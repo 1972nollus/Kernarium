@@ -7,8 +7,8 @@ This directory contains only source-family-independent inputs:
 - `config/darwin-uml.fragment`: the kernel configuration policy every line
   shares. Each line applies its own overlay after it, which lists only the
   settings in which that line differs and whose README says why;
-- `config/page-16k.fragment`: shared 16 KiB page and 128 KiB task-stack
-  geometry;
+- `config/page-16k.fragment` and `config/page-4k.fragment`: shared page-size
+  and 128 KiB task-stack geometry, selected by each line's build;
 - `artifacts/`: compact prebuilt-kernel bundle schema and verifier, plus the
   shared `KEY='value'` metadata parser in `contract_checks.py`;
 - `patches/`: the generated topic series every maintained line applies
@@ -144,33 +144,12 @@ so a stack of that size holds every frame. `guest-sme-gadgets` and
 `guest-sme-jit` check the contract, and `guest-sme-off-gadgets` and
 `guest-sme-off-jit` that none of it shows without SME.
 
-When the host implements non-streaming SVE for a run,
-`darwin_uml_guest_sve_vector_length()` returns its vector length, 16 bytes on
-every host, and an arm64 task gets what `arch/arm64/kernel/fpsimd.c` gives it
-on a CPU whose only SVE vector length is 16 bytes; when it returns zero, as on
-the x86_64-userspace slice or from an engine below `complete`, none of this is
-active. At that length each Z register is its V register, so the state SVE
-adds is P0-P15 and FFR, which every arm64 tail holds after the SME registers,
-16 bits each, with a live flag and the run's vector length. The flag is the
-image of native `TIF_SVE`: the host sets it when the task executes SVE outside
-streaming mode and moves P and FFR across an entry only while it is set, so a
-task that is not live finds them zero when it next executes SVE. The kernel
-clears it where native Linux stops tracking the state: at a system call,
-before any syscall-entry stop, at a sigreturn whose `sve_context` is a bare
-header or missing, at an `NT_ARM_SVE` write in FPSIMD form, when it takes the
-task out of streaming mode, and in a fork child and an exec'd image. Signal
-frames take native arm64's extended layout even without SME: `sve_context` is
-a header with the vector length while the task is not live and holds Z, P and
-FFR while it is, and sigreturn takes P and FFR from it, V from
-`fpsimd_context`, and rejects another vector length and, without SME, a
-streaming record or an SME record. ptrace adds `NT_ARM_SVE`, a bare header in
-streaming mode; `PR_SVE_SET_VL` and `abi.sve_default_vector_length` accept any
-valid length and settle on 16; and `AT_MINSIGSTKSZ` counts the SVE frame,
-4,720 bytes without SME as on native arm64. Entering streaming mode zeroes the
-non-streaming P and FFR. `guest-sve-gadgets` and `guest-sve-jit` check the
-contract against the values native arm64 Linux gives, and
-`guest-sve-off-gadgets` and `guest-sve-off-jit` that none of it shows without
-SVE.
+The virtual CPU has no SVE outside streaming mode and the HWCAPs say so:
+there is no `NT_ARM_SVE`, `PR_SVE_SET_VL` and `PR_SVE_GET_VL` fail with
+`EINVAL`, `abi.sve_default_vector_length` does not exist, and with SME a
+signal frame's `sve_context` outside streaming mode is a bare header with
+vector length zero. The bridge tail holds no SVE state, so a task never keeps
+P or FFR across an entry.
 
 XNU delivers a signal to a thread in streaming mode without leaving it, and
 returning from the handler loses the upper bits of the Z registers. With SME,

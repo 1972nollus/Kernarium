@@ -85,12 +85,11 @@ BuildResult Builder::build(
 	InlineSuffixes suffixes{};
 	std::size_t compiled = 0;
 	bool program_accesses_fp_state = false;
-	bool program_holds_sve = false;
-	/* A transfer without a PC word names its instruction by a 16-bit
-	 * position in the block, and the same cap bounds every packed inline
-	 * suffix to sixteen bits. */
+	/* A transfer without a PC word names its instruction by an 8-bit
+	 * position in the block, which also keeps every packed inline suffix
+	 * within sixteen bits. */
 	const auto window = instructions.first(std::min(instructions.size(),
-		std::size_t{1} << 16));
+		fault_position_instructions));
 	/* A program for SVCR.SM = 1 selects only entries that are safe in
 	 * streaming mode; forwarding contracts do not reach into them, and its
 	 * executor loads the FP state before it enters, so it needs no FP link
@@ -103,8 +102,7 @@ BuildResult Builder::build(
 	const auto finish = [&](std::size_t retired) {
 		resolve_inline_suffixes(words, suffixes, retired);
 		return Program{guest_address, retired, std::move(words),
-			program_accesses_fp_state && !streaming,
-			program_holds_sve && !streaming};
+			program_accesses_fp_state && !streaming};
 	};
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	const void *previous_gadget = nullptr;
@@ -146,7 +144,6 @@ BuildResult Builder::build(
 			window.subspan(compiled + 1),
 			compiled,
 			program_accesses_fp_state,
-			program_holds_sve,
 			words,
 			resolve_link,
 			resolve_indirect_link,

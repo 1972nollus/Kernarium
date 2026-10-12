@@ -24,10 +24,9 @@ void resolve_entered_fault(const Program &program, CpuState &cpu,
 
 Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 		 ProgramWords words,
-		 bool accesses_fp_state, bool holds_sve) noexcept
+		 bool accesses_fp_state) noexcept
 	: guest_address_{guest_address}, instruction_count_{instruction_count},
-	  words_{std::move(words)}, accesses_fp_state_{accesses_fp_state},
-	  holds_sve_{holds_sve}
+	  words_{std::move(words)}, accesses_fp_state_{accesses_fp_state}
 {}
 ::uml::cpu::EngineEvent execute(const Program &program, CpuState &cpu, ::uml::memory::Tlb &tlb) noexcept
 {
@@ -54,12 +53,8 @@ Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 	executed = 0;
 	if (program.words().empty())
 		return ::uml::cpu::EngineEvent::fatal;
-	if (program.accesses_fp_state()) {
+	if (program.accesses_fp_state())
 		cpu.access_fp_state();
-		/* What the SVE link entry does for a linked entry. */
-		if (program.holds_sve())
-			cpu.sve_live = 1;
-	}
 	const auto result =
 		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb,
 			program.instruction_count()

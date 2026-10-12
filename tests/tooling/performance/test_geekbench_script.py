@@ -15,6 +15,8 @@ import unittest
 SCRIPT = pathlib.Path(__file__).resolve().parents[2] / "perf/guest/geekbench.sh"
 GEEKBENCH_6 = "opt/geekbench/release/geekbench6"
 GEEKBENCH_5 = "opt/geekbench/release/geekbench_armv7"
+GEEKBENCH_5_AARCH64 = (
+    "opt/geekbench/release/geekbench_aarch64")
 # Prints the arguments it was run with, then exits with the status it is given
 # in $STATUS, so the test sees exactly what the script asked Geekbench to do.
 # The guest's /bin/sh is dash, so a host that has it runs both and compares.
@@ -86,7 +88,7 @@ class GeekbenchScriptTests(unittest.TestCase):
         self.assertEqual(self.lines(result), [
             "UML_GEEKBENCH_READY",
             f"UML_GEEKBENCH_PROGRAM:/{GEEKBENCH_6}",
-            f"ran /{GEEKBENCH_6} --no-upload",
+            f"ran /{GEEKBENCH_6} --no-upload --iterations 1",
             "UML_GEEKBENCH_END:0",
         ])
 
@@ -96,7 +98,8 @@ class GeekbenchScriptTests(unittest.TestCase):
         result = self.run_script()
         self.assertEqual(self.lines(result)[2:], [
             "UML_GEEKBENCH_TARGETS:102,201",
-            f"ran /{GEEKBENCH_6} --no-upload --single-core --section 1 "
+            f"ran /{GEEKBENCH_6} --no-upload --iterations 1 --single-core "
+            "--section 1 "
             "--workload 102,201",
             "UML_GEEKBENCH_END:0",
         ])
@@ -107,14 +110,24 @@ class GeekbenchScriptTests(unittest.TestCase):
         self.assertEqual(self.lines(result), [
             "UML_GEEKBENCH_READY",
             f"UML_GEEKBENCH_PROGRAM:/{GEEKBENCH_5}",
-            f"ran /{GEEKBENCH_5} --no-upload",
+            f"ran /{GEEKBENCH_5} --no-upload --iterations 1",
             "UML_GEEKBENCH_END:0",
         ])
         self.parameters("UML_GEEKBENCH_WORKLOADS=101\n")
         self.assertIn(
-            f"ran /{GEEKBENCH_5} --no-upload --single-core --section 1 "
+            f"ran /{GEEKBENCH_5} --no-upload --iterations 1 --single-core "
+            "--section 1 "
             "--workload 101",
             self.lines(self.run_script()))
+
+    def test_geekbench_5_aarch64_is_found_by_name(self) -> None:
+        self.program(GEEKBENCH_5_AARCH64)
+        self.assertEqual(self.lines(self.run_script()), [
+            "UML_GEEKBENCH_READY",
+            f"UML_GEEKBENCH_PROGRAM:/{GEEKBENCH_5_AARCH64}",
+            f"ran /{GEEKBENCH_5_AARCH64} --no-upload --iterations 1",
+            "UML_GEEKBENCH_END:0",
+        ])
 
     def test_geekbench_6_wins_when_an_image_carries_both(self) -> None:
         self.program(GEEKBENCH_5)

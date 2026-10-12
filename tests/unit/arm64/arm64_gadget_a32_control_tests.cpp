@@ -25,6 +25,7 @@
 
 #include "cpu/arm64/aarch32/decode.hpp"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -909,6 +910,79 @@ void an_acquire_or_release_to_unmapped_memory_faults_without_effect()
 	}
 }
 
+/* The exclusive and ordered transfers are the A64 part's gadgets, which carry
+ * no key: they report the position of their instruction in the block. A T32
+ * block mixes two instruction lengths, so the position is not the offset, and
+ * the engine must turn it back into the key of that instruction. */
+void a_t32_exclusive_or_ordered_fault_names_its_instruction()
+{
+	struct Case {
+		std::uint16_t first, second;
+		std::uint32_t address;
+		bool alignment;
+	};
+	const Case cases[] = {
+		{0xe852, 0x1f00, unmapped + 0x40, false}, /* ldrex r1,[r2] */
+		{0xe852, 0x1f00, data_base + 0x22, true},
+		{0xe842, 0x1300, unmapped + 0x40, false}, /* strex r3,r1,[r2] */
+		{0xe842, 0x1300, data_base + 0x22, true},
+		{0xe8d2, 0x1fef, unmapped + 0x40, false}, /* ldaex r1,[r2] */
+		{0xe8c2, 0x1fe3, unmapped + 0x40, false}, /* stlex r3,r1,[r2] */
+		{0xe8d2, 0x1faf, unmapped + 0x40, false}, /* lda r1,[r2] */
+		{0xe8d2, 0x1faf, data_base + 0x22, true},
+		{0xe8c2, 0x1faf, unmapped + 0x40, false}, /* stl r1,[r2] */
+		{0xe8d2, 0x677f, unmapped + 0x40, false}, /* ldrexd r6,r7,[r2] */
+		{0xe8d2, 0x677f, data_base + 0x24, true},
+		{0xe8c2, 0x6773, unmapped + 0x40, false}, /* strexd r3,r6,r7,[r2] */
+	};
+	unsigned long generation = 1090;
+	for (const auto &item : cases) {
+		Guest guest{generation++};
+		/* 16, 32 and 16 bits ahead of it: the transfer is the fourth
+		 * instruction, eight bytes in. */
+		guest.t32(0, {t::movs_r0_1, 0xf04f, 0x0001, t::movs_r0_1,
+			      item.first, item.second, t::svc});
+		auto cpu = t32_state();
+		cpu.registers[1] = 0x77;
+		cpu.registers[2] = item.address;
+		cpu.registers[3] = 0x55;
+		cpu.registers[6] = 0x66;
+		cpu.registers[7] = 0x88;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::memory_fault);
+		require(result.fault.alignment == item.alignment);
+		require(result.fault.address == item.address);
+		require(result.retired_instructions == 3);
+		require(cpu.pc == aarch32::t32_key(code_base + 8));
+		require(reg(cpu, 1) == 0x77 && reg(cpu, 3) == 0x55 &&
+			reg(cpu, 6) == 0x66 && reg(cpu, 7) == 0x88);
+	}
+
+	/* The same inside a linked successor, where only the block the stream
+	 * belongs to can say which instruction the position names. */
+	for (const auto &item : {cases[0], cases[11]}) {
+		Guest guest{generation++};
+		guest.t32(0, {0xe07e /* b.n 0x100 */});
+		guest.t32(0x100, {t::movs_r0_1, 0xf04f, 0x0001, t::movs_r0_1,
+				  item.first, item.second, t::svc});
+		for (unsigned run = 0; run < 2; ++run) {
+			auto cpu = t32_state();
+			cpu.registers[1] = 0x77;
+			cpu.registers[2] = item.address;
+			cpu.registers[3] = 0x55;
+			cpu.registers[6] = 0x66;
+			cpu.registers[7] = 0x88;
+			const auto result = guest.run(cpu);
+			require(result.reason == ExitReason::memory_fault);
+			require(result.fault.address == item.address);
+			require(result.retired_instructions == 4);
+			require(cpu.pc == aarch32::t32_key(code_base + 0x100 + 8));
+			require(reg(cpu, 1) == 0x77 && reg(cpu, 3) == 0x55 &&
+				reg(cpu, 6) == 0x66 && reg(cpu, 7) == 0x88);
+		}
+	}
+}
+
 void a_release_store_without_a_reservation_fails()
 {
 	Guest lone{1061};
@@ -1179,6 +1253,308 @@ void the_fp_environment_follows_the_instruction_kind()
 	}
 }
 
+/* A conversion between a float and an integer is the same in either native
+ * environment unless a denormal input or a rounding mode other than nearest
+ * is involved, so it runs in whichever is active, and only the other cases
+ * switch to the guest's: the clamp-and-convert idiom (VMAX, VMIN, VCVT) then
+ * stays in the Standard FPSCR value. The result and the flags must be the
+ * guest's in every case. */
+void conversions_to_and_from_integers_run_in_the_active_environment()
+{
+	constexpr std::uint32_t vadd_f32_d6_d7_d7 = 0xf207'6d07U; /* zeros */
+	constexpr std::uint32_t vadd_f32_s9_s2_s3 = 0xee71'4a21U;
+	constexpr std::uint32_t vcvt_u32_f32_s8_s4 = 0xeebc'4ac2U;
+	constexpr std::uint32_t vcvt_s32_f32_s8_s4 = 0xeebd'4ac2U;
+	constexpr std::uint32_t vcvt_f32_s32_s8_s4 = 0xeeb8'4ac2U;
+	constexpr std::uint32_t fz = 1U << 24;
+	constexpr std::uint32_t rmode_down = 2U << 22;
+	struct Case {
+		std::uint32_t word;
+		std::uint32_t input;
+		std::uint32_t fpcr;
+		std::uint32_t result;
+		std::uint32_t flags; /* IDC IXC IOC of FPSR */
+		bool stays; /* Advanced SIMD's environment survives it */
+	};
+	const Case cases[] = {
+		{vcvt_u32_f32_s8_s4, 0x406c'cccdU, 0, 3, 0x10, true},
+		{vcvt_s32_f32_s8_s4, 0xc06c'cccdU, 0, 0xffff'fffdU, 0x10, true},
+		{vcvt_u32_f32_s8_s4, 0xc06c'cccdU, 0, 0, 0x01, true},
+		{vcvt_u32_f32_s8_s4, 0x7f80'0000U, 0, 0xffff'ffffU, 0x01, true},
+		{vcvt_u32_f32_s8_s4, 0x7fc0'0000U, 0, 0, 0x01, true},
+		{vcvt_u32_f32_s8_s4, 0x0000'0001U, 0, 0, 0x10, false},
+		{vcvt_u32_f32_s8_s4, 0x0000'0001U, fz, 0, 0x80, false},
+		{vcvt_u32_f32_s8_s4, 0x0000'0000U, 0, 0, 0, true},
+		{vcvt_f32_s32_s8_s4, 7U, 0, 0x40e0'0000U, 0, true},
+		{vcvt_f32_s32_s8_s4, 0x0100'0001U, 0, 0x4b80'0000U, 0x10, true},
+		{vcvt_f32_s32_s8_s4, 0x0100'0001U, rmode_down, 0x4b80'0000U, 0x10, false},
+		{vcvt_f32_s32_s8_s4, 0x0100'0003U, rmode_down, 0x4b80'0001U, 0x10, false},
+	};
+	unsigned long generation = 1900;
+	for (const auto &item : cases) {
+		for (const unsigned first : {0U, 1U}) {
+			Guest guest{generation++};
+			/* 0: Advanced SIMD first, so the standard value is native;
+			 * 1: VFP first, so the guest's is. */
+			guest.a32(0, {first == 0 ? vadd_f32_d6_d7_d7 : vadd_f32_s9_s2_s3,
+				      item.word, a::svc});
+			auto cpu = a32_state();
+			cpu.fpcr = item.fpcr;
+			set_d(cpu, 1, 0x3f80'0000'3f80'0000ULL);
+			set_d(cpu, 2, item.input);
+			require(guest.run(cpu).reason == ExitReason::system_call);
+			require(static_cast<std::uint32_t>(get_d(cpu, 4)) == item.result,
+				"a conversion gave the wrong value");
+			require((cpu.fpsr & 0x91U) == item.flags,
+				"a conversion raised the wrong flags");
+			require(cpu.a32_fp_standard == (first == 0 && item.stays ? 1U : 0U),
+				"a conversion switched the environment when it need not have");
+		}
+	}
+}
+
+/* Single-precision VMAX and VMIN give the same result in either native
+ * environment unless an operand is a NaN or a denormal, so they run in the
+ * active one and only those operands switch to the standard value, whose
+ * flush to zero and default NaN they need. */
+void vmax_and_vmin_switch_the_environment_only_for_nan_and_denormal_operands()
+{
+	constexpr std::uint32_t vmax_f32_d3_d1_d2 = 0xf201'3f02U;
+	constexpr std::uint32_t vmin_f32_d3_d1_d2 = 0xf221'3f02U;
+	constexpr std::uint32_t vadd_f32_s9_s10_s11 = 0xee75'4a25U;
+	constexpr std::uint32_t vadd_f32_d6_d7_d7 = 0xf207'6d07U;
+	struct Case {
+		std::uint32_t n, m, maximum, minimum;
+		std::uint32_t flags; /* IDC IOC of FPSR */
+		bool stays;
+	};
+	const Case cases[] = {
+		{0x3f80'0000U, 0x3f00'0000U, 0x3f80'0000U, 0x3f00'0000U, 0, true},
+		{0x0000'0000U, 0x8000'0000U, 0x0000'0000U, 0x8000'0000U, 0, true},
+		{0x7f80'0000U, 0x3f80'0000U, 0x7f80'0000U, 0x3f80'0000U, 0, true},
+		{0xff80'0000U, 0xbf80'0000U, 0xbf80'0000U, 0xff80'0000U, 0, true},
+		{0x0080'0000U, 0x8080'0000U, 0x0080'0000U, 0x8080'0000U, 0, true},
+		{0x0000'0001U, 0xbf80'0000U, 0x0000'0000U, 0xbf80'0000U, 0x80, false},
+		{0x007f'ffffU, 0x3f80'0000U, 0x3f80'0000U, 0x0000'0000U, 0x80, false},
+		{0x3f80'0000U, 0x8000'0001U, 0x3f80'0000U, 0x8000'0000U, 0x80, false},
+		{0x7fc0'0000U, 0x3f80'0000U, 0x7fc0'0000U, 0x7fc0'0000U, 0, false},
+		{0x3f80'0000U, 0x7fc0'1234U, 0x7fc0'0000U, 0x7fc0'0000U, 0, false},
+		{0x7f80'0001U, 0x3f80'0000U, 0x7fc0'0000U, 0x7fc0'0000U, 0x01, false},
+	};
+	unsigned long generation = 1950;
+	for (const auto &item : cases) {
+		for (const bool minimum : {false, true}) {
+			for (const unsigned first : {0U, 1U}) {
+				Guest guest{generation++};
+				/* 0: Advanced SIMD first, so the standard value is native;
+				 * 1: VFP first, so the guest's is. Both add zeros. */
+				guest.a32(0, {first == 0 ? vadd_f32_d6_d7_d7 : vadd_f32_s9_s10_s11,
+					      minimum ? vmin_f32_d3_d1_d2 : vmax_f32_d3_d1_d2,
+					      a::svc});
+				auto cpu = a32_state();
+				set_d(cpu, 1, std::uint64_t{item.n} << 32 | item.n);
+				set_d(cpu, 2, std::uint64_t{item.m} << 32 | item.m);
+				require(guest.run(cpu).reason == ExitReason::system_call);
+				const std::uint32_t expected = minimum ? item.minimum : item.maximum;
+				require(get_d(cpu, 3) == (std::uint64_t{expected} << 32 | expected),
+					"VMAX or VMIN gave the wrong value");
+				require((cpu.fpsr & 0x81U) == item.flags,
+					"VMAX or VMIN raised the wrong flags");
+				require(cpu.a32_fp_standard ==
+					(first == 0 || !item.stays ? 1U : 0U),
+					"VMAX or VMIN switched the environment when it need not have");
+			}
+		}
+	}
+}
+
+/* The host's calling convention keeps the low halves of v8 to v15 across the
+ * execution boundary, and the translating C++ around it relies on that (a
+ * block copy of guest memory held a constant a gadget left there). No gadget
+ * may write them. Runs a program of Advanced SIMD, VFP and parallel
+ * arithmetic between a write of known values and a read. */
+__attribute__((noinline)) void gadgets_keep_the_callee_saved_vector_registers(
+	Guest &guest, arm64::CpuState &cpu)
+{
+	const std::uint64_t before[8] = {
+		0x0101'0101'0101'0101ULL, 0x0202'0202'0202'0202ULL,
+		0x0303'0303'0303'0303ULL, 0x0404'0404'0404'0404ULL,
+		0x0505'0505'0505'0505ULL, 0x0606'0606'0606'0606ULL,
+		0x0707'0707'0707'0707ULL, 0x0808'0808'0808'0808ULL};
+	std::uint64_t after[8] = {};
+	asm volatile("ldp d8, d9, [%0]\n\tldp d10, d11, [%0, #16]\n\t"
+		     "ldp d12, d13, [%0, #32]\n\tldp d14, d15, [%0, #48]"
+		     :: "r"(before) : "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15");
+	const auto result = guest.run(cpu);
+	asm volatile("stp d8, d9, [%0]\n\tstp d10, d11, [%0, #16]\n\t"
+		     "stp d12, d13, [%0, #32]\n\tstp d14, d15, [%0, #48]"
+		     :: "r"(after) : "memory");
+	require(result.reason == ExitReason::system_call);
+	for (unsigned index = 0; index < 8; ++index)
+		require(after[index] == before[index],
+			"a gadget wrote a callee-saved vector register");
+}
+
+void gadgets_leave_the_callee_saved_vector_registers_alone()
+{
+	constexpr std::uint32_t vmax_f32_d3_d1_d2 = 0xf201'3f02U;
+	constexpr std::uint32_t vmin_f32_q3_q1_q2 = 0xf222'6f44U; /* q-form below */
+	constexpr std::uint32_t vcvt_u32_f32_s8_s4 = 0xeebc'4ac2U;
+	constexpr std::uint32_t vadd_f32_s9_s10_s11 = 0xee75'4a25U;
+	constexpr std::uint32_t uadd8_r0_r1_r2 = 0xe651'0f92U;
+	constexpr std::uint32_t sel_r3_r1_r2 = 0xe681'3fb2U;
+	unsigned long generation = 2100;
+	for (const std::uint32_t operand : {0x3f80'0000U, 0x0000'0001U, 0x7fc0'0000U}) {
+		Guest guest{generation++};
+		guest.a32(0, {vmax_f32_d3_d1_d2, vmin_f32_q3_q1_q2, vcvt_u32_f32_s8_s4,
+			      vadd_f32_s9_s10_s11, uadd8_r0_r1_r2, sel_r3_r1_r2, a::svc});
+		auto cpu = a32_state();
+		set_d(cpu, 1, std::uint64_t{operand} << 32 | operand);
+		set_d(cpu, 2, std::uint64_t{operand} << 32 | operand);
+		cpu.registers[1] = 0x8001'ff7fU;
+		cpu.registers[2] = 0x7f01'0180U;
+		gadgets_keep_the_callee_saved_vector_registers(guest, cpu);
+	}
+}
+
+/* A single-precision add, subtract or multiply on the host with the given
+ * FPCR: the value and the cumulative flags (IDC IXC UFC OFC DZC IOC) it
+ * leaves, the reference for what a guest instruction must give. */
+struct HostFloat {
+	std::uint32_t bits;
+	std::uint32_t flags;
+};
+
+[[nodiscard]] HostFloat host_float(unsigned operation, std::uint32_t a,
+				   std::uint32_t b, std::uint64_t fpcr)
+{
+	const float x = std::bit_cast<float>(a);
+	const float y = std::bit_cast<float>(b);
+	float z;
+	std::uint64_t saved_fpcr, saved_fpsr, fpsr;
+	asm volatile("mrs %0, fpcr\n\tmrs %1, fpsr" : "=r"(saved_fpcr), "=r"(saved_fpsr));
+	asm volatile("msr fpcr, %0\n\tmsr fpsr, xzr" :: "r"(fpcr) : "memory");
+	if (operation == 0)
+		asm volatile("fadd %s0, %s1, %s2" : "=w"(z) : "w"(x), "w"(y));
+	else if (operation == 1)
+		asm volatile("fsub %s0, %s1, %s2" : "=w"(z) : "w"(x), "w"(y));
+	else
+		asm volatile("fmul %s0, %s1, %s2" : "=w"(z) : "w"(x), "w"(y));
+	asm volatile("mrs %0, fpsr" : "=r"(fpsr));
+	asm volatile("msr fpcr, %0\n\tmsr fpsr, %1" :: "r"(saved_fpcr), "r"(saved_fpsr) : "memory");
+	return {std::bit_cast<std::uint32_t>(z), static_cast<std::uint32_t>(fpsr & 0x9fU)};
+}
+
+/* VADD, VSUB and VMUL of singles, in Advanced SIMD and in VFP, give the same
+ * result in either native environment while each nonzero operand's exponent
+ * field is 64 to 191 and the guest's rounding mode is round to nearest, so
+ * they run in the active one then and switch only for other operands. The
+ * value and flags must be those of the architecture whichever way they ran:
+ * Advanced SIMD's under the standard value, VFP's under the guest's FPCR. */
+void add_sub_and_mul_run_in_the_active_environment_for_ordinary_operands()
+{
+	constexpr std::uint32_t vadd_f32_d6_d7_d7 = 0xf207'6d07U; /* zeros */
+	constexpr std::uint32_t vadd_f32_s29_s30_s31 = 0xee7f'ea2fU; /* zeros */
+	constexpr std::uint32_t vfp_ops[3] = {0xee31'3a02U, 0xee31'3a42U, 0xee21'3a02U};
+	constexpr std::uint32_t neon_d_ops[3] = {0xf201'3d02U, 0xf221'3d02U, 0xf301'3d12U};
+	constexpr std::uint32_t neon_q_ops[3] = {0xf202'6d44U, 0xf222'6d44U, 0xf302'6d54U};
+	constexpr std::uint32_t standard = 0x0300'0000U; /* DN FZ, round to nearest */
+	struct Operands {
+		std::uint32_t a, b;
+	};
+	const Operands operands[] = {
+		{0x3f80'0000U, 0x4000'0000U}, /* 1, 2 */
+		{0x3dcc'cccdU, 0x3e4c'cccdU}, /* inexact */
+		{0x0000'0000U, 0x0000'0000U},
+		{0x8000'0000U, 0x0000'0000U},
+		{0x0000'0000U, 0x4060'0000U},
+		{0xc0c0'0000U, 0x3f80'0000U},
+		{0x2000'0000U, 0x2000'0000U}, /* 2**-63, the lowest in range */
+		{0x2000'0000U, 0xa000'0000U},
+		{0x1f80'0000U, 0x3f80'0000U}, /* 2**-64 */
+		{0x5f80'0000U, 0x3f80'0000U}, /* 2**64, the highest in range */
+		{0x5f80'0000U, 0x5f80'0000U}, /* overflow of a product */
+		{0x6000'0000U, 0x3f80'0000U}, /* 2**65 */
+		{0x0000'0001U, 0x3f80'0000U}, /* denormal */
+		{0x3f80'0000U, 0x807f'ffffU},
+		{0x7f80'0000U, 0x3f80'0000U}, /* infinity */
+		{0x7fc0'0000U, 0x3f80'0000U}, /* quiet NaN */
+		{0x3f80'0000U, 0x7f80'0001U}, /* signaling NaN */
+		{0x3f80'0000U, 0x3f80'0001U}, /* nearly equal */
+	};
+	const auto in_range = [](std::uint32_t value) {
+		const std::uint32_t exponent = value >> 23 & 0xffU;
+		return (value << 1) == 0 || (exponent >= 64 && exponent <= 191);
+	};
+	unsigned long generation = 2200;
+	for (const auto fpcr : {0U, standard, 1U << 22, 3U << 22}) {
+		for (const auto &item : operands) {
+			for (unsigned operation = 0; operation < 3; ++operation) {
+				for (unsigned kind = 0; kind < 3; ++kind) { /* VFP, D, Q */
+					for (const unsigned first : {0U, 1U}) {
+						Guest guest{generation++};
+						/* 0: Advanced SIMD first, so the standard value
+						 * is native; 1: VFP first, so the guest's is. */
+						const std::uint32_t tested = kind == 0 ? vfp_ops[operation] :
+							kind == 1 ? neon_d_ops[operation] : neon_q_ops[operation];
+						guest.a32(0, {first == 0 ? vadd_f32_d6_d7_d7 :
+							      vadd_f32_s29_s30_s31, tested, a::svc});
+						auto cpu = a32_state();
+						cpu.fpcr = fpcr;
+						/* A quad register has lanes: the case is in the
+						 * last one and the rest are ordinary. */
+						const std::uint32_t other_a = 0x3f80'0000U;
+						const std::uint32_t other_b = 0x4000'0000U;
+						if (kind == 2) {
+							set_d(cpu, 2, std::uint64_t{other_a} << 32 | other_a);
+							set_d(cpu, 3, std::uint64_t{item.a} << 32 | other_a);
+							set_d(cpu, 4, std::uint64_t{other_b} << 32 | other_b);
+							set_d(cpu, 5, std::uint64_t{item.b} << 32 | other_b);
+						} else {
+							set_d(cpu, 1, std::uint64_t{item.a} << 32 | item.a);
+							set_d(cpu, 2, std::uint64_t{item.b} << 32 | item.b);
+						}
+						require(guest.run(cpu).reason == ExitReason::system_call);
+						const bool neon = kind != 0;
+						const auto expected = host_float(operation, item.a, item.b,
+							neon ? standard : fpcr);
+						const auto ordinary = host_float(operation, other_a, other_b,
+							neon ? standard : fpcr);
+						if (kind == 0) {
+							require(static_cast<std::uint32_t>(get_d(cpu, 3)) == expected.bits,
+								"a VFP add, subtract or multiply gave the wrong value");
+						} else if (kind == 1) {
+							require(get_d(cpu, 3) ==
+								(std::uint64_t{expected.bits} << 32 | expected.bits),
+								"an Advanced SIMD add, subtract or multiply gave the wrong value");
+						} else {
+							require(get_d(cpu, 6) ==
+								(std::uint64_t{ordinary.bits} << 32 | ordinary.bits) &&
+								get_d(cpu, 7) ==
+								(std::uint64_t{expected.bits} << 32 | ordinary.bits),
+								"a quad add, subtract or multiply gave the wrong value");
+						}
+						require((cpu.fpsr & 0x9fU) == (expected.flags | ordinary.flags),
+							"an add, subtract or multiply raised the wrong flags");
+						/* The environment survives an instruction of the
+						 * kind it is native for, and any other with
+						 * operands the guard passes. */
+						const bool own = neon ? first == 0 : first == 1;
+						const bool passes = in_range(item.a) && in_range(item.b) &&
+							(fpcr & (3U << 22)) == 0;
+						const bool stays = own || passes;
+						const unsigned active_before = first == 0 ? 1U : 0U;
+						const unsigned after = stays ? active_before : neon ? 1U : 0U;
+						require(cpu.a32_fp_standard == after,
+							"an add, subtract or multiply switched the environment "
+							"when it need not have, or did not when it had to");
+					}
+				}
+			}
+		}
+	}
+}
+
 /* The library runs an instruction whose floating point it models in
  * software, so the cumulative flags the native instructions of the block
  * raised before it must reach CpuState first and the flags it raises must
@@ -1270,6 +1646,327 @@ void structure_loads_and_stores_move_the_elements_and_write_back()
 		require(get_d(cpu, 1) == 0x0404'0404'0303'0303ULL);
 		require(reg(cpu, 0) == data_base + boundary + 16);
 	}
+}
+
+/* VLD1 and VST1 of one to four registers copy the same bytes at every
+ * element size, so the 16- and 32-bit forms are gadgets like the 8- and
+ * 64-bit ones: an access inside a page never reaches the library. */
+void vld1_and_vst1_copies_stay_out_of_the_library()
+{
+	struct Copy {
+		std::uint32_t word;
+		unsigned registers;
+		bool store;
+	};
+	const Copy copies[] = {
+		{0xf420'074fU, 1, false}, /* vld1.16 {d0}, [r0] */
+		{0xf420'0a4fU, 2, false}, /* vld1.16 {d0, d1}, [r0] */
+		{0xf420'068dU, 3, false}, /* vld1.32 {d0-d2}, [r0]! */
+		{0xf420'0282U, 4, false}, /* vld1.32 {d0-d3}, [r0], r2 */
+		{0xf401'0a4fU, 2, true},  /* vst1.16 {d0, d1}, [r1] */
+		{0xf401'068dU, 3, true},  /* vst1.32 {d0-d2}, [r1]! */
+		{0xf401'028fU, 4, true},  /* vst1.32 {d0-d3}, [r1] */
+		{0xf401'075fU, 1, true},  /* vst1.16 {d0}, [r1:64] */
+	};
+	aarch32::count_a32_library_exits(true);
+	unsigned long generation = 1300;
+	for (const auto &copy : copies) {
+		const auto decoded = aarch32::decode_a32(
+			copy.word, aarch32::Profile::at(aarch32::Level::complete));
+		require(decoded.legal(), "a VLD1 or VST1 word did not decode");
+		Guest guest{generation++};
+		guest.a32(0, {copy.word, a::svc});
+		for (std::uint32_t index = 0; index < 8; ++index)
+			guest.data32(0x40 + 4 * index, 0x0101'0101U * (index + 1));
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + 0x40;
+		cpu.registers[1] = data_base + 0x80;
+		cpu.registers[2] = 0x20;
+		for (unsigned n = 0; n < 4; ++n)
+			set_d(cpu, n, 0x1111'1111'0000'0000ULL * (n + 1) + n + 1);
+		aarch32::reset_a32_library_exits();
+		require(guest.run(cpu).reason == ExitReason::system_call);
+		require(aarch32::a32_library_exits(decoded.form) == 0,
+			"a VLD1 or VST1 copy used the library");
+		for (unsigned n = 0; n < copy.registers; ++n) {
+			if (copy.store) {
+				const std::uint64_t value =
+					0x1111'1111'0000'0000ULL * (n + 1) + n + 1;
+				require(guest.data32(0x80 + 8 * n) ==
+					static_cast<std::uint32_t>(value));
+				require(guest.data32(0x84 + 8 * n) ==
+					static_cast<std::uint32_t>(value >> 32));
+			} else {
+				require(get_d(cpu, n) ==
+					(std::uint64_t{0x0101'0101U * (2 * n + 2)} << 32 |
+					 0x0101'0101U * (2 * n + 1)));
+			}
+		}
+	}
+	aarch32::count_a32_library_exits(false);
+}
+
+/* A VLD1 or VST1 copy that crosses a page is a gadget too: the slow transfer
+ * helper moves the bytes after translating both pages. */
+void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
+{
+	struct Copy {
+		std::uint32_t word;
+		unsigned registers;
+		bool store;
+	};
+	const Copy copies[] = {
+		{0xf420'0a8fU, 2, false}, /* vld1.32 {d0, d1}, [r0] */
+		{0xf420'068fU, 3, false}, /* vld1.32 {d0-d2}, [r0] */
+		{0xf420'028fU, 4, false}, /* vld1.32 {d0-d3}, [r0] */
+		{0xf420'074fU, 1, false}, /* vld1.16 {d0}, [r0] */
+		{0xf401'0a8fU, 2, true},  /* vst1.32 {d0, d1}, [r1] */
+		{0xf401'068fU, 3, true},  /* vst1.32 {d0-d2}, [r1] */
+		{0xf401'028fU, 4, true},  /* vst1.32 {d0-d3}, [r1] */
+		{0xf401'074fU, 1, true},  /* vst1.16 {d0}, [r1] */
+	};
+	aarch32::count_a32_library_exits(true);
+	unsigned long generation = 1500;
+	for (const auto &copy : copies) {
+		const auto decoded = aarch32::decode_a32(
+			copy.word, aarch32::Profile::at(aarch32::Level::complete));
+		require(decoded.legal(), "a VLD1 or VST1 word did not decode");
+		Guest guest{generation++};
+		guest.a32(0, {copy.word, a::svc});
+		/* Four bytes of every register in the first page, four in the
+		 * second, wherever the transfer is long enough. */
+		const std::uint32_t start = page - 4 * copy.registers;
+		for (std::uint32_t index = 0; index < 8; ++index)
+			guest.data32(start + 4 * index, 0x0101'0101U * (index + 1));
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + start;
+		cpu.registers[1] = data_base + start;
+		for (unsigned n = 0; n < 4; ++n)
+			set_d(cpu, n, 0x1111'1111'0000'0000ULL * (n + 1) + n + 1);
+		aarch32::reset_a32_library_exits();
+		require(guest.run(cpu).reason == ExitReason::system_call);
+		require(aarch32::a32_library_exits(decoded.form) == 0,
+			"a VLD1 or VST1 copy across a page used the library");
+		for (unsigned n = 0; n < copy.registers; ++n) {
+			if (copy.store) {
+				const std::uint64_t value =
+					0x1111'1111'0000'0000ULL * (n + 1) + n + 1;
+				require(guest.data32(start + 8 * n) ==
+					static_cast<std::uint32_t>(value));
+				require(guest.data32(start + 8 * n + 4) ==
+					static_cast<std::uint32_t>(value >> 32));
+			} else {
+				require(get_d(cpu, n) ==
+					(std::uint64_t{0x0101'0101U * (2 * n + 2)} << 32 |
+					 0x0101'0101U * (2 * n + 1)));
+			}
+		}
+	}
+	aarch32::count_a32_library_exits(false);
+}
+
+/* A VLD1 or VST1 copy without an alignment hint has a gadget for each
+ * writeback (none, the size, Rm) and register count; each must move the
+ * bytes, inside a page and across one, write back what it should and leave
+ * the other core registers alone. */
+void vld1_and_vst1_copies_write_back_in_each_mode()
+{
+	/* type field of VLD1 and VST1 for one to four registers */
+	const std::uint32_t types[] = {0x7U, 0xaU, 0x6U, 0x2U};
+	unsigned long generation = 2400;
+	for (const bool store : {false, true}) {
+		for (unsigned registers = 1; registers <= 4; ++registers) {
+			for (unsigned mode = 0; mode < 3; ++mode) { /* none, size, Rm = r2 */
+				for (const bool crossing : {false, true}) {
+					const std::uint32_t word = (store ? 0xf400'0000U : 0xf420'0000U) |
+						(store ? 1U : 0U) << 16 | types[registers - 1] << 8 |
+						0x80U | (mode == 0 ? 0xfU : mode == 1 ? 0xdU : 0x2U);
+					Guest guest{generation++};
+					guest.a32(0, {word, a::svc});
+					const std::uint32_t size = 8 * registers;
+					const std::uint32_t start = crossing ? page - size / 2 : 0x40;
+					for (std::uint32_t index = 0; index < 8; ++index)
+						guest.data32(start + 4 * index, 0x0101'0101U * (index + 1));
+					auto cpu = a32_state();
+					cpu.registers[0] = data_base + start;
+					cpu.registers[1] = data_base + start;
+					cpu.registers[2] = 0x24;
+					cpu.registers[3] = 0xfeed'f00dU;
+					for (unsigned n = 0; n < 4; ++n)
+						set_d(cpu, n, 0x1111'1111'0000'0000ULL * (n + 1) + n + 1);
+					require(guest.run(cpu).reason == ExitReason::system_call);
+					for (unsigned n = 0; n < registers; ++n) {
+						if (store) {
+							const std::uint64_t value =
+								0x1111'1111'0000'0000ULL * (n + 1) + n + 1;
+							require(guest.data32(start + 8 * n) ==
+								static_cast<std::uint32_t>(value));
+							require(guest.data32(start + 8 * n + 4) ==
+								static_cast<std::uint32_t>(value >> 32));
+						} else {
+							require(get_d(cpu, n) ==
+								(std::uint64_t{0x0101'0101U * (2 * n + 2)} << 32 |
+								 0x0101'0101U * (2 * n + 1)));
+						}
+					}
+					const unsigned base = store ? 1U : 0U;
+					const std::uint32_t expected = data_base + start +
+						(mode == 0 ? 0U : mode == 1 ? size : 0x24U);
+					require(reg(cpu, base) == expected, "a copy wrote back the wrong base");
+					require(reg(cpu, 1 - base) == data_base + start,
+						"a copy changed the other base");
+					require(reg(cpu, 2) == 0x24U && reg(cpu, 3) == 0xfeed'f00dU,
+						"a copy changed an unrelated register");
+				}
+			}
+		}
+	}
+}
+
+/* ADD and SUB of an immediate to a register in place have an entry per
+ * register with its displacement baked in; each must reach its own register
+ * and flags. */
+void in_place_add_and_sub_of_an_immediate_reach_every_register()
+{
+	unsigned long generation = 1600;
+	for (std::uint32_t reg = 0; reg < 15; ++reg) {
+		Guest guest{generation++};
+		const std::uint32_t both = reg << 16 | reg << 12;
+		guest.a32(0, {0xe280'0010U | both,   /* add rN, rN, #0x10 */
+			      0xe240'0008U | both,   /* sub rN, rN, #8 */
+			      0xe250'0004U | both,   /* subs rN, rN, #4 */
+			      a::svc});
+		auto cpu = a32_state();
+		for (unsigned other = 0; other < 15; ++other)
+			cpu.registers[other] = 0x1000U * (other + 1);
+		cpu.registers[reg] = 0xffff'fffcU; /* ends at zero */
+		require(guest.run(cpu).reason == ExitReason::system_call);
+		for (unsigned other = 0; other < 15; ++other)
+			require(static_cast<std::uint32_t>(cpu.registers[other]) ==
+				(other == reg ? 0U : 0x1000U * (other + 1)),
+				"an in-place immediate reached another register");
+		/* subs to zero: Z and C set, N and V clear. */
+		require((cpu.nzcv >> 28) == 0x6U, "SUBS to zero set wrong flags");
+	}
+}
+
+/* A CMP followed at once by a conditional branch is one fused gadget of the
+ * AArch64 bank. It must leave the flags and take the branch as the pair
+ * does, for every condition and for the register and immediate forms. */
+bool condition_holds(unsigned cond, std::uint32_t flags)
+{
+	const bool n = (flags >> 3 & 1U) != 0, z = (flags >> 2 & 1U) != 0,
+		   c = (flags >> 1 & 1U) != 0, v = (flags & 1U) != 0;
+	switch (cond) {
+	case 0: return z;
+	case 1: return !z;
+	case 2: return c;
+	case 3: return !c;
+	case 4: return n;
+	case 5: return !n;
+	case 6: return v;
+	case 7: return !v;
+	case 8: return c && !z;
+	case 9: return !c || z;
+	case 10: return n == v;
+	case 11: return n != v;
+	case 12: return !z && n == v;
+	default: return z || n != v;
+	}
+}
+
+std::uint32_t compare_flags(std::uint32_t a, std::uint32_t b)
+{
+	const std::uint32_t result = a - b;
+	return (result >> 31) << 3 | (result == 0 ? 4U : 0U) |
+	       (a >= b ? 2U : 0U) | (((a ^ b) & (a ^ result)) >> 31);
+}
+
+void compare_and_branch_pairs_take_the_branch_as_the_pair_does()
+{
+	const std::uint32_t values[] = {0U, 1U, 5U, 0xffU, 0x7fff'ffffU,
+					0x8000'0000U, 0xffff'ffffU};
+	const std::uint32_t immediates[] = {0U, 1U, 5U, 0xffU};
+	unsigned long generation = 1700;
+	for (std::uint32_t cond = 0; cond < 14; ++cond) {
+		/* The immediate form once per immediate, then the register form
+		 * with the second operand in r1. */
+		for (std::size_t form = 0; form <= std::size(immediates); ++form) {
+			const bool immediate = form < std::size(immediates);
+			Guest guest{generation++};
+			/* cmp r0, #imm or r1; b<cond> +8; mov r5, #1; svc;
+			 * mov r5, #2; svc. */
+			guest.a32(0, {immediate ? 0xe350'0000U | immediates[form]
+						: 0xe150'0001U,
+				      cond << 28 | 0x0a00'0001U, 0xe3a0'5001U,
+				      a::svc, 0xe3a0'5002U, a::svc});
+			for (const auto a_value : values) {
+				const auto count = immediate ? 1U : std::size(values);
+				for (std::size_t index = 0; index < count; ++index) {
+					const auto b_value = immediate ?
+						immediates[form] : values[index];
+					auto cpu = a32_state();
+					cpu.registers[0] = a_value;
+					cpu.registers[1] = b_value;
+					cpu.registers[5] = 0;
+					require(guest.run(cpu).reason ==
+						ExitReason::system_call);
+					const auto flags = compare_flags(a_value, b_value);
+					require(cpu.registers[5] ==
+						(condition_holds(cond, flags) ? 2U : 1U),
+						"a fused compare and branch took the wrong way");
+					require((cpu.nzcv >> 28) == flags,
+						"a fused compare and branch left the wrong flags");
+				}
+			}
+		}
+	}
+}
+
+/* The parallel add and subtract family and SEL are gadgets: Advanced SIMD
+ * does the lanes, GE is the byte-lane mask CpuState keeps, and the library
+ * runs none of them. */
+void parallel_arithmetic_and_sel_stay_out_of_the_library()
+{
+	struct Step {
+		std::uint32_t word;
+		unsigned destination;
+		std::uint32_t expected;
+	};
+	/* r0 = 0x80ff7f01, r1 = 0x01010180. UADD8 carries out of byte 2 only,
+	 * so GE is 0x00ff0000 for the SEL after it; SASX adds the high half of
+	 * Rn to the low half of Rm and subtracts, so its GE is the low pair. */
+	const Step steps[] = {
+		{0xe650'2f91U, 2, 0x8100'8081U}, /* uadd8 r2, r0, r1 */
+		{0xe680'3fb1U, 3, 0x01ff'0180U}, /* sel r3, r0, r1 */
+		{0xe660'4ff1U, 4, 0x7ffe'7e00U}, /* uqsub8 r4, r0, r1 */
+		{0xe620'5f91U, 5, 0x8100'7f81U}, /* qadd8 r5, r0, r1 */
+		{0xe610'6f31U, 6, 0x827f'7e00U}, /* sasx r6, r0, r1 */
+		{0xe680'7fb1U, 7, 0x0101'7f01U}, /* sel r7, r0, r1 */
+	};
+	aarch32::count_a32_library_exits(true);
+	Guest guest{1400};
+	std::uint32_t offset = 0;
+	for (const auto &step : steps) {
+		guest.a32(offset, {step.word});
+		offset += 4;
+	}
+	guest.a32(offset, {a::svc});
+	auto cpu = a32_state();
+	cpu.registers[0] = 0x80ff'7f01U;
+	cpu.registers[1] = 0x0101'0180U;
+	aarch32::reset_a32_library_exits();
+	require(guest.run(cpu).reason == ExitReason::system_call);
+	for (const auto &step : steps) {
+		const auto decoded = aarch32::decode_a32(
+			step.word, aarch32::Profile::at(aarch32::Level::complete));
+		require(decoded.legal(), "a parallel word did not decode");
+		require(aarch32::a32_library_exits(decoded.form) == 0,
+			"a parallel add or subtract or SEL used the library");
+		require(static_cast<std::uint32_t>(cpu.registers[step.destination]) ==
+			step.expected, "a parallel result was wrong");
+	}
+	aarch32::count_a32_library_exits(false);
 }
 
 /* The runtime loads a task's vectors lazily (CpuState::defer_fp_load) and a
@@ -1721,6 +2418,7 @@ int main()
 	acquire_loads_and_release_stores_round_trip();
 	an_unaligned_acquire_or_release_is_an_alignment_fault();
 	an_acquire_or_release_to_unmapped_memory_faults_without_effect();
+	a_t32_exclusive_or_ordered_fault_names_its_instruction();
 	a_release_store_without_a_reservation_fails();
 	the_kuser_compare_and_swap_succeeds_or_reports_a_mismatch();
 	set_event_local_is_a_hint();
@@ -1736,7 +2434,17 @@ int main()
 	advanced_simd_floating_point_uses_the_standard_fpscr();
 	a_library_floating_point_instruction_keeps_the_flags_around_it();
 	the_fp_environment_follows_the_instruction_kind();
+	conversions_to_and_from_integers_run_in_the_active_environment();
+	vmax_and_vmin_switch_the_environment_only_for_nan_and_denormal_operands();
+	gadgets_leave_the_callee_saved_vector_registers_alone();
+	add_sub_and_mul_run_in_the_active_environment_for_ordinary_operands();
 	structure_loads_and_stores_move_the_elements_and_write_back();
+	vld1_and_vst1_copies_stay_out_of_the_library();
+	vld1_and_vst1_copies_write_back_in_each_mode();
+	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();
+	in_place_add_and_sub_of_an_immediate_reach_every_register();
+	compare_and_branch_pairs_take_the_branch_as_the_pair_does();
+	parallel_arithmetic_and_sel_stay_out_of_the_library();
 	structure_and_library_blocks_load_the_deferred_vectors();
 	single_stepped_floating_point_loads_the_deferred_vectors();
 	a_vfp_word_is_illegal_at_the_base_level();

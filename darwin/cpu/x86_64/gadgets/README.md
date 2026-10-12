@@ -76,9 +76,20 @@ Two banks implement the scalar integer instructions.
   is an immediate in the entry, so the host forwards the CPU-state stores into
   the loads. A `[base + displacement]` address is fused into the entry; an
   indexed address is one shared address entry followed by the access entry.
-  An access carries its instruction's RIP and length in one stream word, the
-  RIP in bits 47:0 and the length in bits 59:56, because only its fault and
-  overlap exits read them.
+  An access carries its displacement and the facts only its cold exits read
+  in one stream word: the sign-extended displacement in bits 31:0, the
+  instruction's position in its block (its address less the program's first
+  address) in bits 41:32, the length in bits 59:56, and bit 60, which
+  publication sets. The fault and overlap exits rebuild the RIP from the
+  context's program begin and the position, so a block that reaches 1024 bytes
+  takes the ordinary bank for the instructions beyond it, and every stream
+  built from part of a block (a budget-limited replay, a checked single
+  instruction) takes the block's own first address as that base. A memory
+  operation with an immediate carries a 14-bit immediate in bits 55:42 when
+  the value, sign-extended from the operation width, fits; the other
+  immediates take the ordinary bank. RIP-relative and absolute addresses have
+  no 32-bit displacement and keep the address as a word of their own ahead of
+  the access word.
   INC and DEC are enumerated a second time by the carry their producer left,
   because they preserve the carry flag: a borrow, carry or cleared source
   reaches RFLAGS with at most one condition, a settled one inherits the
@@ -783,9 +794,11 @@ page stamp describes either.
 ## Measuring what the cache costs
 
 A `UML_GADGET_CACHE_CENSUS=ON` build makes every executor append what its
-private cache still held at teardown: the committed slabs, each resident
-translation's own storage -- its native stream and saved source, and the
-decoded instructions only a replayed block holds -- the link and indirect
-records, and the target link table each address space owns. The record format is the arm64 engine's,
-so one analyzer reads a capture from either. See
+private cache holds, at teardown and optionally at intervals: the committed
+slabs, each resident translation's own allocations as the allocator sized
+them -- its record, native stream and saved source, and the decoded
+instructions only a replayed block holds -- the link and indirect records,
+and the target link table each address space owns, with the history of its
+lookups, evictions and retranslations. The record format is the arm64
+engine's, so one analyzer reads a capture from either. See
 [`tests/perf/README.md`](../../../../tests/perf/README.md).

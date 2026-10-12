@@ -32,7 +32,6 @@ function(uml_add_arm64_unit_test STEM)
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
             $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-            $<TARGET_OBJECTS:uml_arm64_sve_semantics>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     endif()
     add_executable(${_target}
@@ -68,10 +67,15 @@ include("${CMAKE_CURRENT_LIST_DIR}/engine.cmake")
 uml_add_arm64_unit_test(sme_foundation WITHOUT_HARNESS
     OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
-# The guest-SVE policy, the non-streaming SVE profile and its predicate
-# forms, the state it adds and the identification registers.
-uml_add_arm64_unit_test(sve_foundation WITHOUT_HARNESS
+# The virtual CPU presents no non-streaming SVE: the prober, the engines,
+# the identification registers and the HWCAPs, and the reserved predicate
+# state's reset.
+uml_add_arm64_unit_test(no_sve WITHOUT_HARNESS
     OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+
+# The SM = 0 vector-length family the virtual CPU (FEAT_SME, no FEAT_SVE)
+# executes: its definition and the words both engines translate from.
+uml_add_arm64_unit_test(sm0_vector_length WITHOUT_HARNESS)
 
 # The AArch32 foundation: the state CpuState appends, the guest-AArch32
 # policy, the engines' levels, the AArch32 identification registers and
@@ -144,6 +148,9 @@ uml_add_arm64_unit_test(base_ordered_behavior)
 uml_add_arm64_unit_test(base_ordered_gadget)
 # Load/store-exclusive loops make progress whatever the TLB holds.
 uml_add_arm64_unit_test(exclusive_progress)
+# After an ISB, both engines run the code another vCPU changed and
+# synchronized, in A64 and A32.
+uml_add_arm64_unit_test(isb_code_change)
 uml_add_arm64_unit_test(simd_ordinary_memory_gadget)
 uml_add_arm64_unit_test(simd_structure_gadget)
 uml_add_arm64_unit_test(simd_baseline_inventory WITHOUT_HARNESS

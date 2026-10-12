@@ -18,12 +18,14 @@ runner's report line or JSON record carries the vCPU count; do not compare
 results taken at different counts, and keep one count for a whole series.
 
 Geekbench uses the payload already installed in `rootfs.erofs` and always runs
-with `--no-upload`. The workload is [`guest/geekbench.sh`](guest/geekbench.sh),
-which the runner installs as a payload file and which prints the
-`UML_GEEKBENCH_READY` and `UML_GEEKBENCH_END:<status>` markers;
-`/etc/uml-geekbench.env` may name single-core workloads to run instead of the
-whole benchmark. The runner creates disposable writable state and does not
-start systemd or background desktop services. See current options with:
+with `--no-upload` and `--iterations 1`; scores taken before 2026-10-12 used
+Geekbench's default iteration count and are not comparable. The workload is
+[`guest/geekbench.sh`](guest/geekbench.sh), which the runner installs as a
+payload file and which prints the `UML_GEEKBENCH_READY` and
+`UML_GEEKBENCH_END:<status>` markers; `/etc/uml-geekbench.env` may name
+single-core workloads to run instead of the whole benchmark. The runner creates
+disposable writable state and does not start systemd or background desktop
+services. See current options with:
 
 ```sh
 python3 tests/perf/run_guest_geekbench.py --help
@@ -54,7 +56,9 @@ root and a 4 KiB block size, which both guest page profiles mount. `rootfs`
 cuts the starter disk's ext4 filesystem into an unpartitioned `.ext4` image,
 which `--rootfs` takes with `--root-type ext4`; with `--release-dir` it also
 installs the release under `/opt/geekbench`, for a device with no second disk
-such as an iPad (`KERNARIUM_ROOTFS`). The armhf image has no `ip`, so a run
+such as an iPad (`KERNARIUM_ROOTFS`). `--program geekbench_aarch64`, before
+the subcommand, packages the same release's 64-bit program from an arm64 starter
+disk, the control for an armv7 comparison. The armhf image has no `ip`, so a run
 passes `--no-network`, and a measurement never needs a network anyway:
 
 ```sh
@@ -346,9 +350,10 @@ second); the profile is rewritten there every two seconds, when a run ends,
 and at exit. A sampler thread suspends each vCPU carrier in turn; when the
 carrier is inside gadget code, its executor names the translated block and the
 guest instruction words it came from, and any other host PC is counted by host
-symbol (the guest kernel, the executor, translation, MMU). Each block sample
-also records the guest thread pointer (`TPIDR_EL0`) it ran under, which tells
-one busy guest thread from a pool. Guest entry and exit store one flag each;
+symbol (the guest kernel, the executor, translation, MMU). The `gadget` lines
+count the block samples again by the gadget symbol they stopped in. Each block
+sample also records the guest thread pointer (`TPIDR_EL0`) it ran under, which
+tells one busy guest thread from a pool. Guest entry and exit store one flag each;
 the translated code is unchanged. Only the gadgets engine is sampled, so a
 macOS run, whose default engine is the JIT, needs
 `--execution-engine=gadgets`.
@@ -367,20 +372,49 @@ profile is cumulative, so copy it at a phase boundary and pass that copy as
 ## Cache census
 
 A separate `UML_GADGET_CACHE_CENSUS=ON` build reports what every executor's
-cache still held when the run ended. Set `DARWIN_UML_GADGET_CACHE_CENSUS` to a
-path; each executor appends its measured footprint and one record per resident
-translation, naming the address space, guest PC, stream length and a digest of
-the guest code the translation consumed. Summarize a capture with
-`analyze_gadget_cache_census.py --help`.
+cache holds and how it came to hold it. Set `DARWIN_UML_GADGET_CACHE_CENSUS`
+to a path; each cache appends a snapshot of itself when its executor is
+destroyed, and another every `DARWIN_UML_GADGET_CACHE_CENSUS_SECONDS` seconds
+when that is set, taken by its own vCPU at its next lookup. Summarize a
+capture with `analyze_gadget_cache_census.py --help`: it reports one snapshot
+(`--snapshot`, by default the one taken at teardown) or one line per snapshot
+(`--series`).
 
-Both gadget engines report in the same record format, so a private cache costs
-measured bytes rather than an estimate on either. The footprint is the
-committed slabs, every resident translation's own allocations, the link and
-indirect records, and the per-address-space indexes the cache owns; a field an
-engine has no counterpart for is simply absent from its records. Only arm64
-owns a stream lookup index and counts the lookups against it, and only x86-64
-owns a target link table per address space and reports the slot size it was
-compiled with.
+A snapshot is an `E` record with the cache's geometry, measured footprint and
+history, a `G` record per resident address space, a `P` record per resident
+translation, and, for one in every `DARWIN_UML_GADGET_CACHE_CENSUS_WORDS`
+bodies and link records, a `W` record listing the body's stream word by word
+as a gadget, a link or indirect record named by guest PC, or another operand,
+and an `L` record naming the link record's guest PC. Both gadget engines write
+the same records, so a private cache costs measured bytes rather than an
+estimate on either; a field an engine has no counterpart for is simply absent.
+The footprint is the committed slabs, every resident translation's allocations
+as the allocator sized them, the link and indirect records and target tables,
+and the per-address-space indexes the cache owns; on arm64 it also says how
+much of the body arena is chunks that hold no live body. A `P` record carries
+its translation's allocation and the header, stream and validation bytes in
+it.
+
+When arm64 executors share an address space's translations, an `E` record
+counts only what its cache owns (slot slabs and slot lists), each `G` record
+names the space its slots point into, every cache holding a space writes the
+space's arena, link and indirect bytes on an `S` record, and a `P` record
+names its body. The report counts each space and each body once, and the
+history counts the misses that adopted another cache's body.
+
+The history counts how each lookup ended, why each departing translation
+left (way eviction, address-space retirement, or a discard), and, for every
+store, whether the cache had held the same code under the same key before and
+why it was gone. A store of code that another cache translated first is
+counted against the executors of its own address space or against another
+address space. For a translation evicted and later stored again unchanged,
+the number of evictions in between goes into a power-of-two histogram, which
+says how many of those misses an exclusive victim tier of a given size would
+have served.
+
+A census build pays for this on every store and pauses a vCPU for each
+snapshot, so it runs slower than a default build; its timings are not
+measurements.
 
 Identity is the consumed guest code, not the produced stream, because two
 executors translating the same code embed pointers to their own link records.

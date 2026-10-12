@@ -2,7 +2,7 @@
 /* The AArch32 part of the gadget region: A32 and T32 instructions as the
  * shared decoder (cpu/arm64/aarch32/decode.hpp) reads them, lowered onto
  * general registers. It has a bank, a cold section and an island of its own
- * after the SVE part, so no earlier part moves for it, and it holds no SVE or
+ * after the SME part, so no earlier part moves for it, and it holds no SVE or
  * SME instruction: sme.inc has turned those extensions off.
  *
  * State: R0-R14 are CpuState::registers[0..14], each a 64-bit slot of which
@@ -18,7 +18,11 @@
  * A gadget that can leave the block with the instruction not retired (a
  * memory gadget, an undefined instruction) has the key of that instruction
  * in the stream word after its operands, which uml_arm64_gadget_memory_fault
- * and uml_arm64_gadget_illegal read through _stream.
+ * and uml_arm64_gadget_illegal read through _stream. The one exception is
+ * the exclusive and ordered transfers, which are the A64 part's gadgets: they
+ * carry the instruction's position in the block in the top byte of their
+ * operand, and finish_a32_block turns the position a fault reports into the
+ * key.
  *
  * Instruction conditions: a conditional instruction is preceded by an
  * a32_skip_<cc> gadget whose operand is the byte distance to skip over the
@@ -167,14 +171,19 @@ La32fpdone\@:
 	strb w12, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
 .endm
 
+/* As train_indirect_cell: fill the site's first empty cell, if any. */
 .macro a32_train_cell
-	ldrb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	add x14, x9, x13, lsl #4
-	stp x10, x12, [x14]
-	add w13, w13, #1
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	strb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+	ldr x13, [x9]
+	cmn x13, #1
+	b.eq 1f
+	ldr x13, [x9, #16]
+	cmn x13, #1
+	b.ne 2f
+	stp x10, x12, [x9, #16]
+	b 2f
+1:
+	stp x10, x12, [x9]
+2:
 .endm
 
 /* x10 is the target key and x9 the site's cells: follow the cell that holds
@@ -633,6 +642,29 @@ a32_cp15_barrier dmb, "dmb sy"
 a32_cp15_barrier isb, "isb"
 
 .purgem a32_cp15_barrier
+
+gadget a32_isb
+	isb
+	next_gadget
+
+/* The fall-through of a block that ends at an ISB, the ARMv8 or the CP15
+ * one: leave when the address space's code changed since this program was
+ * validated, as the A64 isb gadget does (engine/system_atomic.inc). The
+ * block ends there, so everything it precharged has retired. Stream: [next
+ * key]. */
+gadget a32_code_sequence_check
+	ldr x8, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE]
+	ldr x9, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE_SEEN]
+	ldr x8, [x8]
+	cmp x8, x9
+	b.ne 1f
+	add _stream, _stream, #8
+	next_gadget
+1:
+	ldr x8, [_stream]
+	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
 
 #include "a32_generated.inc"
 

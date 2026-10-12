@@ -5,8 +5,8 @@
 The tests need a host with SME and an engine at SmeSupport control or better
 (the SME control core of design section 5.3 S4/S5 M1). While the host or the
 engine falls short, the runner names the test, says why it is skipped and
-exits with CTest's skip status. Otherwise it sets DARWIN_UML_GUEST_SME=1 and
-runs, in order:
+exits with CTest's skip status. Otherwise it runs, with the guest-SME policy
+at its default (on), in order:
 
 - sme_probe in "kernel" mode as the guest's /init: the kernel's SME task
   state reached through sigreturn frames and ptrace alone (sme_probe.cpp);
@@ -25,8 +25,8 @@ runs, in order:
   out of it; libgcc's SME support routines save, commit and restore ZA.
 
 --minimum-support and --modes select less for a manual run. "--modes off"
-instead boots the probe with the policy off, on any host and engine, and
-checks that the run shows no SME at all.
+instead boots the probe with the policy forced off (DARWIN_UML_GUEST_SME=0),
+on any host and engine, and checks that the run shows no SME at all.
 """
 
 from __future__ import annotations
@@ -179,7 +179,7 @@ def main() -> int:
     arguments.probe = arguments.probe.resolve()
     modes = arguments.modes.split(",")
     if modes == ["off"]:
-        os.environ.pop("DARWIN_UML_GUEST_SME", None)
+        os.environ["DARWIN_UML_GUEST_SME"] = "0"
         if run_probe_boot(arguments, "off"):
             raise RuntimeError(f"{arguments.name}: the probe found SME with the "
                                "policy off")
@@ -205,7 +205,7 @@ def main() -> int:
         if level == "none":
             modes = [mode for mode in modes if mode not in ENGINE_MODES]
 
-    os.environ["DARWIN_UML_GUEST_SME"] = "1"
+    os.environ.pop("DARWIN_UML_GUEST_SME", None)
     failures = 0
     for mode in modes:
         print(f"== {arguments.name}: {mode}", flush=True)

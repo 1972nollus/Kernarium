@@ -30,10 +30,9 @@
  * it reads and writes TPIDR_EL0, and its TPIDR2_EL0 reads as zero and ignores
  * writes.
  *
- * Every mode follows HWCAP_SVE. In a run with SVE, an sve_context outside
- * streaming mode is a header with SVE's 16-byte vector length rather than 0;
- * "off" mode's frames keep that header, and its AT_MINSIGSTKSZ is native
- * arm64's for SVE alone.
+ * No guest has non-streaming SVE: an sve_context outside streaming mode is a
+ * header with vector length 0, and "off" mode's frames hold no sve_context
+ * and its auxiliary vector no AT_MINSIGSTKSZ.
  *
  * SME_PROBE_MODE=<mode> on the kernel command line selects the mode, "kernel"
  * by default. Every mode prints PASS or FAIL lines, then "sme-probe: <mode>:
@@ -106,17 +105,10 @@ constexpr long nt_arm_ssve = 0x40b;
 constexpr long nt_arm_za = 0x40c;
 constexpr long nt_arm_zt = 0x40d;
 
-constexpr u64 at_hwcap = 16;
 constexpr u64 at_hwcap2 = 26;
 constexpr u64 at_minsigstksz = 51;
-constexpr u64 hwcap_sve = 1UL << 22;
 constexpr u64 hwcap2_sme = 1UL << 23;
 constexpr u64 hwcap2_sme2 = 1UL << 37;
-
-/* A run with SVE has one non-streaming vector length, 16 bytes, and without
- * SME its AT_MINSIGSTKSZ is native arm64's for that length alone. */
-constexpr u64 guest_sve_vl = 16;
-constexpr u64 minsigstksz_sve_alone = 4720;
 
 /* Signal frame records (arch/arm64/include/uapi/asm/sigcontext.h). */
 constexpr u32 fpsimd_magic = 0x46508001;
@@ -346,10 +338,7 @@ void note(const char *text, long value)
 u64 svl;      /* streaming vector length, bytes */
 u64 svq;      /* the same in quadwords */
 bool sme2;
-/* The non-streaming SVE vector length: guest_sve_vl with SVE, else 0. */
-u64 sve_vl;
 u64 auxv_minsigstksz;
-u64 auxv_hwcap;
 u64 auxv_hwcap2;
 const char *self_path = "/init";
 
@@ -828,11 +817,11 @@ struct FrameBuilder {
 		return head;
 	}
 
-	/* Outside streaming mode the header names the SVE vector length. */
+	/* Outside streaming mode the header names vector length 0. */
 	u8 *sve_header()
 	{
 		u8 *head = add(sve_magic, 16);
-		store<u16>(head + 8, static_cast<u16>(sve_vl));
+		store<u16>(head + 8, 0);
 		return head;
 	}
 
@@ -943,11 +932,11 @@ bool streaming_matches(const Capture &capture, bool v_low)
 	return true;
 }
 
-/* Outside streaming mode, without non-streaming SVE state: a header with
- * the SVE vector length, 0 in a run without SVE. */
+/* Outside streaming mode: a header with vector length 0, as the guest has no
+ * non-streaming SVE state. */
 bool not_streaming(const Capture &capture)
 {
-	return capture.has_sve && capture.sve_vl == sve_vl && capture.sve_flags == 0 &&
+	return capture.has_sve && capture.sve_vl == 0 && capture.sve_flags == 0 &&
 		capture.sve_size == 16;
 }
 
@@ -1013,7 +1002,7 @@ void test_plain_frame()
 	Capture &capture = capture_now();
 	check_layout(capture, false, false, "SME-off");
 	check(not_streaming(capture),
-	      "sve_context is a header with the SVE vector length outside streaming mode");
+	      "sve_context is a header with vector length 0 outside streaming mode");
 	check(capture.has_tpidr2 && capture.tpidr2 == 0, "tpidr2_context holds 0");
 	check(za_off(capture), "za_context is a header with the SVL while ZA is off");
 	check(capture.record_count > 0 && capture.magics[0] == fpsimd_magic,
@@ -1271,10 +1260,6 @@ void test_invalid_frames()
 	bool has_extra = expected_layout(true, true).extra;
 	for (const Case &item : cases) {
 		if ((item.needs_sme2 && !sme2) || (item.needs_extra && !has_extra))
-			continue;
-		/* With SVE at the streaming length, that record is valid
-		 * non-streaming SVE state. */
-		if (item.corruption == Corruption::sve_data_without_sm && sve_vl == svl)
 			continue;
 		corruption = item.corruption;
 		check(killed_by(run_child(invalid_frame_child), sigsegv), item.name);
@@ -1734,6 +1719,20 @@ void engine_zero_za();
 void engine_load_zt0(const u8 *bytes);
 void engine_store_zt0(u8 *bytes);
 void engine_spin_streaming(const u8 *rows, u64 svl, u8 *out);
+/* The SM = 0 vector-length family (detail/sm0_vector_length.hpp): x0 is the
+ * operand of the ones that scale or count into it. */
+u64 engine_cntb();
+u64 engine_cntd();
+u64 engine_rdvl();
+u64 engine_addvl(u64 base);
+u64 engine_addpl(u64 base);
+u64 engine_incd(u64 value);
+u64 engine_decb(u64 value);
+u64 engine_cntb_streaming();
+/* ... and its LDR and STR of Z and P: x0 is where to store, x1 where to load
+ * from. */
+void engine_spill_z(u8 *out, const u8 *in);
+void engine_spill_p(u8 *out);
 }
 
 __asm__(R"(
@@ -1746,6 +1745,52 @@ engine_read_svcr:
 	.globl engine_rdsvl
 engine_rdsvl:
 	.inst	0x04bf5820	// rdsvl x0, #1
+	ret
+	.globl engine_cntb
+engine_cntb:
+	.inst	0x0420e3e0	// cntb x0
+	ret
+	.globl engine_cntd
+engine_cntd:
+	.inst	0x04e0e3e0	// cntd x0
+	ret
+	.globl engine_rdvl
+engine_rdvl:
+	.inst	0x04bf5020	// rdvl x0, #1
+	ret
+	.globl engine_addvl
+engine_addvl:
+	.inst	0x04205020	// addvl x0, x0, #1
+	ret
+	.globl engine_addpl
+engine_addpl:
+	.inst	0x04605020	// addpl x0, x0, #1
+	ret
+	.globl engine_incd
+engine_incd:
+	.inst	0x04f0e3e0	// incd x0
+	ret
+	.globl engine_decb
+engine_decb:
+	.inst	0x0430e7e0	// decb x0
+	ret
+	.globl engine_spill_z
+engine_spill_z:
+	.inst	0x85804030	// ldr z16, [x1]
+	.inst	0x85804431	// ldr z17, [x1, #1, mul vl]
+	.inst	0xe5804810	// str z16, [x0, #2, mul vl]
+	.inst	0xe5bd5411	// str z17, [x0, #-19, mul vl]
+	ret
+	.globl engine_spill_p
+engine_spill_p:
+	.inst	0xe5800c04	// str p4, [x0, #3, mul vl]
+	.inst	0x85bf1c05	// ldr p5, [x0, #-1, mul vl]
+	ret
+	.globl engine_cntb_streaming
+engine_cntb_streaming:
+	.inst	0xd503477f	// smstart
+	.inst	0x0420e3e0	// cntb x0
+	.inst	0xd503467f	// smstop
 	ret
 	.globl engine_smstart
 engine_smstart:
@@ -1862,6 +1907,39 @@ void run_engine()
 	group = "engine";
 	check_value(engine_rdsvl(), svl, "RDSVL reads the SVL");
 	check_value(engine_read_svcr(), 0, "SVCR starts at 0");
+	/* A deliberate departure from the architecture: without SVE, the
+	 * engine counts and scales a vector length of 16 bytes at SM = 0, and
+	 * the streaming vector length in streaming mode. */
+	check_value(engine_cntb(), 16, "CNTB counts a 16-byte vector at SM = 0");
+	check_value(engine_cntd(), 2, "CNTD counts two doublewords at SM = 0");
+	check_value(engine_rdvl(), 16, "RDVL #1 is 16 at SM = 0");
+	check_value(engine_addvl(100), 116, "ADDVL scales by 16 at SM = 0");
+	check_value(engine_addpl(100), 102, "ADDPL scales by 2 at SM = 0");
+	check_value(engine_incd(10), 12, "INCD adds 2 at SM = 0");
+	check_value(engine_decb(40), 24, "DECB subtracts 16 at SM = 0");
+	/* LDR and STR of Z and P move 16 and 2 bytes: Z through V, and P as
+	 * zeros, wherever the offset reaches. */
+	u8 spill_in[32], spill_out[512];
+	for (u64 index = 0; index < sizeof spill_in; index++)
+		spill_in[index] = static_cast<u8>(index * 7 + 1);
+	memset(spill_out, 0xaa, sizeof spill_out);
+	engine_spill_z(spill_out + 320, spill_in);
+	bool spilled = memcmp(spill_out + 16, spill_in + 16, 16) == 0 &&
+		memcmp(spill_out + 352, spill_in, 16) == 0;
+	for (u64 index = 0; index < sizeof spill_out; index++)
+		if ((index < 16 || (index >= 32 && index < 352) || index >= 368) &&
+		    spill_out[index] != 0xaa)
+			spilled = false;
+	check(spilled, "STR and LDR of Z move 16 bytes at SM = 0");
+	memset(spill_out, 0xaa, sizeof spill_out);
+	engine_spill_p(spill_out + 16);
+	bool predicate = spill_out[22] == 0 && spill_out[23] == 0;
+	for (u64 index = 0; index < 64; index++)
+		if (index != 22 && index != 23 && spill_out[index] != 0xaa)
+			predicate = false;
+	check(predicate, "STR of P stores two zero bytes and LDR of P loads two");
+	check_value(engine_cntb_streaming(), svl, "CNTB reads the SVL in streaming mode");
+	check_value(engine_read_svcr(), 0, "and streaming mode ended");
 	engine_smstart_za();
 	check_value(engine_read_svcr(), 2, "SMSTART ZA sets PSTATE.ZA");
 	engine_store_za(za_out, svl);
@@ -1967,25 +2045,16 @@ void test_off()
 {
 	group = "off";
 	check((auxv_hwcap2 & (hwcap2_sme | hwcap2_sme2)) == 0, "AT_HWCAP2 has no SME bit");
-	if (sve_vl != 0)
-		check_value(auxv_minsigstksz, minsigstksz_sve_alone,
-			    "AT_MINSIGSTKSZ is native arm64's with SVE alone");
-	else
-		check_value(auxv_minsigstksz, 0, "the auxiliary vector has no AT_MINSIGSTKSZ");
+	check_value(auxv_minsigstksz, 0, "the auxiliary vector has no AT_MINSIGSTKSZ");
 	check_error(sys(nr_prctl, pr_sme_get_vl), einval, "PR_SME_GET_VL fails with EINVAL");
 	check_error(sys(nr_prctl, pr_sme_set_vl, 16), einval, "PR_SME_SET_VL fails with EINVAL");
 	mount_proc();
 	check_error(sys(nr_openat, at_fdcwd, ptr("/proc/sys/abi/sme_default_vector_length"), 0),
 		    enoent, "abi.sme_default_vector_length does not exist");
 	const Capture &capture = capture_now();
-	if (sve_vl != 0)
-		check(capture.valid && capture.error == nullptr && capture.record_count == 2 &&
-			      capture.magics[0] == fpsimd_magic && not_streaming(capture),
-		      "a signal frame holds fpsimd_context and an SVE header");
-	else
-		check(capture.valid && capture.error == nullptr && capture.record_count == 1 &&
-			      capture.magics[0] == fpsimd_magic,
-		      "a signal frame holds fpsimd_context alone");
+	check(capture.valid && capture.error == nullptr && capture.record_count == 1 &&
+		      capture.magics[0] == fpsimd_magic,
+	      "a signal frame holds fpsimd_context alone");
 	long pid = clone_run(sigchld, nullptr, off_tracee, nullptr);
 	if (!stopped_with(wait_stop(pid), sigstop)) {
 		check(false, "the tracee stops");
@@ -2064,14 +2133,11 @@ extern "C" [[noreturn]] void probe_main(u64 *initial)
 		auxv++;
 	auxv++;
 	for (; auxv[0] != 0; auxv += 2) {
-		if (auxv[0] == at_hwcap)
-			auxv_hwcap = auxv[1];
-		else if (auxv[0] == at_hwcap2)
+		if (auxv[0] == at_hwcap2)
 			auxv_hwcap2 = auxv[1];
 		else if (auxv[0] == at_minsigstksz)
 			auxv_minsigstksz = auxv[1];
 	}
-	sve_vl = (auxv_hwcap & hwcap_sve) != 0 ? guest_sve_vl : 0;
 	if (argc > 0 && argv[0] != nullptr)
 		self_path = argv[0];
 	const char *first = find_argument(argv, 1);

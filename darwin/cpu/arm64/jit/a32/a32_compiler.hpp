@@ -98,6 +98,8 @@ private:
       /* A conditional branch the block went on past was taken: link to
        * `target`. */
       branch,
+      /* An ISB found the address space's code changed: leave after it. */
+      code_changed,
     };
     Arm64Emitter::Label label;
     Kind kind;
@@ -251,6 +253,10 @@ private:
   void exit_continue_at(std::uint64_t pc_key, std::uint8_t it,
                         std::size_t count);
   [[nodiscard]] Arm64Emitter::Label cold_exit(ColdPath::Kind kind);
+  /* After an ISB: leave after it when the address space's code changed
+   * since this run's translations were validated, as the A64 compiler's
+   * check does (JitCompiler::emit_code_change_check). */
+  void emit_code_change_check();
 
   // Registers and constants (a32_compiler_alu.cpp).
   [[nodiscard]] const Decoded &cur() const noexcept { return block_[count_]; }

@@ -47,6 +47,10 @@ static_assert((fpcr_writable_mask & fpcr_afp_controls) == 0U);
  * and the gadget assembly's UML_ARM64_FPSR_WRITABLE is checked against it. */
 inline constexpr std::uint32_t fpsr_writable_mask = 0x0800'009fU;
 
+/* The code-change sequence of a CpuState no engine has bound to an address
+ * space. It never changes, so a context synchronization never leaves. */
+inline constexpr std::uint64_t no_code_changes = 0;
+
 struct alignas(16) VectorRegister final {
 	std::array<std::byte, 16> bytes{};
 };
@@ -146,13 +150,12 @@ struct CpuState final {
 	 * bytes, or null when the run does not implement SME. While SM is set,
 	 * guest V_n is the low 16 bytes of Z_n here and `vectors` is stale. */
 	std::byte *sme_registers{};
-	/* Non-streaming SVE state (sve_profile.hpp), appended so that no
-	 * earlier offset moves: P0-P15 and FFR in the engines' mask form, apart
-	 * from the streaming P in the SME register file. Z_n outside streaming
-	 * mode is `vectors[n]`. sve_live, 0 or 1, is the image of arm64
-	 * Linux's TIF_SVE: the task has executed SVE since its last system
-	 * call or exec, so its P and FFR are part of its state. A byte rather
-	 * than a bool, since translated code stores it. */
+	/* The storage of the removed non-streaming SVE profile
+	 * (sve_profile.hpp), reserved so that no offset after it moves: P0-P15
+	 * and FFR in mask form, apart from the streaming P in the SME register
+	 * file, and a live flag. The virtual CPU implements no SVE outside
+	 * streaming mode, so nothing sets them; a change of PSTATE.SM zeroes P
+	 * and FFR. */
 	alignas(16) std::array<SvePredicate, sve_p_registers> sve_p{};
 	alignas(16) SvePredicate sve_ffr{};
 	std::uint8_t sve_live{};
@@ -189,6 +192,16 @@ struct CpuState final {
 	 * environment clears this; it means nothing while gadget_fp_active is
 	 * clear. */
 	std::uint8_t a32_fp_standard{};
+	/* Context synchronization, appended so that no earlier offset moves:
+	 * the running address space's code-change sequence
+	 * (darwin_uml_static_vm_execution_context_code_sequence) and the value
+	 * of it that the translations this entry runs were validated at. Both
+	 * engines publish them before every translated run. An ISB compares the
+	 * two and leaves translated code when they differ, so code another vCPU
+	 * changed and invalidated before this one synchronized is fetched anew
+	 * rather than run from a stale translation or link. */
+	const std::uint64_t *code_sequence{&no_code_changes};
+	std::uint64_t code_sequence_seen{};
 	/* The JIT's staging for an Advanced SIMD load that crosses between two
 	 * pages whose host mappings are not adjacent: the last 32 bytes of the
 	 * first page, then the first 32 of the second. It holds nothing between

@@ -66,9 +66,10 @@
 #define UML_ARM64_SME_ZA_OFFSET_VL 34
 #define UML_ARM64_SME_ZT0_BYTES 64
 
-/* Non-streaming SVE state (cpu/arm64/sve_profile.hpp), for both engines:
- * P_n in mask form, 16 bytes each, at UML_ARM64_CPU_SVE_P + 16 * n, FFR in
- * the same form, and the live flag. */
+/* The reserved storage of the removed non-streaming SVE profile
+ * (cpu/arm64/sve_profile.hpp): P_n in mask form, 16 bytes each, at
+ * UML_ARM64_CPU_SVE_P + 16 * n, FFR in the same form, and a live flag. No
+ * engine reads or writes it; the offsets after it stay where they were. */
 #define UML_ARM64_CPU_SVE_P 1232
 #define UML_ARM64_CPU_SVE_FFR 1488
 #define UML_ARM64_CPU_SVE_LIVE 1504
@@ -85,6 +86,12 @@
 #define UML_ARM64_CPU_A32_CP15BEN 1522
 #define UML_ARM64_CPU_A32 1523
 #define UML_ARM64_CPU_A32_FP_STANDARD 1524
+
+/* Context synchronization (cpu/arm64/cpu_state.hpp), for both engines: the
+ * address of the running address space's code-change sequence, then the
+ * value the running translations were validated at. */
+#define UML_ARM64_CPU_CODE_SEQUENCE 1528
+#define UML_ARM64_CPU_CODE_SEQUENCE_SEEN 1536
 
 #define UML_GADGET_TLB_ENTRIES 0
 #define UML_GADGET_TLB_ENTRY_READ_PAGE 0

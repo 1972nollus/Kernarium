@@ -348,6 +348,10 @@ JitExecutor::Implementation::translate_a32_single(
   preempted_ = sequences.execution_interrupt != 0;
   if (preempted_)
     return Event::interrupt;
+  /* What the translations this run reaches are validated at, below: an ISB
+   * leaves when the address space's code has changed since. */
+  cpu.code_sequence = code_sequence_;
+  cpu.code_sequence_seen = sequences.code_changes;
   const bool mapping_changed = mapping_generation_ != generation ||
                                mapping_changes_ != sequences.mapping_changes;
   if (prepared_memory_ != &memory || mapping_changed) {

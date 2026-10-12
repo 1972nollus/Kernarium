@@ -279,8 +279,8 @@ uml_add_guest_integration_test(
 add_subdirectory(aarch32)
 add_subdirectory(balloon)
 add_subdirectory(exclusive)
+add_subdirectory(no_sve)
 add_subdirectory(sme)
-add_subdirectory(sve)
 
 # One-vCPU guest: an input burst past the tty buffer must not end console input.
 uml_add_guest_integration_test(
@@ -499,6 +499,39 @@ uml_add_guest_payload(UML_GUEST_FORK_COW_COHERENCE guest-fork-cow-coherence
     LINK_OPTIONS
         -Wl,-z,max-page-size=16384
         -Wl,-s)
+
+uml_add_guest_payload(UML_GUEST_CODE_CHANGE guest-code-change
+    smp/guest_code_change.cpp
+    COMMENT "Building the freestanding arm64 guest code-change probe"
+    COMPILE_OPTIONS
+        -std=c++20
+        -O2
+        -Wall
+        -Wextra
+        -Werror
+        -march=armv8.1-a
+        -mno-outline-atomics
+        -ffreestanding
+        -fno-exceptions
+        -fno-rtti
+        -fno-stack-protector
+        -fno-asynchronous-unwind-tables
+    LINK_OPTIONS
+        -Wl,-z,max-page-size=16384
+        -Wl,-s)
+
+# Code changed by stores, protection, fork, remapping and the address space's
+# other vCPUs, on each engine.
+foreach(_code_change_engine IN ITEMS gadgets jit)
+    uml_add_guest_integration_test(
+        NAME guest-code-change-${_code_change_engine}
+        SCRIPT smp/run_guest_code_change.py
+        ARGS --probe ${UML_GUEST_CODE_CHANGE} --cpus 4
+            --engine ${_code_change_engine}
+        LABELS guest;smp;dynamic-code;${_code_change_engine}
+        TIMEOUT 600
+        CPUS 4)
+endforeach()
 
 uml_add_guest_integration_test(
     NAME guest-mmu-stress

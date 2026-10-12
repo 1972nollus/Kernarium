@@ -17,6 +17,8 @@ namespace jit_test = uml::cpu::arm64::jit::testing;
 namespace {
 
 using arm64_jit_memory_run_codegen_test::cbnz_x0;
+using arm64_jit_memory_run_codegen_test::cold_code;
+using arm64_jit_memory_run_codegen_test::count_straddle_form;
 using arm64_jit_memory_run_codegen_test::count_branch_shape;
 using arm64_jit_memory_run_codegen_test::count_page_span_tbnz;
 using arm64_jit_memory_run_codegen_test::count_word;
@@ -25,8 +27,11 @@ using arm64_jit_memory_run_codegen_test::monitor_clear;
 using arm64_jit_memory_run_codegen_test::nop;
 using arm64_jit_memory_run_codegen_test::page_span_eor;
 using arm64_jit_memory_run_codegen_test::require_count;
+using arm64_jit_memory_run_codegen_test::run_base_back;
+using arm64_jit_memory_run_codegen_test::run_base_forward;
 using arm64_jit_memory_run_codegen_test::sp_alignment_extract;
 using arm64_jit_memory_run_codegen_test::sp_span_offset_extract;
+using arm64_jit_memory_run_codegen_test::straddle_next_page;
 using arm64_jit_memory_run_codegen_test::translation_probe;
 using uml::testing::require;
 
@@ -200,21 +205,44 @@ void page_proofs_cover_both_guest_page_sizes() {
   const auto beyond = unsigned_memory(variants[9], page_qwords, 31, 2);
 
   const std::array exact_sp{near, exact};
-  const auto exact_sp_hot =
-      hot_code(jit_test::compile_block(code_base + 0xb0'000U, exact_sp),
-               exact_sp.size());
+  const auto exact_sp_compiled =
+      jit_test::compile_block(code_base + 0xb0'000U, exact_sp);
+  const auto exact_sp_hot = hot_code(exact_sp_compiled, exact_sp.size());
   require_count(count_word(exact_sp_hot, translation_probe), 1,
                 "exact-page-end SIMD SP pair did not coalesce");
   require(count_word(exact_sp_hot, sp_span_offset_extract) == 1,
           "SIMD SP pair omitted its 4K/16K page-offset proof");
+  const auto exact_sp_cold = cold_code(exact_sp_compiled);
+  require(count_word(exact_sp_cold, straddle_next_page) == 1 &&
+              count_straddle_form(exact_sp_cold, near) == 1 &&
+              count_straddle_form(exact_sp_cold, exact) == 1,
+          "SIMD SP run lacks a straddle path replaying each access");
 
-  const std::array rejected_sp{beyond, beyond};
+  const std::array rejected_sp{near, beyond};
   require(count_word(
               hot_code(jit_test::compile_block(code_base + 0xb0'100U,
                                                rejected_sp),
                        rejected_sp.size()),
               translation_probe) == rejected_sp.size(),
-          "out-of-page static SIMD SP offsets were coalesced");
+          "SIMD SP offsets spanning more than a page were coalesced");
+
+  for (const unsigned base : {31U, 9U}) {
+    const std::array far{
+        unsigned_memory(variants[9], page_qwords, base, 2),
+        unsigned_memory(variants[9], page_qwords + 1U, base, 3),
+    };
+    const auto far_hot = hot_code(
+        jit_test::compile_block(code_base + 0xb0'180U + base * 0x10U, far),
+        far.size());
+    require_count(count_word(far_hot, translation_probe), 1,
+                  "SIMD fields beyond a page did not share one translation");
+    require(count_word(far_hot, run_base_forward(page_qwords * 16U)) == 1 &&
+                count_word(far_hot, run_base_back(page_qwords * 16U)) == 1,
+            "SIMD run did not translate its first accessed byte");
+    require(count_word(far_hot, page_span_eor) == 1 &&
+                count_page_span_tbnz(far_hot) == 1,
+            "far SIMD run omitted its accessed-span page proof");
+  }
 
   const std::array shrunk_sp{near, near, beyond};
   require(count_word(

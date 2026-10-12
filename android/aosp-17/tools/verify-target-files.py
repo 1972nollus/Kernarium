@@ -17,7 +17,7 @@ from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import android_image  # noqa: E402
-from release_common import sha256_path  # noqa: E402
+from release_common import BUILD_VARIANTS, configured_build_variant, sha256_path  # noqa: E402
 
 
 ELF_MAGIC = b"\x7fELF"
@@ -481,7 +481,11 @@ def init_actions(payload: str) -> dict[str, list[str]]:
     return actions
 
 
-def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+def check_boot_policy(
+    archive: zipfile.ZipFile,
+    infos: dict[str, zipfile.ZipInfo],
+    build_variant: str,
+) -> None:
     system_properties = read_small(
         archive, infos["SYSTEM/build.prop"]
     ).decode("utf-8", errors="strict").splitlines()
@@ -490,13 +494,10 @@ def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo
         for line in system_properties
         if line.partition("=")[1]
     }
-    for property_name, expected in {
-        "ro.build.type": "user",
-        "ro.debuggable": "0",
-    }.items():
+    for property_name, expected in BUILD_VARIANTS[build_variant].items():
         if system_property_map.get(property_name) != expected:
             fail(
-                f"unexpected user-build property {property_name}: "
+                f"unexpected {build_variant}-build property {property_name}: "
                 f"{system_property_map.get(property_name)!r}"
             )
 
@@ -837,7 +838,15 @@ def main() -> None:
     parser.add_argument("--kernel-elf", type=Path, required=True)
     parser.add_argument("--kernel-config", type=Path, required=True)
     parser.add_argument("--kernel-release-file", type=Path, required=True)
+    parser.add_argument(
+        "--build-variant",
+        choices=sorted(BUILD_VARIANTS),
+        help="build variant the target files must carry (default: tracked metadata)",
+    )
     args = parser.parse_args()
+    build_variant = args.build_variant or configured_build_variant(
+        Path(__file__).resolve().parents[1]
+    )
 
     kernel_config = args.kernel_config
     kernel_release_file = args.kernel_release_file
@@ -898,7 +907,7 @@ def main() -> None:
         check_hardware_features(archive, infos)
         check_audio_policy(archive, infos)
         check_mesa_gles_stack(archive, infos)
-        check_boot_policy(archive, infos)
+        check_boot_policy(archive, infos, build_variant)
         check_kernel_policy(
             archive, infos, kernel_config, kernel_release_file
         )

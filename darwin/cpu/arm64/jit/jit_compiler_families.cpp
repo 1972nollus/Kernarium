@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "jit_compiler_families.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 #include "jit_emitter.hpp"
 #include "jit_linking.hpp"
 #include "jit_runtime_contract.hpp"
@@ -267,25 +266,6 @@ std::optional<unsigned> JitCompilerFamilies::constrained_vector_source(
     std::uint32_t instruction) const noexcept {
   const auto &host = host_capabilities();
 
-  /*
-   * SVE FMLA and FMLS by element lower to the AdvSIMD form, whose Zm is
-   * one of Z0-Z7 (half and single) or Z0-Z15 (double): the same
-   * constraint, which must agree with emit_sve_floating's acceptance.
-   */
-  if (host.floating_point && host.advanced_simd && implements_sve(host)) {
-    /* FMLA and FMLS (bits 15-11 clear) and FMUL (bits 15-10 001000). */
-    const auto sve_indexed = instruction & 0xffe0'f800U;
-    const auto sve_multiply = instruction & 0xffe0'fc00U;
-    if (sve_indexed == 0x64a0'0000U || sve_multiply == 0x64a0'2000U)
-      return (instruction >> 16U) & 7U;
-    if (sve_indexed == 0x64e0'0000U || sve_multiply == 0x64e0'2000U)
-      return (instruction >> 16U) & 15U;
-    if (((instruction & 0xffa0'f800U) == 0x6420'0000U ||
-         (instruction & 0xffa0'fc00U) == 0x6420'2000U) &&
-        host.fp16)
-      return (instruction >> 16U) & 7U;
-  }
-
   if (!floating_or_vector_primary_class(instruction))
     return std::nullopt;
 
@@ -425,20 +405,9 @@ JitCompilerFamilies::allocate_vector_slot(unsigned guest) {
 
 std::size_t
 JitCompilerFamilies::vector_slot_offset(unsigned guest) noexcept {
-  if (guest < unbound_guest)
-    return offsetof(arm64::CpuState, vectors) +
-           guest * sizeof(arm64::VectorRegister);
-  const unsigned index = guest - predicate_identity;
-  if (index == sve_ffr)
-    return offsetof(arm64::CpuState, sve_ffr);
-  return offsetof(arm64::CpuState, sve_p) +
-         index * sizeof(arm64::SvePredicate);
+  return offsetof(arm64::CpuState, vectors) +
+         guest * sizeof(arm64::VectorRegister);
 }
-
-/* LDR and STR (Q, unsigned offset) reach every binding's state. */
-static_assert(offsetof(arm64::CpuState, sve_p) % 16U == 0U &&
-              offsetof(arm64::CpuState, sve_ffr) % 16U == 0U &&
-              offsetof(arm64::CpuState, sve_ffr) < 4096U * 16U);
 
 JitCompilerFamilies::NativeVector
 JitCompilerFamilies::read_native_vector(unsigned guest,
@@ -514,25 +483,6 @@ void JitCompilerFamilies::commit_native_vector(NativeVector value,
     return;
   static_cast<Arm64Emitter *>(family_emitter_)
       ->store_q(value.host, 15, vector_slot_offset(guest));
-}
-
-JitCompilerFamilies::NativeVector
-JitCompilerFamilies::read_native_predicate(unsigned index,
-                                           unsigned fallback) {
-  return read_native_vector(predicate_identity + index, fallback);
-}
-
-JitCompilerFamilies::NativeVector
-JitCompilerFamilies::write_native_predicate(unsigned index, bool reads_old,
-                                            unsigned fallback) {
-  sve_full_[index] = 0U;
-  return write_native_vector(predicate_identity + index, reads_old,
-                             fallback);
-}
-
-void JitCompilerFamilies::commit_native_predicate(NativeVector value,
-                                                  unsigned index) {
-  commit_native_vector(value, predicate_identity + index);
 }
 
 void JitCompilerFamilies::emit_native_vector_unary(

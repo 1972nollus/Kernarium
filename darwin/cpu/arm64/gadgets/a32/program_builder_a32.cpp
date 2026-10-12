@@ -25,7 +25,6 @@ void uml_arm64_gadget_branch();
 void uml_arm64_gadget_interrupt();
 void uml_arm64_gadget_illegal();
 void uml_arm64_gadget_yield();
-void uml_arm64_gadget_isb();
 void uml_arm64_gadget_clear_exclusive();
 #define UML_A32_DECLARE_CONDITIONAL(cc) \
 	void uml_arm64_gadget_branch_##cc(); \
@@ -46,6 +45,24 @@ UML_A32_DECLARE_CONDITIONAL(lt)
 UML_A32_DECLARE_CONDITIONAL(gt)
 UML_A32_DECLARE_CONDITIONAL(le)
 #undef UML_A32_DECLARE_CONDITIONAL
+#define UML_A32_DECLARE_COMPARE_BRANCH(cc) \
+	void uml_arm64_gadget_compare_register_branch_w_##cc##_inline(); \
+	void uml_arm64_gadget_compare_immediate_branch_w_##cc##_inline();
+UML_A32_DECLARE_COMPARE_BRANCH(eq)
+UML_A32_DECLARE_COMPARE_BRANCH(ne)
+UML_A32_DECLARE_COMPARE_BRANCH(hs)
+UML_A32_DECLARE_COMPARE_BRANCH(lo)
+UML_A32_DECLARE_COMPARE_BRANCH(mi)
+UML_A32_DECLARE_COMPARE_BRANCH(pl)
+UML_A32_DECLARE_COMPARE_BRANCH(vs)
+UML_A32_DECLARE_COMPARE_BRANCH(vc)
+UML_A32_DECLARE_COMPARE_BRANCH(hi)
+UML_A32_DECLARE_COMPARE_BRANCH(ls)
+UML_A32_DECLARE_COMPARE_BRANCH(ge)
+UML_A32_DECLARE_COMPARE_BRANCH(lt)
+UML_A32_DECLARE_COMPARE_BRANCH(gt)
+UML_A32_DECLARE_COMPARE_BRANCH(le)
+#undef UML_A32_DECLARE_COMPARE_BRANCH
 #define UML_A32_DECLARE_BARRIER(n) \
 	void uml_arm64_gadget_dmb_##n(); \
 	void uml_arm64_gadget_dsb_##n();
@@ -95,6 +112,39 @@ constexpr std::array<void (*)(), 14> conditional_inline{
 	uml_arm64_gadget_branch_hi_inline, uml_arm64_gadget_branch_ls_inline,
 	uml_arm64_gadget_branch_ge_inline, uml_arm64_gadget_branch_lt_inline,
 	uml_arm64_gadget_branch_gt_inline, uml_arm64_gadget_branch_le_inline};
+/* The AArch64 bank's fused CMP and B.cond, in the 32-bit form, which read
+ * the same CpuState slots an AArch32 register is in: a compare followed at
+ * once by a conditional branch whose fall-through is translated inline. */
+constexpr std::array<void (*)(), 14> compare_register_branch_inline{
+	uml_arm64_gadget_compare_register_branch_w_eq_inline,
+	uml_arm64_gadget_compare_register_branch_w_ne_inline,
+	uml_arm64_gadget_compare_register_branch_w_hs_inline,
+	uml_arm64_gadget_compare_register_branch_w_lo_inline,
+	uml_arm64_gadget_compare_register_branch_w_mi_inline,
+	uml_arm64_gadget_compare_register_branch_w_pl_inline,
+	uml_arm64_gadget_compare_register_branch_w_vs_inline,
+	uml_arm64_gadget_compare_register_branch_w_vc_inline,
+	uml_arm64_gadget_compare_register_branch_w_hi_inline,
+	uml_arm64_gadget_compare_register_branch_w_ls_inline,
+	uml_arm64_gadget_compare_register_branch_w_ge_inline,
+	uml_arm64_gadget_compare_register_branch_w_lt_inline,
+	uml_arm64_gadget_compare_register_branch_w_gt_inline,
+	uml_arm64_gadget_compare_register_branch_w_le_inline};
+constexpr std::array<void (*)(), 14> compare_immediate_branch_inline{
+	uml_arm64_gadget_compare_immediate_branch_w_eq_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_ne_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_hs_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_lo_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_mi_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_pl_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_vs_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_vc_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_hi_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_ls_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_ge_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_lt_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_gt_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_le_inline};
 constexpr std::array<void (*)(), 14> conditional_plain{
 	uml_arm64_gadget_branch_eq, uml_arm64_gadget_branch_ne,
 	uml_arm64_gadget_branch_hs, uml_arm64_gadget_branch_lo,
@@ -208,7 +258,7 @@ void Translator::credit()
 	if (!run_active_)
 		return;
 	push(G::credit);
-	patches_.emplace_back(words_.size(), compiled_ + 1);
+	patches_.push_back({words_.size(), compiled_ + 1, 0});
 	push(0);
 }
 
@@ -271,6 +321,12 @@ void Translator::emit_fallthrough()
 		return;
 	}
 	if (linked()) {
+		/* Unlinked and IT exits leave anyway, and the next entry sees
+		 * any code change; a linked one checks after an ISB. */
+		if (synchronize_) {
+			push(G::code_sequence_check);
+			push(next);
+		}
 		push_external(uml_arm64_gadget_branch_linked);
 		push_link(next);
 	} else {
@@ -359,11 +415,29 @@ Translator::Result Translator::emit_dp_values(const Instruction &in,
 			}
 		}
 	}
+	/* ADD or SUB of an immediate to a register in place: the entry with
+	 * the register baked. R15 and the scratch slots are not registers. */
+	if (shape == shape_imm && (op == op_add || op == op_sub) && rd == rn &&
+	    rd < 15U * 8U) {
+		push(kDpInplace[op == op_sub ? 1 : 0][sets ? 1 : 0][rd / 8U]);
+		push(word);
+		return {false, sets};
+	}
 	const G which = kDp[op][sets ? 1 : 0][shape];
 	if (which == G::count)
 		return {};
 	push(which);
 	push(word);
+	/* A plain CMP is the first half of a fused compare and branch: of a
+	 * register, or of an immediate that fits the fused entry's field. */
+	if (op == op_cmp && in.cond == 14 && !in.in_it) {
+		if (shape == shape_reg) {
+			compare_ = {words_.size(), false, rn << 16 | rm << 32};
+		} else if (shape == shape_imm && immediate < (1U << 24)) {
+			compare_ = {words_.size(), true,
+				    (rn / 8U) << 8 | std::uint64_t{immediate} << 16};
+		}
+	}
 	return {false, sets};
 }
 
@@ -481,6 +555,14 @@ Translator::Result Translator::emit_multiply(const Instruction &in,
 	}
 	case Family::div:
 		push(plan.sub == 0 ? G::sdiv : G::udiv);
+		push(d | n << 8 | m << 16);
+		return {};
+	case Family::parallel:
+		push(kParallel[plan.sub / 6U][plan.sub % 6U]);
+		push(d | n << 8 | m << 16);
+		return {};
+	case Family::sel:
+		push(G::sel);
 		push(d | n << 8 | m << 16);
 		return {};
 	default:
@@ -777,6 +859,10 @@ Translator::Result Translator::emit_exclusive(const Instruction &in,
 	const auto t2 = static_cast<std::uint64_t>(o.t2) * 8U;
 	auto n = static_cast<std::uint64_t>(o.n) * 8U;
 	const auto d = static_cast<std::uint64_t>(o.d) * 8U;
+	/* The gadgets are the A64 engine's, which carry no PC word: the
+	 * instruction's position in the block rides in the operand's top byte
+	 * and finish_a32_block turns a fault's position back into the key. */
+	const auto position = static_cast<std::uint64_t>(compiled_) << 56;
 	/* The T32 forms add a word offset to the base; the gadgets take the
 	 * address in a register. */
 	if (o.imm32 != 0) {
@@ -790,7 +876,7 @@ Translator::Result Translator::emit_exclusive(const Instruction &in,
 			push_external(ordered ?
 				uml_arm64_gadget_exclusive_pair_load_acquire_w_rr :
 				uml_arm64_gadget_exclusive_pair_load_relaxed_w_rr);
-			push(t | t2 << 16 | n << 32);
+			push(t | t2 << 16 | n << 32 | position);
 		} else {
 			push_external(ordered ?
 				(size == 0 ?
@@ -803,13 +889,13 @@ Translator::Result Translator::emit_exclusive(const Instruction &in,
 				 size == 1 ?
 				 uml_arm64_gadget_exclusive_load_relaxed_h_r :
 				 uml_arm64_gadget_exclusive_load_relaxed_w_r));
-			push(t | n << 16);
+			push(t | n << 16 | position);
 		}
 	} else if (size == 3) {
 		push_external(ordered ?
 			uml_arm64_gadget_exclusive_pair_store_release_w_rrr :
 			uml_arm64_gadget_exclusive_pair_store_relaxed_w_rrr);
-		push(t | t2 << 16 | d << 32 | n << 48);
+		push(t | t2 << 12 | d << 24 | n << 36 | position);
 	} else {
 		push_external(ordered ?
 			(size == 0 ?
@@ -822,9 +908,8 @@ Translator::Result Translator::emit_exclusive(const Instruction &in,
 			 size == 1 ?
 			 uml_arm64_gadget_exclusive_store_relaxed_h_rr :
 			 uml_arm64_gadget_exclusive_store_relaxed_w_rr));
-		push(t | d << 16 | n << 32);
+		push(t | d << 16 | n << 32 | position);
 	}
-	push(key_);
 	return {};
 }
 
@@ -849,8 +934,7 @@ Translator::Result Translator::emit_ordered(const Instruction &in,
 			plan.sub == 1 ?
 			uml_arm64_gadget_ordered_store_release_h_r :
 			uml_arm64_gadget_ordered_store_release_w_r);
-	push(t | n << 16);
-	push(key_);
+	push(t | n << 16 | static_cast<std::uint64_t>(compiled_) << 56);
 	return {};
 }
 
@@ -869,9 +953,25 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 			return {true, false};
 		}
 		if (linked() && !input_.single) {
+			if (compare_.end == words_.size() && !in.in_it) {
+				/* The compare just pushed and this branch are
+				 * one entry: the AArch64 bank's fused pair
+				 * takes the compare's operand word, with the
+				 * count of instructions behind the branch in
+				 * its top bits, and the link. */
+				words_.truncate(words_.size() - 2U);
+				push_external((compare_.immediate ?
+					compare_immediate_branch_inline :
+					compare_register_branch_inline)[in.cond]);
+				patches_.push_back({words_.size(), compiled_ + 1,
+						    compare_.immediate ? 40U : 48U});
+				push(compare_.operand);
+				push_link(target);
+				return {};
+			}
 			push_external(conditional_inline[in.cond]);
 			push_link(target);
-			patches_.emplace_back(words_.size(), compiled_ + 1);
+			patches_.push_back({words_.size(), compiled_ + 1, 0});
 			push(0);
 			return {};
 		}
@@ -926,7 +1026,7 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 			push(nonzero ? G::cbnz_inline : G::cbz_inline);
 			push(rn);
 			push_link(target);
-			patches_.emplace_back(words_.size(), compiled_ + 1);
+			patches_.push_back({words_.size(), compiled_ + 1, 0});
 			push(0);
 			return {};
 		}
@@ -974,9 +1074,10 @@ Translator::Result Translator::emit_system(const Instruction &in,
 			push_external(uml_arm64_gadget_yield);
 		return {};
 	case Family::barrier:
-		if (plan.sub == 2)
-			push_external(uml_arm64_gadget_isb);
-		else if (plan.sub == 0)
+		if (plan.sub == 2) {
+			push(G::isb);
+			synchronize_ = true;
+		} else if (plan.sub == 0)
 			push_external(data_barrier[in.word & 15U]);
 		else
 			push_external(synchronization_barrier[in.word & 15U]);
@@ -1039,6 +1140,7 @@ Translator::Result Translator::emit_system(const Instruction &in,
 		case SysReg::cp15_isb:
 			push(G::cp15_isb);
 			push(key_);
+			synchronize_ = true;
 			return {};
 		case SysReg::none:
 			break;
@@ -1061,6 +1163,8 @@ Translator::Result Translator::emit(const Instruction &in,
 	case Family::mulh:
 	case Family::mulxy:
 	case Family::div:
+	case Family::parallel:
+	case Family::sel:
 		return emit_multiply(in, plan);
 	case Family::movw:
 	case Family::movt:
@@ -1250,7 +1354,7 @@ BuildOutput Translator::run()
 		unit_ += length;
 		units_ = unit_;
 		++compiled_;
-		if (input_.single)
+		if (input_.single || synchronize_)
 			break;
 	}
 
@@ -1261,12 +1365,14 @@ BuildOutput Translator::run()
 	} else {
 		close_run();
 	}
-	for (const auto &[index, through] : patches_)
-		words_[index] = compiled_ > through ? compiled_ - through : 0;
+	for (const auto &patch : patches_)
+		words_[patch.index] |= std::uintptr_t{
+			compiled_ > patch.through ? compiled_ - patch.through : 0}
+			<< patch.shift;
 
 	BuildOutput output{
 		BuildResult{Program{input_.key, compiled_, std::move(words_),
-				    uses_fp_, false},
+				    uses_fp_},
 			    complete_, stop_address_, stop_instruction_},
 		units_, it_};
 	return output;
@@ -1309,6 +1415,21 @@ std::optional<std::size_t> thumb_position(
 		++position;
 	}
 	return at == unit ? std::optional{position} : std::nullopt;
+}
+
+std::optional<std::size_t> thumb_unit(
+	std::span<const std::byte> halfwords, std::size_t position) noexcept
+{
+	std::size_t at = 0;
+	const auto count = halfwords.size() / 2U;
+	for (std::size_t seen = 0; at < count; ++seen) {
+		if (seen == position)
+			return at;
+		std::uint16_t hw1;
+		std::memcpy(&hw1, halfwords.data() + at * 2U, sizeof(hw1));
+		at += thumb_length(hw1) / 2U;
+	}
+	return std::nullopt;
 }
 
 bool routes_to_library(aarch32::Form form) noexcept

@@ -7,6 +7,7 @@
 
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/detail/memory_copy_set.hpp"
+#include "cpu/arm64/detail/sm0_spill.hpp"
 #include "cpu/arm64/detail/single_copy_alignment.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/memory_transfer.hpp"
@@ -772,6 +773,57 @@ uml_arm64_jit_execute_simd_structure(CpuState *cpu, Tlb *tlb,
   }
   cpu->pc += sizeof(instruction);
   return pack_jit_result(Event::continued, 1);
+}
+
+/*
+ * Guest memory for the spill access of the SM = 0 vector-length family
+ * (detail/sm0_spill.hpp) through the executor's TLB. The access forms its
+ * address untagged, so the plain translation applies. A store invalidates
+ * the software reservations of the host bytes it wrote as it writes them.
+ */
+class JitSpillMemory final : public arm64::detail::Sm0Memory {
+public:
+  explicit JitSpillMemory(Tlb &tlb) noexcept : tlb_{tlb} {}
+
+  std::byte *translate(std::uint64_t address,
+                       ::uml::memory::MemoryAccess access) noexcept override {
+    return tlb_.translate(address, ::uml::memory::translated_access(access));
+  }
+
+  void stored(std::byte *host, std::size_t size) noexcept override {
+    const JitStoreRange range{reinterpret_cast<std::uintptr_t>(host), size};
+    jit::semantic::invalidate_store_ranges(std::span{&range, 1});
+  }
+
+private:
+  Tlb &tlb_;
+};
+
+/* The slow path of the SM = 0 vector-length family's spill words
+ * (detail/sm0_vector_length.hpp): a terminal helper, so the block's spill
+ * has filled CpuState. */
+extern "C" std::uint64_t
+uml_arm64_jit_execute_sm0_spill(CpuState *cpu, Tlb *tlb,
+                                std::uint32_t instruction) noexcept {
+  if (cpu == nullptr || tlb == nullptr)
+    return pack_jit_result(Event::fatal, 0);
+  materialize_semantic_cpu_state(*cpu);
+  JitSpillMemory memory{*tlb};
+  const auto result =
+      arm64::detail::execute_sm0_spill(*cpu, instruction, memory);
+  switch (result.event) {
+  case arm64::detail::Sm0Event::retired:
+    cpu->pc += sizeof(std::uint32_t);
+    return pack_jit_result(Event::continued, 1);
+  case arm64::detail::Sm0Event::memory_fault:
+    tlb->fault_address = result.fault_address;
+    tlb->fault_access = ::uml::memory::translated_access(result.access);
+    tlb->fault_alignment = result.alignment ? 1U : 0U;
+    return pack_jit_result(Event::memory_fault, 0);
+  case arm64::detail::Sm0Event::fatal:
+    break;
+  }
+  return pack_jit_result(Event::fatal, 0);
 }
 
 } // namespace

@@ -108,6 +108,14 @@ static_assert(offsetof(CpuState, a32_fp_standard) ==
  * 16-bit operand a gadget carries. */
 static_assert(UML_ARM64_CPU_A32_GE_MASK > UML_ARM64_CPU_SVE_LIVE &&
 	UML_ARM64_CPU_A32_FP_STANDARD < 0x1'0000);
+static_assert(offsetof(CpuState, code_sequence) == UML_ARM64_CPU_CODE_SEQUENCE);
+static_assert(offsetof(CpuState, code_sequence_seen) ==
+	UML_ARM64_CPU_CODE_SEQUENCE_SEEN);
+/* Each is one scaled LDR from CpuState. */
+static_assert(UML_ARM64_CPU_CODE_SEQUENCE > UML_ARM64_CPU_A32_FP_STANDARD &&
+	UML_ARM64_CPU_CODE_SEQUENCE % 8 == 0 &&
+	UML_ARM64_CPU_CODE_SEQUENCE_SEEN % 8 == 0 &&
+	UML_ARM64_CPU_CODE_SEQUENCE_SEEN < 4096 * 8);
 
 static_assert(sizeof(::uml::memory::TlbEntry) == 32);
 static_assert(alignof(::uml::memory::TlbEntry) == 32);

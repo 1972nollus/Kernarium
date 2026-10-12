@@ -8,18 +8,15 @@ engine and, when the host implements the case's native features or the case
 is an invalid encoding, through the JIT. A case that needs FEAT_LSE2 runs in
 neither lane on a host without it, and a case that needs FEAT_AFP or
 FEAT_RPRES runs in neither lane where the virtual CPU does not implement it
-(see [FEAT_AFP cases](#feat_afp-cases)). A third lane runs the cases with
-non-streaming SVE state through the SVE semantic library (see
-[Non-streaming SVE state](#non-streaming-sve-state)). The runner needs no
-Python, network, or file other than the pack.
+(see [FEAT_AFP cases](#feat_afp-cases)). The runner needs no Python, network,
+or file other than the pack.
 
 The checked-in `source/` tables retain the programs and independently derived
 or observed golden expectations. CMake's `uml_arm64_instruction_corpus` target
 generates the full pack in this directory's build-tree counterpart, including
 both page profiles. Allocation loops and regular register and memory fills
-are recipes. Maintained SME/SVE generators supply native test inputs while
-the tables retain their hardware observations; the SVE trap generator derives
-trap cases from the native golden records. Generation needs Python only
+are recipes. The maintained SME generator supplies native test inputs while
+the tables retain their hardware observations. Generation needs Python only
 at build time and verifies the accepted pack hash. The
 [source contract](../../../../tools/instruction-corpus/README.md) owns this
 format and promotion of accepted producer output.
@@ -35,7 +32,7 @@ instead of an exact state.
 
 - `manifest.tsv` has one row per record: a producer CTest, check site, harness
   options, and page profiles, with program and case counts and hashes; the
-  code hash also covers a record's SVL and VL.
+  code hash also covers a record's SVL.
 - `coverage.tsv` counts cases per `../a64_instruction_inventory.tsv` entry,
   attributing each entry word through its official allocation predicates and
   decode partition, with illegal-instruction cases counted separately.
@@ -84,21 +81,19 @@ a `/16k` or `/4k` suffix holds profile-specific cases.
 | `host-counter-frequency/v1` | expected state with the host's CNTFRQ_EL0 in each MRS CNTFRQ_EL0 destination |
 | `ignore-host-counter-register/v1` | expected state except system-register read destinations |
 | `permitted-exclusive-store-failure/v1` | expected state except the opaque exclusive-monitor value and version |
-| `unpredictable-nonfault-load-elements/v1` | expected state except the elements of a first-fault or non-fault load's destination from the first whose expected FFR element is FALSE, which the ASL leaves CONSTRAINED UNPREDICTABLE |
 
 Relations derive their operands from the program, so a new relation or a new
 use of an existing one requires a runner change.
 
 ## Pack format
 
-All integers are little-endian. The file is `UMLA64C\0`, u32 version 3, u32 0,
+All integers are little-endian. The file is `UMLA64C\0`, u32 version 2, u32 0,
 and u64 body length, followed by the zlib-compressed body:
 
 ```text
 body     = meta:str32  tokens:u16*str16  native:u16*(u8*u16)
            validators:u16*str16  blobs:u32*(u32 size, bytes)  records:u32*record
 record   = name:str16 producer:str16 site:str16 profiles:u8 options:u16 svl:u16
-           vl:u16
            programs:u32*(entry:u16, u16*(offset:u16, word:u32))  cases:u32*case
 case     = program:u32 name:str16 ordinal_16k:u32 ordinal_4k:u32 event:u8
            flags:u8 retire [fault] [syndrome] native:u16 validator:u16
@@ -108,11 +103,8 @@ fault    = address:u64 access:u8        present when flags bit 1 is set
 syndrome = u32                          present for floating-point-trap
 state    = u32 mask, u64 per set bit (bit 31 is SP)
            u32 mask, 16 bytes per set vector
-           [sve]                                present when vl is not 0
            [sme]                                present when svl is not 0
            u8 count, (field id:u8, value) per field
-sve      = u16 mask, vl/8 bytes per set P register
-           u8 0 | u8 1, vl/8 bytes              FFR
 sme      = u32 mask, svl bytes per set Z register
            u16 mask, svl/8 bytes per set P register
            svl/8-byte mask, svl bytes per set ZA row (horizontal vector)
@@ -132,21 +124,22 @@ reserved or CONSTRAINED UNPREDICTABLE operand value, a permanently undefined
 word, or an encoding of a feature the virtual CPU never implements. A clear
 bit on an illegal-instruction case means a valid encoding that traps for its
 exception level, mode, or state, or because a feature that some virtual-CPU
-configuration implements (SVE, SME, FEAT_AFP) is absent from this one;
+configuration implements (SME, FEAT_AFP) is absent from this one;
 [`invalid-encoding-corpus.py`](#invalid-encoding-bits) decides it.
 `profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
-Option bits 0 and 1 are reserved, bits 2-9, in order, force the portable
+Option bits 0, 1, and 12 are reserved, bits 2-9, in order, force the portable
 checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
 gadget bodies, bit 10 (`without_afp`) translates the record for a virtual
 CPU without FEAT_AFP on every host, bit 11 (`without_sme`) does the same
-for FEAT_SME, and bit 12 (`without_sve`) for FEAT_SVE. Region flags are
+for FEAT_SME. Region flags are
 readable, writable, executable, guest code, and guest writable. Events follow the harness order:
 system call, memory fault, reserved, illegal instruction, breakpoint,
 floating-point trap, PC alignment, instruction budget, fatal. The reserved
 option bits, event code 2, the field ids the table below omits, and non-empty
 tag lists held FEAT_PAuth,
-FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_LS64, FEAT_FP8, and FEAT_SSBS state and
-the producer's one-byte PSTATE.SM and ZA (see
+FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_LS64, FEAT_FP8, and FEAT_SSBS state, the
+producer's one-byte PSTATE.SM and ZA, and the non-streaming SVE of the
+removed `without_sve` virtual CPU (see
 [Absent-feature cases](#absent-feature-cases)); the runner rejects a pack
 that uses them.
 Validator `0xffff` means exact comparison; retirement maximum `0xffffffff` is
@@ -172,9 +165,8 @@ address is all ones, and every other field is zero. Field ids are:
 | 24 | `pstate_daif` u8 | | |
 
 | 38 | `svcr` u8 | 39 | `tpidr2` u64 |
-| 40 | `sve_live` u8 | | |
 
-Ids 5, 7, 9-18, 20-22, and 32-37 are reserved. A region's initial bytes are its
+Ids 5, 7, 9-18, 20-22, 32-37, and 40 are reserved. A region's initial bytes are its
 blob, and its expected bytes are the blob with the runs applied.
 
 ### SME state
@@ -196,51 +188,17 @@ index `n` that names the byte's position at the largest SVL: `256i + b` for
 byte `b` of `Zi`, `0x2000 + 32i + b` of `Pi`, `0x10000 + 256r + b` of ZA row
 `r`, and `0x30000 + b` of ZT0.
 
-### Non-streaming SVE state
-
-A record's `vl` is the vector length outside streaming mode that its cases'
-P and FFR are sized for, 16 bytes, or 0 for a record without that state.
-Only a record with a VL holds P0-P15, FFR, or `sve_live`. The runner runs its
-cases, and any case that needs an SVE profile feature natively, only for a
-lane whose `sve_support` is `complete` where the virtual CPU implements the
-SVE profile, and counts every other one as skipped for `sve`. Such a case
-that needs FEAT_BF16 or FEAT_I8MM runs only where the host has it, since the
-profile's forms of those are the virtual CPU's only there, and is otherwise
-skipped for `bf16` or `i8mm`. At that VL Z_n
-is V_n, so the vector section holds the Z registers. P and FFR are packed,
-bit k for byte k, as the architecture holds them; the runner loads them into
-the engines' mask form and compares them packed. `sve_live` is 0 or 1, the
-image of arm64 Linux's TIF_SVE: whether the task's SVE state is live. A
-state that is not live holds zero P and FFR, because Linux zeroes them when
-it discards the state and when the next SVE instruction makes it live again;
-the encoder refuses a state that breaks this. The base fill of P, FFR, and
-`sve_live` is zero, and the expected state's are the initial ones unless it
-names its own. A record without a VL expects them zero. They are apart from
-the streaming P registers of the SME state.
-
-The `library` lane runs every SVE case, for a virtual CPU with the profile
-the guest-SVE policy gives the host, through the gadget engine with the SVE
-semantic library
-([`cpu/arm64/detail/sve_semantics.hpp`](../../../../darwin/cpu/arm64/detail/sve_semantics.hpp))
-behind its illegal-instruction exit: each non-streaming SVE word the
-engine stops at retires through the library, and the engine resumes after
-it. It skips a case whose features that virtual CPU lacks, and counts each.
-The library covers every form the encoding table routes; the lane also
-skips and counts a case with a word of a form it does not cover, which only
-a regenerated table with a new form can produce.
-
-A version 1 pack is a version 2 pack without SVLs, and a version 2 pack is a
-version 3 pack without VLs. `build-unit-corpus.py` reads all three and writes
-version 3; it writes version 2 for a corpus without VLs, so the
-`arm64-instruction-corpus-freshness` test can show that every record keeps
-its meaning, bit for bit, in both.
+A version 1 pack is a version 2 pack without SVLs. `build-unit-corpus.py`
+reads both and writes version 2. Version 3 added the non-streaming SVE state of
+the removed SVE profile (a VL per record, P0-P15, FFR, and field 40) and is no
+longer read.
 
 ## Running
 
 ```sh
 uml_arm64_instruction_corpus_tests BUILD/tests/unit/arm64/corpus/a64_instruction_corpus.pack \
   [--record TEXT] [--producer NAME] [--case TEXT] [--ordinal N] \
-  [--engine gadgets|jit|library] [--assume-host-feature TOKEN] \
+  [--engine gadgets|jit] [--assume-host-feature TOKEN] \
   [--max-failures N | --fail-fast] [--list]
 ```
 
@@ -254,8 +212,7 @@ controls clear. The default stops after 25 failures; `--max-failures 0` never
 stops early.
 A failure names the record, case index, producer check ordinals, entry word,
 lane, and the first mismatch. The summary counts each lane's runs and the runs
-it skipped for each missing feature, the library lane's cases skipped for
-an uncovered form, and the words that lane handed to the library.
+it skipped for each missing feature.
 
 ## Engine entry
 
@@ -266,7 +223,7 @@ without being marked as doing so loses its writes. The runner compares only
 what a context switch would save: the vectors if the engine marked them
 written (`fp_dirty`), FPCR and FPSR as the deferred image reports them. A
 case that expects a vector write therefore fails for an engine that did not
-load the vectors first. The library lane is not deferred.
+load the vectors first.
 
 ## Regeneration and new cases
 
@@ -335,15 +292,11 @@ records, and appends them, so the steps run in one order, followed by one
 `--repack`: [LSE2 alignment](#lse2-alignment-cases),
 [absent features](#absent-feature-cases), [native SME](#native-sme-cases),
 [native floating-point trap](#native-floating-point-trap-cases),
-[native SVE](#native-sve-cases), [SVE/SME](#svesme-cases),
-[SVE FEAT_AFP](#sve-feat_afp-cases), [SVE trap](#sve-trap-cases), and
+[SM = 0 family](#sm--0-family-cases), and
 [invalid-encoding bits](#invalid-encoding-bits). A
 hardware step's `--carry PACK` copies the pack's records for a request that
 is unchanged, so a regeneration that changes no request needs no host. The
-SVE trap step derives its records from the native SVE records, and the
-invalid-encoding step stays last. Deriving trap records from the SVE/SME `m4`
-and SVE FEAT_AFP records as well needs a source predicate that admits the
-rows that need SME.
+invalid-encoding step stays last.
 
 ## LSE2 alignment cases
 
@@ -369,8 +322,9 @@ ACCDATA state, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR, or the SIMD&FP extensions
 FEAT_FP8 (with FP8DOT2, FP8DOT4, FP8FMA, F8F16MM, F8F32MM, and its FPMR state),
 FEAT_F16F32DOT, FEAT_F16MM and FEAT_F16F32MM, FEAT_LUT, FEAT_FAMINMAX,
 FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, or FEAT_CMPBR, FEAT_HBC, FEAT_SSBS,
-FEAT_XS, FEAT_WFxT, or any SVE or SME feature outside the SVE and SME
-profiles; every encoding they add is UNDEFINED. The producer harness
+FEAT_XS, FEAT_WFxT, or any SME feature outside the SME profile; every
+encoding they add is UNDEFINED, and so is every SVE encoding outside
+streaming mode but the SM = 0 family below. The producer harness
 enabled the removed features in most cases' state, so
 [`tools/arm64-tests/absent-feature-corpus.py`](../../../../tools/arm64-tests/absent-feature-corpus.py)
 rewrites the dump after the LSE2 step. It drops the cases that exercise a
@@ -384,10 +338,10 @@ least one word of every encoding class to be undefined and the hints to be
 NOPs, and `arm64-absent-mte-tbi` records that restore the coverage the failing
 cases took from their allocations.
 
-FEAT_SME and FEAT_SVE are two-sided, like FEAT_AFP: the virtual CPU
-implements the SME profile only where the host does, and the SVE profile only
-under the guest-SVE policy where the host has the AdvSIMD forms it lowers
-onto. The producer's SME model is retired, so the rewrite drops its SME cases
+FEAT_SME is two-sided, like FEAT_AFP: the virtual CPU implements the SME
+profile only where the host does. FEAT_SVE is absent on every host, so no
+case holds non-streaming SVE state. The producer's SME model is retired, so
+the rewrite drops its SME cases
 and strips its one-byte PSTATE.SM and ZA fields as for an absent feature. The
 witness word of every row of the generated SVE/SME encoding table
 ([`darwin/cpu/arm64/detail/sme_encodings.hpp`](../../../../darwin/cpu/arm64/detail/sme_encodings.hpp)),
@@ -398,15 +352,15 @@ PSTATE.SM = 0 in the record whose option makes it so, which the runner
 translates for on every host:
 
 - `arm64-absent-sme`, under `without_sme`: SMSTART, SMSTOP, MRS and MSR
-  SVCR, the other rows of the SME profile, MOVT, and the SVE rows that need
-  FEAT_SME outside streaming mode as well (the SCLAMP class);
-- `arm64-absent-sve`, under `without_sve`: every row the SVE profile executes
-  outside streaming mode, the SCLAMP class included;
+  SVCR, the other rows of the SME profile, and MOVT;
+- `arm64-absent-sve`, under `without_sme`: the SM = 0 family, the words a
+  virtual CPU with SME executes outside streaming mode (see
+  [SM = 0 family cases](#sm--0-family-cases)), so only one without SME takes
+  them as UNDEFINED;
 - `arm64-absent-sve` without an option: every other row, undefined there on
-  every virtual CPU: the SVE rows that never execute outside streaming mode
-  (the withheld FEAT_SVE_BitPerm, FEAT_SVE_SM4, FEAT_F32MM, FEAT_F64MM and
-  FEAT_SVE2p1 forms, and the SVE2p1 forms that SME2 executes in streaming
-  mode) and the rows outside both profiles.
+  every virtual CPU: the SVE rows that execute only in streaming mode or
+  nowhere (the SCLAMP class, which needs FEAT_SVE and FEAT_SME outside
+  streaming mode, included) and the rows outside the SME profile.
 
 Each witness is checked against LLVM MC by the table's generator or the
 allocation generator, and its case name gives the entry's stable id, encoding
@@ -450,6 +404,12 @@ python3 -B tools/arm64-tests/build-unit-corpus.py --repack absent.jsonl \
   --output .build/corpora/arm64
 ```
 
+A change to the encoding table or the authored records alone needs no export:
+`absent-feature-corpus.py --authored-only DUMP OUTPUT` rewrites the dump's
+`arm64-absent-<feature>` records in place and refreshes the step's hashes,
+leaving every other record, the TBI replacements included, and the later
+steps' records as they are.
+
 A regeneration that changes which stripped cases fail refreshes the failing
 list: rewrite without `--failing`, run the corpus test on that pack in both
 page profiles with `--max-failures 0`, and pass both logs to
@@ -475,9 +435,11 @@ implements SME at that SVL, and a case that needs `sme2` only for an engine
 at `sme2` where the virtual CPU has the SME2 profile; it counts every other
 case as skipped for the feature. Each case names the profile features it
 needs (`sme`, `sme2`, `sme_f64f64`, `sme_i16i64`, `bf16`, `i8mm`). The M4 has
-no FEAT_SVE, so a case outside streaming mode whose word the SVE profile
-executes there holds only for a virtual CPU without SVE; such cases sit in a
-sibling of their group's record under `without_sve`. A case
+no FEAT_SVE, and neither has the virtual CPU, so a case outside streaming
+mode whose word only an SVE profile would execute is UNDEFINED on both. The
+19 cases of the SM = 0 family are the exception: the M4 traps those words and
+the virtual CPU does not, so no native record holds them (the generator keeps
+them in the request, so the oracle still observes the host). A case
 starts with X18 zero, because Darwin clears X18 whenever a thread returns
 to user mode, and forms only addresses with a zero top byte, because the
 host ignores the top byte and the guest's default state does not.
@@ -558,7 +520,7 @@ python3 -B tools/arm64-tests/floating-trap-native-corpus.py native.jsonl \
   trap.jsonl --response trap.response --response trap.response2
 ```
 
-The native SVE step below follows on `trap.jsonl` before the repack.
+The SM = 0 family step below follows on `trap.jsonl` before the repack.
 
 The cases that need FEAT_AFP or FEAT_BF16, which the M1 lacks, form a second
 request, which `--afp-request` writes and an FEAT_AFP and FEAT_BF16 host, the
@@ -571,228 +533,64 @@ rerecorded outcomes changed under `floating_trap_native`, and the
 `arm64-instruction-corpus-floating-trap-native` tooling test re-derives
 every case but its outcome.
 
-## Native SVE cases
+## SM = 0 family cases
 
-No producer had an SVE model.
-[`tools/arm64-tests/sve-native-corpus.py`](../../../../tools/arm64-tests/sve-native-corpus.py)
-authors the `arm64-sve-native` records from the generated SVE/SME encoding
-table and appends them after the native floating-point trap step, and
-[`tools/arm64-tests/sve_native_oracle.cpp`](../../../../tools/arm64-tests/sve_native_oracle.cpp)
-observes their outcomes on an arm64 Linux host with FEAT_SVE at a 16-byte
-vector length, a Neoverse V2 host. The script's docstring lists what each
-record covers and owns the oracle's request and response formats.
+The virtual CPU, with FEAT_SME and never FEAT_SVE, executes CNTB, CNTH, CNTW
+and CNTD, RDVL, ADDVL, ADDPL, and the scalar INCB, INCH, INCW, INCD, DECB,
+DECH, DECW and DECD at PSTATE.SM = 0, every predicate pattern and multiplier,
+for a constant vector length of 128 bits (CNTB = 16, CNTD = 2); and LDR and
+STR of a vector register Z (16 bytes) and of a predicate register P (2 bytes)
+with a scalar base and an immediate offset (MUL VL). This is a deliberate
+departure from the architecture, which makes them UNDEFINED there without
+FEAT_SVE: an M4 traps them, so no hardware result exists, and the
+expectations are the instructions' pseudocode with the constant length,
+written independently of the engines. The CPU has no predicate state at
+SM = 0, so STR of P stores two zero bytes and LDR of P performs its access and
+drops the data. See
+[`sm0_vector_length.hpp`](../../../../darwin/cpu/arm64/detail/sm0_vector_length.hpp)
+and [Architecture](../../../../docs/architecture.md).
+[`tools/arm64-tests/sm0-vl-corpus.py`](../../../../tools/arm64-tests/sm0-vl-corpus.py)
+writes the one `arm64-sm0-vl` record, with `svl` 64:
 
-The oracle is a sibling of the SME oracle, not a Linux build of it. The SME
-oracle reads a case's state on a Mach exception port and works around XNU's
-FPSR reset; this one runs each case under POSIX signal handlers and reads and
-writes its state in the signal frame's fpsimd, SVE, and ESR records. The
-handler starts a case by writing a full `sve_context` for a state that is
-live or a bare header for one that is not, and the return from the signal
-sets or clears TIF_SVE from it, so a case starts in exactly its state
-whatever the kernel did with the SVE state before. The response holds the
-frame's `sve_context` size at the case's last trap, which the script
-requires to agree with the recorded live bit.
+- every element size with every predicate pattern, the reserved ones that
+  count nothing included, and the multipliers 1, 3 and 16 of CNT, INC and
+  DEC, over destinations that rotate through the registers, and XZR;
+- RDVL, ADDVL and ADDPL for every immediate, over distinct, equal and SP
+  registers, and XZR where RDVL discards the result;
+- one word of each vector-length form with ZA enabled;
+- the four spill forms over immediates across the signed 9-bit range, including
+  those beyond an unscaled A64 access, transfer registers and bases (X0, the
+  frame pointer, SP), in a page, misaligned, across a page, into an unmapped
+  page and from one, into read-only memory, through a tagged pointer, at a
+  misaligned SP, and with ZA enabled; and the 166 words the compilers emit
+  for the callee-saved Z8-Z23 and P4-P15 saves and restores (clang 22, Apple
+  clang 21 and GCC 14, from `sme-idiom-corpus.py`); and
+- controls: words the compilers emit beside the spills, which stay UNDEFINED
+  (SVE data processing, contiguous loads and stores, predicate
+  construction), and the reserved encodings next to the spill forms.
 
-Every native record has `vl` 16, the one vector length outside streaming
-mode, and runs only as the SVE state section above describes. The
-`classify`, `operands`, `memory`, `gather`, `live`, and `fpcr` records hold
-for both page profiles: their regions are 16 KiB-aligned multiples of
-16 KiB, so each page crossing is one in both. `memory/4k` maps 4 KiB regions so that
-an access crosses into a 4 KiB page that is unmapped or read-only, and
-holds for the 4 KiB profile only. The host's own pages are 4 KiB, so every
-region maps exactly as the guest's does. The 29 SCLAMP-class forms need
-FEAT_SME as well outside streaming mode, so an SVE host without SME cannot
-record them; the SVE/SME records below hold them. The withheld features'
-forms are not in these records either, since their UNDEFINED results belong
-to the absent-feature records.
+The record's SVL makes the runner run it only for a virtual CPU that
+implements the SME profile, with no hardware requirement: the engines
+translate each family word to the ordinary A64 access or word of the same
+effect, so `arm64-instruction-corpus-sm0-vl-profile` runs it with the profile
+assumed on any host, and on an SME host the full corpus runs it natively. The
+`arm64-absent-sve` record under `without_sme` pins the same words UNDEFINED
+where SME is not implemented, the unconditional `arm64-absent-sve` record pins
+every other SVE word UNDEFINED at SM = 0, and the native SME records hold no
+family word at SM = 0.
 
-`fpcr` holds each floating-point form that FPCR affects, at each element
-size, with its sources holding ties, subnormals, NaNs, or values that
-overflow. Each class runs under the FPCR values that vary the controls it
-meets. Ties and overflow get each rounding mode. NaNs get DN clear and
-set. Subnormals get a strength-2 covering array of the rounding mode, FZ,
-DN, and FZ16, so every pair of their values occurs. The V2 has no
-FEAT_AFP, so FPCR.AH, FIZ, and NEP are not sampled here.
-
-The encoding table decides the legality of each row's witness, of its own
-registers, and of a word no row decodes; the hardware decides a free field
-value that a row decodes but its pseudocode makes UNDEFINED, such as a
-reserved bitmask immediate. A response that disagrees with the table is a
-finding about the table and writes nothing. The hardware also decides the
-fault address of a crossing access and what a faulting access leaves in
-memory and its destination. What it cannot decide, because the ASL leaves it
-CONSTRAINED UNPREDICTABLE, stays out of the expectations: a MOVPRFX is
-followed by the instruction it prefixes, and a completed first-fault or
-non-fault load uses `unpredictable-nonfault-load-elements/v1`, with zero,
-one of the permitted values, recorded in the elements it excludes.
-
-Regenerate on an SVE host at VL 16. The script runs the oracle there twice,
-each time from a fresh private directory in the host's home that it removes
-afterwards, and the generator requires the responses to give identical
-records; they may differ only in the elements the relation excludes:
+The step needs no hardware and appends after the native floating-point trap
+step. It reruns after any change to the script or the table, on the previous
+step's dump or the pack's own `--dump`:
 
 ```sh
-python3 -B tools/arm64-tests/sve-native-corpus.py --request sve.request
-tools/arm64-tests/sve-native-oracle.sh SVE-HOST sve.request sve.response
-python3 -B tools/arm64-tests/sve-native-corpus.py trap.jsonl sve.jsonl \
-  --response sve.response.1 --response sve.response.2
-python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve.jsonl \
-  --output .build/corpora/arm64
+python3 -B tools/arm64-tests/sm0-vl-corpus.py trap.jsonl sm0-vl.jsonl
 ```
 
-The SVE/SME step below follows on `sve.jsonl` before the repack. A
-regeneration that leaves the request unchanged needs no SVE host:
-`--carry BUILD/tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
-current native records instead of `--response`. `provenance.json` records the
-script, table, and request hashes, the host's VL, page size, and hardware
-capabilities, and the outcome counts under `sve_native`;
-`build-unit-corpus.py --check` verifies the hashes, and the
-`arm64-instruction-corpus-sve-native` tooling test re-derives every case but
-its outcome. The `arm64-sve-native-oracle` tooling test drives the oracle
-with base A64 cases on any arm64 Mac, and with SVE cases where the host has
-SVE at VL 16.
-
-## SVE/SME cases
-
-On a CPU with both FEAT_SVE and FEAT_SME, 29 encodings that FEAT_SME or
-FEAT_SME2 shares with FEAT_SVE2p1 execute outside streaming mode: PSEL,
-REVD, SCLAMP, UCLAMP, and 25 that need FEAT_SME2. The encoding table gives
-them the non-streaming requirement sve plus sme (plus sme2). No host
-observes them there: the Neoverse V2 host has no SME, and the M4 has no SVE.
-[`tools/arm64-tests/sve-sme-corpus.py`](../../../../tools/arm64-tests/sve-sme-corpus.py)
-authors their `arm64-sve-sme` records at VL 16 from the native SVE
-generator's classify and operand cases of their rows, appends them after the
-native SVE step, and takes each family's outcomes from one source:
-
-- `asl` holds the 22 integer and predicate encodings: PSEL, REVD, SCLAMP,
-  UCLAMP, the 2-way SDOT and UDOT, the two-register narrowing forms, and the
-  predicate-pair WHILEs. The script transcribes their execute pseudocode
-  from the pinned 2026-06 XML, which depends on the vector length only
-  through the element count. A model is used only after it reproduces the
-  whole final state of every M4 case of its encoding in streaming mode that
-  the native SME records hold, at VL 64.
-- `m4` holds the 7 floating-point encodings: FCLAMP, BFMLSLB and BFMLSLT,
-  and the half-precision FDOT. Each is lane-local within a 128-bit segment,
-  so the M4 runs each case in streaming mode with every Z and P register
-  holding its VL 16 value in each segment. The low segment and FPSR are then
-  the VL 16 outcome, and the script requires every segment to agree. The
-  same request runs the `asl` cases, whose results must match their models,
-  and on the M4 they all do.
-- `table` holds any word no row decodes; today there is none.
-
-Each record has a VL and no SVL, and each case names its row's
-requirement. The runner runs a case only for an engine at `sve_support`
-`complete` whose virtual CPU implements SME at any SVL, and SME2 where the
-case names it, and skips it elsewhere.
-
-```sh
-python3 -B tools/arm64-tests/sve-sme-corpus.py sve.jsonl sve-sme.jsonl \
-  --carry BUILD/tests/unit/arm64/corpus/a64_instruction_corpus.pack
-python3 -B tools/arm64-tests/sve-sme-corpus.py --m4-request m4.request
-sme_native_oracle m4.request m4.response.1                # twice, on the M4
-python3 -B tools/arm64-tests/sve-sme-corpus.py sve.jsonl sve-sme.jsonl \
-  --m4-response m4.response.1 --m4-response m4.response.2
-```
-
-The first form keeps the pack's `m4` record, if any, and needs no host. The
-responses must give identical records. The SVE FEAT_AFP step below follows
-on `sve-sme.jsonl` before the repack. `provenance.json` records, under
-`sve_sme`, the script, table and M4 request hashes, the model checks per
-encoding, the case counts, and the M4's features. `build-unit-corpus.py
---check` verifies the hashes. The `arm64-instruction-corpus-sve-sme` tooling
-test re-derives the `asl` and `table` records, repeats the model checks
-against the pack's SME records, and drives the M4 path with a synthetic
-response.
-
-## SVE FEAT_AFP cases
-
-FPCR.AH, FIZ, and NEP need FEAT_AFP, which the Neoverse V2 host lacks, so the
-native SVE records cannot set them. The M4 has FEAT_AFP but no SVE.
-[`tools/arm64-tests/sve-afp-corpus.py`](../../../../tools/arm64-tests/sve-afp-corpus.py)
-authors `arm64-sve-afp/m4` at VL 16 from M4 runs in streaming mode, with
-every 128-bit segment holding the case, as the SVE/SME `m4` record does.
-The forms are the native `fpcr` group's floating-point forms that are legal
-in streaming mode. The reductions are left out, because they depend on the
-vector length, and so are the conversions from integers. The script
-requires every segment of every register to agree, which also refuses a
-form that is not lane-local.
-
-The sources hold subnormals, NaNs, signed zeros, or ties, or, in the mixed
-cases, a subnormal beside a NaN in each order, with a one in a third source:
-AH reports a subnormal operand only when no operand is a NaN. These run
-under FIZ, AH, and the combinations of AH with FIZ, NEP, and FZ, FZ16, and
-DN that each class meets. Ties run under AH with RZ, which the BF16 forms
-override with round-to-nearest. A host without FEAT_AFP reads AH, FIZ, and
-NEP back as zero, and the script refuses its response. Each case names its
-row's non-streaming requirement and `afp`, and also `rpres` for
-single-precision FRECPE and FRSQRTE under AH:
-
-```sh
-python3 -B tools/arm64-tests/sve-afp-corpus.py --m4-request afp.request
-sme_native_oracle afp.request afp.response.1              # twice, on the M4
-python3 -B tools/arm64-tests/sve-afp-corpus.py sve-sme.jsonl sve-afp.jsonl \
-  --m4-response afp.response.1 --m4-response afp.response.2
-```
-
-`--carry PACK` instead keeps the pack's record, if any, for a request that
-is unchanged. The SVE trap step below follows on `sve-afp.jsonl` before the
-repack. `provenance.json` records the script, table, and request hashes
-under `sve_afp`. The `arm64-instruction-corpus-sve-afp` tooling test
-checks the request's cases, any record against them, and the M4 path with a
-synthetic response.
-
-## SVE trap cases
-
-The AdvSIMD trapped outcomes are the M1's (see
-[Native floating-point trap cases](#native-floating-point-trap-cases)),
-and they fix the trap contract of
-[`floating_exception.hpp`](../../../../darwin/cpu/arm64/detail/floating_exception.hpp):
-an enabled exception leaves every register, FPSR and PC as they were, and
-gives syndrome EC 0x2c, IL, TFV, and one cause, the first enabled one
-raised in the order ID, IO, DZ, OF, UF, IX. No hardware observes an SVE
-trap at PSTATE.SM = 0: the native records run with every enable clear,
-the M1 has no SVE, and in streaming mode FPProcessException() traps only
-with FEAT_SME_FA64.
-[`tools/arm64-tests/sve-trap-corpus.py`](../../../../tools/arm64-tests/sve-trap-corpus.py)
-derives the SVE floating-point forms' outcomes from that contract and
-writes the `arm64-sve-trap` records, at VL 16 in both page profiles:
-
-- `derived` reruns each completed one-instruction floating-point case of
-  the `arm64-sve-native` records with every enable, with only the first
-  raised one's when it raised several, and with every enable but the
-  raised ones'. Its outcome follows from the exceptions the Neoverse V2
-  host observed with every enable clear; a case that does not trap
-  completes exactly as observed.
-- `authored` holds what no native case pins: divide by zero and input
-  denormal alone, the one cause of every element's exceptions together,
-  the flags a trap leaves, inactive elements that would raise, which
-  complete, traps that keep a compare's P destination and the V
-  destination of FADDV and FADDA, and the underflow rules below. IEEE 754
-  arithmetic decides each operand's exceptions.
-
-A trap leaves the SVE state live, as the SVE access trap Linux takes first
-makes it. FPRoundBase() never traps a flush to zero's underflow, and with
-UFE set a tiny result underflows even when it is exact. The authored cases
-hold both rules: exact tiny products, tiny intermediate results of FADDV,
-FADDA and FMAXV, and an FCVT to half precision, which ignores FZ16, trap;
-FMUL and FRECPE flushes under FZ and FZ16 complete. A native case cannot
-show an exact tiny intermediate result, so a derived case sets UFE only
-when it raised underflow with FZ and FZ16 clear.
-
-The step needs no hardware. It precedes the
-[invalid-encoding step](#invalid-encoding-bits) and reruns after any change to
-the native records or to the script, on `sve-afp.jsonl` or on the pack's own
-`--dump`:
-
-```sh
-python3 -B tools/arm64-tests/sve-trap-corpus.py sve-afp.jsonl sve-trap.jsonl
-```
-
-`provenance.json` records the script and table hashes and the case counts
-under `sve_trap`; `build-unit-corpus.py --check` verifies the hashes, and
-the `arm64-instruction-corpus-sve-trap` tooling test re-derives every
-record from the pack's native records and checks each case against the
-contract.
+`provenance.json` records the script and table hashes and the case counts under
+`sm0_vl`; `build-unit-corpus.py --check` verifies the hashes, and the
+`arm64-instruction-corpus-sm0-vl` tooling test re-derives the record and checks
+the model against hand-written values.
 
 ## Invalid-encoding bits
 
@@ -800,7 +598,7 @@ contract.
 owns every case's invalid-encoding bit, so no producer needs to compute it:
 the exported checks set it wherever they expect an undefined-instruction
 trap, and this step rewrites it. It is the last step of the chain. It reads
-the SVE trap step's dump and, for each illegal-instruction case that retires
+the SM = 0 family step's dump and, for each illegal-instruction case that retires
 nothing, sets the bit from the answer of
 [`invalid_encoding.py`](../../../../tools/arm64-tests/invalid_encoding.py),
 which decides it from the checked-in decode partitions, allocation table, and
@@ -808,18 +606,19 @@ SVE/SME encoding table:
 
 - set: a word the partitions leave unallocated; a reserved bitmask immediate
   or Advanced SIMD arrangement; an SVE or SME row that no mode of any
-  virtual-CPU configuration executes (the withheld FEAT_SVE_BitPerm and
-  FEAT_SVE_SM4 forms and the rows outside both profiles); and an encoding of
+  virtual-CPU configuration executes (the SVE rows streaming mode does not
+  execute, the withheld forms, and the rows outside the SME profile); and an
+  encoding of
   a feature the virtual CPU never implements (the features of the
   [absent-feature](#absent-feature-cases) list and FEAT_PAuth_LR, and
   FEAT_D128 with its SYSP, MRRS, and MSRR forms);
 - clear: a generic system or exception word (MRS and MSR register, SYS,
   SYSL, HVC, SMC, HLT, DCPS, ERET, DRPS), which decodes for every operand
   and traps at EL0, a register or operation that nothing defines included; a
-  word of a record under `without_sme` or `without_sve`, which a
-  configuration with the feature executes; and an SVE or SME row that some
-  mode of some configuration executes, in a mode or configuration that traps
-  it (an SVE-only row in streaming mode or without SVE).
+  word of a record under `without_sme`, which a configuration with the
+  feature executes; and an SVE or SME row that some mode of some
+  configuration executes, in a mode or configuration that traps it (a
+  streaming-mode row at PSTATE.SM = 0, or without SME).
 
 A word the tables do not settle keeps its producer's bit: a reserved operand
 value or CONSTRAINED UNPREDICTABLE combination inside an allocated encoding
@@ -834,7 +633,7 @@ word.
 
 ```sh
 python3 -B tools/arm64-tests/invalid-encoding-corpus.py \
-  sve-trap.jsonl invalid.jsonl
+  sm0-vl.jsonl invalid.jsonl
 python3 -B tools/arm64-tests/build-unit-corpus.py --repack invalid.jsonl \
   --output .build/corpora/arm64
 ```
@@ -843,8 +642,9 @@ python3 -B tools/arm64-tests/build-unit-corpus.py --repack invalid.jsonl \
 case counts under `invalid_encoding`; `build-unit-corpus.py --check` verifies
 the hashes. The `arm64-instruction-corpus-invalid-encoding` tooling test
 requires every case that the classifier settles to carry its bit and its
-feature lists to cover every allocation-table feature token, the absent-feature
-script, and the SVE profile. Its `arm64-instruction-corpus-invalid-encoding-llvm`
+feature lists to cover every allocation-table feature token and the
+absent-feature script, and every SVE feature of the encoding table to be
+unimplemented. Its `arm64-instruction-corpus-invalid-encoding-llvm`
 test is opt-in with the pinned LLVM MC, like the A64 oracle freshness test,
 and requires every word with a clear bit to be a valid encoding to it, which
 catches a reserved word that a producer wrongly leaves clear.

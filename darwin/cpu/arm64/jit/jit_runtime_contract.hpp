@@ -174,13 +174,6 @@ struct JitChainState final {
   std::uint32_t deferred_exclusive_instruction{};
   /* The translation key of the indirect site that missed. */
   std::uint64_t indirect_source_pc{};
-  /*
-   * The host address of the lowest byte a window of SVE loads reads, which
-   * the window's first word translates and the words behind it in the same
-   * block read back (JitCompiler::plan_sve_window). Nothing carries it from
-   * one block to another.
-   */
-  std::uint64_t sve_window_anchor{};
   /* The executor's table of trained indirect targets (JitIndirectTarget),
    * for the AArch32 translations, whose indirect branches look there after
    * their site's cells; A64 code does not read it. */
@@ -198,10 +191,9 @@ static_assert(offsetof(JitChainState, indirect_miss) == 16);
 static_assert(offsetof(JitChainState, link_selector) == 24);
 static_assert(offsetof(JitChainState, deferred_exclusive_instruction) == 28);
 static_assert(offsetof(JitChainState, indirect_source_pc) == 32);
-static_assert(offsetof(JitChainState, sve_window_anchor) == 40);
-static_assert(offsetof(JitChainState, indirect_targets) == 48);
-static_assert(offsetof(JitChainState, indirect_target_tag) == 56);
-static_assert(sizeof(JitChainState) == 64);
+static_assert(offsetof(JitChainState, indirect_targets) == 40);
+static_assert(offsetof(JitChainState, indirect_target_tag) == 48);
+static_assert(sizeof(JitChainState) == 56);
 static_assert(sizeof(JitStoreRange) == 16);
 static_assert(sizeof(JitChainState::link_selector) == 1);
 

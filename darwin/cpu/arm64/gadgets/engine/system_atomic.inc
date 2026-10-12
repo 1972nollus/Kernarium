@@ -407,9 +407,29 @@ memory_barrier_option 15
 .purgem memory_barrier_option
 .purgem memory_barrier
 
+/* ISB, a context synchronization point. A translation and the links out of
+ * it are current as of the code-change sequence its executor validated it at
+ * (CpuState::code_sequence_seen); when the address space's sequence has moved
+ * since -- another vCPU changed code and invalidated it -- the ISB leaves at
+ * its fall-through, and the executor revalidates and relinks before the next
+ * instruction runs, as a refetch would. Leaving from inside the block gives
+ * back the instructions translated after the ISB, which entering it
+ * precharged. Stream: [instructions after this one][fall-through guest PC]. */
 gadget isb
+	ldr x8, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE]
+	ldr x9, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE_SEEN]
 	isb
+	ldr x8, [x8]
+	cmp x8, x9
+	b.ne 1f
+	add _stream, _stream, #16
 	next_gadget
+1:
+	ldp x10, x11, [_stream]
+	sub x29, x29, x10
+	str x11, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
 
 gadget speculation_barrier
 	/* Native SB; selected only after host-feature detection at translation. */
@@ -459,10 +479,10 @@ gadget clrbhb
 /* Translation-specialized AdvSIMD multiple-structure transfers. The symbol
  * fixes direction, register count, contiguous versus interleaved layout,
  * arrangement, and writeback mode. The packed operand holds Rt in bits 4:0,
- * Rn's CpuState byte offset in 31:16, Rm's offset in 47:32, and the decoded
- * architectural element size in 55:48. Mode 0 has no writeback, mode 1 uses
- * the architecturally implied byte count, and mode 2 reads the post-index
- * increment from Rm. */
+ * Rn's CpuState byte offset in 31:16, Rm's offset in 47:32, and the
+ * instruction's position in its block, which a fault reports in place of a PC
+ * word, in 63:56. Mode 0 has no writeback, mode 1 uses the architecturally
+ * implied byte count, and mode 2 reads the post-index increment from Rm. */
 .macro simd_structure_cpu_load count
 	add x8, _cpu, #UML_GADGET_CPU_V0
 	and w9, w19, #31
@@ -666,11 +686,11 @@ gadget simd_structure_\name
 	mov x7, x20
 Lsimd_structure_translate\@:
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	simd_structure_memory_load \count, \elements, \q, \size
 	simd_structure_cpu_store \count
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	simd_structure_cpu_load \count
 	simd_structure_memory_store \count, \elements, \q, \size
 	.endif
@@ -683,7 +703,6 @@ Lsimd_structure_translate\@:
 	add x20, x20, x8
 	str x20, [_cpu, x24]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 
 	.if \base_sp == 0 || \mode != 0
@@ -736,12 +755,11 @@ Lsimd_structure_slow\@:
 	add x20, x20, x8
 	str x20, [_cpu, x24]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 
 Lsimd_structure_fault\@:
 	add sp, sp, #80
-	b uml_arm64_gadget_memory_fault
+	b uml_arm64_gadget_memory_fault_indexed
 
 	.if \base_sp
 Lsimd_structure_alignment\@:
@@ -871,7 +889,7 @@ gadget simd_replicate_\name
 	.endif
 	mov x7, x21
 Lsimd_replicate_translate\@:
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	simd_replicate_transfer \count, \width, \q
 	.if \mode == 1
 	add x21, x21, #(\count * \width)
@@ -882,7 +900,6 @@ Lsimd_replicate_translate\@:
 	add x21, x21, x8
 	str x21, [_cpu, x20]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 
 	.if \base_sp == 0 || \mode != 0
@@ -920,12 +937,11 @@ Lsimd_replicate_slow\@:
 	add x21, x21, x8
 	str x21, [_cpu, x20]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 
 Lsimd_replicate_fault\@:
 	add sp, sp, #48
-	b uml_arm64_gadget_memory_fault
+	b uml_arm64_gadget_memory_fault_indexed
 
 	.if \base_sp
 Lsimd_replicate_alignment\@:
@@ -966,7 +982,7 @@ simd_replicate_counts d_q, 8, 1
 .purgem simd_replicate_one
 
 /* Translation-specialized single-structure lane transfers. The lane byte
- * offset is precomputed into operand bits 63:48; width, register count,
+ * offset is precomputed into operand bits 55:48; width, register count,
  * direction, and writeback mode are fixed by the selected symbol. */
 .macro simd_lane_one load, width
 	and w9, w26, #31
@@ -1020,7 +1036,7 @@ simd_replicate_counts d_q, 8, 1
 gadget simd_lane_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
-	ubfx x23, x19, #48, #16
+	ubfx x23, x19, #48, #8
 	ldr x21, [_cpu, x20]
 	.if \base_sp
 	tst x21, #0xf
@@ -1036,9 +1052,9 @@ gadget simd_lane_\name
 	mov x7, x21
 Lsimd_lane_translate\@:
 	.if \load
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	.else
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	.endif
 	simd_lane_transfer \load, \count, \width
 	.if \mode == 1
@@ -1050,7 +1066,6 @@ Lsimd_lane_translate\@:
 	add x21, x21, x8
 	str x21, [_cpu, x20]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 
 	.if \base_sp == 0 || \mode != 0
@@ -1103,12 +1118,11 @@ Lsimd_lane_slow\@:
 	add x21, x21, x8
 	str x21, [_cpu, x20]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 
 Lsimd_lane_fault\@:
 	add sp, sp, #48
-	b uml_arm64_gadget_memory_fault
+	b uml_arm64_gadget_memory_fault_indexed
 
 	.if \base_sp
 Lsimd_lane_alignment\@:
@@ -1179,10 +1193,11 @@ Llse2_resume_\name:
 /*
  * CheckSPAlignment is selected solely from Rn at translation time. Ordinary
  * GPR-base atomic gadgets retain their existing hot paths; SP forms receive
- * this small prefix. The selected memory gadget and packed operand precede the
- * guest PC, so a fault consumes those two words before entering the shared
- * fault exit. SIMD structure gadgets fold this check into SP-specialized
- * symbols to avoid an additional threaded dispatch.
+ * this small prefix. The selected memory gadget and packed operand, which
+ * holds the instruction's position in its block, follow it, so a fault
+ * consumes those two words before entering the shared fault exit. SIMD
+ * structure gadgets fold this check into SP-specialized symbols to avoid an
+ * additional threaded dispatch.
  */
 .macro atomic_sp_alignment name
 gadget atomic_sp_alignment_\name
@@ -1190,7 +1205,7 @@ gadget atomic_sp_alignment_\name
 	tst x7, #0xf
 	b.eq 1f
 	/* _stream currently addresses the selected atomic gadget pointer,
-	 * followed by its packed operand and guest PC. */
+	 * followed by its packed operand. */
 	add _stream, _stream, #16
 	b uml_arm64_gadget_atomic_alignment_fault_\name
 1:
@@ -1210,7 +1225,7 @@ uml_arm64_gadget_atomic_alignment_fault_read:
 	mov w2, #0
 	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
-	b uml_arm64_gadget_memory_fault
+	b uml_arm64_gadget_memory_fault_indexed
 
 .p2align 4
 uml_arm64_gadget_atomic_alignment_fault_write:
@@ -1220,14 +1235,15 @@ uml_arm64_gadget_atomic_alignment_fault_write:
 	mov w2, #1
 	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
-	b uml_arm64_gadget_memory_fault
+	b uml_arm64_gadget_memory_fault_indexed
 
 /*
  * FEAT_LSE scalar atomic read-modify-write operations. Width, operation,
  * ordering, source-ZR handling, and result-discard handling are all selected
  * while the threaded program is built. The valid hot path therefore contains
  * no opcode/ordering dispatch and maps one guest operation to one native host
- * LSE instruction. Stream: original instruction, guest PC.
+ * LSE instruction. Stream: one packed operand, which ends in the
+ * instruction's position in its block.
  */
 .macro atomic_rmw_gadget name, instruction, host_register, alignment, source_zero, discard_result
 gadget atomic_\name
@@ -1237,7 +1253,7 @@ gadget atomic_\name
 	.if \alignment
 	single_copy_alignment atomic_\name, \alignment, 1
 	.endif
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	.if \source_zero
 	mov x15, xzr
 	.else
@@ -1249,7 +1265,6 @@ gadget atomic_\name
 	and x21, x19, #0xffff
 	str x16, [_cpu, x21]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 .endm
 
@@ -1300,7 +1315,7 @@ gadget compare_swap_\name
 	.if \alignment
 	single_copy_alignment compare_swap_\name, \alignment, 1
 	.endif
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	.if \compare_zero
 	mov x15, xzr
 	.else
@@ -1317,7 +1332,6 @@ gadget compare_swap_\name
 	.if !\compare_zero
 	str x15, [_cpu, x20]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 .endm
 
@@ -1353,7 +1367,7 @@ gadget compare_swap_pair_\name
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
 	single_copy_alignment compare_swap_pair_\name, \alignment, 1
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	and x20, x19, #0xffff
 	ubfx x21, x19, #16, #16
 	ldr x14, [_cpu, x20]
@@ -1376,7 +1390,6 @@ gadget compare_swap_pair_\name
 	.if !\compare_second_zero
 	str x15, [_cpu, x22]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 .endm
 
@@ -1440,7 +1453,6 @@ EXCL(load_resume_)\name:
 	and x21, x19, #0xffff
 	str x15, [_cpu, x21]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 EXCL(load_miss_)\name:
 	adr x13, EXCL(load_resume_)\name
@@ -1488,7 +1500,6 @@ EXCL(store_done_)\name:
 	ubfx x20, x19, #16, #16
 	str x14, [_cpu, x20]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 EXCL(store_miss_)\name:
 	adr x13, EXCL(store_done_)\name
@@ -1537,7 +1548,6 @@ EXCL(pair_load_resume_)\name:
 	ubfx x22, x19, #16, #16
 	str x16, [_cpu, x22]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 EXCL(pair_load_miss_)\name:
 	adr x13, EXCL(pair_load_resume_)\name
@@ -1566,18 +1576,18 @@ exclusive_pair_load_sizes acquire, ldaxp, ldaxp
 .macro exclusive_pair_store_gadget name, instruction, host_register, alignment, first_zero, second_zero, discard_status, complete
 gadget exclusive_pair_store_\name
 	ldr x19, [_stream], #8
-	ubfx x20, x19, #48, #16
+	ubfx x20, x19, #36, #12
 	ldr x7, [_cpu, x20]
 	.if \first_zero
 	mov x15, xzr
 	.else
-	and x21, x19, #0xffff
+	and x21, x19, #0xfff
 	ldr x15, [_cpu, x21]
 	.endif
 	.if \second_zero
 	mov x16, xzr
 	.else
-	ubfx x22, x19, #16, #16
+	ubfx x22, x19, #12, #12
 	ldr x16, [_cpu, x22]
 	.endif
 	single_copy_alignment exclusive_pair_store_\name, \alignment, 1
@@ -1586,10 +1596,9 @@ gadget exclusive_pair_store_\name
 EXCL(pair_store_done_)\name:
 	exclusive_record_clear
 	.if !\discard_status
-	ubfx x20, x19, #32, #16
+	ubfx x20, x19, #24, #12
 	str x14, [_cpu, x20]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 EXCL(pair_store_miss_)\name:
 	adr x13, EXCL(pair_store_done_)\name
@@ -1621,13 +1630,13 @@ exclusive_pair_store_sizes release, stlxp, stlxp
 
 /* The shared routines of the stubs above. */
 	.p2align 4
-	exclusive_load_miss EXCL(load_miss), uml_arm64_gadget_memory_fault
+	exclusive_load_miss EXCL(load_miss), uml_arm64_gadget_memory_fault_indexed
 
 .macro exclusive_store_completes order, byte_cas, half_cas, word_cas, double_cas
-	exclusive_store_complete EXCL(store_complete_)\order\()_b, \byte_cas, w, uml_arm64_gadget_memory_fault
-	exclusive_store_complete EXCL(store_complete_)\order\()_h, \half_cas, w, uml_arm64_gadget_memory_fault
-	exclusive_store_complete EXCL(store_complete_)\order\()_w, \word_cas, w, uml_arm64_gadget_memory_fault
-	exclusive_store_complete EXCL(store_complete_)\order\()_x, \double_cas, x, uml_arm64_gadget_memory_fault
+	exclusive_store_complete EXCL(store_complete_)\order\()_b, \byte_cas, w, uml_arm64_gadget_memory_fault_indexed
+	exclusive_store_complete EXCL(store_complete_)\order\()_h, \half_cas, w, uml_arm64_gadget_memory_fault_indexed
+	exclusive_store_complete EXCL(store_complete_)\order\()_w, \word_cas, w, uml_arm64_gadget_memory_fault_indexed
+	exclusive_store_complete EXCL(store_complete_)\order\()_x, \double_cas, x, uml_arm64_gadget_memory_fault_indexed
 .endm
 
 exclusive_store_completes relaxed, casb, cash, cas, cas
@@ -1636,8 +1645,8 @@ exclusive_store_completes release, caslb, caslh, casl, casl
 .purgem exclusive_store_completes
 
 .macro exclusive_pair_store_completes order, word_cas, double_cas
-	exclusive_pair_store_complete EXCL(pair_store_complete_)\order\()_w, \word_cas, w, uml_arm64_gadget_memory_fault
-	exclusive_pair_store_complete EXCL(pair_store_complete_)\order\()_x, \double_cas, x, uml_arm64_gadget_memory_fault
+	exclusive_pair_store_complete EXCL(pair_store_complete_)\order\()_w, \word_cas, w, uml_arm64_gadget_memory_fault_indexed
+	exclusive_pair_store_complete EXCL(pair_store_complete_)\order\()_x, \double_cas, x, uml_arm64_gadget_memory_fault_indexed
 .endm
 
 exclusive_pair_store_completes relaxed, casp, casp
@@ -1666,13 +1675,12 @@ gadget ordered_load_\name
 	.if \alignment
 	single_copy_alignment ordered_load_\name, \alignment, 0
 	.endif
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	\instruction \host_register\()15, [x7]
 	.if !\discard_result
 	and x21, x19, #0xffff
 	str x15, [_cpu, x21]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 .endm
 
@@ -1702,7 +1710,7 @@ gadget ordered_store_\name
 	.if \alignment
 	single_copy_alignment ordered_store_\name, \alignment, 1
 	.endif
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	.if \source_zero
 	mov x15, xzr
 	.else
@@ -1710,7 +1718,6 @@ gadget ordered_store_\name
 	ldr x15, [_cpu, x21]
 	.endif
 	\instruction \host_register\()15, [x7]
-	add _stream, _stream, #8
 	next_gadget
 .endm
 
@@ -1735,7 +1742,8 @@ ordered_store_sizes release, stlrb, stlrh, stlr, stlr
 /* FEAT_LRCPC/2 LDAPR and LDAPUR plus FEAT_LRCPC2 STLUR. The builder packs
  * the signed byte offset and chooses width, extension, and ZR handling, so a
  * valid hot path only calculates the address, translates it, and executes the
- * exact host RCpc/release instruction. Stream: packed operand, guest PC. */
+ * exact host RCpc/release instruction. Stream: packed operand, which ends in
+ * the instruction's position in its block. */
 .macro rcpc_load_gadget name, instruction, host_register, alignment, extension, discard
 gadget rcpc_load_\name
 	ldr x19, [_stream], #8
@@ -1743,12 +1751,12 @@ gadget rcpc_load_\name
 	ubfx w21, w19, #5, #5
 	add x8, _cpu, #UML_GADGET_CPU_X0
 	ldr x7, [x8, x20, lsl #3]
-	asr x9, x19, #10
+	sbfx x9, x19, #10, #9
 	add x7, x7, x9
 	.if \alignment
 	single_copy_alignment rcpc_load_\name, \alignment, 0
 	.endif
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	\instruction \host_register\()15, [x7]
 	.if \extension == 1
 	sxtb w15, w15
@@ -1765,7 +1773,6 @@ gadget rcpc_load_\name
 	add x8, _cpu, #UML_GADGET_CPU_X0
 	str x15, [x8, x21, lsl #3]
 	.endif
-	add _stream, _stream, #8
 	next_gadget
 .endm
 
@@ -1794,12 +1801,12 @@ gadget rcpc_store_\name
 	ubfx w21, w19, #5, #5
 	add x8, _cpu, #UML_GADGET_CPU_X0
 	ldr x7, [x8, x20, lsl #3]
-	asr x9, x19, #10
+	sbfx x9, x19, #10, #9
 	add x7, x7, x9
 	.if \alignment
 	single_copy_alignment rcpc_store_\name, \alignment, 1
 	.endif
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	.if \source_zero
 	mov x15, xzr
 	.else
@@ -1807,7 +1814,6 @@ gadget rcpc_store_\name
 	ldr x15, [x8, x21, lsl #3]
 	.endif
 	\instruction \host_register\()15, [x7]
-	add _stream, _stream, #8
 	next_gadget
 .endm
 

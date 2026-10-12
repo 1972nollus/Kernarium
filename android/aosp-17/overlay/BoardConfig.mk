@@ -19,6 +19,12 @@
 # provide, while this board owns its static storage and module-free kernel.
 include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk
 
+# The inherited page-size-agnostic product boots a 16 KiB kernel. This guest
+# runs 4 KiB pages, so clear that choice and let ro.product.page_size report
+# 4096. The product makefile cannot do this: its parent assigns the variable
+# after the child file is read.
+TARGET_BOOTS_16K :=
+
 # The inherited mainline board routes ordinary application dexpreopt outputs
 # into system_other. This product does not build that image, so keep the
 # artifacts adjacent to their APKs in the immutable partition images instead.

@@ -149,6 +149,13 @@ public:
     }
   }
 
+  void code(std::size_t offset, std::span<const std::uint32_t> words) {
+    for (const auto word : words) {
+      backing_.put32(offset, word);
+      offset += 4U;
+    }
+  }
+
   void put(std::uint64_t address, std::span<const std::byte> bytes) {
     backing_.put(address - base_, bytes);
   }

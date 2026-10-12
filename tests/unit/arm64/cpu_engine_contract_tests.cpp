@@ -268,14 +268,9 @@ void test_all_engines_scope_unsupported_instruction_to_guest()
 	/* PTRUE P0.B: allocated SVE, outside the profile of a virtual CPU
 	 * without SVE. Every adapter must turn it into a precise guest
 	 * illegal-instruction exit. Each engine translates for what it
-	 * presents, as the runtime configures it, here for the host without
-	 * the guest-SVE policy's tokens whatever the environment sets, since an
-	 * engine at sve_support complete presents SVE under the policy.
+	 * presents, as the runtime configures it.
 	 */
 	constexpr std::uint32_t unsupported_instruction = 0x2518'e3e0U;
-	const auto without_sve = uml::platform::apple::apply_guest_sve_policy(
-		uml::cpu::host_capabilities(),
-		uml::platform::apple::GuestSvePolicy::off);
 	unsigned long generation = 0x7200;
 	for (const auto kind : {uml::cpu::EngineKind::gadgets,
 		uml::cpu::EngineKind::jit}) {
@@ -285,7 +280,7 @@ void test_all_engines_scope_unsupported_instruction_to_guest()
 			uml::cpu::EngineConfiguration{
 				.host_capabilities =
 					uml::cpu::engine_host_capabilities(kind,
-						without_sve),
+						uml::cpu::host_capabilities()),
 			});
 		require(engine != nullptr && engine->kind() == kind,
 			"requested engine was replaced by a fallback");

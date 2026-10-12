@@ -37,9 +37,9 @@ kernel replay. The host-only contracts `darwin/include/uml_darwin_guest.h`,
 sync outputs.
 
 Every arm64 task's register tail is its FP registers, then its SME registers,
-then its SVE registers, 592 bytes whether or not the run implements SME or
-SVE; an x86_64-userspace task's tail is its FP registers alone. The host
-requires exactly the slice's size on every entry.
+552 bytes whether or not the run implements SME; an x86_64-userspace task's
+tail is its FP registers alone. The host requires exactly the slice's size on
+every entry.
 
 An AArch32 task of an arm64 kernel uses the same register image, which
 `struct darwin_uml_guest_registers` documents field by field, with TPIDRURO in
@@ -56,7 +56,7 @@ For an intentional bridge declaration change:
 2. run `kernel/common/abi/sync.sh --kernel-source <replay>` and regenerate the
    kernel topic that carries the change; and
 3. rebuild and re-accept the four kernel artifacts (mainline arm64 16 KiB and
-   4 KiB, mainline x86_64 4 KiB, and Android arm64 16 KiB).
+   4 KiB, mainline x86_64 4 KiB, and Android arm64 4 KiB).
 
 A change to what a bridge declaration promises, with no change to its form,
 takes the same three steps with a new version and the unchanged fingerprint.

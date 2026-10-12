@@ -18,11 +18,11 @@ clang-22=clang++,--target=aarch64-linux-gnu.
 report walks every function of every object from the mode its name
 prefix declares (sme_idioms.cpp) with sme_sm0.py and prints each
 distinct SVE or SME word executed at SM = 0, by class: family words, SME
-words legal there, and the decisions (an SVE word outside the family, a
-word that needs streaming mode, or a callee-saved Z or P spill, which the
-note column names). It also checks that the entry mode the image scan
-would infer agrees with the declared one. The exit status is 1 when a
-decision exists.
+words legal there, and the decisions (an SVE word outside the family or a
+word that needs streaming mode; the callee-saved Z and P spills are family
+words, whose note column names them). It also checks that the entry mode
+the image scan would infer agrees with the declared one. The exit status is
+1 when a decision exists.
 """
 
 from __future__ import annotations
@@ -198,8 +198,7 @@ def report(arguments) -> int:
         print(f"  {label} {name}: {state}")
     groups: dict[tuple, dict] = {}
     for label, variant, name, kind, address, word, classified in records:
-        decision = classified.cls in sme_sm0.DECISION_CLASSES or \
-            bool(classified.note)
+        decision = classified.cls in sme_sm0.DECISION_CLASSES
         key = (decision, classified.cls, classified.encoding,
                classified.note.split(" ")[0] if classified.note else "")
         group = groups.setdefault(key, {
@@ -212,8 +211,7 @@ def report(arguments) -> int:
         group["text"].add(texts.get(word, "").split(" ")[0])
     decisions = 0
     for decision in (False, True):
-        heading = ("Decisions: SM=0 words the guest traps, or callee-saved "
-                   "Z/P spills" if decision else
+        heading = ("Decisions: SM=0 words the guest traps" if decision else
                    "Covered: family words and SME words legal at SM=0")
         print(f"  {heading}")
         for key in sorted(k for k in groups if k[0] == decision):

@@ -50,6 +50,9 @@ void A32Compiler::emit_cold_paths() {
       }
       exit_direct(cold.target, 0U, cold.index + 1U);
       break;
+    case ColdPath::Kind::code_changed:
+      exit_event(Event::continued, next_key(), d.inst.next_it.bits());
+      break;
     case ColdPath::Kind::slow:
       emit_slow_helper(cold);
       break;

@@ -40,9 +40,9 @@ extern "C" std::uint64_t
 uml_arm64_jit_write_svcr(CpuState *, Tlb *, std::uint32_t) noexcept;
 extern "C" std::uint64_t
 uml_arm64_jit_execute_sme(CpuState *, Tlb *, std::uint32_t) noexcept;
-/* Non-streaming SVE (jit_semantic_sve.cpp): the slow path of every SM=0
- * word the translation does not lower, through the semantic library. */
+/* The slow path of the SM = 0 vector-length family's spill words
+ * (detail/sm0_vector_length.hpp). */
 extern "C" std::uint64_t
-uml_arm64_jit_execute_sve(CpuState *, Tlb *, std::uint32_t) noexcept;
+uml_arm64_jit_execute_sm0_spill(CpuState *, Tlb *, std::uint32_t) noexcept;
 
 } // namespace uml::cpu::arm64

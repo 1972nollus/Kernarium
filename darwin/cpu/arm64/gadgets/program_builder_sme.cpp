@@ -5,8 +5,11 @@
  * here only from its cold paths, where a virtual CPU without SME ends the
  * block exactly as it always did. */
 #include "program_builder_decode.hpp"
+#include "gadget_operand_encoding.hpp"
 #include "sme_layout.h"
+#include "software_helpers.hpp"
 
+#include "cpu/arm64/detail/sm0_vector_length.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 
@@ -85,6 +88,41 @@ DecodeResult emit_svcr_write(DecodeContext &context, std::uint8_t mask,
 	emit(context.words, context.address);
 	++context.compiled;
 	return DecodeResult::terminal;
+}
+
+/* A spill word of the SM = 0 vector-length family
+ * (detail/sm0_vector_length.hpp), as the memory access it is. A vector
+ * register Z is the V register, so LDR and STR of Z are the 16-byte SIMD&FP
+ * load and store with the byte offset in the operand's signed 16-bit
+ * displacement, which holds the nine-bit immediate times the register's
+ * size, and the block position in its top byte as for every memory form.
+ * The virtual CPU has no predicate state at SM = 0, so STR of P is a halfword
+ * store of the zero register and LDR of P a halfword load into it, which
+ * performs the access and discards the data. */
+DecodeResult emit_sm0_spill(DecodeContext &context,
+	const detail::Sm0Spill &spill)
+{
+	auto &words = context.words;
+	const bool sp_base = spill.base == 31U;
+	const auto displacement = (static_cast<std::uint64_t>(
+		static_cast<std::int64_t>(spill.offset)) & 0xffffU) << 32;
+	const auto base = selection::base_register_offset(spill.base) << 16;
+	if (spill.predicate) {
+		const auto *gadgets = selection::scalar_other_gadgets(1U,
+			spill.store ? 0U : 1U);
+		emit(words, gadgets->immediate[0][sp_base ? 1 : 0][1]);
+		emit(words, selection::transfer_register_offset(31U) | base |
+			displacement | fault_position(context));
+	} else {
+		const auto *gadgets = selection::vector_other_gadgets(0U,
+			spill.store ? 2U : 3U);
+		emit(words, gadgets->immediate[0][sp_base ? 1 : 0]);
+		emit(words, vector_operand_offset(spill.transfer) | base |
+			displacement | fault_position(context));
+		/* The program reads or writes a vector register. */
+		context.program_accesses_fp_state = true;
+	}
+	return DecodeResult::decoded;
 }
 
 [[nodiscard]] std::uintptr_t memory_descriptor(unsigned operation,
@@ -176,10 +214,24 @@ DecodeResult decode_sme_space(DecodeContext &context)
 {
 	const auto instruction = context.instruction;
 	const auto &host = context.options.host_capabilities;
-	if ((context.options.svcr & svcr_sm) == 0U && implements_sve(host) &&
-	    detail::sme_encoding_space(instruction)) [[unlikely]] {
-		if (const auto decoded = decode_sve_space(context))
-			return *decoded;
+	/* The SM = 0 vector-length family (detail/sm0_vector_length.hpp), which
+	 * an SME virtual CPU executes: a vector-length word as the base word of
+	 * the same effect, an ADD, SUB, MOVZ or MOVN, which touch no vector
+	 * state, and a spill word as the memory access it is. */
+	if ((context.options.svcr & svcr_sm) == 0U &&
+	    detail::implements_sm0_vector_length(host)) [[unlikely]] {
+		if (const auto equivalent =
+			    detail::sm0_vector_length_equivalent(instruction)) {
+			if (*equivalent == detail::sm0_vector_length_nop) {
+				emit(context.words, selection::uml_arm64_gadget_nop);
+				return DecodeResult::decoded;
+			}
+			DecodeContext base{context};
+			base.instruction = *equivalent;
+			return decode_data_processing(base);
+		}
+		if (const auto spill = detail::sm0_spill_access(instruction))
+			return emit_sm0_spill(context, *spill);
 	}
 	if (!detail::sme_encoding_space(instruction) || !implements_sme(host))
 		return implementation_gap(context);

@@ -117,7 +117,7 @@ artifact.
 The normal arm64-userspace profiles are:
 
 - 16 KiB pages from `kernel/common/config/page-16k.fragment` (default); and
-- 4 KiB pages from `config/page-4k.fragment` (compatibility).
+- 4 KiB pages from `kernel/common/config/page-4k.fragment` (compatibility).
 
 The separate x86_64-userspace slice is 4 KiB only. Its
 `slices/x86_64/config/userspace.fragment` follows the shared policy, this
@@ -211,7 +211,7 @@ once the run's engine implements AArch32, 32-bit ARM EABI executables. The
 programs whose segments are 16 KiB congruent, as the
 [shared README](../common/README.md) says.
 Android does not consume the x86_64 overlay. The slice's overlay turns off
-`UML_ARM64_SME`, so it builds none of the shared SME and SVE task state,
+`UML_ARM64_SME`, so it builds none of the shared SME task state,
 which x86 tasks do not have; the shared mm-shared mark stays, for the x86-64
 JIT.
 

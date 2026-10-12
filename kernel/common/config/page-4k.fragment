@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Darwin UML 4 KiB guest pages, with the same task-stack byte geometry.
+CONFIG_PAGE_SIZE_4KB=y
+# CONFIG_PAGE_SIZE_16KB is not set
+# Preserve the same 128 KiB task-stack byte geometry as the 16 KiB profile.
+CONFIG_KERNEL_STACK_ORDER=5

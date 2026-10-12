@@ -22,8 +22,8 @@
 
 /* Zero-size labels around each section the gadget bank (engine.S) emits
  * code into: the bank itself, the sections its gadgets push forwarding
- * variants, cold paths and FEAT_AFP twins into, the SME part and the SVE
- * part. */
+ * variants, cold paths and FEAT_AFP twins into, the SME part and the AArch32
+ * part's bank and cold paths. */
 extern "C" const char uml_arm64_gadget_bank_begin[];
 extern "C" const char uml_arm64_gadget_bank_end[];
 extern "C" const char uml_arm64_gadget_forward_section_begin[];
@@ -36,8 +36,10 @@ extern "C" const char uml_arm64_gadget_afp_section_begin[];
 extern "C" const char uml_arm64_gadget_afp_section_end[];
 extern "C" const char uml_arm64_gadget_sme_section_begin[];
 extern "C" const char uml_arm64_gadget_sme_section_end[];
-extern "C" const char uml_arm64_gadget_sve_section_begin[];
-extern "C" const char uml_arm64_gadget_sve_section_end[];
+extern "C" const char uml_arm64_gadget_a32_bank_section_begin[];
+extern "C" const char uml_arm64_gadget_a32_bank_section_end[];
+extern "C" const char uml_arm64_gadget_a32_cold_section_begin[];
+extern "C" const char uml_arm64_gadget_a32_cold_section_end[];
 
 namespace uml::cpu::arm64::gadgets::diagnostics {
 
@@ -74,8 +76,10 @@ namespace {
 			uml_arm64_gadget_afp_section_end},
 		{uml_arm64_gadget_sme_section_begin,
 			uml_arm64_gadget_sme_section_end},
-		{uml_arm64_gadget_sve_section_begin,
-			uml_arm64_gadget_sve_section_end},
+		{uml_arm64_gadget_a32_bank_section_begin,
+			uml_arm64_gadget_a32_bank_section_end},
+		{uml_arm64_gadget_a32_cold_section_begin,
+			uml_arm64_gadget_a32_cold_section_end},
 	};
 	return std::ranges::any_of(sections, [pc](const auto &section) {
 		return pc >= reinterpret_cast<std::uintptr_t>(section.first) &&
@@ -290,6 +294,7 @@ private:
 					entry.block = block;
 					entry.thread = guest_thread;
 				}
+				++gadgets_[pc];
 			} else if (in_bank) {
 				++unresolved_;
 			} else {
@@ -317,6 +322,7 @@ private:
 			const std::scoped_lock dump_lock{dump_mutex_};
 			std::vector<BlockEntry> blocks;
 			std::vector<std::pair<std::uintptr_t, std::uint64_t>> host;
+			std::vector<std::pair<std::uintptr_t, std::uint64_t>> gadgets;
 			std::uint64_t passes = 0;
 			std::uint64_t samples = 0;
 			std::uint64_t unresolved = 0;
@@ -327,6 +333,7 @@ private:
 				for (const auto &[key, entry] : blocks_)
 					blocks.push_back(entry);
 				host.assign(host_.begin(), host_.end());
+				gadgets.assign(gadgets_.begin(), gadgets_.end());
 				passes = passes_;
 				samples = samples_;
 				unresolved = unresolved_;
@@ -342,6 +349,16 @@ private:
 			for (auto &[name, count] : symbols)
 				ranked.emplace_back(count, name);
 			std::ranges::sort(ranked, std::greater{});
+			/* The same samples by the gadget they stopped in, which says
+			 * what the translated code spent its time on where the block
+			 * lines say which guest code it was. */
+			std::unordered_map<std::string, std::uint64_t> gadget_symbols;
+			for (const auto &[pc, count] : gadgets)
+				gadget_symbols[cached_host_symbol(pc)] += count;
+			std::vector<std::pair<std::uint64_t, std::string>> gadget_ranked;
+			for (auto &[name, count] : gadget_symbols)
+				gadget_ranked.emplace_back(count, name);
+			std::ranges::sort(gadget_ranked, std::greater{});
 			std::ranges::sort(blocks, [](const auto &a, const auto &b) {
 				return a.count > b.count;
 			});
@@ -380,6 +397,11 @@ private:
 				std::fprintf(out, "host\t%llu\t%s\n",
 					static_cast<unsigned long long>(count),
 					name.c_str());
+			std::fprintf(out, "# gadget\tcount\tsymbol\n");
+			for (const auto &[count, name] : gadget_ranked)
+				std::fprintf(out, "gadget\t%llu\t%s\n",
+					static_cast<unsigned long long>(count),
+					name.c_str());
 			std::fclose(out);
 			std::rename(temporary.c_str(), path_.c_str());
 		} catch (...) {
@@ -395,6 +417,7 @@ private:
 	std::vector<Target> targets_;
 	std::unordered_map<BlockKey, BlockEntry, BlockKeyHash> blocks_;
 	std::unordered_map<std::uintptr_t, std::uint64_t> host_;
+	std::unordered_map<std::uintptr_t, std::uint64_t> gadgets_;
 	std::uint64_t passes_{};
 	std::uint64_t samples_{};
 	std::uint64_t unresolved_{};

@@ -1,6 +1,6 @@
 {
   "absent_features": {
-    "added_cases": 3454,
+    "added_cases": 3421,
     "afp": {
       "added_requirement": 419,
       "controls": 2661,
@@ -78,7 +78,7 @@
     },
     "input_sha256": "7b74bdb27b8faf17488472186b017c45da9b09f1aa67bf260f3a358c89dc1b60",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
-    "sha256": "8f113f2f561a71e07095b48cb061714640eeb7f157edbecf782eeb0045b32395",
+    "sha256": "129e84eabef0bef1fc2b8df1da97415b597db72443e06c87bb7b85983bff1d86",
     "sme_table": {
       "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
       "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
@@ -86,26 +86,26 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 217006,
+  "cases": 175762,
   "cases_by_event": {
-    "breakpoint": 78,
-    "floating-point-trap": 6279,
-    "illegal-instruction": 34280,
+    "breakpoint": 75,
+    "floating-point-trap": 85,
+    "illegal-instruction": 34149,
     "instruction-budget": 186,
-    "memory-fault": 11843,
-    "system-call": 164340
+    "memory-fault": 10534,
+    "system-call": 130733
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 161414,
-    "4k": 27977
+    "16k+4k": 120546,
+    "4k": 27601
   },
   "coverage": {
     "entries": 2291,
-    "entries_with_cases": 1817,
+    "entries_with_cases": 1723,
     "entries_with_illegal_cases": 2169,
     "unattributed_cases": 0,
-    "unattributed_illegal_cases": 1289
+    "unattributed_illegal_cases": 1294
   },
   "exports": {
     "16k": {
@@ -178,12 +178,12 @@
   "invalid_encoding": {
     "classifier": {
       "file": "tools/arm64-tests/invalid_encoding.py",
-      "sha256": "16add068ee0994217a90f2f716482f7fefbf00325fee0a2733381ab1af090cc0"
+      "sha256": "d21bdb72a5a5241e0690caed8b8698087eea6b19bd4c8872c89b29af90798332"
     },
-    "decided_cases": 24096,
-    "illegal_cases": 34280,
+    "decided_cases": 23967,
+    "illegal_cases": 34149,
     "script": "tools/arm64-tests/invalid-encoding-corpus.py",
-    "sha256": "e74fef4a7e0165fb1f2491104388cab8ff1c0edca09ba18e869a2db502de3308",
+    "sha256": "dbc8ce5def2d21e2235b7ac4b40b3269a6aafc9912f23c3d99dd9b077d44347a",
     "tables": [
       {
         "file": "tests/unit/arm64/a64_instruction_allocations.tsv",
@@ -205,15 +205,28 @@
     "script": "tools/arm64-tests/lse2-alignment-corpus.py",
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
-  "memory_blobs": 3357,
-  "pack_bytes": 15269785,
-  "pack_sha256": "145f235466b772aae8d2646c5bcd5117eca10fbcc5415c00a600edb718952c19",
+  "memory_blobs": 2150,
+  "pack_bytes": 14411365,
+  "pack_sha256": "f62bdd32b54e1a1836767f5e397f81edfd1db61bd24e1ba36994b7b224628bc1",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
-  "programs": 157687,
-  "records": 1120,
+  "programs": 146712,
+  "records": 1108,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
+  "sm0_vl": {
+    "cases": 2338,
+    "control_cases": 20,
+    "script": "tools/arm64-tests/sm0-vl-corpus.py",
+    "sha256": "f48a62b29d96acbd02bc0bf028ab0f1b648023226a4eff5148bbcb73516dc5b1",
+    "spill_cases": 442,
+    "svl": 64,
+    "table": {
+      "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
+      "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
+    },
+    "vector_length": 16
+  },
   "sme_native": {
     "cases": 28134,
     "events": {
@@ -229,7 +242,7 @@
     ],
     "request_sha256": "51b09afd774c8f9f43a9384a75c3d13027796a79e046ccc90d220adc1d8f16dc",
     "script": "tools/arm64-tests/sme-native-corpus.py",
-    "sha256": "0f272b4b1c6e84e95bc445698f52bd8732f5e560cbab86484175aa8f903a86eb",
+    "sha256": "cff7755f13aaa01df4b2db182078136c05ff43396271e99de8bfa428f1f58987",
     "svl": 64,
     "table": {
       "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
@@ -237,120 +250,12 @@
     }
   },
   "state_minimization": {
-    "full": 75647,
+    "full": 34403,
     "narrow": 141359
-  },
-  "sve_afp": {
-    "cases": 5105,
-    "host_features": [
-      "FEAT_SME",
-      "FEAT_SME2",
-      "FEAT_SME_F64F64",
-      "FEAT_SME_I16I64"
-    ],
-    "request_sha256": "ee01910ae89d02ef65c41ad2f65c7cef87bb3e1c74b5693389d658a24d4bc8ed",
-    "script": "tools/arm64-tests/sve-afp-corpus.py",
-    "sha256": "89e9c0fe834734f362db1a78ca4ce803d760faa8e1c63e075045c8be4e0f1161",
-    "svl": 64,
-    "table": {
-      "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
-      "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
-    },
-    "vl": 16
-  },
-  "sve_native": {
-    "cases": 23849,
-    "events": {
-      "breakpoint": 3,
-      "illegal-instruction": 99,
-      "memory-fault": 1353,
-      "system-call": 22394
-    },
-    "host": {
-      "hwcap": "0xefffffff",
-      "hwcap2": "0x3f3ff",
-      "page": 4096,
-      "vl": 16
-    },
-    "request_sha256": "3cad9992f228e6a9a33ef2b8431f2e4b10a227fb1a7d2f04a02182a11cb2dcf0",
-    "script": "tools/arm64-tests/sve-native-corpus.py",
-    "sha256": "b9ce0b1b532acffcb3f9c71c0ad4bb8b03b53af2cfa71b0be38629823cf7b213",
-    "table": {
-      "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
-      "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
-    },
-    "vl": 16
-  },
-  "sve_sme": {
-    "cases": {
-      "asl": 311,
-      "m4": 73
-    },
-    "m4": {
-      "cases": 384,
-      "host_features": [
-        "FEAT_SME",
-        "FEAT_SME2",
-        "FEAT_SME_F64F64",
-        "FEAT_SME_I16I64"
-      ],
-      "request_sha256": "e9054d5a105d21fc256eae4428cb1baa6acd08bb45d0377caf2401a31c3880c1",
-      "svl": 64
-    },
-    "m4_request_sha256": "e9054d5a105d21fc256eae4428cb1baa6acd08bb45d0377caf2401a31c3880c1",
-    "models_checked": {
-      "psel_p_ppi_": 62,
-      "revd_z_p_z_m": 8,
-      "sclamp_z_zz_": 10,
-      "sdot_z32_zzz_": 7,
-      "sdot_z32_zzzi_": 9,
-      "sqcvtn_z_mz2_": 5,
-      "sqcvtun_z_mz2_": 5,
-      "sqrshrn_z_mz2_": 6,
-      "sqrshrun_z_mz2_": 6,
-      "uclamp_z_zz_": 10,
-      "udot_z32_zzz_": 7,
-      "udot_z32_zzzi_": 9,
-      "uqcvtn_z_mz2_": 5,
-      "uqrshrn_z_mz2_": 6,
-      "whilege_pp_rr_": 13,
-      "whilegt_pp_rr_": 13,
-      "whilehi_pp_rr_": 13,
-      "whilehs_pp_rr_": 13,
-      "whilele_pp_rr_": 13,
-      "whilelo_pp_rr_": 13,
-      "whilels_pp_rr_": 13,
-      "whilelt_pp_rr_": 13
-    },
-    "script": "tools/arm64-tests/sve-sme-corpus.py",
-    "sha256": "4fe4a2eddf249bede0f03210a90dfd2ad7a0e8d47d6ab58c6b755773f4bd3da1",
-    "table": {
-      "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
-      "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
-    },
-    "vl": 16
-  },
-  "sve_trap": {
-    "cases": {
-      "authored": 26,
-      "derived": 14166
-    },
-    "events": {
-      "floating-point-trap": 6194,
-      "system-call": 7998
-    },
-    "script": "tools/arm64-tests/sve-trap-corpus.py",
-    "sha256": "71575f941a00917c2857193f3633287048778e182772247946c666a7dd9ef634",
-    "table": {
-      "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
-      "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
-    },
-    "vl": 16
   },
   "validator_cases": {
     "host-counter-frequency/v1": 9,
     "ignore-host-counter-register/v1": 1,
-    "permitted-exclusive-store-failure/v1": 318,
-    "unpredictable-nonfault-load-elements/v1": 1815
+    "permitted-exclusive-store-failure/v1": 318
   }
 }

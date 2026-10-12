@@ -10,10 +10,12 @@ script writes now:
 
 - provenance.json names the script's request, script, and table hashes;
 - the records are the script's groups, at its SVL, in both page profiles,
-  each without harness options but for its sibling of the cases that hold
-  only where the virtual CPU lacks SVE, under without_sve;
+  each without harness options;
 - each case is the script's case in order: its name, program, native
-  requirement, initial state, and data regions;
+  requirement, initial state, and data regions, except the 19 cases of the
+  SM = 0 family (the vector-length words and the Z and P spills), which no
+  record holds because the SME host traps what the virtual CPU executes
+  (the arm64-sm0-vl records);
 - each outcome agrees with the table where the table decides legality, and
   each retired count with its terminal PC and event;
 - no case that stays in streaming mode expects the FPSR XNU leaves after a
@@ -64,13 +66,20 @@ def check(native, records: list[dict], meta: dict) -> str:
                          "script")
     drafts = native.drafts()
     by_key: dict[tuple, list] = {}
+    project_defined = 0
     for draft in drafts:
-        by_key.setdefault(native.record_key(draft), []).append(draft)
-    keys = [key for group in native.GROUPS
-            for key in ((group, ()), (group, (native.WITHOUT_SVE,)))
-            if key in by_key]
+        # The SM = 0 family: the host traps it and the virtual CPU executes
+        # it, so sm0-vl-corpus.py owns its cases.
+        if native.project_defined(draft):
+            project_defined += 1
+            continue
+        by_key.setdefault(draft.group, []).append(draft)
+    if project_defined != 19:
+        raise SystemExit(f"{project_defined} project-defined cases; the "
+                         "SM = 0 family has 19 words")
+    keys = [group for group in native.GROUPS if group in by_key]
     if [(record["record"].split("/")[1], tuple(record["options"]))
-            for record in records] != keys:
+            for record in records] != [(key, ()) for key in keys]:
         raise SystemExit("the native records are not the script's groups")
     total = 0
     for record, key in zip(records, keys):

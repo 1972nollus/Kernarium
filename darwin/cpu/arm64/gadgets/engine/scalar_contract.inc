@@ -23,6 +23,8 @@ _scalar_w16 .req w0
 .set Lscalar_offset16, (16 << 6) | 16
 .set Lscalar_offset32, (16 << 6) | 32
 .set Lscalar_offset48, (16 << 6) | 48
+.set Lscalar_offset8_48, (8 << 6) | 48
+.set Lscalar_offset12_24, (12 << 6) | 24
 .set Lscalar_register0, (3 << 12) | (5 << 6)
 .set Lscalar_register8, (3 << 12) | (5 << 6) | 8
 .set Lscalar_register16, (3 << 12) | (5 << 6) | 16
