@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "jit_executor_internal.hpp"
-#include "jit_semantic_sve.hpp"
 
 #include <algorithm>
 
@@ -192,11 +191,7 @@ JitExecutor::JitExecutor(JitExecutorOptions options,
       }()} {}
 #endif
 
-JitExecutor::~JitExecutor() {
-  /* The emulator leaves through _Exit: the SVE library-exit report, when
-   * asked for, is written as each executor retires. */
-  jit::semantic::write_sve_library_report_from_environment();
-}
+JitExecutor::~JitExecutor() = default;
 
 bool JitExecutor::begin_execution(unsigned long generation,
                                   std::uint64_t guest_pc) {

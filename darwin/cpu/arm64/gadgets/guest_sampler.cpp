@@ -22,8 +22,8 @@
 
 /* Zero-size labels around each section the gadget bank (engine.S) emits
  * code into: the bank itself, the sections its gadgets push forwarding
- * variants, cold paths and FEAT_AFP twins into, the SME part, the SVE part
- * and the AArch32 part's bank and cold paths. */
+ * variants, cold paths and FEAT_AFP twins into, the SME part and the AArch32
+ * part's bank and cold paths. */
 extern "C" const char uml_arm64_gadget_bank_begin[];
 extern "C" const char uml_arm64_gadget_bank_end[];
 extern "C" const char uml_arm64_gadget_forward_section_begin[];
@@ -36,8 +36,6 @@ extern "C" const char uml_arm64_gadget_afp_section_begin[];
 extern "C" const char uml_arm64_gadget_afp_section_end[];
 extern "C" const char uml_arm64_gadget_sme_section_begin[];
 extern "C" const char uml_arm64_gadget_sme_section_end[];
-extern "C" const char uml_arm64_gadget_sve_section_begin[];
-extern "C" const char uml_arm64_gadget_sve_section_end[];
 extern "C" const char uml_arm64_gadget_a32_bank_section_begin[];
 extern "C" const char uml_arm64_gadget_a32_bank_section_end[];
 extern "C" const char uml_arm64_gadget_a32_cold_section_begin[];
@@ -78,8 +76,6 @@ namespace {
 			uml_arm64_gadget_afp_section_end},
 		{uml_arm64_gadget_sme_section_begin,
 			uml_arm64_gadget_sme_section_end},
-		{uml_arm64_gadget_sve_section_begin,
-			uml_arm64_gadget_sve_section_end},
 		{uml_arm64_gadget_a32_bank_section_begin,
 			uml_arm64_gadget_a32_bank_section_end},
 		{uml_arm64_gadget_a32_cold_section_begin,

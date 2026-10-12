@@ -4,8 +4,8 @@
 
 usage: sm0-vl-corpus.py DUMP OUTPUT
 
-A virtual CPU with FEAT_SME and without FEAT_SVE executes, outside streaming
-mode, CNTB, CNTH, CNTW and CNTD, RDVL, ADDVL, ADDPL, and the scalar INCB,
+The virtual CPU has FEAT_SME on an SME host and never FEAT_SVE, and it
+executes, outside streaming mode, CNTB, CNTH, CNTW and CNTD, RDVL, ADDVL, ADDPL, and the scalar INCB,
 INCH, INCW, INCD, DECB, DECH, DECW and DECD, every predicate pattern and
 multiplier, for one constant vector length of 128 bits (CNTB = 16, CNTD = 2);
 and LDR and STR of a vector register Z (16 bytes) and of a predicate register
@@ -18,17 +18,16 @@ has no predicate state at SM = 0, so STR of P stores zeros and LDR of P
 performs its access and drops the data. See
 darwin/cpu/arm64/detail/sm0_vector_length.hpp and docs/architecture.md.
 
-The cases go into one arm64-sm0-vl record under without_sve, which the runner
-translates for on every host, and the record's SVL makes the runner run them
-only where the virtual CPU implements the SME profile (the A64 instructions
-the engines translate them to run on any hardware, so a host without SME runs
-them with the profile assumed; see arm64-instruction-corpus-sm0-vl). The
-streaming-mode meaning of the same words, with the streaming vector length,
-belongs to the native SME records, and sme-native-corpus.py leaves out the
-cases whose results the SME host's trap would contradict. The same words are
-UNDEFINED where neither SME nor SVE is implemented, which arm64-absent-sve
-under without_sme and without_sve pins, and every other SVE word at SM = 0
-stays UNDEFINED under the arm64-absent-sve records. The record also holds
+The cases go into one arm64-sm0-vl record, and the record's SVL makes the
+runner run them only where the virtual CPU implements the SME profile (the
+A64 instructions the engines translate them to run on any hardware, so a host
+without SME runs them with the profile assumed; see
+arm64-instruction-corpus-sm0-vl). The streaming-mode meaning of the same
+words, with the streaming vector length, belongs to the native SME records,
+and sme-native-corpus.py leaves out the cases whose results the SME host's
+trap would contradict. The same words are UNDEFINED where SME is not
+implemented, which arm64-absent-sve under without_sme pins, and every other
+SVE word at SM = 0 stays UNDEFINED under the arm64-absent-sve records. The record also holds
 CONTROL cases: words the compilers emit beside the spill words (the data
 processing, contiguous loads and stores, and predicate construction of an
 SVE function) that stay UNDEFINED at SM = 0, so a binary that computes with
@@ -41,8 +40,8 @@ registers and bases: in a page, misaligned, across a page, at an unmapped
 page, through a tagged pointer, into read-only memory, and with a
 misaligned SP.
 
-Run it on a finished dump, after the step that appended the SVE trap records,
-and --repack the result; the invalid-encoding step still runs last.
+Run it on a finished dump, after the native floating-point trap step, and
+--repack the result; the invalid-encoding step still runs last.
 """
 from __future__ import annotations
 
@@ -77,7 +76,6 @@ sme_table = _load("sme_encoding_table", "sme_encoding_table.py")
 
 SITE = "tools/arm64-tests/sm0-vl-corpus.py"
 PRODUCER = "arm64-sm0-vl"
-WITHOUT_SVE = "without_sve"
 # The streaming vector length the record's SME state has, as the native SME
 # records do; it is the profile the virtual CPU implements, not what the
 # family counts.
@@ -646,10 +644,9 @@ def build() -> tuple[dict, dict]:
         programs.append({"entry": 0, "words": [[0, f"{word:08x}"],
                                                [4, f"{SVC:08x}"]]})
         cases.append(control_case(word, len(programs) - 1, why))
-    bits = 1 << corpus.OPTION_NAMES.index(WITHOUT_SVE)
     item = {
-        "record": f"{PRODUCER}/options={bits:x}", "producer": PRODUCER,
-        "site": SITE, "profiles": ["16k", "4k"], "options": [WITHOUT_SVE],
+        "record": PRODUCER, "producer": PRODUCER,
+        "site": SITE, "profiles": ["16k", "4k"], "options": [],
         "svl": SVL, "programs": programs, "cases": cases,
     }
     return item, blobs

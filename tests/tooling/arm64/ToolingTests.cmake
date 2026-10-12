@@ -7,15 +7,6 @@ uml_add_tooling_test(
     LABELS cpu
     TIMEOUT 60)
 
-# The SVE library-exit report names and ranks its rows from the checked-in
-# encoding table.
-uml_add_tooling_test(
-    NAME arm64-sve-library-report
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_sve_library_report.py
-    LABELS cpu
-    TIMEOUT 60)
-
 # The SME image scan and idiom corpus classify the words SME code executes
 # at PSTATE.SM = 0 against the SM=0 family, on synthetic ELF fixtures.
 uml_add_tooling_test(
@@ -65,38 +56,6 @@ uml_add_tooling_test(
     TIMEOUT 300)
 
 uml_add_tooling_test(
-    NAME arm64-instruction-corpus-sve-native
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_native.py
-        ${UML_ARM64_INSTRUCTION_CORPUS}
-    LABELS cpu
-    TIMEOUT 300)
-
-uml_add_tooling_test(
-    NAME arm64-instruction-corpus-sve-sme
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_sme.py
-        ${UML_ARM64_INSTRUCTION_CORPUS}
-    LABELS cpu
-    TIMEOUT 300)
-
-uml_add_tooling_test(
-    NAME arm64-instruction-corpus-sve-afp
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_afp.py
-        ${UML_ARM64_INSTRUCTION_CORPUS}
-    LABELS cpu
-    TIMEOUT 300)
-
-uml_add_tooling_test(
-    NAME arm64-instruction-corpus-sve-trap
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_trap.py
-        ${UML_ARM64_INSTRUCTION_CORPUS}
-    LABELS cpu
-    TIMEOUT 300)
-
-uml_add_tooling_test(
     NAME arm64-instruction-corpus-sm0-vl
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sm0_vl.py
@@ -134,18 +93,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         COMMAND ${Python3_EXECUTABLE} -B
             ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_sme_native_oracle.py
             $<TARGET_FILE:uml_sme_native_oracle>
-        LABELS cpu
-        TIMEOUT 60)
-    # The SVE oracle records on an arm64 Linux SVE host, where
-    # tools/arm64-tests/sve-native-oracle.sh builds it; this test drives its
-    # signal path and state transfer with base A64 cases.
-    add_executable(uml_sve_native_oracle
-        ${PROJECT_SOURCE_DIR}/tools/arm64-tests/sve_native_oracle.cpp)
-    uml_add_tooling_test(
-        NAME arm64-sve-native-oracle
-        COMMAND ${Python3_EXECUTABLE} -B
-            ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_sve_native_oracle.py
-            $<TARGET_FILE:uml_sve_native_oracle>
         LABELS cpu
         TIMEOUT 60)
 endif()

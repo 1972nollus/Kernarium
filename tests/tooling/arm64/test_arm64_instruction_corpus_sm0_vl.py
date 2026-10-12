@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Check the A64 instruction corpus's SM = 0 family records.
 
-A virtual CPU with FEAT_SME and without FEAT_SVE executes CNT[BHWD], RDVL,
+The virtual CPU, with FEAT_SME and never FEAT_SVE, executes CNT[BHWD], RDVL,
 ADDVL, ADDPL, the scalar INC[BHWD] and DEC[BHWD], and LDR and STR of Z and P
 registers outside streaming mode for a constant vector length of 128 bits, a
 deliberate departure from the architecture
@@ -12,7 +12,7 @@ writes them from the instructions' pseudocode. This test re-derives the
 contract from the current script and encoding table:
 
 - provenance.json names the script and the table, and its case counts;
-- the one arm64-sm0-vl record, under without_sve, is the script's, and
+- the one arm64-sm0-vl record is the script's, and
   every row of the family has a completed case in it, the spill rows
   with page crossings, unmapped and read-only pages, tagged pointers and
   misaligned SPs;
@@ -21,10 +21,9 @@ contract from the current script and encoding table:
   family word;
 - no arm64-sme-native case holds a family word at PSTATE.SM = 0, whose
   results are the M4's trap; and
-- the family words are undefined only where neither profile is: they are
-  in the arm64-absent-sve record under without_sme and without_sve, and in
-  no other record that expects them undefined, so no other SVE word has
-  moved.
+- the family words are undefined only where SME is not implemented: they
+  are in the arm64-absent-sve record under without_sme, and in no other
+  record that expects them undefined, so no other SVE word has moved.
 
 build-unit-corpus.py --check already refuses a pack whose recorded script or
 table hash is stale.
@@ -182,9 +181,9 @@ def check_record(gen, record: dict, meta: dict) -> int:
         if case["invalid_encoding"] and case["event"] != "illegal-instruction":
             raise SystemExit(f"{case['name']}: invalid encoding, yet it "
                              "executes")
-    if record["options"] != [gen.WITHOUT_SVE] or record["svl"] != gen.SVL:
-        raise SystemExit(f"{record['record']}: not under without_sve at "
-                         "the profile's SVL")
+    if record["options"] != [] or record["svl"] != gen.SVL:
+        raise SystemExit(f"{record['record']}: not optionless at the "
+                         "profile's SVL")
     counts = gen.counts()
     if (meta.get("script"), meta.get("vector_length")) != \
             (gen.SITE, gen.VL) or \
@@ -253,7 +252,7 @@ def check_others(gen, records: list[dict]) -> None:
                                  "virtual CPU executes")
             if undefined and not streaming and (
                     item["producer"] != "arm64-absent-sve" or
-                    item["options"] != ["without_sme", "without_sve"]):
+                    item["options"] != ["without_sme"]):
                 raise SystemExit(f"{where}: expects a family word undefined "
                                  "at SM = 0 where SME may be implemented")
 

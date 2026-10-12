@@ -126,27 +126,6 @@ enum class SmeSupport : std::uint8_t {
 	return sme_feature_mask(features);
 }
 
-/* The table rows the virtual CPU implements on `host` outside streaming
- * mode, as their non-streaming requirement bits: none without the SVE
- * profile; otherwise its SVE tokens, BF16 and I8MM where the host has them,
- * and the SME profile's bits, which the SM = 0 forms that FEAT_SME admits
- * alongside FEAT_SVE (PSEL, REVD, SCLAMP and the like) need too. */
-[[nodiscard]] inline detail::SmeFeatureMask implemented_sve_features(
-	const HostCapabilities &host) noexcept
-{
-	if (!implements_sve(host))
-		return {};
-	ArmFeatureSet features;
-	for (const ArmFeature feature : sve_features)
-		if (host.has(feature))
-			features.set(static_cast<std::size_t>(feature));
-	for (const ArmFeature feature : {ArmFeature::bf16, ArmFeature::i8mm})
-		if (host.has(feature))
-			features.set(static_cast<std::size_t>(feature));
-	return static_cast<detail::SmeFeatureMask>(sme_feature_mask(features) |
-		implemented_sme_features(host));
-}
-
 /* SVCR: PSTATE.SM in bit 0 and PSTATE.ZA in bit 1. The lazy-transfer bits
  * (CpuState::sme_loaded and sme_dirty) name the state each mode makes live
  * with the same bits: Z/P while SM is set, ZA/ZT0 while ZA is. */

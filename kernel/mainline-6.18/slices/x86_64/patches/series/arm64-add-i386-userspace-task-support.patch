@@ -68,7 +68,7 @@ index ee9fd0150f487c491d1ffa0637a004832481de8b..89a196845065fdd863ca5d0e4f5a7baa
  config GENERIC_ENTRY
  	bool
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 67fe81d06be4c8069a707adb5a846c8f833f8515..30111d4827d58517e1bbd440ecbb86ff0af9737a 100644
+index 2cad8a5b2cb68ded8c1c9ab1dded637a1b113af3..a14604ac9a6284aae08083290301afed0f79b294 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
 @@ -30,12 +30,20 @@ config UML_ARM64_SME
@@ -105,11 +105,11 @@ index 67fe81d06be4c8069a707adb5a846c8f833f8515..30111d4827d58517e1bbd440ecbb86ff
  config KUSER_HELPERS
  	bool "Enable kuser helpers page for 32-bit applications"
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index c91e868233ae0f78f1c3bd080fecceb5dddcf50e..6c7af7f398e9fc93c4a001b53ed7417013b2c3b3 100644
+index 6421e5c3f00b847682a16d31c9263deced9440de..43e54d19ab21df8276c0baf338183b1827dd77b3 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
 @@ -6,22 +6,29 @@ obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
- obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o sve.o
+ obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
  obj-$(CONFIG_UML_ARM64_AARCH32) += aarch32.o aarch32_pages.o \
  	armv8_deprecated.o ptrace32.o signal32.o sys32.o sys_compat.o
 +obj-$(CONFIG_COMPAT) += x86_32_syscalls.o
@@ -334,10 +334,10 @@ index 3bfa08cbdb8451ae06f112a645439aa7fccbdbf6..171f0559dc68a7c4cf56c1f95f9025a0
  #define ELF_NGREG 27
  typedef elf_greg_t elf_gregset_t[ELF_NGREG];
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
-index 4041ad87142823ec92cc0afc65d49e97933b13a9..da8bed3f15d86281657a038f0d4306aa91f61442 100644
+index 25feaa3f56803976c127c0e6c44789f275cfbc3e..25bb617d166e1d1b304f8b852b760c5b2a185e2e 100644
 --- a/arch/arm64/um/asm/processor.h
 +++ b/arch/arm64/um/asm/processor.h
-@@ -99,6 +99,17 @@ static __always_inline void cpu_relax(void)
+@@ -91,6 +91,17 @@ static __always_inline void cpu_relax(void)
  #endif
  
  #ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
@@ -2589,10 +2589,10 @@ index 9ff2fa2288c4a59014725de16b21af4e5816ba23..766807e1ee60ea42848e8159bdfc5123
  	/*
  	 * If no time passes, then sched_yield may not actually yield, causing
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index ac307fbcc5fd0af2913508930b1d7bb7e2457bfa..414ca37f659257aa5fb11713d9d4ccd6e2933292 100644
+index a8b3795db98ba90741d79777e074b5abd2c96d68..3e4611423ac5bd74b8b47b24e7f70ec987cc2228 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -458,6 +458,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -444,6 +444,10 @@ void userspace(struct uml_pt_regs *registers)
  		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
  		 */
  		registers->is_user = 1;

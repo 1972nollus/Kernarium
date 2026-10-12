@@ -21,12 +21,10 @@
 #include "cpu/arm64/jit/jit_semantic_memory.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/jit/jit_sme_transition.hpp"
-#include "cpu/arm64/jit/jit_sve_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "cpu/arm64/detail/sm0_vector_length.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/sme_profile.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/host_capabilities.hpp"
 
 #include <algorithm>
@@ -82,14 +80,10 @@ struct Witness final {
 
 /* The host's own profile with the SME2 (or SME1-only) profile at `svl`,
  * or without SME at svl 0, and without FEAT_CSSC, so CNT takes its
- * fallback as on the M4. It carries no SVE profile whatever the guest-SVE
- * policy says: the non-streaming SVE rows are arm64-jit-sve-control's and
- * arm64-jit-sve-forms', and with them these checks' "every other row is
- * the illegal exit" no longer holds. */
+ * fallback as on the M4. It carries no SVE token, as no virtual CPU does. */
 [[nodiscard]] uml::cpu::HostCapabilities sme_host(unsigned svl,
                                                   bool sme2 = true) {
-  auto host = arm64::sve_host_for_support(uml::cpu::host_capabilities(),
-                                          arm64::SveSupport::none);
+  auto host = ::uml::platform::without_sve(uml::cpu::host_capabilities());
   for (const auto feature :
        {uml::cpu::ArmFeature::sme, uml::cpu::ArmFeature::sme2,
         uml::cpu::ArmFeature::sme_f64f64, uml::cpu::ArmFeature::sme_i16i64})
@@ -533,9 +527,8 @@ void rows_translate_exactly_where_implemented() {
  * of a family word is the code of the ADD, SUB, MOVZ, MOVN or NOP that
  * detail::sm0_vector_length_equivalent() names, in every mode without
  * PSTATE.SM, at every SVL and with SME2 or without, and in streaming mode
- * it stays the SVL-based form. Without SME, or with the SVE profile (the
- * SVE path owns the words there), the SME-only translation does not apply:
- * the former is the illegal exit. */
+ * it stays the SVL-based form. Without SME the SME-only translation does
+ * not apply: the words are the illegal exit. */
 void vector_length_family_translates_as_its_base_word() {
   constexpr std::uint64_t pc = 0x4f58'0000U;
   const auto words = uml::emulator::tests::sm0_vector_length::words();
@@ -584,9 +577,9 @@ void vector_length_family_translates_as_its_base_word() {
 /* The spill words translate outside streaming mode, at every SVL, with SME2
  * or without, and with ZA enabled or not: a vector register Z reads or
  * writes V and so the block accesses the FP state, a predicate register does
- * not. In streaming mode they keep the SVE rows' streaming translation, and
- * the SVE profile owns them where it is implemented; without SME they are
- * the illegal exit, as is every other SVE load and store. */
+ * not. In streaming mode they keep the SVE rows' streaming translation;
+ * without SME they are the illegal exit, as is every other SVE load and
+ * store. */
 void spill_words_translate_as_memory_accesses() {
   constexpr std::uint64_t pc = 0x4f58'8000U;
   const auto spills = uml::emulator::tests::sm0_vector_length::spills();

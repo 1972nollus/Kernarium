@@ -22,9 +22,10 @@ namespace uml::cpu::arm64::detail {
  *
  * The features are the profile's, as SmeFeatureMask bits; svl_bytes is the
  * streaming vector length, which nothing here assumes. A row's
- * non-streaming requirement, which the SVE profile decides, has no helper
- * yet: no engine executes an SVE form outside streaming mode, and without
- * an SVE feature that requirement decides what these helpers do.
+ * non-streaming requirement, which only an SVE profile decides, has no
+ * helper: no engine executes an SVE form outside streaming mode, apart from
+ * the SM = 0 family (sm0_vector_length.hpp), which the engines decode
+ * themselves.
  */
 
 /* True for a word in the SVE (op0 x, op1 0010) or SME (op0 1, op1 0000) space. */
