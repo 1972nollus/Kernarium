@@ -632,9 +632,14 @@ compare.
 The result, on the M1 Ultra at 4 vCPUs, was 2.0x the armv7 single-core and
 multi-core scores of the start, with the aarch64 score unchanged. Against
 the aarch64 build the armv7 ratio went from 0.53 and 0.46 to 1.06 and 0.96
-(single-core and multi-core). The aarch64 build scored 0.3x to 0.5x of its
-M4 scores on PDF Rendering, Text Rendering and Ray Tracing and 0.5x to 0.7x
-on the other workloads, so these ratios overstate a like-for-like one.
+(single-core and multi-core). These ratios overstate a like-for-like one:
+the aarch64 build of that base predates the semantic-helper exit work above,
+and on PDF Rendering, Text Rendering and Ray Tracing its memory-run proofs
+failed on hot loads whenever a run's data layout put the base near a page
+end, tens of millions of helper exits per workload. It scored 0.3x to 0.5x
+of its M4 scores there and 0.5x to 0.7x elsewhere. A build with that work,
+the same one on both hosts, scores 0.5x to 0.7x of the M4 on every workload
+at 4 KiB, at 1 and at 4 vCPUs.
 
 | Attempt | Disposition and lesson |
 | --- | --- |
