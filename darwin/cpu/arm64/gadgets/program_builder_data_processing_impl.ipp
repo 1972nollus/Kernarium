@@ -601,16 +601,28 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			return illegal_instruction(context);
 		const unsigned destination = instruction & 31U;
 		const unsigned source = (instruction >> 5) & 31U;
-		if (destination == source && destination != 31U)
+		if (destination == source && destination != 31U) {
+			/* The baked entry reads no register field: the immediate
+			 * is its only operand. */
 			emit(words, logical_immediate_inplace_gadget(is_64_bit,
 				(instruction >> 29) & 3U, destination));
-		else
+			emit(words, static_cast<std::uintptr_t>(*immediate));
+		} else {
 			emit(words, logical_immediate_gadget(is_64_bit,
 				(instruction >> 29) & 3U, source == 31U,
 				destination == 31U));
-		emit(words, destination |
-			(static_cast<std::uintptr_t>(source) << 8));
-		emit(words, *immediate);
+			const auto registers = destination |
+				(static_cast<std::uintptr_t>(source) << 8);
+			/* A 32-bit immediate shares the register word. */
+			if (is_64_bit) {
+				emit(words, registers);
+				emit(words, static_cast<std::uintptr_t>(*immediate));
+			} else {
+				emit(words, registers |
+					(static_cast<std::uintptr_t>(*immediate)
+					 << 32));
+			}
+		}
 	} else if ((instruction & 0x1f80'0000U) == 0x1300'0000U) {
 		const bool is_64_bit = (instruction >> 31) != 0;
 		const auto n = (instruction >> 22) & 1U;

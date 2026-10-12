@@ -383,6 +383,12 @@ unselected, because removing them would move every later entry.
 `arm64-gadget-test-bit-branch` runs every bit, both polarities, XZR and each
 shape the builder emits.
 
+A logical immediate on W registers shares the word that names its registers,
+in bits 63:32 above the destination and source fields. A 64-bit immediate has a
+word of its own, and a form whose destination is its source, which bakes the
+register into the entry, has that word alone. `arm64-gadget-packed-immediate`
+runs every W encoding and a sample of the X ones in each shape.
+
 The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
 too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and
 order file. It follows the arm64 region in an image that carries both and

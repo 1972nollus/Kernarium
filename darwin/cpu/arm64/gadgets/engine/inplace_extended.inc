@@ -24,12 +24,12 @@
  */
 
 /* ---- logical immediate, Rd == Rn, both ordinary registers ---------------- */
-/* Two operand words: the register fields the baked entry no longer reads, and
- * the immediate Builder already decoded. One LDP replaces the two LDRs. */
+/* One operand word, the immediate Builder already decoded: the register
+ * fields the baked entry no longer reads are not in the stream. */
 .macro logical_inplace_entry operation, bits64, reg, suffix, forward
 	.set Lipl\@, 0x8000 | (\reg * 8)
-scalar_entry logical_immediate_inplace_\suffix\()_\reg, \forward, 12, Lipl\@, Lipl\@, Lscalar_none, Lscalar_none, 2
-	ldp x8, x14, [_stream], #16
+scalar_entry logical_immediate_inplace_\suffix\()_\reg, \forward, 12, Lipl\@, Lipl\@, Lscalar_none, Lscalar_none, 1
+	ldr x14, [_stream], #8
 	.if \forward & 1
 	mov x15, x0
 	.else
