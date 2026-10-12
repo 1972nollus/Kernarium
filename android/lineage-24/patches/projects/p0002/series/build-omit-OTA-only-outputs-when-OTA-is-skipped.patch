@@ -12,10 +12,10 @@ recovery-from-boot patch into target-files.
  1 file changed, 5 insertions(+)
 
 diff --git a/core/Makefile b/core/Makefile
-index 39cad66a4443bfe6cf8d06e53e82e53bb0e30ae5..5e8481e16d85e07ee355a55bd5679575d62a70bb 100644
+index 65c45cb835d01281314fd418cc4f52947e337d92..de2b83bc540f76470d8277d9f6a4658e3f0b7162 100644
 --- a/core/Makefile
 +++ b/core/Makefile
-@@ -6356,10 +6356,13 @@ built_ota_tools :=
+@@ -6379,10 +6379,13 @@ built_ota_tools :=
  # We can't build static executables when SANITIZE_TARGET=address
  ifeq (,$(filter address, $(SANITIZE_TARGET)))
  ifeq (false,$(AB_OTA_UPDATER))
@@ -29,7 +29,7 @@ index 39cad66a4443bfe6cf8d06e53e82e53bb0e30ae5..5e8481e16d85e07ee355a55bd5679575
  
  $(BUILT_TARGET_FILES_DIR): PRIVATE_OTA_TOOLS := $(built_ota_tools)
  
-@@ -6969,11 +6972,13 @@ ifneq ($(PRODUCT_SYSTEM_DLKM_BASE_FS_PATH),)
+@@ -7011,11 +7014,13 @@ ifneq ($(PRODUCT_SYSTEM_DLKM_BASE_FS_PATH),)
  	  $(zip_root)/META/$(notdir $(PRODUCT_SYSTEM_DLKM_BASE_FS_PATH))
  endif
  ifeq ($(TARGET_OTA_ALLOW_NON_AB),true)

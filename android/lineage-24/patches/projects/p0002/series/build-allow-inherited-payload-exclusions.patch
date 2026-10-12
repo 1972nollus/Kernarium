@@ -10,7 +10,7 @@ Subject: [PATCH] build: allow inherited payload exclusions
  3 files changed, 9 insertions(+)
 
 diff --git a/core/main.mk b/core/main.mk
-index 81bc8ce7396464d71d708a513b3714d3541a11ab..6e220e116cbedb5c8162abc106fb700046f99189 100644
+index 6461bf2615f8015f7e45fdbad9776e094eb8865f..e4ec9c06834cdc28e32748455cdf73e21483b62f 100644
 --- a/core/main.mk
 +++ b/core/main.mk
 @@ -1008,12 +1008,14 @@ define product-installed-modules
@@ -29,7 +29,7 @@ index 81bc8ce7396464d71d708a513b3714d3541a11ab..6e220e116cbedb5c8162abc106fb7000
  endef
  
 diff --git a/core/product.mk b/core/product.mk
-index 1ba058dc2856aee5f8bae1f3042a0bfd657e0bac..5347415a9f21b471903c9f4b52255e7871cf2fe5 100644
+index f62a539bfb0f3487dfad83b8b7b523b0ad9e53ec..fcc12110df2a8cde2c5a1eca8bf7b7c741b47ccd 100644
 --- a/core/product.mk
 +++ b/core/product.mk
 @@ -45,6 +45,7 @@ _product_single_value_vars += PRODUCT_AAPT_PREF_CONFIG
@@ -49,7 +49,7 @@ index 1ba058dc2856aee5f8bae1f3042a0bfd657e0bac..5347415a9f21b471903c9f4b52255e78
  # The OTA key(s) specified by the product config, if any.  The names
  # of these keys are stored in the target-files zip so that post-build
 diff --git a/core/product_config.mk b/core/product_config.mk
-index 2bcc764b55a5a1d207a4b077d83f15e3c1130beb..354a6ea293e83444cc2f5003a0681701d306ca61 100644
+index 5883e213b5811794c79e399711f281d650f4315b..2d7980f0132f614256554ec15a30a25d90855693 100644
 --- a/core/product_config.mk
 +++ b/core/product_config.mk
 @@ -268,6 +268,11 @@ INTERNAL_PRODUCT := $(current_product_makefile)

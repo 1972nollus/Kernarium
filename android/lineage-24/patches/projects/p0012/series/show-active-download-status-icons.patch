@@ -9,10 +9,10 @@ Use low importance for DownloadProvider progress notifications. They remain sile
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/src/com/android/providers/downloads/DownloadNotifier.java b/src/com/android/providers/downloads/DownloadNotifier.java
-index 1e4dd0ac26f407c9531951d6a8b9a22efe8c0153..36c893b793731f742a22b9339737c5d1f3eeaf97 100644
+index 2d3491e996f0f27c38a368bddcb2b2d68fdfe875..16957e496aedc3f4f455af778a797a0c6f46facc 100644
 --- a/src/com/android/providers/downloads/DownloadNotifier.java
 +++ b/src/com/android/providers/downloads/DownloadNotifier.java
-@@ -104,7 +104,7 @@ public class DownloadNotifier {
+@@ -107,7 +107,7 @@ public class DownloadNotifier {
          // Ensure that all our channels are ready to use
          NotificationChannel activeNotifChannel = new NotificationChannel(CHANNEL_ACTIVE,
                  context.getText(R.string.download_running),

@@ -8,7 +8,7 @@ Subject: [PATCH] audio: make assistant default configurable
  1 file changed, 11 insertions(+)
 
 diff --git a/services/core/java/com/android/server/audio/AudioService.java b/services/core/java/com/android/server/audio/AudioService.java
-index 45576af37259a4edd26cd567f32db3ac3a87bdb7..2e085b4fd8b78a86cb881fe88742545168bdb44a 100644
+index 7f9555c7713cf23cfe9bf21a1ed0d0985b9bde2b..b8ed9206a81c23266170c49996278fc21767b0d2 100644
 --- a/services/core/java/com/android/server/audio/AudioService.java
 +++ b/services/core/java/com/android/server/audio/AudioService.java
 @@ -1713,6 +1713,17 @@ public class AudioService extends IAudioService.Stub

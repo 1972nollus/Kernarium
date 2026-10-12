@@ -13,7 +13,7 @@ Subject: [PATCH] Settings keep network software controls
  6 files changed, 36 insertions(+), 78 deletions(-)
 
 diff --git a/res/xml/network_provider_internet.xml b/res/xml/network_provider_internet.xml
-index 7a33367231703d8334cab7b4d8c05f902d9cd79d..28991363a376a6b619f35588b4680a37e15ef291 100644
+index 07f728496731031fdd6c19955661989650bc2d25..2d64df770ca5f44928aad2b4f8646fc76181881c 100644
 --- a/res/xml/network_provider_internet.xml
 +++ b/res/xml/network_provider_internet.xml
 @@ -20,62 +20,17 @@
@@ -82,7 +82,7 @@ index 7a33367231703d8334cab7b4d8c05f902d9cd79d..28991363a376a6b619f35588b4680a37
      <com.android.settings.datausage.DataSaverPreference
          android:key="restrict_background_parent_entry"
          android:title="@string/data_saver_title"
-@@ -104,18 +59,4 @@
+@@ -105,18 +60,4 @@
          android:positiveButtonText="@string/save"
          android:negativeButtonText="@android:string/cancel" />
  
@@ -102,7 +102,7 @@ index 7a33367231703d8334cab7b4d8c05f902d9cd79d..28991363a376a6b619f35588b4680a37
 -        settings:controller="com.android.settings.network.CellularSecurityPreferenceController"/>
  </PreferenceScreen>
 diff --git a/src/com/android/settings/network/NetworkDashboardFragment.java b/src/com/android/settings/network/NetworkDashboardFragment.java
-index b1900cff86b9255f15dc15ba4b36ffcddd67ef24..7dfe2a3fc6ec8a8f3112601f71629a2567ea6661 100644
+index 30d4b5bb3ea15175b007641ac2ebf4544fd5dc4f..738668bc5a0958d6a727547111c5d0d456ad6f5d 100644
 --- a/src/com/android/settings/network/NetworkDashboardFragment.java
 +++ b/src/com/android/settings/network/NetworkDashboardFragment.java
 @@ -59,10 +59,6 @@ public class NetworkDashboardFragment extends DashboardFragment implements
@@ -116,7 +116,7 @@ index b1900cff86b9255f15dc15ba4b36ffcddd67ef24..7dfe2a3fc6ec8a8f3112601f71629a25
      }
  
      @Override
-@@ -123,6 +119,6 @@ public class NetworkDashboardFragment extends DashboardFragment implements
+@@ -119,6 +115,6 @@ public class NetworkDashboardFragment extends DashboardFragment implements
  
      @Override
      public @Nullable String getPreferenceScreenBindingKey(@NonNull Context context) {
@@ -125,10 +125,10 @@ index b1900cff86b9255f15dc15ba4b36ffcddd67ef24..7dfe2a3fc6ec8a8f3112601f71629a25
      }
  }
 diff --git a/src/com/android/settings/network/NetworkProviderSettings.java b/src/com/android/settings/network/NetworkProviderSettings.java
-index 9bf8453de355dd0c2d7eef9fce7f7958f229e836..f8d47141eb072aaace5342fd7a8315045f489460 100644
+index 40eb5b685cf0c60599bcc62cf995e5e293deddf5..c5b3cc9ec4626267ac17815a127cc91ffbe90f89 100644
 --- a/src/com/android/settings/network/NetworkProviderSettings.java
 +++ b/src/com/android/settings/network/NetworkProviderSettings.java
-@@ -172,6 +172,7 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
+@@ -186,6 +186,7 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
      static final String PREF_KEY_DATA_USAGE = "non_carrier_data_usage";
      private static final String PREF_KEY_RESET_INTERNET = "resetting_your_internet";
      private static final String PREF_KEY_WIFI_STATUS_MESSAGE = "wifi_status_message_footer";
@@ -136,7 +136,7 @@ index 9bf8453de355dd0c2d7eef9fce7f7958f229e836..f8d47141eb072aaace5342fd7a831504
      private static final String PREF_KEY_ETHERNET_INTERFACES = "ethernet_interfaces";
  
      private static final int REQUEST_CODE_WIFI_DPP_ENROLLEE_QR_CODE_SCANNER = 0;
-@@ -422,6 +423,10 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
+@@ -481,6 +482,10 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
          return (mWifiManager != null);
      }
  
@@ -147,7 +147,7 @@ index 9bf8453de355dd0c2d7eef9fce7f7958f229e836..f8d47141eb072aaace5342fd7a831504
      @Override
      public void onCreate(Bundle icicle) {
          super.onCreate(icicle);
-@@ -475,7 +480,8 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
+@@ -537,7 +542,8 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
                  if (fixConnectivityItem == null) {
                      return;
                  }
@@ -157,9 +157,9 @@ index 9bf8453de355dd0c2d7eef9fce7f7958f229e836..f8d47141eb072aaace5342fd7a831504
              }
          };
  
-@@ -528,8 +534,14 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
-             mResetInternetPreference.setVisible(false);
+@@ -601,8 +607,14 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
          }
+         addMobileDataPreferenceController();
          addNetworkMobileProviderController();
 -        addWifiSwitchPreferenceController();
 -        if (com.android.settings.connectivity.Flags.ethernetSettings()) {
@@ -174,7 +174,7 @@ index 9bf8453de355dd0c2d7eef9fce7f7958f229e836..f8d47141eb072aaace5342fd7a831504
              addEthernetSwitchPreferenceController();
          } else {
              addConnectedEthernetNetworkController();
-@@ -614,7 +626,7 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
+@@ -699,7 +711,7 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
              mWifiPickerTracker = mWifiPickerTrackerHelper.getWifiPickerTracker();
          }
          mInternetUpdater = new InternetUpdater(getContext(), getSettingsLifecycle(), this);
@@ -183,19 +183,19 @@ index 9bf8453de355dd0c2d7eef9fce7f7958f229e836..f8d47141eb072aaace5342fd7a831504
              mEthernetManager = getContext().getSystemService(EthernetManager.class);
              mEthernetTracker = EthernetTrackerImpl.getInstance(
                      getContext());
-@@ -675,7 +687,7 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
-             return;
+@@ -768,7 +780,7 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
          }
          mAirplaneModeEnabler.start();
+         mDataStateListener.start(mSubId);
 -        if (com.android.settings.connectivity.Flags.ethernetSettings()) {
 +        if (useEthernetSettings()) {
              mEthernetTracker.registerInterfaceListener(this::onInterfaceListChanged);
          }
      }
-@@ -728,7 +740,7 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
-         getView().removeCallbacks(mUpdateWifiEntryPreferencesRunnable);
+@@ -823,7 +835,7 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
          getView().removeCallbacks(mHideProgressBarRunnable);
          mAirplaneModeEnabler.stop();
+         mDataStateListener.stop();
 -        if (com.android.settings.connectivity.Flags.ethernetSettings()) {
 +        if (useEthernetSettings()) {
              mEthernetTracker.unregisterInterfaceListener(this::onInterfaceListChanged);

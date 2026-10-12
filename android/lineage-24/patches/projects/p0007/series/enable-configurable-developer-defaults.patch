@@ -21,10 +21,10 @@ index 580dce2c63b756f8fc8aec5fc08f70a2d61894a5..60a8478b62ea50b40e6702c8417f16ef
      <integer name="def_paired_device_location_mode">1</integer>
      <bool name="assisted_gps_enabled">false</bool>
 diff --git a/packages/SettingsProvider/src/com/android/providers/settings/DatabaseHelper.java b/packages/SettingsProvider/src/com/android/providers/settings/DatabaseHelper.java
-index 3a8415bf34e4798565a3356e05978cc4f794e56b..719139c91c6210f0ea2d0c089282b91a1582b271 100644
+index dc2285f3eaee3351354f9d78e028aaa7dbc1285f..9e2077bd719b4836046033779d0f484bf9e5f043 100644
 --- a/packages/SettingsProvider/src/com/android/providers/settings/DatabaseHelper.java
 +++ b/packages/SettingsProvider/src/com/android/providers/settings/DatabaseHelper.java
-@@ -2297,6 +2297,9 @@ class DatabaseHelper extends SQLiteOpenHelper {
+@@ -2301,6 +2301,9 @@ class DatabaseHelper extends SQLiteOpenHelper {
              loadBooleanSetting(stmt, Settings.Global.ASSISTED_GPS_ENABLED,
                      R.bool.assisted_gps_enabled);
  

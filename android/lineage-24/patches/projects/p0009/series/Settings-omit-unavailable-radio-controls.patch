@@ -13,11 +13,11 @@ connected-devices tile is no longer re-enabled at runtime.
  res/xml/development_settings.xml              | 25 -------------------
  res/xml/sound_settings.xml                    |  9 -------
  .../android/settings/SettingsActivity.java    |  6 -----
- .../DevelopmentSettingsDashboardFragment.java |  6 -----
- 5 files changed, 10 insertions(+), 46 deletions(-)
+ .../DevelopmentSettingsDashboardFragment.java |  8 ------
+ 5 files changed, 10 insertions(+), 48 deletions(-)
 
 diff --git a/AndroidManifest.xml b/AndroidManifest.xml
-index c0cd7748c8f2b3cf0f280600cb023aa18257f78c..594de9d524ab8b655ae4533ec6d0cadccb6e5164 100644
+index 2523082b31132439fad2dd97566ac1a13f4e95b7..0fe185e9e06d2206f5a55eb774a83fe186e37201 100644
 --- a/AndroidManifest.xml
 +++ b/AndroidManifest.xml
 @@ -367,6 +367,7 @@
@@ -36,7 +36,7 @@ index c0cd7748c8f2b3cf0f280600cb023aa18257f78c..594de9d524ab8b655ae4533ec6d0cadc
              android:configChanges="orientation|keyboardHidden|screenSize">
              <intent-filter android:priority="1">
                  <action android:name="android.settings.WIFI_SETTINGS"/>
-@@ -609,6 +611,7 @@
+@@ -620,6 +622,7 @@
              android:label="@string/wifi_configure_settings_preference_title"
              android:icon="@drawable/ic_settings_wireless"
              android:exported="true"
@@ -44,7 +44,7 @@ index c0cd7748c8f2b3cf0f280600cb023aa18257f78c..594de9d524ab8b655ae4533ec6d0cadc
              android:configChanges="orientation|keyboardHidden|screenSize">
              <intent-filter android:priority="1">
                  <action android:name="android.settings.WIFI_IP_SETTINGS" />
-@@ -633,6 +636,7 @@
+@@ -644,6 +647,7 @@
              android:label="@string/wifi_saved_access_points_label"
              android:icon="@drawable/ic_settings_wireless"
              android:exported="true"
@@ -52,7 +52,7 @@ index c0cd7748c8f2b3cf0f280600cb023aa18257f78c..594de9d524ab8b655ae4533ec6d0cadc
              android:configChanges="orientation|keyboardHidden|screenSize">
              <intent-filter android:priority="1">
                  <action android:name="android.settings.WIFI_SAVED_NETWORK_SETTINGS" />
-@@ -647,6 +651,7 @@
+@@ -658,6 +662,7 @@
          </activity>
  
          <activity android:name=".Settings$WifiInfoActivity"
@@ -60,7 +60,7 @@ index c0cd7748c8f2b3cf0f280600cb023aa18257f78c..594de9d524ab8b655ae4533ec6d0cadc
              android:exported="true">
              <intent-filter>
                  <action android:name="android.intent.action.MAIN"/>
-@@ -5434,6 +5439,7 @@
+@@ -5450,6 +5455,7 @@
  
          <activity android:name="Settings$AdvancedConnectedDeviceActivity"
                    android:exported="true"
@@ -68,7 +68,7 @@ index c0cd7748c8f2b3cf0f280600cb023aa18257f78c..594de9d524ab8b655ae4533ec6d0cadc
                    android:label="@string/connected_device_connections_title">
              <intent-filter android:priority="1">
                  <action android:name="com.android.settings.ADVANCED_CONNECTED_DEVICE_SETTINGS" />
-@@ -5465,6 +5471,7 @@
+@@ -5481,6 +5487,7 @@
          <activity android:name="Settings$BluetoothDeviceDetailActivity"
                    android:label="@string/device_details_title"
                    android:exported="true"
@@ -76,7 +76,7 @@ index c0cd7748c8f2b3cf0f280600cb023aa18257f78c..594de9d524ab8b655ae4533ec6d0cadc
                    android:permission="android.permission.BLUETOOTH_CONNECT">
              <intent-filter android:priority="1">
                  <action android:name="com.android.settings.BLUETOOTH_DEVICE_DETAIL_SETTINGS" />
-@@ -5482,6 +5489,7 @@
+@@ -5498,6 +5505,7 @@
              android:name=".Settings$PreviouslyConnectedDeviceActivity"
              android:label="@string/connected_device_saved_title"
              android:exported="true"
@@ -84,7 +84,7 @@ index c0cd7748c8f2b3cf0f280600cb023aa18257f78c..594de9d524ab8b655ae4533ec6d0cadc
              android:permission="android.permission.BLUETOOTH_CONNECT"
              android:icon="@drawable/ic_homepage_connected_device">
              <intent-filter android:priority="1">
-@@ -5952,6 +5960,7 @@
+@@ -5968,6 +5976,7 @@
          <activity android:name="Settings$BluetoothDashboardActivity"
              android:label="@string/bluetooth_settings_title"
              android:permission="android.permission.BLUETOOTH_CONNECT"
@@ -92,7 +92,7 @@ index c0cd7748c8f2b3cf0f280600cb023aa18257f78c..594de9d524ab8b655ae4533ec6d0cadc
              android:exported="true">
              <intent-filter>
                  <action android:name="android.settings.BLUETOOTH_DASHBOARD_SETTINGS" />
-@@ -5964,6 +5973,7 @@
+@@ -5980,6 +5989,7 @@
          <activity
              android:name="com.android.settings.connecteddevice.audiosharing.AudioSharingActivity"
              android:label="@string/audio_sharing_title"
@@ -101,10 +101,10 @@ index c0cd7748c8f2b3cf0f280600cb023aa18257f78c..594de9d524ab8b655ae4533ec6d0cadc
              <intent-filter>
                  <action android:name="com.android.settings.BLUETOOTH_AUDIO_SHARING_SETTINGS" />
 diff --git a/res/xml/development_settings.xml b/res/xml/development_settings.xml
-index 076ea4d6acd198c4c2db85aab82bf063184095bb..6f8e8e56d4e966144e9730db998e77509081a1a2 100644
+index a04c5c779d63f797d0a51dbd8a38d5ef51cc14f0..a3c394c1c7b03203d122d4cef25b5e73391ac638 100644
 --- a/res/xml/development_settings.xml
 +++ b/res/xml/development_settings.xml
-@@ -302,31 +302,6 @@
+@@ -308,31 +308,6 @@
          android:title="@string/debug_networking_category"
          android:order="400">
  
@@ -137,7 +137,7 @@ index 076ea4d6acd198c4c2db85aab82bf063184095bb..6f8e8e56d4e966144e9730db998e7750
              android:key="mobile_data_always_on"
              android:title="@string/mobile_data_always_on"
 diff --git a/res/xml/sound_settings.xml b/res/xml/sound_settings.xml
-index 73f3167d20fe1446a5c0b9e7f52952e7e9158229..42210085d1ed2b7fa5db9a0aa1bb2b298d742427 100644
+index 2ddbd52e2593d19ce54632047809a9831be6a220..e886002c9822ded67edf5f1d8a4f2544ee714928 100644
 --- a/res/xml/sound_settings.xml
 +++ b/res/xml/sound_settings.xml
 @@ -34,15 +34,6 @@
@@ -174,10 +174,10 @@ index a369a9b67e1017184c49fe11b63780e6855dacb3..a6ea148b3db4effbd47db6478577be4b
                          Settings.PowerUsageSummaryActivity.class.getName()),
                  mBatteryPresent, isAdmin) || somethingChanged;
 diff --git a/src/com/android/settings/development/DevelopmentSettingsDashboardFragment.java b/src/com/android/settings/development/DevelopmentSettingsDashboardFragment.java
-index f7ebc6c01d7902360241687224c7641db550b19c..205c9400852e0d8df71a59418fc7919fb2481ac8 100644
+index 0d6ff75450c7f3b4b0be913be4838974df635a16..982673a0e3dc8eb2e2af81230cce345bc397d9bb 100644
 --- a/src/com/android/settings/development/DevelopmentSettingsDashboardFragment.java
 +++ b/src/com/android/settings/development/DevelopmentSettingsDashboardFragment.java
-@@ -518,8 +518,6 @@ public class DevelopmentSettingsDashboardFragment extends RestrictedDashboardFra
+@@ -519,8 +519,6 @@ public class DevelopmentSettingsDashboardFragment extends RestrictedDashboardFra
          controllers.add(new LocalBackupPasswordPreferenceController(context));
          controllers.add(new StayAwakePreferenceController(context, lifecycle));
          controllers.add(new HdcpCheckingPreferenceController(context));
@@ -186,14 +186,16 @@ index f7ebc6c01d7902360241687224c7641db550b19c..205c9400852e0d8df71a59418fc7919f
          controllers.add(new OemUnlockPreferenceController(context, activity, fragment));
          controllers.add(new Enable16kPagesPreferenceController(context, fragment));
          controllers.add(new PictureColorModePreferenceController(context, lifecycle));
-@@ -550,10 +548,6 @@ public class DevelopmentSettingsDashboardFragment extends RestrictedDashboardFra
+@@ -552,12 +550,6 @@ public class DevelopmentSettingsDashboardFragment extends RestrictedDashboardFra
          controllers.add(new LogdSizePreferenceController(context));
          controllers.add(new LogPersistPreferenceController(context, fragment, lifecycle));
          controllers.add(new CameraLaserSensorPreferenceController(context));
--        controllers.add(new WifiDisplayCertificationPreferenceController(context));
--        controllers.add(new WifiVerboseLoggingPreferenceController(context));
--        controllers.add(new WifiScanThrottlingPreferenceController(context));
--        controllers.add(new WifiNonPersistentMacRandomizationPreferenceController(context));
+-        if (context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_WIFI)) {
+-            controllers.add(new WifiDisplayCertificationPreferenceController(context));
+-            controllers.add(new WifiVerboseLoggingPreferenceController(context));
+-            controllers.add(new WifiScanThrottlingPreferenceController(context));
+-            controllers.add(new WifiNonPersistentMacRandomizationPreferenceController(context));
+-        }
          controllers.add(new MobileDataAlwaysOnPreferenceController(context));
          controllers.add(new TetheringHardwareAccelPreferenceController(context));
          controllers.add(new NfcSnoopLogPreferenceController(context, fragment));

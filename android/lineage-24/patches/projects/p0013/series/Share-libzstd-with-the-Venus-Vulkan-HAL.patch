@@ -12,13 +12,13 @@ tree the same visibility the AOSP Mesa port has.
  1 file changed, 1 insertion(+)
 
 diff --git a/Android.bp b/Android.bp
-index 85d972884c99d8cde0a2b69ef4fccdb82411f81e..48a0ffffc6e87a6b985d4e3b4173ca571df2d1c8 100644
+index 51f5d112f94d45c589827fe4921708bbe0b99799..793a0c9eb30d210278d762f6c44c1ad1bb503031 100644
 --- a/Android.bp
 +++ b/Android.bp
-@@ -77,6 +77,7 @@ cc_library {
-         "//external/elfutils:__subpackages__",
+@@ -78,6 +78,7 @@ cc_library {
          "//external/libbpf:__subpackages__",
          "//external/mesa3d:__subpackages__",
+         "//external/rsync:__subpackages__",
 +        "//external/mesa3d-venus:__subpackages__",
          "//external/squashfs-tools/squashfs-tools:__subpackages__",
          "//external/stg:__subpackages__",
