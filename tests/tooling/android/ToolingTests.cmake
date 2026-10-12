@@ -33,6 +33,14 @@ uml_add_tooling_test(
     TIMEOUT 60)
 
 uml_add_tooling_test(
+    NAME lineage24-fdroid-source
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_fdroid_source.py
+        --source-root ${PROJECT_SOURCE_DIR}
+    LABELS android;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME lineage24-release-contract
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_release_contract.py
