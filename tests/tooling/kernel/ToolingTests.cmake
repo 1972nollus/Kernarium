@@ -5,20 +5,20 @@ uml_add_tooling_test(
     COMMAND
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_slice_contract.sh
     LABELS kernel;audit
-    TIMEOUT 30)
+    TIMEOUT 240)
 
 uml_add_tooling_test(
     NAME kernel-config-fragments
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_config_fragments.sh
     LABELS kernel;audit
-    TIMEOUT 30)
+    TIMEOUT 60)
 
 uml_add_tooling_test(
     NAME kernel-series-contract
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_series.py
     LABELS kernel;android;audit
-    TIMEOUT 120)
+    TIMEOUT 450)
 
 uml_add_tooling_test(
     NAME kernel-artifact-contract

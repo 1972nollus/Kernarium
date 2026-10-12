@@ -33,12 +33,9 @@ import functools
 import hashlib
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
-from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 sys.dont_write_bytecode = True
 
@@ -95,8 +92,10 @@ class SeriesError(Exception):
     pass
 
 
-@dataclass(frozen=True)
-class Series:
+# subprocess, shutil, and tempfile load only where Git or a scratch directory is
+# used: the series checks that dependency preparation runs for every manifest
+# row read files alone, and the imports are most of their start-up.
+class Series(NamedTuple):
     directory: Path
     tree: str | None
     names: tuple[str, ...]
@@ -115,6 +114,8 @@ def _caller_identity() -> tuple[tuple[str, str], ...]:
     fixture's) carry forward whatever Git resolved outside it; when Git
     resolves nothing, nothing is carried and Git reports it.
     """
+    import subprocess
+
     identity: list[tuple[str, str]] = []
     for role in ("AUTHOR", "COMMITTER"):
         result = subprocess.run(
@@ -152,6 +153,8 @@ def git(
 
     A failure raises ``error``, or by default the command, with Git's output.
     """
+    import subprocess
+
     result = subprocess.run(
         ["git", "-C", str(repository), *GIT_OPTIONS, *arguments],
         stdout=subprocess.PIPE,
@@ -247,6 +250,8 @@ def series_provenance(directories: list[Path]) -> tuple[int, str]:
 
 def series_tree(repository: Path, base: str, directories: list[Path]) -> str:
     """Return the tree the series produce on ``base``, without a checkout."""
+    import tempfile
+
     base_commit = resolve_commit(repository, base)
     with tempfile.TemporaryDirectory(prefix="uml-series-index.") as scratch:
         environment = isolated_environment({"GIT_INDEX_FILE": str(Path(scratch) / "index")})
@@ -364,6 +369,9 @@ def export_series(
     check: bool = False,
 ) -> str:
     """Write, or with ``check`` compare, the series for ``base..head``."""
+    import shutil
+    import tempfile
+
     if git(source, "status", "--porcelain", "--untracked-files=all").strip():
         raise SeriesError(f"{source}: topic checkout is not clean")
     base_commit = resolve_commit(source, base)

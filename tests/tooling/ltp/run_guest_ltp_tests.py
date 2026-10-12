@@ -22,6 +22,11 @@ sys.path.insert(0, str(LTP_ROOT))
 import run_guest_ltp as runner  # noqa: E402
 import guest as guest_support  # noqa: E402
 
+# How long a test waits for a child process or a worker thread it started. The
+# wait is a hard bound that only a failure reaches, so it outlasts a host under
+# many times its normal load instead of being sized to the time a test needs.
+WAIT_SECONDS = 60
+
 
 class GuestConsoleWriteTests(unittest.TestCase):
     def test_console_write_retries_short_writes_until_complete(self) -> None:
@@ -1114,7 +1119,7 @@ page dumped because: still mapped when deleted
             self.assertEqual(case.kernel_arguments, ("ncpus=1",))
             with lock:
                 worker_threads.add(threading.get_ident())
-            barrier.wait(timeout=2)
+            barrier.wait(timeout=WAIT_SECONDS)
             return runner.Result(case, 0, {"passed": 1}, "")
 
         results = list(runner.run_cases(
@@ -1278,7 +1283,7 @@ page dumped because: still mapped when deleted
             nonlocal maximum_exclusive_active
             del emulator, rootfs, memory
             if not case.host_pressure and not case.serial:
-                barrier.wait(timeout=2)
+                barrier.wait(timeout=WAIT_SECONDS)
                 with lock:
                     regular_completed += 1
                     completion_order.append(case.test_id)

@@ -30,6 +30,14 @@ its scratch in a `with` block or a `tempfile.TemporaryDirectory` object, whose
 finalizer runs at exit. Performance and long external campaigns are not CTest
 correctness suites.
 
+A tooling test's `TIMEOUT` is a hard bound sized from measurement, not from
+the time the test takes alone: about four times its longest duration at gate
+concurrency (`ctest -j10`) while the host load average was 40 to 80, taken up
+to the next of 30, 60, 90, 120, 180, 240, 300, 450, 600, 900, 1200 or 1800 s.
+A process-heavy test runs many times slower there than alone. A wait inside a
+test for a process, file or thread the test started outlasts the same load,
+stays below the test's bound, and is never retried or unbounded.
+
 Tooling tests run tools against fixtures; they do not grep tracked source for
 expected tokens or restate values that another file owns. A shell tooling
 test's `$TMPDIR` is its `test-scratch/<test>` in the build tree, which
