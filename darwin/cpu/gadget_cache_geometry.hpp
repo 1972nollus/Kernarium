@@ -15,9 +15,14 @@
 namespace uml::cpu::gadget_cache {
 
 /* Both ISAs keep executor-owned links in identically shaped private caches.
- * The translated payload and its validation remain owned by the ISA. */
+ * The translated payload and its validation remain owned by the ISA.
+ *
+ * Hashed blocks load sets unevenly, so a four-way set evicts code it will run
+ * again while other sets still have room. Eight ways keep that code at the
+ * cost of a longer probe; at 131,072 slots multi-core Geekbench stored a
+ * quarter fewer translations and ran 2% faster (G229). */
 inline constexpr std::size_t slots = UML_GADGET_CACHE_SLOTS;
-inline constexpr std::size_t ways = 4;
+inline constexpr std::size_t ways = 8;
 inline constexpr std::size_t slab_slots = 256;
 inline constexpr std::size_t resident_generations = UML_GADGET_RESIDENT_GENERATIONS;
 static_assert((slots & (slots - 1U)) == 0);

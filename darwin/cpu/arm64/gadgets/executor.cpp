@@ -1370,7 +1370,7 @@ private:
 	{
 		/* Fold the address space into the index so the same guest PC in
 		 * two address spaces lands in different sets rather than
-		 * competing for the four ways of one.
+		 * competing for the ways of one.
 		 */
 		const auto block = (pc >> 2) ^
 			(static_cast<std::uint64_t>(generation) *
