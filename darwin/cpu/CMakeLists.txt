@@ -23,19 +23,37 @@ add_subdirectory(arm64/aarch32)
 # slot count, not residency or validation, is what bounds Clang.
 #
 # Capacity is not free on either engine. An empty way costs 40 bytes on arm64
-# and 80 on x86, and an occupied one its translation besides. macOS can spend
-# it and iOS cannot: the iOS app runs under a jetsam limit with a 2048 MiB
-# guest default, and one executor per host core would pay for it several times
-# over. The compatibility default therefore stays where it was measured to be
-# affordable.
-if(UML_APPLE_PLATFORM STREQUAL "macos")
-    set(_uml_gadget_cache_slots_default "262144")
-else()
-    set(_uml_gadget_cache_slots_default "65536")
+# and 80 on x86, and an occupied one its translation besides. The iOS app runs
+# under a jetsam limit with a 2048 MiB guest default, and one executor per host
+# core would pay for it several times over, so iOS stays at 65,536 slots. Every
+# product and both ISAs use that one geometry, macOS included, so that the Mac
+# runs the memory behavior iOS ships; a larger cache is an explicit
+# -DUML_GADGET_CACHE_SLOTS.
+#
+# A tree configured while macOS defaulted to 262,144 holds that value as an
+# ordinary cache entry, which the set() below would keep. An entry that still
+# carries the help text this variable had then is such a value: it is moved to
+# the default once, unless a command-line -D replaced it in this configure, and
+# the new help text is what records that it has been moved. A value other than
+# 262,144 was chosen and stays.
+set(_uml_gadget_cache_slots_help
+    "Slots in each ISA's private gadget cache; power of two, at least 1024; 65536 unless set")
+if(DEFINED CACHE{UML_GADGET_CACHE_SLOTS})
+    get_property(_uml_gadget_cache_slots_old_help
+        CACHE UML_GADGET_CACHE_SLOTS PROPERTY HELPSTRING)
+    if(_uml_gadget_cache_slots_old_help STREQUAL
+       "Slots in each ISA's private gadget cache; power of two, at least 1024"
+       AND UML_GADGET_CACHE_SLOTS STREQUAL "262144")
+        message(STATUS "UML_GADGET_CACHE_SLOTS: moving 262144, the retired "
+                       "macOS default, to 65536")
+        set(UML_GADGET_CACHE_SLOTS "65536" CACHE STRING
+            "${_uml_gadget_cache_slots_help}" FORCE)
+    endif()
+    unset(_uml_gadget_cache_slots_old_help)
 endif()
-set(UML_GADGET_CACHE_SLOTS "${_uml_gadget_cache_slots_default}" CACHE STRING
-    "Slots in each ISA's private gadget cache; power of two, at least 1024")
-unset(_uml_gadget_cache_slots_default)
+set(UML_GADGET_CACHE_SLOTS "65536" CACHE STRING
+    "${_uml_gadget_cache_slots_help}")
+unset(_uml_gadget_cache_slots_help)
 if(NOT UML_GADGET_CACHE_SLOTS MATCHES "^[0-9]+$")
     message(FATAL_ERROR
         "UML_GADGET_CACHE_SLOTS must be a positive integer")
