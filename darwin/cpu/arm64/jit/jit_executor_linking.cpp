@@ -13,6 +13,12 @@ namespace uml::cpu::arm64 {
   execution_context_ =
       darwin_uml_static_vm_execution_context_create(generation);
   execution_generation_ = execution_context_ != nullptr ? generation : 0;
+  const auto *sequence =
+      execution_context_ != nullptr
+          ? darwin_uml_static_vm_execution_context_code_sequence(
+                execution_context_)
+          : nullptr;
+  code_sequence_ = sequence != nullptr ? sequence : &arm64::no_code_changes;
   return execution_context_;
 }
 

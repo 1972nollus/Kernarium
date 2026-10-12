@@ -61,6 +61,39 @@ P 7 0x1000 4 10 4 0xabc 128 32 80 16
 P 8 0x2000 4 10 4 0x123 128 32 80 16
 """
 
+# Two arm64 caches sharing address space 7 (space 0x70). Both hold the body
+# at 0xb00 for 0x1000; only the first holds 0x3000. Each cache owns its slabs
+# and slot list, and the space's bytes are on the S line each cache writes.
+SHARED = """\
+E 0xa generations=1 occupancy=2 slots=4096 slot_bytes=40 slab_slots=256 \
+slab_count=2 stream_index=0 slabs=20480 streams=0 arena_empty=0 links=1024 \
+indirect=0 total=21504 stream_lookups=0 adoptions=0 shared=1 snapshot=1 \
+seconds=10.0 wall=1 lookups=100 hits=90 revalidated=0 misses=10 adopted=0 \
+stores=10 first=10 again_evicted=0 again_retired=0 again_discarded=0 \
+changed=0 restored=0 other_executor=0 other_space=0 evictions=0 \
+evicted_bytes=0 retirements=0 discards=0 departed=0 distance=0
+G 7 current=1 rank=0 idle_switches=0 idle_seconds=0.000 link_records=2 \
+links=1024 indirect=0 targets=0 space=0x70
+S 0x70 generation=7 mode=0 attached=2 stream_index=0 streams=65536 \
+arena_empty=32768 links=4096 indirect=0 link_records=2 limbo=0
+L 7 0x1000 0x70
+P 7 0x1000 4 10 4 0xabc 128 32 80 16 0xb00
+P 7 0x3000 4 10 5 0xdef 144 32 80 20 0xc00
+E 0xb generations=1 occupancy=1 slots=4096 slot_bytes=40 slab_slots=256 \
+slab_count=2 stream_index=0 slabs=20480 streams=0 arena_empty=0 links=1024 \
+indirect=0 total=21504 stream_lookups=0 adoptions=1 shared=1 snapshot=1 \
+seconds=10.5 wall=1 lookups=100 hits=90 revalidated=0 misses=5 adopted=5 \
+stores=5 first=5 again_evicted=0 again_retired=0 again_discarded=0 \
+changed=0 restored=0 other_executor=0 other_space=0 evictions=0 \
+evicted_bytes=0 retirements=0 discards=0 departed=0 distance=0
+G 7 current=1 rank=0 idle_switches=0 idle_seconds=0.000 link_records=2 \
+links=1024 indirect=0 targets=0 space=0x70
+S 0x70 generation=7 mode=0 attached=2 stream_index=0 streams=65536 \
+arena_empty=32768 links=4096 indirect=0 link_records=2 limbo=0
+L 7 0x1000 0x70
+P 7 0x1000 4 10 4 0xabc 128 32 80 16 0xb00
+"""
+
 # What the census wrote before it carried snapshots, geometry or parts.
 LEGACY = """\
 E 0xa generations=1 occupancy=2 stream_index=0 slabs=10240 streams=1024 \
@@ -144,6 +177,27 @@ class CensusTests(unittest.TestCase):
         lines = run_main(path, "--series").splitlines()
         self.assertEqual(len(lines), 2)
         self.assertTrue(lines[1].split()[0] == "1")
+
+    def test_shared_spaces_and_bodies_count_once(self) -> None:
+        path = write(self.root, SHARED)
+        blocks = census.scan(path)
+        contents = [census.load(path, block) for block in blocks]
+        # Each cache's own bytes, and the space once.
+        parts = census.measured(blocks, contents)
+        self.assertEqual(parts["total"], 2 * 21504 + 65536 + 4096)
+        self.assertEqual(parts["arena_empty"], 32768)
+        self.assertEqual(len(census.distinct_bodies(contents)), 2)
+        result = census.duplication(contents)
+        self.assertEqual(result.resident, 3)
+        self.assertEqual((result.space_copies, result.space_bytes), (0, 0))
+        self.assertEqual(result.bytes, 128 + 144)
+        # The one record both caches sampled is one record.
+        self.assertEqual((result.links_sampled, result.links_distinct), (1, 1))
+        text = run_main(path)
+        self.assertIn("1 address-space records, held by 2.00 caches each", text)
+        self.assertIn("adopted from another cache of the space 5", text)
+        self.assertIn("served without translating 92.50%", text)
+        self.assertRegex(text, r"bodies\s+2, held by 1\.500 slots each")
 
     def test_legacy_capture_still_reads(self) -> None:
         path = write(self.root, LEGACY)

@@ -18,6 +18,11 @@
 
 namespace uml::cpu::arm64::gadgets {
 
+/* Defined with the translation cache: what an executor says about whether it
+ * may be running translated code, which executors sharing an address space
+ * read before they free a body. */
+struct ExecutorAnnouncement;
+
 struct GadgetCacheDiagnostics final {
 	/* Programs this executor had to produce. */
 	std::uint64_t translations{};
@@ -26,6 +31,9 @@ struct GadgetCacheDiagnostics final {
 	std::uint64_t validation_mismatches{};
 	std::uint64_t validation_faults{};
 	std::uint64_t validation_sequence_races{};
+	/* Translations another executor of the address space stored, which
+	 * this one took after validating them instead of translating. */
+	std::uint64_t adoptions{};
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	/* Why translated execution returned to this executor, per block entry:
 	 * the chain reached its linked-instruction limit, an indirect site missed
@@ -149,6 +157,9 @@ private:
 	CpuState *current_cpu_{};
 	void *execution_context_{};
 	unsigned long execution_generation_{};
+	/* The execution context's code-change sequence, which every run
+	 * publishes in CpuState::code_sequence for the ISB to check. */
+	const std::uint64_t *code_sequence_{&arm64::no_code_changes};
 	bool preempted_{};
 	bool single_step_{};
 	std::uint32_t floating_point_syndrome_{};
@@ -169,6 +180,9 @@ private:
 	std::array<SmeModeCache, 3> sme_caches_{};
 	/* BKPT's immediate, after the last A64 member so that none moves. */
 	std::uint32_t breakpoint_immediate_{};
+	/* Null when the executor keeps its translations to itself. */
+	ExecutorAnnouncement *announcement_{};
+	bool share_translations_{};
 };
 
 } // namespace uml::cpu::arm64::gadgets

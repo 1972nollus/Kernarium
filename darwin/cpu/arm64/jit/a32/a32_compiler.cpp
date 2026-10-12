@@ -332,6 +332,15 @@ void A32Compiler::exit_indirect(unsigned key_register) {
   standard_fp_ = standard;
 }
 
+void A32Compiler::emit_code_change_check() {
+  const auto changed = cold_exit(ColdPath::Kind::code_changed);
+  emitter_.load_x(0, 15, offsetof(CpuState, code_sequence));
+  emitter_.load_x(1, 15, offsetof(CpuState, code_sequence_seen));
+  emitter_.load_x(0, 0, 0);
+  emit(0xcb01'0000U); // sub x0, x0, x1
+  compare_zero(changed, 0, true, true);
+}
+
 Arm64Emitter::Label A32Compiler::cold_exit(ColdPath::Kind kind) {
   const auto label = make_label();
   cold_.push_back({.label = label,

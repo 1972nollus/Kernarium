@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory_resource>
 #include <string_view>
+#include <utility>
 
 namespace uml::emulator::tests::base_barrier {
 
@@ -141,9 +142,14 @@ void standard_translation()
 		require(dsb.complete && dsb.program.words().size() == 3U &&
 				dsb.program.words().front() == dsb_gadgets[option],
 			"DSB option was not selected at translation");
-		require(isb.complete && isb.program.words().size() == 3U &&
+		/* The ISB carries the instructions after it, here the SVC,
+		 * and its fall-through, for the exit a code change takes. */
+		require(isb.complete && isb.program.words().size() == 5U &&
 				isb.program.words().front() ==
-					address(uml_arm64_gadget_isb),
+					address(uml_arm64_gadget_isb) &&
+				isb.program.words()[1] == 1U &&
+				isb.program.words()[2] ==
+					engine_test_code_base + 4U,
 			"ISB option retained runtime decoding");
 	}
 }
@@ -176,6 +182,52 @@ void extension_translation()
 	}
 }
 
+/* An ISB leaves at its fall-through exactly when the address space's code
+ * changed after the program was validated, retiring only what came before
+ * it; the instructions after it run on the next entry. */
+void isb_synchronizes_with_code_changes()
+{
+	const std::array code{
+		0xd280'0020U, // MOVZ X0, #1
+		encode_standard(isb_base, 15U),
+		0xd280'0040U, // MOVZ X0, #2
+		terminal_system_call,
+	};
+	const auto built = gadgets::Builder{}.build(engine_test_code_base, code,
+		{}, std::pmr::get_default_resource());
+	require(built.complete, "ISB block did not translate");
+	std::uint64_t sequence = 7;
+	const auto run = [&](const std::uint64_t *published, std::uint64_t seen,
+			std::size_t &executed) {
+		arm64::CpuState cpu{};
+		if (published != nullptr)
+			cpu.code_sequence = published;
+		cpu.code_sequence_seen = seen;
+		::uml::memory::Tlb tlb;
+		executed = 0;
+		const auto event =
+			gadgets::execute(built.program, cpu, tlb, executed);
+		return std::pair{event, cpu};
+	};
+
+	std::size_t executed = 0;
+	const auto [current, current_cpu] = run(&sequence, 7, executed);
+	require(current == ::uml::cpu::EngineEvent::system_call &&
+			current_cpu.registers[0] == 2U && executed == 4U,
+		"ISB left although no code changed");
+
+	const auto [changed, changed_cpu] = run(&sequence, 6, executed);
+	require(changed == ::uml::cpu::EngineEvent::continued &&
+			changed_cpu.pc == engine_test_code_base + 8U &&
+			changed_cpu.registers[0] == 1U && executed == 2U,
+		"ISB did not leave at its fall-through after a code change");
+
+	const auto [unbound, unbound_cpu] = run(nullptr, 0, executed);
+	require(unbound == ::uml::cpu::EngineEvent::system_call &&
+			unbound_cpu.registers[0] == 2U && executed == 4U,
+		"ISB of a state bound to no address space left");
+}
+
 void hot_path_shape()
 {
 	for (const auto entry : dmb_gadgets) {
@@ -190,10 +242,11 @@ void hot_path_shape()
 		require(runtime_instruction_count(entry) == 3U,
 			"DSB hot path is not one barrier plus dispatch");
 	}
-	require(conditional_branches(address(uml_arm64_gadget_isb)) == 0U &&
+	/* The barrier, the code-change check and dispatch past its operands. */
+	require(conditional_branches(address(uml_arm64_gadget_isb)) == 1U &&
 			runtime_instruction_count(
-				address(uml_arm64_gadget_isb)) == 3U,
-		"ISB hot path is not one barrier plus dispatch");
+				address(uml_arm64_gadget_isb)) == 9U,
+		"ISB hot path is not the barrier, one sequence check and dispatch");
 	require(conditional_branches(
 			address(uml_arm64_gadget_speculation_barrier)) == 0U &&
 			runtime_instruction_count(
@@ -215,6 +268,7 @@ int main()
 {
 	uml::emulator::tests::base_barrier::standard_translation();
 	uml::emulator::tests::base_barrier::extension_translation();
+	uml::emulator::tests::base_barrier::isb_synchronizes_with_code_changes();
 	uml::emulator::tests::base_barrier::hot_path_shape();
 	return 0;
 }
