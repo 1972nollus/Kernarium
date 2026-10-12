@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <malloc/malloc.h>
 #include <source_location>
 #include <span>
@@ -9049,6 +9050,504 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 	return true;
 }
 
+/* ---- the baked access word ------------------------------------------------
+ *
+ * A baked memory access carries its instruction's position in its block, and
+ * the cold exits rebuild the RIP from it and the block's start. These put an
+ * access at chosen positions of a block that starts away from zero and have it
+ * leave through a fault, a budget-limited replay or a store into its own
+ * block, and check the immediates the access word holds against the register
+ * forms that carry theirs in a word of their own.
+ */
+
+void load_code(TestMemory &memory, std::uint64_t address,
+	const std::vector<std::uint8_t> &code)
+{
+	memory.fill(address, std::as_bytes(std::span{code}));
+}
+
+/* NOPs adding up to `bytes`, seven-byte ones first; counts them. */
+void append_padding(std::vector<std::uint8_t> &code, std::size_t bytes,
+	std::size_t &instructions)
+{
+	for (; bytes >= 7U; bytes -= 7U, ++instructions)
+		code.insert(code.end(), {0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00});
+	for (; bytes != 0; --bytes, ++instructions)
+		code.push_back(0x90);
+}
+
+enum class AddressField : std::uint8_t { none, rip_relative, absolute };
+
+struct FaultingAccess final {
+	const char *name;
+	std::vector<std::uint8_t> encoding;
+	/* Which field of the encoding names the faulting address. */
+	AddressField field;
+	uml::memory::MemoryAccess access;
+	std::size_t bytes;
+	/* What RBX or RSP holds beyond the faulting address. */
+	std::int64_t rbx_bias;
+	bool stack;
+	std::int64_t rsp_bias;
+	/* A read-modify-write may fault on its load, before it stores, and
+	 * the banks differ in which they report. */
+	bool read_modify_write = false;
+};
+
+/* The shapes of baked access that fault: loads and stores through a base, a
+ * base and an index and no base, memory,immediate forms, the widening load,
+ * both stack forms, and the immediate the access word cannot hold. */
+[[nodiscard]] std::vector<FaultingAccess> faulting_accesses()
+{
+	using uml::memory::MemoryAccess;
+	constexpr auto none = AddressField::none;
+	return {
+		{"mov rax,[rbx]", {0x48, 0x8b, 0x03}, none, MemoryAccess::read, 8, 0,
+			false, 0},
+		{"mov rax,[rbx+rcx*8+0x12345]",
+			{0x48, 0x8b, 0x84, 0xcb, 0x45, 0x23, 0x01, 0x00}, none,
+			MemoryAccess::read, 8, -0x12345, false, 0},
+		{"mov [rbx],rax", {0x48, 0x89, 0x03}, none, MemoryAccess::write, 8, 0,
+			false, 0},
+		{"mov [rbx+rcx*8],rax", {0x48, 0x89, 0x04, 0xcb}, none,
+			MemoryAccess::write, 8, 0, false, 0},
+		{"mov dword [rbx],1", {0xc7, 0x03, 0x01, 0x00, 0x00, 0x00}, none,
+			MemoryAccess::write, 4, 0, false, 0},
+		{"mov dword [rbx+rcx*8],-1",
+			{0xc7, 0x04, 0xcb, 0xff, 0xff, 0xff, 0xff}, none,
+			MemoryAccess::write, 4, 0, false, 0},
+		{"add rax,[rbx]", {0x48, 0x03, 0x03}, none, MemoryAccess::read, 8, 0,
+			false, 0},
+		{"add [rbx],rax", {0x48, 0x01, 0x03}, none, MemoryAccess::write, 8, 0,
+			false, 0, true},
+		{"cmp dword [rbx],1", {0x83, 0x3b, 0x01}, none, MemoryAccess::read, 4,
+			0, false, 0},
+		{"add dword [rbx],0x4000", {0x81, 0x03, 0x00, 0x40, 0x00, 0x00}, none,
+			MemoryAccess::write, 4, 0, false, 0, true},
+		{"movzx eax,byte [rbx]", {0x0f, 0xb6, 0x03}, none,
+			MemoryAccess::read, 1, 0, false, 0},
+		{"mov rax,[rip+rel]", {0x48, 0x8b, 0x05, 0, 0, 0, 0},
+			AddressField::rip_relative, MemoryAccess::read, 8, 0, false, 0},
+		{"mov rax,[abs]", {0x48, 0x8b, 0x04, 0x25, 0, 0, 0, 0},
+			AddressField::absolute, MemoryAccess::read, 8, 0, false, 0},
+		{"push rax", {0x50}, none, MemoryAccess::write, 8, 0, true, 8},
+		{"pop rax", {0x58}, none, MemoryAccess::read, 8, 0, true, 0},
+	};
+}
+
+/* An address no memory covers, and the last byte of the memory, where an
+ * access of more than a byte crosses into a page that is not there. */
+constexpr std::uint64_t unmapped_address = 0x20000;
+constexpr std::uint64_t page_end_address = 16383;
+
+[[nodiscard]] bool baked_faults_rebuild_the_rip_from_the_block_start()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t code = 0x1230;
+	const std::array<std::size_t, 13> positions{0, 1, 6, 7, 63, 64, 100, 500,
+		1016, 1023, 1024, 1025, 1100};
+	for (const auto &access : faulting_accesses()) {
+		for (const auto position : positions) {
+			for (const auto target : {unmapped_address, page_end_address}) {
+				if (target == page_end_address && access.bytes == 1U)
+					continue;
+				std::vector<std::uint8_t> bytes;
+				std::size_t padding = 0;
+				append_padding(bytes, position, padding);
+				const auto at = bytes.size();
+				auto encoding = access.encoding;
+				if (access.field == AddressField::rip_relative) {
+					const auto rel = static_cast<std::uint32_t>(
+						target - (code + at + encoding.size()));
+					for (unsigned byte = 0; byte < 4U; ++byte)
+						encoding[3U + byte] =
+							static_cast<std::uint8_t>(rel >> (8U * byte));
+				} else if (access.field == AddressField::absolute) {
+					for (unsigned byte = 0; byte < 4U; ++byte)
+						encoding[4U + byte] =
+							static_cast<std::uint8_t>(target >> (8U * byte));
+				}
+				bytes.insert(bytes.end(), encoding.begin(), encoding.end());
+				bytes.insert(bytes.end(), {0x0f, 0x05});
+				TestMemory memory;
+				load_code(memory, code, bytes);
+				const auto built = require_built(
+					gadgets::build(memory, code, 400), access.name);
+				/* The whole block, then a replay of the instructions up to
+				 * and including the access. */
+				for (const auto budget : {std::size_t{1000}, padding + 1U}) {
+					CpuState cpu{};
+					cpu.rip = code;
+					cpu.gpr(Register::rbx) = target + access.rbx_bias;
+					cpu.gpr(Register::rsp) = access.stack ?
+						target + access.rsp_bias : 0x800;
+					const auto result = gadgets::execute(
+						built.program, cpu, memory, budget);
+					const auto where = std::string{access.name} + " at " +
+						std::to_string(position) + ", budget " +
+						std::to_string(budget) + ", address " +
+						std::to_string(target);
+					if (!expect(result.event ==
+								uml::cpu::EngineEvent::memory_fault,
+							(where + " did not fault").c_str()) ||
+						!expect(result.retired_instructions == padding &&
+								cpu.rip == code + at,
+							(where + " reported the wrong RIP or retirement")
+								.c_str()) ||
+						!expect(result.fault.access == access.access ||
+								access.read_modify_write,
+							(where + " reported the wrong access").c_str()))
+						return false;
+				}
+			}
+		}
+	}
+	return true;
+}
+
+/* An access takes the baked bank while it lies within 1024 bytes of its
+ * block's start, and the ordinary bank beyond. */
+[[nodiscard]] bool baked_accesses_stop_at_the_position_field()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t code = 0x1230;
+	const auto baked_load = reinterpret_cast<std::uintptr_t>(
+		gadgets::baked::uml_x86_64_baked_move_64_rm[
+			0U * gadgets::baked::base_slots + 3U]);
+	for (const auto position : {std::size_t{1023}, std::size_t{1024}}) {
+		std::vector<std::uint8_t> bytes;
+		std::size_t padding = 0;
+		append_padding(bytes, position, padding);
+		bytes.insert(bytes.end(), {0x48, 0x8b, 0x03, 0x0f, 0x05});
+		TestMemory memory;
+		load_code(memory, code, bytes);
+		const auto built = require_built(gadgets::build(memory, code, 400),
+			"padded load block did not build");
+		const auto stream = built.program.native_stream();
+		const bool baked_form =
+			std::ranges::find(stream, baked_load) != stream.end();
+		if (!expect(baked_form == (position < 1024U),
+			"the baked bank's position limit moved"))
+			return false;
+	}
+	return true;
+}
+
+/* A store into the block that is running leaves through the overlap exit with
+ * the RIP after the store, rebuilt from the same position. */
+[[nodiscard]] bool baked_overlap_exits_rebuild_the_rip_from_the_block_start()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t code = 0x1100;
+	struct Store final {
+		const char *name;
+		std::vector<std::uint8_t> encoding;
+		bool stack;
+	};
+	const std::vector<Store> stores{
+		{"mov byte [rbx],0x90", {0xc6, 0x03, 0x90}, false},
+		{"mov byte [rbx+rcx*2],0x90", {0xc6, 0x04, 0x4b, 0x90}, false},
+		{"mov [rbx],al", {0x88, 0x03}, false},
+		{"mov [rbx+rcx*2],al", {0x88, 0x04, 0x4b}, false},
+		{"add [rbx],al", {0x00, 0x03}, false},
+		{"add byte [rbx],0x7f", {0x80, 0x03, 0x7f}, false},
+		{"push rax", {0x50}, true},
+	};
+	for (const auto &store : stores) {
+		for (const auto position : {std::size_t{0}, std::size_t{5},
+			std::size_t{200}, std::size_t{1023}, std::size_t{1024},
+			std::size_t{1030}}) {
+			std::vector<std::uint8_t> bytes;
+			std::size_t padding = 0;
+			append_padding(bytes, position, padding);
+			const auto at = bytes.size();
+			bytes.insert(bytes.end(), store.encoding.begin(),
+				store.encoding.end());
+			bytes.insert(bytes.end(), {0x0f, 0x05});
+			TestMemory memory;
+			load_code(memory, code, bytes);
+			memory.set_executable_page(code);
+			const auto built = require_built(
+				gadgets::build(memory, code, 400), store.name);
+			CpuState cpu{};
+			cpu.rip = code;
+			cpu.gpr(Register::rax) = 0x90;
+			const auto end = code + at + store.encoding.size();
+			cpu.gpr(Register::rbx) = end;
+			cpu.gpr(Register::rsp) = store.stack ? end + 8U : 0x800;
+			gadgets::Executor executor;
+			executor.prepare(memory, 1, 1, 1);
+			const auto result = gadgets::execute(
+				built.program, cpu, memory, executor, 1000);
+			const auto where = std::string{store.name} + " at " +
+				std::to_string(position);
+			if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+					result.retired_instructions == padding + 1U &&
+					cpu.rip == end,
+					(where + " left the block with the wrong RIP").c_str()) ||
+				!expect(memory.invalidations() == 1,
+					(where + " did not publish its change").c_str()))
+				return false;
+		}
+	}
+	return true;
+}
+
+enum class ImmediateOp : std::uint8_t {
+	add = 0, bit_or = 1, bit_and = 4, subtract = 5, bit_xor = 6, compare = 7,
+	test = 8, move = 9,
+};
+
+/* `op` of `bits` against the operand `modrm`, `tail` name (a register or a
+ * memory operand without its /r digit) and an immediate. */
+[[nodiscard]] std::vector<std::uint8_t> encode_immediate(ImmediateOp op,
+	unsigned bits, std::int64_t immediate, std::uint8_t modrm,
+	const std::vector<std::uint8_t> &tail)
+{
+	std::vector<std::uint8_t> code;
+	if (bits == 16)
+		code.push_back(0x66);
+	if (bits == 64)
+		code.push_back(0x48);
+	std::uint8_t digit = static_cast<std::uint8_t>(op);
+	std::size_t size = bits == 8 ? 1U : bits == 16 ? 2U : 4U;
+	if (op == ImmediateOp::test) {
+		code.push_back(bits == 8 ? 0xf6 : 0xf7);
+		digit = 0;
+	} else if (op == ImmediateOp::move) {
+		code.push_back(bits == 8 ? 0xc6 : 0xc7);
+		digit = 0;
+	} else if (bits == 8) {
+		code.push_back(0x80);
+	} else if (immediate >= -128 && immediate < 128) {
+		code.push_back(0x83);
+		size = 1;
+	} else {
+		code.push_back(0x81);
+	}
+	code.push_back(static_cast<std::uint8_t>(modrm | (digit << 3U)));
+	code.insert(code.end(), tail.begin(), tail.end());
+	for (std::size_t byte = 0; byte < size; ++byte)
+		code.push_back(static_cast<std::uint8_t>(
+			static_cast<std::uint64_t>(immediate) >> (8U * byte)));
+	code.insert(code.end(), {0x0f, 0x05});
+	return code;
+}
+
+/* ALU and MOV against memory with every width and immediates on either side of
+ * what the access word holds, against the same operation on a register, which
+ * carries its immediate in a word of its own. */
+[[nodiscard]] bool memory_immediates_match_the_register_form()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t data = 0x800;
+	const std::array<std::int64_t, 17> immediates{0, 1, -1, 2, 0x7f, -0x80,
+		0xff, 8191, 8192, -8192, -8193, 0x7fff, -0x8000, 0xffff, 0x7fffffff,
+		-0x80000000LL, 0xffffffffLL};
+	const std::array<std::uint64_t, 6> initial{0, 1, 0x80, 0xffff,
+		0x7fffffffffffffffULL, 0x8000000000000000ULL};
+	const std::array<ImmediateOp, 8> operations{ImmediateOp::add,
+		ImmediateOp::bit_or, ImmediateOp::bit_and, ImmediateOp::subtract,
+		ImmediateOp::bit_xor, ImmediateOp::compare, ImmediateOp::test,
+		ImmediateOp::move};
+	std::size_t checked = 0;
+	for (const unsigned bits : {8U, 16U, 32U, 64U}) {
+		const std::uint64_t mask = bits == 64 ? ~std::uint64_t{} :
+			(std::uint64_t{1} << bits) - 1U;
+		/* What the instruction can encode at this width. */
+		const std::int64_t low = bits == 8 ? -128 : bits == 16 ? -0x8000 :
+			-0x80000000LL;
+		const std::int64_t high = bits == 8 ? 255 : bits == 16 ? 0xffff :
+			bits == 32 ? 0xffffffffLL : 0x7fffffff;
+		for (const auto op : operations) {
+			for (const auto immediate : immediates) {
+				if (immediate < low || immediate > high)
+					continue;
+				for (const auto value : initial) {
+					for (const bool indexed : {false, true}) {
+						const auto memory_code = encode_immediate(op, bits,
+							immediate, indexed ? 0x44 : 0x43,
+							indexed ? std::vector<std::uint8_t>{0x4b, 0x08} :
+								std::vector<std::uint8_t>{0x08});
+						const auto register_code = encode_immediate(op, bits,
+							immediate, 0xc2, {});
+
+						TestMemory with_memory;
+						load_code(with_memory, 0x100, memory_code);
+						std::array<std::uint8_t, 8> stored_value{};
+						for (unsigned byte = 0; byte < 8U; ++byte)
+							stored_value[byte] = static_cast<std::uint8_t>(
+								value >> (8U * byte));
+						with_memory.fill(data,
+							std::as_bytes(std::span{stored_value}));
+						CpuState memory_cpu{};
+						memory_cpu.rip = 0x100;
+						memory_cpu.gpr(Register::rbx) = indexed ?
+							data - 10U : data - 8U;
+						memory_cpu.gpr(Register::rcx) = 1;
+						const auto memory_built = require_built(
+							gadgets::build(with_memory, 0x100),
+							"memory immediate did not build");
+						const auto memory_result = gadgets::execute(
+							memory_built.program, memory_cpu, with_memory, 64);
+
+						TestMemory with_register;
+						load_code(with_register, 0x100, register_code);
+						CpuState register_cpu{};
+						register_cpu.rip = 0x100;
+						register_cpu.gpr(Register::rdx) = value;
+						const auto register_built = require_built(
+							gadgets::build(with_register, 0x100),
+							"register immediate did not build");
+						const auto register_result = gadgets::execute(
+							register_built.program, register_cpu,
+							with_register, 64);
+
+						const auto where = "ALU op " +
+							std::to_string(static_cast<unsigned>(op)) + " at " +
+							std::to_string(bits) + " bits, immediate " +
+							std::to_string(immediate) + ", operand " +
+							std::to_string(value) +
+							(indexed ? ", indexed" : ", based");
+						if (!expect(memory_result.event ==
+									uml::cpu::EngineEvent::system_call &&
+								register_result.event ==
+									uml::cpu::EngineEvent::system_call,
+								(where + " did not reach SYSCALL").c_str()))
+							return false;
+						const auto stored = with_memory.qword(data);
+						const bool writes = op != ImmediateOp::compare &&
+							op != ImmediateOp::test;
+						const std::uint64_t expected = writes ?
+							(register_cpu.gpr(Register::rdx) & mask) :
+							(value & mask);
+						if (!expect((stored & mask) == expected,
+								(where + " stored the wrong value").c_str()) ||
+							!expect((stored & ~mask) == (value & ~mask),
+								(where + " wrote beyond its width").c_str()))
+							return false;
+						materialize_flags(memory_cpu);
+						materialize_flags(register_cpu);
+						if (op != ImmediateOp::move &&
+							!expect((memory_cpu.rflags & 0x8d5U) ==
+									(register_cpu.rflags & 0x8d5U),
+								(where + " set different flags").c_str()))
+							return false;
+						++checked;
+					}
+				}
+			}
+		}
+	}
+	return expect(checked > 2000, "the immediate sweep ran too few cases");
+}
+
+/* An immediate the access word holds selects the baked bank, and one it
+ * cannot hold the ordinary bank. */
+[[nodiscard]] bool wide_memory_immediates_take_the_ordinary_bank()
+{
+	using namespace uml::cpu::x86_64;
+	const auto baked_add = reinterpret_cast<std::uintptr_t>(
+		gadgets::baked::uml_x86_64_baked_add_32_mi[3U]);
+	const auto entry = [](std::int32_t immediate) {
+		const auto word = static_cast<std::uint32_t>(immediate);
+		return first_native_entry({0x81, 0x43, 0x08,
+			static_cast<std::uint8_t>(word),
+			static_cast<std::uint8_t>(word >> 8U),
+			static_cast<std::uint8_t>(word >> 16U),
+			static_cast<std::uint8_t>(word >> 24U), 0x0f, 0x05});
+	};
+	return expect(entry(8191) == baked_add,
+			"an immediate of 8191 left the baked bank") &&
+		expect(entry(-8192) == baked_add,
+			"an immediate of -8192 left the baked bank") &&
+		expect(entry(8192) != baked_add,
+			"an immediate of 8192 stayed in a bank that cannot hold it") &&
+		expect(entry(-8193) != baked_add,
+			"an immediate of -8193 stayed in a bank that cannot hold it");
+}
+
+/* The address entry hands its access word to the access entry behind it, and
+ * an LEA that shares the entry takes only the displacement. */
+[[nodiscard]] bool indexed_addresses_resolve_every_displacement()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t data = 0x800;
+	constexpr std::uint64_t marker = 0x0123'4567'89ab'cdefULL;
+	const std::array<std::int32_t, 6> displacements{5, 0x12345678,
+		-0x12345678, 0x7fffffff, std::numeric_limits<std::int32_t>::min(),
+		-1};
+	for (unsigned scale = 0; scale < 4U; ++scale) {
+		for (const auto displacement : displacements) {
+			for (const bool based : {true, false}) {
+				const std::uint64_t index = 3;
+				const std::uint64_t scaled = index << scale;
+				/* A base-less address is the displacement and the scaled
+				 * index alone, so the memory sits where they say. */
+				const std::uint64_t base = based ?
+					data - static_cast<std::uint64_t>(
+						static_cast<std::int64_t>(displacement)) - scaled : 0;
+				const std::uint64_t address = base + scaled +
+					static_cast<std::uint64_t>(
+						static_cast<std::int64_t>(displacement));
+				const auto word = static_cast<std::uint32_t>(displacement);
+				const std::uint8_t modrm = based ? 0x84 : 0x04;
+				const std::uint8_t sib = static_cast<std::uint8_t>(
+					(scale << 6U) | (1U << 3U) | (based ? 3U : 5U));
+				const auto operand = [&](std::uint8_t opcode, bool wide) {
+					std::vector<std::uint8_t> code;
+					if (wide)
+						code.push_back(0x48);
+					code.insert(code.end(), {opcode, modrm, sib,
+						static_cast<std::uint8_t>(word),
+						static_cast<std::uint8_t>(word >> 8U),
+						static_cast<std::uint8_t>(word >> 16U),
+						static_cast<std::uint8_t>(word >> 24U), 0x0f, 0x05});
+					return code;
+				};
+				for (const bool wide : {true, false}) {
+					TestMemory memory;
+					load_code(memory, 0x100, operand(0x8d, wide));
+					CpuState cpu{};
+					cpu.rip = 0x100;
+					cpu.gpr(Register::rbx) = base;
+					cpu.gpr(Register::rcx) = index;
+					const auto built = require_built(
+						gadgets::build(memory, 0x100), "LEA did not build");
+					const auto result = gadgets::execute(
+						built.program, cpu, memory, 64);
+					const auto expected = wide ? address :
+						(address & 0xffffffffU);
+					if (!expect(result.event ==
+								uml::cpu::EngineEvent::system_call &&
+							cpu.gpr(Register::rax) == expected,
+						"an indexed LEA computed the wrong address"))
+						return false;
+				}
+				if (address != data)
+					continue;
+				TestMemory memory;
+				load_code(memory, 0x100, operand(0x8b, true));
+				const std::array<std::uint64_t, 1> marker_word{marker};
+				memory.fill(data, std::as_bytes(std::span{marker_word}));
+				CpuState cpu{};
+				cpu.rip = 0x100;
+				cpu.gpr(Register::rbx) = base;
+				cpu.gpr(Register::rcx) = index;
+				const auto built = require_built(
+					gadgets::build(memory, 0x100), "indexed load did not build");
+				const auto result = gadgets::execute(
+					built.program, cpu, memory, 64);
+				if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+						cpu.gpr(Register::rax) == marker,
+					"an indexed load read the wrong address"))
+					return false;
+			}
+		}
+	}
+	return true;
+}
+
 } // namespace
 
 int main()
@@ -9197,6 +9696,12 @@ int main()
 		mask_store_keeps_concurrent_unselected_bytes() &&
 		faulting_split_operand_releases_the_lock() &&
 		guest_stores_reach_other_cpus_in_program_order() &&
-		guest_memory_gadgets_end_in_an_ordering_barrier();
+		guest_memory_gadgets_end_in_an_ordering_barrier() &&
+		baked_faults_rebuild_the_rip_from_the_block_start() &&
+		baked_accesses_stop_at_the_position_field() &&
+		baked_overlap_exits_rebuild_the_rip_from_the_block_start() &&
+		memory_immediates_match_the_register_form() &&
+		wide_memory_immediates_take_the_ordinary_bank() &&
+		indexed_addresses_resolve_every_displacement();
 	return passed ? 0 : 1;
 }

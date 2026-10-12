@@ -9,6 +9,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -47,19 +48,21 @@ class StableRecordTable final {
 		"chunks come from the ordinary array allocation");
 
 public:
-	/* The records a sweep keeps, found from their addresses. */
+	/* The records a sweep keeps, found from their addresses, over one table
+	 * or several (marks_of), so that a value can be tried against every table
+	 * an owner keeps at once. */
 	class Marks final {
 	public:
 		/* Keep the record that begins at `address`. Any other value --
 		 * one inside a record, past the records made, or outside the
-		 * table -- is ignored, so a caller may pass every value that
+		 * tables -- is ignored, so a caller may pass every value that
 		 * might name a record, at the cost of keeping a few that
 		 * nothing names. */
 		void mark(std::uintptr_t address) noexcept
 		{
-			if (const auto ordinal = ordinal_of(address);
-			    ordinal != absent)
-				bits_[ordinal / 64] |= std::uint64_t{1} << (ordinal % 64);
+			if (const auto found = locate(address); found.table != absent)
+				tables_[found.table].bits[found.ordinal / 64] |=
+					std::uint64_t{1} << (found.ordinal % 64);
 		}
 
 		void mark(const Record *record) noexcept
@@ -69,9 +72,10 @@ public:
 
 		[[nodiscard]] bool marked(const Record *record) const noexcept
 		{
-			const auto ordinal = ordinal_of(
+			const auto found = locate(
 				reinterpret_cast<std::uintptr_t>(record));
-			return ordinal != absent && test(ordinal);
+			return found.table != absent &&
+				test(tables_[found.table].bits, found.ordinal);
 		}
 
 	private:
@@ -81,40 +85,63 @@ public:
 			std::uintptr_t begin;
 			std::uintptr_t end;
 			std::size_t first;
+			std::size_t table;
+		};
+
+		struct Table final {
+			const StableRecordTable *table;
+			std::vector<std::uint64_t> bits;
+		};
+
+		struct Found final {
+			std::size_t table;
+			std::size_t ordinal;
 		};
 
 		static constexpr std::size_t absent = ~std::size_t{};
 
-		[[nodiscard]] std::size_t ordinal_of(
-			std::uintptr_t address) const noexcept
+		[[nodiscard]] Found locate(std::uintptr_t address) const noexcept
 		{
 			if (address < lowest_ || address >= highest_)
-				return absent;
+				return {absent, 0};
 			auto found = std::upper_bound(ranges_.begin(), ranges_.end(),
 				address, [](std::uintptr_t value, const Range &range) {
 					return value < range.begin;
 				});
 			if (found == ranges_.begin())
-				return absent;
+				return {absent, 0};
 			--found;
 			if (address >= found->end)
-				return absent;
+				return {absent, 0};
 			const auto offset = address - found->begin;
 			if (offset % sizeof(Record) != 0)
-				return absent;
-			return found->first + offset / sizeof(Record);
+				return {absent, 0};
+			return {found->table, found->first + offset / sizeof(Record)};
 		}
 
-		[[nodiscard]] bool test(std::size_t ordinal) const noexcept
+		[[nodiscard]] static bool test(const std::vector<std::uint64_t> &bits,
+			std::size_t ordinal) noexcept
 		{
-			return (bits_[ordinal / 64] >> (ordinal % 64) & 1U) != 0;
+			return (bits[ordinal / 64] >> (ordinal % 64) & 1U) != 0;
 		}
 
-		/* The chunks by address, each over the records it has carved. */
+		[[nodiscard]] const std::vector<std::uint64_t> &bits_of(
+			const StableRecordTable *table) const noexcept
+		{
+			const auto found = std::find_if(tables_.begin(), tables_.end(),
+				[table](const Table &entry) {
+					return entry.table == table;
+				});
+			assert(found != tables_.end());
+			return found->bits;
+		}
+
+		/* Every table's chunks by address, each over the records it has
+		 * carved. */
 		std::vector<Range> ranges_;
 		std::uintptr_t lowest_{};
 		std::uintptr_t highest_{};
-		std::vector<std::uint64_t> bits_;
+		std::vector<Table> tables_;
 	};
 
 	StableRecordTable() = default;
@@ -201,18 +228,34 @@ public:
 	 * between taking them and sweeping with them. */
 	[[nodiscard]] Marks marks() const
 	{
+		const StableRecordTable *self = this;
+		return marks_of(std::span{&self, 1});
+	}
+
+	/* marks() over several tables of one owner, each swept with them. */
+	[[nodiscard]] static Marks marks_of(
+		std::span<const StableRecordTable *const> tables)
+	{
 		Marks marks;
-		marks.bits_.assign((carved_ + 63) / 64, 0);
-		marks.ranges_.reserve(chunks_.size());
-		std::size_t first = 0;
-		for (const auto &chunk : chunks_) {
-			const auto begin = reinterpret_cast<std::uintptr_t>(
-				chunk.storage.get());
-			const auto used = &chunk == &chunks_.back() ?
-				used_ : chunk.count;
-			marks.ranges_.push_back({begin, begin + used * sizeof(Record),
-				first});
-			first += chunk.count;
+		marks.tables_.reserve(tables.size());
+		std::size_t chunks = 0;
+		for (const auto *table : tables)
+			chunks += table->chunks_.size();
+		marks.ranges_.reserve(chunks);
+		for (const auto *table : tables) {
+			const auto index = marks.tables_.size();
+			marks.tables_.push_back({table, std::vector<std::uint64_t>(
+				(table->carved_ + 63) / 64)});
+			std::size_t first = 0;
+			for (const auto &chunk : table->chunks_) {
+				const auto begin = reinterpret_cast<std::uintptr_t>(
+					chunk.storage.get());
+				const auto used = &chunk == &table->chunks_.back() ?
+					table->used_ : chunk.count;
+				marks.ranges_.push_back({begin,
+					begin + used * sizeof(Record), first, index});
+				first += chunk.count;
+			}
 		}
 		std::sort(marks.ranges_.begin(), marks.ranges_.end(),
 			[](const auto &left, const auto &right) {
@@ -233,12 +276,13 @@ public:
 	 */
 	std::size_t sweep(const Marks &marks)
 	{
-		assert(marks.bits_.size() == (carved_ + 63) / 64);
+		const auto &bits = marks.bits_of(this);
+		assert(bits.size() == (carved_ + 63) / 64);
 		std::vector<std::uint32_t> kept;
 		kept.reserve(size_);
 		for (std::size_t position = 0; position < capacity(); ++position)
 			if (const auto entry = index_[position]; entry != 0 &&
-			    marks.test((entry & ~tag_mask) - 1U))
+			    Marks::test(bits, (entry & ~tag_mask) - 1U))
 				kept.push_back(entry & ~tag_mask);
 		const auto released = size_ - kept.size();
 		if (released == 0)
@@ -251,7 +295,7 @@ public:
 
 		for (std::size_t position = 0; position < capacity(); ++position)
 			if (const auto entry = index_[position]; entry != 0 &&
-			    !marks.test((entry & ~tag_mask) - 1U))
+			    !Marks::test(bits, (entry & ~tag_mask) - 1U))
 				release((entry & ~tag_mask) - 1U);
 		index_ = std::move(replacement);
 		mask_ = index_ == nullptr ? 0 : next - 1;

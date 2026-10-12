@@ -922,7 +922,12 @@ moves and the part holds no SVE or SME word. A conditional instruction is a
 skip over a run of instructions sharing its condition, a conditional
 terminal gives the skipped instruction back, and a block never ends inside an
 IT block: one the block limit cuts off ends in an unlinked exit with ITSTATE
-stored. A word the decoder rejects, a coprocessor word the profile lacks and
+stored. A plain CMP of a register or of an immediate below 2^24, outside an IT
+block and followed at once by a conditional branch, is the A64 fused
+compare-and-branch gadget of the branch's condition, which reads the CpuState
+slots a register lives in, so the pair costs one dispatch; ADD and SUB of an
+immediate to the same register have an entry per register R0 to R14 with the
+displacement baked in. A word the decoder rejects, a coprocessor word the profile lacks and
 a form above the engine's level end the block in the illegal-instruction exit
 at the word whatever its condition, except a coprocessor word that is not
 UNPREDICTABLE in the complete profile, which a failing condition skips like
@@ -931,9 +936,13 @@ a fault or undefined exit does not. SVC leaves PC after itself and ITSTATE
 advanced; a fault, UDF or BKPT leaves PC at the instruction with its own
 ITSTATE, which a T32 block recovers by decoding its saved halfwords again. An
 entry with ITSTATE set, and a single step, run one uncached instruction at a
-time until ITSTATE is zero. LDM, STM, PUSH and POP that cross a page, and
-the rare integer forms (parallel arithmetic, SEL, USAD8, the dual multiplies,
-the 16-bit saturates and extends, QADD and its relatives), run through the
+time until ITSTATE is zero. The parallel add and subtract family and SEL are
+gadgets: Advanced SIMD does the lanes on the low half of a vector register, GE
+is the byte-lane mask CpuState keeps, and the saturating forms compute their
+saturation with lane arithmetic, because the saturating instructions would set
+FPSR.QC, which the guest reads in FPSCR. LDM, STM, PUSH and POP that cross a
+page, and the rare integer forms (USAD8, the dual multiplies, the 16-bit
+saturates and extends, QADD and its relatives), run through the
 shared AArch32 semantic library (`cpu/arm64/aarch32/semantics.hpp`): the
 `a32_library` gadget and the crossing paths spill NZCV, decode the word again
 and call `execute_a32`, which translates every page before a load changes a
@@ -952,16 +961,30 @@ each such gadget starts with `a32_fp_standard` and each VFP gadget with
 `a32_fp_guest` (`engine/a32.inc`), which write the host FPCR only when
 `CpuState::a32_fp_standard` says the native environment holds the other one,
 so a loop of one kind switches once and the execution boundary restores the
-host's FPCR whichever it holds. The A32 shifts by an immediate use the A64
+host's FPCR whichever it holds. A switch costs more than the instructions
+around it, so the forms that interleave the two kinds in image and signal
+code run in the active environment when their result is the same in both and
+switch only for operands where it is not: the VFP conversions between floats
+and integers (all but a denormal float to integer, and an integer to float
+under a rounding mode other than round to nearest), VMAX and VMIN (a NaN or a
+denormal), and the single-precision VADD, VSUB and VMUL of both kinds (a
+nonzero operand whose exponent field is outside 64 to 191, which keeps a sum,
+a difference and a product normal, and a guest rounding mode other than round
+to nearest). The test is integer arithmetic on the operands' bits, made
+before the instruction so that it raises no flags of its own. The A32 shifts by an immediate use the A64
 shift-by-register instructions with a replicated signed amount, so a gadget
 serves every amount; the forms that exist in A64 only with an immediate
 (SQSHLU, the converts with a fraction width, VEXT) have a gadget per
 immediate. VLDn and VSTn are native (`engine/a32_structure.py`): a copy for
 VLD1 and VST1 of several registers, LD2 to LD4 and ST2 to ST4 for the
 interleaved ones, element copies for one lane and LD1R to LD4R for all lanes,
-with the register or immediate writeback. VRECPS and VRSQRTS (AArch32's
-unfused steps, not the fused A64 ones), a structure access or VLDM and VSTM
-that crosses a page, and a misaligned access with an alignment hint run
+with the register or immediate writeback; a VLD1 or VST1 copy that crosses a
+page stays in the gadget and moves its bytes with the A64 slow transfer helper,
+and one without an alignment hint has a gadget for each writeback that tests
+nothing the instruction does not need.
+VRECPS and VRSQRTS (AArch32's unfused steps, not the fused A64 ones), an
+interleaved or one-lane structure access or VLDM and VSTM that crosses a page,
+and a misaligned access with an alignment hint run
 through the semantic library, whose exit commits the live FPSR to
 CpuState before the call and reinstalls it after, as the A64 engine's
 software floating-point helpers do. A saturating instruction leaves QC in the
@@ -1162,24 +1185,30 @@ its runtime memory domain. Cache and publication contracts are described in
 The gadget cache may retain several address spaces. Cache slots and links are
 tagged by address space, retirement drops one address space's owned state, and
 same-generation stale programs are reused only after exact page-bounded word
-validation. An address space's link records and indirect sites are swept once
+validation. On arm64, `DARWIN_UML_GADGET_SHARED_BODIES=1` shares an address
+space's bodies and link state among every executor running it, while each
+executor keeps its own slots and retirement order; sharing is off by default,
+as [`../darwin/README.md`](../darwin/README.md) records. An address space a
+single executor keeps to itself sweeps its link records and indirect sites once
 they number half again what its last sweep kept and enough of its translations
 have left the cache to have left some unnamed: one that no resident
 translation's stream names and that is no resident block's own record is
 released for reuse, and the site cells and target-table entries naming it are
 emptied, so link state follows what the cache holds rather than all the code
-the address space ever ran. Cached returns consult a private
-per-carrier return-record ring after their site cells miss: linked calls push
-the return PC with its block link, a matching record follows that link and
-trains the cell, and the executor empties the ring on every address-space
-switch and after a link sweep, so a stale record can only fall back to the
-ordinary miss exit. A
-cached indirect branch whose cells (and, for a return, ring) miss then looks the
-target up in its address space's direct-mapped target table, which every miss
-exit trains with the target's block link; a hit follows that link and trains
-the site's cell. The table belongs to the address space's link state and is
-retired with it, so it never names another address space's code, and a link
-reset by a code change leaves through its ordinary unlinked exit.
+the address space ever ran. A shared address space is not swept. Cached
+returns consult a private per-carrier return-record ring after their site
+cells miss: linked calls push the return PC with its block link, a matching
+record follows that link and fills an empty cell of the site, and the executor
+empties the ring on every address-space switch and after a link sweep, so a
+stale record can only fall back to the ordinary miss exit. A cached indirect
+branch whose cells (and, for a return, ring) miss then looks the target up in
+its address space's direct-mapped target table, which every miss exit trains
+with the target's block link; a hit follows that link and likewise fills only
+an empty cell, so vCPUs sharing a polymorphic site do not keep rewriting it,
+while the miss exit retrains its cells round-robin. The table belongs to the
+address space's link state and is retired with it, so it never names another
+address space's code, and a link reset by a code change leaves through its
+ordinary unlinked exit.
 The software TLB keys its entries by guest page number. A same-page transfer
 compares the page of its final byte against the way its first byte indexes: the
 16 KiB direct-mapped index never places neighbouring pages in one set, so a

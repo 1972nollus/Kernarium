@@ -340,6 +340,11 @@ struct BuildOptions final {
 	std::uint8_t svcr{};
 	::uml::cpu::HostCapabilities host_capabilities{
 		::uml::cpu::host_capabilities()};
+
+	/* Two executors build the same stream for the same guest code exactly
+	 * when their options compare equal, so only then may they share it. */
+	[[nodiscard]] bool operator==(const BuildOptions &) const noexcept =
+		default;
 };
 
 /* Direct control-flow gadgets load these immutable-layout cells through the

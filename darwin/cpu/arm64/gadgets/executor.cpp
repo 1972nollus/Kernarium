@@ -16,17 +16,20 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cassert>
 #include <cstddef>
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
 #endif
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iterator>
 #include <memory>
 #include <memory_resource>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -241,9 +244,11 @@ private:
  * over bump-allocated chunks hold the same programs in 65 MiB.
  *
  * Freed bodies return to the class they came from, so retranslating a block
- * reuses its predecessor's bytes; chunks are returned only when the cache is
- * destroyed, which is what keeps retiring an address space proportional to
- * what it owned rather than to a serialised allocator walk. See G167.
+ * reuses its predecessor's bytes. Each address space has an arena of its own,
+ * and its chunks are returned when the address space's translations are, so
+ * retiring an address space returns its memory instead of leaving holes in
+ * chunks other address spaces still use. Chunks start small and double, so an
+ * address space that runs little code costs little. See G167.
  *
  * The arena also answers which live body holds an address. Each chunk keeps
  * one bit per granule, set at the first granule of every live block, so the
@@ -267,6 +272,9 @@ public:
 		for (const auto &chunk : chunks_)
 			upstream_->deallocate(chunk.base, chunk.bytes,
 				alignof(std::max_align_t));
+		for (const auto &direct : direct_)
+			upstream_->deallocate(direct.base, direct.bytes,
+				alignof(std::max_align_t));
 	}
 
 	[[nodiscard]] void *allocate(std::size_t bytes)
@@ -287,7 +295,8 @@ public:
 			return block;
 		}
 		if (size > limit_ - used_) {
-			const auto wanted = std::max(size, chunk_bytes);
+			const auto wanted = std::max(size, next_chunk_);
+			next_chunk_ = std::min(next_chunk_ * 2, largest_chunk);
 			auto starts = std::make_unique<std::uint64_t[]>(
 				map_words(wanted));
 			auto *base = static_cast<std::byte *>(
@@ -412,7 +421,8 @@ private:
 	 * 32 stream words per guest instruction. */
 	static constexpr std::size_t classes = 1024;
 	static constexpr std::size_t largest_class = (classes - 1) * granule;
-	static constexpr std::size_t chunk_bytes = std::size_t{256} << 10;
+	static constexpr std::size_t first_chunk = std::size_t{32} << 10;
+	static constexpr std::size_t largest_chunk = std::size_t{256} << 10;
 
 	[[nodiscard]] static std::size_t rounded(std::size_t bytes) noexcept
 	{
@@ -481,18 +491,1181 @@ private:
 	std::uint64_t *current_starts_{};
 	std::size_t used_{};
 	std::size_t limit_{};
+	std::size_t next_chunk_{first_chunk};
 	std::array<std::byte *, classes> free_{};
 };
+
+/* What each executor says about itself for the bodies other executors free.
+ *
+ * Between begin_execution() and end_execution() an executor may hold a stream
+ * pointer it loaded from a link, so a body unpublished in that time may only
+ * be freed once the executor has left. The sequence is odd from entry until
+ * exit and even outside, and moves at both, so a reclaimer that saw an odd
+ * value waits for any other. An executor that never brackets its runs stays
+ * odd, which only keeps bodies longer. A guest entry runs at most a dispatch
+ * budget, so a running executor leaves within a fraction of a millisecond. */
+struct alignas(128) ExecutorAnnouncement final {
+	std::atomic<std::uint64_t> sequence{};
+	bool used{};
+};
+
+namespace {
+
+using Announcement = ExecutorAnnouncement;
+
+/* Publish a pair of words that translated code reads with one `ldp`: a
+ * BlockLink's stream and instruction count, or an indirect cell's guest PC
+ * and link. With FEAT_LSE2 an aligned sixteen-byte `stp` is a single access,
+ * so a vCPU following the pair while another retargets it sees one value or
+ * the other, never a stream with another block's count. */
+inline void store_pair(void *at, std::uint64_t first,
+	std::uint64_t second) noexcept
+{
+	assert((reinterpret_cast<std::uintptr_t>(at) & 15U) == 0U);
+	asm volatile("stp %x1, %x2, [%x0]"
+		     :
+		     : "r"(at), "r"(first), "r"(second)
+		     : "memory");
+}
+
+[[nodiscard]] inline std::uint64_t word_of(const void *pointer) noexcept
+{
+	return reinterpret_cast<std::uintptr_t>(pointer);
+}
+
+/* One translation, allocated apart from the slots that index it.
+ *
+ * A set way exists whether or not it holds a translation, so every byte kept
+ * inline is paid for by the whole cache. With the program, its stream and its
+ * validation words moved into one separately allocated body, an empty way
+ * costs a tag rather than a full BuildResult, and the words a spilling stream
+ * used to allocate on their own now share the body's allocation.
+ *
+ * The body is also paid for by every translation the cache holds, so it keeps
+ * only what a stored block cannot recompute. A BuildResult carries a words
+ * object able to own and grow its storage, against a mean stream of about 225
+ * bytes; a stored block's words are the ones behind this header. result()
+ * rebuilds the builder's type from these fields whenever a caller needs one,
+ * which is once per entry from C++.
+ */
+struct Body final {
+	/* Where the block starts: its guest PC, or for AArch32 its key. */
+	std::uint64_t guest_address{};
+	std::uint64_t stop_address{};
+	std::uint32_t stop_instruction{};
+	std::uint32_t word_count{};
+	std::uint8_t instruction_count{};
+	/* The guest units the stream is validated against: words for A64 and
+	 * A32, halfwords for T32 (at most maximum_t32_validation_units). */
+	std::uint8_t source_word_count{};
+	bool complete{};
+	bool accesses_fp_state{};
+	bool holds_sve{};
+	/* The translation's aarch32::GuestIsa, from its key: it sizes a unit
+	 * and so the validation words. */
+	std::uint8_t isa{};
+	/* How many cache slots, in every executor running the address space,
+	 * hold this body. Changed only under its link record's shard lock. */
+	std::uint16_t holders{};
+
+	/* The stream follows the body, and the guest words it is validated
+	 * against follow the stream. A block that accesses FP/SIMD state is
+	 * linked to through one fp_link_entry word in front of its stream, or
+	 * sve_link_entry for one that holds a non-streaming SVE word, which falls
+	 * through into it, so its link record needs no prefix of its own. */
+	[[nodiscard]] std::size_t entry_words() const noexcept
+	{
+		return accesses_fp_state ? 1U : 0U;
+	}
+	[[nodiscard]] const std::uintptr_t *link_entry() const noexcept
+	{
+		return reinterpret_cast<const std::uintptr_t *>(this + 1);
+	}
+	[[nodiscard]] std::uintptr_t *words() noexcept
+	{
+		return reinterpret_cast<std::uintptr_t *>(this + 1) +
+			entry_words();
+	}
+	[[nodiscard]] const std::uintptr_t *words() const noexcept
+	{
+		return link_entry() + entry_words();
+	}
+	[[nodiscard]] std::uint32_t *source_words() noexcept
+	{
+		return reinterpret_cast<std::uint32_t *>(words() + word_count);
+	}
+	[[nodiscard]] const std::uint32_t *source_words() const noexcept
+	{
+		return reinterpret_cast<const std::uint32_t *>(
+			words() + word_count);
+	}
+	/* The validation units are bytes in a unit the ISA sizes: a word, or
+	 * for T32 a halfword. */
+	[[nodiscard]] std::size_t source_unit() const noexcept
+	{
+		return arm64::aarch32::isa_unit_bytes(
+			static_cast<arm64::aarch32::GuestIsa>(isa));
+	}
+	[[nodiscard]] std::byte *source_bytes() noexcept
+	{
+		return reinterpret_cast<std::byte *>(source_words());
+	}
+	[[nodiscard]] const std::byte *source_bytes() const noexcept
+	{
+		return reinterpret_cast<const std::byte *>(source_words());
+	}
+	[[nodiscard]] std::span<const std::byte> source() const noexcept
+	{
+		return {source_bytes(),
+			std::size_t{source_word_count} * source_unit()};
+	}
+	/* What the arena must be given back follows from the counts, so
+	 * neither the body nor the slot that indexes it stores it. `words`
+	 * counts an FP block's entry word with its stream. */
+	[[nodiscard]] static std::size_t allocation_bytes(
+		std::size_t words, std::size_t source_bytes) noexcept
+	{
+		return sizeof(Body) + words * sizeof(std::uintptr_t) +
+			source_bytes;
+	}
+	[[nodiscard]] std::size_t allocation_bytes() const noexcept
+	{
+		return allocation_bytes(entry_words() + word_count,
+			source_word_count * source_unit());
+	}
+	/* The stored block as the builder produced it. The program refers to
+	 * the words behind this header rather than copying them, so it is
+	 * valid exactly as long as the body is. */
+	[[nodiscard]] BuildResult result() const noexcept
+	{
+		arm64::gadgets::ProgramWords view{
+			arm64::gadgets::ProgramWords::Borrowed{
+				const_cast<std::uintptr_t *>(words()),
+				word_count}};
+		return BuildResult{arm64::gadgets::Program{guest_address,
+				instruction_count, std::move(view),
+				accesses_fp_state, holds_sve},
+			complete, stop_address, stop_instruction};
+	}
+};
+static_assert(sizeof(Body) == 32 &&
+	sizeof(Body) % alignof(std::uintptr_t) == 0,
+	"the stream tail follows the body at pointer alignment");
+static_assert(offsetof(Body, isa) == 29 && offsetof(Body, holders) == 30,
+	"the ISA byte and the holder count sit in what was padding");
+static_assert(maximum_t32_validation_units < 0x100U,
+	"a T32 translation's halfword count fits the narrow field");
+static_assert(block_instruction_count < 0xffU,
+	"a stored block's counts fit the body's narrow fields");
+
+/* A link names a guest PC, which is only meaningful inside one address
+ * space; keying by PC alone would let a block in one branch straight into
+ * another's translation. Each address space therefore owns its own records,
+ * which also keeps the key a single word.
+ *
+ * Translated code follows `link` with one `ldp` of its stream and count while
+ * other vCPUs of the address space may retarget it, so the pair sits on a
+ * sixteen-byte boundary and is only ever written whole (store_pair). The
+ * fallback word stays right in front of it, where link_exit expects its
+ * stream, and the alignment's padding holds the body a miss may adopt.
+ */
+struct alignas(16) LinkRecord final {
+	explicit LinkRecord(std::uint64_t pc) noexcept
+		: fallback_stream{reinterpret_cast<std::uintptr_t>(
+			uml_arm64_gadget_link_exit)},
+		  link{
+			.stream = &fallback_stream,
+			.instruction_count = 0,
+			.guest_pc = pc,
+		  }
+	{
+	}
+
+	void reset() noexcept
+	{
+		store_pair(&link, word_of(&fallback_stream), 0);
+	}
+
+	/* Retarget the record at a stored body. Its words were written before
+	 * this, and a vCPU that loads the pair reads them through it. */
+	void link_to(const Body &body) noexcept
+	{
+		std::atomic_thread_fence(std::memory_order_release);
+		store_pair(&link, word_of(body.link_entry()),
+			body.instruction_count);
+	}
+
+	[[nodiscard]] bool names(const Body &body) const noexcept
+	{
+		return link.stream == body.link_entry();
+	}
+
+	/* The newest body stored for this PC that some slot still holds, which
+	 * another executor's miss may adopt instead of translating. */
+	Body *indexed{};
+	/* An unlinked record's stream: link_exit, which takes the guest PC from
+	 * the BlockLink right behind it. */
+	std::uintptr_t fallback_stream;
+	arm64::gadgets::BlockLink link;
+	/* Set while this record sits in its shard's live list, so a code change
+	 * resets the records that hold an activation instead of every record
+	 * the translator ever named. */
+	bool listed{};
+};
+
+static_assert(offsetof(LinkRecord, link) == 16 &&
+	offsetof(LinkRecord, fallback_stream) + sizeof(std::uintptr_t) ==
+		offsetof(LinkRecord, link) &&
+	sizeof(LinkRecord) == 48,
+	"link_exit reads the PC two words past its stream word, and the "
+	"stream and count are one aligned pair");
+
+struct LinkKey final {
+	[[nodiscard]] std::uint64_t operator()(
+		const LinkRecord &record) const noexcept
+	{
+		return record.link.guest_pc;
+	}
+};
+
+/* An indirect site is named by the branch that owns it, which its own cells do
+ * not record. Translated streams point at the site, the first member; its
+ * cells are aligned pairs that translated code trains as it runs. */
+struct alignas(16) IndirectRecord final {
+	explicit IndirectRecord(std::uint64_t source) noexcept
+		: source_pc{source}
+	{}
+
+	arm64::gadgets::IndirectLink site{};
+	std::uint64_t source_pc;
+};
+
+static_assert(offsetof(IndirectRecord, site) == 0 &&
+	sizeof(IndirectRecord) == 48,
+	"indirect cells are aligned pairs");
+
+struct IndirectKey final {
+	[[nodiscard]] std::uint64_t operator()(
+		const IndirectRecord &record) const noexcept
+	{
+		return record.source_pc;
+	}
+};
+
+constexpr std::size_t announcement_capacity = 256;
+Announcement announcements[announcement_capacity];
+std::mutex announcements_mutex;
+
+[[nodiscard]] constexpr bool inside(std::uint64_t sequence) noexcept
+{
+	return (sequence & 1U) != 0U;
+}
+
+[[nodiscard]] constexpr std::uint64_t next_odd(std::uint64_t sequence) noexcept
+{
+	return sequence + (inside(sequence) ? 2U : 1U);
+}
+
+[[nodiscard]] Announcement *acquire_announcement() noexcept
+{
+	const std::lock_guard guard{announcements_mutex};
+	for (auto &announcement : announcements) {
+		if (announcement.used)
+			continue;
+		announcement.used = true;
+		announcement.sequence.store(next_odd(announcement.sequence.load(
+			std::memory_order_relaxed)), std::memory_order_relaxed);
+		return &announcement;
+	}
+	return nullptr;
+}
+
+/* The executor may now load stream pointers from links: every body
+ * unpublished before this fence is out of its reach. */
+void announce_entry(Announcement &announcement) noexcept
+{
+	announcement.sequence.store(next_odd(announcement.sequence.load(
+		std::memory_order_relaxed)), std::memory_order_relaxed);
+	std::atomic_thread_fence(std::memory_order_seq_cst);
+}
+
+/* The executor holds no stream pointer any more. */
+void announce_exit(Announcement &announcement) noexcept
+{
+	const auto sequence =
+		announcement.sequence.load(std::memory_order_relaxed);
+	if (inside(sequence))
+		announcement.sequence.store(sequence + 1U,
+			std::memory_order_release);
+}
+
+/* DARWIN_UML_GADGET_SHARED_BODIES=1 lets executors running one address
+ * space share its translations; unset or 0 keeps every executor's to itself.
+ * Private is the default until a shared space bounds the link records and
+ * freed arena it accumulates under process churn (G227). Read as each
+ * executor is made. */
+[[nodiscard]] bool shared_bodies_enabled() noexcept
+{
+	const char *value = std::getenv("DARWIN_UML_GADGET_SHARED_BODIES");
+	return value != nullptr && *value != '\0' &&
+		std::strcmp(value, "0") != 0;
+}
+
+void release_announcement(Announcement *announcement) noexcept
+{
+	if (announcement == nullptr)
+		return;
+	const auto sequence =
+		announcement->sequence.load(std::memory_order_relaxed);
+	if (inside(sequence))
+		announcement->sequence.store(sequence + 1U,
+			std::memory_order_release);
+	const std::lock_guard guard{announcements_mutex};
+	announcement->used = false;
+}
+
+/* The executors of one address space whose leaving a reclaimer waits for, as
+ * they were when it unpublished the bodies it holds back. */
+struct Snapshot final {
+	struct Seen final {
+		const Announcement *announcement;
+		std::uint64_t sequence;
+	};
+	std::vector<Seen> seen;
+
+	/* Every executor seen inside has left since, apart from `self`, which
+	 * holds nothing it could reach through an unpublished body: releases
+	 * happen in C++ before it runs translated code again. */
+	[[nodiscard]] bool elapsed(const Announcement *self) const noexcept
+	{
+		for (const auto &entry : seen) {
+			if (entry.announcement == self || !inside(entry.sequence))
+				continue;
+			if (entry.announcement->sequence.load(
+				    std::memory_order_acquire) == entry.sequence)
+				return false;
+		}
+		return true;
+	}
+};
+
+/* What makes two executors' translations interchangeable: the address space,
+ * the SVCR mode they were built for and the build options. A key with an
+ * owner is private to that cache. */
+struct SpaceKey final {
+	unsigned long generation{};
+	std::uint8_t mode{};
+	const void *owner{};
+	BuildOptions options{};
+};
+
+/* One address space's translations.
+ *
+ * Its bodies, the link records and indirect sites their streams name, and the
+ * target table the indirect gadgets consult all belong to the address space,
+ * so every executor running it shares them when the host can retarget a pair
+ * atomically. Each executor keeps its own tagged slots, which decide what it
+ * holds; a body lives while any slot holds it, so the address space costs the
+ * union of what its executors hold rather than the sum. A miss on a body
+ * another executor holds adopts it after exact word validation, with no copy
+ * or relocation (G161, G166).
+ *
+ * The records are split eight ways by key, each part behind its own lock, so
+ * vCPUs resolving links for different code rarely meet. Lock order: reset,
+ * shard, limbo, arena.
+ */
+class Space final {
+public:
+	explicit Space(SpaceKey key, std::uint64_t changes)
+		: key_{std::move(key)}, gate_{changes}, reset_done_{changes},
+		  bodies_{&counted_}
+	{
+		auto &empty = shard_of(empty_pc);
+		empty_link_ = &empty.links.try_emplace(empty_pc, empty_pc)
+			.first->link;
+	}
+
+	~Space()
+	{
+		/* No executor holds this address space any more, so nothing can
+		 * run a body or follow a record of it. */
+		free_bodies(limbo_.waiting);
+		free_bodies(limbo_.incoming);
+	}
+
+	Space(const Space &) = delete;
+	Space &operator=(const Space &) = delete;
+
+	/* The unreachable guest PC an untrained indirect cell names; guest
+	 * targets are admitted only word-aligned, so none can collide. */
+	static constexpr std::uint64_t empty_pc = ~std::uint64_t{};
+
+	[[nodiscard]] const SpaceKey &key() const noexcept { return key_; }
+
+	void attach(const Announcement *announcement)
+	{
+		const std::lock_guard guard{attached_mutex_};
+		attached_.push_back(announcement);
+	}
+
+	/* Whether this was the last executor. */
+	[[nodiscard]] bool detach(const Announcement *announcement)
+	{
+		const std::lock_guard guard{attached_mutex_};
+		const auto found = std::find(attached_.begin(), attached_.end(),
+			announcement);
+		if (found != attached_.end())
+			attached_.erase(found);
+		return attached_.empty();
+	}
+
+	[[nodiscard]] const arm64::gadgets::BlockLink *link(std::uint64_t pc)
+	{
+		auto &shard = shard_of(pc);
+		const std::lock_guard guard{shard.mutex};
+		return &shard.links.try_emplace(pc, pc).first->link;
+	}
+
+	[[nodiscard]] arm64::gadgets::IndirectLink *indirect_link(
+		std::uint64_t source_pc)
+	{
+		auto &shard = shard_of(source_pc);
+		const std::lock_guard guard{shard.mutex};
+		const auto [created, inserted] =
+			shard.indirect.try_emplace(source_pc, source_pc);
+		if (inserted)
+			for (auto &entry : created->site.entries)
+				store_pair(&entry, empty_pc, word_of(empty_link_));
+		return &created->site;
+	}
+
+	/* The target table, or null before the address space's first indirect
+	 * miss. It lives as long as the records it names. */
+	[[nodiscard]] const void *target_tier() const noexcept
+	{
+		return targets_.load(std::memory_order_acquire);
+	}
+
+	/* Train `site` and the target table with `target`, the record for
+	 * `target_pc`. Every vCPU of the address space misses into here, so
+	 * only a site's first training takes a lock.
+	 *
+	 * A cell or table entry only ever names a record, and a record is
+	 * linked only to a body validated at the gate, so writing one without
+	 * the shard lock is safe even while a code change resets the site:
+	 * following it at worst exits through link_exit. Enrolment in the live
+	 * list only keeps a reset site's predictions clean. */
+	void learn_indirect(arm64::gadgets::IndirectLink &site,
+		std::uint64_t target_pc, const arm64::gadgets::BlockLink *target)
+	{
+		train_target(target_pc, target);
+		/* Training is the only thing C++ does to move a site off its
+		 * empty cells, and empty_pc is unreachable as a guest target, so
+		 * a site still holding two empty cells is untrained since its
+		 * last reset -- which makes this the transition that enrols it.
+		 * Translated code trains cells too, without enrolling; such a
+		 * cell names a record, which a code change resets. */
+		if (untrained(site)) {
+			const auto &owner =
+				*reinterpret_cast<const IndirectRecord *>(&site);
+			auto &shard = shard_of(owner.source_pc);
+			const std::lock_guard guard{shard.mutex};
+			if (untrained(site)) {
+				shard.live_indirect.push_back(&site);
+				store_pair(&site.entries[0], target_pc,
+					word_of(target));
+				return;
+			}
+		}
+		for (auto &entry : site.entries) {
+			if (cell_pc(entry) != target_pc)
+				continue;
+			store_pair(&entry, target_pc, word_of(target));
+			return;
+		}
+		std::atomic_ref<std::uint8_t> replacement{site.next_replacement};
+		const auto next = replacement.load(std::memory_order_relaxed);
+		store_pair(&site.entries[next %
+				arm64::gadgets::indirect_link_entries],
+			target_pc, word_of(target));
+		replacement.store(static_cast<std::uint8_t>((next + 1U) %
+			arm64::gadgets::indirect_link_entries),
+			std::memory_order_relaxed);
+	}
+
+	/* Store a freshly built translation, or adopt the equal one another
+	 * executor stored first, and hold it for the caller's slot. */
+	[[nodiscard]] Body *publish(const BuildResult &built,
+		std::span<const std::byte> validation,
+		arm64::aarch32::GuestIsa isa)
+	{
+		const auto pc = built.program.guest_address();
+		auto &shard = shard_of(pc);
+		{
+			const std::lock_guard guard{shard.mutex};
+			auto &record = *shard.links.try_emplace(pc, pc).first;
+			if (auto *held = equal_indexed(record, validation, isa)) {
+				++held->holders;
+				return held;
+			}
+		}
+		auto *body = new_body(built, validation, isa);
+		{
+			const std::lock_guard guard{shard.mutex};
+			auto &record = *shard.links.find(pc);
+			if (auto *held = equal_indexed(record, validation, isa)) {
+				++held->holders;
+				/* Never published, so nothing can reach it. */
+				const std::lock_guard arena{arena_mutex_};
+				delete_body(body);
+				return held;
+			}
+			body->holders = 1;
+			if (!validation.empty())
+				record.indexed = body;
+		}
+		return body;
+	}
+
+	/* Hold the body indexed for `pc`, which the caller will validate. */
+	[[nodiscard]] Body *hold_indexed(std::uint64_t pc)
+	{
+		auto &shard = shard_of(pc);
+		const std::lock_guard guard{shard.mutex};
+		auto *record = shard.links.find(pc);
+		if (record == nullptr || record->indexed == nullptr)
+			return nullptr;
+		++record->indexed->holders;
+		return record->indexed;
+	}
+
+	/* A slot lets go of `body`. `stale` says validation found guest code
+	 * other than the body's, so no miss should adopt it any more. */
+	void release(Body *body, bool stale)
+	{
+		auto &shard = shard_of(body->guest_address);
+		const std::lock_guard guard{shard.mutex};
+		auto *record = shard.links.find(body->guest_address);
+		assert(body->holders != 0);
+		const bool last = --body->holders == 0;
+		if (record != nullptr && record->indexed == body && (last || stale))
+			record->indexed = nullptr;
+		if (!last)
+			return;
+		/* Only a body that leaves can leave a record nothing names. */
+		if (key_.owner != nullptr)
+			++departed_;
+		/* Nothing names it from here on; executors that loaded the
+		 * record before this may still be running it, so it waits for
+		 * them in limbo. */
+		if (record != nullptr && record->names(*body))
+			record->reset();
+		const std::lock_guard limbo{limbo_.mutex};
+		limbo_.incoming.push_back(body);
+		limbo_.pending.store(true, std::memory_order_relaxed);
+	}
+
+	/* Link the record for `pc` to `body`, which the caller holds and
+	 * validated at `changes`, unless a newer code change has reset the
+	 * address space's links since. Returns the record for the slot's memo. */
+	LinkRecord *activate(std::uint64_t pc, LinkRecord *memo,
+		const Body &body, std::uint64_t changes)
+	{
+		auto &shard = shard_of(pc);
+		const std::lock_guard guard{shard.mutex};
+		auto *record = memo != nullptr && memo->link.guest_pc == pc ?
+			memo : shard.links.try_emplace(pc, pc).first;
+		if (gate_.load(std::memory_order_seq_cst) != changes)
+			return record;
+		if (!record->listed) {
+			record->listed = true;
+			shard.live_links.push_back(record);
+		}
+		if (!record->names(body))
+			record->link_to(body);
+		return record;
+	}
+
+	/* Answer a code change: before any executor runs the address space at
+	 * `changes`, every link and site that held an activation is reset.
+	 * Raising the gate first means an activation racing this either lands
+	 * before its shard is reset or sees the gate and stays unlinked. */
+	void observe(std::uint64_t changes)
+	{
+		if (reset_done_.load(std::memory_order_acquire) >= changes)
+			return;
+		const std::lock_guard reset{reset_mutex_};
+		if (reset_done_.load(std::memory_order_relaxed) >= changes)
+			return;
+		gate_.store(changes, std::memory_order_seq_cst);
+		for (auto &shard : shards_) {
+			const std::lock_guard guard{shard.mutex};
+			for (auto *record : shard.live_links) {
+				record->reset();
+				record->listed = false;
+			}
+			shard.live_links.clear();
+			/* The reset cells name this address space's own empty
+			 * record, so a site never points at another's link
+			 * state. */
+			for (auto *site : shard.live_indirect) {
+				for (auto &entry : site->entries)
+					store_pair(&entry, empty_pc,
+						word_of(empty_link_));
+				std::atomic_ref<std::uint8_t>{site->next_replacement}
+					.store(0, std::memory_order_relaxed);
+			}
+			shard.live_indirect.clear();
+		}
+		reset_done_.store(changes, std::memory_order_release);
+	}
+
+	using LinkTable = gadget_cache::StableRecordTable<LinkRecord, LinkKey>;
+	using SiteTable =
+		gadget_cache::StableRecordTable<IndirectRecord, IndirectKey>;
+
+	/* Whether to sweep this address space's link records and sites now
+	 * (gadget_cache::sweep_due).
+	 *
+	 * Only an address space one executor keeps to itself is swept: that
+	 * executor's slots are then everything that holds one of its bodies,
+	 * and none of its translated code runs while the executor stores. A
+	 * shared one would need the slots of every executor holding it, a grace
+	 * period like its bodies' before a released record is used again, and
+	 * every executor's memos and return ring let go of what went, so it is
+	 * never swept. */
+	[[nodiscard]] bool sweep_due() const noexcept
+	{
+		return key_.owner != nullptr &&
+			gadget_cache::sweep_due(records(), kept_, departed_);
+	}
+
+	/* Marks over every record and site, the empty record already kept. */
+	[[nodiscard]] std::pair<LinkTable::Marks, SiteTable::Marks> marks() const
+	{
+		std::array<const LinkTable *, shard_count> links;
+		std::array<const SiteTable *, shard_count> sites;
+		for (std::size_t index = 0; index < shard_count; ++index) {
+			links[index] = &shards_[index].links;
+			sites[index] = &shards_[index].indirect;
+		}
+		auto result = std::pair{LinkTable::marks_of(links),
+			SiteTable::marks_of(sites)};
+		result.first.mark(record_of(empty_link_));
+		return result;
+	}
+
+	/* The record for `pc`, or null; never makes one. */
+	[[nodiscard]] const LinkRecord *find_link(std::uint64_t pc) const noexcept
+	{
+		return shards_[shard_index(pc)].links.find(pc);
+	}
+
+	struct Released final {
+		std::size_t links;
+		std::size_t sites;
+	};
+
+	/* Release every record and site the marks leave, which the one
+	 * executor holding this address space found nothing to name. A site
+	 * cell or target-table entry may still name such a record, whose
+	 * block is gone; it is emptied as a code change empties it, to learn
+	 * its target again if that runs. Everything this allocates comes before
+	 * anything is released, and each step after leaves the address space
+	 * consistent, so a sweep that runs out of memory part way only keeps
+	 * more than it could have. */
+	[[nodiscard]] Released sweep(const LinkTable::Marks &links,
+		const SiteTable::Marks &sites)
+	{
+		assert(key_.owner != nullptr);
+		std::array<std::vector<LinkRecord *>, shard_count> live_links;
+		std::array<std::vector<arm64::gadgets::IndirectLink *>, shard_count>
+			live_indirect;
+		for (std::size_t index = 0; index < shard_count; ++index) {
+			const auto &shard = shards_[index];
+			const std::lock_guard guard{shard.mutex};
+			for (auto *record : shard.live_links)
+				if (links.marked(record))
+					live_links[index].push_back(record);
+			for (auto *site : shard.live_indirect)
+				if (sites.marked(site_record(site)))
+					live_indirect[index].push_back(site);
+		}
+
+		const auto clear = [&](arm64::gadgets::IndirectLinkEntry &entry) {
+			if (!links.marked(record_of(entry.link)))
+				store_pair(&entry, empty_pc, word_of(empty_link_));
+		};
+		for (auto &shard : shards_) {
+			const std::lock_guard guard{shard.mutex};
+			shard.indirect.for_each([&](IndirectRecord &record) {
+				for (auto &entry : record.site.entries)
+					clear(entry);
+			});
+		}
+		if (auto *table = targets_.load(std::memory_order_acquire))
+			for (std::size_t index = 0;
+			     index < arm64::gadgets::target_tier_entries; ++index)
+				clear(table[index]);
+		Released released{};
+		for (std::size_t index = 0; index < shard_count; ++index) {
+			auto &shard = shards_[index];
+			const std::lock_guard guard{shard.mutex};
+			/* A site whose cells are all empty again is enrolled by its
+			 * next training, as one never trained is. */
+			std::erase_if(live_indirect[index],
+				[](arm64::gadgets::IndirectLink *site) {
+					return untrained(*site);
+				});
+			shard.live_links = std::move(live_links[index]);
+			shard.live_indirect = std::move(live_indirect[index]);
+			released.sites += shard.indirect.sweep(sites);
+			released.links += shard.links.sweep(links);
+		}
+		return released;
+	}
+
+	/* A sweep, whole or not, has run: the next waits for growth and
+	 * departures from here. */
+	void swept() noexcept
+	{
+		kept_ = records();
+		departed_ = 0;
+	}
+
+	[[nodiscard]] static const LinkRecord *record_of(
+		const arm64::gadgets::BlockLink *link) noexcept
+	{
+		return reinterpret_cast<const LinkRecord *>(
+			reinterpret_cast<std::uintptr_t>(link) -
+			offsetof(LinkRecord, link));
+	}
+
+	/* Free what was unpublished long enough ago that no other executor can
+	 * still be running it. Never waits. */
+	void reclaim(const Announcement *self)
+	{
+		if (!limbo_.pending.load(std::memory_order_relaxed))
+			return;
+		std::unique_lock limbo{limbo_.mutex, std::try_to_lock};
+		if (!limbo.owns_lock())
+			return;
+		if (!limbo_.waiting.empty()) {
+			if (!limbo_.snapshot.elapsed(self))
+				return;
+			free_bodies(limbo_.waiting);
+		}
+		if (!limbo_.incoming.empty()) {
+			/* Every body here was unpublished before this fence, so
+			 * an executor seen outside now can only enter after it
+			 * and never reach one. */
+			std::atomic_thread_fence(std::memory_order_seq_cst);
+			limbo_.waiting.swap(limbo_.incoming);
+			take_snapshot(limbo_.snapshot);
+			if (limbo_.snapshot.elapsed(self))
+				free_bodies(limbo_.waiting);
+		}
+		limbo_.pending.store(!limbo_.waiting.empty(),
+			std::memory_order_relaxed);
+	}
+
+	/* The live body whose allocation holds `address`, or null. A body
+	 * waiting in limbo is still live here, so an exit inside a successor
+	 * that was unpublished while it ran is still attributed to it. */
+	[[nodiscard]] const Body *owner(const void *address) const
+	{
+		const std::lock_guard arena{arena_mutex_};
+		return static_cast<const Body *>(bodies_.owner(address));
+	}
+
+	/* owner() for the guest sampler, which must not wait on a vCPU it
+	 * has suspended. */
+	[[nodiscard]] bool try_owner(const void *address,
+		const Body *&body) const
+	{
+		std::unique_lock arena{arena_mutex_, std::try_to_lock};
+		if (!arena.owns_lock())
+			return false;
+		body = static_cast<const Body *>(bodies_.owner(address));
+		return true;
+	}
+
+	struct Footprint final {
+		std::size_t stream_index, streams, links, indirect;
+	};
+
+	[[nodiscard]] Footprint footprint() const
+	{
+		Footprint result{};
+		{
+			const std::lock_guard arena{arena_mutex_};
+			result.stream_index = bodies_.index_bytes();
+			result.streams = bodies_.bytes();
+		}
+		for (const auto &shard : shards_) {
+			const std::lock_guard guard{shard.mutex};
+			result.links += shard.links.bytes() +
+				shard.live_links.capacity() *
+					sizeof(LinkRecord *);
+			result.indirect += shard.indirect.bytes() +
+				shard.live_indirect.capacity() * sizeof(void *);
+		}
+		if (targets_.load(std::memory_order_relaxed) != nullptr)
+			result.indirect += arm64::gadgets::target_tier_entries *
+				sizeof(arm64::gadgets::IndirectLinkEntry);
+		return result;
+	}
+
+#if UML_GADGET_CACHE_CENSUS
+	[[nodiscard]] std::size_t census_empty_bytes() const
+	{
+		const std::lock_guard arena{arena_mutex_};
+		return bodies_.empty_bytes();
+	}
+
+	[[nodiscard]] std::size_t link_records() const
+	{
+		std::size_t count = 0;
+		for (const auto &shard : shards_) {
+			const std::lock_guard guard{shard.mutex};
+			count += shard.links.size();
+		}
+		return count;
+	}
+
+	[[nodiscard]] std::size_t attached() const
+	{
+		const std::lock_guard guard{attached_mutex_};
+		return attached_.size();
+	}
+
+	[[nodiscard]] std::size_t limbo_bodies() const
+	{
+		const std::lock_guard limbo{limbo_.mutex};
+		return limbo_.waiting.size() + limbo_.incoming.size();
+	}
+
+	template <typename Visit>
+	void for_each_link(Visit &&visit) const
+	{
+		for (const auto &shard : shards_) {
+			const std::lock_guard guard{shard.mutex};
+			shard.links.for_each(visit);
+		}
+	}
+
+	template <typename Visit>
+	void for_each_indirect(Visit &&visit) const
+	{
+		for (const auto &shard : shards_) {
+			const std::lock_guard guard{shard.mutex};
+			shard.indirect.for_each(visit);
+		}
+	}
+#endif
+
+private:
+	static constexpr std::size_t shard_count = 8;
+
+	struct Shard final {
+		mutable std::mutex mutex;
+		/* These grow with the code the address space runs. The records
+		 * live in chunks, so each stays where translated link cells name
+		 * it, until a sweep of a private address space releases what
+		 * nothing names any more (sweep()); a shared one keeps them for
+		 * its whole residency. */
+		LinkTable links;
+		SiteTable indirect;
+		/* The records and sites holding an activation. */
+		std::vector<LinkRecord *> live_links;
+		std::vector<arm64::gadgets::IndirectLink *> live_indirect;
+	};
+
+	struct Limbo final {
+		mutable std::mutex mutex;
+		/* Unpublished, not yet covered by a snapshot. */
+		std::vector<Body *> incoming;
+		/* Unpublished before `snapshot` was taken. */
+		std::vector<Body *> waiting;
+		Snapshot snapshot;
+		std::atomic<bool> pending{};
+	};
+
+	[[nodiscard]] static std::size_t shard_index(std::uint64_t key) noexcept
+	{
+		auto mixed = key * 0x9e3779b97f4a7c15ULL;
+		mixed ^= mixed >> 29;
+		return (mixed >> 7) & (shard_count - 1U);
+	}
+
+	[[nodiscard]] Shard &shard_of(std::uint64_t key) noexcept
+	{
+		return shards_[shard_index(key)];
+	}
+
+	[[nodiscard]] static const IndirectRecord *site_record(
+		const arm64::gadgets::IndirectLink *site) noexcept
+	{
+		return reinterpret_cast<const IndirectRecord *>(
+			reinterpret_cast<std::uintptr_t>(site) -
+			offsetof(IndirectRecord, site));
+	}
+
+	/* Records and sites, which only a private address space's own
+	 * executor reads here (sweep_due()). */
+	[[nodiscard]] std::size_t records() const noexcept
+	{
+		std::size_t count = 0;
+		for (const auto &shard : shards_)
+			count += shard.links.size() + shard.indirect.size();
+		return count;
+	}
+
+	[[nodiscard]] static std::uint64_t cell_pc(
+		arm64::gadgets::IndirectLinkEntry &entry) noexcept
+	{
+		return std::atomic_ref<std::uint64_t>{entry.guest_pc}.load(
+			std::memory_order_relaxed);
+	}
+
+	[[nodiscard]] static bool untrained(
+		arm64::gadgets::IndirectLink &site) noexcept
+	{
+		for (auto &entry : site.entries)
+			if (cell_pc(entry) != empty_pc)
+				return false;
+		return true;
+	}
+
+	/* The indexed body when it stands for exactly these guest units. */
+	[[nodiscard]] static Body *equal_indexed(const LinkRecord &record,
+		std::span<const std::byte> validation,
+		arm64::aarch32::GuestIsa isa) noexcept
+	{
+		auto *held = record.indexed;
+		if (held == nullptr || validation.empty() ||
+		    held->isa != static_cast<std::uint8_t>(isa))
+			return nullptr;
+		const auto source = held->source();
+		if (source.size() != validation.size() ||
+		    !std::equal(source.begin(), source.end(),
+			    validation.begin()))
+			return nullptr;
+		return held;
+	}
+
+	void train_target(std::uint64_t pc,
+		const arm64::gadgets::BlockLink *target)
+	{
+		using arm64::gadgets::target_tier_entries;
+		auto *table = targets_.load(std::memory_order_acquire);
+		if (table == nullptr) {
+			const std::lock_guard guard{targets_mutex_};
+			table = targets_.load(std::memory_order_relaxed);
+			if (table == nullptr) {
+				targets_storage_ = std::make_unique<
+					arm64::gadgets::IndirectLinkEntry[]>(
+					target_tier_entries);
+				table = targets_storage_.get();
+				/* Empty entries name the address space's own
+				 * unlinked record for empty_pc, as reset site cells
+				 * do. */
+				for (std::size_t index = 0;
+				     index < target_tier_entries; ++index)
+					store_pair(&table[index], empty_pc,
+						word_of(empty_link_));
+				targets_.store(table, std::memory_order_release);
+			}
+		}
+		store_pair(&table[arm64::gadgets::target_tier_index(pc)], pc,
+			word_of(target));
+	}
+
+	[[nodiscard]] Body *new_body(const BuildResult &built,
+		std::span<const std::byte> validation,
+		arm64::aarch32::GuestIsa isa)
+	{
+		const auto &program = built.program;
+		const auto words = program.words();
+		assert(program.instruction_count() <= block_instruction_count);
+		const auto unit = arm64::aarch32::isa_unit_bytes(isa);
+		assert(validation.size() % unit == 0);
+		const std::size_t entry = program.accesses_fp_state() ? 1U : 0U;
+		const auto bytes = Body::allocation_bytes(
+			entry + words.size(), validation.size());
+		void *storage = nullptr;
+		{
+			const std::lock_guard arena{arena_mutex_};
+			storage = bodies_.allocate(bytes);
+		}
+		auto *body = new (storage) Body{
+			.guest_address = program.guest_address(),
+			.stop_address = built.stop_address,
+			.stop_instruction = built.stop_instruction,
+			.word_count = static_cast<std::uint32_t>(words.size()),
+			.instruction_count = static_cast<std::uint8_t>(
+				program.instruction_count()),
+			.source_word_count =
+				static_cast<std::uint8_t>(validation.size() / unit),
+			.complete = built.complete,
+			.accesses_fp_state = program.accesses_fp_state(),
+			.holds_sve = program.holds_sve(),
+			.isa = static_cast<std::uint8_t>(isa),
+		};
+		if (entry != 0)
+			body->words()[-1] = reinterpret_cast<std::uintptr_t>(
+				program.holds_sve() ?
+					uml_arm64_gadget_sve_link_entry :
+					uml_arm64_gadget_fp_link_entry);
+		std::copy(words.begin(), words.end(), body->words());
+		std::copy(validation.begin(), validation.end(),
+			body->source_bytes());
+		return body;
+	}
+
+	/* The caller holds arena_mutex_. */
+	void delete_body(Body *body) noexcept
+	{
+		const auto bytes = body->allocation_bytes();
+		body->~Body();
+		bodies_.deallocate(body, bytes);
+	}
+
+	void free_bodies(std::vector<Body *> &bodies) noexcept
+	{
+		if (bodies.empty())
+			return;
+		const std::lock_guard arena{arena_mutex_};
+		for (auto *body : bodies)
+			delete_body(body);
+		bodies.clear();
+	}
+
+	void take_snapshot(Snapshot &snapshot)
+	{
+		snapshot.seen.clear();
+		const std::lock_guard guard{attached_mutex_};
+		for (const auto *announcement : attached_)
+			if (announcement != nullptr)
+				snapshot.seen.push_back({announcement,
+					announcement->sequence.load(
+						std::memory_order_acquire)});
+	}
+
+	SpaceKey key_;
+	std::array<Shard, shard_count> shards_;
+	const arm64::gadgets::BlockLink *empty_link_{};
+	/* The code-change sequence links may be activated at, and the one
+	 * whose reset has finished. */
+	std::atomic<std::uint64_t> gate_;
+	std::atomic<std::uint64_t> reset_done_;
+	std::mutex reset_mutex_;
+	std::mutex targets_mutex_;
+	std::unique_ptr<arm64::gadgets::IndirectLinkEntry[]> targets_storage_;
+	std::atomic<arm64::gadgets::IndirectLinkEntry *> targets_{};
+	Limbo limbo_;
+	mutable std::mutex arena_mutex_;
+	CountingResource counted_;
+	BodyArena bodies_;
+	mutable std::mutex attached_mutex_;
+	std::vector<const Announcement *> attached_;
+	/* For a private address space: the records and sites its last sweep
+	 * kept, and the bodies that have left it since (sweep_due()). */
+	std::size_t kept_{};
+	std::size_t departed_{};
+};
+
+/* The address spaces whose translations executors share, by key. */
+class SpaceRegistry final {
+public:
+	[[nodiscard]] static SpaceRegistry &instance() noexcept
+	{
+		static SpaceRegistry registry;
+		return registry;
+	}
+
+	/* The space for `key`, made when absent, with `announcement` among
+	 * the executors a reclaimer waits for. A key with an owner is never
+	 * shared and never registered. */
+	[[nodiscard]] Space *attach(SpaceKey key, std::uint64_t changes,
+		const Announcement *announcement)
+	{
+		if (key.owner != nullptr) {
+			auto *space = new Space(std::move(key), changes);
+			space->attach(announcement);
+			return space;
+		}
+		const std::lock_guard guard{mutex_};
+		auto &candidates = spaces_[{key.generation, key.mode}];
+		for (auto *space : candidates)
+			if (space->key().options == key.options) {
+				space->attach(announcement);
+				return space;
+			}
+		auto space = std::make_unique<Space>(key, changes);
+		space->attach(announcement);
+		candidates.push_back(space.get());
+		return space.release();
+	}
+
+	void detach(Space *space, const Announcement *announcement)
+	{
+		if (space->key().owner != nullptr) {
+			(void)space->detach(announcement);
+			delete space;
+			return;
+		}
+		std::unique_ptr<Space> destroyed;
+		{
+			const std::lock_guard guard{mutex_};
+			if (!space->detach(announcement))
+				return;
+			const auto found = spaces_.find(
+				{space->key().generation, space->key().mode});
+			if (found != spaces_.end()) {
+				auto &candidates = found->second;
+				candidates.erase(std::find(candidates.begin(),
+					candidates.end(), space));
+				if (candidates.empty())
+					spaces_.erase(found);
+			}
+			destroyed.reset(space);
+		}
+	}
+
+private:
+	struct Key final {
+		unsigned long generation;
+		std::uint8_t mode;
+		bool operator==(const Key &) const noexcept = default;
+	};
+	struct KeyHash final {
+		[[nodiscard]] std::size_t operator()(const Key &key) const noexcept
+		{
+			return std::hash<unsigned long>{}(key.generation) ^
+				(std::size_t{key.mode} << 56);
+		}
+	};
+
+	std::mutex mutex_;
+	std::unordered_map<Key, std::vector<Space *>, KeyHash> spaces_;
+};
+
+} // namespace
 
 class GadgetExecutor::ProgramCache final {
 	/* Named by member declarations below and defined with the rest of the
 	 * private state. */
-	struct LinkRecord;
 	struct Generation;
 
 public:
-	ProgramCache()
-		: bodies_{&counted_},
+	/* `mode` is the SVCR mode every translation here is built for, and
+	 * `announcement` what this cache's executor says about itself; with
+	 * `share` false the cache keeps its address spaces to itself. */
+	ProgramCache(const BuildOptions &options, std::uint8_t mode,
+		const Announcement *announcement, bool share)
+		: options_{options}, mode_{mode}, announcement_{announcement},
+		  share_{share},
 		  build_scratch_{scratch_.data(), scratch_.size()}
 	{}
 
@@ -504,46 +1677,17 @@ public:
 			for (auto &slot : slab->slots) {
 				if (slot.body == nullptr)
 					continue;
-				delete_body(slot.body);
+				space_of(slot.generation).release(slot.body, false);
 				slot.body = nullptr;
 			}
 		}
+		for (auto &[generation, state] : generations_)
+			SpaceRegistry::instance().detach(state.space,
+				announcement_);
 	}
 
-	struct Footprint final {
-		std::size_t stream_index, slabs, streams, links, indirect;
-		[[nodiscard]] std::size_t total() const noexcept
-		{
-			return stream_index + slabs + streams + links + indirect;
-		}
-	};
-
-	[[nodiscard]] Footprint footprint() const noexcept
-	{
-		std::size_t slabs = 0;
-		for (const auto &slab : slabs_)
-			if (slab)
-				slabs += sizeof(Slab);
-		std::size_t links = 0;
-		std::size_t indirect = 0;
-		for (const auto &[generation, state] : generations_) {
-			links += state.links.bytes() +
-				state.live_links.capacity() *
-					sizeof(LinkRecord *) +
-				state.slots.capacity() * sizeof(std::uint32_t);
-			indirect += state.indirect.bytes() +
-				state.live_indirect.capacity() * sizeof(void *) +
-				(state.targets ? arm64::gadgets::target_tier_entries *
-					sizeof(arm64::gadgets::IndirectLinkEntry) : 0);
-		}
-		return {
-			.stream_index = bodies_.index_bytes(),
-			.slabs = slabs,
-			.streams = bodies_.bytes(),
-			.links = links,
-			.indirect = indirect,
-		};
-	}
+	ProgramCache(const ProgramCache &) = delete;
+	ProgramCache &operator=(const ProgramCache &) = delete;
 
 #if UML_GADGET_CACHE_CENSUS
 	/* Write what this cache holds and how it came to hold it, so
@@ -555,11 +1699,26 @@ public:
 	 * stream it produced: two executors translating the same code emit the
 	 * same words but embed pointers to their own link records, so only the
 	 * source identifies the work. The parts of its allocation go out with
-	 * it because they decide what a body costs.
+	 * it because they decide what a body costs. Every address space the
+	 * cache holds is written whole, with its identity, so a reader counts a
+	 * space that several executors share once, and each translation names
+	 * its body so a body several slots hold is counted once.
 	 */
-	void census(std::FILE *out, std::uint64_t snapshot) const noexcept
+	void census(std::FILE *out, std::uint64_t snapshot) const
 	{
-		const auto parts = footprint();
+		/* The executor record counts only what this cache owns: its slabs
+		 * and its per-space slot lists. Each address space's bodies and
+		 * records follow on an S line named by the space, which every
+		 * cache holding it writes and a reader counts once. */
+		std::size_t slabs = 0;
+		for (const auto &slab : slabs_)
+			if (slab)
+				slabs += sizeof(Slab);
+		std::size_t lists = 0;
+		for (const auto &[generation, state] : generations_)
+			lists += state.slots.capacity() * sizeof(std::uint32_t);
+		if (link_memo_)
+			lists += sizeof(LinkMemo);
 		/* How often the stream lookup was asked, against how often a
 		 * store would have had to maintain an index for it. */
 		const auto slab_total = static_cast<std::size_t>(
@@ -567,17 +1726,16 @@ public:
 				[](const auto &slab) { return slab != nullptr; }));
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu slots=%zu slot_bytes=%zu "
-			"slab_slots=%zu slab_count=%zu stream_index=%zu slabs=%zu "
-			"streams=%zu arena_empty=%zu links=%zu indirect=%zu "
-			"total=%zu stream_lookups=%llu sweeps=%llu swept_links=%llu "
-			"swept_sites=%llu sweep_ns=%llu",
+			"slab_slots=%zu slab_count=%zu stream_index=0 slabs=%zu "
+			"streams=0 arena_empty=0 links=%zu indirect=0 "
+			"total=%zu stream_lookups=%llu adoptions=%llu shared=%d "
+			"sweeps=%llu swept_links=%llu swept_sites=%llu sweep_ns=%llu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), slot_count, sizeof(Slot), slab_slots,
-			slab_total, parts.stream_index, parts.slabs, parts.streams,
-			bodies_.empty_bytes(), parts.links, parts.indirect,
-			parts.total(),
+			slab_total, slabs, lists, slabs + lists,
 			static_cast<unsigned long long>(stream_lookups_),
-			static_cast<unsigned long long>(sweeps_),
+			static_cast<unsigned long long>(adoptions_),
+			share_ ? 1 : 0, static_cast<unsigned long long>(sweeps_),
 			static_cast<unsigned long long>(swept_links_),
 			static_cast<unsigned long long>(swept_sites_),
 			static_cast<unsigned long long>(sweep_ns_));
@@ -589,40 +1747,56 @@ public:
 			const auto found = std::find(resident_.rbegin(),
 				resident_.rend(), generation);
 			const bool running = generation == current_generation_;
+			const auto space = state.space->footprint();
+			/* The G line's bytes are this cache's own list of its
+			 * slots in the space; the space's are on its S line. */
 			std::fprintf(out,
 				"G %lu current=%d rank=%td idle_switches=%llu "
 				"idle_seconds=%.3f link_records=%zu links=%zu "
-				"indirect=%zu targets=%zu\n",
+				"indirect=0 targets=0 space=%p\n",
 				generation, running ? 1 : 0,
 				found - resident_.rbegin(),
 				static_cast<unsigned long long>(running ? 0 :
 					switches_ - state.census_switch),
 				running ? 0.0 : now - state.census_seconds,
-				state.links.size(),
-				state.links.bytes() +
-					state.live_links.capacity() *
-						sizeof(LinkRecord *) +
-					state.slots.capacity() *
-						sizeof(std::uint32_t),
-				state.indirect.bytes() +
-					state.live_indirect.capacity() *
-						sizeof(void *),
-				state.targets ? arm64::gadgets::target_tier_entries *
-					sizeof(arm64::gadgets::IndirectLinkEntry) : 0);
+				state.space->link_records(),
+				state.slots.capacity() * sizeof(std::uint32_t),
+				static_cast<const void *>(state.space));
+			std::fprintf(out,
+				"S %p generation=%lu mode=%u attached=%zu "
+				"stream_index=%zu streams=%zu arena_empty=%zu "
+				"links=%zu indirect=%zu link_records=%zu limbo=%zu\n",
+				static_cast<const void *>(state.space), generation,
+				unsigned{mode_}, state.space->attached(),
+				space.stream_index, space.streams,
+				state.space->census_empty_bytes(), space.links,
+				space.indirect, state.space->link_records(),
+				state.space->limbo_bodies());
 		}
 		const auto sample = census::word_sample();
 		/* The same link targets are sampled in every cache, so the
 		 * sample says how many of an address space's records each
-		 * cache keeps for itself. */
+		 * cache keeps for itself. A shared space writes its records
+		 * from every cache that holds it, which a reader removes by
+		 * the space's identity. */
 		if (sample != 0)
 			for (const auto &[generation, state] : generations_)
-				state.links.for_each([&](const LinkRecord &record) {
-					if (census_sampled(record.link.guest_pc, sample))
-						std::fprintf(out, "L %lu 0x%llx\n",
-							generation,
-							static_cast<unsigned long long>(
-								record.link.guest_pc));
-				});
+				state.space->for_each_link(
+					[&, generation](const LinkRecord &record) {
+						if (census_sampled(
+							    record.link.guest_pc,
+							    sample))
+							std::fprintf(out,
+								"L %lu 0x%llx %p\n",
+								generation,
+								static_cast<
+									unsigned long long>(
+									record.link
+										.guest_pc),
+								static_cast<
+									const void *>(
+									state.space));
+					});
 		const auto text = census::text_of(reinterpret_cast<const void *>(
 			reinterpret_cast<std::uintptr_t>(
 				uml_arm64_gadget_link_exit)));
@@ -636,7 +1810,7 @@ public:
 				const auto &body = *slot.body;
 				std::fprintf(out,
 					"P %lu 0x%llx %zu %zu %zu 0x%llx %zu %zu %zu "
-					"%zu\n",
+					"%zu %p\n",
 					slot.generation,
 					static_cast<unsigned long long>(slot.pc),
 					std::size_t{body.instruction_count},
@@ -648,7 +1822,8 @@ public:
 					(body.entry_words() + body.word_count) *
 						sizeof(std::uintptr_t),
 					std::size_t{body.source_word_count} *
-						body.source_unit());
+						body.source_unit(),
+					static_cast<const void *>(&body));
 				if (sample != 0 &&
 				    census_sampled(slot.pc, sample))
 					census_words(out, slot, text, records);
@@ -677,38 +1852,6 @@ public:
 		return occupied;
 	}
 
-	/* Reset the activations of one address space, as its code change
-	 * requires.
-	 *
-	 * The code-change sequence is per address space, so a change in one says
-	 * nothing about the others and their links stay live. Within the changed
-	 * one, only a record that was activated can differ from the reset state,
-	 * so the walk is over those rather than over every record the translator
-	 * ever named -- with several address spaces resident, that difference is
-	 * the whole cost of the reset.
-	 */
-	void invalidate_links(Generation &state) noexcept
-	{
-		for (auto *record : state.live_links) {
-			record->reset();
-			record->listed = false;
-		}
-		state.live_links.clear();
-		if (state.live_indirect.empty())
-			return;
-		/* The reset cells name this address space's own empty record, so
-		 * a site never points at another's link state. */
-		const auto *empty_link = &link_record(state, empty_pc).link;
-		for (auto *site : state.live_indirect) {
-			for (auto &entry : site->entries) {
-				entry.guest_pc = empty_pc;
-				entry.link = empty_link;
-			}
-			site->next_replacement = 0;
-		}
-		state.live_indirect.clear();
-	}
-
 	/* Bind the cache to an address space and answer for whatever changed in
 	 * it while it was away. Each address space carries its own mark, so a
 	 * switch back to one whose code never changed costs nothing. */
@@ -723,19 +1866,13 @@ public:
 		}
 #endif
 		current_generation_ = generation;
-		auto [entry, inserted] = generations_.try_emplace(generation);
-		current_ = &entry->second;
+		current_ = nullptr;
+		auto &state = current();
 		touch(generation);
-		if (inserted) {
-			current_->changes = changes;
-			while (resident_.size() > uml_gadget_resident_generations)
-				retire(resident_.front());
+		if (state.changes == changes)
 			return;
-		}
-		if (current_->changes == changes)
-			return;
-		invalidate_links(*current_);
-		current_->changes = changes;
+		state.space->observe(changes);
+		state.changes = changes;
 	}
 
 	[[nodiscard]] std::optional<BuildResult> find(
@@ -749,36 +1886,44 @@ public:
 #endif
 		const auto location = locate(current_generation_, pc);
 		auto &slab = slabs_[location.slab];
-		if (!slab) {
+		if (slab) {
+			for (std::size_t way = 0; way < ways; ++way) {
+				auto &slot = slab->slots[location.offset + way];
+				if (slot.body == nullptr || slot.pc != pc ||
+				    slot.generation != current_generation_)
+					continue;
+				if (slot.validated_changes == changes) {
 #if UML_GADGET_CACHE_CENSUS
-			history_.missed();
+					history_.hit();
 #endif
-			return std::nullopt;
-		}
-		for (std::size_t way = 0; way < ways; ++way) {
-			auto &slot = slab->slots[location.offset + way];
-			if (slot.body == nullptr || slot.pc != pc ||
-			    slot.generation != current_generation_)
-				continue;
-			if (slot.validated_changes == changes) {
+					return slot.body->result();
+				}
+				++diagnostics.validation_attempts;
+				if (!validate(slot, changes, mapping_changes,
+					    memory, execution_context,
+					    diagnostics)) {
 #if UML_GADGET_CACHE_CENSUS
-				history_.hit();
+					history_.missed();
+#endif
+					return std::nullopt;
+				}
+				activate(pc, slot);
+#if UML_GADGET_CACHE_CENSUS
+				history_.revalidated();
 #endif
 				return slot.body->result();
 			}
-			++diagnostics.validation_attempts;
-			if (!validate(slot, changes, mapping_changes, memory,
-				    execution_context, diagnostics)) {
+		}
+		/* No slot here holds the PC, so ask the address space: another
+		 * executor may hold its translation. */
+		if (share_) {
+			if (auto adopted = adopt(pc, changes, mapping_changes,
+				    memory, execution_context, diagnostics)) {
 #if UML_GADGET_CACHE_CENSUS
-				history_.missed();
+				history_.adopted();
 #endif
-				return std::nullopt;
+				return adopted;
 			}
-			activate(pc, slot);
-#if UML_GADGET_CACHE_CENSUS
-			history_.revalidated();
-#endif
-			return slot.body->result();
 		}
 #if UML_GADGET_CACHE_CENSUS
 		history_.missed();
@@ -792,20 +1937,20 @@ public:
 	 * stream, and the retirement correction needs that successor's program
 	 * rather than the entered block's. The arena knows which live body
 	 * holds any address, and a stream pointer the engine has just produced
-	 * always lies in a live body: links only ever name current
-	 * translations, and nothing is stored or released between the exit and
-	 * this lookup. The answer is exact, with no index to fall out of.
+	 * always lies in a live body: links only ever name translations a slot
+	 * held when they were linked, and an unpublished body is freed only
+	 * after this executor has left translated code. The answer is exact,
+	 * with no index to fall out of.
 	 */
 	[[nodiscard]] std::optional<BuildResult> find_stream(
-		const void *stream) const noexcept
+		const void *stream) const
 	{
-		if (stream == nullptr)
+		if (stream == nullptr || current_ == nullptr)
 			return std::nullopt;
 #if UML_GADGET_CACHE_CENSUS
 		++stream_lookups_;
 #endif
-		const auto *body = static_cast<const Body *>(
-			bodies_.owner(stream));
+		const auto *body = current_->space->owner(stream);
 		if (body == nullptr)
 			return std::nullopt;
 		auto result = body->result();
@@ -823,102 +1968,108 @@ public:
 	};
 
 	[[nodiscard]] std::optional<StreamSource> find_stream_source(
-		const void *stream) const noexcept
+		const void *stream) const
 	{
-		if (stream == nullptr)
+		if (stream == nullptr || current_ == nullptr)
 			return std::nullopt;
-		const auto *body = static_cast<const Body *>(
-			bodies_.owner(stream));
+		const auto *body = current_->space->owner(stream);
 		if (body == nullptr)
 			return std::nullopt;
 		auto result = body->result();
 		if (!program_contains_stream(result.program, stream))
 			return std::nullopt;
-		return StreamSource{std::move(result),
-			{body->source_bytes(),
-			 std::size_t{body->source_word_count} * body->source_unit()}};
+		return StreamSource{std::move(result), body->source()};
 	}
 
 	/* The same lookup for the guest sampler, which runs while this
-	 * executor's thread is suspended in gadget code: reads only. */
+	 * executor's thread is suspended in gadget code: reads only, and never
+	 * waits for a lock another vCPU may hold. */
 	[[nodiscard]] bool sample_block(const void *stream,
 		diagnostics::SampledBlock &block) const noexcept
 	{
-		const auto *body = static_cast<const Body *>(bodies_.owner(stream));
-		if (body == nullptr)
-			return false;
-		const auto *word = static_cast<const std::uintptr_t *>(stream);
-		if (word < body->link_entry() ||
-		    word >= body->words() + body->word_count)
-			return false;
-		block.guest_address = body->guest_address;
-		block.instruction_count = body->instruction_count;
-		if (body->isa == 0) {
-			block.word_count = std::min<std::uint32_t>(
-				body->source_word_count,
-				static_cast<std::uint32_t>(diagnostics::sampled_block_words));
-			std::copy_n(body->source_words(), block.word_count, block.words);
+		for (const auto &[generation, state] : generations_) {
+			const Body *body = nullptr;
+			try {
+				if (!state.space->try_owner(stream, body) ||
+				    body == nullptr)
+					continue;
+			} catch (...) {
+				return false;
+			}
+			const auto *word =
+				static_cast<const std::uintptr_t *>(stream);
+			if (word < body->link_entry() ||
+			    word >= body->words() + body->word_count)
+				return false;
+			block.guest_address = body->guest_address;
+			block.instruction_count = body->instruction_count;
+			if (body->isa == 0) {
+				block.word_count = std::min<std::uint32_t>(
+					body->source_word_count,
+					static_cast<std::uint32_t>(
+						diagnostics::sampled_block_words));
+				std::copy_n(body->source_words(), block.word_count,
+					block.words);
+				return true;
+			}
+			/* An AArch32 block's address is its key, and its words
+			 * are the guest bytes it was translated from, a T32
+			 * block's halfwords in pairs (little-endian words, as
+			 * the guest stores them). */
+			const auto bytes = std::min<std::size_t>(
+				std::size_t{body->source_word_count} *
+					body->source_unit(),
+				diagnostics::sampled_block_words *
+					sizeof(std::uint32_t));
+			block.word_count = static_cast<std::uint32_t>(
+				(bytes + sizeof(std::uint32_t) - 1) /
+				sizeof(std::uint32_t));
+			std::fill_n(block.words, block.word_count, 0U);
+			std::memcpy(block.words, body->source_bytes(), bytes);
 			return true;
 		}
-		/* An AArch32 block's address is its key, and its words are the
-		 * guest bytes it was translated from, a T32 block's halfwords in
-		 * pairs (little-endian words, as the guest stores them). */
-		const auto bytes = std::min<std::size_t>(
-			std::size_t{body->source_word_count} * body->source_unit(),
-			diagnostics::sampled_block_words * sizeof(std::uint32_t));
-		block.word_count = static_cast<std::uint32_t>(
-			(bytes + sizeof(std::uint32_t) - 1) / sizeof(std::uint32_t));
-		std::fill_n(block.words, block.word_count, 0U);
-		std::memcpy(block.words, body->source_bytes(), bytes);
-		return true;
+		return false;
 	}
 
-	[[nodiscard]] const arm64::gadgets::BlockLink *link(
-		std::uint64_t pc)
+	[[nodiscard]] const arm64::gadgets::BlockLink *link(std::uint64_t pc)
 	{
-		return &link_record(pc).link;
+		return space().link(pc);
 	}
 
 	/* The running address space's target table, or null before its first
-	 * indirect miss. It lives and dies with the Generation, as the link
+	 * indirect miss. It lives and dies with the address space, as the link
 	 * records it names do, so it can never name another address space's
 	 * code; a record reset by a code change just exits through link_exit. */
 	[[nodiscard]] const void *target_tier() const noexcept
 	{
-		return current_ != nullptr ? current_->targets.get() : nullptr;
-	}
-
-	void train_target(std::uint64_t pc,
-		const arm64::gadgets::BlockLink *target)
-	{
-		using arm64::gadgets::target_tier_entries;
-		auto &state = current();
-		if (!state.targets) {
-			state.targets = std::make_unique<
-				arm64::gadgets::IndirectLinkEntry[]>(
-				target_tier_entries);
-			/* Empty records name the address space's own unlinked
-			 * record for empty_pc, as reset site cells do. */
-			const auto *empty = &link_record(state, empty_pc).link;
-			std::fill_n(state.targets.get(), target_tier_entries,
-				arm64::gadgets::IndirectLinkEntry{empty_pc, empty});
-		}
-		state.targets[arm64::gadgets::target_tier_index(pc)] = {pc, target};
+		return current_ != nullptr ? current_->space->target_tier() :
+			nullptr;
 	}
 
 	[[nodiscard]] arm64::gadgets::IndirectLink *indirect_link(
 		std::uint64_t source_pc)
 	{
-		const auto [created, inserted] =
-			current().indirect.try_emplace(source_pc, source_pc);
-		if (inserted) {
-			const auto *empty_link = link(empty_pc);
-			for (auto &entry : created->site.entries) {
-				entry.guest_pc = empty_pc;
-				entry.link = empty_link;
-			}
-		}
-		return &created->site;
+		return space().indirect_link(source_pc);
+	}
+
+	/* The record for `pc` in the current address space, through this
+	 * cache's memo of the records its indirect misses named. A record never
+	 * moves while its address space is resident here, and retiring one
+	 * clears its entries, as a sweep clears those naming a record it
+	 * released, so a hit is always the live record; it spares the space's
+	 * lock, which every vCPU's misses would otherwise meet. */
+	[[nodiscard]] const arm64::gadgets::BlockLink *link_record(
+		std::uint64_t pc)
+	{
+		if (!link_memo_)
+			link_memo_ = std::make_unique<LinkMemo>();
+		auto &entry = (*link_memo_)[((pc >> 2U) ^ (pc >> 14U) ^
+			current_generation_) & (link_memo_entries - 1U)];
+		if (entry.link == nullptr || entry.pc != pc ||
+		    entry.generation != current_generation_)
+			entry = {pc, current_generation_,
+				current_->space->link(pc)};
+		return entry.link;
 	}
 
 	void learn_indirect(arm64::gadgets::IndirectLink &site,
@@ -929,30 +2080,7 @@ public:
 		 * dump can say how many cells a site would have needed. */
 		++site_misses_[&site][target_pc];
 #endif
-		const auto *target = link(target_pc);
-		train_target(target_pc, target);
-		/* Training is the only thing that moves a site off its empty
-		 * cells, and empty_pc is unreachable as a guest target, so a
-		 * site still holding two empty cells is untrained since its last
-		 * reset -- which makes this the transition that enrols it. */
-		if (std::all_of(site.entries.begin(), site.entries.end(),
-			    [](const auto &entry) {
-				    return entry.guest_pc == empty_pc;
-			    }))
-			current().live_indirect.push_back(&site);
-		for (auto &entry : site.entries) {
-			if (entry.guest_pc != target_pc)
-				continue;
-			entry.link = target;
-			return;
-		}
-		auto &entry = site.entries[site.next_replacement %
-			arm64::gadgets::indirect_link_entries];
-		entry.guest_pc = target_pc;
-		entry.link = target;
-		site.next_replacement = static_cast<std::uint8_t>(
-			(site.next_replacement + 1U) %
-			arm64::gadgets::indirect_link_entries);
+		space().learn_indirect(site, target_pc, link_record(target_pc));
 	}
 
 	[[nodiscard]] BuildResult store(
@@ -984,89 +2112,37 @@ public:
 		GadgetCacheDiagnostics &diagnostics)
 	{
 		assert(arm64::aarch32::key_is_canonical(pc));
-		const auto location = locate(current_generation_, pc);
-		auto &slab = slabs_[location.slab];
-		if (!slab)
-			slab = std::make_unique<Slab>();
+		auto &state = current();
+		auto *body = state.space->publish(result, validation,
+			arm64::aarch32::key_isa(pc));
 #if UML_GADGET_CACHE_CENSUS
 		/* A lookup that lost a validation race leaves its translation
 		 * resident, and this store makes a second copy beside it. */
 		bool restored = false;
-		for (std::size_t way = 0; way < ways; ++way) {
-			const auto &held = slab->slots[location.offset + way];
-			if (held.body != nullptr && held.pc == pc &&
-			    held.generation == current_generation_)
-				restored = true;
+		{
+			const auto location = locate(current_generation_, pc);
+			if (const auto &slab = slabs_[location.slab])
+				for (std::size_t way = 0; way < ways; ++way) {
+					const auto &held =
+						slab->slots[location.offset + way];
+					if (held.body != nullptr &&
+					    held.pc == pc &&
+					    held.generation ==
+						    current_generation_)
+						restored = true;
+				}
 		}
 #endif
-
-		auto &replacement = next_replacement_[location.set];
-		std::size_t selected = replacement;
-		for (std::size_t way = 0; way < ways; ++way) {
-			const auto &slot = slab->slots[location.offset + way];
-			if (slot.body == nullptr) {
-				selected = way;
-				break;
-			}
-		}
-		replacement = static_cast<std::uint8_t>((selected + 1) & (ways - 1));
-
-		auto &slot = slab->slots[location.offset + selected];
-		/* Record the slot against the address space taking it, so its
-		 * retirement walks what it owns instead of the whole cache. */
-		auto &state = current();
-		if (state.slots_complete) {
-			if (state.slots.size() < slot_count) {
-				state.slots.push_back(static_cast<std::uint32_t>(
-					location.slab * slab_slots +
-					location.offset + selected));
-			} else {
-				state.slots_complete = false;
-				state.slots.clear();
-				state.slots.shrink_to_fit();
-			}
-		}
-		auto *replacement_body = new_body(result, validation,
-			arm64::aarch32::key_isa(pc));
-		/* Whatever occupied the slot has a link record to reset, and a
-		 * body for this cache to release. */
-		if (slot.body != nullptr) {
-#if UML_GADGET_CACHE_CENSUS
-			history_.depart(slot.generation, slot.pc,
-				body_digest(*slot.body), body_bytes(*slot.body),
-				census::Departure::evicted);
-#endif
-			deactivate(slot.generation, slot.pc,
-				slot.body->link_entry());
-			delete_body(slot.body);
-			slot.body = nullptr;
-		}
-		/* The memoised binding describes whoever held the slot until
-		 * now, and a store may hand the slot to a different address
-		 * space at the same guest PC -- where every test activate()
-		 * makes still passes. Left in place it would publish this
-		 * translation into the *previous* address space's record,
-		 * branching its code into this one and leaving the slot naming a
-		 * record that retiring that address space destroys. Taking a
-		 * slot therefore always resolves the binding again; ordinary
-		 * reactivation of an unchanged owner keeps the memo.
-		 */
-		slot.link = nullptr;
-		slot.body = replacement_body;
-		slot.pc = pc;
-		slot.generation = current_generation_;
-		slot.validated_changes = changes;
+		auto &slot = install(pc, body, changes);
 #if UML_GADGET_CACHE_CENSUS
 		history_.arrive(census_id_, current_generation_, pc,
 			body_digest(*slot.body), restored);
 #endif
-		activate(pc, slot);
+		state.space->reclaim(announcement_);
 		/* The build's words are in the body now, so nothing outside what
 		 * a sweep reads names a record it made. */
-		if (gadget_cache::sweep_due(
-			    state.links.size() + state.indirect.size(), state.kept,
-			    state.departed))
-			sweep(state, current_generation_, diagnostics);
+		if (state.space->sweep_due())
+			sweep(state, diagnostics);
 		return slot.body->result();
 	}
 
@@ -1083,141 +2159,21 @@ public:
 		return &build_scratch_;
 	}
 
+	[[nodiscard]] std::uint64_t adoptions() const noexcept
+	{
+		return adoptions_;
+	}
+
 private:
 	static constexpr std::size_t ways = ::uml::cpu::gadget_cache::ways;
 	static constexpr std::size_t slot_count = uml_gadget_cache_slots;
 	static constexpr std::size_t set_count = slot_count / ways;
 	static constexpr std::size_t slab_slots = ::uml::cpu::gadget_cache::slab_slots;
 	static constexpr std::size_t slab_count = slot_count / slab_slots;
-	/* The unreachable guest PC an untrained indirect cell names; guest
-	 * targets are admitted only word-aligned, so none can collide. */
-	static constexpr std::uint64_t empty_pc = ~std::uint64_t{};
-
-	/* One translation, allocated apart from the slot that indexes it.
-	 *
-	 * A set way exists whether or not it holds a translation, so every byte
-	 * kept inline is paid for by the whole cache. With the program, its
-	 * stream and its validation words moved into one separately allocated
-	 * body, an empty way costs a tag rather than a full BuildResult, and the
-	 * words a spilling stream used to allocate on their own now share the
-	 * body's allocation.
-	 *
-	 * The body is also paid for by every translation the cache holds, so it
-	 * keeps only what a stored block cannot recompute. A BuildResult carries
-	 * a words object able to own and grow its storage, against a mean
-	 * stream of about 225 bytes; a stored block's words are the ones behind
-	 * this header. result() rebuilds the builder's type from these
-	 * fields whenever a caller needs one, which is once per entry from C++.
-	 */
-	struct Body final {
-		/* Where the block starts. */
-		std::uint64_t guest_address{};
-		std::uint64_t stop_address{};
-		std::uint32_t stop_instruction{};
-		std::uint32_t word_count{};
-		std::uint16_t instruction_count{};
-		/* The guest units the stream is validated against: words for
-		 * A64 and A32, halfwords for T32 (at most
-		 * maximum_t32_validation_units). */
-		std::uint8_t source_word_count{};
-		bool complete{};
-		bool accesses_fp_state{};
-		bool holds_sve{};
-		/* The translation's aarch32::GuestIsa, from its key, in what
-		 * was padding: it sizes a unit and so the validation words. */
-		std::uint8_t isa{};
-
-		/* The stream follows the body, and the guest words it is
-		 * validated against follow the stream. A block that accesses
-		 * FP/SIMD state is linked to through one fp_link_entry word in
-		 * front of its stream, or sve_link_entry for one that holds a
-		 * non-streaming SVE word, which falls through into it, so its
-		 * link record needs no prefix of its own. */
-		[[nodiscard]] std::size_t entry_words() const noexcept
-		{
-			return accesses_fp_state ? 1U : 0U;
-		}
-		[[nodiscard]] const std::uintptr_t *link_entry() const noexcept
-		{
-			return reinterpret_cast<const std::uintptr_t *>(this + 1);
-		}
-		[[nodiscard]] std::uintptr_t *words() noexcept
-		{
-			return reinterpret_cast<std::uintptr_t *>(this + 1) +
-				entry_words();
-		}
-		[[nodiscard]] const std::uintptr_t *words() const noexcept
-		{
-			return link_entry() + entry_words();
-		}
-		[[nodiscard]] std::uint32_t *source_words() noexcept
-		{
-			return reinterpret_cast<std::uint32_t *>(
-				words() + word_count);
-		}
-		[[nodiscard]] const std::uint32_t *source_words() const noexcept
-		{
-			return reinterpret_cast<const std::uint32_t *>(
-				words() + word_count);
-		}
-		/* The validation units are bytes in a unit the ISA sizes: a
-		 * word, or for T32 a halfword. */
-		[[nodiscard]] std::size_t source_unit() const noexcept
-		{
-			return arm64::aarch32::isa_unit_bytes(
-				static_cast<arm64::aarch32::GuestIsa>(isa));
-		}
-		[[nodiscard]] std::byte *source_bytes() noexcept
-		{
-			return reinterpret_cast<std::byte *>(source_words());
-		}
-		[[nodiscard]] const std::byte *source_bytes() const noexcept
-		{
-			return reinterpret_cast<const std::byte *>(source_words());
-		}
-		/* What the arena must be given back follows from the counts, so
-		 * neither the body nor the slot that indexes it stores it.
-		 * `words` counts an FP block's entry word with its stream. */
-		[[nodiscard]] static std::size_t allocation_bytes(
-			std::size_t words, std::size_t source_bytes) noexcept
-		{
-			return sizeof(Body) + words * sizeof(std::uintptr_t) +
-				source_bytes;
-		}
-		[[nodiscard]] std::size_t allocation_bytes() const noexcept
-		{
-			return allocation_bytes(entry_words() + word_count,
-				source_word_count * source_unit());
-		}
-		/* The stored block as the builder produced it. The program
-		 * refers to the words behind this header rather than copying
-		 * them, so it is valid exactly as long as the body is. */
-		[[nodiscard]] BuildResult result() const noexcept
-		{
-			arm64::gadgets::ProgramWords view{
-				arm64::gadgets::ProgramWords::Borrowed{
-					const_cast<std::uintptr_t *>(words()),
-					word_count}};
-			return BuildResult{arm64::gadgets::Program{guest_address,
-					instruction_count, std::move(view),
-					accesses_fp_state, holds_sve},
-				complete, stop_address, stop_instruction};
-		}
-	};
-	static_assert(sizeof(Body) == 32 &&
-		sizeof(Body) % alignof(std::uintptr_t) == 0,
-		"the stream tail follows the body at pointer alignment");
-	static_assert(offsetof(Body, holds_sve) == 29 &&
-		offsetof(Body, isa) == 30,
-		"the ISA byte sits in the body's padding, after every field");
-	static_assert(maximum_t32_validation_units < 0x100U,
-		"a T32 translation's halfword count fits the narrow field");
-	static_assert(block_instruction_count < 0xffU,
-		"a stored block's counts fit the body's narrow fields");
 
 	struct Slot final {
-		/* The translation this slot indexes. A slot is occupied exactly
-		 * while this is non-null. */
+		/* The translation this slot indexes, held in its address space.
+		 * A slot is occupied exactly while this is non-null. */
 		Body *body{};
 		/* The address space this translation belongs to. A guest virtual
 		 * address only means something inside one, so a slot is a match
@@ -1229,18 +2185,12 @@ private:
 		std::uint64_t pc{};
 		/* Reactivation resolves the same link record every time, so its
 		 * address is memoised here rather than hashed again on each pass.
-		 * The owning address space keeps its records in chunks that never
-		 * move, and a link sweep keeps the record of every block held, so
+		 * The address space keeps its records in chunks that never move,
+		 * and a sweep keeps the record of every block a slot holds, so
 		 * the address stays valid while the slot holds this translation:
-		 * store() and release() reset the memo, and retiring the address
-		 * space releases this slot in the same pass that destroys the map.
-		 *
-		 * The memo is only ever valid for the address space named by
-		 * `generation`, and nothing about the record itself says which
-		 * one that is: the guest PC it carries is equal across all of
-		 * them. Ordinary slot replacement does not keep the owner, so
-		 * store() resets the memo rather than letting activate() decide
-		 * from the record alone.
+		 * install() and release() reset the memo, and retiring the
+		 * address space releases this slot before the cache lets go of
+		 * the space.
 		 */
 		LinkRecord *link{};
 		std::uint64_t validated_changes{};
@@ -1263,79 +2213,23 @@ private:
 		std::size_t offset;
 	};
 
-	/* A link names a guest PC, which is only meaningful inside one address
-	 * space; keying by PC alone would let a block in one branch straight
-	 * into another's translation. Each address space therefore owns its own
-	 * map, which also keeps the key a single word. */
-	struct LinkRecord final {
-		explicit LinkRecord(std::uint64_t pc) noexcept
-			: fallback_stream{reinterpret_cast<std::uintptr_t>(
-				uml_arm64_gadget_link_exit)},
-			  link{
-				.stream = &fallback_stream,
-				.instruction_count = 0,
-				.guest_pc = pc,
-			  }
-		{
-		}
-
-		void reset() noexcept
-		{
-			link.stream = &fallback_stream;
-			link.instruction_count = 0;
-		}
-
-		/* An unlinked record's stream: link_exit, which takes the guest
-		 * PC from the BlockLink right behind it. */
-		std::uintptr_t fallback_stream;
-		arm64::gadgets::BlockLink link;
-		/* Set while this record sits in its address space's live list, so
-		 * a code change resets the records that hold an activation
-		 * instead of every record the translator ever named. */
-		bool listed{};
-	};
-
-	static_assert(offsetof(LinkRecord, link) == sizeof(std::uintptr_t) &&
-		sizeof(LinkRecord) == 40,
-		"link_exit reads the PC two words past its stream word");
-
-	struct LinkKey final {
-		[[nodiscard]] std::uint64_t operator()(
-			const LinkRecord &record) const noexcept
-		{
-			return record.link.guest_pc;
-		}
-	};
-
-	/* An indirect site is named by the branch that owns it, which its own
-	 * cells do not record. Translated streams point at the site, the first
-	 * member. */
-	struct IndirectRecord final {
-		explicit IndirectRecord(std::uint64_t source) noexcept
-			: source_pc{source}
-		{}
-
-		arm64::gadgets::IndirectLink site{};
-		std::uint64_t source_pc;
-	};
-
-	struct IndirectKey final {
-		[[nodiscard]] std::uint64_t operator()(
-			const IndirectRecord &record) const noexcept
-		{
-			return record.source_pc;
-		}
-	};
-
-	/* Everything that belongs to one address space.
+	/* What this cache keeps about one address space it holds: the space,
+	 * shared with other executors or not, the code-change mark it last
+	 * answered, and the slots it stored into.
 	 *
-	 * Retiring an address space is then dropping this, rather than filtering
-	 * it out of structures the others share. That matters because retirement
-	 * is not rare on a desktop guest: it happens on every first sight of a
-	 * ninth address space, and the filtering version had to walk every slot
-	 * in the cache and every link record of every address space to find the
-	 * one being retired. See G167.
+	 * Retiring an address space is then releasing those slots and the
+	 * space, rather than filtering it out of structures the others share.
+	 * That matters because retirement is not rare on a desktop guest: it
+	 * happens on every first sight of a ninth address space. See G167.
 	 */
+	static constexpr std::size_t link_memo_entries = 4096;
+	struct LinkMemoEntry final {
+		std::uint64_t pc;
+		unsigned long generation;
+		const arm64::gadgets::BlockLink *link;
+	};
+	using LinkMemo = std::array<LinkMemoEntry, link_memo_entries>;
+
 	struct Generation final {
 		Generation() = default;
 		Generation(const Generation &) = delete;
@@ -1343,32 +2237,14 @@ private:
 		Generation(Generation &&) = delete;
 		Generation &operator=(Generation &&) = delete;
 
+		Space *space{};
 		std::uint64_t changes{};
-		/* These grow with the code the address space runs, and a sweep
-		 * releases what nothing names any more (sweep()). The records
-		 * live in chunks, so retiring an address space is a few bulk
-		 * releases rather than thousands of allocator frees across busy
-		 * vCPU carriers, and each record stays where translated link
-		 * cells name it. */
-		gadget_cache::StableRecordTable<LinkRecord, LinkKey> links;
-		gadget_cache::StableRecordTable<IndirectRecord, IndirectKey>
-			indirect;
-		/* The records and sites the last sweep kept, and the bodies
-		 * that have left the cache since (gadget_cache::sweep_due). */
-		std::size_t kept{};
-		std::size_t departed{};
-		/* The target table the translated code consults after a site's
-		 * cells miss; allocated on the address space's first miss. */
-		std::unique_ptr<arm64::gadgets::IndirectLinkEntry[]> targets;
-		/* The records and sites holding an activation. */
-		std::vector<LinkRecord *> live_links;
-		std::vector<arm64::gadgets::IndirectLink *> live_indirect;
 		/* Slots this address space has stored into, as flat slot
 		 * indices. It may name a slot another address space has since
 		 * taken, and may name one twice, so retirement checks every
 		 * entry; it can only *miss* a slot by having overflowed, which
 		 * `slots_complete` records and retirement answers with the whole
-		 * sweep. A link sweep rewrites it as the slots held, each once.
+		 * sweep.
 		 */
 		std::vector<std::uint32_t> slots;
 		bool slots_complete{true};
@@ -1410,15 +2286,13 @@ private:
 		resident_.push_back(generation);
 	}
 
-	/* Drop everything describing one address space: its resident
-	 * translations, the links the generated code reaches them through, and
-	 * its indirect sites.
+	/* Let go of one address space: its resident translations, and the
+	 * cache's hold on the space, which goes with the last executor that
+	 * held it.
 	 *
 	 * The slots come from the list the address space kept while it was
 	 * storing, so this is proportional to what it owned rather than to the
-	 * size of the cache; the link records, indirect sites and live lists go
-	 * with the Generation itself. No deactivate() is needed on the way out,
-	 * because the records those calls would reset are about to be destroyed.
+	 * size of the cache.
 	 */
 	void retire(unsigned long generation)
 	{
@@ -1435,10 +2309,16 @@ private:
 					release(slot, generation);
 			}
 		}
+		if (link_memo_)
+			for (auto &entry : *link_memo_)
+				if (entry.generation == generation)
+					entry = {};
 		if (owner != generations_.end()) {
+			auto *space = owner->second.space;
 			if (current_ == &owner->second)
 				current_ = nullptr;
 			generations_.erase(owner);
+			SpaceRegistry::instance().detach(space, announcement_);
 		}
 		const auto found = std::find(
 			resident_.begin(), resident_.end(), generation);
@@ -1446,7 +2326,7 @@ private:
 			resident_.erase(found);
 	}
 
-	void release(Slot &slot, unsigned long generation) noexcept
+	void release(Slot &slot, unsigned long generation)
 	{
 		if (slot.body == nullptr || slot.generation != generation)
 			return;
@@ -1454,10 +2334,18 @@ private:
 		history_.depart(slot.generation, slot.pc, body_digest(*slot.body),
 			body_bytes(*slot.body), census::Departure::retired);
 #endif
-		delete_body(slot.body);
+		space_of(generation).release(slot.body, false);
 		slot.body = nullptr;
 		slot.link = nullptr;
 	}
+
+	[[nodiscard]] Space &space_of(unsigned long generation)
+	{
+		return *generations_.find(generation)->second.space;
+	}
+
+	/* The running address space's translations. */
+	[[nodiscard]] Space &space() { return *current().space; }
 
 #if UML_GADGET_CACHE_CENSUS
 	/* The census names a translation by a digest of its validation
@@ -1511,13 +2399,13 @@ private:
 			const auto owner = generations_.find(slot.generation);
 			if (owner != generations_.end()) {
 				auto &table = named->second;
-				owner->second.links.for_each(
+				owner->second.space->for_each_link(
 					[&table](const LinkRecord &record) {
 						table[reinterpret_cast<std::uintptr_t>(
 							&record.link)] =
 							{'l', record.link.guest_pc};
 					});
-				owner->second.indirect.for_each(
+				owner->second.space->for_each_indirect(
 					[&table](const IndirectRecord &record) {
 						table[reinterpret_cast<std::uintptr_t>(
 							&record.site)] =
@@ -1557,63 +2445,16 @@ private:
 	}
 #endif
 
-	/* Store a freshly built translation as one exact allocation.
-	 *
-	 * The build's own words live in the scratch the next build reuses, so
-	 * they are copied into the body's tail and the stored program is given
-	 * those words to refer to rather than a second copy of them.
-	 */
-	[[nodiscard]] Body *new_body(
-		const BuildResult &built, std::span<const std::byte> validation,
-		arm64::aarch32::GuestIsa isa)
-	{
-		const auto &program = built.program;
-		const auto words = program.words();
-		assert(program.instruction_count() <= block_instruction_count);
-		const auto unit = arm64::aarch32::isa_unit_bytes(isa);
-		assert(validation.size() % unit == 0);
-		const std::size_t entry = program.accesses_fp_state() ? 1U : 0U;
-		const auto bytes = Body::allocation_bytes(
-			entry + words.size(), validation.size());
-		auto *body = new (bodies_.allocate(bytes)) Body{
-			.guest_address = program.guest_address(),
-			.stop_address = built.stop_address,
-			.stop_instruction = built.stop_instruction,
-			.word_count = static_cast<std::uint32_t>(words.size()),
-			.instruction_count = static_cast<std::uint16_t>(
-				program.instruction_count()),
-			.source_word_count =
-				static_cast<std::uint8_t>(validation.size() / unit),
-			.complete = built.complete,
-			.accesses_fp_state = program.accesses_fp_state(),
-			.holds_sve = program.holds_sve(),
-			.isa = static_cast<std::uint8_t>(isa),
-		};
-		if (entry != 0)
-			body->words()[-1] = reinterpret_cast<std::uintptr_t>(
-				program.holds_sve() ?
-					uml_arm64_gadget_sve_link_entry :
-					uml_arm64_gadget_fp_link_entry);
-		std::copy(words.begin(), words.end(), body->words());
-		std::copy(validation.begin(), validation.end(),
-			body->source_bytes());
-		return body;
-	}
-
-	void delete_body(Body *body) noexcept
-	{
-		const auto bytes = body->allocation_bytes();
-		body->~Body();
-		bodies_.deallocate(body, bytes);
-	}
-
 	[[nodiscard]] Slot &slot_at(std::uint32_t index) noexcept
 	{
 		auto &slab = slabs_[index / slab_slots];
 		return slab->slots[index % slab_slots];
 	}
 
-	/* The address space translation is currently running in.
+	/* The address space translation is currently running in, bound to its
+	 * space -- made, or shared with the other executors running it -- on
+	 * first sight, when the least recently current one beyond the resident
+	 * bound is retired.
 	 *
 	 * prepare() sets this on every switch, but its caller may skip the call
 	 * when nothing changed, and on the very first entry there is nothing to
@@ -1621,24 +2462,115 @@ private:
 	 * assumed. */
 	[[nodiscard]] Generation &current()
 	{
-		if (current_ == nullptr)
-			current_ = &generations_
-					    .try_emplace(current_generation_)
-					    .first->second;
+		if (current_ != nullptr)
+			return *current_;
+		auto [entry, inserted] =
+			generations_.try_emplace(current_generation_);
+		current_ = &entry->second;
+		if (inserted) {
+			auto &state = entry->second;
+			state.space = SpaceRegistry::instance().attach(
+				SpaceKey{
+					.generation = current_generation_,
+					.mode = mode_,
+					.owner = share_ ? nullptr : this,
+					.options = options_,
+				},
+				state.changes, announcement_);
+			touch(current_generation_);
+			while (resident_.size() > uml_gadget_resident_generations)
+				retire(resident_.front());
+		}
 		return *current_;
 	}
 
-	[[nodiscard]] LinkRecord &link_record(Generation &state, std::uint64_t pc)
+	/* Put a held body in the set for `pc`, letting go of whatever the way
+	 * it takes held, and link it. */
+	Slot &install(std::uint64_t pc, Body *body, std::uint64_t changes)
 	{
-		return *state.links.try_emplace(pc, pc).first;
+		const auto location = locate(current_generation_, pc);
+		auto &slab = slabs_[location.slab];
+		if (!slab)
+			slab = std::make_unique<Slab>();
+		auto &replacement = next_replacement_[location.set];
+		std::size_t selected = replacement;
+		for (std::size_t way = 0; way < ways; ++way) {
+			const auto &slot = slab->slots[location.offset + way];
+			if (slot.body == nullptr) {
+				selected = way;
+				break;
+			}
+		}
+		replacement = static_cast<std::uint8_t>((selected + 1) & (ways - 1));
+
+		auto &slot = slab->slots[location.offset + selected];
+		/* Record the slot against the address space taking it, so its
+		 * retirement walks what it owns instead of the whole cache. */
+		auto &state = current();
+		if (state.slots_complete) {
+			if (state.slots.size() < slot_count) {
+				state.slots.push_back(static_cast<std::uint32_t>(
+					location.slab * slab_slots +
+					location.offset + selected));
+			} else {
+				state.slots_complete = false;
+				state.slots.clear();
+				state.slots.shrink_to_fit();
+			}
+		}
+		/* Whatever occupied the slot lets go of its body, whose address
+		 * space may not be the running one. */
+		if (slot.body != nullptr) {
+#if UML_GADGET_CACHE_CENSUS
+			history_.depart(slot.generation, slot.pc,
+				body_digest(*slot.body), body_bytes(*slot.body),
+				census::Departure::evicted);
+#endif
+			space_of(slot.generation).release(slot.body, false);
+			slot.body = nullptr;
+		}
+		/* The memoised record describes whoever held the slot until now,
+		 * and a store may hand the slot to a different address space at
+		 * the same guest PC. Left in place it would publish this
+		 * translation into the *previous* address space's record, so
+		 * taking a slot always resolves the record again; ordinary
+		 * reactivation of an unchanged owner keeps the memo.
+		 */
+		slot.link = nullptr;
+		slot.body = body;
+		slot.pc = pc;
+		slot.generation = current_generation_;
+		slot.validated_changes = changes;
+		activate(pc, slot);
+		return slot;
 	}
 
-	[[nodiscard]] LinkRecord &link_record(std::uint64_t pc)
+	/* Take the translation another executor of the address space holds for
+	 * `pc` instead of building it: validated against guest memory exactly
+	 * as a stale slot is, then held and linked like a fresh store. */
+	[[nodiscard]] std::optional<BuildResult> adopt(std::uint64_t pc,
+		std::uint64_t changes, std::uint64_t mapping_changes,
+		StaticGuestMemory &memory, void *execution_context,
+		GadgetCacheDiagnostics &diagnostics)
 	{
-		return link_record(current(), pc);
+		auto &space = this->space();
+		auto *body = space.hold_indexed(pc);
+		if (body == nullptr)
+			return std::nullopt;
+		const auto verdict = validate_body(*body, pc, changes,
+			mapping_changes, memory, execution_context);
+		if (verdict != Validation::valid) {
+			space.release(body, verdict == Validation::stale);
+			return std::nullopt;
+		}
+		++adoptions_;
+		++diagnostics.adoptions;
+		auto &slot = install(pc, body, changes);
+		space.reclaim(announcement_);
+		return slot.body->result();
 	}
 
-	void discard(Slot &slot) noexcept
+	void discard(Slot &slot)
 	{
 		if (slot.body != nullptr) {
 #if UML_GADGET_CACHE_CENSUS
@@ -1646,34 +2578,40 @@ private:
 				body_digest(*slot.body), body_bytes(*slot.body),
 				census::Departure::discarded);
 #endif
-			deactivate(slot.generation, slot.pc,
-				slot.body->link_entry());
-			delete_body(slot.body);
+			auto &space = space_of(slot.generation);
+			space.release(slot.body, true);
 			slot.body = nullptr;
+			slot.link = nullptr;
+			space.reclaim(announcement_);
 		}
 		slot.validated_changes = 0;
 	}
 
-	[[nodiscard]] bool validate(
-		Slot &slot, std::uint64_t changes, std::uint64_t mapping_changes,
-		StaticGuestMemory &memory, void *execution_context,
-		GadgetCacheDiagnostics &diagnostics)
+	enum class Validation : std::uint8_t { valid, stale, race };
+
+	/* Compare a body's guest units with guest memory: words, or for T32
+	 * halfwords, read where the key says they lie, and only while the
+	 * address space's sequences stay where they were. */
+	[[nodiscard]] Validation validate_body(const Body &body,
+		std::uint64_t pc, std::uint64_t changes,
+		std::uint64_t mapping_changes, StaticGuestMemory &memory,
+		void *execution_context, GadgetCacheDiagnostics *diagnostics =
+			nullptr)
 	{
-		const auto units = std::size_t{slot.body->source_word_count};
-		const auto limit = slot.body->isa == 0 ? block_instruction_count :
+		const auto units = std::size_t{body.source_word_count};
+		const auto limit = body.isa == 0 ? block_instruction_count :
 			maximum_t32_validation_units;
 		if (units == 0 || units > limit) {
-			++diagnostics.validation_mismatches;
-			discard(slot);
-			return false;
+			if (diagnostics != nullptr)
+				++diagnostics->validation_mismatches;
+			return Validation::stale;
 		}
 
 		/* The saved units are the block's instructions and, for a build
-		 * that stopped, the one it read without retiring: words, or for
-		 * T32 halfwords, read where the key says they lie. */
+		 * that stopped, the one it read without retiring. */
 		std::array<std::uint32_t, block_instruction_count + 1> fetched;
 		const auto outcome = arm64::aarch32::validate_guest_units(
-			slot.pc, units, slot.body->source_bytes(),
+			pc, units, body.source_bytes(),
 			std::as_writable_bytes(std::span{fetched}),
 			guest_page_size,
 			[&memory](std::uint64_t address,
@@ -1682,14 +2620,14 @@ private:
 			},
 			false);
 		if (outcome == arm64::aarch32::GuestValidation::fault) {
-			++diagnostics.validation_faults;
-			discard(slot);
-			return false;
+			if (diagnostics != nullptr)
+				++diagnostics->validation_faults;
+			return Validation::stale;
 		}
 		if (outcome == arm64::aarch32::GuestValidation::mismatch) {
-			++diagnostics.validation_mismatches;
-			discard(slot);
-			return false;
+			if (diagnostics != nullptr)
+				++diagnostics->validation_mismatches;
+			return Validation::stale;
 		}
 
 		const auto current =
@@ -1698,8 +2636,28 @@ private:
 		if (current.execution_interrupt != 0 ||
 		    current.mapping_changes != mapping_changes ||
 		    current.code_changes != changes) {
-			++diagnostics.validation_sequence_races;
+			if (diagnostics != nullptr)
+				++diagnostics->validation_sequence_races;
+			return Validation::race;
+		}
+		return Validation::valid;
+	}
+
+	[[nodiscard]] bool validate(
+		Slot &slot, std::uint64_t changes, std::uint64_t mapping_changes,
+		StaticGuestMemory &memory, void *execution_context,
+		GadgetCacheDiagnostics &diagnostics)
+	{
+		switch (validate_body(*slot.body, slot.pc, changes,
+			mapping_changes, memory, execution_context,
+			&diagnostics)) {
+		case Validation::stale:
+			discard(slot);
 			return false;
+		case Validation::race:
+			return false;
+		case Validation::valid:
+			break;
 		}
 		slot.validated_changes = changes;
 		++diagnostics.validation_hits;
@@ -1711,70 +2669,41 @@ private:
 		const auto &body = *slot.body;
 		if (!body.complete || body.instruction_count == 0)
 			return;
-		if (slot.link == nullptr || slot.link->link.guest_pc != pc)
-			slot.link = &link_record(pc);
-		auto &record = *slot.link;
-		if (!record.listed) {
-			record.listed = true;
-			current().live_links.push_back(&record);
-		}
-		auto *target = &record.link;
-		target->stream = body.link_entry();
-		target->instruction_count = body.instruction_count;
+		slot.link = space().activate(pc, slot.link, body,
+			slot.validated_changes);
 	}
 
-	void deactivate(unsigned long generation, std::uint64_t pc,
-			const std::uintptr_t *entry) noexcept
-	{
-		/* Slots of several address spaces share this cache, so an
-		 * eviction is frequently not from the current one; the record to
-		 * retire belongs to the slot's address space, not to whichever
-		 * happens to be running. */
-		const auto owner = generations_.find(generation);
-		if (owner == generations_.end())
-			return;
-		++owner->second.departed;
-		auto *found = owner->second.links.find(pc);
-		if (found == nullptr)
-			return;
-		auto &record = *found;
-		if (record.link.stream == entry)
-			record.reset();
-	}
-
-	/* Release the link records and indirect sites of one address space that
-	 * nothing it holds names any more.
+	/* Release the link records and indirect sites of the running address
+	 * space, which this cache keeps to itself, that nothing it holds names
+	 * any more.
 	 *
-	 * A record is made for every PC a translation links to, and nothing
-	 * else ever released one, so they grew with all the code the address
-	 * space ever ran instead of with what the cache holds (G226). What can
-	 * name one is known: a resident translation's stream words name its
-	 * successors' records and its indirect sites, a resident block keeps its
-	 * own record because only an activation arms it and a hit does not
-	 * activate, and empty cells name the empty_pc record. Every word of every
-	 * stream is tried, operands too; one that happens to equal a record's
-	 * address only keeps that record. Site cells and the target table may
-	 * still name a record no translation names; its block is gone, so it is
-	 * unlinked, and the cell is emptied as a code change empties it, to learn
-	 * the target again if it runs. The CPU's return ring may name one too,
-	 * so an executor that sees `link_sweeps` move across a store empties the
-	 * ring.
+	 * A record is made for every PC a translation links to and a site for
+	 * every indirect branch, and nothing else releases one, so they grew
+	 * with all the code the address space ever ran instead of with what the
+	 * cache holds (G226). What can name one is known: a resident
+	 * translation's stream words name its successors' records and its
+	 * sites, a resident block keeps its own record because only an
+	 * activation arms it and a hit does not activate, and empty cells name
+	 * the empty record. Every word of every stream is tried, operands too;
+	 * one that happens to equal a record's address only keeps that record.
+	 * The space empties the site cells and target-table entries that named
+	 * what went, this cache forgets its memo of them, and the CPU's return
+	 * ring may name one too, so an executor that sees `link_sweeps` move
+	 * across a store empties the ring.
 	 *
 	 * Only a store calls this, after the build's words are in their body. */
-	void sweep(Generation &state, unsigned long generation,
-		GadgetCacheDiagnostics &diagnostics) noexcept
+	void sweep(Generation &state, GadgetCacheDiagnostics &diagnostics) noexcept
 	{
 #if UML_GADGET_CACHE_CENSUS
 		const auto started = std::chrono::steady_clock::now();
 #endif
 		try {
-			sweep_records(state, generation, diagnostics);
+			sweep_records(state, diagnostics);
 		} catch (const std::bad_alloc &) {
 			/* A sweep only returns memory; without the memory to run
 			 * one, the records stay. */
 		}
-		state.kept = state.links.size() + state.indirect.size();
-		state.departed = 0;
+		state.space->swept();
 		++diagnostics.link_sweeps;
 #if UML_GADGET_CACHE_CENSUS
 		++sweeps_;
@@ -1784,36 +2713,25 @@ private:
 #endif
 	}
 
-	[[nodiscard]] static const LinkRecord *record_of(
-		const arm64::gadgets::BlockLink *link) noexcept
-	{
-		return reinterpret_cast<const LinkRecord *>(
-			reinterpret_cast<std::uintptr_t>(link) -
-			offsetof(LinkRecord, link));
-	}
-
 	/* sweep(), with everything it allocates allocated before anything is
 	 * released. */
-	void sweep_records(Generation &state, unsigned long generation,
-		GadgetCacheDiagnostics &diagnostics)
+	void sweep_records(Generation &state, GadgetCacheDiagnostics &diagnostics)
 	{
-		auto links = state.links.marks();
-		auto sites = state.indirect.marks();
-		const auto *empty = state.links.find(empty_pc);
-		if (empty != nullptr)
-			links.mark(empty);
+		auto &space = *state.space;
+		auto [links, sites] = space.marks();
 		std::vector<std::uint64_t> seen((slot_count + 63) / 64);
 		std::vector<std::uint32_t> held;
 		const auto visit = [&](std::uint32_t index) {
 			const auto &slot = slot_at(index);
-			if (slot.body == nullptr || slot.generation != generation ||
+			if (slot.body == nullptr ||
+			    slot.generation != current_generation_ ||
 			    (seen[index / 64] >> (index % 64) & 1U) != 0)
 				return;
 			seen[index / 64] |= std::uint64_t{1} << (index % 64);
 			held.push_back(index);
 			if (slot.link != nullptr)
 				links.mark(slot.link);
-			else if (const auto *own = state.links.find(slot.pc))
+			else if (const auto *own = space.find_link(slot.pc))
 				links.mark(own);
 			const auto &body = *slot.body;
 			const auto *end = body.words() + body.word_count;
@@ -1835,63 +2753,22 @@ private:
 							slab * slab_slots + offset));
 		}
 		held.shrink_to_fit();
-		const auto site_of = [](arm64::gadgets::IndirectLink *site) {
-			return reinterpret_cast<const IndirectRecord *>(
-				reinterpret_cast<std::uintptr_t>(site) -
-				offsetof(IndirectRecord, site));
-		};
-		std::vector<LinkRecord *> live_links;
-		live_links.reserve(static_cast<std::size_t>(std::count_if(
-			state.live_links.begin(), state.live_links.end(),
-			[&links](const LinkRecord *record) {
-				return links.marked(record);
-			})));
-		for (auto *record : state.live_links)
-			if (links.marked(record))
-				live_links.push_back(record);
-		std::vector<arm64::gadgets::IndirectLink *> live_indirect;
-		live_indirect.reserve(state.live_indirect.size());
-		for (auto *site : state.live_indirect)
-			if (sites.marked(site_of(site)))
-				live_indirect.push_back(site);
-
-		/* From here each step leaves the address space consistent. */
-		const auto released_sites = state.indirect.sweep(sites);
-		diagnostics.released_sites += released_sites;
-		state.live_indirect = std::move(live_indirect);
+		/* The memo of the records indirect misses named may hold one
+		 * about to go. */
+		if (link_memo_)
+			for (auto &entry : *link_memo_)
+				if (entry.generation == current_generation_ &&
+				    entry.link != nullptr &&
+				    !links.marked(Space::record_of(entry.link)))
+					entry = {};
 		state.slots = std::move(held);
 		state.slots_complete = true;
-		if (empty != nullptr) {
-			const auto empty_entry = arm64::gadgets::IndirectLinkEntry{
-				empty_pc, &empty->link};
-			const auto clear = [&](arm64::gadgets::IndirectLinkEntry &entry) {
-				if (!links.marked(record_of(entry.link)))
-					entry = empty_entry;
-			};
-			state.indirect.for_each([&](IndirectRecord &record) {
-				for (auto &entry : record.site.entries)
-					clear(entry);
-			});
-			if (state.targets)
-				for (std::size_t index = 0;
-				     index < arm64::gadgets::target_tier_entries;
-				     ++index)
-					clear(state.targets[index]);
-			/* A site whose cells are all empty again is enrolled by its
-			 * next training, as one never trained is. */
-			std::erase_if(state.live_indirect, [](const auto *site) {
-				return std::all_of(site->entries.begin(),
-					site->entries.end(), [](const auto &entry) {
-						return entry.guest_pc == empty_pc;
-					});
-			});
-		}
-		const auto released_links = state.links.sweep(links);
-		diagnostics.released_links += released_links;
-		state.live_links = std::move(live_links);
+		const auto released = space.sweep(links, sites);
+		diagnostics.released_links += released.links;
+		diagnostics.released_sites += released.sites;
 #if UML_GADGET_CACHE_CENSUS
-		swept_links_ += released_links;
-		swept_sites_ += released_sites;
+		swept_links_ += released.links;
+		swept_sites_ += released.sites;
 #endif
 	}
 
@@ -1916,8 +2793,13 @@ public:
 	}
 private:
 #endif
-	CountingResource counted_;
-	BodyArena bodies_;
+	BuildOptions options_;
+	std::uint8_t mode_{};
+	const Announcement *announcement_{};
+	bool share_{};
+	std::uint64_t adoptions_{};
+	/* The records indirect misses named, made at the first one. */
+	std::unique_ptr<LinkMemo> link_memo_;
 	/* Large enough that an ordinary build never reaches the upstream: a
 	 * stream that doubles its way to 272 words consumes 510 words of
 	 * scratch on the way. */
@@ -1950,12 +2832,21 @@ private:
 };
 
 GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
-	: programs_{std::make_unique<ProgramCache>()},
-	  build_options_{build_options},
+	: build_options_{build_options},
 	  sampling_{diagnostics::guest_sampling_register(*this)}
 {
 	tlb_.unaligned_atomics =
 		build_options_.host_capabilities.has(ArmFeature::lse2);
+	/* Executors running one address space share its translations when
+	 * sharing is enabled, the host retargets a link pair in one access, and
+	 * a reclaimer can see whether this executor is running translated
+	 * code. */
+	announcement_ = acquire_announcement();
+	share_translations_ = announcement_ != nullptr &&
+		build_options_.host_capabilities.has(ArmFeature::lse2) &&
+		shared_bodies_enabled();
+	programs_ = std::make_unique<ProgramCache>(build_options_, 0,
+		announcement_, share_translations_);
 }
 
 GadgetExecutor::~GadgetExecutor()
@@ -1981,6 +2872,12 @@ GadgetExecutor::~GadgetExecutor()
 		arm64::restore_native_fp_environment(*current_cpu_);
 	}
 	darwin_uml_static_vm_execution_context_destroy(execution_context_);
+	/* The caches let go of their address spaces before the executor stops
+	 * being one a reclaimer waits for. */
+	programs_.reset();
+	for (auto &mode : sme_caches_)
+		mode.programs.reset();
+	release_announcement(announcement_);
 }
 
 bool GadgetExecutor::begin_execution(unsigned long generation,
@@ -1991,6 +2888,8 @@ bool GadgetExecutor::begin_execution(unsigned long generation,
 	if (context == nullptr ||
 	    darwin_uml_static_vm_execution_context_begin(context, guest_pc) != 0)
 		return false;
+	if (announcement_ != nullptr)
+		announce_entry(*announcement_);
 	if (sampling_ != nullptr)
 		diagnostics::guest_sampling_enter(*sampling_);
 	return true;
@@ -2010,6 +2909,8 @@ void GadgetExecutor::end_execution() noexcept
 	current_cpu_ = nullptr;
 	if (execution_context_ != nullptr)
 		(void)darwin_uml_static_vm_execution_context_end(execution_context_);
+	if (announcement_ != nullptr)
+		announce_exit(*announcement_);
 }
 
 void GadgetExecutor::select_cpu(CpuState &cpu) noexcept
@@ -2038,6 +2939,10 @@ void *GadgetExecutor::execution_context(unsigned long generation)
 	execution_context_ =
 		darwin_uml_static_vm_execution_context_create(generation);
 	execution_generation_ = execution_context_ != nullptr ? generation : 0;
+	const auto *sequence = execution_context_ != nullptr ?
+		darwin_uml_static_vm_execution_context_code_sequence(
+			execution_context_) : nullptr;
+	code_sequence_ = sequence != nullptr ? sequence : &arm64::no_code_changes;
 	return execution_context_;
 }
 
@@ -2196,6 +3101,10 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 	preempted_ = sequences.execution_interrupt != 0;
 	if (preempted_)
 		return ::uml::cpu::EngineEvent::interrupt;
+	/* What the translations this run reaches are validated at, below: an
+	 * ISB leaves when the address space's code has changed since. */
+	cpu.code_sequence = code_sequence_;
+	cpu.code_sequence_seen = sequences.code_changes;
 	if (mapping_generation_ != generation ||
 	    mapping_changes_ != sequences.mapping_changes) {
 		memory.prepare(generation, sequences.mapping_changes);
@@ -2281,7 +3190,8 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 		return ::uml::cpu::EngineEvent::fatal;
 	auto &state = sme_caches_[mode - 1U];
 	if (!state.programs)
-		state.programs = std::make_unique<ProgramCache>();
+		state.programs = std::make_unique<ProgramCache>(build_options_,
+			mode, announcement_, share_translations_);
 	auto &programs = *state.programs;
 	if (state.generation != generation) {
 		cpu.gadget_return_stack = {};
@@ -2402,6 +3312,10 @@ private:
 	preempted_ = sequences.execution_interrupt != 0;
 	if (preempted_)
 		return ::uml::cpu::EngineEvent::interrupt;
+	/* What the translations this run reaches are validated at, below: an
+	 * ISB leaves when the address space's code has changed since. */
+	cpu.code_sequence = code_sequence_;
+	cpu.code_sequence_seen = sequences.code_changes;
 	if (mapping_generation_ != generation ||
 	    mapping_changes_ != sequences.mapping_changes) {
 		memory.prepare(generation, sequences.mapping_changes);

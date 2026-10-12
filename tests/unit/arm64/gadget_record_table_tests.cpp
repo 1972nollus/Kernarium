@@ -172,6 +172,38 @@ void trim()
 	require(untouched.sweep(untouched.marks()) == 0);
 }
 
+/* One set of marks covers several tables, as an owner that splits its records
+ * into shards keeps them: a value is tried against all of them at once, and
+ * each table releases only its own records that were left unmarked. */
+void several_tables()
+{
+	using Record = Sized<24>;
+	using Table = cache::StableRecordTable<Record, KeyOf>;
+	Table first;
+	Table second;
+	std::vector<Record *> kept;
+	std::vector<Record *> gone;
+	for (std::uint64_t index = 0; index < 3000; ++index) {
+		auto &table = index % 2 == 0 ? first : second;
+		auto *record = table.try_emplace(index, index).first;
+		(index % 3 == 0 ? kept : gone).push_back(record);
+	}
+	const std::array<const Table *, 2> tables{&first, &second};
+	auto marks = Table::marks_of(tables);
+	for (auto *record : kept)
+		marks.mark(reinterpret_cast<std::uintptr_t>(record));
+	for (const auto *record : kept)
+		require(marks.marked(record));
+	for (const auto *record : gone)
+		require(!marks.marked(record));
+	require(first.sweep(marks) + second.sweep(marks) == gone.size());
+	require(first.size() + second.size() == kept.size());
+	for (std::uint64_t index = 0; index < 3000; ++index) {
+		const auto &table = index % 2 == 0 ? first : second;
+		require((table.find(index) != nullptr) == (index % 3 == 0));
+	}
+}
+
 } // namespace
 
 int main()
@@ -183,6 +215,7 @@ int main()
 	sweep<Sized<1024>>(5'000);
 	sweep<Sized<8192>>(1'000);
 	trim();
+	several_tables();
 
 	/* Consecutive keys, as neighbouring guest addresses are. */
 	cache::StableRecordTable<Sized<24>, KeyOf> table;

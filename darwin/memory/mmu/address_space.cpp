@@ -1130,6 +1130,18 @@ public:
 		return 0;
 	}
 
+	[[nodiscard]] static const std::uint64_t *execution_context_code_sequence(
+		const ExecutionContext *context) noexcept
+	{
+		static_assert(sizeof(std::atomic_uint64_t) == sizeof(std::uint64_t) &&
+			std::atomic_uint64_t::is_always_lock_free,
+			"translated code loads the sequence as a plain word");
+		if (context == nullptr)
+			return nullptr;
+		return reinterpret_cast<const std::uint64_t *>(
+			&context->state->code_changes);
+	}
+
 	static darwin_uml_static_sequences execution_context_sequences(
 		const ExecutionContext *context)
 	{
@@ -2220,6 +2232,13 @@ darwin_uml_static_vm_execution_context_sequences(void *context)
 	} catch (...) {
 		return {};
 	}
+}
+
+extern "C" const uint64_t *
+darwin_uml_static_vm_execution_context_code_sequence(void *context)
+{
+	return uml::memory::AddressSpace::execution_context_code_sequence(
+		static_cast<uml::memory::ExecutionContext *>(context));
 }
 
 extern "C" int darwin_uml_static_vm_invalidate_code_generation(

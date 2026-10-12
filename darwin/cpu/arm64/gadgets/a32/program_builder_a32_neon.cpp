@@ -226,6 +226,12 @@ Translator::Result Translator::emit_structure(const Instruction &in,
 		which = kNeonMem[store][shape][structs - 1][log2][variant];
 	if (which == G::count)
 		return emit_library(in);
+	/* A copy without an alignment hint has gadgets of its own. */
+	if (shape == 0 && structs == 1 && o.alignment <= 1) {
+		const G fast = kNeonCopy[store][variant][!o.wback ? 0 : o.register_index ? 2 : 1];
+		if (fast != G::count)
+			which = fast;
+	}
 	const std::uintptr_t rn = source(o.n, scratch0);
 	std::uintptr_t rm = 0;
 	if (o.wback && o.register_index)

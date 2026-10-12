@@ -343,6 +343,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           instruction, host_capabilities().has(ArmFeature::sb));
       for (std::size_t index = 0; index < lowered.count; ++index)
         emitter_.emit(lowered.words[index]);
+      if ((instruction & 0xffff'f0ffU) == 0xd503'30dfU)
+        emit_code_change_check(instruction, pc);
       return Action::keep_going;
     }
     /* SB with a nonzero CRm is reserved, and DSB nXS needs FEAT_XS, which
