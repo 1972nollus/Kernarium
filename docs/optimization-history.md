@@ -614,3 +614,79 @@ build on the M1.
 | Run a memory run that straddles two pages natively | Accepted. A structure across a page boundary failed the run's proof on every execution. A cold path translates both pages and replays the run's accesses, each on its page's host base, and only an access that itself crosses takes the helper. Asset Compression's exits fell from 46 million to the 12 thousand real crossings; Ray Tracing on the M4 rose from 522 to 613 at 4 KiB and from 642 to 669 at 16 KiB. The cold copies were 1.6 percent of Clang's generated words. |
 | Run LDAR and LDAPR as host load-acquires | Accepted. Every LDAR ended its block in the ordered helper, and C++ reaches LDARB at every function-local static guard. An aligned load now uses the host's own instruction, and LDAR no longer splits the block. Ordered exits fell from 15 million to 47 thousand in Asset Compression and from 5.7 million to 16 thousand in Clang. On the loaded M1 at 1 vCPU, Asset Compression's median rose from 301 to 329 over the three changes, and the five-workload GB6 subset stayed level within its noise. |
 | Keep the FP environment live across helper exits | Rejected before building. After the three changes the remaining switches are real page crossings, at most 14 million a run in Object Remover and well under a million elsewhere: under 1 percent of any workload, against a change to the environment code the gadget engine shares. |
+
+## AArch32 JIT: floating-point environment
+
+The JIT lowers AArch32 in `cpu/arm64/jit/a32`. Geekbench 5 armv7 on it scored
+0.466 (single-core) and 0.471 (multi-core) of the aarch64 build, on an M4
+MacBook Air with 4 vCPUs. The work was ordered by the dynamic host
+instructions per guest instruction of each workload, by the share of
+executor returns and by the busy samples in the host FPCR writes. Every row is
+a paired comparison of the single-core workloads (two 1-vCPU guests at once on
+an M1 Ultra, the order swapped each repetition, rounds above host load 40
+dropped), the score of the change over the score before it, unless it says
+otherwise. All of them ran Geekbench 5 at its default iteration count; the
+repository now runs one iteration, and scores of the two settings do not
+compare.
+
+The result, on the M1 Ultra at 4 vCPUs, was 2.0x the armv7 single-core and
+multi-core scores of the start, with the aarch64 score unchanged. Against
+the aarch64 build the armv7 ratio went from 0.53 and 0.46 to 1.06 and 0.96
+(single-core and multi-core). The aarch64 build scored 0.3x to 0.5x of its
+M4 scores on PDF Rendering, Text Rendering and Ray Tracing and 0.5x to 0.7x
+on the other workloads, so these ratios overstate a like-for-like one.
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Keep the host FPCR mode across exits and links | Accepted. A Neon instruction runs under the Standard FPSCR value and a VFP one under the guest's. A translation switched at its first Neon instruction and restored at every exit, so a loop of Neon blocks wrote the FPCR twice per iteration: 74% of the busy samples of Structure from Motion and 68% of Machine Learning. `CpuState::a32_fp_standard`, shared with the gadget engine, now records the mode and a translation writes the FPCR only when it differs. Single-core +14% on the M1 Ultra (Gaussian Blur 2.8x, Machine Learning 3.0x, Structure from Motion 1.5x) and +19% on an M4. A register write waits for the floating-point operations before it, so the number of writes matters more than what they write. |
+| Run VMAX and VMIN under the guest's FPCR behind an integer test | Accepted. The two modes part only on a nonzero denormal, a NaN or a result that is tiny before rounding, which thirteen integer vector instructions find. A clamp compiled to VMAX/VMIN between two VFP operations had caused 90% of the switches. Single-core +40% (Camera 1.57, Structure from Motion 1.34, Horizon Detection 1.25). |
+| Run Neon VADD, VSUB, VMUL, VMLA and VMLS the same way | Accepted, with a loss the Standard-FPCR row repaired. Image Inpainting 1.43 and Speech Recognition 1.26, but Camera 0.78 and Structure from Motion 0.80, whose pure-Neon loops paid about thirty-five guard instructions per operation where one FPCR write per lap had been cheaper, so the single-core score of that step was 0.92. A multiplication that underflows inexactly is the one case a run under the guest's FPCR cannot take back, so its operand exponents are tested before it. |
+| Set the Standard FPCR once, in the preheader, for a Neon floating-point loop | Accepted. Over the step before it, Camera 1.27, Structure from Motion 1.36 and Machine Learning 1.07, repairing the loss above. A guard is for code where the mode is not known; in a loop of Neon instructions the mode is known and the guard is the whole cost. A VFP instruction or an FPSCR write in the body keeps the guards. |
+| Keep the native FP environment across non-FP helper calls | Accepted. A terminal helper restored the host FPCR and FPSR before it ran, and the next block activated the guest's again; Gaussian Blur's page-crossing VLD1 and VST1 took the helper a million times a second. A memory transfer or integer arithmetic has nothing to do with floating point, so the environment stays installed: Gaussian Blur +8.8%. |
+| Pass VCMP's flags to the next VMRS APSR_nzcv in the host NZCV | Accepted, small. The reload of the flags from `CpuState` made a branch wait for a comparison, a move, a store, a forwarded load and a move; 9% to 26% of the hot samples of Face Detection, Speech Recognition and N-Body are in blocks with the idiom. The score moved 1.009 with every one of ten repetitions at least level, and four repetitions had shown nothing: a small effect needs repetitions to match its size. |
+
+## AArch32 JIT: library exits and instruction selection
+
+An instruction the compiler sends to the semantic library ends its block: a
+decode, an execute, a return to the executor and a re-entry.
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Inline loads with register-offset writeback whose destination is the offset | Accepted. The form was 99% of Horizon Detection's library exits and most of those of the integer workloads. The load goes to a scratch register and the destination is written last, as the pseudocode orders it. Single-core +22%, integer +31% (Image Compression 1.56, Text Rendering 1.49, SQLite 1.27, Text Compression 1.23). Count exits by form before choosing what to lower: the form that dominates one loop may be rare in a listing. |
+| Lower the parallel add and subtract forms to the vector unit | Accepted. UADD8 and UQSUB8 were 91% of Speech Recognition's library exits (glibc's string kernels use them). Alone, at its place in the sequence, it measured level (0.997 over twelve repetitions), because the FPCR writes of that step hid it; at the tip, without it, SQLite loses 2.8% and Speech Recognition 2.0%. Nothing may set the host's QC flag, which is the guest's FPSCR.QC, so the unsigned saturating forms use UMAX and UMIN and GE comes from a widening add. Measure a change again once the larger bottleneck is gone, at the tip. |
+| Run a conditional data-processing instruction on both arms and select with CSEL | Accepted. A comparison selecting one of two values, a clamp or a count above a threshold is a data-dependent branch over a short body, which mispredicts; a hardware ARM executes the instruction either way. Face Detection +8.6%. Flag-setting forms, register-controlled shifts, loads, stores and the PC keep the branch. |
+| Keep a page-crossing Advanced SIMD load in the translation | Accepted. Gaussian Blur put 16-byte loads across page ends three million times a second, each a library call. A cold path probes both pages and reads through the host mapping when they are adjacent, or from a 64-byte staging copy of the two ends. Gaussian Blur +18%, Image Inpainting +7.5%. Stores still take the library, which orders them. |
+| Fuse an exclusive run that leaves on a conditional branch | Accepted, targeted. The compare-and-swap that gives up on a mismatch and the try-lock did not fuse, so every pass took the helper twice. Clang +6.6% and SQLite +8% (median) on a loaded host; the single-core score moved 0.99, because the workloads that gain are few. |
+
+## AArch32 JIT: memory access
+
+Inline TLB probes are 20% to 40% of the host instructions executed in the
+memory-heavy single-core workloads, so a shorter probe is a general saving.
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Probe the 4 KiB TLB in two fewer instructions, skip the crossing test of an access aligned to its size, and fold the crossing test into the tag compare | Accepted as three changes with one measurement: single-core +5.6% over the block before them, 11 of the 12 workloads level or faster (Gaussian Blur 1.11, Machine Learning 1.14, SQLite 1.09, Rigid Body 1.07). The A32 probe is its own copy of the shared sequence: bit i of the index is bit 12+i of the address xor bit 25+i, which is one xor with the address shifted by 13 and one extract, and the tag compare shifts the address itself. Comparing the tag with the page of the last byte makes the crossing test free, because the entry belongs to another page when the access crosses. The tests compare the emitted words, because a probe with a wrong index passes every behavioral test by missing. |
+| Add the TLB delta in the access, as `[x9, w8, uxtw]`, instead of before it | Accepted. The add was 2.8% to 5.1% of the executed host instructions and three quarters of the accesses after it have the register-offset form. Single-core +4.8% over the step before it together with the revert of the skip region below (Speech Recognition 1.16, Camera 1.12, Text Compression 1.05). A pair, a multiple transfer, an acquire or release, a lane transfer and a store that records its host range keep the add. |
+
+## AArch32 JIT: blocks, links and registers
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Go on past a conditional forward branch (B, CBZ, CBNZ) in a block, with a cold side exit for the taken path | Accepted. Every conditional branch had ended a block with two links, so the short blocks of the benchmarks paid a link sequence and the loads of the next block on every transition. Single-core +9% (Text Compression 1.06, SQLite 1.09, N-Body 1.03, Face Detection 1.02). |
+| Run a block that branches back to itself as a host loop | Accepted. A probe compilation records the registers the body holds, the loop loads them once and the back edge publishes only the flags and checks the budget. Single-core +2.2% with Machine Learning +13%, measured on a loaded host. |
+| Hold the loop's most used registers, not its first | Superseded. Neutral alone (1.004) and made moot when a translation took all fifteen core registers. |
+| Keep the target of a forward branch in the block, over the instructions it skips | Rejected and reverted. Four concurrent repetitions of the twelve workloads gave 0.996 of the block before it. It carried the most state in the compiler (a second set of bindings and flag states for the skipping arm, a join that reconciles them, a retry that compiles the block again without a region that does not fit, a budget credit for the skipped instructions) and the cold side exit it avoids costs one link. It also made reachable a latent defect, which the revert makes unreachable again: a cold path stores the dirty registers through the bindings at the end of the block, which is wrong once a binding is forgotten in the middle of one, and the join was the only place that forgot them. |
+| State the loaded FP state and the native environment in every chain's link selector | Accepted. A chain's selector described its first block, so a loop of an integer block that stores and a block of Neon arithmetic returned to the executor at both edges of every iteration: two blocks made 160 of Structure from Motion's 240 million returns. Returns fell from 247 to 64 million. |
+| Look up an indirect branch's target in a per-executor table behind its two cells | Accepted. A return from a function with more than two callers cannot keep its targets in two cells (libm's `lroundf` from four places made 36 million returns in Structure from Motion). A 4096-entry direct-mapped table of trained targets takes the third level, tagged with the link epoch because it outlives address spaces: the first version without the tag followed another address space's function at the same address and killed init, which the userspace smoke found. Returns fell from 64 to 19 million in Structure from Motion, from 13 to 2.0 million in Image Inpainting, from 16.8 to 5.2 in Speech Recognition. Together with the selector row, single-core +10% (SQLite 1.35, Structure from Motion 1.10, Horizon Detection 1.04) over the two repetitions taken on a quiet host. |
+| Hold all fifteen core registers in the host (x22 to x28 beside the eight) | Accepted, small on its own: single-core +0.7% (Structure from Motion +2.4%). A block that names r0 to r12 did 25 register-file accesses per pass with eight host registers. It is the precondition of the next row. |
+| Keep the core registers in the host across links | Accepted. A linked translation loads the fifteen registers once, before the internal entry that only the executor reaches, a link leaves them in their hosts and only a return to the executor writes them back, in pairs. Single-core +4.1% over the step before it (SQLite 1.13, Speech Recognition 1.12, Image Inpainting 1.12). Registers the link sequence had used as scratch (x12 and x13) became resident, and two conversion lowerings that used the hosts of r0 to r2 as scratch became a defect that the change exposed: a kept register set turns every hard-coded scratch register into one, so the tests write r0 to r2 before the instructions that use scratch. |
+| Go on past a conditional branch back | Accepted. A loop body that tests its bounds with several branches back to the loop's increment was a chain of two-to-four-instruction blocks that fall through nearly always, each paying a link. Horizon Detection +3.2%, Speech Recognition +3.9%. A branch back to the block's own first instruction still ends it, for the host loop. |
+
+## AArch32 JIT: candidates not built
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Cache the last page ahead of the TLB probe | Rejected before building. The crossing test an access needs beside the cached page compare costs what the cache saves. |
+| Skip clearing the exclusive monitor on ordinary stores | Rejected. An ordinary store may clear the local monitor, and a reservation left standing lets a later store-exclusive succeed where the architecture says it fails. |
+| Keep the vector registers in the host across links as the core registers are | Not built. Vector spills and fills are 2% to 6% of the executed host instructions in the floating-point workloads, an expected 1% of the single-core score, for a fixed binding of the A64 compiler's dynamic vector residency and every helper that reads the vectors. |
+| Fold the alignment test into the tag compare, and drop the repeated monitor clear after a store in the same block | Not built. The alignment test is 0.2% to 1.9% of the executed host instructions (5.2% in N-Body) and the clears 0.5% to 1.3%; neither is a gain a paired run resolves. |

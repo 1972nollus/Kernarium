@@ -33,6 +33,8 @@ constexpr unsigned temp1 = 1;
 constexpr unsigned temp2 = 8;
 constexpr unsigned shifted = 16;
 constexpr unsigned image = 11;
+/* Where a predicated instruction builds its result. */
+constexpr unsigned predicated_result = 2;
 
 [[nodiscard]] bool is_logical(Op op) noexcept {
   switch (op) {
@@ -74,6 +76,8 @@ unsigned A32Compiler::use(unsigned r, unsigned fallback) {
     load_u32(fallback, pc_read());
     return fallback;
   }
+  if (probing_)
+    ++uses_[r];
   return read_native_gpr(r, false, fallback).host;
 }
 
@@ -81,10 +85,21 @@ A32Compiler::Dest A32Compiler::def(unsigned r, bool reads_old,
                                    unsigned fallback) {
   if (r == 15U)
     return {{fallback, false}, 15U};
+  if (probing_)
+    ++uses_[r];
+  if (predicated_)
+    return {{predicated_result, false}, r};
   return {write_native_gpr(r, false, reads_old, fallback), r};
 }
 
 void A32Compiler::done(const Dest &dest) {
+  if (predicated_ && dest.guest != 15U) {
+    const auto old = write_native_gpr(dest.guest, false, true, fallback_n);
+    emit(enc::csel(old.host, predicated_result, old.host,
+                   predicate_condition_));
+    commit_native_gpr(old, dest.guest, false);
+    return;
+  }
   if (dest.guest != 15U)
     commit_native_gpr(dest.native, dest.guest, false);
 }
