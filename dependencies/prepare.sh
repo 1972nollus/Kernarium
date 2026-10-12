@@ -394,7 +394,10 @@ verify_metadata_path()
 	while [ -n "$metadata_prefix" ]; do
 		[ ! -L "$metadata_prefix" ] ||
 			fail "metadata path contains a symlink: $1"
-		metadata_prefix=${metadata_prefix%/*}
+		case $metadata_prefix in
+		*/*) metadata_prefix=${metadata_prefix%/*} ;;
+		*) break ;;
+		esac
 	done
 }
 
