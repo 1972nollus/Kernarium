@@ -80,18 +80,18 @@ declaration.
 
 A gadget cache slot indexes a translation rather than holding one. Each stored
 program is a single exact-sized allocation carrying its stream and the guest
-words it is validated against, taken from an arena with sixteen-byte size
-classes, and the program refers to those words rather than owning a second
-copy. The arena reuses freed space by best fit and merges a freed block with
-free neighbours, so the holes a retired address space leaves serve
-translations of any size, and it unmaps a 64 KiB chunk once its last
-translation leaves. A build assembles its stream in a
-scratch buffer that the next build rewinds, so a translation allocates only
-when it is stored. The arena marks
-where every live translation starts, one bit per granule, and that map is how a
-terminal exit inside a linked successor is attributed to the successor's
-program; the cache keeps no index keyed by stream address and maintains nothing
-per store for that lookup.
+words it is validated against, taken from its address space's arena in
+sixteen-byte granules, and the program refers to those words rather than
+owning a second copy. An arena reuses freed space by best fit and merges a
+freed block with its free neighbours, so the hole an evicted translation
+leaves serves translations of any size; it unmaps a 64 KiB chunk once the
+chunk's last translation leaves, and the rest go with the address space. A
+build assembles its stream in a scratch buffer that the next build rewinds, so
+a translation allocates only when it is stored. The arena marks where every
+live translation starts, one bit per granule, and that map is how a terminal
+exit inside a linked successor is attributed to the successor's program; the
+cache keeps no index keyed by stream address and maintains nothing per store
+for that lookup.
 
 The arm64 and x86 private gadget caches use the same `UML_GADGET_CACHE_SLOTS`
 and `UML_GADGET_RESIDENT_GENERATIONS` controls: four ways, 256-slot lazy slabs,
