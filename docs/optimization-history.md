@@ -636,16 +636,21 @@ repository now runs one iteration, and scores of the two settings do not
 compare.
 
 The result, on the M1 Ultra at 4 vCPUs, was 2.0x the armv7 single-core and
-multi-core scores of the start, with the aarch64 score unchanged. Against
-the aarch64 build the armv7 ratio went from 0.53 and 0.46 to 1.06 and 0.96
-(single-core and multi-core). These ratios overstate a like-for-like one:
-the aarch64 build of that base predates the semantic-helper exit work above,
-and on PDF Rendering, Text Rendering and Ray Tracing its memory-run proofs
-failed on hot loads whenever a run's data layout put the base near a page
-end, tens of millions of helper exits per workload. It scored 0.3x to 0.5x
-of its M4 scores there and 0.5x to 0.7x elsewhere. A build with that work,
-the same one on both hosts, scores 0.5x to 0.7x of the M4 on every workload
-at 4 KiB, at 1 and at 4 vCPUs.
+multi-core scores of the start, with the aarch64 score unchanged. Measured
+against the aarch64 build of that base, the armv7 ratio went from 0.53 and
+0.46 to 1.06 and 0.96 (single-core and multi-core), but that build predates
+the semantic-helper exit work above: on PDF Rendering, Text Rendering and
+Ray Tracing its memory-run proofs failed on hot loads whenever a run's data
+layout put the base near a page end, tens of millions of helper exits per
+workload. It scored 0.3x to 0.5x of its M4 scores there and 0.5x to 0.7x
+elsewhere. A build with that work, the same one on both hosts, scores 0.5x
+to 0.7x of the M4 on every workload at 4 KiB, at 1 and at 4 vCPUs. Against
+it, with one iteration at 4 KiB, armv7 scores 0.89 of aarch64 single-core
+at 1 vCPU (0.93 at 4) and 0.92 multi-core at 4 vCPUs on the M1 Ultra, and
+0.96 and 0.98 at 4 vCPUs on the M4. AES-XTS (0.26 to 0.30) and Face
+Detection (0.31 to 0.34) are the lowest workloads on both hosts, then
+Camera, Horizon Detection, Machine Learning and Structure from Motion (0.48
+to 0.57).
 
 | Attempt | Disposition and lesson |
 | --- | --- |
