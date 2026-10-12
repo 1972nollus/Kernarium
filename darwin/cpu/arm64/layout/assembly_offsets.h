@@ -87,6 +87,12 @@
 #define UML_ARM64_CPU_A32 1523
 #define UML_ARM64_CPU_A32_FP_STANDARD 1524
 
+/* Context synchronization (cpu/arm64/cpu_state.hpp), for both engines: the
+ * address of the running address space's code-change sequence, then the
+ * value the running translations were validated at. */
+#define UML_ARM64_CPU_CODE_SEQUENCE 1528
+#define UML_ARM64_CPU_CODE_SEQUENCE_SEEN 1536
+
 #define UML_GADGET_TLB_ENTRIES 0
 #define UML_GADGET_TLB_ENTRY_READ_PAGE 0
 #define UML_GADGET_TLB_ENTRY_READ_DATA_MINUS_ADDRESS 8

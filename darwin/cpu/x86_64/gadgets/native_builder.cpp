@@ -5190,10 +5190,8 @@ struct FlagState final {
  * enumerates and decline everything else, which then takes the ordinary
  * family. A baked entry reads no operand word: a register pair is the entry
  * alone, an immediate follows it, and a [base + displacement] access carries
- * the displacement, the length word and the RIP, in the ordinary order, so the
- * shared fault and overlap tails read the same registers as always. An indexed
- * address is an address entry with the displacement, then the access entry
- * with the length word and the RIP.
+ * one access word, described below. An indexed address is an address entry
+ * with the access word, then the access entry, which finds the word in x23.
  */
 
 [[nodiscard]] bool baked_bank_enabled() noexcept
@@ -5225,21 +5223,68 @@ struct FlagState final {
 	return width == OperandWidth::byte ? baked::byte_slots : baked::gpr_slots;
 }
 
-/* A baked access carries its instruction's RIP and length in one word: the
- * RIP in bits 47:0, which every user-mode RIP fits, and the length in bits
- * 59:56. Bit 60 stays clear for the store's publication flag. Only a fault
- * or an exit after a store into the running block reads the RIP back. */
-constexpr unsigned baked_rip_bits = 48;
+/* A baked access carries everything its entry needs of the instruction in one
+ * access word:
+ *
+ *   bits 31:0   the displacement, which the entry sign-extends
+ *   bits 41:32  the instruction's position in its block, its address less the
+ *               block's start, which is the context's program_begin
+ *   bits 55:42  a memory,immediate access's immediate, signed
+ *   bits 59:56  the instruction's length
+ *   bit  60     the store's publication flag, clear in the stream
+ *
+ * Only a fault or an exit after a store into the running block reads the
+ * position back, and the cold exits rebuild the RIP from the block's start.
+ * A block's start is the one every stream of it agrees on, the cached
+ * translation's, a budget-limited replay's and a checked instruction's, so
+ * the builder takes it as an argument rather than reading it off the first
+ * instruction it was given. An instruction 1024 bytes or more past it, which
+ * a block of the default 64 instructions never holds, takes the ordinary
+ * bank.
+ *
+ * A fused access with no base register still needs a 64-bit address, a
+ * RIP-relative or absolute one, so its stream carries the address before the
+ * word, whose displacement field is clear.
+ */
+constexpr unsigned baked_position_shift = 32;
+constexpr unsigned baked_position_bits = 10;
+constexpr unsigned baked_immediate_shift = 42;
+constexpr unsigned baked_immediate_bits = 14;
+constexpr unsigned baked_length_shift = 56;
 
-[[nodiscard]] bool baked_access_fits(const Gadget &gadget) noexcept
+/* The access word without its displacement and immediate, or nothing when the
+ * instruction lies too far into its block. */
+[[nodiscard]] std::optional<std::uintptr_t> baked_access_header(
+	const Gadget &gadget, std::uint64_t program_begin) noexcept
 {
-	return (gadget.address >> baked_rip_bits) == 0;
+	const auto position = gadget.address - program_begin;
+	if (position >= (std::uint64_t{1} << baked_position_bits))
+		return std::nullopt;
+	return static_cast<std::uintptr_t>(position << baked_position_shift) |
+		(static_cast<std::uintptr_t>(gadget.instruction.length) <<
+			baked_length_shift);
 }
 
-[[nodiscard]] std::uintptr_t baked_access_word(const Gadget &gadget) noexcept
+/* A memory,immediate access's immediate as the access word holds it: the
+ * value the operation sees at its width, sign-extended, when that fits. The
+ * entries sign-extend it again, and every consumer reads the bits of its
+ * width. */
+[[nodiscard]] std::optional<std::uintptr_t> baked_packed_immediate(
+	std::uint64_t immediate, OperandWidth width) noexcept
 {
-	return static_cast<std::uintptr_t>(gadget.address) |
-		(static_cast<std::uintptr_t>(gadget.instruction.length) << 56U);
+	std::int64_t value{};
+	switch (width) {
+	case OperandWidth::byte: value = static_cast<std::int8_t>(immediate); break;
+	case OperandWidth::word: value = static_cast<std::int16_t>(immediate); break;
+	case OperandWidth::dword: value = static_cast<std::int32_t>(immediate); break;
+	default: value = static_cast<std::int64_t>(immediate); break;
+	}
+	constexpr std::int64_t limit = std::int64_t{1} << (baked_immediate_bits - 1U);
+	if (value < -limit || value >= limit)
+		return std::nullopt;
+	return (static_cast<std::uintptr_t>(value) &
+		((std::uintptr_t{1} << baked_immediate_bits) - 1U)) <<
+		baked_immediate_shift;
 }
 
 struct BakedAddress final {
@@ -5248,21 +5293,47 @@ struct BakedAddress final {
 	unsigned scale{};
 	bool indexed{};
 	std::uintptr_t displacement{};
+	/* The access word without its displacement and immediate. */
+	std::uintptr_t header{};
+
+	/* Whether the access word holds the displacement: every access with a
+	 * base register or an index, whose displacement is the instruction's
+	 * 32 bits, and not a fused [address]. */
+	[[nodiscard]] bool displaced() const noexcept
+	{
+		return indexed || base != baked::no_base_slot;
+	}
+
+	/* The access word, with `immediate` in its field. */
+	[[nodiscard]] std::uintptr_t word(
+		std::uintptr_t immediate = 0) const noexcept
+	{
+		return header | immediate |
+			(displaced() ? static_cast<std::uint32_t>(displacement) : 0U);
+	}
 };
 
 /* The plain 64-bit address shapes: no segment override, no narrow address
  * arithmetic, no vector index. A RIP-relative or absolute address is a
- * displacement with no base. */
+ * displacement with no base. An LEA, which cannot fault, has no use for the
+ * access word's position and takes `access` false. */
 [[nodiscard]] std::optional<BakedAddress> baked_address(
-	const Gadget &gadget, const Operand &operand) noexcept
+	const Gadget &gadget, std::uint64_t program_begin,
+	const Operand &operand, bool access = true) noexcept
 {
-	if (operand.kind != OperandKind::memory || !baked_access_fits(gadget))
+	if (operand.kind != OperandKind::memory)
 		return std::nullopt;
 	const auto &memory = operand.memory;
 	if (memory.segment != Segment::none || memory.address_16 ||
 	    memory.address_32 || memory.vector_index)
 		return std::nullopt;
 	BakedAddress address{};
+	if (access) {
+		const auto header = baked_access_header(gadget, program_begin);
+		if (!header)
+			return std::nullopt;
+		address.header = *header;
+	}
 	if (memory.absolute_address) {
 		address.base = baked::no_base_slot;
 		address.displacement = memory.absolute;
@@ -5294,26 +5365,41 @@ struct BakedAddress final {
 	return address;
 }
 
+/* The fused entry's operands: the access word, behind the 64-bit address of
+ * an access with no base register. */
+void append_baked_operands(std::vector<std::uintptr_t> &stream,
+	const BakedAddress &address, std::uintptr_t immediate = 0)
+{
+	if (!address.displaced())
+		stream.push_back(address.displacement);
+	stream.push_back(address.word(immediate));
+}
+
+/* The address entry of an indexed access, with the access word it hands to
+ * the access entry behind it. */
+void append_baked_index(std::vector<std::uintptr_t> &stream,
+	const BakedAddress &address, std::uintptr_t immediate = 0)
+{
+	stream.push_back(baked::uml_x86_64_baked_ea[
+		(address.base * baked::gpr_slots + address.index) *
+			baked::scale_slots + address.scale]);
+	stream.push_back(address.word(immediate));
+}
+
 /* Emit a memory access: the fused entry for [base + displacement], or the
  * address entry followed by the split access entry. `slot` indexes the value
  * dimension of both tables. */
 void append_baked_access(std::vector<std::uintptr_t> &stream,
-	const Gadget &gadget, const BakedAddress &address,
-	const std::uintptr_t *fused, const std::uintptr_t *split,
-	unsigned slot)
+	const BakedAddress &address, const std::uintptr_t *fused,
+	const std::uintptr_t *split, unsigned slot)
 {
 	if (!address.indexed) {
 		stream.push_back(fused[slot * baked::base_slots + address.base]);
-		stream.push_back(address.displacement);
-		stream.push_back(baked_access_word(gadget));
+		append_baked_operands(stream, address);
 		return;
 	}
-	stream.push_back(baked::uml_x86_64_baked_ea[
-		(address.base * baked::gpr_slots + address.index) *
-			baked::scale_slots + address.scale]);
-	stream.push_back(address.displacement);
+	append_baked_index(stream, address);
 	stream.push_back(split[slot]);
-	stream.push_back(baked_access_word(gadget));
 }
 
 /* The host flags a baked entry of this operation leaves. Narrow widths
@@ -5403,8 +5489,8 @@ struct BakedArithTables final {
 /* MOV and the two-operand arithmetic: reg,reg; reg,imm; reg,[mem]; [mem],reg;
  * [mem],imm. A locked form keeps the ordinary exclusive loop. */
 [[nodiscard]] bool append_baked_binary(std::vector<std::uintptr_t> &stream,
-	const Gadget &gadget, const BakedArithTables &tables,
-	FlagState &produced)
+	const Gadget &gadget, std::uint64_t program_begin,
+	const BakedArithTables &tables, FlagState &produced)
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.locked)
@@ -5438,15 +5524,15 @@ struct BakedArithTables final {
 		}
 		if (source.kind != OperandKind::memory || source.width != width)
 			return false;
-		const auto address = baked_address(gadget, source);
+		const auto address = baked_address(gadget, program_begin, source);
 		if (!address)
 			return false;
-		append_baked_access(stream, gadget, *address, tables.rm, tables.xrm, *d);
+		append_baked_access(stream, *address, tables.rm, tables.xrm, *d);
 		return true;
 	}
 	if (destination.kind != OperandKind::memory)
 		return false;
-	const auto address = baked_address(gadget, destination);
+	const auto address = baked_address(gadget, program_begin, destination);
 	if (!address)
 		return false;
 	produced = writes_memory ? FlagState{} :
@@ -5457,24 +5543,31 @@ struct BakedArithTables final {
 		const auto s = baked_register_slot(source);
 		if (!s)
 			return false;
-		append_baked_access(stream, gadget, *address, tables.mr, tables.xmr, *s);
+		append_baked_access(stream, *address, tables.mr, tables.xmr, *s);
 		return true;
 	}
 	if (source.kind != OperandKind::immediate)
 		return false;
+	/* The immediate rides in the access word when it fits; an access with no
+	 * base register has its address in the stream already and keeps the
+	 * immediate in a word of its own. One that does not fit takes the
+	 * ordinary bank. */
+	const auto immediate = baked_packed_immediate(source.immediate, width);
+	if (!address->displaced()) {
+		stream.push_back(tables.mi[address->base]);
+		append_baked_operands(stream, *address);
+		stream.push_back(source.immediate);
+		return true;
+	}
+	if (!immediate)
+		return false;
 	if (!address->indexed) {
 		stream.push_back(tables.mi[address->base]);
-		stream.push_back(address->displacement);
-		stream.push_back(baked_access_word(gadget));
-	} else {
-		stream.push_back(baked::uml_x86_64_baked_ea[
-			(address->base * baked::gpr_slots + address->index) *
-				baked::scale_slots + address->scale]);
-		stream.push_back(address->displacement);
-		stream.push_back(*tables.xmi);
-		stream.push_back(baked_access_word(gadget));
+		append_baked_operands(stream, *address, *immediate);
+		return true;
 	}
-	stream.push_back(source.immediate);
+	append_baked_index(stream, *address, *immediate);
+	stream.push_back(*tables.xmi);
 	return true;
 }
 
@@ -5508,7 +5601,7 @@ struct BakedExtendTables final {
 }
 
 [[nodiscard]] bool append_baked_extend(std::vector<std::uintptr_t> &stream,
-	const Gadget &gadget)
+	const Gadget &gadget, std::uint64_t program_begin)
 {
 	const auto &instruction = gadget.instruction;
 	const auto &destination = instruction.destination;
@@ -5528,10 +5621,10 @@ struct BakedExtendTables final {
 	}
 	if (tables->rm == nullptr)
 		return false;
-	const auto address = baked_address(gadget, source);
+	const auto address = baked_address(gadget, program_begin, source);
 	if (!address)
 		return false;
-	append_baked_access(stream, gadget, *address, tables->rm, tables->xm, *d);
+	append_baked_access(stream, *address, tables->rm, tables->xm, *d);
 	return true;
 }
 
@@ -5641,11 +5734,12 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 }
 
 [[nodiscard]] bool append_baked_lea(std::vector<std::uintptr_t> &stream,
-	const Gadget &gadget)
+	const Gadget &gadget, std::uint64_t program_begin)
 {
 	const auto &instruction = gadget.instruction;
 	const auto d = baked_register_slot(instruction.destination);
-	const auto address = baked_address(gadget, instruction.source);
+	const auto address = baked_address(gadget, program_begin,
+		instruction.source, false);
 	if (!d || !address)
 		return false;
 	const std::uintptr_t *fused{};
@@ -5661,21 +5755,20 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		break;
 	default: return false;
 	}
+	/* It cannot fault, so its stream is the displacement alone, or for an
+	 * indexed address the address entry's word with only that field set. */
 	if (!address->indexed) {
 		stream.push_back(fused[*d * baked::base_slots + address->base]);
 		stream.push_back(address->displacement);
 		return true;
 	}
-	stream.push_back(baked::uml_x86_64_baked_ea[
-		(address->base * baked::gpr_slots + address->index) *
-			baked::scale_slots + address->scale]);
-	stream.push_back(address->displacement);
+	append_baked_index(stream, *address);
 	stream.push_back(split[*d]);
 	return true;
 }
 
 [[nodiscard]] bool append_baked_stack(std::vector<std::uintptr_t> &stream,
-	const Gadget &gadget)
+	const Gadget &gadget, std::uint64_t program_begin)
 {
 	const auto &instruction = gadget.instruction;
 	const bool push = instruction.operation == Operation::push;
@@ -5683,11 +5776,12 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	if (operand.width != OperandWidth::qword)
 		return false;
 	const auto slot = baked_register_slot(operand);
-	if (!slot || !baked_access_fits(gadget))
+	const auto header = baked_access_header(gadget, program_begin);
+	if (!slot || !header)
 		return false;
 	stream.push_back((push ? baked::uml_x86_64_baked_push_64_r :
 		baked::uml_x86_64_baked_pop_64_r)[*slot]);
-	stream.push_back(baked_access_word(gadget));
+	stream.push_back(*header);
 	return true;
 }
 
@@ -5695,8 +5789,8 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
  * entries, false to take the ordinary family. Only 64-bit mode is enumerated;
  * the stack forms in particular assume a 64-bit stack pointer. */
 [[nodiscard]] bool append_baked(std::vector<std::uintptr_t> &stream,
-	const Gadget &gadget, ExecutionMode mode, const FlagState &state,
-	FlagState &produced)
+	const Gadget &gadget, ExecutionMode mode, std::uint64_t program_begin,
+	const FlagState &state, FlagState &produced)
 {
 	produced = {};
 	if (!baked_bank_enabled() || mode != ExecutionMode::long64)
@@ -5705,8 +5799,8 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	switch (instruction.operation) {
 	case Operation::move: {
 		const auto tables = baked_move_tables(instruction.destination.width);
-		return tables &&
-			append_baked_binary(stream, gadget, *tables, produced);
+		return tables && append_baked_binary(stream, gadget,
+			program_begin, *tables, produced);
 	}
 	case Operation::add:
 	case Operation::subtract:
@@ -5717,22 +5811,22 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	case Operation::test: {
 		const auto tables = baked_arith_tables(
 			instruction.operation, instruction.destination.width);
-		return tables &&
-			append_baked_binary(stream, gadget, *tables, produced);
+		return tables && append_baked_binary(stream, gadget,
+			program_begin, *tables, produced);
 	}
 	case Operation::move_zero_extend:
 	case Operation::move_sign_extend:
-		return append_baked_extend(stream, gadget);
+		return append_baked_extend(stream, gadget, program_begin);
 	case Operation::increment:
 	case Operation::decrement:
 	case Operation::negate:
 	case Operation::bit_not:
 		return append_baked_unary(stream, gadget, state, produced);
 	case Operation::lea:
-		return append_baked_lea(stream, gadget);
+		return append_baked_lea(stream, gadget, program_begin);
 	case Operation::push:
 	case Operation::pop:
-		return append_baked_stack(stream, gadget);
+		return append_baked_stack(stream, gadget, program_begin);
 	default:
 		return false;
 	}
@@ -5762,7 +5856,8 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
  * gadget, which is what lets a conditional branch inline its fall-through. */
 [[nodiscard]] bool append_native(
 	std::vector<std::uintptr_t> &stream, const Gadget &gadget,
-	ExecutionMode mode, ProgramLinkResolver links, const FlagState &state,
+	ExecutionMode mode, std::uint64_t program_begin,
+	ProgramLinkResolver links, const FlagState &state,
 	bool has_following, FlagState &produced)
 {
 	/* The decoder admits LOCK only on memory-destination read-modify-write
@@ -5776,7 +5871,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			native::uml_x86_64_gadget_segment_guard));
 		stream.push_back(gadget.address);
 	}
-	if (append_baked(stream, gadget, mode, state, produced)) {
+	if (append_baked(stream, gadget, mode, program_begin, state, produced)) {
 		/* A baked entry that executes no flag-setting host instruction
 		 * leaves the producer's NZCV for a later consumer. The bank's
 		 * transfers are all such entries: their translation tests the TLB
@@ -6794,14 +6889,15 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 
 std::optional<std::size_t> append_native_stream(
 	std::vector<std::uintptr_t> &stream, std::span<const Gadget> gadgets,
-	std::uint64_t final_rip, ExecutionMode mode, ProgramLinkResolver links)
+	std::uint64_t final_rip, ExecutionMode mode,
+	std::uint64_t program_begin, ProgramLinkResolver links)
 {
 	stream.reserve(stream.size() + gadgets.size() * 3U + 2U);
 	FlagState state{};
 	for (std::size_t index = 0; index < gadgets.size(); ++index) {
 		FlagState produced{};
-		if (!append_native(stream, gadgets[index], mode, links, state,
-			index + 1U < gadgets.size(), produced))
+		if (!append_native(stream, gadgets[index], mode, program_begin,
+			links, state, index + 1U < gadgets.size(), produced))
 			return index;
 		state = produced;
 	}
@@ -6828,7 +6924,7 @@ std::optional<std::size_t> append_native_stream(
 
 std::optional<std::size_t> instruction_at_word(
 	std::span<const Gadget> gadgets, std::span<const std::uintptr_t> stream,
-	std::size_t word, ExecutionMode mode)
+	std::size_t word, ExecutionMode mode, std::uint64_t program_begin)
 {
 	/* Only a branch's form depends on the links its build found, and the
 	 * forms differ in their first word, so each instruction is built both
@@ -6851,8 +6947,8 @@ std::optional<std::size_t> instruction_at_word(
 		for (const auto links : {ProgramLinkResolver{}, linked}) {
 			words.clear();
 			produced = {};
-			if (!append_native(words, gadgets[index], mode, links, state,
-				index + 1U < gadgets.size(), produced))
+			if (!append_native(words, gadgets[index], mode, program_begin,
+				links, state, index + 1U < gadgets.size(), produced))
 				return std::nullopt;
 			if (!words.empty() && position + words.size() <= stream.size() &&
 				words.front() == stream[position]) {
@@ -6872,10 +6968,12 @@ std::optional<std::size_t> instruction_at_word(
 
 std::vector<std::uintptr_t> build_native_stream(
 	std::span<const Gadget> gadgets, std::uint64_t final_rip,
-	ExecutionMode mode, ProgramLinkResolver links)
+	ExecutionMode mode, std::uint64_t program_begin,
+	ProgramLinkResolver links)
 {
 	std::vector<std::uintptr_t> stream;
-	if (append_native_stream(stream, gadgets, final_rip, mode, links))
+	if (append_native_stream(stream, gadgets, final_rip, mode,
+		program_begin, links))
 		throw std::logic_error{
 			"x86-64 operation has no native assembly gadget"};
 	return stream;

@@ -803,7 +803,13 @@ the kernel's user-helper page), the CP15 and counter reads, and LDM, STM and
 LDRD across a page, mapped and not, and that Advanced SIMD floating point
 runs under the standard FPSCR value while VFP keeps the guest's (in either
 order, in a skipped conditional run and across a block that ends inside a
-run), that a VFP word is illegal when the engine translates at the base
+run), that the conversions, VMAX, VMIN, VADD, VSUB and VMUL run in whichever
+environment is native exactly when their operands allow it, with the value,
+flags and environment left checked against the host's own instruction under
+the matching FPCR, that no gadget writes the callee-saved halves of V8-V15
+(the corpus runner checks them around every case), that every writeback of a
+VLD1 or VST1 copy moves the bytes and the base inside a page and across one,
+that a VFP word is illegal when the engine translates at the base
 level, and that at the complete level a form of an extension (CRC32, AES,
 SHA-1, PMULL, FP16, DotProd, RDM, FCMA, FHM, BF16, I8MM, JSCVT) executes on a
 host that has it, as a gadget or in the semantic library, and is the
@@ -832,9 +838,11 @@ the load and the store, which a loaded host makes frequent enough to see in a
 gate; the oracle's never does. A case whose only difference is that failure
 runs again, up to 16 attempts in all, and the summary counts the cases that
 needed it. `arm64-gadget-a32-corpus-interrupted` runs the `exclusive-qemu`
-record 200 times with a signal storm aimed at the guest's thread and requires
-both that store-exclusives were lost and that every case then agreed. All four
-run in both page profiles.
+record at least 200 times with a timer signal every few microseconds aimed at
+the guest's thread, and goes on past that until a store-exclusive has lost its
+reservation (at most 60 s, because whether a signal lands in the window is
+chance). It requires that one was lost and that every case then agreed. All
+four run in both page profiles.
 Instruction semantics belong to the instruction corpus, not to the first two.
 
 `arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:

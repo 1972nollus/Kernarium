@@ -186,7 +186,7 @@ void exact_translation_selection()
 					(static_cast<std::uintptr_t>(
 						static_cast<std::uint64_t>(
 							static_cast<std::int64_t>(
-								offset))) << 10);
+								offset)) & 0x1ffU) << 10);
 				require_selected(
 					ordered::scalar_instruction(
 						variant, offset, rn, rt),

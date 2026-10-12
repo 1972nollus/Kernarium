@@ -93,34 +93,35 @@ DecodeResult emit_svcr_write(DecodeContext &context, std::uint8_t mask,
 /* A spill word of the SM = 0 vector-length family
  * (detail/sm0_vector_length.hpp), as the memory access it is. A vector
  * register Z is the V register, so LDR and STR of Z are the 16-byte SIMD&FP
- * load and store with the byte offset in the stream word, which holds any
- * 32-bit displacement. The virtual CPU has no predicate state at SM = 0, so
- * STR of P is a halfword store of the zero register and LDR of P a halfword
- * load into it, which performs the access and discards the data. */
+ * load and store with the byte offset in the operand's signed 16-bit
+ * displacement, which holds the nine-bit immediate times the register's
+ * size, and the block position in its top byte as for every memory form.
+ * The virtual CPU has no predicate state at SM = 0, so STR of P is a halfword
+ * store of the zero register and LDR of P a halfword load into it, which
+ * performs the access and discards the data. */
 DecodeResult emit_sm0_spill(DecodeContext &context,
 	const detail::Sm0Spill &spill)
 {
 	auto &words = context.words;
 	const bool sp_base = spill.base == 31U;
-	const auto displacement = static_cast<std::uint64_t>(
-		static_cast<std::int64_t>(spill.offset)) << 32;
+	const auto displacement = (static_cast<std::uint64_t>(
+		static_cast<std::int64_t>(spill.offset)) & 0xffffU) << 32;
 	const auto base = selection::base_register_offset(spill.base) << 16;
 	if (spill.predicate) {
 		const auto *gadgets = selection::scalar_other_gadgets(1U,
 			spill.store ? 0U : 1U);
 		emit(words, gadgets->immediate[0][sp_base ? 1 : 0][1]);
 		emit(words, selection::transfer_register_offset(31U) | base |
-			displacement);
+			displacement | fault_position(context));
 	} else {
 		const auto *gadgets = selection::vector_other_gadgets(0U,
 			spill.store ? 2U : 3U);
 		emit(words, gadgets->immediate[0][sp_base ? 1 : 0]);
 		emit(words, vector_operand_offset(spill.transfer) | base |
-			displacement);
+			displacement | fault_position(context));
 		/* The program reads or writes a vector register. */
 		context.program_accesses_fp_state = true;
 	}
-	emit(words, context.address);
 	return DecodeResult::decoded;
 }
 

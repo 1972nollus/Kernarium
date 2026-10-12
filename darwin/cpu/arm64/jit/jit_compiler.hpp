@@ -107,6 +107,9 @@ private:
       memory_copy_set_slow,
       sme_slow,
       sm0_spill_slow,
+      /* An ISB found the address space's code changed: leave at its
+       * fall-through, which the executor fetches anew. */
+      code_changed,
     };
 
     Arm64Emitter::Label label;
@@ -221,6 +224,8 @@ private:
 
   void emit_code_synchronize(std::uint32_t instruction, std::uint64_t pc,
                              std::size_t count);
+
+  void emit_code_change_check(std::uint32_t instruction, std::uint64_t pc);
 
   void emit_pair_slow(std::uint32_t instruction, std::uint64_t pc,
                       std::size_t count);

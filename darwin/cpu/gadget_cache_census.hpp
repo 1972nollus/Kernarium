@@ -279,6 +279,9 @@ public:
 	void hit() noexcept { ++lookups_; ++hits_; }
 	void revalidated() noexcept { ++lookups_; ++revalidated_; }
 	void missed() noexcept { ++lookups_; ++misses_; }
+	/* A miss that took the translation another executor of the address
+	 * space holds instead of translating. */
+	void adopted() noexcept { ++lookups_; ++adopted_; }
 	[[nodiscard]] std::uint64_t lookups() const noexcept { return lookups_; }
 
 	void depart(std::uint64_t generation, std::uint64_t pc,
@@ -356,13 +359,15 @@ public:
 	{
 		std::fprintf(out,
 			" lookups=%llu hits=%llu revalidated=%llu misses=%llu"
+			" adopted=%llu"
 			" stores=%llu first=%llu again_evicted=%llu"
 			" again_retired=%llu again_discarded=%llu changed=%llu"
 			" restored=%llu other_executor=%llu other_space=%llu"
 			" evictions=%llu evicted_bytes=%llu retirements=%llu"
 			" discards=%llu departed=%zu distance=",
 			value(lookups_), value(hits_), value(revalidated_),
-			value(misses_), value(stores_), value(first_),
+			value(misses_), value(adopted_), value(stores_),
+			value(first_),
 			value(again_evicted_), value(again_retired_),
 			value(again_discarded_), value(changed_),
 			value(restored_), value(other_executor_),
@@ -404,7 +409,8 @@ private:
 		Departure why;
 	};
 
-	std::uint64_t lookups_{}, hits_{}, revalidated_{}, misses_{};
+	std::uint64_t lookups_{}, hits_{}, revalidated_{}, misses_{},
+		adopted_{};
 	std::uint64_t stores_{}, first_{}, again_evicted_{}, again_retired_{},
 		again_discarded_{}, changed_{}, restored_{};
 	std::uint64_t other_executor_{}, other_space_{};
