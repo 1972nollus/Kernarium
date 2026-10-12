@@ -240,6 +240,7 @@ The detailed per-workload sample matrix was intentionally discarded.
 | G229 | Keep more address spaces resident in a gadget cache: a window of twelve, sixteen or twenty-four instead of eight | Rejected. At macOS's 262,144 slots a browser guest's lookups hit more often with a larger window, its rendering phase from about four fifths to nine tenths at sixteen, but every resident address space keeps its link records until it retires, so the cache grew by two fifths at twelve, two thirds at sixteen and nearly twice at twenty-four; with half the slots to pay for twelve or sixteen it hit less often than eight, and at iOS's 65,536 slots no larger window gained. Six and four shrank the cache at a clear loss of hit rate. Eight stays on both products. What a residency bound costs is the state each resident space keeps, not the slots its code occupies. |
 | G230 | Give a way a lookup found a second chance before its set replaces it | Rejected, with x86's X86. A per-set mark for each found way, which the round-robin hand clears as it passes, raised multi-core Geekbench's hit rate from 98.5% to 98.6% at equal memory and cut its stores by a twentieth, gained half a point at 65,536 slots, and left a browser guest's hit rate where it was. That is below what a timing run resolves, and it adds a read-modify-write of a separate array to every executor hit. The misses that remain come from sets too small for their blocks, which the choice of victim cannot fix. |
 | G231 | Give each gadget cache set eight ways instead of four | Kept, with x86's X87. At 131,072 slots on the M4 MacBook Air (4 vCPUs, one Geekbench iteration, ABBABAAB), multi-core Geekbench rose 2.4% and single-core 0.5%, and WebGL Aquarium ran 2.1% faster with its load time level within noise. Census builds hit 96.8% of multi-core lookups instead of 95.8% and stored a quarter fewer translations, for 2% more cache because more slots stay occupied; these memory figures predate C5's slot diet. At 262,144 slots eight ways grew the cache by a twentieth on Geekbench and a sixth on the browser. Eight ways at 131,072 slots against four at 262,144 held Geekbench level for a fifth less cache, a comparison the user's interim 131,072-slot default for both products superseded. On an iPad at 65,536 slots and 2 vCPUs, measured before that default, both Geekbench scores were half a percent lower. A wider set keeps the code a narrow one evicts while neighbouring sets stand empty. |
+| G232 | Give macOS and iOS one gadget-cache slot count | Accepted as the user's interim default of 131,072 slots on both products and both ISAs, until a later sweep over 65,536, 131,072 and 262,144 picks the final one. The first request was macOS at iOS's 65,536 slots, so that the Mac would run the memory behavior the device ships; the user raised it to 131,072 because 65,536 already costs performance (a census run had multi-core Geekbench fall from 451 to 345 against 262,144 slots, at Geekbench's default iteration count). iOS rises from 65,536 and macOS falls from 262,144. On the M1 Ultra, in four-way builds that predate G231's eight ways, at one Geekbench iteration and two ABBA runs per arm, 131,072 against 262,144 slots cost single-core Geekbench 3% (136 and 145 against 142 and 148) and left multi-core level (506 and 493 against 474 and 524, runs that differ by a tenth), WebGL Aquarium level within noise (17.6 frames per second against 17.3) and its load time level (54 s against 56 s). On the iPad mini 6, also four-way, with 2 vCPUs and 2 GiB, multi-core Geekbench peaked at 1.78 GiB of footprint against 1.63 GiB at 65,536 slots, 62% of the 2,867 MiB limit, with the score level within a percent and no memory kill. A product default stored in a CMake cache entry reaches only new trees unless the entry can tell a value nobody chose from one somebody did; its help text now names the default a tree was configured with, so a value that still equals it moves when the default does. |
 
 ## Host instructions per guest instruction
 
@@ -408,7 +409,7 @@ measured against their parent on the workloads their mechanism reaches.
 | X84 | Replace SSE arithmetic fix-ups with FEAT_AFP host modes | Measured, parked; it could serve only the macOS x86 slice on M4 and later hosts. Under FPCR.AH, NEP, FIZ and FZ one host instruction can stand in for a gadget's lane merge, DAZ and FTZ tests and NaN repair. HDR ran 5 to 6 percent faster than base but only about 3 percent faster than the same binary with the twins off, Object Remover gained nothing despite a 28.6 percent sample share, and RPRES found no use. A sample share is not removable work: packed memory-operand gadgets are bound by their loads and dispatch, and only dependent scalar chains gained. Holding NEP across the dispatch loop gives every one-input scalar instruction a false dependency on its destination, and an FPCR write costs about 10 ns on the M4. |
 | X85 | Carry a baked access's displacement in its access word | Accepted. A baked memory access paid one stream word for its displacement and another for its RIP and length; one access word now holds the displacement, the instruction's position in its block, its length and a 14-bit immediate, and the cold exits rebuild the RIP from the block's start. A fused access went from three words to two and an indexed one from four to three: stream words fell 10 percent over 13 Debian binaries, and GB6 on an M4 at 4 vCPUs stayed level. Folding the sign extension into the address add lost to a separate extension beside the base load. A word only a cold exit reads should be recomputed from the block, not fetched. |
 | X86 | Give an x86 way a lookup found a second chance before its set replaces it | Rejected, with arm64's G230. Multi-core Geekbench hit 98.2% instead of 98.0% while the cache grew from 403 to 410 MiB. The lesson is G230's. |
-| X87 | Give each x86 gadget cache set eight ways instead of four | Kept, with arm64's G231, whose geometry it shares. Census builds hit 98.9% of multi-core Geekbench lookups instead of 98.0% at 262,144 slots, and 97.5% at 131,072; no x86 timing run was made. The lesson is G231's. |
+| X87 | Give each x86 gadget cache set eight ways instead of four | Kept, with arm64's G231, whose geometry it shares. Census builds hit 98.9% of multi-core Geekbench lookups instead of 98.0% at 262,144 slots, and 97.5% at 131,072. Timed at 131,072 slots on the M4 MacBook Air against the same build with only the x86 sets cut back to four ways (x86-64 guest, 4 vCPUs, one Geekbench iteration, ABBABAAB), Geekbench held level: single-core +0.3%, multi-core -0.3% within a run-to-run spread of a tenth. The lesson is G231's. |
 
 The opening profile ranked candidates by what executes rather than by a static
 instruction histogram, and so retired several planned items that barely ran:
@@ -635,16 +636,21 @@ repository now runs one iteration, and scores of the two settings do not
 compare.
 
 The result, on the M1 Ultra at 4 vCPUs, was 2.0x the armv7 single-core and
-multi-core scores of the start, with the aarch64 score unchanged. Against
-the aarch64 build the armv7 ratio went from 0.53 and 0.46 to 1.06 and 0.96
-(single-core and multi-core). These ratios overstate a like-for-like one:
-the aarch64 build of that base predates the semantic-helper exit work above,
-and on PDF Rendering, Text Rendering and Ray Tracing its memory-run proofs
-failed on hot loads whenever a run's data layout put the base near a page
-end, tens of millions of helper exits per workload. It scored 0.3x to 0.5x
-of its M4 scores there and 0.5x to 0.7x elsewhere. A build with that work,
-the same one on both hosts, scores 0.5x to 0.7x of the M4 on every workload
-at 4 KiB, at 1 and at 4 vCPUs.
+multi-core scores of the start, with the aarch64 score unchanged. Measured
+against the aarch64 build of that base, the armv7 ratio went from 0.53 and
+0.46 to 1.06 and 0.96 (single-core and multi-core), but that build predates
+the semantic-helper exit work above: on PDF Rendering, Text Rendering and
+Ray Tracing its memory-run proofs failed on hot loads whenever a run's data
+layout put the base near a page end, tens of millions of helper exits per
+workload. It scored 0.3x to 0.5x of its M4 scores there and 0.5x to 0.7x
+elsewhere. A build with that work, the same one on both hosts, scores 0.5x
+to 0.7x of the M4 on every workload at 4 KiB, at 1 and at 4 vCPUs. Against
+it, with one iteration at 4 KiB, armv7 scores 0.89 of aarch64 single-core
+at 1 vCPU (0.93 at 4) and 0.92 multi-core at 4 vCPUs on the M1 Ultra, and
+0.96 and 0.98 at 4 vCPUs on the M4. AES-XTS (0.26 to 0.30) and Face
+Detection (0.31 to 0.34) are the lowest workloads on both hosts, then
+Camera, Horizon Detection, Machine Learning and Structure from Motion (0.48
+to 0.57).
 
 | Attempt | Disposition and lesson |
 | --- | --- |

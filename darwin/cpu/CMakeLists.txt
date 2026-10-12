@@ -23,19 +23,55 @@ add_subdirectory(arm64/aarch32)
 # slot count, not residency or validation, is what bounds Clang.
 #
 # Capacity is not free on either engine. An empty way costs 24 bytes on arm64
-# and 40 on x86, and an occupied one its translation besides. macOS can spend
-# it and iOS cannot: the iOS app runs under a jetsam limit with a 2048 MiB
-# guest default, and one executor per host core would pay for it several times
-# over. The compatibility default therefore stays where it was measured to be
-# affordable.
-if(UML_APPLE_PLATFORM STREQUAL "macos")
-    set(_uml_gadget_cache_slots_default "262144")
-else()
-    set(_uml_gadget_cache_slots_default "65536")
+# and 40 on x86, and an occupied one its translation besides. Every product and
+# both ISAs share one default, 131,072 slots, so that macOS behaves like iOS;
+# an explicit -DUML_GADGET_CACHE_SLOTS selects another power of two.
+#
+# The variable is a cache entry, so a tree configured under an earlier default
+# would keep it. The help text below names the default a tree was configured
+# with, which tells a value nobody chose from one somebody did: an entry that
+# still carries a configured default's help text and equals it is moved to the
+# current default. Trees configured before the help text named a default hold
+# the default of their day, 262,144 on macOS and 65,536 elsewhere. A
+# command-line -D replaces the help text and so is kept, as is any other value.
+set(_uml_gadget_cache_slots_default "131072")
+set(_uml_gadget_cache_slots_help
+    "Slots in each ISA's private gadget cache; power of two, at least 1024")
+set(_uml_gadget_cache_slots_doc
+    "${_uml_gadget_cache_slots_help}; default ${_uml_gadget_cache_slots_default}")
+if(DEFINED CACHE{UML_GADGET_CACHE_SLOTS})
+    get_property(_uml_gadget_cache_slots_old_doc
+        CACHE UML_GADGET_CACHE_SLOTS PROPERTY HELPSTRING)
+    unset(_uml_gadget_cache_slots_configured)
+    if(_uml_gadget_cache_slots_old_doc STREQUAL _uml_gadget_cache_slots_help)
+        if(UML_APPLE_PLATFORM STREQUAL "macos")
+            set(_uml_gadget_cache_slots_configured "262144")
+        else()
+            set(_uml_gadget_cache_slots_configured "65536")
+        endif()
+    elseif(_uml_gadget_cache_slots_old_doc MATCHES
+           "^${_uml_gadget_cache_slots_help}; default ([0-9]+)$")
+        set(_uml_gadget_cache_slots_configured "${CMAKE_MATCH_1}")
+    endif()
+    if(DEFINED _uml_gadget_cache_slots_configured AND
+       UML_GADGET_CACHE_SLOTS STREQUAL _uml_gadget_cache_slots_configured)
+        if(NOT UML_GADGET_CACHE_SLOTS STREQUAL _uml_gadget_cache_slots_default)
+            message(STATUS "UML_GADGET_CACHE_SLOTS: moving ${UML_GADGET_CACHE_SLOTS}, "
+                           "a former default, to ${_uml_gadget_cache_slots_default}")
+        endif()
+        set(UML_GADGET_CACHE_SLOTS "${_uml_gadget_cache_slots_default}"
+            CACHE STRING "${_uml_gadget_cache_slots_doc}" FORCE)
+    endif()
+    unset(_uml_gadget_cache_slots_configured)
+    unset(_uml_gadget_cache_slots_old_doc)
 endif()
 set(UML_GADGET_CACHE_SLOTS "${_uml_gadget_cache_slots_default}" CACHE STRING
-    "Slots in each ISA's private gadget cache; power of two, at least 1024")
+    "${_uml_gadget_cache_slots_doc}")
+set_property(CACHE UML_GADGET_CACHE_SLOTS PROPERTY HELPSTRING
+    "${_uml_gadget_cache_slots_doc}")
 unset(_uml_gadget_cache_slots_default)
+unset(_uml_gadget_cache_slots_help)
+unset(_uml_gadget_cache_slots_doc)
 if(NOT UML_GADGET_CACHE_SLOTS MATCHES "^[0-9]+$")
     message(FATAL_ERROR
         "UML_GADGET_CACHE_SLOTS must be a positive integer")
@@ -54,11 +90,11 @@ unset(_uml_gadget_cache_slots_invalid)
 # spaces, measured on a browser guest at 65536 slots, reach a 76.2% lookup hit
 # rate against 29.7% for flushing on every switch and cut retranslation from
 # 1.46M to 255K a second; sixteen was worse on every axis, because more address
-# spaces dilute one pool the same way partitioning it did. At macOS's 262,144
-# slots more address spaces do hit more often, but each resident one keeps its
-# link records until it retires: twelve and sixteen grew the browser's cache by
-# two fifths and two thirds, and with half the slots to pay for that they hit
-# less than eight. Eight stays the default on both products (G229).
+# spaces dilute one pool the same way partitioning it did. At 262,144 slots
+# more address spaces do hit more often, but each resident one keeps its link
+# records until it retires: twelve and sixteen grew the browser's cache by two
+# fifths and two thirds, and with half the slots to pay for that they hit less
+# than eight. Eight stays the default on both products (G229).
 set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
     "Address spaces that may hold translations in each private gadget cache")
 
