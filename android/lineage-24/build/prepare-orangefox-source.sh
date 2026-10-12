@@ -20,7 +20,7 @@ MANIFEST_OUTPUT=
 usage()
 {
 	cat <<'EOF'
-Usage: android/aosp-17/build/prepare-orangefox-source.sh \
+Usage: android/lineage-24/build/prepare-orangefox-source.sh \
        --orangefox-source ABSOLUTE_PATH [--jobs N]
 
 Run on the x86_64 Linux builder. This is the only OrangeFox producer step

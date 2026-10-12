@@ -5,12 +5,12 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
-AOSP_METADATA="$ROOT_DIR/android/aosp-17/metadata/aosp.env"
+AOSP_METADATA="$ROOT_DIR/android/lineage-24/metadata/aosp.env"
 ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
-JELLY_METADATA="$ROOT_DIR/android/aosp-17/third_party/jelly/metadata.env"
-JELLY_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-jelly-source.py"
-MESA_VENUS_METADATA="$ROOT_DIR/android/aosp-17/third_party/mesa-venus/metadata.env"
-MESA_VENUS_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-mesa-venus-source.py"
+JELLY_METADATA="$ROOT_DIR/android/lineage-24/third_party/jelly/metadata.env"
+JELLY_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-jelly-source.py"
+MESA_VENUS_METADATA="$ROOT_DIR/android/lineage-24/third_party/mesa-venus/metadata.env"
+MESA_VENUS_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-mesa-venus-source.py"
 
 AOSP_SOURCE=
 ACK_WORKSPACE=
@@ -23,7 +23,7 @@ STAGING=
 usage()
 {
 	cat <<'EOF'
-Usage: android/aosp-17/build/prepare-sources.sh \
+Usage: android/lineage-24/build/prepare-sources.sh \
        --aosp-source ABSOLUTE_PATH \
        --ack-workspace ABSOLUTE_PATH [--jobs N]
 
@@ -65,7 +65,7 @@ materialize_pinned()
 	branch=$7
 	shift 7
 	if [ -e "$destination" ] || [ -L "$destination" ]; then
-		"$verifier" --android-root "$ROOT_DIR/android/aosp-17" \
+		"$verifier" --android-root "$ROOT_DIR/android/lineage-24" \
 			--aosp-source "$AOSP_SOURCE"
 		printf '%s\n' "reusing pinned $label checkout: $destination"
 		return
@@ -95,7 +95,7 @@ materialize_pinned()
 	done
 	mv -- "$STAGING" "$destination"
 	STAGING=
-	"$verifier" --android-root "$ROOT_DIR/android/aosp-17" \
+	"$verifier" --android-root "$ROOT_DIR/android/lineage-24" \
 		--aosp-source "$AOSP_SOURCE"
 }
 
@@ -156,8 +156,8 @@ esac
 # shellcheck disable=SC1090
 . "$MESA_VENUS_METADATA"
 
-"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17"
-"$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17"
+"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/lineage-24"
+"$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/lineage-24"
 
 command -v repo >/dev/null 2>&1 || fail "repo is not available on PATH"
 command -v git >/dev/null 2>&1 || fail "git is not available on PATH"
@@ -190,13 +190,13 @@ git -C "$ACK_WORKSPACE/common" checkout --detach \
 materialize_pinned Jelly "$AOSP_SOURCE/$JELLY_DESTINATION" "$JELLY_VERIFIER" \
 	"$JELLY_UPSTREAM_REPOSITORY" "$JELLY_UPSTREAM_COMMIT" \
 	"$JELLY_UPSTREAM_TREE" "" \
-	android/aosp-17/third_party/jelly/series "$JELLY_FINAL_TREE"
+	android/lineage-24/third_party/jelly/series "$JELLY_FINAL_TREE"
 materialize_pinned "Mesa Venus" "$AOSP_SOURCE/$MESA_VENUS_DESTINATION" \
 	"$MESA_VENUS_VERIFIER" "$MESA_VENUS_UPSTREAM_REPOSITORY" \
 	"$MESA_VENUS_UPSTREAM_COMMIT" "$MESA_VENUS_UPSTREAM_TREE" \
 	"$MESA_VENUS_PATCH_BRANCH" \
 	"$MESA_VENUS_GUEST_SERIES" "$MESA_VENUS_GUEST_TREE" \
-	android/aosp-17/third_party/mesa-venus/series "$MESA_VENUS_FINAL_TREE"
+	android/lineage-24/third_party/mesa-venus/series "$MESA_VENUS_FINAL_TREE"
 
 "$SCRIPT_DIR/preflight.sh" \
 	--aosp-source "$AOSP_SOURCE" \

@@ -1,7 +1,7 @@
 # Android guest sources
 
 Android guest inputs are organized by AOSP major version. The first maintained
-lane is [`aosp-17/`](aosp-17/README.md).
+lane is [`lineage-24/`](lineage-24/README.md).
 
 This directory owns AOSP patch series, builder-local scripts, image/release
 support, and Android-version metadata. The ACK kernel configuration overlay and

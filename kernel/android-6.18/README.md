@@ -107,13 +107,13 @@ context is created.
 ## Build and artifact boundary
 
 The standalone ACK replay and build are owned by
-[`../../android/aosp-17`](../../android/aosp-17/README.md) and run on the Linux
+[`../../android/lineage-24`](../../android/lineage-24/README.md) and run on the Linux
 builder. That producer verifies the generated series, configuration, ELF, and
 exact bridge imports. As in Kleaf, its host tools build against the pinned
 kernel-build-tools musl sysroot and libraries, including the `libelf` that
 `resolve_btfids` needs, and BTF comes from that package's `pahole`.
 
-`android/aosp-17/tools/publish-kernel-artifact.py` publishes an already-built
+`android/lineage-24/tools/publish-kernel-artifact.py` publishes an already-built
 clean ACK result into the common compact artifact format. It strips DWARF from
 the published `vmlinux`. That drops only the `STT_FILE` symbols and
 debug-section locals, and keeps `.BTF`, every function and data symbol,

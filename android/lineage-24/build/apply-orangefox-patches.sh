@@ -18,7 +18,7 @@ ORANGEFOX_SOURCE=
 usage()
 {
 	cat <<'EOF'
-Usage: android/aosp-17/build/apply-orangefox-patches.sh \
+Usage: android/lineage-24/build/apply-orangefox-patches.sh \
        --orangefox-source ABSOLUTE_PATH
 
 Run on the x86_64 Linux builder after prepare-orangefox-source.sh. Routed Repo

@@ -5,10 +5,10 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
-AOSP_METADATA="$ROOT_DIR/android/aosp-17/metadata/aosp.env"
+AOSP_METADATA="$ROOT_DIR/android/lineage-24/metadata/aosp.env"
 ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
-JELLY_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-jelly-source.py"
-MESA_VENUS_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-mesa-venus-source.py"
+JELLY_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-jelly-source.py"
+MESA_VENUS_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-mesa-venus-source.py"
 
 AOSP_SOURCE=
 ACK_WORKSPACE=
@@ -23,7 +23,7 @@ SOURCE_ONLY=0
 usage()
 {
 	cat <<'EOF'
-Usage: android/aosp-17/build/preflight.sh \
+Usage: android/lineage-24/build/preflight.sh \
        --aosp-source ABSOLUTE_PATH \
        --ack-workspace ABSOLUTE_PATH \
        [--source-only | \
@@ -136,9 +136,9 @@ dirty_projects=$(dirty_repo_projects "$AOSP_SOURCE")
 if [ -n "$dirty_projects" ]; then
 	fail "AOSP Repo workspace has dirty projects: $dirty_projects"
 fi
-"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
+"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/lineage-24" \
 	--aosp-source "$AOSP_SOURCE"
-"$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
+"$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/lineage-24" \
 	--aosp-source "$AOSP_SOURCE"
 
 if [ "$SOURCE_ONLY" -eq 1 ]; then

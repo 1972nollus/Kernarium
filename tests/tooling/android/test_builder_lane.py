@@ -1266,7 +1266,7 @@ def main() -> None:
     args = parser.parse_args()
     root = args.source_root.resolve()
 
-    android_root = root / "android/aosp-17"
+    android_root = root / "android/lineage-24"
     kernel_root = root / "kernel/android-6.18"
 
     subprocess.run(

@@ -32,7 +32,7 @@ if _GUEST_SUPPORT not in sys.path:
 from guest import remove_emulator_run_directories  # noqa: E402
 
 ACCEPTED_RELEASE = (
-    REPO_ROOT / "android/aosp-17/metadata/accepted-release.env"
+    REPO_ROOT / "android/lineage-24/metadata/accepted-release.env"
 )
 RELEASES_ROOT = REPO_ROOT / ".build/android/releases"
 INSTANCES_ROOT = REPO_ROOT / ".build/android/instances"

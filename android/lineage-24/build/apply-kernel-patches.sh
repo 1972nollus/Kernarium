@@ -19,7 +19,7 @@ KERNEL_SOURCE=
 usage()
 {
 	cat <<'EOF'
-Usage: android/aosp-17/build/apply-kernel-patches.sh \
+Usage: android/lineage-24/build/apply-kernel-patches.sh \
        --ack-workspace ABSOLUTE_PATH \
        --kernel-source NEW_ABSOLUTE_PATH
 

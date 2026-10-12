@@ -55,7 +55,7 @@ def main() -> None:
     args = parser.parse_args()
 
     root = args.source_root.resolve()
-    android_root = root / "android/aosp-17"
+    android_root = root / "android/lineage-24"
     sys.path.insert(0, str(android_root / "tools"))
     from release_common import (  # noqa: PLC0415
         BUILD_VARIANTS,
@@ -216,7 +216,7 @@ def main() -> None:
         },
         "outer": {"revision": "a" * 40, "dirty": False},
         "producer": {
-            "entry_point": "android/aosp-17/build/publish-release.sh",
+            "entry_point": "android/lineage-24/build/publish-release.sh",
             "functional_options": ["pinned AOSP source", "verified ACK build"],
             "builder": {
                 "os": "Linux fixture",

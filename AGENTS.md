@@ -206,7 +206,7 @@ Update documentation in the same change whenever its current contract changes.
   `repository-environment-portability` enforces this.
 - After validating a replacement Android release, remove the superseded
   artifacts that
-  [`android/aosp-17/README.md`](android/aosp-17/README.md#superseded-releases)
+  [`android/lineage-24/README.md`](android/lineage-24/README.md#superseded-releases)
   names, deleting only explicit paths.
 - Remove a worktree and delete its branch as soon as their work is merged,
   cherry-picked, or superseded; keep only trees with live work, unmerged

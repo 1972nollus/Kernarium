@@ -26,7 +26,7 @@ source "$SCRIPT_DIR/common.sh"
 usage()
 {
 	cat <<'EOF'
-Usage: android/aosp-17/build/assemble-image.sh \
+Usage: android/lineage-24/build/assemble-image.sh \
        --target-files ABSOLUTE_PATH \
        --kernel-artifact ABSOLUTE_PATH \
        --mkbootfs ABSOLUTE_PATH \

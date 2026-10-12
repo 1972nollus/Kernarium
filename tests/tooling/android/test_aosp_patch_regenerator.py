@@ -76,12 +76,12 @@ def main() -> None:
     parser.add_argument("--source-root", type=Path, required=True)
     args = parser.parse_args()
     source_root = args.source_root.resolve()
-    generator = source_root / "android/aosp-17/tools/regenerate-aosp-patches.py"
-    verifier = source_root / "android/aosp-17/tools/verify-aosp-patches.py"
+    generator = source_root / "android/lineage-24/tools/regenerate-aosp-patches.py"
+    verifier = source_root / "android/lineage-24/tools/verify-aosp-patches.py"
 
     with tempfile.TemporaryDirectory(prefix="aosp-patch-regenerator-") as temporary:
         root = Path(temporary)
-        android_root = root / "android/aosp-17"
+        android_root = root / "android/lineage-24"
         topic = root / "topic"
         write_fixture(root, android_root, topic, verifier, source_root / "scripts")
         command = (

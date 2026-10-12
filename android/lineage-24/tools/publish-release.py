@@ -424,7 +424,7 @@ def main() -> None:
                 ("schema", 2),
                 ("release_id", args.release_id),
                 ("product_family", PRODUCT_FAMILY),
-                ("producer", "android/aosp-17/build/publish-release.sh"),
+                ("producer", "android/lineage-24/build/publish-release.sh"),
                 ("outer_revision", outer_revision),
                 ("outer_dirty", "false"),
                 ("aosp_manifest_commit", aosp["manifest_commit"]),
@@ -485,7 +485,7 @@ def main() -> None:
                 },
                 "outer": {"revision": outer_revision, "dirty": False},
                 "producer": {
-                    "entry_point": "android/aosp-17/build/publish-release.sh",
+                    "entry_point": "android/lineage-24/build/publish-release.sh",
                     "functional_options": [
                         "pinned AOSP source",
                         "pinned external Jelly source",

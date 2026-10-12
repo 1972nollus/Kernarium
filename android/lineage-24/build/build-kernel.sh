@@ -30,7 +30,7 @@ JOBS=
 usage()
 {
 	cat <<'EOF'
-Usage: android/aosp-17/build/build-kernel.sh \
+Usage: android/lineage-24/build/build-kernel.sh \
        --ack-workspace ABSOLUTE_PATH \
        --kernel-source ABSOLUTE_PATH \
        --darwin-sdk ABSOLUTE_PATH \

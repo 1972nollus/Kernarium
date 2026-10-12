@@ -6,7 +6,7 @@
 # fail MESSAGE...: report MESSAGE under the running script's name and exit.
 fail()
 {
-	printf '%s\n' "android/aosp-17/build/${0##*/}: $*" >&2
+	printf '%s\n' "android/lineage-24/build/${0##*/}: $*" >&2
 	exit 1
 }
 

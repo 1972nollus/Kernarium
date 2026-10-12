@@ -24,7 +24,7 @@ MANIFEST = "release-manifest.json"
 COMMAND_LINE = "boot/kernel-command-line.txt"
 GUEST_DIRECTORY = "guest"
 ROOT = Path(__file__).resolve().parents[2]
-ACCEPTANCE = ROOT / "android/aosp-17/metadata/accepted-release.env"
+ACCEPTANCE = ROOT / "android/lineage-24/metadata/accepted-release.env"
 _ARTIFACTS = str(ROOT / "kernel/common/artifacts")
 if _ARTIFACTS not in sys.path:
     sys.path.insert(0, _ARTIFACTS)

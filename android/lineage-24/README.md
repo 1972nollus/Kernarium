@@ -378,7 +378,7 @@ a builder path.
 After copying a reviewed candidate to the workstation, install it with:
 
 ```sh
-android/aosp-17/tools/install-release.py \
+android/lineage-24/tools/install-release.py \
   --source /absolute/local/path/to/release
 ```
 

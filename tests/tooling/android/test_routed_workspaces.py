@@ -239,7 +239,7 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
     (android_root / "metadata").mkdir(parents=True)
     (android_root / "tools").mkdir()
     shutil.copy2(
-        source_root / "android/aosp-17/tools/sync-device-tree.py",
+        source_root / "android/lineage-24/tools/sync-device-tree.py",
         android_root / "tools/sync-device-tree.py",
     )
     overlay = android_root / "overlay"
@@ -265,7 +265,7 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
     )
 
     verifier = Verifier(
-        source_root / "android/aosp-17/tools/verify-aosp-patches.py",
+        source_root / "android/lineage-24/tools/verify-aosp-patches.py",
         android_root, "--aosp-source", workspace, environment,
     )
     check_route_states(verifier, [(route, route_base, route_final)], "AOSP")
@@ -297,7 +297,7 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
 
 
 def check_orangefox(source_root: Path, root: Path, environment: dict[str, str]) -> None:
-    real = parse_env(source_root / "android/aosp-17/third_party/orangefox/metadata.env")
+    real = parse_env(source_root / "android/lineage-24/third_party/orangefox/metadata.env")
     android_root = root / "orangefox-policy"
     workspace = root / "orangefox"
     manifests = workspace / ".repo/manifests"
@@ -330,7 +330,7 @@ def check_orangefox(source_root: Path, root: Path, environment: dict[str, str]) 
     orangefox.mkdir(parents=True)
     (android_root / "tools").mkdir()
     shutil.copy2(
-        source_root / "android/aosp-17/tools/sync-device-tree.py",
+        source_root / "android/lineage-24/tools/sync-device-tree.py",
         android_root / "tools/sync-device-tree.py",
     )
     device = orangefox / "device"
@@ -377,7 +377,7 @@ def check_orangefox(source_root: Path, root: Path, environment: dict[str, str]) 
     )
 
     verifier = Verifier(
-        source_root / "android/aosp-17/tools/verify-orangefox-source.py",
+        source_root / "android/lineage-24/tools/verify-orangefox-source.py",
         android_root, "--orangefox-source", workspace, environment,
     )
     check_route_states(verifier, [

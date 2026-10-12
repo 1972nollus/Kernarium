@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://linux-um-darwin.invalid/android/aosp-17/release-manifest.schema.json",
+  "$id": "https://linux-um-darwin.invalid/android/lineage-24/release-manifest.schema.json",
   "title": "Android 17 ACK 6.18 4 KiB UML release manifest",
   "type": "object",
   "additionalProperties": false,

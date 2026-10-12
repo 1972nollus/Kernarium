@@ -343,7 +343,7 @@ def validate_manifest(value: object) -> dict:
         fail("accepted release records a dirty outer project")
 
     producer = require_exact_keys(manifest["producer"], PRODUCER_KEYS, "producer")
-    if producer["entry_point"] != "android/aosp-17/build/publish-release.sh":
+    if producer["entry_point"] != "android/lineage-24/build/publish-release.sh":
         fail("release records an unexpected producer entry point")
     options = producer["functional_options"]
     if not isinstance(options, list) or not options:

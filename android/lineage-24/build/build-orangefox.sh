@@ -22,7 +22,7 @@ source "$SCRIPT_DIR/common.sh"
 usage()
 {
 	cat <<'EOF'
-Usage: android/aosp-17/build/build-orangefox.sh \
+Usage: android/lineage-24/build/build-orangefox.sh \
        --orangefox-source ABSOLUTE_PATH \
        --out ABSOLUTE_PATH \
        --kernel-elf ABSOLUTE_PATH \

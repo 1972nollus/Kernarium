@@ -77,12 +77,12 @@ def main() -> None:
     parser.add_argument("--source-root", type=Path, required=True)
     args = parser.parse_args()
     source_root = args.source_root.resolve()
-    generator = source_root / "android/aosp-17/tools/regenerate-jelly-patches.py"
-    verifier = source_root / "android/aosp-17/tools/verify-jelly-source.py"
+    generator = source_root / "android/lineage-24/tools/regenerate-jelly-patches.py"
+    verifier = source_root / "android/lineage-24/tools/verify-jelly-source.py"
 
     with tempfile.TemporaryDirectory(prefix="jelly-source-contract-") as temporary:
         root = Path(temporary)
-        android_root = root / "android/aosp-17"
+        android_root = root / "android/lineage-24"
         topic = root / "topic"
         base_commit = write_fixture(
             root, android_root, topic, verifier, source_root / "scripts"

@@ -27,7 +27,7 @@ source "$SCRIPT_DIR/common.sh"
 usage()
 {
 	cat <<'EOF'
-Usage: android/aosp-17/build/build-aosp.sh \
+Usage: android/lineage-24/build/build-aosp.sh \
        --aosp-source ABSOLUTE_PATH \
        --out ABSOLUTE_PATH \
        --kernel-artifact ABSOLUTE_PATH [--jobs N]

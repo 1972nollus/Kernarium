@@ -20,7 +20,7 @@ AOSP_SOURCE=
 usage()
 {
 	cat <<'EOF'
-Usage: android/aosp-17/build/apply-aosp-patches.sh \
+Usage: android/lineage-24/build/apply-aosp-patches.sh \
        --aosp-source ABSOLUTE_PATH
 
 Run locally on the x86_64 Linux builder after source preparation. Every routed
