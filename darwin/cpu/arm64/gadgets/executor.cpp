@@ -799,13 +799,16 @@ void announce_exit(Announcement &announcement) noexcept
 			std::memory_order_release);
 }
 
-/* DARWIN_UML_GADGET_SHARED_BODIES=0 keeps every executor's translations to
- * itself, which is how one binary measures sharing against not sharing. Read
- * as each executor is made. */
+/* DARWIN_UML_GADGET_SHARED_BODIES=1 lets executors running one address
+ * space share its translations; unset or 0 keeps every executor's to itself.
+ * Private is the default until a shared space bounds the link records and
+ * freed arena it accumulates under process churn (G227). Read as each
+ * executor is made. */
 [[nodiscard]] bool shared_bodies_enabled() noexcept
 {
 	const char *value = std::getenv("DARWIN_UML_GADGET_SHARED_BODIES");
-	return value == nullptr || std::strcmp(value, "0") != 0;
+	return value != nullptr && *value != '\0' &&
+		std::strcmp(value, "0") != 0;
 }
 
 void release_announcement(Announcement *announcement) noexcept
@@ -2567,9 +2570,10 @@ GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
 {
 	tlb_.unaligned_atomics =
 		build_options_.host_capabilities.has(ArmFeature::lse2);
-	/* Executors running one address space share its translations when the
-	 * host retargets a link pair in one access, and when a reclaimer can
-	 * see whether this executor is running translated code. */
+	/* Executors running one address space share its translations when
+	 * sharing is enabled, the host retargets a link pair in one access, and
+	 * a reclaimer can see whether this executor is running translated
+	 * code. */
 	announcement_ = acquire_announcement();
 	share_translations_ = announcement_ != nullptr &&
 		build_options_.host_capabilities.has(ArmFeature::lse2) &&

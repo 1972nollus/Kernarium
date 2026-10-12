@@ -3,7 +3,8 @@
  * another executor holds adopts that body after validating it, links are the
  * address space's, a code change reaches every executor's links, an executor
  * that retires the address space leaves the others' bodies alone, and bodies
- * are freed only once no executor can be running them. */
+ * are freed only once no executor can be running them. Sharing is off by
+ * default, so these tests turn it on. */
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 
@@ -220,7 +221,7 @@ void retiring_in_one_executor_keeps_the_other()
 }
 
 /* Executors built with other options make other streams, so they never
- * share; nor does an executor told not to. */
+ * share; nor does an executor told not to, or left at the default. */
 void different_options_do_not_share()
 {
 	constexpr unsigned long generation = 943;
@@ -230,6 +231,7 @@ void different_options_do_not_share()
 	StaticGuestMemory first_memory;
 	StaticGuestMemory second_memory;
 	StaticGuestMemory third_memory;
+	StaticGuestMemory fourth_memory;
 	gadgets::GadgetExecutor first{sharing_options()};
 	auto other = sharing_options();
 	other.scalar_forwarding = false;
@@ -245,10 +247,16 @@ void different_options_do_not_share()
 	require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", "0", 1) == 0);
 	gadgets::GadgetExecutor third{sharing_options()};
 	require(unsetenv("DARWIN_UML_GADGET_SHARED_BODIES") == 0);
+	gadgets::GadgetExecutor fourth{sharing_options()};
+	require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", "1", 1) == 0);
 	require(run_to_system_call(third, third_memory, generation, cpu,
 		code_base) == 4);
 	require(third.cache_diagnostics().translations == 2);
 	require(third.cache_diagnostics().adoptions == 0);
+	require(run_to_system_call(fourth, fourth_memory, generation, cpu,
+		code_base) == 4);
+	require(fourth.cache_diagnostics().translations == 2);
+	require(fourth.cache_diagnostics().adoptions == 0);
 }
 
 /* Several vCPUs run, link, retire and revalidate the same address spaces
@@ -338,6 +346,7 @@ void concurrent_executors_follow_code_changes()
 int main()
 {
 	const uml::testing::RuntimeTestRoute runtime_route;
+	require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", "1", 1) == 0);
 	a_second_executor_adopts_instead_of_translating();
 	a_code_change_reaches_every_executor();
 	retiring_in_one_executor_keeps_the_other();
