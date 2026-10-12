@@ -101,12 +101,14 @@ PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG :=
 # The LineageOS updater polls a server for a device this project does not
 # publish, the setup wizard would block automation, and the remaining apps
 # have nothing to work with: no recorder input, no NFC wallet, no fastboot
-# transport, and Canvas is the largest app for the least use. DeskClock and
-# EmergencyInfo leave with the other absent-hardware packages below.
+# transport, and Canvas is the largest app for the least use. The Profiles app
+# has no hardware triggers to act on here. DeskClock and EmergencyInfo leave
+# with the other absent-hardware packages below.
 PRODUCT_PACKAGES_EXCLUDE += \
     Canvas \
     fastbootd \
     LineageSetupWizard \
+    Profiles \
     QuickAccessWallet \
     Recorder \
     Updater
@@ -273,11 +275,15 @@ PRODUCT_PACKAGES_EXCLUDE += \
 
 # The browser (Jelly), the keyboard (LatinIME) and ThemePicker come from the
 # LineageOS product chain. resize2fs grows the compact userdata filesystem
-# after the host expands its partition and before the first /data mount.
+# after the host expands its partition and before the first /data mount. The
+# F-Droid client and its Privileged Extension are presigned prebuilts that
+# source preparation materializes under vendor/kernarium/fdroid.
 PRODUCT_PACKAGES += \
     android.hardware.health-service.example \
     android.hardware.health-service.example_recovery \
     e2fsck \
+    F-Droid \
+    F-DroidPrivilegedExtension \
     resize2fs
 
 # Replace the handheld feature declaration and remove optional feature files

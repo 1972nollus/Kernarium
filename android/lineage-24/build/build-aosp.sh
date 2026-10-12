@@ -9,6 +9,7 @@ ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 METADATA="$ANDROID_ROOT/metadata/lineage.env"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
+FDROID_SOURCE_TOOL="$ANDROID_ROOT/tools/fdroid_source.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 PARTITION_LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
 OUTER_ROOT=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
@@ -148,12 +149,15 @@ fi
 [[ -f "$METADATA" ]] || fail "AOSP metadata is missing"
 [[ -x "$VERIFIER" ]] || fail "AOSP patch verifier is missing"
 [[ -x "$MESA_VENUS_VERIFIER" ]] || fail "Mesa Venus source verifier is missing"
+[[ -x "$FDROID_SOURCE_TOOL" ]] || fail "F-Droid source tool is missing"
 [[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
 [[ -f "$KERNEL_ARTIFACT_VERIFIER" ]] || fail "kernel artifact verifier is missing"
 # shellcheck disable=SC1090
 source "$METADATA"
 
 "$MESA_VENUS_VERIFIER" --android-root "$ANDROID_ROOT" \
+	--aosp-source "$AOSP_SOURCE"
+python3 -B "$FDROID_SOURCE_TOOL" verify --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
@@ -329,6 +333,8 @@ for package in \
 	Camelot \
 	Etar \
 	ExactCalculator \
+	F-Droid \
+	F-DroidPrivilegedExtension \
 	Glimpse \
 	Jelly \
 	LatinIME \
@@ -354,6 +360,7 @@ for package in \
 	lineage_charger_animation \
 	lineage_charger_animation_vendor \
 	LineageSetupWizard \
+	Profiles \
 	QuickAccessWallet \
 	Recorder \
 	Updater; do

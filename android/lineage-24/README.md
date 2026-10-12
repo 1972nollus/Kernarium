@@ -58,6 +58,17 @@ upstream projects.
 synchronized as one verified unit. The Vulkan HAL's Mesa source has its own
 pinned source and generated series under `third_party/mesa-venus/`.
 
+`third_party/fdroid/` pins the F-Droid client and its Privileged Extension by
+size and SHA-256. Both are upstream-presigned APKs the build installs
+unchanged: the client as an ordinary product app and the extension in
+`priv-app` with a permission allowlist of only `INSTALL_PACKAGES` and
+`DELETE_PACKAGES`. `tools/fdroid_source.py` materializes them into the
+workspace during source preparation (the only networked step, refusing any
+size or digest difference) and the build verifies the result. Their detached
+`.asc` signatures verify only against the 2018 F-Droid release key, which a
+current keyring may list as expired, so the pinned digests and the APK
+signing-certificate pin in `metadata.env` are the checked identity.
+
 `third_party/orangefox/` records the official OrangeFox sync identity, the
 fully resolved TWRP Repo manifest, the exact OrangeFox-owned project commits,
 two generated integration topics, and a small independent Kernarium recovery
@@ -109,8 +120,10 @@ and names what the product leaves out. The image provides Settings, Trebuchet,
 Files, Package Installer, the LineageOS WebView, LatinIME, ThemePicker, the
 patched Jelly browser and a curated application set: Glimpse (gallery), Twelve
 (music), Etar (calendar), ExactCalculator, Camelot (PDF viewer) and Seedvault
-(backup). It has no Google or microG services. The LineageOS updater and setup
-wizard, Canvas, Aperture, Recorder, QuickAccessWallet, the charger animation,
+(backup), plus the F-Droid client and Privileged Extension. It has no Google
+or microG services. The LineageOS updater and setup
+wizard, Canvas, Aperture, Profiles, Recorder, QuickAccessWallet, the charger
+animation,
 fastbootd and AudioFX are excluded, as are DeskClock and EmergencyInfo; the
 build and verifier assert both lists. QuickSearchBox and its home-screen
 search surface are deliberately omitted. Bluetooth and Wi-Fi

@@ -135,10 +135,15 @@ REQUIRED_PLAIN_APKS = (
     "PRODUCT/app/Camelot/Camelot.apk",
     "PRODUCT/app/Etar/Etar.apk",
     "PRODUCT/app/ExactCalculator/ExactCalculator.apk",
+    "PRODUCT/app/F-Droid/F-Droid.apk",
     "PRODUCT/app/Glimpse/Glimpse.apk",
     "PRODUCT/app/Twelve/Twelve.apk",
     "PRODUCT/app/webview/webview.apk",
+    "PRODUCT/priv-app/F-DroidPrivilegedExtension/F-DroidPrivilegedExtension.apk",
     "SYSTEM_EXT/priv-app/LineageSettingsProvider/LineageSettingsProvider.apk",
+)
+FDROID_PERMISSIONS = (
+    "PRODUCT/etc/permissions/privapp-permissions-org.fdroid.fdroid.privileged.xml"
 )
 
 
@@ -281,6 +286,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           half_preopt_pair: bool = False,
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
+                          wide_fdroid_permissions: bool = False,
                           mesa_gles_alignment: int = 16384,
                           init_variant: str | None = None,
                           extra_entry: str | None = None,
@@ -500,6 +506,19 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in REQUIRED_PLAIN_APKS:
                     archive.writestr(apk, b"apk")
+                archive.writestr(
+                    FDROID_PERMISSIONS,
+                    '<permissions><privapp-permissions '
+                    'package="org.fdroid.fdroid.privileged">'
+                    '<permission name="android.permission.INSTALL_PACKAGES"/>'
+                    '<permission name="android.permission.DELETE_PACKAGES"/>'
+                    + (
+                        '<permission name="android.permission.WRITE_SECURE_SETTINGS"/>'
+                        if wide_fdroid_permissions
+                        else ""
+                    )
+                    + '</privapp-permissions></permissions>',
+                )
                 advertised_feature = (
                     "android.hardware.microphone"
                     if unsupported_feature
@@ -690,6 +709,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("curated-out-updater",
              {"extra_entry": "SYSTEM_EXT/priv-app/Updater/Updater.apk"}),
             ("fastbootd", {"extra_entry": "SYSTEM/bin/fastbootd"}),
+            ("curated-out-profiles",
+             {"extra_entry": "SYSTEM_EXT/app/Profiles/Profiles.apk"}),
+            ("fdroid-wide-permissions", {"wide_fdroid_permissions": True}),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)

@@ -9,6 +9,7 @@ AOSP_METADATA="$ROOT_DIR/android/lineage-24/metadata/lineage.env"
 ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
 MESA_VENUS_METADATA="$ROOT_DIR/android/lineage-24/third_party/mesa-venus/metadata.env"
 MESA_VENUS_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-mesa-venus-source.py"
+FDROID_SOURCE_TOOL="$ROOT_DIR/android/lineage-24/tools/fdroid_source.py"
 
 AOSP_SOURCE=
 ACK_WORKSPACE=
@@ -31,7 +32,8 @@ Mesa source. Both Repo workspaces must already exist and be clean. The
 LineageOS workspace is synchronized to the exact commits of the checked base
 manifest, and needs Git LFS for its WebView prebuilts. The Venus Vulkan HAL's
 Mesa source is materialized at its pinned external commit plus generated local
-patch series. No endpoint or transport option is accepted.
+patch series, and the F-Droid client and Privileged Extension are downloaded
+at their pinned sizes and digests. No endpoint or transport option is accepted.
 EOF
 }
 
@@ -152,6 +154,8 @@ esac
 . "$MESA_VENUS_METADATA"
 
 "$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/lineage-24"
+[ -f "$FDROID_SOURCE_TOOL" ] || fail "missing F-Droid source tool: $FDROID_SOURCE_TOOL"
+python3 -B "$FDROID_SOURCE_TOOL" verify --android-root "$ROOT_DIR/android/lineage-24"
 
 command -v repo >/dev/null 2>&1 || fail "repo is not available on PATH"
 command -v git >/dev/null 2>&1 || fail "git is not available on PATH"
@@ -198,6 +202,9 @@ materialize_pinned "Mesa Venus" "$AOSP_SOURCE/$MESA_VENUS_DESTINATION" \
 	"$MESA_VENUS_PATCH_BRANCH" \
 	"$MESA_VENUS_GUEST_SERIES" "$MESA_VENUS_GUEST_TREE" \
 	android/lineage-24/third_party/mesa-venus/series "$MESA_VENUS_FINAL_TREE"
+
+python3 -B "$FDROID_SOURCE_TOOL" prepare \
+	--android-root "$ROOT_DIR/android/lineage-24" --aosp-source "$AOSP_SOURCE"
 
 "$SCRIPT_DIR/preflight.sh" \
 	--aosp-source "$AOSP_SOURCE" \
