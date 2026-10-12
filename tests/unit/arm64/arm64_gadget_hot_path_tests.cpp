@@ -30,6 +30,7 @@ void uml_arm64_gadget_divide_w_s_rr_r();
 void uml_arm64_gadget_load8_unsigned_fast_r();
 void uml_arm64_gadget_vector_load128_unsigned_fast();
 void uml_arm64_gadget_literal_load64_fast_r();
+void uml_arm64_gadget_literal_load64_far_r();
 void uml_arm64_gadget_scalar_other_load32u_pre_r();
 void uml_arm64_gadget_vector_other_load128_pre();
 void uml_arm64_gadget_integer_pair_load64_1_rr();
@@ -87,7 +88,7 @@ static void require_positioned(const gadgets::Program &program,
 	const std::array terminal{0xd400'0001U};
 	const auto alone = gadgets::Builder{}.build(0x4004, terminal);
 	require(program.words()[1] != instruction);
-	require((program.words()[1] >> 48) == 0U);
+	require((program.words()[1] >> 56) == 0U);
 	require(program.words().size() == 2U + alone.program.words().size());
 }
 
@@ -205,7 +206,7 @@ static void mixed_family_walk_preserves_stream_order()
 		/* The unsigned-offset load names its instruction by its position in
 		 * the block, which is zero when it is built alone. */
 		if (index == 3U)
-			words[1] |= std::uintptr_t{index} << 48;
+			words[1] |= std::uintptr_t{index} << 56;
 		expected.insert(expected.end(), words.begin(), words.end());
 		accesses_fp_state = accesses_fp_state ||
 			built.program.accesses_fp_state();
@@ -329,25 +330,36 @@ int main()
 		const auto instruction = unsigned_immediate(0, 3, 1, 3, 2, true);
 		const auto program = build_one(instruction); // ldr q2,[x3,#16]
 		require_gadget(program, uml_arm64_gadget_vector_load128_unsigned_fast);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		constexpr std::uint32_t instruction = 0x5800'0042U; // ldr x2,pc+8
 		const auto program = build_one(instruction);
 		require_gadget(program, uml_arm64_gadget_literal_load64_fast_r);
+		/* The operand holds the target, the destination offset and the
+		 * position, and nothing follows it. */
+		require(program.words()[1] == (std::uintptr_t{0x4008} |
+			std::uintptr_t{2U * 8U} << 48));
+		require_positioned(program, instruction);
+	}
+	{
+		/* A target the 48-bit field cannot hold keeps the PC word. */
+		constexpr std::uint32_t instruction = 0x58fd'ffe2U; // ldr x2,pc-0x4004
+		const auto program = build_one(instruction);
+		require_gadget(program, uml_arm64_gadget_literal_load64_far_r);
 		require_predecoded(program, instruction);
 	}
 	{
 		const auto instruction = immediate_other(2, 1, 1, 3, 3, 2);
 		const auto program = build_one(instruction); // ldr w2,[x3,#1]!
 		require_gadget(program, uml_arm64_gadget_scalar_other_load32u_pre_r);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		const auto instruction = immediate_other(0, 3, 1, 3, 3, 2, true);
 		const auto program = build_one(instruction); // ldr q2,[x3,#1]!
 		require_gadget(program, uml_arm64_gadget_vector_other_load128_pre);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		const auto instruction = pair(2, false, true, 3, 1, 3, 2, 4);
@@ -359,7 +371,7 @@ int main()
 		const auto instruction = pair(2, true, true, 1, 1, 3, 2, 4);
 		const auto program = build_one(instruction); // ldp q2,q4,[x3],#16
 		require_gadget(program, uml_arm64_gadget_vector_pair_load128_2);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		const auto instruction = simd_multiple(true, true, true,
@@ -367,39 +379,39 @@ int main()
 		const auto program = build_one(instruction);
 		require_gadget(program,
 			uml_arm64_gadget_simd_structure_contig_q_2_load_1);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		const auto instruction = simd_single(true, true, false,
 			0, 0, 7, 0, 2, 3, 2); // ld3r {v2.4s-v4.4s},[x3]
 		const auto program = build_one(instruction);
 		require_gadget(program, uml_arm64_gadget_simd_replicate_s_q_3_0);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		const auto instruction = simd_single(true, true, true,
 			1, 4, 3, 0, 0, 3, 2); // ld4 lanes, post-index x4
 		const auto program = build_one(instruction);
 		require_gadget(program, uml_arm64_gadget_simd_lane_h_4_load_2);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		constexpr std::uint32_t instruction = 0xc8df'fc62U;
 		const auto program = build_one(instruction); // ldar x2,[x3]
 		require_gadget(program, uml_arm64_gadget_ordered_load_acquire_x_r);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		const auto instruction = atomic(3, 0, 3, 4, 2);
 		const auto program = build_one(instruction); // ldadd x4,x2,[x3]
 		require_gadget(program, uml_arm64_gadget_atomic_ldadd_relaxed_x_rr);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		const auto instruction = exclusive_load(3, 3, 2);
 		const auto program = build_one(instruction); // ldxr x2,[x3]
 		require_gadget(program, uml_arm64_gadget_exclusive_load_relaxed_x_r);
-		require_predecoded(program, instruction);
+		require_positioned(program, instruction);
 	}
 	{
 		const auto program = build_one(three_same(false, false, false, 0, 8));

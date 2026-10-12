@@ -18,7 +18,11 @@
  * A gadget that can leave the block with the instruction not retired (a
  * memory gadget, an undefined instruction) has the key of that instruction
  * in the stream word after its operands, which uml_arm64_gadget_memory_fault
- * and uml_arm64_gadget_illegal read through _stream.
+ * and uml_arm64_gadget_illegal read through _stream. The one exception is
+ * the exclusive and ordered transfers, which are the A64 part's gadgets: they
+ * carry the instruction's position in the block in the top byte of their
+ * operand, and finish_a32_block turns the position a fault reports into the
+ * key.
  *
  * Instruction conditions: a conditional instruction is preceded by an
  * a32_skip_<cc> gadget whose operand is the byte distance to skip over the
