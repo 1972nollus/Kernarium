@@ -25,7 +25,6 @@ void uml_arm64_gadget_branch();
 void uml_arm64_gadget_interrupt();
 void uml_arm64_gadget_illegal();
 void uml_arm64_gadget_yield();
-void uml_arm64_gadget_isb();
 void uml_arm64_gadget_clear_exclusive();
 #define UML_A32_DECLARE_CONDITIONAL(cc) \
 	void uml_arm64_gadget_branch_##cc(); \
@@ -322,6 +321,12 @@ void Translator::emit_fallthrough()
 		return;
 	}
 	if (linked()) {
+		/* Unlinked and IT exits leave anyway, and the next entry sees
+		 * any code change; a linked one checks after an ISB. */
+		if (synchronize_) {
+			push(G::code_sequence_check);
+			push(next);
+		}
 		push_external(uml_arm64_gadget_branch_linked);
 		push_link(next);
 	} else {
@@ -1067,9 +1072,10 @@ Translator::Result Translator::emit_system(const Instruction &in,
 			push_external(uml_arm64_gadget_yield);
 		return {};
 	case Family::barrier:
-		if (plan.sub == 2)
-			push_external(uml_arm64_gadget_isb);
-		else if (plan.sub == 0)
+		if (plan.sub == 2) {
+			push(G::isb);
+			synchronize_ = true;
+		} else if (plan.sub == 0)
 			push_external(data_barrier[in.word & 15U]);
 		else
 			push_external(synchronization_barrier[in.word & 15U]);
@@ -1132,6 +1138,7 @@ Translator::Result Translator::emit_system(const Instruction &in,
 		case SysReg::cp15_isb:
 			push(G::cp15_isb);
 			push(key_);
+			synchronize_ = true;
 			return {};
 		case SysReg::none:
 			break;
@@ -1345,7 +1352,7 @@ BuildOutput Translator::run()
 		unit_ += length;
 		units_ = unit_;
 		++compiled_;
-		if (input_.single)
+		if (input_.single || synchronize_)
 			break;
 	}
 

@@ -407,9 +407,29 @@ memory_barrier_option 15
 .purgem memory_barrier_option
 .purgem memory_barrier
 
+/* ISB, a context synchronization point. A translation and the links out of
+ * it are current as of the code-change sequence its executor validated it at
+ * (CpuState::code_sequence_seen); when the address space's sequence has moved
+ * since -- another vCPU changed code and invalidated it -- the ISB leaves at
+ * its fall-through, and the executor revalidates and relinks before the next
+ * instruction runs, as a refetch would. Leaving from inside the block gives
+ * back the instructions translated after the ISB, which entering it
+ * precharged. Stream: [instructions after this one][fall-through guest PC]. */
 gadget isb
+	ldr x8, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE]
+	ldr x9, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE_SEEN]
 	isb
+	ldr x8, [x8]
+	cmp x8, x9
+	b.ne 1f
+	add _stream, _stream, #16
 	next_gadget
+1:
+	ldp x10, x11, [_stream]
+	sub x29, x29, x10
+	str x11, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
 
 gadget speculation_barrier
 	/* Native SB; selected only after host-feature detection at translation. */

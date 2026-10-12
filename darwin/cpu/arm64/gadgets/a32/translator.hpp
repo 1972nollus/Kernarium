@@ -174,6 +174,9 @@ private:
 	std::uint64_t key_{};
 	std::uint64_t next_key_{};
 	bool ended_{};
+	/* The block ends after an ISB, at a fall-through that checks whether
+	 * the address space's code changed since it was validated. */
+	bool synchronize_{};
 	bool complete_{true};
 	std::uint64_t stop_address_{};
 	std::uint32_t stop_instruction_{};
