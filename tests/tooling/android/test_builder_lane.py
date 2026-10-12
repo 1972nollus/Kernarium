@@ -105,7 +105,6 @@ REQUIRED_PREOPT_APKS = (
     "SYSTEM/app/CaptivePortalLogin/CaptivePortalLogin.apk",
     "SYSTEM/app/PartnerBookmarksProvider/PartnerBookmarksProvider.apk",
     "SYSTEM/app/PrintRecommendationService/PrintRecommendationService.apk",
-    "SYSTEM/app/Traceur/Traceur.apk",
     "SYSTEM/priv-app/BlockedNumberProvider/BlockedNumberProvider.apk",
     "SYSTEM/priv-app/ContactsProvider/ContactsProvider.apk",
     "SYSTEM/priv-app/CredentialManager/CredentialManager.apk",
@@ -122,10 +121,24 @@ REQUIRED_PREOPT_APKS = (
     "SYSTEM/priv-app/Tag/Tag.apk",
     "SYSTEM/priv-app/UserDictionaryProvider/UserDictionaryProvider.apk",
     "SYSTEM/priv-app/VpnDialogs/VpnDialogs.apk",
+    "SYSTEM_EXT/priv-app/Launcher3QuickStep/Launcher3QuickStep.apk",
+    "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
+    "SYSTEM_EXT/priv-app/Seedvault/Seedvault.apk",
     "SYSTEM_EXT/priv-app/Settings/Settings.apk",
     "SYSTEM_EXT/priv-app/StorageManager/StorageManager.apk",
     "SYSTEM_EXT/priv-app/SystemUI/SystemUI.apk",
     "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
+)
+# The curated LineageOS applications and the WebView that ship without
+# pre-optimization requirements.
+REQUIRED_PLAIN_APKS = (
+    "PRODUCT/app/Camelot/Camelot.apk",
+    "PRODUCT/app/Etar/Etar.apk",
+    "PRODUCT/app/ExactCalculator/ExactCalculator.apk",
+    "PRODUCT/app/Glimpse/Glimpse.apk",
+    "PRODUCT/app/Twelve/Twelve.apk",
+    "PRODUCT/app/webview/webview.apk",
+    "SYSTEM_EXT/priv-app/LineageSettingsProvider/LineageSettingsProvider.apk",
 )
 
 
@@ -485,6 +498,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             half_preopt_pair and apk.endswith("/Jelly.apk")
                         ):
                             archive.writestr(f"{artifact}.vdex", b"vdex")
+                for apk in REQUIRED_PLAIN_APKS:
+                    archive.writestr(apk, b"apk")
                 advertised_feature = (
                     "android.hardware.microphone"
                     if unsupported_feature
@@ -670,6 +685,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"extra_entry": "VENDOR/etc/init/init_graphics.vendor.rc"}),
             ("product-init-rc", {"extra_entry": "PRODUCT/etc/init/init.rc"}),
             ("legacy-ueventd", {"extra_entry": "VENDOR/ueventd.rc"}),
+            ("curated-out-canvas",
+             {"extra_entry": "PRODUCT/app/Canvas/Canvas.apk"}),
+            ("curated-out-updater",
+             {"extra_entry": "SYSTEM_EXT/priv-app/Updater/Updater.apk"}),
+            ("fastbootd", {"extra_entry": "SYSTEM/bin/fastbootd"}),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)

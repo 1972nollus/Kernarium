@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache-2.0
-# Build the fixed AOSP 17 arm64-only UML product: page-agnostic userspace on
-# the 4 KiB kernel.
+# Build the fixed LineageOS 24 arm64-only UML product: page-agnostic userspace
+# on the 4 KiB kernel.
 set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -326,13 +326,51 @@ for package in \
 	com.android.virt \
 	com.android.wifi \
 	e2fsck \
+	Camelot \
+	Etar \
+	ExactCalculator \
+	Glimpse \
 	Jelly \
 	LatinIME \
+	Launcher3QuickStep \
+	LineageParts \
+	LineageSettingsProvider \
 	resize2fs \
-	ThemePicker; do
+	Seedvault \
+	ThemePicker \
+	Twelve; do
 	[[ "$PRODUCT_PACKAGES" == *" $package "* ]] ||
 		fail "required UML product package is absent: $package"
 done
+# The curated LineageOS application set leaves out the updater, the setup
+# wizard and the apps for hardware this machine lacks. LineageOS's own
+# switches (no camera, no AudioFX, no charger, no fastbootd) keep most of them
+# out of the package set; the rest are excluded by name.
+for package in \
+	Aperture \
+	AudioFX \
+	Canvas \
+	fastbootd \
+	lineage_charger_animation \
+	lineage_charger_animation_vendor \
+	LineageSetupWizard \
+	QuickAccessWallet \
+	Recorder \
+	Updater; do
+	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||
+		fail "curated-out LineageOS package is present: $package"
+done
+if [[ "$LINEAGE24_BUILD_VARIANT" == user ]]; then
+	[[ "$PRODUCT_PACKAGES" != *" su "* ]] ||
+		fail "a user build must not carry su"
+else
+	[[ "$PRODUCT_PACKAGES" == *" su "* ]] ||
+		fail "a debug build must carry su for the development tooling"
+	[[ -z "$(get_build_var PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG)" ]] ||
+		fail "a debug build must be debuggable"
+fi
+[[ "$PRODUCT_PACKAGES" == *" adb_root "* ]] ||
+	fail "the LineageOS adb root service is absent"
 PRODUCT_PACKAGES_EXCLUDE=" $(get_build_var PRODUCT_PACKAGES_EXCLUDE) "
 for package in \
 	BasicDreams \
