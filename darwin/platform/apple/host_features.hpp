@@ -128,10 +128,11 @@ native_jscvt_subnormal_flags_correct() noexcept
 		HostCapabilityResult::supported;
 }
 
-/* Whether the virtual CPU may implement SME on a host that has the profile.
- * Off by default until both engines implement it completely; setting
- * DARWIN_UML_GUEST_SME to exactly "1" turns it on. It is a run policy, not a
- * test hook, and it never enables anything the host lacks. */
+/* Whether the virtual CPU implements SME on a host that has the profile, at
+ * any streaming vector length: on by default, now that both engines
+ * implement the profile (cpu/engine_factory.cpp checks that). Setting
+ * DARWIN_UML_GUEST_SME to exactly "0" forces it off. It is a run policy, not
+ * a test hook, and it never enables anything the host lacks. */
 enum class GuestSmePolicy : std::uint8_t {
 	off,
 	on,
@@ -142,8 +143,8 @@ inline constexpr const char *guest_sme_policy_variable = "DARWIN_UML_GUEST_SME";
 [[nodiscard]] inline GuestSmePolicy parse_guest_sme_policy(
 	const char *value) noexcept
 {
-	return value != nullptr && std::strcmp(value, "1") == 0 ?
-		GuestSmePolicy::on : GuestSmePolicy::off;
+	return value != nullptr && std::strcmp(value, "0") == 0 ?
+		GuestSmePolicy::off : GuestSmePolicy::on;
 }
 
 /* Read once, so every engine, the identification registers and the kernel

@@ -2,8 +2,8 @@
 /*
  * The JIT's register-only SVE and SME forms at run time (S4 milestone M2).
  * They run natively in SM=1 translations, so every test needs a host whose
- * profile implements SME (an SME host with DARWIN_UML_GUEST_SME=1) and is
- * skipped elsewhere; arm64-jit-sme-codegen checks the translations on any
+ * profile implements SME (an SME host, unless DARWIN_UML_GUEST_SME=0) and
+ * is skipped elsewhere; arm64-jit-sme-codegen checks the translations on any
  * host. The tests check what the JIT adds around a guest word: general
  * register fields re-encoded (resident or not, SP, XZR), the ZA slice index
  * in W12, the guest's NZCV around flag-setting forms, the guest's FPCR in

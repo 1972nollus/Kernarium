@@ -441,7 +441,7 @@ def main() -> None:
                 ("ack_final_tree", kernel["final_tree"]),
                 ("ack_patch_manifest_sha256", kernel["patch_manifest_sha256"]),
                 ("kernel_release", kernel_release),
-                ("page_size", 16384),
+                ("page_size", 4096),
                 ("abi_version", kernel["abi_version"]),
                 ("abi_fingerprint", kernel["abi_fingerprint"]),
                 ("android_product", aosp_metadata["ANDROID17_PRODUCT"]),
@@ -480,7 +480,7 @@ def main() -> None:
                 "kernel": {
                     **kernel,
                     "release": kernel_release,
-                    "page_size": 16384,
+                    "page_size": 4096,
                     "elf_role": "darwin-uml",
                 },
                 "outer": {"revision": outer_revision, "dirty": False},

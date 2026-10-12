@@ -145,7 +145,8 @@ REQUIRED_HWCAPS2 = HWCAP2_CSSC | HWCAP2_MOPS
 # on a host that has those three, and SME2 with I16I32 and BI32I32 where
 # the host also has SME2 and the running engine implements it (its
 # sme_support is sme2). The host prober reports it only under the
-# guest-SME policy and with a valid streaming vector length.
+# guest-SME policy, which DARWIN_UML_GUEST_SME=0 alone turns off, and with a
+# valid streaming vector length.
 GUEST_SME_POLICY_VARIABLE = "DARWIN_UML_GUEST_SME"
 SME_HOST_FEATURES = (
     "hw.optional.arm.FEAT_SME",
@@ -259,7 +260,7 @@ def expected_sme_hwcap2(tool: pathlib.Path | None, engine: str) -> int:
     """The SME bits this run's guest sees: the host prober's rule
     (darwin/platform/apple/host_features.hpp) with sme_profile()'s, and
     SME2 only from an engine at sme2 (sme_host_for_support())."""
-    if os.environ.get(GUEST_SME_POLICY_VARIABLE) != "1":
+    if os.environ.get(GUEST_SME_POLICY_VARIABLE) == "0":
         return 0
     if not all(host_feature(name) for name in SME_HOST_FEATURES):
         return 0

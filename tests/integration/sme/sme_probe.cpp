@@ -1734,6 +1734,20 @@ void engine_zero_za();
 void engine_load_zt0(const u8 *bytes);
 void engine_store_zt0(u8 *bytes);
 void engine_spin_streaming(const u8 *rows, u64 svl, u8 *out);
+/* The SM = 0 vector-length family (detail/sm0_vector_length.hpp): x0 is the
+ * operand of the ones that scale or count into it. */
+u64 engine_cntb();
+u64 engine_cntd();
+u64 engine_rdvl();
+u64 engine_addvl(u64 base);
+u64 engine_addpl(u64 base);
+u64 engine_incd(u64 value);
+u64 engine_decb(u64 value);
+u64 engine_cntb_streaming();
+/* ... and its LDR and STR of Z and P: x0 is where to store, x1 where to load
+ * from. */
+void engine_spill_z(u8 *out, const u8 *in);
+void engine_spill_p(u8 *out);
 }
 
 __asm__(R"(
@@ -1746,6 +1760,52 @@ engine_read_svcr:
 	.globl engine_rdsvl
 engine_rdsvl:
 	.inst	0x04bf5820	// rdsvl x0, #1
+	ret
+	.globl engine_cntb
+engine_cntb:
+	.inst	0x0420e3e0	// cntb x0
+	ret
+	.globl engine_cntd
+engine_cntd:
+	.inst	0x04e0e3e0	// cntd x0
+	ret
+	.globl engine_rdvl
+engine_rdvl:
+	.inst	0x04bf5020	// rdvl x0, #1
+	ret
+	.globl engine_addvl
+engine_addvl:
+	.inst	0x04205020	// addvl x0, x0, #1
+	ret
+	.globl engine_addpl
+engine_addpl:
+	.inst	0x04605020	// addpl x0, x0, #1
+	ret
+	.globl engine_incd
+engine_incd:
+	.inst	0x04f0e3e0	// incd x0
+	ret
+	.globl engine_decb
+engine_decb:
+	.inst	0x0430e7e0	// decb x0
+	ret
+	.globl engine_spill_z
+engine_spill_z:
+	.inst	0x85804030	// ldr z16, [x1]
+	.inst	0x85804431	// ldr z17, [x1, #1, mul vl]
+	.inst	0xe5804810	// str z16, [x0, #2, mul vl]
+	.inst	0xe5bd5411	// str z17, [x0, #-19, mul vl]
+	ret
+	.globl engine_spill_p
+engine_spill_p:
+	.inst	0xe5800c04	// str p4, [x0, #3, mul vl]
+	.inst	0x85bf1c05	// ldr p5, [x0, #-1, mul vl]
+	ret
+	.globl engine_cntb_streaming
+engine_cntb_streaming:
+	.inst	0xd503477f	// smstart
+	.inst	0x0420e3e0	// cntb x0
+	.inst	0xd503467f	// smstop
 	ret
 	.globl engine_smstart
 engine_smstart:
@@ -1862,6 +1922,39 @@ void run_engine()
 	group = "engine";
 	check_value(engine_rdsvl(), svl, "RDSVL reads the SVL");
 	check_value(engine_read_svcr(), 0, "SVCR starts at 0");
+	/* A deliberate departure from the architecture: without SVE, the
+	 * engine counts and scales a vector length of 16 bytes at SM = 0, and
+	 * the streaming vector length in streaming mode. */
+	check_value(engine_cntb(), 16, "CNTB counts a 16-byte vector at SM = 0");
+	check_value(engine_cntd(), 2, "CNTD counts two doublewords at SM = 0");
+	check_value(engine_rdvl(), 16, "RDVL #1 is 16 at SM = 0");
+	check_value(engine_addvl(100), 116, "ADDVL scales by 16 at SM = 0");
+	check_value(engine_addpl(100), 102, "ADDPL scales by 2 at SM = 0");
+	check_value(engine_incd(10), 12, "INCD adds 2 at SM = 0");
+	check_value(engine_decb(40), 24, "DECB subtracts 16 at SM = 0");
+	/* LDR and STR of Z and P move 16 and 2 bytes: Z through V, and P as
+	 * zeros, wherever the offset reaches. */
+	u8 spill_in[32], spill_out[512];
+	for (u64 index = 0; index < sizeof spill_in; index++)
+		spill_in[index] = static_cast<u8>(index * 7 + 1);
+	memset(spill_out, 0xaa, sizeof spill_out);
+	engine_spill_z(spill_out + 320, spill_in);
+	bool spilled = memcmp(spill_out + 16, spill_in + 16, 16) == 0 &&
+		memcmp(spill_out + 352, spill_in, 16) == 0;
+	for (u64 index = 0; index < sizeof spill_out; index++)
+		if ((index < 16 || (index >= 32 && index < 352) || index >= 368) &&
+		    spill_out[index] != 0xaa)
+			spilled = false;
+	check(spilled, "STR and LDR of Z move 16 bytes at SM = 0");
+	memset(spill_out, 0xaa, sizeof spill_out);
+	engine_spill_p(spill_out + 16);
+	bool predicate = spill_out[22] == 0 && spill_out[23] == 0;
+	for (u64 index = 0; index < 64; index++)
+		if (index != 22 && index != 23 && spill_out[index] != 0xaa)
+			predicate = false;
+	check(predicate, "STR of P stores two zero bytes and LDR of P loads two");
+	check_value(engine_cntb_streaming(), svl, "CNTB reads the SVL in streaming mode");
+	check_value(engine_read_svcr(), 0, "and streaming mode ended");
 	engine_smstart_za();
 	check_value(engine_read_svcr(), 2, "SMSTART ZA sets PSTATE.ZA");
 	engine_store_za(za_out, svl);

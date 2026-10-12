@@ -235,7 +235,7 @@ Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted 16 KiB or 4 KiB mainline
 artifact on macOS and on the iOS device. The macOS x86_64 userspace
 product uses a separately identified 4 KiB mainline slice. Android uses a
-separate accepted 16 KiB ACK artifact.
+separate accepted 4 KiB ACK artifact.
 
 Kernarium is an iOS device product only; [`graphics.md`](graphics.md)
 gives the Metal 4 reason the Simulator has no build of it or of the Apple GPU
@@ -461,18 +461,29 @@ vector length (SVL), whatever that is: native execution needs the guest's SVL
 to equal the host's, and EL0 cannot change it.
 [`cpu/arm64/sme_profile.hpp`](../darwin/cpu/arm64/sme_profile.hpp) derives
 the profile, the register-file layout and the SVCR transition rules for both
-engines. The prober reports the profile only under the guest-SME policy,
-`DARWIN_UML_GUEST_SME=1`, which is off by default; with it off,
+engines. The prober reports the profile under the guest-SME policy, which
+is on by default wherever the host has the profile, at any SVL, on macOS and
+iOS alike; `DARWIN_UML_GUEST_SME=0` forces it off, and then
 ID_AA64PFR1_EL1.SME, ID_AA64SMFR0_EL1 and the SME HWCAP2 bits read zero on
-every host. Each engine's `sme_support` names how much of the profile it
-implements: the control core (`control`), all of it but the SME2 forms
-(`complete`), or all of it (`sme2`). An SVE or SME word it does not
-implement is the illegal-instruction exit. A guest sees FEAT_SME2 only
-from an engine at `sme2`: the runtime configures each engine, and derives
-the HWCAPs from the selected one, with the host less FEAT_SME2 below that
-level (`cpu::engine_host_capabilities`). Below it ID_AA64PFR1_EL1.SME
-reads 1, SMEver, I16I32 and BI32I32 read zero, HWCAP2_SME2, SME_I16I32 and
-SME_BI32I32 are clear, and the ZT0 forms are undefined.
+every host, as they do on a host without SME. Each engine's `sme_support`
+names how much of the profile it implements: the control core (`control`),
+all of it but the SME2 forms (`complete`), or all of it (`sme2`). An SVE or
+SME word it does not implement is the illegal-instruction exit. The default
+needs both engines at `complete` or better, which `cpu/engine_factory.cpp`
+asserts. A guest sees FEAT_SME2 only from an engine at `sme2`: the runtime
+configures each engine, and derives the HWCAPs from the selected one, with
+the host less FEAT_SME2 below that level (`cpu::engine_host_capabilities`).
+Below it ID_AA64PFR1_EL1.SME reads 1, SMEver, I16I32 and BI32I32 read zero,
+HWCAP2_SME2, SME_I16I32 and SME_BI32I32 are clear, and the ZT0 forms are
+undefined.
+
+Both engines are `complete`, so a guest is told of SME1 only: FEAT_SME,
+FEAT_SME_F64F64 and FEAT_SME_I16I64. On the M4, SME1 against the policy
+off made Geekbench 6's Object Detection, Background Blur and Photo Library
+1.34x faster (geomean) on the gadget engine and 1.39x on the JIT, without
+regressing its single- or multi-core score, while adding SME2's forms to
+the gadget engine lost to SME1 (geomean 0.975), so the engines stay at
+`complete` ([optimization history](optimization-history.md)).
 
 Each vCPU's SME register file is one zeroed, 256-byte-aligned allocation of
 the size its SVL needs, made at start-up only when the run implements SME and
@@ -617,6 +628,38 @@ implements outside streaming mode, `none`, `control` or `complete`, and
 ID_AA64ZFR0_EL1 read zero, the SVE HWCAP bits are clear, and every
 non-streaming SVE word is the illegal-instruction exit. Both engines are at
 `complete`.
+
+One deliberate departure from the architecture covers a virtual CPU with
+FEAT_SME and without the SVE profile, the default. CNTB, CNTH, CNTW and CNTD,
+RDVL, ADDVL, ADDPL and the scalar INCB, INCH, INCW, INCD, DECB, DECH, DECW and
+DECD, with every predicate pattern and multiplier, execute at PSTATE.SM = 0
+for one constant vector length of 128 bits for the whole process (CNTB = 16,
+CNTD = 2), and so do LDR and STR of a vector register Z and of a predicate
+register P with a scalar base and an immediate offset (MUL VL), the
+compilers' callee-saved spills, which move 16 and 2 bytes. The architecture
+makes every SVE word UNDEFINED there on such a CPU and an M4 traps them.
+Compilers target armv9-a, which implies SVE2, so a locally-streaming function
+reads the non-streaming vector length with CNTD before it enters streaming
+mode, and would take SIGILL on every host that advertises SME; one that must
+keep Z8-Z23 and P4-P15 across the mode change spills them first. Z_n is V_n
+outside streaming mode, so a Z access is the 16-byte access of the V
+register. The CPU has no predicate state there, so STR of P stores two zero
+bytes and LDR of P performs its access, faulting as a load does, and drops
+the data. In streaming mode the same words keep their architectural meaning
+with the streaming vector length, and the ID registers and hwcaps still
+report no SVE. Every other SVE word at SM = 0 stays the illegal-instruction
+exit, so a binary built for SVE and SME that computes with SVE outside
+streaming mode (its data processing, contiguous and gather loads and stores,
+and predicate construction) still takes SIGILL: the family keeps SME code
+running, and is no promise to run SVE code on a CPU without the SVE profile.
+Where the SVE profile is present its path owns the words.
+[`cpu/arm64/detail/sm0_vector_length.hpp`](../darwin/cpu/arm64/detail/sm0_vector_length.hpp)
+defines the family once: both engines decode a vector-length word to the A64
+word of the same effect (MOVZ, MOVN, ADD, SUB or NOP), so no translation of
+one touches the FP or SVE state, and a spill word to the SIMD&FP or halfword
+access it is, with the offset in the translation, since a Z offset reaches
+four times as far as an unscaled A64 access. No hardware observes the
+results, so the corpus holds them as project-defined (`arm64-sm0-vl`).
 
 The guest kernel learns the same answer from
 `darwin_uml_guest_sve_vector_length()`, 16 exactly when the selected engine
@@ -879,7 +922,12 @@ moves and the part holds no SVE or SME word. A conditional instruction is a
 skip over a run of instructions sharing its condition, a conditional
 terminal gives the skipped instruction back, and a block never ends inside an
 IT block: one the block limit cuts off ends in an unlinked exit with ITSTATE
-stored. A word the decoder rejects, a coprocessor word the profile lacks and
+stored. A plain CMP of a register or of an immediate below 2^24, outside an IT
+block and followed at once by a conditional branch, is the A64 fused
+compare-and-branch gadget of the branch's condition, which reads the CpuState
+slots a register lives in, so the pair costs one dispatch; ADD and SUB of an
+immediate to the same register have an entry per register R0 to R14 with the
+displacement baked in. A word the decoder rejects, a coprocessor word the profile lacks and
 a form above the engine's level end the block in the illegal-instruction exit
 at the word whatever its condition, except a coprocessor word that is not
 UNPREDICTABLE in the complete profile, which a failing condition skips like
@@ -888,9 +936,13 @@ a fault or undefined exit does not. SVC leaves PC after itself and ITSTATE
 advanced; a fault, UDF or BKPT leaves PC at the instruction with its own
 ITSTATE, which a T32 block recovers by decoding its saved halfwords again. An
 entry with ITSTATE set, and a single step, run one uncached instruction at a
-time until ITSTATE is zero. LDM, STM, PUSH and POP that cross a page, and
-the rare integer forms (parallel arithmetic, SEL, USAD8, the dual multiplies,
-the 16-bit saturates and extends, QADD and its relatives), run through the
+time until ITSTATE is zero. The parallel add and subtract family and SEL are
+gadgets: Advanced SIMD does the lanes on the low half of a vector register, GE
+is the byte-lane mask CpuState keeps, and the saturating forms compute their
+saturation with lane arithmetic, because the saturating instructions would set
+FPSR.QC, which the guest reads in FPSCR. LDM, STM, PUSH and POP that cross a
+page, and the rare integer forms (USAD8, the dual multiplies, the 16-bit
+saturates and extends, QADD and its relatives), run through the
 shared AArch32 semantic library (`cpu/arm64/aarch32/semantics.hpp`): the
 `a32_library` gadget and the crossing paths spill NZCV, decode the word again
 and call `execute_a32`, which translates every page before a load changes a
@@ -909,16 +961,30 @@ each such gadget starts with `a32_fp_standard` and each VFP gadget with
 `a32_fp_guest` (`engine/a32.inc`), which write the host FPCR only when
 `CpuState::a32_fp_standard` says the native environment holds the other one,
 so a loop of one kind switches once and the execution boundary restores the
-host's FPCR whichever it holds. The A32 shifts by an immediate use the A64
+host's FPCR whichever it holds. A switch costs more than the instructions
+around it, so the forms that interleave the two kinds in image and signal
+code run in the active environment when their result is the same in both and
+switch only for operands where it is not: the VFP conversions between floats
+and integers (all but a denormal float to integer, and an integer to float
+under a rounding mode other than round to nearest), VMAX and VMIN (a NaN or a
+denormal), and the single-precision VADD, VSUB and VMUL of both kinds (a
+nonzero operand whose exponent field is outside 64 to 191, which keeps a sum,
+a difference and a product normal, and a guest rounding mode other than round
+to nearest). The test is integer arithmetic on the operands' bits, made
+before the instruction so that it raises no flags of its own. The A32 shifts by an immediate use the A64
 shift-by-register instructions with a replicated signed amount, so a gadget
 serves every amount; the forms that exist in A64 only with an immediate
 (SQSHLU, the converts with a fraction width, VEXT) have a gadget per
 immediate. VLDn and VSTn are native (`engine/a32_structure.py`): a copy for
 VLD1 and VST1 of several registers, LD2 to LD4 and ST2 to ST4 for the
 interleaved ones, element copies for one lane and LD1R to LD4R for all lanes,
-with the register or immediate writeback. VRECPS and VRSQRTS (AArch32's
-unfused steps, not the fused A64 ones), a structure access or VLDM and VSTM
-that crosses a page, and a misaligned access with an alignment hint run
+with the register or immediate writeback; a VLD1 or VST1 copy that crosses a
+page stays in the gadget and moves its bytes with the A64 slow transfer helper,
+and one without an alignment hint has a gadget for each writeback that tests
+nothing the instruction does not need.
+VRECPS and VRSQRTS (AArch32's unfused steps, not the fused A64 ones), an
+interleaved or one-lane structure access or VLDM and VSTM that crosses a page,
+and a misaligned access with an alignment hint run
 through the semantic library, whose exit commits the live FPSR to
 CpuState before the call and reinstalls it after, as the A64 engine's
 software floating-point helpers do. A saturating instruction leaves QC in the
@@ -1211,7 +1277,7 @@ identities, and producer provenance do not become runtime compatibility keys.
 release, and producer tools. Kernel and rootfs releases are selected
 independently. Apple emulator builds consume only the ACK ELF artifact; rootfs
 and command-line paths are launch inputs. The `uml-darwin-android17` product
-opens one directly writable supplied GPT and has no 4 KiB variant.
+opens one directly writable supplied GPT and has no 16 KiB variant.
 
 Guest bundles, disk capacity, and compressed rootfs delivery belong to the
 application ([`../Kernarium/README.md`](../Kernarium/README.md)). Runtime

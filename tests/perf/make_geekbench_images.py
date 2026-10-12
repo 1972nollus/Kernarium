@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Make the local images a Geekbench 5 armv7 measurement needs.
+"""Make the local images a Geekbench 5 measurement needs: armv7 by default, or
+the same release's geekbench_aarch64 with --program.
 
 Neither the Geekbench payload nor an image that
 carries it is ever published or committed: the tool refuses to write one into
 the repository outside its ignored .build tree. It only packages a Geekbench release directory and checks its program SHA-256.
 
-  payload  an EROFS image with geekbench_armv7 and geekbench.plar at its root,
+  payload  an EROFS image with the program and geekbench.plar at its root,
            for run_guest_geekbench.py --payload (Mac and MacBook Air).
   rootfs   an unpartitioned ext4 filesystem cut from the armhf starter disk's
            partition, for run_guest_geekbench.py --root-type ext4. With
@@ -34,7 +35,8 @@ REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / "tools" / "rootfs" / "starter"))
 import gpt  # noqa: E402
 
-PROGRAM = "geekbench_armv7"
+PROGRAMS = ("geekbench_armv7", "geekbench_aarch64")
+PROGRAM = PROGRAMS[0]
 DATA = "geekbench.plar"
 # Where an image carries the release; geekbench.sh finds it by name.
 INSTALL_DIRECTORIES = ("/opt", "/opt/geekbench",
@@ -248,15 +250,19 @@ def make_rootfs(starter: pathlib.Path, release: pathlib.Path | None,
 
 
 def main() -> int:
+    global PROGRAM
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    parser.add_argument("--program", choices=PROGRAMS, default=PROGRAM,
+                        help="the Geekbench program to package (default: "
+                        "%(default)s)")
     commands = parser.add_subparsers(dest="command", required=True)
     payload = commands.add_parser("payload", help="make the EROFS payload")
     payload.add_argument("--release-dir", required=True, type=pathlib.Path,
                          help="the Geekbench 5 release")
     payload.add_argument("--program-sha256", required=True,
-                         help=f"the release's {PROGRAM} SHA-256")
+                         help="the release's program SHA-256")
     payload.add_argument("--output", required=True, type=pathlib.Path)
     rootfs = commands.add_parser("rootfs", help="make the ext4 root image")
     rootfs.add_argument("--starter-image", required=True, type=pathlib.Path,
@@ -265,9 +271,10 @@ def main() -> int:
     rootfs.add_argument("--release-dir", type=pathlib.Path,
                         help="also install this Geekbench 5 release")
     rootfs.add_argument("--program-sha256",
-                        help=f"the release's {PROGRAM} SHA-256")
+                        help="the release's program SHA-256")
     rootfs.add_argument("--output", required=True, type=pathlib.Path)
     arguments = parser.parse_args()
+    PROGRAM = arguments.program
     try:
         if arguments.command == "payload":
             make_payload(arguments.release_dir, arguments.program_sha256,

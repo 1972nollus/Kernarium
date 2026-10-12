@@ -30,7 +30,7 @@ BOOT_HEADER_SIZE = 1584
 BOOT_PAGE_SIZE = 4096
 NEWC_HEADER_SIZE = 110
 MAX_NEWC_ENTRY_SIZE = 128 * 1024 * 1024
-PAGE_SIZE = 16384
+MAX_PAGE_SIZE_SUPPORTED = 16384
 PT_LOAD = 1
 PT_DYNAMIC = 2
 DT_NULL = 0
@@ -280,14 +280,15 @@ def program_headers(payload: bytes) -> list[Segment]:
 
 
 def check_load_alignment(name: str, payload: bytes, error: Error) -> int:
-    """Require 16 KiB-compatible load segments; return how many there are."""
+    """Require load segments aligned to the 16 KiB maximum page size the
+    page-agnostic 64-bit userspace promises; return how many there are."""
     loads = 0
     for segment in program_headers(payload):
         if segment.kind != PT_LOAD:
             continue
         loads += 1
         alignment = segment.alignment
-        if alignment < PAGE_SIZE or alignment & (alignment - 1):
+        if alignment < MAX_PAGE_SIZE_SUPPORTED or alignment & (alignment - 1):
             raise error(
                 f"target ELF load alignment is below 16 KiB: {name} ({alignment:#x})"
             )

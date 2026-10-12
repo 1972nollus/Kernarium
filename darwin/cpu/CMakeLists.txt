@@ -22,8 +22,8 @@ add_subdirectory(arm64/aarch32)
 # translated and lost, and address-space retirement causes none of them. The
 # slot count, not residency or validation, is what bounds Clang.
 #
-# Capacity is not free on either engine. An empty way costs 56 bytes on arm64
-# and 76 on x86, and an occupied one its translation besides. macOS can spend
+# Capacity is not free on either engine. An empty way costs 40 bytes on arm64
+# and 80 on x86, and an occupied one its translation besides. macOS can spend
 # it and iOS cannot: the iOS app runs under a jetsam limit with a 2048 MiB
 # guest default, and one executor per host core would pay for it several times
 # over. The compatibility default therefore stays where it was measured to be
@@ -58,14 +58,15 @@ unset(_uml_gadget_cache_slots_invalid)
 set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
     "Address spaces that may hold translations in each private gadget cache")
 
-# Default-off: the census walks every cache slot when an executor is destroyed
-# and writes its measured footprint plus one record per resident translation,
-# which is how duplication between executors and between address spaces is
-# measured rather than estimated. Both engines report it, so the option is
-# declared with the shared cache geometry above rather than beside the arm64
-# translation diagnostics below.
+# Default-off: the census walks every cache slot when an executor is destroyed,
+# and at intervals when asked, and writes its measured footprint, its lookup
+# and eviction history, and one record per resident translation, which is how
+# duplication between executors and between address spaces is measured rather
+# than estimated. Both engines report it, so the option is declared with the
+# shared cache geometry above rather than beside the arm64 translation
+# diagnostics below.
 option(UML_GADGET_CACHE_CENSUS
-    "Dump resident gadget cache contents at executor teardown (diagnostic builds only)"
+    "Write gadget cache census snapshots (diagnostic builds only)"
     OFF)
 
 # x86-64 guests run on the x86_64 tree's engines. The fixed x86 Linux slice
@@ -235,6 +236,7 @@ add_custom_command(
         ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_neon.py
         ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_structure.py
         ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_armv8.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_parallel.py
         ${_uml_arm64_a32_table}
         ${_uml_arm64_a32_table_rows} ${_uml_arm64_a32_hand_written}
     COMMENT "Generating the arm64 AArch32 gadgets"

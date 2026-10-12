@@ -66,16 +66,17 @@ constexpr std::array sme_tokens{ArmFeature::sme, ArmFeature::sme2,
 	return host.sme_svl_bytes != 0;
 }
 
-void policy_parses_only_one()
+/* On unless DARWIN_UML_GUEST_SME is exactly "0". */
+void policy_parses_only_zero()
 {
 	using apple::GuestSmePolicy;
-	require(apple::parse_guest_sme_policy(nullptr) == GuestSmePolicy::off);
-	require(apple::parse_guest_sme_policy("") == GuestSmePolicy::off);
-	require(apple::parse_guest_sme_policy("0") == GuestSmePolicy::off);
-	require(apple::parse_guest_sme_policy("1 ") == GuestSmePolicy::off);
-	require(apple::parse_guest_sme_policy("yes") == GuestSmePolicy::off);
-	require(apple::parse_guest_sme_policy("11") == GuestSmePolicy::off);
+	require(apple::parse_guest_sme_policy(nullptr) == GuestSmePolicy::on);
+	require(apple::parse_guest_sme_policy("") == GuestSmePolicy::on);
 	require(apple::parse_guest_sme_policy("1") == GuestSmePolicy::on);
+	require(apple::parse_guest_sme_policy("0 ") == GuestSmePolicy::on);
+	require(apple::parse_guest_sme_policy("no") == GuestSmePolicy::on);
+	require(apple::parse_guest_sme_policy("00") == GuestSmePolicy::on);
+	require(apple::parse_guest_sme_policy("0") == GuestSmePolicy::off);
 }
 
 /* With the policy off no host reports an SME token or a vector length, SME
@@ -507,16 +508,17 @@ void svcr_writes_apply_to_state()
 	}
 }
 
-/* SME stays unadvertised by default until both engines implement all of it,
- * and the exit for a task without SME storage retires nothing. */
+/* SME is advertised by default, which needs both engines to implement all
+ * of the profile, and the exit for a task without SME storage retires
+ * nothing. */
 void defaults_follow_engine_support()
 {
 	using arm64::SmeSupport;
-	if (arm64::gadgets::sme_support < SmeSupport::complete ||
-	    arm64::jit::sme_support < SmeSupport::complete)
-		require(apple::parse_guest_sme_policy(nullptr) ==
-				apple::GuestSmePolicy::off,
-			"SME is on by default before both engines are complete");
+	static_assert(arm64::gadgets::sme_support >= SmeSupport::complete &&
+		arm64::jit::sme_support >= SmeSupport::complete);
+	require(apple::parse_guest_sme_policy(nullptr) ==
+			apple::GuestSmePolicy::on,
+		"SME is not on by default");
 	require(::uml::cpu::terminal_does_not_retire(
 		::uml::cpu::EngineEvent::sme_access));
 }
@@ -727,7 +729,7 @@ void host_streaming_state_is_read_only_on_sme_hardware()
 
 int main()
 {
-	policy_parses_only_one();
+	policy_parses_only_zero();
 	prober_follows_policy();
 	process_profile_honours_environment();
 	profile_needs_every_part();
