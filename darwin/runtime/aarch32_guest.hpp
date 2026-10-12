@@ -34,12 +34,10 @@ inline constexpr std::int32_t software_step_class = 0x32;
 /* Whether the kernel may hand `registers` over as an AArch32 entry. Every
  * condition is a kernel invariant (the design's "entry state"): the mode is
  * User, E is clear (SETEND is undefined, so no AArch32 EL0 code runs
- * big-endian), IT bits come with T, and the task is not in streaming mode
- * nor holds live SVE registers. An entry that breaks one is fatal rather than
- * run. */
+ * big-endian), IT bits come with T, and the task is not in streaming mode. An entry that
+ * breaks one is fatal rather than run. */
 [[nodiscard]] inline bool entry_is_valid(
-	const darwin_uml_guest_registers &registers,
-	const darwin_uml_guest_sve_registers &sve) noexcept
+	const darwin_uml_guest_registers &registers) noexcept
 {
 	const auto psr = registers.pstate;
 	if ((psr & a32::psr_mode_mask) != a32::psr_mode_user ||
@@ -47,7 +45,7 @@ inline constexpr std::int32_t software_step_class = 0x32;
 		return false;
 	if ((psr & a32::psr_it) != 0U && (psr & a32::psr_t) == 0U)
 		return false;
-	return registers.svcr == 0 && sve.flags == 0;
+	return registers.svcr == 0;
 }
 
 /* Loads the state of a valid entry (entry_is_valid()) into `cpu`:
@@ -61,7 +59,7 @@ inline constexpr std::int32_t software_step_class = 0x32;
  *   has it, with `fpcr_host_mask` the control bits the host takes;
  * - TPIDRURW from `tls` and TPIDRURO, and CP15BEN from the dispatch flags;
  * - no exclusive monitor and no top-byte ignore, which AArch32 lacks;
- * - no streaming mode and no live SVE registers.
+ * - no streaming mode.
  * The vector registers load lazily, as for AArch64. */
 inline void load_a32_cpu(arm64::CpuState &cpu,
 	const darwin_uml_guest_registers &registers,
@@ -100,7 +98,6 @@ inline void load_a32_cpu(arm64::CpuState &cpu,
 	cpu.sme_loaded = 0;
 	cpu.sme_dirty = 0;
 	cpu.sme_task = nullptr;
-	cpu.sve_live = 0;
 	cpu.a32_fpscr_nzcv = fp.fpsr & a32::fpscr_nzcv;
 	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr,
 		fpcr_host_mask & a32::fpscr_control_mask);

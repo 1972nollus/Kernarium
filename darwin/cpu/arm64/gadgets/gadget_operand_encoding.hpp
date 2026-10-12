@@ -26,12 +26,15 @@ namespace uml::cpu::arm64::gadgets::selection {
 	return static_cast<std::int64_t>(value << shift) >> shift;
 }
 
+/* The base register in bits 4:0, the transfer register in 9:5 and the signed
+ * nine-bit byte offset in 18:10. */
 [[nodiscard]] constexpr std::uintptr_t rcpc_memory_operand(
 	std::uint32_t instruction, std::int64_t offset) noexcept
 {
 	return ((instruction >> 5) & 31U) |
 		(static_cast<std::uintptr_t>(instruction & 31U) << 5) |
-		(static_cast<std::uintptr_t>(static_cast<std::uint64_t>(offset)) << 10);
+		((static_cast<std::uintptr_t>(static_cast<std::uint64_t>(offset)) &
+		  0x1ffU) << 10);
 }
 
 /* The CpuState offset of a general register operand. Register 31 reads the

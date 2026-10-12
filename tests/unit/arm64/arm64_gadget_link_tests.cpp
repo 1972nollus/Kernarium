@@ -253,6 +253,9 @@ int main()
 		require(gadgets::execute(first.program, cpu, tlb, executed) ==
 			::uml::cpu::EngineEvent::memory_fault);
 		require(cpu.fp_loaded && cpu.fp_dirty);
+		/* The vector load reports its position in the successor, as every
+		 * transfer without a PC word does. */
+		gadgets::resolve_fault_position(successor.program, cpu.pc);
 		require(cpu.pc == target.link.guest_pc);
 		require(executed == 3);
 	}

@@ -42,6 +42,20 @@ protected:
   void attach_family_emitter(void *emitter, bool *native_fp,
                              bool enable_gpr_cache) noexcept;
   void attach_link_resolver(void *context, LinkResolver resolver) noexcept;
+  /* The translation keeps its core registers in the host across every link:
+   * a successor finds them in their hosts, a block entered from the executor
+   * loads them all before its internal entry, and every return to the
+   * executor writes all of them back. Its link sequences use x10 and x11,
+   * which no binding holds, and a pair of bindings is written back with one
+   * store. */
+  void keep_gprs_across_links() noexcept {
+    resident_across_links_ = true;
+    link_pointer_ = 10U;
+    link_scratch_ = 11U;
+  }
+  [[nodiscard]] bool gprs_kept_across_links() const noexcept {
+    return resident_across_links_;
+  }
   void begin_link_observation() noexcept;
   [[nodiscard]] std::size_t direct_link_refusals() const noexcept;
   [[nodiscard]] std::size_t indirect_link_refusals() const noexcept;
@@ -82,7 +96,7 @@ protected:
 
   [[nodiscard]] bool gpr_slots_unbound() const noexcept;
   [[nodiscard]] constexpr std::size_t gpr_slot_capacity() const noexcept {
-    return resident_gpr_hosts.size();
+    return gpr_host_limit_;
   }
 
   [[nodiscard]] NativeGpr read_native_gpr(unsigned guest,
@@ -119,34 +133,6 @@ protected:
                                                  bool reads_old,
                                                  unsigned fallback);
   void commit_native_vector(NativeVector value, unsigned guest);
-  /*
-   * The non-streaming SVE predicates P0-P15 and, as index sve_ffr, FFR, in
-   * CpuState's mask form. They share the vector bindings with V as block
-   * residents, under identities after V's, so every exit, cold path, link
-   * and terminal call writes a dirty one back as it does a vector. A
-   * translation without an SVE word never binds one.
-   */
-  static constexpr unsigned sve_ffr = 16U;
-  [[nodiscard]] NativeVector read_native_predicate(unsigned index,
-                                                   unsigned fallback);
-  [[nodiscard]] NativeVector write_native_predicate(unsigned index,
-                                                    bool reads_old,
-                                                    unsigned fallback);
-  void commit_native_predicate(NativeVector value, unsigned index);
-  /*
-   * Whether a predicate is known to be all-active, for elements of esize
-   * bytes, along the straight line translated so far: an all-active PTRUE
-   * or a guard that passed since the predicate was last written. Knowledge
-   * for one element size holds for every larger one (the significant bytes
-   * of the larger size are among the smaller's), and any write forgets it.
-   */
-  [[nodiscard]] bool sve_predicate_known_full(unsigned index,
-                                              unsigned esize) const noexcept {
-    return sve_full_[index] != 0U && sve_full_[index] <= esize;
-  }
-  void note_sve_predicate_full(unsigned index, unsigned esize) noexcept {
-    sve_full_[index] = static_cast<std::uint8_t>(esize);
-  }
   /*
    * These emit instruction with its Rn (bits 5-9), Rm and Rd (bits 0-4)
    * fields naming native vector bindings. Operands bind in the order
@@ -212,9 +198,12 @@ protected:
   void read_flags(unsigned destination);
   void mark_native_fp() noexcept;
   void emit_linked_exit(std::uint64_t target, std::size_t count);
+  /* `target_table`: a miss of both cells looks in the executor's table of
+   * trained targets (JitIndirectTarget) before it leaves. */
   void emit_indirect_linked_exit(unsigned target_host, bool writes_link,
                                  std::uint64_t source_pc,
-                                 std::size_t count);
+                                 std::size_t count,
+                                 bool target_table = false);
 
   void emit_native_binary(std::uint32_t instruction, bool stack_pointer,
                           bool sets_flags);
@@ -336,13 +325,15 @@ protected:
 
 private:
   static constexpr unsigned unbound_guest = 32U;
-  /* A vector binding's identity: V0-V31, then P0-P15 and FFR. */
-  static constexpr unsigned predicate_identity = unbound_guest + 1U;
   /* The CpuState offset of a vector binding's identity. */
   [[nodiscard]] static std::size_t
   vector_slot_offset(unsigned guest) noexcept;
-  static constexpr std::array<unsigned, 8> resident_gpr_hosts{
-      3U, 4U, 5U, 6U, 7U, 12U, 13U, 17U};
+  /* The first eight hold an A64 translation's registers; an AArch32
+   * translation, whose guest has fifteen core registers, takes all of them
+   * (x22-x28 are callee-saved, which its frame preserves). */
+  static constexpr std::array<unsigned, 15> resident_gpr_hosts{
+      3U, 4U, 5U, 6U, 7U, 12U, 13U, 17U, 22U, 23U, 24U, 25U, 26U, 27U, 28U};
+  static constexpr std::size_t a64_gpr_hosts = 8;
   /* x19-x21 carry linked-block state, and Darwin clears x18 when it
    * interrupts the thread. */
   static_assert([] {
@@ -351,6 +342,8 @@ private:
         return false;
     return true;
   }());
+  static_assert(resident_gpr_hosts.size() <= 16U,
+                "the dirty masks are sixteen bits");
   static constexpr std::size_t pinned_vector_slot_count = 2;
   static constexpr std::array<unsigned, 18> resident_vector_hosts{
       6U,  7U,  16U, 17U, 18U, 19U, 20U, 21U, 22U,
@@ -382,7 +375,11 @@ private:
 
   std::array<GprSlot, resident_gpr_hosts.size()> gpr_slots_{};
   std::array<VectorSlot, resident_vector_hosts.size()> vector_slots_{};
+  std::size_t gpr_host_limit_{a64_gpr_hosts};
   std::uint16_t exit_gpr_mask_{};
+  bool resident_across_links_{};
+  unsigned link_pointer_{12U};
+  unsigned link_scratch_{13U};
   std::uint32_t exit_vector_mask_{};
   GuestFlagsState guest_flags_state_{GuestFlagsState::memory};
   bool exit_gpr_mask_set_{};
@@ -397,9 +394,6 @@ private:
   IndirectLinkResolver indirect_link_resolver_{};
   std::size_t indirect_link_refusals_{};
   std::uint8_t sme_mode_{};
-  /* Per predicate (P0-P15, FFR): the smallest element size in bytes it is
-   * known all-active for, or 0. */
-  std::array<std::uint8_t, 17> sve_full_{};
 };
 
 } // namespace uml::cpu::arm64::jit

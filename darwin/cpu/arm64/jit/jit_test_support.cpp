@@ -674,6 +674,29 @@ A32Compilation compile_a32_block(std::uint64_t key,
           .guest_units = compiled.guest_units};
 }
 
+A32Compilation compile_a32_linked_block(std::uint64_t key,
+                                        std::span<const std::byte> bytes) {
+  struct Context final {
+    JitBlockLink direct{};
+    JitIndirectLink site{};
+  } context;
+  const auto direct = +[](void *opaque, std::uint64_t key) -> const void * {
+    auto &resolved = *static_cast<Context *>(opaque);
+    resolved.direct.guest_pc = key;
+    return &resolved.direct;
+  };
+  const auto indirect =
+      +[](void *opaque, std::uint64_t key) -> const void * {
+    auto &resolved = *static_cast<Context *>(opaque);
+    resolved.site.source_pc = key;
+    return &resolved.site;
+  };
+  a32::A32Compiler compiler{&context, direct, false, indirect};
+  const auto compiled = compiler.compile({.key = key, .bytes = bytes});
+  return {.code = copied_code(compiled.translation),
+          .guest_units = compiled.guest_units};
+}
+
 ModeCompilation compile_block_in_mode(
     std::uint64_t pc, std::span<const std::uint32_t> instructions,
     std::uint8_t mode, LinkShape shape) {

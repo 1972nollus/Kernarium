@@ -26,9 +26,12 @@
  * fails and a guest loops, but a corpus case is one attempt: a case whose
  * only difference from the pack is that failed store-exclusive runs again,
  * up to kExclusiveAttempts times in all, and must then agree completely.
- * --interrupt aims a signal storm at the thread that runs the guest so that
- * this happens on purpose, and fails if no store-exclusive was lost.
- * --passes N repeats the selected records.
+ * --interrupt interrupts the thread that runs the guest with a timer signal
+ * every few microseconds so that this happens on purpose. Whether one lands
+ * in a window of tens of nanoseconds is chance, so the passes go on past
+ * --passes until a store-exclusive has lost its reservation, for at most
+ * kInterruptDeadline, and the run fails if none did. --passes N repeats the
+ * selected records at least N times.
  *
  *   uml_arm64_gadget_a32_corpus_tests PACK [--level base|simd|complete]
  *       [--record NAME] [--case TEXT] [--limit N] [--forms FILE]
@@ -44,7 +47,7 @@
 #include "scratch_backing.hpp"
 
 #include <algorithm>
-#include <atomic>
+#include <chrono>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -55,10 +58,9 @@
 #include <set>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
 
-#include <pthread.h>
+#include <sys/time.h>
 
 namespace {
 
@@ -74,6 +76,11 @@ constexpr std::size_t budget = 20'000;
  * nanoseconds, so a few attempts are enough; an engine whose store-exclusive
  * never succeeds fails every one. */
 constexpr unsigned kExclusiveAttempts = 16;
+/* How long --interrupt may go on looking for a lost reservation. A pass takes
+ * a fraction of a second and loses one within a few, even with two dozen
+ * such processes sharing ten cores, so reaching this means the host keeps its
+ * monitor across an interrupt. */
+constexpr std::chrono::seconds kInterruptDeadline{60};
 
 [[nodiscard]] ::uml::cpu::arm64::gadgets::BuildOptions options_at(
 	::uml::cpu::arm64::A32Support level)
@@ -417,6 +424,8 @@ struct Totals final {
 	/* Cases that agreed with the pack only on a later attempt, after a
 	 * store-exclusive lost its reservation. */
 	std::size_t retried = 0;
+	/* Attempts that lost a reservation, whatever became of their case. */
+	std::size_t lost = 0;
 	/* The encodings under test of the cases that ran, for --forms. */
 	std::set<std::string> forms;
 };
@@ -427,49 +436,49 @@ struct Options final {
 	std::size_t limit = 40;
 	std::size_t passes = 1;
 	bool explain = false;
-	/* Interrupt the guest's thread continuously, and require that a
-	 * store-exclusive was lost to it. */
+	/* Interrupt the guest's thread continuously, and go on until a
+	 * store-exclusive has lost its reservation to it. */
 	bool interrupt = false;
 	/* Write the encodings whose cases ran, one per line, to this file. */
 	std::string forms_path;
 };
 
-/* Host interrupts on demand: a thread aims SIGUSR1 at the thread that runs
- * the guest as fast as the host can raise it. Each delivery enters and leaves
- * the kernel on the interrupted thread, which ends the host's exclusive
- * monitor as a timer tick, an inter-processor interrupt or a preemption does
- * on a loaded host. The handler does nothing. */
+/* Host interrupts on demand: an interval timer sends SIGALRM to the process
+ * every few microseconds, and the process has one thread, the one that runs
+ * the guest. Each delivery enters and leaves the kernel on the interrupted
+ * thread, which ends the host's exclusive monitor as a timer tick, an
+ * inter-processor interrupt or a preemption does on a loaded host. The timer
+ * is the kernel's, so no thread of ours has to be scheduled for it to fire,
+ * as one that sent the signals would. The handler does nothing and stays
+ * installed after the timer stops, so that a signal already pending when it
+ * does is not fatal. */
 class InterruptStorm final {
 public:
 	InterruptStorm()
-		: target_{::pthread_self()}
 	{
 		struct sigaction action {};
 		action.sa_handler = [](int) {};
 		sigemptyset(&action.sa_mask);
 		action.sa_flags = SA_RESTART;
-		require(::sigaction(SIGUSR1, &action, &previous_) == 0);
-		thread_ = std::thread{[this] {
-			while (!stop_.load(std::memory_order_relaxed))
-				(void)::pthread_kill(target_, SIGUSR1);
-		}};
+		require(::sigaction(SIGALRM, &action, nullptr) == 0);
+		struct itimerval timer {};
+		timer.it_interval.tv_usec = timer.it_value.tv_usec = kInterval;
+		require(::setitimer(ITIMER_REAL, &timer, nullptr) == 0);
 	}
 
 	~InterruptStorm()
 	{
-		stop_.store(true, std::memory_order_relaxed);
-		thread_.join();
-		(void)::sigaction(SIGUSR1, &previous_, nullptr);
+		struct itimerval off {};
+		(void)::setitimer(ITIMER_REAL, &off, nullptr);
 	}
 
 	InterruptStorm(const InterruptStorm &) = delete;
 	InterruptStorm &operator=(const InterruptStorm &) = delete;
 
 private:
-	pthread_t target_;
-	struct sigaction previous_ {};
-	std::atomic<bool> stop_{false};
-	std::thread thread_;
+	/* Microseconds. Shorter fills the host with timer interrupts for no
+	 * more losses; longer loses fewer. */
+	static constexpr suseconds_t kInterval = 5;
 };
 
 /* The program's words and what the decoder says of the instruction under
@@ -680,8 +689,10 @@ void check_case(Machine &machine, const corpus::Record &record,
 
 	auto attempt = run_case(machine, test, initial_data, expected_data);
 	unsigned attempts = 1;
+	totals.lost += attempt.reservation_lost ? 1 : 0;
 	while (attempt.reservation_lost && attempts < kExclusiveAttempts) {
 		attempt = run_case(machine, test, initial_data, expected_data);
+		totals.lost += attempt.reservation_lost ? 1 : 0;
 		++attempts;
 	}
 	if (attempt.diffs.empty()) {
@@ -749,7 +760,10 @@ int main(int argc, char **argv)
 	std::optional<InterruptStorm> storm;
 	if (options.interrupt)
 		storm.emplace();
-	for (std::size_t pass = 0; pass < options.passes; ++pass) {
+	const auto deadline = std::chrono::steady_clock::now() + kInterruptDeadline;
+	for (std::size_t pass = 1;; ++pass) {
+		/* The lines of this pass; the last one's are printed. */
+		std::vector<std::string> lines;
 		for (const auto &record : pack.records) {
 			if ((record.profiles & corpus::kProfileBit) == 0 ||
 			    (!options.record.empty() && record.name != options.record))
@@ -761,13 +775,21 @@ int main(int argc, char **argv)
 					continue;
 				check_case(machine, record, test, options, totals);
 			}
-			/* One line per record: the last pass's, the summary has
-			 * the totals. */
-			if (pass + 1 == options.passes)
-				std::printf("  %-24s run %5zu  skipped %5zu  failed %5zu\n",
-					    record.name.c_str(), totals.run - before.run,
-					    totals.skipped - before.skipped,
-					    totals.failed - before.failed);
+			char line[160];
+			std::snprintf(line, sizeof(line),
+				      "  %-24s run %5zu  skipped %5zu  failed %5zu\n",
+				      record.name.c_str(), totals.run - before.run,
+				      totals.skipped - before.skipped,
+				      totals.failed - before.failed);
+			lines.emplace_back(line);
+		}
+		const bool enough = pass >= options.passes &&
+			(!options.interrupt || totals.lost != 0);
+		if (enough || (options.interrupt &&
+			       std::chrono::steady_clock::now() >= deadline)) {
+			for (const auto &line : lines)
+				std::fputs(line.c_str(), stdout);
+			break;
 		}
 	}
 	if (!options.forms_path.empty()) {
@@ -785,7 +807,7 @@ int main(int argc, char **argv)
 		    static_cast<unsigned long long>(
 			    ::uml::emulator::tests::a32::check_library_exits()));
 	/* A storm that never ended a reservation proved nothing. */
-	if (options.interrupt && totals.retried == 0) {
+	if (options.interrupt && totals.lost == 0) {
 		std::fprintf(stderr, "--interrupt: no store-exclusive lost its "
 			     "reservation, so none was interrupted\n");
 		return 1;

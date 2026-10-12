@@ -150,13 +150,12 @@ struct CpuState final {
 	 * bytes, or null when the run does not implement SME. While SM is set,
 	 * guest V_n is the low 16 bytes of Z_n here and `vectors` is stale. */
 	std::byte *sme_registers{};
-	/* Non-streaming SVE state (sve_profile.hpp), appended so that no
-	 * earlier offset moves: P0-P15 and FFR in the engines' mask form, apart
-	 * from the streaming P in the SME register file. Z_n outside streaming
-	 * mode is `vectors[n]`. sve_live, 0 or 1, is the image of arm64
-	 * Linux's TIF_SVE: the task has executed SVE since its last system
-	 * call or exec, so its P and FFR are part of its state. A byte rather
-	 * than a bool, since translated code stores it. */
+	/* The storage of the removed non-streaming SVE profile
+	 * (sve_profile.hpp), reserved so that no offset after it moves: P0-P15
+	 * and FFR in mask form, apart from the streaming P in the SME register
+	 * file, and a live flag. The virtual CPU implements no SVE outside
+	 * streaming mode, so nothing sets them; a change of PSTATE.SM zeroes P
+	 * and FFR. */
 	alignas(16) std::array<SvePredicate, sve_p_registers> sve_p{};
 	alignas(16) SvePredicate sve_ffr{};
 	std::uint8_t sve_live{};
@@ -185,12 +184,13 @@ struct CpuState final {
 	std::uint8_t a32_itstate{};
 	std::uint8_t a32_cp15ben{};
 	std::uint8_t a32{};
-	/* The gadget engine's native floating-point environment, while
+	/* The AArch32 engines' native floating-point environment, while
 	 * gadget_fp_active is set, holds the Standard FPSCR value that Advanced
 	 * SIMD floating point runs under when a32_fp_standard is 1 and the
-	 * guest's FPCR when it is 0. The gadgets that need one switch to it
-	 * (engine/a32.inc) and the one that activates the environment clears
-	 * this; it means nothing while gadget_fp_active is clear. */
+	 * guest's FPCR when it is 0. The gadgets (engine/a32.inc) and the JIT's
+	 * translations that need one switch to it, and what activates the
+	 * environment clears this; it means nothing while gadget_fp_active is
+	 * clear. */
 	std::uint8_t a32_fp_standard{};
 	/* Context synchronization, appended so that no earlier offset moves:
 	 * the running address space's code-change sequence
@@ -202,6 +202,11 @@ struct CpuState final {
 	 * rather than run from a stale translation or link. */
 	const std::uint64_t *code_sequence{&no_code_changes};
 	std::uint64_t code_sequence_seen{};
+	/* The JIT's staging for an Advanced SIMD load that crosses between two
+	 * pages whose host mappings are not adjacent: the last 32 bytes of the
+	 * first page, then the first 32 of the second. It holds nothing between
+	 * two instructions. */
+	alignas(16) std::array<std::uint8_t, 64> a32_cross{};
 	[[nodiscard]] std::uint64_t untag_data_address(
 		std::uint64_t address, bool base_sp) const noexcept
 	{

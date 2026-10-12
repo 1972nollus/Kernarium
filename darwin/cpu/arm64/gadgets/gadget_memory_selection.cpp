@@ -4,24 +4,37 @@
 namespace uml::cpu::arm64::gadgets::selection {
 
 [[nodiscard]] Gadget literal_load_gadget(
-	bool vector, unsigned operation, bool discard) noexcept
+	bool vector, unsigned operation, bool discard, bool far) noexcept
 {
 	if (vector) {
 		static constexpr std::array gadgets{
-			uml_arm64_gadget_literal_load_vector32_fast,
-			uml_arm64_gadget_literal_load_vector64_fast,
-			uml_arm64_gadget_literal_load_vector128_fast};
-		return operation < gadgets.size() ? gadgets[operation] : nullptr;
+			std::array{uml_arm64_gadget_literal_load_vector32_fast,
+				uml_arm64_gadget_literal_load_vector64_fast,
+				uml_arm64_gadget_literal_load_vector128_fast},
+			std::array{uml_arm64_gadget_literal_load_vector32_far,
+				uml_arm64_gadget_literal_load_vector64_far,
+				uml_arm64_gadget_literal_load_vector128_far}};
+		return operation < gadgets[far].size() ?
+			gadgets[far][operation] : nullptr;
 	}
 	using Modes = std::array<Gadget, 2>;
 	static constexpr std::array gadgets{
-		Modes{uml_arm64_gadget_literal_load32_fast_r,
-			uml_arm64_gadget_literal_load32_fast_z},
-		Modes{uml_arm64_gadget_literal_load64_fast_r,
-			uml_arm64_gadget_literal_load64_fast_z},
-		Modes{uml_arm64_gadget_literal_load32_signed_fast_r,
-			uml_arm64_gadget_literal_load32_signed_fast_z}};
-	return operation < gadgets.size() ? gadgets[operation][discard] : nullptr;
+		std::array{
+			Modes{uml_arm64_gadget_literal_load32_fast_r,
+				uml_arm64_gadget_literal_load32_fast_z},
+			Modes{uml_arm64_gadget_literal_load64_fast_r,
+				uml_arm64_gadget_literal_load64_fast_z},
+			Modes{uml_arm64_gadget_literal_load32_signed_fast_r,
+				uml_arm64_gadget_literal_load32_signed_fast_z}},
+		std::array{
+			Modes{uml_arm64_gadget_literal_load32_far_r,
+				uml_arm64_gadget_literal_load32_far_z},
+			Modes{uml_arm64_gadget_literal_load64_far_r,
+				uml_arm64_gadget_literal_load64_far_z},
+			Modes{uml_arm64_gadget_literal_load32_signed_far_r,
+				uml_arm64_gadget_literal_load32_signed_far_z}}};
+	return operation < gadgets[far].size() ?
+		gadgets[far][operation][discard] : nullptr;
 }
 
 [[nodiscard]] Gadget scalar_unsigned_memory_gadget(unsigned size,

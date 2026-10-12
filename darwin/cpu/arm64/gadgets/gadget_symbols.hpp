@@ -2043,10 +2043,16 @@ UML_DECLARE_ATOMIC_ORDERS(swp)
 UML_DECLARE_LITERAL_INTEGER(literal_load32_fast)
 UML_DECLARE_LITERAL_INTEGER(literal_load64_fast)
 UML_DECLARE_LITERAL_INTEGER(literal_load32_signed_fast)
+UML_DECLARE_LITERAL_INTEGER(literal_load32_far)
+UML_DECLARE_LITERAL_INTEGER(literal_load64_far)
+UML_DECLARE_LITERAL_INTEGER(literal_load32_signed_far)
 #undef UML_DECLARE_LITERAL_INTEGER
 void uml_arm64_gadget_literal_load_vector32_fast();
 void uml_arm64_gadget_literal_load_vector64_fast();
 void uml_arm64_gadget_literal_load_vector128_fast();
+void uml_arm64_gadget_literal_load_vector32_far();
+void uml_arm64_gadget_literal_load_vector64_far();
+void uml_arm64_gadget_literal_load_vector128_far();
 void uml_arm64_gadget_svc();
 void uml_arm64_gadget_interrupt();
 void uml_arm64_gadget_illegal();

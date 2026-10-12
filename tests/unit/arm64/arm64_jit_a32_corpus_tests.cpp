@@ -5,8 +5,22 @@
  * address and retired count are compared with what the oracle observed.
  * tests/unit/arm64/aarch32_corpus/README.md owns the pack and its format.
  *
+ * A store-exclusive may fail without cause, as the architecture allows, and
+ * the JIT's is the host's: the host's monitor ends at any interrupt or
+ * preemption between the load and the store, and the first fused pair a
+ * process runs can lose it too. The oracle's never fails and a guest loops,
+ * but a corpus case is one attempt. A case whose only difference from the
+ * pack is that failed store-exclusive (the status register 1 where the pack
+ * has 0, and the store it therefore did not make) runs again, up to
+ * kExclusiveAttempts times in all, and must then agree completely.
+ * --interrupt aims a signal storm at the thread that runs the guest so that
+ * this happens on purpose: it repeats the selected records, at most --passes
+ * N times, until kReservationsWanted cases have lost a reservation, and fails
+ * if none did. --attempts N replaces the limit (1 makes the storm fail).
+ *
  *   uml_arm64_jit_a32_corpus_tests PACK [--record NAME] [--case NAME]
- *                                       [--form PREFIX] [--list-failures]
+ *       [--form PREFIX] [--list-failures] [--passes N] [--interrupt]
+ *       [--attempts N]
  */
 #include "aarch32_corpus_pack.hpp"
 #include "arm64_jit_a32_test_support.hpp"
@@ -20,6 +34,8 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -27,9 +43,14 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <utility>
 #include <vector>
+
+#include <pthread.h>
 
 #ifndef DARWIN_UML_GUEST_PAGE_SIZE
 #error "the guest page profile selects the corpus records"
@@ -41,6 +62,15 @@ namespace {
  * the cumulative flags); N, Z, C and V are a32_fpscr_nzcv. */
 constexpr std::uint32_t fpscr_control_mask = 0x07c8'0000U;
 constexpr std::uint32_t fpscr_status_mask = 0x0800'009fU;
+/* How many times a case whose store-exclusive lost its reservation may run.
+ * A lost reservation is an interrupt that landed in a window of tens of
+ * nanoseconds, so a few attempts are enough; an engine whose store-exclusive
+ * never succeeds fails every one. */
+constexpr unsigned kExclusiveAttempts = 16;
+/* How many cases an interrupt storm must have cost a reservation before it
+ * stops: the losses are a few in a thousand passes, and a storm that has
+ * seen some has measured the rerun. */
+constexpr std::size_t kReservationsWanted = 4;
 
 using namespace ::uml::emulator::tests;
 using namespace ::uml::emulator::tests::a32;
@@ -141,6 +171,10 @@ public:
         memory[patch.offset + index] = static_cast<std::byte>(patch.bytes[index]);
     return memory;
   }
+  /* The data the loaded case started from. */
+  [[nodiscard]] const std::vector<std::byte> &initial_data() const {
+    return expected_data_;
+  }
   [[nodiscard]] std::vector<std::byte> read_data() const {
     std::vector<std::byte> bytes(kDataSize);
     data_.get(0, bytes);
@@ -218,12 +252,85 @@ std::uint32_t apsr_of(const arm64::CpuState &cpu) {
 }
 
 struct Totals final {
-  std::size_t run = 0, skipped = 0, failed = 0, retried = 0;
+  std::size_t run = 0, skipped = 0, failed = 0;
+  /* Cases that agreed with the pack only on a later attempt, after a
+   * store-exclusive lost its reservation. */
+  std::size_t retried = 0;
   std::map<std::string, std::size_t> failed_forms;
 };
 
-/* Returns the reason the JIT disagrees with the oracle, or nothing. */
-std::string check(Machine &machine, const Case &test) {
+/* Host interrupts on demand: a thread aims SIGUSR1 at the thread that runs
+ * the guest as fast as the host can raise it. Each delivery enters and leaves
+ * the kernel on the interrupted thread, which ends the host's exclusive
+ * monitor as a timer tick, an inter-processor interrupt or a preemption does
+ * on a loaded host. The handler does nothing. */
+class InterruptStorm final {
+public:
+  InterruptStorm() : target_{::pthread_self()} {
+    struct sigaction action {};
+    action.sa_handler = [](int) {};
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_RESTART;
+    require(::sigaction(SIGUSR1, &action, &previous_) == 0);
+    thread_ = std::thread{[this] {
+      while (!stop_.load(std::memory_order_relaxed))
+        (void)::pthread_kill(target_, SIGUSR1);
+    }};
+  }
+  ~InterruptStorm() {
+    stop_.store(true, std::memory_order_relaxed);
+    thread_.join();
+    (void)::sigaction(SIGUSR1, &previous_, nullptr);
+  }
+  InterruptStorm(const InterruptStorm &) = delete;
+  InterruptStorm &operator=(const InterruptStorm &) = delete;
+
+private:
+  pthread_t target_;
+  struct sigaction previous_ {};
+  std::atomic<bool> stop_{false};
+  std::thread thread_;
+};
+
+/* What one run of a case found. */
+struct Attempt final {
+  Attempt() = default;
+  Attempt(std::string reason) : problem{std::move(reason)} {}
+  Attempt(const char *reason) : problem{reason} {}
+  /* The reason the JIT disagrees with the oracle, or nothing. */
+  std::string problem;
+  /* The only difference is a store-exclusive that reported failure where the
+   * oracle's succeeded, and the store it therefore did not make. */
+  bool reservation_lost = false;
+};
+
+[[nodiscard]] bool is_store_exclusive(const Case &test) {
+  return test.form.starts_with("STREX") || test.form.starts_with("STLEX");
+}
+
+/* Whether the disagreement at register `index` is the whole of it: the
+ * store-exclusive's status reads 1 where the pack has 0, and nothing else
+ * differs, the data being what the case started from. */
+[[nodiscard]] bool lost_reservation(const Machine &machine, const Case &test,
+                                    const arm64::CpuState &cpu,
+                                    unsigned index) {
+  if (!is_store_exclusive(test) || test.final.r[index] != 0U ||
+      cpu.registers[index] != 1U)
+    return false;
+  if (apsr_of(cpu) != test.final.apsr || fpscr_of(cpu) != test.final.fpscr ||
+      cpu.a32_tpidruro != test.final.tpidruro || cpu.tls != test.final.tpidrurw)
+    return false;
+  for (unsigned d = 0; d < kVectors; ++d) {
+    std::uint64_t value;
+    std::memcpy(&value, cpu.vectors[d / 2].bytes.data() + 8U * (d & 1U), 8);
+    if (value != test.final.d[d])
+      return false;
+  }
+  return machine.read_data() == machine.initial_data();
+}
+
+/* Runs one attempt at a case. */
+Attempt check(Machine &machine, const Case &test) {
   const bool thumb = test.flags & kFlagThumb;
   std::uint32_t stub = 0;
   bool padded = false;
@@ -325,14 +432,23 @@ std::string check(Machine &machine, const Case &test) {
       return text;
     }
   }
+  unsigned differing = 0, first_register = 0;
   for (unsigned index = 0; index < kRegisters; ++index) {
     if (static_cast<std::uint32_t>(cpu.registers[index]) != test.final.r[index] ||
         (cpu.registers[index] >> 32) != 0) {
-      std::snprintf(text, sizeof text, "r%u = %016llx, expected %08x", index,
-                    static_cast<unsigned long long>(cpu.registers[index]),
-                    test.final.r[index]);
-      return text;
+      if (differing++ == 0)
+        first_register = index;
     }
+  }
+  if (differing != 0) {
+    std::snprintf(text, sizeof text, "r%u = %016llx, expected %08x",
+                  first_register,
+                  static_cast<unsigned long long>(cpu.registers[first_register]),
+                  test.final.r[first_register]);
+    Attempt attempt{text};
+    attempt.reservation_lost =
+        differing == 1 && lost_reservation(machine, test, cpu, first_register);
+    return attempt;
   }
   if (apsr_of(cpu) != test.final.apsr) {
     std::snprintf(text, sizeof text, "apsr %08x, expected %08x", apsr_of(cpu),
@@ -612,6 +728,9 @@ int main(int argc, char **argv) {
   bool trace = false;
   bool all_failures = false;
   bool exit_report = false;
+  bool interrupt = false;
+  std::size_t passes = 1;
+  unsigned attempts_limit = kExclusiveAttempts;
   std::string only_form;
   for (int index = 1; index < argc; ++index) {
     const std::string_view argument = argv[index];
@@ -629,6 +748,13 @@ int main(int argc, char **argv) {
       exit_report = true;
     else if (argument == "--form" && index + 1 < argc)
       only_form = argv[++index];
+    else if (argument == "--passes" && index + 1 < argc)
+      passes = static_cast<std::size_t>(std::strtoul(argv[++index], nullptr, 10));
+    else if (argument == "--attempts" && index + 1 < argc)
+      attempts_limit =
+          static_cast<unsigned>(std::strtoul(argv[++index], nullptr, 10));
+    else if (argument == "--interrupt")
+      interrupt = true;
     else if (argument == "--dump" && index + 1 < argc) {
       const std::uint32_t word =
           static_cast<std::uint32_t>(std::strtoul(argv[++index], nullptr, 16));
@@ -639,7 +765,7 @@ int main(int argc, char **argv) {
     else
       path = argv[index];
   }
-  require(path != nullptr);
+  require(path != nullptr && passes != 0 && attempts_limit != 0);
   const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
   require_vector_forms_classified();
@@ -656,60 +782,75 @@ int main(int argc, char **argv) {
     return 0;
   }
   Totals totals;
-  for (const auto &record : pack.records) {
-    if ((record.profiles & kProfileBit) == 0 ||
-        (!only_record.empty() && record.name != only_record))
-      continue;
-    for (const auto &test : record.cases) {
-      if (!only_case.empty() && test.name != only_case)
+  std::optional<InterruptStorm> storm;
+  if (interrupt)
+    storm.emplace();
+  for (std::size_t pass = 0; pass < passes; ++pass) {
+    for (const auto &record : pack.records) {
+      if ((record.profiles & kProfileBit) == 0 ||
+          (!only_record.empty() && record.name != only_record))
         continue;
-      if (!only_form.empty() && !test.form.starts_with(only_form))
-        continue;
-      if (!within_level(test, profile)) {
-        ++totals.skipped;
-        continue;
-      }
-      ++totals.run;
-      if (trace) {
-        std::fprintf(stderr, "case %s:", test.name.c_str());
-        for (const auto half : test.halves)
-          std::fprintf(stderr, " %04x", half);
-        std::fprintf(stderr, "\n");
-      }
-      auto problem = check(machine, test);
-      /* A store-exclusive may fail without cause (the architecture allows
-       * it, and the host's does on the first fused pair a process runs), and
-       * the oracle's never does. A guest retries; a lone corpus case cannot,
-       * so a failing exclusive case runs once more and must then agree
-       * completely. */
-      if (!problem.empty() && record.name.find("exclusive") != std::string::npos) {
-        problem = check(machine, test);
-        if (problem.empty()) {
-          ++totals.retried;
+      for (const auto &test : record.cases) {
+        if (!only_case.empty() && test.name != only_case)
+          continue;
+        if (!only_form.empty() && !test.form.starts_with(only_form))
+          continue;
+        if (!within_level(test, profile)) {
+          ++totals.skipped;
           continue;
         }
-      }
-      if (problem.empty())
-        continue;
-      ++totals.failed;
-      ++totals.failed_forms[test.form];
-      if (totals.failed_forms[test.form] == 1 || all_failures || !only_case.empty()) {
-        std::fprintf(stderr, "FAIL %s: %s: %s\n  program:", record.name.c_str(),
-                     test.name.c_str(), problem.c_str());
-        for (const auto half : test.halves)
-          std::fprintf(stderr, " %04x", half);
-        std::fprintf(stderr, "%s\n", test.flags & kFlagThumb ? " (thumb)" : " (arm)");
+        ++totals.run;
+        if (trace) {
+          std::fprintf(stderr, "case %s:", test.name.c_str());
+          for (const auto half : test.halves)
+            std::fprintf(stderr, " %04x", half);
+          std::fprintf(stderr, "\n");
+        }
+        auto attempt = check(machine, test);
+        unsigned attempts = 1;
+        while (attempt.reservation_lost && attempts < attempts_limit) {
+          attempt = check(machine, test);
+          ++attempts;
+        }
+        if (attempt.problem.empty()) {
+          if (attempts > 1)
+            ++totals.retried;
+          continue;
+        }
+        ++totals.failed;
+        ++totals.failed_forms[test.form];
+        if (totals.failed_forms[test.form] == 1 || all_failures ||
+            !only_case.empty()) {
+          std::fprintf(stderr, "FAIL %s: %s: %s", record.name.c_str(),
+                       test.name.c_str(), attempt.problem.c_str());
+          if (attempts > 1)
+            std::fprintf(stderr, " (%u attempts)", attempts);
+          std::fprintf(stderr, "\n  program:");
+          for (const auto half : test.halves)
+            std::fprintf(stderr, " %04x", half);
+          std::fprintf(stderr, "%s\n",
+                       test.flags & kFlagThumb ? " (thumb)" : " (arm)");
+        }
       }
     }
+    if (interrupt && totals.retried + totals.failed >= kReservationsWanted)
+      break;
   }
+  storm.reset();
   std::printf("AArch32 corpus on the JIT: %zu cases run, %zu skipped below the level, "
               "%zu failed (%zu exclusive retried)\n",
               totals.run, totals.skipped, totals.failed, totals.retried);
   if (list_failures || totals.failed != 0)
     for (const auto &[form, count] : totals.failed_forms)
       std::printf("  %s: %zu\n", form.c_str(), count);
+  /* A storm that never ended a reservation proved nothing. */
+  if (interrupt && totals.retried == 0 && totals.failed == 0) {
+    std::fprintf(stderr, "--interrupt: no store-exclusive lost its "
+                         "reservation, so none was interrupted\n");
+    return 1;
+  }
   if (totals.failed == 0 && only_record.empty() && only_case.empty() &&
-      only_form.empty())
+      only_form.empty() && !interrupt)
     require_lowered_forms_stay_inline(machine, pack, profile);
   return totals.failed == 0 ? 0 : 1;
 }

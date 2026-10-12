@@ -71,6 +71,12 @@ struct BuildOutput final {
 [[nodiscard]] std::optional<std::size_t> thumb_position(
 	std::span<const std::byte> halfwords, std::size_t unit) noexcept;
 
+/* The halfword where the instruction at `position` of a T32 block starts: the
+ * inverse of thumb_position. A memory gadget reports the position, and the
+ * key of its instruction is the block's key plus four per halfword. */
+[[nodiscard]] std::optional<std::size_t> thumb_unit(
+	std::span<const std::byte> halfwords, std::size_t position) noexcept;
+
 /* ITSTATE at the instruction starting at `unit` of a T32 block that begins
  * with ITSTATE = 0, found by decoding the block's halfwords again. */
 [[nodiscard]] std::uint8_t thumb_itstate(std::span<const std::byte> halfwords,
