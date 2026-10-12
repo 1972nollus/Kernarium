@@ -104,21 +104,25 @@ and target table belong to one process-wide space, and each executor's private
 slots only point into it. A body lives while any executor's slot holds it, so
 an address space costs the union of what its executors hold. A miss with no
 slot for its PC adopts the body the space indexes for it after the same exact
-word validation a stale slot gets, without copying or relocating it. Links are
-retargeted with one sixteen-byte store, single-copy atomic with FEAT_LSE2,
-which sharing requires; a code change raises the space's gate before it resets
-the live links, so an executor still validating at an older sequence cannot
-relink. A body no slot holds is freed once every other executor attached to
-the space has left translated code since it was unpublished, and the last
-executor to retire a space frees it with its arena. A code change one vCPU publishes resets the
+word validation a stale slot gets, without copying or relocating it. Links and
+indirect-site cells are retargeted with one sixteen-byte store, single-copy
+atomic with FEAT_LSE2, which sharing requires; a site takes the space's lock
+only to enrol on its first training, and translated code fills only a site's
+empty cells, so vCPUs sharing a polymorphic site do not keep rewriting it. A
+code change raises the space's gate before it resets the live links, so an
+executor still validating at an older sequence cannot relink. A body no slot
+holds is freed once every other executor attached to the space has left
+translated code since it was unpublished, and the last executor to retire a
+space frees it with its arena. A code change one vCPU publishes resets the
 space's links before that vCPU continues, so every other executor of the space
-leaves translated code at its next block transition, as an ISB after the
-change requires. Set `DARWIN_UML_GADGET_SHARED_BODIES=0` to keep each
-executor's translations private; a private executor sees another vCPU's code
-change only when it next leaves translated code, because ISB does not leave,
-and `guest-code-change-gadgets` fails its vcpu case that way. x86 gadget executors keep private translations: their links carry the
-block's guest range for self-modifying-store checks, which translated code
-reads in two loads that one atomic store cannot keep consistent.
+leaves translated code at its next block transition, as an ISB after the change
+requires. Set `DARWIN_UML_GADGET_SHARED_BODIES=0` to keep each executor's
+translations private; a private executor sees another vCPU's code change only
+when it next leaves translated code, because ISB does not leave, and
+`guest-code-change-gadgets` fails its vcpu case that way. x86 gadget executors
+keep private translations: their links carry the block's guest range for
+self-modifying-store checks, which translated code reads in two loads that one
+atomic store cannot keep consistent.
 
 Scalar forwarding keeps one write-through scalar result in host `x0` between
 adjacent declared gadgets. Assembly templates emit
