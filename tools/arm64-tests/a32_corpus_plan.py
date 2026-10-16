@@ -329,7 +329,7 @@ def move_pairs(context: Context) -> list[Case]:
             "two": [movw(1, 0x5678, thumb), movt(2, 0x9ABC, thumb)],
             "apart": [movw(3, 0x0FFF, thumb), add, movt(3, 0x7001, thumb)],
             "twice": [movw(5, 0x8001, thumb), movt(5, 0x0101, thumb), movt(5, 0xFEDC, thumb)],
-            "limit": [nop] * 58 + [movw(6, 0x4321, thumb), movt(6, 0x8765, thumb)],
+            "limit": [nop] * (58 if thumb else 63) + [movw(6, 0x4321, thumb), movt(6, 0x8765, thumb)],
         }
         if thumb:
             programs["itt"] = [(0xBF04,), movw(7, 0x1111, True), movt(7, 0x2222, True)]

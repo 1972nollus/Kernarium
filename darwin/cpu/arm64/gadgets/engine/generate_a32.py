@@ -42,6 +42,7 @@ import a32_armv8  # noqa: E402
 import a32_neon  # noqa: E402  (the complete level; this file's sibling)
 import a32_parallel  # noqa: E402  (parallel add and subtract, SEL)
 import a32_simd  # noqa: E402  (VFP and Advanced SIMD; this file's sibling)
+import a32_structure  # noqa: E402  (VLDn and VSTn)
 
 
 class GenerationError(Exception):
@@ -561,6 +562,51 @@ def emit_dp(asm: Assembly) -> list[tuple[str, str, bool, str]]:
                 asm.gadget(name, dp_shape_body(op, s, shape))
                 produced.append((op, shape, s, name))
     return produced
+
+
+# Conditional data processing that sets no flags, as a select instead of a
+# skip: the result, or the register's old value where the condition fails.
+# The skip gadget's branch follows the guest's condition, which the image
+# kernels compute from their data, so it mispredicts where the select does
+# not branch at all. The operand word holds the condition as a truth table
+# over NZCV (bit n is whether the condition passes with NZCV = n), where an
+# ordinary data-processing word keeps its carry and register fields:
+#
+#   imm    table[0:16] rd[16:24] rn[24:32] imm32[32:64]
+#   reg    table[0:16] rd[16:24] rn[24:32] rm[32:40]
+SELECT_OPS = ["mov", "mvn", "add", "sub", "rsb", "and", "orr", "eor", "bic"]
+SELECT_SHAPES = ["imm", "reg"]
+
+
+def select_name(op: str, shape: str) -> str:
+    return f"dp_{op}_{shape}_select"
+
+
+def select_body(op: str, shape: str) -> str:
+    lines = ["ldr x8, [_stream], #8"]
+    if op not in UNARY:
+        lines += ["ubfx x9, x8, #24, #8", "ldr w9, [_cpu, x9]"]
+    if shape == "imm":
+        lines.append("lsr x12, x8, #32")
+    else:
+        lines += ["ubfx x12, x8, #32, #8", "ldr w12, [_cpu, x12]"]
+    a, b = "w9", "w12"
+    lines.append({"mov": f"mov w11, {b}", "mvn": f"mvn w11, {b}",
+                  "add": f"add w11, {a}, {b}", "sub": f"sub w11, {a}, {b}",
+                  "rsb": f"sub w11, {b}, {a}", "and": f"and w11, {a}, {b}",
+                  "orr": f"orr w11, {a}, {b}", "eor": f"eor w11, {a}, {b}",
+                  "bic": f"bic w11, {a}, {b}"}[op])
+    lines += ["ubfx x10, x8, #16, #8", "ldr w13, [_cpu, x10]",
+              "lsr w14, w27, #28", "lsr x15, x8, x14", "tst x15, #1",
+              "csel w11, w11, w13, ne", "str w11, [_cpu, x10]",
+              "next_gadget"]
+    return "\n".join(lines)
+
+
+def emit_select(asm: Assembly) -> None:
+    for op in SELECT_OPS:
+        for shape in SELECT_SHAPES:
+            asm.gadget(select_name(op, shape), select_body(op, shape))
 
 
 # ---------------------------------------------------------------------------
@@ -1184,6 +1230,11 @@ def build_assembly(asm: Assembly) -> None:
     a32_simd.emit(asm)
     a32_armv8.emit(asm)
     a32_parallel.emit(asm)
+    emit_select(asm)
+    a32_structure.emit_fused(asm)
+    a32_structure.emit_hinted(asm)
+    a32_simd.emit_compare_apsr(asm)
+    a32_simd.emit_move_select(asm)
 
 
 def write_assembly(path: Path, asm: Assembly, hand: list[str]) -> None:
@@ -1281,6 +1332,16 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
                 g(inplace_name(subtract, s, r))
                 for r in range(INPLACE_REGISTERS)) + "},")
         out.append("\t},")
+    out += ["};", ""]
+    out.append("/* Conditional data processing as a select: [operation][shape];"
+               " the operations")
+    out.append(" * are DP_ORDER's, the shapes imm and reg (generate_a32.py "
+               "SELECT_OPS). */")
+    out.append("inline constexpr G kDpSelect[17][2] = {")
+    for op in DP_ORDER:
+        out.append("\t{" + ", ".join(
+            g(select_name(op, shape)) if op in SELECT_OPS else absent
+            for shape in SELECT_SHAPES) + "},")
     out += ["};", ""]
     out.append("/* Single transfers: [size][mode]; modes are i ipre ipost ra "
                "rs rapre rspre rapost rspost abs. */")

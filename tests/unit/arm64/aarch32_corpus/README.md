@@ -126,6 +126,19 @@ On a boundary (any level):
   region into the read-only region. The words ahead of the faulting one are
   stored, and the base register is as before.
 
+Sequences an engine may translate together (any level):
+
+- `sequences`: an ADD or SUB of an immediate that computes the base of a
+  VLD1 or VST1, next to it or with Advanced SIMD data processing between, at
+  the memory suite's addresses and one that wraps around 2^32, and the shapes
+  that keep the two apart (flags set, a core register read, VFP or another
+  ADD between, another base, writeback, a hint, a PC base); VCMP and VCMPE
+  of each precision followed by VMRS APSR_nzcv, and apart, to a core
+  register or conditional; and the conditional data-processing instructions
+  that set no flags, MOVW and VMOV under conditions that pass and fail,
+  alone and in runs with conditional loads and stores, in A32 and IT blocks.
+  A copy that faults does so with the instructions before it retired.
+
 The `simd` level (VFPv4-D32 and Advanced SIMD):
 
 - `simd`: every register form, each word started in D registers of
@@ -145,6 +158,10 @@ The `simd` level (VFPv4-D32 and Advanced SIMD):
   that a single cannot hold, which the `simd` suite's edge values leave out;
 - `simd-memory`: VLDR, VSTR, VLDM, VSTM, FLDMX, FSTMX and the structure loads
   and stores VLD1-4 and VST1-4, aimed at the memory suite's addresses;
+- `simd-hints`: VLD1 and VST1 copies with each alignment hint and none, and
+  VLD1 to all lanes with and without one, at addresses the hint accepts and
+  refuses (the alignment fault comes before an unmapped page's), across the
+  4 KiB and 16 KiB lines, with each writeback;
 - `fpscr`: VMRS and VMSR, including the exception trap enables the profile
   reads as zero and ignores writes to, and FZ16, which holds what is written
   to it wherever FEAT_FP16 is.

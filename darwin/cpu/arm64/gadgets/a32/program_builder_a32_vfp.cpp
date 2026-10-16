@@ -36,12 +36,27 @@ Translator::Result Translator::emit_vfp(const Instruction &in,
 		push(reg(o.d) | reg(o.n) << 16 | reg(o.m) << 32);
 		return {};
 	case Family::vfp2:
+		/* A conditional VMOV of S or D registers, as a select (run()
+		 * opened no skip for it); anything else goes behind a skip. */
+		if (select_ < 14) {
+			const unsigned cond = select_;
+			select_ = 14;
+			if (plan.sub == kVfp2Vmov && precision < 2) {
+				push(kVfpMoveSelect[precision]);
+				push(reg(o.d) | reg(o.m) << 16 |
+				     condition_table(cond) << 32);
+				return {};
+			}
+			begin_instruction(cond);
+		}
 		push(kVfp2[plan.sub][precision]);
 		push(reg(o.d) | reg(o.m) << 16);
 		return {};
 	case Family::vfpcmp:
 		push(kVfpCmp[plan.sub][precision]);
 		push(reg(o.d) | reg(o.m) << 16);
+		if (in.cond == 14 && !in.in_it)
+			vfp_compare_ = {words_.size(), plan.sub, precision};
 		return {};
 	case Family::vfpimm:
 		push(dbl ? G::vfp_vmov_imm_d : G::vfp_vmov_imm_s);
@@ -55,6 +70,19 @@ Translator::Result Translator::emit_vfp(const Instruction &in,
 	case Family::vfpsys:
 		if (plan.sub == 0) {
 			if (o.t == 15) {
+				/* Right after an unconditional compare: one
+				 * gadget sets FPSCR.NZCV and copies it to NZCV. */
+				const auto cmp = vfp_compare_;
+				vfp_compare_.end = ~std::size_t{};
+				if (in.cond == 14 && !in.in_it &&
+				    cmp.end == words_.size() &&
+				    kVfpCmpApsr[cmp.operation][cmp.precision] !=
+					    G::count) {
+					words_[cmp.end - 2] = gadget(
+						kVfpCmpApsr[cmp.operation]
+							   [cmp.precision]);
+					return {false, true};
+				}
 				push(G::vfp_vmrs_apsr);
 				return {false, true};
 			}
