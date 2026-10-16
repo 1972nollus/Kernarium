@@ -28,6 +28,36 @@ using namespace aarch32;
 constexpr std::uintptr_t scratch0 = 15 * 8;
 constexpr std::uintptr_t scratch1 = 16 * 8;
 
+/* Whether condition `cond` passes, for each NZCV value n (N in bit 3, V in
+ * bit 0): bit n of the result. The truth table a select gadget tests. */
+[[nodiscard]] inline constexpr std::uint64_t condition_table(unsigned cond) noexcept
+{
+	std::uint64_t table = 0;
+	for (unsigned nzcv = 0; nzcv < 16; ++nzcv) {
+		const bool n = (nzcv & 8U) != 0, z = (nzcv & 4U) != 0;
+		const bool c = (nzcv & 2U) != 0, v = (nzcv & 1U) != 0;
+		bool pass = true;
+		switch (cond >> 1) {
+		case 0: pass = z; break;
+		case 1: pass = c; break;
+		case 2: pass = n; break;
+		case 3: pass = v; break;
+		case 4: pass = c && !z; break;
+		case 5: pass = n == v; break;
+		case 6: pass = !z && n == v; break;
+		default: break;
+		}
+		if ((cond & 1U) != 0 && cond != 15)
+			pass = !pass;
+		if (pass)
+			table |= std::uint64_t{1} << nzcv;
+	}
+	return table;
+}
+static_assert(condition_table(0) == 0xf0f0U);  /* EQ: Z */
+static_assert(condition_table(11) == 0x55aaU); /* LT: N != V */
+static_assert(condition_table(14) == 0xffffU);
+
 /* Where D0-D31 and S0-S31 are: they overlay V0-V15 (D(2n) is the low half
  * of V(n)), so a VFP or Advanced SIMD register is a byte offset. */
 constexpr std::uint64_t vector_base = UML_GADGET_CPU_V0;
@@ -204,6 +234,11 @@ private:
 		std::uint64_t operand{};
 	};
 	Compare compare_;
+	/* The condition of the instruction being translated when it is a
+	 * conditional data-processing instruction that sets no flags, which
+	 * emit_dp_values lowers as a select rather than behind a skip; 14
+	 * otherwise. */
+	unsigned select_{14};
 	/* The block holds a form that reads or writes the vector registers or
 	 * FPSCR (the decoder table's fp_state trait, set in run()), and so is
 	 * entered through the FP state link: CpuState loads the task's vectors

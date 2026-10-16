@@ -700,9 +700,13 @@ moves and the part holds no SVE or SME word. A conditional instruction is a
 skip over a run of instructions sharing its condition, a conditional
 terminal gives the skipped instruction back, and a block never ends inside an
 IT block: one the block limit cuts off ends in an unlinked exit with ITSTATE
-stored. A plain CMP of a register or of an immediate below 2^24, outside an IT
-block and followed at once by a conditional branch, is the A64 fused
-compare-and-branch gadget of the branch's condition, which reads the CpuState
+stored. Conditional data processing that sets no flags and does not write the
+PC (MOV, MVN, ADD, SUB, RSB, AND, ORR, EOR and BIC of an immediate or a
+register, and MOVW) is a select instead: its gadget computes the result and
+keeps the old value where the condition fails, so nothing branches on the
+guest's flags. A plain CMP of a register or of an immediate below 2^24,
+outside an IT block and followed at once by a conditional branch, is the A64
+fused compare-and-branch gadget of the branch's condition, which reads the CpuState
 slots a register lives in, so the pair costs one dispatch; ADD and SUB of an
 immediate to the same register have an entry per register R0 to R14 with the
 displacement baked in. A word the decoder rejects, a coprocessor word the profile lacks and

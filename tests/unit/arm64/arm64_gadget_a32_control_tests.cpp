@@ -5,7 +5,8 @@
  * the corpus's; these programs pin the translator's control behaviour:
  *
  * - retirement counts, with skipped conditional instructions retired and a
- *   faulting or undefined instruction not;
+ *   faulting or undefined instruction not, and conditional data processing
+ *   that sets no flags as a select rather than behind a skip;
  * - the key every exit leaves in cpu.pc, the architectural fault address,
  *   and ITSTATE at SVC, at a fault and in an entry in the middle of a block;
  * - interworking branches in both directions and the A32 target with
@@ -154,6 +155,97 @@ void skipped_conditional_instructions_retire()
 	require(result.reason == ExitReason::system_call);
 	require(result.retired_instructions == 5);
 	require(reg(cpu, 1) == 10 && reg(cpu, 2) == 21);
+}
+
+} // namespace
+
+extern "C" {
+void uml_arm64_gadget_a32_skip_eq();
+void uml_arm64_gadget_a32_skip_ne();
+void uml_arm64_gadget_a32_skip_cs();
+void uml_arm64_gadget_a32_skip_cc();
+void uml_arm64_gadget_a32_skip_mi();
+void uml_arm64_gadget_a32_skip_pl();
+void uml_arm64_gadget_a32_skip_vs();
+void uml_arm64_gadget_a32_skip_vc();
+void uml_arm64_gadget_a32_skip_hi();
+void uml_arm64_gadget_a32_skip_ls();
+void uml_arm64_gadget_a32_skip_ge();
+void uml_arm64_gadget_a32_skip_lt();
+void uml_arm64_gadget_a32_skip_gt();
+void uml_arm64_gadget_a32_skip_le();
+}
+
+namespace {
+
+/* Whether a translation of `words` at the code base holds a skip gadget. */
+[[nodiscard]] bool translation_skips(std::span<const std::uint32_t> words)
+{
+	const auto options = options_at(gadgets::a32_support);
+	const auto output = gadgets::a32::build(
+		{.key = aarch32::a32_key(code_base), .code = std::as_bytes(words)},
+		{}, std::pmr::get_default_resource(), {}, options,
+		gadgets::a32::decode_profile(options), 64);
+	for (const auto word : output.result.program.words())
+		for (const auto skip : {&uml_arm64_gadget_a32_skip_eq,
+					&uml_arm64_gadget_a32_skip_ne,
+					&uml_arm64_gadget_a32_skip_cs,
+					&uml_arm64_gadget_a32_skip_cc,
+					&uml_arm64_gadget_a32_skip_mi,
+					&uml_arm64_gadget_a32_skip_pl,
+					&uml_arm64_gadget_a32_skip_vs,
+					&uml_arm64_gadget_a32_skip_vc,
+					&uml_arm64_gadget_a32_skip_hi,
+					&uml_arm64_gadget_a32_skip_ls,
+					&uml_arm64_gadget_a32_skip_ge,
+					&uml_arm64_gadget_a32_skip_lt,
+					&uml_arm64_gadget_a32_skip_gt,
+					&uml_arm64_gadget_a32_skip_le})
+			if (word == reinterpret_cast<std::uintptr_t>(skip))
+				return true;
+	return false;
+}
+
+/* A conditional data-processing instruction that sets no flags is a select
+ * of its result and the register's old value, with no skip and so no branch
+ * on the guest's data; one that sets flags, a conditional compare and a
+ * conditional load keep their skip. */
+void conditional_data_processing_selects_without_a_skip()
+{
+	const std::array<std::uint32_t, 7> words{
+		0xe350'0000U, /* cmp r0, #0 */
+		0x03a0'1005U, /* moveq r1, #5 */
+		0x1282'2001U, /* addne r2, r2, #1 */
+		0xb263'3000U, /* rsblt r3, r3, #0 */
+		0xc301'4234U, /* movwgt r4, #0x1234 */
+		0x11a0'5006U, /* movne r5, r6 */
+		a::svc};
+	require(!translation_skips(words));
+	struct Case final {
+		std::uint32_t r0, r1, r2, r3, r4, r5;
+	};
+	for (const auto &item : {Case{0, 5, 20, 30, 40, 50},
+				 Case{1, 10, 21, 30, 0x1234, 60},
+				 Case{~0U, 10, 21, 0U - 30U, 40, 60}}) {
+		Guest guest{1070 + item.r0 % 4};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		auto cpu = a32_state();
+		cpu.registers[0] = item.r0;
+		for (unsigned index = 1; index <= 6; ++index)
+			cpu.registers[index] = 10 * index;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(result.retired_instructions == words.size());
+		require(reg(cpu, 1) == item.r1 && reg(cpu, 2) == item.r2 &&
+			reg(cpu, 3) == item.r3 && reg(cpu, 4) == item.r4 &&
+			reg(cpu, 5) == item.r5);
+	}
+	/* addsne r2, r2, #1; cmpne r0, #1; ldrne r1, [r2] */
+	for (const auto word : {0x1292'2001U, 0x1350'0001U, 0x1592'1000U}) {
+		const std::array<std::uint32_t, 2> pair{word, a::svc};
+		require(translation_skips(pair));
+	}
 }
 
 void conditional_branch_retires_taken_or_not()
@@ -2623,6 +2715,7 @@ int main()
 	const ::uml::testing::RuntimeTestRoute runtime_route;
 	straight_line_retires_every_instruction();
 	skipped_conditional_instructions_retire();
+	conditional_data_processing_selects_without_a_skip();
 	conditional_branch_retires_taken_or_not();
 	conditional_supervisor_call_is_skipped_or_taken();
 	a_data_fault_stops_at_the_instruction();

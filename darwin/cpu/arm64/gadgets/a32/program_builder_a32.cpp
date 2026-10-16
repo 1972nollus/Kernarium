@@ -415,6 +415,26 @@ Translator::Result Translator::emit_dp_values(const Instruction &in,
 			}
 		}
 	}
+	/* A conditional instruction that sets no flags, as a select of the
+	 * result and the old value (run() opened no skip for it). A shape
+	 * without a select gadget goes behind a skip after all: nothing of
+	 * this instruction is in the stream yet but scratch values. */
+	if (select_ < 14) {
+		const unsigned cond = select_;
+		select_ = 14;
+		const G which = sets || rd >= 15U * 8U ? G::count :
+			shape == shape_imm ? kDpSelect[op][0] :
+			shape == shape_reg ? kDpSelect[op][1] : G::count;
+		if (which != G::count) {
+			push(which);
+			push(condition_table(cond) | std::uint64_t{rd} << 16 |
+			     std::uint64_t{rn} << 24 |
+			     (shape == shape_imm ? std::uint64_t{immediate} :
+						   std::uint64_t{rm}) << 32);
+			return {};
+		}
+		begin_instruction(cond);
+	}
 	/* ADD or SUB of an immediate to a register in place: the entry with
 	 * the register baked. R15 and the scratch slots are not registers. */
 	if (shape == shape_imm && (op == op_add || op == op_sub) && rd == rn &&
@@ -1331,13 +1351,23 @@ BuildOutput Translator::run()
 			break;
 		}
 		if (in.status == Status::ok) {
-			/* A conditional branch tests its own condition; every
-			 * other conditional instruction is behind a skip. */
+			/* A conditional branch tests its own condition, and
+			 * conditional data processing that sets no flags is a
+			 * select where emit_dp_values has one for its shape;
+			 * every other conditional instruction is behind a
+			 * skip. */
 			if (plan.family == Family::branch ||
-			    plan.family == Family::cbz || plan.family == Family::it)
+			    plan.family == Family::cbz || plan.family == Family::it) {
 				close_run();
-			else
+			} else if (in.cond < 14 && !in.operands.setflags &&
+				   in.operands.d != 15 &&
+				   (plan.family == Family::dp ||
+				    plan.family == Family::movw)) {
+				close_run();
+				select_ = in.cond;
+			} else {
 				begin_instruction(in.cond);
+			}
 			/* The vectors and FPSCR load lazily, once, for a block
 			 * marked as touching them (uses_fp_): every form that
 			 * does, by the decoder table's fp_state trait, whichever
