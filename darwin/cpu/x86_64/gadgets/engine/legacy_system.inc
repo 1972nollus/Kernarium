@@ -235,6 +235,7 @@ Lx86_bound_loaded\@:
 bound_gadget 16
 bound_gadget 32
 Lx86_bound_range:
+	instruction_rip x22
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_BOUND_RANGE
 	b uml_x86_64_gadget_leave
@@ -298,7 +299,7 @@ Lx86_arpl_memory_unchanged:
 
 .macro push_all width
 gadget push_all_\width
-	ldp x23, x22, [_stream], #16
+	ldr x23, [_stream], #8
 	ldr x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub w25, w26, #(8 * (\width / 8))
 	mov x7, x25
@@ -422,7 +423,7 @@ Lx86_push_all_done\@:
 
 .macro pop_all width
 gadget pop_all_\width
-	ldr x22, [_stream], #8
+	ldr x23, [_stream], #8
 	ldr w25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	mov x7, x25
 	page_cross_check (8 * (\width / 8)), Lx86_pop_all_cross\@
@@ -492,7 +493,7 @@ pop_all 32
 
 .macro push_segment_compat32
 gadget push_segment_32
-	ldp x23, x22, [_stream], #16
+	ldr x23, [_stream], #8
 	and x8, x23, #0xffff
 	ldrh w24, [_cpu, x8]
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
@@ -513,7 +514,7 @@ push_segment_compat32
 .purgem push_segment_compat32
 
 gadget push_segment_64
-	ldp x23, x22, [_stream], #16
+	ldr x23, [_stream], #8
 	and x8, x23, #0xffff
 	ldrh w24, [_cpu, x8]
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
@@ -530,7 +531,7 @@ Lx86_push_segment_64_cross:
 	b Lx86_push_segment_64_done
 
 gadget xlat
-	ldp x23, x22, [_stream], #16
+	ldr x23, [_stream], #8
 	ldr x7, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
 	ldrb w9, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	tbnz x23, #3, Lx86_xlat_address_16
