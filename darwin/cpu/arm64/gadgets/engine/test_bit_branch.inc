@@ -54,7 +54,6 @@ test_bit_branch z, eq
 test_bit_branch nz, ne
 
 .purgem test_bit_branch
-.purgem follow_block_link
 
 /* The end of the family, for the table of entries a streaming program may
  * name. */

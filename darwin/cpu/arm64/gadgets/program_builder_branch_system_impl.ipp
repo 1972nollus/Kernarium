@@ -212,15 +212,21 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		const bool cached = static_cast<bool>(resolve_indirect_link) &&
 			(opcode != 0xd63f'0000U ||
 				static_cast<bool>(resolve_link));
+		/* RET through X30 names no source register; the entry loads it
+		 * from its fixed place. */
+		const bool baked_return = cached && opcode == 0xd65f'0000U &&
+			source == 30U;
 		emit(words, opcode == 0xd61f'0000U ?
 			(cached ? uml_arm64_gadget_branch_register_cached :
 				uml_arm64_gadget_branch_register) :
 			opcode == 0xd63f'0000U ?
 			(cached ? uml_arm64_gadget_branch_link_register_cached :
 				uml_arm64_gadget_branch_link_register) :
+			baked_return ? uml_arm64_gadget_return_x30_cached :
 			(cached ? uml_arm64_gadget_return_cached :
 				uml_arm64_gadget_return));
-		emit(words, arithmetic_register_offset(source));
+		if (!baked_return)
+			emit(words, arithmetic_register_offset(source));
 		if (cached)
 			emit_indirect_link(context, address,
 				opcode == 0xd65f'0000U);
