@@ -46,13 +46,13 @@ PLATFORM_CERT = (
     "AAECAwQFBgcICQ==\n"
     "-----END CERTIFICATE-----\n"
 )
-# The AOSP public test certificate and a vendor's extra recovery certificate.
+# The AOSP public test certificate and the LineageOS release certificate.
 AOSP_CERT = (
     "-----BEGIN CERTIFICATE-----\n"
     "CgsMDQ4PEBESEw==\n"
     "-----END CERTIFICATE-----\n"
 )
-EXTRA_CERT = (
+LINEAGE_CERT = (
     "-----BEGIN CERTIFICATE-----\n"
     "FBUWFxgZGhscHQ==\n"
     "-----END CERTIFICATE-----\n"
@@ -89,16 +89,18 @@ print("NOT signing: F-Droid.apk (skipped due to special cert string)")
 
 def build_target_files(path: Path, ota: str) -> None:
     """The fake signer copies this archive, so it holds the signed OTA certificates."""
-    recovery = {
-        "ok": (PLATFORM_CERT, EXTRA_CERT),
-        "ota-aosp": (PLATFORM_CERT, AOSP_CERT),
-        "ota-missing": (EXTRA_CERT,),
+    system, recovery = {
+        "ok": ((PLATFORM_CERT,), (PLATFORM_CERT,)),
+        "ota-aosp": ((PLATFORM_CERT,), (PLATFORM_CERT, AOSP_CERT)),
+        "ota-lineage": ((PLATFORM_CERT,), (PLATFORM_CERT, LINEAGE_CERT)),
+        "ota-system-aosp": ((AOSP_CERT, PLATFORM_CERT), (PLATFORM_CERT,)),
+        "ota-missing": ((PLATFORM_CERT,), (LINEAGE_CERT,)),
     }[ota]
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("META/apexkeys.txt", APEXKEYS)
         archive.writestr("META/apkcerts.txt", APKCERTS)
         archive.writestr("IMAGES/userdata.img", b"seed")
-        archive.writestr("SYSTEM/etc/security/otacerts.zip", otacerts(PLATFORM_CERT))
+        archive.writestr("SYSTEM/etc/security/otacerts.zip", otacerts(*system))
         archive.writestr(
             "RECOVERY/RAMDISK/system/etc/security/otacerts.zip", otacerts(*recovery)
         )
@@ -136,6 +138,9 @@ def run_case(
     security = case / "build/make/target/product/security"
     security.mkdir(parents=True)
     (security / "testkey.x509.pem").write_text(AOSP_CERT)
+    lineage = case / "vendor/lineage/build/target/product/security"
+    lineage.mkdir(parents=True)
+    (lineage / "lineage.x509.pem").write_text(LINEAGE_CERT)
     keys = case / "keys"
     build_keys(keys, skip=skip, loose=loose)
     os.chmod(keys, key_mode)
@@ -216,7 +221,15 @@ def main() -> None:
             ("fail", {"mode": "fail"}, "sign_target_files_apks failed"),
             (
                 "ota-aosp", {"mode": "ok", "ota": "ota-aosp"},
-                "RECOVERY/RAMDISK/system/etc/security/otacerts.zip still trusts an AOSP",
+                "RECOVERY/RAMDISK/system/etc/security/otacerts.zip still trusts a public",
+            ),
+            (
+                "ota-lineage", {"mode": "ok", "ota": "ota-lineage"},
+                "RECOVERY/RAMDISK/system/etc/security/otacerts.zip still trusts a public",
+            ),
+            (
+                "ota-system-aosp", {"mode": "ok", "ota": "ota-system-aosp"},
+                "SYSTEM/etc/security/otacerts.zip still trusts a public",
             ),
             (
                 "ota-missing", {"mode": "ok", "ota": "ota-missing"},

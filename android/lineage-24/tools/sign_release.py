@@ -5,7 +5,7 @@
 is copied into a private (0700) directory, the AOSP releasetools sign the
 archive with those keys, the signing log is checked so no APK or APEX stays
 signed with a key outside the copy, the OTA certificates are replaced and
-checked so no AOSP public test certificate stays trusted, and the copy is
+checked so no public AOSP or LineageOS certificate stays trusted, and the copy is
 deleted again, with the deletion verified, whether or not signing succeeded.
 
 The key directory holds the Android platform set (`releasekey`, `platform`,
@@ -34,6 +34,9 @@ from pathlib import Path
 from release_common import fail
 
 SECURITY_DIR = "build/make/target/product/security/"
+# Source directories of public certificates (AOSP's test keys and LineageOS's
+# release certificate) that no signed release may trust.
+PUBLIC_CERTIFICATE_DIRS = (SECURITY_DIR, "vendor/lineage/build/target/product/security/")
 PLATFORM_KEYS = ("releasekey", "platform", "media", "shared")
 # `signing: NAME [container] (KEY)` and the continuation `: NAME payload (KEY)`;
 # the tool may print the next record on the same line, so search the text.
@@ -150,19 +153,27 @@ def certificate_digests(keys: Path) -> dict[str, str]:
 
 
 def check_ota_certificates(signed_output: Path, keys: Path, aosp_source: Path) -> None:
-    """Every otacerts.zip must trust the release certificate and no AOSP one.
+    """Every otacerts.zip, in the system and the recovery, must trust the
+    release certificate and no public AOSP or LineageOS certificate.
 
     Without the OTA key replacement the recovery and the system keep the AOSP
     public test certificate, which would let anyone sideload an update."""
     release = pem_digest((keys / "releasekey.x509.pem").read_bytes())
     public = {
         pem_digest(path.read_bytes())
-        for path in sorted((aosp_source / SECURITY_DIR).glob("*.x509.pem"))
+        for directory in PUBLIC_CERTIFICATE_DIRS
+        for path in sorted((aosp_source / directory).glob("*.x509.pem"))
     }
+    if not public:
+        fail("the source tree holds no public certificates to check against")
     with zipfile.ZipFile(signed_output) as archive:
         names = [name for name in archive.namelist() if name.endswith("/otacerts.zip")]
-        if not names:
-            fail("the signed target files hold no otacerts.zip")
+        for required in (
+            "SYSTEM/etc/security/otacerts.zip",
+            "RECOVERY/RAMDISK/system/etc/security/otacerts.zip",
+        ):
+            if required not in names:
+                fail(f"the signed target files omit {required}")
         for name in names:
             with zipfile.ZipFile(io.BytesIO(archive.read(name))) as certificates:
                 digests = {
@@ -173,7 +184,7 @@ def check_ota_certificates(signed_output: Path, keys: Path, aosp_source: Path) -
             if release not in digests:
                 fail(f"{name} omits the release certificate")
             if digests & public:
-                fail(f"{name} still trusts an AOSP public test certificate")
+                fail(f"{name} still trusts a public AOSP or LineageOS certificate")
 
 
 def run_logged(arguments: list[str], *, cwd: Path, env: dict[str, str]) -> str:

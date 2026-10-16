@@ -84,6 +84,11 @@ PRODUCT_COPY_FILES_EXCLUDE += \
     frameworks/base/data/sounds/newwavelabs/% \
     frameworks/base/data/sounds/ringtones/%
 
+# LineageOS's recovery also trusts the public LineageOS release certificate, so
+# the project's own builds can be sideloaded. This product is signed with its
+# owner's key alone: the recovery and the system trust that key and no other.
+PRODUCT_EXTRA_RECOVERY_KEYS :=
+
 PRODUCT_NAME := lineage_darwin
 PRODUCT_DEVICE := darwin
 PRODUCT_BRAND := Android
