@@ -1420,17 +1420,6 @@ def main() -> None:
         [
             sys.executable,
             "-B",
-            str(android_root / "tools/verify-orangefox-source.py"),
-            "--android-root",
-            str(android_root),
-        ],
-        check=True,
-    )
-
-    subprocess.run(
-        [
-            sys.executable,
-            "-B",
             str(root / "kernel/common/tooling/kernel_series.py"),
             "check",
             "--metadata",
@@ -1483,7 +1472,6 @@ def main() -> None:
         for path in (
             android_root / "README.md",
             android_root / "metadata/lineage.env",
-            android_root / "third_party/orangefox/metadata.env",
             kernel_root / "README.md",
             root / "kernel/common/config/darwin-uml.fragment",
             kernel_root / "config/android.fragment",

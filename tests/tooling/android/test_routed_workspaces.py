@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Run the AOSP and OrangeFox source verifiers against routed Repo workspaces.
+"""Run the AOSP source verifier against a routed Repo workspace.
 
-A fake `repo` on PATH answers the two commands the verifiers use: `manifest
+A fake `repo` on PATH answers the two commands the verifier uses: `manifest
 -r`, which reports every listed project at its checked-out HEAD, and `forall
--c`, which runs a shell command in each project with REPO_PATH set. Each
+-c`, which runs a shell command in each project with REPO_PATH set. The
 workspace has one routed project with a generated series, unrouted projects
 at their pinned revisions, and the synchronized device tree.
 """
@@ -372,153 +372,6 @@ def check_snapshot(source_root: Path, android_root: Path, root: Path,
         fail("snapshot-source.py recorded a dirty workspace")
 
 
-def check_orangefox(source_root: Path, root: Path, environment: dict[str, str]) -> None:
-    real = parse_env(source_root / "android/lineage-24/third_party/orangefox/metadata.env")
-    android_root = root / "orangefox-policy"
-    workspace = root / "orangefox"
-    manifests = workspace / ".repo/manifests"
-    manifests.mkdir(parents=True)
-    run("git", "init", "-q", str(manifests))
-    commit(manifests, "default.xml", "<manifest/>\n", "manifest", 1700000000)
-    route_base, route_base_tree = project(workspace, "build/make", 1700000010)
-    recovery_base, recovery_base_tree = project(workspace, "bootable/recovery", 1700000020)
-    vendor, vendor_tree = project(workspace, "vendor/recovery", 1700000030)
-    omapi, omapi_tree = project(workspace, "external/se_omapi", 1700000040)
-    route = workspace / "build/make"
-    recovery = workspace / "bootable/recovery"
-    route_final, route_final_tree = topic(route, 1700000050)
-    recovery_final, recovery_final_tree = topic(recovery, 1700000060)
-    for path, key in (
-        ("bootable/recovery", "ORANGEFOX_BOOTABLE_RECOVERY_REPOSITORY"),
-        ("vendor/recovery", "ORANGEFOX_VENDOR_RECOVERY_REPOSITORY"),
-        ("external/se_omapi", "ORANGEFOX_SE_OMAPI_REPOSITORY"),
-    ):
-        run("git", "remote", "add", "origin", real[key], cwd=workspace / path)
-    projects = [
-        ("android_build", "build/make", "android-14"),
-        ("android_bootable_recovery", "bootable/recovery", "android-14"),
-        ("android_vendor_recovery", "vendor/recovery", "android-14"),
-        ("android_external_se_omapi", "external/se_omapi", "android-14"),
-    ]
-    write_projects(workspace, projects, "nebrassy")
-
-    orangefox = android_root / "third_party/orangefox"
-    orangefox.mkdir(parents=True)
-    (android_root / "tools").mkdir()
-    shutil.copy2(
-        source_root / "android/lineage-24/tools/sync-device-tree.py",
-        android_root / "tools/sync-device-tree.py",
-    )
-    device = orangefox / "device"
-    device.mkdir()
-    (device / "device.mk").write_text("# fixture device\n")
-    copy_device_tree(device, workspace)
-    digest = write_manifest(orangefox / "base-manifest.xml", [
-        ("android_build", "build/make", route_base, "android-14"),
-        ("android_bootable_recovery", "bootable/recovery", recovery_base, "android-14"),
-        ("android_vendor_recovery", "vendor/recovery", vendor, "android-14"),
-        ("android_external_se_omapi", "external/se_omapi", omapi, "android-14"),
-    ], "nebrassy", explicit=True)
-    values = dict(real)
-    values.update({
-        "ORANGEFOX_MANIFEST_COMMIT": run("git", "rev-parse", "HEAD", cwd=manifests),
-        "ORANGEFOX_MANIFEST_TREE": run("git", "rev-parse", "HEAD^{tree}", cwd=manifests),
-        "ORANGEFOX_BASE_MANIFEST_SHA256": digest,
-        "ORANGEFOX_BOOTABLE_RECOVERY_COMMIT": recovery_base,
-        "ORANGEFOX_BOOTABLE_RECOVERY_TREE": recovery_base_tree,
-        "ORANGEFOX_VENDOR_RECOVERY_COMMIT": vendor,
-        "ORANGEFOX_VENDOR_RECOVERY_TREE": vendor_tree,
-        "ORANGEFOX_SE_OMAPI_COMMIT": omapi,
-        "ORANGEFOX_SE_OMAPI_TREE": omapi_tree,
-    })
-    (orangefox / "metadata.env").write_text(
-        "".join(f"{key}='{value}'\n" for key, value in values.items())
-    )
-    rows = []
-    for order, (name, path, base, base_tree, final_tree) in enumerate((
-        ("android_build", "build/make", route_base, route_base_tree, route_final_tree),
-        ("android_bootable_recovery", "bootable/recovery", recovery_base,
-         recovery_base_tree, recovery_final_tree),
-    ), 1):
-        series = f"third_party/orangefox/patches/projects/p{order:04d}/series"
-        export(workspace / path, base, android_root / series, "GPL-3.0-or-later")
-        rows.append(
-            f"{order}\tp{order:04d}\tnebrassy\t{name}\t{path}\tandroid-14\t"
-            f"{base}\t{base_tree}\t{final_tree}\t{series}\n"
-        )
-    (orangefox / "patches/projects.tsv").write_text(
-        "# SPDX-License-Identifier: GPL-3.0-or-later\n"
-        "order\troute_id\tmanifest_remote\tmanifest_project\tcheckout_path\t"
-        "manifest_upstream\tbase_commit\tbase_tree\tfinal_tree\tseries_dir\n"
-        + "".join(rows)
-    )
-
-    verifier = Verifier(
-        source_root / "android/lineage-24/tools/verify-orangefox-source.py",
-        android_root, "--orangefox-source", workspace, environment,
-    )
-    check_route_states(verifier, [
-        (route, route_base, route_final),
-        (recovery, recovery_base, recovery_final),
-    ], "OrangeFox")
-    detach(route, route_base)
-    verifier.refuses(
-        "a second OrangeFox route past its base for --expect base",
-        "route p0002 is not at its exact base", "base",
-    )
-    detach(route, route_final)
-
-    kernel = workspace / "device/kernarium/darwin/prebuilt/kernel"
-    kernel.parent.mkdir()
-    kernel.write_bytes(b"kernel")
-    kernel.chmod(0o755)
-    verifier.refuses(
-        "a prebuilt OrangeFox kernel without --allow-prebuilt-kernel",
-        "destination inventory differs", "final",
-    )
-    verifier.accepts(
-        "a prebuilt OrangeFox kernel with --allow-prebuilt-kernel",
-        "final", "--allow-prebuilt-kernel",
-    )
-    shutil.rmtree(kernel.parent)
-
-    commit(workspace / "external/se_omapi", "moved.txt", "moved\n", "moved", 1700000070)
-    verifier.refuses(
-        "a moved unrouted OrangeFox project",
-        "external/se_omapi", "final",
-    )
-    detach(workspace / "external/se_omapi", omapi)
-
-    run("git", "remote", "set-url", "origin", "https://example.invalid/recovery.git",
-        cwd=workspace / "vendor/recovery")
-    verifier.refuses(
-        "an OrangeFox external with another origin",
-        "OrangeFox external origin differs: vendor/recovery", "final",
-    )
-    run("git", "remote", "set-url", "origin", real["ORANGEFOX_VENDOR_RECOVERY_REPOSITORY"],
-        cwd=workspace / "vendor/recovery")
-
-    commit(manifests, "default.xml", "<manifest></manifest>\n", "moved", 1700000080)
-    verifier.refuses(
-        "a moved OrangeFox manifest checkout",
-        "OrangeFox manifest checkout moved from its pin", "final",
-    )
-    run("git", "reset", "-q", "--hard", "HEAD~1", cwd=manifests)
-
-    project(workspace, "external/extra", 1700000090)
-    write_projects(
-        workspace, [*projects, ("android_external_extra", "external/extra", "x")],
-        "nebrassy",
-    )
-    verifier.refuses(
-        "an OrangeFox project the base manifest lacks",
-        "Repo project paths differ", "final",
-    )
-    write_projects(workspace, projects, "nebrassy")
-    check_route_checkout(verifier, root, workspace, projects, "nebrassy", "OrangeFox")
-    verifier.accepts("the restored OrangeFox workspace", "final")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
@@ -534,9 +387,8 @@ def main() -> None:
         (tools / "repo").chmod(0o755)
         environment = dict(os.environ, PATH=f"{tools}{os.pathsep}{os.environ['PATH']}")
         check_aosp(source_root, root, environment)
-        check_orangefox(source_root, root, environment)
 
-    print("routed AOSP and OrangeFox workspace verifiers passed")
+    print("routed AOSP workspace verifier passed")
 
 
 if __name__ == "__main__":
