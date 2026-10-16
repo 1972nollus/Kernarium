@@ -640,15 +640,30 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			emit(words, uml_arm64_gadget_nop);
 		} else {
 			const unsigned source = (instruction >> 5) & 31U;
-			emit(words, bitfield_gadget(is_64_bit, operation,
-				rotate != 0U, source == 31U));
-			emit(words,
-				static_cast<std::uintptr_t>(destination * 8U) |
-				(static_cast<std::uintptr_t>(source * 8U) << 16) |
-				(static_cast<std::uintptr_t>(rotate) << 32) |
-				(static_cast<std::uintptr_t>(imms) << 40));
-			emit(words, masks->write);
-			emit(words, masks->test);
+			if (operation == 1U) {
+				emit(words, bitfield_gadget(is_64_bit, operation,
+					rotate != 0U, source == 31U));
+				emit(words,
+					static_cast<std::uintptr_t>(destination * 8U) |
+					(static_cast<std::uintptr_t>(source * 8U) << 16) |
+					(static_cast<std::uintptr_t>(rotate) << 32) |
+					(static_cast<std::uintptr_t>(imms) << 40));
+				emit(words, masks->write);
+				emit(words, masks->test);
+			} else {
+				/* SBFM and UBFM are (source << left) >> right;
+				 * engine/bitfield_shift.inc derives the amounts
+				 * and says where the operand keeps them. */
+				const unsigned mask = is_64_bit ? 63U : 31U;
+				const unsigned left = mask - imms;
+				const unsigned right = (rotate - imms - 1U) & mask;
+				emit(words, bitfield_shift_gadget(is_64_bit,
+					operation == 0U, left != 0U, right != 0U));
+				emit(words, (left != 0U ? left : right) |
+					(static_cast<std::uintptr_t>(right) << 6) |
+					(static_cast<std::uintptr_t>(destination * 8U) << 16) |
+					(arithmetic_register_offset(source) << 32));
+			}
 		}
 	} else if ((instruction & 0xffff'c000U) == 0xdac1'0000U ||
 		   (instruction & 0xffff'f800U) == 0xdac1'4000U) {
