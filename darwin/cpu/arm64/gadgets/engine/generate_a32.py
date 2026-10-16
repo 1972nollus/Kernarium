@@ -1233,6 +1233,7 @@ def build_assembly(asm: Assembly) -> None:
     emit_select(asm)
     a32_structure.emit_fused(asm)
     a32_structure.emit_hinted(asm)
+    a32_simd.emit_compare_apsr(asm)
 
 
 def write_assembly(path: Path, asm: Assembly, hand: list[str]) -> None:

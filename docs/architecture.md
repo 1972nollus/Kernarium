@@ -707,7 +707,9 @@ keeps the old value where the condition fails, so nothing branches on the
 guest's flags. A plain CMP of a register or of an immediate below 2^24,
 outside an IT block and followed at once by a conditional branch, is the A64
 fused compare-and-branch gadget of the branch's condition, which reads the CpuState
-slots a register lives in, so the pair costs one dispatch; ADD and SUB of an
+slots a register lives in, so the pair costs one dispatch. An unconditional
+VCMP or VCMPE followed at once by an unconditional VMRS APSR_nzcv is likewise
+one gadget that sets FPSCR's flags and copies them to NZCV. ADD and SUB of an
 immediate to the same register have an entry per register R0 to R14 with the
 displacement baked in. A word the decoder rejects, a coprocessor word the profile lacks and
 a form above the engine's level end the block in the illegal-instruction exit

@@ -2013,6 +2013,48 @@ void hinted_copies_and_loads_to_all_lanes_have_their_own_gadgets()
 	}
 }
 
+} // namespace
+
+extern "C" {
+void uml_arm64_gadget_a32_vfp_vcmpe_s_apsr();
+void uml_arm64_gadget_a32_vfp_vmrs_apsr();
+}
+
+namespace {
+
+/* A VCMP or VCMPE followed at once by VMRS APSR_nzcv is one gadget that
+ * sets FPSCR.NZCV and copies it to the APSR, for each kind of outcome. */
+void a_compare_and_the_flag_transfer_after_it_run_as_one()
+{
+	const std::array<std::uint32_t, 5> words{
+		0xeeb4'3ac4U, /* vcmpe.f32 s6, s8 */
+		0xeef1'fa10U, /* vmrs APSR_nzcv, fpscr */
+		0xb300'1001U, /* movwlt r1, #1 */
+		0xeef1'2a10U, /* vmrs r2, fpscr */
+		a::svc};
+	require(translation_holds(words, &uml_arm64_gadget_a32_vfp_vcmpe_s_apsr));
+	require(!translation_holds(words, &uml_arm64_gadget_a32_vfp_vmrs_apsr));
+	struct Case final {
+		std::uint32_t s6, s8, r1, fpscr;
+	};
+	unsigned long generation = 1090;
+	for (const auto &item : {Case{0x3f80'0000U, 0x4000'0000U, 1, 0x8000'0000U},
+				 Case{0x4000'0000U, 0x3f80'0000U, 0, 0x2000'0000U},
+				 Case{0x3f80'0000U, 0x3f80'0000U, 0, 0x6000'0000U},
+				 Case{0x3f80'0000U, 0x7fc0'0000U, 1, 0x3000'0001U}}) {
+		Guest guest{generation++};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		auto cpu = a32_state();
+		set_d(cpu, 3, item.s6);
+		set_d(cpu, 4, item.s8);
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(result.retired_instructions == words.size());
+		require(reg(cpu, 1) == item.r1 && reg(cpu, 2) == item.fpscr);
+	}
+}
+
 /* A VLD1 or VST1 copy that crosses a page is a gadget too: the slow transfer
  * helper moves the bytes after translating both pages. */
 void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
@@ -2977,6 +3019,7 @@ int main()
 	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();
 	an_add_that_computes_a_copy_base_runs_in_the_copy();
 	hinted_copies_and_loads_to_all_lanes_have_their_own_gadgets();
+	a_compare_and_the_flag_transfer_after_it_run_as_one();
 	in_place_add_and_sub_of_an_immediate_reach_every_register();
 	compare_and_branch_pairs_take_the_branch_as_the_pair_does();
 	parallel_arithmetic_and_sel_stay_out_of_the_library();

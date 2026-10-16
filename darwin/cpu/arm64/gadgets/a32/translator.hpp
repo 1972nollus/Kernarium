@@ -254,6 +254,17 @@ private:
 	AddressAdd address_add_;
 	/* Library exits pushed so far. */
 	std::size_t library_calls_{};
+	/* The unconditional VCMP or VCMPE pushed last, while nothing has been
+	 * pushed since: `end` is the length of the stream just after it, ~0
+	 * when there is none, and `operation` and `precision` its kVfpCmpApsr
+	 * row and column. A VMRS APSR_nzcv right after it turns its gadget
+	 * into the fused one. */
+	struct VfpCompare final {
+		std::size_t end{~std::size_t{}};
+		unsigned operation{};
+		unsigned precision{};
+	};
+	VfpCompare vfp_compare_;
 	/* The block holds a form that reads or writes the vector registers or
 	 * FPSCR (the decoder table's fp_state trait, set in run()), and so is
 	 * entered through the FP state link: CpuState loads the task's vectors
