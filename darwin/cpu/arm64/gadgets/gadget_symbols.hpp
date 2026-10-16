@@ -7,6 +7,8 @@ namespace uml::cpu::arm64::gadgets::selection {
 
 extern "C" {
 void uml_arm64_gadget_move_wide_constant();
+void uml_arm64_gadget_move_wide_packed_zero();
+void uml_arm64_gadget_move_wide_packed_ones();
 #define UML_DECLARE_ADD_SUB_IMMEDIATE_MODES(prefix) \
 	void uml_arm64_gadget_add_sub_immediate_##prefix##_rr(); \
 	void uml_arm64_gadget_add_sub_immediate_##prefix##_rs(); \
@@ -312,6 +314,19 @@ UML_DECLARE_BITFIELD_SOURCES(x_s)
 UML_DECLARE_BITFIELD_SOURCES(x_b)
 UML_DECLARE_BITFIELD_SOURCES(x_u)
 #undef UML_DECLARE_BITFIELD_SOURCES
+#define UML_DECLARE_BITFIELD_SHIFT(prefix) \
+	void uml_arm64_gadget_bitfield_shift_##prefix();
+UML_DECLARE_BITFIELD_SHIFT(w_lsl)
+UML_DECLARE_BITFIELD_SHIFT(w_lsr)
+UML_DECLARE_BITFIELD_SHIFT(w_asr)
+UML_DECLARE_BITFIELD_SHIFT(w_ubfm)
+UML_DECLARE_BITFIELD_SHIFT(w_sbfm)
+UML_DECLARE_BITFIELD_SHIFT(x_lsl)
+UML_DECLARE_BITFIELD_SHIFT(x_lsr)
+UML_DECLARE_BITFIELD_SHIFT(x_asr)
+UML_DECLARE_BITFIELD_SHIFT(x_ubfm)
+UML_DECLARE_BITFIELD_SHIFT(x_sbfm)
+#undef UML_DECLARE_BITFIELD_SHIFT
 #define UML_DECLARE_BIT_REVERSE_COUNT(prefix) \
 	void uml_arm64_gadget_bit_reverse_count_##prefix();
 UML_DECLARE_BIT_REVERSE_COUNT(w_rbit)
@@ -2066,6 +2081,7 @@ void uml_arm64_gadget_branch_link_register();
 void uml_arm64_gadget_branch_register_cached();
 void uml_arm64_gadget_branch_link_register_cached();
 void uml_arm64_gadget_return_cached();
+void uml_arm64_gadget_return_x30_cached();
 void uml_arm64_gadget_return();
 /* Fused guest CMP of two registers + B.cond, see compare_register_branch. */
 void uml_arm64_gadget_compare_register_branch_x_eq();
@@ -2232,8 +2248,8 @@ void uml_arm64_gadget_compare_branch_w_z_inline();
 void uml_arm64_gadget_compare_branch_w_nz_inline();
 void uml_arm64_gadget_compare_branch_x_z_inline();
 void uml_arm64_gadget_compare_branch_x_nz_inline();
-void uml_arm64_gadget_test_branch_z_inline();
-void uml_arm64_gadget_test_branch_nz_inline();
+void uml_arm64_gadget_test_bit_branch_z_inline();
+void uml_arm64_gadget_test_bit_branch_nz_inline();
 void uml_arm64_gadget_compare_immediate_branch_x_eq_inline();
 void uml_arm64_gadget_compare_immediate_branch_x_ne_inline();
 void uml_arm64_gadget_compare_immediate_branch_x_hs_inline();
@@ -2298,12 +2314,12 @@ UML_DECLARE_COMPARE_BRANCH(w, nz)
 UML_DECLARE_COMPARE_BRANCH(x, z)
 UML_DECLARE_COMPARE_BRANCH(x, nz)
 #undef UML_DECLARE_COMPARE_BRANCH
-#define UML_DECLARE_TEST_BRANCH(polarity) \
-	void uml_arm64_gadget_test_branch_##polarity(); \
-	void uml_arm64_gadget_test_branch_##polarity##_linked();
-UML_DECLARE_TEST_BRANCH(z)
-UML_DECLARE_TEST_BRANCH(nz)
-#undef UML_DECLARE_TEST_BRANCH
+#define UML_DECLARE_TEST_BIT_BRANCH(polarity) \
+	void uml_arm64_gadget_test_bit_branch_##polarity(); \
+	void uml_arm64_gadget_test_bit_branch_##polarity##_linked();
+UML_DECLARE_TEST_BIT_BRANCH(z)
+UML_DECLARE_TEST_BIT_BRANCH(nz)
+#undef UML_DECLARE_TEST_BIT_BRANCH
 void uml_arm64_gadget_link_exit();
 }
 

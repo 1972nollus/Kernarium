@@ -4,6 +4,7 @@
  * index and the operand words this file packs. */
 #include "translator.hpp"
 
+#include <algorithm>
 #include <bit>
 
 namespace uml::cpu::arm64::gadgets::a32::detail {
@@ -226,11 +227,51 @@ Translator::Result Translator::emit_structure(const Instruction &in,
 		which = kNeonMem[store][shape][structs - 1][log2][variant];
 	if (which == G::count)
 		return emit_library(in);
-	/* A copy without an alignment hint has gadgets of its own. */
-	if (shape == 0 && structs == 1 && o.alignment <= 1) {
-		const G fast = kNeonCopy[store][variant][!o.wback ? 0 : o.register_index ? 2 : 1];
-		if (fast != G::count)
+	/* A copy, hinted or not, and a VLD1 to all lanes have gadgets of their
+	 * own; the hinted copy and the VLD1 to all lanes take the alignment
+	 * mask in word1's bits 32-39, above the one or two slots they use. */
+	const unsigned writeback = !o.wback ? 0U : o.register_index ? 2U : 1U;
+	bool mask_in_word1 = false;
+	if (shape == 0 && structs == 1) {
+		const bool hinted = o.alignment > 1;
+		const G fast = hinted ? kNeonCopyHint[store][variant][writeback] :
+					kNeonCopy[store][variant][writeback];
+		if (fast != G::count) {
 			which = fast;
+			mask_in_word1 = hinted;
+		}
+	} else if (shape == 2 && structs == 1 && !store && variant < 2) {
+		const G fast = kNeonAllFast[log2][variant][writeback];
+		if (fast != G::count) {
+			which = fast;
+			mask_in_word1 = true;
+		}
+	}
+	/* A copy without writeback whose base the ADD or SUB still absorbable
+	 * computed: the fused gadget does the ADD, then the copy, and the ADD's
+	 * words leave the stream. Only Advanced SIMD data processing that reads
+	 * no core register came between (run()), so doing the ADD here is
+	 * invisible: no exit or fault in between can see Rd. */
+	if (shape == 0 && structs == 1 && o.alignment <= 1 && !o.wback &&
+	    in.cond == 14 && !in.in_it && in_range && which != G::count &&
+	    address_add_.start != ~std::size_t{} && o.n != 15 &&
+	    address_add_.rd == static_cast<std::uintptr_t>(o.n) * 8U &&
+	    kNeonCopyAdd[store][variant] != G::count) {
+		const auto add = address_add_;
+		address_add_.start = ~std::size_t{};
+		auto *data = words_.data();
+		std::copy(data + add.end, data + words_.size(), data + add.start);
+		words_.truncate(words_.size() - (add.end - add.start));
+		std::uint64_t word1 = 0;
+		for (unsigned k = 0; k < 4; ++k)
+			word1 |= slots[k] << (16U * k);
+		push(kNeonCopyAdd[store][variant]);
+		push(key_);
+		push(add.rn | std::uint64_t{add.rd} << 16 |
+		     std::uint64_t{add.immediate} << 32);
+		push(word1);
+		push(library_operand(in));
+		return {};
 	}
 	const std::uintptr_t rn = source(o.n, scratch0);
 	std::uintptr_t rm = 0;
@@ -244,6 +285,8 @@ Translator::Result Translator::emit_structure(const Instruction &in,
 	std::uint64_t word1 = 0;
 	for (unsigned k = 0; k < 4; ++k)
 		word1 |= slots[k] << (16U * k);
+	if (mask_in_word1 && o.alignment > 1)
+		word1 |= static_cast<std::uint64_t>(o.alignment - 1) << 32;
 	push(which);
 	push(key_);
 	push(word0);

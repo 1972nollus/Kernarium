@@ -310,7 +310,7 @@ void run_as_one_chain(unsigned long generation, const ChainProgram &program) {
  * edge. */
 void native_environment_is_carried_into_a_chain() {
   constexpr std::uint32_t base = 0x00f0'0000U;
-  constexpr std::size_t window = 60; // the compiler's block length
+  constexpr std::size_t window = 64; // the compiler's A32 block length
   constexpr std::uint32_t add_r0 = 0xe280'0001U; // add r0, r0, #1
   constexpr std::uint32_t vadd = 0xee30'0a20U;   // vadd.f32 s0, s0, s1
   std::vector<std::uint32_t> words(window, add_r0);
@@ -509,13 +509,28 @@ void static_exits_chain() {
   };
 
   // A straight run of more words than a block holds: the fetch window cuts it.
+  // An A32 block holds maximum_block_instructions; a T32 block four fewer,
+  // the room an IT block opened by its last instruction may need
+  // (a32_compiler.cpp).
   {
-    constexpr std::size_t window = 60; // the compiler's block length (a32_compiler.cpp)
+    constexpr std::size_t window = 64;
     constexpr std::size_t words = 2 * window + 22;
     std::vector<std::uint32_t> program(words, add_r0);
     program.push_back(0xef00'0000U); // svc
     run_as_one_chain(0x1a32'0c10, {a32_bytes(program), {window * 4, 2 * window * 4},
                                    false, words + 1, static_cast<std::uint32_t>(words)});
+  }
+  {
+    constexpr std::size_t window = 60;
+    constexpr std::size_t halves = 2 * window + 22;
+    std::vector<std::uint8_t> bytes;
+    for (std::size_t i = 0; i <= halves; ++i) {
+      const std::uint16_t half = i < halves ? 0x3001 : 0xdf00; // adds r0, #1; svc
+      bytes.push_back(static_cast<std::uint8_t>(half));
+      bytes.push_back(static_cast<std::uint8_t>(half >> 8));
+    }
+    run_as_one_chain(0x1a32'0c19, {bytes, {window * 2, 2 * window * 2}, true,
+                                   halves + 1, static_cast<std::uint32_t>(halves)});
   }
   // A conditional branch that is not taken: cmp r1, r1 sets Z, so bne falls
   // through to the next block; the skipped arm is a static successor.

@@ -18,11 +18,12 @@ using aarch32::Status;
 
 namespace {
 
-/* A block of this many instructions ends at the next boundary outside an IT
- * block. The ceiling leaves room for the four instructions of an IT block
+/* A T32 block of this many instructions ends at the next boundary outside an
+ * IT block. The ceiling leaves room for the four instructions of an IT block
  * opened by the last of them, so no block exceeds maximum_block_instructions
- * (the write masks are indexed by instruction). */
-constexpr std::size_t block_target = maximum_block_instructions - 4U;
+ * (the write masks are indexed by instruction). A32 has no IT blocks, so an
+ * A32 block takes all of them. */
+constexpr std::size_t t32_block_target = maximum_block_instructions - 4U;
 
 [[nodiscard]] std::uint32_t load16(std::span<const std::byte> bytes,
                                    std::size_t offset) noexcept {
@@ -79,10 +80,12 @@ void A32Compiler::decode_block(const Request &request) {
   std::size_t offset = 0;
   std::uint32_t pc = aarch32::key_pc(request.key);
   const std::size_t unit = thumb_ ? 2U : 4U;
+  const std::size_t target =
+      thumb_ ? t32_block_target : maximum_block_instructions;
   while (true) {
     if (single_ && !block_.empty())
       break;
-    if (block_.size() >= block_target && !it.active())
+    if (block_.size() >= target && !it.active())
       break;
     if (offset + unit > bytes.size())
       break;
@@ -287,6 +290,7 @@ A32Compiler::Flow A32Compiler::emit_loop_branch() {
 void A32Compiler::emit_block() {
   count_ = 0;
   terminated_ = false;
+  forget_s_shadows();
   if (looping_)
     apply_loop_plan();
   while (count_ < block_.size()) {
@@ -320,6 +324,7 @@ void A32Compiler::emit_block() {
 A32Compiler::Flow A32Compiler::emit_instruction() {
   const auto &d = cur();
   const auto &inst = d.inst;
+  begin_s_shadows();
   if (count_ + 1U == block_.size()) {
     if (probing_)
       record_loop_plan();

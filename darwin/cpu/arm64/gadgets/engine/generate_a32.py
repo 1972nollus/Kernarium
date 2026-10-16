@@ -42,6 +42,7 @@ import a32_armv8  # noqa: E402
 import a32_neon  # noqa: E402  (the complete level; this file's sibling)
 import a32_parallel  # noqa: E402  (parallel add and subtract, SEL)
 import a32_simd  # noqa: E402  (VFP and Advanced SIMD; this file's sibling)
+import a32_structure  # noqa: E402  (VLDn and VSTn)
 
 
 class GenerationError(Exception):
@@ -563,6 +564,51 @@ def emit_dp(asm: Assembly) -> list[tuple[str, str, bool, str]]:
     return produced
 
 
+# Conditional data processing that sets no flags, as a select instead of a
+# skip: the result, or the register's old value where the condition fails.
+# The skip gadget's branch follows the guest's condition, which the image
+# kernels compute from their data, so it mispredicts where the select does
+# not branch at all. The operand word holds the condition as a truth table
+# over NZCV (bit n is whether the condition passes with NZCV = n), where an
+# ordinary data-processing word keeps its carry and register fields:
+#
+#   imm    table[0:16] rd[16:24] rn[24:32] imm32[32:64]
+#   reg    table[0:16] rd[16:24] rn[24:32] rm[32:40]
+SELECT_OPS = ["mov", "mvn", "add", "sub", "rsb", "and", "orr", "eor", "bic"]
+SELECT_SHAPES = ["imm", "reg"]
+
+
+def select_name(op: str, shape: str) -> str:
+    return f"dp_{op}_{shape}_select"
+
+
+def select_body(op: str, shape: str) -> str:
+    lines = ["ldr x8, [_stream], #8"]
+    if op not in UNARY:
+        lines += ["ubfx x9, x8, #24, #8", "ldr w9, [_cpu, x9]"]
+    if shape == "imm":
+        lines.append("lsr x12, x8, #32")
+    else:
+        lines += ["ubfx x12, x8, #32, #8", "ldr w12, [_cpu, x12]"]
+    a, b = "w9", "w12"
+    lines.append({"mov": f"mov w11, {b}", "mvn": f"mvn w11, {b}",
+                  "add": f"add w11, {a}, {b}", "sub": f"sub w11, {a}, {b}",
+                  "rsb": f"sub w11, {b}, {a}", "and": f"and w11, {a}, {b}",
+                  "orr": f"orr w11, {a}, {b}", "eor": f"eor w11, {a}, {b}",
+                  "bic": f"bic w11, {a}, {b}"}[op])
+    lines += ["ubfx x10, x8, #16, #8", "ldr w13, [_cpu, x10]",
+              "lsr w14, w27, #28", "lsr x15, x8, x14", "tst x15, #1",
+              "csel w11, w11, w13, ne", "str w11, [_cpu, x10]",
+              "next_gadget"]
+    return "\n".join(lines)
+
+
+def emit_select(asm: Assembly) -> None:
+    for op in SELECT_OPS:
+        for shape in SELECT_SHAPES:
+            asm.gadget(select_name(op, shape), select_body(op, shape))
+
+
 # ---------------------------------------------------------------------------
 # Memory
 
@@ -632,7 +678,7 @@ def load_single(name: str, size: str, mode: str) -> str:
     label = name
     lines = ["ldp x21, x19, [_stream], #16"] + address
     lines.append(
-        f"transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, {byte_count},"
+        f"a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, {byte_count},"
         f" x7, Lcold_{label}, Lresume_{label}, Lcross_{label}, 0,"
         f" fault=La32_memory_fault")
     lines += [load, "and x8, x19, #0xff", "str w0, [_cpu, x8]"]
@@ -640,7 +686,7 @@ def load_single(name: str, size: str, mode: str) -> str:
         lines += writeback_lines()
     lines.append("next_gadget")
     lines.append(
-        f"transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE,"
+        f"a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
         f" 0, fault=La32_memory_fault")
     if byte_count > 1:
@@ -663,7 +709,7 @@ def store_single(name: str, size: str, mode: str) -> str:
     label = name
     lines = ["ldp x21, x19, [_stream], #16"] + address
     lines.append(
-        f"transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
+        f"a32_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
         f" 0, fault=La32_memory_fault")
     lines += ["and x8, x19, #0xff", "ldr w0, [_cpu, x8]", store]
@@ -671,7 +717,7 @@ def store_single(name: str, size: str, mode: str) -> str:
         lines += writeback_lines()
     lines.append("next_gadget")
     lines.append(
-        f"transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
+        f"a32_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
         f" 0, fault=La32_memory_fault")
     if byte_count > 1:
@@ -744,7 +790,7 @@ def load_double(name: str, mode: str) -> str:
     lines = ["ldp x21, x19, [_stream], #16"] + address
     lines += ["tst w7, #3", "b.ne Lalign_" + name]
     lines.append(
-        f"transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
+        f"a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
         f" fault=La32_memory_fault")
     lines += ["ldp w0, w15, [x7]", "and x8, x19, #0xff",
@@ -754,7 +800,7 @@ def load_double(name: str, mode: str) -> str:
         lines += double_writeback()
     lines.append("next_gadget")
     lines.append(
-        f"transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
+        f"a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
         f" fault=La32_memory_fault")
     lines.append(f"Lcross_{name}:")
@@ -774,7 +820,7 @@ def store_double(name: str, mode: str) -> str:
     lines = ["ldp x21, x19, [_stream], #16"] + address
     lines += ["tst w7, #3", "b.ne Lalign_" + name]
     lines.append(
-        f"transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
+        f"a32_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
         f" fault=La32_memory_fault")
     lines += ["and x8, x19, #0xff", "ubfx x9, x19, #8, #8",
@@ -784,7 +830,7 @@ def store_double(name: str, mode: str) -> str:
         lines += double_writeback()
     lines.append("next_gadget")
     lines.append(
-        f"transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
+        f"a32_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
         f" fault=La32_memory_fault")
     lines.append(f"Lcross_{name}:")
@@ -861,12 +907,12 @@ def block_gadget(count: int, access_load: bool) -> str:
         "UML_GADGET_TLB_ENTRY_WRITE_PAGE"
     direction = 0 if access_load else 1
     lines = block_prologue(name)
-    lines.append(f"transfer_translate {direction}, {page}, {size}, x7,"
+    lines.append(f"a32_translate {direction}, {page}, {size}, x7,"
                  f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
                  f" fault=La32_memory_fault")
     lines += block_registers(count, access_load, "x7")
     lines += block_epilogue(count)
-    lines.append(f"transfer_translate_cold {direction}, {page}, {size}, x7,"
+    lines.append(f"a32_translate_cold {direction}, {page}, {size}, x7,"
                  f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
                  f" fault=La32_memory_fault")
     # A transfer that crosses a page is the semantic library's: it
@@ -1184,6 +1230,11 @@ def build_assembly(asm: Assembly) -> None:
     a32_simd.emit(asm)
     a32_armv8.emit(asm)
     a32_parallel.emit(asm)
+    emit_select(asm)
+    a32_structure.emit_fused(asm)
+    a32_structure.emit_hinted(asm)
+    a32_simd.emit_compare_apsr(asm)
+    a32_simd.emit_move_select(asm)
 
 
 def write_assembly(path: Path, asm: Assembly, hand: list[str]) -> None:
@@ -1281,6 +1332,16 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
                 g(inplace_name(subtract, s, r))
                 for r in range(INPLACE_REGISTERS)) + "},")
         out.append("\t},")
+    out += ["};", ""]
+    out.append("/* Conditional data processing as a select: [operation][shape];"
+               " the operations")
+    out.append(" * are DP_ORDER's, the shapes imm and reg (generate_a32.py "
+               "SELECT_OPS). */")
+    out.append("inline constexpr G kDpSelect[17][2] = {")
+    for op in DP_ORDER:
+        out.append("\t{" + ", ".join(
+            g(select_name(op, shape)) if op in SELECT_OPS else absent
+            for shape in SELECT_SHAPES) + "},")
     out += ["};", ""]
     out.append("/* Single transfers: [size][mode]; modes are i ipre ipost ra "
                "rs rapre rspre rapost rspost abs. */")

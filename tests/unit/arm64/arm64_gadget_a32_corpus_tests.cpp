@@ -13,11 +13,9 @@
  * A case whose forms need a level above the engine's is skipped, as the
  * decoder-only runner skips them; the engine raises the illegal-instruction
  * exit for them, which the forms test checks. The `unaligned` and
- * `fpscr-reserved` suites are recorded only from hardware that does not exist
- * yet, so nothing here invents expectations for them: the engine follows the
- * design's rules (a multi-word access at a misaligned address is an
- * alignment fault, as the SCTLR.A = 0 text of the design says), and the
- * records of the `memory` suite stand for the aligned and unmapped cases.
+ * `fpscr-reserved` suites are recorded from hardware (a Raspberry Pi 4): a
+ * multi-word access at a misaligned address is an alignment fault, as the
+ * SCTLR.A = 0 text of the design says, and Stride and Len read as zero.
  *
  * A store-exclusive may fail without cause, as the architecture allows. The
  * gadgets run the host's own exclusives, and the host's monitor ends at any
@@ -34,7 +32,7 @@
  * selected records at least N times.
  *
  *   uml_arm64_gadget_a32_corpus_tests PACK [--level base|simd|complete]
- *       [--record NAME] [--case TEXT] [--limit N] [--forms FILE]
+ *       [--record NAME[,NAME...]] [--case TEXT] [--limit N] [--forms FILE]
  *       [--passes N] [--interrupt]
  */
 #include "aarch32_corpus_pack.hpp"
@@ -441,6 +439,24 @@ struct Options final {
 	bool interrupt = false;
 	/* Write the encodings whose cases ran, one per line, to this file. */
 	std::string forms_path;
+
+	/* Whether --record names the record: one name, or several separated
+	 * by commas; none selects every record. */
+	[[nodiscard]] bool selects(std::string_view name) const
+	{
+		if (record.empty())
+			return true;
+		std::string_view rest = record;
+		while (!rest.empty()) {
+			const auto comma = rest.find(',');
+			if (rest.substr(0, comma) == name)
+				return true;
+			if (comma == std::string_view::npos)
+				break;
+			rest.remove_prefix(comma + 1);
+		}
+		return false;
+	}
 };
 
 /* Host interrupts on demand: an interval timer sends SIGALRM to the process
@@ -766,7 +782,7 @@ int main(int argc, char **argv)
 		std::vector<std::string> lines;
 		for (const auto &record : pack.records) {
 			if ((record.profiles & corpus::kProfileBit) == 0 ||
-			    (!options.record.empty() && record.name != options.record))
+			    !options.selects(record.name))
 				continue;
 			Totals before = totals;
 			for (const auto &test : record.cases) {

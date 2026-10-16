@@ -132,14 +132,16 @@ public:
 	 * what the block is validated against and what a budget-limited replay
 	 * decodes back out of, and `words` is the native stream built for
 	 * them. */
-	Program(ExecutionMode mode, std::uint64_t address, std::size_t byte_count,
+	Program(ExecutionMode mode, std::uint64_t address,
 		std::span<const Gadget> gadgets,
 		std::span<const std::byte> source,
 		std::span<const std::uintptr_t> words, bool check_head = false);
 
 	[[nodiscard]] ExecutionMode execution_mode() const noexcept { return mode_; }
 	[[nodiscard]] std::uint64_t address() const noexcept { return address_; }
-	[[nodiscard]] std::size_t byte_count() const noexcept { return byte_count_; }
+	/* The guest bytes the block spans, which are the bytes its source saves:
+	 * the instructions kept, one encoding after another. */
+	[[nodiscard]] std::size_t byte_count() const noexcept { return source_; }
 	[[nodiscard]] std::span<const std::uintptr_t> native_stream() const noexcept
 	{
 		return {words_storage_.get(), words_};
@@ -190,7 +192,6 @@ private:
 	/* Widest members first: every translation an executor caches embeds
 	 * a program, so padding here is paid once per translation. */
 	std::uint64_t address_{};
-	std::size_t byte_count_{};
 	/* The words the engine runs, alone. Holding them in one allocation with
 	 * the cold data behind them put every hot stream a cold kilobyte or two
 	 * away from the next and cost the workloads with the widest code. */
@@ -207,6 +208,8 @@ private:
 	bool terminal_{};
 	bool check_head_{};
 };
+static_assert(sizeof(Program) == 48,
+	"every cached translation embeds a program");
 
 enum class BuildStatus : std::uint8_t {
 	built,

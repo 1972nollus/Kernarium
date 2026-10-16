@@ -24,7 +24,7 @@ MANIFEST = "release-manifest.json"
 COMMAND_LINE = "boot/kernel-command-line.txt"
 GUEST_DIRECTORY = "guest"
 ROOT = Path(__file__).resolve().parents[2]
-ACCEPTANCE = ROOT / "android/aosp-17/metadata/accepted-release.env"
+ACCEPTANCE = ROOT / "android/lineage-24/metadata/accepted-release.env"
 _ARTIFACTS = str(ROOT / "kernel/common/artifacts")
 if _ARTIFACTS not in sys.path:
     sys.path.insert(0, _ARTIFACTS)
@@ -38,7 +38,7 @@ def fail(message: str) -> None:
 def accepted_directory_name() -> str:
     return contract_checks.accepted_directory_name(
         ACCEPTANCE,
-        "ANDROID17_ACCEPTED_DIRECTORY_NAME",
+        "LINEAGE24_ACCEPTED_DIRECTORY_NAME",
         lambda message: SystemExit(
             f"Kernarium/scripts/make-guest-bundle.py: {message}"
         ),

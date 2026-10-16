@@ -415,12 +415,41 @@ Translator::Result Translator::emit_dp_values(const Instruction &in,
 			}
 		}
 	}
+	/* A conditional instruction that sets no flags, as a select of the
+	 * result and the old value (run() opened no skip for it). A shape
+	 * without a select gadget goes behind a skip after all: nothing of
+	 * this instruction is in the stream yet but scratch values. */
+	if (select_ < 14) {
+		const unsigned cond = select_;
+		select_ = 14;
+		const G which = sets || rd >= 15U * 8U ? G::count :
+			shape == shape_imm ? kDpSelect[op][0] :
+			shape == shape_reg ? kDpSelect[op][1] : G::count;
+		if (which != G::count) {
+			push(which);
+			push(condition_table(cond) | std::uint64_t{rd} << 16 |
+			     std::uint64_t{rn} << 24 |
+			     (shape == shape_imm ? std::uint64_t{immediate} :
+						   std::uint64_t{rm}) << 32);
+			return {};
+		}
+		begin_instruction(cond);
+	}
+	/* An unconditional ADD or SUB of an immediate between registers that
+	 * sets no flags may become the base of a VLD1 or VST1 copy. */
+	const bool address = shape == shape_imm &&
+		(op == op_add || op == op_sub) && !sets && in.cond == 14 &&
+		!in.in_it && rd < 15U * 8U && rn < 15U * 8U;
+	const std::size_t start = words_.size();
 	/* ADD or SUB of an immediate to a register in place: the entry with
 	 * the register baked. R15 and the scratch slots are not registers. */
 	if (shape == shape_imm && (op == op_add || op == op_sub) && rd == rn &&
 	    rd < 15U * 8U) {
 		push(kDpInplace[op == op_sub ? 1 : 0][sets ? 1 : 0][rd / 8U]);
 		push(word);
+		if (address)
+			address_add_ = {start, words_.size(), rd, rn,
+					op == op_sub ? 0U - immediate : immediate};
 		return {false, sets};
 	}
 	const G which = kDp[op][sets ? 1 : 0][shape];
@@ -428,6 +457,9 @@ Translator::Result Translator::emit_dp_values(const Instruction &in,
 		return {};
 	push(which);
 	push(word);
+	if (address)
+		address_add_ = {start, words_.size(), rd, rn,
+				op == op_sub ? 0U - immediate : immediate};
 	/* A plain CMP is the first half of a fused compare and branch: of a
 	 * register, or of an immediate that fits the fused entry's field. */
 	if (op == op_cmp && in.cond == 14 && !in.in_it) {
@@ -682,6 +714,7 @@ std::uint64_t Translator::library_operand(const Instruction &in,
 /* An instruction the engine leaves to the semantic library. */
 Translator::Result Translator::emit_library(const Instruction &in)
 {
+	++library_calls_;
 	push(G::library);
 	push(key_);
 	push(library_operand(in));
@@ -1331,20 +1364,46 @@ BuildOutput Translator::run()
 			break;
 		}
 		if (in.status == Status::ok) {
-			/* A conditional branch tests its own condition; every
-			 * other conditional instruction is behind a skip. */
+			/* A conditional branch tests its own condition, and
+			 * conditional data processing that sets no flags and a
+			 * conditional VMOV of VFP registers are selects where
+			 * emit_dp_values or emit_vfp has one for the shape;
+			 * every other conditional instruction is behind a
+			 * skip. */
 			if (plan.family == Family::branch ||
-			    plan.family == Family::cbz || plan.family == Family::it)
+			    plan.family == Family::cbz || plan.family == Family::it) {
 				close_run();
-			else
+			} else if (in.cond < 14 &&
+				   ((!in.operands.setflags &&
+				     in.operands.d != 15 &&
+				     (plan.family == Family::dp ||
+				      plan.family == Family::movw)) ||
+				    (plan.family == Family::vfp2 &&
+				     plan.sub == kVfp2Vmov))) {
+				close_run();
+				select_ = in.cond;
+			} else {
 				begin_instruction(in.cond);
+			}
 			/* The vectors and FPSCR load lazily, once, for a block
 			 * marked as touching them (uses_fp_): every form that
 			 * does, by the decoder table's fp_state trait, whichever
 			 * path lowers it. */
 			if ((in.info().traits & aarch32::trait::fp_state) != 0U)
 				uses_fp_ = true;
+			const std::size_t address_add = address_add_.start;
+			const std::size_t library_calls = library_calls_;
 			const Result result = emit(in, plan);
+			/* An ADD this instruction did not push stays absorbable
+			 * only behind Advanced SIMD data processing that reads no
+			 * core register, cannot leave the block and is not
+			 * conditional, so that moving the ADD past it changes no
+			 * state any exit or fault can see. */
+			if (address_add_.start == address_add &&
+			    !(plan.family == Family::neon && in.cond == 14 &&
+			      !in.in_it && library_calls_ == library_calls &&
+			      kNeonGroups[plan.sub].shape != NeonShape::dcore))
+				address_add_.start = ~std::size_t{};
 			if (result.flags)
 				flags_written();
 			if (result.terminal && !run_active_)

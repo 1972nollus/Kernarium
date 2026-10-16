@@ -5,7 +5,8 @@
  * the corpus's; these programs pin the translator's control behaviour:
  *
  * - retirement counts, with skipped conditional instructions retired and a
- *   faulting or undefined instruction not;
+ *   faulting or undefined instruction not, and conditional data processing
+ *   that sets no flags as a select rather than behind a skip;
  * - the key every exit leaves in cpu.pc, the architectural fault address,
  *   and ITSTATE at SVC, at a fault and in an entry in the middle of a block;
  * - interworking branches in both directions and the A32 target with
@@ -13,7 +14,9 @@
  * - the instruction budget, single step and code that changes in place;
  * - exclusives, the Armv8 acquire and release forms, the CP15 and counter
  *   reads and the system forms;
- * - LDM, STM and LDRD across a page boundary, mapped and not; and
+ * - LDM, STM and LDRD across a page boundary, mapped and not, and the
+ *   memory gadgets' TLB probe hitting inside a page and not across one, and
+ *   in the set the TLB's own fill path chose; and
  * - at the complete level, that a form of an extension the host has runs
  *   (as a gadget, or in the semantic library when none lowers it) and one of
  *   an extension it lacks is UNDEFINED.
@@ -25,10 +28,15 @@
 
 #include "cpu/arm64/aarch32/decode.hpp"
 
+#include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
+#include <memory_resource>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -147,6 +155,97 @@ void skipped_conditional_instructions_retire()
 	require(result.reason == ExitReason::system_call);
 	require(result.retired_instructions == 5);
 	require(reg(cpu, 1) == 10 && reg(cpu, 2) == 21);
+}
+
+} // namespace
+
+extern "C" {
+void uml_arm64_gadget_a32_skip_eq();
+void uml_arm64_gadget_a32_skip_ne();
+void uml_arm64_gadget_a32_skip_cs();
+void uml_arm64_gadget_a32_skip_cc();
+void uml_arm64_gadget_a32_skip_mi();
+void uml_arm64_gadget_a32_skip_pl();
+void uml_arm64_gadget_a32_skip_vs();
+void uml_arm64_gadget_a32_skip_vc();
+void uml_arm64_gadget_a32_skip_hi();
+void uml_arm64_gadget_a32_skip_ls();
+void uml_arm64_gadget_a32_skip_ge();
+void uml_arm64_gadget_a32_skip_lt();
+void uml_arm64_gadget_a32_skip_gt();
+void uml_arm64_gadget_a32_skip_le();
+}
+
+namespace {
+
+/* Whether a translation of `words` at the code base holds a skip gadget. */
+[[nodiscard]] bool translation_skips(std::span<const std::uint32_t> words)
+{
+	const auto options = options_at(gadgets::a32_support);
+	const auto output = gadgets::a32::build(
+		{.key = aarch32::a32_key(code_base), .code = std::as_bytes(words)},
+		{}, std::pmr::get_default_resource(), {}, options,
+		gadgets::a32::decode_profile(options), 64);
+	for (const auto word : output.result.program.words())
+		for (const auto skip : {&uml_arm64_gadget_a32_skip_eq,
+					&uml_arm64_gadget_a32_skip_ne,
+					&uml_arm64_gadget_a32_skip_cs,
+					&uml_arm64_gadget_a32_skip_cc,
+					&uml_arm64_gadget_a32_skip_mi,
+					&uml_arm64_gadget_a32_skip_pl,
+					&uml_arm64_gadget_a32_skip_vs,
+					&uml_arm64_gadget_a32_skip_vc,
+					&uml_arm64_gadget_a32_skip_hi,
+					&uml_arm64_gadget_a32_skip_ls,
+					&uml_arm64_gadget_a32_skip_ge,
+					&uml_arm64_gadget_a32_skip_lt,
+					&uml_arm64_gadget_a32_skip_gt,
+					&uml_arm64_gadget_a32_skip_le})
+			if (word == reinterpret_cast<std::uintptr_t>(skip))
+				return true;
+	return false;
+}
+
+/* A conditional data-processing instruction that sets no flags is a select
+ * of its result and the register's old value, with no skip and so no branch
+ * on the guest's data; one that sets flags, a conditional compare and a
+ * conditional load keep their skip. */
+void conditional_data_processing_selects_without_a_skip()
+{
+	const std::array<std::uint32_t, 7> words{
+		0xe350'0000U, /* cmp r0, #0 */
+		0x03a0'1005U, /* moveq r1, #5 */
+		0x1282'2001U, /* addne r2, r2, #1 */
+		0xb263'3000U, /* rsblt r3, r3, #0 */
+		0xc301'4234U, /* movwgt r4, #0x1234 */
+		0x11a0'5006U, /* movne r5, r6 */
+		a::svc};
+	require(!translation_skips(words));
+	struct Case final {
+		std::uint32_t r0, r1, r2, r3, r4, r5;
+	};
+	for (const auto &item : {Case{0, 5, 20, 30, 40, 50},
+				 Case{1, 10, 21, 30, 0x1234, 60},
+				 Case{~0U, 10, 21, 0U - 30U, 40, 60}}) {
+		Guest guest{1070 + item.r0 % 4};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		auto cpu = a32_state();
+		cpu.registers[0] = item.r0;
+		for (unsigned index = 1; index <= 6; ++index)
+			cpu.registers[index] = 10 * index;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(result.retired_instructions == words.size());
+		require(reg(cpu, 1) == item.r1 && reg(cpu, 2) == item.r2 &&
+			reg(cpu, 3) == item.r3 && reg(cpu, 4) == item.r4 &&
+			reg(cpu, 5) == item.r5);
+	}
+	/* addsne r2, r2, #1; cmpne r0, #1; ldrne r1, [r2] */
+	for (const auto word : {0x1292'2001U, 0x1350'0001U, 0x1592'1000U}) {
+		const std::array<std::uint32_t, 2> pair{word, a::svc};
+		require(translation_skips(pair));
+	}
 }
 
 void conditional_branch_retires_taken_or_not()
@@ -1706,6 +1805,348 @@ void vld1_and_vst1_copies_stay_out_of_the_library()
 	aarch32::count_a32_library_exits(false);
 }
 
+} // namespace
+
+extern "C" {
+void uml_arm64_gadget_a32_dp_add_imm();
+void uml_arm64_gadget_a32_dp_sub_imm_r3();
+void uml_arm64_gadget_a32_neon_vld1_m_16_a();
+void uml_arm64_gadget_a32_neon_vld1_m_32_a();
+void uml_arm64_gadget_a32_neon_vst1_m_16_a();
+}
+
+namespace {
+
+/* Whether a translation of `words` at the code base holds `gadget`. */
+[[nodiscard]] bool translation_holds(std::span<const std::uint32_t> words,
+				     void (*gadget)())
+{
+	const auto options = options_at(gadgets::a32_support);
+	const auto output = gadgets::a32::build(
+		{.key = aarch32::a32_key(code_base), .code = std::as_bytes(words)},
+		{}, std::pmr::get_default_resource(), {}, options,
+		gadgets::a32::decode_profile(options), 64);
+	for (const auto word : output.result.program.words())
+		if (word == reinterpret_cast<std::uintptr_t>(gadget))
+			return true;
+	return false;
+}
+
+/* An ADD or SUB of an immediate that computes the base of the next VLD1 or
+ * VST1 copy without writeback, with only Advanced SIMD data processing
+ * between, runs inside the copy's gadget: Rd is written before the transfer,
+ * so a fault at the copy finds the state the two instructions leave one by
+ * one (Rd written, the instructions between retired, the PC at the copy).
+ * An instruction between that reads a core register keeps the ADD apart. */
+void an_add_that_computes_a_copy_base_runs_in_the_copy()
+{
+	constexpr std::uint32_t add_r3_r0_16 = 0xe280'3010U;
+	constexpr std::uint32_t sub_r3_r3_8 = 0xe243'3008U;
+	constexpr std::uint32_t vmul_q13_q13_q9 = 0xf34a'adf2U;
+	constexpr std::uint32_t vadd_q8_q8_q9 = 0xf240'0de2U;
+	constexpr std::uint32_t vld1_64_d28_d29_r3 = 0xf463'cacfU;
+	constexpr std::uint32_t vst1_64_d28_d29_r3 = 0xf443'cacfU;
+	constexpr std::uint32_t vld1_32_d0_d3_r3 = 0xf423'028fU;
+	constexpr std::uint32_t vdup_32_q0_r3 = 0xeea0'3b10U;
+	const auto floats = [](arm64::CpuState &cpu) {
+		set_d(cpu, 26, 0x4000'0000'4000'0000ULL); /* 2.0 */
+		set_d(cpu, 27, 0x4000'0000'4000'0000ULL);
+		set_d(cpu, 18, 0x4040'0000'4040'0000ULL); /* 3.0 */
+		set_d(cpu, 19, 0x4040'0000'4040'0000ULL);
+	};
+	{
+		const std::array<std::uint32_t, 4> words{
+			add_r3_r0_16, vmul_q13_q13_q9, vld1_64_d28_d29_r3, a::svc};
+		require(translation_holds(words,
+			&uml_arm64_gadget_a32_neon_vld1_m_16_a));
+		require(!translation_holds(words,
+			&uml_arm64_gadget_a32_dp_add_imm));
+		/* Inside a page, across the page line, and across into the
+		 * unmapped page after the data. */
+		unsigned long generation = 1080;
+		for (const std::uint32_t base :
+		     {0x30U, page - 0x18U,
+		      static_cast<std::uint32_t>(data_pages * page - 0x18U)}) {
+			Guest guest{generation++};
+			for (std::uint32_t index = 0; index < words.size(); ++index)
+				guest.a32(4 * index, {words[index]});
+			for (std::uint32_t offset = 0; offset < 16; offset += 4)
+				if (base + 0x10 + offset < data_pages * page)
+					guest.data32(base + 0x10 + offset,
+						     0x0101'0101U * (offset + 1));
+			auto cpu = a32_state();
+			cpu.registers[0] = data_base + base;
+			floats(cpu);
+			const auto result = guest.run(cpu);
+			require(reg(cpu, 3) == data_base + base + 0x10);
+			require(get_d(cpu, 26) == 0x40c0'0000'40c0'0000ULL);
+			if (base + 0x20 > data_pages * page) {
+				require(result.reason == ExitReason::memory_fault);
+				require(result.retired_instructions == 2);
+				require(cpu.pc == aarch32::a32_key(code_base + 8));
+				require(result.fault.address ==
+					data_base + data_pages * page);
+				continue;
+			}
+			require(result.reason == ExitReason::system_call);
+			require(result.retired_instructions == 4);
+			require(get_d(cpu, 28) == 0x0505'0505'0101'0101ULL);
+			require(get_d(cpu, 29) == 0x0d0d'0d0d'0909'0909ULL);
+		}
+	}
+	{
+		/* SUB in place, a 32-byte copy, two instructions between. */
+		const std::array<std::uint32_t, 5> words{
+			sub_r3_r3_8, vmul_q13_q13_q9, vadd_q8_q8_q9,
+			vld1_32_d0_d3_r3, a::svc};
+		require(translation_holds(words,
+			&uml_arm64_gadget_a32_neon_vld1_m_32_a));
+		require(!translation_holds(words,
+			&uml_arm64_gadget_a32_dp_sub_imm_r3));
+		Guest guest{1087};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		for (std::uint32_t offset = 0; offset < 32; offset += 4)
+			guest.data32(0x38 + offset, 0x1000'0000U + offset);
+		auto cpu = a32_state();
+		cpu.registers[3] = data_base + 0x40;
+		floats(cpu);
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(reg(cpu, 3) == data_base + 0x38);
+		require(get_d(cpu, 0) == 0x1000'0004'1000'0000ULL);
+		require(get_d(cpu, 3) == 0x1000'001c'1000'0018ULL);
+	}
+	{
+		/* A store, faulting: Rd is written and the store did nothing. */
+		const std::array<std::uint32_t, 3> words{
+			add_r3_r0_16, vst1_64_d28_d29_r3, a::svc};
+		require(translation_holds(words,
+			&uml_arm64_gadget_a32_neon_vst1_m_16_a));
+		Guest guest{1088};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		auto cpu = a32_state();
+		cpu.registers[0] = unmapped - 0x10;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::memory_fault);
+		require(result.retired_instructions == 1);
+		require(cpu.pc == aarch32::a32_key(code_base + 4));
+		require(reg(cpu, 3) == unmapped);
+		require(result.fault.access == ::uml::memory::MemoryAccess::write);
+	}
+	{
+		/* VDUP reads R3 between: the ADD stays apart and VDUP sees it. */
+		const std::array<std::uint32_t, 4> words{
+			add_r3_r0_16, vdup_32_q0_r3, vld1_64_d28_d29_r3, a::svc};
+		require(translation_holds(words,
+			&uml_arm64_gadget_a32_dp_add_imm));
+		require(!translation_holds(words,
+			&uml_arm64_gadget_a32_neon_vld1_m_16_a));
+		Guest guest{1089};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + 0x30;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(get_d(cpu, 0) == (std::uint64_t{data_base + 0x40} << 32 |
+					  (data_base + 0x40)));
+	}
+}
+
+} // namespace
+
+extern "C" {
+void uml_arm64_gadget_a32_neon_vld1_m_16_nh();
+void uml_arm64_gadget_a32_neon_vst1_m_16_nh();
+void uml_arm64_gadget_a32_neon_vld1r_4_p2_i();
+void uml_arm64_gadget_a32_neon_vld1_m_16();
+void uml_arm64_gadget_a32_neon_vld1_a_4_p2();
+}
+
+namespace {
+
+/* A hinted VLD1 or VST1 copy and a VLD1 to all lanes take gadgets of their
+ * own, which test the hint's alignment and leave a misaligned access to the
+ * library (the corpus's simd-hints suite runs every hint, writeback and
+ * misalignment); the general structure gadget is for the other shapes. */
+void hinted_copies_and_loads_to_all_lanes_have_their_own_gadgets()
+{
+	struct Selection final {
+		std::uint32_t word;
+		void (*fast)();
+		void (*general)();
+	};
+	for (const auto &item : {
+		     /* vld1.64 {d22, d23}, [r0:128] */
+		     Selection{0xf460'6aefU, &uml_arm64_gadget_a32_neon_vld1_m_16_nh,
+			       &uml_arm64_gadget_a32_neon_vld1_m_16},
+		     /* vst1.64 {d22, d23}, [r0:128] */
+		     Selection{0xf440'6aefU, &uml_arm64_gadget_a32_neon_vst1_m_16_nh,
+			       nullptr},
+		     /* vld1.32 {d0[], d1[]}, [r9:32]! */
+		     Selection{0xf4a9'0cbdU, &uml_arm64_gadget_a32_neon_vld1r_4_p2_i,
+			       &uml_arm64_gadget_a32_neon_vld1_a_4_p2}}) {
+		const std::array<std::uint32_t, 2> words{item.word, a::svc};
+		require(translation_holds(words, item.fast));
+		if (item.general != nullptr)
+			require(!translation_holds(words, item.general));
+	}
+	/* The hinted copy at an aligned address and at one the hint refuses. */
+	for (const std::uint32_t offset : {0x40U, 0x48U}) {
+		const std::array<std::uint32_t, 2> words{0xf460'6aefU, a::svc};
+		Guest guest{1098 + offset / 0x48U};
+		guest.a32(0, {words[0]});
+		guest.a32(4, {words[1]});
+		guest.data32(offset, 0x1122'3344U);
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + offset;
+		const auto result = guest.run(cpu);
+		if (offset == 0x40U) {
+			require(result.reason == ExitReason::system_call);
+			require(get_d(cpu, 22) == 0x1122'3344U);
+		} else {
+			require(result.reason != ExitReason::system_call);
+			require(result.retired_instructions == 0);
+		}
+	}
+}
+
+} // namespace
+
+extern "C" {
+void uml_arm64_gadget_a32_vfp_vcmpe_s_apsr();
+void uml_arm64_gadget_a32_vfp_vmrs_apsr();
+}
+
+namespace {
+
+/* A VCMP or VCMPE followed at once by VMRS APSR_nzcv is one gadget that
+ * sets FPSCR.NZCV and copies it to the APSR, for each kind of outcome. */
+void a_compare_and_the_flag_transfer_after_it_run_as_one()
+{
+	const std::array<std::uint32_t, 5> words{
+		0xeeb4'3ac4U, /* vcmpe.f32 s6, s8 */
+		0xeef1'fa10U, /* vmrs APSR_nzcv, fpscr */
+		0xb300'1001U, /* movwlt r1, #1 */
+		0xeef1'2a10U, /* vmrs r2, fpscr */
+		a::svc};
+	require(translation_holds(words, &uml_arm64_gadget_a32_vfp_vcmpe_s_apsr));
+	require(!translation_holds(words, &uml_arm64_gadget_a32_vfp_vmrs_apsr));
+	struct Case final {
+		std::uint32_t s6, s8, r1, fpscr;
+	};
+	unsigned long generation = 1090;
+	for (const auto &item : {Case{0x3f80'0000U, 0x4000'0000U, 1, 0x8000'0000U},
+				 Case{0x4000'0000U, 0x3f80'0000U, 0, 0x2000'0000U},
+				 Case{0x3f80'0000U, 0x3f80'0000U, 0, 0x6000'0000U},
+				 Case{0x3f80'0000U, 0x7fc0'0000U, 1, 0x3000'0001U}}) {
+		Guest guest{generation++};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		auto cpu = a32_state();
+		set_d(cpu, 3, item.s6);
+		set_d(cpu, 4, item.s8);
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(result.retired_instructions == words.size());
+		require(reg(cpu, 1) == item.r1 && reg(cpu, 2) == item.fpscr);
+	}
+}
+
+/* A conditional VMOV between S or D registers is a select, not a skip. */
+void a_conditional_floating_point_move_selects_without_a_skip()
+{
+	const std::array<std::uint32_t, 5> words{
+		0xeeb5'1b40U, /* vcmp.f64 d1, #0 */
+		0xeef1'fa10U, /* vmrs APSR_nzcv, fpscr */
+		0xceb0'0b42U, /* vmovgt.f64 d0, d2 */
+		0xbef0'3a42U, /* vmovlt.f32 s7, s4 */
+		a::svc};
+	require(!translation_skips(words));
+	unsigned long generation = 1095;
+	for (const std::uint64_t d1 : {0x3ff0'0000'0000'0000ULL /* 1.0 */,
+				       0xbff0'0000'0000'0000ULL /* -1.0 */,
+				       0ULL}) {
+		Guest guest{generation++};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		auto cpu = a32_state();
+		set_d(cpu, 0, 0x1111'1111'1111'1111ULL);
+		set_d(cpu, 1, d1);
+		set_d(cpu, 2, 0x2222'2222'2222'2222ULL);
+		set_d(cpu, 3, 0x3333'3333'3333'3333ULL);
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(result.retired_instructions == words.size());
+		const bool greater = d1 == 0x3ff0'0000'0000'0000ULL;
+		const bool less = d1 == 0xbff0'0000'0000'0000ULL;
+		require(get_d(cpu, 0) == (greater ? 0x2222'2222'2222'2222ULL :
+						    0x1111'1111'1111'1111ULL));
+		/* S7 is the high half of D3, S4 the low half of D2. */
+		require(get_d(cpu, 3) == (less ? 0x2222'2222'3333'3333ULL :
+						 0x3333'3333'3333'3333ULL));
+	}
+}
+
+/* An A32 block holds every instruction of its window up to block_limit,
+ * whatever window it is given; a T32 block stops five short of the limit
+ * unless an IT block is open. A straight run longer than a block links on and
+ * retires every instruction. */
+void an_a32_block_holds_all_sixty_four_instructions()
+{
+	constexpr std::uint32_t add_r0_1 = 0xe280'0001U;
+	std::array<std::uint32_t, 80> words;
+	words.fill(add_r0_1);
+	std::array<std::uint16_t, 80> halfwords;
+	halfwords.fill(0x3001U); /* adds r0, #1 */
+	const auto options = options_at(gadgets::a32_support);
+	const auto count = [&](std::uint64_t key,
+			       std::span<const std::byte> code,
+			       std::size_t window) {
+		return gadgets::a32::build({.key = key, .code = code}, {},
+			std::pmr::get_default_resource(), {}, options,
+			gadgets::a32::decode_profile(options), window)
+			.result.program.instruction_count();
+	};
+	const auto a32_code = std::as_bytes(std::span{words});
+	const auto t32_code = std::as_bytes(std::span{halfwords});
+	require(gadgets::a32::block_limit == 64);
+	require(count(aarch32::a32_key(code_base), a32_code.first(64 * 4), 64) ==
+		64);
+	require(count(aarch32::a32_key(code_base), a32_code, 80) == 64);
+	require(count(aarch32::t32_key(code_base), t32_code.first(64 * 2), 64) ==
+		59);
+	require(count(aarch32::t32_key(code_base), t32_code, 80) == 59);
+
+	Guest guest{1110};
+	for (std::uint32_t index = 0; index < 70; ++index)
+		guest.a32(4 * index, {add_r0_1});
+	guest.a32(4 * 70, {a::svc});
+	auto cpu = a32_state();
+	const auto result = guest.run(cpu);
+	require(result.reason == ExitReason::system_call);
+	require(result.retired_instructions == 71);
+	require(reg(cpu, 0) == 70);
+
+	/* A fault at the last position of a full block reports that
+	 * instruction. */
+	Guest faulting{1111};
+	for (std::uint32_t index = 0; index < 63; ++index)
+		faulting.a32(4 * index, {add_r0_1});
+	faulting.a32(4 * 63, {0xe592'1000U}); /* ldr r1, [r2] */
+	faulting.a32(4 * 64, {a::svc});
+	auto at_end = a32_state();
+	at_end.registers[2] = unmapped;
+	const auto fault = faulting.run(at_end);
+	require(fault.reason == ExitReason::memory_fault);
+	require(fault.retired_instructions == 63);
+	require(at_end.pc == aarch32::a32_key(code_base + 4 * 63));
+	require(fault.fault.address == unmapped);
+	require(reg(at_end, 0) == 63);
+}
+
 /* A VLD1 or VST1 copy that crosses a page is a gadget too: the slow transfer
  * helper moves the bytes after translating both pages. */
 void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
@@ -2389,11 +2830,234 @@ void a_block_transfer_into_an_unmapped_page_faults_at_that_page()
 
 } // namespace
 
+extern "C" {
+void uml_arm64_gadget_a32_ld_w_i();
+void uml_arm64_gadget_a32_st_h_i();
+void uml_arm64_gadget_a32_ld_b_i();
+void uml_arm64_gadget_a32_neon_vld1_m_16_n();
+void uml_arm64_gadget_a32_neon_vst1_m_16_n();
+}
+
+namespace {
+
+/* The probe's set index, in the words of the gadgets that carry it: on
+ * 4 KiB pages one xor with the address shifted by 13 and one extract, with
+ * no crossing test in front (a crossing transfer only misses); on 16 KiB
+ * pages the shared probe's extract. A wrong index would only miss, and the
+ * miss helper finds the entry, so the words are what is compared. */
+void the_tlb_probe_indexes_the_set_in_two_instructions()
+{
+	/* eor x9, x7, x7, lsr #13; ubfx x9, x9, #12, #13;
+	 * add x10, x2, x9, lsl #5 */
+	constexpr std::array<std::uint32_t, 3> small{
+		0xca47'34e9U, 0xd34c'6129U, 0x8b09'144aU};
+	/* ubfx x9, x7, #14, #14; add x10, x2, x9, lsl #6 */
+	constexpr std::array<std::uint32_t, 2> large{0xd34e'6ce9U,
+						      0x8b09'184aU};
+	for (const auto gadget : {&uml_arm64_gadget_a32_ld_w_i,
+				  &uml_arm64_gadget_a32_st_h_i,
+				  &uml_arm64_gadget_a32_ld_b_i,
+				  &uml_arm64_gadget_a32_neon_vld1_m_16_n,
+				  &uml_arm64_gadget_a32_neon_vst1_m_16_n}) {
+		const auto *words = reinterpret_cast<const std::uint32_t *>(
+			reinterpret_cast<std::uintptr_t>(gadget));
+		const std::span<const std::uint32_t> sequence =
+			page == 4096 ? std::span<const std::uint32_t>{small} :
+				       std::span<const std::uint32_t>{large};
+		std::size_t at = 0;
+		while (at < 24 && !std::equal(sequence.begin(), sequence.end(),
+					      words + at))
+			++at;
+		require(at < 24, "a memory gadget's probe has another index");
+		/* No TBZ or TBNZ (a crossing test) ahead of the probe. */
+		for (std::size_t index = 0; index < at; ++index)
+			require((words[index] & 0x7e00'0000U) != 0x3600'0000U,
+				"a memory gadget tests for a crossing in front");
+	}
+}
+
+/* The memory gadgets' TLB probe, run against a TLB this test fills: an
+ * access inside a page whose entry the TLB holds hits it, and one that
+ * crosses into the next page does not, although both pages' entries are
+ * there. The entries point at host bytes no guest page maps, with other
+ * bytes between the two pages' copies, so a crossing access that hit would
+ * read or write the bytes between. */
+void the_tlb_probe_hits_inside_a_page_and_not_across_one()
+{
+	constexpr std::uint32_t first = 0x7000'0000U;
+	constexpr std::uint32_t second = first + page;
+	constexpr std::uint32_t gap = 64;
+	std::vector<std::uint8_t> host(2 * page + gap);
+	for (std::size_t index = 0; index < host.size(); ++index)
+		host[index] = static_cast<std::uint8_t>(index < page ? 0x11 :
+			index < page + gap ? 0xee : 0x22);
+	auto tlb = std::make_unique<::uml::memory::Tlb>();
+	const auto fill = [&](std::uint32_t address, std::uint8_t *bytes) {
+		const std::uint64_t key = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
+		auto &entry = tlb->entries[tlb_set(key) *
+					   ::uml::memory::tlb_way_count];
+		const auto base = reinterpret_cast<std::uintptr_t>(bytes) -
+			address;
+		entry.read_page = key;
+		entry.write_page = key;
+		entry.read_data_minus_address = base;
+		entry.write_data_minus_address = base;
+	};
+	fill(first, host.data());
+	fill(second, host.data() + page + gap);
+	const auto options = options_at(gadgets::a32_support);
+	const auto run = [&](std::uint32_t word, std::uint32_t address,
+			     std::uint32_t value) {
+		const auto output = gadgets::a32::build(
+			{.key = aarch32::a32_key(code_base),
+			 .code = std::as_bytes(std::span{&word, 1}),
+			 .single = true},
+			{}, std::pmr::get_default_resource(), {}, options,
+			gadgets::a32::decode_profile(options), 64);
+		auto cpu = a32_state();
+		cpu.registers[0] = value;
+		cpu.registers[1] = address;
+		std::size_t executed = 0;
+		const auto event = gadgets::execute(output.result.program, cpu,
+						    *tlb, executed);
+		require(event != ::uml::cpu::EngineEvent::memory_fault,
+			"an access to a page the TLB holds faulted");
+		require(executed == 1);
+		return cpu;
+	};
+	constexpr std::uint32_t ldr_r0_r1 = 0xe591'0000U;
+	constexpr std::uint32_t ldrh_r0_r1 = 0xe1d1'00b0U;
+	constexpr std::uint32_t ldrb_r0_r1 = 0xe5d1'0000U;
+	constexpr std::uint32_t str_r0_r1 = 0xe581'0000U;
+	constexpr std::uint32_t vld1_8_d0_d1_r1 = 0xf421'0a0fU;
+	constexpr std::uint32_t vst1_8_d0_d1_r1 = 0xf401'0a0fU;
+	/* Inside each page, up to its last byte. */
+	require(reg(run(ldr_r0_r1, first + 8, 0), 0) == 0x1111'1111U);
+	require(reg(run(ldr_r0_r1, second + page - 4, 0), 0) == 0x2222'2222U);
+	require(reg(run(ldrh_r0_r1, first + page - 2, 0), 0) == 0x1111U);
+	require(reg(run(ldrb_r0_r1, first + page - 1, 0), 0) == 0x11U);
+	require(get_d(run(vld1_8_d0_d1_r1, first + page - 16, 0), 1) ==
+		0x1111'1111'1111'1111ULL);
+	/* Across the boundary, from both pages' copies. */
+	require(reg(run(ldr_r0_r1, first + page - 2, 0), 0) == 0x2222'1111U);
+	require(reg(run(ldr_r0_r1, first + page - 1, 0), 0) == 0x2222'2211U);
+	require(reg(run(ldrh_r0_r1, first + page - 1, 0), 0) == 0x2211U);
+	{
+		const auto cpu = run(vld1_8_d0_d1_r1, first + page - 8, 0);
+		require(get_d(cpu, 0) == 0x1111'1111'1111'1111ULL);
+		require(get_d(cpu, 1) == 0x2222'2222'2222'2222ULL);
+	}
+	(void)run(str_r0_r1, first + page - 3, 0x4433'2211U);
+	require(host[page - 3] == 0x11 && host[page - 2] == 0x22 &&
+		host[page - 1] == 0x33 && host[page + gap] == 0x44);
+	{
+		auto cpu = a32_state();
+		set_d(cpu, 0, 0x0807'0605'0403'0201ULL);
+		set_d(cpu, 1, 0x100f'0e0d'0c0b'0a09ULL);
+		const auto output = gadgets::a32::build(
+			{.key = aarch32::a32_key(code_base),
+			 .code = std::as_bytes(std::span{&vst1_8_d0_d1_r1, 1}),
+			 .single = true},
+			{}, std::pmr::get_default_resource(), {}, options,
+			gadgets::a32::decode_profile(options), 64);
+		cpu.registers[1] = second - 4;
+		std::size_t executed = 0;
+		require(gadgets::execute(output.result.program, cpu, *tlb,
+					 executed) !=
+			::uml::cpu::EngineEvent::memory_fault);
+		for (std::uint32_t index = 0; index < 16; ++index)
+			require(host[index < 4 ? page - 4 + index :
+				     page + gap + index - 4] == index + 1);
+	}
+	for (std::size_t index = page; index < page + gap; ++index)
+		require(host[index] == 0xee, "a crossing access hit");
+}
+
+/* An entry the TLB's own fill path (Tlb::translate, the miss helper's) puts
+ * in the table hits through the probe the gadgets emit. A probe that looked
+ * in another set would only miss, and the miss helper would find the entry,
+ * so every entry of the other sets holds the same page with another
+ * backing: a probe of the wrong set reads that one instead. The pages
+ * spread over the 32-bit space, where the 4 KiB index folds the high page
+ * bits into the low ones. */
+void an_entry_the_tlb_fills_hits_through_the_emitted_probe()
+{
+	Guest guest{1104};
+	std::array<std::uint32_t, 8> pages{
+		0x0000'7000U, 0x0200'0000U, 0x0fff'f000U, 0x1234'5000U,
+		0x7000'0000U, 0x8000'1000U, 0xc3a5'e000U, 0xffff'e000U};
+	for (auto &address : pages) {
+		address &= ~(page - 1U);
+		guest.map_data(address);
+	}
+	std::vector<std::uint8_t> decoy(page, 0xdd);
+	const auto options = options_at(gadgets::a32_support);
+	const auto run = [&](::uml::memory::Tlb &tlb, std::uint32_t word,
+			     std::uint32_t address, std::uint32_t value) {
+		const auto output = gadgets::a32::build(
+			{.key = aarch32::a32_key(code_base),
+			 .code = std::as_bytes(std::span{&word, 1}),
+			 .single = true},
+			{}, std::pmr::get_default_resource(), {}, options,
+			gadgets::a32::decode_profile(options), 64);
+		auto cpu = a32_state();
+		cpu.registers[0] = value;
+		cpu.registers[1] = address;
+		std::size_t executed = 0;
+		require(gadgets::execute(output.result.program, cpu, tlb,
+					 executed) !=
+			::uml::cpu::EngineEvent::memory_fault);
+		require(executed == 1);
+		return cpu;
+	};
+	constexpr std::uint32_t ldr_r0_r1 = 0xe591'0000U;
+	constexpr std::uint32_t ldrb_r0_r1 = 0xe5d1'0000U;
+	constexpr std::uint32_t str_r0_r1 = 0xe581'0000U;
+	constexpr std::uint32_t vld1_8_d0_d1_r1 = 0xf421'0a0fU;
+	for (const auto address : pages) {
+		auto tlb = std::make_unique<::uml::memory::Tlb>();
+		tlb->generation = guest.generation();
+		const auto key = std::uint64_t{address} >> DARWIN_UML_GUEST_PAGE_SHIFT;
+		auto *const host = tlb->translate(address, ::uml::memory::Access::write);
+		require(host != nullptr &&
+			tlb->translate(address, ::uml::memory::Access::read) == host);
+		std::fill_n(reinterpret_cast<std::uint8_t *>(host), page,
+			    std::uint8_t{0x5a});
+		std::size_t filled = tlb->entries.size();
+		for (std::size_t index = 0; index < tlb->entries.size(); ++index)
+			if (tlb->entries[index].read_page == key) {
+				require(filled == tlb->entries.size());
+				filled = index;
+			}
+		require(filled < tlb->entries.size());
+		const auto other = reinterpret_cast<std::uintptr_t>(decoy.data()) -
+			address;
+		const auto set = filled / ::uml::memory::tlb_way_count;
+		for (std::size_t index = 0; index < tlb->entries.size(); ++index)
+			if (index / ::uml::memory::tlb_way_count != set)
+				tlb->entries[index] = {key, other, key, other};
+		require(reg(run(*tlb, ldr_r0_r1, address + 0x40, 0), 0) ==
+			0x5a5a'5a5aU);
+		require(reg(run(*tlb, ldrb_r0_r1, address + page - 1, 0), 0) ==
+			0x5aU);
+		require(get_d(run(*tlb, vld1_8_d0_d1_r1, address + 0x80, 0), 1) ==
+			0x5a5a'5a5a'5a5a'5a5aULL);
+		(void)run(*tlb, str_r0_r1, address + 0x100, 0x1234'5678U);
+		require(reinterpret_cast<std::uint8_t *>(host)[0x100] == 0x78);
+		require(std::ranges::all_of(decoy, [](std::uint8_t byte) {
+			return byte == 0xdd;
+		}));
+	}
+}
+
+} // namespace
+
 int main()
 {
 	const ::uml::testing::RuntimeTestRoute runtime_route;
 	straight_line_retires_every_instruction();
 	skipped_conditional_instructions_retire();
+	conditional_data_processing_selects_without_a_skip();
 	conditional_branch_retires_taken_or_not();
 	conditional_supervisor_call_is_skipped_or_taken();
 	a_data_fault_stops_at_the_instruction();
@@ -2430,6 +3094,9 @@ int main()
 	a_pop_to_pc_across_a_page_boundary_branches();
 	a_conditional_block_transfer_across_a_page_follows_its_condition();
 	a_double_word_load_crosses_a_page_boundary();
+	the_tlb_probe_hits_inside_a_page_and_not_across_one();
+	the_tlb_probe_indexes_the_set_in_two_instructions();
+	an_entry_the_tlb_fills_hits_through_the_emitted_probe();
 	a_block_transfer_into_an_unmapped_page_faults_at_that_page();
 	advanced_simd_floating_point_uses_the_standard_fpscr();
 	a_library_floating_point_instruction_keeps_the_flags_around_it();
@@ -2442,6 +3109,11 @@ int main()
 	vld1_and_vst1_copies_stay_out_of_the_library();
 	vld1_and_vst1_copies_write_back_in_each_mode();
 	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();
+	an_add_that_computes_a_copy_base_runs_in_the_copy();
+	hinted_copies_and_loads_to_all_lanes_have_their_own_gadgets();
+	a_compare_and_the_flag_transfer_after_it_run_as_one();
+	a_conditional_floating_point_move_selects_without_a_skip();
+	an_a32_block_holds_all_sixty_four_instructions();
 	in_place_add_and_sub_of_an_immediate_reach_every_register();
 	compare_and_branch_pairs_take_the_branch_as_the_pair_does();
 	parallel_arithmetic_and_sel_stay_out_of_the_library();

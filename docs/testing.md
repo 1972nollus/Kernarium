@@ -453,7 +453,7 @@ their provenance and deployment targets, required APIs, and the absence of
 unused command-line providers. Apple builds
 validate the kernel bridge ABI, page profile, product family, and `6.18` series
 before embedding an artifact; they do not bind to its patch release or source
-commit and never prepare sources or invoke a kernel/AOSP build. Rootfs bundles
+commit and never prepare sources or invoke a kernel or Android build. Rootfs bundles
 are launch inputs, not emulator build inputs.
 
 Kernarium's defaults, guest bundles, and scripts are described in
@@ -839,15 +839,16 @@ extension the host lacks, BF16 and I8MM on the M1 Ultra, is skipped);
 `--level` runs the
 cases of another level with the engine translating at it, which is how a
 level is brought up before the engine's own moves. The `unaligned` and
-`fpscr-reserved` suites are unrecorded until a hardware oracle exists, so
-nothing here invents expectations for them. A store-exclusive may fail
+`fpscr-reserved` suites are recorded from hardware (a Raspberry Pi 4), as the
+corpus README describes. A store-exclusive may fail
 without cause, and the gadgets' fails whenever a host interrupt lands between
 the load and the store, which a loaded host makes frequent enough to see in a
 gate; the oracle's never does. A case whose only difference is that failure
 runs again, up to 16 attempts in all, and the summary counts the cases that
 needed it. `arm64-gadget-a32-corpus-interrupted` runs the `exclusive-qemu`
-record at least 200 times with a timer signal every few microseconds aimed at
-the guest's thread, and goes on past that until a store-exclusive has lost its
+and `sequences-qemu` records (`--record` takes a comma-separated list) at
+least 200 times with a timer signal every few microseconds aimed at the
+guest's thread, and goes on past that until a store-exclusive has lost its
 reservation (at most 60 s, because whether a signal lands in the window is
 chance). It requires that one was lost and that every case then agreed. All
 four run in both page profiles.

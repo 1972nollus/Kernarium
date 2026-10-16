@@ -13,6 +13,7 @@
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/layout/assembly_offsets.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -27,6 +28,36 @@ using namespace aarch32;
  * destination PC live. */
 constexpr std::uintptr_t scratch0 = 15 * 8;
 constexpr std::uintptr_t scratch1 = 16 * 8;
+
+/* Whether condition `cond` passes, for each NZCV value n (N in bit 3, V in
+ * bit 0): bit n of the result. The truth table a select gadget tests. */
+[[nodiscard]] inline constexpr std::uint64_t condition_table(unsigned cond) noexcept
+{
+	std::uint64_t table = 0;
+	for (unsigned nzcv = 0; nzcv < 16; ++nzcv) {
+		const bool n = (nzcv & 8U) != 0, z = (nzcv & 4U) != 0;
+		const bool c = (nzcv & 2U) != 0, v = (nzcv & 1U) != 0;
+		bool pass = true;
+		switch (cond >> 1) {
+		case 0: pass = z; break;
+		case 1: pass = c; break;
+		case 2: pass = n; break;
+		case 3: pass = v; break;
+		case 4: pass = c && !z; break;
+		case 5: pass = n == v; break;
+		case 6: pass = !z && n == v; break;
+		default: break;
+		}
+		if ((cond & 1U) != 0 && cond != 15)
+			pass = !pass;
+		if (pass)
+			table |= std::uint64_t{1} << nzcv;
+	}
+	return table;
+}
+static_assert(condition_table(0) == 0xf0f0U);  /* EQ: Z */
+static_assert(condition_table(11) == 0x55aaU); /* LT: N != V */
+static_assert(condition_table(14) == 0xffffU);
 
 /* Where D0-D31 and S0-S31 are: they overlay V0-V15 (D(2n) is the low half
  * of V(n)), so a VFP or Advanced SIMD register is a byte offset. */
@@ -57,8 +88,11 @@ public:
 		  profile_{profile}, words_{storage}, it_{input.it},
 		  thumb_{key_isa(input.key) == GuestIsa::t32},
 		  unit_bytes_{thumb_ ? 2U : 4U},
-		  limit_{input.single ? 1U : block_instructions},
-		  soft_limit_{input.single ? 1U : block_instructions - 5U},
+		  limit_{input.single ? 1U :
+				       std::min(block_instructions, block_limit)},
+		  /* A T32 block stops early enough for an IT block it starts
+		   * to complete inside it; A32 has none. */
+		  soft_limit_{input.single ? 1U : thumb_ ? limit_ - 5U : limit_},
 		  available_{input.code.size() / unit_bytes_}
 	{}
 
@@ -204,6 +238,37 @@ private:
 		std::uint64_t operand{};
 	};
 	Compare compare_;
+	/* The condition of the instruction being translated when it is a
+	 * conditional data-processing instruction that sets no flags, which
+	 * emit_dp_values lowers as a select rather than behind a skip; 14
+	 * otherwise. */
+	unsigned select_{14};
+	/* The ADD or SUB of an immediate pushed last, while every instruction
+	 * translated since is Advanced SIMD data processing that reads no core
+	 * register: a VLD1 or VST1 copy without writeback based on its Rd
+	 * absorbs it (emit_structure), taking its words out of the stream.
+	 * `start` is ~0 when there is none. */
+	struct AddressAdd final {
+		std::size_t start{~std::size_t{}};
+		std::size_t end{};
+		std::uintptr_t rd{};
+		std::uintptr_t rn{};
+		std::uint32_t immediate{};
+	};
+	AddressAdd address_add_;
+	/* Library exits pushed so far. */
+	std::size_t library_calls_{};
+	/* The unconditional VCMP or VCMPE pushed last, while nothing has been
+	 * pushed since: `end` is the length of the stream just after it, ~0
+	 * when there is none, and `operation` and `precision` its kVfpCmpApsr
+	 * row and column. A VMRS APSR_nzcv right after it turns its gadget
+	 * into the fused one. */
+	struct VfpCompare final {
+		std::size_t end{~std::size_t{}};
+		unsigned operation{};
+		unsigned precision{};
+	};
+	VfpCompare vfp_compare_;
 	/* The block holds a form that reads or writes the vector registers or
 	 * FPSCR (the decoder table's fp_state trait, set in run()), and so is
 	 * entered through the FP state link: CpuState loads the task's vectors
