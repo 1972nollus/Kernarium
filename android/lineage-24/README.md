@@ -415,6 +415,10 @@ same loopback forward as normal Android (`adb sideload` checks packages against
 the signing keys in the image's `otacerts`), and mounts the fixed GPT
 partitions from the checked `overlay/config/recovery.fstab`. Recovery ADB
 authentication follows the product's `ro.boot.kernarium.adb_auth` policy.
+Recovery loads only its ramdisk's `prop.default`, which the build fills from the
+product's properties, so `sys.use_memfd=true` reaches it and its ashmem users
+fall back to memfd on a kernel without `/dev/ashmem`. The verifier requires
+that line.
 
 The recovery partition is 20 MiB. The stock LineageOS recovery image measures
 15.07 MiB (15,802,368 bytes), and the size rule is that image plus 25%

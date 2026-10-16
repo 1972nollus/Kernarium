@@ -183,9 +183,14 @@ def verify_entries(
             fail(f"recovery binary is not an executable regular file: {name}")
     if entries["system/etc/recovery.fstab"].payload != expected_fstab:
         fail("recovery fstab differs from the checked device tree")
-    properties = entries["prop.default"].payload
+    properties = entries["prop.default"].payload.splitlines()
     if b"persist.adb.tcp.port=5555" not in properties:
         fail("recovery properties omit the ADB TCP port")
+    # Recovery loads only the ramdisk's prop.default, never the product
+    # partition's properties. Without this one a kernel that lacks /dev/ashmem
+    # (the mainline line) fails every ashmem_create_region caller in recovery.
+    if b"sys.use_memfd=true" not in properties:
+        fail("recovery properties omit sys.use_memfd, which the ashmem fallback needs")
     interface = entries["system/lib64/librecovery_ui_ext.so"].payload
     if b"eth1" in interface or any(
         token not in interface for token in (b"eth0\0", b"10.0.2.15\0", b"255.255.255.0\0")

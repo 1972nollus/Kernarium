@@ -949,7 +949,7 @@ def lz4_legacy_frame(payload: bytes, block_size: int = 1 << 20) -> bytes:
 def synthetic_lineage_recovery_ramdisk(
     fstab: bytes, *, alignment: int = 16384, omit_dependency: bool = False,
     interface: bytes = b"eth0\0", compression: str = "lz4",
-    module: bool = False,
+    module: bool = False, no_memfd: bool = False,
 ) -> bytes:
     entries = [
         newc_entry("init", 0o100750, synthetic_aarch64_elf(alignment), 1),
@@ -957,7 +957,8 @@ def synthetic_lineage_recovery_ramdisk(
             "prop.default",
             0o100644,
             b"ro.product.system.device=darwin\n"
-            b"persist.adb.tcp.port=5555\n",
+            b"persist.adb.tcp.port=5555\n"
+            + (b"" if no_memfd else b"sys.use_memfd=true\n"),
             2,
         ),
         newc_entry(
@@ -1058,6 +1059,10 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
                 synthetic_lineage_recovery_ramdisk(fstab, interface=b"eth1\0"),
             ),
             ("a loadable module", synthetic_lineage_recovery_ramdisk(fstab, module=True)),
+            (
+                "properties without sys.use_memfd",
+                synthetic_lineage_recovery_ramdisk(fstab, no_memfd=True),
+            ),
             (
                 "a changed fstab",
                 synthetic_lineage_recovery_ramdisk(fstab + b"# changed\n"),
