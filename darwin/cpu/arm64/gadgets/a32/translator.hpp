@@ -216,6 +216,14 @@ private:
 		std::uint64_t operand{};
 	};
 	Compare compare_;
+	/* The MOVW the last gadget pushed is, while nothing has been pushed
+	 * since: `end` is the length of the stream just after it, and `rd` the
+	 * register it writes. */
+	struct MoveWide final {
+		std::size_t end{~std::size_t{}};
+		std::uintptr_t rd{};
+	};
+	MoveWide movw_;
 	/* The block holds a form that reads or writes the vector registers or
 	 * FPSCR (the decoder table's fp_state trait, set in run()), and so is
 	 * entered through the FP state link: CpuState loads the task's vectors

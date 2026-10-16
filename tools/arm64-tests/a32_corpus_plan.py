@@ -302,6 +302,47 @@ def suite_alu(context: Context) -> list[Case]:
                 cases.append(Case(
                     "alu", f"{form.name}/{index}.{variant}", form.name, ISA_LETTER[isa],
                     word_of(isa, word), 0, recipe, {"apsr": flags}))
+    return cases + move_pairs(context)
+
+
+# MOVW then MOVT: of one register and of two, apart, twice, under a condition and in
+# IT blocks, and with the block limit between them.
+def movw(rd: int, value: int, thumb: bool, cond: int = 14) -> tuple[int, ...]:
+    if not thumb:
+        return (cond << 28 | 0x03000000 | value >> 12 << 16 | rd << 12 | value & 0xFFF,)
+    return (0xF240 | (value >> 11 & 1) << 10 | value >> 12, (value >> 8 & 7) << 12 | rd << 8 | value & 0xFF)
+
+
+def movt(rd: int, value: int, thumb: bool, cond: int = 14) -> tuple[int, ...]:
+    word = movw(rd, value, thumb, cond)
+    return (word[0] | 0x00400000,) if not thumb else (word[0] | 0x0080, word[1])
+
+
+def move_pairs(context: Context) -> list[Case]:
+    cases = []
+    for thumb in (False, True):
+        state, nop = ("T", (0xBF00,)) if thumb else ("A", (0xE320F000,))
+        add = (0xF103, 0x0301) if thumb else (0xE2833001,)  # add r3, r3, #1
+        programs = {
+            "same": [movw(0, 0x1234, thumb), movt(0, 0xABCD, thumb)],
+            "lr": [movw(14, 0xFFFF, thumb), movt(14, 0x8000, thumb)],
+            "two": [movw(1, 0x5678, thumb), movt(2, 0x9ABC, thumb)],
+            "apart": [movw(3, 0x0FFF, thumb), add, movt(3, 0x7001, thumb)],
+            "twice": [movw(5, 0x8001, thumb), movt(5, 0x0101, thumb), movt(5, 0xFEDC, thumb)],
+            "limit": [nop] * 58 + [movw(6, 0x4321, thumb), movt(6, 0x8765, thumb)],
+        }
+        if thumb:
+            programs["itt"] = [(0xBF04,), movw(7, 0x1111, True), movt(7, 0x2222, True)]
+            programs["ite"] = [(0xBF0C,), movw(8, 0x3333, True), movt(8, 0x4444, True)]
+        else:
+            programs["eq"] = [movw(7, 0x1111, False, 0), movt(7, 0x2222, False, 0)]
+        for name, parts in programs.items():
+            target = len(parts) - 1
+            form = "MOVT_T1" if thumb else "MOVT_A1"
+            for flags in ((0, 0x40000000) if name in ("eq", "itt", "ite") else (0x60000000,)):
+                program = tuple(unit for part in parts for unit in part)
+                cases.append(Case("alu", f"{form}/pair-{name}.{flags >> 28:x}", form, state,
+                                  program, target, f"pattern-{state.lower()}", {"apsr": flags}))
     return cases
 
 

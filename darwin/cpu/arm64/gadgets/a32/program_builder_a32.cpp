@@ -608,10 +608,23 @@ Translator::Result Translator::emit_integer(const Instruction &in,
 	const auto n = static_cast<std::uint64_t>(o.n) * 8U;
 	const auto m = static_cast<std::uint64_t>(o.m) * 8U;
 	switch (plan.family) {
-	case Family::movw:
-		return emit_mov_constant(in, o.d,
+	case Family::movw: {
+		const auto result = emit_mov_constant(in, o.d,
 			static_cast<std::uint32_t>(o.imm32));
+		if (o.d != 15 && in.cond >= 14 && !in.in_it)
+			movw_ = {words_.size(), d};
+		return result;
+	}
 	case Family::movt:
+		/* MOVT behind a MOVW of the same register is one move of the
+		 * whole constant: the MOVW's immediate takes the top half. */
+		if (movw_.end == words_.size() && movw_.rd == d &&
+		    in.cond >= 14 && !in.in_it) {
+			auto &word = words_[words_.size() - 1U];
+			word = (word & ~(std::uintptr_t{0xffff} << 48)) |
+			       std::uintptr_t{o.imm16} << 48;
+			return {};
+		}
 		push(G::movt);
 		push(d | std::uint64_t{o.imm16} << 48);
 		return {};

@@ -1,6 +1,6 @@
 record	oracle	cases
 absent-profile	profile	751
-alu-qemu	qemu	7684
+alu-qemu	qemu	7702
 armv8-memory-qemu	qemu	69
 armv8-qemu	qemu	4324
 armv8-system-qemu	qemu	4
