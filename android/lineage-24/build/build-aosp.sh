@@ -542,7 +542,7 @@ DEXPREOPT_CONFIG="$OUT_DIR_ABSOLUTE/soong/dexpreopt-${LINEAGE24_PRODUCT}.config"
 verify_dexpreopt_config "$DEXPREOPT_CONFIG"
 TARGET_FILES="$PRODUCT_OUT/obj/PACKAGING/target_files_intermediates/${LINEAGE24_PRODUCT}-target_files.zip"
 [[ -f "$TARGET_FILES" ]] || fail "target-files archive is missing: $TARGET_FILES"
-python3 -B "$FIRST_BOOT_TOOL" verify --aosp-source "$AOSP_SOURCE" --out-dir "$OUT_DIR" \
+python3 -B "$FIRST_BOOT_TOOL" verify --host-bin "$OUT_DIR_ABSOLUTE/host/linux-x86/bin" \
 	--target-files-dir "${TARGET_FILES%.zip}" --artifacts "$AOSP_SOURCE/$FIRST_BOOT_OAT"
 "$TARGET_FILES_VERIFIER" --target-files "$TARGET_FILES" \
 	--kernel-elf "$KERNEL_ELF" \

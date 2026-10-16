@@ -193,10 +193,10 @@ class Layout:
 
 
 class Tools:
-    def __init__(self, aosp: Path, out_dir: str) -> None:
+    def __init__(self, aosp: Path, out_dir: str, host_bin: Path | None = None) -> None:
         self.aosp = aosp
         self.out = out_dir
-        self.bin = aosp / out_dir / "host" / "linux-x86" / "bin"
+        self.bin = host_bin or aosp / out_dir / "host" / "linux-x86" / "bin"
         for tool in ("debugfs", "aapt2"):
             if not (self.bin / tool).is_file():
                 fail(f"missing host tool: {self.bin / tool}")
@@ -471,9 +471,8 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    aosp = args.aosp_source.resolve()
     layout = Layout(args.target_files_dir.resolve(), "target-files")
-    tools = Tools(aosp, args.out_dir)
+    tools = Tools(Path(), "", args.host_bin.resolve())
     manifest = json.loads((args.artifacts / "manifest.json").read_text(encoding="utf-8"))
     produced = {p["location"]: p for p in manifest["packages"]}
     problems: list[str] = []
@@ -505,15 +504,16 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     build = sub.add_parser("build", help="compile the packages that lack artifacts")
     verify = sub.add_parser("verify", help="check a packaged target-files tree")
-    for p in (build, verify):
-        p.add_argument("--aosp-source", type=Path, required=True,
+    build.add_argument("--aosp-source", type=Path, required=True,
                        help="AOSP workspace root (also the working directory of dex2oat)")
-        p.add_argument("--out-dir", default="out", help="build output directory name inside the workspace")
+    build.add_argument("--out-dir", default="out", help="build output directory name inside the workspace")
     build.add_argument("--product", default="darwin", help="device directory under out/target/product")
     build.add_argument("--output", type=Path, required=True, help="new directory for the artifacts")
     build.add_argument("--previous", type=Path, help="earlier output; its copies in the build tree count as ours")
     build.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     build.set_defaults(func=cmd_build)
+    verify.add_argument("--host-bin", type=Path, required=True,
+                        help="host tool directory holding debugfs and aapt2 (out/host/linux-x86/bin)")
     verify.add_argument("--target-files-dir", type=Path, required=True, help="extracted target-files staging")
     verify.add_argument("--artifacts", type=Path, required=True, help="the build output directory")
     verify.set_defaults(func=cmd_verify)

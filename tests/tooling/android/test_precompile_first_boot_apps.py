@@ -244,7 +244,8 @@ def check_build_and_verify(tool, scratch: Path) -> None:
 
     staging = scratch / "target-files"
     target_files_tree(aosp, first, staging)
-    verify = ["verify", *common, "--target-files-dir", str(staging), "--artifacts", str(first)]
+    verify = ["verify", "--host-bin", str(aosp / "out/host/linux-x86/bin"),
+              "--target-files-dir", str(staging), "--artifacts", str(first)]
     run_tool(tool, *verify)
 
     # Output that already exists is never overwritten.
