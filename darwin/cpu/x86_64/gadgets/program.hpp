@@ -136,13 +136,6 @@ public:
 		std::span<const Gadget> gadgets,
 		std::span<const std::byte> source,
 		std::span<const std::uintptr_t> words, bool check_head = false);
-	/* A block a cache kept in its victim tier, given back as it was
-	 * stored: the stream and source it was built with, and the facts its
-	 * decoded instructions would give, which it no longer carries. */
-	[[nodiscard]] static Program kept(ExecutionMode mode,
-		std::uint64_t address, std::span<const std::byte> source,
-		std::span<const std::uintptr_t> words,
-		std::size_t instructions, bool terminal, bool check_head);
 
 	[[nodiscard]] ExecutionMode execution_mode() const noexcept { return mode_; }
 	[[nodiscard]] std::uint64_t address() const noexcept { return address_; }

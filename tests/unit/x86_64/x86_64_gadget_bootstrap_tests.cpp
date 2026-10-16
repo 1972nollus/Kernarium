@@ -1,5 +1,4 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/cpuid.hpp"
 #include "cpu/x86_64/decoder.hpp"
@@ -21,7 +20,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <limits>
@@ -1436,119 +1434,6 @@ template<typename Body>
 		"a resident address space lost its program") &&
 		expect(retired.program != nullptr && !retired.cache_hit,
 			"a retired address space was served its old program");
-}
-
-/* Mirrors locate_program(): the set a long-mode block lands in, so that a
- * test can aim more blocks than a set has ways at one set. */
-[[nodiscard]] std::size_t x86_cache_set(std::uint64_t generation,
-	std::uint64_t address) noexcept
-{
-	constexpr auto sets = uml::cpu::gadget_cache::slots /
-		uml::cpu::gadget_cache::ways;
-	const auto block = address ^ (generation * 0x9e37'79b9'7f4a'7c15ULL);
-	const auto mixed = block ^ (block >> 12U) ^ (block >> 24U);
-	return static_cast<std::size_t>(mixed) & (sets - 1U);
-}
-
-/* With a victim tier, a block its set evicted comes back out of the tier
- * instead of being translated again, after the source comparison a fresh
- * build's bytes stand for. One more block than a set has ways is aimed at one
- * set, each `mov eax, index; syscall`, so the last store evicts the first.
- * The first's miss must then restore it and run its own immediate, and the one
- * that restore evicts must come back the same way. A block whose bytes changed
- * while it was in the tier, and one kept under a smaller instruction limit
- * than the next request's, must be translated again instead. */
-[[nodiscard]] bool an_evicted_block_comes_back_from_the_victim_tier()
-{
-	using namespace uml::cpu::x86_64;
-	constexpr std::uint64_t generation = 77;
-	constexpr auto ways = uml::cpu::gadget_cache::ways;
-	constexpr std::size_t span = std::size_t{8} << 20;
-	std::vector<std::uint64_t> blocks{0};
-	for (std::uint64_t address = 16; blocks.size() < ways + 3;
-	     address += 16) {
-		uml::testing::require(address + 16 <= span,
-			"no set of the cache filled within the test memory");
-		if (x86_cache_set(generation, address) ==
-		    x86_cache_set(generation, 0))
-			blocks.push_back(address);
-	}
-	auto memory = std::make_unique<TestMemory>(0, span);
-	const auto put = [&](std::size_t index, std::uint8_t value) {
-		memory->load(blocks[index], {
-			0xb8, value, 0x00, 0x00, 0x00,
-			0x0f, 0x05,
-		});
-	};
-	for (std::size_t index = 0; index < blocks.size(); ++index)
-		put(index, static_cast<std::uint8_t>(index + 1));
-
-	uml::testing::require(setenv("DARWIN_UML_GADGET_VICTIM_TIER_KIB", "64",
-		1) == 0, "the tier size could not be set");
-	gadgets::Executor executor;
-	uml::testing::require(unsetenv("DARWIN_UML_GADGET_VICTIM_TIER_KIB") ==
-		0, "the tier size could not be cleared");
-	executor.prepare(*memory, generation, 1, 1);
-	const auto &diagnostics = executor.cache_diagnostics();
-	const auto run = [&](std::size_t index, std::uint32_t value,
-		std::size_t limit = 64) {
-		const auto selected = executor.select_program(*memory,
-			blocks[index], ExecutionMode::long64, limit);
-		uml::testing::require(selected.program != nullptr,
-			"a block did not build");
-		CpuState cpu{};
-		cpu.rip = blocks[index];
-		const auto result = gadgets::execute(
-			*selected.program, cpu, *memory, executor, limit);
-		uml::testing::require(limit < 2 ||
-			(result.event == uml::cpu::EngineEvent::system_call &&
-			 cpu.gpr(Register::rax) == value),
-			"a block ran another block's code");
-		return selected;
-	};
-
-	for (std::size_t index = 0; index <= ways; ++index)
-		(void)run(index, static_cast<std::uint32_t>(index + 1));
-	if (!expect(diagnostics.translations == ways + 1 &&
-		diagnostics.victim_restores == 0,
-		"filling a set past its ways did not translate every block"))
-		return false;
-
-	/* The first block was evicted; its miss restores it, and evicts the
-	 * second, whose miss restores it in turn. */
-	const auto restored = run(0, 1);
-	(void)run(1, 2);
-	if (!expect(!restored.cache_hit && diagnostics.translations == ways + 1 &&
-		diagnostics.victim_restores == 2,
-		"an evicted block was translated again instead of restored"))
-		return false;
-
-	/* The next store evicts the third; rewrite its bytes behind the cache. */
-	(void)run(ways + 1, static_cast<std::uint32_t>(ways + 2));
-	put(2, 0x63);
-	(void)run(2, 0x63);
-	if (!expect(diagnostics.translations == ways + 3 &&
-		diagnostics.victim_restores == 2,
-		"a kept block whose bytes changed was restored"))
-		return false;
-
-	/* A block built under a one-instruction limit stops short of what a
-	 * whole-block request needs. A set replaces its ways in turn, and while
-	 * the short block is resident at least three of the other blocks are
-	 * not, so three passes over them place enough to evict it. */
-	const auto last = ways + 2;
-	(void)run(last, 0, 1);
-	for (std::size_t pass = 0; pass < 3; ++pass)
-		for (std::size_t index = 0; index < last; ++index)
-			(void)run(index, index == 2 ? 0x63 :
-				static_cast<std::uint32_t>(index + 1));
-	const auto translations = diagnostics.translations;
-	const auto restores = diagnostics.victim_restores;
-	const auto whole = run(last, static_cast<std::uint32_t>(last + 1));
-	return expect(!whole.cache_hit &&
-		diagnostics.victim_restores == restores &&
-		diagnostics.translations == translations + 1,
-		"a block kept under a smaller limit served a larger request");
 }
 
 /* A slot is current when the epoch it carries is its space's, and the epoch
@@ -9671,7 +9556,6 @@ int main()
 		a_block_longer_than_the_fetch_window_decodes() &&
 		cache_retires_the_oldest_generation() &&
 		a_recycled_address_space_id_serves_no_old_translation() &&
-		an_evicted_block_comes_back_from_the_victim_tier() &&
 		a_validation_does_not_outlive_the_epochs_it_counts() &&
 		cache_links_common_successors() &&
 		cache_chains_direct_branches() &&

@@ -23,8 +23,7 @@ target_include_directories(uml_x86_64_gadgets PUBLIC
 target_compile_definitions(uml_x86_64_gadgets PRIVATE
     UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
-    UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS}
-    UML_GADGET_VICTIM_TIER_KIB=${_uml_gadget_victim_tier_kib})
+    UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
 # The register-baked scalar bank is enumerated by a generator: one entry
 # per operand combination is thousands of entries, which the assembler's

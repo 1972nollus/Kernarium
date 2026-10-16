@@ -94,25 +94,6 @@ L 7 0x1000 0x70
 P 7 0x1000 4 10 4 0xabc 128 32 80 16 0xb00
 """
 
-# One arm64 cache with a victim tier: of the 20 lookups its slots missed, 8
-# were served by taking an evicted translation back out of the tier, whose
-# 65,536 bytes count in the cache's own total.
-VICTIM = """\
-E 0xa generations=1 occupancy=1 slots=4096 slot_bytes=24 slab_slots=256 \
-slab_count=1 stream_index=0 slabs=6144 streams=0 arena_empty=0 links=1024 \
-indirect=0 victim=65536 total=72704 stream_lookups=0 adoptions=0 shared=0 \
-victim_kept=12 victim_taken=9 snapshot=1 seconds=10.0 wall=1 lookups=100 \
-hits=80 revalidated=0 misses=12 adopted=0 unpacked=8 stores=12 first=12 \
-again_evicted=0 again_retired=0 again_discarded=0 changed=0 restored=0 \
-other_executor=0 other_space=0 evictions=12 evicted_bytes=2400 \
-retirements=0 discards=0 departed=0 distance=0
-G 7 current=1 rank=0 idle_switches=0 idle_seconds=0.000 link_records=2 \
-links=1024 indirect=0 targets=0 space=0x70
-S 0x70 generation=7 mode=0 attached=1 stream_index=0 streams=4096 \
-arena_empty=0 links=4096 indirect=0 link_records=2 limbo=0
-P 7 0x1000 4 10 4 0xabc 128 16 80 16 0xb00
-"""
-
 # What the census wrote before it carried snapshots, geometry or parts.
 LEGACY = """\
 E 0xa generations=1 occupancy=2 stream_index=0 slabs=10240 streams=1024 \
@@ -217,20 +198,6 @@ class CensusTests(unittest.TestCase):
         self.assertIn("adopted from another cache of the space 5", text)
         self.assertIn("served without translating 92.50%", text)
         self.assertRegex(text, r"bodies\s+2, held by 1\.500 slots each")
-
-    def test_victim_tier_counts_its_bytes_and_returns(self) -> None:
-        path = write(self.root, VICTIM)
-        blocks = census.scan(path)
-        contents = [census.load(path, block) for block in blocks]
-        parts = census.measured(blocks, contents)
-        self.assertEqual(parts["victim"], 65536)
-        self.assertEqual(parts["total"], 72704 + 4096 + 4096)
-        text = run_main(path)
-        self.assertRegex(text, r"victim tier\s+0\.1 MiB")
-        self.assertIn("taken back from the victim tier 8 of 12 kept", text)
-        self.assertIn("served without translating 88.00%", text)
-        lines = run_main(path, "--series").splitlines()
-        self.assertEqual(lines[1].split()[10:12], ["80.00%", "88.00%"])
 
     def test_legacy_capture_still_reads(self) -> None:
         path = write(self.root, LEGACY)

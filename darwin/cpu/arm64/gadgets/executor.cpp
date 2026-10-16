@@ -8,7 +8,6 @@
 #include "cpu/arm64/gadgets/a32_support.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
-#include "cpu/gadget_victim_tier.hpp"
 #if UML_GADGET_CACHE_CENSUS
 #include "cpu/gadget_cache_census.hpp"
 #endif
@@ -908,20 +907,6 @@ void announce_exit(Announcement &announcement) noexcept
 		std::strcmp(value, "0") != 0;
 }
 
-#ifndef UML_GADGET_VICTIM_TIER_KIB
-#error "UML_GADGET_VICTIM_TIER_KIB must come from the build"
-#endif
-
-/* The text every gadget entry lies in, which the tier numbers rather than
- * spells out. */
-[[nodiscard]] gadget_cache::TextRange gadget_text() noexcept
-{
-	static const auto text = gadget_cache::text_of(
-		reinterpret_cast<const void *>(reinterpret_cast<std::uintptr_t>(
-			uml_arm64_gadget_link_exit)));
-	return text;
-}
-
 void release_announcement(Announcement *announcement) noexcept
 {
 	if (announcement == nullptr)
@@ -1627,13 +1612,7 @@ public:
 		: options_{options}, mode_{mode}, announcement_{announcement},
 		  share_{share},
 		  build_scratch_{scratch_.data(), scratch_.size()}
-	{
-		if (const auto bytes = gadget_cache::victim_tier_bytes(
-			    UML_GADGET_VICTIM_TIER_KIB);
-		    bytes != 0)
-			victims_ = std::make_unique<gadget_cache::VictimTier>(
-				bytes, gadget_text());
-	}
+	{}
 
 	~ProgramCache()
 	{
@@ -1685,9 +1664,6 @@ public:
 			lists += state.slots.capacity() * sizeof(std::uint32_t);
 		if (link_memo_)
 			lists += sizeof(LinkMemo);
-		/* The victim tier, once its first eviction allocated it. */
-		const std::size_t victims =
-			victims_ ? victims_->footprint() : 0;
 		/* How often the stream lookup was asked, against how often a
 		 * store would have had to maintain an index for it. */
 		const auto slab_total = static_cast<std::size_t>(
@@ -1696,19 +1672,14 @@ public:
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu slots=%zu slot_bytes=%zu "
 			"slab_slots=%zu slab_count=%zu stream_index=0 slabs=%zu "
-			"streams=0 arena_empty=0 links=%zu indirect=0 victim=%zu "
-			"total=%zu stream_lookups=%llu adoptions=%llu shared=%d "
-			"victim_kept=%llu victim_taken=%llu",
+			"streams=0 arena_empty=0 links=%zu indirect=0 "
+			"total=%zu stream_lookups=%llu adoptions=%llu shared=%d",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), slot_count, sizeof(Slot), slab_slots,
-			slab_total, slabs, lists, victims, slabs + lists + victims,
+			slab_total, slabs, lists, slabs + lists,
 			static_cast<unsigned long long>(stream_lookups_),
 			static_cast<unsigned long long>(adoptions_),
-			share_ ? 1 : 0,
-			static_cast<unsigned long long>(
-				victims_ ? victims_->kept() : 0),
-			static_cast<unsigned long long>(
-				victims_ ? victims_->taken() : 0));
+			share_ ? 1 : 0);
 		census::write_when(out, snapshot);
 		history_.write(out);
 		std::fputc('\n', out);
@@ -1897,16 +1868,6 @@ public:
 				history_.adopted();
 #endif
 				return adopted;
-			}
-		}
-		/* Then the victim tier: this cache may have evicted it. */
-		if (victims_ && current_ != nullptr) {
-			if (auto unpacked = unpack(pc, changes, mapping_changes,
-				    memory, execution_context, diagnostics)) {
-#if UML_GADGET_CACHE_CENSUS
-				history_.unpacked(current_generation_, pc);
-#endif
-				return unpacked;
 			}
 		}
 #if UML_GADGET_CACHE_CENSUS
@@ -2296,11 +2257,6 @@ private:
 		 * once the address space is retired and its slots released. */
 		unsigned long value{};
 		std::uint16_t id{};
-		/* The number the victim tier names the address space by: fresh
-		 * at every enrolment, so a space that returns after retiring
-		 * never finds what was kept for its predecessor, whose records
-		 * the kept streams point at. */
-		std::uint32_t serial{};
 		/* How many times the address space's code is known to have
 		 * changed, as far as a slot's validation can tell: a slot whose
 		 * epoch equals this one has matched guest memory since the
@@ -2567,7 +2523,6 @@ private:
 	void enroll(Generation &state, unsigned long generation)
 	{
 		state.value = generation;
-		state.serial = next_serial();
 		if (!free_ids_.empty()) {
 			state.id = free_ids_.back();
 			free_ids_.pop_back();
@@ -2686,7 +2641,6 @@ private:
 				body_digest(*slot.body), body_bytes(*slot.body),
 				census::Departure::evicted);
 #endif
-			keep_victim(slot);
 			space_of(slot).release(slot.body, false);
 			slot.vacate();
 		}
@@ -2730,90 +2684,6 @@ private:
 		return slot.body->result();
 	}
 
-	/* What the tier keeps of a body besides its key, stream and units:
-	 * the facts store() takes from the build. */
-	static constexpr std::uint8_t victim_complete = 1U;
-	static constexpr std::uint8_t victim_fp = 2U;
-
-	/* Keep the translation a way is evicting, for a later miss on it.
-	 * One with no guest units to validate could never be taken back. */
-	void keep_victim(const Slot &slot) noexcept
-	{
-		if (!victims_)
-			return;
-		const auto &body = *slot.body;
-		if (body.source_word_count == 0)
-			return;
-		const auto *stop = body.has_stop ? body.stop() : nullptr;
-		victims_->keep(slot.key(), owner_of(slot)->serial,
-			{
-				.stop_address = stop != nullptr ? stop->address :
-					body.guest_address,
-				.stop_instruction =
-					stop != nullptr ? stop->instruction : 0U,
-				.instruction_count = body.instruction_count,
-				.flags = static_cast<std::uint8_t>(
-					(body.complete ? victim_complete : 0U) |
-					(body.accesses_fp_state ? victim_fp : 0U)),
-			},
-			{body.words(), body.word_count}, body.source());
-	}
-
-	/* Take the running address space's translation for `pc` back out of
-	 * the victim tier: validated against guest memory exactly as a stale
-	 * slot is, then stored and linked as the build that made it was.
-	 *
-	 * The stream comes back word for word, and its link and indirect words
-	 * name records of the address space the tier filed it under, which
-	 * never move or die while the space is resident here; the serial a
-	 * space is filed under is never reused, so they are that space's own.
-	 * store() copies a build's stream out of the scratch it was assembled
-	 * in, so a stream never names its own words and needs no relocation. */
-	[[nodiscard]] std::optional<BuildResult> unpack(std::uint64_t pc,
-		std::uint64_t changes, std::uint64_t mapping_changes,
-		StaticGuestMemory &memory, void *execution_context,
-		GadgetCacheDiagnostics &diagnostics)
-	{
-		auto &state = *current_;
-		const auto taken = victims_->take(pc, state.serial);
-		if (!taken)
-			return std::nullopt;
-		if (validate_units(pc, taken->source, changes, mapping_changes,
-			    memory, execution_context) != Validation::valid)
-			return std::nullopt;
-		const auto &fields = taken->fields;
-		const BuildResult kept{
-			arm64::gadgets::Program{pc, fields.instruction_count,
-				arm64::gadgets::ProgramWords{
-					arm64::gadgets::ProgramWords::Borrowed{
-						const_cast<std::uintptr_t *>(
-							taken->words.data()),
-						taken->words.size()}},
-				(fields.flags & victim_fp) != 0},
-			(fields.flags & victim_complete) != 0,
-			fields.stop_address, fields.stop_instruction};
-		auto *body = state.space->publish(kept, taken->source,
-			arm64::aarch32::key_isa(pc));
-		++diagnostics.victim_restores;
-		auto &slot = install(pc, body, changes);
-		state.space->reclaim(announcement_);
-		return slot.body->result();
-	}
-
-	/* The next serial for an address space the tier names. Should the
-	 * count ever wrap, the tier forgets everything and the resident
-	 * spaces are numbered again, so no number names two spaces. */
-	[[nodiscard]] std::uint32_t next_serial() noexcept
-	{
-		if (++last_serial_ != 0)
-			return last_serial_;
-		if (victims_)
-			victims_->clear();
-		for (auto &[generation, state] : generations_)
-			state.serial = ++last_serial_;
-		return ++last_serial_;
-	}
-
 	void discard(Slot &slot)
 	{
 		if (slot.body != nullptr) {
@@ -2840,23 +2710,9 @@ private:
 		void *execution_context, GadgetCacheDiagnostics *diagnostics =
 			nullptr)
 	{
-		return validate_units(pc, body.source(), changes,
-			mapping_changes, memory, execution_context, diagnostics);
-	}
-
-	/* validate_body() for guest units kept apart from a body: `source`
-	 * holds them in the units the key's ISA reads. */
-	[[nodiscard]] Validation validate_units(std::uint64_t pc,
-		std::span<const std::byte> source, std::uint64_t changes,
-		std::uint64_t mapping_changes, StaticGuestMemory &memory,
-		void *execution_context, GadgetCacheDiagnostics *diagnostics =
-			nullptr)
-	{
-		const auto isa = arm64::aarch32::key_isa(pc);
-		const auto units =
-			source.size() / arm64::aarch32::isa_unit_bytes(isa);
-		const auto limit = isa == arm64::aarch32::GuestIsa::a64 ?
-			block_instruction_count : maximum_t32_validation_units;
+		const auto units = std::size_t{body.source_word_count};
+		const auto limit = body.isa == 0 ? block_instruction_count :
+			maximum_t32_validation_units;
 		if (units == 0 || units > limit) {
 			if (diagnostics != nullptr)
 				++diagnostics->validation_mismatches;
@@ -2867,7 +2723,7 @@ private:
 		 * that stopped, the one it read without retiring. */
 		std::array<std::uint32_t, block_instruction_count + 1> fetched;
 		const auto outcome = arm64::aarch32::validate_guest_units(
-			pc, units, source.data(),
+			pc, units, body.source_bytes(),
 			std::as_writable_bytes(std::span{fetched}),
 			guest_page_size,
 			[&memory](std::uint64_t address,
@@ -2955,10 +2811,6 @@ private:
 	const Announcement *announcement_{};
 	bool share_{};
 	std::uint64_t adoptions_{};
-	/* What this cache's ways evicted, packed, or null without a tier. */
-	std::unique_ptr<gadget_cache::VictimTier> victims_;
-	/* The serial last given an address space (Generation::serial). */
-	std::uint32_t last_serial_{};
 	/* The records indirect misses named, made at the first one. */
 	std::unique_ptr<LinkMemo> link_memo_;
 	/* Large enough that an ordinary build never reaches the upstream: a

@@ -172,16 +172,6 @@ Program::Program(ExecutionMode mode, std::uint64_t address,
 	terminal_ = !gadgets.empty() && gadgets.back().instruction.terminal();
 }
 
-Program Program::kept(ExecutionMode mode, std::uint64_t address,
-	std::span<const std::byte> source, std::span<const std::uintptr_t> words,
-	std::size_t instructions, bool terminal, bool check_head)
-{
-	Program program{mode, address, {}, source, words, check_head};
-	program.instructions_ = static_cast<std::uint32_t>(instructions);
-	program.terminal_ = terminal;
-	return program;
-}
-
 BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t address, std::size_t maximum_instructions) noexcept
 

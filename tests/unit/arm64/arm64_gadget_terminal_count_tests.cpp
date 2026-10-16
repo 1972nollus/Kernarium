@@ -354,8 +354,7 @@ void linked_successor_fpcr_exit_subtracts_only_its_suffix()
 
 /* Replacing a translation's slot frees its body, and the retranslation may be
  * given those very bytes back; a fault linked into it must be attributed to
- * the new translation. A victim tier gives the block back in a new body
- * instead of translating it, which must hold the same way. */
+ * the new translation. */
 void a_retranslated_successor_answers_from_its_new_body()
 {
 	constexpr unsigned long generation = 763;
@@ -420,9 +419,7 @@ void a_retranslated_successor_answers_from_its_new_body()
 	rewarm_target.pc = target;
 	require(execute_block(
 			executor, memory, generation, rewarm_target).executed == 1);
-	const auto &diagnostics = executor.cache_diagnostics();
-	require(diagnostics.translations + diagnostics.victim_restores ==
-		cache_ways + 3);
+	require(executor.cache_diagnostics().translations == cache_ways + 3);
 
 	arm64::CpuState linked{};
 	linked.pc = source;

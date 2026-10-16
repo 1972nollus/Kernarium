@@ -469,10 +469,3 @@
 		${PROJECT_SOURCE_DIR}/darwin)
     uml_add_unit_test(NAME gadget-record-table
 		COMMAND uml_gadget_record_table_tests)
-
-    add_executable(uml_gadget_victim_tier_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/gadget_victim_tier_tests.cpp)
-    target_include_directories(uml_gadget_victim_tier_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin)
-    uml_add_unit_test(NAME gadget-victim-tier
-		COMMAND uml_gadget_victim_tier_tests)

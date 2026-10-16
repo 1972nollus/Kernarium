@@ -8,10 +8,6 @@ target_link_libraries(uml_x86_64_gadget_bootstrap_tests PRIVATE
     UML::CpuContract)
 target_include_directories(uml_x86_64_gadget_bootstrap_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-# The victim tier case aims blocks at one set of the configured geometry.
-target_compile_definitions(uml_x86_64_gadget_bootstrap_tests PRIVATE
-    UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
-    UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 uml_add_unit_test(
     NAME x86-64-gadget-bootstrap
     COMMAND uml_x86_64_gadget_bootstrap_tests
