@@ -622,4 +622,4 @@ test_branch nz, ne
 .purgem compare_branch
 
 .purgem conditional_branch_linked
-.purgem follow_block_link
+/* follow_block_link stays defined for test_bit_branch.inc, which purges it. */
