@@ -309,9 +309,9 @@ private:
  * chunk. With freed blocks kept only for their own sixteen-byte size and
  * chunks never returned, a browser that cycles through more address spaces
  * than the cache keeps held an executor's arena at its high-water mark, about
- * twice its live bodies. See G226. A free touches a few map words and at most
- * two neighbours, so retiring an address space still costs in proportion to
- * what it owned. See G167.
+ * twice its live bodies. See G226 and G251. A free touches a few map words
+ * and at most two neighbours, so retiring an address space still costs in
+ * proportion to what it owned. See G167.
  *
  * A chunk is an anonymous mapping of its own rather than a heap block: the
  * heap keeps freed blocks of this size resident, in the process's footprint,
