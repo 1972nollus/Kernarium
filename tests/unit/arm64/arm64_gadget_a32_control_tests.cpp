@@ -13,7 +13,9 @@
  * - the instruction budget, single step and code that changes in place;
  * - exclusives, the Armv8 acquire and release forms, the CP15 and counter
  *   reads and the system forms;
- * - LDM, STM and LDRD across a page boundary, mapped and not; and
+ * - LDM, STM and LDRD across a page boundary, mapped and not, and the
+ *   memory gadgets' TLB probe hitting inside a page and not across one, and
+ *   in the set the TLB's own fill path chose; and
  * - at the complete level, that a form of an extension the host has runs
  *   (as a gadget, or in the semantic library when none lowers it) and one of
  *   an extension it lacks is UNDEFINED.
@@ -25,10 +27,15 @@
 
 #include "cpu/arm64/aarch32/decode.hpp"
 
+#include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
+#include <memory_resource>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -2389,6 +2396,228 @@ void a_block_transfer_into_an_unmapped_page_faults_at_that_page()
 
 } // namespace
 
+extern "C" {
+void uml_arm64_gadget_a32_ld_w_i();
+void uml_arm64_gadget_a32_st_h_i();
+void uml_arm64_gadget_a32_ld_b_i();
+void uml_arm64_gadget_a32_neon_vld1_m_16_n();
+void uml_arm64_gadget_a32_neon_vst1_m_16_n();
+}
+
+namespace {
+
+/* The probe's set index, in the words of the gadgets that carry it: on
+ * 4 KiB pages one xor with the address shifted by 13 and one extract, with
+ * no crossing test in front (a crossing transfer only misses); on 16 KiB
+ * pages the shared probe's extract. A wrong index would only miss, and the
+ * miss helper finds the entry, so the words are what is compared. */
+void the_tlb_probe_indexes_the_set_in_two_instructions()
+{
+	/* eor x9, x7, x7, lsr #13; ubfx x9, x9, #12, #13;
+	 * add x10, x2, x9, lsl #5 */
+	constexpr std::array<std::uint32_t, 3> small{
+		0xca47'34e9U, 0xd34c'6129U, 0x8b09'144aU};
+	/* ubfx x9, x7, #14, #14; add x10, x2, x9, lsl #6 */
+	constexpr std::array<std::uint32_t, 2> large{0xd34e'6ce9U,
+						      0x8b09'184aU};
+	for (const auto gadget : {&uml_arm64_gadget_a32_ld_w_i,
+				  &uml_arm64_gadget_a32_st_h_i,
+				  &uml_arm64_gadget_a32_ld_b_i,
+				  &uml_arm64_gadget_a32_neon_vld1_m_16_n,
+				  &uml_arm64_gadget_a32_neon_vst1_m_16_n}) {
+		const auto *words = reinterpret_cast<const std::uint32_t *>(
+			reinterpret_cast<std::uintptr_t>(gadget));
+		const std::span<const std::uint32_t> sequence =
+			page == 4096 ? std::span<const std::uint32_t>{small} :
+				       std::span<const std::uint32_t>{large};
+		std::size_t at = 0;
+		while (at < 24 && !std::equal(sequence.begin(), sequence.end(),
+					      words + at))
+			++at;
+		require(at < 24, "a memory gadget's probe has another index");
+		/* No TBZ or TBNZ (a crossing test) ahead of the probe. */
+		for (std::size_t index = 0; index < at; ++index)
+			require((words[index] & 0x7e00'0000U) != 0x3600'0000U,
+				"a memory gadget tests for a crossing in front");
+	}
+}
+
+/* The memory gadgets' TLB probe, run against a TLB this test fills: an
+ * access inside a page whose entry the TLB holds hits it, and one that
+ * crosses into the next page does not, although both pages' entries are
+ * there. The entries point at host bytes no guest page maps, with other
+ * bytes between the two pages' copies, so a crossing access that hit would
+ * read or write the bytes between. */
+void the_tlb_probe_hits_inside_a_page_and_not_across_one()
+{
+	constexpr std::uint32_t first = 0x7000'0000U;
+	constexpr std::uint32_t second = first + page;
+	constexpr std::uint32_t gap = 64;
+	std::vector<std::uint8_t> host(2 * page + gap);
+	for (std::size_t index = 0; index < host.size(); ++index)
+		host[index] = static_cast<std::uint8_t>(index < page ? 0x11 :
+			index < page + gap ? 0xee : 0x22);
+	auto tlb = std::make_unique<::uml::memory::Tlb>();
+	const auto fill = [&](std::uint32_t address, std::uint8_t *bytes) {
+		const std::uint64_t key = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
+		auto &entry = tlb->entries[tlb_set(key) *
+					   ::uml::memory::tlb_way_count];
+		const auto base = reinterpret_cast<std::uintptr_t>(bytes) -
+			address;
+		entry.read_page = key;
+		entry.write_page = key;
+		entry.read_data_minus_address = base;
+		entry.write_data_minus_address = base;
+	};
+	fill(first, host.data());
+	fill(second, host.data() + page + gap);
+	const auto options = options_at(gadgets::a32_support);
+	const auto run = [&](std::uint32_t word, std::uint32_t address,
+			     std::uint32_t value) {
+		const auto output = gadgets::a32::build(
+			{.key = aarch32::a32_key(code_base),
+			 .code = std::as_bytes(std::span{&word, 1}),
+			 .single = true},
+			{}, std::pmr::get_default_resource(), {}, options,
+			gadgets::a32::decode_profile(options), 64);
+		auto cpu = a32_state();
+		cpu.registers[0] = value;
+		cpu.registers[1] = address;
+		std::size_t executed = 0;
+		const auto event = gadgets::execute(output.result.program, cpu,
+						    *tlb, executed);
+		require(event != ::uml::cpu::EngineEvent::memory_fault,
+			"an access to a page the TLB holds faulted");
+		require(executed == 1);
+		return cpu;
+	};
+	constexpr std::uint32_t ldr_r0_r1 = 0xe591'0000U;
+	constexpr std::uint32_t ldrh_r0_r1 = 0xe1d1'00b0U;
+	constexpr std::uint32_t ldrb_r0_r1 = 0xe5d1'0000U;
+	constexpr std::uint32_t str_r0_r1 = 0xe581'0000U;
+	constexpr std::uint32_t vld1_8_d0_d1_r1 = 0xf421'0a0fU;
+	constexpr std::uint32_t vst1_8_d0_d1_r1 = 0xf401'0a0fU;
+	/* Inside each page, up to its last byte. */
+	require(reg(run(ldr_r0_r1, first + 8, 0), 0) == 0x1111'1111U);
+	require(reg(run(ldr_r0_r1, second + page - 4, 0), 0) == 0x2222'2222U);
+	require(reg(run(ldrh_r0_r1, first + page - 2, 0), 0) == 0x1111U);
+	require(reg(run(ldrb_r0_r1, first + page - 1, 0), 0) == 0x11U);
+	require(get_d(run(vld1_8_d0_d1_r1, first + page - 16, 0), 1) ==
+		0x1111'1111'1111'1111ULL);
+	/* Across the boundary, from both pages' copies. */
+	require(reg(run(ldr_r0_r1, first + page - 2, 0), 0) == 0x2222'1111U);
+	require(reg(run(ldr_r0_r1, first + page - 1, 0), 0) == 0x2222'2211U);
+	require(reg(run(ldrh_r0_r1, first + page - 1, 0), 0) == 0x2211U);
+	{
+		const auto cpu = run(vld1_8_d0_d1_r1, first + page - 8, 0);
+		require(get_d(cpu, 0) == 0x1111'1111'1111'1111ULL);
+		require(get_d(cpu, 1) == 0x2222'2222'2222'2222ULL);
+	}
+	(void)run(str_r0_r1, first + page - 3, 0x4433'2211U);
+	require(host[page - 3] == 0x11 && host[page - 2] == 0x22 &&
+		host[page - 1] == 0x33 && host[page + gap] == 0x44);
+	{
+		auto cpu = a32_state();
+		set_d(cpu, 0, 0x0807'0605'0403'0201ULL);
+		set_d(cpu, 1, 0x100f'0e0d'0c0b'0a09ULL);
+		const auto output = gadgets::a32::build(
+			{.key = aarch32::a32_key(code_base),
+			 .code = std::as_bytes(std::span{&vst1_8_d0_d1_r1, 1}),
+			 .single = true},
+			{}, std::pmr::get_default_resource(), {}, options,
+			gadgets::a32::decode_profile(options), 64);
+		cpu.registers[1] = second - 4;
+		std::size_t executed = 0;
+		require(gadgets::execute(output.result.program, cpu, *tlb,
+					 executed) !=
+			::uml::cpu::EngineEvent::memory_fault);
+		for (std::uint32_t index = 0; index < 16; ++index)
+			require(host[index < 4 ? page - 4 + index :
+				     page + gap + index - 4] == index + 1);
+	}
+	for (std::size_t index = page; index < page + gap; ++index)
+		require(host[index] == 0xee, "a crossing access hit");
+}
+
+/* An entry the TLB's own fill path (Tlb::translate, the miss helper's) puts
+ * in the table hits through the probe the gadgets emit. A probe that looked
+ * in another set would only miss, and the miss helper would find the entry,
+ * so every entry of the other sets holds the same page with another
+ * backing: a probe of the wrong set reads that one instead. The pages
+ * spread over the 32-bit space, where the 4 KiB index folds the high page
+ * bits into the low ones. */
+void an_entry_the_tlb_fills_hits_through_the_emitted_probe()
+{
+	Guest guest{1104};
+	std::array<std::uint32_t, 8> pages{
+		0x0000'7000U, 0x0200'0000U, 0x0fff'f000U, 0x1234'5000U,
+		0x7000'0000U, 0x8000'1000U, 0xc3a5'e000U, 0xffff'e000U};
+	for (auto &address : pages) {
+		address &= ~(page - 1U);
+		guest.map_data(address);
+	}
+	std::vector<std::uint8_t> decoy(page, 0xdd);
+	const auto options = options_at(gadgets::a32_support);
+	const auto run = [&](::uml::memory::Tlb &tlb, std::uint32_t word,
+			     std::uint32_t address, std::uint32_t value) {
+		const auto output = gadgets::a32::build(
+			{.key = aarch32::a32_key(code_base),
+			 .code = std::as_bytes(std::span{&word, 1}),
+			 .single = true},
+			{}, std::pmr::get_default_resource(), {}, options,
+			gadgets::a32::decode_profile(options), 64);
+		auto cpu = a32_state();
+		cpu.registers[0] = value;
+		cpu.registers[1] = address;
+		std::size_t executed = 0;
+		require(gadgets::execute(output.result.program, cpu, tlb,
+					 executed) !=
+			::uml::cpu::EngineEvent::memory_fault);
+		require(executed == 1);
+		return cpu;
+	};
+	constexpr std::uint32_t ldr_r0_r1 = 0xe591'0000U;
+	constexpr std::uint32_t ldrb_r0_r1 = 0xe5d1'0000U;
+	constexpr std::uint32_t str_r0_r1 = 0xe581'0000U;
+	constexpr std::uint32_t vld1_8_d0_d1_r1 = 0xf421'0a0fU;
+	for (const auto address : pages) {
+		auto tlb = std::make_unique<::uml::memory::Tlb>();
+		tlb->generation = guest.generation();
+		const auto key = std::uint64_t{address} >> DARWIN_UML_GUEST_PAGE_SHIFT;
+		auto *const host = tlb->translate(address, ::uml::memory::Access::write);
+		require(host != nullptr &&
+			tlb->translate(address, ::uml::memory::Access::read) == host);
+		std::fill_n(reinterpret_cast<std::uint8_t *>(host), page,
+			    std::uint8_t{0x5a});
+		std::size_t filled = tlb->entries.size();
+		for (std::size_t index = 0; index < tlb->entries.size(); ++index)
+			if (tlb->entries[index].read_page == key) {
+				require(filled == tlb->entries.size());
+				filled = index;
+			}
+		require(filled < tlb->entries.size());
+		const auto other = reinterpret_cast<std::uintptr_t>(decoy.data()) -
+			address;
+		const auto set = filled / ::uml::memory::tlb_way_count;
+		for (std::size_t index = 0; index < tlb->entries.size(); ++index)
+			if (index / ::uml::memory::tlb_way_count != set)
+				tlb->entries[index] = {key, other, key, other};
+		require(reg(run(*tlb, ldr_r0_r1, address + 0x40, 0), 0) ==
+			0x5a5a'5a5aU);
+		require(reg(run(*tlb, ldrb_r0_r1, address + page - 1, 0), 0) ==
+			0x5aU);
+		require(get_d(run(*tlb, vld1_8_d0_d1_r1, address + 0x80, 0), 1) ==
+			0x5a5a'5a5a'5a5a'5a5aULL);
+		(void)run(*tlb, str_r0_r1, address + 0x100, 0x1234'5678U);
+		require(reinterpret_cast<std::uint8_t *>(host)[0x100] == 0x78);
+		require(std::ranges::all_of(decoy, [](std::uint8_t byte) {
+			return byte == 0xdd;
+		}));
+	}
+}
+
+} // namespace
+
 int main()
 {
 	const ::uml::testing::RuntimeTestRoute runtime_route;
@@ -2430,6 +2659,9 @@ int main()
 	a_pop_to_pc_across_a_page_boundary_branches();
 	a_conditional_block_transfer_across_a_page_follows_its_condition();
 	a_double_word_load_crosses_a_page_boundary();
+	the_tlb_probe_hits_inside_a_page_and_not_across_one();
+	the_tlb_probe_indexes_the_set_in_two_instructions();
+	an_entry_the_tlb_fills_hits_through_the_emitted_probe();
 	a_block_transfer_into_an_unmapped_page_faults_at_that_page();
 	advanced_simd_floating_point_uses_the_standard_fpscr();
 	a_library_floating_point_instruction_keeps_the_flags_around_it();

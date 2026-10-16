@@ -1095,7 +1095,11 @@ The software TLB keys its entries by guest page number. A same-page transfer
 compares the page of its final byte against the way its first byte indexes: the
 16 KiB direct-mapped index never places neighbouring pages in one set, so a
 crossing transfer can only miss and is recognized on the cold path, while the
-folded 4 KiB index keeps the explicit crossing check ahead of the lookup.
+folded 4 KiB index keeps the explicit crossing check ahead of the lookup. The
+fold maps pages n and n + 1 to one set only when n has 25 trailing ones, which
+a 32-bit address cannot, so the AArch32 gadgets' probe (`a32_translate`) keys
+by the final byte on 4 KiB pages too and computes the index with one xor and
+one extract.
 
 Guest debuggers depend on two kernel/host contracts. To single-step a task,
 Linux sets the architectural step bit in the entry registers (arm64 PSTATE.SS,
