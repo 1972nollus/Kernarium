@@ -42,6 +42,7 @@ import a32_armv8  # noqa: E402
 import a32_neon  # noqa: E402  (the complete level; this file's sibling)
 import a32_parallel  # noqa: E402  (parallel add and subtract, SEL)
 import a32_simd  # noqa: E402  (VFP and Advanced SIMD; this file's sibling)
+import a32_structure  # noqa: E402  (VLDn and VSTn)
 
 
 class GenerationError(Exception):
@@ -1230,6 +1231,7 @@ def build_assembly(asm: Assembly) -> None:
     a32_armv8.emit(asm)
     a32_parallel.emit(asm)
     emit_select(asm)
+    a32_structure.emit_fused(asm)
 
 
 def write_assembly(path: Path, asm: Assembly, hand: list[str]) -> None:

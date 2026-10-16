@@ -92,7 +92,12 @@ def fast_body(name: str, load: bool, bytes_: int, writeback: str,
               split: list[str]) -> str:
     """A copy with no alignment hint: Rn is a base at word0's offset, the
     writeback is none ("n"), Rn plus the size ("i") or plus Rm ("r"), and the
-    destination is the slot at word1's low half."""
+    destination is the slot at word1's low half. "a" is the copy without
+    writeback fused with the ADD or SUB of an immediate that computed its
+    base: word0 holds that instruction's Rn in bits 0-14, its Rd (the copy's
+    base) in bits 16-30 and the immediate (negated for SUB) in bits 32-63, and
+    the gadget writes Rd before the transfer, so a fault finds it written as
+    the ADD left it."""
     direction = LOAD if load else STORE
     page = "UML_GADGET_TLB_ENTRY_READ_PAGE" if load else \
         "UML_GADGET_TLB_ENTRY_WRITE_PAGE"
@@ -101,7 +106,10 @@ def fast_body(name: str, load: bool, bytes_: int, writeback: str,
                  f" fault=La32_memory_fault")
     lines = ["ldp x21, x19, [_stream], #16", "ldr x24, [_stream], #8",
              "and x9, x19, #0x7fff", "ldr w7, [_cpu, x9]"]
-    if writeback == "i":
+    if writeback == "a":
+        lines += ["lsr x10, x19, #32", "add w7, w7, w10",
+                  "ubfx x9, x19, #16, #15", "str w7, [_cpu, x9]"]
+    elif writeback == "i":
         lines.append(f"add w22, w7, #{bytes_}")
     elif writeback == "r":
         lines += ["ubfx x10, x19, #16, #15", "ldr w10, [_cpu, x10]",
@@ -116,7 +124,7 @@ def fast_body(name: str, load: bool, bytes_: int, writeback: str,
         lines.append("add x13, _cpu, x13")
         lines += copy_lines(bytes_, load)
     lines.append(f"Lfinish_{name}:")
-    if writeback != "n":
+    if writeback in ("i", "r"):
         lines += ["and x9, x19, #0x7fff", "str w22, [_cpu, x9]"]
     lines += ["add _stream, _stream, #8", "next_gadget",
               "a32_translate_cold " + translate,
@@ -246,6 +254,15 @@ def emit(asm) -> None:
                 all_lanes(asm, structs, size, pairs)
 
 
+def emit_fused(asm) -> None:
+    """The copies fused with the ADD or SUB that computes their base, after
+    every other gadget of the part so that the bank before them keeps its
+    layout."""
+    for load in (True, False):
+        for regs in (1, 2, 3, 4):
+            multiple_copy_fast(asm, load, regs, "a")
+
+
 def header_tables(names: set[str]) -> list[str]:
     """kNeonMem[load / store][m / 1 / a][structures - 1][log2 size][variant]:
     the gadget, or G::count where the combination does not exist. The
@@ -291,5 +308,13 @@ def header_tables(names: set[str]) -> list[str]:
             out.append("\t\t{" + ", ".join(
                 g(fast_name(store == 0, regs, w)) for w in WRITEBACKS) + "},")
         out.append("\t},")
+    out.append("};")
+    out += ["/* The copy without writeback fused with the ADD or SUB of an "
+            "immediate that computed its base: [store][registers - 1]. */",
+            "inline constexpr G kNeonCopyAdd[2][4] = {"]
+    for store in (0, 1):
+        out.append("\t{" + ", ".join(
+            g(fast_name(store == 0, regs, "a")) for regs in (1, 2, 3, 4)) +
+                   "},")
     out.append("};")
     return out

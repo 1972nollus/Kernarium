@@ -4,6 +4,7 @@
  * index and the operand words this file packs. */
 #include "translator.hpp"
 
+#include <algorithm>
 #include <bit>
 
 namespace uml::cpu::arm64::gadgets::a32::detail {
@@ -231,6 +232,32 @@ Translator::Result Translator::emit_structure(const Instruction &in,
 		const G fast = kNeonCopy[store][variant][!o.wback ? 0 : o.register_index ? 2 : 1];
 		if (fast != G::count)
 			which = fast;
+	}
+	/* A copy without writeback whose base the ADD or SUB still absorbable
+	 * computed: the fused gadget does the ADD, then the copy, and the ADD's
+	 * words leave the stream. Only Advanced SIMD data processing that reads
+	 * no core register came between (run()), so doing the ADD here is
+	 * invisible: no exit or fault in between can see Rd. */
+	if (shape == 0 && structs == 1 && o.alignment <= 1 && !o.wback &&
+	    in.cond == 14 && !in.in_it && in_range && which != G::count &&
+	    address_add_.start != ~std::size_t{} && o.n != 15 &&
+	    address_add_.rd == static_cast<std::uintptr_t>(o.n) * 8U &&
+	    kNeonCopyAdd[store][variant] != G::count) {
+		const auto add = address_add_;
+		address_add_.start = ~std::size_t{};
+		auto *data = words_.data();
+		std::copy(data + add.end, data + words_.size(), data + add.start);
+		words_.truncate(words_.size() - (add.end - add.start));
+		std::uint64_t word1 = 0;
+		for (unsigned k = 0; k < 4; ++k)
+			word1 |= slots[k] << (16U * k);
+		push(kNeonCopyAdd[store][variant]);
+		push(key_);
+		push(add.rn | std::uint64_t{add.rd} << 16 |
+		     std::uint64_t{add.immediate} << 32);
+		push(word1);
+		push(library_operand(in));
+		return {};
 	}
 	const std::uintptr_t rn = source(o.n, scratch0);
 	std::uintptr_t rm = 0;

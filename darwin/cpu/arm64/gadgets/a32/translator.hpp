@@ -239,6 +239,21 @@ private:
 	 * emit_dp_values lowers as a select rather than behind a skip; 14
 	 * otherwise. */
 	unsigned select_{14};
+	/* The ADD or SUB of an immediate pushed last, while every instruction
+	 * translated since is Advanced SIMD data processing that reads no core
+	 * register: a VLD1 or VST1 copy without writeback based on its Rd
+	 * absorbs it (emit_structure), taking its words out of the stream.
+	 * `start` is ~0 when there is none. */
+	struct AddressAdd final {
+		std::size_t start{~std::size_t{}};
+		std::size_t end{};
+		std::uintptr_t rd{};
+		std::uintptr_t rn{};
+		std::uint32_t immediate{};
+	};
+	AddressAdd address_add_;
+	/* Library exits pushed so far. */
+	std::size_t library_calls_{};
 	/* The block holds a form that reads or writes the vector registers or
 	 * FPSCR (the decoder table's fp_state trait, set in run()), and so is
 	 * entered through the FP state link: CpuState loads the task's vectors

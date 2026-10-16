@@ -1805,6 +1805,156 @@ void vld1_and_vst1_copies_stay_out_of_the_library()
 	aarch32::count_a32_library_exits(false);
 }
 
+} // namespace
+
+extern "C" {
+void uml_arm64_gadget_a32_dp_add_imm();
+void uml_arm64_gadget_a32_dp_sub_imm_r3();
+void uml_arm64_gadget_a32_neon_vld1_m_16_a();
+void uml_arm64_gadget_a32_neon_vld1_m_32_a();
+void uml_arm64_gadget_a32_neon_vst1_m_16_a();
+}
+
+namespace {
+
+/* Whether a translation of `words` at the code base holds `gadget`. */
+[[nodiscard]] bool translation_holds(std::span<const std::uint32_t> words,
+				     void (*gadget)())
+{
+	const auto options = options_at(gadgets::a32_support);
+	const auto output = gadgets::a32::build(
+		{.key = aarch32::a32_key(code_base), .code = std::as_bytes(words)},
+		{}, std::pmr::get_default_resource(), {}, options,
+		gadgets::a32::decode_profile(options), 64);
+	for (const auto word : output.result.program.words())
+		if (word == reinterpret_cast<std::uintptr_t>(gadget))
+			return true;
+	return false;
+}
+
+/* An ADD or SUB of an immediate that computes the base of the next VLD1 or
+ * VST1 copy without writeback, with only Advanced SIMD data processing
+ * between, runs inside the copy's gadget: Rd is written before the transfer,
+ * so a fault at the copy finds the state the two instructions leave one by
+ * one (Rd written, the instructions between retired, the PC at the copy).
+ * An instruction between that reads a core register keeps the ADD apart. */
+void an_add_that_computes_a_copy_base_runs_in_the_copy()
+{
+	constexpr std::uint32_t add_r3_r0_16 = 0xe280'3010U;
+	constexpr std::uint32_t sub_r3_r3_8 = 0xe243'3008U;
+	constexpr std::uint32_t vmul_q13_q13_q9 = 0xf34a'adf2U;
+	constexpr std::uint32_t vadd_q8_q8_q9 = 0xf240'0de2U;
+	constexpr std::uint32_t vld1_64_d28_d29_r3 = 0xf463'cacfU;
+	constexpr std::uint32_t vst1_64_d28_d29_r3 = 0xf443'cacfU;
+	constexpr std::uint32_t vld1_32_d0_d3_r3 = 0xf423'028fU;
+	constexpr std::uint32_t vdup_32_q0_r3 = 0xeea0'3b10U;
+	const auto floats = [](arm64::CpuState &cpu) {
+		set_d(cpu, 26, 0x4000'0000'4000'0000ULL); /* 2.0 */
+		set_d(cpu, 27, 0x4000'0000'4000'0000ULL);
+		set_d(cpu, 18, 0x4040'0000'4040'0000ULL); /* 3.0 */
+		set_d(cpu, 19, 0x4040'0000'4040'0000ULL);
+	};
+	{
+		const std::array<std::uint32_t, 4> words{
+			add_r3_r0_16, vmul_q13_q13_q9, vld1_64_d28_d29_r3, a::svc};
+		require(translation_holds(words,
+			&uml_arm64_gadget_a32_neon_vld1_m_16_a));
+		require(!translation_holds(words,
+			&uml_arm64_gadget_a32_dp_add_imm));
+		/* Inside a page, across the page line, and across into the
+		 * unmapped page after the data. */
+		unsigned long generation = 1080;
+		for (const std::uint32_t base :
+		     {0x30U, page - 0x18U,
+		      static_cast<std::uint32_t>(data_pages * page - 0x18U)}) {
+			Guest guest{generation++};
+			for (std::uint32_t index = 0; index < words.size(); ++index)
+				guest.a32(4 * index, {words[index]});
+			for (std::uint32_t offset = 0; offset < 16; offset += 4)
+				if (base + 0x10 + offset < data_pages * page)
+					guest.data32(base + 0x10 + offset,
+						     0x0101'0101U * (offset + 1));
+			auto cpu = a32_state();
+			cpu.registers[0] = data_base + base;
+			floats(cpu);
+			const auto result = guest.run(cpu);
+			require(reg(cpu, 3) == data_base + base + 0x10);
+			require(get_d(cpu, 26) == 0x40c0'0000'40c0'0000ULL);
+			if (base + 0x20 > data_pages * page) {
+				require(result.reason == ExitReason::memory_fault);
+				require(result.retired_instructions == 2);
+				require(cpu.pc == aarch32::a32_key(code_base + 8));
+				require(result.fault.address ==
+					data_base + data_pages * page);
+				continue;
+			}
+			require(result.reason == ExitReason::system_call);
+			require(result.retired_instructions == 4);
+			require(get_d(cpu, 28) == 0x0505'0505'0101'0101ULL);
+			require(get_d(cpu, 29) == 0x0d0d'0d0d'0909'0909ULL);
+		}
+	}
+	{
+		/* SUB in place, a 32-byte copy, two instructions between. */
+		const std::array<std::uint32_t, 5> words{
+			sub_r3_r3_8, vmul_q13_q13_q9, vadd_q8_q8_q9,
+			vld1_32_d0_d3_r3, a::svc};
+		require(translation_holds(words,
+			&uml_arm64_gadget_a32_neon_vld1_m_32_a));
+		require(!translation_holds(words,
+			&uml_arm64_gadget_a32_dp_sub_imm_r3));
+		Guest guest{1087};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		for (std::uint32_t offset = 0; offset < 32; offset += 4)
+			guest.data32(0x38 + offset, 0x1000'0000U + offset);
+		auto cpu = a32_state();
+		cpu.registers[3] = data_base + 0x40;
+		floats(cpu);
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(reg(cpu, 3) == data_base + 0x38);
+		require(get_d(cpu, 0) == 0x1000'0004'1000'0000ULL);
+		require(get_d(cpu, 3) == 0x1000'001c'1000'0018ULL);
+	}
+	{
+		/* A store, faulting: Rd is written and the store did nothing. */
+		const std::array<std::uint32_t, 3> words{
+			add_r3_r0_16, vst1_64_d28_d29_r3, a::svc};
+		require(translation_holds(words,
+			&uml_arm64_gadget_a32_neon_vst1_m_16_a));
+		Guest guest{1088};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		auto cpu = a32_state();
+		cpu.registers[0] = unmapped - 0x10;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::memory_fault);
+		require(result.retired_instructions == 1);
+		require(cpu.pc == aarch32::a32_key(code_base + 4));
+		require(reg(cpu, 3) == unmapped);
+		require(result.fault.access == ::uml::memory::MemoryAccess::write);
+	}
+	{
+		/* VDUP reads R3 between: the ADD stays apart and VDUP sees it. */
+		const std::array<std::uint32_t, 4> words{
+			add_r3_r0_16, vdup_32_q0_r3, vld1_64_d28_d29_r3, a::svc};
+		require(translation_holds(words,
+			&uml_arm64_gadget_a32_dp_add_imm));
+		require(!translation_holds(words,
+			&uml_arm64_gadget_a32_neon_vld1_m_16_a));
+		Guest guest{1089};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + 0x30;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(get_d(cpu, 0) == (std::uint64_t{data_base + 0x40} << 32 |
+					  (data_base + 0x40)));
+	}
+}
+
 /* A VLD1 or VST1 copy that crosses a page is a gadget too: the slow transfer
  * helper moves the bytes after translating both pages. */
 void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
@@ -2767,6 +2917,7 @@ int main()
 	vld1_and_vst1_copies_stay_out_of_the_library();
 	vld1_and_vst1_copies_write_back_in_each_mode();
 	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();
+	an_add_that_computes_a_copy_base_runs_in_the_copy();
 	in_place_add_and_sub_of_an_immediate_reach_every_register();
 	compare_and_branch_pairs_take_the_branch_as_the_pair_does();
 	parallel_arithmetic_and_sel_stay_out_of_the_library();
