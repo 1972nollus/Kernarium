@@ -710,3 +710,25 @@ memory-heavy single-core workloads, so a shorter probe is a general saving.
 | Skip clearing the exclusive monitor on ordinary stores | Rejected. An ordinary store may clear the local monitor, and a reservation left standing lets a later store-exclusive succeed where the architecture says it fails. |
 | Keep the vector registers in the host across links as the core registers are | Not built. Vector spills and fills are 2% to 6% of the executed host instructions in the floating-point workloads, an expected 1% of the single-core score, for a fixed binding of the A64 compiler's dynamic vector residency and every helper that reads the vectors. |
 | Fold the alignment test into the tag compare, and drop the repeated monitor clear after a store in the same block | Not built. The alignment test is 0.2% to 1.9% of the executed host instructions (5.2% in N-Body) and the clears 0.5% to 1.3%; neither is a gain a paired run resolves. |
+
+## AArch32: AES-XTS and Face Detection
+
+With the JIT at 0.89 of aarch64 single-core on the M1, AES-XTS (0.26) and
+Face Detection (0.34) were the lowest Geekbench 5 armv7 workloads. Each JIT
+row compares concurrent pairs of 1-vCPU guests on the M1 Ultra at 4 KiB, one
+iteration, the order swapped every repetition, against the commit before it.
+Over the three accepted rows the armv7 single-core score rose 1.08 (Face
+Detection 2.50, Camera 1.37, Horizon Detection 1.32, Structure from Motion
+1.23, Image Inpainting 1.21, Rigid Body Physics 1.17, HDR 1.11, every other
+workload within 2%), an estimated 0.85 of aarch64 for Face Detection and
+0.97 for the single-core score. The aarch64 emission is unchanged.
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| AES-XTS in either engine | Intrinsic; nothing changed. The armv7 binary holds no AESE, AESD, AESMC, AESIMC or VMULL.P64 in either instruction set, although the guest advertises the AArch32 crypto extension and OpenSSL in the armhf guest uses it. Geekbench encrypts with lookup tables, 11 to 19 times the guest instructions that the aarch64 build's AES instructions need for the same work, and both engines retire those instructions at least as fast as aarch64 ones. The ratio is 0.26 in the JIT and 0.07 in the gadget engine, which runs aarch64 AES as fast as the JIT does. Count the instructions per unit of work of the two binaries before looking for an engine cause. |
+| Face Detection in the gadget engine | Nothing specific to armv7: 0.77 of aarch64. The gadget engine addresses each S register in CpuState, so the lane inserts of the JIT rows below do not arise there. |
+| Convert singles to and from integers in the vector unit (JIT) | Accepted. VCVT between a single and a 32-bit integer went through W0 twice; the A64 scalar SIMD forms round, saturate and raise the flags as the general-register forms do. Face Detection 1.41, Camera 1.22, Structure from Motion 1.16, Horizon Detection 1.11, Speech Recognition level. The AArch32 corpus could not tell FCVTZS from FCVTNS, because no conversion input had a fraction; its simd-convert suite now has them. |
+| Keep S registers in V registers through runs of VFP instructions (JIT) | Accepted. An S register is a lane of its resident Q register, so every single-precision instruction moved its operands out of their lanes and inserted its result, and an insert rewrites the whole Q: Face Detection's four independent chains on S8, S10, S12 and S14 (lanes of Q2 and Q3) waited for each other's inserts. In a run of unconditional single-precision instructions an S register now keeps a copy in a low V register that later reads take; the insert still writes the Q, and an instruction that may write an S register another way or use those registers forgets the copies. Face Detection 1.70, Horizon Detection 1.19, Camera 1.12, Structure from Motion 1.09, Speech Recognition 1.03. Lanes packed into one register serialize independent work through their inserts; a copy outside the packing removes the dependency without changing what exits and links see. |
+| Let an A32 block hold all 64 instructions (JIT) | Accepted. The 60-instruction target leaves room for an IT block that a block's last instruction opens, which only T32 has. Face Detection's feature loop ran a block of 60 and a block of the four instructions after it on every pass; one block of 64 saves a link: Face Detection 1.04 (nine of ten pairs), the other workloads within 1%. |
+| Link a loop block's exit through the unconditional B after it (JIT) | Not built. Face Detection's inner loop leaves into a one-instruction block, a B to the outer loop's head, on every pass; the row above puts one link at about 4% of that workload, but the change reaches into the host loop's exits, budget and saved guest words. |
+| Cache the TLB page for a run of table loads | Not built. After the rows above, TLB probes are 38% of the host instructions in Face Detection's loop and 57% in AES-XTS's table rounds, but a translation holds all fifteen core registers, which leaves no host register for a cached page, and the last-page cache above was rejected for the crossing test it needs. |

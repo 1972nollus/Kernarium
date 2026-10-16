@@ -132,6 +132,11 @@ The `simd` level (VFPv4-D32 and Advanced SIMD):
   denormals and one in half and single precision, which the `simd` suite's
   sampled states do not pair (FZ16 stays clear, so a half-precision denormal
   is a nonzero number);
+- `simd-convert`: VCVT and VCVTR between single or double precision and
+  32-bit integers, with fractions at and either side of a half, the largest
+  values below the integer limits and the first past them, a denormal, a NaN
+  and an infinity, under each rounding mode and flush-to-zero, and integers
+  that a single cannot hold, which the `simd` suite's edge values leave out;
 - `simd-memory`: VLDR, VSTR, VLDM, VSTM, FLDMX, FSTMX and the structure loads
   and stores VLD1-4 and VST1-4, aimed at the memory suite's addresses;
 - `fpscr`: VMRS and VMSR, including the exception trap enables the profile
