@@ -41,6 +41,14 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME lineage24-first-boot-precompile
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_precompile_first_boot_apps.py
+        --source-root ${PROJECT_SOURCE_DIR}
+    LABELS android;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME lineage24-release-contract
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_release_contract.py

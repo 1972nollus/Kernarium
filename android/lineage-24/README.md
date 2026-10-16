@@ -186,10 +186,30 @@ DownloadProvider transfers use a silent low-importance channel so their
 progress icon remains visible there; later notification changes remain owned
 by the user.
 
-The product uses software KeyMint/gatekeeper, SELinux enforcing policy, build-
-time artifacts for ordinary applications, no `system_other` image, and no
-loadable modules or DLKM partitions. Applications inside updatable APEXes
-remain subject to the pinned platform's own ART policy.
+The product uses software KeyMint/gatekeeper, SELinux enforcing policy, no
+`system_other` image, and no loadable modules or DLKM partitions.
+
+A first boot compiles nothing. ART Service would otherwise compile every
+package without a usable artifact on a fresh `/data` (reason `first-boot`,
+filter `verify`), and Soong leaves two groups without one: the applications
+packaged inside updatable APEXes, which it never dexpreopts, and the presigned
+F-Droid client and Privileged Extension, whose prebuilt modules opt out.
+`tools/precompile-first-boot-apps.py` compiles exactly those after a first
+`target-files-package` pass, with the host `dex2oat`, Soong's own recorded
+application flags, filter `verify` and the class loader context ART Service
+derives on the device (the manifest's libraries plus the implicit ones
+`PackageBackwardCompatibility` adds). It writes the artifacts where ART looks
+first: `/system/framework/oat/arm64/apex@<apex>@<path>@classes.{odex,vdex}` for
+an APK under `/apex`, and `oat/arm64` beside every other APK. A second pass
+installs them through a generated `PRODUCT_COPY_FILES` fragment named by
+`LINEAGE24_FIRST_BOOT_OAT_MK`, which `overlay/lineage_darwin.mk` includes, and
+`build-aosp.sh` then runs the tool's `verify` against the packaged tree: every
+APK with dex code must carry artifacts, and the tool's own must match its
+manifest and the packaged APK's dex checksums. An unchanged result skips the
+second pass. The artifacts are tied to the exact dex checksums and class loader
+context, so a package that is later replaced (an APEX update, a different
+class path) is recompiled by ART Service as usual; the image has no such
+update channel.
 
 ## Graphics
 

@@ -286,6 +286,15 @@ PRODUCT_PACKAGES += \
     F-DroidPrivilegedExtension \
     resize2fs
 
+# First boot compiles nothing. Soong preopts the applications it installs, but
+# never an application inside an APEX, and the presigned F-Droid prebuilts opt
+# out. tools/precompile-first-boot-apps.py compiles the rest after a first build
+# pass; build-aosp.sh hands its PRODUCT_COPY_FILES fragment to the second pass
+# through this variable, a path relative to the workspace root.
+ifneq ($(LINEAGE24_FIRST_BOOT_OAT_MK),)
+include $(LINEAGE24_FIRST_BOOT_OAT_MK)
+endif
+
 # Replace the handheld feature declaration and remove optional feature files
 # for absent hardware. This keeps PackageManager truthful for sideloaded apps.
 PRODUCT_COPY_FILES_EXCLUDE += \

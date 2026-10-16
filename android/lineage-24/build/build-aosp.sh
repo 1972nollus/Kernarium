@@ -11,6 +11,7 @@ VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
 FDROID_SOURCE_TOOL="$ANDROID_ROOT/tools/fdroid_source.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
+FIRST_BOOT_TOOL="$ANDROID_ROOT/tools/precompile-first-boot-apps.py"
 PARTITION_LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
 OUTER_ROOT=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
 KERNEL_COMMON_ROOT="$OUTER_ROOT/kernel/common"
@@ -151,6 +152,7 @@ fi
 [[ -x "$MESA_VENUS_VERIFIER" ]] || fail "Mesa Venus source verifier is missing"
 [[ -x "$FDROID_SOURCE_TOOL" ]] || fail "F-Droid source tool is missing"
 [[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
+[[ -f "$FIRST_BOOT_TOOL" ]] || fail "first-boot precompile tool is missing"
 [[ -f "$KERNEL_ARTIFACT_VERIFIER" ]] || fail "kernel artifact verifier is missing"
 # shellcheck disable=SC1090
 source "$METADATA"
@@ -512,11 +514,36 @@ fi
 
 # publish-release.py consumes the packaged VINTF checker and the AOSP zstd from
 # this output, so a fresh output builds both host tools.
+# First boot compiles nothing. Soong preopts the applications it installs but
+# never one inside an APEX, and the presigned F-Droid prebuilts opt out, so
+# ART Service would compile them on every fresh /data. After a first pass, the
+# host dex2oat compiles them with the flags and class loader context ART
+# Service uses on the device; a second pass installs the artifacts through the
+# product's PRODUCT_COPY_FILES fragment. An unchanged output skips the second
+# pass.
+FIRST_BOOT_OAT=$OUT_DIR/first-boot-oat
+if [[ -f "$FIRST_BOOT_OAT/first-boot-oat.mk" ]]; then
+	export LINEAGE24_FIRST_BOOT_OAT_MK=$FIRST_BOOT_OAT/first-boot-oat.mk
+fi
 m -j"$JOBS" target-files-package check_target_files_vintf zstd
+rm -rf -- "$FIRST_BOOT_OAT.new"
+python3 -B "$FIRST_BOOT_TOOL" build --aosp-source "$AOSP_SOURCE" --out-dir "$OUT_DIR" \
+	--product "$(basename -- "$PRODUCT_OUT")" --output "$AOSP_SOURCE/$FIRST_BOOT_OAT.new" \
+	--previous "$AOSP_SOURCE/$FIRST_BOOT_OAT" --jobs "$JOBS"
+if [[ -d "$FIRST_BOOT_OAT" ]] && diff -r -q -- "$FIRST_BOOT_OAT" "$FIRST_BOOT_OAT.new" >/dev/null; then
+	rm -rf -- "$FIRST_BOOT_OAT.new"
+else
+	rm -rf -- "$FIRST_BOOT_OAT"
+	mv -- "$FIRST_BOOT_OAT.new" "$FIRST_BOOT_OAT"
+	export LINEAGE24_FIRST_BOOT_OAT_MK=$FIRST_BOOT_OAT/first-boot-oat.mk
+	m -j"$JOBS" target-files-package
+fi
 DEXPREOPT_CONFIG="$OUT_DIR_ABSOLUTE/soong/dexpreopt-${LINEAGE24_PRODUCT}.config"
 verify_dexpreopt_config "$DEXPREOPT_CONFIG"
 TARGET_FILES="$PRODUCT_OUT/obj/PACKAGING/target_files_intermediates/${LINEAGE24_PRODUCT}-target_files.zip"
 [[ -f "$TARGET_FILES" ]] || fail "target-files archive is missing: $TARGET_FILES"
+python3 -B "$FIRST_BOOT_TOOL" verify --aosp-source "$AOSP_SOURCE" --out-dir "$OUT_DIR" \
+	--target-files-dir "${TARGET_FILES%.zip}" --artifacts "$AOSP_SOURCE/$FIRST_BOOT_OAT"
 "$TARGET_FILES_VERIFIER" --target-files "$TARGET_FILES" \
 	--kernel-elf "$KERNEL_ELF" \
 	--kernel-config "$KERNEL_CONFIG" \
