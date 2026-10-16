@@ -22,9 +22,10 @@
   address scenarios, including alignment-hinted accesses at misaligned
   addresses;
 - fpscr: VMRS and VMSR, including the exception trap enables the profile
-  reads as zero and ignores writes to (decision D4);
-- fpscr-reserved: the same with Stride, Len and FZ16 set, whose behaviour is
-  the implementation's and so is recorded from hardware only.
+  reads as zero and ignores writes to (decision D4), and FZ16, which holds
+  wherever FEAT_FP16 is;
+- fpscr-reserved: the same with Stride and Len set, whose behaviour is the
+  implementation's and so is recorded from hardware only.
 """
 
 from __future__ import annotations
@@ -42,13 +43,17 @@ from a32_corpus_plan import (  # noqa: E402
 
 # FPSCR values a case starts in: rounding modes (23:22), FZ (24), DN (25),
 # AHP (26), QC (27) and the cumulative flags. Stride and Len (21:20, 18:16)
-# and FZ16 (19) stay clear: whether they stick depends on the implementation,
-# so the writes that probe them are the hardware-only fpscr-reserved suite.
+# stay clear: whether they stick depends on the implementation, so the writes
+# that probe them are the hardware-only fpscr-reserved suite. FZ16 (19) stays
+# clear too: it is FEAT_FP16's, which an oracle may lack (the Pi 4's
+# Cortex-A72 reads it as zero), so only the fpscr suite, recorded where
+# FEAT_FP16 is, writes it.
 FPSCR_MODES = (
     0x00000000, 0x00400000, 0x00800000, 0x00C00000, 0x01000000, 0x02000000, 0x03000000,
     0x04000000, 0x08000000, 0x0000009F, 0x01C00000, 0x07C0009F,
 )
-FPSCR_RESERVED_BITS = 0x003F0000
+FPSCR_LEN_STRIDE = 0x00370000
+FPSCR_FZ16 = 0x00080000
 # Fields that choose what the instruction does rather than which registers it names.
 NOT_VARIANT = {"D", "N", "M", "Vd", "Vn", "Vm", "Rn", "Rm", "Rt", "Rt2", "cond", "P", "W", "imm8", "imm6", "imm4",
                "imm4H", "imm4L", "imm3", "imm3H", "imm3L", "index_align"}
@@ -372,7 +377,7 @@ def suite_simd_memory(context: Context, levels=("simd",), suite="simd-memory") -
 
 # VMRS and VMSR ----------------------------------------------------------------------------------------------------------
 
-def fpscr_cases(context: Context, suite: str, values) -> list[Case]:
+def fpscr_cases(context: Context, suite: str, values, tag: str = "") -> list[Case]:
     cases = []
     for name in ("VMRS_A1_AS", "VMRS_T1_AS", "VMSR_A1_AS", "VMSR_T1_AS"):
         form = context.model.by_name[name]
@@ -393,21 +398,23 @@ def fpscr_cases(context: Context, suite: str, values) -> list[Case]:
                 initial = {"apsr": FLAGS[pattern(number) >> 8 & 3], "fpscr": values[(index + 3) % len(values)]}
                 if name.startswith("VMSR"):
                     initial[f"r{register}"] = value
-                cases.append(Case(suite, f"{name}/r{register}.{index}", name, ISA_LETTER[isa],
+                cases.append(Case(suite, f"{name}/r{register}.{tag}{index}", name, ISA_LETTER[isa],
                                   word_of(isa, word), 0, f"{RECIPES[index % 4]}-{suffix}", initial))
     return cases
 
 
 def suite_fpscr(context: Context) -> list[Case]:
-    """VMRS and VMSR: the trap-enable bits (14:8 and 15) read as zero and ignore writes."""
+    """VMRS and VMSR: the trap-enable bits (14:8 and 15) read as zero and ignore
+    writes, and FZ16 holds what is written to it."""
     values = (0x00000000, 0x03C09F9F, 0xF7C0FFFF, 0x0000FF00, 0x00001F00,
-              0xFFFFFFFF & ~FPSCR_RESERVED_BITS, 0x07C0009F, 0x00C00000, 0x0000009F, 0x08000000)
-    return fpscr_cases(context, "fpscr", values)
+              0xFFFFFFFF & ~(FPSCR_LEN_STRIDE | FPSCR_FZ16), 0x07C0009F, 0x00C00000, 0x0000009F, 0x08000000)
+    half = (FPSCR_FZ16, 0xFFFFFFFF & ~FPSCR_LEN_STRIDE, 0x03C80000, 0x0008009F)
+    return fpscr_cases(context, "fpscr", values) + fpscr_cases(context, "fpscr", half, "fz16.")
 
 
 def suite_fpscr_reserved(context: Context) -> list[Case]:
-    """VMRS and VMSR with Stride, Len and FZ16 in play: what sticks is the implementation's."""
-    values = (0x00370000, 0xFFFFFFFF, 0x00300000, 0x00080000, 0x003F0000, 0x00010000, 0x00200000, 0x00070000)
+    """VMRS and VMSR with Stride and Len in play: what sticks is the implementation's."""
+    values = (0x00370000, 0xFFF7FFFF, 0x00300000, 0x00040000, 0x00170000, 0x00010000, 0x00200000, 0x00070000)
     return fpscr_cases(context, "fpscr-reserved", values)
 
 

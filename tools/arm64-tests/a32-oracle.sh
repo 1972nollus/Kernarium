@@ -6,29 +6,35 @@
 # machine with AArch32 EL0 and a 64-bit kernel with compat support, or one
 # that runs `qemu-arm` (decision D2: the oracle there is labelled "qemu").
 # The oracle is copied, with the request, into a fresh private directory
-# $HOME/NAME.XXXXXX on the host, run there, its response fetched and the
-# directory removed, so nothing stays on the host.
+# $HOME/[DIRECTORY/]NAME.XXXXXX on the host, run there, its response fetched
+# and the directory removed, so nothing stays on the host.
 #
-#   a32-oracle.sh [--prefix NAME] [--runner 'qemu-arm -cpu max'] HOST REQUEST OUTPUT
+#   a32-oracle.sh [--prefix NAME] [--directory DIRECTORY]
+#                 [--runner 'qemu-arm -cpu max'] HOST REQUEST OUTPUT
 #
-# --runner is the command the oracle runs under on the host ("" runs it
-# natively). Every ssh and transfer is time-bounded.
+# --directory names an existing directory under the host's home to work in,
+# for a host whose owner confines visitors to one. --runner is the command
+# the oracle runs under on the host ("" runs it natively). Every ssh and
+# transfer is time-bounded.
 
 set -euo pipefail
 
 prefix=a32-oracle
+parent=
 runner=
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--prefix) prefix=$2; shift 2 ;;
+	--directory) parent=$2/; shift 2 ;;
 	--runner) runner=$2; shift 2 ;;
 	--) shift; break ;;
 	-*) echo "unknown option $1" >&2; exit 64 ;;
 	*) break ;;
 	esac
 done
-if [[ $# -ne 3 || ! $prefix =~ ^[A-Za-z0-9._-]+$ ]]; then
-	echo "usage: $0 [--prefix NAME] [--runner COMMAND] HOST REQUEST OUTPUT" >&2
+if [[ $# -ne 3 || ! $prefix =~ ^[A-Za-z0-9._-]+$ || ! $parent =~ ^([A-Za-z0-9._-]+/)*$
+	|| $parent == *../* ]]; then
+	echo "usage: $0 [--prefix NAME] [--directory DIRECTORY] [--runner COMMAND] HOST REQUEST OUTPUT" >&2
 	exit 64
 fi
 host=$1
@@ -44,7 +50,7 @@ cleanup() {
 	rm -rf -- "$work"
 	if [[ -n $directory ]]; then
 		timeout 60 ssh -o ConnectTimeout=15 -o BatchMode=yes "$host" \
-			"case '$directory' in \"\$HOME\"/$prefix.*) rm -rf -- '$directory' ;; esac" \
+			"case '$directory' in \"\$HOME\"/$parent$prefix.*) rm -rf -- '$directory' ;; esac" \
 			</dev/null || echo "could not remove $host:$directory" >&2
 	fi
 }
@@ -65,7 +71,7 @@ ssh_options=(-o ConnectTimeout=15 -o BatchMode=yes)
 remote() {
 	timeout "$1" ssh "${ssh_options[@]}" "$host" "${@:2}" </dev/null
 }
-directory=$(remote 60 "mktemp -d \"\$HOME/$prefix.XXXXXX\"")
+directory=$(remote 60 "mktemp -d \"\$HOME/$parent$prefix.XXXXXX\"")
 [[ $directory == /* ]] || { echo "bad remote directory" >&2; exit 70; }
 timeout 600 scp -q "${ssh_options[@]}" "$work/a32_oracle" "$request" "$host:$directory/" </dev/null
 remote 3000 "CDPATH= cd -- '$directory' && chmod +x a32_oracle && $runner ./a32_oracle '$(basename "$request")' response"

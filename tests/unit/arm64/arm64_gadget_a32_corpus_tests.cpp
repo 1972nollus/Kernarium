@@ -13,11 +13,9 @@
  * A case whose forms need a level above the engine's is skipped, as the
  * decoder-only runner skips them; the engine raises the illegal-instruction
  * exit for them, which the forms test checks. The `unaligned` and
- * `fpscr-reserved` suites are recorded only from hardware that does not exist
- * yet, so nothing here invents expectations for them: the engine follows the
- * design's rules (a multi-word access at a misaligned address is an
- * alignment fault, as the SCTLR.A = 0 text of the design says), and the
- * records of the `memory` suite stand for the aligned and unmapped cases.
+ * `fpscr-reserved` suites are recorded from hardware (a Raspberry Pi 4): a
+ * multi-word access at a misaligned address is an alignment fault, as the
+ * SCTLR.A = 0 text of the design says, and Stride and Len read as zero.
  *
  * A store-exclusive may fail without cause, as the architecture allows. The
  * gadgets run the host's own exclusives, and the host's monitor ends at any

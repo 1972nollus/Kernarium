@@ -5,14 +5,16 @@
 The tables under tests/unit/arm64/aarch32_corpus must generate the pack their
 provenance records, every row must be well formed, the manifest, coverage and
 exclusion tables must be what the producer derives from the rows, and every
-inventory entry the corpus owes cases must have some. The oracle, the Arm
-XML and LLVM are not needed: the tables hold what the oracle observed.
+inventory entry the corpus owes cases must have some, and every known
+difference from a hardware oracle must name cases the corpus has. The oracle,
+the Arm XML and LLVM are not needed: the tables hold what the oracle observed.
 """
 
 from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import fnmatch
 import hashlib
 import importlib.util
 import json
@@ -125,6 +127,22 @@ def check_coverage(prior: dict) -> None:
     require(not missing, f"{len(missing)} inventory entries have no case: {missing[:8]}")
 
 
+def check_known_differences(prior: dict) -> None:
+    """Each known difference names an oracle, a suite the corpus records and
+    cases of it, and fields compare reads."""
+    module = producer()
+    cases: dict[str, list[str]] = {}
+    for record in prior["parsed"]["records"]:
+        suite = record["name"].removesuffix("-" + record["oracle"])
+        cases[suite] = [case["name"] for case in record["cases"]]
+    for row in module.known_differences():
+        require(row["oracle"] in ORACLES - {"profile"}, f"known difference for oracle {row['oracle']!r}")
+        require(row["suite"] in cases, f"known difference in {row['suite']!r}, which has no record")
+        require(any(fnmatch.fnmatchcase(name, row["cases"]) for name in cases[row["suite"]]),
+                f"known difference {row['suite']} {row['cases']} matches no case")
+        require(row["reason"].strip() != "", f"known difference {row['cases']} without a reason")
+
+
 def check_wire() -> None:
     cases = [
         wire.Case("t", "ADC_i_A1/0", "ADC_i_A1", "A", (0xE2A16C3C,), 0, "zero-a"),
@@ -159,6 +177,7 @@ def main() -> int:
     prior = check_source()
     check_derived(prior)
     check_coverage(prior)
+    check_known_differences(prior)
     check_wire()
     print(f"AArch32 corpus: {prior['provenance']['cases']} cases in "
           f"{len(prior['parsed']['records'])} records")

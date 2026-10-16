@@ -839,8 +839,8 @@ extension the host lacks, BF16 and I8MM on the M1 Ultra, is skipped);
 `--level` runs the
 cases of another level with the engine translating at it, which is how a
 level is brought up before the engine's own moves. The `unaligned` and
-`fpscr-reserved` suites are unrecorded until a hardware oracle exists, so
-nothing here invents expectations for them. A store-exclusive may fail
+`fpscr-reserved` suites are recorded from hardware (a Raspberry Pi 4), as the
+corpus README describes. A store-exclusive may fail
 without cause, and the gadgets' fails whenever a host interrupt lands between
 the load and the store, which a loaded host makes frequent enough to see in a
 gate; the oracle's never does. A case whose only difference is that failure

@@ -1,8 +1,14 @@
 {
   "architecture_archive_sha256": "b389a93f41504376895b723ed6e9861ce369e2253c138e6f4c46e27e95375887",
-  "cases": 34677,
+  "cases": 35065,
   "kind": "aarch32",
   "oracles": {
+    "pi4": {
+      "host": "Raspberry Pi 4 Model B Rev 1.1 Linux 6.18.50+rpt-rpi-v8",
+      "hwcap": "37b0d6",
+      "hwcap2": "10",
+      "runner": "native"
+    },
     "profile": {},
     "qemu": {
       "host": "qemu-arm version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1)",
@@ -11,7 +17,7 @@
       "runner": "qemu-arm -cpu max"
     }
   },
-  "pack_sha256": "183cc7445d388272f324d813686a585dd2bf8598d64a2225a4de92749da07a29",
+  "pack_sha256": "10a53d0505b9b8b4182e19ca66331e9e58dd549427d869000c1474d224dc50f3",
   "records": {
     "absent-profile": 751,
     "alu-qemu": 7684,
@@ -22,7 +28,8 @@
     "conditions-qemu": 1816,
     "exclusive-qemu": 256,
     "fetch-qemu": 994,
-    "fpscr-qemu": 180,
+    "fpscr-qemu": 252,
+    "fpscr-reserved-pi4": 144,
     "memory-qemu": 1914,
     "pc-qemu": 88,
     "prefetch-qemu": 144,
@@ -31,7 +38,8 @@
     "simd-qemu": 10226,
     "simd-steps-qemu": 164,
     "straddle-qemu": 60,
-    "system-qemu": 324
+    "system-qemu": 324,
+    "unaligned-pi4": 172
   },
   "schema": 1
 }
