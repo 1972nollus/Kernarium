@@ -453,7 +453,9 @@ engines in both page profiles, and `guest-exclusive-progress-gadgets` and
 `guest-exclusive-progress-jit` check it in a guest.
 
 Both engines complete WFE and WFI at once and treat SEV and SEVL as no-ops,
-so no wait ever depends on an event. AT_HWCAP therefore always carries
+so no wait ever depends on an event. Completing WFI is a deliberate deviation
+from arm64 Linux, which traps WFI at EL0 and kills the program with SIGILL, so
+no working program depends on either behaviour. AT_HWCAP therefore always carries
 EVTSTRM, arm64 Linux's promise that WFE wakes at least once per event-stream
 period, 100 µs, without an SEV.
 `guest-gadgets-smoke` and `guest-jit-smoke` time a WFE loop against that
@@ -929,7 +931,15 @@ The JIT's AArch32 vector support (VFP and Advanced SIMD on D0-D31) keeps Q0-Q15
 in the A64 compiler's vector residency: CpuState vectors 0-15 are the resident
 host registers V16-V31, a D register is the low or high half of its Q and an S
 register a 32-bit lane, so a narrower operand is staged in a scratch register
-and a result is inserted into its half or lane. A VFP instruction runs under the
+and a result is inserted into its half or lane. An insert rewrites the whole Q,
+so in a run of unconditional single-precision VFP instructions an S register
+that was read from its lane or written also keeps a copy, a shadow, in one of
+V0-V4 and V7, which the run's later reads take instead of the lane: operations
+on different lanes of one Q do not wait for each other's inserts. The Q
+register still takes every write, so an exit, a link and a cold path need no
+shadow; a conditional, double-precision or Advanced SIMD instruction, or any
+other that may write an S register or use those host registers, forgets them,
+and the TLB miss bridge preserves V0-V7. A VFP instruction runs under the
 guest's FPCR and FPSR, which the executor installs for a block that holds one
 (the native floating-point environment of the A64 compiler); an Advanced SIMD
 floating-point instruction runs under the Standard FPSCR value (FZ and DN set,
