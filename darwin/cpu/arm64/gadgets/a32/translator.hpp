@@ -13,6 +13,7 @@
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/layout/assembly_offsets.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -87,8 +88,11 @@ public:
 		  profile_{profile}, words_{storage}, it_{input.it},
 		  thumb_{key_isa(input.key) == GuestIsa::t32},
 		  unit_bytes_{thumb_ ? 2U : 4U},
-		  limit_{input.single ? 1U : block_instructions},
-		  soft_limit_{input.single ? 1U : block_instructions - 5U},
+		  limit_{input.single ? 1U :
+				       std::min(block_instructions, block_limit)},
+		  /* A T32 block stops early enough for an IT block it starts
+		   * to complete inside it; A32 has none. */
+		  soft_limit_{input.single ? 1U : thumb_ ? limit_ - 5U : limit_},
 		  available_{input.code.size() / unit_bytes_}
 	{}
 

@@ -2090,6 +2090,63 @@ void a_conditional_floating_point_move_selects_without_a_skip()
 	}
 }
 
+/* An A32 block holds every instruction of its window up to block_limit,
+ * whatever window it is given; a T32 block stops five short of the limit
+ * unless an IT block is open. A straight run longer than a block links on and
+ * retires every instruction. */
+void an_a32_block_holds_all_sixty_four_instructions()
+{
+	constexpr std::uint32_t add_r0_1 = 0xe280'0001U;
+	std::array<std::uint32_t, 80> words;
+	words.fill(add_r0_1);
+	std::array<std::uint16_t, 80> halfwords;
+	halfwords.fill(0x3001U); /* adds r0, #1 */
+	const auto options = options_at(gadgets::a32_support);
+	const auto count = [&](std::uint64_t key,
+			       std::span<const std::byte> code,
+			       std::size_t window) {
+		return gadgets::a32::build({.key = key, .code = code}, {},
+			std::pmr::get_default_resource(), {}, options,
+			gadgets::a32::decode_profile(options), window)
+			.result.program.instruction_count();
+	};
+	const auto a32_code = std::as_bytes(std::span{words});
+	const auto t32_code = std::as_bytes(std::span{halfwords});
+	require(gadgets::a32::block_limit == 64);
+	require(count(aarch32::a32_key(code_base), a32_code.first(64 * 4), 64) ==
+		64);
+	require(count(aarch32::a32_key(code_base), a32_code, 80) == 64);
+	require(count(aarch32::t32_key(code_base), t32_code.first(64 * 2), 64) ==
+		59);
+	require(count(aarch32::t32_key(code_base), t32_code, 80) == 59);
+
+	Guest guest{1110};
+	for (std::uint32_t index = 0; index < 70; ++index)
+		guest.a32(4 * index, {add_r0_1});
+	guest.a32(4 * 70, {a::svc});
+	auto cpu = a32_state();
+	const auto result = guest.run(cpu);
+	require(result.reason == ExitReason::system_call);
+	require(result.retired_instructions == 71);
+	require(reg(cpu, 0) == 70);
+
+	/* A fault at the last position of a full block reports that
+	 * instruction. */
+	Guest faulting{1111};
+	for (std::uint32_t index = 0; index < 63; ++index)
+		faulting.a32(4 * index, {add_r0_1});
+	faulting.a32(4 * 63, {0xe592'1000U}); /* ldr r1, [r2] */
+	faulting.a32(4 * 64, {a::svc});
+	auto at_end = a32_state();
+	at_end.registers[2] = unmapped;
+	const auto fault = faulting.run(at_end);
+	require(fault.reason == ExitReason::memory_fault);
+	require(fault.retired_instructions == 63);
+	require(at_end.pc == aarch32::a32_key(code_base + 4 * 63));
+	require(fault.fault.address == unmapped);
+	require(reg(at_end, 0) == 63);
+}
+
 /* A VLD1 or VST1 copy that crosses a page is a gadget too: the slow transfer
  * helper moves the bytes after translating both pages. */
 void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
@@ -3056,6 +3113,7 @@ int main()
 	hinted_copies_and_loads_to_all_lanes_have_their_own_gadgets();
 	a_compare_and_the_flag_transfer_after_it_run_as_one();
 	a_conditional_floating_point_move_selects_without_a_skip();
+	an_a32_block_holds_all_sixty_four_instructions();
 	in_place_add_and_sub_of_an_immediate_reach_every_register();
 	compare_and_branch_pairs_take_the_branch_as_the_pair_does();
 	parallel_arithmetic_and_sel_stay_out_of_the_library();
