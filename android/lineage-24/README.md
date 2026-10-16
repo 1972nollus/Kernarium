@@ -358,7 +358,7 @@ time compared and the release accepted.
 
 ## Static disk and boot contract
 
-`support/image/partition-layout.json` owns a compact 2,815 MiB seed GPT with
+`support/image/partition-layout.json` owns a compact 2,803 MiB seed GPT with
 separate Android payload, metadata, `init_boot`, `misc`, recovery, and a
 128 MiB userdata filesystem. Userdata is the final partition. Before its first
 boot, the Apple app's generic Swift `DiskUtil` expands the bundle-local raw
@@ -415,6 +415,15 @@ same loopback forward as normal Android (`adb sideload` checks packages against
 the signing keys in the image's `otacerts`), and mounts the fixed GPT
 partitions from the checked `overlay/config/recovery.fstab`. Recovery ADB
 authentication follows the product's `ro.boot.kernarium.adb_auth` policy.
+
+The recovery partition is 20 MiB. The stock LineageOS recovery image measures
+15.07 MiB (15,802,368 bytes), and the size rule is that image plus 25%
+headroom, rounded up to a 4 MiB multiple: 18.8 MiB becomes 20 MiB, which leaves
+4.9 MiB (32%) of the partition free. Like every partition it starts on the
+layout's 1 MiB alignment, and `BOARD_RECOVERYIMAGE_PARTITION_SIZE` must equal
+the layout, so the build fails on an image that does not fit. Resize the
+partition only when the image outgrows 80% of it, and a resize moves
+userdata, so it changes the seed GPT that the Apple runtime validates.
 
 `tools/verify-lineage-recovery.py` checks the image the assembler installs: a
 kernel-less v4 image whose LZ4 or gzip ramdisk holds only target ELFs aligned
