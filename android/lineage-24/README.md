@@ -211,6 +211,10 @@ context, so a package that is later replaced (an APEX update, a different
 class path) is recompiled by ART Service as usual; the image has no such
 update channel.
 
+The boot animation is off (`androidboot.enable_bootanimation=0`; the vendor
+init script turns `debug.sf.nobootanimation` on for it), so SurfaceFlinger
+draws nothing until the first real frame.
+
 ## Graphics
 
 Both graphics APIs come from one Mesa build of this project's own guest Mesa
