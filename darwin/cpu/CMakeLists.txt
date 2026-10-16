@@ -97,6 +97,21 @@ unset(_uml_gadget_cache_slots_invalid)
 # than eight. Eight stays the default on both products (G229).
 set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
     "Address spaces that may hold translations in each private gadget cache")
+# Most misses of a full cache are returns of code its own ways evicted. An
+# arm64 gadget cache can keep what its ways evict, packed to about half a
+# body's size, in a byte ring of this many KiB that a miss takes it back out
+# of after exact validation; zero keeps none. The entry is empty unless a tree
+# chooses a size, so a tree follows the default below when it moves.
+# DARWIN_UML_GADGET_VICTIM_TIER_KIB replaces either for measurement.
+set(UML_GADGET_VICTIM_TIER_KIB "" CACHE STRING
+    "KiB of evicted translations each arm64 gadget cache keeps; empty: default")
+set(_uml_gadget_victim_tier_kib "${UML_GADGET_VICTIM_TIER_KIB}")
+if(_uml_gadget_victim_tier_kib STREQUAL "")
+    set(_uml_gadget_victim_tier_kib "0")
+elseif(NOT _uml_gadget_victim_tier_kib MATCHES "^[0-9]+$")
+    message(FATAL_ERROR
+        "UML_GADGET_VICTIM_TIER_KIB must be empty or a non-negative integer")
+endif()
 
 # Default-off: the census walks every cache slot when an executor is destroyed,
 # and at intervals when asked, and writes its measured footprint, its lookup
@@ -496,7 +511,8 @@ target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
-    UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+    UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS}
+    UML_GADGET_VICTIM_TIER_KIB=${_uml_gadget_victim_tier_kib})
 
 add_library(uml_arm64_gadget_engine OBJECT arm64/gadgets/engine_adapter.cpp)
 uml_declare_architecture_target(uml_arm64_gadget_engine cpu gadget)

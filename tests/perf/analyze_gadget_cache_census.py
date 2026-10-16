@@ -282,7 +282,8 @@ def measured(blocks: list[Block], contents: list[Contents]) -> Counter[str]:
     space once."""
     parts: Counter[str] = Counter()
     for block in blocks:
-        for name in ("total", "slabs", "decoded", "targets") + SPACE_PARTS:
+        for name in ("total", "slabs", "decoded", "targets",
+                     "victim") + SPACE_PARTS:
             parts[name] += block.get(name)
     for space in shared_spaces(contents).values():
         for name in SPACE_PARTS:
@@ -579,7 +580,8 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
              ("link records" + (" and slot lists" if shared else ""),
               parts["links"]),
              ("indirect sites", parts["indirect"]),
-             ("target tables", parts["targets"])]
+             ("target tables", parts["targets"]),
+             ("victim tier", parts["victim"])]
     for name, value in rows:
         if value:
             print(f"  {name:34s} {mib(value)}  {share(value, total)}")
@@ -630,9 +632,15 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
               f"   revalidated {100.0 * history['revalidated'] / lookups:.2f}%"
               f"   misses {history['misses']:,}")
         if history["adopted"]:
-            served = hits + history["adopted"]
             print(f"  adopted from another cache of the space "
-                  f"{history['adopted']:,}   served without translating "
+                  f"{history['adopted']:,}")
+        if history["unpacked"]:
+            print(f"  taken back from the victim tier "
+                  f"{history['unpacked']:,} of {history['victim_kept']:,} "
+                  f"kept")
+        if history["adopted"] or history["unpacked"]:
+            served = hits + history["adopted"] + history["unpacked"]
+            print(f"  served without translating "
                   f"{100.0 * served / lookups:.2f}%")
         stores = history["stores"]
         print(f"  stores {stores:,}")
@@ -715,7 +723,8 @@ def series(path: Path, blocks: list[Block]) -> None:
     snapshots = sorted({b.snapshot for b in blocks}, key=snapshot_order)
     print(f"{'snapshot':>8} {'s':>7} {'caches':>6} {'resident':>9} "
           f"{'MiB':>7} {'bodies':>7} {'dup/space':>9} {'dup/code':>8} "
-          f"{'dormant':>7} {'lookups':>11} {'hit rate':>8} {'stores':>9} "
+          f"{'dormant':>7} {'lookups':>11} {'hit rate':>8} {'served':>8} "
+          f"{'stores':>9} "
           f"{'evicted':>8}")
     previous: dict[str, Block] = {}
     for snapshot in snapshots:
@@ -728,18 +737,22 @@ def series(path: Path, blocks: list[Block]) -> None:
         delta: Counter[str] = Counter()
         for block in chosen:
             before = previous.get(block.tag)
-            for name in ("lookups", "hits", "revalidated", "stores",
-                         "evictions"):
+            for name in ("lookups", "hits", "revalidated", "adopted",
+                         "unpacked", "stores", "evictions"):
                 delta[name] += block.get(name) - (before.get(name) if before else 0)
             previous[block.tag] = block
         rate = ((delta["hits"] + delta["revalidated"]) / delta["lookups"]
                 if delta["lookups"] else float("nan"))
+        served = ((delta["hits"] + delta["revalidated"] + delta["adopted"] +
+                   delta["unpacked"]) / delta["lookups"]
+                  if delta["lookups"] else float("nan"))
         seconds = max(float(b.fields.get("seconds", 0.0)) for b in chosen)
         print(f"{snapshot!s:>8} {seconds:7.1f} {len(chosen):6d} {dup.resident:9,} "
               f"{total / MIB:7.1f} {dup.bytes / MIB:7.1f} "
               f"{share(dup.space_bytes, total):>9} {share(dup.family_bytes, total):>8} "
               f"{share(dormant, total):>7} {delta['lookups']:11,} "
-              f"{100.0 * rate:7.2f}% {delta['stores']:9,} {delta['evictions']:8,}")
+              f"{100.0 * rate:7.2f}% {100.0 * served:7.2f}% "
+              f"{delta['stores']:9,} {delta['evictions']:8,}")
 
 
 def main() -> int:

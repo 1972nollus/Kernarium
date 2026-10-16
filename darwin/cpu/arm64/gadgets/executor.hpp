@@ -34,6 +34,10 @@ struct GadgetCacheDiagnostics final {
 	/* Translations another executor of the address space stored, which
 	 * this one took after validating them instead of translating. */
 	std::uint64_t adoptions{};
+	/* Translations this executor's ways had evicted, which it took back
+	 * out of its victim tier after validating them instead of
+	 * translating. */
+	std::uint64_t victim_restores{};
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	/* Why translated execution returned to this executor, per block entry:
 	 * the chain reached its linked-instruction limit, an indirect site missed

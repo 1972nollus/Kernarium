@@ -732,9 +732,230 @@ void an_evicted_block_misses_and_its_predecessor_link_is_reset()
 	require(executor.cache_diagnostics().validation_attempts == 0);
 }
 
+/* With a victim tier, an evicted block comes back out of it instead of being
+ * translated again, after the same validation a stale slot gets.
+ *
+ * The set is filled one block past its ways, as above, so the target is
+ * evicted. Its miss must then restore it without a translation, the
+ * predecessor must link to it again, and the restored block must run its own
+ * code. Evicted once more and rewritten in guest memory behind the cache, it
+ * must fail that validation and be translated from the new words.
+ */
+void an_evicted_block_comes_back_from_the_victim_tier()
+{
+	constexpr auto target = code_base + 0x100;
+	constexpr std::size_t blocks = cache_ways + 1;
+
+	unsigned long generation = 1400;
+	while (cache_set(generation, code_base) == cache_set(generation, target))
+		++generation;
+
+	std::vector<std::uint64_t> pcs{target};
+	for (std::uint64_t word = 0x80; pcs.size() < blocks; ++word) {
+		const auto pc = code_base + word * sizeof(std::uint32_t);
+		if (cache_set(generation, pc) == cache_set(generation, target))
+			pcs.push_back(pc);
+		require(word < (1U << 22));
+	}
+	const auto extent = pcs.back() + 2 * sizeof(std::uint32_t) - code_base;
+	const std::size_t pages = (extent + DARWIN_UML_GUEST_PAGE_SIZE - 1) /
+		DARWIN_UML_GUEST_PAGE_SIZE;
+
+	JitBacking backing{pages};
+	backing.put32(0, branch(code_base, target));
+	for (std::size_t index = 0; index < pcs.size(); ++index) {
+		backing.put32(pcs[index] - code_base,
+			move_immediate(0, static_cast<unsigned>(index + 1)));
+		backing.put32(pcs[index] - code_base + 4, system_call);
+	}
+	JitMapping mapping{generation, code_base, backing, pages};
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+
+	const auto run_block = [&](std::size_t index, unsigned value) {
+		arm64::CpuState cpu{};
+		cpu.pc = pcs[index];
+		const auto outcome = run_once(executor, memory, generation, cpu);
+		require(outcome.event == ::uml::cpu::EngineEvent::system_call);
+		require(cpu.registers[0] == value);
+	};
+	const auto run_predecessor = [&] {
+		arm64::CpuState cpu{};
+		cpu.pc = code_base;
+		return std::pair{run_once(executor, memory, generation, cpu), cpu};
+	};
+	const auto diagnostics = [&] { return executor.cache_diagnostics(); };
+
+	run_block(0, 1);
+	{
+		const auto [linked, cpu] = run_predecessor();
+		require(linked.executed == 3);
+		require(cpu.registers[0] == 1);
+	}
+	for (std::size_t index = 1; index <= cache_ways; ++index)
+		run_block(index, static_cast<unsigned>(index + 1));
+	const auto full = diagnostics().translations;
+	require(full == 2 + cache_ways);
+	require(diagnostics().victim_restores == 0);
+
+	/* The target went with its way, and its link with it. */
+	{
+		const auto [reset, cpu] = run_predecessor();
+		require(reset.event == ::uml::cpu::EngineEvent::continued);
+		require(reset.executed == 1);
+		require(cpu.pc == target);
+	}
+
+	/* Its miss restores it, taking the next way in turn, and the
+	 * predecessor links to the restored body. */
+	run_block(0, 1);
+	require(diagnostics().translations == full);
+	require(diagnostics().victim_restores == 1);
+	{
+		const auto [relinked, cpu] = run_predecessor();
+		require(relinked.event == ::uml::cpu::EngineEvent::system_call);
+		require(relinked.executed == 3);
+		require(cpu.registers[0] == 1);
+	}
+	/* The block it displaced comes back the same way. */
+	run_block(1, 2);
+	require(diagnostics().translations == full);
+	require(diagnostics().victim_restores == 2);
+
+	/* Evict the target again by running the others round the set, then
+	 * change its first word behind the cache. Its entry in the tier no
+	 * longer matches guest memory and must not be used. */
+	for (std::size_t index = 2; index <= cache_ways; ++index)
+		run_block(index, static_cast<unsigned>(index + 1));
+	run_block(1, 2);
+	const auto before = diagnostics();
+	write_mapped32(generation, target, move_immediate(0, 77));
+	run_block(0, 77);
+	require(diagnostics().translations == before.translations + 1);
+	require(diagnostics().victim_restores == before.victim_restores);
+}
+
+/* A kept translation is filed under the address space whose records its
+ * stream names, and only that space gets it back.
+ *
+ * As in a_replaced_slot_drops_the_previous_owner_link, another address space
+ * takes the owner's way at the same guest PC. The owner's evicted successor
+ * goes to the tier; the owner's miss must restore that one and run the
+ * owner's code, linked from the owner's own predecessor, while the other
+ * space keeps answering from its way. A retired space that returns is
+ * numbered afresh and must translate again rather than find what was kept
+ * for its predecessor, whose records are gone.
+ */
+void a_victim_returns_only_to_its_own_address_space()
+{
+	constexpr auto target = code_base + 0x100;
+	constexpr unsigned owner_value = 7;
+	constexpr unsigned other_value = 9;
+	static_assert(UML_GADGET_RESIDENT_GENERATIONS >= 2);
+
+	unsigned long owner = 1500;
+	while (cache_set(owner, target) == cache_set(owner, code_base))
+		++owner;
+	const auto set = cache_set(owner, target);
+	unsigned long other = owner + 1;
+	while (cache_set(other, target) != set) {
+		++other;
+		require(other < 8'000'000UL);
+	}
+
+	std::vector<std::uint64_t> fillers;
+	for (auto pc = target + 2 * sizeof(std::uint32_t);
+	     fillers.size() + 1 < cache_ways; pc += sizeof(std::uint32_t)) {
+		require(pc - code_base < (std::uint64_t{1} << 26));
+		if (cache_set(other, pc) == set) {
+			fillers.push_back(pc);
+			pc += sizeof(std::uint32_t);
+		}
+	}
+	const auto extent = (fillers.empty() ? target : fillers.back()) +
+		2 * sizeof(std::uint32_t) - code_base;
+	const std::size_t pages = (extent + DARWIN_UML_GUEST_PAGE_SIZE - 1) /
+		DARWIN_UML_GUEST_PAGE_SIZE;
+
+	JitBacking owner_backing{1};
+	owner_backing.put32(0, branch(code_base, target));
+	owner_backing.put32(target - code_base, move_immediate(0, owner_value));
+	owner_backing.put32(target - code_base + 4, system_call);
+	JitBacking other_backing{pages};
+	other_backing.put32(target - code_base, move_immediate(0, other_value));
+	other_backing.put32(target - code_base + 4, system_call);
+	for (const auto pc : fillers) {
+		other_backing.put32(pc - code_base, move_immediate(0, other_value));
+		other_backing.put32(pc - code_base + 4, system_call);
+	}
+
+	auto executor = std::make_unique<gadgets::GadgetExecutor>();
+	auto memory = std::make_unique<StaticGuestMemory>();
+	std::vector<std::unique_ptr<JitMapping>> mappings;
+	mappings.push_back(std::make_unique<JitMapping>(
+		owner, code_base, owner_backing, 1));
+	mappings.push_back(std::make_unique<JitMapping>(
+		other, code_base, other_backing, pages));
+	const auto diagnostics = [&] { return executor->cache_diagnostics(); };
+	const auto run_at = [&](unsigned long generation, std::uint64_t pc,
+				unsigned value) {
+		arm64::CpuState cpu{};
+		cpu.pc = pc;
+		const auto outcome =
+			run_once(*executor, *memory, generation, cpu);
+		require(outcome.event == ::uml::cpu::EngineEvent::system_call);
+		require(cpu.registers[0] == value);
+		return outcome;
+	};
+
+	run_at(owner, target, owner_value);
+	require(run_at(owner, code_base, owner_value).executed == 3);
+	for (const auto pc : fillers)
+		run_at(other, pc, other_value);
+	run_at(other, target, other_value);
+	const auto full = diagnostics().translations;
+	require(full == cache_ways + 2);
+
+	/* The owner's predecessor exits at its successor, whose miss restores
+	 * the owner's translation -- taking a way of the set, so the oldest
+	 * of the other's goes to the tier in turn. */
+	{
+		arm64::CpuState cpu{};
+		cpu.pc = code_base;
+		const auto reset = run_once(*executor, *memory, owner, cpu);
+		require(reset.event == ::uml::cpu::EngineEvent::continued);
+		require(cpu.pc == target);
+	}
+	run_at(owner, target, owner_value);
+	require(diagnostics().translations == full);
+	require(diagnostics().victim_restores == 1);
+	require(run_at(owner, code_base, owner_value).executed == 3);
+	run_at(other, target, other_value);
+	require(diagnostics().translations == full);
+
+	/* Retire the owner by running as many other spaces as are resident,
+	 * then return to it: its old entries name records that went with
+	 * it. */
+	constexpr unsigned long first = 1600;
+	JitBacking filler_backing{1};
+	filler_backing.put32(0, move_immediate(0, 1));
+	filler_backing.put32(4, system_call);
+	for (unsigned long index = 0; index < UML_GADGET_RESIDENT_GENERATIONS;
+	     ++index) {
+		mappings.push_back(std::make_unique<JitMapping>(
+			first + index, code_base, filler_backing, 1));
+		run_at(first + index, code_base, 1);
+	}
+	const auto returning = diagnostics();
+	run_at(owner, target, owner_value);
+	require(diagnostics().translations == returning.translations + 1);
+	require(diagnostics().victim_restores == returning.victim_restores);
+}
+
 /* The same cases with each address space's translations private to its
  * executor and then shared among them: the cache's slots and bodies keep
- * their own packing in both. */
+ * their own packing in both. Without a victim tier an evicted block is
+ * translated again; the tier's own cases follow with one. */
 void run_all()
 {
 	unchanged_words_avoid_retranslation();
@@ -749,14 +970,25 @@ void run_all()
 	an_evicted_block_misses_and_its_predecessor_link_is_reset();
 }
 
+void run_with_victim_tier()
+{
+	an_evicted_block_comes_back_from_the_victim_tier();
+	a_victim_returns_only_to_its_own_address_space();
+}
+
 } // namespace
 
 int main()
 {
 	const uml::testing::RuntimeTestRoute runtime_route;
-	require(unsetenv("DARWIN_UML_GADGET_SHARED_BODIES") == 0);
-	run_all();
-	require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", "1", 1) == 0);
-	run_all();
+	for (const char *shared : {"0", "1"}) {
+		require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", shared, 1) ==
+			0);
+		require(setenv("DARWIN_UML_GADGET_VICTIM_TIER_KIB", "0", 1) == 0);
+		run_all();
+		require(setenv("DARWIN_UML_GADGET_VICTIM_TIER_KIB", "64", 1) ==
+			0);
+		run_with_victim_tier();
+	}
 	return 0;
 }

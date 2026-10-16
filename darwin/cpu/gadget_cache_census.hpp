@@ -20,11 +20,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
-#include <dlfcn.h>
-#include <mach-o/getsect.h>
-#include <mach-o/loader.h>
 #include <mutex>
 #include <unordered_map>
+
+#include "cpu/gadget_text.hpp"
 
 namespace uml::cpu::gadget_cache::census {
 
@@ -148,30 +147,9 @@ inline void write_when(std::FILE *out, std::uint64_t snapshot) noexcept
 		static_cast<long long>(std::time(nullptr)));
 }
 
-/* The executable's text, which every gadget entry lies in: a stream word
- * inside it names a gadget. */
-struct TextRange final {
-	std::uintptr_t begin{};
-	std::uintptr_t end{};
-
-	[[nodiscard]] bool contains(std::uintptr_t word) const noexcept
-	{
-		return word >= begin && word < end;
-	}
-};
-
-[[nodiscard]] inline TextRange text_of(const void *inside) noexcept
-{
-	Dl_info info{};
-	if (dladdr(inside, &info) == 0 || info.dli_fbase == nullptr)
-		return {};
-	unsigned long size = 0;
-	const auto *data = getsegmentdata(
-		static_cast<const mach_header_64 *>(info.dli_fbase), "__TEXT",
-		&size);
-	const auto begin = reinterpret_cast<std::uintptr_t>(data);
-	return {begin, begin + size};
-}
+/* The executable's text, which every gadget entry lies in. */
+using gadget_cache::TextRange;
+using gadget_cache::text_of;
 
 /* Periodic snapshots are numbered from one by the interval they fall in, so
  * the records every cache writes for the same moment share a number. */
@@ -295,6 +273,14 @@ public:
 	/* A miss that took the translation another executor of the address
 	 * space holds instead of translating. */
 	void adopted() noexcept { ++lookups_; ++adopted_; }
+	/* A miss that took the translation back out of the cache's victim
+	 * tier: it is resident again, as it was before it was evicted. */
+	void unpacked(std::uint64_t generation, std::uint64_t pc)
+	{
+		++lookups_;
+		++unpacked_;
+		departed_.erase(Key{generation, pc});
+	}
 	[[nodiscard]] std::uint64_t lookups() const noexcept { return lookups_; }
 
 	void depart(std::uint64_t generation, std::uint64_t pc,
@@ -373,14 +359,15 @@ public:
 	{
 		std::fprintf(out,
 			" lookups=%llu hits=%llu revalidated=%llu misses=%llu"
-			" adopted=%llu"
+			" adopted=%llu unpacked=%llu"
 			" stores=%llu first=%llu again_evicted=%llu"
 			" again_retired=%llu again_discarded=%llu changed=%llu"
 			" restored=%llu other_executor=%llu other_space=%llu"
 			" evictions=%llu evicted_bytes=%llu retirements=%llu"
 			" discards=%llu departed=%zu distance=",
 			value(lookups_), value(hits_), value(revalidated_),
-			value(misses_), value(adopted_), value(stores_),
+			value(misses_), value(adopted_), value(unpacked_),
+			value(stores_),
 			value(first_),
 			value(again_evicted_), value(again_retired_),
 			value(again_discarded_), value(changed_),
@@ -424,7 +411,7 @@ private:
 	};
 
 	std::uint64_t lookups_{}, hits_{}, revalidated_{}, misses_{},
-		adopted_{};
+		adopted_{}, unpacked_{};
 	std::uint64_t stores_{}, first_{}, again_evicted_{}, again_retired_{},
 		again_discarded_{}, changed_{}, restored_{};
 	std::uint64_t other_executor_{}, other_space_{};
