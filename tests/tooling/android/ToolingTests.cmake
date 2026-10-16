@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 uml_add_tooling_test(
-    NAME android17-builder-lane
+    NAME lineage24-builder-lane
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_builder_lane.py
         --source-root ${PROJECT_SOURCE_DIR}
@@ -9,7 +9,7 @@ uml_add_tooling_test(
     TIMEOUT 120)
 
 uml_add_tooling_test(
-    NAME android17-aosp-patch-regenerator
+    NAME lineage24-aosp-patch-regenerator
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_aosp_patch_regenerator.py
         --source-root ${PROJECT_SOURCE_DIR}
@@ -17,7 +17,7 @@ uml_add_tooling_test(
     TIMEOUT 60)
 
 uml_add_tooling_test(
-    NAME android17-routed-workspaces
+    NAME lineage24-routed-workspaces
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_routed_workspaces.py
         --source-root ${PROJECT_SOURCE_DIR}
@@ -25,15 +25,7 @@ uml_add_tooling_test(
     TIMEOUT 900)
 
 uml_add_tooling_test(
-    NAME android17-jelly-source-contract
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_jelly_source_contract.py
-        --source-root ${PROJECT_SOURCE_DIR}
-    LABELS android;audit
-    TIMEOUT 120)
-
-uml_add_tooling_test(
-    NAME android17-mesa-venus-source-contract
+    NAME lineage24-mesa-venus-source-contract
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_mesa_venus_source_contract.py
         --source-root ${PROJECT_SOURCE_DIR}
@@ -41,7 +33,31 @@ uml_add_tooling_test(
     TIMEOUT 300)
 
 uml_add_tooling_test(
-    NAME android17-release-contract
+    NAME lineage24-fdroid-source
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_fdroid_source.py
+        --source-root ${PROJECT_SOURCE_DIR}
+    LABELS android;audit
+    TIMEOUT 90)
+
+uml_add_tooling_test(
+    NAME lineage24-first-boot-precompile
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_precompile_first_boot_apps.py
+        --source-root ${PROJECT_SOURCE_DIR}
+    LABELS android;audit
+    TIMEOUT 60)
+
+uml_add_tooling_test(
+    NAME lineage24-sign-release
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_sign_release.py
+        --source-root ${PROJECT_SOURCE_DIR}
+    LABELS android;audit
+    TIMEOUT 60)
+
+uml_add_tooling_test(
+    NAME lineage24-release-contract
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_release_contract.py
         --source-root ${PROJECT_SOURCE_DIR}

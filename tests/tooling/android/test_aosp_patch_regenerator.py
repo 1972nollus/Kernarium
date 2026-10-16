@@ -51,21 +51,22 @@ def write_fixture(
     (root / "scripts").mkdir()
     shutil.copy2(scripts / "patch_series.py", root / "scripts/patch_series.py")
     manifest = (
-        '<manifest><project name="fixture/project" path="fixture/project" '
+        '<manifest><default remote="fixture"/>'
+        '<project name="fixture/project" path="fixture/project" '
         f'revision="{base_commit}" upstream="refs/tags/fixture"/></manifest>\n'
     )
     (android_root / "metadata/base-manifest.xml").write_text(manifest)
     manifest_digest = hashlib.sha256(manifest.encode()).hexdigest()
-    (android_root / "metadata/aosp.env").write_text(
+    (android_root / "metadata/lineage.env").write_text(
         "AOSP_SOURCE_SCHEMA=1\n"
-        f"ANDROID17_BASE_MANIFEST_SHA256='{manifest_digest}'\n"
+        f"LINEAGE24_BASE_MANIFEST_SHA256='{manifest_digest}'\n"
     )
     empty_tree = "0" * 40
     (android_root / "patches/projects.tsv").write_text(
         "# SPDX-License-Identifier: Apache-2.0\n"
-        "order\troute_id\tmanifest_project\tcheckout_path\tmanifest_revision\t"
-        "base_commit\tbase_tree\tfinal_tree\tseries_dir\n"
-        f"1\tp0001\tfixture/project\tfixture/project\trefs/tags/fixture\t"
+        "order\troute_id\tmanifest_remote\tmanifest_project\tcheckout_path\t"
+        "manifest_revision\tbase_commit\tbase_tree\tfinal_tree\tseries_dir\n"
+        f"1\tp0001\tfixture\tfixture/project\tfixture/project\trefs/tags/fixture\t"
         f"{base_commit}\t{base_tree}\t{empty_tree}\t"
         "patches/projects/p0001/series\n"
     )
@@ -76,12 +77,12 @@ def main() -> None:
     parser.add_argument("--source-root", type=Path, required=True)
     args = parser.parse_args()
     source_root = args.source_root.resolve()
-    generator = source_root / "android/aosp-17/tools/regenerate-aosp-patches.py"
-    verifier = source_root / "android/aosp-17/tools/verify-aosp-patches.py"
+    generator = source_root / "android/lineage-24/tools/regenerate-aosp-patches.py"
+    verifier = source_root / "android/lineage-24/tools/verify-aosp-patches.py"
 
     with tempfile.TemporaryDirectory(prefix="aosp-patch-regenerator-") as temporary:
         root = Path(temporary)
-        android_root = root / "android/aosp-17"
+        android_root = root / "android/lineage-24"
         topic = root / "topic"
         write_fixture(root, android_root, topic, verifier, source_root / "scripts")
         command = (
@@ -144,7 +145,7 @@ def verify_strict_contract(android_root: Path) -> None:
     verifier = android_root / "tools/verify-aosp-patches.py"
     projects = android_root / "patches/projects.tsv"
     manifest = android_root / "metadata/base-manifest.xml"
-    metadata = android_root / "metadata/aosp.env"
+    metadata = android_root / "metadata/lineage.env"
     saved = {path: path.read_bytes() for path in (projects, manifest, metadata)}
 
     def restore() -> None:
@@ -172,7 +173,7 @@ def verify_strict_contract(android_root: Path) -> None:
         manifest_digest = hashlib.sha256(text.encode()).hexdigest()
         metadata.write_text(
             "AOSP_SOURCE_SCHEMA=1\n"
-            f"ANDROID17_BASE_MANIFEST_SHA256='{manifest_digest}'\n"
+            f"LINEAGE24_BASE_MANIFEST_SHA256='{manifest_digest}'\n"
         )
 
     # A line of only white space is a malformed row, not a blank line.

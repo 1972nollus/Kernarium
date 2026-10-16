@@ -480,7 +480,7 @@ Mesa's Venus driver installed as the Vulkan HAL `vulkan.virtio.so`, with
 gralloc buffers from minigbm and presentation through
 `VK_ANDROID_native_buffer`. That contract, including which guest epoch the
 hardware-buffer path needs and why no dEQP level is declared, lives in
-[`../android/aosp-17/README.md`](../android/aosp-17/README.md#graphics).
+[`../android/lineage-24/README.md`](../android/lineage-24/README.md#graphics).
 
 Khronos publishes Android's mandatory Vulkan functionality as the
 `VP_ANDROID_17_requirements` profile, which chains the

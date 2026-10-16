@@ -273,7 +273,7 @@ Sync, quiesce, resume, and the management console are in the
 [architecture](../docs/architecture.md#guest-lifecycle). Disk capacity is an
 application concern: the runtime validates that a GPT matches its file and
 boots it without rewriting either, and the
-[Android static disk contract](../android/aosp-17/README.md#static-disk-and-boot-contract)
+[Android static disk contract](../android/lineage-24/README.md#static-disk-and-boot-contract)
 owns how an image and its filesystem grow. When Kernarium syncs, quiesces, and
 resumes is in [`../Kernarium/README.md`](../Kernarium/README.md#lifecycle).
 

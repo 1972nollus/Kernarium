@@ -42,16 +42,16 @@ projects = [
 ]
 if sys.argv[1:] == ["manifest", "-r"]:
     print("<manifest>")
-    for name, path, upstream in projects:
+    for name, path, upstream, remote in projects:
         revision = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=workspace / path,
             check=True, stdout=subprocess.PIPE, text=True,
         ).stdout.strip()
-        print(f'  <project name="{name}" path="{path}" revision="{revision}" '
-              f'upstream="{upstream}"/>')
+        print(f'  <project name="{name}" path="{path}" remote="{remote}" '
+              f'revision="{revision}" upstream="{upstream}"/>')
     print("</manifest>")
 elif len(sys.argv) == 4 and sys.argv[1:3] == ["forall", "-c"]:
-    for name, path, _ in projects:
+    for name, path, _, _ in projects:
         environment = dict(os.environ, REPO_PATH=path, REPO_PROJECT=name)
         status = subprocess.run(
             ["sh", "-c", sys.argv[3]], cwd=workspace / path, env=environment
@@ -95,18 +95,35 @@ def export(checkout: Path, base: str, series: Path, license_id: str) -> None:
     patch_series.export_series(checkout, base, "HEAD", series, license_id=license_id)
 
 
-def write_projects(workspace: Path, rows: list[tuple[str, str, str]]) -> None:
+def write_projects(
+    workspace: Path, rows: list[tuple[str, str, str]], remote: str
+) -> None:
+    """Record the projects the fake Repo reports, all served by one remote."""
     (workspace / ".repo/fixture-projects.tsv").write_text(
-        "".join(f"{name}\t{path}\t{upstream}\n" for name, path, upstream in rows)
+        "".join(
+            f"{name}\t{path}\t{upstream}\t{remote}\n" for name, path, upstream in rows
+        )
     )
 
 
-def write_manifest(path: Path, rows: list[tuple[str, str, str, str]]) -> str:
-    text = "<manifest>\n" + "".join(
-        f'  <project name="{name}" path="{checkout}" revision="{revision}" '
-        f'upstream="{upstream}"/>\n'
-        for name, checkout, revision, upstream in rows
-    ) + "</manifest>\n"
+def write_manifest(
+    path: Path, rows: list[tuple[str, str, str, str]], remote: str, explicit: bool
+) -> str:
+    """Write a base manifest whose projects come from `remote`.
+
+    The default remote serves a project that names none, as in the real
+    snapshots; `explicit` makes each project name its remote instead.
+    """
+    attribute = f' remote="{remote}"' if explicit else ""
+    text = (
+        f'<manifest>\n  <default remote="{remote}"/>\n'
+        + "".join(
+            f'  <project name="{name}" path="{checkout}"{attribute} '
+            f'revision="{revision}" upstream="{upstream}"/>\n'
+            for name, checkout, revision, upstream in rows
+        )
+        + "</manifest>\n"
+    )
     path.write_text(text)
     return hashlib.sha256(text.encode()).hexdigest()
 
@@ -200,15 +217,21 @@ def check_route_states(verifier: Verifier, routes: list[tuple[Path, str, str]],
 
 
 def check_route_checkout(verifier: Verifier, root: Path, workspace: Path,
-                         projects: list[tuple[str, str, str]], label: str) -> None:
-    """The first route must keep its manifest name and stay inside the workspace."""
+                         projects: list[tuple[str, str, str]], remote: str,
+                         label: str) -> None:
+    """The first route keeps its manifest name and remote, inside the workspace."""
     name, path, upstream = projects[0]
-    write_projects(workspace, [(f"{name}-renamed", path, upstream), *projects[1:]])
+    write_projects(workspace, [(f"{name}-renamed", path, upstream), *projects[1:]], remote)
     verifier.refuses(
         f"a {label} route whose current manifest names another project",
         "route p0001 maps to the wrong manifest project", "final",
     )
-    write_projects(workspace, projects)
+    write_projects(workspace, projects, f"{remote}-moved")
+    verifier.refuses(
+        f"a {label} route whose current manifest names another remote",
+        "route p0001 maps to the wrong manifest project", "final",
+    )
+    write_projects(workspace, projects, remote)
 
     route = workspace / path
     outside = root / f"outside-{label}"
@@ -225,7 +248,10 @@ def check_route_checkout(verifier: Verifier, root: Path, workspace: Path,
 def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> None:
     android_root = root / "aosp-policy"
     workspace = root / "aosp"
-    (workspace / ".repo/manifests").mkdir(parents=True)
+    manifests = workspace / ".repo/manifests"
+    manifests.mkdir(parents=True)
+    run("git", "init", "-q", str(manifests))
+    commit(manifests, "default.xml", "<manifest/>\n", "manifest", 1700000000)
     route_base, route_base_tree = project(workspace, "build/make", 1700000000)
     pinned, _ = project(workspace, "external/zstd", 1700000010)
     route = workspace / "build/make"
@@ -234,12 +260,12 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
         ("platform/build", "build/make", "refs/tags/fixture"),
         ("platform/external/zstd", "external/zstd", "refs/tags/fixture"),
     ]
-    write_projects(workspace, projects)
+    write_projects(workspace, projects, "aosp")
 
     (android_root / "metadata").mkdir(parents=True)
     (android_root / "tools").mkdir()
     shutil.copy2(
-        source_root / "android/aosp-17/tools/sync-device-tree.py",
+        source_root / "android/lineage-24/tools/sync-device-tree.py",
         android_root / "tools/sync-device-tree.py",
     )
     overlay = android_root / "overlay"
@@ -249,23 +275,23 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
     digest = write_manifest(android_root / "metadata/base-manifest.xml", [
         ("platform/build", "build/make", route_base, "refs/tags/fixture"),
         ("platform/external/zstd", "external/zstd", pinned, "refs/tags/fixture"),
-    ])
-    (android_root / "metadata/aosp.env").write_text(
+    ], "aosp", explicit=False)
+    (android_root / "metadata/lineage.env").write_text(
         "AOSP_SOURCE_SCHEMA=1\n"
-        f"ANDROID17_BASE_MANIFEST_SHA256='{digest}'\n"
+        f"LINEAGE24_BASE_MANIFEST_SHA256='{digest}'\n"
     )
     export(route, route_base, android_root / "patches/projects/p0001/series", "Apache-2.0")
     (android_root / "patches/projects.tsv").write_text(
         "# SPDX-License-Identifier: Apache-2.0\n"
-        "order\troute_id\tmanifest_project\tcheckout_path\tmanifest_revision\t"
-        "base_commit\tbase_tree\tfinal_tree\tseries_dir\n"
-        f"1\tp0001\tplatform/build\tbuild/make\trefs/tags/fixture\t"
+        "order\troute_id\tmanifest_remote\tmanifest_project\tcheckout_path\t"
+        "manifest_revision\tbase_commit\tbase_tree\tfinal_tree\tseries_dir\n"
+        f"1\tp0001\taosp\tplatform/build\tbuild/make\trefs/tags/fixture\t"
         f"{route_base}\t{route_base_tree}\t{route_final_tree}\t"
         "patches/projects/p0001/series\n"
     )
 
     verifier = Verifier(
-        source_root / "android/aosp-17/tools/verify-aosp-patches.py",
+        source_root / "android/lineage-24/tools/verify-aosp-patches.py",
         android_root, "--aosp-source", workspace, environment,
     )
     check_route_states(verifier, [(route, route_base, route_final)], "AOSP")
@@ -279,12 +305,14 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
     detach(workspace / "external/zstd", pinned)
 
     project(workspace, "external/extra", 1700000040)
-    write_projects(workspace, [*projects, ("platform/external/extra", "external/extra", "x")])
+    write_projects(
+        workspace, [*projects, ("platform/external/extra", "external/extra", "x")], "aosp"
+    )
     verifier.refuses(
         "an AOSP project the base manifest lacks",
         "Repo project paths differ", "final",
     )
-    write_projects(workspace, projects)
+    write_projects(workspace, projects, "aosp")
 
     (workspace / "device/kernarium/darwin/device.mk").unlink()
     verifier.refuses(
@@ -292,12 +320,60 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
     )
     copy_device_tree(overlay, workspace)
 
-    check_route_checkout(verifier, root, workspace, projects, "AOSP")
+    check_route_checkout(verifier, root, workspace, projects, "aosp", "AOSP")
     verifier.accepts("the restored AOSP workspace", "final")
+    check_snapshot(source_root, android_root, root, workspace, environment)
+
+
+def check_snapshot(source_root: Path, android_root: Path, root: Path,
+                   workspace: Path, environment: dict[str, str]) -> None:
+    """Recording a workspace rewrites the snapshot and the digests that pin it."""
+    copy = root / "snapshot-policy"
+    shutil.copytree(android_root, copy)
+    metadata = copy / "metadata/lineage.env"
+    metadata.write_text(
+        metadata.read_text()
+        + "LINEAGE24_MANIFEST_COMMIT='" + "0" * 40 + "'\n"
+        + "LINEAGE24_MANIFEST_TREE='" + "0" * 40 + "'\n"
+    )
+    tool = source_root / "android/lineage-24/tools/snapshot-source.py"
+    command = (
+        sys.executable, "-B", str(tool), "--android-root", str(copy),
+        "--aosp-source", str(workspace),
+    )
+    done = subprocess.run(
+        command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True,
+    )
+    if done.returncode != 0:
+        fail(f"snapshot-source.py refused a clean workspace: {done.stdout.strip()}")
+    manifests = workspace / ".repo/manifests"
+    values = parse_env(metadata)
+    snapshot = copy / "metadata/base-manifest.xml"
+    if values["LINEAGE24_BASE_MANIFEST_SHA256"] != hashlib.sha256(
+        snapshot.read_bytes()
+    ).hexdigest():
+        fail("snapshot-source.py left a stale snapshot digest")
+    for key, revision in (
+        ("LINEAGE24_MANIFEST_COMMIT", "HEAD"), ("LINEAGE24_MANIFEST_TREE", "HEAD^{tree}")
+    ):
+        if values[key] != run("git", "rev-parse", revision, cwd=manifests):
+            fail(f"snapshot-source.py recorded the wrong {key}")
+    if 'path="build/make"' not in snapshot.read_text():
+        fail("snapshot-source.py did not record the workspace projects")
+
+    (workspace / "build/make/untracked.txt").write_text("dirty\n")
+    done = subprocess.run(
+        command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True,
+    )
+    (workspace / "build/make/untracked.txt").unlink()
+    if done.returncode == 0 or "build/make" not in done.stdout:
+        fail("snapshot-source.py recorded a dirty workspace")
 
 
 def check_orangefox(source_root: Path, root: Path, environment: dict[str, str]) -> None:
-    real = parse_env(source_root / "android/aosp-17/third_party/orangefox/metadata.env")
+    real = parse_env(source_root / "android/lineage-24/third_party/orangefox/metadata.env")
     android_root = root / "orangefox-policy"
     workspace = root / "orangefox"
     manifests = workspace / ".repo/manifests"
@@ -324,13 +400,13 @@ def check_orangefox(source_root: Path, root: Path, environment: dict[str, str]) 
         ("android_vendor_recovery", "vendor/recovery", "android-14"),
         ("android_external_se_omapi", "external/se_omapi", "android-14"),
     ]
-    write_projects(workspace, projects)
+    write_projects(workspace, projects, "nebrassy")
 
     orangefox = android_root / "third_party/orangefox"
     orangefox.mkdir(parents=True)
     (android_root / "tools").mkdir()
     shutil.copy2(
-        source_root / "android/aosp-17/tools/sync-device-tree.py",
+        source_root / "android/lineage-24/tools/sync-device-tree.py",
         android_root / "tools/sync-device-tree.py",
     )
     device = orangefox / "device"
@@ -342,7 +418,7 @@ def check_orangefox(source_root: Path, root: Path, environment: dict[str, str]) 
         ("android_bootable_recovery", "bootable/recovery", recovery_base, "android-14"),
         ("android_vendor_recovery", "vendor/recovery", vendor, "android-14"),
         ("android_external_se_omapi", "external/se_omapi", omapi, "android-14"),
-    ])
+    ], "nebrassy", explicit=True)
     values = dict(real)
     values.update({
         "ORANGEFOX_MANIFEST_COMMIT": run("git", "rev-parse", "HEAD", cwd=manifests),
@@ -367,17 +443,18 @@ def check_orangefox(source_root: Path, root: Path, environment: dict[str, str]) 
         series = f"third_party/orangefox/patches/projects/p{order:04d}/series"
         export(workspace / path, base, android_root / series, "GPL-3.0-or-later")
         rows.append(
-            f"{order}\tp{order:04d}\t{name}\t{path}\tandroid-14\t"
+            f"{order}\tp{order:04d}\tnebrassy\t{name}\t{path}\tandroid-14\t"
             f"{base}\t{base_tree}\t{final_tree}\t{series}\n"
         )
     (orangefox / "patches/projects.tsv").write_text(
         "# SPDX-License-Identifier: GPL-3.0-or-later\n"
-        "order\troute_id\tmanifest_project\tcheckout_path\tmanifest_upstream\t"
-        "base_commit\tbase_tree\tfinal_tree\tseries_dir\n" + "".join(rows)
+        "order\troute_id\tmanifest_remote\tmanifest_project\tcheckout_path\t"
+        "manifest_upstream\tbase_commit\tbase_tree\tfinal_tree\tseries_dir\n"
+        + "".join(rows)
     )
 
     verifier = Verifier(
-        source_root / "android/aosp-17/tools/verify-orangefox-source.py",
+        source_root / "android/lineage-24/tools/verify-orangefox-source.py",
         android_root, "--orangefox-source", workspace, environment,
     )
     check_route_states(verifier, [
@@ -429,13 +506,16 @@ def check_orangefox(source_root: Path, root: Path, environment: dict[str, str]) 
     run("git", "reset", "-q", "--hard", "HEAD~1", cwd=manifests)
 
     project(workspace, "external/extra", 1700000090)
-    write_projects(workspace, [*projects, ("android_external_extra", "external/extra", "x")])
+    write_projects(
+        workspace, [*projects, ("android_external_extra", "external/extra", "x")],
+        "nebrassy",
+    )
     verifier.refuses(
         "an OrangeFox project the base manifest lacks",
         "Repo project paths differ", "final",
     )
-    write_projects(workspace, projects)
-    check_route_checkout(verifier, root, workspace, projects, "OrangeFox")
+    write_projects(workspace, projects, "nebrassy")
+    check_route_checkout(verifier, root, workspace, projects, "nebrassy", "OrangeFox")
     verifier.accepts("the restored OrangeFox workspace", "final")
 
 

@@ -1197,7 +1197,7 @@ CMake graph imports compact artifacts and checks their bridge ABI, page
 profile, product family, and `6.18` release series. Patch releases, commit
 identities, and producer provenance do not become runtime compatibility keys.
 
-`android/aosp-17` owns the Android product, static GPT layout, ramdisks, rootfs
+`android/lineage-24` owns the Android product, static GPT layout, ramdisks, rootfs
 release, and producer tools. Kernel and rootfs releases are selected
 independently. Apple emulator builds consume only the ACK ELF artifact; rootfs
 and command-line paths are launch inputs. The `uml-darwin-android17` product
