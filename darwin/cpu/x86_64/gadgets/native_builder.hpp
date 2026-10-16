@@ -11,6 +11,14 @@
 
 namespace uml::cpu::x86_64::gadgets {
 
+/* What a stream is. A block's own stream is the one its program holds and an
+ * executor runs, and the runtime can name any of its instructions from a
+ * stream word (`instruction_at_word`); a baked PUSH or POP in it therefore
+ * carries no word of its own. A fragment is built for one run from some of a
+ * block's instructions, a budget-limited replay or one checked instruction,
+ * and its instructions all carry their position. */
+enum class StreamKind : std::uint8_t { fragment, block };
+
 /* Append the block's stream to `stream`, which the caller may hand back with
  * its capacity intact so a translation does not buy the storage again.
  * Returns the index of the first gadget the bank has no form for, leaving a
@@ -27,13 +35,16 @@ namespace uml::cpu::x86_64::gadgets {
 [[nodiscard]] std::optional<std::size_t> append_native_stream(
 	std::vector<std::uintptr_t> &stream, std::span<const Gadget> gadgets,
 	std::uint64_t final_rip, ExecutionMode mode,
-	std::uint64_t program_begin, ProgramLinkResolver links = {});
+	std::uint64_t program_begin, ProgramLinkResolver links = {},
+	StreamKind kind = StreamKind::fragment);
 
-/* The instruction of `gadgets` whose words in `stream`, the block's stream,
- * include word `word`, or nothing when the stream is not theirs. */
+/* The instruction of `gadgets` whose words in `stream`, a stream of `kind`
+ * built from them, include word `word`, or nothing when the stream is not
+ * theirs. */
 [[nodiscard]] std::optional<std::size_t> instruction_at_word(
 	std::span<const Gadget> gadgets, std::span<const std::uintptr_t> stream,
-	std::size_t word, ExecutionMode mode, std::uint64_t program_begin);
+	std::size_t word, ExecutionMode mode, std::uint64_t program_begin,
+	StreamKind kind = StreamKind::fragment);
 
 [[nodiscard]] std::vector<std::uintptr_t> build_native_stream(
 	std::span<const Gadget> gadgets, std::uint64_t final_rip,

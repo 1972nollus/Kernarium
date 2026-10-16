@@ -86,7 +86,8 @@ Two banks implement the scalar integer instructions.
   bits 55:42 when the value, sign-extended from the operation width, fits; the
   other immediates take the ordinary bank. RIP-relative and absolute addresses
   have no 32-bit displacement and keep the address as a word of their own
-  ahead of the access word.
+  ahead of the access word. PUSH and POP of a register have no stream word:
+  their entry is their whole stream (below).
   INC and DEC are enumerated a second time by the carry their producer left,
   because they preserve the carry flag: a borrow, carry or cleared source
   reaches RFLAGS with at most one condition, a settled one inherits the
@@ -126,13 +127,14 @@ address. It carries its position: its address less the block's first address,
 which the execution context names as `program_begin`, in ten bits. The word
 that holds it is one the gadget reads anyway: bits 45:36 of an ordinary memory
 descriptor (the baked access word's own are 41:32), and the same bits of the
-operand word of a push, pop, string, division, ENTER, LEAVE, return,
-privileged, RDTSC, segment-guard and write-segment-base gadget; the length in
-bits 59:56 serves an exit that retires the instruction. A direct CALL of five
-bytes carries nothing: the return address it pushes is its address plus five.
-One with a prefix has its own gadgets, which keep the position in a word of
-their own. AAM, AAD, the instructions the segment model runs and IRET keep the
-address in a word of their own, and INTO and INT 4 the address after them.
+operand word of an ordinary push or pop, string, division, ENTER, LEAVE,
+return, privileged, RDTSC, segment-guard and write-segment-base gadget; the
+length in bits 59:56 serves an exit that retires the instruction. A direct
+CALL of five bytes carries nothing: the return address it pushes is its
+address plus five. One with a prefix has its own gadgets, which keep the
+position in a word of their own. AAM, AAD, the instructions the segment model
+runs and IRET keep the address in a word of their own, and INTO and INT 4 the
+address after them.
 
 A cold exit rebuilds the RIP with `instruction_rip` from `program_begin` and
 the position, wrapping the sum at 4 GiB in compatibility mode, so no hot path
@@ -141,6 +143,28 @@ budget-limited replay, a checked single instruction) takes the block's own
 first address as that base. The block ends before the first instruction 1024
 bytes or more past its start, so a block of the default 64 instructions (at
 most 945 bytes) never reaches it.
+
+### Stack instructions
+
+A baked PUSH or POP of a register carries nothing, not even a position: its
+entry is its whole stream. Its fault, and a store of a PUSH that lands in the
+running block, leave with the stream pointer in the context's exception
+stream (`UML_X86_64_EVENT_STREAM_FAULT` and `UML_X86_64_EVENT_STREAM_RETIRED`),
+and `execute` recovers the instruction as it does for an exception the guest
+unmasked. It takes the program that holds the stream word before the pointer:
+the one the run entered, or the cached block the context's `program_begin`
+names after a link. It decodes that block back out of its saved bytes without
+keeping the decode, and builds its instructions until `instruction_at_word`
+finds the one whose words include the stream word. The fault then reports that
+instruction's address and the overlap the address after it.
+
+Only a block's own stream (`StreamKind::block`), the one a program holds, has
+these entries. A stream built for one run from part of a block, a
+budget-limited replay or one checked instruction, is a fragment and takes the
+ordinary PUSH and POP, which carry their position. The recovery costs about a
+translation of its block and runs only on a fault or an overlap. The baked bank
+serves long mode only, and a compatibility-mode PUSH or POP always carries its
+position.
 
 ## Host-flag fusion
 

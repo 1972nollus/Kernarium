@@ -64,12 +64,21 @@ constexpr unsigned direct_call_length = 5;
 class StreamWords final {
 public:
 	StreamWords(std::vector<std::uintptr_t> &words, ExecutionMode mode,
-		std::uint64_t program_begin) noexcept :
-		words_{&words}, mode_{mode}, program_begin_{program_begin}
+		std::uint64_t program_begin,
+		StreamKind kind = StreamKind::fragment) noexcept :
+		words_{&words}, mode_{mode}, program_begin_{program_begin},
+		kind_{kind}
 	{
 	}
 
 	void push_back(std::uintptr_t word) { words_->push_back(word); }
+
+	/* Whether the stream is a block's own, from which the runtime recovers
+	 * an instruction by a stream word it left with. */
+	[[nodiscard]] bool block() const noexcept
+	{
+		return kind_ == StreamKind::block;
+	}
 
 	/* The instruction's position in the block, or nothing when it lies
 	 * farther in than the stream word's field reaches. */
@@ -94,6 +103,7 @@ private:
 	std::vector<std::uintptr_t> *words_;
 	ExecutionMode mode_;
 	std::uint64_t program_begin_;
+	StreamKind kind_;
 };
 
 /* CpuState offsets packed into one stream word, 16 bits apiece. */
@@ -5301,6 +5311,9 @@ struct FlagState final {
  * A fused access with no base register still needs a 64-bit address, a
  * RIP-relative or absolute one, so its stream carries the address before the
  * word, whose displacement field is clear.
+ *
+ * PUSH and POP of a register have no access word in a block's own stream
+ * (`append_baked_stack`).
  */
 constexpr unsigned baked_position_shift = 32;
 constexpr unsigned baked_position_bits = 10;
@@ -5823,21 +5836,24 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	return true;
 }
 
+/* PUSH and POP of a register carry no stream word: their entry is all of
+ * their stream. A fault or an overlap leaves with the stream pointer, and the
+ * runtime finds the instruction from it, which only a block's own stream
+ * allows -- a stream built from part of a block, for one run, takes the
+ * ordinary bank, whose words carry the instruction's position. */
 [[nodiscard]] bool append_baked_stack(StreamWords &stream,
-	const Gadget &gadget, std::uint64_t program_begin)
+	const Gadget &gadget)
 {
 	const auto &instruction = gadget.instruction;
 	const bool push = instruction.operation == Operation::push;
 	const auto &operand = push ? instruction.source : instruction.destination;
-	if (operand.width != OperandWidth::qword)
+	if (!stream.block() || operand.width != OperandWidth::qword)
 		return false;
 	const auto slot = baked_register_slot(operand);
-	const auto header = baked_access_header(gadget, program_begin);
-	if (!slot || !header)
+	if (!slot)
 		return false;
 	stream.push_back((push ? baked::uml_x86_64_baked_push_64_r :
 		baked::uml_x86_64_baked_pop_64_r)[*slot]);
-	stream.push_back(*header);
 	return true;
 }
 
@@ -5882,7 +5898,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		return append_baked_lea(stream, gadget, program_begin);
 	case Operation::push:
 	case Operation::pop:
-		return append_baked_stack(stream, gadget, program_begin);
+		return append_baked_stack(stream, gadget);
 	default:
 		return false;
 	}
@@ -6953,10 +6969,10 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 std::optional<std::size_t> append_native_stream(
 	std::vector<std::uintptr_t> &stream, std::span<const Gadget> gadgets,
 	std::uint64_t final_rip, ExecutionMode mode,
-	std::uint64_t program_begin, ProgramLinkResolver links)
+	std::uint64_t program_begin, ProgramLinkResolver links, StreamKind kind)
 {
 	stream.reserve(stream.size() + gadgets.size() * 3U + 2U);
-	StreamWords words{stream, mode, program_begin};
+	StreamWords words{stream, mode, program_begin, kind};
 	FlagState state{};
 	for (std::size_t index = 0; index < gadgets.size(); ++index) {
 		FlagState produced{};
@@ -6988,7 +7004,8 @@ std::optional<std::size_t> append_native_stream(
 
 std::optional<std::size_t> instruction_at_word(
 	std::span<const Gadget> gadgets, std::span<const std::uintptr_t> stream,
-	std::size_t word, ExecutionMode mode, std::uint64_t program_begin)
+	std::size_t word, ExecutionMode mode, std::uint64_t program_begin,
+	StreamKind kind)
 {
 	/* Only a branch's form depends on the links its build found, and the
 	 * forms differ in their first word, so each instruction is built both
@@ -7003,7 +7020,7 @@ std::optional<std::size_t> instruction_at_word(
 			IndirectLink * { return &placeholder_site; },
 	};
 	std::vector<std::uintptr_t> words;
-	StreamWords builder{words, mode, program_begin};
+	StreamWords builder{words, mode, program_begin, kind};
 	FlagState state{};
 	std::size_t position{};
 	for (std::size_t index = 0; index < gadgets.size(); ++index) {
