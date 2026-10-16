@@ -22,8 +22,8 @@ add_subdirectory(arm64/aarch32)
 # translated and lost, and address-space retirement causes none of them. The
 # slot count, not residency or validation, is what bounds Clang.
 #
-# Capacity is not free on either engine. An empty way costs 40 bytes on arm64
-# and 80 on x86, and an occupied one its translation besides. Every product and
+# Capacity is not free on either engine. An empty way costs 24 bytes on arm64
+# and 40 on x86, and an occupied one its translation besides. Every product and
 # both ISAs share one default, 131,072 slots, so that macOS behaves like iOS;
 # an explicit -DUML_GADGET_CACHE_SLOTS selects another power of two.
 #
