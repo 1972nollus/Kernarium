@@ -361,6 +361,24 @@ private:
    * bits. */
   [[nodiscard]] unsigned s_use(unsigned s, unsigned scratch);
   void s_write(unsigned s, unsigned result);
+  /* S shadows: in a run of instructions that leave V0-V4 and V7 alone, an
+   * S register that was read from its lane or written keeps a copy in the
+   * low lane of one of them, which the next read takes instead of the lane.
+   * The Q register still takes every write, so an exit, a link or a cold
+   * path never needs a shadow. begin_s_shadows() classifies the instruction
+   * about to be translated: it keeps, forgets or may use the shadows. */
+  void begin_s_shadows();
+  void forget_s_shadows() noexcept;
+  void forget_s_shadow(unsigned s) noexcept;
+  /* The host register of S n's shadow, which the instruction reads, or -1
+   * where it has none or may not use them. */
+  [[nodiscard]] int s_shadow_host(unsigned s) noexcept;
+  /* The host register of the shadow S n takes, an existing one or the least
+   * recently used one the instruction does not read. */
+  [[nodiscard]] unsigned take_s_shadow(unsigned s) noexcept;
+  /* The register the last instruction of a VFP operation on S or D n
+   * writes, for fp_write: S n's shadow when the instruction may use them. */
+  [[nodiscard]] unsigned fp_result(unsigned r, bool dp) noexcept;
   /* A VFP operand: a single or a double register. */
   [[nodiscard]] unsigned fp_use(unsigned r, bool dp, unsigned scratch) {
     return dp ? d_use(r, scratch) : s_use(r, scratch);
@@ -511,6 +529,20 @@ private:
   unsigned guest_fp_mode_ops_{};
   /* How often a probing compilation touched each core register. */
   std::array<unsigned, 15> uses_{};
+  /* The S shadows (s_use): the S register each host holds, or -1, with the
+   * clock of its last use; the shadows the instruction being translated
+   * reads; whether it may use them. */
+  struct SShadow final {
+    int s{-1};
+    std::size_t used{};
+  };
+  /* The VFP scratch registers V3 and V4 hold sources only where an
+   * instruction may not use shadows, V5 and V6 a result or an addend. */
+  static constexpr std::array<unsigned, 6> s_shadow_hosts{0, 1, 2, 3, 4, 7};
+  std::array<SShadow, s_shadow_hosts.size()> s_shadows_{};
+  std::size_t s_shadow_clock_{};
+  unsigned s_shadow_pinned_{};
+  bool s_shadowing_{};
   bool looping_{};
   LoopPlan plan_{};
   Arm64Emitter::Label loop_head_{};

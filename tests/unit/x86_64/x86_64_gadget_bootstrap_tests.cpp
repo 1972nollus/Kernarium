@@ -1397,6 +1397,98 @@ template<typename Body>
 		"least-recently-current address space was not retired");
 }
 
+/* A slot names its address space by an id the cache hands out and takes back
+ * when the space is retired, so the id of a retired space is the id of the
+ * next to arrive. Every translation of the retired space must be gone by then
+ * however many times the ids go round, or the newcomer would be served the
+ * old space's program at the same address. */
+[[nodiscard]] bool a_recycled_address_space_id_serves_no_old_translation()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {0x0f, 0x05});
+	gadgets::Executor executor;
+	constexpr std::uint64_t spaces = 3 * 8 + 1;
+	for (std::uint64_t generation = 1; generation <= spaces; ++generation) {
+		executor.prepare(memory, generation, 1, 1);
+		const auto fresh = executor.select_program(
+			memory, 0, ExecutionMode::long64);
+		if (!expect(fresh.status == gadgets::BuildStatus::built &&
+			fresh.program != nullptr && !fresh.cache_hit,
+			"a new address space was served another's program"))
+			return false;
+		const auto again = executor.select_program(
+			memory, 0, ExecutionMode::long64);
+		if (!expect(again.program != nullptr && again.cache_hit,
+			"an address space did not find its own program"))
+			return false;
+	}
+	/* The eight most recent are resident and the rest are gone. */
+	executor.prepare(memory, spaces - 7, 1, 1);
+	const auto kept = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	executor.prepare(memory, 1, 1, 1);
+	const auto retired = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	return expect(kept.program != nullptr && kept.cache_hit,
+		"a resident address space lost its program") &&
+		expect(retired.program != nullptr && !retired.cache_hit,
+			"a retired address space was served its old program");
+}
+
+/* A slot is current when the epoch it carries is its space's, and the epoch
+ * counts code changes in sixteen bits. A slot the space has not run for a whole
+ * epoch cycle must not be taken for current when the count comes round to its
+ * own again: the cache clears the epochs a wrap would repeat.
+ *
+ * Block A is selected once and its bytes rewritten behind the cache's back.
+ * Block B then runs through every code change that returns the epoch to A's,
+ * and A, never run in between, must be validated against the guest's bytes and
+ * rebuilt instead of served stale. */
+[[nodiscard]] bool a_validation_does_not_outlive_the_epochs_it_counts()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {0xb8, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x05});
+	memory.load(0x100, {0xb8, 0x02, 0x00, 0x00, 0x00, 0x0f, 0x05});
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, 1, 1);
+	const auto cold = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(cold.status == gadgets::BuildStatus::built &&
+		cold.program != nullptr && !cold.cache_hit,
+		"the first program was not built"))
+		return false;
+	memory.load(1, {0x09});
+	std::uint64_t changes = 1;
+	for (unsigned change = 0; change < 65'535; ++change) {
+		executor.prepare(memory, 42, 1, ++changes);
+		const auto other = executor.select_program(
+			memory, 0x100, ExecutionMode::long64);
+		if (!expect(other.program != nullptr,
+			"the second program was not selected"))
+			return false;
+	}
+	const auto before = executor.cache_diagnostics();
+	const auto rebuilt = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(rebuilt.status == gadgets::BuildStatus::built &&
+		rebuilt.program != nullptr && !rebuilt.cache_hit,
+		"a stale program survived a whole epoch cycle"))
+		return false;
+	CpuState cpu{};
+	const auto executed = gadgets::execute(
+		*rebuilt.program, cpu, memory, executor, 64);
+	const auto after = executor.cache_diagnostics();
+	return expect(executed.event == uml::cpu::EngineEvent::system_call &&
+		cpu.gpr(Register::rax) == 9,
+		"the rebuilt program ran the old immediate") &&
+		expect(after.validation_attempts == before.validation_attempts + 1 &&
+			after.validation_mismatches ==
+				before.validation_mismatches + 1,
+			"the program was not validated against the guest's bytes");
+}
+
 [[nodiscard]] bool cache_links_common_successors()
 {
 	using namespace uml::cpu::x86_64;
@@ -9573,6 +9665,8 @@ int main()
 		a_decode_at_a_page_edge_faults_where_it_stopped() &&
 		a_block_longer_than_the_fetch_window_decodes() &&
 		cache_retires_the_oldest_generation() &&
+		a_recycled_address_space_id_serves_no_old_translation() &&
+		a_validation_does_not_outlive_the_epochs_it_counts() &&
 		cache_links_common_successors() &&
 		cache_chains_direct_branches() &&
 		cache_chains_indirect_transfers() &&

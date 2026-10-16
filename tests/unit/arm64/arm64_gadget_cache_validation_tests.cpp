@@ -7,6 +7,7 @@
 #include "static_mmu_test_support.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <utility>
@@ -320,6 +321,141 @@ void retiring_an_address_space_keeps_the_others()
 	/* The retired one has to be translated again, and retires another. */
 	visit(first);
 	require(executor->cache_diagnostics().translations == after_fill + 2);
+}
+
+/* A block that stopped at a word the builder does not translate keeps where
+ * it stopped in a tail of its stored body, and an empty one reports that
+ * address as the illegal exit's PC. Both come back from the cache the same as
+ * from the build that stored them. */
+void a_stopped_block_keeps_its_stop_in_the_cache()
+{
+	constexpr unsigned long generation = 1300;
+	/* An exception-class word no allocation gives a meaning: the builder
+	 * stops before it without retiring it. */
+	constexpr std::uint32_t unimplemented = 0xd400'0000U;
+	constexpr auto stopped = code_base + 0x100;
+	JitBacking backing{1};
+	backing.put32(0, unimplemented);
+	backing.put32(stopped - code_base, move_immediate(0, 7));
+	backing.put32(stopped - code_base + 4, unimplemented);
+	JitMapping mapping{generation, code_base, backing, 1};
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+	for (unsigned pass = 0; pass < 3; ++pass) {
+		arm64::CpuState empty{};
+		empty.pc = code_base;
+		require(run_once(executor, memory, generation, empty).event ==
+			::uml::cpu::EngineEvent::illegal_instruction);
+		require(empty.pc == code_base);
+
+		arm64::CpuState cpu{};
+		cpu.pc = stopped;
+		require(run_once(executor, memory, generation, cpu).event ==
+			::uml::cpu::EngineEvent::illegal_instruction);
+		require(cpu.pc == stopped + 4);
+		require(cpu.registers[0] == 7);
+		require(executor.cache_diagnostics().translations == 2);
+	}
+}
+
+/* A slot names its address space by an id the cache hands out and takes back
+ * when the space is retired, so the id of a retired space is the id of the
+ * next to arrive. Every translation of the retired space must be gone by then
+ * however many times the ids go round, or the newcomer would run the old
+ * space's code at the same PC.
+ *
+ * Each space maps code of its own at the same address, and the visits cycle
+ * through more spaces than are resident, so every visit retires one space and
+ * reuses its id.
+ */
+void a_recycled_address_space_id_serves_no_old_translation()
+{
+	constexpr unsigned long first = 1100;
+	constexpr auto resident = UML_GADGET_RESIDENT_GENERATIONS;
+	constexpr unsigned long spaces = 3 * resident + 1;
+	std::vector<std::unique_ptr<JitBacking>> backings;
+	std::vector<std::unique_ptr<JitMapping>> mappings;
+	for (unsigned long index = 0; index < spaces; ++index) {
+		backings.push_back(std::make_unique<JitBacking>(1));
+		backings.back()->put32(0, move_immediate(0, 100 + index));
+		backings.back()->put32(4, system_call);
+		mappings.push_back(std::make_unique<JitMapping>(
+			first + index, code_base, *backings.back(), 1));
+	}
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+	std::size_t translations = 0;
+	for (unsigned pass = 0; pass < 3; ++pass) {
+		for (unsigned long index = 0; index < spaces; ++index) {
+			arm64::CpuState cpu{};
+			cpu.pc = code_base;
+			require(run_once(executor, memory, first + index, cpu)
+					.event == ::uml::cpu::EngineEvent::system_call);
+			require(cpu.registers[0] == 100 + index);
+			/* Cycling through more spaces than the cache keeps, each
+			 * visit finds its space gone. */
+			require(executor.cache_diagnostics().translations ==
+				++translations);
+			cpu = {};
+			cpu.pc = code_base;
+			require(run_once(executor, memory, first + index, cpu)
+					.event == ::uml::cpu::EngineEvent::system_call);
+			require(cpu.registers[0] == 100 + index);
+			require(executor.cache_diagnostics().translations ==
+				translations);
+		}
+	}
+}
+
+/* A slot is current when the epoch it carries is its space's, and the epoch
+ * counts code changes in sixteen bits. A slot the space has not run for a whole
+ * epoch cycle must not be taken for current when the count comes round to its
+ * own again: the cache clears the epochs a wrap would repeat.
+ *
+ * Block A is run once and its word rewritten behind the cache's back, which
+ * moves no code-change sequence. Block B then runs through every one of the
+ * changes that returns the epoch to A's, and A, never run in between, must be
+ * validated against the guest's words and rebuilt instead of served stale.
+ */
+void a_validation_does_not_outlive_the_epochs_it_counts()
+{
+	constexpr unsigned long generation = 1200;
+	constexpr auto other = code_base + 0x100;
+	JitBacking backing{1};
+	backing.put32(0, move_immediate(0, 7));
+	backing.put32(4, system_call);
+	backing.put32(other - code_base, move_immediate(1, 1));
+	backing.put32(other - code_base + 4, system_call);
+	JitMapping mapping{generation, code_base, backing, 1};
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+	arm64::CpuState cpu{};
+	cpu.pc = code_base;
+	require(run_once(executor, memory, generation, cpu).event ==
+		::uml::cpu::EngineEvent::system_call);
+	require(cpu.registers[0] == 7);
+
+	write_mapped32(generation, code_base, move_immediate(0, 9));
+	constexpr unsigned changes = 65'535;
+	for (unsigned change = 0; change < changes; ++change) {
+		darwin_uml_static_vm_invalidate_code(
+			code_base + DARWIN_UML_GUEST_PAGE_SIZE);
+		cpu = {};
+		cpu.pc = other;
+		require(run_once(executor, memory, generation, cpu).event ==
+			::uml::cpu::EngineEvent::system_call);
+	}
+
+	const auto before = executor.cache_diagnostics();
+	cpu = {};
+	cpu.pc = code_base;
+	require(run_once(executor, memory, generation, cpu).event ==
+		::uml::cpu::EngineEvent::system_call);
+	require(cpu.registers[0] == 9);
+	const auto after = executor.cache_diagnostics();
+	require(after.validation_attempts == before.validation_attempts + 1);
+	require(after.validation_mismatches == before.validation_mismatches + 1);
+	require(after.translations == before.translations + 1);
 }
 
 /* Mirrors ProgramCache::locate(): the set a translation lands in folds the
@@ -748,19 +884,36 @@ void an_address_space_that_only_grows_does_not_sweep()
 	require(executor.cache_diagnostics().link_sweeps == 0);
 }
 
-} // namespace
-
-int main()
+/* The same cases with each address space's translations private to its
+ * executor and then shared among them: the cache's slots and bodies keep
+ * their own packing in both. */
+void run_all()
 {
-	const uml::testing::RuntimeTestRoute runtime_route;
 	unchanged_words_avoid_retranslation();
 	changed_words_rebuild_and_republish_links();
 	a_kernel_text_write_republishes_through_the_bridge();
 	an_unrelated_code_change_resets_an_untouched_link();
 	retiring_an_address_space_keeps_the_others();
+	a_stopped_block_keeps_its_stop_in_the_cache();
+	a_recycled_address_space_id_serves_no_old_translation();
+	a_validation_does_not_outlive_the_epochs_it_counts();
 	a_replaced_slot_drops_the_previous_owner_link();
 	an_evicted_block_misses_and_its_predecessor_link_is_reset();
+}
+
+} // namespace
+
+int main()
+{
+	const uml::testing::RuntimeTestRoute runtime_route;
+	require(unsetenv("DARWIN_UML_GADGET_SHARED_BODIES") == 0);
+	run_all();
+	/* A shared address space is never swept, so the sweep's cases run
+	 * with private translations only (arm64_gadget_shared_bodies_tests
+	 * checks the shared skip). */
 	a_link_sweep_releases_what_only_evicted_blocks_named();
 	an_address_space_that_only_grows_does_not_sweep();
+	require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", "1", 1) == 0);
+	run_all();
 	return 0;
 }

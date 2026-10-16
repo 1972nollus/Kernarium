@@ -74,18 +74,192 @@ void A32Compiler::d_write(unsigned d, unsigned result) {
   q_done(destination, d >> 1);
 }
 
+int A32Compiler::s_shadow_host(unsigned s) noexcept {
+  if (!s_shadowing_)
+    return -1;
+  for (std::size_t slot = 0; slot < s_shadows_.size(); ++slot) {
+    if (s_shadows_[slot].s != static_cast<int>(s))
+      continue;
+    s_shadows_[slot].used = ++s_shadow_clock_;
+    s_shadow_pinned_ |= 1U << slot;
+    return static_cast<int>(s_shadow_hosts[slot]);
+  }
+  return -1;
+}
+
 unsigned A32Compiler::s_use(unsigned s, unsigned scratch) {
+  if (const int shadow = s_shadow_host(s); shadow >= 0)
+    return static_cast<unsigned>(shadow);
   const unsigned host = read_native_vector(s >> 2, scratch).host;
   if ((s & 3U) == 0U)
     return host;
-  emit(enc::vec::dup_scalar(2, scratch, host, s & 3U));
-  return scratch;
+  const unsigned into = s_shadowing_ ? take_s_shadow(s) : scratch;
+  emit(enc::vec::dup_scalar(2, into, host, s & 3U));
+  return into;
 }
 
 void A32Compiler::s_write(unsigned s, unsigned result) {
-  const auto destination = q_def(s >> 2, true, 2);
+  bool shadowed = false;
+  for (std::size_t slot = 0; slot < s_shadows_.size(); ++slot)
+    if (s_shadows_[slot].s == static_cast<int>(s))
+      shadowed = s_shadowing_ && s_shadow_hosts[slot] == result;
+  if (!shadowed)
+    forget_s_shadow(s);
+  /* The fallback of a Q register that has no host is not a shadow's while
+   * the instruction may use them: V6, which it has read by now. */
+  const auto destination = q_def(s >> 2, true, s_shadowing_ ? 6U : 2U);
   emit(enc::vec::ins_element(2, destination.host, s & 3U, result, 0));
   q_done(destination, s >> 2);
+}
+
+// ---------------------------------------------------------------------------
+// S shadows.
+
+namespace {
+
+enum class ShadowEffect : std::uint8_t {
+  /* Leaves the shadows' registers and the S registers alone. A TLB miss
+   * preserves them (the bridge saves V0-V7); a core register access across
+   * a page takes the library, and the staged copy through V0-V3
+   * (emit_crossing_cold) serves only the vector loads, which forget them. */
+  keep,
+  /* VLDR of one S register, whose value the shadow takes. */
+  load,
+  /* An unconditional single-precision VFP operation, which may use them. */
+  use,
+  /* Anything else. */
+  forget,
+};
+
+ShadowEffect shadow_effect(const aarch32::Instruction &inst) noexcept {
+  if (inst.status == aarch32::Status::nop)
+    return ShadowEffect::keep;
+  if (inst.status != aarch32::Status::ok)
+    return ShadowEffect::forget;
+  switch (op_info(inst.form).op) {
+  case Op::adc: case Op::add: case Op::add_w: case Op::adr: case Op::and_:
+  case Op::bic: case Op::cmn: case Op::cmp: case Op::eor: case Op::mov:
+  case Op::mvn: case Op::orn: case Op::orr: case Op::rsb: case Op::rsc:
+  case Op::sbc: case Op::sub: case Op::sub_w: case Op::teq: case Op::tst:
+  case Op::movw: case Op::movt:
+  case Op::bfc: case Op::bfi: case Op::sbfx: case Op::ubfx: case Op::clz:
+  case Op::rbit: case Op::rev: case Op::rev16: case Op::revsh: case Op::sxtb:
+  case Op::sxth: case Op::uxtb: case Op::uxth: case Op::sxtab: case Op::sxtah:
+  case Op::uxtab: case Op::uxtah: case Op::sxtb16: case Op::uxtb16:
+  case Op::sxtab16: case Op::uxtab16: case Op::pkh: case Op::sel:
+  case Op::mul: case Op::mla: case Op::mls: case Op::umull: case Op::umlal:
+  case Op::smull: case Op::smlal: case Op::umaal: case Op::sdiv:
+  case Op::udiv: case Op::smla_xy: case Op::smul_xy: case Op::smlal_xy:
+  case Op::smlaw: case Op::smulw: case Op::smlad: case Op::smlsd:
+  case Op::smuad: case Op::smusd: case Op::smlald: case Op::smlsld:
+  case Op::smmla: case Op::smmls: case Op::smmul:
+  case Op::qadd: case Op::qsub: case Op::qdadd: case Op::qdsub:
+  case Op::ssat: case Op::usat:
+  case Op::b: case Op::bl: case Op::blx: case Op::bx: case Op::cbz:
+  case Op::cbnz: case Op::svc: case Op::bkpt: case Op::mrs: case Op::msr:
+  case Op::nop: case Op::dmb: case Op::dsb: case Op::isb: case Op::clrex:
+  case Op::it:
+    return ShadowEffect::keep;
+  case Op::ldr: case Op::ldrb: case Op::ldrh: case Op::ldrsb: case Op::ldrsh:
+  case Op::ldrd: case Op::ldm: case Op::str: case Op::strb: case Op::strh:
+  case Op::strd: case Op::stm: case Op::ldrt: case Op::ldrbt: case Op::ldrht:
+  case Op::ldrsbt: case Op::ldrsht: case Op::strt: case Op::strbt:
+  case Op::strht: case Op::lda: case Op::ldab: case Op::ldah: case Op::stl:
+  case Op::stlb: case Op::stlh: case Op::tb: case Op::prefetch:
+    return ShadowEffect::keep;
+  case Op::vector:
+    break;
+  default:
+    return ShadowEffect::forget;
+  }
+  const auto &v = vector_info(inst.form);
+  switch (v.mnemonic) {
+  case VM::vmrs: case VM::vmsr: case VM::vstr:
+    return ShadowEffect::keep;
+  default:
+    break;
+  }
+  if (inst.cond < 14U || !v.vfp || v.dp)
+    return ShadowEffect::forget;
+  switch (v.mnemonic) {
+  case VM::vldr:
+    return ShadowEffect::load;
+  case VM::vabs: case VM::vneg: case VM::vsqrt: case VM::vadd: case VM::vsub:
+  case VM::vmul: case VM::vdiv: case VM::vnmul: case VM::vmla: case VM::vmls:
+  case VM::vnmla: case VM::vnmls: case VM::vfma: case VM::vfms:
+  case VM::vfnma: case VM::vfnms: case VM::vcmp: case VM::vcmpe:
+    return ShadowEffect::use;
+  case VM::vcvt: case VM::vcvtr:
+    return v.variant == Variant::siv || v.variant == Variant::uiv ||
+                   v.variant == Variant::vi
+               ? ShadowEffect::use
+               : ShadowEffect::forget;
+  case VM::vmov:
+    return v.variant == Variant::tos || v.variant == Variant::s ||
+                   v.variant == Variant::r || v.variant == Variant::i
+               ? ShadowEffect::use
+               : ShadowEffect::forget;
+  default:
+    return ShadowEffect::forget;
+  }
+}
+
+} // namespace
+
+void A32Compiler::begin_s_shadows() {
+  s_shadow_pinned_ = 0;
+  s_shadowing_ = false;
+  /* Without vector residency a Q register is staged in a fallback, V2
+   * among them. */
+  const bool enabled = !track_direct_stores_;
+  const auto &inst = cur().inst;
+  switch (shadow_effect(inst)) {
+  case ShadowEffect::keep:
+    break;
+  case ShadowEffect::load:
+    forget_s_shadow(static_cast<unsigned>(inst.operands.d));
+    s_shadowing_ = enabled;
+    break;
+  case ShadowEffect::use:
+    s_shadowing_ = enabled;
+    break;
+  case ShadowEffect::forget:
+    forget_s_shadows();
+    break;
+  }
+}
+
+void A32Compiler::forget_s_shadows() noexcept {
+  for (auto &shadow : s_shadows_)
+    shadow.s = -1;
+}
+
+void A32Compiler::forget_s_shadow(unsigned s) noexcept {
+  for (auto &shadow : s_shadows_)
+    if (shadow.s == static_cast<int>(s))
+      shadow.s = -1;
+}
+
+unsigned A32Compiler::take_s_shadow(unsigned s) noexcept {
+  std::size_t chosen = s_shadows_.size();
+  for (std::size_t slot = 0; slot < s_shadows_.size(); ++slot)
+    if (s_shadows_[slot].s == static_cast<int>(s))
+      chosen = slot;
+  if (chosen == s_shadows_.size()) {
+    for (std::size_t slot = 0; slot < s_shadows_.size(); ++slot) {
+      if ((s_shadow_pinned_ & (1U << slot)) != 0U)
+        continue;
+      if (chosen == s_shadows_.size() || s_shadows_[slot].s < 0 ||
+          (s_shadows_[chosen].s >= 0 &&
+           s_shadows_[slot].used < s_shadows_[chosen].used))
+        chosen = slot;
+      if (s_shadows_[chosen].s < 0)
+        break;
+    }
+  }
+  s_shadows_[chosen] = {.s = static_cast<int>(s), .used = ++s_shadow_clock_};
+  s_shadow_pinned_ |= 1U << chosen;
+  return s_shadow_hosts[chosen];
 }
 
 // ---------------------------------------------------------------------------
