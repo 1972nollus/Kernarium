@@ -727,7 +727,10 @@ and call `execute_a32`, which translates every page before a load changes a
 register, stores the words ahead of a faulting STM and leaves the base
 register as it was. LDREX and STREX, and LDAEX and STLEX, are the A64
 exclusive gadgets and share their forward-progress mechanism; LDA and STL are
-the A64 ordered ones. The library-exit counters name any lowered form that
+the A64 ordered ones. Like them, the single and doubleword transfers, VLDR,
+VSTR, TBB and TBH carry no key: their operand holds the instruction's position
+in bits 31:24 (`darwin/cpu/arm64/gadgets/a32_layout.h`), which a fault reports
+as the A64 transfers do. The library-exit counters name any lowered form that
 reaches the library, and the unit tests require none does.
 
 VFP and Advanced SIMD are lowered onto the A64 instructions with the same

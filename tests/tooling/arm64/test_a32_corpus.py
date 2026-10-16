@@ -40,7 +40,7 @@ ORACLES = {"qemu", "pi4", "pi5", "profile"}
 # The inventory levels whose executed entries the corpus owes cases.
 REQUIRED_LEVELS = {"base", "simd", "complete"}
 # Suites whose golden only hardware can settle.
-HARDWARE_ONLY = {"unaligned", "fpscr-reserved"}
+HARDWARE_ONLY = {"unaligned", "fpscr-reserved", "positions-unaligned"}
 
 
 def require(condition: bool, message: str) -> None:

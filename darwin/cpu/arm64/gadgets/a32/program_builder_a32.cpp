@@ -782,12 +782,11 @@ Translator::Result Translator::emit_single(const Instruction &in,
 			}
 			const unsigned base = !writeback ? 3U : post ? 7U : 5U;
 			mode = base + (o.add ? 0U : 1U);
-			word |= rm << 16 | std::uint64_t{amount} << 24;
+			word |= rm << 16 | std::uint64_t{amount} << 32;
 		}
 	}
 	push(load ? kLoad[size][mode] : kStore[size][mode]);
-	push(key_);
-	push(word);
+	push(word | position());
 	if (to_pc)
 		emit_indirect(scratch0, true, o.n == 13);
 	return {to_pc, false};
@@ -824,12 +823,11 @@ Translator::Result Translator::emit_double(const Instruction &in,
 			const std::uintptr_t rm = source(o.m, scratch1);
 			const unsigned base = !o.wback ? 3U : o.index ? 5U : 7U;
 			mode = base + (o.add ? 0U : 1U);
-			word |= rm << 24;
+			word |= rm << 32;
 		}
 	}
 	push(load ? kLdrd[mode] : kStrd[mode]);
-	push(key_);
-	push(word);
+	push(word | position());
 	return {};
 }
 
@@ -1080,8 +1078,8 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 		const auto rm = static_cast<std::uintptr_t>(o.m) * 8U;
 		credit();
 		push(plan.sub == 0 ? G::tbb : G::tbh);
-		push(key_);
-		push(rn | rm << 8 | std::uint64_t{pc_value()} << 32);
+		push(rn | rm << 8 | position() |
+		     std::uint64_t{pc_value()} << 32);
 		push(indirects_ ? reinterpret_cast<std::uintptr_t>(indirects_(key_))
 				: reinterpret_cast<std::uintptr_t>(&dummy_site()));
 		return {true, false};

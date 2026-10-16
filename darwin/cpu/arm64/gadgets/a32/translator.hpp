@@ -11,8 +11,10 @@
 
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
+#include "cpu/arm64/gadgets/a32_layout.h"
 #include "cpu/arm64/layout/assembly_offsets.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -57,8 +59,9 @@ public:
 		  profile_{profile}, words_{storage}, it_{input.it},
 		  thumb_{key_isa(input.key) == GuestIsa::t32},
 		  unit_bytes_{thumb_ ? 2U : 4U},
-		  limit_{input.single ? 1U : block_instructions},
-		  soft_limit_{input.single ? 1U : block_instructions - 5U},
+		  limit_{input.single ? 1U : std::min(block_instructions,
+						       fault_position_instructions)},
+		  soft_limit_{limit_ - (input.single ? 0U : 5U)},
 		  available_{input.code.size() / unit_bytes_}
 	{}
 
@@ -150,6 +153,15 @@ private:
 	/* The Armv8 additions and optional extensions that are neither VFP nor
 	 * Advanced SIMD: program_builder_a32_armv8.cpp. */
 	Result emit_armv8(const Instruction &in, const FormPlan &plan);
+	/* The operand bits that name the current instruction to a memory
+	 * gadget's fault (a32_layout.h). limit_ keeps every position of a block
+	 * within the eight bits. */
+	[[nodiscard]] std::uint64_t position() const noexcept
+	{
+		static_assert(fault_position_instructions <= 256);
+		return static_cast<std::uint64_t>(compiled_)
+		       << UML_GADGET_A32_POSITION_SHIFT;
+	}
 	/* The illegal-instruction exit at the current instruction. */
 	void emit_illegal();
 	void emit_indirect(std::uintptr_t source, bool interwork, bool returns);

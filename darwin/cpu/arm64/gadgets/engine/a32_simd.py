@@ -532,15 +532,15 @@ def emit_vfp_system(asm) -> None:
 
 
 def memory_prologue(label: str, mode: str, mask: int = 3) -> list[str]:
-    """[key][word]: the vector register offset in bits 0-15 and, for a base
-    register, its offset in bits 16-31 and the signed displacement in bits
-    32-63, or for an absolute address the address in bits 32-63. The address
-    is left in w7."""
-    lines = ["ldp x21, x19, [_stream], #16"]
+    """[word]: the vector register offset in bits 0-15, the position at bit
+    24 (a32_layout.h) and, for a base register, its offset in bits 16-23 and
+    the signed displacement in bits 32-63, or for an absolute address the
+    address in bits 32-63. The address is left in w7."""
+    lines = ["ldr x19, [_stream], #8"]
     if mode == "abs":
         lines.append("lsr x7, x19, #32")
     else:
-        lines += ["ubfx x9, x19, #16, #16", "ldr w9, [_cpu, x9]",
+        lines += ["ubfx x9, x19, #16, #8", "ldr w9, [_cpu, x9]",
                   "lsr x10, x19, #32", "add w7, w9, w10"]
     lines += [f"tst w7, #{mask}", f"b.ne Lalign_{label}"]
     return lines
@@ -556,7 +556,7 @@ def vfp_memory(asm, load: bool, width: str, mode: str) -> None:
     lines = memory_prologue(name, mode, 1 if size == 2 else 3)
     translate = (f"{direction}, {page}, {size}, x7, Lcold_{name},"
                  f" Lresume_{name}, Lcross_{name}, 0,"
-                 f" fault=La32_memory_fault")
+                 f" fault=La32_position_fault")
     lines.append("a32_translate " + translate)
     lines.append("and x14, x19, #0xffff")
     if load:
@@ -568,14 +568,14 @@ def vfp_memory(asm, load: bool, width: str, mode: str) -> None:
     lines.append("a32_translate_cold " + translate)
     lines.append(f"Lcross_{name}:")
     if load:
-        lines += [f"transfer_slow 0, x7, {size}, fault=La32_memory_fault",
+        lines += [f"transfer_slow 0, x7, {size}, fault=La32_position_fault",
                   "and x14, x19, #0xffff",
                   f"str {stored(width)}0, [_cpu, x14]"]
     else:
         lines += ["and x14, x19, #0xffff", f"ldr {width}0, [_cpu, x14]",
-                  f"transfer_slow 1, x7, {size}, fault=La32_memory_fault"]
+                  f"transfer_slow 1, x7, {size}, fault=La32_position_fault"]
     lines.append("next_gadget")
-    lines += [f"Lalign_{name}:", "b La32_alignment_fault_" +
+    lines += [f"Lalign_{name}:", "b La32_position_alignment_fault_" +
               ("read" if load else "write")]
     asm.gadget(name, "\n".join(lines))
 

@@ -17,7 +17,13 @@ address zero.
   rejects with an alignment fault and an arm64 Linux kernel fixes up for a
   compat task, so only hardware records settle them (decision D3);
 - exclusive: LDREX/STREX sequences, with CLREX, with a lone STREX and across
-  addresses.
+  addresses;
+- positions: single-register and doubleword loads and stores, VLDR, VSTR, TBB
+  and TBH that fault after other instructions, some in a block a branch
+  reaches: unmapped, crossing from the read-only region into unmapped memory,
+  and a literal below the code region;
+- positions-unaligned: the same at a misaligned address, which only hardware
+  records settle.
 """
 
 from __future__ import annotations
@@ -329,5 +335,116 @@ def suite_exclusive(context: Context) -> list[Case]:
             + exclusive_cases(context, "exclusive", "LDAEX", "STLEX"))
 
 
+# Positions -------------------------------------------------------------------------------------------------
+
+# The instructions ahead of the faulting one: NOPs of both Thumb lengths, and a
+# branch to the next instruction, which starts a block an engine links to.
+LEADS = {
+    "A": (((0xE320F000,),),
+          ((0xE320F000,), (0xE320F000,), (0xE320F000,)),
+          ((0xEAFFFFFF,), (0xE320F000,), (0xE320F000,))),
+    "T": (((0xBF00,),),
+          ((0xF3AF, 0x8000), (0xBF00,), (0xF3AF, 0x8000)),
+          ((0xE7FF,), (0xF3AF, 0x8000), (0xBF00,))),
+}
+VFP_TRANSFER = re.compile(r"V(LDR|STR)(_l)?_[AT]1_([DSH])\Z")
+RO_END = READ_ONLY + corpus.READ_ONLY_SIZE
+
+
+def position_forms(context: Context):
+    """(form, bytes, alignment): the transfers whose operand names their place in the block."""
+    singles = {form.name for form in memory_forms(context, "base")
+               if not MULTIPLE.fullmatch(mnemonic(form.name))}
+    for form in context.model.forms:
+        if form.encoding is None or form.availability != "implemented" or form.check or form.nop:
+            continue
+        vfp = VFP_TRANSFER.fullmatch(form.name)
+        if vfp:
+            size = {"D": 8, "S": 4, "H": 2}[vfp.group(3)]
+            yield form, size, min(size, 4)
+        elif form.name in ("TBB_T1", "TBH_T1"):
+            yield form, 1 if form.name == "TBB_T1" else 2, 1
+        elif form.name in singles:
+            size = access_size(form.name)
+            ordered = mnemonic(form.name).startswith(("LDA", "STL"))
+            yield form, size, size if ordered else 4 if size == 8 else 1
+
+
+def position_scenarios(name: str, size: int, alignment: int, literal: bool) -> dict[str, int]:
+    if literal:
+        return {"below": 0}
+    scenarios = {"unmapped": 0x60000000}
+    loads = name.startswith(("LDR", "VLDR", "TB"))
+    if loads and size > 1 and (RO_END - size // 2) % alignment == 0:
+        scenarios["cross"] = RO_END - size // 2
+    if alignment > 1:
+        scenarios["u1"] = D + 0x1041
+    return scenarios
+
+
+def position_word(context, form, literal: bool):
+    """A word of the form to aim, or for a literal one whose address is below the code region."""
+    fields = fields_of(form)
+    for word, operands in pick_words(context, form, 12):
+        if literal:
+            if "U" in fields:  # subtract a large, aligned offset: the top immediate field's largest
+                immediates = [name for name in fields if name.startswith("imm")]
+                word = set_field(word, *fields["U"], 0)
+                for index, name in enumerate(immediates):
+                    word = set_field(word, *fields[name], (1 << fields[name][1]) - 1 if index == 0 else 0)
+                found = usable(context, form, word)
+                if found is not None and not found[1].get("add", True) and found[1].get("imm32", 0) >= 0x40:
+                    return found
+        elif operands.get("n") not in (None, 15) and operands.get("m") not in (13, 15) \
+                and operands.get("m", -1) != operands["n"]:
+            return word, operands
+    return None
+
+
+def position_cases(context: Context, suite: str, misaligned: bool) -> list[Case]:
+    """The cases of the positions suites: the misaligned ones, which only hardware settles, or the rest."""
+    cases = []
+    for form_index, (form, size, alignment) in enumerate(position_forms(context)):
+        isa = form.encoding.isa
+        state = ISA_LETTER[isa]
+        suffix = "a" if state == "A" else "t"
+        literal = form.name.split("_")[1] == "l"
+        found = position_word(context, form, literal)
+        if found is None:
+            continue
+        word, operands = found
+        for number, (scenario, address) in enumerate(
+                position_scenarios(form.name, size, alignment, literal).items()):
+            # The A72 the hardware records come from has no half-precision VLDR or VSTR.
+            if (scenario == "u1") != misaligned or misaligned and form.name.endswith("_H"):
+                continue
+            leads = LEADS[state][(form_index + number) % len(LEADS[state])]
+            flags = FLAGS[pattern(len(cases)) >> 8 & 3]
+            initial = {"apsr": flags}
+            if form.name.startswith("TB"):
+                initial.update({f"r{operands['n']}": address, f"r{operands['m']}": 0})
+            elif not literal:
+                aim = solve(operands, address, flags, len(cases))
+                if aim is None:
+                    continue
+                initial.update(aim)
+            linked = leads[0] in ((0xEAFFFFFF,), (0xE7FF,))
+            program = tuple(unit for lead in leads for unit in lead) + word_of(isa, word)
+            cases.append(Case(suite, f"{form.name}/{scenario}.{len(leads)}", form.name, state,
+                              program, len(leads), f"{RECIPES[(form_index + number) % len(RECIPES)]}-{suffix}",
+                              initial, straight=not linked,
+                              fault_retired=len(leads) if linked else None))
+    return cases
+
+
+def suite_positions(context: Context) -> list[Case]:
+    return position_cases(context, "positions", False)
+
+
+def suite_positions_unaligned(context: Context) -> list[Case]:
+    return position_cases(context, "positions-unaligned", True)
+
+
 SUITES = {"memory": suite_memory, "unaligned": suite_unaligned, "exclusive": suite_exclusive,
-          "prefetch": suite_prefetch}
+          "prefetch": suite_prefetch, "positions": suite_positions,
+          "positions-unaligned": suite_positions_unaligned}

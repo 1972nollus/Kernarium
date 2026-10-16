@@ -98,6 +98,11 @@ no floating point or SIMD):
   addresses, across 4 KiB and 16 KiB lines, at the ends of the data region, in
   the read-only region and in unmapped memory, with writeback;
 - `prefetch`: PLD, PLDW and PLI never fault;
+- `positions`: single-register and doubleword transfers, VLDR, VSTR, TBB and
+  TBH that fault after other instructions, some in a block a branch reaches:
+  unmapped, crossing from the read-only region into unmapped memory, and a
+  literal below the code region, so an engine names the faulting
+  instruction by its place in the block;
 - `exclusive`: LDREX/STREX and LDAEX/STLEX sequences, CLREX, misaligned and
   unmapped loads;
 - `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH, PC-writing loads and ALU
@@ -166,13 +171,15 @@ failing store-exclusive case again, a bounded number of times: when the only
 difference is a status of 1 where the pack has 0 and the store that did not
 happen, up to 16 attempts in all, in the gadget lane and the JIT lane alike.
 
-Two suites are recorded only from hardware: `unaligned` (172 cases:
-multi-word accesses at misaligned addresses) and `fpscr-reserved` (144
-cases: VMRS and VMSR with Stride and Len set, which an implementation may or
-may not hold). The producer refuses to record them as `qemu`, and nothing
-derives them from rules. Both are `pi4` records. The Cortex-A72 reads Stride
-and Len as zero and ignores writes to them, as the profile does, and a
-misaligned multi-word access raises SIGBUS at its first address.
+Three suites are recorded only from hardware: `unaligned` (172 cases:
+multi-word accesses at misaligned addresses), `positions-unaligned` (34
+cases: the `positions` transfers at a misaligned address) and
+`fpscr-reserved` (144 cases: VMRS and VMSR with Stride and Len set, which an
+implementation may or may not hold). The producer refuses to record them as
+`qemu`, and nothing derives them from rules. All are `pi4` records. The
+Cortex-A72 reads Stride and Len as zero and ignores writes to them, as the
+profile does, and a misaligned multi-word access raises SIGBUS at its first
+address.
 
 ## What the oracle's answers rest on
 
