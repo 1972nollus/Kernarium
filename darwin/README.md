@@ -84,11 +84,8 @@ words it is validated against, taken from its address space's arena in
 sixteen-byte granules, and the program refers to those words rather than
 owning a second copy. An arena reuses freed space by best fit and merges a
 freed block with its free neighbours, so the hole an evicted translation
-leaves serves translations of any size; it gives back a 64 KiB chunk once the
-chunk's last translation leaves, and the rest go with the address space. The
-process keeps up to 16 MiB of given-back chunks for the next arena that needs
-one and unmaps the rest, so the address spaces a browser starts reuse the
-chunks of those it retires without a mapping and fresh pages each time. A
+leaves serves translations of any size; it unmaps a 64 KiB chunk once the
+chunk's last translation leaves, and the rest go with the address space. A
 build assembles its stream in a scratch buffer that the next build rewinds, so
 a translation allocates only when it is stored. The arena marks where every
 live translation starts, one bit per granule, and that map is how a terminal

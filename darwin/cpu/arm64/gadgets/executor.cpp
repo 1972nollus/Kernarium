@@ -234,76 +234,6 @@ private:
 	std::size_t bytes_{};
 };
 
-/* The empty chunks body arenas give back, kept for the next chunk an arena
- * needs, up to a fixed amount; past it a chunk is unmapped.
- *
- * A browser retires address spaces while it starts others, and a retiring
- * space's arena empties chunks about as fast as the new spaces' arenas fill
- * them. Unmapped at once, each costs a mapping each way and a zero-filled
- * fault per page of the chunk mapped in its place: under WebGL Aquarium at
- * 131,072 slots the arenas mapped 66,000 chunks in a run, most of them while
- * the page loaded. Keeping 16 MiB here served four in five of those mappings
- * for 6 MiB more mean footprint. See G234.
- *
- * Never destroyed, since an arena may still give chunks back while the
- * process exits. */
-class EmptyChunks final {
-public:
-	static constexpr std::size_t chunk_bytes = std::size_t{64} << 10;
-	static constexpr std::size_t kept_limit = 256;
-
-	EmptyChunks(const EmptyChunks &) = delete;
-	EmptyChunks &operator=(const EmptyChunks &) = delete;
-
-	[[nodiscard]] static EmptyChunks &instance()
-	{
-		static auto *const chunks = new EmptyChunks;
-		return *chunks;
-	}
-
-	/* The chunk given back last, or a new mapping. */
-	[[nodiscard]] std::byte *take()
-	{
-		{
-			const std::lock_guard guard{mutex_};
-			if (count_ != 0)
-				return kept_[--count_];
-		}
-		void *base = mmap(nullptr, chunk_bytes, PROT_READ | PROT_WRITE,
-			MAP_PRIVATE | MAP_ANON, -1, 0);
-		if (base == MAP_FAILED)
-			throw std::bad_alloc{};
-		return static_cast<std::byte *>(base);
-	}
-
-	void give(std::byte *chunk) noexcept
-	{
-		{
-			const std::lock_guard guard{mutex_};
-			if (count_ < kept_limit) {
-				kept_[count_++] = chunk;
-				return;
-			}
-		}
-		(void)munmap(chunk, chunk_bytes);
-	}
-
-#if UML_GADGET_CACHE_CENSUS
-	[[nodiscard]] std::size_t bytes() const
-	{
-		const std::lock_guard guard{mutex_};
-		return count_ * chunk_bytes;
-	}
-#endif
-
-private:
-	EmptyChunks() = default;
-
-	mutable std::mutex mutex_;
-	std::array<std::byte *, kept_limit> kept_{};
-	std::size_t count_{};
-};
-
 /* Storage for stored translations.
  *
  * A translation is one allocation: its body, the stream words behind it, and
@@ -318,7 +248,7 @@ private:
  * by best fit: a block comes from the smallest free block that holds it, split
  * off the front, and a freed block merges with the free blocks on either side,
  * so a hole serves bodies of any size rather than only bodies of the size that
- * left it. A chunk whose last block is freed is given back, and the address
+ * left it. A chunk whose last block is freed is unmapped, and the address
  * space's remaining chunks go with it; one that runs little code costs one
  * chunk. With freed blocks kept only for their own sixteen-byte size and
  * chunks never returned, a browser that cycles through more address spaces
@@ -329,8 +259,7 @@ private:
  *
  * A chunk is an anonymous mapping of its own rather than a heap block: the
  * heap keeps freed blocks of this size resident, in the process's footprint,
- * until it hands them out again. A chunk given back goes to EmptyChunks, which
- * keeps a bounded number for the next arena and unmaps the rest.
+ * until it hands them out again.
  *
  * The arena also answers which live body holds an address. Each chunk keeps
  * one bit per granule, set at the first granule of every live block, so the
@@ -355,7 +284,7 @@ public:
 	~BodyArena()
 	{
 		for (const auto &chunk : chunks_)
-			give_back(chunk.base);
+			unmap(chunk.base);
 		for (const auto &direct : direct_)
 			upstream_->deallocate(direct.base, direct.bytes,
 				alignof(std::max_align_t));
@@ -480,7 +409,7 @@ public:
 	}
 
 #if UML_GADGET_CACHE_CENSUS
-	/* Chunks that hold no live body. A chunk is given back when its last
+	/* Chunks that hold no live body. A chunk is unmapped when its last
 	 * block is freed, so only the one being carved can be empty. */
 	[[nodiscard]] std::size_t empty_bytes() const noexcept
 	{
@@ -508,7 +437,7 @@ private:
 	static constexpr std::size_t largest_class = (classes - 1) * granule;
 	/* Small enough that a chunk empties, large enough to hold the largest
 	 * class several times over; whole host pages. */
-	static constexpr std::size_t chunk_bytes = EmptyChunks::chunk_bytes;
+	static constexpr std::size_t chunk_bytes = std::size_t{64} << 10;
 	static constexpr std::size_t chunk_granules = chunk_bytes / granule;
 	static constexpr std::size_t map_words = chunk_granules / 64;
 	/* Free blocks by size: one list per class, and the last for the runs
@@ -689,7 +618,7 @@ private:
 			auto maps = std::make_unique<std::uint64_t[]>(
 				2 * map_words);
 			auto *starts = maps.get();
-			auto *base = EmptyChunks::instance().take();
+			auto *base = map();
 			try {
 				/* Kept in address order, which is what owner()
 				 * searches. */
@@ -699,7 +628,7 @@ private:
 				chunks_.insert(at,
 					Chunk{base, std::move(maps)});
 			} catch (...) {
-				give_back(base);
+				unmap(base);
 				throw;
 			}
 			if (current_ != nullptr && used_ < chunk_granules) {
@@ -718,20 +647,29 @@ private:
 	}
 
 	/* A chunk whose blocks are all free, other than the current one:
-	 * give it back. */
+	 * unmap it. */
 	void release(const Chunk &chunk) noexcept
 	{
 		auto *base = chunk.base;
-		give_back(base);
+		unmap(base);
 		chunks_.erase(std::lower_bound(chunks_.begin(), chunks_.end(),
 			base, [](const Chunk &held, const std::byte *address) {
 				return held.base < address;
 			}));
 	}
 
-	static void give_back(std::byte *base) noexcept
+	[[nodiscard]] static std::byte *map()
 	{
-		EmptyChunks::instance().give(base);
+		void *base = mmap(nullptr, chunk_bytes, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANON, -1, 0);
+		if (base == MAP_FAILED)
+			throw std::bad_alloc{};
+		return static_cast<std::byte *>(base);
+	}
+
+	static void unmap(std::byte *base) noexcept
+	{
+		(void)munmap(base, chunk_bytes);
 	}
 
 	[[nodiscard]] static bool before_chunk(
@@ -1850,10 +1788,6 @@ public:
 		census::write_when(out, snapshot);
 		history_.write(out);
 		std::fputc('\n', out);
-		/* The empty chunks kept for any arena of the process, the same
-		 * in every cache's record. */
-		std::fprintf(out, "K arena_kept=%zu\n",
-			EmptyChunks::instance().bytes());
 		const auto now = census::elapsed_seconds();
 		for (const auto &[generation, state] : generations_) {
 			const auto found = std::find(resident_.rbegin(),
