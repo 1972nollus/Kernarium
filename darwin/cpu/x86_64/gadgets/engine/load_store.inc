@@ -105,7 +105,7 @@ gadget lea_64
 
 .macro push_register width, load, host_register, store
 gadget push_\width\()_r
-	ldp x23, x22, [_stream], #16
+	ldr x23, [_stream], #8
 	and x8, x23, #0xffff
 	\load \host_register\()24, [_cpu, x8]
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
@@ -128,7 +128,6 @@ Lx86_push_cross\@:
 .macro push_immediate width, host_register, store
 gadget push_\width\()_i
 	ldp x23, x24, [_stream], #16
-	ldr x22, [_stream], #8
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 8)
 	.if \width == 32
@@ -148,7 +147,7 @@ Lx86_push_immediate_cross\@:
 
 .macro pop_register width, load, host_register, store, store_register
 gadget pop_\width\()_r
-	ldp x23, x22, [_stream], #16
+	ldr x23, [_stream], #8
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	.if \width == 32
 	mov w25, w25
@@ -193,7 +192,7 @@ gadget push_flags_\width
 	/* PUSHF stores RF and VM as zero whatever RFLAGS holds; IRET may have
 	 * loaded RF. */
 	and x24, x24, #~0x30000
-	ldp x23, x22, [_stream], #16
+	ldr x23, [_stream], #8
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 8)
 	.if \width == 32
@@ -219,7 +218,7 @@ push_flags 64, str, x
 
 .macro pop_flags width, load, host_register
 gadget pop_flags_\width
-	ldr x22, [_stream], #8
+	ldr x23, [_stream], #8
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	.if \width == 32
 	mov w25, w25
@@ -280,7 +279,7 @@ pop_flags 64, ldr, x
 
 .macro leave width, load, store, host_register
 gadget leave_\width
-	ldr x22, [_stream], #8
+	ldr x23, [_stream], #8
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
 	.if \width == 32
 	mov w25, w25
@@ -350,7 +349,7 @@ push_memory 64, ldr, x, str, x
 
 .macro pop_memory width, load, load_register, store, store_register
 gadget pop_\width\()_m
-	ldr x22, [_stream, #16]
+	ldr x23, [_stream]
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	.if \width == 32
 	mov w25, w25
@@ -421,7 +420,7 @@ Lx86_stack_write_overlap\@:
 Lx86_stack_write_ready\@:
 .endm
 
-.macro call_push_and_exit width, store, host_register, linked=0, indirect=0
+.macro call_push_and_exit width, store, host_register, linked=0, indirect=0, positioned=1
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 8)
 	.if \width == 32
@@ -437,7 +436,11 @@ Lx86_stack_write_ready\@:
 	invalidate_stack_write (\width / 8), 0
 	b Lx86_call_settled\@
 Lx86_call_slow\@:
+	.if \positioned
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8), 1
+	.else
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8), 1, Lx86_call_fault\@
+	.endif
 	\store \host_register\()24, [x7]
 Lx86_call_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
@@ -459,25 +462,59 @@ Lx86_call_exit\@:
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 Lx86_call_cross\@:
+	.if \positioned
 	cross_page_store x24, (\width / 8)
+	.else
+	cross_page_store x24, (\width / 8), Lx86_call_fault\@
+	.endif
 	b Lx86_call_done\@
+	.if !\positioned
+	/* A direct CALL without a word of its own is five bytes long, and the
+	 * return address it pushes is the address after it. */
+Lx86_call_fault\@:
+	.if \width == 64
+	sub x22, x24, #5
+	.else
+	sub w22, w24, #5
+	.endif
+	b Lx86_memory_fault_at
+	.endif
+.endm
+
+/* A direct CALL is `call_direct`; a form carrying a prefix, which no longer
+ * ends five bytes before the return address, has the stream word that gives
+ * its position instead. */
+.macro call_direct width, store, host_register, linked, positioned
+	.if \linked
+	ldp x27, x24, [_stream], #16
+	.else
+	ldp x26, x24, [_stream], #16
+	.endif
+	.if \positioned
+	ldr x23, [_stream], #8
+	.endif
+	.if \linked
+	ldr x26, [x27, #16]
+	.endif
+	call_push_and_exit \width, \store, \host_register, \linked, 0, \positioned
 .endm
 
 gadget call
-	ldp x26, x24, [_stream], #16
-	ldr x22, [_stream], #8
-	call_push_and_exit 64, str, x
+	call_direct 64, str, x, 0, 0
 
 gadget call_linked
-	ldp x27, x24, [_stream], #16
-	ldr x22, [_stream], #8
-	ldr x26, [x27, #16]
-	call_push_and_exit 64, str, x, 1
+	call_direct 64, str, x, 1, 0
+
+gadget call_positioned
+	call_direct 64, str, x, 0, 1
+
+gadget call_positioned_linked
+	call_direct 64, str, x, 1, 1
 
 .macro call_indirect_register name, width, load, host_register, store, store_register, cached=0
 gadget \name
-	ldp x8, x24, [_stream], #16
-	ldr x22, [_stream], #8
+	ldp x23, x24, [_stream], #16
+	and x8, x23, #0xffff
 	.if \cached
 	ldr x27, [_stream], #8
 	.endif
@@ -498,15 +535,16 @@ gadget \name
 .endm
 
 gadget call_32
-	ldp x26, x24, [_stream], #16
-	ldr x22, [_stream], #8
-	call_push_and_exit 32, str, w
+	call_direct 32, str, w, 0, 0
 
 gadget call_32_linked
-	ldp x27, x24, [_stream], #16
-	ldr x22, [_stream], #8
-	ldr x26, [x27, #16]
-	call_push_and_exit 32, str, w, 1
+	call_direct 32, str, w, 1, 0
+
+gadget call_32_positioned
+	call_direct 32, str, w, 0, 1
+
+gadget call_32_positioned_linked
+	call_direct 32, str, w, 1, 1
 
 call_indirect_register call_indirect_r, 64, ldr, x, str, x
 call_indirect_register call_indirect_32_r, 32, ldr, w, str, w
@@ -519,6 +557,7 @@ call_indirect_memory call_indirect_32_m_cached, 32, ldr, w, str, w, 1
 
 .purgem call_indirect_memory
 .purgem call_indirect_register
+.purgem call_direct
 .purgem call_push_and_exit
 .purgem invalidate_stack_write
 
@@ -530,7 +569,7 @@ call_indirect_memory call_indirect_32_m_cached, 32, ldr, w, str, w, 1
  */
 .macro return_gadget name, width, load, host_register, cached=0
 gadget \name
-	ldp x23, x22, [_stream], #16
+	ldr x23, [_stream], #8
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	.if \width == 32
 	mov w25, w25
@@ -545,7 +584,7 @@ Lx86_return_slow\@:
 	\load \host_register\()24, [x7]
 Lx86_return_done\@:
 	add x9, x25, #(\width / 8)
-	add x9, x9, x23
+	add x9, x9, w23, uxth
 	.if \width == 32
 	mov w9, w9
 	.endif
