@@ -8,7 +8,7 @@ branch-qemu	qemu	454
 conditions-qemu	qemu	1816
 exclusive-qemu	qemu	256
 fetch-qemu	qemu	994
-fpscr-qemu	qemu	180
+fpscr-qemu	qemu	252
 memory-qemu	qemu	1914
 pc-qemu	qemu	88
 prefetch-qemu	qemu	144

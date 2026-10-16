@@ -135,7 +135,8 @@ The `simd` level (VFPv4-D32 and Advanced SIMD):
 - `simd-memory`: VLDR, VSTR, VLDM, VSTM, FLDMX, FSTMX and the structure loads
   and stores VLD1-4 and VST1-4, aimed at the memory suite's addresses;
 - `fpscr`: VMRS and VMSR, including the exception trap enables the profile
-  reads as zero and ignores writes to.
+  reads as zero and ignores writes to, and FZ16, which holds what is written
+  to it wherever FEAT_FP16 is.
 
 The `complete` level (the Armv8 additions):
 
@@ -161,8 +162,8 @@ happen, up to 16 attempts in all, in the gadget lane and the JIT lane alike.
 
 Two suites are recorded only from hardware (`pi4` or `pi5`): `unaligned`
 (172 cases: multi-word accesses at misaligned addresses) and `fpscr-reserved`
-(144 cases: VMRS and VMSR with Stride, Len and FZ16 set, which an
-implementation may or may not hold). The producer refuses to record them as
+(144 cases: VMRS and VMSR with Stride and Len set, which an implementation
+may or may not hold). The producer refuses to record them as
 `qemu` and nothing derives them from rules, so they are unrecorded until a
 hardware oracle exists, and so is the hardware cross-check of the `qemu`
 records (`compare`, below), in particular of the fault addresses of the
@@ -180,8 +181,11 @@ records (`compare`, below), in particular of the fault addresses of the
   PUSH, POP) with an alignment fault where an arm64 kernel fixes them up for a
   compat task. The `unaligned` suite is therefore recorded only from hardware.
 - qemu-arm clears the FPSCR exception trap enables on a write (the profile's
-  read-as-zero, write-ignored) and keeps Stride, Len and FZ16; the last three
+  read-as-zero, write-ignored) and keeps Stride, Len and FZ16. Stride and Len
   are the `fpscr-reserved` suite's, so the `qemu` records never set them.
+  FZ16 is FEAT_FP16's and holds wherever that is, as in qemu-arm's `-cpu
+  max`; the `fpscr` suite writes it, and every other suite starts with it
+  clear, because an oracle without FEAT_FP16 reads it as zero.
 - CNTFRQ and CNTVCT depend on the host and are not in the corpus.
 
 ## Regeneration
