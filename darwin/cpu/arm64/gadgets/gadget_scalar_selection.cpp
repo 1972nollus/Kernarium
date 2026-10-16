@@ -325,10 +325,10 @@ namespace uml::cpu::arm64::gadgets::selection {
 		uml_arm64_gadget_compare_branch_w_z_inline;
 }
 
-[[nodiscard]] Gadget test_branch_inline_gadget(bool nonzero) noexcept
+[[nodiscard]] Gadget test_bit_branch_inline_gadget(bool nonzero) noexcept
 {
-	return nonzero ? uml_arm64_gadget_test_branch_nz_inline :
-		uml_arm64_gadget_test_branch_z_inline;
+	return nonzero ? uml_arm64_gadget_test_bit_branch_nz_inline :
+		uml_arm64_gadget_test_bit_branch_z_inline;
 }
 
 [[nodiscard]] Gadget compare_branch_gadget(bool wide, bool nonzero,
@@ -349,13 +349,13 @@ namespace uml::cpu::arm64::gadgets::selection {
 	return table[wide][nonzero][linked];
 }
 
-[[nodiscard]] Gadget test_branch_gadget(bool nonzero, bool linked) noexcept
+[[nodiscard]] Gadget test_bit_branch_gadget(bool nonzero, bool linked) noexcept
 {
 	static constexpr std::array table{
-		std::array{uml_arm64_gadget_test_branch_z,
-			uml_arm64_gadget_test_branch_z_linked},
-		std::array{uml_arm64_gadget_test_branch_nz,
-			uml_arm64_gadget_test_branch_nz_linked},
+		std::array{uml_arm64_gadget_test_bit_branch_z,
+			uml_arm64_gadget_test_bit_branch_z_linked},
+		std::array{uml_arm64_gadget_test_bit_branch_nz,
+			uml_arm64_gadget_test_bit_branch_nz_linked},
 	};
 	return table[nonzero][linked];
 }
@@ -1137,6 +1137,29 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 }
 
 #undef UML_SELECT_BITFIELD_SOURCES
+
+/* SBFM and UBFM by their shift amounts: a form that shifts one way takes a
+ * single-shift entry, anything else both. */
+[[nodiscard]] Gadget bitfield_shift_gadget(bool is_64_bit, bool is_signed,
+	bool left_nonzero, bool right_nonzero) noexcept
+{
+	if (is_64_bit) {
+		if (!right_nonzero)
+			return uml_arm64_gadget_bitfield_shift_x_lsl;
+		if (!left_nonzero)
+			return is_signed ? uml_arm64_gadget_bitfield_shift_x_asr :
+				uml_arm64_gadget_bitfield_shift_x_lsr;
+		return is_signed ? uml_arm64_gadget_bitfield_shift_x_sbfm :
+			uml_arm64_gadget_bitfield_shift_x_ubfm;
+	}
+	if (!right_nonzero)
+		return uml_arm64_gadget_bitfield_shift_w_lsl;
+	if (!left_nonzero)
+		return is_signed ? uml_arm64_gadget_bitfield_shift_w_asr :
+			uml_arm64_gadget_bitfield_shift_w_lsr;
+	return is_signed ? uml_arm64_gadget_bitfield_shift_w_sbfm :
+		uml_arm64_gadget_bitfield_shift_w_ubfm;
+}
 
 #define UML_SELECT_EXTRACT_DESTINATION(prefix) \
 	return destination_zero ? uml_arm64_gadget_extract_register_##prefix##_z : \

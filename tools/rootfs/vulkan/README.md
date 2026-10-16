@@ -14,7 +14,7 @@ carried in the downstream patch series. The Android Vulkan HAL's port is the
 one carrier of a generated codec, because Soong cannot generate it out of
 tree. It pins the protocol series and Vulkan-Headers trees recorded here, so
 a change to either needs that port regenerated, as the
-[Android producer](../../../android/aosp-17/README.md#graphics) describes.
+[Android producer](../../../android/lineage-24/README.md#graphics) describes.
 
 The guest Mesa series ([`patches/mesa/series.tsv`](patches/mesa/series.tsv))
 is intentionally downstream and carries transport, reporting, and sharing

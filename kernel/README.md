@@ -14,7 +14,7 @@ Kernel inputs are scoped by source family and version:
   products without reading a source checkout or invoking Kbuild.
 
 The AOSP product and rootfs release are independently owned by
-[`../android/aosp-17`](../android/aosp-17/README.md). Kernel and rootfs release
+[`../android/lineage-24`](../android/lineage-24/README.md). Kernel and rootfs release
 selection must remain independent.
 
 Maintained kernel changes are local to this project. Generated patch series,

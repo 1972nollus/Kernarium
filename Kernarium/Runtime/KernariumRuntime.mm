@@ -873,7 +873,7 @@ int runtimeRun(
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         /* Android's vendor policy labels the battery's sysfs path by its
          * position among the Virtio devices
-         * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts). Straight
+         * (android/lineage-24/overlay/sepolicy/vendor/genfs_contexts). Straight
          * after the GPU it is always virtio-uml.1/virtio1, whatever optional
          * devices follow. */
         arguments.emplace_back(uml::gpu::virtioDeviceArgument(

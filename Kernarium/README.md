@@ -49,7 +49,7 @@ image `kde-20260929-r2.erofs`
 settings already store, `rootfs.erofs` included, is kept, and every image in
 Documents stays selectable. An Android guest is a `.kern`
 bundle directory in Documents; the
-[Android README](../android/aosp-17/README.md#apple-consumers-and-guest-bundles)
+[Android README](../android/lineage-24/README.md#apple-consumers-and-guest-bundles)
 owns its layout. A bundle holds the guest's persistent, directly writable image,
 and every launch reopens that same image, so rebuilding the application or a
 runtime framework must not erase it and a bundle is never recreated merely to
@@ -63,7 +63,7 @@ capacity and compressed delivery are application concerns, so runtime
 frameworks receive only an ordinary disk image and no capacity policy.
 `DiskUtil` owns a raw file's capacity before launch and dispatches any
 format-specific partition-table update; Android GPT growth is in the
-[static disk contract](../android/aosp-17/README.md#static-disk-and-boot-contract).
+[static disk contract](../android/lineage-24/README.md#static-disk-and-boot-contract).
 `ZstdUtil` streams a zstd source into an adjacent temporary file, optionally
 representing zero regions as sparse holes, and publishes the destination only
 after a complete decode.

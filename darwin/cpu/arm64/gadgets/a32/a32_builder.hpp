@@ -51,8 +51,15 @@ struct BuildOutput final {
 	aarch32::ItState next_it{};
 };
 
-/* The block-wide limit on translated instructions: an IT block that starts
- * below it always completes inside the block. */
+/* The most instructions an AArch32 block holds, whatever window the executor
+ * fetches. Gadget words that carry an instruction's position in its block may
+ * rely on it. */
+inline constexpr std::size_t block_limit = 64;
+
+/* `block_instructions` is the block-wide limit on translated instructions,
+ * at most block_limit. An A32 block holds that many; a T32 block stops five
+ * short of it unless an IT block is open, so that an IT block that starts
+ * inside the block always completes there. */
 [[nodiscard]] BuildOutput build(const BuildInput &input,
 	const Builder::LinkResolver &resolve_link,
 	std::pmr::memory_resource *storage,

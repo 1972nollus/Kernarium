@@ -21,6 +21,7 @@ namespace reference = arm64_gadget_dependency_reference;
 extern "C" void uml_arm64_gadget_interrupt();
 void run_gadget_dependency_memory_tests();
 void run_gadget_vector_dependency_tests();
+void run_gadget_bitfield_shift_tests();
 
 namespace {
 using uml::testing::require;
@@ -364,6 +365,7 @@ int main()
 	linked_counts();
 	taken_prefix();
 	run_gadget_dependency_memory_tests();
+	run_gadget_bitfield_shift_tests();
 	run_gadget_vector_dependency_tests();
 	std::puts("gadget dependency tests passed");
 }
