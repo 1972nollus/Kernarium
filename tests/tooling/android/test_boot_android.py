@@ -257,6 +257,31 @@ class BootAndroidTests(unittest.TestCase):
             ],
         )
 
+    def test_adb_is_ready_in_the_device_or_recovery_state(self) -> None:
+        guest = mock.Mock()
+        guest.poll.return_value = None
+        for state in ("device", "recovery"):
+            def run(command, **_kwargs):
+                text = state if "get-state" in command else "connected"
+                return subprocess.CompletedProcess(command, 0, stdout=text + "\n")
+
+            with mock.patch.object(boot_android.subprocess, "run", side_effect=run):
+                boot_android.wait_for_adb(Path("adb"), "127.0.0.1:5555", guest, 5)
+        for state in ("offline", "unauthorized"):
+            def refuse(command, **_kwargs):
+                text = state if "get-state" in command else "connected"
+                return subprocess.CompletedProcess(command, 0, stdout=text + "\n")
+
+            with (
+                mock.patch.object(boot_android.subprocess, "run", side_effect=refuse),
+                mock.patch.object(boot_android.time, "sleep"),
+                mock.patch.object(
+                    boot_android.time, "monotonic", side_effect=(0.0, 0.5, 6.0)
+                ),
+                self.assertRaises(boot_android.LauncherError),
+            ):
+                boot_android.wait_for_adb(Path("adb"), "127.0.0.1:5555", guest, 5)
+
     def test_normal_exit_disconnects_adb_and_reaps_guest(self) -> None:
         class Guest:
             pid = 123

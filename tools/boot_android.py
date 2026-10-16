@@ -551,7 +551,8 @@ def wait_for_adb(
                 timeout=10,
                 check=False,
             )
-            if state.returncode == 0 and state.stdout.strip() == "device":
+            # Recovery's adbd reports the state "recovery" instead of "device".
+            if state.returncode == 0 and state.stdout.strip() in ("device", "recovery"):
                 return
         except subprocess.TimeoutExpired:
             last_response = "ADB command timed out"
