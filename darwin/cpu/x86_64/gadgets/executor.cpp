@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
@@ -22,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -89,6 +91,35 @@ struct ProgramCacheLocation final {
 		.offset = first % program_cache_slab_slots,
 	};
 }
+
+/* A slot's tag holds the translation's guest address and execution mode in its
+ * low 48 bits, under the id of the address space that owns it. A long64
+ * address is below the guest address limit (2^47) and a compat32 address
+ * below 2^32, and the mode takes the bit above the first. An address with no
+ * such form names no fetchable code, so it tags to a value no slot holds. */
+inline constexpr unsigned tag_owner_shift = 48;
+inline constexpr std::uint64_t tag_address_mask =
+	(std::uint64_t{1} << 47) - 1U;
+inline constexpr std::uint64_t compat32_flag = std::uint64_t{1} << 47;
+inline constexpr std::uint64_t unmatchable_tag = ~std::uint64_t{};
+
+[[nodiscard]] constexpr std::uint64_t compact_tag_address(
+	std::uint64_t address, ExecutionMode mode) noexcept
+{
+	if (mode == ExecutionMode::compat32)
+		return address > 0xffff'ffffU ? unmatchable_tag :
+			address | compat32_flag;
+	return address > tag_address_mask ? unmatchable_tag : address;
+}
+
+static_assert(compact_tag_address(0x1000, ExecutionMode::long64) !=
+	compact_tag_address(0x1000, ExecutionMode::compat32));
+static_assert(compact_tag_address(tag_address_mask, ExecutionMode::long64) ==
+	tag_address_mask);
+static_assert(compact_tag_address(tag_address_mask + 1U,
+	ExecutionMode::long64) == unmatchable_tag);
+static_assert(compact_tag_address(0x1'0000'0000ULL,
+	ExecutionMode::compat32) == unmatchable_tag);
 
 enum class ProgramSourceComparison {
 	match,
@@ -456,51 +487,153 @@ private:
 	 * page stamps it was last validated against and its places in the
 	 * code-page lists. A large cache commonly runs with half its ways empty,
 	 * and every way pays for its slot, so these live in an allocation of
-	 * their own, which a replaced translation hands to its successor. */
+	 * their own, which a replaced translation hands to its successor. The
+	 * stamps' count and completeness are two small fields the slot has room
+	 * for (Slot::stamp_state), which keeps this record at the 96 bytes the
+	 * allocator hands out in whole sixteens. */
 	struct Translation final {
 		explicit Translation(Program &&built) noexcept
 			: program{std::move(built)}
 		{}
 
 		std::array<PageLink, 2> page_links{};
-		ProgramCodeStamps code_stamps{};
+		std::array<::uml::memory::CodePageStamp, 2> code_pages{};
 		Program program;
 	};
+	static_assert(sizeof(Translation) == 96);
 
+	/* One way of a set. A way exists whether or not it holds a translation,
+	 * so every byte here is paid for by the whole cache: at 262,144 slots
+	 * every eight bytes is two mebibytes per executor, which is why a slot
+	 * is four words and the rest of what a translation needs is in its
+	 * Translation. */
 	struct Slot final {
-		/* Keep every field needed to reject a way in the first cache line.
-		 * The program and saved bytes are touched only after the key matches. */
-		std::uint64_t epoch{};
-		std::uint64_t generation{};
-		std::uint64_t address{};
+		/* What a lookup compares, so rejecting a way is one load and one
+		 * comparison: the translation's address and execution mode
+		 * (compact_tag_address) under the id of the address space that
+		 * owns it. Zero while the slot is empty: ids start at one, so no
+		 * occupied slot's tag is zero and no lookup's is, either. It is
+		 * written after the rest of the slot, so a slot is never seen
+		 * occupied half made. */
+		std::uint64_t tag{};
+		std::unique_ptr<Translation> translation;
+		/* Two fields sharing a word, a pointer below the guest's 48-bit
+		 * address-space limit and sixteen bits above it: the link record
+		 * the slot's block publishes through, memoised so reactivation
+		 * need not look it up again, and the epoch of the owner's code
+		 * (Generation::epoch) when the block was last known to match
+		 * guest memory, zero for never. */
+		std::uint64_t memo{};
 		/* The slot's flat index, which names it in successor sets and page
 		 * lists; fixed when its slab is made. */
 		std::uint32_t index{};
 		std::uint8_t instruction_limit{};
-		ExecutionMode mode{ExecutionMode::long64};
 		bool terminal{};
 		/* Which of the translation's `page_links` are in a page's list;
 		 * never set without a translation. */
 		std::uint8_t linked_pages{};
-		std::uint64_t validated_changes{};
-		LinkRecord *link{};
-		std::uint64_t link_epoch{};
-		std::unique_ptr<Translation> translation;
+		/* How many of the translation's `code_pages` are stamps, in two
+		 * bits, and above them whether they cover the whole block; zero
+		 * while the translation has none. */
+		std::uint8_t stamp_state{};
+
+		static constexpr unsigned epoch_shift = 48;
+		static constexpr std::uint64_t link_mask =
+			(std::uint64_t{1} << epoch_shift) - 1U;
+
+		[[nodiscard]] bool resident() const noexcept { return tag != 0; }
+		[[nodiscard]] std::uint16_t owner() const noexcept
+		{
+			return static_cast<std::uint16_t>(tag >> tag_owner_shift);
+		}
+		[[nodiscard]] ExecutionMode mode() const noexcept
+		{
+			return (tag & compat32_flag) != 0U ?
+				ExecutionMode::compat32 : ExecutionMode::long64;
+		}
+		[[nodiscard]] std::uint64_t address() const noexcept
+		{
+			return tag & (compat32_flag - 1U);
+		}
+		[[nodiscard]] LinkRecord *link() const noexcept
+		{
+			return reinterpret_cast<LinkRecord *>(
+				static_cast<std::uintptr_t>(memo & link_mask));
+		}
+		void set_link(LinkRecord *record) noexcept
+		{
+			const auto address =
+				reinterpret_cast<std::uintptr_t>(record);
+			assert((address & ~link_mask) == 0U);
+			memo = (memo & ~link_mask) | address;
+		}
+		[[nodiscard]] std::uint16_t epoch() const noexcept
+		{
+			return static_cast<std::uint16_t>(memo >> epoch_shift);
+		}
+		void set_epoch(std::uint16_t value) noexcept
+		{
+			memo = (memo & link_mask) |
+				(std::uint64_t{value} << epoch_shift);
+		}
+
+		static constexpr std::uint8_t stamps_complete_bit = 4;
+
+		/* The translation's page stamps as a validation compares them. */
+		[[nodiscard]] bool stamped() const noexcept
+		{
+			return (stamp_state & stamps_complete_bit) != 0U;
+		}
+		[[nodiscard]] ProgramCodeStamps code_stamps() const noexcept
+		{
+			ProgramCodeStamps stamps;
+			stamps.pages = translation->code_pages;
+			stamps.count = stamp_state & (stamps_complete_bit - 1U);
+			stamps.complete = stamped();
+			return stamps;
+		}
+		void set_code_stamps(const ProgramCodeStamps &stamps) noexcept
+		{
+			translation->code_pages = stamps.pages;
+			stamp_state = static_cast<std::uint8_t>(stamps.count |
+				(stamps.complete ? stamps_complete_bit : 0U));
+		}
 	};
-	static_assert(sizeof(Slot) == 64,
+	static_assert(ProgramCodeStamps{}.pages.size() < Slot::stamps_complete_bit,
+		"a stamp count fits the bits below the completeness bit");
+	static_assert(sizeof(Slot) == 32,
 		"a way costs its slot whether or not it holds a translation");
 	static_assert(program_cache_slots < (std::size_t{1} << 31),
 		"a page link id fits 32 bits");
 
 	/* The common monomorphic and bimorphic successors bypass the main
 	 * set probe. A successor is named by its slot's index plus one, so
-	 * zero is empty, and a slot's own set sits at that same index. Slots and
+	 * zero is empty, and a slot's own set sits at that same index; bit 31 of
+	 * the first entry is the way the next successor replaces. Slots and
 	 * their companion sets live in lazy slabs for the executor's lifetime;
-	 * epoch and key checks make stale entries inert. */
+	 * tag checks make stale entries inert. */
 	struct SuccessorSet final {
+		static constexpr std::uint32_t replacement_bit = 1U << 31;
+
 		std::array<std::uint32_t, 2> entries{};
-		std::uint8_t next_replacement{};
+
+		[[nodiscard]] std::uint32_t entry(std::size_t way) const noexcept
+		{
+			return entries[way] & ~replacement_bit;
+		}
+		[[nodiscard]] std::size_t next_replacement() const noexcept
+		{
+			return (entries[0] & replacement_bit) != 0U ? 1U : 0U;
+		}
+		void set(std::size_t way, std::uint32_t id,
+			std::size_t next) noexcept
+		{
+			entries[way] = (entries[way] & replacement_bit) | id;
+			entries[0] = (entries[0] & ~replacement_bit) |
+				(next != 0U ? replacement_bit : 0U);
+		}
 	};
+	static_assert(sizeof(SuccessorSet) == 8);
 
 	struct Slab final {
 		std::array<Slot, program_cache_slab_slots> slots;
@@ -570,6 +703,18 @@ private:
 	 */
 	struct Generation final {
 		std::uint64_t changes{};
+		/* The guest's number for the address space, and the cache's own
+		 * for it: the id a slot's tag carries, from one up, recycled once
+		 * the address space is retired and its slots released. */
+		std::uint64_t value{};
+		std::uint16_t id{};
+		/* How many times the address space's code is known to have
+		 * changed, as far as a slot's validation can tell: a slot whose
+		 * epoch equals this one has matched guest memory since the last
+		 * change. It runs from one to its maximum and starts over after a
+		 * sweep of the slots that carry it, so a slot's epoch is never
+		 * mistaken for the current one. */
+		std::uint16_t epoch{1};
 		std::array<gadget_cache::StableRecordTable<LinkRecord, LinkKey>, 2>
 			links;
 		std::array<gadget_cache::StableRecordTable<IndirectRecord,
@@ -597,7 +742,7 @@ public:
 		for (auto &slab : slabs_)
 			if (slab)
 				for (auto &slot : slab->slots)
-					if (resident(slot))
+					if (slot.resident())
 						census_depart(slot,
 							census::Departure::retired);
 #endif
@@ -607,20 +752,20 @@ public:
 					registries_->of(generation).remove(page);
 		resident_.clear();
 		generations_.clear();
-		current_ = nullptr;
+		owners_.assign(1, nullptr);
+		free_ids_.clear();
+		unbind();
+		/* Every address space is gone, so no slot is occupied, and none
+		 * names a link record or a page list. A slot keeps its allocated
+		 * translation for the next one stored in it. */
 		for (auto &slab : slabs_)
 			if (slab)
-				for (auto &slot : slab->slots)
+				for (auto &slot : slab->slots) {
+					slot.tag = 0;
+					slot.memo = 0;
 					slot.linked_pages = 0;
+				}
 		preceding_ = nullptr;
-		++epoch_;
-		if (epoch_ != 0)
-			return;
-		for (auto &slab : slabs_)
-			if (slab)
-				for (auto &slot : slab->slots)
-					slot.epoch = 0;
-		epoch_ = 1;
 	}
 
 	void prepare(std::uint64_t generation, std::uint64_t changes)
@@ -638,6 +783,9 @@ public:
 		current_generation_ = generation;
 		auto [entry, inserted] = generations_.try_emplace(generation);
 		current_ = &entry->second;
+		if (inserted)
+			enroll(*current_, generation);
+		bind(*current_);
 		touch(generation);
 		if (inserted) {
 			current_->changes = changes;
@@ -651,6 +799,7 @@ public:
 		if (!retire_changed_code(*current_))
 			invalidate_links(*current_);
 		current_->changes = changes;
+		advance_epoch(*current_);
 	}
 
 	void set_code_change_reader(
@@ -702,8 +851,8 @@ public:
 				for (auto id = found->second; id != 0;
 					     id = page_link(id).next) {
 					auto &slot = page_link_slot(id);
-					if (slot.epoch == epoch_ &&
-					    slot.generation == current_generation_ &&
+					if (slot.resident() &&
+					    slot.owner() == current_->id &&
 					    slot.translation && source_overlaps(
 						    slot.translation->program,
 						    address, size))
@@ -717,8 +866,10 @@ public:
 
 	void accept_code_changes(std::uint64_t changes) noexcept
 	{
-		if (current_ != nullptr)
-			current_->changes = changes;
+		if (current_ == nullptr || current_->changes == changes)
+			return;
+		current_->changes = changes;
+		advance_epoch(*current_);
 	}
 
 	[[nodiscard]] const BlockLink *link(
@@ -773,25 +924,32 @@ public:
 
 	[[nodiscard]] const Program *find(std::uint64_t address,
 		ExecutionMode mode, std::size_t maximum_instructions,
-		std::uint64_t changes, std::uint64_t mapping_changes,
+		[[maybe_unused]] std::uint64_t changes,
+		std::uint64_t mapping_changes,
 		::uml::memory::GuestAddressSpace &memory, void *execution_context,
 		ProgramCacheSequenceReader sequence_reader,
 		ProgramCacheDiagnostics &diagnostics, bool &cache_hit)
 	{
 		cache_hit = false;
+		/* The slots' validation is kept as an epoch of the address space's
+		 * code, which prepare() and accept_code_changes() have been told. */
+		assert(current_ == nullptr || current_->changes == changes);
 #if UML_GADGET_CACHE_CENSUS
 		if ((history_.lookups() & 4095U) == 0)
 			snapshot_if_due();
 #endif
+		const auto tag = tag_of(address, mode);
 		if (preceding_ != nullptr) {
-			for (const auto successor : preceding_->entries) {
+			for (std::size_t way = 0; way < preceding_->entries.size();
+			     ++way) {
+				const auto successor = preceding_->entry(way);
 				if (successor == 0)
 					continue;
 				auto &slot = slot_at(successor - 1U);
-				if (!matches(slot, address, mode))
+				if (slot.tag != tag)
 					continue;
 				const auto *program = use(slot,
-					maximum_instructions, changes, mapping_changes,
+					maximum_instructions, mapping_changes,
 					memory, execution_context, sequence_reader,
 					diagnostics);
 				if (program == nullptr) {
@@ -815,10 +973,10 @@ public:
 		}
 		for (std::size_t way = 0; way < program_cache_ways; ++way) {
 			auto &slot = slab->slots[location.offset + way];
-			if (!matches(slot, address, mode))
+			if (slot.tag != tag)
 				continue;
 			const auto *program = use(slot, maximum_instructions,
-				changes, mapping_changes, memory, execution_context,
+				mapping_changes, memory, execution_context,
 				sequence_reader, diagnostics);
 			if (program == nullptr)
 				return nullptr;
@@ -846,9 +1004,10 @@ public:
 		if (location.slab >= slabs_.size() || !slabs_[location.slab])
 			return nullptr;
 		const auto &slab = *slabs_[location.slab];
+		const auto tag = tag_of(address, mode);
 		for (std::size_t way = 0; way < program_cache_ways; ++way) {
 			const auto &slot = slab.slots[location.offset + way];
-			if (!matches(slot, address, mode) || !slot.translation)
+			if (slot.tag != tag || !slot.translation)
 				continue;
 			const auto stream = slot.translation->program.native_stream();
 			if (word >= stream.data() &&
@@ -859,10 +1018,19 @@ public:
 	}
 
 	[[nodiscard]] const Program &store(Program &&program,
-		std::uint64_t changes,
+		[[maybe_unused]] std::uint64_t changes,
 		std::size_t instruction_limit, ProgramCodeStamps code_stamps)
 	{
 		(void)link(program.address(), program.execution_mode());
+		/* The address space is registered, and told the code it holds is
+		 * as current as the caller's sequence, before the tag naming it is
+		 * made. */
+		assert(current_ != nullptr && current_->changes == changes);
+		const auto tag = tag_of(program.address(), program.execution_mode());
+		/* An address no slot can name is not cached, which the caller
+		 * answers by running the program once. */
+		if (tag == unmatchable_tag)
+			throw std::length_error("no cacheable translation key");
 
 		const auto location = locate_program(current_generation_,
 			program.address(), program.execution_mode());
@@ -880,15 +1048,14 @@ public:
 		 * resident, and this store makes a second copy beside it. */
 		bool restored = false;
 		for (std::size_t way = 0; way < program_cache_ways; ++way)
-			if (matches(slab->slots[location.offset + way],
-				    program.address(), program.execution_mode()))
+			if (slab->slots[location.offset + way].tag == tag)
 				restored = true;
 #endif
 		auto &replacement = next_replacement_[location.set];
 		std::size_t selected = replacement;
 		for (std::size_t way = 0; way < program_cache_ways; ++way) {
 			const auto &slot = slab->slots[location.offset + way];
-			if (slot.epoch != epoch_) {
+			if (!slot.resident()) {
 				selected = way;
 				break;
 			}
@@ -912,12 +1079,12 @@ public:
 		auto &slot = slab->slots[location.offset + selected];
 		auto &successors = slab->successors[location.offset + selected];
 #if UML_GADGET_CACHE_CENSUS
-		if (resident(slot))
+		if (slot.resident())
 			census_depart(slot, census::Departure::evicted);
 #endif
 		unindex(slot);
 		deactivate(slot);
-		slot.epoch = 0;
+		slot.tag = 0;
 		successors = {};
 		if (slot.translation)
 			slot.translation->program = std::move(program);
@@ -925,27 +1092,25 @@ public:
 			slot.translation =
 				std::make_unique<Translation>(std::move(program));
 		const auto &stored = slot.translation->program;
-		slot.generation = current_generation_;
-		slot.address = stored.address();
-		slot.validated_changes = changes;
-		slot.translation->code_stamps = code_stamps;
+		slot.memo = 0;
+		slot.set_epoch(current_epoch_);
+		slot.set_code_stamps(code_stamps);
 		slot.instruction_limit = kept_instruction_limit(instruction_limit);
-		slot.mode = stored.execution_mode();
 		slot.terminal = stored.terminal();
-		/* Epoch is the validity marker and is written only after the slot is
-		 * complete. */
-		slot.epoch = epoch_;
+		/* The tag is the occupancy marker and is written only after the
+		 * slot is complete; index() reads the owner from it. */
+		slot.tag = tag;
 		try {
 			index(slot);
 		} catch (...) {
-			slot.epoch = 0;
+			slot.tag = 0;
 			slot.translation.reset();
 			throw;
 		}
 		activate_link(slot);
 		activate(slot, successors);
 #if UML_GADGET_CACHE_CENSUS
-		history_.arrive(census_id_, slot.generation, census_key(slot),
+		history_.arrive(census_id_, current_generation_, census_key(slot),
 			census_digest(slot), restored);
 #endif
 		return stored;
@@ -1004,7 +1169,7 @@ public:
 				continue;
 			slabs += malloc_size(slab.get());
 			for (const auto &slot : slab->slots) {
-				if (!resident(slot))
+				if (!slot.resident())
 					continue;
 				/* A translation is its record, the native
 				 * stream and the saved source; a block some
@@ -1041,7 +1206,7 @@ public:
 			if (!slab)
 				continue;
 			for (const auto &slot : slab->slots)
-				if (resident(slot))
+				if (slot.resident())
 					++occupied;
 		}
 		return occupied;
@@ -1126,7 +1291,7 @@ public:
 			if (!slab)
 				continue;
 			for (const auto &slot : slab->slots) {
-				if (!resident(slot))
+				if (!slot.resident())
 					continue;
 				const auto &program = slot.translation->program;
 				const auto bytes = translation_bytes(slot);
@@ -1134,9 +1299,9 @@ public:
 					"P %llu 0x%llx %zu %zu %zu 0x%llx %zu %zu "
 					"%zu %zu\n",
 					static_cast<unsigned long long>(
-						slot.generation),
+						generation_of(slot)),
 					static_cast<unsigned long long>(
-						slot.address),
+						slot.address()),
 					program.instruction_count(),
 					program.native_stream().size(),
 					program.source().size(),
@@ -1146,7 +1311,7 @@ public:
 					program.native_stream().size_bytes(),
 					program.source().size());
 				if (sample != 0 &&
-				    census_sampled(slot.address, sample))
+				    census_sampled(slot.address(), sample))
 					census_words(out, slot, text, records);
 			}
 		}
@@ -1156,16 +1321,17 @@ public:
 private:
 	static constexpr std::uint64_t code_page_mask =
 		~std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE - 1U};
+	/* The ids tags can carry, and the owner bits that match none of them
+	 * while no address space is running. */
+	static constexpr std::size_t max_owner_id = 0xfffeU;
+	static constexpr std::uint64_t no_owner = std::uint64_t{0xffffU}
+		<< tag_owner_shift;
+	static constexpr std::uint16_t max_epoch = 0xffffU;
+	static_assert(resident_generation_limit + 2U < max_owner_id,
+		"every resident address space has an id, and so does the one "
+		"being retired");
 
 #if UML_GADGET_CACHE_CENSUS
-	/* A slot holds a translation only while its epoch is the live one; the
-	 * epoch is written last, so nothing else has to be cleared to retire
-	 * one. */
-	[[nodiscard]] bool resident(const Slot &slot) const noexcept
-	{
-		return slot.epoch == epoch_;
-	}
-
 	/* libc++ keeps one heap node per element -- the value, a next pointer
 	 * and the cached hash -- plus one pointer per bucket. Exact for the
 	 * value, close enough for the node. */
@@ -1203,15 +1369,15 @@ private:
 	 * of either mode sets. */
 	[[nodiscard]] static std::uint64_t census_key(const Slot &slot) noexcept
 	{
-		return slot.address ^
-			(static_cast<std::uint64_t>(mode_index(slot.mode)) << 63);
+		return slot.address() ^
+			(static_cast<std::uint64_t>(mode_index(slot.mode())) << 63);
 	}
 
 	/* The same bytes decoded in the other execution mode are a different
 	 * translation, so the mode seeds the digest. */
 	[[nodiscard]] static std::uint64_t census_digest(const Slot &slot) noexcept
 	{
-		auto digest = census::digest_seed ^ mode_index(slot.mode);
+		auto digest = census::digest_seed ^ mode_index(slot.mode());
 		for (const auto byte : slot.translation->program.source())
 			digest = census::digest_add(digest,
 				static_cast<std::uint8_t>(byte));
@@ -1222,7 +1388,7 @@ private:
 	{
 		if (!slot.translation)
 			return;
-		history_.depart(slot.generation, census_key(slot),
+		history_.depart(generation_of(slot), census_key(slot),
 			census_digest(slot), translation_bytes(slot).allocated, why);
 	}
 
@@ -1248,18 +1414,18 @@ private:
 	void census_words(std::FILE *out, const Slot &slot,
 		census::TextRange text, CensusRecords &records) const
 	{
-		auto [named, inserted] = records.try_emplace(slot.generation);
+		auto [named, inserted] = records.try_emplace(generation_of(slot));
 		if (inserted) {
-			const auto owner = generations_.find(slot.generation);
-			if (owner != generations_.end()) {
+			const auto *owner = owner_of(slot);
+			if (owner != nullptr) {
 				auto &table = named->second;
-				for (const auto &mode : owner->second.links)
+				for (const auto &mode : owner->links)
 					mode.for_each([&table](const LinkRecord &record) {
 						table[reinterpret_cast<std::uintptr_t>(
 							&record.link)] =
 							{'l', record.link.guest_rip};
 					});
-				for (const auto &mode : owner->second.indirect)
+				for (const auto &mode : owner->indirect)
 					mode.for_each(
 						[&table](const IndirectRecord &record) {
 							table[reinterpret_cast<
@@ -1269,7 +1435,7 @@ private:
 			}
 		}
 		std::fprintf(out, "W 0x%llx",
-			static_cast<unsigned long long>(slot.address));
+			static_cast<unsigned long long>(slot.address()));
 		for (const auto value :
 			slot.translation->program.native_stream()) {
 			if (text.contains(value)) {
@@ -1376,7 +1542,7 @@ private:
 				auto [bucket, inserted] =
 					index.try_emplace(pages.pages[completed], 0U);
 				if (inserted && registries_ != nullptr)
-					registries_->of(slot.generation).add(
+					registries_->of(generation_of(slot)).add(
 						pages.pages[completed], &registries_->participant);
 				const auto id = page_link_id(slot, completed);
 				auto &link = slot.translation->page_links[completed];
@@ -1446,14 +1612,14 @@ private:
 	{
 		if (slot.linked_pages == 0)
 			return;
-		auto owner = generations_.find(slot.generation);
-		if (owner == generations_.end()) {
+		auto *owner = owner_of(slot);
+		if (owner == nullptr) {
 			slot.linked_pages = 0;
 			return;
 		}
 		auto &links = slot.translation->page_links;
 		for (std::size_t entry = 0; entry < links.size(); ++entry)
-			unlink(slot.generation, owner->second, slot, entry);
+			unlink(owner->value, *owner, slot, entry);
 	}
 
 	/* A slot keeps the limit it was built under in one byte. The runtime
@@ -1465,16 +1631,87 @@ private:
 		return static_cast<std::uint8_t>(std::min<std::size_t>(limit, 0xffU));
 	}
 
-	[[nodiscard]] bool matches(const Slot &slot, std::uint64_t address,
+	/* The tag a lookup in the running address space compares. */
+	[[nodiscard]] std::uint64_t tag_of(std::uint64_t address,
 		ExecutionMode mode) const noexcept
 	{
-		return slot.epoch == epoch_ &&
-			slot.generation == current_generation_ &&
-			slot.address == address && slot.mode == mode;
+		const auto compact = compact_tag_address(address, mode);
+		return compact == unmatchable_tag ? unmatchable_tag :
+			compact | current_owner_;
+	}
+
+	[[nodiscard]] Generation *owner_of(const Slot &slot) const noexcept
+	{
+		return owners_[slot.owner()];
+	}
+
+	[[nodiscard]] std::uint64_t generation_of(
+		const Slot &slot) const noexcept
+	{
+		return owners_[slot.owner()]->value;
+	}
+
+	/* Give an address space the id its slots' tags will carry. */
+	void enroll(Generation &state, std::uint64_t generation)
+	{
+		state.value = generation;
+		if (!free_ids_.empty()) {
+			state.id = free_ids_.back();
+			free_ids_.pop_back();
+		} else {
+			assert(owners_.size() < max_owner_id);
+			state.id = static_cast<std::uint16_t>(owners_.size());
+			owners_.push_back(nullptr);
+		}
+		owners_[state.id] = &state;
+	}
+
+	/* Make an enrolled address space the one lookups are made in. */
+	void bind(const Generation &state) noexcept
+	{
+		current_owner_ = std::uint64_t{state.id} << tag_owner_shift;
+		current_epoch_ = state.epoch;
+	}
+
+	/* No address space is running: the owner bits name none, so no lookup
+	 * matches. */
+	void unbind() noexcept
+	{
+		current_ = nullptr;
+		current_owner_ = no_owner;
+		current_epoch_ = 0;
+	}
+
+	/* A code change was seen in the running address space: every slot's
+	 * validation is out of date. The epoch advances, and when it would pass
+	 * what a slot can hold the slots that carry one are cleared, so that no
+	 * old validation is ever equal to a new epoch. */
+	void advance_epoch(Generation &state) noexcept
+	{
+		if (state.epoch == max_epoch) {
+			const auto id = state.id;
+			const auto forget = [id](Slot &slot) noexcept {
+				if (slot.resident() && slot.owner() == id)
+					slot.set_epoch(0);
+			};
+			if (state.slots_complete) {
+				for (const auto index : state.slots)
+					forget(slot_at(index));
+			} else {
+				for (auto &slab : slabs_)
+					if (slab)
+						for (auto &slot : slab->slots)
+							forget(slot);
+			}
+			state.epoch = 0;
+		}
+		++state.epoch;
+		if (&state == current_)
+			current_epoch_ = state.epoch;
 	}
 
 	[[nodiscard]] const Program *use(Slot &slot,
-		std::size_t maximum_instructions, std::uint64_t changes,
+		std::size_t maximum_instructions,
 		std::uint64_t mapping_changes,
 		::uml::memory::GuestAddressSpace &memory, void *execution_context,
 		ProgramCacheSequenceReader sequence_reader,
@@ -1497,12 +1734,12 @@ private:
 			return nullptr;
 		}
 #if UML_GADGET_CACHE_CENSUS
-		if (slot.validated_changes == changes)
+		if (slot.epoch() == current_epoch_)
 			history_.hit();
 #endif
-		if (slot.validated_changes != changes) {
+		if (slot.epoch() != current_epoch_) {
 			++diagnostics.validation_attempts;
-			if (!validate(slot, changes, mapping_changes, memory,
+			if (!validate(slot, mapping_changes, memory,
 				execution_context, sequence_reader, diagnostics)) {
 #if UML_GADGET_CACHE_CENSUS
 				history_.missed();
@@ -1527,18 +1764,15 @@ private:
 	{
 		if (preceding_ != nullptr) {
 			const auto id = slot.index + 1U;
-			auto selected = static_cast<std::size_t>(
-				preceding_->next_replacement & 1U);
+			auto selected = preceding_->next_replacement();
 			for (std::size_t way = 0; way < preceding_->entries.size(); ++way) {
-				const auto entry = preceding_->entries[way];
+				const auto entry = preceding_->entry(way);
 				if (entry == 0 || entry == id) {
 					selected = way;
 					break;
 				}
 			}
-			preceding_->entries[selected] = id;
-			preceding_->next_replacement = static_cast<std::uint8_t>(
-				(selected + 1U) & 1U);
+			preceding_->set(selected, id, (selected + 1U) & 1U);
 		}
 		preceding_ = &successors;
 	}
@@ -1651,18 +1885,17 @@ private:
 	{
 		if (!slot.translation)
 			return;
-		if (slot.link == nullptr || slot.link_epoch != epoch_) {
-			auto owner = generations_.find(slot.generation);
-			if (owner == generations_.end())
+		if (slot.link() == nullptr) {
+			auto *owner = owner_of(slot);
+			if (owner == nullptr)
 				return;
-			auto *found = owner->second.links[mode_index(slot.mode)]
-				.find(slot.address);
+			auto *found = owner->links[mode_index(slot.mode())]
+				.find(slot.address());
 			if (found == nullptr)
 				return;
-			slot.link = found;
-			slot.link_epoch = epoch_;
+			slot.set_link(found);
 		}
-		auto &record = *slot.link;
+		auto &record = *slot.link();
 		if (!record.listed) {
 			record.listed = true;
 			record.next_live = current().live_links;
@@ -1677,12 +1910,12 @@ private:
 		/* Publishing here, rather than at a branch that asked for this
 		 * address, is what lets a RET reach a return site it has never
 		 * reached before: the block that runs there announces itself. */
-		if (slot.generation != current_generation_)
+		if (slot.owner() != (current_owner_ >> tag_owner_shift))
 			return;
-		auto *table = target_table(current(), slot.mode);
+		auto *table = target_table(current(), slot.mode());
 		if (table != nullptr)
-			(*table)[target_link_index(slot.address)] = {
-				slot.address, &record.link};
+			(*table)[target_link_index(slot.address())] = {
+				slot.address(), &record.link};
 	}
 
 	void deactivate(Slot &slot) noexcept
@@ -1690,23 +1923,11 @@ private:
 		if (slot.translation) {
 			const auto *stream =
 				slot.translation->program.native_stream().data();
-			if (slot.link != nullptr && slot.link_epoch == epoch_) {
-				if (slot.link->link.stream == stream)
-					slot.link->reset();
-			} else if (slot.link_epoch == epoch_) {
-				auto owner = generations_.find(slot.generation);
-				if (owner != generations_.end()) {
-					auto *found = owner->second.links[
-						mode_index(slot.mode)].find(slot.address);
-					if (found != nullptr &&
-						found->link.stream ==
-							stream)
-						found->reset();
-				}
-			}
+			if (slot.link() != nullptr &&
+			    slot.link()->link.stream == stream)
+				slot.link()->reset();
 		}
-		slot.link = nullptr;
-		slot.link_epoch = 0;
+		slot.set_link(nullptr);
 	}
 
 	void touch(std::uint64_t generation)
@@ -1721,23 +1942,26 @@ private:
 	void retire(std::uint64_t generation) noexcept
 	{
 		const auto owner = generations_.find(generation);
-		if (owner != generations_.end() && owner->second.slots_complete) {
-			for (const auto index : owner->second.slots)
-				release(slot_at(index), generation);
-		} else {
-			for (auto &slab : slabs_) {
-				if (!slab)
-					continue;
-				for (auto &slot : slab->slots)
-					release(slot, generation);
-			}
-		}
 		if (owner != generations_.end()) {
+			const auto id = owner->second.id;
+			if (owner->second.slots_complete) {
+				for (const auto index : owner->second.slots)
+					release(slot_at(index), id);
+			} else {
+				for (auto &slab : slabs_) {
+					if (!slab)
+						continue;
+					for (auto &slot : slab->slots)
+						release(slot, id);
+				}
+			}
 			if (current_ == &owner->second)
-				current_ = nullptr;
+				unbind();
 			if (registries_ != nullptr)
 				for (const auto &[page, link] : owner->second.code_pages)
 					registries_->of(generation).remove(page);
+			owners_[id] = nullptr;
+			free_ids_.push_back(id);
 			generations_.erase(owner);
 		}
 		if (registries_ != nullptr)
@@ -1748,9 +1972,9 @@ private:
 			resident_.erase(found);
 	}
 
-	void release(Slot &slot, std::uint64_t generation) noexcept
+	void release(Slot &slot, std::uint16_t owner) noexcept
 	{
-		if (slot.epoch != epoch_ || slot.generation != generation)
+		if (!slot.resident() || slot.owner() != owner)
 			return;
 #if UML_GADGET_CACHE_CENSUS
 		census_depart(slot, census::Departure::retired);
@@ -1772,9 +1996,14 @@ private:
 
 	[[nodiscard]] Generation &current()
 	{
-		if (current_ == nullptr)
-			current_ = &generations_
-				.try_emplace(current_generation_).first->second;
+		if (current_ == nullptr) {
+			auto [entry, inserted] =
+				generations_.try_emplace(current_generation_);
+			current_ = &entry->second;
+			if (inserted)
+				enroll(*current_, current_generation_);
+			bind(*current_);
+		}
 		return *current_;
 	}
 
@@ -1782,14 +2011,15 @@ private:
 	{
 		unindex(slot);
 		deactivate(slot);
-		slot.epoch = 0;
+		slot.tag = 0;
 		slot.translation.reset();
-		slot.validated_changes = 0;
+		slot.memo = 0;
 		slot.terminal = false;
+		slot.stamp_state = 0;
 	}
 
 	[[nodiscard]] bool validate(Slot &slot,
-		std::uint64_t changes, std::uint64_t mapping_changes,
+		std::uint64_t mapping_changes,
 		::uml::memory::GuestAddressSpace &memory, void *execution_context,
 		ProgramCacheSequenceReader sequence_reader,
 		ProgramCacheDiagnostics &diagnostics)
@@ -1830,11 +2060,11 @@ private:
 		auto &translation = *slot.translation;
 		const auto current_stamps = capture_program_code_stamps(
 			memory, translation.program, execution_context);
-		if (translation.code_stamps.complete && current_stamps.complete &&
-		    current_stamps == translation.code_stamps) {
+		if (slot.stamped() && current_stamps.complete &&
+		    current_stamps == slot.code_stamps()) {
 			if (!memory_settled())
 				return false;
-			slot.validated_changes = changes;
+			slot.set_epoch(current_epoch_);
 			++diagnostics.validation_stamp_hits;
 			++diagnostics.validation_hits;
 			return true;
@@ -1863,8 +2093,8 @@ private:
 
 		if (!memory_settled())
 			return false;
-		slot.validated_changes = changes;
-		translation.code_stamps = current_stamps;
+		slot.set_epoch(current_epoch_);
+		slot.set_code_stamps(current_stamps);
 		++diagnostics.validation_hits;
 		return true;
 	}
@@ -1873,10 +2103,18 @@ private:
 	Generation *current_{};
 	std::vector<std::uint64_t> resident_;
 	std::uint64_t current_generation_{};
+	/* What the running address space adds to an address to make a tag, and
+	 * the epoch its slots must carry to be current. Both are read by every
+	 * lookup, so they sit here rather than behind current_. */
+	std::uint64_t current_owner_{no_owner};
+	std::uint16_t current_epoch_{};
+	/* Address spaces by id, with id zero never used, and the ids of the
+	 * ones retired. */
+	std::vector<Generation *> owners_{nullptr};
+	std::vector<std::uint16_t> free_ids_;
 	std::array<std::unique_ptr<Slab>, program_cache_slab_count> slabs_{};
 	std::array<std::uint8_t, program_cache_sets> next_replacement_{};
 	SuccessorSet *preceding_{};
-	std::uint64_t epoch_{1};
 	NativeTlbEntry *write_translations_{};
 	CodePageRegistries *registries_{};
 	ProgramCacheCodeChangeReader code_change_reader_{};

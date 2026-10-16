@@ -3,7 +3,8 @@
 
 .macro divide_register name, width, load, host_register, target
 gadget \name\()_\width\()_r
-	ldp x8, x22, [_stream], #16
+	ldr x23, [_stream], #8
+	and x8, x23, #0xffff
 	\load \host_register\()15, [_cpu, x8]
 	b \target
 .endm
@@ -219,6 +220,7 @@ Lx86_divide_signed_store:
 
 .p2align 4
 Lx86_divide_trap:
+	instruction_rip x22
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_FLOATING_POINT_TRAP
 	b uml_x86_64_gadget_leave

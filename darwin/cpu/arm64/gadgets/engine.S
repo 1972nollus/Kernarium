@@ -173,6 +173,8 @@ Lveneer_\symbol:
 #include "engine/inplace_immediate.inc"
 #include "engine/inplace_extended.inc"
 #include "engine/inplace_memory.inc"
+#include "engine/constant_store.inc"
+#include "engine/test_bit_branch.inc"
 #include "engine/bitfield_shift.inc"
 #include "engine/scalar_forwarding.inc"
 #include "engine/vector_forwarding.inc"

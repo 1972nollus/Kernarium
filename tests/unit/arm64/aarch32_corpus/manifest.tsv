@@ -8,12 +8,15 @@ branch-qemu	qemu	454
 conditions-qemu	qemu	1816
 exclusive-qemu	qemu	256
 fetch-qemu	qemu	994
-fpscr-qemu	qemu	180
+fpscr-qemu	qemu	252
+fpscr-reserved-pi4	pi4	144
 memory-qemu	qemu	1914
 pc-qemu	qemu	88
 prefetch-qemu	qemu	144
+simd-convert-qemu	qemu	1504
 simd-memory-qemu	qemu	3721
 simd-qemu	qemu	10226
 simd-steps-qemu	qemu	164
 straddle-qemu	qemu	60
 system-qemu	qemu	324
+unaligned-pi4	pi4	172

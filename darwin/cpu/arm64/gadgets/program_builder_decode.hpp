@@ -52,6 +52,32 @@ struct DecodeContext final {
 	return static_cast<std::uintptr_t>(context.compiled) << 56;
 }
 
+/* Store `value` in the register at CpuState offset `offset`. A value that
+ * fits 48 bits, or whose top sixteen bits are all ones, shares one stream word
+ * with the offset, which sits in bits 63:48 over the value's low 48 bits;
+ * any other value takes the offset and the value in a word each. */
+inline void emit_constant_store(ProgramWords &words, std::uintptr_t offset,
+				std::uint64_t value)
+{
+	constexpr std::uint64_t low_48 = (std::uint64_t{1} << 48) - 1;
+	if ((value & ~low_48) == 0) {
+		selection::emit(words,
+			selection::uml_arm64_gadget_move_wide_packed_zero);
+		selection::emit(words,
+			static_cast<std::uintptr_t>(value) | (offset << 48));
+	} else if ((value & ~low_48) == ~low_48) {
+		selection::emit(words,
+			selection::uml_arm64_gadget_move_wide_packed_ones);
+		selection::emit(words, static_cast<std::uintptr_t>(
+			value & low_48) | (offset << 48));
+	} else {
+		selection::emit(words,
+			selection::uml_arm64_gadget_move_wide_constant);
+		selection::emit(words, offset);
+		selection::emit(words, static_cast<std::uintptr_t>(value));
+	}
+}
+
 /* Emit the cell a direct control-flow gadget reads its successor through: this
  * executor's record for `target`. */
 inline void emit_link(DecodeContext &context, std::uint64_t target)
@@ -128,23 +154,6 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 {
 	return emit_inlined_packed_compare_branch(
 		context, gadget, operand, target, 16, retires);
-}
-
-[[nodiscard]] inline bool emit_inlined_test_branch(
-	DecodeContext &context, selection::Gadget gadget,
-	std::uintptr_t operand, std::uintptr_t mask, std::uint64_t target,
-	std::size_t retires = 1)
-{
-	if (gadget == nullptr || operand > 0xffffU ||
-	    context.suffixes.full())
-		return false;
-	selection::emit(context.words, gadget);
-	context.suffixes.add(context.words.size(),
-		context.compiled + retires, 16);
-	selection::emit(context.words, operand);
-	selection::emit(context.words, mask);
-	emit_link(context, target);
-	return true;
 }
 
 

@@ -234,6 +234,14 @@ A32Compiler::Flow A32Compiler::emit_vector_register_transfer(bool store) {
     track_direct_store(address_register, bytes);
     vmem_granule(false, log2_size, reg, 0);
     clear_exclusive_monitor();
+  } else if (s_shadowing_ && bytes == 4U) {
+    /* VLDR of one S register (begin_s_shadows): the word goes to a shadow,
+     * after the translation's cold paths, and from there to its lane. */
+    const unsigned shadow = take_s_shadow(reg);
+    emit(enc::vec::ldur_simd(word_size, shadow, address_register, 0));
+    const auto dest = q_def(reg >> 2, true, s_view);
+    emit(enc::vec::ins_element(word_size, dest.host, reg & 3U, shadow, 0));
+    q_done(dest, reg >> 2);
   } else {
     vmem_granule(true, log2_size, reg, 0);
   }
