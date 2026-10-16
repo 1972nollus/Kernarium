@@ -153,11 +153,10 @@ std::span<const Gadget> Program::replay_instructions() const noexcept
 }
 
 Program::Program(ExecutionMode mode, std::uint64_t address,
-	std::size_t byte_count, std::span<const Gadget> gadgets,
-	std::span<const std::byte> source, std::span<const std::uintptr_t> words,
-	bool check_head)
+	std::span<const Gadget> gadgets, std::span<const std::byte> source,
+	std::span<const std::uintptr_t> words, bool check_head)
 	: address_{normalize_instruction_pointer(mode, address)},
-	  byte_count_{byte_count}, mode_{mode}, check_head_{check_head}
+	  mode_{mode}, check_head_{check_head}
 {
 	words_storage_ =
 		std::make_unique_for_overwrite<std::uintptr_t[]>(words.size());
@@ -280,7 +279,7 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 			words.clear();
 			append_leave_stream(words, stream.front().address);
 			return {BuildStatus::built,
-				Program{mode, address, bytes,
+				Program{mode, address,
 					std::span<const Gadget>{stream},
 					std::span<const std::byte>{source},
 					std::span<const std::uintptr_t>{words}, true},
@@ -306,7 +305,7 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 		/* The saved bytes are the block: one instruction's encoding after
 		 * another, ending where the block does. */
 		return {BuildStatus::built,
-			Program{mode, address, bytes,
+			Program{mode, address,
 				std::span<const Gadget>{stream},
 				std::span<const std::byte>{source},
 				std::span<const std::uintptr_t>{words}},
@@ -492,7 +491,8 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 			if (single_step &&
 				repeated_string(gadgets.front().instruction)) {
 				limited_stream = build_repeat_step_stream(
-					gadgets.front(), program.execution_mode());
+					gadgets.front(), program.execution_mode(),
+					program.address());
 				native_stream = limited_stream;
 			} else if (limited) {
 				limited_stream = build_native_stream(
@@ -621,7 +621,7 @@ constexpr std::uint64_t x87_compare_rflags = 0x8d5U;
 			{0, ::uml::memory::MemoryAccess::read, true}, false, false};
 
 	const auto stream = step_string ?
-		build_repeat_step_stream(first, mode) :
+		build_repeat_step_stream(first, mode, program.address()) :
 		build_native_stream(gadgets.subspan(index, 1), final_rip, mode,
 			program.address());
 	const bool simd = (checked & check_simd) != 0 &&
@@ -855,7 +855,7 @@ ExecuteResult execute_step(const Gadget &gadget, CpuState &cpu,
 		const auto stream = build_native_stream({&gadget, 1},
 			advance_instruction_pointer(mode, gadget.address, length), mode,
 			normalize_instruction_pointer(mode, gadget.address));
-		const Program program{mode, gadget.address, length, {&gadget, 1},
+		const Program program{mode, gadget.address, {&gadget, 1},
 			std::span<const std::byte>{source}.first(length), stream};
 		if (checked != 0)
 			return run_checked_instruction(program, {&gadget, 1}, 0, cpu,

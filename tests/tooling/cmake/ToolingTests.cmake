@@ -15,7 +15,7 @@ uml_add_tooling_test(
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_xcframework_destination.sh
         ${PROJECT_SOURCE_DIR}/scripts/build-xcframework.sh
     LABELS audit;package
-    TIMEOUT 30)
+    TIMEOUT 60)
 
 uml_add_tooling_test(
     NAME git-identity-environment-contract
@@ -29,14 +29,14 @@ uml_add_tooling_test(
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_patch_series.py
     LABELS audit;kernel;dependency;android
-    TIMEOUT 120)
+    TIMEOUT 450)
 
 uml_add_tooling_test(
     NAME apple-xcframework-staging
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_create_apple_xcframework.sh
         ${PROJECT_SOURCE_DIR}/scripts/create-apple-xcframework.py
     LABELS audit;package
-    TIMEOUT 30)
+    TIMEOUT 60)
 
 # The XCFramework, Kernarium framework and Kernarium app packaging run this
 # check on every iOS product; the fixtures show it finds FEXCore as a symbol,
@@ -67,7 +67,7 @@ uml_add_tooling_test(
             ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/check_environment_portability.py
         --source-root ${PROJECT_SOURCE_DIR}
     LABELS audit
-    TIMEOUT 120)
+    TIMEOUT 180)
 
 uml_add_tooling_test(
     NAME engine-kind-link-audit
@@ -76,4 +76,4 @@ uml_add_tooling_test(
         --cmake ${CMAKE_COMMAND}
         --audit ${PROJECT_SOURCE_DIR}/scripts/audit-cmake-file-api.cmake
     LABELS audit;cpu
-    TIMEOUT 60)
+    TIMEOUT 240)

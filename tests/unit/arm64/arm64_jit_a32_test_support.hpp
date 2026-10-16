@@ -88,6 +88,15 @@ public:
                 code_.descriptor(), 0, guest_page, PROT_READ | PROT_EXEC, 1,
                 1) == 0);
   }
+  /* Page `page` of the data again at `address` (data_pages permitting), so a
+   * test can put two pages next to each other in the guest that are not next
+   * to each other in the host. */
+  void map_data_alias(std::uint32_t address, std::size_t page) {
+    require(darwin_uml_static_vm_map_generation(
+                generation_, reinterpret_cast<void *>(std::uintptr_t{address}),
+                data_.descriptor(), page * guest_page, guest_page,
+                PROT_READ | PROT_WRITE, 1, 1) == 0);
+  }
   void code_byte(std::size_t offset, std::byte value) {
     code_.put(offset, std::span{&value, 1});
     code_written(offset, 1);

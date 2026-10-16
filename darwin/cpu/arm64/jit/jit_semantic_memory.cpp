@@ -30,6 +30,8 @@ activate_native_fp_environment(CpuState &cpu) noexcept {
   __asm__ volatile("mrs %0, fpcr" : "=r"(cpu.gadget_host_fpcr) : : "memory");
   __asm__ volatile("mrs %0, fpsr" : "=r"(cpu.gadget_host_fpsr) : : "memory");
   cpu.gadget_fp_active = true;
+  /* The environment starts under the guest's FPCR (see a32_fp_standard). */
+  cpu.a32_fp_standard = 0;
   const std::uint64_t fpcr = arm64::detail::host_fpcr(cpu.fpcr);
   const std::uint64_t fpsr = cpu.fpsr;
   __asm__ volatile("msr fpcr, %0" : : "r"(fpcr) : "memory");

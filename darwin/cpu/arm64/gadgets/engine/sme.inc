@@ -54,7 +54,11 @@ NAME(uml_arm64_gadget_streaming_rows_begin):
 	streaming_row svc, fp_link_entry
 	streaming_row branch, simd_destination_resident_load
 	streaming_row add_sub_immediate_inplace_w_add_n_0, simd_fused_inplace_fmla_4h_0
+	streaming_row move_wide_packed_zero, constant_store_end
+	streaming_row test_bit_branch_z, test_bit_branch_end
+	streaming_row bitfield_shift_w_lsl, bitfield_shift_end
 	streaming_entry sysreg_fpcr_read_afp
+	streaming_entry return_x30_cached
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	streaming_entry execution_count
 #endif

@@ -13,14 +13,19 @@
   precision denormal is a nonzero number, so its product with an infinity is
   infinite, where a single-precision one is flushed under the Standard FPSCR
   value);
+- simd-convert: VCVT and VCVTR between single or double precision and 32-bit
+  integers, with fractions halfway and either side of it, the integer limits
+  and the values past them, a denormal, a NaN and an infinity, under each
+  rounding mode and flush-to-zero; and integers to floating point that round;
 - simd-memory: VLDR, VSTR, VLDM, VSTM, the deprecated FLDMX/FSTMX and the
   structure loads and stores VLD1-4/VST1-4, aimed with the memory suites'
   address scenarios, including alignment-hinted accesses at misaligned
   addresses;
 - fpscr: VMRS and VMSR, including the exception trap enables the profile
-  reads as zero and ignores writes to (decision D4);
-- fpscr-reserved: the same with Stride, Len and FZ16 set, whose behaviour is
-  the implementation's and so is recorded from hardware only.
+  reads as zero and ignores writes to (decision D4), and FZ16, which holds
+  wherever FEAT_FP16 is;
+- fpscr-reserved: the same with Stride and Len set, whose behaviour is the
+  implementation's and so is recorded from hardware only.
 """
 
 from __future__ import annotations
@@ -38,13 +43,17 @@ from a32_corpus_plan import (  # noqa: E402
 
 # FPSCR values a case starts in: rounding modes (23:22), FZ (24), DN (25),
 # AHP (26), QC (27) and the cumulative flags. Stride and Len (21:20, 18:16)
-# and FZ16 (19) stay clear: whether they stick depends on the implementation,
-# so the writes that probe them are the hardware-only fpscr-reserved suite.
+# stay clear: whether they stick depends on the implementation, so the writes
+# that probe them are the hardware-only fpscr-reserved suite. FZ16 (19) stays
+# clear too: it is FEAT_FP16's, which an oracle may lack (the Pi 4's
+# Cortex-A72 reads it as zero), so only the fpscr suite, recorded where
+# FEAT_FP16 is, writes it.
 FPSCR_MODES = (
     0x00000000, 0x00400000, 0x00800000, 0x00C00000, 0x01000000, 0x02000000, 0x03000000,
     0x04000000, 0x08000000, 0x0000009F, 0x01C00000, 0x07C0009F,
 )
-FPSCR_RESERVED_BITS = 0x003F0000
+FPSCR_LEN_STRIDE = 0x00370000
+FPSCR_FZ16 = 0x00080000
 # Fields that choose what the instruction does rather than which registers it names.
 NOT_VARIANT = {"D", "N", "M", "Vd", "Vn", "Vm", "Rn", "Rm", "Rt", "Rt2", "cond", "P", "W", "imm8", "imm6", "imm4",
                "imm4H", "imm4L", "imm3", "imm3H", "imm3L", "index_align"}
@@ -210,6 +219,95 @@ def suite_simd_steps(context: Context) -> list[Case]:
     return cases
 
 
+# VCVT between floating point and 32-bit integers ------------------------------------------------------------------------
+
+# Floating point to integer: halves and either side of them (round to nearest takes the even one), the largest values
+# below the integer limits and the first past them (saturation, IOC), a negative fraction for the unsigned forms, a
+# denormal (FZ flushes it), a NaN and an infinity.
+CONVERT_SINGLES = (0x3F000000, 0xBF000000, 0x3FC00000, 0xBFC00000, 0x40200000, 0xC0200000, 0x3F400000, 0xBF400000,
+                   0x3EFFFFFF, 0x3F000001, 0x4AFFFFFF, 0x4EFFFFFF, 0x4F000000, 0xCF000000, 0xCF000001, 0x4F7FFFFF,
+                   0x4F800000, 0x00000001, 0x80400000, 0x7FC00000, 0xFF800000)
+CONVERT_DOUBLES = (0x3FE0000000000000, 0xBFE0000000000000, 0x3FF8000000000000, 0xBFF8000000000000,
+                   0x4004000000000000, 0xC004000000000000, 0x41DFFFFFFFE00000, 0x41DFFFFFFFC00000,
+                   0xC1E0000000100000, 0xC1E0000000000000, 0x41EFFFFFFFF00000, 0x41EFFFFFFFE00000,
+                   0xBFD0000000000000, 0x0000000000000001, 0x7FF8000000000000, 0xFFF0000000000000)
+# Integer to floating point: values a single cannot hold, which round (a double holds every one).
+CONVERT_INTEGERS = (0x00000000, 0x00000001, 0xFFFFFFFF, 0x01000001, 0x01000003, 0x7FFFFFFF, 0x80000000, 0x80000001,
+                    0xFEFFFFFF, 0x7FFFFFC1)
+# FPSCR: each rounding mode, and flush-to-zero with round to nearest and toward minus infinity.
+CONVERT_ROUNDING = (0x00000000, 0x00400000, 0x00800000, 0x00C00000, 0x01000000, 0x01800000)
+# VCVT rounds toward zero whatever the mode: one directed mode and flush-to-zero.
+CONVERT_TOWARD_ZERO = (0x00400000, 0x01800000)
+# (destination, source) register numbers in the form's sizes: lanes and halves other than the first.
+CONVERT_REGISTERS = ((0, 1), (5, 2), (7, 7), (12, 30), (31, 17))
+
+
+def convert_word(context: Context, form, d: int, m: int) -> int:
+    """The form's word with S/D d and S/D m (Vd:D or D:Vd as the form's sizes say)."""
+    fields = fields_of(form)
+    word = pick_words(context, form, 1)[0][0]
+    double_destination = form.name.startswith("VCVT_vi_") and form.name.endswith("_D")
+    double_source = not form.name.startswith("VCVT_vi_") and form.name.endswith("_D")
+    for (vector, bit), number, double in ((("Vd", "D"), d, double_destination), (("Vm", "M"), m, double_source)):
+        if double:
+            word = set_field(word, *fields[vector], number & 15)
+            word = set_field(word, *fields[bit], number >> 4)
+        else:
+            word = set_field(word, *fields[vector], number >> 1)
+            word = set_field(word, *fields[bit], number & 1)
+    if usable(context, form, word) is None:
+        raise SystemExit(f"{form.name}: {word:08x} is not a usable word")
+    return word
+
+
+def suite_simd_convert(context: Context) -> list[Case]:
+    cases = []
+    to_integer = [f"{mnemonic}_{kind}_{isa}1_{size}" for mnemonic in ("VCVT", "VCVTR") for kind in ("siv", "uiv")
+                  for size in ("S", "D") for isa in ("A", "T")]
+    for name in to_integer:
+        form = context.model.by_name[name]
+        isa = form.encoding.isa
+        suffix = "a" if isa == "A32" else "t"
+        double = name.endswith("_D")
+        values = CONVERT_DOUBLES if double else CONVERT_SINGLES
+        modes = CONVERT_ROUNDING if name.startswith("VCVTR") else CONVERT_TOWARD_ZERO
+        for index, value in enumerate(values):
+            d, m = CONVERT_REGISTERS[index % len(CONVERT_REGISTERS)]
+            if double:
+                m &= 31
+            word = convert_word(context, form, d, m)
+            for mode_index, mode in enumerate(modes):
+                number = len(cases)
+                initial = {"fpscr": mode, "apsr": FLAGS[(index + mode_index) % len(FLAGS)]}
+                if double:
+                    initial[f"d{m}"] = value
+                else:
+                    initial[f"d{m >> 1}"] = (context.recipes[f"pattern-{suffix}"][f"d{m >> 1}"]
+                                             & ~(0xFFFFFFFF << 32 * (m & 1)) | value << 32 * (m & 1))
+                cases.append(Case("simd-convert", f"{name}/{index}.{mode_index}", name, ISA_LETTER[isa],
+                                  word_of(isa, word), 0, f"pattern-{suffix}", initial))
+    for name in ("VCVT_vi_A1_S", "VCVT_vi_T1_S", "VCVT_vi_A1_D", "VCVT_vi_T1_D"):
+        form = context.model.by_name[name]
+        isa = form.encoding.isa
+        suffix = "a" if isa == "A32" else "t"
+        fields = fields_of(form)
+        for signed in (0, 1):
+            for index, value in enumerate(CONVERT_INTEGERS):
+                d, m = CONVERT_REGISTERS[index % len(CONVERT_REGISTERS)]
+                if name.endswith("_D"):
+                    d &= 31
+                word = set_field(convert_word(context, form, d, m), *fields["op"], signed)
+                if usable(context, form, word) is None:
+                    raise SystemExit(f"{name}: {word:08x} is not a usable word")
+                for mode_index, mode in enumerate(CONVERT_ROUNDING[:4]):
+                    initial = {"fpscr": mode, "apsr": FLAGS[(index + mode_index) % len(FLAGS)],
+                               f"d{m >> 1}": (context.recipes[f"pattern-{suffix}"][f"d{m >> 1}"]
+                                              & ~(0xFFFFFFFF << 32 * (m & 1)) | value << 32 * (m & 1))}
+                    cases.append(Case("simd-convert", f"{name}/{signed}.{index}.{mode_index}", name,
+                                      ISA_LETTER[isa], word_of(isa, word), 0, f"pattern-{suffix}", initial))
+    return cases
+
+
 # Memory ----------------------------------------------------------------------------------------------------------------
 
 SCENARIOS = ("a", "x4", "u1", "x16", "ro", "unmapped", "zero", "last")
@@ -279,7 +377,7 @@ def suite_simd_memory(context: Context, levels=("simd",), suite="simd-memory") -
 
 # VMRS and VMSR ----------------------------------------------------------------------------------------------------------
 
-def fpscr_cases(context: Context, suite: str, values) -> list[Case]:
+def fpscr_cases(context: Context, suite: str, values, tag: str = "") -> list[Case]:
     cases = []
     for name in ("VMRS_A1_AS", "VMRS_T1_AS", "VMSR_A1_AS", "VMSR_T1_AS"):
         form = context.model.by_name[name]
@@ -300,27 +398,30 @@ def fpscr_cases(context: Context, suite: str, values) -> list[Case]:
                 initial = {"apsr": FLAGS[pattern(number) >> 8 & 3], "fpscr": values[(index + 3) % len(values)]}
                 if name.startswith("VMSR"):
                     initial[f"r{register}"] = value
-                cases.append(Case(suite, f"{name}/r{register}.{index}", name, ISA_LETTER[isa],
+                cases.append(Case(suite, f"{name}/r{register}.{tag}{index}", name, ISA_LETTER[isa],
                                   word_of(isa, word), 0, f"{RECIPES[index % 4]}-{suffix}", initial))
     return cases
 
 
 def suite_fpscr(context: Context) -> list[Case]:
-    """VMRS and VMSR: the trap-enable bits (14:8 and 15) read as zero and ignore writes."""
+    """VMRS and VMSR: the trap-enable bits (14:8 and 15) read as zero and ignore
+    writes, and FZ16 holds what is written to it."""
     values = (0x00000000, 0x03C09F9F, 0xF7C0FFFF, 0x0000FF00, 0x00001F00,
-              0xFFFFFFFF & ~FPSCR_RESERVED_BITS, 0x07C0009F, 0x00C00000, 0x0000009F, 0x08000000)
-    return fpscr_cases(context, "fpscr", values)
+              0xFFFFFFFF & ~(FPSCR_LEN_STRIDE | FPSCR_FZ16), 0x07C0009F, 0x00C00000, 0x0000009F, 0x08000000)
+    half = (FPSCR_FZ16, 0xFFFFFFFF & ~FPSCR_LEN_STRIDE, 0x03C80000, 0x0008009F)
+    return fpscr_cases(context, "fpscr", values) + fpscr_cases(context, "fpscr", half, "fz16.")
 
 
 def suite_fpscr_reserved(context: Context) -> list[Case]:
-    """VMRS and VMSR with Stride, Len and FZ16 in play: what sticks is the implementation's."""
-    values = (0x00370000, 0xFFFFFFFF, 0x00300000, 0x00080000, 0x003F0000, 0x00010000, 0x00200000, 0x00070000)
+    """VMRS and VMSR with Stride and Len in play: what sticks is the implementation's."""
+    values = (0x00370000, 0xFFF7FFFF, 0x00300000, 0x00040000, 0x00170000, 0x00010000, 0x00200000, 0x00070000)
     return fpscr_cases(context, "fpscr-reserved", values)
 
 
 SUITES = {
     "simd": suite_simd,
     "simd-steps": suite_simd_steps,
+    "simd-convert": suite_simd_convert,
     "simd-memory": suite_simd_memory,
     "fpscr": suite_fpscr,
     "fpscr-reserved": suite_fpscr_reserved,

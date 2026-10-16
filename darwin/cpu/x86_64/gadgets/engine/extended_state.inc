@@ -165,8 +165,7 @@ Lx86_extended_write_done\@:
 	helper_call uml_x86_64_gadget_publish_code_write
 Lx86_extended_published\@:
 	add sp, sp, #Lx86_extended_size
-	ubfx x8, x23, #56, #4
-	add x8, x22, x8
+	instruction_rip x8, 1
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
@@ -187,8 +186,7 @@ Lx86_extended_published\@:
 Lx86_extended_write_done\@:
 	publish_pending_code x25, \size
 	add sp, sp, #Lx86_extended_size
-	ubfx x8, x23, #56, #4
-	add x8, x22, x8
+	instruction_rip x8, 1
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
@@ -346,8 +344,8 @@ Lx86_extended_restore_avx_done\@:
 
 /* FXSAVE and FXRSTOR require their image aligned to 16 bytes, XSAVE and
  * XRSTOR to 64, and raise #GP(0) at the instruction for one that is not,
- * before any access. effective_address leaves the instruction's address in
- * x22, which the #GP exit stores as RIP. */
+ * before any access. effective_address leaves the instruction's stream word
+ * in x23, which the #GP exit finds its address from. */
 .macro extended_state_aligned mask
 	tst x7, #\mask
 	b.ne Lx86_extended_misaligned

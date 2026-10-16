@@ -143,6 +143,110 @@ void thumb_fused_add(unsigned long generation) {
   require(block_instructions(fixture, 0, 8, true) == 5);
 }
 
+/* A branch out of the run: LDREX, a compare or CBNZ, a conditional branch to
+ * the exit, then the STREX. The run is one fused block with no helper exit
+ * on either arm, and the taken arm closes the monitor. */
+void branch_out_of_the_run(unsigned long generation) {
+  const auto arm = [&](Fixture &fixture, unsigned mode) {
+    // mode 0: ldrex r3; cmp r3,r1; bne out; strex r12,r2; cmp r12,#0; bne 0.
+    // mode 1: ldr r6,[r0]; cmp r5,#0 in the previous block; ldrex r2;
+    //         bne out; strex r3,r1; cmp r3,#0; bne the compare.
+    // mode 2: cmp r5,#0; ldrex r2; strexeq r3,r1; cmpeq r3,#1; beq the
+    // compare. A first store to a page may fail, as any may.
+    if (mode == 2)
+      fixture.code32(0, {0xe590'6000U, 0xe355'0000U, 0xe190'2f9fU,
+                         0x0180'3f91U, 0x0353'0001U, arm_branch(eq, 5, 1),
+                         arm_svc});
+    else if (mode == 0)
+      fixture.code32(0, {0xe190'3f9fU, 0xe153'0001U, arm_branch(ne, 2, 6),
+                         0xe180'cf92U, 0xe35c'0000U, arm_branch(ne, 5, 0),
+                         arm_svc});
+    else
+      fixture.code32(0, {0xe590'6000U, 0xe355'0000U, 0xe190'2f9fU,
+                         arm_branch(ne, 3, 7), 0xe180'3f91U, arm_cmp_r3_0,
+                         arm_branch(ne, 6, 1), arm_svc});
+  };
+  for (const unsigned mode : {0U, 1U, 2U}) {
+    for (const bool stays : {false, true}) {
+      Fixture fixture{generation + mode};
+      arm(fixture, mode);
+      fixture.data32(0, 77);
+      auto cpu = Fixture::task(false);
+      cpu.registers[0] = data_base;
+      cpu.registers[1] = mode == 0 ? (stays ? 78 : 77) : 99;
+      cpu.registers[2] = 99;
+      cpu.registers[5] = stays ? 1 : 0;
+      cpu.registers[12] = 0xdead;
+      cpu.registers[3] = 0xbeef;
+      cpu.exclusive_size = 4;
+      ::uml::cpu::arm64::jit::a32::reset_helper_exits();
+      ::uml::cpu::arm64::jit::a32::count_helper_exits(true);
+      const auto result = fixture.run(cpu);
+      ::uml::cpu::arm64::jit::a32::count_helper_exits(false);
+      require(result.reason == ExitReason::system_call);
+      require(::uml::cpu::arm64::jit::a32::helper_exit_total() == 0);
+      require(cpu.exclusive_size == 0);
+      if (mode == 0) {
+        require(cpu.registers[3] == 77);
+        require(fixture.read32(0) == (stays ? 77U : 99U));
+        require(cpu.registers[12] == (stays ? 0xdeadU : 0U));
+      } else {
+        require(cpu.registers[2] == 77);
+        require(fixture.read32(0) == (stays ? 77U : 99U));
+        require(cpu.registers[3] == (stays ? 0xbeefU : 0U));
+      }
+    }
+  }
+  Fixture fixture{generation + 3};
+  arm(fixture, 0);
+  require(block_instructions(fixture, 0, 7, false) == 6);
+}
+
+void thumb_branch_out_of_the_run(unsigned long generation) {
+  // 1: ldrex r2,[r0]; cmp r2,r1; bne.n 2f; strex r3,r4,[r0]; cmp r3,#0;
+  // bne.n 1b; 2: svc
+  // 1: ldrex r2,[r0]; cbnz r2,2f; strex r3,r1,[r0]; cmp r3,#0; bne.n 1b;
+  // 2: svc
+  for (const unsigned form : {0U, 1U}) {
+    for (const bool stays : {false, true}) {
+      Fixture fixture{generation + form};
+      if (form == 0)
+        fixture.code16(0, {0xe850, 0x2f00, 0x428a, thumb_branch(ne, 3, 8),
+                           0xe840, 0x4300, 0x2b00, thumb_branch(ne, 7, 0),
+                           0xdf00});
+      else
+        fixture.code16(0, {0xe850, 0x2f00, 0xb91a, 0xe840, 0x1300, 0x2b00,
+                           thumb_branch(ne, 6, 0), 0xdf00});
+      fixture.data32(0, form == 0 ? 55 : (stays ? 3 : 0));
+      auto cpu = Fixture::task(true);
+      cpu.registers[0] = data_base;
+      cpu.registers[1] = form == 0 ? (stays ? 56 : 55) : 21;
+      cpu.registers[4] = 21;
+      cpu.registers[3] = 0xbeef;
+      cpu.exclusive_size = 4;
+      ::uml::cpu::arm64::jit::a32::reset_helper_exits();
+      ::uml::cpu::arm64::jit::a32::count_helper_exits(true);
+      const auto result = fixture.run(cpu);
+      ::uml::cpu::arm64::jit::a32::count_helper_exits(false);
+      require(result.reason == ExitReason::system_call);
+      require(::uml::cpu::arm64::jit::a32::helper_exit_total() == 0);
+      require(cpu.exclusive_size == 0);
+      require(cpu.registers[2] == (form == 0 ? 55U : (stays ? 3U : 0U)));
+      if (stays) {
+        require(fixture.read32(0) == (form == 0 ? 55U : 3U));
+        require(cpu.registers[3] == 0xbeefU);
+      } else {
+        require(fixture.read32(0) == 21U);
+        require(cpu.registers[3] == 0U);
+      }
+    }
+  }
+  Fixture fixture{generation + 2};
+  fixture.code16(0, {0xe850, 0x2f00, 0x428a, thumb_branch(ne, 3, 8), 0xe840,
+                     0x4300, 0x2b00, thumb_branch(ne, 7, 0), 0xdf00});
+  require(block_instructions(fixture, 0, 9, true) == 6);
+}
+
 void byte_and_halfword_runs(unsigned long generation) {
   Fixture fixture{generation};
   // 1: ldrexb r2,[r0]; add r2,r2,#1; strexb r3,r2,[r0]; cmp r3,#0; bne 1b
@@ -373,6 +477,8 @@ int main() {
   atomic_add_loop_fuses_and_counts(0x1a32'0401);
   conditional_store_compare_and_swap(0x1a32'0402);
   thumb_fused_add(0x1a32'0403);
+  branch_out_of_the_run(0x1a32'0410);
+  thumb_branch_out_of_the_run(0x1a32'0420);
   byte_and_halfword_runs(0x1a32'0404);
   faults_and_alignment(0x1a32'0406);
   two_threads_count_exactly(0x1a32'0407);

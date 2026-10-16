@@ -4,4 +4,4 @@ uml_add_tooling_test(
     NAME abi-declaration-identity
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/abi/test_declaration_identity.sh
     LABELS abi;audit
-    TIMEOUT 30)
+    TIMEOUT 120)

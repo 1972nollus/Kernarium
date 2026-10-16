@@ -28,13 +28,18 @@ import run_vk_gl_cts as common  # noqa: E402
 
 TOKEN = "a" * 32
 
+# How long a test waits for a child process or a worker thread it started. The
+# wait is a hard bound that only a failure reaches, so it outlasts a host under
+# many times its normal load instead of being sized to the time a test needs.
+WAIT_SECONDS = 60
+
 
 def setting(path: Path) -> str:
     return json.dumps({"path": str(path), "token": TOKEN})
 
 
 def wait_for(path: Path) -> str:
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + WAIT_SECONDS
     while time.monotonic() < deadline:
         if path.exists() and (value := path.read_text()):
             return value
@@ -128,7 +133,7 @@ class GuestProcessTests(unittest.TestCase):
             finally:
                 os.close(go_write)
                 if helper.ident is not None:
-                    helper.join(timeout=5)
+                    helper.join(timeout=WAIT_SECONDS)
                 for descriptor in (go_read, done_read, done_write):
                     os.close(descriptor)
                 for number, handler in previous.items():
@@ -330,7 +335,7 @@ class GuestProcessTests(unittest.TestCase):
                 finally:
                     if process.poll() is None:
                         process.kill()
-                    process.wait(timeout=5)
+                    process.wait(timeout=WAIT_SECONDS)
             self.assertEqual(process.returncode, -signal.SIGKILL)
             self.assertEqual(sorted(path.name for path in scratch.iterdir()), [other.name])
 
@@ -387,7 +392,7 @@ class GuestProcessTests(unittest.TestCase):
                 repeats.start()
                 campaign.stop_owned_group(process, grace=5, term_grace=3, kill_grace=2,
                                           ownership=(journal, TOKEN))
-                repeats.join(timeout=2)
+                repeats.join(timeout=WAIT_SECONDS)
                 self.assertFalse(repeats.is_alive())
                 owned.validate_journal(journal, TOKEN, required=True)
                 self.assertIsNotNone(process.poll())
@@ -401,7 +406,7 @@ class GuestProcessTests(unittest.TestCase):
                 # Exact test-owned handles/record only; never scan for emulators.
                 if process.poll() is None:
                     process.kill()
-                process.wait(timeout=5)
+                process.wait(timeout=WAIT_SECONDS)
                 if campaign.group_exists(process.pid):
                     os.killpg(process.pid, signal.SIGKILL)
                 if child_pid is not None:
@@ -410,7 +415,7 @@ class GuestProcessTests(unittest.TestCase):
                     except ProcessLookupError:
                         pass
                 unrelated.kill()
-                unrelated.wait(timeout=5)
+                unrelated.wait(timeout=WAIT_SECONDS)
 
 
 if __name__ == "__main__":

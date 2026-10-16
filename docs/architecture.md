@@ -367,6 +367,36 @@ Only MOPS and a literal load whose target does not fit 48 bits keep a PC word.
 `arm64-gadget-memory-fault-position` faults one instruction of each family at
 several positions, directly and through a link.
 
+A constant stored to a register is one stream word when it fits 48 bits or is
+ones above bit 47: the destination's CpuState offset in bits 63:48 over the
+value's low 48 bits, which MOVZ and MOVN take below a shift of 48, ADR and
+ADRP (with the ADD that folds into them) and the emulated identification
+registers when their value fits. Any other value keeps
+`move_wide_constant` and its two words. `arm64-gadget-packed-immediate` runs
+each form against the architectural definition.
+
+A TBZ or TBNZ carries no mask word: its operand word holds the bit number in
+bits 5:0, where the register shift that tests it reads it, and the register's
+CpuState offset in bits 31:16, and an inlined branch's retire suffix sits in
+bits 47:32. The `test_branch` entries of the former form stay in the bank
+unselected, because removing them would move every later entry.
+`arm64-gadget-test-bit-branch` runs every bit, both polarities, XZR and each
+shape the builder emits.
+
+A logical immediate on W registers shares the word that names its registers,
+in bits 63:32 above the destination and source fields. A 64-bit immediate has a
+word of its own, and a form whose destination is its source, which bakes the
+register into the entry, has that word alone. `arm64-gadget-packed-immediate`
+runs every W encoding and a sample of the X ones in each shape.
+
+An SBFM or UBFM is a gadget pointer and one operand word: the two shifts that
+compute it, whose amounts the builder derives from the encoding, and the
+CpuState offsets of its source and destination. Only BFM keeps its two mask
+words. The SBFM and UBFM entries of the former form stay in the bank
+unselected, because removing them would move every later entry. A RET through
+X30 is the gadget pointer and its indirect site; any other register keeps the
+operand that names it.
+
 The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
 too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and
 order file. It follows the arm64 region in an image that carries both and
@@ -431,7 +461,9 @@ engines in both page profiles, and `guest-exclusive-progress-gadgets` and
 `guest-exclusive-progress-jit` check it in a guest.
 
 Both engines complete WFE and WFI at once and treat SEV and SEVL as no-ops,
-so no wait ever depends on an event. AT_HWCAP therefore always carries
+so no wait ever depends on an event. Completing WFI is a deliberate deviation
+from arm64 Linux, which traps WFI at EL0 and kills the program with SIGILL, so
+no working program depends on either behaviour. AT_HWCAP therefore always carries
 EVTSTRM, arm64 Linux's promise that WFE wakes at least once per event-stream
 period, 100 µs, without an SEV.
 `guest-gadgets-smoke` and `guest-jit-smoke` time a WFE loop against that
@@ -818,31 +850,88 @@ The JIT lowers AArch32 in `cpu/arm64/jit/a32`, beside the A64 compiler and
 without changing it. An A32 or T32 block is decoded by the shared decoder and
 compiled by its own compiler, which reuses the A64 compiler's register
 residency, flag machine, cold paths, direct and indirect links, tracked stores
-and publication: R0-R14 are resident host registers written back at every
-exit, NZCV is the host's with the lazy-flag states of the A64 compiler, a
-condition is a branch over the body, and a link's target is the key. Every exit
+and publication: R0-R14 are resident host registers (each core register has
+one: x3-x7, x12, x13, x17 and the callee-saved x22-x28, which an AArch32
+translation's frame saves and the A64 translations never touch). A linked
+translation keeps them there from block to block: the registers are loaded
+before the block's internal entry, which only the executor reaches, a link
+leaves them in their hosts, and every return to the executor, a refused link
+included, writes all fifteen back; its link sequences therefore use x10 and
+x11, and no lowering may use a host register of a core register as scratch.
+An unlinked translation (the tracked-store variant, a single instruction) loads
+at first use and writes back at every exit. NZCV is the host's with the lazy-flag states of the A64 compiler, a
+condition is a branch over the body (a conditional data-processing instruction
+that sets no flags and writes no PC, and MOVW, instead runs on both arms and
+a CSEL on the host flags keeps its result only where the condition holds, so
+no data-dependent branch is left to mispredict), and a link's target is the
+key. Every exit
 whose successor is static (a branch, the fall-through of a block the 60
 instructions of a window cut short, the arm of a conditional instruction or
 CBZ that is not taken) is a link while the ITSTATE that follows is zero, so a
-straight run chains like a loop. Memory
-takes the shared inline TLB sequence after a 32-bit address and the alignment
-rule of the form; the Armv8 load-acquire and store-release (LDA, STL and their
+straight run chains like a loop. A chain states what is set up for the whole
+run, not what its first block needs: the floating-point state is loaded, and
+the native environment is on whenever any earlier block switched it on, so a
+chain that began at an integer block links into a floating-point one and back
+instead of returning to the executor at each edge. An indirect branch of
+AArch32 code looks in its site's two cells and then in the executor's
+direct-mapped table of the targets its misses have trained (4096 entries,
+tagged with the link epoch so that the translation of the same address in
+another address space or after a code change never matches), and returns to the
+executor only when both miss: a function with many callers, such as libm's
+`lroundf`, has a return to each of them. A conditional branch (B with a
+condition, CBZ, CBNZ) does not end a block: the block goes on with its
+registers and flags in the host, while the taken path leaves by a cold side
+exit that publishes what is dirty at the branch and links to the target. A
+branch back is a loop's end or a `continue`, and the side exit costs the link
+of the taken path either way. An unconditional branch ends the block, and so
+does a conditional one back to the translation's own first instruction: that
+block is a loop in the host. A probe compilation records the vector registers it holds at
+the back edge and the core registers the body names, the
+translation loads them before the loop head and counts
+every one as dirty so that each exit writes them back, and the back edge is the
+chain budget's test for one more iteration and a branch. The iteration that
+cannot be afforded leaves like any linked exit. Memory
+takes the inline TLB sequence after a 32-bit address and the alignment
+rule of the form (on 4 KiB pages the entry index comes from the address's own
+bits and the tag compare shifts the address, two instructions fewer than the
+A64 compiler's). An access already checked to be aligned to its size (a
+single-precision VLDR or VSTR, a Neon transfer whose alignment hint covers its
+bytes, an ordered or exclusive access) is not tested for crossing a page. On
+4 KiB pages any other access of more than one byte compares the entry's tag
+with the page of its last byte, so a crossing access misses (the index never
+gives neighbouring pages of a 32-bit address space one entry) and its cold path
+tells it from a miss; 16 KiB pages test the offset before the probe. A
+single load or store of a byte, halfword or word does not add the entry's
+delta to the address in a register of its own: the access takes the delta in
+its addressing mode (`[x9, w8, uxtw]`), and the miss path leaves the host
+pointer in x9 and zero in x8; a pair, a multiple transfer, an acquire or
+release and a store that records its host range keep the host pointer in x8.
+The Armv8 load-acquire and store-release (LDA, STL and their
 byte and halfword forms) are an alignment-checked LDAR and STLR. A
 load-exclusive, up to four register instructions and the store-exclusive
 (acquire and release forms included) on the same address at the start of a
 block become one host load-exclusive and store-exclusive, so the guest's
 monitor is the host's; a failed store leaves the status to the guest's retry
-loop. What the lowering declines (an access across a page or one that must
-fault, an exclusive that does not fuse, the parallel arithmetic) leaves the
-block through `uml_arm64_jit_a32_execute`, a terminal helper that runs the one
-instruction in the AArch32 semantic library over the TLB, with the library's
-fault ordering. The exclusives run there too, over the JIT's versioned software
-reservation: the helper overrides the library's monitor hooks, because the
-guest monitor is shared with the tracked stores and the fused host exclusives
-and the library's default compare-and-swap monitor is not. An entry in the middle of an IT block and a single
-step run one instruction in the single-instruction arena, with the IT state
-the exit recorded. Translations validate their saved guest bytes in
-the ISA's unit, so a halfword of a 32-bit T32 instruction rewritten under a
+loop. A conditional forward branch or CBZ/CBNZ between the two (the
+compare-and-swap that leaves on a mismatch, the try-lock) stays in the run as
+a side exit whose taken arm clears the monitor and links to the target. The
+parallel add and subtract forms run in the vector unit on the
+packed lanes (UMAX and UMIN stand in for the unsigned saturating forms and a
+widening add for GE, so the host's QC flag is never set). What the lowering
+declines (an access across a page or one that must fault, an exclusive that
+does not fuse, the signed saturating parallel forms, SSAT16, USAT16 and USAD8)
+leaves the block through `uml_arm64_jit_a32_execute`, a terminal helper that
+runs the one instruction in the AArch32 semantic library over the TLB, with
+the library's fault ordering. The helper restores the host's FPCR and FPSR
+unless the instruction is a memory transfer or integer arithmetic, which
+leave the guest's native environment installed for the next block. The
+exclusives run there too, over the JIT's versioned software reservation: the
+helper overrides the library's monitor hooks, because the guest monitor is
+shared with the tracked stores and the fused host exclusives and the library's
+default compare-and-swap monitor is not. An entry in the middle of an IT block
+and a single step run one instruction in the single-instruction arena, with
+the IT state the exit recorded. Translations validate their saved guest bytes
+in the ISA's unit, so a halfword of a 32-bit T32 instruction rewritten under a
 translation is seen. Executable memory comes only from the arena the A64 JIT
 already uses; the A32 files allocate and publish none.
 
@@ -850,22 +939,55 @@ The JIT's AArch32 vector support (VFP and Advanced SIMD on D0-D31) keeps Q0-Q15
 in the A64 compiler's vector residency: CpuState vectors 0-15 are the resident
 host registers V16-V31, a D register is the low or high half of its Q and an S
 register a 32-bit lane, so a narrower operand is staged in a scratch register
-and a result is inserted into its half or lane. A VFP instruction runs under the
+and a result is inserted into its half or lane. An insert rewrites the whole Q,
+so in a run of unconditional single-precision VFP instructions an S register
+that was read from its lane or written also keeps a copy, a shadow, in one of
+V0-V4 and V7, which the run's later reads take instead of the lane: operations
+on different lanes of one Q do not wait for each other's inserts. The Q
+register still takes every write, so an exit, a link and a cold path need no
+shadow; a conditional, double-precision or Advanced SIMD instruction, or any
+other that may write an S register or use those host registers, forgets them,
+and the TLB miss bridge preserves V0-V7. A VFP instruction runs under the
 guest's FPCR and FPSR, which the executor installs for a block that holds one
 (the native floating-point environment of the A64 compiler); an Advanced SIMD
 floating-point instruction runs under the Standard FPSCR value (FZ and DN set,
-round to nearest, AHP and FZ16 the guest's), which the translation sets before
-the first one and puts back at every exit and in a conditional arm that changed
-it, so a block always begins and ends under the guest's FPCR and a link keeps
-its meaning. A saturating instruction sets QC in the host FPSR, which is the
-guest's. VRECPS and VRSQRTS round the product before the step, as the AArch32
-pseudocode does and the A64 instructions do not, and answer 2.0 or 1.5 for an
-infinity times a zero without raising Invalid Operation. VLDR, VSTR and the
-register-list transfers move whole Q registers where the list is aligned to
-one; the structure loads and stores use the host LDn and STn on scratch
-registers. They share the scalar transfers' TLB sequence and alignment rule,
-and a page crossing, a faulting alignment, a PC base or a list past the
-register file runs the instruction in the semantic library instead.
+round to nearest, AHP and FZ16 the guest's). The host FPCR keeps the mode it
+has across exits and links, as the gadget engine's does:
+`CpuState::a32_fp_standard` records it, the executor clears it where it
+activates the environment, and a translation tests the byte at the first
+instruction that needs a mode and writes the FPCR only when the mode differs.
+The two modes part only on a nonzero denormal operand, a NaN operand, a
+result that is tiny before rounding and a rounding mode other than to nearest,
+so a Neon VMAX, VMIN, VADD, VSUB, VMUL, VMLA or VMLS of single precision in a
+run of at most eight Neon floating-point operations that a VFP instruction
+(or the end of the block) follows runs under the guest's FPCR behind integer
+tests of its operands, and under the Standard value from a cold path when a
+test fails; a longer run switches once, and so does a loop that holds such
+operations and no VFP instruction or FPSCR write (the probe compilation counts
+them): it sets the Standard value before its head and runs every lap unguarded.
+A run under the guest's FPCR leaves its cumulative
+exception flags behind, so what only it would raise is found before it: a
+product whose operand exponents sum to less than 129 (it may underflow,
+inexactly) is tested before the multiplication, and a sum needs no such test
+because a tiny sum of normal numbers is exact. A saturating
+instruction sets QC in the host FPSR, which is the guest's. A VCMP
+leaves its flags in FPSCR's copy in `CpuState` and in the host NZCV, so an
+unconditional VMRS APSR_nzcv, FPSCR right after it keeps them there and
+the branch on them waits for no reload. VRECPS and VRSQRTS
+round the product before the step, as the AArch32 pseudocode does and the A64
+instructions do not, and answer 2.0 or 1.5 for an infinity times a zero
+without raising Invalid Operation. VLDR, VSTR and the register-list transfers
+move whole Q registers where the list is aligned to one; the structure loads
+and stores use the host LDn and STn on scratch registers. They share the
+scalar transfers' TLB sequence and alignment rule. A faulting alignment, a PC
+base or a list past the register file runs the instruction in the semantic
+library instead, as does a store that crosses a page. A load of at most 32
+bytes that crosses a page stays in the translation: its cold path probes the
+TLB for both pages and, when the two mappings are adjacent in the host, reads
+through the first as within one page, and otherwise copies the last 32 bytes
+of the first page and the first 32 of the second side by side into
+`CpuState::a32_cross` and reads from there at the guest's offset. A page
+missing from the TLB takes the library, which fills it.
 
 At the complete level the JIT presents the Armv8 extensions as well, each where
 the host has its A64 feature: it decodes against `a32_decode_profile`, the
@@ -981,7 +1103,11 @@ The software TLB keys its entries by guest page number. A same-page transfer
 compares the page of its final byte against the way its first byte indexes: the
 16 KiB direct-mapped index never places neighbouring pages in one set, so a
 crossing transfer can only miss and is recognized on the cold path, while the
-folded 4 KiB index keeps the explicit crossing check ahead of the lookup.
+folded 4 KiB index keeps the explicit crossing check ahead of the lookup. The
+fold maps pages n and n + 1 to one set only when n has 25 trailing ones, which
+a 32-bit address cannot, so the AArch32 gadgets' probe (`a32_translate`) keys
+by the final byte on 4 KiB pages too and computes the index with one xor and
+one extract.
 
 Guest debuggers depend on two kernel/host contracts. To single-step a task,
 Linux sets the architectural step bit in the entry registers (arm64 PSTATE.SS,

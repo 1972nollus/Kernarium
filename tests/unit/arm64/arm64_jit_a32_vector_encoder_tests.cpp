@@ -459,6 +459,16 @@ void vector_encoders_match_llvm_mc() {
     check("fsqrt v3.2s, v4.2s", enc::vec::float_misc(false, vec::fsqrt, false, 3, 4), 0x2ea1f883U);
     check("fsqrt v3.4s, v4.4s", enc::vec::float_misc(true, vec::fsqrt, false, 3, 4), 0x6ea1f883U);
     check("fsqrt v3.2d, v4.2d", enc::vec::float_misc(true, vec::fsqrt, true, 3, 4), 0x6ee1f883U);
+    check("fcvtzs s5, s4", enc::vec::float_misc_scalar(vec::fcvtzs, false, 5, 4), 0x5ea1b885U);
+    check("fcvtzu s5, s4", enc::vec::float_misc_scalar(vec::fcvtzu, false, 5, 4), 0x7ea1b885U);
+    check("fcvtns s5, s4", enc::vec::float_misc_scalar(vec::fcvtns, false, 5, 4), 0x5e21a885U);
+    check("fcvtnu s5, s4", enc::vec::float_misc_scalar(vec::fcvtnu, false, 5, 4), 0x7e21a885U);
+    check("fcvtps s5, s4", enc::vec::float_misc_scalar(vec::fcvtps, false, 5, 4), 0x5ea1a885U);
+    check("fcvtpu s5, s4", enc::vec::float_misc_scalar(vec::fcvtpu, false, 5, 4), 0x7ea1a885U);
+    check("fcvtms s5, s4", enc::vec::float_misc_scalar(vec::fcvtms, false, 5, 4), 0x5e21b885U);
+    check("fcvtmu s5, s4", enc::vec::float_misc_scalar(vec::fcvtmu, false, 5, 4), 0x7e21b885U);
+    check("scvtf s5, s4", enc::vec::float_misc_scalar(vec::scvtf, false, 5, 4), 0x5e21d885U);
+    check("ucvtf s5, s4", enc::vec::float_misc_scalar(vec::ucvtf, false, 5, 4), 0x7e21d885U);
     check("frecpe v3.2s, v4.2s", enc::vec::float_misc(false, vec::frecpe, false, 3, 4), 0x0ea1d883U);
     check("frecpe v3.4s, v4.4s", enc::vec::float_misc(true, vec::frecpe, false, 3, 4), 0x4ea1d883U);
     check("frecpe v3.2d, v4.2d", enc::vec::float_misc(true, vec::frecpe, true, 3, 4), 0x4ee1d883U);

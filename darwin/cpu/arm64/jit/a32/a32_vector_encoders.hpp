@@ -126,6 +126,12 @@ enum FloatMisc : unsigned {
 	       (((op >> 6) & 1U) << 23) | (double_precision ? 1U << 22 : 0U) |
 	       ((op & 31U) << 12) | (n << 5) | d;
 }
+/* The scalar form, 01 U 11110: S n to S d (or D to D), as SCVTF S5, S4. */
+[[nodiscard]] constexpr std::uint32_t float_misc_scalar(FloatMisc op,
+	bool double_precision, unsigned d, unsigned n) noexcept
+{
+	return float_misc(true, op, double_precision, d, n) | 1U << 28;
+}
 
 /* FCVTN and FCVTL (half <-> single, single <-> double): size bit 0 selects
  * the wider type. */
@@ -491,6 +497,13 @@ enum FloatInt : unsigned {
 	const unsigned opc = log2_size == 4U ? 3U : 1U;
 	return 0x3c00'0000U | (size << 30) | (opc << 22) |
 	       ((static_cast<unsigned>(offset) & 0x1ffU) << 12) | (n << 5) | t;
+}
+/* An LDUR or STUR at offset 0 as the register-offset form that adds the
+ * zero-extended W index m: [Xn, Wm, uxtw]. */
+[[nodiscard]] constexpr std::uint32_t indexed_uxtw(std::uint32_t transfer,
+	unsigned m) noexcept
+{
+	return transfer | 0x0020'4800U | (m << 16);
 }
 [[nodiscard]] constexpr std::uint32_t stur_simd(unsigned log2_size,
 	unsigned t, unsigned n, int offset) noexcept

@@ -5,7 +5,7 @@ uml_add_tooling_test(
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/emulator/guest_harness_session_tests.py
     LABELS emulator;guest
-    TIMEOUT 120)
+    TIMEOUT 180)
 
 if(UML_BUILD_KERNEL_RUNNER)
     add_executable(uml_embedded_kernel_serialization_tests

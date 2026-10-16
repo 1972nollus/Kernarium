@@ -184,7 +184,7 @@ JitCompilerFamilies::allocate_gpr_slot(unsigned guest,
   if (!gpr_cache_enabled_ || (guest == 31U && !stack_pointer))
     return std::nullopt;
   stack_pointer = guest == 31U && stack_pointer;
-  for (std::size_t index = 0; index < gpr_slots_.size(); ++index) {
+  for (std::size_t index = 0; index < gpr_host_limit_; ++index) {
     auto &slot = gpr_slots_[index];
     /* A ZA slice index names W12-W15, so a streaming translation keeps
      * x12 free for the guest index (design 4.2). */
@@ -595,7 +595,10 @@ void JitCompilerFamilies::store_gpr(unsigned host, unsigned guest,
 std::uint16_t JitCompilerFamilies::dirty_gpr_mask() const noexcept {
   std::uint16_t mask = 0;
   for (std::size_t index = 0; index < gpr_slots_.size(); ++index)
-    if (gpr_slots_[index].dirty)
+    /* Kept across links, every binding is as new as the last block's: the
+     * memory behind it is not current. */
+    if (resident_across_links_ ? gpr_slots_[index].guest != unbound_guest
+                               : gpr_slots_[index].dirty)
       mask |= static_cast<std::uint16_t>(1U << index);
   return mask;
 }
@@ -614,6 +617,18 @@ void JitCompilerFamilies::flush_gprs(std::uint16_t mask) {
     const auto &slot = gpr_slots_[index];
     if ((mask & (1U << index)) == 0U || slot.guest == unbound_guest)
       continue;
+    if (resident_across_links_ && index + 1U < gpr_slots_.size()) {
+      /* Two bindings of neighbouring guest registers are one store. */
+      const auto &next = gpr_slots_[index + 1U];
+      if ((mask & (2U << index)) != 0U && next.guest == slot.guest + 1U &&
+          !slot.stack_pointer && !next.stack_pointer) {
+        emitter.store_pair_x(resident_gpr_hosts[index],
+                             resident_gpr_hosts[index + 1U], 15,
+                             register_offset(slot.guest, false));
+        ++index;
+        continue;
+      }
+    }
     emitter.store_x(resident_gpr_hosts[index], 15,
                     register_offset(slot.guest, slot.stack_pointer));
   }
@@ -660,8 +675,11 @@ void JitCompilerFamilies::flush_exit_gprs() {
 }
 
 void JitCompilerFamilies::flush_link_transition_state() {
-  const auto gpr_mask =
-      exit_gpr_mask_set_ ? exit_gpr_mask_ : dirty_gpr_mask();
+  /* The successor takes the core registers from the hosts. */
+  const std::uint16_t gpr_mask =
+      resident_across_links_ ? 0U
+      : exit_gpr_mask_set_   ? exit_gpr_mask_
+                             : dirty_gpr_mask();
   const auto vector_mask =
       exit_vector_mask_set_ ? exit_vector_mask_ : dirty_vector_mask();
   flush_gprs(gpr_mask);
@@ -768,7 +786,9 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
    * linked-exit sequence publishes the ordinary resident state above.
    */
   assume_flags_in_memory();
-  set_exit_gpr_mask(0);
+  /* Where the registers stay in the host, the paths that return to the
+   * executor write them back all. */
+  set_exit_gpr_mask(resident_across_links_ ? dirty_gpr_mask() : 0);
   set_exit_vector_mask(0);
   /* The successor runs in this translation's mode: nothing in a block
    * changes SVCR and then reaches a linked exit. */
@@ -792,8 +812,10 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
   }
 
   const auto fallback = emitter.make_label();
+  const unsigned record = link_pointer_;
+  const unsigned scratch = link_scratch_;
   emitter.load_relocatable_pointer(
-      12, reinterpret_cast<std::uintptr_t>(link),
+      record, reinterpret_cast<std::uintptr_t>(link),
       JitRelocationKind::direct_link, key);
   /*
    * Subtract the completed source while the descriptor pointer load is in
@@ -803,12 +825,12 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
    * data never contributes to the indexed native branch target.
    */
   emitter.subtract_immediate(20, 20, static_cast<unsigned>(count));
-  emitter.load_pair_x(16, 9, 12, 0);
-  emitter.load_w(13, 12, offsetof(JitBlockLink, allowed_selectors));
-  emitter.logical_shift_right_variable(13, 13, 21);
-  emitter.test_zero(fallback, 13, 0, false);
-  emitter.load_x(13, 12, offsetof(JitBlockLink, internal_entry));
-  emitter.compare_zero(fallback, 13, true, false);
+  emitter.load_pair_x(16, 9, record, 0);
+  emitter.load_w(scratch, record, offsetof(JitBlockLink, allowed_selectors));
+  emitter.logical_shift_right_variable(scratch, scratch, 21);
+  emitter.test_zero(fallback, scratch, 0, false);
+  emitter.load_x(scratch, record, offsetof(JitBlockLink, internal_entry));
+  emitter.compare_zero(fallback, scratch, true, false);
 
   emitter.compare_register(20, 9);
   emitter.branch_condition(fallback, 3); // LO
@@ -820,7 +842,7 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
    * Every successor exit therefore returns through the one frame established
    * by the initial C++ entry.
    */
-  emitter.branch_register(13);
+  emitter.branch_register(scratch);
 
   emitter.bind(fallback);
   emitter.add_immediate(20, 20, static_cast<unsigned>(count));
@@ -830,7 +852,7 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
 
 void JitCompilerFamilies::emit_indirect_linked_exit(
     unsigned target_host, bool writes_link, std::uint64_t source_pc,
-    std::size_t count) {
+    std::size_t count, bool target_table) {
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
   /*
    * Preserve the architectural target before BLR can replace a resident X30
@@ -852,7 +874,7 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
    * Ordinary CpuState and NZCV are canonical before host-only comparisons.
    */
   assume_flags_in_memory();
-  set_exit_gpr_mask(0);
+  set_exit_gpr_mask(resident_across_links_ ? dirty_gpr_mask() : 0);
   set_exit_vector_mask(0);
 
   /* The site and every target it trains belong to this translation's mode;
@@ -874,8 +896,12 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
   const auto miss = emitter.make_label();
   const auto fallback = emitter.make_label();
   const auto undo_and_return_to_cpp = emitter.make_label();
+  /* The site is in x13 (x11 where the registers stay in the host), the
+   * matched record in x12 (x10). */
+  const unsigned record = link_pointer_;
+  const unsigned site_register = link_scratch_;
   emitter.load_relocatable_pointer(
-      13, reinterpret_cast<std::uintptr_t>(site),
+      site_register, reinterpret_cast<std::uintptr_t>(site),
       JitRelocationKind::indirect_link, source_key);
   /*
    * Hide the independent budget update under the dependent PIC descriptor
@@ -884,7 +910,7 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
   emitter.subtract_immediate(20, 20, static_cast<unsigned>(count));
   const auto load_entry = [&](std::size_t offset) {
     /* ldp x9, x12, [x13, #offset]: {guest target, host entry table}. */
-    emitter.load_pair_x(9, 12, 13,
+    emitter.load_pair_x(9, record, site_register,
                         static_cast<std::ptrdiff_t>(offset));
   };
   load_entry(offsetof(JitIndirectLink, entries));
@@ -893,28 +919,46 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
   load_entry(offsetof(JitIndirectLink, entries) +
              sizeof(JitIndirectLinkEntry));
   emitter.compare_register(8, 9);
-  emitter.branch_condition(miss, 1); // NE
+  if (target_table) {
+    emitter.branch_condition(matched, 0); // EQ
+    /* Neither cell holds the target: its entry in the executor's table, if
+     * it was trained in this context, names the record x12. x13 stays the
+     * site for the miss. */
+    emitter.load_x(16, 19, offsetof(JitChainState, indirect_targets));
+    emitter.load_x(9, 19, offsetof(JitChainState, indirect_target_tag));
+    // eor x12, x8, x8, lsr #14: the index of jit_indirect_target_index().
+    emitter.emit(0xca40'0000U | (14U << 10) | (8U << 16) | (8U << 5) | record);
+    emitter.ubfm(record, record, 2, 1U + jit_indirect_target_bits);
+    emitter.add_shifted(record, 16, record, 4);
+    emitter.emit(0xaa00'0000U | (8U << 16) | (9U << 5) | 9U); // orr x9, x9, x8
+    emitter.load_pair_x(16, record, record, 0);
+    emitter.compare_register(9, 16);
+    emitter.branch_condition(miss, 1); // NE
+  } else {
+    emitter.branch_condition(miss, 1); // NE
+  }
   emitter.bind(matched);
 
   /*
    * x12 is a stable host record selected by a guest-target equality test.
    * Only its host-published internal entry can reach BR below.
    */
-  emitter.load_pair_x(16, 9, 12, 0);
-  emitter.load_w(13, 12, offsetof(JitBlockLink, allowed_selectors));
-  emitter.logical_shift_right_variable(13, 13, 21);
-  emitter.test_zero(fallback, 13, 0, false);
-  emitter.load_x(13, 12, offsetof(JitBlockLink, internal_entry));
-  emitter.compare_zero(fallback, 13, true, false);
+  emitter.load_pair_x(16, 9, record, 0);
+  emitter.load_w(site_register, record,
+                 offsetof(JitBlockLink, allowed_selectors));
+  emitter.logical_shift_right_variable(site_register, site_register, 21);
+  emitter.test_zero(fallback, site_register, 0, false);
+  emitter.load_x(site_register, record, offsetof(JitBlockLink, internal_entry));
+  emitter.compare_zero(fallback, site_register, true, false);
 
   emitter.compare_register(20, 9);
   emitter.branch_condition(fallback, 3); // LO
 
-  emitter.branch_register(13);
+  emitter.branch_register(site_register);
 
   emitter.bind(miss);
   emitter.store_x(8, 15, offsetof(CpuState, pc));
-  emitter.store_x(13, 19, offsetof(JitChainState, indirect_miss));
+  emitter.store_x(site_register, 19, offsetof(JitChainState, indirect_miss));
   emitter.load_literal_constant(9, source_key);
   emitter.store_x(9, 19, offsetof(JitChainState, indirect_source_pc));
   emitter.branch(undo_and_return_to_cpp);

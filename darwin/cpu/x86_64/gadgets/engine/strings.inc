@@ -245,7 +245,7 @@ Lx86_fill_done\@:
 
 .macro string_gadget operation, width, load, store, host_register, store_register, shift
 gadget string_\operation\()_\width
-	ldp x23, x22, [_stream], #16
+	ldr x23, [_stream], #8
 	ubfx w8, w23, #8, #8
 	cbz w8, Lx86_string_nonrepeating\@
 	/* Long REP operations must periodically return to the executor so an
@@ -547,9 +547,7 @@ Lx86_string_bulk_destination_wide\@:
 	orr x9, x9, #0x10000
 Lx86_string_between_elements\@:
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	str x22, [_cpu, #UML_X86_64_CPU_RIP]
-	mov w0, #UML_X86_64_EVENT_REPEAT_YIELD
-	b uml_x86_64_gadget_leave
+	b Lx86_repeat_yield
 Lx86_string_finish\@:
 	.ifc \operation,compare
 	record_deferred 2, \width
@@ -559,13 +557,7 @@ Lx86_string_finish\@:
 	.endif
 Lx86_string_finish_empty\@:
 	tbz x23, #32, Lx86_string_continue\@
-	ubfx x8, x23, #56, #4
-	add x8, x22, x8
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
-	add _executed, _executed, #1
-	x86_memory_order_boundary
-	mov w0, #UML_X86_64_EVENT_CONTINUED
-	b uml_x86_64_gadget_leave
+	b Lx86_store_code_exit
 Lx86_string_continue\@:
 	retire_and_next
 
@@ -576,7 +568,7 @@ Lx86_string_continue\@:
  * bulk run is never entered. The gadget above keeps its layout; this entry
  * only joins it. */
 gadget string_\operation\()_\width\()_step
-	ldp x23, x22, [_stream], #16
+	ldr x23, [_stream], #8
 	mov w9, #1
 	str w9, [sp, #0x68]
 	tbnz x23, #3, Lx86_string_step_count_16\@

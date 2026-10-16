@@ -86,7 +86,8 @@ A record holds one suite observed by one oracle and is named
 | --- | --- |
 | `qemu` | `qemu-arm -cpu max` on the build host, run twice per case; both runs must agree (decision D2) |
 | `profile` | no oracle ran it: the event the profile defines |
-| `pi4`, `pi5` | hardware (decision D3), when recorded |
+| `pi4` | a Raspberry Pi 4 Model B (Cortex-A72, Armv8.0) running the oracle natively under its 64-bit Linux, twice per case (decision D3) |
+| `pi5` | a Raspberry Pi 5 (Cortex-A76), when recorded |
 
 The suites, in the order the corpus grows. The base level (A32 and Thumb-2,
 no floating point or SIMD):
@@ -132,10 +133,16 @@ The `simd` level (VFPv4-D32 and Advanced SIMD):
   denormals and one in half and single precision, which the `simd` suite's
   sampled states do not pair (FZ16 stays clear, so a half-precision denormal
   is a nonzero number);
+- `simd-convert`: VCVT and VCVTR between single or double precision and
+  32-bit integers, with fractions at and either side of a half, the largest
+  values below the integer limits and the first past them, a denormal, a NaN
+  and an infinity, under each rounding mode and flush-to-zero, and integers
+  that a single cannot hold, which the `simd` suite's edge values leave out;
 - `simd-memory`: VLDR, VSTR, VLDM, VSTM, FLDMX, FSTMX and the structure loads
   and stores VLD1-4 and VST1-4, aimed at the memory suite's addresses;
 - `fpscr`: VMRS and VMSR, including the exception trap enables the profile
-  reads as zero and ignores writes to.
+  reads as zero and ignores writes to, and FZ16, which holds what is written
+  to it wherever FEAT_FP16 is.
 
 The `complete` level (the Armv8 additions):
 
@@ -155,18 +162,17 @@ The oracle's store-exclusive always succeeds when its load-exclusive ran
 first, and a case is one attempt. An engine whose exclusives are the host's
 can fail one without cause, as the architecture allows: the host's monitor
 ends at any interrupt between the load and the store. A lane therefore runs a
-failing store-exclusive case again, a bounded number of times: the gadget lane
-when the only difference is a status of 1 where the pack has 0 and the store
-that did not happen, the JIT lane once.
+failing store-exclusive case again, a bounded number of times: when the only
+difference is a status of 1 where the pack has 0 and the store that did not
+happen, up to 16 attempts in all, in the gadget lane and the JIT lane alike.
 
-Two suites are recorded only from hardware (`pi4` or `pi5`): `unaligned`
-(172 cases: multi-word accesses at misaligned addresses) and `fpscr-reserved`
-(144 cases: VMRS and VMSR with Stride, Len and FZ16 set, which an
-implementation may or may not hold). The producer refuses to record them as
-`qemu` and nothing derives them from rules, so they are unrecorded until a
-hardware oracle exists, and so is the hardware cross-check of the `qemu`
-records (`compare`, below), in particular of the fault addresses of the
-`fetch` and `straddle` suites.
+Two suites are recorded only from hardware: `unaligned` (172 cases:
+multi-word accesses at misaligned addresses) and `fpscr-reserved` (144
+cases: VMRS and VMSR with Stride and Len set, which an implementation may or
+may not hold). The producer refuses to record them as `qemu`, and nothing
+derives them from rules. Both are `pi4` records. The Cortex-A72 reads Stride
+and Len as zero and ignores writes to them, as the profile does, and a
+misaligned multi-word access raises SIGBUS at its first address.
 
 ## What the oracle's answers rest on
 
@@ -176,13 +182,51 @@ records (`compare`, below), in particular of the fault addresses of the
   bits.
 - Linux turns the A32 `0xe7f001f0`, T16 `0xde01` and T32 `0xf7f0a000`
   undefined-instruction encodings into SIGTRAP; every other UDF is SIGILL.
-- qemu-arm refuses misaligned multi-word accesses (LDM, STM, LDRD, STRD,
-  PUSH, POP) with an alignment fault where an arm64 kernel fixes them up for a
-  compat task. The `unaligned` suite is therefore recorded only from hardware.
+- A misaligned multi-word access (LDM, STM, LDRD, STRD, PUSH, POP) is an
+  alignment fault, SIGBUS at its first address. An arm64 kernel fixes it up
+  for a compat task only with `CONFIG_COMPAT_ALIGNMENT_FIXUPS`; the profile
+  has no fixup, and neither has the `pi4` oracle's kernel. qemu-arm agrees
+  with both, but the `unaligned` suite stays a hardware record.
 - qemu-arm clears the FPSCR exception trap enables on a write (the profile's
-  read-as-zero, write-ignored) and keeps Stride, Len and FZ16; the last three
+  read-as-zero, write-ignored) and keeps Stride, Len and FZ16. Stride and Len
   are the `fpscr-reserved` suite's, so the `qemu` records never set them.
+  FZ16 is FEAT_FP16's and holds wherever that is, as in qemu-arm's `-cpu
+  max`; the `fpscr` suite writes it, and every other suite starts with it
+  clear, because an oracle without FEAT_FP16 reads it as zero.
 - CNTFRQ and CNTVCT depend on the host and are not in the corpus.
+
+## The hardware cross-check
+
+`compare` of every `qemu` record against the `pi4` oracle's observations of
+the same cases agrees on every case, including the fault addresses of the
+`fetch` and `straddle` suites, except for two kinds. The first is the cases
+whose instruction needs a feature the Cortex-A72 lacks; they raise SIGILL
+there and `--absent` leaves them out. Those features are FEAT_FP16
+(including the half-precision variants of the VFP and Advanced SIMD forms),
+the cryptographic extensions with PMULL, the dot product, RDM, FCMA, JSCVT,
+FHM, BF16, I8MM and SB. The second is the differences that
+[`known-differences.tsv`](known-differences.tsv) lists. There the
+architecture, Linux or the A72's missing features leave the answer open,
+and the corpus keeps qemu-arm's, which is the profile's:
+
+- A store multiple that faults part-way (`straddle`): the architecture
+  leaves the memory it wrote UNKNOWN. The profile stores the words ahead of
+  the faulting one; the A72 stores none.
+- VTRN.32 with Dd = Dm (Qd = Qm): the result is ARBITRARY. The profile swaps
+  the two words; the A72 copies the even word into both. The 8- and 16-bit
+  forms, and VSWP, VUZP and VZIP with Dd = Dm, are ARBITRARY too, and there
+  the A72 agrees with the profile. So does an STM that stores its
+  written-back base after the first register: the stored value is the
+  original base.
+- An LDRD whose two words both fault (at `0xfffffffc` and `0`): the profile
+  reports the first word's address; the A72 reports either, varying from one
+  run to the next.
+- WFI: arm64 Linux leaves SCTLR_EL1.nTWI clear, so WFI at EL0 traps and the
+  program gets SIGILL, as the `pi4` records show. The profile completes WFI
+  at once, as it does WFE
+  ([`docs/architecture.md`](../../../../docs/architecture.md)), so the six
+  WFI cases of `system` differ from `pi4` by design.
+- FZ16 in the `fpscr` suite reads as zero on the A72, which lacks FEAT_FP16.
 
 ## Regeneration
 
@@ -207,11 +251,16 @@ planner that moves a case fails it until the suite is observed again.
 
 Hardware records use the same producer without `--runner`, so the harness runs
 natively on an aarch64 Linux host whose cores run AArch32 at EL0 (a Raspberry
-Pi 4 or 5 with a 64-bit kernel). `compare` then lists where another oracle's
-observations of the same cases differ from the checked-in ones:
+Pi 4 or 5 with a 64-bit kernel); `--host-directory` keeps its private
+directory inside one the host's owner set aside. `compare` then lists where
+another oracle's observations of the same cases differ from the checked-in
+ones. It leaves out the cases that need a feature the hardware lacks, and it
+counts the differences `known-differences.tsv` explains apart; only the
+others fail it:
 
 ```sh
 python3 tools/arm64-tests/a32-corpus.py observe --archive ISA_AArch32_xml_A_profile-2026-06.tar.gz \
-  --suite alu --host HOST --oracle pi5 --source /tmp/a32-pi5
-python3 tools/arm64-tests/a32-corpus.py compare --right /tmp/a32-pi5
+  --suite alu --host HOST --oracle pi5 --host-directory DIR --source /tmp/a32-pi5
+python3 tools/arm64-tests/a32-corpus.py compare --right /tmp/a32-pi5 \
+  --archive ISA_AArch32_xml_A_profile-2026-06.tar.gz --absent bf16,i8mm,fhm,sb,fcma,jscvt
 ```
