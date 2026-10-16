@@ -158,7 +158,8 @@ private:
 			      unsigned shape_class, std::uintptr_t rd,
 			      std::uintptr_t rn, std::uintptr_t rm,
 			      std::uintptr_t rs, std::uint32_t immediate,
-			      std::optional<unsigned> carry);
+			      std::optional<unsigned> carry,
+			      bool in_place = true);
 	Result emit_mov_constant(const Instruction &in, int d,
 				 std::uint32_t value);
 	Result emit_multiply(const Instruction &in, const FormPlan &plan);

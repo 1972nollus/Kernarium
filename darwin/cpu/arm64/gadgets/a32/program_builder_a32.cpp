@@ -358,7 +358,7 @@ void Translator::finish_stop(bool, std::uint32_t word)
 Translator::Result Translator::emit_dp_values(const Instruction &in,
 	unsigned op, bool s, unsigned shape_class, std::uintptr_t rd,
 	std::uintptr_t rn, std::uintptr_t rm, std::uintptr_t rs,
-	std::uint32_t immediate, std::optional<unsigned> carry)
+	std::uint32_t immediate, std::optional<unsigned> carry, bool in_place)
 {
 	const auto &o = in.operands;
 	const bool logical = is_logical(op);
@@ -443,8 +443,8 @@ Translator::Result Translator::emit_dp_values(const Instruction &in,
 	const std::size_t start = words_.size();
 	/* ADD or SUB of an immediate to a register in place: the entry with
 	 * the register baked. R15 and the scratch slots are not registers. */
-	if (shape == shape_imm && (op == op_add || op == op_sub) && rd == rn &&
-	    rd < 15U * 8U) {
+	if (in_place && shape == shape_imm && (op == op_add || op == op_sub) &&
+	    rd == rn && rd < 15U * 8U) {
 		push(kDpInplace[op == op_sub ? 1 : 0][sets ? 1 : 0][rd / 8U]);
 		push(word);
 		if (address)
@@ -502,7 +502,10 @@ Translator::Result Translator::emit_dp(const Instruction &in,
 	 * scratch slot holding the PC value: PC as the second operand of any
 	 * operation, and as the first of one that commutes or, for SUB and
 	 * RSB, of the other. An unshifted register keeps C, as an immediate
-	 * without a carry does. */
+	 * without a carry does. Such a sum is an address: an indexed load
+	 * wrote the literal it adds to and indexed loads consume it, so it
+	 * takes the indexed entry even in place, because rename forwards a
+	 * CpuState hop only between accesses of one addressing form (G199). */
 	bool folded = false;
 	if (shape_class == 1 && o.shift_t == SRType::LSL && o.shift_n == 0) {
 		if (o.m == 15 && (unary || first != 15)) {
@@ -553,7 +556,7 @@ Translator::Result Translator::emit_dp(const Instruction &in,
 	const std::uintptr_t rd = is_compare(op) ? 0 :
 		to_pc ? scratch0 : static_cast<std::uintptr_t>(o.d) * 8U;
 	const auto result = emit_dp_values(in, op, s, shape_class, rd, rn, rm,
-					   rs, immediate, carry);
+					   rs, immediate, carry, !folded);
 	if (to_pc)
 		emit_indirect(scratch0, !thumb_, false);
 	return {to_pc, result.flags};

@@ -620,6 +620,9 @@ PC_CONDITIONAL_A = (
     (0x019F00B1, {"r1": 0x01000002}),
 )
 PC_CONDITIONAL_T = (0x46780000, 0x447B0000, 0x44FC0000)
+# Each fold whose other operand is its destination, which an in-place ADD or SUB
+# of an immediate would run (ADD, ADDS, SUB and RSB, which becomes a SUB).
+PC_IN_PLACE_A = (0xE08F1001, 0xE081100F, 0xE091100F, 0xE041100F, 0xE06F1001)
 
 
 def pc_operands(context, suite, results):
@@ -686,6 +689,17 @@ def pc_operands(context, suite, results):
             prog.half(0xBF08).insn(0x44780000, "T16").tail(THUMB)
             make(results, suite, f"ADD_r_T2/it-eq-{flags >> 28:x}.{lead}", "ADD_r_T2", THUMB, prog,
                  {"apsr": flags}, retired=lead + 3, check=False, target=lead + 1)
+    for word in PC_IN_PLACE_A:
+        result, _operands = context.reference.operands("A32", word, 0, "complete", FEATURES)
+        if result.status == "undefined":
+            raise ValueError(f"{word:08x} is not a legal A32 word")
+        for lead in (0, 1, 2, 3):
+            prog = Prog()
+            for _ in range(lead):
+                prog.word(0xE320F000)
+            prog.insn(word, "A32").tail(ARM)
+            make(results, suite, f"{result.form}/{word:08x}.{lead}", result.form, ARM, prog, {},
+                 retired=lead + 2, check=False, target=lead)
 
 
 def suite_conditions(context: Context) -> list[Case]:
