@@ -907,7 +907,15 @@ The JIT's AArch32 vector support (VFP and Advanced SIMD on D0-D31) keeps Q0-Q15
 in the A64 compiler's vector residency: CpuState vectors 0-15 are the resident
 host registers V16-V31, a D register is the low or high half of its Q and an S
 register a 32-bit lane, so a narrower operand is staged in a scratch register
-and a result is inserted into its half or lane. A VFP instruction runs under the
+and a result is inserted into its half or lane. An insert rewrites the whole Q,
+so in a run of unconditional single-precision VFP instructions an S register
+that was read from its lane or written also keeps a copy, a shadow, in one of
+V0-V4 and V7, which the run's later reads take instead of the lane: operations
+on different lanes of one Q do not wait for each other's inserts. The Q
+register still takes every write, so an exit, a link and a cold path need no
+shadow; a conditional, double-precision or Advanced SIMD instruction, or any
+other that may write an S register or use those host registers, forgets them,
+and the TLB miss bridge preserves V0-V7. A VFP instruction runs under the
 guest's FPCR and FPSR, which the executor installs for a block that holds one
 (the native floating-point environment of the A64 compiler); an Advanced SIMD
 floating-point instruction runs under the Standard FPSCR value (FZ and DN set,

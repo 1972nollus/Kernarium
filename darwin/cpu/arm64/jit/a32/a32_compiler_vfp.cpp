@@ -33,6 +33,10 @@ constexpr std::uint32_t fpscr_status_mask = 0x0800'009fU;
 
 } // namespace
 
+unsigned A32Compiler::fp_result(unsigned r, bool dp) noexcept {
+  return dp || !s_shadowing_ ? scratch_result : take_s_shadow(r);
+}
+
 A32Compiler::Flow A32Compiler::emit_vfp(const OpInfo &, const VInfo &v) {
   switch (v.mnemonic) {
   case VM::vabs: case VM::vneg: case VM::vsqrt: case VM::vadd: case VM::vsub:
@@ -72,11 +76,12 @@ A32Compiler::Flow A32Compiler::emit_vfp_arith(const VInfo &v) {
   case VM::vneg:
   case VM::vsqrt: {
     const unsigned source = fp_use(m, dp, scratch_m);
+    const unsigned result = fp_result(d, dp);
     emit(enc::vec::float1(v.mnemonic == VM::vabs   ? enc::vec::fabs_s
                           : v.mnemonic == VM::vneg ? enc::vec::fneg_s
                                                    : enc::vec::fsqrt_s,
-                          type, scratch_result, source));
-    fp_write(d, dp, scratch_result);
+                          type, result, source));
+    fp_write(d, dp, result);
     return Flow::next;
   }
   case VM::vadd: case VM::vsub: case VM::vmul: case VM::vdiv: case VM::vnmul: {
@@ -90,8 +95,9 @@ A32Compiler::Flow A32Compiler::emit_vfp_arith(const VInfo &v) {
     case VM::vnmul: op = enc::vec::fnmul_s; break;
     default: break;
     }
-    emit(enc::vec::float2(op, type, scratch_result, left, right));
-    fp_write(d, dp, scratch_result);
+    const unsigned result = fp_result(d, dp);
+    emit(enc::vec::float2(op, type, result, left, right));
+    fp_write(d, dp, result);
     return Flow::next;
   }
   case VM::vmla: case VM::vmls: case VM::vnmla: case VM::vnmls: {
@@ -112,9 +118,10 @@ A32Compiler::Flow A32Compiler::emit_vfp_arith(const VInfo &v) {
       emit(enc::vec::float1(enc::vec::fneg_s, type, scratch_d, addend));
       first = scratch_d;
     }
-    emit(enc::vec::float2(enc::vec::fadd_s, type, scratch_result, first,
+    const unsigned result = fp_result(d, dp);
+    emit(enc::vec::float2(enc::vec::fadd_s, type, result, first,
                           scratch_result));
-    fp_write(d, dp, scratch_result);
+    fp_write(d, dp, result);
     return Flow::next;
   }
   case VM::vfma: case VM::vfms: case VM::vfnma: case VM::vfnms: {
@@ -126,8 +133,9 @@ A32Compiler::Flow A32Compiler::emit_vfp_arith(const VInfo &v) {
                     : v.mnemonic == VM::vfms  ? enc::vec::fmsub
                     : v.mnemonic == VM::vfnma ? enc::vec::fnmadd
                                               : enc::vec::fnmsub;
-    emit(enc::vec::float3(op, type, scratch_result, left, right, addend));
-    fp_write(d, dp, scratch_result);
+    const unsigned result = fp_result(d, dp);
+    emit(enc::vec::float3(op, type, result, left, right, addend));
+    fp_write(d, dp, result);
     return Flow::next;
   }
   default:
@@ -238,6 +246,7 @@ A32Compiler::Flow A32Compiler::emit_vfp_convert(const VInfo &v) {
       using enc::vec::FloatInt;
       using enc::vec::FloatMisc;
       const bool is_unsigned = o.unsigned_;
+      const unsigned result = fp_result(static_cast<unsigned>(o.d), false);
       /* A single converts in the vector unit, S to S: the A64 scalar form
        * rounds, saturates and raises the flags as the general-register form
        * does, without the two transfers through W0. A double's 32-bit result
@@ -250,8 +259,8 @@ A32Compiler::Flow A32Compiler::emit_vfp_convert(const VInfo &v) {
                                    type, false, 0, source));
         else
           emit(enc::vec::float_misc_scalar(
-              is_unsigned ? unsigned_scalar : signed_scalar, false,
-              scratch_result, source));
+              is_unsigned ? unsigned_scalar : signed_scalar, false, result,
+              source));
       };
       if (o.zero_rounding) {
         convert(enc::vec::fcvtzs_w, enc::vec::fcvtzu_w, enc::vec::fcvtzs,
@@ -288,21 +297,22 @@ A32Compiler::Flow A32Compiler::emit_vfp_convert(const VInfo &v) {
         bind(done);
       }
       if (dp)
-        fmov_from_w(scratch_result);
-      s_write(static_cast<unsigned>(o.d), scratch_result);
+        fmov_from_w(result);
+      s_write(static_cast<unsigned>(o.d), result);
     } else {
       const unsigned source = s_use(static_cast<unsigned>(o.m), scratch_m);
+      const unsigned result = fp_result(static_cast<unsigned>(o.d), dp);
       if (dp) {
         fmov_to_w(source);
         emit(enc::vec::float_int(o.unsigned_ ? enc::vec::ucvtf_w
                                              : enc::vec::scvtf_w,
-                                 type, false, scratch_result, 0));
+                                 type, false, result, 0));
       } else {
         emit(enc::vec::float_misc_scalar(
-            o.unsigned_ ? enc::vec::ucvtf : enc::vec::scvtf, false,
-            scratch_result, source));
+            o.unsigned_ ? enc::vec::ucvtf : enc::vec::scvtf, false, result,
+            source));
       }
-      fp_write(static_cast<unsigned>(o.d), dp, scratch_result);
+      fp_write(static_cast<unsigned>(o.d), dp, result);
     }
     return Flow::next;
   }
@@ -399,13 +409,25 @@ A32Compiler::Flow A32Compiler::emit_vfp_move(const VInfo &v) {
     // VMOV Rt, Sn / VMOV Sn, Rt.
     const unsigned s = static_cast<unsigned>(o.n);
     if (o.to_arm_register) {
+      if (const int shadow = s_shadow_host(s); shadow >= 0) {
+        const auto dest = def(static_cast<unsigned>(o.t), false, fallback_n);
+        emit(enc::vec::float_int(enc::vec::fmov_to_w, 0, false,
+                                 dest.native.host,
+                                 static_cast<unsigned>(shadow)));
+        done(dest);
+        return Flow::next;
+      }
       const unsigned host = read_native_vector(s >> 2, scratch_n).host;
       const auto dest = def(static_cast<unsigned>(o.t), false, fallback_n);
       emit(enc::vec::umov(2, dest.native.host, host, s & 3U));
       done(dest);
     } else {
       const unsigned source = use(static_cast<unsigned>(o.t), fallback_n);
-      const auto destination = q_def(s >> 2, true, 2);
+      forget_s_shadow(s);
+      if (s_shadowing_)
+        emit(enc::vec::float_int(enc::vec::fmov_from_w, 0, false,
+                                 take_s_shadow(s), source));
+      const auto destination = q_def(s >> 2, true, s_shadowing_ ? 6U : 2U);
       emit(enc::vec::ins_general(2, destination.host, s & 3U, source));
       q_done(destination, s >> 2);
     }
@@ -507,8 +529,9 @@ A32Compiler::Flow A32Compiler::emit_vfp_move(const VInfo &v) {
     if (v.variant == Variant::i) {
       const std::uint32_t word = inst.word;
       const unsigned imm8 = ((word >> 12) & 0xf0U) | (word & 0xfU);
-      emit(enc::vec::fmov_immediate(dp ? 1U : 0U, scratch_result, imm8));
-      fp_write(d, dp, scratch_result);
+      const unsigned result = fp_result(d, dp);
+      emit(enc::vec::fmov_immediate(dp ? 1U : 0U, result, imm8));
+      fp_write(d, dp, result);
       return Flow::next;
     }
     break;

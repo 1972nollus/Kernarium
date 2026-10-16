@@ -287,6 +287,7 @@ A32Compiler::Flow A32Compiler::emit_loop_branch() {
 void A32Compiler::emit_block() {
   count_ = 0;
   terminated_ = false;
+  forget_s_shadows();
   if (looping_)
     apply_loop_plan();
   while (count_ < block_.size()) {
@@ -320,6 +321,7 @@ void A32Compiler::emit_block() {
 A32Compiler::Flow A32Compiler::emit_instruction() {
   const auto &d = cur();
   const auto &inst = d.inst;
+  begin_s_shadows();
   if (count_ + 1U == block_.size()) {
     if (probing_)
       record_loop_plan();
