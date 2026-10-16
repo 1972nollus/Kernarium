@@ -114,18 +114,21 @@ of two. Their payloads and mutable branch links remain ISA-specific. Cached
 x86 programs release spare decoder and native-stream capacity before
 publication.
 
-An arm64 gadget cache can keep what its ways evict in a victim tier of
-`UML_GADGET_VICTIM_TIER_KIB` KiB, which `DARWIN_UML_GADGET_VICTIM_TIER_KIB`
+A gadget cache of either engine can keep what its ways evict in a victim tier
+of `UML_GADGET_VICTIM_TIER_KIB` KiB, which `DARWIN_UML_GADGET_VICTIM_TIER_KIB`
 replaces for measurement; zero keeps none, and none is kept by default. The
 tier is a byte ring that overwrites its oldest entry, with an index by guest PC
 and address space, so it holds evicted translations fully associatively in the
 order they left. An entry keeps the translation's stream word for word, two tag
 bits per word choosing a dictionary number for a gadget, a varint, a varint
 difference from the previous pointer, or the raw word, beside the guest units
-it was validated against. A miss whose set holds no slot for its PC takes the
-entry out, validates its units against guest memory as a stale slot is
-validated, and stores and links it as a fresh build, so nothing the tier
-returns was not first checked against the guest's code. A stream names link
+(arm64) or bytes (x86) it was validated against. A miss whose set holds no slot
+for its PC takes the entry out and checks it as a fresh build would be: arm64
+validates its units against guest memory as a stale slot is validated, and
+x86 holds and stamps the block's code pages before comparing its saved bytes,
+and serves it only under the instruction limit it was built for. It is then
+stored and linked as a fresh build, so nothing the tier returns was not first
+checked against the guest's code. A stream names link
 and indirect records of its address space, which live while the space is
 resident, and the tier files an entry under a number the cache gives each
 address space at every enrolment and never reuses, so a space that retires and

@@ -31,6 +31,10 @@ struct ProgramCacheDiagnostics final {
 	std::uint64_t validation_mismatches{};
 	std::uint64_t validation_faults{};
 	std::uint64_t validation_sequence_races{};
+	/* Translations this executor's ways had evicted, which it took back
+	 * out of its victim tier after validating them instead of
+	 * translating. */
+	std::uint64_t victim_restores{};
 };
 
 struct ProgramCacheSequences final {

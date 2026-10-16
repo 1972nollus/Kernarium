@@ -97,14 +97,14 @@ unset(_uml_gadget_cache_slots_invalid)
 # than eight. Eight stays the default on both products (G229).
 set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
     "Address spaces that may hold translations in each private gadget cache")
-# Most misses of a full cache are returns of code its own ways evicted. An
-# arm64 gadget cache can keep what its ways evict, packed to about half a
-# body's size, in a byte ring of this many KiB that a miss takes it back out
+# Most misses of a full cache are returns of code its own ways evicted. A
+# gadget cache of either engine can keep what its ways evict, packed to about
+# half its size, in a byte ring of this many KiB that a miss takes it back out
 # of after exact validation; zero keeps none. The entry is empty unless a tree
 # chooses a size, so a tree follows the default below when it moves.
 # DARWIN_UML_GADGET_VICTIM_TIER_KIB replaces either for measurement.
 set(UML_GADGET_VICTIM_TIER_KIB "" CACHE STRING
-    "KiB of evicted translations each arm64 gadget cache keeps; empty: default")
+    "KiB of evicted translations each gadget cache keeps; empty: default")
 set(_uml_gadget_victim_tier_kib "${UML_GADGET_VICTIM_TIER_KIB}")
 if(_uml_gadget_victim_tier_kib STREQUAL "")
     set(_uml_gadget_victim_tier_kib "0")

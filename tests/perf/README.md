@@ -410,7 +410,7 @@ counted against the executors of its own address space or against another
 address space. For a translation evicted and later stored again unchanged,
 the number of evictions in between goes into a power-of-two histogram, which
 says how many of those misses an exclusive victim tier of a given size would
-have served. With an arm64 victim tier (`DARWIN_UML_GADGET_VICTIM_TIER_KIB`),
+have served. With a victim tier (`DARWIN_UML_GADGET_VICTIM_TIER_KIB`),
 the `E` record also carries the tier's allocated bytes, counted in the
 cache's footprint, and how many translations it kept and gave back, and the
 history counts the misses it served; `--series` shows them as served

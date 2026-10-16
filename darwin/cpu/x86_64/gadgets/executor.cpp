@@ -3,6 +3,7 @@
 
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
+#include "cpu/gadget_victim_tier.hpp"
 #if UML_GADGET_CACHE_CENSUS
 #include "cpu/gadget_cache_census.hpp"
 #endif
@@ -64,6 +65,9 @@ static_assert(program_cache_sets * program_cache_ways == program_cache_slots);
 static_assert(resident_generation_limit != 0,
 	"x86-64 gadget cache must retain at least one address space");
 static_assert(std::is_nothrow_move_constructible_v<Program>);
+#ifndef UML_GADGET_VICTIM_TIER_KIB
+#error "UML_GADGET_VICTIM_TIER_KIB must come from the build"
+#endif
 
 struct ProgramCacheLocation final {
 	std::size_t set;
@@ -708,6 +712,11 @@ private:
 		 * the address space is retired and its slots released. */
 		std::uint64_t value{};
 		std::uint16_t id{};
+		/* The number the victim tier names the address space by: fresh
+		 * at every enrolment, so a space that returns after retiring
+		 * never finds what was kept for its predecessor, whose records
+		 * the kept streams point at. */
+		std::uint32_t serial{};
 		/* How many times the address space's code is known to have
 		 * changed, as far as a slot's validation can tell: a slot whose
 		 * epoch equals this one has matched guest memory since the last
@@ -984,6 +993,13 @@ public:
 			cache_hit = true;
 			return program;
 		}
+		/* No way holds the address: this cache may have evicted it. */
+		if (victims_ && current_ != nullptr)
+			if (const auto *program = unpack(address, mode,
+				    maximum_instructions, changes, mapping_changes,
+				    memory, execution_context, sequence_reader,
+				    diagnostics))
+				return program;
 #if UML_GADGET_CACHE_CENSUS
 		history_.missed();
 #endif
@@ -1018,6 +1034,44 @@ public:
 	}
 
 	[[nodiscard]] const Program &store(Program &&program,
+		std::uint64_t changes, std::size_t instruction_limit,
+		ProgramCodeStamps code_stamps)
+	{
+#if UML_GADGET_CACHE_CENSUS
+		/* A lookup that could not use its translation can leave it
+		 * resident, and this store makes a second copy beside it. */
+		bool restored = false;
+		{
+			const auto tag = tag_of(program.address(),
+				program.execution_mode());
+			const auto location = locate_program(current_generation_,
+				program.address(), program.execution_mode());
+			if (const auto &slab = slabs_[location.slab])
+				for (std::size_t way = 0; way < program_cache_ways;
+				     ++way)
+					if (slab->slots[location.offset + way].tag ==
+					    tag)
+						restored = true;
+		}
+#endif
+		auto &slot = place(std::move(program), changes,
+			instruction_limit, code_stamps);
+#if UML_GADGET_CACHE_CENSUS
+		history_.arrive(census_id_, current_generation_, census_key(slot),
+			census_digest(slot), restored);
+#endif
+		return slot.translation->program;
+	}
+
+	[[nodiscard]] std::size_t resident_generations() const noexcept
+	{
+		return generations_.size();
+	}
+
+private:
+	/* Put a program in the set for its address, evicting whatever the way
+	 * it takes held, and index and link it. */
+	[[nodiscard]] Slot &place(Program &&program,
 		[[maybe_unused]] std::uint64_t changes,
 		std::size_t instruction_limit, ProgramCodeStamps code_stamps)
 	{
@@ -1043,14 +1097,6 @@ public:
 					location.slab * program_cache_slab_slots + offset);
 		}
 
-#if UML_GADGET_CACHE_CENSUS
-		/* A lookup that could not use its translation can leave it
-		 * resident, and this store makes a second copy beside it. */
-		bool restored = false;
-		for (std::size_t way = 0; way < program_cache_ways; ++way)
-			if (slab->slots[location.offset + way].tag == tag)
-				restored = true;
-#endif
 		auto &replacement = next_replacement_[location.set];
 		std::size_t selected = replacement;
 		for (std::size_t way = 0; way < program_cache_ways; ++way) {
@@ -1082,6 +1128,8 @@ public:
 		if (slot.resident())
 			census_depart(slot, census::Departure::evicted);
 #endif
+		if (slot.resident())
+			keep_victim(slot);
 		unindex(slot);
 		deactivate(slot);
 		slot.tag = 0;
@@ -1109,17 +1157,133 @@ public:
 		}
 		activate_link(slot);
 		activate(slot, successors);
-#if UML_GADGET_CACHE_CENSUS
-		history_.arrive(census_id_, current_generation_, census_key(slot),
-			census_digest(slot), restored);
-#endif
-		return stored;
+		return slot;
 	}
 
-	[[nodiscard]] std::size_t resident_generations() const noexcept
+	/* What the tier keeps of a program besides its key, stream and
+	 * source, in its flags, and the instruction limit it was built under
+	 * in the stop-instruction field. */
+	static constexpr std::uint8_t victim_terminal = 1U;
+	static constexpr std::uint8_t victim_check_head = 2U;
+
+	/* Keep the program a way is evicting, for a later miss on it. One
+	 * with no source to validate could never be taken back. */
+	void keep_victim(const Slot &slot) noexcept
 	{
-		return generations_.size();
+		if (!victims_ || !slot.translation)
+			return;
+		const auto &program = slot.translation->program;
+		if (program.source().empty() ||
+		    program.source().size() != program.byte_count() ||
+		    program.instruction_count() > 0xffU)
+			return;
+		const auto key = slot.tag & (compat32_flag | tag_address_mask);
+		victims_->keep(key, owner_of(slot)->serial,
+			{
+				.stop_address = key,
+				.stop_instruction = slot.instruction_limit,
+				.instruction_count = static_cast<std::uint8_t>(
+					program.instruction_count()),
+				.flags = static_cast<std::uint8_t>(
+					(program.terminal() ? victim_terminal : 0U) |
+					(program.check_head() ? victim_check_head :
+						0U)),
+			},
+			program.native_stream(), program.source());
 	}
+
+	/* Take the running address space's program for `address` back out of
+	 * the victim tier, validated as a fresh build is: its pages are held
+	 * and stamped before its saved source is compared with guest memory,
+	 * and those stamps are what the slot records. Like a slot's, it serves
+	 * only a request whose instruction limit it was built under.
+	 *
+	 * The stream comes back word for word, and its link and indirect words
+	 * name records of the address space the tier filed it under, which
+	 * never move or die while the space is resident here; the serial a
+	 * space is filed under is never reused, so they are that space's own.
+	 * A program copies its stream out of the build's scratch, so a stream
+	 * never names its own words and needs no relocation. */
+	[[nodiscard]] const Program *unpack(std::uint64_t address,
+		ExecutionMode mode, std::size_t maximum_instructions,
+		std::uint64_t changes, std::uint64_t mapping_changes,
+		::uml::memory::GuestAddressSpace &memory, void *execution_context,
+		ProgramCacheSequenceReader sequence_reader,
+		ProgramCacheDiagnostics &diagnostics)
+	{
+		const auto key = compact_tag_address(address, mode);
+		if (key == unmatchable_tag)
+			return nullptr;
+		const auto taken = victims_->take(key, current_->serial);
+		if (!taken)
+			return nullptr;
+		const auto &fields = taken->fields;
+		const bool terminal = (fields.flags & victim_terminal) != 0U;
+		const auto limit = static_cast<std::uint8_t>(fields.stop_instruction);
+		if (!terminal && kept_instruction_limit(maximum_instructions) > limit)
+			return nullptr;
+		try {
+			auto program = Program::kept(mode, address, taken->source,
+				taken->words, fields.instruction_count, terminal,
+				(fields.flags & victim_check_head) != 0U);
+			const CodePageHold hold{registries_, address, mode};
+			const auto held = capture_held_code_stamps(
+				memory, hold.pages(), execution_context);
+			if (compare_program_source(memory, program,
+				    program.source()) != ProgramSourceComparison::match)
+				return nullptr;
+			if (execution_context != nullptr && sequence_reader != nullptr) {
+				const auto current = sequence_reader(execution_context);
+				if (current.interrupted ||
+				    current.mapping_changes != mapping_changes)
+					return nullptr;
+			}
+			const auto stamps =
+				program_code_stamps_from_hold(program, hold.pages(), held);
+			if (!stamps)
+				return nullptr;
+			auto &slot = place(std::move(program), changes, limit,
+				*stamps);
+			++diagnostics.victim_restores;
+#if UML_GADGET_CACHE_CENSUS
+			history_.unpacked(current_generation_, census_key(slot));
+#endif
+			return &slot.translation->program;
+		} catch (...) {
+			return nullptr;
+		}
+	}
+
+	/* The tier this cache keeps, if its size is not zero
+	 * (gadget_cache::victim_tier_bytes). */
+	[[nodiscard]] static std::unique_ptr<gadget_cache::VictimTier>
+	make_victim_tier()
+	{
+		const auto bytes = gadget_cache::victim_tier_bytes(
+			UML_GADGET_VICTIM_TIER_KIB);
+		if (bytes == 0)
+			return nullptr;
+		return std::make_unique<gadget_cache::VictimTier>(bytes,
+			gadget_cache::text_of(reinterpret_cast<const void *>(
+				reinterpret_cast<std::uintptr_t>(
+					native::uml_x86_64_gadget_link_exit))));
+	}
+
+	/* The next serial for an address space the tier names. Should the
+	 * count ever wrap, the tier forgets everything and the resident
+	 * spaces are numbered again, so no number names two spaces. */
+	[[nodiscard]] std::uint32_t next_serial() noexcept
+	{
+		if (++last_serial_ != 0)
+			return last_serial_;
+		if (victims_)
+			victims_->clear();
+		for (auto &[generation, state] : generations_)
+			state.serial = ++last_serial_;
+		return ++last_serial_;
+	}
+
+public:
 
 #if UML_GADGET_CACHE_CENSUS
 	/* What this cache costs, in bytes it actually holds rather than in the
@@ -1233,16 +1397,24 @@ public:
 		const auto slab_count = static_cast<std::size_t>(
 			std::count_if(slabs_.begin(), slabs_.end(),
 				[](const auto &slab) { return slab != nullptr; }));
+		/* The victim tier, once its first eviction allocated it. */
+		const std::size_t victims = victims_ ? victims_->footprint() : 0;
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu slots=%zu "
 			"slot_bytes=%zu slab_slots=%zu slab_count=%zu slabs=%zu "
 			"streams=%zu decoded=%zu links=%zu indirect=%zu "
-			"targets=%zu total=%zu",
+			"targets=%zu victim=%zu total=%zu victim_kept=%llu "
+			"victim_taken=%llu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), program_cache_slots, sizeof(Slot),
 			program_cache_slab_slots, slab_count, parts.slabs,
 			parts.streams, parts.decoded, parts.links,
-			parts.indirect, parts.targets, parts.total());
+			parts.indirect, parts.targets, victims,
+			parts.total() + victims,
+			static_cast<unsigned long long>(
+				victims_ ? victims_->kept() : 0),
+			static_cast<unsigned long long>(
+				victims_ ? victims_->taken() : 0));
 		census::write_when(out, snapshot);
 		history_.write(out);
 		std::fputc('\n', out);
@@ -1655,6 +1827,7 @@ private:
 	void enroll(Generation &state, std::uint64_t generation)
 	{
 		state.value = generation;
+		state.serial = next_serial();
 		if (!free_ids_.empty()) {
 			state.id = free_ids_.back();
 			free_ids_.pop_back();
@@ -2119,6 +2292,10 @@ private:
 	CodePageRegistries *registries_{};
 	ProgramCacheCodeChangeReader code_change_reader_{};
 	void *code_change_context_{};
+	/* What this cache's ways evicted, packed, or null without a tier. */
+	std::unique_ptr<gadget_cache::VictimTier> victims_{make_victim_tier()};
+	/* The serial last given an address space (Generation::serial). */
+	std::uint32_t last_serial_{};
 #if UML_GADGET_CACHE_CENSUS
 	census::History history_;
 	census::Schedule schedule_;

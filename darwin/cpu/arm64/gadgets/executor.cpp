@@ -912,19 +912,6 @@ void announce_exit(Announcement &announcement) noexcept
 #error "UML_GADGET_VICTIM_TIER_KIB must come from the build"
 #endif
 
-/* The bytes of victim tier each cache may fill with what its ways evict:
- * UML_GADGET_VICTIM_TIER_KIB, which DARWIN_UML_GADGET_VICTIM_TIER_KIB
- * replaces for measurement. Zero keeps no tier. Read as each cache is
- * made. */
-[[nodiscard]] std::size_t victim_tier_bytes() noexcept
-{
-	std::size_t kib = UML_GADGET_VICTIM_TIER_KIB;
-	if (const char *value = std::getenv("DARWIN_UML_GADGET_VICTIM_TIER_KIB");
-	    value != nullptr && *value != '\0')
-		kib = static_cast<std::size_t>(std::strtoull(value, nullptr, 10));
-	return kib << 10;
-}
-
 /* The text every gadget entry lies in, which the tier numbers rather than
  * spells out. */
 [[nodiscard]] gadget_cache::TextRange gadget_text() noexcept
@@ -1641,7 +1628,9 @@ public:
 		  share_{share},
 		  build_scratch_{scratch_.data(), scratch_.size()}
 	{
-		if (const auto bytes = victim_tier_bytes(); bytes != 0)
+		if (const auto bytes = gadget_cache::victim_tier_bytes(
+			    UML_GADGET_VICTIM_TIER_KIB);
+		    bytes != 0)
 			victims_ = std::make_unique<gadget_cache::VictimTier>(
 				bytes, gadget_text());
 	}

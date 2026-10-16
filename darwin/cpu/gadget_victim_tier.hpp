@@ -6,6 +6,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -15,6 +16,20 @@
 #include "cpu/gadget_text.hpp"
 
 namespace uml::cpu::gadget_cache {
+
+/* The bytes of victim tier each cache keeps: `default_kib`, the build's
+ * UML_GADGET_VICTIM_TIER_KIB, which DARWIN_UML_GADGET_VICTIM_TIER_KIB
+ * replaces for measurement. Zero keeps no tier. Read as each cache is
+ * made. */
+[[nodiscard]] inline std::size_t victim_tier_bytes(
+	std::size_t default_kib) noexcept
+{
+	std::size_t kib = default_kib;
+	if (const char *value = std::getenv("DARWIN_UML_GADGET_VICTIM_TIER_KIB");
+	    value != nullptr && *value != '\0')
+		kib = static_cast<std::size_t>(std::strtoull(value, nullptr, 10));
+	return kib << 10;
+}
 
 /* What a translation is besides its key, its stream and its guest units: the
  * engine's own fields, which the tier keeps without interpreting them. */
@@ -68,8 +83,10 @@ struct Unpacked final {
  */
 class VictimTier final {
 public:
+	/* Larger than any arm64 block's stream and units, and than the
+	 * source of any x86 block the x86 cache keeps. */
 	static constexpr std::size_t maximum_words = 512;
-	static constexpr std::size_t maximum_source_bytes = 512;
+	static constexpr std::size_t maximum_source_bytes = 1024;
 
 	VictimTier(std::size_t ring_bytes, TextRange text) noexcept
 		: capacity_{ring_bytes}, text_{text}
