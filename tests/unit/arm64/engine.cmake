@@ -183,6 +183,9 @@
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(gadget_terminal_count WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
+    target_compile_definitions(uml_arm64_gadget_terminal_count_tests PRIVATE
+        UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
     # Every memory transfer's fault names its instruction by the position in
     # its operand; the executor turns that back into the PC.
     uml_add_arm64_unit_test(gadget_memory_fault_position WITHOUT_HARNESS
