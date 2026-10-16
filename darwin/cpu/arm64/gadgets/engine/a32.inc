@@ -67,6 +67,52 @@ La32veneer_\symbol:
 
 #include "../a32_layout.h"
 
+/* The part's TLB probe: transfer_translate and its cold half, except that
+ * on 4 KiB pages the lookup is keyed by the page of the transfer's final
+ * byte, as on 16 KiB pages, and the set index takes two instructions. The
+ * shared 4 KiB probe tests for a page crossing in front because its folded
+ * index maps pages n and n + 1 to one set when n has 25 trailing ones; an
+ * AArch32 address has 20 page bits, so here a crossing transfer can only
+ * miss, and the cold half recognizes it. Bit i of the index is bit 12 + i
+ * of the address xor bit 25 + i: one xor with the address shifted by 13 and
+ * one extract. */
+.macro a32_translate access, page_offset, bytes, address, cold, resume, cross, forward=0, fault=uml_arm64_gadget_memory_fault
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	.if \bytes > 1
+	add x8, \address, #(\bytes - 1)
+	.endif
+	eor x9, \address, \address, lsr #(UML_GADGET_TLB_FOLD_SHIFT - UML_GADGET_GUEST_PAGE_SHIFT)
+	ubfx x9, x9, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
+	add x10, _tlb, x9, lsl #5
+	ldp x11, x12, [x10, #\page_offset]
+	.if \bytes > 1
+	lsr x8, x8, #UML_GADGET_GUEST_PAGE_SHIFT
+	.else
+	lsr x8, \address, #UML_GADGET_GUEST_PAGE_SHIFT
+	.endif
+	cmp x11, x8
+	b.ne \cold
+	add \address, x12, \address
+\resume:
+#else
+	transfer_translate \access, \page_offset, \bytes, \address, \cold, \resume, \cross, \forward, \fault
+#endif
+.endm
+
+.macro a32_translate_cold access, page_offset, bytes, address, cold, resume, cross, forward=0, outofline=0, fault=uml_arm64_gadget_memory_fault
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	.if \bytes > 1
+\cold:
+	branch_if_cross_page \address, \bytes, x9, \cross
+	transfer_translate_cold \access, \page_offset, \bytes, \address, \cold\()_miss, \resume, \cross, \forward, \outofline, \fault
+	.else
+	transfer_translate_cold \access, \page_offset, \bytes, \address, \cold, \resume, \cross, \forward, \outofline, \fault
+	.endif
+#else
+	transfer_translate_cold \access, \page_offset, \bytes, \address, \cold, \resume, \cross, \forward, \outofline, \fault
+#endif
+.endm
+
 /* The native floating-point environment holds the guest's FPCR, or the
  * Standard FPSCR value that Advanced SIMD floating point runs under (flush to
  * zero, default NaN, round to nearest; AHP and FZ16 from the guest);
@@ -445,14 +491,14 @@ gadget a32_\name
 	ubfx x10, x19, #8, #8
 	ldr w10, [_cpu, x10]
 	add w7, w9, w10, lsl #\shift
-	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_memory_fault
+	a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_memory_fault
 	\load w10, [x7]
 	lsr x11, x19, #32
 	add w10, w11, w10, lsl #1
 	a32_key_thumb
 	ldr x9, [_stream], #8
 	a32_follow_indirect 0
-	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_memory_fault
+	a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_memory_fault
 	.if \shift
 La32tb_cross_\name:
 	transfer_slow 0, x7, 2, fault=La32_memory_fault

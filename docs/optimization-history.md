@@ -732,3 +732,18 @@ workload within 2%), an estimated 0.85 of aarch64 for Face Detection and
 | Let an A32 block hold all 64 instructions (JIT) | Accepted. The 60-instruction target leaves room for an IT block that a block's last instruction opens, which only T32 has. Face Detection's feature loop ran a block of 60 and a block of the four instructions after it on every pass; one block of 64 saves a link: Face Detection 1.04 (nine of ten pairs), the other workloads within 1%. |
 | Link a loop block's exit through the unconditional B after it (JIT) | Not built. Face Detection's inner loop leaves into a one-instruction block, a B to the outer loop's head, on every pass; the row above puts one link at about 4% of that workload, but the change reaches into the host loop's exits, budget and saved guest words. |
 | Cache the TLB page for a run of table loads | Not built. After the rows above, TLB probes are 38% of the host instructions in Face Detection's loop and 57% in AES-XTS's table rounds, but a translation holds all fifteen core registers, which leaves no host register for a cached page, and the last-page cache above was rejected for the crossing test it needs. |
+
+## AArch32 gadgets against the Raspberry Pi 4
+
+Each row runs Geekbench 5 armv7 single-core in the gadget engine at 4 KiB on
+the M1 Ultra: concurrent pairs of 1-vCPU guests, one iteration, the order
+swapped every repetition, against the commit before it. The engine's gap is
+its armv7/aarch64 ratio divided by the same ratio on a native Raspberry Pi 4
+(Cortex-A72). At the start it was 0.85 for the single-core score, with
+Gaussian Blur at 0.57, Machine Learning 0.59, and Navigation, Ray Tracing,
+Image Compression and Speech Recognition near 0.78.
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| AES-XTS against the Pi 4 | Measured; nothing to change. The Pi 4's Cortex-A72 has no AES instructions, so both of its builds encrypt with tables and armv7 reaches 0.84 of aarch64 there. Our 0.07 measures the host AES instructions our aarch64 guest runs, not a slow armv7 path. The armv7 rounds are 47 percent table loads through the TLB probe, which the next row shortens for every load. |
+| Key the 4 KiB AArch32 TLB probe by the access's last byte | Accepted. The folded 4 KiB index puts pages n and n + 1 in one set only when n has 25 trailing ones, which no 32-bit page number has. The crossing test therefore joins the tag compare as it does on 16 KiB, and the set index takes one xor and one extract: 9 probe instructions instead of 12 for each multi-byte access. Single-core +3.1 percent (five of six pairs higher, none lower) and 18 of 21 workloads higher: Structure from Motion +5.9, Camera +5.3, Navigation +4.4, Gaussian Blur +4.2. Machine Learning and AES-XTS were level. N-Body's 0.97 did not reproduce: the change with every later gadget padded back to its old address beat the commit before by 1.5 percent and tied the change. A wrong set index only shows as misses that the C++ fill path hides, so the control test fills an entry through that path and must hit it through the emitted probe. |

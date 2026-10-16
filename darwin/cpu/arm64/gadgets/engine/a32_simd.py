@@ -557,7 +557,7 @@ def vfp_memory(asm, load: bool, width: str, mode: str) -> None:
     translate = (f"{direction}, {page}, {size}, x7, Lcold_{name},"
                  f" Lresume_{name}, Lcross_{name}, 0,"
                  f" fault=La32_memory_fault")
-    lines.append("transfer_translate " + translate)
+    lines.append("a32_translate " + translate)
     lines.append("and x14, x19, #0xffff")
     if load:
         lines += [f"ldr {width}0, [x7]",
@@ -565,7 +565,7 @@ def vfp_memory(asm, load: bool, width: str, mode: str) -> None:
     else:
         lines += [f"ldr {width}0, [_cpu, x14]", f"str {width}0, [x7]"]
     lines.append("next_gadget")
-    lines.append("transfer_translate_cold " + translate)
+    lines.append("a32_translate_cold " + translate)
     lines.append(f"Lcross_{name}:")
     if load:
         lines += [f"transfer_slow 0, x7, {size}, fault=La32_memory_fault",
@@ -626,7 +626,7 @@ def vfp_block(asm, load: bool, bytes_: int) -> None:
              "sbfx x10, x19, #16, #16", "add w7, w9, w10",
              "sbfx x11, x19, #32, #16", "add w22, w9, w11",
              "tst w7, #3", f"b.ne Lalign_{name}",
-             "transfer_translate " + translate,
+             "a32_translate " + translate,
              "ubfx x13, x19, #48, #16", "add x13, _cpu, x13"]
     if load:
         lines += block_copy(bytes_, "x7", "x13")
@@ -635,7 +635,7 @@ def vfp_block(asm, load: bool, bytes_: int) -> None:
     lines += ["tbz x19, #15, 1f", "and x9, x19, #0x7fff",
               "str w22, [_cpu, x9]", "1:", "add _stream, _stream, #8",
               "next_gadget",
-              "transfer_translate_cold " + translate,
+              "a32_translate_cold " + translate,
               f"Lcross_{name}:", "ldr x8, [_stream], #8",
               "a32_library_call", "next_gadget",
               f"Lalign_{name}:",
