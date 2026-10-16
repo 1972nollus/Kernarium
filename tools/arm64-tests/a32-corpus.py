@@ -31,6 +31,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import pathlib
@@ -56,6 +57,10 @@ import a32_corpus_wire as wire  # noqa: E402
 import aarch32 as corpus  # noqa: E402
 
 DIRECTORY = REPOSITORY / "tests/unit/arm64/aarch32_corpus"
+KNOWN_DIFFERENCES = DIRECTORY / "known-differences.tsv"
+COMPARED = ("e", "fi", "fa", "k", "x", "m")
+# What makes two rows the same case: the program, where it starts and its starting state.
+CASE_INPUTS = ("f", "i", "p", "t", "o", "s", "si", "d", "dp")
 INVENTORY = REPOSITORY / "tests/unit/arm64/a32_instruction_inventory.tsv"
 CHUNK = 1500
 SUITES = {**plan.SUITES, **memory.SUITES, **control.SUITES, **system.SUITES, **simd.SUITES,
@@ -345,14 +350,34 @@ def needs_feature(context, row: dict, present: set[str]) -> bool:
             and context.reference.decode(isa, word, 0, "complete", present).status == "undefined")
 
 
+def known_differences() -> list[dict]:
+    """The rows of known-differences.tsv: an oracle, a suite, a glob of case
+    names and the fields in which that oracle may differ from the record."""
+    lines = KNOWN_DIFFERENCES.read_text(encoding="utf-8").splitlines()
+    names = lines[0].split("\t")
+    rows = []
+    for line in lines[1:]:
+        values = line.split("\t")
+        row = dict(zip(names, values), fields=set(values[names.index("fields")].split(",")))
+        if len(values) != len(names) or not row["fields"] <= set(COMPARED):
+            raise SystemExit(f"{KNOWN_DIFFERENCES.name}: malformed row {line!r}")
+        rows.append(row)
+    return rows
+
+
 def compare(arguments) -> int:
     """Differences between two source directories' observations of the same
     cases, leaving out the cases whose instruction needs a feature one of the
-    oracles lacks (--absent, which needs --archive to decode them)."""
+    oracles lacks (--absent, which needs --archive to decode them). A
+    difference known-differences.tsv explains for the right-hand oracle is
+    counted apart and fails nothing."""
     def load(directory: pathlib.Path) -> dict[str, dict[str, dict]]:
         return {suite: {row["n"]: row for row in corpus.read_jsonl(path)[1:]}
                 for suite, path in suite_tables(directory).items()}
     left, right = load(pathlib.Path(arguments.left)), load(pathlib.Path(arguments.right))
+    oracles = {corpus.read_jsonl(path)[0]["oracle"]
+               for path in suite_tables(pathlib.Path(arguments.right)).values()}
+    known = [row for row in known_differences() if row["oracle"] in oracles]
     absent = set(filter(None, arguments.absent.split(",")))
     unknown = absent - plan.FEATURES
     if unknown:
@@ -360,10 +385,9 @@ def compare(arguments) -> int:
     if absent and not arguments.archive:
         raise SystemExit("--absent needs --archive")
     context = plan.build_context(arguments.archive) if absent else None
-    keys = ("e", "fi", "fa", "k", "x", "m")
     different = 0
     for suite in sorted(left.keys() & right.keys()):
-        differing, same, skipped = [], 0, 0
+        differing, same, skipped, expected = [], 0, 0, 0
         for name, row in left[suite].items():
             other = right[suite].get(name)
             if other is None:
@@ -371,12 +395,18 @@ def compare(arguments) -> int:
             if absent and needs_feature(context, row, plan.FEATURES - absent):
                 skipped += 1
                 continue
-            if row["p"] != other["p"] or any(row.get(key) != other.get(key) for key in keys):
-                differing.append((name, [key for key in keys if row.get(key) != other.get(key)]))
-            else:
+            fields = [key for key in COMPARED if row.get(key) != other.get(key)]
+            if any(row.get(key) != other.get(key) for key in CASE_INPUTS):
+                differing.append((name, ["the case itself"]))
+            elif not fields:
                 same += 1
+            elif any(entry["suite"] == suite and fnmatch.fnmatchcase(name, entry["cases"])
+                     and set(fields) <= entry["fields"] for entry in known):
+                expected += 1
+            else:
+                differing.append((name, fields))
         different += len(differing)
-        print(f"{suite}: {same} agree, {len(differing)} differ, {skipped} absent, "
+        print(f"{suite}: {same} agree, {len(differing)} differ, {expected} known, {skipped} absent, "
               f"{len(left[suite].keys() - right[suite].keys())} only left, "
               f"{len(right[suite].keys() - left[suite].keys())} only right")
         for name, fields in differing[:arguments.show]:

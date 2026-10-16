@@ -190,6 +190,39 @@ misaligned multi-word access raises SIGBUS at its first address.
   clear, because an oracle without FEAT_FP16 reads it as zero.
 - CNTFRQ and CNTVCT depend on the host and are not in the corpus.
 
+## The hardware cross-check
+
+`compare` of every `qemu` record against the `pi4` oracle's observations of
+the same cases agrees on every case, including the fault addresses of the
+`fetch` and `straddle` suites, except for two kinds. The first is the cases
+whose instruction needs a feature the Cortex-A72 lacks; they raise SIGILL
+there and `--absent` leaves them out. Those features are FEAT_FP16
+(including the half-precision variants of the VFP and Advanced SIMD forms),
+the cryptographic extensions with PMULL, the dot product, RDM, FCMA, JSCVT,
+FHM, BF16, I8MM and SB. The second is the differences that
+[`known-differences.tsv`](known-differences.tsv) lists. There the
+architecture, Linux or the A72's missing features leave the answer open,
+and the corpus keeps qemu-arm's, which is the profile's:
+
+- A store multiple that faults part-way (`straddle`): the architecture
+  leaves the memory it wrote UNKNOWN. The profile stores the words ahead of
+  the faulting one; the A72 stores none.
+- VTRN.32 with Dd = Dm (Qd = Qm): the result is ARBITRARY. The profile swaps
+  the two words; the A72 copies the even word into both. The 8- and 16-bit
+  forms, and VSWP, VUZP and VZIP with Dd = Dm, are ARBITRARY too, and there
+  the A72 agrees with the profile. So does an STM that stores its
+  written-back base after the first register: the stored value is the
+  original base.
+- An LDRD whose two words both fault (at `0xfffffffc` and `0`): the profile
+  reports the first word's address; the A72 reports either, varying from one
+  run to the next.
+- WFI: arm64 Linux leaves SCTLR_EL1.nTWI clear, so WFI at EL0 traps and the
+  program gets SIGILL, as the `pi4` records show. The profile completes WFI
+  at once, as it does WFE
+  ([`docs/architecture.md`](../../../../docs/architecture.md)), so the six
+  WFI cases of `system` differ from `pi4` by design.
+- FZ16 in the `fpscr` suite reads as zero on the A72, which lacks FEAT_FP16.
+
 ## Regeneration
 
 ```sh
@@ -216,7 +249,9 @@ natively on an aarch64 Linux host whose cores run AArch32 at EL0 (a Raspberry
 Pi 4 or 5 with a 64-bit kernel); `--host-directory` keeps its private
 directory inside one the host's owner set aside. `compare` then lists where
 another oracle's observations of the same cases differ from the checked-in
-ones, leaving out the cases that need a feature the hardware lacks:
+ones. It leaves out the cases that need a feature the hardware lacks, and it
+counts the differences `known-differences.tsv` explains apart; only the
+others fail it:
 
 ```sh
 python3 tools/arm64-tests/a32-corpus.py observe --archive ISA_AArch32_xml_A_profile-2026-06.tar.gz \
