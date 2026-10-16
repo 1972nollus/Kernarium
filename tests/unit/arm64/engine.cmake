@@ -449,6 +449,7 @@
         SOURCES
             ${CMAKE_CURRENT_SOURCE_DIR}/arm64_gadget_dependency_reference.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/arm64_gadget_dependency_memory_tests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/arm64_gadget_bitfield_shift_tests.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/arm64_gadget_vector_dependency_tests.cpp)
     target_link_libraries(uml_arm64_gadget_dependency_tests PRIVATE
         UML::CpuContract uml_arm64_engine_test_support)

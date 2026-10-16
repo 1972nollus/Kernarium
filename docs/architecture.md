@@ -367,6 +367,12 @@ Only MOPS and a literal load whose target does not fit 48 bits keep a PC word.
 `arm64-gadget-memory-fault-position` faults one instruction of each family at
 several positions, directly and through a link.
 
+An SBFM or UBFM is a gadget pointer and one operand word: the two shifts that
+compute it, whose amounts the builder derives from the encoding, and the
+CpuState offsets of its source and destination. Only BFM keeps its two mask
+words. The SBFM and UBFM entries of the former form stay in the bank
+unselected, because removing them would move every later entry.
+
 The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
 too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and
 order file. It follows the arm64 region in an image that carries both and

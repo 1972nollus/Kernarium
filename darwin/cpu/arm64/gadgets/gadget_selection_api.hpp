@@ -228,6 +228,7 @@ extern const RcpcStoreGadgets rcpc_store_gadgets;
 [[nodiscard]] Gadget logical_shifted_gadget(bool, unsigned int, bool, unsigned int, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget multiply_add_gadget(unsigned int, bool, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget bitfield_gadget(bool, unsigned int, bool, bool) noexcept;
+[[nodiscard]] Gadget bitfield_shift_gadget(bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget extract_register_gadget(bool, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget crc32_gadget(unsigned int, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget bit_reverse_count_gadget(bool, unsigned int) noexcept;
