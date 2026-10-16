@@ -32,7 +32,7 @@
  * selected records at least N times.
  *
  *   uml_arm64_gadget_a32_corpus_tests PACK [--level base|simd|complete]
- *       [--record NAME] [--case TEXT] [--limit N] [--forms FILE]
+ *       [--record NAME[,NAME...]] [--case TEXT] [--limit N] [--forms FILE]
  *       [--passes N] [--interrupt]
  */
 #include "aarch32_corpus_pack.hpp"
@@ -439,6 +439,24 @@ struct Options final {
 	bool interrupt = false;
 	/* Write the encodings whose cases ran, one per line, to this file. */
 	std::string forms_path;
+
+	/* Whether --record names the record: one name, or several separated
+	 * by commas; none selects every record. */
+	[[nodiscard]] bool selects(std::string_view name) const
+	{
+		if (record.empty())
+			return true;
+		std::string_view rest = record;
+		while (!rest.empty()) {
+			const auto comma = rest.find(',');
+			if (rest.substr(0, comma) == name)
+				return true;
+			if (comma == std::string_view::npos)
+				break;
+			rest.remove_prefix(comma + 1);
+		}
+		return false;
+	}
 };
 
 /* Host interrupts on demand: an interval timer sends SIGALRM to the process
@@ -764,7 +782,7 @@ int main(int argc, char **argv)
 		std::vector<std::string> lines;
 		for (const auto &record : pack.records) {
 			if ((record.profiles & corpus::kProfileBit) == 0 ||
-			    (!options.record.empty() && record.name != options.record))
+			    !options.selects(record.name))
 				continue;
 			Totals before = totals;
 			for (const auto &test : record.cases) {
