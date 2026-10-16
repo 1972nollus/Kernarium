@@ -86,7 +86,8 @@ A record holds one suite observed by one oracle and is named
 | --- | --- |
 | `qemu` | `qemu-arm -cpu max` on the build host, run twice per case; both runs must agree (decision D2) |
 | `profile` | no oracle ran it: the event the profile defines |
-| `pi4`, `pi5` | hardware (decision D3), when recorded |
+| `pi4` | a Raspberry Pi 4 Model B (Cortex-A72, Armv8.0) running the oracle natively under its 64-bit Linux, twice per case (decision D3) |
+| `pi5` | a Raspberry Pi 5 (Cortex-A76), when recorded |
 
 The suites, in the order the corpus grows. The base level (A32 and Thumb-2,
 no floating point or SIMD):
@@ -160,14 +161,13 @@ failing store-exclusive case again, a bounded number of times: when the only
 difference is a status of 1 where the pack has 0 and the store that did not
 happen, up to 16 attempts in all, in the gadget lane and the JIT lane alike.
 
-Two suites are recorded only from hardware (`pi4` or `pi5`): `unaligned`
-(172 cases: multi-word accesses at misaligned addresses) and `fpscr-reserved`
-(144 cases: VMRS and VMSR with Stride and Len set, which an implementation
-may or may not hold). The producer refuses to record them as
-`qemu` and nothing derives them from rules, so they are unrecorded until a
-hardware oracle exists, and so is the hardware cross-check of the `qemu`
-records (`compare`, below), in particular of the fault addresses of the
-`fetch` and `straddle` suites.
+Two suites are recorded only from hardware: `unaligned` (172 cases:
+multi-word accesses at misaligned addresses) and `fpscr-reserved` (144
+cases: VMRS and VMSR with Stride and Len set, which an implementation may or
+may not hold). The producer refuses to record them as `qemu`, and nothing
+derives them from rules. Both are `pi4` records. The Cortex-A72 reads Stride
+and Len as zero and ignores writes to them, as the profile does, and a
+misaligned multi-word access raises SIGBUS at its first address.
 
 ## What the oracle's answers rest on
 
@@ -177,9 +177,11 @@ records (`compare`, below), in particular of the fault addresses of the
   bits.
 - Linux turns the A32 `0xe7f001f0`, T16 `0xde01` and T32 `0xf7f0a000`
   undefined-instruction encodings into SIGTRAP; every other UDF is SIGILL.
-- qemu-arm refuses misaligned multi-word accesses (LDM, STM, LDRD, STRD,
-  PUSH, POP) with an alignment fault where an arm64 kernel fixes them up for a
-  compat task. The `unaligned` suite is therefore recorded only from hardware.
+- A misaligned multi-word access (LDM, STM, LDRD, STRD, PUSH, POP) is an
+  alignment fault, SIGBUS at its first address. An arm64 kernel fixes it up
+  for a compat task only with `CONFIG_COMPAT_ALIGNMENT_FIXUPS`; the profile
+  has no fixup, and neither has the `pi4` oracle's kernel. qemu-arm agrees
+  with both, but the `unaligned` suite stays a hardware record.
 - qemu-arm clears the FPSCR exception trap enables on a write (the profile's
   read-as-zero, write-ignored) and keeps Stride, Len and FZ16. Stride and Len
   are the `fpscr-reserved` suite's, so the `qemu` records never set them.
@@ -211,11 +213,14 @@ planner that moves a case fails it until the suite is observed again.
 
 Hardware records use the same producer without `--runner`, so the harness runs
 natively on an aarch64 Linux host whose cores run AArch32 at EL0 (a Raspberry
-Pi 4 or 5 with a 64-bit kernel). `compare` then lists where another oracle's
-observations of the same cases differ from the checked-in ones:
+Pi 4 or 5 with a 64-bit kernel); `--host-directory` keeps its private
+directory inside one the host's owner set aside. `compare` then lists where
+another oracle's observations of the same cases differ from the checked-in
+ones, leaving out the cases that need a feature the hardware lacks:
 
 ```sh
 python3 tools/arm64-tests/a32-corpus.py observe --archive ISA_AArch32_xml_A_profile-2026-06.tar.gz \
-  --suite alu --host HOST --oracle pi5 --source /tmp/a32-pi5
-python3 tools/arm64-tests/a32-corpus.py compare --right /tmp/a32-pi5
+  --suite alu --host HOST --oracle pi5 --host-directory DIR --source /tmp/a32-pi5
+python3 tools/arm64-tests/a32-corpus.py compare --right /tmp/a32-pi5 \
+  --archive ISA_AArch32_xml_A_profile-2026-06.tar.gz --absent bf16,i8mm,fhm,sb,fcma,jscvt
 ```
