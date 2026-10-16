@@ -38,7 +38,7 @@ Lx86_enter_load_done\@:
 
 .macro enter_gadget width, load, load_register, store, store_register
 gadget enter_\width
-	ldp x23, x22, [_stream], #16
+	ldr x23, [_stream], #8
 	ldr x27, [_cpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
 	mov x24, x27
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
@@ -76,8 +76,7 @@ Lx86_enter_nesting_done\@:
 	mov w25, w25
 	.endif
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	ubfx x8, x23, #56, #4
-	add x8, x22, x8
+	instruction_rip x8, 1
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
@@ -117,7 +116,7 @@ Lx86_segment_instruction:
 	cmp w0, #UML_X86_64_SEGMENT_TRAP
 	b.eq Lx86_segment_trap
 	cmp w0, #UML_X86_64_SEGMENT_MEMORY_FAULT
-	b.eq Lx86_memory_fault
+	b.eq Lx86_memory_fault_at
 	mov w0, #UML_X86_64_EVENT_SEGMENT_FAULT
 	b uml_x86_64_gadget_leave
 Lx86_segment_next:
@@ -137,7 +136,7 @@ Lx86_segment_trap:
 	ldr x7, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	add x7, x7, #((\width / 8) * \offset)
 	page_cross_check (\width / 8), Lx86_iret_load_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
+	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8), 0, Lx86_memory_fault_at
 	\load \host_register\()\destination, [x7]
 	b Lx86_iret_load_done\@
 Lx86_iret_load_cross\@:
@@ -145,7 +144,7 @@ Lx86_iret_load_cross\@:
 	mov x1, x7
 	mov w2, #(\width / 8)
 	helper_call uml_x86_64_gadget_cross_page_load
-	cbz x1, Lx86_memory_fault
+	cbz x1, Lx86_memory_fault_at
 	mov x\destination, x0
 Lx86_iret_load_done\@:
 .endm

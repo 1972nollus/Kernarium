@@ -632,7 +632,7 @@ def load_single(name: str, size: str, mode: str) -> str:
     label = name
     lines = ["ldp x21, x19, [_stream], #16"] + address
     lines.append(
-        f"transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, {byte_count},"
+        f"a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, {byte_count},"
         f" x7, Lcold_{label}, Lresume_{label}, Lcross_{label}, 0,"
         f" fault=La32_memory_fault")
     lines += [load, "and x8, x19, #0xff", "str w0, [_cpu, x8]"]
@@ -640,7 +640,7 @@ def load_single(name: str, size: str, mode: str) -> str:
         lines += writeback_lines()
     lines.append("next_gadget")
     lines.append(
-        f"transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE,"
+        f"a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
         f" 0, fault=La32_memory_fault")
     if byte_count > 1:
@@ -663,7 +663,7 @@ def store_single(name: str, size: str, mode: str) -> str:
     label = name
     lines = ["ldp x21, x19, [_stream], #16"] + address
     lines.append(
-        f"transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
+        f"a32_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
         f" 0, fault=La32_memory_fault")
     lines += ["and x8, x19, #0xff", "ldr w0, [_cpu, x8]", store]
@@ -671,7 +671,7 @@ def store_single(name: str, size: str, mode: str) -> str:
         lines += writeback_lines()
     lines.append("next_gadget")
     lines.append(
-        f"transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
+        f"a32_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
         f" 0, fault=La32_memory_fault")
     if byte_count > 1:
@@ -744,7 +744,7 @@ def load_double(name: str, mode: str) -> str:
     lines = ["ldp x21, x19, [_stream], #16"] + address
     lines += ["tst w7, #3", "b.ne Lalign_" + name]
     lines.append(
-        f"transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
+        f"a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
         f" fault=La32_memory_fault")
     lines += ["ldp w0, w15, [x7]", "and x8, x19, #0xff",
@@ -754,7 +754,7 @@ def load_double(name: str, mode: str) -> str:
         lines += double_writeback()
     lines.append("next_gadget")
     lines.append(
-        f"transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
+        f"a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
         f" fault=La32_memory_fault")
     lines.append(f"Lcross_{name}:")
@@ -774,7 +774,7 @@ def store_double(name: str, mode: str) -> str:
     lines = ["ldp x21, x19, [_stream], #16"] + address
     lines += ["tst w7, #3", "b.ne Lalign_" + name]
     lines.append(
-        f"transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
+        f"a32_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
         f" fault=La32_memory_fault")
     lines += ["and x8, x19, #0xff", "ubfx x9, x19, #8, #8",
@@ -784,7 +784,7 @@ def store_double(name: str, mode: str) -> str:
         lines += double_writeback()
     lines.append("next_gadget")
     lines.append(
-        f"transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
+        f"a32_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
         f" fault=La32_memory_fault")
     lines.append(f"Lcross_{name}:")
@@ -861,12 +861,12 @@ def block_gadget(count: int, access_load: bool) -> str:
         "UML_GADGET_TLB_ENTRY_WRITE_PAGE"
     direction = 0 if access_load else 1
     lines = block_prologue(name)
-    lines.append(f"transfer_translate {direction}, {page}, {size}, x7,"
+    lines.append(f"a32_translate {direction}, {page}, {size}, x7,"
                  f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
                  f" fault=La32_memory_fault")
     lines += block_registers(count, access_load, "x7")
     lines += block_epilogue(count)
-    lines.append(f"transfer_translate_cold {direction}, {page}, {size}, x7,"
+    lines.append(f"a32_translate_cold {direction}, {page}, {size}, x7,"
                  f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
                  f" fault=La32_memory_fault")
     # A transfer that crosses a page is the semantic library's: it

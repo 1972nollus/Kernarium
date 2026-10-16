@@ -180,7 +180,7 @@ gadget xgetbv
 
 .macro timestamp rdtscp
 gadget \rdtscp
-	ldr x22, [_stream], #8
+	ldr x23, [_stream], #8
 	ldrb w8, [_cpu, #UML_X86_64_CPU_TIMESTAMP_FAULTS]
 	cbnz w8, Lx86_general_protection
 	isb
@@ -200,9 +200,11 @@ timestamp rdtscp
 .purgem timestamp
 
 gadget privileged
-	ldr x22, [_stream]
-/* A faulting instruction does not retire; RIP names the instruction. */
+	ldr x23, [_stream]
+/* A faulting instruction does not retire; RIP names the instruction, which
+ * the stream word in x23 locates. */
 Lx86_general_protection:
+	instruction_rip x22
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_GENERAL_PROTECTION
 	b uml_x86_64_gadget_leave
@@ -236,7 +238,7 @@ gadget read_\name\()_base_\host_register\()_r
 gadget write_\name\()_base_\width\()_r
 	ldr x8, [_stream], #8
 	.if \width == 64
-	ldr x22, [_stream], #8
+	ldr x23, [_stream], #8
 	.endif
 	ldr \host_register\()9, [_cpu, x8]
 	.if \width == 64
@@ -341,6 +343,9 @@ Lx86_mxcsr_store_cross:
 
 .p2align 4
 Lx86_memory_fault:
+	instruction_rip x22
+/* The fault of a gadget that has the instruction's address in x22. */
+Lx86_memory_fault_at:
 	ldrb w8, [_context, #UML_X86_64_CONTEXT_SPLIT_LOCK]
 	cbz w8, Lx86_memory_fault_unlocked
 	split_lock_leave
@@ -349,11 +354,31 @@ Lx86_memory_fault_unlocked:
 	mov w0, #UML_X86_64_EVENT_MEMORY_FAULT
 	b uml_x86_64_gadget_leave
 
+/* The instruction at x23 wrote into the block that is running: it retires,
+ * and the run leaves for the instruction after it, whose code may have
+ * changed. Every memory gadget that stores shares this exit. */
+Lx86_store_code_exit:
+	instruction_rip x8, 1
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	add _executed, _executed, #1
+	x86_memory_order_barrier
+	mov w0, #UML_X86_64_EVENT_CONTINUED
+	b uml_x86_64_gadget_leave
+
+/* A repeated string instruction spent its repeat budget and stops between
+ * elements with RIP still naming it. */
+Lx86_repeat_yield:
+	instruction_rip x22
+	str x22, [_cpu, #UML_X86_64_CPU_RIP]
+	mov w0, #UML_X86_64_EVENT_REPEAT_YIELD
+	b uml_x86_64_gadget_leave
+
 /* An access through a segment failed its inline check, or a guard stopped
  * an instruction the engine cannot check: it leaves, as a fault would,
- * before anything committed, with x22 naming it, for the runtime's exact
- * check (`prepare_segment_step`). */
+ * before anything committed, with the stream word in x23 naming it, for the
+ * runtime's exact check (`prepare_segment_step`). */
 Lx86_segment_check:
+	instruction_rip x22
 	ldrb w8, [_context, #UML_X86_64_CONTEXT_SPLIT_LOCK]
 	cbz w8, Lx86_segment_check_unlocked
 	split_lock_leave
@@ -366,7 +391,7 @@ Lx86_segment_check_unlocked:
  * not check inline: it leaves for the exact check unless the runtime runs the
  * instruction under a bypass, having checked it. */
 gadget segment_guard
-	ldr x22, [_stream], #8
+	ldr x23, [_stream], #8
 	ldrb w8, [_cpu, #UML_X86_64_CPU_SEGMENT_BYPASS]
 	cbz w8, Lx86_segment_check
 	next_gadget

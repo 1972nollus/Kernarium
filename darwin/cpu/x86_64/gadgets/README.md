@@ -81,15 +81,12 @@ Two banks implement the scalar integer instructions.
   instruction's position in its block (its address less the program's first
   address) in bits 41:32, the length in bits 59:56, and bit 60, which
   publication sets. The fault and overlap exits rebuild the RIP from the
-  context's program begin and the position, so a block that reaches 1024 bytes
-  takes the ordinary bank for the instructions beyond it, and every stream
-  built from part of a block (a budget-limited replay, a checked single
-  instruction) takes the block's own first address as that base. A memory
-  operation with an immediate carries a 14-bit immediate in bits 55:42 when
-  the value, sign-extended from the operation width, fits; the other
-  immediates take the ordinary bank. RIP-relative and absolute addresses have
-  no 32-bit displacement and keep the address as a word of their own ahead of
-  the access word.
+  context's program begin and the position, as every instruction's do
+  (below). A memory operation with an immediate carries a 14-bit immediate in
+  bits 55:42 when the value, sign-extended from the operation width, fits; the
+  other immediates take the ordinary bank. RIP-relative and absolute addresses
+  have no 32-bit displacement and keep the address as a word of their own
+  ahead of the access word.
   INC and DEC are enumerated a second time by the carry their producer left,
   because they preserve the carry flag: a borrow, carry or cleared source
   reaches RFLAGS with at most one condition, a settled one inherits the
@@ -121,6 +118,29 @@ and adds a base only for a segment the descriptor names: FS or GS, at full
 width in long mode and, in compatibility mode, after the segment's limit
 check (below); or the ES, CS, SS or DS of an instruction the runtime steps
 through the segment model, which has checked its accesses already.
+
+## Instruction position
+
+An instruction whose gadget can fault, trap or leave does not carry its
+address. It carries its position: its address less the block's first address,
+which the execution context names as `program_begin`, in ten bits. The word
+that holds it is one the gadget reads anyway: bits 45:36 of an ordinary memory
+descriptor (the baked access word's own are 41:32), and the same bits of the
+operand word of a push, pop, string, division, ENTER, LEAVE, return,
+privileged, RDTSC, segment-guard and write-segment-base gadget; the length in
+bits 59:56 serves an exit that retires the instruction. A direct CALL of five
+bytes carries nothing: the return address it pushes is its address plus five.
+One with a prefix has its own gadgets, which keep the position in a word of
+their own. AAM, AAD, the instructions the segment model runs and IRET keep the
+address in a word of their own, and INTO and INT 4 the address after them.
+
+A cold exit rebuilds the RIP with `instruction_rip` from `program_begin` and
+the position, wrapping the sum at 4 GiB in compatibility mode, so no hot path
+loads or keeps an address. A stream built from part of a block (a
+budget-limited replay, a checked single instruction) takes the block's own
+first address as that base. The block ends before the first instruction 1024
+bytes or more past its start, so a block of the default 64 instructions (at
+most 945 bytes) never reaches it.
 
 ## Host-flag fusion
 

@@ -182,6 +182,26 @@ Lx86_mxcsr_flushed_none\@:
 	.endif
 .endm
 
+/* The address of the instruction whose stream word is in x23, or with
+ * `length` the address of the one after it: the block's start, which the
+ * context's program_begin names, plus the position in bits 45:36 (the baked
+ * access word's is at `position`, 32) and the length in bits 59:56. A
+ * compatibility-mode address wraps at 4 GiB. Cold exits only; x9 and x10 are
+ * clobbered and `destination` is neither. */
+.macro instruction_rip destination, length=0, position=UML_X86_64_STREAM_POSITION
+	ubfx x9, x23, #\position, #UML_X86_64_STREAM_POSITION_BITS
+	ldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]
+	add \destination, x10, x9
+	.if \length
+	ubfx x9, x23, #56, #4
+	add \destination, \destination, x9
+	.endif
+	ldrb w9, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
+	and x10, \destination, #0xffffffff
+	cmp w9, #1
+	csel \destination, x10, \destination, eq
+.endm
+
 .macro retire_and_next
 	add _executed, _executed, #1
 	x86_memory_order_boundary
@@ -198,11 +218,10 @@ Lx86_mxcsr_flushed_none\@:
  * runs: when it unmasks an exception in a run that does not check that kind,
  * when it unmasks SIMD underflow, precision or a denormal operand, or when it
  * unmasks an x87 exception whose flag is set, which is then pending. For a gadget that computed its
- * effective address: x22 and the descriptor's length name the next
+ * effective address: the descriptor's position and length name the next
  * instruction. */
 .macro retire_and_leave
-	ubfx x8, x23, #56, #4
-	add x8, x22, x8
+	instruction_rip x8, 1
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
@@ -906,10 +925,11 @@ Lx86_lazy_ready\@:
 
 /* Stream descriptor:
  *   15:0   value-register byte offset
- *   31:16  base-register byte offset, or UML_X86_64_CPU_SEGMENT_ZERO when
+ *   25:16  base-register byte offset, or UML_X86_64_CPU_SEGMENT_ZERO when
  *          there is no base register
- *   47:32  index-register byte offset, or UML_X86_64_CPU_SEGMENT_ZERO when
+ *   35:26  index-register byte offset, or UML_X86_64_CPU_SEGMENT_ZERO when
  *          there is no index register
+ *   45:36  the instruction's position in its block (`instruction_rip`)
  *   49:48  index scale shift
  *   51:50  segment (0 none, 1 FS, 2 GS), or with bit 55 the ES, CS, SS
  *          or DS whose base a stepped instruction adds
@@ -921,13 +941,13 @@ Lx86_lazy_ready\@:
  *   59:56  instruction length
  *   60     a write translation proved this store publishes nothing:
  *          its page holds no cached code and no publication is pending
- * Followed by the folded displacement/absolute address and current RIP.
+ * Followed by the folded displacement/absolute address. Every CpuState
+ * offset a descriptor names is below 1024, which the builder checks.
  */
 .macro effective_address
 	ldp x23, x14, [_stream], #16
-	ldr x22, [_stream], #8
-	ubfx x9, x23, #16, #16
-	ubfx x11, x23, #32, #16
+	ubfx x9, x23, #16, #10
+	ubfx x11, x23, #26, #10
 	ubfx x12, x23, #48, #2
 	ldr x10, [_cpu, x9]
 	ldr x13, [_cpu, x11]
@@ -1031,7 +1051,7 @@ Lx86_segment_ready\@:
 	add x7, x25, x13
 .endm
 
-.macro translate access, entry_offset, size, record_stack=0
+.macro translate access, entry_offset, size, record_stack=0, fault=Lx86_memory_fault
 	x86_marks_guest_memory
 	.if \access == 1
 	/* Only a translation that reaches the decision below may skip the store's
@@ -1061,7 +1081,7 @@ Lx86_segment_ready\@:
 	mov w2, #\access
 	mov w3, #\size
 	helper_call uml_x86_64_gadget_tlb_miss
-	cbz x0, Lx86_memory_fault
+	cbz x0, \fault
 	mov x7, x0
 	b Lx86_tlb_done\@
 Lx86_tlb_hit\@:
@@ -1159,13 +1179,13 @@ Lx86_plain_tlb_done\@:
 	cbz x1, Lx86_memory_fault
 .endm
 
-.macro cross_page_store value, size
+.macro cross_page_store value, size, fault=Lx86_memory_fault
 	mov x0, _context
 	mov x1, x25
 	mov x2, \value
 	mov w3, #\size
 	helper_call uml_x86_64_gadget_cross_page_store
-	cbz w0, Lx86_memory_fault
+	cbz w0, \fault
 .endm
 
 /* Read a `size`-byte memory operand into register `number`: x7 holds its
@@ -1289,13 +1309,7 @@ Lx86_store_check_overlap\@:
 	mov x1, x25
 	helper_call uml_x86_64_gadget_invalidate_code
 Lx86_store_code_exit\@:
-	ubfx x8, x23, #56, #4
-	add x8, x22, x8
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
-	add _executed, _executed, #1
-	x86_memory_order_boundary
-	mov w0, #UML_X86_64_EVENT_CONTINUED
-	b uml_x86_64_gadget_leave
+	b Lx86_store_code_exit
 Lx86_store_done\@:
 	retire_and_next
 .endm

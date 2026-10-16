@@ -18,10 +18,12 @@ namespace uml::cpu::x86_64::gadgets {
  *
  * `program_begin` is the address of the block the stream runs as, which the
  * run's execution context names as its program_begin whatever part of the
- * block the stream holds: a baked memory access carries its position from it,
- * and its fault and overlap exits add it back. A stream built from some of a
- * block's instructions, a budget-limited replay or one checked instruction,
- * therefore takes the block's address and not its own first instruction's. */
+ * block the stream holds: an instruction that can fault or leave carries its
+ * position from it in its stream words, and the exits add it back. A stream
+ * built from some of a block's instructions, a budget-limited replay or one
+ * checked instruction, therefore takes the block's address and not its own
+ * first instruction's. An instruction 1024 bytes or more past it has no
+ * form, and ends the stream before it like any other the bank refuses. */
 [[nodiscard]] std::optional<std::size_t> append_native_stream(
 	std::vector<std::uintptr_t> &stream, std::span<const Gadget> gadgets,
 	std::uint64_t final_rip, ExecutionMode mode,
@@ -44,11 +46,10 @@ namespace uml::cpu::x86_64::gadgets {
 
 /* One iteration of a repeated string instruction, as a single step runs
  * it: the stream leaves between elements with RIP naming the instruction,
- * or retires it when the iteration ends it. A string instruction carries no
- * baked access word, so the stream has no position to take from its
- * block. */
+ * or retires it when the iteration ends it. The instruction's position is
+ * counted from `program_begin`, as in `append_native_stream`. */
 [[nodiscard]] std::vector<std::uintptr_t> build_repeat_step_stream(
-	const Gadget &gadget, ExecutionMode mode);
+	const Gadget &gadget, ExecutionMode mode, std::uint64_t program_begin);
 
 /* A stream that runs nothing and leaves with RIP at `rip`: a check head's,
  * whose instruction the runtime runs itself. */

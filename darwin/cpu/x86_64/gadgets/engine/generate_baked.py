@@ -281,13 +281,12 @@ def shared_tails(o):
     # Every tail belongs to a guest memory access, whichever gadget reaches it.
     o.emit('\tx86_marks_guest_memory')
     # The ordinary fault exit reports the RIP from x22, which a baked access
-    # rebuilds from its access word's position and the block's start.
+    # rebuilds from its access word's position and the block's start, wrapped
+    # at 4 GiB in compatibility mode.
     o.emit('\t.p2align 2')
     o.emit('Lx86_baked_memory_fault:')
-    o.emit('\tubfx x9, x23, #32, #10')
-    o.emit('\tldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]')
-    o.emit('\tadd x22, x10, x9')
-    o.emit('\tb Lx86_memory_fault')
+    o.emit('\tinstruction_rip x22, 0, 32')
+    o.emit('\tb Lx86_memory_fault_at')
     for write in (0, 1):
         for size in (1, 2, 4, 8):
             o.emit('\t.p2align 2')
@@ -360,11 +359,7 @@ def shared_tails(o):
         o.emit('\tmov x1, x25')
         o.emit('\thelper_call uml_x86_64_gadget_invalidate_code')
         o.emit(f'Lx86_baked_store_overlap_exit_{size}:')
-        o.emit('\tubfx x8, x23, #56, #4')
-        o.emit('\tubfx x9, x23, #32, #10')
-        o.emit('\tldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]')
-        o.emit('\tadd x8, x8, x9')
-        o.emit('\tadd x8, x8, x10')
+        o.emit('\tinstruction_rip x8, 1, 32')
         o.emit('\tstr x8, [_cpu, #UML_X86_64_CPU_RIP]')
         o.emit('\tadd _executed, _executed, #1')
         o.emit('\tx86_memory_order_boundary')
