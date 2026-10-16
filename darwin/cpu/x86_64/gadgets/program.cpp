@@ -491,7 +491,8 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 			if (single_step &&
 				repeated_string(gadgets.front().instruction)) {
 				limited_stream = build_repeat_step_stream(
-					gadgets.front(), program.execution_mode());
+					gadgets.front(), program.execution_mode(),
+					program.address());
 				native_stream = limited_stream;
 			} else if (limited) {
 				limited_stream = build_native_stream(
@@ -620,7 +621,7 @@ constexpr std::uint64_t x87_compare_rflags = 0x8d5U;
 			{0, ::uml::memory::MemoryAccess::read, true}, false, false};
 
 	const auto stream = step_string ?
-		build_repeat_step_stream(first, mode) :
+		build_repeat_step_stream(first, mode, program.address()) :
 		build_native_stream(gadgets.subspan(index, 1), final_rip, mode,
 			program.address());
 	const bool simd = (checked & check_simd) != 0 &&
