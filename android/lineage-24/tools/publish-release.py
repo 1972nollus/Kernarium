@@ -183,7 +183,6 @@ def write_receipt(path: Path, rows: list[tuple[str, object]]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--aosp-source", type=Path, required=True)
-    parser.add_argument("--orangefox-source", type=Path, required=True)
     parser.add_argument(
         "--kernel-artifact",
         type=Path,
@@ -226,9 +225,6 @@ def main() -> None:
     )
     parser.add_argument("--mkbootfs", type=Path, help="needed with --signing-keys")
     parser.add_argument("--mkbootimg", type=Path, help="needed with --signing-keys")
-    parser.add_argument(
-        "--recovery-image", type=Path, help="needed with --signing-keys"
-    )
     args = parser.parse_args()
 
     if RELEASE_ID_RE.fullmatch(args.release_id) is None:
@@ -239,7 +235,6 @@ def main() -> None:
     android_root = Path(__file__).resolve().parents[1]
     outer_root = android_root.parents[1]
     aosp_source = regular_directory(args.aosp_source, "AOSP source")
-    orangefox_source = regular_directory(args.orangefox_source, "OrangeFox source")
     kernel_artifact = regular_directory(args.kernel_artifact, "ACK kernel artifact")
     darwin_sdk = regular_directory(args.darwin_sdk, "Darwin SDK")
     release_root = regular_directory(args.release_root, "release root")
@@ -247,7 +242,7 @@ def main() -> None:
     signing_result: tuple[int, list[str], dict[str, str]] | None = None
     if args.signing_keys is None:
         disk = regular_file(args.disk, "raw GPT disk")
-        for option in ("mkbootfs", "mkbootimg", "recovery_image", "first_boot_artifacts"):
+        for option in ("mkbootfs", "mkbootimg", "first_boot_artifacts"):
             if getattr(args, option) is not None:
                 fail(f"--{option.replace('_', '-')} is only used with --signing-keys")
     else:
@@ -261,14 +256,12 @@ def main() -> None:
         for option, value in (
             ("--mkbootfs", args.mkbootfs),
             ("--mkbootimg", args.mkbootimg),
-            ("--recovery-image", args.recovery_image),
             ("--first-boot-artifacts", args.first_boot_artifacts),
         ):
             if value is None:
                 fail(f"--signing-keys needs {option}")
         mkbootfs = regular_file(args.mkbootfs, "mkbootfs", executable=True)
         mkbootimg = regular_file(args.mkbootimg, "mkbootimg", executable=True)
-        recovery_image = regular_file(args.recovery_image, "OrangeFox recovery image")
         first_boot_artifacts = regular_directory(
             args.first_boot_artifacts, "first-boot artifact directory"
         )
@@ -311,16 +304,6 @@ def main() -> None:
         "--expect",
         "final",
     ])
-    run([
-        str(android_root / "tools/verify-orangefox-source.py"),
-        "--android-root",
-        str(android_root),
-        "--orangefox-source",
-        str(orangefox_source),
-        "--expect",
-        "final",
-        "--allow-prebuilt-kernel",
-    ])
 
     # verify-kernel-artifact.py has checked the payload files and the ELF.
     kernel_payload = kernel_artifact / "kernel"
@@ -358,7 +341,6 @@ def main() -> None:
             "--target-files", str(signed_archive),
             "--kernel-artifact", str(kernel_artifact),
             "--mkbootfs", str(mkbootfs),
-            "--recovery-image", str(recovery_image),
             "--mkbootimg", str(mkbootimg),
             "--output", str(disk),
         ])
@@ -478,32 +460,16 @@ def main() -> None:
             provenance = staging / "provenance/source-repo-manifest.xml"
             provenance.parent.mkdir(parents=True, exist_ok=True)
             provenance.write_text(resolved_manifest + "\n", encoding="utf-8")
-            orangefox_manifest = run(
-                ["repo", "manifest", "-r"], cwd=orangefox_source, capture=True
-            )
-            orangefox_provenance = (
-                staging / "provenance/orangefox-repo-manifest.xml"
-            )
-            orangefox_provenance.write_text(
-                orangefox_manifest + "\n", encoding="utf-8"
-            )
 
             kernel_release = kernel_release_file.read_text(
                 encoding="utf-8", errors="strict"
             ).strip()
-            source, orangefox, kernel = (
-                tracked["source"], tracked["orangefox"], tracked["kernel"]
-            )
+            source, kernel = tracked["source"], tracked["kernel"]
             source_routes = read_routes(
                 android_root / "patches/projects.tsv", android_root, "source"
             )
-            orangefox_routes = read_routes(
-                android_root / "third_party/orangefox/patches/projects.tsv",
-                android_root,
-                "OrangeFox",
-            )
             receipt_rows = [
-                ("schema", 2),
+                ("schema", 3),
                 ("release_id", args.release_id),
                 ("product_family", PRODUCT_FAMILY),
                 ("producer", "android/lineage-24/build/publish-release.sh"),
@@ -511,12 +477,6 @@ def main() -> None:
                 ("outer_dirty", "false"),
                 ("source_manifest_commit", source["manifest_commit"]),
                 ("source_projects_manifest_sha256", source["projects_manifest_sha256"]),
-                ("orangefox_manifest_commit", orangefox["manifest_commit"]),
-                ("orangefox_base_manifest_sha256", orangefox["base_manifest_sha256"]),
-                ("orangefox_projects_manifest_sha256", orangefox["projects_manifest_sha256"]),
-                ("orangefox_bootable_recovery_commit", orangefox["bootable_recovery_commit"]),
-                ("orangefox_vendor_recovery_commit", orangefox["vendor_recovery_commit"]),
-                ("orangefox_se_omapi_commit", orangefox["se_omapi_commit"]),
                 ("ack_final_tree", kernel["final_tree"]),
                 ("ack_patch_manifest_sha256", kernel["patch_manifest_sha256"]),
                 ("kernel_release", kernel_release),
@@ -526,7 +486,6 @@ def main() -> None:
                 ("android_product", aosp_metadata["LINEAGE24_PRODUCT"]),
                 ("android_build_id", build_id),
                 ("source_role_android", "pinned Repo workspace"),
-                ("source_role_orangefox", "pinned OrangeFox 14.1 recovery workspace"),
                 ("source_role_ack", "replayed ACK 6.18 worktree"),
                 ("input_role_kernel", "verified standalone ACK UML build"),
                 ("input_role_disk", "verified fixed-layout UBD image"),
@@ -545,7 +504,7 @@ def main() -> None:
             write_receipt(staging / "provenance/build-receipt.tsv", receipt_rows)
 
             manifest = {
-                "schema_version": 4,
+                "schema_version": 5,
                 "release_id": args.release_id,
                 "directory_name": directory_name,
                 "product_family": PRODUCT_FAMILY,
@@ -564,7 +523,6 @@ def main() -> None:
                     "release_config": aosp_metadata["LINEAGE24_RELEASE_CONFIG"],
                 },
                 "source": {**source, "routes": source_routes},
-                "orangefox": {**orangefox, "routes": orangefox_routes},
                 "kernel": {
                     **kernel,
                     "release": kernel_release,
@@ -576,12 +534,11 @@ def main() -> None:
                     "entry_point": "android/lineage-24/build/publish-release.sh",
                     "functional_options": [
                         "pinned Android source",
-                        "pinned OrangeFox 14.1 source and local topics",
                         "clean replayed ACK source",
                         "verified standalone ACK build",
                         "verified AOSP target files",
                         "verified partition-backed UML initramfs",
-                        "verified kernel-less OrangeFox recovery partition",
+                        "verified kernel-less LineageOS recovery partition",
                         "verified fixed-layout UBD disk",
                         "explicit Darwin SDK",
                         "explicit pinned Clang",

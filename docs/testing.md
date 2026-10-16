@@ -488,11 +488,11 @@ For an opt-in diagnostic, pass one SLiRP forwarding specification as
 launches leave the variable unset and publish no host port.
 
 Android recovery qualification uses a fresh disposable bundle and sets
-`TEST_RUNNER_KERNARIUM_ANDROID_BOOT_MODE=recovery`. Verify the OrangeFox UI,
-touch input, ADB, fixed-GPT partition discovery, read-only payload mounts,
-userdata/metadata mount and format behavior, backup/restore, file manager,
-terminal, battery display, and normal/recovery reboot paths. Never run wipe or
-restore checks against an existing user bundle.
+`TEST_RUNNER_KERNARIUM_ANDROID_BOOT_MODE=recovery`. Verify the LineageOS
+recovery UI, touch input, ADB, `adb sideload` of a signed package, fixed-GPT
+partition discovery, read-only payload mounts, userdata/metadata mount and
+factory reset, battery display, and normal/recovery reboot paths. Never run
+wipe checks against an existing user bundle.
 
 `KernariumTests` runs on an iPad and, as an iPad app, on an Apple silicon
 Mac. The iPad is the reference, and the whole suite passes there. On the Mac

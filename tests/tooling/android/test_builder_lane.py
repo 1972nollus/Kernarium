@@ -923,50 +923,64 @@ def verify_boot_image_fixtures(verifier: Path) -> None:
                 fail(f"boot-image verifier accepted {label}")
 
 
-def synthetic_orangefox_ramdisk(
-    fstab: bytes, *, alignment: int = 16384, omit_dependency: bool = False
+def lz4_literal_block(payload: bytes) -> bytes:
+    """One LZ4 block that carries `payload` as a single literal run."""
+    length = len(payload)
+    token = min(length, 15) << 4
+    extension = bytearray()
+    if length >= 15:
+        remaining = length - 15
+        while remaining >= 255:
+            extension.append(255)
+            remaining -= 255
+        extension.append(remaining)
+    return bytes([token]) + bytes(extension) + payload
+
+
+def lz4_legacy_frame(payload: bytes, block_size: int = 1 << 20) -> bytes:
+    """An LZ4 legacy frame, the format of Android's compressed recovery ramdisk."""
+    frame = bytearray(b"\x02\x21\x4c\x18")
+    for offset in range(0, len(payload), block_size):
+        block = lz4_literal_block(payload[offset:offset + block_size])
+        frame += struct.pack("<I", len(block)) + block
+    return bytes(frame)
+
+
+def synthetic_lineage_recovery_ramdisk(
+    fstab: bytes, *, alignment: int = 16384, omit_dependency: bool = False,
+    interface: bytes = b"eth0\0", compression: str = "lz4",
+    module: bool = False,
 ) -> bytes:
     entries = [
-        newc_entry("init", 0o100750, b"init", 1),
+        newc_entry("init", 0o100750, synthetic_aarch64_elf(alignment), 1),
         newc_entry(
             "prop.default",
             0o100644,
             b"ro.product.system.device=darwin\n"
-            b"ro.product.system.model=OrangeFox on Darwin UML\n"
-            b"service.adb.tcp.port=5555\n",
+            b"persist.adb.tcp.port=5555\n",
             2,
         ),
         newc_entry(
-            "init.recovery.cutf_cvm.rc",
-            0o100644,
-            b"service recovery_ethernet /system/bin/ifconfig eth0 10.0.2.15 "
-            b"netmask 255.255.255.0 up\n"
-            b"    seclabel u:r:su:s0\n"
-            b"on early-fs\n"
-            b"    exec u:r:su:s0 root root -- /system/bin/sh "
-            b"/system/bin/kernarium-grow-userdata\n",
-            15,
+            "system/bin/adbd", 0o100755,
+            synthetic_aarch64_elf(alignment, needed=("libfixture.so",)), 3,
         ),
-        newc_entry("system/bin/blockdev", 0o100755, b"tool", 16),
-        newc_entry("system/bin/e2fsck", 0o100755, b"tool", 17),
-        newc_entry(
-            "system/bin/kernarium-grow-userdata",
-            0o100644,
-            b"partition=/dev/block/by-name/userdata\n"
-            b"partition_sectors=$(/system/bin/blockdev --getsz \"$partition\")\n"
-            b"filesystem_blocks=$(/system/bin/tune2fs -l \"$partition\")\n"
-            b"filesystem_block_size=4096\n"
-            b"filesystem_block_sectors=$((filesystem_block_size / 512))\n"
-            b"filesystem_sectors=$((filesystem_blocks * filesystem_block_sectors))\n"
-            b"/system/bin/e2fsck -pf \"$partition\"\n"
-            b"exec /system/bin/resize2fs \"$partition\"\n",
-            18,
-        ),
-        newc_entry("system/bin/resize2fs", 0o100755, b"tool", 19),
-        newc_entry("system/bin/tune2fs", 0o100755, b"tool", 20),
+        newc_entry("system/bin/e2fsck", 0o100755, b"tool", 4),
+        newc_entry("system/bin/mke2fs", 0o100755, b"tool", 5),
         newc_entry(
             "system/bin/recovery", 0o100755,
-            synthetic_aarch64_elf(alignment, needed=("libfixture.so",)), 3,
+            synthetic_aarch64_elf(alignment, needed=("librecovery_ui.so",)), 6,
+        ),
+        newc_entry("system/bin/resize2fs", 0o100755, b"tool", 7),
+        newc_entry("system/bin/tune2fs", 0o100755, b"tool", 8),
+        newc_entry("system/etc/recovery.fstab", 0o100644, fstab, 9),
+        newc_entry(
+            "system/lib64/librecovery_ui.so", 0o100644,
+            synthetic_aarch64_elf(alignment), 10,
+        ),
+        newc_entry(
+            "system/lib64/librecovery_ui_ext.so", 0o100644,
+            synthetic_aarch64_elf(alignment)
+            + interface + b"10.0.2.15\0" + b"255.255.255.0\0", 11,
         ),
         *([] if omit_dependency else [
             newc_entry(
@@ -974,74 +988,89 @@ def synthetic_orangefox_ramdisk(
                 synthetic_aarch64_elf(alignment), 12,
             )
         ]),
-        newc_entry("system/etc/fox.cfg", 0o100644, b"FOX_CODE_BASE=fixture\n", 4),
-        newc_entry("system/etc/recovery.fstab", 0o100644, fstab, 5),
-        newc_entry(
-            "system/etc/cgroups.json", 0o100644,
-            b'{"Cgroups":[{"Controller":"cpuset"}]}\n', 13,
-        ),
-        newc_entry(
-            "system/etc/task_profiles.json", 0o100644,
-            b'{"Profiles":[{"Name":"ServiceCapacityLow"}]}\n', 14,
-        ),
+        *([newc_entry("lib/modules/fixture.ko", 0o100644, b"module", 13)] if module else []),
     ]
-    for inode, name in enumerate(
-        ("recovery", "backup", "restore", "files", "mount", "wipe"), 6
-    ):
-        entries.append(newc_entry(f"twres/pages/{name}.xml", 0o100644, b"<recovery/>\n", inode))
     entries.append(newc_entry("TRAILER!!!", 0, b"", len(entries) + 1))
-    return gzip.compress(b"".join(entries), mtime=0)
+    archive = b"".join(entries)
+    if compression == "gzip":
+        return gzip.compress(archive, mtime=0)
+    if compression == "lz4":
+        return lz4_legacy_frame(archive)
+    return archive
 
 
-def verify_orangefox_recovery_fixtures(verifier: Path, android_root: Path) -> None:
-    fstab = (
-        android_root
-        / "third_party/orangefox/device/recovery/root/system/etc/recovery.fstab"
-    ).read_bytes()
-    with tempfile.TemporaryDirectory(prefix="android-orangefox-") as temporary:
+def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None:
+    fstab = (android_root / "overlay/config/recovery.fstab").read_bytes()
+    spec = importlib.util.spec_from_file_location("verify_lineage_recovery", verifier)
+    assert spec is not None and spec.loader is not None
+    sys.path.insert(0, str(verifier.parent))
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(verifier.parent))
+    # A match whose offset is shorter than its length repeats the pattern.
+    if module.lz4_block(b"\x35abc\x03\x00\x20de", 1 << 20) != b"abcabcabcabcde":
+        fail("LZ4 block decoder mis-decoded an overlapping match")
+    for label, block in (
+        ("offset past the output", b"\x15a\x02\x00\x10b"),
+        ("zero offset", b"\x15a\x00\x00\x10b"),
+        ("literal run past the block", b"\x50ab"),
+        ("truncated length", b"\xf0"),
+    ):
+        try:
+            module.lz4_block(block, 1 << 20)
+        except module.VerificationError:
+            continue
+        fail(f"LZ4 block decoder accepted {label}")
+
+    def run(image: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable, "-B", str(verifier),
+                "--android-root", str(android_root), "--image", str(image),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="android-lineage-recovery-") as temporary:
         root = Path(temporary)
-        good = root / "recovery.img"
-        good.write_bytes(synthetic_boot_image(synthetic_orangefox_ramdisk(fstab)))
-        subprocess.run(
-            [
-                sys.executable, "-B", str(verifier),
-                "--android-root", str(android_root), "--image", str(good),
-            ],
-            check=True,
-        )
-        bad = root / "recovery-4k.img"
-        bad.write_bytes(
-            synthetic_boot_image(synthetic_orangefox_ramdisk(fstab, alignment=4096))
-        )
-        result = subprocess.run(
-            [
-                sys.executable, "-B", str(verifier),
-                "--android-root", str(android_root), "--image", str(bad),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        if result.returncode == 0:
-            fail("OrangeFox verifier accepted a 4 KiB-only recovery ELF")
-        missing_dependency = root / "recovery-missing-dependency.img"
-        missing_dependency.write_bytes(
-            synthetic_boot_image(
-                synthetic_orangefox_ramdisk(fstab, omit_dependency=True)
+        for compression in ("lz4", "gzip"):
+            good = root / f"recovery-{compression}.img"
+            good.write_bytes(
+                synthetic_boot_image(
+                    synthetic_lineage_recovery_ramdisk(fstab, compression=compression)
+                )
             )
-        )
-        result = subprocess.run(
-            [
-                sys.executable, "-B", str(verifier),
-                "--android-root", str(android_root),
-                "--image", str(missing_dependency),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        if result.returncode == 0:
-            fail("OrangeFox verifier accepted a missing ELF dependency")
+            result = run(good)
+            if result.returncode != 0:
+                fail(f"Lineage recovery verifier rejected a {compression} fixture: {result.stdout}")
+        for label, ramdisk in (
+            ("a 4 KiB-only ELF", synthetic_lineage_recovery_ramdisk(fstab, alignment=4096)),
+            (
+                "a missing ELF dependency",
+                synthetic_lineage_recovery_ramdisk(fstab, omit_dependency=True),
+            ),
+            (
+                "the Cuttlefish interface",
+                synthetic_lineage_recovery_ramdisk(fstab, interface=b"eth1\0"),
+            ),
+            ("a loadable module", synthetic_lineage_recovery_ramdisk(fstab, module=True)),
+            (
+                "a changed fstab",
+                synthetic_lineage_recovery_ramdisk(fstab + b"# changed\n"),
+            ),
+            (
+                "an uncompressed ramdisk",
+                synthetic_lineage_recovery_ramdisk(fstab, compression="none"),
+            ),
+        ):
+            bad = root / "recovery-bad.img"
+            bad.write_bytes(synthetic_boot_image(ramdisk))
+            if run(bad).returncode == 0:
+                fail(f"Lineage recovery verifier accepted {label}")
 
 
 def synthetic_sparse_image() -> bytes:
@@ -1423,8 +1452,8 @@ def main() -> None:
     verify_pin_manifest(android_root / "tools/render-pin-manifest.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")
-    verify_orangefox_recovery_fixtures(
-        android_root / "tools/verify-orangefox-recovery.py", android_root
+    verify_lineage_recovery_fixtures(
+        android_root / "tools/verify-lineage-recovery.py", android_root
     )
     verify_ubd_disk_fixtures(
         android_root / "tools/ubd-disk.py",
