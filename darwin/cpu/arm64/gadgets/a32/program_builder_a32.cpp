@@ -1365,17 +1365,21 @@ BuildOutput Translator::run()
 		}
 		if (in.status == Status::ok) {
 			/* A conditional branch tests its own condition, and
-			 * conditional data processing that sets no flags is a
-			 * select where emit_dp_values has one for its shape;
+			 * conditional data processing that sets no flags and a
+			 * conditional VMOV of VFP registers are selects where
+			 * emit_dp_values or emit_vfp has one for the shape;
 			 * every other conditional instruction is behind a
 			 * skip. */
 			if (plan.family == Family::branch ||
 			    plan.family == Family::cbz || plan.family == Family::it) {
 				close_run();
-			} else if (in.cond < 14 && !in.operands.setflags &&
-				   in.operands.d != 15 &&
-				   (plan.family == Family::dp ||
-				    plan.family == Family::movw)) {
+			} else if (in.cond < 14 &&
+				   ((!in.operands.setflags &&
+				     in.operands.d != 15 &&
+				     (plan.family == Family::dp ||
+				      plan.family == Family::movw)) ||
+				    (plan.family == Family::vfp2 &&
+				     plan.sub == kVfp2Vmov))) {
 				close_run();
 				select_ = in.cond;
 			} else {

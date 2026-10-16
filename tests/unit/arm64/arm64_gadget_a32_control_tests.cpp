@@ -2055,6 +2055,41 @@ void a_compare_and_the_flag_transfer_after_it_run_as_one()
 	}
 }
 
+/* A conditional VMOV between S or D registers is a select, not a skip. */
+void a_conditional_floating_point_move_selects_without_a_skip()
+{
+	const std::array<std::uint32_t, 5> words{
+		0xeeb5'1b40U, /* vcmp.f64 d1, #0 */
+		0xeef1'fa10U, /* vmrs APSR_nzcv, fpscr */
+		0xceb0'0b42U, /* vmovgt.f64 d0, d2 */
+		0xbef0'3a42U, /* vmovlt.f32 s7, s4 */
+		a::svc};
+	require(!translation_skips(words));
+	unsigned long generation = 1095;
+	for (const std::uint64_t d1 : {0x3ff0'0000'0000'0000ULL /* 1.0 */,
+				       0xbff0'0000'0000'0000ULL /* -1.0 */,
+				       0ULL}) {
+		Guest guest{generation++};
+		for (std::uint32_t index = 0; index < words.size(); ++index)
+			guest.a32(4 * index, {words[index]});
+		auto cpu = a32_state();
+		set_d(cpu, 0, 0x1111'1111'1111'1111ULL);
+		set_d(cpu, 1, d1);
+		set_d(cpu, 2, 0x2222'2222'2222'2222ULL);
+		set_d(cpu, 3, 0x3333'3333'3333'3333ULL);
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(result.retired_instructions == words.size());
+		const bool greater = d1 == 0x3ff0'0000'0000'0000ULL;
+		const bool less = d1 == 0xbff0'0000'0000'0000ULL;
+		require(get_d(cpu, 0) == (greater ? 0x2222'2222'2222'2222ULL :
+						    0x1111'1111'1111'1111ULL));
+		/* S7 is the high half of D3, S4 the low half of D2. */
+		require(get_d(cpu, 3) == (less ? 0x2222'2222'3333'3333ULL :
+						 0x3333'3333'3333'3333ULL));
+	}
+}
+
 /* A VLD1 or VST1 copy that crosses a page is a gadget too: the slow transfer
  * helper moves the bytes after translating both pages. */
 void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
@@ -3020,6 +3055,7 @@ int main()
 	an_add_that_computes_a_copy_base_runs_in_the_copy();
 	hinted_copies_and_loads_to_all_lanes_have_their_own_gadgets();
 	a_compare_and_the_flag_transfer_after_it_run_as_one();
+	a_conditional_floating_point_move_selects_without_a_skip();
 	in_place_add_and_sub_of_an_immediate_reach_every_register();
 	compare_and_branch_pairs_take_the_branch_as_the_pair_does();
 	parallel_arithmetic_and_sel_stay_out_of_the_library();

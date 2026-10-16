@@ -36,6 +36,19 @@ Translator::Result Translator::emit_vfp(const Instruction &in,
 		push(reg(o.d) | reg(o.n) << 16 | reg(o.m) << 32);
 		return {};
 	case Family::vfp2:
+		/* A conditional VMOV of S or D registers, as a select (run()
+		 * opened no skip for it); anything else goes behind a skip. */
+		if (select_ < 14) {
+			const unsigned cond = select_;
+			select_ = 14;
+			if (plan.sub == kVfp2Vmov && precision < 2) {
+				push(kVfpMoveSelect[precision]);
+				push(reg(o.d) | reg(o.m) << 16 |
+				     condition_table(cond) << 32);
+				return {};
+			}
+			begin_instruction(cond);
+		}
 		push(kVfp2[plan.sub][precision]);
 		push(reg(o.d) | reg(o.m) << 16);
 		return {};
