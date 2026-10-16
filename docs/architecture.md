@@ -1077,7 +1077,9 @@ folded 4 KiB index keeps the explicit crossing check ahead of the lookup. The
 fold maps pages n and n + 1 to one set only when n has 25 trailing ones, which
 a 32-bit address cannot, so the AArch32 gadgets' probe (`a32_translate`) keys
 by the final byte on 4 KiB pages too and computes the index with one xor and
-one extract.
+one extract. `arm64-tlb-probe-set` checks in both page profiles that every
+inline probe of both engines hits the entry the C++ fill path placed, in each
+way of its set, and misses a page its set does not hold.
 
 Guest debuggers depend on two kernel/host contracts. To single-step a task,
 Linux sets the architectural step bit in the entry registers (arm64 PSTATE.SS,
