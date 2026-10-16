@@ -110,7 +110,8 @@ no floating point or SIMD):
   condition passes and fails), PC-writing loads and ALU instructions,
   interworking both ways, jumps to unmapped addresses;
 - `conditions`: every condition against every NZCV, and every IT block;
-- `pc`: instructions that read the PC;
+- `pc`: instructions that read the PC, among them the PC as a register
+  operand under a condition that fails and passes;
 - `system`: barriers, hints, CPS, the APSR instructions, TPIDRURO, TPIDRURW,
   the CP15 barriers, BKPT and the encodings Linux turns into SIGTRAP;
 - `absent`: UNDEFINED, UNPREDICTABLE, unallocated and absent-feature

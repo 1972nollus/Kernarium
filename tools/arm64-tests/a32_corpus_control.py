@@ -17,7 +17,8 @@ solving for the offset the layout needs.
   whose condition passes and fails), loads and ALU instructions that write
   the PC, interworking in both directions and jumps to unmapped addresses;
 - conditions: every condition against every NZCV, and every IT block;
-- pc: instructions that read the PC.
+- pc: instructions that read the PC, among them the PC as a register operand
+  under a condition that fails and passes.
 """
 
 from __future__ import annotations
@@ -610,6 +611,15 @@ PC_OPERANDS_A = (
     (0xE79F0101, {"r1": 0x00400000}), (0xE71F0001, {"r1": 0xFF000000}),
 )
 PC_OPERANDS_T = (0x447B0000, 0x44FC0000)
+# Each fold under EQ, whose condition fails and passes: data processing that
+# sets no flags runs as a select, everything else behind a skip.
+PC_CONDITIONAL_A = (
+    (0x0082100F, {}), (0x0042100F, {}), (0x0022100F, {}), (0x01A0000F, {}), (0x01E0000F, {}),
+    (0x008F1002, {}), (0x000F1002, {}), (0x00AF1002, {}), (0x004F1002, {}), (0x006F1002, {}),
+    (0x011F0001, {}), (0x079F0001, {"r1": 0x01000000}), (0x078F0001, {"r1": 0x01000000}),
+    (0x019F00B1, {"r1": 0x01000002}),
+)
+PC_CONDITIONAL_T = (0x46780000, 0x447B0000, 0x44FC0000)
 
 
 def pc_operands(context, suite, results):
@@ -643,6 +653,30 @@ def pc_operands(context, suite, results):
             prog.insn(word, "T16").tail(THUMB)
             make(results, suite, f"{result.form}/{word:08x}.{lead}", result.form, THUMB, prog, {},
                  retired=lead + 2, check=False, target=lead)
+    for word, initial in PC_CONDITIONAL_A:
+        result, _operands = context.reference.operands("A32", word, 0, "complete", FEATURES)
+        if result.status == "undefined":
+            raise ValueError(f"{word:08x} is not a legal A32 word")
+        for flags in (0, 0x40000000):
+            for lead in (0, 1):
+                prog = Prog()
+                for _ in range(lead):
+                    prog.word(0xE320F000)
+                prog.insn(word, "A32").tail(ARM)
+                make(results, suite, f"{result.form}/{word:08x}.eq{flags >> 28:x}.{lead}", result.form, ARM,
+                     prog, {**initial, "apsr": flags}, retired=lead + 2, check=False, target=lead)
+    for word in PC_CONDITIONAL_T:
+        result, _operands = context.reference.operands("T16", word, 0, "complete", FEATURES)
+        if result.status == "undefined":
+            raise ValueError(f"{word:08x} is not a legal T16 word")
+        for flags in (0, 0x40000000):
+            for lead in (0, 1):
+                prog = Prog()
+                for _ in range(lead):
+                    prog.half(NOP_T)
+                prog.half(0xBF08).insn(word, "T16").tail(THUMB)
+                make(results, suite, f"{result.form}/{word:08x}.it-eq{flags >> 28:x}.{lead}", result.form,
+                     THUMB, prog, {"apsr": flags}, retired=lead + 3, check=False, target=lead + 1)
     # ADD Rdn, PC under IT EQ, whose condition fails and passes.
     for flags in (0, 0x40000000):
         for lead in (0, 1):

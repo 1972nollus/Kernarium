@@ -11,7 +11,7 @@ fetch-qemu	qemu	994
 fpscr-qemu	qemu	252
 fpscr-reserved-pi4	pi4	144
 memory-qemu	qemu	1914
-pc-qemu	qemu	206
+pc-qemu	qemu	274
 positions-qemu	qemu	618
 positions-unaligned-pi4	pi4	34
 prefetch-qemu	qemu	144
