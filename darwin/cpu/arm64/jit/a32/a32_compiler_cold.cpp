@@ -12,9 +12,18 @@ namespace uml::cpu::arm64::jit::a32 {
 void A32Compiler::emit_cold_paths() {
   for (const auto &path : translation_cold_)
     emit_translation_cold(path);
+  for (const auto &path : crossing_cold_)
+    emit_crossing_cold(path);
   for (const auto &path : resume_cold_) {
     bind(path.label);
     emit(0xd503'3f5fU); // clrex
+    emitter_.branch(path.continuation);
+  }
+  for (const auto &path : float_cold_) {
+    bind(path.label);
+    emit_fp_write(true);
+    emit_vec3(path.base, path.dest, path.a, path.b);
+    emit_fp_write(false);
     emitter_.branch(path.continuation);
   }
   for (const auto &cold : cold_) {
@@ -26,7 +35,6 @@ void A32Compiler::emit_cold_paths() {
     publish_cold_flags(cold.flags);
     assume_flags_in_memory();
     count_ = cold.index;
-    standard_fp_ = cold.standard_fp;
     const auto &d = cur();
     switch (cold.kind) {
     case ColdPath::Kind::memory_fault:
@@ -34,6 +42,13 @@ void A32Compiler::emit_cold_paths() {
       break;
     case ColdPath::Kind::illegal:
       exit_event(Event::illegal_instruction, key_of(d), d.it);
+      break;
+    case ColdPath::Kind::branch:
+      if (cold.monitor) {
+        emit(0xd503'3f5fU); // clrex
+        clear_exclusive_monitor();
+      }
+      exit_direct(cold.target, 0U, cold.index + 1U);
       break;
     case ColdPath::Kind::code_changed:
       exit_event(Event::continued, next_key(), d.inst.next_it.bits());
@@ -60,7 +75,6 @@ void A32Compiler::emit_cold_paths() {
 
 void A32Compiler::emit_slow_helper(const ColdPath &cold) {
   /* The helper restores the host's own FPCR and FPSR before it runs. */
-  standard_fp_ = false;
   const auto &d = cur();
   store_pc(key_of(d));
   spill_gprs_for_terminal_call();

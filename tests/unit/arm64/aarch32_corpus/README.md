@@ -155,9 +155,9 @@ The oracle's store-exclusive always succeeds when its load-exclusive ran
 first, and a case is one attempt. An engine whose exclusives are the host's
 can fail one without cause, as the architecture allows: the host's monitor
 ends at any interrupt between the load and the store. A lane therefore runs a
-failing store-exclusive case again, a bounded number of times: the gadget lane
-when the only difference is a status of 1 where the pack has 0 and the store
-that did not happen, the JIT lane once.
+failing store-exclusive case again, a bounded number of times: when the only
+difference is a status of 1 where the pack has 0 and the store that did not
+happen, up to 16 attempts in all, in the gadget lane and the JIT lane alike.
 
 Two suites are recorded only from hardware (`pi4` or `pi5`): `unaligned`
 (172 cases: multi-word accesses at misaligned addresses) and `fpscr-reserved`

@@ -493,7 +493,7 @@ private:
 		"a page link id fits 32 bits");
 
 	/* The common monomorphic and bimorphic successors bypass the main
-	 * four-way probe. A successor is named by its slot's index plus one, so
+	 * set probe. A successor is named by its slot's index plus one, so
 	 * zero is empty, and a slot's own set sits at that same index. Slots and
 	 * their companion sets live in lazy slabs for the executor's lifetime;
 	 * epoch and key checks make stale entries inert. */
@@ -1116,6 +1116,8 @@ public:
 				state.links[0].size() + state.links[1].size(),
 				bytes.links, bytes.indirect, bytes.targets);
 		}
+		if (census::totals_only())
+			return;
 		const auto sample = census::word_sample();
 		/* The same link targets are sampled in every cache, so the
 		 * sample says how many of an address space's records each

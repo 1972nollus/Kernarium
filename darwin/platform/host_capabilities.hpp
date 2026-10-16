@@ -124,13 +124,10 @@ enum class ArmFeature : std::size_t {
 	sme2,
 	sme_f64f64,
 	sme_i16i64,
-	/* The non-streaming SVE profile (cpu/arm64/sve_profile.hpp): FEAT_SVE
-	 * and FEAT_SVE2, with FEAT_SVE_AES, FEAT_SVE_PMULL128 and
-	 * FEAT_SVE_SHA3. No supported host implements SVE; the engines lower
-	 * it onto the host's AdvSIMD forms, so the prober reports these only
-	 * under the guest-SVE policy and where the host has those forms. The
-	 * SVE forms of FEAT_I8MM and FEAT_BF16 need no token: they are FEAT_SVE
-	 * with those features. */
+	/* The non-streaming SVE features: FEAT_SVE and FEAT_SVE2, with
+	 * FEAT_SVE_AES, FEAT_SVE_PMULL128 and FEAT_SVE_SHA3. The virtual CPU
+	 * implements none of them (without_sve), whatever the host reports;
+	 * the tokens stay as the architectural inventory. */
 	sve,
 	sve2,
 	sve_aes,
@@ -328,5 +325,18 @@ struct HostCapabilities final {
 	[[nodiscard, gnu::always_inline]] bool operator==(
 		const HostCapabilities &) const noexcept = default;
 };
+
+/* `host` without the non-streaming SVE tokens: no supported host implements
+ * SVE and the virtual CPU presents none, so neither the prober nor an
+ * engine's presented profile carries one. */
+[[nodiscard]] inline HostCapabilities without_sve(
+	HostCapabilities host) noexcept
+{
+	for (const auto feature : {ArmFeature::sve, ArmFeature::sve2,
+		     ArmFeature::sve_aes, ArmFeature::sve_pmull128,
+		     ArmFeature::sve_sha3})
+		host.supported.reset(static_cast<std::size_t>(feature));
+	return host;
+}
 
 } // namespace uml::platform

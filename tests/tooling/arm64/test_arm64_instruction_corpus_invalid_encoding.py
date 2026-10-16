@@ -14,8 +14,8 @@ chain, writes its answers into the pack. This test requires:
   tables settle to carry the classifier's bit (a word they leave open keeps
   its producer's bit, which `--llvm` checks);
 - the classifier's feature lists to cover every allocation-table feature
-  token, the absent-feature script's features, and the SVE profile of
-  darwin/cpu/arm64/sve_profile.hpp, so a new feature has to be decided; and
+  token and the absent-feature script's features, so a new feature has to be
+  decided; and
 - provenance.json to record the step.
 
 `--llvm` adds the cross-check that the tables cannot make: a case whose bit
@@ -32,14 +32,12 @@ import argparse
 import importlib.util
 import json
 import pathlib
-import re
 import subprocess
 import sys
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 TOOLS = REPOSITORY / "tools" / "arm64-tests"
 SKIP = 77
-SVE_PROFILE = REPOSITORY / "darwin" / "cpu" / "arm64" / "sve_profile.hpp"
 
 
 def load(name: str, path: pathlib.Path):
@@ -66,6 +64,15 @@ def check_features(ie) -> list[str]:
         problems.append("allocation-table feature tokens that "
                         "invalid_encoding.py decides neither implemented "
                         "nor omitted: " + ", ".join(unknown))
+    # The virtual CPU executes SVE only in streaming mode, so every SVE
+    # feature of the encoding table is unimplemented outside the SME rows.
+    sve = frozenset(token for token in ie.sme_table.FEATURES
+                    if token.startswith("sve"))
+    if sve - ie.UNIMPLEMENTED_PROFILE_FEATURES:
+        problems.append("SVE features of the encoding table that "
+                        "invalid_encoding.py treats as implemented: " +
+                        ", ".join(sorted(
+                            sve - ie.UNIMPLEMENTED_PROFILE_FEATURES)))
     both = sorted(ie.OMITTED_TOKENS & ie.IMPLEMENTED_TOKENS)
     if both:
         problems.append("tokens listed as implemented and omitted: " +
@@ -86,25 +93,17 @@ def check_features(ie) -> list[str]:
             problems.append("the absent-feature script removes conditions "
                             "that invalid_encoding.py does not omit: " +
                             ", ".join(missing))
-    text = SVE_PROFILE.read_text(encoding="utf-8")
-    match = re.search(r"sve_features\{([^}]*)\}", text)
-    implemented = {name.split("::")[1] for name in
-                   re.findall(r"ArmFeature::\w+", match.group(1))}
-    table_sve = {name for name in ie.sme_table.FEATURES
-                 if name.startswith("sve")}
-    if table_sve - ie.UNIMPLEMENTED_PROFILE_FEATURES != implemented:
-        problems.append(
-            "the table's SVE features less the unimplemented ones are "
-            f"{sorted(table_sve - ie.UNIMPLEMENTED_PROFILE_FEATURES)}, "
-            f"sve_features is {sorted(implemented)}")
     return problems
 
 
 # (word, record options, invalid): one word of each rule of the classifier.
 EXAMPLES = (
-    # ADR (vectors): SVE outside streaming mode, and where SVE is absent.
-    (0x04A0_A000, (), False),
-    (0x04A0_A000, ("without_sve",), False),
+    # ADR (vectors) is non-streaming SVE, which no configuration executes;
+    # RDVL executes in streaming mode and, as the SM = 0 family, outside it,
+    # and is a valid encoding where SME is absent.
+    (0x04A0_A000, (), True),
+    (0x04BF_5000, (), False),
+    (0x04BF_5000, ("without_sme",), False),
     # An SVE row nothing executes, and AND (immediate) with a reserved imm13.
     (0x0406_A000, (), True),
     (0x0583_FFE0, (), True),

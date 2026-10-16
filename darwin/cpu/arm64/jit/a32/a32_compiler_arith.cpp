@@ -4,7 +4,8 @@
 // bit-field and byte-order operations, extension, packing and SEL,
 // saturation, and the DSP multiplies. All arithmetic is on W registers; the
 // 64-bit forms use the host's long multiplies. The parallel add and subtract
-// forms, SSAT16, USAT16 and the sum of absolute differences run in the AArch32
+// forms run in the vector unit, except the signed saturating ones, which with
+// SSAT16, USAT16 and the sum of absolute differences run in the AArch32
 // semantic library, through the slow helper (a32_execute.cpp).
 //
 // Registers: an operand lives in its resident register or a fallback (x9 for
@@ -15,6 +16,7 @@
 
 #include "a32_encoders.hpp"
 #include "a32_operations.hpp"
+#include "a32_vector_encoders.hpp"
 
 namespace uml::cpu::arm64::jit::a32 {
 
@@ -543,6 +545,111 @@ A32Compiler::Flow A32Compiler::emit_dsp_multiply(const OpInfo &info) {
   }
   exit_illegal();
   return Flow::end;
+}
+
+// ---------------------------------------------------------------------------
+// Parallel add and subtract.
+//
+// The packed lanes of the two registers go through the vector unit as bytes
+// or halfwords of a D register. No instruction here may set the host's QC
+// flag, which is the guest's FPSCR.QC: the unsigned saturating forms use
+// UMAX and UMIN (UQSUB is MAX(a, b) - b, UQADD is a + MIN(b, ~a)), and the
+// signed forms take GE from the exact sum of a widening add. The signed
+// saturating forms, which would need saturating clamps, stay in the library.
+// ASX and SAX exchange the halves of Rm and take one lane from the
+// subtraction and one from the addition.
+
+A32Compiler::Flow A32Compiler::emit_parallel(const OpInfo &info) {
+  const auto &o = cur().inst.operands;
+  if (info.mode == ParallelMode::saturating || o.d == 15 || o.n == 15 ||
+      o.m == 15)
+    return emit_arith_through_helper();
+  constexpr unsigned v_a = 0;
+  constexpr unsigned v_b = 1;
+  constexpr unsigned v_add = 2;
+  constexpr unsigned v_add_ge = 3;
+  constexpr unsigned v_sub = 4;
+  constexpr unsigned v_sub_ge = 5;
+  constexpr unsigned v_wide = 6;
+  const bool exchange =
+      info.kind == ParallelKind::asx || info.kind == ParallelKind::sax;
+  const bool halfwords = exchange || info.kind == ParallelKind::add16 ||
+                         info.kind == ParallelKind::sub16;
+  const unsigned size = halfwords ? 1U : 0U;
+  const bool sets_ge = info.mode == ParallelMode::signed_wrap ||
+                       info.mode == ParallelMode::unsigned_wrap;
+  const unsigned n = use(o.n, fallback_n);
+  const unsigned m = use(o.m, fallback_m);
+  emit(enc::vec::float_int(enc::vec::fmov_from_w, 0, false, v_a, n));
+  unsigned b_source = m;
+  if (exchange) {
+    emit(enc::ror_i(temp0, m, 16));
+    b_source = temp0;
+  }
+  emit(enc::vec::float_int(enc::vec::fmov_from_w, 0, false, v_b, b_source));
+
+  using enc::vec::Same;
+  const auto three = [&](Same op, unsigned d, unsigned a, unsigned b) {
+    emit(enc::vec::same(false, op, size, d, a, b));
+  };
+  const auto lanes = [&](bool subtract, unsigned result, unsigned ge) {
+    switch (info.mode) {
+    case ParallelMode::signed_wrap:
+      three(subtract ? Same::sub : Same::add, result, v_a, v_b);
+      emit(enc::vec::diff(false,
+                          subtract ? enc::vec::ssubl : enc::vec::saddl, size,
+                          v_wide, v_a, v_b));
+      emit(enc::vec::misc(true, enc::vec::cmge0, size + 1U, v_wide, v_wide));
+      emit(enc::vec::misc(false, enc::vec::xtn, size, ge, v_wide));
+      break;
+    case ParallelMode::unsigned_wrap:
+      three(subtract ? Same::sub : Same::add, result, v_a, v_b);
+      if (subtract)
+        three(Same::cmhs, ge, v_a, v_b);
+      else
+        three(Same::cmhi, ge, v_a, result); // a > a + b: a carry
+      break;
+    case ParallelMode::unsigned_saturating:
+      if (subtract) {
+        three(Same::umax, result, v_a, v_b);
+        three(Same::sub, result, result, v_b);
+      } else {
+        emit(enc::vec::misc(false, enc::vec::not_, 0, v_wide, v_a));
+        three(Same::umin, v_wide, v_wide, v_b);
+        three(Same::add, result, v_a, v_wide);
+      }
+      break;
+    case ParallelMode::signed_halving:
+      three(subtract ? Same::shsub : Same::shadd, result, v_a, v_b);
+      break;
+    case ParallelMode::unsigned_halving:
+      three(subtract ? Same::uhsub : Same::uhadd, result, v_a, v_b);
+      break;
+    case ParallelMode::saturating:
+      break;
+    }
+  };
+  if (exchange) {
+    lanes(false, v_add, v_add_ge);
+    lanes(true, v_sub, v_sub_ge);
+    // ASX subtracts in the low lane, SAX in the high one.
+    const unsigned lane = info.kind == ParallelKind::asx ? 0U : 1U;
+    emit(enc::vec::ins_element(1, v_add, lane, v_sub, lane));
+    if (sets_ge)
+      emit(enc::vec::ins_element(1, v_add_ge, lane, v_sub_ge, lane));
+  } else {
+    lanes(info.kind == ParallelKind::sub16 || info.kind == ParallelKind::sub8,
+          v_add, v_add_ge);
+  }
+  if (sets_ge) {
+    emit(enc::vec::float_int(enc::vec::fmov_to_w, 0, false, temp0, v_add_ge));
+    emitter_.store_w(temp0, 15, offsetof(CpuState, a32_ge_mask));
+  }
+  const auto dest = def(o.d, false, fallback_n);
+  emit(enc::vec::float_int(enc::vec::fmov_to_w, 0, false, dest.native.host,
+                           v_add));
+  done(dest);
+  return Flow::next;
 }
 
 // ---------------------------------------------------------------------------

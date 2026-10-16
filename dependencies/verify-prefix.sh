@@ -199,14 +199,17 @@ dynamic_files=$(find "$PREFIX" \( -type f -o -type l \) -print |
 # Suffix checks provide a useful diagnostic for conventional library names, but
 # the static-only policy is about payload contents. Inspect every regular file
 # below lib so a Mach-O dynamic library or plug-in cannot hide behind an
-# unconventional filename.
-find "$PREFIX/lib" -type f -print | while IFS= read -r library_payload; do
-	if "$XCRUN_OTOOL" -hv "$library_payload" 2>/dev/null |
-		awk '$5 == "DYLIB" || $5 == "BUNDLE" || $5 == "DYLIB_STUB" { found = 1 }
-			END { exit !found }'; then
-		fail "dynamic Mach-O payload is forbidden in the private prefix: $library_payload"
-	fi
-done
+# unconventional filename. One otool run covers the files, and each header
+# line it prints names the payload (or archive member) the next row describes.
+dynamic_payload=$(find "$PREFIX/lib" -type f -exec "$XCRUN_OTOOL" -hv {} + \
+	2>/dev/null | awk '
+		/^[^[:space:]].*:$/ { payload = substr($0, 1, length($0) - 1); next }
+		$5 == "DYLIB" || $5 == "BUNDLE" || $5 == "DYLIB_STUB" {
+			print payload
+			exit
+		}')
+[ -z "$dynamic_payload" ] ||
+	fail "dynamic Mach-O payload is forbidden in the private prefix: $dynamic_payload"
 
 for cmake_metadata in lib/cmake share/cmake; do
 	[ ! -e "$PREFIX/$cmake_metadata" ] && [ ! -L "$PREFIX/$cmake_metadata" ] ||

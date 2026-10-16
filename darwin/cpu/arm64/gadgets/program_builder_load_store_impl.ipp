@@ -6,6 +6,13 @@ namespace uml::cpu::arm64::gadgets::builder_detail {
 
 using namespace selection;
 
+/* The exclusive and vector pair operands pack their register offsets into
+ * 12-bit fields. */
+static_assert(vector_operand_offset(31U) <= 0xfffU &&
+	      base_register_offset(31U) <= 0xfffU &&
+	      transfer_register_offset(31U) <= 0xfffU,
+	      "a packed memory operand's register offset must fit its field");
+
 DecodeResult decode_load_store(DecodeContext &context)
 {
 	const auto address = context.address;
@@ -26,16 +33,35 @@ DecodeResult decode_load_store(DecodeContext &context)
 		if (vector && operation == 3U)
 			return illegal_instruction(context);
 		const unsigned destination = instruction & 31U;
-		emit(words, literal_load_gadget(
-			vector, operation, !vector && destination == 31U));
-		const auto destination_offset = vector ?
-			vector_operand_offset(destination) :
-			transfer_register_offset(destination);
 		const auto displacement =
 			sign_extend((instruction >> 5) & 0x7ffffU, 19) * 4;
-		emit(words, destination_offset |
-			(static_cast<std::uint64_t>(displacement) << 16));
-		emit(words, address);
+		const auto target =
+			address + static_cast<std::uint64_t>(displacement);
+		/* The target address, the destination and the instruction's
+		 * position share one operand when the target fits 48 bits,
+		 * which only a PC within a megabyte of either end of the
+		 * address space does not. A vector destination is named by
+		 * its register's offset in sixteen-byte units. */
+		if (target >> 48 == 0U) {
+			emit(words, literal_load_gadget(vector, operation,
+				!vector && destination == 31U, false));
+			const auto destination_field = vector ?
+				vector_operand_offset(destination) / 16U :
+				transfer_register_offset(destination);
+			emit(words, target |
+				(static_cast<std::uintptr_t>(destination_field)
+					<< 48) |
+				fault_position(context));
+		} else {
+			emit(words, literal_load_gadget(vector, operation,
+				!vector && destination == 31U, true));
+			const auto destination_offset = vector ?
+				vector_operand_offset(destination) :
+				transfer_register_offset(destination);
+			emit(words, destination_offset |
+				(static_cast<std::uint64_t>(displacement) << 16));
+			emit(words, address);
+		}
 	} else if ((instruction & 0xbfbf'fc00U) == 0x0d01'8400U ||
 		   (instruction & 0x3f20'0c00U) == 0x1d00'0800U) {
 		/* FEAT_LRCPC3 LDAP1 and STL1, and LDAPUR and STLUR to SIMD&FP
@@ -72,8 +98,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			emit(words, (instruction & 31U) |
 				(static_cast<std::uintptr_t>(base_offset) << 16) |
 				(static_cast<std::uintptr_t>(offset_register_offset)
-					<< 32));
-			emit(words, address);
+					<< 32) |
+				fault_position(context));
 		} else {
 			return illegal_instruction(context);
 		}
@@ -111,8 +137,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			emit(words, (instruction & 31U) |
 				(static_cast<std::uintptr_t>(base_offset) << 16) |
 				(static_cast<std::uintptr_t>(offset_register_offset)
-					<< 32));
-			emit(words, address);
+					<< 32) |
+				fault_position(context));
 		} else if (valid_no_offset && scale != 3U && valid_lane) {
 			const bool q = (instruction & 0x4000'0000U) != 0;
 			const unsigned count =
@@ -145,8 +171,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(static_cast<std::uintptr_t>(base_offset) << 16) |
 				(static_cast<std::uintptr_t>(offset_register_offset)
 					<< 32) |
-				(static_cast<std::uintptr_t>(lane_offset) << 48));
-			emit(words, address);
+				(static_cast<std::uintptr_t>(lane_offset) << 48) |
+				fault_position(context));
 		} else {
 			return illegal_instruction(context);
 		}
@@ -212,8 +238,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			emit(words,
 				rcpc_load_gadgets[variant][transfer == 31U]);
 		}
-		emit(words, rcpc_memory_operand(instruction, offset));
-		emit(words, address);
+		emit(words, rcpc_memory_operand(instruction, offset) |
+			fault_position(context));
 	} else if ((instruction & 0x3fa0'0000U) == 0x0880'0000U) {
 		/* o0 clear selects LDLAR and STLLR, which need FEAT_LOR; the
 		 * virtual CPU does not implement it. */
@@ -233,8 +259,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 				transfer_register_offset(transfer);
 			const auto base_offset = base_register_offset(base);
 			emit(words, transfer_offset |
-				(static_cast<std::uintptr_t>(base_offset) << 16));
-			emit(words, address);
+				(static_cast<std::uintptr_t>(base_offset) << 16) |
+				fault_position(context));
 		} else {
 			return illegal_instruction(context);
 		}
@@ -330,8 +356,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const auto base_offset = base_register_offset(base);
 			emit(words, destination_offset |
 				(static_cast<std::uintptr_t>(source_offset) << 16) |
-				(static_cast<std::uintptr_t>(base_offset) << 32));
-			emit(words, address);
+				(static_cast<std::uintptr_t>(base_offset) << 32) |
+				fault_position(context));
 		} else {
 			return illegal_instruction(context);
 		}
@@ -364,8 +390,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const auto base_offset = base_register_offset(base);
 			emit(words, compare_offset |
 				(static_cast<std::uintptr_t>(replacement_offset) << 16) |
-				(static_cast<std::uintptr_t>(base_offset) << 32));
-			emit(words, address);
+				(static_cast<std::uintptr_t>(base_offset) << 32) |
+				fault_position(context));
 		} else {
 			return illegal_instruction(context);
 		}
@@ -396,8 +422,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const auto base_offset = base_register_offset(base);
 			emit(words, compare_offset |
 				(static_cast<std::uintptr_t>(replacement_offset) << 16) |
-				(static_cast<std::uintptr_t>(base_offset) << 32));
-			emit(words, address);
+				(static_cast<std::uintptr_t>(base_offset) << 32) |
+				fault_position(context));
 		} else {
 			return illegal_instruction(context);
 		}
@@ -431,7 +457,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 					base_register_offset(base);
 				emit(words, first_offset |
 					(static_cast<std::uintptr_t>(second_offset) << 16) |
-					(static_cast<std::uintptr_t>(base_offset) << 32));
+					(static_cast<std::uintptr_t>(base_offset) << 32) |
+					fault_position(context));
 			} else {
 				const unsigned registers =
 					(first == 31U ? 4U : 0U) |
@@ -447,12 +474,14 @@ DecodeResult decode_load_store(DecodeContext &context)
 					transfer_register_offset(status);
 				const auto base_offset =
 					base_register_offset(base);
+				/* Four 12-bit offsets and the position: no 16-bit
+				 * field is left for the base. */
 				emit(words, first_offset |
-					(static_cast<std::uintptr_t>(second_offset) << 16) |
-					(static_cast<std::uintptr_t>(status_offset) << 32) |
-					(static_cast<std::uintptr_t>(base_offset) << 48));
+					(static_cast<std::uintptr_t>(second_offset) << 12) |
+					(static_cast<std::uintptr_t>(status_offset) << 24) |
+					(static_cast<std::uintptr_t>(base_offset) << 36) |
+					fault_position(context));
 			}
-			emit(words, address);
 		} else {
 			return illegal_instruction(context);
 		}
@@ -479,7 +508,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 				const auto base_offset =
 					base_register_offset(base);
 				emit(words, transfer_offset |
-					(static_cast<std::uintptr_t>(base_offset) << 16));
+					(static_cast<std::uintptr_t>(base_offset) << 16) |
+					fault_position(context));
 			} else {
 				const unsigned registers =
 					(transfer == 31U ? 2U : 0U) |
@@ -494,9 +524,9 @@ DecodeResult decode_load_store(DecodeContext &context)
 					base_register_offset(base);
 				emit(words, transfer_offset |
 					(static_cast<std::uintptr_t>(status_offset) << 16) |
-					(static_cast<std::uintptr_t>(base_offset) << 32));
+					(static_cast<std::uintptr_t>(base_offset) << 32) |
+					fault_position(context));
 			}
-			emit(words, address);
 		} else {
 			return illegal_instruction(context);
 		}
@@ -543,8 +573,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 				((instruction >> 10) & 0xfffU) << scale;
 			emit(words, transfer_offset |
 				(static_cast<std::uintptr_t>(base_offset) << 16) |
-				(static_cast<std::uintptr_t>(offset) << 32));
-			emit(words, address);
+				(static_cast<std::uintptr_t>(offset) << 32) |
+				fault_position(context));
 		}
 	} else if ((instruction & 0x3b00'0000U) == 0x3800'0000U &&
 		   (instruction & 0x0400'0000U) == 0) {
@@ -588,7 +618,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 				emit(words, transfer_offset |
 					(static_cast<std::uintptr_t>(base_offset) << 16) |
 					(static_cast<std::uintptr_t>(
-						offset_register_offset) << 32));
+						offset_register_offset) << 32) |
+					fault_position(context));
 			} else {
 				const bool overlap = operation != 0U && base != 31U &&
 					base == transfer;
@@ -601,9 +632,10 @@ DecodeResult decode_load_store(DecodeContext &context)
 					(instruction >> 12) & 0x1ffU, 9);
 				emit(words, transfer_offset |
 					(static_cast<std::uintptr_t>(base_offset) << 16) |
-					(static_cast<std::uint64_t>(displacement) << 32));
+					((static_cast<std::uint64_t>(displacement) &
+					  0xffffU) << 32) |
+					fault_position(context));
 			}
-			emit(words, address);
 		} else {
 			return illegal_instruction(context);
 		}
@@ -639,7 +671,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 				emit(words, transfer_offset |
 					(static_cast<std::uintptr_t>(base_offset) << 16) |
 					(static_cast<std::uintptr_t>(
-						offset_register_offset) << 32));
+						offset_register_offset) << 32) |
+					fault_position(context));
 			} else {
 				const unsigned address_mode = mode == 1U ? 2U :
 					mode == 3U ? 1U : 0U;
@@ -649,9 +682,10 @@ DecodeResult decode_load_store(DecodeContext &context)
 					(instruction >> 12) & 0x1ffU, 9);
 				emit(words, transfer_offset |
 					(static_cast<std::uintptr_t>(base_offset) << 16) |
-					(static_cast<std::uint64_t>(displacement) << 32));
+					((static_cast<std::uint64_t>(displacement) &
+					  0xffffU) << 32) |
+					fault_position(context));
 			}
-			emit(words, address);
 		} else {
 			return illegal_instruction(context);
 		}
@@ -719,12 +753,14 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(instruction >> 15) & 0x7fU, 7) <<
 				(operation < 2U ? operation + 2U : 4U);
 			emit(words, gadgets[address_mode][base == 31U]);
+			/* Three 12-bit offsets and a signed 12-bit displacement
+			 * fill the low 48 bits; the position takes the top. */
 			emit(words, first_offset |
-				(static_cast<std::uintptr_t>(second_offset) << 16) |
-				(static_cast<std::uintptr_t>(base_offset) << 32) |
-				((static_cast<std::uint64_t>(displacement) & 0xffffU)
-					<< 48));
-			emit(words, address);
+				(static_cast<std::uintptr_t>(second_offset) << 12) |
+				(static_cast<std::uintptr_t>(base_offset) << 24) |
+				((static_cast<std::uint64_t>(displacement) & 0xfffU)
+					<< 36) |
+				fault_position(context));
 		} else {
 			return illegal_instruction(context);
 		}

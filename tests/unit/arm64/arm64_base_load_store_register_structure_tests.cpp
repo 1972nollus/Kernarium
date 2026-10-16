@@ -121,15 +121,12 @@ using uml::emulator::tests::address;
 void require_register_stream(const gadgets::BuildResult &built,
 			     Gadget expected, std::uintptr_t operand)
 {
-	test::require(built.complete && built.program.words().size() == 5U,
+	test::require(built.complete && built.program.words().size() == 4U,
 		"register-offset scalar-memory stream has an unexpected shape");
 	test::require(built.program.words()[0] == address(expected),
 		"register-offset scalar-memory gadget was not selected at translation");
 	test::require(built.program.words()[1] == operand,
 		"register-offset scalar-memory fields were not predecoded");
-	test::require(built.program.words()[2] ==
-			engine_tests::engine_test_code_base,
-		"register-offset scalar-memory PC was not a direct stream operand");
 }
 
 [[nodiscard]] constexpr unsigned address_mode(unsigned option, bool scaled)

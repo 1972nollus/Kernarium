@@ -4,6 +4,7 @@
 
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
+#include "cpu/gadget_cache_geometry.hpp"
 
 #include <array>
 #include <cstdint>
@@ -80,12 +81,18 @@ using Configure = void (*)(arm64::CpuState &);
 		(static_cast<std::uint32_t>(displacement >> 2) & 0x03ff'ffffU);
 }
 
+/* Mirrors ProgramCache::locate(): the address space is folded into the
+ * index, so blocks collide only within one address space's mapping. */
 [[nodiscard]] constexpr std::size_t program_cache_set(
-	std::uint64_t pc) noexcept
+	unsigned long generation, std::uint64_t pc) noexcept
 {
-	const auto block = pc >> 2;
+	constexpr auto sets = ::uml::cpu::gadget_cache::slots /
+		::uml::cpu::gadget_cache::ways;
+	const auto block = (pc >> 2) ^
+		(static_cast<std::uint64_t>(generation) *
+			0x9e37'79b9'7f4a'7c15ULL);
 	const auto mixed = block ^ (block >> 12) ^ (block >> 24);
-	return static_cast<std::size_t>(mixed) & (4 * 1024 - 1);
+	return static_cast<std::size_t>(mixed) & (sets - 1);
 }
 
 void illegal_at_block_start_does_not_retire()
@@ -353,17 +360,19 @@ void a_retranslated_successor_answers_from_its_new_body()
 	constexpr unsigned long generation = 763;
 	constexpr auto source = code_base;
 	constexpr auto target = code_base + 0x100;
-	constexpr std::size_t cache_ways = 4;
+	constexpr std::size_t cache_ways = ::uml::cpu::gadget_cache::ways;
 	std::array<std::uint64_t, cache_ways + 1> colliding{};
 	colliding[0] = target;
 	std::size_t found = 1;
 	for (auto candidate = target + sizeof(std::uint32_t);
 	     found < colliding.size(); candidate += sizeof(std::uint32_t)) {
 		require(candidate - code_base < 64 * 1024 * 1024);
-		if (program_cache_set(candidate) == program_cache_set(target))
+		if (program_cache_set(generation, candidate) ==
+		    program_cache_set(generation, target))
 			colliding[found++] = candidate;
 	}
-	require(program_cache_set(source) != program_cache_set(target));
+	require(program_cache_set(generation, source) !=
+		program_cache_set(generation, target));
 
 	const auto mapped_bytes =
 		colliding.back() - code_base + sizeof(std::uint32_t);
@@ -396,7 +405,7 @@ void a_retranslated_successor_answers_from_its_new_body()
 	require(first.cpu.registers[1] == 9);
 	require(first.executed == 2);
 
-	/* Four more translations replace every way in target's cache set. */
+	/* A translation per way replaces every way in target's cache set. */
 	for (std::size_t index = 1; index < colliding.size(); ++index) {
 		arm64::CpuState collision{};
 		collision.pc = colliding[index];
@@ -404,11 +413,13 @@ void a_retranslated_successor_answers_from_its_new_body()
 				executor, memory, generation, collision).event ==
 			::uml::cpu::EngineEvent::system_call);
 	}
+	require(executor.cache_diagnostics().translations == cache_ways + 2);
 
 	arm64::CpuState rewarm_target{};
 	rewarm_target.pc = target;
 	require(execute_block(
 			executor, memory, generation, rewarm_target).executed == 1);
+	require(executor.cache_diagnostics().translations == cache_ways + 3);
 
 	arm64::CpuState linked{};
 	linked.pc = source;

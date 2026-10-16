@@ -30,6 +30,14 @@ its scratch in a `with` block or a `tempfile.TemporaryDirectory` object, whose
 finalizer runs at exit. Performance and long external campaigns are not CTest
 correctness suites.
 
+A tooling test's `TIMEOUT` is a hard bound sized from measurement, not from
+the time the test takes alone: about four times its longest duration at gate
+concurrency (`ctest -j10`) while the host load average was 40 to 80, taken up
+to the next of 30, 60, 90, 120, 180, 240, 300, 450, 600, 900, 1200 or 1800 s.
+A process-heavy test runs many times slower there than alone. A wait inside a
+test for a process, file or thread the test started outlasts the same load,
+stays below the test's bound, and is never retried or unbounded.
+
 Tooling tests run tools against fixtures; they do not grep tracked source for
 expected tokens or restate values that another file owns. A shell tooling
 test's `$TMPDIR` is its `test-scratch/<test>` in the build tree, which
@@ -543,8 +551,7 @@ python3 tests/integration/ltp/run_guest_ltp.py --help
 
 `arm64-instruction-corpus` runs the build-generated corpus from
 [`../tests/unit/arm64/corpus/`](../tests/unit/arm64/corpus/README.md) through
-the gadget and JIT engines of each page profile in one process, its SVE cases
-through the SVE semantic library as well, and the
+the gadget and JIT engines of each page profile in one process, and the
 `arm64-instruction-corpus-freshness` tooling test checks the corpus metadata
 against its pack. The corpus README owns the format, sampling policy, runner
 options, and promotion of new cases, which requires a producer commit. Cases
@@ -574,18 +581,12 @@ UNDEFINED on every host. The
 `arm64-instruction-corpus-sme-native` tooling test re-derives their cases from
 their generator, and `arm64-sme-native-oracle` drives the native oracle with
 base A64 cases on any arm64 Mac. Regenerating their outcomes needs an SME host;
-the corpus README describes it. The M4 has no SVE, so the native SME cases
-outside streaming mode whose words the SVE profile executes there run under
-the `without_sve` option, which translates them for a virtual CPU without
-SVE on every host.
+the corpus README describes it.
 
-A corpus case with non-streaming SVE state, or one that needs an SVE profile
-feature natively, runs only for an engine whose `sve_support` is `complete`
-where the virtual CPU implements the SVE profile; the summary counts every
-other one as skipped for `sve`. The `arm64-absent-sve` records pin every
-encoding the SVE profile executes outside streaming mode UNDEFINED under
-`without_sve`, and every other SVE encoding UNDEFINED there on every virtual
-CPU, so both engines run them today with the guest-SVE policy off or on.
+The virtual CPU implements no SVE outside streaming mode, so no corpus case
+holds a vector length or non-streaming SVE state. The `arm64-absent-sve`
+records pin every SVE encoding that the removed profile executed UNDEFINED
+outside the SM = 0 family below, in both engines on every host.
 
 A virtual CPU with SME and without SVE executes CNT, INC, DEC, RDVL, ADDVL and
 ADDPL at SM = 0 for a vector length of 16 bytes, and LDR and STR of Z and P
@@ -605,35 +606,6 @@ UNDEFINED at SM = 0 in both engines. The unit tests `arm64-sm0-vector-length`,
 the family against a model of the pseudocode, run it in each engine, and pin
 the same for the rest of the encoding table.
 
-The `arm64-sve-native` records hold non-streaming SVE results observed at a
-16-byte vector length on an arm64 Linux SVE host (a Neoverse V2 core),
-in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
-pages. Their floating-point forms are sampled across FPCR's rounding modes
-and its FZ, DN, and FZ16 controls. Both engines are at `sve_support`
-`complete`, so their lanes run them with the guest-SVE policy on. The
-corpus's library lane runs them through the gadget engine with the SVE
-semantic library behind its illegal-instruction exit, and the library covers
-every form the encoding table routes; the JIT lane is checked against the
-records directly. The `arm64-instruction-corpus-sve-native` tooling
-test re-derives their cases from their generator, and
-`arm64-sve-native-oracle` drives the native oracle with base A64 cases on any
-arm64 Mac, and with SVE cases where the host has SVE at that length.
-Regenerating their outcomes needs such a host and runs the oracle twice from
-clean directories; the corpus README describes it.
-
-The `arm64-sve-sme` records hold, at the same vector length, the 29 SME
-forms that SVE executes outside streaming mode. No host observes them
-there. Their integer and predicate families come from models of the
-pinned pseudocode, each of which must first reproduce every M4 streaming
-case of its encoding. Their floating-point families come from the M4 in
-streaming mode with every 128-bit segment holding the case. The runner
-runs them only for an engine at `sve_support` `complete` on a virtual CPU
-with SME, and SME2 where named. The `arm64-instruction-corpus-sve-sme`
-tooling test re-derives them. The `arm64-sve-afp` records come from the
-M4 the same way. They hold those forms under FPCR.AH, FIZ, and NEP, which
-the Neoverse V2 host lacks. The `arm64-instruction-corpus-sve-afp` test
-checks them against their request.
-
 The `arm64-floating-trap-native` records, and the outcomes of the
 register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
 were observed on the M1, which traps floating-point exceptions natively; any
@@ -642,14 +614,6 @@ need FEAT_AFP and FEAT_BF16 and were observed on the M4. The
 `arm64-instruction-corpus-floating-trap-native` tooling test re-derives their
 cases and holds every trap to one cause, and one at a program's entry to no
 state change.
-
-The `arm64-sve-trap` records hold the SVE floating-point forms with FPCR
-trap enables set. No hardware observes them, since the M1 has no SVE: each
-is derived from a native case's observed exceptions, or authored with
-operands whose exceptions IEEE 754 arithmetic and FPRoundBase() decide,
-under the trap contract the M1's records fix. The
-`arm64-instruction-corpus-sve-trap` tooling test re-derives them from the
-native records.
 
 The `arm64-instruction-corpus-invalid-encoding` tooling test requires every
 illegal-instruction case that the decode partitions, the allocation table, and
@@ -801,67 +765,22 @@ same classification for each compiler idiom, callee-saved Z and P spills
 among the family words. The `arm64-sme-sm0-scan` tooling test checks the classifier and
 both tools on synthetic ELF fixtures.
 
-## Guest SVE policy
+## No guest SVE
 
-`arm64-sve-foundation` checks the guest-SVE policy, the host features each
-part of the SVE profile needs, the engines' support levels, the predicate
-mask form and the SM-change reset, with injected hosts. Unit binaries take
-that policy from their environment as well; the suites must hold unchanged
-with `DARWIN_UML_GUEST_SVE=1`.
-`arm64-jit-sve-control` checks the JIT's control core against the
-pseudocode on injected SVE hosts under either policy, and
-`arm64-jit-sve-forms` checks every row of the profile through the JIT
-against the semantic library on random states, requires a lowered word to stay
-out of the library from a clean state, runs FSCALE with each kind of element
-(zeros, infinities, NaNs, denormals, scales that overflow, underflow or wrap)
-and requires exactly those to take the library, runs the conversions between
-precisions and UQSHL at the values they turn on, and runs gathers and scatters with a
-lane out of reach, scatters while another vCPU's reservation tracks stores,
-the saturating counts at their limits, table lookups with indices that land
-in the tables, and the governing-predicate shapes (none, one, all but one, runs,
-every subset of the narrow sizes) of the breaks, COMPACT and SPLICE. It
-requires a block of SVE memory words to check the top-byte-ignore state once,
-runs the words with tagged and untagged bases, requires the loads of one base
-to share a translation exactly where a window allows (words between them, base
-changes, stores, other bases, the 256-byte span and the 17-word limit) and runs
-them against the library inside a page, across its end and across the mapped
-pages, and also runs the 29 forms
-that FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1 (the SCLAMP class), which
-execute at SM = 0 only with SME beside SVE, on an injected profile with SME and
-again with SME2.
-`arm64-jit-sve-codegen` compiles every row of the profile (with SME and SME2
-as well) and every evidence witness at SM = 0 in both ZA states and every
-link shape, and requires that no translation holds an SVE or SME word.
+`arm64-no-sve` checks that the virtual CPU presents no SVE outside streaming
+mode whatever the host reports: the prober's token set, the engines' presented
+profiles, ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1, the SVE bits of AT_HWCAP
+and AT_HWCAP2, the 16-bit mask form of the predicate storage `CpuState`
+reserves, and the zeroing of that storage at every PSTATE.SM change.
+`arm64-advertised-features` pins the words and registers of named hosts.
 
-`DARWIN_UML_SVE_LIBRARY_EXITS=<file>` counts, for the whole run, the SVE
-words that leave translated code for the semantic library, per table row, and
-writes the report to the file as each executor retires and as the process ends
-(the emulator leaves through `_Exit`; the last write is the complete one). The
-JIT and the gadget engine write the same report: a header and one
-tab-separated line per row, most exits first, with the form, the row, its
-encoding, the translations, those that ended the block in the library and the
-exits. `tools/arm64-tests/sve-library-report.py` names and ranks the forms
-of either engine's report and sums several. The words a workload sends there
-are the ones worth lowering. `arm64-jit-sve-forms` runs a child process
-through `_Exit` and reads the report it leaves, and one that exits having run
-no JIT executor and requires it to leave a report already in the file alone,
-since either engine's process may write it.
-
-`guest-sve-gadgets` and `guest-sve-jit` check the guest kernel's SVE contract
-under the policy on. Each skips, naming its reason, unless its engine's SVE
-support is `complete`. The freestanding `sve_probe.cpp` boots as `/init` and
-checks signal frames, sigreturn and its invalid frames, the live state across
-system calls, preemption, fork, vfork, clone and exec, `NT_ARM_SVE` at
-signal and syscall-entry stops and across a traced fork, `AT_MINSIGSTKSZ`,
-prctl and the sysctl; on an SME host a second boot adds the SME policy and
-the streaming-mode checks. The same binary runs as an ordinary program on
-arm64 Linux with SVE at a 16-byte vector length, `sve-probe kernel`, and
-every check must pass there too; its expected values came from such a run on
-Linux 6.12, and checks where native Linux may keep a discarded state live
-with zero registers accept either outcome. Where 6.12 differs from the
-guest's Linux 6.18, the guest is held to 6.18 and only a native run accepts
-6.12. `guest-sve-off-gadgets` and `guest-sve-off-jit` run on every host and
-check that with the policy off the probe sees no SVE and PTRUE is undefined.
+`guest-no-sve-gadgets` and `guest-no-sve-jit` run on every host. The
+freestanding `no_sve_probe.cpp` boots as `/init` and checks that the guest
+kernel and the engine agree: no SVE bit in AT_HWCAP or AT_HWCAP2, no SVE
+prctl, sysctl or ptrace regset, no sve_context in a signal frame without SME
+and only its bare header outside streaming mode with it (as Linux gives a CPU
+with SME and without SVE; `guest-sme-gadgets` and `guest-sme-jit` check the
+streaming record), and undefined SVE instructions.
 
 ## Guest AArch32 foundation
 
@@ -975,10 +894,16 @@ The JIT's AArch32 tests run on the macOS JIT only and in both page profiles.
 `arm64-jit-a32-corpus` runs every case of the AArch32 corpus pack
 through `CpuEngine::run_aarch32` on the oracle's memory map, with an svc at
 each of the oracle's two epilogues, and compares registers, APSR, thread
-registers, changed data, event, fault address and retired count; a failing
-exclusive case runs once more, because a host store-exclusive may fail without
-cause. It then requires every lowered form to stay out of the slow helper from a
-clean state: each event-free case runs twice, and past the first run one case
+registers, changed data, event, fault address and retired count. A
+store-exclusive may fail without cause, and the JIT's fails whenever a host
+interrupt lands between the load and the store; a case whose only difference
+is that failure (a status of 1 where the pack has 0, and the store not made)
+runs again, up to 16 attempts in all, and the summary counts the cases that
+needed it. `arm64-jit-a32-corpus-interrupted` runs the `exclusive-qemu` record
+with a signal storm aimed at the guest's thread until four cases have lost a
+reservation, and requires that every case then agreed. The corpus then
+requires every lowered form to stay out of the slow helper from a clean state:
+each event-free case runs twice, and past the first run one case
 in which the form always executes must take no helper exit (the others cross a
 page or write back over the loaded register). The forms that the semantic
 library runs (the parallel arithmetic and the Armv8 extensions the compiler does
@@ -989,26 +914,44 @@ decodes it as UNDEFINED there. The corpus's VJCVT cases include a flush-to-zero
 subnormal input, which exercises the correction for a host whose FJCVTZS
 reports it as exact. `arm64-jit-a32-runtime`,
 `arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
-programs against an independent reference of the instruction forms (the corpus
-carries T32).
+programs, conditions included, against an independent reference of the
+instruction forms (the corpus carries T32); `arm64-jit-a32-data-processing` also runs every parallel add and
+subtract form against a lane model and requires the lowered ones to stay out
+of the library.
 `arm64-jit-a32-exclusive` covers the fused LL/SC runs, the compare-and-swap
 idiom, the monitor rules, fault and alignment exits, two threads counting
 exactly and an ordinary store clearing a reservation, and requires the fused
-loop to make no helper call. `arm64-jit-a32-acquire-release` covers LDA and
+loop to make no helper call, also with a compare and conditional branch or a
+CBNZ between the load and the store (A32 and T32). `arm64-jit-a32-acquire-release` covers LDA and
 STL with their byte and halfword forms, the always-checked alignment, the fused
 and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
 helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a
-step at a time and from the middle, long blocks under a small budget, code
+step at a time and from the middle, random A32 and T32 programs of
+conditional branches, forward and back (B, CBZ, CBNZ), among data processing
+whole and one instruction at a time, the shape of a block that goes on past a
+branch back and of one that ends at a branch to its own first instruction, the
+code shape of a linked block (the fifteen core registers loaded once before its
+internal entry, none written back before a link) and the registers across the
+budget returns of a chain with a call and a return, random loops with memory, Advanced SIMD and
+side exits in their bodies that end by a count, a branch out or a fault, and
+the counted loop's translation as a host loop through the chain budget, long blocks under a small budget, code
 rewritten under translations, and one form of each optional extension on hosts
 with every extension and on hosts lacking one (the form is UNDEFINED, A32 and
 T32, and nothing else changes). `arm64-jit-a32-vector` covers what the corpus
 does not see of VFP and Advanced SIMD: the guest's FPCR for a VFP instruction
 and the Standard FPSCR value for a Neon one across a conditional arm, a chained
-branch and an exit, QC across runs, and the vector memory forms staying inline
-and taking the library, with its data and faults, across a page, on a
-misalignment and into an unmapped page. `arm64-jit-a32-encoder` compares the compiler's
-A64 encoders with LLVM MC, and `arm64-jit-a32-vector-encoder` those of the
-vector instruction classes.
+branch, an exit and alternating blocks (the host FPCR keeps its mode across
+them), VMAX, VMIN, VADD, VSUB, VMUL, VMLA and VMLS on every special operand,
+rounding mode and flush mode in the contexts that guard them and the one that
+does not, QC across runs, the flags of VCMP and VCMPE reaching the APSR
+through VMRS (adjacent or not, conditional or not), and the vector memory forms staying inline and
+taking the library, with its data and faults, across a page, on a misalignment
+and into an unmapped page (every load form across a page at every offset, with
+the two pages adjacent in the host and not, and with no library call once the
+TLB holds both), where the library leaves the guest's FP environment
+installed. `arm64-jit-a32-encoder` compares the compiler's A64 encoders with LLVM
+MC, and `arm64-jit-a32-vector-encoder` those of the vector instruction
+classes.
 
 ## x86 instruction conformance
 
@@ -1066,14 +1009,14 @@ Benchmarks, full LTP, external networking, KDE/VNC/WebGL desktop campaigns,
 GPU conformance, SMP stress, official A64 semantics, and connected-device runs
 are opt-in. Run them only when the change or question crosses that boundary.
 
-Geekbench runs the image-local payload, or an attached payload image checked
-by its SHA-256 for an image without one, such as every x86-64 and armhf image,
-through the checked-in workload script with `--no-upload` and requires no
-Internet preflight. The workload runs Geekbench 6, or Geekbench 5's armv7
-build on an armhf image. Manual performance tools and the probe inventory are
-under [`../tests/perf/README.md`](../tests/perf/README.md). Record conclusions in
-[`optimization-history.md`](optimization-history.md), not raw logs or a new
-investigation document.
+Geekbench runs the image-local payload, or an attached payload image checked by
+its SHA-256 for an image without one, such as every x86-64 and armhf image,
+through the checked-in workload script with `--no-upload` and `--iterations 1`,
+and requires no Internet preflight. The workload runs Geekbench 6, or Geekbench
+5's armv7 build on an armhf image. Manual performance tools and the probe
+inventory are under [`../tests/perf/README.md`](../tests/perf/README.md).
+Record conclusions in [`optimization-history.md`](optimization-history.md), not
+raw logs or a new investigation document.
 
 GPU capabilities, qualification boundaries, and unsupported Vulkan work are
 summarized in [`graphics.md`](graphics.md).

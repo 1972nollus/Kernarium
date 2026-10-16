@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "executor.hpp"
-#include "sve_helpers.hpp"
 
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/guest_validation.hpp"
@@ -203,7 +202,6 @@ constexpr std::size_t uml_gadget_resident_generations =
 
 extern "C" void uml_arm64_gadget_link_exit();
 extern "C" void uml_arm64_gadget_fp_link_entry();
-extern "C" void uml_arm64_gadget_sve_link_entry();
 
 class CountingResource final : public std::pmr::memory_resource {
 public:
@@ -560,7 +558,6 @@ struct Body final {
 	std::uint8_t source_word_count{};
 	bool complete{};
 	bool accesses_fp_state{};
-	bool holds_sve{};
 	/* The translation's aarch32::GuestIsa, from its key: it sizes a unit
 	 * and so the validation words. */
 	std::uint8_t isa{};
@@ -570,9 +567,8 @@ struct Body final {
 
 	/* The stream follows the body, and the guest words it is validated
 	 * against follow the stream. A block that accesses FP/SIMD state is
-	 * linked to through one fp_link_entry word in front of its stream, or
-	 * sve_link_entry for one that holds a non-streaming SVE word, which falls
-	 * through into it, so its link record needs no prefix of its own. */
+	 * linked to through one fp_link_entry word in front of its stream, so
+	 * its link record needs no prefix of its own. */
 	[[nodiscard]] std::size_t entry_words() const noexcept
 	{
 		return accesses_fp_state ? 1U : 0U;
@@ -644,14 +640,14 @@ struct Body final {
 				word_count}};
 		return BuildResult{arm64::gadgets::Program{guest_address,
 				instruction_count, std::move(view),
-				accesses_fp_state, holds_sve},
+				accesses_fp_state},
 			complete, stop_address, stop_instruction};
 	}
 };
 static_assert(sizeof(Body) == 32 &&
 	sizeof(Body) % alignof(std::uintptr_t) == 0,
 	"the stream tail follows the body at pointer alignment");
-static_assert(offsetof(Body, isa) == 29 && offsetof(Body, holders) == 30,
+static_assert(offsetof(Body, isa) == 28 && offsetof(Body, holders) == 30,
 	"the ISA byte and the holder count sit in what was padding");
 static_assert(maximum_t32_validation_units < 0x100U,
 	"a T32 translation's halfword count fits the narrow field");
@@ -1509,14 +1505,11 @@ private:
 				static_cast<std::uint8_t>(validation.size() / unit),
 			.complete = built.complete,
 			.accesses_fp_state = program.accesses_fp_state(),
-			.holds_sve = program.holds_sve(),
 			.isa = static_cast<std::uint8_t>(isa),
 		};
 		if (entry != 0)
 			body->words()[-1] = reinterpret_cast<std::uintptr_t>(
-				program.holds_sve() ?
-					uml_arm64_gadget_sve_link_entry :
-					uml_arm64_gadget_fp_link_entry);
+				uml_arm64_gadget_fp_link_entry);
 		std::copy(words.begin(), words.end(), body->words());
 		std::copy(validation.begin(), validation.end(),
 			body->source_bytes());
@@ -1773,6 +1766,8 @@ public:
 				space.indirect, state.space->link_records(),
 				state.space->limbo_bodies());
 		}
+		if (census::totals_only())
+			return;
 		const auto sample = census::word_sample();
 		/* The same link targets are sampled in every cache, so the
 		 * sample says how many of an address space's records each
@@ -2261,7 +2256,7 @@ private:
 	{
 		/* Fold the address space into the index so the same guest PC in
 		 * two address spaces lands in different sets rather than
-		 * competing for the four ways of one.
+		 * competing for the ways of one.
 		 */
 		const auto block = (pc >> 2) ^
 			(static_cast<std::uint64_t>(generation) *
@@ -2853,7 +2848,6 @@ GadgetExecutor::~GadgetExecutor()
 {
 	if (sampling_ != nullptr)
 		diagnostics::guest_sampling_unregister(*sampling_);
-	write_sve_library_report_from_environment();
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	diagnostics::execution_histogram_forget_executor(&cache_diagnostics_);
 #endif
@@ -3453,6 +3447,9 @@ private:
 	}
 	const auto event = arm64::gadgets::execute(
 		built.program, cpu, tlb_, executed);
+	/* A memory gadget without a key reports its position, which is 0. */
+	if ((cpu.pc & 3U) == 1U)
+		cpu.pc = key;
 	/* The one instruction is the whole program: a terminal that did not
 	 * retire gives it back. */
 	if (terminal_does_not_retire(event))
@@ -3486,6 +3483,19 @@ private:
 			    cpu.gadget_indirect_miss)) {
 			const auto &program = exit->result.program;
 			const auto guest = program.guest_address();
+			/* The exclusive and ordered gadgets carry no key: they
+			 * report the position of their instruction in the block,
+			 * which has bit 0 set where a key has none. */
+			if ((cpu.pc & 3U) == 1U) {
+				const auto at = static_cast<std::size_t>(cpu.pc >> 2);
+				std::optional<std::size_t> unit;
+				if (arm64::aarch32::key_is_thumb(guest))
+					unit = a32::thumb_unit(exit->source, at);
+				else if (at < program.instruction_count())
+					unit = at;
+				if (unit)
+					cpu.pc = guest + *unit * 4U;
+			}
 			const auto position_key = cpu.pc;
 			if (position_key >= guest &&
 			    ((position_key - guest) & 3U) == 0U) {
@@ -3552,30 +3562,6 @@ private:
 	return event;
 }
 
-::uml::cpu::EngineEvent GadgetExecutor::run_library_instruction(
-	arm64::CpuState &cpu, std::uint32_t instruction,
-	const arm64::detail::SmeEncoding &row, std::size_t &executed)
-{
-	const auto result =
-		arm64::gadgets::execute_sve_word(cpu, tlb_, instruction, row);
-	switch (result.event) {
-	case arm64::detail::SveEvent::retired:
-		cpu.pc += 4U;
-		executed = 1;
-		return ::uml::cpu::EngineEvent::continued;
-	case arm64::detail::SveEvent::memory_fault:
-		return ::uml::cpu::EngineEvent::memory_fault;
-	case arm64::detail::SveEvent::floating_point_trap:
-		floating_point_syndrome_ = result.syndrome;
-		return ::uml::cpu::EngineEvent::floating_point_trap;
-	case arm64::detail::SveEvent::undefined:
-		return ::uml::cpu::EngineEvent::illegal_instruction;
-	case arm64::detail::SveEvent::fatal:
-		break;
-	}
-	return ::uml::cpu::EngineEvent::fatal;
-}
-
 ::uml::cpu::EngineEvent GadgetExecutor::run_trap_enabled_instruction(
 	arm64::CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed)
 {
@@ -3601,19 +3587,6 @@ private:
 
 	auto options = build_options_;
 	options.svcr = static_cast<std::uint8_t>(cpu.svcr & arm64::svcr_mask);
-	/* An SVE word outside streaming mode runs through the semantic
-	 * library, which decides a floating-point form's trap and the flags it
-	 * commits (detail::decide_floating_exception); a generated gadget runs
-	 * with the trap enables clear. */
-	if ((options.svcr & arm64::svcr_sm) == 0U &&
-	    arm64::implements_sve(options.host_capabilities)) {
-		const auto decoded = arm64::gadgets::decode_sve_word(instruction,
-			options.host_capabilities, options.svcr);
-		if (decoded.kind == arm64::gadgets::SveWord::implemented &&
-		    arm64::detail::sve_semantics_covers(*decoded.row))
-			return run_library_instruction(cpu, instruction,
-				*decoded.row, executed);
-	}
 	auto built = arm64::gadgets::Builder{}.build(
 		cpu.pc, std::span{&instruction, 1}, {},
 		std::pmr::get_default_resource(), {}, options);

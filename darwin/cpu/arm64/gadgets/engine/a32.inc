@@ -2,7 +2,7 @@
 /* The AArch32 part of the gadget region: A32 and T32 instructions as the
  * shared decoder (cpu/arm64/aarch32/decode.hpp) reads them, lowered onto
  * general registers. It has a bank, a cold section and an island of its own
- * after the SVE part, so no earlier part moves for it, and it holds no SVE or
+ * after the SME part, so no earlier part moves for it, and it holds no SVE or
  * SME instruction: sme.inc has turned those extensions off.
  *
  * State: R0-R14 are CpuState::registers[0..14], each a 64-bit slot of which
@@ -18,7 +18,11 @@
  * A gadget that can leave the block with the instruction not retired (a
  * memory gadget, an undefined instruction) has the key of that instruction
  * in the stream word after its operands, which uml_arm64_gadget_memory_fault
- * and uml_arm64_gadget_illegal read through _stream.
+ * and uml_arm64_gadget_illegal read through _stream. The one exception is
+ * the exclusive and ordered transfers, which are the A64 part's gadgets: they
+ * carry the instruction's position in the block in the top byte of their
+ * operand, and finish_a32_block turns the position a fault reports into the
+ * key.
  *
  * Instruction conditions: a conditional instruction is preceded by an
  * a32_skip_<cc> gadget whose operand is the byte distance to skip over the

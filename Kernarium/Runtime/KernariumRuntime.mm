@@ -222,7 +222,9 @@ public:
 
 /* KERNARIUM_FOOTPRINT_LOG_MS reports the process footprint, the figure iOS
  * holds the application to, while the guest runs: one line per interval and
- * the peak when the guest stops. */
+ * the peak when the guest stops. Each line also gives the headroom the kernel
+ * leaves below the application's memory limit, so the footprint plus the
+ * headroom is the limit and the least headroom is the closest approach. */
 class FootprintReporter final {
 public:
     static long intervalMilliseconds() noexcept
@@ -254,7 +256,8 @@ public:
         }
         stopped_.notify_one();
         thread_.join();
-        std::printf("Kernarium: footprint peak %.1f MiB\n", peak_ / 1048576.0);
+        std::printf("Kernarium: footprint peak %.1f MiB least remaining %.1f MiB\n",
+            peak_ / 1048576.0, leastRemaining_ / 1048576.0);
     }
 
     FootprintReporter(const FootprintReporter&) = delete;
@@ -263,6 +266,7 @@ public:
 private:
     struct Sample {
         std::uint64_t footprint;
+        std::uint64_t remaining;
         /* The share of the footprint charged as graphics memory: Metal
          * resources and the driver's command storage alike. */
         std::uint64_t graphics;
@@ -274,10 +278,10 @@ private:
         mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
         if (task_info(mach_task_self(), TASK_VM_INFO,
                 reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
-            return {};
+            return {0, UINT64_MAX, 0};
         const std::int64_t graphics = info.ledger_tag_graphics_footprint +
             info.ledger_tag_graphics_footprint_compressed;
-        return {info.phys_footprint,
+        return {info.phys_footprint, info.limit_bytes_remaining,
             static_cast<std::uint64_t>(std::max<std::int64_t>(graphics, 0))};
     }
 
@@ -289,11 +293,13 @@ private:
         while (!stopped_.wait_for(lock, interval_, [this] { return stopping_; })) {
             const Sample current = sample();
             peak_ = std::max(peak_, current.footprint);
+            leastRemaining_ = std::min(leastRemaining_, current.remaining);
             const auto elapsed = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - start).count();
-            std::printf("Kernarium: footprint %.1f s %.1f MiB graphics %.1f MiB\n",
+            std::printf("Kernarium: footprint %.1f s %.1f MiB graphics %.1f MiB "
+                "remaining %.1f MiB\n",
                 elapsed, current.footprint / 1048576.0,
-                current.graphics / 1048576.0);
+                current.graphics / 1048576.0, current.remaining / 1048576.0);
         }
     }
 
@@ -302,6 +308,7 @@ private:
     std::condition_variable stopped_;
     bool stopping_ {};
     std::uint64_t peak_ {};
+    std::uint64_t leastRemaining_ {UINT64_MAX};
     std::thread thread_;
 };
 

@@ -41,6 +41,10 @@ struct A32Compilation final {
 [[nodiscard]] A32Compilation
 compile_a32_block(std::uint64_t key, std::span<const std::byte> bytes,
                   std::uint8_t itstate = 0, bool single = false);
+/* The same block with link resolvers, as the executor compiles it: its exits
+ * are linked, and the core registers stay in the host across them. */
+[[nodiscard]] A32Compilation
+compile_a32_linked_block(std::uint64_t key, std::span<const std::byte> bytes);
 
 /* How compile_block_in_mode() wires the compiler's link operands. */
 enum class LinkShape {

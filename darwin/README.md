@@ -90,13 +90,13 @@ program; the cache keeps no index keyed by stream address and maintains nothing
 per store for that lookup.
 
 The arm64 and x86 private gadget caches use the same `UML_GADGET_CACHE_SLOTS`
-and `UML_GADGET_RESIDENT_GENERATIONS` controls: four ways, 256-slot lazy slabs,
-and eight resident address spaces. The slot count is the one geometry control
-that differs by product: macOS defaults to 262,144 slots and iOS and the iOS
-Simulator to 65,536, because a slot is committed whether or not it is occupied
-and the iOS app runs under a jetsam limit. Their payloads and mutable branch
-links remain ISA-specific. Cached x86 programs
-release spare decoder and native-stream capacity before publication.
+and `UML_GADGET_RESIDENT_GENERATIONS` controls: eight ways, 256-slot lazy slabs,
+and eight resident address spaces. The slot count defaults to 131,072 on every
+product, so that macOS behaves like iOS, and a slot is committed whether or not
+it is occupied; an explicit `-DUML_GADGET_CACHE_SLOTS` selects another power
+of two. Their payloads and mutable branch links remain ISA-specific. Cached
+x86 programs release spare decoder and native-stream capacity before
+publication.
 
 With `DARWIN_UML_GADGET_SHARED_BODIES=1`, arm64 gadget executors running one
 address space with the same build options and SVCR mode share its

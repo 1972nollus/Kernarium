@@ -910,6 +910,79 @@ void an_acquire_or_release_to_unmapped_memory_faults_without_effect()
 	}
 }
 
+/* The exclusive and ordered transfers are the A64 part's gadgets, which carry
+ * no key: they report the position of their instruction in the block. A T32
+ * block mixes two instruction lengths, so the position is not the offset, and
+ * the engine must turn it back into the key of that instruction. */
+void a_t32_exclusive_or_ordered_fault_names_its_instruction()
+{
+	struct Case {
+		std::uint16_t first, second;
+		std::uint32_t address;
+		bool alignment;
+	};
+	const Case cases[] = {
+		{0xe852, 0x1f00, unmapped + 0x40, false}, /* ldrex r1,[r2] */
+		{0xe852, 0x1f00, data_base + 0x22, true},
+		{0xe842, 0x1300, unmapped + 0x40, false}, /* strex r3,r1,[r2] */
+		{0xe842, 0x1300, data_base + 0x22, true},
+		{0xe8d2, 0x1fef, unmapped + 0x40, false}, /* ldaex r1,[r2] */
+		{0xe8c2, 0x1fe3, unmapped + 0x40, false}, /* stlex r3,r1,[r2] */
+		{0xe8d2, 0x1faf, unmapped + 0x40, false}, /* lda r1,[r2] */
+		{0xe8d2, 0x1faf, data_base + 0x22, true},
+		{0xe8c2, 0x1faf, unmapped + 0x40, false}, /* stl r1,[r2] */
+		{0xe8d2, 0x677f, unmapped + 0x40, false}, /* ldrexd r6,r7,[r2] */
+		{0xe8d2, 0x677f, data_base + 0x24, true},
+		{0xe8c2, 0x6773, unmapped + 0x40, false}, /* strexd r3,r6,r7,[r2] */
+	};
+	unsigned long generation = 1090;
+	for (const auto &item : cases) {
+		Guest guest{generation++};
+		/* 16, 32 and 16 bits ahead of it: the transfer is the fourth
+		 * instruction, eight bytes in. */
+		guest.t32(0, {t::movs_r0_1, 0xf04f, 0x0001, t::movs_r0_1,
+			      item.first, item.second, t::svc});
+		auto cpu = t32_state();
+		cpu.registers[1] = 0x77;
+		cpu.registers[2] = item.address;
+		cpu.registers[3] = 0x55;
+		cpu.registers[6] = 0x66;
+		cpu.registers[7] = 0x88;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::memory_fault);
+		require(result.fault.alignment == item.alignment);
+		require(result.fault.address == item.address);
+		require(result.retired_instructions == 3);
+		require(cpu.pc == aarch32::t32_key(code_base + 8));
+		require(reg(cpu, 1) == 0x77 && reg(cpu, 3) == 0x55 &&
+			reg(cpu, 6) == 0x66 && reg(cpu, 7) == 0x88);
+	}
+
+	/* The same inside a linked successor, where only the block the stream
+	 * belongs to can say which instruction the position names. */
+	for (const auto &item : {cases[0], cases[11]}) {
+		Guest guest{generation++};
+		guest.t32(0, {0xe07e /* b.n 0x100 */});
+		guest.t32(0x100, {t::movs_r0_1, 0xf04f, 0x0001, t::movs_r0_1,
+				  item.first, item.second, t::svc});
+		for (unsigned run = 0; run < 2; ++run) {
+			auto cpu = t32_state();
+			cpu.registers[1] = 0x77;
+			cpu.registers[2] = item.address;
+			cpu.registers[3] = 0x55;
+			cpu.registers[6] = 0x66;
+			cpu.registers[7] = 0x88;
+			const auto result = guest.run(cpu);
+			require(result.reason == ExitReason::memory_fault);
+			require(result.fault.address == item.address);
+			require(result.retired_instructions == 4);
+			require(cpu.pc == aarch32::t32_key(code_base + 0x100 + 8));
+			require(reg(cpu, 1) == 0x77 && reg(cpu, 3) == 0x55 &&
+				reg(cpu, 6) == 0x66 && reg(cpu, 7) == 0x88);
+		}
+	}
+}
+
 void a_release_store_without_a_reservation_fails()
 {
 	Guest lone{1061};
@@ -2345,6 +2418,7 @@ int main()
 	acquire_loads_and_release_stores_round_trip();
 	an_unaligned_acquire_or_release_is_an_alignment_fault();
 	an_acquire_or_release_to_unmapped_memory_faults_without_effect();
+	a_t32_exclusive_or_ordered_fault_names_its_instruction();
 	a_release_store_without_a_reservation_fails();
 	the_kuser_compare_and_swap_succeeds_or_reports_a_mismatch();
 	set_event_local_is_a_hint();

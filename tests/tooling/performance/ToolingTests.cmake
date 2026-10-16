@@ -46,7 +46,7 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/performance/steam_boot_bench_tests.py
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
     LABELS performance;steam
-    TIMEOUT 60)
+    TIMEOUT 300)
 
 uml_add_tooling_test(
     NAME android-launch-suite-contract

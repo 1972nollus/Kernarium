@@ -457,6 +457,8 @@ STUB_COMMANDS = {
     "ps": "echo stub-ps",
     "glxinfo": "echo stub-glxinfo",
     "pgrep": "echo 4242",
+    # Stopping Chromium leaves a mark its stub waits for.
+    "pkill": 'touch "$(dirname "$FAKE_UPTIME")/chromium-stopped"',
     # The guest has GNU sed; give macOS hosts its in-place form.
     "sed": (
         'if [ "$1" = -i ]; then\n'
@@ -464,6 +466,83 @@ STUB_COMMANDS = {
         'else\n    exec /usr/bin/sed "$@"\nfi'
     ),
 }
+
+
+# Chromium's own output from a guest too starved for its start-up
+# connections (WebGL Aquarium on gadgets, the emulator stopped and resumed to
+# run a third of the time, 2026-10-12): two children give up after 15 s, then
+# the network service is lost and the page never loads.
+STARVED_START = "".join(
+    line + "\n"
+    for line in (
+        "[609:609:1012/060701.927686:WARNING:sandbox/policy/linux/s"
+        "andbox_linux.cc:405] InitializeSandbox() called with "
+        "multiple threads in process gpu-process.",
+        "[612:612:1012/060713.674833:INFO:content/child/child_threa"
+        "d_impl.cc:908] Terminating current process after 15 "
+        "seconds with no connection.",
+        "[609:609:1012/060714.896876:ERROR:ui/gl/gl_surface_egl.cc:"
+        "277] No suitable EGL configs found.",
+        "[609:609:1012/060714.909403:ERROR:ui/gl/gl_surface_egl.cc:"
+        "380] No suitable EGL configs found for initialization.",
+        "[626:1:1012/060715.429673:INFO:content/child/child_thread_"
+        "impl.cc:908] Terminating current process after 15 seconds "
+        "with no connection.",
+        "[537:537:1012/060717.000443:ERROR:content/browser/network_"
+        "service_instance_impl.cc:618] Network service crashed or "
+        "was terminated, restarting service.",
+    )
+)
+# The same workload run half the time: one renderer gave up after 15 s,
+# Chromium replaced it, and the page loaded and reported.
+RENDERER_TIMEOUT_ONLY = "".join(
+    line + "\n"
+    for line in (
+        "[608:608:1012/052418.569083:WARNING:sandbox/policy/linux/s"
+        "andbox_linux.cc:405] InitializeSandbox() called with "
+        "multiple threads in process gpu-process.",
+        "[608:608:1012/052429.359844:ERROR:ui/gl/gl_surface_egl.cc:"
+        "277] No suitable EGL configs found.",
+        "[608:608:1012/052429.363906:ERROR:ui/gl/gl_surface_egl.cc:"
+        "380] No suitable EGL configs found for initialization.",
+        "[629:1:1012/052432.498916:INFO:content/child/child_thread_"
+        "impl.cc:908] Terminating current process after 15 seconds "
+        "with no connection.",
+        "[539:580:1012/052452.906298:ERROR:google_apis/gcm/engine/r"
+        "egistration_request.cc:291] Registration response error "
+        "message: DEPRECATED_ENDPOINT",
+        "[539:539:1012/052501.819075:INFO:CONSOLE:55] \"--Setup "
+        "Laser----------------------------------------\", source: "
+        "https://webglsamples.org/tdl/log.js (55)",
+        "[539:539:1012/052503.344426:INFO:CONSOLE:55] \"--Draw "
+        "Fish---------------------------------------\", source: "
+        "https://webglsamples.org/tdl/log.js (55)",
+    )
+)
+NETWORK_SERVICE_LOST = STARVED_START.splitlines()[-1] + "\n"
+STARVED_ERROR = (
+    "UML_CHROMIUM_ERROR: network service missed Chromium's start-up "
+    "connection; guest starved"
+)
+
+
+def chromium_stub(output: str, seconds: int = 10) -> str:
+    """A Chromium that prints ``output`` and then runs until it is stopped,
+    or exits with status 3 after ``seconds`` if nothing stops it."""
+
+    return (
+        "cat <<'CHROMIUM_OUTPUT'\n"
+        + output
+        + "CHROMIUM_OUTPUT\n"
+        'stopped="$(dirname "$FAKE_UPTIME")/chromium-stopped"\n'
+        "i=0\n"
+        f'while [ ! -e "$stopped" ] && [ "$i" -lt {seconds * 10} ]; do\n'
+        "    /bin/sleep 0.1\n"
+        "    i=$((i + 1))\n"
+        "done\n"
+        '[ -e "$stopped" ] && exit 143\n'
+        "exit 3"
+    )
 
 
 class AquariumLauncherBudgetTests(unittest.TestCase):
@@ -643,6 +722,43 @@ class AquariumLauncherBudgetTests(unittest.TestCase):
                 # The fake clock stands at 5 s of a 315 s launcher budget.
                 self.assertGreater(remaining, 315 - 5 - 10 - 30)
                 self.assertLess(remaining, 315 - 5 - 10 + 30)
+
+    def test_starved_chromium_start_is_named_and_stopped(self) -> None:
+        result, _, _ = self.run_launcher(
+            "virgl",
+            session_ready=True,
+            stubs={"chromium": chromium_stub(STARVED_START)},
+        )
+        lines = result.stdout.strip().splitlines()
+        self.assertEqual(lines.count(STARVED_ERROR), 1)
+        # Stopped by the launcher at once, not by its deadline, and named once.
+        self.assertEqual(lines[-1], "UML_CHROMIUM_EXIT|STATUS=143")
+        self.assertEqual(
+            [line for line in lines if line.startswith("UML_CHROMIUM_ERROR:")],
+            [STARVED_ERROR],
+        )
+
+    def test_chromium_that_recovers_is_not_stopped(self) -> None:
+        for name, output in (
+            ("renderer timeout only", RENDERER_TIMEOUT_ONLY),
+            (
+                "network service lost after the page started",
+                RENDERER_TIMEOUT_ONLY + NETWORK_SERVICE_LOST,
+            ),
+        ):
+            with self.subTest(name):
+                result, _, _ = self.run_launcher(
+                    "virgl",
+                    session_ready=True,
+                    stubs={"chromium": chromium_stub(output, seconds=2)},
+                )
+                self.assertNotIn(STARVED_ERROR, result.stdout)
+                # Nothing stopped it, so the stub ran out its own bound.
+                self.assertEqual(
+                    result.stdout.strip().splitlines()[-1],
+                    "UML_CHROMIUM_ERROR: Chromium exited with status 3 "
+                    "before Aquarium reported",
+                )
 
     def test_named_guest_failures_reach_the_runner_error(self) -> None:
         text = (

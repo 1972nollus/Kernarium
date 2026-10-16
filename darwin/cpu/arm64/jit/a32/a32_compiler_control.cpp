@@ -52,8 +52,9 @@ A32Compiler::Flow A32Compiler::emit_operation() {
   case Op::smusd: case Op::smlald: case Op::smlsld: case Op::smmla:
   case Op::smmls: case Op::smmul:
     return emit_dsp_multiply(info);
-  case Op::parallel: case Op::ssat16: case Op::usat16: case Op::usad8:
-  case Op::usada8:
+  case Op::parallel:
+    return emit_parallel(info);
+  case Op::ssat16: case Op::usat16: case Op::usad8: case Op::usada8:
     return emit_arith_through_helper();
   case Op::library:
     return emit_extension(info);

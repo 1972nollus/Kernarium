@@ -154,8 +154,8 @@ class Row:
     @property
     def in_profile(self) -> bool:
         """Whether the SME profile implements the row in streaming mode;
-        a row only the SVE profile implements, outside streaming mode, is
-        not, as no engine executes those yet."""
+        a row only non-streaming SVE would execute is not, as the virtual
+        CPU has no such profile."""
         return bool(self.requirement)
 
     @property

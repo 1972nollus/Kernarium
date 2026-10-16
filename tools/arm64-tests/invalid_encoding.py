@@ -11,10 +11,12 @@ set when no virtual-CPU configuration decodes the word as an instruction:
 - an encoding of a feature the virtual CPU implements in no configuration
   (FEAT_PAuth, FEAT_MTE, FEAT_GCS, FEAT_D128, the SVE and SME rows nothing
   executes, and the other features of the README's absent-feature section).
+  An SVE row executes only in streaming mode, where the SME profile does, so
+  an SVE row the SME profile does not execute in either mode is such a word.
 
 It is clear when the word is a valid encoding that traps for its exception
 level, mode, or state, or because a feature that some configuration
-implements (SVE, SME) is absent from this one.
+implements (SME) is absent from this one.
 
 decide() answers from the checked-in tables alone: the decode partitions,
 the allocation table, and the generated SVE/SME encoding table. It returns
@@ -57,15 +59,19 @@ sme_table = _load("sme_encoding_table", "sme_encoding_table.py")
 
 SITE = "tools/arm64-tests/invalid_encoding.py"
 
-# Records of these options run on a virtual CPU with the feature that the
+# Records of this option run on a virtual CPU without the feature that the
 # option removes (the runner translates for the removal), so their words
 # execute in another configuration.
-WITHOUT_FEATURE_OPTIONS = frozenset({"without_sme", "without_sve"})
+WITHOUT_FEATURE_OPTIONS = frozenset({"without_sme"})
 
-# The SVE/SME table features no virtual-CPU configuration implements. The
-# others (SVE, SVE2, SVE_AES, SVE_PMULL128, SVE_SHA3 and the SME profile)
-# are sve_features and the SME profile in darwin/cpu/arm64.
-UNIMPLEMENTED_PROFILE_FEATURES = frozenset({"sve_bitperm", "sve_sm4"})
+# The SVE/SME table features no virtual-CPU configuration implements: every
+# SVE feature, since the virtual CPU executes SVE only in streaming mode, as
+# the SME profile (sme, sme2, sme_f64f64, sme_i16i64, and the bf16 and i8mm
+# its rows share with the host). A row's non-streaming requirement names
+# "sve" wherever SVE alone would execute it outside streaming mode.
+UNIMPLEMENTED_PROFILE_FEATURES = frozenset({
+    "sve", "sve2", "sve_aes", "sve_pmull128", "sve_sha3", "sve_bitperm",
+    "sve_sm4"})
 
 BITMASK_ROWS = ("and_z_zi_", "eor_z_zi_", "orr_z_zi_", "dupm_z_i_")
 

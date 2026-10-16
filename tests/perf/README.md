@@ -18,12 +18,14 @@ runner's report line or JSON record carries the vCPU count; do not compare
 results taken at different counts, and keep one count for a whole series.
 
 Geekbench uses the payload already installed in `rootfs.erofs` and always runs
-with `--no-upload`. The workload is [`guest/geekbench.sh`](guest/geekbench.sh),
-which the runner installs as a payload file and which prints the
-`UML_GEEKBENCH_READY` and `UML_GEEKBENCH_END:<status>` markers;
-`/etc/uml-geekbench.env` may name single-core workloads to run instead of the
-whole benchmark. The runner creates disposable writable state and does not
-start systemd or background desktop services. See current options with:
+with `--no-upload` and `--iterations 1`; scores taken before 2026-10-12 used
+Geekbench's default iteration count and are not comparable. The workload is
+[`guest/geekbench.sh`](guest/geekbench.sh), which the runner installs as a
+payload file and which prints the `UML_GEEKBENCH_READY` and
+`UML_GEEKBENCH_END:<status>` markers; `/etc/uml-geekbench.env` may name
+single-core workloads to run instead of the whole benchmark. The runner creates
+disposable writable state and does not start systemd or background desktop
+services. See current options with:
 
 ```sh
 python3 tests/perf/run_guest_geekbench.py --help
@@ -413,7 +415,10 @@ have served.
 
 A census build pays for this on every store and pauses a vCPU for each
 snapshot, so it runs slower than a default build; its timings are not
-measurements.
+measurements. `DARWIN_UML_GADGET_CACHE_CENSUS_TOTALS=1` keeps only the `E` and
+`G` records and leaves stores unmatched against other caches, which is what a
+browser guest on a loaded host can afford; read such a capture with
+`--series`.
 
 Identity is the consumed guest code, not the produced stream, because two
 executors translating the same code embed pointers to their own link records.
