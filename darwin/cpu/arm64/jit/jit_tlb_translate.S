@@ -16,7 +16,9 @@
  * preserving bridge rather than spilling every live binding into CpuState at
  * each call site.  x0 is the helper's pointer result; x1/x2 and the ordinary
  * scratch registers may be clobbered.  The caller-saved resident registers,
- * the CpuState/TLB context registers, and LR are preserved explicitly.
+ * the CpuState/TLB context registers, and LR are preserved explicitly, and
+ * so are V0-V7, where an AArch32 translation keeps copies of S registers
+ * across its accesses.
  */
 
 	.text
@@ -24,7 +26,7 @@
 	.private_extern _uml_arm64_jit_tlb_translate_preserving
 	.globl	_uml_arm64_jit_tlb_translate_preserving
 _uml_arm64_jit_tlb_translate_preserving:
-	sub	sp, sp, #400
+	sub	sp, sp, #496
 	mrs	x9, nzcv
 	mrs	x10, fpcr
 	mrs	x11, fpsr
@@ -44,6 +46,9 @@ _uml_arm64_jit_tlb_translate_preserving:
 	stp	q28, q29, [sp, #304]
 	stp	q30, q31, [sp, #336]
 	stp	q6, q7, [sp, #368]
+	stp	q0, q1, [sp, #400]
+	stp	q2, q3, [sp, #432]
+	stp	q4, q5, [sp, #464]
 
 	/*
 	 * A generated block may own the guest floating-point environment. A
@@ -59,6 +64,9 @@ _uml_arm64_jit_tlb_translate_preserving:
 1:
 	bl	_uml_arm64_jit_tlb_translate
 
+	ldp	q4, q5, [sp, #464]
+	ldp	q2, q3, [sp, #432]
+	ldp	q0, q1, [sp, #400]
 	ldp	q6, q7, [sp, #368]
 	ldp	q30, q31, [sp, #336]
 	ldp	q28, q29, [sp, #304]
@@ -77,6 +85,6 @@ _uml_arm64_jit_tlb_translate_preserving:
 	ldp	x3, x4, [sp, #0]
 	msr	fpcr, x10
 	msr	fpsr, x11
-	add	sp, sp, #400
+	add	sp, sp, #496
 	msr	nzcv, x9
 	ret
