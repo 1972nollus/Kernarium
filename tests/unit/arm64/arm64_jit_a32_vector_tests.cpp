@@ -808,6 +808,324 @@ void vcmp_flags_reach_the_apsr() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// A run of single-precision VFP instructions keeps the S registers it reads
+// and writes in host registers between its instructions (the S shadows of
+// a32_compiler_vector.cpp), forgotten where an instruction may change the S
+// register another way or use the host register: a double-precision or
+// Advanced SIMD instruction, a conditional one. An access keeps them: its
+// TLB miss preserves the registers. Random programs of such runs among
+// integer arithmetic, loads and stores (some across a page), VLDR and VSTR,
+// VMOV to and from core registers and comparisons read by VMRS, some of them
+// counted loops, run whole and one instruction at a time, must leave the same
+// registers, vectors, FPSCR and memory. Each program has an address space of
+// its own, so its first accesses miss in the TLB inside a translation.
+
+class Xorshift final {
+public:
+  explicit Xorshift(std::uint64_t seed) : state_{seed | 1U} {}
+  std::uint64_t next() {
+    state_ ^= state_ << 13;
+    state_ ^= state_ >> 7;
+    state_ ^= state_ << 17;
+    return state_;
+  }
+  unsigned below(unsigned bound) {
+    return static_cast<unsigned>(next() % bound);
+  }
+
+private:
+  std::uint64_t state_;
+};
+
+/* An unconditional VFP data-processing word on S d, S n and S m. */
+std::uint32_t vfp_single(std::uint32_t base, unsigned d, unsigned n,
+                         unsigned m) {
+  return 0xe000'0000U | base | (d & 1U) << 22 | (n >> 1) << 16 |
+         (d >> 1) << 12 | (n & 1U) << 7 | (m & 1U) << 5 | m >> 1;
+}
+
+std::vector<std::uint32_t> single_run_program(Xorshift &random, bool loop) {
+  /* VADD, VSUB, VMUL, VNMUL, VDIV, VMLA, VMLS, VNMLS, VNMLA, VFMA, VFMS,
+   * VFNMS and VFNMA. */
+  static constexpr std::uint32_t three[] = {
+      0x0e30'0a00U, 0x0e30'0a40U, 0x0e20'0a00U, 0x0e20'0a40U, 0x0e80'0a00U,
+      0x0e00'0a00U, 0x0e00'0a40U, 0x0e10'0a00U, 0x0e10'0a40U, 0x0ea0'0a00U,
+      0x0ea0'0a40U, 0x0e90'0a00U, 0x0e90'0a40U};
+  /* VABS, VNEG, VSQRT, VMOV, VCVT.F32.S32, VCVT.F32.U32, VCVT.S32.F32,
+   * VCVTR.S32.F32, VCVT.U32.F32 and VCVTR.U32.F32. */
+  static constexpr std::uint32_t two[] = {
+      0x0eb0'0ac0U, 0x0eb1'0a40U, 0x0eb1'0ac0U, 0x0eb0'0a40U, 0x0eb8'0ac0U,
+      0x0eb8'0a40U, 0x0ebd'0ac0U, 0x0ebd'0a40U, 0x0ebc'0ac0U, 0x0ebc'0a40U};
+  const auto pick = [&](const auto &table) {
+    return table[random.below(static_cast<unsigned>(std::size(table)))];
+  };
+  const auto s = [&] { return random.below(20); };
+  const auto r = [&] { return random.below(8); };
+  std::vector<std::uint32_t> words{
+      0xeee1'1a10U,                          // vmsr fpscr, r1
+      0xe3a0'9000U | (2U + random.below(2)), // mov r9, #2 or #3
+  };
+  const std::size_t body = words.size();
+  const unsigned length = 8U + random.below(70);
+  for (unsigned i = 0; i < length; ++i) {
+    const unsigned kind = random.below(100);
+    if (kind < 34) {
+      words.push_back(vfp_single(pick(three), s(), s(), s()));
+    } else if (kind < 50) {
+      words.push_back(vfp_single(pick(two), s(), 0, s()));
+    } else if (kind < 56) {
+      const unsigned n = s();
+      // vmov Sn, Rt or vmov Rt, Sn.
+      words.push_back((random.below(2) != 0 ? 0xee00'0a10U : 0xee10'0a10U) |
+                      (n >> 1) << 16 | r() << 12 | (n & 1U) << 7);
+    } else if (kind < 59) {
+      const unsigned d = s(), imm8 = random.below(256);
+      words.push_back(0xeeb0'0a00U | (d & 1U) << 22 | (imm8 >> 4) << 16 |
+                      (d >> 1) << 12 | (imm8 & 15U)); // vmov.f32 Sd, #imm
+    } else if (kind < 63) {
+      // vcmp or vcmpe, vmrs APSR_nzcv, fpscr and movgt r8, #1.
+      words.push_back(vfp_single(
+          random.below(2) != 0 ? 0x0eb4'0a40U : 0x0eb4'0ac0U, s(), 0, s()));
+      words.push_back(0xeef1'fa10U);
+      words.push_back(0xc3a0'8001U);
+    } else if (kind < 70) {
+      const unsigned d = s();
+      // vldr or vstr Sd, [r10, #4 * imm8]
+      words.push_back((random.below(3) != 0 ? 0xed9a'0a00U : 0xed8a'0a00U) |
+                      (d & 1U) << 22 | (d >> 1) << 12 | random.below(64));
+    } else if (kind < 76) {
+      // add or mla.
+      if (random.below(2) != 0)
+        words.push_back(0xe080'0000U | r() << 16 | r() << 12 | r());
+      else
+        words.push_back(0xe020'0090U | r() << 16 | r() << 12 | r() << 8 |
+                        r());
+    } else if (kind < 82) {
+      // ldr or str Rt, [r11, #imm]: r11 is 64 bytes before a page end.
+      words.push_back((random.below(2) != 0 ? 0xe59b'0000U : 0xe58b'0000U) |
+                      r() << 12 |
+                      (random.below(2) != 0 ? 60U + random.below(4)
+                                            : random.below(128)));
+    } else if (kind < 85) {
+      // vadd.f64 Dd, Dn, Dm
+      const unsigned d = random.below(10), n = random.below(10);
+      words.push_back(0xee30'0b00U | n << 16 | d << 12 | random.below(10));
+    } else if (kind < 87) {
+      // vcvt.f64.f32 Dd, Sm
+      const unsigned d = random.below(10), m = s();
+      words.push_back(0xeeb7'0ac0U | d << 12 | (m & 1U) << 5 | m >> 1);
+    } else if (kind < 89) {
+      // vadd.f32 Qd, Qn, Qm
+      const unsigned d = 2 * random.below(5), n = 2 * random.below(5);
+      words.push_back(0xf200'0d40U | n << 16 | d << 12 | 2 * random.below(5));
+    } else if (kind < 94) {
+      // A conditional single-precision operation.
+      const std::uint32_t word = vfp_single(pick(three), s(), s(), s());
+      words.push_back((word & 0x0fff'ffffU) | random.below(14) << 28);
+    } else if (kind < 97) {
+      // A conditional add.
+      words.push_back(random.below(14) << 28 | 0x0080'0000U | r() << 16 |
+                      r() << 12 | r());
+    } else {
+      words.push_back(0xeee1'ca10U); // vmsr fpscr, r12
+    }
+  }
+  if (loop) {
+    words.push_back(0xe259'9001U); // subs r9, r9, #1
+    // bne body
+    const auto offset = static_cast<std::int32_t>(body) -
+                        static_cast<std::int32_t>(words.size() + 2U);
+    words.push_back(0x1a00'0000U |
+                    (static_cast<std::uint32_t>(offset) & 0x00ff'ffffU));
+  }
+  words.push_back(arm_svc);
+  return words;
+}
+
+struct SingleRunOutcome final {
+  arm64::CpuState cpu;
+  std::size_t retired;
+  ExitReason reason;
+  std::vector<std::byte> data;
+};
+
+void single_run_data(Fixture &fixture, std::uint64_t seed) {
+  Xorshift random{seed};
+  std::vector<std::byte> data(2 * guest_page);
+  for (std::size_t index = 0; index < data.size(); index += 4) {
+    const auto word = static_cast<std::uint32_t>(random.next());
+    // Half of the words are small floats, the others any bits.
+    const std::uint32_t value =
+        (word & 1U) != 0U ? 0x3f00'0000U | (word >> 9 & 0x00ff'ffffU) : word;
+    std::memcpy(data.data() + index, &value, 4);
+  }
+  fixture.data_bytes(0, data);
+}
+
+SingleRunOutcome single_run(Fixture &fixture, arm64::CpuState cpu,
+                            std::uint64_t seed, bool stepped) {
+  single_run_data(fixture, seed);
+  std::size_t retired = 0;
+  ExitReason reason = ExitReason::single_step;
+  if (stepped) {
+    for (unsigned step = 0; step < 4096; ++step) {
+      const auto result = fixture.run(cpu, 1, true);
+      retired += result.retired_instructions;
+      reason = result.reason;
+      if (reason != ExitReason::single_step)
+        break;
+    }
+  } else {
+    const auto result = fixture.run(cpu, 4096);
+    retired = result.retired_instructions;
+    reason = result.reason;
+  }
+  return {cpu, retired, reason, fixture.read_data(0, 2 * guest_page)};
+}
+
+/* The registers a single-precision run starts with: interesting values in
+ * most S registers, any bits in the rest. */
+arm64::CpuState single_run_task(Xorshift &random) {
+  static constexpr std::uint32_t values[] = {
+      0x0000'0000U, 0x8000'0000U, 0x3f80'0000U, 0xbfc0'0000U, 0x4020'0000U,
+      0x3f00'0000U, 0x5015'02f9U, 0x8020'0000U, 0x7f80'0000U, 0xff80'0000U,
+      0x7fc0'0000U, 0x7f80'0001U, 0x47f1'2066U, 0xcf00'0000U, 0x4f80'0000U,
+      0x7f7f'ffffU, 0x0000'0007U, 0xffff'fffdU, 0x0000'0001U, 0x4b00'0001U};
+  static constexpr std::uint32_t modes[] = {0x0000'0000U, 0x0040'0000U,
+                                            0x0080'0000U, 0x00c0'0000U,
+                                            0x0100'0000U, 0x0300'0000U};
+  auto cpu = Fixture::task(false);
+  for (unsigned i = 0; i < 8; ++i)
+    cpu.registers[i] = random.below(2) != 0
+                           ? values[random.below(std::size(values))]
+                           : static_cast<std::uint32_t>(random.next());
+  cpu.registers[1] = modes[random.below(std::size(modes))];
+  cpu.registers[12] = modes[random.below(std::size(modes))];
+  cpu.registers[10] = data_base + 128U;
+  cpu.registers[11] = data_base + static_cast<std::uint32_t>(guest_page) - 64U;
+  cpu.nzcv = static_cast<std::uint32_t>(random.next()) & 0xf000'0000U;
+  for (unsigned q = 0; q < 8; ++q)
+    for (unsigned lane = 0; lane < 4; ++lane)
+      set_lane32(cpu, q, lane,
+                 random.below(3) != 0
+                     ? values[random.below(std::size(values))]
+                     : static_cast<std::uint32_t>(random.next()));
+  return cpu;
+}
+
+/* The program in a new address space, run whole and stepped from `rounds`
+ * random starts. */
+void check_single_run(unsigned long generation,
+                      const std::vector<std::uint32_t> &words, Xorshift &random,
+                      unsigned rounds, unsigned program) {
+  Fixture fixture{generation};
+  for (std::size_t i = 0; i < words.size(); ++i)
+    fixture.code32(4 * i, {words[i]});
+  for (unsigned round = 0; round < rounds; ++round) {
+    const auto cpu = single_run_task(random);
+    const std::uint64_t seed = random.next();
+    const auto whole = single_run(fixture, cpu, seed, false);
+    const auto stepped = single_run(fixture, cpu, seed, true);
+    bool same = whole.reason == ExitReason::system_call &&
+                whole.reason == stepped.reason &&
+                whole.retired == stepped.retired &&
+                whole.cpu.pc == stepped.cpu.pc &&
+                whole.cpu.nzcv >> 28 == stepped.cpu.nzcv >> 28 &&
+                whole.cpu.fpsr == stepped.cpu.fpsr &&
+                whole.cpu.fpcr == stepped.cpu.fpcr &&
+                whole.cpu.a32_fpscr_nzcv == stepped.cpu.a32_fpscr_nzcv &&
+                whole.data == stepped.data;
+    for (unsigned i = 0; i < 15; ++i)
+      same = same && whole.cpu.registers[i] == stepped.cpu.registers[i];
+    for (unsigned q = 0; q < 16; ++q)
+      same = same && whole.cpu.vectors[q].bytes == stepped.cpu.vectors[q].bytes;
+    if (!same) {
+      std::fprintf(stderr,
+                   "program %u round %u: whole reason=%d retired=%zu "
+                   "stepped reason=%d retired=%zu\n",
+                   program, round, static_cast<int>(whole.reason),
+                   whole.retired, static_cast<int>(stepped.reason),
+                   stepped.retired);
+      for (const auto word : words)
+        std::fprintf(stderr, "  %08x\n", word);
+      for (unsigned q = 0; q < 8; ++q)
+        for (unsigned lane = 0; lane < 4; ++lane)
+          if (lane32(whole.cpu, q, lane) != lane32(stepped.cpu, q, lane))
+            std::fprintf(stderr, "  s%u whole=%08x stepped=%08x\n",
+                         4 * q + lane, lane32(whole.cpu, q, lane),
+                         lane32(stepped.cpu, q, lane));
+    }
+    require(same);
+  }
+}
+
+void single_precision_runs_whole_and_stepped() {
+  Xorshift random{0x5ade'5a32'f00dU};
+  /* Each way an S register with a shadow changes, or an instruction uses
+   * the host registers, between a write that shadows S1 (and S5) and reads
+   * of it. */
+  constexpr std::uint32_t write_s1 = 0xee71'0a82U;  // vadd.f32 s1, s3, s4
+  constexpr std::uint32_t write_s5 = 0xee72'2a01U;  // vadd.f32 s5, s4, s2
+  constexpr std::uint32_t read_s1 = 0xee30'4aa0U;   // vadd.f32 s8, s1, s1
+  constexpr std::uint32_t read_s5 = 0xee72'4a82U;   // vadd.f32 s9, s5, s4
+  constexpr std::uint32_t move_out = 0xee10'0a90U;  // vmov r0, s1
+  const std::vector<std::uint32_t> changes[] = {
+      {0xeef0'0a43U},  // vmov.f32 s1, s6
+      {0xeef7'0a08U},  // vmov.f32 s1, #1.5
+      {0xee00'2a90U},  // vmov s1, r2
+      {0xedda'0a01U},  // vldr s1, [r10, #4]
+      {0xeef8'0ac3U},  // vcvt.f32.s32 s1, s6
+      {0xeefd'0ae1U},  // vcvt.s32.f32 s1, s3
+      {0xee30'0b02U},  // vadd.f64 d0, d0, d2
+      {0xf200'0d44U},  // vadd.f32 q0, q0, q2
+      {0x1e71'0a82U},  // vaddne.f32 s1, s3, s4
+      {0xeeb7'0ac3U},  // vcvt.f64.f32 d0, s6
+      {0xe59b'003eU},  // ldr r0, [r11, #62] (across the page: the library)
+      {0xe58b'003eU},  // str r0, [r11, #62]
+      {0xe59b'0040U},  // ldr r0, [r11, #64] (the second page)
+      {0xed8a'0a01U},  // vstr s0, [r10, #4]
+      {0xe080'0001U},  // add r0, r0, r1
+      {0xeee1'ca10U},  // vmsr fpscr, r12
+      {0xeeb4'0a60U, 0xeef1'fa10U}, // vcmp.f32 s0, s1; vmrs APSR_nzcv, fpscr
+  };
+  /* Loads from both pages around r11 + 64, each the first access to its
+   * page in a new address space: a TLB miss, which in the loop comes after
+   * S1 has its shadow. */
+  constexpr std::uint32_t warm_first = 0xe59b'3000U;  // ldr r3, [r11]
+  constexpr std::uint32_t warm_second = 0xe59b'3040U; // ldr r3, [r11, #64]
+  unsigned program = 0;
+  for (const auto &change : changes) {
+    std::vector<std::uint32_t> words{0xeee1'1a10U, warm_first, warm_second,
+                                     write_s1, write_s5};
+    words.insert(words.end(), change.begin(), change.end());
+    words.insert(words.end(), {read_s1, read_s5, move_out, arm_svc});
+    check_single_run(0x1a32'5d00U + program, words, random, 4, program);
+    ++program;
+  }
+  /* The same in a counted loop, a host loop from its second pass. */
+  for (const auto &change : changes) {
+    std::vector<std::uint32_t> words{0xeee1'1a10U, 0xe3a0'9003U, // mov r9, #3
+                                     write_s1, warm_first, warm_second,
+                                     write_s5};
+    words.insert(words.end(), change.begin(), change.end());
+    words.insert(words.end(), {read_s1, read_s5, move_out,
+                               0xe259'9001U}); // subs r9, r9, #1
+    // bne to write_s1
+    const auto offset = 2 - static_cast<std::int32_t>(words.size() + 2U);
+    words.push_back(0x1a00'0000U |
+                    (static_cast<std::uint32_t>(offset) & 0x00ff'ffffU));
+    words.push_back(arm_svc);
+    check_single_run(0x1a32'5d00U + program, words, random, 4, program);
+    ++program;
+  }
+  constexpr unsigned programs = 240;
+  for (unsigned p = 0; p < programs; ++p) {
+    const auto words = single_run_program(random, p % 2 == 0);
+    check_single_run(0x1a32'5e00U + p, words, random, 3, 100 + p);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -824,6 +1142,7 @@ int main() {
   library_memory_transfer_keeps_the_fp_environment();
   vector_memory_faults();
   vcmp_flags_reach_the_apsr();
+  single_precision_runs_whole_and_stepped();
   std::puts("arm64-jit-a32-vector: ok");
   return 0;
 }

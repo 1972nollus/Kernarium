@@ -126,6 +126,12 @@ enum FloatMisc : unsigned {
 	       (((op >> 6) & 1U) << 23) | (double_precision ? 1U << 22 : 0U) |
 	       ((op & 31U) << 12) | (n << 5) | d;
 }
+/* The scalar form, 01 U 11110: S n to S d (or D to D), as SCVTF S5, S4. */
+[[nodiscard]] constexpr std::uint32_t float_misc_scalar(FloatMisc op,
+	bool double_precision, unsigned d, unsigned n) noexcept
+{
+	return float_misc(true, op, double_precision, d, n) | 1U << 28;
+}
 
 /* FCVTN and FCVTL (half <-> single, single <-> double): size bit 0 selects
  * the wider type. */
