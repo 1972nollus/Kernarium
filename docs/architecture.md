@@ -431,7 +431,9 @@ engines in both page profiles, and `guest-exclusive-progress-gadgets` and
 `guest-exclusive-progress-jit` check it in a guest.
 
 Both engines complete WFE and WFI at once and treat SEV and SEVL as no-ops,
-so no wait ever depends on an event. AT_HWCAP therefore always carries
+so no wait ever depends on an event. Completing WFI is a deliberate deviation
+from arm64 Linux, which traps WFI at EL0 and kills the program with SIGILL, so
+no working program depends on either behaviour. AT_HWCAP therefore always carries
 EVTSTRM, arm64 Linux's promise that WFE wakes at least once per event-stream
 period, 100 µs, without an SEV.
 `guest-gadgets-smoke` and `guest-jit-smoke` time a WFE loop against that
