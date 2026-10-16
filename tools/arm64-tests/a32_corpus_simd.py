@@ -37,7 +37,7 @@ import random  # noqa: E402
 import a32_corpus_plan as plan  # noqa: E402
 from a32_corpus_memory import D, READ_ONLY, solve  # noqa: E402
 from a32_corpus_plan import (  # noqa: E402
-    FLAGS, ISA_LETTER, Case, Context, candidate_words, fields_of, get_field, pattern, set_field, usable,
+    FLAGS, ISA_LETTER, Case, Context, candidate_words, decode, fields_of, get_field, pattern, set_field, usable,
     word_of,
 )
 
@@ -418,6 +418,96 @@ def suite_fpscr_reserved(context: Context) -> list[Case]:
     return fpscr_cases(context, "fpscr-reserved", values)
 
 
+# Alignment hints ------------------------------------------------------------------------------------------------------
+
+# The hints of a VLD1 or VST1 copy by register count (the align field: none,
+# 64, 128, 256 bits), and the addresses each runs at: a line's start, 8, 16
+# and 1 byte past it, across the 4 KiB and 16 KiB lines on 8- and 16-byte
+# boundaries, read-only, unmapped, and unmapped at an odd address, where the
+# alignment fault comes first.
+HINT_ALIGNS = {1: (0, 1), 2: (0, 1, 2), 3: (0, 1), 4: (0, 1, 2, 3)}
+HINT_SCENARIOS = {
+    "a": D + 0x1040, "m8": D + 0x1048, "m16": D + 0x1050, "u1": D + 0x1041, "x4": D + 0x2000 - 16,
+    "x16": D + 0x4000 - 8, "ro": READ_ONLY, "unmapped": 0x60000000, "uu": 0x60000001,
+}
+# A VLD1 to all lanes: element size by its field, and the addresses: aligned,
+# one and two bytes past, the last bytes before the 4 KiB and 16 KiB lines
+# (an element without a hint crosses them), read-only, unmapped and odd.
+LANE_SCENARIOS = {
+    "a": D + 0x1040, "u1": D + 0x1041, "u2": D + 0x1042, "x4": D + 0x2000 - 1, "x16": D + 0x4000 - 2,
+    "ro": READ_ONLY + 0x3FFC, "unmapped": 0x60000000, "uu": 0x60000001,
+}
+HINT_INDEX = (0x20, 0xFFFFFFF8, 0x1000, 4)
+
+
+def hint_word(isa: str, word: int) -> tuple[int, ...]:
+    """An A32 structure word (1111 0100 ...) in the instruction set."""
+    return (word,) if isa == "A32" else (0xF900 | word >> 16 & 0xFF, word & 0xFFFF)
+
+
+def suite_simd_hints(context: Context) -> list[Case]:
+    """VLD1 and VST1 copies with each alignment hint and none, and VLD1 to
+    all lanes with and without one, at addresses the hint accepts and
+    refuses, across lines and faulting, with each writeback."""
+    cases = []
+    number = 0
+    for isa in ("A32", "T32"):
+        suffix = "a" if isa == "A32" else "t"
+        for store in (False, True):
+            for regs, aligns in HINT_ALIGNS.items():
+                for align in aligns:
+                    for index, (scenario, address) in enumerate(HINT_SCENARIOS.items()):
+                        if scenario == "ro" and not store:
+                            continue
+                        writeback = (index + regs + align) % 3
+                        m = (15, 13, 6)[writeback]
+                        size = (index + align) % 4
+                        first = (0, 16, 7, 28)[(index + regs) % 4]
+                        first = min(first, 32 - regs)
+                        word = ((0xF4000000 if store else 0xF4200000) | (first >> 4 & 1) << 22 | 4 << 16
+                                | (first & 15) << 12 | {1: 0x7, 2: 0xA, 3: 0x6, 4: 0x2}[regs] << 8 | size << 6
+                                | align << 4 | m)
+                        initial = {"apsr": FLAGS[pattern(number) >> 8 & 3], "r4": address}
+                        if m == 6:
+                            initial["r6"] = HINT_INDEX[number % len(HINT_INDEX)]
+                        form = found_form(context, isa, word)
+                        cases.append(Case("simd-hints", f"{form}/{regs}.{align}.{scenario}", form, ISA_LETTER[isa],
+                                          hint_word(isa, word), 0,
+                                          f"{RECIPES[number % len(RECIPES)]}-{suffix}", initial))
+                        number += 1
+        for size in (0, 1, 2):
+            for regs in (1, 2):
+                for hinted in ((False, True) if size else (False,)):
+                    for index, (scenario, address) in enumerate(LANE_SCENARIOS.items()):
+                        writeback = (index + size + regs) % 3
+                        m = (15, 13, 6)[writeback]
+                        first = (3, 31, 16, 8)[(index + size) % 4]
+                        first = min(first, 32 - regs)
+                        word = (0xF4A00C00 | (first >> 4 & 1) << 22 | 4 << 16 | (first & 15) << 12 | size << 6
+                                | (regs - 1) << 5 | int(hinted) << 4 | m)
+                        initial = {"apsr": FLAGS[pattern(number) >> 8 & 3], "r4": address}
+                        if m == 6:
+                            initial["r6"] = HINT_INDEX[number % len(HINT_INDEX)]
+                        form = found_form(context, isa, word)
+                        cases.append(Case("simd-hints",
+                                          f"{form}/{8 << size}.{regs}.{'h' if hinted else 'n'}.{scenario}", form,
+                                          ISA_LETTER[isa], hint_word(isa, word), 0,
+                                          f"{RECIPES[number % len(RECIPES)]}-{suffix}", initial))
+                        number += 1
+    return cases
+
+
+def found_form(context: Context, isa: str, word: int) -> str:
+    """The inventory form of an A32 structure word in the instruction set; a
+    word that does not decode is a planner bug."""
+    program = hint_word(isa, word)
+    value = program[0] if isa == "A32" else program[0] << 16 | program[1]
+    result, _ = decode(context, isa, value)
+    if result.status == "undefined":
+        raise SystemExit(f"simd-hints: {isa} {value:08x} does not decode")
+    return result.form
+
+
 SUITES = {
     "simd": suite_simd,
     "simd-steps": suite_simd_steps,
@@ -425,4 +515,5 @@ SUITES = {
     "simd-memory": suite_simd_memory,
     "fpscr": suite_fpscr,
     "fpscr-reserved": suite_fpscr_reserved,
+    "simd-hints": suite_simd_hints,
 }

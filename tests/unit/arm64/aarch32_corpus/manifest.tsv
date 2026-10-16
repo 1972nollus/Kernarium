@@ -13,7 +13,9 @@ fpscr-reserved-pi4	pi4	144
 memory-qemu	qemu	1914
 pc-qemu	qemu	88
 prefetch-qemu	qemu	144
+sequences-qemu	qemu	1158
 simd-convert-qemu	qemu	1504
+simd-hints-qemu	qemu	534
 simd-memory-qemu	qemu	3721
 simd-qemu	qemu	10226
 simd-steps-qemu	qemu	164

@@ -730,12 +730,21 @@ moves and the part holds no SVE or SME word. A conditional instruction is a
 skip over a run of instructions sharing its condition, a conditional
 terminal gives the skipped instruction back, and a block never ends inside an
 IT block: one the block limit cuts off ends in an unlinked exit with ITSTATE
-stored. A plain CMP of a register or of an immediate below 2^24, outside an IT
-block and followed at once by a conditional branch, is the A64 fused
-compare-and-branch gadget of the branch's condition, which reads the CpuState
-slots a register lives in, so the pair costs one dispatch; ADD and SUB of an
-immediate to the same register have an entry per register R0 to R14 with the
-displacement baked in. A word the decoder rejects, a coprocessor word the profile lacks and
+stored. A block holds at most 64 instructions (`a32::block_limit`); a T32
+block stops five short of that unless an IT block is open, so that an IT
+block it starts completes inside it. Conditional data processing that sets
+no flags and does not write the PC (MOV, MVN, ADD, SUB, RSB, AND, ORR, EOR
+and BIC of an immediate or a register, MOVW, and VMOV between S or D
+registers) is a select instead: its gadget computes the result and keeps the
+old value where the condition fails, so nothing branches on the guest's
+flags. A plain CMP of a register or of an immediate below 2^24, outside an
+IT block and followed at once by a conditional branch, is the A64 fused
+compare-and-branch gadget of the branch's condition, which reads the
+CpuState slots a register lives in, so the pair costs one dispatch. An
+unconditional VCMP or VCMPE followed at once by an unconditional VMRS
+APSR_nzcv is likewise one gadget that sets FPSCR's flags and copies them to
+NZCV. ADD and SUB of an immediate to the same register have an entry per
+register R0 to R14 with the displacement baked in. A word the decoder rejects, a coprocessor word the profile lacks and
 a form above the engine's level end the block in the illegal-instruction exit
 at the word whatever its condition, except a coprocessor word that is not
 UNPREDICTABLE in the complete profile, which a failing condition skips like
@@ -789,7 +798,15 @@ interleaved ones, element copies for one lane and LD1R to LD4R for all lanes,
 with the register or immediate writeback; a VLD1 or VST1 copy that crosses a
 page stays in the gadget and moves its bytes with the A64 slow transfer helper,
 and one without an alignment hint has a gadget for each writeback that tests
-nothing the instruction does not need.
+nothing the instruction does not need. A copy with an alignment hint and a
+VLD1 to all lanes of one or two registers have gadgets of their own too, which
+test the alignment and leave a misaligned access to the library. An
+unconditional ADD or SUB of an immediate that sets no flags, names no PC and
+computes the base of a copy without hint or writeback runs inside the copy's
+gadget when only unconditional Advanced SIMD data processing that reads no
+core register comes between: the gadget writes the register before the
+transfer, so a fault finds it as the ADD left it, and nothing between can
+exit or fault.
 VRECPS and VRSQRTS (AArch32's unfused steps, not the fused A64 ones), an
 interleaved or one-lane structure access or VLDM and VSTM that crosses a page,
 and a misaligned access with an alignment hint run
