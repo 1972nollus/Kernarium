@@ -55,6 +55,62 @@ constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 constexpr std::size_t maximum_t32_validation_units =
 	2 * block_instruction_count + 2;
 
+/* A translation cache slot's tag holds the translation's key in its low 48
+ * bits, under the id of the address space that owns it. An A64 key is a user
+ * PC below the guest address limit (2^47, DARWIN_UML_GUEST_ADDRESS_LIMIT) and
+ * is kept as it is; an AArch32 key keeps its 34 significant low bits under
+ * two flags in the bits a PC of that width never uses, so no two canonical
+ * keys share a compact form. A key outside both has none: it tags to a value
+ * no slot holds, which is a miss. */
+constexpr unsigned tag_owner_shift = 48;
+constexpr std::uint64_t tag_key_mask =
+	(std::uint64_t{1} << tag_owner_shift) - 1U;
+constexpr unsigned a64_key_bits = 47;
+constexpr std::uint64_t aarch32_flag = std::uint64_t{1} << a64_key_bits;
+constexpr std::uint64_t thumb_flag = std::uint64_t{1} << (a64_key_bits - 1U);
+constexpr std::uint64_t aarch32_address_mask =
+	(std::uint64_t{1} << 34) - 1U;
+constexpr std::uint64_t unmatchable_tag = ~std::uint64_t{};
+
+[[nodiscard]] constexpr std::uint64_t compact_tag_key(
+	std::uint64_t key) noexcept
+{
+	if ((key >> a64_key_bits) == 0U) [[likely]]
+		return key;
+	if (!arm64::aarch32::key_is_canonical(key) ||
+	    !arm64::aarch32::key_is_aarch32(key))
+		return unmatchable_tag;
+	return aarch32_flag |
+		(arm64::aarch32::key_is_thumb(key) ? thumb_flag : 0U) |
+		(key & aarch32_address_mask);
+}
+
+[[nodiscard]] constexpr std::uint64_t expand_tag_key(
+	std::uint64_t tag) noexcept
+{
+	tag &= tag_key_mask;
+	if ((tag & aarch32_flag) == 0U)
+		return tag;
+	return arm64::aarch32::aarch32_key_bit |
+		((tag & thumb_flag) != 0U ? arm64::aarch32::thumb_key_bit : 0U) |
+		(tag & aarch32_address_mask);
+}
+
+static_assert(expand_tag_key(compact_tag_key(0x0000'7fff'ffff'fffcU)) ==
+	0x0000'7fff'ffff'fffcU);
+static_assert(expand_tag_key(compact_tag_key(0)) == 0);
+static_assert(expand_tag_key(compact_tag_key(
+	arm64::aarch32::a32_key(0xffff'fffcU))) ==
+	arm64::aarch32::a32_key(0xffff'fffcU));
+static_assert(expand_tag_key(compact_tag_key(
+	arm64::aarch32::t32_key(0xffff'fffeU))) ==
+	arm64::aarch32::t32_key(0xffff'fffeU));
+static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1000U)) !=
+	compact_tag_key(arm64::aarch32::t32_key(0x1000U)));
+static_assert(compact_tag_key(0x0000'8000'0000'1000U) == unmatchable_tag);
+static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
+	unmatchable_tag);
+
 [[nodiscard]] std::size_t fetch_instruction_window(
 	StaticGuestMemory &memory, std::uint64_t pc,
 	std::span<std::uint32_t> instructions)
@@ -549,21 +605,36 @@ inline void store_pair(void *at, std::uint64_t first,
 struct Body final {
 	/* Where the block starts: its guest PC, or for AArch32 its key. */
 	std::uint64_t guest_address{};
-	std::uint64_t stop_address{};
-	std::uint32_t stop_instruction{};
-	std::uint32_t word_count{};
+	/* The words of the stream, and the facts about it a stored block
+	 * cannot recompute, packed into one word. */
+	std::uint32_t word_count : 24 {};
+	bool complete : 1 {};
+	bool accesses_fp_state : 1 {};
+	/* A tail after the validation units holds the build's stop (see
+	 * Stop). */
+	bool has_stop : 1 {};
+	/* The translation's aarch32::GuestIsa, from its key: it sizes a unit
+	 * and so the validation words. */
+	std::uint32_t isa : 2 {};
+	/* How many cache slots, in every executor running the address space,
+	 * hold this body. Changed only under its link record's shard lock. */
+	std::uint16_t holders{};
 	std::uint8_t instruction_count{};
 	/* The guest units the stream is validated against: words for A64 and
 	 * A32, halfwords for T32 (at most maximum_t32_validation_units). */
 	std::uint8_t source_word_count{};
-	bool complete{};
-	bool accesses_fp_state{};
-	/* The translation's aarch32::GuestIsa, from its key: it sizes a unit
-	 * and so the validation words. */
-	std::uint8_t isa{};
-	/* How many cache slots, in every executor running the address space,
-	 * hold this body. Changed only under its link record's shard lock. */
-	std::uint16_t holders{};
+
+	/* Where a build stopped, which a stored block keeps only when
+	 * something can ask for it: a block that stopped at a word it could
+	 * not translate, or that holds no instruction, reports its stop
+	 * address as the illegal exit's PC. A complete block's terminal is in
+	 * its stream and its validation words, and no caller of a stored
+	 * block reads the stop fields of one. */
+	struct Stop final {
+		std::uint64_t address;
+		std::uint32_t instruction;
+		std::uint32_t padding;
+	};
 
 	/* The stream follows the body, and the guest words it is validated
 	 * against follow the stream. A block that accesses FP/SIMD state is
@@ -615,19 +686,48 @@ struct Body final {
 		return {source_bytes(),
 			std::size_t{source_word_count} * source_unit()};
 	}
+	/* Whether a build's stop is kept: see Stop. */
+	[[nodiscard]] static bool keeps_stop(
+		bool complete, std::size_t instruction_count) noexcept
+	{
+		return !complete || instruction_count == 0;
+	}
+	/* The offset of the stop tail from the body, at its own alignment
+	 * after the validation units. */
+	[[nodiscard]] static std::size_t stop_offset(
+		std::size_t words, std::size_t source_bytes) noexcept
+	{
+		return (sizeof(Body) + words * sizeof(std::uintptr_t) +
+			source_bytes + alignof(Stop) - 1U) &
+			~(alignof(Stop) - 1U);
+	}
+	[[nodiscard]] Stop *stop() noexcept
+	{
+		return reinterpret_cast<Stop *>(
+			reinterpret_cast<std::byte *>(this) +
+			stop_offset(entry_words() + word_count,
+				source_word_count * source_unit()));
+	}
+	[[nodiscard]] const Stop *stop() const noexcept
+	{
+		return const_cast<Body *>(this)->stop();
+	}
 	/* What the arena must be given back follows from the counts, so
 	 * neither the body nor the slot that indexes it stores it. `words`
 	 * counts an FP block's entry word with its stream. */
 	[[nodiscard]] static std::size_t allocation_bytes(
-		std::size_t words, std::size_t source_bytes) noexcept
+		std::size_t words, std::size_t source_bytes,
+		bool with_stop) noexcept
 	{
-		return sizeof(Body) + words * sizeof(std::uintptr_t) +
-			source_bytes;
+		return with_stop ?
+			stop_offset(words, source_bytes) + sizeof(Stop) :
+			sizeof(Body) + words * sizeof(std::uintptr_t) +
+				source_bytes;
 	}
 	[[nodiscard]] std::size_t allocation_bytes() const noexcept
 	{
 		return allocation_bytes(entry_words() + word_count,
-			source_word_count * source_unit());
+			source_word_count * source_unit(), has_stop);
 	}
 	/* The stored block as the builder produced it. The program refers to
 	 * the words behind this header rather than copying them, so it is
@@ -638,17 +738,17 @@ struct Body final {
 			arm64::gadgets::ProgramWords::Borrowed{
 				const_cast<std::uintptr_t *>(words()),
 				word_count}};
+		const auto *kept = has_stop ? stop() : nullptr;
 		return BuildResult{arm64::gadgets::Program{guest_address,
 				instruction_count, std::move(view),
 				accesses_fp_state},
-			complete, stop_address, stop_instruction};
+			complete, kept != nullptr ? kept->address : 0U,
+			kept != nullptr ? kept->instruction : 0U};
 	}
 };
-static_assert(sizeof(Body) == 32 &&
+static_assert(sizeof(Body) == 16 &&
 	sizeof(Body) % alignof(std::uintptr_t) == 0,
 	"the stream tail follows the body at pointer alignment");
-static_assert(offsetof(Body, isa) == 28 && offsetof(Body, holders) == 30,
-	"the ISA byte and the holder count sit in what was padding");
 static_assert(maximum_t32_validation_units < 0x100U,
 	"a T32 translation's halfword count fits the narrow field");
 static_assert(block_instruction_count < 0xffU,
@@ -1339,26 +1439,30 @@ private:
 		const auto unit = arm64::aarch32::isa_unit_bytes(isa);
 		assert(validation.size() % unit == 0);
 		const std::size_t entry = program.accesses_fp_state() ? 1U : 0U;
+		const bool with_stop = Body::keeps_stop(
+			built.complete, program.instruction_count());
 		const auto bytes = Body::allocation_bytes(
-			entry + words.size(), validation.size());
+			entry + words.size(), validation.size(), with_stop);
+		assert(words.size() < (std::size_t{1} << 24));
 		void *storage = nullptr;
 		{
 			const std::lock_guard arena{arena_mutex_};
 			storage = bodies_.allocate(bytes);
 		}
-		auto *body = new (storage) Body{
-			.guest_address = program.guest_address(),
-			.stop_address = built.stop_address,
-			.stop_instruction = built.stop_instruction,
-			.word_count = static_cast<std::uint32_t>(words.size()),
-			.instruction_count = static_cast<std::uint8_t>(
-				program.instruction_count()),
-			.source_word_count =
-				static_cast<std::uint8_t>(validation.size() / unit),
-			.complete = built.complete,
-			.accesses_fp_state = program.accesses_fp_state(),
-			.isa = static_cast<std::uint8_t>(isa),
-		};
+		auto *body = new (storage) Body{};
+		body->guest_address = program.guest_address();
+		body->word_count = static_cast<std::uint32_t>(words.size());
+		body->instruction_count =
+			static_cast<std::uint8_t>(program.instruction_count());
+		body->source_word_count =
+			static_cast<std::uint8_t>(validation.size() / unit);
+		body->complete = built.complete;
+		body->accesses_fp_state = program.accesses_fp_state();
+		body->has_stop = with_stop;
+		body->isa = static_cast<std::uint8_t>(isa) & 3U;
+		if (with_stop)
+			*body->stop() = {built.stop_address,
+				built.stop_instruction, 0U};
 		if (entry != 0)
 			body->words()[-1] = reinterpret_cast<std::uintptr_t>(
 				uml_arm64_gadget_fp_link_entry);
@@ -1518,8 +1622,8 @@ public:
 			for (auto &slot : slab->slots) {
 				if (slot.body == nullptr)
 					continue;
-				space_of(slot.generation).release(slot.body, false);
-				slot.body = nullptr;
+				space_of(slot).release(slot.body, false);
+				slot.vacate();
 			}
 		}
 		for (auto &[generation, state] : generations_)
@@ -1650,8 +1754,8 @@ public:
 				std::fprintf(out,
 					"P %lu 0x%llx %zu %zu %zu 0x%llx %zu %zu %zu "
 					"%zu %p\n",
-					slot.generation,
-					static_cast<unsigned long long>(slot.pc),
+					generation_of(slot),
+					static_cast<unsigned long long>(slot.key()),
 					std::size_t{body.instruction_count},
 					std::size_t{body.word_count},
 					std::size_t{body.source_word_count},
@@ -1664,7 +1768,7 @@ public:
 						body.source_unit(),
 					static_cast<const void *>(&body));
 				if (sample != 0 &&
-				    census_sampled(slot.pc, sample))
+				    census_sampled(slot.key(), sample))
 					census_words(out, slot, text, records);
 			}
 		}
@@ -1712,6 +1816,7 @@ public:
 			return;
 		state.space->observe(changes);
 		state.changes = changes;
+		advance_epoch(state);
 	}
 
 	[[nodiscard]] std::optional<BuildResult> find(
@@ -1723,15 +1828,16 @@ public:
 		if ((history_.lookups() & 4095U) == 0)
 			snapshot_if_due();
 #endif
+		assert(current_ == nullptr || current_->changes == changes);
 		const auto location = locate(current_generation_, pc);
+		const auto tag = tag_of(pc);
 		auto &slab = slabs_[location.slab];
 		if (slab) {
 			for (std::size_t way = 0; way < ways; ++way) {
 				auto &slot = slab->slots[location.offset + way];
-				if (slot.body == nullptr || slot.pc != pc ||
-				    slot.generation != current_generation_)
+				if (slot.tag != tag)
 					continue;
-				if (slot.validated_changes == changes) {
+				if (slot.epoch() == current_epoch_) {
 #if UML_GADGET_CACHE_CENSUS
 					history_.hit();
 #endif
@@ -1924,7 +2030,7 @@ public:
 	[[nodiscard]] BuildResult store(
 		std::uint64_t pc, const BuildResult &result,
 		std::span<const std::uint32_t> guest_words,
-		std::uint64_t changes)
+		[[maybe_unused]] std::uint64_t changes)
 	{
 		/* The words a validating find() will compare against guest
 		 * memory: the program's instructions, plus the word a stopped
@@ -1946,10 +2052,20 @@ public:
 	 * T32 builder supplies halfwords and everything else supplies words. */
 	[[nodiscard]] BuildResult store_validated(
 		std::uint64_t pc, const BuildResult &result,
-		std::span<const std::byte> validation, std::uint64_t changes)
+		std::span<const std::byte> validation,
+		[[maybe_unused]] std::uint64_t changes)
 	{
 		assert(arm64::aarch32::key_is_canonical(pc));
+		/* The running address space is registered before the tag that
+		 * names it is made. */
 		auto &state = current();
+		/* The stored translation is as current as the address space's
+		 * code is, which prepare() has been told. */
+		assert(state.changes == changes);
+		[[maybe_unused]] const auto tag = tag_of(pc);
+		/* Nothing is stored under a key with no compact form: such a
+		 * key names no fetchable code. */
+		assert(tag != unmatchable_tag);
 		auto *body = state.space->publish(result, validation,
 			arm64::aarch32::key_isa(pc));
 #if UML_GADGET_CACHE_CENSUS
@@ -1959,15 +2075,10 @@ public:
 		{
 			const auto location = locate(current_generation_, pc);
 			if (const auto &slab = slabs_[location.slab])
-				for (std::size_t way = 0; way < ways; ++way) {
-					const auto &held =
-						slab->slots[location.offset + way];
-					if (held.body != nullptr &&
-					    held.pc == pc &&
-					    held.generation ==
-						    current_generation_)
+				for (std::size_t way = 0; way < ways; ++way)
+					if (slab->slots[location.offset + way]
+						    .tag == tag)
 						restored = true;
-				}
 		}
 #endif
 		auto &slot = install(pc, body, changes);
@@ -2003,36 +2114,106 @@ private:
 	static constexpr std::size_t set_count = slot_count / ways;
 	static constexpr std::size_t slab_slots = ::uml::cpu::gadget_cache::slab_slots;
 	static constexpr std::size_t slab_count = slot_count / slab_slots;
+	/* The ids tags can carry, and the owner bits that match none of them
+	 * while no address space is running. */
+	static constexpr std::size_t max_owner_id = 0xfffeU;
+	static constexpr std::uint64_t no_owner = std::uint64_t{0xffffU}
+		<< tag_owner_shift;
+	static constexpr std::uint16_t max_epoch = 0xffffU;
+	static_assert(uml_gadget_resident_generations + 2U < max_owner_id,
+		"every resident address space has an id, and so does the one "
+		"being retired");
 
+	/* One way of a set: what a lookup compares and the translation it
+	 * names.
+	 *
+	 * The cache commits a slot per way whether or not it is occupied, so
+	 * the tag size multiplies by slot_count: at 262,144 slots every eight
+	 * bytes here is two mebibytes per executor. A slot therefore holds
+	 * three words, and anything that belongs to one translation belongs
+	 * in its Body.
+	 */
 	struct Slot final {
+		/* The translation's key (compact_tag_key) under the id of the
+		 * address space it belongs to. A guest virtual address only
+		 * means something inside one, so a slot is a match only when
+		 * both agree, which is what lets translations for several
+		 * address spaces share one cache instead of being wiped at
+		 * every switch, and what makes a lookup one comparison. Zero
+		 * while the slot is empty: ids start at one, so no occupied
+		 * slot's tag is zero and no lookup's is, either.
+		 */
+		std::uint64_t tag{};
 		/* The translation this slot indexes, held in its address space.
 		 * A slot is occupied exactly while this is non-null. */
 		Body *body{};
-		/* The address space this translation belongs to. A guest virtual
-		 * address only means something inside one, so a slot is a match
-		 * only when the generation matches too; that is what lets
-		 * translations for several address spaces share one cache
-		 * instead of being wiped at every switch.
+		/* Two fields sharing a word, a pointer below the guest's
+		 * 48-bit address-space limit and sixteen bits above it:
+		 *
+		 * The link record reactivation resolves every time, so its
+		 * address is memoised here rather than hashed again on each
+		 * pass. The address space keeps its records in chunks that
+		 * never move, so the address stays valid while the slot holds
+		 * this translation: install() and release() reset the memo,
+		 * and retiring the address space releases this slot before the
+		 * cache lets go of the space.
+		 *
+		 * The memo is only ever valid for the address space the tag
+		 * names, and nothing about the record itself says which one
+		 * that is: the guest PC it carries is equal across all of
+		 * them. Ordinary slot replacement does not keep the owner, so
+		 * install() resets the memo rather than letting activate()
+		 * decide from the record alone.
+		 *
+		 * The epoch of the owner's code (Generation::epoch) when the
+		 * translation was last known to match guest memory, zero for
+		 * never. It is equal to the owner's current one exactly when no
+		 * code change has been seen since.
 		 */
-		unsigned long generation{};
-		std::uint64_t pc{};
-		/* Reactivation resolves the same link record every time, so its
-		 * address is memoised here rather than hashed again on each pass.
-		 * The address space keeps its records in chunks that never move,
-		 * so the address stays valid while the slot holds this
-		 * translation: install() and release() reset the memo, and
-		 * retiring the address space releases this slot before the cache
-		 * lets go of the space.
-		 */
-		LinkRecord *link{};
-		std::uint64_t validated_changes{};
-	};
+		std::uint64_t memo{};
 
-	/* The cache commits a slot per way whether or not it is occupied, so
-	 * the tag size multiplies by slot_count: at 65,536 slots every eight
-	 * bytes here is half a mebibyte per executor. Anything that belongs to
-	 * one translation belongs in its Body. */
-	static_assert(sizeof(Slot) <= 40,
+		static constexpr unsigned epoch_shift = 48;
+		static constexpr std::uint64_t link_mask =
+			(std::uint64_t{1} << epoch_shift) - 1U;
+
+		[[nodiscard]] LinkRecord *link() const noexcept
+		{
+			return reinterpret_cast<LinkRecord *>(
+				static_cast<std::uintptr_t>(memo & link_mask));
+		}
+		void set_link(LinkRecord *record) noexcept
+		{
+			const auto address =
+				reinterpret_cast<std::uintptr_t>(record);
+			assert((address & ~link_mask) == 0U);
+			memo = (memo & ~link_mask) | address;
+		}
+		[[nodiscard]] std::uint16_t epoch() const noexcept
+		{
+			return static_cast<std::uint16_t>(memo >> epoch_shift);
+		}
+		void set_epoch(std::uint16_t value) noexcept
+		{
+			memo = (memo & link_mask) |
+				(std::uint64_t{value} << epoch_shift);
+		}
+		[[nodiscard]] std::uint16_t owner() const noexcept
+		{
+			return static_cast<std::uint16_t>(tag >> tag_owner_shift);
+		}
+		[[nodiscard]] std::uint64_t key() const noexcept
+		{
+			return expand_tag_key(tag);
+		}
+		/* Empty the slot. The body is the caller's to release. */
+		void vacate() noexcept
+		{
+			tag = 0;
+			body = nullptr;
+			memo = 0;
+		}
+	};
+	static_assert(sizeof(Slot) == 24,
 		"cache slots index translations; they do not hold them");
 
 	struct Slab final {
@@ -2071,6 +2252,18 @@ private:
 
 		Space *space{};
 		std::uint64_t changes{};
+		/* The guest's number for the address space, and the cache's own
+		 * for it: the id a slot's tag carries, from one up, recycled
+		 * once the address space is retired and its slots released. */
+		unsigned long value{};
+		std::uint16_t id{};
+		/* How many times the address space's code is known to have
+		 * changed, as far as a slot's validation can tell: a slot whose
+		 * epoch equals this one has matched guest memory since the
+		 * last change. It runs from one to its maximum and starts over
+		 * after a sweep of the slots that carry it, so a slot's epoch
+		 * is never mistaken for the current one. */
+		std::uint16_t epoch{1};
 		/* Slots this address space has stored into, as flat slot
 		 * indices. It may name a slot another address space has since
 		 * taken, and may name one twice, so retirement checks every
@@ -2129,17 +2322,21 @@ private:
 	void retire(unsigned long generation)
 	{
 		const auto owner = generations_.find(generation);
-		if (owner != generations_.end() &&
-		    owner->second.slots_complete) {
-			for (const auto index : owner->second.slots)
-				release(slot_at(index), generation);
-		} else {
-			for (auto &slab : slabs_) {
-				if (!slab)
-					continue;
-				for (auto &slot : slab->slots)
-					release(slot, generation);
+		if (owner != generations_.end()) {
+			const auto id = owner->second.id;
+			if (owner->second.slots_complete) {
+				for (const auto index : owner->second.slots)
+					release(slot_at(index), id);
+			} else {
+				for (auto &slab : slabs_) {
+					if (!slab)
+						continue;
+					for (auto &slot : slab->slots)
+						release(slot, id);
+				}
 			}
+		} else {
+			assert(false && "a resident address space is registered");
 		}
 		if (link_memo_)
 			for (auto &entry : *link_memo_)
@@ -2147,8 +2344,11 @@ private:
 					entry = {};
 		if (owner != generations_.end()) {
 			auto *space = owner->second.space;
+			const auto id = owner->second.id;
 			if (current_ == &owner->second)
-				current_ = nullptr;
+				unbind();
+			owners_[id] = nullptr;
+			free_ids_.push_back(id);
 			generations_.erase(owner);
 			SpaceRegistry::instance().detach(space, announcement_);
 		}
@@ -2158,22 +2358,23 @@ private:
 			resident_.erase(found);
 	}
 
-	void release(Slot &slot, unsigned long generation)
+	void release(Slot &slot, std::uint16_t owner)
 	{
-		if (slot.body == nullptr || slot.generation != generation)
+		if (slot.body == nullptr || slot.owner() != owner)
 			return;
 #if UML_GADGET_CACHE_CENSUS
-		history_.depart(slot.generation, slot.pc, body_digest(*slot.body),
-			body_bytes(*slot.body), census::Departure::retired);
+		history_.depart(generation_of(slot), slot.key(),
+			body_digest(*slot.body), body_bytes(*slot.body),
+			census::Departure::retired);
 #endif
-		space_of(generation).release(slot.body, false);
-		slot.body = nullptr;
-		slot.link = nullptr;
+		space_of(slot).release(slot.body, false);
+		slot.vacate();
 	}
 
-	[[nodiscard]] Space &space_of(unsigned long generation)
+	/* The address space a slot's translation belongs to. */
+	[[nodiscard]] Space &space_of(const Slot &slot) const noexcept
 	{
-		return *generations_.find(generation)->second.space;
+		return *owner_of(slot)->space;
 	}
 
 	/* The running address space's translations. */
@@ -2226,18 +2427,18 @@ private:
 	void census_words(std::FILE *out, const Slot &slot,
 		census::TextRange text, CensusRecords &records) const
 	{
-		auto [named, inserted] = records.try_emplace(slot.generation);
+		auto [named, inserted] = records.try_emplace(generation_of(slot));
 		if (inserted) {
-			const auto owner = generations_.find(slot.generation);
-			if (owner != generations_.end()) {
+			const auto *owner = owner_of(slot);
+			if (owner != nullptr) {
 				auto &table = named->second;
-				owner->second.space->for_each_link(
+				owner->space->for_each_link(
 					[&table](const LinkRecord &record) {
 						table[reinterpret_cast<std::uintptr_t>(
 							&record.link)] =
 							{'l', record.link.guest_pc};
 					});
-				owner->second.space->for_each_indirect(
+				owner->space->for_each_indirect(
 					[&table](const IndirectRecord &record) {
 						table[reinterpret_cast<std::uintptr_t>(
 							&record.site)] =
@@ -2247,7 +2448,7 @@ private:
 		}
 		const auto &body = *slot.body;
 		std::fprintf(out, "W 0x%llx",
-			static_cast<unsigned long long>(slot.pc));
+			static_cast<unsigned long long>(slot.key()));
 		const auto *end = body.words() + body.word_count;
 		for (const auto *word = body.link_entry(); word != end; ++word) {
 			const auto value = *word;
@@ -2301,6 +2502,7 @@ private:
 		current_ = &entry->second;
 		if (inserted) {
 			auto &state = entry->second;
+			enroll(state, current_generation_);
 			state.space = SpaceRegistry::instance().attach(
 				SpaceKey{
 					.generation = current_generation_,
@@ -2313,13 +2515,94 @@ private:
 			while (resident_.size() > uml_gadget_resident_generations)
 				retire(resident_.front());
 		}
+		bind(*current_);
 		return *current_;
+	}
+
+	/* Give an address space the id its slots' tags will carry. */
+	void enroll(Generation &state, unsigned long generation)
+	{
+		state.value = generation;
+		if (!free_ids_.empty()) {
+			state.id = free_ids_.back();
+			free_ids_.pop_back();
+		} else {
+			assert(owners_.size() <= max_owner_id);
+			state.id = static_cast<std::uint16_t>(owners_.size());
+			owners_.push_back(nullptr);
+		}
+		owners_[state.id] = &state;
+	}
+
+	/* Make an enrolled address space the one lookups are made in. */
+	void bind(const Generation &state) noexcept
+	{
+		current_owner_ = std::uint64_t{state.id} << tag_owner_shift;
+		current_epoch_ = state.epoch;
+	}
+
+	/* No address space is running: the owner bits name none, so no
+	 * lookup matches. */
+	void unbind() noexcept
+	{
+		current_ = nullptr;
+		current_owner_ = no_owner;
+		current_epoch_ = 0;
+	}
+
+	/* The tag a lookup in the running address space compares. */
+	[[nodiscard]] std::uint64_t tag_of(std::uint64_t key) const noexcept
+	{
+		const auto compact = compact_tag_key(key);
+		return compact == unmatchable_tag ? unmatchable_tag :
+			compact | current_owner_;
+	}
+
+	[[nodiscard]] Generation *owner_of(const Slot &slot) const noexcept
+	{
+		return owners_[slot.owner()];
+	}
+
+	[[nodiscard]] unsigned long generation_of(
+		const Slot &slot) const noexcept
+	{
+		return owners_[slot.owner()]->value;
+	}
+
+	/* A code change was seen in the running address space: every slot's
+	 * validation is out of date. The epoch advances, and when it would
+	 * pass what a slot can hold the slots that carry one are cleared, so
+	 * that no old validation is ever equal to a new epoch. */
+	void advance_epoch(Generation &state) noexcept
+	{
+		if (state.epoch == max_epoch) {
+			const auto id = state.id;
+			const auto forget = [id](Slot &slot) noexcept {
+				if (slot.body != nullptr && slot.owner() == id)
+					slot.set_epoch(0);
+			};
+			if (state.slots_complete) {
+				for (const auto index : state.slots)
+					forget(slot_at(index));
+			} else {
+				for (auto &slab : slabs_)
+					if (slab)
+						for (auto &slot : slab->slots)
+							forget(slot);
+			}
+			state.epoch = 0;
+		}
+		++state.epoch;
+		if (&state == current_)
+			current_epoch_ = state.epoch;
 	}
 
 	/* Put a held body in the set for `pc`, letting go of whatever the way
 	 * it takes held, and link it. */
-	Slot &install(std::uint64_t pc, Body *body, std::uint64_t changes)
+	Slot &install(std::uint64_t pc, Body *body,
+		[[maybe_unused]] std::uint64_t changes)
 	{
+		assert(current().changes == changes);
 		const auto location = locate(current_generation_, pc);
 		auto &slab = slabs_[location.slab];
 		if (!slab)
@@ -2354,12 +2637,12 @@ private:
 		 * space may not be the running one. */
 		if (slot.body != nullptr) {
 #if UML_GADGET_CACHE_CENSUS
-			history_.depart(slot.generation, slot.pc,
+			history_.depart(generation_of(slot), slot.key(),
 				body_digest(*slot.body), body_bytes(*slot.body),
 				census::Departure::evicted);
 #endif
-			space_of(slot.generation).release(slot.body, false);
-			slot.body = nullptr;
+			space_of(slot).release(slot.body, false);
+			slot.vacate();
 		}
 		/* The memoised record describes whoever held the slot until now,
 		 * and a store may hand the slot to a different address space at
@@ -2368,11 +2651,10 @@ private:
 		 * taking a slot always resolves the record again; ordinary
 		 * reactivation of an unchanged owner keeps the memo.
 		 */
-		slot.link = nullptr;
+		slot.tag = tag_of(pc);
 		slot.body = body;
-		slot.pc = pc;
-		slot.generation = current_generation_;
-		slot.validated_changes = changes;
+		slot.memo = 0;
+		slot.set_epoch(current_epoch_);
 		activate(pc, slot);
 		return slot;
 	}
@@ -2406,17 +2688,15 @@ private:
 	{
 		if (slot.body != nullptr) {
 #if UML_GADGET_CACHE_CENSUS
-			history_.depart(slot.generation, slot.pc,
+			history_.depart(generation_of(slot), slot.key(),
 				body_digest(*slot.body), body_bytes(*slot.body),
 				census::Departure::discarded);
 #endif
-			auto &space = space_of(slot.generation);
+			auto &space = space_of(slot);
 			space.release(slot.body, true);
-			slot.body = nullptr;
-			slot.link = nullptr;
+			slot.vacate();
 			space.reclaim(announcement_);
 		}
-		slot.validated_changes = 0;
 	}
 
 	enum class Validation : std::uint8_t { valid, stale, race };
@@ -2480,7 +2760,7 @@ private:
 		StaticGuestMemory &memory, void *execution_context,
 		GadgetCacheDiagnostics &diagnostics)
 	{
-		switch (validate_body(*slot.body, slot.pc, changes,
+		switch (validate_body(*slot.body, slot.key(), changes,
 			mapping_changes, memory, execution_context,
 			&diagnostics)) {
 		case Validation::stale:
@@ -2491,7 +2771,7 @@ private:
 		case Validation::valid:
 			break;
 		}
-		slot.validated_changes = changes;
+		slot.set_epoch(current_epoch_);
 		++diagnostics.validation_hits;
 		return true;
 	}
@@ -2501,8 +2781,8 @@ private:
 		const auto &body = *slot.body;
 		if (!body.complete || body.instruction_count == 0)
 			return;
-		slot.link = space().activate(pc, slot.link, body,
-			slot.validated_changes);
+		slot.set_link(space().activate(pc, slot.link(), body,
+			current().changes));
 	}
 
 #if UML_GADGET_EXECUTION_HISTOGRAM
@@ -2555,6 +2835,15 @@ private:
 	/* Address-space switches, the clock dormancy is counted in. */
 	std::uint64_t switches_{};
 #endif
+	/* What the running address space adds to a key to make a tag, and
+	 * the epoch its slots must carry to be current. Both are read by
+	 * every lookup, so they sit here rather than behind current_. */
+	std::uint64_t current_owner_{no_owner};
+	std::uint16_t current_epoch_{};
+	/* Address spaces by id, with id zero never used, and the ids of the
+	 * ones retired. */
+	std::vector<Generation *> owners_{nullptr};
+	std::vector<std::uint16_t> free_ids_;
 	std::array<std::unique_ptr<Slab>, slab_count> slabs_;
 	std::array<std::uint8_t, set_count> next_replacement_{};
 };
