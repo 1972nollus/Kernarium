@@ -575,6 +575,66 @@ def pc_reads(context, suite, results):
                      retired=lead + 2, check=False, target=lead)
 
 
+# PC as an unshifted register operand: the second operand of any operation, the
+# first of a commuting one or of SUB and RSB, flag-setting and conditional, and
+# [PC, Rm] addressing, with the forms beside them that keep the PC in a register
+# (a shift, a subtracted index, an operation that does not commute). The loads'
+# index puts the address in the data region, or past it for a fault.
+PC_OPERANDS_A = (
+    (0xE082100F, {}), (0xE052100F, {}), (0xE022100F, {}), (0xE1E0000F, {}),
+    (0xE1B0000F, {}), (0xE151000F, {}), (0xE0D2100F, {}), (0xE09F1002, {}),
+    (0xE0AF1002, {}), (0xE01F1002, {}), (0xE06F1002, {}), (0xE07F1002, {}),
+    (0xE05F1002, {}), (0xE11F0001, {}), (0xE13F0001, {}), (0xE17F0001, {}),
+    (0xE1CF1002, {}), (0xE08F1102, {}), (0x008F1002, {}), (0x1082100F, {}),
+    (0xE79F0001, {"r1": 0x01000000}), (0xE7DF0001, {"r1": 0x01000001}),
+    (0xE19F00B1, {"r1": 0x01000002}), (0xE78F0001, {"r1": 0x01000000}),
+    (0xE79F0101, {"r1": 0x00400000}), (0xE71F0001, {"r1": 0xFF000000}),
+)
+PC_OPERANDS_T = (0x447B0000, 0x44FC0000)
+
+
+def pc_operands(context, suite, results):
+    for word, initial in PC_OPERANDS_A:
+        result, _operands = context.reference.operands("A32", word, 0, "complete", FEATURES)
+        if result.status == "undefined":
+            raise ValueError(f"{word:08x} is not a legal A32 word")
+        for lead in (0, 1, 2, 3):
+            prog = Prog()
+            for _ in range(lead):
+                prog.word(0xE320F000)
+            prog.insn(word, "A32").tail(ARM)
+            make(results, suite, f"{result.form}/{word:08x}.{lead}", result.form, ARM, prog,
+                 initial, retired=lead + 2, check=False, target=lead)
+    # A load whose [PC, Rm] address is unmapped faults at the instruction.
+    for lead in (0, 1):
+        prog = Prog()
+        for _ in range(lead):
+            prog.word(0xE320F000)
+        prog.insn(0xE79F0001, "A32").tail(ARM)
+        make(results, suite, f"LDR_r_A1_off/e79f0001.fault{lead}", "LDR_r_A1_off", ARM, prog,
+             {"r1": 0x11000000}, fault_retired=lead, target=lead)
+    for word in PC_OPERANDS_T:
+        result, _operands = context.reference.operands("T16", word, 0, "complete", FEATURES)
+        if result.status == "undefined":
+            raise ValueError(f"{word:08x} is not a legal T16 word")
+        for lead in (0, 1, 2, 3):
+            prog = Prog()
+            for _ in range(lead):
+                prog.half(NOP_T)
+            prog.insn(word, "T16").tail(THUMB)
+            make(results, suite, f"{result.form}/{word:08x}.{lead}", result.form, THUMB, prog, {},
+                 retired=lead + 2, check=False, target=lead)
+    # ADD Rdn, PC under IT EQ, whose condition fails and passes.
+    for flags in (0, 0x40000000):
+        for lead in (0, 1):
+            prog = Prog()
+            for _ in range(lead):
+                prog.half(NOP_T)
+            prog.half(0xBF08).insn(0x44780000, "T16").tail(THUMB)
+            make(results, suite, f"ADD_r_T2/it-eq-{flags >> 28:x}.{lead}", "ADD_r_T2", THUMB, prog,
+                 {"apsr": flags}, retired=lead + 3, check=False, target=lead + 1)
+
+
 def suite_conditions(context: Context) -> list[Case]:
     results: list[Case] = []
     condition_table(context, "conditions", results)
@@ -585,6 +645,7 @@ def suite_conditions(context: Context) -> list[Case]:
 def suite_pc(context: Context) -> list[Case]:
     results: list[Case] = []
     pc_reads(context, "pc", results)
+    pc_operands(context, "pc", results)
     return results
 
 

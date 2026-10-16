@@ -458,22 +458,52 @@ Translator::Result Translator::emit_dp(const Instruction &in,
 				       const FormPlan &plan)
 {
 	const auto &o = in.operands;
-	const unsigned op = plan.sub;
-	const unsigned shape_class = plan.aux & 3U;
+	unsigned op = plan.sub;
+	unsigned shape_class = plan.aux & 3U;
 	const bool s = o.setflags || is_compare(op);
+	const bool unary = op == op_mov || op == op_mvn;
+	/* The SP forms name no Rn: the first operand is R13. */
+	int first = (plan.aux & 4U) != 0 ? 13 : o.n;
+	std::uint32_t immediate = 0;
+	/* PC as an unshifted register operand is a constant, so the
+	 * instruction is the immediate form of its operation, which needs no
+	 * scratch slot holding the PC value: PC as the second operand of any
+	 * operation, and as the first of one that commutes or, for SUB and
+	 * RSB, of the other. An unshifted register keeps C, as an immediate
+	 * without a carry does. */
+	bool folded = false;
+	if (shape_class == 1 && o.shift_t == SRType::LSL && o.shift_n == 0) {
+		if (o.m == 15 && (unary || first != 15)) {
+			folded = true;
+		} else if (!unary && first == 15 && o.m != 15) {
+			switch (op) {
+			case op_add: case op_adc: case op_and: case op_eor:
+			case op_orr: case op_tst: case op_teq: case op_cmn:
+				folded = true;
+				break;
+			case op_sub: op = op_rsb; folded = true; break;
+			case op_rsb: op = op_sub; folded = true; break;
+			default: break;
+			}
+			if (folded)
+				first = o.m;
+		}
+		if (folded) {
+			shape_class = 0;
+			immediate = pc_value();
+		}
+	}
 	std::uintptr_t rn = 0;
 	std::uintptr_t rm = 0;
 	std::uintptr_t rs = 0;
-	/* The SP forms name no Rn: the first operand is R13. */
-	if (op != op_mov && op != op_mvn)
-		rn = source((plan.aux & 4U) != 0 ? 13 : o.n, scratch0);
+	if (!unary)
+		rn = source(first, scratch0);
 	if (shape_class != 0)
 		rm = source(o.m, scratch1);
 	if (shape_class == 2)
 		rs = static_cast<std::uintptr_t>(o.s) * 8U;
-	std::uint32_t immediate = 0;
 	std::optional<unsigned> carry;
-	if (shape_class == 0) {
+	if (shape_class == 0 && !folded) {
 		if (raw_immediate(op)) {
 			const auto expanded = o.a32 ?
 				aarch32::detail::a32_expand_imm_c(o.imm) :
@@ -714,6 +744,14 @@ Translator::Result Translator::emit_single(const Instruction &in,
 					     pc_aligned() - offset;
 		mode = 9;
 		word |= std::uint64_t{address} << 32;
+	} else if (register_form && !unprivileged && o.n == 15 && o.m != 15 &&
+		   !o.wback && o.add && o.shift_t == SRType::LSL &&
+		   o.shift_n == 0) {
+		/* [PC, Rm] is [Rm, #PC]: the offset form, with no scratch slot
+		 * holding the PC value. */
+		mode = 0;
+		word |= static_cast<std::uint64_t>(o.m) * 8U << 8 |
+			std::uint64_t{pc_value()} << 32;
 	} else {
 		const std::uintptr_t rn = source(o.n, scratch1);
 		/* The unprivileged forms post-index in A32 and use the offset
