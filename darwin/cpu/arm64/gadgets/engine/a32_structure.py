@@ -72,12 +72,12 @@ def body(name: str, load: bool, bytes_: int, transfer: list[str],
              "3:", "add w22, w9, w10", "mov w7, w9",
              "ubfx x11, x19, #32, #8", "tst w7, w11",
              f"b.ne Lcross_{name}",
-             "transfer_translate " + translate]
+             "a32_translate " + translate]
     lines += transfer
     lines += [f"Lfinish_{name}:", "tbz x19, #15, 1f", "and x9, x19, #0x7fff",
               "str w22, [_cpu, x9]", "1:", "add _stream, _stream, #8",
               "next_gadget",
-              "transfer_translate_cold " + translate]
+              "a32_translate_cold " + translate]
     if split:
         lines += [f"Lsplit_{name}:"] + split + [f"b Lfinish_{name}"]
     lines += [f"Lcross_{name}:", "ldr x8, [_stream], #8",
@@ -106,7 +106,7 @@ def fast_body(name: str, load: bool, bytes_: int, writeback: str,
     elif writeback == "r":
         lines += ["ubfx x10, x19, #16, #15", "ldr w10, [_cpu, x10]",
                   "add w22, w7, w10"]
-    lines.append("transfer_translate " + translate)
+    lines.append("a32_translate " + translate)
     lines.append("ubfx x13, x24, #0, #16")
     if bytes_ in (8, 16):
         reg = "d0" if bytes_ == 8 else "q0"
@@ -119,7 +119,7 @@ def fast_body(name: str, load: bool, bytes_: int, writeback: str,
     if writeback != "n":
         lines += ["and x9, x19, #0x7fff", "str w22, [_cpu, x9]"]
     lines += ["add _stream, _stream, #8", "next_gadget",
-              "transfer_translate_cold " + translate,
+              "a32_translate_cold " + translate,
               f"Lsplit_{name}:"] + split + [f"b Lfinish_{name}"]
     return "\n".join(lines)
 
