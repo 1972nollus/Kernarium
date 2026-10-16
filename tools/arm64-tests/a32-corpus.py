@@ -4,9 +4,12 @@
 
   a32-corpus.py observe --archive TAR.GZ --suite alu[,memory...] --host HOST
                         [--runner 'qemu-arm -cpu max'] [--oracle qemu]
+                        [--host-directory DIR]
                         [--source tests/unit/arm64/aarch32_corpus/source]
   a32-corpus.py finish  --archive TAR.GZ [--directory tests/unit/arm64/aarch32_corpus]
   a32-corpus.py check   --archive TAR.GZ [--source tests/unit/arm64/aarch32_corpus/source]
+  a32-corpus.py compare --right DIR [--left tests/unit/arm64/aarch32_corpus/source]
+                        [--archive TAR.GZ --absent FEATURE,...] [--show N]
 
 observe plans the cases of each suite, runs them twice through the oracle on
 HOST (tools/arm64-tests/a32-oracle.sh), requires both runs to agree, and
@@ -17,7 +20,10 @@ D2: records observed under qemu-arm are labelled "qemu"; hardware records
 carry the hardware's name. check plans every suite again without an oracle and
 requires each source table to hold exactly the planned cases (name, form, program,
 starting state), in order: a change to the planner or to the forms it iterates over
-that moves a case shows up here, and the suite is observed again.
+that moves a case shows up here, and the suite is observed again. compare
+lists the cases whose observations differ between two source directories,
+such as the checked-in records and another oracle's of the same suites,
+leaving out the cases whose instruction needs a feature one oracle lacks.
 """
 
 from __future__ import annotations
@@ -77,6 +83,8 @@ def run_oracle(arguments, cases, recipes, label: str) -> tuple[dict, list]:
             command = [str(HERE / "a32-oracle.sh"), "--prefix", "a32d-oracle"]
             if arguments.runner:
                 command += ["--runner", arguments.runner]
+            if arguments.host_directory:
+                command += ["--directory", arguments.host_directory]
             command += [arguments.host, str(scratch / "request"), str(output)]
             subprocess.run(command, check=True, timeout=3600, stdin=subprocess.DEVNULL)
             responses.append(output.read_bytes())
@@ -266,16 +274,30 @@ def finish(arguments) -> int:
     return 0
 
 
+def suite_tables(source: pathlib.Path) -> dict[str, pathlib.Path]:
+    """Each suite's source table, whichever oracle recorded it (a record is
+    named <suite>-<oracle>, and no oracle's name has a hyphen)."""
+    tables: dict[str, pathlib.Path] = {}
+    for path in sorted(source.glob("*.jsonl")):
+        if path.name != "states.jsonl":
+            suite = path.stem.rsplit("-", 1)[0]
+            if suite in tables:
+                raise SystemExit(f"{suite}: recorded by two oracles ({tables[suite].name}, {path.name})")
+            tables[suite] = path
+    return tables
+
+
 def check(arguments) -> int:
     """Every suite's plan against the source table that records it; 1 on any difference."""
     context = plan.build_context(arguments.archive)
     source = pathlib.Path(arguments.source)
+    tables = suite_tables(source)
     drifted = 0
     for suite in sorted(SUITES):
-        oracle = "profile" if suite in system.PREDICTED else "qemu"
-        table = source / f"{suite}-{oracle}.jsonl"
-        if not table.exists():
-            print(f"{suite}: no table (hardware only)")
+        table = tables.get(suite)
+        if table is None:
+            print(f"{suite}: no table" + (" (hardware only)" if suite in HARDWARE_ONLY else ""))
+            drifted += suite not in HARDWARE_ONLY
             continue
         rows = corpus.read_jsonl(table)[1:]
         cases = SUITES[suite](context)
@@ -299,36 +321,66 @@ def check(arguments) -> int:
     return 1 if drifted else 0
 
 
+def needs_feature(context, row: dict, present: set[str]) -> bool:
+    """Whether the instruction under test needs a feature outside present:
+    the form's own, or one its fields select (the half-precision variants of
+    the VFP and Advanced SIMD forms are FEAT_FP16, VMULL.P64 FEAT_PMULL)."""
+    thumb, halves = corpus.program_halfwords(row)
+    starts, index = [], 0
+    while index < len(halves):
+        starts.append(index)
+        index += 2 if not thumb or halves[index] >> 11 in (0x1D, 0x1E, 0x1F) else 1
+    first = starts[row["t"]]
+    if thumb and halves[first] >> 11 in (0x1D, 0x1E, 0x1F) and first + 1 == len(halves):
+        return False  # a fetch case whose second halfword is unmapped faults before decode
+    if not thumb:
+        isa, word = "A32", halves[first + 1] << 16 | halves[first]
+    elif halves[first] >> 11 in (0x1D, 0x1E, 0x1F):
+        isa, word = "T32", halves[first] << 16 | halves[first + 1]
+    else:
+        isa, word = "T16", halves[first] << 16
+    # Undefined without the feature: Undefined() or, where the XML says so
+    # (the Thumb VMULL.P64 without FEAT_PMULL), UnpredictableProcedure().
+    return (context.reference.decode(isa, word, 0, "complete", plan.FEATURES).status != "undefined"
+            and context.reference.decode(isa, word, 0, "complete", present).status == "undefined")
+
+
 def compare(arguments) -> int:
-    """Differences between two source directories' observations of the same cases."""
+    """Differences between two source directories' observations of the same
+    cases, leaving out the cases whose instruction needs a feature one of the
+    oracles lacks (--absent, which needs --archive to decode them)."""
     def load(directory: pathlib.Path) -> dict[str, dict[str, dict]]:
-        records = {}
-        for path in sorted(directory.glob("*.jsonl")):
-            if path.name != "states.jsonl":
-                records[path.name.rsplit("-", 1)[0]] = {
-                    row["n"]: row for row in corpus.read_jsonl(path)[1:]}
-        return records
+        return {suite: {row["n"]: row for row in corpus.read_jsonl(path)[1:]}
+                for suite, path in suite_tables(directory).items()}
     left, right = load(pathlib.Path(arguments.left)), load(pathlib.Path(arguments.right))
+    absent = set(filter(None, arguments.absent.split(",")))
+    unknown = absent - plan.FEATURES
+    if unknown:
+        raise SystemExit(f"unknown features: {', '.join(sorted(unknown))}")
+    if absent and not arguments.archive:
+        raise SystemExit("--absent needs --archive")
+    context = plan.build_context(arguments.archive) if absent else None
     keys = ("e", "fi", "fa", "k", "x", "m")
     different = 0
     for suite in sorted(left.keys() & right.keys()):
-        shown = 0
-        differing, same = [], 0
+        differing, same, skipped = [], 0, 0
         for name, row in left[suite].items():
             other = right[suite].get(name)
             if other is None:
+                continue
+            if absent and needs_feature(context, row, plan.FEATURES - absent):
+                skipped += 1
                 continue
             if row["p"] != other["p"] or any(row.get(key) != other.get(key) for key in keys):
                 differing.append((name, [key for key in keys if row.get(key) != other.get(key)]))
             else:
                 same += 1
         different += len(differing)
-        print(f"{suite}: {same} agree, {len(differing)} differ, "
+        print(f"{suite}: {same} agree, {len(differing)} differ, {skipped} absent, "
               f"{len(left[suite].keys() - right[suite].keys())} only left, "
               f"{len(right[suite].keys() - left[suite].keys())} only right")
         for name, fields in differing[:arguments.show]:
             print(f"  {name}: {','.join(fields)}")
-            shown += 1
     return 1 if different else 0
 
 
@@ -343,6 +395,8 @@ def main() -> int:
             command.add_argument("--host", required=True)
             command.add_argument("--runner", default="")
             command.add_argument("--oracle", default="qemu")
+            command.add_argument("--host-directory", default="",
+                                 help="an existing directory under the host's home to work in")
             command.add_argument("--source", default=str(DIRECTORY / "source"))
             command.add_argument("--limit", type=int, default=0)
         elif name == "check":
@@ -353,6 +407,10 @@ def main() -> int:
     command.add_argument("--left", default=str(DIRECTORY / "source"))
     command.add_argument("--right", required=True)
     command.add_argument("--show", type=int, default=20)
+    command.add_argument("--absent", default="",
+                         help="comma-separated features (fp16, aes, ...) one oracle lacks: "
+                              "the cases that need them are left out")
+    command.add_argument("--archive", type=pathlib.Path)
     arguments = parser.parse_args()
     return {"observe": observe, "finish": finish, "check": check,
             "compare": compare}[arguments.command](arguments)
