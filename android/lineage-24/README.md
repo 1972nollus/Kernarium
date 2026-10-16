@@ -458,6 +458,28 @@ therefore advances only
 keeps the accepted release, which then runs a later ACK than the one it
 records.
 
+### Release signing
+
+A release is signed with a private key set that never enters the repository,
+a log or a release. `tools/publish-release.py --signing-keys DIR` takes the
+unsigned target files, copies `DIR` (owner-only, no group or other access) to a
+private temporary directory, signs with the AOSP `sign_target_files_apks`,
+assembles the disk from the signed archive, and deletes the copy and checks the
+deletion whether or not signing succeeded. `--disk` then names the new signed
+disk, and `--mkbootfs`, `--mkbootimg`, `--recovery-image` and
+`--first-boot-artifacts` are required; the last names the first-boot output of
+`tools/precompile-first-boot-apps.py`, and publishing runs that tool's `verify`
+on the signed tree, so re-signing cannot leave first boot compiling. The
+set holds the platform keys (`releasekey`, `platform`, `media`, `shared`,
+`networkstack` and the others the tree names) as `.pk8` and `.x509.pem`, and
+one 4096-bit key per APEX container with its `.pem` payload key. Signing
+fails when any file stays signed with a key outside the copy, so no AOSP
+public test key survives; the presigned F-Droid APKs keep their upstream
+signature and are named in the build receipt, which also records the SHA-256 of
+each platform certificate. The AOSP host tools need `sign_target_files_apks`
+(built with `otatools`). The key directory, its backup and the transfer to the
+builder are the maintainer's responsibility.
+
 ### Superseded releases
 
 After a replacement release is validated, remove the superseded Android build,

@@ -513,7 +513,8 @@ if ! cmp -s -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"; then
 fi
 
 # publish-release.py consumes the packaged VINTF checker and the AOSP zstd from
-# this output, so a fresh output builds both host tools.
+# this output, and signs with sign_target_files_apks and the tools it runs, so
+# a fresh output builds those host tools.
 # First boot compiles nothing. Soong preopts the applications it installs but
 # never one inside an APEX, and the presigned F-Droid prebuilts opt out, so
 # ART Service would compile them on every fresh /data. After a first pass, the
@@ -525,7 +526,8 @@ FIRST_BOOT_OAT=$OUT_DIR/first-boot-oat
 if [[ -f "$FIRST_BOOT_OAT/first-boot-oat.mk" ]]; then
 	export LINEAGE24_FIRST_BOOT_OAT_MK=$FIRST_BOOT_OAT/first-boot-oat.mk
 fi
-m -j"$JOBS" target-files-package check_target_files_vintf zstd
+m -j"$JOBS" target-files-package check_target_files_vintf zstd \
+	sign_target_files_apks otatools
 rm -rf -- "$FIRST_BOOT_OAT.new"
 python3 -B "$FIRST_BOOT_TOOL" build --aosp-source "$AOSP_SOURCE" --out-dir "$OUT_DIR" \
 	--product "$(basename -- "$PRODUCT_OUT")" --output "$AOSP_SOURCE/$FIRST_BOOT_OAT.new" \
@@ -554,6 +556,8 @@ VINTF_CHECKER="$HOST_BIN/check_target_files_vintf"
 PATH="$HOST_BIN:/usr/bin:/bin" "$VINTF_CHECKER" "$TARGET_FILES"
 [[ -f "$HOST_BIN/zstd" && -x "$HOST_BIN/zstd" ]] ||
 	fail "AOSP zstd is missing: $HOST_BIN/zstd"
+[[ -e "$HOST_BIN/sign_target_files_apks" ]] ||
+	fail "AOSP release signing tool is missing: $HOST_BIN/sign_target_files_apks"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
 printf '%s\n' "built AOSP 17 UML target files under: $OUT_DIR_ABSOLUTE"
