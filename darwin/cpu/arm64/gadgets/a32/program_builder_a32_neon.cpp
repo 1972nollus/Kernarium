@@ -227,11 +227,25 @@ Translator::Result Translator::emit_structure(const Instruction &in,
 		which = kNeonMem[store][shape][structs - 1][log2][variant];
 	if (which == G::count)
 		return emit_library(in);
-	/* A copy without an alignment hint has gadgets of its own. */
-	if (shape == 0 && structs == 1 && o.alignment <= 1) {
-		const G fast = kNeonCopy[store][variant][!o.wback ? 0 : o.register_index ? 2 : 1];
-		if (fast != G::count)
+	/* A copy, hinted or not, and a VLD1 to all lanes have gadgets of their
+	 * own; the hinted copy and the VLD1 to all lanes take the alignment
+	 * mask in word1's bits 32-39, above the one or two slots they use. */
+	const unsigned writeback = !o.wback ? 0U : o.register_index ? 2U : 1U;
+	bool mask_in_word1 = false;
+	if (shape == 0 && structs == 1) {
+		const bool hinted = o.alignment > 1;
+		const G fast = hinted ? kNeonCopyHint[store][variant][writeback] :
+					kNeonCopy[store][variant][writeback];
+		if (fast != G::count) {
 			which = fast;
+			mask_in_word1 = hinted;
+		}
+	} else if (shape == 2 && structs == 1 && !store && variant < 2) {
+		const G fast = kNeonAllFast[log2][variant][writeback];
+		if (fast != G::count) {
+			which = fast;
+			mask_in_word1 = true;
+		}
 	}
 	/* A copy without writeback whose base the ADD or SUB still absorbable
 	 * computed: the fused gadget does the ADD, then the copy, and the ADD's
@@ -271,6 +285,8 @@ Translator::Result Translator::emit_structure(const Instruction &in,
 	std::uint64_t word1 = 0;
 	for (unsigned k = 0; k < 4; ++k)
 		word1 |= slots[k] << (16U * k);
+	if (mask_in_word1 && o.alignment > 1)
+		word1 |= static_cast<std::uint64_t>(o.alignment - 1) << 32;
 	push(which);
 	push(key_);
 	push(word0);

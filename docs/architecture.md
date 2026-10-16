@@ -763,12 +763,15 @@ interleaved ones, element copies for one lane and LD1R to LD4R for all lanes,
 with the register or immediate writeback; a VLD1 or VST1 copy that crosses a
 page stays in the gadget and moves its bytes with the A64 slow transfer helper,
 and one without an alignment hint has a gadget for each writeback that tests
-nothing the instruction does not need. An unconditional ADD or SUB of an
-immediate that sets no flags, names no PC and computes the base of such a copy
-without writeback runs inside the copy's gadget when only unconditional
-Advanced SIMD data processing that reads no core register comes between: the
-gadget writes the register before the transfer, so a fault finds it as the
-ADD left it, and nothing between can exit or fault.
+nothing the instruction does not need. A copy with an alignment hint and a
+VLD1 to all lanes of one or two registers have gadgets of their own too, which
+test the alignment and leave a misaligned access to the library. An
+unconditional ADD or SUB of an immediate that sets no flags, names no PC and
+computes the base of a copy without hint or writeback runs inside the copy's
+gadget when only unconditional Advanced SIMD data processing that reads no
+core register comes between: the gadget writes the register before the
+transfer, so a fault finds it as the ADD left it, and nothing between can
+exit or fault.
 VRECPS and VRSQRTS (AArch32's unfused steps, not the fused A64 ones), an
 interleaved or one-lane structure access or VLDM and VSTM that crosses a page,
 and a misaligned access with an alignment hint run

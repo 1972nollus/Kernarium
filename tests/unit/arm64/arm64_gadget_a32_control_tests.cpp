@@ -1955,6 +1955,64 @@ void an_add_that_computes_a_copy_base_runs_in_the_copy()
 	}
 }
 
+} // namespace
+
+extern "C" {
+void uml_arm64_gadget_a32_neon_vld1_m_16_nh();
+void uml_arm64_gadget_a32_neon_vst1_m_16_nh();
+void uml_arm64_gadget_a32_neon_vld1r_4_p2_i();
+void uml_arm64_gadget_a32_neon_vld1_m_16();
+void uml_arm64_gadget_a32_neon_vld1_a_4_p2();
+}
+
+namespace {
+
+/* A hinted VLD1 or VST1 copy and a VLD1 to all lanes take gadgets of their
+ * own, which test the hint's alignment and leave a misaligned access to the
+ * library (the corpus's simd-hints suite runs every hint, writeback and
+ * misalignment); the general structure gadget is for the other shapes. */
+void hinted_copies_and_loads_to_all_lanes_have_their_own_gadgets()
+{
+	struct Selection final {
+		std::uint32_t word;
+		void (*fast)();
+		void (*general)();
+	};
+	for (const auto &item : {
+		     /* vld1.64 {d22, d23}, [r0:128] */
+		     Selection{0xf460'6aefU, &uml_arm64_gadget_a32_neon_vld1_m_16_nh,
+			       &uml_arm64_gadget_a32_neon_vld1_m_16},
+		     /* vst1.64 {d22, d23}, [r0:128] */
+		     Selection{0xf440'6aefU, &uml_arm64_gadget_a32_neon_vst1_m_16_nh,
+			       nullptr},
+		     /* vld1.32 {d0[], d1[]}, [r9:32]! */
+		     Selection{0xf4a9'0cbdU, &uml_arm64_gadget_a32_neon_vld1r_4_p2_i,
+			       &uml_arm64_gadget_a32_neon_vld1_a_4_p2}}) {
+		const std::array<std::uint32_t, 2> words{item.word, a::svc};
+		require(translation_holds(words, item.fast));
+		if (item.general != nullptr)
+			require(!translation_holds(words, item.general));
+	}
+	/* The hinted copy at an aligned address and at one the hint refuses. */
+	for (const std::uint32_t offset : {0x40U, 0x48U}) {
+		const std::array<std::uint32_t, 2> words{0xf460'6aefU, a::svc};
+		Guest guest{1098 + offset / 0x48U};
+		guest.a32(0, {words[0]});
+		guest.a32(4, {words[1]});
+		guest.data32(offset, 0x1122'3344U);
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + offset;
+		const auto result = guest.run(cpu);
+		if (offset == 0x40U) {
+			require(result.reason == ExitReason::system_call);
+			require(get_d(cpu, 22) == 0x1122'3344U);
+		} else {
+			require(result.reason != ExitReason::system_call);
+			require(result.retired_instructions == 0);
+		}
+	}
+}
+
 /* A VLD1 or VST1 copy that crosses a page is a gadget too: the slow transfer
  * helper moves the bytes after translating both pages. */
 void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
@@ -2918,6 +2976,7 @@ int main()
 	vld1_and_vst1_copies_write_back_in_each_mode();
 	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();
 	an_add_that_computes_a_copy_base_runs_in_the_copy();
+	hinted_copies_and_loads_to_all_lanes_have_their_own_gadgets();
 	in_place_add_and_sub_of_an_immediate_reach_every_register();
 	compare_and_branch_pairs_take_the_branch_as_the_pair_does();
 	parallel_arithmetic_and_sel_stay_out_of_the_library();
