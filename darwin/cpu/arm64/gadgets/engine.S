@@ -180,6 +180,9 @@ Lveneer_\symbol:
 /* The cold FEAT_LSE2 alignment stubs of the atomic families go last, in reach
  * of their conditional branches, so no established gadget moves for them. */
 #include "engine/lse2_alignment.inc"
+/* RET through X30 appends its entry after them: neither the bank nor the cold
+ * part moves for it. */
+#include "engine/return_x30.inc"
 /* Only into the SME part, after every base part's code. */
 #include "engine/sme.inc"
 /* Only into the AArch32 part's sections, after every part before it. */

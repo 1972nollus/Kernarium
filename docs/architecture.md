@@ -371,7 +371,9 @@ An SBFM or UBFM is a gadget pointer and one operand word: the two shifts that
 compute it, whose amounts the builder derives from the encoding, and the
 CpuState offsets of its source and destination. Only BFM keeps its two mask
 words. The SBFM and UBFM entries of the former form stay in the bank
-unselected, because removing them would move every later entry.
+unselected, because removing them would move every later entry. A RET through
+X30 is the gadget pointer and its indirect site; any other register keeps the
+operand that names it.
 
 The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
 too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and

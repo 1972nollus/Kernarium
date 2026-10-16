@@ -2079,6 +2079,7 @@ void uml_arm64_gadget_branch_link_register();
 void uml_arm64_gadget_branch_register_cached();
 void uml_arm64_gadget_branch_link_register_cached();
 void uml_arm64_gadget_return_cached();
+void uml_arm64_gadget_return_x30_cached();
 void uml_arm64_gadget_return();
 /* Fused guest CMP of two registers + B.cond, see compare_register_branch. */
 void uml_arm64_gadget_compare_register_branch_x_eq();
