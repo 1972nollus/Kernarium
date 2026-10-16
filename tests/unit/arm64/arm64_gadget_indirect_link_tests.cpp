@@ -17,6 +17,7 @@ extern "C" void uml_arm64_gadget_link_exit();
 extern "C" void uml_arm64_gadget_branch_register_cached();
 extern "C" void uml_arm64_gadget_branch_link_register_cached();
 extern "C" void uml_arm64_gadget_return_cached();
+extern "C" void uml_arm64_gadget_return_x30_cached();
 
 namespace {
 
@@ -214,6 +215,89 @@ int main()
 			::uml::cpu::EngineEvent::system_call);
 		require(return_cpu.registers[0] == 77);
 		require(executed == 3);
+	}
+
+	/* RET through X30 bakes the register: the stream is the entry and the
+	 * site, and a hit, a miss and the return ring behave as for any RET. */
+	{
+		auto target_program = build_target(0x7000, 77);
+		LinkTarget target{0x7000};
+		target.resolve(target_program);
+		gadgets::IndirectLink site{};
+		initialize(site, empty);
+		site.entries[0] = {target.link.guest_pc, &target.link};
+
+		auto ret = build_cached(source_pc, return_register(30), site);
+		require(ret.program.words().size() == 2);
+		require(ret.program.words()[0] ==
+			address(uml_arm64_gadget_return_x30_cached));
+		require(ret.program.words()[1] ==
+			reinterpret_cast<std::uintptr_t>(&site));
+		arm64::CpuState hit_cpu{};
+		hit_cpu.registers[30] = 0x7000;
+		hit_cpu.registers[12] = 0x9000;
+		::uml::memory::Tlb tlb;
+		std::size_t executed = 0;
+		require(gadgets::execute(ret.program, hit_cpu, tlb, executed) ==
+			::uml::cpu::EngineEvent::system_call);
+		require(hit_cpu.registers[0] == 77);
+		require(executed == 3);
+
+		arm64::CpuState miss_cpu{};
+		miss_cpu.registers[30] = 0x8000;
+		miss_cpu.registers[12] = 0x7000;
+		executed = 0;
+		require(gadgets::execute(ret.program, miss_cpu, tlb, executed) ==
+			::uml::cpu::EngineEvent::continued);
+		require(miss_cpu.pc == 0x8000);
+		require(miss_cpu.gadget_indirect_miss == &site);
+
+		/* Any other register keeps the general entry and its operand. */
+		auto other = build_cached(source_pc, return_register(29), site);
+		require(other.program.words().size() == 3);
+		require(other.program.words()[0] ==
+			address(uml_arm64_gadget_return_cached));
+	}
+
+	/* A call pushes the return ring, whose record answers a baked RET whose
+	 * site has not seen the target. */
+	{
+		const std::uint64_t callee_pc = 0x7000;
+		LinkTarget callee{callee_pc};
+		LinkTarget resume{source_pc + 4};
+		auto resume_program = build_target(source_pc + 4, 91);
+		resume.resolve(resume_program);
+		gadgets::IndirectLink return_site{};
+		initialize(return_site, empty);
+		const std::array return_code{return_register(30)};
+		auto callee_program = gadgets::Builder{}.build(
+			callee_pc, return_code, {},
+			std::pmr::get_default_resource(),
+			[&](std::uint64_t) { return &return_site; });
+		callee.resolve(callee_program);
+		require(callee_program.program.words()[0] ==
+			address(uml_arm64_gadget_return_x30_cached));
+
+		gadgets::IndirectLink call_site{};
+		initialize(call_site, empty);
+		call_site.entries[0] = {callee_pc, &callee.link};
+		const std::array call_code{branch_link_register(9)};
+		auto call = gadgets::Builder{}.build(
+			source_pc, call_code,
+			[&](std::uint64_t) { return &resume.link; },
+			std::pmr::get_default_resource(),
+			[&](std::uint64_t) { return &call_site; });
+		arm64::CpuState cpu{};
+		cpu.registers[9] = callee_pc;
+		::uml::memory::Tlb tlb;
+		std::size_t executed = 0;
+		require(gadgets::execute(call.program, cpu, tlb, executed) ==
+			::uml::cpu::EngineEvent::system_call);
+		require(cpu.registers[0] == 91);
+		require(cpu.gadget_indirect_miss == nullptr);
+		require(executed == 4);
+		require(return_site.entries[0].guest_pc == source_pc + 4 &&
+			return_site.entries[0].link == &resume.link);
 	}
 
 	/* A target the site's cells do not hold is followed through the address

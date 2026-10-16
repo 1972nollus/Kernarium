@@ -367,6 +367,36 @@ Only MOPS and a literal load whose target does not fit 48 bits keep a PC word.
 `arm64-gadget-memory-fault-position` faults one instruction of each family at
 several positions, directly and through a link.
 
+A constant stored to a register is one stream word when it fits 48 bits or is
+ones above bit 47: the destination's CpuState offset in bits 63:48 over the
+value's low 48 bits, which MOVZ and MOVN take below a shift of 48, ADR and
+ADRP (with the ADD that folds into them) and the emulated identification
+registers when their value fits. Any other value keeps
+`move_wide_constant` and its two words. `arm64-gadget-packed-immediate` runs
+each form against the architectural definition.
+
+A TBZ or TBNZ carries no mask word: its operand word holds the bit number in
+bits 5:0, where the register shift that tests it reads it, and the register's
+CpuState offset in bits 31:16, and an inlined branch's retire suffix sits in
+bits 47:32. The `test_branch` entries of the former form stay in the bank
+unselected, because removing them would move every later entry.
+`arm64-gadget-test-bit-branch` runs every bit, both polarities, XZR and each
+shape the builder emits.
+
+A logical immediate on W registers shares the word that names its registers,
+in bits 63:32 above the destination and source fields. A 64-bit immediate has a
+word of its own, and a form whose destination is its source, which bakes the
+register into the entry, has that word alone. `arm64-gadget-packed-immediate`
+runs every W encoding and a sample of the X ones in each shape.
+
+An SBFM or UBFM is a gadget pointer and one operand word: the two shifts that
+compute it, whose amounts the builder derives from the encoding, and the
+CpuState offsets of its source and destination. Only BFM keeps its two mask
+words. The SBFM and UBFM entries of the former form stay in the bank
+unselected, because removing them would move every later entry. A RET through
+X30 is the gadget pointer and its indirect site; any other register keeps the
+operand that names it.
+
 The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
 too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and
 order file. It follows the arm64 region in an image that carries both and

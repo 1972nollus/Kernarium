@@ -186,10 +186,10 @@ void probe_shape_has_one_predecessor_and_eight_successors()
 		0x54ff'fde1U, // b.ne to the first ADD
 	};
 	constexpr std::array<std::size_t, 8> predecessor_words{
-		0U, 3U, 8U, 12U, 16U, 20U, 24U, 28U,
+		0U, 3U, 7U, 11U, 15U, 19U, 23U, 27U,
 	};
 	constexpr std::array<std::size_t, 8> successor_words{
-		2U, 5U, 10U, 14U, 18U, 22U, 26U, 30U,
+		2U, 5U, 9U, 13U, 17U, 21U, 25U, 29U,
 	};
 
 	const auto result = gadgets::Builder{}.build(

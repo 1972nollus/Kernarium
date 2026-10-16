@@ -200,13 +200,13 @@ extern const RcpcStoreGadgets rcpc_store_gadgets;
 [[nodiscard]] Gadget conditional_branch_linked_gadget(unsigned int) noexcept;
 [[nodiscard]] Gadget conditional_branch_inline_gadget(unsigned int) noexcept;
 [[nodiscard]] Gadget compare_branch_inline_gadget(bool, bool) noexcept;
-[[nodiscard]] Gadget test_branch_inline_gadget(bool) noexcept;
+[[nodiscard]] Gadget test_bit_branch_inline_gadget(bool) noexcept;
 [[nodiscard]] Gadget compare_immediate_branch_inline_gadget(
 	bool, unsigned int) noexcept;
 [[nodiscard]] Gadget compare_register_branch_inline_gadget(
 	bool, unsigned int) noexcept;
 [[nodiscard]] Gadget compare_branch_gadget(bool, bool, bool) noexcept;
-[[nodiscard]] Gadget test_branch_gadget(bool, bool) noexcept;
+[[nodiscard]] Gadget test_bit_branch_gadget(bool, bool) noexcept;
 [[nodiscard]] Gadget mops_gadget(unsigned int, unsigned int, bool) noexcept;
 [[nodiscard]] PstateImmediateGadget pstate_immediate_gadget(std::uint32_t) noexcept;
 [[nodiscard]] SystemRegisterGadget system_register_gadget(std::uint32_t) noexcept;
@@ -228,6 +228,7 @@ extern const RcpcStoreGadgets rcpc_store_gadgets;
 [[nodiscard]] Gadget logical_shifted_gadget(bool, unsigned int, bool, unsigned int, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget multiply_add_gadget(unsigned int, bool, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget bitfield_gadget(bool, unsigned int, bool, bool) noexcept;
+[[nodiscard]] Gadget bitfield_shift_gadget(bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget extract_register_gadget(bool, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget crc32_gadget(unsigned int, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget bit_reverse_count_gadget(bool, unsigned int) noexcept;
