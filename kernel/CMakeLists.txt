@@ -16,8 +16,8 @@ if(UML_KERNEL_PRODUCT STREQUAL "android-17")
         message(FATAL_ERROR
             "The Android 17 product supports only 4 KiB guest pages")
     endif()
-    add_subdirectory("${PROJECT_SOURCE_DIR}/android/aosp-17"
-        "${CMAKE_CURRENT_BINARY_DIR}/android-aosp-17")
+    add_subdirectory("${PROJECT_SOURCE_DIR}/android/lineage-24"
+        "${CMAKE_CURRENT_BINARY_DIR}/android-lineage-24")
     set(UML_ACTIVE_KERNEL_ARTIFACT_TARGET
         "${UML_ANDROID17_KERNEL_ARTIFACT_TARGET}"
         CACHE INTERNAL "Selected read-only kernel artifact target" FORCE)

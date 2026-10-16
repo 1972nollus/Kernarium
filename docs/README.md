@@ -26,7 +26,7 @@ investigation date.
 | Shared kernel contracts | [`../kernel/common/README.md`](../kernel/common/README.md) |
 | Mainline kernel policy | [`../kernel/mainline-6.18/README.md`](../kernel/mainline-6.18/README.md) |
 | Android ACK policy | [`../kernel/android-6.18/README.md`](../kernel/android-6.18/README.md) |
-| AOSP 17 producer and guest image | [`../android/aosp-17/README.md`](../android/aosp-17/README.md) |
+| LineageOS 24 (Android 17) producer and guest image | [`../android/lineage-24/README.md`](../android/lineage-24/README.md) |
 | Linux guest images and the boot ramdisk | the README beside each producer under [`../tools/rootfs/`](../tools/rootfs/); the Vulkan guest image and its receipt: [`../tools/rootfs/vulkan/README.md`](../tools/rootfs/vulkan/README.md) |
 | Public and kernel ABI maintenance | [`../kernel/common/abi/README.md`](../kernel/common/abi/README.md) |
 

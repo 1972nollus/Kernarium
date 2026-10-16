@@ -193,14 +193,14 @@ def main() -> None:
     parser.add_argument("--source-root", type=Path, required=True)
     args = parser.parse_args()
     source_root = args.source_root.resolve()
-    tools = source_root / "android/aosp-17/tools"
+    tools = source_root / "android/lineage-24/tools"
     regenerator = tools / "regenerate-mesa-venus-patches.py"
     verifier = tools / "verify-mesa-venus-source.py"
     generator = tools / "generate-mesa-venus-port.py"
 
     with tempfile.TemporaryDirectory(prefix="mesa-venus-contract-") as temporary:
         root = Path(temporary)
-        android_root = root / "android/aosp-17"
+        android_root = root / "android/lineage-24"
         topic = root / "topic"
         upstream_commit, guest_commit, protocol, headers, protocol_base = write_fixture(
             root, android_root, topic, verifier, generator

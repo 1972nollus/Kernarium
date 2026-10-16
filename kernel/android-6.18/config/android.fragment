@@ -2,7 +2,7 @@
 # The AOSP 17 line's overlay for ACK 6.18 on the shared Darwin UML kernel
 # policy in kernel/common/config/darwin-uml.fragment. It lists only the
 # settings in which this line differs from mainline.
-# android/aosp-17/build/build-kernel.sh applies it after the shared policy and
+# android/lineage-24/build/build-kernel.sh applies it after the shared policy and
 # before kernel/common/config/page-4k.fragment, then runs `olddefconfig`
 # against the pinned ACK source. There is no Android 16 KiB profile.
 

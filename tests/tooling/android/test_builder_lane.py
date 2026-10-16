@@ -105,7 +105,6 @@ REQUIRED_PREOPT_APKS = (
     "SYSTEM/app/CaptivePortalLogin/CaptivePortalLogin.apk",
     "SYSTEM/app/PartnerBookmarksProvider/PartnerBookmarksProvider.apk",
     "SYSTEM/app/PrintRecommendationService/PrintRecommendationService.apk",
-    "SYSTEM/app/Traceur/Traceur.apk",
     "SYSTEM/priv-app/BlockedNumberProvider/BlockedNumberProvider.apk",
     "SYSTEM/priv-app/ContactsProvider/ContactsProvider.apk",
     "SYSTEM/priv-app/CredentialManager/CredentialManager.apk",
@@ -122,10 +121,29 @@ REQUIRED_PREOPT_APKS = (
     "SYSTEM/priv-app/Tag/Tag.apk",
     "SYSTEM/priv-app/UserDictionaryProvider/UserDictionaryProvider.apk",
     "SYSTEM/priv-app/VpnDialogs/VpnDialogs.apk",
+    "SYSTEM_EXT/priv-app/Launcher3QuickStep/Launcher3QuickStep.apk",
+    "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
+    "SYSTEM_EXT/priv-app/Seedvault/Seedvault.apk",
     "SYSTEM_EXT/priv-app/Settings/Settings.apk",
     "SYSTEM_EXT/priv-app/StorageManager/StorageManager.apk",
     "SYSTEM_EXT/priv-app/SystemUI/SystemUI.apk",
     "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
+)
+# The curated LineageOS applications and the WebView that ship without
+# pre-optimization requirements.
+REQUIRED_PLAIN_APKS = (
+    "PRODUCT/app/Camelot/Camelot.apk",
+    "PRODUCT/app/Etar/Etar.apk",
+    "PRODUCT/app/ExactCalculator/ExactCalculator.apk",
+    "PRODUCT/app/F-Droid/F-Droid.apk",
+    "PRODUCT/app/Glimpse/Glimpse.apk",
+    "PRODUCT/app/Twelve/Twelve.apk",
+    "PRODUCT/app/webview/webview.apk",
+    "PRODUCT/priv-app/F-DroidPrivilegedExtension/F-DroidPrivilegedExtension.apk",
+    "SYSTEM_EXT/priv-app/LineageSettingsProvider/LineageSettingsProvider.apk",
+)
+FDROID_PERMISSIONS = (
+    "PRODUCT/etc/permissions/privapp-permissions-org.fdroid.fdroid.privileged.xml"
 )
 
 
@@ -268,6 +286,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           half_preopt_pair: bool = False,
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
+                          wide_fdroid_permissions: bool = False,
                           mesa_gles_alignment: int = 16384,
                           init_variant: str | None = None,
                           extra_entry: str | None = None,
@@ -485,6 +504,21 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             half_preopt_pair and apk.endswith("/Jelly.apk")
                         ):
                             archive.writestr(f"{artifact}.vdex", b"vdex")
+                for apk in REQUIRED_PLAIN_APKS:
+                    archive.writestr(apk, b"apk")
+                archive.writestr(
+                    FDROID_PERMISSIONS,
+                    '<permissions><privapp-permissions '
+                    'package="org.fdroid.fdroid.privileged">'
+                    '<permission name="android.permission.INSTALL_PACKAGES"/>'
+                    '<permission name="android.permission.DELETE_PACKAGES"/>'
+                    + (
+                        '<permission name="android.permission.WRITE_SECURE_SETTINGS"/>'
+                        if wide_fdroid_permissions
+                        else ""
+                    )
+                    + '</privapp-permissions></permissions>',
+                )
                 advertised_feature = (
                     "android.hardware.microphone"
                     if unsupported_feature
@@ -670,6 +704,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"extra_entry": "VENDOR/etc/init/init_graphics.vendor.rc"}),
             ("product-init-rc", {"extra_entry": "PRODUCT/etc/init/init.rc"}),
             ("legacy-ueventd", {"extra_entry": "VENDOR/ueventd.rc"}),
+            ("curated-out-canvas",
+             {"extra_entry": "PRODUCT/app/Canvas/Canvas.apk"}),
+            ("curated-out-updater",
+             {"extra_entry": "SYSTEM_EXT/priv-app/Updater/Updater.apk"}),
+            ("fastbootd", {"extra_entry": "SYSTEM/bin/fastbootd"}),
+            ("curated-out-profiles",
+             {"extra_entry": "SYSTEM_EXT/app/Profiles/Profiles.apk"}),
+            ("fdroid-wide-permissions", {"wide_fdroid_permissions": True}),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)
@@ -1260,25 +1302,91 @@ def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
             fail("UBD assembler accepted a partition payload that exceeds its capacity")
 
 
+def verify_pin_manifest(tool: Path) -> None:
+    """Only a project the manifest reads at a branch needs pinning."""
+    commit = "1" * 40
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        base = root / "base-manifest.xml"
+        base.write_text(
+            '<manifest><remote name="r" fetch=".."/><default remote="r"/>'
+            f'<project name="tag" path="a/tag" revision="{commit}" '
+            'upstream="refs/tags/fixture"/>'
+            f'<project name="branch" path="a/branch" revision="{commit}" '
+            'upstream="refs/heads/fixture"/>'
+            f'<project name="branch" path="b/branch" revision="{commit}" '
+            'upstream="refs/heads/other"/></manifest>'
+        )
+        pin = root / "local_manifests/pin.xml"
+        subprocess.run(
+            [sys.executable, "-B", str(tool), "--base-manifest", str(base),
+             "--output", str(pin)],
+            check=True,
+        )
+        expected = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n'
+            f'  <extend-project name="branch" path="a/branch" revision="{commit}" '
+            'upstream="refs/heads/fixture" />\n'
+            f'  <extend-project name="branch" path="b/branch" revision="{commit}" '
+            'upstream="refs/heads/other" />\n</manifest>\n'
+        )
+        if pin.read_text() != expected:
+            fail(f"pin manifest differs from the expected local manifest: {pin.read_text()}")
+        base.write_text(base.read_text().replace(commit, "refs/heads/moving", 1))
+        refused = subprocess.run(
+            [sys.executable, "-B", str(tool), "--base-manifest", str(base),
+             "--output", str(root / "refused.xml")],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        if refused.returncode == 0 or "not pinned to a commit" not in refused.stdout:
+            fail("pin manifest rendering accepted a project not pinned to a commit")
+
+
+def verify_layout_consumers(root: Path, android_root: Path) -> None:
+    """The fixed GPT geometry is compiled into the emulator and the launcher."""
+    layout = json.loads(
+        (android_root / "support/image/partition-layout.json").read_text()
+    )
+    partitions = layout["partitions"]
+    emulator = (root / "darwin/device/block/android_boot.cpp").read_text()
+    seed_mib = re.search(
+        r"seedDiskSize = ([0-9']+)ULL \* mebibyte;", emulator
+    )
+    if seed_mib is None or (
+        int(seed_mib.group(1).replace("'", "")) << 20 != layout["disk_size_bytes"]
+    ):
+        fail("the emulator's seed disk size differs from partition-layout.json")
+    compiled = re.findall(
+        r'ExpectedPartition\{"([a-z_]+)", ([0-9\']+)ULL, ([0-9\']+)ULL\}',
+        emulator,
+    )
+    expected = [
+        (p["name"], p["start_bytes"], p["size_bytes"]) for p in partitions
+    ]
+    if [
+        (name, int(offset.replace("'", "")), int(size.replace("'", "")))
+        for name, offset, size in compiled
+    ] != expected:
+        fail("the emulator's fixed partitions differ from partition-layout.json")
+    launcher = (root / "tools/boot_android.py").read_text()
+    first_lba = re.search(r"USERDATA_FIRST_LBA = ([0-9_]+)", launcher)
+    userdata = partitions[-1]
+    if userdata["name"] != "userdata" or first_lba is None or (
+        int(first_lba.group(1).replace("_", ""))
+        != userdata["start_bytes"] // layout["sector_size"]
+    ):
+        fail("the launcher's userdata start differs from partition-layout.json")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
     args = parser.parse_args()
     root = args.source_root.resolve()
 
-    android_root = root / "android/aosp-17"
+    android_root = root / "android/lineage-24"
     kernel_root = root / "kernel/android-6.18"
 
-    subprocess.run(
-        [
-            sys.executable,
-            "-B",
-            str(android_root / "tools/verify-jelly-source.py"),
-            "--android-root",
-            str(android_root),
-        ],
-        check=True,
-    )
     subprocess.run(
         [
             sys.executable,
@@ -1312,6 +1420,7 @@ def main() -> None:
     verify_kernel_elf_fixtures(android_root / "build/verify-kernel-elf.py")
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_hal_selections(android_root)
+    verify_pin_manifest(android_root / "tools/render-pin-manifest.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")
     verify_orangefox_recovery_fixtures(
@@ -1321,6 +1430,7 @@ def main() -> None:
         android_root / "tools/ubd-disk.py",
         android_root / "support/image/partition-layout.json",
     )
+    verify_layout_consumers(root, android_root)
 
     scripts = list((android_root / "build").rglob("*.sh"))
     scripts += list((android_root / "tools").rglob("*.py"))
@@ -1343,7 +1453,7 @@ def main() -> None:
         path.read_text(errors="surrogateescape")
         for path in (
             android_root / "README.md",
-            android_root / "metadata/aosp.env",
+            android_root / "metadata/lineage.env",
             android_root / "third_party/orangefox/metadata.env",
             kernel_root / "README.md",
             root / "kernel/common/config/darwin-uml.fragment",

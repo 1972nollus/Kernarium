@@ -32,7 +32,7 @@ if _GUEST_SUPPORT not in sys.path:
 from guest import remove_emulator_run_directories  # noqa: E402
 
 ACCEPTED_RELEASE = (
-    REPO_ROOT / "android/aosp-17/metadata/accepted-release.env"
+    REPO_ROOT / "android/lineage-24/metadata/accepted-release.env"
 )
 RELEASES_ROOT = REPO_ROOT / ".build/android/releases"
 INSTANCES_ROOT = REPO_ROOT / ".build/android/instances"
@@ -46,7 +46,7 @@ SGDISK_FALLBACK_CANDIDATES = (
     Path("/usr/local/bin/sgdisk"),
 )
 USERDATA_PARTITION_NUMBER = 10
-USERDATA_FIRST_LBA = 3_796_992
+USERDATA_FIRST_LBA = 5_500_928
 USERDATA_TYPE_GUID = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 USERDATA_UNIQUE_GUID = "523ABB36-1F98-5D08-92D0-31C3C8A47304"
 GPT_TRAILING_FREE_BYTES = 1024**2
@@ -197,7 +197,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 
 def accepted_directory(descriptor: Path = ACCEPTED_RELEASE) -> str:
     return accepted_directory_name(
-        descriptor, "ANDROID17_ACCEPTED_DIRECTORY_NAME", LauncherError
+        descriptor, "LINEAGE24_ACCEPTED_DIRECTORY_NAME", LauncherError
     )
 
 

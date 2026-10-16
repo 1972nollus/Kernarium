@@ -46,15 +46,14 @@ void production_specialization()
 				base, std::array{encode_test_branch(
 					nonzero, bit, displacement, 11)});
 			require(built.complete &&
-					built.program.words().size() == 5U,
+					built.program.words().size() == 4U,
 				"test branch retained unexpected runtime fields");
+			/* The bit in bits 5:0, the register's offset in 31:16. */
 			require(built.program.words()[1] ==
-					offsetof(arm64::CpuState, registers) +
-						11U * 8U &&
-					built.program.words()[2] ==
-						(std::uint64_t{1} << bit) &&
-					built.program.words()[3] == target &&
-					built.program.words()[4] == base + 4,
+					(bit | (offsetof(arm64::CpuState, registers) +
+						11U * 8U) << 16) &&
+					built.program.words()[2] == target &&
+					built.program.words()[3] == base + 4,
 				"test branch fields were not resolved during "
 				"translation");
 			test_entries.insert(built.program.words()[0]);

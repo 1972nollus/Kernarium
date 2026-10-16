@@ -28,7 +28,7 @@ namespace {
 constexpr std::uint64_t sectorSize = 512;
 constexpr std::uint64_t mebibyte = 1'048'576ULL;
 constexpr std::uint64_t gibibyte = 1'073'741'824ULL;
-constexpr std::uint64_t seedDiskSize = 1'983ULL * mebibyte;
+constexpr std::uint64_t seedDiskSize = 2'815ULL * mebibyte;
 constexpr std::uint64_t backupGptReservation = mebibyte;
 constexpr std::uint64_t minimumDiskSizeGiB = 4;
 constexpr std::uint64_t maximumDiskSizeGiB = 64;
@@ -43,16 +43,16 @@ struct ExpectedPartition {
 };
 
 constexpr std::array seedPartitions {
-	ExpectedPartition{"system", 1'048'576ULL, 1'073'741'824ULL},
-	ExpectedPartition{"system_ext", 1'074'790'400ULL, 268'435'456ULL},
-	ExpectedPartition{"product", 1'343'225'856ULL, 268'435'456ULL},
-	ExpectedPartition{"vendor", 1'611'661'312ULL, 268'435'456ULL},
-	ExpectedPartition{"odm", 1'880'096'768ULL, 4'194'304ULL},
-	ExpectedPartition{"metadata", 1'884'291'072ULL, 16'777'216ULL},
-	ExpectedPartition{"init_boot", 1'901'068'288ULL, 8'388'608ULL},
-	ExpectedPartition{"misc", 1'909'456'896ULL, 1'048'576ULL},
-	ExpectedPartition{"recovery", 1'910'505'472ULL, 33'554'432ULL},
-	ExpectedPartition{"userdata", 1'944'059'904ULL, 134'217'728ULL},
+	ExpectedPartition{"system", 1'048'576ULL, 1'409'286'144ULL},
+	ExpectedPartition{"system_ext", 1'410'334'720ULL, 536'870'912ULL},
+	ExpectedPartition{"product", 1'947'205'632ULL, 536'870'912ULL},
+	ExpectedPartition{"vendor", 2'484'076'544ULL, 268'435'456ULL},
+	ExpectedPartition{"odm", 2'752'512'000ULL, 4'194'304ULL},
+	ExpectedPartition{"metadata", 2'756'706'304ULL, 16'777'216ULL},
+	ExpectedPartition{"init_boot", 2'773'483'520ULL, 8'388'608ULL},
+	ExpectedPartition{"misc", 2'781'872'128ULL, 1'048'576ULL},
+	ExpectedPartition{"recovery", 2'782'920'704ULL, 33'554'432ULL},
+	ExpectedPartition{"userdata", 2'816'475'136ULL, 134'217'728ULL},
 };
 
 constexpr std::size_t initBootPartition = 6;

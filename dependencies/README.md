@@ -276,7 +276,7 @@ process's `std::cout` and `std::cerr`, where the core reports its reasons; a
 failed call appends that output to its error message. The storage archive
 excludes every GPT fdisk command-line front end and `popt`. The standalone
 macOS Android launcher runs an installed `sgdisk` executable instead (see the
-[static disk contract](../android/aosp-17/README.md#static-disk-and-boot-contract));
+[static disk contract](../android/lineage-24/README.md#static-disk-and-boot-contract));
 no Homebrew library is linked or discovered.
 The zstd build contains the streaming decompressor but excludes compression,
 dictionary-builder, legacy-frame, deprecated, and command-line code. Both
