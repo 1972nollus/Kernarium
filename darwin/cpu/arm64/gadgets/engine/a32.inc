@@ -491,8 +491,12 @@ a32_compare_branch cbnz, ne
 
 .purgem a32_compare_branch
 
-/* TBB and TBH: [rn[0:8] rm[8:16] position[24:32] PC value[32:64]][site].
- * The target is the PC value plus twice the table entry. */
+/* TBB and TBH: [rn[0:8] rm[8:16] credit[16:24] position[24:32] PC value
+ * [32:64]][site]. The target is the PC value plus twice the table entry. The
+ * credit gives back the instructions translated behind a conditional one, as
+ * a32_credit does for the other leaving instructions, but only once the table
+ * entry is loaded: a fault leaves them precharged, which the executor's fault
+ * path expects. */
 .macro a32_table_branch name, load, shift, bytes
 gadget a32_\name
 	ldr x19, [_stream], #8
@@ -503,6 +507,8 @@ gadget a32_\name
 	add w7, w9, w10, lsl #\shift
 	a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_position_fault
 	\load w10, [x7]
+	ubfx x11, x19, #16, #8
+	sub x29, x29, x11
 	lsr x11, x19, #32
 	add w10, w11, w10, lsl #1
 	a32_key_thumb
@@ -513,6 +519,8 @@ gadget a32_\name
 La32tb_cross_\name:
 	transfer_slow 0, x7, 2, fault=La32_position_fault
 	umov w10, v0.h[0]
+	ubfx x11, x19, #16, #8
+	sub x29, x29, x11
 	lsr x11, x19, #32
 	add w10, w11, w10, lsl #1
 	a32_key_thumb

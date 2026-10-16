@@ -21,7 +21,8 @@ address zero.
 - positions: single-register and doubleword loads and stores, VLDR, VSTR, TBB
   and TBH that fault after other instructions, some in a block a branch
   reaches: unmapped, crossing from the read-only region into unmapped memory,
-  and a literal below the code region;
+  and a literal below the code region; the unmapped and literal ones also
+  under a condition that fails and passes;
 - positions-unaligned: the same at a misaligned address, which only hardware
   records settle.
 """
@@ -404,6 +405,7 @@ def position_word(context, form, literal: bool):
 def position_cases(context: Context, suite: str, misaligned: bool) -> list[Case]:
     """The cases of the positions suites: the misaligned ones, which only hardware settles, or the rest."""
     cases = []
+    conditional_cases = []
     for form_index, (form, size, alignment) in enumerate(position_forms(context)):
         isa = form.encoding.isa
         state = ISA_LETTER[isa]
@@ -434,7 +436,32 @@ def position_cases(context: Context, suite: str, misaligned: bool) -> list[Case]
                               program, len(leads), f"{RECIPES[(form_index + number) % len(RECIPES)]}-{suffix}",
                               initial, straight=not linked,
                               fault_retired=len(leads) if linked else None))
-    return cases
+            if misaligned or scenario not in ("unmapped", "below"):
+                continue
+            # The same transfer under EQ (in A32) or IT EQ (in Thumb), whose condition fails, so
+            # nothing faults, and passes. A half-precision VLDR or VSTR is UNPREDICTABLE under a
+            # condition.
+            fields = fields_of(form)
+            if state == "A" and "cond" not in fields or form.name.endswith("_H"):
+                continue
+            lead = LEADS[state][0][0]
+            if state == "A":
+                body = word_of(isa, set_field(word, *fields["cond"], 0))
+            else:
+                body = (0xBF08,) + word_of(isa, word)
+            for passes in (False, True):
+                apsr = (0x40000000 if passes else 0) | flags & 0xB0000000
+                conditional = dict(initial, apsr=apsr)
+                if not form.name.startswith("TB") and not literal:
+                    aim = solve(operands, address, apsr, len(conditional_cases))
+                    if aim is None:
+                        continue
+                    conditional.update(aim)
+                conditional_cases.append(Case(
+                    suite, f"{form.name}/{scenario}-eq{'p' if passes else 'f'}", form.name, state, lead + body,
+                    len(lead) if state == "A" else 2,
+                    f"{RECIPES[(form_index + number + 1) % len(RECIPES)]}-{suffix}", conditional))
+    return cases + conditional_cases
 
 
 def suite_positions(context: Context) -> list[Case]:

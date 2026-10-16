@@ -1122,8 +1122,11 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 	case Family::tb: {
 		const auto rn = source(o.n, scratch0);
 		const auto rm = static_cast<std::uintptr_t>(o.m) * 8U;
-		credit();
+		/* The gadget gives back the instructions behind it itself, after
+		 * the table load, so that one that faults leaves them charged. */
+		static_assert(block_limit <= 256);
 		push(plan.sub == 0 ? G::tbb : G::tbh);
+		patches_.push_back({words_.size(), compiled_ + 1, 16});
 		push(rn | rm << 8 | position() |
 		     std::uint64_t{pc_value()} << 32);
 		push(indirects_ ? reinterpret_cast<std::uintptr_t>(indirects_(key_))

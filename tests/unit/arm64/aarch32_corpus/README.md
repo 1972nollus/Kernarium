@@ -101,12 +101,14 @@ no floating point or SIMD):
 - `positions`: single-register and doubleword transfers, VLDR, VSTR, TBB and
   TBH that fault after other instructions, some in a block a branch reaches:
   unmapped, crossing from the read-only region into unmapped memory, and a
-  literal below the code region, so an engine names the faulting
+  literal below the code region, the unmapped and literal ones also under a
+  condition that fails and passes, so an engine names the faulting
   instruction by its place in the block;
 - `exclusive`: LDREX/STREX and LDAEX/STLEX sequences, CLREX, misaligned and
   unmapped loads;
-- `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH, PC-writing loads and ALU
-  instructions, interworking both ways, jumps to unmapped addresses;
+- `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH (also in an IT block whose
+  condition passes and fails), PC-writing loads and ALU instructions,
+  interworking both ways, jumps to unmapped addresses;
 - `conditions`: every condition against every NZCV, and every IT block;
 - `pc`: instructions that read the PC;
 - `system`: barriers, hints, CPS, the APSR instructions, TPIDRURO, TPIDRURW,

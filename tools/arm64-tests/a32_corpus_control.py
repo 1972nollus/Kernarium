@@ -13,9 +13,9 @@ is affine over GF(2), including the J1/J2 XOR of the Thumb branches) and
 solving for the offset the layout needs.
 
 - branch: B, BL, BLX and BX in both instruction sets, conditional branches
-  under passing and failing flags, CBZ/CBNZ, TBB/TBH, loads and ALU
-  instructions that write the PC, interworking in both directions and jumps
-  to unmapped addresses;
+  under passing and failing flags, CBZ/CBNZ, TBB/TBH (also in an IT block
+  whose condition passes and fails), loads and ALU instructions that write
+  the PC, interworking in both directions and jumps to unmapped addresses;
 - conditions: every condition against every NZCV, and every IT block;
 - pc: instructions that read the PC.
 """
@@ -354,6 +354,25 @@ def table_branches(context, suite, results):
                      (0, 1, 2, 0)[index], data_patches=patches)
 
 
+def conditional_table_branches(context, suite, results):
+    """TBB and TBH under IT EQ, from a table in the data region: skipped, they fall through both
+    fillers; taken, they leave instructions behind them in their block."""
+    for name, scale in (("TBB_T1", 1), ("TBH_T1", 2)):
+        form = form_named(context, name)
+        fields = fields_of(form)
+        base = base_word(context, form)[0]
+        entries = [4, 2, 0, 4][:4 // scale]
+        table = b"".join(bytes([e]) if scale == 1 else struct.pack("<H", e) for e in entries)
+        word = set_field(set_field(base, *fields["Rn"], 1), *fields["Rm"], 2)
+        for passes in (False, True):
+            for index in range(len(entries)) if passes else (0,):
+                prog = Prog().half(0xBF08).insn(word, "T32").half(*FILL_T).half(*FILL2_T).tail(THUMB)
+                executed = (0, 1, 2, 0)[index] if passes else 2
+                make(results, suite, f"{name}/it-eq{'p' if passes else 'f'}i{index}", name, THUMB, prog,
+                     {"r1": D + 0x100, "r2": index, "apsr": 0x40000000 if passes else 0}, executed,
+                     target=1, retired=3 + executed, data_patches=[(0x100, table)])
+
+
 # Loads and ALU instructions that write the PC ----------------------------------------------------------
 
 
@@ -660,6 +679,7 @@ def suite_branch(context: Context) -> list[Case]:
     pc_loads(context, suite, results)
     alu_pc_writes(context, suite, results)
     unmapped_targets(context, suite, results)
+    conditional_table_branches(context, suite, results)
     return results
 
 
