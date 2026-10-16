@@ -4,8 +4,9 @@
 `publish-release.py --signing-keys DIR` uses this module. The key directory
 is copied into a private (0700) directory, the AOSP releasetools sign the
 archive with those keys, the signing log is checked so no APK or APEX stays
-signed with a key outside the copy, and the copy is deleted again, with the
-deletion verified, whether or not signing succeeded.
+signed with a key outside the copy, the OTA certificates are replaced and
+checked so no AOSP public test certificate stays trusted, and the copy is
+deleted again, with the deletion verified, whether or not signing succeeded.
 
 The key directory holds the Android platform set (`releasekey`, `platform`,
 `media`, `shared`, `networkstack`, ... as `<name>.pk8` and `<name>.x509.pem`)
@@ -20,6 +21,7 @@ __import__("sys").dont_write_bytecode = True
 
 import base64
 import hashlib
+import io
 import os
 import re
 import shutil
@@ -129,16 +131,49 @@ def check_signing_log(log: str, keys: Path) -> tuple[int, list[str]]:
     return signed, unsigned
 
 
+def pem_digest(pem: bytes) -> str:
+    """SHA-256 of the DER form of one PEM certificate (public data)."""
+    body = "".join(
+        line
+        for line in pem.decode("ascii").splitlines()
+        if line and not line.startswith("-----")
+    )
+    return hashlib.sha256(base64.b64decode(body)).hexdigest()
+
+
 def certificate_digests(keys: Path) -> dict[str, str]:
     """SHA-256 of the DER form of each platform certificate (public data)."""
-    digests: dict[str, str] = {}
-    for name in PLATFORM_KEYS:
-        text = (keys / f"{name}.x509.pem").read_text(encoding="ascii")
-        body = "".join(
-            line for line in text.splitlines() if line and not line.startswith("-----")
-        )
-        digests[name] = hashlib.sha256(base64.b64decode(body)).hexdigest()
-    return digests
+    return {
+        name: pem_digest((keys / f"{name}.x509.pem").read_bytes())
+        for name in PLATFORM_KEYS
+    }
+
+
+def check_ota_certificates(signed_output: Path, keys: Path, aosp_source: Path) -> None:
+    """Every otacerts.zip must trust the release certificate and no AOSP one.
+
+    Without the OTA key replacement the recovery and the system keep the AOSP
+    public test certificate, which would let anyone sideload an update."""
+    release = pem_digest((keys / "releasekey.x509.pem").read_bytes())
+    public = {
+        pem_digest(path.read_bytes())
+        for path in sorted((aosp_source / SECURITY_DIR).glob("*.x509.pem"))
+    }
+    with zipfile.ZipFile(signed_output) as archive:
+        names = [name for name in archive.namelist() if name.endswith("/otacerts.zip")]
+        if not names:
+            fail("the signed target files hold no otacerts.zip")
+        for name in names:
+            with zipfile.ZipFile(io.BytesIO(archive.read(name))) as certificates:
+                digests = {
+                    pem_digest(certificates.read(member))
+                    for member in certificates.namelist()
+                    if member.endswith(".pem")
+                }
+            if release not in digests:
+                fail(f"{name} omits the release certificate")
+            if digests & public:
+                fail(f"{name} still trusts an AOSP public test certificate")
 
 
 def run_logged(arguments: list[str], *, cwd: Path, env: dict[str, str]) -> str:
@@ -198,6 +233,7 @@ def sign_target_files(
     try:
         arguments = [
             str(tool),
+            "-o",
             "-d", str(copy),
             *key_arguments(target_files, copy),
             str(target_files),
@@ -207,6 +243,7 @@ def sign_target_files(
         env["PATH"] = f"{host_bin}:{jdk_bin}:{env.get('PATH', '/usr/bin:/bin')}"
         log = run_logged(arguments, cwd=aosp_source, env=env)
         signed, unsigned = check_signing_log(log, copy)
+        check_ota_certificates(signed_output, copy, aosp_source)
         # Signing rebuilds the partition images but not the data seed.
         with zipfile.ZipFile(target_files) as original, zipfile.ZipFile(
             signed_output, "a", zipfile.ZIP_DEFLATED

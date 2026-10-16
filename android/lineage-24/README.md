@@ -470,9 +470,12 @@ set holds the platform keys (`releasekey`, `platform`, `media`, `shared`,
 `networkstack` and the others the tree names) as `.pk8` and `.x509.pem`, and
 one 4096-bit key per APEX container with its `.pem` payload key. Signing
 fails when any file stays signed with a key outside the copy, so no AOSP
-public test key survives; the presigned F-Droid APKs keep their upstream
-signature and are named in the build receipt, which also records the SHA-256 of
-each platform certificate. The AOSP host tools need `sign_target_files_apks`
+public test key survives. Signing also replaces the OTA certificates, and the
+tool then requires every `otacerts.zip` (system and recovery) to trust the
+release certificate and no AOSP public certificate; the recovery keeps
+LineageOS's own extra recovery certificate, as a stock LineageOS recovery does.
+The presigned F-Droid APKs keep their upstream signature and are named in the
+build receipt, which also records the SHA-256 of each platform certificate. The AOSP host tools need `sign_target_files_apks`
 (built with `otatools`). The key directory, its backup and the transfer to the
 builder are the maintainer's responsibility.
 
