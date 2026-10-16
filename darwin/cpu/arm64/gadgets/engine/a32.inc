@@ -299,13 +299,22 @@ gadget a32_set_itstate
 	strb w8, [_cpu, #UML_ARM64_CPU_A32_ITSTATE]
 	next_gadget
 
-/* BL and BLX (immediate): the return key's BlockLink is behind the target's,
- * then the value LR gets, which is the return address with the Thumb bit. */
+/* \value := the value LR gets for a call that returns to \key: the return
+ * address with the Thumb bit. An A32 key's low word is the address, and a
+ * T32 key holds the halfword address shifted left one bit under bit 62
+ * (aarch32/guest_key.hpp). Scratch x13. */
+.macro a32_return_value value, valuex, key
+	ubfx x13, \key, #62, #1
+	lsr \valuex, \key, x13
+	orr \value, \value, w13
+.endm
+
+/* BL and BLX (immediate): [target BlockLink][return BlockLink]. LR comes
+ * from the return link's key, so the stream carries no LR value. */
 gadget a32_bl_linked
-	ldr x8, [_stream], #8
-	ldr x11, [_stream], #8
-	ldr x12, [_stream]
+	ldp x8, x11, [_stream]
 	ldr x9, [x11, #16]
+	a32_return_value w12, x12, x9
 	str w12, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
 	a32_push_return_record x9, x11
 	a32_follow_link x8
@@ -350,14 +359,15 @@ a32_indirect bw, a32_key_thumb, 0, 0
 .purgem a32_indirect
 
 /* BLX Rm: the target is read before LR is written. [source offset][site]
- * [return BlockLink][LR value] cached, [source offset][LR value] not. */
+ * [return BlockLink] cached, LR coming from the return link's key as for
+ * BL; [source offset][LR value] not. */
 gadget a32_blx_cached
 	ldp x8, x9, [_stream], #16
 	ldr w10, [_cpu, x8]
 	a32_key_interworking
-	ldr x14, [_stream], #8
-	ldr x15, [_stream]
+	ldr x14, [_stream]
 	ldr x11, [x14, #16]
+	a32_return_value w15, x15, x11
 	str w15, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
 	a32_push_return_record x11, x14
 	a32_follow_indirect 0
@@ -668,6 +678,7 @@ gadget a32_code_sequence_check
 
 #include "a32_generated.inc"
 
+.purgem a32_return_value
 .purgem a32_follow_indirect
 .purgem a32_train_cell
 .purgem a32_push_return_record

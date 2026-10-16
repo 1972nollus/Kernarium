@@ -1025,6 +1025,7 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 		const auto target = target_key(
 			base + static_cast<std::uint32_t>(o.imm32), to_thumb);
 		credit();
+		/* The linked form takes LR from the return link's key. */
 		if (linked()) {
 			push(G::bl_linked);
 			push_link(target);
@@ -1032,8 +1033,8 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 		} else {
 			push(G::bl);
 			push(target);
+			push(return_value());
 		}
-		push(return_value());
 		return {true, false};
 	}
 	case Family::bx: {
@@ -1051,8 +1052,8 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 		} else {
 			push(G::blx);
 			push(src);
+			push(return_value());
 		}
-		push(return_value());
 		return {true, false};
 	}
 	case Family::cbz: {
