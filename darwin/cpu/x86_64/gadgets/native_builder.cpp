@@ -27,6 +27,9 @@ using NativeEntry = void (*)();
 		mode, gadget.address, gadget.instruction.length);
 }
 
+/* A direct CALL's opcode and 32-bit displacement. */
+constexpr unsigned direct_call_length = 5;
+
 [[nodiscard]] constexpr std::uint64_t relative_target(
 	const Gadget &gadget, ExecutionMode mode) noexcept
 {
@@ -47,6 +50,51 @@ using NativeEntry = void (*)();
 {
 	return static_cast<std::uintptr_t>(instruction.vex) << 63U;
 }
+
+/* The words of one block's stream, and what an instruction's words need to
+ * know of the block they are in. An instruction that can fault or leave
+ * reports its address, which its stream word does not carry: the word holds
+ * the instruction's position in the block, its address less the block's
+ * start, and the exits add the start back from the context's program_begin.
+ * Every stream of a block takes the block's own start as that base -- a
+ * budget-limited replay and a checked instruction included -- so
+ * `program_begin` is the block's, not the first instruction's of the span
+ * being built. A compatibility-mode position wraps at 4 GiB as the address
+ * does. */
+class StreamWords final {
+public:
+	StreamWords(std::vector<std::uintptr_t> &words, ExecutionMode mode,
+		std::uint64_t program_begin) noexcept :
+		words_{&words}, mode_{mode}, program_begin_{program_begin}
+	{
+	}
+
+	void push_back(std::uintptr_t word) { words_->push_back(word); }
+
+	/* The instruction's position in the block, or nothing when it lies
+	 * farther in than the stream word's field reaches. */
+	[[nodiscard]] std::optional<std::uintptr_t> position(
+		const Gadget &gadget) const noexcept
+	{
+		const auto position = normalize_instruction_pointer(
+			mode_, gadget.address - program_begin_);
+		if (position >= (std::uint64_t{1} << UML_X86_64_STREAM_POSITION_BITS))
+			return std::nullopt;
+		return static_cast<std::uintptr_t>(position);
+	}
+
+	/* The word fields that name the instruction: its position and length. */
+	[[nodiscard]] std::uintptr_t locator(const Gadget &gadget) const noexcept
+	{
+		return (*position(gadget) << UML_X86_64_STREAM_POSITION) |
+			(static_cast<std::uintptr_t>(gadget.instruction.length) << 56U);
+	}
+
+private:
+	std::vector<std::uintptr_t> *words_;
+	ExecutionMode mode_;
+	std::uint64_t program_begin_;
+};
 
 /* CpuState offsets packed into one stream word, 16 bits apiece. */
 [[nodiscard]] constexpr std::uintptr_t pack_offsets(std::uint16_t first,
@@ -909,28 +957,35 @@ struct EncodedMemory final {
 	std::uintptr_t displacement{};
 };
 
+/* A memory descriptor names the value, base and index registers by ten-bit
+ * CpuState offsets, which the sixteen general registers, the vector and x87
+ * registers and the always-zero slot all lie below. */
+constexpr std::uintptr_t descriptor_offset_limit = 1024;
+static_assert(UML_X86_64_CPU_SEGMENT_ZERO < descriptor_offset_limit);
+static_assert(UML_X86_64_CPU_SEGMENT_SELECTORS + 6 * 2 <=
+	descriptor_offset_limit);
+
 enum class DescriptorTag { none, vex };
 
-/* The four words every memory form's stream starts with: its entry, the
- * operand descriptor, tagged for a VEX form, the displacement and the guest
- * address. It is always inlined, and each push takes its word the way the
- * callers' own pushes did: the entry by its value category, the rest from
- * where they live. The callers' code then stays within a few instructions
- * of the open-coded pushes. */
+/* The three words every memory form's stream starts with: its entry, the
+ * operand descriptor, tagged for a VEX form and locating the instruction in
+ * its block, and the displacement. It is always inlined, and each push takes
+ * its word the way the callers' own pushes did: the entry by its value
+ * category, the rest from where they live. The callers' code then stays
+ * within a few instructions of the open-coded pushes. */
 template<typename Entry>
 [[gnu::always_inline]] inline void append_memory_words(
-	std::vector<std::uintptr_t> &stream, Entry &&entry,
+	StreamWords &stream, Entry &&entry,
 	const EncodedMemory &encoded, const Gadget &gadget,
 	DescriptorTag tag = DescriptorTag::none)
 {
 	stream.push_back(std::forward<Entry>(entry));
 	if (tag == DescriptorTag::vex)
-		stream.push_back(
-			encoded.descriptor | vex_tag(gadget.instruction));
+		stream.push_back(encoded.descriptor | stream.locator(gadget) |
+			vex_tag(gadget.instruction));
 	else
-		stream.push_back(encoded.descriptor);
+		stream.push_back(encoded.descriptor | stream.locator(gadget));
 	stream.push_back(encoded.displacement);
-	stream.push_back(gadget.address);
 }
 
 [[nodiscard]] std::optional<EncodedMemory> encode_memory(
@@ -966,9 +1021,13 @@ template<typename Entry>
 	 */
 	const auto plain = segment == Segment::none && !legacy &&
 		!memory.address_32 && !memory.address_16;
+	/* The three offsets are ten-bit fields; every CpuState offset a gadget
+	 * names is below 1024, but a value offset comes from the caller. */
+	if (value_offset >= descriptor_offset_limit)
+		return std::nullopt;
 	std::uintptr_t descriptor = value_offset |
 		(static_cast<std::uintptr_t>(base) << 16U) |
-		(static_cast<std::uintptr_t>(index) << 32U) |
+		(static_cast<std::uintptr_t>(index) << 26U) |
 		(static_cast<std::uintptr_t>(scale_shift) << 48U) |
 		(segment_field << 50U) |
 		(static_cast<std::uintptr_t>(legacy) <<
@@ -980,10 +1039,11 @@ template<typename Entry>
 		(static_cast<std::uintptr_t>(gadget.instruction.length) << 56U);
 	std::uintptr_t displacement{};
 	constexpr auto register_fields =
-		(std::uintptr_t{0xffff} << 16U) | (std::uintptr_t{0xffff} << 32U);
+		(std::uintptr_t{descriptor_offset_limit - 1U} << 16U) |
+		(std::uintptr_t{descriptor_offset_limit - 1U} << 26U);
 	constexpr auto zero_registers =
 		(std::uintptr_t{UML_X86_64_CPU_SEGMENT_ZERO} << 16U) |
-		(std::uintptr_t{UML_X86_64_CPU_SEGMENT_ZERO} << 32U);
+		(std::uintptr_t{UML_X86_64_CPU_SEGMENT_ZERO} << 26U);
 	if (memory.absolute_address) {
 		displacement = memory.absolute;
 		descriptor = (descriptor & ~register_fields) | zero_registers;
@@ -1013,7 +1073,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_memory_move(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool load = instruction.source.kind == OperandKind::memory;
@@ -1049,7 +1109,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_memory_arithmetic(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool register_memory = instruction.source.kind ==
@@ -1088,7 +1148,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_shift(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool memory = instruction.destination.kind == OperandKind::memory;
@@ -1140,7 +1200,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_double_shift(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool memory = instruction.destination.kind == OperandKind::memory;
@@ -1189,7 +1249,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_multiply(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool sign = instruction.operation == Operation::multiply_signed;
@@ -1261,7 +1321,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_divide(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool memory = instruction.destination.kind == OperandKind::memory;
@@ -1277,8 +1337,7 @@ template<typename Entry>
 		if (!divisor)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(*divisor);
-		stream.push_back(gadget.address);
+		stream.push_back(*divisor | stream.locator(gadget));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -1290,7 +1349,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_bit_operation(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool memory = instruction.destination.kind == OperandKind::memory;
@@ -1341,7 +1400,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_bit_count(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.destination.kind != OperandKind::reg)
@@ -1371,7 +1430,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_atomic_binary(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool memory = instruction.destination.kind == OperandKind::memory;
@@ -1400,7 +1459,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_compare_exchange_pair(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.destination.kind != OperandKind::memory)
@@ -1417,7 +1476,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_movbe(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool load = instruction.source.kind == OperandKind::memory;
@@ -1439,7 +1498,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_crc32(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.destination.kind != OperandKind::reg)
@@ -1468,7 +1527,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_adx(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.destination.kind != OperandKind::reg)
@@ -1498,7 +1557,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_scalar_bmi(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.destination.kind != OperandKind::reg)
@@ -1610,7 +1669,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_vector_move(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.destination.kind == OperandKind::mmx_reg) {
@@ -1717,7 +1776,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_vector_move_scalar(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.destination.kind == OperandKind::memory &&
@@ -1783,7 +1842,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_vector_to_gpr(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto destination = register_offset(instruction.destination);
@@ -1836,7 +1895,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_vector_insert(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto destination = vector_state_offset(instruction.destination);
@@ -1906,7 +1965,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_vector_test(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto left = vector_offset(instruction.source);
@@ -1936,7 +1995,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_vector_compare_flags(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto left = vector_offset(instruction.source);
@@ -1974,7 +2033,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_vector_gpr_move(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.vector_opcode == 0x7e &&
@@ -2078,7 +2137,7 @@ template<typename Entry>
 }
 
 [[nodiscard]] bool append_vector_mask_store(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto source = vector_state_offset(instruction.source);
@@ -2136,7 +2195,7 @@ enum class VectorDuplicateKind { sldup, shdup, ddup };
 }
 
 [[nodiscard]] bool append_vector_lane_move(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.vector_opcode == 0x13 ||
@@ -2252,7 +2311,7 @@ enum class VectorDuplicateKind { sldup, shdup, ddup };
 }
 
 [[nodiscard]] bool append_vector_bitwise(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.vector_opcode < 0x54 ||
@@ -2329,7 +2388,7 @@ enum class VectorShuffleKind {
 }
 
 [[nodiscard]] bool append_vector_shuffle(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	VectorShuffleKind kind{};
@@ -2503,7 +2562,7 @@ enum class VectorFloatKind {
 }
 
 [[nodiscard]] bool append_vector_float(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool scalar = instruction.vector_prefix >= 2;
@@ -2621,7 +2680,7 @@ enum class VectorFloatKind {
 }
 
 [[nodiscard]] bool append_vector_convert(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto destination = vector_offset(instruction.destination);
@@ -2733,7 +2792,7 @@ enum class VectorFloatKind {
 }
 
 [[nodiscard]] bool append_vector_scalar_convert(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool to_float = instruction.vector_opcode == 0x2a;
@@ -2878,7 +2937,7 @@ enum class VectorFloatKind {
 }
 
 [[nodiscard]] bool append_vector_fma(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto destination = vector_offset(instruction.destination);
@@ -2938,7 +2997,7 @@ enum class VectorFloatKind {
 }
 
 [[nodiscard]] bool append_vector_aes(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto destination = vector_offset(instruction.destination);
@@ -2989,7 +3048,7 @@ enum class VectorFloatKind {
 }
 
 [[nodiscard]] bool append_vector_sha(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto destination = vector_offset(instruction.destination);
@@ -3188,7 +3247,7 @@ inline void note_vector_result(const Instruction &instruction,
 		produced = {*destination, instruction.destination.width};
 }
 
-[[nodiscard]] bool append_vector_integer(std::vector<std::uintptr_t> &stream,
+[[nodiscard]] bool append_vector_integer(StreamWords &stream,
 	const Gadget &gadget, const VectorResult &available) noexcept
 {
 	const auto &instruction = gadget.instruction;
@@ -3318,7 +3377,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_integer_map2(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto destination = vector_state_offset(instruction.destination);
@@ -3381,7 +3440,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map2_permute(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
@@ -3439,7 +3498,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map2_shift(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
@@ -3499,7 +3558,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map2_broadcast(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	unsigned element{};
@@ -3537,7 +3596,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map2_half(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.vector_opcode != 0x13)
@@ -3590,7 +3649,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map2_masked_memory(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto opcode = instruction.vector_opcode;
@@ -3626,7 +3685,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map2_misc(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	if (append_vector_map2_masked_memory(stream, gadget))
 		return true;
@@ -3655,7 +3714,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_gather(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto destination = vector_offset(instruction.destination);
@@ -3696,7 +3755,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map3_extract_scalar(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.vector_opcode < 0x14 ||
@@ -3731,7 +3790,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map3_extract_lane(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.vector_opcode != 0x19 &&
@@ -3779,7 +3838,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map3_insert_scalar(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.vector_opcode != 0x20 &&
@@ -3815,7 +3874,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map3_insertps(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.vector_opcode != 0x21)
@@ -3891,7 +3950,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map3_shuffle(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
@@ -3960,7 +4019,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map3_round(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
@@ -3995,7 +4054,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map3_half(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.vector_opcode != 0x1d)
@@ -4056,7 +4115,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map3_math(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
@@ -4090,7 +4149,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map3_crypto(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto opcode = instruction.vector_opcode;
@@ -4162,7 +4221,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_map3_string(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	if (instruction.vector_opcode < 0x60 ||
@@ -4209,7 +4268,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_vector_integer_map3(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	if (append_vector_map3_shuffle(stream, gadget))
 		return true;
@@ -4291,7 +4350,7 @@ inline void note_vector_result(const Instruction &instruction,
 }
 
 [[nodiscard]] bool append_memory_extension(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto destination = register_offset(instruction.destination);
@@ -4649,7 +4708,7 @@ struct FlagState final {
 #undef UML_X86_CONDITION_CASES
 
 [[nodiscard]] bool append_register_pair(
-	std::vector<std::uintptr_t> &stream, std::uintptr_t entry,
+	StreamWords &stream, std::uintptr_t entry,
 	const Operand &destination, const Operand &source) noexcept
 {
 	const auto destination_offset = register_offset(destination);
@@ -4662,7 +4721,7 @@ struct FlagState final {
 }
 
 [[nodiscard]] bool append_register_binary(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget,
+	StreamWords &stream, const Gadget &gadget,
 	std::uintptr_t entry) noexcept
 {
 	const auto destination = register_offset(
@@ -4695,7 +4754,7 @@ struct FlagState final {
 
 /* MOV from a segment register; a load of one is the segment model's. */
 [[nodiscard]] bool append_segment_move(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto selector = segment_selector_offset(instruction.vector_group);
@@ -4734,7 +4793,7 @@ struct FlagState final {
 
 /* PUSH of a segment register; a POP to one is the segment model's. */
 [[nodiscard]] bool append_segment_stack(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto selector = segment_selector_offset(instruction.vector_group);
@@ -4750,13 +4809,12 @@ struct FlagState final {
 			native::uml_x86_64_gadget_push_segment_64;
 	stream.push_back(entry_address(entry));
 	stream.push_back(static_cast<std::uintptr_t>(*selector) |
-		(static_cast<std::uintptr_t>(instruction.length) << 56U));
-	stream.push_back(gadget.address);
+		stream.locator(gadget));
 	return true;
 }
 
 [[nodiscard]] bool append_enter(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	NativeEntry entry{};
@@ -4772,10 +4830,9 @@ struct FlagState final {
 		(static_cast<std::uintptr_t>(instruction.auxiliary.immediate) & 0x1fU) |
 		((static_cast<std::uintptr_t>(instruction.source.immediate) & 0xffffU)
 			<< 16U) |
-		(static_cast<std::uintptr_t>(instruction.length) << 56U);
+		stream.locator(gadget);
 	stream.push_back(entry_address(entry));
 	stream.push_back(descriptor);
-	stream.push_back(gadget.address);
 	return true;
 }
 
@@ -4836,7 +4893,7 @@ struct FlagState final {
 	return nullptr;
 }
 
-[[nodiscard]] bool append_string(std::vector<std::uintptr_t> &stream,
+[[nodiscard]] bool append_string(StreamWords &stream,
 	const Gadget &gadget, bool step = false) noexcept
 {
 	const auto &instruction = gadget.instruction;
@@ -4859,15 +4916,14 @@ struct FlagState final {
 		(static_cast<std::uintptr_t>(source_segment) << 1U) |
 		(static_cast<std::uintptr_t>(memory->memory.address_16) << 3U) |
 		(static_cast<std::uintptr_t>(instruction.repeat) << 8U) |
-		(static_cast<std::uintptr_t>(instruction.length) << 56U);
+		stream.locator(gadget);
 	stream.push_back(entry_address(entry));
 	stream.push_back(descriptor);
-	stream.push_back(gadget.address);
 	return true;
 }
 
 [[nodiscard]] bool append_extended_state(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto encoded = encode_memory(gadget, instruction.destination, 0);
@@ -4886,7 +4942,7 @@ struct FlagState final {
 }
 
 [[nodiscard]] bool append_x87(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+	StreamWords &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto opcode = instruction.vector_opcode;
@@ -5367,7 +5423,7 @@ struct BakedAddress final {
 
 /* The fused entry's operands: the access word, behind the 64-bit address of
  * an access with no base register. */
-void append_baked_operands(std::vector<std::uintptr_t> &stream,
+void append_baked_operands(StreamWords &stream,
 	const BakedAddress &address, std::uintptr_t immediate = 0)
 {
 	if (!address.displaced())
@@ -5377,7 +5433,7 @@ void append_baked_operands(std::vector<std::uintptr_t> &stream,
 
 /* The address entry of an indexed access, with the access word it hands to
  * the access entry behind it. */
-void append_baked_index(std::vector<std::uintptr_t> &stream,
+void append_baked_index(StreamWords &stream,
 	const BakedAddress &address, std::uintptr_t immediate = 0)
 {
 	stream.push_back(baked::uml_x86_64_baked_ea[
@@ -5389,7 +5445,7 @@ void append_baked_index(std::vector<std::uintptr_t> &stream,
 /* Emit a memory access: the fused entry for [base + displacement], or the
  * address entry followed by the split access entry. `slot` indexes the value
  * dimension of both tables. */
-void append_baked_access(std::vector<std::uintptr_t> &stream,
+void append_baked_access(StreamWords &stream,
 	const BakedAddress &address, const std::uintptr_t *fused,
 	const std::uintptr_t *split, unsigned slot)
 {
@@ -5488,7 +5544,7 @@ struct BakedArithTables final {
 
 /* MOV and the two-operand arithmetic: reg,reg; reg,imm; reg,[mem]; [mem],reg;
  * [mem],imm. A locked form keeps the ordinary exclusive loop. */
-[[nodiscard]] bool append_baked_binary(std::vector<std::uintptr_t> &stream,
+[[nodiscard]] bool append_baked_binary(StreamWords &stream,
 	const Gadget &gadget, std::uint64_t program_begin,
 	const BakedArithTables &tables, FlagState &produced)
 {
@@ -5600,7 +5656,7 @@ struct BakedExtendTables final {
 #undef UML_X86_BAKED_EXTEND_TABLES
 }
 
-[[nodiscard]] bool append_baked_extend(std::vector<std::uintptr_t> &stream,
+[[nodiscard]] bool append_baked_extend(StreamWords &stream,
 	const Gadget &gadget, std::uint64_t program_begin)
 {
 	const auto &instruction = gadget.instruction;
@@ -5676,7 +5732,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	}
 }
 
-[[nodiscard]] bool append_baked_unary(std::vector<std::uintptr_t> &stream,
+[[nodiscard]] bool append_baked_unary(StreamWords &stream,
 	const Gadget &gadget, const FlagState &state, FlagState &produced)
 {
 	const auto &instruction = gadget.instruction;
@@ -5733,7 +5789,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	return true;
 }
 
-[[nodiscard]] bool append_baked_lea(std::vector<std::uintptr_t> &stream,
+[[nodiscard]] bool append_baked_lea(StreamWords &stream,
 	const Gadget &gadget, std::uint64_t program_begin)
 {
 	const auto &instruction = gadget.instruction;
@@ -5767,7 +5823,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	return true;
 }
 
-[[nodiscard]] bool append_baked_stack(std::vector<std::uintptr_t> &stream,
+[[nodiscard]] bool append_baked_stack(StreamWords &stream,
 	const Gadget &gadget, std::uint64_t program_begin)
 {
 	const auto &instruction = gadget.instruction;
@@ -5788,7 +5844,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 /* The bank's entry point: true when the instruction was emitted as baked
  * entries, false to take the ordinary family. Only 64-bit mode is enumerated;
  * the stack forms in particular assume a 64-bit stack pointer. */
-[[nodiscard]] bool append_baked(std::vector<std::uintptr_t> &stream,
+[[nodiscard]] bool append_baked(StreamWords &stream,
 	const Gadget &gadget, ExecutionMode mode, std::uint64_t program_begin,
 	const FlagState &state, FlagState &produced)
 {
@@ -5855,7 +5911,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
  * `has_following` says whether more of this block is translated behind this
  * gadget, which is what lets a conditional branch inline its fall-through. */
 [[nodiscard]] bool append_native(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget,
+	StreamWords &stream, const Gadget &gadget,
 	ExecutionMode mode, std::uint64_t program_begin,
 	ProgramLinkResolver links, const FlagState &state,
 	bool has_following, FlagState &produced)
@@ -5863,13 +5919,19 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	/* The decoder admits LOCK only on memory-destination read-modify-write
 	 * operations (lock_allowed), and each of those has an atomic gadget. */
 	const auto &instruction = gadget.instruction;
+	/* The words that locate an instruction reach 1024 bytes into its block.
+	 * A block of the default 64 instructions ends short of that; a longer
+	 * one ends before the first instruction beyond, as at any instruction
+	 * the bank has no form for. */
+	if (!stream.position(gadget))
+		return false;
 	/* An access through FS or GS in compatibility mode that the general
 	 * address tail does not check, and any through CS, wait for the
 	 * runtime's exact check. */
 	if (mode == ExecutionMode::compat32 && segment_guarded(instruction)) {
 		stream.push_back(entry_address(
 			native::uml_x86_64_gadget_segment_guard));
-		stream.push_back(gadget.address);
+		stream.push_back(stream.locator(gadget));
 	}
 	if (append_baked(stream, gadget, mode, program_begin, state, produced)) {
 		/* A baked entry that executes no flag-setting host instruction
@@ -5958,9 +6020,8 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		default:
 			return false;
 		}
-		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->descriptor | stream.locator(gadget));
 		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
 		return true;
 	}
 	case Operation::adjust_rpl:
@@ -6423,12 +6484,11 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		else
 			return false;
 		const auto descriptor = static_cast<std::uintptr_t>(*source) |
-			(static_cast<std::uintptr_t>(instruction.length) << 56U);
+			stream.locator(gadget);
 		stream.push_back(entry);
 		stream.push_back(descriptor);
 		if (immediate)
 			stream.push_back(instruction.source.immediate);
-		stream.push_back(gadget.address);
 		return true;
 	}
 	case Operation::pop: {
@@ -6460,8 +6520,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			return false;
 		stream.push_back(entry);
 		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(instruction.length) << 56U));
-		stream.push_back(gadget.address);
+			stream.locator(gadget));
 		return true;
 	}
 	case Operation::push_all: {
@@ -6472,9 +6531,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		if (entry == 0)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(
-			static_cast<std::uintptr_t>(instruction.length) << 56U);
-		stream.push_back(gadget.address);
+		stream.push_back(stream.locator(gadget));
 		return true;
 	}
 	case Operation::pop_all: {
@@ -6485,7 +6542,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		if (entry == 0)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(gadget.address);
+		stream.push_back(stream.locator(gadget));
 		return true;
 	}
 	case Operation::push_flags: {
@@ -6498,8 +6555,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		if (entry == 0)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(static_cast<std::uintptr_t>(instruction.length) << 56U);
-		stream.push_back(gadget.address);
+		stream.push_back(stream.locator(gadget));
 		return true;
 	}
 	case Operation::pop_flags: {
@@ -6512,7 +6568,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		if (entry == 0)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(gadget.address);
+		stream.push_back(stream.locator(gadget));
 		stream.push_back(next_instruction_pointer(gadget, mode));
 		return true;
 	}
@@ -6526,7 +6582,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		if (entry == 0)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(gadget.address);
+		stream.push_back(stream.locator(gadget));
 		return true;
 	}
 	case Operation::enter:
@@ -6543,16 +6599,25 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			links.resolve(links.context, target, mode);
 		const bool linked = link != nullptr;
 		const auto next = next_instruction_pointer(gadget, mode);
-		stream.push_back(entry_address(
-			mode == ExecutionMode::compat32 ?
-				(linked ? native::uml_x86_64_gadget_call_32_linked :
-					native::uml_x86_64_gadget_call_32) :
-				(linked ? native::uml_x86_64_gadget_call_linked :
-					native::uml_x86_64_gadget_call)));
+		/* A CALL of the five bytes the opcode and its displacement make has
+		 * its address in the return address it pushes, five bytes before it.
+		 * One with a prefix before that carries the word that locates it. */
+		const bool bare = instruction.length == direct_call_length;
+		const bool compat = mode == ExecutionMode::compat32;
+		stream.push_back(entry_address(compat ?
+			(linked ? (bare ? native::uml_x86_64_gadget_call_32_linked :
+					native::uml_x86_64_gadget_call_32_positioned_linked) :
+				(bare ? native::uml_x86_64_gadget_call_32 :
+					native::uml_x86_64_gadget_call_32_positioned)) :
+			(linked ? (bare ? native::uml_x86_64_gadget_call_linked :
+					native::uml_x86_64_gadget_call_positioned_linked) :
+				(bare ? native::uml_x86_64_gadget_call :
+					native::uml_x86_64_gadget_call_positioned))));
 		stream.push_back(linked ? reinterpret_cast<std::uintptr_t>(link) :
 			target);
 		stream.push_back(next);
-		stream.push_back(gadget.address);
+		if (!bare)
+			stream.push_back(stream.locator(gadget));
 		return true;
 	}
 	case Operation::call_indirect: {
@@ -6585,9 +6650,8 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 					native::uml_x86_64_gadget_call_indirect_32_r) :
 				(site ? native::uml_x86_64_gadget_call_indirect_r_cached :
 					native::uml_x86_64_gadget_call_indirect_r)));
-		stream.push_back(*source);
+		stream.push_back(*source | stream.locator(gadget));
 		stream.push_back(next);
-		stream.push_back(gadget.address);
 		if (site)
 			stream.push_back(reinterpret_cast<std::uintptr_t>(site));
 		return true;
@@ -6599,8 +6663,8 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 				native::uml_x86_64_gadget_return_32) :
 			(linked ? native::uml_x86_64_gadget_return_cached :
 				native::uml_x86_64_gadget_return)));
-		stream.push_back(instruction.source.immediate);
-		stream.push_back(gadget.address);
+		stream.push_back((instruction.source.immediate & 0xffffU) |
+			stream.locator(gadget));
 		return true;
 	}
 	case Operation::interrupt_ret: {
@@ -6628,7 +6692,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		return true;
 	case Operation::privileged:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_privileged));
-		stream.push_back(gadget.address);
+		stream.push_back(stream.locator(gadget));
 		return true;
 	case Operation::cpuid:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_cpuid));
@@ -6641,7 +6705,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			instruction.auxiliary.immediate != 0 ?
 				native::uml_x86_64_gadget_rdtscp :
 				native::uml_x86_64_gadget_rdtsc));
-		stream.push_back(gadget.address);
+		stream.push_back(stream.locator(gadget));
 		return true;
 	case Operation::read_processor_id: {
 		const auto destination = register_offset(instruction.destination);
@@ -6666,8 +6730,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			(static_cast<std::uintptr_t>(
 				instruction.source.memory.address_16) << 3U);
 		stream.push_back(entry_address(native::uml_x86_64_gadget_xlat));
-		stream.push_back(config);
-		stream.push_back(gadget.address);
+		stream.push_back(config | stream.locator(gadget));
 		return true;
 	}
 	case Operation::random: {
@@ -6727,7 +6790,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		/* A 64-bit write raises #GP at this instruction when the base is
 		 * not canonical. */
 		if (!read && operand.width == OperandWidth::qword)
-			stream.push_back(gadget.address);
+			stream.push_back(stream.locator(gadget));
 		return true;
 	}
 	case Operation::memory_fence:
@@ -6893,10 +6956,11 @@ std::optional<std::size_t> append_native_stream(
 	std::uint64_t program_begin, ProgramLinkResolver links)
 {
 	stream.reserve(stream.size() + gadgets.size() * 3U + 2U);
+	StreamWords words{stream, mode, program_begin};
 	FlagState state{};
 	for (std::size_t index = 0; index < gadgets.size(); ++index) {
 		FlagState produced{};
-		if (!append_native(stream, gadgets[index], mode, program_begin,
+		if (!append_native(words, gadgets[index], mode, program_begin,
 			links, state, index + 1U < gadgets.size(), produced))
 			return index;
 		state = produced;
@@ -6939,6 +7003,7 @@ std::optional<std::size_t> instruction_at_word(
 			IndirectLink * { return &placeholder_site; },
 	};
 	std::vector<std::uintptr_t> words;
+	StreamWords builder{words, mode, program_begin};
 	FlagState state{};
 	std::size_t position{};
 	for (std::size_t index = 0; index < gadgets.size(); ++index) {
@@ -6947,7 +7012,7 @@ std::optional<std::size_t> instruction_at_word(
 		for (const auto links : {ProgramLinkResolver{}, linked}) {
 			words.clear();
 			produced = {};
-			if (!append_native(words, gadgets[index], mode, program_begin,
+			if (!append_native(builder, gadgets[index], mode, program_begin,
 				links, state, index + 1U < gadgets.size(), produced))
 				return std::nullopt;
 			if (!words.empty() && position + words.size() <= stream.size() &&
@@ -6994,11 +7059,15 @@ bool repeated_string(const Instruction &instruction) noexcept
 }
 
 std::vector<std::uintptr_t> build_repeat_step_stream(
-	const Gadget &gadget, ExecutionMode mode)
+	const Gadget &gadget, ExecutionMode mode, std::uint64_t program_begin)
 {
 	std::vector<std::uintptr_t> stream;
+	StreamWords words{stream, mode, program_begin};
+	if (!words.position(gadget))
+		throw std::logic_error{
+			"x86-64 step of an instruction beyond its block's reach"};
 	if (!repeated_string(gadget.instruction) ||
-		!append_string(stream, gadget, true))
+		!append_string(words, gadget, true))
 		throw std::logic_error{
 			"x86-64 step of a non-repeated instruction"};
 	stream.push_back(entry_address(native::uml_x86_64_gadget_block_exit));
