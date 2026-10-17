@@ -6,11 +6,9 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 AOSP_METADATA="$ROOT_DIR/android/lineage-24/metadata/lineage.env"
-ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
 MESA_VENUS_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-mesa-venus-source.py"
 
 AOSP_SOURCE=
-ACK_WORKSPACE=
 DARWIN_SDK=
 WORK_ROOT=
 RELEASE_ROOT=
@@ -24,7 +22,6 @@ usage()
 	cat <<'EOF'
 Usage: android/lineage-24/build/preflight.sh \
        --aosp-source ABSOLUTE_PATH \
-       --ack-workspace ABSOLUTE_PATH \
        [--source-only | \
         --darwin-sdk ABSOLUTE_PATH \
         --work-root ABSOLUTE_PATH \
@@ -61,11 +58,6 @@ while [ "$#" -gt 0 ]; do
 		AOSP_SOURCE=$2
 		shift 2
 		;;
-	--ack-workspace)
-		[ "$#" -ge 2 ] || fail "--ack-workspace requires a path"
-		ACK_WORKSPACE=$2
-		shift 2
-		;;
 	--darwin-sdk)
 		[ "$#" -ge 2 ] || fail "--darwin-sdk requires a path"
 		DARWIN_SDK=$2
@@ -94,42 +86,31 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$AOSP_SOURCE" ] || fail "--aosp-source is required"
-[ -n "$ACK_WORKSPACE" ] || fail "--ack-workspace is required"
 absolute_path "AOSP source" "$AOSP_SOURCE"
-absolute_path "ACK workspace" "$ACK_WORKSPACE"
 [ -d "$AOSP_SOURCE" ] || fail "AOSP source does not exist: $AOSP_SOURCE"
-[ -d "$ACK_WORKSPACE" ] || fail "ACK workspace does not exist: $ACK_WORKSPACE"
 
 [ "$(uname -s)" = Linux ] || fail "builder host must be Linux"
 [ "$(uname -m)" = x86_64 ] || fail "builder host must be x86_64"
 [ -r /proc/meminfo ] || fail "builder memory information is unavailable"
 
 [ -f "$AOSP_METADATA" ] || fail "missing AOSP metadata: $AOSP_METADATA"
-[ -f "$ACK_METADATA" ] || fail "missing ACK metadata: $ACK_METADATA"
 [ -x "$MESA_VENUS_VERIFIER" ] ||
 	fail "missing Mesa Venus source verifier: $MESA_VENUS_VERIFIER"
 # shellcheck disable=SC1090
 . "$AOSP_METADATA"
-# shellcheck disable=SC1090
-. "$ACK_METADATA"
 
 [ "$LINEAGE24_ANDROID_MAJOR" -eq 17 ] || fail "AOSP metadata is not Android 17"
 [ "$LINEAGE24_KERNEL_PAGE_SIZE" -eq 4096 ] || fail "Android kernel page size is not 4096"
 [ "$LINEAGE24_MAX_PAGE_SIZE_SUPPORTED" -eq 16384 ] ||
 	fail "Android maximum page size is not 16384"
-[ "$UML_KERNEL_FAMILY" = android-6.18 ] || fail "wrong ACK kernel family"
 
 command -v git >/dev/null 2>&1 || fail "git is not available on PATH"
 command -v repo >/dev/null 2>&1 || fail "repo is not available on PATH"
 [ -d "$AOSP_SOURCE/.repo/manifests" ] || fail "AOSP Repo metadata is missing"
-[ -e "$ACK_WORKSPACE/common/.git" ] || fail "ACK common checkout is missing"
 
 require_pinned_checkout "$AOSP_SOURCE/.repo/manifests" \
 	"$LINEAGE24_MANIFEST_COMMIT" "$LINEAGE24_MANIFEST_TREE" \
 	"AOSP manifest"
-require_pinned_checkout "$ACK_WORKSPACE/common" \
-	"$UML_KERNEL_UPSTREAM_COMMIT" "$UML_KERNEL_UPSTREAM_TREE" \
-	"ACK common"
 dirty_projects=$(dirty_repo_projects "$AOSP_SOURCE")
 if [ -n "$dirty_projects" ]; then
 	fail "AOSP Repo workspace has dirty projects: $dirty_projects"
@@ -160,17 +141,11 @@ absolute_path "release root" "$RELEASE_ROOT"
 [ -d "$RELEASE_ROOT" ] && [ -w "$RELEASE_ROOT" ] ||
 	fail "release root must exist and be writable: $RELEASE_ROOT"
 
-ACK_CLANG="$ACK_WORKSPACE/prebuilts/clang/host/linux-x86/clang-$UML_KERNEL_CLANG_VERSION/bin/clang"
-ACK_LLD="$ACK_WORKSPACE/prebuilts/clang/host/linux-x86/clang-$UML_KERNEL_CLANG_VERSION/bin/ld.lld"
-ACK_MAKE="$ACK_WORKSPACE/prebuilts/build-tools/linux-x86/bin/make"
 AOSP_JAVA="$AOSP_SOURCE/prebuilts/jdk/jdk21/linux-x86/bin/java"
 AOSP_NINJA="$AOSP_SOURCE/prebuilts/build-tools/linux-x86/bin/ninja"
-for tool in "$ACK_CLANG" "$ACK_LLD" "$ACK_MAKE" "$AOSP_JAVA" "$AOSP_NINJA"; do
+for tool in "$AOSP_JAVA" "$AOSP_NINJA"; do
 	[ -x "$tool" ] || fail "required checked-out tool is missing: $tool"
 done
-
-"$ACK_CLANG" --print-targets | grep -Eq '^[[:space:]]*aarch64[[:space:]]' ||
-	fail "pinned ACK Clang does not provide the AArch64 target"
 
 memory_kib=$(awk '/^MemTotal:/ { print $2; exit }' /proc/meminfo)
 [ -n "$memory_kib" ] || fail "cannot read total builder memory"
