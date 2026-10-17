@@ -67,6 +67,10 @@ int darwin_uml_static_vm_destroy(unsigned long generation);
 /* 1 while the generation has an address space, 0 once it was destroyed (a
  * generation is never reused), negative if the host cannot say. */
 int darwin_uml_static_vm_generation_live(unsigned long generation);
+/* Advances whenever a generation is destroyed, in any guest of the process,
+ * so one load tells a holder of per-generation state whether any generation
+ * may have died since it last asked darwin_uml_static_vm_generation_live(). */
+unsigned long long darwin_uml_static_vm_generation_retirements(void);
 /* Unmaps the page at `address` when its mapping names other backing than
  * `fd` at `offset`; an absent or equal mapping is left as it is. The caller's
  * backing is never installed: which of the two is stale is unknown, and the
