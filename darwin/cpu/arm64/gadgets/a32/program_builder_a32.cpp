@@ -226,9 +226,32 @@ void Translator::close_run()
 {
 	if (!run_active_)
 		return;
-	words_[run_operand_] =
-		(words_.size() - (run_operand_ + 1)) * sizeof(std::uintptr_t);
 	run_active_ = false;
+	const std::size_t words = words_.size() - (run_operand_ + 1);
+	if (words < kSkipWordsMin || words > kSkipWordsMax) {
+		words_[run_operand_] = words * sizeof(std::uintptr_t);
+		return;
+	}
+	/* A run of a length a skip gadget holds takes that gadget, and its
+	 * operand leaves the stream: every word and recorded position after it
+	 * moves down one. */
+	words_[run_operand_ - 1] =
+		gadget(kSkipBy[run_cond_][words - kSkipWordsMin]);
+	auto *data = words_.data();
+	std::copy(data + run_operand_ + 1, data + words_.size(),
+		  data + run_operand_);
+	words_.truncate(words_.size() - 1U);
+	const auto moved = [this](std::size_t &index) {
+		if (index != ~std::size_t{} && index > run_operand_)
+			--index;
+	};
+	for (auto &patch : patches_)
+		moved(patch.index);
+	moved(compare_.end);
+	moved(movw_.end);
+	moved(vfp_compare_.end);
+	moved(address_add_.start);
+	moved(address_add_.end);
 }
 
 void Translator::begin_instruction(unsigned cond)

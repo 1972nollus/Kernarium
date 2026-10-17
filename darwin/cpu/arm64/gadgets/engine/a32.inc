@@ -28,9 +28,11 @@
  * a32_skip_<cc> gadget whose operand is the byte distance to skip over the
  * instruction's stream words when the condition fails, so the instruction
  * itself is the unconditional gadget. A run of instructions under one
- * condition that set no flags share one skip. An instruction that leaves the
- * block while others are translated behind it in the same block is preceded
- * by a32_credit, which gives back the count of instructions behind it.
+ * condition that set no flags share one skip. A run of two to nine words
+ * takes a32_skip_<cc>_<words> instead, which holds the distance and has no
+ * operand. An instruction that leaves the block while others are translated
+ * behind it in the same block is preceded by a32_credit, which gives back the
+ * count of instructions behind it.
  *
  * The part's gadgets are generated at build time by engine/generate_a32.py
  * (a32_generated.inc) beside this file's hand-written control and system
@@ -302,8 +304,8 @@ La32_target_tier_miss\@:
 	orr x10, x13, #0xc000000000000000
 .endm
 
-/* A condition, as an NZCV test of x27: skip the next \distance bytes of
- * stream when it does not hold. */
+/* A condition, as an NZCV test of x27: skip the number of stream bytes its
+ * operand holds when it does not hold. */
 .macro a32_skip name, inverse
 gadget a32_skip_\name
 	ldr x8, [_stream], #8
@@ -313,6 +315,17 @@ gadget a32_skip_\name
 1:
 	add _stream, _stream, x8
 	next_gadget
+	/* The same with the distance in the gadget, for the runs of two to
+	 * nine words (Translator::close_run), which carry no operand. */
+	.irp words, 2, 3, 4, 5, 6, 7, 8, 9
+gadget a32_skip_\name\()_\words
+	msr nzcv, x27
+	b.\inverse 1f
+	next_gadget
+1:
+	add _stream, _stream, #(8 * \words)
+	next_gadget
+	.endr
 .endm
 
 a32_skip eq, ne

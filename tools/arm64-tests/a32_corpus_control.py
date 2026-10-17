@@ -17,7 +17,9 @@ solving for the offset the layout needs.
   whose condition passes and fails), loads and ALU instructions that write
   the PC (the multiple loads also under a condition that fails and passes),
   interworking in both directions and jumps to unmapped addresses;
-- conditions: every condition against every NZCV, and every IT block;
+- conditions: every condition against every NZCV, every IT block, and runs
+  of conditional instructions of two to eleven stream words that a skip steps
+  over, under every condition;
 - pc: instructions that read the PC, among them the PC as a register operand
   under a condition that fails and passes.
 """
@@ -739,10 +741,51 @@ def pc_operands(context, suite, results):
                  retired=lead + 2, check=False, target=lead)
 
 
+# Runs of conditional instructions that a skip steps over, of two to eleven
+# stream words: MUL (two words) and LDM of one register in A32 or two in T32
+# (three), then an unconditional ADD the stream resumes at. Each run is under
+# its own condition, A32 and Thumb seven apart, so the runs cover every
+# condition.
+SKIP_RUNS = ("M", "L", "MM", "ML", "LL", "MML", "MLL", "LLL", "MMML", "MLLL")
+CONDITION_NAMES = ("eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le")
+
+
+def it_all_then(firstcond: int, count: int) -> int:
+    """IT with `count` instructions, all under `firstcond`."""
+    then = (firstcond & 1) * ((1 << (count - 1)) - 1) << (5 - count)
+    return 0xBF00 | firstcond << 4 | then | 1 << (4 - count)
+
+
+def skip_runs(context, suite, results):
+    for passes in (False, True):
+        for index, run in enumerate(SKIP_RUNS):
+            outcome = "p" if passes else "f"
+            condition = index % 14
+            flags = cond_flags(condition, passes, index)
+            prog = Prog()
+            for kind in run:  # mul<c> r1, r1, r2 / ldm<c> r8, {r3}
+                prog.word(condition << 28 | (0x00010291 if kind == "M" else 0x08980008))
+            prog.word(0xE2844001).tail(ARM)  # add r4, r4, #1
+            make(results, suite, f"skip/a-{run}.{CONDITION_NAMES[condition]}{outcome}",
+                 "MUL_A1" if run[0] == "M" else "LDM_A1", ARM, prog,
+                 {"apsr": flags, "r4": 7, "r8": D + 0x100}, check=False, retired=len(run) + 2,
+                 expect={"r4": 1})
+            condition = (index + 7) % 14
+            flags = cond_flags(condition, passes, index + 7)
+            prog = Prog().half(it_all_then(condition, len(run)))
+            for kind in run:  # mul r1, r1, r2 / ldm.w r8, {r3, r5}
+                prog.half(*((0xFB01, 0xF102) if kind == "M" else (0xE898, 0x0028)))
+            prog.half(0x3401).tail(THUMB)  # adds r4, #1
+            make(results, suite, f"skip/t-{run}.{CONDITION_NAMES[condition]}{outcome}", "IT_T1", THUMB,
+                 prog, {"apsr": flags, "r4": 7, "r8": D + 0x100}, check=False, retired=len(run) + 3,
+                 expect={"r4": 1})
+
+
 def suite_conditions(context: Context) -> list[Case]:
     results: list[Case] = []
     condition_table(context, "conditions", results)
     it_blocks(context, "conditions", results)
+    skip_runs(context, "conditions", results)
     return results
 
 

@@ -5,7 +5,7 @@ armv8-memory-qemu	qemu	69
 armv8-qemu	qemu	4324
 armv8-system-qemu	qemu	4
 branch-qemu	qemu	476
-conditions-qemu	qemu	1816
+conditions-qemu	qemu	1856
 exclusive-qemu	qemu	256
 fetch-qemu	qemu	994
 fpscr-qemu	qemu	252

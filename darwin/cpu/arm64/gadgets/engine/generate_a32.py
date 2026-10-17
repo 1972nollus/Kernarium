@@ -1216,10 +1216,16 @@ STORE_ORDER = ["w", "b", "h"]
 SINGLE_MODES = ADDRESS_MODES + ["abs"]
 
 
+# The conditions in encoding order, and the run lengths in words that a skip
+# gadget holds as its distance (a32.inc's a32_skip).
+CONDITIONS = ("eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc", "hi", "ls", "ge",
+              "lt", "gt", "le")
+SKIP_WORDS = range(2, 10)
+
 # The gadgets a32.inc defines through macros, which its text does not name.
 MACRO_GADGETS = (
-    [f"skip_{cc}" for cc in ("eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc",
-                             "hi", "ls", "ge", "lt", "gt", "le")] +
+    [name for cc in CONDITIONS
+     for name in [f"skip_{cc}"] + [f"skip_{cc}_{n}" for n in SKIP_WORDS]] +
     ["cbz_inline", "cbz_linked", "cbz_plain", "cbnz_inline", "cbnz_linked",
      "cbnz_plain",
      "bx_cached", "bx_return_cached", "bx", "bw_cached", "bw_return_cached",
@@ -1376,6 +1382,15 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
             f"G::ldm_{c}" for c in range(1, 17)) + "};",
         "inline constexpr G kStm[17] = {G::count, " + ", ".join(
             f"G::stm_{c}" for c in range(1, 17)) + "};", ""]
+    out.append("/* The skips whose distance is in the gadget: [condition]"
+               "[words - kSkipWordsMin]. */")
+    for bound, words in (("Min", SKIP_WORDS[0]), ("Max", SKIP_WORDS[-1])):
+        out.append(f"inline constexpr std::size_t kSkipWords{bound} = {words};")
+    out.append(f"inline constexpr G kSkipBy[14][{len(SKIP_WORDS)}] = {{")
+    for cc in CONDITIONS:
+        row = ", ".join(g(f"skip_{cc}_{n}") for n in SKIP_WORDS)
+        out.append("\t{" + row + "},")
+    out += ["};", ""]
     out += a32_simd.header_tables(index)
     out.append("")
     out += a32_armv8.header_tables(index)

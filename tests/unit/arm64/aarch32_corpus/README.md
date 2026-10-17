@@ -115,7 +115,9 @@ no floating point or SIMD):
   condition passes and fails), PC-writing loads (the multiple ones also under
   a condition that fails and passes) and ALU instructions, interworking both
   ways, jumps to unmapped addresses;
-- `conditions`: every condition against every NZCV, and every IT block;
+- `conditions`: every condition against every NZCV, every IT block, and
+  runs of one to four conditional instructions that fail and pass, under
+  every condition;
 - `pc`: instructions that read the PC, among them the PC as a register
   operand under a condition that fails and passes and as the operand of an
   ADD or SUB whose other operand is its destination;
