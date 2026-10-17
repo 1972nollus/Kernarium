@@ -1794,12 +1794,16 @@ public:
 				resident_.rend(), generation);
 			const bool running = generation == current_generation_;
 			const auto space = state.space->footprint();
+			/* Whether the MMU still has the address space: 1 live, 0
+			 * destroyed, negative when it cannot say from this thread. */
+			const int alive =
+				darwin_uml_static_vm_generation_live(generation);
 			/* The G line's bytes are this cache's own list of its
 			 * slots in the space; the space's are on its S line. */
 			std::fprintf(out,
 				"G %lu current=%d rank=%td idle_switches=%llu "
 				"idle_seconds=%.3f link_records=%zu links=%zu "
-				"indirect=0 targets=0 space=%p\n",
+				"indirect=0 targets=0 space=%p alive=%d\n",
 				generation, running ? 1 : 0,
 				found - resident_.rbegin(),
 				static_cast<unsigned long long>(running ? 0 :
@@ -1807,17 +1811,18 @@ public:
 				running ? 0.0 : now - state.census_seconds,
 				state.space->link_records(),
 				state.slots.capacity() * sizeof(std::uint32_t),
-				static_cast<const void *>(state.space));
+				static_cast<const void *>(state.space), alive);
 			std::fprintf(out,
 				"S %p generation=%lu mode=%u attached=%zu "
 				"stream_index=%zu streams=%zu arena_empty=%zu "
-				"links=%zu indirect=%zu link_records=%zu limbo=%zu\n",
+				"links=%zu indirect=%zu link_records=%zu limbo=%zu "
+				"alive=%d\n",
 				static_cast<const void *>(state.space), generation,
 				unsigned{mode_}, state.space->attached(),
 				space.stream_index, space.streams,
 				state.space->census_empty_bytes(), space.links,
 				space.indirect, state.space->link_records(),
-				state.space->limbo_bodies());
+				state.space->limbo_bodies(), alive);
 		}
 		if (census::totals_only())
 			return;

@@ -401,7 +401,11 @@ counts only what its cache owns (slot slabs and slot lists), each `G` record
 names the space its slots point into, every cache holding a space writes the
 space's arena, link and indirect bytes on an `S` record, and a `P` record
 names its body. The report counts each space and each body once, and the
-history counts the misses that adopted another cache's body.
+history counts the misses that adopted another cache's body. Each `G` and `S`
+record also says whether the MMU still has the address space's generation
+(`alive=1`) or has destroyed it (`alive=0`; negative when it cannot say from the
+thread taking the snapshot), and the report counts the bytes of the destroyed
+ones.
 
 The history counts how each lookup ended, why each departing translation
 left (way eviction, address-space retirement, or a discard), and, for every
