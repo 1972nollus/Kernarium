@@ -13,20 +13,17 @@ outside this repository.
 
 ## Producer boundary
 
-`build/prepare-sources.sh` and `build/prepare-orangefox-source.sh` are the only
-producer commands allowed to use the network. The first pins the Android
-source, ACK, and the guest Mesa source; the second materializes the
-independently pinned OrangeFox
-14.1/TWRP workspace. All patching, builds, verification, image assembly, and
-publication are offline.
+`build/prepare-sources.sh` is the only producer command allowed to use the
+network. It pins the Android source, ACK, and the guest Mesa source. All
+patching, builds, verification, image assembly, and publication are offline.
 
-The producer has five independent outputs:
+The producer has four independent outputs:
 
 1. a replayed and built ACK 4 KiB kernel, published as a kernel artifact;
-2. the `lineage_darwin` target files of the configured build variant;
-3. a kernel-less OrangeFox recovery partition;
-4. one static GPT guest disk containing both boot ramdisks; and
-5. a compact rootfs release installed by Apple consumers.
+2. the `lineage_darwin` target files of the configured build variant, which
+   carry the kernel-less `init_boot` and LineageOS recovery images;
+3. one static GPT guest disk containing both boot ramdisks; and
+4. a compact rootfs release installed by Apple consumers.
 
 Use the scripts under `build/` in that order. Each script's `--help` is the
 canonical interface for builder paths and optional inputs. Ninja and the
@@ -69,14 +66,6 @@ size or digest difference) and the build verifies the result. Their detached
 current keyring may list as expired, so the pinned digests and the APK
 signing-certificate pin in `metadata.env` are the checked identity.
 
-`third_party/orangefox/` records the official OrangeFox sync identity, the
-fully resolved TWRP Repo manifest, the exact OrangeFox-owned project commits,
-two generated integration topics, and a small independent Kernarium recovery
-device tree. It does not vendor OrangeFox source. Source preparation needs
-roughly 85 GiB, matching the upstream `fox_14.1` guidance. The device tree is
-synced to the same `device/kernarium/darwin` path, but only inside the separate
-OrangeFox workspace.
-
 Every series here uses the shared
 [`scripts/patch_series.py`](../../scripts/patch_series.py) format and is
 identified by the tree it produces: replay applies it to the pinned base and
@@ -86,11 +75,8 @@ series files when they are published.
 
 Never edit generated patch files. Amend clean Git topic branches and run the
 matching regenerator under `tools/`; it exports the series and records its
-final tree. OrangeFox routes have no dedicated regenerator: export a route with
-`scripts/patch_series.py export --license GPL-3.0-or-later` and record the tree
-it prints as that route's `final_tree`. Export refuses a topic whose author is
-a placeholder; amend it as described in
-[`kernel/mainline-6.18/README.md`](../../kernel/mainline-6.18/README.md).
+final tree. Export refuses a topic whose author is a placeholder; amend it as
+described in [`kernel/mainline-6.18/README.md`](../../kernel/mainline-6.18/README.md).
 
 ## Android product
 
@@ -372,7 +358,7 @@ time compared and the release accepted.
 
 ## Static disk and boot contract
 
-`support/image/partition-layout.json` owns a compact 2,815 MiB seed GPT with
+`support/image/partition-layout.json` owns a compact 2,803 MiB seed GPT with
 separate Android payload, metadata, `init_boot`, `misc`, recovery, and a
 128 MiB userdata filesystem. Userdata is the final partition. Before its first
 boot, the Apple app's generic Swift `DiskUtil` expands the bundle-local raw
@@ -385,9 +371,10 @@ disk-capacity parameter and rejects a GPT that does not match the file. The
 resized image is opened directly as writable storage; Android launch never
 constructs or accepts a UBD COW pair. Normal Android asks the ext4
 `resize2fs` tool to fill userdata before mounting `/data`; the tool is
-idempotent when the host has not enlarged the partition. OrangeFox compares
-the ext4 and partition extents before running `e2fsck` plus `resize2fs`. Neither
-guest rewrites or refreshes a live partition table. There is no `super`,
+idempotent when the host has not enlarged the partition. Recovery does not grow
+userdata: it mounts the filesystem at its current extent, and its factory reset
+formats the whole partition. Neither guest rewrites or refreshes a live
+partition table. There is no `super`,
 dynamic partition, Virtual A/B, AVB, OTA slot, or DLKM partition.
 
 The immutable Android payload filesystems and APEX payloads are ext4. Userdata
@@ -401,30 +388,53 @@ extents are promptly returned to the sparse host file through UBD's batched
 discard path.
 
 `init_boot` and `recovery` contain kernelless boot-image-v4 ramdisks. The ACK
-ELF remains outside the disk in the selected runtime artifact. `init_boot`
-comes from the AOSP target files; the final recovery partition is the separately
-built and verified OrangeFox image, never the stock target-files copy. Neither
-ramdisk is duplicated as a standalone release file. Boot mode `auto` follows
-the standard command in the directly writable `misc` partition; explicit
-normal/recovery selection is diagnostic.
+ELF remains outside the disk in the selected runtime artifact. Both images come
+from the signed AOSP target files; `recovery` is the stock LineageOS recovery
+that `lineage_darwin` builds, with no separate recovery source or build.
+Neither ramdisk is duplicated as a standalone release file. Boot mode `auto`
+follows the standard command in the directly writable `misc` partition;
+explicit normal/recovery selection is diagnostic.
 
-OrangeFox is built page-size agnostic with 64 KiB ELF alignment. Its two
-upstream 4 KiB-only helper prebuilts are not shipped: toybox supplies `ps`, and
-MagiskBoot image repacking is intentionally absent because the signed ACK ELF
-is app-owned rather than stored in an Android boot partition. Mount, format,
-backup/restore, file-manager, terminal, ADB, and reboot paths remain available.
-Its BGRA minui path writes the BGRX byte order required by Virtio-GPU's fixed
-XRGB legacy dumb-buffer resources. The virtual-DRM topic also labels NanoSVG
-and generated RGBA resources as BGRA so pixelflinger converts their channels
-instead of leaving image and shaped-control colors transposed.
-Recovery screen blanking, its separate idle lock timeout, haptics, and USB-only
-device paths are disabled for the virtual hardware. The pinned recovery cgroup
-and task-profile maps keep OrangeFox 14.1's logd/logcat path functional.
+The recovery ramdisk is an LZ4 legacy frame of the product's page-agnostic
+AArch64 ELFs, so it runs on the 4 KiB kernel unchanged. Two product changes
+adapt the stock recovery to the virtual hardware:
 
-`build/build-orangefox.sh` and `build/assemble-image.sh` own recovery
-construction, `init_boot` ramdisk composition, disk assembly, and
-verification. The assembler requires an explicit verified OrangeFox image and
-refuses unsafe paths, partition overflow, module payloads, or replacement of an
+- `overlay/recovery/` builds `librecovery_ui_darwin`, selected by
+  `TARGET_RECOVERY_UI_LIB`. The stock Cuttlefish UI library addresses `eth1`;
+  this one addresses the Virtio-net `eth0`, assigns the SLiRP address
+  `10.0.2.15/24` itself (init cannot run `ifconfig` from recovery's SELinux
+  domain), keeps Cuttlefish's always-connected USB policy, and removes the
+  menu items for the bootloader, fastboot, and an ADB toggle that have no
+  meaning here.
+- The `bootable/recovery` route `p0016` lets the UI read the virtual
+  touchscreen, a direct single-touch device (`BTN_TOUCH` with `ABS_X` and
+  `ABS_Y`) that the stock UI, which reads only multi-touch axes, ignores.
+
+Recovery shows the DRM display, takes VNC keys and touch, serves ADB over the
+same loopback forward as normal Android (`adb sideload` checks packages against
+the signing keys in the image's `otacerts`), and mounts the fixed GPT
+partitions from the checked `overlay/config/recovery.fstab`. Recovery ADB
+authentication follows the product's `ro.boot.kernarium.adb_auth` policy.
+Recovery loads only its ramdisk's `prop.default`, which the build fills from the
+product's properties, so `sys.use_memfd=true` reaches it and its ashmem users
+fall back to memfd on a kernel without `/dev/ashmem`. The verifier requires
+that line.
+
+The recovery partition is 20 MiB. The stock LineageOS recovery image measures
+15.07 MiB (15,802,368 bytes), and the size rule is that image plus 25%
+headroom, rounded up to a 4 MiB multiple: 18.8 MiB becomes 20 MiB, which leaves
+4.9 MiB (32%) of the partition free. Like every partition it starts on the
+layout's 1 MiB alignment, and `BOARD_RECOVERYIMAGE_PARTITION_SIZE` must equal
+the layout, so the build fails on an image that does not fit. Resize the
+partition only when the image outgrows 80% of it, and a resize moves
+userdata, so it changes the seed GPT that the Apple runtime validates.
+
+`tools/verify-lineage-recovery.py` checks the image the assembler installs: a
+kernel-less v4 image whose LZ4 or gzip ramdisk holds only target ELFs aligned
+to 16 KiB or better, a closed dependency set, no loadable modules, the checked
+fstab, and the `eth0` interface policy. `build/assemble-image.sh` owns
+`init_boot` ramdisk composition, disk assembly, and verification. It refuses
+unsafe paths, partition overflow, module payloads, or replacement of an
 existing output.
 
 ## Release installation
@@ -460,25 +470,32 @@ records.
 
 ### Release signing
 
-A release is signed with a private key set that never enters the repository,
-a log or a release. `tools/publish-release.py --signing-keys DIR` takes the
+A release is signed with a private key set that never enters the repository, a
+log or a release. `tools/publish-release.py --signing-keys DIR` takes the
 unsigned target files, copies `DIR` (owner-only, no group or other access) to a
 private temporary directory, signs with the AOSP `sign_target_files_apks`,
 assembles the disk from the signed archive, and deletes the copy and checks the
 deletion whether or not signing succeeded. `--disk` then names the new signed
-disk, and `--mkbootfs`, `--mkbootimg`, `--recovery-image` and
-`--first-boot-artifacts` are required; the last names the first-boot output of
+disk, and `--mkbootfs`, `--mkbootimg` and `--first-boot-artifacts` are
+required; the last names the first-boot output of
 `tools/precompile-first-boot-apps.py`, and publishing runs that tool's `verify`
-on the signed tree, so re-signing cannot leave first boot compiling. The
-set holds the platform keys (`releasekey`, `platform`, `media`, `shared`,
+on the signed tree, so re-signing cannot leave first boot compiling. The set
+holds the platform keys (`releasekey`, `platform`, `media`, `shared`,
 `networkstack` and the others the tree names) as `.pk8` and `.x509.pem`, and
-one 4096-bit key per APEX container with its `.pem` payload key. Signing
-fails when any file stays signed with a key outside the copy, so no AOSP
-public test key survives; the presigned F-Droid APKs keep their upstream
-signature and are named in the build receipt, which also records the SHA-256 of
-each platform certificate. The AOSP host tools need `sign_target_files_apks`
-(built with `otatools`). The key directory, its backup and the transfer to the
-builder are the maintainer's responsibility.
+one 4096-bit key per APEX container with its `.pem` payload key. Signing fails
+when any file stays signed with a key outside the copy, so no AOSP public test
+key survives. Signing also replaces the OTA certificates, and the tool then
+requires the system's and the recovery's `otacerts.zip` to trust the release
+certificate and no public AOSP or LineageOS certificate; the product clears
+`PRODUCT_EXTRA_RECOVERY_KEYS`, which would add LineageOS's release certificate
+to the recovery. Release `20261017-los24-r1` was signed without this
+replacement: its recovery and system trust the public AOSP test key, so anyone
+who can reach its ADB can sideload an update. Release r2 supersedes r1 for that
+reason, and r1 must not be used or distributed. The presigned F-Droid APKs keep
+their upstream signature and are named in the build receipt, which also records
+the SHA-256 of each platform certificate. The AOSP host tools need
+`sign_target_files_apks` (built with `otatools`). The key directory, its backup
+and the transfer to the builder are the maintainer's responsibility.
 
 ### Superseded releases
 
@@ -508,7 +525,7 @@ with a newly expanded copy of that release. The default session uses
 the existing `macos-android17` executable with native Metal display, 10 vCPUs,
 8 GiB of RAM, the gadgets engine, and a 720-by-1280 portrait display. Pass
 `--build` to refresh that executable incrementally or `--recovery` to boot
-OrangeFox; run `tools/boot_android.py --help` for other overrides.
+recovery; run `tools/boot_android.py --help` for other overrides.
 
 Kernarium represents one Android guest as a `.kern` directory containing:
 
