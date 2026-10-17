@@ -12,8 +12,9 @@
                         [--archive TAR.GZ --absent FEATURE,...] [--show N]
 
 observe plans the cases of each suite, runs them twice through the oracle on
-HOST (tools/arm64-tests/a32-oracle.sh), requires both runs to agree, and
-writes the suite's source table beside the state recipes. finish generates
+HOST (tools/arm64-tests/a32-oracle.sh), requires both runs to agree except in
+the fields known-differences.tsv leaves open for that oracle, and writes the
+suite's source table beside the state recipes. finish generates
 the pack from the source tables (tools/instruction-corpus/source.py does the
 same at build time) and writes provenance, manifest and coverage. Decision
 D2: records observed under qemu-arm are labelled "qemu"; hardware records
@@ -78,8 +79,29 @@ def json_line(value) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
 
-def run_oracle(arguments, cases, recipes, label: str) -> tuple[dict, list]:
-    """Both runs of one chunk; they must be identical."""
+def run_disagreements(oracle: str, suite: str, cases, recipes, first, second) -> tuple[list, list]:
+    """The cases whose two observations differ, as (name, fields): those whose
+    differing fields known-differences.tsv leaves open for the oracle, where
+    hardware may answer either way from one run to the next, and the rest."""
+    known = [row for row in known_differences() if row["oracle"] == oracle and row["suite"] == suite]
+    open_, unexplained = [], []
+    for case, left, right in zip(cases, first, second, strict=True):
+        if left == right:
+            continue
+        rows = [source_row(case, recipes, observation) for observation in (left, right)]
+        fields = sorted(key for key in rows[0].keys() | rows[1].keys()
+                        if rows[0].get(key) != rows[1].get(key))
+        if not fields:  # what no row holds: si_code or the initial data's digest
+            fields = [name for name in ("code", "digest") if getattr(left, name) != getattr(right, name)]
+        explained = any(fnmatch.fnmatchcase(case.name, row["cases"]) and set(fields) <= row["fields"]
+                        for row in known)
+        (open_ if explained else unexplained).append((case.name, fields))
+    return open_, unexplained
+
+
+def run_oracle(arguments, suite: str, cases, recipes, label: str) -> tuple[dict, list]:
+    """Both runs of one chunk. They must agree except where
+    run_disagreements finds the answer open; there the first run's is kept."""
     with tempfile.TemporaryDirectory(prefix="a32-corpus-run-") as scratch:
         scratch = pathlib.Path(scratch)
         (scratch / "request").write_bytes(wire.request(cases, recipes))
@@ -94,9 +116,20 @@ def run_oracle(arguments, cases, recipes, label: str) -> tuple[dict, list]:
             command += [arguments.host, str(scratch / "request"), str(output)]
             subprocess.run(command, check=True, timeout=3600, stdin=subprocess.DEVNULL)
             responses.append(output.read_bytes())
+        meta, first = wire.parse_response(responses[0])
         if responses[0] != responses[1]:
-            raise SystemExit(f"{label}: the oracle's two runs disagree")
-        return wire.parse_response(responses[0])
+            other_meta, second = wire.parse_response(responses[1])
+            if other_meta != meta or len(second) != len(first):
+                raise SystemExit(f"{label}: the oracle's two responses differ beyond their cases")
+            open_, unexplained = run_disagreements(arguments.oracle, suite, cases, recipes, first, second)
+            if unexplained:
+                raise SystemExit(f"{label}: the oracle's two runs disagree on {len(unexplained)} "
+                                 "case(s):\n" + "".join(f"  {name}: {','.join(fields)}\n"
+                                                        for name, fields in unexplained[:20]))
+            print(f"{label}: the runs differ where known-differences.tsv leaves the answer open, "
+                  "the first run's kept: " + ", ".join(f"{name} ({','.join(fields)})"
+                                                        for name, fields in open_), flush=True)
+        return meta, first
 
 
 def describe_host(arguments) -> str:
@@ -199,7 +232,7 @@ def observe(arguments) -> int:
             cases = []
         for start in range(0, len(cases), CHUNK):
             chunk = cases[start:start + CHUNK]
-            meta, observations = run_oracle(arguments, chunk, context.recipes,
+            meta, observations = run_oracle(arguments, suite, chunk, context.recipes,
                                             f"{suite} {start}")
             environment = {"runner": arguments.runner or "native", "host": identity,
                            "hwcap": f"{meta['hwcap']:x}", "hwcap2": f"{meta['hwcap2']:x}"}
@@ -353,7 +386,8 @@ def needs_feature(context, row: dict, present: set[str]) -> bool:
 
 def known_differences() -> list[dict]:
     """The rows of known-differences.tsv: an oracle, a suite, a glob of case
-    names and the fields in which that oracle may differ from the record."""
+    names and the fields in which that oracle may differ from the record, and
+    so between its own two runs."""
     lines = KNOWN_DIFFERENCES.read_text(encoding="utf-8").splitlines()
     names = lines[0].split("\t")
     rows = []
