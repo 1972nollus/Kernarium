@@ -27,6 +27,11 @@ CONFIG_CRYPTO_HCTR2=y
 
 # --- Root and general-purpose filesystems -----------------------------------
 CONFIG_UNICODE=y
+# MediaProvider serves shared storage through FUSE and names the file under
+# each FUSE path, so that an app's FileObserver sees the changes MediaProvider
+# and other writers make to the underlying file. The desktop product's FUSE
+# servers do not implement the request.
+CONFIG_FUSE_CANONICAL_PATH=y
 
 # --- Android memory, IPC, and allocator interfaces -------------------------
 # Android 17 shares memory through memfd: the product sets sys.use_memfd, and
@@ -57,6 +62,10 @@ CONFIG_VIRTIO_DMA_SHARED_BUFFER=y
 
 # --- Processes, scheduling, and namespaces ----------------------------------
 # CONFIG_CHECKPOINT_RESTORE is not set
+# system_server moves apps between the cpu, cpuset and blkio groups of its
+# scheduling classes without running as root. Without this every move fails
+# with EACCES and apps never leave the groups their zygote child gave them.
+CONFIG_CGROUP_V1_ATTACH_SYS_NICE=y
 CONFIG_SECCOMP=y
 CONFIG_SECCOMP_FILTER=y
 CONFIG_TASK_DELAY_ACCT=y
@@ -100,6 +109,10 @@ CONFIG_NETFILTER_XT_MATCH_MULTIPORT=y
 CONFIG_NETFILTER_XT_MATCH_OWNER=y
 CONFIG_NETFILTER_XT_MATCH_PKTTYPE=y
 CONFIG_NETFILTER_XT_MATCH_POLICY=y
+# netd's data-usage quotas and alerts (-m quota2, with its alert on the
+# NETLINK_NFLOG socket).
+CONFIG_NETFILTER_XT_MATCH_QUOTA2=y
+CONFIG_NETFILTER_XT_MATCH_QUOTA2_LOG=y
 CONFIG_NETFILTER_XT_MATCH_SOCKET=y
 CONFIG_NETFILTER_XT_MATCH_STATISTIC=y
 CONFIG_NETFILTER_XT_MATCH_STRING=y
@@ -107,6 +120,8 @@ CONFIG_NETFILTER_XT_MATCH_TIME=y
 CONFIG_NETFILTER_XT_MATCH_U32=y
 CONFIG_NETFILTER_XT_TARGET_CONNMARK=y
 CONFIG_NETFILTER_XT_TARGET_IDLETIMER=y
+# netd passes --send_nl_msg, so its interface idle timers send uevents.
+CONFIG_NETFILTER_XT_TARGET_IDLETIMER_NL_MSG=y
 CONFIG_NETFILTER_XT_TARGET_MARK=y
 CONFIG_NETFILTER_XT_TARGET_NFLOG=y
 CONFIG_NETFILTER_XT_TARGET_NFQUEUE=y

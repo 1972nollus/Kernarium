@@ -9,3 +9,8 @@ patch	um-offer-a-touchscreen-only-VNC-input-option-for-Android-guests.patch
 patch	drm-virtio-offer-the-standard-32-bit-RGB-formats-as-a-plane-option.patch
 patch	memfd-selinux-call-security_inode_init_security_anon.patch
 patch	sched-psi-skip-the-privilege-check-when-SELinux-is-the-default.patch
+patch	cgroup-let-CAP_SYS_NICE-move-other-users-tasks-between-v1-cgroups.patch
+patch	vfs-add-d_canonical_path-for-stacked-filesystems.patch
+patch	fuse-add-support-for-d_canonical_path.patch
+patch	netfilter-xt_IDLETIMER-add-send_nl_msg-support.patch
+patch	netfilter-xt_quota2-add-the-quota2-match.patch
