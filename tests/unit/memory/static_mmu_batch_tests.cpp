@@ -954,6 +954,72 @@ void test_waiting_execution_context_cannot_enter_retired_generation()
 
 } // namespace
 
+/* A TLB miss resolves through its executor's execution context while the
+ * context is entered: same answer as the generation's own translation, for
+ * every access and every kind of page. Anything else (a context that is not
+ * entered, another generation, no context) is the generation's translation. */
+void test_an_entered_context_translates_as_its_generation_does()
+{
+	constexpr unsigned long generation = 319;
+	constexpr unsigned long other_generation = 320;
+	constexpr unsigned long page = DARWIN_UML_GUEST_PAGE_SIZE;
+	constexpr unsigned long base = 0x70'0000;
+	ScratchBacking backing{backing_name, 4 * page};
+	require(darwin_uml_static_vm_map_generation(generation,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0, page,
+		PROT_READ | PROT_WRITE, 0, 1) == 0);
+	require(darwin_uml_static_vm_map_generation(generation,
+		reinterpret_cast<void *>(base + page), backing.descriptor(), page,
+		page, PROT_READ, 0, 0) == 0);
+	require(darwin_uml_static_vm_map_generation(generation,
+		reinterpret_cast<void *>(base + 2 * page), backing.descriptor(),
+		2 * page, page, PROT_READ | PROT_EXEC, 1, 0) == 0);
+	require(darwin_uml_static_vm_map_generation(other_generation,
+		reinterpret_cast<void *>(base), backing.descriptor(), 3 * page,
+		page, PROT_READ | PROT_WRITE, 0, 1) == 0);
+
+	constexpr std::array accesses{DARWIN_UML_STATIC_READ,
+		DARWIN_UML_STATIC_WRITE, DARWIN_UML_STATIC_EXECUTE};
+	const auto agrees = [&](void *context, unsigned long asked) {
+		for (unsigned long offset = 0; offset < 4 * page;
+		     offset += page / 2) {
+			for (const auto access : accesses) {
+				void *expected = &backing;
+				void *found = &backing;
+				const int want = darwin_uml_static_vm_translate(
+					asked, base + offset + 8, access, &expected);
+				const int got =
+					darwin_uml_static_vm_execution_context_translate(
+						context, asked, base + offset + 8, access,
+						&found);
+				require(got == want && found == expected);
+			}
+		}
+	};
+
+	void *context = darwin_uml_static_vm_execution_context_create(generation);
+	require(context != nullptr);
+	agrees(context, generation);
+	require(darwin_uml_static_vm_execution_context_begin(context, base) == 0);
+	agrees(context, generation);
+	agrees(context, other_generation);
+	agrees(nullptr, generation);
+	void *own = nullptr;
+	void *other = nullptr;
+	require(darwin_uml_static_vm_execution_context_translate(context,
+		generation, base, DARWIN_UML_STATIC_WRITE, &own) ==
+		DARWIN_UML_STATIC_TRANSLATED);
+	require(darwin_uml_static_vm_execution_context_translate(context,
+		other_generation, base, DARWIN_UML_STATIC_WRITE, &other) ==
+		DARWIN_UML_STATIC_TRANSLATED);
+	require(own != nullptr && other != nullptr && own != other);
+	require(darwin_uml_static_vm_execution_context_end(context) == 0);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+	agrees(context, generation);
+	darwin_uml_static_vm_execution_context_destroy(context);
+	require(darwin_uml_static_vm_destroy(other_generation) == 0);
+}
+
 int main()
 {
 	test_additive_batch_does_not_stop_execution();
@@ -978,6 +1044,7 @@ int main()
 	test_page_index_hash_spreads_host_pages_under_a_masked_bucket_count();
 	test_retired_batch_cannot_commit_into_replacement_generation();
 	test_waiting_execution_context_cannot_enter_retired_generation();
+	test_an_entered_context_translates_as_its_generation_does();
 	std::puts("Static MMU batch tests passed");
 	return 0;
 }

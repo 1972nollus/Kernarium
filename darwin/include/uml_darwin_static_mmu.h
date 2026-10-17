@@ -81,6 +81,18 @@ int darwin_uml_static_vm_discard_if_stale(unsigned long address, int fd,
 int darwin_uml_static_vm_copy_from_buffer(unsigned long address,
 					   const void *buffer,
 					   unsigned long length);
+/* The same copy for a kernel write, a uaccess the kernel made through its own
+ * alias of the page. It publishes a code change for a guest-code page only
+ * once darwin_uml_static_vm_require_coherent_kernel_code_writes() was called:
+ * arm64 and AArch32 code see such a write only after their own instruction
+ * cache maintenance, which publishes it. */
+int darwin_uml_static_vm_copy_kernel_write(unsigned long address,
+					   const void *buffer,
+					   unsigned long length);
+/* Called before code whose instruction fetch is coherent with every store,
+ * x86 code, is first translated; from then on, for the life of the process,
+ * every kernel write into a guest-code page publishes a code change. */
+void darwin_uml_static_vm_require_coherent_kernel_code_writes(void);
 int darwin_uml_static_vm_retry_fault(unsigned long address, int execute,
 				     int write);
 int darwin_uml_static_vm_batch_begin(unsigned long generation);
@@ -96,6 +108,13 @@ int darwin_uml_static_vm_translate(unsigned long generation,
 				   unsigned long address,
 				   enum darwin_uml_static_access access,
 				   void **host_address);
+/* darwin_uml_static_vm_translate() through an execution context of the same
+ * generation: while the context is entered, a guest address is resolved from
+ * the generation it holds; otherwise, or for a null context, this is
+ * darwin_uml_static_vm_translate(). */
+int darwin_uml_static_vm_execution_context_translate(
+	void *context, unsigned long generation, unsigned long address,
+	enum darwin_uml_static_access access, void **host_address);
 /* Returns an opaque, mapping-lifetime handle for an executable physical page.
  * Callers may retain it only while their cached mapping sequence is current.
  */

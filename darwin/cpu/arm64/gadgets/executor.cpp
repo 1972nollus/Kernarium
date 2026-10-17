@@ -3198,6 +3198,7 @@ GadgetExecutor::~GadgetExecutor()
 		arm64::restore_native_fp_environment(*current_cpu_);
 	}
 	darwin_uml_static_vm_execution_context_destroy(execution_context_);
+	tlb_.execution_context = nullptr;
 	/* The caches let go of their address spaces before the executor stops
 	 * being one a reclaimer waits for. */
 	programs_.reset();
@@ -3325,6 +3326,7 @@ void *GadgetExecutor::execution_context(unsigned long generation)
 	execution_context_ =
 		darwin_uml_static_vm_execution_context_create(generation);
 	execution_generation_ = execution_context_ != nullptr ? generation : 0;
+	tlb_.execution_context = execution_context_;
 	const auto *sequence = execution_context_ != nullptr ?
 		darwin_uml_static_vm_execution_context_code_sequence(
 			execution_context_) : nullptr;

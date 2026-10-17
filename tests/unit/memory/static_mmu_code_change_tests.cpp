@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <sys/mman.h>
 #include <vector>
 
@@ -482,6 +483,70 @@ void test_a_published_page_moves_its_stamp()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+/* A kernel write into a guest-code page, the bytes a 4 KiB uaccess copies
+ * back from the kernel's alias, lands either way. It publishes no code change
+ * until code whose fetch is coherent with every store (x86) is about to run:
+ * arm64 code sees the write only after its own instruction cache maintenance,
+ * which publishes it. From then on it publishes the page and moves its stamp,
+ * as a plain copy always does. */
+void test_a_kernel_write_publishes_once_x86_code_may_run()
+{
+	constexpr unsigned long generation = 509;
+	constexpr unsigned long base = 0x180'0000;
+	ScratchBacking backing{backing_name, page};
+	map(generation, base, backing, 0, 1, rwx, 1);
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	Observer seen{generation};
+	void *handle = nullptr;
+	darwin_uml_static_code_page_stamp stamp{};
+	require(darwin_uml_static_vm_code_page(generation, base, &handle,
+		&stamp) == DARWIN_UML_STATIC_TRANSLATED);
+	const auto moved = [&] {
+		darwin_uml_static_code_page_stamp now{};
+		require(darwin_uml_static_vm_code_page_stamp(handle, &now) == 0);
+		const bool changed = now.version != stamp.version;
+		stamp = now;
+		return changed;
+	};
+	const auto holds = [&](unsigned long address, std::uint32_t expected) {
+		void *host = nullptr;
+		require(darwin_uml_static_vm_translate(generation, address,
+			DARWIN_UML_STATIC_READ, &host) ==
+			DARWIN_UML_STATIC_TRANSLATED);
+		std::uint32_t value{};
+		std::memcpy(&value, host, sizeof value);
+		return value == expected;
+	};
+
+	const std::uint32_t first = 0xd503'201fU;
+	require(darwin_uml_static_vm_copy_kernel_write(base + 8, &first,
+		sizeof first) == 0);
+	require(holds(base + 8, first));
+	seen.consume();
+	require_code(seen, 0, 0);
+	require(!moved());
+
+	/* A plain copy publishes whatever runs. */
+	const std::uint32_t second = 0xd503'3fdfU;
+	require(darwin_uml_static_vm_copy_from_buffer(base + 16, &second,
+		sizeof second) == 0);
+	require(holds(base + 16, second));
+	seen.consume();
+	require_code(seen, base, 1);
+	require(moved());
+
+	darwin_uml_static_vm_require_coherent_kernel_code_writes();
+	darwin_uml_static_vm_require_coherent_kernel_code_writes();
+	const std::uint32_t third = 0xd65f'03c0U;
+	require(darwin_uml_static_vm_copy_kernel_write(base + 8, &third,
+		sizeof third) == 0);
+	require(holds(base + 8, third));
+	seen.consume();
+	require_code(seen, base, 1);
+	require(moved());
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 } // namespace
 
 int main()
@@ -495,6 +560,7 @@ int main()
 	test_a_flush_publishes_the_whole_address_space();
 	test_discarding_a_stale_page_publishes_it();
 	test_a_published_page_moves_its_stamp();
+	test_a_kernel_write_publishes_once_x86_code_may_run();
 	std::puts("Static MMU code change tests passed");
 	return 0;
 }

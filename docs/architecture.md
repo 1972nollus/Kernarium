@@ -1149,6 +1149,9 @@ neighbouring pages in one set, so a crossing transfer can only miss and is
 recognized on the cold path. `arm64-tlb-probe-set` checks in both page
 profiles that every inline probe of both engines hits the entry the C++ fill
 path placed, in each way of its set, and misses a page its set does not hold.
+The gadget engine's fill path looks the page up in the generation its entered
+execution context holds (`darwin_uml_static_vm_execution_context_translate()`),
+without resolving the thread's address space and active generation each time.
 
 Guest debuggers depend on two kernel/host contracts. To single-step a task,
 Linux sets the architectural step bit in the entry registers (arm64 PSTATE.SS,

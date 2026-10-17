@@ -98,6 +98,9 @@ struct alignas(32) Tlb final {
 	 * next flush clears the whole table. Not read by generated code. */
 	std::uint32_t dirty_count{};
 	std::array<std::uint16_t, tlb_dirty_capacity> dirty_sets{};
+	/* The owning executor's static-MMU execution context, or null. A miss
+	 * resolves through it while it is entered. Not read by generated code. */
+	void *execution_context{};
 
 	Tlb();
 	void prepare(std::uint64_t next_generation, std::uint64_t next_changes);

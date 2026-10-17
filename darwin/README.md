@@ -184,6 +184,14 @@ CP15 one, compares the two after its native ISB, one load and a compare, and
 when they differ leaves translated code at its fall-through, so the next run
 revalidates and relinks first. The gadget A64 ISB leaves from inside its block
 and gives back the instructions after it; a gadget A32 block ends at its ISB.
+A kernel write into a guest-code page, such as a system call's output that a
+4 KiB uaccess copies back from the kernel's alias, likewise reaches arm64 code
+only through the guest's own IC IVAU or `cacheflush()`, as on hardware that
+advertises neither DIC nor IDC, and on 16 KiB pages. It publishes a code change
+of its own only once x86 code is about to run in the process, since x86 fetch
+sees every store; otherwise a process with an executable stack would publish
+one, and revalidate every translation, for each system call that writes its
+result there.
 
 Scalar forwarding keeps one write-through scalar result in host `x0` between
 adjacent declared gadgets. Assembly templates emit

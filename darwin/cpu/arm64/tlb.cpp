@@ -196,8 +196,8 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 		 * entering generated code. Keep execute translation precise here as
 		 * well without changing the assembly-visible two-way data TLB layout. */
 		void *translated = nullptr;
-		const auto result = darwin_uml_static_vm_translate(
-			static_cast<unsigned long>(generation),
+		const auto result = darwin_uml_static_vm_execution_context_translate(
+			execution_context, static_cast<unsigned long>(generation),
 			static_cast<unsigned long>(page), DARWIN_UML_STATIC_EXECUTE,
 			&translated);
 		if (result != DARWIN_UML_STATIC_TRANSLATED || translated == nullptr) {
@@ -225,8 +225,8 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 	void *translated = nullptr;
 	const auto host_access = access == Access::write ?
 		DARWIN_UML_STATIC_WRITE : DARWIN_UML_STATIC_READ;
-	const auto result = darwin_uml_static_vm_translate(
-		static_cast<unsigned long>(generation),
+	const auto result = darwin_uml_static_vm_execution_context_translate(
+		execution_context, static_cast<unsigned long>(generation),
 		static_cast<unsigned long>(page), host_access, &translated);
 	if (result != DARWIN_UML_STATIC_TRANSLATED || translated == nullptr) {
 		fault_address = address;
