@@ -96,14 +96,31 @@ no floating point or SIMD):
   packing and parallel arithmetic;
 - `memory`: single and multiple loads and stores at aligned and misaligned
   addresses, across 4 KiB and 16 KiB lines, at the ends of the data region, in
-  the read-only region and in unmapped memory, with writeback;
+  the read-only region and in unmapped memory, with writeback; and LDM, STM,
+  PUSH and POP of two, six, seven and the most registers under a condition
+  that fails and passes, within a page and across one;
 - `prefetch`: PLD, PLDW and PLI never fault;
+- `positions`: single-register and doubleword transfers, VLDR, VSTR, TBB and
+  TBH that fault after other instructions, some in a block a branch reaches:
+  unmapped, crossing from the read-only region into unmapped memory, and a
+  literal below the code region, the unmapped and literal ones also under a
+  condition that fails and passes, so an engine names the faulting
+  instruction by its place in the block; then LDM, STM, PUSH and POP,
+  unmapped and crossing from unmapped memory into the data region, and an
+  A32 STM that stores the PC, unmapped and where it stores, within a page
+  and across one, each also under a condition that fails and passes;
 - `exclusive`: LDREX/STREX and LDAEX/STLEX sequences, CLREX, misaligned and
   unmapped loads;
-- `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH, PC-writing loads and ALU
-  instructions, interworking both ways, jumps to unmapped addresses;
-- `conditions`: every condition against every NZCV, and every IT block;
-- `pc`: instructions that read the PC;
+- `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH (also in an IT block whose
+  condition passes and fails), PC-writing loads (the multiple ones also under
+  a condition that fails and passes) and ALU instructions, interworking both
+  ways, jumps to unmapped addresses;
+- `conditions`: every condition against every NZCV, every IT block, and
+  runs of one to four conditional instructions that fail and pass, under
+  every condition;
+- `pc`: instructions that read the PC, among them the PC as a register
+  operand under a condition that fails and passes and as the operand of an
+  ADD or SUB whose other operand is its destination;
 - `system`: barriers, hints, CPS, the APSR instructions, TPIDRURO, TPIDRURW,
   the CP15 barriers, BKPT and the encodings Linux turns into SIGTRAP;
 - `absent`: UNDEFINED, UNPREDICTABLE, unallocated and absent-feature
@@ -183,13 +200,15 @@ failing store-exclusive case again, a bounded number of times: when the only
 difference is a status of 1 where the pack has 0 and the store that did not
 happen, up to 16 attempts in all, in the gadget lane and the JIT lane alike.
 
-Two suites are recorded only from hardware: `unaligned` (172 cases:
-multi-word accesses at misaligned addresses) and `fpscr-reserved` (144
-cases: VMRS and VMSR with Stride and Len set, which an implementation may or
-may not hold). The producer refuses to record them as `qemu`, and nothing
-derives them from rules. Both are `pi4` records. The Cortex-A72 reads Stride
-and Len as zero and ignores writes to them, as the profile does, and a
-misaligned multi-word access raises SIGBUS at its first address.
+Three suites are recorded only from hardware: `unaligned` (172 cases:
+multi-word accesses at misaligned addresses), `positions-unaligned` (54
+cases: the `positions` transfers at a misaligned address) and
+`fpscr-reserved` (144 cases: VMRS and VMSR with Stride and Len set, which an
+implementation may or may not hold). The producer refuses to record them as
+`qemu`, and nothing derives them from rules. All are `pi4` records. The
+Cortex-A72 reads Stride and Len as zero and ignores writes to them, as the
+profile does, and a misaligned multi-word access raises SIGBUS at its first
+address.
 
 ## What the oracle's answers rest on
 

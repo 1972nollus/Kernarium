@@ -759,15 +759,21 @@ gadgets: Advanced SIMD does the lanes on the low half of a vector register, GE
 is the byte-lane mask CpuState keeps, and the saturating forms compute their
 saturation with lane arithmetic, because the saturating instructions would set
 FPSR.QC, which the guest reads in FPSCR. LDM, STM, PUSH and POP that cross a
-page, and the rare integer forms (USAD8, the dual multiplies, the 16-bit
-saturates and extends, QADD and its relatives), run through the
-shared AArch32 semantic library (`cpu/arm64/aarch32/semantics.hpp`): the
-`a32_library` gadget and the crossing paths spill NZCV, decode the word again
-and call `execute_a32`, which translates every page before a load changes a
+page, an STM that stores the PC, and the rare integer forms (USAD8, the dual
+multiplies, the 16-bit saturates and extends, QADD and its relatives), run
+through the shared AArch32 semantic library
+(`cpu/arm64/aarch32/semantics.hpp`): the `a32_library` gadget and the
+crossing paths spill NZCV, decode the word again and call `execute_a32`,
+which translates every page before a load changes a
 register, stores the words ahead of a faulting STM and leaves the base
 register as it was. LDREX and STREX, and LDAEX and STLEX, are the A64
 exclusive gadgets and share their forward-progress mechanism; LDA and STL are
-the A64 ordered ones. The library-exit counters name any lowered form that
+the A64 ordered ones. Like them, the single and doubleword transfers, VLDR,
+VSTR, TBB, TBH and the block transfers carry no key: their operand holds the
+instruction's position in bits 31:24
+(`darwin/cpu/arm64/gadgets/a32_layout.h`), which a fault reports as the A64
+transfers do, and a block transfer's crossing path passes it to the library
+in place of the key. The library-exit counters name any lowered form that
 reaches the library, and the unit tests require none does.
 
 VFP and Advanced SIMD are lowered onto the A64 instructions with the same
@@ -1104,19 +1110,27 @@ same-generation stale programs are reused only after exact page-bounded word
 validation. On arm64, `DARWIN_UML_GADGET_SHARED_BODIES=1` shares an address
 space's bodies and link state among every executor running it, while each
 executor keeps its own slots and retirement order; sharing is off by default,
-as [`../darwin/README.md`](../darwin/README.md) records. Cached
+as [`../darwin/README.md`](../darwin/README.md) records. An address space a
+single executor keeps to itself sweeps its link records and indirect sites once
+they number half again what its last sweep kept and enough of its translations
+have left the cache to have left some unnamed: one that no resident
+translation's stream names and that is no resident block's own record is
+released for reuse, and the site cells and target-table entries naming it are
+emptied, so link state follows what the cache holds rather than all the code
+the address space ever ran. A shared address space is not swept. Cached
 returns consult a private per-carrier return-record ring after their site
 cells miss: linked calls push the return PC with its block link, a matching
 record follows that link and fills an empty cell of the site, and the executor
-empties the ring on every address-space switch, so a stale record can only
-fall back to the ordinary miss exit. A cached indirect branch whose cells (and,
-for a return, ring) miss then looks the target up in its address space's
-direct-mapped target table, which every miss exit trains with the target's
-block link; a hit follows that link and likewise fills only an empty cell, so
-vCPUs sharing a polymorphic site do not keep rewriting it, while the miss exit
-retrains its cells round-robin. The table belongs to the address space's link
-state and is retired with it, so it never names another address space's code,
-and a link reset by a code change leaves through its ordinary unlinked exit.
+empties the ring on every address-space switch and after a link sweep, so a
+stale record can only fall back to the ordinary miss exit. A cached indirect
+branch whose cells (and, for a return, ring) miss then looks the target up in
+its address space's direct-mapped target table, which every miss exit trains
+with the target's block link; a hit follows that link and likewise fills only
+an empty cell, so vCPUs sharing a polymorphic site do not keep rewriting it,
+while the miss exit retrains its cells round-robin. The table belongs to the
+address space's link state and is retired with it, so it never names another
+address space's code, and a link reset by a code change leaves through its
+ordinary unlinked exit.
 The software TLB keys its entries by guest page number. A same-page transfer
 compares the page of its final byte against the way its first byte indexes: the
 16 KiB direct-mapped index never places neighbouring pages in one set, so a

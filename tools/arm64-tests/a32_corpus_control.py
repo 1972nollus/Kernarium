@@ -13,11 +13,15 @@ is affine over GF(2), including the J1/J2 XOR of the Thumb branches) and
 solving for the offset the layout needs.
 
 - branch: B, BL, BLX and BX in both instruction sets, conditional branches
-  under passing and failing flags, CBZ/CBNZ, TBB/TBH, loads and ALU
-  instructions that write the PC, interworking in both directions and jumps
-  to unmapped addresses;
-- conditions: every condition against every NZCV, and every IT block;
-- pc: instructions that read the PC.
+  under passing and failing flags, CBZ/CBNZ, TBB/TBH (also in an IT block
+  whose condition passes and fails), loads and ALU instructions that write
+  the PC (the multiple loads also under a condition that fails and passes),
+  interworking in both directions and jumps to unmapped addresses;
+- conditions: every condition against every NZCV, every IT block, and runs
+  of conditional instructions of two to eleven stream words that a skip steps
+  over, under every condition;
+- pc: instructions that read the PC, among them the PC as a register operand
+  under a condition that fails and passes.
 """
 
 from __future__ import annotations
@@ -354,6 +358,25 @@ def table_branches(context, suite, results):
                      (0, 1, 2, 0)[index], data_patches=patches)
 
 
+def conditional_table_branches(context, suite, results):
+    """TBB and TBH under IT EQ, from a table in the data region: skipped, they fall through both
+    fillers; taken, they leave instructions behind them in their block."""
+    for name, scale in (("TBB_T1", 1), ("TBH_T1", 2)):
+        form = form_named(context, name)
+        fields = fields_of(form)
+        base = base_word(context, form)[0]
+        entries = [4, 2, 0, 4][:4 // scale]
+        table = b"".join(bytes([e]) if scale == 1 else struct.pack("<H", e) for e in entries)
+        word = set_field(set_field(base, *fields["Rn"], 1), *fields["Rm"], 2)
+        for passes in (False, True):
+            for index in range(len(entries)) if passes else (0,):
+                prog = Prog().half(0xBF08).insn(word, "T32").half(*FILL_T).half(*FILL2_T).tail(THUMB)
+                executed = (0, 1, 2, 0)[index] if passes else 2
+                make(results, suite, f"{name}/it-eq{'p' if passes else 'f'}i{index}", name, THUMB, prog,
+                     {"r1": D + 0x100, "r2": index, "apsr": 0x40000000 if passes else 0}, executed,
+                     target=1, retired=3 + executed, data_patches=[(0x100, table)])
+
+
 # Loads and ALU instructions that write the PC ----------------------------------------------------------
 
 
@@ -414,6 +437,42 @@ def pc_loads(context, suite, results):
                 make(results, suite, f"{form.name}/{count}{target_state}", form.name, state,
                      prog.tail(target_state), aim, check=False,
                      data_patches=[(slot - D, struct.pack("<I", CODE + landing + (target_state == THUMB)))])
+
+
+def conditional_pc_loads(context, suite, results):
+    """The multiple loads of the PC under EQ (in A32) or IT EQ (in Thumb): a failing condition
+    runs the filler, a passing one lands past it."""
+    for form in context.model.forms:
+        if (form.encoding is None or form.level != "base" or "load_pc" not in form.traits
+                or MULTIPLE.fullmatch(mnemonic(form.name)) is None):
+            continue
+        isa = form.encoding.isa
+        state = ARM if isa == "A32" else THUMB
+        for word in candidate_words(context, form, 16):
+            forced = force_pc_in_list(form, word)
+            if forced is None:
+                continue
+            if isa == "A32":
+                forced = set_field(forced, 28, 4, 14)
+            found = usable(context, form, forced, True)
+            if found is None:
+                continue
+            word, operands = found
+            address = D + 0x1040
+            aim = solve_multiple(operands, multiple_mode(form.name), address)
+            slot = address + 4 * (bin(operands["registers"]).count("1") - 1)
+            for passes in (False, True):
+                prog = Prog()
+                if state == THUMB:
+                    prog.half(0xBF08)
+                prog.insn(set_field(word, 28, 4, 0) if state == ARM else word, isa).fill(state)
+                landing = prog.here
+                apsr = cond_flags(0, passes, len(results))
+                make(results, suite, f"{form.name}/eq{'p' if passes else 'f'}", form.name, state,
+                     prog.tail(state), {**aim, "apsr": apsr}, target=1 if state == THUMB else 0,
+                     check=False, retired=(state == THUMB) + (2 if passes else 3),
+                     data_patches=[(slot - D, struct.pack("<I", CODE + landing + (state == THUMB)))])
+            break
 
 
 # ALU instructions with the PC as destination: the result must be the landing address.
@@ -575,16 +634,165 @@ def pc_reads(context, suite, results):
                      retired=lead + 2, check=False, target=lead)
 
 
+# PC as an unshifted register operand: the second operand of any operation, the
+# first of a commuting one or of SUB and RSB, flag-setting and conditional, and
+# [PC, Rm] addressing, with the forms beside them that keep the PC in a register
+# (a shift, a subtracted index, an operation that does not commute). The loads'
+# index puts the address in the data region, or past it for a fault.
+PC_OPERANDS_A = (
+    (0xE082100F, {}), (0xE052100F, {}), (0xE022100F, {}), (0xE1E0000F, {}),
+    (0xE1B0000F, {}), (0xE151000F, {}), (0xE0D2100F, {}), (0xE09F1002, {}),
+    (0xE0AF1002, {}), (0xE01F1002, {}), (0xE06F1002, {}), (0xE07F1002, {}),
+    (0xE05F1002, {}), (0xE11F0001, {}), (0xE13F0001, {}), (0xE17F0001, {}),
+    (0xE1CF1002, {}), (0xE08F1102, {}), (0x008F1002, {}), (0x1082100F, {}),
+    (0xE79F0001, {"r1": 0x01000000}), (0xE7DF0001, {"r1": 0x01000001}),
+    (0xE19F00B1, {"r1": 0x01000002}), (0xE78F0001, {"r1": 0x01000000}),
+    (0xE79F0101, {"r1": 0x00400000}), (0xE71F0001, {"r1": 0xFF000000}),
+)
+PC_OPERANDS_T = (0x447B0000, 0x44FC0000)
+# Each fold under EQ, whose condition fails and passes: data processing that
+# sets no flags runs as a select, everything else behind a skip.
+PC_CONDITIONAL_A = (
+    (0x0082100F, {}), (0x0042100F, {}), (0x0022100F, {}), (0x01A0000F, {}), (0x01E0000F, {}),
+    (0x008F1002, {}), (0x000F1002, {}), (0x00AF1002, {}), (0x004F1002, {}), (0x006F1002, {}),
+    (0x011F0001, {}), (0x079F0001, {"r1": 0x01000000}), (0x078F0001, {"r1": 0x01000000}),
+    (0x019F00B1, {"r1": 0x01000002}),
+)
+PC_CONDITIONAL_T = (0x46780000, 0x447B0000, 0x44FC0000)
+# Each fold whose other operand is its destination, which an in-place ADD or SUB
+# of an immediate would run (ADD, ADDS, SUB and RSB, which becomes a SUB).
+PC_IN_PLACE_A = (0xE08F1001, 0xE081100F, 0xE091100F, 0xE041100F, 0xE06F1001)
+
+
+def pc_operands(context, suite, results):
+    for word, initial in PC_OPERANDS_A:
+        result, _operands = context.reference.operands("A32", word, 0, "complete", FEATURES)
+        if result.status == "undefined":
+            raise ValueError(f"{word:08x} is not a legal A32 word")
+        for lead in (0, 1, 2, 3):
+            prog = Prog()
+            for _ in range(lead):
+                prog.word(0xE320F000)
+            prog.insn(word, "A32").tail(ARM)
+            make(results, suite, f"{result.form}/{word:08x}.{lead}", result.form, ARM, prog,
+                 initial, retired=lead + 2, check=False, target=lead)
+    # A load whose [PC, Rm] address is unmapped faults at the instruction.
+    for lead in (0, 1):
+        prog = Prog()
+        for _ in range(lead):
+            prog.word(0xE320F000)
+        prog.insn(0xE79F0001, "A32").tail(ARM)
+        make(results, suite, f"LDR_r_A1_off/e79f0001.fault{lead}", "LDR_r_A1_off", ARM, prog,
+             {"r1": 0x11000000}, fault_retired=lead, target=lead)
+    for word in PC_OPERANDS_T:
+        result, _operands = context.reference.operands("T16", word, 0, "complete", FEATURES)
+        if result.status == "undefined":
+            raise ValueError(f"{word:08x} is not a legal T16 word")
+        for lead in (0, 1, 2, 3):
+            prog = Prog()
+            for _ in range(lead):
+                prog.half(NOP_T)
+            prog.insn(word, "T16").tail(THUMB)
+            make(results, suite, f"{result.form}/{word:08x}.{lead}", result.form, THUMB, prog, {},
+                 retired=lead + 2, check=False, target=lead)
+    for word, initial in PC_CONDITIONAL_A:
+        result, _operands = context.reference.operands("A32", word, 0, "complete", FEATURES)
+        if result.status == "undefined":
+            raise ValueError(f"{word:08x} is not a legal A32 word")
+        for flags in (0, 0x40000000):
+            for lead in (0, 1):
+                prog = Prog()
+                for _ in range(lead):
+                    prog.word(0xE320F000)
+                prog.insn(word, "A32").tail(ARM)
+                make(results, suite, f"{result.form}/{word:08x}.eq{flags >> 28:x}.{lead}", result.form, ARM,
+                     prog, {**initial, "apsr": flags}, retired=lead + 2, check=False, target=lead)
+    for word in PC_CONDITIONAL_T:
+        result, _operands = context.reference.operands("T16", word, 0, "complete", FEATURES)
+        if result.status == "undefined":
+            raise ValueError(f"{word:08x} is not a legal T16 word")
+        for flags in (0, 0x40000000):
+            for lead in (0, 1):
+                prog = Prog()
+                for _ in range(lead):
+                    prog.half(NOP_T)
+                prog.half(0xBF08).insn(word, "T16").tail(THUMB)
+                make(results, suite, f"{result.form}/{word:08x}.it-eq{flags >> 28:x}.{lead}", result.form,
+                     THUMB, prog, {"apsr": flags}, retired=lead + 3, check=False, target=lead + 1)
+    # ADD Rdn, PC under IT EQ, whose condition fails and passes.
+    for flags in (0, 0x40000000):
+        for lead in (0, 1):
+            prog = Prog()
+            for _ in range(lead):
+                prog.half(NOP_T)
+            prog.half(0xBF08).insn(0x44780000, "T16").tail(THUMB)
+            make(results, suite, f"ADD_r_T2/it-eq-{flags >> 28:x}.{lead}", "ADD_r_T2", THUMB, prog,
+                 {"apsr": flags}, retired=lead + 3, check=False, target=lead + 1)
+    for word in PC_IN_PLACE_A:
+        result, _operands = context.reference.operands("A32", word, 0, "complete", FEATURES)
+        if result.status == "undefined":
+            raise ValueError(f"{word:08x} is not a legal A32 word")
+        for lead in (0, 1, 2, 3):
+            prog = Prog()
+            for _ in range(lead):
+                prog.word(0xE320F000)
+            prog.insn(word, "A32").tail(ARM)
+            make(results, suite, f"{result.form}/{word:08x}.{lead}", result.form, ARM, prog, {},
+                 retired=lead + 2, check=False, target=lead)
+
+
+# Runs of conditional instructions that a skip steps over, of two to eleven
+# stream words: MUL (two words) and LDM of one register in A32 or two in T32
+# (three), then an unconditional ADD the stream resumes at. Each run is under
+# its own condition, A32 and Thumb seven apart, so the runs cover every
+# condition.
+SKIP_RUNS = ("M", "L", "MM", "ML", "LL", "MML", "MLL", "LLL", "MMML", "MLLL")
+CONDITION_NAMES = ("eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le")
+
+
+def it_all_then(firstcond: int, count: int) -> int:
+    """IT with `count` instructions, all under `firstcond`."""
+    then = (firstcond & 1) * ((1 << (count - 1)) - 1) << (5 - count)
+    return 0xBF00 | firstcond << 4 | then | 1 << (4 - count)
+
+
+def skip_runs(context, suite, results):
+    for passes in (False, True):
+        for index, run in enumerate(SKIP_RUNS):
+            outcome = "p" if passes else "f"
+            condition = index % 14
+            flags = cond_flags(condition, passes, index)
+            prog = Prog()
+            for kind in run:  # mul<c> r1, r1, r2 / ldm<c> r8, {r3}
+                prog.word(condition << 28 | (0x00010291 if kind == "M" else 0x08980008))
+            prog.word(0xE2844001).tail(ARM)  # add r4, r4, #1
+            make(results, suite, f"skip/a-{run}.{CONDITION_NAMES[condition]}{outcome}",
+                 "MUL_A1" if run[0] == "M" else "LDM_A1", ARM, prog,
+                 {"apsr": flags, "r4": 7, "r8": D + 0x100}, check=False, retired=len(run) + 2,
+                 expect={"r4": 1})
+            condition = (index + 7) % 14
+            flags = cond_flags(condition, passes, index + 7)
+            prog = Prog().half(it_all_then(condition, len(run)))
+            for kind in run:  # mul r1, r1, r2 / ldm.w r8, {r3, r5}
+                prog.half(*((0xFB01, 0xF102) if kind == "M" else (0xE898, 0x0028)))
+            prog.half(0x3401).tail(THUMB)  # adds r4, #1
+            make(results, suite, f"skip/t-{run}.{CONDITION_NAMES[condition]}{outcome}", "IT_T1", THUMB,
+                 prog, {"apsr": flags, "r4": 7, "r8": D + 0x100}, check=False, retired=len(run) + 3,
+                 expect={"r4": 1})
+
+
 def suite_conditions(context: Context) -> list[Case]:
     results: list[Case] = []
     condition_table(context, "conditions", results)
     it_blocks(context, "conditions", results)
+    skip_runs(context, "conditions", results)
     return results
 
 
 def suite_pc(context: Context) -> list[Case]:
     results: list[Case] = []
     pc_reads(context, "pc", results)
+    pc_operands(context, "pc", results)
     return results
 
 
@@ -599,6 +807,8 @@ def suite_branch(context: Context) -> list[Case]:
     pc_loads(context, suite, results)
     alu_pc_writes(context, suite, results)
     unmapped_targets(context, suite, results)
+    conditional_table_branches(context, suite, results)
+    conditional_pc_loads(context, suite, results)
     return results
 
 

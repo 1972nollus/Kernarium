@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Synchronize a checked Kernarium device tree into an AOSP or OrangeFox workspace."""
+"""Synchronize the checked Kernarium device overlay into the AOSP workspace."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from pathlib import Path, PurePosixPath
 
 
 DESTINATION = PurePosixPath("device/kernarium/darwin")
-GENERATED_KERNEL = PurePosixPath("prebuilt/kernel")
 
 
 @dataclass(frozen=True)
@@ -23,15 +22,9 @@ class Tree:
     source: str
     workspace: str
     label: str
-    prebuilt_kernel: bool
 
 
-TREES = {
-    "overlay": Tree("overlay", "AOSP source", "device overlay", False),
-    "orangefox": Tree(
-        "third_party/orangefox/device", "OrangeFox source", "OrangeFox device tree", True
-    ),
-}
+TREES = {"overlay": Tree("overlay", "AOSP source", "device overlay")}
 
 
 def fail(message: str) -> None:
@@ -71,16 +64,11 @@ def inventory(root: Path) -> dict[PurePosixPath, tuple[str, int, bytes | None]]:
     return result
 
 
-def verify(source: Path, destination: Path, allow_kernel: bool) -> None:
+def verify(source: Path, destination: Path) -> None:
     if not destination.is_dir() or destination.is_symlink():
         fail(f"destination is missing or unsafe: {destination}")
     source_entries = inventory(source)
     destination_entries = inventory(destination)
-    if allow_kernel and GENERATED_KERNEL in destination_entries:
-        kind, mode, payload = destination_entries.pop(GENERATED_KERNEL)
-        if kind != "file" or not mode & 0o111 or not payload:
-            fail("generated prebuilt kernel is not a nonempty executable regular file")
-        destination_entries.pop(GENERATED_KERNEL.parent, None)
     if source_entries.keys() != destination_entries.keys():
         missing = sorted(str(path) for path in source_entries.keys() - destination_entries.keys())
         extra = sorted(str(path) for path in destination_entries.keys() - source_entries.keys())
@@ -107,7 +95,7 @@ def synchronize(source: Path, destination: Path) -> None:
         shutil.rmtree(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source, destination, copy_function=shutil.copy2)
-    verify(source, destination, False)
+    verify(source, destination)
 
 
 def main() -> None:
@@ -116,13 +104,8 @@ def main() -> None:
     parser.add_argument("--tree", choices=sorted(TREES), required=True)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--verify", action="store_true")
-    parser.add_argument("--allow-prebuilt-kernel", action="store_true")
     args = parser.parse_args()
     tree = TREES[args.tree]
-    if args.allow_prebuilt_kernel and not tree.prebuilt_kernel:
-        fail(f"--allow-prebuilt-kernel is invalid for the {args.tree} tree")
-    if args.allow_prebuilt_kernel and not args.verify:
-        fail("--allow-prebuilt-kernel is valid only with --verify")
 
     android_root = checked_root(args.android_root, "Android policy root")
     workspace = checked_root(args.workspace, tree.workspace)
@@ -138,7 +121,7 @@ def main() -> None:
         fail(f"device destination escapes the {tree.workspace}")
 
     if args.verify:
-        verify(source, destination, args.allow_prebuilt_kernel)
+        verify(source, destination)
         print(f"verified exact {tree.label}: {destination}")
     else:
         synchronize(source, destination)

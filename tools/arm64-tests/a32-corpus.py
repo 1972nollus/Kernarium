@@ -71,7 +71,7 @@ HEADER_DEFAULTS = {"k": 1}
 # unaligned addresses, which qemu-arm refuses and an arm64 Linux kernel fixes
 # up for a compat task, and the FPSCR bits (Stride, Len, FZ16) an
 # implementation may or may not hold.
-HARDWARE_ONLY = {"unaligned", "fpscr-reserved"}
+HARDWARE_ONLY = {"unaligned", "fpscr-reserved", "positions-unaligned"}
 
 
 def json_line(value) -> str:

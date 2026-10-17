@@ -10,12 +10,11 @@ TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 DISK_TOOL="$ANDROID_ROOT/tools/ubd-disk.py"
 BOOT_IMAGE_TOOL="$ANDROID_ROOT/tools/boot-image.py"
 INITRAMFS_VERIFIER="$ANDROID_ROOT/tools/verify-initramfs.py"
-RECOVERY_VERIFIER="$ANDROID_ROOT/tools/verify-orangefox-recovery.py"
+RECOVERY_VERIFIER="$ANDROID_ROOT/tools/verify-lineage-recovery.py"
 
 TARGET_FILES=
 KERNEL_ARTIFACT=
 MKBOOTFS=
-RECOVERY_IMAGE=
 MKBOOTIMG=
 OUTPUT=
 WORK_DIR=
@@ -30,15 +29,14 @@ Usage: android/lineage-24/build/assemble-image.sh \
        --target-files ABSOLUTE_PATH \
        --kernel-artifact ABSOLUTE_PATH \
        --mkbootfs ABSOLUTE_PATH \
-       --recovery-image ABSOLUTE_PATH \
        --mkbootimg ABSOLUTE_PATH \
        --output ABSOLUTE_PATH
 
 Run locally on the x86_64 Linux builder after build-aosp.sh. The target-files
 staging directory must remain beside its .zip archive. The generic and UML
 first-stage ramdisks are composed into one raw newc ramdisk, wrapped in a
-kernelless boot-image v4 init_boot partition. The separately built, verified
-OrangeFox image replaces the target-files stock recovery. The output is a new
+kernelless boot-image v4 init_boot partition. The target files' own LineageOS
+recovery image, verified here, is the recovery partition. The output is a new
 raw GPT disk; an existing path is never replaced.
 EOF
 }
@@ -68,11 +66,6 @@ while [[ $# -gt 0 ]]; do
 		MKBOOTFS=$2
 		shift 2
 		;;
-	--recovery-image)
-		[[ $# -ge 2 ]] || fail "--recovery-image requires a path"
-		RECOVERY_IMAGE=$2
-		shift 2
-		;;
 	--mkbootimg)
 		[[ $# -ge 2 ]] || fail "--mkbootimg requires a path"
 		MKBOOTIMG=$2
@@ -94,13 +87,11 @@ done
 [[ -n "$TARGET_FILES" ]] || fail "--target-files is required"
 [[ -n "$KERNEL_ARTIFACT" ]] || fail "--kernel-artifact is required"
 [[ -n "$MKBOOTFS" ]] || fail "--mkbootfs is required"
-[[ -n "$RECOVERY_IMAGE" ]] || fail "--recovery-image is required"
 [[ -n "$MKBOOTIMG" ]] || fail "--mkbootimg is required"
 [[ -n "$OUTPUT" ]] || fail "--output is required"
 absolute_path "target-files archive" "$TARGET_FILES"
 absolute_path "kernel artifact" "$KERNEL_ARTIFACT"
 absolute_path "mkbootfs" "$MKBOOTFS"
-absolute_path "OrangeFox recovery image" "$RECOVERY_IMAGE"
 absolute_path "mkbootimg" "$MKBOOTIMG"
 absolute_path "output disk" "$OUTPUT"
 [[ "$(uname -s)" == Linux ]] || fail "builder host must be Linux"
@@ -109,7 +100,7 @@ absolute_path "output disk" "$OUTPUT"
 [[ -x "$DISK_TOOL" ]] || fail "UBD disk tool is missing"
 [[ -x "$BOOT_IMAGE_TOOL" ]] || fail "boot-image verifier is missing"
 [[ -x "$INITRAMFS_VERIFIER" ]] || fail "initramfs verifier is missing"
-[[ -x "$RECOVERY_VERIFIER" ]] || fail "OrangeFox recovery verifier is missing"
+[[ -x "$RECOVERY_VERIFIER" ]] || fail "LineageOS recovery verifier is missing"
 [[ -f "$LAYOUT" ]] || fail "fixed UBD partition layout is missing"
 [[ -f "$TARGET_FILES" && ! -L "$TARGET_FILES" ]] ||
 	fail "target-files archive must be a regular non-symlink file"
@@ -118,8 +109,6 @@ absolute_path "output disk" "$OUTPUT"
 KERNEL_ELF="$KERNEL_ARTIFACT/kernel/vmlinux"
 [[ -f "$KERNEL_ELF" && ! -L "$KERNEL_ELF" ]] ||
 	fail "kernel artifact ELF must be a regular non-symlink file"
-[[ -f "$RECOVERY_IMAGE" && ! -L "$RECOVERY_IMAGE" ]] ||
-	fail "OrangeFox recovery must be a regular non-symlink file"
 [[ -f "$MKBOOTFS" && -x "$MKBOOTFS" ]] || fail "mkbootfs is not executable"
 [[ -f "$MKBOOTIMG" && -x "$MKBOOTIMG" ]] || fail "mkbootimg is not executable"
 case "$TARGET_FILES" in
@@ -130,6 +119,9 @@ TARGET_FILES_DIR=${TARGET_FILES%.zip}
 IMAGES_DIR="$TARGET_FILES_DIR/IMAGES"
 [[ -d "$IMAGES_DIR" && ! -L "$IMAGES_DIR" ]] ||
 	fail "target-files IMAGES staging directory is missing"
+RECOVERY_IMAGE="$IMAGES_DIR/recovery.img"
+[[ -f "$RECOVERY_IMAGE" && ! -L "$RECOVERY_IMAGE" ]] ||
+	fail "target-files recovery image must be a regular non-symlink file"
 RAMDISK_SOURCE="$TARGET_FILES_DIR/INIT_BOOT/RAMDISK"
 VENDOR_FSTAB="$TARGET_FILES_DIR/VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml"
 FILESYSTEM_CONFIG_SOURCE="$TARGET_FILES_DIR/META/init_boot_filesystem_config.txt"
@@ -181,7 +173,6 @@ EOF
 "$RECOVERY_VERIFIER" --android-root "$ANDROID_ROOT" --image "$RECOVERY_IMAGE"
 "$DISK_TOOL" assemble --layout "$LAYOUT" --images-dir "$IMAGES_DIR" \
 	--image "init_boot=$INIT_BOOT_IMAGE" \
-	--image "recovery=$RECOVERY_IMAGE" \
 	--blank-partition metadata --blank-partition misc --output "$OUTPUT"
 "$BOOT_IMAGE_TOOL" verify --layout "$LAYOUT" --disk "$OUTPUT" \
 	--partition init_boot --ramdisk "$RAMDISK"

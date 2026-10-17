@@ -612,10 +612,10 @@ def emit_select(asm: Assembly) -> None:
 # ---------------------------------------------------------------------------
 # Memory
 
-# A memory gadget's stream is [gadget][key of the instruction][operand word
-# ...]: the key is read together with the first operand by one LDP, into x21
-# (which survives the translation helpers), and a fault exits through
-# La32_memory_fault with it as the PC.
+# A memory gadget's stream is [gadget][operand word ...]. The operand holds
+# the instruction's position in its block at bit 24 (a32_layout.h), and x19
+# keeps it through the translation helpers: a fault exits through
+# La32_position_fault, which makes the position the PC.
 ADDRESS_MODES = ["i", "ipre", "ipost", "ra", "rs", "rapre", "rspre",
                  "rapost", "rspost"]
 
@@ -625,7 +625,7 @@ def address_lines(mode: str) -> tuple[list[str], bool]:
     from the operand word in x19; returns (lines, writes_back).
 
       imm modes   rt[0:8] rn[8:16] imm32[32:64]
-      reg modes   rt[0:8] rn[8:16] rm[16:24] lsl-amount[24:30]
+      reg modes   rt[0:8] rn[8:16] rm[16:24] lsl-amount[32:38]
       abs         rt[0:8] address[32:64]
     """
     if mode == "abs":
@@ -642,7 +642,7 @@ def address_lines(mode: str) -> tuple[list[str], bool]:
             lines += ["mov w7, w9", "add w20, w9, w10"]
         return (lines, True)
     lines += ["ubfx x10, x19, #16, #8", "ldr w10, [_cpu, x10]",
-              "ubfx x11, x19, #24, #6", "lsl w10, w10, w11"]
+              "ubfx x11, x19, #32, #6", "lsl w10, w10, w11"]
     operation = "add" if mode[1] == "a" else "sub"
     if mode in ("ra", "rs"):
         lines.append(f"{operation} w7, w9, w10")
@@ -676,11 +676,11 @@ def load_single(name: str, size: str, mode: str) -> str:
     byte_count, load, cross_extract, extend = LOAD_SIZES[size]
     address, writes_back = address_lines(mode)
     label = name
-    lines = ["ldp x21, x19, [_stream], #16"] + address
+    lines = ["ldr x19, [_stream], #8"] + address
     lines.append(
         f"a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, {byte_count},"
         f" x7, Lcold_{label}, Lresume_{label}, Lcross_{label}, 0,"
-        f" fault=La32_memory_fault")
+        f" fault=La32_position_fault")
     lines += [load, "and x8, x19, #0xff", "str w0, [_cpu, x8]"]
     if writes_back:
         lines += writeback_lines()
@@ -688,11 +688,11 @@ def load_single(name: str, size: str, mode: str) -> str:
     lines.append(
         f"a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
-        f" 0, fault=La32_memory_fault")
+        f" 0, fault=La32_position_fault")
     if byte_count > 1:
         lines.append(f"Lcross_{label}:")
         lines.append(f"transfer_slow 0, x7, {byte_count},"
-                     f" fault=La32_memory_fault")
+                     f" fault=La32_position_fault")
         lines.append(cross_extract)
         if extend:
             lines.append(extend)
@@ -707,11 +707,11 @@ def store_single(name: str, size: str, mode: str) -> str:
     byte_count, store, cross_pack = STORE_SIZES[size]
     address, writes_back = address_lines(mode)
     label = name
-    lines = ["ldp x21, x19, [_stream], #16"] + address
+    lines = ["ldr x19, [_stream], #8"] + address
     lines.append(
         f"a32_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
-        f" 0, fault=La32_memory_fault")
+        f" 0, fault=La32_position_fault")
     lines += ["and x8, x19, #0xff", "ldr w0, [_cpu, x8]", store]
     if writes_back:
         lines += writeback_lines()
@@ -719,12 +719,12 @@ def store_single(name: str, size: str, mode: str) -> str:
     lines.append(
         f"a32_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
-        f" 0, fault=La32_memory_fault")
+        f" 0, fault=La32_position_fault")
     if byte_count > 1:
         lines.append(f"Lcross_{label}:")
         lines += ["and x8, x19, #0xff", "ldr w0, [_cpu, x8]", cross_pack,
                   f"transfer_slow 1, x7, {byte_count},"
-                  f" fault=La32_memory_fault"]
+                  f" fault=La32_position_fault"]
         if writes_back:
             lines += writeback_lines()
         lines.append("next_gadget")
@@ -744,7 +744,7 @@ def emit_single(asm: Assembly) -> None:
 
 # LDRD and STRD move two words that must be word aligned (a32lsmd): the
 # stream is as a single transfer's, with rt[0:8] and rt2[8:16] in place of
-# the data register, and rn at [16:24], rm at [24:32] (lsl amount 0 only).
+# the data register, and rn at [16:24], rm at [32:40] (lsl amount 0 only).
 DOUBLE_MODES = ["i", "ipre", "ipost", "ra", "rs", "rapre", "rspre",
                 "rapost", "rspost", "abs"]
 
@@ -753,7 +753,7 @@ def double_address_lines(mode: str) -> tuple[list[str], bool]:
     """As address_lines, for the doubleword layout:
 
       imm modes   rt[0:8] rt2[8:16] rn[16:24] imm32[32:64]
-      reg modes   rt[0:8] rt2[8:16] rn[16:24] rm[24:32]
+      reg modes   rt[0:8] rt2[8:16] rn[16:24] rm[32:40]
       abs         rt[0:8] rt2[8:16] address[32:64]
     """
     if mode == "abs":
@@ -769,7 +769,7 @@ def double_address_lines(mode: str) -> tuple[list[str], bool]:
         else:
             lines += ["mov w7, w9", "add w20, w9, w10"]
         return (lines, True)
-    lines += ["ubfx x10, x19, #24, #8", "ldr w10, [_cpu, x10]"]
+    lines += ["ubfx x10, x19, #32, #8", "ldr w10, [_cpu, x10]"]
     operation = "add" if mode[1] == "a" else "sub"
     if mode in ("ra", "rs"):
         lines.append(f"{operation} w7, w9, w10")
@@ -787,12 +787,12 @@ def double_writeback() -> list[str]:
 
 def load_double(name: str, mode: str) -> str:
     address, writes_back = double_address_lines(mode)
-    lines = ["ldp x21, x19, [_stream], #16"] + address
+    lines = ["ldr x19, [_stream], #8"] + address
     lines += ["tst w7, #3", "b.ne Lalign_" + name]
     lines.append(
         f"a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-        f" fault=La32_memory_fault")
+        f" fault=La32_position_fault")
     lines += ["ldp w0, w15, [x7]", "and x8, x19, #0xff",
               "ubfx x9, x19, #8, #8", "str w0, [_cpu, x8]",
               "str w15, [_cpu, x9]"]
@@ -802,27 +802,27 @@ def load_double(name: str, mode: str) -> str:
     lines.append(
         f"a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-        f" fault=La32_memory_fault")
+        f" fault=La32_position_fault")
     lines.append(f"Lcross_{name}:")
-    lines += ["transfer_slow 0, x7, 8, fault=La32_memory_fault",
+    lines += ["transfer_slow 0, x7, 8, fault=La32_position_fault",
               "umov x15, v0.d[0]", "and x8, x19, #0xff",
               "ubfx x9, x19, #8, #8", "str w15, [_cpu, x8]",
               "lsr x15, x15, #32", "str w15, [_cpu, x9]"]
     if writes_back:
         lines += double_writeback()
     lines.append("next_gadget")
-    lines += [f"Lalign_{name}:", "b La32_alignment_fault_read"]
+    lines += [f"Lalign_{name}:", "b La32_position_alignment_fault_read"]
     return "\n".join(lines)
 
 
 def store_double(name: str, mode: str) -> str:
     address, writes_back = double_address_lines(mode)
-    lines = ["ldp x21, x19, [_stream], #16"] + address
+    lines = ["ldr x19, [_stream], #8"] + address
     lines += ["tst w7, #3", "b.ne Lalign_" + name]
     lines.append(
         f"a32_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-        f" fault=La32_memory_fault")
+        f" fault=La32_position_fault")
     lines += ["and x8, x19, #0xff", "ubfx x9, x19, #8, #8",
               "ldr w0, [_cpu, x8]", "ldr w15, [_cpu, x9]",
               "stp w0, w15, [x7]"]
@@ -832,16 +832,16 @@ def store_double(name: str, mode: str) -> str:
     lines.append(
         f"a32_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-        f" fault=La32_memory_fault")
+        f" fault=La32_position_fault")
     lines.append(f"Lcross_{name}:")
     lines += ["and x8, x19, #0xff", "ubfx x9, x19, #8, #8",
               "ldr w0, [_cpu, x8]", "ldr w15, [_cpu, x9]",
               "bfi x0, x15, #32, #32", "fmov d0, x0",
-              "transfer_slow 1, x7, 8, fault=La32_memory_fault"]
+              "transfer_slow 1, x7, 8, fault=La32_position_fault"]
     if writes_back:
         lines += double_writeback()
     lines.append("next_gadget")
-    lines += [f"Lalign_{name}:", "b La32_alignment_fault_write"]
+    lines += [f"Lalign_{name}:", "b La32_position_alignment_fault_write"]
     return "\n".join(lines)
 
 
@@ -855,49 +855,61 @@ def emit_double(asm: Assembly) -> None:
 
 
 # LDM and STM, for each count of registers. The stream is
-#   [gadget][key][word0][register offsets, eight to a word][library operand]
-# word0: rn[0:8], the start address's displacement from Rn (signed) [8:16],
-# the written-back Rn's displacement (signed) [16:24], writeback [24]. The
+#   [gadget][word0][registers seven to sixteen, if any][library operand]
+# A register is its CpuState offset over four (scaled back by the access):
+# word0: Rn [0:5], writeback [5], the start address's displacement from Rn
+# (signed) [8:16], the written-back Rn's displacement (signed) [16:24], the
+# instruction's position (a32_layout.h) [24:32], the first six registers
+# [32:62] five bits each; the next word holds the rest five bits each. The
 # registers are in ascending order, which is the order of ascending
 # addresses. The start address must be word aligned; a transfer within one
 # page runs from the translated host address, and one that crosses a page is
 # the semantic library's, run as the whole instruction through the operand
-# the stream ends with (a32_library_call).
+# the stream ends with (a32_library_call) and the position in place of the
+# key, since no transfer here reads the PC.
+BLOCK_WORD_REGISTERS = 6
+
+
+def block_rest_words(count: int) -> int:
+    return 1 if count > BLOCK_WORD_REGISTERS else 0
+
+
 def block_registers(count: int, access_load: bool, base: str) -> list[str]:
     """The transfers of `count` registers between the host address in `base`
-    and CpuState; the register offsets are at [_stream, #8*k]."""
+    and CpuState; registers past the sixth are in the word at [_stream]."""
     lines = []
-    words = (count + 7) // 8
-    for word in range(words):
-        lines.append(f"ldr x{13 + word}, [_stream, #{8 * word}]")
+    if block_rest_words(count):
+        lines.append("ldr x13, [_stream]")
     for index in range(count):
-        word, byte = divmod(index, 8)
-        register = f"x{13 + word}"
-        lines.append(f"ubfx x17, {register}, #{8 * byte}, #8")
+        if index < BLOCK_WORD_REGISTERS:
+            source, low = "x19", 32 + 5 * index
+        else:
+            source, low = "x13", 5 * (index - BLOCK_WORD_REGISTERS)
+        lines.append(f"ubfx x17, {source}, #{low}, #5")
         if access_load:
             lines += [f"ldr w0, [{base}, #{4 * index}]",
-                      "str w0, [_cpu, x17]"]
+                      "str w0, [_cpu, x17, lsl #2]"]
         else:
-            lines += ["ldr w0, [_cpu, x17]",
+            lines += ["ldr w0, [_cpu, x17, lsl #2]",
                       f"str w0, [{base}, #{4 * index}]"]
     return lines
 
 
 def block_prologue(label: str) -> list[str]:
-    return ["ldp x21, x19, [_stream], #16",
-            "ubfx x9, x19, #0, #8", "ldr w9, [_cpu, x9]",
+    return ["ldr x19, [_stream], #8",
+            "ubfx x9, x19, #0, #5", "ldr w9, [_cpu, x9, lsl #2]",
             "sbfx x10, x19, #8, #8", "add w7, w9, w10",
             "sbfx x11, x19, #16, #8", "add w22, w9, w11",
             "tst w7, #3", "b.ne Lalign_" + label]
 
 
 def block_epilogue(count: int) -> list[str]:
-    # The register words, then the library operand the crossing path runs
-    # the whole instruction with.
-    words = (count + 7) // 8 + 1
+    # The register word, if any, then the library operand the crossing path
+    # runs the whole instruction with.
+    words = block_rest_words(count) + 1
     return [f"add _stream, _stream, #{8 * words}",
-            "tbz x19, #24, 1f", "and x9, x19, #0xff",
-            "str w22, [_cpu, x9]", "1:", "next_gadget"]
+            "tbz x19, #5, 1f", "ubfx x9, x19, #0, #5",
+            "str w22, [_cpu, x9, lsl #2]", "1:", "next_gadget"]
 
 
 def block_gadget(count: int, access_load: bool) -> str:
@@ -909,22 +921,25 @@ def block_gadget(count: int, access_load: bool) -> str:
     lines = block_prologue(name)
     lines.append(f"a32_translate {direction}, {page}, {size}, x7,"
                  f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-                 f" fault=La32_memory_fault")
+                 f" fault=La32_position_fault")
     lines += block_registers(count, access_load, "x7")
     lines += block_epilogue(count)
     lines.append(f"a32_translate_cold {direction}, {page}, {size}, x7,"
                  f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-                 f" fault=La32_memory_fault")
+                 f" fault=La32_position_fault")
     # A transfer that crosses a page is the semantic library's: it
     # translates every page before it changes a register or, for a load,
     # any state, and an STM stores the words ahead of the one that faults.
     # Nothing has changed by here, so the library runs the whole
     # instruction.
-    lines += [f"Lcross_{name}:",
-              f"add _stream, _stream, #{8 * ((count + 7) // 8)}",
-              "ldr x8, [_stream], #8", "a32_library_call", "next_gadget"]
+    lines.append(f"Lcross_{name}:")
+    if block_rest_words(count):
+        lines.append("add _stream, _stream, #8")
+    lines += ["ldr x8, [_stream], #8", "a32_position_pc",
+              "a32_library_call", "next_gadget"]
     lines += [f"Lalign_{name}:",
-              "b La32_alignment_fault_" + ("read" if access_load else "write")]
+              "b La32_position_alignment_fault_" +
+              ("read" if access_load else "write")]
     return "\n".join(lines)
 
 
@@ -1201,10 +1216,16 @@ STORE_ORDER = ["w", "b", "h"]
 SINGLE_MODES = ADDRESS_MODES + ["abs"]
 
 
+# The conditions in encoding order, and the run lengths in words that a skip
+# gadget holds as its distance (a32.inc's a32_skip).
+CONDITIONS = ("eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc", "hi", "ls", "ge",
+              "lt", "gt", "le")
+SKIP_WORDS = range(2, 10)
+
 # The gadgets a32.inc defines through macros, which its text does not name.
 MACRO_GADGETS = (
-    [f"skip_{cc}" for cc in ("eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc",
-                             "hi", "ls", "ge", "lt", "gt", "le")] +
+    [name for cc in CONDITIONS
+     for name in [f"skip_{cc}"] + [f"skip_{cc}_{n}" for n in SKIP_WORDS]] +
     ["cbz_inline", "cbz_linked", "cbz_plain", "cbnz_inline", "cbnz_linked",
      "cbnz_plain",
      "bx_cached", "bx_return_cached", "bx", "bw_cached", "bw_return_cached",
@@ -1361,6 +1382,15 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
             f"G::ldm_{c}" for c in range(1, 17)) + "};",
         "inline constexpr G kStm[17] = {G::count, " + ", ".join(
             f"G::stm_{c}" for c in range(1, 17)) + "};", ""]
+    out.append("/* The skips whose distance is in the gadget: [condition]"
+               "[words - kSkipWordsMin]. */")
+    for bound, words in (("Min", SKIP_WORDS[0]), ("Max", SKIP_WORDS[-1])):
+        out.append(f"inline constexpr std::size_t kSkipWords{bound} = {words};")
+    out.append(f"inline constexpr G kSkipBy[14][{len(SKIP_WORDS)}] = {{")
+    for cc in CONDITIONS:
+        row = ", ".join(g(f"skip_{cc}_{n}") for n in SKIP_WORDS)
+        out.append("\t{" + row + "},")
+    out += ["};", ""]
     out += a32_simd.header_tables(index)
     out.append("")
     out += a32_armv8.header_tables(index)

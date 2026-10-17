@@ -15,22 +15,24 @@
  * The PC of a translated stream is a key (cpu/arm64/aarch32/guest_key.hpp):
  * every PC word a gadget stores, and every guest PC in a BlockLink, is the
  * key of an A32 or T32 instruction. The runtime converts it on the way out.
- * A gadget that can leave the block with the instruction not retired (a
- * memory gadget, an undefined instruction) has the key of that instruction
- * in the stream word after its operands, which uml_arm64_gadget_memory_fault
- * and uml_arm64_gadget_illegal read through _stream. The one exception is
- * the exclusive and ordered transfers, which are the A64 part's gadgets: they
- * carry the instruction's position in the block in the top byte of their
- * operand, and finish_a32_block turns the position a fault reports into the
- * key.
+ * A gadget that can leave the block with the instruction not retired (an
+ * undefined instruction, VLDM, VSTM, a structure transfer) has the key of
+ * that instruction in the stream word after its operands, which
+ * uml_arm64_gadget_memory_fault and uml_arm64_gadget_illegal read through
+ * _stream. The other memory gadgets carry the instruction's position in the
+ * block in their operand instead (a32_layout.h; the exclusive and ordered
+ * transfers, which are the A64 part's gadgets, in its top byte), and
+ * finish_a32_block turns the position a fault reports into the key.
  *
  * Instruction conditions: a conditional instruction is preceded by an
  * a32_skip_<cc> gadget whose operand is the byte distance to skip over the
  * instruction's stream words when the condition fails, so the instruction
  * itself is the unconditional gadget. A run of instructions under one
- * condition that set no flags share one skip. An instruction that leaves the
- * block while others are translated behind it in the same block is preceded
- * by a32_credit, which gives back the count of instructions behind it.
+ * condition that set no flags share one skip. A run of two to nine words
+ * takes a32_skip_<cc>_<words> instead, which holds the distance and has no
+ * operand. An instruction that leaves the block while others are translated
+ * behind it in the same block is preceded by a32_credit, which gives back the
+ * count of instructions behind it.
  *
  * The part's gadgets are generated at build time by engine/generate_a32.py
  * (a32_generated.inc) beside this file's hand-written control and system
@@ -148,13 +150,14 @@ La32fpdone\@:
 .endm
 
 /* Runs one instruction through the AArch32 semantic library
- * (uml_arm64_gadget_a32_execute): x21 is the instruction's key, x8 the
- * library operand (a32_layout.h) and _stream is past the instruction's
- * stream words. The guest's NZCV, kept in x27, goes to CpuState before the
- * call and comes back after it; everything else the base profile touches is
- * in CpuState already. A fault leaves through the memory-fault exit with the
- * fault in the TLB, an UNDEFINED instruction through the illegal-instruction
- * exit, an internal error as the fatal event. */
+ * (uml_arm64_gadget_a32_execute): x21 is the instruction's key, or a block
+ * transfer's position as a32_position_pc forms it, x8 the library operand
+ * (a32_layout.h) and _stream is past the instruction's stream words. The
+ * guest's NZCV, kept in x27, goes to CpuState before the call and comes back
+ * after it; everything else the base profile touches is in CpuState already.
+ * A fault leaves through the memory-fault exit with the fault in the TLB, an
+ * UNDEFINED instruction through the illegal-instruction exit, an internal
+ * error as the fatal event. */
 .macro a32_library_call
 	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	/* The live FPSR is the host register while the native environment is
@@ -301,8 +304,8 @@ La32_target_tier_miss\@:
 	orr x10, x13, #0xc000000000000000
 .endm
 
-/* A condition, as an NZCV test of x27: skip the next \distance bytes of
- * stream when it does not hold. */
+/* A condition, as an NZCV test of x27: skip the number of stream bytes its
+ * operand holds when it does not hold. */
 .macro a32_skip name, inverse
 gadget a32_skip_\name
 	ldr x8, [_stream], #8
@@ -312,6 +315,17 @@ gadget a32_skip_\name
 1:
 	add _stream, _stream, x8
 	next_gadget
+	/* The same with the distance in the gadget, for the runs of two to
+	 * nine words (Translator::close_run), which carry no operand. */
+	.irp words, 2, 3, 4, 5, 6, 7, 8, 9
+gadget a32_skip_\name\()_\words
+	msr nzcv, x27
+	b.\inverse 1f
+	next_gadget
+1:
+	add _stream, _stream, #(8 * \words)
+	next_gadget
+	.endr
 .endm
 
 a32_skip eq, ne
@@ -345,13 +359,22 @@ gadget a32_set_itstate
 	strb w8, [_cpu, #UML_ARM64_CPU_A32_ITSTATE]
 	next_gadget
 
-/* BL and BLX (immediate): the return key's BlockLink is behind the target's,
- * then the value LR gets, which is the return address with the Thumb bit. */
+/* \value := the value LR gets for a call that returns to \key: the return
+ * address with the Thumb bit. An A32 key's low word is the address, and a
+ * T32 key holds the halfword address shifted left one bit under bit 62
+ * (aarch32/guest_key.hpp). Scratch x13. */
+.macro a32_return_value value, valuex, key
+	ubfx x13, \key, #62, #1
+	lsr \valuex, \key, x13
+	orr \value, \value, w13
+.endm
+
+/* BL and BLX (immediate): [target BlockLink][return BlockLink]. LR comes
+ * from the return link's key, so the stream carries no LR value. */
 gadget a32_bl_linked
-	ldr x8, [_stream], #8
-	ldr x11, [_stream], #8
-	ldr x12, [_stream]
+	ldp x8, x11, [_stream]
 	ldr x9, [x11, #16]
+	a32_return_value w12, x12, x9
 	str w12, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
 	a32_push_return_record x9, x11
 	a32_follow_link x8
@@ -396,14 +419,15 @@ a32_indirect bw, a32_key_thumb, 0, 0
 .purgem a32_indirect
 
 /* BLX Rm: the target is read before LR is written. [source offset][site]
- * [return BlockLink][LR value] cached, [source offset][LR value] not. */
+ * [return BlockLink] cached, LR coming from the return link's key as for
+ * BL; [source offset][LR value] not. */
 gadget a32_blx_cached
 	ldp x8, x9, [_stream], #16
 	ldr w10, [_cpu, x8]
 	a32_key_interworking
-	ldr x14, [_stream], #8
-	ldr x15, [_stream]
+	ldr x14, [_stream]
 	ldr x11, [x14, #16]
+	a32_return_value w15, x15, x11
 	str w15, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
 	a32_push_return_record x11, x14
 	a32_follow_indirect 0
@@ -481,28 +505,36 @@ a32_compare_branch cbnz, ne
 
 .purgem a32_compare_branch
 
-/* TBB and TBH: [key][rn[0:8] rm[8:16] PC value[32:64]][site]. The target
- * is the PC value plus twice the table entry. */
+/* TBB and TBH: [rn[0:8] rm[8:16] credit[16:24] position[24:32] PC value
+ * [32:64]][site]. The target is the PC value plus twice the table entry. The
+ * credit gives back the instructions translated behind a conditional one, as
+ * a32_credit does for the other leaving instructions, but only once the table
+ * entry is loaded: a fault leaves them precharged, which the executor's fault
+ * path expects. */
 .macro a32_table_branch name, load, shift, bytes
 gadget a32_\name
-	ldp x21, x19, [_stream], #16
+	ldr x19, [_stream], #8
 	and x9, x19, #0xff
 	ldr w9, [_cpu, x9]
 	ubfx x10, x19, #8, #8
 	ldr w10, [_cpu, x10]
 	add w7, w9, w10, lsl #\shift
-	a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_memory_fault
+	a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_position_fault
 	\load w10, [x7]
+	ubfx x11, x19, #16, #8
+	sub x29, x29, x11
 	lsr x11, x19, #32
 	add w10, w11, w10, lsl #1
 	a32_key_thumb
 	ldr x9, [_stream], #8
 	a32_follow_indirect 0
-	a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_memory_fault
+	a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_position_fault
 	.if \shift
 La32tb_cross_\name:
-	transfer_slow 0, x7, 2, fault=La32_memory_fault
+	transfer_slow 0, x7, 2, fault=La32_position_fault
 	umov w10, v0.h[0]
+	ubfx x11, x19, #16, #8
+	sub x29, x29, x11
 	lsr x11, x19, #32
 	add w10, w11, w10, lsl #1
 	a32_key_thumb
@@ -547,8 +579,19 @@ La32_fp_to_guest:
 	ret
 
 /* Faults the memory gadgets share: the key of the instruction is in x21 and
- * the stream is past the operand. */
+ * the stream is past the operand. A gadget without a key enters at the
+ * La32_position_ labels with its operand word in x19, whose position
+ * (a32_layout.h) becomes the PC: shifted left by two with bit 0 set, which
+ * no key has. */
+.macro a32_position_pc
+	ubfx x21, x19, #UML_GADGET_A32_POSITION_SHIFT, #8
+	lsl x21, x21, #2
+	orr x21, x21, #1
+.endm
+
 .p2align 4
+La32_position_fault:
+	a32_position_pc
 La32_memory_fault:
 	sub x9, _stream, #8
 	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
@@ -564,6 +607,8 @@ La32_undefined:
 	b uml_arm64_gadget_leave
 
 .p2align 4
+La32_position_alignment_fault_read:
+	a32_position_pc
 La32_alignment_fault_read:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x2
@@ -574,6 +619,8 @@ La32_alignment_fault_read:
 	b La32_memory_fault
 
 .p2align 4
+La32_position_alignment_fault_write:
+	a32_position_pc
 La32_alignment_fault_write:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x2
@@ -714,6 +761,7 @@ gadget a32_code_sequence_check
 
 #include "a32_generated.inc"
 
+.purgem a32_return_value
 .purgem a32_follow_indirect
 .purgem a32_train_cell
 .purgem a32_push_return_record

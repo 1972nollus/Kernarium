@@ -13,14 +13,13 @@
     "published_at_utc",
     "android",
     "source",
-    "orangefox",
     "kernel",
     "outer",
     "producer",
     "inventory"
   ],
   "properties": {
-    "schema_version": { "const": 4 },
+    "schema_version": { "const": 5 },
     "release_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
     "directory_name": { "type": "string" },
     "product_family": { "const": "lineage-24-ack-6.18-4k" },
@@ -28,7 +27,6 @@
     "published_at_utc": { "type": "string" },
     "android": { "type": "object" },
     "source": { "type": "object" },
-    "orangefox": { "type": "object" },
     "kernel": { "type": "object" },
     "outer": { "type": "object" },
     "producer": { "type": "object" },

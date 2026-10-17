@@ -2,7 +2,7 @@
 """What the Android image verifiers share.
 
 boot-image.py, verify-initramfs.py, verify-target-files.py and
-verify-orangefox-recovery.py read the same formats: the kernelless boot-image
+verify-lineage-recovery.py read the same formats: the kernelless boot-image
 v4 header, a partition's range in partition-layout.json, uncompressed newc
 archives and the program headers of AArch64 ELF payloads. They also compare
 against the same tracked first-stage fstab. Each caller passes its own error

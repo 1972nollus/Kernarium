@@ -12,12 +12,24 @@ address zero.
 
 - memory: single-register loads and stores and the multiple-register forms,
   at addresses an AArch32 process may use on any host, and the unaligned
-  accesses a single-register form permits;
+  accesses a single-register form permits; then LDM, STM, PUSH and POP of
+  two, six, seven and the most registers under a condition that fails and
+  passes, within a page and across one;
 - unaligned: the multi-word forms at unaligned addresses, which qemu-arm
   rejects with an alignment fault and an arm64 Linux kernel fixes up for a
   compat task, so only hardware records settle them (decision D3);
 - exclusive: LDREX/STREX sequences, with CLREX, with a lone STREX and across
-  addresses.
+  addresses;
+- positions: single-register and doubleword loads and stores, VLDR, VSTR, TBB
+  and TBH that fault after other instructions, some in a block a branch
+  reaches: unmapped, crossing from the read-only region into unmapped memory,
+  and a literal below the code region; the unmapped and literal ones also
+  under a condition that fails and passes. Then LDM, STM, PUSH and POP,
+  unmapped and crossing from unmapped memory into the data region, and an
+  A32 STM that stores the PC, unmapped and where it stores, within a page
+  and across one, each also under a condition that fails and passes;
+- positions-unaligned: the same at a misaligned address, which only hardware
+  records settle.
 """
 
 from __future__ import annotations
@@ -216,8 +228,89 @@ def build(context: Context, level: str, suite: str, ordinary: bool) -> list[Case
     return cases
 
 
+def encode_list(form, word: int, registers: int) -> int:
+    """The word with its register list set to `registers` (bit 14 LR, bit 15 PC), in whichever
+    fields the encoding keeps them."""
+    fields = fields_of(form)
+    width = fields["register_list"][1]
+    word = set_field(word, *fields["register_list"], registers & ((1 << width) - 1))
+    if width < 16:
+        for name, bit in (("M", 14), ("P", 15)):
+            if name in fields:
+                word = set_field(word, *fields[name], registers >> bit & 1)
+    return word
+
+
+def block_lists(form, base: int) -> list[int]:
+    """Register lists that leave out the base, of two, six and seven registers and of all the
+    encoding takes besides the SP and the PC: the transfer keeps six of them in its first operand
+    word and the rest in one more."""
+    width = fields_of(form)["register_list"][1]
+    names = set(fields_of(form))
+    low = range(8) if width == 8 else range(13)
+    usable_registers = [number for number in low if number != base]
+    if width == 16 or "M" in names:
+        usable_registers.append(14)
+    lists = []
+    for count in (2, 6, 7, len(usable_registers)):
+        if count <= len(usable_registers):
+            mask = sum(1 << number for number in usable_registers[:count])
+            if mask not in lists:
+                lists.append(mask)
+    return lists
+
+
+def block_condition_cases(context: Context, suite: str) -> list[Case]:
+    """LDM, STM, PUSH and POP under EQ (in A32) or IT EQ (in Thumb), whose condition fails and
+    passes, with lists of two, six, seven and the most registers, within a page and, for six and
+    the most, across one, with and without writeback where the encoding chooses it."""
+    cases = []
+    blocks = [form for form in memory_forms(context, "base") if MULTIPLE.fullmatch(mnemonic(form.name))]
+    for form_index, form in enumerate(blocks):
+        isa = form.encoding.isa
+        state = ISA_LETTER[isa]
+        suffix = "a" if state == "A" else "t"
+        found = block_word(context, form, False)
+        if found is None:
+            continue
+        fields = fields_of(form)
+        base = found[1].get("n", 13)
+        for list_index, registers in enumerate(block_lists(form, base)):
+            word = encode_list(form, found[0], registers)
+            if "W" in fields:
+                word = set_field(word, *fields["W"], 1 - list_index % 2 if list_index < 3 else 0)
+            if state == "A":
+                word = set_field(word, *fields["cond"], 14)
+            checked = usable(context, form, word)
+            if checked is None:
+                continue
+            word, operands = checked
+            count = bin(operands["registers"]).count("1")
+            wback = "w" if operands.get("wback", "n" not in operands) else ""
+            half = 4 * (count // 2)
+            scenarios = {"a": D + 0x1040}
+            if list_index % 2 == 1:
+                scenarios["x16"] = D + 0x4000 - half
+            lead = LEADS[state][0][0]
+            if state == "A":
+                body = word_of(isa, set_field(word, *fields["cond"], 0))
+            else:
+                body = (0xBF08,) + word_of(isa, word)
+            for number, (scenario, start) in enumerate(scenarios.items()):
+                flags = FLAGS[pattern(len(cases) + 11) >> 8 & 3]
+                aim = solve_multiple(operands, multiple_mode(form.name), start)
+                for passes in (False, True):
+                    apsr = (0x40000000 if passes else 0) | flags & 0xB0000000
+                    cases.append(Case(
+                        suite, f"{form.name}/c{count}{wback}.{scenario}-eq{'p' if passes else 'f'}", form.name,
+                        state, lead + body, len(lead) if state == "A" else 2,
+                        f"{RECIPES[(form_index + list_index + number) % len(RECIPES)]}-{suffix}",
+                        {"apsr": apsr, **aim}))
+    return cases
+
+
 def suite_memory(context: Context) -> list[Case]:
-    return build(context, "base", "memory", True)
+    return build(context, "base", "memory", True) + block_condition_cases(context, "memory")
 
 
 def suite_unaligned(context: Context) -> list[Case]:
@@ -329,5 +422,215 @@ def suite_exclusive(context: Context) -> list[Case]:
             + exclusive_cases(context, "exclusive", "LDAEX", "STLEX"))
 
 
+# Positions -------------------------------------------------------------------------------------------------
+
+# The instructions ahead of the faulting one: NOPs of both Thumb lengths, and a
+# branch to the next instruction, which starts a block an engine links to.
+LEADS = {
+    "A": (((0xE320F000,),),
+          ((0xE320F000,), (0xE320F000,), (0xE320F000,)),
+          ((0xEAFFFFFF,), (0xE320F000,), (0xE320F000,))),
+    "T": (((0xBF00,),),
+          ((0xF3AF, 0x8000), (0xBF00,), (0xF3AF, 0x8000)),
+          ((0xE7FF,), (0xF3AF, 0x8000), (0xBF00,))),
+}
+VFP_TRANSFER = re.compile(r"V(LDR|STR)(_l)?_[AT]1_([DSH])\Z")
+RO_END = READ_ONLY + corpus.READ_ONLY_SIZE
+
+
+def position_forms(context: Context):
+    """(form, bytes, alignment): the transfers whose operand names their place in the block."""
+    singles = {form.name for form in memory_forms(context, "base")
+               if not MULTIPLE.fullmatch(mnemonic(form.name))}
+    for form in context.model.forms:
+        if form.encoding is None or form.availability != "implemented" or form.check or form.nop:
+            continue
+        vfp = VFP_TRANSFER.fullmatch(form.name)
+        if vfp:
+            size = {"D": 8, "S": 4, "H": 2}[vfp.group(3)]
+            yield form, size, min(size, 4)
+        elif form.name in ("TBB_T1", "TBH_T1"):
+            yield form, 1 if form.name == "TBB_T1" else 2, 1
+        elif form.name in singles:
+            size = access_size(form.name)
+            ordered = mnemonic(form.name).startswith(("LDA", "STL"))
+            yield form, size, size if ordered else 4 if size == 8 else 1
+
+
+def position_scenarios(name: str, size: int, alignment: int, literal: bool) -> dict[str, int]:
+    if literal:
+        return {"below": 0}
+    scenarios = {"unmapped": 0x60000000}
+    loads = name.startswith(("LDR", "VLDR", "TB"))
+    if loads and size > 1 and (RO_END - size // 2) % alignment == 0:
+        scenarios["cross"] = RO_END - size // 2
+    if alignment > 1:
+        scenarios["u1"] = D + 0x1041
+    return scenarios
+
+
+def position_word(context, form, literal: bool):
+    """A word of the form to aim, or for a literal one whose address is below the code region."""
+    fields = fields_of(form)
+    for word, operands in pick_words(context, form, 12):
+        if literal:
+            if "U" in fields:  # subtract a large, aligned offset: the top immediate field's largest
+                immediates = [name for name in fields if name.startswith("imm")]
+                word = set_field(word, *fields["U"], 0)
+                for index, name in enumerate(immediates):
+                    word = set_field(word, *fields[name], (1 << fields[name][1]) - 1 if index == 0 else 0)
+                found = usable(context, form, word)
+                if found is not None and not found[1].get("add", True) and found[1].get("imm32", 0) >= 0x40:
+                    return found
+        elif operands.get("n") not in (None, 15) and operands.get("m") not in (13, 15) \
+                and operands.get("m", -1) != operands["n"]:
+            return word, operands
+    return None
+
+
+def position_cases(context: Context, suite: str, misaligned: bool) -> list[Case]:
+    """The cases of the positions suites: the misaligned ones, which only hardware settles, or the rest."""
+    cases = []
+    conditional_cases = []
+    for form_index, (form, size, alignment) in enumerate(position_forms(context)):
+        isa = form.encoding.isa
+        state = ISA_LETTER[isa]
+        suffix = "a" if state == "A" else "t"
+        literal = form.name.split("_")[1] == "l"
+        found = position_word(context, form, literal)
+        if found is None:
+            continue
+        word, operands = found
+        for number, (scenario, address) in enumerate(
+                position_scenarios(form.name, size, alignment, literal).items()):
+            # The A72 the hardware records come from has no half-precision VLDR or VSTR.
+            if (scenario == "u1") != misaligned or misaligned and form.name.endswith("_H"):
+                continue
+            leads = LEADS[state][(form_index + number) % len(LEADS[state])]
+            flags = FLAGS[pattern(len(cases)) >> 8 & 3]
+            initial = {"apsr": flags}
+            if form.name.startswith("TB"):
+                initial.update({f"r{operands['n']}": address, f"r{operands['m']}": 0})
+            elif not literal:
+                aim = solve(operands, address, flags, len(cases))
+                if aim is None:
+                    continue
+                initial.update(aim)
+            linked = leads[0] in ((0xEAFFFFFF,), (0xE7FF,))
+            program = tuple(unit for lead in leads for unit in lead) + word_of(isa, word)
+            cases.append(Case(suite, f"{form.name}/{scenario}.{len(leads)}", form.name, state,
+                              program, len(leads), f"{RECIPES[(form_index + number) % len(RECIPES)]}-{suffix}",
+                              initial, straight=not linked,
+                              fault_retired=len(leads) if linked else None))
+            if misaligned or scenario not in ("unmapped", "below"):
+                continue
+            # The same transfer under EQ (in A32) or IT EQ (in Thumb), whose condition fails, so
+            # nothing faults, and passes. A half-precision VLDR or VSTR is UNPREDICTABLE under a
+            # condition.
+            fields = fields_of(form)
+            if state == "A" and "cond" not in fields or form.name.endswith("_H"):
+                continue
+            lead = LEADS[state][0][0]
+            if state == "A":
+                body = word_of(isa, set_field(word, *fields["cond"], 0))
+            else:
+                body = (0xBF08,) + word_of(isa, word)
+            for passes in (False, True):
+                apsr = (0x40000000 if passes else 0) | flags & 0xB0000000
+                conditional = dict(initial, apsr=apsr)
+                if not form.name.startswith("TB") and not literal:
+                    aim = solve(operands, address, apsr, len(conditional_cases))
+                    if aim is None:
+                        continue
+                    conditional.update(aim)
+                conditional_cases.append(Case(
+                    suite, f"{form.name}/{scenario}-eq{'p' if passes else 'f'}", form.name, state, lead + body,
+                    len(lead) if state == "A" else 2,
+                    f"{RECIPES[(form_index + number + 1) % len(RECIPES)]}-{suffix}", conditional))
+    return cases + conditional_cases + block_position_cases(context, suite, misaligned)
+
+
+def block_word(context, form, store_pc: bool):
+    """A word of a block transfer of two or more registers that leaves out its base, with the PC in
+    its list for an STM that stores it."""
+    fields = fields_of(form)
+    for word, operands in pick_words(context, form, 12):
+        if store_pc:
+            word = set_field(word, *fields["register_list"], operands["registers"] | 0x8000)
+            found = usable(context, form, word)
+            if found is None:
+                continue
+            word, operands = found
+        registers = operands["registers"]
+        if bin(registers).count("1") >= 2 and not registers >> operands.get("n", 13) & 1:
+            return word, operands
+    return None
+
+
+def block_position_cases(context: Context, suite: str, misaligned: bool) -> list[Case]:
+    """LDM, STM, PUSH and POP that fault after other instructions: unmapped, crossing from unmapped
+    memory into the data region, which the library runs and where nothing is transferred before the
+    fault, and misaligned; an A32 STM that stores the PC, which the library runs, also where it
+    stores, within a page and across one; all but the misaligned ones also under a condition that
+    fails and passes."""
+    cases = []
+    conditional_cases = []
+    blocks = [form for form in memory_forms(context, "base") if MULTIPLE.fullmatch(mnemonic(form.name))]
+    variants = [(form, False) for form in blocks] + [
+        (form, True) for form in blocks
+        if form.encoding.isa == "A32" and mnemonic(form.name).startswith("STM")]
+    for form_index, (form, store_pc) in enumerate(variants):
+        isa = form.encoding.isa
+        state = ISA_LETTER[isa]
+        suffix = "a" if state == "A" else "t"
+        found = block_word(context, form, store_pc)
+        if found is None:
+            continue
+        word, operands = found
+        count = bin(operands["registers"]).count("1")
+        prefix = "pc-" if store_pc else ""
+        if misaligned:
+            scenarios = {"u1": D + 0x1041}
+        else:
+            scenarios = {"unmapped": 0x60000000, "into": D - 4 * (count // 2)}
+            if store_pc:
+                scenarios = {"a": D + 0x1040, "x16": D + 0x4000 - 4 * (count // 2), "unmapped": 0x60000000}
+        for number, (scenario, start) in enumerate(scenarios.items()):
+            leads = LEADS[state][(form_index + number) % len(LEADS[state])]
+            flags = FLAGS[pattern(len(cases) + 7) >> 8 & 3]
+            initial = {"apsr": flags, **solve_multiple(operands, multiple_mode(form.name), start)}
+            linked = leads[0] in ((0xEAFFFFFF,), (0xE7FF,))
+            program = tuple(unit for lead in leads for unit in lead) + word_of(isa, word)
+            cases.append(Case(suite, f"{form.name}/{prefix}{scenario}.{len(leads)}", form.name, state,
+                              program, len(leads), f"{RECIPES[(form_index + number) % len(RECIPES)]}-{suffix}",
+                              initial, straight=not linked,
+                              fault_retired=len(leads) if linked and scenario != "a" else None))
+            if misaligned:
+                continue
+            fields = fields_of(form)
+            lead = LEADS[state][0][0]
+            if state == "A":
+                body = word_of(isa, set_field(word, *fields["cond"], 0))
+            else:
+                body = (0xBF08,) + word_of(isa, word)
+            for passes in (False, True):
+                apsr = (0x40000000 if passes else 0) | flags & 0xB0000000
+                conditional_cases.append(Case(
+                    suite, f"{form.name}/{prefix}{scenario}-eq{'p' if passes else 'f'}", form.name, state,
+                    lead + body, len(lead) if state == "A" else 2,
+                    f"{RECIPES[(form_index + number + 1) % len(RECIPES)]}-{suffix}",
+                    dict(initial, apsr=apsr)))
+    return cases + conditional_cases
+
+
+def suite_positions(context: Context) -> list[Case]:
+    return position_cases(context, "positions", False)
+
+
+def suite_positions_unaligned(context: Context) -> list[Case]:
+    return position_cases(context, "positions-unaligned", True)
+
+
 SUITES = {"memory": suite_memory, "unaligned": suite_unaligned, "exclusive": suite_exclusive,
-          "prefetch": suite_prefetch}
+          "prefetch": suite_prefetch, "positions": suite_positions,
+          "positions-unaligned": suite_positions_unaligned}
