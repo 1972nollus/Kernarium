@@ -122,6 +122,14 @@
  * context holding the vector and error code. `execute` reports it as
  * general_protection with ExecuteResult's vector and error. */
 #define UML_X86_64_EVENT_SEGMENT_FAULT 67
+/* Not an EngineEvent: a baked PUSH or POP, which has no stream word of its
+ * own, faulted on its memory access (STREAM_FAULT) or stored into the running
+ * block and retired (STREAM_RETIRED), with the context's exception stream just
+ * past its gadget word. `execute` recovers the instruction from the stream
+ * and reports a memory fault with RIP naming it, or continued with RIP at the
+ * instruction after it. */
+#define UML_X86_64_EVENT_STREAM_FAULT 68
+#define UML_X86_64_EVENT_STREAM_RETIRED 69
 
 /* What uml_x86_64_gadget_run_segment_instruction returns: the instruction
  * retired and the stream continues (0), it retired and the run leaves, or

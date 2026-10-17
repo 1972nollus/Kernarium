@@ -16,6 +16,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -274,7 +275,8 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 			if (append_native_stream(words, std::span<const Gadget>{stream},
 				advance_instruction_pointer(mode,
 					normalize_instruction_pointer(mode, address), bytes),
-				mode, normalize_instruction_pointer(mode, address)))
+				mode, normalize_instruction_pointer(mode, address), {},
+				StreamKind::block))
 				return {BuildStatus::illegal_instruction, {}, address};
 			words.clear();
 			append_leave_stream(words, stream.front().address);
@@ -291,7 +293,8 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 				std::span<const Gadget>{stream},
 				advance_instruction_pointer(mode,
 					normalize_instruction_pointer(mode, address), bytes),
-				mode, normalize_instruction_pointer(mode, address), links);
+				mode, normalize_instruction_pointer(mode, address), links,
+				StreamKind::block);
 			if (!refused)
 				break;
 			if (*refused == 0)
@@ -322,6 +325,76 @@ namespace {
 	std::span<const std::uintptr_t> native_stream,
 	const NativeExecutionContext &context, std::size_t executed,
 	std::size_t instruction_budget) noexcept;
+
+/* Where a gadget that left with the stream pointer in the context's
+ * exception stream was: the stream word just before it, in the stream this
+ * run entered or in the cached block a link reached, which the context's
+ * program begin names. */
+struct StreamWord final {
+	const Program *holder{};
+	std::span<const std::uintptr_t> stream;
+	StreamKind kind{};
+	std::size_t word{};
+};
+
+[[nodiscard]] std::optional<StreamWord> locate_stream_word(
+	const Program &program, Executor &executor,
+	std::span<const std::uintptr_t> native_stream,
+	const NativeExecutionContext &context) noexcept
+{
+	if (context.exception_stream == nullptr)
+		return std::nullopt;
+	const auto *word = context.exception_stream - 1;
+	const Program *holder = &program;
+	auto stream = native_stream;
+	if (word < stream.data() || word >= stream.data() + stream.size()) {
+		holder = executor.program_holding(context.program_begin,
+			program.execution_mode(), word);
+		if (holder == nullptr)
+			return std::nullopt;
+		stream = holder->native_stream();
+	}
+	/* Only a program's own stream is a block's; the one built from part of
+	 * it for a budget-limited run is a fragment. */
+	return StreamWord{holder, stream,
+		stream.data() == holder->native_stream().data() ?
+			StreamKind::block : StreamKind::fragment,
+		static_cast<std::size_t>(word - stream.data())};
+}
+
+/* The instruction a baked PUSH or POP was running when it left, which has no
+ * stream word to say. The block is decoded back out of its saved bytes, as a
+ * replay does, but not kept: a stack fault is rare, and the decode costs what
+ * a translation of the block does. */
+struct StreamInstruction final {
+	std::uint64_t address{};
+	std::uint32_t length{};
+};
+
+[[nodiscard]] std::optional<StreamInstruction> recover_stream_instruction(
+	const Program &program, Executor &executor,
+	std::span<const std::uintptr_t> native_stream,
+	const NativeExecutionContext &context) noexcept
+{
+	try {
+		const auto located = locate_stream_word(
+			program, executor, native_stream, context);
+		if (!located)
+			return std::nullopt;
+		auto &gadgets = replay_scratch();
+		if (!decode_block(*located->holder, gadgets))
+			return std::nullopt;
+		const auto index = instruction_at_word(gadgets, located->stream,
+			located->word, located->holder->execution_mode(),
+			located->holder->address(), located->kind);
+		if (!index)
+			return std::nullopt;
+		return StreamInstruction{gadgets[*index].address,
+			gadgets[*index].instruction.length};
+	} catch (...) {
+		return std::nullopt;
+	}
+}
 
 /* Runs `native_stream`, the program's own stream or one built from its
  * instructions, for at most `limit` instructions of the caller's
@@ -368,7 +441,7 @@ template<bool WatchFloating, bool Checked = false>
 		Checked ? checked_run_checks(cpu) : gadget_checks(cpu);
 	executor.enter_engine();
 	clear_host_floating_exceptions();
-	const auto result = uml_x86_64_gadget_enter(
+	auto result = uml_x86_64_gadget_enter(
 		native_stream.data(), &cpu, &context);
 	if constexpr (WatchFloating)
 		*floating_exceptions = host_floating_exceptions();
@@ -402,6 +475,27 @@ template<bool WatchFloating, bool Checked = false>
 				native_stream, context, result.executed,
 				instruction_budget);
 		}
+	}
+	if (result.event == UML_X86_64_EVENT_STREAM_FAULT ||
+		result.event == UML_X86_64_EVENT_STREAM_RETIRED) {
+		/* A baked PUSH or POP, which only a block's own stream holds and
+		 * so never a checked run's, left without an address: it is a fault
+		 * at the instruction, or it retired and the run goes on after it. */
+		const bool retired = result.event == UML_X86_64_EVENT_STREAM_RETIRED;
+		const auto where = Checked ? std::nullopt :
+			recover_stream_instruction(program, executor, native_stream,
+				context);
+		if (!where) {
+			trace_fatal("stream-recovery", program, cpu,
+				instruction_budget, result.executed);
+			return {::uml::cpu::EngineEvent::fatal, result.executed, {},
+				false, false};
+		}
+		cpu.rip = retired ? advance_instruction_pointer(
+			program.execution_mode(), where->address, where->length) :
+			where->address;
+		result.event = retired ? UML_X86_64_EVENT_CONTINUED :
+			UML_X86_64_EVENT_MEMORY_FAULT;
 	}
 	if (result.event == UML_X86_64_EVENT_SEGMENT_FAULT) {
 		ExecuteResult fault{::uml::cpu::EngineEvent::general_protection,
@@ -741,28 +835,20 @@ ExecuteResult run_raised(const Program &program, CpuState &cpu,
 {
 	cpu.exception_raised = 0;
 	try {
-		const auto mode = program.execution_mode();
-		const auto *word = context.exception_stream - 1;
-		const Program *holder = &program;
-		auto stream = native_stream;
-		if (context.exception_stream == nullptr || word < stream.data() ||
-			word >= stream.data() + stream.size()) {
-			holder = context.exception_stream == nullptr ? nullptr :
-				executor.program_holding(context.program_begin, mode,
-					word);
-			if (holder == nullptr) {
-				trace_fatal("raised-block", program, cpu,
-					instruction_budget, executed);
-				return {::uml::cpu::EngineEvent::fatal, executed, {},
-					false, false};
-			}
-			stream = holder->native_stream();
+		const auto located = locate_stream_word(
+			program, executor, native_stream, context);
+		if (!located) {
+			trace_fatal("raised-block", program, cpu,
+				instruction_budget, executed);
+			return {::uml::cpu::EngineEvent::fatal, executed, {},
+				false, false};
 		}
+		const auto *holder = located->holder;
 		const auto gadgets = holder->replay_instructions();
 		const auto index = gadgets.size() == holder->instruction_count() ?
-			instruction_at_word(gadgets, stream,
-				static_cast<std::size_t>(word - stream.data()), mode,
-				holder->address()) :
+			instruction_at_word(gadgets, located->stream, located->word,
+				holder->execution_mode(), holder->address(),
+				located->kind) :
 			std::nullopt;
 		if (!index || executed >= instruction_budget) {
 			trace_fatal("raised-instruction", *holder, cpu,
