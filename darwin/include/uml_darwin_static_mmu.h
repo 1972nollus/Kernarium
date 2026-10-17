@@ -104,6 +104,13 @@ int darwin_uml_static_vm_translate(unsigned long generation,
 				   unsigned long address,
 				   enum darwin_uml_static_access access,
 				   void **host_address);
+/* darwin_uml_static_vm_translate() through an execution context of the same
+ * generation: while the context is entered, a guest address is resolved from
+ * the generation it holds; otherwise, or for a null context, this is
+ * darwin_uml_static_vm_translate(). */
+int darwin_uml_static_vm_execution_context_translate(
+	void *context, unsigned long generation, unsigned long address,
+	enum darwin_uml_static_access access, void **host_address);
 /* Returns an opaque, mapping-lifetime handle for an executable physical page.
  * Callers may retain it only while their cached mapping sequence is current.
  */

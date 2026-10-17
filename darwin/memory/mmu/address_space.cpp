@@ -823,9 +823,38 @@ public:
 		 * processes neither share a hash table nor touch the same lock cacheline.
 		 */
 		auto reference = reference_for(resolved_generation);
-		std::shared_lock lock{reference.state->mappings_mutex};
-		auto iterator = reference.state->mappings.find(page);
-		if (iterator == reference.state->mappings.end())
+		return translate_in(*reference.state, address, access, result);
+	}
+
+	/* translate() for an entered execution context of `generation`: the
+	 * context holds the generation's state, so a guest address needs neither
+	 * the thread's address space nor its active generation. Anything else
+	 * answers execution_context_fallback for the general path. */
+	static constexpr int execution_context_fallback = -1000;
+	[[nodiscard]] static int execution_context_translate(
+		ExecutionContext *context, std::uint64_t generation,
+		std::uint64_t address, darwin_uml_static_access access,
+		void **result)
+	{
+		if (context == nullptr || !context->entered ||
+		    context->generation != generation || result == nullptr)
+			return execution_context_fallback;
+		const auto page = address & ~(page_size - 1);
+		if (!AddressLayout::is_guest(page) ||
+		    context->state->retired.load(std::memory_order_acquire))
+			return execution_context_fallback;
+		*result = nullptr;
+		return translate_in(*context->state, address, access, result);
+	}
+
+	[[nodiscard]] static int translate_in(GenerationState &state,
+		std::uint64_t address, darwin_uml_static_access access,
+		void **result)
+	{
+		const auto page = address & ~(page_size - 1);
+		std::shared_lock lock{state.mappings_mutex};
+		auto iterator = state.mappings.find(page);
+		if (iterator == state.mappings.end())
 			return DARWIN_UML_STATIC_UNMAPPED;
 		const auto &mapping = iterator->second;
 		const bool permitted = access == DARWIN_UML_STATIC_EXECUTE ?
@@ -2154,6 +2183,19 @@ extern "C" int darwin_uml_static_vm_translate(
 	return with_address_space([&](auto &space) {
 		return space.translate(generation, address, access, host_address);
 	});
+}
+
+extern "C" int darwin_uml_static_vm_execution_context_translate(
+	void *context, unsigned long generation, unsigned long address,
+	enum darwin_uml_static_access access, void **host_address)
+{
+	const int result = uml::memory::AddressSpace::execution_context_translate(
+		static_cast<uml::memory::ExecutionContext *>(context), generation,
+		address, access, host_address);
+	if (result != uml::memory::AddressSpace::execution_context_fallback)
+		return result;
+	return darwin_uml_static_vm_translate(generation, address, access,
+		host_address);
 }
 
 extern "C" int darwin_uml_static_vm_code_page(
