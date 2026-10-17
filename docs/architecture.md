@@ -1131,15 +1131,15 @@ while the miss exit retrains its cells round-robin. The table belongs to the
 address space's link state and is retired with it, so it never names another
 address space's code, and a link reset by a code change leaves through its
 ordinary unlinked exit.
-The software TLB keys its entries by guest page number. A same-page transfer
-compares the page of its final byte against the way its first byte indexes: the
-16 KiB direct-mapped index never places neighbouring pages in one set, so a
-crossing transfer can only miss and is recognized on the cold path, while the
-folded 4 KiB index keeps the explicit crossing check ahead of the lookup. The
-fold maps pages n and n + 1 to one set only when n has 25 trailing ones, which
-a 32-bit address cannot, so the AArch32 gadgets' probe (`a32_translate`) keys
-by the final byte on 4 KiB pages too and computes the index with one xor and
-one extract.
+The software TLB keys its entries by guest page number and indexes 16,384 sets
+directly by the page number's low bits: two ways of a 64-byte set on 16 KiB
+pages, one 32-byte entry on 4 KiB pages, where a cache line holds two
+neighbouring pages. A same-page transfer compares the page of its final byte
+against the way its first byte indexes: the direct index never places
+neighbouring pages in one set, so a crossing transfer can only miss and is
+recognized on the cold path. `arm64-tlb-probe-set` checks in both page
+profiles that every inline probe of both engines hits the entry the C++ fill
+path placed, in each way of its set, and misses a page its set does not hold.
 
 Guest debuggers depend on two kernel/host contracts. To single-step a task,
 Linux sets the architectural step bit in the entry registers (arm64 PSTATE.SS,

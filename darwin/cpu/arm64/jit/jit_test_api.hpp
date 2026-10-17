@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/execution_types.hpp"
 #include "cpu/host_capabilities.hpp"
 
 #include <cstddef>
@@ -8,7 +9,32 @@
 #include <span>
 #include <vector>
 
+namespace uml::memory {
+struct Tlb;
+}
+
+namespace uml::cpu::arm64 {
+struct CpuState;
+}
+
 namespace uml::cpu::arm64::jit::testing {
+
+/* Compiles the instructions at pc as one unlinked A64 block for the SVCR
+ * mode `sme_mode` (or, for the A32 form, the guest bytes at the key as an
+ * AArch32 block) and runs it once on cpu with tlb as its software TLB, which
+ * the caller has filled: the block's inline probes meet exactly the entries
+ * left there. A nonzero mode needs cpu's SME state bound and loaded as the
+ * executor leaves it. Returns the block's exit event, or fatal when the
+ * block needs link relocations or cannot be published. */
+[[nodiscard]] ::uml::cpu::EngineEvent
+run_block_on_tlb_for_testing(std::uint64_t pc,
+                             std::span<const std::uint32_t> instructions,
+                             CpuState &cpu, ::uml::memory::Tlb &tlb,
+                             std::uint8_t sme_mode = 0);
+[[nodiscard]] ::uml::cpu::EngineEvent
+run_a32_block_on_tlb_for_testing(std::uint64_t key,
+                                 std::span<const std::byte> bytes,
+                                 CpuState &cpu, ::uml::memory::Tlb &tlb);
 
 struct CompiledCode final {
   std::vector<std::uint32_t> words;

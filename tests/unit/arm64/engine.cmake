@@ -351,6 +351,11 @@
             ${UML_STATIC_RUNTIME_TEST_OBJECTS}
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 
+    # Every inline TLB probe of both engines hits the entry the C++ fill
+    # path placed, in each way of its set, and misses another page.
+    uml_add_arm64_unit_test(tlb_probe_set WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+
     uml_add_arm64_unit_test(jit_sp_memory_run_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 

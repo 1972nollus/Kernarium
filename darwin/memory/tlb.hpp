@@ -54,8 +54,12 @@ struct alignas(32) TlbEntry final {
 	std::uintptr_t write_data_minus_address{};
 };
 
-inline constexpr std::size_t tlb_index_bits =
-	DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 14U : 13U;
+/* Both page profiles index 16,384 sets directly by the low bits of the guest
+ * page number: two ways of a 64-byte set on 16 KiB pages, one 32-byte entry
+ * on 4 KiB pages, where a cache line holds two neighbouring pages. A direct
+ * index never places pages n and n + 1 in one set, which lets a transfer key
+ * its probe by the page of its final byte and find a crossing as a miss. */
+inline constexpr std::size_t tlb_index_bits = 14U;
 inline constexpr std::size_t tlb_set_count = 1U << tlb_index_bits;
 inline constexpr std::size_t tlb_way_count =
 	DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 2U : 1U;

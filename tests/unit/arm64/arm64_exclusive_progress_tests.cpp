@@ -152,10 +152,7 @@ static_assert(cbnz_w(4, 24, 0) == 0x35ff'ff44U);
 /* The TLB set of a guest page key: the production table's index. */
 [[nodiscard]] constexpr std::uint64_t tlb_set(std::uint64_t key)
 {
-	if constexpr (page == 16384)
-		return key & (uml::memory::tlb_set_count - 1);
-	else
-		return (key ^ (key >> 13)) & (uml::memory::tlb_set_count - 1);
+	return key & (uml::memory::tlb_set_count - 1);
 }
 
 /* The address of the `ordinal`-th page (1 and up) after the target's whose

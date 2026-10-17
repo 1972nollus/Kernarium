@@ -10,10 +10,10 @@
 // store evicts the target's write entry, so a store-exclusive that depends on
 // the TLB loses the host monitor on every pass and never completes.
 //
-// The 4 KiB profile's TLB is direct-mapped: set = (key ^ (key >> 13)) &
-// 0x1fff, key = address >> 12. The 16 KiB profile's has 16384 sets of two
-// ways: set = key & 0x3fff. The pages below are chosen by those functions, so
-// a change of geometry shows as the collision tests no longer colliding in
+// Both profiles' TLBs have 16384 sets: set = key & 0x3fff, where key =
+// address >> 12 on 4 KiB pages (one way) and address >> 14 on 16 KiB pages
+// (two ways). The pages below are chosen by that function, so a change of
+// geometry shows as the collision tests no longer colliding in
 // tests/unit/arm64/arm64_exclusive_progress_tests.cpp, which guards them.
 //
 // With the argument "inside" the loops also store between the exclusive load
@@ -368,7 +368,8 @@ void *map_fixed(u64 address, long page)
 
 u64 tlb_set(u64 key, long shift)
 {
-	return shift == 12 ? (key ^ (key >> 13)) & 0x1fff : key & 0x3fff;
+	(void)shift;
+	return key & 0x3fff;
 }
 
 // The `ordinal`-th key above `target` that is in the target's TLB set.

@@ -706,10 +706,7 @@ void a_store_without_a_reservation_fails()
  * would otherwise evict the target's write entry on every pass. */
 [[nodiscard]] constexpr std::uint64_t tlb_set(std::uint64_t key)
 {
-	if constexpr (page == 16384)
-		return key & (::uml::memory::tlb_set_count - 1);
-	else
-		return (key ^ (key >> 13)) & (::uml::memory::tlb_set_count - 1);
+	return key & (::uml::memory::tlb_set_count - 1);
 }
 
 [[nodiscard]] std::uint32_t colliding_page(std::uint32_t target,
@@ -2831,17 +2828,15 @@ void uml_arm64_gadget_a32_neon_vst1_m_16_n();
 
 namespace {
 
-/* The probe's set index, in the words of the gadgets that carry it: on
- * 4 KiB pages one xor with the address shifted by 13 and one extract, with
- * no crossing test in front (a crossing transfer only misses); on 16 KiB
- * pages the shared probe's extract. A wrong index would only miss, and the
+/* The probe's set index, in the words of the gadgets that carry it: the
+ * shared probe's extract and the scaled add, with no crossing test in front
+ * (a crossing transfer only misses). A wrong index would only miss, and the
  * miss helper finds the entry, so the words are what is compared. */
 void the_tlb_probe_indexes_the_set_in_two_instructions()
 {
-	/* eor x9, x7, x7, lsr #13; ubfx x9, x9, #12, #13;
-	 * add x10, x2, x9, lsl #5 */
-	constexpr std::array<std::uint32_t, 3> small{
-		0xca47'34e9U, 0xd34c'6129U, 0x8b09'144aU};
+	/* ubfx x9, x7, #12, #14; add x10, x2, x9, lsl #5 */
+	constexpr std::array<std::uint32_t, 2> small{0xd34c'64e9U,
+						      0x8b09'144aU};
 	/* ubfx x9, x7, #14, #14; add x10, x2, x9, lsl #6 */
 	constexpr std::array<std::uint32_t, 2> large{0xd34e'6ce9U,
 						      0x8b09'184aU};

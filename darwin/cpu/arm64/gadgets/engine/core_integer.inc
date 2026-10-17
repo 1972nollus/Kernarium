@@ -92,23 +92,15 @@ NAME(uml_arm64_gadget_\name):
 	msr fpsr, x16
 .endm
 
-/* Translate guest address x7 through the persistent iSH-style TLB. The 16 KiB
- * build uses 16,384 two-way direct sets; the 4 KiB fallback retains 8,192
- * one-way folded entries. On success x7 is the host address. The miss helper
- * updates the entry.
+/* Translate guest address x7 through the persistent iSH-style TLB of 16,384
+ * direct sets: two ways on 16 KiB pages, one on 4 KiB pages. On success x7 is
+ * the host address. The miss helper updates the entry.
  */
 .macro translate access, page_offset, forward=0, fault=uml_arm64_gadget_memory_fault
 	/* Entries are keyed by guest page number (address >> page shift). */
 	lsr x8, x7, #UML_GADGET_GUEST_PAGE_SHIFT
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	ubfx x9, x7, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	add x10, _tlb, x9, lsl #6
-#else
-	ubfx x9, x7, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	eor x9, x9, x7, lsr #UML_GADGET_TLB_FOLD_SHIFT
-	and w9, w9, #UML_GADGET_TLB_INDEX_MASK
-	add x10, _tlb, x9, lsl #5
-#endif
+	add x10, _tlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
 	/* Each access-specific tag is paired with its backing delta, so the
 	 * successful way needs one cache-line-local load pair and no later load. */
 	ldp x11, x12, [x10, #\page_offset]
@@ -165,39 +157,25 @@ NAME(uml_arm64_gadget_\name):
  * plus translate; the cold half is placed after the gadget's dispatch and
  * resumes at \resume. One-byte transfers cannot cross and are never checked.
  *
- * The 16 KiB build keys the lookup by the
- * page of the transfer's final byte while indexing by its first: pages n and
- * n + 1 never share a direct-mapped set, so a crossing transfer can only miss
- * and the cold path is where it is recognized. The folded 4 KiB index can map
- * neighbouring pages to one set, so that build keeps the explicit check in
- * front. The key is shifted before a plain compare: a shifted-operand compare
- * resolved the branch late enough to cost two percent on transfer-bound
- * loops. Scratch: x8-x12.
+ * The lookup is keyed by the page of the transfer's final byte while indexed
+ * by its first: pages n and n + 1 never share a direct-mapped set, so a
+ * crossing transfer can only miss and the cold path is where it is
+ * recognized. The key is shifted before a plain compare: a shifted-operand
+ * compare resolved the branch late enough to cost two percent on
+ * transfer-bound loops. Scratch: x8-x12.
  */
 .macro transfer_translate access, page_offset, bytes, address, cold, resume, cross, forward=0, fault=uml_arm64_gadget_memory_fault
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	.if \bytes > 1
 	add x8, \address, #(\bytes - 1)
 	.endif
 	ubfx x9, \address, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	add x10, _tlb, x9, lsl #6
+	add x10, _tlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
 	ldp x11, x12, [x10, #\page_offset]
 	.if \bytes > 1
 	lsr x8, x8, #UML_GADGET_GUEST_PAGE_SHIFT
 	.else
 	lsr x8, \address, #UML_GADGET_GUEST_PAGE_SHIFT
 	.endif
-#else
-	.if \bytes > 1
-	branch_if_cross_page \address, \bytes, x9, \cross
-	.endif
-	ubfx x9, \address, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	eor x9, x9, \address, lsr #UML_GADGET_TLB_FOLD_SHIFT
-	and w9, w9, #UML_GADGET_TLB_INDEX_MASK
-	add x10, _tlb, x9, lsl #5
-	ldp x11, x12, [x10, #\page_offset]
-	lsr x8, \address, #UML_GADGET_GUEST_PAGE_SHIFT
-#endif
 	cmp x11, x8
 	b.ne \cold
 	add \address, x12, \address
@@ -219,10 +197,10 @@ NAME(uml_arm64_gadget_\name):
 	.endif
 	cmp x11, x8
 	b.eq 93f
+#endif
 	.if \bytes > 1
 	branch_if_cross_page \address, \bytes, x9, \cross
 	.endif
-#endif
 	stp x1, x2, [sp, #-16]!
 	mov x0, x2
 	mov x1, \address

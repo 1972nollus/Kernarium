@@ -662,6 +662,44 @@ CompiledCode compile_block(
   return copied_code(compiler.compile(pc, instructions));
 }
 
+namespace {
+
+[[nodiscard]] ::uml::cpu::EngineEvent
+run_translation_on_tlb(const JitCompiler::Result &compiled, CpuState &cpu,
+                       ::uml::memory::Tlb &tlb) {
+  if (compiled.words.empty() || !compiled.relocations.empty())
+    return ::uml::cpu::EngineEvent::fatal;
+  detail::ExecutableArena arena{256U * 1024U};
+  auto *const code = arena.valid() ? arena.store(compiled.words) : nullptr;
+  if (code == nullptr)
+    return ::uml::cpu::EngineEvent::fatal;
+  JitChainState chain{};
+  const auto result =
+      sign_jit_function<JitFunction>(code)(&cpu, &tlb, &chain);
+  return unpack_jit_result(result).event;
+}
+
+} // namespace
+
+::uml::cpu::EngineEvent
+run_block_on_tlb_for_testing(std::uint64_t pc,
+                             std::span<const std::uint32_t> instructions,
+                             CpuState &cpu, ::uml::memory::Tlb &tlb,
+                             std::uint8_t sme_mode) {
+  JitCompiler compiler{};
+  compiler.set_sme_mode(sme_mode);
+  return run_translation_on_tlb(compiler.compile(pc, instructions), cpu, tlb);
+}
+
+::uml::cpu::EngineEvent
+run_a32_block_on_tlb_for_testing(std::uint64_t key,
+                                 std::span<const std::byte> bytes,
+                                 CpuState &cpu, ::uml::memory::Tlb &tlb) {
+  a32::A32Compiler compiler{};
+  const auto compiled = compiler.compile({.key = key, .bytes = bytes});
+  return run_translation_on_tlb(compiled.translation, cpu, tlb);
+}
+
 A32Compilation compile_a32_block(std::uint64_t key,
                                  std::span<const std::byte> bytes,
                                  std::uint8_t itstate, bool single) {

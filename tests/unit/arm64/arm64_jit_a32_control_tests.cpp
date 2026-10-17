@@ -1205,10 +1205,9 @@ void backward_side_exit_programs() {
 }
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-/* On 4 KiB pages the inline TLB probe is the short form: the entry index from
- * the address xor its shift by 13 (one instruction and one extract) and a tag
- * compare that shifts the address itself, not the A64 compiler's longer
- * sequence. A probe with the wrong index would only miss, so the words are
+/* On 4 KiB pages the inline TLB probe is the short form: the entry index
+ * extracted from the address (one instruction) and a tag compare that shifts
+ * the address itself, not the A64 compiler's longer sequence. A probe with the wrong index would only miss, so the words are
  * what is checked. An access of more than one byte that may be unaligned
  * compares the tag with its last byte's page, which tells a page crossing
  * from a hit without a test of its own. */
@@ -1226,11 +1225,11 @@ void tlb_probe_is_the_short_form() {
                      word) != compiled.code.words.end();
   };
   const auto byte_load = compile(0xe5d1'0004U); // ldrb r0,[r1,#4]
-  require(has(byte_load, 0xca48'3500U));  // eor x0, x8, x8, lsr #13
+  require(has(byte_load, 0xd34c'6500U));  // ubfx x0, x8, #12, #14
   require(has(byte_load, 0xca48'3042U));  // eor x2, x2, x8, lsr #12
   require(!has(byte_load, 0xd34c'fd01U)); // lsr x1, x8, #12 (the long form)
   const auto word_load = compile(0xe591'0004U); // ldr r0,[r1,#4]
-  require(has(word_load, 0xca48'3500U));
+  require(has(word_load, 0xd34c'6500U));
   require(has(word_load, 0x9100'0d01U));  // add x1, x8, #3
   require(has(word_load, 0xca41'3042U));  // eor x2, x2, x1, lsr #12
   require(!has(word_load, 0xca48'3042U));

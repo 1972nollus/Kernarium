@@ -64,9 +64,6 @@ void JitCompiler::emit_tlb_set(unsigned address) {
 #else
     emitter_.ubfm(0, address, page_shift,
                   page_shift + ::uml::memory::tlb_index_bits - 1U);
-    emitter_.emit(0xca40'0000U | ((page_shift + 13U) << 10) |
-                  ((address & 31U) << 16)); // eor x0, x0, address, lsr #25
-    emitter_.ubfm(0, 0, 0, ::uml::memory::tlb_index_bits - 1U);
     emitter_.add_shifted(0, 14, 0, 5);
 #endif
   }
