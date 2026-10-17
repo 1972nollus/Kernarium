@@ -17,13 +17,8 @@ constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 	std::uint64_t address) noexcept
 {
 	const auto page = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	return static_cast<std::size_t>(
 		(page & (tlb_set_count - 1)) * tlb_way_count);
-#else
-	return static_cast<std::size_t>((page ^ (page >> 13)) &
-		(tlb_set_count - 1));
-#endif
 }
 
 static_assert(sizeof(TlbEntry) == 32);

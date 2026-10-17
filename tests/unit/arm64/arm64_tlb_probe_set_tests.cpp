@@ -64,27 +64,17 @@ constexpr std::size_t offset = 0x100;
 /* The probed page, below 4 GiB for the AArch32 forms. The top bit of its
  * index is set, and so is the bit above the index in the value the index is
  * taken from, so an index one bit too narrow or too wide reads another set.
- * On 16 KiB pages the index is the page number's low 14 bits (page 0x16a5b,
- * address 0x5a96c000). On 4 KiB pages it is the low 13 bits of the page
- * number folded with the page number shifted right by 13 (page 0x47a5b,
- * address 0x47a5b000); its fold term, 0x23, also moves a probe that drops
- * the fold or shifts it by another amount. */
-constexpr std::uint64_t target = (page == 16384 ? 0x16a5bULL : 0x47a5bULL)
-	<< page_shift;
+ * The index is the page number's low 14 bits in both page profiles (page
+ * 0x16a5b: address 0x5a96c000 on 16 KiB pages, 0x16a5b000 on 4 KiB pages). */
+constexpr std::uint64_t target = 0x16a5bULL << page_shift;
 /* The next page, in another set. */
 constexpr std::uint64_t neighbour = target + page;
 
-/* The page number one table above `key` in the same set. On 4 KiB pages
- * that adds one to the fold term, so the low bits change by the same xor to
- * keep the index. main() checks that the fill path agrees. */
+/* The page number one table above `key`, in the same set. main() checks
+ * that the fill path agrees. */
 [[nodiscard]] constexpr std::uint64_t alias_key(std::uint64_t key) noexcept
 {
-	constexpr auto bits = ::uml::memory::tlb_index_bits;
-	if constexpr (page == 16384)
-		return key + (std::uint64_t{1} << bits);
-	const auto fold = key >> bits;
-	return ((fold + 1) << bits) |
-		((key ^ fold ^ (fold + 1)) & ((std::uint64_t{1} << bits) - 1));
+	return key + (std::uint64_t{1} << ::uml::memory::tlb_index_bits);
 }
 
 /* A page in the target's set under another key. */

@@ -246,13 +246,7 @@ void mapped_memory_runtime_boundaries()
 	 * then A again exercises replacement without confusing their host bases.
 	 */
 	constexpr std::uint64_t collision_page =
-		guest_page + (
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-			::uml::memory::tlb_set_count
-#else
-			::uml::memory::tlb_set_count + 1
-#endif
-		) *
+		guest_page + ::uml::memory::tlb_set_count *
 			DARWIN_UML_GUEST_PAGE_SIZE;
 	constexpr std::uint64_t first_value = 0x1111'2222'3333'4444ULL;
 	constexpr std::uint64_t collision_value =
@@ -309,14 +303,8 @@ void mapped_memory_runtime_boundaries()
 	constexpr auto guest_page_number =
 		guest_page >> DARWIN_UML_GUEST_PAGE_SHIFT;
 	constexpr std::size_t collision_slot =
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 		(guest_page_number & (::uml::memory::tlb_set_count - 1)) *
 		::uml::memory::tlb_way_count;
-#else
-		(guest_page_number ^
-			(guest_page_number >> ::uml::memory::tlb_index_bits)) &
-		(::uml::memory::tlb_set_count - 1);
-#endif
 	require(independent_tlb->entries[collision_slot].read_page ==
 		guest_page_number);
 	require(independent_tlb->entries[collision_slot].write_page ==

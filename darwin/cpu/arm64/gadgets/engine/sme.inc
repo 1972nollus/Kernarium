@@ -240,8 +240,6 @@ NAME(uml_arm64_gadget_enter_streaming):
 91:
 #else
 	ubfx x9, \address, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	eor x9, x9, \address, lsr #UML_GADGET_TLB_FOLD_SHIFT
-	and w9, w9, #UML_GADGET_TLB_INDEX_MASK
 	add x10, _tlb, x9, lsl #5
 	.if \access
 	ldp x11, x12, [x10, #UML_GADGET_TLB_ENTRY_WRITE_PAGE]
