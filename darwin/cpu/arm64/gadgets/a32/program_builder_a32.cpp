@@ -903,26 +903,34 @@ Translator::Result Translator::emit_block_transfer(const Instruction &in,
 	 * the instruction's address, is the library's. */
 	if (!load && has_pc)
 		return emit_library(in);
-	push(load ? kLdm[count] : kStm[count]);
-	push(static_cast<std::uint64_t>(base_register) * 8U |
-	     std::uint64_t{static_cast<std::uint8_t>(start)} << 8 |
-	     std::uint64_t{static_cast<std::uint8_t>(delta)} << 16 |
-	     position() | std::uint64_t{writeback} << 32);
-	std::uint64_t packed = 0;
+	/* Each register is its CpuState offset over four, which the gadget
+	 * scales back in the access: the first six in the top of the word
+	 * that holds the base, the rest in one more word. A load of the PC
+	 * goes to the scratch slot. */
+	auto slot = [](unsigned number) -> std::uint64_t {
+		return (number == 15 ? scratch0 : number * 8U) / 4U;
+	};
+	std::uint64_t word = slot(static_cast<unsigned>(base_register)) |
+			     std::uint64_t{writeback} << 5 |
+			     std::uint64_t{static_cast<std::uint8_t>(start)} << 8 |
+			     std::uint64_t{static_cast<std::uint8_t>(delta)} << 16 |
+			     position();
+	std::uint64_t rest = 0;
 	unsigned index = 0;
 	for (unsigned number = 0; number < 16; ++number) {
 		if ((registers >> number & 1U) == 0)
 			continue;
-		const std::uint64_t offset =
-			number == 15 ? scratch0 : std::uint64_t{number} * 8U;
-		packed |= offset << (8U * (index % 8U));
-		if (++index % 8U == 0) {
-			push(packed);
-			packed = 0;
-		}
+		if (index < block_word_registers)
+			word |= slot(number) << (32U + 5U * index);
+		else
+			rest |= slot(number)
+				<< (5U * (index - block_word_registers));
+		++index;
 	}
-	if (index % 8U != 0)
-		push(packed);
+	push(load ? kLdm[count] : kStm[count]);
+	push(word);
+	if (count > static_cast<int>(block_word_registers))
+		push(rest);
 	/* A transfer that crosses a page is the library's; a load that writes
 	 * PC leaves the value in the scratch slot, as the gadget does. */
 	push(library_operand(in, load && has_pc));

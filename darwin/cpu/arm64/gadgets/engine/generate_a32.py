@@ -855,51 +855,61 @@ def emit_double(asm: Assembly) -> None:
 
 
 # LDM and STM, for each count of registers. The stream is
-#   [gadget][word0][register offsets, eight to a word][library operand]
-# word0: rn[0:8], the start address's displacement from Rn (signed) [8:16],
-# the written-back Rn's displacement (signed) [16:24], the instruction's
-# position (a32_layout.h) [24:32], writeback [32]. The registers are in
-# ascending order, which is the order of ascending addresses. The start
-# address must be word aligned; a transfer within one page runs from the
-# translated host address, and one that crosses a page is the semantic
-# library's, run as the whole instruction through the operand the stream ends
-# with (a32_library_call) and the position in place of the key, since no
-# transfer here reads the PC.
+#   [gadget][word0][registers seven to sixteen, if any][library operand]
+# A register is its CpuState offset over four (scaled back by the access):
+# word0: Rn [0:5], writeback [5], the start address's displacement from Rn
+# (signed) [8:16], the written-back Rn's displacement (signed) [16:24], the
+# instruction's position (a32_layout.h) [24:32], the first six registers
+# [32:62] five bits each; the next word holds the rest five bits each. The
+# registers are in ascending order, which is the order of ascending
+# addresses. The start address must be word aligned; a transfer within one
+# page runs from the translated host address, and one that crosses a page is
+# the semantic library's, run as the whole instruction through the operand
+# the stream ends with (a32_library_call) and the position in place of the
+# key, since no transfer here reads the PC.
+BLOCK_WORD_REGISTERS = 6
+
+
+def block_rest_words(count: int) -> int:
+    return 1 if count > BLOCK_WORD_REGISTERS else 0
+
+
 def block_registers(count: int, access_load: bool, base: str) -> list[str]:
     """The transfers of `count` registers between the host address in `base`
-    and CpuState; the register offsets are at [_stream, #8*k]."""
+    and CpuState; registers past the sixth are in the word at [_stream]."""
     lines = []
-    words = (count + 7) // 8
-    for word in range(words):
-        lines.append(f"ldr x{13 + word}, [_stream, #{8 * word}]")
+    if block_rest_words(count):
+        lines.append("ldr x13, [_stream]")
     for index in range(count):
-        word, byte = divmod(index, 8)
-        register = f"x{13 + word}"
-        lines.append(f"ubfx x17, {register}, #{8 * byte}, #8")
+        if index < BLOCK_WORD_REGISTERS:
+            source, low = "x19", 32 + 5 * index
+        else:
+            source, low = "x13", 5 * (index - BLOCK_WORD_REGISTERS)
+        lines.append(f"ubfx x17, {source}, #{low}, #5")
         if access_load:
             lines += [f"ldr w0, [{base}, #{4 * index}]",
-                      "str w0, [_cpu, x17]"]
+                      "str w0, [_cpu, x17, lsl #2]"]
         else:
-            lines += ["ldr w0, [_cpu, x17]",
+            lines += ["ldr w0, [_cpu, x17, lsl #2]",
                       f"str w0, [{base}, #{4 * index}]"]
     return lines
 
 
 def block_prologue(label: str) -> list[str]:
     return ["ldr x19, [_stream], #8",
-            "ubfx x9, x19, #0, #8", "ldr w9, [_cpu, x9]",
+            "ubfx x9, x19, #0, #5", "ldr w9, [_cpu, x9, lsl #2]",
             "sbfx x10, x19, #8, #8", "add w7, w9, w10",
             "sbfx x11, x19, #16, #8", "add w22, w9, w11",
             "tst w7, #3", "b.ne Lalign_" + label]
 
 
 def block_epilogue(count: int) -> list[str]:
-    # The register words, then the library operand the crossing path runs
-    # the whole instruction with.
-    words = (count + 7) // 8 + 1
+    # The register word, if any, then the library operand the crossing path
+    # runs the whole instruction with.
+    words = block_rest_words(count) + 1
     return [f"add _stream, _stream, #{8 * words}",
-            "tbz x19, #32, 1f", "and x9, x19, #0xff",
-            "str w22, [_cpu, x9]", "1:", "next_gadget"]
+            "tbz x19, #5, 1f", "ubfx x9, x19, #0, #5",
+            "str w22, [_cpu, x9, lsl #2]", "1:", "next_gadget"]
 
 
 def block_gadget(count: int, access_load: bool) -> str:
@@ -922,9 +932,10 @@ def block_gadget(count: int, access_load: bool) -> str:
     # any state, and an STM stores the words ahead of the one that faults.
     # Nothing has changed by here, so the library runs the whole
     # instruction.
-    lines += [f"Lcross_{name}:",
-              f"add _stream, _stream, #{8 * ((count + 7) // 8)}",
-              "ldr x8, [_stream], #8", "a32_position_pc",
+    lines.append(f"Lcross_{name}:")
+    if block_rest_words(count):
+        lines.append("add _stream, _stream, #8")
+    lines += ["ldr x8, [_stream], #8", "a32_position_pc",
               "a32_library_call", "next_gadget"]
     lines += [f"Lalign_{name}:",
               "b La32_position_alignment_fault_" +

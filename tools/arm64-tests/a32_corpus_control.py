@@ -15,7 +15,8 @@ solving for the offset the layout needs.
 - branch: B, BL, BLX and BX in both instruction sets, conditional branches
   under passing and failing flags, CBZ/CBNZ, TBB/TBH (also in an IT block
   whose condition passes and fails), loads and ALU instructions that write
-  the PC, interworking in both directions and jumps to unmapped addresses;
+  the PC (the multiple loads also under a condition that fails and passes),
+  interworking in both directions and jumps to unmapped addresses;
 - conditions: every condition against every NZCV, and every IT block;
 - pc: instructions that read the PC, among them the PC as a register operand
   under a condition that fails and passes.
@@ -436,6 +437,42 @@ def pc_loads(context, suite, results):
                      data_patches=[(slot - D, struct.pack("<I", CODE + landing + (target_state == THUMB)))])
 
 
+def conditional_pc_loads(context, suite, results):
+    """The multiple loads of the PC under EQ (in A32) or IT EQ (in Thumb): a failing condition
+    runs the filler, a passing one lands past it."""
+    for form in context.model.forms:
+        if (form.encoding is None or form.level != "base" or "load_pc" not in form.traits
+                or MULTIPLE.fullmatch(mnemonic(form.name)) is None):
+            continue
+        isa = form.encoding.isa
+        state = ARM if isa == "A32" else THUMB
+        for word in candidate_words(context, form, 16):
+            forced = force_pc_in_list(form, word)
+            if forced is None:
+                continue
+            if isa == "A32":
+                forced = set_field(forced, 28, 4, 14)
+            found = usable(context, form, forced, True)
+            if found is None:
+                continue
+            word, operands = found
+            address = D + 0x1040
+            aim = solve_multiple(operands, multiple_mode(form.name), address)
+            slot = address + 4 * (bin(operands["registers"]).count("1") - 1)
+            for passes in (False, True):
+                prog = Prog()
+                if state == THUMB:
+                    prog.half(0xBF08)
+                prog.insn(set_field(word, 28, 4, 0) if state == ARM else word, isa).fill(state)
+                landing = prog.here
+                apsr = cond_flags(0, passes, len(results))
+                make(results, suite, f"{form.name}/eq{'p' if passes else 'f'}", form.name, state,
+                     prog.tail(state), {**aim, "apsr": apsr}, target=1 if state == THUMB else 0,
+                     check=False, retired=(state == THUMB) + (2 if passes else 3),
+                     data_patches=[(slot - D, struct.pack("<I", CODE + landing + (state == THUMB)))])
+            break
+
+
 # ALU instructions with the PC as destination: the result must be the landing address.
 ARM_PC_WRITES = (
     ("MOV_r_A1", 0xE1A0F002, lambda t: {"r2": t}),
@@ -728,6 +765,7 @@ def suite_branch(context: Context) -> list[Case]:
     alu_pc_writes(context, suite, results)
     unmapped_targets(context, suite, results)
     conditional_table_branches(context, suite, results)
+    conditional_pc_loads(context, suite, results)
     return results
 
 

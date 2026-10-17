@@ -4,13 +4,13 @@ alu-qemu	qemu	7702
 armv8-memory-qemu	qemu	69
 armv8-qemu	qemu	4324
 armv8-system-qemu	qemu	4
-branch-qemu	qemu	462
+branch-qemu	qemu	476
 conditions-qemu	qemu	1816
 exclusive-qemu	qemu	256
 fetch-qemu	qemu	994
 fpscr-qemu	qemu	252
 fpscr-reserved-pi4	pi4	144
-memory-qemu	qemu	1914
+memory-qemu	qemu	2098
 pc-qemu	qemu	294
 positions-qemu	qemu	750
 positions-unaligned-pi4	pi4	54

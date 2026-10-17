@@ -12,7 +12,9 @@ address zero.
 
 - memory: single-register loads and stores and the multiple-register forms,
   at addresses an AArch32 process may use on any host, and the unaligned
-  accesses a single-register form permits;
+  accesses a single-register form permits; then LDM, STM, PUSH and POP of
+  two, six, seven and the most registers under a condition that fails and
+  passes, within a page and across one;
 - unaligned: the multi-word forms at unaligned addresses, which qemu-arm
   rejects with an alignment fault and an arm64 Linux kernel fixes up for a
   compat task, so only hardware records settle them (decision D3);
@@ -226,8 +228,89 @@ def build(context: Context, level: str, suite: str, ordinary: bool) -> list[Case
     return cases
 
 
+def encode_list(form, word: int, registers: int) -> int:
+    """The word with its register list set to `registers` (bit 14 LR, bit 15 PC), in whichever
+    fields the encoding keeps them."""
+    fields = fields_of(form)
+    width = fields["register_list"][1]
+    word = set_field(word, *fields["register_list"], registers & ((1 << width) - 1))
+    if width < 16:
+        for name, bit in (("M", 14), ("P", 15)):
+            if name in fields:
+                word = set_field(word, *fields[name], registers >> bit & 1)
+    return word
+
+
+def block_lists(form, base: int) -> list[int]:
+    """Register lists that leave out the base, of two, six and seven registers and of all the
+    encoding takes besides the SP and the PC: the transfer keeps six of them in its first operand
+    word and the rest in one more."""
+    width = fields_of(form)["register_list"][1]
+    names = set(fields_of(form))
+    low = range(8) if width == 8 else range(13)
+    usable_registers = [number for number in low if number != base]
+    if width == 16 or "M" in names:
+        usable_registers.append(14)
+    lists = []
+    for count in (2, 6, 7, len(usable_registers)):
+        if count <= len(usable_registers):
+            mask = sum(1 << number for number in usable_registers[:count])
+            if mask not in lists:
+                lists.append(mask)
+    return lists
+
+
+def block_condition_cases(context: Context, suite: str) -> list[Case]:
+    """LDM, STM, PUSH and POP under EQ (in A32) or IT EQ (in Thumb), whose condition fails and
+    passes, with lists of two, six, seven and the most registers, within a page and, for six and
+    the most, across one, with and without writeback where the encoding chooses it."""
+    cases = []
+    blocks = [form for form in memory_forms(context, "base") if MULTIPLE.fullmatch(mnemonic(form.name))]
+    for form_index, form in enumerate(blocks):
+        isa = form.encoding.isa
+        state = ISA_LETTER[isa]
+        suffix = "a" if state == "A" else "t"
+        found = block_word(context, form, False)
+        if found is None:
+            continue
+        fields = fields_of(form)
+        base = found[1].get("n", 13)
+        for list_index, registers in enumerate(block_lists(form, base)):
+            word = encode_list(form, found[0], registers)
+            if "W" in fields:
+                word = set_field(word, *fields["W"], 1 - list_index % 2 if list_index < 3 else 0)
+            if state == "A":
+                word = set_field(word, *fields["cond"], 14)
+            checked = usable(context, form, word)
+            if checked is None:
+                continue
+            word, operands = checked
+            count = bin(operands["registers"]).count("1")
+            wback = "w" if operands.get("wback", "n" not in operands) else ""
+            half = 4 * (count // 2)
+            scenarios = {"a": D + 0x1040}
+            if list_index % 2 == 1:
+                scenarios["x16"] = D + 0x4000 - half
+            lead = LEADS[state][0][0]
+            if state == "A":
+                body = word_of(isa, set_field(word, *fields["cond"], 0))
+            else:
+                body = (0xBF08,) + word_of(isa, word)
+            for number, (scenario, start) in enumerate(scenarios.items()):
+                flags = FLAGS[pattern(len(cases) + 11) >> 8 & 3]
+                aim = solve_multiple(operands, multiple_mode(form.name), start)
+                for passes in (False, True):
+                    apsr = (0x40000000 if passes else 0) | flags & 0xB0000000
+                    cases.append(Case(
+                        suite, f"{form.name}/c{count}{wback}.{scenario}-eq{'p' if passes else 'f'}", form.name,
+                        state, lead + body, len(lead) if state == "A" else 2,
+                        f"{RECIPES[(form_index + list_index + number) % len(RECIPES)]}-{suffix}",
+                        {"apsr": apsr, **aim}))
+    return cases
+
+
 def suite_memory(context: Context) -> list[Case]:
-    return build(context, "base", "memory", True)
+    return build(context, "base", "memory", True) + block_condition_cases(context, "memory")
 
 
 def suite_unaligned(context: Context) -> list[Case]:

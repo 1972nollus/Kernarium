@@ -96,7 +96,9 @@ no floating point or SIMD):
   packing and parallel arithmetic;
 - `memory`: single and multiple loads and stores at aligned and misaligned
   addresses, across 4 KiB and 16 KiB lines, at the ends of the data region, in
-  the read-only region and in unmapped memory, with writeback;
+  the read-only region and in unmapped memory, with writeback; and LDM, STM,
+  PUSH and POP of two, six, seven and the most registers under a condition
+  that fails and passes, within a page and across one;
 - `prefetch`: PLD, PLDW and PLI never fault;
 - `positions`: single-register and doubleword transfers, VLDR, VSTR, TBB and
   TBH that fault after other instructions, some in a block a branch reaches:
@@ -110,8 +112,9 @@ no floating point or SIMD):
 - `exclusive`: LDREX/STREX and LDAEX/STLEX sequences, CLREX, misaligned and
   unmapped loads;
 - `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH (also in an IT block whose
-  condition passes and fails), PC-writing loads and ALU instructions,
-  interworking both ways, jumps to unmapped addresses;
+  condition passes and fails), PC-writing loads (the multiple ones also under
+  a condition that fails and passes) and ALU instructions, interworking both
+  ways, jumps to unmapped addresses;
 - `conditions`: every condition against every NZCV, and every IT block;
 - `pc`: instructions that read the PC, among them the PC as a register
   operand under a condition that fails and passes and as the operand of an
