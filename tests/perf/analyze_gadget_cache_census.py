@@ -96,6 +96,11 @@ class Space:
     targets: int
     # The shared space this cache's slots point into, if any.
     space: str | None = None
+    # Whether the MMU still has the generation (1), has destroyed it (0) or
+    # could not say; and the bytes of the cache's translations of it, which
+    # an engine with no shared spaces (x86) reports here.
+    alive: int | None = None
+    held: int = 0
 
 
 @dataclass
@@ -196,7 +201,9 @@ def load(path: Path, block: Block) -> Contents:
                 indirect=int(values.get("indirect", 0)),
                 targets=int(values.get("targets", 0)),
                 space=(str(values["space"]) if "space" in values
-                       else None)))
+                       else None),
+                alive=(int(values["alive"]) if "alive" in values else None),
+                held=int(values.get("held", 0))))
         elif fields[0] == "S":
             values = {name: parse_value(value) for name, _, value in
                       (pair.partition("=") for pair in fields[2:])}
@@ -283,11 +290,21 @@ SPACE_PARTS = ("stream_index", "streams", "arena_empty", "links", "indirect")
 def dead_spaces(contents: list[Contents]) -> tuple[int, int]:
     """How many address spaces the caches hold for a generation the MMU has
     destroyed (`alive=0`), and the bytes of their arenas, indexes and
-    records. Absent from captures written before the census said."""
+    records. An engine whose caches keep their spaces to themselves (x86)
+    says so on the `G` record, with the bytes of the translations held.
+    Absent from captures written before the census said."""
     dead = [space for space in shared_spaces(contents).values()
             if space.fields.get("alive") == 0]
-    return len(dead), sum(space.get(name) for space in dead
-                          for name in SPACE_PARTS if name != "arena_empty")
+    count = len(dead)
+    total = sum(space.get(name) for space in dead
+                for name in SPACE_PARTS if name != "arena_empty")
+    for content in contents:
+        for space in content.spaces:
+            if space.space is None and space.alive == 0:
+                count += 1
+                total += (space.links + space.indirect + space.targets +
+                          space.held)
+    return count, total
 
 
 def measured(blocks: list[Block], contents: list[Contents]) -> Counter[str]:
@@ -532,10 +549,10 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
         attached = sum(space.get("attached") for space in shared.values())
         print(f"  {len(shared)} address-space records, held by "
               f"{attached / len(shared):.2f} caches each")
-        dead, dead_bytes = dead_spaces(contents)
-        if dead:
-            print(f"  {dead} of them for destroyed generations, "
-                  f"{dead_bytes / MIB:.1f} MiB")
+    dead, dead_bytes = dead_spaces(contents)
+    if dead:
+        print(f"  {dead} address spaces held for destroyed generations, "
+              f"{dead_bytes / MIB:.1f} MiB")
     if resident == 0:
         return
 

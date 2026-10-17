@@ -208,7 +208,7 @@ class CensusTests(unittest.TestCase):
         contents = [census.load(path, block) for block in blocks]
         self.assertEqual(census.dead_spaces(contents), (1, 65536 + 4096))
         text = run_main(path)
-        self.assertIn("1 of them for destroyed generations, 0.1 MiB", text)
+        self.assertIn("1 address spaces held for destroyed generations, 0.1 MiB", text)
         header, row = run_main(path, "--series").splitlines()
         # The column after the dormant share is the destroyed spaces' MiB.
         self.assertEqual(row.split()[9], "0.1")
@@ -223,6 +223,21 @@ class CensusTests(unittest.TestCase):
         path = write(self.root, SHARED)
         contents = [census.load(path, block) for block in census.scan(path)]
         self.assertEqual(census.dead_spaces(contents), (0, 0))
+
+    def test_destroyed_x86_generations_count_what_they_hold(self) -> None:
+        # x86 caches keep their spaces to themselves: no S records, the bytes
+        # of a generation's translations on its G record.
+        capture = """\
+E 0xa generations=2 occupancy=2 stream_index=0 slabs=10240 streams=1024 \
+links=10 indirect=0 total=11274 stores=2 snapshot=1 seconds=5.0
+G 7 current=1 rank=0 idle_switches=0 idle_seconds=0.000 link_records=2 \
+links=100 indirect=20 targets=3 alive=1 held=1000
+G 8 current=0 rank=1 idle_switches=2 idle_seconds=1.000 link_records=2 \
+links=400 indirect=50 targets=6 alive=0 held=2000
+"""
+        path = write(self.root, capture)
+        contents = [census.load(path, block) for block in census.scan(path)]
+        self.assertEqual(census.dead_spaces(contents), (1, 400 + 50 + 6 + 2000))
 
     def test_legacy_capture_still_reads(self) -> None:
         path = write(self.root, LEGACY)

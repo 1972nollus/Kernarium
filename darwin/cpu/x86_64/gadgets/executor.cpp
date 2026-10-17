@@ -1264,22 +1264,37 @@ public:
 		history_.write(out);
 		std::fputc('\n', out);
 		const auto now = census::elapsed_seconds();
+		/* What each address space's resident translations occupy. */
+		std::unordered_map<std::uint16_t, std::size_t> held;
+		for (const auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			for (const auto &slot : slab->slots)
+				if (slot.resident())
+					held[slot.owner()] +=
+						translation_bytes(slot).allocated;
+		}
 		for (const auto &[generation, state] : generations_) {
 			const auto found = std::find(resident_.rbegin(),
 				resident_.rend(), generation);
 			const bool running = generation == current_generation_;
 			const auto bytes = generation_bytes(state);
+			/* Whether the MMU still has the address space: 1 live, 0
+			 * destroyed, negative when it cannot say from this thread. */
+			const int alive = darwin_uml_static_vm_generation_live(
+				static_cast<unsigned long>(generation));
 			std::fprintf(out,
 				"G %llu current=%d rank=%td idle_switches=%llu "
 				"idle_seconds=%.3f link_records=%zu links=%zu "
-				"indirect=%zu targets=%zu\n",
+				"indirect=%zu targets=%zu alive=%d held=%zu\n",
 				static_cast<unsigned long long>(generation),
 				running ? 1 : 0, found - resident_.rbegin(),
 				static_cast<unsigned long long>(running ? 0 :
 					switches_ - state.census_switch),
 				running ? 0.0 : now - state.census_seconds,
 				state.links[0].size() + state.links[1].size(),
-				bytes.links, bytes.indirect, bytes.targets);
+				bytes.links, bytes.indirect, bytes.targets, alive,
+				held[state.id]);
 		}
 		if (census::totals_only())
 			return;
