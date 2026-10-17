@@ -15,22 +15,24 @@
  * The PC of a translated stream is a key (cpu/arm64/aarch32/guest_key.hpp):
  * every PC word a gadget stores, and every guest PC in a BlockLink, is the
  * key of an A32 or T32 instruction. The runtime converts it on the way out.
- * A gadget that can leave the block with the instruction not retired (a
- * memory gadget, an undefined instruction) has the key of that instruction
- * in the stream word after its operands, which uml_arm64_gadget_memory_fault
- * and uml_arm64_gadget_illegal read through _stream. The one exception is
- * the exclusive and ordered transfers, which are the A64 part's gadgets: they
- * carry the instruction's position in the block in the top byte of their
- * operand, and finish_a32_block turns the position a fault reports into the
- * key.
+ * A gadget that can leave the block with the instruction not retired (an
+ * undefined instruction, VLDM, VSTM, a structure transfer) has the key of
+ * that instruction in the stream word after its operands, which
+ * uml_arm64_gadget_memory_fault and uml_arm64_gadget_illegal read through
+ * _stream. The other memory gadgets carry the instruction's position in the
+ * block in their operand instead (a32_layout.h; the exclusive and ordered
+ * transfers, which are the A64 part's gadgets, in its top byte), and
+ * finish_a32_block turns the position a fault reports into the key.
  *
  * Instruction conditions: a conditional instruction is preceded by an
  * a32_skip_<cc> gadget whose operand is the byte distance to skip over the
  * instruction's stream words when the condition fails, so the instruction
  * itself is the unconditional gadget. A run of instructions under one
- * condition that set no flags share one skip. An instruction that leaves the
- * block while others are translated behind it in the same block is preceded
- * by a32_credit, which gives back the count of instructions behind it.
+ * condition that set no flags share one skip. A run of two to nine words
+ * takes a32_skip_<cc>_<words> instead, which holds the distance and has no
+ * operand. An instruction that leaves the block while others are translated
+ * behind it in the same block is preceded by a32_credit, which gives back the
+ * count of instructions behind it.
  *
  * The part's gadgets are generated at build time by engine/generate_a32.py
  * (a32_generated.inc) beside this file's hand-written control and system
@@ -148,13 +150,14 @@ La32fpdone\@:
 .endm
 
 /* Runs one instruction through the AArch32 semantic library
- * (uml_arm64_gadget_a32_execute): x21 is the instruction's key, x8 the
- * library operand (a32_layout.h) and _stream is past the instruction's
- * stream words. The guest's NZCV, kept in x27, goes to CpuState before the
- * call and comes back after it; everything else the base profile touches is
- * in CpuState already. A fault leaves through the memory-fault exit with the
- * fault in the TLB, an UNDEFINED instruction through the illegal-instruction
- * exit, an internal error as the fatal event. */
+ * (uml_arm64_gadget_a32_execute): x21 is the instruction's key, or a block
+ * transfer's position as a32_position_pc forms it, x8 the library operand
+ * (a32_layout.h) and _stream is past the instruction's stream words. The
+ * guest's NZCV, kept in x27, goes to CpuState before the call and comes back
+ * after it; everything else the base profile touches is in CpuState already.
+ * A fault leaves through the memory-fault exit with the fault in the TLB, an
+ * UNDEFINED instruction through the illegal-instruction exit, an internal
+ * error as the fatal event. */
 .macro a32_library_call
 	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	/* The live FPSR is the host register while the native environment is
@@ -301,8 +304,8 @@ La32_target_tier_miss\@:
 	orr x10, x13, #0xc000000000000000
 .endm
 
-/* A condition, as an NZCV test of x27: skip the next \distance bytes of
- * stream when it does not hold. */
+/* A condition, as an NZCV test of x27: skip the number of stream bytes its
+ * operand holds when it does not hold. */
 .macro a32_skip name, inverse
 gadget a32_skip_\name
 	ldr x8, [_stream], #8
@@ -312,6 +315,17 @@ gadget a32_skip_\name
 1:
 	add _stream, _stream, x8
 	next_gadget
+	/* The same with the distance in the gadget, for the runs of two to
+	 * nine words (Translator::close_run), which carry no operand. */
+	.irp words, 2, 3, 4, 5, 6, 7, 8, 9
+gadget a32_skip_\name\()_\words
+	msr nzcv, x27
+	b.\inverse 1f
+	next_gadget
+1:
+	add _stream, _stream, #(8 * \words)
+	next_gadget
+	.endr
 .endm
 
 a32_skip eq, ne

@@ -159,21 +159,23 @@ void skipped_conditional_instructions_retire()
 
 } // namespace
 
+/* Every skip gadget of a condition: the one whose operand is the distance and
+ * those holding a distance of two to nine words. */
+#define UML_A32_SKIPS(X, cc)                                                \
+	X(cc) X(cc##_2) X(cc##_3) X(cc##_4) X(cc##_5) X(cc##_6) X(cc##_7)  \
+		X(cc##_8) X(cc##_9)
+#define UML_A32_ALL_SKIPS(X)                                                \
+	UML_A32_SKIPS(X, eq) UML_A32_SKIPS(X, ne) UML_A32_SKIPS(X, cs)       \
+	UML_A32_SKIPS(X, cc) UML_A32_SKIPS(X, mi) UML_A32_SKIPS(X, pl)       \
+	UML_A32_SKIPS(X, vs) UML_A32_SKIPS(X, vc) UML_A32_SKIPS(X, hi)       \
+	UML_A32_SKIPS(X, ls) UML_A32_SKIPS(X, ge) UML_A32_SKIPS(X, lt)       \
+	UML_A32_SKIPS(X, gt) UML_A32_SKIPS(X, le)
+#define UML_A32_DECLARE_SKIP(name) void uml_arm64_gadget_a32_skip_##name();
+#define UML_A32_SKIP_ADDRESS(name)                                          \
+	reinterpret_cast<std::uintptr_t>(&uml_arm64_gadget_a32_skip_##name),
+
 extern "C" {
-void uml_arm64_gadget_a32_skip_eq();
-void uml_arm64_gadget_a32_skip_ne();
-void uml_arm64_gadget_a32_skip_cs();
-void uml_arm64_gadget_a32_skip_cc();
-void uml_arm64_gadget_a32_skip_mi();
-void uml_arm64_gadget_a32_skip_pl();
-void uml_arm64_gadget_a32_skip_vs();
-void uml_arm64_gadget_a32_skip_vc();
-void uml_arm64_gadget_a32_skip_hi();
-void uml_arm64_gadget_a32_skip_ls();
-void uml_arm64_gadget_a32_skip_ge();
-void uml_arm64_gadget_a32_skip_lt();
-void uml_arm64_gadget_a32_skip_gt();
-void uml_arm64_gadget_a32_skip_le();
+UML_A32_ALL_SKIPS(UML_A32_DECLARE_SKIP)
 }
 
 namespace {
@@ -181,28 +183,17 @@ namespace {
 /* Whether a translation of `words` at the code base holds a skip gadget. */
 [[nodiscard]] bool translation_skips(std::span<const std::uint32_t> words)
 {
+	static const std::uintptr_t skips[] = {
+		UML_A32_ALL_SKIPS(UML_A32_SKIP_ADDRESS)};
 	const auto options = options_at(gadgets::a32_support);
 	const auto output = gadgets::a32::build(
 		{.key = aarch32::a32_key(code_base), .code = std::as_bytes(words)},
 		{}, std::pmr::get_default_resource(), {}, options,
 		gadgets::a32::decode_profile(options), 64);
 	for (const auto word : output.result.program.words())
-		for (const auto skip : {&uml_arm64_gadget_a32_skip_eq,
-					&uml_arm64_gadget_a32_skip_ne,
-					&uml_arm64_gadget_a32_skip_cs,
-					&uml_arm64_gadget_a32_skip_cc,
-					&uml_arm64_gadget_a32_skip_mi,
-					&uml_arm64_gadget_a32_skip_pl,
-					&uml_arm64_gadget_a32_skip_vs,
-					&uml_arm64_gadget_a32_skip_vc,
-					&uml_arm64_gadget_a32_skip_hi,
-					&uml_arm64_gadget_a32_skip_ls,
-					&uml_arm64_gadget_a32_skip_ge,
-					&uml_arm64_gadget_a32_skip_lt,
-					&uml_arm64_gadget_a32_skip_gt,
-					&uml_arm64_gadget_a32_skip_le})
-			if (word == reinterpret_cast<std::uintptr_t>(skip))
-				return true;
+		if (std::find(std::begin(skips), std::end(skips), word) !=
+		    std::end(skips))
+			return true;
 	return false;
 }
 
