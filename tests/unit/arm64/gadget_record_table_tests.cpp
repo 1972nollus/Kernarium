@@ -2,7 +2,9 @@
 #include "cpu/gadget_record_table.hpp"
 #include "require.hpp"
 
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -138,6 +140,138 @@ void sweep(std::uint64_t count)
 	require(table.sweep(all) == 0 && table.size() == count);
 }
 
+/* A sweep in its steps. Unlinking takes the unmarked records out of the index
+ * and nothing else: no lookup finds them, a record made for the same key is
+ * made anew in a place of its own, and what they held is still there for
+ * whoever has not let go of them. Releasing zeroes them and frees their
+ * places, which the next records take lowest first. */
+template <typename Record>
+void unlink_then_release(std::uint64_t count)
+{
+	cache::StableRecordTable<Record, KeyOf> table;
+	std::vector<Record *> records;
+	for (std::uint64_t index = 0; index < count; ++index) {
+		const auto key = key_of(index);
+		records.push_back(table.try_emplace(key, key).first);
+	}
+	auto marks = table.marks();
+	for (std::uint64_t index = 0; index < count; index += 3)
+		marks.mark(records[index]);
+	const auto kept = (count + 2) / 3;
+
+	auto unlinked = table.unlink(marks);
+	require(unlinked.size() == count - kept && !unlinked.empty());
+	require(table.size() == kept);
+	std::vector<const Record *> doomed(unlinked.records().begin(),
+		unlinked.records().end());
+	std::sort(doomed.begin(), doomed.end());
+	for (std::uint64_t index = 0; index < count; ++index) {
+		const bool gone = index % 3 != 0;
+		require(std::binary_search(doomed.begin(), doomed.end(),
+			records[index]) == gone);
+		require((table.find(key_of(index)) == nullptr) == gone);
+		/* Nothing about a record changed. */
+		require(records[index]->key == key_of(index));
+		require(records[index]->payload.back() ==
+			static_cast<std::uint8_t>(key_of(index)));
+	}
+	/* Their places are still taken: they are visited, and a record made
+	 * for a key that went is not made in one of them. */
+	std::uint64_t visited = 0;
+	table.for_each([&](const Record &) { ++visited; });
+	require(visited == count);
+	const auto [fresh, inserted] = table.try_emplace(key_of(1), key_of(1));
+	require(inserted && fresh->key == key_of(1));
+	require(!std::binary_search(doomed.begin(), doomed.end(), fresh));
+	require(table.size() == kept + 1);
+
+	require(table.release(unlinked) == count - kept);
+	visited = 0;
+	table.for_each([&](const Record &) { ++visited; });
+	require(visited == kept + 1);
+	/* The first chunk holds the first record, which is kept, so the
+	 * released ones in it are still readable, and zero. */
+	require(records[1]->key == 0 && records[1]->payload.back() == 0);
+	require(records[2]->key == 0 && records[2]->payload.back() == 0);
+	for (std::uint64_t index = 0; index < count; index += 3)
+		require(table.find(key_of(index)) == records[index] &&
+			records[index]->payload.back() ==
+				static_cast<std::uint8_t>(key_of(index)));
+	/* The lowest places go first. */
+	require(table.try_emplace(key_of(count), key_of(count)).first ==
+		records[1]);
+	require(table.try_emplace(key_of(count + 1), key_of(count + 1)).first ==
+		records[2]);
+
+	/* Nothing to take changes nothing. */
+	auto everything = table.marks();
+	table.for_each([&](const Record &record) { everything.mark(&record); });
+	const auto before = table.size();
+	require(table.unlink(everything).empty() && table.size() == before);
+}
+
+/* What a sweep may release is what existed when its marks were taken. A
+ * record made afterwards is kept whatever the marks say, whether it takes a
+ * place a sweep freed (inside the range the marks cover) or one carved past
+ * them. */
+void candidates()
+{
+	using Record = Sized<24>;
+	using Table = cache::StableRecordTable<Record, KeyOf>;
+	const auto count = [](const std::vector<std::uint64_t> &bits) {
+		std::size_t total = 0;
+		for (const auto word : bits)
+			total += static_cast<std::size_t>(std::popcount(word));
+		return total;
+	};
+	Table table;
+	std::vector<Record *> records;
+	for (std::uint64_t index = 0; index < 200; ++index)
+		records.push_back(table.try_emplace(index, index).first);
+	require(count(table.presence()) == 200);
+	{
+		auto marks = table.marks();
+		for (std::uint64_t index = 0; index < 200; index += 2)
+			marks.mark(records[index]);
+		require(table.sweep(marks) == 100);
+	}
+	/* The places the sweep freed are not present. */
+	require(count(table.presence()) == 100);
+
+	auto marks = table.marks();
+	std::vector<Record *> later;
+	for (std::uint64_t index = 0; index < 150; ++index)
+		later.push_back(table.try_emplace(1000 + index, 1000 + index).first);
+	/* The first hundred took the freed places, the rest were carved. */
+	require(std::count_if(later.begin(), later.end(),
+		[&](const Record *record) {
+			return std::find(records.begin(), records.end(), record) !=
+				records.end();
+		}) == 100);
+	/* Nothing is marked: every record that existed goes, and no other. */
+	auto unlinked = table.unlink(marks);
+	require(unlinked.size() == 100);
+	require(table.size() == 150);
+	for (std::uint64_t index = 0; index < 150; ++index) {
+		require(table.find(1000 + index) == later[index]);
+		require(later[index]->key == 1000 + index);
+	}
+	for (std::uint64_t index = 0; index < 200; index += 2)
+		require(table.find(index) == nullptr);
+	require(table.release(unlinked) == 100);
+	for (std::uint64_t index = 0; index < 150; ++index)
+		require(table.find(1000 + index) == later[index] &&
+			later[index]->payload.back() ==
+				static_cast<std::uint8_t>(1000 + index));
+	/* Marks taken before any record was made cover none of those made
+	 * after. */
+	Table fresh;
+	auto early = fresh.marks();
+	for (std::uint64_t index = 0; index < 50; ++index)
+		require(fresh.try_emplace(index, index).second);
+	require(fresh.sweep(early) == 0 && fresh.size() == 50);
+}
+
 /* Chunks at the end that a sweep empties are returned, and the table grows
  * past them again. */
 void trim()
@@ -196,7 +330,12 @@ void several_tables()
 		require(marks.marked(record));
 	for (const auto *record : gone)
 		require(!marks.marked(record));
-	require(first.sweep(marks) + second.sweep(marks) == gone.size());
+	/* Each table takes its own, in steps. */
+	const auto first_gone = first.unlink(marks);
+	const auto second_gone = second.unlink(marks);
+	require(first_gone.size() + second_gone.size() == gone.size());
+	require(first.release(first_gone) + second.release(second_gone) ==
+		gone.size());
 	require(first.size() + second.size() == kept.size());
 	for (std::uint64_t index = 0; index < 3000; ++index) {
 		const auto &table = index % 2 == 0 ? first : second;
@@ -214,6 +353,10 @@ int main()
 	sweep<Sized<24>>(200'000);
 	sweep<Sized<1024>>(5'000);
 	sweep<Sized<8192>>(1'000);
+	unlink_then_release<Sized<24>>(200'000);
+	unlink_then_release<Sized<1024>>(5'000);
+	unlink_then_release<Sized<8192>>(1'000);
+	candidates();
 	trim();
 	several_tables();
 

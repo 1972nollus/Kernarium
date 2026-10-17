@@ -1107,17 +1107,22 @@ its runtime memory domain. Cache and publication contracts are described in
 The gadget cache may retain several address spaces. Cache slots and links are
 tagged by address space, retirement drops one address space's owned state, and
 same-generation stale programs are reused only after exact page-bounded word
-validation. On arm64, `DARWIN_UML_GADGET_SHARED_BODIES=1` shares an address
-space's bodies and link state among every executor running it, while each
-executor keeps its own slots and retirement order; sharing is off by default,
-as [`../darwin/README.md`](../darwin/README.md) records. An address space a
+validation. On arm64, an address space's bodies and link state are shared among
+every executor running it, while each executor keeps its own slots and
+retirement order; `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private, as
+[`../darwin/README.md`](../darwin/README.md) records. An address space a
 single executor keeps to itself sweeps its link records and indirect sites once
 they number half again what its last sweep kept and enough of its translations
 have left the cache to have left some unnamed: one that no resident
 translation's stream names and that is no resident block's own record is
 released for reuse, and the site cells and target-table entries naming it are
 emptied, so link state follows what the cache holds rather than all the code
-the address space ever ran. A shared address space is not swept. Cached
+the address space ever ran. A shared address space is not swept, but is
+renewed once its arena holds at least two mebibytes no body uses and more than
+its bodies do: it is closed, and each executor attached lets go of it at the
+start of its next entry into translated code, so the next one to run the
+address space makes a new one and the old one dies with its last executor.
+Cached
 returns consult a private per-carrier return-record ring after their site
 cells miss: linked calls push the return PC with its block link, a matching
 record follows that link and fills an empty cell of the site, and the executor

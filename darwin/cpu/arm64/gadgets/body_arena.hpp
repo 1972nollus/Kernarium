@@ -201,6 +201,12 @@ public:
 		return total;
 	}
 
+	/* What a block for `bytes` takes from the arena. */
+	[[nodiscard]] static std::size_t block_bytes(std::size_t bytes) noexcept
+	{
+		return rounded(bytes);
+	}
+
 	/* The start maps, which are what owner() and reuse cost. */
 	[[nodiscard]] std::size_t index_bytes() const noexcept
 	{

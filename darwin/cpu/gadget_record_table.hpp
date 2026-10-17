@@ -39,6 +39,15 @@ namespace uml::cpu::gadget_cache {
  * reused, lowest number first, by the next record made, and chunks at the end
  * that hold no record any more are returned, so the table follows what is
  * named rather than everything that ever was.
+ *
+ * A sweep is three steps, so that an owner whose records are still reachable
+ * while it decides can hold back the last one. `presence` says which records
+ * exist, and are therefore the only ones a sweep may release: a record made
+ * after it is never a candidate, whatever the marks say, so an owner may go on
+ * making records while it marks. `unlink` takes the unmarked candidates out of
+ * the index, so no lookup finds them, and leaves their memory as it was.
+ * `release` zeroes them and returns their places. `sweep` is the three in a
+ * row, for an owner that nothing else reaches while it runs.
  */
 template <typename Record, typename KeyOf>
 class StableRecordTable final {
@@ -50,7 +59,9 @@ class StableRecordTable final {
 public:
 	/* The records a sweep keeps, found from their addresses, over one table
 	 * or several (marks_of), so that a value can be tried against every table
-	 * an owner keeps at once. */
+	 * an owner keeps at once. They also remember which records each table
+	 * held when they were taken (presence), which are the only ones the
+	 * sweep can release. */
 	class Marks final {
 	public:
 		/* Keep the record that begins at `address`. Any other value --
@@ -91,6 +102,7 @@ public:
 		struct Table final {
 			const StableRecordTable *table;
 			std::vector<std::uint64_t> bits;
+			std::vector<std::uint64_t> present;
 		};
 
 		struct Found final {
@@ -125,7 +137,7 @@ public:
 			return (bits[ordinal / 64] >> (ordinal % 64) & 1U) != 0;
 		}
 
-		[[nodiscard]] const std::vector<std::uint64_t> &bits_of(
+		[[nodiscard]] const Table &of(
 			const StableRecordTable *table) const noexcept
 		{
 			const auto found = std::find_if(tables_.begin(), tables_.end(),
@@ -133,7 +145,7 @@ public:
 					return entry.table == table;
 				});
 			assert(found != tables_.end());
-			return found->bits;
+			return *found;
 		}
 
 		/* Every table's chunks by address, each over the records it has
@@ -142,6 +154,28 @@ public:
 		std::uintptr_t lowest_{};
 		std::uintptr_t highest_{};
 		std::vector<Table> tables_;
+	};
+
+	/* Records `unlink` took out of the index, whose places are not yet free:
+	 * their memory is as it was until `release` returns it. */
+	class Unlinked final {
+	public:
+		[[nodiscard]] std::size_t size() const noexcept
+		{
+			return records_.size();
+		}
+		[[nodiscard]] bool empty() const noexcept { return records_.empty(); }
+		[[nodiscard]] std::span<Record *const> records() const noexcept
+		{
+			return records_;
+		}
+
+	private:
+		friend class StableRecordTable;
+
+		std::vector<Record *> records_;
+		/* Their numbers, as the index holds them. */
+		std::vector<std::uint32_t> numbers_;
 	};
 
 	StableRecordTable() = default;
@@ -223,9 +257,10 @@ public:
 					place(ordinal))));
 	}
 
-	/* Marks over the records made so far, none of them kept yet. They do
-	 * not cover a record made after them, so no record may be made
-	 * between taking them and sweeping with them. */
+	/* Marks over the records made so far, none of them kept yet. A record
+	 * made after them is not covered, so it is not a candidate either: a
+	 * sweep with these marks keeps it. The caller holds whatever keeps the
+	 * table from changing while they are taken. */
 	[[nodiscard]] Marks marks() const
 	{
 		const StableRecordTable *self = this;
@@ -245,7 +280,7 @@ public:
 		for (const auto *table : tables) {
 			const auto index = marks.tables_.size();
 			marks.tables_.push_back({table, std::vector<std::uint64_t>(
-				(table->carved_ + 63) / 64)});
+				(table->carved_ + 63) / 64), table->presence()});
 			std::size_t first = 0;
 			for (const auto &chunk : table->chunks_) {
 				const auto begin = reinterpret_cast<std::uintptr_t>(
@@ -269,42 +304,93 @@ public:
 		return marks;
 	}
 
-	/* Release every record `marks` does not keep, and return how many went.
-	 * A released record is zeroed, so a reference its owner failed to mark
-	 * faults rather than reaching whatever is made there next. The sweep
-	 * happens whole or, when its new index cannot be allocated, not at all.
-	 */
-	std::size_t sweep(const Marks &marks)
+	/* The records that exist now, one bit per number: the only ones a sweep
+	 * can release. Places a sweep left free, and places taken later, are not
+	 * among them. */
+	[[nodiscard]] std::vector<std::uint64_t> presence() const
 	{
-		const auto &bits = marks.bits_of(this);
-		assert(bits.size() == (carved_ + 63) / 64);
-		std::vector<std::uint32_t> kept;
-		kept.reserve(size_);
+		std::vector<std::uint64_t> present((carved_ + 63) / 64);
 		for (std::size_t position = 0; position < capacity(); ++position)
-			if (const auto entry = index_[position]; entry != 0 &&
-			    Marks::test(bits, (entry & ~tag_mask) - 1U))
-				kept.push_back(entry & ~tag_mask);
-		const auto released = size_ - kept.size();
-		if (released == 0)
-			return 0;
+			if (const auto entry = index_[position]; entry != 0) {
+				const auto ordinal = (entry & ~tag_mask) - 1U;
+				present[ordinal / 64] |= std::uint64_t{1} << (ordinal % 64);
+			}
+		return present;
+	}
+
+	/* Take every record `marks` does not keep, and had when it was taken,
+	 * out of the index, and return them. They are found by no lookup from
+	 * here on, and a record made for the same key is made anew; the places
+	 * and their contents stay until `release`. Everything this allocates
+	 * comes before anything changes, so it happens whole or, when its new
+	 * index cannot be allocated, not at all. */
+	[[nodiscard]] Unlinked unlink(const Marks &marks)
+	{
+		const auto &table = marks.of(this);
+		assert(table.bits.size() == table.present.size());
+		const auto doomed = [&](std::uint32_t entry) noexcept {
+			const auto ordinal = (entry & ~tag_mask) - 1U;
+			return ordinal / 64 < table.present.size() &&
+				Marks::test(table.present, ordinal) &&
+				!Marks::test(table.bits, ordinal);
+		};
+		std::size_t gone = 0;
+		for (std::size_t position = 0; position < capacity(); ++position)
+			if (const auto entry = index_[position];
+			    entry != 0 && doomed(entry))
+				++gone;
+		Unlinked unlinked;
+		if (gone == 0)
+			return unlinked;
+		const auto remaining = size_ - gone;
+		std::vector<std::uint32_t> kept;
+		kept.reserve(remaining);
+		unlinked.records_.reserve(gone);
+		unlinked.numbers_.reserve(gone);
 		std::size_t next = first_capacity;
-		while (kept.size() * 4 > next * 3)
+		while (remaining * 4 > next * 3)
 			next *= 2;
-		auto replacement = kept.empty() ? nullptr :
+		auto replacement = remaining == 0 ? nullptr :
 			std::make_unique<std::uint32_t[]>(next);
 
-		for (std::size_t position = 0; position < capacity(); ++position)
-			if (const auto entry = index_[position]; entry != 0 &&
-			    !Marks::test(bits, (entry & ~tag_mask) - 1U))
-				release((entry & ~tag_mask) - 1U);
+		for (std::size_t position = 0; position < capacity(); ++position) {
+			const auto entry = index_[position];
+			if (entry == 0)
+				continue;
+			const auto number = entry & ~tag_mask;
+			if (doomed(entry)) {
+				unlinked.records_.push_back(record_at(number));
+				unlinked.numbers_.push_back(number);
+			} else {
+				kept.push_back(number);
+			}
+		}
 		index_ = std::move(replacement);
 		mask_ = index_ == nullptr ? 0 : next - 1;
 		size_ = kept.size();
 		for (const auto number : kept)
 			insert(number, mix(KeyOf{}(*record_at(number))));
+		return unlinked;
+	}
+
+	/* Free the places of records `unlink` took, zeroing them so that a
+	 * reference their owner failed to mark faults rather than reaching
+	 * whatever is made there next, and return the chunks at the end that
+	 * hold no record any more. */
+	std::size_t release(const Unlinked &unlinked) noexcept
+	{
+		for (const auto number : unlinked.numbers_)
+			free_place(number - 1U);
 		lowest_vacant_ = 0;
 		trim();
-		return released;
+		return unlinked.numbers_.size();
+	}
+
+	/* Release every record `marks` does not keep, and return how many went:
+	 * unlink and release in a row. */
+	std::size_t sweep(const Marks &marks)
+	{
+		return release(unlink(marks));
 	}
 
 private:
@@ -450,8 +536,9 @@ private:
 		return carved_++;
 	}
 
-	void release(std::size_t ordinal) noexcept
+	void free_place(std::size_t ordinal) noexcept
 	{
+		assert(!vacant(ordinal));
 		std::memset(static_cast<void *>(place(ordinal)), 0, sizeof(Record));
 		vacant_[ordinal / 64] |= std::uint64_t{1} << (ordinal % 64);
 		++vacancies_;

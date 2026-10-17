@@ -221,7 +221,7 @@ void retiring_in_one_executor_keeps_the_other()
 }
 
 /* Executors built with other options make other streams, so they never
- * share; nor does an executor told not to, or left at the default. */
+ * share; nor does an executor told not to. One left at the default does. */
 void different_options_do_not_share()
 {
 	constexpr unsigned long generation = 943;
@@ -255,8 +255,8 @@ void different_options_do_not_share()
 	require(third.cache_diagnostics().adoptions == 0);
 	require(run_to_system_call(fourth, fourth_memory, generation, cpu,
 		code_base) == 4);
-	require(fourth.cache_diagnostics().translations == 2);
-	require(fourth.cache_diagnostics().adoptions == 0);
+	require(fourth.cache_diagnostics().translations == 0);
+	require(fourth.cache_diagnostics().adoptions == 1);
 }
 
 /* Only an address space one executor keeps to itself sweeps its link

@@ -448,6 +448,27 @@
     target_compile_definitions(uml_arm64_gadget_shared_bodies_tests PRIVATE
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
+    # A shared address space bounds the freed arena it accumulates by renewal.
+    # The test links the executor variant that schedules renewals and exposes
+    # what a space holds, in place of the production one.
+    set(UML_STATIC_RUNTIME_STRESS_TEST_OBJECTS
+        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
+    list(TRANSFORM UML_STATIC_RUNTIME_STRESS_TEST_OBJECTS REPLACE
+        "uml_arm64_gadget_executor>"
+        "uml_arm64_gadget_sweep_stress_executor>")
+    uml_add_arm64_unit_test(gadget_shared_bound WITHOUT_HARNESS
+        OBJECTS
+            $<TARGET_OBJECTS:uml_static_mmu>
+            $<TARGET_OBJECTS:uml_arm64_gadgets>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
+            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+            ${UML_STATIC_RUNTIME_STRESS_TEST_OBJECTS}
+        LABELS tsan)
+    target_compile_definitions(uml_arm64_gadget_shared_bound_tests PRIVATE
+        UML_GADGET_SWEEP_STRESS=1
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+
     # The body arena on its own, against a model of what it hands out.
     uml_add_arm64_unit_test(gadget_body_arena WITHOUT_HARNESS NO_OBJECTS)
 
