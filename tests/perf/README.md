@@ -391,9 +391,10 @@ estimate on either; a field an engine has no counterpart for is simply absent.
 The footprint is the committed slabs, every resident translation's allocations
 as the allocator sized them, the link and indirect records and target tables,
 and the per-address-space indexes the cache owns; on arm64 it also says how
-much of the body arena is chunks that hold no live body. A `P` record carries
-its translation's allocation and the header, stream and validation bytes in
-it.
+much of the body arena is chunks that hold no live body. The `E` record also
+counts the link sweeps, the link records and indirect sites they released, and
+the time they took. A `P` record carries its translation's allocation and the
+header, stream and validation bytes in it.
 
 When arm64 executors share an address space's translations, an `E` record
 counts only what its cache owns (slot slabs and slot lists), each `G` record

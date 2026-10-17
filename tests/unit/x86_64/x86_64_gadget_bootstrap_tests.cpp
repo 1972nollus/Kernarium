@@ -1923,6 +1923,116 @@ read_test_sequences(void *context) noexcept
 		"an undescribed code change left a link armed");
 }
 
+/* A link sweep releases the records only replaced blocks named, as the arm64
+ * cache's does, and keeps what the resident blocks and a trained site need.
+ *
+ * One jump is rewritten to a new target thousands of times, each through a
+ * code change the address space can describe, so only the jump is retired and
+ * rebuilt, and every earlier target is named by nothing but, for a round, an
+ * indirect site's cells. Those records pile up past the sweep floor and a
+ * store sweeps them; the site, asked again for the target it learned last
+ * round, must find its cell emptied rather than naming a released record. A
+ * pair linked before any sweep still links after them, and a resident block
+ * nothing links to keeps the record its slot remembers and that a block
+ * translated later links through.
+ */
+[[nodiscard]] bool a_link_sweep_releases_what_only_replaced_blocks_named()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::size_t rounds = 6000;
+	constexpr std::uint64_t far_targets = 0x10'0000;
+	TestMemory memory;
+	const auto jump_to = [&](std::uint64_t source, std::uint64_t target) {
+		const auto displacement =
+			static_cast<std::uint32_t>(target - (source + 5U));
+		memory.load(source, {0xe9,
+			static_cast<std::uint8_t>(displacement),
+			static_cast<std::uint8_t>(displacement >> 8),
+			static_cast<std::uint8_t>(displacement >> 16),
+			static_cast<std::uint8_t>(displacement >> 24)});
+	};
+	const auto target = [](std::size_t round) {
+		return far_targets + 16U * round;
+	};
+	jump_to(0, target(0));
+	memory.load(0x100, {0xff, 0xe0});
+	memory.load(0x200, {0xb8, 0x4d, 0x00, 0x00, 0x00, 0x0f, 0x05});
+	jump_to(0x300, 0x200);
+	memory.load(0x400, {0xb8, 0x4e, 0x00, 0x00, 0x00, 0x0f, 0x05});
+	jump_to(0x500, 0x400);
+	TestSequences sequences;
+	memory.set_code_changes(&sequences.code_changes);
+	gadgets::Executor executor;
+	const auto prepare = [&] {
+		executor.prepare(memory, 42, sequences.mapping_changes,
+			sequences.code_changes, &sequences, read_test_sequences,
+			read_test_code_changes);
+	};
+	const auto run = [&](std::uint64_t rip, std::uint64_t rax = 0) {
+		CpuState cpu{};
+		cpu.rip = rip;
+		cpu.gpr(Register::rax) = rax;
+		const auto selected = executor.select_program(
+			memory, rip, ExecutionMode::long64);
+		if (selected.program == nullptr)
+			return std::pair{gadgets::ExecuteResult{}, cpu};
+		const auto result = gadgets::execute(
+			*selected.program, cpu, memory, executor, 64);
+		return std::pair{result, cpu};
+	};
+	const auto linked = [&](std::uint64_t rip, std::uint64_t value) {
+		const auto [result, cpu] = run(rip);
+		return result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 3 &&
+			cpu.gpr(Register::rax) == value;
+	};
+
+	prepare();
+	if (!expect(executor.select_program(memory, 0x200,
+			ExecutionMode::long64).program != nullptr &&
+			executor.select_program(memory, 0x400,
+				ExecutionMode::long64).program != nullptr &&
+			linked(0x300, 0x4d),
+		"link-sweep setup did not link its resident pair"))
+		return false;
+	for (std::size_t round = 0; round < rounds; ++round) {
+		if (round != 0) {
+			jump_to(0, target(round));
+			/* Each prepare reads only the newest change. */
+			sequences.recorded = 0;
+			sequences.change(0, 5);
+			prepare();
+		}
+		const auto [jumped, cpu] = run(0);
+		if (!expect(jumped.event == uml::cpu::EngineEvent::continued &&
+				jumped.retired_instructions == 1 &&
+				cpu.rip == target(round),
+			"a rewritten jump did not leave for its new target"))
+			return false;
+		if (round == 0)
+			continue;
+		for (const auto asked : {target(round - 1), target(round)}) {
+			const auto [indirect, landed] = run(0x100, asked);
+			if (!expect(indirect.event ==
+					uml::cpu::EngineEvent::continued &&
+					landed.rip == asked,
+				"an indirect site lost a target a sweep released"))
+				return false;
+		}
+	}
+	const auto &diagnostics = executor.cache_diagnostics();
+	return expect(linked(0x300, 0x4d),
+			"a sweep reset a link between resident blocks") &&
+		expect(executor.select_program(memory, 0x400,
+				ExecutionMode::long64).program != nullptr &&
+			linked(0x500, 0x4e),
+			"a sweep released the record of a resident block") &&
+		expect(diagnostics.link_sweeps != 0 &&
+			diagnostics.released_links >= rounds / 2 &&
+			diagnostics.released_sites == 0,
+			"replaced jumps' targets were not swept");
+}
+
 [[nodiscard]] bool linked_call_crosses_a_disjoint_executable_stack_write()
 {
 	using namespace uml::cpu::x86_64;
@@ -9508,6 +9618,438 @@ struct PositionCase final {
 	return true;
 }
 
+/* ---- the stack forms' recovery --------------------------------------------
+ *
+ * A baked PUSH or POP of a register has no stream word. When it faults, or
+ * stores into the block that is running, the gadget leaves with the stream
+ * pointer and `execute` finds the instruction by building the block's
+ * instructions again, as it does for an exception the guest unmasked. These
+ * run every register's PUSH and POP, with and without a REX prefix, to a fault
+ * and to an overlap, at positions of a block and at the top of the address
+ * space, from the block's own stream and from the fragment a budget-limited
+ * replay runs, and check what the recovery must not disturb: a store across a
+ * page edge, a block of many such instructions, a block a link enters and an
+ * exception the guest unmasked behind them.
+ */
+
+/* PUSH or POP of register `index` (0 to 15), as encoded in 64-bit mode. */
+[[nodiscard]] std::vector<std::uint8_t> stack_encoding(bool push,
+	unsigned index)
+{
+	std::vector<std::uint8_t> encoding;
+	if (index >= 8U)
+		encoding.push_back(0x41);
+	encoding.push_back(static_cast<std::uint8_t>(
+		(push ? 0x50U : 0x58U) + (index & 7U)));
+	return encoding;
+}
+
+[[nodiscard]] std::string stack_name(bool push, unsigned index)
+{
+	return std::string{push ? "push r" : "pop r"} + std::to_string(index);
+}
+
+/* Every register's PUSH and POP faults on an unmapped stack with its own
+ * address, whichever stream runs it: the block's own, where the instruction
+ * has no word, and a fragment, where it keeps its position. */
+[[nodiscard]] bool baked_stack_faults_report_their_instruction()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::array<std::size_t, 8> positions{0, 1, 6, 7, 63, 100, 500,
+		1000};
+	for (const auto mode : {ExecutionMode::long64, ExecutionMode::compat32}) {
+		const unsigned registers = mode == ExecutionMode::long64 ? 16U : 8U;
+		for (const bool push : {true, false}) {
+			for (unsigned index = 0; index < registers; ++index) {
+				const auto name = stack_name(push, index);
+				const PositionCase test{name.c_str(),
+					stack_encoding(push, index), uml::cpu::EngineEvent::memory_fault,
+					PositionCase::Setup::stack};
+				for (const auto position : positions) {
+					TestMemory memory;
+					if (!position_case_reports_its_address(
+							test, mode, memory, 0, 0x1230, position))
+						return false;
+				}
+				if (mode == ExecutionMode::long64) {
+					for (const auto position : {std::size_t{0},
+						std::size_t{9}}) {
+						constexpr std::uint64_t base = 0x7f00'0000'0000ULL;
+						TestMemory memory{base};
+						if (!position_case_reports_its_address(test, mode,
+								memory, base, base + 0x1230, position))
+							return false;
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
+/* The same instructions at the top of a 32-bit space, where a compatibility
+ * mode block wraps to zero; those take the ordinary bank and must keep
+ * reporting the wrapped address. */
+[[nodiscard]] bool compat32_stack_faults_wrap_at_4gib()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t base = 0xffff'f000ULL;
+	constexpr std::uint64_t code = 0xffff'fff8ULL;
+	for (const bool push : {true, false}) {
+		for (unsigned index = 0; index < 8U; ++index) {
+			const auto name = stack_name(push, index);
+			const PositionCase test{name.c_str(),
+				stack_encoding(push, index), uml::cpu::EngineEvent::memory_fault,
+				PositionCase::Setup::stack};
+			for (const std::size_t position : {1U, 2U, 3U, 5U, 7U, 8U, 9U,
+				10U, 16U, 30U}) {
+				TestMemory memory{base};
+				memory.set_wrap32(true);
+				if (!position_case_reports_its_address(test,
+						ExecutionMode::compat32, memory, base, code,
+						position))
+					return false;
+			}
+		}
+	}
+	return true;
+}
+
+/* A store of the stack's eight bytes that lands in the running block retires
+ * and leaves for the instruction after it, from every register. */
+[[nodiscard]] bool baked_stack_overlaps_report_the_next_instruction()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t code = 0x1100;
+	for (unsigned index = 0; index < 16U; ++index) {
+		const auto encoding = stack_encoding(true, index);
+		for (const auto position : {std::size_t{0}, std::size_t{5},
+			std::size_t{200}, std::size_t{1019}}) {
+			for (const auto budget : {std::size_t{1000}, std::size_t{0}}) {
+				std::vector<std::uint8_t> bytes;
+				std::size_t padding = 0;
+				append_padding(bytes, position, padding);
+				const auto at = bytes.size();
+				bytes.insert(bytes.end(), encoding.begin(), encoding.end());
+				bytes.insert(bytes.end(), {0x0f, 0x05});
+				TestMemory memory;
+				load_code(memory, code, bytes);
+				memory.set_executable_page(code);
+				const auto built = require_built(
+					gadgets::build(memory, code, 400),
+					stack_name(true, index).c_str());
+				CpuState cpu{};
+				cpu.rip = code;
+				const auto end = code + at + encoding.size();
+				for (unsigned other = 0; other < 16U; ++other)
+					cpu.gpr(static_cast<Register>(other)) = 0x90 + other;
+				/* The push stores at the instruction after its own. */
+				cpu.gpr(Register::rsp) = end + 8U;
+				const auto stored = cpu.gpr(static_cast<Register>(index));
+				gadgets::Executor executor;
+				executor.prepare(memory, 1, 1, 1);
+				/* Budget 0 stands for a replay of the instructions up to
+				 * and including the push. */
+				const std::size_t limit = budget == 0 ? padding + 1U : budget;
+				const auto result = gadgets::execute(
+					built.program, cpu, memory, executor, limit);
+				const auto where = stack_name(true, index) + " at " +
+					std::to_string(position) + ", budget " +
+					std::to_string(limit);
+				if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+						result.retired_instructions == padding + 1U &&
+						cpu.rip == end,
+						(where + " left the block with the wrong RIP")
+							.c_str()) ||
+					!expect(memory.qword(end) == stored &&
+						cpu.gpr(Register::rsp) == end &&
+						memory.invalidations() == 1,
+						(where + " lost its store").c_str()))
+					return false;
+			}
+		}
+	}
+	return true;
+}
+
+/* A stack access across a page edge goes through the crossing tails, which
+ * start a PUSH's publication flag clear because no word does: the store
+ * lands, and a crossing access off the end of memory faults at the
+ * instruction. */
+[[nodiscard]] bool baked_stack_crosses_page_edges()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t code = 0x3000;
+	for (unsigned index = 0; index < 16U; ++index) {
+		for (const bool push : {true, false}) {
+			for (const std::size_t position : {std::size_t{0}, std::size_t{9}}) {
+				const auto encoding = stack_encoding(push, index);
+				std::vector<std::uint8_t> bytes;
+				std::size_t padding = 0;
+				append_padding(bytes, position, padding);
+				const auto at = bytes.size();
+				bytes.insert(bytes.end(), encoding.begin(), encoding.end());
+				bytes.push_back(0xcc);
+				const auto where = stack_name(push, index) + " at " +
+					std::to_string(position);
+				/* A page edge inside the memory, then the memory's end. */
+				for (const std::uint64_t address : {std::uint64_t{4092},
+					std::uint64_t{8188}, page_end_address}) {
+					TestMemory memory;
+					load_code(memory, code, bytes);
+					const auto built = require_built(
+						gadgets::build(memory, code, 400), where.c_str());
+					CpuState cpu{};
+					cpu.rip = code;
+					constexpr std::uint64_t value = 0x1122334455667788ULL;
+					cpu.gpr(static_cast<Register>(index)) = value;
+					cpu.gpr(Register::rsp) = push ? address + 8U : address;
+					const std::uint64_t pushed = cpu.gpr(
+						static_cast<Register>(index));
+					if (!push)
+						for (unsigned byte = 0; byte < 8U &&
+							address + byte < 16384U; ++byte)
+							memory.load(address + byte,
+								{static_cast<std::uint8_t>(
+									value >> (8U * byte))});
+					const bool inside = address + 8U <= 16384U;
+					const auto result = gadgets::execute(
+						built.program, cpu, memory, 1000);
+					if (!inside) {
+						if (!expect(result.event ==
+								uml::cpu::EngineEvent::memory_fault &&
+							result.retired_instructions == padding &&
+							cpu.rip == code + at,
+							(where + " off the end of memory reported the "
+								"wrong RIP").c_str()))
+							return false;
+						continue;
+					}
+					/* INT3 ends the block without touching RCX or R11. */
+					if (!expect(result.event ==
+								uml::cpu::EngineEvent::breakpoint &&
+							result.retired_instructions >= padding + 1U,
+						(where + " across a page edge did not retire")
+							.c_str()))
+						return false;
+					if (push) {
+						if (!expect(memory.qword(address) == pushed &&
+								cpu.gpr(Register::rsp) == address,
+							(where + " across a page edge lost its store")
+								.c_str()))
+							return false;
+					} else if (!expect(
+							cpu.gpr(static_cast<Register>(index)) == value &&
+								(index == 4U ||
+								cpu.gpr(Register::rsp) == address + 8U),
+							(where + " across a page edge lost its load at " +
+								std::to_string(address) + ": register " +
+								std::to_string(cpu.gpr(
+									static_cast<Register>(index))) +
+								", rsp " +
+								std::to_string(cpu.gpr(Register::rsp)))
+								.c_str())) {
+						return false;
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
+/* A block of many PUSH, POP and ordinary instructions faults at the right
+ * one wherever the stack gives out, so the recovery counts the words of the
+ * headerless entries before it. */
+[[nodiscard]] bool baked_stack_faults_inside_a_long_block()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t code = 0x1230;
+	struct Step final {
+		std::vector<std::uint8_t> encoding;
+		int delta;
+	};
+	std::vector<Step> steps;
+	for (unsigned n = 0; n < 40U; ++n) {
+		switch (n % 5U) {
+		case 0: steps.push_back({stack_encoding(true, n % 16U), 1}); break;
+		case 1: steps.push_back({{0x48, 0xff, 0xc1}, 0}); break;
+		case 2: steps.push_back({stack_encoding(true, (n * 7U) % 16U), 1});
+			break;
+		case 3: {
+			/* Not RSP: a POP of it moves the stack to what it loaded. */
+			const unsigned index = (n * 3U) % 15U;
+			steps.push_back({stack_encoding(false,
+				index >= 4U ? index + 1U : index), -1});
+			break;
+		}
+		default: steps.push_back({{0xb8, 0x07, 0x00, 0x00, 0x00}, 0}); break;
+		}
+	}
+	std::vector<std::uint8_t> bytes;
+	std::vector<std::size_t> offsets;
+	for (const auto &step : steps) {
+		offsets.push_back(bytes.size());
+		bytes.insert(bytes.end(), step.encoding.begin(), step.encoding.end());
+	}
+	bytes.insert(bytes.end(), {0x0f, 0x05});
+	for (unsigned depth = 0; depth < 24U; ++depth) {
+		TestMemory memory;
+		load_code(memory, code, bytes);
+		const auto built = require_built(
+			gadgets::build(memory, code, 400), "long stack block");
+		CpuState cpu{};
+		cpu.rip = code;
+		const std::uint64_t start = 8U * depth;
+		cpu.gpr(Register::rsp) = start;
+		/* The first PUSH to run below address zero faults. */
+		std::int64_t rsp = static_cast<std::int64_t>(start);
+		std::size_t fault = steps.size();
+		for (std::size_t index = 0; index < steps.size(); ++index) {
+			if (steps[index].delta > 0 && rsp - 8 < 0) {
+				fault = index;
+				break;
+			}
+			rsp -= 8 * steps[index].delta;
+		}
+		const auto result = gadgets::execute(
+			built.program, cpu, memory, 1000);
+		const auto where = "stack block from depth " + std::to_string(depth);
+		if (fault == steps.size()) {
+			if (!expect(result.event == uml::cpu::EngineEvent::system_call,
+					(where + " did not reach its end").c_str()))
+				return false;
+			continue;
+		}
+		if (!expect(result.event == uml::cpu::EngineEvent::memory_fault &&
+				result.retired_instructions == fault &&
+				cpu.rip == code + offsets[fault],
+				(where + " faulted at the wrong instruction").c_str()))
+			return false;
+	}
+	return true;
+}
+
+/* A PUSH in a block that a link enters, and one in a program the executor
+ * did not cache, are found from the context's program begin and from the
+ * program the run was entered with. */
+[[nodiscard]] bool a_linked_block_recovers_its_stack_instruction()
+{
+	using namespace uml::cpu::x86_64;
+	for (const bool overlap : {false, true}) {
+		for (const unsigned padding : {0U, 3U}) {
+			for (const bool push : {true, false}) {
+				if (overlap && !push)
+					continue;
+				TestMemory memory;
+				memory.load(0, {0xe9, 0x0b, 0x00, 0x00, 0x00});
+				std::vector<std::uint8_t> bytes(padding, 0x90);
+				bytes.push_back(push ? 0x53 : 0x5b);
+				bytes.insert(bytes.end(), {0x0f, 0x05});
+				load_code(memory, 16, bytes);
+				if (overlap)
+					memory.set_executable_page(0);
+				TestSequences sequences;
+				memory.set_code_changes(&sequences.code_changes);
+				gadgets::Executor executor;
+				executor.prepare(memory, 42, sequences.mapping_changes,
+					sequences.code_changes, &sequences, read_test_sequences);
+				const auto target = executor.select_program(
+					memory, 16, ExecutionMode::long64);
+				const auto jump = executor.select_program(
+					memory, 0, ExecutionMode::long64);
+				if (!expect(target.program != nullptr &&
+						jump.program != nullptr,
+					"linked stack block did not populate its link"))
+					return false;
+				CpuState cpu{};
+				const std::uint64_t end = 16U + padding + 1U;
+				/* The push lands on the instruction after it, or nowhere. */
+				cpu.gpr(Register::rsp) = overlap ? end + 8U : 0x20008;
+				cpu.gpr(Register::rbx) = 0x55;
+				const auto result = gadgets::execute(
+					*jump.program, cpu, memory, executor, 64);
+				const auto where = std::string{push ? "push" : "pop"} +
+					(overlap ? " (overlap)" : " (fault)") + " behind a link, "
+					"padding " + std::to_string(padding);
+				if (overlap) {
+					if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+							result.retired_instructions == 2U + padding &&
+							cpu.rip == end &&
+							memory.qword(end) == 0x55,
+						(where + " left with the wrong RIP").c_str()))
+						return false;
+				} else if (!expect(result.event ==
+						uml::cpu::EngineEvent::memory_fault &&
+						result.retired_instructions == 1U + padding &&
+						cpu.rip == 16U + padding,
+					(where + " faulted at the wrong instruction").c_str())) {
+					return false;
+				}
+			}
+		}
+	}
+	return true;
+}
+
+/* An exception the guest unmasked, found behind PUSH and POP, is raised at
+ * its own instruction: the recovery for it builds the block's stream as the
+ * block's own, whose entries have no word. */
+[[nodiscard]] bool an_unmasked_exception_is_found_behind_stack_instructions()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x53,                   // push rbx
+		0x41, 0x54,             // push r12
+		0x59,                   // pop rcx
+		0x41, 0x5d,             // pop r13
+		0xf3, 0x0f, 0x5e, 0xc1, // divss xmm0, xmm1
+		0x0f, 0x05,             // syscall
+	});
+	const auto built = require_built(gadgets::build(memory, 0, 64),
+		"stack block with a DIVSS did not build");
+	gadgets::Executor executor;
+	executor.prepare(memory);
+	CpuState cpu{};
+	cpu.mxcsr = 0x1d80;
+	cpu.gpr(Register::rsp) = 0x800;
+	set_xmm_low(cpu, 0, 0x3f800000);
+	const auto trap = gadgets::execute(
+		built.program, cpu, memory, executor, 64);
+	return expect(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
+			trap.vector == 19 && trap.retired_instructions == 4 &&
+			cpu.rip == 6 && cpu.gpr(Register::rsp) == 0x800,
+		"an unmasked exception behind PUSH and POP was not raised at its "
+		"own instruction");
+}
+
+/* A block's own stream holds the entries alone, and only there. */
+[[nodiscard]] bool baked_stack_entries_carry_no_stream_word()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x53,       // push rbx
+		0x41, 0x57, // push r15
+		0x5d,       // pop rbp
+		0x41, 0x58, // pop r8
+		0x0f, 0x05, // syscall
+	});
+	const auto built = require_built(gadgets::build(memory, 0, 64),
+		"stack block did not build");
+	const auto stream = built.program.native_stream();
+	const auto entry = [](bool push, unsigned index) {
+		return reinterpret_cast<std::uintptr_t>(
+			(push ? gadgets::baked::uml_x86_64_baked_push_64_r :
+				gadgets::baked::uml_x86_64_baked_pop_64_r)[index]);
+	};
+	return expect(stream.size() >= 4 && stream[0] == entry(true, 3) &&
+			stream[1] == entry(true, 15) && stream[2] == entry(false, 5) &&
+			stream[3] == entry(false, 8),
+		"PUSH and POP in a block's stream do not follow one another");
+}
+
 [[nodiscard]] bool ordinary_forms_report_their_position()
 {
 	using namespace uml::cpu::x86_64;
@@ -10165,6 +10707,7 @@ int main()
 		cache_chains_direct_branches() &&
 		cache_chains_indirect_transfers() &&
 		an_unrelated_code_change_leaves_a_link_armed() &&
+		a_link_sweep_releases_what_only_replaced_blocks_named() &&
 		linked_call_crosses_a_disjoint_executable_stack_write() &&
 		linked_call_stops_when_the_stack_write_hits_its_target() &&
 		short_blocks_retain_only_their_translated_storage() &&
@@ -10287,6 +10830,14 @@ int main()
 		baked_faults_rebuild_the_rip_from_the_block_start() &&
 		baked_accesses_stop_at_the_position_field() &&
 		baked_overlap_exits_rebuild_the_rip_from_the_block_start() &&
+		baked_stack_entries_carry_no_stream_word() &&
+		baked_stack_faults_report_their_instruction() &&
+		compat32_stack_faults_wrap_at_4gib() &&
+		baked_stack_overlaps_report_the_next_instruction() &&
+		baked_stack_crosses_page_edges() &&
+		baked_stack_faults_inside_a_long_block() &&
+		a_linked_block_recovers_its_stack_instruction() &&
+		an_unmasked_exception_is_found_behind_stack_instructions() &&
 		ordinary_forms_report_their_position() &&
 		ordinary_forms_report_their_position_across_4gib() &&
 		ordinary_overlap_exits_report_the_next_address() &&

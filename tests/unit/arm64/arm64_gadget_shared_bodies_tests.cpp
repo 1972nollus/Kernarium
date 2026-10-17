@@ -259,6 +259,53 @@ void different_options_do_not_share()
 	require(fourth.cache_diagnostics().adoptions == 0);
 }
 
+/* Only an address space one executor keeps to itself sweeps its link
+ * records: a shared one is named from the slots, memos and return rings of
+ * every executor holding it, so it keeps them all. Rewriting one branch
+ * thousands of times leaves a record behind for every target it ever had;
+ * the private executor sweeps those, and the sharing one must not. */
+void a_shared_space_is_never_swept()
+{
+	constexpr unsigned long generation = 944;
+	constexpr std::size_t rounds = 5000;
+	constexpr std::uint64_t first_target = code_base + 0x1000;
+	constexpr std::size_t pages = (0x1000 + rounds * 8 +
+		DARWIN_UML_GUEST_PAGE_SIZE - 1) / DARWIN_UML_GUEST_PAGE_SIZE;
+	JitBacking backing{pages};
+	JitMapping mapping{generation, code_base, backing, pages};
+	const auto rewrite = [&](gadgets::GadgetExecutor &executor,
+				 StaticGuestMemory &memory) {
+		for (std::size_t round = 0; round < rounds; ++round) {
+			const auto to = first_target + round * 8;
+			backing.put32(0, branch(code_base, to));
+			require(darwin_uml_static_vm_invalidate_code_generation(
+				generation, code_base, 4) == 0);
+			arm64::CpuState cpu{};
+			cpu.pc = code_base;
+			const auto outcome = run_once(executor, memory, generation,
+				cpu);
+			require(outcome.event == ::uml::cpu::EngineEvent::continued);
+			require(cpu.pc == to);
+		}
+		return executor.cache_diagnostics();
+	};
+
+	StaticGuestMemory shared_memory;
+	gadgets::GadgetExecutor shared{sharing_options()};
+	const auto sharing = rewrite(shared, shared_memory);
+	require(sharing.translations == rounds);
+	require(sharing.link_sweeps == 0);
+
+	require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", "0", 1) == 0);
+	StaticGuestMemory private_memory;
+	gadgets::GadgetExecutor alone{sharing_options()};
+	require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", "1", 1) == 0);
+	const auto kept = rewrite(alone, private_memory);
+	require(kept.translations == rounds);
+	require(kept.link_sweeps != 0);
+	require(kept.released_links >= rounds / 2);
+}
+
 /* Several vCPUs run, link, retire and revalidate the same address spaces
  * while another rewrites their code. Every run must see one of the values
  * the code has held, and once the writer stops, the last ones. */
@@ -351,6 +398,7 @@ int main()
 	a_code_change_reaches_every_executor();
 	retiring_in_one_executor_keeps_the_other();
 	different_options_do_not_share();
+	a_shared_space_is_never_swept();
 	concurrent_executors_follow_code_changes();
 	return 0;
 }

@@ -11,6 +11,7 @@
 
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
+#include "cpu/arm64/gadgets/a32_layout.h"
 #include "cpu/arm64/layout/assembly_offsets.h"
 
 #include <algorithm>
@@ -157,7 +158,8 @@ private:
 			      unsigned shape_class, std::uintptr_t rd,
 			      std::uintptr_t rn, std::uintptr_t rm,
 			      std::uintptr_t rs, std::uint32_t immediate,
-			      std::optional<unsigned> carry);
+			      std::optional<unsigned> carry,
+			      bool in_place = true);
 	Result emit_mov_constant(const Instruction &in, int d,
 				 std::uint32_t value);
 	Result emit_multiply(const Instruction &in, const FormPlan &plan);
@@ -184,6 +186,15 @@ private:
 	/* The Armv8 additions and optional extensions that are neither VFP nor
 	 * Advanced SIMD: program_builder_a32_armv8.cpp. */
 	Result emit_armv8(const Instruction &in, const FormPlan &plan);
+	/* The operand bits that name the current instruction to a memory
+	 * gadget's fault (a32_layout.h). block_limit keeps every position of a
+	 * block within the eight bits. */
+	[[nodiscard]] std::uint64_t position() const noexcept
+	{
+		static_assert(block_limit <= 256);
+		return static_cast<std::uint64_t>(compiled_)
+		       << UML_GADGET_A32_POSITION_SHIFT;
+	}
 	/* The illegal-instruction exit at the current instruction. */
 	void emit_illegal();
 	void emit_indirect(std::uintptr_t source, bool interwork, bool returns);
@@ -238,6 +249,14 @@ private:
 		std::uint64_t operand{};
 	};
 	Compare compare_;
+	/* The MOVW the last gadget pushed is, while nothing has been pushed
+	 * since: `end` is the length of the stream just after it, and `rd` the
+	 * register it writes. */
+	struct MoveWide final {
+		std::size_t end{~std::size_t{}};
+		std::uintptr_t rd{};
+	};
+	MoveWide movw_;
 	/* The condition of the instruction being translated when it is a
 	 * conditional data-processing instruction that sets no flags, which
 	 * emit_dp_values lowers as a select rather than behind a skip; 14

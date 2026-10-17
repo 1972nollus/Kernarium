@@ -271,8 +271,7 @@ Translator::Result Translator::emit_vfp_memory(const Instruction &in,
 				pc_aligned() + offset : pc_aligned() - offset;
 			push(dbl ? G::vfp_ldr_d_abs :
 			     half ? G::vfp_ldr_h_abs : G::vfp_ldr_s_abs);
-			push(key_);
-			push(vreg | std::uint64_t{address} << 32);
+			push(vreg | position() | std::uint64_t{address} << 32);
 			return {};
 		}
 		const std::uintptr_t rn = source(o.n, scratch1);
@@ -281,8 +280,7 @@ Translator::Result Translator::emit_vfp_memory(const Instruction &in,
 			     half ? G::vfp_ldr_h_i : G::vfp_ldr_s_i) :
 			    (dbl ? G::vfp_str_d_i :
 			     half ? G::vfp_str_h_i : G::vfp_str_s_i));
-		push(key_);
-		push(vreg | std::uint64_t{rn} << 16 |
+		push(vreg | std::uint64_t{rn} << 16 | position() |
 		     std::uint64_t{displacement} << 32);
 		return {};
 	}

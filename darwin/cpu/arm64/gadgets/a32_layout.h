@@ -21,6 +21,12 @@
 #define UML_GADGET_A32_LIBRARY_PC_VALUE_SHIFT 42
 #define UML_GADGET_A32_LIBRARY_FORM_SHIFT 48
 
+/* The single and doubleword transfers, VLDR and VSTR, and TBB and TBH carry
+ * no key: bits 24-31 of their operand word hold the instruction's position
+ * in its block, which a fault reports as the PC, shifted left by two with
+ * bit 0 set, for the executor to resolve to the instruction's key. */
+#define UML_GADGET_A32_POSITION_SHIFT 24
+
 /* What uml_arm64_gadget_a32_execute (a32_library_helpers.cpp) returns to the
  * gadget: the instruction retired; it faulted, with the fault in the TLB;
  * it is UNDEFINED; or it reached an internal error, the engine's fatal
