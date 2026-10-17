@@ -4,8 +4,8 @@
 
 A bundle is a directory the application can boot on its own: the release
 payload including the directly writable disk the guest accumulates. The kernel
-is not part of it: the application carries an independently accepted ACK
-artifact in its signed runtime framework.
+is not part of it: the application carries an independently accepted Android
+kernel artifact in its signed runtime framework.
 """
 
 from __future__ import annotations

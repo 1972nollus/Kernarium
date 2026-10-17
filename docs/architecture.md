@@ -235,7 +235,8 @@ Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted 16 KiB or 4 KiB mainline
 artifact on macOS and on the iOS device. The macOS x86_64 userspace
 product uses a separately identified 4 KiB mainline slice. Android uses a
-separate accepted 4 KiB ACK artifact.
+separate accepted 4 KiB artifact of the `android-6.18` family, built from the
+same mainline tree with the Android configuration.
 
 Kernarium is an iOS device product only; [`graphics.md`](graphics.md)
 gives the Metal 4 reason the Simulator has no build of it or of the Apple GPU
@@ -1190,17 +1191,18 @@ declines.
 
 ## Kernel and Android ownership
 
-`kernel/mainline-6.18` and `kernel/android-6.18` independently own their pinned
-source identity, configuration, generated patch series, and standalone build
-policy. `kernel/common` owns only contracts shared across families. The Apple
-CMake graph imports compact artifacts and checks their bridge ABI, page
-profile, product family, and `6.18` release series. Patch releases, commit
-identities, and producer provenance do not become runtime compatibility keys.
+`kernel/mainline-6.18` owns the pinned source identity, configuration,
+generated patch series, and standalone build policy of both the Linux and the
+Android kernel products. `kernel/common` owns only contracts shared across
+families. The Apple CMake graph imports compact artifacts and checks their
+bridge ABI, page profile, product family, and `6.18` release series. Patch
+releases, commit identities, and producer provenance do not become runtime
+compatibility keys.
 
-`android/lineage-24` owns the Android product, static GPT layout, ramdisks, rootfs
-release, and producer tools. Kernel and rootfs releases are selected
-independently. Apple emulator builds consume only the ACK ELF artifact; rootfs
-and command-line paths are launch inputs. The `uml-darwin-android17` product
+`android/lineage-24` owns the Android product, static GPT layout, ramdisks,
+rootfs release, and producer tools. Kernel and rootfs releases are selected
+independently. Apple emulator builds consume only the Android kernel artifact;
+rootfs and command-line paths are launch inputs. The `uml-darwin-android17` product
 opens one directly writable supplied GPT and has no 16 KiB variant.
 
 Guest bundles, disk capacity, and compressed rootfs delivery belong to the

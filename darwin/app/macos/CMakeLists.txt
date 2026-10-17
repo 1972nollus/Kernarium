@@ -115,7 +115,8 @@ endif()
 if(UML_BUILD_ANDROID17_CLI)
     if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET)
         message(FATAL_ERROR
-            "uml-darwin-android17 requires a compatible ACK artifact")
+            "uml-darwin-android17 requires a compatible Android kernel "
+            "artifact")
     endif()
     uml_add_macos_embedded_kernel_app(
         uml-darwin-android17 android17_main.cpp
