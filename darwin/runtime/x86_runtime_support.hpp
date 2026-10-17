@@ -25,6 +25,7 @@ public:
 	X86StaticExecutionScope(unsigned long generation, std::uint64_t guest_pc)
 		: context_{darwin_uml_static_vm_execution_context_create(generation)}
 	{
+		darwin_uml_static_vm_require_coherent_kernel_code_writes();
 		entered_ = context_ != nullptr &&
 			darwin_uml_static_vm_execution_context_begin(
 				context_, guest_pc) == 0;

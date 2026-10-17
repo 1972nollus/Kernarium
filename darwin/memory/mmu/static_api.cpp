@@ -379,7 +379,7 @@ extern "C" int darwin_uml_vm_sync_from_buffer(unsigned long address, const void 
 	if (address_range(reinterpret_cast<void *>(address), length) ==
 	    AddressDomain::invalid)
 		return invalid_address_range();
-	return darwin_uml_static_vm_copy_from_buffer(address, buffer, length);
+	return darwin_uml_static_vm_copy_kernel_write(address, buffer, length);
 }
 
 extern "C" int darwin_uml_vm_invalidate_code(unsigned long generation,

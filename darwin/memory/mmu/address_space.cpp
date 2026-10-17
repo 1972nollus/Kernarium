@@ -96,6 +96,27 @@ constexpr std::size_t maximum_mapping_history = 4096;
 	return mapping.guest_code && (mapping.protection & PROT_EXEC) != 0;
 }
 
+/* Raised once for the process, before the first x86 translation exists. x86
+ * code sees every store at once, the kernel's included, so a kernel write into
+ * a guest-code page must publish a code change itself. arm64 and AArch32 code
+ * see such a write only after their own IC IVAU or cacheflush(), which
+ * publishes it, and a process that runs nothing else does not pay for a
+ * publication per uaccess. */
+std::atomic_bool &coherent_kernel_code_writes()
+{
+	static std::atomic_bool required{};
+	return required;
+}
+
+/* Whether a kernel write just copied into a guest-code page must publish.
+ * The fence pairs with the one after the flag is raised: either this load
+ * sees the flag, or the first x86 translator fetches the bytes just written. */
+[[nodiscard]] bool kernel_code_write_publishes() noexcept
+{
+	std::atomic_thread_fence(std::memory_order_seq_cst);
+	return coherent_kernel_code_writes().load(std::memory_order_relaxed);
+}
+
 /* Whether replacing `before` with `after` can leave a translation of the
  * page wrong. A translation exists only for a page that could hold one, so
  * a page that could not changes no code, whatever it becomes. One that
@@ -745,8 +766,10 @@ public:
 		return 0;
 	}
 
+	/* A kernel write (`kernel_write`) publishes a code change only when
+	 * kernel_code_write_publishes() says x86 code may hold the page. */
 	int copy_from_buffer(std::uint64_t address, const void *buffer,
-			     std::uint64_t length)
+			     std::uint64_t length, bool kernel_write)
 	{
 		if (length == 0)
 			return 0;
@@ -777,7 +800,8 @@ public:
 		if (destination == nullptr)
 			return -1;
 		std::memcpy(destination, buffer, length);
-		if (iterator->second.guest_code) {
+		if (iterator->second.guest_code &&
+		    (!kernel_write || kernel_code_write_publishes())) {
 			MappedBacking::invalidate_code_page(
 				iterator->second.backing->code_page_handle(
 					iterator->second.offset));
@@ -2063,8 +2087,25 @@ extern "C" int darwin_uml_static_vm_copy_from_buffer(
 	unsigned long address, const void *buffer, unsigned long length)
 {
 	return with_address_space([&](auto &space) {
-		return space.copy_from_buffer(address, buffer, length);
+		return space.copy_from_buffer(address, buffer, length, false);
 	});
+}
+
+extern "C" int darwin_uml_static_vm_copy_kernel_write(
+	unsigned long address, const void *buffer, unsigned long length)
+{
+	return with_address_space([&](auto &space) {
+		return space.copy_from_buffer(address, buffer, length, true);
+	});
+}
+
+extern "C" void darwin_uml_static_vm_require_coherent_kernel_code_writes(void)
+{
+	auto &required = uml::memory::coherent_kernel_code_writes();
+	if (required.load(std::memory_order_acquire))
+		return;
+	required.store(true, std::memory_order_seq_cst);
+	std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 
 extern "C" int darwin_uml_static_vm_retry_fault(
