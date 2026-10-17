@@ -563,6 +563,11 @@ The product carries none of ACK's own features, and does without them:
 - Binder real-time priority inheritance, `/sys/kernel/wakeup_reasons`, and
   ACK's 20 s expedited-RCU window at boot, which mainline ends at init.
 
+The iOS runtime framework for this product keeps its earlier name,
+`KRuntime_ACK_6_18_4K`, though it now embeds this line's Android artifact.
+Renaming it touches the Kernarium project and its packaging scripts and needs
+the full XCFramework script to verify, so it is a follow-up.
+
 ## Standalone build and publication
 
 Build each profile outside the source tree:
