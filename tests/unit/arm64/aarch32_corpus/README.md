@@ -254,15 +254,21 @@ and the corpus keeps qemu-arm's, which is the profile's:
   the A72 agrees with the profile. So does an STM that stores its
   written-back base after the first register: the stored value is the
   original base.
-- An LDRD whose two words both fault (at `0xfffffffc` and `0`): the profile
-  reports the first word's address; the A72 reports either, varying from one
-  run to the next.
+- An LDRD whose two words both fault, in two pages (at `0xfffffffc` and
+  `0`): the profile reports the first word's address; the A72 reports
+  either, varying from one run to the next. Where both words are in one
+  page, and for an STRD, it reports the first.
 - WFI: arm64 Linux leaves SCTLR_EL1.nTWI clear, so WFI at EL0 traps and the
   program gets SIGILL, as the `pi4` records show. The profile completes WFI
   at once, as it does WFE
   ([`docs/architecture.md`](../../../../docs/architecture.md)), so the six
   WFI cases of `system` differ from `pi4` by design.
 - FZ16 in the `fpscr` suite reads as zero on the A72, which lacks FEAT_FP16.
+
+`observe` runs each case twice, and the two runs must agree, except in the
+fields `known-differences.tsv` lists for the oracle and the case, where the
+answer is open and the first run's is kept. Any other difference fails it
+and names the cases.
 
 ## Regeneration
 

@@ -143,6 +143,32 @@ def check_known_differences(prior: dict) -> None:
         require(row["reason"].strip() != "", f"known difference {row['cases']} without a reason")
 
 
+def check_run_disagreements() -> None:
+    """observe accepts a difference between an oracle's two runs only in the
+    fields known-differences.tsv leaves open for that oracle and case."""
+    module = producer()
+    recipes = {name: dict(state) for name, state in __import__("a32_corpus_plan").make_recipes().items()}
+    case = wire.Case("memory", "LDRD_i_A1_off/3.wrap", "LDRD_i_A1_off", "A", (0xE1C487D3,), 0,
+                     "edges3-a", {"apsr": 0x80000000, "r4": 0xFFFFFF89})
+    start = wire.initial_state(case, recipes)
+
+    def observed(address: int, **changes: int) -> wire.Observation:
+        return wire.Observation(11, 1, address, 0x4F000000, 0, wire.initial_data_digest(case),
+                                start | changes, [])
+
+    def runs(oracle: str, second: wire.Observation) -> tuple[list, list]:
+        return module.run_disagreements(oracle, "memory", [case], recipes, [observed(0xFFFFFFFC)],
+                                        [second])
+
+    require(runs("pi4", observed(0xFFFFFFFC)) == ([], []), "identical runs")
+    require(runs("pi4", observed(0)) == ([(case.name, ["fa"])], []),
+            "a fault address the Cortex-A72 reports either way is open between its runs")
+    require(runs("qemu", observed(0)) == ([], [(case.name, ["fa"])]),
+            "a difference is open only for the oracle known-differences.tsv names")
+    require(runs("pi4", observed(0, r0=1)) == ([], [(case.name, ["fa", "x"])]),
+            "a difference in a field the row does not list is not open")
+
+
 def check_wire() -> None:
     cases = [
         wire.Case("t", "ADC_i_A1/0", "ADC_i_A1", "A", (0xE2A16C3C,), 0, "zero-a"),
@@ -178,6 +204,7 @@ def main() -> int:
     check_derived(prior)
     check_coverage(prior)
     check_known_differences(prior)
+    check_run_disagreements()
     check_wire()
     print(f"AArch32 corpus: {prior['provenance']['cases']} cases in "
           f"{len(prior['parsed']['records'])} records")
