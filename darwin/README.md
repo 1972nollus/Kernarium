@@ -119,12 +119,12 @@ of two. Their payloads and mutable branch links remain ISA-specific. Cached
 x86 programs release spare decoder and native-stream capacity before
 publication.
 
-With `DARWIN_UML_GADGET_SHARED_BODIES=1`, arm64 gadget executors running one
-address space with the same build options and SVCR mode share its
-translations: the bodies, link records, indirect sites and target table belong
-to one process-wide space, and each executor's private slots only point into
-it. A body lives while any executor's slot holds it, so
-an address space costs the union of what its executors hold. A miss with no
+Unless `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private, arm64 gadget
+executors running one address space with the same build options and SVCR mode
+share its translations: the bodies, link records, indirect sites and target
+table belong to one process-wide space, and each executor's private slots only
+point into it. A body lives while any executor's slot holds it, so an address
+space costs the union of what its executors hold. A miss with no
 slot for its PC adopts the body the space indexes for it after the same exact
 word validation a stale slot gets, without copying or relocating it. Links and
 indirect-site cells are retargeted with one sixteen-byte store, single-copy
@@ -137,15 +137,14 @@ holds is freed once every other executor attached to the space has left
 translated code since it was unpublished, and the last executor to retire a
 space frees it with its arena. A code change one vCPU publishes resets the
 space's links before that vCPU continues, so every other executor of the space
-leaves translated code at its next block transition. Sharing is off by
-default, and each executor keeps its translations private: sharing halves the
-four-vCPU Geekbench multi-core cache, but a shared space lives while any
-executor's window keeps it, so under process churn it accumulates link records
-and freed body arena that private copies shed, and WebGL Aquarium's cache grew
-by a fifth to a third at its peak (G227). A private cache sweeps away the
-link records and indirect sites that nothing it holds names any more, but a
-shared space is never swept, so sharing stays off while a shared space does not
-bound that state.
+leaves translated code at its next block transition. Sharing is the default
+on a host that retargets a link pair in one access (FEAT_LSE2, which every
+Apple Silicon product has): it halves the four-vCPU Geekbench multi-core
+cache, and renewal, below, keeps a shared space from accumulating the freed
+arena and link records that process churn leaves in it, which WebGL
+Aquarium's cache did before (G227, G267, G268). A private cache sweeps away
+the link records and indirect sites that nothing it holds names any more; a
+shared space is never swept, and renewal replaces it instead.
 
 A shared space bounds its freed arena by renewal. It counts the bytes of its
 arena and of the bodies some slot holds; once it holds at least two mebibytes

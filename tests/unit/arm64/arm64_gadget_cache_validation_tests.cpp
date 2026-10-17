@@ -1015,14 +1015,15 @@ void run_all()
 int main()
 {
 	const uml::testing::RuntimeTestRoute runtime_route;
-	require(unsetenv("DARWIN_UML_GADGET_SHARED_BODIES") == 0);
+	require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", "0", 1) == 0);
 	run_all();
 	/* A shared address space is never swept, so the sweep's cases run
 	 * with private translations only (arm64_gadget_shared_bodies_tests
 	 * checks the shared skip). */
 	a_link_sweep_releases_what_only_evicted_blocks_named();
 	an_address_space_that_only_grows_does_not_sweep();
-	require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", "1", 1) == 0);
+	/* Sharing is the default. */
+	require(unsetenv("DARWIN_UML_GADGET_SHARED_BODIES") == 0);
 	run_all();
 	return 0;
 }
