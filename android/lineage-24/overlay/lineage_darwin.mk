@@ -63,7 +63,7 @@ TARGET_NO_RECOVERY := false
 # development tooling; a user build never does.
 PRODUCT_NO_CAMERA := true
 TARGET_EXCLUDES_AUDIOFX := true
-# The ACK UML ELF is built and published independently; the board stages it
+# The Android UML ELF is built and published independently; the board stages it
 # from the kernel artifact, so LineageOS's own kernel build stays off.
 TARGET_NO_KERNEL_OVERRIDE := true
 TARGET_DISABLE_FASTBOOTD := true

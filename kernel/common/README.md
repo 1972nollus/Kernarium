@@ -4,9 +4,9 @@ This directory contains only source-family-independent inputs:
 
 - [`abi/`](abi/README.md): canonical plain-C host/kernel bridge, identity,
   generated-copy authority, and import policy;
-- `config/darwin-uml.fragment`: the kernel configuration policy every line
-  shares. Each line applies its own overlay after it, which lists only the
-  settings in which that line differs and whose README says why;
+- `config/darwin-uml.fragment`: the kernel configuration policy every product
+  shares. Each product applies its own overlay after it, which lists only the
+  settings in which that product differs and whose README says why;
 - `config/page-16k.fragment` and `config/page-4k.fragment`: shared page-size
   and 128 KiB task-stack geometry, selected by each line's build;
 - `artifacts/`: compact prebuilt-kernel bundle schema and verifier, plus the

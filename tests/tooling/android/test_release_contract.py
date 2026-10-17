@@ -63,6 +63,7 @@ def main() -> None:
     from release_common import (  # noqa: PLC0415
         BUILD_VARIANTS,
         DIRECTORY_PREFIX,
+        KERNEL_FAMILY,
         PAYLOAD_SPECS,
         PRODUCT_FAMILY,
         SCHEMA_VERSION,
@@ -84,7 +85,7 @@ def main() -> None:
         fail("release schema does not pin the Android product family")
 
     aosp = parse_env(android_root / "metadata/lineage.env")
-    kernel_root = root / "kernel/android-6.18"
+    kernel_root = root / "kernel/mainline-6.18"
     kernel = parse_env(kernel_root / "patches/metadata.env")
     kernel_patch_count, kernel_patch_digest = kernel_series_provenance(root)
     abi = parse_env(root / "kernel/common/abi/identity.env")
@@ -141,10 +142,9 @@ def main() -> None:
             ),
         },
         "kernel": {
-            "family": kernel["UML_KERNEL_FAMILY"],
+            "family": KERNEL_FAMILY,
             "repository": kernel["UML_KERNEL_UPSTREAM_REPOSITORY"],
             "branch": kernel["UML_KERNEL_UPSTREAM_BRANCH"],
-            "tag": kernel["UML_KERNEL_UPSTREAM_TAG"],
             "base_commit": kernel["UML_KERNEL_UPSTREAM_COMMIT"],
             "base_tree": kernel["UML_KERNEL_UPSTREAM_TREE"],
             "final_tree": kernel["UML_KERNEL_FINAL_TREE"],
@@ -159,7 +159,7 @@ def main() -> None:
         "outer": {"revision": "a" * 40, "dirty": False},
         "producer": {
             "entry_point": "android/lineage-24/build/publish-release.sh",
-            "functional_options": ["pinned AOSP source", "verified ACK build"],
+            "functional_options": ["pinned AOSP source", "verified Android kernel build"],
             "builder": {
                 "os": "Linux fixture",
                 "architecture": "x86_64",
@@ -254,6 +254,41 @@ def main() -> None:
         expect_failure(
             lambda: verify_release(release_root, android_root, semantic=False),
             "a historical release without its acceptance descriptor",
+        )
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+        )
+
+        # The fixture's kernel records no tag, as a mainline-built release
+        # does. The accepted release records the ACK tag it was built from,
+        # and stays valid until the next signed release drops the allowance.
+        tagged = copy.deepcopy(manifest)
+        tagged["kernel"]["tag"] = "android16-6.18-fixture"
+        manifest_path.write_text(json.dumps(tagged, indent=2, sort_keys=True) + "\n")
+        verify_release(
+            release_root,
+            android_root,
+            acceptance_path=acceptance,
+            semantic=False,
+        )
+        for value, label in (("", "an empty kernel tag"), (7, "a non-string kernel tag")):
+            invalid = copy.deepcopy(tagged)
+            invalid["kernel"]["tag"] = value
+            manifest_path.write_text(json.dumps(invalid, indent=2, sort_keys=True) + "\n")
+            expect_failure(
+                lambda: verify_release(
+                    release_root, android_root, acceptance_path=acceptance, semantic=False
+                ),
+                label,
+            )
+        unexpected = copy.deepcopy(tagged)
+        unexpected["kernel"]["unexpected"] = "x"
+        manifest_path.write_text(json.dumps(unexpected, indent=2, sort_keys=True) + "\n")
+        expect_failure(
+            lambda: verify_release(
+                release_root, android_root, acceptance_path=acceptance, semantic=False
+            ),
+            "an unknown kernel key beside the tag",
         )
         manifest_path.write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n"

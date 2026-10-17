@@ -5,16 +5,16 @@
 A line's ``metadata.env`` names its pinned upstream commit, the ordered
 generated series that turn that commit into the line's tree, and that tree:
 
-    UML_KERNEL_SERIES='kernel/common/patches:codex/android17-6.18-common
-                       kernel/android-6.18/patches/series:codex/android17-6.18-darwin'
-    UML_KERNEL_OWNED_SERIES='kernel/android-6.18/patches/series'
+    UML_KERNEL_SERIES='kernel/common/patches:codex/linux-6.18-common
+                       kernel/mainline-6.18/patches/series:codex/linux-6.18-darwin'
+    UML_KERNEL_OWNED_SERIES='kernel/common/patches kernel/mainline-6.18/patches/series'
     UML_KERNEL_FINAL_TREE='<tree>'
 
 Each ``UML_KERNEL_SERIES`` entry pairs a series directory with the managed
-replay branch that ends it. A line regenerates only the trailing series it
-owns; the series before them belong to another line and are checked by the
-tree they produce here, because the same topics exported from a different
-upstream base carry different context and index lines.
+replay branch that ends it. A line regenerates only the series it owns; a
+series it does not own belongs to another line and is checked by the tree it
+produces here, because the same topics exported from a different upstream base
+carry different context and index lines.
 
 A line whose last inherited series has a ``metadata.env`` beside it is an
 overlay of that line, such as the mainline x86_64 slice. Its inherited series

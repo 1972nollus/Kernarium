@@ -10,8 +10,8 @@ set_property(CACHE UML_KERNEL_PRODUCT PROPERTY STRINGS
     mainline-6.18 android-17)
 
 if(UML_KERNEL_PRODUCT STREQUAL "android-17")
-    # Apple targets consume the ACK artifact only. Rootfs bundles are selected
-    # at launch and are not inputs to the emulator build.
+    # Apple targets consume the Android kernel artifact only. Rootfs bundles
+    # are selected at launch and are not inputs to the emulator build.
     if(UML_GUEST_16K_PAGES)
         message(FATAL_ERROR
             "The Android 17 product supports only 4 KiB guest pages")

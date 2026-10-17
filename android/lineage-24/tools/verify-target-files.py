@@ -677,7 +677,7 @@ def check_kernel_policy(
 ) -> None:
     packaged_config = read_small(archive, infos["META/kernel_configs.txt"])
     if packaged_config != kernel_config.read_bytes():
-        fail("packaged kernel configuration differs from the ACK UML build")
+        fail("packaged kernel configuration differs from the UML build")
 
     packaged_release = read_small(
         archive, infos["META/kernel_version.txt"]
@@ -686,7 +686,7 @@ def check_kernel_policy(
         encoding="utf-8", errors="strict"
     ).strip()
     if not kernel_release or packaged_release != kernel_release:
-        fail("packaged kernel release differs from the ACK UML build")
+        fail("packaged kernel release differs from the UML build")
 
     vendor_policy = read_small(
         archive, infos["VENDOR/etc/selinux/vendor_sepolicy.cil"]
@@ -966,7 +966,7 @@ def main() -> None:
             archive, infos, kernel_config, kernel_release_file
         )
         if sha256_member(archive, infos["BOOT/kernel"]) != sha256_path(args.kernel_elf):
-            fail("BOOT/kernel does not match the verified ACK UML ELF")
+            fail("BOOT/kernel does not match the verified UML ELF")
 
     print(
         f"verified AOSP 17 target files: {len(seen)} entries, "

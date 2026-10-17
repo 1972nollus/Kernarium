@@ -187,7 +187,7 @@ def main() -> None:
         "--kernel-artifact",
         type=Path,
         required=True,
-        help="published ACK kernel artifact of the tracked kernel source",
+        help="published Android kernel artifact of the tracked kernel source",
     )
     parser.add_argument("--target-files", type=Path, required=True)
     parser.add_argument(
@@ -235,7 +235,7 @@ def main() -> None:
     android_root = Path(__file__).resolve().parents[1]
     outer_root = android_root.parents[1]
     aosp_source = regular_directory(args.aosp_source, "AOSP source")
-    kernel_artifact = regular_directory(args.kernel_artifact, "ACK kernel artifact")
+    kernel_artifact = regular_directory(args.kernel_artifact, "Android kernel artifact")
     darwin_sdk = regular_directory(args.darwin_sdk, "Darwin SDK")
     release_root = regular_directory(args.release_root, "release root")
     target_files = regular_file(args.target_files, "target-files archive")
@@ -277,7 +277,7 @@ def main() -> None:
 
     aosp_metadata = parse_env(android_root / "metadata/lineage.env")
     tracked = tracked_identity(android_root)
-    kernel_root = outer_root / "kernel/android-6.18"
+    kernel_root = outer_root / "kernel/mainline-6.18"
     outer_revision = verify_clean_git(outer_root, "outer project")
     # The release ships the kernel as its published artifact: the tracked
     # source's runtime image, without the DWARF the build's vmlinux keeps.
@@ -477,8 +477,8 @@ def main() -> None:
                 ("outer_dirty", "false"),
                 ("source_manifest_commit", source["manifest_commit"]),
                 ("source_projects_manifest_sha256", source["projects_manifest_sha256"]),
-                ("ack_final_tree", kernel["final_tree"]),
-                ("ack_patch_manifest_sha256", kernel["patch_manifest_sha256"]),
+                ("kernel_final_tree", kernel["final_tree"]),
+                ("kernel_patch_manifest_sha256", kernel["patch_manifest_sha256"]),
                 ("kernel_release", kernel_release),
                 ("page_size", 4096),
                 ("abi_version", kernel["abi_version"]),
@@ -486,8 +486,8 @@ def main() -> None:
                 ("android_product", aosp_metadata["LINEAGE24_PRODUCT"]),
                 ("android_build_id", build_id),
                 ("source_role_android", "pinned Repo workspace"),
-                ("source_role_ack", "replayed ACK 6.18 worktree"),
-                ("input_role_kernel", "verified standalone ACK UML build"),
+                ("source_role_kernel", "replayed mainline 6.18 worktree"),
+                ("input_role_kernel", "verified standalone Android UML build"),
                 ("input_role_disk", "verified fixed-layout UBD image"),
             ]
             if signing_result is not None:
@@ -534,8 +534,8 @@ def main() -> None:
                     "entry_point": "android/lineage-24/build/publish-release.sh",
                     "functional_options": [
                         "pinned Android source",
-                        "clean replayed ACK source",
-                        "verified standalone ACK build",
+                        "clean replayed mainline kernel source",
+                        "verified standalone Android kernel build",
                         "verified AOSP target files",
                         "verified partition-backed UML initramfs",
                         "verified kernel-less LineageOS recovery partition",

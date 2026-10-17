@@ -1419,19 +1419,8 @@ def main() -> None:
     root = args.source_root.resolve()
 
     android_root = root / "android/lineage-24"
-    kernel_root = root / "kernel/android-6.18"
+    kernel_root = root / "kernel/mainline-6.18"
 
-    subprocess.run(
-        [
-            sys.executable,
-            "-B",
-            str(root / "kernel/common/tooling/kernel_series.py"),
-            "check",
-            "--metadata",
-            str(kernel_root / "patches/metadata.env"),
-        ],
-        check=True,
-    )
     subprocess.run(
         [
             str(android_root / "tools/verify-aosp-patches.py"),

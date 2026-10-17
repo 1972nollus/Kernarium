@@ -1,24 +1,25 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# The AOSP 17 line's overlay for ACK 6.18 on the shared Darwin UML kernel
-# policy in kernel/common/config/darwin-uml.fragment. It lists only the
-# settings in which this line differs from mainline.
-# android/lineage-24/build/build-kernel.sh applies it after the shared policy and
-# before kernel/common/config/page-4k.fragment, then runs `olddefconfig`
-# against the pinned ACK source. There is no Android 16 KiB profile.
+# The Android product's overlay on the shared Darwin UML kernel policy in
+# kernel/common/config/darwin-uml.fragment. It replaces config/mainline.fragment
+# for that product and lists only the settings in which the Android product
+# differs from the Linux desktop one. build/build-kernel.sh --product android
+# applies it after the shared policy and before
+# kernel/common/config/page-4k.fragment, then runs `olddefconfig`. There is no
+# Android 16 KiB profile.
 
 # --- Boot, init, and image identity -----------------------------------------
 # Android init consumes bootconfig when one is supplied by the image builder.
 CONFIG_BOOT_CONFIG=y
 
 # --- Block devices and the storage stack ------------------------------------
-# Android metadata encryption places dm-default-key above userdata. UML's UBD
-# device has no hardware inline-encryption capability, so the block-crypto
-# software fallback, fscrypt hooks, and target must all be built into the one
-# signed kernel ELF.
+# Android's file-based encryption can use inline encryption. UML's UBD device
+# has no hardware inline-encryption capability, so the block-crypto software
+# fallback and the fscrypt hooks must be built into the one signed kernel ELF.
+# The product's userdata is not encrypted, and the ACK-only dm-default-key
+# target that metadata encryption would need is not carried.
 CONFIG_BLK_INLINE_ENCRYPTION=y
 CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK=y
 CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y
-CONFIG_DM_DEFAULT_KEY=y
 # The AOSP 17 UML fstab selects AES-256-XTS contents with AES-256-HCTR2
 # filenames. Keep the software HCTR2 transform and everything it selects in
 # the signed kernel because this product cannot load crypto modules on iOS.
@@ -28,16 +29,16 @@ CONFIG_CRYPTO_HCTR2=y
 CONFIG_UNICODE=y
 
 # --- Android memory, IPC, and allocator interfaces -------------------------
-# Android 17 uses memfd for new shared-memory clients while retaining the
-# ashmem ioctl/device compatibility path for older applications. ACK's ashmem
-# implementation is Rust, so both are part of this static kernel image.
+# Android 17 shares memory through memfd: the product sets sys.use_memfd, and
+# libcutils' ashmem_create_region() then creates a memfd. The ACK-only ashmem
+# driver, which is Rust and lives in staging, is not carried, so /dev/ashmem
+# does not exist. The SELinux memfd_class capability the policy requires comes
+# from the mainline overlay's memfd topic.
 CONFIG_MEMFD_CREATE=y
-CONFIG_RUST=y
-CONFIG_STAGING=y
-CONFIG_ASHMEM=y
 CONFIG_ANON_VMA_NAME=y
 # Match the Android 17 GKI policy: seal userspace's system mappings instead of
 # enabling checkpoint/restore, whose Kconfig dependency excludes this feature.
+# The mainline overlay keeps checkpoint/restore for Linux guests.
 CONFIG_MSEAL_SYSTEM_MAPPINGS=y
 # Use the established C Binder implementation. Binderfs and the three standard
 # contexts are built in; no Binder implementation may be a loadable module.
@@ -99,7 +100,6 @@ CONFIG_NETFILTER_XT_MATCH_MULTIPORT=y
 CONFIG_NETFILTER_XT_MATCH_OWNER=y
 CONFIG_NETFILTER_XT_MATCH_PKTTYPE=y
 CONFIG_NETFILTER_XT_MATCH_POLICY=y
-CONFIG_NETFILTER_XT_MATCH_QUOTA2=y
 CONFIG_NETFILTER_XT_MATCH_SOCKET=y
 CONFIG_NETFILTER_XT_MATCH_STATISTIC=y
 CONFIG_NETFILTER_XT_MATCH_STRING=y
@@ -138,6 +138,15 @@ CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,selinux,ipe,bpf"
 # VIRTIO_ID_CONSOLE. Keep its hvc infrastructure in the signed ELF; loadable
 # modules are unavailable on iOS.
 CONFIG_HVC_DRIVER=y
+# Android's composer scans out RGBA and RGBX buffers (ABGR8888 and XBGR8888)
+# directly, so the Virtio-GPU primary plane must list the standard 32-bit RGB
+# orders. The desktop product keeps the two-format plane its compositors
+# choose from.
+CONFIG_DRM_VIRTIO_GPU_STANDARD_FORMATS=y
+# Android and its recovery enter pointer mode for an input device that also
+# reports mouse buttons, so the Darwin display is presented as a pure direct
+# touchscreen. The desktop product keeps the tablet's buttons and wheel.
+CONFIG_UML_VNC_INPUT_TOUCHSCREEN=y
 
 # --- Host battery -----------------------------------------------------------
 # The Apple launcher provides a local experimental Virtio device carrying the
@@ -155,18 +164,3 @@ CONFIG_KERNARIUM_VIRTIO_BATTERY=y
 # built, and the upstream help text states plainly that this is required for
 # Android.
 CONFIG_TRACE_GPU_MEM=y
-# Per-UID CPU and I/O accounting depends on the profiling infrastructure.
-CONFIG_PROFILING=y
-CONFIG_UID_SYS_STATS=y
-
-# --- Kernel build policy ----------------------------------------------------
-# ACK enables compile warnings as errors by default. The maintained port keeps
-# warnings visible but does not let ACK-only warning policy reject its existing
-# UML and generic-driver code.
-# CONFIG_WERROR is not set
-
-# --- BTF type information ---------------------------------------------------
-# The build compresses DWARF object sections with zstd, as GKI does, for the
-# pinned ACK kernel-build-tools pahole.
-CONFIG_DEBUG_INFO=y
-CONFIG_DEBUG_INFO_COMPRESSED_ZSTD=y

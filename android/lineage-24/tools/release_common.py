@@ -20,6 +20,7 @@ _ARTIFACTS = str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"
 if _ARTIFACTS not in sys.path:
     sys.path.insert(0, _ARTIFACTS)
 from contract_checks import ContractChecks, parse_config, sha256_path  # noqa: E402
+from kernel_artifact import verify_config_policy  # noqa: E402
 
 _CHECKS = ContractChecks("Android release verifier")
 error = _CHECKS.error
@@ -32,8 +33,14 @@ safe_relative = _CHECKS.safe_relative
 parse_env = _CHECKS.parse_env
 
 SCHEMA_VERSION = 5
+# The family and the directory prefix keep the names of the accepted release,
+# which the ACK kernel qualified. The rename to the mainline kernel lands with
+# the next signed release.
 PRODUCT_FAMILY = "lineage-24-ack-6.18-4k"
 DIRECTORY_PREFIX = "lineage24-ack6.18-4k-"
+# The kernel artifact family of the Android product. Kernarium and CMake key
+# Android mode on it.
+KERNEL_FAMILY = "android-6.18"
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 # The Android build variants a release may be built as, with the build
@@ -118,7 +125,6 @@ KERNEL_KEYS = {
     "family",
     "repository",
     "branch",
-    "tag",
     "base_commit",
     "base_tree",
     "final_tree",
@@ -130,6 +136,11 @@ KERNEL_KEYS = {
     "abi_fingerprint",
     "elf_role",
 }
+# Transitional: the accepted release records the ACK tag its kernel was built
+# from, while a release built from the mainline kernel line records none. The
+# next signed release drops this allowance and the accepted release's tag with
+# it.
+KERNEL_OPTIONAL_KEYS = {"tag"}
 OUTER_KEYS = {"revision", "dirty"}
 PRODUCER_KEYS = {"entry_point", "functional_options", "builder"}
 BUILDER_KEYS = {
@@ -209,10 +220,15 @@ def validate_manifest(value: object) -> dict:
     require_hex(source["projects_manifest_sha256"], 64, "projects manifest SHA-256")
     validate_routes(source["routes"], "source")
 
-    kernel = require_exact_keys(manifest["kernel"], KERNEL_KEYS, "kernel")
-    if kernel["family"] != "android-6.18":
-        fail("kernel family is not android-6.18")
-    for key in ("repository", "branch", "tag", "release"):
+    kernel = manifest["kernel"]
+    if isinstance(kernel, dict):
+        for key in sorted(KERNEL_OPTIONAL_KEYS & set(kernel)):
+            require_string(kernel[key], f"kernel.{key}")
+        kernel = {k: v for k, v in kernel.items() if k not in KERNEL_OPTIONAL_KEYS}
+    kernel = require_exact_keys(kernel, KERNEL_KEYS, "kernel")
+    if kernel["family"] != KERNEL_FAMILY:
+        fail(f"kernel family is not {KERNEL_FAMILY}")
+    for key in ("repository", "branch", "release"):
         require_string(kernel[key], f"kernel.{key}")
     for key in ("base_commit", "base_tree", "final_tree"):
         require_hex(kernel[key], 40, f"kernel.{key}")
@@ -300,7 +316,11 @@ def validate_routes(routes: object, label: str) -> None:
 
 
 def kernel_series_provenance(outer_root: Path) -> tuple[int, str]:
-    """Return the ACK line's patch count and ordered patch-content digest."""
+    """Return the mainline line's patch count and ordered patch-content digest.
+
+    The count and digest cover the shared series and the line's overlay, which
+    together turn the pinned upstream commit into the line's tree.
+    """
     tooling = str(outer_root / "kernel/common/tooling")
     if tooling not in sys.path:
         sys.path.insert(0, tooling)
@@ -308,10 +328,10 @@ def kernel_series_provenance(outer_root: Path) -> tuple[int, str]:
 
     try:
         return kernel_series.provenance(
-            kernel_series.load_line(outer_root / "kernel/android-6.18/patches/metadata.env")
+            kernel_series.load_line(outer_root / KERNEL_METADATA)
         )
     except kernel_series.SeriesError as error:
-        fail(f"ACK kernel series are invalid: {error}")
+        fail(f"kernel series are invalid: {error}")
 
 
 def series_provenance(outer_root: Path, *directories: Path) -> tuple[int, str]:
@@ -354,6 +374,11 @@ def read_routes(projects: Path, android_root: Path, label: str) -> list[dict]:
     return routes
 
 
+# The tracked kernel source of the Android product: the mainline line, built
+# with its Android overlay.
+KERNEL_METADATA = "kernel/mainline-6.18/patches/metadata.env"
+KERNEL_CONFIG_DIRECTORY = "kernel/mainline-6.18/config"
+
 TRACKED_SECTIONS = {
     "android": "Android",
     "source": "source",
@@ -370,7 +395,7 @@ def tracked_identity(android_root: Path) -> dict[str, dict]:
     """
     outer_root = android_root.parents[1]
     lineage = parse_env(android_root / "metadata/lineage.env")
-    kernel = parse_env(outer_root / "kernel/android-6.18/patches/metadata.env")
+    kernel = parse_env(outer_root / KERNEL_METADATA)
     abi = parse_env(outer_root / "kernel/common/abi/identity.env")
     kernel_count, kernel_digest = kernel_series_provenance(outer_root)
     return {
@@ -385,10 +410,9 @@ def tracked_identity(android_root: Path) -> dict[str, dict]:
             "projects_manifest_sha256": sha256_path(android_root / "patches/projects.tsv"),
         },
         "kernel": {
-            "family": kernel["UML_KERNEL_FAMILY"],
+            "family": KERNEL_FAMILY,
             "repository": kernel["UML_KERNEL_UPSTREAM_REPOSITORY"],
             "branch": kernel["UML_KERNEL_UPSTREAM_BRANCH"],
-            "tag": kernel["UML_KERNEL_UPSTREAM_TAG"],
             "base_commit": kernel["UML_KERNEL_UPSTREAM_COMMIT"],
             "base_tree": kernel["UML_KERNEL_UPSTREAM_TREE"],
             "final_tree": kernel["UML_KERNEL_FINAL_TREE"],
@@ -502,19 +526,13 @@ def verify_kernel_config(
         fail(f"release kernel contains loadable-module values: {module_values[:8]}")
     if not enforce_tracked_policy:
         return
-    # The ACK kernel line owns its configuration contract.
-    line_config = android_root.parents[1] / "kernel/android-6.18/config"
-    for path, expected in (
-        (line_config / "required-builtins.txt", "y"),
-        (line_config / "forbidden-options.txt", "n"),
-    ):
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            symbol = raw.strip()
-            if not symbol or symbol.startswith("#"):
-                continue
-            observed = config.get(symbol, "n")
-            if observed != expected:
-                fail(f"release kernel config {symbol}={observed}, expected {expected}")
+    # The mainline line owns the Android product's configuration contract.
+    line_config = android_root.parents[1] / KERNEL_CONFIG_DIRECTORY
+    verify_config_policy(
+        release_root / "kernel/config",
+        line_config / "android-required-builtins.txt",
+        line_config / "android-forbidden-options.txt",
+    )
 
 
 def run_checked(arguments: list[str], *, env: dict[str, str] | None = None) -> None:
@@ -731,11 +749,12 @@ def verify_release(
         verify_tracked_identity(manifest, android_root)
     else:
         verify_acceptance(manifest, acceptance_path)
-        # Schema 2 recorded the ACK that qualified this rootfs build. Keep that
-        # identity as immutable historical provenance, but do not compare it to
-        # the current host/kernel bridge. The independently accepted ACK
-        # artifact owns that compatibility check now, allowing an old rootfs
-        # bundle's writable disk to survive a kernel-only application update.
+        # The kernel identity a release records is the build that qualified its
+        # target files. Keep it as immutable historical provenance, but do not
+        # compare it to the current host/kernel bridge. The independently
+        # accepted kernel artifact owns that compatibility check now, allowing
+        # an old rootfs bundle's writable disk to survive a kernel-only
+        # application update.
     verify_inventory(release_root, manifest, allow_expanded_disk=allow_expanded_disk)
     if semantic:
         verify_semantics(

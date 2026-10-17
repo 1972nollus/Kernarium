@@ -48,8 +48,8 @@ BOARD_VENDOR_SEPOLICY_DIRS := $(filter-out \
 
 BOARD_VENDOR_SEPOLICY_DIRS += device/kernarium/darwin/sepolicy/vendor
 
-# The ACK UML ELF is built and published independently. Android packaging must
-# neither substitute a Cuttlefish kernel nor stage loadable modules.
+# The Android UML ELF is built and published independently. Android packaging
+# must neither substitute a Cuttlefish kernel nor stage loadable modules.
 PRODUCT_COPY_FILES := $(filter-out %:kernel,$(PRODUCT_COPY_FILES))
 TARGET_KERNEL_PATH :=
 SYSTEM_DLKM_SRC :=
@@ -122,9 +122,9 @@ BOARD_USERDATAIMAGE_PARTITION_SIZE := 134217728
 BOARD_INIT_BOOT_IMAGE_PARTITION_SIZE := 8388608
 BOARD_RECOVERYIMAGE_PARTITION_SIZE := 20971520
 
-# The final GPT has init_boot and recovery ramdisk containers, but the ACK UML
-# kernel remains the separately signed executable. Both images therefore use
-# Android boot image v4 with no embedded kernel.
+# The final GPT has init_boot and recovery ramdisk containers, but the Android
+# UML kernel remains the separately signed executable. Both images therefore
+# use Android boot image v4 with no embedded kernel.
 BOARD_INIT_BOOT_HEADER_VERSION := 4
 BOARD_BOOT_HEADER_VERSION := 4
 BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE := true

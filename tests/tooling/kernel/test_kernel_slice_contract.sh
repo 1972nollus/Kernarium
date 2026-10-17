@@ -412,6 +412,32 @@ grep -F 'x86_64 userspace slice supports only the 4k page profile' \
 	"$TEST_ROOT/x86-16k.err" >/dev/null ||
 	fail "x86_64 16 KiB rejection did not identify the slice constraint"
 
+# The Android product exists once, as the arm64 4 KiB kernel without a
+# lock-checking probe, and the producer rejects every other request.
+expect_android_rejection()
+{
+	android_reason=$1
+	shift
+	if UML_KERNEL_JOBS=1 \
+		"$BUILD_FIXTURE/kernel/mainline-6.18/build/build-kernel.sh" "$@" \
+			>"$TEST_ROOT/android-rejected.out" \
+			2>"$TEST_ROOT/android-rejected.err"; then
+		fail "build-kernel.sh accepted: $*"
+	fi
+	grep -F -- "$android_reason" "$TEST_ROOT/android-rejected.err" >/dev/null ||
+		fail "build-kernel.sh rejected '$*' for the wrong reason"
+}
+expect_android_rejection 'the android product supports only the 4k page profile' \
+	--product android --build "$TEST_ROOT/build-android-16k" --page-size 16k
+expect_android_rejection 'the android product supports only the arm64 slice' \
+	--product android --slice x86_64 --build "$TEST_ROOT/build-android-x86" \
+	--page-size 4k
+expect_android_rejection '--lockdep is not available for the android product' \
+	--product android --build "$TEST_ROOT/build-android-lockdep" \
+	--page-size 4k --lockdep
+expect_android_rejection '--product must be linux or android' \
+	--product desktop --build "$TEST_ROOT/build-desktop" --page-size 4k
+
 # Run verify-replay against no-op producer doubles. This checks the complete
 # ordered matrix without downloading Linux or spending a full kernel build.
 REPLAY_FIXTURE="$TEST_ROOT/replay-fixture"
@@ -454,15 +480,19 @@ NR == 3 { good += ($1 == "build-kernel.sh" && $2 == "--slice" &&
 NR == 4 { good += ($1 == "build-kernel.sh" && $2 == "--slice" &&
 	$3 == "arm64" && $4 == "--build" && $5 ~ /\/build-arm64-4k$/ &&
 	$6 == "--page-size" && $7 == "4k" && $8 == "--jobs" && $9 == "7") }
-NR == 5 { good += ($0 == "prepare-source.sh --slice x86_64 --no-fetch") }
-NR == 6 { good += ($0 == "prepare-source.sh --slice x86_64 --verify --no-fetch") }
-NR == 7 { good += ($1 == "build-kernel.sh" && $2 == "--slice" &&
+NR == 5 { good += ($1 == "build-kernel.sh" && $2 == "--slice" &&
+	$3 == "arm64" && $4 == "--build" && $5 ~ /\/build-arm64-4k-android$/ &&
+	$6 == "--page-size" && $7 == "4k" && $8 == "--product" &&
+	$9 == "android" && $10 == "--jobs" && $11 == "7") }
+NR == 6 { good += ($0 == "prepare-source.sh --slice x86_64 --no-fetch") }
+NR == 7 { good += ($0 == "prepare-source.sh --slice x86_64 --verify --no-fetch") }
+NR == 8 { good += ($1 == "build-kernel.sh" && $2 == "--slice" &&
 	$3 == "x86_64" && $4 == "--build" && $5 ~ /\/build-x86_64-4k$/ &&
 	$6 == "--page-size" && $7 == "4k" && $8 == "--jobs" && $9 == "7") }
-END { exit !(NR == 7 && good == 7) }
+END { exit !(NR == 8 && good == 8) }
 ' "$REPLAY_LOG" </dev/null || {
 	sed -n '1,40p' "$REPLAY_LOG" >&2
-	fail "verify-replay does not cover arm64 16k/4k followed by x86_64 4k"
+	fail "verify-replay does not cover arm64 16k/4k, the Android 4k product, and x86_64 4k"
 }
 
 printf '%s\n' "kernel common/x86_64 slice producer contract passed"

@@ -47,7 +47,7 @@ Kernarium's runtime frameworks, defaults, and one run per launch are described
 in [`../Kernarium/README.md`](../Kernarium/README.md).
 
 The Android macOS composition is a separate product. Its build consumes a
-compatible ACK kernel artifact; launch accepts a rootfs directory and
+compatible Android kernel artifact; launch accepts a rootfs directory and
 one directly writable GPT image without comparing rootfs release identity, and
 it does not search for the Linux desktop image.
 

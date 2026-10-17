@@ -3,9 +3,10 @@
 This directory owns the standalone LineageOS 24 guest producer for Darwin UML.
 LineageOS 24.0 is Android 17: its tree is the AOSP `android-17.0.0_r1` release
 with LineageOS's forks of the projects it changes. The exact source identity and
-product name live in [`metadata/lineage.env`](metadata/lineage.env); the ACK
-identity and generated kernel series live under
-[`../../kernel/android-6.18`](../../kernel/android-6.18/README.md).
+product name live in [`metadata/lineage.env`](metadata/lineage.env). The guest
+kernel is not owned here: it is the mainline kernel line built with its Android
+overlay, described in
+[`../../kernel/mainline-6.18`](../../kernel/mainline-6.18/README.md#android-product).
 
 The producer runs locally on an x86_64 Linux builder. Repository scripts accept
 builder-local paths only; transport, machines, accounts, and credentials are
@@ -14,30 +15,33 @@ outside this repository.
 ## Producer boundary
 
 `build/prepare-sources.sh` is the only producer command allowed to use the
-network. It pins the Android source, ACK, and the guest Mesa source. All
-patching, builds, verification, image assembly, and publication are offline.
+network. It pins the Android source and the guest Mesa source. All patching,
+builds, verification, image assembly, and publication are offline.
 
-The producer has four independent outputs:
+The producer has three independent outputs:
 
-1. a replayed and built ACK 4 KiB kernel, published as a kernel artifact;
-2. the `lineage_darwin` target files of the configured build variant, which
+1. the `lineage_darwin` target files of the configured build variant, which
    carry the kernel-less `init_boot` and LineageOS recovery images;
-3. one static GPT guest disk containing both boot ramdisks; and
-4. a compact rootfs release installed by Apple consumers.
+2. one static GPT guest disk containing both boot ramdisks; and
+3. a compact rootfs release installed by Apple consumers.
 
 Use the scripts under `build/` in that order. Each script's `--help` is the
 canonical interface for builder paths and optional inputs. Ninja and the
 preserved AOSP output directory own incremental builds; the wrapper does not
 introduce a second build system.
 
-Kernel publication is independent of rootfs publication. An already-built
-clean ACK result is published with `tools/publish-kernel-artifact.py` and
-installed below `.build/kernel/artifacts`. Updating this artifact must not
-republish the GPT or invalidate a guest bundle. The Android build, the disk
-assembly and the release publisher take their kernel from such an artifact
-(`--kernel-artifact`). Its `vmlinux` is the runtime image; the build's own
-`vmlinux` keeps the DWARF pahole reads and does not fit the product's 64 MiB
-boot image. A release ships the artifact's kernel files unchanged.
+The kernel is an input, not an output. It is the `android-6.18` artifact the
+Mac builds from the mainline line with
+`kernel/mainline-6.18/build/build-kernel.sh --product android` and publishes
+with `publish-artifact.py --product android`; the builder receives the
+published directory. Updating the artifact must not republish the GPT or
+invalidate a guest bundle. The Android build, the disk assembly and the release
+publisher take their kernel from such an artifact (`--kernel-artifact`) and
+verify it against the tracked mainline source. Its `vmlinux` is the runtime
+image; the build's own `vmlinux` keeps the DWARF pahole reads and does not fit
+the product's 64 MiB boot image. A release ships the artifact's kernel files
+unchanged, and its `kernel/config` must satisfy the Android required and
+forbidden lists of the mainline line.
 
 ## Source and patch ownership
 
@@ -387,8 +391,8 @@ Writable metadata and userdata use continuous ext4 discard so deleted guest
 extents are promptly returned to the sparse host file through UBD's batched
 discard path.
 
-`init_boot` and `recovery` contain kernelless boot-image-v4 ramdisks. The ACK
-ELF remains outside the disk in the selected runtime artifact. Both images come
+`init_boot` and `recovery` contain kernelless boot-image-v4 ramdisks. The
+kernel ELF remains outside the disk in the selected runtime artifact. Both images come
 from the signed AOSP target files; `recovery` is the stock LineageOS recovery
 that `lineage_darwin` builds, with no separate recovery source or build.
 Neither ramdisk is duplicated as a standalone release file. Boot mode `auto`
@@ -458,15 +462,19 @@ local file, revalidates the staged tree, and installs it atomically below
 does not import the rootfs release and does not invoke Repo, Soong, Kbuild,
 image assembly, publication, or transport.
 
-The release manifest may retain the ACK build that qualified its target files,
+The release manifest retains the kernel build that qualified its target files,
 but that value is historical provenance. Apple runtime selection uses an
-independent compatible ACK artifact and performs no rootfs, kernel commit, or
-emulator release comparison at launch. A bundle's expanded disk remains usable
-across compatible kernel updates within the `6.18` line. A kernel-only update
-therefore advances only
-[`accepted-4k.env`](../../kernel/android-6.18/artifacts/accepted-4k.env) and
-keeps the accepted release, which then runs a later ACK than the one it
-records.
+independent compatible Android kernel artifact and performs no rootfs, kernel
+commit, or emulator release comparison at launch. A bundle's expanded disk
+remains usable across compatible kernel updates within the `6.18` line. A
+kernel-only update therefore advances only
+[`accepted-android-4k.env`](../../kernel/mainline-6.18/artifacts/accepted-android-4k.env)
+and keeps the accepted release, which then runs a later kernel than the one it
+records. The accepted release records the ACK 6.18 build that qualified it,
+tag included, and runs the mainline kernel line's `android-6.18` artifact. The
+manifest accepts that tag as optional, and the producer records none. The next
+signed release is built from the mainline line; it renames the product family
+and release prefix to the mainline kernel and removes the tag allowance.
 
 ### Release signing
 
@@ -511,9 +519,9 @@ prefixes, non-Android guests, and unrelated files beside a bundle.
 ## Apple consumers and guest bundles
 
 The macOS Android product is configured with the `macos-android17` preset. Its
-build requires a compatible ACK artifact; launch takes any rootfs directory
-with the expected payload layout and one directly writable GPT image. It
-does not alter the normal Linux executable or search for `rootfs.erofs`.
+build requires a compatible Android kernel artifact; launch takes any rootfs
+directory with the expected payload layout and one directly writable GPT image.
+It does not alter the normal Linux executable or search for `rootfs.erofs`.
 
 [`../../tools/boot_android.py`](../../tools/boot_android.py) is the ordinary
 macOS launcher. It selects the accepted installed release, copies its seed GPT

@@ -6,13 +6,11 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 AOSP_METADATA="$ROOT_DIR/android/lineage-24/metadata/lineage.env"
-ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
 MESA_VENUS_METADATA="$ROOT_DIR/android/lineage-24/third_party/mesa-venus/metadata.env"
 MESA_VENUS_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-mesa-venus-source.py"
 FDROID_SOURCE_TOOL="$ROOT_DIR/android/lineage-24/tools/fdroid_source.py"
 
 AOSP_SOURCE=
-ACK_WORKSPACE=
 JOBS=
 STAGING=
 
@@ -23,14 +21,13 @@ usage()
 {
 	cat <<'EOF'
 Usage: android/lineage-24/build/prepare-sources.sh \
-       --aosp-source ABSOLUTE_PATH \
-       --ack-workspace ABSOLUTE_PATH [--jobs N]
+       --aosp-source ABSOLUTE_PATH [--jobs N]
 
 Run this command locally on the x86_64 Linux builder. It is the only Android
-producer step allowed to synchronize the public LineageOS, ACK, and guest
-Mesa source. Both Repo workspaces must already exist and be clean. The
-LineageOS workspace is synchronized to the exact commits of the checked base
-manifest, and needs Git LFS for its WebView prebuilts. The Venus Vulkan HAL's
+producer step allowed to synchronize the public LineageOS and guest Mesa
+source. The Repo workspace must already exist and be clean. It is synchronized
+to the exact commits of the checked base manifest, and needs Git LFS for its
+WebView prebuilts. The Venus Vulkan HAL's
 Mesa source is materialized at its pinned external commit plus generated local
 patch series, and the F-Droid client and Privileged Extension are downloaded
 at their pinned sizes and digests. No endpoint or transport option is accepted.
@@ -107,11 +104,6 @@ while [ "$#" -gt 0 ]; do
 		AOSP_SOURCE=$2
 		shift 2
 		;;
-	--ack-workspace)
-		[ "$#" -ge 2 ] || fail "--ack-workspace requires a path"
-		ACK_WORKSPACE=$2
-		shift 2
-		;;
 	--jobs)
 		[ "$#" -ge 2 ] || fail "--jobs requires a value"
 		JOBS=$2
@@ -126,11 +118,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$AOSP_SOURCE" ] || fail "--aosp-source is required"
-[ -n "$ACK_WORKSPACE" ] || fail "--ack-workspace is required"
 absolute_path "AOSP source" "$AOSP_SOURCE"
 [ -d "$AOSP_SOURCE" ] || fail "AOSP source does not exist: $AOSP_SOURCE"
-absolute_path "ACK workspace" "$ACK_WORKSPACE"
-[ -d "$ACK_WORKSPACE" ] || fail "ACK workspace does not exist: $ACK_WORKSPACE"
 
 [ "$(uname -s)" = Linux ] || fail "builder host must be Linux"
 [ "$(uname -m)" = x86_64 ] || fail "builder host must be x86_64"
@@ -141,15 +130,12 @@ case "$JOBS" in
 esac
 
 [ -f "$AOSP_METADATA" ] || fail "missing AOSP metadata: $AOSP_METADATA"
-[ -f "$ACK_METADATA" ] || fail "missing ACK metadata: $ACK_METADATA"
 [ -f "$MESA_VENUS_METADATA" ] ||
 	fail "missing Mesa Venus metadata: $MESA_VENUS_METADATA"
 [ -x "$MESA_VENUS_VERIFIER" ] ||
 	fail "missing Mesa Venus source verifier: $MESA_VENUS_VERIFIER"
 # shellcheck disable=SC1090
 . "$AOSP_METADATA"
-# shellcheck disable=SC1090
-. "$ACK_METADATA"
 # shellcheck disable=SC1090
 . "$MESA_VENUS_METADATA"
 
@@ -161,15 +147,10 @@ command -v repo >/dev/null 2>&1 || fail "repo is not available on PATH"
 command -v git >/dev/null 2>&1 || fail "git is not available on PATH"
 git lfs version >/dev/null 2>&1 || fail "git-lfs is not available on PATH"
 [ -d "$AOSP_SOURCE/.repo" ] || fail "AOSP source is not a Repo workspace"
-[ -d "$ACK_WORKSPACE/.repo" ] || fail "ACK workspace is not a Repo workspace"
-[ -e "$ACK_WORKSPACE/common/.git" ] || fail "ACK common checkout is missing"
 
 dirty_projects=$(dirty_repo_projects "$AOSP_SOURCE")
 if [ -n "$dirty_projects" ]; then
 	fail "AOSP Repo workspace has dirty projects: $dirty_projects"
-fi
-if [ -n "$(git -C "$ACK_WORKSPACE/common" status --porcelain)" ]; then
-	fail "ACK common checkout is dirty"
 fi
 
 (
@@ -190,12 +171,6 @@ fi
 		'[ ! -f .lfsconfig ] || { git lfs install --local >/dev/null && git lfs checkout >/dev/null; }'
 )
 
-git -C "$ACK_WORKSPACE/common" fetch --no-tags \
-	"$UML_KERNEL_UPSTREAM_REPOSITORY" \
-	"refs/tags/$UML_KERNEL_UPSTREAM_TAG"
-git -C "$ACK_WORKSPACE/common" checkout --detach \
-	"$UML_KERNEL_UPSTREAM_COMMIT"
-
 materialize_pinned "Mesa Venus" "$AOSP_SOURCE/$MESA_VENUS_DESTINATION" \
 	"$MESA_VENUS_VERIFIER" "$MESA_VENUS_UPSTREAM_REPOSITORY" \
 	"$MESA_VENUS_UPSTREAM_COMMIT" "$MESA_VENUS_UPSTREAM_TREE" \
@@ -208,5 +183,4 @@ python3 -B "$FDROID_SOURCE_TOOL" prepare \
 
 "$SCRIPT_DIR/preflight.sh" \
 	--aosp-source "$AOSP_SOURCE" \
-	--ack-workspace "$ACK_WORKSPACE" \
 	--source-only

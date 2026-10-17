@@ -6,8 +6,8 @@
 # kernel/common/tooling/config-fragments.sh, and runs `olddefconfig` so every
 # unlisted symbol takes its Kconfig default. The overlays,
 # kernel/mainline-6.18/config/mainline.fragment and
-# kernel/android-6.18/config/android.fragment, list only the settings in which
-# their line differs; a setting both lines need belongs here.
+# kernel/mainline-6.18/config/android.fragment, list only the settings in which
+# their product differs; a setting both products need belongs here.
 #
 # UML deliberately ships without loadable-module support, so every capability
 # a guest distribution may expect has to be built in here or in an overlay.
@@ -514,11 +514,12 @@ CONFIG_SND_VIRTIO=y
 # /sys/kernel/btf/vmlinux describes this kernel's types to bpftool and lets
 # CO-RE BPF programs, such as systemd-networkd's sysctl monitor, relocate
 # against them. pahole encodes .BTF from DWARF 5, which Clang emits and pahole
-# reads; split or reduced debug info would starve it of types. Each line's
-# overlay chooses whether that DWARF is compressed, for its build host's
-# pahole. .BTF is allocated and stays resident, but the published artifact
-# strips the DWARF, which nothing loads.
+# reads; split or reduced debug info would starve it of types. The DWARF stays
+# uncompressed, the Kconfig default, because the Darwin host's pahole links an
+# elfutils built without zstd. .BTF is allocated and stays resident, but the
+# published artifact strips the DWARF, which nothing loads.
 CONFIG_DEBUG_INFO_DWARF5=y
+CONFIG_DEBUG_INFO_COMPRESSED_NONE=y
 # CONFIG_DEBUG_INFO_REDUCED is not set
 # CONFIG_DEBUG_INFO_SPLIT is not set
 CONFIG_DEBUG_INFO_BTF=y

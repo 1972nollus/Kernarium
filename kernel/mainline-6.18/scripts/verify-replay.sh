@@ -23,8 +23,8 @@ Usage: kernel/mainline-6.18/scripts/verify-replay.sh \
 
 PATH must be on a case-sensitive filesystem. The command materializes the
 exact pinned stable-branch commit there, validates its final tree, and by
-default builds the arm64 16 KiB and 4 KiB slices plus the dedicated x86_64
-userspace 4 KiB slice out of tree.
+default builds the arm64 16 KiB and 4 KiB slices, the Android product (arm64,
+4 KiB), and the dedicated x86_64 userspace 4 KiB slice out of tree.
 EOF
 }
 
@@ -91,10 +91,12 @@ printf 'UML_KERNEL_SOURCE_DIR=%s\n' "$REPLAY_DIR/linux" \
 "$LINE_ROOT/scripts/prepare-source.sh" --slice arm64
 "$LINE_ROOT/scripts/prepare-source.sh" --slice arm64 --verify --no-fetch
 
-# build_slice SLICE PAGE_SIZE builds one slice into the replay directory.
+# build_slice SLICE PAGE_SIZE [PRODUCT] builds one slice into the replay
+# directory. Only the Android product names its product and its directory.
 build_slice()
 {
-	set -- --slice "$1" --build "$REPLAY_DIR/build-$1-$2" --page-size "$2"
+	set -- --slice "$1" --build "$REPLAY_DIR/build-$1-$2${3:+-$3}" \
+		--page-size "$2" ${3:+--product "$3"}
 	[ -z "$JOBS" ] || set -- "$@" --jobs "$JOBS"
 	"$LINE_ROOT/build/build-kernel.sh" "$@"
 }
@@ -102,6 +104,7 @@ build_slice()
 if [ "$BUILD" -eq 1 ]; then
 	build_slice arm64 16k
 	build_slice arm64 4k
+	build_slice arm64 4k android
 fi
 
 "$LINE_ROOT/scripts/prepare-source.sh" --slice x86_64 --no-fetch

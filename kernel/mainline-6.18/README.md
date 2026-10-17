@@ -1,21 +1,28 @@
 # Mainline Linux 6.18 source policy
 
 This directory owns the maintained stable Linux 6.18 source identity, local
-Darwin UML patch series, kernel configuration overlay, standalone build
+Darwin UML patch series, kernel configuration overlays, standalone build
 policy, and accepted artifact descriptors.
 
 Exact upstream commit/tree, the ordered series, and the final tree they
 produce live in [`patches/metadata.env`](patches/metadata.env); the bridge ABI
 identity is [`../common/abi/identity.env`](../common/abi/identity.env). The
 normal arm64 slices apply the shared
-[`kernel/common/patches`](../common/patches) series, which the Android line
-also applies, and then this line's overlay in `patches/series`. The dedicated
-x86_64 userspace slice applies after them and owns only its config and patch
-overlay under [`slices/x86_64`](slices/x86_64). Its metadata names no upstream
-identity: the slice takes this line's, and the series tooling rejects a copy.
-Those machine-readable files are the source of truth; the final tree is the
-identity an artifact is accepted by, and replay commit IDs and binary hashes
-are observations.
+[`kernel/common/patches`](../common/patches) series and then this line's
+overlay in `patches/series`. The dedicated x86_64 userspace slice applies after
+them and owns only its config and patch overlay under
+[`slices/x86_64`](slices/x86_64). Its metadata names no upstream identity: the
+slice takes this line's, and the series tooling rejects a copy. Those
+machine-readable files are the source of truth; the final tree is the identity
+an artifact is accepted by, and replay commit IDs and binary hashes are
+observations.
+
+The line builds two products from one tree. The Linux product is the desktop
+kernel, in 16 KiB (default) and 4 KiB profiles and the x86_64 userspace slice.
+The [Android product](#android-product) is the 4 KiB arm64 kernel of the
+LineageOS 24 (Android 17) guest. It differs from the Linux product only in its
+configuration overlay: both build the same tree, including four overlay topics
+that matter only to Android.
 
 The shared stateful Virtio video decoder is built in for every product in this
 line. Its [wire contract](../common/video/README.md) is synchronized from the
@@ -25,9 +32,10 @@ The host exposes hardware decoding through V4L2 independently of the GPU.
 The shared series also carries topics Android relies on: an initrd read from a
 byte range of a host file (`initrd_offset=` and `initrd_size=`), arm64 kernel
 API header generation, arm64 Rust target flags, the arm64 system-mapping
-sealing capability, and the Kernarium Virtio battery driver. This line's
-configuration leaves Rust, `MSEAL_SYSTEM_MAPPINGS` (which `CHECKPOINT_RESTORE`
-excludes), and the battery driver disabled.
+sealing capability, and the Kernarium Virtio battery driver. The Linux product
+leaves Rust, `MSEAL_SYSTEM_MAPPINGS` (which `CHECKPOINT_RESTORE` excludes), and
+the battery driver disabled; the Android product enables the last two and
+leaves Rust disabled.
 
 ## Source preparation and replay
 
@@ -77,10 +85,8 @@ kernel/mainline-6.18/scripts/rebase-patches.sh --slice x86_64
 ```
 
 Each run exports its slice's series, named by topic subject, and records the
-final tree. The arm64 run exports the shared series too; a shared change then
-needs the Android refresh in [its README](../android-6.18/README.md) in the
-same change. The x86_64 run first rebases its overlay onto the current arm64
-branch. The slice replaces the arm64 port's ptrace, signal, TLS, syscall and
+final tree. The arm64 run exports the shared series too. The x86_64 run first
+rebases its overlay onto the current arm64 branch. The slice replaces the arm64 port's ptrace, signal, TLS, syscall and
 ELF files wholesale, so a shared topic that edits them is resolved against the
 slice's own versions in the same change, and the slice's artifact is rebuilt. A
 patch file changes only when its own topic does. Never edit patch
@@ -95,18 +101,20 @@ The series is maintained locally; no tooling submits or pushes it.
 
 The shipped policy is the shared
 [`kernel/common/config/darwin-uml.fragment`](../common/config/darwin-uml.fragment)
-plus this line's overlay, `config/mainline.fragment`. The build copies the
+plus the overlay of the product, `config/mainline.fragment` for Linux or
+`config/android.fragment` for [Android](#android-product). The build copies the
 shared policy as the starting `.config`, applies the overlay and exactly one
 page fragment, runs `olddefconfig`, and verifies that every requested symbol
-resolved as declared. The overlay holds only what differs from the Android
-line:
+resolved as declared. The Linux overlay holds only what differs from the
+Android product:
 
 - `CHECKPOINT_RESTORE` stays on for Linux guests. Its Kconfig dependency
   excludes `MSEAL_SYSTEM_MAPPINGS`, which Android enables instead.
 - Smack is the exclusive LSM, with the matching `CONFIG_LSM` order, because
   the recorded LTP results depend on it. Android uses SELinux.
-- DWARF stays uncompressed for the Darwin host's pahole, whose elfutils is
-  built without zstd. Android compresses it with zstd.
+
+DWARF stays uncompressed in both products, in the shared policy, for the Darwin
+host's pahole, whose elfutils is built without zstd.
 
 `build/build-kernel.sh --lockdep` also applies `config/lockdep.fragment`
 last, for a lock-checking probe with lockdep, its hardirq-state tracking,
@@ -120,8 +128,8 @@ The normal arm64-userspace profiles are:
 - 4 KiB pages from `kernel/common/config/page-4k.fragment` (compatibility).
 
 The separate x86_64-userspace slice is 4 KiB only. Its
-`slices/x86_64/config/userspace.fragment` follows the shared policy, this
-line's overlay and the 4 KiB fragment, and it applies only the patches in
+`slices/x86_64/config/userspace.fragment` follows the shared policy, the Linux
+overlay and the 4 KiB fragment, and it applies only the patches in
 `slices/x86_64/patches`. The kernel still executes its UML kernel mode as native arm64, but its userspace ABI is
 fixed to the x86 family: it accepts x86_64 and i386 tasks and never arm64
 userspace. Signal delivery exposes the native x86 XSAVE layout for x87, SSE,
@@ -263,11 +271,8 @@ framed request. The virtqueue and config interrupts either path records are
 taken and cleared under the same lock before they are delivered, so a
 recorded interrupt is never lost between two deliverers. Virtio-GPU
 host-visible blobs use the same 16 KiB granularity without a private userspace
-ioctl or a bridge ABI change.
-The ACK line carries the same shared-memory transport, aperture geometry, and
-mapping-capacity policy for its Venus Vulkan HAL. The two maintained kernel
-lines adapt the topic to their own source histories while preserving the same
-host-visible Virtio-GPU contract.
+ioctl or a bridge ABI change. Android's Venus Vulkan HAL needs the aperture:
+Venus refuses to initialize without `VIRTGPU_PARAM_HOST_VISIBLE` or guest VRAM.
 
 A Virtio-GPU file on a device with context initialization has no context until
 it initializes one or its first transfer, submission, or resource creation
@@ -276,16 +281,14 @@ import, is attached to the context when it is created, as a handle opened
 afterwards is when it opens; closing one first drops it without a detach.
 Upstream attaches only handles opened after the context exists, so the host
 refused every transfer that named such a buffer. Android's gralloc mapper reads
-an imported buffer exactly that way, which blanked every screenshot. The ACK
-line carries the same change.
+an imported buffer exactly that way, which blanked every screenshot.
 
 The Virtio-GPU primary plane accepts ARGB8888 as well as XRGB8888, so a GBM
 client whose EGL config has alpha can set a mode. XRGB8888 stays the first
 format, the one fbdev takes. The plane has no blend-mode property. The host
 presents a scanout's colour channels and ignores its alpha byte, which is what
-premultiplied alpha over the CRTC's black background shows. Only this line
-carries the topic, because the ACK base already offers ARGB8888 and the other
-32-bit RGB orders on the plane.
+premultiplied alpha over the CRTC's black background shows. The Android
+product offers the other 32-bit RGB orders as well.
 
 Both page profiles request the runtime's anonymous physical-memory token. The
 kernel's linear physical window becomes the RAM root, so MMU and host-service
@@ -309,7 +312,7 @@ therefore updates a slab's freelist and counters with one CASP, which runs
 directly on the host CPU, and `kmalloc_nolock()`, which BPF timers allocate
 with, can use every cache. A build assertion checks that the FLATMEM memory
 map's `SMP_CACHE_BYTES` allocation alignment covers the double-word alignment
-this needs. The ACK line carries the same change.
+this needs.
 
 Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
 at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
@@ -403,9 +406,7 @@ regrouped, so io_uring refuses with `EINVAL` an `IORING_SETUP_NO_MMAP` ring, a
 registered memory region or a provided-buffer ring whose pages are neither one
 folio nor whole aligned groups. The BPF ring buffer is laid out so that the
 first data copy ends on a group boundary, which is a change to
-`kernel/bpf/ringbuf.c`. The topic lives in each overlay instead of the shared
-series because the ACK file's include block and page-size macros differ, so one
-patch cannot apply to both bases; the ACK line carries an adapted variant. A
+`kernel/bpf/ringbuf.c`. A
 buffer under 16 KiB brackets its wrapped tail with the vmap hooks. Perf no
 longer selects `PERF_USE_VMALLOC`, as native arm64 does not. The virtio-gpu
 console draws into a vmap of scattered shmem pages, which is a private copy on
@@ -472,6 +473,101 @@ Zswap is built in and enabled with zstd but allocates no pool until the guest
 activates backing swap. Normal desktop launchers do not create backing swap and
 must not count zswap as guest memory.
 
+## Android product
+
+The kernel of the LineageOS 24 (Android 17) guest is this line's arm64 tree
+with 4 KiB pages and the Android overlay, `config/android.fragment`, in place
+of `config/mainline.fragment`. It is built-in-only (`CONFIG_MODULES=n`, no
+`.ko` or DLKM payloads) and has no 16 KiB variant: Android's 32-bit libraries
+are 4 KiB aligned, so the kernel page size is 4 KiB while the 64-bit userspace
+stays page-agnostic. The product is owned by
+[`../../android/lineage-24`](../../android/lineage-24/README.md); the kernel and
+the rootfs release are selected independently.
+
+The kernel build (`--product android`) and the release verifier require every
+symbol of [`config/android-required-builtins.txt`](config/android-required-builtins.txt)
+to be `y` and every symbol of
+[`config/android-forbidden-options.txt`](config/android-forbidden-options.txt)
+to be absent. `CONFIG_COMPAT` and `CONFIG_KUSER_HELPERS` are required
+builtins: the shared AArch32 task support described in
+[`kernel/common`](../common/README.md) lets an armeabi-v7a process run once the
+host's engine implements AArch32.
+
+The overlay holds only what differs from the Linux product:
+
+- SELinux with audit syscall records is the exclusive LSM, with the matching
+  `CONFIG_LSM` order, because Android owns the SELinux policy. Linux uses
+  Smack.
+- `CHECKPOINT_RESTORE` is off, as in GKI, so that `MSEAL_SYSTEM_MAPPINGS` can
+  seal userspace's system mappings.
+- Android's own facilities: Binder and binderfs, the DMA-BUF heaps and udmabuf,
+  bootconfig, the inline-encryption fallback with fscrypt and HCTR2, PF_KEY for
+  the network statistics path, socket destruction for netd, further xtables
+  matches and targets, the gpu_mem tracepoints, the Kernarium battery, and hvc
+  for the single-port Virtio console.
+- Settings the shared policy leaves to their Kconfig defaults, which the
+  overlay pins: seccomp, delay accounting, utilization clamping (off), policy
+  routing, XFRM interfaces and statistics, conntrack events and netlink, and
+  Unicode.
+- The two presentation options below.
+
+The current rootfs uses unencrypted ext4 userdata. The fscrypt and
+inline-encryption fallback stay built in for ordinary application and framework
+compatibility. Android's Ethernet IpClient acquires the SLiRP lease, default
+route, and DNS configuration after init starts, so the kernel does not perform
+IP autoconfiguration. Recovery independently assigns its fixed local endpoint
+for the host-forwarded ADB contract; external recovery routing is not a
+product requirement.
+
+Four topics in this line's patch overlay change behaviour only when the Android
+overlay switches them on, or only under Android's SELinux policy. Each stays
+out of the shared series because it depends on the guest OS:
+
+- `CONFIG_UML_VNC_INPUT_TOUCHSCREEN` presents the display's absolute pointer as
+  a pure direct touchscreen (`BTN_TOUCH`, `ABS_X`, `ABS_Y`). Android and its
+  recovery enter pointer mode for an input device that also reports mouse
+  buttons, while a desktop guest needs the tablet's buttons, hover and wheel.
+  Legacy `BTN_LEFT` events from an older frontend still become touches.
+- `CONFIG_DRM_VIRTIO_GPU_STANDARD_FORMATS` adds BGRX8888, BGRA8888, RGBX8888,
+  RGBA8888, XBGR8888 and ABGR8888 to the Virtio-GPU primary plane, and
+  framebuffer creation then accepts exactly the formats the plane lists.
+  Android's composer scans out its RGBA and RGBX buffers (the
+  `hwcomposer.display_framebuffer_format=rgba` ABGR8888 and XBGR8888)
+  directly, so without the option every framebuffer is refused and the display
+  stays black. A Linux compositor chooses its scanout format from the plane's
+  list, so the Linux product keeps XRGB8888 and ARGB8888.
+- The SELinux `memfd_class` policy capability, a backport of a selinux.git
+  change that 6.18.y lacks. Android 17's policy labels memfds with the
+  `memfd_file` class (VSR-3.5.2-004) and grants audio and media clients the
+  shared-memory queues they build on memfds only through it. Only SELinux
+  implements the hook, so a Smack guest is unchanged.
+- The PSI trigger privilege: system_server's low-memory detector registers 1 s
+  windows without `CAP_SYS_RESOURCE`, which upstream refuses with `EINVAL`.
+  `psi_trigger_create()` counts every writer as privileged when SELinux is the
+  default security module (`CONFIG_DEFAULT_SECURITY_SELINUX`), and the policy
+  decides who may write `/proc/pressure`. The Linux product keeps the
+  capability check.
+
+The product carries none of ACK's own features, and does without them:
+
+- `/dev/ashmem` and its `ASHMEM_*` ioctls on memfds. The product sets
+  `sys.use_memfd`, so libcutils' `ashmem_create_region()` creates a memfd;
+  native code that opens the device itself, or issues ashmem ioctls on a memfd,
+  fails (a memfd answers `ENOTTY`). Recovery loads no product properties, so
+  the recovery image must set `sys.use_memfd` itself.
+- dm-default-key (metadata encryption), which the unencrypted userdata does not
+  use.
+- Per-UID I/O statistics (`/proc/uid_io/stats`), which storaged does without.
+- `xt_quota2`, so the data-usage alerts and limits netd would install fail; the
+  Ethernet network is unmetered.
+- Binder real-time priority inheritance, `/sys/kernel/wakeup_reasons`, and
+  ACK's 20 s expedited-RCU window at boot, which mainline ends at init.
+
+The iOS runtime framework for this product keeps its earlier name,
+`KRuntime_ACK_6_18_4K`, though it now embeds this line's Android artifact.
+Renaming it touches the Kernarium project and its packaging scripts and needs
+the full XCFramework script to verify, so it is a follow-up.
+
 ## Standalone build and publication
 
 Build each profile outside the source tree:
@@ -484,10 +580,13 @@ kernel/mainline-6.18/build/build-kernel.sh \
 kernel/mainline-6.18/scripts/prepare-source.sh --slice x86_64
 kernel/mainline-6.18/build/build-kernel.sh \
   --slice x86_64 --build /case-sensitive/build-x86_64-4k --page-size 4k
+kernel/mainline-6.18/build/build-kernel.sh \
+  --product android --build /case-sensitive/build-android-4k --page-size 4k
 ```
 
 Publish each completed build with
-`build/publish-artifact.py`. The publisher requires a clean replay at the
+`build/publish-artifact.py`; the Android build takes `--product android`. The
+publisher requires a clean replay at the
 tracked final tree, validates resolved policy and ELF/ABI geometry, and copies
 only the compact runtime/support bundle, with the kernel image's DWARF
 stripped (see [Toolchain](#toolchain)). It never builds, fetches, or changes a
@@ -496,8 +595,15 @@ source checkout. Use the script's `--help` for output and release options.
 `artifacts/accepted-16k.env` and `accepted-4k.env` select reviewed arm64 local
 publications below `.build/kernel/artifacts`.
 `slices/x86_64/artifacts/accepted-4k.env` independently selects the x86_64
-userspace publication. Artifact identity includes the slice, so an arm64 4 KiB
-kernel cannot satisfy an x86_64 selection. Apple products validate the whole
+userspace publication. `artifacts/accepted-android-4k.env` selects the Android
+product's publication. Artifact identity includes the family and the slice, so
+a Linux 4 KiB kernel cannot satisfy an Android selection, nor an arm64 4 KiB
+kernel an x86_64 one. The Android kernel keeps the `android-6.18` family name:
+the Apple CMake graph and Kernarium key Android mode on it. They validate the
+bridge ABI, the 4 KiB page profile, the family, and the `6.18` series at build
+time; patch releases and commit identities are provenance, not runtime gates.
+Advancing the accepted Android kernel must not rebuild or rename the rootfs
+release, recreate a `.kern` bundle, or invalidate its persistent disk. Apple products validate the whole
 selected bundle and derive paths from its manifest; they do not inspect source
 or Kbuild state.
 

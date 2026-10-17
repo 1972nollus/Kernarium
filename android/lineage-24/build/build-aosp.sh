@@ -34,8 +34,9 @@ Usage: android/lineage-24/build/build-aosp.sh \
        --kernel-artifact ABSOLUTE_PATH [--jobs N]
 
 Run locally on the x86_64 Linux builder after applying the routed AOSP patch
-series. The kernel is a published ACK kernel artifact of the tracked source,
-whose vmlinux is the runtime image without DWARF. The output directory must be an ignored directory inside the AOSP Repo
+series. The kernel is a published Android kernel artifact of the tracked
+mainline source, whose vmlinux is the runtime image without DWARF. The output
+directory must be an ignored directory inside the AOSP Repo
 workspace; the pinned Android 17 Soong tree rejects generated host-tool paths
 from an external absolute OUT_DIR. Reusing the same output path lets the
 Android build system select and preserve its compatible incremental state; a
@@ -165,7 +166,7 @@ python3 -B "$FDROID_SOURCE_TOOL" verify --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
 python3 -B "$KERNEL_ARTIFACT_VERIFIER" --artifact "$KERNEL_ARTIFACT" \
 	--common-root "$KERNEL_COMMON_ROOT" \
-	--kernel-metadata "$OUTER_ROOT/kernel/android-6.18/patches/metadata.env" \
+	--kernel-metadata "$OUTER_ROOT/kernel/mainline-6.18/patches/metadata.env" \
 	--abi-metadata "$KERNEL_COMMON_ROOT/abi/identity.env"
 SOONG_BUILD_GRAPH="$OUT_DIR/soong/build.${LINEAGE24_PRODUCT}.ninja"
 mkdir -p -- "$OUT_DIR"
@@ -267,7 +268,7 @@ EOF
 [[ "$(get_build_var PRODUCT_BUILD_RECOVERY_IMAGE)" == true ]] ||
 	fail "PRODUCT_BUILD_RECOVERY_IMAGE must be true"
 [[ "$(get_build_var BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE)" == true ]] ||
-	fail "recovery must use the separately built ACK kernel"
+	fail "recovery must use the separately built Android kernel"
 [[ "$(get_build_var BOARD_USES_FULL_RECOVERY_IMAGE)" == true ]] ||
 	fail "recovery must remain a full standalone partition image"
 [[ "$(get_build_var BOARD_BOOT_HEADER_VERSION)" == 4 ]] ||
@@ -497,7 +498,7 @@ for package in \
 		fail "unsupported Cuttlefish HAL package is present: $package"
 done
 
-# target-files always carries a kernel input. Stage only the published ACK
+# target-files always carries a kernel input. Stage only the published Android
 # artifact's runtime image in the output tree; the product's init_boot and
 # recovery images deliberately exclude it, and no AOSP source project owns a
 # copy. The build's own vmlinux keeps the DWARF that pahole reads and would not

@@ -28,7 +28,6 @@ SeriesError = patch_series.SeriesError
 LINES = (
     "kernel/mainline-6.18/patches/metadata.env",
     "kernel/mainline-6.18/slices/x86_64/patches/metadata.env",
-    "kernel/android-6.18/patches/metadata.env",
 )
 
 

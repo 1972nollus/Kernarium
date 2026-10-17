@@ -58,9 +58,9 @@ find_tool PYTHON python3
 RUNTIME_4K="KRuntime_6_18_4K"
 RUNTIME_16K="KRuntime_6_18_16K"
 
-# The Android runtime carries an independently accepted ACK artifact. Rootfs
-# release updates do not rename this framework and kernel-only updates do not
-# invalidate an existing guest bundle.
+# The Android runtime carries an independently accepted Android kernel
+# artifact. Rootfs release updates do not rename this framework and kernel-only
+# updates do not invalidate an existing guest bundle.
 RUNTIME_ANDROID_4K="KRuntime_ACK_6_18_4K"
 
 RUNTIME_TREE=kernarium-runtime-ios-device
