@@ -33,6 +33,7 @@
 #include <new>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -488,6 +489,8 @@ struct Body final {
 			kept != nullptr ? kept->instruction : 0U};
 	}
 };
+static_assert(std::is_trivially_destructible_v<Body>,
+	"an address space's bodies go with its arena without being freed");
 static_assert(sizeof(Body) == 16 &&
 	sizeof(Body) % alignof(std::uintptr_t) == 0,
 	"the stream tail follows the body at pointer alignment");
@@ -723,13 +726,12 @@ public:
 			.first->link;
 	}
 
-	~Space()
-	{
-		/* No executor holds this address space any more, so nothing can
-		 * run a body or follow a record of it. */
-		free_bodies(limbo_.waiting);
-		free_bodies(limbo_.incoming);
-	}
+	/* No executor holds this address space any more, so nothing can run a
+	 * body or follow a record of it, and the bodies still waiting in limbo
+	 * go with the arena: it unmaps its chunks whole, which costs what it
+	 * mapped rather than what it holds. Freeing each body first merged
+	 * and listed blocks the next step discards. See G257. */
+	~Space() = default;
 
 	Space(const Space &) = delete;
 	Space &operator=(const Space &) = delete;

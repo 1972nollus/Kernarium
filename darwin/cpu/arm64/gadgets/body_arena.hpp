@@ -35,13 +35,17 @@ namespace uml::cpu::arm64::gadgets {
  * chunk. With freed blocks kept only for their own sixteen-byte size and
  * chunks never returned, a browser that cycles through more address spaces
  * than the cache keeps held an executor's arena at its high-water mark, about
- * twice its live bodies. See G226 and G251. A free touches a few map words
+ * twice its live bodies. See G226 and G257. A free touches a few map words
  * and at most two neighbours, so retiring an address space still costs in
  * proportion to what it owned. See G167.
  *
- * A chunk is an anonymous mapping of its own rather than a heap block: the
- * heap keeps freed blocks of this size resident, in the process's footprint,
- * until it hands them out again.
+ * Chunks are carved from anonymous mappings of their own rather than heap
+ * blocks: the heap keeps freed blocks of this size resident, in the
+ * process's footprint, until it hands them out again. An arena maps a few
+ * chunks at a time, doubling to sixteen, because a browser retires address
+ * spaces by the thousand and a mapping per chunk made their mapping and
+ * unmapping the arena's largest cost; an address space that dies unmaps its
+ * regions whole, without freeing a body of it.
  *
  * The arena also answers which live body holds an address. Each chunk keeps
  * one bit per granule, set at the first granule of every live block, so the
@@ -65,8 +69,21 @@ public:
 
 	~BodyArena()
 	{
-		for (const auto &chunk : chunks_)
-			unmap(chunk.base);
+		for (const auto &region : regions_) {
+			for (std::uint32_t at = 0; at < region.chunks;) {
+				if ((region.mapped >> at & 1U) == 0) {
+					++at;
+					continue;
+				}
+				auto end = at;
+				while (end < region.chunks &&
+					(region.mapped >> end & 1U) != 0)
+					++end;
+				unmap(region.base + std::size_t{at} * chunk_bytes,
+					std::size_t{end - at} * chunk_bytes);
+				at = end;
+			}
+		}
 		for (const auto &direct : direct_)
 			upstream_->deallocate(direct.base, direct.bytes,
 				alignof(std::max_align_t));
@@ -222,6 +239,12 @@ private:
 	static constexpr std::size_t chunk_bytes = std::size_t{64} << 10;
 	static constexpr std::size_t chunk_granules = chunk_bytes / granule;
 	static constexpr std::size_t map_words = chunk_granules / 64;
+	/* A region doubles the arena's reach, from four chunks to sixteen: an
+	 * address space that runs a browser's code holds about seventeen, so
+	 * it maps four times where one chunk at a time mapped seventeen. */
+	static constexpr std::size_t first_region_chunks = 4;
+	static constexpr std::size_t region_chunks = 16;
+	static_assert(region_chunks <= 32, "a region's chunks fit its mask");
 	/* Free blocks by size: one list per class, and the last for the runs
 	 * merging makes longer than the largest class. */
 	static constexpr std::size_t lists = classes + 1;
@@ -262,6 +285,18 @@ private:
 	struct Direct final {
 		std::byte *base;
 		std::size_t bytes;
+	};
+
+	/* One mapping of up to region_chunks chunks, in address order among
+	 * the arena's regions. */
+	struct Region final {
+		std::byte *base;
+		std::uint32_t chunks;
+		/* One bit per chunk still mapped: a chunk released while the
+		 * arena lives is unmapped alone, and the arena's end unmaps
+		 * only what is left, since the address space of the others
+		 * may be another mapping's by then. */
+		std::uint32_t mapped;
 	};
 
 	[[nodiscard]] static bool test(const std::uint64_t *map,
@@ -400,7 +435,7 @@ private:
 			auto maps = std::make_unique<std::uint64_t[]>(
 				2 * map_words);
 			auto *starts = maps.get();
-			auto *base = map();
+			auto *base = take_chunk();
 			try {
 				/* Kept in address order, which is what owner()
 				 * searches. */
@@ -410,7 +445,10 @@ private:
 				chunks_.insert(at,
 					Chunk{base, std::move(maps)});
 			} catch (...) {
-				unmap(base);
+				/* The chunk just taken, so the region has it back. */
+				spare_ = base;
+				++spare_left_;
+				--carved_;
 				throw;
 			}
 			if (current_ != nullptr && used_ < chunk_granules) {
@@ -433,25 +471,72 @@ private:
 	void release(const Chunk &chunk) noexcept
 	{
 		auto *base = chunk.base;
-		unmap(base);
+		const auto region = std::prev(std::upper_bound(
+			regions_.begin(), regions_.end(), base,
+			[](const std::byte *address, const Region &held) {
+				return address < held.base;
+			}));
+		region->mapped &= ~(std::uint32_t{1} <<
+			static_cast<std::size_t>(base - region->base) /
+				chunk_bytes);
+		unmap(base, chunk_bytes);
+		if (region->mapped == 0)
+			regions_.erase(region);
 		chunks_.erase(std::lower_bound(chunks_.begin(), chunks_.end(),
 			base, [](const Chunk &held, const std::byte *address) {
 				return held.base < address;
 			}));
 	}
 
-	[[nodiscard]] static std::byte *map()
+	/* The next chunk of the arena, from the region being carved or from a
+	 * new one. A region is one mapping of several chunks, which only
+	 * reserves address space until its chunks are carved, so an arena that
+	 * grows maps a few times rather than once per chunk. */
+	[[nodiscard]] std::byte *take_chunk()
 	{
-		void *base = mmap(nullptr, chunk_bytes, PROT_READ | PROT_WRITE,
-			MAP_PRIVATE | MAP_ANON, -1, 0);
-		if (base == MAP_FAILED)
-			throw std::bad_alloc{};
-		return static_cast<std::byte *>(base);
+		if (spare_left_ == 0) {
+			auto want = std::clamp(
+				carved_ == 0 ? first_region_chunks : carved_,
+				std::size_t{1}, region_chunks);
+			void *base = MAP_FAILED;
+			for (;; want = 1) {
+				base = mmap(nullptr, want * chunk_bytes,
+					PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANON, -1, 0);
+				if (base != MAP_FAILED)
+					break;
+				if (want == 1)
+					throw std::bad_alloc{};
+			}
+			auto *at = static_cast<std::byte *>(base);
+			try {
+				regions_.insert(std::upper_bound(regions_.begin(),
+						regions_.end(), at,
+						[](const std::byte *address,
+							const Region &held) {
+							return address < held.base;
+						}),
+					Region{at,
+						static_cast<std::uint32_t>(want),
+						static_cast<std::uint32_t>(
+							(std::uint64_t{1} << want) - 1)});
+			} catch (...) {
+				(void)munmap(base, want * chunk_bytes);
+				throw;
+			}
+			spare_ = at;
+			spare_left_ = want;
+		}
+		auto *chunk = spare_;
+		spare_ += chunk_bytes;
+		--spare_left_;
+		++carved_;
+		return chunk;
 	}
 
-	static void unmap(std::byte *base) noexcept
+	static void unmap(std::byte *base, std::size_t bytes) noexcept
 	{
-		(void)munmap(base, chunk_bytes);
+		(void)munmap(base, bytes);
 	}
 
 	[[nodiscard]] static bool before_chunk(
@@ -474,7 +559,13 @@ private:
 	std::pmr::memory_resource *upstream_;
 	/* In address order. */
 	std::vector<Chunk> chunks_;
+	std::vector<Region> regions_;
 	std::vector<Direct> direct_;
+	/* The chunks of the newest region not yet taken. */
+	std::byte *spare_{};
+	std::size_t spare_left_{};
+	/* Chunks taken so far, which sizes the next region. */
+	std::size_t carved_{};
 	std::byte *current_{};
 	std::uint64_t *current_starts_{};
 	/* Granules of the current chunk carved so far. */
