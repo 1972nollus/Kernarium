@@ -13,6 +13,8 @@ at the device, and then send commands:
   ipad-automation.py --device UDID start --hours 8
   ipad-automation.py --device UDID launch --env KERNARIUM_ROOTFS=none.erofs
   ipad-automation.py --device UDID tap --id displayModeButton
+  ipad-automation.py --device UDID orientation landscapeLeft
+  ipad-automation.py --device UDID --bundle com.apple.springboard drag 500 700 400 600 1
   ipad-automation.py --device UDID screenshot -o shot.png
   ipad-automation.py --device UDID stop --force
 
@@ -24,6 +26,12 @@ Run `start` only while someone can approve, because XCTest gives up 60 s after
 the runner starts and leaves the prompt on screen. The host targets
 com.imxieyi.Kernarium unless --bundle names another application, such as
 com.apple.springboard.
+
+A coordinate tap or drag names points as offsets from the origin of that
+application's frame, which `tree` prints; springboard's frame is the whole
+screen. A drag presses its start for the given seconds before moving, which is
+what picks up a window's resize handle. `orientation` rotates the device and
+reports the orientation it reached; without a name it only reports.
 
 No command ends the host: a failed command reports its error, and the host
 prints it to its log. If every command starts taking about 60 s, a system
@@ -82,6 +90,8 @@ UNDELIVERABLE = {
 }
 # The key each dropped character stands for.
 DROPPED = {"\r": "return", "\x7f": "delete", "\b": "delete", "\x1b": "escape"}
+# The UIDeviceOrientation cases XCUIDevice can be set to.
+ORIENTATIONS = ("portrait", "portraitUpsideDown", "landscapeLeft", "landscapeRight")
 
 
 class NoHost(Exception):
@@ -419,6 +429,18 @@ def build_command(options):
     elif op == "key":
         command["key"] = key_character(options.key)
         command["modifiers"] = [item for item in options.modifiers.split(",") if item]
+    elif op == "orientation":
+        if options.orientation is not None:
+            command["orientation"] = options.orientation
+    elif op == "drag":
+        if options.seconds < 0 or options.hold < 0:
+            raise ValueError("a drag's press and hold durations cannot be negative")
+        command.update(x1=options.x1, y1=options.y1, x2=options.x2, y2=options.y2,
+                       press=options.seconds, hold=options.hold)
+        if options.velocity is not None:
+            if options.velocity <= 0:
+                raise ValueError("a drag's velocity is a positive number of points per second")
+            command["velocity"] = options.velocity
     return command
 
 
@@ -495,6 +517,20 @@ def parse(argv):
             sub.add_argument("--y", type=float)
         if name == "wait":
             sub.add_argument("--gone", action="store_true", help="wait for disappearance")
+    drag = commands.add_parser(
+        "drag", help="press a point, drag it to another and lift (points from the "
+                     "application's origin)")
+    for name in ("x1", "y1", "x2", "y2"):
+        drag.add_argument(name, type=float)
+    drag.add_argument("seconds", type=float, nargs="?", default=0.5,
+                      help="how long to press before dragging (default: 0.5)")
+    drag.add_argument("--velocity", type=float,
+                      help="drag speed in points per second (default: XCTest's)")
+    drag.add_argument("--hold", type=float, default=0.0,
+                      help="seconds to hold at the end before lifting (default: 0)")
+    orientation = commands.add_parser(
+        "orientation", help="rotate the device, or report its orientation")
+    orientation.add_argument("orientation", nargs="?", choices=ORIENTATIONS)
     type_ = commands.add_parser("type", help="type text into the focused element")
     type_.add_argument("text")
     key = commands.add_parser("key", help="press one hardware-keyboard key")
