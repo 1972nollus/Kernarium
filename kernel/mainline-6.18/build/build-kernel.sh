@@ -25,7 +25,7 @@ usage()
 	cat <<'EOF'
 Usage: kernel/mainline-6.18/build/build-kernel.sh \
        --build PATH --page-size 16k|4k [--slice arm64|x86_64] [--jobs N]
-       [--lockdep]
+       [--product linux|android] [--lockdep]
 
 The compiler, linker, make program, cross prefix, and tool overrides are
 configured through UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,
@@ -35,9 +35,15 @@ and the static libelf used for BTF come from UML_KERNEL_HOST_TOOLS_PREFIX
 dependencies/build-kernel-host-tools.sh); UML_KERNEL_PAHOLE may select another
 pahole v1.29 or newer.
 The configuration is the shared kernel/common/config/darwin-uml.fragment
-policy, then this line's config/mainline.fragment overlay, then a page-size
-fragment. The arm64 slice supports 16 KiB and 4 KiB pages. The x86_64
-userspace slice is 4 KiB only and applies its own config fragment after those.
+policy, then this line's overlay for the product, then a page-size fragment.
+The linux product (the default) uses config/mainline.fragment and supports the
+arm64 slice with 16 KiB and 4 KiB pages. The x86_64 userspace slice is 4 KiB
+only and applies its own config fragment after those. The android product uses
+config/android.fragment instead; it is the arm64 slice with 4 KiB pages only,
+and the build refuses a configuration that lacks a symbol of
+config/android-required-builtins.txt or has one of
+config/android-forbidden-options.txt. Its kernel is published in the
+android-6.18 artifact family.
 The output directory must be outside the Linux source tree. Darwin host-tool
 compatibility is injected from kernel/mainline-6.18/build/toolchain/darwin-host.
 macOS, iOS Simulator, and physical iOS all use the same constrained native
@@ -52,12 +58,18 @@ EOF
 BUILD_DIR=''
 PAGE_SIZE=''
 SLICE=arm64
+PRODUCT=linux
 LOCKDEP=0
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--slice)
 		[ "$#" -ge 2 ] || fail "--slice requires arm64 or x86_64"
 		SLICE=$2
+		shift 2
+		;;
+	--product)
+		[ "$#" -ge 2 ] || fail "--product requires linux or android"
+		PRODUCT=$2
 		shift 2
 		;;
 	--build)
@@ -108,6 +120,22 @@ SOURCE_DIR=$("$SOURCE_LOCATION" --require-source) ||
 case "$PAGE_SIZE" in
 16k|4k) ;;
 *) fail "--page-size must be 16k or 4k" ;;
+esac
+case "$PRODUCT" in
+linux)
+	PRODUCT_FRAGMENT="$CONFIG_DIR/mainline.fragment"
+	;;
+android)
+	# The Android product exists once: arm64, 4 KiB, no lock-checking probe.
+	[ "$UML_KERNEL_SLICE" = arm64 ] ||
+		fail "the android product supports only the arm64 slice"
+	[ "$PAGE_SIZE" = 4k ] ||
+		fail "the android product supports only the 4k page profile"
+	[ "$LOCKDEP" -eq 0 ] ||
+		fail "--lockdep is not available for the android product"
+	PRODUCT_FRAGMENT="$CONFIG_DIR/android.fragment"
+	;;
+*) fail "--product must be linux or android" ;;
 esac
 [ "$UML_KERNEL_SLICE" != x86_64 ] || [ "$PAGE_SIZE" = 4k ] ||
 	fail "the x86_64 userspace slice supports only the 4k page profile"
@@ -248,7 +276,7 @@ case "$PAGE_SIZE" in
 16k) PAGE_FRAGMENT="$COMMON_ROOT/config/page-16k.fragment" ;;
 4k) PAGE_FRAGMENT="$COMMON_ROOT/config/page-4k.fragment" ;;
 esac
-set -- "$COMMON_ROOT/config/darwin-uml.fragment" "$CONFIG_DIR/mainline.fragment" \
+set -- "$COMMON_ROOT/config/darwin-uml.fragment" "$PRODUCT_FRAGMENT" \
 	"$PAGE_FRAGMENT"
 if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
 	set -- "$@" "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
@@ -261,6 +289,15 @@ uml_kernel_config_compose "$SOURCE_DIR" "$BUILD_DIR/.config" "$@" ||
 run_make olddefconfig
 uml_kernel_config_verify "$BUILD_DIR/.config" "$@" ||
 	fail "kernel configuration does not match its fragments"
+if [ "$PRODUCT" = android ]; then
+	# Fail before the long build when a symbol the product needs was dropped
+	# or one it must not have came back.
+	python3 -B "$COMMON_ROOT/artifacts/verify-config-policy.py" \
+		--config "$BUILD_DIR/.config" \
+		--required "$CONFIG_DIR/android-required-builtins.txt" \
+		--forbidden "$CONFIG_DIR/android-forbidden-options.txt" ||
+		fail "the Android kernel configuration violates its product policy"
+fi
 run_make -j"$UML_KERNEL_JOBS"
 [ -f "$BUILD_DIR/vmlinux" ] ||
 	fail "Kbuild completed without producing $BUILD_DIR/vmlinux"
@@ -271,4 +308,4 @@ if [ "$(uname -s)" = Darwin ]; then
 	python3 "$COMMON_ROOT/tooling/verify-console-input.py" \
 		--source "$SOURCE_DIR" --build "$BUILD_DIR"
 fi
-printf '%s\n' "built $UML_KERNEL_SLICE $PAGE_SIZE Darwin UML kernel: $BUILD_DIR/vmlinux"
+printf '%s\n' "built $PRODUCT $UML_KERNEL_SLICE $PAGE_SIZE Darwin UML kernel: $BUILD_DIR/vmlinux"

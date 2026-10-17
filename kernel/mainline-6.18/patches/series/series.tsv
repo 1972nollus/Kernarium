@@ -5,3 +5,7 @@ patch	virtio_balloon-do-not-wait-for-an-answer-from-a-broken-device.patch
 patch	drm-virtio-attach-a-buffer-imported-before-the-context-exists.patch
 patch	drm-virtio-accept-ARGB8888-on-the-primary-plane.patch
 patch	bpf-ringbuf-map-the-ring-in-whole-vmap-groups.patch
+patch	um-offer-a-touchscreen-only-VNC-input-option-for-Android-guests.patch
+patch	drm-virtio-offer-the-standard-32-bit-RGB-formats-as-a-plane-option.patch
+patch	memfd-selinux-call-security_inode_init_security_anon.patch
+patch	sched-psi-skip-the-privilege-check-when-SELinux-is-the-default.patch

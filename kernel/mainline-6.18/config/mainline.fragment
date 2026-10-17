@@ -1,18 +1,15 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# The mainline line's overlay on the shared Darwin UML kernel policy in
+# The Linux desktop product's overlay on the shared Darwin UML kernel policy in
 # kernel/common/config/darwin-uml.fragment. It lists only the settings in
-# which this line differs from Android; build/build-kernel.sh applies it after
-# the shared policy and before the page-size fragment.
+# which that product differs from the Android one, android.fragment;
+# build/build-kernel.sh applies it after the shared policy and before the
+# page-size fragment.
 
 # Linux guests keep checkpoint/restore. Its Kconfig dependency excludes
-# MSEAL_SYSTEM_MAPPINGS, which the Android line enables instead.
+# MSEAL_SYSTEM_MAPPINGS, which the Android product enables instead.
 CONFIG_CHECKPOINT_RESTORE=y
 
 # Smack is the validated choice for this port; changing it invalidates the
 # recorded LTP results that depend on it.
 CONFIG_SECURITY_SMACK=y
 CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,smack,ipe,bpf"
-
-# The Darwin host's pahole reads the DWARF uncompressed, the Kconfig default:
-# the kernel-host-tools elfutils is built without zstd.
-CONFIG_DEBUG_INFO_COMPRESSED_NONE=y

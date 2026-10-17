@@ -165,9 +165,9 @@ check_mismatch 'CONFIG_NR=32' \
 check_mismatch 'CONFIG_LSM="landlock,selinux"' \
 	"CONFIG_LSM: $TEST_ROOT/mismatch.fragment requested \"landlock,selinux\", resolved \"landlock,smack\""
 
-# Every maintained line starts from the shared policy, and each line's overlay
-# lists only where that line differs: an overlay never names a shared symbol,
-# and a setting both overlays make identically belongs in the shared policy.
+# Every product starts from the shared policy, and each product's overlay lists
+# only where that product differs: an overlay never names a shared symbol, and
+# a setting both overlays make identically belongs in the shared policy.
 policy_problems=$(awk '
 	/^CONFIG_[A-Za-z0-9_]+=/ {
 		symbol = substr($0, 1, index($0, "=") - 1)
@@ -183,10 +183,56 @@ policy_problems=$(awk '
 	}
 ' "$ROOT_DIR/kernel/common/config/darwin-uml.fragment" \
 	"$ROOT_DIR/kernel/mainline-6.18/config/mainline.fragment" \
-	"$ROOT_DIR/kernel/android-6.18/config/android.fragment" </dev/null)
+	"$ROOT_DIR/kernel/mainline-6.18/config/android.fragment" </dev/null)
 [ -z "$policy_problems" ] || {
 	printf '%s\n' "$policy_problems" >&2
-	fail "a line overlay repeats shared kernel configuration"
+	fail "a product overlay repeats shared kernel configuration"
+}
+
+# The Android product's symbol lists agree with the fragments that compose it:
+# no listed symbol is both required and forbidden, and neither the shared
+# policy nor the Android overlay requests the opposite of a list.
+ANDROID_CONFIG_DIR="$ROOT_DIR/kernel/mainline-6.18/config"
+list_problems=$(awk '
+	function symbol_of(line) {
+		if (match(line, /^CONFIG_[A-Za-z0-9_]+=/))
+			return substr(line, 1, index(line, "=") - 1)
+		if (match(line, /^# CONFIG_[A-Za-z0-9_]+ is not set$/)) {
+			split(line, words, " ")
+			return words[2]
+		}
+		return ""
+	}
+	function value_of(line) {
+		if (line ~ /^# /)
+			return "n"
+		return substr(line, index(line, "=") + 1)
+	}
+	/^[[:space:]]*(#|$)/ && !/^# CONFIG_[A-Za-z0-9_]+ is not set$/ { next }
+	FILENAME == ARGV[1] { required[$1] = 1; next }
+	FILENAME == ARGV[2] {
+		forbidden[$1] = 1
+		if ($1 in required)
+			print $1 " is both required and forbidden"
+		next
+	}
+	{
+		symbol = symbol_of($0)
+		if (symbol == "")
+			next
+		value = value_of($0)
+		if ((symbol in required) && value != "y")
+			print FILENAME ": " symbol "=" value " but the Android product requires y"
+		if ((symbol in forbidden) && value != "n")
+			print FILENAME ": " symbol "=" value " but the Android product forbids it"
+	}
+' "$ANDROID_CONFIG_DIR/android-required-builtins.txt" \
+	"$ANDROID_CONFIG_DIR/android-forbidden-options.txt" \
+	"$ROOT_DIR/kernel/common/config/darwin-uml.fragment" \
+	"$ANDROID_CONFIG_DIR/android.fragment" </dev/null)
+[ -z "$list_problems" ] || {
+	printf '%s\n' "$list_problems" >&2
+	fail "the Android symbol lists contradict the fragments"
 }
 
 printf '%s\n' "kernel config fragment composition tests passed"

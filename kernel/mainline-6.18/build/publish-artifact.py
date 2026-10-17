@@ -30,6 +30,13 @@ def main() -> None:
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--page-size", choices=("4k", "16k"), required=True)
     parser.add_argument("--slice", choices=("arm64", "x86_64"), default="arm64")
+    parser.add_argument(
+        "--product",
+        choices=("linux", "android"),
+        default="linux",
+        help="the product the build configured; the android product publishes "
+        "the android-6.18 artifact family and is checked against its symbol lists",
+    )
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--release-id", required=True)
     parser.add_argument(
@@ -49,6 +56,7 @@ def main() -> None:
         RELEASE_ID_RE,
         parse_env,
         publish_artifact,
+        verify_config_policy,
     )
 
     source = absolute_directory(args.source, "kernel source")
@@ -65,6 +73,8 @@ def main() -> None:
         fail("--objcopy must name an absolute executable")
     if args.slice == "x86_64" and args.page_size != "4k":
         fail("the x86_64 userspace slice supports only 4 KiB pages")
+    if args.product == "android" and (args.slice != "arm64" or args.page_size != "4k"):
+        fail("the android product supports only the arm64 slice and 4 KiB pages")
 
     metadata_path = line_root / "patches/metadata.env"
     if args.slice == "x86_64":
@@ -78,9 +88,16 @@ def main() -> None:
         if not release.startswith(metadata["UML_KERNEL_RELEASE_VERSION"]):
             fail("built kernel release does not match tracked release version")
 
+    def verify_android_policy(staging: Path) -> None:
+        verify_config_policy(
+            staging / "kernel/config",
+            line_root / "config/android-required-builtins.txt",
+            line_root / "config/android-forbidden-options.txt",
+        )
+
     destination = publish_artifact(
         fail,
-        family="mainline-6.18",
+        family="android-6.18" if args.product == "android" else "mainline-6.18",
         kernel_slice=args.slice,
         page_size=16384 if args.page_size == "16k" else 4096,
         source=source,
@@ -92,8 +109,11 @@ def main() -> None:
         common_root=common_root,
         metadata_path=metadata_path,
         check_release=check_release,
+        verify_staged=(
+            verify_android_policy if args.product == "android" else None
+        ),
     )
-    print(f"published {args.slice} mainline kernel artifact: {destination}")
+    print(f"published {args.slice} {args.product} kernel artifact: {destination}")
 
 
 if __name__ == "__main__":

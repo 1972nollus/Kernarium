@@ -16,8 +16,9 @@ alpha. A premultiplied pixel over the CRTC's black background shows
 exactly its colour channels. That is what the Darwin host presents: it
 ignores the fourth byte of a scanout, as it does for B8G8R8X8.
 
-Android's common kernel already lists ARGB8888 and the other 32-bit RGB
-orders on this plane, so the topic belongs to the mainline line only.
+The other 32-bit RGB orders Android's composer scans out are a separate
+option, DRM_VIRTIO_GPU_STANDARD_FORMATS, because they change which format
+a Linux compositor picks.
 ---
  drivers/gpu/drm/virtio/virtgpu_plane.c | 1 +
  1 file changed, 1 insertion(+)

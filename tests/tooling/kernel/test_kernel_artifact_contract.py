@@ -539,6 +539,52 @@ def require_config_rejected(
         )
 
 
+def verify_config_policy_contract(module: ModuleType, root: Path) -> None:
+    """A product's lists need its required symbols at y and its forbidden ones off."""
+    required = root / "required.txt"
+    forbidden = root / "forbidden.txt"
+    required.write_text(
+        "# SPDX-License-Identifier: GPL-2.0-or-later\n"
+        "# A comment and a blank line are not symbols.\n"
+        "\n"
+        "CONFIG_NEEDED\n"
+        "  CONFIG_PADDED  \n",
+        encoding="utf-8",
+    )
+    forbidden.write_text("# comment\nCONFIG_BANNED\nCONFIG_ABSENT\n", encoding="utf-8")
+
+    def check(values: dict[str, str], diagnostic: str | None) -> None:
+        config = root / "policy.config"
+        write_config(config, values)
+        try:
+            module.verify_config_policy(config, required, forbidden)
+        except SystemExit as error:
+            require(
+                diagnostic is not None and diagnostic in str(error),
+                f"config policy rejected a kernel for the wrong reason: {error}",
+            )
+        else:
+            require(diagnostic is None, f"config policy accepted: {diagnostic}")
+
+    good = {"CONFIG_NEEDED": "y", "CONFIG_PADDED": "y", "CONFIG_BANNED": "n"}
+    check(good, None)
+    check({**good, "CONFIG_NEEDED": "n"}, "kernel config CONFIG_NEEDED=n, expected y")
+    check({**good, "CONFIG_PADDED": "m"}, "kernel config CONFIG_PADDED=m, expected y")
+    check(
+        {key: value for key, value in good.items() if key != "CONFIG_NEEDED"},
+        "kernel config CONFIG_NEEDED=n, expected y",
+    )
+    check({**good, "CONFIG_BANNED": "y"}, "kernel config CONFIG_BANNED=y, expected n")
+    check({**good, "CONFIG_BANNED": "m"}, "kernel config CONFIG_BANNED=m, expected n")
+    check({**good, "CONFIG_ABSENT": "y"}, "kernel config CONFIG_ABSENT=y, expected n")
+    try:
+        module.verify_config_policy(root / "policy.config", required, root / "missing.txt")
+    except SystemExit as error:
+        require("missing or unsafe" in str(error), f"a missing list failed oddly: {error}")
+    else:
+        raise AssertionError("config policy accepted a missing list")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-module", type=Path, required=True)
@@ -632,6 +678,7 @@ def main() -> int:
             "kernel .BTF section is not allocated",
         )
         verify_kernel_elf_contract(module, root)
+        verify_config_policy_contract(module, root)
 
     print("kernel artifact family/slice/page contract verified")
     return 0

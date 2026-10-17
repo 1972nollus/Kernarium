@@ -257,6 +257,28 @@ def verify_config(path: Path, page_size: int, kernel_slice: str) -> None:
         fail(f"kernel artifact contains loadable-module values: {modular[:8]}")
 
 
+def verify_config_policy(
+    config_path: Path, required_path: Path, forbidden_path: Path
+) -> None:
+    """Check a kernel config against a product's two symbol lists.
+
+    Every symbol of the required list must resolve to y, and every symbol of the
+    forbidden list must be disabled or absent. A list holds one symbol per line;
+    blank lines and comments are ignored.
+    """
+    config = parse_config(config_path)
+    for list_path, wanted in ((required_path, "y"), (forbidden_path, "n")):
+        if not list_path.is_file() or list_path.is_symlink():
+            fail(f"config policy list is missing or unsafe: {list_path}")
+        for raw in list_path.read_text(encoding="utf-8").splitlines():
+            symbol = raw.strip()
+            if not symbol or symbol.startswith("#"):
+                continue
+            observed = config.get(symbol, "n")
+            if observed != wanted:
+                fail(f"kernel config {symbol}={observed}, expected {wanted}")
+
+
 def verify_elf_geometry(
     payload: bytes,
     page_size: int,
