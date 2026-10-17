@@ -42,6 +42,7 @@ import a32_armv8  # noqa: E402
 import a32_neon  # noqa: E402  (the complete level; this file's sibling)
 import a32_parallel  # noqa: E402  (parallel add and subtract, SEL)
 import a32_simd  # noqa: E402  (VFP and Advanced SIMD; this file's sibling)
+import a32_structure  # noqa: E402  (VLDn and VSTn)
 
 
 class GenerationError(Exception):
@@ -563,13 +564,58 @@ def emit_dp(asm: Assembly) -> list[tuple[str, str, bool, str]]:
     return produced
 
 
+# Conditional data processing that sets no flags, as a select instead of a
+# skip: the result, or the register's old value where the condition fails.
+# The skip gadget's branch follows the guest's condition, which the image
+# kernels compute from their data, so it mispredicts where the select does
+# not branch at all. The operand word holds the condition as a truth table
+# over NZCV (bit n is whether the condition passes with NZCV = n), where an
+# ordinary data-processing word keeps its carry and register fields:
+#
+#   imm    table[0:16] rd[16:24] rn[24:32] imm32[32:64]
+#   reg    table[0:16] rd[16:24] rn[24:32] rm[32:40]
+SELECT_OPS = ["mov", "mvn", "add", "sub", "rsb", "and", "orr", "eor", "bic"]
+SELECT_SHAPES = ["imm", "reg"]
+
+
+def select_name(op: str, shape: str) -> str:
+    return f"dp_{op}_{shape}_select"
+
+
+def select_body(op: str, shape: str) -> str:
+    lines = ["ldr x8, [_stream], #8"]
+    if op not in UNARY:
+        lines += ["ubfx x9, x8, #24, #8", "ldr w9, [_cpu, x9]"]
+    if shape == "imm":
+        lines.append("lsr x12, x8, #32")
+    else:
+        lines += ["ubfx x12, x8, #32, #8", "ldr w12, [_cpu, x12]"]
+    a, b = "w9", "w12"
+    lines.append({"mov": f"mov w11, {b}", "mvn": f"mvn w11, {b}",
+                  "add": f"add w11, {a}, {b}", "sub": f"sub w11, {a}, {b}",
+                  "rsb": f"sub w11, {b}, {a}", "and": f"and w11, {a}, {b}",
+                  "orr": f"orr w11, {a}, {b}", "eor": f"eor w11, {a}, {b}",
+                  "bic": f"bic w11, {a}, {b}"}[op])
+    lines += ["ubfx x10, x8, #16, #8", "ldr w13, [_cpu, x10]",
+              "lsr w14, w27, #28", "lsr x15, x8, x14", "tst x15, #1",
+              "csel w11, w11, w13, ne", "str w11, [_cpu, x10]",
+              "next_gadget"]
+    return "\n".join(lines)
+
+
+def emit_select(asm: Assembly) -> None:
+    for op in SELECT_OPS:
+        for shape in SELECT_SHAPES:
+            asm.gadget(select_name(op, shape), select_body(op, shape))
+
+
 # ---------------------------------------------------------------------------
 # Memory
 
-# A memory gadget's stream is [gadget][key of the instruction][operand word
-# ...]: the key is read together with the first operand by one LDP, into x21
-# (which survives the translation helpers), and a fault exits through
-# La32_memory_fault with it as the PC.
+# A memory gadget's stream is [gadget][operand word ...]. The operand holds
+# the instruction's position in its block at bit 24 (a32_layout.h), and x19
+# keeps it through the translation helpers: a fault exits through
+# La32_position_fault, which makes the position the PC.
 ADDRESS_MODES = ["i", "ipre", "ipost", "ra", "rs", "rapre", "rspre",
                  "rapost", "rspost"]
 
@@ -579,7 +625,7 @@ def address_lines(mode: str) -> tuple[list[str], bool]:
     from the operand word in x19; returns (lines, writes_back).
 
       imm modes   rt[0:8] rn[8:16] imm32[32:64]
-      reg modes   rt[0:8] rn[8:16] rm[16:24] lsl-amount[24:30]
+      reg modes   rt[0:8] rn[8:16] rm[16:24] lsl-amount[32:38]
       abs         rt[0:8] address[32:64]
     """
     if mode == "abs":
@@ -596,7 +642,7 @@ def address_lines(mode: str) -> tuple[list[str], bool]:
             lines += ["mov w7, w9", "add w20, w9, w10"]
         return (lines, True)
     lines += ["ubfx x10, x19, #16, #8", "ldr w10, [_cpu, x10]",
-              "ubfx x11, x19, #24, #6", "lsl w10, w10, w11"]
+              "ubfx x11, x19, #32, #6", "lsl w10, w10, w11"]
     operation = "add" if mode[1] == "a" else "sub"
     if mode in ("ra", "rs"):
         lines.append(f"{operation} w7, w9, w10")
@@ -630,11 +676,11 @@ def load_single(name: str, size: str, mode: str) -> str:
     byte_count, load, cross_extract, extend = LOAD_SIZES[size]
     address, writes_back = address_lines(mode)
     label = name
-    lines = ["ldp x21, x19, [_stream], #16"] + address
+    lines = ["ldr x19, [_stream], #8"] + address
     lines.append(
         f"a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, {byte_count},"
         f" x7, Lcold_{label}, Lresume_{label}, Lcross_{label}, 0,"
-        f" fault=La32_memory_fault")
+        f" fault=La32_position_fault")
     lines += [load, "and x8, x19, #0xff", "str w0, [_cpu, x8]"]
     if writes_back:
         lines += writeback_lines()
@@ -642,11 +688,11 @@ def load_single(name: str, size: str, mode: str) -> str:
     lines.append(
         f"a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
-        f" 0, fault=La32_memory_fault")
+        f" 0, fault=La32_position_fault")
     if byte_count > 1:
         lines.append(f"Lcross_{label}:")
         lines.append(f"transfer_slow 0, x7, {byte_count},"
-                     f" fault=La32_memory_fault")
+                     f" fault=La32_position_fault")
         lines.append(cross_extract)
         if extend:
             lines.append(extend)
@@ -661,11 +707,11 @@ def store_single(name: str, size: str, mode: str) -> str:
     byte_count, store, cross_pack = STORE_SIZES[size]
     address, writes_back = address_lines(mode)
     label = name
-    lines = ["ldp x21, x19, [_stream], #16"] + address
+    lines = ["ldr x19, [_stream], #8"] + address
     lines.append(
         f"a32_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
-        f" 0, fault=La32_memory_fault")
+        f" 0, fault=La32_position_fault")
     lines += ["and x8, x19, #0xff", "ldr w0, [_cpu, x8]", store]
     if writes_back:
         lines += writeback_lines()
@@ -673,12 +719,12 @@ def store_single(name: str, size: str, mode: str) -> str:
     lines.append(
         f"a32_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE,"
         f" {byte_count}, x7, Lcold_{label}, Lresume_{label}, Lcross_{label},"
-        f" 0, fault=La32_memory_fault")
+        f" 0, fault=La32_position_fault")
     if byte_count > 1:
         lines.append(f"Lcross_{label}:")
         lines += ["and x8, x19, #0xff", "ldr w0, [_cpu, x8]", cross_pack,
                   f"transfer_slow 1, x7, {byte_count},"
-                  f" fault=La32_memory_fault"]
+                  f" fault=La32_position_fault"]
         if writes_back:
             lines += writeback_lines()
         lines.append("next_gadget")
@@ -698,7 +744,7 @@ def emit_single(asm: Assembly) -> None:
 
 # LDRD and STRD move two words that must be word aligned (a32lsmd): the
 # stream is as a single transfer's, with rt[0:8] and rt2[8:16] in place of
-# the data register, and rn at [16:24], rm at [24:32] (lsl amount 0 only).
+# the data register, and rn at [16:24], rm at [32:40] (lsl amount 0 only).
 DOUBLE_MODES = ["i", "ipre", "ipost", "ra", "rs", "rapre", "rspre",
                 "rapost", "rspost", "abs"]
 
@@ -707,7 +753,7 @@ def double_address_lines(mode: str) -> tuple[list[str], bool]:
     """As address_lines, for the doubleword layout:
 
       imm modes   rt[0:8] rt2[8:16] rn[16:24] imm32[32:64]
-      reg modes   rt[0:8] rt2[8:16] rn[16:24] rm[24:32]
+      reg modes   rt[0:8] rt2[8:16] rn[16:24] rm[32:40]
       abs         rt[0:8] rt2[8:16] address[32:64]
     """
     if mode == "abs":
@@ -723,7 +769,7 @@ def double_address_lines(mode: str) -> tuple[list[str], bool]:
         else:
             lines += ["mov w7, w9", "add w20, w9, w10"]
         return (lines, True)
-    lines += ["ubfx x10, x19, #24, #8", "ldr w10, [_cpu, x10]"]
+    lines += ["ubfx x10, x19, #32, #8", "ldr w10, [_cpu, x10]"]
     operation = "add" if mode[1] == "a" else "sub"
     if mode in ("ra", "rs"):
         lines.append(f"{operation} w7, w9, w10")
@@ -741,12 +787,12 @@ def double_writeback() -> list[str]:
 
 def load_double(name: str, mode: str) -> str:
     address, writes_back = double_address_lines(mode)
-    lines = ["ldp x21, x19, [_stream], #16"] + address
+    lines = ["ldr x19, [_stream], #8"] + address
     lines += ["tst w7, #3", "b.ne Lalign_" + name]
     lines.append(
         f"a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-        f" fault=La32_memory_fault")
+        f" fault=La32_position_fault")
     lines += ["ldp w0, w15, [x7]", "and x8, x19, #0xff",
               "ubfx x9, x19, #8, #8", "str w0, [_cpu, x8]",
               "str w15, [_cpu, x9]"]
@@ -756,27 +802,27 @@ def load_double(name: str, mode: str) -> str:
     lines.append(
         f"a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-        f" fault=La32_memory_fault")
+        f" fault=La32_position_fault")
     lines.append(f"Lcross_{name}:")
-    lines += ["transfer_slow 0, x7, 8, fault=La32_memory_fault",
+    lines += ["transfer_slow 0, x7, 8, fault=La32_position_fault",
               "umov x15, v0.d[0]", "and x8, x19, #0xff",
               "ubfx x9, x19, #8, #8", "str w15, [_cpu, x8]",
               "lsr x15, x15, #32", "str w15, [_cpu, x9]"]
     if writes_back:
         lines += double_writeback()
     lines.append("next_gadget")
-    lines += [f"Lalign_{name}:", "b La32_alignment_fault_read"]
+    lines += [f"Lalign_{name}:", "b La32_position_alignment_fault_read"]
     return "\n".join(lines)
 
 
 def store_double(name: str, mode: str) -> str:
     address, writes_back = double_address_lines(mode)
-    lines = ["ldp x21, x19, [_stream], #16"] + address
+    lines = ["ldr x19, [_stream], #8"] + address
     lines += ["tst w7, #3", "b.ne Lalign_" + name]
     lines.append(
         f"a32_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-        f" fault=La32_memory_fault")
+        f" fault=La32_position_fault")
     lines += ["and x8, x19, #0xff", "ubfx x9, x19, #8, #8",
               "ldr w0, [_cpu, x8]", "ldr w15, [_cpu, x9]",
               "stp w0, w15, [x7]"]
@@ -786,16 +832,16 @@ def store_double(name: str, mode: str) -> str:
     lines.append(
         f"a32_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, 8, x7,"
         f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-        f" fault=La32_memory_fault")
+        f" fault=La32_position_fault")
     lines.append(f"Lcross_{name}:")
     lines += ["and x8, x19, #0xff", "ubfx x9, x19, #8, #8",
               "ldr w0, [_cpu, x8]", "ldr w15, [_cpu, x9]",
               "bfi x0, x15, #32, #32", "fmov d0, x0",
-              "transfer_slow 1, x7, 8, fault=La32_memory_fault"]
+              "transfer_slow 1, x7, 8, fault=La32_position_fault"]
     if writes_back:
         lines += double_writeback()
     lines.append("next_gadget")
-    lines += [f"Lalign_{name}:", "b La32_alignment_fault_write"]
+    lines += [f"Lalign_{name}:", "b La32_position_alignment_fault_write"]
     return "\n".join(lines)
 
 
@@ -1184,6 +1230,11 @@ def build_assembly(asm: Assembly) -> None:
     a32_simd.emit(asm)
     a32_armv8.emit(asm)
     a32_parallel.emit(asm)
+    emit_select(asm)
+    a32_structure.emit_fused(asm)
+    a32_structure.emit_hinted(asm)
+    a32_simd.emit_compare_apsr(asm)
+    a32_simd.emit_move_select(asm)
 
 
 def write_assembly(path: Path, asm: Assembly, hand: list[str]) -> None:
@@ -1281,6 +1332,16 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
                 g(inplace_name(subtract, s, r))
                 for r in range(INPLACE_REGISTERS)) + "},")
         out.append("\t},")
+    out += ["};", ""]
+    out.append("/* Conditional data processing as a select: [operation][shape];"
+               " the operations")
+    out.append(" * are DP_ORDER's, the shapes imm and reg (generate_a32.py "
+               "SELECT_OPS). */")
+    out.append("inline constexpr G kDpSelect[17][2] = {")
+    for op in DP_ORDER:
+        out.append("\t{" + ", ".join(
+            g(select_name(op, shape)) if op in SELECT_OPS else absent
+            for shape in SELECT_SHAPES) + "},")
     out += ["};", ""]
     out.append("/* Single transfers: [size][mode]; modes are i ipre ipost ra "
                "rs rapre rspre rapost rspost abs. */")

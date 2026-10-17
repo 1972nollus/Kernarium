@@ -51,6 +51,7 @@ import a32_corpus_boundary as boundary  # noqa: E402
 import a32_corpus_control as control  # noqa: E402
 import a32_corpus_memory as memory  # noqa: E402
 import a32_corpus_plan as plan  # noqa: E402
+import a32_corpus_sequences as sequences  # noqa: E402
 import a32_corpus_simd as simd  # noqa: E402
 import a32_corpus_system as system  # noqa: E402
 import a32_corpus_wire as wire  # noqa: E402
@@ -64,13 +65,13 @@ CASE_INPUTS = ("f", "i", "p", "t", "o", "s", "si", "d", "dp")
 INVENTORY = REPOSITORY / "tests/unit/arm64/a32_instruction_inventory.tsv"
 CHUNK = 1500
 SUITES = {**plan.SUITES, **memory.SUITES, **control.SUITES, **system.SUITES, **simd.SUITES,
-          **armv8.SUITES, **boundary.SUITES}
+          **armv8.SUITES, **boundary.SUITES, **sequences.SUITES}
 HEADER_DEFAULTS = {"k": 1}
 # Suites whose golden only hardware can settle: the multi-word accesses at
 # unaligned addresses, which qemu-arm refuses and an arm64 Linux kernel fixes
 # up for a compat task, and the FPSCR bits (Stride, Len, FZ16) an
 # implementation may or may not hold.
-HARDWARE_ONLY = {"unaligned", "fpscr-reserved"}
+HARDWARE_ONLY = {"unaligned", "fpscr-reserved", "positions-unaligned"}
 
 
 def json_line(value) -> str:

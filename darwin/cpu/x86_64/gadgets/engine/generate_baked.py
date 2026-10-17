@@ -30,6 +30,9 @@ the access entry behind it. The one access without a base register, a fused
 first and the word after it, whose displacement field is clear. Only the fault
 and overlap exits read the position, and they rebuild the RIP from it.
 
+PUSH and POP of a register carry no word at all: their exits leave with the
+stream pointer, and the runtime finds the instruction from it (program.cpp).
+
 Every entry keeps the ordinary family's semantics: the same lazy flag record,
 page-crossing test, translation, publication and overlap checks. Only the cold
 tails -- a crossing access, a translation miss, a publication and an
@@ -129,7 +132,7 @@ def base_address(o, base):
         o.emit('\tadd x7, x14, x10')
 
 
-def translate(o, write, size, record_stack=False):
+def translate(o, write, size, record_stack=False, miss='Lx86_baked_miss'):
     """The ordinary translation with its miss tail shared; x19 carries the continuation."""
     hit, done = o.label('hit'), o.label('done')
     o.emit('\tx86_marks_guest_memory')
@@ -154,7 +157,7 @@ def translate(o, write, size, record_stack=False):
         o.emit('\teor x14, x9, x12')
     o.emit(f'\tcbz x14, {hit}')
     o.emit(f'\tadr x19, {done}')
-    o.emit(f'\tb Lx86_baked_miss_{1 if write else 0}_{size}')
+    o.emit(f'\tb {miss}_{1 if write else 0}_{size}')
     o.emit(f'{hit}:')
     if write:
         ready, publishes = o.label('wcready'), o.label('publishes')
@@ -196,7 +199,7 @@ def translate(o, write, size, record_stack=False):
         o.emit('\t.popsection')
 
 
-def finish_store(o, size, check=None):
+def finish_store(o, size, check=None, overlap_tail=None):
     """The ordinary store epilogue with its publication and overlap tails shared.
     x25 is the guest address and x23 the access word. `check` names the
     overlap test for a caller that has already settled publication.
@@ -224,7 +227,7 @@ def finish_store(o, size, check=None):
     o.emit(f'{done}:')
     o.emit('\tretire_and_next')
     o.emit(f'{overlap}:')
-    o.emit(f'\tb Lx86_baked_store_overlap_{size}')
+    o.emit(f'\tb {overlap_tail or f"Lx86_baked_store_overlap_{size}"}')
 
 
 def page_cross(o, size, label):
@@ -281,13 +284,12 @@ def shared_tails(o):
     # Every tail belongs to a guest memory access, whichever gadget reaches it.
     o.emit('\tx86_marks_guest_memory')
     # The ordinary fault exit reports the RIP from x22, which a baked access
-    # rebuilds from its access word's position and the block's start.
+    # rebuilds from its access word's position and the block's start, wrapped
+    # at 4 GiB in compatibility mode.
     o.emit('\t.p2align 2')
     o.emit('Lx86_baked_memory_fault:')
-    o.emit('\tubfx x9, x23, #32, #10')
-    o.emit('\tldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]')
-    o.emit('\tadd x22, x10, x9')
-    o.emit('\tb Lx86_memory_fault')
+    o.emit('\tinstruction_rip x22, 0, 32')
+    o.emit('\tb Lx86_memory_fault_at')
     for write in (0, 1):
         for size in (1, 2, 4, 8):
             o.emit('\t.p2align 2')
@@ -360,11 +362,7 @@ def shared_tails(o):
         o.emit('\tmov x1, x25')
         o.emit('\thelper_call uml_x86_64_gadget_invalidate_code')
         o.emit(f'Lx86_baked_store_overlap_exit_{size}:')
-        o.emit('\tubfx x8, x23, #56, #4')
-        o.emit('\tubfx x9, x23, #32, #10')
-        o.emit('\tldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]')
-        o.emit('\tadd x8, x8, x9')
-        o.emit('\tadd x8, x8, x10')
+        o.emit('\tinstruction_rip x8, 1, 32')
         o.emit('\tstr x8, [_cpu, #UML_X86_64_CPU_RIP]')
         o.emit('\tadd _executed, _executed, #1')
         o.emit('\tx86_memory_order_boundary')
@@ -845,14 +843,86 @@ def lea(o):
         o.table(f'lea_{width}_x', entries)
 
 
+def stack_tails(o):
+    """The tails of PUSH and POP, which carry no stream word. A fault or an
+    overlap leaves with the stream pointer, which is past the instruction's
+    gadget word; the runtime finds the instruction from it (program.cpp) and
+    reports its address, or the address after it. Each is its shared
+    counterpart, ending in the stream-position exit."""
+    o.emit('\tx86_marks_guest_memory')
+    o.emit('\t.p2align 2')
+    o.emit('Lx86_baked_stack_fault:')
+    o.emit('\tstr _stream, [_context, #UML_X86_64_CONTEXT_EXCEPTION_STREAM]')
+    o.emit('\tmov w0, #UML_X86_64_EVENT_STREAM_FAULT')
+    o.emit('\tb uml_x86_64_gadget_leave')
+    for write in (0, 1):
+        o.emit('\t.p2align 2')
+        o.emit(f'Lx86_baked_stack_miss_{write}_8:')
+        o.emit('\tmrs x9, nzcv')
+        o.emit('\tstr x9, [sp, #-16]!')
+        o.emit('\tmov x0, _context')
+        o.emit('\tmov x1, x7')
+        o.emit(f'\tmov w2, #{write}')
+        o.emit('\tmov w3, #8')
+        o.emit('\thelper_call uml_x86_64_gadget_tlb_miss')
+        o.emit('\tldr x9, [sp], #16')
+        o.emit('\tmsr nzcv, x9')
+        o.emit('\tcbz x0, Lx86_baked_stack_fault')
+        o.emit('\tmov x7, x0')
+        o.emit('\tbr x19')
+    o.emit('\t.p2align 2')
+    o.emit('Lx86_baked_stack_cross_load:')
+    o.emit('\tmrs x9, nzcv')
+    o.emit('\tstr x9, [sp, #-16]!')
+    o.emit('\tmov x0, _context')
+    o.emit('\tmov x1, x25')
+    o.emit('\tmov w2, #8')
+    o.emit('\thelper_call uml_x86_64_gadget_cross_page_load')
+    o.emit('\tldr x9, [sp], #16')
+    o.emit('\tmsr nzcv, x9')
+    o.emit('\tcbz x1, Lx86_baked_stack_fault')
+    o.emit('\tmov x11, x0')
+    o.emit('\tbr x19')
+    o.emit('\t.p2align 2')
+    o.emit('Lx86_baked_stack_cross_store:')
+    o.emit('\tmrs x9, nzcv')
+    o.emit('\tstr x9, [sp, #-16]!')
+    o.emit('\tmov x0, _context')
+    o.emit('\tmov x1, x25')
+    o.emit('\tmov x2, x24')
+    o.emit('\tmov w3, #8')
+    o.emit('\thelper_call uml_x86_64_gadget_cross_page_store')
+    o.emit('\tldr x9, [sp], #16')
+    o.emit('\tmsr nzcv, x9')
+    o.emit('\tcbz w0, Lx86_baked_stack_fault')
+    o.emit('\tbr x19')
+    # The store landed inside the running block: it retires and the run
+    # leaves for the instruction after it, which the runtime names.
+    o.emit('\t.p2align 2')
+    o.emit('Lx86_baked_stack_overlap:')
+    o.emit('\tldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
+    o.emit('\tcbnz w8, Lx86_baked_stack_overlap_exit')
+    o.emit('\tmov x0, _context')
+    o.emit('\tmov x1, x25')
+    o.emit('\thelper_call uml_x86_64_gadget_invalidate_code')
+    o.emit('Lx86_baked_stack_overlap_exit:')
+    o.emit('\tstr _stream, [_context, #UML_X86_64_CONTEXT_EXCEPTION_STREAM]')
+    o.emit('\tadd _executed, _executed, #1')
+    o.emit('\tx86_memory_order_boundary')
+    o.emit('\tmov w0, #UML_X86_64_EVENT_STREAM_RETIRED')
+    o.emit('\tb uml_x86_64_gadget_leave')
+
+
 def push_pop(o):
-    """64-bit PUSH and POP of a register. Stream: access word, whose
-    displacement field is clear."""
+    """64-bit PUSH and POP of a register. Their entry is their whole stream:
+    the instruction is not in a word of its own, because a fault or an overlap
+    leaves with the stream pointer and the runtime recovers the instruction
+    from it. Only a block's own stream holds these; a stream built from part
+    of a block takes the ordinary bank."""
     entries = []
     for d in GPR:
         entry = f'push_64_r_{d}'
         o.gadget(entry)
-        o.emit('\tldr x23, [_stream], #8')
         o.emit(f'\tldr x24, [_cpu, #{d}]')
         o.emit('\tldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
         o.emit('\tsub x25, x25, #8')
@@ -868,21 +938,23 @@ def push_pop(o):
         o.emit('\tstr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
         o.emit(f'\tb {check}')
         o.emit(f'{slow}:')
-        translate(o, True, 8, record_stack=True)
+        translate(o, True, 8, record_stack=True, miss='Lx86_baked_stack_miss')
         o.emit('\tstr x24, [x7]')
         o.emit(f'{done}:')
         o.emit('\tstr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
-        finish_store(o, 8, check)
+        finish_store(o, 8, check, 'Lx86_baked_stack_overlap')
+        # No stream word holds the publication flag; a crossing store reaches
+        # the epilogue without a translation to settle it, so it starts clear.
         o.emit(f'{crossed}:')
+        o.emit('\tand x23, x23, #~(1 << 60)')
         o.emit(f'\tadr x19, {done}')
-        o.emit('\tb Lx86_baked_cross_store_8')
+        o.emit('\tb Lx86_baked_stack_cross_store')
         entries.append(entry)
     o.table('push_64_r', entries)
     entries = []
     for d in GPR:
         entry = f'pop_64_r_{d}'
         o.gadget(entry)
-        o.emit('\tldr x23, [_stream], #8')
         o.emit('\tldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]')
         o.emit('\tmov x7, x25')
         crossed, done, slow = o.label('popcross'), o.label('popdone'), o.label('popslow')
@@ -891,7 +963,7 @@ def push_pop(o):
         o.emit('\tldr x11, [x7]')
         o.emit(f'\tb {done}')
         o.emit(f'{slow}:')
-        translate(o, False, 8, record_stack=True)
+        translate(o, False, 8, record_stack=True, miss='Lx86_baked_stack_miss')
         o.emit('\tldr x11, [x7]')
         o.emit(f'{done}:')
         o.emit('\tadd x9, x25, #8')
@@ -900,9 +972,10 @@ def push_pop(o):
         o.emit('\tretire_and_next')
         o.emit(f'{crossed}:')
         o.emit(f'\tadr x19, {done}')
-        o.emit('\tb Lx86_baked_cross_load_64')
+        o.emit('\tb Lx86_baked_stack_cross_load')
         entries.append(entry)
     o.table('pop_64_r', entries)
+    stack_tails(o)
 
 
 def main():

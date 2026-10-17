@@ -554,7 +554,7 @@ int uml::app::runEmbeddedKernel(
 			battery_service = uml::battery::makeInProcessService();
 			/* Android's vendor policy labels the battery's sysfs
 			 * path by its position among the Virtio devices
-			 * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts).
+			 * (android/lineage-24/overlay/sepolicy/vendor/genfs_contexts).
 			 * Straight after the GPU it is always virtio-uml.1/virtio1,
 			 * whatever optional devices follow. */
 			prepared.kernel.emplace_back(

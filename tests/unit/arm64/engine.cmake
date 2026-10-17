@@ -426,10 +426,11 @@
     # throughout. A store-exclusive may fail without cause (a host interrupt
     # ends the monitor the gadgets use) and the corpus's single attempts must
     # tolerate it; this lane makes that happen so the tolerance is measured
-    # and not left to the load a gate happens to run under.
+    # and not left to the load a gate happens to run under. The sequences
+    # the gadgets translate together run under the same interrupts.
     uml_add_unit_test(NAME arm64-gadget-a32-corpus-interrupted
         COMMAND uml_arm64_gadget_a32_corpus_tests ${UML_ARM64_AARCH32_CORPUS}
-            --record exclusive-qemu --passes 200 --interrupt)
+            --record exclusive-qemu,sequences-qemu --passes 200 --interrupt)
     target_compile_definitions(uml_arm64_gadget_cache_validation_tests PRIVATE
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
@@ -448,6 +449,8 @@
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
     uml_add_arm64_unit_test(gadget_hot_path WITHOUT_HARNESS)
+    uml_add_arm64_unit_test(gadget_packed_immediate WITHOUT_HARNESS)
+    uml_add_arm64_unit_test(gadget_test_bit_branch WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_nzcv_residency WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_fp_environment WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_afp_twin WITHOUT_HARNESS)
@@ -457,6 +460,7 @@
         SOURCES
             ${CMAKE_CURRENT_SOURCE_DIR}/arm64_gadget_dependency_reference.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/arm64_gadget_dependency_memory_tests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/arm64_gadget_bitfield_shift_tests.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/arm64_gadget_vector_dependency_tests.cpp)
     target_link_libraries(uml_arm64_gadget_dependency_tests PRIVATE
         UML::CpuContract uml_arm64_engine_test_support)

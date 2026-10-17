@@ -57,6 +57,15 @@
 /* No page: guest pages are 4 KiB aligned, so this is none of them. */
 #define UML_X86_64_CODE_PAGE_NONE 1
 
+/* Stream-word field: the instruction's position in its block, its address
+ * less the context's program_begin, which every word that must report the
+ * instruction's address carries beside the instruction's length in bits
+ * 59:56. A block is at most 64 instructions of 15 bytes, and the builder
+ * refuses an instruction that lies farther in than the field reaches.
+ */
+#define UML_X86_64_STREAM_POSITION 36
+#define UML_X86_64_STREAM_POSITION_BITS 10
+
 /* Stream-descriptor bit: the effective address is the sum of base, scaled
  * index and displacement with nothing after it -- long-mode arithmetic and no
  * segment base to add.
@@ -113,6 +122,14 @@
  * context holding the vector and error code. `execute` reports it as
  * general_protection with ExecuteResult's vector and error. */
 #define UML_X86_64_EVENT_SEGMENT_FAULT 67
+/* Not an EngineEvent: a baked PUSH or POP, which has no stream word of its
+ * own, faulted on its memory access (STREAM_FAULT) or stored into the running
+ * block and retired (STREAM_RETIRED), with the context's exception stream just
+ * past its gadget word. `execute` recovers the instruction from the stream
+ * and reports a memory fault with RIP naming it, or continued with RIP at the
+ * instruction after it. */
+#define UML_X86_64_EVENT_STREAM_FAULT 68
+#define UML_X86_64_EVENT_STREAM_RETIRED 69
 
 /* What uml_x86_64_gadget_run_segment_instruction returns: the instruction
  * retired and the stream continues (0), it retired and the run leaves, or

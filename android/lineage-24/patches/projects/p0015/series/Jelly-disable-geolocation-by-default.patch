@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 24 Aug 2026 13:46:00 +0000
+Subject: [PATCH] Jelly disable geolocation by default
+
+---
+ .../main/java/org/lineageos/jelly/utils/SharedPreferencesExt.kt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/app/src/main/java/org/lineageos/jelly/utils/SharedPreferencesExt.kt b/app/src/main/java/org/lineageos/jelly/utils/SharedPreferencesExt.kt
+index 7dd6334aa600d22074a4a8a331be3a87c70c2e49..178b3f945815c93df4b2632403d2c57aacd949b5 100644
+--- a/app/src/main/java/org/lineageos/jelly/utils/SharedPreferencesExt.kt
++++ b/app/src/main/java/org/lineageos/jelly/utils/SharedPreferencesExt.kt
+@@ -113,7 +113,7 @@ class SharedPreferencesExt(context: Context) {
+         private const val JAVASCRIPT_ENABLED_DEFAULT = true
+ 
+         private const val LOCATION_ENABLED_KEY = "key_location"
+-        private const val LOCATION_ENABLED_DEFAULT = true
++        private const val LOCATION_ENABLED_DEFAULT = false
+ 
+         private const val COOKIES_ENABLED_KEY = "key_cookie"
+         private const val COOKIES_ENABLED_DEFAULT = true

@@ -367,6 +367,36 @@ Only MOPS and a literal load whose target does not fit 48 bits keep a PC word.
 `arm64-gadget-memory-fault-position` faults one instruction of each family at
 several positions, directly and through a link.
 
+A constant stored to a register is one stream word when it fits 48 bits or is
+ones above bit 47: the destination's CpuState offset in bits 63:48 over the
+value's low 48 bits, which MOVZ and MOVN take below a shift of 48, ADR and
+ADRP (with the ADD that folds into them) and the emulated identification
+registers when their value fits. Any other value keeps
+`move_wide_constant` and its two words. `arm64-gadget-packed-immediate` runs
+each form against the architectural definition.
+
+A TBZ or TBNZ carries no mask word: its operand word holds the bit number in
+bits 5:0, where the register shift that tests it reads it, and the register's
+CpuState offset in bits 31:16, and an inlined branch's retire suffix sits in
+bits 47:32. The `test_branch` entries of the former form stay in the bank
+unselected, because removing them would move every later entry.
+`arm64-gadget-test-bit-branch` runs every bit, both polarities, XZR and each
+shape the builder emits.
+
+A logical immediate on W registers shares the word that names its registers,
+in bits 63:32 above the destination and source fields. A 64-bit immediate has a
+word of its own, and a form whose destination is its source, which bakes the
+register into the entry, has that word alone. `arm64-gadget-packed-immediate`
+runs every W encoding and a sample of the X ones in each shape.
+
+An SBFM or UBFM is a gadget pointer and one operand word: the two shifts that
+compute it, whose amounts the builder derives from the encoding, and the
+CpuState offsets of its source and destination. Only BFM keeps its two mask
+words. The SBFM and UBFM entries of the former form stay in the bank
+unselected, because removing them would move every later entry. A RET through
+X30 is the gadget pointer and its indirect site; any other register keeps the
+operand that names it.
+
 The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
 too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and
 order file. It follows the arm64 region in an image that carries both and
@@ -700,12 +730,21 @@ moves and the part holds no SVE or SME word. A conditional instruction is a
 skip over a run of instructions sharing its condition, a conditional
 terminal gives the skipped instruction back, and a block never ends inside an
 IT block: one the block limit cuts off ends in an unlinked exit with ITSTATE
-stored. A plain CMP of a register or of an immediate below 2^24, outside an IT
-block and followed at once by a conditional branch, is the A64 fused
-compare-and-branch gadget of the branch's condition, which reads the CpuState
-slots a register lives in, so the pair costs one dispatch; ADD and SUB of an
-immediate to the same register have an entry per register R0 to R14 with the
-displacement baked in. A word the decoder rejects, a coprocessor word the profile lacks and
+stored. A block holds at most 64 instructions (`a32::block_limit`); a T32
+block stops five short of that unless an IT block is open, so that an IT
+block it starts completes inside it. Conditional data processing that sets
+no flags and does not write the PC (MOV, MVN, ADD, SUB, RSB, AND, ORR, EOR
+and BIC of an immediate or a register, MOVW, and VMOV between S or D
+registers) is a select instead: its gadget computes the result and keeps the
+old value where the condition fails, so nothing branches on the guest's
+flags. A plain CMP of a register or of an immediate below 2^24, outside an
+IT block and followed at once by a conditional branch, is the A64 fused
+compare-and-branch gadget of the branch's condition, which reads the
+CpuState slots a register lives in, so the pair costs one dispatch. An
+unconditional VCMP or VCMPE followed at once by an unconditional VMRS
+APSR_nzcv is likewise one gadget that sets FPSCR's flags and copies them to
+NZCV. ADD and SUB of an immediate to the same register have an entry per
+register R0 to R14 with the displacement baked in. A word the decoder rejects, a coprocessor word the profile lacks and
 a form above the engine's level end the block in the illegal-instruction exit
 at the word whatever its condition, except a coprocessor word that is not
 UNPREDICTABLE in the complete profile, which a failing condition skips like
@@ -727,7 +766,10 @@ and call `execute_a32`, which translates every page before a load changes a
 register, stores the words ahead of a faulting STM and leaves the base
 register as it was. LDREX and STREX, and LDAEX and STLEX, are the A64
 exclusive gadgets and share their forward-progress mechanism; LDA and STL are
-the A64 ordered ones. The library-exit counters name any lowered form that
+the A64 ordered ones. Like them, the single and doubleword transfers, VLDR,
+VSTR, TBB and TBH carry no key: their operand holds the instruction's position
+in bits 31:24 (`darwin/cpu/arm64/gadgets/a32_layout.h`), which a fault reports
+as the A64 transfers do. The library-exit counters name any lowered form that
 reaches the library, and the unit tests require none does.
 
 VFP and Advanced SIMD are lowered onto the A64 instructions with the same
@@ -759,7 +801,15 @@ interleaved ones, element copies for one lane and LD1R to LD4R for all lanes,
 with the register or immediate writeback; a VLD1 or VST1 copy that crosses a
 page stays in the gadget and moves its bytes with the A64 slow transfer helper,
 and one without an alignment hint has a gadget for each writeback that tests
-nothing the instruction does not need.
+nothing the instruction does not need. A copy with an alignment hint and a
+VLD1 to all lanes of one or two registers have gadgets of their own too, which
+test the alignment and leave a misaligned access to the library. An
+unconditional ADD or SUB of an immediate that sets no flags, names no PC and
+computes the base of a copy without hint or writeback runs inside the copy's
+gadget when only unconditional Advanced SIMD data processing that reads no
+core register comes between: the gadget writes the register before the
+transfer, so a fault finds it as the ADD left it, and nothing between can
+exit or fault.
 VRECPS and VRSQRTS (AArch32's unfused steps, not the fused A64 ones), an
 interleaved or one-lane structure access or VLDM and VSTM that crosses a page,
 and a misaligned access with an alignment hint run
@@ -1056,28 +1106,36 @@ same-generation stale programs are reused only after exact page-bounded word
 validation. On arm64, `DARWIN_UML_GADGET_SHARED_BODIES=1` shares an address
 space's bodies and link state among every executor running it, while each
 executor keeps its own slots and retirement order; sharing is off by default,
-as [`../darwin/README.md`](../darwin/README.md) records. Cached
+as [`../darwin/README.md`](../darwin/README.md) records. An address space a
+single executor keeps to itself sweeps its link records and indirect sites once
+they number half again what its last sweep kept and enough of its translations
+have left the cache to have left some unnamed: one that no resident
+translation's stream names and that is no resident block's own record is
+released for reuse, and the site cells and target-table entries naming it are
+emptied, so link state follows what the cache holds rather than all the code
+the address space ever ran. A shared address space is not swept. Cached
 returns consult a private per-carrier return-record ring after their site
 cells miss: linked calls push the return PC with its block link, a matching
 record follows that link and fills an empty cell of the site, and the executor
-empties the ring on every address-space switch, so a stale record can only
-fall back to the ordinary miss exit. A cached indirect branch whose cells (and,
-for a return, ring) miss then looks the target up in its address space's
-direct-mapped target table, which every miss exit trains with the target's
-block link; a hit follows that link and likewise fills only an empty cell, so
-vCPUs sharing a polymorphic site do not keep rewriting it, while the miss exit
-retrains its cells round-robin. The table belongs to the address space's link
-state and is retired with it, so it never names another address space's code,
-and a link reset by a code change leaves through its ordinary unlinked exit.
+empties the ring on every address-space switch and after a link sweep, so a
+stale record can only fall back to the ordinary miss exit. A cached indirect
+branch whose cells (and, for a return, ring) miss then looks the target up in
+its address space's direct-mapped target table, which every miss exit trains
+with the target's block link; a hit follows that link and likewise fills only
+an empty cell, so vCPUs sharing a polymorphic site do not keep rewriting it,
+while the miss exit retrains its cells round-robin. The table belongs to the
+address space's link state and is retired with it, so it never names another
+address space's code, and a link reset by a code change leaves through its
+ordinary unlinked exit.
 The software TLB keys its entries by guest page number and indexes 16,384 sets
 directly by the page number's low bits: two ways of a 64-byte set on 16 KiB
 pages, one 32-byte entry on 4 KiB pages, where a cache line holds two
 neighbouring pages. A same-page transfer compares the page of its final byte
 against the way its first byte indexes: the direct index never places
 neighbouring pages in one set, so a crossing transfer can only miss and is
-recognized on the cold path. `arm64-tlb-probe-set` checks in both page profiles that every
-inline probe of both engines hits the entry the C++ fill path placed, in each
-way of its set, and misses a page its set does not hold.
+recognized on the cold path. `arm64-tlb-probe-set` checks in both page
+profiles that every inline probe of both engines hits the entry the C++ fill
+path placed, in each way of its set, and misses a page its set does not hold.
 
 Guest debuggers depend on two kernel/host contracts. To single-step a task,
 Linux sets the architectural step bit in the entry registers (arm64 PSTATE.SS,
@@ -1150,7 +1208,7 @@ CMake graph imports compact artifacts and checks their bridge ABI, page
 profile, product family, and `6.18` release series. Patch releases, commit
 identities, and producer provenance do not become runtime compatibility keys.
 
-`android/aosp-17` owns the Android product, static GPT layout, ramdisks, rootfs
+`android/lineage-24` owns the Android product, static GPT layout, ramdisks, rootfs
 release, and producer tools. Kernel and rootfs releases are selected
 independently. Apple emulator builds consume only the ACK ELF artifact; rootfs
 and command-line paths are launch inputs. The `uml-darwin-android17` product

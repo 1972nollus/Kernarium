@@ -1524,7 +1524,9 @@ logical_shifted_shifts 3, 1, 1, x_ands_n
 
 /* Production logical-immediate entries.  The immediate is decoded once by
  * Builder; width, operation, XZR/SP meanings and flag update are entry-point
- * constants. Stream: [Rd[4:0], Rn[12:8]][decoded immediate]. */
+ * constants. Stream: [Rd[4:0], Rn[12:8], W immediate[63:32]][X immediate]: a
+ * 32-bit immediate shares the register word, a 64-bit one has a word of its
+ * own. */
 .macro logical_immediate_fast operation, bits64, source_zero, destination_special, suffix, forward=0
 	.set Lsd\@, Lscalar_register0
 	.if \destination_special && \operation != 3
@@ -1537,9 +1539,13 @@ logical_shifted_shifts 3, 1, 1, x_ands_n
 	.if \source_zero
 	.set Lsn\@, Lscalar_none
 	.endif
-scalar_entry logical_immediate_\suffix, \forward, 12, Lsd\@, Lsn\@, Lscalar_none, Lscalar_none, 2
+scalar_entry logical_immediate_\suffix, \forward, 12, Lsd\@, Lsn\@, Lscalar_none, Lscalar_none, 1 + \bits64
 	ldr x8, [_stream], #8
+	.if \bits64
 	ldr x14, [_stream], #8
+	.else
+	lsr x14, x8, #32
+	.endif
 	.if \source_zero
 		.if \operation == 0
 	mov _scalar_x16, xzr

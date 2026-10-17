@@ -239,10 +239,6 @@ gadget return_cached
 	ldr x10, [_cpu, x8]
 	follow_indirect_link 1
 
-.purgem follow_indirect_link
-.purgem train_indirect_cell
-.purgem push_return_record
-
 /* B.cond's condition is fixed when its data-only program is built.  Selecting
  * one of these precompiled gadgets avoids a C++ helper call at every loop
  * edge.  EL0 may write NZCV, so CSEL can evaluate the original guest flags
@@ -622,4 +618,6 @@ test_branch nz, ne
 .purgem compare_branch
 
 .purgem conditional_branch_linked
-.purgem follow_block_link
+/* follow_block_link, follow_indirect_link, train_indirect_cell and
+ * push_return_record stay defined for test_bit_branch.inc and return_x30.inc;
+ * return_x30.inc, the last to use them, purges them. */

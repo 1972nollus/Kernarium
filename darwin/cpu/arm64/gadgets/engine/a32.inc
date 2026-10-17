@@ -310,13 +310,22 @@ gadget a32_set_itstate
 	strb w8, [_cpu, #UML_ARM64_CPU_A32_ITSTATE]
 	next_gadget
 
-/* BL and BLX (immediate): the return key's BlockLink is behind the target's,
- * then the value LR gets, which is the return address with the Thumb bit. */
+/* \value := the value LR gets for a call that returns to \key: the return
+ * address with the Thumb bit. An A32 key's low word is the address, and a
+ * T32 key holds the halfword address shifted left one bit under bit 62
+ * (aarch32/guest_key.hpp). Scratch x13. */
+.macro a32_return_value value, valuex, key
+	ubfx x13, \key, #62, #1
+	lsr \valuex, \key, x13
+	orr \value, \value, w13
+.endm
+
+/* BL and BLX (immediate): [target BlockLink][return BlockLink]. LR comes
+ * from the return link's key, so the stream carries no LR value. */
 gadget a32_bl_linked
-	ldr x8, [_stream], #8
-	ldr x11, [_stream], #8
-	ldr x12, [_stream]
+	ldp x8, x11, [_stream]
 	ldr x9, [x11, #16]
+	a32_return_value w12, x12, x9
 	str w12, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
 	a32_push_return_record x9, x11
 	a32_follow_link x8
@@ -361,14 +370,15 @@ a32_indirect bw, a32_key_thumb, 0, 0
 .purgem a32_indirect
 
 /* BLX Rm: the target is read before LR is written. [source offset][site]
- * [return BlockLink][LR value] cached, [source offset][LR value] not. */
+ * [return BlockLink] cached, LR coming from the return link's key as for
+ * BL; [source offset][LR value] not. */
 gadget a32_blx_cached
 	ldp x8, x9, [_stream], #16
 	ldr w10, [_cpu, x8]
 	a32_key_interworking
-	ldr x14, [_stream], #8
-	ldr x15, [_stream]
+	ldr x14, [_stream]
 	ldr x11, [x14, #16]
+	a32_return_value w15, x15, x11
 	str w15, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
 	a32_push_return_record x11, x14
 	a32_follow_indirect 0
@@ -446,28 +456,36 @@ a32_compare_branch cbnz, ne
 
 .purgem a32_compare_branch
 
-/* TBB and TBH: [key][rn[0:8] rm[8:16] PC value[32:64]][site]. The target
- * is the PC value plus twice the table entry. */
+/* TBB and TBH: [rn[0:8] rm[8:16] credit[16:24] position[24:32] PC value
+ * [32:64]][site]. The target is the PC value plus twice the table entry. The
+ * credit gives back the instructions translated behind a conditional one, as
+ * a32_credit does for the other leaving instructions, but only once the table
+ * entry is loaded: a fault leaves them precharged, which the executor's fault
+ * path expects. */
 .macro a32_table_branch name, load, shift, bytes
 gadget a32_\name
-	ldp x21, x19, [_stream], #16
+	ldr x19, [_stream], #8
 	and x9, x19, #0xff
 	ldr w9, [_cpu, x9]
 	ubfx x10, x19, #8, #8
 	ldr w10, [_cpu, x10]
 	add w7, w9, w10, lsl #\shift
-	a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_memory_fault
+	a32_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_position_fault
 	\load w10, [x7]
+	ubfx x11, x19, #16, #8
+	sub x29, x29, x11
 	lsr x11, x19, #32
 	add w10, w11, w10, lsl #1
 	a32_key_thumb
 	ldr x9, [_stream], #8
 	a32_follow_indirect 0
-	a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_memory_fault
+	a32_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, La32tb_cold_\name, La32tb_resume_\name, La32tb_cross_\name, 0, fault=La32_position_fault
 	.if \shift
 La32tb_cross_\name:
-	transfer_slow 0, x7, 2, fault=La32_memory_fault
+	transfer_slow 0, x7, 2, fault=La32_position_fault
 	umov w10, v0.h[0]
+	ubfx x11, x19, #16, #8
+	sub x29, x29, x11
 	lsr x11, x19, #32
 	add w10, w11, w10, lsl #1
 	a32_key_thumb
@@ -512,8 +530,19 @@ La32_fp_to_guest:
 	ret
 
 /* Faults the memory gadgets share: the key of the instruction is in x21 and
- * the stream is past the operand. */
+ * the stream is past the operand. A gadget without a key enters at the
+ * La32_position_ labels with its operand word in x19, whose position
+ * (a32_layout.h) becomes the PC: shifted left by two with bit 0 set, which
+ * no key has. */
+.macro a32_position_pc
+	ubfx x21, x19, #UML_GADGET_A32_POSITION_SHIFT, #8
+	lsl x21, x21, #2
+	orr x21, x21, #1
+.endm
+
 .p2align 4
+La32_position_fault:
+	a32_position_pc
 La32_memory_fault:
 	sub x9, _stream, #8
 	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
@@ -529,6 +558,8 @@ La32_undefined:
 	b uml_arm64_gadget_leave
 
 .p2align 4
+La32_position_alignment_fault_read:
+	a32_position_pc
 La32_alignment_fault_read:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x2
@@ -539,6 +570,8 @@ La32_alignment_fault_read:
 	b La32_memory_fault
 
 .p2align 4
+La32_position_alignment_fault_write:
+	a32_position_pc
 La32_alignment_fault_write:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x2
@@ -679,6 +712,7 @@ gadget a32_code_sequence_check
 
 #include "a32_generated.inc"
 
+.purgem a32_return_value
 .purgem a32_follow_indirect
 .purgem a32_train_cell
 .purgem a32_push_return_record

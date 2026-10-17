@@ -239,7 +239,10 @@ def vfp_unary(asm, width: str, name: str, operation: str | None,
     asm.gadget(f"vfp_{name}_{width}", "\n".join(lines))
 
 
-def vfp_compare(asm, width: str, signaling: bool, zero: bool) -> None:
+def vfp_compare(asm, width: str, signaling: bool, zero: bool,
+                apsr: bool = False) -> None:
+    """VCMP and VCMPE into FPSCR.NZCV; with `apsr`, fused with the
+    VMRS APSR_nzcv, FPSCR after it, which copies the flags to NZCV."""
     r = width
     instruction = "fcmpe" if signaling else "fcmp"
     lines = ["ldr x8, [_stream], #8", "ubfx x9, x8, #16, #16",
@@ -250,11 +253,38 @@ def vfp_compare(asm, width: str, signaling: bool, zero: bool) -> None:
     else:
         lines += [f"ldr {r}1, [_cpu, x9]", f"{instruction} {r}0, {r}1"]
     lines += ["mrs x10, nzcv", "and w10, w10, #0xf0000000",
-              "str w10, [_cpu, #UML_ARM64_CPU_A32_FPSCR_NZCV]",
-              "next_gadget"]
+              "str w10, [_cpu, #UML_ARM64_CPU_A32_FPSCR_NZCV]"]
+    if apsr:
+        lines.append("mov w27, w10")
+    lines.append("next_gadget")
     suffix = ("e" if signaling else "") + ("z" if zero else "")
-    asm.gadget(f"vfp_vcmp{suffix}_{width}",
+    asm.gadget(f"vfp_vcmp{suffix}_{width}" + ("_apsr" if apsr else ""),
                "\n".join(lines))
+
+
+def emit_move_select(asm) -> None:
+    """A conditional VMOV between S or D registers as a select of the
+    source and the destination's old value, as generate_a32.py's
+    conditional data processing does: the word is d[0:16] m[16:32] and the
+    condition's truth table over NZCV in [32:48]. After every other gadget of
+    the part so that the bank before them keeps its layout."""
+    for r in "sd":
+        asm.gadget(f"vfp_vmov_{r}_select", "\n".join([
+            "ldr x8, [_stream], #8", "ubfx x9, x8, #16, #16",
+            "and x10, x8, #0xffff", "ldr " + r + "0, [_cpu, x9]",
+            "ldr " + r + "1, [_cpu, x10]", "lsr w14, w27, #28",
+            "lsr x15, x8, #32", "lsr x15, x15, x14", "tst x15, #1",
+            f"fcsel {r}0, {r}0, {r}1, ne", f"str {r}0, [_cpu, x10]",
+            "next_gadget"]))
+
+
+def emit_compare_apsr(asm) -> None:
+    """The compares fused with VMRS APSR_nzcv, after every other gadget of
+    the part so that the bank before them keeps its layout."""
+    for width in "sdh":
+        for signaling in (False, True):
+            for zero in (False, True):
+                vfp_compare(asm, width, signaling, zero, apsr=True)
 
 
 def emit_vfp_arithmetic(asm) -> None:
@@ -532,15 +562,15 @@ def emit_vfp_system(asm) -> None:
 
 
 def memory_prologue(label: str, mode: str, mask: int = 3) -> list[str]:
-    """[key][word]: the vector register offset in bits 0-15 and, for a base
-    register, its offset in bits 16-31 and the signed displacement in bits
-    32-63, or for an absolute address the address in bits 32-63. The address
-    is left in w7."""
-    lines = ["ldp x21, x19, [_stream], #16"]
+    """[word]: the vector register offset in bits 0-15, the position at bit
+    24 (a32_layout.h) and, for a base register, its offset in bits 16-23 and
+    the signed displacement in bits 32-63, or for an absolute address the
+    address in bits 32-63. The address is left in w7."""
+    lines = ["ldr x19, [_stream], #8"]
     if mode == "abs":
         lines.append("lsr x7, x19, #32")
     else:
-        lines += ["ubfx x9, x19, #16, #16", "ldr w9, [_cpu, x9]",
+        lines += ["ubfx x9, x19, #16, #8", "ldr w9, [_cpu, x9]",
                   "lsr x10, x19, #32", "add w7, w9, w10"]
     lines += [f"tst w7, #{mask}", f"b.ne Lalign_{label}"]
     return lines
@@ -556,7 +586,7 @@ def vfp_memory(asm, load: bool, width: str, mode: str) -> None:
     lines = memory_prologue(name, mode, 1 if size == 2 else 3)
     translate = (f"{direction}, {page}, {size}, x7, Lcold_{name},"
                  f" Lresume_{name}, Lcross_{name}, 0,"
-                 f" fault=La32_memory_fault")
+                 f" fault=La32_position_fault")
     lines.append("a32_translate " + translate)
     lines.append("and x14, x19, #0xffff")
     if load:
@@ -568,14 +598,14 @@ def vfp_memory(asm, load: bool, width: str, mode: str) -> None:
     lines.append("a32_translate_cold " + translate)
     lines.append(f"Lcross_{name}:")
     if load:
-        lines += [f"transfer_slow 0, x7, {size}, fault=La32_memory_fault",
+        lines += [f"transfer_slow 0, x7, {size}, fault=La32_position_fault",
                   "and x14, x19, #0xffff",
                   f"str {stored(width)}0, [_cpu, x14]"]
     else:
         lines += ["and x14, x19, #0xffff", f"ldr {width}0, [_cpu, x14]",
-                  f"transfer_slow 1, x7, {size}, fault=La32_memory_fault"]
+                  f"transfer_slow 1, x7, {size}, fault=La32_position_fault"]
     lines.append("next_gadget")
-    lines += [f"Lalign_{name}:", "b La32_alignment_fault_" +
+    lines += [f"Lalign_{name}:", "b La32_position_alignment_fault_" +
               ("read" if load else "write")]
     asm.gadget(name, "\n".join(lines))
 
@@ -693,6 +723,18 @@ def header_tables(names: set[str]) -> list[str]:
     for suffix in ("", "e", "z", "ez"):
         out.append("\t{" + ", ".join(
             g(f"vfp_vcmp{suffix}_{w}") for w in "sdh") + "},")
+    out.append("};")
+    out.append("/* A conditional VMOV (register) as a select: [single, "
+               "double]. */")
+    out.append(f"inline constexpr unsigned kVfp2Vmov = "
+               f"{VFP2_NAMES.index('vmov')};")
+    out.append("inline constexpr G kVfpMoveSelect[2] = {" + ", ".join(
+        g(f"vfp_vmov_{w}_select") for w in "sd") + "};")
+    out.append("/* VCMP fused with VMRS APSR_nzcv: as kVfpCmp. */")
+    out.append("inline constexpr G kVfpCmpApsr[4][3] = {")
+    for suffix in ("", "e", "z", "ez"):
+        out.append("\t{" + ", ".join(
+            g(f"vfp_vcmp{suffix}_{w}_apsr") for w in "sdh") + "},")
     out.append("};")
     out.append("/* VLDM and VSTM by transfer size in words. */")
     for kind in ("ldm", "stm"):

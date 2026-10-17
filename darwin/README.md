@@ -137,8 +137,10 @@ default, and each executor keeps its translations private: sharing halves the
 four-vCPU Geekbench multi-core cache, but a shared space lives while any
 executor's window keeps it, so under process churn it accumulates link records
 and freed body arena that private copies shed, and WebGL Aquarium's cache grew
-by a fifth to a third at its peak (G227). It stays off while a shared space
-does not bound that state. x86 gadget executors
+by a fifth to a third at its peak (G227). A private cache sweeps away the
+link records and indirect sites that nothing it holds names any more, but a
+shared space is never swept, so sharing stays off while a shared space does not
+bound that state. x86 gadget executors
 keep private translations: their links carry the block's guest range for
 self-modifying-store checks, which translated code reads in two loads that one
 atomic store cannot keep consistent.
@@ -273,7 +275,7 @@ Sync, quiesce, resume, and the management console are in the
 [architecture](../docs/architecture.md#guest-lifecycle). Disk capacity is an
 application concern: the runtime validates that a GPT matches its file and
 boots it without rewriting either, and the
-[Android static disk contract](../android/aosp-17/README.md#static-disk-and-boot-contract)
+[Android static disk contract](../android/lineage-24/README.md#static-disk-and-boot-contract)
 owns how an image and its filesystem grow. When Kernarium syncs, quiesces, and
 resumes is in [`../Kernarium/README.md`](../Kernarium/README.md#lifecycle).
 

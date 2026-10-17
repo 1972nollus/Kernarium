@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: Apache-2.0
+// F-Droid prebuilts, materialized next to their pinned APKs by
+// tools/fdroid_source.py. Both APKs are presigned and installed unchanged.
+
+package {
+    default_applicable_licenses: ["vendor_kernarium_fdroid_license"],
+}
+
+license {
+    name: "vendor_kernarium_fdroid_license",
+    visibility: [":__subpackages__"],
+    license_kinds: [
+        "SPDX-license-identifier-Apache-2.0",
+        "SPDX-license-identifier-GPL-3.0",
+    ],
+}
+
+android_app_import {
+    name: "F-Droid",
+    apk: "org.fdroid.fdroid_2000051.apk",
+    presigned: true,
+    preprocessed: true,
+    product_specific: true,
+    dex_preopt: {
+        enabled: false,
+    },
+}
+
+android_app_import {
+    name: "F-DroidPrivilegedExtension",
+    apk: "org.fdroid.fdroid.privileged_2140.apk",
+    presigned: true,
+    preprocessed: true,
+    // Upstream stores the dex compressed, which the privileged-app check
+    // rejects. Repacking would break the upstream signature, so the pinned
+    // APK is installed as published and the extension loads its compressed
+    // dex at run time.
+    skip_preprocessed_apk_checks: true,
+    privileged: true,
+    product_specific: true,
+    dex_preopt: {
+        enabled: false,
+    },
+    required: ["privapp-permissions-org.fdroid.fdroid.privileged"],
+}
+
+// The extension may install and delete packages and nothing more.
+prebuilt_etc {
+    name: "privapp-permissions-org.fdroid.fdroid.privileged",
+    src: "privapp-permissions-org.fdroid.fdroid.privileged.xml",
+    filename: "privapp-permissions-org.fdroid.fdroid.privileged.xml",
+    sub_dir: "permissions",
+    product_specific: true,
+}

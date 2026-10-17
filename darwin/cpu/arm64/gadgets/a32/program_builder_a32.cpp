@@ -358,7 +358,7 @@ void Translator::finish_stop(bool, std::uint32_t word)
 Translator::Result Translator::emit_dp_values(const Instruction &in,
 	unsigned op, bool s, unsigned shape_class, std::uintptr_t rd,
 	std::uintptr_t rn, std::uintptr_t rm, std::uintptr_t rs,
-	std::uint32_t immediate, std::optional<unsigned> carry)
+	std::uint32_t immediate, std::optional<unsigned> carry, bool in_place)
 {
 	const auto &o = in.operands;
 	const bool logical = is_logical(op);
@@ -415,12 +415,41 @@ Translator::Result Translator::emit_dp_values(const Instruction &in,
 			}
 		}
 	}
+	/* A conditional instruction that sets no flags, as a select of the
+	 * result and the old value (run() opened no skip for it). A shape
+	 * without a select gadget goes behind a skip after all: nothing of
+	 * this instruction is in the stream yet but scratch values. */
+	if (select_ < 14) {
+		const unsigned cond = select_;
+		select_ = 14;
+		const G which = sets || rd >= 15U * 8U ? G::count :
+			shape == shape_imm ? kDpSelect[op][0] :
+			shape == shape_reg ? kDpSelect[op][1] : G::count;
+		if (which != G::count) {
+			push(which);
+			push(condition_table(cond) | std::uint64_t{rd} << 16 |
+			     std::uint64_t{rn} << 24 |
+			     (shape == shape_imm ? std::uint64_t{immediate} :
+						   std::uint64_t{rm}) << 32);
+			return {};
+		}
+		begin_instruction(cond);
+	}
+	/* An unconditional ADD or SUB of an immediate between registers that
+	 * sets no flags may become the base of a VLD1 or VST1 copy. */
+	const bool address = shape == shape_imm &&
+		(op == op_add || op == op_sub) && !sets && in.cond == 14 &&
+		!in.in_it && rd < 15U * 8U && rn < 15U * 8U;
+	const std::size_t start = words_.size();
 	/* ADD or SUB of an immediate to a register in place: the entry with
 	 * the register baked. R15 and the scratch slots are not registers. */
-	if (shape == shape_imm && (op == op_add || op == op_sub) && rd == rn &&
-	    rd < 15U * 8U) {
+	if (in_place && shape == shape_imm && (op == op_add || op == op_sub) &&
+	    rd == rn && rd < 15U * 8U) {
 		push(kDpInplace[op == op_sub ? 1 : 0][sets ? 1 : 0][rd / 8U]);
 		push(word);
+		if (address)
+			address_add_ = {start, words_.size(), rd, rn,
+					op == op_sub ? 0U - immediate : immediate};
 		return {false, sets};
 	}
 	const G which = kDp[op][sets ? 1 : 0][shape];
@@ -428,6 +457,9 @@ Translator::Result Translator::emit_dp_values(const Instruction &in,
 		return {};
 	push(which);
 	push(word);
+	if (address)
+		address_add_ = {start, words_.size(), rd, rn,
+				op == op_sub ? 0U - immediate : immediate};
 	/* A plain CMP is the first half of a fused compare and branch: of a
 	 * register, or of an immediate that fits the fused entry's field. */
 	if (op == op_cmp && in.cond == 14 && !in.in_it) {
@@ -458,22 +490,55 @@ Translator::Result Translator::emit_dp(const Instruction &in,
 				       const FormPlan &plan)
 {
 	const auto &o = in.operands;
-	const unsigned op = plan.sub;
-	const unsigned shape_class = plan.aux & 3U;
+	unsigned op = plan.sub;
+	unsigned shape_class = plan.aux & 3U;
 	const bool s = o.setflags || is_compare(op);
+	const bool unary = op == op_mov || op == op_mvn;
+	/* The SP forms name no Rn: the first operand is R13. */
+	int first = (plan.aux & 4U) != 0 ? 13 : o.n;
+	std::uint32_t immediate = 0;
+	/* PC as an unshifted register operand is a constant, so the
+	 * instruction is the immediate form of its operation, which needs no
+	 * scratch slot holding the PC value: PC as the second operand of any
+	 * operation, and as the first of one that commutes or, for SUB and
+	 * RSB, of the other. An unshifted register keeps C, as an immediate
+	 * without a carry does. Such a sum is an address: an indexed load
+	 * wrote the literal it adds to and indexed loads consume it, so it
+	 * takes the indexed entry even in place, because rename forwards a
+	 * CpuState hop only between accesses of one addressing form (G199). */
+	bool folded = false;
+	if (shape_class == 1 && o.shift_t == SRType::LSL && o.shift_n == 0) {
+		if (o.m == 15 && (unary || first != 15)) {
+			folded = true;
+		} else if (!unary && first == 15 && o.m != 15) {
+			switch (op) {
+			case op_add: case op_adc: case op_and: case op_eor:
+			case op_orr: case op_tst: case op_teq: case op_cmn:
+				folded = true;
+				break;
+			case op_sub: op = op_rsb; folded = true; break;
+			case op_rsb: op = op_sub; folded = true; break;
+			default: break;
+			}
+			if (folded)
+				first = o.m;
+		}
+		if (folded) {
+			shape_class = 0;
+			immediate = pc_value();
+		}
+	}
 	std::uintptr_t rn = 0;
 	std::uintptr_t rm = 0;
 	std::uintptr_t rs = 0;
-	/* The SP forms name no Rn: the first operand is R13. */
-	if (op != op_mov && op != op_mvn)
-		rn = source((plan.aux & 4U) != 0 ? 13 : o.n, scratch0);
+	if (!unary)
+		rn = source(first, scratch0);
 	if (shape_class != 0)
 		rm = source(o.m, scratch1);
 	if (shape_class == 2)
 		rs = static_cast<std::uintptr_t>(o.s) * 8U;
-	std::uint32_t immediate = 0;
 	std::optional<unsigned> carry;
-	if (shape_class == 0) {
+	if (shape_class == 0 && !folded) {
 		if (raw_immediate(op)) {
 			const auto expanded = o.a32 ?
 				aarch32::detail::a32_expand_imm_c(o.imm) :
@@ -491,7 +556,7 @@ Translator::Result Translator::emit_dp(const Instruction &in,
 	const std::uintptr_t rd = is_compare(op) ? 0 :
 		to_pc ? scratch0 : static_cast<std::uintptr_t>(o.d) * 8U;
 	const auto result = emit_dp_values(in, op, s, shape_class, rd, rn, rm,
-					   rs, immediate, carry);
+					   rs, immediate, carry, !folded);
 	if (to_pc)
 		emit_indirect(scratch0, !thumb_, false);
 	return {to_pc, result.flags};
@@ -578,10 +643,23 @@ Translator::Result Translator::emit_integer(const Instruction &in,
 	const auto n = static_cast<std::uint64_t>(o.n) * 8U;
 	const auto m = static_cast<std::uint64_t>(o.m) * 8U;
 	switch (plan.family) {
-	case Family::movw:
-		return emit_mov_constant(in, o.d,
+	case Family::movw: {
+		const auto result = emit_mov_constant(in, o.d,
 			static_cast<std::uint32_t>(o.imm32));
+		if (o.d != 15 && in.cond >= 14 && !in.in_it)
+			movw_ = {words_.size(), d};
+		return result;
+	}
 	case Family::movt:
+		/* MOVT behind a MOVW of the same register is one move of the
+		 * whole constant: the MOVW's immediate takes the top half. */
+		if (movw_.end == words_.size() && movw_.rd == d &&
+		    in.cond >= 14 && !in.in_it) {
+			auto &word = words_[words_.size() - 1U];
+			word = (word & ~(std::uintptr_t{0xffff} << 48)) |
+			       std::uintptr_t{o.imm16} << 48;
+			return {};
+		}
 		push(G::movt);
 		push(d | std::uint64_t{o.imm16} << 48);
 		return {};
@@ -682,6 +760,7 @@ std::uint64_t Translator::library_operand(const Instruction &in,
 /* An instruction the engine leaves to the semantic library. */
 Translator::Result Translator::emit_library(const Instruction &in)
 {
+	++library_calls_;
 	push(G::library);
 	push(key_);
 	push(library_operand(in));
@@ -714,6 +793,14 @@ Translator::Result Translator::emit_single(const Instruction &in,
 					     pc_aligned() - offset;
 		mode = 9;
 		word |= std::uint64_t{address} << 32;
+	} else if (register_form && !unprivileged && o.n == 15 && o.m != 15 &&
+		   !o.wback && o.add && o.shift_t == SRType::LSL &&
+		   o.shift_n == 0) {
+		/* [PC, Rm] is [Rm, #PC]: the offset form, with no scratch slot
+		 * holding the PC value. */
+		mode = 0;
+		word |= static_cast<std::uint64_t>(o.m) * 8U << 8 |
+			std::uint64_t{pc_value()} << 32;
 	} else {
 		const std::uintptr_t rn = source(o.n, scratch1);
 		/* The unprivileged forms post-index in A32 and use the offset
@@ -744,12 +831,11 @@ Translator::Result Translator::emit_single(const Instruction &in,
 			}
 			const unsigned base = !writeback ? 3U : post ? 7U : 5U;
 			mode = base + (o.add ? 0U : 1U);
-			word |= rm << 16 | std::uint64_t{amount} << 24;
+			word |= rm << 16 | std::uint64_t{amount} << 32;
 		}
 	}
 	push(load ? kLoad[size][mode] : kStore[size][mode]);
-	push(key_);
-	push(word);
+	push(word | position());
 	if (to_pc)
 		emit_indirect(scratch0, true, o.n == 13);
 	return {to_pc, false};
@@ -786,12 +872,11 @@ Translator::Result Translator::emit_double(const Instruction &in,
 			const std::uintptr_t rm = source(o.m, scratch1);
 			const unsigned base = !o.wback ? 3U : o.index ? 5U : 7U;
 			mode = base + (o.add ? 0U : 1U);
-			word |= rm << 24;
+			word |= rm << 32;
 		}
 	}
 	push(load ? kLdrd[mode] : kStrd[mode]);
-	push(key_);
-	push(word);
+	push(word | position());
 	return {};
 }
 
@@ -987,6 +1072,7 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 		const auto target = target_key(
 			base + static_cast<std::uint32_t>(o.imm32), to_thumb);
 		credit();
+		/* The linked form takes LR from the return link's key. */
 		if (linked()) {
 			push(G::bl_linked);
 			push_link(target);
@@ -994,8 +1080,8 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 		} else {
 			push(G::bl);
 			push(target);
+			push(return_value());
 		}
-		push(return_value());
 		return {true, false};
 	}
 	case Family::bx: {
@@ -1013,8 +1099,8 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 		} else {
 			push(G::blx);
 			push(src);
+			push(return_value());
 		}
-		push(return_value());
 		return {true, false};
 	}
 	case Family::cbz: {
@@ -1039,10 +1125,13 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 	case Family::tb: {
 		const auto rn = source(o.n, scratch0);
 		const auto rm = static_cast<std::uintptr_t>(o.m) * 8U;
-		credit();
+		/* The gadget gives back the instructions behind it itself, after
+		 * the table load, so that one that faults leaves them charged. */
+		static_assert(block_limit <= 256);
 		push(plan.sub == 0 ? G::tbb : G::tbh);
-		push(key_);
-		push(rn | rm << 8 | std::uint64_t{pc_value()} << 32);
+		patches_.push_back({words_.size(), compiled_ + 1, 16});
+		push(rn | rm << 8 | position() |
+		     std::uint64_t{pc_value()} << 32);
 		push(indirects_ ? reinterpret_cast<std::uintptr_t>(indirects_(key_))
 				: reinterpret_cast<std::uintptr_t>(&dummy_site()));
 		return {true, false};
@@ -1331,20 +1420,46 @@ BuildOutput Translator::run()
 			break;
 		}
 		if (in.status == Status::ok) {
-			/* A conditional branch tests its own condition; every
-			 * other conditional instruction is behind a skip. */
+			/* A conditional branch tests its own condition, and
+			 * conditional data processing that sets no flags and a
+			 * conditional VMOV of VFP registers are selects where
+			 * emit_dp_values or emit_vfp has one for the shape;
+			 * every other conditional instruction is behind a
+			 * skip. */
 			if (plan.family == Family::branch ||
-			    plan.family == Family::cbz || plan.family == Family::it)
+			    plan.family == Family::cbz || plan.family == Family::it) {
 				close_run();
-			else
+			} else if (in.cond < 14 &&
+				   ((!in.operands.setflags &&
+				     in.operands.d != 15 &&
+				     (plan.family == Family::dp ||
+				      plan.family == Family::movw)) ||
+				    (plan.family == Family::vfp2 &&
+				     plan.sub == kVfp2Vmov))) {
+				close_run();
+				select_ = in.cond;
+			} else {
 				begin_instruction(in.cond);
+			}
 			/* The vectors and FPSCR load lazily, once, for a block
 			 * marked as touching them (uses_fp_): every form that
 			 * does, by the decoder table's fp_state trait, whichever
 			 * path lowers it. */
 			if ((in.info().traits & aarch32::trait::fp_state) != 0U)
 				uses_fp_ = true;
+			const std::size_t address_add = address_add_.start;
+			const std::size_t library_calls = library_calls_;
 			const Result result = emit(in, plan);
+			/* An ADD this instruction did not push stays absorbable
+			 * only behind Advanced SIMD data processing that reads no
+			 * core register, cannot leave the block and is not
+			 * conditional, so that moving the ADD past it changes no
+			 * state any exit or fault can see. */
+			if (address_add_.start == address_add &&
+			    !(plan.family == Family::neon && in.cond == 14 &&
+			      !in.in_it && library_calls_ == library_calls &&
+			      kNeonGroups[plan.sub].shape != NeonShape::dcore))
+				address_add_.start = ~std::size_t{};
 			if (result.flags)
 				flags_written();
 			if (result.terminal && !run_active_)

@@ -1,10 +1,10 @@
 # Android guest sources
 
-Android guest inputs are organized by AOSP major version. The first maintained
-lane is [`aosp-17/`](aosp-17/README.md).
+Android guest inputs are organized by product line. The maintained lane is
+[`lineage-24/`](lineage-24/README.md): LineageOS 24.0, which is Android 17.
 
-This directory owns AOSP patch series, builder-local scripts, image/release
-support, and Android-version metadata. The ACK kernel configuration overlay and
+This directory owns the patch series for the projects the product changes,
+builder-local scripts, image/release support, and Android-version metadata. The ACK kernel configuration overlay and
 generated kernel patches remain under
 [`../kernel/android-6.18/`](../kernel/android-6.18/README.md).
 

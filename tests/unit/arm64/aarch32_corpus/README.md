@@ -98,12 +98,21 @@ no floating point or SIMD):
   addresses, across 4 KiB and 16 KiB lines, at the ends of the data region, in
   the read-only region and in unmapped memory, with writeback;
 - `prefetch`: PLD, PLDW and PLI never fault;
+- `positions`: single-register and doubleword transfers, VLDR, VSTR, TBB and
+  TBH that fault after other instructions, some in a block a branch reaches:
+  unmapped, crossing from the read-only region into unmapped memory, and a
+  literal below the code region, the unmapped and literal ones also under a
+  condition that fails and passes, so an engine names the faulting
+  instruction by its place in the block;
 - `exclusive`: LDREX/STREX and LDAEX/STLEX sequences, CLREX, misaligned and
   unmapped loads;
-- `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH, PC-writing loads and ALU
-  instructions, interworking both ways, jumps to unmapped addresses;
+- `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH (also in an IT block whose
+  condition passes and fails), PC-writing loads and ALU instructions,
+  interworking both ways, jumps to unmapped addresses;
 - `conditions`: every condition against every NZCV, and every IT block;
-- `pc`: instructions that read the PC;
+- `pc`: instructions that read the PC, among them the PC as a register
+  operand under a condition that fails and passes and as the operand of an
+  ADD or SUB whose other operand is its destination;
 - `system`: barriers, hints, CPS, the APSR instructions, TPIDRURO, TPIDRURW,
   the CP15 barriers, BKPT and the encodings Linux turns into SIGTRAP;
 - `absent`: UNDEFINED, UNPREDICTABLE, unallocated and absent-feature
@@ -120,6 +129,19 @@ On a boundary (any level):
 - `straddle`: STM, PUSH, VSTM and FSTMX whose block crosses from the data
   region into the read-only region. The words ahead of the faulting one are
   stored, and the base register is as before.
+
+Sequences an engine may translate together (any level):
+
+- `sequences`: an ADD or SUB of an immediate that computes the base of a
+  VLD1 or VST1, next to it or with Advanced SIMD data processing between, at
+  the memory suite's addresses and one that wraps around 2^32, and the shapes
+  that keep the two apart (flags set, a core register read, VFP or another
+  ADD between, another base, writeback, a hint, a PC base); VCMP and VCMPE
+  of each precision followed by VMRS APSR_nzcv, and apart, to a core
+  register or conditional; and the conditional data-processing instructions
+  that set no flags, MOVW and VMOV under conditions that pass and fail,
+  alone and in runs with conditional loads and stores, in A32 and IT blocks.
+  A copy that faults does so with the instructions before it retired.
 
 The `simd` level (VFPv4-D32 and Advanced SIMD):
 
@@ -140,6 +162,10 @@ The `simd` level (VFPv4-D32 and Advanced SIMD):
   that a single cannot hold, which the `simd` suite's edge values leave out;
 - `simd-memory`: VLDR, VSTR, VLDM, VSTM, FLDMX, FSTMX and the structure loads
   and stores VLD1-4 and VST1-4, aimed at the memory suite's addresses;
+- `simd-hints`: VLD1 and VST1 copies with each alignment hint and none, and
+  VLD1 to all lanes with and without one, at addresses the hint accepts and
+  refuses (the alignment fault comes before an unmapped page's), across the
+  4 KiB and 16 KiB lines, with each writeback;
 - `fpscr`: VMRS and VMSR, including the exception trap enables the profile
   reads as zero and ignores writes to, and FZ16, which holds what is written
   to it wherever FEAT_FP16 is.
@@ -166,13 +192,15 @@ failing store-exclusive case again, a bounded number of times: when the only
 difference is a status of 1 where the pack has 0 and the store that did not
 happen, up to 16 attempts in all, in the gadget lane and the JIT lane alike.
 
-Two suites are recorded only from hardware: `unaligned` (172 cases:
-multi-word accesses at misaligned addresses) and `fpscr-reserved` (144
-cases: VMRS and VMSR with Stride and Len set, which an implementation may or
-may not hold). The producer refuses to record them as `qemu`, and nothing
-derives them from rules. Both are `pi4` records. The Cortex-A72 reads Stride
-and Len as zero and ignores writes to them, as the profile does, and a
-misaligned multi-word access raises SIGBUS at its first address.
+Three suites are recorded only from hardware: `unaligned` (172 cases:
+multi-word accesses at misaligned addresses), `positions-unaligned` (34
+cases: the `positions` transfers at a misaligned address) and
+`fpscr-reserved` (144 cases: VMRS and VMSR with Stride and Len set, which an
+implementation may or may not hold). The producer refuses to record them as
+`qemu`, and nothing derives them from rules. All are `pi4` records. The
+Cortex-A72 reads Stride and Len as zero and ignores writes to them, as the
+profile does, and a misaligned multi-word access raises SIGBUS at its first
+address.
 
 ## What the oracle's answers rest on
 

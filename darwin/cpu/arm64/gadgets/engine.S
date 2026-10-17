@@ -173,12 +173,18 @@ Lveneer_\symbol:
 #include "engine/inplace_immediate.inc"
 #include "engine/inplace_extended.inc"
 #include "engine/inplace_memory.inc"
+#include "engine/constant_store.inc"
+#include "engine/test_bit_branch.inc"
+#include "engine/bitfield_shift.inc"
 #include "engine/scalar_forwarding.inc"
 #include "engine/vector_forwarding.inc"
 #include "engine/execution_count.inc"
 /* The cold FEAT_LSE2 alignment stubs of the atomic families go last, in reach
  * of their conditional branches, so no established gadget moves for them. */
 #include "engine/lse2_alignment.inc"
+/* RET through X30 appends its entry after them: neither the bank nor the cold
+ * part moves for it. */
+#include "engine/return_x30.inc"
 /* Only into the SME part, after every base part's code. */
 #include "engine/sme.inc"
 /* Only into the AArch32 part's sections, after every part before it. */
