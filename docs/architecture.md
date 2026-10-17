@@ -1125,7 +1125,8 @@ address space makes a new one and the old one dies with its last executor.
 An executor also lets go of an address space whose generation the MMU has
 destroyed, at the same point and as the count of destroyed generations moves,
 leaving its number in the window's order until the least-recently-used rule
-reaches it. Cached
+reaches it; the x86 gadget executors do the same at the start of each run.
+Cached
 returns consult a private per-carrier return-record ring after their site
 cells miss: linked calls push the return PC with its block link, a matching
 record follows that link and fills an empty cell of the site, and the executor

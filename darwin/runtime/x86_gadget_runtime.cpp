@@ -35,6 +35,11 @@ bool execution_interrupt_boundary(void *context) noexcept
 		execution->sequences().execution_interrupt != 0;
 }
 
+[[nodiscard]] int generation_live(unsigned long generation) noexcept
+{
+	return darwin_uml_static_vm_generation_live(generation);
+}
+
 [[nodiscard]] x86_64::gadgets::ProgramCacheSequences cache_sequences(
 	void *context) noexcept
 {
@@ -153,6 +158,15 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	result.reason = ::uml::cpu::ExitReason::fatal;
 	if (!host_runs_x86_engine())
 		return run;
+	/* Before anything of the run: the executors let go of the address spaces
+	 * of generations the kernel has destroyed since they last looked. No
+	 * translated code of theirs is running, and each prepares again below. */
+	const auto retirements = darwin_uml_static_vm_generation_retirements();
+	executor.leave_gone_generations(retirements, &generation_live);
+	for (auto &checked_executor : checked_executors)
+		if (checked_executor)
+			checked_executor->leave_gone_generations(
+				retirements, &generation_live);
 	X86StaticExecutionScope execution{generation, cpu.rip};
 	if (!execution.entered()) {
 		trace_fatal("execution-scope", cpu, generation, errno);

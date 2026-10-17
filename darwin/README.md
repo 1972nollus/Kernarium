@@ -168,10 +168,13 @@ window order as a tombstone that the least-recently-used rule retires with no
 work, so a window keeps exactly the live address spaces it kept before. A
 shared space dies with the last executor attached to it, which lets go at its
 own next entry; a vCPU that is idle keeps it until then. Geekbench's windows
-otherwise hold the boot-time processes' spaces for the whole run. x86
-gadget executors keep private translations: their links carry the block's guest range for
-self-modifying-store checks, which translated code reads in two loads that one
-atomic store cannot keep consistent.
+otherwise hold the boot-time processes' spaces for the whole run.
+
+x86 gadget executors keep private translations: their links carry the block's
+guest range for self-modifying-store checks, which translated code reads in
+two loads that one atomic store cannot keep consistent. They let go of the
+address spaces of destroyed generations the same way, at the start of each run
+([`cpu/x86_64/gadgets/README.md`](cpu/x86_64/gadgets/README.md)).
 
 In both arm64 engines, code another vCPU changed and synchronized takes effect
 at this vCPU's next context synchronization point. Every run publishes in

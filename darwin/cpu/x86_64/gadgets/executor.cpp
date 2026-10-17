@@ -794,8 +794,13 @@ public:
 		touch(generation);
 		if (inserted) {
 			current_->changes = changes;
-			while (resident_.size() > resident_generation_limit)
+			while (resident_.size() > resident_generation_limit) {
+#if UML_GADGET_CACHE_CENSUS
+				if (!generations_.contains(resident_.front()))
+					++lru_tomb_;
+#endif
 				retire(resident_.front());
+			}
 			return;
 		}
 		if (current_->changes == changes)
@@ -805,6 +810,34 @@ public:
 			invalidate_links(*current_);
 		current_->changes = changes;
 		advance_epoch(*current_);
+	}
+
+	/* Let go of every address space held here whose generation `live`
+	 * reports destroyed, and say whether the one last prepared was among
+	 * them. The generation's number keeps its place in the order the
+	 * window retires in, a tombstone that holds nothing and that the
+	 * least-recently-used rule drops when it reaches it, so the window
+	 * keeps the live address spaces it would have kept. An answer `live`
+	 * cannot give (negative) keeps the address space. */
+	[[nodiscard]] bool leave_gone(GenerationLiveness live) noexcept
+	{
+		std::array<std::uint64_t, resident_generation_limit + 1U> gone{};
+		std::size_t count = 0;
+		for (const auto &[generation, state] : generations_) {
+			if (count == gone.size())
+				break;
+			if (live(static_cast<unsigned long>(generation)) == 0)
+				gone[count++] = generation;
+		}
+		bool left_current = false;
+		for (std::size_t index = 0; index < count; ++index) {
+			left_current |= gone[index] == current_generation_;
+#if UML_GADGET_CACHE_CENSUS
+			++dead_left_;
+#endif
+			retire(gone[index], true);
+		}
+		return left_current;
 	}
 
 	void set_code_change_reader(
@@ -1250,7 +1283,8 @@ public:
 			"slot_bytes=%zu slab_slots=%zu slab_count=%zu slabs=%zu "
 			"streams=%zu decoded=%zu links=%zu indirect=%zu "
 			"targets=%zu total=%zu sweeps=%llu swept_links=%llu "
-			"swept_sites=%llu sweep_ns=%llu",
+			"swept_sites=%llu sweep_ns=%llu dead_left=%llu "
+			"lru_tomb=%llu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), program_cache_slots, sizeof(Slot),
 			program_cache_slab_slots, slab_count, parts.slabs,
@@ -1259,7 +1293,9 @@ public:
 			static_cast<unsigned long long>(sweeps_),
 			static_cast<unsigned long long>(swept_links_),
 			static_cast<unsigned long long>(swept_sites_),
-			static_cast<unsigned long long>(sweep_ns_));
+			static_cast<unsigned long long>(sweep_ns_),
+			static_cast<unsigned long long>(dead_left_),
+			static_cast<unsigned long long>(lru_tomb_));
 		census::write_when(out, snapshot);
 		history_.write(out);
 		std::fputc('\n', out);
@@ -2140,7 +2176,11 @@ private:
 		resident_.push_back(generation);
 	}
 
-	void retire(std::uint64_t generation) noexcept
+	/* The generation's number leaves the window's order unless `tombstone`
+	 * keeps its place there (leave_gone). A number in the order that names
+	 * no address space is such a tombstone: retiring it only drops the
+	 * place. */
+	void retire(std::uint64_t generation, bool tombstone = false) noexcept
 	{
 		const auto owner = generations_.find(generation);
 		if (owner != generations_.end()) {
@@ -2167,6 +2207,8 @@ private:
 		}
 		if (registries_ != nullptr)
 			registries_->release(generation);
+		if (tombstone)
+			return;
 		const auto found = std::find(
 			resident_.begin(), resident_.end(), generation);
 		if (found != resident_.end())
@@ -2342,6 +2384,10 @@ private:
 	std::uint64_t swept_links_{};
 	std::uint64_t swept_sites_{};
 	std::uint64_t sweep_ns_{};
+	/* Address spaces let go of because their generation was destroyed, and
+	 * the tombstones of those the window's order retired. */
+	std::uint64_t dead_left_{};
+	std::uint64_t lru_tomb_{};
 #endif
 };
 
@@ -2393,6 +2439,9 @@ struct Executor::Storage final {
 	 * can be newer than the sequence the caller asked about. */
 	std::uint64_t tlb_mapping_sequence{};
 	ProgramCacheDiagnostics diagnostics{};
+	/* The MMU's count of destroyed generations when this executor last let
+	 * go of the address spaces of destroyed ones. */
+	unsigned long long retirements_seen{};
 	bool prepared{};
 	bool cache_ready{};
 	unsigned checked{};
@@ -2517,6 +2566,18 @@ void Executor::prepare(::uml::memory::GuestAddressSpace &memory,
 		storage_->programs.invalidate();
 		storage_->cache_ready = false;
 	}
+}
+
+void Executor::leave_gone_generations(unsigned long long retirements,
+	GenerationLiveness live) noexcept
+{
+	if (retirements == storage_->retirements_seen)
+		return;
+	storage_->retirements_seen = retirements;
+	/* A cache that lost the address space it last prepared must prepare
+	 * again before it is used. */
+	if (storage_->programs.leave_gone(live))
+		storage_->cache_ready = false;
 }
 
 NativeTlbEntry *Executor::tlb_entries() noexcept
