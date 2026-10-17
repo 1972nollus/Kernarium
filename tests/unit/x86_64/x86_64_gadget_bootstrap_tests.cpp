@@ -1923,6 +1923,116 @@ read_test_sequences(void *context) noexcept
 		"an undescribed code change left a link armed");
 }
 
+/* A link sweep releases the records only replaced blocks named, as the arm64
+ * cache's does, and keeps what the resident blocks and a trained site need.
+ *
+ * One jump is rewritten to a new target thousands of times, each through a
+ * code change the address space can describe, so only the jump is retired and
+ * rebuilt, and every earlier target is named by nothing but, for a round, an
+ * indirect site's cells. Those records pile up past the sweep floor and a
+ * store sweeps them; the site, asked again for the target it learned last
+ * round, must find its cell emptied rather than naming a released record. A
+ * pair linked before any sweep still links after them, and a resident block
+ * nothing links to keeps the record its slot remembers and that a block
+ * translated later links through.
+ */
+[[nodiscard]] bool a_link_sweep_releases_what_only_replaced_blocks_named()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::size_t rounds = 6000;
+	constexpr std::uint64_t far_targets = 0x10'0000;
+	TestMemory memory;
+	const auto jump_to = [&](std::uint64_t source, std::uint64_t target) {
+		const auto displacement =
+			static_cast<std::uint32_t>(target - (source + 5U));
+		memory.load(source, {0xe9,
+			static_cast<std::uint8_t>(displacement),
+			static_cast<std::uint8_t>(displacement >> 8),
+			static_cast<std::uint8_t>(displacement >> 16),
+			static_cast<std::uint8_t>(displacement >> 24)});
+	};
+	const auto target = [](std::size_t round) {
+		return far_targets + 16U * round;
+	};
+	jump_to(0, target(0));
+	memory.load(0x100, {0xff, 0xe0});
+	memory.load(0x200, {0xb8, 0x4d, 0x00, 0x00, 0x00, 0x0f, 0x05});
+	jump_to(0x300, 0x200);
+	memory.load(0x400, {0xb8, 0x4e, 0x00, 0x00, 0x00, 0x0f, 0x05});
+	jump_to(0x500, 0x400);
+	TestSequences sequences;
+	memory.set_code_changes(&sequences.code_changes);
+	gadgets::Executor executor;
+	const auto prepare = [&] {
+		executor.prepare(memory, 42, sequences.mapping_changes,
+			sequences.code_changes, &sequences, read_test_sequences,
+			read_test_code_changes);
+	};
+	const auto run = [&](std::uint64_t rip, std::uint64_t rax = 0) {
+		CpuState cpu{};
+		cpu.rip = rip;
+		cpu.gpr(Register::rax) = rax;
+		const auto selected = executor.select_program(
+			memory, rip, ExecutionMode::long64);
+		if (selected.program == nullptr)
+			return std::pair{gadgets::ExecuteResult{}, cpu};
+		const auto result = gadgets::execute(
+			*selected.program, cpu, memory, executor, 64);
+		return std::pair{result, cpu};
+	};
+	const auto linked = [&](std::uint64_t rip, std::uint64_t value) {
+		const auto [result, cpu] = run(rip);
+		return result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 3 &&
+			cpu.gpr(Register::rax) == value;
+	};
+
+	prepare();
+	if (!expect(executor.select_program(memory, 0x200,
+			ExecutionMode::long64).program != nullptr &&
+			executor.select_program(memory, 0x400,
+				ExecutionMode::long64).program != nullptr &&
+			linked(0x300, 0x4d),
+		"link-sweep setup did not link its resident pair"))
+		return false;
+	for (std::size_t round = 0; round < rounds; ++round) {
+		if (round != 0) {
+			jump_to(0, target(round));
+			/* Each prepare reads only the newest change. */
+			sequences.recorded = 0;
+			sequences.change(0, 5);
+			prepare();
+		}
+		const auto [jumped, cpu] = run(0);
+		if (!expect(jumped.event == uml::cpu::EngineEvent::continued &&
+				jumped.retired_instructions == 1 &&
+				cpu.rip == target(round),
+			"a rewritten jump did not leave for its new target"))
+			return false;
+		if (round == 0)
+			continue;
+		for (const auto asked : {target(round - 1), target(round)}) {
+			const auto [indirect, landed] = run(0x100, asked);
+			if (!expect(indirect.event ==
+					uml::cpu::EngineEvent::continued &&
+					landed.rip == asked,
+				"an indirect site lost a target a sweep released"))
+				return false;
+		}
+	}
+	const auto &diagnostics = executor.cache_diagnostics();
+	return expect(linked(0x300, 0x4d),
+			"a sweep reset a link between resident blocks") &&
+		expect(executor.select_program(memory, 0x400,
+				ExecutionMode::long64).program != nullptr &&
+			linked(0x500, 0x4e),
+			"a sweep released the record of a resident block") &&
+		expect(diagnostics.link_sweeps != 0 &&
+			diagnostics.released_links >= rounds / 2 &&
+			diagnostics.released_sites == 0,
+			"replaced jumps' targets were not swept");
+}
+
 [[nodiscard]] bool linked_call_crosses_a_disjoint_executable_stack_write()
 {
 	using namespace uml::cpu::x86_64;
@@ -10597,6 +10707,7 @@ int main()
 		cache_chains_direct_branches() &&
 		cache_chains_indirect_transfers() &&
 		an_unrelated_code_change_leaves_a_link_armed() &&
+		a_link_sweep_releases_what_only_replaced_blocks_named() &&
 		linked_call_crosses_a_disjoint_executable_stack_write() &&
 		linked_call_stops_when_the_stack_write_hits_its_target() &&
 		short_blocks_retain_only_their_translated_storage() &&
