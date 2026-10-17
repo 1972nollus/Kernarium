@@ -259,6 +259,41 @@ def main() -> None:
             json.dumps(manifest, indent=2, sort_keys=True) + "\n"
         )
 
+        # The fixture's kernel records no tag, as a mainline-built release
+        # does. The accepted release records the ACK tag it was built from,
+        # and stays valid until the next signed release drops the allowance.
+        tagged = copy.deepcopy(manifest)
+        tagged["kernel"]["tag"] = "android16-6.18-fixture"
+        manifest_path.write_text(json.dumps(tagged, indent=2, sort_keys=True) + "\n")
+        verify_release(
+            release_root,
+            android_root,
+            acceptance_path=acceptance,
+            semantic=False,
+        )
+        for value, label in (("", "an empty kernel tag"), (7, "a non-string kernel tag")):
+            invalid = copy.deepcopy(tagged)
+            invalid["kernel"]["tag"] = value
+            manifest_path.write_text(json.dumps(invalid, indent=2, sort_keys=True) + "\n")
+            expect_failure(
+                lambda: verify_release(
+                    release_root, android_root, acceptance_path=acceptance, semantic=False
+                ),
+                label,
+            )
+        unexpected = copy.deepcopy(tagged)
+        unexpected["kernel"]["unexpected"] = "x"
+        manifest_path.write_text(json.dumps(unexpected, indent=2, sort_keys=True) + "\n")
+        expect_failure(
+            lambda: verify_release(
+                release_root, android_root, acceptance_path=acceptance, semantic=False
+            ),
+            "an unknown kernel key beside the tag",
+        )
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+        )
+
         extra = release_root / "support/undeclared"
         extra.write_bytes(b"x")
         expect_failure(
