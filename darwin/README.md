@@ -85,13 +85,14 @@ sixteen-byte granules, and the program refers to those words rather than
 owning a second copy. An arena reuses freed space by best fit and merges a
 freed block with its free neighbours, so the hole an evicted translation
 leaves serves translations of any size; it unmaps a 64 KiB chunk once the
-chunk's last translation leaves, and the rest go with the address space. A
-build assembles its stream in a scratch buffer that the next build rewinds, so
-a translation allocates only when it is stored. The arena marks where every
-live translation starts, one bit per granule, and that map is how a terminal
-exit inside a linked successor is attributed to the successor's program; the
-cache keeps no index keyed by stream address and maintains nothing per store
-for that lookup.
+chunk's last translation leaves. An arena maps its chunks a few at a time (four,
+doubling to sixteen), and an address space that dies unmaps what remains
+without freeing a translation of it. A build assembles its stream in a scratch
+buffer that the next build rewinds, so a translation allocates only when it is
+stored. The arena marks where every live translation starts, one bit per
+granule, and that map is how a terminal exit inside a linked successor is
+attributed to the successor's program; the cache keeps no index keyed by
+stream address and maintains nothing per store for that lookup.
 
 A slot is three words on arm64 and four on x86: a tag, the translation, and a
 memo. The tag packs the translation's key (an A64 PC below the guest address
