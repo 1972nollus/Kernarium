@@ -21,7 +21,7 @@ The line builds two products from one tree. The Linux product is the desktop
 kernel, in 16 KiB (default) and 4 KiB profiles and the x86_64 userspace slice.
 The [Android product](#android-product) is the 4 KiB arm64 kernel of the
 LineageOS 24 (Android 17) guest. It differs from the Linux product only in its
-configuration overlay: both build the same tree, including four overlay topics
+configuration overlay: both build the same tree, including nine overlay topics
 that matter only to Android.
 
 The shared stateful Virtio video decoder is built in for every product in this
@@ -519,7 +519,7 @@ IP autoconfiguration. Recovery independently assigns its fixed local endpoint
 for the host-forwarded ADB contract; external recovery routing is not a
 product requirement.
 
-Four topics in this line's patch overlay change behaviour only when the Android
+Nine topics in this line's patch overlay change behaviour only when the Android
 overlay switches them on, or only under Android's SELinux policy. Each stays
 out of the shared series because it depends on the guest OS:
 
@@ -547,6 +547,37 @@ out of the shared series because it depends on the guest OS:
   default security module (`CONFIG_DEFAULT_SECURITY_SELINUX`), and the policy
   decides who may write `/proc/pressure`. The Linux product keeps the
   capability check.
+- `CONFIG_CGROUP_V1_ATTACH_SYS_NICE` lets a process whose file credentials hold
+  `CAP_SYS_NICE` in a task's user namespace move that task between the groups
+  of a v1 hierarchy. Android's system_server moves apps between the cpu, cpuset
+  and blkio groups of its scheduling classes without being root, so without
+  the option every move after an app's start fails with `EACCES` and a
+  background app keeps its foreground groups. Upstream lets only root and the
+  task's own user do it, which the Linux product keeps. The Android common
+  kernel tests the writer's capability; this topic tests the opener's, like
+  the user ID checks beside it.
+- `CONFIG_FUSE_CANONICAL_PATH`, which selects `CONFIG_DCACHE_CANONICAL_PATH`,
+  lets a FUSE server name the file of another filesystem that a FUSE path
+  stands for (`FUSE_CANONICAL_PATH`). inotify then watches that file and an
+  open of the FUSE file reaches its watchers, so an app's `FileObserver` on
+  shared storage sees what MediaProvider and other writers change below the
+  FUSE mount. Without it the watcher misses those writes. Desktop FUSE servers
+  do not implement the request, so the Linux product keeps FUSE unchanged.
+  The option takes two patches (the VFS operation and its FUSE server).
+- `CONFIG_NETFILTER_XT_MATCH_QUOTA2` and its alert option
+  `CONFIG_NETFILTER_XT_MATCH_QUOTA2_LOG` add the `quota2` match, which netd's
+  bandwidth controller uses for data-usage limits and alerts: a counter that
+  IPv4 and IPv6 rules share, named in `/proc/net/xt_quota`, and that sends its
+  alert on the `NETLINK_NFLOG` socket. The Linux product has the per-CPU
+  `quota` match and does without it.
+- `CONFIG_NETFILTER_XT_TARGET_IDLETIMER_NL_MSG` lets the `IDLETIMER` target
+  take `--send_nl_msg`, which netd passes for every interface idle timer, and
+  sends the uevents that report an interface going idle or active again.
+  Upstream refuses the argument, so the Linux product keeps its `IDLETIMER`
+  as is.
+
+The cgroup, FUSE, `quota2` and `IDLETIMER` topics are backports from the
+Android common kernel.
 
 The product carries none of ACK's own features, and does without them:
 
@@ -558,8 +589,6 @@ The product carries none of ACK's own features, and does without them:
 - dm-default-key (metadata encryption), which the unencrypted userdata does not
   use.
 - Per-UID I/O statistics (`/proc/uid_io/stats`), which storaged does without.
-- `xt_quota2`, so the data-usage alerts and limits netd would install fail; the
-  Ethernet network is unmetered.
 - Binder real-time priority inheritance, `/sys/kernel/wakeup_reasons`, and
   ACK's 20 s expedited-RCU window at boot, which mainline ends at init.
 
