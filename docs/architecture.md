@@ -758,18 +758,21 @@ gadgets: Advanced SIMD does the lanes on the low half of a vector register, GE
 is the byte-lane mask CpuState keeps, and the saturating forms compute their
 saturation with lane arithmetic, because the saturating instructions would set
 FPSR.QC, which the guest reads in FPSCR. LDM, STM, PUSH and POP that cross a
-page, and the rare integer forms (USAD8, the dual multiplies, the 16-bit
-saturates and extends, QADD and its relatives), run through the
-shared AArch32 semantic library (`cpu/arm64/aarch32/semantics.hpp`): the
-`a32_library` gadget and the crossing paths spill NZCV, decode the word again
-and call `execute_a32`, which translates every page before a load changes a
+page, an STM that stores the PC, and the rare integer forms (USAD8, the dual
+multiplies, the 16-bit saturates and extends, QADD and its relatives), run
+through the shared AArch32 semantic library
+(`cpu/arm64/aarch32/semantics.hpp`): the `a32_library` gadget and the
+crossing paths spill NZCV, decode the word again and call `execute_a32`,
+which translates every page before a load changes a
 register, stores the words ahead of a faulting STM and leaves the base
 register as it was. LDREX and STREX, and LDAEX and STLEX, are the A64
 exclusive gadgets and share their forward-progress mechanism; LDA and STL are
 the A64 ordered ones. Like them, the single and doubleword transfers, VLDR,
-VSTR, TBB and TBH carry no key: their operand holds the instruction's position
-in bits 31:24 (`darwin/cpu/arm64/gadgets/a32_layout.h`), which a fault reports
-as the A64 transfers do. The library-exit counters name any lowered form that
+VSTR, TBB, TBH and the block transfers carry no key: their operand holds the
+instruction's position in bits 31:24
+(`darwin/cpu/arm64/gadgets/a32_layout.h`), which a fault reports as the A64
+transfers do, and a block transfer's crossing path passes it to the library
+in place of the key. The library-exit counters name any lowered form that
 reaches the library, and the unit tests require none does.
 
 VFP and Advanced SIMD are lowered onto the A64 instructions with the same

@@ -22,7 +22,10 @@ address zero.
   and TBH that fault after other instructions, some in a block a branch
   reaches: unmapped, crossing from the read-only region into unmapped memory,
   and a literal below the code region; the unmapped and literal ones also
-  under a condition that fails and passes;
+  under a condition that fails and passes. Then LDM, STM, PUSH and POP,
+  unmapped and crossing from unmapped memory into the data region, and an
+  A32 STM that stores the PC, unmapped and where it stores, within a page
+  and across one, each also under a condition that fails and passes;
 - positions-unaligned: the same at a misaligned address, which only hardware
   records settle.
 """
@@ -461,6 +464,79 @@ def position_cases(context: Context, suite: str, misaligned: bool) -> list[Case]
                     suite, f"{form.name}/{scenario}-eq{'p' if passes else 'f'}", form.name, state, lead + body,
                     len(lead) if state == "A" else 2,
                     f"{RECIPES[(form_index + number + 1) % len(RECIPES)]}-{suffix}", conditional))
+    return cases + conditional_cases + block_position_cases(context, suite, misaligned)
+
+
+def block_word(context, form, store_pc: bool):
+    """A word of a block transfer of two or more registers that leaves out its base, with the PC in
+    its list for an STM that stores it."""
+    fields = fields_of(form)
+    for word, operands in pick_words(context, form, 12):
+        if store_pc:
+            word = set_field(word, *fields["register_list"], operands["registers"] | 0x8000)
+            found = usable(context, form, word)
+            if found is None:
+                continue
+            word, operands = found
+        registers = operands["registers"]
+        if bin(registers).count("1") >= 2 and not registers >> operands.get("n", 13) & 1:
+            return word, operands
+    return None
+
+
+def block_position_cases(context: Context, suite: str, misaligned: bool) -> list[Case]:
+    """LDM, STM, PUSH and POP that fault after other instructions: unmapped, crossing from unmapped
+    memory into the data region, which the library runs and where nothing is transferred before the
+    fault, and misaligned; an A32 STM that stores the PC, which the library runs, also where it
+    stores, within a page and across one; all but the misaligned ones also under a condition that
+    fails and passes."""
+    cases = []
+    conditional_cases = []
+    blocks = [form for form in memory_forms(context, "base") if MULTIPLE.fullmatch(mnemonic(form.name))]
+    variants = [(form, False) for form in blocks] + [
+        (form, True) for form in blocks
+        if form.encoding.isa == "A32" and mnemonic(form.name).startswith("STM")]
+    for form_index, (form, store_pc) in enumerate(variants):
+        isa = form.encoding.isa
+        state = ISA_LETTER[isa]
+        suffix = "a" if state == "A" else "t"
+        found = block_word(context, form, store_pc)
+        if found is None:
+            continue
+        word, operands = found
+        count = bin(operands["registers"]).count("1")
+        prefix = "pc-" if store_pc else ""
+        if misaligned:
+            scenarios = {"u1": D + 0x1041}
+        else:
+            scenarios = {"unmapped": 0x60000000, "into": D - 4 * (count // 2)}
+            if store_pc:
+                scenarios = {"a": D + 0x1040, "x16": D + 0x4000 - 4 * (count // 2), "unmapped": 0x60000000}
+        for number, (scenario, start) in enumerate(scenarios.items()):
+            leads = LEADS[state][(form_index + number) % len(LEADS[state])]
+            flags = FLAGS[pattern(len(cases) + 7) >> 8 & 3]
+            initial = {"apsr": flags, **solve_multiple(operands, multiple_mode(form.name), start)}
+            linked = leads[0] in ((0xEAFFFFFF,), (0xE7FF,))
+            program = tuple(unit for lead in leads for unit in lead) + word_of(isa, word)
+            cases.append(Case(suite, f"{form.name}/{prefix}{scenario}.{len(leads)}", form.name, state,
+                              program, len(leads), f"{RECIPES[(form_index + number) % len(RECIPES)]}-{suffix}",
+                              initial, straight=not linked,
+                              fault_retired=len(leads) if linked and scenario != "a" else None))
+            if misaligned:
+                continue
+            fields = fields_of(form)
+            lead = LEADS[state][0][0]
+            if state == "A":
+                body = word_of(isa, set_field(word, *fields["cond"], 0))
+            else:
+                body = (0xBF08,) + word_of(isa, word)
+            for passes in (False, True):
+                apsr = (0x40000000 if passes else 0) | flags & 0xB0000000
+                conditional_cases.append(Case(
+                    suite, f"{form.name}/{prefix}{scenario}-eq{'p' if passes else 'f'}", form.name, state,
+                    lead + body, len(lead) if state == "A" else 2,
+                    f"{RECIPES[(form_index + number + 1) % len(RECIPES)]}-{suffix}",
+                    dict(initial, apsr=apsr)))
     return cases + conditional_cases
 
 

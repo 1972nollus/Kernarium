@@ -855,14 +855,16 @@ def emit_double(asm: Assembly) -> None:
 
 
 # LDM and STM, for each count of registers. The stream is
-#   [gadget][key][word0][register offsets, eight to a word][library operand]
+#   [gadget][word0][register offsets, eight to a word][library operand]
 # word0: rn[0:8], the start address's displacement from Rn (signed) [8:16],
-# the written-back Rn's displacement (signed) [16:24], writeback [24]. The
-# registers are in ascending order, which is the order of ascending
-# addresses. The start address must be word aligned; a transfer within one
-# page runs from the translated host address, and one that crosses a page is
-# the semantic library's, run as the whole instruction through the operand
-# the stream ends with (a32_library_call).
+# the written-back Rn's displacement (signed) [16:24], the instruction's
+# position (a32_layout.h) [24:32], writeback [32]. The registers are in
+# ascending order, which is the order of ascending addresses. The start
+# address must be word aligned; a transfer within one page runs from the
+# translated host address, and one that crosses a page is the semantic
+# library's, run as the whole instruction through the operand the stream ends
+# with (a32_library_call) and the position in place of the key, since no
+# transfer here reads the PC.
 def block_registers(count: int, access_load: bool, base: str) -> list[str]:
     """The transfers of `count` registers between the host address in `base`
     and CpuState; the register offsets are at [_stream, #8*k]."""
@@ -884,7 +886,7 @@ def block_registers(count: int, access_load: bool, base: str) -> list[str]:
 
 
 def block_prologue(label: str) -> list[str]:
-    return ["ldp x21, x19, [_stream], #16",
+    return ["ldr x19, [_stream], #8",
             "ubfx x9, x19, #0, #8", "ldr w9, [_cpu, x9]",
             "sbfx x10, x19, #8, #8", "add w7, w9, w10",
             "sbfx x11, x19, #16, #8", "add w22, w9, w11",
@@ -896,7 +898,7 @@ def block_epilogue(count: int) -> list[str]:
     # the whole instruction with.
     words = (count + 7) // 8 + 1
     return [f"add _stream, _stream, #{8 * words}",
-            "tbz x19, #24, 1f", "and x9, x19, #0xff",
+            "tbz x19, #32, 1f", "and x9, x19, #0xff",
             "str w22, [_cpu, x9]", "1:", "next_gadget"]
 
 
@@ -909,12 +911,12 @@ def block_gadget(count: int, access_load: bool) -> str:
     lines = block_prologue(name)
     lines.append(f"a32_translate {direction}, {page}, {size}, x7,"
                  f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-                 f" fault=La32_memory_fault")
+                 f" fault=La32_position_fault")
     lines += block_registers(count, access_load, "x7")
     lines += block_epilogue(count)
     lines.append(f"a32_translate_cold {direction}, {page}, {size}, x7,"
                  f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
-                 f" fault=La32_memory_fault")
+                 f" fault=La32_position_fault")
     # A transfer that crosses a page is the semantic library's: it
     # translates every page before it changes a register or, for a load,
     # any state, and an STM stores the words ahead of the one that faults.
@@ -922,9 +924,11 @@ def block_gadget(count: int, access_load: bool) -> str:
     # instruction.
     lines += [f"Lcross_{name}:",
               f"add _stream, _stream, #{8 * ((count + 7) // 8)}",
-              "ldr x8, [_stream], #8", "a32_library_call", "next_gadget"]
+              "ldr x8, [_stream], #8", "a32_position_pc",
+              "a32_library_call", "next_gadget"]
     lines += [f"Lalign_{name}:",
-              "b La32_alignment_fault_" + ("read" if access_load else "write")]
+              "b La32_position_alignment_fault_" +
+              ("read" if access_load else "write")]
     return "\n".join(lines)
 
 

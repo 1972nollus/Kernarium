@@ -3481,10 +3481,10 @@ private:
 			    cpu.gadget_indirect_miss)) {
 			const auto &program = exit->result.program;
 			const auto guest = program.guest_address();
-			/* The memory gadgets other than the block transfers
-			 * carry no key: they report the position of their
-			 * instruction in the block, which has bit 0 set where a
-			 * key has none. */
+			/* The memory gadgets other than VLDM, VSTM and the
+			 * structure transfers carry no key: they report the
+			 * position of their instruction in the block, which has
+			 * bit 0 set where a key has none. */
 			if ((cpu.pc & 3U) == 1U) {
 				const auto at = static_cast<std::size_t>(cpu.pc >> 2);
 				std::optional<std::size_t> unit;

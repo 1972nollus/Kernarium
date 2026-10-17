@@ -750,6 +750,7 @@ std::uint64_t Translator::library_operand(const Instruction &in,
 {
 	return std::uint64_t{in.word} |
 	       std::uint64_t{it_.bits()} << UML_GADGET_A32_LIBRARY_IT_SHIFT |
+	       std::uint64_t{thumb_} << UML_GADGET_A32_LIBRARY_THUMB_SHIFT |
 	       std::uint64_t{static_cast<std::uint8_t>(profile_.level)}
 		       << UML_GADGET_A32_LIBRARY_LEVEL_SHIFT |
 	       std::uint64_t{pc_value} << UML_GADGET_A32_LIBRARY_PC_VALUE_SHIFT |
@@ -898,14 +899,15 @@ Translator::Result Translator::emit_block_transfer(const Instruction &in,
 	default: start = 4; delta = 4 * count; break;
 	}
 	const bool has_pc = (registers & 0x8000U) != 0;
+	/* The gadgets carry no key, so an STM that stores the PC, which reads
+	 * the instruction's address, is the library's. */
 	if (!load && has_pc)
-		set_scratch(scratch0, pc_value());
+		return emit_library(in);
 	push(load ? kLdm[count] : kStm[count]);
-	push(key_);
 	push(static_cast<std::uint64_t>(base_register) * 8U |
 	     std::uint64_t{static_cast<std::uint8_t>(start)} << 8 |
 	     std::uint64_t{static_cast<std::uint8_t>(delta)} << 16 |
-	     std::uint64_t{writeback} << 24);
+	     position() | std::uint64_t{writeback} << 32);
 	std::uint64_t packed = 0;
 	unsigned index = 0;
 	for (unsigned number = 0; number < 16; ++number) {

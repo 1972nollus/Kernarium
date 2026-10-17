@@ -12,8 +12,8 @@ fpscr-qemu	qemu	252
 fpscr-reserved-pi4	pi4	144
 memory-qemu	qemu	1914
 pc-qemu	qemu	294
-positions-qemu	qemu	618
-positions-unaligned-pi4	pi4	34
+positions-qemu	qemu	750
+positions-unaligned-pi4	pi4	54
 prefetch-qemu	qemu	144
 sequences-qemu	qemu	1158
 simd-convert-qemu	qemu	1504

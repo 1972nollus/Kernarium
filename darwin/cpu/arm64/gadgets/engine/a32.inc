@@ -15,14 +15,14 @@
  * The PC of a translated stream is a key (cpu/arm64/aarch32/guest_key.hpp):
  * every PC word a gadget stores, and every guest PC in a BlockLink, is the
  * key of an A32 or T32 instruction. The runtime converts it on the way out.
- * A gadget that can leave the block with the instruction not retired (a
- * memory gadget, an undefined instruction) has the key of that instruction
- * in the stream word after its operands, which uml_arm64_gadget_memory_fault
- * and uml_arm64_gadget_illegal read through _stream. The one exception is
- * the exclusive and ordered transfers, which are the A64 part's gadgets: they
- * carry the instruction's position in the block in the top byte of their
- * operand, and finish_a32_block turns the position a fault reports into the
- * key.
+ * A gadget that can leave the block with the instruction not retired (an
+ * undefined instruction, VLDM, VSTM, a structure transfer) has the key of
+ * that instruction in the stream word after its operands, which
+ * uml_arm64_gadget_memory_fault and uml_arm64_gadget_illegal read through
+ * _stream. The other memory gadgets carry the instruction's position in the
+ * block in their operand instead (a32_layout.h; the exclusive and ordered
+ * transfers, which are the A64 part's gadgets, in its top byte), and
+ * finish_a32_block turns the position a fault reports into the key.
  *
  * Instruction conditions: a conditional instruction is preceded by an
  * a32_skip_<cc> gadget whose operand is the byte distance to skip over the
@@ -148,13 +148,14 @@ La32fpdone\@:
 .endm
 
 /* Runs one instruction through the AArch32 semantic library
- * (uml_arm64_gadget_a32_execute): x21 is the instruction's key, x8 the
- * library operand (a32_layout.h) and _stream is past the instruction's
- * stream words. The guest's NZCV, kept in x27, goes to CpuState before the
- * call and comes back after it; everything else the base profile touches is
- * in CpuState already. A fault leaves through the memory-fault exit with the
- * fault in the TLB, an UNDEFINED instruction through the illegal-instruction
- * exit, an internal error as the fatal event. */
+ * (uml_arm64_gadget_a32_execute): x21 is the instruction's key, or a block
+ * transfer's position as a32_position_pc forms it, x8 the library operand
+ * (a32_layout.h) and _stream is past the instruction's stream words. The
+ * guest's NZCV, kept in x27, goes to CpuState before the call and comes back
+ * after it; everything else the base profile touches is in CpuState already.
+ * A fault leaves through the memory-fault exit with the fault in the TLB, an
+ * UNDEFINED instruction through the illegal-instruction exit, an internal
+ * error as the fatal event. */
 .macro a32_library_call
 	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	/* The live FPSR is the host register while the native environment is
