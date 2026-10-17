@@ -154,8 +154,22 @@ executor to run its address space gets a new one, and every executor attached
 lets go of it, as the window lets go of the least recently used space, at the
 start of its next entry into translated code. The old space then dies with its
 last executor, taking its arena, link records and freed bodies, and the
-executors translate again what they still run. x86 gadget executors
-keep private translations: their links carry the block's guest range for
+executors translate again what they still run.
+
+The kernel numbers every Linux mm it creates (fork, exec and the first process
+each get a new one), never reuses a number, and destroys the generation when
+the mm's last reference goes; the MMU counts destroyed generations. An arm64
+gadget executor loads that count at the start of every entry into translated
+code and, when it moved, lets go of each address space it holds, in every SVCR
+mode cache, whose generation the MMU reports destroyed, as it lets go of a
+closed one. A generation that was destroyed can never run again, so nothing it
+held can be looked up again. Its number keeps its place in the executor's
+window order as a tombstone that the least-recently-used rule retires with no
+work, so a window keeps exactly the live address spaces it kept before. A
+shared space dies with the last executor attached to it, which lets go at its
+own next entry; a vCPU that is idle keeps it until then. Geekbench's windows
+otherwise hold the boot-time processes' spaces for the whole run. x86
+gadget executors keep private translations: their links carry the block's guest range for
 self-modifying-store checks, which translated code reads in two loads that one
 atomic store cannot keep consistent.
 

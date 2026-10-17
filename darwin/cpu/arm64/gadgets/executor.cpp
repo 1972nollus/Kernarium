@@ -1775,7 +1775,8 @@ public:
 			"slab_slots=%zu slab_count=%zu stream_index=0 slabs=%zu "
 			"streams=0 arena_empty=0 links=%zu indirect=0 "
 			"total=%zu stream_lookups=%llu adoptions=%llu shared=%d "
-			"sweeps=%llu swept_links=%llu swept_sites=%llu sweep_ns=%llu",
+			"sweeps=%llu swept_links=%llu swept_sites=%llu sweep_ns=%llu "
+			"dead_left=%llu lru_tomb=%llu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), slot_count, sizeof(Slot), slab_slots,
 			slab_total, slabs, lists, slabs + lists,
@@ -1784,7 +1785,9 @@ public:
 			share_ ? 1 : 0, static_cast<unsigned long long>(sweeps_),
 			static_cast<unsigned long long>(swept_links_),
 			static_cast<unsigned long long>(swept_sites_),
-			static_cast<unsigned long long>(sweep_ns_));
+			static_cast<unsigned long long>(sweep_ns_),
+			static_cast<unsigned long long>(dead_left_),
+			static_cast<unsigned long long>(lru_tomb_));
 		census::write_when(out, snapshot);
 		history_.write(out);
 		std::fputc('\n', out);
@@ -2227,25 +2230,46 @@ public:
 	}
 
 	/* Let go of every address space held here that has been closed, as the
-	 * window lets go of the least recently used one, and say whether the one
-	 * last prepared was among them. The caller runs no translated code of
-	 * this cache from before this call until after the next prepare(), which
-	 * it must therefore make: the retired space's successor is attached
-	 * there, at the address space's current code-change sequence. */
-	[[nodiscard]] bool leave_closed()
+	 * window lets go of the least recently used one, and, with `dead`, of
+	 * every one whose generation the MMU has destroyed since the caller last
+	 * looked. A destroyed generation never runs again, so nothing it holds
+	 * can be looked up again. A closed space's generation leaves the window's
+	 * order; a destroyed one's number keeps its place in it as a tombstone,
+	 * which holds nothing and which the least-recently-used rule retires when
+	 * it reaches it, so the window keeps the live address spaces it would
+	 * have kept. Say whether the one last prepared was among those let go of.
+	 * The caller runs no translated code of this cache from before this call
+	 * until after the next prepare(), which it must therefore make: a retired
+	 * space's successor is attached there, at the address space's current
+	 * code-change sequence. */
+	[[nodiscard]] bool leave_gone(bool dead)
 	{
-		bool left_current = false;
-		for (;;) {
-			const auto found = std::find_if(generations_.begin(),
-				generations_.end(), [](const auto &entry) {
-					return entry.second.space->closed();
-				});
-			if (found == generations_.end())
-				return left_current;
-			const auto generation = found->first;
-			left_current |= generation == current_generation_;
-			retire(generation);
+		struct Leaving final {
+			unsigned long generation;
+			bool tombstone;
+		};
+		std::array<Leaving, uml_gadget_resident_generations + 1U> leaving{};
+		std::size_t count = 0;
+		for (const auto &[generation, state] : generations_) {
+			if (count == leaving.size())
+				break;
+			if (state.space->closed())
+				leaving[count++] = {generation, false};
+			else if (dead &&
+				 darwin_uml_static_vm_generation_live(generation) == 0)
+				leaving[count++] = {generation, true};
 		}
+		bool left_current = false;
+		for (std::size_t index = 0; index < count; ++index) {
+			const auto [generation, tombstone] = leaving[index];
+			left_current |= generation == current_generation_;
+#if UML_GADGET_CACHE_CENSUS
+			if (tombstone)
+				++dead_left_;
+#endif
+			retire(generation, tombstone);
+		}
+		return left_current;
 	}
 
 private:
@@ -2459,48 +2483,56 @@ private:
 	 * The slots come from the list the address space kept while it was
 	 * storing, so this is proportional to what it owned rather than to the
 	 * size of the cache.
-	 */
-	void retire(unsigned long generation)
+	 *
+	 * The generation's number leaves the window's order unless `tombstone`
+	 * keeps its place there (leave_gone). A number in the order that names
+	 * no address space is such a tombstone: retiring it only drops the
+	 * place. */
+	void retire(unsigned long generation, bool tombstone = false)
 	{
 		const auto owner = generations_.find(generation);
-		if (owner != generations_.end()) {
-			const auto id = owner->second.id;
-			if (owner->second.slots_complete) {
-				for (const auto index : owner->second.slots)
-					release(slot_at(index), id);
-			} else {
-				for (auto &slab : slabs_) {
-					if (!slab)
-						continue;
-					for (auto &slot : slab->slots)
-						release(slot, id);
-				}
-			}
+		if (owner == generations_.end()) {
+			forget_place(generation);
+			return;
+		}
+		const auto id = owner->second.id;
+		if (owner->second.slots_complete) {
+			for (const auto index : owner->second.slots)
+				release(slot_at(index), id);
 		} else {
-			assert(false && "a resident address space is registered");
+			for (auto &slab : slabs_) {
+				if (!slab)
+					continue;
+				for (auto &slot : slab->slots)
+					release(slot, id);
+			}
 		}
 		if (link_memo_)
 			for (auto &entry : *link_memo_)
 				if (entry.generation == generation)
 					entry = {};
-		if (owner != generations_.end()) {
-			auto *space = owner->second.space;
-			const auto id = owner->second.id;
-			/* Everything that can fail comes before anything changes,
-			 * so that a failure leaves the address space held and
-			 * retirable again. */
-			free_ids_.reserve(free_ids_.size() + 1);
-			/* Letting go of its slots may have left a shared space
-			 * mostly freed arena. This cache still holds the space,
-			 * which is what makes it safe to close. */
-			renew_if_due(*space);
-			if (current_ == &owner->second)
-				unbind();
-			owners_[id] = nullptr;
-			free_ids_.push_back(id);
-			generations_.erase(owner);
-			SpaceRegistry::instance().detach(space, announcement_);
-		}
+		auto *space = owner->second.space;
+		/* Everything that can fail comes before anything changes,
+		 * so that a failure leaves the address space held and
+		 * retirable again. */
+		free_ids_.reserve(free_ids_.size() + 1);
+		/* Letting go of its slots may have left a shared space
+		 * mostly freed arena. This cache still holds the space,
+		 * which is what makes it safe to close. */
+		renew_if_due(*space);
+		if (current_ == &owner->second)
+			unbind();
+		owners_[id] = nullptr;
+		free_ids_.push_back(id);
+		generations_.erase(owner);
+		SpaceRegistry::instance().detach(space, announcement_);
+		if (!tombstone)
+			forget_place(generation);
+	}
+
+	/* Drop a generation's place in the window's order. */
+	void forget_place(unsigned long generation)
+	{
 		const auto found = std::find(
 			resident_.begin(), resident_.end(), generation);
 		if (found != resident_.end())
@@ -2673,8 +2705,13 @@ private:
 				},
 				state.changes, announcement_);
 			touch(current_generation_);
-			while (resident_.size() > uml_gadget_resident_generations)
+			while (resident_.size() > uml_gadget_resident_generations) {
+#if UML_GADGET_CACHE_CENSUS
+				if (!generations_.contains(resident_.front()))
+					++lru_tomb_;
+#endif
 				retire(resident_.front());
+			}
 		}
 		bind(*current_);
 		return *current_;
@@ -3102,6 +3139,10 @@ private:
 	std::uint64_t swept_links_{};
 	std::uint64_t swept_sites_{};
 	std::uint64_t sweep_ns_{};
+	/* Address spaces let go of because their generation was destroyed, and
+	 * the tombstones of those the window's order retired. */
+	std::uint64_t dead_left_{};
+	std::uint64_t lru_tomb_{};
 #endif
 	/* What the running address space adds to a key to make a tag, and
 	 * the epoch its slots must carry to be current. Both are read by
@@ -3132,6 +3173,7 @@ GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
 		shared_bodies_enabled();
 	programs_ = std::make_unique<ProgramCache>(build_options_, 0,
 		announcement_, share_translations_);
+	retirements_seen_ = darwin_uml_static_vm_generation_retirements();
 }
 
 GadgetExecutor::~GadgetExecutor()
@@ -3174,31 +3216,39 @@ constexpr std::uint64_t unprepared_changes = ~std::uint64_t{};
 } // namespace
 
 /* Let go of the address spaces another executor closed because they held
- * mostly freed arena (Space::renewal_due). This executor runs no translated
+ * mostly freed arena (Space::renewal_due), and, when the MMU has destroyed a
+ * generation since this executor last looked, of those whose generation it
+ * destroyed, which no vCPU can enter again. This executor runs no translated
  * code here, and its return ring empties at the first select_cpu() of the
  * run that follows, which is what window retirement relies on too. A cache
  * that lost the address space it last prepared must prepare again, so that
  * the successor is attached at the code-change sequence the guest is at
  * rather than the zero a fresh binding starts from. */
-void GadgetExecutor::leave_closed_spaces() noexcept
+void GadgetExecutor::leave_gone_spaces(std::uint64_t retirements) noexcept
 {
-	if (!announcement_->renew.exchange(false, std::memory_order_acquire))
+	const bool dead = retirements != retirements_seen_;
+	const bool closed = announcement_ != nullptr &&
+		announcement_->renew.exchange(false, std::memory_order_acquire);
+	if (!dead && !closed)
 		return;
+	retirements_seen_ = retirements;
 	try {
-		if (programs_->leave_closed()) {
+		if (programs_->leave_gone(dead)) {
 			cache_generation_ = no_generation;
 			cache_changes_ = unprepared_changes;
 		}
 		for (auto &mode : sme_caches_)
-			if (mode.programs && mode.programs->leave_closed()) {
+			if (mode.programs && mode.programs->leave_gone(dead)) {
 				mode.generation = no_generation;
 				mode.changes = unprepared_changes;
 			}
 	} catch (...) {
 		/* Out of memory part way, so some may still be held: ask again at
 		 * the next entry, and prepare afresh meanwhile, since the one last
-		 * prepared may be among those let go. */
-		announcement_->renew.store(true, std::memory_order_relaxed);
+		 * prepared may be among those let go of. */
+		if (announcement_ != nullptr)
+			announcement_->renew.store(true, std::memory_order_relaxed);
+		retirements_seen_ = retirements - 1U;
 		cache_generation_ = no_generation;
 		cache_changes_ = unprepared_changes;
 		for (auto &mode : sme_caches_) {
@@ -3212,9 +3262,14 @@ bool GadgetExecutor::begin_execution(unsigned long generation,
 				     std::uint64_t guest_pc)
 {
 	preempted_ = false;
-	if (announcement_ != nullptr &&
-	    announcement_->renew.load(std::memory_order_relaxed))
-		leave_closed_spaces();
+	/* Two loads decide: whether the MMU destroyed a generation since this
+	 * executor last looked, and whether another executor closed a space it
+	 * holds. */
+	const auto retirements = darwin_uml_static_vm_generation_retirements();
+	if (retirements != retirements_seen_ ||
+	    (announcement_ != nullptr &&
+	     announcement_->renew.load(std::memory_order_relaxed)))
+		leave_gone_spaces(retirements);
 	auto *context = execution_context(generation);
 	if (context == nullptr ||
 	    darwin_uml_static_vm_execution_context_begin(context, guest_pc) != 0)
