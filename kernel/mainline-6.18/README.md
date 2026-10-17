@@ -585,7 +585,10 @@ The product carries none of ACK's own features, and does without them:
   `sys.use_memfd`, so libcutils' `ashmem_create_region()` creates a memfd;
   native code that opens the device itself, or issues ashmem ioctls on a memfd,
   fails (a memfd answers `ENOTTY`). Recovery loads no product properties, so
-  the recovery image must set `sys.use_memfd` itself.
+  the recovery image must set `sys.use_memfd` itself. Only apps that target
+  SDK 27 or lower can reach the device at all, since SELinux denies it to
+  later targets on ACK too. Fennec 66, for one, loses its ashmem IPC path
+  but renders and runs, so the product carries no ashmem shim.
 - dm-default-key (metadata encryption), which the unencrypted userdata does not
   use.
 - Per-UID I/O statistics (`/proc/uid_io/stats`), which storaged does without.
