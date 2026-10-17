@@ -1113,7 +1113,11 @@ have left the cache to have left some unnamed: one that no resident
 translation's stream names and that is no resident block's own record is
 released for reuse, and the site cells and target-table entries naming it are
 emptied, so link state follows what the cache holds rather than all the code
-the address space ever ran. A shared address space is not swept. Cached
+the address space ever ran. A shared address space is not swept, but is renewed once its arena holds
+at least two mebibytes no body uses and more than its bodies do: it is closed,
+and each executor attached lets go of it at the start of its next entry into
+translated code, so the next one to run the address space makes a new one and
+the old one dies with its last executor. Cached
 returns consult a private per-carrier return-record ring after their site
 cells miss: linked calls push the return PC with its block link, a matching
 record follows that link and fills an empty cell of the site, and the executor

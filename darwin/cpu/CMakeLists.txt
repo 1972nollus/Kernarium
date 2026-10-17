@@ -498,6 +498,33 @@ target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
     UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
+if(UML_BUILD_UNIT_TESTS)
+    # The same executor with a schedule for renewing shared address spaces and
+    # the hooks that let a test lower the floor and read what a space holds
+    # (stress hooks in executor.hpp), and a small cache so that a test can
+    # evict a space's translations with a few thousand blocks. Only the tests
+    # of a shared space's bound link it, in place of the production executor
+    # above; the executor's cache geometry is private to its translation
+    # unit.
+    add_library(uml_arm64_gadget_sweep_stress_executor OBJECT
+        arm64/gadgets/executor.cpp)
+    uml_declare_architecture_target(
+        uml_arm64_gadget_sweep_stress_executor cpu gadget)
+    target_link_libraries(uml_arm64_gadget_sweep_stress_executor PRIVATE
+        UML::BridgeAbi
+        UML::CpuContract)
+    target_link_libraries(uml_arm64_gadget_sweep_stress_executor PUBLIC
+        uml_arm64_gadgets)
+    target_include_directories(uml_arm64_gadget_sweep_stress_executor PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin)
+    target_compile_definitions(uml_arm64_gadget_sweep_stress_executor PRIVATE
+        UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
+        UML_GADGET_CACHE_SLOTS=1024
+        UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS}
+        UML_GADGET_SWEEP_STRESS=1)
+endif()
+
 add_library(uml_arm64_gadget_engine OBJECT arm64/gadgets/engine_adapter.cpp)
 uml_declare_architecture_target(uml_arm64_gadget_engine cpu gadget)
 target_link_libraries(uml_arm64_gadget_engine PRIVATE

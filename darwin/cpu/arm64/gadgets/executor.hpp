@@ -106,6 +106,9 @@ private:
 	/* A cached translation is handed out as a BuildResult whose program
 	 * borrows the cache's words, so it is valid until the next store. */
 	void prepare_cache(unsigned long generation, std::uint64_t changes);
+	/* Before entering translated code: let go of the address spaces
+	 * another executor closed. */
+	void leave_closed_spaces() noexcept;
 	void select_cpu(CpuState &cpu) noexcept;
 	[[nodiscard]] std::optional<BuildResult> find(
 		std::uint64_t pc, std::uint64_t changes,
@@ -184,5 +187,39 @@ private:
 	ExecutorAnnouncement *announcement_{};
 	bool share_translations_{};
 };
+
+#if defined(UML_GADGET_SWEEP_STRESS) && UML_GADGET_SWEEP_STRESS
+/* Hooks of the unit-test variant of the gadget executor
+ * (uml_arm64_gadget_sweep_stress_executor), which tests link in place of the
+ * production one. They are defined in executor.cpp, under the same macro. */
+namespace stress {
+
+/* Address spaces alive now, private and closed ones included, and how many
+ * shared ones have been closed. */
+[[nodiscard]] std::size_t live_spaces() noexcept;
+[[nodiscard]] std::uint64_t closes() noexcept;
+/* Renew a shared address space on every Nth body stored in it, 0 for never;
+ * the variant starts at every 64th. */
+void set_renewal_period(unsigned stores) noexcept;
+/* Freed arena bytes a shared address space needs before it is renewed for
+ * holding more of them than its bodies use; production uses two mebibytes. */
+void set_renewal_floor(std::size_t bytes) noexcept;
+/* Close the open shared address spaces of one guest address space, as a
+ * store that found them mostly freed arena would; how many. The caller is
+ * the only thread that can destroy them. */
+std::size_t close_spaces(unsigned long generation);
+struct SpaceBytes final {
+	std::size_t arena;
+	std::size_t held;
+	std::size_t spaces;
+};
+/* What the open shared spaces of a guest address space hold: arena bytes,
+ * and the bytes of the bodies some slot holds. */
+[[nodiscard]] SpaceBytes open_space_bytes(unsigned long generation);
+/* Exercise the body arena's commit and byte counts; aborts on a failure. */
+void arena_self_test();
+
+} // namespace stress
+#endif
 
 } // namespace uml::cpu::arm64::gadgets

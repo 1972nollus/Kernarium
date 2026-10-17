@@ -140,7 +140,17 @@ and freed body arena that private copies shed, and WebGL Aquarium's cache grew
 by a fifth to a third at its peak (G227). A private cache sweeps away the
 link records and indirect sites that nothing it holds names any more, but a
 shared space is never swept, so sharing stays off while a shared space does not
-bound that state. x86 gadget executors
+bound that state.
+
+A shared space bounds its freed arena by renewal. It counts the bytes of its
+arena and of the bodies some slot holds; once it holds at least two mebibytes
+no body uses, and more than its bodies use, the executor that let go of a body
+or stored one closes it. A closed space leaves the registry, so the next
+executor to run its address space gets a new one, and every executor attached
+lets go of it, as the window lets go of the least recently used space, at the
+start of its next entry into translated code. The old space then dies with its
+last executor, taking its arena, link records and freed bodies, and the
+executors translate again what they still run. x86 gadget executors
 keep private translations: their links carry the block's guest range for
 self-modifying-store checks, which translated code reads in two loads that one
 atomic store cannot keep consistent.

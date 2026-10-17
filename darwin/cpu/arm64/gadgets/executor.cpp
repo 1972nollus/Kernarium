@@ -19,9 +19,7 @@
 #include <bit>
 #include <cassert>
 #include <cstddef>
-#if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
-#endif
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -47,6 +45,12 @@ namespace {
  * one that reads it. */
 #ifndef UML_GADGET_BLOCK_INSTRUCTIONS
 #error "UML_GADGET_BLOCK_INSTRUCTIONS must come from the build"
+#endif
+/* Set only by the unit-test variant of this file (see the stress hooks at its
+ * end), which renews shared address spaces on a schedule instead of waiting
+ * for their freed arena to grow. */
+#ifndef UML_GADGET_SWEEP_STRESS
+#define UML_GADGET_SWEEP_STRESS 0
 #endif
 constexpr std::size_t block_instruction_count = UML_GADGET_BLOCK_INSTRUCTIONS;
 constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
@@ -311,6 +315,12 @@ private:
  * measured guest did about once per hundred and twenty stores; the index by
  * stream address that this replaces was maintained at every one of those
  * stores, five set installs per program. See G203.
+ *
+ * A block is live from commit(), not from allocate(): the caller writes the
+ * body between them without the arena's lock, so a reader that walks the live
+ * blocks under it never meets a body that is half written. The arena also
+ * counts the bytes it holds, so its owner can tell without a walk how much of
+ * them its bodies use.
  */
 class BodyArena final {
 public:
@@ -340,12 +350,12 @@ public:
 			auto *block = static_cast<std::byte *>(
 				upstream_->allocate(size,
 					alignof(std::max_align_t)));
-			direct_.push_back({block, size});
+			direct_.push_back({block, size, false});
+			bytes_ += size;
 			return block;
 		}
 		if (auto *block = free_[size / granule]; block != nullptr) {
 			free_[size / granule] = next_of(block);
-			mark(block, true);
 			return block;
 		}
 		if (size > limit_ - used_) {
@@ -357,23 +367,36 @@ public:
 				upstream_->allocate(wanted,
 					alignof(std::max_align_t)));
 			/* Kept in address order, which is what owner() searches. */
-			const auto inserted = chunks_.insert(
+			chunks_.insert(
 				std::upper_bound(chunks_.begin(), chunks_.end(),
 					base, before_chunk),
 				Chunk{base, wanted, std::move(starts)});
+			bytes_ += wanted;
 			/* The tail of the chunk being left behind is at most one
 			 * body, and one partly used chunk is the arena's whole
 			 * slack. */
 			current_ = base;
-			current_starts_ = inserted->starts.get();
 			used_ = 0;
 			limit_ = wanted;
 		}
 		auto *block = current_ + used_;
-		current_starts_[used_ / granule / 64] |=
-			std::uint64_t{1} << (used_ / granule % 64);
 		used_ += size;
 		return block;
+	}
+
+	/* The block's contents are written: from here it is live, and owner()
+	 * finds it. */
+	void commit(void *block) noexcept
+	{
+		auto *at = static_cast<std::byte *>(block);
+		if (chunk_of(at) != nullptr) {
+			mark(at, true);
+			return;
+		}
+		const auto held = std::find_if(direct_.begin(), direct_.end(),
+			[at](const Direct &direct) { return direct.base == at; });
+		assert(held != direct_.end());
+		held->committed = true;
 	}
 
 	void deallocate(void *block, std::size_t bytes) noexcept
@@ -387,6 +410,7 @@ public:
 				});
 			if (held != direct_.end())
 				direct_.erase(held);
+			bytes_ -= size;
 			upstream_->deallocate(block, size,
 				alignof(std::max_align_t));
 			return;
@@ -423,20 +447,19 @@ public:
 			}
 		}
 		for (const auto &direct : direct_)
-			if (at >= direct.base && at < direct.base + direct.bytes)
+			if (direct.committed && at >= direct.base &&
+			    at < direct.base + direct.bytes)
 				return direct.base;
 		return nullptr;
 	}
 
 	/* What the arena holds, which is what the cache costs. */
-	[[nodiscard]] std::size_t bytes() const noexcept
+	[[nodiscard]] std::size_t bytes() const noexcept { return bytes_; }
+
+	/* What a block for `bytes` takes from the arena. */
+	[[nodiscard]] static std::size_t block_bytes(std::size_t bytes) noexcept
 	{
-		std::size_t total = 0;
-		for (const auto &direct : direct_)
-			total += direct.bytes;
-		for (const auto &chunk : chunks_)
-			total += chunk.bytes;
-		return total;
+		return rounded(bytes);
 	}
 
 	/* The start maps, which are what owner() costs. */
@@ -506,6 +529,7 @@ private:
 	struct Direct final {
 		std::byte *base;
 		std::size_t bytes;
+		bool committed;
 	};
 
 	[[nodiscard]] static bool before_chunk(
@@ -542,10 +566,11 @@ private:
 	std::vector<Chunk> chunks_;
 	std::vector<Direct> direct_;
 	std::byte *current_{};
-	std::uint64_t *current_starts_{};
 	std::size_t used_{};
 	std::size_t limit_{};
 	std::size_t next_chunk_{first_chunk};
+	/* The bytes of the chunks and the direct blocks. */
+	std::size_t bytes_{};
 	std::array<std::byte *, classes> free_{};
 };
 
@@ -561,6 +586,12 @@ private:
 struct alignas(128) ExecutorAnnouncement final {
 	std::atomic<std::uint64_t> sequence{};
 	bool used{};
+	/* Set by whichever executor closes an address space this one is
+	 * attached to (Space::request_renewal): the next time this executor
+	 * enters translated code it first lets go of every closed address
+	 * space it holds. Written through a pointer to const, since an
+	 * executor sees the announcements of the others that way. */
+	mutable std::atomic<bool> renew{};
 };
 
 namespace {
@@ -869,6 +900,7 @@ std::mutex announcements_mutex;
 		if (announcement.used)
 			continue;
 		announcement.used = true;
+		announcement.renew.store(false, std::memory_order_relaxed);
 		announcement.sequence.store(next_odd(announcement.sequence.load(
 			std::memory_order_relaxed)), std::memory_order_relaxed);
 		return &announcement;
@@ -905,6 +937,28 @@ void announce_exit(Announcement &announcement) noexcept
 	const char *value = std::getenv("DARWIN_UML_GADGET_SHARED_BODIES");
 	return value != nullptr && *value != '\0' &&
 		std::strcmp(value, "0") != 0;
+}
+
+/* A shared address space whose arena holds at least this many bytes that no
+ * slot needs, and more of them than its bodies hold, is renewed (see
+ * Space::renewal_due). */
+constexpr std::size_t renewal_floor_bytes = std::size_t{2} << 20;
+
+#if UML_GADGET_SWEEP_STRESS
+/* The unit-test variant lowers the floor and renews on a schedule. */
+std::atomic<std::size_t> stress_renewal_floor{renewal_floor_bytes};
+std::atomic<unsigned> stress_renewal_period{64};
+std::atomic<std::size_t> stress_live_spaces{};
+std::atomic<std::uint64_t> stress_closes{};
+#endif
+
+[[nodiscard]] inline std::size_t renewal_floor() noexcept
+{
+#if UML_GADGET_SWEEP_STRESS
+	return stress_renewal_floor.load(std::memory_order_relaxed);
+#else
+	return renewal_floor_bytes;
+#endif
 }
 
 void release_announcement(Announcement *announcement) noexcept
@@ -967,8 +1021,18 @@ struct SpaceKey final {
  * or relocation (G161, G166).
  *
  * The records are split eight ways by key, each part behind its own lock, so
- * vCPUs resolving links for different code rarely meet. Lock order: reset,
- * shard, limbo, arena.
+ * vCPUs resolving links for different code rarely meet. Lock order: registry,
+ * reset, shard, limbo, arena; the registry's lock also covers a space's
+ * attached list.
+ *
+ * A shared address space also counts what its arena holds and what its bodies
+ * use of it. Once the arena holds at least as much freed space as bodies
+ * (renewal_due), the space is closed: it leaves the registry, so the next
+ * executor to want its address space gets a new one, and every executor
+ * attached lets go of it before its next entry into translated code. The old
+ * space then dies with its last executor and takes its arena, its link
+ * records and its freed bodies with it, which window retirement does for a
+ * private one.
  */
 class Space final {
 public:
@@ -979,6 +1043,9 @@ public:
 		auto &empty = shard_of(empty_pc);
 		empty_link_ = &empty.links.try_emplace(empty_pc, empty_pc)
 			.first->link;
+#if UML_GADGET_SWEEP_STRESS
+		stress_live_spaces.fetch_add(1, std::memory_order_relaxed);
+#endif
 	}
 
 	~Space()
@@ -987,6 +1054,9 @@ public:
 		 * run a body or follow a record of it. */
 		free_bodies(limbo_.waiting);
 		free_bodies(limbo_.incoming);
+#if UML_GADGET_SWEEP_STRESS
+		stress_live_spaces.fetch_sub(1, std::memory_order_relaxed);
+#endif
 	}
 
 	Space(const Space &) = delete;
@@ -1013,6 +1083,49 @@ public:
 		if (found != attached_.end())
 			attached_.erase(found);
 		return attached_.empty();
+	}
+
+	/* Whether this shared address space holds enough freed arena to be
+	 * replaced: at least the floor, and as much as its bodies use. A private
+	 * one never is, since its executor's window retires it. */
+	[[nodiscard]] bool renewal_due() const noexcept
+	{
+		return renewal_due_.load(std::memory_order_relaxed) &&
+			!closed_.load(std::memory_order_relaxed);
+	}
+
+	[[nodiscard]] bool closed() const noexcept
+	{
+		return closed_.load(std::memory_order_acquire);
+	}
+
+#if UML_GADGET_SWEEP_STRESS
+	[[nodiscard]] std::size_t stress_arena_bytes() const noexcept
+	{
+		return arena_bytes_.load(std::memory_order_relaxed);
+	}
+	[[nodiscard]] std::size_t stress_held_bytes() const noexcept
+	{
+		return held_bytes_.load(std::memory_order_relaxed);
+	}
+#endif
+
+	/* Close the address space; true for the caller that did, which then
+	 * withdraws it from the registry and calls request_renewal(). */
+	[[nodiscard]] bool close() noexcept
+	{
+		return !closed_.exchange(true, std::memory_order_acq_rel);
+	}
+
+	/* Ask every executor attached to let go of this address space before it
+	 * next enters translated code. */
+	void request_renewal()
+	{
+		const std::lock_guard guard{attached_mutex_};
+		for (const auto *announcement : attached_)
+			if (announcement != nullptr)
+				announcement->renew.store(true,
+					std::memory_order_release);
 	}
 
 	[[nodiscard]] const arm64::gadgets::BlockLink *link(std::uint64_t pc)
@@ -1117,6 +1230,13 @@ public:
 				return held;
 			}
 			body->holders = 1;
+			{
+				/* Written, and held: the arena counts it live. */
+				const std::lock_guard arena{arena_mutex_};
+				bodies_.commit(body);
+			}
+			if (key_.owner == nullptr)
+				note_held(*body);
 			if (!validation.empty())
 				record.indexed = body;
 		}
@@ -1151,6 +1271,8 @@ public:
 		/* Only a body that leaves can leave a record nothing names. */
 		if (key_.owner != nullptr)
 			++departed_;
+		else
+			note_released(*body);
 		/* Nothing names it from here on; executors that loaded the
 		 * record before this may still be running it, so it waits for
 		 * them in limbo. */
@@ -1593,10 +1715,15 @@ private:
 			entry + words.size(), validation.size(), with_stop);
 		assert(words.size() < (std::size_t{1} << 24));
 		void *storage = nullptr;
+		bool grown = false;
 		{
 			const std::lock_guard arena{arena_mutex_};
 			storage = bodies_.allocate(bytes);
+			if (key_.owner == nullptr)
+				grown = note_arena();
 		}
+		if (grown)
+			note_idle();
 		auto *body = new (storage) Body{};
 		body->guest_address = program.guest_address();
 		body->word_count = static_cast<std::uint32_t>(words.size());
@@ -1626,6 +1753,56 @@ private:
 		const auto bytes = body->allocation_bytes();
 		body->~Body();
 		bodies_.deallocate(body, bytes);
+		if (key_.owner == nullptr)
+			(void)note_arena();
+	}
+
+	/* The arena's bytes changed hands: record them, and say whether they
+	 * differ from what was last recorded. The caller holds arena_mutex_. */
+	bool note_arena() noexcept
+	{
+		const auto bytes = bodies_.bytes();
+		return arena_bytes_.exchange(bytes, std::memory_order_relaxed) !=
+			bytes;
+	}
+
+	/* A body some slot holds now, where none did. The caller holds the shard
+	 * lock of its record. */
+	void note_held(const Body &body) noexcept
+	{
+		held_bytes_.fetch_add(
+			BodyArena::block_bytes(body.allocation_bytes()),
+			std::memory_order_relaxed);
+#if UML_GADGET_SWEEP_STRESS
+		const auto period =
+			stress_renewal_period.load(std::memory_order_relaxed);
+		if (period != 0 &&
+		    stress_stores_.fetch_add(1, std::memory_order_relaxed) %
+				period == period - 1U)
+			renewal_due_.store(true, std::memory_order_relaxed);
+#endif
+	}
+
+	/* The last slot let go of a body. The caller holds the shard lock of its
+	 * record. */
+	void note_released(const Body &body) noexcept
+	{
+		held_bytes_.fetch_sub(
+			BodyArena::block_bytes(body.allocation_bytes()),
+			std::memory_order_relaxed);
+		note_idle();
+	}
+
+	/* Mark the space for renewal once the arena holds more bytes no body
+	 * uses than bodies do, and at least the floor. Both counts move apart
+	 * from the decision, so this only ever errs by a store or a release. */
+	void note_idle() noexcept
+	{
+		const auto arena = arena_bytes_.load(std::memory_order_relaxed);
+		const auto held = held_bytes_.load(std::memory_order_relaxed);
+		if (arena > held && arena - held >= held &&
+		    arena - held >= renewal_floor())
+			renewal_due_.store(true, std::memory_order_relaxed);
 	}
 
 	void free_bodies(std::vector<Body *> &bodies) noexcept
@@ -1670,6 +1847,17 @@ private:
 	 * kept, and the bodies that have left it since (sweep_due()). */
 	std::size_t kept_{};
 	std::size_t departed_{};
+	/* For a shared one: the bytes of its arena, and of the bodies some slot
+	 * holds (a body counts from its first holder to its last), whether it
+	 * holds enough freed arena to be renewed, and whether it has been
+	 * (renewal_due()). */
+	std::atomic<std::size_t> arena_bytes_{};
+	std::atomic<std::size_t> held_bytes_{};
+	std::atomic<bool> renewal_due_{};
+	std::atomic<bool> closed_{};
+#if UML_GADGET_SWEEP_STRESS
+	std::atomic<std::uint64_t> stress_stores_{};
+#endif
 };
 
 /* The address spaces whose translations executors share, by key. */
@@ -1717,18 +1905,41 @@ public:
 			const std::lock_guard guard{mutex_};
 			if (!space->detach(announcement))
 				return;
-			const auto found = spaces_.find(
-				{space->key().generation, space->key().mode});
-			if (found != spaces_.end()) {
-				auto &candidates = found->second;
-				candidates.erase(std::find(candidates.begin(),
-					candidates.end(), space));
-				if (candidates.empty())
-					spaces_.erase(found);
-			}
+			withdraw(space);
 			destroyed.reset(space);
 		}
 	}
+
+	/* Close a shared space and ask its executors to let go of it. It stays
+	 * alive for as long as some of them have not; no executor attaches to it
+	 * from here on, since attaching happens under the lock that withdraws
+	 * it, so every executor that did is among those asked. */
+	void close(Space *space)
+	{
+		if (!space->close())
+			return;
+#if UML_GADGET_SWEEP_STRESS
+		stress_closes.fetch_add(1, std::memory_order_relaxed);
+#endif
+		const std::lock_guard guard{mutex_};
+		withdraw(space);
+		space->request_renewal();
+	}
+
+#if UML_GADGET_SWEEP_STRESS
+	/* The open spaces of a guest address space, all modes. */
+	[[nodiscard]] std::vector<Space *> open_spaces(unsigned long generation)
+	{
+		const std::lock_guard guard{mutex_};
+		std::vector<Space *> found;
+		for (const auto &[key, candidates] : spaces_)
+			if (key.generation == generation)
+				for (auto *space : candidates)
+					if (!space->closed())
+						found.push_back(space);
+		return found;
+	}
+#endif
 
 private:
 	struct Key final {
@@ -1743,6 +1954,23 @@ private:
 				(std::size_t{key.mode} << 56);
 		}
 	};
+
+	/* Stop handing a space out. It may already be gone, when it was closed.
+	 * The caller holds mutex_. */
+	void withdraw(const Space *space)
+	{
+		const auto found = spaces_.find(
+			{space->key().generation, space->key().mode});
+		if (found == spaces_.end())
+			return;
+		auto &candidates = found->second;
+		const auto at =
+			std::find(candidates.begin(), candidates.end(), space);
+		if (at != candidates.end())
+			candidates.erase(at);
+		if (candidates.empty())
+			spaces_.erase(found);
+	}
 
 	std::mutex mutex_;
 	std::unordered_map<Key, std::vector<Space *>, KeyHash> spaces_;
@@ -1778,9 +2006,11 @@ public:
 				slot.vacate();
 			}
 		}
-		for (auto &[generation, state] : generations_)
+		for (auto &[generation, state] : generations_) {
+			renew_if_due(*state.space);
 			SpaceRegistry::instance().detach(state.space,
 				announcement_);
+		}
 	}
 
 	ProgramCache(const ProgramCache &) = delete;
@@ -2250,6 +2480,7 @@ public:
 		 * a sweep reads names a record it made. */
 		if (state.space->sweep_due())
 			sweep(state, diagnostics);
+		renew_if_due(*state.space);
 		return slot.body->result();
 	}
 
@@ -2269,6 +2500,28 @@ public:
 	[[nodiscard]] std::uint64_t adoptions() const noexcept
 	{
 		return adoptions_;
+	}
+
+	/* Let go of every address space held here that has been closed, as the
+	 * window lets go of the least recently used one, and say whether the one
+	 * last prepared was among them. The caller runs no translated code of
+	 * this cache from before this call until after the next prepare(), which
+	 * it must therefore make: the retired space's successor is attached
+	 * there, at the address space's current code-change sequence. */
+	[[nodiscard]] bool leave_closed()
+	{
+		bool left_current = false;
+		for (;;) {
+			const auto found = std::find_if(generations_.begin(),
+				generations_.end(), [](const auto &entry) {
+					return entry.second.space->closed();
+				});
+			if (found == generations_.end())
+				return left_current;
+			const auto generation = found->first;
+			left_current |= generation == current_generation_;
+			retire(generation);
+		}
 	}
 
 private:
@@ -2509,6 +2762,14 @@ private:
 		if (owner != generations_.end()) {
 			auto *space = owner->second.space;
 			const auto id = owner->second.id;
+			/* Everything that can fail comes before anything changes,
+			 * so that a failure leaves the address space held and
+			 * retirable again. */
+			free_ids_.reserve(free_ids_.size() + 1);
+			/* Letting go of its slots may have left a shared space
+			 * mostly freed arena. This cache still holds the space,
+			 * which is what makes it safe to close. */
+			renew_if_due(*space);
 			if (current_ == &owner->second)
 				unbind();
 			owners_[id] = nullptr;
@@ -2520,6 +2781,18 @@ private:
 			resident_.begin(), resident_.end(), generation);
 		if (found != resident_.end())
 			resident_.erase(found);
+	}
+
+	/* Close a shared address space that holds enough freed arena
+	 * (Space::renewal_due), for every executor attached to let go of. Only
+	 * one this cache holds, and so is attached to throughout: whoever lets go
+	 * of a body closes the space it was in, not just the space it stores
+	 * into, since a mostly dead space receives no stores. Called with no lock
+	 * of the space held. */
+	static void renew_if_due(Space &space)
+	{
+		if (space.renewal_due())
+			SpaceRegistry::instance().close(&space);
 	}
 
 	void release(Slot &slot, std::uint16_t owner)
@@ -2805,8 +3078,10 @@ private:
 				body_digest(*slot.body), body_bytes(*slot.body),
 				census::Departure::evicted);
 #endif
-			space_of(slot).release(slot.body, false);
+			auto &evicted = space_of(slot);
+			evicted.release(slot.body, false);
 			slot.vacate();
+			renew_if_due(evicted);
 		}
 		/* The memoised record describes whoever held the slot until now,
 		 * and a store may hand the slot to a different address space at
@@ -2845,6 +3120,7 @@ private:
 		++diagnostics.adoptions;
 		auto &slot = install(pc, body, changes);
 		space.reclaim(announcement_);
+		renew_if_due(space);
 		return slot.body->result();
 	}
 
@@ -2860,6 +3136,7 @@ private:
 			space.release(slot.body, true);
 			slot.vacate();
 			space.reclaim(announcement_);
+			renew_if_due(space);
 		}
 	}
 
@@ -3163,10 +3440,57 @@ GadgetExecutor::~GadgetExecutor()
 	release_announcement(announcement_);
 }
 
+namespace {
+
+/* A cache generation and code-change sequence no run has: they make the next
+ * prepare_cache() prepare. */
+constexpr unsigned long no_generation = ~0UL;
+constexpr std::uint64_t unprepared_changes = ~std::uint64_t{};
+
+} // namespace
+
+/* Let go of the address spaces another executor closed because they held
+ * mostly freed arena (Space::renewal_due). This executor runs no translated
+ * code here, and its return ring empties at the first select_cpu() of the
+ * run that follows, which is what window retirement relies on too. A cache
+ * that lost the address space it last prepared must prepare again, so that
+ * the successor is attached at the code-change sequence the guest is at
+ * rather than the zero a fresh binding starts from. */
+void GadgetExecutor::leave_closed_spaces() noexcept
+{
+	if (!announcement_->renew.exchange(false, std::memory_order_acquire))
+		return;
+	try {
+		if (programs_->leave_closed()) {
+			cache_generation_ = no_generation;
+			cache_changes_ = unprepared_changes;
+		}
+		for (auto &mode : sme_caches_)
+			if (mode.programs && mode.programs->leave_closed()) {
+				mode.generation = no_generation;
+				mode.changes = unprepared_changes;
+			}
+	} catch (...) {
+		/* Out of memory part way, so some may still be held: ask again at
+		 * the next entry, and prepare afresh meanwhile, since the one last
+		 * prepared may be among those let go. */
+		announcement_->renew.store(true, std::memory_order_relaxed);
+		cache_generation_ = no_generation;
+		cache_changes_ = unprepared_changes;
+		for (auto &mode : sme_caches_) {
+			mode.generation = no_generation;
+			mode.changes = unprepared_changes;
+		}
+	}
+}
+
 bool GadgetExecutor::begin_execution(unsigned long generation,
 				     std::uint64_t guest_pc)
 {
 	preempted_ = false;
+	if (announcement_ != nullptr &&
+	    announcement_->renew.load(std::memory_order_relaxed))
+		leave_closed_spaces();
 	auto *context = execution_context(generation);
 	if (context == nullptr ||
 	    darwin_uml_static_vm_execution_context_begin(context, guest_pc) != 0)
@@ -3990,5 +4314,119 @@ std::uint32_t GadgetExecutor::floating_point_syndrome() const noexcept
 {
 	return floating_point_syndrome_;
 }
+
+#if UML_GADGET_SWEEP_STRESS
+namespace stress {
+
+std::size_t live_spaces() noexcept
+{
+	return stress_live_spaces.load(std::memory_order_relaxed);
+}
+
+std::uint64_t closes() noexcept
+{
+	return stress_closes.load(std::memory_order_relaxed);
+}
+
+void set_renewal_period(unsigned stores) noexcept
+{
+	stress_renewal_period.store(stores, std::memory_order_relaxed);
+}
+
+void set_renewal_floor(std::size_t bytes) noexcept
+{
+	stress_renewal_floor.store(bytes, std::memory_order_relaxed);
+}
+
+std::size_t close_spaces(unsigned long generation)
+{
+	auto &registry = SpaceRegistry::instance();
+	std::size_t closed = 0;
+	for (auto *space : registry.open_spaces(generation)) {
+		registry.close(space);
+		++closed;
+	}
+	return closed;
+}
+
+SpaceBytes open_space_bytes(unsigned long generation)
+{
+	SpaceBytes total{};
+	for (const auto *space :
+	     SpaceRegistry::instance().open_spaces(generation)) {
+		total.arena += space->stress_arena_bytes();
+		total.held += space->stress_held_bytes();
+		++total.spaces;
+	}
+	return total;
+}
+
+void arena_self_test()
+{
+	const auto check = [](bool condition, int line = __builtin_LINE()) {
+		if (!condition) {
+			std::fprintf(stderr, "executor.cpp:%d: arena check failed\n",
+				line);
+			std::abort();
+		}
+	};
+	CountingResource upstream;
+	{
+		BodyArena arena{&upstream};
+		auto *first = static_cast<std::byte *>(arena.allocate(100));
+		/* A block is live from commit(), not from allocate(). owner() names
+		 * the live block at or below an address, so an uncommitted one is
+		 * never named for itself. */
+		check(arena.owner(first) != first);
+		check(arena.bytes() != 0 && arena.bytes() == upstream.bytes());
+		arena.commit(first);
+		check(arena.owner(first) == first);
+		check(arena.owner(first + 50) == first);
+		auto *second = static_cast<std::byte *>(arena.allocate(100));
+		check(arena.owner(second) != second);
+		arena.commit(second);
+		check(arena.owner(second) == second && second > first);
+		const auto chunk = arena.bytes();
+
+		/* A freed block is not live, and a recycled one is not until it
+		 * is committed again. */
+		arena.deallocate(first, 100);
+		check(arena.owner(first) != first && arena.owner(second) == second);
+		auto *again = static_cast<std::byte *>(arena.allocate(100));
+		check(again == first && arena.owner(again) != again);
+		arena.commit(again);
+		check(arena.owner(again) == again);
+		/* Freeing a block that was never committed leaves the others. */
+		auto *lost = static_cast<std::byte *>(arena.allocate(64));
+		arena.deallocate(lost, 64);
+		check(arena.owner(lost) != lost && arena.owner(again) == again &&
+			arena.owner(second) == second);
+		check(arena.bytes() == chunk);
+
+		/* A block above the largest class has the same rules, and its bytes
+		 * come and go with it. */
+		auto *big = static_cast<std::byte *>(arena.allocate(20000));
+		check(arena.owner(big) == nullptr && arena.bytes() > chunk);
+		arena.commit(big);
+		check(arena.owner(big) == big && arena.owner(big + 19999) == big);
+		arena.deallocate(big, 20000);
+		check(arena.owner(big) == nullptr && arena.bytes() == chunk);
+		check(arena.bytes() == upstream.bytes());
+
+		/* A second chunk is counted. */
+		std::vector<std::byte *> blocks;
+		while (arena.bytes() == chunk) {
+			blocks.push_back(static_cast<std::byte *>(arena.allocate(4000)));
+			arena.commit(blocks.back());
+		}
+		check(arena.bytes() > chunk && arena.bytes() == upstream.bytes());
+		for (const auto *block : blocks)
+			check(arena.owner(block) == block);
+	}
+	check(upstream.bytes() == 0);
+}
+
+} // namespace stress
+#endif
 
 } // namespace uml::cpu::arm64::gadgets
