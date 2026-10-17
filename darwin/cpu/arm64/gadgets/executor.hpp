@@ -216,8 +216,6 @@ struct SpaceBytes final {
 /* What the open shared spaces of a guest address space hold: arena bytes,
  * and the bytes of the bodies some slot holds. */
 [[nodiscard]] SpaceBytes open_space_bytes(unsigned long generation);
-/* Exercise the body arena's commit and byte counts; aborts on a failure. */
-void arena_self_test();
 
 } // namespace stress
 #endif

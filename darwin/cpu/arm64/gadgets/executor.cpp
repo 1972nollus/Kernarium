@@ -4,6 +4,7 @@
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
+#include "cpu/arm64/gadgets/body_arena.hpp"
 #include "cpu/arm64/gadgets/a32/a32_builder.hpp"
 #include "cpu/arm64/gadgets/a32_support.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
@@ -27,11 +28,15 @@
 #include <memory>
 #include <memory_resource>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <sys/mman.h>
 
 namespace uml::cpu::arm64::gadgets {
 using ::uml::memory::StaticGuestMemory;
@@ -291,289 +296,6 @@ private:
 	std::size_t bytes_{};
 };
 
-/* Storage for stored translations.
- *
- * A translation is one allocation: its body, the stream words behind it, and
- * the guest words it is validated against behind those, sized exactly. The
- * cache holds tens of thousands of them per executor, so a rounding allocator
- * costs more than the streams do: a pmr pool asked its upstream for 204 MiB to
- * hold 64 MiB of programs on a measured six-vCPU guest, between its own size
- * classes and the capacity a stream reached by doubling. Sixteen-byte classes
- * over bump-allocated chunks hold the same programs in 65 MiB.
- *
- * Freed bodies return to the class they came from, so retranslating a block
- * reuses its predecessor's bytes. Each address space has an arena of its own,
- * and its chunks are returned when the address space's translations are, so
- * retiring an address space returns its memory instead of leaving holes in
- * chunks other address spaces still use. Chunks start small and double, so an
- * address space that runs little code costs little. See G167.
- *
- * The arena also answers which live body holds an address. Each chunk keeps
- * one bit per granule, set at the first granule of every live block, so the
- * block holding an address is the nearest set bit at or below it. The cache
- * asks this when a terminal exit lands in a linked successor, which a
- * measured guest did about once per hundred and twenty stores; the index by
- * stream address that this replaces was maintained at every one of those
- * stores, five set installs per program. See G203.
- *
- * A block is live from commit(), not from allocate(): the caller writes the
- * body between them without the arena's lock, so a reader that walks the live
- * blocks under it never meets a body that is half written. The arena also
- * counts the bytes it holds, so its owner can tell without a walk how much of
- * them its bodies use.
- */
-class BodyArena final {
-public:
-	explicit BodyArena(std::pmr::memory_resource *upstream) noexcept
-		: upstream_{upstream}
-	{}
-
-	BodyArena(const BodyArena &) = delete;
-	BodyArena &operator=(const BodyArena &) = delete;
-
-	~BodyArena()
-	{
-		for (const auto &chunk : chunks_)
-			upstream_->deallocate(chunk.base, chunk.bytes,
-				alignof(std::max_align_t));
-		for (const auto &direct : direct_)
-			upstream_->deallocate(direct.base, direct.bytes,
-				alignof(std::max_align_t));
-	}
-
-	[[nodiscard]] void *allocate(std::size_t bytes)
-	{
-		const auto size = rounded(bytes);
-		if (size > largest_class) {
-			/* Too big for a class to recycle, so it is not carved
-			 * out of a chunk either; it is freed on its own. */
-			auto *block = static_cast<std::byte *>(
-				upstream_->allocate(size,
-					alignof(std::max_align_t)));
-			direct_.push_back({block, size, false});
-			bytes_ += size;
-			return block;
-		}
-		if (auto *block = free_[size / granule]; block != nullptr) {
-			free_[size / granule] = next_of(block);
-			return block;
-		}
-		if (size > limit_ - used_) {
-			const auto wanted = std::max(size, next_chunk_);
-			next_chunk_ = std::min(next_chunk_ * 2, largest_chunk);
-			auto starts = std::make_unique<std::uint64_t[]>(
-				map_words(wanted));
-			auto *base = static_cast<std::byte *>(
-				upstream_->allocate(wanted,
-					alignof(std::max_align_t)));
-			/* Kept in address order, which is what owner() searches. */
-			chunks_.insert(
-				std::upper_bound(chunks_.begin(), chunks_.end(),
-					base, before_chunk),
-				Chunk{base, wanted, std::move(starts)});
-			bytes_ += wanted;
-			/* The tail of the chunk being left behind is at most one
-			 * body, and one partly used chunk is the arena's whole
-			 * slack. */
-			current_ = base;
-			used_ = 0;
-			limit_ = wanted;
-		}
-		auto *block = current_ + used_;
-		used_ += size;
-		return block;
-	}
-
-	/* The block's contents are written: from here it is live, and owner()
-	 * finds it. */
-	void commit(void *block) noexcept
-	{
-		auto *at = static_cast<std::byte *>(block);
-		if (chunk_of(at) != nullptr) {
-			mark(at, true);
-			return;
-		}
-		const auto held = std::find_if(direct_.begin(), direct_.end(),
-			[at](const Direct &direct) { return direct.base == at; });
-		assert(held != direct_.end());
-		held->committed = true;
-	}
-
-	void deallocate(void *block, std::size_t bytes) noexcept
-	{
-		const auto size = rounded(bytes);
-		auto *freed = static_cast<std::byte *>(block);
-		if (size > largest_class) {
-			const auto held = std::find_if(direct_.begin(),
-				direct_.end(), [freed](const Direct &direct) {
-					return direct.base == freed;
-				});
-			if (held != direct_.end())
-				direct_.erase(held);
-			bytes_ -= size;
-			upstream_->deallocate(block, size,
-				alignof(std::max_align_t));
-			return;
-		}
-		mark(freed, false);
-		next_of(freed) = free_[size / granule];
-		free_[size / granule] = freed;
-	}
-
-	/* The live block holding an address, or nullptr. */
-	[[nodiscard]] void *owner(const void *address) const noexcept
-	{
-		const auto *at = static_cast<const std::byte *>(address);
-		if (const auto *chunk = chunk_of(at); chunk != nullptr) {
-			const auto index =
-				static_cast<std::size_t>(at - chunk->base) / granule;
-			/* Nothing in a chunk spans more than the largest class,
-			 * so a start any further below is another block's. */
-			const auto floor = index >= largest_class / granule ?
-				(index - largest_class / granule) / 64 : 0;
-			auto word = index / 64;
-			auto bits = chunk->starts[word] &
-				(~std::uint64_t{0} >> (63 - index % 64));
-			for (;;) {
-				if (bits != 0)
-					return chunk->base +
-						(word * 64 + 63 -
-							static_cast<std::size_t>(
-								std::countl_zero(bits))) *
-						granule;
-				if (word == floor)
-					return nullptr;
-				bits = chunk->starts[--word];
-			}
-		}
-		for (const auto &direct : direct_)
-			if (direct.committed && at >= direct.base &&
-			    at < direct.base + direct.bytes)
-				return direct.base;
-		return nullptr;
-	}
-
-	/* What the arena holds, which is what the cache costs. */
-	[[nodiscard]] std::size_t bytes() const noexcept { return bytes_; }
-
-	/* What a block for `bytes` takes from the arena. */
-	[[nodiscard]] static std::size_t block_bytes(std::size_t bytes) noexcept
-	{
-		return rounded(bytes);
-	}
-
-	/* The start maps, which are what owner() costs. */
-	[[nodiscard]] std::size_t index_bytes() const noexcept
-	{
-		std::size_t total = 0;
-		for (const auto &chunk : chunks_)
-			total += map_words(chunk.bytes) * sizeof(std::uint64_t);
-		return total;
-	}
-
-#if UML_GADGET_CACHE_CENSUS
-	/* Chunks that no longer hold a live body, which the arena keeps until
-	 * the cache is destroyed. Their blocks wait on the class free lists. */
-	[[nodiscard]] std::size_t empty_bytes() const noexcept
-	{
-		std::size_t total = 0;
-		for (const auto &chunk : chunks_) {
-			if (chunk.base == current_)
-				continue;
-			const auto *starts = chunk.starts.get();
-			if (std::all_of(starts, starts + map_words(chunk.bytes),
-				    [](std::uint64_t word) { return word == 0; }))
-				total += chunk.bytes;
-		}
-		return total;
-	}
-#endif
-
-private:
-	/* Eight bytes would fit the free-list link, but sixteen keeps every
-	 * body's stream tail aligned for a pair access and still rounds a mean
-	 * body by eight bytes. */
-	static constexpr std::size_t granule = 16;
-	/* Up to 16 KiB in classes, which a 64-instruction block reaches only at
-	 * 32 stream words per guest instruction. */
-	static constexpr std::size_t classes = 1024;
-	static constexpr std::size_t largest_class = (classes - 1) * granule;
-	static constexpr std::size_t first_chunk = std::size_t{32} << 10;
-	static constexpr std::size_t largest_chunk = std::size_t{256} << 10;
-
-	[[nodiscard]] static std::size_t rounded(std::size_t bytes) noexcept
-	{
-		return (std::max(bytes, granule) + granule - 1) & ~(granule - 1);
-	}
-
-	[[nodiscard]] static std::byte *&next_of(std::byte *block) noexcept
-	{
-		return *reinterpret_cast<std::byte **>(block);
-	}
-
-	/* Words in the start map of a chunk of this many bytes. */
-	[[nodiscard]] static constexpr std::size_t map_words(
-		std::size_t bytes) noexcept
-	{
-		return (bytes / granule + 63) / 64;
-	}
-
-	struct Chunk final {
-		std::byte *base;
-		std::size_t bytes;
-		/* One bit per granule, set at the first granule of a live block. */
-		std::unique_ptr<std::uint64_t[]> starts;
-	};
-
-	/* A block above the largest class, held outside the chunks. */
-	struct Direct final {
-		std::byte *base;
-		std::size_t bytes;
-		bool committed;
-	};
-
-	[[nodiscard]] static bool before_chunk(
-		const std::byte *address, const Chunk &chunk) noexcept
-	{
-		return address < chunk.base;
-	}
-
-	[[nodiscard]] const Chunk *chunk_of(
-		const std::byte *address) const noexcept
-	{
-		const auto after = std::upper_bound(
-			chunks_.begin(), chunks_.end(), address, before_chunk);
-		if (after == chunks_.begin())
-			return nullptr;
-		const auto &chunk = *std::prev(after);
-		return address < chunk.base + chunk.bytes ? &chunk : nullptr;
-	}
-
-	void mark(const std::byte *block, bool live) noexcept
-	{
-		const auto *chunk = chunk_of(block);
-		const auto index =
-			static_cast<std::size_t>(block - chunk->base) / granule;
-		const auto bit = std::uint64_t{1} << (index % 64);
-		if (live)
-			chunk->starts[index / 64] |= bit;
-		else
-			chunk->starts[index / 64] &= ~bit;
-	}
-
-	std::pmr::memory_resource *upstream_;
-	/* In address order. */
-	std::vector<Chunk> chunks_;
-	std::vector<Direct> direct_;
-	std::byte *current_{};
-	std::size_t used_{};
-	std::size_t limit_{};
-	std::size_t next_chunk_{first_chunk};
-	/* The bytes of the chunks and the direct blocks. */
-	std::size_t bytes_{};
-	std::array<std::byte *, classes> free_{};
-};
-
 /* What each executor says about itself for the bodies other executors free.
  *
  * Between begin_execution() and end_execution() an executor may hold a stream
@@ -777,6 +499,8 @@ struct Body final {
 			kept != nullptr ? kept->instruction : 0U};
 	}
 };
+static_assert(std::is_trivially_destructible_v<Body>,
+	"an address space's bodies go with its arena without being freed");
 static_assert(sizeof(Body) == 16 &&
 	sizeof(Body) % alignof(std::uintptr_t) == 0,
 	"the stream tail follows the body at pointer alignment");
@@ -1048,16 +772,17 @@ public:
 #endif
 	}
 
-	~Space()
-	{
-		/* No executor holds this address space any more, so nothing can
-		 * run a body or follow a record of it. */
-		free_bodies(limbo_.waiting);
-		free_bodies(limbo_.incoming);
+	/* No executor holds this address space any more, so nothing can run a
+	 * body or follow a record of it, and the bodies still waiting in limbo
+	 * go with the arena: it unmaps its chunks whole, which costs what it
+	 * mapped rather than what it holds. Freeing each body first merged
+	 * and listed blocks the next step discards. See G257. */
 #if UML_GADGET_SWEEP_STRESS
-		stress_live_spaces.fetch_sub(1, std::memory_order_relaxed);
+	/* The unit-test variant counts the address spaces alive. */
+	~Space() { stress_live_spaces.fetch_sub(1, std::memory_order_relaxed); }
+#else
+	~Space() = default;
 #endif
-	}
 
 	Space(const Space &) = delete;
 	Space &operator=(const Space &) = delete;
@@ -1230,11 +955,6 @@ public:
 				return held;
 			}
 			body->holders = 1;
-			{
-				/* Written, and held: the arena counts it live. */
-				const std::lock_guard arena{arena_mutex_};
-				bodies_.commit(body);
-			}
 			if (key_.owner == nullptr)
 				note_held(*body);
 			if (!validation.empty())
@@ -4096,10 +3816,10 @@ private:
 			    cpu.gadget_indirect_miss)) {
 			const auto &program = exit->result.program;
 			const auto guest = program.guest_address();
-			/* The memory gadgets other than the block transfers
-			 * carry no key: they report the position of their
-			 * instruction in the block, which has bit 0 set where a
-			 * key has none. */
+			/* The memory gadgets other than VLDM, VSTM and the
+			 * structure transfers carry no key: they report the
+			 * position of their instruction in the block, which has
+			 * bit 0 set where a key has none. */
 			if ((cpu.pc & 3U) == 1U) {
 				const auto at = static_cast<std::size_t>(cpu.pc >> 2);
 				std::optional<std::size_t> unit;
@@ -4359,71 +4079,6 @@ SpaceBytes open_space_bytes(unsigned long generation)
 		++total.spaces;
 	}
 	return total;
-}
-
-void arena_self_test()
-{
-	const auto check = [](bool condition, int line = __builtin_LINE()) {
-		if (!condition) {
-			std::fprintf(stderr, "executor.cpp:%d: arena check failed\n",
-				line);
-			std::abort();
-		}
-	};
-	CountingResource upstream;
-	{
-		BodyArena arena{&upstream};
-		auto *first = static_cast<std::byte *>(arena.allocate(100));
-		/* A block is live from commit(), not from allocate(). owner() names
-		 * the live block at or below an address, so an uncommitted one is
-		 * never named for itself. */
-		check(arena.owner(first) != first);
-		check(arena.bytes() != 0 && arena.bytes() == upstream.bytes());
-		arena.commit(first);
-		check(arena.owner(first) == first);
-		check(arena.owner(first + 50) == first);
-		auto *second = static_cast<std::byte *>(arena.allocate(100));
-		check(arena.owner(second) != second);
-		arena.commit(second);
-		check(arena.owner(second) == second && second > first);
-		const auto chunk = arena.bytes();
-
-		/* A freed block is not live, and a recycled one is not until it
-		 * is committed again. */
-		arena.deallocate(first, 100);
-		check(arena.owner(first) != first && arena.owner(second) == second);
-		auto *again = static_cast<std::byte *>(arena.allocate(100));
-		check(again == first && arena.owner(again) != again);
-		arena.commit(again);
-		check(arena.owner(again) == again);
-		/* Freeing a block that was never committed leaves the others. */
-		auto *lost = static_cast<std::byte *>(arena.allocate(64));
-		arena.deallocate(lost, 64);
-		check(arena.owner(lost) != lost && arena.owner(again) == again &&
-			arena.owner(second) == second);
-		check(arena.bytes() == chunk);
-
-		/* A block above the largest class has the same rules, and its bytes
-		 * come and go with it. */
-		auto *big = static_cast<std::byte *>(arena.allocate(20000));
-		check(arena.owner(big) == nullptr && arena.bytes() > chunk);
-		arena.commit(big);
-		check(arena.owner(big) == big && arena.owner(big + 19999) == big);
-		arena.deallocate(big, 20000);
-		check(arena.owner(big) == nullptr && arena.bytes() == chunk);
-		check(arena.bytes() == upstream.bytes());
-
-		/* A second chunk is counted. */
-		std::vector<std::byte *> blocks;
-		while (arena.bytes() == chunk) {
-			blocks.push_back(static_cast<std::byte *>(arena.allocate(4000)));
-			arena.commit(blocks.back());
-		}
-		check(arena.bytes() > chunk && arena.bytes() == upstream.bytes());
-		for (const auto *block : blocks)
-			check(arena.owner(block) == block);
-	}
-	check(upstream.bytes() == 0);
 }
 
 } // namespace stress

@@ -7,6 +7,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import io
 import os
 import stat
 import sys
@@ -45,6 +46,25 @@ PLATFORM_CERT = (
     "AAECAwQFBgcICQ==\n"
     "-----END CERTIFICATE-----\n"
 )
+# The AOSP public test certificate and the LineageOS release certificate.
+AOSP_CERT = (
+    "-----BEGIN CERTIFICATE-----\n"
+    "CgsMDQ4PEBESEw==\n"
+    "-----END CERTIFICATE-----\n"
+)
+LINEAGE_CERT = (
+    "-----BEGIN CERTIFICATE-----\n"
+    "FBUWFxgZGhscHQ==\n"
+    "-----END CERTIFICATE-----\n"
+)
+
+
+def otacerts(*certificates: str) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for index, certificate in enumerate(certificates):
+            archive.writestr(f"cert{index}.x509.pem", certificate)
+    return buffer.getvalue()
 
 FAKE_SIGNER = r'''#!/usr/bin/env python3
 import shutil, sys
@@ -67,11 +87,23 @@ print("NOT signing: F-Droid.apk (skipped due to special cert string)")
 '''
 
 
-def build_target_files(path: Path) -> None:
+def build_target_files(path: Path, ota: str) -> None:
+    """The fake signer copies this archive, so it holds the signed OTA certificates."""
+    system, recovery = {
+        "ok": ((PLATFORM_CERT,), (PLATFORM_CERT,)),
+        "ota-aosp": ((PLATFORM_CERT,), (PLATFORM_CERT, AOSP_CERT)),
+        "ota-lineage": ((PLATFORM_CERT,), (PLATFORM_CERT, LINEAGE_CERT)),
+        "ota-system-aosp": ((AOSP_CERT, PLATFORM_CERT), (PLATFORM_CERT,)),
+        "ota-missing": ((PLATFORM_CERT,), (LINEAGE_CERT,)),
+    }[ota]
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("META/apexkeys.txt", APEXKEYS)
         archive.writestr("META/apkcerts.txt", APKCERTS)
         archive.writestr("IMAGES/userdata.img", b"seed")
+        archive.writestr("SYSTEM/etc/security/otacerts.zip", otacerts(*system))
+        archive.writestr(
+            "RECOVERY/RAMDISK/system/etc/security/otacerts.zip", otacerts(*recovery)
+        )
 
 
 def build_keys(path: Path, *, skip: str | None = None, loose: bool = False) -> None:
@@ -97,12 +129,18 @@ def entries(path: Path) -> list[str]:
 
 def run_case(
     sign_release, work: Path, name: str, mode: str, *, skip: str | None = None, loose: bool = False,
-    key_mode: int = 0o700,
+    key_mode: int = 0o700, ota: str = "ok",
 ):
     case = work / name
     case.mkdir()
     target_files = case / "target-files.zip"
-    build_target_files(target_files)
+    build_target_files(target_files, ota)
+    security = case / "build/make/target/product/security"
+    security.mkdir(parents=True)
+    (security / "testkey.x509.pem").write_text(AOSP_CERT)
+    lineage = case / "vendor/lineage/build/target/product/security"
+    lineage.mkdir(parents=True)
+    (lineage / "lineage.x509.pem").write_text(LINEAGE_CERT)
     keys = case / "keys"
     build_keys(keys, skip=skip, loose=loose)
     os.chmod(keys, key_mode)
@@ -156,6 +194,8 @@ def main() -> None:
         if entries(ok["scratch"]):
             fail("the private key copy survived a successful signing")
         arguments = Path(ok["record"]).read_text().splitlines()
+        if "-o" not in arguments:
+            fail("signing did not replace the OTA keys")
         copy = arguments[arguments.index("-d") + 1]
         if Path(copy).parent != ok["scratch"] or str(ok["keys"]) in " ".join(arguments):
             fail("signing did not use a private copy of the key directory")
@@ -179,6 +219,22 @@ def main() -> None:
         for label, case_args, text in (
             ("leak", {"mode": "leak"}, "outside the release key set"),
             ("fail", {"mode": "fail"}, "sign_target_files_apks failed"),
+            (
+                "ota-aosp", {"mode": "ok", "ota": "ota-aosp"},
+                "RECOVERY/RAMDISK/system/etc/security/otacerts.zip still trusts a public",
+            ),
+            (
+                "ota-lineage", {"mode": "ok", "ota": "ota-lineage"},
+                "RECOVERY/RAMDISK/system/etc/security/otacerts.zip still trusts a public",
+            ),
+            (
+                "ota-system-aosp", {"mode": "ok", "ota": "ota-system-aosp"},
+                "SYSTEM/etc/security/otacerts.zip still trusts a public",
+            ),
+            (
+                "ota-missing", {"mode": "ok", "ota": "ota-missing"},
+                "RECOVERY/RAMDISK/system/etc/security/otacerts.zip omits the release",
+            ),
             ("missing", {"mode": "ok", "skip": "com.android.adbd.pem"}, "lacks: com.android.adbd.pem"),
             ("loose", {"mode": "ok", "loose": True}, "accessible to group or others"),
             ("open-dir", {"mode": "ok", "key_mode": 0o755}, "must not be accessible"),

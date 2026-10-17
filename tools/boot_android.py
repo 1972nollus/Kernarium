@@ -46,7 +46,7 @@ SGDISK_FALLBACK_CANDIDATES = (
     Path("/usr/local/bin/sgdisk"),
 )
 USERDATA_PARTITION_NUMBER = 10
-USERDATA_FIRST_LBA = 5_500_928
+USERDATA_FIRST_LBA = 5_476_352
 USERDATA_TYPE_GUID = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 USERDATA_UNIQUE_GUID = "523ABB36-1F98-5D08-92D0-31C3C8A47304"
 GPT_TRAILING_FREE_BYTES = 1024**2
@@ -551,7 +551,8 @@ def wait_for_adb(
                 timeout=10,
                 check=False,
             )
-            if state.returncode == 0 and state.stdout.strip() == "device":
+            # Recovery's adbd reports the state "recovery" instead of "device".
+            if state.returncode == 0 and state.stdout.strip() in ("device", "recovery"):
                 return
         except subprocess.TimeoutExpired:
             last_response = "ADB command timed out"

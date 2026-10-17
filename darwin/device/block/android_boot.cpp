@@ -28,7 +28,7 @@ namespace {
 constexpr std::uint64_t sectorSize = 512;
 constexpr std::uint64_t mebibyte = 1'048'576ULL;
 constexpr std::uint64_t gibibyte = 1'073'741'824ULL;
-constexpr std::uint64_t seedDiskSize = 2'815ULL * mebibyte;
+constexpr std::uint64_t seedDiskSize = 2'803ULL * mebibyte;
 constexpr std::uint64_t backupGptReservation = mebibyte;
 constexpr std::uint64_t minimumDiskSizeGiB = 4;
 constexpr std::uint64_t maximumDiskSizeGiB = 64;
@@ -51,8 +51,8 @@ constexpr std::array seedPartitions {
 	ExpectedPartition{"metadata", 2'756'706'304ULL, 16'777'216ULL},
 	ExpectedPartition{"init_boot", 2'773'483'520ULL, 8'388'608ULL},
 	ExpectedPartition{"misc", 2'781'872'128ULL, 1'048'576ULL},
-	ExpectedPartition{"recovery", 2'782'920'704ULL, 33'554'432ULL},
-	ExpectedPartition{"userdata", 2'816'475'136ULL, 134'217'728ULL},
+	ExpectedPartition{"recovery", 2'782'920'704ULL, 20'971'520ULL},
+	ExpectedPartition{"userdata", 2'803'892'224ULL, 134'217'728ULL},
 };
 
 constexpr std::size_t initBootPartition = 6;

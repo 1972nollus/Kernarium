@@ -26,13 +26,13 @@ namespace {
 
 constexpr std::uint64_t sectorSize = 512;
 constexpr std::uint64_t backupGptReservation = 1'048'576ULL;
-constexpr std::uint64_t seedDiskSize = 2'951'741'440ULL;
+constexpr std::uint64_t seedDiskSize = 2'939'158'528ULL;
 constexpr std::uint64_t expandedDiskSize = 8'589'934'592ULL;
 constexpr std::uint64_t initBootOffset = 2'773'483'520ULL;
 constexpr std::uint64_t initBootSize = 8'388'608ULL;
 constexpr std::uint64_t miscOffset = 2'781'872'128ULL;
 constexpr std::uint64_t recoveryOffset = 2'782'920'704ULL;
-constexpr std::uint64_t recoverySize = 33'554'432ULL;
+constexpr std::uint64_t recoverySize = 20'971'520ULL;
 constexpr std::uint64_t normalRamdiskSize = 8192;
 constexpr std::uint64_t recoveryRamdiskSize = 12288;
 
@@ -52,7 +52,7 @@ constexpr std::array partitions {
 	Partition{"init_boot", initBootOffset, initBootSize},
 	Partition{"misc", miscOffset, 1'048'576ULL},
 	Partition{"recovery", recoveryOffset, recoverySize},
-	Partition{"userdata", 2'816'475'136ULL, 134'217'728ULL},
+	Partition{"userdata", 2'803'892'224ULL, 134'217'728ULL},
 };
 
 using uml::testing::require;

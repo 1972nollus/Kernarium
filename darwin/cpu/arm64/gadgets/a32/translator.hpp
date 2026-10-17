@@ -29,6 +29,9 @@ using namespace aarch32;
  * destination PC live. */
 constexpr std::uintptr_t scratch0 = 15 * 8;
 constexpr std::uintptr_t scratch1 = 16 * 8;
+/* The registers of a block transfer that its first operand word holds
+ * (engine/generate_a32.py). */
+constexpr unsigned block_word_registers = 6;
 
 /* Whether condition `cond` passes, for each NZCV value n (N in bit 3, V in
  * bit 0): bit n of the result. The truth table a select gadget tests. */

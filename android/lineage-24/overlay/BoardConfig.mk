@@ -120,7 +120,7 @@ BOARD_ODMIMAGE_PARTITION_SIZE := 4194304
 BOARD_METADATAIMAGE_PARTITION_SIZE := 16777216
 BOARD_USERDATAIMAGE_PARTITION_SIZE := 134217728
 BOARD_INIT_BOOT_IMAGE_PARTITION_SIZE := 8388608
-BOARD_RECOVERYIMAGE_PARTITION_SIZE := 33554432
+BOARD_RECOVERYIMAGE_PARTITION_SIZE := 20971520
 
 # The final GPT has init_boot and recovery ramdisk containers, but the ACK UML
 # kernel remains the separately signed executable. Both images therefore use
@@ -130,6 +130,9 @@ BOARD_BOOT_HEADER_VERSION := 4
 BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE := true
 BOARD_USES_FULL_RECOVERY_IMAGE := true
 TARGET_RECOVERY_FSTAB := device/kernarium/darwin/config/recovery.fstab
+# The inherited recovery UI reaches ADB over eth1, which Cuttlefish provides and
+# this machine does not. Darwin's own UI uses eth0, the Virtio-net interface.
+TARGET_RECOVERY_UI_LIB := librecovery_ui_darwin
 TARGET_NO_RECOVERY := false
 
 BOARD_SUPER_PARTITION_SIZE :=

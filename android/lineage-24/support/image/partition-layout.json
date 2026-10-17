@@ -2,7 +2,7 @@
   "schema_version": 1,
   "sector_size": 512,
   "alignment_bytes": 1048576,
-  "disk_size_bytes": 2951741440,
+  "disk_size_bytes": 2939158528,
   "partition_entry_count": 128,
   "disk_guid": "0f88cc4a-aeba-55c8-a739-7a73979c280f",
   "partitions": [
@@ -81,7 +81,7 @@
     {
       "name": "recovery",
       "start_bytes": 2782920704,
-      "size_bytes": 33554432,
+      "size_bytes": 20971520,
       "image": "recovery.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
       "unique_guid": "63b8ab73-87d1-5eb2-9fee-e1c4fd574d36",
@@ -89,7 +89,7 @@
     },
     {
       "name": "userdata",
-      "start_bytes": 2816475136,
+      "start_bytes": 2803892224,
       "size_bytes": 134217728,
       "image": "userdata.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",

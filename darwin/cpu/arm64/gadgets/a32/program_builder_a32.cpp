@@ -226,9 +226,32 @@ void Translator::close_run()
 {
 	if (!run_active_)
 		return;
-	words_[run_operand_] =
-		(words_.size() - (run_operand_ + 1)) * sizeof(std::uintptr_t);
 	run_active_ = false;
+	const std::size_t words = words_.size() - (run_operand_ + 1);
+	if (words < kSkipWordsMin || words > kSkipWordsMax) {
+		words_[run_operand_] = words * sizeof(std::uintptr_t);
+		return;
+	}
+	/* A run of a length a skip gadget holds takes that gadget, and its
+	 * operand leaves the stream: every word and recorded position after it
+	 * moves down one. */
+	words_[run_operand_ - 1] =
+		gadget(kSkipBy[run_cond_][words - kSkipWordsMin]);
+	auto *data = words_.data();
+	std::copy(data + run_operand_ + 1, data + words_.size(),
+		  data + run_operand_);
+	words_.truncate(words_.size() - 1U);
+	const auto moved = [this](std::size_t &index) {
+		if (index != ~std::size_t{} && index > run_operand_)
+			--index;
+	};
+	for (auto &patch : patches_)
+		moved(patch.index);
+	moved(compare_.end);
+	moved(movw_.end);
+	moved(vfp_compare_.end);
+	moved(address_add_.start);
+	moved(address_add_.end);
 }
 
 void Translator::begin_instruction(unsigned cond)
@@ -750,6 +773,7 @@ std::uint64_t Translator::library_operand(const Instruction &in,
 {
 	return std::uint64_t{in.word} |
 	       std::uint64_t{it_.bits()} << UML_GADGET_A32_LIBRARY_IT_SHIFT |
+	       std::uint64_t{thumb_} << UML_GADGET_A32_LIBRARY_THUMB_SHIFT |
 	       std::uint64_t{static_cast<std::uint8_t>(profile_.level)}
 		       << UML_GADGET_A32_LIBRARY_LEVEL_SHIFT |
 	       std::uint64_t{pc_value} << UML_GADGET_A32_LIBRARY_PC_VALUE_SHIFT |
@@ -898,29 +922,38 @@ Translator::Result Translator::emit_block_transfer(const Instruction &in,
 	default: start = 4; delta = 4 * count; break;
 	}
 	const bool has_pc = (registers & 0x8000U) != 0;
+	/* The gadgets carry no key, so an STM that stores the PC, which reads
+	 * the instruction's address, is the library's. */
 	if (!load && has_pc)
-		set_scratch(scratch0, pc_value());
-	push(load ? kLdm[count] : kStm[count]);
-	push(key_);
-	push(static_cast<std::uint64_t>(base_register) * 8U |
-	     std::uint64_t{static_cast<std::uint8_t>(start)} << 8 |
-	     std::uint64_t{static_cast<std::uint8_t>(delta)} << 16 |
-	     std::uint64_t{writeback} << 24);
-	std::uint64_t packed = 0;
+		return emit_library(in);
+	/* Each register is its CpuState offset over four, which the gadget
+	 * scales back in the access: the first six in the top of the word
+	 * that holds the base, the rest in one more word. A load of the PC
+	 * goes to the scratch slot. */
+	auto slot = [](unsigned number) -> std::uint64_t {
+		return (number == 15 ? scratch0 : number * 8U) / 4U;
+	};
+	std::uint64_t word = slot(static_cast<unsigned>(base_register)) |
+			     std::uint64_t{writeback} << 5 |
+			     std::uint64_t{static_cast<std::uint8_t>(start)} << 8 |
+			     std::uint64_t{static_cast<std::uint8_t>(delta)} << 16 |
+			     position();
+	std::uint64_t rest = 0;
 	unsigned index = 0;
 	for (unsigned number = 0; number < 16; ++number) {
 		if ((registers >> number & 1U) == 0)
 			continue;
-		const std::uint64_t offset =
-			number == 15 ? scratch0 : std::uint64_t{number} * 8U;
-		packed |= offset << (8U * (index % 8U));
-		if (++index % 8U == 0) {
-			push(packed);
-			packed = 0;
-		}
+		if (index < block_word_registers)
+			word |= slot(number) << (32U + 5U * index);
+		else
+			rest |= slot(number)
+				<< (5U * (index - block_word_registers));
+		++index;
 	}
-	if (index % 8U != 0)
-		push(packed);
+	push(load ? kLdm[count] : kStm[count]);
+	push(word);
+	if (count > static_cast<int>(block_word_registers))
+		push(rest);
 	/* A transfer that crosses a page is the library's; a load that writes
 	 * PC leaves the value in the scratch slot, as the gadget does. */
 	push(library_operand(in, load && has_pc));

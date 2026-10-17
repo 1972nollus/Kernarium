@@ -48,7 +48,9 @@ private:
 /* Runs the instruction at `key` that `operand` names (a32_layout.h) and
  * returns an UML_GADGET_A32_LIBRARY_* outcome; a memory fault is in the TLB.
  * The PC and ITSTATE of CpuState are the library's scratch here: the
- * translated code keeps neither. */
+ * translated code keeps neither. A block transfer passes its position
+ * (a32_layout.h) in place of the key and reads no PC, so it runs at address
+ * 0 of the instruction set the operand names. */
 extern "C" [[gnu::noinline]] std::uint32_t uml_arm64_gadget_a32_execute(
 	uml::cpu::arm64::CpuState *cpu, uml::memory::Tlb *tlb,
 	std::uint64_t operand, std::uint64_t key) noexcept
@@ -68,14 +70,16 @@ extern "C" [[gnu::noinline]] std::uint32_t uml_arm64_gadget_a32_execute(
 	 * profile (a32::decode_profile), so the decode here only recovers
 	 * what it found and needs no host knowledge. */
 	const auto profile = a32::Profile::at(level);
-	const auto instruction = a32::key_is_thumb(key) ?
-		a32::decode_thumb(word, it, profile) :
-		a32::decode_a32(word, profile);
+	const bool thumb =
+		(operand >> UML_GADGET_A32_LIBRARY_THUMB_SHIFT & 1U) != 0U;
+	const auto instruction = thumb ? a32::decode_thumb(word, it, profile) :
+					 a32::decode_a32(word, profile);
 	if (instruction.form != form)
 		return UML_GADGET_A32_LIBRARY_FATAL;
 	const auto saved_pc = cpu->pc;
 	const auto saved_it = cpu->a32_itstate;
-	cpu->pc = key;
+	cpu->pc = (key & 3U) != 1U ? key : thumb ? a32::t32_key(0) :
+						    a32::a32_key(0);
 	cpu->a32_itstate = it.bits();
 	gadgets::GadgetMemory memory{*tlb};
 	const auto result = a32::execute_a32(*cpu, instruction, memory);

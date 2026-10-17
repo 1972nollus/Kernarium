@@ -464,6 +464,9 @@
         UML_GADGET_SWEEP_STRESS=1
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
+    # The body arena on its own, against a model of what it hands out.
+    uml_add_arm64_unit_test(gadget_body_arena WITHOUT_HARNESS NO_OBJECTS)
+
     uml_add_arm64_unit_test(gadget_hot_path WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_packed_immediate WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_test_bit_branch WITHOUT_HARNESS)

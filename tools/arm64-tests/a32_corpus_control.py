@@ -15,8 +15,11 @@ solving for the offset the layout needs.
 - branch: B, BL, BLX and BX in both instruction sets, conditional branches
   under passing and failing flags, CBZ/CBNZ, TBB/TBH (also in an IT block
   whose condition passes and fails), loads and ALU instructions that write
-  the PC, interworking in both directions and jumps to unmapped addresses;
-- conditions: every condition against every NZCV, and every IT block;
+  the PC (the multiple loads also under a condition that fails and passes),
+  interworking in both directions and jumps to unmapped addresses;
+- conditions: every condition against every NZCV, every IT block, and runs
+  of conditional instructions of two to eleven stream words that a skip steps
+  over, under every condition;
 - pc: instructions that read the PC, among them the PC as a register operand
   under a condition that fails and passes.
 """
@@ -436,6 +439,42 @@ def pc_loads(context, suite, results):
                      data_patches=[(slot - D, struct.pack("<I", CODE + landing + (target_state == THUMB)))])
 
 
+def conditional_pc_loads(context, suite, results):
+    """The multiple loads of the PC under EQ (in A32) or IT EQ (in Thumb): a failing condition
+    runs the filler, a passing one lands past it."""
+    for form in context.model.forms:
+        if (form.encoding is None or form.level != "base" or "load_pc" not in form.traits
+                or MULTIPLE.fullmatch(mnemonic(form.name)) is None):
+            continue
+        isa = form.encoding.isa
+        state = ARM if isa == "A32" else THUMB
+        for word in candidate_words(context, form, 16):
+            forced = force_pc_in_list(form, word)
+            if forced is None:
+                continue
+            if isa == "A32":
+                forced = set_field(forced, 28, 4, 14)
+            found = usable(context, form, forced, True)
+            if found is None:
+                continue
+            word, operands = found
+            address = D + 0x1040
+            aim = solve_multiple(operands, multiple_mode(form.name), address)
+            slot = address + 4 * (bin(operands["registers"]).count("1") - 1)
+            for passes in (False, True):
+                prog = Prog()
+                if state == THUMB:
+                    prog.half(0xBF08)
+                prog.insn(set_field(word, 28, 4, 0) if state == ARM else word, isa).fill(state)
+                landing = prog.here
+                apsr = cond_flags(0, passes, len(results))
+                make(results, suite, f"{form.name}/eq{'p' if passes else 'f'}", form.name, state,
+                     prog.tail(state), {**aim, "apsr": apsr}, target=1 if state == THUMB else 0,
+                     check=False, retired=(state == THUMB) + (2 if passes else 3),
+                     data_patches=[(slot - D, struct.pack("<I", CODE + landing + (state == THUMB)))])
+            break
+
+
 # ALU instructions with the PC as destination: the result must be the landing address.
 ARM_PC_WRITES = (
     ("MOV_r_A1", 0xE1A0F002, lambda t: {"r2": t}),
@@ -702,10 +741,51 @@ def pc_operands(context, suite, results):
                  retired=lead + 2, check=False, target=lead)
 
 
+# Runs of conditional instructions that a skip steps over, of two to eleven
+# stream words: MUL (two words) and LDM of one register in A32 or two in T32
+# (three), then an unconditional ADD the stream resumes at. Each run is under
+# its own condition, A32 and Thumb seven apart, so the runs cover every
+# condition.
+SKIP_RUNS = ("M", "L", "MM", "ML", "LL", "MML", "MLL", "LLL", "MMML", "MLLL")
+CONDITION_NAMES = ("eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le")
+
+
+def it_all_then(firstcond: int, count: int) -> int:
+    """IT with `count` instructions, all under `firstcond`."""
+    then = (firstcond & 1) * ((1 << (count - 1)) - 1) << (5 - count)
+    return 0xBF00 | firstcond << 4 | then | 1 << (4 - count)
+
+
+def skip_runs(context, suite, results):
+    for passes in (False, True):
+        for index, run in enumerate(SKIP_RUNS):
+            outcome = "p" if passes else "f"
+            condition = index % 14
+            flags = cond_flags(condition, passes, index)
+            prog = Prog()
+            for kind in run:  # mul<c> r1, r1, r2 / ldm<c> r8, {r3}
+                prog.word(condition << 28 | (0x00010291 if kind == "M" else 0x08980008))
+            prog.word(0xE2844001).tail(ARM)  # add r4, r4, #1
+            make(results, suite, f"skip/a-{run}.{CONDITION_NAMES[condition]}{outcome}",
+                 "MUL_A1" if run[0] == "M" else "LDM_A1", ARM, prog,
+                 {"apsr": flags, "r4": 7, "r8": D + 0x100}, check=False, retired=len(run) + 2,
+                 expect={"r4": 1})
+            condition = (index + 7) % 14
+            flags = cond_flags(condition, passes, index + 7)
+            prog = Prog().half(it_all_then(condition, len(run)))
+            for kind in run:  # mul r1, r1, r2 / ldm.w r8, {r3, r5}
+                prog.half(*((0xFB01, 0xF102) if kind == "M" else (0xE898, 0x0028)))
+            prog.half(0x3401).tail(THUMB)  # adds r4, #1
+            make(results, suite, f"skip/t-{run}.{CONDITION_NAMES[condition]}{outcome}", "IT_T1", THUMB,
+                 prog, {"apsr": flags, "r4": 7, "r8": D + 0x100}, check=False, retired=len(run) + 3,
+                 expect={"r4": 1})
+
+
 def suite_conditions(context: Context) -> list[Case]:
     results: list[Case] = []
     condition_table(context, "conditions", results)
     it_blocks(context, "conditions", results)
+    skip_runs(context, "conditions", results)
     return results
 
 
@@ -728,6 +808,7 @@ def suite_branch(context: Context) -> list[Case]:
     alu_pc_writes(context, suite, results)
     unmapped_targets(context, suite, results)
     conditional_table_branches(context, suite, results)
+    conditional_pc_loads(context, suite, results)
     return results
 
 

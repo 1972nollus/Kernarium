@@ -5,12 +5,11 @@ Mesa Venus keeps a metadata.env with one key prefix, a generated patch
 series and a maintained Git topic. Its verifier and regenerator differ from
 any other pinned source in their constants, in how a materialized checkout
 must sit on its base, and in how the regenerator finds the topic's export
-base; everything else is here. The AOSP and OrangeFox route verifiers check the
-same kind of tab-separated route table against a resolved Repo manifest and
-the same kind of routed Repo workspace, so those checks are here too, as is
-the one command runner every verifier, regenerator and the release publisher
-uses. Each caller passes its own error type, so diagnostics keep their
-per-tool prefixes.
+base; everything else is here. The AOSP route verifier checks a
+tab-separated route table against a resolved Repo manifest and a routed Repo
+workspace, so those checks are here too, as is the one command runner every
+verifier, regenerator and the release publisher uses. Each caller passes its
+own error type, so diagnostics keep their per-tool prefixes.
 """
 
 from __future__ import annotations
@@ -298,7 +297,7 @@ def verify_repo_routes(
 
 
 def verify_device_tree(
-    android_root: Path, tree: str, workspace: Path, error: Error, *options: str
+    android_root: Path, tree: str, workspace: Path, error: Error
 ) -> None:
     """Require the workspace's device tree to equal the checked one."""
     tool = android_root / "tools/sync-device-tree.py"
@@ -306,7 +305,7 @@ def verify_device_tree(
         raise error("device-tree sync tool is missing")
     run(
         str(tool), "--android-root", str(android_root), "--tree", tree,
-        "--workspace", str(workspace.resolve()), "--verify", *options, error=error,
+        "--workspace", str(workspace.resolve()), "--verify", error=error,
     )
 
 
