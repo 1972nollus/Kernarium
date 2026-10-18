@@ -620,6 +620,126 @@ void configChangeWaitStillAnswersConfigReads()
     });
 }
 
+/* Holds what the process writes to stderr, where the server reports a failed
+ * connection, until finish(). A failed requirement would vanish into it, so
+ * none is checked until it has finished. */
+class StandardErrorCapture final {
+public:
+    StandardErrorCapture()
+    {
+        require(file_ != nullptr);
+        std::fflush(stderr);
+        saved_ = UniqueDescriptor {::dup(STDERR_FILENO)};
+        require(saved_.get() >= 0);
+        require(::dup2(::fileno(file_), STDERR_FILENO) == STDERR_FILENO);
+    }
+    StandardErrorCapture(const StandardErrorCapture&) = delete;
+    StandardErrorCapture& operator=(const StandardErrorCapture&) = delete;
+    ~StandardErrorCapture()
+    {
+        restore();
+        if (file_ != nullptr)
+            std::fclose(file_);
+    }
+
+    /* Restores stderr, copies what was captured to it, and returns that. */
+    [[nodiscard]] std::string finish()
+    {
+        restore();
+        std::string text;
+        std::rewind(file_);
+        std::array<char, 512> buffer {};
+        std::size_t count = 0;
+        while ((count = std::fread(buffer.data(), 1, buffer.size(), file_)) !=
+               0) {
+            text.append(buffer.data(), count);
+        }
+        std::fputs(text.c_str(), stderr);
+        return text;
+    }
+
+private:
+    void restore() noexcept
+    {
+        if (saved_.get() < 0)
+            return;
+        std::fflush(stderr);
+        (void)::dup2(saved_.get(), STDERR_FILENO);
+        saved_.reset();
+    }
+
+    std::FILE* file_ {std::tmpfile()};
+    UniqueDescriptor saved_;
+};
+
+/* A guest that powers off with a configuration change unanswered closes the
+ * backend channel, possibly before the main socket, and one that has already
+ * closed it fails the server's next request on it with EPIPE. Either way the
+ * front-end has let the device go, so the server ends the connection as it
+ * does at end of file on the main socket, without reporting a failure. */
+void closedBackendChannelEndsTheConnectionQuietly()
+{
+    for (const bool closedBeforeTheChange : {false, true}) {
+        auto device = std::make_unique<ConfigChangeDevice>();
+        auto* source = device.get();
+        VhostUserServer server {std::move(device)};
+        std::optional<StandardErrorCapture> capture;
+        bool notified = false;
+        bool connectionClosed = false;
+        withServerConnection(server, [&](int socket) {
+            constexpr std::uint64_t features =
+                protocol::protocolFeatureReplyAck |
+                protocol::protocolFeatureSlaveRequest |
+                protocol::protocolFeatureConfig;
+            negotiateProtocolFeatures(socket, features);
+            auto backend = makeSocketPair();
+            const std::array descriptors {backend.descriptors[1].get()};
+            sendRequestAndReadAcknowledgement(
+                socket,
+                protocol::VhostRequest::setSlaveRequestFd,
+                {},
+                descriptors);
+            backend.descriptors[1].reset();
+
+            capture.emplace();
+            if (closedBeforeTheChange) {
+                backend.descriptors[0].reset();
+                source->trigger();
+                notified = true;
+            } else {
+                source->trigger();
+                pollfd ready {
+                    .fd = backend.descriptors[0].get(),
+                    .events = POLLIN,
+                };
+                protocol::VhostHeader notification {};
+                notified = ::poll(&ready, 1, 2000) == 1 &&
+                    ::recv(
+                        backend.descriptors[0].get(),
+                        &notification,
+                        sizeof(notification),
+                        MSG_WAITALL) == sizeof(notification) &&
+                    notification.request == static_cast<std::uint32_t>(
+                        protocol::VhostSlaveRequest::configChange);
+                // Unanswered, as the guest leaves it.
+                backend.descriptors[0].reset();
+            }
+            // The main socket stays open: the backend channel alone ends it.
+            pollfd closed {.fd = socket, .events = POLLIN};
+            std::uint8_t byte {};
+            connectionClosed = ::poll(&closed, 1, 2000) == 1 &&
+                ::read(socket, &byte, sizeof(byte)) == 0;
+        });
+        const auto reported = capture->finish();
+        require(notified);
+        require(connectionClosed);
+        require(
+            reported.find("connection failed") == std::string::npos,
+            "a front-end that closed the connection was reported as a "
+            "failure");
+    }
+}
+
 class SharedMemoryDevice final : public FixtureDevice {
 public:
     explicit SharedMemoryDevice(std::size_t actionCount = 1)
@@ -1919,6 +2039,7 @@ void runVhostUserProtocolTests()
     completedPrefixNotifiesBeforeRetry();
     configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement();
     configChangeWaitStillAnswersConfigReads();
+    closedBackendChannelEndsTheConnectionQuietly();
     sharedMemoryRequiresBackendAcknowledgements();
     sharedMemoryConfigurationRequiresNegotiation();
     standardizedSharedMemoryNegotiationBatchesBackendRequestsBeforeReply();

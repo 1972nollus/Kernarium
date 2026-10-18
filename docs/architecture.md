@@ -1317,7 +1317,11 @@ answering the guest's feature, queue-size, shared-memory-configuration, and
 config queries. Any other request is held until the acknowledgement arrives and
 is then handled before anything still unread, because its sender drains the
 backend channel while it waits, and handling it early could start a second
-backend request inside the first.
+backend request inside the first. A front-end closes the backend channel only
+when it lets the device go, as a guest that powers off with a config change
+unanswered does, so the server ends the connection without reporting a failure
+when that channel reaches end of file or a write finds either socket closed,
+as it does at end of file on the main socket.
 
 Retiring the device is where the guest's recovery ends. virtio-gpu has no
 broken-device handling of its own: it never tests `virtqueue_is_broken()`, so a

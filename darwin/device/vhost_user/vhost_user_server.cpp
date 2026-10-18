@@ -58,6 +58,32 @@ constexpr std::uint64_t baseOfferedProtocolFeatures =
 
 class ConnectionStopped final {};
 
+/* The front-end has closed a socket of the connection, which it does only
+ * when it lets the device go. This ends the connection as end of file on the
+ * main socket does, without reporting a failure. */
+class ConnectionClosed final {};
+
+/* What a write goes to. A socket of the connection whose peer has closed it
+ * fails a write with EPIPE, or with ECONNRESET when the peer left data
+ * unread; either means the front-end closed the connection. */
+enum class WriteTarget : bool {
+    descriptor,
+    socket,
+};
+
+[[noreturn]] void throwWriteFailure(
+    WriteTarget target,
+    const char* operation,
+    int error)
+{
+    if (target == WriteTarget::socket &&
+        (error == EPIPE || error == ECONNRESET)) {
+        throw ConnectionClosed {};
+    }
+    throw std::runtime_error(
+        std::string(operation) + ": " + std::strerror(error));
+}
+
 /* A front-end request whose reply the front-end reads from the main socket
  * without draining the backend channel, and whose handling only reads state,
  * so it can be answered while a backend request is outstanding. */
@@ -139,6 +165,7 @@ void flushReadinessOutput()
 }
 
 void writeExact(
+    WriteTarget target,
     int descriptor,
     const void* source,
     std::size_t length,
@@ -154,8 +181,7 @@ void writeExact(
                 continue;
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 continue;
-            throw std::runtime_error(
-                "vhost-user write failed: " + std::string(std::strerror(errno)));
+            throwWriteFailure(target, "vhost-user write failed", errno);
         }
         if (count == 0)
             throw std::runtime_error("short vhost-user write");
@@ -193,9 +219,8 @@ void writeFrame(
         if (count < 0) {
             if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
                 continue;
-            throw std::runtime_error(
-                "vhost-user frame write failed: " +
-                std::string(std::strerror(errno)));
+            throwWriteFailure(
+                WriteTarget::socket, "vhost-user frame write failed", errno);
         }
         if (count == 0)
             throw std::runtime_error("short vhost-user frame write");
@@ -259,15 +284,15 @@ void writeFrameWithDescriptor(
         if (count < 0) {
             if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
                 continue;
-            throw std::runtime_error(
-                "vhost-user descriptor send failed: " +
-                std::string(std::strerror(errno)));
+            throwWriteFailure(
+                WriteTarget::socket, "vhost-user descriptor send failed", errno);
         }
         if (count == 0)
             throw std::runtime_error("short vhost-user descriptor send");
         const auto consumed = static_cast<std::size_t>(count);
         if (consumed < frame.size()) {
             writeExact(
+                WriteTarget::socket,
                 socket,
                 frame.data() + consumed,
                 frame.size() - consumed,
@@ -295,7 +320,12 @@ void writeEmulatorMessage(
      * enter the guest receiver on this thread.  That receiver cannot wait for
      * a payload the interrupted thread has not written yet.
      */
-    writeExact(socket, message.data(), message.size(), stopRequested);
+    writeExact(
+        WriteTarget::socket,
+        socket,
+        message.data(),
+        message.size(),
+        stopRequested);
 }
 
 template<typename Value>
@@ -728,6 +758,7 @@ void VhostUserServer::signalQueue(std::uint32_t index)
     if (queues_[index].callDescriptor.get() >= 0) {
         constexpr std::uint64_t completionCount = 1;
         writeExact(
+            WriteTarget::descriptor,
             queues_[index].callDescriptor.get(),
             &completionCount,
             sizeof(completionCount),
@@ -866,8 +897,10 @@ void VhostUserServer::awaitBackendAcknowledgement(
                         std::memory_order_acquire)) {
                     throw ConnectionStopped {};
                 }
-                throw std::runtime_error(
-                    std::string("closed vhost-user ") + channel + " channel");
+                /* A guest that powers off with a configuration change still
+                 * unanswered closes this channel, and it may do so before it
+                 * closes the main socket. */
+                throw ConnectionClosed {};
             }
             constexpr std::uint32_t expectedReplyFlags =
                 protocol::vhostUserVersion | protocol::vhostUserReply;
@@ -1801,6 +1834,8 @@ void VhostUserServer::serveConnection(
         }
     } catch (const ConnectionStopped&) {
         // Normal cooperative shutdown while a peer is not draining output.
+    } catch (const ConnectionClosed&) {
+        // The front-end let the device go while a write or a wait was on it.
     } catch (const std::exception& error) {
         std::fprintf(
             stderr,
