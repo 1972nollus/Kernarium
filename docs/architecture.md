@@ -1252,6 +1252,13 @@ battery, and network providers own their protocol behavior independently. Only
 the GPU provider depends on `UML_BUILD_GPU`; the others build on the transport
 alone.
 
+A disabled ring is given no new data. A buffer the backend only fills, such as
+a virtio-input event buffer, stays in the ring until the ring is enabled again:
+the front end reads a used buffer whatever its length, so returning it empty
+would replay the event it held before. A buffer that carries a request is
+consumed and dropped. A suspended guest disables its rings, so input that
+arrives meanwhile reaches it once, after the resume.
+
 The [Virtio video device](../darwin/device/video/README.md) bridges the shared
 mainline/Android V4L2 driver to the platform VideoToolbox decoder. It uses its
 own vhost-user connection and requires no GPU context. The
