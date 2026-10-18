@@ -51,6 +51,18 @@ carriers included, so host-side kernel code changes a signal mask only with
 `sigprocmask`, and the console PTY assertion checks that a console write
 leaves another thread's mask unchanged.
 
+Linux asks for the current CPU on every use of `current`, and a Darwin vCPU
+carrier keeps its CPU number in a pthread key. `uml_curr_cpu()` reads that
+key's word directly from the carrier's thread-specific data, whose base
+`TPIDRRO_EL0` holds, instead of calling `pthread_getspecific()`, a host call
+that iOS pays an order of magnitude more for than macOS. The layout is
+Darwin's own, not an interface, so each carrier checks it as it comes up: the
+base must lie inside the carrier's own pthread structure and name the thread
+in its first word, and the words of both CPU keys must equal what
+`pthread_getspecific()` returns. The direct read starts once a carrier has
+passed, and any mismatch stops it for the rest of the run with a warning on
+stderr, so a changed layout costs speed and never correctness.
+
 Host-side kernel objects pass variadic arguments in registers, while Apple's
 arm64 ABI reads them from the stack, so a direct call to a variadic libc
 function hands it arbitrary arguments. `fcntl()` goes through the fixed-arity
