@@ -1474,12 +1474,23 @@ private:
 					for (std::uint64_t position = 0;
 					     position < operation.length;
 					     position += page_size) {
-						auto &page = page_for(
-							operation.address + position);
+						const auto page_address =
+							operation.address + position;
 						if (!operation.map) {
-							clear_page(page);
+							/* An unmap changes only a page the
+							 * generation or this batch holds. Most
+							 * name pages nothing mapped, and a 4 KiB
+							 * guest sends one per page, so plan none
+							 * for them. */
+							if (!page_indices.contains(
+								    page_address) &&
+							    !state.mappings.contains(
+								    page_address))
+								continue;
+							clear_page(page_for(page_address));
 							continue;
 						}
+						auto &page = page_for(page_address);
 						std::optional<Mapping> next;
 						next = Mapping{operation.mapping.backing,
 							operation.mapping.offset + position,
