@@ -57,6 +57,8 @@ def run_samples_launcher(
         ),
         "runuser": 'shift 3\nexec "$@"',
         "glxinfo": "echo stub-glxinfo",
+        # Plasma has finished starting: its shell runs and its splash is gone.
+        "pgrep": '[ "$2" = ksplashqml ] && exit 1\necho 4242',
         "curl": (
             'while [ "$1" != --output ]; do shift; done\n'
             'echo "<html>" > "$2"'
@@ -295,7 +297,7 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIn("first page fetch failed", runner)
         self.assertIn('"run_at": "document_end"', runner)
         self.assertNotIn('"run_at": "document_idle"', runner)
-        self.assertIn('default=300', runner)
+        self.assertIn('default=360', runner)
         self.assertIn("first WebGL sample did not render within", runner)
         self.assertIn('"state": "failed"', runner)
         self.assertIn('"state": "interrupted"', runner)

@@ -358,7 +358,7 @@ emit_session_diagnostics()
     ls -l "$runtime" /tmp/.X11-unix 2>&1 || true
     timeout 10 loginctl list-sessions --no-pager 2>&1 || true
     ps -eo pid,ppid,stat,etimes,wchan:24,args 2>&1 |
-        grep -E 'sddm|kwin|plasma|Xwayland|qdbus|chromium|agetty|login' |
+        grep -E 'sddm|kwin|plasma|ksplash|Xwayland|qdbus|chromium|agetty|login' |
         grep -v grep || true
     timeout 15 journalctl --no-pager -b -o short-monotonic \\
         -u sddm.service -u 'getty@*' -n 60 2>&1 || true
@@ -526,8 +526,10 @@ fi
         *'Network service crashed or was terminated'*)
             # A guest too starved to answer Chromium's 15 s start-up
             # connection loses its network service before the page's first
-            # console line, and the page never loads. A renderer that misses
-            # the same deadline is replaced, so only this stops Chromium.
+            # console line, and the page never loads. The storage service,
+            # started with it, often misses the same deadline; another child
+            # that misses it alone does not stop the page, so only this
+            # stops Chromium.
             if [ "$page_started" = 0 ] && [ "$reported" = 0 ]; then
                 reported=1
                 echo "UML_CHROMIUM_ERROR:" \\

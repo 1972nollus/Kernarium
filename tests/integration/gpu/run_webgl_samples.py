@@ -521,10 +521,12 @@ def main() -> int:
         metavar="INDEX",
         help="stop at the one-based sample index (diagnostic use)",
     )
+    # The default leaves the KDE session 135 s of guest uptime to finish
+    # starting; a ten-vCPU JIT guest takes about 45 s.
     parser.add_argument(
         "--first-sample-timeout",
         type=float,
-        default=300,
+        default=360,
         help="bound browser navigation and extension startup",
     )
     parser.add_argument("--timeout", type=float, default=900)

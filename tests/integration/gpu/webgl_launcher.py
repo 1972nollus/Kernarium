@@ -47,7 +47,11 @@ fail()
     exit 1
 }
 # $1: the display socket; $2: what it belongs to. The session bus must exist
-# as well.
+# as well, and the session must have finished starting. Plasma's splash,
+# ksplashqml, starts before plasmashell and exits once the session reports
+# its start-up complete. Chromium started earlier shares the guest with the
+# whole desktop start-up, and on a small guest its browser thread can then
+# miss the 15 s its first child processes wait for their IPC connection.
 wait_for_session()
 {
     while [ ! -S "$1" ] || [ ! -S "$runtime/bus" ]; do
@@ -57,6 +61,15 @@ wait_for_session()
         fi
         sleep 1
     done
+    while pgrep -x ksplashqml >/dev/null ||
+        ! pgrep -x plasmashell >/dev/null; do
+        if [ "$(uptime_seconds)" -ge "$session_deadline" ]; then
+            fail "$2 did not finish starting by guest uptime" \\
+                "${session_deadline}s"
+        fi
+        sleep 1
+    done
+    printf 'UML_SESSION_READY|UPTIME=%s\\n' "$(cut -d' ' -f1 /proc/uptime)"
 }
 find_xauthority()
 {
