@@ -78,10 +78,10 @@ index b8cb01088c5fa5cb9f05f17fbc68f8e8de27f186..5d52597843faacbcd6f5a4ef1140a137
  	unsigned long from;
  	unsigned long to;
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index 512090564767072bc880dfb9759678e7a9288df7..1b1a49ace5a0613dda53b4b7ed026af383611974 100644
+index 6c022aa9698cec9b1ef5fe4f60e6a7a04c700274..2b1a007cd64b3197b25b8d994240e0bc28379237 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
-@@ -292,7 +292,6 @@ extern int darwin_uml_vm_map_generation(unsigned long generation,
+@@ -293,7 +293,6 @@ extern int darwin_uml_vm_map_generation(unsigned long generation,
  					unsigned long length,
  					int protection, int guest_code,
  					int guest_writable);

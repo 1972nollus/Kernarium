@@ -40,6 +40,10 @@ must not discard pending interactive commands or bootstrap payload bytes.
 The standalone Darwin kernel build verifies this with the actual console
 implementation and a native PTY assertion. This producer check takes explicit
 source/build paths; Apple product configuration still consumes only bundles.
+Closing a serial line, as its exitcall does at power-off, never closes a host
+descriptor: an `fd:` channel's close only restores the terminal, and the
+duplicate output descriptor `close_one_chan()` would close exists only in
+time-travel mode, which needs a uniprocessor kernel.
 
 Darwin's `sigprocmask()` sets the mask of every thread in the process, vCPU
 carriers included, so host-side kernel code changes a signal mask only with
