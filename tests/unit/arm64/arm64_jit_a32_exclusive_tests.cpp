@@ -301,10 +301,18 @@ void monitor_rules(unsigned long generation) {
   fixture.data32(8, 20);
   cpu = run({0xe190'1f9fU, 0xe280'4008U, 0xe184'3f92U, arm_svc});
   require(cpu.registers[3] == 1 && fixture.read32(8) == 20);
-  // The pair succeeds without anything between.
-  fixture.data32(0, 10);
-  cpu = run({0xe190'1f9fU, 0xe180'3f92U, arm_svc});
-  require(cpu.registers[3] == 0 && fixture.read32(0) == 99);
+  // The pair succeeds without anything between. It is the host's own load
+  // and store exclusive, and the host store fails when anything clears the
+  // host monitor in between, such as an interrupt or a context switch. The
+  // architecture allows that failure and a guest retries, so the pair gets a
+  // few attempts.
+  bool stored = false;
+  for (int attempt = 0; attempt < 16 && !stored; ++attempt) {
+    fixture.data32(0, 10);
+    cpu = run({0xe190'1f9fU, 0xe180'3f92U, arm_svc});
+    stored = cpu.registers[3] == 0;
+  }
+  require(stored && fixture.read32(0) == 99);
 }
 
 void faults_and_alignment(unsigned long generation) {

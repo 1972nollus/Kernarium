@@ -260,26 +260,38 @@ void pair_and_monitor(unsigned long generation, bool thumb) {
     require(stopped.reason == ExitReason::system_call);
     return task;
   };
+  // A fused pair is the host's own load and store exclusive, and the host
+  // store fails when anything clears the host monitor in between, such as an
+  // interrupt or a context switch. The architecture allows that failure and
+  // a guest retries, so a pair that must succeed gets a few attempts.
+  const auto run_until_stored = [&](std::initializer_list<std::uint32_t> program) {
+    for (int attempt = 0; attempt < 16; ++attempt) {
+      fixture.data32(0, 10);
+      auto task = run(program);
+      if (task.registers[3] == 0)
+        return task;
+    }
+    require(false);
+    return Fixture::task(false);
+  };
   fixture.data32(0, 10);
   cpu = run({a_stlex_r3, arm_svc});
   require(cpu.registers[3] == 1 && fixture.read32(0) == 10);
   fixture.data32(0, 10);
   cpu = run({a_ldaex_r2, 0xe580'5000U /* str r5,[r0] */, a_stlex_r3, arm_svc});
   require(cpu.registers[3] == 1 && fixture.read32(0) == 99);
-  fixture.data32(0, 10);
-  cpu = run({a_ldaex_r2, a_stlex_r3, arm_svc});
-  require(cpu.registers[3] == 0 && fixture.read32(0) == 10);
+  cpu = run_until_stored({a_ldaex_r2, a_stlex_r3, arm_svc});
+  require(fixture.read32(0) == 10);
   // CLREX takes the reservation away.
   fixture.data32(0, 10);
   cpu = run({a_ldaex_r2, 0xf57f'f01fU, a_stlex_r3, arm_svc});
   require(cpu.registers[3] == 1 && fixture.read32(0) == 10);
   // An LDREX pairs with an STLEX and an LDAEX with an STREX.
-  fixture.data32(0, 10);
-  cpu = run({0xe190'2f9fU, a_stlex_r3, arm_svc});
-  require(cpu.registers[3] == 0);
-  fixture.data32(0, 10);
-  cpu = run({a_ldaex_r2, 0xe180'3f92U /* strex r3,r2,[r0] */, arm_svc});
-  require(cpu.registers[3] == 0);
+  cpu = run_until_stored({0xe190'2f9fU, a_stlex_r3, arm_svc});
+  require(fixture.read32(0) == 10);
+  cpu = run_until_stored(
+      {a_ldaex_r2, 0xe180'3f92U /* strex r3,r2,[r0] */, arm_svc});
+  require(fixture.read32(0) == 10);
 }
 
 /* SEVL is a no-op for the flags and the registers and retires like any
