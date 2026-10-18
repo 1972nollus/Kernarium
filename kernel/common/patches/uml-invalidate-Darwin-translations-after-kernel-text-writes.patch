@@ -64,10 +64,10 @@ index 4c9858cd36ecb26b0da0fae25fac732ff4125717..b301339bed275270cf4c99b751eac7c5
  #include <asm-generic/cacheflush.h>
  #endif /* __UM_ASM_CACHEFLUSH_H */
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index 2dde638d10d910fcc9a9110793c36f5c29495e66..6cd49a51fd6ac538b1406af80c2222a82fa2830d 100644
+index 8ebb9e59271b2cca93efb75d62f25cf744a2fd7a..8914ece2ca2d81399169f75c2c1aa0ca5851c374 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
-@@ -275,6 +275,9 @@ extern int darwin_uml_vm_walker_lock(unsigned long generation);
+@@ -276,6 +276,9 @@ extern int darwin_uml_vm_walker_lock(unsigned long generation);
  extern int darwin_uml_vm_walker_unlock(unsigned long generation);
  extern int darwin_uml_vm_destroy(unsigned long generation);
  extern int darwin_uml_vm_flush_generation(unsigned long generation);

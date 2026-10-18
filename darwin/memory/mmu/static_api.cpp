@@ -351,16 +351,19 @@ extern "C" int darwin_uml_vm_sync_from_backing(unsigned long address)
 		return 0;
 	auto native_space = uml::memory::native_address_space();
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	/* Kernel uaccess asks for every page it touches, nearly always one the
+	 * space maps directly, so that answer comes from one hold of its lock. */
 	return native_address_call(native_space, [&](auto &space) {
-		if (space.contains_shadow(address, DARWIN_UML_GUEST_PAGE_SIZE))
+		const auto direct = space.sync_direct_unless_shadow(
+			address, DARWIN_UML_GUEST_PAGE_SIZE);
+		if (direct <= 0)
+			return direct;
 #if DARWIN_UML_X86_64_USERSPACE_ONLY
-			return space.reload_from_backing(
-				address, DARWIN_UML_GUEST_PAGE_SIZE);
+		return space.reload_from_backing(
+			address, DARWIN_UML_GUEST_PAGE_SIZE);
 #else
-			return space.refresh(
-				address, DARWIN_UML_GUEST_PAGE_SIZE);
+		return space.refresh(address, DARWIN_UML_GUEST_PAGE_SIZE);
 #endif
-		return space.sync_direct(address, DARWIN_UML_GUEST_PAGE_SIZE);
 	});
 #endif
 	return native_address_call(native_space, [&](auto &space) {

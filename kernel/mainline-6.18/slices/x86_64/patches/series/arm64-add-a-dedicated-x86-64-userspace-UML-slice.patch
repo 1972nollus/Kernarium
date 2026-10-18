@@ -2903,10 +2903,10 @@ index 276273b4470e6f412dece700242b332851648a3f..9ff2fa2288c4a59014725de16b21af4e
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
  
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 3267358aad21eb46cb76cc8375280bac948f0bc9..bde1affde2a40d95c648c8221d1d58181d687a4f 100644
+index 67bb5bc16c01d7a95ca2b3aa82d21b3b0b4f5e9d..4fabe9205a7a023142b01450a4730433bef273ca 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
-@@ -484,6 +484,9 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
+@@ -482,6 +482,9 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
  		struct faultinfo *fi = UPT_FAULTINFO(regs);
  		current->thread.arch.faultinfo = *fi;
  		force_sig_fault(sig, code, (void __user *)FAULT_ADDRESS(*fi));

@@ -383,7 +383,13 @@ the same memory as the frames' other views; an empty slot is unmapped in one
 call; every other slot is a host-private copy that is coherent with the frames
 only at a synchronization point. The four samples are not one atomic snapshot;
 a writer publishes its range after it changes a PTE, so a later walk reapplies
-it. A kernel-mode fault publishes exactly its
+it. A walk applies only the `init_mm` PTEs that carry `_PAGE_NEEDSYNC`, on the
+4 KiB profile only the slots one of whose quarters carries it, and clears the
+bit by compare-and-exchange once the host mapping is applied. A writer that
+changes the PTE meanwhile has set the bit again, and its own flush applies the
+new value. A vmalloc purge flushes the whole span between the areas it frees,
+so without the bit such a walk mapped every present page of the span again.
+User PTEs keep the bit. A kernel-mode fault marks and publishes exactly its
 Linux page, synchronizes `init_mm`, and resumes only when the host confirms
 the access is backed; any other outcome panics instead of faulting again. On
 both page profiles a nested mmu-gather flush keeps the range it collected
@@ -447,6 +453,17 @@ work. Its state lasts until the last open file is closed, which no longer
 reaches the device. `guest-video-teardown` removes it by unbind, halt and
 forced power-off while it has open files, queued buffers and commands in
 flight.
+A synchronous video command waits five seconds for its answer. On Darwin its
+answer is already in guest memory when the kick returns, because the backend
+runs the queue before it acknowledges the kick and the device answers such a
+command at once, so the timeout can only race the completion interrupt; a
+device that queues its work may still answer later. A command therefore owns
+its response memory and copies a timely answer to its caller, and a waiter
+that gives up leaves the command allocated for the late answer, or the
+removal, to free. An open that fails after the device made its stream
+destroys that stream. `guest-video-late-answer` serves the decoder from the
+production device behind a test-only shim that answers one parameter query
+late and another never.
 
 Lifecycle quiesce uses full Linux system suspend. The management console
 acknowledges only after the suspend entry boundary and remains the explicit

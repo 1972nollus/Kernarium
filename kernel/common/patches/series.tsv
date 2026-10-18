@@ -36,6 +36,7 @@ patch	deliver-data-alignment-faults-to-guest-signal-handlers.patch
 patch	uml-replay-user-mappings-concurrently.patch
 patch	uml-complete-or-report-a-Darwin-kernel-range-TLB-flush.patch
 patch	uml-stop-a-vhost-user-device-whose-backend-has-gone.patch
+patch	uml-delete-the-virtqueues-of-a-lost-vhost-user-backend-quietly.patch
 patch	mm-vmscan-write-back-dirty-swap-cache-folios.patch
 patch	uml-single-step-Darwin-guests-for-ptrace.patch
 patch	uml-invalidate-Darwin-translations-after-kernel-text-writes.patch
@@ -70,3 +71,5 @@ patch	mm-vmalloc-allocate-and-align-areas-in-architecture-mapping-groups.patch
 patch	um-map-congruent-4-KiB-kernel-slots-as-shared-Darwin-host-pages.patch
 patch	io_uring-keep-a-vmapped-region-coherent-with-its-user-mapping.patch
 patch	drm-fbdev-shmem-flush-the-kernel-mapping-before-reporting-damage.patch
+patch	um-read-the-Darwin-carrier-CPU-without-a-host-call.patch
+patch	um-apply-only-changed-kernel-PTEs-in-a-Darwin-kernel-TLB-sync.patch

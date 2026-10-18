@@ -1122,6 +1122,10 @@ renewed once its arena holds at least two mebibytes no body uses and more than
 its bodies do: it is closed, and each executor attached lets go of it at the
 start of its next entry into translated code, so the next one to run the
 address space makes a new one and the old one dies with its last executor.
+An executor also lets go of an address space whose generation the MMU has
+destroyed, at the same point and as the count of destroyed generations moves,
+leaving its number in the window's order until the least-recently-used rule
+reaches it; the x86 gadget executors do the same at the start of each run.
 Cached
 returns consult a private per-carrier return-record ring after their site
 cells miss: linked calls push the return PC with its block link, a matching
@@ -1148,6 +1152,11 @@ path placed, in each way of its set, and misses a page its set does not hold.
 The gadget engine's fill path looks the page up in the generation its entered
 execution context holds (`darwin_uml_static_vm_execution_context_translate()`),
 without resolving the thread's address space and active generation each time.
+It reads the generation's fill index (`darwin/memory/mmu/fill_index.hpp`), a
+radix table of host addresses and guest permissions that mirrors the mapping
+map and is read without a lock: whatever removes or changes a mapping quiesces
+execution first, so an entered context never sees a stale word. A page the index
+does not hold is looked up in the map under its reader lock.
 
 Guest debuggers depend on two kernel/host contracts. To single-step a task,
 Linux sets the architectural step bit in the entry registers (arm64 PSTATE.SS,
@@ -1270,7 +1279,12 @@ for that teardown, because a host read registration is level triggered and a
 descriptor at end of file stays readable: its handler would otherwise be
 re-entered until it consumed a whole vCPU, which no amount of disabling the
 interrupt line prevents. A would-block still ends an ordinary pass, so a
-healthy device and a spurious wake are unaffected.
+healthy device and a spurious wake are unaffected. A message that cannot be
+sent because the peer has gone reports the same loss. Deleting the virtqueues
+of a lost backend sends it nothing: disabling the rings only stops a live
+backend from using them, so the driver's removal of the retired device warns
+about nothing. `guest-vhost-user-backend-gone` loses a console's backend
+while its driver is bound.
 
 In-band notifications are always negotiated, so a queue is kicked by a
 synchronous request on the control socket rather than through a kick

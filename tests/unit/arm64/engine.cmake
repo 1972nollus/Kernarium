@@ -469,6 +469,20 @@
         UML_GADGET_SWEEP_STRESS=1
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
+    # Executors let go of the spaces of generations the MMU destroyed.
+    uml_add_arm64_unit_test(gadget_dead_space WITHOUT_HARNESS
+        OBJECTS
+            $<TARGET_OBJECTS:uml_static_mmu>
+            $<TARGET_OBJECTS:uml_arm64_gadgets>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
+            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+            ${UML_STATIC_RUNTIME_STRESS_TEST_OBJECTS}
+        LABELS tsan)
+    target_compile_definitions(uml_arm64_gadget_dead_space_tests PRIVATE
+        UML_GADGET_SWEEP_STRESS=1
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+
     # The body arena on its own, against a model of what it hands out.
     uml_add_arm64_unit_test(gadget_body_arena WITHOUT_HARNESS NO_OBJECTS)
 
