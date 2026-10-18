@@ -474,6 +474,24 @@ hotplug and restores them before guest tasks resume. The console socket is
 `uml_dir=<dir>`, a directory owned by that machine alone; a path that does not
 fit Darwin's 104-byte `sun_path` is refused, never truncated.
 
+Only a wake source ends the suspend: the management console, the UML RTC
+alarm, VNC input, and a vhost-user device whose wakeup is enabled in sysfs. A
+Linux host clears O_ASYNC on every other descriptor for the suspend; Darwin,
+whose IRQ notification thread stands in for SIGIO, takes those descriptors off
+that thread instead, so network and console input, vhost-user requests and
+block completions wait for the resume and are handled then. The suspended CPU
+sleeps until a wake source has input or a wakeup is pending, so neither a host
+signal nor a notification collected before the suspend ends it. A wake request
+that arrives while a suspend is still being entered, whether the host or the
+guest started it, is answered at once rather than left on the console, and it
+still ends that suspend: the PM core aborts at its next wakeup check, or the
+CPU does not go to sleep. A guest that is not suspending only answers it.
+Virtio input is not a wake source, because a suspend disables its rings, so a
+host that forwards a power key also sends the wake. `guest-suspend-holds`
+keeps network, console and vhost-user traffic flowing through a suspend, sends
+early wakes, and wakes a suspend the guest entered by itself with a wake and
+with a power key typed on the VNC display.
+
 Loadable modules remain disabled. The required guest filesystems, networking,
 Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM
 policy are built in. Hostfs is disabled. Deliberately unsupported kernel

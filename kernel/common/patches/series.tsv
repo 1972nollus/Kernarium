@@ -75,3 +75,5 @@ patch	um-read-the-Darwin-carrier-CPU-without-a-host-call.patch
 patch	um-apply-only-changed-kernel-PTEs-in-a-Darwin-kernel-TLB-sync.patch
 patch	uml-hold-the-vhost-user-socket-from-a-request-to-its-reply.patch
 patch	virtio_console-queue-hvc-output-as-a-port-buffer.patch
+patch	um-hold-a-Darwin-system-suspend-until-a-wake-source-fires.patch
+patch	um-let-VNC-input-wake-a-suspended-guest.patch

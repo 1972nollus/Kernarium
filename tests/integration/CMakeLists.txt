@@ -369,6 +369,18 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# A system suspend holds through network, console and vhost-user traffic
+# until a wake request, and a wake sent while it is still being entered
+# ends it. A suspend the guest entered by itself ends for a wake or for a
+# power key typed on the VNC display, which reaches the guest once.
+uml_add_guest_integration_test(
+    NAME guest-suspend-holds
+    SCRIPT kernel/run_guest_suspend_holds.py
+    ARGS --server $<TARGET_FILE:uml-balloon-churn-server>
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    CPUS 2)
+
 # Path and name strings copied from user memory keep their contract.
 uml_add_guest_integration_test(
     NAME guest-user-strings

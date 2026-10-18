@@ -1236,6 +1236,14 @@ void VhostUserServer::processQueue(std::uint32_t index)
             throw std::runtime_error("oversized virtio request");
 
         if (!queue.enabled) {
+            /* A disabled ring is given no new data: a buffer the device only
+             * fills waits in the ring until it is enabled again. Returning it
+             * empty would not do, because a front end such as virtio-input
+             * reads a used buffer whatever its length, and would replay the
+             * event that buffer held before. A buffer carrying a request is
+             * consumed and dropped, as a disabled ring's outgoing data is. */
+            if (requestSize == 0 && responseCapacity != 0)
+                break;
             const PendingRequest disabled {
                 .requestId = 0,
                 .queueIndex = index,
