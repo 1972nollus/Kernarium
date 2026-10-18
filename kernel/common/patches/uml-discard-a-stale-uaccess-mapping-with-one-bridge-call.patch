@@ -30,10 +30,10 @@ bridge header names the sync.sh that copies it.
  5 files changed, 22 insertions(+), 28 deletions(-)
 
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index 1b1a49ace5a0613dda53b4b7ed026af383611974..f3d75ef6be4c70c8af7123526855df9e99f032a1 100644
+index 2b1a007cd64b3197b25b8d994240e0bc28379237..7d8ca4414554983e5ebeb6ad61d6e3dfad8dfd10 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
-@@ -296,10 +296,8 @@ extern int darwin_uml_vm_sync_from_backing(unsigned long address);
+@@ -297,10 +297,8 @@ extern int darwin_uml_vm_sync_from_backing(unsigned long address);
  extern int darwin_uml_vm_sync_from_buffer(unsigned long address,
  					  const void *buffer,
  					  unsigned long length);

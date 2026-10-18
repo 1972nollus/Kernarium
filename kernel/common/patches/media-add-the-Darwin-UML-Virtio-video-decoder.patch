@@ -22,22 +22,31 @@ reset does not reach the backend, answers every pending command as failed
 so that a queued buffer returns to vb2 in error, and flushes the event work.
 The last reference to the video device, perhaps a later close, frees the
 driver state.
+
+A synchronous command waits five seconds for its answer, but a device
+that answers later still writes the answer into the buffer it was given.
+That buffer is therefore memory the command owns, inline or allocated
+with it, and the waiter copies a timely answer to its caller. A waiter
+that gives up leaves the command, with its request, data and response, to
+the late answer or to removal to free, and no response callback runs for
+it. An open that fails after the device created its stream destroys that
+stream.
 ---
  drivers/media/Kconfig                       |    2 +
  drivers/media/Makefile                      |    2 +
  drivers/media/virtio/Kconfig                |    9 +
  drivers/media/virtio/Makefile               |    6 +
  drivers/media/virtio/README                 |   11 +
- drivers/media/virtio/virtio_video.h         |  437 +++++++
+ drivers/media/virtio/virtio_video.h         |  450 +++++++
  drivers/media/virtio/virtio_video_blob.c    |  157 +++
  drivers/media/virtio/virtio_video_caps.c    |  515 ++++++++
  drivers/media/virtio/virtio_video_dec.c     |  479 +++++++
- drivers/media/virtio/virtio_video_device.c  | 1294 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_device.c  | 1297 +++++++++++++++++++
  drivers/media/virtio/virtio_video_driver.c  |  261 ++++
  drivers/media/virtio/virtio_video_helpers.c |  253 ++++
- drivers/media/virtio/virtio_video_vq.c      | 1088 ++++++++++++++++
+ drivers/media/virtio/virtio_video_vq.c      | 1135 ++++++++++++++++
  include/uapi/linux/virtio_video.h           |  539 ++++++++
- 14 files changed, 5053 insertions(+)
+ 14 files changed, 5116 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -120,10 +129,10 @@ index 0000000000000000000000000000000000000000..90e8a3531bb86bec3aca28050a7e4950
 +in the owning Darwin host repository.
 diff --git a/drivers/media/virtio/virtio_video.h b/drivers/media/virtio/virtio_video.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..a78713606382a94b4eb5ca71b2e16dc4c06e524d
+index 0000000000000000000000000000000000000000..9b2099f6de32b3235c21a615e608f42e340e3d6d
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video.h
-@@ -0,0 +1,437 @@
+@@ -0,0 +1,450 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/* Common header for virtio video driver.
 + *
@@ -230,16 +239,29 @@ index 0000000000000000000000000000000000000000..a78713606382a94b4eb5ca71b2e16dc4
 +	void *data_buf;
 +	uint32_t data_size;
 +
++	/*
++	 * Memory the command owns, inline or allocated with it, so that an
++	 * answer arriving after its waiter gave up reaches nothing freed.
++	 */
 +	char *resp_buf;
 +	int resp_size;
 +	/* Bytes the device wrote into resp_buf, as the used ring reported. */
 +	unsigned int resp_len;
++	/* A synchronous caller's buffer, which the waiter copies the answer to. */
++	void *caller_resp;
 +
 +	void *priv;
 +	virtio_video_resp_cb resp_cb;
 +
 +	bool is_sync;
 +	struct completion reclaimed;
++	/*
++	 * Under qlock: answered once the device or removal has answered a
++	 * synchronous command, and its waiter frees it; abandoned once its
++	 * waiter gave up, and whoever takes it back frees it.
++	 */
++	bool answered;
++	bool abandoned;
 +
 +	struct list_head pending_list_entry;
 +};
@@ -1732,10 +1754,10 @@ index 0000000000000000000000000000000000000000..d3ec77840dc7e7e2d2265dac1e15ea0e
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..593c6b45152749e13eaee1e2ef69f24ec137f54b
+index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06bb7d916a9
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -0,0 +1,1294 @@
+@@ -0,0 +1,1297 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -2774,13 +2796,13 @@ index 0000000000000000000000000000000000000000..593c6b45152749e13eaee1e2ef69f24e
 +
 +	ret = virtio_video_stream_get_params(vvd, stream);
 +	if (ret)
-+		goto err_stream_create;
++		goto err_stream_destroy;
 +
 +	if (format >= VIRTIO_VIDEO_FORMAT_CODED_MIN &&
 +	    format <= VIRTIO_VIDEO_FORMAT_CODED_MAX) {
 +		ret = virtio_video_stream_get_controls(vvd, stream);
 +		if (ret)
-+			goto err_stream_create;
++			goto err_stream_destroy;
 +	}
 +
 +	mutex_init(&stream->vq_mutex);
@@ -2816,6 +2838,9 @@ index 0000000000000000000000000000000000000000..593c6b45152749e13eaee1e2ef69f24e
 +	mutex_unlock(video_dev->lock);
 +err_init_ctx:
 +	v4l2_fh_exit(&stream->fh);
++err_stream_destroy:
++	/* The device made the stream; it must not outlive the failed open. */
++	virtio_video_cmd_stream_destroy(vvd, stream_id);
 +err_stream_create:
 +	virtio_video_stream_id_put(vvd, stream_id);
 +	kfree(stream);
@@ -3558,10 +3583,10 @@ index 0000000000000000000000000000000000000000..2ccfa84c3d1ae9525e0c7c92341aec07
 +}
 diff --git a/drivers/media/virtio/virtio_video_vq.c b/drivers/media/virtio/virtio_video_vq.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..67f13592e1c9260b542803508c1cc19c1c1524d8
+index 0000000000000000000000000000000000000000..13357d3513869296f9921b83dc9909900a0e93ba
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_vq.c
-@@ -0,0 +1,1088 @@
+@@ -0,0 +1,1135 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -3651,12 +3676,21 @@ index 0000000000000000000000000000000000000000..67f13592e1c9260b542803508c1cc19c
 +	return false;
 +}
 +
++/* Frees a command on no list, apart from the data it was given. */
++static void put_vbuf(struct virtio_video_device *vvd,
++		     struct virtio_video_vbuffer *vbuf)
++{
++	if (vbuf->resp_buf != vbuf->buf + vbuf->size)
++		kfree(vbuf->resp_buf);
++	kmem_cache_free(vvd->vbufs, vbuf);
++}
++
 +static void free_vbuf(struct virtio_video_device *vvd,
 +		      struct virtio_video_vbuffer *vbuf)
 +{
 +	list_del(&vbuf->pending_list_entry);
 +	kfree(vbuf->data_buf);
-+	kmem_cache_free(vvd->vbufs, vbuf);
++	put_vbuf(vvd, vbuf);
 +}
 +
 +void virtio_video_cmd_cb(struct virtqueue *vq)
@@ -3674,14 +3708,22 @@ index 0000000000000000000000000000000000000000..67f13592e1c9260b542803508c1cc19c
 +			if (!vbuf_is_pending(vvd, vbuf))
 +				continue;
 +
++			/* Nothing waits for an answer its waiter gave up on. */
++			if (vbuf->abandoned) {
++				free_vbuf(vvd, vbuf);
++				continue;
++			}
++
 +			vbuf->resp_len = len;
 +			if (vbuf->resp_cb)
 +				vbuf->resp_cb(vvd, vbuf);
 +
-+			if (vbuf->is_sync)
++			if (vbuf->is_sync) {
++				vbuf->answered = true;
 +				complete(&vbuf->reclaimed);
-+			else
++			} else {
 +				free_vbuf(vvd, vbuf);
++			}
 +		}
 +
 +		if (unlikely(virtqueue_is_broken(vq)))
@@ -3757,11 +3799,17 @@ index 0000000000000000000000000000000000000000..67f13592e1c9260b542803508c1cc19c
 +
 +	vbuf->resp_cb = resp_cb;
 +	vbuf->resp_size = resp_size;
-+	if (resp_size <= MAX_INLINE_RESP_SIZE && !resp_buf)
-+		vbuf->resp_buf = (void *)vbuf->buf + size;
-+	else
-+		vbuf->resp_buf = resp_buf;
-+	BUG_ON(!vbuf->resp_buf);
++	/* Only a synchronous command may name a buffer of its caller. */
++	vbuf->caller_resp = resp_buf;
++	if (resp_size <= MAX_INLINE_RESP_SIZE) {
++		vbuf->resp_buf = vbuf->buf + size;
++	} else {
++		vbuf->resp_buf = kzalloc(resp_size, GFP_KERNEL);
++		if (!vbuf->resp_buf) {
++			kmem_cache_free(vvd->vbufs, vbuf);
++			return ERR_PTR(-ENOMEM);
++		}
++	}
 +
 +	return vbuf;
 +}
@@ -3809,7 +3857,8 @@ index 0000000000000000000000000000000000000000..67f13592e1c9260b542803508c1cc19c
 + * Answer every command still pending as the device would answer one it could
 + * not complete: with an empty response. A response callback sees a failed
 + * command, so a queued buffer returns to vb2 in error; a synchronous command
-+ * wakes its waiter, which frees it, and any other is freed here.
++ * wakes its waiter, which frees it, and any other is freed here, as is one
++ * whose waiter gave up on it.
 + */
 +void virtio_video_cancel_cmds(struct virtio_video_device *vvd)
 +{
@@ -3819,14 +3868,24 @@ index 0000000000000000000000000000000000000000..67f13592e1c9260b542803508c1cc19c
 +	spin_lock_irqsave(&vvd->commandq.qlock, flags);
 +	list_for_each_entry_safe(vbuf, next, &vvd->pending_vbuf_list,
 +				 pending_list_entry) {
++		/* Its waiter already has its answer, and frees it. */
++		if (vbuf->answered)
++			continue;
++		if (vbuf->abandoned) {
++			free_vbuf(vvd, vbuf);
++			continue;
++		}
++
 +		vbuf->resp_len = 0;
 +		if (vbuf->resp_cb)
 +			vbuf->resp_cb(vvd, vbuf);
 +
-+		if (vbuf->is_sync)
++		if (vbuf->is_sync) {
++			vbuf->answered = true;
 +			complete(&vbuf->reclaimed);
-+		else
++		} else {
 +			free_vbuf(vvd, vbuf);
++		}
 +	}
 +	spin_unlock_irqrestore(&vvd->commandq.qlock, flags);
 +}
@@ -3945,7 +4004,7 @@ index 0000000000000000000000000000000000000000..67f13592e1c9260b542803508c1cc19c
 +	spin_unlock_irqrestore(&vvd->commandq.qlock, flags);
 +
 +	if (ret)
-+		kmem_cache_free(vvd->vbufs, vbuf);
++		put_vbuf(vvd, vbuf);
 +
 +	return ret;
 +}
@@ -3954,9 +4013,9 @@ index 0000000000000000000000000000000000000000..67f13592e1c9260b542803508c1cc19c
 +virtio_video_queue_cmd_buffer_sync(struct virtio_video_device *vvd,
 +				   struct virtio_video_vbuffer *vbuf)
 +{
-+	int ret;
-+	unsigned long rem;
 +	unsigned long flags;
++	bool answered, gone;
++	int ret;
 +
 +	vbuf->is_sync = true;
 +	init_completion(&vbuf->reclaimed);
@@ -3965,17 +4024,30 @@ index 0000000000000000000000000000000000000000..67f13592e1c9260b542803508c1cc19c
 +	if (ret)
 +		return ret;
 +
-+	rem = wait_for_completion_timeout(&vbuf->reclaimed, 5 * HZ);
-+	if (rem == 0)
-+		ret = -ETIMEDOUT;
++	wait_for_completion_timeout(&vbuf->reclaimed, 5 * HZ);
 +
 +	spin_lock_irqsave(&vvd->commandq.qlock, flags);
++	answered = vbuf->answered;
++	if (answered)
++		list_del(&vbuf->pending_list_entry);
++	else
++		/*
++		 * The device still has it and may yet answer, into memory the
++		 * command owns: whoever takes it back frees it.
++		 */
++		vbuf->abandoned = true;
 +	/* A command the removal cancelled has no answer. */
-+	if (!vvd->commandq.ready)
-+		ret = -ENODEV;
-+	if (vbuf_is_pending(vvd, vbuf))
-+		free_vbuf(vvd, vbuf);
++	gone = !vvd->commandq.ready;
 +	spin_unlock_irqrestore(&vvd->commandq.qlock, flags);
++
++	if (!answered)
++		return gone ? -ENODEV : -ETIMEDOUT;
++
++	ret = gone ? -ENODEV : 0;
++	if (!ret && vbuf->caller_resp)
++		memcpy(vbuf->caller_resp, vbuf->resp_buf, vbuf->resp_size);
++	kfree(vbuf->data_buf);
++	put_vbuf(vvd, vbuf);
 +
 +	return ret;
 +}
