@@ -294,7 +294,10 @@ private:
 	};
 
 	/* One mapping of up to region_chunks chunks, in address order among
-	 * the arena's regions. */
+	 * the arena's regions. The ranges of two regions can interleave: the
+	 * system fits a new mapping into the first hole that holds it, and the
+	 * chunks an arena released from the end of one region and the start of
+	 * the next leave a hole that holds a whole region. */
 	struct Region final {
 		std::byte *base;
 		std::uint32_t chunks;
@@ -473,18 +476,22 @@ private:
 	}
 
 	/* A chunk whose blocks are all free, other than the current one:
-	 * unmap it. */
+	 * unmap it. Its region is the nearest at or below it that still maps
+	 * it, not simply the nearest, since ranges interleave (see Region);
+	 * a bit cleared in another region would leave the chunk's own region
+	 * believing it mapped, and the arena's end would unmap the address
+	 * again from whatever holds it by then. */
 	void release(const Chunk &chunk) noexcept
 	{
 		auto *base = chunk.base;
-		const auto region = std::prev(std::upper_bound(
-			regions_.begin(), regions_.end(), base,
-			[](const std::byte *address, const Region &held) {
+		auto region = std::upper_bound(regions_.begin(), regions_.end(),
+			base, [](const std::byte *address, const Region &held) {
 				return address < held.base;
-			}));
-		region->mapped &= ~(std::uint32_t{1} <<
-			static_cast<std::size_t>(base - region->base) /
-				chunk_bytes);
+			});
+		std::uint32_t bit = 0;
+		while (bit == 0)
+			bit = chunk_bit(*--region, base);
+		region->mapped &= ~bit;
 		unmap(base, chunk_bytes);
 		if (region->mapped == 0)
 			regions_.erase(region);
@@ -538,6 +545,17 @@ private:
 		--spare_left_;
 		++carved_;
 		return chunk;
+	}
+
+	/* The bit of the chunk at `base` in a region at or below it, or 0
+	 * when that region does not map the chunk. */
+	[[nodiscard]] static std::uint32_t chunk_bit(const Region &region,
+		const std::byte *base) noexcept
+	{
+		const auto index = static_cast<std::size_t>(base - region.base) /
+			chunk_bytes;
+		return index < region.chunks ?
+			(region.mapped & std::uint32_t{1} << index) : 0;
 	}
 
 	static void unmap(std::byte *base, std::size_t bytes) noexcept

@@ -10,6 +10,7 @@
 #include <memory>
 #include <memory_resource>
 #include <random>
+#include <utility>
 #include <vector>
 
 #include <sys/mman.h>
@@ -240,10 +241,133 @@ void destruction_leaves_released_addresses_alone(std::uint64_t seed)
 	}
 }
 
+/* Free every live block that lies in the chunk at `base`, which the arena
+ * then unmaps. */
+void empty_chunk(Model &model, const std::byte *base)
+{
+	for (std::size_t index = model.blocks_.size(); index-- > 0;) {
+		const auto *address = model.blocks_[index].address;
+		if (address >= base && address < base + chunk_bytes)
+			model.release(index);
+	}
+}
+
+[[nodiscard]] bool mapped(const void *base, std::size_t bytes)
+{
+	return msync(const_cast<void *>(base), bytes, MS_ASYNC) == 0;
+}
+
+/* Make the next mapping of `bytes` that the system places for anyone go to
+ * `want`: mappings of our own fill every lower hole that holds as much, and
+ * stay until `fillers` is unmapped. False when something else holds `want`. */
+[[nodiscard]] bool place_next_mapping(std::byte *want, std::size_t bytes,
+	std::vector<std::pair<void *, std::size_t>> &fillers)
+{
+	for (std::size_t tries = 0; tries < 64; ++tries) {
+		void *base = mmap(nullptr, bytes, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANON, -1, 0);
+		require(base != MAP_FAILED);
+		if (base == want) {
+			require(munmap(base, bytes) == 0);
+			return true;
+		}
+		fillers.emplace_back(base, bytes);
+	}
+	return false;
+}
+
+/* A region the arena maps may take addresses its own regions gave back: the
+ * system fits a new mapping into the first hole that holds it, and a hole
+ * that spans the emptied end of one region and the emptied start of the next
+ * holds a whole region. The new region's chunks above the older region's
+ * start still belong to the new region; one of them emptied is given back
+ * there, and the arena's end leaves its address alone rather than unmapping
+ * whatever has taken it by then. */
+void regions_mapped_into_given_back_addresses_keep_their_chunks()
+{
+	/* Blocks of a sixteenth of a chunk tile the chunks they are carved
+	 * from, so the n-th block is in the n/16-th chunk taken. */
+	constexpr std::size_t block_bytes = chunk_bytes / 16;
+	constexpr std::size_t region_bytes = 16 * chunk_bytes;
+	std::vector<std::pair<void *, std::size_t>> fillers;
+	/* Arenas whose regions could not be placed end to end, kept so that
+	 * their mappings fill holes too. */
+	std::vector<std::unique_ptr<Model>> set_aside;
+	std::unique_ptr<Model> model;
+	std::vector<std::byte *> chunks;
+	for (std::size_t attempt = 0; model == nullptr; ++attempt) {
+		require(attempt < 8, "no two regions could be placed end to end");
+		auto trial = std::make_unique<Model>(3 + attempt);
+		/* Regions of 4, 4, 8 and 16 chunks, all taken. */
+		for (std::size_t count = 0; count < 32 * 16; ++count)
+			trial->allocate(block_bytes);
+		std::vector<std::byte *> taken;
+		for (std::size_t chunk = 0; chunk < 32; ++chunk)
+			taken.push_back(trial->blocks_[chunk * 16].address);
+		/* The next region of sixteen right behind the last. */
+		const auto placed = place_next_mapping(taken[31] + chunk_bytes,
+			region_bytes, fillers);
+		if (placed) {
+			for (std::size_t count = 0; count < 16 * 16; ++count)
+				trial->allocate(block_bytes);
+			for (std::size_t chunk = 32; chunk < 48; ++chunk)
+				taken.push_back(
+					trial->blocks_[chunk * 16].address);
+		}
+		if (placed && taken[32] == taken[31] + chunk_bytes) {
+			model = std::move(trial);
+			chunks = std::move(taken);
+		} else {
+			set_aside.push_back(std::move(trial));
+		}
+	}
+
+	/* The second half of the one and the first half of the next. */
+	for (std::size_t chunk = 24; chunk < 40; ++chunk)
+		empty_chunk(*model, chunks[chunk]);
+	auto *hole = chunks[24];
+	require(!mapped(hole, region_bytes));
+	require(place_next_mapping(hole, region_bytes, fillers));
+
+	/* A new region of sixteen chunks there, carved whole. */
+	model->allocate(block_bytes);
+	require(model->blocks_.back().address == hole);
+	for (std::size_t count = 1; count < 16 * 16; ++count)
+		model->allocate(block_bytes);
+	/* The next region takes the carving, so that every chunk of the new
+	 * one can empty. */
+	model->allocate(block_bytes);
+	model->verify();
+
+	/* A chunk of the new region above where the older region starts. */
+	auto *emptied = hole + 12 * chunk_bytes;
+	require(emptied > chunks[32]);
+	empty_chunk(*model, emptied);
+	require(!mapped(emptied, chunk_bytes));
+	model->verify();
+
+	/* A mapping of our own takes the address back. */
+	auto *foreign = static_cast<std::byte *>(mmap(emptied, chunk_bytes,
+		PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1,
+		0));
+	require(foreign == emptied);
+	std::memset(foreign, 0xc3, chunk_bytes);
+
+	model.reset();
+	require(mapped(foreign, chunk_bytes));
+	for (std::size_t offset = 0; offset < chunk_bytes; offset += 4096)
+		require(static_cast<std::uint8_t>(foreign[offset]) == 0xc3);
+	require(munmap(foreign, chunk_bytes) == 0);
+	set_aside.clear();
+	for (const auto &[base, bytes] : fillers)
+		require(munmap(base, bytes) == 0);
+}
+
 } // namespace
 
 int main()
 {
+	regions_mapped_into_given_back_addresses_keep_their_chunks();
 	chunks_emptied_in_front_are_given_back();
 	random_churn_keeps_every_block_intact();
 	for (std::uint64_t seed = 10; seed < 30; ++seed)
