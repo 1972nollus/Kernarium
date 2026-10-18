@@ -227,7 +227,7 @@ index 0000000000000000000000000000000000000000..12d70d6cb35c1e20f51fed4a0ec8fa38
 +}
 diff --git a/arch/um/os-Darwin/file.c b/arch/um/os-Darwin/file.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..83c173bc699249c5bd40502a7d68ce48a7a81e4b
+index 0000000000000000000000000000000000000000..0c9e000c9e74f4839f62beed91643973291c9c9d
 --- /dev/null
 +++ b/arch/um/os-Darwin/file.c
 @@ -0,0 +1,544 @@
@@ -280,7 +280,7 @@ index 0000000000000000000000000000000000000000..83c173bc699249c5bd40502a7d68ce48
 +{
 +	struct stat status;
 +
-+	if (lstat(path, &status) < 0)
++	if (stat(path, &status) < 0)
 +		return -errno;
 +	if (buffer != NULL)
 +		copy_stat(buffer, &status);

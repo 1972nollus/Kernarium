@@ -215,7 +215,7 @@ index 2a4a85f24530ca8a2eb08e9209349dd0db66844d..11a6996b79ae828de46d98119b5757fb
  }
  
 diff --git a/arch/um/os-Darwin/file.c b/arch/um/os-Darwin/file.c
-index 7d140acc8a8c95d3c331738e3ec70b7c22a1e5de..8aa91f7a2ee8173708c47533c222cbda1f4df084 100644
+index b8a5e8144a4ac5df0b4922abece73e554fa3da29..42cd89b93862d1ce3e6514afb725e9613bd1fbc4 100644
 --- a/arch/um/os-Darwin/file.c
 +++ b/arch/um/os-Darwin/file.c
 @@ -301,20 +301,25 @@ int os_set_fd_async(int fd)

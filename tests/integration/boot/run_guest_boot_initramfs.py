@@ -9,9 +9,10 @@ directory the image already has, leaves both layers visible and switches root
 into the payload's entry program as PID 1. The same payload must boot over an
 ext4 writable layer formatted on a second block device, with the container
 state bound from that filesystem, when a second segment appended after the
-first replaces its /boot.env, and the harness session must run a workload
-entry and power the guest off after it. The same payload must also boot from
-an initrd that uml-initramfs writes. The remaining cases require every broken
+first replaces its /boot.env and the initrd and the device are named through
+symbolic links, and the harness session must run a workload entry and power
+the guest off after it. The same payload must also boot from an initrd that
+uml-initramfs writes. The remaining cases require every broken
 boot to stop with a named reason and a nonzero exit instead of reaching the
 image's own init: the base archive alone, a segment appended without the
 base's padding, an initrd the kernel never loads, and an invalid /boot.env.
@@ -311,17 +312,24 @@ def run(arguments: argparse.Namespace) -> None:
         device = work / "writable.img"
         with device.open("wb") as handle:
             handle.truncate(EXT4_DEVICE_BYTES)
+        # The kernel sizes an initrd and a disk from the paths it is given,
+        # which a user often gives as symbolic links.
+        layered_link = work / "layered-link.cpio"
+        layered_link.symlink_to(layered)
+        device_link = work / "writable-link.img"
+        device_link.symlink_to(device)
         status, output = launch(
             emulator,
             rootfs,
             engine,
             scratch,
-            [f"initrd={layered}", MISSING_INIT, f"ubd1={device}"],
+            [f"initrd={layered_link}", MISSING_INIT, f"ubd1={device_link}"],
         )
         require_probe(status, output, token, f"{MISSING_INIT} ")
         print(
             "ok: a later segment's /boot.env boots the overlay on a fresh ext4 "
-            "layer with the container state beside it"
+            "layer with the container state beside it, both named through "
+            "symbolic links"
         )
 
         status, output = launch(

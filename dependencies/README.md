@@ -369,7 +369,7 @@ the rest of the repository does not.
 | Tool | Needed by |
 | --- | --- |
 | `ld.lld` (LLVM lld) | integration guest payloads, the x86 probe corpus |
-| erofs-utils (`mkfs.erofs`, `fsck.erofs`) and e2fsprogs (`debugfs`, `e2fsck`, `resize2fs`) | `tests/perf/make_geekbench_images.py` |
+| erofs-utils (`mkfs.erofs`, `fsck.erofs`) and e2fsprogs (`debugfs`, `e2fsck`, `resize2fs`) | `tests/perf/make_geekbench_images.py`; erofs-utils alone for `guest-erofs-lz4` |
 | gptfdisk (`sgdisk`) | the Android launcher, `tools/boot_android.py` |
 | GNU coreutils `timeout` | the oracle scripts under `tools/arm64-tests/` |
 | OpenSSL (`openssl`) | `tools/rootfs/provision.py` |
