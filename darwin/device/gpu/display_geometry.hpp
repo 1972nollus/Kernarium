@@ -228,6 +228,11 @@ private:
     std::atomic_uint64_t advertisedSize_;
     std::atomic_uint64_t activeGuestSize_;
     std::atomic_uint64_t settledHostSize_;
+    /* Whether the guest applied a different scanout size since the last
+     * advertised resize. Only such a guest change can be followed by a host
+     * window, so only then does settling at the active guest size mean
+     * following the guest rather than returning to it. */
+    std::atomic_bool guestResizedSinceAdvertised_ {false};
 };
 
 } // namespace uml::gpu

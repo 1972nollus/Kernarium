@@ -642,6 +642,33 @@ void guestModesetsNeverDisableHostResize()
         "the first changed scanout after reset was ignored");
 }
 
+void returningBeforeTheGuestFollowsIsAdvertisedAgain()
+{
+    using uml::gpu::DisplaySize;
+
+    // A rotation and its reversal settle before the guest applies the first.
+    uml::gpu::DisplayGeometryPolicy policy {1133, 687, true};
+    require(!policy.guestScanoutChanged(1133, 687),
+        "an unchanged initial scanout changed presentation geometry");
+    require(policy.hostSizeSettled(744, 1076),
+        "a settled host rotation was not advertised");
+    require(policy.hostSizeSettled(1133, 687),
+        "returning to the active size before the guest followed left the "
+        "guest holding the abandoned size");
+    require(policy.advertisedSize() == DisplaySize {1133, 687},
+        "the returned host size was not advertised");
+    require(!policy.hostSizeSettled(1133, 687),
+        "one returned host size requested more than one guest resize");
+
+    // The guest applies the abandoned size late, then the returned one.
+    require(policy.guestScanoutChanged(744, 1076),
+        "a late guest result was ignored");
+    require(policy.guestScanoutChanged(1133, 687),
+        "the guest's response to the returned size was ignored");
+    require(!policy.hostSizeSettled(1133, 687),
+        "a host settled at the advertised size fed it back again");
+}
+
 void configuredOffAlwaysKeepsHostResizeSilent()
 {
     uml::gpu::DisplayGeometryPolicy policy {800, 600, false};
@@ -711,6 +738,7 @@ int main()
         fittedMousePointersKeepTheNativeBarRules();
         fittedTouchesEnterAndLeaveAtTheGuestEdge();
         guestModesetsNeverDisableHostResize();
+        returningBeforeTheGuestFollowsIsAdvertisedAgain();
         configuredOffAlwaysKeepsHostResizeSilent();
         repeatedSettledResizesRequestOnceAndFollowEveryGuestResult();
         return EXIT_SUCCESS;

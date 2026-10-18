@@ -403,13 +403,20 @@ bool DisplayGeometryPolicy::hostSizeSettled(
         return false;
     const auto previous = advertisedSize_.exchange(
         encoded, std::memory_order_acq_rel);
-    if (activeGuestSize_.load(std::memory_order_acquire) == encoded) {
+    if (previous == encoded)
+        return false;
+    if (activeGuestSize_.load(std::memory_order_acquire) == encoded &&
+        guestResizedSinceAdvertised_.load(std::memory_order_acquire)) {
         /* AppKit follows every applied guest mode. Its resulting drawable
          * callback settles at the already-active guest size and must not feed
-         * that size back to the guest as another resize request. */
+         * that size back to the guest as another resize request. A host that
+         * returns to the active size before the guest applied anything is not
+         * following it: the guest still holds the size advertised last, so
+         * the returned size is advertised again. */
         return false;
     }
-    return previous != encoded;
+    guestResizedSinceAdvertised_.store(false, std::memory_order_release);
+    return true;
 }
 
 bool DisplayGeometryPolicy::guestScanoutChanged(
@@ -419,8 +426,12 @@ bool DisplayGeometryPolicy::guestScanoutChanged(
     if (width == 0 || height == 0)
         return false;
     const auto encoded = packDisplaySize({width, height});
-    return activeGuestSize_.exchange(encoded, std::memory_order_acq_rel) !=
+    const bool changed =
+        activeGuestSize_.exchange(encoded, std::memory_order_acq_rel) !=
         encoded;
+    if (changed)
+        guestResizedSinceAdvertised_.store(true, std::memory_order_release);
+    return changed;
 }
 
 void DisplayGeometryPolicy::resetGuestSession(DisplaySize activeSize) noexcept
@@ -430,6 +441,7 @@ void DisplayGeometryPolicy::resetGuestSession(DisplaySize activeSize) noexcept
     const auto active = activeSize.width == 0 || activeSize.height == 0 ?
         settled : packDisplaySize(activeSize);
     activeGuestSize_.store(active, std::memory_order_release);
+    guestResizedSinceAdvertised_.store(false, std::memory_order_release);
 }
 
 } // namespace uml::gpu
