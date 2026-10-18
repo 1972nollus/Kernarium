@@ -59,10 +59,10 @@ index 6f54254aaf443d0420bc02e6e67e3285ce99c68e..c1ad6f1a4e249a8d8ec07e4260352c46
  #include <linux/types.h>
  #include <asm/vm-flags.h>
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index 6cd49a51fd6ac538b1406af80c2222a82fa2830d..b9fcc80df13687109f1c737b98db5672a4b85395 100644
+index 8914ece2ca2d81399169f75c2c1aa0ca5851c374..1abe4b56b3ba15b32dbea0577976d1efe8a38ca6 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
-@@ -201,6 +201,10 @@ extern void uml_rtc_stop_alarm_thread(void);
+@@ -202,6 +202,10 @@ extern void uml_rtc_stop_alarm_thread(void);
  
  /* mem.c */
  extern int create_mem_file(unsigned long long len);

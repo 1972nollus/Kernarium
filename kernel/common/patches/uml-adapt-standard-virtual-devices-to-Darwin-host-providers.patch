@@ -14,13 +14,13 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/drivers/rtc_kern.c        |  30 ++++-
  arch/um/drivers/rtc_user.c        | 119 ++++++++++++++++++-
  arch/um/drivers/ssl.c             |   2 +-
- arch/um/drivers/ubd_kern.c        | 129 ++++++++++++++++++---
+ arch/um/drivers/ubd_kern.c        | 163 +++++++++++++++++++++++---
  arch/um/drivers/ubd_user.c        |   4 -
  arch/um/drivers/virtio_uml.c      |  39 ++++---
  arch/um/drivers/vnc_input.c       | 183 ++++++++++++++++++++++++++++++
  arch/um/include/shared/os.h       |   5 +
  drivers/video/console/Kconfig     |   3 +-
- 15 files changed, 720 insertions(+), 51 deletions(-)
+ 15 files changed, 754 insertions(+), 51 deletions(-)
  create mode 100644 arch/um/drivers/darwin_net_kern.c
  create mode 100644 arch/um/drivers/vnc_input.c
 
@@ -701,7 +701,7 @@ index 8006a5bd578c27a1fdfece03bd2b0e361d1f2b0d..3818fce20a303eb8d4a2ce1398d872bd
  static void ssl_announce(char *dev_name, int dev)
  {
 diff --git a/arch/um/drivers/ubd_kern.c b/arch/um/drivers/ubd_kern.c
-index 37455e74d31452c9bccd1487647c19d01f921400..6d235135aaaa5a58527228e3e5e8d56755f4d3b5 100644
+index 37455e74d31452c9bccd1487647c19d01f921400..739c7c843662d2a6b8fd8521e5f211c909c1cb96 100644
 --- a/arch/um/drivers/ubd_kern.c
 +++ b/arch/um/drivers/ubd_kern.c
 @@ -36,6 +36,7 @@
@@ -731,12 +731,40 @@ index 37455e74d31452c9bccd1487647c19d01f921400..6d235135aaaa5a58527228e3e5e8d567
  
  static struct io_thread_req * (*irq_req_buffer)[];
  static struct io_thread_req *irq_remainder;
-@@ -476,10 +482,20 @@ static irqreturn_t ubd_intr(int irq, void *dev)
+@@ -476,10 +482,45 @@ static irqreturn_t ubd_intr(int irq, void *dev)
  /* Only changed by ubd_init, which is an initcall. */
  static struct os_helper_thread *io_td;
  
 +#ifdef UML_HOST_DARWIN
 +static struct workqueue_struct *darwin_ubd_wq;
++/* Set under ubd_lock once the exitcall has quiesced every disk. */
++static bool darwin_ubd_stopped;
++
++/*
++ * UML runs its exitcalls from machine_power_off() and machine_restart()
++ * while the other virtual CPUs still run tasks: they stop only when the run
++ * ends afterwards, and `poweroff -f` leaves every task running.  Quiesce
++ * every disk first, so that no ->queue_rq() runs or starts again, and then
++ * let destroy_workqueue() complete the requests already handed to it.  A
++ * request submitted later waits in its queue until the run ends, as it
++ * would on a machine that has stopped, instead of reaching a workqueue
++ * that is draining or gone.
++ */
++static void darwin_ubd_stop(void)
++{
++	int i;
++
++	mutex_lock(&ubd_lock);
++	darwin_ubd_stopped = true;
++	for (i = 0; i < MAX_DEV; i++)
++		if (ubd_devs[i].disk)
++			blk_mq_quiesce_queue(ubd_devs[i].disk->queue);
++	mutex_unlock(&ubd_lock);
++	if (darwin_ubd_wq) {
++		destroy_workqueue(darwin_ubd_wq);
++		darwin_ubd_wq = NULL;
++	}
++}
 +#endif
 +
  static void kill_io_thread(void)
@@ -744,15 +772,28 @@ index 37455e74d31452c9bccd1487647c19d01f921400..6d235135aaaa5a58527228e3e5e8d567
  	if (io_td)
  		os_kill_helper_thread(io_td);
 +#ifdef UML_HOST_DARWIN
-+	if (darwin_ubd_wq) {
-+		destroy_workqueue(darwin_ubd_wq);
-+		darwin_ubd_wq = NULL;
-+	}
++	darwin_ubd_stop();
 +#endif
  }
  
  __uml_exitcall(kill_io_thread);
-@@ -1108,6 +1124,19 @@ static int __init ubd_driver_init(void)
+@@ -840,6 +881,15 @@ static int ubd_add(int n, char **error_out)
+ 	if(ubd_dev->file == NULL)
+ 		goto out;
+ 
++#ifdef UML_HOST_DARWIN
++	/* A disk added after the exitcall would have no workqueue. */
++	if (darwin_ubd_stopped) {
++		*error_out = "ubd is shut down";
++		err = -ESHUTDOWN;
++		goto out;
++	}
++#endif
++
+ 	if (ubd_dev->cow.file)
+ 		lim.max_hw_sectors = 8 * sizeof(long);
+ 	if (!ubd_dev->no_trim) {
+@@ -1108,6 +1158,19 @@ static int __init ubd_driver_init(void)
  {
  	int err;
  
@@ -772,7 +813,7 @@ index 37455e74d31452c9bccd1487647c19d01f921400..6d235135aaaa5a58527228e3e5e8d567
  	/* Set by CONFIG_BLK_DEV_UBD_SYNC or ubd=sync.*/
  	if(global_openflags.s){
  		printk(KERN_INFO "ubd: Synchronous mode\n");
-@@ -1257,11 +1286,29 @@ static struct io_thread_req *ubd_alloc_req(struct ubd *dev, struct request *req,
+@@ -1257,11 +1320,29 @@ static struct io_thread_req *ubd_alloc_req(struct ubd *dev, struct request *req,
  	return io_req;
  }
  
@@ -802,7 +843,7 @@ index 37455e74d31452c9bccd1487647c19d01f921400..6d235135aaaa5a58527228e3e5e8d567
  	enum req_op op = req_op(req);
  
  	if (op == REQ_OP_FLUSH)
-@@ -1279,6 +1326,19 @@ static int ubd_submit_request(struct ubd *dev, struct request *req)
+@@ -1279,6 +1360,19 @@ static int ubd_submit_request(struct ubd *dev, struct request *req)
  	if (segs)
  		ubd_map_req(dev, io_req, req);
  
@@ -822,7 +863,7 @@ index 37455e74d31452c9bccd1487647c19d01f921400..6d235135aaaa5a58527228e3e5e8d567
  	ret = os_write_file(thread_fd, &io_req, sizeof(io_req));
  	if (ret != sizeof(io_req)) {
  		if (ret != -EAGAIN)
-@@ -1286,6 +1346,7 @@ static int ubd_submit_request(struct ubd *dev, struct request *req)
+@@ -1286,6 +1380,7 @@ static int ubd_submit_request(struct ubd *dev, struct request *req)
  		kfree(io_req);
  	}
  	return ret;
@@ -830,7 +871,7 @@ index 37455e74d31452c9bccd1487647c19d01f921400..6d235135aaaa5a58527228e3e5e8d567
  }
  
  static blk_status_t ubd_queue_rq(struct blk_mq_hw_ctx *hctx,
-@@ -1297,7 +1358,9 @@ static blk_status_t ubd_queue_rq(struct blk_mq_hw_ctx *hctx,
+@@ -1297,7 +1392,9 @@ static blk_status_t ubd_queue_rq(struct blk_mq_hw_ctx *hctx,
  
  	blk_mq_start_request(req);
  
@@ -840,7 +881,7 @@ index 37455e74d31452c9bccd1487647c19d01f921400..6d235135aaaa5a58527228e3e5e8d567
  
  	switch (req_op(req)) {
  	case REQ_OP_FLUSH:
-@@ -1312,7 +1375,9 @@ static blk_status_t ubd_queue_rq(struct blk_mq_hw_ctx *hctx,
+@@ -1312,7 +1409,9 @@ static blk_status_t ubd_queue_rq(struct blk_mq_hw_ctx *hctx,
  		res = BLK_STS_NOTSUPP;
  	}
  
@@ -850,7 +891,7 @@ index 37455e74d31452c9bccd1487647c19d01f921400..6d235135aaaa5a58527228e3e5e8d567
  
  	if (ret < 0) {
  		if (ret == -ENOMEM)
-@@ -1393,6 +1458,48 @@ static int map_error(int error_code)
+@@ -1393,6 +1492,48 @@ static int map_error(int error_code)
   * will result in unpredictable behaviour and/or crashes.
   */
  
@@ -899,7 +940,7 @@ index 37455e74d31452c9bccd1487647c19d01f921400..6d235135aaaa5a58527228e3e5e8d567
  static int update_bitmap(struct io_thread_req *req, struct io_desc *segment)
  {
  	int n;
-@@ -1400,8 +1507,8 @@ static int update_bitmap(struct io_thread_req *req, struct io_desc *segment)
+@@ -1400,8 +1541,8 @@ static int update_bitmap(struct io_thread_req *req, struct io_desc *segment)
  	if (segment->cow_offset == -1)
  		return map_error(0);
  
@@ -910,7 +951,7 @@ index 37455e74d31452c9bccd1487647c19d01f921400..6d235135aaaa5a58527228e3e5e8d567
  	if (n != sizeof(segment->bitmap_words))
  		return map_error(-n);
  
-@@ -1440,20 +1547,14 @@ static void do_io(struct io_thread_req *req, struct io_desc *desc)
+@@ -1440,20 +1581,14 @@ static void do_io(struct io_thread_req *req, struct io_desc *desc)
  
  		switch (req_op(req->req)) {
  		case REQ_OP_READ:

@@ -36,6 +36,7 @@ patch	deliver-data-alignment-faults-to-guest-signal-handlers.patch
 patch	uml-replay-user-mappings-concurrently.patch
 patch	uml-complete-or-report-a-Darwin-kernel-range-TLB-flush.patch
 patch	uml-stop-a-vhost-user-device-whose-backend-has-gone.patch
+patch	uml-delete-the-virtqueues-of-a-lost-vhost-user-backend-quietly.patch
 patch	mm-vmscan-write-back-dirty-swap-cache-folios.patch
 patch	uml-single-step-Darwin-guests-for-ptrace.patch
 patch	uml-invalidate-Darwin-translations-after-kernel-text-writes.patch

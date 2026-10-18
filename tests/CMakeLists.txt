@@ -37,6 +37,11 @@ endif()
 # all correctness-suite aggregates and registrations.
 add_subdirectory(perf EXCLUDE_FROM_ALL)
 
+if(UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS)
+    # Test-only device wrappers that unit and integration tests share.
+    add_subdirectory(support/vhost_user)
+endif()
+
 if(UML_BUILD_UNIT_TESTS)
     add_library(uml_host_capabilities_test_support OBJECT
         unit/host_capabilities_test_support.cpp)

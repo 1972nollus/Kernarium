@@ -1274,7 +1274,12 @@ for that teardown, because a host read registration is level triggered and a
 descriptor at end of file stays readable: its handler would otherwise be
 re-entered until it consumed a whole vCPU, which no amount of disabling the
 interrupt line prevents. A would-block still ends an ordinary pass, so a
-healthy device and a spurious wake are unaffected.
+healthy device and a spurious wake are unaffected. A message that cannot be
+sent because the peer has gone reports the same loss. Deleting the virtqueues
+of a lost backend sends it nothing: disabling the rings only stops a live
+backend from using them, so the driver's removal of the retired device warns
+about nothing. `guest-vhost-user-backend-gone` loses a console's backend
+while its driver is bound.
 
 In-band notifications are always negotiated, so a queue is kicked by a
 synchronous request on the control socket rather than through a kick

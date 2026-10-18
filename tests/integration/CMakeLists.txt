@@ -341,6 +341,34 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# A forced power-off with direct reads in flight on every vCPU stops the UBD
+# queues before their workqueue goes, so it ends with no warning or panic.
+uml_add_guest_integration_test(
+    NAME guest-ubd-poweroff
+    SCRIPT kernel/run_guest_ubd_poweroff.py
+    LABELS guest;kernel;smoke
+    TIMEOUT 600
+    CPUS 4)
+
+# Removing the Virtio video decoder by unbind, management-console halt or
+# forced power-off, while files are open and buffers queued, resets it first,
+# returns everything it held and frees nothing an open file still uses.
+uml_add_guest_integration_test(
+    NAME guest-video-teardown
+    SCRIPT kernel/run_guest_video_teardown.py
+    LABELS guest;kernel;video;smoke
+    TIMEOUT 300
+    CPUS 4)
+
+# A vhost-user backend lost while its device is bound retires the device
+# with no warning: removing a lost backend's virtqueues sends it nothing.
+uml_add_guest_integration_test(
+    NAME guest-vhost-user-backend-gone
+    SCRIPT kernel/run_guest_vhost_user_backend_gone.py
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    CPUS 2)
+
 # Path and name strings copied from user memory keep their contract.
 uml_add_guest_integration_test(
     NAME guest-user-strings
@@ -463,6 +491,54 @@ uml_add_integration_test(
     TIMEOUT 600
     PROCESSORS 4
     RESOURCE_GROUPS cpus:4)
+
+# A Virtio video command that its device answers after the driver gave up on
+# it reaches only memory the driver kept for it, and an open that fails after
+# the device made its stream destroys that stream. The device is the
+# production one behind a test-only shim that answers late.
+uml_add_guest_payload(UML_GUEST_VIDEO_LATE_ANSWER_INIT
+    guest-video-late-answer-init
+    video/video_late_answer_init.cpp
+    COMMENT "Building the freestanding arm64 init of the late video answer test"
+    COMPILE_OPTIONS
+        -std=c++20
+        -O2
+        -Wall
+        -Wextra
+        -Werror
+        -march=armv8-a
+        -ffreestanding
+        -fno-exceptions
+        -fno-rtti
+        -fno-stack-protector
+        -fno-asynchronous-unwind-tables
+    LINK_OPTIONS
+        -Wl,-z,max-page-size=16384
+        -Wl,-s)
+add_executable(uml_video_late_answer_tests video/video_late_answer_tests.cpp)
+target_link_libraries(uml_video_late_answer_tests PRIVATE
+    UML::BootInitramfs
+    UML::DelayedAnswerDevice
+    UML::Emulator
+    UML::VideoDevice)
+target_link_options(uml_video_late_answer_tests PRIVATE
+    "LINKER:-export_dynamic"
+    "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
+add_dependencies(uml_video_late_answer_tests
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
+add_dependencies(integration-test-binaries uml_video_late_answer_tests)
+get_target_property(_uml_video_late_answer_kernel
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_IMAGE)
+uml_add_integration_test(
+    NAME guest-video-late-answer
+    COMMAND uml_video_late_answer_tests
+        ${_uml_video_late_answer_kernel}
+        ${UML_GUEST_VIDEO_LATE_ANSWER_INIT}
+        ${CMAKE_CURRENT_BINARY_DIR}/video-late-answer
+    LABELS guest;kernel;video
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
 
 uml_add_guest_payload(UML_GUEST_SAMPLER_WORKLOAD guest-sampler-workload
     profiling/guest_sampler_workload.S

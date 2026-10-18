@@ -71,10 +71,10 @@ index 1bdad33f906f5739c0559ac40e22bbf16e25057a..a1c6fd8c126fb07c2fe99f719b89187c
  	return NULL;
  }
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index b9fcc80df13687109f1c737b98db5672a4b85395..512090564767072bc880dfb9759678e7a9288df7 100644
+index 1abe4b56b3ba15b32dbea0577976d1efe8a38ca6..6c022aa9698cec9b1ef5fe4f60e6a7a04c700274 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
-@@ -271,7 +271,8 @@ extern void mark_sigio_pending(void);
+@@ -272,7 +272,8 @@ extern void mark_sigio_pending(void);
  /* util.c */
  extern void stack_protections(unsigned long address);
  #ifdef UML_HOST_DARWIN

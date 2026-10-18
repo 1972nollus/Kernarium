@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+import UIKit
 import XCTest
 
 /// A long-lived UI automation host for a connected device.
@@ -349,6 +350,41 @@ private struct Executor {
         (command["timeout"] as? Double) ?? value
     }
 
+    private func number(_ command: [String: Any], _ key: String) throws -> Double {
+        guard let value = command[key] as? Double else {
+            throw Failure(message: "the command has no number \(key)")
+        }
+        return value
+    }
+
+    /// A point given as an offset in points from the application's frame
+    /// origin; springboard's frame is the whole screen.
+    private func point(_ app: XCUIApplication, x: Double, y: Double) -> XCUICoordinate {
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: x, dy: y))
+    }
+
+    private static func orientation(named name: String) -> UIDeviceOrientation? {
+        switch name {
+        case "portrait": .portrait
+        case "portraitUpsideDown": .portraitUpsideDown
+        case "landscapeLeft": .landscapeLeft
+        case "landscapeRight": .landscapeRight
+        default: nil
+        }
+    }
+
+    private static func name(of orientation: UIDeviceOrientation) -> String {
+        switch orientation {
+        case .portrait: "portrait"
+        case .portraitUpsideDown: "portraitUpsideDown"
+        case .landscapeLeft: "landscapeLeft"
+        case .landscapeRight: "landscapeRight"
+        case .faceUp: "faceUp"
+        case .faceDown: "faceDown"
+        default: "unknown"
+        }
+    }
+
     /// The element a command names by accessibility identifier or label.
     private func element(_ command: [String: Any], in app: XCUIApplication) throws -> XCUIElement {
         let query = app.descendants(matching: .any)
@@ -394,9 +430,7 @@ private struct Executor {
         case "tap":
             let app = application(command)
             if let x = command["x"] as? Double, let y = command["y"] as? Double {
-                app.coordinate(withNormalizedOffset: .zero)
-                    .withOffset(CGVector(dx: x, dy: y))
-                    .tap()
+                point(app, x: x, y: y).tap()
                 return [:]
             }
             let target = try element(command, in: app)
@@ -405,6 +439,32 @@ private struct Executor {
             }
             target.tap()
             return ["label": target.label]
+
+        case "drag":
+            // Presses, drags at the given speed, then holds before lifting;
+            // a held start is what picks up a window's resize handle.
+            let app = application(command)
+            let start = point(app, x: try number(command, "x1"), y: try number(command, "y1"))
+            let end = point(app, x: try number(command, "x2"), y: try number(command, "y2"))
+            let velocity = (command["velocity"] as? Double)
+                .map { XCUIGestureVelocity(rawValue: CGFloat($0)) } ?? .default
+            start.press(
+                forDuration: command["press"] as? Double ?? 0.5,
+                thenDragTo: end,
+                withVelocity: velocity,
+                thenHoldForDuration: command["hold"] as? Double ?? 0
+            )
+            return [:]
+
+        case "orientation":
+            // Without a name the command only reports the orientation.
+            if let name = command["orientation"] as? String {
+                guard let orientation = Self.orientation(named: name) else {
+                    throw Failure(message: "unknown orientation \(name)")
+                }
+                XCUIDevice.shared.orientation = orientation
+            }
+            return ["orientation": Self.name(of: XCUIDevice.shared.orientation)]
 
         case "wait":
             let app = application(command)
