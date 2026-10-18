@@ -272,9 +272,11 @@ Host-to-guest automatic resizing is enabled by default. Kernarium stores the
 choice in its iOS app settings; the macOS executable selects it with
 `--gpu-auto-resize=on|off`. When enabled, a settled host change updates the
 Virtio-GPU advertised mode and raises one display event. Duplicate callbacks
-for the same settled size do not raise another event. Presentation storage
-remains sized to the active guest scanout until the guest applies its eventual
-mode with `SET_SCANOUT` or `SET_SCANOUT_BLOB`.
+for the same settled size do not raise another event, but a host that settles
+back at the active guest size before the guest has applied the mode advertised
+since is returning to it, not following it, so the size is advertised again.
+Presentation storage remains sized to the active guest scanout until the guest
+applies its eventual mode with `SET_SCANOUT` or `SET_SCANOUT_BLOB`.
 
 Every applied guest mode is authoritative for presentation, whether selected
 by the guest or produced by guest-side rounding of a host request, and whether
