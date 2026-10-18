@@ -8,6 +8,13 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME kernarium-ipad-automation-gestures
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernarium/test_ipad_automation_gestures.py
+    LABELS kernarium
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME kernarium-ipad-automation-supervisor
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernarium/test_ipad_automation_supervisor.py
