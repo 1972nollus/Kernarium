@@ -12,10 +12,14 @@ The runner serves a Virtio console through the guest kernel's
 ``virtio_uml.device=`` command-line device from a minimal backend of its
 own, which offers what a Darwin guest requires (reply acknowledgements,
 backend requests and in-band notifications) and acknowledges every request.
-Once the console driver has bound, the backend closes its connection and
-every descriptor the guest gave it. The guest must report the loss, remove
-the device without a kernel warning, oops or panic, keep running, and power
-off with status 0. The contract is the lost-backend paragraph of
+Once the console driver has bound, a writer on the second vCPU starts
+writing to the console's hvc0. The backend never uses a buffer, so the
+console's write waits in put_chars() for the backend to take it, which is
+the output a console has in flight when its backend goes. Once the writer's
+first kick has arrived, the backend closes its connection and every
+descriptor the guest gave it. The guest must report the loss, remove the
+device without a kernel warning, oops or panic, keep running, and power off
+with status 0. The contract is the lost-backend paragraph of
 docs/architecture.md.
 """
 
@@ -49,6 +53,8 @@ GET_VRING_BASE = 11
 GET_PROTOCOL_FEATURES = 15
 GET_QUEUE_NUM = 17
 GET_CONFIG = 24
+VRING_KICK = 35
+OUTPUT_QUEUE = 1
 REPLY = 0x4
 NEED_REPLY = 0x8
 VERSION = 0x1
@@ -74,6 +80,7 @@ class Backend(threading.Thread):
         self._connection: socket.socket | None = None
         self._descriptors: list[int] = []
         self._vanish = threading.Event()
+        self.output_kicked = threading.Event()
         self.failure: BaseException | None = None
 
     def _receive(self, size: int, idle: bool = False) -> bytes:
@@ -128,6 +135,10 @@ class Backend(threading.Thread):
                     self._reply(request, payload[:4] + bytes(4))
                 elif request == GET_CONFIG:
                     self._reply(request, payload)
+                elif request == VRING_KICK:
+                    if struct.unpack_from("<I", payload)[0] == OUTPUT_QUEUE:
+                        self.output_kicked.set()
+                    self._reply(request, struct.pack("<Q", 0))
                 elif flags & NEED_REPLY:
                     self._reply(request, struct.pack("<Q", 0))
         except BaseException as error:  # reported by the main thread
@@ -168,7 +179,12 @@ def run(arguments: argparse.Namespace, private: pathlib.Path) -> None:
             arguments.rootfs,
             "1G",
             "tmpfs",
-            ("ncpus=2", f"virtio_uml.device={path}:{CONSOLE_DEVICE}"),
+            # SLUB checks that the removal frees nothing twice.
+            (
+                "ncpus=2",
+                "slab_debug=FZPU",
+                f"virtio_uml.device={path}:{CONSOLE_DEVICE}",
+            ),
             init_shell=True,
             engine=arguments.engine,
         ) as guest:
@@ -188,6 +204,17 @@ def run(arguments: argparse.Namespace, private: pathlib.Path) -> None:
             )
             if backend.failure is not None:
                 raise RuntimeError(f"the backend failed: {backend.failure!r}")
+            # Pinned off CPU 0, which alone polls the host descriptors that
+            # report the loss: put_chars() waits with interrupts disabled.
+            guest.check_command(
+                "(python3 -c 'import os; os.sched_setaffinity(0, {1}); "
+                "os.execvp(\"sh\", [\"sh\", \"-c\", "
+                "\"while printf x; do :; done\"])' "
+                ">/dev/hvc0 2>/dev/null </dev/null &)",
+                30,
+            )
+            if not backend.output_kicked.wait(30):
+                raise RuntimeError("the console's output was never kicked")
             start = len(guest.output())
             backend.vanish()
             guest.check_command(
