@@ -363,17 +363,43 @@ def create_swap_image(value: str) -> pathlib.Path:
     return pathlib.Path(name)
 
 
-def marker_pattern(marker: str) -> re.Pattern[bytes]:
-    """Match protocol markers even if a tty ioctl enables case conversion.
+# The kernel prints its messages on the console the shell writes to, each a
+# whole timestamped line written at once. The shell's output can stop short of
+# a line: the terminal driver writes a line's text and its line end
+# separately, and the console line writes only what the host accepts and
+# queues the rest, which a kernel message then overtakes. So a kernel line can
+# land between any two bytes the shell prints, protocol markers included.
+KERNEL_LINE = rb"\[ *\d+\.\d+\][^\r\n]*\r?\n"
+_KERNEL_LINES = rb"(?:" + KERNEL_LINE + rb")*"
 
-    The status ends at the first character that is not a digit. That is
-    usually the newline after it, but a kernel message shares the console
-    and can land between the two.
+
+def console_text(text: str) -> bytes:
+    """Return a pattern for ``text`` with kernel lines anywhere inside it."""
+    return _KERNEL_LINES.join(re.escape(bytes((byte,))) for byte in text.encode())
+
+
+def marker_pattern(marker: str) -> re.Pattern[bytes]:
+    """Match a protocol marker and its status line as the console shows it.
+
+    Kernel lines may interleave anywhere in the marker, its status and before
+    its line end, and a tty ioctl may have enabled case conversion. Read the
+    status with ``marker_status()``.
     """
     return re.compile(
-        re.escape(marker.encode()) + rb":(\d+)(?=\D)",
+        console_text(f"{marker}:")
+        + _KERNEL_LINES
+        + rb"(\d(?:"
+        + _KERNEL_LINES
+        + rb"\d)*)"
+        + _KERNEL_LINES
+        + rb"\r?\n",
         re.IGNORECASE,
     )
+
+
+def marker_status(match: re.Match[bytes]) -> int:
+    """Return the status a ``marker_pattern()`` match carries."""
+    return int(re.sub(KERNEL_LINE, b"", match.group(1)))
 
 
 # A console prompt does not always begin a line with CRLF. When bash execs a
@@ -511,10 +537,14 @@ class ConsoleProcess:
         else:
             self._write(wrapped + stdin)
 
+        begin_pattern = re.compile(console_text(begin), re.IGNORECASE)
+
         def output(section: bytes) -> str:
-            begin_at = section.rfind(begin.encode())
-            if begin_at >= 0:
-                section = section[begin_at + len(begin) :]
+            begin_end = None
+            for found in begin_pattern.finditer(section):
+                begin_end = found.end()
+            if begin_end is not None:
+                section = section[begin_end:]
             return self._normal_output(section)
 
         try:
@@ -524,7 +554,7 @@ class ConsoleProcess:
                 str(error), output(bytes(self._transcript[start:]))
             ) from error
         return CommandResult(
-            int(match.group(1)),
+            marker_status(match),
             output(bytes(self._transcript[start : match.start()])),
         )
 
@@ -780,7 +810,9 @@ class Guest(ConsoleProcess):
         """Reach the root shell the session starts."""
         ready = self._read_until(
             re.compile(
-                re.escape(f"{SESSION_READY_MARKER}/bin/sh".encode()) + rb"\r?\n"
+                console_text(f"{SESSION_READY_MARKER}/bin/sh")
+                + _KERNEL_LINES
+                + rb"\r?\n"
             ),
             timeout_seconds,
         )
