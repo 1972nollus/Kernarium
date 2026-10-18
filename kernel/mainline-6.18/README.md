@@ -432,6 +432,13 @@ pointer is a direct touchscreen.
 Direct UBD images advertise discard ranges up to 128 MiB and service each range
 with one host hole punch. The project adds no behavior to upstream UML's COW
 implementation, and Apple launchers never construct a COW image pair.
+UML runs its exitcalls, which tear its drivers down, while the other vCPUs
+still run tasks, and `poweroff -f` leaves every task running. The UBD exitcall
+therefore quiesces every disk before it destroys the workqueue that runs their
+requests: the requests already handed to it complete, and a later one waits in
+its queue until the run ends, as on a machine that has stopped.
+`guest-ubd-poweroff` powers guests off with direct reads in flight on every
+vCPU.
 
 Lifecycle quiesce uses full Linux system suspend. The management console
 acknowledges only after the suspend entry boundary and remains the explicit

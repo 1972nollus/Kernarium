@@ -341,6 +341,15 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# A forced power-off with direct reads in flight on every vCPU stops the UBD
+# queues before their workqueue goes, so it ends with no warning or panic.
+uml_add_guest_integration_test(
+    NAME guest-ubd-poweroff
+    SCRIPT kernel/run_guest_ubd_poweroff.py
+    LABELS guest;kernel;smoke
+    TIMEOUT 600
+    CPUS 4)
+
 # Path and name strings copied from user memory keep their contract.
 uml_add_guest_integration_test(
     NAME guest-user-strings
