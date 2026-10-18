@@ -265,8 +265,11 @@ Native AppKit and UIKit displays publish host geometry only after it settles.
 AppKit retains the active guest mode throughout live window resize and
 publishes the final logical-point content size when live resize ends. UIKit
 retains it through an interactive view-controller transition and publishes the
-final point or Retina-pixel size from transition completion. Non-interactive
-layout changes are coalesced until their geometry is stable.
+final point or Retina-pixel size from transition completion. An iPadOS window
+resize is one gesture through many sizes: UIKit retains the mode until the
+window scene reports the gesture over and the last transition has completed,
+so the guest sees only the size the gesture settles at. Non-interactive layout
+changes are coalesced until their geometry is stable.
 
 Host-to-guest automatic resizing is enabled by default. Kernarium stores the
 choice in its iOS app settings; the macOS executable selects it with
