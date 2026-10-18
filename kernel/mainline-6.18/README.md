@@ -438,7 +438,15 @@ therefore quiesces every disk before it destroys the workqueue that runs their
 requests: the requests already handed to it complete, and a later one waits in
 its queue until the run ends, as on a machine that has stopped.
 `guest-ubd-poweroff` powers guests off with direct reads in flight on every
-vCPU.
+vCPU. A management-console halt or reboot, an unbind and a lost vhost-user
+backend reach a driver's removal without `device_shutdown()`. The Virtio
+video decoder's removal resets the device and deletes its queues before it
+returns anything the device held, then answers every pending command as
+failed, so a queued buffer returns to vb2 in error, and flushes its event
+work. Its state lasts until the last open file is closed, which no longer
+reaches the device. `guest-video-teardown` removes it by unbind, halt and
+forced power-off while it has open files, queued buffers and commands in
+flight.
 
 Lifecycle quiesce uses full Linux system suspend. The management console
 acknowledges only after the suspend entry boundary and remains the explicit

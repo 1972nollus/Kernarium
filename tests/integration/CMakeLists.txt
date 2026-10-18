@@ -350,6 +350,16 @@ uml_add_guest_integration_test(
     TIMEOUT 600
     CPUS 4)
 
+# Removing the Virtio video decoder by unbind, management-console halt or
+# forced power-off, while files are open and buffers queued, resets it first,
+# returns everything it held and frees nothing an open file still uses.
+uml_add_guest_integration_test(
+    NAME guest-video-teardown
+    SCRIPT kernel/run_guest_video_teardown.py
+    LABELS guest;kernel;video;smoke
+    TIMEOUT 300
+    CPUS 4)
+
 # Path and name strings copied from user memory keep their contract.
 uml_add_guest_integration_test(
     NAME guest-user-strings
