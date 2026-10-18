@@ -823,6 +823,12 @@ def process_tree_snapshot(root_pid: int) -> dict[str, object]:
     }
 
 
+class HostAccountingError(RuntimeError):
+    """The measured process tree used less CPU at the end than at the start,
+    which happens when one of its processes, normally the emulator, exited
+    during the measurement."""
+
+
 def summarize_host_measurement(
     begin: dict[str, object],
     end: dict[str, object],
@@ -835,7 +841,7 @@ def summarize_host_measurement(
         - float(begin["monotonic_seconds"])
     )
     if cpu_seconds < 0 or wall_seconds <= 0:
-        raise RuntimeError("host process accounting moved backwards")
+        raise HostAccountingError("host process accounting moved backwards")
     return {
         "active_cpu_seconds": cpu_seconds,
         "wall_seconds": wall_seconds,
@@ -854,6 +860,70 @@ GUEST_FAILURE_MARKERS = (
     "UML_CHROMIUM_ERROR:",
 )
 GUEST_RESULT_MARKERS = ("UML_AQUARIUM_OK|", *GUEST_FAILURE_MARKERS)
+
+# Console lines with which a dying emulator names its fault: the host fault
+# report, the guest kernel's panic and the emulator's own.
+EMULATOR_FAULT_MARKERS = (
+    "Darwin POSIX fault",
+    "Kernel panic",
+    "Darwin UML panic",
+)
+EMULATOR_EXIT = re.compile(r"emulator exited with status (-?\d+)")
+# How long a harness whose emulator died takes to report it and exit.
+EMULATOR_DEATH_GRACE_SECONDS = 30.0
+
+
+def describe_emulator_death(text: str, return_code: int | None) -> str | None:
+    """Name an emulator that died, from the console and the harness status.
+
+    The guest harness prints the emulator's exit status, negative for the
+    signal that ended it, and the emulator and guest kernel print the fault
+    first. None when the console shows neither and the harness did not fail.
+    """
+    statuses = EMULATOR_EXIT.findall(text)
+    faults = [
+        line.strip()
+        for line in text.splitlines()
+        if any(marker in line for marker in EMULATOR_FAULT_MARKERS)
+    ]
+    if not statuses and not faults and not return_code:
+        return None
+    if statuses:
+        status = int(statuses[-1])
+        if status < 0:
+            try:
+                name = signal.Signals(-status).name
+            except ValueError:
+                name = "an unknown signal"
+            cause = f"the emulator was killed by signal {-status} ({name})"
+        else:
+            cause = f"the emulator exited with status {status}"
+    elif return_code:
+        cause = f"the guest harness exited with status {return_code}"
+    else:
+        cause = "the emulator reported a fault"
+    if faults:
+        cause += "; console: " + " | ".join(faults[:4])
+    return cause
+
+
+def emulator_death(
+    process: subprocess.Popen[bytes], log_path: Path, *, settle: bool
+) -> str | None:
+    """The emulator death behind a failure, if there was one. A guest
+    harness still running is given a bounded time to finish reporting it
+    when `settle` says a process is known to have gone, or when the console
+    already shows the fault."""
+    text = log_path.read_text(encoding="utf-8", errors="replace")
+    if process.poll() is None and (
+        settle or describe_emulator_death(text, None) is not None
+    ):
+        try:
+            process.wait(timeout=EMULATOR_DEATH_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    return describe_emulator_death(text, process.poll())
 
 
 def describe_missing_report(
@@ -904,18 +974,31 @@ def wait_for_log(
                 peak_rss_kib = max(
                     peak_rss_kib, int(host_end["rss_kib"])
                 )
-            host = (
-                summarize_host_measurement(
-                    host_begin, host_end, peak_rss_kib, host_snapshots
+            try:
+                host = (
+                    summarize_host_measurement(
+                        host_begin, host_end, peak_rss_kib, host_snapshots
+                    )
+                    if host_begin is not None and host_end is not None
+                    else None
                 )
-                if host_begin is not None and host_end is not None
-                else None
-            )
+            except HostAccountingError as error:
+                death = emulator_death(process, log_path, settle=True)
+                if death is None:
+                    raise
+                raise RuntimeError(
+                    f"the emulator died during the measurement: {death}"
+                ) from error
             return text, host
         if process.poll() is not None:
+            death = describe_emulator_death(
+                log_path.read_text(encoding="utf-8", errors="replace"),
+                process.returncode,
+            )
             raise RuntimeError(
                 f"guest exited before Chromium verification (status "
                 f"{process.returncode})"
+                + (f": {death}" if death is not None else "")
             )
         time.sleep(0.5)
     raise TimeoutError("Chromium WebGL verification did not finish in time")
@@ -1588,12 +1671,20 @@ def main() -> int:
                 validate_native_shutdown(text)
                 native_display = cts.parse_native_display_final(text)
             else:
-                webgl_launcher.capture_rendered_frame(
-                    options.client,
-                    password,
-                    announced_vnc_port(text),
-                    capture_path,
-                )
+                try:
+                    webgl_launcher.capture_rendered_frame(
+                        options.client,
+                        password,
+                        announced_vnc_port(text),
+                        capture_path,
+                    )
+                except Exception as error:
+                    death = emulator_death(process, log_path, settle=False)
+                    if death is None:
+                        raise
+                    raise RuntimeError(
+                        f"the emulator died after Aquarium reported: {death}"
+                    ) from error
                 if not raster_marker_visible(capture_path):
                     raise RuntimeError(
                         "Chromium rendered WebGL but lost the 2D raster text marker"
