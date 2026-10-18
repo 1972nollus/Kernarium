@@ -337,6 +337,69 @@ struct KernariumTests {
 
     @Test
     @MainActor
+    func aTransitionHoldsTheGuestModeUntilItCompletes() {
+        var hold = GuestResizeHold()
+
+        let rotation = hold.transitionWillBegin()
+        #expect(rotation.action == .begin)
+        #expect(hold.transitionDidComplete(token: rotation.token) == .finish)
+    }
+
+    @Test
+    @MainActor
+    func aSupersededTransitionNeverFinishesTheHold() {
+        var hold = GuestResizeHold()
+
+        let first = hold.transitionWillBegin()
+        let second = hold.transitionWillBegin()
+        #expect(hold.transitionDidComplete(token: first.token) == .none)
+        #expect(hold.transitionDidComplete(token: second.token) == .finish)
+    }
+
+    @Test
+    @MainActor
+    func anInteractiveWindowResizeHoldsTheModeThroughEveryTransition() {
+        var hold = GuestResizeHold()
+
+        #expect(hold.interactiveResizeChanged(true) == .begin)
+        // Each size the drag passes through runs a transition. None of them
+        // lets the guest follow that size.
+        for _ in 0..<4 {
+            let step = hold.transitionWillBegin()
+            #expect(hold.transitionDidComplete(token: step.token) == .none)
+        }
+        #expect(hold.interactiveResizeChanged(false) == .finish)
+
+        // The next transition is an ordinary one again.
+        let rotation = hold.transitionWillBegin()
+        #expect(hold.transitionDidComplete(token: rotation.token) == .finish)
+    }
+
+    @Test
+    @MainActor
+    func theEndOfAGestureWaitsForItsLastTransition() {
+        var hold = GuestResizeHold()
+
+        #expect(hold.interactiveResizeChanged(true) == .begin)
+        let last = hold.transitionWillBegin()
+        #expect(hold.interactiveResizeChanged(false) == .none)
+        #expect(hold.transitionDidComplete(token: last.token) == .finish)
+    }
+
+    @Test
+    @MainActor
+    func repeatedGestureStatesRaiseOneBeginAndOneFinish() {
+        var hold = GuestResizeHold()
+
+        #expect(hold.interactiveResizeChanged(false) == .none)
+        #expect(hold.interactiveResizeChanged(true) == .begin)
+        #expect(hold.interactiveResizeChanged(true) == .none)
+        #expect(hold.interactiveResizeChanged(false) == .finish)
+        #expect(hold.interactiveResizeChanged(false) == .none)
+    }
+
+    @Test
+    @MainActor
     func overlayDiskIsRecreatedAtRequestedSize() throws {
         let manager = FileManager.default
         let directory = manager.temporaryDirectory.appendingPathComponent(

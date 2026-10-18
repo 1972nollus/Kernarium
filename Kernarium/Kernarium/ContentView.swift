@@ -744,6 +744,50 @@ private extension Notification.Name {
     )
 }
 
+/// When the guest keeps its display mode while the host view changes size.
+///
+/// A view-controller transition holds the mode from its start to its
+/// completion. An iPadOS window resize is one interactive gesture that runs
+/// many such transitions, one per size the window passes through, and it holds
+/// the mode until the gesture ends, as an AppKit live resize does. The guest
+/// then sees only the size the gesture settles at, not each pause on the way.
+struct GuestResizeHold {
+    enum Action: Equatable {
+        case none
+        case begin
+        case finish
+    }
+
+    private var generation: UInt64 = 0
+    private var transitionInFlight = false
+    private var interactive = false
+
+    /// A transition starts; returns the token its completion presents.
+    mutating func transitionWillBegin() -> (token: UInt64, action: Action) {
+        generation &+= 1
+        transitionInFlight = true
+        return (generation, .begin)
+    }
+
+    /// A transition completed. A superseded transition never finishes the
+    /// hold, and neither does any transition during an interactive resize.
+    mutating func transitionDidComplete(token: UInt64) -> Action {
+        guard token == generation else { return .none }
+        transitionInFlight = false
+        return interactive ? .none : .finish
+    }
+
+    /// The window scene's interactive-resize state changed. The end of a
+    /// gesture finishes the hold unless the gesture's last transition is
+    /// still running, which finishes it on completion.
+    mutating func interactiveResizeChanged(_ resizing: Bool) -> Action {
+        guard resizing != interactive else { return .none }
+        interactive = resizing
+        if resizing { return .begin }
+        return transitionInFlight ? .none : .finish
+    }
+}
+
 private struct GuestDisplayView: UIViewControllerRepresentable {
     @Binding var keyboardVisible: Bool
     let retinaMode: Bool
@@ -785,7 +829,8 @@ private struct GuestDisplayView: UIViewControllerRepresentable {
 
 private final class GuestDisplayViewController: UIViewController {
     let metalView: GuestMetalView
-    private var transitionGeneration: UInt64 = 0
+    private var resizeHold = GuestResizeHold()
+    private var sceneGeometryObservation: NSKeyValueObservation?
 
     init(metalView: GuestMetalView) {
         self.metalView = metalView
@@ -805,14 +850,38 @@ private final class GuestDisplayViewController: UIViewController {
         to size: CGSize,
         with coordinator: UIViewControllerTransitionCoordinator
     ) {
-        transitionGeneration &+= 1
-        let generation = transitionGeneration
-        metalView.beginHostResize()
+        let (token, action) = resizeHold.transitionWillBegin()
+        perform(action)
         super.viewWillTransition(to: size, with: coordinator)
         coordinator.animate(alongsideTransition: nil) { [weak self] _ in
-            guard let self,
-                  self.transitionGeneration == generation else { return }
-            self.metalView.finishHostResize()
+            guard let self else { return }
+            self.perform(self.resizeHold.transitionDidComplete(token: token))
+        }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard sceneGeometryObservation == nil,
+              let scene = view.window?.windowScene else { return }
+        // An interactive window resize reports no transition of its own to
+        // hold across, so the scene's geometry says when the gesture runs.
+        sceneGeometryObservation = scene.observe(
+            \.effectiveGeometry, options: [.initial, .new]
+        ) { [weak self] scene, _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.perform(self.resizeHold.interactiveResizeChanged(
+                    scene.effectiveGeometry.isInteractivelyResizing
+                ))
+            }
+        }
+    }
+
+    private func perform(_ action: GuestResizeHold.Action) {
+        switch action {
+        case .none: break
+        case .begin: metalView.beginHostResize()
+        case .finish: metalView.finishHostResize()
         }
     }
 }
