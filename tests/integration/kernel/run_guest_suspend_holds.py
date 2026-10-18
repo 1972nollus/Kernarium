@@ -714,7 +714,17 @@ def run_power(arguments, private: pathlib.Path) -> None:
             )
         finally:
             keyboard.close()
-        keys = guest.check_command(f"cat {KEY_LOG}", 30).split()
+        # The emulator's VNC server reports the keyboard client's departure
+        # on the console it shares with the guest, and that report can land
+        # in this command's output. One printf writes the events as one line,
+        # which reaches the console in one piece, and only that line is read.
+        listed = guest.check_command(
+            f"printf 'keys:%s:end\\n' \"$(tr '\\n' ' ' < {KEY_LOG})\"", 30
+        )
+        found = re.search(r"keys:([^:\r\n]*):end", listed)
+        if found is None:
+            raise RuntimeError(f"power: no key events in {listed!r}")
+        keys = found.group(1).split()
         if keys != ["ready", "1", "0"]:
             raise RuntimeError(
                 f"power: the guest received power key events {keys[1:]}, not "
