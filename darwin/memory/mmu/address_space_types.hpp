@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "fill_index.hpp"
 #include "mapped_backing.hpp"
 #include "uml_darwin_static_mmu.h"
 #include "word_shared_mutex.hpp"
@@ -38,6 +39,8 @@ struct AddressSpaceLifetime final {
 struct GenerationState final {
 	mutable WordSharedMutex mappings_mutex;
 	std::unordered_map<std::uint64_t, Mapping> mappings;
+	/* `mappings` again, for the lock-free fill of an entered context. */
+	FillIndex fill_index;
 	std::atomic_uint64_t mapping_changes{1};
 	std::atomic_uint64_t code_changes{1};
 	std::atomic_uint64_t invalidation_epoch{};

@@ -1020,6 +1020,112 @@ void test_an_entered_context_translates_as_its_generation_does()
 	require(darwin_uml_static_vm_destroy(other_generation) == 0);
 }
 
+/* The entered context's fill reads a lock-free copy of the mappings. Every
+ * change, failed or not, keeps that copy's answer the generation's: a remap,
+ * a protection change, a batch that adds pages while a vCPU runs, a batch
+ * that fails part way, an unmap, one that empties a part of the copy, a
+ * whole-generation flush and pages far apart in the address space. */
+void test_an_entered_context_fill_follows_every_mapping_change()
+{
+	using uml::memory::testing::AllocationSite;
+	using uml::memory::testing::fail_allocation_at;
+	constexpr unsigned long generation = 321;
+	constexpr unsigned long page = DARWIN_UML_GUEST_PAGE_SIZE;
+	constexpr unsigned long base = 0x90'0000;
+	/* Far enough apart for separate nodes at every level of the index. */
+	constexpr std::array<unsigned long, 3> bases{base, 0x7f'f000'0000UL,
+		DARWIN_UML_GUEST_ADDRESS_LIMIT - 4 * page};
+	ScratchBacking backing{backing_name, 8 * page};
+	constexpr std::array accesses{DARWIN_UML_STATIC_READ,
+		DARWIN_UML_STATIC_WRITE, DARWIN_UML_STATIC_EXECUTE};
+
+	void *context = darwin_uml_static_vm_execution_context_create(generation);
+	require(context != nullptr);
+	const auto agrees = [&] {
+		require(darwin_uml_static_vm_execution_context_begin(
+				context, base) == 0);
+		for (const auto first : bases) {
+			for (unsigned long offset = 0; offset < 4 * page;
+			     offset += page / 2) {
+				for (const auto access : accesses) {
+					void *expected = &backing;
+					void *found = &backing;
+					const int want = darwin_uml_static_vm_translate(
+						generation, first + offset + 8, access,
+						&expected);
+					const int got =
+						darwin_uml_static_vm_execution_context_translate(
+							context, generation, first + offset + 8,
+							access, &found);
+					require(got == want && found == expected);
+				}
+			}
+		}
+		require(darwin_uml_static_vm_execution_context_end(context) == 0);
+	};
+	const auto map = [&](unsigned long address, unsigned long offset,
+				 unsigned long length, int protection, int code) {
+		return darwin_uml_static_vm_map_generation(generation,
+			reinterpret_cast<void *>(address), backing.descriptor(),
+			offset, length, protection, code, 1);
+	};
+
+	for (const auto first : bases) {
+		require(map(first, 0, page, PROT_READ | PROT_WRITE, 0) == 0);
+		require(map(first + page, page, page, PROT_READ | PROT_EXEC, 1) ==
+			0);
+	}
+	agrees();
+	/* Another backing page at the same address. */
+	require(map(base, 4 * page, page, PROT_READ | PROT_WRITE, 0) == 0);
+	agrees();
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(darwin_uml_static_vm_protect(reinterpret_cast<void *>(base),
+			page, PROT_READ) == 0);
+	agrees();
+	require(darwin_uml_static_vm_protect(
+			reinterpret_cast<void *>(base + page), page, PROT_READ) == 0);
+	agrees();
+	{
+		/* Added beside a running vCPU, without stopping it. */
+		HeldExecution running{generation, base};
+		require(darwin_uml_static_vm_batch_begin(generation) == 0);
+		require(map(base + 2 * page, 2 * page, page,
+				PROT_READ | PROT_WRITE, 0) == 0);
+		require(darwin_uml_static_vm_batch_end() == 0);
+		void *found = nullptr;
+		require(darwin_uml_static_vm_execution_context_translate(
+				running.context(), generation, base + 2 * page,
+				DARWIN_UML_STATIC_WRITE, &found) ==
+			DARWIN_UML_STATIC_TRANSLATED);
+		require(found != nullptr);
+	}
+	agrees();
+	require(darwin_uml_static_vm_batch_begin(generation) == 0);
+	require(map(base + 3 * page, 3 * page, page, PROT_READ, 0) == 0);
+	require(map(base, 5 * page, 2 * page, PROT_READ | PROT_WRITE, 0) == 0);
+	/* The second page's insertion fails after the first one's. */
+	fail_allocation_at(AllocationSite::mapping, 2);
+	require(darwin_uml_static_vm_batch_end() == -1);
+	agrees();
+	require(darwin_uml_static_vm_unmap_generation(generation,
+			reinterpret_cast<void *>(base + page), 2 * page) == 0);
+	agrees();
+	require(darwin_uml_static_vm_unmap_generation(generation,
+			reinterpret_cast<void *>(bases[2]), 4 * page) == 0);
+	agrees();
+	/* Into the range whose last page has just gone. */
+	require(map(bases[2] + page, 7 * page, page, PROT_READ, 0) == 0);
+	agrees();
+	require(darwin_uml_static_vm_flush_generation(generation) == 0);
+	agrees();
+	for (const auto first : bases)
+		require(map(first, 6 * page, page, PROT_READ | PROT_WRITE, 0) == 0);
+	agrees();
+	darwin_uml_static_vm_execution_context_destroy(context);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 int main()
 {
 	test_additive_batch_does_not_stop_execution();
@@ -1045,6 +1151,7 @@ int main()
 	test_retired_batch_cannot_commit_into_replacement_generation();
 	test_waiting_execution_context_cannot_enter_retired_generation();
 	test_an_entered_context_translates_as_its_generation_does();
+	test_an_entered_context_fill_follows_every_mapping_change();
 	std::puts("Static MMU batch tests passed");
 	return 0;
 }
