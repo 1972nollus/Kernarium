@@ -808,6 +808,19 @@ WARNINGS 0
         self.assertIsNotNone(match)
         self.assertEqual(match.group(1), b"0")
 
+    def test_protocol_marker_ends_its_status_at_a_kernel_message(self) -> None:
+        # The console interleaves kernel messages with the shell's output, so
+        # one can arrive between the status and its newline.
+        pattern = guest_support.marker_pattern("__UML_LTP_END_deadbeef__")
+        match = pattern.search(
+            b"__UML_LTP_END_deadbeef__:12[    2.244317] virtio-video virtio0: "
+            b"failed to get stream bitrate\r\n"
+        )
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), b"12")
+        # A status whose end has not arrived yet does not match.
+        self.assertIsNone(pattern.search(b"__UML_LTP_END_deadbeef__:12"))
+
     def test_case_runs_from_ltp_binary_directory(self) -> None:
         command = runner.ltp_guest_command("./helper.sh 'argument'")
         self.assertIn(

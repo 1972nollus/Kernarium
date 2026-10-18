@@ -364,9 +364,14 @@ def create_swap_image(value: str) -> pathlib.Path:
 
 
 def marker_pattern(marker: str) -> re.Pattern[bytes]:
-    """Match protocol markers even if a tty ioctl enables case conversion."""
+    """Match protocol markers even if a tty ioctl enables case conversion.
+
+    The status ends at the first character that is not a digit. That is
+    usually the newline after it, but a kernel message shares the console
+    and can land between the two.
+    """
     return re.compile(
-        re.escape(marker.encode()) + rb":(\d+)\r?\n",
+        re.escape(marker.encode()) + rb":(\d+)(?=\D)",
         re.IGNORECASE,
     )
 
