@@ -835,6 +835,23 @@ interrupt still abandons the validation: those say the memory being read
 through is being replaced, or that this vCPU has been asked to leave, and no
 page stamp describes either.
 
+## Address spaces the kernel destroyed
+
+The cache keeps the translations of the eight most recently run address
+spaces. The kernel never reuses a generation number and destroys the
+generation when its mm's last reference goes, after which the MMU refuses to
+run it. At the start of every run, `run_x86_gadgets` gives each of its
+executors the MMU's count of destroyed generations and the MMU's answer for a
+generation (`Executor::leave_gone_generations`); an executor whose count moved
+lets go of each address space the MMU reports destroyed, and one the MMU
+cannot answer for keeps it. The number keeps its place in the order the
+window retires in, a tombstone that holds nothing and that the
+least-recently-used rule drops when it reaches it, so the cache keeps the live
+address spaces it would have kept; letting go of the place too would be a
+larger window for live spaces. Without the rule a destroyed generation's
+translations, link records and indirect sites stay until eight newer
+generations displace them, which a long-running benchmark process never does.
+
 ## Measuring what the cache costs
 
 A `UML_GADGET_CACHE_CENSUS=ON` build makes every executor append what its

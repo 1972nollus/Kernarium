@@ -13,6 +13,13 @@ uml_add_unit_test(
     COMMAND uml_x86_64_gadget_bootstrap_tests
     LABELS cpu;x86-64)
 
+# The cache's handling of destroyed address-space generations alone, cheap
+# enough for the sanitizer trees.
+uml_add_unit_test(
+    NAME x86-64-gadget-dead-generations
+    COMMAND uml_x86_64_gadget_bootstrap_tests dead-generations
+    LABELS cpu;x86-64)
+
 add_executable(uml_x86_64_sse_exactness_tests
     x86_64_sse_exactness_tests.cpp)
 target_link_libraries(uml_x86_64_sse_exactness_tests PRIVATE

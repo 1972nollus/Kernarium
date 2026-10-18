@@ -1459,6 +1459,177 @@ template<typename Body>
 			"a retired address space was served its old program");
 }
 
+/* What the MMU says of a generation: the cache is told by function, since a
+ * cache without an MMU of its own has none to ask. Bit g of a mask answers
+ * for generation g. */
+std::uint64_t destroyed_generations;
+std::uint64_t unknown_generations;
+
+int mmu_says(unsigned long generation) noexcept
+{
+	if ((unknown_generations >> generation) & 1U)
+		return -1;
+	return ((destroyed_generations >> generation) & 1U) != 0 ? 0 : 1;
+}
+
+/* One program at address 0 in every address space, and whether it was found
+ * resident or had to be built. */
+struct Lookup final {
+	bool built;
+	bool hit;
+};
+
+[[nodiscard]] Lookup look_up(uml::cpu::x86_64::gadgets::Executor &executor,
+	TestMemory &memory, std::uint64_t generation)
+{
+	using namespace uml::cpu::x86_64;
+	executor.prepare(memory, generation, 1, 1);
+	const auto selected = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	return {selected.status == gadgets::BuildStatus::built &&
+			selected.program != nullptr,
+		selected.cache_hit};
+}
+
+/* An address space whose generation the MMU destroyed is let go of the next
+ * time the executor looks after the count moved, and not before; one that is
+ * live, or that the MMU cannot answer for, keeps its programs. */
+[[nodiscard]] bool a_destroyed_generation_is_let_go_of_when_the_count_moves()
+{
+	using namespace uml::cpu::x86_64;
+	destroyed_generations = unknown_generations = 0;
+	TestMemory memory;
+	memory.load(0, {0x0f, 0x05});
+	gadgets::Executor executor;
+	for (std::uint64_t generation = 1; generation <= 3; ++generation)
+		if (!expect(look_up(executor, memory, generation).built,
+			"a new address space was not built"))
+			return false;
+	destroyed_generations = 1U << 1;
+	unknown_generations = 1U << 2;
+	executor.leave_gone_generations(0, &mmu_says);
+	if (!expect(executor.resident_generations() == 3,
+		"an executor looked before the count moved"))
+		return false;
+	executor.leave_gone_generations(1, &mmu_says);
+	if (!expect(executor.resident_generations() == 2,
+		"a destroyed address space was kept, or a live one let go"))
+		return false;
+	executor.leave_gone_generations(1, &mmu_says);
+	destroyed_generations |= 1U << 3;
+	executor.leave_gone_generations(1, &mmu_says);
+	if (!expect(executor.resident_generations() == 2,
+		"an executor looked again at the same count"))
+		return false;
+	const auto live = look_up(executor, memory, 3);
+	const auto unknown = look_up(executor, memory, 2);
+	if (!expect(live.hit && unknown.hit,
+		"an address space the MMU cannot answer for lost its program"))
+		return false;
+	executor.leave_gone_generations(2, &mmu_says);
+	if (!expect(executor.resident_generations() == 1,
+		"the last destroyed address space was kept"))
+		return false;
+	const auto again = look_up(executor, memory, 1);
+	return expect(again.built && !again.hit,
+		"a let-go address space was served its old program");
+}
+
+/* The address space the cache last prepared may be the one let go of: the
+ * executor must prepare again before it is used, and the next address space
+ * must work. */
+[[nodiscard]] bool the_prepared_generation_can_be_let_go_of()
+{
+	using namespace uml::cpu::x86_64;
+	destroyed_generations = unknown_generations = 0;
+	TestMemory memory;
+	memory.load(0, {0x0f, 0x05});
+	gadgets::Executor executor;
+	if (!expect(look_up(executor, memory, 7).built,
+		"a new address space was not built"))
+		return false;
+	destroyed_generations = 1U << 7;
+	executor.leave_gone_generations(1, &mmu_says);
+	if (!expect(executor.resident_generations() == 0,
+		"the prepared destroyed address space was kept"))
+		return false;
+	/* Until it prepares again the executor translates without caching, as
+	 * after a failed prepare, rather than bind the address space it let go
+	 * of. */
+	const auto unbound = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(unbound.status == gadgets::BuildStatus::built &&
+			executor.resident_generations() == 0,
+		"an executor cached into the address space it let go of"))
+		return false;
+	const auto next = look_up(executor, memory, 8);
+	const auto repeat = look_up(executor, memory, 8);
+	return expect(next.built && !next.hit && repeat.hit,
+		"an address space after one let go of did not cache");
+}
+
+/* A generation number the MMU gave out again after destroying it (which the
+ * kernel never does) names new code: the old address space's program must be
+ * gone, not found resident under the same code-change count. */
+[[nodiscard]] bool a_number_given_out_again_runs_its_new_code()
+{
+	using namespace uml::cpu::x86_64;
+	destroyed_generations = unknown_generations = 0;
+	TestMemory memory;
+	memory.load(0, {0x0f, 0x05});
+	gadgets::Executor executor;
+	if (!expect(look_up(executor, memory, 5).built, "address space not built") ||
+	    !expect(look_up(executor, memory, 6).built, "address space not built"))
+		return false;
+	destroyed_generations = 1U << 5;
+	executor.leave_gone_generations(1, &mmu_says);
+	destroyed_generations = 0;
+	memory.load(0, {0x90, 0x0f, 0x05});
+	executor.prepare(memory, 5, 1, 1);
+	const auto selected = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	return expect(selected.status == gadgets::BuildStatus::built &&
+			selected.program != nullptr && !selected.cache_hit &&
+			selected.program->source().size() == 3,
+		"a number given out again was served the old address space's program");
+}
+
+/* A destroyed address space keeps its place in the order the window retires
+ * in until the least-recently-used rule reaches it, so the live address
+ * spaces kept are the ones kept without the rule. Generations 1..8 fill the
+ * window and 3 is destroyed. Entering a ninth retires 1, the least recently
+ * used; with the place given up nothing would be retired and 1 would still
+ * hit. Entering 1 retires 2, and a tenth reaches 3's place and drops it, so 4
+ * still hits; a place at the back of the order would have retired 4 instead. */
+[[nodiscard]] bool a_destroyed_generation_keeps_its_window_place()
+{
+	using namespace uml::cpu::x86_64;
+	destroyed_generations = unknown_generations = 0;
+	TestMemory memory;
+	memory.load(0, {0x0f, 0x05});
+	gadgets::Executor executor;
+	for (std::uint64_t generation = 1; generation <= 8; ++generation)
+		if (!expect(look_up(executor, memory, generation).built,
+			"a new address space was not built"))
+			return false;
+	destroyed_generations = 1U << 3;
+	executor.leave_gone_generations(1, &mmu_says);
+	if (!expect(executor.resident_generations() == 7,
+		"the destroyed address space was kept"))
+		return false;
+	if (!expect(look_up(executor, memory, 9).built, "address space not built"))
+		return false;
+	const auto first = look_up(executor, memory, 1);
+	if (!expect(first.built && !first.hit,
+		"the least recently used address space survived a full window"))
+		return false;
+	if (!expect(look_up(executor, memory, 10).built, "address space not built"))
+		return false;
+	const auto fourth = look_up(executor, memory, 4);
+	return expect(fourth.hit,
+		"a live address space was retired in place of the tombstone");
+}
+
 /* A slot is current when the epoch it carries is its space's, and the epoch
  * counts code changes in sixteen bits. A slot the space has not run for a whole
  * epoch cycle must not be taken for current when the count comes round to its
@@ -10678,8 +10849,15 @@ enum class ImmediateOp : std::uint8_t {
 
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+	/* The address spaces the kernel destroyed alone, which a sanitizer tree
+	 * can afford to run; the rest of the suite is long. */
+	if (argc > 1 && std::strcmp(argv[1], "dead-generations") == 0)
+		return a_destroyed_generation_is_let_go_of_when_the_count_moves() &&
+			the_prepared_generation_can_be_let_go_of() &&
+			a_number_given_out_again_runs_its_new_code() &&
+			a_destroyed_generation_keeps_its_window_place() ? 0 : 1;
 	const bool passed = decode_scaled_address() &&
 		cache_reuses_and_revalidates_programs() &&
 		cache_validates_inline_source_spans() &&
@@ -10702,6 +10880,10 @@ int main()
 		a_block_longer_than_the_fetch_window_decodes() &&
 		cache_retires_the_oldest_generation() &&
 		a_recycled_address_space_id_serves_no_old_translation() &&
+		a_destroyed_generation_is_let_go_of_when_the_count_moves() &&
+		the_prepared_generation_can_be_let_go_of() &&
+		a_number_given_out_again_runs_its_new_code() &&
+		a_destroyed_generation_keeps_its_window_place() &&
 		a_validation_does_not_outlive_the_epochs_it_counts() &&
 		cache_links_common_successors() &&
 		cache_chains_direct_branches() &&

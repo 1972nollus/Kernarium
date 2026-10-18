@@ -361,6 +361,20 @@ std::atomic_uint64_t &lifetime_retirement_epoch()
 	return epoch;
 }
 
+/* Generations destroyed in this process, in any domain: what a holder of
+ * per-generation state loads to learn that some generation may have died
+ * since it last asked generation_live(). Every executor loads it at each
+ * entry into translated code, so it has a cache line of its own: a neighbour
+ * another thread writes would make each of those loads a miss. */
+std::atomic_uint64_t &generation_retirement_sequence()
+{
+	struct alignas(128) Sequence final {
+		std::atomic_uint64_t value{};
+	};
+	static Sequence sequence;
+	return sequence.value;
+}
+
 struct ResolvedAddressSpace final {
 	std::uint64_t domain{};
 	std::uint64_t retirement_sequence{};
@@ -703,6 +717,10 @@ public:
 			    found != states_.end() && found->second == state)
 				states_.erase(found);
 		}
+		/* After the erasure, so a holder that loads the new count and then
+		 * asks generation_live() is told the generation is gone. */
+		generation_retirement_sequence().fetch_add(
+			1, std::memory_order_release);
 		auto &active = active_thread_generation();
 		if (active.address_space == this && active.generation == generation) {
 			active.state.reset();
@@ -728,6 +746,8 @@ public:
 			}
 			states_.clear();
 		}
+		generation_retirement_sequence().fetch_add(
+			1, std::memory_order_release);
 		auto &active = active_thread_generation();
 		if (active.address_space == this) {
 			active.address_space = nullptr;
@@ -2149,6 +2169,12 @@ extern "C" int darwin_uml_static_vm_generation_live(unsigned long generation)
 {
 	return with_address_space(
 		[&](auto &space) { return space.generation_live(generation); });
+}
+
+extern "C" unsigned long long darwin_uml_static_vm_generation_retirements(void)
+{
+	return uml::memory::generation_retirement_sequence().load(
+		std::memory_order_acquire);
 }
 
 extern "C" int darwin_uml_static_vm_discard_if_stale(unsigned long address,

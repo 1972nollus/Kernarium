@@ -63,6 +63,10 @@ using ProgramCacheCodeChangeReader = int (*)(void *context,
 	std::uint64_t sequence, ProgramCodeChange *changes,
 	std::size_t capacity, std::uint64_t *current_sequence) noexcept;
 
+/* Whether the MMU still has a generation: 1 while it does, 0 once it was
+ * destroyed (a generation is never reused), negative when it cannot say. */
+using GenerationLiveness = int (*)(unsigned long generation) noexcept;
+
 class Executor final {
 public:
 	Executor();
@@ -121,6 +125,16 @@ public:
 	[[nodiscard]] const ProgramCacheDiagnostics &cache_diagnostics()
 		const noexcept;
 	[[nodiscard]] std::size_t resident_generations() const noexcept;
+	/* Before a native run: let go of the address spaces whose generation
+	 * `live` reports destroyed, if `retirements`, the MMU's count of
+	 * destroyed generations, moved since the last call. A destroyed
+	 * generation never runs again, so nothing it holds can be looked up
+	 * again. Its number keeps its place in the order the least recently used
+	 * address space is retired in, so the cache keeps the live address
+	 * spaces it would have kept. The caller runs no translated code of this
+	 * executor until after its next prepare(). */
+	void leave_gone_generations(unsigned long long retirements,
+		GenerationLiveness live) noexcept;
 
 private:
 	struct Storage;
