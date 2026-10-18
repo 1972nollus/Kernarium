@@ -72,3 +72,4 @@ patch	um-map-congruent-4-KiB-kernel-slots-as-shared-Darwin-host-pages.patch
 patch	io_uring-keep-a-vmapped-region-coherent-with-its-user-mapping.patch
 patch	drm-fbdev-shmem-flush-the-kernel-mapping-before-reporting-damage.patch
 patch	um-read-the-Darwin-carrier-CPU-without-a-host-call.patch
+patch	um-apply-only-changed-kernel-PTEs-in-a-Darwin-kernel-TLB-sync.patch
