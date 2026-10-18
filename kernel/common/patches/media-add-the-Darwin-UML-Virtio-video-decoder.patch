@@ -13,22 +13,31 @@ region, the resource entry carries that region's ID and the plane's offset
 inside it, which the negotiated VIRTIO_VIDEO_F_RESOURCE_SHM_REGION feature
 permits. V4L2 carries no per-plane offset on a capture buffer, so planes
 that share one dma-buf follow one another at their negotiated sizes.
+
+UML removes a device from an exitcall while other CPUs still run tasks, and
+a management-console halt, an unbind or a lost vhost-user backend does so
+without device_shutdown(). Removal therefore resets the device and deletes
+its queues before it returns anything the device held, since a vhost-user
+reset does not reach the backend, answers every pending command as failed
+so that a queued buffer returns to vb2 in error, and flushes the event work.
+The last reference to the video device, perhaps a later close, frees the
+driver state.
 ---
  drivers/media/Kconfig                       |    2 +
  drivers/media/Makefile                      |    2 +
  drivers/media/virtio/Kconfig                |    9 +
  drivers/media/virtio/Makefile               |    6 +
  drivers/media/virtio/README                 |   11 +
- drivers/media/virtio/virtio_video.h         |  428 +++++++
+ drivers/media/virtio/virtio_video.h         |  437 +++++++
  drivers/media/virtio/virtio_video_blob.c    |  157 +++
  drivers/media/virtio/virtio_video_caps.c    |  515 ++++++++
  drivers/media/virtio/virtio_video_dec.c     |  479 +++++++
- drivers/media/virtio/virtio_video_device.c  | 1283 +++++++++++++++++++
- drivers/media/virtio/virtio_video_driver.c  |  215 ++++
+ drivers/media/virtio/virtio_video_device.c  | 1294 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_driver.c  |  261 ++++
  drivers/media/virtio/virtio_video_helpers.c |  253 ++++
- drivers/media/virtio/virtio_video_vq.c      | 1009 +++++++++++++++
+ drivers/media/virtio/virtio_video_vq.c      | 1088 ++++++++++++++++
  include/uapi/linux/virtio_video.h           |  539 ++++++++
- 14 files changed, 4908 insertions(+)
+ 14 files changed, 5053 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -111,10 +120,10 @@ index 0000000000000000000000000000000000000000..90e8a3531bb86bec3aca28050a7e4950
 +in the owning Darwin host repository.
 diff --git a/drivers/media/virtio/virtio_video.h b/drivers/media/virtio/virtio_video.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..f0507b92cddf2d892ba9773b1f8c441b29193afc
+index 0000000000000000000000000000000000000000..a78713606382a94b4eb5ca71b2e16dc4c06e524d
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video.h
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,437 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/* Common header for virtio video driver.
 + *
@@ -235,6 +244,11 @@ index 0000000000000000000000000000000000000000..f0507b92cddf2d892ba9773b1f8c441b
 +	struct list_head pending_list_entry;
 +};
 +
++/*
++ * A queue's vq may be used only while ready is set, and ready changes only
++ * under the queue's lock: qlock for the command queue, lock for the event
++ * queue. Removal clears ready before it deletes the queues.
++ */
 +struct virtio_video_cmd_queue {
 +	struct virtqueue *vq;
 +	bool ready;
@@ -245,6 +259,7 @@ index 0000000000000000000000000000000000000000..f0507b92cddf2d892ba9773b1f8c441b
 +struct virtio_video_event_queue {
 +	struct virtqueue *vq;
 +	bool ready;
++	struct mutex lock;
 +	struct work_struct work;
 +};
 +
@@ -413,9 +428,12 @@ index 0000000000000000000000000000000000000000..f0507b92cddf2d892ba9773b1f8c441b
 +int virtio_video_alloc_vbufs(struct virtio_video_device *vvd);
 +void virtio_video_free_vbufs(struct virtio_video_device *vvd);
 +int virtio_video_alloc_events(struct virtio_video_device *vvd);
++void virtio_video_stop_queues(struct virtio_video_device *vvd);
++void virtio_video_cancel_cmds(struct virtio_video_device *vvd);
 +
 +int virtio_video_device_init(struct virtio_video_device *vvd);
 +void virtio_video_device_deinit(struct virtio_video_device *vvd);
++void virtio_video_device_free(struct virtio_video_device *vvd);
 +
 +int virtio_video_dec_init(struct virtio_video_device *vvd);
 +
@@ -1714,10 +1732,10 @@ index 0000000000000000000000000000000000000000..d3ec77840dc7e7e2d2265dac1e15ea0e
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..c05088522b01e8ff75a256832e9a6aef1e8608f5
+index 0000000000000000000000000000000000000000..593c6b45152749e13eaee1e2ef69f24ec137f54b
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -0,0 +1,1283 @@
+@@ -0,0 +1,1294 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -2148,7 +2166,10 @@ index 0000000000000000000000000000000000000000..c05088522b01e8ff75a256832e9a6aef
 +					      vb->num_planes,
 +					      to_virtio_queue_type(vb->type));
 +	if (ret) {
-+		v4l2_err(&vvd->v4l2_dev, "failed to queue buffer\n");
++		/* Nothing else would ever return it, so its queue never stops. */
++		if (ret != -ENODEV)
++			v4l2_err(&vvd->v4l2_dev, "failed to queue buffer\n");
++		virtio_video_buf_done(virtio_vb, VIRTIO_VIDEO_DEQUEUE_FLAG_ERR, 0);
 +		return;
 +	}
 +
@@ -2644,7 +2665,9 @@ index 0000000000000000000000000000000000000000..c05088522b01e8ff75a256832e9a6aef
 +
 +	ret = virtio_video_cmd_queue_clear(vvd, stream, queue_type);
 +	if (ret) {
-+		v4l2_err(&vvd->v4l2_dev, "failed to clear queue\n");
++		/* A removed device has already returned every buffer. */
++		if (ret != -ENODEV)
++			v4l2_err(&vvd->v4l2_dev, "failed to clear queue\n");
 +		return ret;
 +	}
 +
@@ -2991,22 +3014,28 @@ index 0000000000000000000000000000000000000000..c05088522b01e8ff75a256832e9a6aef
 +	return ret;
 +}
 +
++/*
++ * No open or ioctl reaches the driver after this, and every poll and event
++ * waiter is woken. A file still open keeps the device until its release.
++ */
 +void virtio_video_device_deinit(struct virtio_video_device *vvd)
 +{
-+	vvd->commandq.ready = false;
-+	vvd->eventq.ready = false;
-+
 +	virtio_video_device_unregister(vvd);
++}
++
++/* What only the last reference to the video device may free. */
++void virtio_video_device_free(struct virtio_video_device *vvd)
++{
 +	v4l2_m2m_release(vvd->m2m_dev);
 +	virtio_video_clean_control(vvd);
 +	virtio_video_clean_capability(vvd);
 +}
 diff --git a/drivers/media/virtio/virtio_video_driver.c b/drivers/media/virtio/virtio_video_driver.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ceb11bb46bd0e2c7cf1a5c0d853471bd7545cbe0
+index 0000000000000000000000000000000000000000..1f73c6beb1fe81627b675f87d655c1629b3564c4
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_driver.c
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,261 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -3041,6 +3070,31 @@ index 0000000000000000000000000000000000000000..ceb11bb46bd0e2c7cf1a5c0d853471bd
 +module_param(vid_nr_dec, int, 0644);
 +MODULE_PARM_DESC(vid_nr_dec, "videoN start number, -1 is autodetect");
 +
++/*
++ * Stop the queues, answer every pending command as failed, and flush the
++ * event work, which may itself have been waiting for one of them.
++ */
++static void virtio_video_stop(struct virtio_video_device *vvd)
++{
++	virtio_video_stop_queues(vvd);
++	virtio_video_cancel_cmds(vvd);
++	cancel_work_sync(&vvd->eventq.work);
++}
++
++static void virtio_video_release(struct video_device *video_dev)
++{
++	struct virtio_video_device *vvd = to_virtio_vd(video_dev);
++
++	virtio_video_device_free(vvd);
++	virtio_video_free_vbufs(vvd);
++	v4l2_device_unregister(&vvd->v4l2_dev);
++	idr_destroy(&vvd->resource_idr);
++	idr_destroy(&vvd->stream_idr);
++	mutex_destroy(&vvd->eventq.lock);
++	mutex_destroy(&vvd->video_dev_mutex);
++	kfree(vvd);
++}
++
 +static int virtio_video_probe(struct virtio_device *vdev)
 +{
 +	int ret;
@@ -3060,7 +3114,11 @@ index 0000000000000000000000000000000000000000..ceb11bb46bd0e2c7cf1a5c0d853471bd
 +		return -ENODEV;
 +	}
 +
-+	vvd = devm_kzalloc(dev, sizeof(*vvd), GFP_KERNEL);
++	/*
++	 * Open files outlive a removal, so the video device's last reference
++	 * frees this, not the driver core's devres.
++	 */
++	vvd = kzalloc(sizeof(*vvd), GFP_KERNEL);
 +	if (!vvd)
 +		return -ENOMEM;
 +
@@ -3101,7 +3159,7 @@ index 0000000000000000000000000000000000000000..ceb11bb46bd0e2c7cf1a5c0d853471bd
 +
 +	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(64));
 +	if (ret)
-+		return ret;
++		goto err_v4l2_reg;
 +
 +	ret = v4l2_device_register(dev, &vvd->v4l2_dev);
 +	if (ret)
@@ -3110,6 +3168,7 @@ index 0000000000000000000000000000000000000000..ceb11bb46bd0e2c7cf1a5c0d853471bd
 +	spin_lock_init(&vvd->commandq.qlock);
 +	init_waitqueue_head(&vvd->commandq.reclaim_queue);
 +
++	mutex_init(&vvd->eventq.lock);
 +	INIT_WORK(&vvd->eventq.work, virtio_video_process_events);
 +
 +	INIT_LIST_HEAD(&vvd->pending_vbuf_list);
@@ -3164,31 +3223,47 @@ index 0000000000000000000000000000000000000000..ceb11bb46bd0e2c7cf1a5c0d853471bd
 +		goto err_init;
 +	}
 +
++	/* Registered: from now on its last reference frees the device. */
++	vvd->video_dev.release = virtio_video_release;
++
 +	return 0;
 +
 +err_init:
 +err_events:
 +err_config:
++	virtio_video_stop(vvd);
 +	virtio_video_free_vbufs(vvd);
++	goto err_vqs;
 +err_vbufs:
++	virtio_reset_device(vdev);
 +	vdev->config->del_vqs(vdev);
 +err_vqs:
 +	v4l2_device_unregister(&vvd->v4l2_dev);
 +err_v4l2_reg:
-+	devm_kfree(&vdev->dev, vvd);
++	mutex_destroy(&vvd->video_dev_mutex);
++	kfree(vvd);
 +
 +	return ret;
 +}
 +
++/*
++ * UML removes its devices from an exitcall while other CPUs still run tasks,
++ * and a mconsole halt or reboot, an unbind or a lost vhost-user backend does
++ * so without device_shutdown() first. Files may be open and commands in
++ * flight. Unregistering stops new opens and ioctls; the device is reset and
++ * its queues deleted before any buffer it held is returned, every pending
++ * command is then answered as failed, and the event work is flushed. The
++ * video device's last reference, perhaps a later close, frees the rest.
++ */
 +static void virtio_video_remove(struct virtio_device *vdev)
 +{
 +	struct virtio_video_device *vvd = vdev->priv;
++	struct device *video = &vvd->video_dev.dev;
 +
++	get_device(video);
 +	virtio_video_device_deinit(vvd);
-+	virtio_video_free_vbufs(vvd);
-+	vdev->config->del_vqs(vdev);
-+	v4l2_device_unregister(&vvd->v4l2_dev);
-+	devm_kfree(&vdev->dev, vvd);
++	virtio_video_stop(vvd);
++	put_device(video);
 +}
 +
 +static struct virtio_device_id id_table[] = {
@@ -3483,10 +3558,10 @@ index 0000000000000000000000000000000000000000..2ccfa84c3d1ae9525e0c7c92341aec07
 +}
 diff --git a/drivers/media/virtio/virtio_video_vq.c b/drivers/media/virtio/virtio_video_vq.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..7c27bdaccedbb6964d2eb988d766ae6267a1876f
+index 0000000000000000000000000000000000000000..67f13592e1c9260b542803508c1cc19c1c1524d8
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_vq.c
-@@ -0,0 +1,1009 @@
+@@ -0,0 +1,1088 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -3620,20 +3695,31 @@ index 0000000000000000000000000000000000000000..7c27bdaccedbb6964d2eb988d766ae62
 +	wake_up(&vvd->commandq.reclaim_queue);
 +}
 +
++/*
++ * Handling an event sends commands and waits for their answers, so it runs
++ * without the queue lock; the queue is touched only under it, while it is
++ * still ready.
++ */
 +void virtio_video_process_events(struct work_struct *work)
 +{
 +	struct virtio_video_device *vvd = container_of(work,
 +			struct virtio_video_device, eventq.work);
-+	struct virtqueue *vq = vvd->eventq.vq;
++	struct virtqueue *vq;
 +	struct virtio_video_event *evt;
 +	unsigned int len;
 +
++	mutex_lock(&vvd->eventq.lock);
 +	while (vvd->eventq.ready) {
++		vq = vvd->eventq.vq;
 +		virtqueue_disable_cb(vq);
 +
 +		while ((evt = virtqueue_get_buf(vq, &len))) {
++			mutex_unlock(&vvd->eventq.lock);
 +			if (len == sizeof(*evt))
 +				virtio_video_handle_event(vvd, evt);
++			mutex_lock(&vvd->eventq.lock);
++			if (!vvd->eventq.ready)
++				goto out;
 +			virtio_video_queue_event_buffer(vvd, evt);
 +		}
 +
@@ -3643,6 +3729,8 @@ index 0000000000000000000000000000000000000000..7c27bdaccedbb6964d2eb988d766ae62
 +		if (virtqueue_enable_cb(vq))
 +			break;
 +	}
++out:
++	mutex_unlock(&vvd->eventq.lock);
 +}
 +
 +void virtio_video_event_cb(struct virtqueue *vq)
@@ -3690,23 +3778,64 @@ index 0000000000000000000000000000000000000000..7c27bdaccedbb6964d2eb988d766ae62
 +	return 0;
 +}
 +
-+void virtio_video_free_vbufs(struct virtio_video_device *vvd)
++/*
++ * Stop both queues and delete them, once the device can no longer use a
++ * buffer it was given. A transport's reset need not reach the device
++ * itself: vhost-user's does not, and only disabling the rings in del_vqs()
++ * makes the backend drop what it holds. Nothing the device may still write is
++ * freed before that; virtio_video_cancel_cmds() then returns the commands.
++ */
++void virtio_video_stop_queues(struct virtio_video_device *vvd)
 +{
-+	struct virtio_video_vbuffer *vbuf;
++	struct virtio_device *vdev = vvd->vdev;
++	unsigned long flags;
 +
-+	/* Release command buffers. Operation on vbufs here is lock safe,
-+           since before device was deinitialized and queues was stopped
-+           (in not ready state) */
-+	while ((vbuf = virtqueue_detach_unused_buf(vvd->commandq.vq))) {
-+		if (vbuf_is_pending(vvd, vbuf))
++	spin_lock_irqsave(&vvd->commandq.qlock, flags);
++	vvd->commandq.ready = false;
++	spin_unlock_irqrestore(&vvd->commandq.qlock, flags);
++	wake_up_all(&vvd->commandq.reclaim_queue);
++
++	mutex_lock(&vvd->eventq.lock);
++	vvd->eventq.ready = false;
++	mutex_unlock(&vvd->eventq.lock);
++
++	virtio_reset_device(vdev);
++	vdev->config->del_vqs(vdev);
++	vvd->commandq.vq = NULL;
++	vvd->eventq.vq = NULL;
++}
++
++/*
++ * Answer every command still pending as the device would answer one it could
++ * not complete: with an empty response. A response callback sees a failed
++ * command, so a queued buffer returns to vb2 in error; a synchronous command
++ * wakes its waiter, which frees it, and any other is freed here.
++ */
++void virtio_video_cancel_cmds(struct virtio_video_device *vvd)
++{
++	struct virtio_video_vbuffer *vbuf, *next;
++	unsigned long flags;
++
++	spin_lock_irqsave(&vvd->commandq.qlock, flags);
++	list_for_each_entry_safe(vbuf, next, &vvd->pending_vbuf_list,
++				 pending_list_entry) {
++		vbuf->resp_len = 0;
++		if (vbuf->resp_cb)
++			vbuf->resp_cb(vvd, vbuf);
++
++		if (vbuf->is_sync)
++			complete(&vbuf->reclaimed);
++		else
 +			free_vbuf(vvd, vbuf);
 +	}
++	spin_unlock_irqrestore(&vvd->commandq.qlock, flags);
++}
 +
++/* Every command buffer has been freed, and the queues are gone. */
++void virtio_video_free_vbufs(struct virtio_video_device *vvd)
++{
 +	kmem_cache_destroy(vvd->vbufs);
 +	vvd->vbufs = NULL;
-+
-+	/* Release event buffers */
-+	while (virtqueue_detach_unused_buf(vvd->eventq.vq));
 +
 +	kfree(vvd->evts);
 +	vvd->evts = NULL;
@@ -3749,23 +3878,31 @@ index 0000000000000000000000000000000000000000..7c27bdaccedbb6964d2eb988d766ae62
 +	return vbuf->buf;
 +}
 +
++/* Whether a command can be added, or never will be because the queue is gone. */
++static bool virtio_video_cmd_room(struct virtio_video_device *vvd)
++{
++	unsigned long flags;
++	bool room;
++
++	spin_lock_irqsave(&vvd->commandq.qlock, flags);
++	room = !vvd->commandq.ready || vvd->commandq.vq->num_free;
++	spin_unlock_irqrestore(&vvd->commandq.qlock, flags);
++
++	return room;
++}
++
++/*
++ * A command that cannot be queued, because the device is gone or the ring
++ * refused it, is freed here; its data buffer stays the caller's.
++ */
 +static int
 +virtio_video_queue_cmd_buffer(struct virtio_video_device *vvd,
 +			      struct virtio_video_vbuffer *vbuf)
 +{
 +	unsigned long flags;
-+	struct virtqueue *vq = vvd->commandq.vq;
 +	struct scatterlist *sgs[3], vreq, vout, vresp;
 +	int outcnt = 0, incnt = 0;
 +	int ret;
-+
-+	if (!vvd->commandq.ready)
-+		return -ENODEV;
-+
-+	spin_lock_irqsave(&vvd->commandq.qlock, flags);
-+
-+	vbuf->id = vvd->vbufs_sent++;
-+	list_add_tail(&vbuf->pending_list_entry, &vvd->pending_vbuf_list);
 +
 +	sg_init_one(&vreq, vbuf->buf, vbuf->size);
 +	sgs[outcnt + incnt] = &vreq;
@@ -3783,18 +3920,32 @@ index 0000000000000000000000000000000000000000..7c27bdaccedbb6964d2eb988d766ae62
 +		incnt++;
 +	}
 +
-+retry:
-+	ret = virtqueue_add_sgs(vq, sgs, outcnt, incnt, vbuf, GFP_ATOMIC);
-+	if (ret == -ENOSPC) {
++	spin_lock_irqsave(&vvd->commandq.qlock, flags);
++	for (;;) {
++		if (!vvd->commandq.ready) {
++			ret = -ENODEV;
++			break;
++		}
++		ret = virtqueue_add_sgs(vvd->commandq.vq, sgs, outcnt, incnt,
++					vbuf, GFP_ATOMIC);
++		if (ret != -ENOSPC)
++			break;
 +		spin_unlock_irqrestore(&vvd->commandq.qlock, flags);
-+		wait_event(vvd->commandq.reclaim_queue, vq->num_free);
++		wait_event(vvd->commandq.reclaim_queue,
++			   virtio_video_cmd_room(vvd));
 +		spin_lock_irqsave(&vvd->commandq.qlock, flags);
-+		goto retry;
-+	} else {
-+		virtqueue_kick(vq);
 +	}
-+
++	if (!ret) {
++		/* Under the lock, so the answer cannot arrive before this. */
++		vbuf->id = vvd->vbufs_sent++;
++		list_add_tail(&vbuf->pending_list_entry,
++			      &vvd->pending_vbuf_list);
++		virtqueue_kick(vvd->commandq.vq);
++	}
 +	spin_unlock_irqrestore(&vvd->commandq.qlock, flags);
++
++	if (ret)
++		kmem_cache_free(vvd->vbufs, vbuf);
 +
 +	return ret;
 +}
@@ -3819,6 +3970,9 @@ index 0000000000000000000000000000000000000000..7c27bdaccedbb6964d2eb988d766ae62
 +		ret = -ETIMEDOUT;
 +
 +	spin_lock_irqsave(&vvd->commandq.qlock, flags);
++	/* A command the removal cancelled has no answer. */
++	if (!vvd->commandq.ready)
++		ret = -ENODEV;
 +	if (vbuf_is_pending(vvd, vbuf))
 +		free_vbuf(vvd, vbuf);
 +	spin_unlock_irqrestore(&vvd->commandq.qlock, flags);
