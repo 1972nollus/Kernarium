@@ -923,6 +923,24 @@ def wait_for_log(
     raise TimeoutError("Chromium WebGL verification did not finish in time")
 
 
+# The launcher prints the measurement's closing snapshot after Chromium's
+# report; a busy guest can take a few seconds to.
+GUEST_END_SECONDS = 60
+
+
+def wait_for_guest_end(
+    process: subprocess.Popen[bytes], log_path: Path, text: str
+) -> str:
+    """Return the console once the closing guest snapshot has reached it."""
+
+    if "UML_AQUARIUM_GUEST_END|" in text:
+        return text
+    text, _ = wait_for_log(
+        process, log_path, ("UML_AQUARIUM_GUEST_END|",), GUEST_END_SECONDS
+    )
+    return text
+
+
 def guest_child(
     command: Sequence[str], log: BinaryIO, **options: Any
 ) -> AbstractContextManager[subprocess.Popen[bytes]]:
@@ -1604,7 +1622,11 @@ def main() -> int:
                     raise RuntimeError(
                         "Aquarium VNC capture lacks a complete, varied 3D scene"
                     )
-                text = log_path.read_text(encoding="utf-8", errors="replace")
+                text = wait_for_guest_end(
+                    process,
+                    log_path,
+                    log_path.read_text(encoding="utf-8", errors="replace"),
+                )
             samples = parse_sample_lines(text)
             if samples != metrics["RAW_FPS"]:
                 raise RuntimeError("Aquarium sample stream differs from summary")

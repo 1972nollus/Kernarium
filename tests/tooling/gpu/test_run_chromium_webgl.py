@@ -225,6 +225,52 @@ class AquariumProbePolicyTests(unittest.TestCase):
         )
         process.send_signal.assert_not_called()
 
+    def test_runner_waits_for_the_closing_guest_snapshot(self) -> None:
+        # The launcher prints the measurement's closing snapshot after
+        # Chromium's report, and a busy two-vCPU guest took over a second to;
+        # the runner had already read the console and failed the run.
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "console.log"
+            log_path.write_text(
+                "UML_AQUARIUM_GUEST_SAMPLE|INDEX=30\n"
+                "[1:1:INFO:CONSOLE:1] UML_AQUARIUM_OK|AVG_FPS=9.6\n",
+                encoding="utf-8",
+            )
+            text = log_path.read_text(encoding="utf-8")
+            with log_path.open("ab") as log:
+                with run_chromium_webgl.guest_child(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import time; time.sleep(1.5); "
+                        "print('UML_AQUARIUM_GUEST_END|INDEX=0', flush=True); "
+                        "time.sleep(30)",
+                    ],
+                    log,
+                ) as process:
+                    text = run_chromium_webgl.wait_for_guest_end(
+                        process, log_path, text
+                    )
+            self.assertIn("UML_AQUARIUM_GUEST_END|INDEX=0", text)
+
+    def test_guest_that_exits_without_its_closing_snapshot_is_named(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "console.log"
+            log_path.write_text("UML_AQUARIUM_OK|\n", encoding="utf-8")
+            with log_path.open("ab") as log:
+                with run_chromium_webgl.guest_child(
+                    [sys.executable, "-c", "pass"], log
+                ) as process:
+                    process.wait(timeout=30)
+                    with self.assertRaisesRegex(
+                        RuntimeError, "guest exited before"
+                    ):
+                        run_chromium_webgl.wait_for_guest_end(
+                            process, log_path, "UML_AQUARIUM_OK|\n"
+                        )
+
     def test_guest_starts_as_the_leader_of_its_own_session(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             log_path = Path(directory) / "console.log"
