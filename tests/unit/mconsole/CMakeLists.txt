@@ -11,3 +11,6 @@ uml_add_unit_test(NAME guest-console-location
 uml_add_unit_test(NAME guest-console-run
     COMMAND uml_guest_console_tests run
     LABELS console)
+uml_add_unit_test(NAME guest-console-wake
+    COMMAND uml_guest_console_tests wake
+    LABELS console)

@@ -1181,6 +1181,131 @@ void completedPrefixNotifiesBeforeRetry()
     });
 }
 
+/* Holds events for its one queue, like virtio-input's event queue, and
+ * delivers each into a buffer the front end only lets it fill. */
+class EventSourceDevice final : public FixtureDevice {
+public:
+    EventSourceDevice() : FixtureDevice("event source fixture", 1, true) {}
+
+    void raise()
+    {
+        pending_.fetch_add(1, std::memory_order_relaxed);
+        signalReadiness();
+    }
+    [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
+        std::uint32_t index,
+        std::uint64_t,
+        std::span<const std::uint8_t> request,
+        std::size_t responseCapacity) override
+    {
+        require(index == 0);
+        require(request.empty());
+        require(responseCapacity == event.size());
+        if (pending_.load(std::memory_order_relaxed) == 0)
+            return {.action = uml::virtio::VhostUserQueueAction::retry};
+        pending_.fetch_sub(1, std::memory_order_relaxed);
+        delivered_.fetch_add(1, std::memory_order_relaxed);
+        return {
+            .action = uml::virtio::VhostUserQueueAction::complete,
+            .response = {event.begin(), event.end()},
+        };
+    }
+    void drainEventSource() override
+    {
+        FixtureDevice::drainEventSource();
+        drained_.fetch_add(1, std::memory_order_release);
+    }
+    [[nodiscard]] unsigned delivered() const noexcept
+    {
+        return delivered_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] unsigned drained() const noexcept
+    {
+        return drained_.load(std::memory_order_acquire);
+    }
+
+    static constexpr std::array<std::uint8_t, 8> event {1, 0, 116, 0, 1, 0, 0, 0};
+
+private:
+    std::atomic_uint pending_ {};
+    std::atomic_uint delivered_ {};
+    std::atomic_uint drained_ {};
+};
+
+/* A suspended guest disables its rings. An event raised meanwhile must wait
+ * in the device rather than come back as an empty used buffer, which a
+ * virtio-input front end would read as the event that buffer held before;
+ * once the ring is enabled again the event is delivered, once. */
+void aDisabledRingKeepsTheBuffersTheDeviceFills()
+{
+    auto device = std::make_unique<EventSourceDevice>();
+    auto* source = device.get();
+    VhostUserServer server {std::move(device)};
+    const SplitRing ring;
+    const auto memory = ring.memory();
+
+    constexpr std::size_t eventOffset = 0x300;
+    constexpr std::uint8_t staleByte = 0x5a;
+    const std::array descriptors {
+        protocol::VirtqueueDescriptor {
+            .address = SplitRing::guestBase + eventOffset,
+            .length = EventSourceDevice::event.size(),
+            .flags = protocol::descriptorWrite,
+            .next = 0,
+        },
+    };
+    constexpr std::array<std::uint16_t, 1> heads {0};
+    ring.publish(descriptors, heads);
+    std::memset(memory.data() + eventOffset, staleByte,
+        EventSourceDevice::event.size());
+
+    withServerConnection(server, [&](int socket) {
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, ring.descriptor());
+        configureQueue(socket, ring, 0, false);
+        const std::uint64_t queue = 0;
+        QueueChannels channels {.call = makePipe(), .kick = makePipe()};
+        const std::array callDescriptors {channels.call.writeEnd.get()};
+        sendRequestAndReadAcknowledgement(
+            socket,
+            protocol::VhostRequest::setVringCall,
+            bytesOf(queue),
+            callDescriptors);
+        const std::array kickDescriptors {channels.kick.readEnd.get()};
+        sendRequestAndReadAcknowledgement(
+            socket,
+            protocol::VhostRequest::setVringKick,
+            bytesOf(queue),
+            kickDescriptors);
+
+        source->raise();
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds {2};
+        while (source->drained() == 0 &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds {1});
+        require(source->drained() == 1);
+        pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
+        require(::poll(&call, 1, 200) == 0);
+        require(ring.usedIndex() == 0);
+        require(source->delivered() == 0);
+        require(std::ranges::all_of(
+            memory.subspan(eventOffset, EventSourceDevice::event.size()),
+            [](std::uint8_t byte) { return byte == staleByte; }));
+
+        const protocol::VringState enabled {.index = 0, .value = 1};
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringEnable, bytesOf(enabled));
+        awaitCall(channels.call.readEnd.get());
+        require(ring.usedIndex() == 1);
+        require(ring.usedElement(0).length == EventSourceDevice::event.size());
+        require(std::ranges::equal(
+            memory.subspan(eventOffset, EventSourceDevice::event.size()),
+            EventSourceDevice::event));
+        require(source->delivered() == 1);
+    });
+}
+
 void validConfigurationProtocol(VhostUserServer& server)
 {
     withServerConnection(server, [](int socket) {
@@ -2037,6 +2162,7 @@ void runVhostUserProtocolTests()
     multipleDeferredCompletionsRetainTheirDescriptorChains();
     deferredCompletionSupportsFourQueues();
     completedPrefixNotifiesBeforeRetry();
+    aDisabledRingKeepsTheBuffersTheDeviceFills();
     configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement();
     configChangeWaitStillAnswersConfigReads();
     closedBackendChannelEndsTheConnectionQuietly();

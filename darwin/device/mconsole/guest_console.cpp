@@ -520,6 +520,23 @@ void resume_guest(GuestSuspension suspension) noexcept
 	}
 }
 
+bool wake_guest() noexcept
+{
+	try {
+		std::lock_guard lock(consoleMutex);
+		const auto &location = guest_console_location();
+		sockaddr_un address {};
+		if (!location || !fillAddress(address, location->console))
+			return false;
+		adoptConsolePath(location->console);
+		std::string response;
+		return exchange(*location, address, "wake", response) ==
+			ExchangeResult::accepted;
+	} catch (...) {
+		return false;
+	}
+}
+
 GuestConsoleRun::GuestConsoleRun(bool active) noexcept
 	: active_(active)
 {

@@ -44,10 +44,10 @@ index 32721e1b12ab36df3e03e81254bddf46a0e0f6a8..49647d75057b9e4627bda164b35332c5
  	bool "UML RTC driver"
  	depends on RTC_CLASS
 diff --git a/arch/um/drivers/vnc_input.c b/arch/um/drivers/vnc_input.c
-index 6ad13ee15181776f5cf62ecf149f1eadbbe1fc30..7e25f0d48848089873f98b2853ea661375cdd55e 100644
+index 92ba59b6056b1ba7bc1023adca73e01f6242d092..3d95e523e49a8abbe303546235f5592b1705644a 100644
 --- a/arch/um/drivers/vnc_input.c
 +++ b/arch/um/drivers/vnc_input.c
-@@ -45,6 +45,15 @@ static void deliver_event(const struct uml_vnc_input_event *wire)
+@@ -46,6 +46,15 @@ static void deliver_event(const struct uml_vnc_input_event *wire)
  	if (type == EV_SYN) {
  		input_sync(keyboard);
  		input_sync(pointer);
@@ -63,7 +63,7 @@ index 6ad13ee15181776f5cf62ecf149f1eadbbe1fc30..7e25f0d48848089873f98b2853ea6613
  	} else if (type == EV_ABS || type == EV_REL ||
  		   (type == EV_KEY && code >= BTN_MISC)) {
  		input_event(pointer, type, code, value);
-@@ -94,7 +103,8 @@ static void configure_keyboard(struct input_dev *device)
+@@ -98,7 +107,8 @@ static void configure_keyboard(struct input_dev *device)
  
  static void configure_pointer(struct input_dev *device)
  {
@@ -73,7 +73,7 @@ index 6ad13ee15181776f5cf62ecf149f1eadbbe1fc30..7e25f0d48848089873f98b2853ea6613
  	device->phys = "uml/vnc/input1";
  	device->id.bustype = BUS_VIRTUAL;
  	/*
-@@ -109,11 +119,17 @@ static void configure_pointer(struct input_dev *device)
+@@ -113,11 +123,17 @@ static void configure_pointer(struct input_dev *device)
  	 */
  	__set_bit(INPUT_PROP_DIRECT, device->propbit);
  	input_set_capability(device, EV_KEY, BTN_TOUCH);
@@ -96,10 +96,10 @@ index 6ad13ee15181776f5cf62ecf149f1eadbbe1fc30..7e25f0d48848089873f98b2853ea6613
  	input_set_abs_params(device, ABS_X, 0, 32767, 0, 0);
  	input_set_abs_params(device, ABS_Y, 0, 32767, 0, 0);
  }
-@@ -154,8 +170,9 @@ static int __init vnc_input_init(void)
- 		error = input_irq;
- 		goto unregister_pointer;
- 	}
+@@ -166,8 +182,9 @@ static int __init vnc_input_init(void)
+ 	if (error)
+ 		pr_warn("uml_vnc_input: input cannot wake the guest: %d\n",
+ 			error);
 -	pr_info("uml_vnc_input: registered keyboard and tablet at fd=%d\n",
 -		input_fd);
 +	pr_info("uml_vnc_input: registered keyboard and %s at fd=%d\n",

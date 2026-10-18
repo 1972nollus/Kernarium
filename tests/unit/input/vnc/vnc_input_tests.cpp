@@ -24,6 +24,8 @@ void keySymbolsMapToStableGuestCodes()
         "shifted key symbols did not map to their physical keys");
     require(keyCode(0xff0d) == 28 && keyCode(0xffff) == 111,
         "special key symbols did not map to guest input codes");
+    require(keyCode(0x1008ff2a) == 116,
+        "the power key symbol did not map to the guest's power key");
     require(!keyCode(0x10ffff),
         "an unsupported key symbol unexpectedly mapped to a guest key");
 }
