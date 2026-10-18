@@ -42,7 +42,7 @@ index 458f68c3840a1ef17578329c8470f2fbae2a9cb1..66a6516d9c9cebfe2c14bb75c6104bd7
  extern int um_tlb_sync_locked(struct mm_struct *mm, unsigned long start,
  			      unsigned long end);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 1aa29e353e6c71d0073127b85eeca0ad9f10b74f..8ce7d13a2483e464ee618a1de24af0d567d9afd9 100644
+index 6d24b89b3a0229446107798dad8ef83a9d89803d..f8356d4bc12ec0e1a34eac4da544b4afef139b51 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -129,6 +129,62 @@ static int kern_unmap(struct mm_id *mm_idp,
@@ -232,7 +232,7 @@ index 1aa29e353e6c71d0073127b85eeca0ad9f10b74f..8ce7d13a2483e464ee618a1de24af0d5
  /*
   * Linux's kernel-alias cache maintenance for a host-private slot. Callers
   * that share a vmalloc or vmap alias with another alias of the same frames
-@@ -400,9 +476,11 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
+@@ -420,9 +496,11 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
  		 * UML's original shadow-TLB walker was uniprocessor-only.  Clearing
  		 * _PAGE_NEEDSYNC after an unlocked host mapping operation can race a
  		 * concurrent zap: the stale write resurrects a PTE after its rmap was
@@ -246,7 +246,7 @@ index 1aa29e353e6c71d0073127b85eeca0ad9f10b74f..8ce7d13a2483e464ee618a1de24af0d5
  		 */
  		/*
  		 * The PMD can change while the walk holds only mmap_read_lock().
-@@ -434,6 +512,9 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
+@@ -454,6 +532,9 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
  #ifndef UML_HOST_DARWIN
  		if (!pte_needsync(pteval))
  			continue;
@@ -256,7 +256,7 @@ index 1aa29e353e6c71d0073127b85eeca0ad9f10b74f..8ce7d13a2483e464ee618a1de24af0d5
  #endif
  
  		if (pte_present(pteval)) {
-@@ -478,6 +559,10 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
+@@ -498,6 +579,10 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
  			ret = ops->unmap(ops->mm_idp, addr, PAGE_SIZE);
  
  #ifdef UML_HOST_DARWIN
@@ -267,7 +267,7 @@ index 1aa29e353e6c71d0073127b85eeca0ad9f10b74f..8ce7d13a2483e464ee618a1de24af0d5
  		if (!ret && ops->budget != 0 && --ops->budget == 0) {
  			ops->resume = addr + PAGE_SIZE;
  			ret = UML_TLB_SYNC_BATCH_FULL;
-@@ -504,7 +589,7 @@ static inline int update_pmd_range(pud_t *pud, unsigned long addr,
+@@ -524,7 +609,7 @@ static inline int update_pmd_range(pud_t *pud, unsigned long addr,
  		if (!pmd_present(*pmd)) {
  			if (pmd_needsync(*pmd)) {
  #ifdef UML_HOST_DARWIN
@@ -276,7 +276,7 @@ index 1aa29e353e6c71d0073127b85eeca0ad9f10b74f..8ce7d13a2483e464ee618a1de24af0d5
  				 * cleared kernel entry would re-unmap this
  				 * whole span on every covering walk.  Nothing
  				 * frees a vmalloc page table, so no init_mm
-@@ -540,7 +625,7 @@ static inline int update_pud_range(p4d_t *p4d, unsigned long addr,
+@@ -560,7 +645,7 @@ static inline int update_pud_range(p4d_t *p4d, unsigned long addr,
  		if (!pud_present(*pud)) {
  			if (pud_needsync(*pud)) {
  #ifdef UML_HOST_DARWIN
@@ -285,7 +285,7 @@ index 1aa29e353e6c71d0073127b85eeca0ad9f10b74f..8ce7d13a2483e464ee618a1de24af0d5
  				 * cleared kernel entry would re-unmap this
  				 * whole span on every covering walk.  Nothing
  				 * frees a vmalloc page table, so no init_mm
-@@ -575,7 +660,7 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
+@@ -595,7 +680,7 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
  		if (!p4d_present(*p4d)) {
  			if (p4d_needsync(*p4d)) {
  #ifdef UML_HOST_DARWIN
@@ -294,7 +294,7 @@ index 1aa29e353e6c71d0073127b85eeca0ad9f10b74f..8ce7d13a2483e464ee618a1de24af0d5
  				 * cleared kernel entry would re-unmap this
  				 * whole span on every covering walk.  Nothing
  				 * frees a vmalloc page table, so no init_mm
-@@ -609,7 +694,7 @@ static int update_mm_range(struct mm_struct *mm, struct vm_ops *ops,
+@@ -629,7 +714,7 @@ static int update_mm_range(struct mm_struct *mm, struct vm_ops *ops,
  		if (!pgd_present(*pgd)) {
  			if (pgd_needsync(*pgd)) {
  #ifdef UML_HOST_DARWIN

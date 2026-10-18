@@ -169,7 +169,12 @@ pages when groups are unavailable. An alias that cannot be made whole groups, a
 BPF ring buffer smaller than 16 KiB or a vmap of foreign pages, is kept in step
 with the kernel-vmap hooks, `flush_kernel_vmap_range()` and
 `invalidate_kernel_vmap_range()`, which publish a private slot and refresh it
-from its frames and cost a page-table check on a shared one. A ring that lives
+from its frames and cost a page-table check on a shared one. Linux calls
+`flush_cache_vunmap()` before it clears an alias's PTEs, and on this profile it
+publishes the range's private slots, so the stores of a short-lived alias, such
+as the `vm_map_ram()` output of EROFS's LZ4 decompressor, reach their frames
+before the linear map reads them or the frames are freed; a TLB sync applies
+only changed PTEs and publishes nothing for an unchanged one. A ring that lives
 in the application's own memory cannot be regrouped, so on this profile io_uring
 refuses with `EINVAL` a `IORING_SETUP_NO_MMAP` ring, a registered memory region
 or a provided-buffer ring whose pages are neither one folio nor whole aligned
@@ -178,7 +183,8 @@ groups; the application uses a huge page or lets the kernel allocate it, as
 maps a whole host page over it, publishing the shadow's stores to their own
 backing first, and keeps the shadow only when the call runs on a stack inside
 that slot. `guest-kernel-user-shared-memory` checks each sharing in both
-directions and the refusal.
+directions and the refusal, and `guest-erofs-lz4` reads back an LZ4 EROFS image
+with 4 KiB clusters.
 
 A generation's software-MMU mappings are published only by a page-table
 walker's batch. The batch records the generation's invalidation epoch when it
