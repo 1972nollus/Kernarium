@@ -383,7 +383,13 @@ the same memory as the frames' other views; an empty slot is unmapped in one
 call; every other slot is a host-private copy that is coherent with the frames
 only at a synchronization point. The four samples are not one atomic snapshot;
 a writer publishes its range after it changes a PTE, so a later walk reapplies
-it. A kernel-mode fault publishes exactly its
+it. A walk applies only the `init_mm` PTEs that carry `_PAGE_NEEDSYNC`, on the
+4 KiB profile only the slots one of whose quarters carries it, and clears the
+bit by compare-and-exchange once the host mapping is applied. A writer that
+changes the PTE meanwhile has set the bit again, and its own flush applies the
+new value. A vmalloc purge flushes the whole span between the areas it frees,
+so without the bit such a walk mapped every present page of the span again.
+User PTEs keep the bit. A kernel-mode fault marks and publishes exactly its
 Linux page, synchronizes `init_mm`, and resumes only when the host confirms
 the access is backed; any other outcome panics instead of faulting again. On
 both page profiles a nested mmu-gather flush keeps the range it collected

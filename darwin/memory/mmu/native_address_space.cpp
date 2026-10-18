@@ -954,12 +954,43 @@ int NativeAddressSpace::sync_direct(
 	std::lock_guard lock{mutex_};
 	if (refuse_retired_locked())
 		return -1;
+	return sync_direct_locked(address, length);
+}
+
+int NativeAddressSpace::sync_direct_unless_shadow(
+	std::uintptr_t address, std::uint64_t length)
+{
+	std::lock_guard lock{mutex_};
+	if (refuse_retired_locked())
+		return -1;
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	if (contains_shadow_locked(address, length))
+		return 1;
+#endif
+	return sync_direct_locked(address, length);
+}
+
+int NativeAddressSpace::sync_direct_locked(
+	std::uintptr_t address, std::uint64_t length)
+{
+	/* Direct mappings are MAP_SHARED, so there is no shadow buffer to refill.
+	 * Validation still prevents a foreign domain from treating another run's
+	 * high mapping as its own. A slot this space maps directly is its own in
+	 * the registry too, so only a range reaching past those asks it. */
+	std::uintptr_t first;
+	std::uintptr_t end;
+	if (!covered_host_range(address, length, first, end)) {
+		errno = EINVAL;
+		return -1;
+	}
+	auto slot = first;
+	while (slot < end && direct_slots_.contains(slot))
+		slot += host_page_size();
+	if (slot == end)
+		return 0;
 	auto *registry = registry_or_enomem(host_ownership_registry());
 	if (registry == nullptr)
 		return -1;
-	/* Direct mappings are MAP_SHARED, so there is no shadow buffer to refill.
-	 * Validation still prevents a foreign domain from treating another run's
-	 * high mapping as its own. */
 	return registry->validate_direct(ownership_id_, address, length);
 }
 
@@ -1005,9 +1036,15 @@ bool NativeAddressSpace::needs_shadow(
 bool NativeAddressSpace::contains_shadow(
 	std::uintptr_t address, std::uint64_t length) const
 {
+	std::lock_guard lock{mutex_};
+	return contains_shadow_locked(address, length);
+}
+
+bool NativeAddressSpace::contains_shadow_locked(
+	std::uintptr_t address, std::uint64_t length) const
+{
 	if (length == 0 || address + length < address)
 		return false;
-	std::lock_guard lock{mutex_};
 	const auto first = slot_for(address);
 	const auto end = address + length;
 	for (auto slot = first; slot < end; slot += host_page_size())

@@ -1152,6 +1152,11 @@ path placed, in each way of its set, and misses a page its set does not hold.
 The gadget engine's fill path looks the page up in the generation its entered
 execution context holds (`darwin_uml_static_vm_execution_context_translate()`),
 without resolving the thread's address space and active generation each time.
+It reads the generation's fill index (`darwin/memory/mmu/fill_index.hpp`), a
+radix table of host addresses and guest permissions that mirrors the mapping
+map and is read without a lock: whatever removes or changes a mapping quiesces
+execution first, so an entered context never sees a stale word. A page the index
+does not hold is looked up in the map under its reader lock.
 
 Guest debuggers depend on two kernel/host contracts. To single-step a task,
 Linux sets the architectural step bit in the entry registers (arm64 PSTATE.SS,

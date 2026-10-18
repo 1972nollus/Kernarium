@@ -274,11 +274,36 @@ private:
 		(!left || same_mapping(*left, *right));
 }
 
+/* The fill index word of a mapped page: its host address and what the guest
+ * may do there, as translate_in() judges it. */
+[[nodiscard]] std::uintptr_t fill_entry(const Mapping &mapping) noexcept
+{
+	const auto host = reinterpret_cast<std::uintptr_t>(
+		mapping.backing ? mapping.backing->at(mapping.offset) : nullptr);
+	if (host == 0 || (host & FillIndex::permissions) != 0)
+		return 0;
+	return host |
+		((mapping.protection & PROT_READ) != 0 ? FillIndex::readable : 0) |
+		((mapping.protection & PROT_WRITE) != 0 ?
+			FillIndex::writable : 0) |
+		(mapping.guest_code && (mapping.protection & PROT_EXEC) != 0 ?
+			FillIndex::executable : 0);
+}
+
 struct PlannedMappingPage final {
 	std::uint64_t address;
 	std::optional<Mapping> original;
 	std::optional<Mapping> final;
 };
+
+void index_planned_pages(GenerationState &state,
+	std::span<const PlannedMappingPage> pages) noexcept
+{
+	for (const auto &page : pages)
+		if (!same_mapping(page.original, page.final))
+			state.fill_index.assign(page.address,
+				page.final ? fill_entry(*page.final) : 0);
+}
 
 class MappingPlanRollback final {
 public:
@@ -560,8 +585,11 @@ public:
 		for (std::uint64_t position = 0; position < length;
 		     position += page_size) {
 			auto mapping = state->mappings.find(address + position);
-			if (mapping != state->mappings.end())
-				mapping->second.protection = protection;
+			if (mapping == state->mappings.end())
+				continue;
+			mapping->second.protection = protection;
+			state->fill_index.assign(address + position,
+				fill_entry(mapping->second));
 		}
 		pending.commit();
 		return 0;
@@ -631,6 +659,7 @@ public:
 		state->invalidation_epoch.fetch_add(
 			1, std::memory_order_release);
 		state->mappings.clear();
+		state->fill_index.clear();
 		pending.commit();
 		return 0;
 	}
@@ -678,6 +707,7 @@ public:
 				MappingChangePlan{0, 0, {.whole = true}}};
 			PendingMappingChanges pending{*state, changes};
 			state->mappings.clear();
+			state->fill_index.clear();
 			pending.commit();
 		}
 		state->retired.store(true, std::memory_order_release);
@@ -864,6 +894,17 @@ public:
 		    context->state->retired.load(std::memory_order_acquire))
 			return execution_context_fallback;
 		*result = nullptr;
+		const auto wanted = access == DARWIN_UML_STATIC_EXECUTE ?
+			FillIndex::executable :
+			access == DARWIN_UML_STATIC_WRITE ?
+				FillIndex::writable : FillIndex::readable;
+		const auto entry = context->state->fill_index.find(page);
+		if ((entry & wanted) != 0) {
+			*result = reinterpret_cast<void *>(
+				(entry & ~FillIndex::permissions) +
+				(address & (page_size - 1)));
+			return DARWIN_UML_STATIC_TRANSLATED;
+		}
 		return translate_in(*context->state, address, access, result);
 	}
 
@@ -1476,6 +1517,7 @@ private:
 			if (!same_mapping(page.original, page.final) && !page.final)
 				state.mappings.erase(page.address);
 		rollback.commit();
+		index_planned_pages(state, pages);
 		pending.commit();
 	}
 
@@ -1512,6 +1554,7 @@ private:
 			state.mappings.insert_or_assign(page.address, *page.final);
 		}
 		rollback.commit();
+		index_planned_pages(state, pages);
 		pending.commit();
 	}
 
@@ -1591,15 +1634,19 @@ private:
 		if (sparse) {
 			for (auto page = state.mappings.begin();
 			     page != state.mappings.end();) {
-				if (page->first >= address && page->first < end)
+				if (page->first >= address && page->first < end) {
+					state.fill_index.erase(page->first);
 					page = state.mappings.erase(page);
-				else
+				} else {
 					++page;
+				}
 			}
 		} else {
 			for (std::uint64_t position = 0; position < length;
-			     position += page_size)
+			     position += page_size) {
+				state.fill_index.erase(address + position);
 				state.mappings.erase(address + position);
+			}
 		}
 		pending.commit();
 		return true;
