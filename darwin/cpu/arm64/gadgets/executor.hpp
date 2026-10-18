@@ -107,8 +107,9 @@ private:
 	 * borrows the cache's words, so it is valid until the next store. */
 	void prepare_cache(unsigned long generation, std::uint64_t changes);
 	/* Before entering translated code: let go of the address spaces
-	 * another executor closed. */
-	void leave_closed_spaces() noexcept;
+	 * another executor closed, and of those whose generation the MMU has
+	 * destroyed (`retirements` is its count of destroyed generations). */
+	void leave_gone_spaces(std::uint64_t retirements) noexcept;
 	void select_cpu(CpuState &cpu) noexcept;
 	[[nodiscard]] std::optional<BuildResult> find(
 		std::uint64_t pc, std::uint64_t changes,
@@ -186,6 +187,9 @@ private:
 	/* Null when the executor keeps its translations to itself. */
 	ExecutorAnnouncement *announcement_{};
 	bool share_translations_{};
+	/* The MMU's count of destroyed generations when this executor last
+	 * looked for address spaces to let go of. */
+	std::uint64_t retirements_seen_{};
 };
 
 #if defined(UML_GADGET_SWEEP_STRESS) && UML_GADGET_SWEEP_STRESS

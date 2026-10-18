@@ -26,7 +26,10 @@ how much more would collapse if a fork family's identical pages did too.
 The report puts every part of the cache as a share of the measured bytes:
 slot tags, body headers, streams, validation units, allocator rounding, link
 and indirect records, duplicate bodies, and the address spaces that are
-resident but not running. The lookup history gives the hit rate, why each
+resident but not running. A `G` or `S` line's `alive=` says whether the MMU
+still has the address space's generation (1), has destroyed it (0) or could
+not say (negative); the report counts the bytes of the destroyed ones. The
+lookup history gives the hit rate, why each
 translation that had to be made again was gone, and how many of those an
 exclusive victim tier of a given size would have served.
 """
@@ -93,6 +96,11 @@ class Space:
     targets: int
     # The shared space this cache's slots point into, if any.
     space: str | None = None
+    # Whether the MMU still has the generation (1), has destroyed it (0) or
+    # could not say; and the bytes of the cache's translations of it, which
+    # an engine with no shared spaces (x86) reports here.
+    alive: int | None = None
+    held: int = 0
 
 
 @dataclass
@@ -193,7 +201,9 @@ def load(path: Path, block: Block) -> Contents:
                 indirect=int(values.get("indirect", 0)),
                 targets=int(values.get("targets", 0)),
                 space=(str(values["space"]) if "space" in values
-                       else None)))
+                       else None),
+                alive=(int(values["alive"]) if "alive" in values else None),
+                held=int(values.get("held", 0))))
         elif fields[0] == "S":
             values = {name: parse_value(value) for name, _, value in
                       (pair.partition("=") for pair in fields[2:])}
@@ -275,6 +285,26 @@ def shared_spaces(contents: list[Contents]) -> dict[tuple[str, int],
 
 
 SPACE_PARTS = ("stream_index", "streams", "arena_empty", "links", "indirect")
+
+
+def dead_spaces(contents: list[Contents]) -> tuple[int, int]:
+    """How many address spaces the caches hold for a generation the MMU has
+    destroyed (`alive=0`), and the bytes of their arenas, indexes and
+    records. An engine whose caches keep their spaces to themselves (x86)
+    says so on the `G` record, with the bytes of the translations held.
+    Absent from captures written before the census said."""
+    dead = [space for space in shared_spaces(contents).values()
+            if space.fields.get("alive") == 0]
+    count = len(dead)
+    total = sum(space.get(name) for space in dead
+                for name in SPACE_PARTS if name != "arena_empty")
+    for content in contents:
+        for space in content.spaces:
+            if space.space is None and space.alive == 0:
+                count += 1
+                total += (space.links + space.indirect + space.targets +
+                          space.held)
+    return count, total
 
 
 def measured(blocks: list[Block], contents: list[Contents]) -> Counter[str]:
@@ -519,6 +549,10 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
         attached = sum(space.get("attached") for space in shared.values())
         print(f"  {len(shared)} address-space records, held by "
               f"{attached / len(shared):.2f} caches each")
+    dead, dead_bytes = dead_spaces(contents)
+    if dead:
+        print(f"  {dead} address spaces held for destroyed generations, "
+              f"{dead_bytes / MIB:.1f} MiB")
     if resident == 0:
         return
 
@@ -715,14 +749,15 @@ def series(path: Path, blocks: list[Block]) -> None:
     snapshots = sorted({b.snapshot for b in blocks}, key=snapshot_order)
     print(f"{'snapshot':>8} {'s':>7} {'caches':>6} {'resident':>9} "
           f"{'MiB':>7} {'bodies':>7} {'dup/space':>9} {'dup/code':>8} "
-          f"{'dormant':>7} {'lookups':>11} {'hit rate':>8} {'stores':>9} "
-          f"{'evicted':>8}")
+          f"{'dormant':>7} {'dead MiB':>8} {'lookups':>11} {'hit rate':>8} "
+          f"{'stores':>9} {'evicted':>8}")
     previous: dict[str, Block] = {}
     for snapshot in snapshots:
         chosen = [b for b in blocks if b.snapshot == snapshot]
         contents = [load(path, block) for block in chosen]
         dup = duplication(contents)
         total = measured(chosen, contents)["total"]
+        dead = dead_spaces(contents)[1]
         dormant = sum(idle.bodies + idle.state for idle in
                       dormancy(contents, ((0.0, math.inf),)))
         delta: Counter[str] = Counter()
@@ -738,8 +773,9 @@ def series(path: Path, blocks: list[Block]) -> None:
         print(f"{snapshot!s:>8} {seconds:7.1f} {len(chosen):6d} {dup.resident:9,} "
               f"{total / MIB:7.1f} {dup.bytes / MIB:7.1f} "
               f"{share(dup.space_bytes, total):>9} {share(dup.family_bytes, total):>8} "
-              f"{share(dormant, total):>7} {delta['lookups']:11,} "
-              f"{100.0 * rate:7.2f}% {delta['stores']:9,} {delta['evictions']:8,}")
+              f"{share(dormant, total):>7} {dead / MIB:8.1f} "
+              f"{delta['lookups']:11,} {100.0 * rate:7.2f}% "
+              f"{delta['stores']:9,} {delta['evictions']:8,}")
 
 
 def main() -> int:

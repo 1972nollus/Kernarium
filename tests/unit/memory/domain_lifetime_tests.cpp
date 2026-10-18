@@ -323,6 +323,32 @@ void test_software_resolution_cache_drops_a_retired_domain()
 	require(uml::memory::testing::software_domain_count() == 0);
 }
 
+/* The destroyed-generation count moves when a generation is destroyed and
+ * when its domain retires, and generation_live() answers 0 for a destroyed
+ * generation once the count has moved, while its neighbour stays live. */
+void test_software_destroyed_generations_move_the_count()
+{
+	constexpr std::uint64_t domain = 17'001;
+	constexpr unsigned long kept_generation = 912;
+	constexpr unsigned long destroyed_generation = 913;
+
+	active_domain.store(domain, std::memory_order_release);
+	require(darwin_uml_static_vm_activate(kept_generation) == 0);
+	require(darwin_uml_static_vm_activate(destroyed_generation) == 0);
+	require(darwin_uml_static_vm_generation_live(destroyed_generation) == 1);
+	const auto before = darwin_uml_static_vm_generation_retirements();
+	require(darwin_uml_static_vm_destroy(destroyed_generation) == 0);
+	const auto destroyed = darwin_uml_static_vm_generation_retirements();
+	require(destroyed != before);
+	require(darwin_uml_static_vm_generation_live(destroyed_generation) == 0);
+	require(darwin_uml_static_vm_generation_live(kept_generation) == 1);
+	require(darwin_uml_static_vm_generation_retirements() == destroyed);
+
+	active_domain.store(0, std::memory_order_release);
+	uml::memory::retire_domain(domain);
+	require(darwin_uml_static_vm_generation_retirements() != destroyed);
+}
+
 std::atomic_bool nest_next_software_acquisition{};
 std::atomic_int nested_activation_result{-2};
 constexpr std::uint64_t borrowed_domain = 16'001;
@@ -552,6 +578,7 @@ int main()
 	test_software_acquired_space_refuses_post_retirement_state_creation();
 	test_software_thread_state_recovers_after_domain_retirement();
 	test_software_resolution_cache_drops_a_retired_domain();
+	test_software_destroyed_generations_move_the_count();
 	test_software_nested_resolution_keeps_a_borrowed_space();
 	test_software_thread_exit_closes_walker();
 #if UML_MEMORY_DOMAIN_TEST_HAS_NATIVE

@@ -1,0 +1,489 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/* An executor lets go of the address spaces of a generation the MMU has
+ * destroyed at its next entry into translated code, private and shared,
+ * keeps the live ones, leaves the window's live residency as it was, and never
+ * runs a dead one's translations again.
+ *
+ * Runs against the unit-test variant of the gadget executor
+ * (uml_arm64_gadget_sweep_stress_executor), which counts live spaces. */
+#include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
+
+#include "cpu/arm64/gadgets/executor.hpp"
+#include "cpu/arm64/sme_profile.hpp"
+#include "static_mmu_test_support.hpp"
+
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <functional>
+#include <string_view>
+#include <limits>
+#include <memory>
+#include <thread>
+#include <vector>
+
+namespace arm64 = uml::cpu::arm64;
+namespace gadgets = arm64::gadgets;
+namespace stress = gadgets::stress;
+using uml::emulator::tests::JitBacking;
+using uml::emulator::tests::JitMapping;
+using uml::emulator::tests::require;
+using uml::memory::StaticGuestMemory;
+
+namespace {
+
+constexpr std::uint64_t code_base = 0xd0'0000;
+constexpr std::uint64_t target = code_base + 0x100;
+constexpr std::uint32_t system_call = 0xd400'0001U;
+
+[[nodiscard]] gadgets::BuildOptions sharing_options()
+{
+	gadgets::BuildOptions options;
+	options.host_capabilities.supported.set(
+		static_cast<std::size_t>(uml::cpu::ArmFeature::lse2));
+	return options;
+}
+
+struct Outcome final {
+	::uml::cpu::EngineEvent event;
+	std::size_t executed;
+};
+
+[[nodiscard]] Outcome run_once(gadgets::GadgetExecutor &executor,
+	StaticGuestMemory &memory, unsigned long generation, arm64::CpuState &cpu)
+{
+	require(executor.begin_execution(generation, cpu.pc));
+	std::size_t executed = 0;
+	const auto event = executor.run_block(cpu, memory, generation, executed);
+	executor.end_execution();
+	return {event, executed};
+}
+
+[[nodiscard]] std::size_t run_to_system_call(
+	gadgets::GadgetExecutor &executor, StaticGuestMemory &memory,
+	unsigned long generation, arm64::CpuState &cpu, std::uint64_t pc,
+	std::size_t limit = 4)
+{
+	cpu = {};
+	cpu.pc = pc;
+	std::size_t executed = 0;
+	for (std::size_t block = 0; block < limit; ++block) {
+		const auto outcome = run_once(executor, memory, generation, cpu);
+		executed += outcome.executed;
+		if (outcome.event == ::uml::cpu::EngineEvent::system_call)
+			return executed;
+		require(outcome.event == ::uml::cpu::EngineEvent::continued);
+	}
+	require(false);
+	return executed;
+}
+
+[[nodiscard]] constexpr std::uint32_t move_immediate(
+	unsigned reg, unsigned value) noexcept
+{
+	return 0xd280'0000U | ((value & 0xffffU) << 5U) | (reg & 31U);
+}
+
+[[nodiscard]] std::uint32_t branch(std::uint64_t source, std::uint64_t to)
+{
+	const auto displacement = static_cast<std::int64_t>(to) -
+		static_cast<std::int64_t>(source);
+	return 0x1400'0000U |
+		(static_cast<std::uint32_t>(displacement >> 2) & 0x03ff'ffffU);
+}
+
+void put_program(JitBacking &backing, unsigned first, unsigned second)
+{
+	backing.put32(0, move_immediate(0, first));
+	backing.put32(4, branch(code_base + 4, target));
+	backing.put32(target - code_base, move_immediate(1, second));
+	backing.put32(target - code_base + 4, system_call);
+}
+
+struct Vcpu final {
+	Vcpu() : executor{sharing_options()} {}
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+	arm64::CpuState cpu{};
+};
+
+void set_shared(bool shared)
+{
+	require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", shared ? "1" : "0",
+		1) == 0);
+}
+
+/* D1: one executor runs two address spaces; the first one's generation is
+ * destroyed. Nothing happens until the executor enters translated code again,
+ * then its space goes, and the other keeps every translation it had. */
+void a_dead_space_goes_at_the_next_entry(unsigned long first, bool shared)
+{
+	set_shared(shared);
+	JitBacking dying_backing{1};
+	put_program(dying_backing, 1, 2);
+	JitBacking live_backing{1};
+	put_program(live_backing, 3, 4);
+	auto dying = std::make_unique<JitMapping>(first, code_base,
+		dying_backing, 1);
+	JitMapping live{first + 1, code_base, live_backing, 1};
+	const auto spaces = stress::live_spaces();
+	{
+		const auto vcpu = std::make_unique<Vcpu>();
+		auto &executor = vcpu->executor;
+		auto &memory = vcpu->memory;
+		auto &cpu = vcpu->cpu;
+		require(run_to_system_call(executor, memory, first, cpu,
+			code_base) == 4);
+		require(cpu.registers[0] == 1 && cpu.registers[1] == 2);
+		require(run_to_system_call(executor, memory, first + 1, cpu,
+			code_base) == 4);
+		require(cpu.registers[0] == 3 && cpu.registers[1] == 4);
+		require(stress::live_spaces() == spaces + 2);
+		const auto translations = executor.cache_diagnostics().translations;
+
+		dying.reset();
+		require(stress::live_spaces() == spaces + 2);
+		require(run_to_system_call(executor, memory, first + 1, cpu,
+			code_base) == 4);
+		require(cpu.registers[0] == 3 && cpu.registers[1] == 4);
+		require(stress::live_spaces() == spaces + 1);
+		require(executor.cache_diagnostics().translations == translations);
+	}
+	require(stress::live_spaces() == spaces);
+}
+
+/* D2: two executors share a space whose generation dies. It lives until the
+ * last of them enters translated code again: an executor that does not keeps
+ * it, as it keeps a closed one. */
+void a_shared_dead_space_goes_with_its_last_executor(unsigned long first)
+{
+	set_shared(true);
+	JitBacking dying_backing{1};
+	put_program(dying_backing, 1, 2);
+	JitBacking live_backing{1};
+	put_program(live_backing, 3, 4);
+	auto dying = std::make_unique<JitMapping>(first, code_base,
+		dying_backing, 1);
+	JitMapping live{first + 1, code_base, live_backing, 1};
+	const auto spaces = stress::live_spaces();
+	{
+		const auto a_vcpu = std::make_unique<Vcpu>();
+		const auto b_vcpu = std::make_unique<Vcpu>();
+		for (auto *vcpu : {a_vcpu.get(), b_vcpu.get()})
+			for (const auto generation : {first, first + 1})
+				require(run_to_system_call(vcpu->executor,
+					vcpu->memory, generation, vcpu->cpu,
+					code_base) == 4);
+		require(b_vcpu->executor.cache_diagnostics().adoptions >= 1);
+		require(stress::live_spaces() == spaces + 2);
+
+		dying.reset();
+		require(run_to_system_call(a_vcpu->executor, a_vcpu->memory,
+			first + 1, a_vcpu->cpu, code_base) == 4);
+		require(stress::live_spaces() == spaces + 2);
+		require(run_to_system_call(b_vcpu->executor, b_vcpu->memory,
+			first + 1, b_vcpu->cpu, code_base) == 4);
+		require(b_vcpu->cpu.registers[0] == 3 &&
+			b_vcpu->cpu.registers[1] == 4);
+		require(stress::live_spaces() == spaces + 1);
+	}
+	require(stress::live_spaces() == spaces);
+}
+
+/* D3: a generation number the MMU gives out again after destroying it (which
+ * the kernel never does) names new code. The cache must have let go of the old
+ * translations, or a lookup would match a slot validated at the same
+ * code-change count and run the dead address space's code. */
+void a_number_given_out_again_runs_its_new_code(unsigned long first,
+	bool shared)
+{
+	set_shared(shared);
+	JitBacking old_backing{1};
+	put_program(old_backing, 1, 2);
+	JitBacking new_backing{1};
+	put_program(new_backing, 5, 6);
+	JitBacking elsewhere_backing{1};
+	put_program(elsewhere_backing, 3, 4);
+	auto mapping = std::make_unique<JitMapping>(first, code_base,
+		old_backing, 1);
+	JitMapping elsewhere{first + 1, code_base, elsewhere_backing, 1};
+	{
+		const auto vcpu = std::make_unique<Vcpu>();
+		auto &executor = vcpu->executor;
+		auto &memory = vcpu->memory;
+		auto &cpu = vcpu->cpu;
+		require(run_to_system_call(executor, memory, first, cpu,
+			code_base) == 4);
+		require(cpu.registers[0] == 1 && cpu.registers[1] == 2);
+		mapping.reset();
+		require(run_to_system_call(executor, memory, first + 1, cpu,
+			code_base) == 4);
+		mapping = std::make_unique<JitMapping>(first, code_base,
+			new_backing, 1);
+		require(run_to_system_call(executor, memory, first, cpu,
+			code_base) == 4);
+		require(cpu.registers[0] == 5 && cpu.registers[1] == 6);
+	}
+}
+
+/* D4: an executor's streaming-mode caches hold address spaces too. A ZA-mode
+ * run (SVCR.ZA, outside streaming mode, so any host runs it through an
+ * injected SME profile) puts the dying generation's space in the ZA cache;
+ * the next entry, in mode 0 elsewhere, lets go of it there as well. */
+void a_dead_space_goes_from_a_streaming_mode_cache(unsigned long first,
+	bool shared)
+{
+	set_shared(shared);
+	auto host = ::uml::cpu::host_capabilities();
+	for (const auto feature : {uml::cpu::ArmFeature::sme,
+		     uml::cpu::ArmFeature::sme_f64f64,
+		     uml::cpu::ArmFeature::sme_i16i64,
+		     uml::cpu::ArmFeature::lse2})
+		host.supported.set(static_cast<std::size_t>(feature));
+	host.sme_svl_bytes = 64;
+	host.sme_hardware = false;
+	JitBacking dying_backing{1};
+	put_program(dying_backing, 1, 2);
+	JitBacking live_backing{1};
+	put_program(live_backing, 3, 4);
+	auto dying = std::make_unique<JitMapping>(first, code_base,
+		dying_backing, 1);
+	JitMapping live{first + 1, code_base, live_backing, 1};
+	const auto spaces = stress::live_spaces();
+	{
+		const auto memory = std::make_unique<StaticGuestMemory>();
+		const auto executor = std::make_unique<gadgets::GadgetExecutor>(
+			gadgets::BuildOptions{.host_capabilities = host});
+		const auto file = arm64::SmeRegisterFile::for_host(host);
+		require(file.data() != nullptr);
+		std::vector<std::byte> task(arm64::sme_storage_size(file.svl()));
+		const auto cpu = std::make_unique<arm64::CpuState>();
+		const auto run = [&](unsigned long generation, std::uint8_t svcr) {
+			*cpu = {};
+			cpu->bind_sme_registers(file);
+			cpu->defer_sme_load(task.data(), svcr, 0);
+			cpu->pc = code_base;
+			for (std::size_t block = 0; block < 4; ++block) {
+				const auto outcome =
+					run_once(*executor, *memory, generation, *cpu);
+				if (outcome.event == ::uml::cpu::EngineEvent::system_call)
+					return;
+				require(outcome.event ==
+					::uml::cpu::EngineEvent::continued);
+			}
+			require(false);
+		};
+		run(first, arm64::svcr_za);
+		require(cpu->svcr == arm64::svcr_za);
+		require(cpu->registers[0] == 1 && cpu->registers[1] == 2);
+		require(stress::live_spaces() == spaces + 1);
+		dying.reset();
+		run(first + 1, 0);
+		require(cpu->registers[0] == 3 && cpu->registers[1] == 4);
+		/* The ZA cache's space went as the mode-0 one came. */
+		require(stress::live_spaces() == spaces + 1);
+	}
+	require(stress::live_spaces() == spaces);
+}
+
+/* D5: a dead space leaves its window place behind until the least-recently-
+ * used rule reaches it, so the live spaces a window keeps are the ones it kept
+ * before. The executor runs generations 0..7 of the window in order; 3 dies;
+ * entering an eighth one retires 0, the least recently used, and keeps 1. With
+ * the place given up, nothing would be retired and 0 would still hit. Once 1,
+ * 0 and a ninth have been entered, the LRU has reached 3's place and retired
+ * it instead of 4, so 4 still hits. */
+void a_dead_space_keeps_its_window_place(unsigned long first, bool shared)
+{
+	set_shared(shared);
+	constexpr std::size_t window = UML_GADGET_RESIDENT_GENERATIONS;
+	std::vector<std::unique_ptr<JitBacking>> backings;
+	std::vector<std::unique_ptr<JitMapping>> mappings;
+	for (std::size_t index = 0; index <= window + 1; ++index) {
+		backings.push_back(std::make_unique<JitBacking>(1));
+		put_program(*backings.back(), 10 + static_cast<unsigned>(index),
+			20 + static_cast<unsigned>(index));
+		mappings.push_back(std::make_unique<JitMapping>(first + index,
+			code_base, *backings.back(), 1));
+	}
+	const auto vcpu = std::make_unique<Vcpu>();
+	auto &executor = vcpu->executor;
+	auto &memory = vcpu->memory;
+	auto &cpu = vcpu->cpu;
+	for (std::size_t index = 0; index < window; ++index)
+		require(run_to_system_call(executor, memory, first + index, cpu,
+			code_base) == 4);
+	mappings[3].reset();
+	require(run_to_system_call(executor, memory, first + window, cpu,
+		code_base) == 4);
+	require(cpu.registers[0] == 10 + window);
+	const auto translations = executor.cache_diagnostics().translations;
+	require(run_to_system_call(executor, memory, first + 1, cpu,
+		code_base) == 4);
+	require(cpu.registers[0] == 11);
+	require(executor.cache_diagnostics().translations == translations);
+	require(run_to_system_call(executor, memory, first, cpu,
+		code_base) == 4);
+	require(cpu.registers[0] == 10);
+	require(executor.cache_diagnostics().translations == translations + 2);
+	require(run_to_system_call(executor, memory, first + window + 1, cpu,
+		code_base) == 4);
+	require(cpu.registers[0] == 11 + window);
+	const auto later = executor.cache_diagnostics().translations;
+	require(run_to_system_call(executor, memory, first + 4, cpu,
+		code_base) == 4);
+	require(cpu.registers[0] == 14);
+	require(executor.cache_diagnostics().translations == later);
+}
+
+/* S1: vCPUs run generations from a moving window while the main thread maps
+ * new ones and destroys the oldest once no vCPU can pick it any more. Every
+ * run must see its own generation's code; at the end, after every vCPU has
+ * entered once more, only the newest generation's spaces are alive. */
+void concurrent_executors_follow_dead_generations(unsigned long first,
+	bool shared)
+{
+	set_shared(shared);
+	constexpr std::size_t vcpus = 6;
+	constexpr std::size_t pickable = 4;
+	constexpr std::size_t backings_count = 8;
+	std::vector<std::unique_ptr<JitBacking>> backings;
+	for (std::size_t index = 0; index < backings_count; ++index) {
+		backings.push_back(std::make_unique<JitBacking>(1));
+		put_program(*backings.back(), 100 + static_cast<unsigned>(index),
+			200 + static_cast<unsigned>(index));
+	}
+	std::vector<std::unique_ptr<JitMapping>> mappings;
+	const auto map = [&](unsigned long generation) {
+		mappings.push_back(std::make_unique<JitMapping>(generation,
+			code_base, *backings[generation % backings_count], 1));
+	};
+	const auto alive = stress::live_spaces();
+	std::atomic<unsigned long> lowest{first};
+	std::atomic<unsigned long> highest{first + pickable - 1};
+	for (unsigned long generation = first; generation < first + pickable;
+	     ++generation)
+		map(generation);
+	std::array<std::atomic<unsigned long>, vcpus> seen{};
+	for (auto &value : seen)
+		value.store(first);
+	std::atomic<bool> stop{};
+	std::atomic<std::size_t> runs{};
+	std::atomic<std::size_t> parked{};
+	std::atomic<bool> resume{};
+	std::atomic<std::size_t> finished{};
+	std::atomic<bool> release{};
+	const auto vcpu = [&](std::size_t index) {
+		auto owned_memory = std::make_unique<StaticGuestMemory>();
+		auto owned_executor =
+			std::make_unique<gadgets::GadgetExecutor>(sharing_options());
+		auto owned_cpu = std::make_unique<arm64::CpuState>();
+		auto &memory = *owned_memory;
+		auto &executor = *owned_executor;
+		auto &cpu = *owned_cpu;
+		std::size_t round = 0;
+		while (!stop.load()) {
+			const auto low = lowest.load();
+			seen[index].store(low);
+			const auto high = highest.load();
+			const auto generation =
+				low + (round * (index + 1) + index) % (high - low + 1);
+			++round;
+			(void)run_to_system_call(executor, memory, generation, cpu,
+				code_base);
+			require(cpu.registers[0] == 100 + generation % backings_count);
+			require(cpu.registers[1] == 200 + generation % backings_count);
+			runs.fetch_add(1);
+		}
+		/* Out of translated code until every generation but the newest is
+		 * gone; one more entry then lets go of them. */
+		parked.fetch_add(1);
+		while (!resume.load())
+			std::this_thread::yield();
+		const auto last = highest.load();
+		(void)run_to_system_call(executor, memory, last, cpu, code_base);
+		require(cpu.registers[0] == 100 + last % backings_count);
+		finished.fetch_add(1);
+		while (!release.load())
+			std::this_thread::yield();
+	};
+	std::vector<std::thread> threads;
+	for (std::size_t index = 0; index < vcpus; ++index)
+		threads.emplace_back(vcpu, index);
+
+	const auto all_seen = [&](unsigned long low) {
+		for (const auto &value : seen)
+			if (value.load() < low)
+				return false;
+		return true;
+	};
+	const auto deadline = std::chrono::steady_clock::now() +
+		std::chrono::seconds{20};
+	unsigned long destroyed = first;
+	while (std::chrono::steady_clock::now() < deadline &&
+	       destroyed < first + 200) {
+		const auto goal = runs.load() + 50;
+		while (runs.load() < goal &&
+		       std::chrono::steady_clock::now() < deadline)
+			std::this_thread::yield();
+		map(highest.load() + 1);
+		highest.fetch_add(1);
+		lowest.fetch_add(1);
+		while (!all_seen(destroyed + 1) &&
+		       std::chrono::steady_clock::now() < deadline)
+			std::this_thread::yield();
+		require(all_seen(destroyed + 1));
+		mappings.erase(mappings.begin());
+		++destroyed;
+	}
+	stop.store(true);
+	while (parked.load() < vcpus)
+		std::this_thread::yield();
+	while (mappings.size() > 1)
+		mappings.erase(mappings.begin());
+	resume.store(true);
+	while (finished.load() < vcpus)
+		std::this_thread::yield();
+	/* Only the newest generation's spaces are alive: one shared by every
+	 * vCPU, or one each. */
+	const auto live = stress::live_spaces() - alive;
+	release.store(true);
+	for (auto &thread : threads)
+		thread.join();
+	require(destroyed > first + 20);
+	require(live == (shared ? 1U : vcpus));
+	require(stress::live_spaces() == alive);
+}
+
+} // namespace
+
+int main(int argc, char **argv)
+{
+	const uml::testing::RuntimeTestRoute runtime_route;
+	stress::set_renewal_period(0);
+	stress::set_renewal_floor(std::numeric_limits<std::size_t>::max());
+	/* An argument names the one case to run, for mutation testing. */
+	const std::string_view only = argc > 1 ? argv[1] : "";
+	const std::pair<const char *, std::function<void()>> cases[] = {
+		{"d1p", [] { a_dead_space_goes_at_the_next_entry(2000, false); }},
+		{"d1s", [] { a_dead_space_goes_at_the_next_entry(2010, true); }},
+		{"d2", [] { a_shared_dead_space_goes_with_its_last_executor(2020); }},
+		{"d3p", [] { a_number_given_out_again_runs_its_new_code(2030, false); }},
+		{"d3s", [] { a_number_given_out_again_runs_its_new_code(2040, true); }},
+		{"d4p", [] { a_dead_space_goes_from_a_streaming_mode_cache(2050, false); }},
+		{"d4s", [] { a_dead_space_goes_from_a_streaming_mode_cache(2060, true); }},
+		{"d5p", [] { a_dead_space_keeps_its_window_place(2100, false); }},
+		{"d5s", [] { a_dead_space_keeps_its_window_place(2120, true); }},
+		{"s1p", [] { concurrent_executors_follow_dead_generations(3000, false); }},
+		{"s1s", [] { concurrent_executors_follow_dead_generations(4000, true); }},
+	};
+	for (const auto &[name, run] : cases)
+		if (only.empty() || only == name)
+			run();
+	return 0;
+}
