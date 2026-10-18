@@ -338,11 +338,16 @@ std::atomic_uint64_t &lifetime_retirement_epoch()
 
 /* Generations destroyed in this process, in any domain: what a holder of
  * per-generation state loads to learn that some generation may have died
- * since it last asked generation_live(). */
+ * since it last asked generation_live(). Every executor loads it at each
+ * entry into translated code, so it has a cache line of its own: a neighbour
+ * another thread writes would make each of those loads a miss. */
 std::atomic_uint64_t &generation_retirement_sequence()
 {
-	static std::atomic_uint64_t sequence{};
-	return sequence;
+	struct alignas(128) Sequence final {
+		std::atomic_uint64_t value{};
+	};
+	static Sequence sequence;
+	return sequence.value;
 }
 
 struct ResolvedAddressSpace final {
