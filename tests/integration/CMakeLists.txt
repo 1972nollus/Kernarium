@@ -369,6 +369,18 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# A system suspend holds through network, console and vhost-user traffic
+# until a wake request, and a wake sent while it is still being entered
+# ends it. A suspend the guest entered by itself ends for a wake or for a
+# power key typed on the VNC display, which reaches the guest once.
+uml_add_guest_integration_test(
+    NAME guest-suspend-holds
+    SCRIPT kernel/run_guest_suspend_holds.py
+    ARGS --server $<TARGET_FILE:uml-balloon-churn-server>
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    CPUS 2)
+
 # Path and name strings copied from user memory keep their contract.
 uml_add_guest_integration_test(
     NAME guest-user-strings
@@ -539,6 +551,53 @@ uml_add_integration_test(
     TIMEOUT 300
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
+
+# Configuration reads and in-band kicks that several vCPUs start at once on
+# one vhost-user socket each keep their own reply: a console that keeps
+# resizing, and answers late, stays bound while every vCPU writes to it.
+uml_add_guest_payload(UML_GUEST_VHOST_USER_ROUND_TRIPS_INIT
+    guest-vhost-user-round-trips-init
+    kernel/vhost_user_round_trips_init.cpp
+    COMMENT "Building the freestanding arm64 init of the vhost-user round-trip test"
+    COMPILE_OPTIONS
+        -std=c++20
+        -O2
+        -Wall
+        -Wextra
+        -Werror
+        -march=armv8-a
+        -ffreestanding
+        -fno-exceptions
+        -fno-rtti
+        -fno-stack-protector
+        -fno-asynchronous-unwind-tables
+    LINK_OPTIONS
+        -Wl,-z,max-page-size=16384
+        -Wl,-s)
+add_executable(uml_vhost_user_round_trips_tests
+    kernel/vhost_user_round_trips_tests.cpp)
+target_link_libraries(uml_vhost_user_round_trips_tests PRIVATE
+    UML::BootInitramfs
+    UML::Emulator
+    UML::VhostUserTransport)
+target_link_options(uml_vhost_user_round_trips_tests PRIVATE
+    "LINKER:-export_dynamic"
+    "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
+add_dependencies(uml_vhost_user_round_trips_tests
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
+add_dependencies(integration-test-binaries uml_vhost_user_round_trips_tests)
+get_target_property(_uml_vhost_user_round_trips_kernel
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_IMAGE)
+uml_add_integration_test(
+    NAME guest-vhost-user-round-trips
+    COMMAND uml_vhost_user_round_trips_tests
+        ${_uml_vhost_user_round_trips_kernel}
+        ${UML_GUEST_VHOST_USER_ROUND_TRIPS_INIT}
+        ${CMAKE_CURRENT_BINARY_DIR}/vhost-user-round-trips
+    LABELS guest;kernel
+    TIMEOUT 300
+    PROCESSORS 4
+    RESOURCE_GROUPS cpus:4)
 
 uml_add_guest_payload(UML_GUEST_SAMPLER_WORKLOAD guest-sampler-workload
     profiling/guest_sampler_workload.S

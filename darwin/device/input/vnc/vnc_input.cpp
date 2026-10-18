@@ -94,6 +94,8 @@ constexpr std::array specialKeys {
     Key {0xffec, 126}, // Super_R
     Key {0xff67, 127}, // Menu
     Key {0xffff, 111}, // Delete
+    /* A phone's power button, which also wakes a guest that suspended itself. */
+    Key {0x1008ff2a, 116}, // XF86PowerOff
 };
 
 template<std::size_t Size>

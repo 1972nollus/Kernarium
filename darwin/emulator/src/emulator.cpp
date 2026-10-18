@@ -346,6 +346,14 @@ public:
 		::uml::device::resume_guest(suspension);
 	}
 
+	void wake() noexcept
+	{
+		std::lock_guard lock{guest_lifecycle_mutex_};
+		/* A quiesced guest stays put until the host resumes it. */
+		if (guest_suspension_ == ::uml::device::GuestSuspension::none)
+			(void)::uml::device::wake_guest();
+	}
+
 	[[nodiscard]] ::uml::runtime::ExecutionEngine
 	execution_engine() const noexcept
 	{
@@ -482,4 +490,10 @@ extern "C" void uml_emulator_resume(uml_emulator *emulator)
 {
 	if (emulator != nullptr)
 		emulator->implementation.resume();
+}
+
+extern "C" void uml_emulator_wake(uml_emulator *emulator)
+{
+	if (emulator != nullptr)
+		emulator->implementation.wake();
 }

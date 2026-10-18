@@ -1252,6 +1252,13 @@ battery, and network providers own their protocol behavior independently. Only
 the GPU provider depends on `UML_BUILD_GPU`; the others build on the transport
 alone.
 
+A disabled ring is given no new data. A buffer the backend only fills, such as
+a virtio-input event buffer, stays in the ring until the ring is enabled again:
+the front end reads a used buffer whatever its length, so returning it empty
+would replay the event it held before. A buffer that carries a request is
+consumed and dropped. A suspended guest disables its rings, so input that
+arrives meanwhile reaches it once, after the resume.
+
 The [Virtio video device](../darwin/device/video/README.md) bridges the shared
 mainline/Android V4L2 driver to the platform VideoToolbox decoder. It uses its
 own vhost-user connection and requires no GPU context. The
@@ -1283,8 +1290,12 @@ healthy device and a spurious wake are unaffected. A message that cannot be
 sent because the peer has gone reports the same loss. Deleting the virtqueues
 of a lost backend sends it nothing: disabling the rings only stops a live
 backend from using them, so the driver's removal of the retired device warns
-about nothing. `guest-vhost-user-backend-gone` loses a console's backend
-while its driver is bound.
+about nothing. A buffer the backend never used is still the driver's when its
+queue breaks, and the removal frees it as the driver queued it: a console's
+hvc output, which waits for the backend with interrupts disabled, is queued
+as a port buffer like the console's other output.
+`guest-vhost-user-backend-gone` loses a console's backend while its driver is
+bound and its hvc output is in flight, under SLUB debugging.
 
 In-band notifications are always negotiated, so a queue is kicked by a
 synchronous request on the control socket rather than through a kick
@@ -1299,6 +1310,15 @@ answer never comes, or comes malformed, is gone: the guest reports the failed
 round trip once, naming the queue and the error, and retires the device by the
 same path as a lost descriptor, so a failed kick never leaves a silently broken
 virtqueue behind.
+
+Every request on the control socket has a reply, and only their order pairs
+the two, so the guest holds the socket from a request until it has read that
+request's reply, for a configuration read as for an acknowledged kick. A kick
+on one vCPU therefore waits for another vCPU's `GET_CONFIG` to finish rather
+than taking its reply, which would make a healthy backend look gone, and a
+reply that names another request is malformed.
+`guest-vhost-user-round-trips` reads the configuration of a console that keeps
+resizing, and answers late, while every vCPU kicks its output queue.
 
 Neither side of a vhost-user connection waits on one channel alone. Only CPU 0
 polls host descriptors, and a request on either channel can need an answer
@@ -1317,7 +1337,11 @@ answering the guest's feature, queue-size, shared-memory-configuration, and
 config queries. Any other request is held until the acknowledgement arrives and
 is then handled before anything still unread, because its sender drains the
 backend channel while it waits, and handling it early could start a second
-backend request inside the first.
+backend request inside the first. A front-end closes the backend channel only
+when it lets the device go, as a guest that powers off with a config change
+unanswered does, so the server ends the connection without reporting a failure
+when that channel reaches end of file or a write finds either socket closed,
+as it does at end of file on the main socket.
 
 Retiring the device is where the guest's recovery ends. virtio-gpu has no
 broken-device handling of its own: it never tests `virtqueue_is_broken()`, so a
@@ -1403,11 +1427,20 @@ The platform layer tracks every writable host descriptor opened for the guest.
 console, then flushes those host descriptors. `uml_emulator_quiesce()` enters
 full Linux system suspend and waits until devices, secondary CPUs, interrupts,
 and timekeeping have reached the platform sleep boundary before flushing the
-host. `uml_emulator_resume()` sends the console wake edge. A kernel without the
-suspend command falls back to the stop/go pair. Guests that need writeback
-requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
-the console, host-file flushing still runs but guest writeback and freeze are
-unavailable.
+host. `uml_emulator_resume()` sends the console wake edge. Nothing else on the
+guest's descriptors ends the suspend, and an edge sent before the guest reached
+the boundary, as after a suspend request whose reply timed out, still ends it;
+the [mainline README](../kernel/mainline-6.18/README.md) gives the kernel's
+side. `uml_emulator_wake()` sends that edge whatever the host last asked for,
+except to a guest it has quiesced, as a phone's power key does: it ends a
+suspend the guest entered by itself, such as Android's once its display is off,
+and a running guest only answers it. Kernarium sends it after forwarding its
+Power key, whose virtio input cannot wake a suspended guest itself; the macOS
+VNC display maps XF86PowerOff to the guest's power key, and VNC input is itself
+a wake source. A kernel without the suspend command falls back to the stop/go
+pair. Guests that need writeback requests boot with magic SysRq enabled; if the
+physical iOS sandbox cannot bind the console, host-file flushing still runs but
+guest writeback and freeze are unavailable.
 
 The guest binds the management console as a Unix datagram socket and replies
 to each request's own bound socket, which the host places beside it. Both live

@@ -141,7 +141,9 @@ that launch geometry. The Metal shader cache policy is in
 
 Kernarium asks the guest to write back when the application loses focus,
 quiesces it before the application is backgrounded or terminated, and resumes
-it on foregrounding. The runtime side of sync, quiesce, and resume is in
+it on foregrounding. Its Power key also wakes a guest that suspended itself,
+such as Android once its display is off. The runtime side of sync, quiesce,
+resume, and wake is in
 [`../docs/architecture.md`](../docs/architecture.md#guest-lifecycle).
 
 ## Scripts

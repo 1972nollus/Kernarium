@@ -117,6 +117,13 @@ int uml_emulator_sync(struct uml_emulator *emulator);
 int uml_emulator_quiesce(struct uml_emulator *emulator);
 /* Wakes a quiesced guest. Harmless on a guest that is already running. */
 void uml_emulator_resume(struct uml_emulator *emulator);
+/* Does what a phone's power key does: ends a system suspend the guest entered
+ * by itself, such as Android's once its display is off. A running guest is
+ * left as it is, and a guest that uml_emulator_quiesce suspended stays
+ * suspended until uml_emulator_resume. Send it after forwarding the key, which
+ * the guest then receives once. It may wait for the guest's console, so call
+ * it away from a user interface thread. */
+void uml_emulator_wake(struct uml_emulator *emulator);
 
 #ifdef __cplusplus
 }

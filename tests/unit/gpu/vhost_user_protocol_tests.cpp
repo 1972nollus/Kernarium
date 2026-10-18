@@ -620,6 +620,126 @@ void configChangeWaitStillAnswersConfigReads()
     });
 }
 
+/* Holds what the process writes to stderr, where the server reports a failed
+ * connection, until finish(). A failed requirement would vanish into it, so
+ * none is checked until it has finished. */
+class StandardErrorCapture final {
+public:
+    StandardErrorCapture()
+    {
+        require(file_ != nullptr);
+        std::fflush(stderr);
+        saved_ = UniqueDescriptor {::dup(STDERR_FILENO)};
+        require(saved_.get() >= 0);
+        require(::dup2(::fileno(file_), STDERR_FILENO) == STDERR_FILENO);
+    }
+    StandardErrorCapture(const StandardErrorCapture&) = delete;
+    StandardErrorCapture& operator=(const StandardErrorCapture&) = delete;
+    ~StandardErrorCapture()
+    {
+        restore();
+        if (file_ != nullptr)
+            std::fclose(file_);
+    }
+
+    /* Restores stderr, copies what was captured to it, and returns that. */
+    [[nodiscard]] std::string finish()
+    {
+        restore();
+        std::string text;
+        std::rewind(file_);
+        std::array<char, 512> buffer {};
+        std::size_t count = 0;
+        while ((count = std::fread(buffer.data(), 1, buffer.size(), file_)) !=
+               0) {
+            text.append(buffer.data(), count);
+        }
+        std::fputs(text.c_str(), stderr);
+        return text;
+    }
+
+private:
+    void restore() noexcept
+    {
+        if (saved_.get() < 0)
+            return;
+        std::fflush(stderr);
+        (void)::dup2(saved_.get(), STDERR_FILENO);
+        saved_.reset();
+    }
+
+    std::FILE* file_ {std::tmpfile()};
+    UniqueDescriptor saved_;
+};
+
+/* A guest that powers off with a configuration change unanswered closes the
+ * backend channel, possibly before the main socket, and one that has already
+ * closed it fails the server's next request on it with EPIPE. Either way the
+ * front-end has let the device go, so the server ends the connection as it
+ * does at end of file on the main socket, without reporting a failure. */
+void closedBackendChannelEndsTheConnectionQuietly()
+{
+    for (const bool closedBeforeTheChange : {false, true}) {
+        auto device = std::make_unique<ConfigChangeDevice>();
+        auto* source = device.get();
+        VhostUserServer server {std::move(device)};
+        std::optional<StandardErrorCapture> capture;
+        bool notified = false;
+        bool connectionClosed = false;
+        withServerConnection(server, [&](int socket) {
+            constexpr std::uint64_t features =
+                protocol::protocolFeatureReplyAck |
+                protocol::protocolFeatureSlaveRequest |
+                protocol::protocolFeatureConfig;
+            negotiateProtocolFeatures(socket, features);
+            auto backend = makeSocketPair();
+            const std::array descriptors {backend.descriptors[1].get()};
+            sendRequestAndReadAcknowledgement(
+                socket,
+                protocol::VhostRequest::setSlaveRequestFd,
+                {},
+                descriptors);
+            backend.descriptors[1].reset();
+
+            capture.emplace();
+            if (closedBeforeTheChange) {
+                backend.descriptors[0].reset();
+                source->trigger();
+                notified = true;
+            } else {
+                source->trigger();
+                pollfd ready {
+                    .fd = backend.descriptors[0].get(),
+                    .events = POLLIN,
+                };
+                protocol::VhostHeader notification {};
+                notified = ::poll(&ready, 1, 2000) == 1 &&
+                    ::recv(
+                        backend.descriptors[0].get(),
+                        &notification,
+                        sizeof(notification),
+                        MSG_WAITALL) == sizeof(notification) &&
+                    notification.request == static_cast<std::uint32_t>(
+                        protocol::VhostSlaveRequest::configChange);
+                // Unanswered, as the guest leaves it.
+                backend.descriptors[0].reset();
+            }
+            // The main socket stays open: the backend channel alone ends it.
+            pollfd closed {.fd = socket, .events = POLLIN};
+            std::uint8_t byte {};
+            connectionClosed = ::poll(&closed, 1, 2000) == 1 &&
+                ::read(socket, &byte, sizeof(byte)) == 0;
+        });
+        const auto reported = capture->finish();
+        require(notified);
+        require(connectionClosed);
+        require(
+            reported.find("connection failed") == std::string::npos,
+            "a front-end that closed the connection was reported as a "
+            "failure");
+    }
+}
+
 class SharedMemoryDevice final : public FixtureDevice {
 public:
     explicit SharedMemoryDevice(std::size_t actionCount = 1)
@@ -1058,6 +1178,131 @@ void completedPrefixNotifiesBeforeRetry()
         require(std::ranges::all_of(
             memory.subspan(secondResponseOffset, 4),
             [](std::uint8_t byte) { return byte == responseSentinel; }));
+    });
+}
+
+/* Holds events for its one queue, like virtio-input's event queue, and
+ * delivers each into a buffer the front end only lets it fill. */
+class EventSourceDevice final : public FixtureDevice {
+public:
+    EventSourceDevice() : FixtureDevice("event source fixture", 1, true) {}
+
+    void raise()
+    {
+        pending_.fetch_add(1, std::memory_order_relaxed);
+        signalReadiness();
+    }
+    [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
+        std::uint32_t index,
+        std::uint64_t,
+        std::span<const std::uint8_t> request,
+        std::size_t responseCapacity) override
+    {
+        require(index == 0);
+        require(request.empty());
+        require(responseCapacity == event.size());
+        if (pending_.load(std::memory_order_relaxed) == 0)
+            return {.action = uml::virtio::VhostUserQueueAction::retry};
+        pending_.fetch_sub(1, std::memory_order_relaxed);
+        delivered_.fetch_add(1, std::memory_order_relaxed);
+        return {
+            .action = uml::virtio::VhostUserQueueAction::complete,
+            .response = {event.begin(), event.end()},
+        };
+    }
+    void drainEventSource() override
+    {
+        FixtureDevice::drainEventSource();
+        drained_.fetch_add(1, std::memory_order_release);
+    }
+    [[nodiscard]] unsigned delivered() const noexcept
+    {
+        return delivered_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] unsigned drained() const noexcept
+    {
+        return drained_.load(std::memory_order_acquire);
+    }
+
+    static constexpr std::array<std::uint8_t, 8> event {1, 0, 116, 0, 1, 0, 0, 0};
+
+private:
+    std::atomic_uint pending_ {};
+    std::atomic_uint delivered_ {};
+    std::atomic_uint drained_ {};
+};
+
+/* A suspended guest disables its rings. An event raised meanwhile must wait
+ * in the device rather than come back as an empty used buffer, which a
+ * virtio-input front end would read as the event that buffer held before;
+ * once the ring is enabled again the event is delivered, once. */
+void aDisabledRingKeepsTheBuffersTheDeviceFills()
+{
+    auto device = std::make_unique<EventSourceDevice>();
+    auto* source = device.get();
+    VhostUserServer server {std::move(device)};
+    const SplitRing ring;
+    const auto memory = ring.memory();
+
+    constexpr std::size_t eventOffset = 0x300;
+    constexpr std::uint8_t staleByte = 0x5a;
+    const std::array descriptors {
+        protocol::VirtqueueDescriptor {
+            .address = SplitRing::guestBase + eventOffset,
+            .length = EventSourceDevice::event.size(),
+            .flags = protocol::descriptorWrite,
+            .next = 0,
+        },
+    };
+    constexpr std::array<std::uint16_t, 1> heads {0};
+    ring.publish(descriptors, heads);
+    std::memset(memory.data() + eventOffset, staleByte,
+        EventSourceDevice::event.size());
+
+    withServerConnection(server, [&](int socket) {
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, ring.descriptor());
+        configureQueue(socket, ring, 0, false);
+        const std::uint64_t queue = 0;
+        QueueChannels channels {.call = makePipe(), .kick = makePipe()};
+        const std::array callDescriptors {channels.call.writeEnd.get()};
+        sendRequestAndReadAcknowledgement(
+            socket,
+            protocol::VhostRequest::setVringCall,
+            bytesOf(queue),
+            callDescriptors);
+        const std::array kickDescriptors {channels.kick.readEnd.get()};
+        sendRequestAndReadAcknowledgement(
+            socket,
+            protocol::VhostRequest::setVringKick,
+            bytesOf(queue),
+            kickDescriptors);
+
+        source->raise();
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds {2};
+        while (source->drained() == 0 &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds {1});
+        require(source->drained() == 1);
+        pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
+        require(::poll(&call, 1, 200) == 0);
+        require(ring.usedIndex() == 0);
+        require(source->delivered() == 0);
+        require(std::ranges::all_of(
+            memory.subspan(eventOffset, EventSourceDevice::event.size()),
+            [](std::uint8_t byte) { return byte == staleByte; }));
+
+        const protocol::VringState enabled {.index = 0, .value = 1};
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringEnable, bytesOf(enabled));
+        awaitCall(channels.call.readEnd.get());
+        require(ring.usedIndex() == 1);
+        require(ring.usedElement(0).length == EventSourceDevice::event.size());
+        require(std::ranges::equal(
+            memory.subspan(eventOffset, EventSourceDevice::event.size()),
+            EventSourceDevice::event));
+        require(source->delivered() == 1);
     });
 }
 
@@ -1917,8 +2162,10 @@ void runVhostUserProtocolTests()
     multipleDeferredCompletionsRetainTheirDescriptorChains();
     deferredCompletionSupportsFourQueues();
     completedPrefixNotifiesBeforeRetry();
+    aDisabledRingKeepsTheBuffersTheDeviceFills();
     configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement();
     configChangeWaitStillAnswersConfigReads();
+    closedBackendChannelEndsTheConnectionQuietly();
     sharedMemoryRequiresBackendAcknowledgements();
     sharedMemoryConfigurationRequiresNegotiation();
     standardizedSharedMemoryNegotiationBatchesBackendRequestsBeforeReply();
