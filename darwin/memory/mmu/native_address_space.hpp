@@ -37,6 +37,10 @@ public:
 	int unmap_direct(std::uintptr_t address, std::uint64_t length);
 	int flush_direct(std::uintptr_t address, std::uint64_t length);
 	int sync_direct(std::uintptr_t address, std::uint64_t length);
+	/* sync_direct() for a range no shadow holds, all under one hold of the
+	 * lock; 1, with nothing done, when a shadow holds part of it. */
+	int sync_direct_unless_shadow(
+		std::uintptr_t address, std::uint64_t length);
 	int retry_direct(std::uintptr_t address, bool execute, bool write);
 	void retire() noexcept;
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
@@ -141,6 +145,8 @@ private:
 	int materialize_slot_locked(std::uintptr_t slot);
 	int set_slot_protection_locked(std::uintptr_t slot, int protection);
 	int update_slot_protection_locked(std::uintptr_t slot);
+	[[nodiscard]] bool contains_shadow_locked(
+		std::uintptr_t address, std::uint64_t length) const;
 #endif
 	mutable std::mutex mutex_;
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
@@ -179,6 +185,7 @@ private:
 	 * retire() has run.  It is not noexcept: errno's accessor may throw as far
 	 * as the compiler knows, and a noexcept wrapper would add a terminate
 	 * handler to every caller. */
+	int sync_direct_locked(std::uintptr_t address, std::uint64_t length);
 	[[nodiscard]] bool refuse_retired_locked()
 	{
 		if (!retired_.load(std::memory_order_acquire))
