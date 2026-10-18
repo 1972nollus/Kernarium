@@ -442,6 +442,16 @@ uml_add_guest_integration_test(
     TIMEOUT 420
     CPUS 2)
 
+# A TLB replay that sends neighbouring user PTEs as one host call maps each
+# page to its own frame and protection, across PMD and batch boundaries and
+# while another thread's invalidations make it walk batches again.
+uml_add_guest_integration_test(
+    NAME guest-tlb-replay-runs
+    SCRIPT kernel/run_guest_tlb_runs.py
+    LABELS guest;kernel;memory
+    TIMEOUT 600
+    CPUS 2)
+
 # A system call or a fault taken with a bad stack pointer, again and again
 # on one vCPU, gets native arm64's result and never kills the task.
 uml_add_guest_integration_test(
