@@ -46,6 +46,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mach-o/dyld.h>
+#include <memory>
 #include <optional>
 #include <set>
 #include <spawn.h>
@@ -180,7 +181,8 @@ public:
 		: generation_{next_generation_++}, backing_{mapped_pages + 1},
 		  mapping_{generation_, code_base, backing_, mapped_pages,
 			  PROT_READ | PROT_WRITE | PROT_EXEC},
-		  executor_{gadgets::BuildOptions{.host_capabilities = host}},
+		  executor_{std::make_unique<gadgets::GadgetExecutor>(
+			  gadgets::BuildOptions{.host_capabilities = host})},
 		  file_{arm64::SmeRegisterFile::for_host(host)}
 	{
 		for (std::size_t index = 0; index < code.size(); ++index)
@@ -199,19 +201,19 @@ public:
 	 * continued block; `limit` blocks at most. */
 	EngineEvent run(std::size_t limit = 16)
 	{
-		require(executor_.begin_execution(generation_, cpu.pc));
+		require(executor_->begin_execution(generation_, cpu.pc));
 		EngineEvent event = EngineEvent::fatal;
 		retired = 0;
 		for (std::size_t block = 0; block < limit; ++block) {
 			std::size_t executed = 0;
-			event = executor_.run_block(cpu, memory_, generation_,
+			event = executor_->run_block(cpu, *memory_, generation_,
 				executed);
 			retired += executed;
 			if (event != EngineEvent::continued &&
 			    event != EngineEvent::interrupt)
 				break;
 		}
-		executor_.end_execution();
+		executor_->end_execution();
 		gadgets::restore_native_fp_environment(cpu);
 		/* Whatever ran, host code runs out of streaming mode. */
 		require(arm64::host_streaming_state_clear(native_host()));
@@ -258,7 +260,7 @@ public:
 
 	[[nodiscard]] const gadgets::GadgetExecutor &executor() const noexcept
 	{
-		return executor_;
+		return *executor_;
 	}
 
 	arm64::CpuState cpu{};
@@ -269,8 +271,12 @@ private:
 	unsigned long generation_;
 	JitBacking backing_;
 	JitMapping mapping_;
-	StaticGuestMemory memory_;
-	gadgets::GadgetExecutor executor_;
+	/* The memory view and the executor are about a mebibyte each: on the
+	 * heap, since a sanitizer gives every machine that a test function
+	 * inlines into main a stack slot of its own. */
+	std::unique_ptr<StaticGuestMemory> memory_ =
+		std::make_unique<StaticGuestMemory>();
+	std::unique_ptr<gadgets::GadgetExecutor> executor_;
 	arm64::SmeRegisterFile file_;
 	std::vector<std::byte> task_;
 	std::vector<std::byte> fp_image_;
