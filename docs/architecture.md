@@ -1427,11 +1427,16 @@ The platform layer tracks every writable host descriptor opened for the guest.
 console, then flushes those host descriptors. `uml_emulator_quiesce()` enters
 full Linux system suspend and waits until devices, secondary CPUs, interrupts,
 and timekeeping have reached the platform sleep boundary before flushing the
-host. `uml_emulator_resume()` sends the console wake edge. A kernel without the
-suspend command falls back to the stop/go pair. Guests that need writeback
-requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
-the console, host-file flushing still runs but guest writeback and freeze are
-unavailable.
+host. `uml_emulator_resume()` sends the console wake edge. `uml_emulator_wake()`
+sends that edge whatever the host last asked for, except to a guest it has
+quiesced, as a phone's power key does: it ends a suspend the guest entered by
+itself, such as Android's once its display is off, and a running guest only
+answers it. Kernarium sends it after forwarding its Power key, whose virtio
+input cannot wake a suspended guest itself; the macOS VNC display maps
+XF86PowerOff to the guest's power key. A kernel without the suspend command
+falls back to the stop/go pair. Guests that need writeback requests boot with
+magic SysRq enabled; if the physical iOS sandbox cannot bind the console,
+host-file flushing still runs but guest writeback and freeze are unavailable.
 
 The guest binds the management console as a Unix datagram socket and replies
 to each request's own bound socket, which the host places beside it. Both live

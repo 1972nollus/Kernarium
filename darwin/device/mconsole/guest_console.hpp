@@ -100,6 +100,14 @@ guest_console_location();
 void resume_guest(GuestSuspension suspension) noexcept;
 
 /*
+ * Sends the wake edge whatever the host last asked for, as a phone's power
+ * key does: it ends a system suspend the guest is entering or entered by
+ * itself, and a running guest only answers it. True means the guest
+ * answered.
+ */
+bool wake_guest() noexcept;
+
+/*
  * Holds this process's console location for one guest run that passed the
  * host's uml_dir=.
  *

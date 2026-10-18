@@ -1070,9 +1070,22 @@ void runtimeSendKey(uint16_t code, int pressed)
             .value = 0,
         },
     };
-    std::lock_guard lock(activeInputMutex);
-    if (activeKeyboard != nullptr)
+    {
+        std::lock_guard lock(activeInputMutex);
+        if (activeKeyboard == nullptr)
+            return;
         activeKeyboard->send(events);
+    }
+    /* A guest that suspended itself, as Android does once its display is off,
+     * holds the key until something wakes it. Power wakes it, as on a phone.
+     * The wake can wait on the guest's console, so it leaves this thread. */
+    if (code != input::keyPower || pressed == 0)
+        return;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        std::lock_guard lifecycle(emulatorLifecycleMutex);
+        if (activeEmulator != nullptr)
+            uml_emulator_wake(activeEmulator);
+    });
 }
 
 void runtimeSetConsoleOutputCallback(

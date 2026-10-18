@@ -29,6 +29,8 @@ inline constexpr std::uint16_t synchronizeReport = 0x00;
 inline constexpr std::uint16_t absoluteX = 0x00;
 inline constexpr std::uint16_t absoluteY = 0x01;
 inline constexpr std::uint16_t buttonTouch = 0x14a;
+/* Linux's KEY_POWER, which a host forwards as a phone's power button. */
+inline constexpr std::uint16_t keyPower = 116;
 inline constexpr std::uint16_t keyboardKeyMaximum = 0x7f;
 inline constexpr std::uint8_t propertyDirect = 0x01;
 inline constexpr std::uint16_t busVirtual = 0x06;

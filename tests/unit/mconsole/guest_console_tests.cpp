@@ -182,6 +182,40 @@ void aSuspendTimeoutCannotQueueLegacyStop()
 	(void)::close(server);
 }
 
+void answerOneRequest(int descriptor, std::string_view answer,
+	std::vector<std::string> &requests)
+{
+	sockaddr_un client {};
+	socklen_t clientLength {};
+	if (!awaitRequest(descriptor, 10000))
+		return;
+	requests.push_back(receiveRequest(descriptor, client, clientLength));
+	Reply reply {0U, 0U, static_cast<std::uint32_t>(answer.size()), {}};
+	std::memcpy(reply.data.data(), answer.data(), answer.size());
+	require(::sendto(descriptor, &reply, sizeof(reply), 0,
+		reinterpret_cast<const sockaddr *>(&client), clientLength) ==
+		static_cast<ssize_t>(sizeof(reply)));
+}
+
+/* The power key's wake is one request, whatever the host last asked for. */
+void aWakeSendsOneWakeRequest()
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	const auto path = consolePath();
+	/* No guest console yet: nothing answers and nothing waits. */
+	require(!::uml::device::wake_guest());
+	const int server = bindServer(path);
+	std::vector<std::string> requests;
+	std::thread observer {answerOneRequest, server, "running",
+		std::ref(requests)};
+	const bool answered = ::uml::device::wake_guest();
+	observer.join();
+	require(answered);
+	require(requests == std::vector<std::string> {"wake"});
+	require(!awaitRequest(server, 200));
+	(void)::close(server);
+}
+
 /* The widest reply socket a location may name. */
 std::size_t widestClientPath(const ::uml::device::GuestConsoleLocation &location)
 {
@@ -430,6 +464,13 @@ int main(int argc, char **argv)
 		theTerminationPathRemovesTheRunDirectory();
 		aDirectoryLeftByThisPidIsReplaced();
 		aRunRemovesOnlyWhatExitedRunsLeft();
+		return EXIT_SUCCESS;
+	}
+	if (selected == "wake") {
+		const PrivateTemporaryDirectory temporary;
+		require(std::filesystem::path {processLocation().directory}
+				.parent_path() == temporary.path());
+		aWakeSendsOneWakeRequest();
 		return EXIT_SUCCESS;
 	}
 	if (selected == "suspend-timeout") {
