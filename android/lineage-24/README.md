@@ -235,6 +235,17 @@ one host-supplied value, `androidboot.lcd_density`, is copied to
 each launch. The standalone macOS launcher passes none, so SurfaceFlinger uses
 its 213 dpi fallback and logs that the property is undefined.
 
+The display follows the host view. When the host advertises a new size
+([`../../docs/graphics.md`](../../docs/graphics.md#dynamic-native-geometry)),
+the Virtio-GPU connector's mode list changes under an attached display.
+`external/drm_hwcomposer` (route `p0017`) rebinds a connected display whose
+modes changed, so SurfaceFlinger reconnects once at the new size with no
+headless step between. Density stays at its launch value. The touchscreen's
+absolute range stays the launch pixel size, and the host maps the view into it
+linearly, so touch stays exact at a coarser resolution. Release
+`20261017-los24-r2` predates the route: until the next signed release is
+accepted, its display keeps its boot resolution.
+
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under
 [`../../tools/rootfs/vulkan/`](../../tools/rootfs/vulkan/README.md), and the
