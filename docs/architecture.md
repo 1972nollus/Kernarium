@@ -1283,8 +1283,12 @@ healthy device and a spurious wake are unaffected. A message that cannot be
 sent because the peer has gone reports the same loss. Deleting the virtqueues
 of a lost backend sends it nothing: disabling the rings only stops a live
 backend from using them, so the driver's removal of the retired device warns
-about nothing. `guest-vhost-user-backend-gone` loses a console's backend
-while its driver is bound.
+about nothing. A buffer the backend never used is still the driver's when its
+queue breaks, and the removal frees it as the driver queued it: a console's
+hvc output, which waits for the backend with interrupts disabled, is queued
+as a port buffer like the console's other output.
+`guest-vhost-user-backend-gone` loses a console's backend while its driver is
+bound and its hvc output is in flight, under SLUB debugging.
 
 In-band notifications are always negotiated, so a queue is kicked by a
 synchronous request on the control socket rather than through a kick
@@ -1299,6 +1303,15 @@ answer never comes, or comes malformed, is gone: the guest reports the failed
 round trip once, naming the queue and the error, and retires the device by the
 same path as a lost descriptor, so a failed kick never leaves a silently broken
 virtqueue behind.
+
+Every request on the control socket has a reply, and only their order pairs
+the two, so the guest holds the socket from a request until it has read that
+request's reply, for a configuration read as for an acknowledged kick. A kick
+on one vCPU therefore waits for another vCPU's `GET_CONFIG` to finish rather
+than taking its reply, which would make a healthy backend look gone, and a
+reply that names another request is malformed.
+`guest-vhost-user-round-trips` reads the configuration of a console that keeps
+resizing, and answers late, while every vCPU kicks its output queue.
 
 Neither side of a vhost-user connection waits on one channel alone. Only CPU 0
 polls host descriptors, and a request on either channel can need an answer

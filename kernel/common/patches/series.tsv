@@ -73,3 +73,5 @@ patch	io_uring-keep-a-vmapped-region-coherent-with-its-user-mapping.patch
 patch	drm-fbdev-shmem-flush-the-kernel-mapping-before-reporting-damage.patch
 patch	um-read-the-Darwin-carrier-CPU-without-a-host-call.patch
 patch	um-apply-only-changed-kernel-PTEs-in-a-Darwin-kernel-TLB-sync.patch
+patch	uml-hold-the-vhost-user-socket-from-a-request-to-its-reply.patch
+patch	virtio_console-queue-hvc-output-as-a-port-buffer.patch
