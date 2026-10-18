@@ -211,12 +211,17 @@ def require_automation_app(app: pathlib.Path) -> None:
 
 
 def require_automation_boot(transcript: str) -> None:
-    """Refuse a run whose application booted without the payload."""
+    """Refuse a run whose application booted without the payload, or whose
+    kernel turned a host fast path off."""
     if AUTOMATION_BOOT_LINE not in transcript:
         raise KernariumError(
             "the application did not report an automation boot; the "
             "installed build is the release runtime, which ignores payloads"
         )
+    try:
+        guest.require_host_fast_paths(transcript)
+    except RuntimeError as error:
+        raise KernariumError(str(error)) from None
 
 
 def device_command(*arguments: str) -> list[str]:

@@ -148,6 +148,15 @@ class AutomationPayloadTests(unittest.TestCase):
         with self.assertRaisesRegex(kernarium.KernariumError, "release"):
             kernarium.require_automation_boot("Linux version 6.18\n")
 
+    def test_a_boot_with_a_host_fast_path_off_is_refused(self) -> None:
+        with self.assertRaisesRegex(kernarium.KernariumError, "fast path off"):
+            kernarium.require_automation_boot(
+                "Kernarium: automation boot with a 512-byte payload and "
+                "target uml-cts.target\n"
+                "Darwin: CPU1's thread-specific data is not where expected; "
+                "reading the CPU through pthread_getspecific()\n"
+            )
+
     def test_device_settings_clear_inherited_kernarium_settings(self) -> None:
         settings = kernarium.settings_for(
             rootfs="kde-20260928-r1.erofs",

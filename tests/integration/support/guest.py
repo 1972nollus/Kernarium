@@ -49,6 +49,20 @@ EMULATOR_RUN_DIRECTORIES = (
     re.compile(r"^uml-kern(\d+)$"),
     re.compile(r"^uml-guest-initrd-(\d+)-.+$"),
 )
+# What a kernel prints once when a self-check turns a host fast path off for
+# the rest of its run. The run stays correct and only slows down, so a boot
+# that prints one fails here instead of passing unnoticed: today the CPU read
+# through a carrier's thread-specific data (kernel/common/README.md).
+DISABLED_FAST_PATH_WARNINGS = ("thread-specific data is not where expected",)
+
+
+def require_host_fast_paths(transcript: str) -> None:
+    """Refuse a boot whose kernel turned a host fast path off."""
+    for line in transcript.splitlines():
+        if any(warning in line for warning in DISABLED_FAST_PATH_WARNINGS):
+            raise RuntimeError(
+                f"the guest kernel turned a host fast path off: {line.strip()}"
+            )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -770,6 +784,8 @@ class Guest(ConsoleProcess):
         self._read_until(
             re.compile(LINE_START + rb"# $"), timeout_seconds, ready.end() - 1
         )
+        # Every vCPU's carrier has come up by the time the session runs.
+        require_host_fast_paths(self.output())
 
     def boot_and_login(self, timeout_seconds: float = BOOT_TIMEOUT_SECONDS) -> None:
         self.boot_to_shell(timeout_seconds)

@@ -472,6 +472,28 @@ class AttachedGuestSessionTests(unittest.TestCase):
         self.assertIn("UML_SESSION_READY:/bin/sh", guest.output())
         self.assertEqual(guest.run_command("printf '%s' ready").output, "ready")
 
+    def test_a_boot_whose_kernel_turned_a_host_fast_path_off_fails(self) -> None:
+        # The kernel's self-check warns on the emulator's standard error,
+        # which shares the console with the session.
+        self.emulator.write_text(
+            "#!/bin/sh\n"
+            "printf \"Darwin: CPU1's thread-specific data is not where "
+            "expected; reading the CPU through pthread_getspecific()\\n\" >&2\n"
+            "printf 'UML_SESSION_READY:/bin/sh\\n# '\n"
+            "exec /bin/sh\n",
+            encoding="utf-8",
+        )
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        self.addCleanup(self.stop, guest)
+        with self.assertRaisesRegex(RuntimeError, "CPU1's thread-specific data"):
+            guest.boot_to_shell(PROCESS_WAIT_SECONDS)
+
     def test_a_session_failure_ends_the_boot_with_its_reason(self) -> None:
         self.emulator.write_text(
             "#!/bin/sh\nprintf 'UML_SESSION_ERROR:cannot mount /run\\n'\nexit 1\n",

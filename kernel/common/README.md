@@ -61,7 +61,9 @@ base must lie inside the carrier's own pthread structure and name the thread
 in its first word, and the words of both CPU keys must equal what
 `pthread_getspecific()` returns. The direct read starts once a carrier has
 passed, and any mismatch stops it for the rest of the run with a warning on
-stderr, so a changed layout costs speed and never correctness.
+stderr, so a changed layout costs speed and never correctness. The guest
+integration harness and Kernarium automation runs fail a boot that prints the
+warning, so such a change is seen rather than only measured.
 
 Host-side kernel objects pass variadic arguments in registers, while Apple's
 arm64 ABI reads them from the stack, so a direct call to a variadic libc
