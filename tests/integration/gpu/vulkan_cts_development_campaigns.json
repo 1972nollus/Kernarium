@@ -9,7 +9,7 @@
   "macos": {
     "smoke": {
       "mode": "smoke",
-      "page_profile": "16k",
+      "page_profile": "4k",
       "engine": "jit",
       "memory_mib": 8192,
       "cpus": 10,
@@ -29,7 +29,7 @@
     ],
     "smoke": {
       "mode": "smoke",
-      "page_profile": "16k",
+      "page_profile": "4k",
       "engine": "gadgets",
       "memory_mib": 4096,
       "outer_timeout_seconds": 1200,

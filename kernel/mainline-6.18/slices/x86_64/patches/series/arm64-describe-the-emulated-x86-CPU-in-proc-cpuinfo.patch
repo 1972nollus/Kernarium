@@ -77,7 +77,7 @@ index 91ca504ee7c0373209921d732188d8de2d662b68..9caa5929948c87da0855203c155adbbe
  
  obj-$(CONFIG_BLK_DEV_INITRD) += initrd.o
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 11a6996b79ae828de46d98119b5757fb0efaa3c1..0e725f5c7b3d21fcb94029b0753f2d6108259dc2 100644
+index d80440646058d6827d55f9c2d84d4d12659aba1e..de009a8d9b6b952415957246e45082b75336d398 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -88,7 +88,7 @@ static const char * __maybe_unused uml_cpu_model_name(void)

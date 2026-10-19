@@ -4,19 +4,24 @@
 
 #include "display_activity_log.hpp"
 #include "display_geometry.hpp"
+#include "frame_tap_registry.hpp"
 #include "metal_scanout_shader.hpp"
 
+#import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
 #include <optional>
+#include <pthread.h>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace uml::gpu {
@@ -113,7 +118,242 @@ struct MetalPresentationState final :
             ++latestContentGeneration;
             ++latestPresentationGeneration;
         }
+        markTapDirty();
         requestRedraw();
+    }
+
+    /* The mirror (frame_tap.hpp): a second render of the latest guest
+     * content into pool-backed IOSurface buffers, on its own thread, so that
+     * it runs when there is no window to draw into. Nothing here runs while
+     * no sink is set, beyond the thread's wait. */
+
+    void startTap()
+    {
+        tapThread = std::thread([this] { tapLoop(); });
+    }
+
+    void stopTap() noexcept
+    {
+        if (!tapThread.joinable())
+            return;
+        FrameTapRegistry::instance().wake();
+        tapThread.join();
+        if (tapPool != nullptr) {
+            CVPixelBufferPoolRelease(tapPool);
+            tapPool = nullptr;
+        }
+        if (tapTextureCache != nullptr) {
+            CFRelease(tapTextureCache);
+            tapTextureCache = nullptr;
+        }
+    }
+
+    void markTapDirty() noexcept
+    {
+        auto& registry = FrameTapRegistry::instance();
+        if (!registry.armed())
+            return;
+        tapDirty.store(true, std::memory_order_release);
+        registry.wake();
+    }
+
+    void tapLoop() noexcept
+    {
+        (void)::pthread_setname_np("uml-frame-tap");
+        using clock = std::chrono::steady_clock;
+        auto& registry = FrameTapRegistry::instance();
+        auto lastFrame = clock::time_point {};
+        while (running.load(std::memory_order_acquire)) {
+            registry.waitArmed([this] {
+                return !running.load(std::memory_order_relaxed);
+            });
+            if (!running.load(std::memory_order_acquire))
+                break;
+            /* A new guest frame, or a second without one: a static display
+             * is sent again so that its consumer sees a live stream. */
+            registry.wait(std::chrono::milliseconds(1000), [this] {
+                return tapDirty.load(std::memory_order_relaxed) ||
+                    !running.load(std::memory_order_relaxed);
+            });
+            if (!running.load(std::memory_order_acquire))
+                break;
+            const auto armed = registry.snapshot();
+            if (!armed)
+                continue;
+            const auto interval = std::chrono::milliseconds(
+                1000 / armed->options.framesPerSecond);
+            const auto elapsed = clock::now() - lastFrame;
+            if (elapsed < interval)
+                std::this_thread::sleep_for(interval - elapsed);
+            tapDirty.store(false, std::memory_order_release);
+            renderTapFrame(*armed);
+            lastFrame = clock::now();
+        }
+    }
+
+    [[nodiscard]] bool prepareTapSurfaces(
+        std::uint32_t width, std::uint32_t height) noexcept
+    {
+        if (tapTextureCache == nullptr &&
+            CVMetalTextureCacheCreate(
+                kCFAllocatorDefault, nil, device, nil, &tapTextureCache) !=
+                kCVReturnSuccess) {
+            tapTextureCache = nullptr;
+            return false;
+        }
+        if (tapPool != nullptr && tapPoolWidth == width &&
+            tapPoolHeight == height) {
+            return true;
+        }
+        if (tapPool != nullptr) {
+            CVPixelBufferPoolRelease(tapPool);
+            tapPool = nullptr;
+        }
+        NSDictionary* poolAttributes = @{
+            (__bridge NSString*)kCVPixelBufferPoolMinimumBufferCountKey: @3,
+        };
+        NSDictionary* bufferAttributes = @{
+            (__bridge NSString*)kCVPixelBufferPixelFormatTypeKey:
+                @(kCVPixelFormatType_32BGRA),
+            (__bridge NSString*)kCVPixelBufferWidthKey: @(width),
+            (__bridge NSString*)kCVPixelBufferHeightKey: @(height),
+            (__bridge NSString*)kCVPixelBufferIOSurfacePropertiesKey: @{},
+            (__bridge NSString*)kCVPixelBufferMetalCompatibilityKey: @YES,
+        };
+        if (CVPixelBufferPoolCreate(
+                kCFAllocatorDefault,
+                (__bridge CFDictionaryRef)poolAttributes,
+                (__bridge CFDictionaryRef)bufferAttributes,
+                &tapPool) != kCVReturnSuccess) {
+            tapPool = nullptr;
+            return false;
+        }
+        tapPoolWidth = width;
+        tapPoolHeight = height;
+        return true;
+    }
+
+    void renderTapFrame(const FrameTapRegistry::Armed& armed) noexcept
+    {
+        /* The GPU finishes a copy long before the next is due; a backlog
+         * means it is busy, and the mirror yields. */
+        if (tapInFlight.load(std::memory_order_acquire) >= 2)
+            return;
+        @autoreleasepool {
+            try {
+                std::optional<ScanoutSampling> sampling;
+                id<MTLTexture> source;
+                DisplaySize content {};
+                DisplayRotation rotation = DisplayRotation::upright;
+                {
+                    std::lock_guard lock(presentationMutex);
+                    rotation = displayRotation;
+                    if (latestIsCpu) {
+                        sampling = framebufferSampling(
+                            contentWidth, contentHeight);
+                        source = uploadFallbackLocked();
+                    } else {
+                        sampling = latestSampling;
+                        source = latestTexture;
+                    }
+                    /* The display as the window shows it, turned the way
+                     * the user turned it. */
+                    content = presentedDisplaySize(
+                        sampling ?
+                            sampling->content :
+                            DisplaySize {contentWidth, contentHeight},
+                        rotation);
+                }
+                if (content.width == 0 || content.height == 0)
+                    return;
+                /* Even dimensions: a video consumer rejects odd ones. */
+                const std::uint32_t width = std::max<std::uint32_t>(
+                    2U,
+                    std::min(armed.options.maximumWidth, content.width) &
+                        ~1U);
+                const std::uint32_t height = std::max<std::uint32_t>(
+                    2U,
+                    static_cast<std::uint32_t>(std::llround(
+                        static_cast<double>(width) * content.height /
+                        content.width)) & ~1U);
+                if (!prepareTapSurfaces(width, height))
+                    return;
+                CVPixelBufferRef pixelBuffer = nullptr;
+                if (CVPixelBufferPoolCreatePixelBuffer(
+                        kCFAllocatorDefault, tapPool, &pixelBuffer) !=
+                        kCVReturnSuccess) {
+                    return;
+                }
+                CVMetalTextureRef cvTexture = nullptr;
+                if (CVMetalTextureCacheCreateTextureFromImage(
+                        kCFAllocatorDefault,
+                        tapTextureCache,
+                        pixelBuffer,
+                        nil,
+                        MTLPixelFormatBGRA8Unorm,
+                        width,
+                        height,
+                        0,
+                        &cvTexture) != kCVReturnSuccess) {
+                    CVPixelBufferRelease(pixelBuffer);
+                    return;
+                }
+                id<MTLTexture> target = CVMetalTextureGetTexture(cvTexture);
+                id<MTLCommandBuffer> buffer = [commandQueue commandBuffer];
+                MTLRenderPassDescriptor* pass =
+                    [MTLRenderPassDescriptor renderPassDescriptor];
+                pass.colorAttachments[0].texture = target;
+                pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+                pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+                pass.colorAttachments[0].clearColor =
+                    MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
+                id<MTLRenderCommandEncoder> encoder = buffer == nil ? nil :
+                    [buffer renderCommandEncoderWithDescriptor:pass];
+                if (encoder == nil) {
+                    CVPixelBufferRelease(pixelBuffer);
+                    CFRelease(cvTexture);
+                    return;
+                }
+                if (source != nil && sampling && scanoutPassSamples(source)) {
+                    [encoder setRenderPipelineState:
+                        pipelines.forTexture(source)];
+                    [encoder setViewport:MTLViewport {
+                        .originX = 0.0,
+                        .originY = 0.0,
+                        .width = static_cast<double>(width),
+                        .height = static_cast<double>(height),
+                        .znear = 0.0,
+                        .zfar = 1.0,
+                    }];
+                    [encoder setFragmentTexture:source atIndex:0];
+                    const auto shader = shaderSampling(*sampling, rotation);
+                    [encoder setFragmentBytes:&shader
+                                        length:sizeof(shader)
+                                       atIndex:0];
+                    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                                vertexStart:0
+                                vertexCount:3];
+                }
+                [encoder endEncoding];
+                tapInFlight.fetch_add(1, std::memory_order_acq_rel);
+                const auto generation = armed.generation;
+                auto state = shared_from_this();
+                [buffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+                    if (finished.status == MTLCommandBufferStatusCompleted) {
+                        (void)FrameTapRegistry::instance().deliver(
+                            generation, pixelBuffer);
+                    }
+                    CVPixelBufferRelease(pixelBuffer);
+                    CFRelease(cvTexture);
+                    state->tapInFlight.fetch_sub(
+                        1, std::memory_order_acq_rel);
+                }];
+                [buffer commit];
+                if (++tapFrames % 64 == 0)
+                    CVMetalTextureCacheFlush(tapTextureCache, 0);
+            } catch (...) {
+            }
+        }
     }
 
     void drawableSizeChanged() noexcept
@@ -244,6 +484,7 @@ struct MetalPresentationState final :
                     "Native display: direct Metal texture presentation\n",
                     stderr);
             }
+            markTapDirty();
             requestRedraw();
             maybeReport();
             return superseded ? PresentOutcome::dropped
@@ -554,6 +795,14 @@ struct MetalPresentationState final :
     id<MTLDevice> device;
     id<MTLCommandQueue> commandQueue;
     ScanoutPipelines pipelines;
+    std::thread tapThread;
+    std::atomic_bool tapDirty {};
+    std::atomic_int tapInFlight {};
+    CVMetalTextureCacheRef tapTextureCache {};
+    CVPixelBufferPoolRef tapPool {};
+    std::uint32_t tapPoolWidth {};
+    std::uint32_t tapPoolHeight {};
+    std::uint64_t tapFrames {};
     id<MTLTexture> fallbackTexture;
     id<MTLTexture> latestTexture;
     ScanoutSampling latestSampling;
@@ -589,6 +838,7 @@ MetalPresentation::MetalPresentation(
     std::uint32_t width, std::uint32_t height)
     : state_(std::make_shared<MetalPresentationState>(width, height))
 {
+    state_->startTap();
 }
 
 MetalPresentation::~MetalPresentation()
@@ -673,6 +923,7 @@ void MetalPresentation::shutdown() noexcept
         return;
     }
     state_->reportFinal();
+    state_->stopTap();
     std::lock_guard lock(state_->callbackMutex);
     state_->redrawCallback = {};
 }

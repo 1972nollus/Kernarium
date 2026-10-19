@@ -15,11 +15,10 @@ namespace uml::memory {
  *
  * The fill is the hottest reader of a generation's mappings. Through the
  * mapping map it took the reader lock, a cache line every vCPU writes, and
- * then missed on a hash node of its own for every page, so a 4 KiB guest,
- * which refills about twice as often as a 16 KiB one, spent most of each fill
- * waiting for those two lines. A leaf here holds the host address and the
- * guest's permissions of 64 neighbouring pages, one word each, and is read
- * without a lock.
+ * then missed on a hash node of its own for every page, so a guest spent
+ * most of each fill waiting for those two lines. A leaf here holds the host
+ * address and the guest's permissions of 64 neighbouring pages, one word each,
+ * and is read without a lock.
  *
  * The table mirrors the map, and only an entered context may read it, which
  * is what makes the missing lock sound: everything that removes a page or

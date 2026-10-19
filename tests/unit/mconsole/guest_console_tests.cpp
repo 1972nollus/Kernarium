@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -49,7 +50,7 @@ using uml::testing::require;
 /*
  * Every run removes what exited runs left in its parent, $TMPDIR, so a test
  * that plants such entries in the shared one races every other run on the
- * host, this test in the other page profile's tree included: one of them can
+ * host, this test in another build tree included: one of them can
  * remove a planted directory before the test binds into it. The tests that
  * make console directories therefore run under a private $TMPDIR in the
  * user's temporary directory, which is short enough to be the first choice.
@@ -153,7 +154,9 @@ void observeRequests(int descriptor, std::vector<std::string> &requests)
 		return;
 	requests.push_back(receiveRequest(descriptor, client, clientLength));
 
-	if (!awaitRequest(descriptor, 2500))
+	/* Past the host's wait for a suspend reply, so that a stop sent after
+	 * it gave up shows too. */
+	if (!awaitRequest(descriptor, 9500))
 		return;
 
 	requests.push_back(receiveRequest(descriptor, client, clientLength));
@@ -179,6 +182,94 @@ void aSuspendTimeoutCannotQueueLegacyStop()
 	observer.join();
 	require(suspension == ::uml::device::GuestSuspension::system);
 	require(requests == std::vector<std::string> {"suspend"});
+	(void)::close(server);
+}
+
+/* Answers each request in turn with the next scripted reply, an error flag
+ * and its text, the first one only after `firstDelay`, then records whatever
+ * else arrives shortly after, unanswered, so that a request too many shows in
+ * the list. A reply whose request gave up finds no socket, and its loss shows
+ * in the requests that follow. */
+void answerInOrder(int descriptor, std::chrono::milliseconds firstDelay,
+	std::vector<std::pair<std::uint32_t, std::string>> answers,
+	std::vector<std::string> &requests)
+{
+	sockaddr_un client {};
+	socklen_t clientLength {};
+	for (const auto &[error, answer] : answers) {
+		if (!awaitRequest(descriptor, 10000))
+			return;
+		requests.push_back(receiveRequest(descriptor, client, clientLength));
+		if (requests.size() == 1U)
+			std::this_thread::sleep_for(firstDelay);
+		Reply reply {error, 0U, static_cast<std::uint32_t>(answer.size()),
+			{}};
+		std::memcpy(reply.data.data(), answer.data(), answer.size());
+		(void)::sendto(descriptor, &reply, sizeof(reply), 0,
+			reinterpret_cast<const sockaddr *>(&client), clientLength);
+	}
+	while (awaitRequest(descriptor, 500))
+		requests.push_back(receiveRequest(descriptor, client, clientLength));
+}
+
+/* What a suspend-capable guest replies when it gave a suspend up. */
+const std::pair<std::uint32_t, std::string> failedSuspend {
+	1U, "Suspend failed: -16"};
+const std::vector<std::pair<std::uint32_t, std::string>> failThenStop {
+	failedSuspend, {0U, "SysRq : Emergency Sync"}, {0U, "stopped"}};
+
+/* A guest that gives a suspend up is stopped instead. */
+void aFailedSuspendFallsBackToStop()
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	const int server = bindServer(consolePath());
+	std::vector<std::string> requests;
+	std::thread observer {answerInOrder, server,
+		std::chrono::milliseconds {0}, failThenStop, std::ref(requests)};
+	const auto suspension = ::uml::device::suspend_guest(0U, 0U);
+	observer.join();
+	require(suspension == ::uml::device::GuestSuspension::managementStop);
+	require(requests ==
+		std::vector<std::string> {"suspend", "sysrq s", "stop"});
+	(void)::close(server);
+}
+
+/* The guest replies to a suspend only after syncing its filesystems, so a
+ * failure can arrive seconds after the request; the guest still runs then and
+ * is stopped instead. */
+void aLateSuspendFailureFallsBackToStop()
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	const int server = bindServer(consolePath());
+	std::vector<std::string> requests;
+	std::thread observer {answerInOrder, server,
+		std::chrono::milliseconds {3000}, failThenStop,
+		std::ref(requests)};
+	const auto suspension = ::uml::device::suspend_guest(0U, 0U);
+	observer.join();
+	require(suspension == ::uml::device::GuestSuspension::managementStop);
+	require(requests ==
+		std::vector<std::string> {"suspend", "sysrq s", "stop"});
+	(void)::close(server);
+}
+
+/* A kernel without the suspend command is stopped at once. */
+void aKernelWithoutSuspendIsStoppedAtOnce()
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	const int server = bindServer(consolePath());
+	std::vector<std::string> requests;
+	std::thread observer {answerInOrder, server,
+		std::chrono::milliseconds {0},
+		std::vector<std::pair<std::uint32_t, std::string>> {
+			{1U, "System suspend is not configured"},
+			{0U, "SysRq : Emergency Sync"}, {0U, "stopped"}},
+		std::ref(requests)};
+	const auto suspension = ::uml::device::suspend_guest(0U, 0U);
+	observer.join();
+	require(suspension == ::uml::device::GuestSuspension::managementStop);
+	require(requests ==
+		std::vector<std::string> {"suspend", "sysrq s", "stop"});
 	(void)::close(server);
 }
 
@@ -213,6 +304,89 @@ void aWakeSendsOneWakeRequest()
 	require(answered);
 	require(requests == std::vector<std::string> {"wake"});
 	require(!awaitRequest(server, 200));
+	(void)::close(server);
+}
+
+/* Answers one request with `answer` and `error` after `delayMs`. A client
+ * that stopped waiting has removed its socket, so that reply goes nowhere. */
+void answerLater(int descriptor, std::string_view answer, std::uint32_t error,
+	int delayMs, std::vector<std::string> &requests)
+{
+	sockaddr_un client {};
+	socklen_t clientLength {};
+	if (!awaitRequest(descriptor, 10000))
+		return;
+	requests.push_back(receiveRequest(descriptor, client, clientLength));
+	std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+	Reply reply {error, 0U, static_cast<std::uint32_t>(answer.size()), {}};
+	std::memcpy(reply.data.data(), answer.data(), answer.size());
+	(void)::sendto(descriptor, &reply, sizeof(reply), 0,
+		reinterpret_cast<const sockaddr *>(&client), clientLength);
+}
+
+::uml::device::GuestRequest answeredTrim(int server,
+	const std::function<::uml::device::GuestRequest()> &request,
+	std::string_view answer, std::uint32_t error, int delayMs,
+	std::string_view expected)
+{
+	std::vector<std::string> requests;
+	std::thread observer {answerLater, server, answer, error, delayMs,
+		std::ref(requests)};
+	const auto result = request();
+	observer.join();
+	require(requests == std::vector<std::string> {std::string {expected}});
+	return result;
+}
+
+/* Turning trimming on or off is one request, which a kernel without the
+ * command refuses. */
+void trimmingIsSwitchedByOneRequest()
+{
+	using ::uml::device::GuestRequest;
+	using ::uml::device::set_guest_page_cache_trim;
+	const ::uml::device::GuestConsoleRun run {true};
+	const auto path = consolePath();
+	/* No guest console yet: nothing is sent and nothing waits. */
+	require(set_guest_page_cache_trim(true) == GuestRequest::unreachable);
+	const int server = bindServer(path);
+	require(answeredTrim(server, [] { return set_guest_page_cache_trim(true); },
+			"on", 0U, 0, "trim on") == GuestRequest::done);
+	require(answeredTrim(server, [] { return set_guest_page_cache_trim(false); },
+			"off", 0U, 0, "trim off") == GuestRequest::done);
+	require(answeredTrim(server, [] { return set_guest_page_cache_trim(true); },
+			"Unknown command", 1U, 0, "trim on") == GuestRequest::refused);
+	require(!awaitRequest(server, 200));
+	(void)::close(server);
+}
+
+/* A pass takes longer than an ordinary request may wait, and is waited for
+ * up to its own bound and no longer. */
+void aTrimPassIsWaitedForUpToItsBound()
+{
+	using ::uml::device::GuestRequest;
+	using ::uml::device::trim_guest_page_cache;
+	const ::uml::device::GuestConsoleRun run {true};
+	const int server = bindServer(consolePath());
+	require(answeredTrim(server, [] { return trim_guest_page_cache(8000U); },
+			"trimmed 4096 KiB in 3 ms, compacted in 40 ms, "
+			"released 4096 KiB in 2 ms",
+			0U, 2500,
+			"trim once") == GuestRequest::done);
+	/* The reply comes 2.5 seconds late; the request gives up long
+	 * before, and before an ordinary request's two seconds. */
+	std::chrono::steady_clock::duration waited {};
+	require(answeredTrim(server,
+			[&waited] {
+				const auto start = std::chrono::steady_clock::now();
+				const auto result = trim_guest_page_cache(200U);
+				waited = std::chrono::steady_clock::now() - start;
+				return result;
+			},
+			"trimmed 0 KiB in 0 ms, compacted in 40 ms, "
+			"released 0 KiB in 1 ms",
+			0U, 2500,
+			"trim once") == GuestRequest::unanswered);
+	require(waited < std::chrono::milliseconds(1800));
 	(void)::close(server);
 }
 
@@ -471,6 +645,23 @@ int main(int argc, char **argv)
 		require(std::filesystem::path {processLocation().directory}
 				.parent_path() == temporary.path());
 		aWakeSendsOneWakeRequest();
+		return EXIT_SUCCESS;
+	}
+	if (selected == "suspend-failure") {
+		const PrivateTemporaryDirectory temporary;
+		require(std::filesystem::path {processLocation().directory}
+				.parent_path() == temporary.path());
+		aFailedSuspendFallsBackToStop();
+		aLateSuspendFailureFallsBackToStop();
+		aKernelWithoutSuspendIsStoppedAtOnce();
+		return EXIT_SUCCESS;
+	}
+	if (selected == "trim") {
+		const PrivateTemporaryDirectory temporary;
+		require(std::filesystem::path {processLocation().directory}
+				.parent_path() == temporary.path());
+		trimmingIsSwitchedByOneRequest();
+		aTrimPassIsWaitedForUpToItsBound();
 		return EXIT_SUCCESS;
 	}
 	if (selected == "suspend-timeout") {

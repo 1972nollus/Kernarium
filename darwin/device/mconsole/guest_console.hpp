@@ -88,11 +88,13 @@ guest_console_location();
  * timekeeping stop at a kernel-owned boundary, and sends the explicit wake
  * edge. Older kernels fall back to management-console stop/go.
  *
- * The returned mode records which resume command is required. A sent suspend
- * request that has not replied by the deadline still selects system wake:
- * timeout cannot prove that the kernel did not already enter suspend. None
- * means no request reached the console. Resuming is best effort and reports
- * nothing.
+ * The returned mode records which resume command is required. The guest
+ * replies to a suspend request once it has synced its filesystems, so the
+ * request waits up to eight seconds for that reply, and a guest that reports
+ * within them that it could not suspend is stopped instead. A request that has
+ * not replied by then still selects system wake: timeout cannot prove that the
+ * kernel did not already enter suspend. None means no request reached the
+ * console. Resuming is best effort and reports nothing.
  */
 [[nodiscard]] GuestSuspension suspend_guest(
 	unsigned int writeback_settle_ms,
@@ -106,6 +108,34 @@ void resume_guest(GuestSuspension suspension) noexcept;
  * answered.
  */
 bool wake_guest() noexcept;
+
+/* How a request to the guest's console ended. */
+enum class GuestRequest {
+	/* No console was reachable, so nothing was sent. */
+	unreachable,
+	/* Sent, but no reply came within the bound. The guest may still act. */
+	unanswered,
+	/* The guest refused it, as a kernel without the command does. */
+	refused,
+	/* The guest did it. */
+	done,
+};
+
+/*
+ * Turns the guest's periodic page-cache trimming on or off ("trim on",
+ * "trim off"). A guest starts with it off. While it is on, the guest hands
+ * its cold page cache to the host every few seconds, backing off while it
+ * reads evicted pages back.
+ */
+[[nodiscard]] GuestRequest set_guest_page_cache_trim(bool enabled) noexcept;
+
+/*
+ * Has the guest trim all of its cold page cache and hand its free memory to
+ * the host now ("trim once"), waiting up to `wait_ms` for it to finish. Like
+ * every console request it wakes a suspended guest, so send it before a
+ * suspend, never during one.
+ */
+[[nodiscard]] GuestRequest trim_guest_page_cache(unsigned int wait_ms) noexcept;
 
 /*
  * Holds this process's console location for one guest run that passed the

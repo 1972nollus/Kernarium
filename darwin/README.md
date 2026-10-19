@@ -23,8 +23,8 @@ Targets and source lists belong to these directories. See
 ## Products and defaults
 
 The standalone macOS application supports the normal arm64-userspace Linux
-kernel with 16 KiB or 4 KiB guest pages and the separate x86_64-userspace
-kernel with 4 KiB pages. When omitted, `mem=` defaults to 8 GiB and `ncpus=`
+kernel and the separate x86_64-userspace kernel, both with 4 KiB guest pages.
+When omitted, `mem=` defaults to 8 GiB and `ncpus=`
 to 10; explicit kernel arguments override either value independently.
 `cmake --preset macos-x86_64` selects the dedicated x86_64 artifact and host
 gadget backend; ordinary 4 KiB presets continue to select arm64 userspace. The
@@ -195,9 +195,9 @@ when they differ leaves translated code at its fall-through, so the next run
 revalidates and relinks first. The gadget A64 ISB leaves from inside its block
 and gives back the instructions after it; a gadget A32 block ends at its ISB.
 A kernel write into a guest-code page, such as a system call's output that a
-4 KiB uaccess copies back from the kernel's alias, likewise reaches arm64 code
-only through the guest's own IC IVAU or `cacheflush()`, as on hardware that
-advertises neither DIC nor IDC, and on 16 KiB pages. It publishes a code change
+uaccess copies back from the kernel's alias, likewise reaches arm64 code only
+through the guest's own IC IVAU or `cacheflush()`, as on hardware that
+advertises neither DIC nor IDC. It publishes a code change
 of its own only once x86 code is about to run in the process, since x86 fetch
 sees every store; otherwise a process with an executable stack would publish
 one, and revalidate every translation, for each system call that writes its

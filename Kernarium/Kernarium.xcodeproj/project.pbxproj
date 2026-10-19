@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A10000000000000000000004 /* KRuntime_6_18_16K.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* KRuntime_6_18_16K.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000005 /* MesaEGL.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* MesaEGL.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000006 /* MesaGallium.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* MesaGallium.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A1000000000000000000000C /* KosmicKrisp.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* KosmicKrisp.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -44,7 +43,6 @@
 			dstSubfolderSpec = 10;
 			files = (
 				A10000000000000000000007 /* KRuntime_6_18_4K.xcframework in Embed Frameworks */,
-				A10000000000000000000004 /* KRuntime_6_18_16K.xcframework in Embed Frameworks */,
 				A10000000000000000000008 /* KRuntime_ACK_6_18_4K.xcframework in Embed Frameworks */,
 				A10000000000000000000005 /* MesaEGL.xcframework in Embed Frameworks */,
 				A10000000000000000000006 /* MesaGallium.xcframework in Embed Frameworks */,
@@ -59,7 +57,6 @@
 		8AF5E8CF302C966200B19616 /* Kernarium.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kernarium.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8AF5E8DE302C966400B19616 /* KernariumTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernariumTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8AF5E8E8302C966400B19616 /* KernariumUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernariumUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A10000000000000000000011 /* KRuntime_6_18_16K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KRuntime_6_18_16K.xcframework; path = "../.build/kernarium-xcframeworks/KRuntime_6_18_16K.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000012 /* MesaEGL.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = MesaEGL.xcframework; path = "../.build/kernarium-xcframeworks/MesaEGL.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000013 /* MesaGallium.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = MesaGallium.xcframework; path = "../.build/kernarium-xcframeworks/MesaGallium.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000014 /* KRuntime_6_18_4K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KRuntime_6_18_4K.xcframework; path = "../.build/kernarium-xcframeworks/KRuntime_6_18_4K.xcframework"; sourceTree = SOURCE_ROOT; };
@@ -159,7 +156,6 @@
 				A10000000000000000000016 /* GPTFDisk.xcframework */,
 				A10000000000000000000017 /* LibZstd.xcframework */,
 				A10000000000000000000014 /* KRuntime_6_18_4K.xcframework */,
-				A10000000000000000000011 /* KRuntime_6_18_16K.xcframework */,
 				A10000000000000000000015 /* KRuntime_ACK_6_18_4K.xcframework */,
 				A10000000000000000000012 /* MesaEGL.xcframework */,
 				A10000000000000000000013 /* MesaGallium.xcframework */,
@@ -538,8 +534,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = NO;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
@@ -586,8 +582,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = NO;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;

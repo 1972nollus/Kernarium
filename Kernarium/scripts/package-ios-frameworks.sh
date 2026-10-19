@@ -10,9 +10,9 @@
 # silicon Mac in Designed for iPad mode when no device is attached.
 #
 # --automation packages the automation Linux runtimes, which boot host
-# payloads (Kernarium/README.md), in place of the release ones. Both lines are
-# checked: the release runtime must not read a payload, and the automation
-# runtime must.
+# payloads (Kernarium/README.md), in place of the release ones. The Linux
+# runtime is checked: the release runtime must not read a payload, and the
+# automation runtime must.
 #
 # KernariumTests also links HostBattery.xcframework: the Apple battery
 # provider's archive, as the Android runtime links it, with its header. The
@@ -56,7 +56,6 @@ find_tool OTOOL otool
 find_tool PYTHON python3
 
 RUNTIME_4K="KRuntime_6_18_4K"
-RUNTIME_16K="KRuntime_6_18_16K"
 
 # The Android runtime carries an independently accepted Android kernel
 # artifact. Rootfs release updates do not rename this framework and kernel-only
@@ -65,8 +64,7 @@ RUNTIME_ANDROID_4K="KRuntime_ACK_6_18_4K"
 
 RUNTIME_TREE=kernarium-runtime-ios-device
 [ "$AUTOMATION" -eq 0 ] || RUNTIME_TREE=kernarium-runtime-ios-device-automation
-DEVICE_RUNTIME_4K="$ROOT_DIR/.build/$RUNTIME_TREE-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
-DEVICE_RUNTIME_16K="$ROOT_DIR/.build/$RUNTIME_TREE-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
+DEVICE_RUNTIME_4K="$ROOT_DIR/.build/$RUNTIME_TREE/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-4k/Kernarium/Runtime/$RUNTIME_ANDROID_4K.framework"
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64/Frameworks"
 STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
@@ -87,7 +85,6 @@ GPU_FRAMEWORKS="MesaEGL MesaGallium KosmicKrisp"
 
 for framework in \
 	"$DEVICE_RUNTIME_4K" \
-	"$DEVICE_RUNTIME_16K" \
 	"$DEVICE_RUNTIME_ANDROID" \
 	"$STORAGE" \
 	"$ZSTD"; do
@@ -124,7 +121,6 @@ create_xcframework()
 }
 
 create_xcframework "$RUNTIME_4K" "$DEVICE_RUNTIME_4K"
-create_xcframework "$RUNTIME_16K" "$DEVICE_RUNTIME_16K"
 create_xcframework "$RUNTIME_ANDROID_4K" "$DEVICE_RUNTIME_ANDROID"
 for framework in $GPU_FRAMEWORKS; do
 	create_xcframework "$framework" "$DEVICE_GPU/$framework.framework"
@@ -143,7 +139,7 @@ cp -- "$HOST_BATTERY_HEADER" "$HOST_BATTERY_HEADERS/"
 [ -f "$STAGE/HostBattery.xcframework/ios-arm64/libuml_host_battery.a" ] ||
 	fail "HostBattery XCFramework was not created"
 
-RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_16K $RUNTIME_ANDROID_4K"
+RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_ANDROID_4K"
 for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
 	binary="$STAGE/$framework.xcframework/ios-arm64/$framework.framework/$framework"
 	[ -f "$binary" ] || fail "missing packaged framework binary: $binary"
@@ -160,16 +156,14 @@ for framework in $RUNTIME_FRAMEWORKS; do
 	[ "$rpaths" = '@loader_path/..' ] ||
 		fail "$framework has an invalid runtime search path: $rpaths"
 done
-for framework in "$RUNTIME_4K" "$RUNTIME_16K"; do
-	binary="$STAGE/$framework.xcframework/ios-arm64/$framework.framework/$framework"
-	if LC_ALL=C grep -a -q KERNARIUM_BOOT_PAYLOAD "$binary"; then
-		[ "$AUTOMATION" -eq 1 ] ||
-			fail "$framework is an automation runtime; package it with --automation"
-	else
-		[ "$AUTOMATION" -eq 0 ] ||
-			fail "$framework is a release runtime; build the kernarium-ios-device-automation presets"
-	fi
-done
+binary="$STAGE/$RUNTIME_4K.xcframework/ios-arm64/$RUNTIME_4K.framework/$RUNTIME_4K"
+if LC_ALL=C grep -a -q KERNARIUM_BOOT_PAYLOAD "$binary"; then
+	[ "$AUTOMATION" -eq 1 ] ||
+		fail "$RUNTIME_4K is an automation runtime; package it with --automation"
+else
+	[ "$AUTOMATION" -eq 0 ] ||
+		fail "$RUNTIME_4K is a release runtime; build the kernarium-ios-device-automation preset"
+fi
 
 # The storage and compression cores carry no Metal dependency, so their
 # XCFrameworks keep both published slices.

@@ -29,10 +29,10 @@ void JitCompiler::emit_translate(unsigned address, Access access,
     const auto complete = emitter_.make_label();
     /*
      * The access-specific tag and backing delta are adjacent immutable fields.
-     * Load both before matching the tag. The overwhelmingly common first-way
-     * hit falls through one normally-not-taken CBNZ and directly applies the
-     * host-owned delta. The second way and preserving miss bridge are emitted
-     * after the complete hot block and branch back to the same continuation.
+     * Load both before matching the tag. The overwhelmingly common hit falls
+     * through one normally-not-taken CBNZ and directly applies the
+     * host-owned delta. The preserving miss bridge is emitted after the
+     * complete hot block and branches back to the same continuation.
      */
     emitter_.load_pair_x(2, 9, 0, page_offset);
     emitter_.emit(0xca01'0042U); // eor x2, x2, x1
@@ -57,30 +57,13 @@ void JitCompiler::emit_tlb_set(unsigned address) {
      * still relative to the page-aligned address.
      */
     emitter_.ubfm(1, address, page_shift, 63U); // lsr x1, Xn, #page_shift
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-    emitter_.ubfm(0, address, page_shift,
-                  page_shift + ::uml::memory::tlb_index_bits - 1U);
-    emitter_.add_shifted(0, 14, 0, 6);
-#else
     emitter_.ubfm(0, address, page_shift,
                   page_shift + ::uml::memory::tlb_index_bits - 1U);
     emitter_.add_shifted(0, 14, 0, 5);
-#endif
   }
 
 void JitCompiler::emit_translation_cold(const TranslationColdPath &path) {
     emitter_.bind(path.label);
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-    const unsigned page_offset =
-        path.access == Access::write ? 16U : 0U;
-    const auto miss = emitter_.make_label();
-    emitter_.load_pair_x(2, 9, 0, page_offset + 32U);
-    emitter_.emit(0xca01'0042U); // eor x2, x2, x1
-    emitter_.compare_zero(miss, 2, true, true);
-    emitter_.add_shifted(path.address, path.address, 9, 0);
-    emitter_.branch(path.continuation);
-    emitter_.bind(miss);
-#endif
     if (!path.bridge) {
       emitter_.branch(path.fault);
       return;
@@ -1353,23 +1336,16 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
       emitter_.bind(whole);
     }
     /*
-     * Translate both pages. A miss in the inline TLB ways takes the
-     * semantic path, which fills the TLB.
+     * Translate both pages. A miss in the inline TLB takes the semantic
+     * path, which fills the TLB.
      */
     const unsigned page_offset =
         straddle.access == Access::write ? 16U : 0U;
     for (const unsigned address : {8U, 11U}) {
-      const auto hit = emitter_.make_label();
       emit_tlb_set(address);
       emitter_.load_pair_x(2, 9, 0, page_offset);
       emitter_.emit(0xca01'0042U); // eor x2, x2, x1
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-      emitter_.compare_zero(hit, 2, true, false);
-      emitter_.load_pair_x(2, 9, 0, page_offset + 32U);
-      emitter_.emit(0xca01'0042U); // eor x2, x2, x1
-#endif
       emitter_.compare_zero(straddle.slow, 2, true, true);
-      emitter_.bind(hit);
       emitter_.add_shifted(address, address, 9, 0);
     }
     /*

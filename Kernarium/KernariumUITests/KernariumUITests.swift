@@ -39,9 +39,6 @@ final class KernariumUITests: XCTestCase {
         XCTAssertTrue(app.switches["retinaModeToggle"].exists)
         XCTAssertTrue(app.switches["autoResizeGuestToggle"].exists)
         XCTAssertTrue(
-            app.descendants(matching: .any)["kernelPageSizePicker"].exists
-        )
-        XCTAssertTrue(
             app.descendants(matching: .any)["rootfsPicker"].exists
         )
         XCTAssertTrue(app.buttons["settingsSaveButton"].exists)
@@ -130,6 +127,71 @@ final class KernariumUITests: XCTestCase {
             keyboard.waitForNonExistence(timeout: 10),
             "leaving the console did not dismiss the keyboard"
         )
+    }
+
+    /// In a window, iPadOS draws its window controls over the content's
+    /// top-left corner, where the guest's own status bar starts. The guest
+    /// view has to begin below them wherever the window sits and however big
+    /// it is. Full Screen Apps has no controls, and SpringBoard then shows
+    /// none, so there is nothing to clear.
+    @MainActor
+    func testGuestViewClearsTheWindowControls() throws {
+        let app = testApplication()
+        app.launch()
+
+        let guest = app.descendants(matching: .any)["framebufferView"]
+        XCTAssertTrue(guest.waitForExistence(timeout: 10))
+        let springboard = XCUIApplication(
+            bundleIdentifier: "com.apple.springboard"
+        )
+        let controls = springboard.descendants(matching: .any)[
+            "window-controls:com.imxieyi.Kernarium"
+        ]
+        guard controls.waitForExistence(timeout: 5) else {
+            throw XCTSkip("the window has no windowing controls to clear")
+        }
+        XCTAssertFalse(
+            guest.frame.intersects(controls.frame),
+            "the guest view \(guest.frame) lies under the window controls " +
+                "\(controls.frame)"
+        )
+        attachScreenshot(of: app, named: "guest-below-window-controls")
+    }
+
+    /// Where iPadOS draws no window controls over the content, in Full
+    /// Screen Apps and in a window zoomed to the screen, the guest view
+    /// needs no margin and begins at the top of the safe area, 32 points
+    /// down on an iPad mini. The margin of a window (75 points there) must
+    /// not outlive the window: Multitasking switching a running application
+    /// to Full Screen Apps once left it in place. The switch itself is
+    /// checked on a device through the automation host; see
+    /// docs/testing.md.
+    @MainActor
+    func testGuestViewKeepsNoMarginWithoutWindowControls() throws {
+        let app = testApplication()
+        app.launch()
+
+        let guest = app.descendants(matching: .any)["framebufferView"]
+        XCTAssertTrue(guest.waitForExistence(timeout: 10))
+        let springboard = XCUIApplication(
+            bundleIdentifier: "com.apple.springboard"
+        )
+        let controls = springboard.descendants(matching: .any)[
+            "window-controls:com.imxieyi.Kernarium"
+        ]
+        if controls.waitForExistence(timeout: 5) {
+            throw XCTSkip(
+                "the window has controls; testGuestViewClearsTheWindowControls checks it"
+            )
+        }
+        let window = app.windows.firstMatch
+        XCTAssertLessThanOrEqual(
+            guest.frame.minY - window.frame.minY,
+            40,
+            "the guest view \(guest.frame) keeps a margin below the top of " +
+                "the window \(window.frame) with no window controls"
+        )
+        attachScreenshot(of: app, named: "guest-without-window-controls")
     }
 
     @MainActor

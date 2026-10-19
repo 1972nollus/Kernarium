@@ -6,11 +6,15 @@
  * pass instead of refusing it into the CPU fallback. Each case presents a
  * texture with one colour per quadrant and reads back the drawable that the
  * presenter drew into. The CPU path's framebuffer and texture exist only once
- * it is written, so its frames before that present the clear alone. */
+ * it is written, so its frames before that present the clear alone. The
+ * frame mirror for Picture in Picture is checked the same way, from the
+ * pixels it delivers. */
 
+#include "frame_tap.hpp"
 #include "gpu_metal_test_support.hpp"
 #include "metal_presentation.hpp"
 
+#import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 
@@ -22,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -306,6 +311,196 @@ void checkCpuFrames(
     require(allOf(pixels, red), "a CPU frame after a clear was not shown");
 }
 
+/* What the mirror delivered: the newest frame, and how many arrived. */
+struct TapRecorder final {
+    struct Frame final {
+        std::uint32_t width {};
+        std::uint32_t height {};
+        std::vector<std::uint8_t> pixels;
+
+        [[nodiscard]] bool is(
+            double x, double y, const Pixel& expected) const
+        {
+            const auto column = static_cast<std::uint32_t>(x * width);
+            const auto row = static_cast<std::uint32_t>(y * height);
+            const auto* pixel = &pixels[(row * width + column) * 4];
+            for (std::size_t channel = 0; channel < expected.size();
+                 ++channel) {
+                const int difference = static_cast<int>(pixel[channel]) -
+                    static_cast<int>(expected[channel]);
+                if (difference < -3 || difference > 3)
+                    return false;
+            }
+            return true;
+        }
+    };
+
+    std::mutex mutex;
+    Frame latest;
+    std::uint64_t count {};
+
+    static void sink(void* context, void* pixelBuffer) noexcept
+    {
+        auto& recorder = *static_cast<TapRecorder*>(context);
+        const auto buffer = static_cast<CVPixelBufferRef>(pixelBuffer);
+        if (CVPixelBufferLockBaseAddress(
+                buffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) {
+            return;
+        }
+        Frame frame;
+        frame.width = static_cast<std::uint32_t>(
+            CVPixelBufferGetWidth(buffer));
+        frame.height = static_cast<std::uint32_t>(
+            CVPixelBufferGetHeight(buffer));
+        const auto stride = CVPixelBufferGetBytesPerRow(buffer);
+        const auto* base = static_cast<const std::uint8_t*>(
+            CVPixelBufferGetBaseAddress(buffer));
+        frame.pixels.resize(
+            static_cast<std::size_t>(frame.width) * frame.height * 4U);
+        for (std::uint32_t row = 0; row < frame.height; ++row) {
+            std::memcpy(
+                &frame.pixels[static_cast<std::size_t>(row) * frame.width * 4U],
+                base + static_cast<std::size_t>(row) * stride,
+                static_cast<std::size_t>(frame.width) * 4U);
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+        std::lock_guard lock(recorder.mutex);
+        recorder.latest = std::move(frame);
+        ++recorder.count;
+    }
+
+    [[nodiscard]] std::uint64_t delivered()
+    {
+        std::lock_guard lock(mutex);
+        return count;
+    }
+
+    [[nodiscard]] bool awaitCount(
+        std::uint64_t wanted,
+        std::chrono::seconds limit = std::chrono::seconds(60))
+    {
+        const auto deadline = std::chrono::steady_clock::now() + limit;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (delivered() >= wanted)
+                return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    }
+
+    /* Waits for a delivered frame that satisfies `accept`. The limit only
+     * fails a mirror that never delivers; a frame arrives in tens of
+     * milliseconds. */
+    [[nodiscard]] bool await(
+        const std::function<bool(const Frame&)>& accept,
+        std::chrono::seconds limit = std::chrono::seconds(60))
+    {
+        const auto deadline = std::chrono::steady_clock::now() + limit;
+        while (std::chrono::steady_clock::now() < deadline) {
+            {
+                std::lock_guard lock(mutex);
+                if (count != 0 && accept(latest))
+                    return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    }
+};
+
+/* The mirror delivers the guest's display, upright and aspect-preserved,
+ * for the same frames the window shows, and nothing once it is stopped. */
+void checkFrameTap(MetalPresentation& presentation, Harness& harness)
+{
+    TapRecorder recorder;
+    uml::gpu::setFrameTap(
+        &TapRecorder::sink,
+        &recorder,
+        {.maximumWidth = 64, .framesPerSecond = 60});
+
+    require(accepted(harness.present({
+                .width = sourceWidth, .height = sourceHeight})),
+        "a scanout larger than the framebuffer was refused");
+    require(recorder.await([](const TapRecorder::Frame& frame) {
+        return frame.width == 64 && frame.height == 36 &&
+            frame.is(0.25, 0.25, red) && frame.is(0.75, 0.25, green) &&
+            frame.is(0.25, 0.75, blue) && frame.is(0.75, 0.75, white);
+    }), "the mirror did not deliver the scanout, scaled to its size");
+
+    /* A display that stops changing is sent again, so that a consumer of the
+     * stream sees it live. */
+    require(recorder.awaitCount(recorder.delivered() + 2),
+        "the mirror did not repeat a static display");
+
+    require(accepted(harness.present({
+                .width = sourceWidth,
+                .height = sourceHeight,
+                .flipped = true})),
+        "a bottom-up scanout was refused");
+    require(recorder.await([](const TapRecorder::Frame& frame) {
+        return frame.is(0.25, 0.25, blue) && frame.is(0.75, 0.25, white) &&
+            frame.is(0.25, 0.75, red) && frame.is(0.75, 0.75, green);
+    }), "the mirror did not turn a bottom-up scanout the right way up");
+
+    /* A rectangle keeps its aspect: the top half is 128 by 36. */
+    require(accepted(harness.present({
+                .width = sourceWidth, .height = sourceHeight / 2})),
+        "a scanout rectangle was refused");
+    require(recorder.await([](const TapRecorder::Frame& frame) {
+        return frame.width == 64 && frame.height == 18 &&
+            frame.is(0.25, 0.5, red) && frame.is(0.75, 0.5, green);
+    }), "the mirror did not take the rectangle's own aspect");
+
+    /* The user's rotation turns the mirror as it turns the window. */
+    require(presentation.setRotation(DisplayRotation::clockwise90),
+        "rotation did not change");
+    require(accepted(harness.present({
+                .width = sourceWidth, .height = sourceHeight})),
+        "a rotated scanout was refused");
+    require(recorder.await([](const TapRecorder::Frame& frame) {
+        return frame.width < frame.height &&
+            frame.is(0.25, 0.25, blue) && frame.is(0.75, 0.25, red) &&
+            frame.is(0.25, 0.75, white) && frame.is(0.75, 0.75, green);
+    }), "the mirror did not follow the display's rotation");
+    require(presentation.setRotation(DisplayRotation::upright),
+        "rotation did not return");
+
+    /* Stopping returns only once no delivery is running or will start, so
+     * the receiver may go away: nothing arrives afterwards, whatever the
+     * guest shows. */
+    uml::gpu::setFrameTap(nullptr, nullptr);
+    const auto stopped = recorder.delivered();
+    require(accepted(harness.present({
+                .width = sourceWidth, .height = sourceHeight})),
+        "a scanout was refused after the mirror stopped");
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    require(recorder.delivered() == stopped,
+        "the mirror delivered a frame after it was stopped");
+}
+
+/* A CPU-rendered display, which is what a guest without a direct scanout
+ * shows, is mirrored too. */
+void checkFrameTapCpu(MetalPresentation& presentation)
+{
+    TapRecorder recorder;
+    uml::gpu::setFrameTap(
+        &TapRecorder::sink,
+        &recorder,
+        {.maximumWidth = 64, .framesPerSecond = 60});
+    writeCpuFrame(presentation, green);
+    const auto width = presentation.framebuffer().width();
+    const auto height = presentation.framebuffer().height();
+    require(recorder.await([&](const TapRecorder::Frame& frame) {
+        return frame.width == width && frame.height == height &&
+            frame.is(0.1, 0.1, green) && frame.is(0.9, 0.9, green);
+    }), "the mirror did not deliver the CPU framebuffer");
+    writeCpuFrame(presentation, red);
+    require(recorder.await([](const TapRecorder::Frame& frame) {
+        return frame.is(0.5, 0.5, red);
+    }), "the mirror did not follow a new CPU frame");
+    uml::gpu::setFrameTap(nullptr, nullptr);
+}
+
 int run()
 {
     std::unique_ptr<MetalPresentation> presentation;
@@ -333,6 +528,9 @@ int run()
                 .width = sourceWidth * 2,
                 .height = sourceHeight * 2})),
         "a texture smaller than its source was accepted");
+
+    /* The mirror renders into its own surfaces, so it needs no drawable. */
+    checkFrameTap(*presentation, harness);
 
     std::vector<std::uint8_t> pixels;
     require(accepted(harness.present({
@@ -406,6 +604,10 @@ int run()
             pixelIs(pixels, 24, 2, blue) && pixelIs(pixels, 40, 2, red) &&
             pixelIs(pixels, 24, 33, white) && pixelIs(pixels, 40, 33, green),
         "a rotated scanout was not scaled at its rotated aspect");
+
+    require(presentation->setRotation(DisplayRotation::upright),
+        "rotation did not return");
+    checkFrameTapCpu(*presentation);
 
     presentation->shutdown();
     return EXIT_SUCCESS;

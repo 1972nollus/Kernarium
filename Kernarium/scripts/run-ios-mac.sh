@@ -15,14 +15,11 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 ROOTFS=
-# The device runtime presets embed the accepted mainline kernels; stage the
-# artifacts they name.
-# shellcheck disable=SC1091
-. "$ROOT_DIR/kernel/mainline-6.18/artifacts/accepted-16k.env"
-ARTIFACT_16K=${UML_MAINLINE_618_KERNEL_ARTIFACT_16K_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}
+# The device runtime preset embeds the accepted mainline kernel; stage the
+# artifact it names.
 # shellcheck disable=SC1091
 . "$ROOT_DIR/kernel/mainline-6.18/artifacts/accepted-4k.env"
-ARTIFACT_4K=${UML_MAINLINE_618_KERNEL_ARTIFACT_4K_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}
+ARTIFACT=${UML_MAINLINE_618_KERNEL_ARTIFACT_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}
 BUNDLE_ID=com.imxieyi.Kernarium
 DERIVED_DATA="$ROOT_DIR/.build/kernarium-xcode-derived"
 INITRAMFS_TOOL="$ROOT_DIR/.build/presets/macos-integration/bin/uml-initramfs"
@@ -51,8 +48,7 @@ usage()
 		"  --guest-bundle NAME  Assemble NAME.kern from the accepted" \
 		"                 Android release and select it; its writable disk" \
 		"                 is kept across runs" \
-		"  --artifact-16k PATH  Accepted 16 KiB kernel artifact directory" \
-		"  --artifact-4k PATH   Accepted 4 KiB kernel artifact directory" \
+		"  --artifact PATH  Accepted kernel artifact directory" \
 		"  --jobs NUMBER  Parallel build jobs (default: 4)" \
 		"  --no-build     Stage and launch the installed app as it stands" \
 		"  --aquarium     Build the automation runtimes and launch Chromium" \
@@ -69,14 +65,9 @@ while [ "$#" -gt 0 ]; do
 		ROOTFS=$2
 		shift 2
 		;;
-	--artifact-16k)
-		[ "$#" -ge 2 ] || fail "--artifact-16k requires a path"
-		ARTIFACT_16K=$2
-		shift 2
-		;;
-	--artifact-4k)
-		[ "$#" -ge 2 ] || fail "--artifact-4k requires a path"
-		ARTIFACT_4K=$2
+	--artifact)
+		[ "$#" -ge 2 ] || fail "--artifact requires a path"
+		ARTIFACT=$2
 		shift 2
 		;;
 	--guest-bundle)
@@ -133,10 +124,8 @@ case "$ROOTFS_FILENAME" in
 *.erofs|*.ext4) ;;
 *) fail "rootfs must have an .erofs or .ext4 suffix: $ROOTFS" ;;
 esac
-[ -d "$ARTIFACT_16K" ] ||
-	fail "16 KiB kernel artifact is unavailable: $ARTIFACT_16K"
-[ -d "$ARTIFACT_4K" ] ||
-	fail "4 KiB kernel artifact is unavailable: $ARTIFACT_4K"
+[ -d "$ARTIFACT" ] ||
+	fail "kernel artifact is unavailable: $ARTIFACT"
 if [ "$AQUARIUM" -eq 1 ]; then
 	[ -x "$INITRAMFS_TOOL" ] ||
 		fail "uml-initramfs is unavailable: $INITRAMFS_TOOL; build it or pass --initramfs-tool"
@@ -150,11 +139,8 @@ fi
 CDPATH= cd -- "$ROOT_DIR"
 if [ "$SKIP_BUILD" -eq 0 ]; then
 	cmake --preset "$PRESET" \
-		-DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR="$ARTIFACT_16K"
+		-DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR="$ARTIFACT"
 	cmake --build --preset "$PRESET" --parallel "$JOBS"
-	cmake --preset "$PRESET-4k" \
-		-DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR="$ARTIFACT_4K"
-	cmake --build --preset "$PRESET-4k" --parallel "$JOBS"
 	"$ROOT_DIR/Kernarium/scripts/package-ios-frameworks.sh" $PACKAGE_OPTION
 	xcodebuild \
 		-project "$ROOT_DIR/Kernarium/Kernarium.xcodeproj" \

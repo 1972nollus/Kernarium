@@ -19,12 +19,13 @@ on the generated pack:
   arm64-absent-mte-tbi case is the TBI variant of a kept case, and the
   rewrite's addition counts match those records.
 
-The rewrite's drop and strip counts describe the export it read, which the
-repository does not keep, so they are not checked. The native SME records
-that sme-native-corpus.py appends after the rewrite exercise FEAT_SME by
-design, and so do the SM = 0 vector-length records of sm0-vl-corpus.py;
-arm64-instruction-corpus-sme-native and arm64-instruction-corpus-sm0-vl
-check them.
+The rewrite's drop, strip and replacement counts describe the export it read,
+which the repository does not keep, so they are not checked beyond bounding
+the replacements: the retirement of the 16 KiB profile removed some. The
+native SME records that sme-native-corpus.py appends after the rewrite
+exercise FEAT_SME by design, and so do the SM = 0 vector-length records of
+sm0-vl-corpus.py; arm64-instruction-corpus-sme-native and
+arm64-instruction-corpus-sm0-vl check them.
 """
 
 from __future__ import annotations
@@ -156,7 +157,9 @@ def check(rewrite, records: list[dict], step: dict) -> str:
                 raise SystemExit(f"{item['record']}: {case['name']}: not the "
                                  "TBI variant of a kept case")
             replaced += 1
-    if replaced != step["tbi_replacement_cases"]:
+    # The rewrite counts the export's replacements; those of the retired
+    # 16 KiB profile are gone from the pack.
+    if replaced > step["tbi_replacement_cases"]:
         raise SystemExit(f"{replaced} TBI replacement cases, but the rewrite "
                          f"counts {step['tbi_replacement_cases']}")
     return (f"absent-feature rewrite: {count} kept cases hold no removed "

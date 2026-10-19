@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -44,6 +45,29 @@ constexpr unsigned int guest_writeback_settle_ms = 1500U;
  * issuing more, so a frozen guest still needs a moment before its disk has
  * genuinely settled. */
 constexpr unsigned int guest_suspend_settle_ms = 250U;
+
+/* A guest about to be suspended hands its cold page cache and free memory to
+ * the host first, since it keeps whatever it holds until it runs again. The
+ * guest reclaims for at most a second and compacts for at most another, so
+ * this also covers the release and the reply. A pass still running when it
+ * expires finishes before the guest takes the suspend request queued behind
+ * it. */
+constexpr unsigned int guest_trim_wait_ms = 3000U;
+
+[[nodiscard]] int guest_request_result(
+	::uml::device::GuestRequest request) noexcept
+{
+	switch (request) {
+	case ::uml::device::GuestRequest::done:
+		return UML_EMULATOR_OK;
+	case ::uml::device::GuestRequest::unanswered:
+		return -UML_EMULATOR_RUNTIME_ERROR;
+	case ::uml::device::GuestRequest::unreachable:
+	case ::uml::device::GuestRequest::refused:
+		break;
+	}
+	return -UML_EMULATOR_UNSUPPORTED;
+}
 
 /* An embedded kernel maps fixed host addresses, so a process admits one run
  * at a time. A run queued behind it stays cancellable by its handle's stop
@@ -330,6 +354,8 @@ public:
 	{
 		std::lock_guard lock{guest_lifecycle_mutex_};
 		if (guest_suspension_ == ::uml::device::GuestSuspension::none) {
+			(void)::uml::device::trim_guest_page_cache(
+				guest_trim_wait_ms);
 			guest_suspension_ = ::uml::device::suspend_guest(
 				guest_writeback_settle_ms,
 				guest_suspend_settle_ms);
@@ -344,6 +370,33 @@ public:
 		const auto suspension = std::exchange(guest_suspension_,
 			::uml::device::GuestSuspension::none);
 		::uml::device::resume_guest(suspension);
+		if (const auto enabled = std::exchange(pending_page_cache_trim_,
+			    std::nullopt))
+			(void)::uml::device::set_guest_page_cache_trim(*enabled);
+	}
+
+	[[nodiscard]] int set_page_cache_trimming(bool enabled) noexcept
+	{
+		std::lock_guard lock{guest_lifecycle_mutex_};
+		/* Any console request ends a suspend, so a quiesced guest
+		 * receives the change when it is resumed. */
+		if (guest_suspension_ != ::uml::device::GuestSuspension::none) {
+			pending_page_cache_trim_ = enabled;
+			return UML_EMULATOR_OK;
+		}
+		pending_page_cache_trim_.reset();
+		return guest_request_result(
+			::uml::device::set_guest_page_cache_trim(enabled));
+	}
+
+	[[nodiscard]] int trim_page_cache() noexcept
+	{
+		std::lock_guard lock{guest_lifecycle_mutex_};
+		/* Quiescing already trimmed it, and a request would wake it. */
+		if (guest_suspension_ != ::uml::device::GuestSuspension::none)
+			return UML_EMULATOR_OK;
+		return guest_request_result(
+			::uml::device::trim_guest_page_cache(guest_trim_wait_ms));
 	}
 
 	void wake() noexcept
@@ -383,6 +436,8 @@ private:
 	std::mutex guest_lifecycle_mutex_;
 	::uml::device::GuestSuspension guest_suspension_ {
 		::uml::device::GuestSuspension::none};
+	/* A trimming change requested while the guest was quiesced. */
+	std::optional<bool> pending_page_cache_trim_;
 };
 
 } // namespace uml::emulator
@@ -496,4 +551,19 @@ extern "C" void uml_emulator_wake(uml_emulator *emulator)
 {
 	if (emulator != nullptr)
 		emulator->implementation.wake();
+}
+
+extern "C" int uml_emulator_set_page_cache_trimming(uml_emulator *emulator,
+	int enabled)
+{
+	if (emulator == nullptr)
+		return -UML_EMULATOR_INVALID_ARGUMENT;
+	return emulator->implementation.set_page_cache_trimming(enabled != 0);
+}
+
+extern "C" int uml_emulator_trim_page_cache(uml_emulator *emulator)
+{
+	if (emulator == nullptr)
+		return -UML_EMULATOR_INVALID_ARGUMENT;
+	return emulator->implementation.trim_page_cache();
 }

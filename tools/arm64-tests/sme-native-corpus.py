@@ -36,9 +36,9 @@ The cases cover, for each record:
   default-NaN, and rounding controls for floating-point rows;
 - za: ZA slice-index registers at zero and at all ones, which wraps;
 - memory: each profile memory form aligned and misaligned, crossing a 16 KiB
-  page with both pages mapped, with only the first mapped and its elements
-  active on the first page, with either page unmapped, inactive over an
-  unmapped page, and stores to a read-only page;
+  boundary (a guest page boundary too) with both pages mapped, with only the
+  first mapped and its elements active on the first page, with either page
+  unmapped, inactive over an unmapped page, and stores to a read-only page;
 - fpsr: programs that start with FPSR's IXC, IOC, or QC set, in streaming
   mode throughout (instructions that raise flags, raise none, read or write
   FPSR, take a fault or trap, or leave PSTATE.SM as it is) and entering or
@@ -1316,7 +1316,7 @@ def assemble(items: list[tuple[Draft, tuple[int, ...], dict]]) -> list[dict]:
         group = draft.group
         record = records.setdefault(group, {
             "record": f"{PRODUCER}/{group}", "producer": PRODUCER,
-            "site": SITE, "profiles": ["16k", "4k"], "options": [],
+            "site": SITE, "profiles": ["4k"], "options": [],
             "svl": SVL, "programs": [], "cases": []})
         index = programs.setdefault(group, {})
         if words not in index:

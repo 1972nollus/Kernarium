@@ -151,8 +151,8 @@ def make_payload(release: pathlib.Path, program_sha256: str,
                 shutil.copyfile(source, target)
                 target.chmod(0o755 if file_name == PROGRAM else 0o644)
             # Uncompressed so decompression is not in the measurement; a
-            # 4 KiB block size mounts on both guest page profiles, where the
-            # default (the host page size) would not mount on a 4 KiB guest.
+            # 4 KiB block size mounts on the 4 KiB guest, where the default
+            # (the host page size) would not.
             run([mkfs, "-b4096", "-x-1", "--all-root", str(temporary),
                  str(stage)])
         run([fsck, str(temporary)])

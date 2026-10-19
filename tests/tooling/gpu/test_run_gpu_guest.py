@@ -24,6 +24,14 @@ INTEGRATION_CMAKE = Path(__file__).resolve().parents[2] / "integration/CMakeList
 sys.path.insert(0, str(GPU_INTEGRATION_ROOT))
 import run_gpu_guest  # noqa: E402
 
+# How long a step may take before the run is called wedged. The tests below
+# start a Python process and pass bytes between threads and sockets; on a host
+# running other work at many times its core count such a step takes seconds,
+# so a short bound measures the host's load rather than the code. This one
+# only separates a wedged run from a slow one, and is the only time anything
+# here waits on: every step otherwise proceeds on its own signal.
+WEDGE_BOUND_SECONDS = 120
+
 
 def boot_file_pairs(
     rootfs_type: str = "erofs",
@@ -544,7 +552,7 @@ class GpuGuestSafetyTests(unittest.TestCase):
                 run_gpu_guest.run_guest(
                     [sys.executable, "-c", fake_emulator],
                     Path(directory) / "console.log",
-                    timeout=5,
+                    timeout=WEDGE_BOUND_SECONDS,
                     expect_poweroff=False,
                 )
 
@@ -604,11 +612,15 @@ class GpuGuestSafetyTests(unittest.TestCase):
             received = bytearray()
             client_errors: list[BaseException] = []
 
+            run_ended = threading.Event()
+
             def attach() -> None:
                 try:
-                    deadline = time.monotonic() + 5
+                    # The socket appears once run_guest has started its
+                    # relay; wait for that, or for the run to end without it.
+                    deadline = time.monotonic() + WEDGE_BOUND_SECONDS
                     while not serial_path.exists():
-                        if time.monotonic() >= deadline:
+                        if run_ended.is_set() or time.monotonic() >= deadline:
                             raise TimeoutError("serial socket was not created")
                         time.sleep(0.01)
 
@@ -627,12 +639,12 @@ class GpuGuestSafetyTests(unittest.TestCase):
 
                     first = bytearray()
                     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                        client.settimeout(5)
+                        client.settimeout(WEDGE_BOUND_SECONDS)
                         client.connect(str(serial_path))
                         receive_until(client, first, b"READY\n")
 
                     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                        client.settimeout(5)
+                        client.settimeout(WEDGE_BOUND_SECONDS)
                         client.connect(str(serial_path))
                         receive_until(client, received, b"READY\n")
                         client.sendall(b"status\n")
@@ -654,14 +666,19 @@ class GpuGuestSafetyTests(unittest.TestCase):
             )
             client_thread = threading.Thread(target=attach)
             client_thread.start()
-            return_code, saw_pass, saw_fail = run_gpu_guest.run_guest(
-                [sys.executable, "-c", fake_emulator],
-                root / "console.log",
-                timeout=10,
-                expect_poweroff=False,
-                serial_socket=serial_path,
-            )
-            client_thread.join(timeout=5)
+            try:
+                return_code, saw_pass, saw_fail = run_gpu_guest.run_guest(
+                    [sys.executable, "-c", fake_emulator],
+                    root / "console.log",
+                    timeout=WEDGE_BOUND_SECONDS,
+                    expect_poweroff=False,
+                    serial_socket=serial_path,
+                )
+            finally:
+                run_ended.set()
+            # The relay closed its socket as the run ended, so a client that
+            # has not finished is on its way out: it sees the close.
+            client_thread.join(timeout=WEDGE_BOUND_SECONDS)
             self.assertFalse(client_thread.is_alive())
             self.assertEqual(client_errors, [])
             self.assertEqual(return_code, 0)
