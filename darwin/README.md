@@ -114,6 +114,12 @@ hashes the guest's address-space number. The sizes hold with shared bodies
 too, where every executor keeps its own slots and a body's header is paid
 once however many slots hold it.
 
+The x86 cache takes a translation's set from one multiply of its address
+space, byte-granular RIP and execution mode
+(`x86_64/gadgets/program_cache_index.hpp`), so clustered code loads the sets as
+a uniform spread would, where two xor folds of the address left far more full
+sets than that.
+
 The arm64 and x86 private gadget caches use the same `UML_GADGET_CACHE_SLOTS`
 and `UML_GADGET_RESIDENT_GENERATIONS` controls: eight ways, 256-slot lazy slabs,
 and eight resident address spaces. The slot count defaults to 131,072 on every
