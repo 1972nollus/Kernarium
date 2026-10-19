@@ -298,10 +298,22 @@ what memblock reserved, `arch_alloc_page()` commits a released chunk the first
 time the allocator hands out a page of it, and the free-page reporting driver
 releases each whole reported chunk through the bridge. Physical iOS wires only
 committed chunks. `page_cache_trim` reclaims inactive page cache above a floor
-(`page_cache_trim.floor_mb`, by default 1/32 of RAM, checked every
-`page_cache_trim.interval_ms`) through memcg proactive reclaim, which leaves
-anonymous memory alone. `CONFIG_VIRTIO_BALLOON` lets the host carve its GPU
-memory out of guest RAM. UML removes virtio drivers from an exitcall that runs
+(`page_cache_trim.floor_mb`, by default 1/32 of RAM) through memcg proactive
+reclaim, which leaves anonymous memory alone, and only when the host asks. The
+management console's `trim on` and `trim off`, like `page_cache_trim.enabled`,
+start and stop a pass every `page_cache_trim.interval_ms` that takes a quarter
+of the excess. While more than a quarter of what a pass reclaimed is read back
+before the next one, as when a program starts, the interval doubles, up to 32
+times, and a pass whose evictions stay out restores it. `trim once` takes the
+excess for at most a second, then compacts memory for at most another, since
+the pages reclaim frees lie between pages still in use and only whole chunks go
+back, then runs free-page reporting until it finds nothing more to release. It
+replies with both amounts and each step's time, so a host can suspend a guest
+that holds no cold cache. `guest-page-cache-trim` checks the default, all three
+commands, the back-off, and a pass over file cache read between the pages of a
+tmpfs file.
+`CONFIG_VIRTIO_BALLOON` lets the host carve its GPU memory out of guest RAM.
+UML removes virtio drivers from an exitcall that runs
 after `device_shutdown()` has broken every virtqueue, so the balloon returns
 its pages without waiting for a host answer when its queue is broken; otherwise
 power-off with an inflated balloon never completes.

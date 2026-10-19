@@ -50,7 +50,7 @@ the host's own wake has arrived.
  6 files changed, 239 insertions(+), 38 deletions(-)
 
 diff --git a/arch/um/drivers/mconsole_kern.c b/arch/um/drivers/mconsole_kern.c
-index 740d58096d1ac94813e5ccbb0a1cb390256e2288..786862f821944639aec13f250fb5aa772f4e5a27 100644
+index 5abd0dfd66c7f1da714c1895760ada28ac1b2a74..5a0c3b28f9cfef9e38a5014c87efde6f510b7cc8 100644
 --- a/arch/um/drivers/mconsole_kern.c
 +++ b/arch/um/drivers/mconsole_kern.c
 @@ -6,6 +6,7 @@
@@ -61,7 +61,7 @@ index 740d58096d1ac94813e5ccbb0a1cb390256e2288..786862f821944639aec13f250fb5aa77
  #include <linux/string.h>
  #include <linux/interrupt.h>
  #include <linux/list.h>
-@@ -227,6 +228,8 @@ void mconsole_go(struct mc_request *req)
+@@ -229,6 +230,8 @@ void mconsole_go(struct mc_request *req)
  
  #ifdef CONFIG_SUSPEND
  static struct mc_request *suspend_request;
@@ -70,7 +70,7 @@ index 740d58096d1ac94813e5ccbb0a1cb390256e2288..786862f821944639aec13f250fb5aa77
  
  void um_suspend_notify_entered(void)
  {
-@@ -236,10 +239,27 @@ void um_suspend_notify_entered(void)
+@@ -238,10 +241,27 @@ void um_suspend_notify_entered(void)
  		mconsole_reply(req, "suspended", 0, 0);
  }
  
@@ -98,7 +98,7 @@ index 740d58096d1ac94813e5ccbb0a1cb390256e2288..786862f821944639aec13f250fb5aa77
  	int error;
  
  	if (cmpxchg(&suspend_request, NULL, req) != NULL) {
-@@ -247,27 +267,58 @@ void mconsole_suspend(struct mc_request *req)
+@@ -249,27 +269,58 @@ void mconsole_suspend(struct mc_request *req)
  		return;
  	}
  	error = pm_suspend(PM_SUSPEND_MEM);
@@ -159,10 +159,10 @@ index 740d58096d1ac94813e5ccbb0a1cb390256e2288..786862f821944639aec13f250fb5aa77
  void mconsole_stop(struct mc_request *req)
  {
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index 15e501e58d4d2b84c1217e2e60c197a5f72e068c..db99a82cca712ae1107f1f9d127ad4b401712bf6 100644
+index aa401501c034272cf9e4f2391b4921f3f00ded4f..a833287d72c20a02e51ff4e96f593051a8b23324 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
-@@ -74,6 +74,7 @@ extern void fatal_sigsegv(void) __attribute__ ((noreturn));
+@@ -85,6 +85,7 @@ extern void fatal_sigsegv(void) __attribute__ ((noreturn));
  
  void um_idle_sleep(void);
  void um_suspend_notify_entered(void);
