@@ -185,7 +185,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->send_console_input == nullptr ||
         api->set_gpu_hold == nullptr ||
         api->set_frame_sink == nullptr ||
-        api->set_background_throttle == nullptr) {
+        api->set_background_throttle == nullptr ||
+        api->set_page_cache_trimming == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -221,12 +222,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v11");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v12");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v11: %s\n",
+            "Kernarium: selected runtime lacks API v12: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -343,6 +344,12 @@ extern "C" int kernarium_runtime_loader_set_frame_sink(
     return runtime == nullptr ?
         -1 :
         runtime->set_frame_sink(sink, context, maximumWidth, framesPerSecond);
+}
+
+extern "C" int kernarium_runtime_loader_set_page_cache_trimming(int enabled)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -1 : runtime->set_page_cache_trimming(enabled);
 }
 
 extern "C" void kernarium_runtime_loader_send_touch(

@@ -51,6 +51,14 @@ inline constexpr std::uint32_t fpsr_writable_mask = 0x0800'009fU;
  * space. It never changes, so a context synchronization never leaves. */
 inline constexpr std::uint64_t no_code_changes = 0;
 
+/* The gadget engine's mark on a live exclusive_key, set only while
+ * translated code runs: its executor entered translated code again since the
+ * load-exclusive recorded the key, so its own code may have cleared the host
+ * monitor (gadgets/engine/exclusive.inc). No host address has the bit set. */
+inline constexpr unsigned exclusive_key_reentered_bit = 63;
+inline constexpr std::uintptr_t exclusive_key_reentered =
+	std::uintptr_t{1} << exclusive_key_reentered_bit;
+
 struct alignas(16) VectorRegister final {
 	std::array<std::byte, 16> bytes{};
 };

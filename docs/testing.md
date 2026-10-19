@@ -518,6 +518,23 @@ approval rules, and failure modes are in
 `Kernarium/scripts/ipad-automation.py --help`. Keep all automation code in the
 test targets.
 
+### Window layout (device only)
+
+Window layout follows iPadOS windowing, which only a device has. Check it on
+an iPad whenever the layout of the guest view changes, under an iPad lease
+with the automation host and a guest running, in Full Screen Apps, Windowed
+Apps, and Stage Manager. The guest view's frame in the application's tree
+starts below the window controls (`window-controls:com.imxieyi.Kernarium` in
+SpringBoard's tree) and at the safe area where there are none. Change
+Multitasking under the running application with the Settings identifiers
+`com.apple.settings.multitaskingAndGestures.{fullScreenApps,windowedApps,
+stageManager}`, in both directions: the view moves at once, and Full Screen
+Apps gives the frame of a fresh launch. A zoomed window, the tiles and Slide
+Over of its Window menu resize the guest display: Android's `wm size` follows
+the view, a tap's raw touchscreen coordinates map to it (the range is fixed),
+and the console shows no lost GPU backend. Restore Full Screen Apps and check
+that its option is selected before releasing the lease.
+
 ### Background lifecycle (device only)
 
 What the application does as iOS backgrounds it cannot be tested on a host:
