@@ -112,6 +112,13 @@ Geekbench 6's x86-64 chassis probe, which scanned that window when sysfs had
 no tables, could leave a shared mapping of it for the rest of a run.
 `guest-kernel-dmi` checks the tables and the missing `/dev/mem`.
 
+Every host thread the kernel creates names itself, so host tools, crash
+reports and a host's lifecycle code can tell it from the host's own: the vCPU
+carriers are `uml-vcpu-N-carrier`, and the IRQ notification thread, the RTC
+alarm helper and a terminal console's window-size helper are
+`uml-irq-notify`, `uml-rtc-alarm` and `uml-winch`.
+`guest-kernel-thread-names` lists the emulator's threads and finds each one.
+
 A Darwin kernel stack trace walks the stack its starting stack pointer lies
 on: a task's own stack in guest memory or, on the current vCPU carrier, the
 carrier's native stack or the signal stack its interrupts run on. An
