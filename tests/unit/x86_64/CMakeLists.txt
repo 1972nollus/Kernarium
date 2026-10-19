@@ -20,6 +20,19 @@ uml_add_unit_test(
     COMMAND uml_x86_64_gadget_bootstrap_tests dead-generations
     LABELS cpu;x86-64)
 
+# The cache's set index alone: it is header-only, so the test links no gadget
+# object.
+add_executable(uml_x86_64_gadget_cache_index_tests
+    x86_64_gadget_cache_index_tests.cpp)
+target_link_libraries(uml_x86_64_gadget_cache_index_tests PRIVATE
+    UML::CpuContract)
+target_include_directories(uml_x86_64_gadget_cache_index_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME x86-64-gadget-cache-index
+    COMMAND uml_x86_64_gadget_cache_index_tests
+    LABELS cpu;x86-64)
+
 add_executable(uml_x86_64_sse_exactness_tests
     x86_64_sse_exactness_tests.cpp)
 target_link_libraries(uml_x86_64_sse_exactness_tests PRIVATE

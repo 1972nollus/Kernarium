@@ -11,6 +11,7 @@
 
 #include "native_entry.hpp"
 #include "native_symbols.hpp"
+#include "program_cache_index.hpp"
 
 #include <algorithm>
 #include <array>
@@ -78,15 +79,8 @@ struct ProgramCacheLocation final {
 	std::uint64_t generation, std::uint64_t address,
 	ExecutionMode mode) noexcept
 {
-	/* Keep the main-cache index as compact as the arm64 gadget path. x86
-	 * instruction pointers are byte-granular, so retain their low bits and
-	 * fold the execution mode into a high bit before the two xor folds. */
-	const auto block = address ^
-		(generation * 0x9e37'79b9'7f4a'7c15ULL) ^
-		(static_cast<std::uint64_t>(mode) << 32U);
-	const auto mixed = block ^ (block >> 12U) ^ (block >> 24U);
-	const auto set = static_cast<std::size_t>(mixed) &
-		(program_cache_sets - 1U);
+	const auto set = program_cache_set(
+		generation, address, mode, program_cache_sets);
 	const auto first = set * program_cache_ways;
 	return {
 		.set = set,
