@@ -2,6 +2,7 @@
 #pragma once
 
 #include "in_process_vhost_user_service.hpp"
+#include "request_gate.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_device.hpp"
 #include "vhost_user_message.hpp"
@@ -40,6 +41,11 @@ public:
      * Call before runConnected(). */
     void setSharedMemoryRegions(
         std::shared_ptr<uml::virtio::SharedMemoryRegions> regions);
+
+    /* Lets another thread hold back this server's requests: while the gate
+     * is closed none is handed to the device, and each stays in its ring
+     * until the gate opens. Call before runConnected(). */
+    void setRequestGate(std::shared_ptr<RequestGate> gate);
 
 private:
     struct Mapping {
@@ -100,6 +106,9 @@ private:
     void configureKick(VhostUserMessage& message);
     void drainKick(std::uint32_t index);
     void processQueue(std::uint32_t index);
+    /* How many buffers the guest has made available on queue `index` that the
+     * server has not yet taken, or zero if the queue is not running. */
+    [[nodiscard]] std::size_t waitingBuffers(std::uint32_t index);
     void dispatchSharedMemoryActions();
     void drainQueueCompletions();
     void signalPendingConfigChange();
@@ -136,6 +145,7 @@ private:
     std::unique_ptr<uml::virtio::VhostUserDevice> device_;
     UniqueDescriptor slaveRequestDescriptor_;
     std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions_;
+    std::shared_ptr<RequestGate> requestGate_;
     std::vector<Mapping> mappings_;
     std::vector<Queue> queues_;
     std::unordered_map<std::uint64_t, PendingRequest> pendingRequests_;

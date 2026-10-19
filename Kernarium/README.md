@@ -146,6 +146,20 @@ such as Android once its display is off. The runtime side of sync, quiesce,
 resume, and wake is in
 [`../docs/architecture.md`](../docs/architecture.md#guest-lifecycle).
 
+iOS revokes the host GPU within seconds of `didEnterBackground`, and a guest
+request that reached Metal afterwards would make the guest's Vulkan device
+lost for good. The application therefore holds the guest's GPU requests inside
+`didEnterBackground`, before it quiesces, and releases them when it returns to
+the foreground. The hold and the quiesce share the handler's four-second
+budget, and the hold itself waits at most one second for a request already
+running. Requests the guest queues meanwhile wait in their rings, through the
+suspend, and run in order after the release.
+
+iOS may still end a suspended application, and the guest goes with it. The
+application records the background edge in a marker file and removes it on
+foregrounding; a launch that finds one says the guest restarted because
+Kernarium was closed in the background, once, until it is dismissed.
+
 ## Scripts
 
 Each script documents its options in `--help` or its header:

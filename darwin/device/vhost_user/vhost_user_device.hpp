@@ -105,6 +105,18 @@ public:
         std::size_t responseCapacity) = 0;
     virtual void reset() noexcept = 0;
     virtual void prepareReset() noexcept {}
+    /* Whether a request buffer on a disabled ring stays there until the ring
+     * is enabled again, rather than being completed empty at once. A guest
+     * suspends by disabling its rings and sends nothing after, so a device
+     * whose requests are asynchronous, like the GPU's, keeps what a late
+     * submission or a held request left behind and runs it in order after
+     * the resume. A device whose guest can wait for a request synchronously,
+     * as a console's output waits with interrupts off, must not: a buffer it
+     * never completes would hang the guest's suspend. */
+    [[nodiscard]] virtual bool keepsRequestsOnDisabledRing() const noexcept
+    {
+        return false;
+    }
     // Called only on the transport worker. Returned spans are borrowed until
     // reset; devices must release all retained guest state in reset().
     virtual void setGuestMapper(GuestMapper) {}

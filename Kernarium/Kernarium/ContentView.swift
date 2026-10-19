@@ -6,6 +6,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var serialConsole = SerialConsoleController()
     @ObservedObject private var launcher = EmulatorLauncher.shared
+    @ObservedObject private var backgroundSession = BackgroundSession.shared
     @State private var guestViewMode = GuestViewMode.defaultMode
     /// Whether the framebuffer holds the keyboard. Only the framebuffer
     /// mode sets it; the serial console's keyboard is its terminal's focus.
@@ -39,6 +40,12 @@ struct ContentView: View {
                 if case let .ended(result) = launcher.phase {
                     GuestEndedNotice(end: GuestRunEnd(result: result))
                         .padding()
+                } else if let restart = backgroundSession.restart {
+                    GuestRestartedNotice(restart: restart) {
+                        backgroundSession.dismissRestartNotice()
+                    }
+                    .padding()
+                    .frame(maxHeight: .infinity, alignment: .top)
                 }
             }
             floatingButtons
@@ -269,6 +276,40 @@ private struct GuestEndedNotice: View {
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("guestEndedNotice")
+    }
+}
+
+/// Shown over the guest views when the previous launch ended in the
+/// background and this launch's guest booted again. It stays until dismissed:
+/// the guest's boot is under way behind it, and what was running before is
+/// gone.
+private struct GuestRestartedNotice: View {
+    let restart: GuestRestart
+    let dismiss: () -> Void
+
+    var body: some View {
+        Button(action: dismiss) {
+            VStack(spacing: 8) {
+                Image(systemName: restart.systemName)
+                    .font(.title)
+                Text(restart.title)
+                    .font(.headline)
+                Text(restart.message)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
+                Text("Tap to dismiss")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(20)
+            .frame(maxWidth: 320)
+            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("guestRestartedNotice")
     }
 }
 
