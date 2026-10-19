@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <mach/mach.h>
 #include <pthread.h>
+#include <source_location>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -42,6 +43,19 @@ void nap(unsigned microseconds)
 	mach_wait_until(mach_absolute_time() +
 		static_cast<std::uint64_t>(microseconds) * 1000ULL * base.denom /
 		base.numer);
+}
+
+/* Holds, or stops the test saying why the fence could not. */
+void require_hold(ThreadFence &fence, unsigned budget_ms, const char *what,
+	const std::source_location location = std::source_location::current())
+{
+	if (fence.hold(budget_ms))
+		return;
+	const ThreadFence::Report &report = fence.report();
+	std::fprintf(stderr, "%s: failure %d after %u passes, %u deferred, "
+		"%u unsettled\n", what, report.failure, report.passes,
+		report.deferred, report.unsettled);
+	uml::testing::fail(what, location);
 }
 
 /* A thread that does a little work forever and says how much it has done. */
@@ -407,8 +421,10 @@ void a_thread_being_created_is_never_missed()
 	while (named.load() != 4)
 		nap(500);
 	ThreadFence fence;
+	unsigned stalls = 0;
 	for (int round = 0; round < 150; ++round) {
-		require(fence.hold(10000), "the fence must hold");
+		require_hold(fence, 10000, "the fence must hold");
+		stalls += fence.report().creator_stalls;
 		uml::runtime::KernelThreadSnapshot snapshot;
 		uml::runtime::snapshot_kernel_threads(snapshot);
 		require(snapshot.creator_count == 0,
@@ -435,6 +451,10 @@ void a_thread_being_created_is_never_missed()
 	spawning.stop.store(true);
 	for (auto &spawner : spawners)
 		spawner.join();
+	/* A creator waiting on a lock that a held thread owns is let go and tried
+	 * again; how often that happens depends on the load, so it is reported
+	 * and not required. */
+	std::printf("    creators let go to finish: %u\n", stalls);
 }
 
 struct Settling final {

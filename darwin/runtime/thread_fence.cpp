@@ -27,6 +27,12 @@ constexpr std::uintptr_t address_mask = 0x0000ffffffffffffULL;
 
 constexpr unsigned long long nanoseconds_per_millisecond = 1000000ULL;
 
+/* How long a thread may stay in the middle of `kernel_pthread_create` before
+ * the fence concludes that it is waiting for a lock a held thread owns. The
+ * thread library takes its own lock to start or join a thread, and a thread
+ * suspended while it owns that lock keeps a creator from ever finishing. */
+constexpr unsigned creator_patience_ms = 20;
+
 [[nodiscard]] unsigned long long now_ns() noexcept
 {
 	return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
@@ -35,6 +41,13 @@ constexpr unsigned long long nanoseconds_per_millisecond = 1000000ULL;
 void pause_briefly() noexcept
 {
 	const timespec delay{0, 200000};
+	(void)nanosleep(&delay, nullptr);
+}
+
+/* Long enough for a thread that has just been let go to run and finish. */
+void pause_for_creators() noexcept
+{
+	const timespec delay{0, 2000000};
 	(void)nanosleep(&delay, nullptr);
 }
 
@@ -215,6 +228,7 @@ bool ThreadFence::hold(unsigned budget_ms, Settled settled,
 	const thread_act_t self = mach_thread_self();
 	set_kernel_thread_reclaim_inhibited(true);
 	bool accepted = false;
+	unsigned long long creators_since = 0;
 	for (;;) {
 		++report_.passes;
 		Pass pass{};
@@ -231,11 +245,28 @@ bool ThreadFence::hold(unsigned budget_ms, Settled settled,
 			++report_.unsettled;
 			release_all();
 		}
+		/* A creator that is still unfinished after the patience has run out
+		 * is stuck behind something a held thread owns. Everything runs
+		 * again, which lets it finish, and the hold starts over. */
+		bool stalled = false;
+		if (registry_.creator_count == 0) {
+			creators_since = 0;
+		} else if (creators_since == 0) {
+			creators_since = now_ns();
+		} else if ((now_ns() - creators_since) / nanoseconds_per_millisecond >=
+			   creator_patience_ms) {
+			++report_.creator_stalls;
+			release_all();
+			creators_since = 0;
+			stalled = true;
+		}
 		if ((now_ns() - started) / nanoseconds_per_millisecond >= budget_ms) {
 			report_.failure = out_of_time;
 			break;
 		}
-		if (pass.deferred != 0 || pass.acquired == 0)
+		if (stalled)
+			pause_for_creators();
+		else if (pass.deferred != 0 || pass.acquired == 0)
 			pause_briefly();
 	}
 	(void)mach_port_deallocate(mach_task_self(), self);

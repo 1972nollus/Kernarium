@@ -1518,8 +1518,11 @@ run reach the same code. The order is the contract:
   listed. A thread is held only at a moment when neither its program counter
   nor any frame return address is in the allocator, the C library, the dynamic
   loader, the Objective-C runtime or the C++ ABI library, so it holds none of
-  their locks; otherwise it is let go and tried again. The kernel's commit and release calls are then
-  frozen, and the hold is refused while one is in flight. If every thread is
+  their locks; otherwise it is let go and tried again. A thread whose creation
+  of another stays unfinished is waiting for a lock a held thread owns (the
+  thread library's), so every thread is let go to let it finish and the hold
+  starts over. The kernel's commit and release calls are then frozen, and the
+  hold is refused while one is in flight. If every thread is
   not held within two seconds, or the registry overflowed, nothing is held,
   nothing is written, and the guest stays wired and resident. No code between
   the hold and the release allocates or writes to a stream.

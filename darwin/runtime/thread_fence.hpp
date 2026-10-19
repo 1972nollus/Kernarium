@@ -51,6 +51,9 @@ public:
 		unsigned deferred{};
 		/* Times `settled` refused. */
 		unsigned unsettled{};
+		/* Times a thread stayed in the middle of creating another until
+		 * everything was let go so that it could finish. */
+		unsigned creator_stalls{};
 		unsigned passes{};
 		/* Why the last `hold` failed, 0 when it did not. */
 		int failure{};
