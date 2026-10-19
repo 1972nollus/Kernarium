@@ -140,6 +140,9 @@ the view onto it, so touch resolution does not depend on the launch size. The
 Metal shader cache policy is in
 [`graphics.md`](../docs/graphics.md#metal-shader-cache).
 
+The guest view lies within the content the system leaves clear of the window
+controls: below them in a window, and unchanged in Full Screen Apps.
+
 ## Lifecycle
 
 Kernarium asks the guest to write back when the application loses focus,

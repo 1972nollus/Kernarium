@@ -132,6 +132,35 @@ final class KernariumUITests: XCTestCase {
         )
     }
 
+    /// In a window, iPadOS draws its window controls over the content's
+    /// top-left corner, where the guest's own status bar starts. The guest
+    /// view has to begin below them wherever the window sits and however big
+    /// it is. Full Screen Apps has no controls, and SpringBoard then shows
+    /// none, so there is nothing to clear.
+    @MainActor
+    func testGuestViewClearsTheWindowControls() throws {
+        let app = testApplication()
+        app.launch()
+
+        let guest = app.descendants(matching: .any)["framebufferView"]
+        XCTAssertTrue(guest.waitForExistence(timeout: 10))
+        let springboard = XCUIApplication(
+            bundleIdentifier: "com.apple.springboard"
+        )
+        let controls = springboard.descendants(matching: .any)[
+            "window-controls:com.imxieyi.Kernarium"
+        ]
+        guard controls.waitForExistence(timeout: 5) else {
+            throw XCTSkip("the window has no windowing controls to clear")
+        }
+        XCTAssertFalse(
+            guest.frame.intersects(controls.frame),
+            "the guest view \(guest.frame) lies under the window controls " +
+                "\(controls.frame)"
+        )
+        attachScreenshot(of: app, named: "guest-below-window-controls")
+    }
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.

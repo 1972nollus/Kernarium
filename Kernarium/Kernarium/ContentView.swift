@@ -41,6 +41,13 @@ struct ContentView: View {
                         .padding()
                 }
             }
+            // In a window, iPadOS draws its window controls over the top-left
+            // corner of the content, which would cover the guest's own top-left
+            // (Android's status bar). Pushing the guest below them is the
+            // system's job: it knows where the controls are for the window's
+            // placement, and it moves nothing in a full-screen layout, where
+            // there are none.
+            .containerCornerOffset(.top, sizeToFit: true)
             floatingButtons
         }
         .ignoresSafeArea(.keyboard)
