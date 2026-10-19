@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -153,7 +154,9 @@ void observeRequests(int descriptor, std::vector<std::string> &requests)
 		return;
 	requests.push_back(receiveRequest(descriptor, client, clientLength));
 
-	if (!awaitRequest(descriptor, 2500))
+	/* Past the host's wait for a suspend reply, so that a stop sent after
+	 * it gave up shows too. */
+	if (!awaitRequest(descriptor, 9500))
 		return;
 
 	requests.push_back(receiveRequest(descriptor, client, clientLength));
@@ -179,6 +182,94 @@ void aSuspendTimeoutCannotQueueLegacyStop()
 	observer.join();
 	require(suspension == ::uml::device::GuestSuspension::system);
 	require(requests == std::vector<std::string> {"suspend"});
+	(void)::close(server);
+}
+
+/* Answers each request in turn with the next scripted reply, an error flag
+ * and its text, the first one only after `firstDelay`, then records whatever
+ * else arrives shortly after, unanswered, so that a request too many shows in
+ * the list. A reply whose request gave up finds no socket, and its loss shows
+ * in the requests that follow. */
+void answerInOrder(int descriptor, std::chrono::milliseconds firstDelay,
+	std::vector<std::pair<std::uint32_t, std::string>> answers,
+	std::vector<std::string> &requests)
+{
+	sockaddr_un client {};
+	socklen_t clientLength {};
+	for (const auto &[error, answer] : answers) {
+		if (!awaitRequest(descriptor, 10000))
+			return;
+		requests.push_back(receiveRequest(descriptor, client, clientLength));
+		if (requests.size() == 1U)
+			std::this_thread::sleep_for(firstDelay);
+		Reply reply {error, 0U, static_cast<std::uint32_t>(answer.size()),
+			{}};
+		std::memcpy(reply.data.data(), answer.data(), answer.size());
+		(void)::sendto(descriptor, &reply, sizeof(reply), 0,
+			reinterpret_cast<const sockaddr *>(&client), clientLength);
+	}
+	while (awaitRequest(descriptor, 500))
+		requests.push_back(receiveRequest(descriptor, client, clientLength));
+}
+
+/* What a suspend-capable guest replies when it gave a suspend up. */
+const std::pair<std::uint32_t, std::string> failedSuspend {
+	1U, "Suspend failed: -16"};
+const std::vector<std::pair<std::uint32_t, std::string>> failThenStop {
+	failedSuspend, {0U, "SysRq : Emergency Sync"}, {0U, "stopped"}};
+
+/* A guest that gives a suspend up is stopped instead. */
+void aFailedSuspendFallsBackToStop()
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	const int server = bindServer(consolePath());
+	std::vector<std::string> requests;
+	std::thread observer {answerInOrder, server,
+		std::chrono::milliseconds {0}, failThenStop, std::ref(requests)};
+	const auto suspension = ::uml::device::suspend_guest(0U, 0U);
+	observer.join();
+	require(suspension == ::uml::device::GuestSuspension::managementStop);
+	require(requests ==
+		std::vector<std::string> {"suspend", "sysrq s", "stop"});
+	(void)::close(server);
+}
+
+/* The guest replies to a suspend only after syncing its filesystems, so a
+ * failure can arrive seconds after the request; the guest still runs then and
+ * is stopped instead. */
+void aLateSuspendFailureFallsBackToStop()
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	const int server = bindServer(consolePath());
+	std::vector<std::string> requests;
+	std::thread observer {answerInOrder, server,
+		std::chrono::milliseconds {3000}, failThenStop,
+		std::ref(requests)};
+	const auto suspension = ::uml::device::suspend_guest(0U, 0U);
+	observer.join();
+	require(suspension == ::uml::device::GuestSuspension::managementStop);
+	require(requests ==
+		std::vector<std::string> {"suspend", "sysrq s", "stop"});
+	(void)::close(server);
+}
+
+/* A kernel without the suspend command is stopped at once. */
+void aKernelWithoutSuspendIsStoppedAtOnce()
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	const int server = bindServer(consolePath());
+	std::vector<std::string> requests;
+	std::thread observer {answerInOrder, server,
+		std::chrono::milliseconds {0},
+		std::vector<std::pair<std::uint32_t, std::string>> {
+			{1U, "System suspend is not configured"},
+			{0U, "SysRq : Emergency Sync"}, {0U, "stopped"}},
+		std::ref(requests)};
+	const auto suspension = ::uml::device::suspend_guest(0U, 0U);
+	observer.join();
+	require(suspension == ::uml::device::GuestSuspension::managementStop);
+	require(requests ==
+		std::vector<std::string> {"suspend", "sysrq s", "stop"});
 	(void)::close(server);
 }
 
@@ -471,6 +562,15 @@ int main(int argc, char **argv)
 		require(std::filesystem::path {processLocation().directory}
 				.parent_path() == temporary.path());
 		aWakeSendsOneWakeRequest();
+		return EXIT_SUCCESS;
+	}
+	if (selected == "suspend-failure") {
+		const PrivateTemporaryDirectory temporary;
+		require(std::filesystem::path {processLocation().directory}
+				.parent_path() == temporary.path());
+		aFailedSuspendFallsBackToStop();
+		aLateSuspendFailureFallsBackToStop();
+		aKernelWithoutSuspendIsStoppedAtOnce();
 		return EXIT_SUCCESS;
 	}
 	if (selected == "suspend-timeout") {
