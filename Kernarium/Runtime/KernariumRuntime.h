@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 9U
+#define KERNARIUM_RUNTIME_API_VERSION 11U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -79,6 +79,16 @@ typedef void (*kernarium_runtime_set_console_output_callback_function)(
 typedef int (*kernarium_runtime_send_console_input_function)(
     const void* buffer,
     size_t length);
+/* Holds (nonzero) or releases (zero) every GPU request the guest makes, so
+ * none reaches the host GPU while it is held. A request that arrives waits in
+ * its virtqueue, through any suspend of the guest, and runs in order after the
+ * release. Work already in the renderer carries on. The application holds
+ * before it enters the background, where the host GPU is revoked within
+ * seconds, and releases when it returns. Returns 1 when the setting is in
+ * effect and no request was still running after one second, 0 when one was
+ * (the hold is in effect regardless), and -1 when no guest is running: the
+ * setting is kept and applies to the guest's GPU once it starts. */
+typedef int (*kernarium_runtime_set_gpu_hold_function)(int held);
 
 /* The application resolves only this versioned getter after loading exactly
  * one runtime framework. The table is immutable and remains valid until
@@ -99,6 +109,7 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_set_console_output_callback_function
         set_console_output_callback;
     kernarium_runtime_send_console_input_function send_console_input;
+    kernarium_runtime_set_gpu_hold_function set_gpu_hold;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)
@@ -108,7 +119,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v9(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v11(void);
 
 #ifdef __cplusplus
 }

@@ -1465,6 +1465,11 @@ pair. Guests that need writeback requests boot with magic SysRq enabled; if the
 physical iOS sandbox cannot bind the console, host-file flushing still runs but
 guest writeback and freeze are unavailable.
 
+An application that can be backgrounded holds the guest's GPU requests before it
+quiesces, with the runtime's `set_gpu_hold` (see the request gate under
+[devices](#devices-and-graphics)), and releases them before it resumes. The
+guest's rings stay disabled until the resume, and what it queued waits in them.
+
 The guest binds the management console as a Unix datagram socket and replies
 to each request's own bound socket, which the host places beside it. Both live
 in a directory the host passes as `uml_dir=`, under short fixed names, never

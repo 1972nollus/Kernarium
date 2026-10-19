@@ -190,7 +190,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->send_touch == nullptr ||
         api->send_key == nullptr ||
         api->set_console_output_callback == nullptr ||
-        api->send_console_input == nullptr) {
+        api->send_console_input == nullptr ||
+        api->set_gpu_hold == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -226,12 +227,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v9");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v11");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v8: %s\n",
+            "Kernarium: selected runtime lacks API v11: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -324,6 +325,12 @@ extern "C" void kernarium_runtime_loader_resume(void)
     const kernarium_runtime_api* runtime = api();
     if (runtime != nullptr)
         runtime->resume();
+}
+
+extern "C" int kernarium_runtime_loader_set_gpu_hold(int held)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -1 : runtime->set_gpu_hold(held);
 }
 
 extern "C" void kernarium_runtime_loader_send_touch(
