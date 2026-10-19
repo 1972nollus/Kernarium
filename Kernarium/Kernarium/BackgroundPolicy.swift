@@ -9,6 +9,10 @@ enum BackgroundMode: String, CaseIterable, Identifiable {
     /// Keep the guest running while its display shows in a Picture in Picture
     /// window, which iOS keeps alive for as long as the user leaves it open.
     case pictureInPicture
+    /// Keep the guest running for a time the user chose, which they start with
+    /// a button: iOS runs the app as a continued task and shows its progress.
+    /// The guest's graphics wait meanwhile, because iOS withholds the GPU.
+    case keepRunning
 
     var id: String { rawValue }
 
@@ -16,6 +20,7 @@ enum BackgroundMode: String, CaseIterable, Identifiable {
         switch self {
         case .off: "Pause the guest"
         case .pictureInPicture: "Keep running in Picture in Picture"
+        case .keepRunning: "Keep running for a set time"
         }
     }
 
@@ -28,6 +33,11 @@ enum BackgroundMode: String, CaseIterable, Identifiable {
             "The guest keeps running while its display shows in a small " +
                 "floating window. Close the window to pause the guest. This " +
                 "uses the battery as the guest does in the foreground."
+        case .keepRunning:
+            "Tap the keep running button, then leave Kernarium: the guest " +
+                "keeps working, with its graphics paused, until the time " +
+                "is up. iOS shows the progress and lets you stop it at any " +
+                "time."
         }
     }
 }
@@ -42,6 +52,15 @@ struct BackgroundSettings {
     /// "0" keeps the vCPUs at full priority while the guest is kept running,
     /// so a measurement can compare the two.
     static let throttleEnvironmentKey = "KERNARIUM_BACKGROUND_THROTTLE"
+    static let limitKeyPrefix = "background.limitMinutes."
+    /// Automation's way to run one launch with another time limit, in whole
+    /// minutes, so a test does not wait out a user's choice.
+    static let limitEnvironmentKey = "KERNARIUM_BACKGROUND_LIMIT_MINUTES"
+    /// The times offered for a kept-running job, and the one a guest has until
+    /// it chooses.
+    static let limitChoicesMinutes = [15, 30, 60, 120]
+    static let defaultLimitMinutes = 30
+    static let limitRangeMinutes = 1...(24 * 60)
 
     private let defaults: UserDefaults
     private let environment: [String: String]
@@ -67,6 +86,26 @@ struct BackgroundSettings {
     /// background priority. It does unless automation says otherwise.
     var throttlesKeptGuest: Bool {
         environment[Self.throttleEnvironmentKey] != "0"
+    }
+
+    /// How long a kept-running job lasts for this guest, in minutes.
+    func limitMinutes(forGuest guest: String) -> Int {
+        if let forced = environment[Self.limitEnvironmentKey].flatMap(Int.init),
+           Self.limitRangeMinutes.contains(forced) {
+            return forced
+        }
+        let stored = defaults.integer(forKey: Self.limitKeyPrefix + guest)
+        return Self.limitRangeMinutes.contains(stored) ?
+            stored : Self.defaultLimitMinutes
+    }
+
+    func setLimitMinutes(_ minutes: Int, forGuest guest: String) {
+        if minutes == Self.defaultLimitMinutes ||
+            !Self.limitRangeMinutes.contains(minutes) {
+            defaults.removeObject(forKey: Self.limitKeyPrefix + guest)
+        } else {
+            defaults.set(minutes, forKey: Self.limitKeyPrefix + guest)
+        }
     }
 
     func setMode(_ mode: BackgroundMode, forGuest guest: String) {
@@ -104,6 +143,10 @@ protocol BackgroundEffects: AnyObject {
     /// runs unseen, so it keeps going on a fraction of the power.
     func setBackgroundThrottle(_ enabled: Bool)
 
+    /// Whether the user started a job that iOS is running, so the app may keep
+    /// the guest running in the background without a window.
+    var jobActive: Bool { get }
+
     /// Whether iOS will start the Picture in Picture window as the app leaves.
     var pictureInPictureCanStart: Bool { get }
     var pictureInPictureActive: Bool { get }
@@ -136,6 +179,9 @@ final class BackgroundController {
         case awaitingPictureInPicture
         /// In the background, the guest running behind its window.
         case keptRunning
+        /// In the background, the guest running for a job the user started,
+        /// with the GPU held: iOS gives a continued task no GPU.
+        case jobRunning
         /// In the background with the guest paused.
         case quiesced
     }
@@ -182,9 +228,25 @@ final class BackgroundController {
             } else {
                 awaitPictureInPicture()
             }
-        case .off, .pictureInPicture:
+        case .keepRunning where effects.jobActive:
+            effects.flushGuest(until: deadline)
+            effects.setPageCacheTrimming(true)
+            phase = .jobRunning
+        case .off, .pictureInPicture, .keepRunning:
             quiesce(reason: "background", until: deadline)
         }
+    }
+
+    /// The job ended: its time ran out, the user stopped it, or iOS
+    /// expired it. In the background nothing keeps the process running any
+    /// more, so the guest pauses; in the foreground it carries on.
+    func jobDidEnd() {
+        guard phase == .jobRunning else { return }
+        effects.setPageCacheTrimming(false)
+        quiesce(
+            reason: "job ended",
+            until: DispatchTime.now() + Self.edgeBudget
+        )
     }
 
     /// The Picture in Picture window is on screen.
@@ -218,7 +280,7 @@ final class BackgroundController {
                 reason: "picture in picture closed",
                 until: DispatchTime.now() + Self.edgeBudget
             )
-        case .foreground, .quiesced:
+        case .foreground, .jobRunning, .quiesced:
             break
         }
     }
@@ -234,6 +296,9 @@ final class BackgroundController {
         endWait()
         if phase == .keptRunning {
             endKeptRunning()
+        }
+        if phase == .jobRunning {
+            effects.setPageCacheTrimming(false)
         }
         if gpuHeld {
             effects.releaseGuestGPU()

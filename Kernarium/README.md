@@ -222,8 +222,23 @@ background CPU limit fired. Taking guest CPUs offline (hot-unplug) would cap
 the core count outright and is the fallback if a hotter device or a longer
 window shows thermal pressure.
 
-The mode needs the `audio` background mode in `Info.plist`, which iOS requires
-for any Picture in Picture window, and an audio session of category playback
+The mode `keepRunning` keeps a guest working for a time its owner chose (15
+minutes to 2 hours, 30 by default) without a window. A timer button, offered
+only to a guest with the mode, starts the job on the user's tap: iOS wants a
+continued processing task to follow the user's own action, so nothing starts it
+by itself. `BackgroundJob` submits one `BGContinuedProcessingTask`, whose
+progress is the time used against the time chosen, and the system's progress
+card shows the time left and lets the user stop it. iOS grants this task no GPU
+on any device, so the guest's GPU requests stay held for the whole stay: a
+guest that only computes carries on, and one that draws waits for the return.
+The vCPUs are not throttled further, because iOS already runs the continued task
+at background priority. The job ends when its time is up, when the user stops
+it, or when iOS expires it; in the background that quiesces the guest, and in
+the foreground nothing changes. A job belongs to the mode, so choosing another
+mode ends it. `KERNARIUM_BACKGROUND_LIMIT_MINUTES` sets the time for one launch.
+
+The Picture in Picture mode needs the `audio` background mode in `Info.plist`,
+which iOS requires for any such window, and an audio session of category playback
 that mixes with other audio; the window sets the session as the application
 resigns active, because guest audio claims and drops it on its own terms. The
 application plays no sound of its own.
