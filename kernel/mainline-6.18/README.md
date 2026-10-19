@@ -498,12 +498,22 @@ signal nor a notification collected before the suspend ends it. A wake request
 that arrives while a suspend is still being entered, whether the host or the
 guest started it, is answered at once rather than left on the console, and it
 still ends that suspend: the PM core aborts at its next wakeup check, or the
-CPU does not go to sleep. A guest that is not suspending only answers it.
+CPU does not go to sleep. The PM core keeps every wakeup signaled since the
+suspend began, including one signaled while it syncs file systems, and a
+suspend whose sync saw one ends before it notifies or freezes anything; a
+guest that is not suspending only answers the request, and its next suspend
+discards that wakeup. A suspend the host asked for that ends with `-EBUSY`, as
+when one of the guest's own wake sources such as an RTC alarm fired while it
+was being entered, is entered again up to three more times; the host's wake
+ends the request instead, and a request that gives up replies `Suspend
+failed`.
 Virtio input is not a wake source, because a suspend disables its rings, so a
 host that forwards a power key also sends the wake. `guest-suspend-holds`
 keeps network, console and vhost-user traffic flowing through a suspend, sends
-early wakes, and wakes a suspend the guest entered by itself with a wake and
-with a power key typed on the VNC display.
+early wakes, one of them while a frozen file system holds the suspend's sync,
+fires an RTC alarm during a held sync of the host's suspend, which must still
+hold, and wakes a suspend the guest entered by itself with a wake and with a
+power key typed on the VNC display.
 
 Loadable modules remain disabled. The required guest filesystems, networking,
 Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM
