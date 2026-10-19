@@ -247,7 +247,7 @@ def build_spec(options: argparse.Namespace) -> dict[str, Any]:
     spec = {
         "suites": suites, "fraction_count": FRACTIONS,
         "cpus": CPUS, "memory": MEMORY, "engine": "jit",
-        "page_profile": options.page_profile,
+        "page_profile": "4k",
         "shard_timeout": options.shard_timeout,
         "guest_timeout": options.guest_timeout,
         "console_stall_timeout": options.console_stall_timeout,
@@ -286,7 +286,7 @@ def build_spec(options: argparse.Namespace) -> dict[str, Any]:
             inventory = (options.opengl_config_inventory_run if suite == "gl46"
                          else options.gles32_config_inventory_run).resolve()
             configs, digest, attributes = common.load_config_inventory_evidence(
-                inventory, suite, options.page_profile, "vnc", contract,
+                inventory, suite, "4k", "vnc", contract,
                 {key: spec[key] for key in ("emulator_sha256", "kosmickrisp_sha256")},
             )
             config_rows = [{"id": config.identifier,
@@ -369,7 +369,7 @@ def child_command(spec: dict[str, Any], shard: Shard, output: Path) -> list[str]
     command = [str(spec["interpreter"]),
                "-B", spec_runner(spec, shard.suite),
                "--qualification", "--fraction", f"{shard.index},{FRACTIONS}",
-               "--page-profile", spec["page_profile"], "--engine", "jit",
+               "--engine", "jit",
                "--cpus", str(CPUS), "--memory", MEMORY,
                "--shard-timeout", str(spec["shard_timeout"]),
                "--guest-timeout", str(spec["guest_timeout"]),
@@ -892,7 +892,7 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
         # the leaf validated rather than against one fixed renderer.
         common.validate_renderer_probe(
             artifacts["renderer.txt"].decode("utf-8"),
-            16384 if spec["page_profile"] == "16k" else 4096,
+            4096,
             item["renderer"],
             common.host_backend_label(item["renderer"]),
         )
@@ -1154,7 +1154,6 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                         help="verified run.json from Zink CTS-Configs.gl46 on these exact inputs")
     parser.add_argument("--gles32-config-inventory-run", type=Path,
                         help="verified run.json from CTS-Configs.es32 on these exact inputs")
-    parser.add_argument("--page-profile", choices=("16k", "4k"), default="4k")
     parser.add_argument("--jobs", type=common.positive_integer, default=MAX_JOBS,
                         help=f"concurrent owned guests, 1 through {MAX_JOBS} (default: {MAX_JOBS}); each is 4 CPU/4 GiB; "
                              "the floor when --jobs-file is given")

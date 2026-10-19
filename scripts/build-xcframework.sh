@@ -119,7 +119,6 @@ build_consumer()
 		-B "$consumer_dir" -G "$generator" \
 		-DCMAKE_TOOLCHAIN_FILE="$toolchain" \
 		-DUML_APPLE_PLATFORM="$platform" \
-		-DUML_EXPECTED_GUEST_PAGE_SIZE=4096 \
 		-DCMAKE_C_FLAGS:STRING= \
 		-DCMAKE_CXX_FLAGS:STRING= \
 		-DCMAKE_OBJC_FLAGS:STRING= \
@@ -158,7 +157,6 @@ build_slice()
 		-DUML_BUILD_GPU=OFF \
 		-DUML_BUILD_NETWORK_PROVIDER="$network_provider" \
 		-DUML_DEPENDENCY_PREFIX="$dependency_prefix" \
-		-DUML_GUEST_16K_PAGES=OFF \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_C_FLAGS:STRING= \
 		-DCMAKE_CXX_FLAGS:STRING= \

@@ -55,8 +55,8 @@ provider.
 
 ## Memory and executable code
 
-All products use a 128 TiB sparse software-MMU guest task range. The default
-guest page profile is 16 KiB; 4 KiB is a supported compatibility build. The
+All products use a 128 TiB sparse software-MMU guest task range and 4 KiB guest
+pages on the 16 KiB Apple host page. The
 native kernel window contains guest RAM plus a RAM-scaled auxiliary mapping
 allowance bounded between 1 GiB and 4 GiB, plus the fixed guarded aperture the
 kernel reserves for negotiated vhost-user shared-memory regions and its stub
@@ -151,13 +151,11 @@ dropped unmap leaves the host serving a freed page with no fault to repair it.
 A failed kernel map unmaps its own address for the same reason, degrading to
 "not mapped", which the fault path does repair.
 
-Kernel aliases are shared with the other views of their frames on both page
-profiles. The 16 KiB profile maps every `init_mm` slot as a whole host page,
-shared with the backing, so a vmalloc or vmap alias reads and writes the memory
-that the linear map, the user mappings and the devices reach. Under 4 KiB pages
-a 16 KiB host slot carries four `init_mm` PTEs, and only a slot whose four PTEs
+A 16 KiB host slot carries four `init_mm` PTEs, and only a slot whose four PTEs
 name one 16 KiB-aligned run of frames of a single backing, with one protection,
-is the same shared host page; an empty slot is unmapped in one call. Any other
+is the same shared host page, so a vmalloc or vmap alias of it reads and writes
+the memory that the linear map, the user mappings and the devices reach; an
+empty slot is unmapped in one call. Any other
 slot is a private copy of its frames that the host publishes and refreshes only
 at its synchronization points, so it is not coherent with the other aliases of
 those frames for as long as both live. vmalloc therefore aligns, rounds and
@@ -229,7 +227,7 @@ presets keep the native-VM bridge, for their tests. Kernarium uses versioned run
 copies only data and BSS into anonymous storage, and rejects a carrier
 mismatch, writable executable segments, or relocations into signed text. The app
 embeds every selectable framework, links none at launch, and loads exactly one
-guest flavour/page profile for the process lifetime. macOS retains its
+guest flavour for the process lifetime. macOS retains its
 unsigned embedded-loader path.
 
 The iOS device and iOS Simulator products build at an iOS 26.0 minimum. iOS
@@ -239,7 +237,7 @@ platform contract records the same 26.0 deployment target. macOS keeps the
 baseline each macOS product declares.
 
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
-arm64 userspace product uses the same accepted 16 KiB or 4 KiB mainline
+arm64 userspace product uses the same accepted mainline
 artifact on macOS and on the iOS device. The macOS x86_64 userspace
 product uses a separately identified 4 KiB mainline slice. Android uses a
 separate accepted 4 KiB artifact of the `android-6.18` family, built from the
@@ -465,7 +463,7 @@ from its head. The JIT's fused regions check both mappings before the
 monitor, and its semantic path keeps a software reservation; its ordinary
 stores clear the monitor, as the architecture permits.
 `arm64-exclusive-progress` and `arm64-tlb` check the gadget contract on both
-engines in both page profiles, and `guest-exclusive-progress-gadgets` and
+engines, and `guest-exclusive-progress-gadgets` and
 `guest-exclusive-progress-jit` check it in a guest.
 
 Both engines complete WFE and WFI at once and treat SEV and SEVL as no-ops,
@@ -1202,9 +1200,7 @@ kernel answers a 32-bit ELF file with `ENOEXEC` and `personality(PER_LINUX32)`
 with `EINVAL`. `cacheflush()` and a tracer's code writes reach the engines
 through `darwin_uml_vm_invalidate_code()`, as any other code write does, and
 the kuser helpers and signal-return pages are ordinary code pages the kernel
-installs in the task. A 16 KiB guest runs only 32-bit programs whose segments
-are 16 KiB congruent; others fail cleanly at exec or `dlopen`, so stock armhf
-userspace needs the 4 KiB profile. The
+installs in the task. The
 [shared kernel README](../kernel/common/README.md) holds the kernel side.
 
 One decoder serves every AArch32 consumer: `darwin/cpu/arm64/aarch32` decodes
@@ -1241,7 +1237,7 @@ compatibility keys.
 rootfs release, and producer tools. Kernel and rootfs releases are selected
 independently. Apple emulator builds consume only the Android kernel artifact;
 rootfs and command-line paths are launch inputs. The `uml-darwin-android17` product
-opens one directly writable supplied GPT and has no 16 KiB variant.
+opens one directly writable supplied GPT.
 
 Guest bundles, disk capacity, and compressed rootfs delivery belong to the
 application ([`../Kernarium/README.md`](../Kernarium/README.md)). Runtime

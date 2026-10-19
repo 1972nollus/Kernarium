@@ -22,8 +22,8 @@ scripts/              launch, packaging, bundle assembly, and automation tools
 
 ## Runtimes and runs
 
-Kernarium uses `6.18`-series runtime frameworks for 16 KiB Linux, 4 KiB Linux,
-and 4 KiB Android. Their names stay stable across patch releases and kernel
+Kernarium uses `6.18`-series runtime frameworks for Linux and Android, both
+with 4 KiB guest pages. Their names stay stable across patch releases and kernel
 commits, and each carries its kernel ELF in signed Mach-O `__TEXT` (see the
 [architecture](../docs/architecture.md#memory-and-executable-code)). The
 application embeds every framework, links none at launch, and loads exactly
@@ -35,10 +35,10 @@ application says how it ended and asks to be relaunched; it never starts a
 second run in the same process. The guest runs on the named `uml-launcher`
 thread, which leaves the main thread to UIKit and MetalKit.
 
-Kernarium defaults to 4 KiB Linux, the processor count `NSProcessInfo`
-reports, and 4 GiB of guest memory where the process is given the host's
-memory (Designed for iPad on a Mac) or 2 GiB on a physical device, whose jetsam
-limit a 4 GiB guest would cross. Android fixes the page profile at 4 KiB.
+Kernarium defaults to Linux, the processor count `NSProcessInfo` reports, and
+4 GiB of guest memory where the process is given the host's memory (Designed
+for iPad on a Mac) or 2 GiB on a physical device, whose jetsam limit a 4 GiB
+guest would cross.
 
 ## Guest storage
 
@@ -95,10 +95,10 @@ SDDM without autologin, beside the image's `getty@tty0`.
 ## Automation runs
 
 The release runtime accepts no host payload and carries no test campaign. The
-`kernarium-ios-device-automation` and `kernarium-ios-device-automation-4k`
-presets build the Linux runtimes with `UML_KERNARIUM_AUTOMATION_HARNESS`, and
-`scripts/package-ios-frameworks.sh --automation` packages them in place of
-the release ones. Only these read:
+`kernarium-ios-device-automation` preset builds the Linux runtime with
+`UML_KERNARIUM_AUTOMATION_HARNESS`, and
+`scripts/package-ios-frameworks.sh --automation` packages it in place of
+the release one. Only it reads:
 
 - `KERNARIUM_BOOT_PAYLOAD`, a plain file name in Documents: a padded newc
   segment of at most 64 MiB, written by `uml-initramfs`, that the runtime
@@ -154,7 +154,7 @@ Each script documents its options in `--help` or its header:
   on an Apple silicon Mac in Designed for iPad mode;
 - `package-ios-frameworks.sh` packages the selected runtime and graphics slices
   and the static GPT fdisk and zstd XCFrameworks for Xcode, with
-  `--automation` the automation Linux runtimes, and the host battery archive
+  `--automation` the automation Linux runtime, and the host battery archive
   only `KernariumTests` links;
 - `make-guest-bundle.py` assembles an Android `.kern` bundle from an installed
   release;

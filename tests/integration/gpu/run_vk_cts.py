@@ -46,7 +46,7 @@ RECEIPT_MANDATORY_PATH = (
 DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
 DEFAULT_RECEIPT_ROOTFS = REPO_ROOT / ".build/rootfs/rootfs-vulkan-venus.ext4"
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".build/vulkan-cts"
-DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration-4k/bin/uml-darwin"
+DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
 CASE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 FORBIDDEN_SOFTWARE_ICD = re.compile(
@@ -1831,7 +1831,7 @@ def plan_harness_command(
         build_guest_launcher(
             identity,
             selection,
-            page_size=16384 if options.page_profile == "16k" else 4096,
+            page_size=4096,
             timeout=options.shard_timeout,
             experimental_venus=options.experimental_venus,
             case_list=GUEST_CASE_LIST_PATH,
@@ -1925,7 +1925,7 @@ def plan_receipt_harness_command(
         build_receipt_guest_launcher(
             receipt,
             selection,
-            page_size=16384 if options.page_profile == "16k" else 4096,
+            page_size=4096,
             timeout=options.shard_timeout,
             progress_timeout=options.console_stall_timeout,
             use_wsi=uses_wsi,
@@ -2521,7 +2521,7 @@ def run_receipt_campaign(
 ) -> int:
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     artifact_directory = options.artifact_root.resolve() / (
-        f"{timestamp}-{os.getpid()}-{options.page_profile}-receipt-{selection.mode}"
+        f"{timestamp}-{os.getpid()}-4k-receipt-{selection.mode}"
     )
     command = build_receipt_harness_command(
         options, receipt, selection, artifact_directory
@@ -2549,7 +2549,7 @@ def run_receipt_campaign(
         "kosmickrisp_sha256": provider_sha256,
         "receipt_sha256": common.sha256_file(RECEIPT_PATH),
         "git": common.git_state(),
-        "page_profile": options.page_profile,
+        "page_profile": "4k",
         "engine": options.engine,
         "memory": options.memory,
         "cpus": options.cpus,
@@ -2770,7 +2770,6 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--case", action="append", type=exact_case, default=[])
     parser.add_argument("--family", type=exact_case)
     parser.add_argument("--fraction", type=parse_fraction, default=Fraction(0, 1))
-    parser.add_argument("--page-profile", choices=("16k", "4k"), default="4k")
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--cpus", type=int, default=10)
@@ -2870,7 +2869,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         raise SystemExit(str(error)) from error
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     artifact_directory = options.artifact_root.resolve() / (
-        f"{timestamp}-{os.getpid()}-{options.page_profile}-{selection.mode}"
+        f"{timestamp}-{os.getpid()}-4k-{selection.mode}"
     )
     command, guest_files = plan_harness_command(
         options, identity, selection, artifact_directory
@@ -2907,7 +2906,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "qualification": False,
         "experimental_venus": options.experimental_venus,
         "git": common.git_state(),
-        "page_profile": options.page_profile,
+        "page_profile": "4k",
         "engine": options.engine,
         "memory": options.memory,
         "cpus": options.cpus,

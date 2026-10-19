@@ -26,19 +26,13 @@ uml_add_guest_payload(UML_GUEST_EXCLUSIVE_PROGRESS_PROBE
         -Wl,-z,max-page-size=16384
         -Wl,-s)
 
-if(UML_GUEST_16K_PAGES)
-    set(_uml_exclusive_page_size 16384)
-else()
-    set(_uml_exclusive_page_size 4096)
-endif()
-
 foreach(_engine IN ITEMS gadgets jit)
     uml_add_guest_integration_test(
         NAME guest-exclusive-progress-${_engine}
         SCRIPT run_exclusive_progress.py
         ARGS --engine ${_engine}
             --probe ${UML_GUEST_EXCLUSIVE_PROGRESS_PROBE}
-            --page-size ${_uml_exclusive_page_size}
+            --page-size 4096
             --log "${CMAKE_CURRENT_BINARY_DIR}/exclusive-progress-${_engine}.log"
         LABELS guest;cpu;kernel;${_engine}
         TIMEOUT 420

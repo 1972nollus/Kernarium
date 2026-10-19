@@ -12,10 +12,6 @@ set_property(CACHE UML_KERNEL_PRODUCT PROPERTY STRINGS
 if(UML_KERNEL_PRODUCT STREQUAL "android-17")
     # Apple targets consume the Android kernel artifact only. Rootfs bundles
     # are selected at launch and are not inputs to the emulator build.
-    if(UML_GUEST_16K_PAGES)
-        message(FATAL_ERROR
-            "The Android 17 product supports only 4 KiB guest pages")
-    endif()
     add_subdirectory("${PROJECT_SOURCE_DIR}/android/lineage-24"
         "${CMAKE_CURRENT_BINARY_DIR}/android-lineage-24")
     set(UML_ACTIVE_KERNEL_ARTIFACT_TARGET
@@ -29,22 +25,17 @@ if(NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18")
         "UML_KERNEL_PRODUCT must be mainline-6.18 or android-17")
 endif()
 
-# The root rejects every slice other than arm64 and x86_64, and x86_64 with
-# 16 KiB pages. The descriptor only names the bundle; the import verifies the
-# bundle's own slice and page size against this configuration.
+# The root rejects every slice other than arm64 and x86_64. The descriptor
+# only names the bundle; the import verifies the bundle's own slice and page
+# size against this configuration.
 if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
     set(_uml_mainline_acceptance
         "${UML_KERNEL_LINE_ROOT}/slices/x86_64/artifacts/accepted-4k.env")
-    set(_uml_expected_page_size 4096)
-elseif(UML_GUEST_16K_PAGES)
-    set(_uml_mainline_acceptance
-        "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-16k.env")
-    set(_uml_expected_page_size 16384)
 else()
     set(_uml_mainline_acceptance
         "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-4k.env")
-    set(_uml_expected_page_size 4096)
 endif()
+set(_uml_expected_page_size 4096)
 uml_read_artifact_env(
     "${_uml_mainline_acceptance}"
     UML_KERNEL_ARTIFACT_DIRECTORY_NAME

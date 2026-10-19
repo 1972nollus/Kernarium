@@ -87,7 +87,6 @@ def launch(
             cpus=arguments.cpus,
             memory_mib=arguments.memory_mib,
             engine="gadgets",
-            page_size=4096,
             extra={"KERNARIUM_OVERLAY_SIZE_GIB": "1"},
         ),
         log,

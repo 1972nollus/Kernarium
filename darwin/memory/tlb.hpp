@@ -9,6 +9,10 @@
 
 namespace uml::memory {
 
+/* The guest runs 4 KiB pages inside the host's 16 KiB pages. */
+static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096,
+	"the guest page size is 4 KiB");
+
 enum class Access : std::uint32_t {
 	read,
 	write,

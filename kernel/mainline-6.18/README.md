@@ -687,8 +687,8 @@ only the compact runtime/support bundle, with the kernel image's DWARF
 stripped (see [Toolchain](#toolchain)). It never builds, fetches, or changes a
 source checkout. Use the script's `--help` for output and release options.
 
-`artifacts/accepted-16k.env` and `accepted-4k.env` select reviewed arm64 local
-publications below `.build/kernel/artifacts`.
+`artifacts/accepted-4k.env` selects the reviewed arm64 local publication below
+`.build/kernel/artifacts`.
 `slices/x86_64/artifacts/accepted-4k.env` independently selects the x86_64
 userspace publication. `artifacts/accepted-android-4k.env` selects the Android
 product's publication. Artifact identity includes the family and the slice, so

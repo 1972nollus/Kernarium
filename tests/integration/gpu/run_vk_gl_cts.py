@@ -4246,7 +4246,7 @@ def plan_harness_command(
             selection,
             options.seed,
             options.shard_timeout,
-            16384 if options.page_profile == "16k" else 4096,
+            4096,
             options.rootfs_contract,
             config_inventory_api=options.config_inventory,
             matrix=options.matrix_run,
@@ -5141,7 +5141,7 @@ def load_config_inventory_evidence(
             raise CampaignError("config-inventory CTS process failed")
         validate_renderer_probe(
             artifacts["renderer.txt"].decode("utf-8"),
-            16384 if page_profile == "16k" else 4096, renderer,
+            4096, renderer,
             host_backend_label(renderer),
         )
     return configs, digest, attributes
@@ -5509,7 +5509,6 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--egl-config-index", type=nonnegative_integer)
     parser.add_argument("--mustpass-config-index", type=nonnegative_integer,
                         help="authenticated must-pass XML configuration index")
-    parser.add_argument("--page-profile", choices=("16k", "4k"), default="4k")
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     parser.add_argument("--display", choices=("vnc", "native"), default="vnc")
     parser.add_argument(
@@ -5681,11 +5680,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     ):
         parser.error(identity["cts"]["qualification_blocker"])
     if options.emulator is None:
-        options.emulator = (
-            DEFAULT_EMULATOR
-            if options.page_profile == "16k"
-            else REPO_ROOT / ".build/presets/macos-integration-4k/bin/uml-darwin"
-        )
+        options.emulator = DEFAULT_EMULATOR
     try:
         receipt, contract = select_rootfs_contract(
             identity, options.rootfs_type, options.rootfs_receipt
@@ -5747,7 +5742,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             configs, config_digest, config_attributes = load_config_inventory_evidence(
                 options.config_inventory_run.resolve(),
                 options.matrix,
-                options.page_profile,
+                "4k",
                 options.display,
                 contract,
                 ({"emulator_sha256": sha256_file(options.emulator.resolve()),
@@ -5873,7 +5868,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     artifact_directory = options.artifact_root.resolve() / (
-        f"{timestamp}-{os.getpid()}-{options.page_profile}-{suffix}"
+        f"{timestamp}-{os.getpid()}-4k-{suffix}"
     )
     command = build_harness_command(options, selection, artifact_directory)
     if options.dry_run:
@@ -5924,7 +5919,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "adapter": "macos",
         "backend": host_backend_label(options.renderer),
         "renderer": options.renderer,
-        "page_profile": options.page_profile,
+        "page_profile": "4k",
         "engine": options.engine,
         "memory": options.memory,
         "cpus": options.cpus,
@@ -6155,7 +6150,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     summary_text = artifacts["summary.txt"].decode("utf-8", errors="strict")
     validate_renderer_probe(
         renderer_text,
-        16384 if options.page_profile == "16k" else 4096,
+        4096,
         options.renderer,
         host_backend_label(options.renderer),
     )

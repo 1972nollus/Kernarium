@@ -94,8 +94,6 @@ option(UML_BUILD_NETWORK_PROVIDER
 # OBJCXX-only options, among them the -fobjc-arc set above.
 enable_language(OBJCXX)
 
-option(UML_GUEST_16K_PAGES
-    "Build the kernel and static userspace MMU for 16 KiB guest pages" ON)
 set(UML_MAINLINE_KERNEL_SLICE "arm64" CACHE STRING
     "Mainline kernel userspace ISA slice")
 set_property(CACHE UML_MAINLINE_KERNEL_SLICE PROPERTY STRINGS arm64 x86_64)
@@ -104,10 +102,9 @@ if(NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64" AND
     message(FATAL_ERROR
         "UML_MAINLINE_KERNEL_SLICE must be arm64 or x86_64")
 endif()
-if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64" AND
-   (NOT UML_TARGET_MACOS OR UML_GUEST_16K_PAGES))
+if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64" AND NOT UML_TARGET_MACOS)
     message(FATAL_ERROR
-        "The x86_64 mainline kernel slice is a 4 KiB macOS product")
+        "The x86_64 mainline kernel slice is a macOS product")
 endif()
 if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64" AND
    (UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS))
@@ -116,14 +113,11 @@ if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64" AND
         "integration suites")
 endif()
 
-if(UML_GUEST_16K_PAGES)
-    set(UML_GUEST_PAGE_SIZE 16384)
-    set(UML_GUEST_PAGE_SHIFT 14)
-else()
-    set(UML_GUEST_PAGE_SIZE 4096)
-    set(UML_GUEST_PAGE_SHIFT 12)
-endif()
-if(NOT UML_GUEST_16K_PAGES AND UML_TARGET_MACOS AND
+# Every guest uses 4 KiB pages. The host page stays 16 KiB on Apple silicon,
+# and the code that maps a 4 KiB guest page inside it is host-page handling.
+set(UML_GUEST_PAGE_SIZE 4096)
+set(UML_GUEST_PAGE_SHIFT 12)
+if(UML_TARGET_MACOS AND
    (UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64" OR UML_BUILD_UNIT_TESTS))
     set(UML_BUILD_X86_64_GUEST ON)
 else()

@@ -16,7 +16,6 @@
 namespace {
 
 constexpr uint32_t fourKiB = 4096U;
-constexpr uint32_t sixteenKiB = 16384U;
 
 std::mutex selectionMutex;
 std::atomic<const kernarium_runtime_api*> selectedApi;
@@ -84,14 +83,7 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
 
 [[nodiscard]] NSString* pageVariant(uint32_t guestPageSize)
 {
-    switch (guestPageSize) {
-    case fourKiB:
-        return @"4K";
-    case sixteenKiB:
-        return @"16K";
-    default:
-        return nil;
-    }
+    return guestPageSize == fourKiB ? @"4K" : nil;
 }
 
 /* The flavour leads the framework name. Linux additionally requires a numeric

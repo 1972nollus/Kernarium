@@ -49,7 +49,7 @@ def load_probe(path: Path) -> bytes:
 def build_probe_script(payload: bytes, receipt: dict, page_size: int,
                        arguments: Sequence[str]) -> str:
     """The guest check around the probe, which is installed as a guest file."""
-    if page_size not in (4096, 16384):
+    if page_size != 4096:
         raise guest.SafetyError("unsupported guest page size")
     digest = hashlib.sha256(payload).hexdigest()
     identities = [cts._receipt_file(receipt, path) for path in (ICD_PATH, LIBRARY_PATH)]
@@ -89,7 +89,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--emulator", type=Path, required=True)
     parser.add_argument("--rootfs", type=Path, required=True)
     parser.add_argument("--probe", type=Path, required=True)
-    parser.add_argument("--page-size", type=int, choices=(4096, 16384), default=4096)
     parser.add_argument("--timeout", type=float, default=900)
     parser.add_argument("--artifact-root", type=Path,
                         default=guest.REPO_ROOT / ".build/vulkan-probes")
@@ -111,7 +110,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if probe_arguments[:1] == ["--"]:
         probe_arguments = probe_arguments[1:]
     script = guest.make_test_script(
-        [build_probe_script(payload, receipt, options.page_size, probe_arguments)],
+        [build_probe_script(payload, receipt, 4096, probe_arguments)],
         auto_poweroff=True, lower_filesystem_type="ext4")
     directory = options.artifact_root.resolve() / (
         time.strftime("%Y%m%d-%H%M%S-") + str(os.getpid()))
@@ -135,7 +134,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "schema_version": 1, "formal_conformance": False,
         "scope": "supplemental Vulkan behavioral regression, not CTS",
         "command": command, "cpus": 4, "memory": "4G",
-        "page_size": options.page_size, "probe": str(probe),
+        "page_size": 4096, "probe": str(probe),
         "probe_arguments": probe_arguments,
         "probe_sha256": hashlib.sha256(payload).hexdigest(),
         "emulator_sha256": receipt_contract.sha256_file(emulator),

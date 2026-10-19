@@ -597,7 +597,7 @@ class VkGlCtsToolingTests(unittest.TestCase):
                 cts.Selection(options.leaves["gles3"], (), 0, 1),
                 0,
                 900,
-                16384,
+                4096,
                 options.rootfs_contract,
             )
             self.assertIn("688cb152-ce4b-4ac4-9b5d-3def792791f3", launcher)
@@ -652,7 +652,7 @@ class VkGlCtsToolingTests(unittest.TestCase):
                 selection,
                 0,
                 900,
-                16384,
+                4096,
                 options.rootfs_contract,
                 renderer_backend="zink",
             )
@@ -1217,7 +1217,7 @@ x11_blanking=off
 OpenGL renderer string: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))
 """
         cts.validate_renderer_probe(valid)
-        cts.validate_renderer_probe(valid + "guest_page_size=16384\n", 16384)
+        cts.validate_renderer_probe(valid + "guest_page_size=4096\n", 4096)
         with self.assertRaisesRegex(cts.CampaignError, "4096-byte guest pages"):
             cts.validate_renderer_probe(valid + "guest_page_size=16384\n", 4096)
         other_host = valid.replace(
@@ -1268,7 +1268,7 @@ OpenGL renderer string: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)
         the client string, because those are what a check written for Zink over
         Venus can mistake for its own stack.
         """
-        recorded = """guest_page_size=16384
+        recorded = """guest_page_size=4096
 
 device=/dev/dri/card0
 drm_transport=/dev/dri/card0:/sys/bus/platform/drivers/virtio-uml
@@ -1295,13 +1295,13 @@ OpenGL compatibility profile renderer: virgl (zink Vulkan 1.4(Apple M1 Ultra (ME
 OpenGL ES profile renderer: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))
 """
         cts.validate_renderer_probe(
-            recorded, 16384, "virgl", cts.host_backend_label("virgl")
+            recorded, 4096, "virgl", cts.host_backend_label("virgl")
         )
         with self.assertRaisesRegex(
             cts.CampaignError, "Zink over Virtio-GPU Venus"
         ):
             cts.validate_renderer_probe(
-                recorded, 16384, "zink", cts.host_backend_label("zink")
+                recorded, 4096, "zink", cts.host_backend_label("zink")
             )
 
     def test_native_x11_setup_separates_display_driver_and_wayland(self) -> None:
@@ -1635,7 +1635,7 @@ native_display_cleanup
             selection,
             seed=7,
             timeout=300,
-            guest_page_size=16384,
+            guest_page_size=4096,
             rootfs_contract=erofs_contract(),
         )
         self.assertIn(leaf.path, launcher)
@@ -1654,7 +1654,7 @@ native_display_cleanup
         self.assertIn("pgrep -x Xvfb", launcher)
         self.assertIn("/dev/dri/renderD128", launcher)
         self.assertIn("guest_page_size=", launcher)
-        self.assertIn("does not match 16384", launcher)
+        self.assertIn("does not match 4096", launcher)
         self.assertIn("UML_CTS_ARTIFACT_BEGIN", launcher)
         self.assertIn("systemctl poweroff", launcher)
         self.assertNotIn("apt ", launcher)
@@ -1676,7 +1676,7 @@ native_display_cleanup
             ),
             seed=7,
             timeout=300,
-            guest_page_size=16384,
+            guest_page_size=4096,
             rootfs_contract=erofs_contract(),
         )
         self.assertIn(
@@ -1697,7 +1697,7 @@ native_display_cleanup
             selection,
             seed=7,
             timeout=300,
-            guest_page_size=16384,
+            guest_page_size=4096,
             rootfs_contract=erofs_contract(),
             artifact_transport="virtio-serial",
         )
@@ -1727,14 +1727,14 @@ native_display_cleanup
                 selection,
                 7,
                 300,
-                16384,
+                4096,
                 erofs_contract(),
                 artifact_transport="virtiofs",
             )
 
     def test_inventory_launcher_scopes_the_real_display_to_gles(self) -> None:
         launcher = cts.build_guest_launcher(
-            None, 0, 900, 16384, erofs_contract()
+            None, 0, 900, 4096, erofs_contract()
         )
         self.assertIn("--deqp-runmode=txt-caselist", launcher)
         self.assertIn(
@@ -1797,7 +1797,7 @@ native_display_cleanup
             None,
             0,
             900,
-            16384,
+            4096,
             erofs_contract(),
             config_inventory_api="gles3",
         )
@@ -1914,7 +1914,7 @@ native_display_cleanup
                         selection,
                         options.seed,
                         options.shard_timeout,
-                        16384,
+                        4096,
                         options.rootfs_contract,
                         matrix=options.matrix_run,
                         renderer_backend=backend,
@@ -2005,7 +2005,7 @@ native_display_cleanup
                 matrix.selection,
                 options.seed,
                 options.shard_timeout,
-                16384,
+                4096,
                 options.rootfs_contract,
                 matrix=matrix,
             )
@@ -2393,16 +2393,6 @@ native_display_cleanup
                 )
         finally:
             sys.stderr = old_stderr
-
-    def test_page_profile_selects_the_matching_default_emulator(self) -> None:
-        options = cts.parse_arguments(
-            ["--leaf", "gles3", "--api", "gles3", "--page-profile", "4k"]
-        )
-        self.assertIn("macos-integration-4k", str(options.emulator))
-        options = cts.parse_arguments(
-            ["--leaf", "gles3", "--api", "gles3", "--page-profile", "16k"]
-        )
-        self.assertEqual(options.emulator, cts.DEFAULT_EMULATOR)
 
     def test_harness_installs_its_launcher_and_service_as_guest_files(
         self,
@@ -3016,7 +3006,7 @@ class WaiverTests(unittest.TestCase):
 
         digest = hashlib.sha256(xml.encode("utf-8")).hexdigest()
         launcher = cts.build_guest_launcher(
-            matrix.selection, 1, 300, 16384, erofs_contract(),
+            matrix.selection, 1, 300, 4096, erofs_contract(),
             matrix=matrix, renderer_backend="zink", waiver_sha256=digest,
         )
         self.assertIn(
@@ -3025,7 +3015,7 @@ class WaiverTests(unittest.TestCase):
         self.assertIn(digest, launcher)
         self.assertIn("waiver list identity changed", launcher)
         unwaived = cts.build_guest_launcher(
-            matrix.selection, 1, 300, 16384, erofs_contract(),
+            matrix.selection, 1, 300, 4096, erofs_contract(),
             matrix=matrix, renderer_backend="zink",
         )
         self.assertNotIn("--deqp-waiver-file", unwaived)
@@ -3038,14 +3028,14 @@ class WaiverTests(unittest.TestCase):
                 cts.CampaignError, "waiver list needs"
             ):
                 cts.build_guest_launcher(
-                    matrix.selection, 1, 300, 16384, erofs_contract(),
+                    matrix.selection, 1, 300, 4096, erofs_contract(),
                     renderer_backend="zink", **arguments,
                 )
 
     def test_busy_stall_bound_keeps_a_computing_case_and_cuts_a_wedged_one(self) -> None:
         matrix = self.matrix()
         busy = cts.build_guest_launcher(
-            matrix.selection, 1, 300, 16384, erofs_contract(),
+            matrix.selection, 1, 300, 4096, erofs_contract(),
             matrix=matrix, renderer_backend="zink", progress_timeout=600,
             progress_busy_timeout=3600,
         )
@@ -3063,7 +3053,7 @@ class WaiverTests(unittest.TestCase):
         self.assertIn('[ "$idle_seconds" -ge "$progress_timeout" ]', busy)
         self.assertIn('[ "$stalled_seconds" -ge "$progress_busy_timeout" ]', busy)
         plain = cts.build_guest_launcher(
-            matrix.selection, 1, 300, 16384, erofs_contract(),
+            matrix.selection, 1, 300, 4096, erofs_contract(),
             matrix=matrix, renderer_backend="zink", progress_timeout=600,
         )
         self.assertIn("progress_busy_timeout=0\n", plain)
@@ -3073,7 +3063,7 @@ class WaiverTests(unittest.TestCase):
                 cts.CampaignError, "busy stall bound"
             ):
                 cts.build_guest_launcher(
-                    matrix.selection, 1, 300, 16384, erofs_contract(),
+                    matrix.selection, 1, 300, 4096, erofs_contract(),
                     matrix=matrix, renderer_backend="zink", progress_timeout=600,
                     progress_busy_timeout=bound,
                 )

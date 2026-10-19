@@ -62,8 +62,6 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--memory-mib", type=int, default=1536)
     parser.add_argument("--engine", choices=("gadgets", "jit"),
                         default="gadgets")
-    parser.add_argument("--page-size", type=int, choices=(4096, 16384),
-                        default=4096)
     parser.add_argument("--timeout", type=int, default=3600)
     parser.add_argument("--stall-timeout", type=int, default=900)
     parser.add_argument("--install-timeout", type=int, default=600)
@@ -131,7 +129,6 @@ def main(argv: list[str] | None = None) -> int:
         cpus=options.cpus,
         memory_mib=options.memory_mib,
         engine=options.engine,
-        page_size=options.page_size,
     )
     log = artifact / "console.log"
     started = time.monotonic()
@@ -156,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
             "cpus": options.cpus,
             "memory_mib": options.memory_mib,
             "engine": options.engine,
-            "page_size": options.page_size,
+            "page_size": 4096,
             "upper": options.upper,
         },
         "workload_status": status,

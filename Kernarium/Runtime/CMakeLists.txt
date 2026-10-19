@@ -16,8 +16,7 @@ get_target_property(_kernarium_artifact_family
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_ARTIFACT_FAMILY)
 get_target_property(_kernarium_kernel_image
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_IMAGE)
-# The import verified the artifact as release series 6.18 with this
-# configuration's page size, and admits Android only with 4 KiB pages.
+# The import verified the artifact as release series 6.18 with 4 KiB pages.
 if(_kernarium_artifact_family STREQUAL "android-6.18")
     set(KERNARIUM_RUNTIME_ANDROID_GUEST 1)
     set(KERNARIUM_RUNTIME_GUEST_FLAVOR
@@ -31,11 +30,7 @@ else()
         "KernariumRuntime requires the mainline-6.18 or Android 17 artifact")
 endif()
 set(KERNARIUM_KERNEL_RELEASE_COMPONENT 6_18)
-if(UML_GUEST_16K_PAGES)
-    set(KERNARIUM_KERNEL_PAGE_VARIANT 16K)
-else()
-    set(KERNARIUM_KERNEL_PAGE_VARIANT 4K)
-endif()
+set(KERNARIUM_KERNEL_PAGE_VARIANT 4K)
 # The application matches an embedded framework by name before it dares load
 # one, so the guest flavour has to lead the identity rather than trail it: a
 # trailing marker would leave the Android framework matching the Linux
