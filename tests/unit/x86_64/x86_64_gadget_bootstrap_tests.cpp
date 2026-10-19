@@ -742,12 +742,10 @@ template<typename Body>
 			"a moving code-change sequence never reached the page stamp");
 }
 
-/* A native program owes one code-change publication per executable page it
- * stores into. Suppressing a later store to a page it has already published is
- * deliberate -- the published record is page granular, and the writer cools its
- * own cached blocks by exact range on every store -- but a store to a
- * different page has no record of its own, and the page stamp another vCPU
- * validates against never moves.
+/* A native program owes one code-change publication per store to an
+ * executable page that holds cached code, to the page it published last or to
+ * another: the page stamp another vCPU validates against moves only with a
+ * publication, and that vCPU may have revalidated between two stores.
  */
 [[nodiscard]] bool slow_executable_writes_publish_every_code_page()
 {
@@ -763,14 +761,14 @@ template<typename Body>
 		&context, 0x800, bytes.data(), bytes.size());
 	const auto second = gadgets::uml_x86_64_gadget_bulk_store(
 		&context, 0x1800, bytes.data(), bytes.size());
-	/* And back inside the page just published, which still owes nothing. */
+	/* And back inside the page just published, which owes its own record. */
 	const auto repeated = gadgets::uml_x86_64_gadget_bulk_store(
 		&context, 0x1820, bytes.data(), bytes.size());
 	return expect(first == 1 && second == 1 && repeated == 1,
 		"slow executable stores did not complete") &&
-		expect(memory.invalidations() == 2 &&
-			context.code_publications == 2,
-			"a slow store to a second code page published nothing") &&
+		expect(memory.invalidations() == 3 &&
+			context.code_publications == 3,
+			"a slow store to a code page published nothing") &&
 		expect(memory.byte(0x800) == 0x55 && memory.byte(0x1800) == 0x55 &&
 			memory.byte(0x1820) == 0x55,
 			"slow executable stores lost guest bytes");
@@ -799,10 +797,10 @@ template<typename Body>
 }
 
 /* The same rule on the engine's own path, where the write translation carries
- * the decision: cold, through the miss handler, and warm, where a repeat store
- * to an already-published page skips the publication call outright. The middle
- * store is a vector form, which the ordinary bank serves, so the register-baked
- * bank and the hand-written one each have to cross a page here.
+ * the decision: cold, through the miss handler, and warm, where the write
+ * translation already knows the page holds code. The middle store is a vector
+ * form, which the ordinary bank serves, so the register-baked bank and the
+ * hand-written one each have to cross a page here.
  */
 [[nodiscard]] bool native_executable_stores_publish_every_code_page()
 {
@@ -854,11 +852,9 @@ template<typename Body>
 			"two-page publication block lost its guest stores");
 }
 
-/* A publication is owed once per page per program, and a program ends where a
- * followed link settles its publications with the address space and clears
- * what it owes. The page it published must stop counting as published there
- * too, or the rule quietly becomes once per page per native run and a store
- * after the link inherits a record it was never covered by.
+/* A store owes a publication, and a followed link settles the publications of
+ * the stores before it with the address space and clears what is owed. A store
+ * after the link owes its own, however the page stood before it.
  */
 [[nodiscard]] bool a_settled_link_owes_its_page_a_fresh_publication()
 {
@@ -2474,7 +2470,11 @@ read_test_sequences(void *context) noexcept
 			"instruction");
 }
 
-[[nodiscard]] bool executable_store_publishes_code_change()
+/* Both stores of a block publish, though they share a page and nothing
+ * separates them: another vCPU that revalidated a block of the page after the
+ * first would keep the bytes it read until the second moved the stamp again.
+ */
+[[nodiscard]] bool executable_stores_publish_a_code_change_each()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2499,8 +2499,9 @@ read_test_sequences(void *context) noexcept
 	return expect(result.event == uml::cpu::EngineEvent::system_call &&
 		result.retired_instructions == 3 && cpu.rip == 9,
 		"non-overlapping executable stores did not stay in one native block") &&
-		expect(memory.invalidations() == 1,
-			"batched executable stores did not publish one code change") &&
+		expect(memory.invalidations() == 2,
+			"a second executable store to a code page published "
+			"nothing") &&
 		expect(memory.byte(0x800) == 0x7f && memory.byte(0x801) == 0x6e,
 			"batched executable stores did not update guest memory");
 }
@@ -2752,7 +2753,7 @@ read_test_sequences(void *context) noexcept
 			"code-write successor reset lost the guest store");
 }
 
-[[nodiscard]] bool slow_executable_writes_publish_once_per_native_run()
+[[nodiscard]] bool slow_executable_writes_publish_every_store()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2770,11 +2771,9 @@ read_test_sequences(void *context) noexcept
 		&context, 0x810, second.data(), second.size());
 	return expect(first_result == 1 && second_result == 1,
 		"slow executable stores did not complete") &&
-		expect(memory.invalidations() == 1 &&
-			context.code_publications == 1,
-			"slow executable stores repeated one native publication") &&
-		expect(memory.executable_queries() == 1,
-			"published slow store repeated its executable-page probe") &&
+		expect(memory.invalidations() == 2 &&
+			context.code_publications == 2,
+			"a second slow store to a published page published nothing") &&
 		expect(memory.byte(0x800) == 0x55 && memory.byte(0x810) == 0xaa,
 			"slow executable stores lost guest bytes");
 }
@@ -4251,6 +4250,27 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 			cpu.gpr(Register::rax) == 7 &&
 			cpu.gpr(Register::rdx) == 0,
 		"XGETBV did not agree with the CPUID XSAVE feature mask");
+}
+
+/* CPUID serializes, so it is a code-change checkpoint: the run leaves after
+ * it, with the instructions behind it unrun, and the runtime revalidates what
+ * it selects for them. */
+[[nodiscard]] bool cpuid_leaves_the_run()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x0f, 0xa2,       // cpuid
+		0x0f, 0x05,       // syscall
+	});
+	const auto built = require_built(
+		gadgets::build(memory, 0, ExecutionMode::long64, 64),
+		"CPUID block did not build");
+	CpuState cpu{};
+	const auto result = gadgets::execute(built.program, cpu, memory, 64);
+	return expect(result.event == uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == 1 && cpu.rip == 2,
+		"CPUID did not leave the run for the instruction after it");
 }
 
 [[nodiscard]] bool wrap_compat32_instruction_pointer()
@@ -10897,13 +10917,13 @@ int main(int argc, char **argv)
 		budget_limited_replay_matches_the_whole_block() &&
 		budget_limited_replay_ignores_rewritten_guest_code() &&
 		budget_limited_replay_faults_where_the_block_does() &&
-		executable_store_publishes_code_change() &&
+		executable_stores_publish_a_code_change_each() &&
 		store_publishes_only_where_some_executor_caches_code() &&
 		overlapping_executable_store_stops_immediately() &&
 		executable_store_links_only_to_unchanged_code() &&
 		distant_code_write_cools_its_linked_block() &&
 		code_write_resets_unvalidated_successors() &&
-		slow_executable_writes_publish_once_per_native_run() &&
+		slow_executable_writes_publish_every_store() &&
 		execute_scalar_control_flow() &&
 		materialized_flags_match_the_reference() &&
 		carry_branches_match_the_reference() &&
@@ -10929,6 +10949,7 @@ int main(int argc, char **argv)
 		execute_long64_interrupt_return_operand_sizes() &&
 		interrupt_return_masks_user_flags() &&
 		expose_consistent_xsave_cpuid_state() &&
+		cpuid_leaves_the_run() &&
 		wrap_compat32_instruction_pointer() &&
 		execute_compat32_tls_segment() &&
 		reject_program_mode_mismatch() &&

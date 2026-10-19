@@ -319,8 +319,9 @@ if(TARGET uml_gpu_display)
         uml_add_gpu_unit_test(gpu-native-metal-presentation
             uml_gpu_metal_presentation_tests metal_presentation_tests.mm
             LIBRARIES uml_gpu_display
-                "-framework AppKit" "-framework Metal"
-                "-framework MetalKit" "-framework QuartzCore"
+                "-framework AppKit" "-framework CoreVideo"
+                "-framework Metal" "-framework MetalKit"
+                "-framework QuartzCore"
             INCLUDES ${_uml_gpu_device_directory}
             UNIT_DIRECTORY TIMEOUT 90)
         set_tests_properties(gpu-native-metal-presentation PROPERTIES

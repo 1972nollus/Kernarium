@@ -175,6 +175,59 @@ application records the background edge in a marker file and removes it on
 foregrounding; a launch that finds one says the guest restarted because
 Kernarium was closed in the background, once, until it is dismissed.
 
+### Keeping a guest running in the background
+
+A guest pauses in the background unless its owner chose otherwise. Settings
+holds one mode per guest, stored under the guest's root filesystem name, and
+`off` is the default and the only mode of a guest that never chose: running
+costs battery, so it is opt-in. `BackgroundController` decides what the
+lifecycle edges do and acts only through `BackgroundEffects`, which the
+unit tests replace.
+
+The mode `pictureInPicture` keeps the guest running while iOS shows its
+display in a Picture in Picture window, which iOS keeps alive for as long as the
+user leaves it open. The window shows the guest's real display: the runtime
+mirrors the display it already renders to a sink the application sets
+(`kernarium_runtime_loader_set_frame_sink`, see
+[`graphics.md`](../docs/graphics.md)), and the application feeds those frames
+to an `AVSampleBufferDisplayLayer`. While a guest has the mode, the mirror runs
+at a trickle in the foreground so the layer always holds a current picture, and
+iOS starts the window by itself as the user leaves the application; it runs at
+a glanceable rate while the window is up. A guest without the mode renders no
+mirror frames.
+
+The edges, in order, with the host GPU held from the first so no request
+reaches it while it is revoked:
+
+- Leaving the application holds the GPU and writes the guest back. A window
+  that is up, or that iOS has begun to show, keeps the guest running and the
+  GPU is released; one that does not appear within three seconds, fails to
+  start, or is closed in the background quiesces the guest as an unchosen mode
+  would.
+- Returning releases the GPU, resumes a guest that was quiesced, and closes the
+  window if it is still up.
+- While a guest is kept running its vCPU threads run at the system's background
+  priority (`set_background_throttle`): low priority, the efficiency cores, and
+  throttled I/O for those threads only. It returns them to full priority before
+  anything else is asked of the guest, so a quiesce is not throttled.
+
+The throttle moves the work to the efficiency cores rather than removing
+cores: on an A15 iPad, a KDE guest with six vCPUs running a six-thread load
+for 240 s behind the window drew about a tenth of the estimated power it
+drew unthrottled (about 0.2 W against 2.0 W, with no performance-core time),
+and ran at about a third of its foreground rate. Process CPU time fell only
+about 16%. Over that window iOS showed no reaction: the process kept its
+foreground-focal CPU role, the thermal state stayed nominal, and no
+background CPU limit fired. Taking guest CPUs offline (hot-unplug) would cap
+the core count outright and is the fallback if a hotter device or a longer
+window shows thermal pressure.
+
+The mode needs the `audio` background mode in `Info.plist`, which iOS requires
+for any Picture in Picture window, and an audio session of category playback
+that mixes with other audio; the window sets the session as the application
+resigns active, because guest audio claims and drops it on its own terms. The
+application plays no sound of its own.
+
 ## Scripts
 
 Each script documents its options in `--help` or its header:

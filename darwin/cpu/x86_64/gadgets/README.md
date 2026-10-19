@@ -765,28 +765,27 @@ guarantees:
 - counting a page in or out never sleeps: the counts are guarded in 64 stripes
   by the word-sized lock the MMU uses.
 
-A native program owes one publication per page it stores into, and a store
-spanning a page boundary owes both of them. The record a publication leaves is
-the whole page's -- the page stamp moves, and the code-change range is the page
--- so a further store inside the page this program last published owes nothing;
-the program still cools its own overlapping cached blocks by exact range on
-every executable store. A store to any other page has no record at all, and
-because a page stamp is moved only by a publication, another vCPU validating
-against that stamp would keep its translation of the rewritten page
-indefinitely. The program therefore carries the page it last published, and a
-store whose page differs owes a publication again. A program alternating
-between two code pages pays one per store; a JIT patching two call sites, a
-code copy crossing a page and a relocating loader each pay one per page they
-touch.
+Every store to a page that holds cached code owes a publication of its own,
+and the program performs it before its next store. The record a publication
+leaves is the whole page's -- the page stamp moves, and the code-change range
+is the page -- but a stamp certifies only the bytes read after it was taken.
+Another vCPU may revalidate a block of the page between two stores of one
+program, and a second store that moved no stamp would leave it running the
+bytes it read between them: a thread that patches two instructions of a
+function and then flags that it is done would find the other vCPUs on the
+first patch only. A program that patches a page store by store therefore pays
+one publication per store. A store spanning a page boundary owes both pages
+its record, and the writer cools its own overlapping cached blocks by exact
+range on every executable store.
 
-A store translation settles both questions while it resolves the address --
-whether this page owes a record, and whether the store may skip the
-publication call altogether -- because reading the context after the guest
-store costs a memory-disambiguation stall. Only the common answer stays in the
-hot instruction stream: `write_code` is none, pending or published and only
+A store translation settles whether the store owes a record while it resolves
+the address, because reading the context after the guest store costs a
+memory-disambiguation stall. Only the common answer stays in the hot
+instruction stream: `write_code` is none, pending or published and only
 pending is work, so its low bit answers for it and joins the TLB entry's
 cached-code bit in a single test, while the arm that takes a record for a page
-some executor holds a translation of sits in the cold section.
+some executor holds a translation of sits in the cold section and marks every
+such store pending.
 
 `finish_store` performs the guest store before its publication call, and
 `GuestAddressSpace::invalidate_code` moves the page stamp before publishing the
@@ -830,7 +829,8 @@ matched guest memory at an instant inside the validation, and every change
 published up to the sequence the cache was prepared with had landed before
 that instant. A store still in flight reaches the vCPU at its next code-change
 checkpoint, which is where the x86 cross-modifying-code protocol requires an
-executing processor to look. A moved mapping sequence or a raised execution
+executing processor to look: a system call, CPUID, or an IRET, each of which
+leaves the native run so that the runtime revalidates what it selects next. A moved mapping sequence or a raised execution
 interrupt still abandons the validation: those say the memory being read
 through is being replaced, or that this vCPU has been asked to leave, and no
 page stamp describes either.
