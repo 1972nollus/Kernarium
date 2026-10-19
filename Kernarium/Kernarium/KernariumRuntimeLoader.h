@@ -39,6 +39,18 @@ void kernarium_runtime_loader_resume(void);
  * kernarium_runtime_set_gpu_hold_function. Returns the runtime's answer, or -1
  * when no runtime is loaded. */
 int kernarium_runtime_loader_set_gpu_hold(int held);
+/* Moves the guest's vCPU threads to (nonzero) or from (zero) the system's
+ * background policy; see kernarium_runtime_set_background_throttle_function.
+ * Returns the number of threads changed, or -1 when no runtime is loaded. */
+int kernarium_runtime_loader_set_background_throttle(int enabled);
+/* Mirrors the guest's display to `sink`, or stops the mirror for a null sink;
+ * see kernarium_runtime_set_frame_sink_function. Returns the runtime's answer,
+ * or -1 when no runtime is loaded. */
+int kernarium_runtime_loader_set_frame_sink(
+    _Nullable kernarium_runtime_frame_sink sink,
+    void* _Nullable context,
+    uint32_t maximum_width,
+    uint32_t frames_per_second);
 void kernarium_runtime_loader_send_touch(
     uint32_t x,
     uint32_t y,

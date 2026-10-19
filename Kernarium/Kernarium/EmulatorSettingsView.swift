@@ -12,6 +12,7 @@ struct EmulatorSettingsView: View {
     @State private var retinaMode: Bool
     @State private var autoResizeGuest: Bool
     @State private var androidBootMode: AndroidBootMode
+    @State private var backgroundMode: BackgroundMode
 
     private let maximumVCPUCount: Int
     private let defaults: UserDefaults
@@ -56,6 +57,18 @@ struct EmulatorSettingsView: View {
         _retinaMode = State(initialValue: configuration.retinaMode)
         _autoResizeGuest = State(initialValue: configuration.autoResizeGuest)
         _androidBootMode = State(initialValue: configuration.androidBootMode)
+        _backgroundMode = State(
+            initialValue: BackgroundSettings(defaults: defaults)
+                .mode(forGuest: configuration.rootfsFilename)
+        )
+    }
+
+    /// The window is offered only where iOS can show it; a guest that already
+    /// chose it keeps showing as chosen.
+    private var offeredBackgroundModes: [BackgroundMode] {
+        BackgroundMode.allCases.filter {
+            $0 == .off || $0 == backgroundMode || GuestPictureInPicture.isSupported
+        }
     }
 
     var body: some View {
@@ -134,6 +147,26 @@ struct EmulatorSettingsView: View {
                     )
                 }
 
+                Section("Background") {
+                    Picker(
+                        "When Kernarium is in the background",
+                        selection: $backgroundMode
+                    ) {
+                        ForEach(offeredBackgroundModes) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .accessibilityIdentifier("backgroundModePicker")
+
+                    Text(backgroundMode.explanation)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .onChange(of: rootfsFilename) { _, filename in
+                    backgroundMode = BackgroundSettings(defaults: defaults)
+                        .mode(forGuest: filename)
+                }
+
                 Section {
                     Text("Changes take effect the next time the app launches.")
                 }
@@ -167,6 +200,8 @@ struct EmulatorSettingsView: View {
             autoResizeGuest: autoResizeGuest,
             androidBootMode: androidBootMode
         ).save(defaults: defaults)
+        BackgroundSettings(defaults: defaults)
+            .setMode(backgroundMode, forGuest: rootfsFilename)
         dismiss()
     }
 }

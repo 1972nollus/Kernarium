@@ -86,6 +86,10 @@ public:
     [[nodiscard]] std::array<std::uint8_t, 4> pixelForTesting(
         std::uint32_t x, std::uint32_t y) noexcept;
     [[nodiscard]] bool readbackIdleForTesting() const noexcept;
+    /* How many passes of the event thread's loop have finished. The thread
+     * notices a client that connected or left, and every other client event,
+     * only in a pass that starts after it. */
+    [[nodiscard]] std::uint64_t eventLoopPassesForTesting() const noexcept;
 #endif
 
 private:
@@ -158,6 +162,9 @@ private:
     std::uint32_t staleEpoch_ {};
     std::vector<HeldClient> heldClients_;
     std::atomic_bool running_ {true};
+#if UML_GPU_VNC_STARTUP_TESTING
+    std::atomic<std::uint64_t> eventLoopPasses_ {};
+#endif
     std::atomic_bool inputFailureReported_ {};
     std::atomic_bool stagingFailureReported_ {};
     std::thread eventThread_;

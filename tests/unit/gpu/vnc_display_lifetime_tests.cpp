@@ -157,17 +157,26 @@ void dimensionsMustFitLibVncServerAbi()
     require(descriptorCount() == before);
 }
 
-template<typename Predicate>
-void requireEventually(Predicate predicate)
+/* The display's event thread notices a client that connected or left only
+ * in a pass of its loop that starts after the event: a pass already in
+ * progress may have read its sockets before it. So once the loop has finished
+ * two passes after the event, the display has seen it, and what it did about
+ * it can be checked once. Counting passes rather than polling the outcome
+ * against a clock leaves nothing for a loaded host to starve: the thread may
+ * get no time for seconds, and the test then simply waits for it. The
+ * deadline is only a bound on a thread that never runs again. */
+void awaitClientEvent(const uml::gpu::VncDisplay& display)
 {
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (predicate())
-            return;
+    constexpr std::uint64_t passesPastTheEvent = 2;
+    constexpr auto deadlineSpan = std::chrono::seconds(180);
+    const auto deadline = std::chrono::steady_clock::now() + deadlineSpan;
+    const auto target =
+        display.eventLoopPassesForTesting() + passesPastTheEvent;
+    while (display.eventLoopPassesForTesting() < target) {
+        if (std::chrono::steady_clock::now() >= deadline)
+            uml::testing::fail("the VNC event thread stopped running");
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    require(false);
 }
 
 [[nodiscard]] int connectClient(const std::uint16_t port)
@@ -219,10 +228,9 @@ void readbackTracksClientDemandAndReconnects()
     require(!display.needsFullCpuFallback());
 
     int client = connectClient(display.port());
-    requireEventually([&] {
-        return display.presentMetal(scanout) ==
-            uml::gpu::PresentOutcome::unsupported;
-    });
+    awaitClientEvent(display);
+    require(display.presentMetal(scanout) ==
+        uml::gpu::PresentOutcome::unsupported);
     require(display.needsFullCpuFallback());
 
     const std::size_t frameRowBytes =
@@ -256,16 +264,14 @@ void readbackTracksClientDemandAndReconnects()
     require(!display.needsFullCpuFallback());
 
     disconnectClient(client);
-    requireEventually([&] {
-        return display.presentMetal(scanout) ==
-            uml::gpu::PresentOutcome::dropped;
-    });
+    awaitClientEvent(display);
+    require(display.presentMetal(scanout) ==
+        uml::gpu::PresentOutcome::dropped);
 
     client = connectClient(display.port());
-    requireEventually([&] {
-        return display.presentMetal(scanout) ==
-            uml::gpu::PresentOutcome::unsupported;
-    });
+    awaitClientEvent(display);
+    require(display.presentMetal(scanout) ==
+        uml::gpu::PresentOutcome::unsupported);
     require(display.needsFullCpuFallback());
     disconnectClient(client);
 }
@@ -274,7 +280,8 @@ void scaledReadbackIsDamageBounded()
 {
     uml::gpu::VncDisplay display {"127.0.0.1", 0, {}, 160, 90};
     int client = connectClient(display.port());
-    requireEventually([&] { return display.needsFullCpuFallback(); });
+    awaitClientEvent(display);
+    require(display.needsFullCpuFallback());
     uml::gpu::testing::verifyScaledReadbackIsDamageBounded(display);
     disconnectClient(client);
 }
@@ -283,7 +290,8 @@ void clearDiscardsEarlierReadbacks()
 {
     uml::gpu::VncDisplay display {"127.0.0.1", 0, {}, 64, 64};
     int client = connectClient(display.port());
-    requireEventually([&] { return display.needsFullCpuFallback(); });
+    awaitClientEvent(display);
+    require(display.needsFullCpuFallback());
     uml::gpu::testing::verifyClearDiscardsEarlierReadbacks(display);
     disconnectClient(client);
 }
@@ -295,7 +303,8 @@ void privateMetalTextureReadbackIsDamageBounded()
      * while no client is watching, so connect one before presenting. */
     uml::gpu::VncDisplay display {"127.0.0.1", 0, {}, 64, 64};
     int client = connectClient(display.port());
-    requireEventually([&] { return display.needsFullCpuFallback(); });
+    awaitClientEvent(display);
+    require(display.needsFullCpuFallback());
     uml::gpu::testing::verifyPrivateMetalTextureReadback(display);
     disconnectClient(client);
 }
