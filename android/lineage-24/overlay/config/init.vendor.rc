@@ -35,6 +35,12 @@ on boot
     setprop service.adb.tcp.port 5555
     start adbd
 
+# The boot command line expedites RCU grace periods, which shortens boot.
+# Normal grace periods return once boot completes, so a running guest does not
+# interrupt every vCPU for each one.
+on property:sys.boot_completed=1
+    write /sys/kernel/rcu_expedited 0
+
 service bugreport /system/bin/dumpstate -d -p -z
     class main
     user root

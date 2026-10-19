@@ -304,6 +304,7 @@ The detailed per-workload sample matrix was intentionally discarded.
 | Kernel physical window as the Android RAM root | Accepted. The software MMU and host services borrow the kernel's linear window, while protection-specific native mappings remain shared aliases. VM tracking confirmed that the separate full-size root mapping disappeared without creating another resident guest-RAM range; physical devices still require headroom for non-guest memory. |
 | Apple asymmetric CPU topology | Rejected and reverted. Public topology/QoS hints could steer carriers but reduced useful Android capacity on the target device. |
 | Physical-device boot profiling | Measured. After RAM changes, the remaining gap is dominated by host execution and scheduling service for the full gadget/MMU working set. |
+| Expedited RCU grace periods until boot completes | Accepted. Mainline ends the kernel's boot-time expedite when init starts, where the Android common kernel kept it for 20 s. Expediting through `sys.boot_completed` started zygote 1.7 s and reached boot completion 2.7 s earlier in the median of an ABBA series of twelve cold Mac boots. Normal grace periods return after boot, so an idle guest does not interrupt every vCPU for each one. |
 | Batch sparse UBD discard | Accepted in both maintained kernel lines. A 512 MiB raw discard collapsed from 16,384 requests to four; matched controls measured about 19x lower wall time on macOS and 10.6x lower wall time on a physical iPad, while reclaiming the same sparse-file allocation. |
 
 ## Android application launch

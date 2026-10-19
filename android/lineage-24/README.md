@@ -205,6 +205,13 @@ The boot animation is off (`androidboot.enable_bootanimation=0`; the vendor
 init script turns `debug.sf.nobootanimation` on for it), so SurfaceFlinger
 draws nothing until the first real frame.
 
+Boot runs with expedited RCU grace periods (`rcupdate.rcu_expedited=1` on the
+command line), which shortens it by a few seconds. Once `sys.boot_completed`
+is set, the vendor init script writes 0 to `/sys/kernel/rcu_expedited`, so a
+running guest returns to normal grace periods and does not interrupt every
+vCPU for each one. The target-files verifier requires that action. Recovery
+loads no vendor init script and stays expedited for its short run.
+
 ## Graphics
 
 Both graphics APIs come from one Mesa build of this project's own guest Mesa
