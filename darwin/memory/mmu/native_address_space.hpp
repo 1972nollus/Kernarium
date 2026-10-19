@@ -43,7 +43,6 @@ public:
 		std::uintptr_t address, std::uint64_t length);
 	int retry_direct(std::uintptr_t address, bool execute, bool write);
 	void retire() noexcept;
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	[[nodiscard]] static bool needs_shadow(
 		std::uintptr_t address, std::uint64_t offset,
 		std::uint64_t length) noexcept;
@@ -67,10 +66,8 @@ public:
 		noexcept;
 	[[nodiscard]] std::size_t direct_mapping_count_for_testing() const
 		noexcept;
-#endif
 
 private:
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	struct BackingIdentity final {
 		std::uint64_t device;
 		std::uint64_t inode;
@@ -147,9 +144,7 @@ private:
 	int update_slot_protection_locked(std::uintptr_t slot);
 	[[nodiscard]] bool contains_shadow_locked(
 		std::uintptr_t address, std::uint64_t length) const;
-#endif
 	mutable std::mutex mutex_;
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	PageAddressMap<Mapping> mappings_;
 	std::unordered_multimap<BackingPageKey, std::uintptr_t,
 		BackingPageKeyHash> backing_index_;
@@ -180,7 +175,6 @@ private:
 		std::uint64_t offset, std::uint64_t length) const noexcept;
 	void note_shadow_offset_locked(std::uint64_t offset) noexcept;
 	void rebuild_shadow_filter_locked() noexcept;
-#endif
 	/* Every operation asks this under mutex_ and fails with ESHUTDOWN once
 	 * retire() has run.  It is not noexcept: errno's accessor may throw as far
 	 * as the compiler knows, and a noexcept wrapper would add a terminate
