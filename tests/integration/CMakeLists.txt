@@ -360,6 +360,16 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 4)
 
+# Files of an LZ4 EROFS image with 4 KiB clusters, which EROFS decompresses
+# through vm_map_ram() aliases of page-cache folios, read back exactly, again
+# after the page cache is dropped.
+uml_add_guest_integration_test(
+    NAME guest-erofs-lz4
+    SCRIPT kernel/run_guest_erofs_lz4.py
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    CPUS 2)
+
 # A vhost-user backend lost while its device is bound retires the device
 # with no warning: removing a lost backend's virtqueues sends it nothing.
 uml_add_guest_integration_test(

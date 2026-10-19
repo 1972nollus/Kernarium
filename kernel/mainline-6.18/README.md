@@ -407,7 +407,13 @@ to small pages only when it is kernel-private (never a `VM_USERMAP` one), and
 kernel-vmap hooks `flush_kernel_vmap_range()` and
 `invalidate_kernel_vmap_range()` publish and refresh the private copy of a
 slot that cannot be shared, as they do for the callers that already bracket a
-vmap alias (XFS, dm, the DMA-BUF heaps). Pages that user space owns cannot be
+vmap alias (XFS, dm, the DMA-BUF heaps). `flush_cache_vunmap()`, which Linux
+calls before vmalloc, `vunmap()` or `vm_unmap_ram()` clears an alias's PTEs,
+publishes the range's private slots too: a kernel TLB sync applies only
+changed PTEs, so without it the stores of a short-lived alias, such as EROFS's
+LZ4 decompression into page-cache folios, would stay in the host's copy while
+the linear map read stale frames, and reach the frames only at a later purge,
+after they may have been reused. Pages that user space owns cannot be
 regrouped, so io_uring refuses with `EINVAL` an `IORING_SETUP_NO_MMAP` ring, a
 registered memory region or a provided-buffer ring whose pages are neither one
 folio nor whole aligned groups. The BPF ring buffer is laid out so that the
@@ -418,7 +424,8 @@ longer selects `PERF_USE_VMALLOC`, as native arm64 does not. The virtio-gpu
 console draws into a vmap of scattered shmem pages, which is a private copy on
 this profile, so the fbdev shmem dirty callback flushes the damaged lines
 before the device reads them; without it a VNC client sees a blank console.
-Both profiles run `guest-kernel-user-shared-memory`.
+Both profiles run `guest-kernel-user-shared-memory` and `guest-erofs-lz4`; the
+x86_64 slice runs the latter's runner directly.
 
 Signal dispositions are process-wide, so the emulator's device and renderer
 threads share UML's `SIGSEGV` and `SIGBUS` handlers even though they own no
