@@ -418,6 +418,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     if init_variant == "ungated-density"
                     else "on early-init && property:ro.boot.lcd_density=*\n"
                 ) + "    setprop ro.sf.lcd_density ${ro.boot.lcd_density}\n"
+                # The restore of normal RCU grace periods, which belongs to
+                # boot completion, follows the boot action's commands.
+                rcu_restore = "    write /sys/kernel/rcu_expedited 0\n"
+                if init_variant == "missing-rcu-restore":
+                    rcu_restore = ""
+                elif init_variant != "rcu-restore-at-boot":
+                    rcu_restore = "on property:sys.boot_completed=1\n" + rcu_restore
                 archive.writestr(
                     "VENDOR/etc/init/init.kernarium.rc",
                     "on early-init\n" + graphics + density +
@@ -429,7 +436,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "on boot\n"
                     "    setprop ro.hardware.audio.primary goldfish\n"
                     "    setprop service.adb.tcp.port 5555\n"
-                    "    start adbd\n",
+                    "    start adbd\n" + rcu_restore,
                 )
                 if extra_entry is not None:
                     archive.writestr(extra_entry, "on early-init\n")
@@ -700,6 +707,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
             ("ungated-density", {"init_variant": "ungated-density"}),
+            ("missing-rcu-restore", {"init_variant": "missing-rcu-restore"}),
+            ("rcu-restore-at-boot", {"init_variant": "rcu-restore-at-boot"}),
             ("cuttlefish-graphics-rc",
              {"extra_entry": "VENDOR/etc/init/init_graphics.vendor.rc"}),
             ("product-init-rc", {"extra_entry": "PRODUCT/etc/init/init.rc"}),
@@ -774,6 +783,14 @@ def verify_hal_selections(android_root: Path) -> None:
                         f"init action '{trigger}' expands ro.boot.{name}, "
                         "which the boot command line does not set"
                     )
+
+    # Boot runs with expedited RCU grace periods, and the product init script
+    # restores normal ones once boot completes.
+    if command_line.count("rcupdate.rcu_expedited=1") != 1:
+        fail("boot command line does not expedite RCU grace periods once")
+    actions = verifier.init_actions(script)
+    if verifier.UML_INIT_RCU_RESTORE not in actions.get(verifier.UML_INIT_RCU_TRIGGER, []):
+        fail("product init script does not restore normal RCU grace periods after boot")
 
 
 def newc_entry(name: str, mode: int, payload: bytes, inode: int) -> bytes:

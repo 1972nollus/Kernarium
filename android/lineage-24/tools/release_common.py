@@ -33,11 +33,8 @@ safe_relative = _CHECKS.safe_relative
 parse_env = _CHECKS.parse_env
 
 SCHEMA_VERSION = 5
-# The family and the directory prefix keep the names of the accepted release,
-# which the ACK kernel qualified. The rename to the mainline kernel lands with
-# the next signed release.
-PRODUCT_FAMILY = "lineage-24-ack-6.18-4k"
-DIRECTORY_PREFIX = "lineage24-ack6.18-4k-"
+PRODUCT_FAMILY = "lineage-24-mainline-6.18-4k"
+DIRECTORY_PREFIX = "lineage24-mainline6.18-4k-"
 # The kernel artifact family of the Android product. Kernarium and CMake key
 # Android mode on it.
 KERNEL_FAMILY = "android-6.18"
@@ -136,11 +133,6 @@ KERNEL_KEYS = {
     "abi_fingerprint",
     "elf_role",
 }
-# Transitional: the accepted release records the ACK tag its kernel was built
-# from, while a release built from the mainline kernel line records none. The
-# next signed release drops this allowance and the accepted release's tag with
-# it.
-KERNEL_OPTIONAL_KEYS = {"tag"}
 OUTER_KEYS = {"revision", "dirty"}
 PRODUCER_KEYS = {"entry_point", "functional_options", "builder"}
 BUILDER_KEYS = {
@@ -195,7 +187,7 @@ def validate_manifest(value: object) -> dict:
     if directory_name != DIRECTORY_PREFIX + release_id:
         fail("release directory name does not match the release ID")
     if manifest["product_family"] != PRODUCT_FAMILY:
-        fail("release product family is not Android 17 ACK 6.18 4 KiB")
+        fail("release product family is not Android 17 mainline 6.18 4 KiB")
     if manifest["acceptance"] != "accepted":
         fail("release is not marked accepted")
     require_string(manifest["published_at_utc"], "publication timestamp")
@@ -220,12 +212,7 @@ def validate_manifest(value: object) -> dict:
     require_hex(source["projects_manifest_sha256"], 64, "projects manifest SHA-256")
     validate_routes(source["routes"], "source")
 
-    kernel = manifest["kernel"]
-    if isinstance(kernel, dict):
-        for key in sorted(KERNEL_OPTIONAL_KEYS & set(kernel)):
-            require_string(kernel[key], f"kernel.{key}")
-        kernel = {k: v for k, v in kernel.items() if k not in KERNEL_OPTIONAL_KEYS}
-    kernel = require_exact_keys(kernel, KERNEL_KEYS, "kernel")
+    kernel = require_exact_keys(manifest["kernel"], KERNEL_KEYS, "kernel")
     if kernel["family"] != KERNEL_FAMILY:
         fail(f"kernel family is not {KERNEL_FAMILY}")
     for key in ("repository", "branch", "release"):
