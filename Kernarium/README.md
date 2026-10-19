@@ -132,10 +132,21 @@ Kernarium attaches:
 - the guest's `ttyS0` stream mirrored to a terminal view.
 
 Point display mode maps safe-area points to guest pixels at 160 DPI; Retina
-mode multiplies both geometry and density by `nativeScale`. The GPU's EDID, the
-touchscreen, and Android's logical density on the kernel command line all use
-that launch geometry. The Metal shader cache policy is in
+mode multiplies both geometry and density by `nativeScale`. The GPU's EDID and
+Android's logical density on the kernel command line use that launch geometry.
+The touchscreen's absolute range is fixed at 0 through 32767 on both axes, as
+the VNC touchscreen's is, and Kernarium maps the guest's visible rectangle in
+the view onto it, so touch resolution does not depend on the launch size. The
+Metal shader cache policy is in
 [`graphics.md`](../docs/graphics.md#metal-shader-cache).
+
+The guest view lies within the content the system leaves clear of the window
+controls: below them in a window, and unchanged in Full Screen Apps. A
+window that is already running when Multitasking changes to Full Screen Apps
+keeps its margin until the application is next launched.
+
+Kernarium runs one guest per process and so has one window: its scene
+manifest does not support multiple scenes, and iPadOS offers no second window.
 
 ## Lifecycle
 

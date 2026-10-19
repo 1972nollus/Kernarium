@@ -24,7 +24,8 @@ libraries and interface-carried objects into it but never a linked static
 archive, so every module the emulator reaches delivers objects, including one
 that also keeps a static archive for single-copy process state.
 `scripts/build-xcframework.sh` rejects a release archive that leaves a
-first-party symbol undefined.
+first-party symbol undefined, and one whose `uml_emulator_` functions are not
+exactly those the public headers under `darwin/api/include/uml` declare.
 
 The assembly-visible CPU and TLB layout is owned by
 `darwin/cpu/arm64/layout/assembly_offsets.h` and checked from C++ and assembly.

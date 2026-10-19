@@ -354,9 +354,11 @@ larger one, such as 4096x2160, by setting a user-defined mode. The renderer can
 hold a finished client's scanout buffers for a minute or more, until later
 rendering releases them; repeated mode cycles do not accumulate them.
 
-Rendering and input use the same centered aspect-fit rectangle. AppKit and VNC
-map that rectangle into the fixed tablet range, while Kernarium maps it into
-the touchscreen range advertised at boot. VNC rounds the rectangle to whole
+Rendering and input use the same centered aspect-fit rectangle. AppKit, VNC,
+and Kernarium map that rectangle into the fixed absolute range of 0 through
+32767 on both axes. The range belongs to the device, not to the display or the
+launch size, so a view resized to any size keeps the full resolution and the
+guest never has to re-probe it. VNC rounds the rectangle to whole
 framebuffer pixels and maps a pointer at the centre of the pixel it names, so a
 pointer lands on the guest pixel drawn under it. A mouse in a bar reaches the
 guest only while it drags buttons first pressed inside, clamped to the edge,

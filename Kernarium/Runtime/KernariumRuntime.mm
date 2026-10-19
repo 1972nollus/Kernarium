@@ -885,9 +885,9 @@ int runtimeRun(
                 .hostPageSize = static_cast<std::size_t>(getpagesize()),
             });
         uml::input::virtio::InProcessInputService touchscreen(
-            uml::input::virtio::DeviceKind::touchscreen, width, height);
+            uml::input::virtio::DeviceKind::touchscreen);
         uml::input::virtio::InProcessInputService keyboard(
-            uml::input::virtio::DeviceKind::keyboard, width, height);
+            uml::input::virtio::DeviceKind::keyboard);
         const auto audioService = uml::audio::makeInProcessService();
         std::unique_ptr<uml::gpu::InProcessVhostUserService> videoService;
         if (!uml::platform::videoDecodeCapabilities().empty())
@@ -1105,6 +1105,10 @@ void runtimeResume(void)
     if (activeEmulator != nullptr)
         uml_emulator_resume(activeEmulator);
 }
+
+static_assert(
+    KERNARIUM_RUNTIME_TOUCH_MAXIMUM ==
+    uml::input::virtio::protocol::touchscreenAbsoluteMaximum);
 
 void runtimeSendTouch(
     uint32_t x,

@@ -29,6 +29,11 @@ inline constexpr std::uint16_t synchronizeReport = 0x00;
 inline constexpr std::uint16_t absoluteX = 0x00;
 inline constexpr std::uint16_t absoluteY = 0x01;
 inline constexpr std::uint16_t buttonTouch = 0x14a;
+/* The touchscreen's absolute range is 0..touchscreenAbsoluteMaximum on both
+ * axes, the VNC touchscreen's range too. It does not depend on the display, so
+ * the guest's probe-time ABS_X/Y limits stay valid across every later mode
+ * change, and a host maps its view onto it at the full resolution. */
+inline constexpr std::uint32_t touchscreenAbsoluteMaximum = 32767;
 /* Linux's KEY_POWER, which a host forwards as a phone's power button. */
 inline constexpr std::uint16_t keyPower = 116;
 inline constexpr std::uint16_t keyboardKeyMaximum = 0x7f;

@@ -6,6 +6,11 @@
 	<array>
 		<string>audio</string>
 	</array>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 </dict>

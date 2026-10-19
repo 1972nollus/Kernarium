@@ -71,35 +71,10 @@ verify_archive()
 
 	mkdir -p -- "$audit_dir"
 	xcrun nm -gU "$archive" > "$audit_dir/global-defined.txt"
-	awk '
-		BEGIN {
-			allowed["_uml_emulator_create"] = 1
-			allowed["_uml_emulator_destroy"] = 1
-			allowed["_uml_emulator_get_capabilities"] = 1
-			allowed["_uml_emulator_quiesce"] = 1
-			allowed["_uml_emulator_request_stop"] = 1
-			allowed["_uml_emulator_resume"] = 1
-			allowed["_uml_emulator_run"] = 1
-			allowed["_uml_emulator_sync"] = 1
-		}
-		$NF ~ /^_uml_emulator_/ {
-			if (!($NF in allowed)) {
-				printf("unexpected public API symbol: %s\n", $NF) > "/dev/stderr"
-				failed = 1
-			}
-			++seen[$NF]
-		}
-		END {
-			for (symbol in allowed) {
-				if (seen[symbol] != 1) {
-					printf("public API symbol %s has %d definitions\n",
-					       symbol, seen[symbol] + 0) > "/dev/stderr"
-					failed = 1
-				}
-			}
-			exit failed
-		}
-	' "$audit_dir/global-defined.txt" ||
+	# The functions the public headers declare are the whole API.
+	python3 -B "$project_root/scripts/check-public-api.py" \
+		--headers "$project_root/darwin/api/include/uml" \
+		--defined "$audit_dir/global-defined.txt" ||
 		fail "$platform archive does not implement the exact public C API"
 
 	# A product that runs a guest force-loads the archive, because the kernel
