@@ -265,6 +265,16 @@ a branch selects leaves or follows a link on each of its paths -- a
 conditional branch that ends a block takes its two-exit form -- so a block
 that ended at a branch carries none. See X82.
 
+A cached link names its target by a stream pointer and an instruction count,
+one aligned pair that a single paired store replaces. The guest bounds of the
+target's code, which a followed link hands to the context so that a store into
+the running block is recognized, are not in the link: every stream carries them
+in the two words in front of its first, and the engine loads them at
+`[stream, #-16]` after the pair. A link that names no block names its record's
+own link_exit word, behind a `{RIP, RIP}` pair, so a reader can never see the
+bounds of one stream with the count of another. `x86-64-gadget-link-layout`
+holds the layout.
+
 A dispatch's instruction budget bounds how long it runs, not where a block
 may stop: the block that crosses the budget runs to its end, as the arm64
 engines' blocks do, so a dispatch can retire up to one block more than its
@@ -851,6 +861,25 @@ address spaces it would have kept; letting go of the place too would be a
 larger window for live spaces. Without the rule a destroyed generation's
 translations, link records and indirect sites stay until eight newer
 generations displace them, which a long-running benchmark process never does.
+
+## The byte budget
+
+Each address space an executor keeps charges an account in the gadget engines'
+process-wide byte budget (`cpu/gadget_cache_budget.hpp`; see
+[`darwin/README.md`](../../../README.md)) with its resident translations --
+record, native stream (with the bounds in front of it) and saved source as the
+allocator sizes them, charged at
+the store and refunded when the translation departs -- and its link and
+indirect records and target link tables. A store that takes the open accounts
+past the budget asks the largest to shed, which sets a flag on the cache that
+keeps it; `leave_gone_generations` lets go of every such address space at the
+start of the next run, as of a destroyed one but without a tombstone, and the
+address space starts again in a new account. An executor's cache is private,
+so the same address space on four vCPUs is charged four times. When
+translations come to be shared per address space, the shared space owns the
+account, as an arm64 space does: it charges its translations once, its executors
+let go of it at their next run when it is asked to shed, and the registry no
+longer hands it out.
 
 ## Measuring what the cache costs
 

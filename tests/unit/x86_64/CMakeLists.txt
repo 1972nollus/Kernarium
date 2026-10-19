@@ -13,11 +13,40 @@ uml_add_unit_test(
     COMMAND uml_x86_64_gadget_bootstrap_tests
     LABELS cpu;x86-64)
 
+# What translated code reads a link by: the {stream, count} pair and the
+# guest bounds in front of the stream.
+add_executable(uml_x86_64_gadget_link_layout_tests
+    x86_64_gadget_link_layout_tests.cpp)
+target_link_libraries(uml_x86_64_gadget_link_layout_tests PRIVATE
+    uml_x86_64_target
+    uml_x86_64_gadgets
+    uml_test_require
+    UML::CpuContract)
+target_include_directories(uml_x86_64_gadget_link_layout_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME x86-64-gadget-link-layout
+    COMMAND uml_x86_64_gadget_link_layout_tests
+    LABELS cpu;x86-64)
+
 # The cache's handling of destroyed address-space generations alone, cheap
 # enough for the sanitizer trees.
 uml_add_unit_test(
     NAME x86-64-gadget-dead-generations
     COMMAND uml_x86_64_gadget_bootstrap_tests dead-generations
+    LABELS cpu;x86-64)
+
+# The cache's set index alone: it is header-only, so the test links no gadget
+# object.
+add_executable(uml_x86_64_gadget_cache_index_tests
+    x86_64_gadget_cache_index_tests.cpp)
+target_link_libraries(uml_x86_64_gadget_cache_index_tests PRIVATE
+    UML::CpuContract)
+target_include_directories(uml_x86_64_gadget_cache_index_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME x86-64-gadget-cache-index
+    COMMAND uml_x86_64_gadget_cache_index_tests
     LABELS cpu;x86-64)
 
 add_executable(uml_x86_64_sse_exactness_tests
@@ -256,6 +285,24 @@ if(TARGET uml_x86_64_jit)
     uml_add_unit_test(
         NAME x86-64-jit-space-recycling
         COMMAND uml_x86_64_jit_space_tests
+        LABELS cpu;x86-64
+        TIMEOUT 300)
+    # x86's protocol for code another processor changes: a store into
+    # translated code publishes after it lands, and CPUID and IRET end the
+    # run so the runtime hands over the changes before the code after them.
+    add_executable(uml_x86_64_jit_code_change_tests
+        x86_64_jit_code_change_tests.cpp)
+    target_link_libraries(uml_x86_64_jit_code_change_tests PRIVATE
+        uml_x86_64_target
+        uml_x86_64_jit
+        uml_cpu_executable_memory
+        UML::ThirdPartyFEXCore
+        UML::CpuContract)
+    target_include_directories(uml_x86_64_jit_code_change_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin)
+    uml_add_unit_test(
+        NAME x86-64-jit-code-change
+        COMMAND uml_x86_64_jit_code_change_tests
         LABELS cpu;x86-64
         TIMEOUT 300)
 endif()

@@ -1307,7 +1307,8 @@ Lx86_store_done\@:
 	retire_and_next
 .endm
 
-/* A BlockLink contains {stream, instruction_count, guest RIP, begin, end}.
+/* A BlockLink contains {stream, instruction_count, guest RIP}, and the two
+ * words in front of the stream it names are the target's guest {begin, end}.
  * Refuse a target whose complete translated block would cross this native
  * run's exact budget. Every executable store resets cached targets whose
  * saved instruction bytes overlap the write. At the next branch, retain the
@@ -1343,7 +1344,7 @@ Lx86_link_code_ready\@:
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
 Lx86_link_follow\@:
-	ldp x12, x13, [x19, #24]
+	ldp x12, x13, [_stream, #-16]
 	stp x12, x13, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]
 	next_gadget
 .endm

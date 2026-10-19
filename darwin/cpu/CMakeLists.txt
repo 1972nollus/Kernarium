@@ -24,8 +24,11 @@ add_subdirectory(arm64/aarch32)
 #
 # Capacity is not free on either engine. An empty way costs 24 bytes on arm64
 # and 40 on x86, and an occupied one its translation besides. Every product and
-# both ISAs share one default, 131,072 slots, so that macOS behaves like iOS;
-# an explicit -DUML_GADGET_CACHE_SLOTS selects another power of two.
+# both ISAs share one default, 262,144 slots, so that macOS behaves like iOS.
+# Swept against 65,536 and 131,072 on the M1 Ultra, the M4 and the iPad, it was
+# the only size within noise of the best on every Geekbench and WebGL Aquarium
+# metric, for 11 to 14 MiB more arm64 cache on four vCPUs (G280). An explicit
+# -DUML_GADGET_CACHE_SLOTS selects another power of two.
 #
 # The variable is a cache entry, so a tree configured under an earlier default
 # would keep it. The help text below names the default a tree was configured
@@ -34,7 +37,7 @@ add_subdirectory(arm64/aarch32)
 # current default. Trees configured before the help text named a default hold
 # the default of their day, 262,144 on macOS and 65,536 elsewhere. A
 # command-line -D replaces the help text and so is kept, as is any other value.
-set(_uml_gadget_cache_slots_default "131072")
+set(_uml_gadget_cache_slots_default "262144")
 set(_uml_gadget_cache_slots_help
     "Slots in each ISA's private gadget cache; power of two, at least 1024")
 set(_uml_gadget_cache_slots_doc

@@ -363,10 +363,43 @@ void regions_mapped_into_given_back_addresses_keep_their_chunks()
 		require(munmap(base, bytes) == 0);
 }
 
+/* A metered arena charges its account what bytes() and index_bytes() count,
+ * as chunks are carved and given back and blocks too large for a chunk come
+ * and go, and refunds it when it is metered elsewhere. */
+void metered_arena_charges_what_it_holds()
+{
+	namespace cache = uml::cpu::gadget_cache;
+	cache::Account account{[](void *) noexcept {}, nullptr};
+	Model model{3};
+	model.arena().meter(&account);
+	const auto held = [&] {
+		return model.arena().bytes() + model.arena().index_bytes();
+	};
+	require(account.bytes() == held());
+	for (std::size_t step = 0; step < 60000; ++step) {
+		const auto live = model.live();
+		const auto freeing = live > 2500 ||
+			(live > 40 && model.random(100) < 49);
+		if (freeing)
+			model.release_random();
+		else
+			model.allocate(model.body_bytes());
+		if (step % 97 == 0)
+			require(account.bytes() == held());
+	}
+	require(account.bytes() == held() && account.bytes() > 8 * chunk_bytes);
+	while (model.live() != 0)
+		model.release_random();
+	require(account.bytes() == held());
+	model.arena().meter(nullptr);
+	require(account.bytes() == 0);
+}
+
 } // namespace
 
 int main()
 {
+	metered_arena_charges_what_it_holds();
 	regions_mapped_into_given_back_addresses_keep_their_chunks();
 	chunks_emptied_in_front_are_given_back();
 	random_churn_keeps_every_block_intact();

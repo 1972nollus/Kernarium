@@ -114,9 +114,15 @@ hashes the guest's address-space number. The sizes hold with shared bodies
 too, where every executor keeps its own slots and a body's header is paid
 once however many slots hold it.
 
+The x86 cache takes a translation's set from one multiply of its address
+space, byte-granular RIP and execution mode
+(`x86_64/gadgets/program_cache_index.hpp`), so clustered code loads the sets as
+a uniform spread would, where two xor folds of the address left far more full
+sets than that.
+
 The arm64 and x86 private gadget caches use the same `UML_GADGET_CACHE_SLOTS`
 and `UML_GADGET_RESIDENT_GENERATIONS` controls: eight ways, 256-slot lazy slabs,
-and eight resident address spaces. The slot count defaults to 131,072 on every
+and eight resident address spaces. The slot count defaults to 262,144 on every
 product, so that macOS behaves like iOS, and a slot is committed whether or not
 it is occupied; an explicit `-DUML_GADGET_CACHE_SLOTS` selects another power
 of two. Their payloads and mutable branch links remain ISA-specific. Cached
@@ -173,6 +179,34 @@ work, so a window keeps exactly the live address spaces it kept before. A
 shared space dies with the last executor attached to it, which lets go at its
 own next entry; a vCPU that is idle keeps it until then. Geekbench's windows
 otherwise hold the boot-time processes' spaces for the whole run (G272).
+
+Slots bound how many translations a cache holds, not their bytes, so both
+gadget engines also keep a process-wide byte budget
+(`cpu/gadget_cache_budget.hpp`). Each address space as an engine keeps it
+charges an account with what it holds: an arm64 space its arena chunks with
+their maps, blocks too large for a chunk, link and indirect records and target
+table, once however many executors share it; an x86 address space its
+translations (record, native stream and source, as the allocator sizes them),
+records and target tables, in each executor that keeps it. Slots and per-space
+slot lists are not charged. A store that finds the open accounts above the
+budget asks the largest to shed until the rest hold seven eighths of it. An
+arm64 space asked to shed is closed and let go of as a renewed one is, and is
+never attached again; an x86 executor lets go of such an address space at the
+start of its next run, as of a destroyed one. Either way the address space
+starts afresh in a new account. The open accounts therefore stay within the
+budget, give or take what one store adds, and a shed space that an idle vCPU
+still holds was part of what was open, so the whole stays within twice the
+budget.
+
+The emulator sets the budget before the run's first executor: a quarter of
+guest memory, at least 128 MiB, and at most an eighth of the footprint the
+host lets the process reach where it sets one (iOS; macOS sets none), or the
+size `--gadget-cache-budget=` gives. A process that never sets one, such as a
+unit test, keeps 1 GiB. No measured workload was asked to shed: on four vCPUs
+and 8 GiB the largest, x86 multi-core Geekbench, peaked at a seventh of its
+2 GiB budget, and at the iPad's geometry WebGL Aquarium, the least headroom,
+peaked at 47% of 358 MiB (G282). A census build reports the budget, the bytes
+charged and the reliefs on every `E` record.
 
 x86 gadget executors keep private translations: their links carry the block's
 guest range for self-modifying-store checks, which translated code reads in

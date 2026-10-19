@@ -112,7 +112,14 @@ The engine joins the code-page registry with a function that retires its own
 TLB entry for a page. It counts a page in before the decoder reads the page's
 bytes, so a store another vCPU translated lands first and every later store
 publishes. The guest runs READ_IMPLIES_EXEC, so only a store to a page the
-registry holds publishes a code change. A publishing store into the code of
+registry holds publishes a code change. Each such store publishes once it has
+landed, as the gadget engine's do: another vCPU that took a publication made
+before the store and translated the page again would keep the bytes from
+before it, and nothing would tell it they changed. The store's TLB miss
+makes the store itself from the bytes the cold path put in the bounce buffer,
+then publishes; a locked op runs on the operand itself in its cold path, and
+the COMMIT call after it publishes; a repeated string instruction publishes
+each chunk after it. A publishing store into the code of
 the unit running it, which would go on to run the bytes it replaces, stops
 that unit before it stores; its instruction runs again as a unit of its own,
 and the dispatch goes on from freshly fetched code.
@@ -127,6 +134,17 @@ store to a page the registry holds. A fork write-protecting the parent, an
 mprotect that keeps execute and a first mapping publish nothing. A reader
 further behind than the history reaches, or a range of length zero, drops every
 translation of the space.
+
+The runtime hands an engine the histories at every entry, so a vCPU looks
+for code changes only between runs. x86's protocol for code that another
+processor changes has the writer store the code and then a flag, and the
+processor that runs the code see the flag and then enter the kernel or
+execute a serializing instruction, which in user code is IRET or CPUID. Each
+ends the run, which reports it `serialized`, and the runtime hands over the
+histories before the next instruction runs, as at an entry, without leaving
+for the kernel. FEXCore runs CPUID in line, so in an embedding it ends with
+an exit after itself (`EMBEDDER_EXIT_SERIALIZE`); IRET is the segment
+model's. SERIALIZE is not decoded and raises #UD, as on the gadget engine.
 
 ## State at every exit
 

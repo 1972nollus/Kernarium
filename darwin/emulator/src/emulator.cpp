@@ -269,6 +269,13 @@ public:
 				prepared.jit_cache_budget, prepared.guest_cpus,
 				prepared.jit_executor_cache_budget))
 			return -UML_EMULATOR_RUNTIME_ERROR;
+		/* Before any gadget executor exists, for the same reason; an
+		 * x86-64 address space starts on the gadget engine in a JIT run
+		 * too. */
+		if (!prepared.informational)
+			(void)::uml::runtime::set_gadget_cache_budget(
+				prepared.guest_memory_bytes,
+				prepared.gadget_cache_budget);
 		/* A JIT run activates the managed multi-vCPU executor pool. */
 		if (!translation_cache_run.enter(jit_run))
 			return -UML_EMULATOR_RUNTIME_ERROR;

@@ -14,6 +14,8 @@
 
 #include <sys/mman.h>
 
+#include "cpu/gadget_cache_budget.hpp"
+
 namespace uml::cpu::arm64::gadgets {
 
 /* Storage for stored translations.
@@ -57,6 +59,11 @@ namespace uml::cpu::arm64::gadgets {
  * each free block starts; the blocks of a chunk tile it up to where it is
  * still being carved, and no two free blocks are adjacent, so the two maps
  * give every block's extent.
+ *
+ * An arena given an Account (`meter`) charges it with what bytes() and
+ * index_bytes() count, as chunks are carved and released and blocks too big
+ * for a class come and go; its end refunds nothing, since the account goes
+ * with the address space.
  */
 class BodyArena final {
 public:
@@ -98,7 +105,14 @@ public:
 			auto *block = static_cast<std::byte *>(
 				upstream_->allocate(size,
 					alignof(std::max_align_t)));
-			direct_.push_back({block, size});
+			try {
+				direct_.push_back({block, size});
+			} catch (...) {
+				upstream_->deallocate(block, size,
+					alignof(std::max_align_t));
+				throw;
+			}
+			charge(static_cast<std::ptrdiff_t>(size));
 			return block;
 		}
 		const auto granules = size / granule;
@@ -116,8 +130,10 @@ public:
 				direct_.end(), [freed](const Direct &direct) {
 					return direct.base == freed;
 				});
-			if (held != direct_.end())
+			if (held != direct_.end()) {
 				direct_.erase(held);
+				charge(-static_cast<std::ptrdiff_t>(size));
+			}
 			upstream_->deallocate(block, size,
 				alignof(std::max_align_t));
 			return;
@@ -210,7 +226,18 @@ public:
 	/* The start maps, which are what owner() and reuse cost. */
 	[[nodiscard]] std::size_t index_bytes() const noexcept
 	{
-		return chunks_.size() * 2 * map_words * sizeof(std::uint64_t);
+		return chunks_.size() * chunk_map_bytes;
+	}
+
+	/* Charge `account`, null for none, with bytes() and index_bytes() from
+	 * here on, and refund the account it charged until now. */
+	void meter(gadget_cache::Account *account) noexcept
+	{
+		const auto held = static_cast<std::ptrdiff_t>(bytes() +
+			index_bytes());
+		charge(-held);
+		meter_ = account;
+		charge(held);
 	}
 
 #if UML_GADGET_CACHE_CENSUS
@@ -245,6 +272,8 @@ private:
 	static constexpr std::size_t chunk_bytes = std::size_t{64} << 10;
 	static constexpr std::size_t chunk_granules = chunk_bytes / granule;
 	static constexpr std::size_t map_words = chunk_granules / 64;
+	static constexpr std::size_t chunk_map_bytes =
+		2 * map_words * sizeof(std::uint64_t);
 	/* A region doubles the arena's reach, from four chunks to sixteen: an
 	 * address space that runs a browser's code holds about seventeen, so
 	 * it maps four times where one chunk at a time mapped seventeen. */
@@ -460,6 +489,8 @@ private:
 				--carved_;
 				throw;
 			}
+			charge(static_cast<std::ptrdiff_t>(chunk_bytes +
+				chunk_map_bytes));
 			if (current_ != nullptr && used_ < chunk_granules) {
 				set(current_starts_ + map_words, used_);
 				list(current_ + used_ * granule,
@@ -499,6 +530,8 @@ private:
 			base, [](const Chunk &held, const std::byte *address) {
 				return held.base < address;
 			}));
+		charge(-static_cast<std::ptrdiff_t>(chunk_bytes +
+			chunk_map_bytes));
 	}
 
 	/* The next chunk of the arena, from the region being carved or from a
@@ -563,6 +596,12 @@ private:
 		(void)munmap(base, bytes);
 	}
 
+	void charge(std::ptrdiff_t bytes) noexcept
+	{
+		if (meter_ != nullptr)
+			meter_->charge(bytes);
+	}
+
 	[[nodiscard]] static bool before_chunk(
 		const std::byte *address, const Chunk &chunk) noexcept
 	{
@@ -581,6 +620,7 @@ private:
 	}
 
 	std::pmr::memory_resource *upstream_;
+	gadget_cache::Account *meter_{};
 	/* In address order. */
 	std::vector<Chunk> chunks_;
 	std::vector<Region> regions_;

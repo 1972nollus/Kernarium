@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "gadget_cache_budget.hpp"
+
 namespace uml::cpu::gadget_cache {
 
 /* Records that translated streams point at, found by a 64-bit key.
@@ -48,6 +50,9 @@ namespace uml::cpu::gadget_cache {
  * the index, so no lookup finds them, and leaves their memory as it was.
  * `release` zeroes them and returns their places. `sweep` is the three in a
  * row, for an owner that nothing else reaches while it runs.
+ *
+ * A table given an Account (`meter`) charges it every change in bytes(), so
+ * the account holds exactly what the table does.
  */
 template <typename Record, typename KeyOf>
 class StableRecordTable final {
@@ -213,6 +218,7 @@ public:
 		static_assert(std::is_nothrow_constructible_v<Record, Arguments...>);
 		if (auto *found = find(key); found != nullptr)
 			return {found, false};
+		const ChargeScope charged{meter_, [this] { return bytes(); }};
 		if ((size_ + 1) * 4 > capacity() * 3)
 			grow();
 		const auto ordinal = take();
@@ -230,12 +236,20 @@ public:
 	 * places a sweep left free. */
 	[[nodiscard]] std::size_t bytes() const noexcept
 	{
-		std::size_t total = capacity() * sizeof(std::uint32_t) +
+		return capacity() * sizeof(std::uint32_t) +
 			chunks_.capacity() * sizeof(Chunk) +
-			vacant_.capacity() * sizeof(std::uint64_t);
-		for (const auto &chunk : chunks_)
-			total += chunk.count * sizeof(Record);
-		return total;
+			vacant_.capacity() * sizeof(std::uint64_t) + record_bytes_;
+	}
+
+	/* Charge `account`, null for none, with what the table holds from here
+	 * on, and refund the account it charged until now. */
+	void meter(Account *account) noexcept
+	{
+		if (meter_ != nullptr)
+			meter_->charge(-static_cast<std::ptrdiff_t>(bytes()));
+		meter_ = account;
+		if (meter_ != nullptr)
+			meter_->charge(static_cast<std::ptrdiff_t>(bytes()));
 	}
 
 	/* Every record, in the order of their numbers. */
@@ -342,6 +356,7 @@ public:
 		Unlinked unlinked;
 		if (gone == 0)
 			return unlinked;
+		const ChargeScope charged{meter_, [this] { return bytes(); }};
 		const auto remaining = size_ - gone;
 		std::vector<std::uint32_t> kept;
 		kept.reserve(remaining);
@@ -379,6 +394,7 @@ public:
 	 * hold no record any more. */
 	std::size_t release(const Unlinked &unlinked) noexcept
 	{
+		const ChargeScope charged{meter_, [this] { return bytes(); }};
 		for (const auto number : unlinked.numbers_)
 			free_place(number - 1U);
 		lowest_vacant_ = 0;
@@ -530,6 +546,7 @@ private:
 					8, chunks_.size() * 2));
 			chunks_.push_back({std::make_unique_for_overwrite<std::byte[]>(
 				count * sizeof(Record)), count});
+			record_bytes_ += count * sizeof(Record);
 			used_ = 0;
 		}
 		++used_;
@@ -557,6 +574,7 @@ private:
 					~(std::uint64_t{1} << (ordinal % 64));
 			vacancies_ -= carved_ - first;
 			carved_ = first;
+			record_bytes_ -= chunks_.back().count * sizeof(Record);
 			chunks_.pop_back();
 			used_ = chunks_.empty() ? 0 : chunks_.back().count;
 			vacant_.resize((carved_ + 63) / 64);
@@ -575,6 +593,10 @@ private:
 	std::unique_ptr<std::uint32_t[]> index_;
 	std::size_t mask_{};
 	std::size_t size_{};
+	/* The bytes of the record chunks, and the account they are charged
+	 * to. */
+	std::size_t record_bytes_{};
+	Account *meter_{};
 };
 
 } // namespace uml::cpu::gadget_cache

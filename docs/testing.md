@@ -1062,12 +1062,23 @@ engine and the JIT to the same count of retired instructions before each kind
 of stop, in long64 and compat32, including a store into the code of the block
 running it. `x86-64-jit-space-recycling` has an engine make a gone address
 space's space over for the next one and requires the new bytes to run.
+`x86-64-jit-code-change` has a program rewrite a function it has run, with a
+plain, a locked and a repeated store, and requires every publication of the
+change to follow the store; it also has a function rewritten, as another vCPU
+would, behind a flag the program reads before CPUID or IRET, and requires the
+call after either to run the new code.
 `x86-64-tier-switch-corpus` and `x86-64-tier-switch-retirement` run the corpus
 and the retirement cases on the gadget engine for the first K retired
 instructions and on the JIT for the rest, over a sweep of K, and require each
 case to end as the engines alone do; `tests/unit/x86_64/tier_switch_exclusions.tsv`
 lists the one record that differs, in a result the architecture leaves
 undefined.
+`x86-64-gadget-link-layout` holds the layout translated code reads a cached
+link by -- an aligned stream-and-count pair, with the target's guest bounds in
+the two words in front of its stream -- against real programs and the
+executor's own records, and shows a reader following a link that writers
+retarget never sees bounds that belong to another stream; the same reader
+does see them torn when the bounds are stored apart from the pair.
 `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel
