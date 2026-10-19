@@ -116,7 +116,7 @@ once however many slots hold it.
 
 The arm64 and x86 private gadget caches use the same `UML_GADGET_CACHE_SLOTS`
 and `UML_GADGET_RESIDENT_GENERATIONS` controls: eight ways, 256-slot lazy slabs,
-and eight resident address spaces. The slot count defaults to 131,072 on every
+and eight resident address spaces. The slot count defaults to 262,144 on every
 product, so that macOS behaves like iOS, and a slot is committed whether or not
 it is occupied; an explicit `-DUML_GADGET_CACHE_SLOTS` selects another power
 of two. Their payloads and mutable branch links remain ISA-specific. Cached
