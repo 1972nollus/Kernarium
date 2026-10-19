@@ -271,6 +271,19 @@ struct BackgroundControllerTests {
             !$0.hasPrefix(BackgroundSettings.keyPrefix)
         })
 
+        // Automation can force a mode for one launch without touching what
+        // the user chose; a mode this build does not know is ignored.
+        let forced = BackgroundSettings(
+            defaults: defaults,
+            environment: [BackgroundSettings.environmentKey: "pictureInPicture"]
+        )
+        #expect(forced.mode(forGuest: "android.kern") == .pictureInPicture)
+        let unknown = BackgroundSettings(
+            defaults: defaults,
+            environment: [BackgroundSettings.environmentKey: "someday"]
+        )
+        #expect(unknown.mode(forGuest: "android.kern") == .off)
+
         // A value from a newer build that this one does not know pauses.
         defaults.set("someday", forKey: BackgroundSettings.keyPrefix + "x")
         #expect(settings.mode(forGuest: "x") == .off)

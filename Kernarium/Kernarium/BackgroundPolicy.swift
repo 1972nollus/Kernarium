@@ -36,15 +36,27 @@ enum BackgroundMode: String, CaseIterable, Identifiable {
 /// never chose one pauses.
 struct BackgroundSettings {
     static let keyPrefix = "background.mode."
+    /// Automation's way to run one launch in a mode without changing what the
+    /// user chose, as the other `KERNARIUM_` knobs do.
+    static let environmentKey = "KERNARIUM_BACKGROUND_MODE"
 
     private let defaults: UserDefaults
+    private let environment: [String: String]
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
         self.defaults = defaults
+        self.environment = environment
     }
 
     func mode(forGuest guest: String) -> BackgroundMode {
-        defaults.string(forKey: Self.keyPrefix + guest)
+        if let forced = environment[Self.environmentKey]
+            .flatMap(BackgroundMode.init(rawValue:)) {
+            return forced
+        }
+        return defaults.string(forKey: Self.keyPrefix + guest)
             .flatMap(BackgroundMode.init(rawValue:)) ?? .off
     }
 
@@ -123,7 +135,12 @@ final class BackgroundController {
     /// handler as a whole.
     static let edgeBudget = DispatchTimeInterval.seconds(4)
 
-    private(set) var phase = Phase.foreground
+    private(set) var phase = Phase.foreground {
+        didSet {
+            guard phase != oldValue else { return }
+            print("Kernarium: background policy \(oldValue) -> \(phase)")
+        }
+    }
     private let effects: any BackgroundEffects
     private let mode: () -> BackgroundMode
     private var startDeadline: (any BackgroundCancellable)?

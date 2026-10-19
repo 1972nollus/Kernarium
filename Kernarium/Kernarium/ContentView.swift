@@ -18,6 +18,10 @@ struct ContentView: View {
     var body: some View {
         ZStack(alignment: .trailing) {
             ZStack {
+                GuestPictureInPictureAnchor()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+
                 GuestDisplayView(
                     keyboardVisible: $framebufferKeyboardVisible,
                     retinaMode: EmulatorLauncher.shared.retinaMode
@@ -59,16 +63,32 @@ struct ContentView: View {
         }
         .onAppear {
             serialConsole.startObserving()
+            let window = GuestPictureInPicture.shared
+            window.wanted = {
+                EmulatorLauncher.shared.runningGuestName.map {
+                    BackgroundSettings().mode(forGuest: $0)
+                } == .pictureInPicture
+            }
             GuestPersistence.shared.startObserving(
-                guest: { EmulatorLauncher.shared.runningGuestName }
+                guest: { EmulatorLauncher.shared.runningGuestName },
+                pictureInPicture: window
             )
         }
         .onDisappear {
             serialConsole.stopObserving()
             GuestPersistence.shared.stopObserving()
+            GuestPictureInPicture.shared.guestRunningChanged(false)
             EmulatorLauncher.shared.stop()
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UserDefaults.didChangeNotification
+            )
+        ) { _ in
+            GuestPictureInPicture.shared.refresh()
+        }
         .onChange(of: launcher.phase) { _, phase in
+            GuestPictureInPicture.shared.guestRunningChanged(phase == .running)
             // Nothing is left to type into, and the keyboard would cover
             // the notice.
             guard case .ended = phase else { return }

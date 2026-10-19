@@ -542,7 +542,18 @@ two minutes. Each cycle must show, in order:
   Metal errors, RCU stalls, or watchdog lines.
 
 A `0` after the hold means a GPU request was still running after a second; it
-is a finding, not a pass. To check the restart notice, background the
+is a finding, not a pass.
+
+To check the Picture in Picture mode, launch with
+`KERNARIUM_BACKGROUND_MODE=pictureInPicture`, which overrides the stored mode
+for that launch only, and background the application the same way. The console
+must show the mirror at its trickle rate before and its glanceable rate after
+`picture in picture started`, the policy moving to `keptRunning` with the GPU
+released and no guest `PM: suspend entry`, the guest's own progress (a probe
+counting work) continuing through the whole stay, and the window on screen
+showing the guest's display. Returning must stop the window, drop the mirror to
+its trickle, and leave the guest display rendering; closing the window while
+still in the background must quiesce the guest, and the return must resume it. To check the restart notice, background the
 application, terminate its process with `devicectl device process terminate`,
 and launch it again: the console reports that the previous process ended in
 the background and the guest display carries the dismissible Guest Restarted
