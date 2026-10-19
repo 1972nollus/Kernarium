@@ -10,7 +10,7 @@ set(UML_EMULATOR_HEADERS "" CACHE PATH
     "Raw UMLEmulator include root used only for final-slice verification")
 set(UML_EMULATOR_XCFRAMEWORK "" CACHE PATH
     "Final UMLEmulator XCFramework used for Xcode slice-selection verification")
-set(UML_EXPECTED_GUEST_PAGE_SIZE "16384" CACHE STRING
+set(UML_EXPECTED_GUEST_PAGE_SIZE "4096" CACHE STRING
     "Expected installed package guest page size")
 set(UML_EXPECTED_GUEST_SLICE "arm64" CACHE STRING
     "Expected installed package userspace ISA slice")

@@ -9,7 +9,6 @@ struct EmulatorSettingsView: View {
     @State private var overlaySizeGiB: Int
     @State private var androidDiskSizeGiB: Int
     @State private var rootfsFilename: String
-    @State private var kernelPageSize: KernelPageSize
     @State private var retinaMode: Bool
     @State private var autoResizeGuest: Bool
     @State private var androidBootMode: AndroidBootMode
@@ -18,25 +17,6 @@ struct EmulatorSettingsView: View {
     private let defaults: UserDefaults
     private let rootfsFilenames: [String]
     private let documentsDirectory: URL
-
-    /// A specialized selection decides its profile; the picker then shows that
-    /// profile and stops offering one its runtime cannot boot.
-    private var requiredPageSize: KernelPageSize? {
-        RootfsImage.requiredPageSize(
-            forSelectionNamed: rootfsFilename,
-            in: documentsDirectory
-        )
-    }
-
-    /// Shows the profile the selection forces while remembering what the user
-    /// last chose, so switching back to an image restores their own setting
-    /// instead of the one a bundle imposed.
-    private var shownPageSize: Binding<KernelPageSize> {
-        Binding(
-            get: { requiredPageSize ?? kernelPageSize },
-            set: { kernelPageSize = $0 }
-        )
-    }
 
     private var androidBundleSelected: Bool {
         RootfsImage.selection(
@@ -73,7 +53,6 @@ struct EmulatorSettingsView: View {
             initialValue: configuration.androidDiskSizeGiB
         )
         _rootfsFilename = State(initialValue: configuration.rootfsFilename)
-        _kernelPageSize = State(initialValue: configuration.kernelPageSize)
         _retinaMode = State(initialValue: configuration.retinaMode)
         _autoResizeGuest = State(initialValue: configuration.autoResizeGuest)
         _androidBootMode = State(initialValue: configuration.androidBootMode)
@@ -101,14 +80,6 @@ struct EmulatorSettingsView: View {
                     )
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-
-                    Picker("Kernel page size", selection: shownPageSize) {
-                        ForEach(KernelPageSize.allCases) { pageSize in
-                            Text(pageSize.title).tag(pageSize)
-                        }
-                    }
-                    .disabled(requiredPageSize != nil)
-                    .accessibilityIdentifier("kernelPageSizePicker")
 
                     Stepper(
                         "vCPUs: \(vCPUCount)",
@@ -157,19 +128,10 @@ struct EmulatorSettingsView: View {
                         .accessibilityIdentifier("androidBootModePicker")
                     }
 
-                    if let required = requiredPageSize {
-                        Text(
-                            "\(rootfsFilename) carries its own " +
-                            "kernel and boots with \(required.title) " +
-                            "pages."
-                        )
-                        .accessibilityIdentifier("guestBundleNote")
-                    } else {
-                        Text(
-                            "EROFS images and .\(GuestBundle.pathExtension) " +
-                            "guest bundles are loaded from Documents."
-                        )
-                    }
+                    Text(
+                        "EROFS images and .\(GuestBundle.pathExtension) " +
+                        "guest bundles are loaded from Documents."
+                    )
                 }
 
                 Section {
@@ -201,7 +163,6 @@ struct EmulatorSettingsView: View {
             overlaySizeGiB: overlaySizeGiB,
             androidDiskSizeGiB: androidDiskSizeGiB,
             rootfsFilename: rootfsFilename,
-            kernelPageSize: requiredPageSize ?? kernelPageSize,
             retinaMode: retinaMode,
             autoResizeGuest: autoResizeGuest,
             androidBootMode: androidBootMode

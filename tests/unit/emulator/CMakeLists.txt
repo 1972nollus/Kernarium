@@ -55,40 +55,16 @@ if(TARGET uml_network_provider)
 endif()
 uml_add_unit_test(NAME emulator-api COMMAND uml_emulator_api_tests)
 
-if(NOT UML_GUEST_16K_PAGES)
-    add_executable(uml_native_4k_admission_tests native_4k_admission_tests.cpp)
-    target_link_libraries(uml_native_4k_admission_tests PRIVATE
-        UML::BridgeAbi
-        UML::MemorySharedBacking
-        uml_emulator_test_variant)
-    target_include_directories(uml_native_4k_admission_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    uml_add_unit_test(
-        NAME emulator-native-4k-admission
-        COMMAND uml_native_4k_admission_tests
-        LABELS tsan)
-endif()
-
-if(UML_GUEST_16K_PAGES AND UML_TARGET_MACOS)
-    add_executable(uml_native_16k_ownership_tests
-        native_16k_ownership_tests.cpp)
-    # Runs are runtime Contexts, not emulator handles; the test variant
-    # carries the runtime with the memory module's failure probes.
-    target_link_libraries(uml_native_16k_ownership_tests PRIVATE
-        UML::BridgeAbi
-        UML::MemorySharedBacking
-        uml_emulator_test_variant)
-    target_include_directories(uml_native_16k_ownership_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    uml_add_unit_test(
-        NAME emulator-native-16k-ownership
-        COMMAND uml_native_16k_ownership_tests
-        LABELS tsan)
-    # Unsupported beside AddressSanitizer's heap (native_window_test_support.hpp).
-    set_tests_properties(emulator-native-16k-ownership PROPERTIES
-        SKIP_RETURN_CODE 77)
-endif()
+add_executable(uml_native_4k_admission_tests native_4k_admission_tests.cpp)
+target_link_libraries(uml_native_4k_admission_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemorySharedBacking
+    uml_emulator_test_variant)
+target_include_directories(uml_native_4k_admission_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin
+    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
+    ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+uml_add_unit_test(
+    NAME emulator-native-4k-admission
+    COMMAND uml_native_4k_admission_tests
+    LABELS tsan)

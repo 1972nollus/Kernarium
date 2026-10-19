@@ -400,7 +400,7 @@ def main() -> int:
         item["cases"] = kept
         records.append(item)
     added = 0
-    for profile, page_size in (("16k", 16384), ("4k", 4096)):
+    for profile, page_size in (("4k", 4096),):
         record, digest, blob = record_for(profile, page_size)
         if digest not in known_blobs:
             known_blobs.add(digest)
@@ -409,6 +409,9 @@ def main() -> int:
                                     sort_keys=True))
         records.append(record)
         added += len(record["cases"])
+    # A rerun on a finished dump finds nothing left to drop; the count stays
+    # that of the export's.
+    removed += header["meta"].get("lse2_alignment", {}).get("removed_cases", 0)
     header["meta"]["lse2_alignment"] = {
         "script": SITE,
         "sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),

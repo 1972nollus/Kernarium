@@ -23,7 +23,7 @@ and a named system instruction that EL0 does not execute, which it clears.
 The opt-in LLVM check of arm64-instruction-corpus-invalid-encoding covers
 those with a second decoder.
 
-Run it on the dump of the SM = 0 vector-length step and --repack the result.
+Run it on the dump of the 16 KiB retirement step and --repack the result.
 """
 from __future__ import annotations
 

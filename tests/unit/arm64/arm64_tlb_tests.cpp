@@ -61,7 +61,7 @@ private:
 	});
 }
 
-/* Whether any way holds the page, as presented or with its tag stripped. */
+/* Whether any entry holds the page, as presented or with its tag stripped. */
 [[nodiscard]] bool cached(const Tlb &tlb, std::uint64_t address)
 {
 	constexpr std::uint64_t untagged =
@@ -121,10 +121,10 @@ void generation_switch_clears_every_filled_set()
 void wide_unmap_invalidates_only_its_range()
 {
 	constexpr unsigned long generation = 222;
-	/* The five pages probed below occupy distinct sets in both page
-	 * profiles, so no fill evicts another. */
+	/* The five pages probed below occupy distinct entries, so no fill
+	 * evicts another. */
 	constexpr std::uint64_t base = 0x1600'0000;
-	constexpr std::size_t removed = uml::memory::tlb_set_count + 2;
+	constexpr std::size_t removed = uml::memory::tlb_entry_count + 2;
 	constexpr std::size_t pages = removed + 2;
 	constexpr std::uint64_t tag = 0x5aULL << 56;
 	Mapping mapping{generation, base, pages};

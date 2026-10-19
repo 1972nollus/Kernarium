@@ -80,7 +80,7 @@ guest opened with its codec and profile, and each stream's packet, byte, and
 delivered-frame totals when it closes. It is a file because the emulator's
 stderr shares the guest console. Unset, the device opens and writes nothing.
 
-`virtio-video-protocol` exercises buffer layouts across 4 KiB and 16 KiB guest
+`virtio-video-protocol` exercises buffer layouts across 4 KiB and 16 KiB
 memory boundaries, stream lifecycle, EOS, and event backpressure with a synthetic
 decoder. `platform-video-decoder` decodes the checked-in generated fixtures on
 Apple hardware. Both are included in the `check-gpu` workflow. The optional `guest-v4l2-decode` CTest runs the actual V4L2 driver

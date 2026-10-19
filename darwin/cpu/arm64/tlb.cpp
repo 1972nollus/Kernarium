@@ -17,8 +17,7 @@ constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 	std::uint64_t address) noexcept
 {
 	const auto page = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
-	return static_cast<std::size_t>(
-		(page & (tlb_set_count - 1)) * tlb_way_count);
+	return static_cast<std::size_t>(page & (tlb_entry_count - 1));
 }
 
 static_assert(sizeof(TlbEntry) == 32);
@@ -48,14 +47,9 @@ void Tlb::flush()
 {
 	if (dirty_count > tlb_dirty_capacity) {
 		std::ranges::fill(entries, TlbEntry{});
-		std::ranges::fill(replacement_way, 0);
 	} else {
-		for (std::uint32_t index = 0; index < dirty_count; ++index) {
-			const std::size_t set = dirty_sets[index];
-			for (std::size_t way = 0; way < tlb_way_count; ++way)
-				entries[set * tlb_way_count + way] = TlbEntry{};
-			replacement_way[set] = 0;
-		}
+		for (std::uint32_t index = 0; index < dirty_count; ++index)
+			entries[dirty_entries[index]] = TlbEntry{};
 	}
 	dirty_count = 0;
 }
@@ -63,15 +57,15 @@ void Tlb::flush()
 void Tlb::invalidate(std::uint64_t address, std::uint64_t length)
 {
 	/* Keys may carry a logical tag in the top byte (translate_tagged), and
-	 * the set index never depends on that byte, so a masked compare finds
-	 * every key of the page in its own set. */
+	 * the index never depends on that byte, so a masked compare finds every
+	 * key of the page in its own entry. */
 	constexpr std::uint64_t untagged =
 		0x00ff'ffff'ffff'ffffULL >> DARWIN_UML_GUEST_PAGE_SHIFT;
 	const auto end = address + length;
 	/* A range wider than the table is cheaper to find by its keys than by
 	 * its pages: a large unmap would otherwise cost every vCPU a loop over
 	 * pages the table cannot even hold. */
-	if (length / page_size >= tlb_set_count) {
+	if (length / page_size >= tlb_entry_count) {
 		const auto first_key = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
 		const auto last_key = (end - 1) >> DARWIN_UML_GUEST_PAGE_SHIFT;
 		const auto in_range = [&](std::uint64_t key) {
@@ -88,15 +82,12 @@ void Tlb::invalidate(std::uint64_t address, std::uint64_t length)
 		return;
 	}
 	for (auto page = address; page < end; page += page_size) {
-		const auto first = index_for(page);
+		auto &entry = entries[index_for(page)];
 		const auto key = page >> DARWIN_UML_GUEST_PAGE_SHIFT;
-		for (std::size_t way = 0; way < tlb_way_count; ++way) {
-			auto &entry = entries[first + way];
-			if ((entry.read_page & untagged) == key)
-				entry.read_page = tlb_empty_key;
-			if ((entry.write_page & untagged) == key)
-				entry.write_page = tlb_empty_key;
-		}
+		if ((entry.read_page & untagged) == key)
+			entry.read_page = tlb_empty_key;
+		if ((entry.write_page & untagged) == key)
+			entry.write_page = tlb_empty_key;
 	}
 }
 
@@ -116,19 +107,13 @@ std::byte *Tlb::translate_tagged(std::uint64_t address, Access access)
 	const auto tagged_page = address & ~(page_size - 1);
 	const auto key = page >> DARWIN_UML_GUEST_PAGE_SHIFT;
 	const auto tagged_key = tagged_page >> DARWIN_UML_GUEST_PAGE_SHIFT;
-	const auto first = index_for(untagged);
-	for (std::size_t way = 0; way < tlb_way_count; ++way) {
-		auto &entry = entries[first + way];
-		if (access == Access::write && entry.write_page == key) {
-			entry.write_page = tagged_key;
-			entry.write_data_minus_address -= (tagged_page - page);
-			break;
-		}
-		if (access != Access::write && entry.read_page == key) {
-			entry.read_page = tagged_key;
-			entry.read_data_minus_address -= (tagged_page - page);
-			break;
-		}
+	auto &entry = entries[index_for(untagged)];
+	if (access == Access::write && entry.write_page == key) {
+		entry.write_page = tagged_key;
+		entry.write_data_minus_address -= (tagged_page - page);
+	} else if (access != Access::write && entry.read_page == key) {
+		entry.read_page = tagged_key;
+		entry.read_data_minus_address -= (tagged_page - page);
 	}
 	return host;
 }
@@ -194,7 +179,7 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 	if (access == Access::execute) {
 		/* Translated engines normally fetch through StaticGuestMemory before
 		 * entering generated code. Keep execute translation precise here as
-		 * well without changing the assembly-visible two-way data TLB layout. */
+		 * well without changing the assembly-visible data TLB layout. */
 		void *translated = nullptr;
 		const auto result = darwin_uml_static_vm_execution_context_translate(
 			execution_context, static_cast<unsigned long>(generation),
@@ -209,17 +194,15 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 			(address & (page_size - 1));
 	}
 	const auto key = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
-	const auto first = index_for(address);
-	for (std::size_t way = 0; way < tlb_way_count; ++way) {
-		auto &entry = entries[first + way];
-		const auto cached_page = access == Access::write ?
-			entry.write_page : entry.read_page;
-		if (cached_page == key) {
-			const auto base = access == Access::write ?
-				entry.write_data_minus_address :
-				entry.read_data_minus_address;
-			return reinterpret_cast<std::byte *>(base + address);
-		}
+	const auto index = index_for(address);
+	auto &entry = entries[index];
+	const auto cached_page = access == Access::write ?
+		entry.write_page : entry.read_page;
+	if (cached_page == key) {
+		const auto base = access == Access::write ?
+			entry.write_data_minus_address :
+			entry.read_data_minus_address;
+		return reinterpret_cast<std::byte *>(base + address);
 	}
 
 	void *translated = nullptr;
@@ -233,48 +216,17 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 		fault_access = access;
 		return nullptr;
 	}
-	std::size_t selected = tlb_way_count;
-	for (std::size_t way = 0; way < tlb_way_count; ++way) {
-		const auto &candidate = entries[first + way];
-		const auto other_page = access == Access::write ?
-			candidate.read_page : candidate.write_page;
-		if (other_page == key) {
-			selected = way;
-			break;
-		}
-	}
-	if (selected == tlb_way_count) {
-		for (std::size_t way = 0; way < tlb_way_count; ++way) {
-			const auto &candidate = entries[first + way];
-			const auto cached_page = access == Access::write ?
-				candidate.write_page : candidate.read_page;
-			if (cached_page == tlb_empty_key) {
-				selected = way;
-				break;
-			}
-		}
-	}
-	const auto set = first / tlb_way_count;
-	/* A fill into a wholly empty set records it for the next flush. A set
-	 * that invalidation emptied may be recorded twice, which only costs a
-	 * redundant clear. */
+	/* A fill into a wholly empty entry records it for the next flush. An
+	 * entry that invalidation emptied may be recorded twice, which only
+	 * costs a redundant clear. */
 	if (dirty_count <= tlb_dirty_capacity &&
-	    std::all_of(entries.begin() + first,
-		    entries.begin() + first + tlb_way_count,
-		    [](const TlbEntry &way) {
-			    return way.read_page == tlb_empty_key &&
-				    way.write_page == tlb_empty_key;
-		    })) {
+	    entry.read_page == tlb_empty_key &&
+	    entry.write_page == tlb_empty_key) {
 		if (dirty_count < tlb_dirty_capacity)
-			dirty_sets[dirty_count] = static_cast<std::uint16_t>(set);
+			dirty_entries[dirty_count] =
+				static_cast<std::uint16_t>(index);
 		++dirty_count;
 	}
-	if (selected == tlb_way_count) {
-		selected = replacement_way[set];
-		replacement_way[set] = static_cast<std::uint8_t>(
-			(selected + 1) % tlb_way_count);
-	}
-	auto &entry = entries[first + selected];
 	const auto host_page = reinterpret_cast<std::uintptr_t>(translated);
 	if (access == Access::write) {
 		entry.write_data_minus_address = host_page - page;

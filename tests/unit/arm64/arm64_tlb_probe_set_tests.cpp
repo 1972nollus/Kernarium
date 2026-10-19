@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Every inline TLB probe against the C++ fill path, in the page profile this
- * image is built for: the A64 and AArch32 gadget streams, the A64 and
- * AArch32 JIT, and their exclusive, atomic and (on a host with SME) SME
- * forms. The entry Tlb::translate() fills for an address is the one the
- * probe hits, in each way of its set; an address whose set does not hold
- * its page misses, although every other set does hold it.
+ * Every inline TLB probe against the C++ fill path: the A64 and AArch32
+ * gadget streams, the A64 and AArch32 JIT, and their exclusive, atomic and
+ * (on a host with SME) SME forms. The entry Tlb::translate() fills for an
+ * address is the one the probe hits; an address whose entry does not hold
+ * its page misses, although every other entry does hold it.
  *
- * A probe that looked in the wrong set would only miss, and the miss path
+ * A probe that looked at the wrong entry would only miss, and the miss path
  * would find the entry, so the TLB is laid out to tell the outcomes apart.
- * The filled entry is pointed at a host page of its own; every free way of
- * every other set holds the probed page's key with a decoy host page; and
- * the guest page itself holds a third pattern, which only the miss path
- * reaches. An access shows which of the three it used.
+ * The filled entry is pointed at a host page of its own; every other free
+ * entry holds the probed page's key with a decoy host page; and the guest
+ * page itself holds a third pattern, which only the miss path reaches. An
+ * access shows which of the three it used.
  */
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/cpu_state.hpp"
@@ -51,7 +50,6 @@ using ::uml::memory::Access;
 using ::uml::memory::Tlb;
 using ::uml::memory::TlbEntry;
 using ::uml::memory::tlb_empty_key;
-using ::uml::memory::tlb_way_count;
 using ::uml::testing::require;
 
 constexpr std::uint64_t page = DARWIN_UML_GUEST_PAGE_SIZE;
@@ -63,23 +61,23 @@ constexpr std::size_t offset = 0x100;
 
 /* The probed page, below 4 GiB for the AArch32 forms. The top bit of its
  * index is set, and so is the bit above the index in the value the index is
- * taken from, so an index one bit too narrow or too wide reads another set.
- * The index is the page number's low 14 bits in both page profiles (page
- * 0x16a5b: address 0x5a96c000 on 16 KiB pages, 0x16a5b000 on 4 KiB pages). */
+ * taken from, so an index one bit too narrow or too wide reads another entry.
+ * The index is the page number's low 14 bits (page 0x16a5b: address
+ * 0x16a5b000). */
 constexpr std::uint64_t target = 0x16a5bULL << page_shift;
-/* The next page, in another set. */
+/* The next page, in another entry. */
 constexpr std::uint64_t neighbour = target + page;
 
-/* The page number one table above `key`, in the same set. main() checks
+/* The page number one table above `key`, in the same entry. main() checks
  * that the fill path agrees. */
 [[nodiscard]] constexpr std::uint64_t alias_key(std::uint64_t key) noexcept
 {
 	return key + (std::uint64_t{1} << ::uml::memory::tlb_index_bits);
 }
 
-/* A page in the target's set under another key. */
+/* A page in the target's entry under another key. */
 constexpr std::uint64_t alias = alias_key(target >> page_shift) << page_shift;
-/* Where an SME load form stores what it loaded, in a set of its own. */
+/* Where an SME load form stores what it loaded, in an entry of its own. */
 constexpr std::uint64_t spill = target + 3 * page;
 static_assert(alias + page <= (std::uint64_t{1} << 32));
 
@@ -114,7 +112,7 @@ enum class Seen {
 	case Seen::entry:
 		return "the filled entry";
 	case Seen::decoy:
-		return "a decoy in another set";
+		return "a decoy in another entry";
 	case Seen::mapping:
 		return "the guest page (a miss)";
 	case Seen::nothing:
@@ -232,32 +230,32 @@ private:
 	return address >> page_shift;
 }
 
-/* The way Tlb::translate() filled for the page of `address`: the one way
+/* The entry Tlb::translate() filled for the page of `address`: the one
  * whose read key is the page's. */
-[[nodiscard]] std::size_t filled_way(const Tlb &tlb, std::uint64_t address)
+[[nodiscard]] std::size_t filled_entry(const Tlb &tlb, std::uint64_t address)
 {
 	const auto key = key_of(address);
 	std::size_t found = tlb.entries.size();
 	for (std::size_t index = 0; index < tlb.entries.size(); ++index)
 		if (tlb.entries[index].read_page == key) {
 			require(found == tlb.entries.size(),
-				"two ways hold one page");
+				"two entries hold one page");
 			found = index;
 		}
 	require(found < tlb.entries.size(), "the fill placed no entry");
 	require(tlb.entries[found].write_page == key,
-		"the read and write fills chose different ways");
+		"the read and write fills chose different entries");
 	return found;
 }
 
-/* The set the C++ fill path chooses for the page of `address`. */
-[[nodiscard]] std::size_t fill_set(std::uint64_t address)
+/* The entry the C++ fill path chooses for the page of `address`. */
+[[nodiscard]] std::size_t fill_entry(std::uint64_t address)
 {
 	auto tlb = std::make_unique<Tlb>();
 	tlb->prepare(generation, darwin_uml_static_vm_changes(generation));
 	require(tlb->translate(address, Access::read) != nullptr);
 	require(tlb->translate(address, Access::write) != nullptr);
-	return filled_way(*tlb, address) / tlb_way_count;
+	return filled_entry(*tlb, address);
 }
 
 [[nodiscard]] std::uintptr_t delta(const HostPage &host,
@@ -285,12 +283,10 @@ public:
 	[[nodiscard]] bool sme() const noexcept { return sme_; }
 
 	/* Runs `form` once against an address of the probed page or another,
-	 * with the target's entry filled through Tlb::translate() into way
-	 * `way` of its set (an alias fills way 0 first for way 1) and pointed
+	 * with the target's entry filled through Tlb::translate() and pointed
 	 * at the entry page, and decoys keyed by the probed page in every free
-	 * way of every set but the one the fill path picks for it. */
-	[[nodiscard]] Outcome run(const Form &form, std::uint64_t probed,
-		std::size_t way)
+	 * entry but the one the fill path picks for it. */
+	[[nodiscard]] Outcome run(const Form &form, std::uint64_t probed)
 	{
 		guest_.reset();
 		entry_.fill(entry_fill);
@@ -298,28 +294,20 @@ public:
 		auto tlb = std::make_unique<Tlb>();
 		tlb->prepare(generation,
 			darwin_uml_static_vm_changes(generation));
-		if (way == 1) {
-			require(tlb->translate(alias, Access::read) != nullptr);
-			require(tlb->translate(alias, Access::write) !=
-				nullptr);
-		}
 		require(tlb->translate(target, Access::read) != nullptr);
 		require(tlb->translate(target, Access::write) != nullptr);
-		const auto filled = filled_way(*tlb, target);
-		require(filled % tlb_way_count == way,
-			"the fill chose another way");
-		auto &entry = tlb->entries[filled];
+		auto &entry = tlb->entries[filled_entry(*tlb, target)];
 		entry.read_data_minus_address = delta(entry_, target);
 		entry.write_data_minus_address = delta(entry_, target);
 
-		const auto own_set = fill_set(probed);
+		const auto own_entry = fill_entry(probed);
 		const auto key = key_of(probed);
 		const TlbEntry decoy{key, delta(decoy_, probed), key,
 			delta(decoy_, probed)};
 		for (std::size_t index = 0; index < tlb->entries.size();
 		     ++index) {
 			auto &candidate = tlb->entries[index];
-			if (index / tlb_way_count != own_set &&
+			if (index != own_entry &&
 			    candidate.read_page == tlb_empty_key &&
 			    candidate.write_page == tlb_empty_key)
 				candidate = decoy;
@@ -543,12 +531,11 @@ private:
 
 unsigned failures = 0;
 
-void report(const Form &form, const char *probe, std::size_t way,
-	const char *what, Seen seen, Seen expected)
+void report(const Form &form, const char *probe, const char *what, Seen seen,
+	Seen expected)
 {
-	std::fprintf(stderr,
-		"%s %s, %s, target in way %zu: %s %s, expected %s\n",
-		engine_name(form.engine), form.name, probe, way, what,
+	std::fprintf(stderr, "%s %s, %s: %s %s, expected %s\n",
+		engine_name(form.engine), form.name, probe, what,
 		seen_name(seen), seen_name(expected));
 	++failures;
 }
@@ -561,41 +548,38 @@ void report(const Form &form, const char *probe, std::size_t way,
 		event == EngineEvent::continued;
 }
 
-/* The probe of the filled page hits its entry from each way of its set. */
+/* The probe of the filled page hits the entry the fill placed. */
 void the_probe_hits_the_entry_the_fill_placed(Bench &bench,
 	const Form &form)
 {
-	for (std::size_t way = 0; way < tlb_way_count; ++way) {
-		const auto outcome = bench.run(form, target, way);
-		if (!completed(outcome.event)) {
-			std::fprintf(stderr, "%s %s, way %zu: event %d\n",
-				engine_name(form.engine), form.name, way,
-				static_cast<int>(outcome.event));
-			++failures;
-			continue;
-		}
-		if (form.loads && outcome.loaded != Seen::entry)
-			report(form, "the filled page", way, "loaded from",
-				outcome.loaded, Seen::entry);
-		const auto expected_store =
-			form.stores ? Seen::entry : Seen::nothing;
-		if (outcome.stored != expected_store)
-			report(form, "the filled page", way, "stored to",
-				outcome.stored, expected_store);
-		if (form.exclusive_status && outcome.status != 0)
-			report(form, "the filled page", way,
-				"store-exclusive failed, touching", outcome.stored,
-				expected_store);
+	const auto outcome = bench.run(form, target);
+	if (!completed(outcome.event)) {
+		std::fprintf(stderr, "%s %s: event %d\n",
+			engine_name(form.engine), form.name,
+			static_cast<int>(outcome.event));
+		++failures;
+		return;
 	}
+	if (form.loads && outcome.loaded != Seen::entry)
+		report(form, "the filled page", "loaded from", outcome.loaded,
+			Seen::entry);
+	const auto expected_store = form.stores ? Seen::entry : Seen::nothing;
+	if (outcome.stored != expected_store)
+		report(form, "the filled page", "stored to", outcome.stored,
+			expected_store);
+	if (form.exclusive_status && outcome.status != 0)
+		report(form, "the filled page",
+			"store-exclusive failed, touching", outcome.stored,
+			expected_store);
 }
 
 /* A page the filled entry does not cover misses, whether it lies in the
- * next set or in the target's own set under another key: the access
+ * next entry or in the target's own entry under another key: the access
  * reaches the guest page through the miss path. */
 void another_page_misses(Bench &bench, const Form &form,
 	std::uint64_t probed, const char *probe)
 {
-	const auto outcome = bench.run(form, probed, 0);
+	const auto outcome = bench.run(form, probed);
 	if (outcome.event == EngineEvent::memory_fault &&
 	    outcome.stored == Seen::nothing)
 		return; /* a miss that leaves the block before the access */
@@ -607,11 +591,11 @@ void another_page_misses(Bench &bench, const Form &form,
 		return;
 	}
 	if (form.loads && outcome.loaded != Seen::mapping)
-		report(form, probe, 0, "loaded from", outcome.loaded,
+		report(form, probe, "loaded from", outcome.loaded,
 			Seen::mapping);
 	const auto expected_store = form.stores ? Seen::mapping : Seen::nothing;
 	if (outcome.stored != expected_store)
-		report(form, probe, 0, "stored to", outcome.stored,
+		report(form, probe, "stored to", outcome.stored,
 			expected_store);
 }
 
@@ -622,14 +606,14 @@ int main()
 	const ::uml::testing::RuntimeTestRoute runtime_route;
 	Bench bench;
 	/* The layout the checks assume, as the fill path places the pages. */
-	const auto target_set = fill_set(target);
-	require(fill_set(alias) == target_set,
-		"the alias page is not in the target's set");
-	require(fill_set(neighbour) != target_set,
-		"the next page is in the target's set");
-	require(fill_set(spill) != target_set &&
-			fill_set(spill) != fill_set(neighbour),
-		"the spill page shares a probed page's set");
+	const auto target_entry = fill_entry(target);
+	require(fill_entry(alias) == target_entry,
+		"the alias page is not in the target's entry");
+	require(fill_entry(neighbour) != target_entry,
+		"the next page is in the target's entry");
+	require(fill_entry(spill) != target_entry &&
+			fill_entry(spill) != fill_entry(neighbour),
+		"the spill page shares a probed page's entry");
 	if (!bench.sme())
 		std::printf("arm64-tlb-probe-set: no SME hardware; the SME "
 			    "forms are not run\n");
@@ -637,7 +621,7 @@ int main()
 		the_probe_hits_the_entry_the_fill_placed(bench, form);
 		another_page_misses(bench, form, neighbour, "the next page");
 		another_page_misses(bench, form, alias,
-			"a page of the target's set");
+			"a page of the target's entry");
 	}
 	require(failures == 0, "an inline probe disagrees with the fill path");
 	std::printf("arm64-tlb-probe-set: %u-byte pages, every probe agrees\n",

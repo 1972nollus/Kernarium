@@ -93,8 +93,8 @@ NAME(uml_arm64_gadget_\name):
 .endm
 
 /* Translate guest address x7 through the persistent iSH-style TLB of 16,384
- * direct sets: two ways on 16 KiB pages, one on 4 KiB pages. On success x7 is
- * the host address. The miss helper updates the entry.
+ * direct-mapped entries. On success x7 is the host address. The miss helper
+ * updates the entry.
  */
 .macro translate access, page_offset, forward=0, fault=uml_arm64_gadget_memory_fault
 	/* Entries are keyed by guest page number (address >> page shift). */
@@ -106,15 +106,6 @@ NAME(uml_arm64_gadget_\name):
 	ldp x11, x12, [x10, #\page_offset]
 	cmp x8, x11
 	b.eq 91f
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-	.if \access
-	ldp x11, x12, [x10, #UML_GADGET_TLB_SECOND_WRITE_PAGE]
-	.else
-	ldp x11, x12, [x10, #UML_GADGET_TLB_SECOND_READ_PAGE]
-	.endif
-	cmp x8, x11
-	b.eq 93f
-#endif
 	stp x1, x2, [sp, #-16]!
 	mov x0, x2
 	mov x1, x7
@@ -132,11 +123,6 @@ NAME(uml_arm64_gadget_\name):
 	.endif
 	mov x7, x0
 	b 92f
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-93:
-	add x7, x12, x7
-	b 92f
-#endif
 91:
 	add x7, x12, x7
 92:
@@ -182,22 +168,13 @@ NAME(uml_arm64_gadget_\name):
 \resume:
 .endm
 
-/* Second way, crossing, miss and fault handling for transfer_translate. */
+/* Crossing, miss and fault handling for transfer_translate. */
 /* outofline=1 when the caller places this tail in a section of its own: a
  * conditional branch cannot leave its section, so the fault exit takes the
  * same trampoline the forwarding arm already uses. So does a streaming twin,
  * whose default fault exit is in the bank. */
 .macro transfer_translate_cold access, page_offset, bytes, address, cold, resume, cross, forward=0, outofline=0, fault=uml_arm64_gadget_memory_fault
 \cold:
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-	.if \access
-	ldp x11, x12, [x10, #UML_GADGET_TLB_SECOND_WRITE_PAGE]
-	.else
-	ldp x11, x12, [x10, #UML_GADGET_TLB_SECOND_READ_PAGE]
-	.endif
-	cmp x11, x8
-	b.eq 93f
-#endif
 	.if \bytes > 1
 	branch_if_cross_page \address, \bytes, x9, \cross
 	.endif
@@ -216,11 +193,6 @@ NAME(uml_arm64_gadget_\name):
 	.endif
 	mov \address, x0
 	b \resume
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-93:
-	add \address, x12, \address
-	b \resume
-#endif
 .endm
 
 /* Rare cross-page accesses stay on the gadget path. The helper validates all

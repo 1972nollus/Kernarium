@@ -44,7 +44,6 @@ namespace {
 	return address & ~(host_page_size() - 1);
 }
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 constexpr std::uintptr_t guest_page_size = 4096;
 void snapshot_shadow_page(std::uintptr_t page,
 	std::array<std::byte, guest_page_size> &snapshot) noexcept
@@ -230,7 +229,6 @@ int write_exact(int fd, std::uint64_t device, std::uint64_t inode,
 	}
 	return 0;
 }
-#endif
 
 [[nodiscard]] bool covered_host_range(std::uintptr_t address,
 	std::uint64_t length, std::uintptr_t &first,
@@ -255,41 +253,28 @@ int write_exact(int fd, std::uint64_t device, std::uint64_t inode,
 		first == address && end == address + length;
 }
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 enum class OwnershipKind : std::uint8_t {
 	direct,
 	shadow,
 };
-#endif
 
 struct Ownership final {
 	std::uint64_t owner;
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	OwnershipKind kind;
-#endif
 };
 
 [[nodiscard]] constexpr Ownership direct_ownership(
 	std::uint64_t owner) noexcept
 {
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	return {owner, OwnershipKind::direct};
-#else
-	return {owner};
-#endif
 }
 
 [[nodiscard]] constexpr bool is_direct_ownership(
 	const Ownership &ownership, std::uint64_t owner) noexcept
 {
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	return ownership.owner == owner && ownership.kind == OwnershipKind::direct;
-#else
-	return ownership.owner == owner;
-#endif
 }
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 [[nodiscard]] constexpr Ownership shadow_ownership(
 	std::uint64_t owner) noexcept
 {
@@ -301,7 +286,6 @@ struct Ownership final {
 {
 	return ownership.owner == owner && ownership.kind == OwnershipKind::shadow;
 }
-#endif
 
 class HostOwnershipRegistry final {
 public:
@@ -378,7 +362,6 @@ public:
 		return 0;
 	}
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	int map_shadow(std::uint64_t owner, std::uintptr_t slot,
 		int protection)
 	{
@@ -460,7 +443,6 @@ public:
 		found->second = direct_ownership(owner);
 		return 0;
 	}
-#endif
 
 	int protect_direct(std::uint64_t owner, std::uintptr_t address,
 		std::uint64_t length, int protection)
@@ -667,7 +649,6 @@ public:
 		}
 	}
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	int release_shadow(std::uint64_t owner, std::uintptr_t slot) noexcept
 	{
 		std::lock_guard lock{mutex_};
@@ -684,7 +665,6 @@ public:
 		owners_.erase(found);
 		return 0;
 	}
-#endif
 
 	/* Retirement ends one domain, not the process, and a later domain maps
 	 * the same window. Its pages go back to the window's reservation for the
@@ -698,9 +678,7 @@ public:
 				++position;
 				continue;
 			}
-			#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 			if (position->second.kind == OwnershipKind::direct)
-			#endif
 				(void)msync(reinterpret_cast<void *>(position->first),
 					host_page_size(), MS_SYNC);
 			if (!retain_borrowed_guest_ram(
@@ -792,15 +770,12 @@ int NativeAddressSpace::map_direct(
 	if (registry == nullptr)
 		return -1;
 	std::vector<std::uintptr_t> inserted;
-	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	struct DirectSnapshot final {
 		std::uintptr_t page;
 		std::optional<DirectMapping> mapping;
 	};
 	std::vector<DirectSnapshot> direct_snapshots;
-	#endif
 	std::size_t new_page_count = 0;
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	/* A whole host page of one backing replaces the shadow that held its
 	 * quarters until now; the shadow's own writes are published first. */
 	for (auto page = first; page < end; page += host_page_size())
@@ -808,13 +783,11 @@ int NativeAddressSpace::map_direct(
 		    convert_shadow_slot_to_direct_locked(page, fd,
 			offset + (page - first), protection) < 0)
 			return -1;
-#endif
 	for (auto page = first; page < end; page += host_page_size()) {
 		if (!direct_slots_.contains(page))
 			++new_page_count;
 	}
 	inserted.reserve(new_page_count);
-	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	const auto page_count = static_cast<std::size_t>(
 		(end - first) / host_page_size());
 	direct_snapshots.reserve(page_count);
@@ -835,7 +808,6 @@ int NativeAddressSpace::map_direct(
 				direct_mappings_.erase(snapshot.page);
 		}
 	};
-	#endif
 	try {
 		for (auto page = first; page < end; page += host_page_size()) {
 			if (!direct_slots_.contains(page)) {
@@ -844,29 +816,23 @@ int NativeAddressSpace::map_direct(
 				direct_slots_.insert(page);
 				inserted.push_back(page);
 			}
-			#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 			UML_MEMORY_ALLOCATION_CHECKPOINT(
 				testing::AllocationSite::native_direct_record);
 			direct_mappings_.insert_or_assign(page, DirectMapping{
 				fd, offset + (page - first), protection});
-			#endif
 		}
 		const auto result = registry->map_direct(
 			ownership_id_, address, fd, offset, length, protection);
 		if (result != 0) {
 			for (const auto rollback : inserted)
 				direct_slots_.erase(rollback);
-			#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 			rollback_direct_metadata();
-			#endif
 		}
 		return result;
 	} catch (...) {
 		for (const auto rollback : inserted)
 			direct_slots_.erase(rollback);
-		#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 		rollback_direct_metadata();
-		#endif
 		throw;
 	}
 }
@@ -882,7 +848,6 @@ int NativeAddressSpace::protect_direct(
 		return -1;
 	const auto result = registry->protect_direct(
 		ownership_id_, address, length, protection);
-	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	if (result == 0) {
 		const auto end = address + length;
 		for (auto slot = address; slot < end; slot += host_page_size())
@@ -890,7 +855,6 @@ int NativeAddressSpace::protect_direct(
 			    mapping != direct_mappings_.end())
 				mapping->second.protection = protection;
 	}
-	#endif
 	return result;
 }
 
@@ -915,9 +879,7 @@ int NativeAddressSpace::unmap_direct(
 		for (auto page = first; page < end; page += host_page_size())
 			if (!registry->owns_direct(ownership_id_, page)) {
 				direct_slots_.erase(page);
-				#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 				direct_mappings_.erase(page);
-				#endif
 			}
 	};
 	int result;
@@ -963,10 +925,8 @@ int NativeAddressSpace::sync_direct_unless_shadow(
 	std::lock_guard lock{mutex_};
 	if (refuse_retired_locked())
 		return -1;
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	if (contains_shadow_locked(address, length))
 		return 1;
-#endif
 	return sync_direct_locked(address, length);
 }
 
@@ -1024,7 +984,6 @@ int NativeAddressSpace::retry_direct(
 		1 : 0;
 }
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 bool NativeAddressSpace::needs_shadow(
 	std::uintptr_t address, std::uint64_t offset,
 	std::uint64_t length) noexcept
@@ -2460,7 +2419,6 @@ std::size_t NativeAddressSpace::direct_mapping_count_for_testing() const
 		direct_slots_.size();
 }
 #endif
-#endif
 
 NativeAddressSpace::~NativeAddressSpace()
 {
@@ -2472,7 +2430,6 @@ void NativeAddressSpace::retire() noexcept
 	std::lock_guard lock{mutex_};
 	if (retired_.exchange(true, std::memory_order_acq_rel))
 		return;
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	for (const auto slot : materialized_slots_)
 		(void)mprotect(reinterpret_cast<void *>(slot), host_page_size(),
 			PROT_READ | PROT_WRITE);
@@ -2484,7 +2441,6 @@ void NativeAddressSpace::retire() noexcept
 	materialized_slots_.clear();
 	direct_mappings_.clear();
 	backing_index_ready_ = false;
-#endif
 	if (auto *registry = host_ownership_registry(); registry != nullptr)
 		registry->retire(ownership_id_);
 	direct_slots_.clear();

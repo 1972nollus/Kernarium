@@ -30,13 +30,14 @@ avoid unrelated formatting churn. There is no repository-wide formatter.
 - Linux retains Kbuild/GNU Make. Third-party projects retain their verified
   upstream build systems.
 - Supported Apple products are arm64 macOS, iOS device, and iOS Simulator.
-- The default guest page profile is 16 KiB. The 4 KiB compatibility profile is
-  also supported and must be tested when a change is page-size-sensitive.
+- Every arm64 Linux guest uses 4 KiB pages. The Apple host page is 16 KiB, so
+  code that maps a guest page inside a host page is host-page handling, not a
+  second guest profile.
 - Apple builds consume accepted prebuilt kernel bundles. They must not locate a
   kernel checkout, invoke Kbuild, or publish a kernel artifact.
 - Android 17 (LineageOS 24) uses its own 4 KiB kernel, built from the
   mainline line with the Android configuration, and its own rootfs release. It
-  has no 16 KiB product and must not inherit Linux desktop rootfs discovery.
+  must not inherit Linux desktop rootfs discovery.
 
 Keep C++20 code warning-clean under `-Wall -Wextra -Werror`, preserve SPDX
 headers, and follow adjacent formatting.
@@ -98,14 +99,13 @@ Never fall back to Homebrew, ambient `CMAKE_PREFIX_PATH`, or unrestricted
   kernel changes through the generated series under the owning versioned
   kernel directory.
 - Treat every kernel source, patch, and configuration change as shared across
-  all maintained kernel lines and every supported configuration or page
-  profile. Put a topic in the shared `kernel/common/patches` series, refresh
-  every line that applies it, and cover both 16 KiB and 4 KiB profiles where
-  those products exist, in the same change. Keep a topic in one line's overlay
-  only when the behavior genuinely depends on the guest OS or the target
-  product does not exist, and record that reason in the owning versioned
-  README. A topic whose context differs between bases gets an adapted variant
-  in each overlay, not an exemption.
+  all maintained kernel lines and every supported configuration. Put a topic in
+  the shared `kernel/common/patches` series and refresh every line that applies
+  it in the same change. Keep a topic in one line's overlay only when the
+  behavior genuinely depends on the guest OS or the target product does not
+  exist, and record that reason in the owning versioned README. A topic whose
+  context differs between bases gets an adapted variant in each overlay, not an
+  exemption.
 - Use `prepare-source.sh --recreate` only for a clean stale managed replay.
   Never replace an arbitrary source tree.
 - Maintained kernel changes are local to this project; tooling must not suggest
@@ -139,18 +139,15 @@ Common workflows are:
 
 ```sh
 cmake --workflow --preset check-unit
-cmake --workflow --preset check-unit-4k
 cmake --workflow --preset check-integration
-cmake --workflow --preset check-integration-4k
 cmake --workflow --preset check-gpu
 cmake --workflow --preset check-loader-asan-ubsan
 ```
 
-Use an anchored expression for a focused CTest. Run both page profiles for
-page-size-sensitive CPU, memory, ABI, kernel, or guest changes. GPU/VNC,
-sanitizers, Apple packaging, Android, LTP, performance, external-network, and
-official A64 campaigns are opt-in and are required only when the change crosses
-their boundary. See [`docs/testing.md`](docs/testing.md).
+Use an anchored expression for a focused CTest. GPU/VNC, sanitizers, Apple
+packaging, Android, LTP, performance, external-network, and official A64
+campaigns are opt-in and are required only when the change crosses their
+boundary. See [`docs/testing.md`](docs/testing.md).
 
 Treat every guest illegal-instruction failure as a correctness blocker. Do not
 skip, exclude, or route around a workload that encounters `SIGILL`; diagnose

@@ -606,18 +606,6 @@ struct KernariumTests {
     }
 
     @Test
-    func androidBundlesRequireTheFourKiBRuntime() {
-        let directory = URL(fileURLWithPath: "/tmp/page-size.kern")
-        let bundle = GuestBundle(
-            url: directory,
-            flavor: .android,
-            disk: directory.appendingPathComponent("guest/page-size.img")
-        )
-
-        #expect(bundle.requiredPageSize == .fourKiB)
-    }
-
-    @Test
     func configurationDefaultsUseMaximumCPUAndRequestedDefaults() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -635,7 +623,6 @@ struct KernariumTests {
         #expect(configuration.overlaySizeGiB == 8)
         #expect(configuration.androidDiskSizeGiB == 8)
         #expect(configuration.rootfsFilename == "kde-20260929-r2.erofs")
-        #expect(configuration.kernelPageSize == .sixteenKiB)
         #expect(configuration.retinaMode == false)
         #expect(configuration.autoResizeGuest == true)
         #expect(configuration.androidBootMode == .automatic)
@@ -652,7 +639,6 @@ struct KernariumTests {
             overlaySizeGiB: 16,
             androidDiskSizeGiB: 32,
             rootfsFilename: "phosh.erofs",
-            kernelPageSize: .fourKiB,
             retinaMode: true,
             autoResizeGuest: false,
             androidBootMode: .recovery
@@ -667,8 +653,7 @@ struct KernariumTests {
                 overlaySizeGiB: 16,
                 androidDiskSizeGiB: 32,
                 rootfsFilename: "phosh.erofs",
-                kernelPageSize: .fourKiB,
-                retinaMode: true,
+                    retinaMode: true,
                 autoResizeGuest: false,
                 androidBootMode: .recovery
             )
@@ -679,7 +664,6 @@ struct KernariumTests {
         defaults.set(0, forKey: "emulator.overlaySizeGiB")
         defaults.set(128, forKey: "emulator.androidDiskSizeGiB")
         defaults.set("../phosh.erofs", forKey: "emulator.rootfsFilename")
-        defaults.set(8192, forKey: "emulator.kernelPageSize")
         let normalized = EmulatorConfiguration.load(
             defaults: defaults,
             physicalProcessorCount: 6
@@ -689,7 +673,6 @@ struct KernariumTests {
         #expect(normalized.overlaySizeGiB == 1)
         #expect(normalized.androidDiskSizeGiB == 64)
         #expect(normalized.rootfsFilename == "kde-20260929-r2.erofs")
-        #expect(normalized.kernelPageSize == .sixteenKiB)
         #expect(normalized.retinaMode == true)
         #expect(normalized.autoResizeGuest == false)
         #expect(normalized.androidBootMode == .recovery)
@@ -715,24 +698,17 @@ struct KernariumTests {
     }
 
     @Test
-    func environmentCanSelectAnExactCampaignPageProfile() {
+    func retiredKernelPageSizeSettingIsDroppedOnLoad() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(4096, forKey: "emulator.kernelPageSize")
+        defaults.set(16384, forKey: "emulator.kernelPageSize")
 
-        let selected = EmulatorConfiguration.load(
+        _ = EmulatorConfiguration.load(
             defaults: defaults,
-            physicalProcessorCount: 6,
-            environment: [KernelPageSize.environmentKey: "16384"]
+            physicalProcessorCount: 6
         )
-        #expect(selected.kernelPageSize == .sixteenKiB)
 
-        let invalid = EmulatorConfiguration.load(
-            defaults: defaults,
-            physicalProcessorCount: 6,
-            environment: [KernelPageSize.environmentKey: "8192"]
-        )
-        #expect(invalid.kernelPageSize == .fourKiB)
+        #expect(defaults.object(forKey: "emulator.kernelPageSize") == nil)
     }
 
     @Test

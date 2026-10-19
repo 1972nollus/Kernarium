@@ -928,13 +928,13 @@ class ExitingProcess:
 class AquariumResourceMetricTests(unittest.TestCase):
     def test_guest_identity_and_measurement_window_are_parsed(self) -> None:
         transcript = (
-            "UML_AQUARIUM_GUEST_IDENTITY|PAGE_SIZE=16384|CPUS=4"
+            "UML_AQUARIUM_GUEST_IDENTITY|PAGE_SIZE=4096|CPUS=4"
             "|MEM_TOTAL_KIB=1520944\n"
             + guest_measurement_transcript()
         )
         self.assertEqual(
             run_chromium_webgl.parse_guest_identity(transcript),
-            {"page_size": 16384, "cpus": 4, "memory_total_kib": 1520944},
+            {"page_size": 4096, "cpus": 4, "memory_total_kib": 1520944},
         )
         measurement = run_chromium_webgl.parse_guest_snapshots(transcript, 30)
         self.assertEqual(len(measurement["snapshots"]), 32)

@@ -64,7 +64,6 @@ struct NetworkState final {
 };
 
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 struct NativeShadowKernelState final {
 	std::uintptr_t address{};
 	int fd{-1};
@@ -76,7 +75,6 @@ struct NativeShadowKernelState final {
 
 NativeShadowKernelState native_shadow_a;
 NativeShadowKernelState native_shadow_b;
-#endif
 
 using uml::testing::require;
 
@@ -154,7 +152,6 @@ void test_memory_bridge_rejects_split_address_space_ranges()
 }
 
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 using uml::testing::ScratchBacking;
 
 constexpr std::string_view backing_name = "uml-emulator-native-shadow-XXXXXX";
@@ -243,7 +240,6 @@ int native_shadow_kernel_b(int, char *const[], char *const[])
 	return native_shadow_kernel(native_shadow_b);
 }
 
-#endif
 
 int run_kernel(int argc, char *const argv[], char *const envp[])
 {
@@ -544,7 +540,6 @@ void test_run_boundary()
 }
 
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 void test_native_shadow_domains_retire_on_every_handle_exit(
 	ReservedNativeSlot &slot)
 {
@@ -625,7 +620,6 @@ void test_native_shadow_domains_retire_on_every_handle_exit(
 		"handle could not retry with a fresh native-shadow domain");
 }
 
-#endif
 
 void test_active_registries_are_allocation_free_and_transactional()
 {
@@ -770,13 +764,11 @@ int main()
 		test_capabilities_describe_the_kernel();
 		test_stop_requests_belong_to_one_run();
 		test_run_boundary();
-	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 		{
 			ReservedNativeSlot native_shadow_slot;
 			test_native_shadow_domains_retire_on_every_handle_exit(
 				native_shadow_slot);
 		}
-	#endif
 		test_active_registries_are_allocation_free_and_transactional();
 #if UML_EMULATOR_TEST_HAS_SLIRP
 		test_injected_user_network_adds_no_kernel_ip_configuration();

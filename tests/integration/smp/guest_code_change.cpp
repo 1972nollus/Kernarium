@@ -48,8 +48,8 @@ constexpr long sigchld = 17;
  * CLONE_SYSVSEM */
 constexpr u64 thread_flags = 0x00000100 | 0x00000200 | 0x00000400 |
 	0x00000800 | 0x00010000 | 0x00040000;
-/* A page in either guest page profile: every size and offset here is a
- * multiple of the larger one, so the far callee is on another page in both. */
+/* A multiple of the 4 KiB guest page and of the 16 KiB host page: the far
+ * callee is on another guest page and on another host page. */
 constexpr u64 page = 16384;
 constexpr u64 stack_size = 64 * 1024;
 constexpr u32 calls = 200;
