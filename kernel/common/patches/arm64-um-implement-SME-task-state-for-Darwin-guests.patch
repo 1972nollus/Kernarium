@@ -1714,7 +1714,7 @@ index 9489651287b3d7fbe264d32eaeeb8977954a5a95..e04b03437b9a89c2f8e9edd02af04953
  	return 0;
  }
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 12be3ad3e7c0047ffe90985a1f43303420668364..0cb7d999350d9ff8284615cc5b5738c392b17cef 100644
+index abb2a2348c160fab9135ae80ed46dc4f110e4ffc..26c96498cc4507c1537b71ae92849b55a987cbcb 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -15,6 +15,7 @@
@@ -1752,7 +1752,7 @@ index 12be3ad3e7c0047ffe90985a1f43303420668364..0cb7d999350d9ff8284615cc5b5738c3
  
  /* relay_signal consumes Linux signal numbers, not Darwin SIGBUS (10). */
  #define DARWIN_GUEST_SIGBUS 7
-@@ -426,6 +447,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -422,6 +443,10 @@ void userspace(struct uml_pt_regs *registers)
  		UPT_SYSCALL_NR(registers) = -1;
  		switch (event) {
  		case DARWIN_UML_EVENT_SYSCALL:
@@ -1763,7 +1763,7 @@ index 12be3ad3e7c0047ffe90985a1f43303420668364..0cb7d999350d9ff8284615cc5b5738c3
  			registers->orig_x0 = UPT_X(registers, 0);
  			handle_syscall(registers);
  			/* copy_mm() records the parent's COW protection changes in
-@@ -484,6 +509,15 @@ void userspace(struct uml_pt_regs *registers)
+@@ -480,6 +505,15 @@ void userspace(struct uml_pt_regs *registers)
  		}
  		case DARWIN_UML_EVENT_INTERRUPT:
  			break;
@@ -1780,7 +1780,7 @@ index 12be3ad3e7c0047ffe90985a1f43303420668364..0cb7d999350d9ff8284615cc5b5738c3
  		{
  			siginfo_t signal_info = { 0 };
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 7ac28dc6b26f566b5153c6718044b511e51011e5..fe293d21f68942523006048a8f322d099ddc5a0c 100644
+index 38192336884c5922ef6db1ce80afa607cda3c431..56c60588026ee5326a037d9a7e55cca5a5f39c28 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -46,9 +46,24 @@ enum darwin_uml_guest_event {
@@ -1870,7 +1870,7 @@ index 7ac28dc6b26f566b5153c6718044b511e51011e5..fe293d21f68942523006048a8f322d09
  
  #if defined(__cplusplus)
  #include <stddef.h>
-@@ -126,11 +172,14 @@ static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
+@@ -126,10 +172,13 @@ static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
  static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
  static_assert(DARWIN_UML_EVENT_STOP == 9);
  static_assert(DARWIN_UML_EVENT_DATA_ALIGNMENT == 10);
@@ -1878,14 +1878,13 @@ index 7ac28dc6b26f566b5153c6718044b511e51011e5..fe293d21f68942523006048a8f322d09
  static_assert(DARWIN_UML_FLOATING_POINT_SYNDROME_BASE == 0xb2800000U);
  static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
  		(1ULL << DARWIN_UML_GUEST_PAGE_SHIFT));
- static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096 ||
- 		DARWIN_UML_GUEST_PAGE_SIZE == 16384);
+ static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096);
 +static_assert(offsetof(struct darwin_uml_guest_registers, dispatch_flags) ==
 +		DARWIN_UML_ABI_GUEST_REGISTERS_DISPATCH_FLAGS_OFFSET);
  static_assert(offsetof(struct darwin_uml_guest_registers, original_x0) ==
  		DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET);
  static_assert(offsetof(struct darwin_uml_guest_registers, fault) ==
-@@ -146,6 +195,14 @@ static_assert(sizeof(struct darwin_uml_guest_registers) ==
+@@ -145,6 +194,14 @@ static_assert(sizeof(struct darwin_uml_guest_registers) ==
  static_assert(sizeof(struct darwin_uml_faultinfo) == 24U);
  static_assert(sizeof(struct darwin_uml_guest_fp_registers) ==
  		DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE);

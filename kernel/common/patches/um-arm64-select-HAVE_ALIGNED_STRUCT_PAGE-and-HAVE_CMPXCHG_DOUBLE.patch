@@ -41,10 +41,10 @@ index 55785809fc4eb1e08a19ef647ae91f9236905cd4..0c6de0263b94e36efac04e2a398a6ac5
  	select HAVE_PERF_EVENTS
  	select MODULES_USE_ELF_RELA
 diff --git a/arch/um/kernel/mem.c b/arch/um/kernel/mem.c
-index e2b7dd38000bebf08b907bfc21eabd75655f557d..65d77c7b02f89c5817747e08021237403dd1de45 100644
+index bbd1872f3c26d629f54198b9309185196cd2f627..7c42ca72464020660034a658d553132b7f8b1f42 100644
 --- a/arch/um/kernel/mem.c
 +++ b/arch/um/kernel/mem.c
-@@ -215,6 +215,16 @@ void __init paging_init(void)
+@@ -209,6 +209,16 @@ void __init paging_init(void)
  	max_zone_pfn[ZONE_NORMAL] = end_iomem >> PAGE_SHIFT;
  	free_area_init(max_zone_pfn);
  

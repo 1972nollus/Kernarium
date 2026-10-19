@@ -69,10 +69,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  13 files changed, 259 insertions(+), 4 deletions(-)
 
 diff --git a/arch/um/Kconfig b/arch/um/Kconfig
-index cab6992fdc2222474b6c8a68835da5b8715936ea..e8f3c741c85e86baea33526ff5413575fcf58458 100644
+index cc7f5ddb404cbc3fda7ae2d8c6cd847f8941137e..8818e790d811f0446137a780ab0f04c238522bfa 100644
 --- a/arch/um/Kconfig
 +++ b/arch/um/Kconfig
-@@ -92,6 +92,15 @@ config HZ
+@@ -91,6 +91,15 @@ config HZ
  config UML_SUBARCH_SUPPORTS_SMP
  	bool
  
@@ -159,7 +159,7 @@ index 16a9b0f8f228fc0b0bac09d5b77aff057fb1a310..4d671e0632111ef1d0da38142c276613
  extern void current_set_tls(unsigned long tls);
  extern void current_mm_sync(void);
 diff --git a/arch/um/kernel/skas/mmu_darwin.c b/arch/um/kernel/skas/mmu_darwin.c
-index 112d9734f69b3b87ca06288fab39279bf87e280a..5cdb82ff3fe1baa7bd8343401e926945058a610c 100644
+index e770c638bc22feef6238890837e6d3f50bae46f4..7a70e528b66dd95c7102ff2f8bc335907c18c985 100644
 --- a/arch/um/kernel/skas/mmu_darwin.c
 +++ b/arch/um/kernel/skas/mmu_darwin.c
 @@ -8,6 +8,7 @@
@@ -170,8 +170,8 @@ index 112d9734f69b3b87ca06288fab39279bf87e280a..5cdb82ff3fe1baa7bd8343401e926945
  
  static atomic_t darwin_mm_generation = ATOMIC_INIT(1);
  
-@@ -28,6 +29,104 @@ void arch_exit_mmap(struct mm_struct *mm)
- #endif
+@@ -24,6 +25,104 @@ void arch_exit_mmap(struct mm_struct *mm)
+ 		      mm->context.id.darwin_generation);
  }
  
 +#ifdef CONFIG_UML_DARWIN_MM_SHARED
@@ -275,7 +275,7 @@ index 112d9734f69b3b87ca06288fab39279bf87e280a..5cdb82ff3fe1baa7bd8343401e926945
  int arch_unmap_one(struct mm_struct *mm, struct vm_area_struct *vma,
  		   unsigned long addr, pte_t orig_pte)
  {
-@@ -53,6 +152,10 @@ int init_new_context(struct task_struct *task, struct mm_struct *mm)
+@@ -49,6 +148,10 @@ int init_new_context(struct task_struct *task, struct mm_struct *mm)
  	id->pid = atomic_inc_return(&darwin_mm_generation);
  	id->darwin_generation = id->pid;
  	id->darwin_context = NULL;
@@ -353,7 +353,7 @@ index d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f..8c1ab173f3850c7da37b8d048d0bdf5c
  		if (event == DARWIN_UML_EVENT_STOP)
  			darwin_host_stop();
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index fe293d21f68942523006048a8f322d099ddc5a0c..48bd2b7b0c70dce2e8c1667f408000a5c8898a8a 100644
+index 56c60588026ee5326a037d9a7e55cca5a5f39c28..b2404aba46536a37f38fa9626b3ebce398da7a93 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -59,8 +59,17 @@ enum darwin_uml_guest_event {

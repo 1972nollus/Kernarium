@@ -37,6 +37,9 @@ SCHEMA_VERSION = 3
 # Schema 2 bundles also recorded a patch count and a digest of a series
 # manifest. Both are still accepted; the final tree is the source identity.
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
+# Every kernel runs 4 KiB guest pages; the manifest records the size so a
+# consumer checks the profile it was built for.
+GUEST_PAGE_SIZE = 4096
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 ABI_FINGERPRINT_RE = re.compile(r"^0x[0-9a-f]{16}$")
 TOP_LEVEL_KEYS = {
@@ -111,16 +114,12 @@ def validate_manifest(value: object) -> dict:
     if kernel_slice not in ("arm64", "x86_64"):
         fail("kernel slice is unsupported")
     page_size = require_integer(manifest["page_size"], "kernel page size")
-    if page_size not in (4096, 16384):
+    if page_size != GUEST_PAGE_SIZE:
         fail("kernel page size is unsupported")
     if kernel_slice == "x86_64" and family != "mainline-6.18":
         fail("the x86_64 kernel slice requires the mainline-6.18 family")
-    if kernel_slice == "x86_64" and page_size != 4096:
-        fail("the x86_64 kernel slice requires 4096-byte pages")
-    if family == "android-6.18" and (
-        kernel_slice != "arm64" or page_size != 4096
-    ):
-        fail("the android-6.18 family requires arm64 and 4096-byte pages")
+    if family == "android-6.18" and kernel_slice != "arm64":
+        fail("the android-6.18 family requires the arm64 slice")
     directory_name = require_string(manifest["directory_name"], "directory name")
     expected_directory = (
         f"{family}-{kernel_slice}-{page_size // 1024}k-{release_id}"
@@ -226,20 +225,17 @@ def verify_inventory(artifact_root: Path, manifest: dict) -> None:
             fail(f"artifact payload size differs for {relative}")
 
 
-def verify_config(path: Path, page_size: int, kernel_slice: str) -> None:
+def verify_config(path: Path, kernel_slice: str) -> None:
     if kernel_slice not in ("arm64", "x86_64"):
         fail("kernel config slice is unsupported")
-    if kernel_slice == "x86_64" and page_size != 4096:
-        fail("the x86_64 kernel config requires 4096-byte pages")
     config = parse_config(path)
     expected = {
         "CONFIG_64BIT": "y",
         "CONFIG_ARM64": "y",
         "CONFIG_UML": "y",
         "CONFIG_MODULES": "n",
-        "CONFIG_PAGE_SHIFT": "14" if page_size == 16384 else "12",
-        "CONFIG_PAGE_SIZE_16KB": "y" if page_size == 16384 else "n",
-        "CONFIG_PAGE_SIZE_4KB": "n" if page_size == 16384 else "y",
+        "CONFIG_PAGE_SHIFT": "12",
+        "CONFIG_PAGE_SIZE_4KB": "y",
         "CONFIG_UML_X86_64_USERSPACE_ONLY": (
             "y" if kernel_slice == "x86_64" else "n"
         ),
@@ -339,7 +335,6 @@ def verify_elf(
     verify_elf_geometry(payload, page_size)
     verify_imports(
         undefined_symbols(payload, error),
-        page_size,
         kernel_slice,
         common_root / "abi",
         error,
@@ -518,11 +513,7 @@ def _verify_bundle(
     ).strip()
     if release != manifest["release"]:
         fail("kernel release payload differs from its manifest")
-    verify_config(
-        artifact_root / "kernel/config",
-        manifest["page_size"],
-        manifest["slice"],
-    )
+    verify_config(artifact_root / "kernel/config", manifest["slice"])
     payload = verify_elf(
         artifact_root / "kernel/vmlinux",
         manifest["page_size"],
@@ -576,7 +567,6 @@ def publish_artifact(
     *,
     family: str,
     kernel_slice: str,
-    page_size: int,
     source: Path,
     source_label: str,
     build: Path,
@@ -659,14 +649,13 @@ def publish_artifact(
     # The image is checked once, as published, by verify_artifact below:
     # stripping DWARF changes nothing verify_elf reads, and the unstripped
     # build image carries the full DWARF.
-    verify_config(source_paths["kernel/config"], page_size, kernel_slice)
+    verify_config(source_paths["kernel/config"], kernel_slice)
     release = source_paths["kernel/kernel.release"].read_text(
         encoding="utf-8"
     ).strip()
     check_release(release, metadata)
 
-    page_label = "16k" if page_size == 16384 else "4k"
-    directory_name = f"{family}-{kernel_slice}-{page_label}-{release_id}"
+    directory_name = f"{family}-{kernel_slice}-4k-{release_id}"
     output_root.mkdir(parents=True, exist_ok=True)
     if output_root.is_symlink():
         fail_publish("output root must not be a symlink")
@@ -712,7 +701,7 @@ def publish_artifact(
                 datetime.timezone.utc
             ).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "release": release,
-            "page_size": page_size,
+            "page_size": GUEST_PAGE_SIZE,
             "elf_role": "darwin-uml",
             "source": {
                 "repository": metadata["UML_KERNEL_UPSTREAM_REPOSITORY"],

@@ -5,14 +5,14 @@ Subject: [PATCH] uml: define the Darwin fixed-arity host bridge ABI
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
- arch/um/os-Darwin/uml_darwin_abi.h          | 148 ++++++++++++++++++++
+ arch/um/os-Darwin/uml_darwin_abi.h          | 147 ++++++++++++++++++++
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   9 ++
  arch/um/os-Darwin/uml_darwin_bridge.h       |  11 ++
  arch/um/os-Darwin/uml_darwin_cpu.h          |  23 +++
  arch/um/os-Darwin/uml_darwin_host.h         |  22 +++
  arch/um/os-Darwin/uml_darwin_memory.h       |  48 +++++++
  arch/um/os-Darwin/uml_darwin_network.h      |  18 +++
- 7 files changed, 279 insertions(+)
+ 7 files changed, 278 insertions(+)
  create mode 100644 arch/um/os-Darwin/uml_darwin_abi.h
  create mode 100644 arch/um/os-Darwin/uml_darwin_abi_identity.h
  create mode 100644 arch/um/os-Darwin/uml_darwin_bridge.h
@@ -23,10 +23,10 @@ Apply the reviewed final-state topic without intermediate churn.
 
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..555c32a3d9a42bba23f2f690ccf579f3073f1762
+index 0000000000000000000000000000000000000000..a3df85afed6284a5bfd3cdb817605b953b30ffce
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,147 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later */
 +/*
 + * Canonical Darwin UML host/kernel data ABI.
@@ -52,11 +52,11 @@ index 0000000000000000000000000000000000000000..555c32a3d9a42bba23f2f690ccf579f3
 +typedef unsigned long long darwin_uml_abi_u64;
 +
 +#ifndef DARWIN_UML_GUEST_PAGE_SIZE
-+#define DARWIN_UML_GUEST_PAGE_SIZE 16384
++#define DARWIN_UML_GUEST_PAGE_SIZE 4096
 +#endif
 +
 +#ifndef DARWIN_UML_GUEST_PAGE_SHIFT
-+#define DARWIN_UML_GUEST_PAGE_SHIFT 14
++#define DARWIN_UML_GUEST_PAGE_SHIFT 12
 +#endif
 +
 +enum {
@@ -155,8 +155,7 @@ index 0000000000000000000000000000000000000000..555c32a3d9a42bba23f2f690ccf579f3
 +static_assert(DARWIN_UML_FLOATING_POINT_SYNDROME_BASE == 0xb2800000U);
 +static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
 +		(1ULL << DARWIN_UML_GUEST_PAGE_SHIFT));
-+static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096 ||
-+		DARWIN_UML_GUEST_PAGE_SIZE == 16384);
++static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096);
 +static_assert(offsetof(struct darwin_uml_guest_registers, original_x0) ==
 +		DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET);
 +static_assert(offsetof(struct darwin_uml_guest_registers, fault) ==

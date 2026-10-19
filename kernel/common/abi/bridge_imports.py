@@ -4,9 +4,9 @@
 
 The image must import every darwin_uml_* function declared in this
 directory's darwin_uml_*.h headers, except those import-policy.tsv limits to
-4 KiB pages or to the arm64 slice, and none of the host functions that host
-code must not call directly. Kernel builds run this command on the built
-image; the kernel artifact verifier applies the same checks to a bundle.
+the arm64 slice, and none of the host functions that host code must not call
+directly. Kernel builds run this command on the built image; the kernel
+artifact verifier applies the same checks to a bundle.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from typing import NamedTuple
 Error = Callable[[str], BaseException]
 
 ABI_ROOT = Path(__file__).resolve().parent
-PAGE_SIZES = {"16k": 16384, "4k": 4096}
 BRIDGE_SYMBOL_RE = re.compile(r"darwin_uml_[A-Za-z0-9_]+")
 DECLARATION_RE = re.compile(r"\b(darwin_uml_[A-Za-z0-9_]+)\s*\(")
 POLICY_HEADER = "symbol\tavailability\trationale"
@@ -129,22 +128,19 @@ def undefined_symbols(payload: bytes, error: Error = ValueError) -> set[str]:
 
 
 def expected_imports(
-    page_size: int,
     kernel_slice: str,
     abi_root: Path = ABI_ROOT,
     error: Error = ValueError,
 ) -> set[str]:
-    """Return the bridge symbols a kernel of this page size and slice imports."""
+    """Return the bridge symbols a kernel of this slice imports."""
     if kernel_slice not in {"arm64", "x86_64"}:
         raise error(f"unsupported kernel slice for bridge imports: {kernel_slice}")
-    if kernel_slice == "x86_64" and page_size != 4096:
-        raise error("x86_64 bridge imports require 4096-byte pages")
     declared: set[str] = set()
     for path in sorted(abi_root.glob("darwin_uml_*.h")):
         declared.update(DECLARATION_RE.findall(path.read_text(encoding="utf-8")))
     if not declared:
         raise error("shared ABI declarations are missing")
-    conditional: dict[str, set[str]] = {"4k-only": set(), "arm64-only": set()}
+    conditional: dict[str, set[str]] = {"arm64-only": set()}
     policy = abi_root / "import-policy.tsv"
     if not policy.is_file():
         raise error(f"ABI import policy is missing: {policy}")
@@ -168,8 +164,6 @@ def expected_imports(
             f"ABI import policy names undeclared bridge symbols: {sorted(undeclared)}"
         )
     expected = set(declared)
-    if page_size == 16384:
-        expected -= conditional["4k-only"]
     if kernel_slice == "x86_64":
         expected -= conditional["arm64-only"]
     return expected
@@ -177,13 +171,12 @@ def expected_imports(
 
 def verify_imports(
     undefined: Iterable[str],
-    page_size: int,
     kernel_slice: str,
     abi_root: Path = ABI_ROOT,
     error: Error = ValueError,
 ) -> None:
     """Require an image with these undefined symbols to import the active bridge."""
-    expected = expected_imports(page_size, kernel_slice, abi_root, error)
+    expected = expected_imports(kernel_slice, abi_root, error)
     undefined = set(undefined)
     for pattern, description in FORBIDDEN_IMPORTS:
         if any(pattern.fullmatch(name) for name in undefined):
@@ -207,7 +200,6 @@ def main() -> None:
         action="store_true",
         help="print the bridge symbols an image must import",
     )
-    parser.add_argument("--page-size", choices=PAGE_SIZES, required=True)
     parser.add_argument(
         "--slice", choices=("arm64", "x86_64"), required=True, dest="kernel_slice"
     )
@@ -216,9 +208,8 @@ def main() -> None:
     def error(message: str) -> SystemExit:
         return SystemExit(f"kernel/common/abi/bridge_imports.py: {message}")
 
-    page_size = PAGE_SIZES[args.page_size]
     if args.print_expected:
-        for symbol in sorted(expected_imports(page_size, args.kernel_slice, error=error)):
+        for symbol in sorted(expected_imports(args.kernel_slice, error=error)):
             print(symbol)
         return
     if args.kernel_binary is not None:
@@ -229,9 +220,9 @@ def main() -> None:
         if not args.nm_output.is_file():
             raise error(f"nm output is missing: {args.nm_output}")
         undefined = set(args.nm_output.read_bytes().decode("utf-8", "replace").split())
-    verify_imports(undefined, page_size, args.kernel_slice, error=error)
+    verify_imports(undefined, args.kernel_slice, error=error)
     print(
-        f"verified {args.kernel_slice} {args.page_size} Linux imports exactly "
+        f"verified {args.kernel_slice} Linux imports exactly "
         "match the active synchronized bridge"
     )
 

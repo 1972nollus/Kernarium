@@ -28,7 +28,6 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--build", type=Path, required=True)
-    parser.add_argument("--page-size", choices=("4k", "16k"), required=True)
     parser.add_argument("--slice", choices=("arm64", "x86_64"), default="arm64")
     parser.add_argument(
         "--product",
@@ -71,10 +70,8 @@ def main() -> None:
         objcopy, os.X_OK
     ):
         fail("--objcopy must name an absolute executable")
-    if args.slice == "x86_64" and args.page_size != "4k":
-        fail("the x86_64 userspace slice supports only 4 KiB pages")
-    if args.product == "android" and (args.slice != "arm64" or args.page_size != "4k"):
-        fail("the android product supports only the arm64 slice and 4 KiB pages")
+    if args.product == "android" and args.slice != "arm64":
+        fail("the android product supports only the arm64 slice")
 
     metadata_path = line_root / "patches/metadata.env"
     if args.slice == "x86_64":
@@ -99,7 +96,6 @@ def main() -> None:
         fail,
         family="android-6.18" if args.product == "android" else "mainline-6.18",
         kernel_slice=args.slice,
-        page_size=16384 if args.page_size == "16k" else 4096,
         source=source,
         source_label="kernel source",
         build=build,

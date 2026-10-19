@@ -13,7 +13,7 @@ TEST_NAME=test_source_location_config.sh
 
 MISSING_CONFIG="$TEST_ROOT/missing.conf"
 if UML_KERNEL_SOURCE_CONFIG="$MISSING_CONFIG" \
-	"$BUILD_SCRIPT" --build "$TEST_ROOT/build" --page-size 16k \
+	"$BUILD_SCRIPT" --build "$TEST_ROOT/build" \
 	> "$TEST_ROOT/build.out" 2> "$TEST_ROOT/build.err"; then
 	fail "kernel build accepted a missing source-location configuration"
 fi

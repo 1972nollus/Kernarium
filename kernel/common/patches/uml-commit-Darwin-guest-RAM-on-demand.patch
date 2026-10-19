@@ -81,10 +81,10 @@ index 8914ece2ca2d81399169f75c2c1aa0ca5851c374..1abe4b56b3ba15b32dbea0577976d1ef
  /* tlb.c */
  extern void report_enomem(void);
 diff --git a/arch/um/kernel/mem.c b/arch/um/kernel/mem.c
-index 94ab67fa3b6aca2c966b5ab8df6ad8ec54cd84f2..e2b7dd38000bebf08b907bfc21eabd75655f557d 100644
+index a8cd49bd5cc95f9ab038ab184b25766f1320a08c..bbd1872f3c26d629f54198b9309185196cd2f627 100644
 --- a/arch/um/kernel/mem.c
 +++ b/arch/um/kernel/mem.c
-@@ -90,10 +90,12 @@ void __init arch_mm_preinit(void)
+@@ -84,10 +84,12 @@ void __init arch_mm_preinit(void)
  	uml_reserved = brk_end;
  	min_low_pfn = PFN_UP(__pa(uml_reserved));
  	max_pfn = max_low_pfn;
@@ -98,7 +98,7 @@ index 94ab67fa3b6aca2c966b5ab8df6ad8ec54cd84f2..e2b7dd38000bebf08b907bfc21eabd75
  }
  
 diff --git a/arch/um/kernel/physmem.c b/arch/um/kernel/physmem.c
-index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..4346f3e8a7f6cdeb31d0c48792f14bda4ea6b612 100644
+index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..140b50af8ea238e32614f2c1f340745343fa1246 100644
 --- a/arch/um/kernel/physmem.c
 +++ b/arch/um/kernel/physmem.c
 @@ -4,10 +4,14 @@
@@ -145,9 +145,9 @@ index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..4346f3e8a7f6cdeb31d0c48792f14bda
 + *
 + * Releases and commits cover whole chunks of 2^UML_PHYSMEM_CHUNK_ORDER pages,
 + * the minimum reporting order, so one bit per chunk records what the host
-+ * holds. The order is deliberately well below pageblock_order. A 16 KiB
-+ * profile makes a pageblock 32 MiB, and a busy guest rarely has a whole one
-+ * free; 512 KiB still amortizes one host call over 32 pages. A larger
++ * holds. The order is deliberately well below pageblock_order. A pageblock
++ * is 4 MiB, and a busy guest rarely has a whole one free; 128 KiB still
++ * amortizes one host call over 32 pages. A larger
 + * page_reporting.page_reporting_order= still works. A smaller one reports
 + * ranges this code leaves committed.
 + */
@@ -394,7 +394,7 @@ index 182e71b7517618d359bdb9a25526d18c5dc7951c..12e4934ffda251dc11e4aaefde4bd645
 +	return 0;
 +}
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 605e4e25ab86e6a4b0e154940c88c8336f4cea8e..27bc8eb41e2550126d41139303b1de4f0554d795 100644
+index 801942709ede8f6e6bc96a31efc71a9f1b2d0aea..436487f38255638853bb73996d26e8edd3344d90 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -23,8 +23,8 @@
@@ -409,7 +409,7 @@ index 605e4e25ab86e6a4b0e154940c88c8336f4cea8e..27bc8eb41e2550126d41139303b1de4f
  _Static_assert(offsetof(struct uml_pt_regs, orig_x0) ==
  	      DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET,
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 8d524efff0cb5157eaf93303eddb82a18f89a65e..0880cdb2d1c2a263aea806575c082046f9f567bc 100644
+index 087c2c135ac056f8e28c9887278d638e82feaef6..bf40d80441b776417e83504ac732fcd5d7bb163b 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -121,8 +121,8 @@ struct darwin_uml_guest_fp_registers {

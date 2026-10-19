@@ -26,31 +26,30 @@ cache folios, reach the frames before anything reads or frees them.
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- arch/um/include/asm/cacheflush.h |  16 +++
+ arch/um/include/asm/cacheflush.h |  14 +++
  arch/um/include/asm/vmalloc.h    |  14 +++
  arch/um/kernel/tlb.c             | 166 +++++++++++++++++++++++++++++--
- 3 files changed, 189 insertions(+), 7 deletions(-)
+ 3 files changed, 187 insertions(+), 7 deletions(-)
 
 diff --git a/arch/um/include/asm/cacheflush.h b/arch/um/include/asm/cacheflush.h
-index b301339bed275270cf4c99b751eac7c594d86955..acdbb432925271b557bd2e9191c4db9d8007ccac 100644
+index b301339bed275270cf4c99b751eac7c594d86955..31deab0b5c24a55cd6baf6a253f418fc98db3ed0 100644
 --- a/arch/um/include/asm/cacheflush.h
 +++ b/arch/um/include/asm/cacheflush.h
 @@ -3,7 +3,9 @@
  
  #include <asm/tlbflush.h>
  #define flush_cache_vmap flush_tlb_kernel_range
-+#if !defined(UML_HOST_DARWIN) || defined(CONFIG_PAGE_SIZE_16KB)
++#ifndef UML_HOST_DARWIN
  #define flush_cache_vunmap flush_tlb_kernel_range
 +#endif
  
  #ifdef UML_HOST_DARWIN
  struct mm_struct;
-@@ -23,6 +25,20 @@ extern void darwin_flush_icache_remote_user_range(struct mm_struct *mm,
+@@ -23,6 +25,18 @@ extern void darwin_flush_icache_remote_user_range(struct mm_struct *mm,
  						  unsigned long len);
  #define flush_icache_user_page darwin_flush_icache_user_page
  #define flush_icache_remote_user_range darwin_flush_icache_remote_user_range
 +
-+#ifndef CONFIG_PAGE_SIZE_16KB
 +/*
 + * With 4 KiB pages on a 16 KiB host, a kernel alias whose host page does not
 + * map one aligned group of four consecutive frames is a private copy, and
@@ -62,19 +61,18 @@ index b301339bed275270cf4c99b751eac7c594d86955..acdbb432925271b557bd2e9191c4db9d
 +extern void invalidate_kernel_vmap_range(void *vaddr, int size);
 +extern void flush_cache_vunmap(unsigned long start, unsigned long end);
 +#define flush_cache_vunmap flush_cache_vunmap
-+#endif
  #endif
  
  #include <asm-generic/cacheflush.h>
 diff --git a/arch/um/include/asm/vmalloc.h b/arch/um/include/asm/vmalloc.h
-index 9a7b9ed9373370ed8e421004f39fb65e26feec1e..7673960303af6a37a17ce745c4762f0ef11fd4c2 100644
+index 9a7b9ed9373370ed8e421004f39fb65e26feec1e..d366f2f28fd61c7b42456abc1a63dd0dd7cd2244 100644
 --- a/arch/um/include/asm/vmalloc.h
 +++ b/arch/um/include/asm/vmalloc.h
 @@ -1,4 +1,18 @@
  #ifndef _ASM_UM_VMALLOC_H
  #define _ASM_UM_VMALLOC_H
  
-+#if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
++#ifdef UML_HOST_DARWIN
 +/*
 + * A 16 KiB Darwin host page backs four 4 KiB guest pages. The host maps a
 + * kernel slot as one shared page only when it covers one aligned group of
@@ -90,7 +88,7 @@ index 9a7b9ed9373370ed8e421004f39fb65e26feec1e..7673960303af6a37a17ce745c4762f0e
 +
  #endif /* _ASM_UM_VMALLOC_H */
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 6fff9ef7ddbdc6637f2574fabd89c21be710d717..6d24b89b3a0229446107798dad8ef83a9d89803d 100644
+index 813730531f97e2f4d7a01cfb3054177d0dce96dc..37b35d3387afddc48ea6cff26976240f172d47ea 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -9,6 +9,7 @@

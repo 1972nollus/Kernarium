@@ -20,7 +20,6 @@ from types import ModuleType
 
 SUPPORTED_IDENTITIES = {
     ("mainline-6.18", "arm64", 4096),
-    ("mainline-6.18", "arm64", 16384),
     ("mainline-6.18", "x86_64", 4096),
     ("android-6.18", "arm64", 4096),
 }
@@ -121,19 +120,13 @@ def require_rejected(
 
 def schema_identities(path: Path) -> set[tuple[str, str, int]]:
     schema = json.loads(path.read_text(encoding="utf-8"))
+    # Every identity has the one page size the schema names.
+    page_size = schema["properties"]["page_size"]["const"]
     identities: set[tuple[str, str, int]] = set()
     for branch in schema["oneOf"]:
         properties = branch["properties"]
-        family = properties["family"]["const"]
-        kernel_slice = properties["slice"]["const"]
-        page_rule = properties["page_size"]
-        page_sizes = (
-            [page_rule["const"]]
-            if "const" in page_rule
-            else page_rule["enum"]
-        )
-        identities.update(
-            (family, kernel_slice, page_size) for page_size in page_sizes
+        identities.add(
+            (properties["family"]["const"], properties["slice"]["const"], page_size)
         )
     return identities
 
@@ -145,7 +138,6 @@ def config_values(kernel_slice: str) -> dict[str, str]:
         "CONFIG_UML": "y",
         "CONFIG_MODULES": "n",
         "CONFIG_PAGE_SHIFT": "12",
-        "CONFIG_PAGE_SIZE_16KB": "n",
         "CONFIG_PAGE_SIZE_4KB": "y",
         "CONFIG_UML_X86_64_USERSPACE_ONLY": (
             "y" if kernel_slice == "x86_64" else "n"
@@ -229,7 +221,9 @@ PROGRAM_HEADERS = (64, 120, 176)
 
 
 def kernel_elf(imports: list[str]) -> bytearray:
-    """Return a 16 KiB AArch64 ET_DYN kernel image that imports these names.
+    """Return an AArch64 ET_DYN kernel image that imports these names.
+
+    Its loads align to the 16 KiB Darwin host page.
 
     Its .symtab also defines darwin_uml_defined_here, which is not an import.
     """
@@ -295,13 +289,12 @@ def require_kernel_elf(
     path: Path,
     image: bytes,
     common_root: Path,
-    page_size: int,
     kernel_slice: str,
     diagnostic: str | None,
 ) -> None:
     path.write_bytes(image)
     try:
-        module.verify_elf(path, page_size, common_root, kernel_slice)
+        module.verify_elf(path, module.GUEST_PAGE_SIZE, common_root, kernel_slice)
     except SystemExit as error:
         require(
             diagnostic is not None and diagnostic in str(error),
@@ -317,68 +310,46 @@ def verify_kernel_elf_contract(module: ModuleType, root: Path) -> None:
     abi.mkdir(parents=True)
     (abi / "darwin_uml_fixture.h").write_text(
         "int darwin_uml_everywhere(void);\n"
-        "int darwin_uml_small_pages(int value);\n"
         "void darwin_uml_arm64_only(void);\n",
         encoding="utf-8",
     )
-    policy = [
-        "darwin_uml_small_pages\t4k-only\tfixture",
-        "darwin_uml_arm64_only\tarm64-only\tfixture",
-    ]
+    policy = ["darwin_uml_arm64_only\tarm64-only\tfixture"]
     write_bridge_policy(abi, policy)
     common = root / "common"
     path = root / "vmlinux"
-    everywhere, small, arm64 = (
-        "darwin_uml_everywhere",
-        "darwin_uml_small_pages",
-        "darwin_uml_arm64_only",
-    )
-    active_16k = [everywhere, arm64]
+    everywhere, arm64 = "darwin_uml_everywhere", "darwin_uml_arm64_only"
+    active = [everywhere, arm64]
 
     def check(
         image: bytes,
         diagnostic: str | None,
-        page_size: int = 16384,
         kernel_slice: str = "arm64",
     ) -> None:
-        require_kernel_elf(
-            module, path, image, common, page_size, kernel_slice, diagnostic
-        )
+        require_kernel_elf(module, path, image, common, kernel_slice, diagnostic)
 
-    # Each page profile and slice imports exactly its active symbols.
-    check(kernel_elf(active_16k), None)
-    check(kernel_elf([everywhere, small, arm64]), None, 4096)
-    check(kernel_elf([everywhere, small]), None, 4096, "x86_64")
-    for imports, page_size, kernel_slice, missing, extra in (
-        ([everywhere, small, arm64], 16384, "arm64", [], [small]),
-        ([everywhere, small, arm64], 4096, "x86_64", [], [arm64]),
-        ([everywhere, small], 4096, "arm64", [arm64], []),
-        ([everywhere], 16384, "arm64", [arm64], []),
-        ([*active_16k, "darwin_uml_undeclared"], 16384, "arm64", [],
-         ["darwin_uml_undeclared"]),
+    # Each slice imports exactly its active symbols.
+    check(kernel_elf(active), None)
+    check(kernel_elf([everywhere]), None, "x86_64")
+    for imports, kernel_slice, missing, extra in (
+        (active, "x86_64", [], [arm64]),
+        ([everywhere], "arm64", [arm64], []),
+        ([*active, "darwin_uml_undeclared"], "arm64", [], ["darwin_uml_undeclared"]),
     ):
         check(
             kernel_elf(imports),
             f"kernel bridge imports differ (missing={missing}, extra={extra})",
-            page_size,
             kernel_slice,
         )
-    check(kernel_elf(active_16k), "unsupported kernel slice", 16384, "riscv64")
-    check(
-        kernel_elf([everywhere, small]),
-        "x86_64 bridge imports require 4096-byte pages",
-        16384,
-        "x86_64",
-    )
+    check(kernel_elf(active), "unsupported kernel slice", "riscv64")
 
-    # A 4 KiB image may align its loads to 4 KiB; a 16 KiB image may not.
-    small_alignment = kernel_elf([everywhere, small, arm64])
+    # A load aligned to the 4 KiB guest page is enough; a smaller one is not.
+    small_alignment = kernel_elf(active)
     for offset in PROGRAM_HEADERS[:2]:
         struct.pack_into("<Q", small_alignment, offset + 48, 0x1000)
-    check(small_alignment, None, 4096)
+    check(small_alignment, None)
 
     def mutated(layout: str, offset: int, value: int) -> bytearray:
-        image = kernel_elf(active_16k)
+        image = kernel_elf(active)
         struct.pack_into(layout, image, offset, value)
         return image
 
@@ -399,7 +370,7 @@ def verify_kernel_elf_contract(module: ModuleType, root: Path) -> None:
         ("<I", stack + 4, PF_R | PF_W | PF_X, "kernel GNU stack is executable"),
         ("<I", data + 4, PF_R | PF_W | PF_X,
          "ELF load segment 1 is writable and executable"),
-        ("<Q", load + 48, 0x1000, "ELF load segment 0 has invalid alignment 0x1000"),
+        ("<Q", load + 48, 0x800, "ELF load segment 0 has invalid alignment 0x800"),
         ("<Q", load + 48, 0x6000, "ELF load segment 0 has invalid alignment 0x6000"),
         ("<Q", data + 16, 0x10010, "ELF load segment 1 violates alignment congruence"),
         ("<I", data, 0, unseparated),
@@ -407,9 +378,9 @@ def verify_kernel_elf_contract(module: ModuleType, root: Path) -> None:
     ):
         check(mutated(layout, offset, value), diagnostic)
 
-    symbols = section_header(kernel_elf(active_16k), 1)
-    strings = section_header(kernel_elf(active_16k), 2)
-    unterminated = kernel_elf(active_16k)
+    symbols = section_header(kernel_elf(active), 1)
+    strings = section_header(kernel_elf(active), 2)
+    unterminated = kernel_elf(active)
     string_offset, string_size = struct.unpack_from("<QQ", unterminated, strings + 24)
     unterminated[string_offset + string_size - 1] = ord("x")
     for image, diagnostic in (
@@ -430,8 +401,8 @@ def verify_kernel_elf_contract(module: ModuleType, root: Path) -> None:
         ("fcntl", "the variadic Darwin fcntl"),
         ("_fcntl$NOCANCEL", "the variadic Darwin fcntl"),
     ):
-        check(kernel_elf([*active_16k, symbol]), f"the Linux image imports {description}")
-    check(kernel_elf([*active_16k, "pthread_sigmask"]), None)
+        check(kernel_elf([*active, symbol]), f"the Linux image imports {description}")
+    check(kernel_elf([*active, "pthread_sigmask"]), None)
 
     # Kernel builds run the module's command line on the image they built. The
     # copy in the fixture directory reads the fixture declarations and policy.
@@ -449,50 +420,51 @@ def verify_kernel_elf_contract(module: ModuleType, root: Path) -> None:
             text=True,
         )
 
-    for page, kernel_slice, symbols in (
-        ("16k", "arm64", active_16k),
-        ("4k", "arm64", [everywhere, small, arm64]),
-        ("4k", "x86_64", [everywhere, small]),
+    for kernel_slice, symbols in (
+        ("arm64", active),
+        ("x86_64", [everywhere]),
     ):
-        printed = run("--print-expected", "--page-size", page, "--slice", kernel_slice)
+        printed = run("--print-expected", "--slice", kernel_slice)
         require(
             printed.returncode == 0 and printed.stdout.split() == sorted(symbols),
-            f"{page} {kernel_slice} expected imports printed wrongly: {printed}",
+            f"{kernel_slice} expected imports printed wrongly: {printed}",
         )
     for imports, diagnostic in (
-        (active_16k, None),
-        ([everywhere, small, arm64], "kernel bridge imports differ"),
-        ([*active_16k, "_fcntl"], "the Linux image imports the variadic Darwin fcntl"),
+        (active, None),
+        ([everywhere], "kernel bridge imports differ"),
+        ([*active, "_fcntl"], "the Linux image imports the variadic Darwin fcntl"),
     ):
         path.write_bytes(kernel_elf(imports))
-        result = run("--kernel-binary", str(path), "--page-size", "16k", "--slice", "arm64")
+        result = run("--kernel-binary", str(path), "--slice", "arm64")
         require(
             (result.returncode == 0) == (diagnostic is None)
             and (diagnostic is None or diagnostic in result.stderr),
             f"bridge import command line misjudged {imports}: {result.stderr}",
         )
 
-    # The policy is a three-column table of declared conditional symbols.
+    # The policy is a three-column table of declared conditional symbols. A
+    # symbol exempt for 4 KiB pages is a retired availability: no kernel is.
     for row in (
-        "darwin_uml_everywhere\t4k-only",
+        "darwin_uml_everywhere\tarm64-only",
         "darwin_uml_everywhere\t16k-only\tfixture",
-        "darwin_uml_everywhere\t4k-only\t",
-        "darwin_uml_small_pages\tarm64-only\tagain",
-        "uml_everywhere\t4k-only\tfixture",
+        "darwin_uml_everywhere\t4k-only\tfixture",
+        "darwin_uml_everywhere\tarm64-only\t",
+        "darwin_uml_arm64_only\tarm64-only\tagain",
+        "uml_everywhere\tarm64-only\tfixture",
     ):
         write_bridge_policy(abi, [*policy, row])
-        check(kernel_elf(active_16k), "ABI import policy is malformed at line 4")
-    write_bridge_policy(abi, [*policy, "darwin_uml_undeclared\t4k-only\tfixture"])
-    check(kernel_elf(active_16k), "ABI import policy names undeclared bridge symbols")
+        check(kernel_elf(active), "ABI import policy is malformed at line 3")
+    write_bridge_policy(abi, [*policy, "darwin_uml_undeclared\tarm64-only\tfixture"])
+    check(kernel_elf(active), "ABI import policy names undeclared bridge symbols")
     (abi / "import-policy.tsv").write_text(
         "symbol\tavailability\n" + "\n".join(policy) + "\n", encoding="utf-8"
     )
-    check(kernel_elf(active_16k), "ABI import policy is malformed")
+    check(kernel_elf(active), "ABI import policy is malformed")
     (abi / "import-policy.tsv").write_text("", encoding="utf-8")
-    check(kernel_elf(active_16k), "ABI import policy is malformed")
+    check(kernel_elf(active), "ABI import policy is malformed")
     write_bridge_policy(abi, policy)
     (abi / "darwin_uml_fixture.h").unlink()
-    check(kernel_elf(active_16k), "shared ABI declarations are missing")
+    check(kernel_elf(active), "shared ABI declarations are missing")
 
 
 def write_config(path: Path, values: dict[str, str]) -> None:
@@ -511,7 +483,7 @@ def require_config_accepted(
 ) -> None:
     path = root / f"{kernel_slice}-accepted.config"
     write_config(path, values)
-    module.verify_config(path, 4096, kernel_slice)
+    module.verify_config(path, kernel_slice)
 
 
 def require_config_rejected(
@@ -526,7 +498,7 @@ def require_config_rejected(
     path = root / f"{kernel_slice}-{symbol}.config"
     write_config(path, values)
     try:
-        module.verify_config(path, 4096, kernel_slice)
+        module.verify_config(path, kernel_slice)
     except SystemExit as error:
         diagnostic = f"kernel config {symbol}={observed}, expected {wanted}"
         require(
@@ -600,7 +572,7 @@ def main() -> int:
         require_accepted(module, *identity)
         # Accepted schema 2 bundles stay importable beside schema 3 ones.
         module.validate_manifest(manifest(module, *identity, schema=2))
-    legacy = manifest(module, "mainline-6.18", "arm64", 16384)
+    legacy = manifest(module, "mainline-6.18", "arm64", 4096)
     legacy["source"]["patch_count"] = 1
     try:
         module.validate_manifest(legacy)
@@ -612,24 +584,19 @@ def main() -> int:
     require_rejected(
         module,
         "android-6.18",
-        "arm64",
-        16384,
-        "android-6.18 family requires arm64 and 4096-byte pages",
-    )
-    require_rejected(
-        module,
-        "android-6.18",
         "x86_64",
         4096,
         "x86_64 kernel slice requires the mainline-6.18 family",
     )
-    require_rejected(
-        module,
-        "mainline-6.18",
-        "x86_64",
-        16384,
-        "x86_64 kernel slice requires 4096-byte pages",
-    )
+    # The retired 16 KiB profile is no artifact identity at all.
+    for family, kernel_slice in (
+        ("mainline-6.18", "arm64"),
+        ("mainline-6.18", "x86_64"),
+        ("android-6.18", "arm64"),
+    ):
+        require_rejected(
+            module, family, kernel_slice, 16384, "kernel page size is unsupported"
+        )
 
     with tempfile.TemporaryDirectory(prefix="uml-kernel-config-contract-") as raw:
         root = Path(raw)

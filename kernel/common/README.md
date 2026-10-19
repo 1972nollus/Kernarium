@@ -7,8 +7,8 @@ This directory contains only source-family-independent inputs:
 - `config/darwin-uml.fragment`: the kernel configuration policy every product
   shares. Each product applies its own overlay after it, which lists only the
   settings in which that product differs and whose README says why;
-- `config/page-16k.fragment` and `config/page-4k.fragment`: shared page-size
-  and 128 KiB task-stack geometry, selected by each line's build;
+- `config/page-4k.fragment`: the 4 KiB guest page size and the 128 KiB
+  task-stack geometry it implies, which every line's build applies;
 - `artifacts/`: compact prebuilt-kernel bundle schema and verifier, plus the
   shared `KEY='value'` metadata parser in `contract_checks.py`;
 - `patches/`: the generated topic series every maintained line applies
@@ -187,8 +187,8 @@ the io_uring region allocation, and the fbdev shmem flush for the virtio-gpu
 console. `flush_cache_vunmap()` publishes the private slots of a range before
 Linux clears its PTEs, so the stores of a `vm_map_ram()` alias, such as
 EROFS's LZ4 output, reach the page cache before it is read or freed. The first
-three are inert on a 16 KiB profile and on any architecture that reports no
-vmap group, and the flush costs a page-table check there. The x86_64 slice's
+three are inert on any architecture that reports no vmap group, and the flush
+costs a page-table check there. The x86_64 slice's
 pinned-ring accounting below sees no change: a ring in one page of the
 application's memory is one folio and stays valid, and a larger one that is
 not whole aligned groups is refused with `EINVAL`.
@@ -275,8 +275,8 @@ pages the kernel installs, 32-bit signal frames and system calls, the
 ARM-private calls, `cacheflush()` through `flush_icache_remote_user_range()`
 and `darwin_uml_vm_invalidate_code()`, the `NT_PRSTATUS`, `NT_ARM_VFP` and
 `NT_ARM_TLS` regsets with arch/arm's ptrace requests (`GETREGS`, `GETVFPREGS`,
-`GET_THREAD_AREA`, `SET_SYSCALL`), and a compat `vm.mmap_rnd_compat_bits` of 9 (16 KiB) or
-11 (4 KiB) up to 16. Both Android and mainline build it (`CONFIG_COMPAT`,
+`GET_THREAD_AREA`, `SET_SYSCALL`), and a compat `vm.mmap_rnd_compat_bits` of
+11 up to 16. Both Android and mainline build it (`CONFIG_COMPAT`,
 `CONFIG_KUSER_HELPERS`); the x86_64 slice turns `UML_ARM64_AARCH32` off.
 
 Bridge ABI 22 carries the task: nRW in `pstate`, R0-R14 in x0-x14, D0-D31 in
@@ -298,17 +298,13 @@ and `/proc/cpuinfo` is arm64 Linux's layout for a 32-bit task: each block
 adds `model name : ARMv8 Processor rev N (v8l)` after `processor`, and
 `Features` names the compat hardware capabilities.
 
-A 16 KiB guest runs only 32-bit programs whose segments are 16 KiB congruent.
-Any other fails cleanly: the kernel kills a new process it cannot map with
-`SIGSEGV`, as for any binary of the wrong alignment, and the dynamic loader
-reports a library it cannot map from `dlopen()`. A 4 KiB guest has no such
-limit, and stock Debian armhf userspace contains files laid out for 4 KiB, so
-it runs on the 4 KiB profile only. `tests/integration/aarch32` checks the exec
-failure with a program laid out so.
+Guest pages are 4 KiB, so 32-bit programs laid out for 4 KiB pages, as the
+files of stock Debian armhf userspace are, run as they are.
+`tests/integration/aarch32` runs one.
 
 Both maintained kernel lines perform futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value
 observed by that operation, and wake-operation arithmetic retries competing
 updates instead of overwriting them. The optional `guest-futex-atomic` test
 checks concurrent kernel/userspace updates and robust priority-inheritance
-mutexes on both Linux page profiles.
+mutexes.
