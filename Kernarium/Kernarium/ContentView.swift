@@ -7,6 +7,10 @@ struct ContentView: View {
     @StateObject private var serialConsole = SerialConsoleController()
     @ObservedObject private var launcher = EmulatorLauncher.shared
     @ObservedObject private var backgroundSession = BackgroundSession.shared
+    @ObservedObject private var backgroundJob = BackgroundJob.shared
+    /// Whether the running guest chose the keep-running mode, which is what
+    /// offers the button that starts its job.
+    @State private var keepRunningChosen = false
     @State private var guestViewMode = GuestViewMode.defaultMode
     /// Whether the framebuffer holds the keyboard. Only the framebuffer
     /// mode sets it; the serial console's keyboard is its terminal's focus.
@@ -104,9 +108,11 @@ struct ContentView: View {
             )
         ) { _ in
             GuestPictureInPicture.shared.refresh()
+            refreshKeepRunning()
         }
         .onChange(of: launcher.phase) { _, phase in
             GuestPictureInPicture.shared.guestRunningChanged(phase == .running)
+            refreshKeepRunning()
             // Nothing is left to type into, and the keyboard would cover
             // the notice.
             guard case .ended = phase else { return }
@@ -125,10 +131,52 @@ struct ContentView: View {
     private var floatingButtonsContent: some View {
         VStack(alignment: .trailing, spacing: FloatingControlMetrics.spacing) {
             settingsButton
+            if keepRunningChosen && launcher.phase == .running {
+                keepRunningButton
+            }
             displayModeButton
             keyboardButton
             specialKeysRow
         }
+    }
+
+    /// Starts, or stops, the job that keeps the guest running once the user
+    /// leaves Kernarium. iOS wants such a job to follow the user's own action,
+    /// so it never starts by itself.
+    private var keepRunningButton: some View {
+        floatingIconButton(
+            systemName: backgroundJob.isRunning ? "stop.circle" : "timer",
+            accessibilityLabel: keepRunningLabel,
+            identifier: "backgroundJobButton"
+        ) {
+            if backgroundJob.state == .idle {
+                guard let guest = launcher.runningGuestName else { return }
+                backgroundJob.start(
+                    limitMinutes: BackgroundSettings().limitMinutes(
+                        forGuest: guest
+                    ),
+                    guestName: (guest as NSString).deletingPathExtension
+                )
+            } else {
+                backgroundJob.cancel()
+            }
+        }
+    }
+
+    private var keepRunningLabel: String {
+        switch backgroundJob.state {
+        case .idle: "Keep the Guest Running in the Background"
+        case .submitted: "Starting to Keep the Guest Running"
+        case .running: "Stop Keeping the Guest Running"
+        }
+    }
+
+    private func refreshKeepRunning() {
+        let mode = launcher.runningGuestName.map {
+            BackgroundSettings().mode(forGuest: $0)
+        } ?? .off
+        keepRunningChosen = mode == .keepRunning
+        backgroundJob.reconcile(mode: mode)
     }
 
     private var displayModeButton: some View {
@@ -1489,6 +1537,7 @@ final class EmulatorLauncher: ObservableObject {
     @Published private(set) var phase = GuestRunPhase.idle
     /// The name the running guest's own settings are stored under.
     private(set) var runningGuestName: String?
+    private(set) var runningGuestIsAndroid = false
     private var thermalObserver: NSObjectProtocol?
 
     var retinaMode: Bool { configuration.retinaMode }
@@ -1525,6 +1574,7 @@ final class EmulatorLauncher: ObservableObject {
             return
         }
         runningGuestName = rootfsFilename
+        runningGuestIsAndroid = selection.flavor == .android
         // Every runtime carries a 4 KiB kernel.
         guard kernarium_runtime_loader_select(
             selection.flavor.rawValue,

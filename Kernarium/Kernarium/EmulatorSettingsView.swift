@@ -13,6 +13,7 @@ struct EmulatorSettingsView: View {
     @State private var autoResizeGuest: Bool
     @State private var androidBootMode: AndroidBootMode
     @State private var backgroundMode: BackgroundMode
+    @State private var backgroundLimitMinutes: Int
 
     private let maximumVCPUCount: Int
     private let defaults: UserDefaults
@@ -57,9 +58,14 @@ struct EmulatorSettingsView: View {
         _retinaMode = State(initialValue: configuration.retinaMode)
         _autoResizeGuest = State(initialValue: configuration.autoResizeGuest)
         _androidBootMode = State(initialValue: configuration.androidBootMode)
+        let background = BackgroundSettings(defaults: defaults)
         _backgroundMode = State(
-            initialValue: BackgroundSettings(defaults: defaults)
-                .mode(forGuest: configuration.rootfsFilename)
+            initialValue: background.mode(forGuest: configuration.rootfsFilename)
+        )
+        _backgroundLimitMinutes = State(
+            initialValue: background.limitMinutes(
+                forGuest: configuration.rootfsFilename
+            )
         )
     }
 
@@ -67,8 +73,23 @@ struct EmulatorSettingsView: View {
     /// chose it keeps showing as chosen.
     private var offeredBackgroundModes: [BackgroundMode] {
         BackgroundMode.allCases.filter {
-            $0 == .off || $0 == backgroundMode || GuestPictureInPicture.isSupported
+            $0 != .pictureInPicture || $0 == backgroundMode ||
+                GuestPictureInPicture.isSupported
         }
+    }
+
+    /// The times on offer, with the one a guest already has even if it is not
+    /// among them.
+    private var offeredLimitMinutes: [Int] {
+        Set(BackgroundSettings.limitChoicesMinutes + [backgroundLimitMinutes])
+            .sorted()
+    }
+
+    private static func limitTitle(minutes: Int) -> String {
+        if minutes % 60 == 0 {
+            return minutes == 60 ? "1 hour" : "\(minutes / 60) hours"
+        }
+        return "\(minutes) minutes"
     }
 
     var body: some View {
@@ -158,13 +179,29 @@ struct EmulatorSettingsView: View {
                     }
                     .accessibilityIdentifier("backgroundModePicker")
 
+                    if backgroundMode == .keepRunning {
+                        Picker(
+                            "Keep running for",
+                            selection: $backgroundLimitMinutes
+                        ) {
+                            ForEach(offeredLimitMinutes, id: \.self) { minutes in
+                                Text(Self.limitTitle(minutes: minutes))
+                                    .tag(minutes)
+                            }
+                        }
+                        .accessibilityIdentifier("backgroundLimitPicker")
+                    }
+
                     Text(backgroundMode.explanation)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
                 .onChange(of: rootfsFilename) { _, filename in
-                    backgroundMode = BackgroundSettings(defaults: defaults)
-                        .mode(forGuest: filename)
+                    let background = BackgroundSettings(defaults: defaults)
+                    backgroundMode = background.mode(forGuest: filename)
+                    backgroundLimitMinutes = background.limitMinutes(
+                        forGuest: filename
+                    )
                 }
 
                 Section {
@@ -200,8 +237,12 @@ struct EmulatorSettingsView: View {
             autoResizeGuest: autoResizeGuest,
             androidBootMode: androidBootMode
         ).save(defaults: defaults)
-        BackgroundSettings(defaults: defaults)
-            .setMode(backgroundMode, forGuest: rootfsFilename)
+        let background = BackgroundSettings(defaults: defaults)
+        background.setMode(backgroundMode, forGuest: rootfsFilename)
+        background.setLimitMinutes(
+            backgroundLimitMinutes,
+            forGuest: rootfsFilename
+        )
         dismiss()
     }
 }

@@ -58,6 +58,7 @@ final class GuestPersistence {
             guest().map(settings.mode(forGuest:)) ?? .off
         }
         background = controller
+        BackgroundJob.shared.controller = controller
         pictureInPicture?.controller = controller
         let center = NotificationCenter.default
         observers.append(
@@ -301,6 +302,16 @@ final class SystemBackgroundEffects: BackgroundEffects {
             "Kernarium: guest vCPUs \(enabled ? "throttled" : "restored") " +
                 "(\(changed) thread(s))"
         )
+    }
+
+    var jobActive: Bool { BackgroundJob.shared.isRunning }
+
+    var guestIsAndroid: Bool { EmulatorLauncher.shared.runningGuestIsAndroid }
+
+    func pressPowerKey() {
+        let power = GuestSpecialKey.power.code
+        kernarium_runtime_loader_send_key(power, 1)
+        kernarium_runtime_loader_send_key(power, 0)
     }
 
     var pictureInPictureCanStart: Bool { window?.canStart ?? false }
