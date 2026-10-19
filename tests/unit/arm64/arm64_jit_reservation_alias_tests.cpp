@@ -9,6 +9,7 @@
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <chrono>
 #include <cstring>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,7 @@
 #include <vector>
 
 using namespace uml::emulator::tests;
+using uml::testing::fail;
 
 namespace {
 
@@ -616,6 +618,16 @@ void concurrent_native_cold_paths_leave_publication_before_helper() {
  * one field; vCPU B runs a native LDADD loop on bytes the swap also covers,
  * concurrently. A read-compare-write that is not atomic writes back B's old
  * bytes and loses its increments; each field must end at its own count.
+ *
+ * Only an overlap proves that: while B is starved no swap meets an add, and
+ * both fields match trivially. The host scheduler promises B no time inside
+ * A's loop, so a trial measures its overlap instead of hoping for it. B
+ * publishes its add count after every block it retires, and A counts the
+ * blocks it ran across which that count advanced; in each, both vCPUs were
+ * executing. A trial checks every invariant, but it counts only with at least
+ * `required_overlaps` such blocks. One that falls short is repeated on fresh
+ * state until one counts, and a deadline that only a wedged host reaches
+ * fails the test.
  */
 struct HelperSwapRace final {
   unsigned long generation;
@@ -636,6 +648,9 @@ void helper_swap_keeps_native_updates(const HelperSwapRace &race) {
   constexpr std::uint64_t add_code = 0x100U;
   constexpr unsigned swaps = 20000;
   constexpr std::uint64_t unbounded = std::uint64_t{1} << 40;
+  constexpr std::uint64_t required_overlaps = 4096;
+  constexpr std::uint64_t deadline_poll = 4096;
+  constexpr std::chrono::seconds deadline_span{180};
 
   JitBacking backing{2};
   for (std::size_t index = 0; index < race.swap_words; ++index)
@@ -652,62 +667,98 @@ void helper_swap_keeps_native_updates(const HelperSwapRace &race) {
       std::array<uml::cpu::arm64::CpuState, 2>>();
   auto &swap_cpu = (*cpus)[0];
   auto &add_cpu = (*cpus)[1];
-  swap_cpu.pc = race.base;
-  swap_cpu.registers[1] = data + race.swap_offset;
-  swap_cpu.registers[19] = swaps;
-  add_cpu.pc = race.base + add_code;
-  add_cpu.registers[8] = data + race.add_offset;
-  add_cpu.registers[9] = 1;
-  add_cpu.registers[19] = unbounded;
 
-  std::atomic<bool> swapping{true};
-  std::atomic<bool> valid{true};
-  std::barrier start{2};
-  std::thread adder{[&] {
-    if (!add_executor.begin_execution(race.generation, add_cpu.pc))
+  const auto deadline =
+      std::chrono::steady_clock::now() + deadline_span;
+  const auto expired = [&] {
+    return std::chrono::steady_clock::now() >= deadline;
+  };
+
+  /* Runs A's loop against B once from fresh state and returns the number of
+   * A's blocks that overlapped a block B retired. */
+  const auto trial = [&]() -> std::uint64_t {
+    backing.put64(page, 0);
+    backing.put64(page + 8U, 0);
+    swap_cpu = {};
+    add_cpu = {};
+    swap_cpu.pc = race.base;
+    swap_cpu.registers[1] = data + race.swap_offset;
+    swap_cpu.registers[19] = swaps;
+    add_cpu.pc = race.base + add_code;
+    add_cpu.registers[8] = data + race.add_offset;
+    add_cpu.registers[9] = 1;
+    add_cpu.registers[19] = unbounded;
+
+    std::atomic<std::uint64_t> progress{0};
+    std::atomic<bool> swapping{true};
+    std::atomic<bool> valid{true};
+    std::barrier start{2};
+    std::thread adder{[&] {
+      if (!add_executor.begin_execution(race.generation, add_cpu.pc))
+        valid.store(false, std::memory_order_relaxed);
+      start.arrive_and_wait();
+      std::size_t executed = 0;
+      while (swapping.load(std::memory_order_acquire) &&
+             valid.load(std::memory_order_relaxed)) {
+        if (add_executor.run_block(add_cpu, add_memory, race.generation,
+                                   executed) !=
+            ::uml::cpu::EngineEvent::continued)
+          valid.store(false, std::memory_order_relaxed);
+        progress.store(unbounded - add_cpu.registers[19],
+                       std::memory_order_relaxed);
+      }
+      add_executor.end_execution();
+    }};
+    if (!swap_executor.begin_execution(race.generation, swap_cpu.pc))
       valid.store(false, std::memory_order_relaxed);
     start.arrive_and_wait();
-    std::size_t executed = 0;
-    while (swapping.load(std::memory_order_acquire) &&
+    /* Do not start swapping against a B that has not run yet. */
+    while (progress.load(std::memory_order_relaxed) == 0 &&
            valid.load(std::memory_order_relaxed)) {
-      if (add_executor.run_block(add_cpu, add_memory, race.generation,
-                                 executed) !=
-          ::uml::cpu::EngineEvent::continued)
-        valid.store(false, std::memory_order_relaxed);
+      if (expired())
+        fail("the adder vCPU never ran");
+      std::this_thread::yield();
     }
-    add_executor.end_execution();
-  }};
-  if (!swap_executor.begin_execution(race.generation, swap_cpu.pc))
-    valid.store(false, std::memory_order_relaxed);
-  start.arrive_and_wait();
-  auto event = ::uml::cpu::EngineEvent::continued;
-  std::size_t executed = 0;
-  for (std::uint64_t attempt = 0;
-       attempt < 100'000'000U &&
-       event == ::uml::cpu::EngineEvent::continued;
-       ++attempt)
-    event = swap_executor.run_block(swap_cpu, swap_memory,
-                                    race.generation, executed);
-  swapping.store(false, std::memory_order_release);
-  adder.join();
-  swap_executor.end_execution();
-  require(valid.load(std::memory_order_relaxed));
-  require(event == ::uml::cpu::EngineEvent::system_call);
-  require(swap_cpu.registers[19] == 0);
 
-  const auto adds = unbounded - add_cpu.registers[19];
-  const auto low = backing.get64(page);
-  const auto high = backing.get64(page + 8U);
-  const unsigned __int128 memory =
-      (static_cast<unsigned __int128>(high) << 64U) | low;
-  const auto swapped =
-      static_cast<std::uint64_t>(memory >> (race.swap_offset * 8U)) &
-      race.swap_mask;
-  const auto added =
-      static_cast<std::uint64_t>(memory >> race.add_shift) & race.add_mask;
-  require(adds != 0);
-  require(swapped == (swaps & race.swap_mask));
-  require(added == (adds & race.add_mask));
+    auto event = ::uml::cpu::EngineEvent::continued;
+    std::size_t executed = 0;
+    std::uint64_t overlaps = 0;
+    auto seen = progress.load(std::memory_order_relaxed);
+    for (std::uint64_t attempt = 0;
+         event == ::uml::cpu::EngineEvent::continued; ++attempt) {
+      event = swap_executor.run_block(swap_cpu, swap_memory,
+                                      race.generation, executed);
+      const auto now = progress.load(std::memory_order_relaxed);
+      overlaps += now != seen;
+      seen = now;
+      if (attempt % deadline_poll == 0 && expired())
+        fail("the swap loop did not finish before the deadline");
+    }
+    swapping.store(false, std::memory_order_release);
+    adder.join();
+    swap_executor.end_execution();
+    require(valid.load(std::memory_order_relaxed));
+    require(event == ::uml::cpu::EngineEvent::system_call);
+    require(swap_cpu.registers[19] == 0);
+
+    const auto adds = unbounded - add_cpu.registers[19];
+    const auto low = backing.get64(page);
+    const auto high = backing.get64(page + 8U);
+    const unsigned __int128 memory =
+        (static_cast<unsigned __int128>(high) << 64U) | low;
+    const auto swapped =
+        static_cast<std::uint64_t>(memory >> (race.swap_offset * 8U)) &
+        race.swap_mask;
+    const auto added =
+        static_cast<std::uint64_t>(memory >> race.add_shift) & race.add_mask;
+    require(swapped == (swaps & race.swap_mask));
+    require(added == (adds & race.add_mask));
+    return overlaps;
+  };
+
+  while (trial() < required_overlaps)
+    if (expired())
+      fail("the swap and add vCPUs never overlapped before the deadline");
 }
 
 void helper_pair_compare_swap_keeps_native_updates() {
