@@ -6,14 +6,13 @@
 // The loop is the one ART's MessageStack.pushMessage compiles to: read the
 // top of a stack, store it into a new message, then publish the message with
 // a weak compare-and-swap (one LDXR/STLXR attempt, retried by the caller).
-// When the message's page and the stack's page share a TLB set, the plain
+// When the message's page and the stack's page share a TLB entry, the plain
 // store evicts the target's write entry, so a store-exclusive that depends on
 // the TLB loses the host monitor on every pass and never completes.
 //
-// Both profiles' TLBs have 16384 sets: set = key & 0x3fff, where key =
-// address >> 12 on 4 KiB pages (one way) and address >> 14 on 16 KiB pages
-// (two ways). The pages below are chosen by that function, so a change of
-// geometry shows as the collision tests no longer colliding in
+// The TLB has 16384 direct-mapped entries: entry = key & 0x3fff, where
+// key = address >> 12. The pages below are chosen by that function, so a
+// change of geometry shows as the collision tests no longer colliding in
 // tests/unit/arm64/arm64_exclusive_progress_tests.cpp, which guards them.
 //
 // With the argument "inside" the loops also store between the exclusive load
@@ -37,7 +36,6 @@ constexpr long nr_clone = 220;
 constexpr long nr_mmap = 222;
 constexpr long nr_wait4 = 260;
 constexpr long sigchld = 17;
-constexpr long at_pagesz = 6;
 
 inline long raw_syscall(long number, long a0 = 0, long a1 = 0, long a2 = 0,
 			long a3 = 0, long a4 = 0, long a5 = 0)
@@ -366,29 +364,29 @@ void *map_fixed(u64 address, long page)
 					    : reinterpret_cast<void *>(result);
 }
 
-u64 tlb_set(u64 key, long shift)
+u64 tlb_entry(u64 key, long shift)
 {
 	(void)shift;
 	return key & 0x3fff;
 }
 
-// The `ordinal`-th key above `target` that is in the target's TLB set.
-u64 key_in_set(u64 target, long ordinal, long shift)
+// The `ordinal`-th key above `target` that shares the target's TLB entry.
+u64 key_sharing_entry(u64 target, long ordinal, long shift)
 {
 	long seen = 0;
 	for (u64 key = target + 1;; key++) {
-		if (tlb_set(key, shift) != tlb_set(target, shift))
+		if (tlb_entry(key, shift) != tlb_entry(target, shift))
 			continue;
 		if (++seen == ordinal)
 			return key;
 	}
 }
 
-// A key above `target` in another set.
+// A key above `target` in another entry.
 u64 key_apart(u64 target, long shift)
 {
 	u64 key = target + 1;
-	while (tlb_set(key, shift) == tlb_set(target, shift))
+	while (tlb_entry(key, shift) == tlb_entry(target, shift))
 		key++;
 	return key;
 }
@@ -421,19 +419,13 @@ extern "C" __attribute__((noreturn, used)) void probe_main(long *sp)
 	long argc = *sp;
 	char **argv = reinterpret_cast<char **>(sp + 1);
 	bool inside = argc > 1 && argv[1][0] == 'i';
-	long *auxv = sp + 1 + argc + 1;
-	while (*auxv++)
-		;
-	long page = 4096;
-	for (; auxv[0]; auxv += 2)
-		if (auxv[0] == at_pagesz)
-			page = auxv[1];
-	long shift = page == 16384 ? 14 : 12;
+	constexpr long page = 4096;
+	constexpr long shift = 12;
 
 	const u64 key_top = 0x100000 >> (shift - 12);
 	const u64 key_apart_page = key_apart(key_top, shift);
-	const u64 key_one = key_in_set(key_top, 1, shift);
-	const u64 key_two = key_in_set(key_top, 2, shift);
+	const u64 key_one = key_sharing_entry(key_top, 1, shift);
+	const u64 key_two = key_sharing_entry(key_top, 2, shift);
 	void *page_top = map_fixed(key_top << shift, page);
 	void *page_apart = map_fixed(key_apart_page << shift, page);
 	void *page_one = map_fixed(key_one << shift, page);
@@ -449,7 +441,7 @@ extern "C" __attribute__((noreturn, used)) void probe_main(long *sp)
 	// A cold word of the top page keeps the loops off its page boundary and
 	// the 16-byte alignment the pair form needs.
 	volatile void *top = static_cast<volatile char *>(page_top) + 0x40;
-	// The store between the pair goes to a page of the same set.
+	// The store between the pair goes to a page of the same entry.
 	volatile u32 *between = inside ? static_cast<volatile u32 *>(page_two) : nullptr;
 	long failures = 0;
 	long worst = 0;
@@ -461,9 +453,8 @@ extern "C" __attribute__((noreturn, used)) void probe_main(long *sp)
 				       nullptr, nullptr, 2000, 100000, worst),
 				   worst);
 	}
-	// Both colliding shapes: one message page (the whole 4 KiB TLB, and two
-	// pages of a 16 KiB set), then two (a third page contending for the
-	// two ways).
+	// Both colliding shapes: one message page, then two (a third page
+	// contending for the same entry).
 	for (const Form form : forms) {
 		set_top(form, top, 1);
 		failures += report("colliding ", form,

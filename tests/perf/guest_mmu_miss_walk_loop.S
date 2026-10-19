@@ -7,15 +7,15 @@
  * resolved and the mapping looked up, so it is the only path on which the
  * registry lookup, the lifecycle lease and the per-generation mapping lock are
  * paid. Nothing in tests/perf reached it before this probe:
- * guest_tlb_128m_alias_loop touches exactly two pages, which live in the TLB
- * from the second iteration onward, because it was built to expose set aliasing
+ * guest_tlb_32m_alias_loop touches exactly two pages, which live in the TLB
+ * from the second iteration onward, because it was built to expose aliasing
  * in the direct index rather than to generate misses; and guest_memory_site_loop
  * hammers a single site.
  *
  * This probe makes every access a miss instead. It walks a working set of
  * BENCH_PAGES guest pages, one page apart, which at the default of 65,536 pages
- * is 1 GiB against a 16,384-set two-way TLB holding 32,768 entries. A linear
- * walk of twice the TLB's capacity evicts each entry before it is reached again,
+ * is 256 MiB against a TLB of 16,384 direct-mapped entries. A linear walk of
+ * four times the TLB's capacity evicts each entry before it is reached again,
  * so a pass costs one translate() per page.
  *
  * BENCH_THREADS threads share the address space through CLONE_VM, so their
@@ -59,7 +59,7 @@
 	.equ THREADS,		BENCH_THREADS
 	.equ PAGES,		BENCH_PAGES
 	.equ PASSES,		BENCH_PASSES
-	.equ GUEST_PAGE_SIZE,	16384
+	.equ GUEST_PAGE_SIZE,	4096
 	.equ STACK_SIZE,	16384
 	/* Sum of the page indices the parent seeds, checked after every pass. */
 	.equ EXPECTED_SUM,	(PAGES * (PAGES - 1) / 2)

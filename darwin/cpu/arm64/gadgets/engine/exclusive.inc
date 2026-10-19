@@ -55,28 +55,15 @@
 .set Lexcl_mechanism_defined, 1
 
 /* Translate the guest address in x7 to a host address in x7 by the WRITE tag
- * of its set (the second way too, on the 16 KiB profile), branching to `miss`
- * with x7 unchanged when no way holds the page. Scratch: x8-x12; on exit x8
- * is the page key and x10 the set. */
+ * of its entry, branching to `miss` with x7 unchanged when it does not hold
+ * the page. Scratch: x8-x12; on exit x8 is the page key and x10 the entry. */
 .macro exclusive_translate miss
 	lsr x8, x7, #UML_GADGET_GUEST_PAGE_SHIFT
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	ubfx x9, x7, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	add x10, _tlb, x9, lsl #6
-	ldp x11, x12, [x10, #UML_GADGET_TLB_ENTRY_WRITE_PAGE]
-	cmp x8, x11
-	b.eq 91f
-	ldp x11, x12, [x10, #UML_GADGET_TLB_SECOND_WRITE_PAGE]
-	cmp x8, x11
-	b.ne \miss
-91:
-#else
-	ubfx x9, x7, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	add x10, _tlb, x9, lsl #5
+	add x10, _tlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
 	ldp x11, x12, [x10, #UML_GADGET_TLB_ENTRY_WRITE_PAGE]
 	cmp x8, x11
 	b.ne \miss
-#endif
 	add x7, x12, x7
 .endm
 
