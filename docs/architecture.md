@@ -1443,10 +1443,13 @@ suspend the guest entered by itself, such as Android's once its display is off,
 and a running guest only answers it. Kernarium sends it after forwarding its
 Power key, whose virtio input cannot wake a suspended guest itself; the macOS
 VNC display maps XF86PowerOff to the guest's power key, and VNC input is itself
-a wake source. A kernel without the suspend command falls back to the stop/go
-pair. Guests that need writeback requests boot with magic SysRq enabled; if the
-physical iOS sandbox cannot bind the console, host-file flushing still runs but
-guest writeback and freeze are unavailable.
+a wake source. The guest replies to a suspend only after syncing its file
+systems, so the host waits up to eight seconds for that reply. A kernel without
+the suspend command, or a guest that reports within that wait that it could
+not suspend, falls back to the stop/go pair. Guests that need writeback
+requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
+the console, host-file flushing still runs but guest writeback and freeze are
+unavailable.
 
 The guest binds the management console as a Unix datagram socket and replies
 to each request's own bound socket, which the host places beside it. Both live
