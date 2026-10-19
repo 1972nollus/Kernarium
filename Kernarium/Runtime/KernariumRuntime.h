@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 11U
+#define KERNARIUM_RUNTIME_API_VERSION 12U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -65,9 +65,9 @@ typedef void (*kernarium_runtime_request_stop_function)(void);
 /* Flushes the guest's writable host files. Safe to call from any thread while
  * a guest runs, and reports the number of files that could not be flushed. */
 typedef int (*kernarium_runtime_sync_function)(void);
-/* Leaves the guest safely abandonable: writes its filesystems back, enters
- * full system suspend, then flushes the host's own files. Pair it with
- * resume. */
+/* Leaves the guest safely abandonable: trims its cold page cache once, writes
+ * its filesystems back, enters full system suspend, then flushes the host's
+ * own files. Pair it with resume. */
 typedef int (*kernarium_runtime_quiesce_function)(void);
 typedef void (*kernarium_runtime_resume_function)(void);
 typedef void (*kernarium_runtime_send_touch_function)(
@@ -126,6 +126,13 @@ typedef int (*kernarium_runtime_set_frame_sink_function)(
  * the number of threads changed, or a negative value if the threads could not
  * be listed. */
 typedef int (*kernarium_runtime_set_background_throttle_function)(int enabled);
+/* Turns the guest's periodic page-cache trimming on (nonzero) or off, as
+ * uml_emulator_set_page_cache_trimming does, and returns its result. A guest
+ * boots with it off, as a guest in front of its user should be; the
+ * application turns it on only while the guest is kept running in the
+ * background. Quiescing trims once by itself. It may wait for the guest's
+ * console, so call it away from the main thread. */
+typedef int (*kernarium_runtime_set_page_cache_trimming_function)(int enabled);
 
 /* The application resolves only this versioned getter after loading exactly
  * one runtime framework. The table is immutable and remains valid until
@@ -149,6 +156,8 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_set_gpu_hold_function set_gpu_hold;
     kernarium_runtime_set_frame_sink_function set_frame_sink;
     kernarium_runtime_set_background_throttle_function set_background_throttle;
+    kernarium_runtime_set_page_cache_trimming_function
+        set_page_cache_trimming;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)
@@ -158,7 +167,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v11(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v12(void);
 
 #ifdef __cplusplus
 }

@@ -1419,11 +1419,12 @@ compare_swap_pair_sizes acquire_release, caspal, caspal
  * vs store, width, ordering, and ZR/status-discard variants. engine/
  * exclusive.inc explains how they keep a load/store exclusive loop making
  * progress; this file only instantiates it. A load probes the TLB by its
- * write tag and records the software monitor; a store whose probe misses
- * finishes in software in the shared routine for its width and ordering. The
- * gadgets' miss stubs follow each gadget and the shared routines follow the
- * last one. The group keeps the footprint it had before the mechanism, so no
- * gadget after it moved. */
+ * write tag and records the software monitor; a store whose probe misses,
+ * or whose host store fails after the executor entered translated code
+ * again, finishes in software in the shared routine for its width and
+ * ordering. The gadgets' stubs follow each gadget and the shared routines
+ * follow the last one. The group keeps the footprint it had before the
+ * mechanism, so no gadget after it moved. */
 #include "exclusive.inc"
 
 .set Lexcl_footprint, 11936
@@ -1473,7 +1474,7 @@ exclusive_load_sizes acquire, ldaxrb, ldaxrh, ldaxr, ldaxr
 .purgem exclusive_load_modes
 .purgem exclusive_load_gadget
 
-.macro exclusive_store_gadget name, instruction, host_register, alignment, source_zero, discard_status, complete
+.macro exclusive_store_gadget name, instruction, host_register, alignment, source_zero, discard_status, complete, lost
 gadget exclusive_store_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
@@ -1489,6 +1490,7 @@ gadget exclusive_store_\name
 	.endif
 	exclusive_translate EXCL(store_miss_)\name
 	\instruction w14, \host_register\()15, [x7]
+	cbnz w14, EXCL(store_lost_)\name
 EXCL(store_done_)\name:
 	exclusive_record_clear
 	.if !\discard_status
@@ -1499,13 +1501,16 @@ EXCL(store_done_)\name:
 EXCL(store_miss_)\name:
 	adr x13, EXCL(store_done_)\name
 	b \complete
+EXCL(store_lost_)\name:
+	adr x13, EXCL(store_done_)\name
+	b \lost
 .endm
 
 .macro exclusive_store_modes name, instruction, host_register, alignment
-	exclusive_store_gadget \name\()_rr, \instruction, \host_register, \alignment, 0, 0, EXCL(store_complete_)\name
-	exclusive_store_gadget \name\()_rz, \instruction, \host_register, \alignment, 0, 1, EXCL(store_complete_)\name
-	exclusive_store_gadget \name\()_zr, \instruction, \host_register, \alignment, 1, 0, EXCL(store_complete_)\name
-	exclusive_store_gadget \name\()_zz, \instruction, \host_register, \alignment, 1, 1, EXCL(store_complete_)\name
+	exclusive_store_gadget \name\()_rr, \instruction, \host_register, \alignment, 0, 0, EXCL(store_complete_)\name, EXCL(store_lost_)\name
+	exclusive_store_gadget \name\()_rz, \instruction, \host_register, \alignment, 0, 1, EXCL(store_complete_)\name, EXCL(store_lost_)\name
+	exclusive_store_gadget \name\()_zr, \instruction, \host_register, \alignment, 1, 0, EXCL(store_complete_)\name, EXCL(store_lost_)\name
+	exclusive_store_gadget \name\()_zz, \instruction, \host_register, \alignment, 1, 1, EXCL(store_complete_)\name, EXCL(store_lost_)\name
 .endm
 
 .macro exclusive_store_sizes name, byte_instruction, half_instruction, word_instruction, double_instruction
@@ -1568,7 +1573,7 @@ exclusive_pair_load_sizes acquire, ldaxp, ldaxp
 .purgem exclusive_pair_load_modes
 .purgem exclusive_pair_load_gadget
 
-.macro exclusive_pair_store_gadget name, instruction, host_register, alignment, first_zero, second_zero, discard_status, complete
+.macro exclusive_pair_store_gadget name, instruction, host_register, alignment, first_zero, second_zero, discard_status, complete, lost
 gadget exclusive_pair_store_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #36, #12
@@ -1588,6 +1593,7 @@ gadget exclusive_pair_store_\name
 	single_copy_alignment exclusive_pair_store_\name, \alignment, 1
 	exclusive_translate EXCL(pair_store_miss_)\name
 	\instruction w14, \host_register\()15, \host_register\()16, [x7]
+	cbnz w14, EXCL(pair_store_lost_)\name
 EXCL(pair_store_done_)\name:
 	exclusive_record_clear
 	.if !\discard_status
@@ -1598,17 +1604,20 @@ EXCL(pair_store_done_)\name:
 EXCL(pair_store_miss_)\name:
 	adr x13, EXCL(pair_store_done_)\name
 	b \complete
+EXCL(pair_store_lost_)\name:
+	adr x13, EXCL(pair_store_done_)\name
+	b \lost
 .endm
 
 .macro exclusive_pair_store_modes name, instruction, host_register, alignment
-	exclusive_pair_store_gadget \name\()_rrr, \instruction, \host_register, \alignment, 0, 0, 0, EXCL(pair_store_complete_)\name
-	exclusive_pair_store_gadget \name\()_rrz, \instruction, \host_register, \alignment, 0, 0, 1, EXCL(pair_store_complete_)\name
-	exclusive_pair_store_gadget \name\()_rzr, \instruction, \host_register, \alignment, 0, 1, 0, EXCL(pair_store_complete_)\name
-	exclusive_pair_store_gadget \name\()_rzz, \instruction, \host_register, \alignment, 0, 1, 1, EXCL(pair_store_complete_)\name
-	exclusive_pair_store_gadget \name\()_zrr, \instruction, \host_register, \alignment, 1, 0, 0, EXCL(pair_store_complete_)\name
-	exclusive_pair_store_gadget \name\()_zrz, \instruction, \host_register, \alignment, 1, 0, 1, EXCL(pair_store_complete_)\name
-	exclusive_pair_store_gadget \name\()_zzr, \instruction, \host_register, \alignment, 1, 1, 0, EXCL(pair_store_complete_)\name
-	exclusive_pair_store_gadget \name\()_zzz, \instruction, \host_register, \alignment, 1, 1, 1, EXCL(pair_store_complete_)\name
+	exclusive_pair_store_gadget \name\()_rrr, \instruction, \host_register, \alignment, 0, 0, 0, EXCL(pair_store_complete_)\name, EXCL(pair_store_lost_)\name
+	exclusive_pair_store_gadget \name\()_rrz, \instruction, \host_register, \alignment, 0, 0, 1, EXCL(pair_store_complete_)\name, EXCL(pair_store_lost_)\name
+	exclusive_pair_store_gadget \name\()_rzr, \instruction, \host_register, \alignment, 0, 1, 0, EXCL(pair_store_complete_)\name, EXCL(pair_store_lost_)\name
+	exclusive_pair_store_gadget \name\()_rzz, \instruction, \host_register, \alignment, 0, 1, 1, EXCL(pair_store_complete_)\name, EXCL(pair_store_lost_)\name
+	exclusive_pair_store_gadget \name\()_zrr, \instruction, \host_register, \alignment, 1, 0, 0, EXCL(pair_store_complete_)\name, EXCL(pair_store_lost_)\name
+	exclusive_pair_store_gadget \name\()_zrz, \instruction, \host_register, \alignment, 1, 0, 1, EXCL(pair_store_complete_)\name, EXCL(pair_store_lost_)\name
+	exclusive_pair_store_gadget \name\()_zzr, \instruction, \host_register, \alignment, 1, 1, 0, EXCL(pair_store_complete_)\name, EXCL(pair_store_lost_)\name
+	exclusive_pair_store_gadget \name\()_zzz, \instruction, \host_register, \alignment, 1, 1, 1, EXCL(pair_store_complete_)\name, EXCL(pair_store_lost_)\name
 .endm
 
 .macro exclusive_pair_store_sizes name, word_instruction, double_instruction
@@ -1628,10 +1637,10 @@ exclusive_pair_store_sizes release, stlxp, stlxp
 	exclusive_load_miss EXCL(load_miss), uml_arm64_gadget_memory_fault_indexed
 
 .macro exclusive_store_completes order, byte_cas, half_cas, word_cas, double_cas
-	exclusive_store_complete EXCL(store_complete_)\order\()_b, \byte_cas, w, uml_arm64_gadget_memory_fault_indexed
-	exclusive_store_complete EXCL(store_complete_)\order\()_h, \half_cas, w, uml_arm64_gadget_memory_fault_indexed
-	exclusive_store_complete EXCL(store_complete_)\order\()_w, \word_cas, w, uml_arm64_gadget_memory_fault_indexed
-	exclusive_store_complete EXCL(store_complete_)\order\()_x, \double_cas, x, uml_arm64_gadget_memory_fault_indexed
+	exclusive_store_complete EXCL(store_complete_)\order\()_b, EXCL(store_lost_)\order\()_b, \byte_cas, w, uml_arm64_gadget_memory_fault_indexed
+	exclusive_store_complete EXCL(store_complete_)\order\()_h, EXCL(store_lost_)\order\()_h, \half_cas, w, uml_arm64_gadget_memory_fault_indexed
+	exclusive_store_complete EXCL(store_complete_)\order\()_w, EXCL(store_lost_)\order\()_w, \word_cas, w, uml_arm64_gadget_memory_fault_indexed
+	exclusive_store_complete EXCL(store_complete_)\order\()_x, EXCL(store_lost_)\order\()_x, \double_cas, x, uml_arm64_gadget_memory_fault_indexed
 .endm
 
 exclusive_store_completes relaxed, casb, cash, cas, cas
@@ -1640,8 +1649,8 @@ exclusive_store_completes release, caslb, caslh, casl, casl
 .purgem exclusive_store_completes
 
 .macro exclusive_pair_store_completes order, word_cas, double_cas
-	exclusive_pair_store_complete EXCL(pair_store_complete_)\order\()_w, \word_cas, w, uml_arm64_gadget_memory_fault_indexed
-	exclusive_pair_store_complete EXCL(pair_store_complete_)\order\()_x, \double_cas, x, uml_arm64_gadget_memory_fault_indexed
+	exclusive_pair_store_complete EXCL(pair_store_complete_)\order\()_w, EXCL(pair_store_lost_)\order\()_w, \word_cas, w, uml_arm64_gadget_memory_fault_indexed
+	exclusive_pair_store_complete EXCL(pair_store_complete_)\order\()_x, EXCL(pair_store_lost_)\order\()_x, \double_cas, x, uml_arm64_gadget_memory_fault_indexed
 .endm
 
 exclusive_pair_store_completes relaxed, casp, casp

@@ -158,6 +158,42 @@ final class KernariumUITests: XCTestCase {
         attachScreenshot(of: app, named: "guest-below-window-controls")
     }
 
+    /// Where iPadOS draws no window controls over the content, in Full
+    /// Screen Apps and in a window zoomed to the screen, the guest view
+    /// needs no margin and begins at the top of the safe area, 32 points
+    /// down on an iPad mini. The margin of a window (75 points there) must
+    /// not outlive the window: Multitasking switching a running application
+    /// to Full Screen Apps once left it in place. The switch itself is
+    /// checked on a device through the automation host; see
+    /// docs/testing.md.
+    @MainActor
+    func testGuestViewKeepsNoMarginWithoutWindowControls() throws {
+        let app = testApplication()
+        app.launch()
+
+        let guest = app.descendants(matching: .any)["framebufferView"]
+        XCTAssertTrue(guest.waitForExistence(timeout: 10))
+        let springboard = XCUIApplication(
+            bundleIdentifier: "com.apple.springboard"
+        )
+        let controls = springboard.descendants(matching: .any)[
+            "window-controls:com.imxieyi.Kernarium"
+        ]
+        if controls.waitForExistence(timeout: 5) {
+            throw XCTSkip(
+                "the window has controls; testGuestViewClearsTheWindowControls checks it"
+            )
+        }
+        let window = app.windows.firstMatch
+        XCTAssertLessThanOrEqual(
+            guest.frame.minY - window.frame.minY,
+            40,
+            "the guest view \(guest.frame) keeps a margin below the top of " +
+                "the window \(window.frame) with no window controls"
+        )
+        attachScreenshot(of: app, named: "guest-without-window-controls")
+    }
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.

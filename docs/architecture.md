@@ -115,9 +115,16 @@ unwires it when it is released, so it wires only the RAM the guest holds; the
 signed kernel image and the loader tail stay wired from startup. Simulator and
 macOS commit and release without wiring. Wiring prevents compression; it does
 not decide whether a page is mapped. A commit that cannot wire leaves the page
-committed and usable. The kernel also trims its inactive page cache towards a
-floor in the background (`page_cache_trim.*`). The host caches the same disk
-blocks, so a large guest page cache mostly holds memory twice.
+committed and usable. The host caches the same disk blocks as the guest, so a
+large guest page cache mostly holds memory twice. The kernel can trim its
+inactive page cache towards a floor (`page_cache_trim.*`), but only at the
+host's request, because a guest in front of its user pays a host read for every
+evicted page it reads again: `uml_emulator_set_page_cache_trimming()` turns
+periodic trimming on and off, and `uml_emulator_trim_page_cache()` and every
+quiesce run one pass that also hands free memory to the host at once. Kernarium
+trims only while it keeps the guest running in the background. `uml-darwin`
+has no background state, so its guests trim only when started with
+`page_cache_trim.enabled=1`.
 
 The Virtio balloon (`device/balloon`) takes the memory the host GPU uses out of
 the guest. Its target is the larger of the process's Metal allocation
@@ -441,30 +448,41 @@ ordered forms and a CASAL loop for a misaligned read-modify-write. The rule
 matches native LSE2 hardware for every form the virtual CPU implements: the
 LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2 forms.
 
-A load/store-exclusive loop makes progress whatever the TLB holds. Gadgets run
-the host's own exclusives on the translated address, so the TLB miss of a
-store-exclusive, a helper call, loses the host monitor, and the 4 KiB TLB is
+A load/store-exclusive loop makes progress whatever the TLB holds, and nothing
+an engine does between the pair without an exception fails the store. Gadgets
+run the host's own exclusives on the translated address, so anything between
+the pair that clears the host monitor fails the store: the TLB miss of a
+store-exclusive, which calls a helper, and the executor's C++, whose locks and
+atomics run whenever a block leaves to it to translate its successor, train an
+indirect site or pass the block-size limit. The 4 KiB TLB is also
 direct-mapped: a plain store in the loop to a page that shares the target's set
 would evict the target's write entry on every pass. One mechanism in
 `engine/exclusive.inc`, which the AArch32 exclusives reuse, prevents that. An
-exclusive load probes the write tag, and a miss fills the write entry of a
-page that is writable now (`Tlb::translate_exclusive_load`, a read that faults
-like any load) so the store-exclusive that follows hits. The load also records
-the host address and the loaded values in the `CpuState` exclusive fields, and
-every store clears them. A store-exclusive that still misses has lost the
-host monitor to its own miss, so it completes in software: one host CAS (CASP
-for a pair) of the recorded values, with status zero exactly when it
-exchanged and a failure when the recorded address or a value differs. That
-completion is value-based, so it cannot see a write that restored the value,
-and it never runs when the store hits. A fault between the pair leaves the
-loop for the kernel, whose next entry clears the record (an exception return
-ends the monitor; `arm64-static-runtime` checks it), and the loop retries
-from its head. The JIT's fused regions check both mappings before the
-monitor, and its semantic path keeps a software reservation; its ordinary
-stores clear the monitor, as the architecture permits.
-`arm64-exclusive-progress` and `arm64-tlb` check the gadget contract on both
-engines, and `guest-exclusive-progress-gadgets` and
-`guest-exclusive-progress-jit` check it in a guest.
+exclusive load probes the write tag, and a miss fills the write entry of a page
+that is writable now (`Tlb::translate_exclusive_load`, a read that faults like
+any load) so the store-exclusive that follows hits. The load also records the
+host address and the loaded values in the `CpuState` exclusive fields, and
+every store clears them. A store-exclusive that still misses has lost the host
+monitor to its own miss, so it completes in software: one host CAS (CASP for a
+pair) of the recorded values, with status zero exactly when it exchanged and a
+failure when the recorded address or a value differs. Each entry from the
+executor into translated code marks a live record (`exclusive_key_reentered`,
+taken off when the code returns), so a store-exclusive whose host store fails
+after the executor ran completes the same way; one whose record is unmarked
+lost the monitor to an interrupt, a preemption or a store by another thread,
+and fails as hardware's may. That completion is value-based, so it cannot see a
+write that restored the value, and it never runs when the host store succeeds.
+A fault between the pair leaves the loop for the kernel, whose next entry
+clears the record (an exception return ends the monitor; `arm64-static-runtime`
+checks it), and the loop retries from its head. The JIT's fused regions check
+both mappings before the monitor, and its semantic path keeps a software
+reservation; its ordinary stores clear the monitor, as the architecture
+permits. `arm64-exclusive-progress` and `arm64-tlb` check the gadget contract
+on both engines, `arm64-exclusive-events` checks in A64, A32 and T32 that a
+branch, a link, an indirect lookup, a translation, a TLB refill or a library
+call between a pair does not fail its store, and
+`guest-exclusive-progress-gadgets` and `guest-exclusive-progress-jit` check the
+contract in a guest.
 
 Both engines complete WFE and WFI at once and treat SEV and SEVL as no-ops,
 so no wait ever depends on an event. Completing WFI is a deliberate deviation
@@ -1442,12 +1460,15 @@ The devices Kernarium attaches and its display geometry are listed in
 
 The platform layer tracks every writable host descriptor opened for the guest.
 `uml_emulator_sync()` asks the guest to write back through its management
-console, then flushes those host descriptors. `uml_emulator_quiesce()` enters
-full Linux system suspend and waits until devices, secondary CPUs, interrupts,
-and timekeeping have reached the platform sleep boundary before flushing the
-host. `uml_emulator_resume()` sends the console wake edge. Nothing else on the
-guest's descriptors ends the suspend, and an edge sent before the guest reached
-the boundary, as after a suspend request whose reply timed out, still ends it;
+console, then flushes those host descriptors. `uml_emulator_quiesce()` first
+has the guest trim its cold page cache and hand its free memory to the host,
+waiting up to three seconds, then enters full Linux system suspend and waits
+until devices, secondary CPUs, interrupts, and timekeeping have reached the
+platform sleep boundary before flushing the host. `uml_emulator_resume()` sends
+the console wake edge. Every console request ends the suspend, so a trimming
+change requested meanwhile waits for the resume, and nothing else on the
+guest's descriptors ends it. An edge sent before the guest reached the
+boundary, as after a suspend request whose reply timed out, still ends it;
 the [mainline README](../kernel/mainline-6.18/README.md) gives the kernel's
 side. `uml_emulator_wake()` sends that edge whatever the host last asked for,
 except to a guest it has quiesced, as a phone's power key does: it ends a

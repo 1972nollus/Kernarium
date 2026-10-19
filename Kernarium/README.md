@@ -141,12 +141,19 @@ Metal shader cache policy is in
 [`graphics.md`](../docs/graphics.md#metal-shader-cache).
 
 The guest view lies within the content the system leaves clear of the window
-controls: below them in a window, and unchanged in Full Screen Apps. A
-window that is already running when Multitasking changes to Full Screen Apps
-keeps its margin until the application is next launched.
+controls: below them in a window, a tile and a Slide Over window, and at the
+safe area where the scene covers its screen, which is Full Screen Apps and a
+window zoomed to the screen, whose controls move to the menu bar. The system's
+corner offset keeps describing a window after Multitasking switches the
+running application to Full Screen Apps, so the application applies it only
+while the scene is smaller than its screen, and follows the scene's geometry
+as Multitasking, zoom, tiling, Slide Over and rotation change it.
 
 Kernarium runs one guest per process and so has one window: its scene
 manifest does not support multiple scenes, and iPadOS offers no second window.
+Tiling and Slide Over, from the Window menu of a window zoomed to the screen,
+only arrange that window, and the guest display follows its size as it does a
+resize.
 
 ## Lifecycle
 
@@ -169,6 +176,18 @@ deadline, but the quiesce carries on under the `guest-sync` background task,
 waiting up to eight seconds for the guest's suspend reply, which follows its
 file system sync. A return to the foreground resumes the guest once that reply
 has arrived or the wait has ended.
+
+Guest page-cache trimming stays off while the application is in the
+foreground, because the guest then pays a host read for every evicted page its
+user's programs read again. Quiescing trims once by itself, before the suspend:
+the guest takes its cold page cache for up to a second, compacts its memory for
+up to another, and hands what is free to the host, and the quiesce waits up to
+three seconds for that. On a loaded Mac the pass took 1.2 s for a 4 GiB KDE
+guest and 1.8 s for Android, so with an immediate hold and a prompt suspend
+reply the quiesce usually ends within the handler's budget. Trimming only there
+is the user's choice: paused after the pass, a 4 GiB guest held 141 MiB (KDE)
+and 54 MiB (Android) more than one that trimmed all along, measured on macOS.
+A guest kept running in the background trims as it runs; see below.
 
 iOS may still end a suspended application, and the guest goes with it. The
 application records the background edge in a marker file and removes it on
@@ -210,6 +229,12 @@ reaches it while it is revoked:
   priority (`set_background_throttle`): low priority, the efficiency cores, and
   throttled I/O for those threads only. It returns them to full priority before
   anything else is asked of the guest, so a quiesce is not throttled.
+- While a guest is kept running it also trims its page cache periodically
+  (`set_page_cache_trimming`), and stops when it returns to the foreground or
+  is quiesced, which trims once by itself. The switch runs on the `guest-sync`
+  queue behind any write-back or quiesce already asked for, since it may wait
+  for the guest's console; one made while the guest is quiesced reaches it on
+  resume.
 
 The throttle moves the work to the efficiency cores rather than removing
 cores: on an A15 iPad, a KDE guest with six vCPUs running a six-thread load

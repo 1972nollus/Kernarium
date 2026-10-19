@@ -105,11 +105,12 @@ void uml_emulator_request_stop(struct uml_emulator *emulator);
  * negated error constant for API failures. The guest's own page cache is
  * outside this boundary: only the guest kernel can write that back. */
 int uml_emulator_sync(struct uml_emulator *emulator);
-/* Puts the guest somewhere it can be abandoned. It writes the guest's
- * filesystems back, enters full system suspend, and then flushes what the host
- * received. A suspended guest issues no further writes and its monotonic time
- * does not advance, so a host that never runs this process again leaves the
- * disk as it was left.
+/* Puts the guest somewhere it can be abandoned. It has the guest hand its cold
+ * page cache and free memory to the host, as uml_emulator_trim_page_cache
+ * does, writes the guest's filesystems back, enters full system suspend, and
+ * then flushes what the host received. A suspended guest issues no further
+ * writes and its monotonic time does not advance, so a host that never runs
+ * this process again leaves the disk as it was left.
  * Reports the number of host files that could not be flushed, 0 when all of
  * them were, and the negated error constant for API failures. Pair it with
  * uml_emulator_resume; a guest with no management console is only flushed,
@@ -124,6 +125,29 @@ void uml_emulator_resume(struct uml_emulator *emulator);
  * the guest then receives once. It may wait for the guest's console, so call
  * it away from a user interface thread. */
 void uml_emulator_wake(struct uml_emulator *emulator);
+/* Every guest disk is a host file the host caches as well, so the guest's
+ * page cache mostly holds memory twice, and only the guest's copy counts
+ * against this process. A trimming guest hands its cold page cache to the
+ * host every few seconds and pays a host read for each evicted page it reads
+ * again, backing off while that happens often. A guest boots with trimming
+ * off, which suits a guest in front of its user; turn it on while the guest
+ * runs unattended, as in the background, and off again on return. A change
+ * made while uml_emulator_quiesce has the guest suspended reaches the guest
+ * when uml_emulator_resume wakes it.
+ * Returns 0 once the guest has applied the change, -UML_EMULATOR_UNSUPPORTED
+ * when no guest console accepts it, as with no running guest or a kernel
+ * without trimming, and -UML_EMULATOR_RUNTIME_ERROR when the guest did not
+ * answer in time. It may wait for the guest's console, so call it away from a
+ * user interface thread. */
+int uml_emulator_set_page_cache_trimming(struct uml_emulator *emulator,
+					 int enabled);
+/* Has the guest trim all of its cold page cache now and hand its free memory
+ * to the host, and waits a bounded time for it to finish; whatever trimming
+ * is set to stays. Returns as uml_emulator_set_page_cache_trimming does, and
+ * -UML_EMULATOR_RUNTIME_ERROR leaves the guest finishing the pass. A guest
+ * that uml_emulator_quiesce suspended was trimmed then, and this returns 0
+ * without waking it. Call it away from a user interface thread. */
+int uml_emulator_trim_page_cache(struct uml_emulator *emulator);
 
 #ifdef __cplusplus
 }

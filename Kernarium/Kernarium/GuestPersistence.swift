@@ -147,6 +147,23 @@ final class GuestPersistence {
         }
     }
 
+    /// Switches the guest's periodic page-cache trimming through `set` on the
+    /// flush queue, behind any write-back or quiesce already asked for. The
+    /// switch may wait for the guest's console, and one made while the guest
+    /// is quiesced reaches it on resume.
+    func setPageCacheTrimming(
+        _ enabled: Bool,
+        through set: @escaping @Sendable (Int32) -> Int32
+    ) {
+        queue.async {
+            let result = set(enabled ? 1 : 0)
+            print(
+                "Kernarium: guest page-cache trimming " +
+                    "\(enabled ? "on" : "off") (\(result))"
+            )
+        }
+    }
+
     func stopObserving() {
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
@@ -231,13 +248,20 @@ final class SystemBackgroundEffects: BackgroundEffects {
 
     private let persistence: GuestPersistence
     private let window: (any PictureInPictureWindow)?
+    private let pageCacheTrimming: @Sendable (Int32) -> Int32
 
+    /// - Parameter pageCacheTrimming: the runtime's trimming switch; the
+    ///   unit tests replace it.
     init(
         persistence: GuestPersistence,
-        pictureInPicture: (any PictureInPictureWindow)?
+        pictureInPicture: (any PictureInPictureWindow)?,
+        pageCacheTrimming: @escaping @Sendable (Int32) -> Int32 = {
+            kernarium_runtime_loader_set_page_cache_trimming($0)
+        }
     ) {
         self.persistence = persistence
         window = pictureInPicture
+        self.pageCacheTrimming = pageCacheTrimming
     }
 
     func holdGuestGPU() {
@@ -263,9 +287,7 @@ final class SystemBackgroundEffects: BackgroundEffects {
     }
 
     func setPageCacheTrimming(_ enabled: Bool) {
-        // The runtime's page-cache trimming switch is not part of the runtime
-        // API yet; the policy already asks for it at the right edges.
-        _ = enabled
+        persistence.setPageCacheTrimming(enabled, through: pageCacheTrimming)
     }
 
     func setBackgroundThrottle(_ enabled: Bool) {
