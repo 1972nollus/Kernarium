@@ -41,10 +41,10 @@ bool bit(const protocol::InputConfig& config, std::uint16_t index)
     return (config.value.bitmap[index / 8U] & (1U << (index % 8U))) != 0;
 }
 
-void touchscreenConfigurationIsDirectAndPixelExact()
+void touchscreenConfigurationIsDirectWithAFixedRange()
 {
     auto events = std::make_shared<EventQueue>();
-    VirtioInputDevice device(DeviceKind::touchscreen, 440, 860, events);
+    VirtioInputDevice device(DeviceKind::touchscreen, events);
     require(device.queueCount() == 2);
     require(device.features() == 0);
 
@@ -78,15 +78,17 @@ void touchscreenConfigurationIsDirectAndPixelExact()
     const auto x = configuration(device);
     require(x.size == sizeof(protocol::InputAbsoluteInfo));
     require(x.value.absolute.minimum == 0);
-    require(x.value.absolute.maximum == 439);
+    require(x.value.absolute.maximum == protocol::touchscreenAbsoluteMaximum);
     select(device, protocol::configAbsoluteInfo, protocol::absoluteY);
-    require(configuration(device).value.absolute.maximum == 859);
+    const auto y = configuration(device);
+    require(y.value.absolute.minimum == 0);
+    require(y.value.absolute.maximum == protocol::touchscreenAbsoluteMaximum);
 }
 
 void keyboardAdvertisesEvdevKeysAndLeds()
 {
     auto events = std::make_shared<EventQueue>();
-    VirtioInputDevice device(DeviceKind::keyboard, 440, 860, events);
+    VirtioInputDevice device(DeviceKind::keyboard, events);
     select(device, protocol::configEventBits, protocol::eventKey);
     const auto keys = configuration(device);
     require(bit(keys, 1));
@@ -104,7 +106,7 @@ void keyboardAdvertisesEvdevKeysAndLeds()
 void eventQueueDefersAndThenReturnsOneWireEvent()
 {
     auto events = std::make_shared<EventQueue>();
-    VirtioInputDevice device(DeviceKind::touchscreen, 440, 860, events);
+    VirtioInputDevice device(DeviceKind::touchscreen, events);
     const auto empty = device.processQueue(protocol::eventQueue, 1, {}, 8);
     require(empty.action == uml::virtio::VhostUserQueueAction::retry);
 
@@ -137,7 +139,7 @@ void eventQueueDefersAndThenReturnsOneWireEvent()
 
 int main()
 {
-    touchscreenConfigurationIsDirectAndPixelExact();
+    touchscreenConfigurationIsDirectWithAFixedRange();
     keyboardAdvertisesEvdevKeysAndLeds();
     eventQueueDefersAndThenReturnsOneWireEvent();
     return EXIT_SUCCESS;

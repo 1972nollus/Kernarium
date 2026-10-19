@@ -123,15 +123,11 @@ void EventQueue::clear() noexcept
 
 VirtioInputDevice::VirtioInputDevice(
     DeviceKind kind,
-    std::uint32_t width,
-    std::uint32_t height,
     std::shared_ptr<EventQueue> events)
     : kind_(kind)
-    , width_(width)
-    , height_(height)
     , events_(std::move(events))
 {
-    if (!events_ || width == 0 || height == 0)
+    if (!events_)
         throw std::invalid_argument("invalid virtio-input device options");
 }
 
@@ -292,8 +288,7 @@ protocol::InputConfig VirtioInputDevice::selectedConfiguration() const
              subselect_ == protocol::absoluteY)) {
             const protocol::InputAbsoluteInfo info {
                 .minimum = 0,
-                .maximum = subselect_ == protocol::absoluteX ?
-                    width_ - 1U : height_ - 1U,
+                .maximum = protocol::touchscreenAbsoluteMaximum,
                 .fuzz = 0,
                 .flat = 0,
                 .resolution = 0,

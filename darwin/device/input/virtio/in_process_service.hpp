@@ -17,10 +17,7 @@ namespace uml::input::virtio {
 
 class InProcessInputService final {
 public:
-    InProcessInputService(
-        DeviceKind kind,
-        std::uint32_t width,
-        std::uint32_t height);
+    explicit InProcessInputService(DeviceKind kind);
     ~InProcessInputService();
 
     InProcessInputService(const InProcessInputService&) = delete;

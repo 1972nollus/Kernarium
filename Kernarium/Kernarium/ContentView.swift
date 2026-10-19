@@ -48,6 +48,13 @@ struct ContentView: View {
                     .frame(maxHeight: .infinity, alignment: .top)
                 }
             }
+            // In a window, iPadOS draws its window controls over the top-left
+            // corner of the content, which would cover the guest's own top-left
+            // (Android's status bar). Pushing the guest below them is the
+            // system's job: it knows where the controls are for the window's
+            // placement, and it moves nothing in a full-screen layout, where
+            // there are none.
+            .containerCornerOffset(.top, sizeToFit: true)
             floatingButtons
         }
         .ignoresSafeArea(.keyboard)
@@ -374,8 +381,22 @@ private struct GuestDisplayGeometry {
     let dotsPerInch: UInt32
 }
 
+/// The coordinates the guest's touchscreen takes, in a space of `size`
+/// positions on each axis.
 struct GuestInputCoordinateSpace {
     static let maximumDisplayDimension = CGFloat(4095)
+
+    /// The Virtio touchscreen's fixed absolute range, 0 through
+    /// `KERNARIUM_RUNTIME_TOUCH_MAXIMUM` on both axes. It does not depend on
+    /// the guest's display, so a launch at a small size loses no resolution
+    /// at a larger one, and the guest never has to learn the range again
+    /// after a mode change.
+    static let touchscreen = GuestInputCoordinateSpace(
+        size: CGSize(
+            width: CGFloat(KERNARIUM_RUNTIME_TOUCH_MAXIMUM) + 1,
+            height: CGFloat(KERNARIUM_RUNTIME_TOUCH_MAXIMUM) + 1
+        )
+    )
 
     let size: CGSize
 
@@ -932,7 +953,6 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         GuestMetalView,
         GuestDisplayGeometry
     ) -> Void)?
-    var inputCoordinateSpace: GuestInputCoordinateSpace?
     var retinaMode = false
     @objc private(set) var umlGuestResizeInProgress = false
     private var trackedTouch: UITouch?
@@ -1099,10 +1119,8 @@ private final class GuestMetalView: MTKView, UIKeyInput {
     }
 
     private func touchGeometry() -> GuestTouchGeometry? {
-        let coordinateSpace = inputCoordinateSpace ??
-            GuestInputCoordinateSpace(size: bounds.size)
-        return GuestTouchGeometry(
-            coordinateSpace: coordinateSpace,
+        GuestTouchGeometry(
+            coordinateSpace: .touchscreen,
             boundsSize: bounds.size,
             drawableSize: drawableSize,
             contentSize: guestContentSize ?? drawableSize
@@ -1417,10 +1435,6 @@ final class EmulatorLauncher: ObservableObject {
         let size = GuestInputCoordinateSpace.boundedDisplaySize(
             geometry.pixelSize
         )
-        // Virtio-input publishes its ABS_X/Y range only when it is probed.
-        // Keep that launch-time coordinate space stable while later layouts
-        // resize Virtio-GPU, and normalize every current view point into it.
-        view.inputCoordinateSpace = GuestInputCoordinateSpace(size: size)
         view.setGuestDisplay(
             width: UInt32(size.width.rounded(.down)),
             height: UInt32(size.height.rounded(.down))

@@ -25,6 +25,14 @@ enum {
     KERNARIUM_RUNTIME_GUEST_ANDROID = 1,
 };
 
+/* The send_touch coordinates are absolute positions in the guest's
+ * touchscreen range, 0 through this value on both axes, wherever the display
+ * is and however it is sized. The host maps its view onto that range, so the
+ * range never has to follow a mode change. */
+enum {
+    KERNARIUM_RUNTIME_TOUCH_MAXIMUM = 32767,
+};
+
 enum {
     KERNARIUM_RUNTIME_ANDROID_BOOT_AUTO = 0,
     KERNARIUM_RUNTIME_ANDROID_BOOT_NORMAL = 1,
