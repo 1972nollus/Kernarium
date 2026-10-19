@@ -18,6 +18,10 @@ struct ContentView: View {
     var body: some View {
         ZStack(alignment: .trailing) {
             ZStack {
+                GuestPictureInPictureAnchor()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+
                 GuestDisplayView(
                     keyboardVisible: $framebufferKeyboardVisible,
                     retinaMode: EmulatorLauncher.shared.retinaMode
@@ -66,14 +70,32 @@ struct ContentView: View {
         }
         .onAppear {
             serialConsole.startObserving()
-            GuestPersistence.shared.startObserving()
+            let window = GuestPictureInPicture.shared
+            window.wanted = {
+                EmulatorLauncher.shared.runningGuestName.map {
+                    BackgroundSettings().mode(forGuest: $0)
+                } == .pictureInPicture
+            }
+            GuestPersistence.shared.startObserving(
+                guest: { EmulatorLauncher.shared.runningGuestName },
+                pictureInPicture: window
+            )
         }
         .onDisappear {
             serialConsole.stopObserving()
             GuestPersistence.shared.stopObserving()
+            GuestPictureInPicture.shared.guestRunningChanged(false)
             EmulatorLauncher.shared.stop()
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UserDefaults.didChangeNotification
+            )
+        ) { _ in
+            GuestPictureInPicture.shared.refresh()
+        }
         .onChange(of: launcher.phase) { _, phase in
+            GuestPictureInPicture.shared.guestRunningChanged(phase == .running)
             // Nothing is left to type into, and the keyboard would cover
             // the notice.
             guard case .ended = phase else { return }
@@ -1375,6 +1397,8 @@ final class EmulatorLauncher: ObservableObject {
 
     private let configuration: EmulatorConfiguration
     @Published private(set) var phase = GuestRunPhase.idle
+    /// The name the running guest's own settings are stored under.
+    private(set) var runningGuestName: String?
     private var thermalObserver: NSObjectProtocol?
 
     var retinaMode: Bool { configuration.retinaMode }
@@ -1410,6 +1434,7 @@ final class EmulatorLauncher: ObservableObject {
             print("Kernarium: Documents/\(rootfsFilename) is missing")
             return
         }
+        runningGuestName = rootfsFilename
         // Every runtime carries a 4 KiB kernel.
         guard kernarium_runtime_loader_select(
             selection.flavor.rawValue,
