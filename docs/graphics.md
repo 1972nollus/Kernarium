@@ -90,6 +90,17 @@ and offset, has to lie inside the segment or the heap, the size is passed to
 the driver that aliases it, and an optimal texture has to have the guest
 format's texel size. An import that does not fit is refused.
 
+The native presenter can also mirror the guest's display to the application
+(`frame_tap.hpp`) for a view it shows while its own window cannot, such as the
+Picture in Picture window that keeps an iOS guest running in the background.
+While a sink is set, a thread of its own renders the latest content, with the
+user's rotation, into pooled IOSurface BGRA buffers no wider than the sink asked
+for, at most the requested rate, and again about once a second when the display
+is static. It reads the same texture or CPU framebuffer the window shows, so it
+needs no drawable, and it renders nothing while no sink is set. Clearing the
+sink returns only once no delivery is running, so the receiver may be released
+at once.
+
 The macOS native display turns the emulator into an AppKit application, which
 makes the whole process eligible for App Nap whenever its window is occluded or
 minimized or the screen is locked. A napped process runs every thread,

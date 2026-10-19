@@ -51,6 +51,7 @@ set(_uml_gpu_display_sources
     display_geometry.cpp
     display_resize_notifier.cpp
     display.cpp
+    frame_tap.cpp
     metal_presentation.mm
     metal_scanout_shader.mm
     native_display_common.cpp
@@ -77,12 +78,14 @@ if(UML_TARGET_MACOS)
         UML::ThirdPartyVncServer
         "-framework Accelerate"
         "-framework AppKit"
+        "-framework CoreVideo"
         "-framework Metal"
         "-framework MetalKit"
         "-framework QuartzCore")
 else()
     target_link_libraries(uml_gpu_display PRIVATE
         "-framework Accelerate"
+        "-framework CoreVideo"
         "-framework Metal"
         "-framework MetalKit"
         "-framework QuartzCore"
