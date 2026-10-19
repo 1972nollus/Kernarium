@@ -26,8 +26,12 @@ final class GuestPersistence {
 
     private init() {}
 
+    /// What the application does about the background: the policy and the
+    /// facilities it acts through. Created by `startObserving`.
+    private(set) var background: BackgroundController?
+
     /// What the guest is asked to do at a lifecycle edge.
-    private enum Departure {
+    enum Departure {
         /// Write back, but keep running. Losing focus is not losing the
         /// process, and freezing the guest for it would stall a user who is
         /// about to come straight back.
@@ -38,8 +42,23 @@ final class GuestPersistence {
         case quiesce
     }
 
-    func startObserving() {
+    /// - Parameter guest: the name the running guest's background mode is
+    ///   stored under.
+    func startObserving(
+        guest: @escaping () -> String?,
+        pictureInPicture: (any PictureInPictureWindow)? = nil
+    ) {
         guard observers.isEmpty else { return }
+        let settings = BackgroundSettings()
+        let effects = SystemBackgroundEffects(
+            persistence: self,
+            pictureInPicture: pictureInPicture
+        )
+        let controller = BackgroundController(effects: effects) {
+            guest().map(settings.mode(forGuest:)) ?? .off
+        }
+        background = controller
+        pictureInPicture?.controller = controller
         let center = NotificationCenter.default
         observers.append(
             center.addObserver(
@@ -63,7 +82,19 @@ final class GuestPersistence {
                 queue: .main
             ) { _ in
                 MainActor.assumeIsolated {
-                    GuestPersistence.shared.enterBackground()
+                    BackgroundSession.shared.didEnterBackground()
+                    GuestPersistence.shared.background?.didEnterBackground()
+                }
+            }
+        )
+        observers.append(
+            center.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    GuestPersistence.shared.background?.didBecomeActive()
                 }
             }
         )
@@ -90,38 +121,27 @@ final class GuestPersistence {
                 queue: .main
             ) { _ in
                 MainActor.assumeIsolated {
-                    GuestPersistence.shared.returnToForeground()
+                    BackgroundSession.shared.willEnterForeground()
+                    GuestPersistence.shared.background?.willEnterForeground()
                 }
             }
         )
     }
 
-    /// The application has entered the background, and iOS revokes the host
-    /// GPU within seconds of this handler returning. The guest's GPU requests
-    /// are held first, so none reaches Metal in the time the guest needs to
-    /// suspend, or later should the suspend miss its budget and iOS freeze the
-    /// guest running; a Metal error there would make the guest's Vulkan device
-    /// lost for good. Then the guest is quiesced. The handler as a whole
-    /// answers to iOS's watchdog, so the hold and the quiesce share the one
-    /// budget.
-    private func enterBackground() {
-        let deadline = DispatchTime.now() + Self.terminationBudget
-        BackgroundSession.shared.didEnterBackground()
-        let held = kernarium_runtime_loader_set_gpu_hold(1)
-        print("Kernarium: guest GPU requests held on background (\(held))")
-        flush(reason: "background", departure: .quiesce, waitingUntil: deadline)
+    /// Writes the guest's storage back and leaves it running.
+    func syncGuest(reason: String, until deadline: DispatchTime?) {
+        flush(reason: reason, departure: .flush, waitingUntil: deadline)
     }
 
-    /// Lets the held GPU requests through, then resumes on the flush queue,
-    /// behind any quiesce still in flight. A quick return to the app would
-    /// otherwise hold the main thread until that quiesce finished, and
-    /// resuming first would leave the guest suspended. The guest's rings stay
-    /// disabled until the resume, and the requests it queued wait in them
-    /// until then.
-    private func returnToForeground() {
-        BackgroundSession.shared.willEnterForeground()
-        let released = kernarium_runtime_loader_set_gpu_hold(0)
-        print("Kernarium: guest GPU requests released on foreground (\(released))")
+    /// Writes the guest's storage back and suspends it.
+    func quiesceGuest(reason: String, until deadline: DispatchTime?) {
+        flush(reason: reason, departure: .quiesce, waitingUntil: deadline)
+    }
+
+    /// Resumes on the flush queue, behind any quiesce still in flight. A quick
+    /// return to the app would otherwise hold the main thread until that
+    /// quiesce finished, and resuming first would leave the guest suspended.
+    func resumeGuest() {
         queue.async {
             kernarium_runtime_loader_resume()
         }
@@ -179,5 +199,105 @@ final class GuestPersistence {
         } else if unflushed == 0 {
             print("Kernarium: guest storage settled on \(reason)")
         }
+    }
+}
+
+/// The window that keeps the guest alive in the background, as the policy
+/// sees it. The window reports its own edges to `controller`.
+@MainActor
+protocol PictureInPictureWindow: AnyObject {
+    var controller: BackgroundController? { get set }
+    /// Whether iOS will show the window as the app leaves.
+    var canStart: Bool { get }
+    var isActive: Bool { get }
+    func stop()
+}
+
+/// The background policy's effects on the real guest, display and system.
+@MainActor
+final class SystemBackgroundEffects: BackgroundEffects {
+    private final class Token: BackgroundCancellable {
+        private var action: (@MainActor () -> Void)?
+
+        init(_ action: @escaping @MainActor () -> Void) {
+            self.action = action
+        }
+
+        func cancel() {
+            action?()
+            action = nil
+        }
+    }
+
+    private let persistence: GuestPersistence
+    private let window: (any PictureInPictureWindow)?
+
+    init(
+        persistence: GuestPersistence,
+        pictureInPicture: (any PictureInPictureWindow)?
+    ) {
+        self.persistence = persistence
+        window = pictureInPicture
+    }
+
+    func holdGuestGPU() {
+        let result = kernarium_runtime_loader_set_gpu_hold(1)
+        print("Kernarium: guest GPU requests held on background (\(result))")
+    }
+
+    func releaseGuestGPU() {
+        let result = kernarium_runtime_loader_set_gpu_hold(0)
+        print("Kernarium: guest GPU requests released (\(result))")
+    }
+
+    func flushGuest(until deadline: DispatchTime?) {
+        persistence.syncGuest(reason: "background", until: deadline)
+    }
+
+    func quiesceGuest(reason: String, until deadline: DispatchTime?) {
+        persistence.quiesceGuest(reason: reason, until: deadline)
+    }
+
+    func resumeGuest() {
+        persistence.resumeGuest()
+    }
+
+    func setPageCacheTrimming(_ enabled: Bool) {
+        // The runtime's page-cache trimming switch is not part of the runtime
+        // API yet; the policy already asks for it at the right edges.
+        _ = enabled
+    }
+
+    var pictureInPictureCanStart: Bool { window?.canStart ?? false }
+    var pictureInPictureActive: Bool { window?.isActive ?? false }
+
+    func stopPictureInPicture() {
+        window?.stop()
+    }
+
+    func keepScheduled(named name: String) -> any BackgroundCancellable {
+        let application = UIApplication.shared
+        var assertion = UIBackgroundTaskIdentifier.invalid
+        assertion = application.beginBackgroundTask(withName: name) {
+            application.endBackgroundTask(assertion)
+            assertion = .invalid
+        }
+        return Token {
+            if assertion != .invalid {
+                application.endBackgroundTask(assertion)
+                assertion = .invalid
+            }
+        }
+    }
+
+    func schedule(
+        after seconds: TimeInterval,
+        _ action: @escaping @MainActor () -> Void
+    ) -> any BackgroundCancellable {
+        let timer = Timer(timeInterval: seconds, repeats: false) { _ in
+            MainActor.assumeIsolated { action() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        return Token { timer.invalidate() }
     }
 }

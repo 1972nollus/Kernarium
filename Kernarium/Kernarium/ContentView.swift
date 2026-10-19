@@ -59,7 +59,9 @@ struct ContentView: View {
         }
         .onAppear {
             serialConsole.startObserving()
-            GuestPersistence.shared.startObserving()
+            GuestPersistence.shared.startObserving(
+                guest: { EmulatorLauncher.shared.runningGuestName }
+            )
         }
         .onDisappear {
             serialConsole.stopObserving()
@@ -1357,6 +1359,8 @@ final class EmulatorLauncher: ObservableObject {
 
     private let configuration: EmulatorConfiguration
     @Published private(set) var phase = GuestRunPhase.idle
+    /// The name the running guest's own settings are stored under.
+    private(set) var runningGuestName: String?
     private var thermalObserver: NSObjectProtocol?
 
     var retinaMode: Bool { configuration.retinaMode }
@@ -1392,6 +1396,7 @@ final class EmulatorLauncher: ObservableObject {
             print("Kernarium: Documents/\(rootfsFilename) is missing")
             return
         }
+        runningGuestName = rootfsFilename
         // A bundle that pins a page profile overrides whatever was stored; the
         // configuration already resolved that, and this keeps a hand-edited
         // default from reaching a runtime with no kernel for the payload.

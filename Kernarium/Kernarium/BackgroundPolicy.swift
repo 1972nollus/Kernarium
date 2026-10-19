@@ -1,0 +1,256 @@
+import Foundation
+
+/// What a guest does when Kernarium leaves the foreground. A guest runs only
+/// in the foreground unless its owner chose otherwise: the background modes
+/// keep the guest's CPUs busy on the battery, so each is opt-in per guest.
+enum BackgroundMode: String, CaseIterable, Identifiable {
+    /// Write the guest's storage back and pause it, as every app does.
+    case off
+    /// Keep the guest running while its display shows in a Picture in Picture
+    /// window, which iOS keeps alive for as long as the user leaves it open.
+    case pictureInPicture
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: "Pause the guest"
+        case .pictureInPicture: "Keep running in Picture in Picture"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .off:
+            "The guest is paused while Kernarium is in the background and " +
+                "continues when you return."
+        case .pictureInPicture:
+            "The guest keeps running while its display shows in a small " +
+                "floating window. Close the window to pause the guest. This " +
+                "uses the battery as the guest does in the foreground."
+        }
+    }
+}
+
+/// The mode each guest chose, stored under the guest's name. A guest that
+/// never chose one pauses.
+struct BackgroundSettings {
+    static let keyPrefix = "background.mode."
+
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func mode(forGuest guest: String) -> BackgroundMode {
+        defaults.string(forKey: Self.keyPrefix + guest)
+            .flatMap(BackgroundMode.init(rawValue:)) ?? .off
+    }
+
+    func setMode(_ mode: BackgroundMode, forGuest guest: String) {
+        if mode == .off {
+            defaults.removeObject(forKey: Self.keyPrefix + guest)
+        } else {
+            defaults.set(mode.rawValue, forKey: Self.keyPrefix + guest)
+        }
+    }
+}
+
+/// A scheduled action that can be withdrawn.
+@MainActor
+protocol BackgroundCancellable: AnyObject {
+    func cancel()
+}
+
+/// Everything the background policy does to the guest, the display and the
+/// system, behind one seam so the policy can be tested without any of them.
+@MainActor
+protocol BackgroundEffects: AnyObject {
+    /// Holds every guest GPU request, so none reaches the host GPU while it
+    /// is revoked.
+    func holdGuestGPU()
+    func releaseGuestGPU()
+    /// Writes the guest's storage back and leaves it running. Waits for the
+    /// write-back until `deadline`, or not at all when it is nil.
+    func flushGuest(until deadline: DispatchTime?)
+    /// Writes the guest's storage back and suspends it.
+    func quiesceGuest(reason: String, until deadline: DispatchTime?)
+    func resumeGuest()
+    /// Asks the guest to trim its page cache while it runs unseen.
+    func setPageCacheTrimming(_ enabled: Bool)
+
+    /// Whether iOS will start the Picture in Picture window as the app leaves.
+    var pictureInPictureCanStart: Bool { get }
+    var pictureInPictureActive: Bool { get }
+    func stopPictureInPicture()
+
+    /// Keeps the process scheduled while the policy waits on the system;
+    /// the returned value ends the wait.
+    func keepScheduled(named name: String) -> BackgroundCancellable
+    func schedule(
+        after seconds: TimeInterval,
+        _ action: @escaping @MainActor () -> Void
+    ) -> BackgroundCancellable
+}
+
+/// Decides what happens to the guest at each lifecycle edge. It owns no
+/// system facility: it asks its effects, in an order that keeps the GPU safe.
+///
+/// iOS revokes the host GPU a few seconds after the app enters the
+/// background unless something keeps it running, and a guest request that
+/// reaches the GPU then makes the guest's Vulkan device lost for good. So the
+/// GPU is held at the edge and released only once the guest is safe: quiesced
+/// (it issues nothing), or kept alive by a Picture in Picture window that
+/// iOS has started.
+@MainActor
+final class BackgroundController {
+    enum Phase: Equatable {
+        case foreground
+        /// In the background with the GPU held, waiting for the Picture in
+        /// Picture window the system starts on its own.
+        case awaitingPictureInPicture
+        /// In the background, the guest running behind its window.
+        case keptRunning
+        /// In the background with the guest paused.
+        case quiesced
+    }
+
+    /// How long iOS gets to show the window before the guest is paused: it
+    /// starts it about a second and a half after the app leaves.
+    static let pictureInPictureStartBudget: TimeInterval = 3
+    /// What the edge handler's own work may take: the watchdog answers to the
+    /// handler as a whole.
+    static let edgeBudget = DispatchTimeInterval.seconds(4)
+
+    private(set) var phase = Phase.foreground
+    private let effects: any BackgroundEffects
+    private let mode: () -> BackgroundMode
+    private var startDeadline: (any BackgroundCancellable)?
+    private var keepScheduled: (any BackgroundCancellable)?
+    private var gpuHeld = false
+    private var guestQuiesced = false
+
+    init(
+        effects: any BackgroundEffects,
+        mode: @escaping () -> BackgroundMode
+    ) {
+        self.effects = effects
+        self.mode = mode
+    }
+
+    func didEnterBackground() {
+        guard phase == .foreground else { return }
+        let deadline = DispatchTime.now() + Self.edgeBudget
+        holdGPU()
+        switch mode() {
+        case .pictureInPicture
+        where effects.pictureInPictureActive ||
+            effects.pictureInPictureCanStart:
+            effects.flushGuest(until: deadline)
+            if effects.pictureInPictureActive {
+                keepGuestRunning()
+            } else {
+                awaitPictureInPicture()
+            }
+        case .off, .pictureInPicture:
+            quiesce(reason: "background", until: deadline)
+        }
+    }
+
+    /// The Picture in Picture window is on screen.
+    func pictureInPictureDidStart() {
+        guard phase == .awaitingPictureInPicture else { return }
+        endWait()
+        keepGuestRunning()
+    }
+
+    /// iOS would not show the window.
+    func pictureInPictureDidFailToStart() {
+        guard phase == .awaitingPictureInPicture else { return }
+        endWait()
+        quiesce(
+            reason: "picture in picture did not start",
+            until: DispatchTime.now() + Self.edgeBudget
+        )
+    }
+
+    /// The user closed the window. In the foreground that is the app's own
+    /// doing and changes nothing; in the background nothing keeps the process
+    /// running any more.
+    func pictureInPictureDidStop() {
+        switch phase {
+        case .awaitingPictureInPicture:
+            pictureInPictureDidFailToStart()
+        case .keptRunning:
+            effects.setPageCacheTrimming(false)
+            holdGPU()
+            quiesce(
+                reason: "picture in picture closed",
+                until: DispatchTime.now() + Self.edgeBudget
+            )
+        case .foreground, .quiesced:
+            break
+        }
+    }
+
+    /// The app is on screen again: the window has done its work.
+    func didBecomeActive() {
+        if effects.pictureInPictureActive {
+            effects.stopPictureInPicture()
+        }
+    }
+
+    func willEnterForeground() {
+        endWait()
+        if phase == .keptRunning {
+            effects.setPageCacheTrimming(false)
+        }
+        if gpuHeld {
+            effects.releaseGuestGPU()
+            gpuHeld = false
+        }
+        if guestQuiesced {
+            effects.resumeGuest()
+            guestQuiesced = false
+        }
+        phase = .foreground
+    }
+
+    private func holdGPU() {
+        effects.holdGuestGPU()
+        gpuHeld = true
+    }
+
+    private func awaitPictureInPicture() {
+        phase = .awaitingPictureInPicture
+        keepScheduled = effects.keepScheduled(named: "picture-in-picture")
+        startDeadline = effects.schedule(
+            after: Self.pictureInPictureStartBudget
+        ) { [weak self] in
+            self?.pictureInPictureDidFailToStart()
+        }
+    }
+
+    /// The window is up, so the host GPU stays available: the guest may use
+    /// it again.
+    private func keepGuestRunning() {
+        effects.releaseGuestGPU()
+        gpuHeld = false
+        effects.setPageCacheTrimming(true)
+        phase = .keptRunning
+    }
+
+    private func quiesce(reason: String, until deadline: DispatchTime) {
+        effects.quiesceGuest(reason: reason, until: deadline)
+        guestQuiesced = true
+        phase = .quiesced
+    }
+
+    private func endWait() {
+        startDeadline?.cancel()
+        startDeadline = nil
+        keepScheduled?.cancel()
+        keepScheduled = nil
+    }
+}
