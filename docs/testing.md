@@ -1079,6 +1079,10 @@ the two words in front of its stream -- against real programs and the
 executor's own records, and shows a reader following a link that writers
 retarget never sees bounds that belong to another stream; the same reader
 does see them torn when the bounds are stored apart from the pair.
+`x86-64-gadget-bodies` holds what a cached translation is: a body in its address
+space's arena with its stream behind it and its source apart, the program a
+view of both, the move of an owning program, a replay on a stored program, and
+several threads racing to replay one program and agreeing on a single decode.
 `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel

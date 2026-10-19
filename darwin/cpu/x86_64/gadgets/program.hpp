@@ -8,6 +8,7 @@
 #include "memory/guest_address_space.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -145,15 +146,21 @@ struct ProgramLinkResolver final {
 		void *, std::uint64_t, ExecutionMode){};
 };
 
-/* A translation is built with two allocations, each at exactly the size the
- * block turned out to need: the native stream the engine runs, and the guest
- * bytes the decoder read. Its decoded instructions are not among them -- they
- * are what those bytes decode to, and the only thing that ever asks for them
- * again is a budget-limited replay, which decodes them back out of the source.
- * A block that one replay has ended inside keeps what that decode produced,
- * and nothing else does. Keeping the streams in their own allocations is what
- * keeps them near each other in the allocator, which the workloads with the
- * widest code notice. */
+/* A translation is two pieces, each at exactly the size the block turned out to
+ * need: the native stream the engine runs, behind its guest bounds, and the
+ * guest bytes the decoder read. Its decoded instructions are not among them --
+ * they are what those bytes decode to, and the only thing that ever asks for
+ * them again is a budget-limited replay, which decodes them back out of the
+ * source. A block that one replay has ended inside keeps what that decode
+ * produced, and nothing else does. Keeping the streams apart from the source
+ * is what keeps them near each other in the allocator, which the workloads
+ * with the widest code notice.
+ *
+ * A program a build returns owns its pieces. One the cache stores is a view:
+ * its stream and source belong to the body that holds it (the cache's arena),
+ * which outlives every use of the view, and only what a replay decoded is the
+ * program's own to free. A viewing program is never copied or moved out of its
+ * body. */
 class Program final {
 public:
 	Program() = default;
@@ -165,6 +172,26 @@ public:
 		std::span<const Gadget> gadgets,
 		std::span<const std::byte> source,
 		std::span<const std::uintptr_t> words, bool check_head = false);
+	~Program();
+	Program(Program &&other) noexcept;
+	Program &operator=(Program &&other) noexcept;
+	Program(const Program &) = delete;
+	Program &operator=(const Program &) = delete;
+
+	/* The words a stored program's stream takes with its header, and where
+	 * its view begins: `stream` is stream_header_words words of guest bounds
+	 * followed by the stream, and `source` is a copy of the saved bytes, both
+	 * already in the storage the view will live in. */
+	[[nodiscard]] static std::size_t stream_bytes(
+		std::size_t words) noexcept
+	{
+		return (stream_header_words + words) * sizeof(std::uintptr_t);
+	}
+	/* Fill `stream` (stream_bytes(words.size()) bytes, aligned to sixteen)
+	 * with the guest bounds and the words, and `source` (source.size() bytes)
+	 * with the saved bytes, and return the view that stands for them. */
+	[[nodiscard]] Program view_in(std::uintptr_t *stream, std::byte *source)
+		const noexcept;
 
 	[[nodiscard]] ExecutionMode execution_mode() const noexcept { return mode_; }
 	[[nodiscard]] std::uint64_t address() const noexcept { return address_; }
@@ -173,12 +200,12 @@ public:
 	[[nodiscard]] std::size_t byte_count() const noexcept { return source_; }
 	[[nodiscard]] std::span<const std::uintptr_t> native_stream() const noexcept
 	{
-		return {words_storage_.get() + stream_header_words, words_};
+		return {words_ + stream_header_words, words_count_};
 	}
 	/* The allocation holding the stream and its header. */
 	[[nodiscard]] const void *stream_allocation() const noexcept
 	{
-		return words_storage_.get();
+		return words_;
 	}
 	[[nodiscard]] std::size_t instruction_count() const noexcept
 	{
@@ -199,7 +226,7 @@ public:
 	 * without reading guest memory again. */
 	[[nodiscard]] std::span<const std::byte> source() const noexcept
 	{
-		return {source_storage_.get(), source_};
+		return {source_bytes_, source_};
 	}
 	/* This block's decoded instructions, for the budget-limited replay that
 	 * is the only caller: a single step, or the one instruction a POPF that
@@ -211,36 +238,41 @@ public:
 	 * result means the decode or its storage failed and the caller has
 	 * nothing to run.
 	 *
-	 * A program belongs to the cache of one executor, which is one vCPU
-	 * thread, and this is that thread's own lazy work. */
+	 * Executors that share the program may ask at once: each decodes into
+	 * storage of its own and the first to publish keeps its copy. */
 	[[nodiscard]] std::span<const Gadget> replay_instructions() const noexcept;
 	/* What those instructions cost while they are resident, which is nothing
 	 * until a replay has asked for them. */
 	[[nodiscard]] std::size_t replay_bytes() const noexcept
 	{
-		return decoded_ == nullptr ? 0 :
+		return decoded_.load(std::memory_order_relaxed) == nullptr ? 0 :
 			std::size_t{instructions_} * sizeof(Gadget);
 	}
 
 private:
-	/* Widest members first: every translation an executor caches embeds
-	 * a program, so padding here is paid once per translation. */
+	void release() noexcept;
+
+	/* Widest members first: every cached translation embeds a program, so
+	 * padding here is paid once per translation. */
 	std::uint64_t address_{};
-	/* The words the engine runs, alone. Holding them in one allocation with
-	 * the cold data behind them put every hot stream a cold kilobyte or two
-	 * away from the next and cost the workloads with the widest code. */
-	std::unique_ptr<std::uintptr_t[]> words_storage_;
+	/* The words the engine runs behind their guest bounds, alone. Holding
+	 * them in one allocation with the cold data behind them put every hot
+	 * stream a cold kilobyte or two away from the next and cost the workloads
+	 * with the widest code. */
+	std::uintptr_t *words_{};
 	/* The guest bytes the decoder read, untouched while the block runs. */
-	std::unique_ptr<std::byte[]> source_storage_;
+	std::byte *source_bytes_{};
 	/* What one budget-limited replay decoded, kept for the next one. Null
 	 * until a replay asks, which most blocks never do. */
-	mutable std::unique_ptr<std::byte[]> decoded_;
-	std::uint32_t words_{};
+	mutable std::atomic<std::byte *> decoded_{};
+	std::uint32_t words_count_{};
 	std::uint32_t instructions_{};
 	std::uint32_t source_{};
 	ExecutionMode mode_{ExecutionMode::long64};
 	bool terminal_{};
 	bool check_head_{};
+	/* Whether the stream and source are this program's to free. */
+	bool owns_{};
 };
 static_assert(sizeof(Program) == 48,
 	"every cached translation embeds a program");

@@ -845,6 +845,20 @@ interrupt still abandons the validation: those say the memory being read
 through is being replaced, or that this vCPU has been asked to leave, and no
 page stamp describes either.
 
+## Where a translation lives
+
+A cached translation is a body (`translation_body.hpp`) in its address space's
+arena, the native stream directly behind it and the guest bounds in front of
+the stream. The saved source is cold and lives in a second arena, so that
+streams stay dense. The body holds the translation's program, its page stamps,
+its places in the lists of translations per page and the instruction limit it
+was built under; a slot, which exists whether or not it holds a translation,
+keeps a tag, the body and a few words. The program a body holds is a view of
+the stream and source it sits beside and frees only what a replay decoded.
+That decode is published once by a compare-and-swap, so a program replayed on
+several threads keeps one decode. `x86-64-gadget-bodies` holds the layout and
+the replay.
+
 ## Address spaces the kernel destroyed
 
 The cache keeps the translations of the eight most recently run address
@@ -867,10 +881,10 @@ generations displace them, which a long-running benchmark process never does.
 Each address space an executor keeps charges an account in the gadget engines'
 process-wide byte budget (`cpu/gadget_cache_budget.hpp`; see
 [`darwin/README.md`](../../../README.md)) with its resident translations --
-record, native stream (with the bounds in front of it) and saved source as the
-allocator sizes them, charged at
-the store and refunded when the translation departs -- and its link and
-indirect records and target link tables. A store that takes the open accounts
+their bodies, each with its native stream and the bounds in front of it, and
+their saved source apart, in two arenas that charge the account as they carve
+and release chunks -- and its link and indirect records and target link
+tables. A store that takes the open accounts
 past the budget asks the largest to shed, which sets a flag on the cache that
 keeps it; `leave_gone_generations` lets go of every such address space at the
 start of the next run, as of a destroyed one but without a tombstone, and the
@@ -885,8 +899,8 @@ longer hands it out.
 
 A `UML_GADGET_CACHE_CENSUS=ON` build makes every executor append what its
 private cache holds, at teardown and optionally at intervals: the committed
-slabs, each resident translation's own allocations as the allocator sized
-them -- its record, native stream and saved source, and the decoded
+slabs, each resident translation's own allocations as the arenas sized
+them -- its body and native stream, its saved source, and the decoded
 instructions only a replayed block holds -- the link and indirect records,
 and the target link table each address space owns, with the history of its
 lookups, evictions and retranslations. The record format is the arm64

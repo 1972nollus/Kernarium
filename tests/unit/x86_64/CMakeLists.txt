@@ -29,6 +29,22 @@ uml_add_unit_test(
     COMMAND uml_x86_64_gadget_link_layout_tests
     LABELS cpu;x86-64)
 
+# What a cached translation is: a body in the address space's arena, and a
+# program that is a view of it.
+add_executable(uml_x86_64_gadget_body_tests
+    x86_64_gadget_body_tests.cpp)
+target_link_libraries(uml_x86_64_gadget_body_tests PRIVATE
+    uml_x86_64_target
+    uml_x86_64_gadgets
+    uml_test_require
+    UML::CpuContract)
+target_include_directories(uml_x86_64_gadget_body_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME x86-64-gadget-bodies
+    COMMAND uml_x86_64_gadget_body_tests
+    LABELS cpu;x86-64;tsan)
+
 # The cache's handling of destroyed address-space generations alone, cheap
 # enough for the sanitizer trees.
 uml_add_unit_test(

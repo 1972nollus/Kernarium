@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "executor.hpp"
 
+#include "cpu/gadget_body_arena.hpp"
 #include "cpu/gadget_cache_budget.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
@@ -12,6 +13,7 @@
 #include "native_entry.hpp"
 #include "native_symbols.hpp"
 #include "program_cache_index.hpp"
+#include "translation_body.hpp"
 
 #include <algorithm>
 #include <array>
@@ -23,6 +25,8 @@
 #endif
 #include <cstring>
 #include <memory>
+#include <memory_resource>
+#include <new>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -459,42 +463,11 @@ private:
 	struct LinkRecord;
 	struct Slot;
 
-	/* A slot's place in the list of slots holding code from one guest page.
-	 * Every way exists whether or not it holds a translation, so the lists
-	 * are threaded through slots by 32-bit link id -- two per slot, `2 *
-	 * index + entry + 1`, with 0 for none -- rather than by pointer, and the
-	 * page is not kept: entry 0 is the page the slot's first byte is on and
-	 * entry 1 the page its last byte is on, which the slot's program still
-	 * says whenever a link is taken out. */
-	struct PageLink final {
-		std::uint32_t previous{};
-		std::uint32_t next{};
-	};
-
-	/* What a way holds only while it holds a translation: the program, the
-	 * page stamps it was last validated against and its places in the
-	 * code-page lists. A large cache commonly runs with half its ways empty,
-	 * and every way pays for its slot, so these live in an allocation of
-	 * their own, which a replaced translation hands to its successor. The
-	 * stamps' count and completeness are two small fields the slot has room
-	 * for (Slot::stamp_state), which keeps this record at the 96 bytes the
-	 * allocator hands out in whole sixteens. */
-	struct Translation final {
-		explicit Translation(Program &&built) noexcept
-			: program{std::move(built)}
-		{}
-
-		std::array<PageLink, 2> page_links{};
-		std::array<::uml::memory::CodePageStamp, 2> code_pages{};
-		Program program;
-	};
-	static_assert(sizeof(Translation) == 96);
-
 	/* One way of a set. A way exists whether or not it holds a translation,
 	 * so every byte here is paid for by the whole cache: at 262,144 slots
 	 * every eight bytes is two mebibytes per executor, which is why a slot
 	 * is four words and the rest of what a translation needs is in its
-	 * Translation. */
+	 * Body. */
 	struct Slot final {
 		/* What a lookup compares, so rejecting a way is one load and one
 		 * comparison: the translation's address and execution mode
@@ -504,7 +477,9 @@ private:
 		 * written after the rest of the slot, so a slot is never seen
 		 * occupied half made. */
 		std::uint64_t tag{};
-		std::unique_ptr<Translation> translation;
+		/* The translation this slot indexes, in its address space's arena.
+		 * A slot is occupied exactly while this is non-null. */
+		Body *body{};
 		/* Two fields sharing a word, a pointer below the guest's 48-bit
 		 * address-space limit and sixteen bits above it: the link record
 		 * the slot's block publishes through, memoised so reactivation
@@ -512,18 +487,11 @@ private:
 		 * (Generation::epoch) when the block was last known to match
 		 * guest memory, zero for never. */
 		std::uint64_t memo{};
-		/* The slot's flat index, which names it in successor sets and page
-		 * lists; fixed when its slab is made. */
+		/* The slot's flat index, which names it in successor sets; fixed
+		 * when its slab is made. */
 		std::uint32_t index{};
 		std::uint8_t instruction_limit{};
 		bool terminal{};
-		/* Which of the translation's `page_links` are in a page's list;
-		 * never set without a translation. */
-		std::uint8_t linked_pages{};
-		/* How many of the translation's `code_pages` are stamps, in two
-		 * bits, and above them whether they cover the whole block; zero
-		 * while the translation has none. */
-		std::uint8_t stamp_state{};
 
 		static constexpr unsigned epoch_shift = 48;
 		static constexpr std::uint64_t link_mask =
@@ -565,34 +533,34 @@ private:
 				(std::uint64_t{value} << epoch_shift);
 		}
 
-		static constexpr std::uint8_t stamps_complete_bit = 4;
-
 		/* The translation's page stamps as a validation compares them. */
 		[[nodiscard]] bool stamped() const noexcept
 		{
-			return (stamp_state & stamps_complete_bit) != 0U;
+			return (body->stamp_state & Body::stamps_complete_bit) != 0U;
 		}
 		[[nodiscard]] ProgramCodeStamps code_stamps() const noexcept
 		{
 			ProgramCodeStamps stamps;
-			stamps.pages = translation->code_pages;
-			stamps.count = stamp_state & (stamps_complete_bit - 1U);
+			stamps.pages = body->code_pages;
+			stamps.count = body->stamp_state &
+				(Body::stamps_complete_bit - 1U);
 			stamps.complete = stamped();
 			return stamps;
 		}
 		void set_code_stamps(const ProgramCodeStamps &stamps) noexcept
 		{
-			translation->code_pages = stamps.pages;
-			stamp_state = static_cast<std::uint8_t>(stamps.count |
-				(stamps.complete ? stamps_complete_bit : 0U));
+			body->code_pages = stamps.pages;
+			body->stamp_state = static_cast<std::uint8_t>(stamps.count |
+				(stamps.complete ? Body::stamps_complete_bit : 0U));
 		}
 	};
-	static_assert(ProgramCodeStamps{}.pages.size() < Slot::stamps_complete_bit,
+	static_assert(ProgramCodeStamps{}.pages.size() <
+			Body::stamps_complete_bit,
 		"a stamp count fits the bits below the completeness bit");
 	static_assert(sizeof(Slot) == 32,
 		"a way costs its slot whether or not it holds a translation");
 	static_assert(program_cache_slots < (std::size_t{1} << 31),
-		"a page link id fits 32 bits");
+		"a slot index fits 32 bits");
 
 	/* The common monomorphic and bimorphic successors bypass the main
 	 * set probe. A successor is named by its slot's index plus one, so
@@ -704,6 +672,8 @@ private:
 		explicit Generation(ProgramCache &cache) noexcept
 			: account{&ProgramCache::shed, &cache}
 		{
+			streams.meter(&account);
+			sources.meter(&account);
 			for (auto &mode : links)
 				mode.meter(&account);
 			for (auto &mode : indirect)
@@ -738,8 +708,8 @@ private:
 		std::array<std::unique_ptr<TargetLinkTable>, 2> target_links;
 		std::array<std::vector<IndirectLink *>, 2> live_indirect;
 		std::vector<std::uint32_t> slots;
-		/* The first link of each page's list. */
-		std::unordered_map<std::uint64_t, std::uint32_t> code_pages;
+		/* The first body of each page's list. */
+		std::unordered_map<std::uint64_t, Body *> code_pages;
 		bool slots_complete{true};
 #if UML_GADGET_CACHE_CENSUS
 		/* When the cache last left this address space, in switches and
@@ -747,6 +717,16 @@ private:
 		std::uint64_t census_switch{};
 		double census_seconds{};
 #endif
+		/* The translations of the address space: each body with its
+		 * stream, and apart from them the source each was read from,
+		 * which is cold. A body gives no heap allocation back but what a
+		 * replay decoded, so dropping the arenas drops the bodies. Both
+		 * are charged to the account as they grow and shrink. */
+		gadget_cache::BodyArena streams{std::pmr::new_delete_resource()};
+		gadget_cache::BodyArena sources{std::pmr::new_delete_resource()};
+		/* Last, so it is destroyed first: a call of shed() in progress
+		 * holds up its destruction, and everything shed() touches is still
+		 * there. */
 		gadget_cache::Account account;
 	};
 
@@ -765,6 +745,13 @@ public:
 			for (auto &[generation, state] : generations_)
 				for (const auto &[page, link] : state.code_pages)
 					registries_->of(generation).remove(page);
+		/* A body's stream and source go with its address space's arenas,
+		 * but what a replay decoded was allocated apart. */
+		for (auto &slab : slabs_)
+			if (slab)
+				for (auto &slot : slab->slots)
+					if (slot.body != nullptr)
+						std::destroy_at(slot.body);
 		resident_.clear();
 		generations_.clear();
 		owners_.assign(1, nullptr);
@@ -772,14 +759,14 @@ public:
 		unbind();
 		/* Every address space is gone, so no slot is occupied, and none
 		 * names a link record or a page list. Their accounts went with
-		 * them, so the translations go too: none is charged any more. */
+		 * them, and the arenas the bodies were in: none is charged any
+		 * more. */
 		for (auto &slab : slabs_)
 			if (slab)
 				for (auto &slot : slab->slots) {
 					slot.tag = 0;
 					slot.memo = 0;
-					slot.linked_pages = 0;
-					slot.translation.reset();
+					slot.body = nullptr;
 				}
 		preceding_ = nullptr;
 	}
@@ -924,16 +911,11 @@ public:
 					(current & (DARWIN_UML_GUEST_PAGE_SIZE - 1U)));
 			const auto found = current_->code_pages.find(page);
 			if (found != current_->code_pages.end()) {
-				for (auto id = found->second; id != 0;
-					     id = page_link(id).next) {
-					auto &slot = page_link_slot(id);
-					if (slot.resident() &&
-					    slot.owner() == current_->id &&
-					    slot.translation && source_overlaps(
-						    slot.translation->program,
+				for (auto *body = found->second; body != nullptr;
+				     body = body->page_next[page_entry(*body, page)])
+					if (source_overlaps(body->program,
 						    address, size))
-						deactivate(slot);
-				}
+						deactivate(*current_, *body);
 			}
 			remaining -= count;
 			current += count;
@@ -1083,17 +1065,17 @@ public:
 		const auto tag = tag_of(address, mode);
 		for (std::size_t way = 0; way < program_cache_ways; ++way) {
 			const auto &slot = slab.slots[location.offset + way];
-			if (slot.tag != tag || !slot.translation)
+			if (slot.tag != tag || slot.body == nullptr)
 				continue;
-			const auto stream = slot.translation->program.native_stream();
+			const auto stream = slot.body->program.native_stream();
 			if (word >= stream.data() &&
 				word < stream.data() + stream.size())
-				return &slot.translation->program;
+				return &slot.body->program;
 		}
 		return nullptr;
 	}
 
-	[[nodiscard]] const Program &store(Program &&program,
+	[[nodiscard]] const Program &store(const Program &program,
 		[[maybe_unused]] std::uint64_t changes,
 		std::size_t instruction_limit, ProgramCodeStamps code_stamps,
 		ProgramCacheDiagnostics &diagnostics)
@@ -1120,6 +1102,12 @@ public:
 					location.slab * program_cache_slab_slots + offset);
 		}
 
+		/* The body is made before anything is disturbed, so that running
+		 * out of memory here leaves the cache as it was. */
+		auto &state = current();
+		auto *body = make_body(state, program, instruction_limit,
+			code_stamps);
+
 #if UML_GADGET_CACHE_CENSUS
 		/* A lookup that could not use its translation can leave it
 		 * resident, and this store makes a second copy beside it. */
@@ -1140,7 +1128,6 @@ public:
 		replacement = static_cast<std::uint8_t>(
 			(selected + 1U) & (program_cache_ways - 1U));
 
-		auto &state = current();
 		if (state.slots_complete) {
 			if (state.slots.size() < program_cache_slots) {
 				state.slots.push_back(static_cast<std::uint32_t>(
@@ -1159,22 +1146,14 @@ public:
 		if (slot.resident())
 			census_depart(slot, census::Departure::evicted);
 #endif
-		depart(slot);
-		unindex(slot);
-		deactivate(slot);
+		release_body(slot);
 		slot.tag = 0;
 		successors = {};
-		if (slot.translation)
-			slot.translation->program = std::move(program);
-		else
-			slot.translation =
-				std::make_unique<Translation>(std::move(program));
-		const auto &stored = slot.translation->program;
+		slot.body = body;
 		slot.memo = 0;
 		slot.set_epoch(current_epoch_);
-		slot.set_code_stamps(code_stamps);
 		slot.instruction_limit = kept_instruction_limit(instruction_limit);
-		slot.terminal = stored.terminal();
+		slot.terminal = body->program.terminal();
 		/* The tag is the occupancy marker and is written only after the
 		 * slot is complete; index() reads the owner from it. */
 		slot.tag = tag;
@@ -1182,10 +1161,10 @@ public:
 			index(slot);
 		} catch (...) {
 			slot.tag = 0;
-			slot.translation.reset();
+			slot.body = nullptr;
+			free_body(state, body);
 			throw;
 		}
-		state.account.charge(translation_charge(stored));
 		activate_link(slot);
 		activate(slot, successors);
 #if UML_GADGET_CACHE_CENSUS
@@ -1201,7 +1180,7 @@ public:
 		 * their caches let go of them at their next run. */
 		if (gadget_cache::over_budget())
 			gadget_cache::relieve();
-		return stored;
+		return body->program;
 	}
 
 	[[nodiscard]] std::size_t resident_generations() const noexcept
@@ -1416,7 +1395,7 @@ public:
 			for (const auto &slot : slab->slots) {
 				if (!slot.resident())
 					continue;
-				const auto &program = slot.translation->program;
+				const auto &program = slot.body->program;
 				const auto bytes = translation_bytes(slot);
 				std::fprintf(out,
 					"P %llu 0x%llx %zu %zu %zu 0x%llx %zu %zu "
@@ -1430,7 +1409,7 @@ public:
 					program.source().size(),
 					static_cast<unsigned long long>(
 						census_digest(slot)),
-					bytes.allocated, sizeof(Translation),
+					bytes.allocated, sizeof(Body),
 					program.native_stream().size_bytes(),
 					program.source().size());
 				if (sample != 0 &&
@@ -1476,13 +1455,14 @@ private:
 	[[nodiscard]] static TranslationBytes translation_bytes(
 		const Slot &slot) noexcept
 	{
-		const auto &program = slot.translation->program;
+		const auto &program = slot.body->program;
 		const auto replay = program.replay_bytes();
 		const auto decoded = replay != 0 ? malloc_good_size(replay) : 0;
 		return {
-			.allocated = malloc_size(slot.translation.get()) +
-				malloc_size(program.stream_allocation()) +
-				malloc_size(program.source().data()) + decoded,
+			.allocated = gadget_cache::BodyArena::block_bytes(
+					slot.body->allocation_bytes()) +
+				gadget_cache::BodyArena::block_bytes(
+					program.byte_count()) + decoded,
 			.decoded = decoded,
 		};
 	}
@@ -1501,7 +1481,7 @@ private:
 	[[nodiscard]] static std::uint64_t census_digest(const Slot &slot) noexcept
 	{
 		auto digest = census::digest_seed ^ mode_index(slot.mode());
-		for (const auto byte : slot.translation->program.source())
+		for (const auto byte : slot.body->program.source())
 			digest = census::digest_add(digest,
 				static_cast<std::uint8_t>(byte));
 		return digest;
@@ -1509,7 +1489,7 @@ private:
 
 	void census_depart(const Slot &slot, census::Departure why)
 	{
-		if (!slot.translation)
+		if (slot.body == nullptr)
 			return;
 		history_.depart(generation_of(slot), census_key(slot),
 			census_digest(slot), translation_bytes(slot).allocated, why);
@@ -1560,7 +1540,7 @@ private:
 		std::fprintf(out, "W 0x%llx",
 			static_cast<unsigned long long>(slot.address()));
 		for (const auto value :
-			slot.translation->program.native_stream()) {
+			slot.body->program.native_stream()) {
 			if (text.contains(value)) {
 				std::fprintf(out, " g%llx",
 					static_cast<unsigned long long>(
@@ -1644,11 +1624,20 @@ private:
 		return false;
 	}
 
+	/* Which of a body's two page entries a page is. A body's entries are
+	 * distinct pages, the first of which is the page of its first byte. */
+	[[nodiscard]] static std::size_t page_entry(const Body &body,
+		std::uint64_t page) noexcept
+	{
+		return (body.program.address() & code_page_mask) == page ? 0U : 1U;
+	}
+
 	void index(Slot &slot)
 	{
-		if (!slot.translation)
+		if (slot.body == nullptr)
 			return;
-		const auto pages = program_pages(slot.translation->program);
+		auto &body = *slot.body;
+		const auto pages = program_pages(body.program);
 		if (write_translations_ != nullptr)
 			for (std::size_t entry = 0; entry < pages.count; ++entry) {
 				auto &translation = write_translations_[
@@ -1662,87 +1651,72 @@ private:
 		std::size_t completed = 0;
 		try {
 			for (; completed < pages.count; ++completed) {
-				auto [bucket, inserted] =
-					index.try_emplace(pages.pages[completed], 0U);
+				auto [bucket, inserted] = index.try_emplace(
+					pages.pages[completed], nullptr);
 				if (inserted && registries_ != nullptr)
 					registries_->of(generation_of(slot)).add(
 						pages.pages[completed], &registries_->participant);
-				const auto id = page_link_id(slot, completed);
-				auto &link = slot.translation->page_links[completed];
-				link = {.previous = 0, .next = bucket->second};
-				if (link.next != 0)
-					page_link(link.next).previous = id;
-				bucket->second = id;
-				slot.linked_pages |=
+				auto *first = bucket->second;
+				body.page_previous[completed] = nullptr;
+				body.page_next[completed] = first;
+				if (first != nullptr)
+					first->page_previous[page_entry(
+						*first, pages.pages[completed])] = &body;
+				bucket->second = &body;
+				body.linked_pages |=
 					static_cast<std::uint8_t>(1U << completed);
 			}
 		} catch (...) {
 			for (std::size_t entry = 0; entry < completed; ++entry)
-				unlink(current_generation_, current(), slot, entry);
+				unlink(current_generation_, current(), body, entry);
 			throw;
 		}
 	}
 
-	[[nodiscard]] static std::uint32_t page_link_id(
-		const Slot &slot, std::size_t entry) noexcept
-	{
-		return slot.index * 2U + static_cast<std::uint32_t>(entry) + 1U;
-	}
-
-	[[nodiscard]] Slot &page_link_slot(std::uint32_t id) noexcept
-	{
-		return slot_at((id - 1U) / 2U);
-	}
-
-	[[nodiscard]] PageLink &page_link(std::uint32_t id) noexcept
-	{
-		return page_link_slot(id).translation->page_links[
-			(id - 1U) % 2U];
-	}
-
-	/* Take one of a slot's links out of its page's list. The slot must
-	 * still hold the program the link was made for, which names the page. */
-	void unlink(std::uint64_t generation, Generation &state, Slot &slot,
+	/* Take one of a body's entries out of its page's list. The body must
+	 * still be intact, since it names the page. */
+	void unlink(std::uint64_t generation, Generation &state, Body &body,
 		std::size_t entry) noexcept
 	{
 		const auto bit = static_cast<std::uint8_t>(1U << entry);
-		if ((slot.linked_pages & bit) == 0)
+		if ((body.linked_pages & bit) == 0)
 			return;
-		auto &link = slot.translation->page_links[entry];
-		if (link.previous != 0) {
-			page_link(link.previous).next = link.next;
+		const auto page = program_pages(body.program).pages[entry];
+		auto *previous = body.page_previous[entry];
+		auto *next = body.page_next[entry];
+		if (previous != nullptr) {
+			previous->page_next[page_entry(*previous, page)] = next;
 		} else {
-			const auto page = program_pages(
-				slot.translation->program).pages[entry];
 			auto bucket = state.code_pages.find(page);
 			if (bucket != state.code_pages.end() &&
-			    bucket->second == page_link_id(slot, entry)) {
-				bucket->second = link.next;
-				if (bucket->second == 0) {
+			    bucket->second == &body) {
+				bucket->second = next;
+				if (bucket->second == nullptr) {
 					state.code_pages.erase(bucket);
 					if (registries_ != nullptr)
 						registries_->of(generation).remove(page);
 				}
 			}
 		}
-		if (link.next != 0)
-			page_link(link.next).previous = link.previous;
-		link = {};
-		slot.linked_pages &= static_cast<std::uint8_t>(~bit);
+		if (next != nullptr)
+			next->page_previous[page_entry(*next, page)] = previous;
+		body.page_previous[entry] = nullptr;
+		body.page_next[entry] = nullptr;
+		body.linked_pages &= static_cast<std::uint8_t>(~bit);
 	}
 
 	void unindex(Slot &slot) noexcept
 	{
-		if (slot.linked_pages == 0)
+		if (slot.body == nullptr || slot.body->linked_pages == 0)
 			return;
 		auto *owner = owner_of(slot);
 		if (owner == nullptr) {
-			slot.linked_pages = 0;
+			slot.body->linked_pages = 0;
 			return;
 		}
-		auto &links = slot.translation->page_links;
-		for (std::size_t entry = 0; entry < links.size(); ++entry)
-			unlink(owner->value, *owner, slot, entry);
+		for (std::size_t entry = 0; entry < slot.body->page_next.size();
+		     ++entry)
+			unlink(owner->value, *owner, *slot.body, entry);
 	}
 
 	/* A slot keeps the limit it was built under in one byte. The runtime
@@ -1840,7 +1814,7 @@ private:
 		ProgramCacheSequenceReader sequence_reader,
 		ProgramCacheDiagnostics &diagnostics)
 	{
-		if (!slot.translation) {
+		if (slot.body == nullptr) {
 #if UML_GADGET_CACHE_CENSUS
 			history_.missed();
 #endif
@@ -1880,7 +1854,7 @@ private:
 		 * rebuild as blocks run, rather than only when one needs revalidating.
 		 */
 		activate_link(slot);
-		return &slot.translation->program;
+		return &slot.body->program;
 	}
 
 	void activate(Slot &slot, SuccessorSet &successors) noexcept
@@ -2008,7 +1982,7 @@ private:
 
 	void activate_link(Slot &slot) noexcept
 	{
-		if (!slot.translation)
+		if (slot.body == nullptr)
 			return;
 		if (slot.link() == nullptr) {
 			auto *owner = owner_of(slot);
@@ -2026,7 +2000,7 @@ private:
 			record.next_live = current().live_links;
 			current().live_links = &record;
 		}
-		const auto &program = slot.translation->program;
+		const auto &program = slot.body->program;
 		record.link.stream = program.native_stream().data();
 		record.link.instruction_count = program.instruction_count();
 		record.link.guest_rip = program.address();
@@ -2043,14 +2017,26 @@ private:
 
 	void deactivate(Slot &slot) noexcept
 	{
-		if (slot.translation) {
+		if (slot.body != nullptr) {
 			const auto *stream =
-				slot.translation->program.native_stream().data();
+				slot.body->program.native_stream().data();
 			if (slot.link() != nullptr &&
 			    slot.link()->link.stream == stream)
 				slot.link()->reset();
 		}
 		slot.set_link(nullptr);
+	}
+
+	/* Reset the record of `body`'s block if it names the body's stream,
+	 * which a store over its source does for every body it overlaps. The
+	 * slot that holds the body keeps its memo of the record. */
+	void deactivate(Generation &state, const Body &body) noexcept
+	{
+		auto *record = state.links[mode_index(
+			body.program.execution_mode())].find(body.program.address());
+		if (record != nullptr &&
+		    record->link.stream == body.program.native_stream().data())
+			record->reset();
 	}
 
 	[[nodiscard]] static std::size_t records(const Generation &state) noexcept
@@ -2128,7 +2114,7 @@ private:
 		const auto visit = [&](std::uint32_t index) {
 			const auto &slot = slot_at(index);
 			if (!slot.resident() || slot.owner() != state.id ||
-			    !slot.translation ||
+			    slot.body == nullptr ||
 			    (seen[index / 64] >> (index % 64) & 1U) != 0)
 				return;
 			seen[index / 64] |= std::uint64_t{1} << (index % 64);
@@ -2140,7 +2126,7 @@ private:
 					 state.links[own].find(slot.address()))
 				links[own].mark(record);
 			for (const auto word :
-			     slot.translation->program.native_stream())
+			     slot.body->program.native_stream())
 				for (std::size_t mode = 0; mode < modes.size();
 				     ++mode) {
 					links[mode].mark(
@@ -2307,32 +2293,72 @@ private:
 	}
 
 	/* Count a resident translation leaving against its address space, whose
-	 * next sweep waits for enough of them (gadget_cache::sweep_due), and
-	 * refund what it was charged. */
+	 * next sweep waits for enough of them (gadget_cache::sweep_due). What it
+	 * held was charged through the arenas it was in, and is refunded as they
+	 * give it back. */
 	void depart(const Slot &slot) noexcept
 	{
-		if (!slot.resident() || !slot.translation)
+		if (!slot.resident() || slot.body == nullptr)
 			return;
-		if (auto *owner = owner_of(slot); owner != nullptr) {
+		if (auto *owner = owner_of(slot); owner != nullptr)
 			++owner->departed;
-			owner->account.charge(
-				-translation_charge(slot.translation->program));
-		}
 	}
 
-	/* What a resident translation is charged: its record, its native stream
-	 * with the bounds in front of it, and its saved source, as the allocator
-	 * sizes them. The decoded
-	 * instructions a budget-limited replay keeps are not: only a block a
-	 * single step or a trap flag ran inside has them. */
-	[[nodiscard]] static std::ptrdiff_t translation_charge(
-		const Program &program) noexcept
+	/* A body for `program` in an address space's arenas: its stream behind
+	 * the body, and its saved source apart. Nothing else is touched, so a
+	 * failure leaves the cache as it was. */
+	[[nodiscard]] Body *make_body(Generation &state, const Program &program,
+		std::size_t instruction_limit, const ProgramCodeStamps &stamps)
 	{
-		return static_cast<std::ptrdiff_t>(
-			malloc_good_size(sizeof(Translation)) +
-			malloc_good_size(program.native_stream().size_bytes() +
-				stream_header_words * sizeof(std::uintptr_t)) +
-			malloc_good_size(program.source().size()));
+		const auto bytes =
+			Body::allocation_bytes(program.native_stream().size());
+		auto *storage = static_cast<std::byte *>(
+			state.streams.allocate(bytes));
+		std::byte *source = nullptr;
+		try {
+			if (program.byte_count() != 0)
+				source = static_cast<std::byte *>(
+					state.sources.allocate(program.byte_count()));
+		} catch (...) {
+			state.streams.deallocate(storage, bytes);
+			throw;
+		}
+		auto *body = new (storage) Body{program.view_in(
+			reinterpret_cast<std::uintptr_t *>(storage + sizeof(Body)),
+			source)};
+		body->instruction_limit = kept_instruction_limit(instruction_limit);
+		body->code_pages = stamps.pages;
+		body->stamp_state = static_cast<std::uint8_t>(stamps.count |
+			(stamps.complete ? Body::stamps_complete_bit : 0U));
+		return body;
+	}
+
+	/* Give a body that is in no list and that no slot holds back to its
+	 * address space's arenas. */
+	static void free_body(Generation &state, Body *body) noexcept
+	{
+		const auto bytes = body->allocation_bytes();
+		auto *source = const_cast<std::byte *>(
+			body->program.source().data());
+		const auto source_bytes = body->program.byte_count();
+		std::destroy_at(body);
+		if (source_bytes != 0)
+			state.sources.deallocate(source, source_bytes);
+		state.streams.deallocate(body, bytes);
+	}
+
+	/* Let a slot go of its body: counted as leaving, out of its pages'
+	 * lists, its block's link reset, and the memory back. */
+	void release_body(Slot &slot) noexcept
+	{
+		if (slot.body == nullptr)
+			return;
+		depart(slot);
+		unindex(slot);
+		deactivate(slot);
+		if (auto *owner = owner_of(slot); owner != nullptr)
+			free_body(*owner, slot.body);
+		slot.body = nullptr;
 	}
 
 	/* The budget asks an address space held here to shed: the cache lets go
@@ -2346,14 +2372,10 @@ private:
 
 	void discard(Slot &slot) noexcept
 	{
-		depart(slot);
-		unindex(slot);
-		deactivate(slot);
+		release_body(slot);
 		slot.tag = 0;
-		slot.translation.reset();
 		slot.memo = 0;
 		slot.terminal = false;
-		slot.stamp_state = 0;
 	}
 
 	[[nodiscard]] bool validate(Slot &slot,
@@ -2362,11 +2384,11 @@ private:
 		ProgramCacheSequenceReader sequence_reader,
 		ProgramCacheDiagnostics &diagnostics)
 	{
-		if (!slot.translation ||
-			slot.translation->program.source().empty() ||
-			slot.translation->program.source().size() !=
-				slot.translation->program.byte_count() ||
-			slot.translation->program.source().size() >
+		if (slot.body == nullptr ||
+			slot.body->program.source().empty() ||
+			slot.body->program.source().size() !=
+				slot.body->program.byte_count() ||
+			slot.body->program.source().size() >
 				maximum_cached_source_bytes) {
 			++diagnostics.validation_mismatches;
 #if UML_GADGET_CACHE_CENSUS
@@ -2395,9 +2417,9 @@ private:
 			return false;
 		};
 
-		auto &translation = *slot.translation;
+		const auto &program = slot.body->program;
 		const auto current_stamps = capture_program_code_stamps(
-			memory, translation.program, execution_context);
+			memory, program, execution_context);
 		if (slot.stamped() && current_stamps.complete &&
 		    current_stamps == slot.code_stamps()) {
 			if (!memory_settled())
@@ -2408,9 +2430,8 @@ private:
 			return true;
 		}
 
-		switch (compare_program_source(
-			memory, translation.program,
-			translation.program.source())) {
+		switch (compare_program_source(memory, program,
+			program.source())) {
 		case ProgramSourceComparison::fault:
 			++diagnostics.validation_faults;
 #if UML_GADGET_CACHE_CENSUS
@@ -2829,8 +2850,7 @@ ProgramSelection Executor::select_program(
 		return use_transient();
 
 	try {
-		const auto &stored = storage_->programs.store(
-			std::move(built.program),
+		const auto &stored = storage_->programs.store(built.program,
 			storage_->code_changes, maximum_instructions, *code_stamps,
 			storage_->diagnostics);
 		return {

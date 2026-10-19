@@ -108,11 +108,12 @@ validation epoch. An address space's epoch advances when its code-change number
 moves, a slot whose epoch is the current one has matched guest memory since,
 and a sweep of the space's slots when the epoch wraps keeps that exact. An
 arm64 body header is 16 bytes, its build's stop kept in a tail only for a block
-that stopped early or holds no instruction, and an x86 translation record is
-96 bytes. Hit rates and victims are unchanged by this packing: the set still
-hashes the guest's address-space number. The sizes hold with shared bodies
-too, where every executor keeps its own slots and a body's header is paid
-once however many slots hold it.
+that stopped early or holds no instruction, and an x86 body is 128 bytes, its
+stream behind it in the arena and its saved source apart in a second one. Hit
+rates and victims are unchanged by this packing: the set still hashes the
+guest's address-space number. The sizes hold with shared bodies too, where
+every executor keeps its own slots and a body's header is paid once however
+many slots hold it.
 
 The x86 cache takes a translation's set from one multiply of its address
 space, byte-granular RIP and execution mode
@@ -191,17 +192,17 @@ gadget engines also keep a process-wide byte budget
 charges an account with what it holds: an arm64 space its arena chunks with
 their maps, blocks too large for a chunk, link and indirect records and target
 table, once however many executors share it; an x86 address space its
-translations (record, native stream and source, as the allocator sizes them),
-records and target tables, in each executor that keeps it. Slots and per-space
-slot lists are not charged. A store that finds the open accounts above the
-budget asks the largest to shed until the rest hold seven eighths of it. An
-arm64 space asked to shed is closed and let go of as a renewed one is, and is
-never attached again; an x86 executor lets go of such an address space at the
-start of its next run, as of a destroyed one. Either way the address space
-starts afresh in a new account. The open accounts therefore stay within the
-budget, give or take what one store adds, and a shed space that an idle vCPU
-still holds was part of what was open, so the whole stays within twice the
-budget.
+translation arenas (bodies with their streams, and saved source, as chunks are
+carved and released), records and target tables, in each executor that keeps
+it. Slots and per-space slot lists are not charged. A store that finds the open
+accounts above the budget asks the largest to shed until the rest hold seven
+eighths of it. An arm64 space asked to shed is closed and let go of as a
+renewed one is, and is never attached again; an x86 executor lets go of such an
+address space at the start of its next run, as of a destroyed one. Either way
+the address space starts afresh in a new account. The open accounts therefore
+stay within the budget, give or take what one store adds, and a shed space that
+an idle vCPU still holds was part of what was open, so the whole stays within
+twice the budget.
 
 The emulator sets the budget before the run's first executor: a quarter of
 guest memory, at least 128 MiB, and at most an eighth of the footprint the
