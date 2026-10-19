@@ -57,3 +57,16 @@ uml_add_unit_test(
     TIMEOUT 120)
 set_tests_properties(runtime-thread-fence
     runtime-thread-fence-registry-overflow PROPERTIES RUN_SERIAL TRUE)
+
+# The order of a hibernation against recording steps, and a real one against
+# real kernel threads and guest RAM.
+add_executable(uml_runtime_guest_hibernation_tests guest_hibernation_tests.cpp)
+target_link_libraries(uml_runtime_guest_hibernation_tests PRIVATE
+    UML::RuntimeHibernation
+    UML::RuntimeThreadFence
+    UML::MemorySharedBacking)
+uml_add_unit_test(
+    NAME runtime-guest-hibernation
+    COMMAND uml_runtime_guest_hibernation_tests
+    TIMEOUT 240)
+set_tests_properties(runtime-guest-hibernation PROPERTIES RUN_SERIAL TRUE)

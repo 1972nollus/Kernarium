@@ -27,11 +27,12 @@ if(NOT TARGET UML::Emulator)
         IMPORTED_LOCATION "${_uml_emulator_archive}"
         INTERFACE_INCLUDE_DIRECTORIES "${_uml_emulator_headers}"
         # The installed headers are C, but the archive implementation uses the
-        # Apple C++ runtime and Foundation. These link-only dependencies also
-        # make C and Objective-C targets complete without changing their
-        # source language.
+        # Apple C++ runtime, Foundation and libcompression (the guest RAM
+        # hibernation image). These link-only dependencies also make C and
+        # Objective-C targets complete without changing their source
+        # language.
         INTERFACE_LINK_LIBRARIES
-            "$<$<LINK_LANGUAGE:C,OBJC>:c++>;-framework Foundation")
+            "$<$<LINK_LANGUAGE:C,OBJC>:c++>;-framework Foundation;compression")
 endif()
 
 unset(_uml_emulator_archive)
