@@ -196,6 +196,17 @@ reaches it while it is revoked:
   throttled I/O for those threads only. It returns them to full priority before
   anything else is asked of the guest, so a quiesce is not throttled.
 
+The throttle moves the work to the efficiency cores rather than removing
+cores: on an A15 iPad, a KDE guest with six vCPUs running a six-thread load
+for 240 s behind the window drew about a tenth of the estimated power it
+drew unthrottled (about 0.2 W against 2.0 W, with no performance-core time),
+and ran at about a third of its foreground rate. Process CPU time fell only
+about 16%. Over that window iOS showed no reaction: the process kept its
+foreground-focal CPU role, the thermal state stayed nominal, and no
+background CPU limit fired. Taking guest CPUs offline (hot-unplug) would cap
+the core count outright and is the fallback if a hotter device or a longer
+window shows thermal pressure.
+
 The mode needs the `audio` background mode in `Info.plist`, which iOS requires
 for any Picture in Picture window, and an audio session of category playback
 that mixes with other audio; the window sets the session as the application
