@@ -18,13 +18,12 @@ an artifact is accepted by, and replay commit IDs and binary hashes are
 observations.
 
 The line builds two products from one tree. The Linux product is the desktop
-kernel, in 4 KiB and 16 KiB profiles and the x86_64 userspace slice. The Apple
-products run only the 4 KiB profile; the 16 KiB one, its accepted bundles and
-`page-16k.fragment` stay until a kernel release removes them.
-The [Android product](#android-product) is the 4 KiB arm64 kernel of the
-LineageOS 24 (Android 17) guest. It differs from the Linux product only in its
-configuration overlay: both build the same tree, including nine overlay topics
-that matter only to Android.
+kernel, with its arm64 kernel and the x86_64 userspace slice. The
+[Android product](#android-product) is the arm64 kernel of the LineageOS 24
+(Android 17) guest. It differs from the Linux product only in its configuration
+overlay: both build the same tree, including nine overlay topics that matter
+only to Android. Every guest page is 4 KiB. The Darwin host's page is 16 KiB,
+which the congruent-slot, aperture and linker rules below account for.
 
 The shared stateful Virtio video decoder is built in for every product in this
 line. Its [wire contract](../common/video/README.md) is synchronized from the
@@ -68,9 +67,9 @@ as `git commit --amend --reset-author`. Tools never name or rewrite an
 identity.
 
 `verify-replay.sh` starts from the pinned upstream commit, verifies the shared
-series, branches and verifies the x86_64 overlay, and by default builds arm64
-16 KiB, arm64 4 KiB, and x86_64-userspace 4 KiB kernels. Use `--skip-build`
-only when source replay is the intended scope. Kernel builds use all online
+series, branches and verifies the x86_64 overlay, and by default builds the
+arm64, Android and x86_64-userspace kernels. Use `--skip-build` only when
+source replay is the intended scope. Kernel builds use all online
 processors unless `UML_KERNEL_JOBS` or `--jobs` supplies a limit.
 
 ## Patch maintenance
@@ -105,7 +104,7 @@ The shipped policy is the shared
 [`kernel/common/config/darwin-uml.fragment`](../common/config/darwin-uml.fragment)
 plus the overlay of the product, `config/mainline.fragment` for Linux or
 `config/android.fragment` for [Android](#android-product). The build copies the
-shared policy as the starting `.config`, applies the overlay and exactly one
+shared policy as the starting `.config`, applies the overlay and the 4 KiB
 page fragment, runs `olddefconfig`, and verifies that every requested symbol
 resolved as declared. The Linux overlay holds only what differs from the
 Android product:
@@ -124,16 +123,10 @@ last, for a lock-checking probe with lockdep, its hardirq-state tracking,
 through `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; it is never an accepted
 artifact.
 
-The normal arm64-userspace profiles are:
-
-- 4 KiB pages from `kernel/common/config/page-4k.fragment` (the products'
-  profile); and
-- 16 KiB pages from `kernel/common/config/page-16k.fragment` (retired from the
-  products).
-
-The separate x86_64-userspace slice is 4 KiB only. Its
+Every kernel has 4 KiB pages, from `kernel/common/config/page-4k.fragment`.
+The separate x86_64-userspace slice's
 `slices/x86_64/config/userspace.fragment` follows the shared policy, the Linux
-overlay and the 4 KiB fragment, and it applies only the patches in
+overlay and that fragment, and it applies only the patches in
 `slices/x86_64/patches`. The kernel still executes its UML kernel mode as native arm64, but its userspace ABI is
 fixed to the x86 family: it accepts x86_64 and i386 tasks and never arm64
 userspace. Signal delivery exposes the native x86 XSAVE layout for x87, SSE,
@@ -217,11 +210,9 @@ Android build none of them.
 instruction execution is qualified against the pinned FEX handwritten x86-64
 corpus; distribution and complete Linux syscall compatibility require separate
 guest qualification. The slice accepts no AArch32 executable (its
-`UML_ARM64_AARCH32` is off); both normal arm64 profiles accept `EM_AARCH64` and,
-once the run's engine implements AArch32, 32-bit ARM EABI executables. The
-4 KiB profile runs stock armhf userspace, and the 16 KiB one runs only 32-bit
-programs whose segments are 16 KiB congruent, as the
-[shared README](../common/README.md) says.
+`UML_ARM64_AARCH32` is off); the arm64 kernels accept `EM_AARCH64` and, once
+the run's engine implements AArch32, 32-bit ARM EABI executables, and run
+stock armhf userspace ([shared README](../common/README.md)).
 Android does not consume the x86_64 overlay. The slice's overlay turns off
 `UML_ARM64_SME`, so it builds none of the shared SME task state,
 which x86 tasks do not have; the shared mm-shared mark stays, for the x86-64
@@ -265,8 +256,8 @@ transport (`VHOST_USER_PROTOCOL_F_SHMEM_MAP`), obtains one region through
 `VHOST_USER_GET_SHMEM_CONFIG`, and services acknowledged backend
 `SHMEM_MAP`/`SHMEM_UNMAP` messages with exact descriptor, range, permission,
 and owner validation. The kernel reserves a 1 GiB guarded guest-physical
-aperture outside RAM, enforces 16 KiB mapping alignment under both guest page
-profiles, and supports one mapping per 16 KiB aperture page through a
+aperture outside RAM, enforces 16 KiB mapping alignment (the host page), and
+supports one mapping per 16 KiB aperture page through a
 constant-time page-to-record index. Reset, disconnect, and release revoke every
 mapping in bounded descriptor batches, and a request-stream lock serializes the
 backend-request IRQ against the drain in every synchronous reply wait
@@ -294,7 +285,7 @@ presents a scanout's colour channels and ignores its alpha byte, which is what
 premultiplied alpha over the CRTC's black background shows. The Android
 product offers the other 32-bit RGB orders as well.
 
-Both page profiles request the runtime's anonymous physical-memory token. The
+The kernel requests the runtime's anonymous physical-memory token. The
 kernel's linear physical window becomes the RAM root, so MMU and host-service
 consumers do not retain a second full-span mapping. Guest RAM is committed on
 demand: every chunk of the anonymous root starts released, `mem_init` commits
@@ -383,8 +374,8 @@ budget. A synchronization its owner requests fails at once instead of
 blocking, and the entry for callers that already hold an `mmap` lock accepts
 only a user `mm`. Every synchronization takes and clears the pending ranges
 under one lock hold, applies all of them, and requeues all of them when any
-part fails, so no pending range is lost. Under 4 KiB pages one 16 KiB host
-slot carries four `init_mm` PTEs: they are sampled under the PTE lock, the
+part fails, so no pending range is lost. One 16 KiB host slot carries four
+`init_mm` PTEs: they are sampled under the PTE lock, the
 whole host slot is dropped before the present quarters are mapped and the
 absent ones unmapped, and the first failure stops the slot. A slot whose four
 PTEs are present, name consecutive frames from a 16 KiB-aligned offset of one
@@ -393,22 +384,21 @@ the same memory as the frames' other views; an empty slot is unmapped in one
 call; every other slot is a host-private copy that is coherent with the frames
 only at a synchronization point. The four samples are not one atomic snapshot;
 a writer publishes its range after it changes a PTE, so a later walk reapplies
-it. A walk applies only the `init_mm` PTEs that carry `_PAGE_NEEDSYNC`, on the
-4 KiB profile only the slots one of whose quarters carries it, and clears the
+it. A walk applies only the `init_mm` PTEs that carry `_PAGE_NEEDSYNC`, and so
+only the slots one of whose quarters carries it, and clears the
 bit by compare-and-exchange once the host mapping is applied. A writer that
 changes the PTE meanwhile has set the bit again, and its own flush applies the
 new value. A vmalloc purge flushes the whole span between the areas it frees,
 so without the bit such a walk mapped every present page of the span again.
 User PTEs keep the bit. A kernel-mode fault marks and publishes exactly its
 Linux page, synchronizes `init_mm`, and resumes only when the host confirms
-the access is backed; any other outcome panics instead of faulting again. On
-both page profiles a nested mmu-gather flush keeps the range it collected
+the access is backed; any other outcome panics instead of faulting again. A
+nested mmu-gather flush keeps the range it collected
 instead of becoming a whole-`mm` flush, because a Darwin range invalidation
 already quiesces the generation's executors and advances its epoch.
 
 Memory that the kernel shares with user space through `init_mm` must be
-whole shared slots on the 4 KiB profile, so the architecture reports a vmap
-group of four pages. vmalloc then aligns, rounds and allocates every area in
+whole shared slots, so the architecture reports a vmap group of four pages. vmalloc then aligns, rounds and allocates every area in
 groups and `vmap()` aligns its area to a group, so BPF maps and ring buffers,
 perf and PACKET_MMAP rings and the io_uring regions that the kernel allocates
 share their memory with user space. An area that cannot be grouped falls back
@@ -434,8 +424,8 @@ longer selects `PERF_USE_VMALLOC`, as native arm64 does not. The virtio-gpu
 console draws into a vmap of scattered shmem pages, which is a private copy on
 this profile, so the fbdev shmem dirty callback flushes the damaged lines
 before the device reads them; without it a VNC client sees a blank console.
-Both profiles run `guest-kernel-user-shared-memory` and `guest-erofs-lz4`; the
-x86_64 slice runs the latter's runner directly.
+The arm64 kernels run `guest-kernel-user-shared-memory` and `guest-erofs-lz4`;
+the x86_64 slice runs the latter's runner directly.
 
 Signal dispositions are process-wide, so the emulator's device and renderer
 threads share UML's `SIGSEGV` and `SIGBUS` handlers even though they own no
@@ -553,11 +543,10 @@ must not count zswap as guest memory.
 ## Android product
 
 The kernel of the LineageOS 24 (Android 17) guest is this line's arm64 tree
-with 4 KiB pages and the Android overlay, `config/android.fragment`, in place
-of `config/mainline.fragment`. It is built-in-only (`CONFIG_MODULES=n`, no
-`.ko` or DLKM payloads) and has no 16 KiB variant: Android's 32-bit libraries
-are 4 KiB aligned, so the kernel page size is 4 KiB while the 64-bit userspace
-stays page-agnostic. The product is owned by
+with the Android overlay, `config/android.fragment`, in place of
+`config/mainline.fragment`. It is built-in-only (`CONFIG_MODULES=n`, no `.ko`
+or DLKM payloads). Android's 32-bit libraries are 4 KiB aligned, while its
+64-bit userspace stays page-agnostic. The product is owned by
 [`../../android/lineage-24`](../../android/lineage-24/README.md); the kernel and
 the rootfs release are selected independently.
 
@@ -679,18 +668,16 @@ the full XCFramework script to verify, so it is a follow-up.
 
 ## Standalone build and publication
 
-Build each profile outside the source tree:
+Build each kernel outside the source tree:
 
 ```sh
 kernel/mainline-6.18/build/build-kernel.sh \
-  --slice arm64 --build /case-sensitive/build-arm64-16k --page-size 16k
-kernel/mainline-6.18/build/build-kernel.sh \
-  --slice arm64 --build /case-sensitive/build-arm64-4k --page-size 4k
+  --slice arm64 --build /case-sensitive/build-arm64
 kernel/mainline-6.18/scripts/prepare-source.sh --slice x86_64
 kernel/mainline-6.18/build/build-kernel.sh \
-  --slice x86_64 --build /case-sensitive/build-x86_64-4k --page-size 4k
+  --slice x86_64 --build /case-sensitive/build-x86_64
 kernel/mainline-6.18/build/build-kernel.sh \
-  --product android --build /case-sensitive/build-android-4k --page-size 4k
+  --product android --build /case-sensitive/build-android
 ```
 
 Publish each completed build with

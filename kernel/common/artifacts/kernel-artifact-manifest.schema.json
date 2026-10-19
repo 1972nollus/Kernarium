@@ -26,7 +26,7 @@
     "slice": { "enum": ["arm64", "x86_64"] },
     "published_at_utc": { "type": "string" },
     "release": { "type": "string" },
-    "page_size": { "enum": [4096, 16384] },
+    "page_size": { "const": 4096 },
     "elf_role": { "const": "darwin-uml" },
     "source": { "type": "object" },
     "abi": { "type": "object" },
@@ -36,22 +36,19 @@
     {
       "properties": {
         "family": { "const": "mainline-6.18" },
-        "slice": { "const": "arm64" },
-        "page_size": { "enum": [4096, 16384] }
+        "slice": { "const": "arm64" }
       }
     },
     {
       "properties": {
         "family": { "const": "mainline-6.18" },
-        "slice": { "const": "x86_64" },
-        "page_size": { "const": 4096 }
+        "slice": { "const": "x86_64" }
       }
     },
     {
       "properties": {
         "family": { "const": "android-6.18" },
-        "slice": { "const": "arm64" },
-        "page_size": { "const": 4096 }
+        "slice": { "const": "arm64" }
       }
     }
   ]

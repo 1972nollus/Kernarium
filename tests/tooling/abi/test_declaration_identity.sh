@@ -104,80 +104,70 @@ import_audit()
 {
 	"$PYTHON" -B "$REPOSITORY/kernel/common/abi/bridge_imports.py" "$@"
 }
-# nm_listing PAGE SLICE OUTPUT: an `nm -u` listing of exactly the symbols the
-# audit expects of that page size and slice.
+# nm_listing SLICE OUTPUT: an `nm -u` listing of exactly the symbols the audit
+# expects of that slice.
 nm_listing()
 {
-	import_audit --print-expected --page-size "$1" --slice "$2" > "$3.symbols"
-	awk '{ print "                 U " $0 }' "$3.symbols" > "$3"
+	import_audit --print-expected --slice "$1" > "$2.symbols"
+	awk '{ print "                 U " $0 }' "$2.symbols" > "$2"
 }
-nm_listing 4k arm64 "$TEST_ROOT/4k.nm"
-nm_listing 16k arm64 "$TEST_ROOT/16k.nm"
-nm_listing 4k x86_64 "$TEST_ROOT/x86-4k.nm"
-# The cross-profile rejections below mean something only while the policy
-# keeps each profile's set distinct.
-! cmp -s "$TEST_ROOT/4k.nm" "$TEST_ROOT/16k.nm" &&
-	! cmp -s "$TEST_ROOT/4k.nm" "$TEST_ROOT/x86-4k.nm" &&
-	! cmp -s "$TEST_ROOT/16k.nm" "$TEST_ROOT/x86-4k.nm" ||
-	fail "the import policy no longer distinguishes the page profiles and slices"
-import_audit --nm-output "$TEST_ROOT/4k.nm" --page-size 4k \
-	--slice arm64 >/dev/null
-import_audit --nm-output "$TEST_ROOT/16k.nm" --page-size 16k \
-	--slice arm64 >/dev/null
-import_audit --nm-output "$TEST_ROOT/x86-4k.nm" --page-size 4k \
-	--slice x86_64 >/dev/null
-expect_failure "16 KiB import audit of a 4 KiB-only symbol" \
-	import_audit --nm-output "$TEST_ROOT/4k.nm" --page-size 16k \
-	--slice arm64
+nm_listing arm64 "$TEST_ROOT/arm64.nm"
+nm_listing x86_64 "$TEST_ROOT/x86.nm"
+# The cross-slice rejections below mean something only while the policy keeps
+# the slices' sets distinct.
+! cmp -s "$TEST_ROOT/arm64.nm" "$TEST_ROOT/x86.nm" ||
+	fail "the import policy no longer distinguishes the slices"
+# Every slice imports the services of the 4 KiB native shadows.
+for listing in arm64 x86; do
+	for symbol in darwin_uml_vm_flush_generation \
+		darwin_uml_vm_sync_from_backing darwin_uml_vm_sync_from_buffer; do
+		grep -Fxq "$symbol" "$TEST_ROOT/$listing.nm.symbols" ||
+			fail "the $listing import set lacks $symbol"
+	done
+done
+import_audit --nm-output "$TEST_ROOT/arm64.nm" --slice arm64 >/dev/null
+import_audit --nm-output "$TEST_ROOT/x86.nm" --slice x86_64 >/dev/null
 expect_failure "x86_64 import audit of an arm64-only symbol" \
-	import_audit --nm-output "$TEST_ROOT/4k.nm" --page-size 4k \
-	--slice x86_64
+	import_audit --nm-output "$TEST_ROOT/arm64.nm" --slice x86_64
 expect_failure "arm64 import audit missing an arm64-only symbol" \
-	import_audit --nm-output "$TEST_ROOT/x86-4k.nm" --page-size 4k \
-	--slice arm64
-sed '1d' "$TEST_ROOT/16k.nm" > "$TEST_ROOT/16k-missing.nm"
-expect_failure "16 KiB import audit missing an active symbol" \
-	import_audit --nm-output "$TEST_ROOT/16k-missing.nm" \
-	--page-size 16k --slice arm64
-{ cat "$TEST_ROOT/16k.nm"; printf '%s\n' \
-	"                 U _pthread_sigmask"; } > "$TEST_ROOT/16k-thread-mask.nm"
-import_audit --nm-output "$TEST_ROOT/16k-thread-mask.nm" \
-	--page-size 16k --slice arm64 >/dev/null
+	import_audit --nm-output "$TEST_ROOT/x86.nm" --slice arm64
+sed '1d' "$TEST_ROOT/arm64.nm" > "$TEST_ROOT/arm64-missing.nm"
+expect_failure "import audit missing an active symbol" \
+	import_audit --nm-output "$TEST_ROOT/arm64-missing.nm" --slice arm64
+{ cat "$TEST_ROOT/arm64.nm"; printf '%s\n' \
+	"                 U _pthread_sigmask"; } > "$TEST_ROOT/arm64-thread-mask.nm"
+import_audit --nm-output "$TEST_ROOT/arm64-thread-mask.nm" \
+	--slice arm64 >/dev/null
 for symbol in sigprocmask _sigprocmask 'sigprocmask$UNIX2003' \
 	'_sigprocmask$UNIX2003'; do
-	{ cat "$TEST_ROOT/16k.nm"; printf '                 U %s\n' "$symbol"; } \
-		> "$TEST_ROOT/16k-process-mask.nm"
+	{ cat "$TEST_ROOT/arm64.nm"; printf '                 U %s\n' "$symbol"; } \
+		> "$TEST_ROOT/arm64-process-mask.nm"
 	expect_diagnostic 'imports the process-wide Darwin sigprocmask' \
-		import_audit --nm-output "$TEST_ROOT/16k-process-mask.nm" \
-		--page-size 16k --slice arm64
+		import_audit --nm-output "$TEST_ROOT/arm64-process-mask.nm" \
+		--slice arm64
 done
 # Host code must call darwin_uml_fcntl(); a direct import of the variadic
 # Darwin fcntl, in any of its Mach-O spellings, is refused.
 for symbol in fcntl _fcntl '_fcntl$NOCANCEL'; do
-	{ cat "$TEST_ROOT/16k.nm"; printf '                 U %s\n' "$symbol"; } \
-		> "$TEST_ROOT/16k-fcntl.nm"
+	{ cat "$TEST_ROOT/arm64.nm"; printf '                 U %s\n' "$symbol"; } \
+		> "$TEST_ROOT/arm64-fcntl.nm"
 	expect_diagnostic 'imports the variadic Darwin fcntl' \
-		import_audit --nm-output "$TEST_ROOT/16k-fcntl.nm" \
-		--page-size 16k --slice arm64
+		import_audit --nm-output "$TEST_ROOT/arm64-fcntl.nm" \
+		--slice arm64
 done
 
 expect_failure "import audit without an image" \
-	import_audit --page-size 16k --slice arm64
-expect_failure "import audit of an unknown page size" \
-	import_audit --nm-output "$TEST_ROOT/16k.nm" --page-size 8k \
+	import_audit --slice arm64
+# Every kernel has 4 KiB pages, so the audit has no page-size option.
+expect_failure "import audit of a page size" \
+	import_audit --nm-output "$TEST_ROOT/arm64.nm" --page-size 4k \
 	--slice arm64
 expect_failure "import audit of an unknown slice" \
-	import_audit --nm-output "$TEST_ROOT/16k.nm" --page-size 16k \
-	--slice riscv64
-expect_diagnostic 'x86_64 bridge imports require 4096-byte pages' \
-	import_audit --nm-output "$TEST_ROOT/x86-4k.nm" --page-size 16k \
-	--slice x86_64
+	import_audit --nm-output "$TEST_ROOT/arm64.nm" --slice riscv64
 expect_diagnostic 'is missing' \
-	import_audit --nm-output "$TEST_ROOT/absent.nm" --page-size 16k \
-	--slice arm64
+	import_audit --nm-output "$TEST_ROOT/absent.nm" --slice arm64
 expect_diagnostic 'is missing' \
-	import_audit --kernel-binary "$TEST_ROOT/absent" --page-size 16k \
-	--slice arm64
+	import_audit --kernel-binary "$TEST_ROOT/absent" --slice arm64
 
 # The policy names each conditional symbol once, with a known availability
 # and a rationale, and only declared symbols. The copied audit resolves the
@@ -188,29 +178,28 @@ copied_import_audit()
 	"$PYTHON" -B "$TEST_ROOT/kernel/common/abi/bridge_imports.py" "$@"
 }
 cp "$POLICY" "$TEST_ROOT/import-policy.tsv"
-for row in 'darwin_uml_fixture_two_fields\t4k-only' \
+# 4k-only is a retired availability: no kernel is exempt for its page size.
+for row in 'darwin_uml_fixture_two_fields\tarm64-only' \
 	'darwin_uml_fixture_availability\t16k-only\tfixture' \
-	'darwin_uml_fixture_rationale\t4k-only\t' \
+	'darwin_uml_fixture_retired\t4k-only\tfixture' \
+	'darwin_uml_fixture_rationale\tarm64-only\t' \
 	"$(sed -n 2p "$TEST_ROOT/import-policy.tsv")" \
-	'uml_fixture_not_bridge\t4k-only\tfixture'; do
+	'uml_fixture_not_bridge\tarm64-only\tfixture'; do
 	{ cat "$TEST_ROOT/import-policy.tsv"; printf '%b\n' "$row"; } > "$POLICY"
 	expect_diagnostic 'import policy is malformed' \
-		copied_import_audit --nm-output "$TEST_ROOT/16k.nm" \
-		--page-size 16k --slice arm64
+		copied_import_audit --nm-output "$TEST_ROOT/arm64.nm" \
+		--slice arm64
 done
 { printf 'symbol\tavailability\n'; sed 1d "$TEST_ROOT/import-policy.tsv"; } \
 	> "$POLICY"
 expect_diagnostic 'import policy is malformed' \
-	copied_import_audit --nm-output "$TEST_ROOT/16k.nm" \
-	--page-size 16k --slice arm64
+	copied_import_audit --nm-output "$TEST_ROOT/arm64.nm" --slice arm64
 { cat "$TEST_ROOT/import-policy.tsv"
-	printf 'darwin_uml_fixture_undeclared\t4k-only\tfixture\n'; } > "$POLICY"
+	printf 'darwin_uml_fixture_undeclared\tarm64-only\tfixture\n'; } > "$POLICY"
 expect_diagnostic 'import policy names undeclared bridge symbols' \
-	copied_import_audit --nm-output "$TEST_ROOT/16k.nm" \
-	--page-size 16k --slice arm64
+	copied_import_audit --nm-output "$TEST_ROOT/arm64.nm" --slice arm64
 cp "$TEST_ROOT/import-policy.tsv" "$POLICY"
-copied_import_audit --nm-output "$TEST_ROOT/16k.nm" --page-size 16k \
-	--slice arm64 >/dev/null
+copied_import_audit --nm-output "$TEST_ROOT/arm64.nm" --slice arm64 >/dev/null
 
 printf '%s\n' \
-	"independent ABI identity and page-specific import negative tests passed"
+	"independent ABI identity and bridge import negative tests passed"
