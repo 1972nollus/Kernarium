@@ -558,6 +558,18 @@ for a comparison, and with `KERNARIUM_FOOTPRINT_LOG_MS` set the footprint lines
 carry the process's CPU time, estimated energy, and performance-core time, from
 which the guest's rate, core use, and power in the window follow.
 
+To check the set-time job, choose the keep-running mode (or launch with
+`KERNARIUM_BACKGROUND_MODE=keepRunning`, and `KERNARIUM_BACKGROUND_LIMIT_MINUTES`
+for a short time), tap the application's `backgroundJobButton`, and background
+it. The console must show the job submitted and running, the policy moving to
+`jobRunning` with the GPU held and never released, the guest's work continuing
+and the process's core use staying low, and the job's end (its time is up, or
+stopped) quiescing the guest while still in the background; the return must
+release the GPU, resume the guest, and render the display. Stopping the job from
+the app's button while in front must change nothing about the guest. For
+Android the console must also show the guest suspending itself soon after the
+power key (`PM: suspend entry`) and the screen coming back on the return.
+
 To check the restart notice, background the
 application, terminate its process with `devicectl device process terminate`,
 and launch it again: the console reports that the previous process ended in

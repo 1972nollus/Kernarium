@@ -232,7 +232,10 @@ card shows the time left and lets the user stop it. iOS grants this task no GPU
 on any device, so the guest's GPU requests stay held for the whole stay: a
 guest that only computes carries on, and one that draws waits for the return.
 The vCPUs are not throttled further, because iOS already runs the continued task
-at background priority. The job ends when its time is up, when the user stops
+on the efficiency cores at background priority: a computing guest there ran at
+about a third of its foreground rate for a fifth of a watt. If iOS ends the
+process during a job, its card reports the job as failed, and the next launch
+shows the restart notice. The job ends when its time is up, when the user stops
 it, or when iOS expires it; in the background that quiesces the guest, and in
 the foreground nothing changes. A job belongs to the mode, so choosing another
 mode ends it. `KERNARIUM_BACKGROUND_LIMIT_MINUTES` sets the time for one launch.
