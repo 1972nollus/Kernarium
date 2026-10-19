@@ -491,11 +491,7 @@ remains usable across compatible kernel updates within the `6.18` line. A
 kernel-only update therefore advances only
 [`accepted-android-4k.env`](../../kernel/mainline-6.18/artifacts/accepted-android-4k.env)
 and keeps the accepted release, which then runs a later kernel than the one it
-records. The accepted release records the ACK 6.18 build that qualified it,
-tag included, and runs the mainline kernel line's `android-6.18` artifact. The
-manifest accepts that tag as optional, and the producer records none. The next
-signed release is built from the mainline line; it renames the product family
-and release prefix to the mainline kernel and removes the tag allowance.
+records.
 
 ### Release signing
 
