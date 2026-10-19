@@ -44,12 +44,6 @@ struct NativeExecutionContext final {
 	 * re-checks this entry's tag before hashing its address, and a plain-page
 	 * tag lets it skip the store epilogue; it is never null. */
 	NativeTlbEntry *stack_entry{};
-	/* The executable page this program's last publication covered, or no page.
-	 * A published record is page granular, so a further store inside that page
-	 * owes nothing; a store to any other page owes its own record. A followed
-	 * link that settles this program's publications puts it back to no page,
-	 * so this is exactly the set of pages `write_code` still speaks for. */
-	std::uint64_t code_page{UML_X86_64_CODE_PAGE_NONE};
 	/* The stack pointer entry left the frame at, to which an exit that a
 	 * gadget takes from inside its own frame returns. */
 	std::uintptr_t entry_stack{};
@@ -91,8 +85,6 @@ static_assert(offsetof(NativeExecutionContext, target_links) ==
 	UML_X86_64_CONTEXT_TARGET_LINKS);
 static_assert(offsetof(NativeExecutionContext, stack_entry) ==
 	UML_X86_64_CONTEXT_STACK_ENTRY);
-static_assert(offsetof(NativeExecutionContext, code_page) ==
-	UML_X86_64_CONTEXT_CODE_PAGE);
 static_assert(offsetof(NativeExecutionContext, entry_stack) ==
 	UML_X86_64_CONTEXT_ENTRY_STACK);
 static_assert(offsetof(NativeExecutionContext, exception_stream) ==

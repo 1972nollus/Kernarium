@@ -19,7 +19,12 @@
  *			before the store and runs it after;
  *	flood		another vCPU publishes more code changes than the
  *			address space remembers while this one is away, and
- *			the function is then translated again and patched.
+ *			the function is then translated again and patched;
+ *	two-patch	one block of one thread patches two instructions of a
+ *			function with no link between the stores while three
+ *			other vCPUs run the function, and after the thread
+ *			flags that it is done every one of them must run both
+ *			patches.
  *
  * A case that sees a value its code no longer holds is a stale translation.
  * Prints one line per case and, last, "code-change: abi=... verdict=ok" when
@@ -30,7 +35,7 @@ namespace {
 using word = unsigned long;
 constexpr long nr_read = 0, nr_write = 1, nr_mmap = 9, nr_mprotect = 10,
 	nr_munmap = 11, nr_mremap = 25, nr_pipe = 22, nr_fork = 57, nr_wait4 = 61,
-	nr_futex = 202, nr_exit_group = 231;
+	nr_futex = 202, nr_exit_group = 231, nr_getppid = 110, nr_clock_gettime = 228;
 constexpr const char *abi = "x86-64";
 long raw_syscall(long number, long a0 = 0, long a1 = 0, long a2 = 0,
 	long a3 = 0, long a4 = 0, long a5 = 0)
@@ -49,7 +54,7 @@ long raw_syscall(long number, long a0 = 0, long a1 = 0, long a2 = 0,
 using word = unsigned int;
 constexpr long nr_read = 3, nr_write = 4, nr_mmap = 192, nr_mprotect = 125,
 	nr_munmap = 91, nr_mremap = 163, nr_pipe = 42, nr_fork = 2, nr_wait4 = 114,
-	nr_futex = 240, nr_exit_group = 252;
+	nr_futex = 240, nr_exit_group = 252, nr_getppid = 64, nr_clock_gettime = 265;
 constexpr const char *abi = "i386";
 long raw_syscall(long number, long a0 = 0, long a1 = 0, long a2 = 0,
 	long a3 = 0, long a4 = 0, long a5 = 0)
@@ -635,6 +640,227 @@ void case_flood()
 	futex_wake(&churn_request);
 }
 
+/* One block of one thread patches two instructions of a function, each with
+ * one byte store, and no link or system call separates the stores, while
+ * three other vCPUs run the function in a loop that enters the engine often.
+ * The thread then flags that it is done through memory that holds no code,
+ * and every vCPU executes a serializing instruction, as the cross-modifying
+ * code protocol asks, and must run the function with both patches.
+ *
+ *	function:	xor %eax, %eax
+ *			mov $a, %al		patched first
+ *			xor %edx, %edx
+ *			mov $d, %dl		patched second
+ *			ret
+ *
+ * The writer is straight-line code, "mov %sil, 3(%rdi); fld1; fsin * delay;
+ * fstp %st(0); mov %dl, 7(%rdi); ret" in 64-bit mode and the same with its
+ * arguments from the stack in 32-bit mode. The delay is what lets a reader
+ * that noticed the first store read the function before the second lands. */
+#ifndef TWO_PATCH_ROUNDS
+#define TWO_PATCH_ROUNDS 2000
+#endif
+#ifndef TWO_PATCH_DELAY
+#define TWO_PATCH_DELAY 40
+#endif
+/* What a reader does between seeing the flag and running the function. */
+constexpr int barrier_system_call = 0;
+constexpr int barrier_serializing = 1;
+#ifndef TWO_PATCH_BARRIER
+#define TWO_PATCH_BARRIER barrier_system_call
+#endif
+constexpr int patch_readers = 3;
+constexpr unsigned patch_rounds = TWO_PATCH_ROUNDS;
+constexpr unsigned patch_delay = TWO_PATCH_DELAY;
+constexpr word patch_first = 3;
+constexpr word patch_second = 7;
+
+volatile int patch_go;
+volatile int patch_flag;
+volatile int patch_stop;
+volatile int patch_barrier;
+volatile int patch_armed[patch_readers];
+volatile int patch_finished[patch_readers];
+volatile unsigned patch_seen[patch_readers];
+unsigned char *patch_function;
+
+void emit_patch_function(unsigned char *at, unsigned first, unsigned second)
+{
+	const unsigned char code[] = {
+		0x31, 0xc0, 0xb0, static_cast<unsigned char>(first),
+		0x31, 0xd2, 0xb2, static_cast<unsigned char>(second), 0xc3,
+	};
+	for (word index = 0; index < sizeof(code); ++index)
+		at[index] = code[index];
+}
+
+/* void writer(unsigned char *function, unsigned first, unsigned second) */
+void emit_patch_writer(unsigned char *at, unsigned delay)
+{
+	unsigned char *out = at;
+	const auto put = [&](unsigned char byte) { *out++ = byte; };
+#if defined(__x86_64__)
+	put(0x40); put(0x88); put(0x77); put(patch_first);	/* mov %sil, 3(%rdi) */
+#else
+	put(0x8b); put(0x4c); put(0x24); put(0x04);		/* mov 4(%esp), %ecx */
+	put(0x8b); put(0x44); put(0x24); put(0x08);		/* mov 8(%esp), %eax */
+	put(0x8b); put(0x54); put(0x24); put(0x0c);		/* mov 12(%esp), %edx */
+	put(0x88); put(0x41); put(patch_first);		/* mov %al, 3(%ecx) */
+#endif
+	put(0xd9); put(0xe8);					/* fld1 */
+	for (unsigned count = 0; count < delay; ++count) {
+		put(0xd9); put(0xfe);				/* fsin */
+	}
+	put(0xdd); put(0xd8);					/* fstp %st(0) */
+#if defined(__x86_64__)
+	put(0x88); put(0x57); put(patch_second);		/* mov %dl, 7(%rdi) */
+#else
+	put(0x88); put(0x51); put(patch_second);		/* mov %dl, 7(%ecx) */
+#endif
+	put(0xc3);
+}
+
+/* The function's two results, al and dl, as one number. */
+unsigned call_patch_function(unsigned char *function)
+{
+	word low, high;
+#if defined(__x86_64__)
+	__asm__ volatile("call *%2"
+		: "=a"(low), "=d"(high) : "r"(function)
+		: "rcx", "rsi", "rdi", "r8", "r9", "r10", "r11", "memory", "cc");
+#else
+	__asm__ volatile("call *%2"
+		: "=a"(low), "=d"(high) : "r"(function)
+		: "ecx", "memory", "cc");
+#endif
+	return (static_cast<unsigned>(low) & 0xffU) |
+		((static_cast<unsigned>(high) & 0xffU) << 8);
+}
+
+void serialize()
+{
+	unsigned a = 0, b, c = 0, d;
+	__asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d) : : "memory");
+}
+
+void futex_wake_all(volatile int *address)
+{
+	raw_syscall(nr_futex, reinterpret_cast<long>(address), futex_wake_private, 0x7fffffff);
+}
+
+void patch_reader(void *argument)
+{
+	const int index = static_cast<int>(reinterpret_cast<word>(argument));
+	int joined = 0;
+	for (;;) {
+		int round;
+		while ((round = __atomic_load_n(&patch_go, __ATOMIC_ACQUIRE)) == joined)
+			futex_wait(&patch_go, joined);
+		joined = round;
+		if (patch_stop)
+			break;
+		/* Translated, linked and run with the bytes of the last round. */
+		(void)call_patch_function(patch_function);
+		__atomic_store_n(&patch_armed[index], round, __ATOMIC_RELEASE);
+		while (__atomic_load_n(&patch_flag, __ATOMIC_ACQUIRE) != round) {
+			(void)call_patch_function(patch_function);
+			raw_syscall(nr_getppid);
+		}
+		if (patch_barrier == barrier_system_call)
+			raw_syscall(nr_getppid);
+		else if (patch_barrier == barrier_serializing)
+			serialize();
+		patch_seen[index] = call_patch_function(patch_function);
+		__atomic_store_n(&patch_finished[index], round, __ATOMIC_RELEASE);
+	}
+	__atomic_store_n(&patch_finished[index], -1, __ATOMIC_RELEASE);
+}
+
+void wait_for_readers(volatile int *states, int round)
+{
+	for (int index = 0; index < patch_readers; ++index)
+		while (__atomic_load_n(&states[index], __ATOMIC_ACQUIRE) != round)
+			raw_syscall(nr_getppid);
+}
+
+long now_microseconds()
+{
+	long stamp[2];
+	raw_syscall(nr_clock_gettime, 1, reinterpret_cast<long>(stamp));
+	return stamp[0] * 1000000L + stamp[1] / 1000L;
+}
+
+void case_two_patch(int barrier = TWO_PATCH_BARRIER)
+{
+	patch_barrier = barrier;
+	patch_stop = 0;
+	auto *region = map_region(2);
+	patch_function = region + callee_near;
+	emit_patch_function(patch_function, 0, 0);
+	auto *writer_code = region + page + 0x40;
+	emit_patch_writer(writer_code, patch_delay);
+	const auto writer = reinterpret_cast<void (*)(unsigned char *, unsigned, unsigned)>(
+		writer_code);
+	auto *stacks = map_region(patch_readers * stack_size / page,
+		prot_read | prot_write, map_private | map_anonymous);
+	for (int index = 0; index < patch_readers; ++index)
+		if (spawn_thread(thread_flags, stacks + (index + 1) * stack_size,
+			    patch_reader, reinterpret_cast<void *>(static_cast<word>(index))) < 0) {
+			print("code-change: thread failed\n");
+			leave(4);
+		}
+	/* What a reader that missed a patch ran: the function with the first
+	 * patch only, with neither patch, or some other mixture. */
+	unsigned first_only = 0, neither = 0, other = 0;
+	unsigned reported = 0;
+	const long started = now_microseconds();
+	unsigned previous = 0;
+	for (unsigned round = 1; round <= patch_rounds; ++round) {
+		const unsigned first = 1 + round % 200;
+		const unsigned second = 101 + round * 7 % 151;
+		const unsigned wanted = first | (second << 8);
+		__atomic_store_n(&patch_go, static_cast<int>(round), __ATOMIC_RELEASE);
+		futex_wake_all(&patch_go);
+		wait_for_readers(patch_armed, static_cast<int>(round));
+		writer(patch_function, first, second);
+		__atomic_store_n(&patch_flag, static_cast<int>(round), __ATOMIC_RELEASE);
+		wait_for_readers(patch_finished, static_cast<int>(round));
+		for (int index = 0; index < patch_readers; ++index) {
+			const unsigned got = patch_seen[index];
+			if (got == wanted)
+				continue;
+			if (got == ((previous & 0xff00U) | first))
+				++first_only;
+			else if (got == previous)
+				++neither;
+			else
+				++other;
+			if (reported++ < 6) {
+				print("code-change: two-patch round "); print(round);
+				print(" reader "); print(index);
+				print(" wanted "); print(first); print(","); print(second);
+				print(" got "); print(got & 0xffU); print(",");
+				print(got >> 8); print("\n");
+			}
+		}
+		expect("two-patch-writer", wanted, call_patch_function(patch_function));
+		previous = wanted;
+	}
+	const long elapsed = now_microseconds() - started;
+	patch_stop = 1;
+	__atomic_store_n(&patch_go, static_cast<int>(patch_rounds + 1), __ATOMIC_RELEASE);
+	futex_wake_all(&patch_go);
+	wait_for_readers(patch_finished, -1);
+	print("code-change: two-patch rounds="); print(patch_rounds);
+	print(" delay="); print(patch_delay);
+	print(" microseconds="); print(elapsed);
+	print(" barrier="); print(static_cast<long>(barrier));
+	print(" first-patch-only="); print(first_only);
+	print(" neither-patch="); print(neither);
+	print(" other="); print(other); print("\n");
+	expect("two-patch", 0, first_only + neither + other);
+}
+
 } // namespace
 
 extern "C" {
@@ -723,6 +949,7 @@ int probe_main()
 	case_vcpu(false);
 	case_vcpu(true);
 	case_flood();
+	case_two_patch();
 	print("code-change: abi="); print(abi);
 	print(" checks="); print(checks);
 	print(" failed="); print(failures);

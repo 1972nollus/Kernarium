@@ -1111,28 +1111,21 @@ Lx86_store_publishes\@:
 Lx86_tlb_done\@:
 	.if \access == 1
 	/* A store to a page some executor holds a translation of is the rare one,
-	 * and settling it needs a second context field, so it leaves the hot
-	 * stream: a bank of thousands of write translations otherwise fetches
-	 * this arm on every store that will never take it.
+	 * and it leaves the hot stream: a bank of thousands of write
+	 * translations otherwise fetches this arm on every store that will never
+	 * take it.
 	 *
-	 * A publication covers a whole page, so such a store owes a record unless
-	 * this program has already published this very page; a store to any other
-	 * page owes its own, because the page stamp another vCPU validates
-	 * against moves only with a publication. The page this program last
-	 * published answers that on its own: it holds an impossible page until
-	 * the first publication and again whenever a followed link retires this
-	 * program's publications, which is exactly when `write_code` says nothing
-	 * is owed.
+	 * Every such store owes a record of its own, even to a page this program
+	 * has just published. The page stamp another vCPU validates against moves
+	 * only with a publication, and a vCPU that revalidated a block of the page
+	 * between two stores keeps the bytes it read there until the stamp moves
+	 * again, so a store that published nothing would leave it running the
+	 * code from before.
 	 */
 	.pushsection GADGET_SECTION_COLD
 Lx86_tlb_write_code_owed\@:
-	ldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
-	eor x14, x9, x14
-	cbz x14, Lx86_tlb_write_code_kept\@
 	mov w14, #UML_X86_64_WRITE_CODE_PENDING
 	strb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-Lx86_tlb_write_code_kept\@:
-	ldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
 	b Lx86_tlb_write_code_ready\@
 	.popsection
 	.endif
@@ -1335,11 +1328,6 @@ Lx86_store_done\@:
 	helper_call uml_x86_64_gadget_code_link_safe
 	cbz w0, Lx86_link_code_exit\@
 	strb wzr, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	/* Those publications are settled, so the page they covered is no longer
-	 * one this program has published: the next store to it owes a record
-	 * again, just as it did before this program made any. */
-	mov w9, #UML_X86_64_CODE_PAGE_NONE
-	str x9, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
 Lx86_link_code_exit\@:
 	cbnz w0, Lx86_link_code_ready\@
 	ldr x9, [x19, #16]
