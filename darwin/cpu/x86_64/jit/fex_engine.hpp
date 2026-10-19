@@ -69,6 +69,10 @@ struct JitRunResult final {
 	std::int32_t error_code{};
 	/* Whether the code that ran kept x86's total store order. */
 	bool stores_ordered{};
+	/* The run ended after a serializing instruction, CPUID or IRET: x86
+	 * runs the code another processor stored before it, so the caller hands
+	 * over the address space's code changes before it runs on. */
+	bool serialized{};
 	/* Within `run`: a dispatch stopped, unretired, at an instruction the
 	 * segment model runs (`execute_segment_instruction`), or at one whose
 	 * accesses through a segment it checks first (`prepare_segment_step`). */

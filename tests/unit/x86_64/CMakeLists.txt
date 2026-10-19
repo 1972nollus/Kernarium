@@ -258,4 +258,22 @@ if(TARGET uml_x86_64_jit)
         COMMAND uml_x86_64_jit_space_tests
         LABELS cpu;x86-64
         TIMEOUT 300)
+    # x86's protocol for code another processor changes: a store into
+    # translated code publishes after it lands, and CPUID and IRET end the
+    # run so the runtime hands over the changes before the code after them.
+    add_executable(uml_x86_64_jit_code_change_tests
+        x86_64_jit_code_change_tests.cpp)
+    target_link_libraries(uml_x86_64_jit_code_change_tests PRIVATE
+        uml_x86_64_target
+        uml_x86_64_jit
+        uml_cpu_executable_memory
+        UML::ThirdPartyFEXCore
+        UML::CpuContract)
+    target_include_directories(uml_x86_64_jit_code_change_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin)
+    uml_add_unit_test(
+        NAME x86-64-jit-code-change
+        COMMAND uml_x86_64_jit_code_change_tests
+        LABELS cpu;x86-64
+        TIMEOUT 300)
 endif()

@@ -1012,6 +1012,9 @@ engine and the JIT to the same count of retired instructions before each kind
 of stop, in long64 and compat32, including a store into the code of the block
 running it. `x86-64-jit-space-recycling` has an engine make a gone address
 space's space over for the next one and requires the new bytes to run.
+`x86-64-jit-code-change` has a function rewritten, as another vCPU would,
+behind a flag the program reads before IRET, and requires the call after the
+IRET to run the new code.
 `x86-64-tier-switch-corpus` and `x86-64-tier-switch-retirement` run the corpus
 and the retirement cases on the gadget engine for the first K retired
 instructions and on the JIT for the rest, over a sweep of K, and require each

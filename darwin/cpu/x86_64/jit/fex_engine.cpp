@@ -1539,11 +1539,15 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	bool check = false;
 	/* After the model retired an instruction: whether the run ends. A step
 	 * ends after one, IRET may have set TF, and a far transfer that changed
-	 * the execution mode needs the caller's sync of the new mode. */
-	const auto ends = [&](JitRunResult &run, const SegmentResult &done) noexcept {
+	 * the execution mode needs the caller's sync of the new mode. IRET also
+	 * serializes, and the caller hands over the address space's code
+	 * changes before the next instruction runs. */
+	const auto ends = [&](JitRunResult &run, const SegmentStep &step) noexcept {
+		const auto &done = step.result;
 		++retired;
+		run.serialized = step.instruction.operation == Operation::interrupt_ret;
 		if (!stepping && !done.trap_armed && done.outcome != SegmentOutcome::retired_changed &&
-			retired < budget && !request.single_instruction)
+			!run.serialized && retired < budget && !request.single_instruction)
 			return false;
 		run.execution.reason = stepping ? ::uml::cpu::ExitReason::single_step :
 			::uml::cpu::ExitReason::instruction_budget;
@@ -1571,7 +1575,7 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 				result.reason = stepping ? ::uml::cpu::ExitReason::single_step :
 					::uml::cpu::ExitReason::instruction_budget;
 			} else if (step.result.outcome != SegmentOutcome::run) {
-				if (!ends(run, step.result))
+				if (!ends(run, step))
 					continue;
 			} else {
 				const SegmentBypass bypass{cpu};
@@ -1627,7 +1631,7 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 			run.error_code = static_cast<std::int32_t>(step.result.fault.error);
 			return run;
 		}
-		if (ends(run, step.result)) {
+		if (ends(run, step)) {
 			result.retired_instructions = retired;
 			return run;
 		}
