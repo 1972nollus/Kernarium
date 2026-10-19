@@ -852,6 +852,24 @@ larger window for live spaces. Without the rule a destroyed generation's
 translations, link records and indirect sites stay until eight newer
 generations displace them, which a long-running benchmark process never does.
 
+## The byte budget
+
+Each address space an executor keeps charges an account in the gadget engines'
+process-wide byte budget (`cpu/gadget_cache_budget.hpp`; see
+[`darwin/README.md`](../../../README.md)) with its resident translations --
+record, native stream and saved source as the allocator sizes them, charged at
+the store and refunded when the translation departs -- and its link and
+indirect records and target link tables. A store that takes the open accounts
+past the budget asks the largest to shed, which sets a flag on the cache that
+keeps it; `leave_gone_generations` lets go of every such address space at the
+start of the next run, as of a destroyed one but without a tombstone, and the
+address space starts again in a new account. An executor's cache is private,
+so the same address space on four vCPUs is charged four times. When
+translations come to be shared per address space, the shared space owns the
+account, as an arm64 space does: it charges its translations once, its executors
+let go of it at their next run when it is asked to shed, and the registry no
+longer hands it out.
+
 ## Measuring what the cache costs
 
 A `UML_GADGET_CACHE_CENSUS=ON` build makes every executor append what its

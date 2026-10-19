@@ -536,6 +536,20 @@ def victim_served(histogram: list[int], entries: int) -> int:
     return sum(histogram[: bound + 1])
 
 
+def budget_of(blocks: list[Block]) -> dict[str, int]:
+    """The process's gadget-cache budget as the snapshot's caches saw it: what
+    every address space was charged, and how often the budget was passed.
+    Each cache reports the whole process, so the latest view counts. Empty
+    for captures written before the census said."""
+    fields = ("budget", "metered", "metered_shedding", "metered_peak",
+              "reliefs", "shed")
+    seen = [b for b in blocks if "budget" in b.fields]
+    if not seen:
+        return {}
+    latest = max(seen, key=lambda b: float(b.fields.get("seconds", 0.0)))
+    return {name: latest.get(name) for name in fields}
+
+
 def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> None:
     contents = [load(path, block) for block in blocks]
     engine = engine_of(blocks)
@@ -553,6 +567,13 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
     if dead:
         print(f"  {dead} address spaces held for destroyed generations, "
               f"{dead_bytes / MIB:.1f} MiB")
+    budget = budget_of(blocks)
+    if budget:
+        print(f"  gadget-cache budget {budget['budget'] / MIB:.1f} MiB: "
+              f"{budget['metered'] / MIB:.1f} MiB charged, "
+              f"{budget['metered_shedding'] / MIB:.1f} MiB of it shedding; "
+              f"{budget['reliefs']:,} reliefs shed "
+              f"{budget['shed']:,} address spaces")
     if resident == 0:
         return
 

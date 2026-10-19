@@ -483,6 +483,20 @@
         UML_GADGET_SWEEP_STRESS=1
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
+    # The process's gadget-cache budget bounds what the executors' address
+    # spaces keep, from several threads at once.
+    uml_add_arm64_unit_test(gadget_budget WITHOUT_HARNESS
+        OBJECTS
+            $<TARGET_OBJECTS:uml_static_mmu>
+            $<TARGET_OBJECTS:uml_arm64_gadgets>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
+            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+            ${UML_STATIC_RUNTIME_TEST_OBJECTS}
+        LABELS tsan)
+    target_compile_definitions(uml_arm64_gadget_budget_tests PRIVATE
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+
     # The body arena on its own, against a model of what it hands out.
     uml_add_arm64_unit_test(gadget_body_arena WITHOUT_HARNESS NO_OBJECTS)
 
@@ -516,3 +530,12 @@
 		${PROJECT_SOURCE_DIR}/darwin)
     uml_add_unit_test(NAME gadget-record-table
 		COMMAND uml_gadget_record_table_tests)
+
+    # The process's byte budget for the gadget caches, on its own.
+    add_executable(uml_gadget_cache_budget_tests
+		${PROJECT_SOURCE_DIR}/tests/unit/arm64/gadget_cache_budget_tests.cpp)
+    target_include_directories(uml_gadget_cache_budget_tests PRIVATE
+		${PROJECT_SOURCE_DIR}/darwin)
+    uml_add_unit_test(NAME gadget-cache-budget
+		COMMAND uml_gadget_cache_budget_tests
+		LABELS tsan)

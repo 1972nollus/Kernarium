@@ -343,6 +343,42 @@ void several_tables()
 	}
 }
 
+/* A metered table charges its account exactly what bytes() counts, through
+ * growth, sweeps in one step or two and the chunks they return, and refunds
+ * it when it is metered elsewhere. */
+template <typename Record>
+void metered(std::uint64_t count)
+{
+	cache::Account account{[](void *) noexcept {}, nullptr};
+	cache::StableRecordTable<Record, KeyOf> table;
+	table.meter(&account);
+	require(account.bytes() == table.bytes());
+	std::vector<Record *> records;
+	for (std::uint64_t index = 0; index < count; ++index) {
+		records.push_back(table.try_emplace(index, index).first);
+		require(account.bytes() == table.bytes());
+	}
+	auto marks = table.marks();
+	for (std::uint64_t index = 0; index < count; index += 3)
+		marks.mark(records[index]);
+	const auto unlinked = table.unlink(marks);
+	require(account.bytes() == table.bytes());
+	require(table.release(unlinked) == count - (count + 2) / 3);
+	require(account.bytes() == table.bytes());
+	for (std::uint64_t index = count; index < 2 * count; ++index)
+		(void)table.try_emplace(index, index);
+	require(account.bytes() == table.bytes());
+	const auto before = table.size();
+	require(table.sweep(table.marks()) == before && table.size() == 0);
+	require(account.bytes() == table.bytes());
+	/* An empty table still holds its index, which it charges. */
+	require(table.bytes() != 0);
+	table.meter(nullptr);
+	require(account.bytes() == 0);
+	(void)table.try_emplace(1, 1);
+	require(account.bytes() == 0);
+}
+
 } // namespace
 
 int main()
@@ -359,6 +395,8 @@ int main()
 	candidates();
 	trim();
 	several_tables();
+	metered<Sized<24>>(20'000);
+	metered<Sized<1024>>(2'000);
 
 	/* Consecutive keys, as neighbouring guest addresses are. */
 	cache::StableRecordTable<Sized<24>, KeyOf> table;

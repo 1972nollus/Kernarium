@@ -35,6 +35,16 @@ inline constexpr unsigned maximum_guest_cpu_count = 64;
 [[nodiscard]] bool acquire_translation_cache_run_session() noexcept;
 void release_translation_cache_run_session() noexcept;
 
+/* Sets the process's byte budget for what the gadget engines' caches keep per
+ * address space (cpu/gadget_cache_budget.hpp) and returns it: `bytes` when
+ * nonzero, otherwise a quarter of the guest's memory, at least 128 MiB and at
+ * most an eighth of the memory the host lets the process reach. Before the
+ * run's first executor; a JIT run sets it too, since an x86-64 address space
+ * starts on the gadget engine.
+ */
+std::size_t set_gadget_cache_budget(std::size_t guest_memory_bytes,
+	std::size_t bytes) noexcept;
+
 /* Parses a byte count with an optional K/M/G suffix. Zero if unparsable. */
 [[nodiscard]] std::size_t parse_translation_cache_quantity(
 	const char *text) noexcept;

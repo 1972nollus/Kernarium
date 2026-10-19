@@ -250,6 +250,30 @@ void test_guest_memory_budget_matches_kernel_memparse()
 		"private JIT cache cap above 256 MiB was accepted");
 }
 
+void test_gadget_cache_budget_option()
+{
+	const char *absent[]{"uml-test"};
+	require(uml::emulator::prepare_emulator_options(
+		1, absent, "/tmp/rootfs.erofs").gadget_cache_budget == 0,
+		"the gadget cache budget was set without being asked for");
+	const char *chosen[]{"uml-test", "--gadget-cache-budget=96M",
+		"ip=dhcp"};
+	auto options = uml::emulator::prepare_emulator_options(
+		3, chosen, "/tmp/rootfs.erofs");
+	require(options.valid &&
+		options.gadget_cache_budget == 96U * 1024U * 1024U &&
+		!contains(options, chosen[1]) && contains(options, "ip=dhcp"),
+		"the gadget cache budget was not consumed by the host");
+	const char *zero[]{"uml-test", "--gadget-cache-budget=0"};
+	require(!uml::emulator::prepare_emulator_options(
+		2, zero, "/tmp/rootfs.erofs").valid,
+		"a zero gadget cache budget was accepted");
+	const char *trailing[]{"uml-test", "--gadget-cache-budget=1Gignored"};
+	require(!uml::emulator::prepare_emulator_options(
+		2, trailing, "/tmp/rootfs.erofs").valid,
+		"the gadget cache budget ignored trailing text");
+}
+
 void test_jit_tier_option()
 {
 	const char *absent[]{"uml-test"};
@@ -554,6 +578,7 @@ int main()
 		test_explicit_defaults_are_preserved();
 		test_x86_64_kernel_memory_accounting_policy();
 		test_guest_memory_budget_matches_kernel_memparse();
+		test_gadget_cache_budget_option();
 		test_jit_tier_option();
 		test_scalable_native_kernel_layout_geometry();
 		test_reserved_native_window_has_no_gap();

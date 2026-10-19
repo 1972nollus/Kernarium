@@ -1148,6 +1148,15 @@ An executor also lets go of an address space whose generation the MMU has
 destroyed, at the same point and as the count of destroyed generations moves,
 leaving its number in the window's order until the least-recently-used rule
 reaches it; the x86 gadget executors do the same at the start of each run.
+Both gadget engines charge what each address space keeps (bodies or
+translations, link and indirect records, target tables; not slots) to one
+process-wide byte budget (`cpu/gadget_cache_budget.hpp`), a translation shared
+by several executors once. A store that takes the open address spaces past
+the budget asks the largest to shed; every executor holding one lets go of it
+at the same point as of a renewed space, so the open spaces stay within the
+budget and the whole within twice it. The emulator sets the budget before the
+first executor from guest memory and the host's process memory limit, or from
+`--gadget-cache-budget=`.
 Cached
 returns consult a private per-carrier return-record ring after their site
 cells miss: linked calls push the return PC with its block link, a matching

@@ -394,7 +394,14 @@ and the per-address-space indexes the cache owns; on arm64 it also says how
 much of the body arena is chunks that hold no live body. The `E` record also
 counts the link sweeps, the link records and indirect sites they released, and
 the time they took. A `P` record carries its translation's allocation and the
-header, stream and validation bytes in it.
+header, stream and validation bytes in it. Every `E` record also carries the
+process's gadget-cache budget (`budget=`), what every address space is charged
+against it (`metered=`, of which `metered_shedding=` is in address spaces
+asked to shed), the most the open ones held when a store passed the budget
+(`metered_peak=`), and how many reliefs asked how many address spaces to shed
+(`reliefs=`, `shed=`); an x86 `E` record adds what its own address spaces are
+charged (`charged=`), and an arm64 `S` record what its space is charged and
+whether it is shedding. The report states the budget line.
 
 When arm64 executors share an address space's translations, an `E` record
 counts only what its cache owns (slot slabs and slot lists), each `G` record
