@@ -7,8 +7,8 @@ or more `ctest --output-junit` files with the registrations of the build tree
 that produced them and prints the time each owning directory and each
 test-name family costs, plus the slowest individual tests.
 
-    tools/ctest-time-breakdown.py --test-dir .build/presets/macos-unit-16k \
-        --junit 16k=unit-16k.xml --junit 4k=unit-4k.xml
+    tools/ctest-time-breakdown.py --test-dir .build/presets/macos-unit \
+        --junit unit=unit.xml
 
 A test's owner is the CMake file that registered it, relative to
 `--owner-root`; a name family is the first `--family-depth` dash-separated
@@ -205,7 +205,7 @@ def main(argv: list[str]) -> int:
         action="append",
         required=True,
         metavar="[LABEL=]PATH",
-        help="a ctest --output-junit file; repeat for several profiles",
+        help="a ctest --output-junit file; repeat for several runs",
     )
     parser.add_argument(
         "--test-dir",

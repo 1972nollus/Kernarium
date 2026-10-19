@@ -200,6 +200,24 @@ inline void sendRequestAndReadAcknowledgement(
     readAcknowledgement(socket, request);
 }
 
+/* Negotiates the vhost-user protocol features `features` the way a front end
+ * does, with the device offering only the protocol-features bit. */
+inline void negotiateProtocolFeatures(int socket, std::uint64_t features)
+{
+    constexpr std::uint64_t deviceFeatures =
+        protocol::vhostFeatureProtocol;
+    sendRequest(
+        socket,
+        protocol::VhostRequest::setFeatures,
+        bytesOf(deviceFeatures),
+        {},
+        false);
+    sendRequestAndReadAcknowledgement(
+        socket,
+        protocol::VhostRequest::setProtocolFeatures,
+        bytesOf(features));
+}
+
 [[nodiscard]] inline std::vector<std::uint8_t> memoryTablePayload(
     std::span<const protocol::MemoryRegion> regions)
 {

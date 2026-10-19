@@ -17,7 +17,7 @@ with its SHA-256, first and from the page cache, in each of several rounds
 separated by dropping the page cache, so each round decompresses again. No
 EROFS error, kernel warning or fault report may reach the console.
 
-It works with the arm64 integration rootfs on either page profile and, run
+It works with the arm64 integration rootfs and, run
 directly, with an x86-64 image on the x86_64-userspace slice. It needs
 erofs-utils on the host.
 """

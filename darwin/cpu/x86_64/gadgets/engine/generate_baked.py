@@ -161,7 +161,7 @@ def translate(o, write, size, record_stack=False, miss='Lx86_baked_miss'):
     o.emit(f'{hit}:')
     if write:
         ready, publishes = o.label('wcready'), o.label('publishes')
-        owed, kept = o.label('wcowed'), o.label('wckept')
+        owed = o.label('wcowed')
         # Publication has work only when a publish is still pending or this
         # page holds cached code. `write_code` is none, pending or published
         # and only pending is work, so its low bit answers for it and joins
@@ -179,22 +179,16 @@ def translate(o, write, size, record_stack=False, miss='Lx86_baked_miss'):
     o.emit('\tadd x7, x13, x7')
     o.emit(f'{done}:')
     if write:
-        # A publication covers its whole page, so a store to a page some
-        # executor has translated owes a record unless this program has
-        # already published that very page. The page it last published answers
-        # that alone -- it is an impossible page until the first publication
-        # and again once a followed link settles them. It is also the rare
-        # case, and a bank this size fetches whatever sits in the hot stream
-        # on every store, so the arm goes to the cold section.
+        # Every store to a page some executor has translated owes a record of
+        # its own, even to a page this program has just published: a vCPU
+        # that revalidated a block of the page between two stores would
+        # otherwise keep the bytes it read. It is also the rare case, and a
+        # bank this size fetches whatever sits in the hot stream on every
+        # store, so the arm goes to the cold section.
         o.emit('\t.pushsection GADGET_SECTION_COLD')
         o.emit(f'{owed}:')
-        o.emit('\tldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]')
-        o.emit('\teor x14, x9, x14')
-        o.emit(f'\tcbz x14, {kept}')
         o.emit('\tmov w14, #UML_X86_64_WRITE_CODE_PENDING')
         o.emit('\tstrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
-        o.emit(f'{kept}:')
-        o.emit('\tldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
         o.emit(f'\tb {ready}')
         o.emit('\t.popsection')
 

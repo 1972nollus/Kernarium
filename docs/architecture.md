@@ -24,7 +24,8 @@ libraries and interface-carried objects into it but never a linked static
 archive, so every module the emulator reaches delivers objects, including one
 that also keeps a static archive for single-copy process state.
 `scripts/build-xcframework.sh` rejects a release archive that leaves a
-first-party symbol undefined.
+first-party symbol undefined, and one whose `uml_emulator_` functions are not
+exactly those the public headers under `darwin/api/include/uml` declare.
 
 The assembly-visible CPU and TLB layout is owned by
 `darwin/cpu/arm64/layout/assembly_offsets.h` and checked from C++ and assembly.
@@ -54,8 +55,8 @@ provider.
 
 ## Memory and executable code
 
-All products use a 128 TiB sparse software-MMU guest task range. The default
-guest page profile is 16 KiB; 4 KiB is a supported compatibility build. The
+All products use a 128 TiB sparse software-MMU guest task range and 4 KiB guest
+pages on the 16 KiB Apple host page. The
 native kernel window contains guest RAM plus a RAM-scaled auxiliary mapping
 allowance bounded between 1 GiB and 4 GiB, plus the fixed guarded aperture the
 kernel reserves for negotiated vhost-user shared-memory regions and its stub
@@ -114,9 +115,16 @@ unwires it when it is released, so it wires only the RAM the guest holds; the
 signed kernel image and the loader tail stay wired from startup. Simulator and
 macOS commit and release without wiring. Wiring prevents compression; it does
 not decide whether a page is mapped. A commit that cannot wire leaves the page
-committed and usable. The kernel also trims its inactive page cache towards a
-floor in the background (`page_cache_trim.*`). The host caches the same disk
-blocks, so a large guest page cache mostly holds memory twice.
+committed and usable. The host caches the same disk blocks as the guest, so a
+large guest page cache mostly holds memory twice. The kernel can trim its
+inactive page cache towards a floor (`page_cache_trim.*`), but only at the
+host's request, because a guest in front of its user pays a host read for every
+evicted page it reads again: `uml_emulator_set_page_cache_trimming()` turns
+periodic trimming on and off, and `uml_emulator_trim_page_cache()` and every
+quiesce run one pass that also hands free memory to the host at once. Kernarium
+trims only while it keeps the guest running in the background. `uml-darwin`
+has no background state, so its guests trim only when started with
+`page_cache_trim.enabled=1`.
 
 The Virtio balloon (`device/balloon`) takes the memory the host GPU uses out of
 the guest. Its target is the larger of the process's Metal allocation
@@ -150,13 +158,11 @@ dropped unmap leaves the host serving a freed page with no fault to repair it.
 A failed kernel map unmaps its own address for the same reason, degrading to
 "not mapped", which the fault path does repair.
 
-Kernel aliases are shared with the other views of their frames on both page
-profiles. The 16 KiB profile maps every `init_mm` slot as a whole host page,
-shared with the backing, so a vmalloc or vmap alias reads and writes the memory
-that the linear map, the user mappings and the devices reach. Under 4 KiB pages
-a 16 KiB host slot carries four `init_mm` PTEs, and only a slot whose four PTEs
+A 16 KiB host slot carries four `init_mm` PTEs, and only a slot whose four PTEs
 name one 16 KiB-aligned run of frames of a single backing, with one protection,
-is the same shared host page; an empty slot is unmapped in one call. Any other
+is the same shared host page, so a vmalloc or vmap alias of it reads and writes
+the memory that the linear map, the user mappings and the devices reach; an
+empty slot is unmapped in one call. Any other
 slot is a private copy of its frames that the host publishes and refreshes only
 at its synchronization points, so it is not coherent with the other aliases of
 those frames for as long as both live. vmalloc therefore aligns, rounds and
@@ -228,7 +234,7 @@ presets keep the native-VM bridge, for their tests. Kernarium uses versioned run
 copies only data and BSS into anonymous storage, and rejects a carrier
 mismatch, writable executable segments, or relocations into signed text. The app
 embeds every selectable framework, links none at launch, and loads exactly one
-guest flavour/page profile for the process lifetime. macOS retains its
+guest flavour for the process lifetime. macOS retains its
 unsigned embedded-loader path.
 
 The iOS device and iOS Simulator products build at an iOS 26.0 minimum. iOS
@@ -238,7 +244,7 @@ platform contract records the same 26.0 deployment target. macOS keeps the
 baseline each macOS product declares.
 
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
-arm64 userspace product uses the same accepted 16 KiB or 4 KiB mainline
+arm64 userspace product uses the same accepted mainline
 artifact on macOS and on the iOS device. The macOS x86_64 userspace
 product uses a separately identified 4 KiB mainline slice. Android uses a
 separate accepted 4 KiB artifact of the `android-6.18` family, built from the
@@ -442,30 +448,41 @@ ordered forms and a CASAL loop for a misaligned read-modify-write. The rule
 matches native LSE2 hardware for every form the virtual CPU implements: the
 LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2 forms.
 
-A load/store-exclusive loop makes progress whatever the TLB holds. Gadgets run
-the host's own exclusives on the translated address, so the TLB miss of a
-store-exclusive, a helper call, loses the host monitor, and the 4 KiB TLB is
+A load/store-exclusive loop makes progress whatever the TLB holds, and nothing
+an engine does between the pair without an exception fails the store. Gadgets
+run the host's own exclusives on the translated address, so anything between
+the pair that clears the host monitor fails the store: the TLB miss of a
+store-exclusive, which calls a helper, and the executor's C++, whose locks and
+atomics run whenever a block leaves to it to translate its successor, train an
+indirect site or pass the block-size limit. The 4 KiB TLB is also
 direct-mapped: a plain store in the loop to a page that shares the target's set
 would evict the target's write entry on every pass. One mechanism in
 `engine/exclusive.inc`, which the AArch32 exclusives reuse, prevents that. An
-exclusive load probes the write tag, and a miss fills the write entry of a
-page that is writable now (`Tlb::translate_exclusive_load`, a read that faults
-like any load) so the store-exclusive that follows hits. The load also records
-the host address and the loaded values in the `CpuState` exclusive fields, and
-every store clears them. A store-exclusive that still misses has lost the
-host monitor to its own miss, so it completes in software: one host CAS (CASP
-for a pair) of the recorded values, with status zero exactly when it
-exchanged and a failure when the recorded address or a value differs. That
-completion is value-based, so it cannot see a write that restored the value,
-and it never runs when the store hits. A fault between the pair leaves the
-loop for the kernel, whose next entry clears the record (an exception return
-ends the monitor; `arm64-static-runtime` checks it), and the loop retries
-from its head. The JIT's fused regions check both mappings before the
-monitor, and its semantic path keeps a software reservation; its ordinary
-stores clear the monitor, as the architecture permits.
-`arm64-exclusive-progress` and `arm64-tlb` check the gadget contract on both
-engines in both page profiles, and `guest-exclusive-progress-gadgets` and
-`guest-exclusive-progress-jit` check it in a guest.
+exclusive load probes the write tag, and a miss fills the write entry of a page
+that is writable now (`Tlb::translate_exclusive_load`, a read that faults like
+any load) so the store-exclusive that follows hits. The load also records the
+host address and the loaded values in the `CpuState` exclusive fields, and
+every store clears them. A store-exclusive that still misses has lost the host
+monitor to its own miss, so it completes in software: one host CAS (CASP for a
+pair) of the recorded values, with status zero exactly when it exchanged and a
+failure when the recorded address or a value differs. Each entry from the
+executor into translated code marks a live record (`exclusive_key_reentered`,
+taken off when the code returns), so a store-exclusive whose host store fails
+after the executor ran completes the same way; one whose record is unmarked
+lost the monitor to an interrupt, a preemption or a store by another thread,
+and fails as hardware's may. That completion is value-based, so it cannot see a
+write that restored the value, and it never runs when the host store succeeds.
+A fault between the pair leaves the loop for the kernel, whose next entry
+clears the record (an exception return ends the monitor; `arm64-static-runtime`
+checks it), and the loop retries from its head. The JIT's fused regions check
+both mappings before the monitor, and its semantic path keeps a software
+reservation; its ordinary stores clear the monitor, as the architecture
+permits. `arm64-exclusive-progress` and `arm64-tlb` check the gadget contract
+on both engines, `arm64-exclusive-events` checks in A64, A32 and T32 that a
+branch, a link, an indirect lookup, a translation, a TLB refill or a library
+call between a pair does not fail its store, and
+`guest-exclusive-progress-gadgets` and `guest-exclusive-progress-jit` check the
+contract in a guest.
 
 Both engines complete WFE and WFI at once and treat SEV and SEVL as no-ops,
 so no wait ever depends on an event. Completing WFI is a deliberate deviation
@@ -922,16 +939,15 @@ every one as dirty so that each exit writes them back, and the back edge is the
 chain budget's test for one more iteration and a branch. The iteration that
 cannot be afforded leaves like any linked exit. Memory
 takes the inline TLB sequence after a 32-bit address and the alignment
-rule of the form (on 4 KiB pages the entry index comes from the address's own
-bits and the tag compare shifts the address, two instructions fewer than the
-A64 compiler's). An access already checked to be aligned to its size (a
+rule of the form (the entry index comes from the address's own bits and the
+tag compare shifts the address, two instructions fewer than the A64
+compiler's). An access already checked to be aligned to its size (a
 single-precision VLDR or VSTR, a Neon transfer whose alignment hint covers its
-bytes, an ordered or exclusive access) is not tested for crossing a page. On
-4 KiB pages any other access of more than one byte compares the entry's tag
-with the page of its last byte, so a crossing access misses (the index never
-gives neighbouring pages of a 32-bit address space one entry) and its cold path
-tells it from a miss; 16 KiB pages test the offset before the probe. A
-single load or store of a byte, halfword or word does not add the entry's
+bytes, an ordered or exclusive access) is not tested for crossing a page. Any
+other access of more than one byte compares the entry's tag with the page of
+its last byte, so a crossing access misses (the index never gives neighbouring
+pages of a 32-bit address space one entry) and its cold path tells it from a
+miss. A single load or store of a byte, halfword or word does not add the entry's
 delta to the address in a register of its own: the access takes the delta in
 its addressing mode (`[x9, w8, uxtw]`), and the miss path leaves the host
 pointer in x9 and zero in x8; a pair, a multiple transfer, an acquire or
@@ -1155,15 +1171,14 @@ while the miss exit retrains its cells round-robin. The table belongs to the
 address space's link state and is retired with it, so it never names another
 address space's code, and a link reset by a code change leaves through its
 ordinary unlinked exit.
-The software TLB keys its entries by guest page number and indexes 16,384 sets
-directly by the page number's low bits: two ways of a 64-byte set on 16 KiB
-pages, one 32-byte entry on 4 KiB pages, where a cache line holds two
-neighbouring pages. A same-page transfer compares the page of its final byte
-against the way its first byte indexes: the direct index never places
-neighbouring pages in one set, so a crossing transfer can only miss and is
-recognized on the cold path. `arm64-tlb-probe-set` checks in both page
-profiles that every inline probe of both engines hits the entry the C++ fill
-path placed, in each way of its set, and misses a page its set does not hold.
+The software TLB keys its entries by guest page number and indexes 16,384
+32-byte entries directly by the page number's low bits, so a cache line holds
+two neighbouring pages. A same-page transfer compares the page of its final
+byte against the entry its first byte indexes: the direct index never places
+neighbouring pages in one entry, so a crossing transfer can only miss and is
+recognized on the cold path. `arm64-tlb-probe-set` checks that every inline
+probe of both engines hits the entry the C++ fill path placed and misses a
+page its entry does not hold.
 The gadget engine's fill path looks the page up in the generation its entered
 execution context holds (`darwin_uml_static_vm_execution_context_translate()`),
 without resolving the thread's address space and active generation each time.
@@ -1210,9 +1225,7 @@ kernel answers a 32-bit ELF file with `ENOEXEC` and `personality(PER_LINUX32)`
 with `EINVAL`. `cacheflush()` and a tracer's code writes reach the engines
 through `darwin_uml_vm_invalidate_code()`, as any other code write does, and
 the kuser helpers and signal-return pages are ordinary code pages the kernel
-installs in the task. A 16 KiB guest runs only 32-bit programs whose segments
-are 16 KiB congruent; others fail cleanly at exec or `dlopen`, so stock armhf
-userspace needs the 4 KiB profile. The
+installs in the task. The
 [shared kernel README](../kernel/common/README.md) holds the kernel side.
 
 One decoder serves every AArch32 consumer: `darwin/cpu/arm64/aarch32` decodes
@@ -1249,7 +1262,7 @@ compatibility keys.
 rootfs release, and producer tools. Kernel and rootfs releases are selected
 independently. Apple emulator builds consume only the Android kernel artifact;
 rootfs and command-line paths are launch inputs. The `uml-darwin-android17` product
-opens one directly writable supplied GPT and has no 16 KiB variant.
+opens one directly writable supplied GPT.
 
 Guest bundles, disk capacity, and compressed rootfs delivery belong to the
 application ([`../Kernarium/README.md`](../Kernarium/README.md)). Runtime
@@ -1271,8 +1284,25 @@ A disabled ring is given no new data. A buffer the backend only fills, such as
 a virtio-input event buffer, stays in the ring until the ring is enabled again:
 the front end reads a used buffer whatever its length, so returning it empty
 would replay the event it held before. A buffer that carries a request is
-consumed and dropped. A suspended guest disables its rings, so input that
-arrives meanwhile reaches it once, after the resume.
+consumed and dropped, because its sender may be waiting for the completion with
+interrupts off, as a console's output does; only a device whose requests are
+asynchronous, the GPU, asks to have them kept, and a request it has not run
+then waits in the ring until the ring is enabled again. A suspended guest
+disables its rings, so input that arrives meanwhile reaches it once, after the
+resume.
+
+A service can be given a request gate, which another thread closes to hold the
+device's requests back. A closed gate lets no request reach the device, and
+closing it waits, for a bounded time, for the request the device is already
+running. A request that arrives meanwhile stays in its ring, unconsumed,
+whatever the ring does: a guest that suspends and resumes while the gate is
+closed finds every request still waiting, and opening the gate wakes the server,
+which runs them in the order they were queued. A deferred request completing,
+the device's event source and the control channel are not gated. Kernarium
+closes the GPU's gate as it enters the background, because iOS revokes the
+host GPU within seconds and a request that reached Metal after that would make
+the renderer's Vulkan device lost for good, and opens it as the application
+returns.
 
 The [Virtio video device](../darwin/device/video/README.md) bridges the shared
 mainline/Android V4L2 driver to the platform VideoToolbox decoder. It uses its
@@ -1439,12 +1469,15 @@ The devices Kernarium attaches and its display geometry are listed in
 
 The platform layer tracks every writable host descriptor opened for the guest.
 `uml_emulator_sync()` asks the guest to write back through its management
-console, then flushes those host descriptors. `uml_emulator_quiesce()` enters
-full Linux system suspend and waits until devices, secondary CPUs, interrupts,
-and timekeeping have reached the platform sleep boundary before flushing the
-host. `uml_emulator_resume()` sends the console wake edge. Nothing else on the
-guest's descriptors ends the suspend, and an edge sent before the guest reached
-the boundary, as after a suspend request whose reply timed out, still ends it;
+console, then flushes those host descriptors. `uml_emulator_quiesce()` first
+has the guest trim its cold page cache and hand its free memory to the host,
+waiting up to three seconds, then enters full Linux system suspend and waits
+until devices, secondary CPUs, interrupts, and timekeeping have reached the
+platform sleep boundary before flushing the host. `uml_emulator_resume()` sends
+the console wake edge. Every console request ends the suspend, so a trimming
+change requested meanwhile waits for the resume, and nothing else on the
+guest's descriptors ends it. An edge sent before the guest reached the
+boundary, as after a suspend request whose reply timed out, still ends it;
 the [mainline README](../kernel/mainline-6.18/README.md) gives the kernel's
 side. `uml_emulator_wake()` sends that edge whatever the host last asked for,
 except to a guest it has quiesced, as a phone's power key does: it ends a
@@ -1452,10 +1485,18 @@ suspend the guest entered by itself, such as Android's once its display is off,
 and a running guest only answers it. Kernarium sends it after forwarding its
 Power key, whose virtio input cannot wake a suspended guest itself; the macOS
 VNC display maps XF86PowerOff to the guest's power key, and VNC input is itself
-a wake source. A kernel without the suspend command falls back to the stop/go
-pair. Guests that need writeback requests boot with magic SysRq enabled; if the
-physical iOS sandbox cannot bind the console, host-file flushing still runs but
-guest writeback and freeze are unavailable.
+a wake source. The guest replies to a suspend only after syncing its file
+systems, so the host waits up to eight seconds for that reply. A kernel without
+the suspend command, or a guest that reports within that wait that it could
+not suspend, falls back to the stop/go pair. Guests that need writeback
+requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
+the console, host-file flushing still runs but guest writeback and freeze are
+unavailable.
+
+An application that can be backgrounded holds the guest's GPU requests before it
+quiesces, with the runtime's `set_gpu_hold` (see the request gate under
+[devices](#devices-and-graphics)), and releases them before it resumes. The
+guest's rings stay disabled until the resume, and what it queued waits in them.
 
 The guest binds the management console as a Unix datagram socket and replies
 to each request's own bound socket, which the host places beside it. Both live

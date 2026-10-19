@@ -1204,11 +1204,10 @@ void backward_side_exit_programs() {
   require(completed >= programs);
 }
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-/* On 4 KiB pages the inline TLB probe is the short form: the entry index
- * extracted from the address (one instruction) and a tag compare that shifts
- * the address itself, not the A64 compiler's longer sequence. A probe with the wrong index would only miss, so the words are
- * what is checked. An access of more than one byte that may be unaligned
+/* The inline TLB probe is the short form: the entry index extracted from the
+ * address (one instruction) and a tag compare that shifts the address itself,
+ * not the A64 compiler's longer sequence. A probe with the wrong index would
+ * only miss, so the words are what is checked. An access of more than one byte that may be unaligned
  * compares the tag with its last byte's page, which tells a page crossing
  * from a hit without a test of its own. */
 void tlb_probe_is_the_short_form() {
@@ -1234,13 +1233,11 @@ void tlb_probe_is_the_short_form() {
   require(has(word_load, 0xca41'3042U));  // eor x2, x2, x1, lsr #12
   require(!has(word_load, 0xca48'3042U));
 }
-#endif
 
 /* An access the hot path has checked is aligned to its size cannot span two
  * pages, so it is not tested for it: a single-precision VLDR, and a VLD1 whose
  * alignment hint covers its bytes. A word load, which may be unaligned, and a
- * VLD1 without a hint are (on 16 KiB pages by a bit test of the offset plus
- * its size, on 4 KiB pages by the tag compare with the last byte's page). */
+ * VLD1 without a hint are (by the tag compare with the last byte's page). */
 void aligned_accesses_skip_the_crossing_test() {
   Fixture fixture{0x1a32'0c12, 2, 2};
   const auto checks_crossing = [&](std::uint32_t word, unsigned bytes) {
@@ -1253,14 +1250,8 @@ void aligned_accesses_skip_the_crossing_test() {
     return std::any_of(
         compiled.code.words.begin(), compiled.code.words.end(),
         [&](std::uint32_t w) {
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-          // tbnz w0, #14, ...
-          (void)bytes;
-          return (w & 0xfff8'001fU) == (0x3700'0000U | 14U << 19);
-#else
           // add x1, x8, #(bytes - 1)
           return w == (0x9100'0101U | (bytes - 1U) << 10);
-#endif
         });
   };
   require(checks_crossing(0xe591'0000U, 4));  // ldr r0,[r1]
@@ -1721,9 +1712,7 @@ int main() {
   rewritten_t32_halfwords();
   rewritten_a32_words();
   side_exit_branches();
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
   tlb_probe_is_the_short_form();
-#endif
   aligned_accesses_skip_the_crossing_test();
   single_transfers_index_by_the_delta();
   backward_branches_are_side_exits();

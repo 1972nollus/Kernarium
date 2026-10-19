@@ -341,6 +341,30 @@ void a_dead_space_keeps_its_window_place(unsigned long first, bool shared)
 	require(executor.cache_diagnostics().translations == later);
 }
 
+/* A wait that load can stretch without limit and only a wedge can end: it
+ * returns once `done`, and fails when `progress` has not moved for
+ * `wedge_limit`. What a run takes is measured in the rounds it completes,
+ * never in seconds, so a loaded host only makes it slower. */
+constexpr std::chrono::seconds wedge_limit{300};
+
+template <typename Done, typename Progress>
+void wait_for(Done done, Progress progress, const char *what)
+{
+	auto last = progress();
+	auto moved = std::chrono::steady_clock::now();
+	while (!done()) {
+		std::this_thread::yield();
+		const auto now = progress();
+		if (now != last) {
+			last = now;
+			moved = std::chrono::steady_clock::now();
+		} else {
+			require(std::chrono::steady_clock::now() - moved <
+					wedge_limit, what);
+		}
+	}
+}
+
 /* S1: vCPUs run generations from a moving window while the main thread maps
  * new ones and destroys the oldest once no vCPU can pick it any more. Every
  * run must see its own generation's code; at the end, after every vCPU has
@@ -352,6 +376,7 @@ void concurrent_executors_follow_dead_generations(unsigned long first,
 	constexpr std::size_t vcpus = 6;
 	constexpr std::size_t pickable = 4;
 	constexpr std::size_t backings_count = 8;
+	constexpr unsigned long rounds = 200;
 	std::vector<std::unique_ptr<JitBacking>> backings;
 	for (std::size_t index = 0; index < backings_count; ++index) {
 		backings.push_back(std::make_unique<JitBacking>(1));
@@ -422,40 +447,41 @@ void concurrent_executors_follow_dead_generations(unsigned long first,
 				return false;
 		return true;
 	};
-	const auto deadline = std::chrono::steady_clock::now() +
-		std::chrono::seconds{20};
+	const auto seen_progress = [&] {
+		unsigned long total = 0;
+		for (const auto &value : seen)
+			total += value.load();
+		return total;
+	};
 	unsigned long destroyed = first;
-	while (std::chrono::steady_clock::now() < deadline &&
-	       destroyed < first + 200) {
+	while (destroyed < first + rounds) {
 		const auto goal = runs.load() + 50;
-		while (runs.load() < goal &&
-		       std::chrono::steady_clock::now() < deadline)
-			std::this_thread::yield();
+		wait_for([&] { return runs.load() >= goal; },
+			[&] { return runs.load(); },
+			"no vCPU completes a run");
 		map(highest.load() + 1);
 		highest.fetch_add(1);
 		lowest.fetch_add(1);
-		while (!all_seen(destroyed + 1) &&
-		       std::chrono::steady_clock::now() < deadline)
-			std::this_thread::yield();
-		require(all_seen(destroyed + 1));
+		wait_for([&] { return all_seen(destroyed + 1); }, seen_progress,
+			"a vCPU never starts a round on the newer window");
 		mappings.erase(mappings.begin());
 		++destroyed;
 	}
 	stop.store(true);
-	while (parked.load() < vcpus)
-		std::this_thread::yield();
+	wait_for([&] { return parked.load() == vcpus; },
+		[&] { return parked.load(); }, "a vCPU never parks");
 	while (mappings.size() > 1)
 		mappings.erase(mappings.begin());
 	resume.store(true);
-	while (finished.load() < vcpus)
-		std::this_thread::yield();
+	wait_for([&] { return finished.load() == vcpus; },
+		[&] { return finished.load(); }, "a vCPU never finishes");
 	/* Only the newest generation's spaces are alive: one shared by every
 	 * vCPU, or one each. */
 	const auto live = stress::live_spaces() - alive;
 	release.store(true);
 	for (auto &thread : threads)
 		thread.join();
-	require(destroyed > first + 20);
+	require(destroyed == first + rounds);
 	require(live == (shared ? 1U : vcpus));
 	require(stress::live_spaces() == alive);
 }

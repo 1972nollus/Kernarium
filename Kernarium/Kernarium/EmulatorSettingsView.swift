@@ -9,34 +9,16 @@ struct EmulatorSettingsView: View {
     @State private var overlaySizeGiB: Int
     @State private var androidDiskSizeGiB: Int
     @State private var rootfsFilename: String
-    @State private var kernelPageSize: KernelPageSize
     @State private var retinaMode: Bool
     @State private var autoResizeGuest: Bool
     @State private var androidBootMode: AndroidBootMode
+    @State private var backgroundMode: BackgroundMode
+    @State private var backgroundLimitMinutes: Int
 
     private let maximumVCPUCount: Int
     private let defaults: UserDefaults
     private let rootfsFilenames: [String]
     private let documentsDirectory: URL
-
-    /// A specialized selection decides its profile; the picker then shows that
-    /// profile and stops offering one its runtime cannot boot.
-    private var requiredPageSize: KernelPageSize? {
-        RootfsImage.requiredPageSize(
-            forSelectionNamed: rootfsFilename,
-            in: documentsDirectory
-        )
-    }
-
-    /// Shows the profile the selection forces while remembering what the user
-    /// last chose, so switching back to an image restores their own setting
-    /// instead of the one a bundle imposed.
-    private var shownPageSize: Binding<KernelPageSize> {
-        Binding(
-            get: { requiredPageSize ?? kernelPageSize },
-            set: { kernelPageSize = $0 }
-        )
-    }
 
     private var androidBundleSelected: Bool {
         RootfsImage.selection(
@@ -73,10 +55,41 @@ struct EmulatorSettingsView: View {
             initialValue: configuration.androidDiskSizeGiB
         )
         _rootfsFilename = State(initialValue: configuration.rootfsFilename)
-        _kernelPageSize = State(initialValue: configuration.kernelPageSize)
         _retinaMode = State(initialValue: configuration.retinaMode)
         _autoResizeGuest = State(initialValue: configuration.autoResizeGuest)
         _androidBootMode = State(initialValue: configuration.androidBootMode)
+        let background = BackgroundSettings(defaults: defaults)
+        _backgroundMode = State(
+            initialValue: background.mode(forGuest: configuration.rootfsFilename)
+        )
+        _backgroundLimitMinutes = State(
+            initialValue: background.limitMinutes(
+                forGuest: configuration.rootfsFilename
+            )
+        )
+    }
+
+    /// The window is offered only where iOS can show it; a guest that already
+    /// chose it keeps showing as chosen.
+    private var offeredBackgroundModes: [BackgroundMode] {
+        BackgroundMode.allCases.filter {
+            $0 != .pictureInPicture || $0 == backgroundMode ||
+                GuestPictureInPicture.isSupported
+        }
+    }
+
+    /// The times on offer, with the one a guest already has even if it is not
+    /// among them.
+    private var offeredLimitMinutes: [Int] {
+        Set(BackgroundSettings.limitChoicesMinutes + [backgroundLimitMinutes])
+            .sorted()
+    }
+
+    private static func limitTitle(minutes: Int) -> String {
+        if minutes % 60 == 0 {
+            return minutes == 60 ? "1 hour" : "\(minutes / 60) hours"
+        }
+        return "\(minutes) minutes"
     }
 
     var body: some View {
@@ -101,14 +114,6 @@ struct EmulatorSettingsView: View {
                     )
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-
-                    Picker("Kernel page size", selection: shownPageSize) {
-                        ForEach(KernelPageSize.allCases) { pageSize in
-                            Text(pageSize.title).tag(pageSize)
-                        }
-                    }
-                    .disabled(requiredPageSize != nil)
-                    .accessibilityIdentifier("kernelPageSizePicker")
 
                     Stepper(
                         "vCPUs: \(vCPUCount)",
@@ -157,19 +162,46 @@ struct EmulatorSettingsView: View {
                         .accessibilityIdentifier("androidBootModePicker")
                     }
 
-                    if let required = requiredPageSize {
-                        Text(
-                            "\(rootfsFilename) carries its own " +
-                            "kernel and boots with \(required.title) " +
-                            "pages."
-                        )
-                        .accessibilityIdentifier("guestBundleNote")
-                    } else {
-                        Text(
-                            "EROFS images and .\(GuestBundle.pathExtension) " +
-                            "guest bundles are loaded from Documents."
-                        )
+                    Text(
+                        "EROFS images and .\(GuestBundle.pathExtension) " +
+                        "guest bundles are loaded from Documents."
+                    )
+                }
+
+                Section("Background") {
+                    Picker(
+                        "When Kernarium is in the background",
+                        selection: $backgroundMode
+                    ) {
+                        ForEach(offeredBackgroundModes) { mode in
+                            Text(mode.title).tag(mode)
+                        }
                     }
+                    .accessibilityIdentifier("backgroundModePicker")
+
+                    if backgroundMode == .keepRunning {
+                        Picker(
+                            "Keep running for",
+                            selection: $backgroundLimitMinutes
+                        ) {
+                            ForEach(offeredLimitMinutes, id: \.self) { minutes in
+                                Text(Self.limitTitle(minutes: minutes))
+                                    .tag(minutes)
+                            }
+                        }
+                        .accessibilityIdentifier("backgroundLimitPicker")
+                    }
+
+                    Text(backgroundMode.explanation)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .onChange(of: rootfsFilename) { _, filename in
+                    let background = BackgroundSettings(defaults: defaults)
+                    backgroundMode = background.mode(forGuest: filename)
+                    backgroundLimitMinutes = background.limitMinutes(
+                        forGuest: filename
+                    )
                 }
 
                 Section {
@@ -201,11 +233,16 @@ struct EmulatorSettingsView: View {
             overlaySizeGiB: overlaySizeGiB,
             androidDiskSizeGiB: androidDiskSizeGiB,
             rootfsFilename: rootfsFilename,
-            kernelPageSize: requiredPageSize ?? kernelPageSize,
             retinaMode: retinaMode,
             autoResizeGuest: autoResizeGuest,
             androidBootMode: androidBootMode
         ).save(defaults: defaults)
+        let background = BackgroundSettings(defaults: defaults)
+        background.setMode(backgroundMode, forGuest: rootfsFilename)
+        background.setLimitMinutes(
+            backgroundLimitMinutes,
+            forGuest: rootfsFilename
+        )
         dismiss()
     }
 }

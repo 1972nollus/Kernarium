@@ -3,7 +3,7 @@
 `a64_instruction_corpus.pack` is the build-generated, self-contained input of
 the ordinary `arm64-instruction-corpus` CTest. Its runner,
 [`../instruction_corpus_runner.cpp`](../instruction_corpus_runner.cpp),
-executes every case of the build's page profile through the production gadget
+executes every case through the production gadget
 engine and, when the host implements the case's native features or the case
 is an invalid encoding, through the JIT. A case that needs FEAT_LSE2 runs in
 neither lane on a host without it, and a case that needs FEAT_AFP or
@@ -13,8 +13,8 @@ or file other than the pack.
 
 The checked-in `source/` tables retain the programs and independently derived
 or observed golden expectations. CMake's `uml_arm64_instruction_corpus` target
-generates the full pack in this directory's build-tree counterpart, including
-both page profiles. Allocation loops and regular register and memory fills
+generates the full pack in this directory's build-tree counterpart. Allocation
+loops and regular register and memory fills
 are recipes. The maintained SME generator supplies native test inputs while
 the tables retain their hardware observations. Generation needs Python only
 at build time and verifies the accepted pack hash. The
@@ -71,8 +71,9 @@ validator relation keep their complete state. Cases with engine hooks or a
 deferred floating-point entry state stay in focused tests that still run
 through the gadget and JIT harness; `provenance.json` counts them.
 
-Identical cases exported by both page profiles are stored once; a record with
-a `/16k` or `/4k` suffix holds profile-specific cases.
+Every record is for the 4 KiB guest page. The producer export also ran the
+retired 16 KiB profile, whose cases the
+[retirement step](#16-kib-retirement) removed.
 
 ## Validator relations
 
@@ -126,7 +127,8 @@ bit on an illegal-instruction case means a valid encoding that traps for its
 exception level, mode, or state, or because a feature that some virtual-CPU
 configuration implements (SME, FEAT_AFP) is absent from this one;
 [`invalid-encoding-corpus.py`](#invalid-encoding-bits) decides it.
-`profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
+`profiles` has bit 1 for 4 KiB; bit 0, the retired 16 KiB profile, is
+rejected by the builder and the runner, and `ordinal_16k` is zero.
 Option bits 0, 1, and 12 are reserved, bits 2-9, in order, force the portable
 checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
 gadget bodies, bit 10 (`without_afp`) translates the record for a virtual
@@ -202,8 +204,8 @@ uml_arm64_instruction_corpus_tests BUILD/tests/unit/arm64/corpus/a64_instruction
   [--max-failures N | --fail-fast] [--list]
 ```
 
-Filters combine; `--ordinal` selects producer check ordinals of the build's
-page profile. `--assume-host-feature` translates as if the host had the
+Filters combine; `--ordinal` selects producer check ordinals of the 4 KiB
+export. `--assume-host-feature` translates as if the host had the
 feature; a case that needs it natively still needs the hardware to have it.
 The `arm64-instruction-corpus-afp-twins` CTest runs the pack with every
 feature `implements_afp()` needs assumed, so the FEAT_AFP twins run on every
@@ -238,7 +240,8 @@ export mode, `tools/arm64-tests/export-unit-corpus.py`, and the producers whose
 cases the corpus holds. To add a case, check out the producer commit and copy
 the current `forced-cases.tsv` into it, add or extend a check in a producer
 unit test under the rule above or force an existing producer check into the
-export, and build and export both page profiles there:
+export, and build and export both page profiles there (that commit's presets still
+carry the profile in their names):
 
 ```sh
 python3 -B tools/arm64-tests/export-unit-corpus.py \
@@ -292,8 +295,8 @@ records, and appends them, so the steps run in one order, followed by one
 `--repack`: [LSE2 alignment](#lse2-alignment-cases),
 [absent features](#absent-feature-cases), [native SME](#native-sme-cases),
 [native floating-point trap](#native-floating-point-trap-cases),
-[SM = 0 family](#sm--0-family-cases), and
-[invalid-encoding bits](#invalid-encoding-bits). A
+[SM = 0 family](#sm--0-family-cases), [16 KiB retirement](#16-kib-retirement),
+and [invalid-encoding bits](#invalid-encoding-bits). A
 hardware step's `--carry PACK` copies the pack's records for a request that
 is unchanged, so a regeneration that changes no request needs no host. The
 invalid-encoding step stays last.
@@ -411,8 +414,8 @@ leaving every other record, the TBI replacements included, and the later
 steps' records as they are.
 
 A regeneration that changes which stripped cases fail refreshes the failing
-list: rewrite without `--failing`, run the corpus test on that pack in both
-page profiles with `--max-failures 0`, and pass both logs to
+list: rewrite without `--failing`, run the corpus test on that pack with
+`--max-failures 0`, and pass its log to
 `absent-feature-corpus.py --collect-failing` with the rewrite's input dump as
 `--source` and the current list as `--previous`. A case the current list
 names keeps its feature; a newly failing case is attributed to the newest
@@ -592,13 +595,33 @@ python3 -B tools/arm64-tests/sm0-vl-corpus.py trap.jsonl sm0-vl.jsonl
 `arm64-instruction-corpus-sm0-vl` tooling test re-derives the record and checks
 the model against hand-written values.
 
+## 16 KiB retirement
+
+The guest has 4 KiB pages only, but the producer export ran both page
+profiles. [`tools/arm64-tests/retire-16k-corpus.py`](../../../../tools/arm64-tests/retire-16k-corpus.py)
+rewrites the SM = 0 step's dump: a record for both profiles becomes a record
+for 4 KiB, and a record for 16 KiB alone is deleted. A deleted case whose
+entry word no 4 KiB case executes is relocated into the 4 KiB code page and
+carried, so the pack's encodings do not shrink, only its page-geometry cases;
+the script's docstring owns the placement rules, and the runner executes a
+carried case like any other. The step needs no hardware and appends before the
+invalid-encoding step:
+
+```sh
+python3 -B tools/arm64-tests/retire-16k-corpus.py sm0-vl.jsonl retired.jsonl
+```
+
+`provenance.json` records the script hash and the counts under `retired_16k`.
+`build-unit-corpus.py` refuses to pack a record that holds profile bit 0, and
+`--check` verifies the hash.
+
 ## Invalid-encoding bits
 
 [`tools/arm64-tests/invalid-encoding-corpus.py`](../../../../tools/arm64-tests/invalid-encoding-corpus.py)
 owns every case's invalid-encoding bit, so no producer needs to compute it:
 the exported checks set it wherever they expect an undefined-instruction
 trap, and this step rewrites it. It is the last step of the chain. It reads
-the SM = 0 family step's dump and, for each illegal-instruction case that retires
+the 16 KiB retirement step's dump and, for each illegal-instruction case that retires
 nothing, sets the bit from the answer of
 [`invalid_encoding.py`](../../../../tools/arm64-tests/invalid_encoding.py),
 which decides it from the checked-in decode partitions, allocation table, and
@@ -633,7 +656,7 @@ word.
 
 ```sh
 python3 -B tools/arm64-tests/invalid-encoding-corpus.py \
-  sm0-vl.jsonl invalid.jsonl
+  retired.jsonl invalid.jsonl
 python3 -B tools/arm64-tests/build-unit-corpus.py --repack invalid.jsonl \
   --output .build/corpora/arm64
 ```

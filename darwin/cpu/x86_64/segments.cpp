@@ -1593,7 +1593,7 @@ bool AddressSpaceSegmentMemory::write(std::uint64_t address,
 		record(address, ::uml::memory::MemoryAccess::write);
 		return false;
 	}
-	/* x86 guests use 4 KiB pages in either guest page profile. */
+	/* x86 guests use 4 KiB pages. */
 	constexpr std::uint64_t page = 4096;
 	for (auto at = address & ~(page - 1U); at < address + source.size();
 		at += page)

@@ -11,10 +11,10 @@ namespace uml::memory {
  * bucket count whenever one is requested through reserve(), constraining a
  * hash by masking rather than by a modulus.  A page address carries
  * log2(page_size) low zero bits, so an identity hash under a power-of-two mask
- * reaches only bucket_count / page_size distinct buckets: at 16 KiB pages a
- * 65,536-bucket table uses four of them, every lookup walks a chain thousands
- * of nodes long, and filling the table becomes quadratic.  Fold the page
- * number so the distribution no longer depends on the bucket count the
+ * reaches only bucket_count / page_size distinct buckets: at 4 KiB pages a
+ * 65,536-bucket table uses sixteen of them, every lookup walks a chain
+ * thousands of nodes long, and filling the table becomes quadratic.  Fold the
+ * page number so the distribution no longer depends on the bucket count the
  * container happens to choose.
  */
 [[nodiscard]] constexpr std::uint64_t fold_page_key(

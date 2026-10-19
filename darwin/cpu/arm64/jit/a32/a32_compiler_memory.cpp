@@ -46,15 +46,9 @@ constexpr unsigned temp0 = 0;
 
 void A32Compiler::emit_tlb_index(unsigned address) {
   emitter_.ubfm(1, address, page_shift, 63U); // lsr x1, Xn, #page_shift
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-  emitter_.ubfm(0, address, page_shift,
-                page_shift + ::uml::memory::tlb_index_bits - 1U);
-  emitter_.add_shifted(0, 14, 0, 6);
-#else
   emitter_.ubfm(0, address, page_shift,
                 page_shift + ::uml::memory::tlb_index_bits - 1U);
   emitter_.add_shifted(0, 14, 0, 5);
-#endif
 }
 
 void A32Compiler::emit_translate(unsigned address, Access access,
@@ -70,13 +64,6 @@ void A32Compiler::emit_translate(unsigned address, Access access,
   if (aligned >= bytes)
     crossing.reset();
   else if (bytes > 1) {
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-    emitter_.ubfm(0, address, 0, page_shift - 1);
-    emitter_.add_immediate(0, 0, static_cast<unsigned>(bytes - 1));
-    /* bytes is below one page, so the sum is below two pages and its page
-     * bit is the complete crossing test. */
-    emitter_.test_zero(crossing_target, 0, page_shift, true);
-#else
     /* The entry is indexed by the first byte's page and compared with the
      * last byte's: an access inside one page hits as before, and a crossing
      * one finds an entry of another page (the direct index never gives two
@@ -85,16 +72,10 @@ void A32Compiler::emit_translate(unsigned address, Access access,
     emitter_.add_immediate(1, address, static_cast<unsigned>(bytes - 1));
     tag_address = 1;
     tag_checks_crossing = true;
-#endif
   }
   const unsigned page_offset = access == Access::write ? 16U : 0U;
   const auto slow = emitter_.make_label();
   const auto complete = emitter_.make_label();
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-  emit_tlb_index(address);
-  emitter_.load_pair_x(2, 9, 0, page_offset);
-  emitter_.emit(0xca01'0042U); // eor x2, x2, x1
-#else
   /* The index is the page number's low bits, extracted from the address, and
    * the tag compare shifts the address itself: one instruction fewer than
    * emit_tlb_index and a compare. */
@@ -104,7 +85,6 @@ void A32Compiler::emit_translate(unsigned address, Access access,
   emitter_.load_pair_x(2, 9, 0, page_offset);
   emitter_.emit(0xca40'0042U | (page_shift << 10) |
                 ((tag_address & 31U) << 16)); // eor x2, x2, tag, lsr #12
-#endif
   emitter_.compare_zero(slow, 2, true, true);
   /* A folded access leaves the address a guest one, and the delta in x9. */
   if (!fold)
@@ -192,17 +172,6 @@ void A32Compiler::emit_translation_cold(const TranslationColdPath &path) {
     emitter_.add_immediate(0, 0, static_cast<unsigned>(path.bytes - 1));
     emitter_.test_zero(path.crossing, 0, page_shift, true);
   }
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-  const unsigned page_offset = path.access == Access::write ? 16U : 0U;
-  const auto miss = emitter_.make_label();
-  emitter_.load_pair_x(2, 9, 0, page_offset + 32U);
-  emitter_.emit(0xca01'0042U); // eor x2, x2, x1
-  emitter_.compare_zero(miss, 2, true, true);
-  if (!path.fold)
-    emitter_.add_shifted(path.address, path.address, 9, 0);
-  emitter_.branch(path.continuation);
-  emitter_.bind(miss);
-#endif
   emitter_.move_x(0, 14);
   emitter_.move_x(1, path.address);
   emitter_.load_constant(2, path.access == Access::write ? 1U : 0U);

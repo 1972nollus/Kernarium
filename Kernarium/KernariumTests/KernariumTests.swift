@@ -167,6 +167,91 @@ struct KernariumTests {
 
     @Test
     @MainActor
+    func touchscreenRangeIsFixedAndIndependentOfTheViewSize() throws {
+        let maximum = UInt32(KERNARIUM_RUNTIME_TOUCH_MAXIMUM)
+        #expect(maximum == 32767)
+        let coordinates = GuestInputCoordinateSpace.touchscreen
+        #expect(coordinates.size == CGSize(width: 32768, height: 32768))
+
+        // The same fraction of any view is the same coordinate, from the
+        // launch size to a window grown well past it.
+        for bounds in [
+            CGSize(width: 440, height: 860),
+            CGSize(width: 1133, height: 692),
+            CGSize(width: 3000, height: 2000),
+        ] {
+            let origin = try #require(coordinates.location(
+                .zero,
+                in: bounds
+            ))
+            let center = try #require(coordinates.location(
+                CGPoint(x: bounds.width / 2, y: bounds.height / 2),
+                in: bounds
+            ))
+            let corner = try #require(coordinates.location(
+                CGPoint(x: bounds.width, y: bounds.height),
+                in: bounds
+            ))
+            #expect(origin.x == 0 && origin.y == 0)
+            #expect(center.x == 16384 && center.y == 16384)
+            #expect(corner.x == maximum && corner.y == maximum)
+        }
+    }
+
+    @Test
+    @MainActor
+    func touchResolutionDoesNotCollapseAfterTheViewGrows() throws {
+        // A launch-sized range of 440 columns would give a view grown to
+        // 3000 points 440 distinct values; the fixed range keeps every point.
+        let coordinates = GuestInputCoordinateSpace.touchscreen
+        let bounds = CGSize(width: 3000, height: 2000)
+        var previous: UInt32?
+        for column in 0..<3000 {
+            let location = try #require(coordinates.location(
+                CGPoint(x: CGFloat(column) + 0.5, y: 1000),
+                in: bounds
+            ))
+            if let previous { #expect(location.x > previous) }
+            previous = location.x
+        }
+    }
+
+    @Test
+    @MainActor
+    func touchPathReportsFullRangeCoordinates() throws {
+        let geometry = try #require(GuestTouchGeometry(
+            coordinateSpace: .touchscreen,
+            boundsSize: CGSize(width: 500, height: 250),
+            drawableSize: CGSize(width: 1000, height: 500),
+            contentSize: CGSize(width: 800, height: 800)
+        ))
+        var path = GuestTouchPath()
+
+        // The guest square spans bounds x 125...375 (drawable 250...750).
+        #expect(path.begin(
+            at: CGPoint(x: 250, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 16384, y: 16384, pressed: true),
+        ])
+        #expect(path.move(
+            to: CGPoint(x: 200, y: 62.5),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 9830, y: 8192, pressed: true),
+        ])
+        // The path leaves through the right edge of the guest square, at the
+        // top of the range's last column.
+        #expect(path.end(
+            at: CGPoint(x: 450, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 32767, y: 13926, pressed: false),
+        ])
+    }
+
+    @Test
+    @MainActor
     func touchPathStartsAndEndsAtGuestDisplayEdges() throws {
         let geometry = try #require(GuestTouchGeometry(
             coordinateSpace: GuestInputCoordinateSpace(
@@ -333,6 +418,20 @@ struct KernariumTests {
             GuestTouchEvent(x: 120, y: 400, pressed: true),
             GuestTouchEvent(x: 120, y: 400, pressed: false),
         ])
+    }
+
+    @Test
+    @MainActor
+    func theApplicationHasOneSceneBecauseItRunsOneGuest() throws {
+        // The runtime boots one guest per process, and closing a window
+        // stops it. With a second window, closing that one would end the
+        // guest the first still shows, so iPadOS must not offer one.
+        let manifest = try #require(
+            Bundle.main.object(
+                forInfoDictionaryKey: "UIApplicationSceneManifest"
+            ) as? [String: Any]
+        )
+        #expect(manifest["UIApplicationSupportsMultipleScenes"] as? Bool == false)
     }
 
     @Test
@@ -507,18 +606,6 @@ struct KernariumTests {
     }
 
     @Test
-    func androidBundlesRequireTheFourKiBRuntime() {
-        let directory = URL(fileURLWithPath: "/tmp/page-size.kern")
-        let bundle = GuestBundle(
-            url: directory,
-            flavor: .android,
-            disk: directory.appendingPathComponent("guest/page-size.img")
-        )
-
-        #expect(bundle.requiredPageSize == .fourKiB)
-    }
-
-    @Test
     func configurationDefaultsUseMaximumCPUAndRequestedDefaults() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -536,7 +623,6 @@ struct KernariumTests {
         #expect(configuration.overlaySizeGiB == 8)
         #expect(configuration.androidDiskSizeGiB == 8)
         #expect(configuration.rootfsFilename == "kde-20260929-r2.erofs")
-        #expect(configuration.kernelPageSize == .sixteenKiB)
         #expect(configuration.retinaMode == false)
         #expect(configuration.autoResizeGuest == true)
         #expect(configuration.androidBootMode == .automatic)
@@ -553,7 +639,6 @@ struct KernariumTests {
             overlaySizeGiB: 16,
             androidDiskSizeGiB: 32,
             rootfsFilename: "phosh.erofs",
-            kernelPageSize: .fourKiB,
             retinaMode: true,
             autoResizeGuest: false,
             androidBootMode: .recovery
@@ -568,8 +653,7 @@ struct KernariumTests {
                 overlaySizeGiB: 16,
                 androidDiskSizeGiB: 32,
                 rootfsFilename: "phosh.erofs",
-                kernelPageSize: .fourKiB,
-                retinaMode: true,
+                    retinaMode: true,
                 autoResizeGuest: false,
                 androidBootMode: .recovery
             )
@@ -580,7 +664,6 @@ struct KernariumTests {
         defaults.set(0, forKey: "emulator.overlaySizeGiB")
         defaults.set(128, forKey: "emulator.androidDiskSizeGiB")
         defaults.set("../phosh.erofs", forKey: "emulator.rootfsFilename")
-        defaults.set(8192, forKey: "emulator.kernelPageSize")
         let normalized = EmulatorConfiguration.load(
             defaults: defaults,
             physicalProcessorCount: 6
@@ -590,7 +673,6 @@ struct KernariumTests {
         #expect(normalized.overlaySizeGiB == 1)
         #expect(normalized.androidDiskSizeGiB == 64)
         #expect(normalized.rootfsFilename == "kde-20260929-r2.erofs")
-        #expect(normalized.kernelPageSize == .sixteenKiB)
         #expect(normalized.retinaMode == true)
         #expect(normalized.autoResizeGuest == false)
         #expect(normalized.androidBootMode == .recovery)
@@ -616,24 +698,17 @@ struct KernariumTests {
     }
 
     @Test
-    func environmentCanSelectAnExactCampaignPageProfile() {
+    func retiredKernelPageSizeSettingIsDroppedOnLoad() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(4096, forKey: "emulator.kernelPageSize")
+        defaults.set(16384, forKey: "emulator.kernelPageSize")
 
-        let selected = EmulatorConfiguration.load(
+        _ = EmulatorConfiguration.load(
             defaults: defaults,
-            physicalProcessorCount: 6,
-            environment: [KernelPageSize.environmentKey: "16384"]
+            physicalProcessorCount: 6
         )
-        #expect(selected.kernelPageSize == .sixteenKiB)
 
-        let invalid = EmulatorConfiguration.load(
-            defaults: defaults,
-            physicalProcessorCount: 6,
-            environment: [KernelPageSize.environmentKey: "8192"]
-        )
-        #expect(invalid.kernelPageSize == .fourKiB)
+        #expect(defaults.object(forKey: "emulator.kernelPageSize") == nil)
     }
 
     @Test

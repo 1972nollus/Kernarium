@@ -119,8 +119,6 @@ def main() -> int:
                         help="the probe laid out for any page size")
     parser.add_argument("--probe-4k", required=True, type=pathlib.Path,
                         help="the probe laid out for 4 KiB pages only")
-    parser.add_argument("--page-size", required=True, type=int,
-                        choices=(4096, 16384), help="the guest's page size")
     parser.add_argument("--engine-support-tool", required=True,
                         type=pathlib.Path)
     parser.add_argument("--groups", help="comma-separated probe groups; "
@@ -143,9 +141,8 @@ def main() -> int:
     os.environ["DARWIN_UML_GUEST_AARCH32"] = "1"
     failures = run_probe(arguments, "any page size layout",
                          arguments.probe.resolve(), level)
-    if arguments.page_size == 4096:
-        failures += run_probe(arguments, "4 KiB layout",
-                              arguments.probe_4k.resolve(), level)
+    failures += run_probe(arguments, "4 KiB layout",
+                          arguments.probe_4k.resolve(), level)
     if failures:
         raise RuntimeError(f"{name}: {failures} failure(s)")
     print(f"{name}: the probe passed at the {level} level")

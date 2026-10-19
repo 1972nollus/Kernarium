@@ -248,7 +248,7 @@ class GlesCtsPlanTests(unittest.TestCase):
                     plan.runner_arguments(self.manifest, run, "/run/selected.txt"),
                 )
                 script = common.build_guest_launcher(
-                    matrix.selection, 0, 60, 16384, contract,
+                    matrix.selection, 0, 60, 4096, contract,
                     matrix=matrix, renderer_backend="virgl",
                 )
                 self.assertIn(matrix.mustpass_xml_sha256, script)
@@ -286,7 +286,7 @@ class GlesCtsPlanTests(unittest.TestCase):
                 renderer="virgl",
             )
             configs, _, attributes = common.load_config_inventory_evidence(
-                path, "gles32", "16k", "vnc", contract, runtime)
+                path, "gles32", "4k", "vnc", contract, runtime)
             self.assertEqual([row.identifier for row in configs], [1, 2])
             # The ES 3.2 scope also records the attribute table the AOSP
             # mapping resolves its GL configuration names against.
@@ -304,19 +304,19 @@ class GlesCtsPlanTests(unittest.TestCase):
                 path.write_text(json.dumps(changed))
                 with self.subTest(key=key), self.assertRaises(common.CampaignError):
                     common.load_config_inventory_evidence(
-                        path, "gles32", "16k", "vnc", contract, runtime)
+                        path, "gles32", "4k", "vnc", contract, runtime)
             path.write_text(original)
             with self.assertRaises(common.CampaignError):
                 # A GL46 inventory never stands in for the ES 3.2 one.
                 common.load_config_inventory_evidence(
-                    path, "gl46", "16k", "vnc", contract, runtime)
+                    path, "gl46", "4k", "vnc", contract, runtime)
 
     def test_the_es32_inventory_scope_captures_the_attribute_table(self) -> None:
         receipt = self.receipt()
         _, contract = common.load_zink_gl_derivative_receipt(
             receipt, common.load_identity())
         script = common.build_guest_launcher(
-            None, 0, 60, 16384, contract, config_inventory_api="gles32",
+            None, 0, 60, 4096, contract, config_inventory_api="gles32",
             renderer_backend="virgl")
         # Two cases need a caselist: --deqp-case selects one filter, and both
         # results must land in one session's QPA.
@@ -327,7 +327,7 @@ class GlesCtsPlanTests(unittest.TestCase):
             subprocess.run(["/bin/sh", "-n"], input=script, text=True,
                            capture_output=True).returncode, 0)
         narrow = common.build_guest_launcher(
-            None, 0, 60, 16384, contract, config_inventory_api="gl46",
+            None, 0, 60, 4096, contract, config_inventory_api="gl46",
             renderer_backend="virgl")
         self.assertIn("--deqp-case=CTS-Configs.gl46", narrow)
         self.assertNotIn("configs.txt", narrow)

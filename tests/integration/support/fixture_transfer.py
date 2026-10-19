@@ -52,9 +52,6 @@ def parse_arguments(
     parser.add_argument("--probe", required=True, type=pathlib.Path)
     if engines:
         parser.add_argument("--engine", required=True, choices=tuple(engines))
-    parser.add_argument(
-        "--page-size", required=True, type=int, choices=(4096, 16384)
-    )
     parser.add_argument("--log", type=pathlib.Path)
     arguments = parser.parse_args()
     binary = arguments.probe.read_bytes()
@@ -127,7 +124,7 @@ def run_probe(
             if precondition:
                 steps.append(precondition)
             steps += [
-                f'test "$(getconf PAGESIZE)" = {arguments.page_size}',
+                'test "$(getconf PAGESIZE)" = 4096',
                 f"cd {PROBE_DIRECTORY}",
                 f"sha256sum -c {CHECKSUMS} >/dev/null",
                 f"{probe} >{RESULT_LOG} 2>&1",

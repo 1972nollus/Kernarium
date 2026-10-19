@@ -43,16 +43,6 @@ struct GuestBundle: Equatable {
         )
     }
 
-    /// Android guests boot the Android kernel that only the 4 KiB runtime carries.
-    var requiredPageSize: KernelPageSize? {
-        switch flavor {
-        case .android:
-            .fourKiB
-        case .linux:
-            nil
-        }
-    }
-
     /// Recognises a bundle from the inputs needed to launch it. The release
     /// manifest is provenance for people and tools, not a runtime identity.
     static func load(

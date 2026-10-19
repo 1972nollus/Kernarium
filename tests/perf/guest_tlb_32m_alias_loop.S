@@ -2,17 +2,18 @@
 /*
  * Freestanding arm64/Linux control for direct-mapped gadget-TLB aliases.
  *
- * The two touched pages are exactly 128 MiB apart.  They collide in a
- * 13-bit direct index with 16 KiB pages, but not in a 14-bit direct index.
- * Alternating the pages on every iteration makes accidental set aliasing
- * immediately visible without depending on a large application workload.
+ * The two touched pages are exactly 32 MiB apart: 8,192 pages of 4 KiB, half
+ * the reach of the TLB's 16,384 direct-mapped entries.  They collide in a
+ * 13-bit direct index, but not in the 14-bit one.  Alternating the pages on
+ * every iteration makes an index that has lost a bit immediately visible
+ * without depending on a large application workload.
  */
 
 #include "probe_harness.inc"
 
 	.equ ITERATIONS,	5000000
-	.equ ALIAS_DISTANCE,	(128 * 1024 * 1024)
-	.equ GUEST_PAGE_SIZE,	16384
+	.equ ALIAS_DISTANCE,	(32 * 1024 * 1024)
+	.equ GUEST_PAGE_SIZE,	4096
 
 	probe_start
 	adrp	x0, first_page
@@ -46,7 +47,7 @@
 	probe_end
 
 	.section .bss
-	.p2align 14
+	.p2align 12
 first_page:
 	.skip GUEST_PAGE_SIZE
 	.skip ALIAS_DISTANCE - GUEST_PAGE_SIZE

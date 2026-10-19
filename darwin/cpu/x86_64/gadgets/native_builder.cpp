@@ -6712,6 +6712,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		return true;
 	case Operation::cpuid:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_cpuid));
+		stream.push_back(next_instruction_pointer(gadget, mode));
 		return true;
 	case Operation::read_extended_control:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_xgetbv));

@@ -4,6 +4,7 @@
 #include "display.hpp"
 #include "shared_memory_regions.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -45,6 +46,18 @@ public:
     [[nodiscard]] std::string takeConnectionName();
     [[nodiscard]] std::string takeInputConnectionName();
     void stop() noexcept;
+
+    /* Holds back the guest's GPU requests so none reaches the renderer, and
+     * with it the host GPU, until releaseRequests(). A request that arrives
+     * meanwhile waits in its virtqueue, through any suspend of the guest that
+     * disables and re-enables the ring, and runs in order after the release.
+     * Returns whether no request was still running after `budget`; the hold
+     * is in place either way. Work the renderer already has, fences included,
+     * carries on. The application holds before it enters the background, where
+     * the host GPU is revoked within seconds. */
+    [[nodiscard]] bool holdRequests(
+        std::chrono::milliseconds budget) noexcept;
+    void releaseRequests() noexcept;
 
 private:
     class Implementation;

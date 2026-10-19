@@ -16,7 +16,6 @@
 namespace {
 
 constexpr uint32_t fourKiB = 4096U;
-constexpr uint32_t sixteenKiB = 16384U;
 
 std::mutex selectionMutex;
 std::atomic<const kernarium_runtime_api*> selectedApi;
@@ -84,14 +83,7 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
 
 [[nodiscard]] NSString* pageVariant(uint32_t guestPageSize)
 {
-    switch (guestPageSize) {
-    case fourKiB:
-        return @"4K";
-    case sixteenKiB:
-        return @"16K";
-    default:
-        return nil;
-    }
+    return guestPageSize == fourKiB ? @"4K" : nil;
 }
 
 /* The flavour leads the framework name. Linux additionally requires a numeric
@@ -190,7 +182,11 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->send_touch == nullptr ||
         api->send_key == nullptr ||
         api->set_console_output_callback == nullptr ||
-        api->send_console_input == nullptr) {
+        api->send_console_input == nullptr ||
+        api->set_gpu_hold == nullptr ||
+        api->set_frame_sink == nullptr ||
+        api->set_background_throttle == nullptr ||
+        api->set_page_cache_trimming == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -226,12 +222,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v9");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v12");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v8: %s\n",
+            "Kernarium: selected runtime lacks API v12: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -324,6 +320,36 @@ extern "C" void kernarium_runtime_loader_resume(void)
     const kernarium_runtime_api* runtime = api();
     if (runtime != nullptr)
         runtime->resume();
+}
+
+extern "C" int kernarium_runtime_loader_set_gpu_hold(int held)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -1 : runtime->set_gpu_hold(held);
+}
+
+extern "C" int kernarium_runtime_loader_set_background_throttle(int enabled)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -1 : runtime->set_background_throttle(enabled);
+}
+
+extern "C" int kernarium_runtime_loader_set_frame_sink(
+    kernarium_runtime_frame_sink sink,
+    void* context,
+    uint32_t maximumWidth,
+    uint32_t framesPerSecond)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ?
+        -1 :
+        runtime->set_frame_sink(sink, context, maximumWidth, framesPerSecond);
+}
+
+extern "C" int kernarium_runtime_loader_set_page_cache_trimming(int enabled)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -1 : runtime->set_page_cache_trimming(enabled);
 }
 
 extern "C" void kernarium_runtime_loader_send_touch(

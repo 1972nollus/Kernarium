@@ -52,7 +52,7 @@ release, checked by the SHA-256 of its
 program, into images that stay local and that the tool refuses to write into
 the repository outside `.build`. It makes two kinds. `payload` is the EROFS
 image `--payload` attaches, with `geekbench_armv7` and `geekbench.plar` at its
-root and a 4 KiB block size, which both guest page profiles mount. `rootfs`
+root and a 4 KiB block size, which the guest mounts. `rootfs`
 cuts the starter disk's ext4 filesystem into an unpartitioned `.ext4` image,
 which `--rootfs` takes with `--root-type ext4`; with `--release-dir` it also
 installs the release under `/opt/geekbench`, for a device with no second disk
@@ -157,7 +157,7 @@ performance evidence.
 ```sh
 python3 tests/integration/gpu/run_vulkan_probe.py \
   --emulator EMULATOR --rootfs VULKAN_ROOTFS --probe RGB32_PROBE \
-  --page-size 16384 -- --correctness-only --max-elements 4099
+  -- --correctness-only --max-elements 4099
 ```
 
 The shader source and generated header are owned here. Regenerate with an
@@ -452,8 +452,7 @@ Probes are self-checking and succeed only when the measured guest command
 finishes, the guest shuts down, and the emulator exits zero. They are not CTest
 registrations and do not enter ordinary suite aggregates.
 
-The 16 KiB alias probe is page-profile-specific, and the LSE atomic probe needs
-assembler support for that extension. Other probes declare any restriction in
+The LSE atomic probe needs assembler support for that extension. Other probes declare any restriction in
 the manifest.
 
 ## Loader corpus
@@ -503,12 +502,12 @@ translation cache, guest kernel, UML scheduler, and the normal
 the complete workload. Host scheduling and the engine's intrinsic threaded
 dispatch remain.
 
-After configuring the `macos-unit-16k` preset, build and run one workload:
+After configuring the `macos-unit` preset, build and run one workload:
 
 ```sh
-cmake --build .build/presets/macos-unit-16k \
+cmake --build .build/presets/macos-unit \
   --target gadget-ceiling-binaries performance-probe-binaries
-.build/presets/macos-unit-16k/bin/uml-gadget-ceiling-bench \
+.build/presets/macos-unit/bin/uml-gadget-ceiling-bench \
   --workload scalar-mix --repetitions 7
 ```
 
@@ -532,7 +531,7 @@ process boundaries.
 python3 tests/perf/run_guest_link_bench.py \
   --emulator .build/presets/macos-integration/bin/uml-darwin \
   --rootfs rootfs.erofs \
-  --binary .build/presets/macos-unit-16k/tests/perf/probes/guest_scalar_mix_loop \
+  --binary .build/presets/macos-unit/tests/perf/probes/guest_scalar_mix_loop \
   --engine gadgets --workers 1 --repetitions 7 \
   --core-class performance --overlay-shell \
   --boot-timeout 180 --command-timeout 120

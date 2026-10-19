@@ -6,17 +6,29 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var serialConsole = SerialConsoleController()
     @ObservedObject private var launcher = EmulatorLauncher.shared
+    @ObservedObject private var backgroundSession = BackgroundSession.shared
+    @ObservedObject private var backgroundJob = BackgroundJob.shared
+    /// Whether the running guest chose the keep-running mode, which is what
+    /// offers the button that starts its job.
+    @State private var keepRunningChosen = false
     @State private var guestViewMode = GuestViewMode.defaultMode
     /// Whether the framebuffer holds the keyboard. Only the framebuffer
     /// mode sets it; the serial console's keyboard is its terminal's focus.
     @State private var framebufferKeyboardVisible = false
     @State private var specialKeysExpanded = false
     @State private var presentedSheet: PresentedSheet?
+    /// Whether the window scene fills the screen. Until the view is in a
+    /// scene, it is taken to be a window, which is the system's own default.
+    @State private var sceneCoversScreen = false
     @Namespace private var floatingButtonNamespace
 
     var body: some View {
         ZStack(alignment: .trailing) {
             ZStack {
+                GuestPictureInPictureAnchor()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+
                 GuestDisplayView(
                     keyboardVisible: $framebufferKeyboardVisible,
                     retinaMode: EmulatorLauncher.shared.retinaMode
@@ -39,11 +51,32 @@ struct ContentView: View {
                 if case let .ended(result) = launcher.phase {
                     GuestEndedNotice(end: GuestRunEnd(result: result))
                         .padding()
+                } else if let restart = backgroundSession.restart {
+                    GuestRestartedNotice(restart: restart) {
+                        backgroundSession.dismissRestartNotice()
+                    }
+                    .padding()
+                    .frame(maxHeight: .infinity, alignment: .top)
                 }
             }
+            // In a window, iPadOS draws its window controls over the top-left
+            // corner of the content, which would cover the guest's own top-left
+            // (Android's status bar). Pushing the guest below them is the
+            // system's job: it knows where the controls are for the window's
+            // placement. A scene that covers the whole screen has none over
+            // its content, and the system's corner offset can outlive the
+            // window it described, so the offset applies only to a scene
+            // smaller than the screen.
+            .containerCornerOffset(
+                SceneCoverage.cornerOffsetEdges(coversScreen: sceneCoversScreen),
+                sizeToFit: true
+            )
             floatingButtons
         }
         .ignoresSafeArea(.keyboard)
+        .background {
+            SceneCoverageReader { sceneCoversScreen = $0 }
+        }
         .sheet(item: $presentedSheet) { destination in
             switch destination {
             case .settings:
@@ -52,14 +85,34 @@ struct ContentView: View {
         }
         .onAppear {
             serialConsole.startObserving()
-            GuestPersistence.shared.startObserving()
+            let window = GuestPictureInPicture.shared
+            window.wanted = {
+                EmulatorLauncher.shared.runningGuestName.map {
+                    BackgroundSettings().mode(forGuest: $0)
+                } == .pictureInPicture
+            }
+            GuestPersistence.shared.startObserving(
+                guest: { EmulatorLauncher.shared.runningGuestName },
+                pictureInPicture: window
+            )
         }
         .onDisappear {
             serialConsole.stopObserving()
             GuestPersistence.shared.stopObserving()
+            GuestPictureInPicture.shared.guestRunningChanged(false)
             EmulatorLauncher.shared.stop()
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UserDefaults.didChangeNotification
+            )
+        ) { _ in
+            GuestPictureInPicture.shared.refresh()
+            refreshKeepRunning()
+        }
         .onChange(of: launcher.phase) { _, phase in
+            GuestPictureInPicture.shared.guestRunningChanged(phase == .running)
+            refreshKeepRunning()
             // Nothing is left to type into, and the keyboard would cover
             // the notice.
             guard case .ended = phase else { return }
@@ -78,10 +131,52 @@ struct ContentView: View {
     private var floatingButtonsContent: some View {
         VStack(alignment: .trailing, spacing: FloatingControlMetrics.spacing) {
             settingsButton
+            if keepRunningChosen && launcher.phase == .running {
+                keepRunningButton
+            }
             displayModeButton
             keyboardButton
             specialKeysRow
         }
+    }
+
+    /// Starts, or stops, the job that keeps the guest running once the user
+    /// leaves Kernarium. iOS wants such a job to follow the user's own action,
+    /// so it never starts by itself.
+    private var keepRunningButton: some View {
+        floatingIconButton(
+            systemName: backgroundJob.isRunning ? "stop.circle" : "timer",
+            accessibilityLabel: keepRunningLabel,
+            identifier: "backgroundJobButton"
+        ) {
+            if backgroundJob.state == .idle {
+                guard let guest = launcher.runningGuestName else { return }
+                backgroundJob.start(
+                    limitMinutes: BackgroundSettings().limitMinutes(
+                        forGuest: guest
+                    ),
+                    guestName: (guest as NSString).deletingPathExtension
+                )
+            } else {
+                backgroundJob.cancel()
+            }
+        }
+    }
+
+    private var keepRunningLabel: String {
+        switch backgroundJob.state {
+        case .idle: "Keep the Guest Running in the Background"
+        case .submitted: "Starting to Keep the Guest Running"
+        case .running: "Stop Keeping the Guest Running"
+        }
+    }
+
+    private func refreshKeepRunning() {
+        let mode = launcher.runningGuestName.map {
+            BackgroundSettings().mode(forGuest: $0)
+        } ?? .off
+        keepRunningChosen = mode == .keepRunning
+        backgroundJob.reconcile(mode: mode)
     }
 
     private var displayModeButton: some View {
@@ -272,6 +367,40 @@ private struct GuestEndedNotice: View {
     }
 }
 
+/// Shown over the guest views when the previous launch ended in the
+/// background and this launch's guest booted again. It stays until dismissed:
+/// the guest's boot is under way behind it, and what was running before is
+/// gone.
+private struct GuestRestartedNotice: View {
+    let restart: GuestRestart
+    let dismiss: () -> Void
+
+    var body: some View {
+        Button(action: dismiss) {
+            VStack(spacing: 8) {
+                Image(systemName: restart.systemName)
+                    .font(.title)
+                Text(restart.title)
+                    .font(.headline)
+                Text(restart.message)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
+                Text("Tap to dismiss")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(20)
+            .frame(maxWidth: 320)
+            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("guestRestartedNotice")
+    }
+}
+
 enum FloatingControlMetrics {
     static let buttonSide: CGFloat = 32
     static let spacing: CGFloat = 8
@@ -333,8 +462,22 @@ private struct GuestDisplayGeometry {
     let dotsPerInch: UInt32
 }
 
+/// The coordinates the guest's touchscreen takes, in a space of `size`
+/// positions on each axis.
 struct GuestInputCoordinateSpace {
     static let maximumDisplayDimension = CGFloat(4095)
+
+    /// The Virtio touchscreen's fixed absolute range, 0 through
+    /// `KERNARIUM_RUNTIME_TOUCH_MAXIMUM` on both axes. It does not depend on
+    /// the guest's display, so a launch at a small size loses no resolution
+    /// at a larger one, and the guest never has to learn the range again
+    /// after a mode change.
+    static let touchscreen = GuestInputCoordinateSpace(
+        size: CGSize(
+            width: CGFloat(KERNARIUM_RUNTIME_TOUCH_MAXIMUM) + 1,
+            height: CGFloat(KERNARIUM_RUNTIME_TOUCH_MAXIMUM) + 1
+        )
+    )
 
     let size: CGSize
 
@@ -788,6 +931,85 @@ struct GuestResizeHold {
     }
 }
 
+/// Whether a window scene fills its screen, and so has no window controls
+/// over its content: Full Screen Apps, and a window zoomed to the screen,
+/// whose controls move to the menu bar. A window, tile or Slide Over scene
+/// is smaller than the screen.
+enum SceneCoverage {
+    static func covers(sceneSize: CGSize, screenSize: CGSize) -> Bool {
+        // A scene is a few hundredths of a point off the screen at most,
+        // where it fills it.
+        abs(sceneSize.width - screenSize.width) < 0.5
+            && abs(sceneSize.height - screenSize.height) < 0.5
+    }
+
+    static func covers(_ scene: UIWindowScene) -> Bool {
+        covers(
+            sceneSize: scene.effectiveGeometry.coordinateSpace.bounds.size,
+            screenSize: scene.screen.bounds.size
+        )
+    }
+
+    /// The edges whose corner offset the guest view takes: the top, which
+    /// the window controls overlay, unless the scene covers the screen.
+    static func cornerOffsetEdges(coversScreen: Bool) -> Edge.Set {
+        coversScreen ? [] : .top
+    }
+}
+
+/// Reports, now and whenever the scene's geometry changes, whether the
+/// scene the view is in covers its screen. The system's corner offset keeps
+/// describing a window after Multitasking switches the scene to Full Screen
+/// Apps, so the offset cannot be the judge of whether there are controls.
+private struct SceneCoverageReader: UIViewRepresentable {
+    let report: @MainActor (Bool) -> Void
+
+    func makeUIView(context: Context) -> SceneCoverageView {
+        let view = SceneCoverageView()
+        view.isUserInteractionEnabled = false
+        view.report = report
+        return view
+    }
+
+    func updateUIView(_ view: SceneCoverageView, context: Context) {
+        view.report = report
+    }
+}
+
+final class SceneCoverageView: UIView {
+    var report: (@MainActor (Bool) -> Void)?
+    private var observation: NSKeyValueObservation?
+    private var reported: Bool?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        observation = nil
+        guard let scene = window?.windowScene else { return }
+        observation = scene.observe(
+            \.effectiveGeometry, options: [.initial, .new]
+        ) { [weak self] scene, _ in
+            MainActor.assumeIsolated { self?.update(from: scene) }
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if let scene = window?.windowScene {
+            update(from: scene)
+        }
+    }
+
+    private func update(from scene: UIWindowScene) {
+        let covers = SceneCoverage.covers(scene)
+        guard covers != reported else { return }
+        reported = covers
+        // SwiftUI state is not written from inside its own layout pass.
+        DispatchQueue.main.async { [weak self] in
+            self?.report?(covers)
+        }
+    }
+}
+
 private struct GuestDisplayView: UIViewControllerRepresentable {
     @Binding var keyboardVisible: Bool
     let retinaMode: Bool
@@ -891,7 +1113,6 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         GuestMetalView,
         GuestDisplayGeometry
     ) -> Void)?
-    var inputCoordinateSpace: GuestInputCoordinateSpace?
     var retinaMode = false
     @objc private(set) var umlGuestResizeInProgress = false
     private var trackedTouch: UITouch?
@@ -1058,10 +1279,8 @@ private final class GuestMetalView: MTKView, UIKeyInput {
     }
 
     private func touchGeometry() -> GuestTouchGeometry? {
-        let coordinateSpace = inputCoordinateSpace ??
-            GuestInputCoordinateSpace(size: bounds.size)
-        return GuestTouchGeometry(
-            coordinateSpace: coordinateSpace,
+        GuestTouchGeometry(
+            coordinateSpace: .touchscreen,
             boundsSize: bounds.size,
             drawableSize: drawableSize,
             contentSize: guestContentSize ?? drawableSize
@@ -1316,6 +1535,9 @@ final class EmulatorLauncher: ObservableObject {
 
     private let configuration: EmulatorConfiguration
     @Published private(set) var phase = GuestRunPhase.idle
+    /// The name the running guest's own settings are stored under.
+    private(set) var runningGuestName: String?
+    private(set) var runningGuestIsAndroid = false
     private var thermalObserver: NSObjectProtocol?
 
     var retinaMode: Bool { configuration.retinaMode }
@@ -1351,15 +1573,14 @@ final class EmulatorLauncher: ObservableObject {
             print("Kernarium: Documents/\(rootfsFilename) is missing")
             return
         }
-        // A bundle that pins a page profile overrides whatever was stored; the
-        // configuration already resolved that, and this keeps a hand-edited
-        // default from reaching a runtime with no kernel for the payload.
-        let pageSize = selection.requiredPageSize ?? configuration.kernelPageSize
+        runningGuestName = rootfsFilename
+        runningGuestIsAndroid = selection.flavor == .android
+        // Every runtime carries a 4 KiB kernel.
         guard kernarium_runtime_loader_select(
             selection.flavor.rawValue,
-            UInt32(pageSize.rawValue)
+            4096
         ) == 0 else {
-            print("Kernarium: cannot load the \(pageSize.title) runtime")
+            print("Kernarium: cannot load the runtime")
             return
         }
         let boot: PreparedBoot
@@ -1376,10 +1597,6 @@ final class EmulatorLauncher: ObservableObject {
         let size = GuestInputCoordinateSpace.boundedDisplaySize(
             geometry.pixelSize
         )
-        // Virtio-input publishes its ABS_X/Y range only when it is probed.
-        // Keep that launch-time coordinate space stable while later layouts
-        // resize Virtio-GPU, and normalize every current view point into it.
-        view.inputCoordinateSpace = GuestInputCoordinateSpace(size: size)
         view.setGuestDisplay(
             width: UInt32(size.width.rounded(.down)),
             height: UInt32(size.height.rounded(.down))

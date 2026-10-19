@@ -148,6 +148,9 @@ uml_add_arm64_unit_test(base_ordered_behavior)
 uml_add_arm64_unit_test(base_ordered_gadget)
 # Load/store-exclusive loops make progress whatever the TLB holds.
 uml_add_arm64_unit_test(exclusive_progress)
+# Only an exception costs a guest its exclusive monitor, in A64, A32 and T32
+# on both engines.
+uml_add_arm64_unit_test(exclusive_events)
 # After an ISB, both engines run the code another vCPU changed and
 # synchronized, in A64 and A32.
 uml_add_arm64_unit_test(isb_code_change)

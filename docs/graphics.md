@@ -90,6 +90,17 @@ and offset, has to lie inside the segment or the heap, the size is passed to
 the driver that aliases it, and an optimal texture has to have the guest
 format's texel size. An import that does not fit is refused.
 
+The native presenter can also mirror the guest's display to the application
+(`frame_tap.hpp`) for a view it shows while its own window cannot, such as the
+Picture in Picture window that keeps an iOS guest running in the background.
+While a sink is set, a thread of its own renders the latest content, with the
+user's rotation, into pooled IOSurface BGRA buffers no wider than the sink asked
+for, at most the requested rate, and again about once a second when the display
+is static. It reads the same texture or CPU framebuffer the window shows, so it
+needs no drawable, and it renders nothing while no sink is set. Clearing the
+sink returns only once no delivery is running, so the receiver may be released
+at once.
+
 The macOS native display turns the emulator into an AppKit application, which
 makes the whole process eligible for App Nap whenever its window is occluded or
 minimized or the screen is locked. A napped process runs every thread,
@@ -343,9 +354,11 @@ larger one, such as 4096x2160, by setting a user-defined mode. The renderer can
 hold a finished client's scanout buffers for a minute or more, until later
 rendering releases them; repeated mode cycles do not accumulate them.
 
-Rendering and input use the same centered aspect-fit rectangle. AppKit and VNC
-map that rectangle into the fixed tablet range, while Kernarium maps it into
-the touchscreen range advertised at boot. VNC rounds the rectangle to whole
+Rendering and input use the same centered aspect-fit rectangle. AppKit, VNC,
+and Kernarium map that rectangle into the fixed absolute range of 0 through
+32767 on both axes. The range belongs to the device, not to the display or the
+launch size, so a view resized to any size keeps the full resolution and the
+guest never has to re-probe it. VNC rounds the rectangle to whole
 framebuffer pixels and maps a pointer at the centre of the pixel it names, so a
 pointer lands on the guest pixel drawn under it. A mouse in a bar reaches the
 guest only while it drags buttons first pressed inside, clamped to the edge,

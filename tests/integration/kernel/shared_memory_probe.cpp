@@ -833,7 +833,7 @@ void test_packet()
 {
 	/* A block the page allocator serves directly (linear-map alias). */
 	test_packet_block(64 * 1024, 2048, "packet-pages");
-	/* A block above MAX_PAGE_ORDER on both profiles: alloc_one_pg_vec_page()
+	/* A block above MAX_PAGE_ORDER: alloc_one_pg_vec_page()
 	 * falls back to vzalloc(). */
 	test_packet_block(32u * 1024 * 1024, 2u * 1024 * 1024, "packet-vzalloc");
 }

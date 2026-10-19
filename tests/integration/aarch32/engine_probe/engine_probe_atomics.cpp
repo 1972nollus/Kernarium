@@ -171,15 +171,26 @@ void group_atomics()
 	volatile u32 *stop = control + 16;
 
 	/* The exclusive monitor: STREX after LDREX stores, a second fails, and
-	 * so does one after CLREX. */
+	 * so does one after CLREX. Hardware may fail the first STREX
+	 * spuriously too, as an interrupt or a preemption of the host thread
+	 * does here, so it must succeed within a few attempts, and an attempt
+	 * whose first STREX failed must have stored nothing. */
 	for (int thumb = 0; thumb < 2; ++thumb) {
 		auto *word_cell = ptr<u32>(region);
-		*word_cell = 10;
+		const unsigned attempts = 16;
 		u32 out[3] = {99, 99, 99};
-		if (thumb)
-			at_monitor_thumb(word_cell, out);
-		else
-			at_monitor_arm(word_cell, out);
+		for (unsigned attempt = 0; attempt < attempts; ++attempt) {
+			*word_cell = 10;
+			out[0] = out[1] = out[2] = 99;
+			if (thumb)
+				at_monitor_thumb(word_cell, out);
+			else
+				at_monitor_arm(word_cell, out);
+			if (out[0] == 0)
+				break;
+			check_eq(out[0], 1, thumb ? "T32: a STREX's status is 0 or 1" : "A32: a STREX's status is 0 or 1");
+			check_eq(*word_cell, 10, thumb ? "T32: a failed STREX stores nothing" : "A32: a failed STREX stores nothing");
+		}
 		check_eq(out[0], 0, thumb ? "T32: STREX after LDREX returns 0" : "A32: STREX after LDREX returns 0");
 		check_eq(out[1], 1, thumb ? "T32: a second STREX fails" : "A32: a second STREX fails");
 		check_eq(out[2], 1, thumb ? "T32: STREX after CLREX fails" : "A32: STREX after CLREX fails");
