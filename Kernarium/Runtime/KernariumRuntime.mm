@@ -133,6 +133,15 @@ uml_emulator* activeEmulator;
 std::mutex activeInputMutex;
 uml::input::virtio::InProcessInputService* activeTouchscreen;
 uml::input::virtio::InProcessInputService* activeKeyboard;
+/* The GPU hold the application last asked for, and the GPU service it applies
+ * to while a guest runs. A hold asked for before the guest's GPU exists takes
+ * effect when it does. */
+std::mutex activeGpuMutex;
+uml::gpu::InProcessGpuService* activeGpu;
+bool gpuHoldRequested;
+/* Longest a hold waits for a GPU request already running. The application
+ * holds inside didEnterBackground, which iOS gives about five seconds. */
+constexpr std::chrono::milliseconds gpuHoldBudget {1000};
 /* Process lifetime, like the input callers it serves: the application's
  * terminal can still write while the process exits. */
 kernarium::console::InputRegistry& consoleInputs =
@@ -351,6 +360,26 @@ public:
 
     ActiveInputRegistration(const ActiveInputRegistration&) = delete;
     ActiveInputRegistration& operator=(const ActiveInputRegistration&) = delete;
+};
+
+class ActiveGpuRegistration final {
+public:
+    explicit ActiveGpuRegistration(uml::gpu::InProcessGpuService& gpu)
+    {
+        std::lock_guard lock(activeGpuMutex);
+        activeGpu = &gpu;
+        if (gpuHoldRequested)
+            (void)gpu.holdRequests(gpuHoldBudget);
+    }
+
+    ~ActiveGpuRegistration()
+    {
+        std::lock_guard lock(activeGpuMutex);
+        activeGpu = nullptr;
+    }
+
+    ActiveGpuRegistration(const ActiveGpuRegistration&) = delete;
+    ActiveGpuRegistration& operator=(const ActiveGpuRegistration&) = delete;
 };
 
 class ConsoleBridge final {
@@ -802,9 +831,9 @@ int runtimeRun(
                 .hostPageSize = static_cast<std::size_t>(getpagesize()),
             });
         uml::input::virtio::InProcessInputService touchscreen(
-            uml::input::virtio::DeviceKind::touchscreen, width, height);
+            uml::input::virtio::DeviceKind::touchscreen);
         uml::input::virtio::InProcessInputService keyboard(
-            uml::input::virtio::DeviceKind::keyboard, width, height);
+            uml::input::virtio::DeviceKind::keyboard);
         const auto audioService = uml::audio::makeInProcessService();
         std::unique_ptr<uml::gpu::InProcessVhostUserService> videoService;
         if (!uml::platform::videoDecodeCapabilities().empty())
@@ -962,6 +991,7 @@ int runtimeRun(
             ActiveInputRegistration inputRegistration {
                 touchscreen, keyboard};
             ActiveEmulatorRegistration registration {emulator.get()};
+            ActiveGpuRegistration gpuRegistration {gpuService};
             const FootprintReporter footprintReporter;
             result = uml_emulator_run(
                 emulator.get(),
@@ -1021,6 +1051,10 @@ void runtimeResume(void)
     if (activeEmulator != nullptr)
         uml_emulator_resume(activeEmulator);
 }
+
+static_assert(
+    KERNARIUM_RUNTIME_TOUCH_MAXIMUM ==
+    uml::input::virtio::protocol::touchscreenAbsoluteMaximum);
 
 void runtimeSendTouch(
     uint32_t x,
@@ -1088,6 +1122,19 @@ void runtimeSendKey(uint16_t code, int pressed)
     });
 }
 
+int runtimeSetGpuHold(int held)
+{
+    std::lock_guard lock(activeGpuMutex);
+    gpuHoldRequested = held != 0;
+    if (activeGpu == nullptr)
+        return -1;
+    if (held == 0) {
+        activeGpu->releaseRequests();
+        return 1;
+    }
+    return activeGpu->holdRequests(gpuHoldBudget) ? 1 : 0;
+}
+
 void runtimeSetConsoleOutputCallback(
     kernarium_runtime_console_output_callback callback,
     void* context)
@@ -1117,11 +1164,12 @@ const kernarium_runtime_api runtimeApi {
     .send_key = runtimeSendKey,
     .set_console_output_callback = runtimeSetConsoleOutputCallback,
     .send_console_input = runtimeSendConsoleInput,
+    .set_gpu_hold = runtimeSetGpuHold,
 };
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v9(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v10(void)
 {
     return &runtimeApi;
 }

@@ -35,6 +35,10 @@ int kernarium_runtime_loader_sync(void);
 /* Leaves the guest safely abandonable, and lets it run again. */
 int kernarium_runtime_loader_quiesce(void);
 void kernarium_runtime_loader_resume(void);
+/* Holds (nonzero) or releases (zero) the guest's GPU requests; see
+ * kernarium_runtime_set_gpu_hold_function. Returns the runtime's answer, or -1
+ * when no runtime is loaded. */
+int kernarium_runtime_loader_set_gpu_hold(int held);
 void kernarium_runtime_loader_send_touch(
     uint32_t x,
     uint32_t y,

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdio>
 #include <deque>
@@ -16,22 +17,6 @@
 
 namespace uml::gpu::testing {
 namespace {
-
-void negotiateProtocolFeatures(int socket, std::uint64_t features)
-{
-    constexpr std::uint64_t deviceFeatures =
-        protocol::vhostFeatureProtocol;
-    sendRequest(
-        socket,
-        protocol::VhostRequest::setFeatures,
-        bytesOf(deviceFeatures),
-        {},
-        false);
-    sendRequestAndReadAcknowledgement(
-        socket,
-        protocol::VhostRequest::setProtocolFeatures,
-        bytesOf(features));
-}
 
 template<typename Value>
 Value readValueReply(int socket, protocol::VhostRequest request)
@@ -1306,6 +1291,368 @@ void aDisabledRingKeepsTheBuffersTheDeviceFills()
     });
 }
 
+/* A device whose requests are one byte long and answered with that byte plus
+ * 0xa0. It records the order in which it saw them, can be told to block
+ * inside a request, and has an event source to raise. */
+class OrderedRequestDevice final : public FixtureDevice {
+public:
+    OrderedRequestDevice(bool keepsRequestsOnDisabledRing, bool signalsReadiness)
+        : FixtureDevice("ordered request fixture", 1, signalsReadiness)
+        , keeps_(keepsRequestsOnDisabledRing)
+    {
+    }
+
+    [[nodiscard]] bool keepsRequestsOnDisabledRing() const noexcept override
+    {
+        return keeps_;
+    }
+    [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
+        std::uint32_t index,
+        std::uint64_t,
+        std::span<const std::uint8_t> request,
+        std::size_t responseCapacity) override
+    {
+        require(index == 0);
+        require(request.size() == 1);
+        require(responseCapacity == 1);
+        std::unique_lock lock(mutex_);
+        calls_.push_back(request.front());
+        changed_.notify_all();
+        if (blockNext_) {
+            blockNext_ = false;
+            blocked_ = true;
+            changed_.notify_all();
+            changed_.wait(lock, [this] { return !blocked_; });
+        }
+        return {
+            .action = uml::virtio::VhostUserQueueAction::complete,
+            .response = {static_cast<std::uint8_t>(0xa0U + request.front())},
+        };
+    }
+    void drainEventSource() override
+    {
+        FixtureDevice::drainEventSource();
+        drained_.fetch_add(1, std::memory_order_release);
+    }
+
+    void raise() const { signalReadiness(); }
+    [[nodiscard]] unsigned drained() const noexcept
+    {
+        return drained_.load(std::memory_order_acquire);
+    }
+    void blockNextRequest()
+    {
+        std::lock_guard lock(mutex_);
+        blockNext_ = true;
+    }
+    /* Returns once a request is blocked inside the device. */
+    void awaitBlocked()
+    {
+        std::unique_lock lock(mutex_);
+        require(changed_.wait_for(
+            lock, std::chrono::seconds {2}, [this] { return blocked_; }));
+    }
+    void unblock()
+    {
+        {
+            std::lock_guard lock(mutex_);
+            blocked_ = false;
+        }
+        changed_.notify_all();
+    }
+    [[nodiscard]] std::vector<std::uint8_t> calls() const
+    {
+        std::lock_guard lock(mutex_);
+        return calls_;
+    }
+
+private:
+    bool keeps_;
+    mutable std::mutex mutex_;
+    std::condition_variable changed_;
+    std::vector<std::uint8_t> calls_;
+    bool blockNext_ {};
+    bool blocked_ {};
+    std::atomic_uint drained_ {};
+};
+
+/* A ring with `count` requests queued, request i carrying the byte i + 1. */
+class OrderedRequestRing {
+public:
+    static constexpr std::size_t requestOffset = 0x300;
+    static constexpr std::size_t responseOffset = 0x400;
+
+    explicit OrderedRequestRing(std::uint16_t count)
+        : count_(count)
+    {
+        for (std::uint16_t request = 0; request < count; ++request)
+            append(request);
+    }
+
+    /* Queues the request carrying byte `value`, after those already queued. */
+    void append(std::uint16_t value)
+    {
+        const std::uint16_t index = published_;
+        const std::uint16_t first = static_cast<std::uint16_t>(2U * index);
+        const std::array descriptors {
+            protocol::VirtqueueDescriptor {
+                .address = SplitRing::guestBase + requestOffset + index,
+                .length = 1,
+                .flags = protocol::descriptorNext,
+                .next = static_cast<std::uint16_t>(first + 1U),
+            },
+            protocol::VirtqueueDescriptor {
+                .address = SplitRing::guestBase + responseOffset + index,
+                .length = 1,
+                .flags = protocol::descriptorWrite,
+                .next = 0,
+            },
+        };
+        std::memcpy(
+            ring_.memory().data() + SplitRing::descriptorOffset +
+                first * sizeof(protocol::VirtqueueDescriptor),
+            descriptors.data(),
+            descriptors.size() * sizeof(protocol::VirtqueueDescriptor));
+        ring_.memory()[requestOffset + index] =
+            static_cast<std::uint8_t>(value + 1U);
+        ring_.memory()[responseOffset + index] = 0;
+        const std::array<std::uint16_t, 1> head {first};
+        ring_.writeHeads(head, index);
+        ++published_;
+        ring_.setAvailableIndex(published_);
+    }
+
+    [[nodiscard]] const SplitRing& ring() const noexcept { return ring_; }
+    [[nodiscard]] std::uint16_t count() const noexcept { return count_; }
+    /* Requires the used ring to hold every request in order, each answered
+     * with the byte the device derives from it. */
+    void requireAnswered(std::uint16_t answered) const
+    {
+        require(ring_.usedIndex() == answered);
+        for (std::uint16_t request = 0; request < answered; ++request) {
+            require(ring_.usedElement(request).id == 2U * request);
+            require(ring_.usedElement(request).length == 1);
+            require(ring_.memory()[responseOffset + request] ==
+                0xa0U + request + 1U);
+        }
+    }
+
+private:
+    SplitRing ring_;
+    std::uint16_t count_;
+    std::uint16_t published_ {};
+};
+
+[[nodiscard]] bool nothingRuns(
+    const OrderedRequestRing& requests,
+    const OrderedRequestDevice& device,
+    int callRead)
+{
+    pollfd call {.fd = callRead, .events = POLLIN};
+    return ::poll(&call, 1, 200) == 0 && requests.ring().usedIndex() == 0 &&
+        device.calls().empty();
+}
+
+/* A closed gate keeps every request in its ring, and opening it runs them in
+ * the order they were queued, each once. The server is idle in poll when the
+ * gate opens, with no kick to follow, so the open itself must wake it. */
+void heldRequestsRunInOrderAfterRelease()
+{
+    auto device = std::make_unique<OrderedRequestDevice>(false, false);
+    const auto* recorder = device.get();
+    const auto gate = std::make_shared<RequestGate>();
+    VhostUserServer server {std::move(device)};
+    server.setRequestGate(gate);
+    const OrderedRequestRing requests {3};
+    require(gate->hold(std::chrono::milliseconds {100}));
+
+    withServerConnection(server, [&](int socket) {
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, requests.ring().descriptor());
+        const auto channels = startQueue(socket, requests.ring());
+        constexpr std::uint64_t kick = 1;
+        require(::write(
+            channels.kick.writeEnd.get(), &kick, sizeof(kick)) ==
+            static_cast<ssize_t>(sizeof(kick)));
+        require(nothingRuns(requests, *recorder, channels.call.readEnd.get()));
+
+        gate->release();
+        awaitCall(channels.call.readEnd.get());
+        requests.requireAnswered(3);
+        require(std::ranges::equal(
+            recorder->calls(), std::array<std::uint8_t, 3> {1, 2, 3}));
+    });
+}
+
+/* The guest's suspend disables its rings. A request held meanwhile is not
+ * answered empty by a pass over the disabled ring, and enabling the ring
+ * again does not run it while the gate is closed: it runs, in order, when the
+ * gate opens. */
+void heldRequestsSurviveADisabledRing(bool deviceKeepsRequests)
+{
+    auto device = std::make_unique<OrderedRequestDevice>(
+        deviceKeepsRequests, true);
+    auto* recorder = device.get();
+    const auto gate = std::make_shared<RequestGate>();
+    VhostUserServer server {std::move(device)};
+    server.setRequestGate(gate);
+    const OrderedRequestRing requests {3};
+    require(gate->hold(std::chrono::milliseconds {100}));
+
+    withServerConnection(server, [&](int socket) {
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, requests.ring().descriptor());
+        const auto channels = startQueue(socket, requests.ring());
+        constexpr std::uint64_t kick = 1;
+        require(::write(
+            channels.kick.writeEnd.get(), &kick, sizeof(kick)) ==
+            static_cast<ssize_t>(sizeof(kick)));
+        require(nothingRuns(requests, *recorder, channels.call.readEnd.get()));
+
+        const auto passOverTheRings = [&] {
+            const auto before = recorder->drained();
+            recorder->raise();
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::seconds {2};
+            while (recorder->drained() == before &&
+                   std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds {1});
+            require(recorder->drained() == before + 1U);
+        };
+        const protocol::VringState disabled {.index = 0, .value = 0};
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringEnable, bytesOf(disabled));
+        passOverTheRings();
+        require(nothingRuns(requests, *recorder, channels.call.readEnd.get()));
+
+        const protocol::VringState enabled {.index = 0, .value = 1};
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringEnable, bytesOf(enabled));
+        passOverTheRings();
+        require(nothingRuns(requests, *recorder, channels.call.readEnd.get()));
+
+        gate->release();
+        awaitCall(channels.call.readEnd.get());
+        requests.requireAnswered(3);
+        require(std::ranges::equal(
+            recorder->calls(), std::array<std::uint8_t, 3> {1, 2, 3}));
+    });
+}
+
+/* The gate waits out the request the device is already running and runs
+ * nothing after it. */
+void holdWaitsForTheRunningRequestAndStopsTheNext()
+{
+    auto device = std::make_unique<OrderedRequestDevice>(false, false);
+    auto* recorder = device.get();
+    const auto gate = std::make_shared<RequestGate>();
+    VhostUserServer server {std::move(device)};
+    server.setRequestGate(gate);
+    OrderedRequestRing requests {0};
+    recorder->blockNextRequest();
+
+    withServerConnection(server, [&](int socket) {
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, requests.ring().descriptor());
+        const auto channels = startQueue(socket, requests.ring());
+        requests.append(0);
+        constexpr std::uint64_t kick = 1;
+        require(::write(
+            channels.kick.writeEnd.get(), &kick, sizeof(kick)) ==
+            static_cast<ssize_t>(sizeof(kick)));
+        recorder->awaitBlocked();
+
+        /* Closed, but a request is inside the device: not yet quiet. */
+        require(!gate->hold(std::chrono::milliseconds {50}));
+        require(gate->held());
+        recorder->unblock();
+        require(gate->hold(std::chrono::seconds {2}));
+        awaitCall(channels.call.readEnd.get());
+        requests.requireAnswered(1);
+
+        requests.append(1);
+        require(::write(
+            channels.kick.writeEnd.get(), &kick, sizeof(kick)) ==
+            static_cast<ssize_t>(sizeof(kick)));
+        pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
+        require(::poll(&call, 1, 200) == 0);
+        require(requests.ring().usedIndex() == 1);
+        require(recorder->calls().size() == 1);
+
+        gate->release();
+        awaitCall(channels.call.readEnd.get());
+        requests.requireAnswered(2);
+        require(std::ranges::equal(
+            recorder->calls(), std::array<std::uint8_t, 2> {1, 2}));
+    });
+}
+
+/* Without a gate, a request on a disabled ring is completed empty at once,
+ * which a console's output relies on: its writer waits for the completion
+ * with interrupts off. A device whose requests are asynchronous asks to have
+ * them kept instead, and they run in order once the ring is enabled. */
+void aDisabledRingKeepsRequestsOnlyForADeviceThatAsksForThem()
+{
+    for (const bool keeps : {false, true}) {
+        auto device = std::make_unique<OrderedRequestDevice>(keeps, true);
+        auto* recorder = device.get();
+        VhostUserServer server {std::move(device)};
+        const OrderedRequestRing requests {2};
+
+        withServerConnection(server, [&](int socket) {
+            negotiateProtocolFeatures(
+                socket, protocol::protocolFeatureReplyAck);
+            configureMemory(socket, requests.ring().descriptor());
+            configureQueue(socket, requests.ring(), 0, false);
+            const std::uint64_t queue = 0;
+            QueueChannels channels {.call = makePipe(), .kick = makePipe()};
+            const std::array callDescriptors {channels.call.writeEnd.get()};
+            sendRequestAndReadAcknowledgement(
+                socket,
+                protocol::VhostRequest::setVringCall,
+                bytesOf(queue),
+                callDescriptors);
+            const std::array kickDescriptors {channels.kick.readEnd.get()};
+            sendRequestAndReadAcknowledgement(
+                socket,
+                protocol::VhostRequest::setVringKick,
+                bytesOf(queue),
+                kickDescriptors);
+
+            const auto before = recorder->drained();
+            recorder->raise();
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::seconds {2};
+            while (recorder->drained() == before &&
+                   std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds {1});
+            require(recorder->drained() == before + 1U);
+            require(recorder->calls().empty());
+
+            if (!keeps) {
+                awaitCall(channels.call.readEnd.get());
+                require(requests.ring().usedIndex() == 2);
+                require(requests.ring().usedElement(0).length == 0);
+                require(requests.ring().usedElement(1).length == 0);
+                return;
+            }
+            pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
+            require(::poll(&call, 1, 200) == 0);
+            require(requests.ring().usedIndex() == 0);
+
+            const protocol::VringState enabled {.index = 0, .value = 1};
+            sendRequestAndReadAcknowledgement(
+                socket,
+                protocol::VhostRequest::setVringEnable,
+                bytesOf(enabled));
+            awaitCall(channels.call.readEnd.get());
+            requests.requireAnswered(2);
+            require(std::ranges::equal(
+                recorder->calls(), std::array<std::uint8_t, 2> {1, 2}));
+        });
+    }
+}
+
 void validConfigurationProtocol(VhostUserServer& server)
 {
     withServerConnection(server, [](int socket) {
@@ -1973,6 +2320,23 @@ void queueNotificationProcessesQueue(
                 require(::poll(&completion, 1, 50) == 0);
             }
         } else {
+            if (!scenario.enableQueue && !scenario.legacyFeatureNegotiation) {
+                /* The GPU keeps a request on a ring the front end has not
+                 * enabled, untouched, and answers it once it is. */
+                pollfd completion {.fd = call.readEnd.get(), .events = POLLIN};
+                require(::poll(&completion, 1, 200) == 0);
+                require(ring.usedIndex() == 0);
+                require(std::ranges::all_of(
+                    memory.subspan(
+                        responseOffset, sizeof(protocol::GpuDisplayInfo)),
+                    [](std::uint8_t byte) {
+                        return byte == responseSentinel;
+                    }));
+                sendRequestAndReadAcknowledgement(
+                    socket,
+                    protocol::VhostRequest::setVringEnable,
+                    bytesOf(enable));
+            }
             awaitCall(call.readEnd.get());
         }
 
@@ -1980,21 +2344,11 @@ void queueNotificationProcessesQueue(
         protocol::GpuControlHeader response {};
         std::memcpy(
             &response, memory.data() + responseOffset, sizeof(response));
-        if (scenario.enableQueue || scenario.legacyFeatureNegotiation) {
-            require(
-                response.type == static_cast<std::uint32_t>(
-                    createContext || createResource ?
-                        protocol::GpuResponse::okNoData :
-                        protocol::GpuResponse::okDisplayInfo));
-        } else {
-            require(std::ranges::all_of(
-                memory.subspan(
-                    responseOffset, sizeof(protocol::GpuDisplayInfo)),
-                [](std::uint8_t byte) {
-                    return byte == responseSentinel;
-                }));
-            require(ring.usedElement(0).length == 0);
-        }
+        require(
+            response.type == static_cast<std::uint32_t>(
+                createContext || createResource ?
+                    protocol::GpuResponse::okNoData :
+                    protocol::GpuResponse::okDisplayInfo));
 
         if (scenario.resetOwnerRecreatesContext) {
             /* The second identical context creation succeeds only if
@@ -2163,6 +2517,11 @@ void runVhostUserProtocolTests()
     deferredCompletionSupportsFourQueues();
     completedPrefixNotifiesBeforeRetry();
     aDisabledRingKeepsTheBuffersTheDeviceFills();
+    aDisabledRingKeepsRequestsOnlyForADeviceThatAsksForThem();
+    heldRequestsRunInOrderAfterRelease();
+    heldRequestsSurviveADisabledRing(false);
+    heldRequestsSurviveADisabledRing(true);
+    holdWaitsForTheRunningRequestAndStopsTheNext();
     configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement();
     configChangeWaitStillAnswersConfigReads();
     closedBackendChannelEndsTheConnectionQuietly();

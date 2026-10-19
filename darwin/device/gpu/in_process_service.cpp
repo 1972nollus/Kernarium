@@ -4,6 +4,7 @@
 
 #include "gpu_vhost_user_server.hpp"
 #include "platform/descriptor.hpp"
+#include "request_gate.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_server.hpp"
 #include "virgl_renderer.hpp"
@@ -77,8 +78,19 @@ public:
               "uml-gpu",
               InProcessVhostUserService::ServerFactory(
                   [this] { return makeServer(); }),
-              options_.sharedMemoryRegions)
+              options_.sharedMemoryRegions,
+              requestGate_)
     {
+    }
+
+    bool holdRequests(std::chrono::milliseconds budget) noexcept
+    {
+        return requestGate_->hold(budget);
+    }
+
+    void releaseRequests() noexcept
+    {
+        requestGate_->release();
     }
 
     std::string takeConnectionName()
@@ -157,6 +169,8 @@ private:
     DescriptorPair inputDescriptors_;
     std::string inputConnectionName_;
     std::atomic_bool reportedInputFailure_ {};
+    std::shared_ptr<RequestGate> requestGate_ {
+        std::make_shared<RequestGate>()};
     /* Last, so the service thread, which forwards input through the members
      * above, is stopped before any of them goes. */
     InProcessVhostUserService service_;
@@ -187,6 +201,17 @@ std::string InProcessGpuService::takeInputConnectionName()
 void InProcessGpuService::stop() noexcept
 {
     implementation_->stop();
+}
+
+bool InProcessGpuService::holdRequests(
+    std::chrono::milliseconds budget) noexcept
+{
+    return implementation_->holdRequests(budget);
+}
+
+void InProcessGpuService::releaseRequests() noexcept
+{
+    implementation_->releaseRequests();
 }
 
 } // namespace uml::gpu

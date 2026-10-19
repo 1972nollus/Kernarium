@@ -40,11 +40,7 @@ private:
 
 class VirtioInputDevice final : public uml::virtio::VhostUserDevice {
 public:
-    VirtioInputDevice(
-        DeviceKind kind,
-        std::uint32_t width,
-        std::uint32_t height,
-        std::shared_ptr<EventQueue> events);
+    VirtioInputDevice(DeviceKind kind, std::shared_ptr<EventQueue> events);
 
     [[nodiscard]] const char* name() const noexcept override;
     [[nodiscard]] std::uint64_t features() const noexcept override;
@@ -67,8 +63,6 @@ private:
     [[nodiscard]] protocol::InputConfig selectedConfiguration() const;
 
     DeviceKind kind_;
-    std::uint32_t width_;
-    std::uint32_t height_;
     std::shared_ptr<EventQueue> events_;
     std::uint8_t select_ {};
     std::uint8_t subselect_ {};

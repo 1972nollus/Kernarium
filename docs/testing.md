@@ -518,6 +518,34 @@ approval rules, and failure modes are in
 `Kernarium/scripts/ipad-automation.py --help`. Keep all automation code in the
 test targets.
 
+### Background lifecycle (device only)
+
+What the application does as iOS backgrounds it cannot be tested on a host:
+only a device revokes the GPU, freezes the process, and reclaims it. Check it
+on an iPad whenever the lifecycle handlers, the GPU hold, or the quiesce
+change, under an iPad lease with the automation host above and the
+application's console (`xcrun devicectl device process launch --console`).
+Background the application by activating another app, wait, and activate
+Kernarium again, for a KDE guest and for an Android guest, at about 20 s and
+two minutes. Each cycle must show, in order:
+
+- `guest GPU requests held on background (1)`, then the guest's
+  `PM: suspend entry`, before the application is suspended;
+- on return, `guest GPU requests released on foreground (1)`, then
+  `request gate opened with N request(s) waiting`, then `PM: suspend exit`;
+- the guest display rendering on return, and no `virtio_gpu` response errors,
+  Metal errors, RCU stalls, or watchdog lines.
+
+A `0` after the hold means a GPU request was still running after a second; it
+is a finding, not a pass. To check the restart notice, background the
+application, terminate its process with `devicectl device process terminate`,
+and launch it again: the console reports that the previous process ended in
+the background and the guest display carries the dismissible Guest Restarted
+card. A guest this large can also be reclaimed by iOS in the first seconds of
+the background, which looks like a missing hold and is not; the next launch
+shows the notice. Remove the guest bundles and payloads the check copied to the
+application's Documents afterwards.
+
 ## LTP
 
 The full LTP campaign is opt-in and runs only on gadget or JIT engines.
