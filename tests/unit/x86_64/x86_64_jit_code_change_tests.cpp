@@ -3,9 +3,17 @@
  * changes: the writer stores the code and then a flag, and a processor that
  * saw the flag and then executes a serializing instruction runs the new
  * code. The runtime hands an engine the address space's code changes only
- * between runs, so IRET, a serializing instruction user code has, ends the
- * run. Here the load of a flag stands for another vCPU, which rewrites the
- * function and leaves its change for the next run's hand-over.
+ * between runs, so
+ *
+ * - a store into code that a translation holds publishes the change only
+ *   once the store has landed: another vCPU that took the publication and
+ *   translated the code again in between would keep the old bytes with
+ *   nothing left to tell it. The address space here records the bytes of
+ *   the function at every publication, for a plain store, a locked one and
+ *   a repeated one;
+ * - IRET, a serializing instruction user code has, ends the run. Here the
+ *   load of a flag stands for another vCPU, which rewrites the function and
+ *   leaves its change for the next run's hand-over.
  *
  * Each case calls a function "mov $1, %eax; ret" so the engine translates
  * it, changes it to return 2, calls it again and makes a system call, at
@@ -55,6 +63,10 @@ public:
 	 * vCPU would, and leaves the change for the next hand-over. */
 	bool change_at_flag{};
 	bool change_pending{};
+	/* Each publication of a change to the function's page, and whether the
+	 * function already returned 2 when it was made. */
+	unsigned publications{};
+	unsigned early_publications{};
 
 	[[nodiscard]] bool read(std::uint64_t address,
 		std::span<std::byte> destination) override
@@ -99,6 +111,15 @@ public:
 	{
 		const auto page = address & ~(page_size - 1);
 		return page == code_page || page == function_page;
+	}
+
+	void invalidate_code(std::uint64_t address) override
+	{
+		if ((address & ~(page_size - 1)) != function_page)
+			return;
+		++publications;
+		if (function_[1] != std::byte{2})
+			++early_publications;
 	}
 
 private:
@@ -201,6 +222,26 @@ void test_serializing(std::string_view name, unsigned long generation,
 		static_cast<unsigned long long>(eax), runs);
 }
 
+/* The program's own store into the function. */
+void test_store(std::string_view name, unsigned long generation,
+	std::initializer_list<std::uint8_t> program)
+{
+	Memory memory{program};
+	unsigned runs = 0;
+	bool finished = false;
+	const auto eax = run_to_system_call(memory, generation, runs, finished);
+	expect(finished, name, "the program did not reach its system call");
+	expect(memory.publications != 0, name, "the store published no change");
+	expect(memory.early_publications == 0, name,
+		"a change was published before its store landed");
+	expect(eax == 2, name, "the call after the store ran the old code");
+	std::printf("%s %.*s: eax=%llu publications=%u early=%u\n",
+		memory.early_publications == 0 && eax == 2 ? "ok" : "FAIL",
+		static_cast<int>(name.size()), name.data(),
+		static_cast<unsigned long long>(eax), memory.publications,
+		memory.early_publications);
+}
+
 } // namespace
 
 int main()
@@ -210,11 +251,26 @@ int main()
 		std::puts("SKIP the x86-64 JIT cannot run on this host");
 		return 0;
 	}
+	/* mov $0x11000, %esi; call *%rsi; movb $2, 1(%rsi); call *%rsi;
+	 * syscall */
+	test_store("store", 1, {0xbe, 0x00, 0x10, 0x01, 0x00, 0xff, 0xd6, 0xc6,
+		0x46, 0x01, 0x02, 0xff, 0xd6, 0x0f, 0x05});
+	/* The same with movl $2, 1(%rsi), four bytes across the immediate. */
+	test_store("store-4", 2, {0xbe, 0x00, 0x10, 0x01, 0x00, 0xff, 0xd6, 0xc7,
+		0x46, 0x01, 0x02, 0x00, 0x00, 0x00, 0xff, 0xd6, 0x0f, 0x05});
+	/* The same with lock xorb $3, 1(%rsi). */
+	test_store("locked", 3, {0xbe, 0x00, 0x10, 0x01, 0x00, 0xff, 0xd6, 0xf0,
+		0x80, 0x76, 0x01, 0x03, 0xff, 0xd6, 0x0f, 0x05});
+	/* The same with lea 1(%rsi), %rdi; mov $2, %eax; mov $1, %ecx; cld;
+	 * rep stosb. */
+	test_store("rep-stosb", 4, {0xbe, 0x00, 0x10, 0x01, 0x00, 0xff, 0xd6, 0x48,
+		0x8d, 0x7e, 0x01, 0xb8, 0x02, 0x00, 0x00, 0x00, 0xb9, 0x01, 0x00, 0x00,
+		0x00, 0xfc, 0xf3, 0xaa, 0xff, 0xd6, 0x0f, 0x05});
 	/* mov $0x11000, %esi; call *%rsi; mov 0x20000, %ebx; mov %ss, %eax;
 	 * push %rax; push %rsp; addq $8, (%rsp); pushfq; mov %cs, %eax;
 	 * push %rax; lea 1f(%rip), %rax; push %rax; iretq; 1: call *%rsi;
 	 * syscall */
-	test_serializing("iret", 1, {0xbe, 0x00, 0x10, 0x01, 0x00, 0xff, 0xd6,
+	test_serializing("iret", 5, {0xbe, 0x00, 0x10, 0x01, 0x00, 0xff, 0xd6,
 		0x8b, 0x1c, 0x25, 0x00, 0x00, 0x02, 0x00, 0x8c, 0xd0, 0x50, 0x54,
 		0x48, 0x83, 0x04, 0x24, 0x08, 0x9c, 0x8c, 0xc8, 0x50, 0x48, 0x8d,
 		0x05, 0x03, 0x00, 0x00, 0x00, 0x50, 0x48, 0xcf, 0xff, 0xd6, 0x0f,

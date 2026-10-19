@@ -294,6 +294,10 @@ struct Space final {
 	 * holds while this thread holds the split-operand lock. */
 	std::uint64_t split_address{};
 	std::size_t split_size{};
+	/* The locked operand in guest code whose change the COMMIT call after
+	 * its op publishes (Embedder.PublishAfter). */
+	std::uint64_t publish_address{};
+	std::size_t publish_size{};
 	/* The dispatch ended at a fault of a gather element. */
 	bool gather_fault{};
 	/* The guest address of the last code fetch this dispatch found no
@@ -614,6 +618,43 @@ void record_code_write(Core::CpuStateFrame &frame, ExitAt at) noexcept
 	record_exit(frame, at);
 }
 
+/* Makes a store whose bytes the cold path put in the bounce buffer
+ * (Core::EMBEDDER_ACCESS_VALUE), as its own instruction would: after every
+ * access before it, which an ordered space's release store promises and an
+ * unordered space loses nothing by, and in one access where x86 makes it
+ * single-copy atomic. */
+void store_from_bounce(std::byte *to, const std::byte *from, std::size_t size) noexcept
+{
+	std::atomic_thread_fence(std::memory_order_release);
+	std::uint64_t low{};
+	std::uint64_t high{};
+	std::memcpy(&low, from, std::min<std::size_t>(size, 8));
+	if (size > 8)
+		std::memcpy(&high, from + 8, std::min<std::size_t>(size - 8, 8));
+	switch (size) {
+	case 1:
+		__asm__ volatile("strb %w1, [%0]" : : "r"(to), "r"(low) : "memory");
+		return;
+	case 2:
+		__asm__ volatile("strh %w1, [%0]" : : "r"(to), "r"(low) : "memory");
+		return;
+	case 4:
+		__asm__ volatile("str %w1, [%0]" : : "r"(to), "r"(low) : "memory");
+		return;
+	case 8:
+		__asm__ volatile("str %1, [%0]" : : "r"(to), "r"(low) : "memory");
+		return;
+	case 16:
+		/* FEAT_LSE2, which the engine requires, makes it single-copy
+		 * atomic when aligned, as x86 does an aligned SSE store. */
+		__asm__ volatile("stp %1, %2, [%0]" : : "r"(to), "r"(low), "r"(high) : "memory");
+		return;
+	default:
+		std::memcpy(to, from, size);
+		return;
+	}
+}
+
 /* A locked operand across a 16-byte granule, which no exclusive access
  * covers: as in the gadget engine, an ordinary load and store under the
  * process-wide split-operand lock, which makes it atomic against every other
@@ -625,6 +666,12 @@ uintptr_t split_operand(Core::CpuStateFrame &frame, Space &space, GuestAddressSp
 	std::uint64_t address, std::size_t size, std::uint64_t info, ExitAt at)
 {
 	auto *bounce = reinterpret_cast<std::byte *>(frame.Embedder.Bounce);
+	/* The op ran on the operand itself, in guest code, and has landed. */
+	if ((info & Core::EMBEDDER_ACCESS_COMMIT) != 0 && frame.Embedder.PublishAfter != 0) {
+		frame.Embedder.PublishAfter = 0;
+		space.engine->publish_code_write(space, space.publish_address, space.publish_size);
+		return 1;
+	}
 	if ((info & Core::EMBEDDER_ACCESS_COMMIT) != 0) {
 		const auto stored = space.split_address;
 		const auto length = space.split_size;
@@ -713,7 +760,9 @@ uintptr_t translate_miss(Core::CpuStateFrame *frame, std::uint64_t address, std:
 			return reinterpret_cast<uintptr_t>(pointer);
 		}
 		/* A page some translator holds code for never gets a write entry,
-		 * so each store to it comes here and publishes before it lands. The
+		 * so each store to it comes here and publishes once it has landed:
+		 * a vCPU that took a publication made before the store and
+		 * translated the page again would keep the old bytes. The
 		 * registry is shared with the other vCPUs, one of which may be
 		 * adding this very page, so the entry is settled like a sequence
 		 * lock: fill, then re-read the change count, and take the entry
@@ -726,10 +775,27 @@ uintptr_t translate_miss(Core::CpuStateFrame *frame, std::uint64_t address, std:
 					record_code_write(*frame, at);
 					return 0;
 				}
-				/* The load of a read-modify-write publishes nothing: its
-				 * store comes here again. */
-				if (store || atomic)
+				/* A store the cold path left in the bounce buffer lands
+				 * here, and the store's own code then writes the bounce
+				 * buffer again. */
+				if ((info & Core::EMBEDDER_ACCESS_VALUE) != 0) {
+					store_from_bounce(pointer, reinterpret_cast<std::byte *>(frame->Embedder.Bounce), size);
 					engine.publish_code_write(space, address, size);
+					return reinterpret_cast<uintptr_t>(frame->Embedder.Bounce);
+				}
+				/* A locked op runs on the operand in the cold path, whose
+				 * COMMIT call then publishes. */
+				if (atomic) {
+					space.publish_address = address;
+					space.publish_size = size;
+					frame->Embedder.PublishAfter = 1;
+					return reinterpret_cast<uintptr_t>(pointer);
+				}
+				/* The load of a read-modify-write publishes nothing: its
+				 * store comes here again. Every store's own access hands
+				 * over its bytes, so a write access without them is a
+				 * probe, which stores nothing (CLZERO, which would be
+				 * another, is not decoded). */
 				return reinterpret_cast<uintptr_t>(pointer);
 			}
 			std::atomic_ref<std::uint64_t>{entry.WriteDelta}.store(delta, std::memory_order_relaxed);
@@ -1035,8 +1101,6 @@ std::uint64_t run_string(Core::CpuStateFrame *frame, Space &space, const Core::E
 			return fail(backward ? dest_address : low_dest, MemoryAccess::write);
 		if (store_ends_unit(space, memory, low_dest, bytes))
 			return code_write();
-		if (space.stores_publish(memory, low_dest))
-			engine.publish_code_write(space, low_dest, bytes);
 		if (copy) {
 			const auto low_src = backward ? src_address + element - bytes : src_address;
 			auto *src = memory.atomic_pointer(low_src, bytes, MemoryAccess::read);
@@ -1060,6 +1124,9 @@ std::uint64_t run_string(Core::CpuStateFrame *frame, Space &space, const Core::E
 			for (std::uint64_t index = 0; index < chunk; ++index)
 				std::memcpy(dest + index * element, value.data(), element);
 		}
+		/* Published once the elements have landed. */
+		if (space.stores_publish(memory, low_dest))
+			engine.publish_code_write(space, low_dest, bytes);
 		const auto step = static_cast<std::int64_t>(bytes);
 		op.Dest += backward ? -step : step;
 		if (copy)
@@ -1690,6 +1757,7 @@ JitRunResult FexEngine::dispatch(CpuState &cpu, GuestAddressSpace &memory, const
 	frame->Embedder.X87Raised = 0;
 	frame->Embedder.FaultAddress = 0;
 	frame->Embedder.FaultAccess = 0;
+	frame->Embedder.PublishAfter = 0;
 	frame->SynchronousFaultData = {};
 	space->gather_fault = false;
 	space->fetch_fault.reset();
