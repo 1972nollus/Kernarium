@@ -548,7 +548,17 @@ released and no guest `PM: suspend entry`, the guest's own progress (a probe
 counting work) continuing through the whole stay, and the window on screen
 showing the guest's display. Returning must stop the window, drop the mirror to
 its trickle, and leave the guest display rendering; closing the window while
-still in the background must quiesce the guest, and the return must resume it. To check the restart notice, background the
+still in the background must quiesce the guest, and the return must resume it,
+and tapping the window's return button must come back with the guest
+uninterrupted. Springboard exposes the window as `PIP-SBInteractionPassThroughView`;
+its close and return buttons appear only after a tap on the window and fade
+within about three seconds, so tap the window and then the button in quick
+succession. `KERNARIUM_BACKGROUND_THROTTLE=0` keeps the vCPUs at full priority
+for a comparison, and with `KERNARIUM_FOOTPRINT_LOG_MS` set the footprint lines
+carry the process's CPU time, estimated energy, and performance-core time, from
+which the guest's rate, core use, and power in the window follow.
+
+To check the restart notice, background the
 application, terminate its process with `devicectl device process terminate`,
 and launch it again: the console reports that the previous process ended in
 the background and the guest display carries the dismissible Guest Restarted
