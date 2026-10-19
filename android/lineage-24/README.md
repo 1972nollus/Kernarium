@@ -252,9 +252,7 @@ SurfaceFlinger reconnects once at the new size with no headless step between.
 between two quick reconnects names an active mode its own list lacks, which
 otherwise crashes `system_server`. Density stays at its launch value. The
 touchscreen's absolute range stays the launch pixel size, and the host maps the
-view into it linearly, so touch stays exact at a coarser resolution. Release
-`20261017-los24-r2` predates both routes: until the next signed release is
-accepted, its display keeps its boot resolution.
+view into it linearly, so touch stays exact at a coarser resolution.
 
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under
