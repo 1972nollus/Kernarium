@@ -37,6 +37,8 @@ struct BackgroundControllerTests {
         var calls: [String] = []
         var pictureInPictureCanStart = false
         var pictureInPictureActive = false
+        var jobActive = false
+        var guestIsAndroid = false
         var deadlines: [Deadline] = []
 
         func holdGuestGPU() { calls.append("hold") }
@@ -54,6 +56,7 @@ struct BackgroundControllerTests {
         func setBackgroundThrottle(_ enabled: Bool) {
             calls.append("throttle \(enabled ? "on" : "off")")
         }
+        func pressPowerKey() { calls.append("power") }
         func stopPictureInPicture() { calls.append("stop pip") }
         func keepScheduled(named name: String) -> any BackgroundCancellable {
             calls.append("begin \(name)")
@@ -73,6 +76,141 @@ struct BackgroundControllerTests {
                 deadline.action()
             }
         }
+    }
+
+    @Test
+    func aJobKeepsTheGuestRunningWithTheGPUHeld() {
+        let effects = Effects()
+        effects.jobActive = true
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        // iOS gives a continued task no GPU, so it is never released.
+        #expect(effects.calls == ["hold", "flush", "trim on"])
+        #expect(policy.phase == .jobRunning)
+
+        policy.willEnterForeground()
+        #expect(effects.calls.suffix(2) == ["trim off", "release"])
+        #expect(!effects.calls.contains("resume"))
+        #expect(!effects.calls.contains { $0.hasPrefix("throttle") })
+        #expect(policy.phase == .foreground)
+    }
+
+    @Test
+    func anAndroidJobTurnsTheScreenOffAndOnAgain() {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.guestIsAndroid = true
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        #expect(effects.calls == ["hold", "flush", "trim on", "power"])
+
+        // The screen comes on after the GPU is back, so it can be drawn.
+        policy.willEnterForeground()
+        #expect(effects.calls.suffix(3) == ["trim off", "release", "power"])
+    }
+
+    @Test
+    func anAndroidJobThatEndedTurnsTheScreenOnAfterTheResume() {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.guestIsAndroid = true
+        let policy = controller(.keepRunning, effects)
+        policy.didEnterBackground()
+        policy.jobDidEnd()
+        effects.calls.removeAll()
+
+        policy.willEnterForeground()
+        #expect(effects.calls == ["release", "resume", "power"])
+    }
+
+    @Test
+    func aGuestThatIsNotAndroidIsNeverSentThePowerKey() {
+        let effects = Effects()
+        effects.jobActive = true
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        policy.willEnterForeground()
+        #expect(!effects.calls.contains("power"))
+    }
+
+    @Test
+    func anAndroidGuestThatPausesKeepsItsScreen() {
+        let effects = Effects()
+        effects.guestIsAndroid = true
+        let policy = controller(.off, effects)
+
+        policy.didEnterBackground()
+        policy.willEnterForeground()
+        #expect(!effects.calls.contains("power"))
+    }
+
+    @Test
+    func aKeepRunningGuestWithNoJobPausesLikeAnyOther() {
+        let effects = Effects()
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        #expect(effects.calls == ["hold", "quiesce background"])
+        #expect(policy.phase == .quiesced)
+    }
+
+    @Test
+    func aJobThatEndsInTheBackgroundPausesTheGuestAndReturnResumesIt() {
+        let effects = Effects()
+        effects.jobActive = true
+        let policy = controller(.keepRunning, effects)
+        policy.didEnterBackground()
+        effects.calls.removeAll()
+
+        policy.jobDidEnd()
+        #expect(effects.calls == ["trim off", "quiesce job ended"])
+        #expect(policy.phase == .quiesced)
+
+        policy.willEnterForeground()
+        #expect(effects.calls.suffix(2) == ["release", "resume"])
+        #expect(policy.phase == .foreground)
+    }
+
+    @Test
+    func aJobThatEndsInTheForegroundChangesNothing() {
+        let effects = Effects()
+        effects.jobActive = true
+        let policy = controller(.keepRunning, effects)
+
+        policy.jobDidEnd()
+        #expect(effects.calls.isEmpty)
+        #expect(policy.phase == .foreground)
+    }
+
+    @Test
+    func aJobDoesNotKeepAGuestThatChoseTheWindow() {
+        let effects = Effects()
+        effects.jobActive = true
+        let policy = controller(.off, effects)
+
+        policy.didEnterBackground()
+        #expect(effects.calls == ["hold", "quiesce background"])
+    }
+
+    /// What reached the runtime's page-cache trimming switch, from any thread.
+    private nonisolated final class TrimmingSwitch: @unchecked Sendable {
+        private let lock = NSLock()
+        private var settings: [Int32] = []
+        private var onMainThread = false
+
+        func set(_ enabled: Int32) -> Int32 {
+            lock.withLock {
+                settings.append(enabled)
+                onMainThread = onMainThread || Thread.isMainThread
+            }
+            return 0
+        }
+
+        var received: [Int32] { lock.withLock { settings } }
+        var reachedOnMainThread: Bool { lock.withLock { onMainThread } }
     }
 
     private func controller(
@@ -121,6 +259,25 @@ struct BackgroundControllerTests {
         #expect(effects.calls.suffix(2) == ["throttle off", "trim off"])
         #expect(!effects.calls.contains("resume"))
         #expect(policy.phase == .foreground)
+    }
+
+    /// The application's effects pass the policy's trimming edges to the
+    /// runtime, in order and away from the main thread, since the switch may
+    /// wait for the guest's console.
+    @Test
+    func theTrimmingEdgesReachTheRuntimeOffTheMainThread() async throws {
+        let runtime = TrimmingSwitch()
+        let effects = SystemBackgroundEffects(
+            persistence: .shared,
+            pictureInPicture: nil,
+            pageCacheTrimming: { runtime.set($0) }
+        )
+
+        effects.setPageCacheTrimming(true)
+        effects.setPageCacheTrimming(false)
+        #expect(try await eventually { runtime.received.count == 2 })
+        #expect(runtime.received == [1, 0])
+        #expect(!runtime.reachedOnMainThread)
     }
 
     @Test
@@ -289,6 +446,27 @@ struct BackgroundControllerTests {
             environment: [BackgroundSettings.environmentKey: "someday"]
         )
         #expect(unknown.mode(forGuest: "android.kern") == .off)
+
+        // A job's time is the guest's choice, a default otherwise, and
+        // automation can force one for a launch.
+        #expect(settings.limitMinutes(forGuest: "kde.erofs") == 30)
+        settings.setLimitMinutes(120, forGuest: "kde.erofs")
+        #expect(settings.limitMinutes(forGuest: "kde.erofs") == 120)
+        #expect(settings.limitMinutes(forGuest: "android.kern") == 30)
+        settings.setLimitMinutes(30, forGuest: "kde.erofs")
+        #expect(settings.limitMinutes(forGuest: "kde.erofs") == 30)
+        defaults.set(0, forKey: BackgroundSettings.limitKeyPrefix + "bad")
+        #expect(settings.limitMinutes(forGuest: "bad") == 30)
+        let short = BackgroundSettings(
+            defaults: defaults,
+            environment: [BackgroundSettings.limitEnvironmentKey: "2"]
+        )
+        #expect(short.limitMinutes(forGuest: "kde.erofs") == 2)
+        let nonsense = BackgroundSettings(
+            defaults: defaults,
+            environment: [BackgroundSettings.limitEnvironmentKey: "-5"]
+        )
+        #expect(nonsense.limitMinutes(forGuest: "kde.erofs") == 30)
 
         // A kept guest is throttled unless automation turns that off.
         #expect(settings.throttlesKeptGuest)

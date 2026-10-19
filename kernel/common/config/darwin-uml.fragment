@@ -2,7 +2,7 @@
 # The Darwin UML kernel policy every maintained kernel line shares.
 #
 # Each line's build-kernel.sh copies this file verbatim as the starting
-# .config, applies the line's overlay and a page-size fragment through
+# .config, applies the line's overlay and the 4 KiB page fragment through
 # kernel/common/tooling/config-fragments.sh, and runs `olddefconfig` so every
 # unlisted symbol takes its Kconfig default. The overlays,
 # kernel/mainline-6.18/config/mainline.fragment and
@@ -459,13 +459,10 @@ CONFIG_DEBUG_FS=y
 
 # --- Kernel build policy ----------------------------------------------------
 # Darwin resumes each stackful UML task on one of the fixed vCPU carriers, and
-# the page profile selects the order that produces a 128 KiB task stack. As a
-# physically contiguous order-3 allocation on the 16 KiB profile that pinned
-# roughly 176 MiB of the zone in unmovable blocks on a booted Android guest and
-# fragmented the buddy allocator past what compaction could recover: 147 MiB
-# free and 2.6 GiB MemAvailable with no free block at order 3 or above, 188 of
-# 230 compaction attempts failing, and six global OOM kills of healthy
-# applications.
+# the page fragment selects the order that produces a 128 KiB task stack. A
+# physically contiguous allocation per task pinned unmovable blocks on a booted
+# Android guest and fragmented the buddy allocator past what compaction could
+# recover, with global OOM kills of healthy applications.
 #
 # Virtually mapped stacks are backed by order-0 pages and remove the
 # contiguity requirement entirely. The stacks stay 128 KiB. This needs the

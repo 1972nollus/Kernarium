@@ -35,7 +35,6 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  arch/um/include/asm/Kbuild              |  1 -
  arch/um/include/asm/compat.h            | 40 +++++++++++++++++++++
  arch/um/include/asm/pgtable-2level.h    |  3 +-
- arch/um/include/asm/pgtable-3level.h    |  3 +-
  arch/um/include/asm/pgtable-4level.h    |  3 +-
  arch/um/include/asm/processor-generic.h | 33 ++++++++++++++++++
  arch/um/include/asm/ptrace-generic.h    |  8 +++++
@@ -43,7 +42,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  arch/um/kernel/process.c                |  2 +-
  arch/um/kernel/signal.c                 | 13 +++++--
  arch/um/kernel/skas/syscall.c           | 46 ++++++++++++++++++++-----
- 11 files changed, 142 insertions(+), 16 deletions(-)
+ 10 files changed, 140 insertions(+), 15 deletions(-)
  create mode 100644 arch/um/include/asm/compat.h
 
 diff --git a/arch/um/include/asm/Kbuild b/arch/um/include/asm/Kbuild
@@ -117,20 +116,6 @@ index 14ec16f92ce4086eafa5ca774f52c79df2b0b88c..10464cc3488b63b51a02c7100bb38ed9
  #define PTRS_PER_PGD	1024
  
  #define pte_ERROR(e) \
-diff --git a/arch/um/include/asm/pgtable-3level.h b/arch/um/include/asm/pgtable-3level.h
-index 277e84d1866403690341e16db6d5f04fa152b74d..cd1506dd3ada3f60bf4c10498d86bd7dafb97680 100644
---- a/arch/um/include/asm/pgtable-3level.h
-+++ b/arch/um/include/asm/pgtable-3level.h
-@@ -22,7 +22,8 @@
- #define PTRS_PER_PMD	(1U << UML_PGTABLE_SHIFT)
- #define PTRS_PER_PGD	(1U << UML_PGTABLE_SHIFT)
- 
--#define USER_PTRS_PER_PGD ((TASK_SIZE + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
-+/* The page directory spans the largest task, not the current one. */
-+#define USER_PTRS_PER_PGD ((task_size + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
- 
- #define pte_ERROR(e) \
- 	printk("%s:%d: bad pte %p(%016lx).\n", __FILE__, __LINE__, &(e), \
 diff --git a/arch/um/include/asm/pgtable-4level.h b/arch/um/include/asm/pgtable-4level.h
 index 17649aefd6922012de5f30349361bf2dc50466e7..a575316839b60ae0d3e8cce5a034e9ff6547d3d4 100644
 --- a/arch/um/include/asm/pgtable-4level.h

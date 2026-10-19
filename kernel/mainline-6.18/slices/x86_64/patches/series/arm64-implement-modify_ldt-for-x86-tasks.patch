@@ -341,10 +341,10 @@ index fdc3e28675372640fbebb31155b25a035b021209..a7d76b1c5499420064308406731c8e40
  	struct mutex turnstile;
  
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index 13f2eaeace5580412e99238e330d2057baa9477d..53298c3c4a537c13eb428b803452ee3f678c6ff8 100644
+index 83f7e9f5c45274d2fd1282a1e5b998a3582cc1a4..bdc2f2a8e3b06dd0b99526f398b991e01af9722b 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
-@@ -58,6 +58,7 @@ extern void do_uml_exitcalls(void);
+@@ -69,6 +69,7 @@ extern void do_uml_exitcalls(void);
  extern int __uml_cant_sleep(void);
  extern int get_current_pid(void);
  extern int current_is_x86_32_userspace(void);
@@ -353,10 +353,10 @@ index 13f2eaeace5580412e99238e330d2057baa9477d..53298c3c4a537c13eb428b803452ee3f
  extern char *uml_strdup(const char *string);
  int uml_need_resched(void);
 diff --git a/arch/um/kernel/skas/mmu_darwin.c b/arch/um/kernel/skas/mmu_darwin.c
-index 5cdb82ff3fe1baa7bd8343401e926945058a610c..941a385bd847d8df7dc4e9e84989b1c400a0dd8c 100644
+index 7a70e528b66dd95c7102ff2f8bc335907c18c985..2a704fcdc2dc64f45e6d1fbe8e47da133e3e9c16 100644
 --- a/arch/um/kernel/skas/mmu_darwin.c
 +++ b/arch/um/kernel/skas/mmu_darwin.c
-@@ -123,7 +123,11 @@ int arch_dup_mmap(struct mm_struct *oldmm, struct mm_struct *mm)
+@@ -119,7 +119,11 @@ int arch_dup_mmap(struct mm_struct *oldmm, struct mm_struct *mm)
  {
  	if (READ_ONCE(oldmm->context.darwin_maps_shared) && maps_shared(mm))
  		WRITE_ONCE(mm->context.darwin_maps_shared, 1);
@@ -368,7 +368,7 @@ index 5cdb82ff3fe1baa7bd8343401e926945058a610c..941a385bd847d8df7dc4e9e84989b1c4
  }
  #endif
  
-@@ -155,6 +159,10 @@ int init_new_context(struct task_struct *task, struct mm_struct *mm)
+@@ -151,6 +155,10 @@ int init_new_context(struct task_struct *task, struct mm_struct *mm)
  #ifdef CONFIG_UML_DARWIN_MM_SHARED
  	mm->context.darwin_maps_shared = 0;
  	atomic_set(&mm->context.darwin_ring_pins, 0);
@@ -379,7 +379,7 @@ index 5cdb82ff3fe1baa7bd8343401e926945058a610c..941a385bd847d8df7dc4e9e84989b1c4
  #endif
  	id->stack = 0;
  	id->sock = -1;
-@@ -174,4 +182,7 @@ void destroy_context(struct mm_struct *mm)
+@@ -170,4 +178,7 @@ void destroy_context(struct mm_struct *mm)
  		      id->darwin_generation);
  	id->darwin_context = NULL;
  	id->pid = -1;

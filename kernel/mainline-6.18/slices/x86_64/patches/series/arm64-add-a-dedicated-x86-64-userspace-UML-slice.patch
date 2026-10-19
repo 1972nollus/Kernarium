@@ -57,10 +57,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 arch/arm64/um/x86_syscall_tables.c
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 8ae0a8f55de94ab387b78a80cb16c0372a31eefc..2cad8a5b2cb68ded8c1c9ab1dded637a1b113af3 100644
+index e195e71dc38a3774ed660e4f7b722f6fe50705da..d2b7d4874a237154ad994c0f6689733579948c5e 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -22,17 +22,29 @@ config UML_ARM64
+@@ -22,16 +22,28 @@ config UML_ARM64
  	select UML_SUBARCH_SUPPORTS_SMP
  
  # Every arm64 task carries SME registers in its Darwin bridge tail, and gets
@@ -84,8 +84,7 @@ index 8ae0a8f55de94ab387b78a80cb16c0372a31eefc..2cad8a5b2cb68ded8c1c9ab1dded637a
  # Every arm64 task may run AArch32 code (armhf and Android's armeabi-v7a) as
  # arm64 Linux's COMPAT does, once the host's engine implements it.  Until
  # then the compat HWCAPs read zero, a 32-bit executable gets ENOEXEC and
- # personality(PER_LINUX32) fails.  Unlike native arm64, the 16 KiB profile
- # enables it: only executables whose segments are congruent to 16 KiB run.
+ # personality(PER_LINUX32) fails.
 +# The x86-64 slice has no arm64 userspace.
  config UML_ARM64_AARCH32
 -	def_bool y
@@ -2813,7 +2812,7 @@ index 0000000000000000000000000000000000000000..eee25b1ba9e6fc18f88a0f1312f76d25
 +#undef __SYSCALL
 +#undef __SYSCALL_NORETURN
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
-index 569087bb751aa14d8d82c16e238269032e2e7498..758554ad78c1aa7901a04ddd4226c90d32dfc596 100644
+index 29228c4941558ab2d4a5153991642c4659552891..7309390f6599b61ed734ea54fca2f9413e6721ac 100644
 --- a/arch/um/include/asm/pgtable.h
 +++ b/arch/um/include/asm/pgtable.h
 @@ -8,6 +8,11 @@

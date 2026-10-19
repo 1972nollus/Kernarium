@@ -22,25 +22,30 @@ unwired. One bit per 32-page chunk records what the host holds, and the
 hook costs the allocation fast path one load once every chunk is
 committed.
 
+Reporting hands each free list over a sixteenth at a time, two seconds
+apart, so a large release reaches the host over half a minute.
+uml_physmem_release_free() runs it at once, pass after pass, for a
+caller about to let the host stop scheduling the guest.
+
 This adds darwin_uml_physmem_release() and darwin_uml_physmem_commit()
 to the bridge, version 12.
 ---
- arch/um/include/asm/page.h                  |  11 ++
+ arch/um/include/asm/page.h                  |  13 ++
  arch/um/include/shared/os.h                 |   4 +
  arch/um/kernel/mem.c                        |   2 +
- arch/um/kernel/physmem.c                    | 199 ++++++++++++++++++++
- arch/um/os-Darwin/mem.c                     |  24 +++
+ arch/um/kernel/physmem.c                    | 242 ++++++++++++++++++++
+ arch/um/os-Darwin/mem.c                     |  24 ++
  arch/um/os-Darwin/skas/process.c            |   4 +-
  arch/um/os-Darwin/uml_darwin_abi.h          |   4 +-
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   4 +-
  arch/um/os-Darwin/uml_darwin_memory.h       |   9 +
- 9 files changed, 255 insertions(+), 6 deletions(-)
+ 9 files changed, 300 insertions(+), 6 deletions(-)
 
 diff --git a/arch/um/include/asm/page.h b/arch/um/include/asm/page.h
-index 6f54254aaf443d0420bc02e6e67e3285ce99c68e..c1ad6f1a4e249a8d8ec07e4260352c462cbc3ce6 100644
+index 6f54254aaf443d0420bc02e6e67e3285ce99c68e..74ffbeb857a75e2f670033d24906f300a875cd7c 100644
 --- a/arch/um/include/asm/page.h
 +++ b/arch/um/include/asm/page.h
-@@ -15,6 +15,17 @@
+@@ -15,6 +15,19 @@
  
  struct page;
  
@@ -50,9 +55,11 @@ index 6f54254aaf443d0420bc02e6e67e3285ce99c68e..c1ad6f1a4e249a8d8ec07e4260352c46
 +void arch_alloc_page(struct page *page, int order);
 +void uml_physmem_commit_init(void);
 +void uml_physmem_commit_reserved(void);
++unsigned long uml_physmem_release_free(void);
 +#else
 +static inline void uml_physmem_commit_init(void) { }
 +static inline void uml_physmem_commit_reserved(void) { }
++static inline unsigned long uml_physmem_release_free(void) { return 0; }
 +#endif
 +
  #include <linux/pfn.h>
@@ -74,10 +81,10 @@ index 8914ece2ca2d81399169f75c2c1aa0ca5851c374..1abe4b56b3ba15b32dbea0577976d1ef
  /* tlb.c */
  extern void report_enomem(void);
 diff --git a/arch/um/kernel/mem.c b/arch/um/kernel/mem.c
-index 94ab67fa3b6aca2c966b5ab8df6ad8ec54cd84f2..e2b7dd38000bebf08b907bfc21eabd75655f557d 100644
+index a8cd49bd5cc95f9ab038ab184b25766f1320a08c..bbd1872f3c26d629f54198b9309185196cd2f627 100644
 --- a/arch/um/kernel/mem.c
 +++ b/arch/um/kernel/mem.c
-@@ -90,10 +90,12 @@ void __init arch_mm_preinit(void)
+@@ -84,10 +84,12 @@ void __init arch_mm_preinit(void)
  	uml_reserved = brk_end;
  	min_low_pfn = PFN_UP(__pa(uml_reserved));
  	max_pfn = max_low_pfn;
@@ -91,10 +98,10 @@ index 94ab67fa3b6aca2c966b5ab8df6ad8ec54cd84f2..e2b7dd38000bebf08b907bfc21eabd75
  }
  
 diff --git a/arch/um/kernel/physmem.c b/arch/um/kernel/physmem.c
-index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..551df349835fdcfc22139481962fce15184f2bee 100644
+index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..140b50af8ea238e32614f2c1f340745343fa1246 100644
 --- a/arch/um/kernel/physmem.c
 +++ b/arch/um/kernel/physmem.c
-@@ -4,9 +4,12 @@
+@@ -4,10 +4,14 @@
   */
  
  #include <linux/module.h>
@@ -105,9 +112,11 @@ index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..551df349835fdcfc22139481962fce15
  #include <linux/pfn.h>
 +#include <linux/scatterlist.h>
  #include <linux/spinlock.h>
++#include <linux/workqueue.h>
  #include <asm/page.h>
  #include <asm/sections.h>
-@@ -342,6 +345,202 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
+ #include <as-layout.h>
+@@ -342,6 +346,244 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
  	max_low_pfn = min_low_pfn + (map_size >> PAGE_SHIFT);
  }
  
@@ -136,9 +145,9 @@ index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..551df349835fdcfc22139481962fce15
 + *
 + * Releases and commits cover whole chunks of 2^UML_PHYSMEM_CHUNK_ORDER pages,
 + * the minimum reporting order, so one bit per chunk records what the host
-+ * holds. The order is deliberately well below pageblock_order. A 16 KiB
-+ * profile makes a pageblock 32 MiB, and a busy guest rarely has a whole one
-+ * free; 512 KiB still amortizes one host call over 32 pages. A larger
++ * holds. The order is deliberately well below pageblock_order. A pageblock
++ * is 4 MiB, and a busy guest rarely has a whole one free; 128 KiB still
++ * amortizes one host call over 32 pages. A larger
 + * page_reporting.page_reporting_order= still works. A smaller one reports
 + * ranges this code leaves committed.
 + */
@@ -151,6 +160,10 @@ index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..551df349835fdcfc22139481962fce15
 +static unsigned long physmem_chunks;
 +static atomic_long_t physmem_uncommitted_chunks = ATOMIC_LONG_INIT(0);
 +static bool physmem_release_failed;
++static bool physmem_reporting;
++/* Ranges reporting has handed over, and chunks released, since boot. */
++static atomic_long_t physmem_reported_ranges = ATOMIC_LONG_INIT(0);
++static atomic_long_t physmem_released_chunks = ATOMIC_LONG_INIT(0);
 +
 +static void physmem_commit(unsigned long chunk, unsigned long count)
 +{
@@ -243,6 +256,7 @@ index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..551df349835fdcfc22139481962fce15
 +
 +	if (READ_ONCE(physmem_release_failed))
 +		return 0;
++	atomic_long_add(nents, &physmem_reported_ranges);
 +	for_each_sg(sgl, sg, nents, index) {
 +		unsigned long pfn = page_to_pfn(sg_page(sg));
 +		unsigned long pages = sg->length >> PAGE_SHIFT;
@@ -282,8 +296,10 @@ index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..551df349835fdcfc22139481962fce15
 +		 * allocation of them.
 +		 */
 +		for (; count; count--, chunk++) {
-+			if (!test_and_set_bit(chunk, physmem_uncommitted))
++			if (!test_and_set_bit(chunk, physmem_uncommitted)) {
 +				atomic_long_inc(&physmem_uncommitted_chunks);
++				atomic_long_inc(&physmem_released_chunks);
++			}
 +		}
 +	}
 +	return 0;
@@ -298,13 +314,48 @@ index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..551df349835fdcfc22139481962fce15
 +{
 +	int err = page_reporting_register(&uml_page_reporting);
 +
-+	if (err)
++	if (err) {
 +		pr_warn("Darwin free-page reporting unavailable (%d)\n", err);
-+	else
-+		pr_info("Darwin free-page reporting returns free guest memory to the host\n");
++		return 0;
++	}
++	WRITE_ONCE(physmem_reporting, true);
++	pr_info("Darwin free-page reporting returns free guest memory to the host\n");
 +	return 0;
 +}
 +late_initcall(uml_page_reporting_init);
++
++/* Bounds uml_physmem_release_free() on a guest that keeps freeing memory. */
++#define UML_PHYSMEM_RELEASE_PASSES 64
++
++/*
++ * Reporting hands each free list over a sixteenth at a time, two seconds
++ * apart, so what a large reclaim frees reaches the host over half a minute.
++ * A host about to stop scheduling the guest cannot wait that long, and a
++ * system suspend freezes the reporting work. This runs reporting now, pass
++ * after pass, until one finds nothing left to hand over, and returns the
++ * bytes the host took back.
++ */
++unsigned long uml_physmem_release_free(void)
++{
++	long released = atomic_long_read(&physmem_released_chunks);
++	long reported;
++	int pass;
++
++	if (!READ_ONCE(physmem_reporting))
++		return 0;
++	/* Pages in per-CPU lists are not on the free lists reporting reads. */
++	drain_all_pages(NULL);
++	for (pass = 0; pass < UML_PHYSMEM_RELEASE_PASSES; pass++) {
++		reported = atomic_long_read(&physmem_reported_ranges);
++		mod_delayed_work(system_freezable_wq, &uml_page_reporting.work, 0);
++		flush_delayed_work(&uml_page_reporting.work);
++		if (READ_ONCE(physmem_release_failed) ||
++		    atomic_long_read(&physmem_reported_ranges) == reported)
++			break;
++	}
++	return (unsigned long)(atomic_long_read(&physmem_released_chunks) -
++			       released) << (UML_PHYSMEM_CHUNK_ORDER + PAGE_SHIFT);
++}
 +#endif /* CONFIG_PAGE_REPORTING */
 +
  int phys_mapping(unsigned long phys, unsigned long long *offset_out)
@@ -343,7 +394,7 @@ index 182e71b7517618d359bdb9a25526d18c5dc7951c..12e4934ffda251dc11e4aaefde4bd645
 +	return 0;
 +}
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 605e4e25ab86e6a4b0e154940c88c8336f4cea8e..27bc8eb41e2550126d41139303b1de4f0554d795 100644
+index 801942709ede8f6e6bc96a31efc71a9f1b2d0aea..436487f38255638853bb73996d26e8edd3344d90 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -23,8 +23,8 @@
@@ -358,7 +409,7 @@ index 605e4e25ab86e6a4b0e154940c88c8336f4cea8e..27bc8eb41e2550126d41139303b1de4f
  _Static_assert(offsetof(struct uml_pt_regs, orig_x0) ==
  	      DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET,
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 8d524efff0cb5157eaf93303eddb82a18f89a65e..0880cdb2d1c2a263aea806575c082046f9f567bc 100644
+index 087c2c135ac056f8e28c9887278d638e82feaef6..bf40d80441b776417e83504ac732fcd5d7bb163b 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -121,8 +121,8 @@ struct darwin_uml_guest_fp_registers {

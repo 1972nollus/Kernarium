@@ -4,8 +4,9 @@ Kernel inputs are scoped by source family and version:
 
 - [`mainline-6.18/`](mainline-6.18/README.md) owns the maintained stable Linux
   source identity, generated Darwin patch series, configuration overlays,
-  standalone build, and accepted publications: the Linux 16 KiB/4 KiB and
-  x86_64 kernels, and the 4 KiB Android kernel built from the same tree.
+  standalone build, and accepted publications: the Linux arm64 and x86_64
+  kernels, and the Android kernel built from the same tree. Every guest page is
+  4 KiB.
 - [`common/`](common/README.md) owns only contracts deliberately shared between
   families, including the kernel configuration policy both overlays extend.
 - [`CMakeLists.txt`](CMakeLists.txt) imports accepted local artifacts for Apple

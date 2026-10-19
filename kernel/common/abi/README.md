@@ -55,8 +55,8 @@ For an intentional bridge declaration change:
 1. set the new version and the computed kernel fingerprint in `identity.env`;
 2. run `kernel/common/abi/sync.sh --kernel-source <replay>` and regenerate the
    kernel topic that carries the change; and
-3. rebuild and re-accept the four kernel artifacts (mainline arm64 16 KiB and
-   4 KiB, mainline x86_64 4 KiB, and Android arm64 4 KiB).
+3. rebuild and re-accept the three kernel artifacts (mainline arm64,
+   mainline x86_64, and Android arm64).
 
 A change to what a bridge declaration promises, with no change to its form,
 takes the same three steps with a new version and the unchanged fingerprint.
@@ -66,8 +66,7 @@ configure rejects an artifact whose identity differs from `identity.env`.
 
 `bridge_imports.py` owns the import policy. A kernel image imports exactly
 the declared `darwin_uml_*` functions, less those `import-policy.tsv` limits
-to 4 KiB pages (the native-shadow services) or to the arm64 slice, and never
-Darwin's process-wide `sigprocmask` or variadic `fcntl`. Every kernel build
-runs `bridge_imports.py --kernel-binary` on its image, the artifact verifier
-applies the same check to each bundle, and `--print-expected` lists the set
-for a page size and slice.
+to the arm64 slice, and never Darwin's process-wide `sigprocmask` or variadic
+`fcntl`. Every kernel build runs `bridge_imports.py --kernel-binary` on its
+image, the artifact verifier applies the same check to each bundle, and
+`--print-expected` lists the set for a slice.

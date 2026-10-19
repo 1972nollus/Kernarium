@@ -17,10 +17,12 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
-CHECKER_TIME_LIMIT_SECONDS = 30.0
+# Only a wedged checker may fail on time: a scan takes about ten seconds
+# alone and several times that at gate concurrency. The hard bounds are this
+# subprocess timeout and the test's own TIMEOUT.
+CHECKER_WEDGE_SECONDS = 120
 
 
 def require(condition: bool, message: str) -> None:
@@ -50,7 +52,7 @@ class Checker:
             stderr=subprocess.STDOUT,
             text=True,
             env=environment,
-            timeout=120,
+            timeout=CHECKER_WEDGE_SECONDS,
         )
 
 
@@ -438,17 +440,11 @@ def run_fixture(checker: Checker, directory: Path) -> None:
 
 def run_tree(checker: Checker, root: Path) -> None:
     for extra in ((), ("--no-denylist",)):
-        started = time.monotonic()
         result = checker.run("--source-root", str(root), *extra)
-        elapsed = time.monotonic() - started
         label = "generic rules" if extra else "default denylist discovery"
         require(
             result.returncode == 0,
             f"the tree has findings under the {label}:\n{result.stdout}",
-        )
-        require(
-            elapsed < CHECKER_TIME_LIMIT_SECONDS,
-            f"the {label} scan took {elapsed:.1f} s",
         )
 
 

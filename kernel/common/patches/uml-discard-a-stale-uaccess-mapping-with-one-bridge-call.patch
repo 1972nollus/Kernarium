@@ -47,7 +47,7 @@ index 2b1a007cd64b3197b25b8d994240e0bc28379237..7d8ca4414554983e5ebeb6ad61d6e3df
  extern int raw(int fd);
  extern void setup_machinename(char *machine_out);
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 72373f2d1d2412dfdb81f84a374c8c30795eb695..3c06ba294795ae3254c49f74e3c1c8b3aa1c8dd9 100644
+index 5b7882481c49540019fcddb189f68745fe048275..a5f518671df0c6e5d27c9eaa0a41bd9cfaa3879c 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -208,26 +208,20 @@ static struct page *maybe_map(unsigned long virt, int is_write)
@@ -85,7 +85,7 @@ index 72373f2d1d2412dfdb81f84a374c8c30795eb695..3c06ba294795ae3254c49f74e3c1c8b3
  #endif
  
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 40b8e125e76a0bfc89e841da59bcf3a7b9469625..0e448cc3248f89c168cffc6e75e64f5ed5e3391f 100644
+index ab48ecac887eca776291a8f864ef6c1ff9c823db..f6e861ad286af192f6f360a13dc97122c934a980 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -2,10 +2,10 @@

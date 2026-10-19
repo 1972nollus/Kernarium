@@ -35,7 +35,10 @@ uml_add_tooling_test(
     NAME kernel-git-source-preparer
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_materialize_git.sh
     LABELS kernel;dependency
-    TIMEOUT 30)
+    # It runs a few dozen git processes and takes seconds on a quiet host, but
+    # a gate at a load average of 80 starves each of them. The bound only
+    # catches a wedged materializer.
+    TIMEOUT 300)
 
 uml_add_tooling_test(
     NAME kernel-source-location-config

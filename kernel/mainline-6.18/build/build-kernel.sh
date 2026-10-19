@@ -24,7 +24,7 @@ usage()
 {
 	cat <<'EOF'
 Usage: kernel/mainline-6.18/build/build-kernel.sh \
-       --build PATH --page-size 16k|4k [--slice arm64|x86_64] [--jobs N]
+       --build PATH [--slice arm64|x86_64] [--jobs N]
        [--product linux|android] [--lockdep]
 
 The compiler, linker, make program, cross prefix, and tool overrides are
@@ -35,12 +35,11 @@ and the static libelf used for BTF come from UML_KERNEL_HOST_TOOLS_PREFIX
 dependencies/build-kernel-host-tools.sh); UML_KERNEL_PAHOLE may select another
 pahole v1.29 or newer.
 The configuration is the shared kernel/common/config/darwin-uml.fragment
-policy, then this line's overlay for the product, then a page-size fragment.
-The linux product (the default) uses config/mainline.fragment and supports the
-arm64 slice with 16 KiB and 4 KiB pages. The x86_64 userspace slice is 4 KiB
-only and applies its own config fragment after those. The android product uses
-config/android.fragment instead; it is the arm64 slice with 4 KiB pages only,
-and the build refuses a configuration that lacks a symbol of
+policy, then this line's overlay for the product, then the 4 KiB page
+fragment. The linux product (the default) uses config/mainline.fragment. The
+x86_64 userspace slice applies its own config fragment after those. The android
+product uses config/android.fragment instead; it is the arm64 slice only, and
+the build refuses a configuration that lacks a symbol of
 config/android-required-builtins.txt or has one of
 config/android-forbidden-options.txt. Its kernel is published in the
 android-6.18 artifact family.
@@ -56,7 +55,6 @@ EOF
 }
 
 BUILD_DIR=''
-PAGE_SIZE=''
 SLICE=arm64
 PRODUCT=linux
 LOCKDEP=0
@@ -75,11 +73,6 @@ while [ "$#" -gt 0 ]; do
 	--build)
 		[ "$#" -ge 2 ] || fail "--build requires a path"
 		BUILD_DIR=$2
-		shift 2
-		;;
-	--page-size)
-		[ "$#" -ge 2 ] || fail "--page-size requires 16k or 4k"
-		PAGE_SIZE=$2
 		shift 2
 		;;
 	--jobs)
@@ -110,35 +103,27 @@ done
 uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
 	fail "cannot select kernel slice: $SLICE"
 
-[ -n "$BUILD_DIR" ] && [ -n "$PAGE_SIZE" ] || {
+[ -n "$BUILD_DIR" ] || {
 	usage >&2
 	exit 2
 }
 [ -x "$SOURCE_LOCATION" ] || fail "missing source-location verifier: $SOURCE_LOCATION"
 SOURCE_DIR=$("$SOURCE_LOCATION" --require-source) ||
 	fail "kernel build requires a valid kernel/mainline-6.18/source-location.conf"
-case "$PAGE_SIZE" in
-16k|4k) ;;
-*) fail "--page-size must be 16k or 4k" ;;
-esac
 case "$PRODUCT" in
 linux)
 	PRODUCT_FRAGMENT="$CONFIG_DIR/mainline.fragment"
 	;;
 android)
-	# The Android product exists once: arm64, 4 KiB, no lock-checking probe.
+	# The Android product exists once: arm64, no lock-checking probe.
 	[ "$UML_KERNEL_SLICE" = arm64 ] ||
 		fail "the android product supports only the arm64 slice"
-	[ "$PAGE_SIZE" = 4k ] ||
-		fail "the android product supports only the 4k page profile"
 	[ "$LOCKDEP" -eq 0 ] ||
 		fail "--lockdep is not available for the android product"
 	PRODUCT_FRAGMENT="$CONFIG_DIR/android.fragment"
 	;;
 *) fail "--product must be linux or android" ;;
 esac
-[ "$UML_KERNEL_SLICE" != x86_64 ] || [ "$PAGE_SIZE" = 4k ] ||
-	fail "the x86_64 userspace slice supports only the 4k page profile"
 case "$UML_KERNEL_JOBS" in
 *[!0-9]*|'') fail "UML_KERNEL_JOBS must be a positive integer" ;;
 esac
@@ -272,12 +257,8 @@ run_make()
 		"LD=$UML_KERNEL_LD" "CROSS_COMPILE=$UML_KERNEL_CROSS_COMPILE" "$@"
 }
 
-case "$PAGE_SIZE" in
-16k) PAGE_FRAGMENT="$COMMON_ROOT/config/page-16k.fragment" ;;
-4k) PAGE_FRAGMENT="$COMMON_ROOT/config/page-4k.fragment" ;;
-esac
 set -- "$COMMON_ROOT/config/darwin-uml.fragment" "$PRODUCT_FRAGMENT" \
-	"$PAGE_FRAGMENT"
+	"$COMMON_ROOT/config/page-4k.fragment"
 if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
 	set -- "$@" "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
 fi
@@ -302,10 +283,10 @@ run_make -j"$UML_KERNEL_JOBS"
 [ -f "$BUILD_DIR/vmlinux" ] ||
 	fail "Kbuild completed without producing $BUILD_DIR/vmlinux"
 python3 -B "$COMMON_ROOT/abi/bridge_imports.py" \
-	--kernel-binary "$BUILD_DIR/vmlinux" --page-size "$PAGE_SIZE" \
+	--kernel-binary "$BUILD_DIR/vmlinux" \
 	--slice "$UML_KERNEL_SLICE"
 if [ "$(uname -s)" = Darwin ]; then
 	python3 "$COMMON_ROOT/tooling/verify-console-input.py" \
 		--source "$SOURCE_DIR" --build "$BUILD_DIR"
 fi
-printf '%s\n' "built $PRODUCT $UML_KERNEL_SLICE $PAGE_SIZE Darwin UML kernel: $BUILD_DIR/vmlinux"
+printf '%s\n' "built $PRODUCT $UML_KERNEL_SLICE 4k Darwin UML kernel: $BUILD_DIR/vmlinux"

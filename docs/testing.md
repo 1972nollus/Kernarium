@@ -518,6 +518,23 @@ approval rules, and failure modes are in
 `Kernarium/scripts/ipad-automation.py --help`. Keep all automation code in the
 test targets.
 
+### Window layout (device only)
+
+Window layout follows iPadOS windowing, which only a device has. Check it on
+an iPad whenever the layout of the guest view changes, under an iPad lease
+with the automation host and a guest running, in Full Screen Apps, Windowed
+Apps, and Stage Manager. The guest view's frame in the application's tree
+starts below the window controls (`window-controls:com.imxieyi.Kernarium` in
+SpringBoard's tree) and at the safe area where there are none. Change
+Multitasking under the running application with the Settings identifiers
+`com.apple.settings.multitaskingAndGestures.{fullScreenApps,windowedApps,
+stageManager}`, in both directions: the view moves at once, and Full Screen
+Apps gives the frame of a fresh launch. A zoomed window, the tiles and Slide
+Over of its Window menu resize the guest display: Android's `wm size` follows
+the view, a tap's raw touchscreen coordinates map to it (the range is fixed),
+and the console shows no lost GPU backend. Restore Full Screen Apps and check
+that its option is selected before releasing the lease.
+
 ### Background lifecycle (device only)
 
 What the application does as iOS backgrounds it cannot be tested on a host:
@@ -557,6 +574,18 @@ succession. `KERNARIUM_BACKGROUND_THROTTLE=0` keeps the vCPUs at full priority
 for a comparison, and with `KERNARIUM_FOOTPRINT_LOG_MS` set the footprint lines
 carry the process's CPU time, estimated energy, and performance-core time, from
 which the guest's rate, core use, and power in the window follow.
+
+To check the set-time job, choose the keep-running mode (or launch with
+`KERNARIUM_BACKGROUND_MODE=keepRunning`, and `KERNARIUM_BACKGROUND_LIMIT_MINUTES`
+for a short time), tap the application's `backgroundJobButton`, and background
+it. The console must show the job submitted and running, the policy moving to
+`jobRunning` with the GPU held and never released, the guest's work continuing
+and the process's core use staying low, and the job's end (its time is up, or
+stopped) quiescing the guest while still in the background; the return must
+release the GPU, resume the guest, and render the display. Stopping the job from
+the app's button while in front must change nothing about the guest. For
+Android the console must also show the guest suspending itself soon after the
+power key (`PM: suspend entry`) and the screen coming back on the return.
 
 To check the restart notice, background the
 application, terminate its process with `devicectl device process terminate`,
