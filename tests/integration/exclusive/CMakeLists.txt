@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 # Load/store-exclusive loops make progress when the pages they touch share a
-# TLB set and when a copy-on-write break lands between the pair
-# (run_exclusive_progress.py), on each engine. The probe reads the guest page
-# size from the auxiliary vector, so one binary serves both page profiles.
+# TLB entry and when a copy-on-write break lands between the pair
+# (run_exclusive_progress.py), on each engine.
 uml_add_guest_payload(UML_GUEST_EXCLUSIVE_PROGRESS_PROBE
     guest-exclusive-progress-probe
     exclusive_progress_probe.cpp
@@ -32,7 +31,6 @@ foreach(_engine IN ITEMS gadgets jit)
         SCRIPT run_exclusive_progress.py
         ARGS --engine ${_engine}
             --probe ${UML_GUEST_EXCLUSIVE_PROGRESS_PROBE}
-            --page-size 4096
             --log "${CMAKE_CURRENT_BINARY_DIR}/exclusive-progress-${_engine}.log"
         LABELS guest;cpu;kernel;${_engine}
         TIMEOUT 420

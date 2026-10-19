@@ -9,8 +9,7 @@
 # test expects the kernel to behave like a CPU without 32-bit EL0: ENOEXEC for
 # the programs and EINVAL for personality(PER_LINUX32). A lane that lands an
 # engine switches UML_AARCH32_EXPECT to run, which executes the program and
-# checks that a program laid out for 4 KiB pages only runs on 4 KiB pages and
-# fails to exec, cleanly, on 16 KiB pages.
+# checks that a program laid out for 4 KiB pages runs.
 set(UML_AARCH32_EXPECT "unsupported" CACHE STRING
     "What guest-aarch32 expects of the host: unsupported or run")
 set_property(CACHE UML_AARCH32_EXPECT PROPERTY STRINGS unsupported run)
@@ -180,7 +179,6 @@ foreach(_engine IN ITEMS gadgets jit)
         ARGS --engine ${_engine}
             --probe ${UML_GUEST_AARCH32_ENGINE_PROBE}
             --probe-4k ${UML_GUEST_AARCH32_ENGINE_PROBE_4K}
-            --page-size 4096
             --engine-support-tool $<TARGET_FILE:uml-a32-engine-support>
             --timeout ${_timeout}
         LABELS guest;aarch32;kernel;${_engine}

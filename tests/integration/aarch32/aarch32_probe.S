@@ -460,7 +460,6 @@ t_basic:
 
 	ldr	r0, [r11, #F_PAGESZ]
 	cmp	r0, #0x1000
-	cmpne	r0, #0x4000
 	moveq	r0, #1
 	movne	r0, #0
 	lea	r1, n_pagesz
@@ -869,13 +868,7 @@ t_mmap:
 	mov	r5, #1
 	sc	SYS_mmap2
 	mov	r4, r0
-	ldr	r1, [r11, #F_PAGESZ]
-	cmp	r1, #0x4000
-	bne	3f
-	mov	r0, r4			/* 16 KiB pages: not a page offset */
-	eq	0xffffffea, n_mmap2_unaligned
-	b	4f
-3:	cmn	r4, #4096		/* 4 KiB pages: the second chunk */
+	cmn	r4, #4096		/* the second chunk */
 	bhs	5f
 	ldr	r0, [r4]
 	eq	0x1001, n_mmap2_unit
@@ -2114,7 +2107,7 @@ mode_vfp:
 	str_	s_pre_restorer, "SA_RESTORER: "
 	str_	s_hello, "a32-probe: hello from AArch32\n"
 	str_	n_write, "write"
-	str_	n_pagesz, "AT_PAGESZ is 4 KiB or 16 KiB"
+	str_	n_pagesz, "AT_PAGESZ is 4 KiB"
 	str_	n_hwcap, "AT_HWCAP is not zero"
 	str_	n_platform, "AT_PLATFORM is v8l"
 	str_	n_tpidruro, "set_tls sets TPIDRURO"
@@ -2157,7 +2150,6 @@ mode_vfp:
 	str_	n_pread64_data, "pread64 reads the file offset"
 	str_	n_mmap2, "mmap2"
 	str_	n_mmap2_data, "mmap2 offset is in 4 KiB units"
-	str_	n_mmap2_unaligned, "mmap2 refuses an offset inside a page"
 	str_	n_mmap2_unit, "mmap2 maps a 4 KiB offset"
 	str_	n_ftruncate64, "ftruncate64"
 	str_	n_fstat64, "fstat64"

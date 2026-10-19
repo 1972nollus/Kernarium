@@ -270,8 +270,7 @@ fault signals and stack growth, the time64 and socket calls with
 `SCM_RIGHTS`, `vfork`, timers, `seccomp` and a 32-bit tracer), a 64-bit
 tracer's session (registers, system call and single-step stops, signal-frame
 VFP state), a core dump and many runs at once, and requires the 4 KiB-only
-program to run on a 4 KiB guest and to be killed by `SIGSEGV` at exec on a
-16 KiB one, leaving the guest working. The tooling test
+program to run on the guest. The tooling test
 `aarch32-elf32-wrapper` checks the two layouts the wrapper writes, and
 `aarch32-elf32-linker` the multi-object linker of the engine probe below.
 

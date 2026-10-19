@@ -245,12 +245,9 @@ void compare_memory_select_keeps_flags_on_both_tlb_paths() {
   const auto cold =
       std::span<const std::uint32_t>{compiled.words}.subspan(
           compiled.hot_words);
-  const std::size_t expected_cold_ways =
-      DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 1 : 0;
-  require(std::ranges::count(cold, 0xca01'0042U) == expected_cold_ways &&
-              std::ranges::count_if(cold, is_tlb_tag_data_pair_load) ==
-                  expected_cold_ways,
-          "deferred TLB way does not match its paired tag and backing delta");
+  require(std::ranges::count(cold, 0xca01'0042U) == 0 &&
+              std::ranges::count_if(cold, is_tlb_tag_data_pair_load) == 0,
+          "the deferred path holds a TLB probe of its own");
   std::size_t returning_miss_calls = 0;
   for (std::size_t index = 0; index + 1U < cold.size(); ++index)
     if (cold[index] == 0xd63f'0200U &&

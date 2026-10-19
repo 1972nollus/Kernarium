@@ -26,8 +26,7 @@ VFP and TLS registers, follows its system calls (PTRACE_GET_SYSCALL_INFO
 names AUDIT_ARCH_ARM) and single steps, and sees the VFP context of its
 signal frames; the faults end the program in SIGSEGV, SIGILL and SIGTRAP; a
 core dump is a 32-bit ARM core file; and many runs at once all complete.  The
-4 KiB-layout program runs on a 4 KiB guest, and on a 16 KiB guest cannot run,
-cleanly: the new process is killed with SIGSEGV and the guest keeps working.
+4 KiB-layout program loads and runs.
 Prints one line per check and exits with the number of failures.
 """
 
@@ -140,7 +139,7 @@ def check_native_view():
     check("cpuinfo names no 32-bit platform", "(v8l)" not in read("/proc/cpuinfo"))
 
     # The compat range of the page profile, as arm64 Linux's Kconfig sets it.
-    low = 9 if page_size() == 16384 else 11
+    low = 11
     path = "/proc/sys/vm/mmap_rnd_compat_bits"
     check("vm.mmap_rnd_compat_bits exists", os.path.exists(path))
     if os.path.exists(path):
@@ -258,33 +257,15 @@ def traced_exec(path, argument):
 
 
 def check_page_layout(elf_4k):
-    """A program laid out for 4 KiB pages only needs a 4 KiB guest.
-
-    A 16 KiB guest maps a segment only where its file offset and address are
-    congruent modulo 16 KiB.  Linux maps the segments after it has committed
-    to the exec, so the new process is killed with SIGSEGV, as an AArch64
-    program laid out the same way is, and nothing else is affected."""
+    """A program laid out for 4 KiB pages only loads and runs."""
     stop, pc = traced_exec(elf_4k, "leaf")
-    if page_size() == 4096:
-        check("the 4 KiB-layout program loads on a 4 KiB guest",
-              stop == signal.SIGTRAP and pc == elf_entry(elf_4k),
-              f"signal {stop} pc {pc}")
-        result, status = exec_errno(elf_4k, "leaf")
-        check("the 4 KiB-layout program runs on a 4 KiB guest",
-              result == 0 and status == 37,
-              f"{errno.errorcode.get(result, result)} status {status}")
-        return
-    check("the 4 KiB-layout program does not load on a 16 KiB guest",
-          stop == signal.SIGSEGV, f"signal {stop}")
+    check("the 4 KiB-layout program loads",
+          stop == signal.SIGTRAP and pc == elf_entry(elf_4k),
+          f"signal {stop} pc {pc}")
     result, status = exec_errno(elf_4k, "leaf")
-    check("the 4 KiB-layout program fails to run on a 16 KiB guest",
-          (result == 0 and status == -signal.SIGSEGV)
-          or result in (errno.EINVAL, errno.ENOEXEC),
+    check("the 4 KiB-layout program runs",
+          result == 0 and status == 37,
           f"{errno.errorcode.get(result, result)} status {status}")
-    # The exec killed only its own child.
-    check("the guest keeps working after the failed exec",
-          subprocess.run(["true"]).returncode == 0
-          and os.uname().machine == "aarch64")
 
 
 def elf_entry(path):

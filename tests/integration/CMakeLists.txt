@@ -90,7 +90,6 @@ if(UML_V4L2_PROBE_BINARY)
         NAME guest-v4l2-decode
         SCRIPT video/run_v4l2_decode.py
         ARGS --probe "${UML_V4L2_PROBE_BINARY}"
-            --page-size 4096
             --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-guest.log"
         LABELS guest;video
         TIMEOUT 600
@@ -108,7 +107,6 @@ if(UML_FUTEX_PROBE_BINARY)
         NAME guest-futex-atomic
         SCRIPT futex/run_futex_atomic.py
         ARGS --probe "${UML_FUTEX_PROBE_BINARY}"
-            --page-size 4096
             --log "${CMAKE_CURRENT_BINARY_DIR}/futex-guest.log"
         LABELS guest;futex
         TIMEOUT 320
@@ -480,7 +478,6 @@ uml_add_guest_integration_test(
     NAME guest-kernel-user-shared-memory
     SCRIPT kernel/run_guest_shared_memory.py
     ARGS --probe ${UML_GUEST_SHARED_MEMORY_PROBE}
-        --page-size 4096
         --cpus 4
     LABELS guest;kernel;memory
     TIMEOUT 900
