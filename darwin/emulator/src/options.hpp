@@ -33,6 +33,10 @@ struct EmulatorOptions final {
 	std::size_t jit_cache_budget{};
 	std::size_t jit_executor_cache_budget{
 		default_jit_executor_cache_budget};
+	/* --gadget-cache-budget=: the process's byte budget for what the gadget
+	 * engines keep per address space. Zero derives it from guest memory and
+	 * the host's limit on the process (runtime::set_gadget_cache_budget). */
+	std::size_t gadget_cache_budget{};
 	/* --jit-tier=: the instructions an x86-64 address space runs on the
 	 * gadget engine before the x86-64 JIT takes it over. Zero is the JIT from
 	 * the first instruction. */

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "cpu/gadget_cache_budget.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/cpuid.hpp"
 #include "cpu/x86_64/decoder.hpp"
@@ -1533,6 +1534,111 @@ struct Lookup final {
 	const auto again = look_up(executor, memory, 1);
 	return expect(again.built && !again.hit,
 		"a let-go address space was served its old program");
+}
+
+/* The process's gadget-cache budget bounds what an executor keeps of its
+ * address spaces, whatever its slots would hold. A workload of large blocks,
+ * each translated once, holds some megabytes under the default budget and is
+ * never asked to shed; under a quarter of that, the address space is asked to
+ * shed whenever a store takes the executor's address spaces past the budget,
+ * the executor lets go of it at its next run, as of a destroyed one, and
+ * translates afresh into a new one, so what it keeps stays within the budget
+ * and its blocks still run as they should. An executor that goes refunds what
+ * it held. */
+[[nodiscard]] bool the_budget_bounds_what_an_executor_keeps()
+{
+	using namespace uml::cpu::x86_64;
+	namespace budget = uml::cpu::gadget_cache;
+	constexpr std::size_t blocks = 3000;
+	constexpr std::size_t stride = 256;
+	constexpr std::size_t kib = 1024;
+	/* What one store and its links may add before the next store's check:
+	 * a translation, a record table's growth and a target table. */
+	constexpr std::size_t one_store = 128 * kib;
+	destroyed_generations = unknown_generations = 0;
+	/* Each block is 63 `add rax, 1` and a SYSCALL. */
+	TestMemory memory{0, blocks * stride + 4096};
+	std::vector<std::byte> block(stride, std::byte{0x90});
+	for (std::size_t add = 0; add < 63; ++add) {
+		block[add * 4] = std::byte{0x48};
+		block[add * 4 + 1] = std::byte{0x83};
+		block[add * 4 + 2] = std::byte{0xc0};
+		block[add * 4 + 3] = std::byte{0x01};
+	}
+	block[252] = std::byte{0x0f};
+	block[253] = std::byte{0x05};
+	for (std::size_t index = 0; index < blocks; ++index)
+		memory.fill(index * stride, block);
+	const auto open = [] {
+		const auto state = budget::ledger_state();
+		return state.total - state.shedding;
+	};
+	/* Select every block once, each at the start of a run, as the runtime
+	 * starts one; return the most the open address spaces held after any
+	 * store, and count the translations. */
+	const auto run = [&](gadgets::Executor &executor,
+				 std::size_t &translated) {
+		std::size_t peak = 0;
+		for (std::size_t index = 0; index < blocks; ++index) {
+			executor.leave_gone_generations(0, &mmu_says);
+			executor.prepare(memory, 7, 1, 1);
+			const auto selected = executor.select_program(memory,
+				index * stride, ExecutionMode::long64);
+			if (selected.status != gadgets::BuildStatus::built ||
+			    selected.program == nullptr)
+				return std::size_t{0};
+			if (!selected.cache_hit)
+				++translated;
+			peak = std::max(peak, open());
+		}
+		return peak;
+	};
+	const auto base = budget::ledger_state();
+	if (!expect(base.budget == budget::fallback_budget,
+		"the default budget was not in effect"))
+		return false;
+	std::size_t control = 0;
+	{
+		gadgets::Executor executor;
+		std::size_t translated = 0;
+		control = std::max(run(executor, translated),
+			run(executor, translated));
+		if (!expect(budget::ledger_state().reliefs == base.reliefs &&
+			translated == blocks && control >= blocks * 63 * 8,
+			"the workload did not fit the default budget"))
+			return false;
+	}
+	if (!expect(budget::ledger_state().total == base.total,
+		"an executor that went kept its charges"))
+		return false;
+	const auto small = std::max(control / 4, 4 * one_store);
+	budget::set_budget(small);
+	bool bounded = false;
+	{
+		gadgets::Executor executor;
+		std::size_t translated = 0;
+		const auto peak = std::max(run(executor, translated),
+			run(executor, translated));
+		const auto after = budget::ledger_state();
+		std::printf("x86 gadget budget: the control held %zu KiB; under "
+			    "%zu KiB the address spaces held at most %zu KiB "
+			    "in %llu reliefs\n", control / kib, small / kib,
+			peak / kib, static_cast<unsigned long long>(
+				after.reliefs - base.reliefs));
+		CpuState cpu{};
+		cpu.rip = 0;
+		run_to_system_call(executor, memory, cpu, "a shed block");
+		bounded = expect(peak != 0 && peak <= small + one_store,
+				  "the budget did not bound the address spaces") &&
+			expect(after.reliefs > base.reliefs &&
+				translated > blocks + blocks / 2,
+				"an address space past the budget was not shed") &&
+			expect(cpu.gpr(Register::rax) == 63,
+				"a block translated afresh ran wrongly");
+	}
+	budget::set_budget(budget::fallback_budget);
+	return bounded && expect(budget::ledger_state().total == base.total,
+		"an executor that went kept its charges");
 }
 
 /* The address space the cache last prepared may be the one let go of: the
@@ -10857,7 +10963,8 @@ int main(int argc, char **argv)
 		return a_destroyed_generation_is_let_go_of_when_the_count_moves() &&
 			the_prepared_generation_can_be_let_go_of() &&
 			a_number_given_out_again_runs_its_new_code() &&
-			a_destroyed_generation_keeps_its_window_place() ? 0 : 1;
+			a_destroyed_generation_keeps_its_window_place() &&
+			the_budget_bounds_what_an_executor_keeps() ? 0 : 1;
 	const bool passed = decode_scaled_address() &&
 		cache_reuses_and_revalidates_programs() &&
 		cache_validates_inline_source_spans() &&
@@ -10884,6 +10991,7 @@ int main(int argc, char **argv)
 		the_prepared_generation_can_be_let_go_of() &&
 		a_number_given_out_again_runs_its_new_code() &&
 		a_destroyed_generation_keeps_its_window_place() &&
+		the_budget_bounds_what_an_executor_keeps() &&
 		a_validation_does_not_outlive_the_epochs_it_counts() &&
 		cache_links_common_successors() &&
 		cache_chains_direct_branches() &&

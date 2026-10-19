@@ -171,6 +171,26 @@ class CensusTests(unittest.TestCase):
         self.assertIn("again after way eviction                         4", text)
         self.assertRegex(text, r"idle 10-60 s\s+spaces\s+1")
         self.assertIn("sampled streams: 1 bodies, 4 words", text)
+        # A capture written before the census carried the budget says nothing
+        # of it.
+        self.assertNotIn("gadget-cache budget", text)
+
+    def test_report_states_the_budget(self) -> None:
+        budgeted = CAPTURE.replace(
+            "total=286624 stream_lookups=0 ",
+            "total=286624 stream_lookups=0 budget=2147483648 "
+            "metered=104857600 metered_shedding=0 metered_peak=0 reliefs=0 "
+            "shed=0 ").replace(
+            "total=288624 stream_lookups=0 ",
+            "total=288624 stream_lookups=0 budget=2147483648 "
+            "metered=110100480 metered_shedding=1048576 metered_peak=0 "
+            "reliefs=2 shed=3 ")
+        path = write(self.root, budgeted)
+        text = run_main(path)
+        # The later snapshot's view of the process.
+        self.assertIn("gadget-cache budget 2048.0 MiB: 105.0 MiB charged, "
+                      "1.0 MiB of it shedding; 2 reliefs shed 3 address "
+                      "spaces", text)
 
     def test_series_lists_every_snapshot(self) -> None:
         path = write(self.root, CAPTURE)

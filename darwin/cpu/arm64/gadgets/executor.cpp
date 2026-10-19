@@ -7,6 +7,7 @@
 #include "cpu/arm64/gadgets/body_arena.hpp"
 #include "cpu/arm64/gadgets/a32/a32_builder.hpp"
 #include "cpu/arm64/gadgets/a32_support.hpp"
+#include "cpu/gadget_cache_budget.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
 #if UML_GADGET_CACHE_CENSUS
@@ -756,13 +757,24 @@ struct SpaceKey final {
  * space then dies with its last executor and takes its arena, its link
  * records and its freed bodies with it, which window retirement does for a
  * private one.
+ *
+ * Every space, shared or private, charges its arena, its record tables and its
+ * target table to an account in the process's gadget-cache budget
+ * (gadget_cache_budget.hpp). When the budget asks it to shed, it asks every
+ * executor attached to let go of it, as closing does; the first to do so
+ * closes it, and no executor attaches to it any more.
  */
 class Space final {
 public:
 	explicit Space(SpaceKey key, std::uint64_t changes)
 		: key_{std::move(key)}, gate_{changes}, reset_done_{changes},
-		  bodies_{&counted_}
+		  bodies_{&counted_}, account_{shed, this}
 	{
+		bodies_.meter(&account_);
+		for (auto &shard : shards_) {
+			shard.links.meter(&account_);
+			shard.indirect.meter(&account_);
+		}
 		auto &empty = shard_of(empty_pc);
 		empty_link_ = &empty.links.try_emplace(empty_pc, empty_pc)
 			.first->link;
@@ -821,6 +833,20 @@ public:
 	[[nodiscard]] bool closed() const noexcept
 	{
 		return closed_.load(std::memory_order_acquire);
+	}
+
+	/* Whether the gadget-cache budget asked this space to shed: an executor
+	 * holding it closes it and lets go of it at its next entry into
+	 * translated code. */
+	[[nodiscard]] bool shedding() const noexcept
+	{
+		return account_.shedding();
+	}
+
+	/* What the space charges the budget. */
+	[[nodiscard]] std::size_t charged() const noexcept
+	{
+		return account_.bytes();
 	}
 
 #if UML_GADGET_SWEEP_STRESS
@@ -1411,6 +1437,9 @@ private:
 				     index < target_tier_entries; ++index)
 					store_pair(&table[index], empty_pc,
 						word_of(empty_link_));
+				account_.charge(static_cast<std::ptrdiff_t>(
+					target_tier_entries *
+					sizeof(arm64::gadgets::IndirectLinkEntry)));
 				targets_.store(table, std::memory_order_release);
 			}
 		}
@@ -1534,6 +1563,19 @@ private:
 		bodies.clear();
 	}
 
+	/* The budget asks the space to shed: every executor attached lets go
+	 * of it at its next entry. Called under the budget's lock, which is
+	 * only ever taken before attached_mutex_. */
+	static void shed(void *owner) noexcept
+	{
+		try {
+			static_cast<Space *>(owner)->request_renewal();
+		} catch (...) {
+			/* The space is still shedding: the next executor to want
+			 * its address space closes it instead of attaching. */
+		}
+	}
+
 	void take_snapshot(Snapshot &snapshot)
 	{
 		snapshot.seen.clear();
@@ -1577,6 +1619,9 @@ private:
 #if UML_GADGET_SWEEP_STRESS
 	std::atomic<std::uint64_t> stress_stores_{};
 #endif
+	/* Last, so it is destroyed first: a call of shed() in progress holds
+	 * up its destruction, and everything shed() touches is still there. */
+	gadget_cache::Account account_;
 };
 
 /* The address spaces whose translations executors share, by key. */
@@ -1601,11 +1646,28 @@ public:
 		}
 		const std::lock_guard guard{mutex_};
 		auto &candidates = spaces_[{key.generation, key.mode}];
-		for (auto *space : candidates)
+		for (std::size_t index = 0; index < candidates.size();) {
+			auto *space = candidates[index];
+			/* One the budget asked to shed is closed here instead, as
+			 * close() would, if no executor holding it has yet. */
+			if (space->shedding()) {
+				if (space->close()) {
+#if UML_GADGET_SWEEP_STRESS
+					stress_closes.fetch_add(1,
+						std::memory_order_relaxed);
+#endif
+					space->request_renewal();
+				}
+				candidates.erase(candidates.begin() +
+					static_cast<std::ptrdiff_t>(index));
+				continue;
+			}
 			if (space->key().options == key.options) {
 				space->attach(announcement);
 				return space;
 			}
+			++index;
+		}
 		auto space = std::make_unique<Space>(key, changes);
 		space->attach(announcement);
 		candidates.push_back(space.get());
@@ -1770,13 +1832,18 @@ public:
 		const auto slab_total = static_cast<std::size_t>(
 			std::count_if(slabs_.begin(), slabs_.end(),
 				[](const auto &slab) { return slab != nullptr; }));
+		/* The process's gadget-cache budget, the same on every E line
+		 * of a snapshot. */
+		const auto book = gadget_cache::ledger_state();
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu slots=%zu slot_bytes=%zu "
 			"slab_slots=%zu slab_count=%zu stream_index=0 slabs=%zu "
 			"streams=0 arena_empty=0 links=%zu indirect=0 "
 			"total=%zu stream_lookups=%llu adoptions=%llu shared=%d "
 			"sweeps=%llu swept_links=%llu swept_sites=%llu sweep_ns=%llu "
-			"dead_left=%llu lru_tomb=%llu",
+			"dead_left=%llu lru_tomb=%llu budget=%zu metered=%zu "
+			"metered_shedding=%zu metered_peak=%zu reliefs=%llu "
+			"shed=%llu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), slot_count, sizeof(Slot), slab_slots,
 			slab_total, slabs, lists, slabs + lists,
@@ -1787,7 +1854,10 @@ public:
 			static_cast<unsigned long long>(swept_sites_),
 			static_cast<unsigned long long>(sweep_ns_),
 			static_cast<unsigned long long>(dead_left_),
-			static_cast<unsigned long long>(lru_tomb_));
+			static_cast<unsigned long long>(lru_tomb_), book.budget,
+			book.total, book.shedding, book.peak_open,
+			static_cast<unsigned long long>(book.reliefs),
+			static_cast<unsigned long long>(book.shed_accounts));
 		census::write_when(out, snapshot);
 		history_.write(out);
 		std::fputc('\n', out);
@@ -1819,13 +1889,15 @@ public:
 				"S %p generation=%lu mode=%u attached=%zu "
 				"stream_index=%zu streams=%zu arena_empty=%zu "
 				"links=%zu indirect=%zu link_records=%zu limbo=%zu "
-				"alive=%d\n",
+				"alive=%d charged=%zu shedding=%d\n",
 				static_cast<const void *>(state.space), generation,
 				unsigned{mode_}, state.space->attached(),
 				space.stream_index, space.streams,
 				state.space->census_empty_bytes(), space.links,
 				space.indirect, state.space->link_records(),
-				state.space->limbo_bodies(), alive);
+				state.space->limbo_bodies(), alive,
+				state.space->charged(),
+				state.space->shedding() ? 1 : 0);
 		}
 		if (census::totals_only())
 			return;
@@ -2208,6 +2280,10 @@ public:
 		if (state.space->sweep_due())
 			sweep(state, diagnostics);
 		renew_if_due(*state.space);
+		/* Past the budget, the largest spaces are asked to shed; their
+		 * executors let go of them at their next entry. */
+		if (gadget_cache::over_budget())
+			gadget_cache::relieve();
 		return slot.body->result();
 	}
 
@@ -2253,7 +2329,7 @@ public:
 		for (const auto &[generation, state] : generations_) {
 			if (count == leaving.size())
 				break;
-			if (state.space->closed())
+			if (state.space->closed() || state.space->shedding())
 				leaving[count++] = {generation, false};
 			else if (dead &&
 				 darwin_uml_static_vm_generation_live(generation) == 0)
@@ -2267,6 +2343,14 @@ public:
 			if (tombstone)
 				++dead_left_;
 #endif
+			/* A space the budget asked to shed is closed, for every
+			 * other executor holding it to let go of too. */
+			if (!tombstone)
+				if (const auto held = generations_.find(generation);
+				    held != generations_.end() &&
+				    held->second.space->shedding())
+					SpaceRegistry::instance().close(
+						held->second.space);
 			retire(generation, tombstone);
 		}
 		return left_current;

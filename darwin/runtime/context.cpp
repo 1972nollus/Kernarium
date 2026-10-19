@@ -2,10 +2,12 @@
 #include "context.hpp"
 
 #include "cpu/engine_factory.hpp"
+#include "cpu/gadget_cache_budget.hpp"
 #include "execution_state.hpp"
 #include "memory/domain_contract.hpp"
 #include "platform/apple/host_features.hpp"
 #include "platform/descriptor.hpp"
+#include "platform/host_environment.hpp"
 #include "platform/host_topology.hpp"
 #include "uml_darwin_guest.h"
 
@@ -558,6 +560,18 @@ bool set_translation_cache_budget(std::size_t total_bytes,
 bool acquire_translation_cache_run_session() noexcept
 {
 	return ::uml::cpu::acquire_translation_cache_run_session();
+}
+
+std::size_t set_gadget_cache_budget(std::size_t guest_memory_bytes,
+	std::size_t bytes) noexcept
+{
+	namespace gadget_cache = ::uml::cpu::gadget_cache;
+	if (bytes == 0)
+		bytes = gadget_cache::derive_budget(guest_memory_bytes,
+			static_cast<std::size_t>(
+				::uml::platform::process_memory_limit_bytes()));
+	gadget_cache::set_budget(bytes);
+	return bytes;
 }
 
 void release_translation_cache_run_session() noexcept

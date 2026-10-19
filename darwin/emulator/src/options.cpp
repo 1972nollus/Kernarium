@@ -18,6 +18,8 @@ constexpr std::string_view jit_cache_budget_prefix{"--jit-cache-budget="};
 constexpr std::string_view jit_executor_cache_budget_prefix{
 	"--jit-executor-cache-budget="};
 constexpr std::string_view jit_tier_prefix{"--jit-tier="};
+constexpr std::string_view gadget_cache_budget_prefix{
+	"--gadget-cache-budget="};
 namespace {
 
 [[nodiscard]] bool has_argument(
@@ -239,6 +241,18 @@ EmulatorOptions prepare_emulator_options(
 				::uml::runtime::parse_translation_cache_quantity(
 					quantity.c_str());
 			if (prepared.jit_cache_budget == 0) {
+				prepared.valid = false;
+				return prepared;
+			}
+			continue;
+		}
+		if (argument.starts_with(gadget_cache_budget_prefix)) {
+			const std::string quantity{argument.substr(
+				gadget_cache_budget_prefix.size())};
+			prepared.gadget_cache_budget =
+				::uml::runtime::parse_translation_cache_quantity(
+					quantity.c_str());
+			if (prepared.gadget_cache_budget == 0) {
 				prepared.valid = false;
 				return prepared;
 			}

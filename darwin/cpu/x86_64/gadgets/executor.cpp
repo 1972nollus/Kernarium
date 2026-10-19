@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "executor.hpp"
 
+#include "cpu/gadget_cache_budget.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
 #if UML_GADGET_CACHE_CENSUS
@@ -13,11 +14,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <cstddef>
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
-#include <malloc/malloc.h>
 #endif
 #include <cstring>
 #include <memory>
@@ -28,6 +29,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <malloc/malloc.h>
 
 namespace uml::cpu::x86_64::gadgets {
 #if UML_GADGET_CACHE_CENSUS
@@ -701,8 +704,24 @@ private:
 	 * Its records are named by address from translated streams, so they live
 	 * in chunks rather than map nodes (G210), and a link sweep releases the
 	 * ones nothing names any more (sweep()).
+	 *
+	 * What it keeps -- its resident translations, its record tables and its
+	 * target link tables -- is charged to its account in the process's
+	 * gadget-cache budget (gadget_cache_budget.hpp), which may ask the cache
+	 * to let go of it (leave_shedding()).
 	 */
 	struct Generation final {
+		explicit Generation(ProgramCache &cache) noexcept
+			: account{&ProgramCache::shed, &cache}
+		{
+			for (auto &mode : links)
+				mode.meter(&account);
+			for (auto &mode : indirect)
+				mode.meter(&account);
+		}
+		Generation(const Generation &) = delete;
+		Generation &operator=(const Generation &) = delete;
+
 		std::uint64_t changes{};
 		/* The guest's number for the address space, and the cache's own
 		 * for it: the id a slot's tag carries, from one up, recycled once
@@ -738,6 +757,7 @@ private:
 		std::uint64_t census_switch{};
 		double census_seconds{};
 #endif
+		gadget_cache::Account account;
 	};
 
 public:
@@ -761,14 +781,15 @@ public:
 		free_ids_.clear();
 		unbind();
 		/* Every address space is gone, so no slot is occupied, and none
-		 * names a link record or a page list. A slot keeps its allocated
-		 * translation for the next one stored in it. */
+		 * names a link record or a page list. Their accounts went with
+		 * them, so the translations go too: none is charged any more. */
 		for (auto &slab : slabs_)
 			if (slab)
 				for (auto &slot : slab->slots) {
 					slot.tag = 0;
 					slot.memo = 0;
 					slot.linked_pages = 0;
+					slot.translation.reset();
 				}
 		preceding_ = nullptr;
 	}
@@ -786,7 +807,8 @@ public:
 		}
 #endif
 		current_generation_ = generation;
-		auto [entry, inserted] = generations_.try_emplace(generation);
+		auto [entry, inserted] = generations_.try_emplace(generation,
+			*this);
 		current_ = &entry->second;
 		if (inserted)
 			enroll(*current_, generation);
@@ -836,6 +858,32 @@ public:
 			++dead_left_;
 #endif
 			retire(gone[index], true);
+		}
+		return left_current;
+	}
+
+	/* Let go of every address space held here that the gadget-cache budget
+	 * asked to shed, as of a destroyed one but with its place in the
+	 * window's order, and say whether the one last prepared was among them.
+	 * Only when the budget has asked since the last call, which one load
+	 * answers. */
+	[[nodiscard]] bool leave_shedding() noexcept
+	{
+		if (!shed_requested_.load(std::memory_order_relaxed))
+			return false;
+		shed_requested_.store(false, std::memory_order_relaxed);
+		std::array<std::uint64_t, resident_generation_limit + 1U> gone{};
+		std::size_t count = 0;
+		for (const auto &[generation, state] : generations_) {
+			if (count == gone.size())
+				break;
+			if (state.account.shedding())
+				gone[count++] = generation;
+		}
+		bool left_current = false;
+		for (std::size_t index = 0; index < count; ++index) {
+			left_current |= gone[index] == current_generation_;
+			retire(gone[index]);
 		}
 		return left_current;
 	}
@@ -1147,6 +1195,7 @@ public:
 			slot.translation.reset();
 			throw;
 		}
+		state.account.charge(translation_charge(stored));
 		activate_link(slot);
 		activate(slot, successors);
 #if UML_GADGET_CACHE_CENSUS
@@ -1158,6 +1207,10 @@ public:
 		if (gadget_cache::sweep_due(records(state), state.kept,
 			    state.departed))
 			sweep(state, diagnostics);
+		/* Past the budget, the largest address spaces are asked to shed;
+		 * their caches let go of them at their next run. */
+		if (gadget_cache::over_budget())
+			gadget_cache::relieve();
 		return stored;
 	}
 
@@ -1278,13 +1331,22 @@ public:
 		const auto slab_count = static_cast<std::size_t>(
 			std::count_if(slabs_.begin(), slabs_.end(),
 				[](const auto &slab) { return slab != nullptr; }));
+		/* The process's gadget-cache budget, the same on every E line
+		 * of a snapshot, and what this cache's address spaces are
+		 * charged. */
+		const auto book = gadget_cache::ledger_state();
+		std::size_t charged = 0;
+		for (const auto &[generation, state] : generations_)
+			charged += state.account.bytes();
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu slots=%zu "
 			"slot_bytes=%zu slab_slots=%zu slab_count=%zu slabs=%zu "
 			"streams=%zu decoded=%zu links=%zu indirect=%zu "
 			"targets=%zu total=%zu sweeps=%llu swept_links=%llu "
 			"swept_sites=%llu sweep_ns=%llu dead_left=%llu "
-			"lru_tomb=%llu",
+			"lru_tomb=%llu charged=%zu budget=%zu metered=%zu "
+			"metered_shedding=%zu metered_peak=%zu reliefs=%llu "
+			"shed=%llu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), program_cache_slots, sizeof(Slot),
 			program_cache_slab_slots, slab_count, parts.slabs,
@@ -1295,7 +1357,10 @@ public:
 			static_cast<unsigned long long>(swept_sites_),
 			static_cast<unsigned long long>(sweep_ns_),
 			static_cast<unsigned long long>(dead_left_),
-			static_cast<unsigned long long>(lru_tomb_));
+			static_cast<unsigned long long>(lru_tomb_), charged,
+			book.budget, book.total, book.shedding, book.peak_open,
+			static_cast<unsigned long long>(book.reliefs),
+			static_cast<unsigned long long>(book.shed_accounts));
 		census::write_when(out, snapshot);
 		history_.write(out);
 		std::fputc('\n', out);
@@ -1885,6 +1950,8 @@ private:
 			} catch (...) {
 				return nullptr;
 			}
+			state.account.charge(static_cast<std::ptrdiff_t>(
+				malloc_good_size(sizeof(TargetLinkTable))));
 		}
 		return owned.get();
 	}
@@ -2241,7 +2308,8 @@ private:
 	{
 		if (current_ == nullptr) {
 			auto [entry, inserted] =
-				generations_.try_emplace(current_generation_);
+				generations_.try_emplace(current_generation_,
+					*this);
 			current_ = &entry->second;
 			if (inserted)
 				enroll(*current_, current_generation_);
@@ -2251,13 +2319,39 @@ private:
 	}
 
 	/* Count a resident translation leaving against its address space, whose
-	 * next sweep waits for enough of them (gadget_cache::sweep_due). */
+	 * next sweep waits for enough of them (gadget_cache::sweep_due), and
+	 * refund what it was charged. */
 	void depart(const Slot &slot) noexcept
 	{
 		if (!slot.resident() || !slot.translation)
 			return;
-		if (auto *owner = owner_of(slot); owner != nullptr)
+		if (auto *owner = owner_of(slot); owner != nullptr) {
 			++owner->departed;
+			owner->account.charge(
+				-translation_charge(slot.translation->program));
+		}
+	}
+
+	/* What a resident translation is charged: its record, its native stream
+	 * and its saved source, as the allocator sizes them. The decoded
+	 * instructions a budget-limited replay keeps are not: only a block a
+	 * single step or a trap flag ran inside has them. */
+	[[nodiscard]] static std::ptrdiff_t translation_charge(
+		const Program &program) noexcept
+	{
+		return static_cast<std::ptrdiff_t>(
+			malloc_good_size(sizeof(Translation)) +
+			malloc_good_size(program.native_stream().size_bytes()) +
+			malloc_good_size(program.source().size()));
+	}
+
+	/* The budget asks an address space held here to shed: the cache lets go
+	 * of it at the start of its next run (leave_shedding()). Called under the
+	 * budget's lock. */
+	static void shed(void *owner) noexcept
+	{
+		static_cast<ProgramCache *>(owner)->shed_requested_.store(true,
+			std::memory_order_relaxed);
 	}
 
 	void discard(Slot &slot) noexcept
@@ -2353,6 +2447,10 @@ private:
 		return true;
 	}
 
+	/* Set by shed() when the budget asks an address space held here to
+	 * shed; before generations_, whose accounts may call shed() until they
+	 * are destroyed. */
+	std::atomic<bool> shed_requested_{};
 	std::unordered_map<std::uint64_t, Generation> generations_;
 	Generation *current_{};
 	std::vector<std::uint64_t> resident_;
@@ -2571,6 +2669,9 @@ void Executor::prepare(::uml::memory::GuestAddressSpace &memory,
 void Executor::leave_gone_generations(unsigned long long retirements,
 	GenerationLiveness live) noexcept
 {
+	/* The address spaces the gadget-cache budget asked to shed, first. */
+	if (storage_->programs.leave_shedding())
+		storage_->cache_ready = false;
 	if (retirements == storage_->retirements_seen)
 		return;
 	storage_->retirements_seen = retirements;
