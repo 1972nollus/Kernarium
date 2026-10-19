@@ -211,6 +211,11 @@ public:
         };
     }
 
+    [[nodiscard]] bool keepsRequestsOnDisabledRing() const noexcept override
+    {
+        return true;
+    }
+
     void reset() noexcept override
     {
         cancelFenceTimer(eventQueue_.get());

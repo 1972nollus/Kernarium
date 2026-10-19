@@ -427,6 +427,11 @@ void VhostUserServer::setSharedMemoryRegions(
     device_->setSharedMemoryRegions(sharedMemoryRegions_);
 }
 
+void VhostUserServer::setRequestGate(std::shared_ptr<RequestGate> gate)
+{
+    requestGate_ = std::move(gate);
+}
+
 void VhostUserServer::resetConnection() noexcept
 {
     resetDeviceState();
@@ -1171,6 +1176,30 @@ void VhostUserServer::dispatchSharedMemoryActions()
     }
 }
 
+std::size_t VhostUserServer::waitingBuffers(std::uint32_t index)
+{
+    if (index >= queues_.size())
+        return 0;
+    const auto& queue = queues_[index];
+    if (!queue.started || queue.size == 0)
+        return 0;
+    const auto* available = translate(
+        queue.availableAddress,
+        protocol::splitRingHeaderSize +
+            static_cast<std::size_t>(queue.size) * sizeof(std::uint16_t),
+        true);
+    if (available == nullptr ||
+        reinterpret_cast<std::uintptr_t>(available) %
+                alignof(std::uint16_t) != 0) {
+        return 0;
+    }
+    const auto availableIndex = loadSharedRingValue(
+        available + sizeof(std::uint16_t), std::memory_order_acquire);
+    const auto waiting = static_cast<std::uint16_t>(
+        availableIndex - queue.lastAvailable);
+    return waiting > queue.size ? 0U : waiting;
+}
+
 void VhostUserServer::processQueue(std::uint32_t index)
 {
     if (index >= queues_.size())
@@ -1235,14 +1264,25 @@ void VhostUserServer::processQueue(std::uint32_t index)
         if (requestSize > maximumVhostUserMessagePayload)
             throw std::runtime_error("oversized virtio request");
 
+        /* A closed gate keeps every request where it is, in a disabled ring
+         * as in an enabled one, so a guest that suspends and resumes meanwhile
+         * finds each still waiting. The requests behind it wait too, which
+         * keeps them in order. */
+        if (requestSize != 0 && requestGate_ && requestGate_->held())
+            break;
+
         if (!queue.enabled) {
             /* A disabled ring is given no new data: a buffer the device only
              * fills waits in the ring until it is enabled again. Returning it
              * empty would not do, because a front end such as virtio-input
              * reads a used buffer whatever its length, and would replay the
              * event that buffer held before. A buffer carrying a request is
-             * consumed and dropped, as a disabled ring's outgoing data is. */
+             * consumed and dropped, as a disabled ring's outgoing data is,
+             * unless its device asks to have it kept: a guest waits for such
+             * a request's response only after the ring is enabled again. */
             if (requestSize == 0 && responseCapacity != 0)
+                break;
+            if (requestSize != 0 && device_->keepsRequestsOnDisabledRing())
                 break;
             const PendingRequest disabled {
                 .requestId = 0,
@@ -1266,6 +1306,15 @@ void VhostUserServer::processQueue(std::uint32_t index)
             std::memcpy(
                 request.data() + requestOffset, source, segment.length);
             requestOffset += segment.length;
+        }
+
+        /* The device call and the shared-memory map or unmap it can raise are
+         * the work a closed gate waits out. */
+        RequestGate::Entry gateEntry;
+        if (requestGate_ && requestSize != 0) {
+            gateEntry = requestGate_->enter();
+            if (!gateEntry)
+                break;
         }
 
         const auto requestId = allocateRequestId();
@@ -1743,8 +1792,9 @@ void VhostUserServer::serveConnection(
             slot = nullptr;
         }
     } stopRegistration {connectionStopRequested_, *device_, stopRequested};
-    std::vector<pollfd> descriptors(queues_.size() + 2U);
+    std::vector<pollfd> descriptors(queues_.size() + 3U);
     const std::size_t deviceEventIndex = queues_.size() + 1U;
+    const std::size_t gateWakeIndex = queues_.size() + 2U;
     frontendDescriptor_ = ownedConnection.get();
     try {
         while (!stopRequested.load(std::memory_order_acquire)) {
@@ -1799,6 +1849,11 @@ void VhostUserServer::serveConnection(
                 .events = POLLIN,
                 .revents = 0,
             };
+            descriptors[gateWakeIndex] = {
+                .fd = requestGate_ ? requestGate_->wakeDescriptor() : -1,
+                .events = POLLIN,
+                .revents = 0,
+            };
             const int peerPoll = ::poll(
                 descriptors.data(),
                 static_cast<nfds_t>(descriptors.size()),
@@ -1836,6 +1891,25 @@ void VhostUserServer::serveConnection(
                 device_->drainEventSource();
                 signalPendingConfigChange();
                 drainQueueCompletions();
+                for (std::uint32_t index = 0; index < queues_.size(); ++index)
+                    processQueue(index);
+            }
+            const auto gateEvents = descriptors[gateWakeIndex].revents;
+            if ((gateEvents & POLLNVAL) != 0)
+                throw std::runtime_error("invalid request gate descriptor");
+            if (gateEvents != 0) {
+                /* The gate opened: the requests it held back run now, every
+                 * queue in turn, as a device event would run them. */
+                requestGate_->acknowledgeRelease();
+                std::size_t waiting = 0;
+                for (std::uint32_t index = 0; index < queues_.size(); ++index)
+                    waiting += waitingBuffers(index);
+                std::fprintf(
+                    stdout,
+                    "%s request gate opened with %zu request(s) waiting\n",
+                    device_->name(),
+                    waiting);
+                (void)std::fflush(stdout);
                 for (std::uint32_t index = 0; index < queues_.size(); ++index)
                     processQueue(index);
             }
@@ -1892,14 +1966,16 @@ InProcessVhostUserService::InProcessVhostUserService(
     std::string label,
     std::string threadName,
     DeviceFactory makeDevice,
-    std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions)
+    std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions,
+    std::shared_ptr<RequestGate> requestGate)
     : InProcessVhostUserService(
           std::move(label),
           std::move(threadName),
           ServerFactory([makeDevice = std::move(makeDevice)] {
               return std::make_unique<VhostUserServer>(makeDevice());
           }),
-          std::move(sharedMemoryRegions))
+          std::move(sharedMemoryRegions),
+          std::move(requestGate))
 {
 }
 
@@ -1907,11 +1983,13 @@ InProcessVhostUserService::InProcessVhostUserService(
     std::string label,
     std::string threadName,
     ServerFactory makeServer,
-    std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions)
+    std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions,
+    std::shared_ptr<RequestGate> requestGate)
     : label_(std::move(label))
     , threadName_(std::move(threadName))
     , makeServer_(std::move(makeServer))
     , sharedMemoryRegions_(std::move(sharedMemoryRegions))
+    , requestGate_(std::move(requestGate))
 {
     /* The service thread inherits this mask. The timer stays blocked here
      * too until the service has started, as it always has. */
@@ -1979,6 +2057,8 @@ void InProcessVhostUserService::run() noexcept
         const auto server = makeServer_();
         if (sharedMemoryRegions_)
             server->setSharedMemoryRegions(sharedMemoryRegions_);
+        if (requestGate_)
+            server->setRequestGate(requestGate_);
         server->runConnected(
             descriptors_[0].release(), stopRequested_, [this] {
                 {

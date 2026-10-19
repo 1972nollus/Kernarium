@@ -24,7 +24,8 @@ libraries and interface-carried objects into it but never a linked static
 archive, so every module the emulator reaches delivers objects, including one
 that also keeps a static archive for single-copy process state.
 `scripts/build-xcframework.sh` rejects a release archive that leaves a
-first-party symbol undefined.
+first-party symbol undefined, and one whose `uml_emulator_` functions are not
+exactly those the public headers under `darwin/api/include/uml` declare.
 
 The assembly-visible CPU and TLB layout is owned by
 `darwin/cpu/arm64/layout/assembly_offsets.h` and checked from C++ and assembly.
@@ -1262,8 +1263,25 @@ A disabled ring is given no new data. A buffer the backend only fills, such as
 a virtio-input event buffer, stays in the ring until the ring is enabled again:
 the front end reads a used buffer whatever its length, so returning it empty
 would replay the event it held before. A buffer that carries a request is
-consumed and dropped. A suspended guest disables its rings, so input that
-arrives meanwhile reaches it once, after the resume.
+consumed and dropped, because its sender may be waiting for the completion with
+interrupts off, as a console's output does; only a device whose requests are
+asynchronous, the GPU, asks to have them kept, and a request it has not run
+then waits in the ring until the ring is enabled again. A suspended guest
+disables its rings, so input that arrives meanwhile reaches it once, after the
+resume.
+
+A service can be given a request gate, which another thread closes to hold the
+device's requests back. A closed gate lets no request reach the device, and
+closing it waits, for a bounded time, for the request the device is already
+running. A request that arrives meanwhile stays in its ring, unconsumed,
+whatever the ring does: a guest that suspends and resumes while the gate is
+closed finds every request still waiting, and opening the gate wakes the server,
+which runs them in the order they were queued. A deferred request completing,
+the device's event source and the control channel are not gated. Kernarium
+closes the GPU's gate as it enters the background, because iOS revokes the
+host GPU within seconds and a request that reached Metal after that would make
+the renderer's Vulkan device lost for good, and opens it as the application
+returns.
 
 The [Virtio video device](../darwin/device/video/README.md) bridges the shared
 mainline/Android V4L2 driver to the platform VideoToolbox decoder. It uses its
@@ -1450,6 +1468,11 @@ not suspend, falls back to the stop/go pair. Guests that need writeback
 requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
 the console, host-file flushing still runs but guest writeback and freeze are
 unavailable.
+
+An application that can be backgrounded holds the guest's GPU requests before it
+quiesces, with the runtime's `set_gpu_hold` (see the request gate under
+[devices](#devices-and-graphics)), and releases them before it resumes. The
+guest's rings stay disabled until the resume, and what it queued waits in them.
 
 The guest binds the management console as a Unix datagram socket and replies
 to each request's own bound socket, which the host places beside it. Both live

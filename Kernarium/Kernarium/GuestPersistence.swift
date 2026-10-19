@@ -41,29 +41,48 @@ final class GuestPersistence {
     func startObserving() {
         guard observers.isEmpty else { return }
         let center = NotificationCenter.default
-        let edges: [(Notification.Name, String, Departure, Bool)] = [
-            (UIApplication.willResignActiveNotification,
-             "inactive", .flush, false),
-            (UIApplication.didEnterBackgroundNotification,
-             "background", .quiesce, true),
-            (UIApplication.willTerminateNotification,
-             "terminating", .quiesce, true),
-        ]
-        for (name, reason, departure, waits) in edges {
-            observers.append(
-                center.addObserver(
-                    forName: name, object: nil, queue: .main
-                ) { _ in
-                    MainActor.assumeIsolated {
-                        GuestPersistence.shared.flush(
-                            reason: reason,
-                            departure: departure,
-                            waitingForCompletion: waits
-                        )
-                    }
+        observers.append(
+            center.addObserver(
+                forName: UIApplication.willResignActiveNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    GuestPersistence.shared.flush(
+                        reason: "inactive",
+                        departure: .flush,
+                        waitingUntil: nil
+                    )
                 }
-            )
-        }
+            }
+        )
+        observers.append(
+            center.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    GuestPersistence.shared.enterBackground()
+                }
+            }
+        )
+        observers.append(
+            center.addObserver(
+                forName: UIApplication.willTerminateNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    BackgroundSession.shared.willTerminate()
+                    GuestPersistence.shared.flush(
+                        reason: "terminating",
+                        departure: .quiesce,
+                        waitingUntil: .now() + Self.terminationBudget
+                    )
+                }
+            }
+        )
         observers.append(
             center.addObserver(
                 forName: UIApplication.willEnterForegroundNotification,
@@ -71,16 +90,38 @@ final class GuestPersistence {
                 queue: .main
             ) { _ in
                 MainActor.assumeIsolated {
-                    GuestPersistence.shared.resume()
+                    GuestPersistence.shared.returnToForeground()
                 }
             }
         )
     }
 
-    /// Resumes on the flush queue, behind any quiesce still in flight. A quick
-    /// return to the app would otherwise hold the main thread until that
-    /// quiesce finished, and resuming first would leave the guest suspended.
-    private func resume() {
+    /// The application has entered the background, and iOS revokes the host
+    /// GPU within seconds of this handler returning. The guest's GPU requests
+    /// are held first, so none reaches Metal in the time the guest needs to
+    /// suspend, or later should the suspend miss its budget and iOS freeze the
+    /// guest running; a Metal error there would make the guest's Vulkan device
+    /// lost for good. Then the guest is quiesced. The handler as a whole
+    /// answers to iOS's watchdog, so the hold and the quiesce share the one
+    /// budget.
+    private func enterBackground() {
+        let deadline = DispatchTime.now() + Self.terminationBudget
+        BackgroundSession.shared.didEnterBackground()
+        let held = kernarium_runtime_loader_set_gpu_hold(1)
+        print("Kernarium: guest GPU requests held on background (\(held))")
+        flush(reason: "background", departure: .quiesce, waitingUntil: deadline)
+    }
+
+    /// Lets the held GPU requests through, then resumes on the flush queue,
+    /// behind any quiesce still in flight. A quick return to the app would
+    /// otherwise hold the main thread until that quiesce finished, and
+    /// resuming first would leave the guest suspended. The guest's rings stay
+    /// disabled until the resume, and the requests it queued wait in them
+    /// until then.
+    private func returnToForeground() {
+        BackgroundSession.shared.willEnterForeground()
+        let released = kernarium_runtime_loader_set_gpu_hold(0)
+        print("Kernarium: guest GPU requests released on foreground (\(released))")
         queue.async {
             kernarium_runtime_loader_resume()
         }
@@ -93,14 +134,15 @@ final class GuestPersistence {
         observers.removeAll()
     }
 
-    /// - Parameter waitingForCompletion: whether to hold the main thread until
-    ///   the flush finishes. Backgrounding and termination do, because the
-    ///   process may not be scheduled again; merely losing focus does not,
-    ///   since the app keeps running and the flush would only stall the UI.
+    /// - Parameter waitingUntil: when to stop holding the main thread for the
+    ///   flush to finish, or nil to return at once. Backgrounding and
+    ///   termination wait, because the process may not be scheduled again;
+    ///   merely losing focus does not, since the app keeps running and the
+    ///   flush would only stall the UI.
     private func flush(
         reason: String,
         departure: Departure,
-        waitingForCompletion: Bool
+        waitingUntil deadline: DispatchTime?
     ) {
         let application = UIApplication.shared
         var assertion = UIBackgroundTaskIdentifier.invalid
@@ -123,8 +165,8 @@ final class GuestPersistence {
                 }
             }
         }
-        if waitingForCompletion {
-            _ = finished.wait(timeout: .now() + Self.terminationBudget)
+        if let deadline {
+            _ = finished.wait(timeout: deadline)
         }
     }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "request_gate.hpp"
 #include "unique_descriptor.hpp"
 
 #include <array>
@@ -36,14 +37,17 @@ public:
     /* Starts the service thread with the guest timer blocked, creates the
      * device on it, and returns once the server is ready. An exception the
      * thread raised before then is rethrown here. `label` names the device
-     * in error messages, `threadName` names the thread, and a non-null
-     * `sharedMemoryRegions` is given to the server before it runs. */
+     * in error messages, `threadName` names the thread, a non-null
+     * `sharedMemoryRegions` is given to the server before it runs, and so is
+     * a non-null `requestGate`, through which the caller holds the device's
+     * requests back. */
     InProcessVhostUserService(
         std::string label,
         std::string threadName,
         DeviceFactory makeDevice,
         std::shared_ptr<uml::virtio::SharedMemoryRegions>
-            sharedMemoryRegions = {});
+            sharedMemoryRegions = {},
+        std::shared_ptr<RequestGate> requestGate = {});
     /* The same, for a device whose server needs more than the device, such
      * as the GPU's display: `makeServer` builds the whole server on the
      * service thread. */
@@ -52,7 +56,8 @@ public:
         std::string threadName,
         ServerFactory makeServer,
         std::shared_ptr<uml::virtio::SharedMemoryRegions>
-            sharedMemoryRegions = {});
+            sharedMemoryRegions = {},
+        std::shared_ptr<RequestGate> requestGate = {});
     ~InProcessVhostUserService();
 
     InProcessVhostUserService(const InProcessVhostUserService&) = delete;
@@ -65,6 +70,7 @@ public:
     /* Stops serving and joins the thread; later calls do nothing. */
     void stop() noexcept;
 
+
 private:
     void run() noexcept;
 
@@ -72,6 +78,7 @@ private:
     std::string threadName_;
     ServerFactory makeServer_;
     std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions_;
+    std::shared_ptr<RequestGate> requestGate_;
     std::array<UniqueDescriptor, 2> descriptors_;
     UniqueDescriptor stopDescriptor_;
     std::string connectionName_;

@@ -4,8 +4,13 @@
 #include "in_process_service.hpp"
 #include "in_process_service_testing.hpp"
 
+#include <array>
+#include <chrono>
+#include <cstdint>
+#include <cstring>
 #include <fcntl.h>
 #include <memory>
+#include <poll.h>
 #include <stdexcept>
 
 namespace uml::gpu::testing {
@@ -163,10 +168,83 @@ void guestTransportEndpointBlocks()
     require(::close(transport) == 0);
 }
 
+/* The application holds the GPU's requests before it enters the background,
+ * through the service it created. A request the guest queues meanwhile must
+ * stay in its ring, the held service must run it once released, and that
+ * release must wake a server that has nothing else to do. */
+void holdRequestsHoldsTheServicesRequests()
+{
+    InProcessGpuOptions options;
+    options.vncPort = 0;
+    options.width = 64;
+    options.height = 64;
+    InProcessGpuService service {std::move(options)};
+    UniqueDescriptor transport {descriptorFromName(service.takeConnectionName())};
+    UniqueDescriptor input {descriptorFromName(service.takeInputConnectionName())};
+    require(service.holdRequests(std::chrono::milliseconds {100}));
+
+    const SplitRing ring;
+    constexpr std::size_t requestOffset = 0x300;
+    constexpr std::size_t responseOffset = 0x400;
+    const std::array descriptors {
+        protocol::VirtqueueDescriptor {
+            .address = SplitRing::guestBase + requestOffset,
+            .length = sizeof(protocol::GpuControlHeader),
+            .flags = protocol::descriptorNext,
+            .next = 1,
+        },
+        protocol::VirtqueueDescriptor {
+            .address = SplitRing::guestBase + responseOffset,
+            .length = sizeof(protocol::GpuDisplayInfo),
+            .flags = protocol::descriptorWrite,
+            .next = 0,
+        },
+    };
+    constexpr std::array<std::uint16_t, 1> heads {0};
+    ring.publish(descriptors, heads);
+    protocol::GpuControlHeader request {};
+    request.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::getDisplayInfo);
+    std::memcpy(ring.memory().data() + requestOffset, &request, sizeof(request));
+    constexpr std::uint8_t sentinel = 0x5a;
+    std::memset(ring.memory().data() + responseOffset, sentinel,
+        sizeof(protocol::GpuDisplayInfo));
+    const auto responseType = [&] {
+        protocol::GpuControlHeader response {};
+        std::memcpy(
+            &response, ring.memory().data() + responseOffset, sizeof(response));
+        return response.type;
+    };
+
+    const int socket = transport.get();
+    negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+    configureMemory(socket, ring.descriptor());
+    const auto channels = startQueue(socket, ring);
+    constexpr std::uint64_t kick = 1;
+    require(::write(channels.kick.writeEnd.get(), &kick, sizeof(kick)) ==
+        static_cast<ssize_t>(sizeof(kick)));
+    pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
+    require(::poll(&call, 1, 200) == 0);
+    require(ring.usedIndex() == 0);
+    require(ring.memory()[responseOffset] == sentinel);
+
+    service.releaseRequests();
+    awaitCall(channels.call.readEnd.get());
+    require(ring.usedIndex() == 1);
+    require(responseType() == static_cast<std::uint32_t>(
+        protocol::GpuResponse::okDisplayInfo));
+
+    /* Holding again, with nothing running, is quiet and holds the next one. */
+    require(service.holdRequests(std::chrono::milliseconds {100}));
+    service.releaseRequests();
+    service.stop();
+}
+
 } // namespace
 
 void runInProcessServiceTests()
 {
+    holdRequestsHoldsTheServicesRequests();
     guestTransportEndpointBlocks();
     forceRepeatedFailure(StartupFailure::afterTransportSocketPair);
     forceRepeatedFailure(StartupFailure::afterInputSocketPair);
