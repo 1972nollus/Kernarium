@@ -164,7 +164,11 @@ lost for good. The application therefore holds the guest's GPU requests inside
 the foreground. The hold and the quiesce share the handler's four-second
 budget, and the hold itself waits at most one second for a request already
 running. Requests the guest queues meanwhile wait in their rings, through the
-suspend, and run in order after the release.
+suspend, and run in order after the release. The handler stops waiting at that
+deadline, but the quiesce carries on under the `guest-sync` background task,
+waiting up to eight seconds for the guest's suspend reply, which follows its
+file system sync. A return to the foreground resumes the guest once that reply
+has arrived or the wait has ended.
 
 iOS may still end a suspended application, and the guest goes with it. The
 application records the background edge in a marker file and removes it on
