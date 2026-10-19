@@ -68,7 +68,7 @@ struct EmulatorConfiguration: Equatable {
     }
     static let defaultOverlaySizeGiB = 8
     static let defaultAndroidDiskSizeGiB = 8
-    static let defaultKernelPageSize = KernelPageSize.sixteenKiB
+    static let defaultKernelPageSize = KernelPageSize.fourKiB
     static let defaultRetinaMode = false
     static let defaultAutoResizeGuest = true
     static let defaultAndroidBootMode = AndroidBootMode.automatic

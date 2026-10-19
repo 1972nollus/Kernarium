@@ -63,7 +63,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--engine", choices=("gadgets", "jit"),
                         default="gadgets")
     parser.add_argument("--page-size", type=int, choices=(4096, 16384),
-                        default=16384)
+                        default=4096)
     parser.add_argument("--timeout", type=int, default=3600)
     parser.add_argument("--stall-timeout", type=int, default=900)
     parser.add_argument("--install-timeout", type=int, default=600)

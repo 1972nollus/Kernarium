@@ -1154,7 +1154,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                         help="verified run.json from Zink CTS-Configs.gl46 on these exact inputs")
     parser.add_argument("--gles32-config-inventory-run", type=Path,
                         help="verified run.json from CTS-Configs.es32 on these exact inputs")
-    parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
+    parser.add_argument("--page-profile", choices=("16k", "4k"), default="4k")
     parser.add_argument("--jobs", type=common.positive_integer, default=MAX_JOBS,
                         help=f"concurrent owned guests, 1 through {MAX_JOBS} (default: {MAX_JOBS}); each is 4 CPU/4 GiB; "
                              "the floor when --jobs-file is given")

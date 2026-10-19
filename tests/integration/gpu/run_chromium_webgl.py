@@ -1371,11 +1371,11 @@ def main() -> int:
     parser.add_argument(
         "--emulator",
         type=Path,
-        default=REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin",
+        default=REPO_ROOT / ".build/presets/macos-integration-4k/bin/uml-darwin",
     )
     kernarium_common.add_rootfs_arguments(parser)
     parser.add_argument("--display", choices=("native", "vnc"), default="vnc")
-    parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
+    parser.add_argument("--page-profile", choices=("16k", "4k"), default="4k")
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument("--width", type=int, default=1280)

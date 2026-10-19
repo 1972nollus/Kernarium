@@ -253,7 +253,7 @@ def write_config_inventory_evidence(
     directory: Path,
     api: str,
     contract: cts.RootfsContract,
-    page_profile: str = "16k",
+    page_profile: str = "4k",
     display: str = "vnc",
     runtime_identity: dict[str, str] | None = None,
     renderer: str = "zink",
@@ -308,7 +308,7 @@ def write_config_inventory_evidence(
         payloads = {
             "results.qpa": payload,
             "renderer.txt": ("device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
-                             "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nx11_blanking=off\nguest_page_size=16384\n"
+                             "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\nx11_connected=1\nx11_drm_fd=1\nx11_blanking=off\nguest_page_size=4096\n"
                              f"OpenGL renderer string: {client}\n").encode(),
             "summary.txt": b"cts_rc=0\n",
         }
@@ -1827,7 +1827,7 @@ native_display_cleanup
             directory = Path(temporary)
             run = write_config_inventory_evidence(directory, "gles2", contract)
             configs, digest, _ = cts.load_config_inventory_evidence(
-                run, "gles2", "16k", "vnc", contract
+                run, "gles2", "4k", "vnc", contract
             )
             self.assertEqual(len(configs), 2)
             self.assertEqual(digest, cts.egl_config_digest(configs))
@@ -1836,7 +1836,7 @@ native_display_cleanup
             qpa_path.write_bytes(qpa_path.read_bytes() + b"changed")
             with self.assertRaisesRegex(cts.CampaignError, "identity changed"):
                 cts.load_config_inventory_evidence(
-                    run, "gles2", "16k", "vnc", contract
+                    run, "gles2", "4k", "vnc", contract
                 )
 
     def test_gl46_config_inventory_binds_the_opengl_stack_it_was_captured_on(
@@ -1854,7 +1854,7 @@ native_display_cleanup
                     runtime_identity=runtime, renderer=renderer,
                 )
                 configs, digest, _ = cts.load_config_inventory_evidence(
-                    run, "gl46", "16k", "vnc", contract, runtime,
+                    run, "gl46", "4k", "vnc", contract, runtime,
                     (1280, 720), renderer,
                 )
                 self.assertEqual(digest, cts.egl_config_digest(configs))
@@ -1862,7 +1862,7 @@ native_display_cleanup
                     cts.CampaignError, "does not match backend"
                 ):
                     cts.load_config_inventory_evidence(
-                        run, "gl46", "16k", "vnc", contract, runtime,
+                        run, "gl46", "4k", "vnc", contract, runtime,
                         (1280, 720), other,
                     )
 
@@ -2440,7 +2440,7 @@ native_display_cleanup
                     selection,
                     options.seed,
                     options.shard_timeout,
-                    16384,
+                    4096,
                     options.rootfs_contract,
                     artifact_transport="virtio-serial",
                     renderer_backend=options.renderer,

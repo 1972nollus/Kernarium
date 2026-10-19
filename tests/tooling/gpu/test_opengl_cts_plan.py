@@ -186,7 +186,7 @@ class OpenGLPlanTests(unittest.TestCase):
                 directory, "gl46", contract, runtime_identity=runtime,
             )
             configs, _, _ = common.load_config_inventory_evidence(
-                path, "gl46", "16k", "vnc", contract, runtime, renderer="zink")
+                path, "gl46", "4k", "vnc", contract, runtime, renderer="zink")
             self.assertEqual([row.identifier for row in configs], [1, 2])
             original = path.read_text()
             for key, value in (("kosmickrisp_sha256", "3" * 64),
@@ -198,13 +198,13 @@ class OpenGLPlanTests(unittest.TestCase):
                 path.write_text(json.dumps(changed))
                 with self.subTest(key=key), self.assertRaises(common.CampaignError):
                     common.load_config_inventory_evidence(
-                        path, "gl46", "16k", "vnc", contract, runtime,
+                        path, "gl46", "4k", "vnc", contract, runtime,
                         renderer="zink")
             path.write_text(original)
             (directory / "artifacts/summary.txt").write_text("cts_rc=1\n")
             with self.assertRaisesRegex(common.CampaignError, "transport and artifacts"):
                 common.load_config_inventory_evidence(
-                    path, "gl46", "16k", "vnc", contract, runtime,
+                    path, "gl46", "4k", "vnc", contract, runtime,
                     renderer="zink")
 
     def test_gl_discovery_is_separate_from_the_matrix_on_either_stack(self) -> None:

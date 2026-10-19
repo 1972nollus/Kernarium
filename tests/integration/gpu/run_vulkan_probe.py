@@ -89,7 +89,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--emulator", type=Path, required=True)
     parser.add_argument("--rootfs", type=Path, required=True)
     parser.add_argument("--probe", type=Path, required=True)
-    parser.add_argument("--page-size", type=int, choices=(4096, 16384), default=16384)
+    parser.add_argument("--page-size", type=int, choices=(4096, 16384), default=4096)
     parser.add_argument("--timeout", type=float, default=900)
     parser.add_argument("--artifact-root", type=Path,
                         default=guest.REPO_ROOT / ".build/vulkan-probes")

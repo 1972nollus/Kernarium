@@ -350,7 +350,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--engine", choices=("auto", "gadgets", "jit"),
                         default="gadgets")
     parser.add_argument("--page-size", type=int, choices=(4096, 16384),
-                        default=16384,
+                        default=4096,
                         help="guest kernel page size the application boots")
     parser.add_argument("--initramfs-tool", type=Path,
                         default=kernarium.DEFAULT_INITRAMFS_TOOL,

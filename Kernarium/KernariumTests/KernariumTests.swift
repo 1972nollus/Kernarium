@@ -536,7 +536,7 @@ struct KernariumTests {
         #expect(configuration.overlaySizeGiB == 8)
         #expect(configuration.androidDiskSizeGiB == 8)
         #expect(configuration.rootfsFilename == "kde-20260929-r2.erofs")
-        #expect(configuration.kernelPageSize == .sixteenKiB)
+        #expect(configuration.kernelPageSize == .fourKiB)
         #expect(configuration.retinaMode == false)
         #expect(configuration.autoResizeGuest == true)
         #expect(configuration.androidBootMode == .automatic)
@@ -553,7 +553,7 @@ struct KernariumTests {
             overlaySizeGiB: 16,
             androidDiskSizeGiB: 32,
             rootfsFilename: "phosh.erofs",
-            kernelPageSize: .fourKiB,
+            kernelPageSize: .sixteenKiB,
             retinaMode: true,
             autoResizeGuest: false,
             androidBootMode: .recovery
@@ -568,7 +568,7 @@ struct KernariumTests {
                 overlaySizeGiB: 16,
                 androidDiskSizeGiB: 32,
                 rootfsFilename: "phosh.erofs",
-                kernelPageSize: .fourKiB,
+                kernelPageSize: .sixteenKiB,
                 retinaMode: true,
                 autoResizeGuest: false,
                 androidBootMode: .recovery
@@ -590,7 +590,7 @@ struct KernariumTests {
         #expect(normalized.overlaySizeGiB == 1)
         #expect(normalized.androidDiskSizeGiB == 64)
         #expect(normalized.rootfsFilename == "kde-20260929-r2.erofs")
-        #expect(normalized.kernelPageSize == .sixteenKiB)
+        #expect(normalized.kernelPageSize == .fourKiB)
         #expect(normalized.retinaMode == true)
         #expect(normalized.autoResizeGuest == false)
         #expect(normalized.androidBootMode == .recovery)

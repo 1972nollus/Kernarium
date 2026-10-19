@@ -35,7 +35,7 @@ application says how it ended and asks to be relaunched; it never starts a
 second run in the same process. The guest runs on the named `uml-launcher`
 thread, which leaves the main thread to UIKit and MetalKit.
 
-Kernarium defaults to 16 KiB Linux, the processor count `NSProcessInfo`
+Kernarium defaults to 4 KiB Linux, the processor count `NSProcessInfo`
 reports, and 4 GiB of guest memory where the process is given the host's
 memory (Designed for iPad on a Mac) or 2 GiB on a physical device, whose jetsam
 limit a 4 GiB guest would cross. Android fixes the page profile at 4 KiB.

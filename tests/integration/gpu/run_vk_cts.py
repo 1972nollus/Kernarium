@@ -46,7 +46,7 @@ RECEIPT_MANDATORY_PATH = (
 DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
 DEFAULT_RECEIPT_ROOTFS = REPO_ROOT / ".build/rootfs/rootfs-vulkan-venus.ext4"
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".build/vulkan-cts"
-DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
+DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration-4k/bin/uml-darwin"
 CASE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 FORBIDDEN_SOFTWARE_ICD = re.compile(
@@ -2770,7 +2770,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--case", action="append", type=exact_case, default=[])
     parser.add_argument("--family", type=exact_case)
     parser.add_argument("--fraction", type=parse_fraction, default=Fraction(0, 1))
-    parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
+    parser.add_argument("--page-profile", choices=("16k", "4k"), default="4k")
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--cpus", type=int, default=10)

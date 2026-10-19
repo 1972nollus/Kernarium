@@ -5509,7 +5509,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--egl-config-index", type=nonnegative_integer)
     parser.add_argument("--mustpass-config-index", type=nonnegative_integer,
                         help="authenticated must-pass XML configuration index")
-    parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
+    parser.add_argument("--page-profile", choices=("16k", "4k"), default="4k")
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     parser.add_argument("--display", choices=("vnc", "native"), default="vnc")
     parser.add_argument(
