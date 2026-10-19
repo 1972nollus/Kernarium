@@ -28,9 +28,9 @@ from guest import Guest, GuestFile  # noqa: E402
 
 GUEST_PROBE = "/usr/local/libexec/uml-test/shared_memory_probe"
 PROBE_TIMEOUT_SECONDS = 600
-# Results on every profile, and the ones a ring below a 16 KiB group adds on
-# the 4 KiB profile, where the kernel synchronizes a wrapped record itself.
-COMMON_RESULTS = (
+# The results of every ring size, including the rings below a 16 KiB group,
+# where the kernel synchronizes a wrapped record itself.
+EXPECTED_RESULTS = (
     "array",
     "ringbuf-16k",
     "ringbuf-64k",
@@ -43,8 +43,6 @@ COMMON_RESULTS = (
     "iouring-pbuf-ring-mmap",
     "iouring-pbuf-ring-user-page",
     "iouring-user-memory",
-)
-SMALL_RING_RESULTS = (
     "ringbuf-4k",
     "ringbuf-8k",
     "user-ringbuf-4k",
@@ -64,14 +62,10 @@ def main() -> int:
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     parser.add_argument("--probe", required=True, type=pathlib.Path)
-    parser.add_argument("--page-size", required=True, type=int,
-                        choices=(4096, 16384))
     parser.add_argument("--cpus", type=int, default=4)
     arguments = parser.parse_args()
 
-    expected = set(COMMON_RESULTS)
-    if arguments.page_size == 4096:
-        expected.update(SMALL_RING_RESULTS)
+    expected = set(EXPECTED_RESULTS)
 
     with Guest(
         arguments.emulator.resolve(),
@@ -89,10 +83,8 @@ def main() -> int:
         # PACKET_MMAP receives frames that a UDP datagram sends to loopback.
         guest.check_command("ip link set lo up", 30)
         page_size = guest.check_command("getconf PAGESIZE", 30).strip()
-        if page_size != str(arguments.page_size):
-            raise RuntimeError(
-                f"the guest page size is {page_size}, not {arguments.page_size}"
-            )
+        if page_size != "4096":
+            raise RuntimeError(f"the guest page size is {page_size}, not 4096")
         result = guest.run_command(f"{GUEST_PROBE} all", PROBE_TIMEOUT_SECONDS)
         print(result.output.strip(), flush=True)
         console = guest.output()

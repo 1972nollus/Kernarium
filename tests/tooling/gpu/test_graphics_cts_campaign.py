@@ -55,7 +55,7 @@ def ownership_record(attempt: Path) -> dict:
 PROBE_PREAMBLE = (
     "device=/dev/dri/card0\ndevice=/dev/dri/renderD128\n"
     "x11_server=xorg\nx11_dri3=1\nx11_present=1\nx11_glamor=1\n"
-    "x11_connected=1\nx11_drm_fd=1\nx11_blanking=off\nguest_page_size=16384\n"
+    "x11_connected=1\nx11_drm_fd=1\nx11_blanking=off\nguest_page_size=4096\n"
 )
 RENDERER_PROBES = {
     "zink": (
@@ -95,7 +95,7 @@ def spec(directory: Path, renderer: str = "zink") -> dict:
     vk_receipt["mustpass"]["unique_case_count"] = 10
     return {
         "suites": ["vulkan", "gl46"], "fraction_count": 8,
-        "cpus": 4, "memory": "4G", "engine": "jit", "page_profile": "16k",
+        "cpus": 4, "memory": "4G", "engine": "jit", "page_profile": "4k",
         "shard_timeout": 900, "guest_timeout": 1500, "console_stall_timeout": 600,
         "console_stall_busy_timeout": 1800,
         "max_resumptions": campaign.common.DEFAULT_MAX_RESUMPTIONS,
@@ -184,7 +184,7 @@ def make_gl_attempt(root: Path, definition: dict, shard: campaign.Shard,
     item = definition["opengl"]
     metadata = {
         "schema_version": 1, "qualification": True, "formal_conformance": False,
-        "engine": "jit", "memory": "4G", "cpus": 4, "page_profile": "16k",
+        "engine": "jit", "memory": "4G", "cpus": 4, "page_profile": "4k",
         "kosmickrisp_sha256": definition["kosmickrisp_sha256"],
         "git": definition["source"]["git"], "console_sha256": gl.sha256_file(run / "console.log"),
         "adapter": "macos", "backend": gl.host_backend_label(item["renderer"]),
@@ -293,7 +293,7 @@ def make_resumed_gl_attempt(root: Path, definition: dict, shard: campaign.Shard)
     item = definition["opengl"]
     metadata = {
         "schema_version": 1, "qualification": True, "formal_conformance": False,
-        "engine": "jit", "memory": "4G", "cpus": 4, "page_profile": "16k",
+        "engine": "jit", "memory": "4G", "cpus": 4, "page_profile": "4k",
         "kosmickrisp_sha256": definition["kosmickrisp_sha256"],
         "git": definition["source"]["git"],
         "console_sha256": gl.sha256_file(run / "console.log"),
@@ -439,7 +439,7 @@ class GraphicsCampaignTests(unittest.TestCase):
                 {key.name() for key in campaign.shards(extended)
                  if key.suite != "gles32"})
             for broken in (
-                {**before, "page_profile": "4k"},
+                {**before, "page_profile": "16k"},
                 {**before, "opengl": {**before["opengl"], "renderer": "virgl"}},
                 {**after, "suites": ["vulkan", "gles32", "gl46"]},
                 after,
@@ -1020,7 +1020,7 @@ class GraphicsCampaignTests(unittest.TestCase):
             location.mkdir()
             (location / "campaign.json").write_text(json.dumps(campaign_record(definition)))
             replaced = copy.deepcopy(definition)
-            replaced["page_profile"] = "4k"
+            replaced["page_profile"] = "16k"
             with mock.patch.object(campaign, "build_spec", return_value=replaced), \
                     mock.patch.object(campaign, "run_pending") as launch, \
                     self.assertRaises(gl.CampaignError):
@@ -1287,7 +1287,7 @@ class GraphicsCampaignTests(unittest.TestCase):
             }))
             metadata = {
                 "qualification": True, "formal_conformance": False, "engine": "jit",
-                "memory": "4G", "cpus": 4, "page_profile": "16k",
+                "memory": "4G", "cpus": 4, "page_profile": "4k",
                 "kosmickrisp_sha256": definition["kosmickrisp_sha256"],
                 "git": definition["source"]["git"],
                 "console_sha256": gl.sha256_file(run / "console.log"),

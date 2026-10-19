@@ -10,7 +10,7 @@ test re-derives everything but the outcomes from the current script, so a
 pack can only hold the records of the request the script writes now:
 
 - provenance.json names the script's request;
-- the records are the script's groups, in both page profiles, without
+- the records are the script's groups, in the 4 KiB profile, without
   harness options, and each case is the script's case in order: its name,
   program, native requirement and initial state;
 - each authored outcome is the cause the script gives the case, or a
@@ -113,7 +113,7 @@ def check(trap, lines: list[str], meta: dict) -> str:
     for record in native:
         group = record["record"].split("/", 1)[1]
         if (record["site"], record["profiles"], record["options"]) != \
-                (trap.SITE, ["16k", "4k"], []) or "svl" in record:
+                (trap.SITE, ["4k"], []) or "svl" in record:
             raise SystemExit(f"{record['record']}: not the script's record")
         expected = by_group[group]
         if len(record["cases"]) != len(expected):

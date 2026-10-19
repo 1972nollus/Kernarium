@@ -214,8 +214,8 @@ NAME(uml_arm64_gadget_enter_streaming):
 
 /* Translate the \bytes (a register; at most one guest page) at guest address
  * \address through the TLB for \access, as transfer_translate does, leaving
- * the host address in \address. Every crossing, miss or second-way mismatch
- * the fast path cannot take branches to \slow, whose helper does the whole
+ * the host address in \address. Every crossing or miss the fast path cannot
+ * take branches to \slow, whose helper does the whole
  * access in C++. Scratch: x8-x12. */
 .macro sme_translate access, address, bytes, slow
 	sub x8, \bytes, #1
@@ -224,27 +224,8 @@ NAME(uml_arm64_gadget_enter_streaming):
 	lsr x8, x8, #UML_GADGET_GUEST_PAGE_SHIFT
 	cbnz x8, \slow
 	lsr x8, \address, #UML_GADGET_GUEST_PAGE_SHIFT
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	ubfx x9, \address, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	add x10, _tlb, x9, lsl #6
-	.if \access
-	ldp x11, x12, [x10, #UML_GADGET_TLB_ENTRY_WRITE_PAGE]
-	.else
-	ldp x11, x12, [x10, #UML_GADGET_TLB_ENTRY_READ_PAGE]
-	.endif
-	cmp x11, x8
-	b.eq 91f
-	.if \access
-	ldp x11, x12, [x10, #UML_GADGET_TLB_SECOND_WRITE_PAGE]
-	.else
-	ldp x11, x12, [x10, #UML_GADGET_TLB_SECOND_READ_PAGE]
-	.endif
-	cmp x11, x8
-	b.ne \slow
-91:
-#else
-	ubfx x9, \address, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
-	add x10, _tlb, x9, lsl #5
+	add x10, _tlb, x9, lsl #UML_GADGET_TLB_SET_SHIFT
 	.if \access
 	ldp x11, x12, [x10, #UML_GADGET_TLB_ENTRY_WRITE_PAGE]
 	.else
@@ -252,7 +233,6 @@ NAME(uml_arm64_gadget_enter_streaming):
 	.endif
 	cmp x11, x8
 	b.ne \slow
-#endif
 	add \address, x12, \address
 .endm
 

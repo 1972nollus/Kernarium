@@ -23,10 +23,9 @@ namespace arm64_jit_memory_run_codegen_test {
 using uml::testing::require;
 
 inline constexpr std::uint32_t memory_register_mask = (31U << 5U) | 31U;
-// One flag-neutral first-way tag comparison is emitted per TLB translation.
+// One flag-neutral tag comparison is emitted per TLB translation.
 inline constexpr std::uint32_t translation_probe = 0xca01'0042U;
-inline constexpr unsigned page_shift =
-    DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 14U : 12U;
+inline constexpr unsigned page_shift = DARWIN_UML_GUEST_PAGE_SHIFT;
 inline constexpr std::uint32_t compare_branch_displacement_mask =
     0x00ff'ffe0U;
 inline constexpr std::uint32_t test_branch_displacement_mask = 0x0007'ffe0U;

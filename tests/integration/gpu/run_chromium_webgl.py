@@ -1307,7 +1307,7 @@ def parse_guest_identity(transcript: str) -> dict[str, int]:
     if marker is None:
         raise RuntimeError("Aquarium guest identity is missing")
     page_size, cpus, memory_kib = (int(value) for value in marker.groups())
-    if page_size not in (4096, 16384) or cpus < 1 or memory_kib < 1:
+    if page_size != 4096 or cpus < 1 or memory_kib < 1:
         raise RuntimeError("Aquarium guest identity is invalid")
     return {
         "page_size": page_size,
@@ -1375,7 +1375,6 @@ def main() -> int:
     )
     kernarium_common.add_rootfs_arguments(parser)
     parser.add_argument("--display", choices=("native", "vnc"), default="vnc")
-    parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument("--width", type=int, default=1280)
@@ -1543,7 +1542,7 @@ def main() -> int:
     separator = kde_session.guest_argument_separator(command)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     artifact = options.artifact_root.resolve() / (
-        f"{timestamp}-{os.getpid()}-{options.page_profile}-{options.display}"
+        f"{timestamp}-{os.getpid()}-4k-{options.display}"
     )
     guest_files = gpu_guest.StagedGuestFiles(
         artifact / gpu_guest.GUEST_FILE_DIRECTORY
@@ -1608,7 +1607,7 @@ def main() -> int:
             options.rootfs_contract
         ),
         "display": options.display,
-        "page_profile": options.page_profile,
+        "page_profile": "4k",
         "engine": options.engine,
         "renderer_backend": options.renderer,
         "serial_socket": (
@@ -1672,11 +1671,8 @@ def main() -> int:
             if metrics["FISH"] != FISH_COUNT:
                 raise RuntimeError("Aquarium used the wrong fish count")
             guest_identity = parse_guest_identity(text)
-            expected_page_size = (
-                16384 if options.page_profile == "16k" else 4096
-            )
             if (
-                guest_identity["page_size"] != expected_page_size
+                guest_identity["page_size"] != 4096
                 or guest_identity["cpus"] != options.cpus
             ):
                 raise RuntimeError("Aquarium guest used a different configuration")

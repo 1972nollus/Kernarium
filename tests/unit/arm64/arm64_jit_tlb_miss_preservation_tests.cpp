@@ -139,48 +139,27 @@ void miss_call_is_cold_and_has_no_resident_spills() {
 
   constexpr std::uint32_t tag_difference = 0xca01'0042U;
   const auto translated_address = add_shifted(8, 8, 9);
-  std::size_t first_probe = hot.size();
+  std::size_t probe = hot.size();
   for (std::size_t index = 0; index + 2U < hot.size(); ++index) {
     if (hot[index] != tag_difference ||
         !is_compare_nonzero_x(hot[index + 1U], 2) ||
         hot[index + 2U] != translated_address)
       continue;
-    require(first_probe == hot.size(),
-            "memory block emitted multiple candidate first-way probes");
-    first_probe = index;
+    require(probe == hot.size(),
+            "memory block emitted multiple candidate probes");
+    probe = index;
   }
-  require(first_probe != hot.size(),
-          "memory block omitted the first-way TLB probe");
-  require(first_probe != 0U &&
-              hot[first_probe - 1U] == load_pair_x(2, 9, 0, 16),
-          "write translation loaded the wrong first-way tag/delta fields");
-  const auto continuation = first_probe + 3U;
+  require(probe != hot.size(),
+          "memory block omitted the TLB probe");
+  require(probe != 0U &&
+              hot[probe - 1U] == load_pair_x(2, 9, 0, 16),
+          "write translation loaded the wrong tag/delta fields");
+  const auto continuation = probe + 3U;
   const auto cold_probe = compare_branch_target(
-      first_probe + 1U, hot[first_probe + 1U]);
+      probe + 1U, hot[probe + 1U]);
   require(cold_probe >= static_cast<std::ptrdiff_t>(compiled.hot_words) &&
               cold_probe < static_cast<std::ptrdiff_t>(all.size()),
-          "first-way miss does not target deferred translation code");
-
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-  const auto second = static_cast<std::size_t>(cold_probe);
-  require(second + 4U < all.size(),
-          "deferred second-way probe is truncated");
-  require(all[second] == load_pair_x(2, 9, 0, 48) &&
-              all[second + 1U] == tag_difference &&
-              is_compare_nonzero_x(all[second + 2U], 2) &&
-              all[second + 3U] == translated_address,
-          "deferred write probe changed the second-way tag/delta fields");
-  require(is_unconditional_branch(all[second + 4U]) &&
-              unconditional_branch_target(
-                  second + 4U, all[second + 4U]) ==
-                  static_cast<std::ptrdiff_t>(continuation),
-          "second-way hit does not rejoin the exact memory continuation");
-  const auto miss = compare_branch_target(
-      second + 2U, all[second + 2U]);
-  require(miss > static_cast<std::ptrdiff_t>(second + 4U) &&
-              miss < static_cast<std::ptrdiff_t>(all.size()),
-          "second-way mismatch does not target the preserving miss bridge");
-#endif
+          "TLB miss does not target deferred translation code");
 
   std::size_t call = all.size();
   for (std::size_t index = compiled.hot_words; index < all.size(); ++index) {
@@ -219,118 +198,20 @@ void miss_call_is_cold_and_has_no_resident_spills() {
                   static_cast<std::ptrdiff_t>(continuation),
           "successful TLB miss does not rejoin the exact memory continuation");
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
   /*
-   * Deferring the second-way probe and preserving miss bridge leaves a
-   * 25-word single-store hot body. The two-word TBI gate selects the exact
-   * semantic path without changing the preserving miss bridge. The persistent linked-block ABI contributes seven
-   * fixed prologue/epilogue words.
-   */
-  const std::size_t persistent_hot_frame_words = 7U;
-  const std::size_t persistent_total_frame_words = 13U;
-  require(compiled.hot_words <= 28 + persistent_hot_frame_words,
-          "single-store JIT hot expansion lost the deferred-translation budget");
-  require(compiled.words.size() <= 68 + persistent_total_frame_words,
-          "single-store JIT total expansion exceeded the "
-          "preserving-call budget");
-#else
-  /*
-   * The 4K translation has no second-way probe, and its deferred miss leaves a
-   * 27-word single-store hot body. The two-word TBI gate matches the 16K
-   * profile.
+   * Deferring the preserving miss bridge leaves a 27-word single-store hot
+   * body. The two-word TBI gate selects the exact semantic path without
+   * changing the preserving miss bridge. The persistent linked-block ABI
+   * contributes seven fixed prologue/epilogue words.
    */
   const std::size_t persistent_hot_frame_words = 7U;
   const std::size_t persistent_total_frame_words = 13U;
   require(compiled.hot_words <= 30 + persistent_hot_frame_words,
-          "single-store 4K JIT hot expansion lost the "
+          "single-store JIT hot expansion lost the "
           "deferred-translation budget");
   require(compiled.words.size() <= 66 + persistent_total_frame_words,
-          "single-store 4K JIT total expansion exceeded the "
+          "single-store JIT total expansion exceeded the "
           "preserving-call budget");
-#endif
-}
-
-void second_way_hit_rejoins_the_hot_memory_continuation() {
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-  constexpr auto page =
-      static_cast<std::uint64_t>(DARWIN_UML_GUEST_PAGE_SIZE);
-  constexpr auto alias_stride = page * (std::uint64_t{1} << 14U);
-  constexpr auto first_address = engine_tests::engine_test_data_base;
-  constexpr auto second_address = first_address + alias_stride;
-  constexpr std::size_t data_offset = 64;
-  constexpr std::uint64_t first_value = 0x1020'3040'5060'7080ULL;
-  constexpr std::uint64_t second_value = 0x8877'6655'4433'2211ULL;
-
-  std::array<std::byte, DARWIN_UML_GUEST_PAGE_SIZE> first_data{};
-  std::array<std::byte, DARWIN_UML_GUEST_PAGE_SIZE> second_data{};
-  std::memcpy(first_data.data() + data_offset, &first_value,
-              sizeof(first_value));
-  std::memcpy(second_data.data() + data_offset, &second_value,
-              sizeof(second_value));
-  const std::array memory{
-      engine_tests::MemoryRegion{
-          .address = first_address,
-          .initial = first_data,
-      },
-      engine_tests::MemoryRegion{
-          .address = second_address,
-          .initial = second_data,
-      },
-  };
-
-  constexpr std::array code{
-      engine_tests::ProgramWord{
-          .offset = 0,
-          .instruction = load_x(2, 0),
-      },
-      engine_tests::ProgramWord{
-          .offset = 4,
-          .instruction = load_x(3, 1),
-      },
-      engine_tests::ProgramWord{
-          .offset = 8,
-          .instruction = 0x9100'056bU, // add x11, x11, #1
-      },
-      engine_tests::ProgramWord{
-          .offset = 12,
-          .instruction = load_x(4, 1),
-      },
-      engine_tests::ProgramWord{
-          .offset = 16,
-          .instruction = 0xd400'0001U,
-      },
-  };
-
-  arm64::CpuState initial{};
-  initial.registers[0] = first_address + data_offset;
-  initial.registers[1] = second_address + data_offset;
-  initial.registers[11] = 0x40;
-  auto expected = initial;
-  expected.registers[2] = first_value;
-  expected.registers[3] = second_value;
-  expected.registers[4] = second_value;
-  expected.registers[11] = 0x41;
-  expected.pc = engine_tests::engine_test_code_base +
-                code.size() * sizeof(std::uint32_t);
-
-  /*
-   * These pages have identical 16K TLB set indexes. The first two loads fill
-   * separate ways; the final load must take the deferred way-1 path and branch
-   * back before the native memory operation without repeating or skipping the
-   * intervening architectural ADD.
-   */
-  engine_tests::EngineHarness harness;
-  harness.check_program({
-      .name = "jit-tlb-way1-rejoins-hot-memory-continuation",
-      .code = code,
-      .initial = initial,
-      .expected = expected,
-      .native = engine_tests::NativeRequirements::baseline(),
-      .memory = memory,
-      .expected_instructions = code.size(),
-  });
-  harness.print_summary("arm64-jit-tlb-way1-continuation");
-#endif
 }
 
 void every_resident_register_survives_a_forced_miss() {
@@ -516,7 +397,6 @@ void pinned_vectors_commit_on_a_direct_cold_fault() {
 int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
   miss_call_is_cold_and_has_no_resident_spills();
-  second_way_hit_rejoins_the_hot_memory_continuation();
   every_resident_register_survives_a_forced_miss();
   ordinary_low_vectors_commit_on_a_direct_cold_fault();
   pinned_vectors_commit_on_a_direct_cold_fault();

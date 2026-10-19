@@ -61,6 +61,20 @@ enum class ExchangeResult {
 constexpr std::string_view writebackAcknowledgement = "Emergency Sync";
 constexpr std::string_view suspendAcknowledgement = "suspended";
 constexpr std::string_view stopAcknowledgement = "stopped";
+/* A suspend-capable guest reports a suspend it gave up with this prefix. */
+constexpr std::string_view suspendFailure = "Suspend failed:";
+
+/* The guest answers most requests at once, so one that has no reply within
+ * replyWait is left pending. It answers a suspend only once it has synced its
+ * filesystems and reached the sleep boundary, or given the suspend up, which
+ * can take longer: a guest with much dirty data syncs for seconds, and one
+ * whose own wake sources kept ending the suspend has entered it several times.
+ * Waiting longer for that reply lets the host flush what the sync wrote, and
+ * stop a guest whose suspend failed late instead of leaving it running. The
+ * wait ends with the reply, so only such a guest spends it, and it leaves most
+ * of the time iOS grants an application it backgrounds. */
+constexpr std::chrono::seconds replyWait {2};
+constexpr std::chrono::seconds suspendReplyWait {8};
 
 /* A reply socket's identifier is this many hexadecimal digits, so the widest
  * reply path is known before any request is sent. */
@@ -219,11 +233,11 @@ void releaseConsoleGuard()
  * Darwin does not autobind a Unix datagram socket, so this binds next to the
  * guest's console. Each request binds a new name, so a reply that arrives
  * after its request gave up finds no socket instead of the next request's. A
- * reply that has not arrived within two seconds is left pending.
+ * reply that has not arrived within the request's wait is left pending.
  */
 class Client final {
 public:
-	explicit Client(const GuestConsoleLocation &location)
+	Client(const GuestConsoleLocation &location, std::chrono::seconds wait)
 	{
 		std::array<char, clientIdDigits + 1U> id {};
 		(void)std::snprintf(id.data(), id.size(), "%08x",
@@ -250,7 +264,10 @@ public:
 			guard_ = std::move(guard);
 		} catch (...) {
 		}
-		const timeval timeout {.tv_sec = 2, .tv_usec = 0};
+		const timeval timeout {
+			.tv_sec = static_cast<decltype(timeval::tv_sec)>(
+				wait.count()),
+			.tv_usec = 0};
 		(void)::setsockopt(descriptor_, SOL_SOCKET, SO_RCVTIMEO, &timeout,
 			sizeof(timeout));
 	}
@@ -305,9 +322,10 @@ void adoptConsolePath(const std::string &path)
 	const GuestConsoleLocation &location,
 	const sockaddr_un &address,
 	std::string_view command,
-	std::string &response)
+	std::string &response,
+	std::chrono::seconds wait = replyWait)
 {
-	Client client {location};
+	Client client {location, wait};
 	if (!client.usable())
 		return ExchangeResult::notSent;
 	const int descriptor = client.descriptor();
@@ -459,8 +477,8 @@ GuestSuspension suspend_guest(unsigned int writebackSettleMs,
 		 * CPUs, interrupts, and timekeeping have reached the platform sleep
 		 * boundary. The separate wake request remains queued on the console
 		 * descriptor until the kernel has resumed it. */
-		const auto suspendResult =
-			exchange(*location, address, "suspend", response);
+		const auto suspendResult = exchange(*location, address, "suspend",
+			response, suspendReplyWait);
 		if (suspendResult == ExchangeResult::accepted) {
 			if (response.find(suspendAcknowledgement) == std::string::npos) {
 				std::fputs("Guest console returned an unexpected suspend reply\n",
@@ -477,10 +495,17 @@ GuestSuspension suspend_guest(unsigned int writebackSettleMs,
 			return GuestSuspension::system;
 		if (suspendResult == ExchangeResult::notSent)
 			return GuestSuspension::none;
+		if (response.starts_with(suspendFailure)) {
+			std::fprintf(stderr,
+				"Guest console: the guest could not suspend (%s); "
+				"stopping it instead\n",
+				response.c_str());
+		}
 		response.clear();
-		/* An explicit rejection identifies an older or suspend-disabled kernel.
-		 * Its stop path does not sync filesystems, so preserve the old writeback
-		 * step only on this compatibility path. A suspend-capable kernel performs
+		/* An explicit rejection comes from an older or suspend-disabled
+		 * kernel, or from a guest that gave the suspend up and kept running.
+		 * The stop path does not sync filesystems, so preserve the old
+		 * writeback step only on this fallback. A suspend that holds performs
 		 * the sync itself and avoids spending the iOS background budget twice. */
 		(void)requestWriteback(*location, address, writebackSettleMs);
 		const auto stopResult = exchange(*location, address, "stop", response);

@@ -70,8 +70,8 @@ La32veneer_\symbol:
 #include "../a32_layout.h"
 
 /* The part's TLB probe: transfer_translate and its cold half, which key a
- * multi-byte access by the page of its final byte in both page profiles, so
- * a crossing transfer only misses and the cold half recognizes it. */
+ * multi-byte access by the page of its final byte, so a crossing transfer
+ * only misses and the cold half recognizes it. */
 .macro a32_translate access, page_offset, bytes, address, cold, resume, cross, forward=0, fault=uml_arm64_gadget_memory_fault
 	transfer_translate \access, \page_offset, \bytes, \address, \cold, \resume, \cross, \forward, \fault
 .endm

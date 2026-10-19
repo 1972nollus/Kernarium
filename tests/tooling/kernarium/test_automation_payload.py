@@ -165,9 +165,7 @@ class AutomationPayloadTests(unittest.TestCase):
             cpus=4,
             memory_mib=1536,
             engine="gadgets",
-            page_size=4096,
         )
-        self.assertEqual(settings["KERNARIUM_KERNEL_PAGE_SIZE"], "4096")
         self.assertEqual(settings["KERNARIUM_SYSTEMD_UNIT"], "uml-cts.target")
         with mock.patch.dict(
             kernarium.os.environ,

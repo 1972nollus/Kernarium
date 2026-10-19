@@ -171,7 +171,7 @@ def build(identifier: str, *, image_type: str, page_size: int) -> Campaign:
     campaigns are bound to sealed ext4 derivatives, and the development
     Vulkan identity to the frozen EROFS image.
     """
-    if image_type not in ("erofs", "ext4") or page_size not in (4096, 16384):
+    if image_type not in ("erofs", "ext4") or page_size != 4096:
         raise cts.CampaignError("unsupported image type or page size")
     if identifier in vulkan.apple_campaigns():
         return _build_vulkan(identifier, image_type, page_size)

@@ -89,7 +89,7 @@ the test or in the code under test can swallow it.
 For one test, use an anchored expression:
 
 ```sh
-ctest --test-dir .build/presets/macos-unit-16k \
+ctest --test-dir .build/presets/macos-unit \
   -R '^exact-test-name$' --output-on-failure
 ```
 
@@ -102,16 +102,14 @@ that boots ten vCPUs, such as `guest-mmu-stress`, needs ten host CPUs and
 skips on a smaller host. The LTP campaigns default to half the host's physical
 cores, at most 16.
 
-The ordinary 16 KiB and 4 KiB host checks are:
+The ordinary host check is:
 
 ```sh
 cmake --workflow --preset check-unit
-cmake --workflow --preset check-unit-4k
 ```
 
-Use both profiles for page-size-sensitive CPU, memory, ABI, kernel, or guest
-changes. A change confined to a page-independent host tool usually needs only
-its owning workflow; for tooling tests alone that is:
+A change confined to a host tool usually needs only its owning workflow; for
+tooling tests alone that is:
 
 ```sh
 cmake --workflow --preset check-tooling
@@ -242,8 +240,8 @@ the guest architecture and configure an integration preset with
 and its fixtures installed as payload files, checks their SHA-256 list, checks
 every advertised profile's pixels, raw layouts including packed BGRA capture,
 imported dma-buf capture, timestamps, source-change and EOS events, and rejects
-kernel faults or failed shutdown. Run it on both Linux
-page profiles; Android uses its own 4 KiB guest and deployment workflow.
+kernel faults or failed shutdown. Android uses its own 4 KiB guest and
+deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
 an x86-64 probe and an x86-64 rootfs, the way its boot check below is run.
@@ -252,12 +250,12 @@ The optional `guest-futex-atomic` test checks the futex contract in
 [`../kernel/common/README.md`](../kernel/common/README.md). Configure
 `UML_FUTEX_PROBE_BINARY` with a static C++20 build of
 `tests/integration/futex/futex_atomic_probe.cpp`; the rootfs needs the video
-probe's shell tools. Run it on both Linux page profiles and the maintained
-Android kernel.
+probe's shell tools. Run it on the Linux guest and the maintained Android
+kernel.
 
 `guest-aarch32-kernel` checks the kernel's AArch32 task support in
-[`../kernel/common/README.md`](../kernel/common/README.md) on both Linux page
-profiles, and needs `python3` in the rootfs. The build generates a freestanding
+[`../kernel/common/README.md`](../kernel/common/README.md), and needs `python3`
+in the rootfs. The build generates a freestanding
 armhf program from `tests/integration/aarch32/aarch32_probe.S` with the
 configured compiler's ARM backend, wraps it into an ELF32 executable with
 `make_elf32.py` (the toolchain has no ARM linker) in a layout for any page size
@@ -272,8 +270,7 @@ fault signals and stack growth, the time64 and socket calls with
 `SCM_RIGHTS`, `vfork`, timers, `seccomp` and a 32-bit tracer), a 64-bit
 tracer's session (registers, system call and single-step stops, signal-frame
 VFP state), a core dump and many runs at once, and requires the 4 KiB-only
-program to run on a 4 KiB guest and to be killed by `SIGSEGV` at exec on a
-16 KiB one, leaving the guest working. The tooling test
+program to run on the guest. The tooling test
 `aarch32-elf32-wrapper` checks the two layouts the wrapper writes, and
 `aarch32-elf32-linker` the multi-object linker of the engine probe below.
 
@@ -284,11 +281,11 @@ and restart. It requires access to macOS audio services.
 The full sanitizer suites remain separate because of their runtime cost:
 
 ```sh
-cmake --preset macos-unit-16k-asan-ubsan
+cmake --preset macos-unit-asan-ubsan
 cmake --build --preset asan-ubsan
 ctest --preset unit-asan-ubsan
 
-cmake --preset macos-unit-16k-tsan
+cmake --preset macos-unit-tsan
 cmake --build --preset tsan
 ctest --preset unit-tsan
 ```
@@ -301,8 +298,7 @@ RAM report themselves unsupported instead of running.
 
 Integration needs four local inputs:
 
-- the accepted kernel bundle for the selected page profile below
-  `.build/kernel/artifacts`;
+- the accepted kernel bundle below `.build/kernel/artifacts`;
 - the accepted boot base archive below `.build/rootfs`, which `uml-darwin`
   embeds ([boot ramdisk](../tools/rootfs/boot-ramdisk/README.md));
 - the verified dependency prefix; and
@@ -312,12 +308,11 @@ It does not require a kernel source checkout or compiler. Run:
 
 ```sh
 cmake --workflow --preset check-integration
-cmake --workflow --preset check-integration-4k
 ```
 
-The workflows configure the product, build it, run tooling checks, and execute
-the fast integration suite. `integration-full` and `integration-full-4k` are
-explicit CTest presets when the complete registered guest set is required.
+The workflow configures the product, builds it, runs tooling checks, and
+executes the fast integration suite. `integration-full` is the explicit CTest
+preset when the complete registered guest set is required.
 
 The shared serial harness boots each guest through the launcher's per-run
 initramfs: its `/init` mounts the image beneath a tmpfs overlay, installs the
@@ -439,8 +434,8 @@ cmake --build --preset ios-simulator
 scripts/build-xcframework.sh
 ```
 
-Kernarium is an iOS device product with runtime presets for 16 KiB and 4 KiB
-Linux and 4 KiB Android and no Simulator variant; see
+Kernarium is an iOS device product with runtime presets for Linux and Android
+and no Simulator variant; see
 [`graphics.md`](graphics.md#current-path).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
@@ -590,7 +585,7 @@ python3 tests/integration/ltp/run_guest_ltp.py --help
 
 `arm64-instruction-corpus` runs the build-generated corpus from
 [`../tests/unit/arm64/corpus/`](../tests/unit/arm64/corpus/README.md) through
-the gadget and JIT engines of each page profile in one process, and the
+the gadget and JIT engines in one process, and the
 `arm64-instruction-corpus-freshness` tooling test checks the corpus metadata
 against its pack. The corpus README owns the format, sampling policy, runner
 options, and promotion of new cases, which requires a producer commit. Cases
@@ -689,7 +684,7 @@ M4 or newer Mac.
 
 ## AArch32 decoder
 
-`arm64-aarch32-decoder` (unit, both page profiles) decodes the stored sample
+`arm64-aarch32-decoder` (unit) decodes the stored sample
 words of every row of the encoding table and the whole 16-bit Thumb space. It
 compares each answer with the one `tests/tooling/arm64/a32_expected.py`
 computes from the same XML pseudocode independently of the C++ translation,
@@ -711,7 +706,7 @@ the decoder's table and the counts in
 
 ## AArch32 corpus
 
-`arm64-aarch32-corpus` (unit, both page profiles) checks every case of the
+`arm64-aarch32-corpus` (unit) checks every case of the
 generated AArch32 corpus against the decoder: the program decodes in order,
 in the IT state its instructions leave, to legal forms except at the
 instruction that raised an event; the instruction under test is the form the
@@ -732,7 +727,7 @@ before the table goes stale; it skips without the archive.
 
 ## AArch32 semantic library
 
-`arm64-aarch32-semantics` (unit, both page profiles) checks the library's
+`arm64-aarch32-semantics` (unit) checks the library's
 contract that the corpus cannot record: fault ordering and the unchanged
 state at a fault, the exclusive monitor, the single-instruction entry's IT
 handling, the events, the library-exit counters and the coverage predicate.
@@ -831,8 +826,7 @@ and that an engine below `base` takes the AArch32 entry as the
 illegal-instruction exit without changing the state. `arm64-a32-guest-key` checks the tagged
 translation keys (round trips, interworking, that no key collides with an A64
 key, the empty cell or a fault position, and the hash-visible bit) and the
-key-aware validation of saved guest units across page boundaries of both
-guest page sizes. `arm64-jit-shared-translation-cache` also checks that the
+key-aware validation of saved guest units across page boundaries. `arm64-jit-shared-translation-cache` also checks that the
 shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
 policy from their environment as well; the suites must hold unchanged with
 `DARWIN_UML_GUEST_AARCH32=1`.
@@ -889,8 +883,7 @@ and `sequences-qemu` records (`--record` takes a comma-separated list) at
 least 200 times with a timer signal every few microseconds aimed at the
 guest's thread, and goes on past that until a store-exclusive has lost its
 reservation (at most 60 s, because whether a signal lands in the window is
-chance). It requires that one was lost and that every case then agreed. All
-four run in both page profiles.
+chance). It requires that one was lost and that every case then agreed.
 Instruction semantics belong to the instruction corpus, not to the first two.
 
 `arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:
@@ -930,7 +923,7 @@ runner print every line of the guest's output, passes included.
 
 ## AArch32 JIT
 
-The JIT's AArch32 tests run on the macOS JIT only and in both page profiles.
+The JIT's AArch32 tests run on the macOS JIT only.
 `arm64-jit-a32-corpus` runs every case of the AArch32 corpus pack
 through `CpuEngine::run_aarch32` on the oracle's memory map, with an svc at
 each of the oracle's two epilogues, and compares registers, APSR, thread
@@ -1016,7 +1009,7 @@ per-test result.
 
 The x86-64 JIT takes the same campaign: give `run-asm-corpus.py`
 `uml_x86_64_fex_asm_jit_runner`, which runs i386 binaries in a compat32
-context. The macOS 4 KiB unit tree also runs the build-generated x86-64 corpus
+context. The macOS unit tree also runs the build-generated x86-64 corpus
 through the x86-64 JIT. `x86-64-jit-instruction-corpus` holds it to
 `tests/unit/x86_64/jit_corpus_exclusions.tsv`, whose rows name each record the
 engine is known to fail with its class and fail the test when the record passes
