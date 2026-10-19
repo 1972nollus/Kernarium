@@ -41,3 +41,19 @@ uml_add_unit_test(
     NAME runtime-x86-tier
     COMMAND uml_runtime_x86_tier_tests
     LABELS tsan)
+
+# The fence against real threads. Each test stops and starts threads of the
+# process, so the binaries run alone.
+add_executable(uml_runtime_thread_fence_tests thread_fence_tests.cpp)
+target_link_libraries(uml_runtime_thread_fence_tests PRIVATE
+    UML::RuntimeThreadFence)
+uml_add_unit_test(
+    NAME runtime-thread-fence
+    COMMAND uml_runtime_thread_fence_tests
+    TIMEOUT 240)
+uml_add_unit_test(
+    NAME runtime-thread-fence-registry-overflow
+    COMMAND uml_runtime_thread_fence_tests overflow
+    TIMEOUT 120)
+set_tests_properties(runtime-thread-fence
+    runtime-thread-fence-registry-overflow PROPERTIES RUN_SERIAL TRUE)
