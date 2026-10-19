@@ -2321,7 +2321,8 @@ private:
 	}
 
 	/* What a resident translation is charged: its record, its native stream
-	 * and its saved source, as the allocator sizes them. The decoded
+	 * with the bounds in front of it, and its saved source, as the allocator
+	 * sizes them. The decoded
 	 * instructions a budget-limited replay keeps are not: only a block a
 	 * single step or a trap flag ran inside has them. */
 	[[nodiscard]] static std::ptrdiff_t translation_charge(
@@ -2329,7 +2330,8 @@ private:
 	{
 		return static_cast<std::ptrdiff_t>(
 			malloc_good_size(sizeof(Translation)) +
-			malloc_good_size(program.native_stream().size_bytes()) +
+			malloc_good_size(program.native_stream().size_bytes() +
+				stream_header_words * sizeof(std::uintptr_t)) +
 			malloc_good_size(program.source().size()));
 	}
 

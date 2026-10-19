@@ -867,7 +867,8 @@ generations displace them, which a long-running benchmark process never does.
 Each address space an executor keeps charges an account in the gadget engines'
 process-wide byte budget (`cpu/gadget_cache_budget.hpp`; see
 [`darwin/README.md`](../../../README.md)) with its resident translations --
-record, native stream and saved source as the allocator sizes them, charged at
+record, native stream (with the bounds in front of it) and saved source as the
+allocator sizes them, charged at
 the store and refunded when the translation departs -- and its link and
 indirect records and target link tables. A store that takes the open accounts
 past the budget asks the largest to shed, which sets a flag on the cache that
