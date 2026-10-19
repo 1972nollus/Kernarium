@@ -23,7 +23,7 @@ The arm64 kernels set neither, and the arm64 host reads neither.
  2 files changed, 9 insertions(+), 3 deletions(-)
 
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 48bd2b7b0c70dce2e8c1667f408000a5c8898a8a..0b3d3bc8da84ed9bc8618985b05978f62a83748f 100644
+index b2404aba46536a37f38fa9626b3ebce398da7a93..d67f5521509afaf512a0a114ba01e6ffa90a484a 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -109,6 +109,11 @@ struct darwin_uml_faultinfo {

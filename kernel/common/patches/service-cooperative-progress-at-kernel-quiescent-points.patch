@@ -38,10 +38,10 @@ index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 096e5ef82dca50bcf61ad08c2e752432d9d0abcd..ac0fc4c0d9f16b932eff1453a5051778c5f7a3df 100644
+index b44b8471a07aee17490060eb29b006597d9f6591..87ac30bc6746fd5ad06660a4f6ea904fb6fbeee6 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -229,6 +229,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+@@ -227,6 +227,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)
  #endif
  }
  
@@ -73,7 +73,7 @@ index 096e5ef82dca50bcf61ad08c2e752432d9d0abcd..ac0fc4c0d9f16b932eff1453a5051778
  static int do_op_one_page(unsigned long addr, int len, int is_write,
  		 int (*op)(unsigned long addr, int len, void *arg), void *arg)
  {
-@@ -250,8 +275,12 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -248,8 +273,12 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  		page = NULL;
  	}
  #endif
@@ -87,7 +87,7 @@ index 096e5ef82dca50bcf61ad08c2e752432d9d0abcd..ac0fc4c0d9f16b932eff1453a5051778
  
  #ifdef CONFIG_64BIT
  	pagefault_disable();
-@@ -282,6 +311,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -280,6 +309,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	if (is_write && n >= 0)
  		mark_user_page_dirty(user_addr, page, may_sleep);
  	put_page(page);
@@ -131,7 +131,7 @@ index b46649f2ea64a6d4b289cb0d9ab8c164da804ba1..8b8a647f44ee690582f1f6b4aabb6d3e
  {
  	int cpu = evt - &timer_clockevent[0];
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index d3b3508d221412cb32c2ae9f6a282729e421c1ee..232d63abc0cc8b6641377db31be49583103bad10 100644
+index 1db28abe9d40c61beccfd70c3920d82b9eeecbc2..3f3d2382294fbe72c58819cf09f723c808c68a43 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -686,7 +686,17 @@ void flush_tlb_mm(struct mm_struct *mm)

@@ -16,11 +16,11 @@ ends or when the batch is full. A walk that stops early drops its run
 and is walked again from its start. Kernel PTEs keep their per-page
 calls, which record each applied PTE.
 ---
- arch/um/kernel/tlb.c | 82 +++++++++++++++++++++++++++++++++++++++++++-
- 1 file changed, 81 insertions(+), 1 deletion(-)
+ arch/um/kernel/tlb.c | 79 +++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 78 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index f8356d4bc12ec0e1a34eac4da544b4afef139b51..f85583e9a56c56956c7b9ff37bb28268ea2b6143 100644
+index 17fad5fcd1bfb4915127b2b30b9d965bb5b90d7b..5b217a950357d31ec0cf42d45ee136251f6d3ee1 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -35,6 +35,15 @@ struct vm_ops {
@@ -39,7 +39,7 @@ index f8356d4bc12ec0e1a34eac4da544b4afef139b51..f85583e9a56c56956c7b9ff37bb28268
  #endif
  };
  
-@@ -473,6 +482,52 @@ void report_enomem(void)
+@@ -473,6 +482,51 @@ void report_enomem(void)
  			"vm.max_map_count has been reached.\n");
  }
  
@@ -61,9 +61,8 @@ index f8356d4bc12ec0e1a34eac4da544b4afef139b51..f85583e9a56c56956c7b9ff37bb28268
 +
 +/*
 + * Add the user PTE at @addr to the pending run, or send the run and start a
-+ * new one; a negative @prot is an absent PTE. A 4 KiB guest's walk otherwise
-+ * makes one host call per page, four times as many as a 16 KiB guest's for
-+ * the same memory, and most of its unmaps come in long runs of empty PTEs.
++ * new one; a negative @prot is an absent PTE. A walk otherwise makes one
++ * host call per page, and most of its unmaps come in long runs of empty PTEs.
 + */
 +static int darwin_queue_pte(struct vm_ops *ops, unsigned long addr, int prot,
 +			    int fd, unsigned long long offset)
@@ -92,12 +91,10 @@ index f8356d4bc12ec0e1a34eac4da544b4afef139b51..f85583e9a56c56956c7b9ff37bb28268
  static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
  				   unsigned long end,
  				   struct vm_ops *ops)
-@@ -487,6 +542,12 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
- #if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
+@@ -487,6 +541,10 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
+ #ifdef UML_HOST_DARWIN
  	if (unlikely(ops->mm == &init_mm))
  		return update_init_mm_pte_range(pmd, addr, end, ops);
-+#endif
-+#ifdef UML_HOST_DARWIN
 +	/* A run never outlives this PMD's walk: a walk that stops early is
 +	 * walked again from its start.
 +	 */
@@ -105,7 +102,7 @@ index f8356d4bc12ec0e1a34eac4da544b4afef139b51..f85583e9a56c56956c7b9ff37bb28268
  #endif
  	do {
  #ifdef UML_HOST_DARWIN
-@@ -564,6 +625,12 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
+@@ -564,6 +622,12 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
  						       vma_protection);
  #endif
  
@@ -118,7 +115,7 @@ index f8356d4bc12ec0e1a34eac4da544b4afef139b51..f85583e9a56c56956c7b9ff37bb28268
  			ret = ops->mmap(ops->mm_idp, addr, PAGE_SIZE,
  					prot, fd, offset);
  #ifdef UML_HOST_DARWIN
-@@ -575,7 +642,12 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
+@@ -575,7 +639,12 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
  			if (unlikely(ret && ops->mm == &init_mm))
  				(void)ops->unmap(ops->mm_idp, addr, PAGE_SIZE);
  #endif
@@ -132,7 +129,7 @@ index f8356d4bc12ec0e1a34eac4da544b4afef139b51..f85583e9a56c56956c7b9ff37bb28268
  			ret = ops->unmap(ops->mm_idp, addr, PAGE_SIZE);
  
  #ifdef UML_HOST_DARWIN
-@@ -588,6 +660,12 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
+@@ -588,6 +657,12 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
  			ret = UML_TLB_SYNC_BATCH_FULL;
  		}
  	} while (addr += PAGE_SIZE, ((addr < end) && !ret));
@@ -145,7 +142,7 @@ index f8356d4bc12ec0e1a34eac4da544b4afef139b51..f85583e9a56c56956c7b9ff37bb28268
  #else
  		*pte = pte_mkuptodate(*pte);
  	} while (pte++, addr += PAGE_SIZE, ((addr < end) && !ret));
-@@ -915,6 +993,8 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -915,6 +990,8 @@ static int __um_tlb_sync(struct mm_struct *mm,
  #ifdef UML_HOST_DARWIN
  	ops.budget = 0;
  	ops.resume = 0;

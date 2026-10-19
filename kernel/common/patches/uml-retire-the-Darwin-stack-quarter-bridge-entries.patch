@@ -13,20 +13,19 @@ tasks whose stack pointer was 0 or outside guest memory.
 
 Retire both entries and the path, as bridge ABI 17.
 ---
- arch/um/os-Darwin/skas/process.c            | 32 ---------------------
+ arch/um/os-Darwin/skas/process.c            | 28 ---------------------
  arch/um/os-Darwin/uml_darwin_abi_identity.h |  4 +--
  arch/um/os-Darwin/uml_darwin_memory.h       |  2 --
- 3 files changed, 2 insertions(+), 36 deletions(-)
+ 3 files changed, 2 insertions(+), 32 deletions(-)
 
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 0cb7d999350d9ff8284615cc5b5738c392b17cef..d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f 100644
+index 26c96498cc4507c1537b71ae92849b55a987cbcb..d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -271,32 +271,6 @@ void __attribute__((noreturn)) darwin_host_stop(void)
+@@ -271,30 +271,6 @@ void __attribute__((noreturn)) darwin_host_stop(void)
  	__builtin_unreachable();
  }
  
--#ifndef CONFIG_PAGE_SIZE_16KB
 -static int reconcile_implicit_stack_quarter(struct uml_pt_regs *registers)
 -{
 -	unsigned long stack_pointer = UPT_SP(registers);
@@ -50,21 +49,18 @@ index 0cb7d999350d9ff8284615cc5b5738c392b17cef..d069b6e05f2f0b35e27c7d9a89d61703
 -	current_mm_force_sync(stack_pointer);
 -	return darwin_uml_vm_finish_stack(stack_pointer);
 -}
--#endif
 -
  void halt_skas(void)
  {
  	shutdown_kernel(0);
-@@ -434,12 +408,6 @@ void userspace(struct uml_pt_regs *registers)
+@@ -432,10 +408,6 @@ void userspace(struct uml_pt_regs *registers)
  		 */
  		darwin_timer_poll(registers);
  		registers->is_user = 0;
--#ifndef CONFIG_PAGE_SIZE_16KB
 -		result = reconcile_implicit_stack_quarter(registers);
 -		if (result < 0)
 -			fatal_userspace(registers, "stack-quarter reconciliation",
 -					result);
--#endif
  		/* Only a syscall event runs a system call.  Signal delivery fails or
  		 * restarts an interrupted call by this number, so a fault or an
  		 * interrupt must not leave the previous call's number here for it

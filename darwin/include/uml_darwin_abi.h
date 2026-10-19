@@ -23,11 +23,11 @@ typedef int darwin_uml_abi_s32;
 typedef unsigned long long darwin_uml_abi_u64;
 
 #ifndef DARWIN_UML_GUEST_PAGE_SIZE
-#define DARWIN_UML_GUEST_PAGE_SIZE 16384
+#define DARWIN_UML_GUEST_PAGE_SIZE 4096
 #endif
 
 #ifndef DARWIN_UML_GUEST_PAGE_SHIFT
-#define DARWIN_UML_GUEST_PAGE_SHIFT 14
+#define DARWIN_UML_GUEST_PAGE_SHIFT 12
 #endif
 
 enum {
@@ -240,8 +240,7 @@ static_assert(DARWIN_UML_EVENT_SME_ACCESS == 11);
 static_assert(DARWIN_UML_FLOATING_POINT_SYNDROME_BASE == 0xb2800000U);
 static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
 		(1ULL << DARWIN_UML_GUEST_PAGE_SHIFT));
-static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096 ||
-		DARWIN_UML_GUEST_PAGE_SIZE == 16384);
+static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096);
 static_assert(offsetof(struct darwin_uml_guest_registers, dispatch_flags) ==
 		DARWIN_UML_ABI_GUEST_REGISTERS_DISPATCH_FLAGS_OFFSET);
 static_assert(offsetof(struct darwin_uml_guest_registers, original_x0) ==

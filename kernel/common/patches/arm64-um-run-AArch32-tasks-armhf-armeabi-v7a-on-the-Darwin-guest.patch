@@ -22,8 +22,7 @@ Task model
   loader, with COMPAT_ELF_HWCAP/HWCAP2 from the host's compat HWCAP
   imports. The kernel provides the kuser helpers page at 0xffff0000
   (CONFIG_KUSER_HELPERS) and a sigreturn page, both ordinary code.
-- The compat mmap randomisation range is mmap_rnd_compat_bits, 9..16
-  with 16 KiB pages and 11..16 with 4 KiB.
+- The compat mmap randomisation range is mmap_rnd_compat_bits, 11..16.
 
 System calls and signals
 - The EABI table comes from the generic compat list, with arm64
@@ -48,13 +47,13 @@ Observation
   tasks.
 
 Bridge
-- The topic leaves the bridge at ABI 23: an arm64 task's register tail
-  is its FP and SME registers, 552 bytes, and the kernel imports no SVE
-  query.
+- The topic leaves the bridge at ABI 24: an arm64 task's register tail
+  is its FP and SME registers, 552 bytes, the kernel imports no SVE
+  query, and the guest page size is 4096 only.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- arch/arm64/um/Kconfig                       |  35 ++
+ arch/arm64/um/Kconfig                       |  33 ++
  arch/arm64/um/Makefile                      |   2 +
  arch/arm64/um/aarch32.c                     | 275 ++++++++++++
  arch/arm64/um/aarch32_pages.S               |   8 +
@@ -87,7 +86,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  arch/um/os-Darwin/uml_darwin_abi.h          |  55 ++-
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   4 +-
  arch/um/os-Darwin/uml_darwin_cpu.h          |  10 +
- 33 files changed, 1988 insertions(+), 19 deletions(-)
+ 33 files changed, 1986 insertions(+), 19 deletions(-)
  create mode 100644 arch/arm64/um/aarch32.c
  create mode 100644 arch/arm64/um/aarch32_pages.S
  create mode 100644 arch/arm64/um/armv8_deprecated.c
@@ -99,18 +98,17 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  create mode 100644 arch/arm64/um/sys_compat.c
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 8b8b7d797c4dfc841eaa5c8f1b3ddc888fda9e1f..8ae0a8f55de94ab387b78a80cb16c0372a31eefc 100644
+index 8b8b7d797c4dfc841eaa5c8f1b3ddc888fda9e1f..e195e71dc38a3774ed660e4f7b722f6fe50705da 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -26,6 +26,32 @@ config UML_ARM64
+@@ -26,6 +26,31 @@ config UML_ARM64
  config UML_ARM64_SME
  	def_bool y
  
 +# Every arm64 task may run AArch32 code (armhf and Android's armeabi-v7a) as
 +# arm64 Linux's COMPAT does, once the host's engine implements it.  Until
 +# then the compat HWCAPs read zero, a 32-bit executable gets ENOEXEC and
-+# personality(PER_LINUX32) fails.  Unlike native arm64, the 16 KiB profile
-+# enables it: only executables whose segments are congruent to 16 KiB run.
++# personality(PER_LINUX32) fails.
 +config UML_ARM64_AARCH32
 +	def_bool y
 +	select ARCH_WANT_COMPAT_IPC_PARSE_VERSION
@@ -135,13 +133,12 @@ index 8b8b7d797c4dfc841eaa5c8f1b3ddc888fda9e1f..8ae0a8f55de94ab387b78a80cb16c037
  config ARCH_MMAP_RND_BITS_MIN
  	int
  	default 18
-@@ -34,6 +60,15 @@ config ARCH_MMAP_RND_BITS_MAX
+@@ -34,6 +59,14 @@ config ARCH_MMAP_RND_BITS_MAX
  	int
  	default 29
  
 +config ARCH_MMAP_RND_COMPAT_BITS_MIN
 +	int
-+	default 9 if PAGE_SIZE_16KB
 +	default 11
 +
 +config ARCH_MMAP_RND_COMPAT_BITS_MAX
@@ -2492,7 +2489,7 @@ index 8c1ab173f3850c7da37b8d048d0bdf5c05070b31..2aa3b998b27f59a2551913dd86056127
  			unblock_signals_trace();
  			registers->is_user = 0;
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 0b3d3bc8da84ed9bc8618985b05978f62a83748f..e4829f2b3f013031565d1e820e50447518dea502 100644
+index d67f5521509afaf512a0a114ba01e6ffa90a484a..f743f77fb28dcc83eab425c91633b532264ced60 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -71,6 +71,16 @@ enum {
@@ -2576,7 +2573,7 @@ index 0b3d3bc8da84ed9bc8618985b05978f62a83748f..e4829f2b3f013031565d1e820e504475
  #define DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE 528U
  #define DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET 528U
  #define DARWIN_UML_ABI_GUEST_SME_REGISTERS_SIZE 24U
-@@ -205,6 +254,8 @@ static_assert(offsetof(struct darwin_uml_guest_registers, fpmr) ==
+@@ -204,6 +253,8 @@ static_assert(offsetof(struct darwin_uml_guest_registers, fpmr) ==
  		DARWIN_UML_ABI_GUEST_REGISTERS_FPMR_OFFSET);
  static_assert(offsetof(struct darwin_uml_guest_registers, compat_tls) ==
  		DARWIN_UML_ABI_GUEST_REGISTERS_COMPAT_TLS_OFFSET);
@@ -2586,7 +2583,7 @@ index 0b3d3bc8da84ed9bc8618985b05978f62a83748f..e4829f2b3f013031565d1e820e504475
  		DARWIN_UML_ABI_GUEST_REGISTERS_SIZE);
  static_assert(sizeof(struct darwin_uml_faultinfo) == 24U);
 diff --git a/arch/um/os-Darwin/uml_darwin_abi_identity.h b/arch/um/os-Darwin/uml_darwin_abi_identity.h
-index 13776d9b286b5d4d36f642134a1eb65ba758622b..aedfc52ae81b766e3dfea15c615be2a09aa28acd 100644
+index 13776d9b286b5d4d36f642134a1eb65ba758622b..dca8e59e73bf4c0a4be1b9dcb8d02a42fa44902d 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi_identity.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 @@ -3,7 +3,7 @@
@@ -2595,8 +2592,8 @@ index 13776d9b286b5d4d36f642134a1eb65ba758622b..aedfc52ae81b766e3dfea15c615be2a0
  
 -#define DARWIN_UML_ABI_VERSION 20U
 -#define DARWIN_UML_ABI_FINGERPRINT 0x75b16149a5953494ULL
-+#define DARWIN_UML_ABI_VERSION 23U
-+#define DARWIN_UML_ABI_FINGERPRINT 0x1ce783abc069c6c2ULL
++#define DARWIN_UML_ABI_VERSION 24U
++#define DARWIN_UML_ABI_FINGERPRINT 0x1e8fdf51f0a2080dULL
  
  #endif
 diff --git a/arch/um/os-Darwin/uml_darwin_cpu.h b/arch/um/os-Darwin/uml_darwin_cpu.h

@@ -68,7 +68,7 @@ index bd049ef7a30551999bbafa7b3bfef08932df43d6..458f68c3840a1ef17578329c8470f2fb
  
  #endif
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index b6ea5a11d548c4b9ac21c79fa2f3c0c9211a52bd..99bdbd238e862b33f0ba2ca36a971047fb94cc76 100644
+index 3b69fda453be8ba3f695b74061bf1d9f39cba034..4572e7c881f1b7b0434136cf35556bf591f5cb19 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -333,6 +333,15 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,

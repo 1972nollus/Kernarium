@@ -42,7 +42,7 @@ index 458f68c3840a1ef17578329c8470f2fbae2a9cb1..66a6516d9c9cebfe2c14bb75c6104bd7
  extern int um_tlb_sync_locked(struct mm_struct *mm, unsigned long start,
  			      unsigned long end);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 6d24b89b3a0229446107798dad8ef83a9d89803d..f8356d4bc12ec0e1a34eac4da544b4afef139b51 100644
+index 37b35d3387afddc48ea6cff26976240f172d47ea..17fad5fcd1bfb4915127b2b30b9d965bb5b90d7b 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -129,6 +129,62 @@ static int kern_unmap(struct mm_id *mm_idp,
@@ -105,7 +105,7 @@ index 6d24b89b3a0229446107798dad8ef83a9d89803d..f8356d4bc12ec0e1a34eac4da544b4af
 +}
 +#endif
 +
- #if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
+ #ifdef UML_HOST_DARWIN
  #define DARWIN_HOST_PAGE_SIZE	(16UL * 1024)
  
 @@ -208,39 +264,15 @@ static bool darwin_init_mm_slot_congruent(const pte_t *snapshots, int *fd_out,

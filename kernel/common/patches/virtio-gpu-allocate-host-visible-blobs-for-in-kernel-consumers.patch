@@ -22,7 +22,7 @@ device. The blobs ask for VIRTGPU_BLOB_MEM_HOST3D with blob_id 0 and exactly
 VIRTGPU_BLOB_FLAG_USE_MAPPABLE, which is what makes the renderer serve the
 allocation out of its own shared memory rather than look for a host object,
 and every size is rounded to the aperture's 16 KiB mapping granule so a buffer
-is mappable in either guest page profile.
+is mappable whatever the guest page size.
 
 The export goes through Virtio-GPU's own exporter rather than the generic DRM
 one: an importer resolves a descriptor back to this object only when the

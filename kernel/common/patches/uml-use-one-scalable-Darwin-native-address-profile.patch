@@ -245,7 +245,7 @@ index 0000000000000000000000000000000000000000..1fd6bd965bb5ada99d3f51edc4776a22
 +
 +#endif
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index d747c429ba7a12c976a31589ec4371864b14ef11..d3b3508d221412cb32c2ae9f6a282729e421c1ee 100644
+index 2585bfa7e23fde21bc6c9984389124388ca818d5..1db28abe9d40c61beccfd70c3920d82b9eeecbc2 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -15,6 +15,9 @@
@@ -446,7 +446,7 @@ index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..87ab3d9503d22267565e895193a234b6
  
  	if (virtmem_size < physmem_size)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 9951a9f2f885b5456fb50ea2e6ef8a9dc8470d3b..6eea20733cd19ee75b462ae87ec200301618cab9 100644
+index 953ce45635b5694d23d1e2807a2210d6c28b7a8e..538ae52fec2e79103ae2a169c0ee9eb6d5591348 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -11,6 +11,7 @@
@@ -468,7 +468,7 @@ index 9951a9f2f885b5456fb50ea2e6ef8a9dc8470d3b..6eea20733cd19ee75b462ae87ec20030
  	       "unexpected ABI fingerprint");
  _Static_assert(offsetof(struct uml_pt_regs, orig_x0) ==
  	      DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET,
-@@ -462,7 +463,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -454,7 +455,7 @@ void userspace(struct uml_pt_regs *registers)
  			 * into the shadow MMU before asking Linux to resolve a real
  			 * guest page fault.
  			 */
@@ -477,7 +477,7 @@ index 9951a9f2f885b5456fb50ea2e6ef8a9dc8470d3b..6eea20733cd19ee75b462ae87ec20030
  				current_mm_force_sync(fault);
  				retry = darwin_uml_vm_retry_fault(fault,
  					FAULT_EXECUTE(registers->faultinfo),
-@@ -497,7 +498,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -489,7 +490,7 @@ void userspace(struct uml_pt_regs *registers)
  			}
  			segv(registers->faultinfo, UPT_IP(registers), 1,
  			     registers, NULL);
@@ -487,7 +487,7 @@ index 9951a9f2f885b5456fb50ea2e6ef8a9dc8470d3b..6eea20733cd19ee75b462ae87ec20030
  
  				if (current_mm_prefault_host_slot(fault, write) < 0)
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 555c32a3d9a42bba23f2f690ccf579f3073f1762..8e770d81be5b491dd65d25007cf0cee7dfc1908d 100644
+index a3df85afed6284a5bfd3cdb817605b953b30ffce..4a3c5fdf3aee3e15cd60e29d4f847f95460ca82e 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -69,7 +69,9 @@ enum {
