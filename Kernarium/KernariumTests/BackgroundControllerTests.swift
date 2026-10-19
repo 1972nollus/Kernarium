@@ -51,6 +51,9 @@ struct BackgroundControllerTests {
         func setPageCacheTrimming(_ enabled: Bool) {
             calls.append("trim \(enabled ? "on" : "off")")
         }
+        func setBackgroundThrottle(_ enabled: Bool) {
+            calls.append("throttle \(enabled ? "on" : "off")")
+        }
         func stopPictureInPicture() { calls.append("stop pip") }
         func keepScheduled(named name: String) -> any BackgroundCancellable {
             calls.append("begin \(name)")
@@ -109,13 +112,13 @@ struct BackgroundControllerTests {
 
         policy.pictureInPictureDidStart()
         #expect(Array(effects.calls.dropFirst(3)) == [
-            "end picture-in-picture", "release", "trim on",
+            "end picture-in-picture", "release", "trim on", "throttle on",
         ])
         #expect(policy.phase == .keptRunning)
         #expect(!effects.calls.contains { $0.hasPrefix("quiesce") })
 
         policy.willEnterForeground()
-        #expect(effects.calls.suffix(1) == ["trim off"])
+        #expect(effects.calls.suffix(2) == ["throttle off", "trim off"])
         #expect(!effects.calls.contains("resume"))
         #expect(policy.phase == .foreground)
     }
@@ -168,7 +171,8 @@ struct BackgroundControllerTests {
 
         policy.pictureInPictureDidStop()
         #expect(effects.calls == [
-            "trim off", "hold", "quiesce picture in picture closed",
+            "throttle off", "trim off", "hold",
+            "quiesce picture in picture closed",
         ])
         #expect(policy.phase == .quiesced)
 
@@ -199,7 +203,9 @@ struct BackgroundControllerTests {
         let policy = controller(.pictureInPicture, effects)
 
         policy.didEnterBackground()
-        #expect(effects.calls == ["hold", "flush", "release", "trim on"])
+        #expect(effects.calls == [
+            "hold", "flush", "release", "trim on", "throttle on",
+        ])
         #expect(policy.phase == .keptRunning)
     }
 
@@ -283,6 +289,13 @@ struct BackgroundControllerTests {
             environment: [BackgroundSettings.environmentKey: "someday"]
         )
         #expect(unknown.mode(forGuest: "android.kern") == .off)
+
+        // A kept guest is throttled unless automation turns that off.
+        #expect(settings.throttlesKeptGuest)
+        #expect(!BackgroundSettings(
+            defaults: defaults,
+            environment: [BackgroundSettings.throttleEnvironmentKey: "0"]
+        ).throttlesKeptGuest)
 
         // A value from a newer build that this one does not know pauses.
         defaults.set("someday", forKey: BackgroundSettings.keyPrefix + "x")

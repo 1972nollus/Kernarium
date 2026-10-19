@@ -1132,6 +1132,44 @@ int runtimeSetGpuHold(int held)
     return activeGpu->holdRequests(gpuHoldBudget) ? 1 : 0;
 }
 
+int runtimeSetBackgroundThrottle(int enabled)
+{
+    thread_act_array_t threads = nullptr;
+    mach_msg_type_number_t count = 0;
+    if (task_threads(mach_task_self(), &threads, &count) != KERN_SUCCESS)
+        return -1;
+    int changed = 0;
+    for (mach_msg_type_number_t index = 0; index < count; ++index) {
+        thread_extended_info_data_t info {};
+        mach_msg_type_number_t infoCount = THREAD_EXTENDED_INFO_COUNT;
+        if (thread_info(
+                threads[index],
+                THREAD_EXTENDED_INFO,
+                reinterpret_cast<thread_info_t>(&info),
+                &infoCount) == KERN_SUCCESS &&
+            std::strncmp(info.pth_name, "uml-vcpu-", 9) == 0) {
+            thread_background_policy_data_t policy {
+                .priority = enabled != 0 ?
+                    THREAD_BACKGROUND_POLICY_DARWIN_BG :
+                    0,
+            };
+            if (thread_policy_set(
+                    threads[index],
+                    THREAD_BACKGROUND_POLICY,
+                    reinterpret_cast<thread_policy_t>(&policy),
+                    THREAD_BACKGROUND_POLICY_COUNT) == KERN_SUCCESS) {
+                ++changed;
+            }
+        }
+        (void)mach_port_deallocate(mach_task_self(), threads[index]);
+    }
+    (void)vm_deallocate(
+        mach_task_self(),
+        reinterpret_cast<vm_address_t>(threads),
+        count * sizeof(thread_act_t));
+    return changed;
+}
+
 int runtimeSetFrameSink(
     kernarium_runtime_frame_sink sink,
     void* context,
@@ -1182,6 +1220,7 @@ const kernarium_runtime_api runtimeApi {
     .send_console_input = runtimeSendConsoleInput,
     .set_gpu_hold = runtimeSetGpuHold,
     .set_frame_sink = runtimeSetFrameSink,
+    .set_background_throttle = runtimeSetBackgroundThrottle,
 };
 
 } // namespace

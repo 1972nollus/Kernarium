@@ -108,6 +108,16 @@ typedef int (*kernarium_runtime_set_frame_sink_function)(
     void* context,
     uint32_t maximum_width,
     uint32_t frames_per_second);
+/* Moves the guest's vCPU threads to (nonzero) or from (zero) the system's
+ * background scheduling policy, which runs them at low priority, prefers the
+ * efficiency cores, and throttles their I/O. The application turns it on while
+ * the guest is kept running behind a window the user is not looking at, so the
+ * guest keeps its clock and its work moving without a foreground's power draw,
+ * and off when the application returns. It applies to the vCPU threads that
+ * exist when it is called, and leaves the host's other threads alone. Returns
+ * the number of threads changed, or a negative value if the threads could not
+ * be listed. */
+typedef int (*kernarium_runtime_set_background_throttle_function)(int enabled);
 
 /* The application resolves only this versioned getter after loading exactly
  * one runtime framework. The table is immutable and remains valid until
@@ -130,6 +140,7 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_send_console_input_function send_console_input;
     kernarium_runtime_set_gpu_hold_function set_gpu_hold;
     kernarium_runtime_set_frame_sink_function set_frame_sink;
+    kernarium_runtime_set_background_throttle_function set_background_throttle;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)

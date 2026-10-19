@@ -39,6 +39,9 @@ struct BackgroundSettings {
     /// Automation's way to run one launch in a mode without changing what the
     /// user chose, as the other `KERNARIUM_` knobs do.
     static let environmentKey = "KERNARIUM_BACKGROUND_MODE"
+    /// "0" keeps the vCPUs at full priority while the guest is kept running,
+    /// so a measurement can compare the two.
+    static let throttleEnvironmentKey = "KERNARIUM_BACKGROUND_THROTTLE"
 
     private let defaults: UserDefaults
     private let environment: [String: String]
@@ -58,6 +61,12 @@ struct BackgroundSettings {
         }
         return defaults.string(forKey: Self.keyPrefix + guest)
             .flatMap(BackgroundMode.init(rawValue:)) ?? .off
+    }
+
+    /// Whether a guest kept running in the background runs at the system's
+    /// background priority. It does unless automation says otherwise.
+    var throttlesKeptGuest: Bool {
+        environment[Self.throttleEnvironmentKey] != "0"
     }
 
     func setMode(_ mode: BackgroundMode, forGuest guest: String) {
@@ -91,6 +100,9 @@ protocol BackgroundEffects: AnyObject {
     func resumeGuest()
     /// Asks the guest to trim its page cache while it runs unseen.
     func setPageCacheTrimming(_ enabled: Bool)
+    /// Runs the guest's vCPUs at the system's background priority while it
+    /// runs unseen, so it keeps going on a fraction of the power.
+    func setBackgroundThrottle(_ enabled: Bool)
 
     /// Whether iOS will start the Picture in Picture window as the app leaves.
     var pictureInPictureCanStart: Bool { get }
@@ -200,7 +212,7 @@ final class BackgroundController {
         case .awaitingPictureInPicture:
             pictureInPictureDidFailToStart()
         case .keptRunning:
-            effects.setPageCacheTrimming(false)
+            endKeptRunning()
             holdGPU()
             quiesce(
                 reason: "picture in picture closed",
@@ -221,7 +233,7 @@ final class BackgroundController {
     func willEnterForeground() {
         endWait()
         if phase == .keptRunning {
-            effects.setPageCacheTrimming(false)
+            endKeptRunning()
         }
         if gpuHeld {
             effects.releaseGuestGPU()
@@ -255,7 +267,15 @@ final class BackgroundController {
         effects.releaseGuestGPU()
         gpuHeld = false
         effects.setPageCacheTrimming(true)
+        effects.setBackgroundThrottle(true)
         phase = .keptRunning
+    }
+
+    /// The guest is no longer to run unseen: it returns to full speed before
+    /// anything else is asked of it, so a quiesce is not throttled.
+    private func endKeptRunning() {
+        effects.setBackgroundThrottle(false)
+        effects.setPageCacheTrimming(false)
     }
 
     private func quiesce(reason: String, until deadline: DispatchTime) {

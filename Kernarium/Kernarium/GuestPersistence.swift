@@ -268,6 +268,19 @@ final class SystemBackgroundEffects: BackgroundEffects {
         _ = enabled
     }
 
+    func setBackgroundThrottle(_ enabled: Bool) {
+        guard enabled == false || BackgroundSettings().throttlesKeptGuest else {
+            return
+        }
+        let changed = kernarium_runtime_loader_set_background_throttle(
+            enabled ? 1 : 0
+        )
+        print(
+            "Kernarium: guest vCPUs \(enabled ? "throttled" : "restored") " +
+                "(\(changed) thread(s))"
+        )
+    }
+
     var pictureInPictureCanStart: Bool { window?.canStart ?? false }
     var pictureInPictureActive: Bool { window?.isActive ?? false }
 

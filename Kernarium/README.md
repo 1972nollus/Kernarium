@@ -191,6 +191,10 @@ reaches it while it is revoked:
   would.
 - Returning releases the GPU, resumes a guest that was quiesced, and closes the
   window if it is still up.
+- While a guest is kept running its vCPU threads run at the system's background
+  priority (`set_background_throttle`): low priority, the efficiency cores, and
+  throttled I/O for those threads only. It returns them to full priority before
+  anything else is asked of the guest, so a quiesce is not throttled.
 
 The mode needs the `audio` background mode in `Info.plist`, which iOS requires
 for any Picture in Picture window, and an audio session of category playback

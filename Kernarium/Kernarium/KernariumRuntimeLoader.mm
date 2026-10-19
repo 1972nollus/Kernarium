@@ -192,7 +192,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->set_console_output_callback == nullptr ||
         api->send_console_input == nullptr ||
         api->set_gpu_hold == nullptr ||
-        api->set_frame_sink == nullptr) {
+        api->set_frame_sink == nullptr ||
+        api->set_background_throttle == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -332,6 +333,12 @@ extern "C" int kernarium_runtime_loader_set_gpu_hold(int held)
 {
     const kernarium_runtime_api* runtime = api();
     return runtime == nullptr ? -1 : runtime->set_gpu_hold(held);
+}
+
+extern "C" int kernarium_runtime_loader_set_background_throttle(int enabled)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -1 : runtime->set_background_throttle(enabled);
 }
 
 extern "C" int kernarium_runtime_loader_set_frame_sink(
