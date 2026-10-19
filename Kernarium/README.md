@@ -179,13 +179,8 @@ three seconds for that. On a loaded Mac the pass took 1.2 s for a 4 GiB KDE
 guest and 1.8 s for Android, so with an immediate hold and a prompt suspend
 reply the quiesce usually ends within the handler's budget. Trimming only there
 is the user's choice: paused after the pass, a 4 GiB guest held 141 MiB (KDE)
-and 54 MiB (Android) more than one that trimmed all along, measured on macOS at
-4 KiB pages. Code that keeps the guest running in the background calls
-`kernarium_runtime_loader_set_page_cache_trimming(1)` when the guest goes on
-running there and `kernarium_runtime_loader_set_page_cache_trimming(0)` on the
-return to the foreground, both away from the main thread, since each may wait
-for the guest's console. A change made while the guest is quiesced reaches it
-on resume.
+and 54 MiB (Android) more than one that trimmed all along, measured on macOS.
+A guest kept running in the background trims as it runs; see below.
 
 iOS may still end a suspended application, and the guest goes with it. The
 application records the background edge in a marker file and removes it on
@@ -227,6 +222,12 @@ reaches it while it is revoked:
   priority (`set_background_throttle`): low priority, the efficiency cores, and
   throttled I/O for those threads only. It returns them to full priority before
   anything else is asked of the guest, so a quiesce is not throttled.
+- While a guest is kept running it also trims its page cache periodically
+  (`set_page_cache_trimming`), and stops when it returns to the foreground or
+  is quiesced, which trims once by itself. The switch runs on the `guest-sync`
+  queue behind any write-back or quiesce already asked for, since it may wait
+  for the guest's console; one made while the guest is quiesced reaches it on
+  resume.
 
 The throttle moves the work to the efficiency cores rather than removing
 cores: on an A15 iPad, a KDE guest with six vCPUs running a six-thread load
