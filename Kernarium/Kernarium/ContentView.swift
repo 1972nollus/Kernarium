@@ -890,7 +890,7 @@ enum SceneCoverage {
 /// Reports, now and whenever the scene's geometry changes, whether the
 /// scene the view is in covers its screen. The system's corner offset keeps
 /// describing a window after Multitasking switches the scene to Full Screen
-/// Apps, which is the one geometry change that does not update it.
+/// Apps, so the offset cannot be the judge of whether there are controls.
 private struct SceneCoverageReader: UIViewRepresentable {
     let report: @MainActor (Bool) -> Void
 
