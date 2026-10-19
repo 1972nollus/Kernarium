@@ -746,6 +746,11 @@ bool VncDisplay::readbackIdleForTesting() const noexcept
     return metalReadback_->idleForTesting();
 }
 
+std::uint64_t VncDisplay::eventLoopPassesForTesting() const noexcept
+{
+    return eventLoopPasses_.load(std::memory_order_acquire);
+}
+
 std::array<std::uint8_t, 4> VncDisplay::pixelForTesting(
     std::uint32_t x, std::uint32_t y) noexcept
 {
@@ -936,13 +941,16 @@ void VncDisplay::eventLoop()
     while (running_.load(std::memory_order_acquire) &&
            rfbIsActive(screen_)) {
         rfbProcessEvents(screen_, heldClients_.empty() ? 10'000 : 1'000);
-        if (heldClients_.empty())
-            continue;
-        releaseHeldClients();
-        /* LibVNCServer still polls a held client's socket without reading
-         * it, so pace the loop while any client waits. */
-        if (!heldClients_.empty())
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (!heldClients_.empty()) {
+            releaseHeldClients();
+            /* LibVNCServer still polls a held client's socket without
+             * reading it, so pace the loop while any client waits. */
+            if (!heldClients_.empty())
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+#if UML_GPU_VNC_STARTUP_TESTING
+        eventLoopPasses_.fetch_add(1, std::memory_order_release);
+#endif
     }
 }
 
