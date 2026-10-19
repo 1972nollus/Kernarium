@@ -38,6 +38,12 @@ void kernarium_runtime_loader_resume(void);
  * kernarium_runtime_set_gpu_hold_function. Returns the runtime's answer, or -1
  * when no runtime is loaded. */
 int kernarium_runtime_loader_set_gpu_hold(int held);
+/* Turns periodic guest page-cache trimming on (nonzero) only while the guest
+ * is kept running in the background, and off again on return to the
+ * foreground. Returns 0 once the guest has applied it, a negative value
+ * otherwise, -1 when no runtime is loaded. Call it away from the main thread:
+ * it may wait for the guest's console. */
+int kernarium_runtime_loader_set_page_cache_trimming(int enabled);
 void kernarium_runtime_loader_send_touch(
     uint32_t x,
     uint32_t y,

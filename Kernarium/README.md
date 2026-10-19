@@ -170,6 +170,23 @@ waiting up to eight seconds for the guest's suspend reply, which follows its
 file system sync. A return to the foreground resumes the guest once that reply
 has arrived or the wait has ended.
 
+Guest page-cache trimming stays off while the application is in the
+foreground, because the guest then pays a host read for every evicted page its
+user's programs read again. Quiescing trims once by itself, before the suspend:
+the guest takes its cold page cache for up to a second, compacts its memory for
+up to another, and hands what is free to the host, and the quiesce waits up to
+three seconds for that. On a loaded Mac the pass took 1.2 s for a 4 GiB KDE
+guest and 1.8 s for Android, so with an immediate hold and a prompt suspend
+reply the quiesce usually ends within the handler's budget. Trimming only there
+is the user's choice: paused after the pass, a 4 GiB guest held 141 MiB (KDE)
+and 54 MiB (Android) more than one that trimmed all along, measured on macOS at
+4 KiB pages. Code that keeps the guest running in the background calls
+`kernarium_runtime_loader_set_page_cache_trimming(1)` when the guest goes on
+running there and `kernarium_runtime_loader_set_page_cache_trimming(0)` on the
+return to the foreground, both away from the main thread, since each may wait
+for the guest's console. A change made while the guest is quiesced reaches it
+on resume.
+
 iOS may still end a suspended application, and the guest goes with it. The
 application records the background edge in a marker file and removes it on
 foregrounding; a launch that finds one says the guest restarted because
