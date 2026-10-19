@@ -10,6 +10,7 @@ add_library(uml_x86_64_gadgets OBJECT
     native_builder.cpp
     native_memory.cpp
     program.cpp
+    translation_space.cpp
     x87_math.cpp)
 uml_declare_architecture_target(uml_x86_64_gadgets cpu gadget)
 # Every image that links these objects places their gadget region

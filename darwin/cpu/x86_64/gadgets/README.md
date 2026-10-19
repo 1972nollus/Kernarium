@@ -859,6 +859,12 @@ That decode is published once by a compare-and-swap, so a program replayed on
 several threads keeps one decode. `x86-64-gadget-bodies` holds the layout and
 the replay.
 
+The arenas, the link records and indirect sites the streams name, and the
+target link tables of one address space are its `Space`
+(`translation_space.hpp`). An executor keeps a space for each address space it
+runs and charges it to one account in the byte budget; the sweep of records
+nothing names is the executor's to ask for, since it reads the executor's slots.
+
 ## Address spaces the kernel destroyed
 
 The cache keeps the translations of the eight most recently run address

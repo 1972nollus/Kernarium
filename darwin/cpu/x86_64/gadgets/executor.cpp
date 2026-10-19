@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "executor.hpp"
 
-#include "cpu/gadget_body_arena.hpp"
 #include "cpu/gadget_cache_budget.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
-#include "cpu/gadget_record_table.hpp"
 #if UML_GADGET_CACHE_CENSUS
 #include "cpu/gadget_cache_census.hpp"
 #endif
@@ -14,6 +12,7 @@
 #include "native_symbols.hpp"
 #include "program_cache_index.hpp"
 #include "translation_body.hpp"
+#include "translation_space.hpp"
 
 #include <algorithm>
 #include <array>
@@ -126,15 +125,6 @@ enum class ProgramSourceComparison {
 	match,
 	mismatch,
 	fault,
-};
-
-struct ProgramCodeStamps final {
-	std::array<::uml::memory::CodePageStamp, 2> pages{};
-	std::uint8_t count{};
-	bool complete{};
-
-	friend bool operator==(
-		const ProgramCodeStamps &, const ProgramCodeStamps &) = default;
 };
 
 /* A page stamp certifies only the bytes read after it was taken: a store that
@@ -260,28 +250,6 @@ struct ProgramCodeStamps final {
 			program.execution_mode(), address, count);
 	}
 	return ProgramSourceComparison::match;
-}
-
-/* Entries no block has claimed name an address no block begins at and carry
- * that address's own fallback, so the translated tier can load the pointer
- * before it has compared the address, and a guest that really does branch
- * there still leaves with the right RIP.
- */
-[[nodiscard]] const TargetLinkTable &vacant_target_links() noexcept
-{
-	static const UnlinkedBlockLink vacant{
-		0, ~std::uint64_t{}, ~std::uint64_t{},
-		reinterpret_cast<std::uintptr_t>(
-			native::uml_x86_64_gadget_link_exit),
-		{&vacant.fallback_stream, 0, ~std::uint64_t{}},
-	};
-	static const TargetLinkTable table = [] {
-		TargetLinkTable initial{};
-		for (auto &entry : initial)
-			entry = {~std::uint64_t{}, &vacant.link};
-		return initial;
-	}();
-	return table;
 }
 
 /* The registries of every address-space generation this executor holds
@@ -460,7 +428,6 @@ struct HeldCodeStamps final {
 
 class ProgramCache final {
 private:
-	struct LinkRecord;
 	struct Slot;
 
 	/* One way of a set. A way exists whether or not it holds a translation,
@@ -596,92 +563,22 @@ private:
 		std::array<SuccessorSet, program_cache_slab_slots> successors;
 	};
 
-	/* Laid out as an UnlinkedBlockLink, so an unlinked record's stream is
-	 * its own link_exit word. */
-	struct alignas(16) LinkRecord final {
-		explicit LinkRecord(std::uint64_t address) noexcept
-			: unlinked_begin{address}, unlinked_end{address},
-			  fallback_stream{reinterpret_cast<std::uintptr_t>(
-				native::uml_x86_64_gadget_link_exit)},
-			  link{&fallback_stream, 0, address}
-		{}
-
-		void reset() noexcept
-		{
-			link.stream = &fallback_stream;
-			link.instruction_count = 0;
-		}
-
-		LinkRecord *next_live{};
-		std::uint64_t unlinked_begin;
-		std::uint64_t unlinked_end;
-		std::uintptr_t fallback_stream;
-		BlockLink link;
-		bool listed{};
-	};
-	static_assert(offsetof(LinkRecord, unlinked_begin) ==
-			offsetof(UnlinkedBlockLink, unlinked_begin) &&
-		offsetof(LinkRecord, fallback_stream) ==
-			offsetof(UnlinkedBlockLink, fallback_stream) &&
-		offsetof(LinkRecord, link) == offsetof(UnlinkedBlockLink, link) &&
-		sizeof(LinkRecord) == 64,
-		"a link record is laid out as the unlinked state link_exit and "
-		"follow_block_link read");
-
-	struct LinkKey final {
-		[[nodiscard]] std::uint64_t operator()(
-			const LinkRecord &record) const noexcept
-		{
-			return record.link.guest_rip;
-		}
-	};
-
-	/* An indirect site is named by the branch that owns it, which its own
-	 * cells do not record. Translated streams point at the site, the first
-	 * member. */
-	struct IndirectRecord final {
-		explicit IndirectRecord(std::uint64_t source) noexcept
-			: source_rip{source}
-		{}
-
-		IndirectLink site{};
-		std::uint64_t source_rip;
-	};
-
-	struct IndirectKey final {
-		[[nodiscard]] std::uint64_t operator()(
-			const IndirectRecord &record) const noexcept
-		{
-			return record.source_rip;
-		}
-	};
-
 	/* As in the arm64 cache, each address space owns the list of slots it has
 	 * populated. Retiring the least-recently-current generation therefore
 	 * scales with that generation's footprint rather than the whole cache.
-	 * Its records are named by address from translated streams, so they live
-	 * in chunks rather than map nodes (G210), and a link sweep releases the
-	 * ones nothing names any more (sweep()).
-	 *
-	 * What it keeps -- its resident translations, its record tables and its
-	 * target link tables -- is charged to its account in the process's
-	 * gadget-cache budget (gadget_cache_budget.hpp), which may ask the cache
-	 * to let go of it (leave_shedding()).
+	 * Its translations, link records and target link tables are its space's
+	 * (translation_space.hpp), charged to the account that space keeps in the
+	 * process's gadget-cache budget (gadget_cache_budget.hpp), which may ask
+	 * the cache to let go of it (leave_shedding()).
 	 */
 	struct Generation final {
 		explicit Generation(ProgramCache &cache) noexcept
-			: account{&ProgramCache::shed, &cache}
-		{
-			streams.meter(&account);
-			sources.meter(&account);
-			for (auto &mode : links)
-				mode.meter(&account);
-			for (auto &mode : indirect)
-				mode.meter(&account);
-		}
+			: space{&ProgramCache::shed, &cache}
+		{}
 		Generation(const Generation &) = delete;
 		Generation &operator=(const Generation &) = delete;
 
+		Space space;
 		std::uint64_t changes{};
 		/* The guest's number for the address space, and the cache's own
 		 * for it: the id a slot's tag carries, from one up, recycled once
@@ -695,18 +592,6 @@ private:
 		 * sweep of the slots that carry it, so a slot's epoch is never
 		 * mistaken for the current one. */
 		std::uint16_t epoch{1};
-		std::array<gadget_cache::StableRecordTable<LinkRecord, LinkKey>, 2>
-			links;
-		std::array<gadget_cache::StableRecordTable<IndirectRecord,
-				   IndirectKey>, 2>
-			indirect;
-		/* The records and sites the last sweep kept, and the bodies
-		 * that have left the cache since (gadget_cache::sweep_due). */
-		std::size_t kept{};
-		std::size_t departed{};
-		LinkRecord *live_links{};
-		std::array<std::unique_ptr<TargetLinkTable>, 2> target_links;
-		std::array<std::vector<IndirectLink *>, 2> live_indirect;
 		std::vector<std::uint32_t> slots;
 		/* The first body of each page's list. */
 		std::unordered_map<std::uint64_t, Body *> code_pages;
@@ -717,17 +602,6 @@ private:
 		std::uint64_t census_switch{};
 		double census_seconds{};
 #endif
-		/* The translations of the address space: each body with its
-		 * stream, and apart from them the source each was read from,
-		 * which is cold. A body gives no heap allocation back but what a
-		 * replay decoded, so dropping the arenas drops the bodies. Both
-		 * are charged to the account as they grow and shrink. */
-		gadget_cache::BodyArena streams{std::pmr::new_delete_resource()};
-		gadget_cache::BodyArena sources{std::pmr::new_delete_resource()};
-		/* Last, so it is destroyed first: a call of shed() in progress
-		 * holds up its destruction, and everything shed() touches is still
-		 * there. */
-		gadget_cache::Account account;
 	};
 
 public:
@@ -806,7 +680,7 @@ public:
 			return;
 		preceding_ = nullptr;
 		if (!retire_changed_code(*current_))
-			invalidate_links(*current_);
+			current_->space.invalidate_links();
 		current_->changes = changes;
 		advance_epoch(*current_);
 	}
@@ -854,7 +728,7 @@ public:
 		for (const auto &[generation, state] : generations_) {
 			if (count == gone.size())
 				break;
-			if (state.account.shedding())
+			if (state.space.account().shedding())
 				gone[count++] = generation;
 		}
 		bool left_current = false;
@@ -933,7 +807,7 @@ public:
 	[[nodiscard]] const BlockLink *link(
 		std::uint64_t address, ExecutionMode mode)
 	{
-		return &link_record(current(), address, mode).link;
+		return current().space.link(address, mode);
 	}
 
 	/* The tier an entering block probes. It belongs to the address space, so
@@ -942,42 +816,20 @@ public:
 	[[nodiscard]] const TargetLinkEntry *target_links(
 		ExecutionMode mode) noexcept
 	{
-		auto *table = current_ == nullptr ? nullptr :
-			target_table(*current_, mode);
-		return table == nullptr ? vacant_target_links().data() :
-			table->data();
+		return current_ == nullptr ? vacant_target_links().data() :
+			current_->space.target_links(mode);
 	}
 
 	[[nodiscard]] IndirectLink *indirect_link(
 		std::uint64_t source, ExecutionMode mode)
 	{
-		const auto *empty = link(empty_target(mode), mode);
-		auto [created, inserted] = current().indirect[mode_index(mode)]
-			.try_emplace(source, source);
-		if (inserted)
-			reset_indirect(created->site, empty_target(mode), empty);
-		return &created->site;
+		return current().space.indirect_link(source, mode);
 	}
 
 	void learn_indirect(IndirectLink &site, std::uint64_t target,
 		ExecutionMode mode)
 	{
-		target = normalize_instruction_pointer(mode, target);
-		const auto *target_link = link(target, mode);
-		if (!site.listed) {
-			current().live_indirect[mode_index(mode)].push_back(&site);
-			site.listed = true;
-		}
-		for (auto &entry : site.entries) {
-			if (entry.guest_rip != target)
-				continue;
-			entry.link = target_link;
-			return;
-		}
-		auto &entry = site.entries[site.next_replacement & 1U];
-		entry.guest_rip = target;
-		entry.link = target_link;
-		site.next_replacement ^= 1U;
+		current().space.learn_indirect(site, target, mode);
 	}
 
 	[[nodiscard]] const Program *find(std::uint64_t address,
@@ -1105,8 +957,8 @@ public:
 		/* The body is made before anything is disturbed, so that running
 		 * out of memory here leaves the cache as it was. */
 		auto &state = current();
-		auto *body = make_body(state, program, instruction_limit,
-			code_stamps);
+		auto *body = state.space.make_body(program,
+			kept_instruction_limit(instruction_limit), code_stamps);
 
 #if UML_GADGET_CACHE_CENSUS
 		/* A lookup that could not use its translation can leave it
@@ -1162,7 +1014,7 @@ public:
 		} catch (...) {
 			slot.tag = 0;
 			slot.body = nullptr;
-			free_body(state, body);
+			state.space.free_body(body);
 			throw;
 		}
 		activate_link(slot);
@@ -1173,8 +1025,7 @@ public:
 #endif
 		/* The build's words are in the slot's program now, so nothing
 		 * outside what a sweep reads names a record it made. */
-		if (gadget_cache::sweep_due(records(state), state.kept,
-			    state.departed))
+		if (state.space.sweep_due())
 			sweep(state, diagnostics);
 		/* Past the budget, the largest address spaces are asked to shed;
 		 * their caches let go of them at their next run. */
@@ -1211,19 +1062,14 @@ public:
 	[[nodiscard]] static GenerationBytes generation_bytes(
 		const Generation &state) noexcept
 	{
-		GenerationBytes bytes{};
-		for (const auto &mode : state.links)
-			bytes.links += mode.bytes();
-		bytes.links += state.slots.capacity() * sizeof(std::uint32_t) +
-			map_bytes(state.code_pages);
-		for (const auto &mode : state.indirect)
-			bytes.indirect += mode.bytes();
-		for (const auto &live : state.live_indirect)
-			bytes.indirect += live.capacity() * sizeof(IndirectLink *);
-		for (const auto &table : state.target_links)
-			if (table)
-				bytes.targets += sizeof(TargetLinkTable);
-		return bytes;
+		const auto bytes = state.space.link_bytes();
+		return {
+			.links = bytes.links +
+				state.slots.capacity() * sizeof(std::uint32_t) +
+				map_bytes(state.code_pages),
+			.indirect = bytes.indirect,
+			.targets = bytes.targets,
+		};
 	}
 
 	[[nodiscard]] Footprint footprint() const noexcept
@@ -1306,7 +1152,7 @@ public:
 		const auto book = gadget_cache::ledger_state();
 		std::size_t charged = 0;
 		for (const auto &[generation, state] : generations_)
-			charged += state.account.bytes();
+			charged += state.space.account().bytes();
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu slots=%zu "
 			"slot_bytes=%zu slab_slots=%zu slab_count=%zu slabs=%zu "
@@ -1362,7 +1208,7 @@ public:
 				static_cast<unsigned long long>(running ? 0 :
 					switches_ - state.census_switch),
 				running ? 0.0 : now - state.census_seconds,
-				state.links[0].size() + state.links[1].size(),
+				state.space.link_records(),
 				bytes.links, bytes.indirect, bytes.targets, alive,
 				held[state.id]);
 		}
@@ -1374,8 +1220,9 @@ public:
 		 * cache keeps for itself. */
 		if (sample != 0)
 			for (const auto &[generation, state] : generations_)
-				for (const auto &mode : state.links)
-					mode.for_each([&](const LinkRecord &record) {
+				state.space.for_each_link(
+					[&, generation = generation](
+						const LinkRecord &record) {
 						if (census_sampled(record.link.guest_rip,
 							    sample))
 							std::fprintf(out,
@@ -1522,19 +1369,18 @@ private:
 			const auto *owner = owner_of(slot);
 			if (owner != nullptr) {
 				auto &table = named->second;
-				for (const auto &mode : owner->links)
-					mode.for_each([&table](const LinkRecord &record) {
+				owner->space.for_each_link(
+					[&table](const LinkRecord &record) {
 						table[reinterpret_cast<std::uintptr_t>(
 							&record.link)] =
 							{'l', record.link.guest_rip};
 					});
-				for (const auto &mode : owner->indirect)
-					mode.for_each(
-						[&table](const IndirectRecord &record) {
-							table[reinterpret_cast<
-								std::uintptr_t>(&record.site)] =
-								{'i', record.source_rip};
-						});
+				owner->space.for_each_indirect(
+					[&table](const IndirectRecord &record) {
+						table[reinterpret_cast<std::uintptr_t>(
+							&record.site)] =
+							{'i', record.source_rip};
+					});
 			}
 		}
 		std::fprintf(out, "W 0x%llx",
@@ -1874,52 +1720,6 @@ private:
 		preceding_ = &successors;
 	}
 
-	[[nodiscard]] static std::size_t mode_index(ExecutionMode mode) noexcept
-	{
-		return mode == ExecutionMode::compat32 ? 1U : 0U;
-	}
-
-	[[nodiscard]] static std::uint64_t empty_target(
-		ExecutionMode mode) noexcept
-	{
-		return normalize_instruction_pointer(mode, ~std::uint64_t{});
-	}
-
-	[[nodiscard]] LinkRecord &link_record(Generation &state,
-		std::uint64_t address, ExecutionMode mode)
-	{
-		return *state.links[mode_index(mode)]
-			.try_emplace(address, address).first;
-	}
-
-	static void reset_indirect(IndirectLink &site, std::uint64_t empty,
-		const BlockLink *empty_link) noexcept
-	{
-		for (auto &entry : site.entries) {
-			entry.guest_rip = empty;
-			entry.link = empty_link;
-		}
-		site.next_replacement = 0;
-		site.listed = false;
-	}
-
-	[[nodiscard]] TargetLinkTable *target_table(
-		Generation &state, ExecutionMode mode) noexcept
-	{
-		auto &owned = state.target_links[mode_index(mode)];
-		if (!owned) {
-			try {
-				owned = std::make_unique<TargetLinkTable>(
-					vacant_target_links());
-			} catch (...) {
-				return nullptr;
-			}
-			state.account.charge(static_cast<std::ptrdiff_t>(
-				malloc_good_size(sizeof(TargetLinkTable))));
-		}
-		return owned.get();
-	}
-
 	/* A code change somewhere in the address space says nothing about the
 	 * blocks this cache holds: a fresh executable mapping, or a write to a
 	 * page nothing has been translated from, overlaps none of them. Ask what
@@ -1952,67 +1752,28 @@ private:
 		return true;
 	}
 
-	void invalidate_links(Generation &state) noexcept
-	{
-		auto *record = state.live_links;
-		state.live_links = nullptr;
-		while (record != nullptr) {
-			auto *next = record->next_live;
-			record->reset();
-			record->listed = false;
-			record->next_live = nullptr;
-			record = next;
-		}
-		for (std::size_t index = 0; index < state.live_indirect.size();
-				++index) {
-			auto &live = state.live_indirect[index];
-			if (live.empty())
-				continue;
-			const auto mode = index == 0 ? ExecutionMode::long64 :
-				ExecutionMode::compat32;
-			const auto empty = empty_target(mode);
-			const auto *found = state.links[index].find(empty);
-			if (found == nullptr)
-				continue;
-			for (auto *site : live)
-				reset_indirect(*site, empty, &found->link);
-			live.clear();
-		}
-	}
-
 	void activate_link(Slot &slot) noexcept
 	{
 		if (slot.body == nullptr)
 			return;
+		auto *owner = owner_of(slot);
+		if (owner == nullptr)
+			return;
 		if (slot.link() == nullptr) {
-			auto *owner = owner_of(slot);
-			if (owner == nullptr)
-				return;
-			auto *found = owner->links[mode_index(slot.mode())]
-				.find(slot.address());
+			auto *found = owner->space.find_link(
+				slot.address(), slot.mode());
 			if (found == nullptr)
 				return;
 			slot.set_link(found);
 		}
 		auto &record = *slot.link();
-		if (!record.listed) {
-			record.listed = true;
-			record.next_live = current().live_links;
-			current().live_links = &record;
-		}
-		const auto &program = slot.body->program;
-		record.link.stream = program.native_stream().data();
-		record.link.instruction_count = program.instruction_count();
-		record.link.guest_rip = program.address();
+		owner->space.arm(record, *slot.body);
 		/* Publishing here, rather than at a branch that asked for this
 		 * address, is what lets a RET reach a return site it has never
 		 * reached before: the block that runs there announces itself. */
 		if (slot.owner() != (current_owner_ >> tag_owner_shift))
 			return;
-		auto *table = target_table(current(), slot.mode());
-		if (table != nullptr)
-			(*table)[target_link_index(slot.address())] = {
-				slot.address(), &record.link};
+		owner->space.announce(record, slot.mode());
 	}
 
 	void deactivate(Slot &slot) noexcept
@@ -2032,25 +1793,7 @@ private:
 	 * slot that holds the body keeps its memo of the record. */
 	void deactivate(Generation &state, const Body &body) noexcept
 	{
-		auto *record = state.links[mode_index(
-			body.program.execution_mode())].find(body.program.address());
-		if (record != nullptr &&
-		    record->link.stream == body.program.native_stream().data())
-			record->reset();
-	}
-
-	[[nodiscard]] static std::size_t records(const Generation &state) noexcept
-	{
-		return state.links[0].size() + state.links[1].size() +
-			state.indirect[0].size() + state.indirect[1].size();
-	}
-
-	[[nodiscard]] static const LinkRecord *record_of(
-		const BlockLink *link) noexcept
-	{
-		return reinterpret_cast<const LinkRecord *>(
-			reinterpret_cast<std::uintptr_t>(link) -
-			offsetof(LinkRecord, link));
+		state.space.reset_link_of(body);
 	}
 
 	/* Release the link records and indirect sites of one address space that
@@ -2079,8 +1822,7 @@ private:
 			/* A sweep only returns memory; without the memory to run
 			 * one, the records stay. */
 		}
-		state.kept = records(state);
-		state.departed = 0;
+		state.space.swept();
 		++diagnostics.link_sweeps;
 #if UML_GADGET_CACHE_CENSUS
 		++sweeps_;
@@ -2097,18 +1839,8 @@ private:
 	void sweep_records(Generation &state,
 		ProgramCacheDiagnostics &diagnostics)
 	{
-		constexpr std::array modes{ExecutionMode::long64,
-			ExecutionMode::compat32};
-		std::array links{state.links[0].marks(), state.links[1].marks()};
-		std::array sites{state.indirect[0].marks(),
-			state.indirect[1].marks()};
-		std::array<const LinkRecord *, 2> empty{};
-		for (std::size_t mode = 0; mode < modes.size(); ++mode) {
-			empty[mode] = state.links[mode].find(
-				empty_target(modes[mode]));
-			if (empty[mode] != nullptr)
-				links[mode].mark(empty[mode]);
-		}
+		auto links = state.space.link_marks();
+		auto sites = state.space.site_marks();
 		std::vector<std::uint64_t> seen((program_cache_slots + 63) / 64);
 		std::vector<std::uint32_t> held;
 		const auto visit = [&](std::uint32_t index) {
@@ -2123,12 +1855,11 @@ private:
 			if (const auto *memo = slot.link(); memo != nullptr)
 				links[own].mark(memo);
 			else if (const auto *record =
-					 state.links[own].find(slot.address()))
+					 state.space.find_link(slot.address(), slot.mode()))
 				links[own].mark(record);
 			for (const auto word :
 			     slot.body->program.native_stream())
-				for (std::size_t mode = 0; mode < modes.size();
-				     ++mode) {
+				for (std::size_t mode = 0; mode < links.size(); ++mode) {
 					links[mode].mark(
 						word - offsetof(LinkRecord, link));
 					sites[mode].mark(
@@ -2150,62 +1881,11 @@ private:
 							offset));
 		}
 		held.shrink_to_fit();
-		std::array<std::vector<IndirectLink *>, 2> live_indirect;
-		for (std::size_t mode = 0; mode < modes.size(); ++mode) {
-			live_indirect[mode].reserve(state.live_indirect[mode].size());
-			for (auto *site : state.live_indirect[mode])
-				if (sites[mode].marked(
-					    reinterpret_cast<const IndirectRecord *>(
-						    reinterpret_cast<std::uintptr_t>(site) -
-						    offsetof(IndirectRecord, site))))
-					live_indirect[mode].push_back(site);
-		}
-
-		/* From here each step leaves the address space consistent. */
-		for (std::size_t mode = 0; mode < modes.size(); ++mode) {
-			diagnostics.released_sites +=
-				state.indirect[mode].sweep(sites[mode]);
-			state.live_indirect[mode] = std::move(live_indirect[mode]);
-		}
+		const auto released = state.space.sweep(links, sites);
+		diagnostics.released_sites += released.sites;
+		diagnostics.released_links += released.links;
 		state.slots = std::move(held);
 		state.slots_complete = true;
-		const auto &vacant = vacant_target_links().front();
-		for (std::size_t mode = 0; mode < modes.size(); ++mode) {
-			if (empty[mode] != nullptr) {
-				const IndirectLinkEntry cleared{
-					empty_target(modes[mode]), &empty[mode]->link};
-				state.indirect[mode].for_each(
-					[&](IndirectRecord &record) {
-						for (auto &entry : record.site.entries)
-							if (!links[mode].marked(
-								    record_of(entry.link)))
-								entry = cleared;
-					});
-			}
-			if (const auto &table = state.target_links[mode])
-				for (auto &entry : *table)
-					if (entry.link != vacant.link &&
-					    !links[mode].marked(record_of(entry.link)))
-						entry = vacant;
-		}
-		/* The live list runs through the records, so the ones about to
-		 * go leave it first. */
-		LinkRecord **next = &state.live_links;
-		for (auto *record = state.live_links; record != nullptr;) {
-			auto *following = record->next_live;
-			if (links[0].marked(record) || links[1].marked(record)) {
-				*next = record;
-				next = &record->next_live;
-			} else {
-				record->listed = false;
-				record->next_live = nullptr;
-			}
-			record = following;
-		}
-		*next = nullptr;
-		for (std::size_t mode = 0; mode < modes.size(); ++mode)
-			diagnostics.released_links +=
-				state.links[mode].sweep(links[mode]);
 	}
 
 	void touch(std::uint64_t generation)
@@ -2301,50 +1981,7 @@ private:
 		if (!slot.resident() || slot.body == nullptr)
 			return;
 		if (auto *owner = owner_of(slot); owner != nullptr)
-			++owner->departed;
-	}
-
-	/* A body for `program` in an address space's arenas: its stream behind
-	 * the body, and its saved source apart. Nothing else is touched, so a
-	 * failure leaves the cache as it was. */
-	[[nodiscard]] Body *make_body(Generation &state, const Program &program,
-		std::size_t instruction_limit, const ProgramCodeStamps &stamps)
-	{
-		const auto bytes =
-			Body::allocation_bytes(program.native_stream().size());
-		auto *storage = static_cast<std::byte *>(
-			state.streams.allocate(bytes));
-		std::byte *source = nullptr;
-		try {
-			if (program.byte_count() != 0)
-				source = static_cast<std::byte *>(
-					state.sources.allocate(program.byte_count()));
-		} catch (...) {
-			state.streams.deallocate(storage, bytes);
-			throw;
-		}
-		auto *body = new (storage) Body{program.view_in(
-			reinterpret_cast<std::uintptr_t *>(storage + sizeof(Body)),
-			source)};
-		body->instruction_limit = kept_instruction_limit(instruction_limit);
-		body->code_pages = stamps.pages;
-		body->stamp_state = static_cast<std::uint8_t>(stamps.count |
-			(stamps.complete ? Body::stamps_complete_bit : 0U));
-		return body;
-	}
-
-	/* Give a body that is in no list and that no slot holds back to its
-	 * address space's arenas. */
-	static void free_body(Generation &state, Body *body) noexcept
-	{
-		const auto bytes = body->allocation_bytes();
-		auto *source = const_cast<std::byte *>(
-			body->program.source().data());
-		const auto source_bytes = body->program.byte_count();
-		std::destroy_at(body);
-		if (source_bytes != 0)
-			state.sources.deallocate(source, source_bytes);
-		state.streams.deallocate(body, bytes);
+			owner->space.note_departed();
 	}
 
 	/* Let a slot go of its body: counted as leaving, out of its pages'
@@ -2357,7 +1994,7 @@ private:
 		unindex(slot);
 		deactivate(slot);
 		if (auto *owner = owner_of(slot); owner != nullptr)
-			free_body(*owner, slot.body);
+			owner->space.free_body(slot.body);
 		slot.body = nullptr;
 	}
 

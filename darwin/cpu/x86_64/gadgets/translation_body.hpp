@@ -14,6 +14,17 @@
 
 namespace uml::cpu::x86_64::gadgets {
 
+/* The page stamps a translation was last validated against, as a validation
+ * compares them. */
+struct ProgramCodeStamps final {
+	std::array<::uml::memory::CodePageStamp, 2> pages{};
+	std::uint8_t count{};
+	bool complete{};
+
+	friend bool operator==(
+		const ProgramCodeStamps &, const ProgramCodeStamps &) = default;
+};
+
 /* One cached translation, allocated in its address space's arena apart from
  * the slots that index it.
  *
