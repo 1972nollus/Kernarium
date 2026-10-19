@@ -6,7 +6,6 @@
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
 #include <mach/arm/thread_status.h>
-#include <mach/mach_vm.h>
 #include <time.h>
 
 namespace uml::runtime {
@@ -106,10 +105,10 @@ bool ThreadFence::unsafe_to_hold(thread_act_t thread) const noexcept
 	for (int depth = 0; depth < 96 && frame_pointer != 0 &&
 	     (frame_pointer & 0xf) == 0; ++depth) {
 		std::uintptr_t frame[2] = {};
-		mach_vm_size_t read = 0;
-		if (mach_vm_read_overwrite(mach_task_self(), frame_pointer,
-			    sizeof frame, reinterpret_cast<mach_vm_address_t>(frame),
-			    &read) != KERN_SUCCESS || read != sizeof frame)
+		vm_size_t read = 0;
+		if (vm_read_overwrite(mach_task_self(), frame_pointer, sizeof frame,
+			    reinterpret_cast<vm_address_t>(frame), &read) !=
+			    KERN_SUCCESS || read != sizeof frame)
 			break;
 		if (avoided(frame[1]))
 			return true;
