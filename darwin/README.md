@@ -193,16 +193,17 @@ charges an account with what it holds: an arm64 space its arena chunks with
 their maps, blocks too large for a chunk, link and indirect records and target
 table, once however many executors share it; an x86 address space its
 translation arenas (bodies with their streams, and saved source, as chunks are
-carved and released), records and target tables, in each executor that keeps
-it. Slots and per-space slot lists are not charged. A store that finds the open
-accounts above the budget asks the largest to shed until the rest hold seven
-eighths of it. An arm64 space asked to shed is closed and let go of as a
-renewed one is, and is never attached again; an x86 executor lets go of such an
-address space at the start of its next run, as of a destroyed one. Either way
-the address space starts afresh in a new account. The open accounts therefore
-stay within the budget, give or take what one store adds, and a shed space that
-an idle vCPU still holds was part of what was open, so the whole stays within
-twice the budget.
+carved and released), records and target tables, once however many executors
+share it, and in each executor that keeps it to itself. Slots and per-space
+slot lists are not charged. A store that finds the open accounts above the
+budget asks the largest to shed until the rest hold seven eighths of it. An
+arm64 space asked to shed is closed and let go of as a renewed one is, and is
+never attached again; an x86 executor lets go of such an address space at the
+start of its next run, as of a destroyed one. Either way the address space
+starts afresh in a new account. The open accounts therefore stay within the
+budget, give or take what one store adds, and a shed space that an idle vCPU
+still holds was part of what was open, so the whole stays within twice the
+budget.
 
 The emulator sets the budget before the run's first executor: a quarter of
 guest memory, at least 128 MiB, and at most an eighth of the footprint the
@@ -214,10 +215,12 @@ and 8 GiB the largest, x86 multi-core Geekbench, peaked at a seventh of its
 peaked at 47% of 358 MiB (G282). A census build reports the budget, the bytes
 charged and the reliefs on every `E` record.
 
-x86 gadget executors keep private translations: their links carry the block's
-guest range for self-modifying-store checks, which translated code reads in
-two loads that one atomic store cannot keep consistent. They let go of the
-address spaces of destroyed generations the same way, at the start of each run
+x86 gadget executors share an address space's translations the same way when
+`DARWIN_UML_GADGET_SHARED_BODIES=1` asks for it, and otherwise keep them
+private. A link's pair and the guest bounds in front of every stream let one
+paired store retarget a link another executor follows, and a store over a
+block's source marks it stale for every executor. They let go of the address
+spaces of destroyed generations the same way, at the start of each run
 ([`cpu/x86_64/gadgets/README.md`](cpu/x86_64/gadgets/README.md)).
 
 In both arm64 engines, code another vCPU changed and synchronized takes effect

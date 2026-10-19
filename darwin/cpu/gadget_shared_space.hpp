@@ -62,6 +62,17 @@ inline void store_pair(void *at, std::uint64_t first,
 		     : "memory");
 }
 
+/* The pair store_pair publishes, read with one `ldp`. */
+inline void load_pair(const void *at, std::uint64_t &first,
+	std::uint64_t &second) noexcept
+{
+	assert((reinterpret_cast<std::uintptr_t>(at) & 15U) == 0U);
+	asm volatile("ldp %x0, %x1, [%x2]"
+		     : "=r"(first), "=r"(second)
+		     : "r"(at)
+		     : "memory");
+}
+
 [[nodiscard]] inline std::uint64_t word_of(const void *pointer) noexcept
 {
 	return reinterpret_cast<std::uintptr_t>(pointer);
@@ -261,6 +272,21 @@ public:
 	{
 		const std::lock_guard limbo{mutex_};
 		return waiting_.size() + incoming_.size();
+	}
+
+	/* Visit every body still waiting, for the space that is going away: no
+	 * executor can run one, so each may be finished with at once. */
+	template <typename Visit>
+	void for_each(Visit &&visit)
+	{
+		const std::lock_guard limbo{mutex_};
+		for (auto *body : waiting_)
+			visit(body);
+		for (auto *body : incoming_)
+			visit(body);
+		waiting_.clear();
+		incoming_.clear();
+		pending_.store(false, std::memory_order_relaxed);
 	}
 
 private:

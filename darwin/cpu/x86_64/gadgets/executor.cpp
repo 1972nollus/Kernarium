@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstddef>
+#include <cstdlib>
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
 #endif
@@ -56,10 +57,6 @@ inline constexpr std::size_t program_cache_slab_count =
 inline constexpr std::size_t resident_generation_limit =
 	gadget_cache::resident_generations;
 inline constexpr std::size_t maximum_cached_source_bytes = 64U * 15U;
-/* A prepare that would walk more than this replays nothing and retires the
- * whole address space instead, which is cheaper than the walk. */
-inline constexpr std::size_t code_change_replay_limit = 64;
-inline constexpr std::uint64_t code_change_replay_pages = 128;
 static_assert(maximum_cached_source_bytes <= DARWIN_UML_GUEST_PAGE_SIZE,
 	"one cached x86 program may span at most two code pages");
 static_assert((program_cache_slots & (program_cache_slots - 1U)) == 0,
@@ -71,6 +68,22 @@ static_assert(program_cache_sets * program_cache_ways == program_cache_slots);
 static_assert(resident_generation_limit != 0,
 	"x86-64 gadget cache must retain at least one address space");
 static_assert(std::is_nothrow_move_constructible_v<Program>);
+
+using gadget_cache::acquire_announcement;
+using gadget_cache::announce_entry;
+using gadget_cache::announce_exit;
+using gadget_cache::release_announcement;
+using Announcement = gadget_cache::ExecutorAnnouncement;
+
+/* Executors running one address space share its translations when
+ * DARWIN_UML_GADGET_SHARED_BODIES=1 asks for it: the bodies, link records,
+ * indirect sites and target tables are the address space's, held once, and
+ * each executor keeps only its own slots. Read as each executor is made. */
+[[nodiscard]] bool shared_bodies_enabled() noexcept
+{
+	const char *value = std::getenv("DARWIN_UML_GADGET_SHARED_BODIES");
+	return value != nullptr && std::strcmp(value, "1") == 0;
+}
 
 struct ProgramCacheLocation final {
 	std::size_t set;
@@ -499,27 +512,6 @@ private:
 			memo = (memo & link_mask) |
 				(std::uint64_t{value} << epoch_shift);
 		}
-
-		/* The translation's page stamps as a validation compares them. */
-		[[nodiscard]] bool stamped() const noexcept
-		{
-			return (body->stamp_state & Body::stamps_complete_bit) != 0U;
-		}
-		[[nodiscard]] ProgramCodeStamps code_stamps() const noexcept
-		{
-			ProgramCodeStamps stamps;
-			stamps.pages = body->code_pages;
-			stamps.count = body->stamp_state &
-				(Body::stamps_complete_bit - 1U);
-			stamps.complete = stamped();
-			return stamps;
-		}
-		void set_code_stamps(const ProgramCodeStamps &stamps) noexcept
-		{
-			body->code_pages = stamps.pages;
-			body->stamp_state = static_cast<std::uint8_t>(stamps.count |
-				(stamps.complete ? Body::stamps_complete_bit : 0U));
-		}
 	};
 	static_assert(ProgramCodeStamps{}.pages.size() <
 			Body::stamps_complete_bit,
@@ -567,18 +559,14 @@ private:
 	 * populated. Retiring the least-recently-current generation therefore
 	 * scales with that generation's footprint rather than the whole cache.
 	 * Its translations, link records and target link tables are its space's
-	 * (translation_space.hpp), charged to the account that space keeps in the
-	 * process's gadget-cache budget (gadget_cache_budget.hpp), which may ask
-	 * the cache to let go of it (leave_shedding()).
+	 * (translation_space.hpp), which this cache shares with the other
+	 * executors running the address space, or keeps to itself
+	 * (DARWIN_UML_GADGET_SHARED_BODIES). The space charges the account it
+	 * keeps in the process's gadget-cache budget (gadget_cache_budget.hpp),
+	 * which may ask the cache to let go of it (leave_shedding()).
 	 */
 	struct Generation final {
-		explicit Generation(ProgramCache &cache) noexcept
-			: space{&ProgramCache::shed, &cache}
-		{}
-		Generation(const Generation &) = delete;
-		Generation &operator=(const Generation &) = delete;
-
-		Space space;
+		Space *space{};
 		std::uint64_t changes{};
 		/* The guest's number for the address space, and the cache's own
 		 * for it: the id a slot's tag carries, from one up, recycled once
@@ -593,8 +581,6 @@ private:
 		 * mistaken for the current one. */
 		std::uint16_t epoch{1};
 		std::vector<std::uint32_t> slots;
-		/* The first body of each page's list. */
-		std::unordered_map<std::uint64_t, Body *> code_pages;
 		bool slots_complete{true};
 #if UML_GADGET_CACHE_CENSUS
 		/* When the cache last left this address space, in switches and
@@ -605,6 +591,28 @@ private:
 	};
 
 public:
+	/* `announcement` is what this cache's executor says about itself for the
+	 * bodies other executors free, and `share` whether the cache shares its
+	 * address spaces with the other executors running them. */
+	explicit ProgramCache(
+		const Announcement *announcement = nullptr, bool share = false)
+		: announcement_{announcement},
+		  share_{share && announcement != nullptr}
+	{}
+
+	ProgramCache(const ProgramCache &) = delete;
+	ProgramCache &operator=(const ProgramCache &) = delete;
+
+	/* The exceptions this cache's blocks are built for: the part of an
+	 * address space's key that is not the address space. Set before the
+	 * first prepare. */
+	void set_checked(unsigned checked) noexcept
+	{
+		checked_ = static_cast<std::uint8_t>(checked);
+	}
+
+	[[nodiscard]] bool sharing() const noexcept { return share_; }
+
 	void invalidate() noexcept
 	{
 #if UML_GADGET_CACHE_CENSUS
@@ -615,33 +623,29 @@ public:
 						census_depart(slot,
 							census::Departure::retired);
 #endif
-		if (registries_ != nullptr)
-			for (auto &[generation, state] : generations_)
-				for (const auto &[page, link] : state.code_pages)
-					registries_->of(generation).remove(page);
-		/* A body's stream and source go with its address space's arenas,
-		 * but what a replay decoded was allocated apart. */
+		/* Every slot lets go of its body, whose address space may be
+		 * shared with executors still running it. */
 		for (auto &slab : slabs_)
 			if (slab)
-				for (auto &slot : slab->slots)
+				for (auto &slot : slab->slots) {
 					if (slot.body != nullptr)
-						std::destroy_at(slot.body);
+						release_body(slot, false);
+					slot.tag = 0;
+					slot.memo = 0;
+					slot.body = nullptr;
+				}
+		for (auto &[generation, state] : generations_) {
+			state.space->reclaim(announcement_);
+			SpaceRegistry::instance().detach(state.space,
+				announcement_);
+			if (registries_ != nullptr)
+				registries_->release(generation);
+		}
 		resident_.clear();
 		generations_.clear();
 		owners_.assign(1, nullptr);
 		free_ids_.clear();
 		unbind();
-		/* Every address space is gone, so no slot is occupied, and none
-		 * names a link record or a page list. Their accounts went with
-		 * them, and the arenas the bodies were in: none is charged any
-		 * more. */
-		for (auto &slab : slabs_)
-			if (slab)
-				for (auto &slot : slab->slots) {
-					slot.tag = 0;
-					slot.memo = 0;
-					slot.body = nullptr;
-				}
 		preceding_ = nullptr;
 	}
 
@@ -658,15 +662,17 @@ public:
 		}
 #endif
 		current_generation_ = generation;
-		auto [entry, inserted] = generations_.try_emplace(generation,
-			*this);
-		current_ = &entry->second;
-		if (inserted)
-			enroll(*current_, generation);
-		bind(*current_);
+		bool inserted = false;
+		auto &state = generation_for(generation, changes, inserted);
+		current_ = &state;
+		bind(state);
 		touch(generation);
 		if (inserted) {
-			current_->changes = changes;
+			state.changes = changes;
+			/* A space another executor made may be behind the code
+			 * this one is at. */
+			state.space->observe(changes, code_change_reader_,
+				code_change_context_);
 			while (resident_.size() > resident_generation_limit) {
 #if UML_GADGET_CACHE_CENSUS
 				if (!generations_.contains(resident_.front()))
@@ -676,13 +682,13 @@ public:
 			}
 			return;
 		}
-		if (current_->changes == changes)
+		if (state.changes == changes)
 			return;
 		preceding_ = nullptr;
-		if (!retire_changed_code(*current_))
-			current_->space.invalidate_links();
-		current_->changes = changes;
-		advance_epoch(*current_);
+		state.space->observe(changes, code_change_reader_,
+			code_change_context_);
+		state.changes = changes;
+		advance_epoch(state);
 	}
 
 	/* Let go of every address space held here whose generation `live`
@@ -714,26 +720,44 @@ public:
 	}
 
 	/* Let go of every address space held here that the gadget-cache budget
-	 * asked to shed, as of a destroyed one but with its place in the
-	 * window's order, and say whether the one last prepared was among them.
-	 * Only when the budget has asked since the last call, which one load
-	 * answers. */
+	 * asked to shed, or that another executor closed, as of a destroyed one
+	 * but with its place in the window's order, and say whether the one last
+	 * prepared was among them. Only when the budget or an executor has
+	 * asked since the last call, which two loads answer. */
 	[[nodiscard]] bool leave_shedding() noexcept
 	{
-		if (!shed_requested_.load(std::memory_order_relaxed))
+		const bool closed = announcement_ != nullptr &&
+			announcement_->renew.load(std::memory_order_relaxed);
+		if (!closed && !shed_requested_.load(std::memory_order_relaxed))
 			return false;
 		shed_requested_.store(false, std::memory_order_relaxed);
+		if (closed)
+			announcement_->renew.store(false, std::memory_order_relaxed);
 		std::array<std::uint64_t, resident_generation_limit + 1U> gone{};
 		std::size_t count = 0;
 		for (const auto &[generation, state] : generations_) {
 			if (count == gone.size())
 				break;
-			if (state.space.account().shedding())
+			if (state.space->closed() || state.space->shedding())
 				gone[count++] = generation;
 		}
 		bool left_current = false;
 		for (std::size_t index = 0; index < count; ++index) {
 			left_current |= gone[index] == current_generation_;
+			/* A space the budget asked to shed is closed, for every
+			 * other executor holding it to let go of too. */
+			if (const auto held = generations_.find(gone[index]);
+			    held != generations_.end() &&
+			    held->second.space->shedding() &&
+			    held->second.space->shared()) {
+				try {
+					SpaceRegistry::instance().close(
+						held->second.space);
+				} catch (...) {
+					/* Still shedding: no executor takes it up
+					 * again. */
+				}
+			}
 			retire(gone[index]);
 		}
 		return left_current;
@@ -763,43 +787,27 @@ public:
 	{
 		if (current_ == nullptr)
 			return false;
-		return current_->code_pages.find(address & code_page_mask) !=
-			current_->code_pages.end();
+		return current_->space->holds_page(address & code_page_mask);
 	}
 
 	/* A write made by this executor already names its exact guest range.
-	 * Reset only translations whose saved instruction bytes overlap it;
-	 * unrelated links can remain live when this executor accepts its own
-	 * publication at the next branch boundary.
+	 * Reset only translations whose saved instruction bytes overlap it, and
+	 * where translations are shared mark them stale; unrelated links can
+	 * remain live when this executor accepts its own publication at the
+	 * next branch boundary.
 	 */
 	void invalidate_code(std::uint64_t address, std::size_t size) noexcept
 	{
 		if (current_ == nullptr || size == 0)
 			return;
-		auto current = address;
-		auto remaining = size;
-		while (remaining != 0) {
-			const auto page = current & code_page_mask;
-			const auto count = std::min<std::size_t>(remaining,
-				DARWIN_UML_GUEST_PAGE_SIZE -
-					(current & (DARWIN_UML_GUEST_PAGE_SIZE - 1U)));
-			const auto found = current_->code_pages.find(page);
-			if (found != current_->code_pages.end()) {
-				for (auto *body = found->second; body != nullptr;
-				     body = body->page_next[page_entry(*body, page)])
-					if (source_overlaps(body->program,
-						    address, size))
-						deactivate(*current_, *body);
-			}
-			remaining -= count;
-			current += count;
-		}
+		current_->space->note_store(address, size);
 	}
 
 	void accept_code_changes(std::uint64_t changes) noexcept
 	{
 		if (current_ == nullptr || current_->changes == changes)
 			return;
+		current_->space->accept(changes);
 		current_->changes = changes;
 		advance_epoch(*current_);
 	}
@@ -807,7 +815,7 @@ public:
 	[[nodiscard]] const BlockLink *link(
 		std::uint64_t address, ExecutionMode mode)
 	{
-		return current().space.link(address, mode);
+		return current().space->link(address, mode);
 	}
 
 	/* The tier an entering block probes. It belongs to the address space, so
@@ -817,19 +825,56 @@ public:
 		ExecutionMode mode) noexcept
 	{
 		return current_ == nullptr ? vacant_target_links().data() :
-			current_->space.target_links(mode);
+			current_->space->target_links(mode);
 	}
 
 	[[nodiscard]] IndirectLink *indirect_link(
 		std::uint64_t source, ExecutionMode mode)
 	{
-		return current().space.indirect_link(source, mode);
+		return current().space->indirect_link(source, mode);
 	}
 
 	void learn_indirect(IndirectLink &site, std::uint64_t target,
 		ExecutionMode mode)
 	{
-		current().space.learn_indirect(site, target, mode);
+		current().space->learn_indirect(site, target, mode);
+	}
+
+	/* The pages a build covers, pinned in the address space's page index
+	 * for as long as the guard lives: stores that land on them from before
+	 * the build reads a byte until it publishes are counted. */
+	class Pinned final {
+	public:
+		Pinned() = default;
+		Pinned(Space *space, std::span<const std::uint64_t> pages)
+			: space_{space}, pins_{space->pin(pages)}
+		{}
+		~Pinned()
+		{
+			if (space_ != nullptr)
+				space_->unpin(pins_);
+		}
+		Pinned(const Pinned &) = delete;
+		Pinned &operator=(const Pinned &) = delete;
+		Pinned(Pinned &&other) noexcept
+			: space_{std::exchange(other.space_, nullptr)},
+			  pins_{other.pins_}
+		{}
+		Pinned &operator=(Pinned &&) = delete;
+
+		[[nodiscard]] const PagePins &pins() const noexcept
+		{
+			return pins_;
+		}
+
+	private:
+		Space *space_{};
+		PagePins pins_{};
+	};
+
+	[[nodiscard]] Pinned pin(std::span<const std::uint64_t> pages)
+	{
+		return {current().space, pages};
 	}
 
 	[[nodiscard]] const Program *find(std::uint64_t address,
@@ -875,24 +920,35 @@ public:
 		const auto location = locate_program(
 			current_generation_, address, mode);
 		auto &slab = slabs_[location.slab];
-		if (!slab) {
-#if UML_GADGET_CACHE_CENSUS
-			history_.missed();
-#endif
-			return nullptr;
+		if (slab) {
+			for (std::size_t way = 0; way < program_cache_ways; ++way) {
+				auto &slot = slab->slots[location.offset + way];
+				if (slot.tag != tag)
+					continue;
+				const auto *program = use(slot, maximum_instructions,
+					mapping_changes, memory, execution_context,
+					sequence_reader, diagnostics);
+				if (program == nullptr)
+					return nullptr;
+				activate(slot, slab->successors[location.offset + way]);
+				cache_hit = true;
+				return program;
+			}
 		}
-		for (std::size_t way = 0; way < program_cache_ways; ++way) {
-			auto &slot = slab->slots[location.offset + way];
-			if (slot.tag != tag)
-				continue;
-			const auto *program = use(slot, maximum_instructions,
-				mapping_changes, memory, execution_context,
-				sequence_reader, diagnostics);
-			if (program == nullptr)
-				return nullptr;
-			activate(slot, slab->successors[location.offset + way]);
-			cache_hit = true;
-			return program;
+		/* No slot here holds the address, so ask the address space:
+		 * another executor may hold its translation. */
+		if (share_ && current_ != nullptr) {
+			if (const auto *program = adopt(address, mode,
+				    maximum_instructions, mapping_changes, memory,
+				    execution_context, sequence_reader,
+				    diagnostics)) {
+#if UML_GADGET_CACHE_CENSUS
+				history_.adopted();
+#endif
+				++adoptions_;
+				cache_hit = true;
+				return program;
+			}
 		}
 #if UML_GADGET_CACHE_CENSUS
 		history_.missed();
@@ -902,35 +958,32 @@ public:
 
 	void cancel_selection() noexcept { preceding_ = nullptr; }
 
-	/* The resident program at `address` whose stream holds `word`, which a
-	 * linked run can be inside of: every block a link enters is resident. */
-	[[nodiscard]] const Program *holding(std::uint64_t address,
-		ExecutionMode mode, const std::uintptr_t *word) const noexcept
+	/* The resident program whose stream holds `word`, which a linked run can
+	 * be inside of: a block a link enters is live in the address space, held
+	 * by some executor's slot or waiting for the executors that may still be
+	 * running it to leave. */
+	[[nodiscard]] const Program *holding(const std::uintptr_t *word) const noexcept
 	{
 		if (current_ == nullptr)
 			return nullptr;
-		const auto location = locate_program(
-			current_generation_, address, mode);
-		if (location.slab >= slabs_.size() || !slabs_[location.slab])
+		const auto *body = current_->space->owner(word);
+		if (body == nullptr)
 			return nullptr;
-		const auto &slab = *slabs_[location.slab];
-		const auto tag = tag_of(address, mode);
-		for (std::size_t way = 0; way < program_cache_ways; ++way) {
-			const auto &slot = slab.slots[location.offset + way];
-			if (slot.tag != tag || slot.body == nullptr)
-				continue;
-			const auto stream = slot.body->program.native_stream();
-			if (word >= stream.data() &&
-				word < stream.data() + stream.size())
-				return &slot.body->program;
-		}
-		return nullptr;
+		const auto stream = body->program.native_stream();
+		if (word < stream.data() || word >= stream.data() + stream.size())
+			return nullptr;
+		return &body->program;
 	}
 
-	[[nodiscard]] const Program &store(const Program &program,
+	/* Store a built program, or adopt an equal one another executor stored
+	 * first, and hold it in a slot. Null, with nothing changed, when a store
+	 * landed over the pages the build read, so that the program may be
+	 * stale; the caller runs it once. Throws when the memory is not there.
+	 */
+	[[nodiscard]] const Program *store(const Program &program,
 		[[maybe_unused]] std::uint64_t changes,
 		std::size_t instruction_limit, ProgramCodeStamps code_stamps,
-		ProgramCacheDiagnostics &diagnostics)
+		const PagePins &pins, ProgramCacheDiagnostics &diagnostics)
 	{
 		(void)link(program.address(), program.execution_mode());
 		/* The address space is registered, and told the code it holds is
@@ -957,8 +1010,11 @@ public:
 		/* The body is made before anything is disturbed, so that running
 		 * out of memory here leaves the cache as it was. */
 		auto &state = current();
-		auto *body = state.space.make_body(program,
-			kept_instruction_limit(instruction_limit), code_stamps);
+		auto *body = state.space->publish(program,
+			kept_instruction_limit(instruction_limit), code_stamps, pins,
+			registries_ != nullptr ? &registries_->participant : nullptr);
+		if (body == nullptr)
+			return nullptr;
 
 #if UML_GADGET_CACHE_CENSUS
 		/* A lookup that could not use its translation can leave it
@@ -968,70 +1024,32 @@ public:
 			if (slab->slots[location.offset + way].tag == tag)
 				restored = true;
 #endif
-		auto &replacement = next_replacement_[location.set];
-		std::size_t selected = replacement;
-		for (std::size_t way = 0; way < program_cache_ways; ++way) {
-			const auto &slot = slab->slots[location.offset + way];
-			if (!slot.resident()) {
-				selected = way;
-				break;
-			}
-		}
-		replacement = static_cast<std::uint8_t>(
-			(selected + 1U) & (program_cache_ways - 1U));
-
-		if (state.slots_complete) {
-			if (state.slots.size() < program_cache_slots) {
-				state.slots.push_back(static_cast<std::uint32_t>(
-					location.slab * program_cache_slab_slots +
-					location.offset + selected));
-			} else {
-				state.slots_complete = false;
-				state.slots.clear();
-				state.slots.shrink_to_fit();
-			}
-		}
-
-		auto &slot = slab->slots[location.offset + selected];
-		auto &successors = slab->successors[location.offset + selected];
-#if UML_GADGET_CACHE_CENSUS
-		if (slot.resident())
-			census_depart(slot, census::Departure::evicted);
-#endif
-		release_body(slot);
-		slot.tag = 0;
-		successors = {};
-		slot.body = body;
-		slot.memo = 0;
-		slot.set_epoch(current_epoch_);
-		slot.instruction_limit = kept_instruction_limit(instruction_limit);
-		slot.terminal = body->program.terminal();
-		/* The tag is the occupancy marker and is written only after the
-		 * slot is complete; index() reads the owner from it. */
-		slot.tag = tag;
-		try {
-			index(slot);
-		} catch (...) {
-			slot.tag = 0;
-			slot.body = nullptr;
-			state.space.free_body(body);
-			throw;
-		}
+		auto &slot = install(location, *slab, tag, state, body,
+			kept_instruction_limit(instruction_limit));
+		auto &successors = successors_at(slot.index);
 		activate_link(slot);
 		activate(slot, successors);
 #if UML_GADGET_CACHE_CENSUS
 		history_.arrive(census_id_, current_generation_, census_key(slot),
 			census_digest(slot), restored);
 #endif
+		state.space->reclaim(announcement_);
 		/* The build's words are in the slot's program now, so nothing
 		 * outside what a sweep reads names a record it made. */
-		if (state.space.sweep_due())
+		if (!state.space->shared() && state.space->sweep_due())
 			sweep(state, diagnostics);
 		/* Past the budget, the largest address spaces are asked to shed;
-		 * their caches let go of them at their next run. */
+		 * their caches let go of them at their next run. This is on the
+		 * carrier thread with no space, page or registry lock held, which
+		 * relieve(), waiting for the budget's own lock, requires. */
 		if (gadget_cache::over_budget())
 			gadget_cache::relieve();
-		return body->program;
+		return &slot.body->program;
+	}
+
+	[[nodiscard]] std::uint64_t adoptions() const noexcept
+	{
+		return adoptions_;
 	}
 
 	[[nodiscard]] std::size_t resident_generations() const noexcept
@@ -1059,17 +1077,25 @@ public:
 		std::size_t links, indirect, targets;
 	};
 
+	/* What an address space costs this cache: its slot list, and, if the
+	 * cache keeps the address space to itself, the address space's records
+	 * and tables. A shared one is written once, on an S line, and counted
+	 * there. */
 	[[nodiscard]] static GenerationBytes generation_bytes(
 		const Generation &state) noexcept
 	{
-		const auto bytes = state.space.link_bytes();
-		return {
-			.links = bytes.links +
-				state.slots.capacity() * sizeof(std::uint32_t) +
-				map_bytes(state.code_pages),
-			.indirect = bytes.indirect,
-			.targets = bytes.targets,
+		GenerationBytes bytes{
+			.links = state.slots.capacity() * sizeof(std::uint32_t),
+			.indirect = 0,
+			.targets = 0,
 		};
+		if (!state.space->shared()) {
+			const auto space = state.space->link_bytes();
+			bytes.links += space.links + space.pages;
+			bytes.indirect = space.indirect;
+			bytes.targets = space.targets;
+		}
+		return bytes;
 	}
 
 	[[nodiscard]] Footprint footprint() const noexcept
@@ -1089,7 +1115,8 @@ public:
 				 * replay has ended inside also holds what that
 				 * replay decoded. */
 				const auto parts = translation_bytes(slot);
-				streams += parts.allocated - parts.decoded;
+				if (!shares(slot))
+					streams += parts.allocated - parts.decoded;
 				decoded += parts.decoded;
 			}
 		}
@@ -1152,7 +1179,8 @@ public:
 		const auto book = gadget_cache::ledger_state();
 		std::size_t charged = 0;
 		for (const auto &[generation, state] : generations_)
-			charged += state.space.account().bytes();
+			if (!state.space->shared())
+				charged += state.space->account().bytes();
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu slots=%zu "
 			"slot_bytes=%zu slab_slots=%zu slab_count=%zu slabs=%zu "
@@ -1186,7 +1214,7 @@ public:
 			if (!slab)
 				continue;
 			for (const auto &slot : slab->slots)
-				if (slot.resident())
+				if (slot.resident() && !shares(slot))
 					held[slot.owner()] +=
 						translation_bytes(slot).allocated;
 		}
@@ -1199,38 +1227,73 @@ public:
 			 * destroyed, negative when it cannot say from this thread. */
 			const int alive = darwin_uml_static_vm_generation_live(
 				static_cast<unsigned long>(generation));
+			/* The G line's bytes are this cache's own list of its slots
+			 * in the space, and all of a private space's; a shared
+			 * space is on its S line, named by its identity, which
+			 * every cache holding it writes and a reader counts
+			 * once. */
 			std::fprintf(out,
 				"G %llu current=%d rank=%td idle_switches=%llu "
 				"idle_seconds=%.3f link_records=%zu links=%zu "
-				"indirect=%zu targets=%zu alive=%d held=%zu\n",
+				"indirect=%zu targets=%zu alive=%d held=%zu",
 				static_cast<unsigned long long>(generation),
 				running ? 1 : 0, found - resident_.rbegin(),
 				static_cast<unsigned long long>(running ? 0 :
 					switches_ - state.census_switch),
 				running ? 0.0 : now - state.census_seconds,
-				state.space.link_records(),
+				state.space->link_records(),
 				bytes.links, bytes.indirect, bytes.targets, alive,
 				held[state.id]);
+			if (state.space->shared())
+				std::fprintf(out, " space=%p",
+					static_cast<const void *>(state.space));
+			std::fputc('\n', out);
+			if (state.space->shared()) {
+				const auto space = state.space->link_bytes();
+				std::fprintf(out,
+					"S %p generation=%llu mode=%u attached=%zu "
+					"stream_index=%zu streams=%zu arena_empty=%zu "
+					"links=%zu indirect=%zu link_records=%zu "
+					"limbo=%zu alive=%d charged=%zu shedding=%d\n",
+					static_cast<const void *>(state.space),
+					static_cast<unsigned long long>(generation),
+					unsigned{checked_}, state.space->attached(),
+					state.space->stream_index_bytes(),
+					state.space->stream_bytes(),
+					state.space->empty_bytes(),
+					space.links + space.pages + space.targets,
+					space.indirect, state.space->link_records(),
+					state.space->limbo_bodies(), alive,
+					state.space->account().bytes(),
+					state.space->shedding() ? 1 : 0);
+			}
 		}
 		if (census::totals_only())
 			return;
 		const auto sample = census::word_sample();
 		/* The same link targets are sampled in every cache, so the
 		 * sample says how many of an address space's records each
-		 * cache keeps for itself. */
+		 * cache keeps for itself. A shared space writes its records
+		 * from every cache that holds it, which a reader removes by
+		 * the space's identity. */
 		if (sample != 0)
 			for (const auto &[generation, state] : generations_)
-				state.space.for_each_link(
-					[&, generation = generation](
+				state.space->for_each_link(
+					[&, generation = generation, &state = state](
 						const LinkRecord &record) {
-						if (census_sampled(record.link.guest_rip,
+						if (!census_sampled(record.link.guest_rip,
 							    sample))
-							std::fprintf(out,
-								"L %llu 0x%llx\n",
-								static_cast<unsigned long long>(
-									generation),
-								static_cast<unsigned long long>(
-									record.link.guest_rip));
+							return;
+						std::fprintf(out, "L %llu 0x%llx",
+							static_cast<unsigned long long>(
+								generation),
+							static_cast<unsigned long long>(
+								record.link.guest_rip));
+						if (state.space->shared())
+							std::fprintf(out, " %p",
+								static_cast<const void *>(
+									state.space));
+						std::fputc('\n', out);
 					});
 		const auto text = census::text_of(reinterpret_cast<const void *>(
 			reinterpret_cast<std::uintptr_t>(
@@ -1246,7 +1309,7 @@ public:
 				const auto bytes = translation_bytes(slot);
 				std::fprintf(out,
 					"P %llu 0x%llx %zu %zu %zu 0x%llx %zu %zu "
-					"%zu %zu\n",
+					"%zu %zu %p\n",
 					static_cast<unsigned long long>(
 						generation_of(slot)),
 					static_cast<unsigned long long>(
@@ -1258,7 +1321,8 @@ public:
 						census_digest(slot)),
 					bytes.allocated, sizeof(Body),
 					program.native_stream().size_bytes(),
-					program.source().size());
+					program.source().size(),
+					static_cast<const void *>(slot.body));
 				if (sample != 0 &&
 				    census_sampled(slot.address(), sample))
 					census_words(out, slot, text, records);
@@ -1369,13 +1433,13 @@ private:
 			const auto *owner = owner_of(slot);
 			if (owner != nullptr) {
 				auto &table = named->second;
-				owner->space.for_each_link(
+				owner->space->for_each_link(
 					[&table](const LinkRecord &record) {
 						table[reinterpret_cast<std::uintptr_t>(
 							&record.link)] =
 							{'l', record.link.guest_rip};
 					});
-				owner->space.for_each_indirect(
+				owner->space->for_each_indirect(
 					[&table](const IndirectRecord &record) {
 						table[reinterpret_cast<std::uintptr_t>(
 							&record.site)] =
@@ -1413,156 +1477,130 @@ private:
 	}
 #endif
 
-	struct ProgramPages final {
-		std::array<std::uint64_t, 2> pages{};
-		std::size_t count{};
-	};
-
-	[[nodiscard]] static ProgramPages program_pages(
-		const Program &program) noexcept
+	/* Take the write translations of a body's pages out of this executor's
+	 * software TLB, so that its next store to one of them asks the miss
+	 * handler, which tags it for publication now that the page holds code. */
+	void retire_write_translations(const Program &program) noexcept
 	{
-		ProgramPages result;
-		auto current = program.address();
-		auto remaining = program.byte_count();
-		while (remaining != 0) {
-			const auto page = current & code_page_mask;
-			if (result.count == 0 ||
-			    result.pages[result.count - 1U] != page)
-				result.pages[result.count++] = page;
-			const auto count = std::min<std::size_t>(remaining,
-				DARWIN_UML_GUEST_PAGE_SIZE -
-					(current & (DARWIN_UML_GUEST_PAGE_SIZE - 1U)));
-			remaining -= count;
-			current = advance_instruction_pointer(
-				program.execution_mode(), current, count);
-		}
-		return result;
-	}
-
-	[[nodiscard]] static bool source_overlaps(const Program &program,
-		std::uint64_t address, std::size_t size) noexcept
-	{
-		auto source = program.address();
-		auto source_remaining = program.byte_count();
-		while (source_remaining != 0) {
-			const auto source_page = source & code_page_mask;
-			const auto source_count = std::min<std::size_t>(source_remaining,
-				DARWIN_UML_GUEST_PAGE_SIZE -
-					(source & (DARWIN_UML_GUEST_PAGE_SIZE - 1U)));
-			auto written = address;
-			auto written_remaining = size;
-			while (written_remaining != 0) {
-				const auto written_page = written & code_page_mask;
-				const auto written_count = std::min<std::size_t>(
-					written_remaining, DARWIN_UML_GUEST_PAGE_SIZE -
-						(written & (DARWIN_UML_GUEST_PAGE_SIZE - 1U)));
-				if (source_page == written_page && source <
-					    written + written_count && written <
-					    source + source_count)
-					return true;
-				written_remaining -= written_count;
-				written += written_count;
-			}
-			source_remaining -= source_count;
-			source = advance_instruction_pointer(
-				program.execution_mode(), source, source_count);
-		}
-		return false;
-	}
-
-	/* Which of a body's two page entries a page is. A body's entries are
-	 * distinct pages, the first of which is the page of its first byte. */
-	[[nodiscard]] static std::size_t page_entry(const Body &body,
-		std::uint64_t page) noexcept
-	{
-		return (body.program.address() & code_page_mask) == page ? 0U : 1U;
-	}
-
-	void index(Slot &slot)
-	{
-		if (slot.body == nullptr)
+		if (write_translations_ == nullptr)
 			return;
-		auto &body = *slot.body;
-		const auto pages = program_pages(body.program);
-		if (write_translations_ != nullptr)
-			for (std::size_t entry = 0; entry < pages.count; ++entry) {
-				auto &translation = write_translations_[
-					native_tlb_index(pages.pages[entry])];
-				/* One is the unmatchable empty tag: guest pages are aligned,
-				 * so no real page compares equal to it.
-				 */
-				translation.write_page = 1;
-			}
-		auto &index = current().code_pages;
-		std::size_t completed = 0;
-		try {
-			for (; completed < pages.count; ++completed) {
-				auto [bucket, inserted] = index.try_emplace(
-					pages.pages[completed], nullptr);
-				if (inserted && registries_ != nullptr)
-					registries_->of(generation_of(slot)).add(
-						pages.pages[completed], &registries_->participant);
-				auto *first = bucket->second;
-				body.page_previous[completed] = nullptr;
-				body.page_next[completed] = first;
-				if (first != nullptr)
-					first->page_previous[page_entry(
-						*first, pages.pages[completed])] = &body;
-				bucket->second = &body;
-				body.linked_pages |=
-					static_cast<std::uint8_t>(1U << completed);
-			}
-		} catch (...) {
-			for (std::size_t entry = 0; entry < completed; ++entry)
-				unlink(current_generation_, current(), body, entry);
-			throw;
-		}
+		const auto pages = program_pages(program);
+		for (std::size_t entry = 0; entry < pages.count; ++entry)
+			/* One is the unmatchable empty tag: guest pages are
+			 * aligned, so no real page compares equal to it. */
+			write_translations_[native_tlb_index(pages.pages[entry])]
+				.write_page = 1;
 	}
 
-	/* Take one of a body's entries out of its page's list. The body must
-	 * still be intact, since it names the page. */
-	void unlink(std::uint64_t generation, Generation &state, Body &body,
-		std::size_t entry) noexcept
+	/* Put a held body in the set for its address, letting go of whatever
+	 * the way it takes held, and return the slot. Nothing here allocates,
+	 * so it cannot fail once the body is held. */
+	Slot &install(const ProgramCacheLocation &location, Slab &slab,
+		std::uint64_t tag, Generation &state, Body *body,
+		std::uint8_t instruction_limit) noexcept
 	{
-		const auto bit = static_cast<std::uint8_t>(1U << entry);
-		if ((body.linked_pages & bit) == 0)
-			return;
-		const auto page = program_pages(body.program).pages[entry];
-		auto *previous = body.page_previous[entry];
-		auto *next = body.page_next[entry];
-		if (previous != nullptr) {
-			previous->page_next[page_entry(*previous, page)] = next;
-		} else {
-			auto bucket = state.code_pages.find(page);
-			if (bucket != state.code_pages.end() &&
-			    bucket->second == &body) {
-				bucket->second = next;
-				if (bucket->second == nullptr) {
-					state.code_pages.erase(bucket);
-					if (registries_ != nullptr)
-						registries_->of(generation).remove(page);
+		auto &replacement = next_replacement_[location.set];
+		std::size_t selected = replacement;
+		for (std::size_t way = 0; way < program_cache_ways; ++way) {
+			const auto &slot = slab.slots[location.offset + way];
+			if (!slot.resident()) {
+				selected = way;
+				break;
+			}
+		}
+		replacement = static_cast<std::uint8_t>(
+			(selected + 1U) & (program_cache_ways - 1U));
+
+		if (state.slots_complete) {
+			if (state.slots.size() < program_cache_slots) {
+				try {
+					state.slots.push_back(static_cast<std::uint32_t>(
+						location.slab * program_cache_slab_slots +
+						location.offset + selected));
+				} catch (...) {
+					/* Without room for the slot in the list the
+					 * address space's slots are found by walking
+					 * the cache. */
+					state.slots_complete = false;
+					state.slots.clear();
+					state.slots.shrink_to_fit();
 				}
+			} else {
+				state.slots_complete = false;
+				state.slots.clear();
+				state.slots.shrink_to_fit();
 			}
 		}
-		if (next != nullptr)
-			next->page_previous[page_entry(*next, page)] = previous;
-		body.page_previous[entry] = nullptr;
-		body.page_next[entry] = nullptr;
-		body.linked_pages &= static_cast<std::uint8_t>(~bit);
+
+		auto &slot = slab.slots[location.offset + selected];
+		auto &successors = slab.successors[location.offset + selected];
+#if UML_GADGET_CACHE_CENSUS
+		if (slot.resident())
+			census_depart(slot, census::Departure::evicted);
+#endif
+		/* Whatever occupied the slot lets go of its body, whose address
+		 * space may not be the running one. */
+		release_body(slot, false);
+		slot.tag = 0;
+		successors = {};
+		slot.body = body;
+		slot.memo = 0;
+		slot.set_epoch(current_epoch_);
+		slot.instruction_limit = instruction_limit;
+		slot.terminal = body->program.terminal();
+		/* The tag is the occupancy marker and is written only after the
+		 * slot is complete; owner() reads the id from it. */
+		slot.tag = tag;
+		retire_write_translations(body->program);
+		return slot;
 	}
 
-	void unindex(Slot &slot) noexcept
+	/* Take the translation another executor of the address space holds for
+	 * `address` instead of building it: validated against guest memory
+	 * exactly as a stale slot is, then held and linked like a stored one. */
+	[[nodiscard]] const Program *adopt(std::uint64_t address,
+		ExecutionMode mode, std::size_t maximum_instructions,
+		std::uint64_t mapping_changes,
+		::uml::memory::GuestAddressSpace &memory, void *execution_context,
+		ProgramCacheSequenceReader sequence_reader,
+		ProgramCacheDiagnostics &diagnostics)
 	{
-		if (slot.body == nullptr || slot.body->linked_pages == 0)
-			return;
-		auto *owner = owner_of(slot);
-		if (owner == nullptr) {
-			slot.body->linked_pages = 0;
-			return;
+		const auto tag = tag_of(address, mode);
+		if (tag == unmatchable_tag)
+			return nullptr;
+		auto &state = *current_;
+		auto *body = state.space->hold_indexed(address, mode,
+			kept_instruction_limit(maximum_instructions));
+		if (body == nullptr)
+			return nullptr;
+		++diagnostics.validation_attempts;
+		const auto verdict = validate_body(*body, mapping_changes, memory,
+			execution_context, sequence_reader, diagnostics);
+		if (verdict != Validation::valid) {
+			state.space->release(body, verdict == Validation::stale);
+			state.space->reclaim(announcement_);
+			return nullptr;
 		}
-		for (std::size_t entry = 0; entry < slot.body->page_next.size();
-		     ++entry)
-			unlink(owner->value, *owner, *slot.body, entry);
+		const auto location = locate_program(current_generation_, address, mode);
+		auto &slab = slabs_[location.slab];
+		if (!slab) {
+			try {
+				slab = std::make_unique<Slab>();
+			} catch (...) {
+				state.space->release(body, false);
+				return nullptr;
+			}
+			for (std::size_t offset = 0; offset < program_cache_slab_slots;
+			     ++offset)
+				slab->slots[offset].index = static_cast<std::uint32_t>(
+					location.slab * program_cache_slab_slots + offset);
+		}
+		auto &slot = install(location, *slab, tag, state, body,
+			body->instruction_limit);
+		activate_link(slot);
+		activate(slot, successors_at(slot.index));
+		state.space->reclaim(announcement_);
+		return &slot.body->program;
 	}
 
 	/* A slot keeps the limit it was built under in one byte. The runtime
@@ -1587,6 +1625,16 @@ private:
 	{
 		return owners_[slot.owner()];
 	}
+
+#if UML_GADGET_CACHE_CENSUS
+	/* Whether the slot's body belongs to an address space that other
+	 * executors may hold too, and so is counted with it. */
+	[[nodiscard]] bool shares(const Slot &slot) const noexcept
+	{
+		const auto *owner = owner_of(slot);
+		return owner != nullptr && owner->space->shared();
+	}
+#endif
 
 	[[nodiscard]] std::uint64_t generation_of(
 		const Slot &slot) const noexcept
@@ -1664,7 +1712,7 @@ private:
 #if UML_GADGET_CACHE_CENSUS
 			history_.missed();
 #endif
-			discard(slot);
+			discard(slot, false);
 			return nullptr;
 		}
 		if (!slot.terminal && kept_instruction_limit(maximum_instructions) >
@@ -1673,7 +1721,7 @@ private:
 			history_.missed();
 			census_depart(slot, census::Departure::discarded);
 #endif
-			discard(slot);
+			discard(slot, false);
 			return nullptr;
 		}
 #if UML_GADGET_CACHE_CENSUS
@@ -1720,38 +1768,11 @@ private:
 		preceding_ = &successors;
 	}
 
-	/* A code change somewhere in the address space says nothing about the
-	 * blocks this cache holds: a fresh executable mapping, or a write to a
-	 * page nothing has been translated from, overlaps none of them. Ask what
-	 * actually changed and retire only the translations covering it, which is
-	 * the same selective retirement this cache already performs for a write
-	 * it made itself. Retiring everything stays the answer whenever the
-	 * address space cannot describe the whole span -- the history is short,
-	 * or the span is wider than one prepare should walk -- because a link
-	 * left armed over changed bytes would run them.
-	 */
-	[[nodiscard]] bool retire_changed_code(Generation &state) noexcept
-	{
-		if (code_change_reader_ == nullptr || code_change_context_ == nullptr)
-			return false;
-		std::array<ProgramCodeChange, code_change_replay_limit> changes;
-		std::uint64_t current = 0;
-		const auto count = code_change_reader_(code_change_context_,
-			state.changes, changes.data(), changes.size(), &current);
-		if (count < 0)
-			return false;
-		std::uint64_t pages = 0;
-		for (int index = 0; index < count; ++index) {
-			pages += changes[index].length / DARWIN_UML_GUEST_PAGE_SIZE + 1U;
-			if (pages > code_change_replay_pages)
-				return false;
-		}
-		for (int index = 0; index < count; ++index)
-			invalidate_code(changes[index].address,
-				static_cast<std::size_t>(changes[index].length));
-		return true;
-	}
-
+	/* Link the block a slot holds: the record its address names is pointed at
+	 * the body unless a code change has been published since the slot was
+	 * validated, or a store has landed over the body. The record is the
+	 * address space's, so what another executor armed is what this one
+	 * follows, and the slot keeps it for next time. */
 	void activate_link(Slot &slot) noexcept
 	{
 		if (slot.body == nullptr)
@@ -1759,41 +1780,13 @@ private:
 		auto *owner = owner_of(slot);
 		if (owner == nullptr)
 			return;
-		if (slot.link() == nullptr) {
-			auto *found = owner->space.find_link(
-				slot.address(), slot.mode());
-			if (found == nullptr)
-				return;
-			slot.set_link(found);
-		}
-		auto &record = *slot.link();
-		owner->space.arm(record, *slot.body);
 		/* Publishing here, rather than at a branch that asked for this
 		 * address, is what lets a RET reach a return site it has never
 		 * reached before: the block that runs there announces itself. */
-		if (slot.owner() != (current_owner_ >> tag_owner_shift))
-			return;
-		owner->space.announce(record, slot.mode());
-	}
-
-	void deactivate(Slot &slot) noexcept
-	{
-		if (slot.body != nullptr) {
-			const auto *stream =
-				slot.body->program.native_stream().data();
-			if (slot.link() != nullptr &&
-			    slot.link()->link.stream == stream)
-				slot.link()->reset();
-		}
-		slot.set_link(nullptr);
-	}
-
-	/* Reset the record of `body`'s block if it names the body's stream,
-	 * which a store over its source does for every body it overlaps. The
-	 * slot that holds the body keeps its memo of the record. */
-	void deactivate(Generation &state, const Body &body) noexcept
-	{
-		state.space.reset_link_of(body);
+		auto *record = owner->space->activate(slot.link(),
+			slot.address(), slot.mode(), *slot.body, owner->changes);
+		if (record != nullptr)
+			slot.set_link(record);
 	}
 
 	/* Release the link records and indirect sites of one address space that
@@ -1822,7 +1815,7 @@ private:
 			/* A sweep only returns memory; without the memory to run
 			 * one, the records stay. */
 		}
-		state.space.swept();
+		state.space->swept();
 		++diagnostics.link_sweeps;
 #if UML_GADGET_CACHE_CENSUS
 		++sweeps_;
@@ -1839,8 +1832,8 @@ private:
 	void sweep_records(Generation &state,
 		ProgramCacheDiagnostics &diagnostics)
 	{
-		auto links = state.space.link_marks();
-		auto sites = state.space.site_marks();
+		auto links = state.space->link_marks();
+		auto sites = state.space->site_marks();
 		std::vector<std::uint64_t> seen((program_cache_slots + 63) / 64);
 		std::vector<std::uint32_t> held;
 		const auto visit = [&](std::uint32_t index) {
@@ -1855,7 +1848,7 @@ private:
 			if (const auto *memo = slot.link(); memo != nullptr)
 				links[own].mark(memo);
 			else if (const auto *record =
-					 state.space.find_link(slot.address(), slot.mode()))
+					 state.space->find_link(slot.address(), slot.mode()))
 				links[own].mark(record);
 			for (const auto word :
 			     slot.body->program.native_stream())
@@ -1881,7 +1874,7 @@ private:
 							offset));
 		}
 		held.shrink_to_fit();
-		const auto released = state.space.sweep(links, sites);
+		const auto released = state.space->sweep(links, sites);
 		diagnostics.released_sites += released.sites;
 		diagnostics.released_links += released.links;
 		state.slots = std::move(held);
@@ -1919,12 +1912,14 @@ private:
 			}
 			if (current_ == &owner->second)
 				unbind();
-			if (registries_ != nullptr)
-				for (const auto &[page, link] : owner->second.code_pages)
-					registries_->of(generation).remove(page);
+			auto *space = owner->second.space;
 			owners_[id] = nullptr;
 			free_ids_.push_back(id);
 			generations_.erase(owner);
+			/* The last executor to let go of a shared space takes it
+			 * with it; what other executors still hold of it stays. */
+			space->reclaim(announcement_);
+			SpaceRegistry::instance().detach(space, announcement_);
 		}
 		if (registries_ != nullptr)
 			registries_->release(generation);
@@ -1943,7 +1938,7 @@ private:
 #if UML_GADGET_CACHE_CENSUS
 		census_depart(slot, census::Departure::retired);
 #endif
-		discard(slot);
+		discard(slot, false);
 	}
 
 	[[nodiscard]] Slot &slot_at(std::uint32_t index) noexcept
@@ -1961,40 +1956,65 @@ private:
 	[[nodiscard]] Generation &current()
 	{
 		if (current_ == nullptr) {
-			auto [entry, inserted] =
-				generations_.try_emplace(current_generation_,
-					*this);
-			current_ = &entry->second;
-			if (inserted)
-				enroll(*current_, current_generation_);
+			bool inserted = false;
+			current_ = &generation_for(current_generation_, 0,
+				inserted);
 			bind(*current_);
 		}
 		return *current_;
 	}
 
-	/* Count a resident translation leaving against its address space, whose
-	 * next sweep waits for enough of them (gadget_cache::sweep_due). What it
-	 * held was charged through the arenas it was in, and is refunded as they
-	 * give it back. */
-	void depart(const Slot &slot) noexcept
+	/* The state for an address space, made and attached to its translations
+	 * on first sight: shared with the other executors running it, or this
+	 * cache's own. A failure leaves nothing behind. */
+	[[nodiscard]] Generation &generation_for(std::uint64_t generation,
+		std::uint64_t changes, bool &inserted)
 	{
-		if (!slot.resident() || slot.body == nullptr)
-			return;
-		if (auto *owner = owner_of(slot); owner != nullptr)
-			owner->space.note_departed();
+		auto [entry, fresh] = generations_.try_emplace(generation);
+		inserted = fresh;
+		auto &state = entry->second;
+		if (!fresh)
+			return state;
+		try {
+			state.space = SpaceRegistry::instance().attach(
+				SpaceKey{
+					.generation = static_cast<unsigned long>(generation),
+					.mode = checked_,
+					.owner = share_ ? nullptr :
+						static_cast<const void *>(&shed_requested_),
+					.options = 0,
+				},
+				changes, announcement_);
+		} catch (...) {
+			generations_.erase(entry);
+			throw;
+		}
+		try {
+			enroll(state, generation);
+		} catch (...) {
+			SpaceRegistry::instance().detach(state.space,
+				announcement_);
+			generations_.erase(entry);
+			throw;
+		}
+		return state;
 	}
 
-	/* Let a slot go of its body: counted as leaving, out of its pages'
-	 * lists, its block's link reset, and the memory back. */
-	void release_body(Slot &slot) noexcept
+	/* Let a slot go of its body: counted as leaving its address space, whose
+	 * next sweep waits for enough of them (gadget_cache::sweep_due), and
+	 * given back to it, which frees the body when no other executor holds
+	 * it, once none can be running it. What it held was charged through the
+	 * arenas it was in, and is refunded as they give it back. `stale` says
+	 * the body's code is no longer the guest's, so that no executor adopts
+	 * it. */
+	void release_body(Slot &slot, bool stale) noexcept
 	{
 		if (slot.body == nullptr)
 			return;
-		depart(slot);
-		unindex(slot);
-		deactivate(slot);
-		if (auto *owner = owner_of(slot); owner != nullptr)
-			owner->space.free_body(slot.body);
+		if (auto *owner = owner_of(slot); owner != nullptr) {
+			owner->space->note_departed();
+			owner->space->release(slot.body, stale);
+		}
 		slot.body = nullptr;
 	}
 
@@ -2007,42 +2027,45 @@ private:
 			std::memory_order_relaxed);
 	}
 
-	void discard(Slot &slot) noexcept
+	void discard(Slot &slot, bool stale) noexcept
 	{
-		release_body(slot);
+		if (slot.body != nullptr) {
+			auto *owner = owner_of(slot);
+			release_body(slot, stale);
+			if (owner != nullptr)
+				owner->space->reclaim(announcement_);
+		}
 		slot.tag = 0;
 		slot.memo = 0;
 		slot.terminal = false;
 	}
 
-	[[nodiscard]] bool validate(Slot &slot,
+	enum class Validation : std::uint8_t { valid, stale, race };
+
+	/* Whether a body still matches guest memory. It does when every page
+	 * stamp it recorded is unchanged, or else when its saved source still
+	 * matches guest memory; the stamps are taken once, before a byte of
+	 * source is read, and a successful comparison records those same
+	 * values. A moved code-change sequence only brings this vCPU here and
+	 * discards nothing by itself. The mapping sequence and an execution
+	 * interrupt still abandon the validation, because no page stamp
+	 * describes either ("Keeping a cached translation" in README.md): that
+	 * is a race, and the body is neither valid nor known to be stale. */
+	[[nodiscard]] Validation validate_body(Body &body,
 		std::uint64_t mapping_changes,
 		::uml::memory::GuestAddressSpace &memory, void *execution_context,
 		ProgramCacheSequenceReader sequence_reader,
 		ProgramCacheDiagnostics &diagnostics)
 	{
-		if (slot.body == nullptr ||
-			slot.body->program.source().empty() ||
-			slot.body->program.source().size() !=
-				slot.body->program.byte_count() ||
-			slot.body->program.source().size() >
-				maximum_cached_source_bytes) {
+		const auto &program = body.program;
+		if (body.stale.load(std::memory_order_acquire))
+			return Validation::stale;
+		if (program.source().empty() ||
+			program.source().size() != program.byte_count() ||
+			program.source().size() > maximum_cached_source_bytes) {
 			++diagnostics.validation_mismatches;
-#if UML_GADGET_CACHE_CENSUS
-			census_depart(slot, census::Departure::discarded);
-#endif
-			discard(slot);
-			return false;
+			return Validation::stale;
 		}
-		/* The program still matches the guest when every page stamp it
-		 * recorded is unchanged, or else when its saved source still matches
-		 * guest memory. The stamps are taken once, before a byte of source is
-		 * read, and a successful comparison records those same values. A moved
-		 * code-change sequence only brings this vCPU here and discards nothing
-		 * by itself. The mapping sequence and an execution interrupt still
-		 * abandon the validation, because no page stamp describes either
-		 * ("Keeping a cached translation" in README.md).
-		 */
 		const auto memory_settled = [&]() noexcept {
 			if (execution_context == nullptr || sequence_reader == nullptr)
 				return true;
@@ -2054,51 +2077,78 @@ private:
 			return false;
 		};
 
-		const auto &program = slot.body->program;
 		const auto current_stamps = capture_program_code_stamps(
 			memory, program, execution_context);
-		if (slot.stamped() && current_stamps.complete &&
-		    current_stamps == slot.code_stamps()) {
+		const auto recorded = body.stamps();
+		if (recorded.complete && current_stamps.complete &&
+		    current_stamps == recorded) {
 			if (!memory_settled())
-				return false;
-			slot.set_epoch(current_epoch_);
+				return Validation::race;
 			++diagnostics.validation_stamp_hits;
 			++diagnostics.validation_hits;
-			return true;
+			return Validation::valid;
 		}
 
 		switch (compare_program_source(memory, program,
 			program.source())) {
 		case ProgramSourceComparison::fault:
 			++diagnostics.validation_faults;
-#if UML_GADGET_CACHE_CENSUS
-			census_depart(slot, census::Departure::discarded);
-#endif
-			discard(slot);
-			return false;
+			return Validation::stale;
 		case ProgramSourceComparison::mismatch:
 			++diagnostics.validation_mismatches;
-#if UML_GADGET_CACHE_CENSUS
-			census_depart(slot, census::Departure::discarded);
-#endif
-			discard(slot);
-			return false;
+			return Validation::stale;
 		case ProgramSourceComparison::match:
 			break;
 		}
 
 		if (!memory_settled())
-			return false;
-		slot.set_epoch(current_epoch_);
-		slot.set_code_stamps(current_stamps);
+			return Validation::race;
+		body.set_stamps(current_stamps);
 		++diagnostics.validation_hits;
-		return true;
+		return Validation::valid;
+	}
+
+	/* validate_body() for a slot's body: a valid one is current for the
+	 * running address space's code, and one that is not the guest's any
+	 * more is let go of, as stale. */
+	[[nodiscard]] bool validate(Slot &slot,
+		std::uint64_t mapping_changes,
+		::uml::memory::GuestAddressSpace &memory, void *execution_context,
+		ProgramCacheSequenceReader sequence_reader,
+		ProgramCacheDiagnostics &diagnostics)
+	{
+		if (slot.body == nullptr) {
+			++diagnostics.validation_mismatches;
+			discard(slot, false);
+			return false;
+		}
+		switch (validate_body(*slot.body, mapping_changes, memory,
+			execution_context, sequence_reader, diagnostics)) {
+		case Validation::valid:
+			slot.set_epoch(current_epoch_);
+			return true;
+		case Validation::stale:
+#if UML_GADGET_CACHE_CENSUS
+			census_depart(slot, census::Departure::discarded);
+#endif
+			discard(slot, true);
+			return false;
+		case Validation::race:
+			return false;
+		}
+		return false;
 	}
 
 	/* Set by shed() when the budget asks an address space held here to
 	 * shed; before generations_, whose accounts may call shed() until they
 	 * are destroyed. */
 	std::atomic<bool> shed_requested_{};
+	/* What this cache's executor says about itself for the bodies other
+	 * executors free, null when it shares nothing; whether the cache shares
+	 * its address spaces; and the exceptions its blocks are built for. */
+	const Announcement *announcement_{};
+	bool share_{};
+	std::uint8_t checked_{};
 	std::unordered_map<std::uint64_t, Generation> generations_;
 	Generation *current_{};
 	std::vector<std::uint64_t> resident_;
@@ -2119,6 +2169,8 @@ private:
 	CodePageRegistries *registries_{};
 	ProgramCacheCodeChangeReader code_change_reader_{};
 	void *code_change_context_{};
+	/* Translations taken from the address space instead of built. */
+	std::uint64_t adoptions_{};
 #if UML_GADGET_CACHE_CENSUS
 	census::History history_;
 	census::Schedule schedule_;
@@ -2151,7 +2203,15 @@ void dump_cache_census(const ProgramCache &programs) noexcept
 } // namespace
 
 struct Executor::Storage final {
-	Storage() = default;
+	/* Executors running one address space share its translations when
+	 * DARWIN_UML_GADGET_SHARED_BODIES=1 asks for it and a reclaimer can see
+	 * whether this one is running translated code (announcements are a
+	 * bounded resource). */
+	Storage()
+		: announcement{shared_bodies_enabled() ? acquire_announcement() :
+				nullptr},
+		  programs{announcement, announcement != nullptr}
+	{}
 	/* A move-assigned executor drops its old storage here, so the pages it
 	 * counted on the shared list are subtracted here rather than in the
 	 * executor's own destructor. */
@@ -2165,12 +2225,16 @@ struct Executor::Storage final {
 #endif
 		programs.invalidate();
 		registries.drop_all();
+		/* The cache let go of its address spaces before the executor
+		 * stops being one a reclaimer waits for. */
+		release_announcement(announcement);
 	}
 	Storage(const Storage &) = delete;
 	Storage &operator=(const Storage &) = delete;
 
 	std::array<NativeTlbEntry, tlb_entry_count> entries{};
 	CodePageRegistries registries;
+	Announcement *announcement{};
 	ProgramCache programs;
 	std::optional<Program> transient_program;
 	::uml::memory::GuestAddressSpace *memory{};
@@ -2360,6 +2424,19 @@ void Executor::leave_engine() noexcept
 void Executor::check_exceptions(unsigned checked) noexcept
 {
 	storage_->checked = checked;
+	storage_->programs.set_checked(checked);
+}
+
+void Executor::begin_run() noexcept
+{
+	if (storage_->announcement != nullptr)
+		announce_entry(*storage_->announcement);
+}
+
+void Executor::end_run() noexcept
+{
+	if (storage_->announcement != nullptr)
+		announce_exit(*storage_->announcement);
 }
 
 unsigned Executor::checked_exceptions() const noexcept
@@ -2451,6 +2528,17 @@ ProgramSelection Executor::select_program(
 	const CodePageHold hold{
 		storage_->cache_ready ? &storage_->registries : nullptr, address,
 		mode};
+	/* The address space counts the stores that land on these pages from
+	 * here until the program is stored, so that a build a store landed
+	 * across is not kept for others to adopt. After the hold, so that every
+	 * such store is published, and before the decoder reads a byte. */
+	std::optional<ProgramCache::Pinned> pinned;
+	if (storage_->cache_ready)
+		try {
+			pinned.emplace(storage_->programs.pin(hold.pages()));
+		} catch (...) {
+			/* Not cached, and run once. */
+		}
 	/* Before the decoder reads a byte, and after the hold, so a store another
 	 * executor has already translated for one of these pages either lands
 	 * ahead of the read or moves the stamp this reads. */
@@ -2478,7 +2566,8 @@ ProgramSelection Executor::select_program(
 			.cache_hit = false,
 		};
 	};
-	if (!storage_->cache_ready || built.program.byte_count() == 0 ||
+	if (!storage_->cache_ready || !pinned ||
+		built.program.byte_count() == 0 ||
 		built.program.byte_count() > maximum_cached_source_bytes)
 		return use_transient();
 	const auto code_stamps = program_code_stamps_from_hold(
@@ -2487,12 +2576,14 @@ ProgramSelection Executor::select_program(
 		return use_transient();
 
 	try {
-		const auto &stored = storage_->programs.store(built.program,
+		const auto *stored = storage_->programs.store(built.program,
 			storage_->code_changes, maximum_instructions, *code_stamps,
-			storage_->diagnostics);
+			pinned->pins(), storage_->diagnostics);
+		if (stored == nullptr)
+			return use_transient();
 		return {
 			.status = BuildStatus::built,
-			.program = &stored,
+			.program = stored,
 			.fault_address = 0,
 			.cache_hit = false,
 		};
@@ -2501,16 +2592,15 @@ ProgramSelection Executor::select_program(
 	}
 }
 
-const Program *Executor::program_holding(std::uint64_t address,
-	ExecutionMode mode, const std::uintptr_t *word) const noexcept
+const Program *Executor::program_holding([[maybe_unused]] std::uint64_t address,
+	[[maybe_unused]] ExecutionMode mode, const std::uintptr_t *word) const noexcept
 {
 	if (const auto &transient = storage_->transient_program; transient) {
 		const auto stream = transient->native_stream();
 		if (word >= stream.data() && word < stream.data() + stream.size())
 			return &*transient;
 	}
-	return storage_->programs.holding(
-		normalize_instruction_pointer(mode, address), mode, word);
+	return storage_->programs.holding(word);
 }
 
 void Executor::train_indirect(IndirectLink *site, std::uint64_t target,

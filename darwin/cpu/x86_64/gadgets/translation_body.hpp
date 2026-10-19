@@ -4,9 +4,11 @@
 #include "program.hpp"
 
 #include "cpu/gadget_body_arena.hpp"
+#include "cpu/gadget_shared_space.hpp"
 #include "memory/guest_address_space.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <new>
@@ -38,9 +40,10 @@ struct ProgramCodeStamps final {
  * A body's program is a view of those, and the body is the only owner of
  * what a replay decoded.
  *
- * Every field below is written before the body is published, except the
- * stamps and page links, which move with validation and with the lists they
- * are in.
+ * Every field below is written before the body is published, except the ones
+ * that say so: they move with validation, with the lists the body is in and
+ * with the slots that hold it. Executors that share an address space share its
+ * bodies, so those are atomic, or read and written as a pair.
  */
 struct alignas(16) Body final {
 	explicit Body(Program &&view) noexcept : program{std::move(view)} {}
@@ -63,14 +66,52 @@ struct alignas(16) Body final {
 		return reinterpret_cast<std::uintptr_t *>(this + 1);
 	}
 
+	/* The stamps a validation reads and records. Each is one aligned pair,
+	 * so a reader sees a stamp some validation recorded, never half of two;
+	 * a stamp that is older than the bytes only costs a comparison of them
+	 * later. */
+	[[nodiscard]] ProgramCodeStamps stamps() const noexcept
+	{
+		ProgramCodeStamps result;
+		for (std::size_t index = 0; index < code_pages.size(); ++index)
+			::uml::cpu::gadget_cache::load_pair(&code_pages[index],
+				result.pages[index].identity,
+				result.pages[index].version);
+		const auto state = std::atomic_ref<std::uint8_t>{
+			const_cast<std::uint8_t &>(stamp_state)}.load(
+				std::memory_order_relaxed);
+		result.count = state & (stamps_complete_bit - 1U);
+		result.complete = (state & stamps_complete_bit) != 0U;
+		return result;
+	}
+	void set_stamps(const ProgramCodeStamps &stamps) noexcept
+	{
+		for (std::size_t index = 0; index < code_pages.size(); ++index)
+			::uml::cpu::gadget_cache::store_pair(&code_pages[index],
+				stamps.pages[index].identity,
+				stamps.pages[index].version);
+		std::atomic_ref<std::uint8_t>{stamp_state}.store(
+			static_cast<std::uint8_t>(stamps.count |
+				(stamps.complete ? stamps_complete_bit : 0U)),
+			std::memory_order_relaxed);
+	}
+
 	Program program;
 	/* The first and last page of the guest range, as the lists of bodies
 	 * per page thread them: entry 0 is the page the first byte is on and
-	 * entry 1 the page the last byte is on. */
+	 * entry 1 the page the last byte is on. The lists belong to the address
+	 * space, which guards them. */
 	std::array<Body *, 2> page_previous{};
 	std::array<Body *, 2> page_next{};
-	/* The page stamps the translation was last validated against. */
-	std::array<::uml::memory::CodePageStamp, 2> code_pages{};
+	/* The page stamps the translation was last validated against, as two
+	 * pairs (stamps()). */
+	alignas(16) std::array<::uml::memory::CodePageStamp, 2> code_pages{};
+	/* How many slots hold the body, counted under the lock of its link
+	 * record. */
+	std::atomic<std::uint32_t> holders{};
+	/* Set once a store has landed over the code the body was read from, so
+	 * that no link is armed to it. */
+	std::atomic<bool> stale{};
 	/* The instruction limit it was built under, as slots compare it
 	 * (kept_instruction_limit). */
 	std::uint8_t instruction_limit{};
@@ -86,5 +127,7 @@ struct alignas(16) Body final {
 static_assert(sizeof(Body) % 16 == 0 && alignof(Body) == 16,
 	"the guest bounds that follow a body start on a sixteen-byte boundary");
 static_assert(sizeof(Body) == 128);
+static_assert(offsetof(Body, code_pages) % 16 == 0,
+	"a stamp is one aligned pair");
 
 } // namespace uml::cpu::x86_64::gadgets

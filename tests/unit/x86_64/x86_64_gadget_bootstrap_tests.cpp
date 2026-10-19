@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <limits>
@@ -10977,8 +10978,31 @@ enum class ImmediateOp : std::uint8_t {
 
 } // namespace
 
+/* Runs a test with executors that share an address space's translations, or
+ * keep them to themselves, whatever the environment says. The variable is
+ * read as each executor is made. */
+template <typename Test>
+[[nodiscard]] bool with_sharing(bool shared, Test test)
+{
+	constexpr const char *name = "DARWIN_UML_GADGET_SHARED_BODIES";
+	const char *held = std::getenv(name);
+	const std::string previous = held != nullptr ? held : "";
+	const bool had = held != nullptr;
+	setenv(name, shared ? "1" : "0", 1);
+	const bool passed = test();
+	if (had)
+		setenv(name, previous.c_str(), 1);
+	else
+		unsetenv(name);
+	return passed;
+}
+
 int main(int argc, char **argv)
 {
+	/* The suite once more with every executor sharing its address space's
+	 * translations, as the executors of a multi-core guest do. */
+	if (argc > 1 && std::strcmp(argv[1], "shared") == 0)
+		setenv("DARWIN_UML_GADGET_SHARED_BODIES", "1", 1);
 	/* The address spaces the kernel destroyed alone, which a sanitizer tree
 	 * can afford to run; the rest of the suite is long. */
 	if (argc > 1 && std::strcmp(argv[1], "dead-generations") == 0)
@@ -11019,7 +11043,8 @@ int main(int argc, char **argv)
 		cache_chains_direct_branches() &&
 		cache_chains_indirect_transfers() &&
 		an_unrelated_code_change_leaves_a_link_armed() &&
-		a_link_sweep_releases_what_only_replaced_blocks_named() &&
+		with_sharing(false,
+			a_link_sweep_releases_what_only_replaced_blocks_named) &&
 		linked_call_crosses_a_disjoint_executable_stack_write() &&
 		linked_call_stops_when_the_stack_write_hits_its_target() &&
 		short_blocks_retain_only_their_translated_storage() &&

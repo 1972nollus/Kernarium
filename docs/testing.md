@@ -1083,6 +1083,20 @@ does see them torn when the bounds are stored apart from the pair.
 space's arena with its stream behind it and its source apart, the program a
 view of both, the move of an owning program, a replay on a stored program, and
 several threads racing to replay one program and agreeing on a single decode.
+`x86-64-gadget-shared-bodies` holds what sharing an address space's
+translations does: a second executor adopts a block instead of building it, a
+code change reaches the links another executor armed, an executor letting go
+leaves the others their blocks, executors built for different exceptions share
+nothing, a shared space is never swept while a private one is under the same
+churn, and a fault in a block only the address space holds is reported where it
+is. `x86-64-gadget-shared-store` holds the writer's protocol: a store resets the
+link another executor armed, a build a store landed across is kept by nobody,
+and no link is armed to a stale body; dropping the stale check at arming, the
+store count at publication, or the reset at the store each fails it.
+`x86-64-gadget-shared-concurrent` runs executors on threads through rounds of
+code an engine store patches, and carries the `tsan` label.
+`x86-64-gadget-bootstrap-shared` runs the whole bootstrap suite with the
+executors sharing.
 `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel
