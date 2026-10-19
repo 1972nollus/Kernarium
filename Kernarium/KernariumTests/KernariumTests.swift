@@ -167,6 +167,91 @@ struct KernariumTests {
 
     @Test
     @MainActor
+    func touchscreenRangeIsFixedAndIndependentOfTheViewSize() throws {
+        let maximum = UInt32(KERNARIUM_RUNTIME_TOUCH_MAXIMUM)
+        #expect(maximum == 32767)
+        let coordinates = GuestInputCoordinateSpace.touchscreen
+        #expect(coordinates.size == CGSize(width: 32768, height: 32768))
+
+        // The same fraction of any view is the same coordinate, from the
+        // launch size to a window grown well past it.
+        for bounds in [
+            CGSize(width: 440, height: 860),
+            CGSize(width: 1133, height: 692),
+            CGSize(width: 3000, height: 2000),
+        ] {
+            let origin = try #require(coordinates.location(
+                .zero,
+                in: bounds
+            ))
+            let center = try #require(coordinates.location(
+                CGPoint(x: bounds.width / 2, y: bounds.height / 2),
+                in: bounds
+            ))
+            let corner = try #require(coordinates.location(
+                CGPoint(x: bounds.width, y: bounds.height),
+                in: bounds
+            ))
+            #expect(origin.x == 0 && origin.y == 0)
+            #expect(center.x == 16384 && center.y == 16384)
+            #expect(corner.x == maximum && corner.y == maximum)
+        }
+    }
+
+    @Test
+    @MainActor
+    func touchResolutionDoesNotCollapseAfterTheViewGrows() throws {
+        // A launch-sized range of 440 columns would give a view grown to
+        // 3000 points 440 distinct values; the fixed range keeps every point.
+        let coordinates = GuestInputCoordinateSpace.touchscreen
+        let bounds = CGSize(width: 3000, height: 2000)
+        var previous: UInt32?
+        for column in 0..<3000 {
+            let location = try #require(coordinates.location(
+                CGPoint(x: CGFloat(column) + 0.5, y: 1000),
+                in: bounds
+            ))
+            if let previous { #expect(location.x > previous) }
+            previous = location.x
+        }
+    }
+
+    @Test
+    @MainActor
+    func touchPathReportsFullRangeCoordinates() throws {
+        let geometry = try #require(GuestTouchGeometry(
+            coordinateSpace: .touchscreen,
+            boundsSize: CGSize(width: 500, height: 250),
+            drawableSize: CGSize(width: 1000, height: 500),
+            contentSize: CGSize(width: 800, height: 800)
+        ))
+        var path = GuestTouchPath()
+
+        // The guest square spans bounds x 125...375 (drawable 250...750).
+        #expect(path.begin(
+            at: CGPoint(x: 250, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 16384, y: 16384, pressed: true),
+        ])
+        #expect(path.move(
+            to: CGPoint(x: 200, y: 62.5),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 9830, y: 8192, pressed: true),
+        ])
+        // The path leaves through the right edge of the guest square, at the
+        // top of the range's last column.
+        #expect(path.end(
+            at: CGPoint(x: 450, y: 125),
+            geometry: geometry
+        ) == [
+            GuestTouchEvent(x: 32767, y: 13926, pressed: false),
+        ])
+    }
+
+    @Test
+    @MainActor
     func touchPathStartsAndEndsAtGuestDisplayEdges() throws {
         let geometry = try #require(GuestTouchGeometry(
             coordinateSpace: GuestInputCoordinateSpace(
