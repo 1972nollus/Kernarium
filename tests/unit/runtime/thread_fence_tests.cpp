@@ -322,8 +322,14 @@ void a_thread_blocked_inside_a_stream_write_is_not_held()
 	require(!fence.holding(), "nothing is held");
 	/* Once the pipe drains, the write finishes and the thread can be held. */
 	char sink[4096];
-	while (!finished.load())
-		(void)!read(pipes[0], sink, sizeof sink);
+	/* The writer stops after one line, and it may not have said it is finished
+	 * when the last of it has been read, so a blocking read could wait for
+	 * ever on a pipe nobody writes to again. */
+	require(fcntl(pipes[0], F_SETFL, O_NONBLOCK) == 0, "nonblocking drain");
+	while (!finished.load()) {
+		if (read(pipes[0], sink, sizeof sink) <= 0)
+			nap(200);
+	}
 	writer.join();
 	require(fence.hold(2000), "a thread past its write is held");
 	fence.release();
