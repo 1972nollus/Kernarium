@@ -307,6 +307,89 @@ void aWakeSendsOneWakeRequest()
 	(void)::close(server);
 }
 
+/* Answers one request with `answer` and `error` after `delayMs`. A client
+ * that stopped waiting has removed its socket, so that reply goes nowhere. */
+void answerLater(int descriptor, std::string_view answer, std::uint32_t error,
+	int delayMs, std::vector<std::string> &requests)
+{
+	sockaddr_un client {};
+	socklen_t clientLength {};
+	if (!awaitRequest(descriptor, 10000))
+		return;
+	requests.push_back(receiveRequest(descriptor, client, clientLength));
+	std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+	Reply reply {error, 0U, static_cast<std::uint32_t>(answer.size()), {}};
+	std::memcpy(reply.data.data(), answer.data(), answer.size());
+	(void)::sendto(descriptor, &reply, sizeof(reply), 0,
+		reinterpret_cast<const sockaddr *>(&client), clientLength);
+}
+
+::uml::device::GuestRequest answeredTrim(int server,
+	const std::function<::uml::device::GuestRequest()> &request,
+	std::string_view answer, std::uint32_t error, int delayMs,
+	std::string_view expected)
+{
+	std::vector<std::string> requests;
+	std::thread observer {answerLater, server, answer, error, delayMs,
+		std::ref(requests)};
+	const auto result = request();
+	observer.join();
+	require(requests == std::vector<std::string> {std::string {expected}});
+	return result;
+}
+
+/* Turning trimming on or off is one request, which a kernel without the
+ * command refuses. */
+void trimmingIsSwitchedByOneRequest()
+{
+	using ::uml::device::GuestRequest;
+	using ::uml::device::set_guest_page_cache_trim;
+	const ::uml::device::GuestConsoleRun run {true};
+	const auto path = consolePath();
+	/* No guest console yet: nothing is sent and nothing waits. */
+	require(set_guest_page_cache_trim(true) == GuestRequest::unreachable);
+	const int server = bindServer(path);
+	require(answeredTrim(server, [] { return set_guest_page_cache_trim(true); },
+			"on", 0U, 0, "trim on") == GuestRequest::done);
+	require(answeredTrim(server, [] { return set_guest_page_cache_trim(false); },
+			"off", 0U, 0, "trim off") == GuestRequest::done);
+	require(answeredTrim(server, [] { return set_guest_page_cache_trim(true); },
+			"Unknown command", 1U, 0, "trim on") == GuestRequest::refused);
+	require(!awaitRequest(server, 200));
+	(void)::close(server);
+}
+
+/* A pass takes longer than an ordinary request may wait, and is waited for
+ * up to its own bound and no longer. */
+void aTrimPassIsWaitedForUpToItsBound()
+{
+	using ::uml::device::GuestRequest;
+	using ::uml::device::trim_guest_page_cache;
+	const ::uml::device::GuestConsoleRun run {true};
+	const int server = bindServer(consolePath());
+	require(answeredTrim(server, [] { return trim_guest_page_cache(8000U); },
+			"trimmed 4096 KiB in 3 ms, compacted in 40 ms, "
+			"released 4096 KiB in 2 ms",
+			0U, 2500,
+			"trim once") == GuestRequest::done);
+	/* The reply comes 2.5 seconds late; the request gives up long
+	 * before, and before an ordinary request's two seconds. */
+	std::chrono::steady_clock::duration waited {};
+	require(answeredTrim(server,
+			[&waited] {
+				const auto start = std::chrono::steady_clock::now();
+				const auto result = trim_guest_page_cache(200U);
+				waited = std::chrono::steady_clock::now() - start;
+				return result;
+			},
+			"trimmed 0 KiB in 0 ms, compacted in 40 ms, "
+			"released 0 KiB in 1 ms",
+			0U, 2500,
+			"trim once") == GuestRequest::unanswered);
+	require(waited < std::chrono::milliseconds(1800));
+	(void)::close(server);
+}
+
 /* The widest reply socket a location may name. */
 std::size_t widestClientPath(const ::uml::device::GuestConsoleLocation &location)
 {
@@ -571,6 +654,14 @@ int main(int argc, char **argv)
 		aFailedSuspendFallsBackToStop();
 		aLateSuspendFailureFallsBackToStop();
 		aKernelWithoutSuspendIsStoppedAtOnce();
+		return EXIT_SUCCESS;
+	}
+	if (selected == "trim") {
+		const PrivateTemporaryDirectory temporary;
+		require(std::filesystem::path {processLocation().directory}
+				.parent_path() == temporary.path());
+		trimmingIsSwitchedByOneRequest();
+		aTrimPassIsWaitedForUpToItsBound();
 		return EXIT_SUCCESS;
 	}
 	if (selected == "suspend-timeout") {

@@ -5,6 +5,7 @@
 #include "sockets/socket_paths.hpp"
 
 #include <TargetConditionals.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -73,8 +74,8 @@ constexpr std::string_view suspendFailure = "Suspend failed:";
  * stop a guest whose suspend failed late instead of leaving it running. The
  * wait ends with the reply, so only such a guest spends it, and it leaves most
  * of the time iOS grants an application it backgrounds. */
-constexpr std::chrono::seconds replyWait {2};
-constexpr std::chrono::seconds suspendReplyWait {8};
+constexpr std::chrono::milliseconds replyWait {std::chrono::seconds {2}};
+constexpr std::chrono::milliseconds suspendReplyWait {std::chrono::seconds {8}};
 
 /* A reply socket's identifier is this many hexadecimal digits, so the widest
  * reply path is known before any request is sent. */
@@ -237,7 +238,8 @@ void releaseConsoleGuard()
  */
 class Client final {
 public:
-	Client(const GuestConsoleLocation &location, std::chrono::seconds wait)
+	Client(const GuestConsoleLocation &location,
+		std::chrono::milliseconds wait)
 	{
 		std::array<char, clientIdDigits + 1U> id {};
 		(void)std::snprintf(id.data(), id.size(), "%08x",
@@ -266,8 +268,9 @@ public:
 		}
 		const timeval timeout {
 			.tv_sec = static_cast<decltype(timeval::tv_sec)>(
-				wait.count()),
-			.tv_usec = 0};
+				wait.count() / 1000),
+			.tv_usec = static_cast<decltype(timeval::tv_usec)>(
+				wait.count() % 1000 * 1000)};
 		(void)::setsockopt(descriptor_, SOL_SOCKET, SO_RCVTIMEO, &timeout,
 			sizeof(timeout));
 	}
@@ -323,7 +326,7 @@ void adoptConsolePath(const std::string &path)
 	const sockaddr_un &address,
 	std::string_view command,
 	std::string &response,
-	std::chrono::seconds wait = replyWait)
+	std::chrono::milliseconds wait = replyWait)
 {
 	Client client {location, wait};
 	if (!client.usable())
@@ -560,6 +563,49 @@ bool wake_guest() noexcept
 	} catch (...) {
 		return false;
 	}
+}
+
+namespace {
+
+[[nodiscard]] GuestRequest requestGuest(std::string_view command,
+	std::chrono::milliseconds wait) noexcept
+{
+	try {
+		std::lock_guard lock(consoleMutex);
+		const auto &location = guest_console_location();
+		sockaddr_un address {};
+		if (!location || !fillAddress(address, location->console))
+			return GuestRequest::unreachable;
+		adoptConsolePath(location->console);
+		std::string response;
+		switch (exchange(*location, address, command, response, wait)) {
+		case ExchangeResult::notSent:
+			return GuestRequest::unreachable;
+		case ExchangeResult::pending:
+			return GuestRequest::unanswered;
+		case ExchangeResult::rejected:
+			return GuestRequest::refused;
+		case ExchangeResult::accepted:
+			return GuestRequest::done;
+		}
+		return GuestRequest::refused;
+	} catch (...) {
+		return GuestRequest::unreachable;
+	}
+}
+
+} // namespace
+
+GuestRequest set_guest_page_cache_trim(bool enabled) noexcept
+{
+	return requestGuest(enabled ? "trim on" : "trim off", replyWait);
+}
+
+GuestRequest trim_guest_page_cache(unsigned int waitMs) noexcept
+{
+	/* A zero receive timeout would wait for ever. */
+	return requestGuest("trim once",
+		std::chrono::milliseconds {std::max(waitMs, 1U)});
 }
 
 GuestConsoleRun::GuestConsoleRun(bool active) noexcept

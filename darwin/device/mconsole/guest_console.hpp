@@ -109,6 +109,34 @@ void resume_guest(GuestSuspension suspension) noexcept;
  */
 bool wake_guest() noexcept;
 
+/* How a request to the guest's console ended. */
+enum class GuestRequest {
+	/* No console was reachable, so nothing was sent. */
+	unreachable,
+	/* Sent, but no reply came within the bound. The guest may still act. */
+	unanswered,
+	/* The guest refused it, as a kernel without the command does. */
+	refused,
+	/* The guest did it. */
+	done,
+};
+
+/*
+ * Turns the guest's periodic page-cache trimming on or off ("trim on",
+ * "trim off"). A guest starts with it off. While it is on, the guest hands
+ * its cold page cache to the host every few seconds, backing off while it
+ * reads evicted pages back.
+ */
+[[nodiscard]] GuestRequest set_guest_page_cache_trim(bool enabled) noexcept;
+
+/*
+ * Has the guest trim all of its cold page cache and hand its free memory to
+ * the host now ("trim once"), waiting up to `wait_ms` for it to finish. Like
+ * every console request it wakes a suspended guest, so send it before a
+ * suspend, never during one.
+ */
+[[nodiscard]] GuestRequest trim_guest_page_cache(unsigned int wait_ms) noexcept;
+
 /*
  * Holds this process's console location for one guest run that passed the
  * host's uml_dir=.

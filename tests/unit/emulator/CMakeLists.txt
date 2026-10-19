@@ -15,6 +15,18 @@ uml_add_unit_test(
     NAME emulator-c-api-boundary
     COMMAND uml_emulator_c_api_boundary_tests)
 
+# The lifecycle calls' console requests, seen by a socket standing where the
+# guest binds its console.
+add_executable(uml_emulator_lifecycle_tests emulator_lifecycle_tests.cpp)
+target_link_libraries(uml_emulator_lifecycle_tests PRIVATE
+    UML::BridgeAbi
+    UML::DeviceGuestConsole
+    UML::Emulator)
+uml_add_unit_test(
+    NAME emulator-lifecycle
+    COMMAND uml_emulator_lifecycle_tests
+    LABELS console)
+
 add_executable(uml_emulator_options_tests emulator_options_tests.cpp)
 target_link_libraries(uml_emulator_options_tests PRIVATE
     UML::BridgeAbi
