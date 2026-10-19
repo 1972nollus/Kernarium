@@ -77,6 +77,81 @@ std::uint64_t GuestRamCommitment::wire_failures() const noexcept
 	return wire_failures_.load(std::memory_order_relaxed);
 }
 
+std::size_t GuestRamCommitment::word_count() const noexcept
+{
+	return (page_count_ + bits_per_word - 1) / bits_per_word;
+}
+
+std::uint64_t GuestRamCommitment::held_word(std::size_t word) const noexcept
+{
+	if (word >= word_count())
+		return 0;
+	const std::size_t first_managed =
+		(managed_begin() + page_size_ - 1) / page_size_;
+	const std::size_t low = word * bits_per_word;
+	const std::size_t first = std::max(low, first_managed);
+	const std::size_t last = std::min(low + bits_per_word, page_count_);
+	if (first >= last)
+		return 0;
+	return word_mask(first - low, last - first) &
+		~released_[word].load(std::memory_order_acquire);
+}
+
+void GuestRamCommitment::hold_changes() noexcept
+{
+	changes_held_.store(true, std::memory_order_seq_cst);
+}
+
+void GuestRamCommitment::allow_changes() noexcept
+{
+	changes_held_.store(false, std::memory_order_release);
+	changes_held_.notify_all();
+}
+
+std::size_t GuestRamCommitment::changes_in_flight() const noexcept
+{
+	return in_flight_.load(std::memory_order_seq_cst);
+}
+
+int GuestRamCommitment::evict(std::size_t first_page,
+	std::size_t pages) noexcept
+{
+	std::byte *const address = root_ + first_page * page_size_;
+	const std::size_t length = pages * page_size_;
+	/* As a release does: a wired page cannot leave the footprint, and a page
+	 * marked reusable while wired would stay wired and uncounted. */
+	if (wire_)
+		(void)munlock(address, length);
+	if (madvise(address, length, MADV_FREE_REUSABLE) != 0) {
+		const int error = errno;
+		report_mapping_failure("guest RAM evict", address, length, error);
+		errno = error;
+		return -1;
+	}
+	return 0;
+}
+
+int GuestRamCommitment::readmit(std::size_t first_page,
+	std::size_t pages) noexcept
+{
+	std::byte *const address = root_ + first_page * page_size_;
+	const std::size_t length = pages * page_size_;
+	if (madvise(address, length, MADV_FREE_REUSE) != 0) {
+		const int error = errno;
+		report_mapping_failure("guest RAM readmit", address, length, error);
+		errno = error;
+		return -1;
+	}
+	/* As a commit does: the page stays usable when it cannot be wired, only
+	 * compressible. */
+	if (wire_ && mlock(address, length) != 0) {
+		const int error = errno;
+		wire_failures_.fetch_add(1, std::memory_order_relaxed);
+		report_mapping_failure("guest RAM wire", address, length, error);
+	}
+	return 0;
+}
+
 int GuestRamCommitment::change(Change kind, std::uint64_t offset,
 	std::uint64_t length) noexcept
 {
@@ -91,6 +166,20 @@ int GuestRamCommitment::change(Change kind, std::uint64_t offset,
 		begin += page_size_ - begin % page_size_;
 	if (begin >= end)
 		return 0;
+	/* A snapshot of the held pages is out: nothing may change them until it
+	 * has been put back. The count and the flag are sequentially consistent
+	 * so that a holder either sees this call in flight or this call sees the
+	 * hold. */
+	in_flight_.fetch_add(1, std::memory_order_seq_cst);
+	while (changes_held_.load(std::memory_order_seq_cst)) {
+		in_flight_.fetch_sub(1, std::memory_order_seq_cst);
+		changes_held_.wait(true, std::memory_order_acquire);
+		in_flight_.fetch_add(1, std::memory_order_seq_cst);
+	}
+	struct Leave final {
+		std::atomic<std::size_t> &count;
+		~Leave() { count.fetch_sub(1, std::memory_order_seq_cst); }
+	} leave{in_flight_};
 
 	/* Flip each page's bit atomically and apply only the pages this call
 	 * changed, merging adjacent ones into one host call. */
