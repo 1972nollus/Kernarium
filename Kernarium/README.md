@@ -177,6 +177,18 @@ waiting up to eight seconds for the guest's suspend reply, which follows its
 file system sync. A return to the foreground resumes the guest once that reply
 has arrived or the wait has ended.
 
+Guest page-cache trimming stays off while the application is in the
+foreground, because the guest then pays a host read for every evicted page its
+user's programs read again. Quiescing trims once by itself, before the suspend:
+the guest takes its cold page cache for up to a second, compacts its memory for
+up to another, and hands what is free to the host, and the quiesce waits up to
+three seconds for that. On a loaded Mac the pass took 1.2 s for a 4 GiB KDE
+guest and 1.8 s for Android, so with an immediate hold and a prompt suspend
+reply the quiesce usually ends within the handler's budget. Trimming only there
+is the user's choice: paused after the pass, a 4 GiB guest held 141 MiB (KDE)
+and 54 MiB (Android) more than one that trimmed all along, measured on macOS.
+A guest kept running in the background trims as it runs; see below.
+
 iOS may still end a suspended application, and the guest goes with it. The
 application records the background edge in a marker file and removes it on
 foregrounding; a launch that finds one says the guest restarted because
@@ -217,6 +229,12 @@ reaches it while it is revoked:
   priority (`set_background_throttle`): low priority, the efficiency cores, and
   throttled I/O for those threads only. It returns them to full priority before
   anything else is asked of the guest, so a quiesce is not throttled.
+- While a guest is kept running it also trims its page cache periodically
+  (`set_page_cache_trimming`), and stops when it returns to the foreground or
+  is quiesced, which trims once by itself. The switch runs on the `guest-sync`
+  queue behind any write-back or quiesce already asked for, since it may wait
+  for the guest's console; one made while the guest is quiesced reaches it on
+  resume.
 
 The throttle moves the work to the efficiency cores rather than removing
 cores: on an A15 iPad, a KDE guest with six vCPUs running a six-thread load

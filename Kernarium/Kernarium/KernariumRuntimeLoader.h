@@ -51,6 +51,12 @@ int kernarium_runtime_loader_set_frame_sink(
     void* _Nullable context,
     uint32_t maximum_width,
     uint32_t frames_per_second);
+/* Turns periodic guest page-cache trimming on (nonzero) only while the guest
+ * is kept running in the background, and off again on return to the
+ * foreground. Returns 0 once the guest has applied it, a negative value
+ * otherwise, -1 when no runtime is loaded. Call it away from the main thread:
+ * it may wait for the guest's console. */
+int kernarium_runtime_loader_set_page_cache_trimming(int enabled);
 void kernarium_runtime_loader_send_touch(
     uint32_t x,
     uint32_t y,

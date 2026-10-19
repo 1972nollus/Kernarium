@@ -115,9 +115,16 @@ unwires it when it is released, so it wires only the RAM the guest holds; the
 signed kernel image and the loader tail stay wired from startup. Simulator and
 macOS commit and release without wiring. Wiring prevents compression; it does
 not decide whether a page is mapped. A commit that cannot wire leaves the page
-committed and usable. The kernel also trims its inactive page cache towards a
-floor in the background (`page_cache_trim.*`). The host caches the same disk
-blocks, so a large guest page cache mostly holds memory twice.
+committed and usable. The host caches the same disk blocks as the guest, so a
+large guest page cache mostly holds memory twice. The kernel can trim its
+inactive page cache towards a floor (`page_cache_trim.*`), but only at the
+host's request, because a guest in front of its user pays a host read for every
+evicted page it reads again: `uml_emulator_set_page_cache_trimming()` turns
+periodic trimming on and off, and `uml_emulator_trim_page_cache()` and every
+quiesce run one pass that also hands free memory to the host at once. Kernarium
+trims only while it keeps the guest running in the background. `uml-darwin`
+has no background state, so its guests trim only when started with
+`page_cache_trim.enabled=1`.
 
 The Virtio balloon (`device/balloon`) takes the memory the host GPU uses out of
 the guest. Its target is the larger of the process's Metal allocation
@@ -1453,12 +1460,15 @@ The devices Kernarium attaches and its display geometry are listed in
 
 The platform layer tracks every writable host descriptor opened for the guest.
 `uml_emulator_sync()` asks the guest to write back through its management
-console, then flushes those host descriptors. `uml_emulator_quiesce()` enters
-full Linux system suspend and waits until devices, secondary CPUs, interrupts,
-and timekeeping have reached the platform sleep boundary before flushing the
-host. `uml_emulator_resume()` sends the console wake edge. Nothing else on the
-guest's descriptors ends the suspend, and an edge sent before the guest reached
-the boundary, as after a suspend request whose reply timed out, still ends it;
+console, then flushes those host descriptors. `uml_emulator_quiesce()` first
+has the guest trim its cold page cache and hand its free memory to the host,
+waiting up to three seconds, then enters full Linux system suspend and waits
+until devices, secondary CPUs, interrupts, and timekeeping have reached the
+platform sleep boundary before flushing the host. `uml_emulator_resume()` sends
+the console wake edge. Every console request ends the suspend, so a trimming
+change requested meanwhile waits for the resume, and nothing else on the
+guest's descriptors ends it. An edge sent before the guest reached the
+boundary, as after a suspend request whose reply timed out, still ends it;
 the [mainline README](../kernel/mainline-6.18/README.md) gives the kernel's
 side. `uml_emulator_wake()` sends that edge whatever the host last asked for,
 except to a guest it has quiesced, as a phone's power key does: it ends a

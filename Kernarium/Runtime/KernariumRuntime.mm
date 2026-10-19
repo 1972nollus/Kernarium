@@ -1106,6 +1106,14 @@ void runtimeResume(void)
         uml_emulator_resume(activeEmulator);
 }
 
+int runtimeSetPageCacheTrimming(int enabled)
+{
+    std::lock_guard lock(emulatorLifecycleMutex);
+    if (activeEmulator == nullptr)
+        return -UML_EMULATOR_UNSUPPORTED;
+    return uml_emulator_set_page_cache_trimming(activeEmulator, enabled);
+}
+
 static_assert(
     KERNARIUM_RUNTIME_TOUCH_MAXIMUM ==
     uml::input::virtio::protocol::touchscreenAbsoluteMaximum);
@@ -1278,11 +1286,12 @@ const kernarium_runtime_api runtimeApi {
     .set_gpu_hold = runtimeSetGpuHold,
     .set_frame_sink = runtimeSetFrameSink,
     .set_background_throttle = runtimeSetBackgroundThrottle,
+    .set_page_cache_trimming = runtimeSetPageCacheTrimming,
 };
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v11(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v12(void)
 {
     return &runtimeApi;
 }

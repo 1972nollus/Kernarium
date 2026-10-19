@@ -75,6 +75,24 @@ struct BackgroundControllerTests {
         }
     }
 
+    /// What reached the runtime's page-cache trimming switch, from any thread.
+    private nonisolated final class TrimmingSwitch: @unchecked Sendable {
+        private let lock = NSLock()
+        private var settings: [Int32] = []
+        private var onMainThread = false
+
+        func set(_ enabled: Int32) -> Int32 {
+            lock.withLock {
+                settings.append(enabled)
+                onMainThread = onMainThread || Thread.isMainThread
+            }
+            return 0
+        }
+
+        var received: [Int32] { lock.withLock { settings } }
+        var reachedOnMainThread: Bool { lock.withLock { onMainThread } }
+    }
+
     private func controller(
         _ mode: BackgroundMode,
         _ effects: Effects
@@ -121,6 +139,25 @@ struct BackgroundControllerTests {
         #expect(effects.calls.suffix(2) == ["throttle off", "trim off"])
         #expect(!effects.calls.contains("resume"))
         #expect(policy.phase == .foreground)
+    }
+
+    /// The application's effects pass the policy's trimming edges to the
+    /// runtime, in order and away from the main thread, since the switch may
+    /// wait for the guest's console.
+    @Test
+    func theTrimmingEdgesReachTheRuntimeOffTheMainThread() async throws {
+        let runtime = TrimmingSwitch()
+        let effects = SystemBackgroundEffects(
+            persistence: .shared,
+            pictureInPicture: nil,
+            pageCacheTrimming: { runtime.set($0) }
+        )
+
+        effects.setPageCacheTrimming(true)
+        effects.setPageCacheTrimming(false)
+        #expect(try await eventually { runtime.received.count == 2 })
+        #expect(runtime.received == [1, 0])
+        #expect(!runtime.reachedOnMainThread)
     }
 
     @Test

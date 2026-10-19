@@ -338,6 +338,18 @@ uml_add_guest_integration_test(
     TIMEOUT 600
     CPUS 4)
 
+# Page-cache trimming is off until the host asks. The management console turns
+# it on and off and runs one pass that leaves the cache at its floor and,
+# compacting, hands most of what it frees to the host even when the cache lay
+# between pages still in use; a trimming guest backs off while a working set it
+# evicted is read back.
+uml_add_guest_integration_test(
+    NAME guest-page-cache-trim
+    SCRIPT kernel/run_guest_page_cache_trim.py
+    LABELS guest;kernel;smoke
+    TIMEOUT 900
+    CPUS 2)
+
 # Removing the Virtio video decoder by unbind, management-console halt or
 # forced power-off, while files are open and buffers queued, resets it first,
 # returns everything it held and frees nothing an open file still uses.
