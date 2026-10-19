@@ -706,7 +706,7 @@ void a_store_without_a_reservation_fails()
  * would otherwise evict the target's write entry on every pass. */
 [[nodiscard]] constexpr std::uint64_t tlb_set(std::uint64_t key)
 {
-	return key & (::uml::memory::tlb_set_count - 1);
+	return key & (::uml::memory::tlb_entry_count - 1);
 }
 
 [[nodiscard]] std::uint32_t colliding_page(std::uint32_t target,
@@ -2880,8 +2880,7 @@ void the_tlb_probe_hits_inside_a_page_and_not_across_one()
 	auto tlb = std::make_unique<::uml::memory::Tlb>();
 	const auto fill = [&](std::uint32_t address, std::uint8_t *bytes) {
 		const std::uint64_t key = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
-		auto &entry = tlb->entries[tlb_set(key) *
-					   ::uml::memory::tlb_way_count];
+		auto &entry = tlb->entries[tlb_set(key)];
 		const auto base = reinterpret_cast<std::uintptr_t>(bytes) -
 			address;
 		entry.read_page = key;
@@ -3018,9 +3017,8 @@ void an_entry_the_tlb_fills_hits_through_the_emitted_probe()
 		require(filled < tlb->entries.size());
 		const auto other = reinterpret_cast<std::uintptr_t>(decoy.data()) -
 			address;
-		const auto set = filled / ::uml::memory::tlb_way_count;
 		for (std::size_t index = 0; index < tlb->entries.size(); ++index)
-			if (index / ::uml::memory::tlb_way_count != set)
+			if (index != filled)
 				tlb->entries[index] = {key, other, key, other};
 		require(reg(run(*tlb, ldr_r0_r1, address + 0x40, 0), 0) ==
 			0x5a5a'5a5aU);

@@ -58,22 +58,18 @@ struct alignas(32) TlbEntry final {
 	std::uintptr_t write_data_minus_address{};
 };
 
-/* Both page profiles index 16,384 sets directly by the low bits of the guest
- * page number: two ways of a 64-byte set on 16 KiB pages, one 32-byte entry
- * on 4 KiB pages, where a cache line holds two neighbouring pages. A direct
- * index never places pages n and n + 1 in one set, which lets a transfer key
- * its probe by the page of its final byte and find a crossing as a miss. */
+/* The table has 16,384 entries, indexed directly by the low bits of the guest
+ * page number: a cache line holds two neighbouring pages' 32-byte entries. A
+ * direct index never places pages n and n + 1 in one entry, which lets a
+ * transfer key its probe by the page of its final byte and find a crossing as
+ * a miss. */
 inline constexpr std::size_t tlb_index_bits = 14U;
-inline constexpr std::size_t tlb_set_count = 1U << tlb_index_bits;
-inline constexpr std::size_t tlb_way_count =
-	DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 2U : 1U;
-inline constexpr std::size_t tlb_entry_count =
-	tlb_set_count * tlb_way_count;
-/* Sets a flush clears one by one before clearing the whole table is cheaper.
- * A vCPU switching address spaces flushes; after a short run in the other
- * space only a few sets hold anything. */
+inline constexpr std::size_t tlb_entry_count = 1U << tlb_index_bits;
+/* Entries a flush clears one by one before clearing the whole table is
+ * cheaper. A vCPU switching address spaces flushes; after a short run in the
+ * other space only a few entries hold anything. */
 inline constexpr std::size_t tlb_dirty_capacity = 1024;
-static_assert(tlb_set_count <= 65536, "dirty set indexes are 16 bits");
+static_assert(tlb_entry_count <= 65536, "dirty entry indexes are 16 bits");
 
 /*
  * This layout is shared by the gadget and JIT engines and their assembly
@@ -88,7 +84,6 @@ struct alignas(32) Tlb final {
 	Access fault_access{Access::read};
 	/* Cold fault cause; each executor clears it at the next block entry. */
 	std::uint32_t fault_alignment{};
-	std::array<std::uint8_t, tlb_set_count> replacement_way{};
 	/* Whether the address space owning the current entries ignores the top
 	 * address byte (TBI). Set by the executor that fills the TLB
 	 * from its guest state; consumers that never present tagged addresses
@@ -98,10 +93,10 @@ struct alignas(32) Tlb final {
 	 * ordered access inside one 16-byte block (FEAT_LSE2), which the guest
 	 * then sees as USCAT. Set once by the executor that owns the TLB. */
 	bool unaligned_atomics{};
-	/* Sets filled since the last flush; a count above the capacity means the
-	 * next flush clears the whole table. Not read by generated code. */
+	/* Entries filled since the last flush; a count above the capacity means
+	 * the next flush clears the whole table. Not read by generated code. */
 	std::uint32_t dirty_count{};
-	std::array<std::uint16_t, tlb_dirty_capacity> dirty_sets{};
+	std::array<std::uint16_t, tlb_dirty_capacity> dirty_entries{};
 	/* The owning executor's static-MMU execution context, or null. A miss
 	 * resolves through it while it is entered. Not read by generated code. */
 	void *execution_context{};
