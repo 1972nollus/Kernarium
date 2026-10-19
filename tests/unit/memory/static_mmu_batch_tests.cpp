@@ -586,6 +586,67 @@ void test_large_sparse_unmap_visits_only_mapped_pages()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+void test_batch_unmaps_change_only_pages_they_find()
+{
+	constexpr unsigned long generation = 322;
+	constexpr unsigned long page = DARWIN_UML_GUEST_PAGE_SIZE;
+	constexpr unsigned long held = 0x40'0000;
+	constexpr unsigned long absent = 0x50'0000;
+	constexpr unsigned long transient = 0x60'0000;
+	constexpr std::size_t held_pages = 8;
+	ScratchBacking backing{backing_name, (held_pages + 2) * page};
+	const auto require_mapped = [&](const unsigned long address) {
+		void *translated = nullptr;
+		require(darwin_uml_static_vm_translate(generation, address,
+				DARWIN_UML_STATIC_READ, &translated) ==
+			DARWIN_UML_STATIC_TRANSLATED);
+		require(translated != nullptr);
+	};
+	const auto map_page = [&](const unsigned long address,
+				  const std::size_t backing_page) {
+		require(darwin_uml_static_vm_map_generation(generation,
+				reinterpret_cast<void *>(address), backing.descriptor(),
+				backing_page * page, page, PROT_READ | PROT_WRITE,
+				0, 1) == 0);
+	};
+	const auto unmap = [&](const unsigned long address,
+			       const unsigned long length) {
+		require(darwin_uml_static_vm_unmap_generation(generation,
+				reinterpret_cast<void *>(address), length) == 0);
+	};
+
+	/* Hold more pages than any unmap below names, so each is walked page by
+	 * page rather than through the generation's mappings. */
+	require(darwin_uml_static_vm_map_generation(generation,
+			reinterpret_cast<void *>(held), backing.descriptor(), 0,
+			held_pages * page, PROT_READ | PROT_WRITE, 0, 1) == 0);
+	const auto before = darwin_uml_static_vm_sequences(generation);
+	require(darwin_uml_static_vm_batch_begin(generation) == 0);
+	unmap(absent, 4 * page);
+	require(darwin_uml_static_vm_batch_end() == 0);
+	const auto after = darwin_uml_static_vm_sequences(generation);
+	require(after.mapping_changes == before.mapping_changes &&
+		after.code_changes == before.code_changes);
+
+	/* An unmap still clears what the generation holds and what an earlier
+	 * operation of the same batch mapped, and an absent page it names can be
+	 * mapped later in the batch. */
+	require(darwin_uml_static_vm_batch_begin(generation) == 0);
+	unmap(absent, page);
+	map_page(absent, held_pages);
+	map_page(transient, held_pages + 1);
+	unmap(transient, page);
+	unmap(held, page);
+	require(darwin_uml_static_vm_batch_end() == 0);
+	require_mapped(absent);
+	require_unmapped(generation, absent + page);
+	require_unmapped(generation, transient);
+	require_unmapped(generation, held);
+	for (std::size_t index = 1; index < held_pages; ++index)
+		require_mapped(held + index * page);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 void test_generation_flush_is_complete_and_reusable()
 {
 	using uml::memory::testing::AllocationSite;
@@ -1140,6 +1201,7 @@ int main()
 	test_large_overlapping_batch_preserves_last_operation();
 	test_batch_index_allocation_failure_is_atomic_and_retryable();
 	test_large_sparse_unmap_visits_only_mapped_pages();
+	test_batch_unmaps_change_only_pages_they_find();
 	test_generation_flush_is_complete_and_reusable();
 	test_empty_generation_flush_rejects_an_older_batch();
 	test_empty_range_unmap_rejects_an_older_batch();

@@ -366,7 +366,13 @@ to a page nobody has published. A user replay is published in batches of 64
 pages which span the ranges of its snapshot, and only a rejected batch is walked
 again, with a timer, IPI and scheduling checkpoint after every full batch and
 every sixteenth rejection, so a whole-`mm` replay after a fork makes progress
-while siblings keep invalidating. `init_mm` keeps its serialized walker.
+while siblings keep invalidating. Within a page table the walk sends a run of
+neighbouring user PTEs as one host call when they are all absent or map
+consecutive offsets of one backing with one protection; it sends the run when
+the next PTE breaks it, when the page table ends or when the batch is full, and
+a walk that stops early drops its unsent run, because its range is walked
+again. `guest-tlb-replay-runs` checks the runs' frames and protections.
+`init_mm` keeps its serialized walker and its per-page calls.
 
 `init_mm` has one synchronizing owner at a time and walks without a batch
 budget. A synchronization its owner requests fails at once instead of

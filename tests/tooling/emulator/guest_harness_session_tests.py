@@ -472,6 +472,78 @@ class AttachedGuestSessionTests(unittest.TestCase):
         self.assertIn("UML_SESSION_READY:/bin/sh", guest.output())
         self.assertEqual(guest.run_command("printf '%s' ready").output, "ready")
 
+    def test_kernel_lines_inside_the_ready_marker_still_reach_the_shell(
+        self,
+    ) -> None:
+        self.emulator.write_text(
+            "#!/bin/sh\n"
+            "printf 'UML_SESSION_READY:/bin[    0.500000] split\\n/sh"
+            "[    0.500001] end\\n\\n# '\n"
+            "exec /bin/sh\n",
+            encoding="utf-8",
+        )
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        self.addCleanup(self.stop, guest)
+        guest.boot_to_shell(5)
+        self.assertEqual(guest.run_command("printf '%s' ready").output, "ready")
+
+    def test_kernel_lines_inside_command_markers_keep_status_and_output(
+        self,
+    ) -> None:
+        # The console can show a whole kernel line between any two bytes the
+        # shell prints. This stand-in puts one inside each command marker,
+        # one inside the status and one before the status line's end.
+        self.emulator.write_text(
+            "#!/bin/sh\n"
+            "/bin/sh 2>&1 | perl -pe 'BEGIN { $| = 1 }"
+            " s/(__UML_COMMAND_)(BEGIN|END)/$1\\[    2.000001] split\\n$2/;"
+            " s/(__:1)(2)$/$1\\[    2.000002] status\\n$2"
+            "\\[    2.000003] end\\n/'\n",
+            encoding="utf-8",
+        )
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        self.addCleanup(self.stop, guest)
+        result = guest.run_command("printf '%s' interleaved; (exit 12)", 5)
+        self.assertEqual(result.return_code, 12)
+        self.assertEqual(result.output, "interleaved")
+        self.assertIn(b"[    2.000002] status", bytes(guest._transcript))
+        guest._write("exit\n")
+        guest._process.wait(timeout=PROCESS_WAIT_SECONDS)
+
+    def test_a_boot_whose_kernel_turned_a_host_fast_path_off_fails(self) -> None:
+        # The kernel's self-check warns on the emulator's standard error,
+        # which shares the console with the session.
+        self.emulator.write_text(
+            "#!/bin/sh\n"
+            "printf \"Darwin: CPU1's thread-specific data is not where "
+            "expected; reading the CPU through pthread_getspecific()\\n\" >&2\n"
+            "printf 'UML_SESSION_READY:/bin/sh\\n# '\n"
+            "exec /bin/sh\n",
+            encoding="utf-8",
+        )
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        self.addCleanup(self.stop, guest)
+        with self.assertRaisesRegex(RuntimeError, "CPU1's thread-specific data"):
+            guest.boot_to_shell(PROCESS_WAIT_SECONDS)
+
     def test_a_session_failure_ends_the_boot_with_its_reason(self) -> None:
         self.emulator.write_text(
             "#!/bin/sh\nprintf 'UML_SESSION_ERROR:cannot mount /run\\n'\nexit 1\n",

@@ -1186,6 +1186,13 @@ void test_shadow_slots_and_direct_maps_share_global_ownership()
 		"foreign bridge drop accepted another domain's direct slot");
 	require(*first == std::byte{0x71} && *second == std::byte{0x82},
 		"foreign partial drop damaged a direct sibling");
+	/* The bridge's space neither maps the slot nor shadows it, so only the
+	 * ownership registry can tell that it is another domain's. */
+	errno = 0;
+	require(darwin_uml_vm_sync_from_backing(base) == -1 && errno == EBUSY,
+		"foreign bridge sync accepted another domain's direct slot");
+	require(direct_owner.sync_direct(base, guest_page_size) == 0,
+		"direct owner could not sync its own slot");
 	require(direct_owner.protect_direct(base, slot.size(), PROT_READ) == 0,
 		"valid full-slot direct protect failed");
 	const auto read_only = uml::testing::current_vm_protection(

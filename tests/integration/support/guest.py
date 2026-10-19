@@ -49,6 +49,20 @@ EMULATOR_RUN_DIRECTORIES = (
     re.compile(r"^uml-kern(\d+)$"),
     re.compile(r"^uml-guest-initrd-(\d+)-.+$"),
 )
+# What a kernel prints once when a self-check turns a host fast path off for
+# the rest of its run. The run stays correct and only slows down, so a boot
+# that prints one fails here instead of passing unnoticed: today the CPU read
+# through a carrier's thread-specific data (kernel/common/README.md).
+DISABLED_FAST_PATH_WARNINGS = ("thread-specific data is not where expected",)
+
+
+def require_host_fast_paths(transcript: str) -> None:
+    """Refuse a boot whose kernel turned a host fast path off."""
+    for line in transcript.splitlines():
+        if any(warning in line for warning in DISABLED_FAST_PATH_WARNINGS):
+            raise RuntimeError(
+                f"the guest kernel turned a host fast path off: {line.strip()}"
+            )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -349,12 +363,43 @@ def create_swap_image(value: str) -> pathlib.Path:
     return pathlib.Path(name)
 
 
+# The kernel prints its messages on the console the shell writes to, each a
+# whole timestamped line written at once. The shell's output can stop short of
+# a line: the terminal driver writes a line's text and its line end
+# separately, and the console line writes only what the host accepts and
+# queues the rest, which a kernel message then overtakes. So a kernel line can
+# land between any two bytes the shell prints, protocol markers included.
+KERNEL_LINE = rb"\[ *\d+\.\d+\][^\r\n]*\r?\n"
+_KERNEL_LINES = rb"(?:" + KERNEL_LINE + rb")*"
+
+
+def console_text(text: str) -> bytes:
+    """Return a pattern for ``text`` with kernel lines anywhere inside it."""
+    return _KERNEL_LINES.join(re.escape(bytes((byte,))) for byte in text.encode())
+
+
 def marker_pattern(marker: str) -> re.Pattern[bytes]:
-    """Match protocol markers even if a tty ioctl enables case conversion."""
+    """Match a protocol marker and its status line as the console shows it.
+
+    Kernel lines may interleave anywhere in the marker, its status and before
+    its line end, and a tty ioctl may have enabled case conversion. Read the
+    status with ``marker_status()``.
+    """
     return re.compile(
-        re.escape(marker.encode()) + rb":(\d+)\r?\n",
+        console_text(f"{marker}:")
+        + _KERNEL_LINES
+        + rb"(\d(?:"
+        + _KERNEL_LINES
+        + rb"\d)*)"
+        + _KERNEL_LINES
+        + rb"\r?\n",
         re.IGNORECASE,
     )
+
+
+def marker_status(match: re.Match[bytes]) -> int:
+    """Return the status a ``marker_pattern()`` match carries."""
+    return int(re.sub(KERNEL_LINE, b"", match.group(1)))
 
 
 # A console prompt does not always begin a line with CRLF. When bash execs a
@@ -492,10 +537,14 @@ class ConsoleProcess:
         else:
             self._write(wrapped + stdin)
 
+        begin_pattern = re.compile(console_text(begin), re.IGNORECASE)
+
         def output(section: bytes) -> str:
-            begin_at = section.rfind(begin.encode())
-            if begin_at >= 0:
-                section = section[begin_at + len(begin) :]
+            begin_end = None
+            for found in begin_pattern.finditer(section):
+                begin_end = found.end()
+            if begin_end is not None:
+                section = section[begin_end:]
             return self._normal_output(section)
 
         try:
@@ -505,7 +554,7 @@ class ConsoleProcess:
                 str(error), output(bytes(self._transcript[start:]))
             ) from error
         return CommandResult(
-            int(match.group(1)),
+            marker_status(match),
             output(bytes(self._transcript[start : match.start()])),
         )
 
@@ -761,7 +810,9 @@ class Guest(ConsoleProcess):
         """Reach the root shell the session starts."""
         ready = self._read_until(
             re.compile(
-                re.escape(f"{SESSION_READY_MARKER}/bin/sh".encode()) + rb"\r?\n"
+                console_text(f"{SESSION_READY_MARKER}/bin/sh")
+                + _KERNEL_LINES
+                + rb"\r?\n"
             ),
             timeout_seconds,
         )
@@ -770,6 +821,8 @@ class Guest(ConsoleProcess):
         self._read_until(
             re.compile(LINE_START + rb"# $"), timeout_seconds, ready.end() - 1
         )
+        # Every vCPU's carrier has come up by the time the session runs.
+        require_host_fast_paths(self.output())
 
     def boot_and_login(self, timeout_seconds: float = BOOT_TIMEOUT_SECONDS) -> None:
         self.boot_to_shell(timeout_seconds)

@@ -806,7 +806,36 @@ WARNINGS 0
         pattern = guest_support.marker_pattern("__UML_LTP_END_deadbeef__")
         match = pattern.search(b"__UML_LTP_END_DEADBEEF__:0\r\n")
         self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), b"0")
+        self.assertEqual(guest_support.marker_status(match), 0)
+
+    def test_protocol_marker_survives_interleaved_kernel_lines(self) -> None:
+        # The console shows whole kernel lines wherever the shell's output
+        # stopped short: between a status and its line end, where the
+        # terminal driver splits every line, or anywhere a full console
+        # buffer cut it.
+        pattern = guest_support.marker_pattern("__UML_LTP_END_deadbeef__")
+        kernel = (
+            b"[    2.244317] virtio-video virtio0: failed to get stream bitrate"
+            b"\r\n"
+        )
+        for console in (
+            b"__UML_LTP_END_deadbeef__:12" + kernel + b"\r\n",
+            b"__UML_LTP_END_dead" + kernel + b"beef__:" + kernel + b"12\r\n",
+            b"__UML_LTP_END_deadbeef__:1" + kernel + kernel + b"2\r\n",
+        ):
+            with self.subTest(console=console):
+                match = pattern.search(console)
+                self.assertIsNotNone(match)
+                self.assertEqual(guest_support.marker_status(match), 12)
+        # A status whose line has not ended does not match yet, and neither
+        # does one that other text follows.
+        for console in (
+            b"__UML_LTP_END_deadbeef__:12",
+            b"__UML_LTP_END_deadbeef__:1" + kernel,
+            b"__UML_LTP_END_deadbeef__:12 more\r\n",
+        ):
+            with self.subTest(console=console):
+                self.assertIsNone(pattern.search(console))
 
     def test_case_runs_from_ltp_binary_directory(self) -> None:
         command = runner.ltp_guest_command("./helper.sh 'argument'")
