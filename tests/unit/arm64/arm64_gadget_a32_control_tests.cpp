@@ -22,7 +22,7 @@
  *   an extension it lacks is UNDEFINED.
  *
  * Everything runs the production loop (run_translated_aarch32_blocks)
- * over the gadget executor, in whichever guest page size the build has. */
+ * over the gadget executor. */
 #include "arm64_gadget_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 

@@ -18,7 +18,9 @@ an artifact is accepted by, and replay commit IDs and binary hashes are
 observations.
 
 The line builds two products from one tree. The Linux product is the desktop
-kernel, in 16 KiB (default) and 4 KiB profiles and the x86_64 userspace slice.
+kernel, in 4 KiB and 16 KiB profiles and the x86_64 userspace slice. The Apple
+products run only the 4 KiB profile; the 16 KiB one, its accepted bundles and
+`page-16k.fragment` stay until a kernel release removes them.
 The [Android product](#android-product) is the 4 KiB arm64 kernel of the
 LineageOS 24 (Android 17) guest. It differs from the Linux product only in its
 configuration overlay: both build the same tree, including nine overlay topics
@@ -124,8 +126,10 @@ artifact.
 
 The normal arm64-userspace profiles are:
 
-- 16 KiB pages from `kernel/common/config/page-16k.fragment` (default); and
-- 4 KiB pages from `kernel/common/config/page-4k.fragment` (compatibility).
+- 4 KiB pages from `kernel/common/config/page-4k.fragment` (the products'
+  profile); and
+- 16 KiB pages from `kernel/common/config/page-16k.fragment` (retired from the
+  products).
 
 The separate x86_64-userspace slice is 4 KiB only. Its
 `slices/x86_64/config/userspace.fragment` follows the shared policy, the Linux

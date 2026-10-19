@@ -52,7 +52,7 @@ release, checked by the SHA-256 of its
 program, into images that stay local and that the tool refuses to write into
 the repository outside `.build`. It makes two kinds. `payload` is the EROFS
 image `--payload` attaches, with `geekbench_armv7` and `geekbench.plar` at its
-root and a 4 KiB block size, which both guest page profiles mount. `rootfs`
+root and a 4 KiB block size, which the guest mounts. `rootfs`
 cuts the starter disk's ext4 filesystem into an unpartitioned `.ext4` image,
 which `--rootfs` takes with `--root-type ext4`; with `--release-dir` it also
 installs the release under `/opt/geekbench`, for a device with no second disk
@@ -445,8 +445,7 @@ Probes are self-checking and succeed only when the measured guest command
 finishes, the guest shuts down, and the emulator exits zero. They are not CTest
 registrations and do not enter ordinary suite aggregates.
 
-The 16 KiB alias probe is page-profile-specific, and the LSE atomic probe needs
-assembler support for that extension. Other probes declare any restriction in
+The LSE atomic probe needs assembler support for that extension. Other probes declare any restriction in
 the manifest.
 
 ## Loader corpus

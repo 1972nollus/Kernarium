@@ -921,16 +921,15 @@ every one as dirty so that each exit writes them back, and the back edge is the
 chain budget's test for one more iteration and a branch. The iteration that
 cannot be afforded leaves like any linked exit. Memory
 takes the inline TLB sequence after a 32-bit address and the alignment
-rule of the form (on 4 KiB pages the entry index comes from the address's own
-bits and the tag compare shifts the address, two instructions fewer than the
-A64 compiler's). An access already checked to be aligned to its size (a
+rule of the form (the entry index comes from the address's own bits and the
+tag compare shifts the address, two instructions fewer than the A64
+compiler's). An access already checked to be aligned to its size (a
 single-precision VLDR or VSTR, a Neon transfer whose alignment hint covers its
-bytes, an ordered or exclusive access) is not tested for crossing a page. On
-4 KiB pages any other access of more than one byte compares the entry's tag
-with the page of its last byte, so a crossing access misses (the index never
-gives neighbouring pages of a 32-bit address space one entry) and its cold path
-tells it from a miss; 16 KiB pages test the offset before the probe. A
-single load or store of a byte, halfword or word does not add the entry's
+bytes, an ordered or exclusive access) is not tested for crossing a page. Any
+other access of more than one byte compares the entry's tag with the page of
+its last byte, so a crossing access misses (the index never gives neighbouring
+pages of a 32-bit address space one entry) and its cold path tells it from a
+miss. A single load or store of a byte, halfword or word does not add the entry's
 delta to the address in a register of its own: the access takes the delta in
 its addressing mode (`[x9, w8, uxtw]`), and the miss path leaves the host
 pointer in x9 and zero in x8; a pair, a multiple transfer, an acquire or
@@ -1145,15 +1144,14 @@ while the miss exit retrains its cells round-robin. The table belongs to the
 address space's link state and is retired with it, so it never names another
 address space's code, and a link reset by a code change leaves through its
 ordinary unlinked exit.
-The software TLB keys its entries by guest page number and indexes 16,384 sets
-directly by the page number's low bits: two ways of a 64-byte set on 16 KiB
-pages, one 32-byte entry on 4 KiB pages, where a cache line holds two
-neighbouring pages. A same-page transfer compares the page of its final byte
-against the way its first byte indexes: the direct index never places
-neighbouring pages in one set, so a crossing transfer can only miss and is
-recognized on the cold path. `arm64-tlb-probe-set` checks in both page
-profiles that every inline probe of both engines hits the entry the C++ fill
-path placed, in each way of its set, and misses a page its set does not hold.
+The software TLB keys its entries by guest page number and indexes 16,384
+32-byte entries directly by the page number's low bits, so a cache line holds
+two neighbouring pages. A same-page transfer compares the page of its final
+byte against the entry its first byte indexes: the direct index never places
+neighbouring pages in one entry, so a crossing transfer can only miss and is
+recognized on the cold path. `arm64-tlb-probe-set` checks that every inline
+probe of both engines hits the entry the C++ fill path placed and misses a
+page its entry does not hold.
 The gadget engine's fill path looks the page up in the generation its entered
 execution context holds (`darwin_uml_static_vm_execution_context_translate()`),
 without resolving the thread's address space and active generation each time.

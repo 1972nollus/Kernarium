@@ -35,7 +35,7 @@
 #endif
 	.equ ROUNDS,		BENCH_ROUNDS
 	.equ TOUCH_PAGES,	BENCH_TOUCH_PAGES
-	.equ GUEST_PAGE_SIZE,	16384
+	.equ GUEST_PAGE_SIZE,	4096
 
 #include "probe_harness.inc"
 

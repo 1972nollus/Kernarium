@@ -166,8 +166,8 @@ endif()
 # mappings; that allowance is stated with its constants below. The guarded
 # vhost-user shared-memory reservation and the kernel stub pages are additional
 # address space and must not consume that ordinary allowance.
-# The existing three-level 16 KiB guest page tables expose their maximum 47-bit
-# range; a true 48-bit range would add a page-table level to every kernel.
+# The guest page tables expose a 47-bit range (128 TiB); a true 48-bit range
+# would add a page-table level to every kernel.
 set(UML_GUEST_ADDRESS_LIMIT 0x0000800000000000ULL)
 set(UML_NATIVE_ADDRESS_START 0x0000000c00000000ULL)
 set(UML_NATIVE_ADDRESS_END 0x0000000f80000000ULL)
