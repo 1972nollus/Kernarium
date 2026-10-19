@@ -49,6 +49,17 @@ uml_add_tooling_test(
     LABELS audit;package
     TIMEOUT 120)
 
+# scripts/build-xcframework.sh takes its exact public API from the headers
+# through this check, so a public change needs no second list.
+uml_add_tooling_test(
+    NAME xcframework-public-api-check
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_check_public_api.py
+        --checker ${PROJECT_SOURCE_DIR}/scripts/check-public-api.py
+        --headers ${PROJECT_SOURCE_DIR}/darwin/api/include/uml
+    LABELS audit;package
+    TIMEOUT 60)
+
 uml_add_tooling_test(
     NAME json-input-duplicate-key-policy
     COMMAND ${Python3_EXECUTABLE} -B
