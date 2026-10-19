@@ -869,17 +869,17 @@ slots.
 
 ## Sharing translations
 
-Executors that run one address space share its translations when
-`DARWIN_UML_GADGET_SHARED_BODIES=1` asks for it, and otherwise keep them to
-themselves. A space is made for an address space generation and the exceptions
-its blocks are built for (`check_exceptions`), because a block is built so that
-no instruction of it needs a check the runtime makes itself; an executor built
-for other exceptions never shares with this one. The space holds the bodies, the
-link records and indirect sites their streams name, the target link tables and
-a page index; each executor keeps its slots, which decide what it holds. A body
-lives while any slot holds it, so the address space costs the union of what its
-executors hold rather than their sum, and the link records, a fifth of a
-private cache, are held once.
+Executors that run one address space share its translations, unless
+`DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them to themselves. A space is made
+for an address space generation and the exceptions its blocks are built for
+(`check_exceptions`), because a block is built so that no instruction of it
+needs a check the runtime makes itself; an executor built for other exceptions
+never shares with this one. The space holds the bodies, the link records and
+indirect sites their streams name, the target link tables and a page index; each
+executor keeps its slots, which decide what it holds. A body lives while any
+slot holds it, so the address space costs the union of what its executors hold
+rather than their sum, and the link records, a fifth of a private cache, are
+held once.
 
 A lookup that misses in an executor's slots asks the space for the body indexed
 for the address. The body is validated as a stale slot is, by page stamps and
@@ -926,9 +926,23 @@ through a link is attributed through the arena's map of live bodies, since the
 block need not be in any slot of the executor that ran it. A shared space is
 never swept; it dies with its last executor, and its arenas go whole.
 
+What bounds a shared space is renewal. It counts the bytes its arenas hold and
+the bytes of the bodies some slot holds, and once the arenas hold at least as
+much freed space as bodies, and at least two mebibytes, it is closed: it leaves
+the registry, so the next executor to want its address space gets a new one,
+and every executor attached lets go of it before it next enters translated
+code. The old space dies with its last executor, taking its arenas, link
+records and freed bodies with it. A cache closes the space it stores into
+after a store, and a space it lets go of whole (a destroyed address space, or
+its own end) before it detaches, since a mostly dead space receives no
+stores. The byte budget closes a space the same way when it asks it to shed.
+Freed blocks that new bodies fit are reused, so steady churn of equal blocks
+renews nothing; fragmentation and processes that end do.
+
 `x86-64-gadget-shared-bodies`, `x86-64-gadget-shared-store` and
-`x86-64-gadget-shared-concurrent` hold this, and `x86-64-gadget-bootstrap-shared`
-runs the bootstrap suite with the executors sharing.
+`x86-64-gadget-shared-concurrent` hold this, `x86-64-gadget-shared-bound` holds
+renewal and the budget, and `x86-64-gadget-bootstrap` runs the bootstrap suite
+with the executors sharing.
 
 ## Address spaces the kernel destroyed
 

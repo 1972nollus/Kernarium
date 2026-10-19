@@ -45,11 +45,11 @@ uml_add_unit_test(
     COMMAND uml_x86_64_gadget_body_tests
     LABELS cpu;x86-64;tsan)
 
-# The same suite with the executors of an address space sharing its
-# translations (DARWIN_UML_GADGET_SHARED_BODIES).
+# The same suite with every executor keeping its translations to itself
+# (DARWIN_UML_GADGET_SHARED_BODIES=0); the plain run shares them.
 uml_add_unit_test(
-    NAME x86-64-gadget-bootstrap-shared
-    COMMAND uml_x86_64_gadget_bootstrap_tests shared
+    NAME x86-64-gadget-bootstrap-private
+    COMMAND uml_x86_64_gadget_bootstrap_tests private
     LABELS cpu;x86-64)
 
 # Executors that share an address space's translations: what sharing does,
@@ -74,6 +74,10 @@ uml_add_unit_test(
 uml_add_unit_test(
     NAME x86-64-gadget-shared-concurrent
     COMMAND uml_x86_64_gadget_shared_tests concurrent
+    LABELS cpu;x86-64;tsan)
+uml_add_unit_test(
+    NAME x86-64-gadget-shared-bound
+    COMMAND uml_x86_64_gadget_shared_tests bound
     LABELS cpu;x86-64;tsan)
 
 # The cache's handling of destroyed address-space generations alone, cheap

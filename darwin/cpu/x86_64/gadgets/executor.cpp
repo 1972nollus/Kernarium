@@ -75,14 +75,17 @@ using gadget_cache::announce_exit;
 using gadget_cache::release_announcement;
 using Announcement = gadget_cache::ExecutorAnnouncement;
 
-/* Executors running one address space share its translations when
- * DARWIN_UML_GADGET_SHARED_BODIES=1 asks for it: the bodies, link records,
- * indirect sites and target tables are the address space's, held once, and
- * each executor keeps only its own slots. Read as each executor is made. */
+/* Executors running one address space share its translations unless
+ * DARWIN_UML_GADGET_SHARED_BODIES=0 keeps every executor's to itself: the
+ * bodies, link records, indirect sites and target tables are the address
+ * space's, held once, and each executor keeps only its own slots. A shared
+ * space bounds the freed arena it accumulates under process churn by renewal
+ * (Space::renewal_due), which is what lets sharing be the default. Read as
+ * each executor is made. */
 [[nodiscard]] bool shared_bodies_enabled() noexcept
 {
 	const char *value = std::getenv("DARWIN_UML_GADGET_SHARED_BODIES");
-	return value != nullptr && std::strcmp(value, "1") == 0;
+	return value == nullptr || std::strcmp(value, "0") != 0;
 }
 
 struct ProgramCacheLocation final {
@@ -635,6 +638,7 @@ public:
 					slot.body = nullptr;
 				}
 		for (auto &[generation, state] : generations_) {
+			renew_if_due(*state.space);
 			state.space->reclaim(announcement_);
 			SpaceRegistry::instance().detach(state.space,
 				announcement_);
@@ -1034,6 +1038,7 @@ public:
 			census_digest(slot), restored);
 #endif
 		state.space->reclaim(announcement_);
+		renew_if_due(*state.space);
 		/* The build's words are in the slot's program now, so nothing
 		 * outside what a sweep reads names a record it made. */
 		if (!state.space->shared() && state.space->sweep_due())
@@ -1189,7 +1194,7 @@ public:
 			"swept_sites=%llu sweep_ns=%llu dead_left=%llu "
 			"lru_tomb=%llu charged=%zu budget=%zu metered=%zu "
 			"metered_shedding=%zu metered_peak=%zu reliefs=%llu "
-			"shed=%llu",
+			"shed=%llu renewals=%llu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), program_cache_slots, sizeof(Slot),
 			program_cache_slab_slots, slab_count, parts.slabs,
@@ -1203,7 +1208,8 @@ public:
 			static_cast<unsigned long long>(lru_tomb_), charged,
 			book.budget, book.total, book.shedding, book.peak_open,
 			static_cast<unsigned long long>(book.reliefs),
-			static_cast<unsigned long long>(book.shed_accounts));
+			static_cast<unsigned long long>(book.shed_accounts),
+			static_cast<unsigned long long>(Space::closed_spaces()));
 		census::write_when(out, snapshot);
 		history_.write(out);
 		std::fputc('\n', out);
@@ -1916,6 +1922,10 @@ private:
 			owners_[id] = nullptr;
 			free_ids_.push_back(id);
 			generations_.erase(owner);
+			/* Letting go of its slots may have left a shared space
+			 * mostly freed arena; this cache still holds the space,
+			 * which is what makes it safe to close. */
+			renew_if_due(*space);
 			/* The last executor to let go of a shared space takes it
 			 * with it; what other executors still hold of it stays. */
 			space->reclaim(announcement_);
@@ -2025,6 +2035,23 @@ private:
 	{
 		static_cast<ProgramCache *>(owner)->shed_requested_.store(true,
 			std::memory_order_relaxed);
+	}
+
+	/* Close a shared address space that holds enough freed arena
+	 * (Space::renewal_due), for every executor attached to let go of. Only
+	 * one this cache holds, and so is attached to throughout: a cache closes
+	 * the space it stores into, and the ones it lets go of whole, since a
+	 * mostly dead space receives no stores. Called with no lock of the space
+	 * held. */
+	static void renew_if_due(Space &space) noexcept
+	{
+		if (!space.renewal_due())
+			return;
+		try {
+			SpaceRegistry::instance().close(&space);
+		} catch (...) {
+			/* Still due: the next body let go of closes it. */
+		}
 	}
 
 	void discard(Slot &slot, bool stale) noexcept
@@ -2203,10 +2230,10 @@ void dump_cache_census(const ProgramCache &programs) noexcept
 } // namespace
 
 struct Executor::Storage final {
-	/* Executors running one address space share its translations when
-	 * DARWIN_UML_GADGET_SHARED_BODIES=1 asks for it and a reclaimer can see
-	 * whether this one is running translated code (announcements are a
-	 * bounded resource). */
+	/* Executors running one address space share its translations unless
+	 * DARWIN_UML_GADGET_SHARED_BODIES=0 keeps them apart, and a reclaimer
+	 * can see whether this one is running translated code (announcements are
+	 * a bounded resource). */
 	Storage()
 		: announcement{shared_bodies_enabled() ? acquire_announcement() :
 				nullptr},

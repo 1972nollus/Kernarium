@@ -10999,10 +10999,10 @@ template <typename Test>
 
 int main(int argc, char **argv)
 {
-	/* The suite once more with every executor sharing its address space's
-	 * translations, as the executors of a multi-core guest do. */
-	if (argc > 1 && std::strcmp(argv[1], "shared") == 0)
-		setenv("DARWIN_UML_GADGET_SHARED_BODIES", "1", 1);
+	/* The suite once more with every executor keeping its translations to
+	 * itself, which the default no longer does. */
+	if (argc > 1 && std::strcmp(argv[1], "private") == 0)
+		setenv("DARWIN_UML_GADGET_SHARED_BODIES", "0", 1);
 	/* The address spaces the kernel destroyed alone, which a sanitizer tree
 	 * can afford to run; the rest of the suite is long. */
 	if (argc > 1 && std::strcmp(argv[1], "dead-generations") == 0)

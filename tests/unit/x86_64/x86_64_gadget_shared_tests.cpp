@@ -17,6 +17,11 @@
  *               is armed to a stale body.
  *   concurrent  executors on their own threads running one address space
  *               through rounds of code patched by an engine store.
+ *   bound       what bounds a shared space: one that holds mostly freed arena
+ *               is renewed for every executor attached, the process's byte
+ *               budget reaches every executor of a space it asks to shed, and
+ *               executors on their own threads keep running while spaces are
+ *               shed and renewed under them.
  */
 #include "cpu/gadget_cache_budget.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
@@ -94,7 +99,10 @@ struct Sequences final {
 
 class Memory final : public uml::memory::GuestAddressSpace {
 public:
-	Memory() : bytes_(16384), versions_(bytes_.size() / 4096U + 1U, 1) {}
+	explicit Memory(std::size_t size = 16384)
+		: bytes_(size), versions_(bytes_.size() / 4096U + 1U, 1)
+	{
+	}
 
 	void set_sequences(Sequences *sequences) noexcept
 	{
@@ -304,7 +312,8 @@ struct World final {
 	Sequences sequences;
 	std::vector<std::unique_ptr<gadgets::Executor>> executors;
 
-	explicit World(std::uint8_t value = 1)
+	explicit World(std::uint8_t value = 1, std::size_t size = 16384)
+		: memory{size}
 	{
 		memory.set_sequences(&sequences);
 		load_chain(memory, value);
@@ -708,6 +717,187 @@ void test_executors_on_threads_follow_patched_code()
 
 } // namespace
 
+/* ---- bound ---- */
+
+namespace budget = uml::cpu::gadget_cache;
+
+constexpr std::size_t block_stride = 32;
+
+/* Block `index` is at index * block_stride: EAX = index + 1, then a system
+ * call. Its translation is its own, so each is a body of the address space. */
+void load_blocks(Memory &memory, std::size_t count)
+{
+	for (std::size_t index = 0; index < count; ++index) {
+		const auto value = static_cast<std::uint32_t>(index + 1U);
+		memory.load(index * block_stride,
+			{0xb8, static_cast<std::uint8_t>(value),
+				static_cast<std::uint8_t>(value >> 8),
+				static_cast<std::uint8_t>(value >> 16),
+				static_cast<std::uint8_t>(value >> 24), 0x0f, 0x05});
+	}
+}
+
+[[nodiscard]] int alive(unsigned long) noexcept { return 1; }
+
+[[nodiscard]] int gone(unsigned long) noexcept { return 0; }
+
+/* How executor A, which translated a great many blocks, stops holding them. */
+enum class Departure { destroyed, retired };
+
+/* Executor A translates a great many blocks and B adopts one in sixty-four,
+ * so that every arena chunk keeps a body; A then stops holding what it
+ * translated, and the bodies only it held are freed. What is left is a space
+ * whose arena is mostly freed, which is closed for B to let go of. */
+void a_mostly_freed_space_is_renewed_for_every_executor(Departure how)
+{
+	constexpr std::size_t blocks = 12000;
+	World world{1, blocks * block_stride + 4096};
+	load_blocks(world.memory, blocks);
+	auto &a = world.add();
+	auto &b = world.add();
+	for (std::size_t index = 0; index < blocks; ++index)
+		(void)select(a, world.memory, index * block_stride);
+	for (std::size_t index = 0; index < blocks; index += 64)
+		require(select(b, world.memory, index * block_stride).cache_hit,
+			"an executor built what the address space held");
+	require(b.cache_diagnostics().translations == 0,
+		"the executors did not share one space");
+
+	switch (how) {
+	case Departure::destroyed:
+		world.executors.erase(world.executors.begin());
+		break;
+	case Departure::retired:
+		/* The MMU destroyed the address space as far as A knows. */
+		a.leave_gone_generations(1, &gone);
+		break;
+	}
+	/* B lets go of the space at its next run, if it was closed, and starts
+	 * again in a new one. */
+	const auto before = b.cache_diagnostics().translations;
+	b.leave_gone_generations(0, &alive);
+	require(b.resident_generations() == 0,
+		"a space that held mostly freed arena was not closed");
+	prepare(b, world.memory, world.sequences);
+	const auto again = select(b, world.memory, 0);
+	require(!again.cache_hit && b.cache_diagnostics().translations ==
+		before + 1,
+		"an executor that let go of a closed space did not start a new one");
+	const auto ran = run(b, world.memory, *again.program);
+	require(ran.event == EngineEvent::system_call && ran.rax == 1,
+		"a block translated into the renewed space ran wrongly");
+}
+
+void test_a_space_under_the_floor_is_left_alone()
+{
+	constexpr std::size_t blocks = 500;
+	World world{1, blocks * block_stride + 4096};
+	load_blocks(world.memory, blocks);
+	auto &a = world.add();
+	auto &b = world.add();
+	for (std::size_t index = 0; index < blocks; ++index)
+		(void)select(a, world.memory, index * block_stride);
+	for (std::size_t index = 0; index < blocks; index += 64)
+		(void)select(b, world.memory, index * block_stride);
+	world.executors.erase(world.executors.begin());
+	b.leave_gone_generations(0, &alive);
+	require(b.resident_generations() == 1,
+		"an executor let go of a space nobody closed");
+}
+
+/* The process's byte budget, past which the largest space is asked to shed,
+ * reaches every executor that holds it. */
+void test_the_budget_reaches_every_executor_of_a_space()
+{
+	constexpr std::size_t blocks = 3000;
+	constexpr std::size_t kib = 1024;
+	const auto base = budget::ledger_state();
+	World world{1, blocks * block_stride + 4096};
+	load_blocks(world.memory, blocks);
+	auto &a = world.add();
+	auto &b = world.add();
+	budget::set_budget(512 * kib);
+	std::size_t translated = 0;
+	for (std::size_t pass = 0; pass < 2; ++pass)
+		for (std::size_t index = 0; index < blocks; ++index) {
+			a.leave_gone_generations(0, &alive);
+			prepare(a, world.memory, world.sequences);
+			const auto selected =
+				select(a, world.memory, index * block_stride);
+			translated += selected.cache_hit ? 0U : 1U;
+			const auto ran = run(a, world.memory, *selected.program);
+			require(ran.event == EngineEvent::system_call &&
+				ran.rax == index + 1,
+				"a block ran wrongly under a budget");
+		}
+	const auto after = budget::ledger_state();
+	budget::set_budget(budget::fallback_budget);
+	require(after.reliefs > base.reliefs && translated > blocks,
+		"a space past the budget was not asked to shed");
+	/* B has not run since: it lets go of the space A's stores shed. */
+	b.leave_gone_generations(0, &alive);
+	require(b.resident_generations() == 0,
+		"an executor kept a space the budget asked to shed");
+	world.executors.clear();
+	require(budget::ledger_state().total == base.total,
+		"executors that went kept their charges");
+}
+
+/* Executors on their own threads select and run blocks of one address space
+ * while the budget has the space shed and the arena has it renewed. */
+void test_executors_on_threads_keep_running_while_spaces_are_replaced()
+{
+	constexpr std::size_t blocks = 2500;
+	constexpr std::size_t threads = 4;
+	constexpr std::size_t rounds = 600;
+	constexpr std::size_t kib = 1024;
+	const auto base = budget::ledger_state();
+	World world{1, blocks * block_stride + 4096};
+	load_blocks(world.memory, blocks);
+	for (std::size_t thread = 0; thread < threads; ++thread)
+		(void)world.add();
+	budget::set_budget(768 * kib);
+	std::atomic<unsigned> failures{0};
+	std::vector<std::thread> pool;
+	for (std::size_t thread = 0; thread < threads; ++thread)
+		pool.emplace_back([&, thread] {
+			auto &executor = *world.executors[thread];
+			std::size_t cursor = thread * (blocks / threads);
+			for (std::size_t round = 0; round < rounds; ++round) {
+				executor.leave_gone_generations(0, &alive);
+				prepare(executor, world.memory, world.sequences);
+				for (std::size_t step = 0; step < 16; ++step) {
+					const auto index = cursor++ % blocks;
+					const auto selected = executor.select_program(
+						world.memory, index * block_stride,
+						ExecutionMode::long64, 64);
+					if (selected.status !=
+						    gadgets::BuildStatus::built ||
+					    selected.program == nullptr) {
+						failures.fetch_add(1);
+						return;
+					}
+					const auto ran = run(executor, world.memory,
+						*selected.program);
+					if (ran.event != EngineEvent::system_call ||
+					    ran.rax != index + 1)
+						failures.fetch_add(1);
+				}
+			}
+		});
+	for (auto &thread : pool)
+		thread.join();
+	const auto after = budget::ledger_state();
+	budget::set_budget(budget::fallback_budget);
+	require(failures.load() == 0,
+		"a block ran wrongly while its address space was replaced");
+	require(after.reliefs > base.reliefs,
+		"the budget never asked the shared space to shed");
+	world.executors.clear();
+	require(budget::ledger_state().total == base.total,
+		"executors that went kept their charges");
+}
+
 int main(int argc, char **argv)
 {
 	share(true);
@@ -726,6 +916,14 @@ int main(int argc, char **argv)
 		test_no_link_is_armed_to_a_stale_body();
 	} else if (mode == "concurrent") {
 		test_executors_on_threads_follow_patched_code();
+	} else if (mode == "bound") {
+		a_mostly_freed_space_is_renewed_for_every_executor(
+			Departure::destroyed);
+		a_mostly_freed_space_is_renewed_for_every_executor(
+			Departure::retired);
+		test_a_space_under_the_floor_is_left_alone();
+		test_the_budget_reaches_every_executor_of_a_space();
+		test_executors_on_threads_keep_running_while_spaces_are_replaced();
 	} else {
 		std::fprintf(stderr, "x86 gadget shared: unknown mode %s\n", argv[1]);
 		return 2;

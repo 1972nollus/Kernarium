@@ -1129,8 +1129,8 @@ its runtime memory domain. Cache and publication contracts are described in
 The gadget cache may retain several address spaces. Cache slots and links are
 tagged by address space, retirement drops one address space's owned state, and
 same-generation stale programs are reused only after exact page-bounded word
-validation. On arm64, an address space's bodies and link state are shared among
-every executor running it, while each executor keeps its own slots and
+validation. Both gadget engines share an address space's bodies and link state
+among every executor running it, while each executor keeps its own slots and
 retirement order; `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private, as
 [`../darwin/README.md`](../darwin/README.md) records. An address space a
 single executor keeps to itself sweeps its link records and indirect sites once

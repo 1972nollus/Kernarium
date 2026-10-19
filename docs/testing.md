@@ -1095,8 +1095,15 @@ and no link is armed to a stale body; dropping the stale check at arming, the
 store count at publication, or the reset at the store each fails it.
 `x86-64-gadget-shared-concurrent` runs executors on threads through rounds of
 code an engine store patches, and carries the `tsan` label.
-`x86-64-gadget-bootstrap-shared` runs the whole bootstrap suite with the
-executors sharing.
+`x86-64-gadget-shared-bound` closes a shared space that executors let go of
+down to the bodies of one, whether by destroying the executor or by the MMU
+destroying the address space, and leaves a smaller one alone; shows the
+byte budget reaching the second executor of a space it asks to shed; and runs
+four executors on threads while the budget has the space shed and replaced
+under them. It carries the `tsan` label.
+`x86-64-gadget-bootstrap` runs the whole bootstrap suite with the executors
+sharing, as they do by default, and `x86-64-gadget-bootstrap-private` with each
+keeping its own.
 `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel

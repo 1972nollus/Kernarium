@@ -137,6 +137,10 @@ struct IndirectKey final {
 	}
 };
 
+/* A shared address space whose arenas hold at least this many bytes that no
+ * body needs, and more of them than its bodies hold, is renewed. */
+inline constexpr std::size_t renewal_floor_bytes = std::size_t{2} << 20;
+
 /* What makes two executors' translations interchangeable: the address space,
  * the exceptions the guest enabled (a block is built so that none of its
  * instructions needs a check the runtime makes itself) and the build options.
@@ -183,6 +187,14 @@ struct PagePins final {
  * see one raises the gate and resets the links of the bodies the change
  * covers, and an activation validated before it is refused.
  *
+ * A shared space is never swept. It counts what its arenas hold and what its
+ * bodies use of it; once the arenas hold at least as much freed space as bodies
+ * (and at least renewal_floor_bytes) the space is closed: it leaves the
+ * registry, so the next executor to want its address space gets a new one,
+ * and every executor attached lets go of it before it next enters translated
+ * code. The old space dies with its last executor, taking its arenas, link
+ * records and freed bodies with it.
+ *
  * An address space that one cache keeps to itself (a key with an owner) is
  * swept by that cache, and nothing else is shared; every space charges its
  * arenas, record tables and target tables to an account in the process's
@@ -226,13 +238,14 @@ public:
 		return attached_.detach(announcement);
 	}
 	/* Close the space; true for the caller that did. */
-	[[nodiscard]] bool close() noexcept
+	[[nodiscard]] bool close() noexcept { return ledger_.close(); }
+	[[nodiscard]] bool closed() const noexcept { return ledger_.closed(); }
+	/* Whether the arena holds enough freed space to be replaced, and the
+	 * space has not been (see renewal_floor_bytes). Only a shared space
+	 * is ever renewed: a private one is swept. */
+	[[nodiscard]] bool renewal_due() const noexcept
 	{
-		return !closed_.exchange(true, std::memory_order_acq_rel);
-	}
-	[[nodiscard]] bool closed() const noexcept
-	{
-		return closed_.load(std::memory_order_acquire);
+		return ledger_.renewal_due();
 	}
 	/* Whether the gadget-cache budget asked this space to shed. */
 	[[nodiscard]] bool shedding() const noexcept
@@ -242,7 +255,16 @@ public:
 	/* Ask every executor attached to let go of this address space before
 	 * it next enters translated code. */
 	void request_renewal();
-	static void note_closed() noexcept {}
+	/* A shared space was closed, for renewal or because the budget asked it
+	 * to shed (the registry calls this once for each); how many so far. */
+	static void note_closed() noexcept
+	{
+		closes().fetch_add(1, std::memory_order_relaxed);
+	}
+	[[nodiscard]] static std::uint64_t closed_spaces() noexcept
+	{
+		return closes().load(std::memory_order_relaxed);
+	}
 
 	[[nodiscard]] gadget_cache::Account &account() noexcept
 	{
@@ -481,6 +503,13 @@ private:
 		std::uint8_t instruction_limit, const ProgramCodeStamps &stamps);
 	void free_bodies(std::vector<Body *> &bodies) noexcept;
 	void free_body(Body *body) noexcept;
+	/* What a body takes from the arenas, with its source. */
+	[[nodiscard]] static std::size_t body_block_bytes(
+		const Body &body) noexcept;
+	/* The arenas' bytes changed hands: record them for the renewal ledger of
+	 * a shared space, and mark the space when they grew and are mostly
+	 * freed. The caller holds arena_mutex_. */
+	bool note_arena() noexcept;
 	[[nodiscard]] TargetLinkTable *target_table(ExecutionMode mode) noexcept;
 	void train_target(ExecutionMode mode, std::uint64_t rip,
 		const BlockLink *target) noexcept;
@@ -498,6 +527,11 @@ private:
 	[[nodiscard]] std::size_t records() const noexcept;
 
 	static void shed(void *owner) noexcept;
+	[[nodiscard]] static std::atomic<std::uint64_t> &closes() noexcept
+	{
+		static std::atomic<std::uint64_t> count;
+		return count;
+	}
 
 	SpaceKey key_;
 	std::array<Shard, shard_count> shards_;
@@ -521,7 +555,8 @@ private:
 	gadget_cache::BodyArena streams_{std::pmr::new_delete_resource()};
 	gadget_cache::BodyArena sources_{std::pmr::new_delete_resource()};
 	gadget_cache::AttachedExecutors attached_;
-	std::atomic<bool> closed_{};
+	/* What decides a shared space is renewed, and that it was. */
+	gadget_cache::RenewalLedger ledger_;
 	/* For a private address space: the records and sites its last sweep
 	 * kept, and the bodies that have left it since (sweep_due()). */
 	std::size_t kept_{};

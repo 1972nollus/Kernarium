@@ -242,6 +242,7 @@ Body *Space::make_body(const Program &program,
 		Body::allocation_bytes(program.native_stream().size());
 	std::byte *storage = nullptr;
 	std::byte *source = nullptr;
+	bool grown = false;
 	{
 		const std::lock_guard arena{arena_mutex_};
 		storage = static_cast<std::byte *>(streams_.allocate(bytes));
@@ -251,9 +252,13 @@ Body *Space::make_body(const Program &program,
 					sources_.allocate(program.byte_count()));
 		} catch (...) {
 			streams_.deallocate(storage, bytes);
+			(void)note_arena();
 			throw;
 		}
+		grown = note_arena();
 	}
+	if (grown)
+		ledger_.note_idle(renewal_floor_bytes);
 	auto *body = new (storage) Body{program.view_in(
 		reinterpret_cast<std::uintptr_t *>(storage + sizeof(Body)),
 		source)};
@@ -277,6 +282,7 @@ void Space::free_bodies(std::vector<Body *> &bodies) noexcept
 			sources_.deallocate(source, source_bytes);
 		streams_.deallocate(body, bytes);
 	}
+	(void)note_arena();
 	bodies.clear();
 }
 
@@ -290,6 +296,22 @@ void Space::free_body(Body *body) noexcept
 	if (source_bytes != 0)
 		sources_.deallocate(source, source_bytes);
 	streams_.deallocate(body, bytes);
+	(void)note_arena();
+}
+
+std::size_t Space::body_block_bytes(const Body &body) noexcept
+{
+	using gadget_cache::BodyArena;
+	return BodyArena::block_bytes(body.allocation_bytes()) +
+		(body.program.byte_count() != 0 ?
+			BodyArena::block_bytes(body.program.byte_count()) : 0U);
+}
+
+bool Space::note_arena() noexcept
+{
+	if (!shared())
+		return false;
+	return ledger_.note_arena(streams_.bytes() + sources_.bytes());
 }
 
 void Space::index_body(Body &body, const ProgramPages &pages,
@@ -392,6 +414,8 @@ Body *Space::publish(const Program &program, std::uint8_t instruction_limit,
 				adopted = held;
 			} else {
 				body->holders.store(1, std::memory_order_relaxed);
+				if (shared())
+					ledger_.note_held(body_block_bytes(*body));
 				record.indexed = body;
 				index_body(*body, pages, gained);
 			}
@@ -448,6 +472,9 @@ void Space::release(Body *body, bool stale) noexcept
 		 * limbo. */
 		if (last && record != nullptr && record->names(*body))
 			record->reset();
+		if (last && shared())
+			ledger_.note_released(body_block_bytes(*body),
+				renewal_floor_bytes);
 	}
 	if (!last)
 		return;

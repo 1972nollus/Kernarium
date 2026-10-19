@@ -215,12 +215,12 @@ and 8 GiB the largest, x86 multi-core Geekbench, peaked at a seventh of its
 peaked at 47% of 358 MiB (G282). A census build reports the budget, the bytes
 charged and the reliefs on every `E` record.
 
-x86 gadget executors share an address space's translations the same way when
-`DARWIN_UML_GADGET_SHARED_BODIES=1` asks for it, and otherwise keep them
-private. A link's pair and the guest bounds in front of every stream let one
-paired store retarget a link another executor follows, and a store over a
-block's source marks it stale for every executor. They let go of the address
-spaces of destroyed generations the same way, at the start of each run
+x86 gadget executors share an address space's translations the same way, and
+`DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private. A link's pair and the
+guest bounds in front of every stream let one paired store retarget a link
+another executor follows, and a store over a block's source marks it stale for
+every executor. They let go of the address spaces of destroyed generations the
+same way, at the start of each run
 ([`cpu/x86_64/gadgets/README.md`](cpu/x86_64/gadgets/README.md)).
 
 In both arm64 engines, code another vCPU changed and synchronized takes effect
