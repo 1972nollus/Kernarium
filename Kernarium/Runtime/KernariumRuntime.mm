@@ -52,6 +52,7 @@
 #include <string>
 #include <string_view>
 #include <mach/mach.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <thread>
@@ -234,7 +235,8 @@ public:
  * holds the application to, while the guest runs: one line per interval and
  * the peak when the guest stops. Each line also gives the headroom the kernel
  * leaves below the application's memory limit, so the footprint plus the
- * headroom is the limit and the least headroom is the closest approach. */
+ * headroom is the limit and the least headroom is the closest approach, and
+ * the process's CPU time so far. */
 class FootprintReporter final {
 public:
     static long intervalMilliseconds() noexcept
@@ -280,7 +282,23 @@ private:
         /* The share of the footprint charged as graphics memory: Metal
          * resources and the driver's command storage alike. */
         std::uint64_t graphics;
+        /* The process's user and system CPU time so far, every thread that
+         * ever ran included: the difference between two lines over their
+         * interval is the process's average core use. */
+        double cpuSeconds;
     };
+
+    static double processCpuSeconds() noexcept
+    {
+        rusage usage {};
+        if (getrusage(RUSAGE_SELF, &usage) != 0)
+            return 0.0;
+        const auto seconds = [](const timeval& time) {
+            return static_cast<double>(time.tv_sec) +
+                static_cast<double>(time.tv_usec) / 1e6;
+        };
+        return seconds(usage.ru_utime) + seconds(usage.ru_stime);
+    }
 
     static Sample sample() noexcept
     {
@@ -288,11 +306,12 @@ private:
         mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
         if (task_info(mach_task_self(), TASK_VM_INFO,
                 reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
-            return {0, UINT64_MAX, 0};
+            return {0, UINT64_MAX, 0, processCpuSeconds()};
         const std::int64_t graphics = info.ledger_tag_graphics_footprint +
             info.ledger_tag_graphics_footprint_compressed;
         return {info.phys_footprint, info.limit_bytes_remaining,
-            static_cast<std::uint64_t>(std::max<std::int64_t>(graphics, 0))};
+            static_cast<std::uint64_t>(std::max<std::int64_t>(graphics, 0)),
+            processCpuSeconds()};
     }
 
     void run()
@@ -307,9 +326,10 @@ private:
             const auto elapsed = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - start).count();
             std::printf("Kernarium: footprint %.1f s %.1f MiB graphics %.1f MiB "
-                "remaining %.1f MiB\n",
+                "remaining %.1f MiB cpu %.2f s\n",
                 elapsed, current.footprint / 1048576.0,
-                current.graphics / 1048576.0, current.remaining / 1048576.0);
+                current.graphics / 1048576.0, current.remaining / 1048576.0,
+                current.cpuSeconds);
         }
     }
 
