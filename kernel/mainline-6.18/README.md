@@ -670,8 +670,11 @@ The product carries none of ACK's own features, and does without them:
 - dm-default-key (metadata encryption), which the unencrypted userdata does not
   use.
 - Per-UID I/O statistics (`/proc/uid_io/stats`), which storaged does without.
-- Binder real-time priority inheritance, `/sys/kernel/wakeup_reasons`, and
-  ACK's 20 s expedited-RCU window at boot, which mainline ends at init.
+- Binder real-time priority inheritance and `/sys/kernel/wakeup_reasons`.
+- ACK's 20 s expedited-RCU window at boot, which mainline ends when init
+  starts. The product's boot command line and init script keep grace periods
+  expedited until boot completes instead (see the
+  [LineageOS README](../../android/lineage-24/README.md#android-product)).
 
 The iOS runtime framework for this product keeps its earlier name,
 `KRuntime_ACK_6_18_4K`, though it now embeds this line's Android artifact.
