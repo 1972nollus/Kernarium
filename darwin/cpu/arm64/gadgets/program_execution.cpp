@@ -20,6 +20,30 @@ void resolve_entered_fault(const Program &program, CpuState &cpu,
 		resolve_fault_position(program, cpu.pc);
 }
 
+/* The executor's C++ ran since the program last left, and its locks and
+ * atomics may have cleared the host's exclusive monitor, which is the
+ * guest's. A live record the load-exclusive left is marked, so that a
+ * store-exclusive whose host store then fails completes from the record
+ * (engine/exclusive.inc): only an exception may cost the guest its monitor,
+ * and entering a program again is none. The mark lives only while the
+ * program runs: unmark_exclusive_reentry() takes off a mark this call set
+ * when the program returns, so the record a run leaves is the one its
+ * load-exclusive wrote, or the one it was given. */
+[[nodiscard]] bool mark_exclusive_reentry(CpuState &cpu) noexcept
+{
+	if (cpu.exclusive_key == 0U ||
+	    (cpu.exclusive_key & exclusive_key_reentered) != 0U)
+		return false;
+	cpu.exclusive_key |= exclusive_key_reentered;
+	return true;
+}
+
+void unmark_exclusive_reentry(CpuState &cpu, bool marked) noexcept
+{
+	if (marked)
+		cpu.exclusive_key &= ~exclusive_key_reentered;
+}
+
 } // namespace
 
 Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
@@ -55,6 +79,7 @@ Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 		return ::uml::cpu::EngineEvent::fatal;
 	if (program.accesses_fp_state())
 		cpu.access_fp_state();
+	const bool marked = mark_exclusive_reentry(cpu);
 	const auto result =
 		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb,
 			program.instruction_count()
@@ -62,6 +87,7 @@ Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 			, diagnostics::execution_counters()
 #endif
 			);
+	unmark_exclusive_reentry(cpu, marked);
 	executed = result.executed;
 	const auto event = static_cast<::uml::cpu::EngineEvent>(result.event);
 	resolve_entered_fault(program, cpu, event);
@@ -76,6 +102,7 @@ Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 	if (program.words().empty())
 		return ::uml::cpu::EngineEvent::fatal;
 	cpu.sme_host_mode = zt0 ? UML_GADGET_SME_HOST_ZT0 : 0U;
+	const bool marked = mark_exclusive_reentry(cpu);
 	const auto result =
 		uml_arm64_gadget_enter_streaming(program.words().data(), &cpu,
 			&tlb, program.instruction_count()
@@ -84,6 +111,7 @@ Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 #endif
 			);
 	cpu.sme_host_mode = 0;
+	unmark_exclusive_reentry(cpu, marked);
 	executed = result.executed;
 	const auto event = static_cast<::uml::cpu::EngineEvent>(result.event);
 	resolve_entered_fault(program, cpu, event);
