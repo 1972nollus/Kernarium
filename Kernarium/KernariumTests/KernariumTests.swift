@@ -422,6 +422,20 @@ struct KernariumTests {
 
     @Test
     @MainActor
+    func theApplicationHasOneSceneBecauseItRunsOneGuest() throws {
+        // The runtime boots one guest per process, and closing a window
+        // stops it. With a second window, closing that one would end the
+        // guest the first still shows, so iPadOS must not offer one.
+        let manifest = try #require(
+            Bundle.main.object(
+                forInfoDictionaryKey: "UIApplicationSceneManifest"
+            ) as? [String: Any]
+        )
+        #expect(manifest["UIApplicationSupportsMultipleScenes"] as? Bool == false)
+    }
+
+    @Test
+    @MainActor
     func aTransitionHoldsTheGuestModeUntilItCompletes() {
         var hold = GuestResizeHold()
 

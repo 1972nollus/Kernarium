@@ -143,6 +143,9 @@ Metal shader cache policy is in
 The guest view lies within the content the system leaves clear of the window
 controls: below them in a window, and unchanged in Full Screen Apps.
 
+Kernarium runs one guest per process and so has one window: its scene
+manifest does not support multiple scenes, and iPadOS offers no second window.
+
 ## Lifecycle
 
 Kernarium asks the guest to write back when the application loses focus,
