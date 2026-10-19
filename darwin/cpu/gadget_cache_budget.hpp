@@ -30,8 +30,12 @@ namespace uml::cpu::gadget_cache {
  * engine (Notify), and every executor holding that address space lets go of it
  * at its next entry into translated code, as it lets go of a renewed space;
  * the storage goes with the last of them, and the address space starts afresh
- * in a new account when it runs again. Until then a shedding account's bytes
- * are counted apart, so the open accounts stay within the budget and a closed
+ * in a new account when it runs again. Until then a shedding account's bytes,
+ * whatever it charges or refunds after it was asked, are counted apart from
+ * the open ones: every charge is attributed to one figure or the other exactly
+ * once. Every store past the budget relieves it in turn, counting the open
+ * accounts again under the ledger's lock, so the open accounts stay within the
+ * budget but for the stores in flight, one per storing vCPU, and a closed
  * space that an idle vCPU still holds -- part of what was open when that vCPU
  * went idle -- leaves the whole at most twice the budget.
  *
@@ -51,9 +55,10 @@ struct Ledger final {
 	std::mutex mutex;
 	Account *first{};
 	std::atomic<std::size_t> budget;
-	/* Every account's bytes, and the share of them in accounts asked to shed
-	 * as the ledger last counted it. */
-	std::atomic<std::size_t> total{};
+	/* The bytes of the open accounts, and of those asked to shed. Each
+	 * charge lands in exactly one of them (Account::charge()), so they are
+	 * exact but for the charges in flight. */
+	std::atomic<std::size_t> open{};
 	std::atomic<std::size_t> shedding{};
 	std::atomic<std::uint64_t> reliefs{};
 	std::atomic<std::uint64_t> shed_accounts{};
@@ -75,9 +80,12 @@ inline constexpr std::size_t limit_divisor = 8;
 /* The share of guest memory a budget takes, as a divisor. */
 inline constexpr std::size_t guest_memory_divisor = 4;
 
+/* Never destroyed, under the exit contract in docs/architecture.md: carriers may
+ * still store, and lock the ledger to relieve it, while exit() runs. */
 [[nodiscard]] inline detail::Ledger &ledger() noexcept
 {
-	static detail::Ledger instance{.budget = fallback_budget};
+	[[clang::no_destroy]] static detail::Ledger instance{
+		.budget = fallback_budget};
 	return instance;
 }
 
@@ -114,15 +122,13 @@ inline void set_budget(std::size_t bytes) noexcept
 	return ledger().budget.load(std::memory_order_relaxed);
 }
 
-/* Whether the open accounts hold more than the budget, as last counted:
- * what every store asks, two loads. */
+/* Whether the open accounts hold more than the budget: what every store asks,
+ * two loads. */
 [[nodiscard]] inline bool over_budget() noexcept
 {
 	auto &book = ledger();
-	const auto total = book.total.load(std::memory_order_relaxed);
-	const auto shedding = book.shedding.load(std::memory_order_relaxed);
-	return total > shedding &&
-		total - shedding > book.budget.load(std::memory_order_relaxed);
+	return book.open.load(std::memory_order_relaxed) >
+		book.budget.load(std::memory_order_relaxed);
 }
 
 /* One address space's storage, charged to the process. The engine charges it
@@ -158,74 +164,101 @@ public:
 			book.first = next_;
 		if (next_ != nullptr)
 			next_->previous_ = previous_;
-		book.total.fetch_sub(bytes_.load(std::memory_order_relaxed),
+		const auto state = state_.load(std::memory_order_relaxed);
+		figure(state).fetch_sub(state & bytes_mask,
 			std::memory_order_relaxed);
-		if (shedding_.load(std::memory_order_relaxed))
-			book.shedding.fetch_sub(counted_,
-				std::memory_order_relaxed);
 	}
 
 	Account(const Account &) = delete;
 	Account &operator=(const Account &) = delete;
 
-	/* The address space's storage grew by `delta` bytes, or shrank. */
+	/* The address space's storage grew by `delta` bytes, or shrank. The
+	 * change counts in the open figure or the shedding one as the account
+	 * stood when it was made, which one atomic step decides: a change made
+	 * before the account was asked to shed moves with it when it is asked,
+	 * and one made after counts as shedding. An account never holds less
+	 * than nothing, so a refund never reaches the flag. */
 	void charge(std::ptrdiff_t delta) noexcept
 	{
 		if (delta == 0)
 			return;
-		const auto bytes = static_cast<std::size_t>(delta);
-		bytes_.fetch_add(bytes, std::memory_order_relaxed);
-		ledger().total.fetch_add(bytes, std::memory_order_relaxed);
+		const auto bytes = static_cast<std::uint64_t>(delta);
+		const auto before = state_.fetch_add(bytes,
+			std::memory_order_relaxed);
+		figure(before).fetch_add(static_cast<std::size_t>(bytes),
+			std::memory_order_relaxed);
 	}
 
 	[[nodiscard]] std::size_t bytes() const noexcept
 	{
-		return bytes_.load(std::memory_order_relaxed);
+		return static_cast<std::size_t>(
+			state_.load(std::memory_order_relaxed) & bytes_mask);
 	}
 
 	/* Whether the address space was asked to shed: its executors let go
 	 * of it at their next entry, and none takes it up again. */
 	[[nodiscard]] bool shedding() const noexcept
 	{
-		return shedding_.load(std::memory_order_relaxed);
+		return (state_.load(std::memory_order_relaxed) &
+			shedding_flag) != 0;
 	}
 
 private:
 	friend void relieve() noexcept;
 	friend LedgerState ledger_state();
 
+	static constexpr std::uint64_t shedding_flag = std::uint64_t{1} << 63;
+	static constexpr std::uint64_t bytes_mask = shedding_flag - 1;
+
+	/* The ledger's figure a change to an account in `state` counts in. */
+	[[nodiscard]] static std::atomic<std::size_t> &figure(
+		std::uint64_t state) noexcept
+	{
+		auto &book = ledger();
+		return (state & shedding_flag) != 0 ? book.shedding : book.open;
+	}
+
+	/* Ask the account to shed, under the ledger's lock, and move what it
+	 * held when asked from the open figure to the shedding one; return
+	 * that. A charge made after counts as shedding by itself. */
+	std::size_t start_shedding() noexcept
+	{
+		const auto before = state_.fetch_or(shedding_flag,
+			std::memory_order_relaxed);
+		const auto bytes = static_cast<std::size_t>(before & bytes_mask);
+		auto &book = ledger();
+		book.open.fetch_sub(bytes, std::memory_order_relaxed);
+		book.shedding.fetch_add(bytes, std::memory_order_relaxed);
+		return bytes;
+	}
+
 	Notify notify_;
 	void *owner_;
-	std::atomic<std::size_t> bytes_{};
-	std::atomic<bool> shedding_{};
-	/* What the ledger counts in its shedding total for this account; read
-	 * and written under its lock. */
-	std::size_t counted_{};
+	/* What the account holds, with shedding_flag once it was asked to. */
+	std::atomic<std::uint64_t> state_{};
 	Account *previous_{};
 	Account *next_{};
 };
 
 /* Ask the largest open accounts to shed until the open ones hold at most seven
- * eighths of the budget, when they hold more than all of it. A caller that
- * finds another relieving goes on: one is enough. */
+ * eighths of the budget, when they hold more than all of it. Every caller
+ * takes its turn, however the lock is held: one that went on storing while
+ * another held it, for an account opening or going, a census or a relief, could
+ * take the open accounts past the budget by as much as it stored meanwhile. A
+ * caller that waited counts again and finds the budget kept, or relieves it
+ * once more. No one holding the ledger's lock waits for anything but the locks
+ * taken after it, so the wait is short, and it comes only past the budget. */
 inline void relieve() noexcept
 {
 	auto &book = ledger();
-	std::unique_lock guard{book.mutex, std::try_to_lock};
-	if (!guard.owns_lock())
-		return;
-	/* A shedding account may have grown or shrunk since it was counted;
-	 * count again, so the figure every store reads is exact here. */
-	std::size_t shedding = 0;
+	const std::lock_guard guard{book.mutex};
+	/* The open accounts, counted afresh: what they hold, not the figure
+	 * a charge in flight may not have reached yet. */
+	std::size_t open = 0;
 	for (auto *account = book.first; account != nullptr;
 	     account = account->next_)
-		if (account->shedding_.load(std::memory_order_relaxed)) {
-			account->counted_ = account->bytes();
-			shedding += account->counted_;
-		}
-	book.shedding.store(shedding, std::memory_order_relaxed);
-	const auto total = book.total.load(std::memory_order_relaxed);
-	auto open = total > shedding ? total - shedding : 0;
+		if (!account->shedding())
+			open += account->bytes();
 	const auto budget = book.budget.load(std::memory_order_relaxed);
 	if (open > book.peak_open.load(std::memory_order_relaxed))
 		book.peak_open.store(open, std::memory_order_relaxed);
@@ -237,17 +270,14 @@ inline void relieve() noexcept
 		Account *largest = nullptr;
 		for (auto *account = book.first; account != nullptr;
 		     account = account->next_)
-			if (!account->shedding_.load(std::memory_order_relaxed) &&
+			if (!account->shedding() &&
 			    (largest == nullptr ||
 			     account->bytes() > largest->bytes()))
 				largest = account;
 		if (largest == nullptr || largest->bytes() == 0)
 			break;
-		largest->counted_ = largest->bytes();
-		largest->shedding_.store(true, std::memory_order_relaxed);
-		shedding += largest->counted_;
-		open = open > largest->counted_ ? open - largest->counted_ : 0;
-		book.shedding.store(shedding, std::memory_order_relaxed);
+		const auto shed = largest->start_shedding();
+		open = open > shed ? open - shed : 0;
 		book.shed_accounts.fetch_add(1, std::memory_order_relaxed);
 		relieved = true;
 		largest->notify_(largest->owner_);

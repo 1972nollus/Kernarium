@@ -8,6 +8,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -83,9 +84,20 @@ struct Holder final {
 	cache::Account account{notify, &owner};
 };
 
+/* Whether the open and shedding figures every store reads are what the
+ * accounts hold, counted one by one. */
+[[nodiscard]] bool figures_agree()
+{
+	const auto state = cache::ledger_state();
+	const auto &book = cache::ledger();
+	return book.open.load() == state.total - state.shedding &&
+		book.shedding.load() == state.shedding;
+}
+
 /* Accounts add up, the largest are asked to shed until the open ones are
  * down to seven eighths of the budget, a shedding account's bytes count
- * apart however it changes, and an account that goes refunds what it held. */
+ * apart however it changes, and an account that goes refunds what it held.
+ * The figures every store reads stay exact throughout. */
 void relief_sheds_the_largest()
 {
 	cache::set_budget(64 * kib);
@@ -113,12 +125,12 @@ void relief_sheds_the_largest()
 	require(state.peak_open >= 90 * kib);
 
 	/* A shedding address space may go on growing until its executors let
-	 * go of it; the open ones are what the budget bounds. The figure every
-	 * store reads counts it as it was when it was asked, so the next store
-	 * finds the budget passed, and relieve() counts again and asks no
-	 * one. */
+	 * go of it; it counts apart, and the open ones are what the budget
+	 * bounds. */
 	large->account.charge(40 * kib);
-	require(cache::over_budget());
+	require(!cache::over_budget());
+	require(cache::ledger_state().shedding == 90 * kib);
+	require(figures_agree());
 	cache::relieve();
 	require(cache::ledger_state().reliefs == base.reliefs + 1);
 	require(large->owner.notified == 1 && !cache::over_budget());
@@ -133,7 +145,7 @@ void relief_sheds_the_largest()
 	require(middle->owner.notified == 1 && small->owner.notified == 0);
 	state = cache::ledger_state();
 	require(state.total == 155 * kib && state.shedding == 150 * kib);
-	require(!cache::over_budget());
+	require(!cache::over_budget() && figures_agree());
 
 	/* Address spaces that go refund what they held. */
 	large.reset();
@@ -144,6 +156,63 @@ void relief_sheds_the_largest()
 	require(!cache::over_budget());
 	small.reset();
 	require(cache::ledger_state().total == 0);
+	cache::set_budget(cache::fallback_budget);
+}
+
+/* A shed address space may give back part of what it held before its last
+ * executor lets go of it, as each frees what only it held. That leaves the
+ * open accounts as they were, so a store finds the budget passed as soon as
+ * they pass it, not once they have also grown by what the shed one gave back.
+ */
+void a_shed_account_that_shrinks_leaves_the_open_ones_exact()
+{
+	cache::set_budget(64 * kib);
+	const auto base = cache::ledger_state();
+	auto old_space = std::make_unique<Holder>();
+	auto new_space = std::make_unique<Holder>();
+	old_space->account.charge(60 * kib);
+	new_space->account.charge(10 * kib);
+	require(cache::over_budget());
+	cache::relieve();
+	require(old_space->account.shedding() &&
+		!new_space->account.shedding());
+	old_space->account.charge(-50 * static_cast<std::ptrdiff_t>(kib));
+	new_space->account.charge(50 * kib);
+	require(!cache::over_budget() && figures_agree());
+	new_space->account.charge(5 * kib);
+	require(cache::over_budget());
+	cache::relieve();
+	require(new_space->account.shedding() && figures_agree());
+	require(cache::ledger_state().reliefs == base.reliefs + 2);
+	old_space.reset();
+	new_space.reset();
+	require(cache::ledger_state().total == 0 && figures_agree());
+	cache::set_budget(cache::fallback_budget);
+}
+
+/* A store past the budget relieves it even while another thread holds the
+ * ledger's lock -- an address space opening or going, a census, another
+ * relief -- by waiting its turn. One that gave up would go on storing past the
+ * budget for as long as the holder kept the lock, which a preempted holder
+ * keeps for a scheduling quantum. */
+void relief_waits_for_the_lock()
+{
+	cache::set_budget(64 * kib);
+	Holder space;
+	std::atomic<bool> held{};
+	std::thread holder{[&held] {
+		const std::lock_guard guard{cache::ledger().mutex};
+		held.store(true);
+		std::this_thread::sleep_for(std::chrono::milliseconds{200});
+	}};
+	while (!held.load())
+		std::this_thread::yield();
+	space.account.charge(65 * kib);
+	require(cache::over_budget());
+	cache::relieve();
+	require(space.account.shedding() && space.owner.notified == 1);
+	holder.join();
+	require(!cache::over_budget() && figures_agree());
 	cache::set_budget(cache::fallback_budget);
 }
 
@@ -204,6 +273,9 @@ void concurrent_charges_add_up()
 	const auto state = cache::ledger_state();
 	require(state.total == 0 && state.shedding == 0 &&
 		state.accounts == 0);
+	/* Every charge landed in one figure or the other exactly once. */
+	require(cache::ledger().open.load() == 0 &&
+		cache::ledger().shedding.load() == 0);
 	require(notified.load() != 0);
 	cache::set_budget(cache::fallback_budget);
 }
@@ -216,6 +288,8 @@ int main()
 	derived_budgets();
 	measured_workloads_stay_well_within_their_budget();
 	relief_sheds_the_largest();
+	a_shed_account_that_shrinks_leaves_the_open_ones_exact();
+	relief_waits_for_the_lock();
 	within_the_budget_nothing_sheds();
 	concurrent_charges_add_up();
 	return 0;
