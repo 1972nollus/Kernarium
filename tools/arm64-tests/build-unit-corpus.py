@@ -33,6 +33,7 @@ BINDINGS = UNIT / "a64_instruction_evidence_bindings.tsv"
 FEATURES = REPOSITORY / "darwin" / "platform" / "host_capabilities.hpp"
 ABSENT_FEATURES_SCRIPT = "tools/arm64-tests/absent-feature-corpus.py"
 INVALID_ENCODING_SCRIPT = "tools/arm64-tests/invalid-encoding-corpus.py"
+RETIRE_16K_SCRIPT = "tools/arm64-tests/retire-16k-corpus.py"
 
 PACK_MAGIC = b"UMLA64C\0"
 PACK_VERSION = 2
@@ -42,8 +43,12 @@ PACK_VERSION = 2
 READ_VERSIONS = (1, 2)
 EXPORT_MAGIC = b"A64CEXP1"
 CODE_BASE = 0x4F00_0000
+# A producer export holds both page profiles; the pack holds the 4 KiB one.
+# Bit 0 of a record's profiles byte is the retired 16 KiB profile, which
+# retire-16k-corpus.py removes before a dump is packed.
 PROFILES = {16384: 1, 4096: 2}
 PROFILE_NAMES = {1: "16k", 2: "4k", 3: "16k+4k"}
+RETIRED_PROFILE_BIT = 1
 DEFAULT_OPTIONS = 1
 OPTION_NAMES = (
     "enable_pointer_authentication",
@@ -957,6 +962,9 @@ def encode_pack(corpus: Corpus, tokens: tuple[str, ...]) -> bytes:
     native_sets: dict[tuple[str, ...], int] = {}
     validators: dict[str, int] = {}
     for record in corpus.records:
+        if record.profiles & RETIRED_PROFILE_BIT:
+            fail(f"{record.name}: holds the retired 16 KiB profile; rewrite "
+                 "the dump with retire-16k-corpus.py")
         for _program, case in record.cases:
             retired = retired_use(record, case)
             if retired is not None:
@@ -1538,6 +1546,8 @@ def metadata(corpus: Corpus, pack: bytes) -> dict[str, bytes]:
            if "floating_trap_native" in corpus.meta else {}),
         **({"sm0_vl": corpus.meta["sm0_vl"]}
            if "sm0_vl" in corpus.meta else {}),
+        **({"retired_16k": corpus.meta["retired_16k"]}
+           if "retired_16k" in corpus.meta else {}),
         **({"invalid_encoding": corpus.meta["invalid_encoding"]}
            if "invalid_encoding" in corpus.meta else {}),
         "sample_limit": corpus.meta["sample_limit"],
@@ -1684,6 +1694,17 @@ def check(options: argparse.Namespace) -> int:
         if sha256((REPOSITORY / table["file"]).read_bytes()) != table["sha256"]:
             stale.append("SVE/SME encoding table (changed since the native "
                          "records)")
+    # The step before the last retires the 16 KiB page profile.
+    step = corpus.meta.get("retired_16k")
+    if step is None or step["script"] != RETIRE_16K_SCRIPT or \
+            sha256((REPOSITORY / step["script"]).read_bytes()) != \
+            step["sha256"]:
+        stale.append(RETIRE_16K_SCRIPT + " (not the retirement of the pack's "
+                     "16 KiB profile)")
+    held = sum(1 for record in corpus.records
+               if record.profiles & RETIRED_PROFILE_BIT)
+    if held:
+        stale.append(f"{held} records (hold the retired 16 KiB profile)")
     # The last step sets the invalid-encoding bits from the current
     # classifier and the current tables.
     step = corpus.meta.get("invalid_encoding")

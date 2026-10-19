@@ -36,7 +36,7 @@ void check_syscall_state(void (*routine)(u32 *), const char *what, long pid)
 void group_basic()
 {
 	/* The auxiliary vector of a 32-bit task. */
-	check(page_size == 4096 || page_size == 16384, "AT_PAGESZ is the guest page size");
+	check(page_size == 4096, "AT_PAGESZ is the guest page size");
 	if (!under_qemu()) {
 		constexpr word always = (1U << 1) | (1U << 2) | (1U << 4) | (1U << 7) |
 			(1U << 15) | (1U << 17) | (1U << 18) | (1U << 20) | (1U << 21);

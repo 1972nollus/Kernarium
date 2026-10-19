@@ -44,7 +44,7 @@ AUTOMATION_BOOT_LINE = "Kernarium: automation boot with a "
 RUNTIME_RESULT = re.compile(r"Kernarium: runtime returned (-?[0-9]+)")
 SESSION_EXIT = re.compile(r"UML_SESSION_EXIT:([0-9]+)")
 SYSTEMD_TARGET = re.compile(r"[A-Za-z0-9@_.:-]{1,121}\.target")
-LINUX_RUNTIME_FRAMEWORKS = ("KRuntime_6_18_16K", "KRuntime_6_18_4K")
+LINUX_RUNTIME_FRAMEWORKS = ("KRuntime_6_18_4K",)
 WORKLOAD_GUEST_PATH = "/usr/local/libexec/uml-workload"
 PROGRESS_INTERVAL_SECONDS = 60
 
@@ -419,18 +419,14 @@ def settings_for(
     cpus: int,
     memory_mib: int,
     engine: str,
-    page_size: int,
     extra: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """The application settings for one run, without the child prefix."""
-    if page_size not in (4096, 16384):
-        raise KernariumError("the kernel page size is 4096 or 16384")
     settings = {
         "KERNARIUM_ROOTFS": rootfs,
         "KERNARIUM_VCPU_COUNT": str(cpus),
         "KERNARIUM_GUEST_MEMORY_MIB": str(memory_mib),
         "KERNARIUM_EXECUTION_ENGINE": engine,
-        "KERNARIUM_KERNEL_PAGE_SIZE": str(page_size),
     }
     if payload is not None:
         settings["KERNARIUM_BOOT_PAYLOAD"] = payload

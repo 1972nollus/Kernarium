@@ -40,7 +40,6 @@ using uml::memory::ConfiguredAddressLayout;
 }
 
 #if UML_MEMORY_HAS_NATIVE_VM
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 [[nodiscard]] bool use_native_shadow(
 	const uml::memory::NativeAddressSpace &space, const void *address,
 	std::uint64_t offset, std::uint64_t length)
@@ -50,7 +49,6 @@ using uml::memory::ConfiguredAddressLayout;
 		space.contains_shadow(
 			reinterpret_cast<std::uintptr_t>(address), length);
 }
-#endif
 
 [[nodiscard]] int write_xor_execute(int protection) noexcept
 {
@@ -78,7 +76,7 @@ template<typename Function>
 [[nodiscard]] int publish_native_shadow(
 	int fd, std::uint64_t offset, std::uint64_t length) noexcept
 {
-#if UML_MEMORY_HAS_NATIVE_VM && DARWIN_UML_GUEST_PAGE_SIZE == 4096
+#if UML_MEMORY_HAS_NATIVE_VM
 	auto native_space = uml::memory::native_address_space();
 	const auto result = native_address_call(native_space, [&](auto &space) {
 		return space.publish_backing(fd, offset, length);
@@ -111,7 +109,6 @@ extern "C" int darwin_uml_vm_map(void *address, int fd, unsigned long long offse
 	}
 #if UML_MEMORY_HAS_NATIVE_VM
 	auto native_space = uml::memory::native_address_space();
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	return native_address_call(native_space, [&](auto &space) {
 		const bool shadow = use_native_shadow(
 			space, address, offset, length);
@@ -133,15 +130,6 @@ extern "C" int darwin_uml_vm_map(void *address, int fd, unsigned long long offse
 				length, protection);
 		return result;
 	});
-#else
-	protection = write_xor_execute(protection);
-	const auto result = native_address_call(native_space, [&](auto &space) {
-		return space.map_direct(
-			reinterpret_cast<std::uintptr_t>(address), fd, offset,
-			length, protection);
-	});
-	return result;
-#endif
 #else
 	return native_vm_unavailable();
 #endif
@@ -182,7 +170,6 @@ extern "C" int darwin_uml_vm_protect(void *address, unsigned long length,
 		return darwin_uml_static_vm_protect(address, length, protection);
 #if UML_MEMORY_HAS_NATIVE_VM
 	auto native_space = uml::memory::native_address_space();
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	return native_address_call(native_space, [&](auto &space) {
 		const bool shadow = space.contains_shadow(
 			reinterpret_cast<std::uintptr_t>(address), length);
@@ -195,7 +182,6 @@ extern "C" int darwin_uml_vm_protect(void *address, unsigned long length,
 			reinterpret_cast<std::uintptr_t>(address), length,
 			write_xor_execute(protection));
 	});
-#endif
 	return native_address_call(native_space, [&](auto &space) {
 		return space.protect_direct(
 			reinterpret_cast<std::uintptr_t>(address), length,
@@ -215,7 +201,6 @@ extern "C" int darwin_uml_vm_unmap(void *address, unsigned long length)
 		return darwin_uml_static_vm_unmap(address, length);
 #if UML_MEMORY_HAS_NATIVE_VM
 	auto native_space = uml::memory::native_address_space();
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	return native_address_call(native_space, [&](auto &space) {
 		const bool shadow = space.contains_shadow(
 			reinterpret_cast<std::uintptr_t>(address), length);
@@ -226,7 +211,6 @@ extern "C" int darwin_uml_vm_unmap(void *address, unsigned long length)
 		return space.unmap_direct(
 			reinterpret_cast<std::uintptr_t>(address), length);
 	});
-#endif
 	return native_address_call(native_space, [&](auto &space) {
 		return space.unmap_direct(
 			reinterpret_cast<std::uintptr_t>(address), length);
@@ -247,7 +231,6 @@ extern "C" int darwin_uml_vm_unmap_generation(unsigned long generation, void *ad
 							     length);
 #if UML_MEMORY_HAS_NATIVE_VM
 	auto native_space = uml::memory::native_address_space();
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	return native_address_call(native_space, [&](auto &space) {
 		if (space.contains_shadow(
 				reinterpret_cast<std::uintptr_t>(address), length) ||
@@ -258,7 +241,6 @@ extern "C" int darwin_uml_vm_unmap_generation(unsigned long generation, void *ad
 		return space.unmap_direct(
 			reinterpret_cast<std::uintptr_t>(address), length);
 	});
-#endif
 	return native_address_call(native_space, [&](auto &space) {
 		return space.unmap_direct(
 			reinterpret_cast<std::uintptr_t>(address), length);
@@ -275,7 +257,7 @@ extern "C" int darwin_uml_vm_drop(void *address, unsigned long length)
 		return invalid_address_range();
 	if (range == AddressDomain::guest)
 		return 0;
-#if UML_MEMORY_HAS_NATIVE_VM && DARWIN_UML_GUEST_PAGE_SIZE == 4096
+#if UML_MEMORY_HAS_NATIVE_VM
 	if ((reinterpret_cast<std::uintptr_t>(address) |
 	     static_cast<std::uintptr_t>(length)) &
 	    (DARWIN_UML_GUEST_PAGE_SIZE - 1))
@@ -283,7 +265,6 @@ extern "C" int darwin_uml_vm_drop(void *address, unsigned long length)
 #endif
 #if UML_MEMORY_HAS_NATIVE_VM
 	auto native_space = uml::memory::native_address_space();
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	return native_address_call(native_space, [&](auto &space) {
 		if (space.contains_shadow(
 				reinterpret_cast<std::uintptr_t>(address), length))
@@ -292,7 +273,6 @@ extern "C" int darwin_uml_vm_drop(void *address, unsigned long length)
 		return space.flush_direct(
 			reinterpret_cast<std::uintptr_t>(address), length);
 	});
-#endif
 	return native_address_call(native_space, [&](auto &space) {
 		return space.flush_direct(
 			reinterpret_cast<std::uintptr_t>(address), length);
@@ -350,7 +330,6 @@ extern "C" int darwin_uml_vm_sync_from_backing(unsigned long address)
 	if (range == AddressDomain::guest)
 		return 0;
 	auto native_space = uml::memory::native_address_space();
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	/* Kernel uaccess asks for every page it touches, nearly always one the
 	 * space maps directly, so that answer comes from one hold of its lock. */
 	return native_address_call(native_space, [&](auto &space) {
@@ -365,7 +344,6 @@ extern "C" int darwin_uml_vm_sync_from_backing(unsigned long address)
 		return space.refresh(address, DARWIN_UML_GUEST_PAGE_SIZE);
 #endif
 	});
-#endif
 	return native_address_call(native_space, [&](auto &space) {
 		return space.sync_direct(
 			address, DARWIN_UML_GUEST_PAGE_SIZE);
@@ -417,7 +395,6 @@ extern "C" int darwin_uml_vm_retry_fault(unsigned long address, int execute, int
 		return darwin_uml_static_vm_retry_fault(address, execute, write);
 #if UML_MEMORY_HAS_NATIVE_VM
 	auto native_space = uml::memory::native_address_space();
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	return native_address_call(native_space, [&](auto &space) {
 		if (space.contains_shadow(address, 1))
 			return space.retry(
@@ -425,7 +402,6 @@ extern "C" int darwin_uml_vm_retry_fault(unsigned long address, int execute, int
 		return space.retry_direct(
 			address, execute != 0, write != 0);
 	});
-#endif
 	return native_address_call(native_space, [&](auto &space) {
 		return space.retry_direct(
 			address, execute != 0, write != 0);

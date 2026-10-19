@@ -50,7 +50,7 @@ using uml::testing::require;
 /*
  * Every run removes what exited runs left in its parent, $TMPDIR, so a test
  * that plants such entries in the shared one races every other run on the
- * host, this test in the other page profile's tree included: one of them can
+ * host, this test in another build tree included: one of them can
  * remove a planted directory before the test binds into it. The tests that
  * make console directories therefore run under a private $TMPDIR in the
  * user's temporary directory, which is short enough to be the first choice.

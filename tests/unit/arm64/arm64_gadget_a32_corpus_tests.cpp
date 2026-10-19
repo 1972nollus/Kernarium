@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* The gadget engine against the AArch32 instruction corpus
- * (tests/unit/arm64/aarch32_corpus/README.md owns the pack). Every case of
- * the page profile whose forms the engine's level implements is run through
- * the production AArch32 loop in the oracle's memory map, with the oracle's
+ * (tests/unit/arm64/aarch32_corpus/README.md owns the pack). Every case whose
+ * forms the engine's level implements is run through the production AArch32
+ * loop in the oracle's memory map, with the oracle's
  * exit stubs, and what the pack records is compared: the signal or system
  * call that ended it and the instruction and address it was raised at, every
  * general register, the APSR flags, Q and GE, TPIDRURW, the data region, and
