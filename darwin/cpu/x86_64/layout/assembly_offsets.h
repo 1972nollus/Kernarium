@@ -54,8 +54,6 @@
 #define UML_X86_64_TLB_WRITE_CACHED_CODE 4
 #define UML_X86_64_WRITE_CODE_PENDING 1
 #define UML_X86_64_WRITE_CODE_PUBLISHED 2
-/* No page: guest pages are 4 KiB aligned, so this is none of them. */
-#define UML_X86_64_CODE_PAGE_NONE 1
 
 /* Stream-word field: the instruction's position in its block, its address
  * less the context's program_begin, which every word that must report the
@@ -87,10 +85,9 @@
 #define UML_X86_64_CONTEXT_INDIRECT_MISS 64
 #define UML_X86_64_CONTEXT_TARGET_LINKS 72
 #define UML_X86_64_CONTEXT_STACK_ENTRY 128
-#define UML_X86_64_CONTEXT_CODE_PAGE 136
-#define UML_X86_64_CONTEXT_ENTRY_STACK 144
-#define UML_X86_64_CONTEXT_EXCEPTION_STREAM 152
-#define UML_X86_64_CONTEXT_SIMD_STATUS 160
+#define UML_X86_64_CONTEXT_ENTRY_STACK 136
+#define UML_X86_64_CONTEXT_EXCEPTION_STREAM 144
+#define UML_X86_64_CONTEXT_SIMD_STATUS 152
 #define UML_X86_64_TARGET_LINK_FOLD 12
 #define UML_X86_64_TARGET_LINK_MASK 4095
 

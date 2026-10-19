@@ -16,6 +16,7 @@
 #include "battery/protocol.hpp"
 #include "console/in_process_service.hpp"
 #include "console/protocol.hpp"
+#include "gpu/frame_tap.hpp"
 #include "gpu/in_process_service.hpp"
 #include "gpu/protocol.hpp"
 #include "input/virtio/in_process_service.hpp"
@@ -51,6 +52,8 @@
 #include <string>
 #include <string_view>
 #include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <thread>
@@ -233,7 +236,10 @@ public:
  * holds the application to, while the guest runs: one line per interval and
  * the peak when the guest stops. Each line also gives the headroom the kernel
  * leaves below the application's memory limit, so the footprint plus the
- * headroom is the limit and the least headroom is the closest approach. */
+ * headroom is the limit and the least headroom is the closest approach, and
+ * the process's CPU time, estimated energy, and performance-core time so far:
+ * the difference between two lines over their interval is the average core use
+ * and power, and how much of it ran on performance cores. */
 class FootprintReporter final {
 public:
     static long intervalMilliseconds() noexcept
@@ -279,7 +285,50 @@ private:
         /* The share of the footprint charged as graphics memory: Metal
          * resources and the driver's command storage alike. */
         std::uint64_t graphics;
+        /* The process's user and system CPU time so far, every thread that
+         * ever ran included: the difference between two lines over their
+         * interval is the process's average core use. */
+        double cpuSeconds;
+        /* What the system estimates the process has consumed, in joules, and
+         * how many of its CPU seconds ran on performance cores. */
+        double energyJoules;
+        double performanceCoreSeconds;
     };
+
+    struct PowerSample {
+        double energyJoules;
+        double performanceCoreSeconds;
+    };
+
+    static PowerSample processPower() noexcept
+    {
+        task_power_info_v2_data_t info {};
+        mach_msg_type_number_t count = TASK_POWER_INFO_V2_COUNT;
+        if (task_info(mach_task_self(), TASK_POWER_INFO_V2,
+                reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
+            return {0.0, 0.0};
+        mach_timebase_info_data_t timebase {};
+        (void)mach_timebase_info(&timebase);
+        const double ticksToSeconds = timebase.denom == 0 ? 0.0 :
+            static_cast<double>(timebase.numer) /
+                static_cast<double>(timebase.denom) / 1e9;
+        return {
+            static_cast<double>(info.task_energy) / 1e9,
+            static_cast<double>(info.task_ptime) * ticksToSeconds,
+        };
+    }
+
+    static double processCpuSeconds() noexcept
+    {
+        rusage usage {};
+        if (getrusage(RUSAGE_SELF, &usage) != 0)
+            return 0.0;
+        const auto seconds = [](const timeval& time) {
+            return static_cast<double>(time.tv_sec) +
+                static_cast<double>(time.tv_usec) / 1e6;
+        };
+        return seconds(usage.ru_utime) + seconds(usage.ru_stime);
+    }
 
     static Sample sample() noexcept
     {
@@ -287,11 +336,14 @@ private:
         mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
         if (task_info(mach_task_self(), TASK_VM_INFO,
                 reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
-            return {0, UINT64_MAX, 0};
+            return {0, UINT64_MAX, 0, processCpuSeconds(), 0.0, 0.0};
         const std::int64_t graphics = info.ledger_tag_graphics_footprint +
             info.ledger_tag_graphics_footprint_compressed;
+        const PowerSample power = processPower();
         return {info.phys_footprint, info.limit_bytes_remaining,
-            static_cast<std::uint64_t>(std::max<std::int64_t>(graphics, 0))};
+            static_cast<std::uint64_t>(std::max<std::int64_t>(graphics, 0)),
+            processCpuSeconds(), power.energyJoules,
+            power.performanceCoreSeconds};
     }
 
     void run()
@@ -306,9 +358,11 @@ private:
             const auto elapsed = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - start).count();
             std::printf("Kernarium: footprint %.1f s %.1f MiB graphics %.1f MiB "
-                "remaining %.1f MiB\n",
+                "remaining %.1f MiB cpu %.2f s energy %.2f J pcore %.2f s\n",
                 elapsed, current.footprint / 1048576.0,
-                current.graphics / 1048576.0, current.remaining / 1048576.0);
+                current.graphics / 1048576.0, current.remaining / 1048576.0,
+                current.cpuSeconds, current.energyJoules,
+                current.performanceCoreSeconds);
         }
     }
 
@@ -1135,6 +1189,63 @@ int runtimeSetGpuHold(int held)
     return activeGpu->holdRequests(gpuHoldBudget) ? 1 : 0;
 }
 
+int runtimeSetBackgroundThrottle(int enabled)
+{
+    thread_act_array_t threads = nullptr;
+    mach_msg_type_number_t count = 0;
+    if (task_threads(mach_task_self(), &threads, &count) != KERN_SUCCESS)
+        return -1;
+    int changed = 0;
+    for (mach_msg_type_number_t index = 0; index < count; ++index) {
+        thread_extended_info_data_t info {};
+        mach_msg_type_number_t infoCount = THREAD_EXTENDED_INFO_COUNT;
+        if (thread_info(
+                threads[index],
+                THREAD_EXTENDED_INFO,
+                reinterpret_cast<thread_info_t>(&info),
+                &infoCount) == KERN_SUCCESS &&
+            std::strncmp(info.pth_name, "uml-vcpu-", 9) == 0) {
+            thread_background_policy_data_t policy {
+                .priority = enabled != 0 ?
+                    THREAD_BACKGROUND_POLICY_DARWIN_BG :
+                    0,
+            };
+            if (thread_policy_set(
+                    threads[index],
+                    THREAD_BACKGROUND_POLICY,
+                    reinterpret_cast<thread_policy_t>(&policy),
+                    THREAD_BACKGROUND_POLICY_COUNT) == KERN_SUCCESS) {
+                ++changed;
+            }
+        }
+        (void)mach_port_deallocate(mach_task_self(), threads[index]);
+    }
+    (void)vm_deallocate(
+        mach_task_self(),
+        reinterpret_cast<vm_address_t>(threads),
+        count * sizeof(thread_act_t));
+    return changed;
+}
+
+int runtimeSetFrameSink(
+    kernarium_runtime_frame_sink sink,
+    void* context,
+    std::uint32_t maximumWidth,
+    std::uint32_t framesPerSecond)
+{
+    if (sink == nullptr) {
+        uml::gpu::setFrameTap(nullptr, nullptr);
+        return 0;
+    }
+    if (maximumWidth == 0 || framesPerSecond == 0)
+        return -EINVAL;
+    uml::gpu::setFrameTap(
+        sink,
+        context,
+        {.maximumWidth = maximumWidth, .framesPerSecond = framesPerSecond});
+    return 0;
+}
+
 void runtimeSetConsoleOutputCallback(
     kernarium_runtime_console_output_callback callback,
     void* context)
@@ -1165,11 +1276,13 @@ const kernarium_runtime_api runtimeApi {
     .set_console_output_callback = runtimeSetConsoleOutputCallback,
     .send_console_input = runtimeSendConsoleInput,
     .set_gpu_hold = runtimeSetGpuHold,
+    .set_frame_sink = runtimeSetFrameSink,
+    .set_background_throttle = runtimeSetBackgroundThrottle,
 };
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v10(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v11(void)
 {
     return &runtimeApi;
 }
