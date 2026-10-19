@@ -1426,13 +1426,8 @@ compare_swap_pair_sizes acquire_release, caspal, caspal
  * gadget after it moved. */
 #include "exclusive.inc"
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-.set Lexcl_footprint, 12960
-.set Lexcl_footprint_twin, 13472
-#else
 .set Lexcl_footprint, 11936
 .set Lexcl_footprint_twin, 12192
-#endif
 
 	.p2align 4
 EXCL(group):
