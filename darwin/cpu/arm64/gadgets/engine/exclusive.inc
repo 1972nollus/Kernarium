@@ -6,12 +6,15 @@
  *
  * A gadget runs the host's own exclusive instructions on the translated
  * address, so the host's exclusive monitor is the guest's. Anything that
- * runs between the load and the store and clears that monitor, such as the
- * helper call a TLB miss makes, fails the store; a loop that takes the same
- * miss on every pass then never completes (the 4 KiB TLB is direct-mapped,
- * so a plain store in the loop to a page that shares the target's set evicts
- * the target's write entry every pass). An architecturally valid load/store
- * exclusive loop must nevertheless make progress, so two rules apply:
+ * runs between the load and the store and clears that monitor fails the
+ * store: the helper call a TLB miss makes, and the executor's C++, whose
+ * locks and atomics run whenever a block leaves to it, to translate its
+ * successor, to train an indirect site, or at the block-size limit. Only an
+ * exception may cost the guest its monitor, and none of those is one; a loop
+ * that takes the same miss on every pass would also never complete (the
+ * 4 KiB TLB is direct-mapped, so a plain store in the loop to a page that
+ * shares the target's set evicts the target's write entry every pass). So
+ * three rules apply:
  *
  * 1. A load probes the TLB by its WRITE tag, not its read tag. On a miss
  *    the shared miss routine asks for access 3 (Tlb::translate_exclusive_load),
@@ -28,14 +31,23 @@
  *    status 0 exactly when it succeeded. Every store clears the record.
  *    The software completion is value-based, so unlike the host monitor it
  *    cannot see a write that restored the recorded value. It runs only
- *    where the host monitor is already lost to the engine's own miss.
+ *    where the host monitor may be lost to the engine's own code.
+ * 3. Each entry into translated code from the executor sets bit
+ *    UML_GADGET_EXCLUSIVE_KEY_REENTERED_BIT of a live exclusive_key
+ *    (program_execution.cpp). A store whose host store-exclusive fails
+ *    completes in software as a miss does when the bit is set, without the
+ *    TLB fill, and fails when it is clear: then only an interrupt, a page
+ *    fault or a preemption of the host thread, or another observer's store,
+ *    cleared the monitor, as on hardware. Both completions ignore the bit
+ *    when they compare addresses.
  *
  * What a gadget supplies is small: the load calls exclusive_translate with
  * its miss stub, runs the host load, and calls exclusive_record_load (or
  * _pair); the store loads its sources into x15 (x16) before translating,
- * runs the host store, then clears the record and writes the status from
- * x14. The stubs are `adr x13, <resume>; b <shared routine>`. Scratch: x8-x12,
- * x13 (resume address), x14 (status), x15-x17, x20-x21; x19 and the engine
+ * runs the host store, branches to its lost stub when the status in x14 is
+ * not zero, then clears the record and writes the status from x14. The
+ * stubs are `adr x13, <resume>; b <shared routine>`. Scratch: x8-x12, x13
+ * (resume address), x14 (status), x15-x17, x20-x21; x19 and the engine
  * registers survive.
  *
  * Nothing here defines a label of its own: callers name the shared routines
@@ -107,10 +119,23 @@
 	br x13
 .endm
 
+/* The entry of a store's shared completion routine for a host store-exclusive
+ * that failed: x7 the host address, x15 (x16) the value, w14 the failure.
+ * Unless the record is marked, the failure stands; otherwise it continues
+ * at the routine's comparison, label 3, with the record in x9. */
+.macro exclusive_store_lost entry
+\entry:
+	ldr x9, [_cpu, #UML_GADGET_CPU_EXCLUSIVE_KEY]
+	tbnz x9, #UML_GADGET_EXCLUSIVE_KEY_REENTERED_BIT, 3f
+	br x13
+.endm
+
 /* The store's shared completion routine for one width and ordering: x7 guest
  * address, x15 the value to store, x13 where the gadget continues with the
- * status in x14. `cas_instruction` is the CAS of the width and ordering. */
-.macro exclusive_store_complete entry, cas_instruction, host_register, fault
+ * status in x14. `cas_instruction` is the CAS of the width and ordering.
+ * `lost` is its entry for a failed host store-exclusive. */
+.macro exclusive_store_complete entry, lost, cas_instruction, host_register, fault
+	exclusive_store_lost \lost
 \entry:
 	stp x1, x2, [sp, #-32]!
 	stp x15, x13, [sp, #16]
@@ -125,6 +150,8 @@
 1:
 	mov x7, x0
 	ldr x9, [_cpu, #UML_GADGET_CPU_EXCLUSIVE_KEY]
+3:
+	and x9, x9, #~(1 << UML_GADGET_EXCLUSIVE_KEY_REENTERED_BIT)
 	cmp x9, x7
 	b.ne 2f
 	ldr x10, [_cpu, #UML_GADGET_CPU_EXCLUSIVE_VALUE]
@@ -141,7 +168,8 @@
 /* The pair store's completion: x15 and x16 hold the pair. CASP wants even
  * and odd consecutive registers, so the new pair moves to x16:x17 and the
  * recorded one to x10:x11, with copies in x20:x21 to compare against. */
-.macro exclusive_pair_store_complete entry, cas_instruction, host_register, fault
+.macro exclusive_pair_store_complete entry, lost, cas_instruction, host_register, fault
+	exclusive_store_lost \lost
 \entry:
 	stp x1, x2, [sp, #-48]!
 	stp x15, x16, [sp, #16]
@@ -158,6 +186,8 @@
 1:
 	mov x7, x0
 	ldr x9, [_cpu, #UML_GADGET_CPU_EXCLUSIVE_KEY]
+3:
+	and x9, x9, #~(1 << UML_GADGET_EXCLUSIVE_KEY_REENTERED_BIT)
 	cmp x9, x7
 	b.ne 2f
 	add x12, _cpu, #UML_GADGET_CPU_EXCLUSIVE_VALUE
