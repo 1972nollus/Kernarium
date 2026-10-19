@@ -358,7 +358,7 @@ emit_session_diagnostics()
     ls -l "$runtime" /tmp/.X11-unix 2>&1 || true
     timeout 10 loginctl list-sessions --no-pager 2>&1 || true
     ps -eo pid,ppid,stat,etimes,wchan:24,args 2>&1 |
-        grep -E 'sddm|kwin|plasma|Xwayland|qdbus|chromium|agetty|login' |
+        grep -E 'sddm|kwin|plasma|ksplash|Xwayland|qdbus|chromium|agetty|login' |
         grep -v grep || true
     timeout 15 journalctl --no-pager -b -o short-monotonic \\
         -u sddm.service -u 'getty@*' -n 60 2>&1 || true
@@ -526,8 +526,10 @@ fi
         *'Network service crashed or was terminated'*)
             # A guest too starved to answer Chromium's 15 s start-up
             # connection loses its network service before the page's first
-            # console line, and the page never loads. A renderer that misses
-            # the same deadline is replaced, so only this stops Chromium.
+            # console line, and the page never loads. The storage service,
+            # started with it, often misses the same deadline; another child
+            # that misses it alone does not stop the page, so only this
+            # stops Chromium.
             if [ "$page_started" = 0 ] && [ "$reported" = 0 ]; then
                 reported=1
                 echo "UML_CHROMIUM_ERROR:" \\
@@ -1002,6 +1004,24 @@ def wait_for_log(
             )
         time.sleep(0.5)
     raise TimeoutError("Chromium WebGL verification did not finish in time")
+
+
+# The launcher prints the measurement's closing snapshot after Chromium's
+# report; a busy guest can take a few seconds to.
+GUEST_END_SECONDS = 60
+
+
+def wait_for_guest_end(
+    process: subprocess.Popen[bytes], log_path: Path, text: str
+) -> str:
+    """Return the console once the closing guest snapshot has reached it."""
+
+    if "UML_AQUARIUM_GUEST_END|" in text:
+        return text
+    text, _ = wait_for_log(
+        process, log_path, ("UML_AQUARIUM_GUEST_END|",), GUEST_END_SECONDS
+    )
+    return text
 
 
 def guest_child(
@@ -1693,7 +1713,11 @@ def main() -> int:
                     raise RuntimeError(
                         "Aquarium VNC capture lacks a complete, varied 3D scene"
                     )
-                text = log_path.read_text(encoding="utf-8", errors="replace")
+                text = wait_for_guest_end(
+                    process,
+                    log_path,
+                    log_path.read_text(encoding="utf-8", errors="replace"),
+                )
             samples = parse_sample_lines(text)
             if samples != metrics["RAW_FPS"]:
                 raise RuntimeError("Aquarium sample stream differs from summary")

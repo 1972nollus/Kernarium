@@ -225,6 +225,52 @@ class AquariumProbePolicyTests(unittest.TestCase):
         )
         process.send_signal.assert_not_called()
 
+    def test_runner_waits_for_the_closing_guest_snapshot(self) -> None:
+        # The launcher prints the measurement's closing snapshot after
+        # Chromium's report, and a busy two-vCPU guest took over a second to;
+        # the runner had already read the console and failed the run.
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "console.log"
+            log_path.write_text(
+                "UML_AQUARIUM_GUEST_SAMPLE|INDEX=30\n"
+                "[1:1:INFO:CONSOLE:1] UML_AQUARIUM_OK|AVG_FPS=9.6\n",
+                encoding="utf-8",
+            )
+            text = log_path.read_text(encoding="utf-8")
+            with log_path.open("ab") as log:
+                with run_chromium_webgl.guest_child(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import time; time.sleep(1.5); "
+                        "print('UML_AQUARIUM_GUEST_END|INDEX=0', flush=True); "
+                        "time.sleep(30)",
+                    ],
+                    log,
+                ) as process:
+                    text = run_chromium_webgl.wait_for_guest_end(
+                        process, log_path, text
+                    )
+            self.assertIn("UML_AQUARIUM_GUEST_END|INDEX=0", text)
+
+    def test_guest_that_exits_without_its_closing_snapshot_is_named(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "console.log"
+            log_path.write_text("UML_AQUARIUM_OK|\n", encoding="utf-8")
+            with log_path.open("ab") as log:
+                with run_chromium_webgl.guest_child(
+                    [sys.executable, "-c", "pass"], log
+                ) as process:
+                    process.wait(timeout=30)
+                    with self.assertRaisesRegex(
+                        RuntimeError, "guest exited before"
+                    ):
+                        run_chromium_webgl.wait_for_guest_end(
+                            process, log_path, "UML_AQUARIUM_OK|\n"
+                        )
+
     def test_guest_starts_as_the_leader_of_its_own_session(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             log_path = Path(directory) / "console.log"
@@ -456,7 +502,15 @@ STUB_COMMANDS = {
     "journalctl": "echo stub-journalctl",
     "ps": "echo stub-ps",
     "glxinfo": "echo stub-glxinfo",
-    "pgrep": "echo 4242",
+    # Plasma's splash runs until the fake guest clock reaches
+    # $FAKE_SPLASH_UNTIL; every other process the launcher looks for runs.
+    "pgrep": (
+        'if [ "$2" = ksplashqml ]; then\n'
+        '    read -r up rest < "$FAKE_UPTIME"\n'
+        '    [ "${up%.*}" -lt "${FAKE_SPLASH_UNTIL:-0}" ] || exit 1\n'
+        "fi\n"
+        "echo 4242"
+    ),
     # Stopping Chromium leaves a mark its stub waits for.
     "pkill": 'touch "$(dirname "$FAKE_UPTIME")/chromium-stopped"',
     # The guest has GNU sed; give macOS hosts its in-place form.
@@ -493,9 +547,9 @@ STARVED_START = "".join(
         "was terminated, restarting service.",
     )
 )
-# The same workload run half the time: one renderer gave up after 15 s,
-# Chromium replaced it, and the page loaded and reported.
-RENDERER_TIMEOUT_ONLY = "".join(
+# The same workload run half the time: one other child gave up after 15 s,
+# and the page still loaded and reported.
+CHILD_TIMEOUT_ONLY = "".join(
     line + "\n"
     for line in (
         "[608:608:1012/052418.569083:WARNING:sandbox/policy/linux/s"
@@ -554,6 +608,7 @@ class AquariumLauncherBudgetTests(unittest.TestCase):
         *,
         session_ready: bool,
         stubs: dict[str, str] | None = None,
+        splash_until: int = 0,
     ) -> tuple[subprocess.CompletedProcess[str], int, str]:
         budget = run_chromium_webgl.guest_budget(360, backend)
         launcher = run_chromium_webgl.build_guest_launcher(
@@ -605,6 +660,7 @@ class AquariumLauncherBudgetTests(unittest.TestCase):
                         "PATH": f"{bin_directory}:/usr/bin:/bin",
                         "FAKE_UPTIME": str(uptime),
                         "FAKE_CLOCK_STEP": str(FAKE_CLOCK_STEP),
+                        "FAKE_SPLASH_UNTIL": str(splash_until),
                     },
                 )
             finally:
@@ -669,6 +725,63 @@ class AquariumLauncherBudgetTests(unittest.TestCase):
         )
         self.assertIn("UML_SESSION_DIAGNOSTICS_BEGIN", lines)
         self.assertIn("stub-journalctl", lines)
+        self.assertGreaterEqual(elapsed, budget.session_deadline)
+        self.assertLess(elapsed, budget.session_deadline + FAKE_CLOCK_STEP)
+
+    def test_chromium_starts_once_the_session_finished_starting(
+        self,
+    ) -> None:
+        # Chromium started during the desktop's own start-up shares a small
+        # guest with all of it, and its first children then miss their 15 s
+        # IPC connection deadline. Plasma's splash marks that start-up.
+        for backend in ("virgl", "zink"):
+            with self.subTest(backend=backend):
+                result, _, _ = self.run_launcher(
+                    backend,
+                    session_ready=True,
+                    splash_until=45,
+                    stubs={
+                        "qdbus6": (
+                            "echo 'OpenGL renderer string: zink Vulkan 1.3"
+                            "(Virtio-GPU Venus (Apple M1))'"
+                        ),
+                        "chromium": (
+                            'read -r up rest < "$FAKE_UPTIME"\n'
+                            'echo "CHROMIUM_STARTED|UPTIME=${up%.*}"\n'
+                            "exit 3"
+                        ),
+                    },
+                )
+                started = re.search(
+                    r"^CHROMIUM_STARTED\|UPTIME=(\d+)$",
+                    result.stdout,
+                    re.MULTILINE,
+                )
+                self.assertIsNotNone(started, result.stdout)
+                assert started is not None
+                self.assertGreaterEqual(int(started.group(1)), 45)
+                ready = re.search(
+                    r"^UML_SESSION_READY\|UPTIME=(\d+)\.\d+$",
+                    result.stdout,
+                    re.MULTILINE,
+                )
+                self.assertIsNotNone(ready, result.stdout)
+                assert ready is not None
+                self.assertGreaterEqual(int(ready.group(1)), 45)
+
+    def test_session_that_never_finishes_starting_is_named(self) -> None:
+        budget = run_chromium_webgl.guest_budget(360, "virgl")
+        result, elapsed, _ = self.run_launcher(
+            "virgl", session_ready=True, splash_until=100000
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        lines = result.stdout.strip().splitlines()
+        self.assertEqual(
+            lines[-1],
+            "UML_CHROMIUM_ERROR: KDE X11 bridge did not finish starting by "
+            f"guest uptime {budget.session_deadline}s",
+        )
+        self.assertIn("UML_SESSION_DIAGNOSTICS_BEGIN", lines)
         self.assertGreaterEqual(elapsed, budget.session_deadline)
         self.assertLess(elapsed, budget.session_deadline + FAKE_CLOCK_STEP)
 
@@ -740,10 +853,10 @@ class AquariumLauncherBudgetTests(unittest.TestCase):
 
     def test_chromium_that_recovers_is_not_stopped(self) -> None:
         for name, output in (
-            ("renderer timeout only", RENDERER_TIMEOUT_ONLY),
+            ("other child timeout only", CHILD_TIMEOUT_ONLY),
             (
                 "network service lost after the page started",
-                RENDERER_TIMEOUT_ONLY + NETWORK_SERVICE_LOST,
+                CHILD_TIMEOUT_ONLY + NETWORK_SERVICE_LOST,
             ),
         ):
             with self.subTest(name):
