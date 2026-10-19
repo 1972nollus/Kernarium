@@ -1165,7 +1165,7 @@ const kernarium_runtime_api runtimeApi {
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v11(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v10(void)
 {
     return &runtimeApi;
 }

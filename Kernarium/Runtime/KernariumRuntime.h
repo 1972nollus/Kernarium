@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 11U
+#define KERNARIUM_RUNTIME_API_VERSION 10U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -119,7 +119,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v11(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v10(void);
 
 #ifdef __cplusplus
 }
