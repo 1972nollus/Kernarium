@@ -167,7 +167,16 @@ Lx86_cpuid_done:
 	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	str x7, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
-	retire_and_next
+	/* CPUID serializes, so it is a code-change checkpoint: a vCPU that saw
+	 * the flag of a cross-modifying-code protocol, then executes it, must
+	 * run the code the writer left. The run leaves for the instruction
+	 * after it, and the runtime revalidates what it selects there. */
+	ldr x8, [_stream]
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	add _executed, _executed, #1
+	x86_memory_order_boundary
+	mov w0, #UML_X86_64_EVENT_CONTINUED
+	b uml_x86_64_gadget_leave
 
 gadget xgetbv
 	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]

@@ -12,8 +12,8 @@ a fork write-protected (copied, or reused once the other side is gone), by
 MAP_FIXED, munmap and mremap, and from a second vCPU -- and every call after
 the change must run the new bytes. One case has a thread patch two
 instructions of a function with no link between the stores while three other
-vCPUs run it: after the thread's flag and a system call each of them must run
-both patches.
+vCPUs run it: after the thread's flag and a barrier -- a system call, CPUID or
+IRET -- each of them must run both patches.
 """
 
 from __future__ import annotations

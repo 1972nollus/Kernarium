@@ -4252,6 +4252,27 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		"XGETBV did not agree with the CPUID XSAVE feature mask");
 }
 
+/* CPUID serializes, so it is a code-change checkpoint: the run leaves after
+ * it, with the instructions behind it unrun, and the runtime revalidates what
+ * it selects for them. */
+[[nodiscard]] bool cpuid_leaves_the_run()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x0f, 0xa2,       // cpuid
+		0x0f, 0x05,       // syscall
+	});
+	const auto built = require_built(
+		gadgets::build(memory, 0, ExecutionMode::long64, 64),
+		"CPUID block did not build");
+	CpuState cpu{};
+	const auto result = gadgets::execute(built.program, cpu, memory, 64);
+	return expect(result.event == uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == 1 && cpu.rip == 2,
+		"CPUID did not leave the run for the instruction after it");
+}
+
 [[nodiscard]] bool wrap_compat32_instruction_pointer()
 {
 	using namespace uml::cpu::x86_64;
@@ -10928,6 +10949,7 @@ int main(int argc, char **argv)
 		execute_long64_interrupt_return_operand_sizes() &&
 		interrupt_return_masks_user_flags() &&
 		expose_consistent_xsave_cpuid_state() &&
+		cpuid_leaves_the_run() &&
 		wrap_compat32_instruction_pointer() &&
 		execute_compat32_tls_segment() &&
 		reject_program_mode_mismatch() &&

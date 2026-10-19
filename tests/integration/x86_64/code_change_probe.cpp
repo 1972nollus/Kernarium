@@ -644,8 +644,10 @@ void case_flood()
  * one byte store, and no link or system call separates the stores, while
  * three other vCPUs run the function in a loop that enters the engine often.
  * The thread then flags that it is done through memory that holds no code,
- * and every vCPU executes a serializing instruction, as the cross-modifying
- * code protocol asks, and must run the function with both patches.
+ * and every vCPU that saw the flag crosses a barrier -- a system call, or one
+ * of the serializing instructions user mode has, CPUID and IRET, which the
+ * cross-modifying code protocol makes a barrier -- and must run the function
+ * with both patches.
  *
  *	function:	xor %eax, %eax
  *			mov $a, %al		patched first
@@ -665,10 +667,8 @@ void case_flood()
 #endif
 /* What a reader does between seeing the flag and running the function. */
 constexpr int barrier_system_call = 0;
-constexpr int barrier_serializing = 1;
-#ifndef TWO_PATCH_BARRIER
-#define TWO_PATCH_BARRIER barrier_system_call
-#endif
+constexpr int barrier_cpuid = 1;
+constexpr int barrier_iret = 2;
 constexpr int patch_readers = 3;
 constexpr unsigned patch_rounds = TWO_PATCH_ROUNDS;
 constexpr unsigned patch_delay = TWO_PATCH_DELAY;
@@ -737,10 +737,42 @@ unsigned call_patch_function(unsigned char *function)
 		((static_cast<unsigned>(high) & 0xffU) << 8);
 }
 
-void serialize()
+/* The serializing instructions user mode has: the cross-modifying code
+ * protocol lets a processor that saw the flag run the new code after any of
+ * them. */
+void serialize_with_cpuid()
 {
 	unsigned a = 0, b, c = 0, d;
 	__asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d) : : "memory");
+}
+
+/* An IRET to the next instruction at the same privilege level, as the
+ * kernel's sync_core() does it. */
+void serialize_with_iret()
+{
+#if defined(__x86_64__)
+	unsigned long scratch;
+	__asm__ volatile(
+		"mov %%ss, %0\n\t"
+		"pushq %q0\n\t"
+		"pushq %%rsp\n\t"
+		"addq $8, (%%rsp)\n\t"
+		"pushfq\n\t"
+		"mov %%cs, %0\n\t"
+		"pushq %q0\n\t"
+		"pushq $1f\n\t"
+		"iretq\n\t"
+		"1:"
+		: "=&r"(scratch) : : "cc", "memory");
+#else
+	__asm__ volatile(
+		"pushfl\n\t"
+		"pushl %%cs\n\t"
+		"pushl $1f\n\t"
+		"iret\n\t"
+		"1:"
+		: : : "cc", "memory");
+#endif
 }
 
 void futex_wake_all(volatile int *address)
@@ -768,8 +800,10 @@ void patch_reader(void *argument)
 		}
 		if (patch_barrier == barrier_system_call)
 			raw_syscall(nr_getppid);
-		else if (patch_barrier == barrier_serializing)
-			serialize();
+		else if (patch_barrier == barrier_cpuid)
+			serialize_with_cpuid();
+		else if (patch_barrier == barrier_iret)
+			serialize_with_iret();
 		patch_seen[index] = call_patch_function(patch_function);
 		__atomic_store_n(&patch_finished[index], round, __ATOMIC_RELEASE);
 	}
@@ -790,10 +824,17 @@ long now_microseconds()
 	return stamp[0] * 1000000L + stamp[1] / 1000L;
 }
 
-void case_two_patch(int barrier = TWO_PATCH_BARRIER)
+void case_two_patch(int barrier)
 {
 	patch_barrier = barrier;
 	patch_stop = 0;
+	patch_go = 0;
+	patch_flag = 0;
+	for (int index = 0; index < patch_readers; ++index) {
+		patch_armed[index] = 0;
+		patch_finished[index] = 0;
+		patch_seen[index] = 0;
+	}
 	auto *region = map_region(2);
 	patch_function = region + callee_near;
 	emit_patch_function(patch_function, 0, 0);
@@ -854,7 +895,9 @@ void case_two_patch(int barrier = TWO_PATCH_BARRIER)
 	print("code-change: two-patch rounds="); print(patch_rounds);
 	print(" delay="); print(patch_delay);
 	print(" microseconds="); print(elapsed);
-	print(" barrier="); print(static_cast<long>(barrier));
+	print(" barrier=");
+	print(barrier == barrier_system_call ? "system-call" :
+		barrier == barrier_cpuid ? "cpuid" : "iret");
 	print(" first-patch-only="); print(first_only);
 	print(" neither-patch="); print(neither);
 	print(" other="); print(other); print("\n");
@@ -949,7 +992,9 @@ int probe_main()
 	case_vcpu(false);
 	case_vcpu(true);
 	case_flood();
-	case_two_patch();
+	case_two_patch(barrier_system_call);
+	case_two_patch(barrier_cpuid);
+	case_two_patch(barrier_iret);
 	print("code-change: abi="); print(abi);
 	print(" checks="); print(checks);
 	print(" failed="); print(failures);

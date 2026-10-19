@@ -829,7 +829,8 @@ matched guest memory at an instant inside the validation, and every change
 published up to the sequence the cache was prepared with had landed before
 that instant. A store still in flight reaches the vCPU at its next code-change
 checkpoint, which is where the x86 cross-modifying-code protocol requires an
-executing processor to look. A moved mapping sequence or a raised execution
+executing processor to look: a system call, CPUID, or an IRET, each of which
+leaves the native run so that the runtime revalidates what it selects next. A moved mapping sequence or a raised execution
 interrupt still abandons the validation: those say the memory being read
 through is being replaced, or that this vCPU has been asked to leave, and no
 page stamp describes either.
