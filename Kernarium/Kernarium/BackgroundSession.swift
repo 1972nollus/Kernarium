@@ -103,6 +103,13 @@ final class BackgroundSession: ObservableObject {
         restart = marker.consume().map {
             GuestRestart(enteredBackgroundAt: $0.enteredAt)
         }
+        if let restart {
+            print(
+                "Kernarium: the previous process ended in the background " +
+                    "(entered at \(restart.enteredBackgroundAt)); the guest " +
+                    "started again from boot"
+            )
+        }
     }
 
     func didEnterBackground() {

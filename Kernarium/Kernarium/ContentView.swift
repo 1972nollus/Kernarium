@@ -296,7 +296,7 @@ private struct GuestRestartedNotice: View {
                     .font(.headline)
                 Text(restart.message)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
                     .multilineTextAlignment(.center)
                 Text("Tap to dismiss")
                     .font(.caption)
