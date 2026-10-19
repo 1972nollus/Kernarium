@@ -141,12 +141,19 @@ Metal shader cache policy is in
 [`graphics.md`](../docs/graphics.md#metal-shader-cache).
 
 The guest view lies within the content the system leaves clear of the window
-controls: below them in a window, and unchanged in Full Screen Apps. A
-window that is already running when Multitasking changes to Full Screen Apps
-keeps its margin until the application is next launched.
+controls: below them in a window, a tile and a Slide Over window, and at the
+safe area where the scene covers its screen, which is Full Screen Apps and a
+window zoomed to the screen, whose controls move to the menu bar. The system's
+corner offset keeps describing a window after Multitasking switches the
+running application to Full Screen Apps, so the application applies it only
+while the scene is smaller than its screen, and follows the scene's geometry
+as Multitasking, zoom, tiling, Slide Over and rotation change it.
 
 Kernarium runs one guest per process and so has one window: its scene
 manifest does not support multiple scenes, and iPadOS offers no second window.
+Tiling and Slide Over, from the Window menu of a window zoomed to the screen,
+only arrange that window, and the guest display follows its size as it does a
+resize.
 
 ## Lifecycle
 
