@@ -640,7 +640,7 @@ def build_records(items: tuple[Draft, ...], results: list
     for draft, result in zip(items, results):
         record = records.setdefault(draft.group, {
             "record": f"{PRODUCER}/{draft.group}", "producer": PRODUCER,
-            "site": SITE, "profiles": ["16k", "4k"], "options": [],
+            "site": SITE, "profiles": ["4k"], "options": [],
             "programs": [], "cases": []})
         index = programs.setdefault(draft.group, {})
         if draft.word not in index:

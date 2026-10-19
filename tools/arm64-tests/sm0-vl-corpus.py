@@ -646,7 +646,7 @@ def build() -> tuple[dict, dict]:
         cases.append(control_case(word, len(programs) - 1, why))
     item = {
         "record": PRODUCER, "producer": PRODUCER,
-        "site": SITE, "profiles": ["16k", "4k"], "options": [],
+        "site": SITE, "profiles": ["4k"], "options": [],
         "svl": SVL, "programs": programs, "cases": cases,
     }
     return item, blobs

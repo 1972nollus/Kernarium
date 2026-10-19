@@ -9,7 +9,7 @@ table, so a pack can only hold native records whose request is the one the
 script writes now:
 
 - provenance.json names the script's request, script, and table hashes;
-- the records are the script's groups, at its SVL, in both page profiles,
+- the records are the script's groups, at its SVL, in the 4 KiB profile,
   each without harness options;
 - each case is the script's case in order: its name, program, native
   requirement, initial state, and data regions, except the 19 cases of the
@@ -85,7 +85,7 @@ def check(native, records: list[dict], meta: dict) -> str:
     for record, key in zip(records, keys):
         if (record["producer"], record["site"], record.get("svl"),
                 record["profiles"]) != \
-                (native.PRODUCER, native.SITE, native.SVL, ["16k", "4k"]):
+                (native.PRODUCER, native.SITE, native.SVL, ["4k"]):
             raise SystemExit(f"{record['record']}: not the script's record")
         expected = by_key[key]
         if len(record["cases"]) != len(expected):
