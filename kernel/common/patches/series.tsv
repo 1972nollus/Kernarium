@@ -79,3 +79,4 @@ patch	PM-sleep-keep-a-wakeup-signaled-while-a-suspend-syncs-file-systems.patch
 patch	um-hold-a-Darwin-system-suspend-until-a-wake-source-fires.patch
 patch	um-let-VNC-input-wake-a-suspended-guest.patch
 patch	um-send-a-run-of-Darwin-user-PTEs-as-one-host-call.patch
+patch	um-describe-the-virtual-machine-in-SMBIOS-tables.patch

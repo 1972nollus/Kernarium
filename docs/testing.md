@@ -413,7 +413,11 @@ included, in both modes.
 `fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
 such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,
 STMXCSR and `fadd` show of the sticky SIMD exception flags against an Intel
-Xeon's, on either engine.
+Xeon's, on either engine. The slice's SMBIOS tables, which
+`guest-kernel-dmi` checks on arm64, are checked by running
+`tests/integration/support/run_guest_probe.py --probe
+tests/integration/kernel/dmi_probe.py --ncpus 2 --probe-timeout 120` the same
+way.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session

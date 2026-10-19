@@ -94,6 +94,24 @@ hotplug, which reach no IPI boundary. A host stop skips Linux exitcalls, so the
 run end stops the RTC alarm helper itself. `guest-run-end-stop` stops guests
 throughout their boot and requires each run to end with no kernel thread left.
 
+Every kernel describes the virtual machine in the SMBIOS tables firmware
+writes on other machines, so `/sys/class/dmi/id`, `/sys/firmware/dmi` and the
+programs that read them, such as dmidecode and systemd, find it there. The
+system, baseboard, chassis, BIOS, processor and memory vendor is `Kernarium`,
+the product, family and board are `Virtual Machine`, the BIOS version is the
+kernel release, the chassis type is Other, and the BIOS characteristics mark a
+virtual machine, so `systemd-detect-virt` reports `vm-other`. The processor is
+the virtual CPU the host names for `/proc/cpuinfo`, with the possible CPUs as
+its cores and threads, and one memory device is the RAM the guest was given.
+No serial number, UUID, speed or firmware date is claimed. The tables sit
+behind an SMBIOS 3.0 entry point in guest RAM, which the kernel writes before
+the DMI core scans for it. No kernel has `/dev/mem`: UML's physical address 0
+is the kernel image, so its legacy BIOS window is kernel text, and a mapping
+of it gave root the kernel's memory, while one past RAM never resolved.
+Geekbench 6's x86-64 chassis probe, which scanned that window when sysfs had
+no tables, could leave a shared mapping of it for the rest of a run.
+`guest-kernel-dmi` checks the tables and the missing `/dev/mem`.
+
 A Darwin kernel stack trace walks the stack its starting stack pointer lies
 on: a task's own stack in guest memory or, on the current vCPU carrier, the
 carrier's native stack or the signal stack its interrupts run on. An
