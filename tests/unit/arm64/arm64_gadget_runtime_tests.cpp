@@ -242,11 +242,11 @@ void mapped_memory_runtime_boundaries()
 	require(backing.get64(crossing_offset) == crossing_value);
 
 	/*
-	 * Select two guest pages in the same build-specific set. Loading A, B,
+	 * Select two guest pages in the same TLB entry. Loading A, B,
 	 * then A again exercises replacement without confusing their host bases.
 	 */
 	constexpr std::uint64_t collision_page =
-		guest_page + ::uml::memory::tlb_set_count *
+		guest_page + ::uml::memory::tlb_entry_count *
 			DARWIN_UML_GUEST_PAGE_SIZE;
 	constexpr std::uint64_t first_value = 0x1111'2222'3333'4444ULL;
 	constexpr std::uint64_t collision_value =
@@ -276,16 +276,6 @@ void mapped_memory_runtime_boundaries()
 	require(cpu.registers[0] == first_value);
 	require(cpu.registers[1] == collision_value);
 	require(cpu.registers[4] == first_value);
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-	constexpr auto collision_set =
-		((guest_page >> DARWIN_UML_GUEST_PAGE_SHIFT) &
-			(::uml::memory::tlb_set_count - 1)) *
-		::uml::memory::tlb_way_count;
-	require(tlb->entries[collision_set].read_page ==
-		guest_page >> DARWIN_UML_GUEST_PAGE_SHIFT);
-	require(tlb->entries[collision_set + 1].read_page ==
-		collision_page >> DARWIN_UML_GUEST_PAGE_SHIFT);
-#endif
 
 	/*
 	 * Read and write translations retain independent host bases even when
@@ -303,8 +293,7 @@ void mapped_memory_runtime_boundaries()
 	constexpr auto guest_page_number =
 		guest_page >> DARWIN_UML_GUEST_PAGE_SHIFT;
 	constexpr std::size_t collision_slot =
-		(guest_page_number & (::uml::memory::tlb_set_count - 1)) *
-		::uml::memory::tlb_way_count;
+		guest_page_number & (::uml::memory::tlb_entry_count - 1);
 	require(independent_tlb->entries[collision_slot].read_page ==
 		guest_page_number);
 	require(independent_tlb->entries[collision_slot].write_page ==

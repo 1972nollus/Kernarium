@@ -9,8 +9,7 @@
 # test expects the kernel to behave like a CPU without 32-bit EL0: ENOEXEC for
 # the programs and EINVAL for personality(PER_LINUX32). A lane that lands an
 # engine switches UML_AARCH32_EXPECT to run, which executes the program and
-# checks that a program laid out for 4 KiB pages only runs on 4 KiB pages and
-# fails to exec, cleanly, on 16 KiB pages.
+# checks that a program laid out for 4 KiB pages runs.
 set(UML_AARCH32_EXPECT "unsupported" CACHE STRING
     "What guest-aarch32 expects of the host: unsupported or run")
 set_property(CACHE UML_AARCH32_EXPECT PROPERTY STRINGS unsupported run)
@@ -165,11 +164,6 @@ target_include_directories(uml-a32-engine-support PRIVATE
 target_link_libraries(uml-a32-engine-support PRIVATE UML::CpuContract)
 add_dependencies(integration-test-binaries uml-a32-engine-support)
 
-if(UML_GUEST_16K_PAGES)
-    set(_uml_a32_page_size 16384)
-else()
-    set(_uml_a32_page_size 4096)
-endif()
 # guest-aarch32-engine-<engine> runs the probe under DARWIN_UML_GUEST_AARCH32=1
 # on an engine that implements AArch32 and skips, naming the reason, on one
 # that does not. The four-vCPU guest gives the exclusives real contention.
@@ -185,7 +179,6 @@ foreach(_engine IN ITEMS gadgets jit)
         ARGS --engine ${_engine}
             --probe ${UML_GUEST_AARCH32_ENGINE_PROBE}
             --probe-4k ${UML_GUEST_AARCH32_ENGINE_PROBE_4K}
-            --page-size ${_uml_a32_page_size}
             --engine-support-tool $<TARGET_FILE:uml-a32-engine-support>
             --timeout ${_timeout}
         LABELS guest;aarch32;kernel;${_engine}

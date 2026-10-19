@@ -5,7 +5,7 @@
  * cell or with a fault position, that interworking selects the state, and
  * that nothing a cache hashes by loses the instruction address. Validation:
  * that a word and a halfword span match, mismatch and fault in the right
- * order across page boundaries of both guest page sizes. */
+ * order across page boundaries of a 4 KiB and a 16 KiB page. */
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/sme_profile.hpp"
@@ -251,8 +251,9 @@ private:
 		per_unit);
 }
 
-/* Match, mismatch and fault, for each ISA and both guest page sizes,
- * starting before a page boundary so the span splits there. */
+/* Match, mismatch and fault, for each ISA and a 4 KiB and a 16 KiB page (the
+ * validation takes the size as a parameter), starting before a page boundary
+ * so the span splits there. */
 void validation_reads_page_bounded_runs()
 {
 	for (const std::uint64_t page_size : {4096ULL, 16384ULL}) {

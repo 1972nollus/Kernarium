@@ -28,6 +28,19 @@ user presses a power key, only answers a running guest, ends the guest's
 own suspend once it holds, and ends it while it is still being entered:
 eight threads in long reads keep the freezer waiting for most of a second,
 as a busy Android does, and the wake must make the PM core give up.
+The sync-wake arm sends the wake earlier still, while the guest's own
+suspend syncs file systems, before the PM core prepares or freezes
+anything: dirty data on a loop device backed by a frozen file system
+holds the sync until the arm thaws it. The suspend must end right after
+the sync, without freezing tasks, and the guest's next suspend must
+still hold.
+A suspend the host asked for is entered again when one of the guest's own
+wake sources ended it. In the sync-alarm arm an RTC alarm fires while the
+host's suspend syncs file systems: the guest must give that attempt up,
+enter the suspend again, reply that it is suspended, and hold until the
+host's wake. In the sync-host-wake arm the host's own wake arrives during
+that sync instead: the request must fail without a second attempt, and the
+host's next suspend must hold.
 The power arm forwards a power key through the VNC display to a guest that
 suspended itself: the key must wake it promptly and reach it exactly once.
 The contract is the suspend paragraph of the mainline kernel README.
@@ -109,6 +122,32 @@ done.set()
 print(f"hold-freeze: {result}", flush=True)
 """
 HOLDER_REFUSED = "hold-freeze: refused"
+# The holder with no readers only suspends and reports. Before a suspend,
+# the sync arms leave dirty data on a loop device whose backing file is on a
+# frozen ext4 on a scratch disk, held open so that closing it writes nothing
+# back: the suspend's file system sync then waits for the loop's writeback
+# until the arm thaws the file system.
+SYNC_DISK_MIB = 256
+SYNC_DONE = "Filesystems sync: "
+SYNC_HELD = "/run/sync-held"
+SYNC_HOLD = (
+    f"mke2fs -q -t ext4 /dev/ubdb && mkdir -p {SYNC_HELD} && "
+    f"mount /dev/ubdb {SYNC_HELD} && truncate -s 64M {SYNC_HELD}/backing && "
+    f"loop=$(losetup -f --show {SYNC_HELD}/backing) && "
+    "(sleep 100000 <$loop >/dev/null 2>&1 &) && "
+    "dd if=/dev/zero of=$loop bs=1M count=16 2>/dev/null && "
+    f"fsfreeze -f {SYNC_HELD} && "
+    "sed -n 's/^Dirty: *//p' /proc/meminfo"
+)
+# Long enough after the suspend's entry line for it to have begun.
+SYNC_SETTLE_SECONDS = 1.0
+SUSPEND_FAILED = "Suspend failed: "
+RTC_ALARM = "/sys/class/rtc/rtc0/wakealarm"
+# The RTC's interrupts on every CPU, summed: each is an alarm that fired.
+RTC_INTERRUPTS = (
+    "awk '$NF == \"rtc\" { n = 0; for (i = 2; i < NF - 1; i++) n += $i; "
+    "print n }' /proc/interrupts"
+)
 VNC_HANDSHAKE_SECONDS = 30
 XF86_POWER_OFF = 0x1008FF2A
 KEY_READER = "/opt/uml-test/power_keys.py"
@@ -316,7 +355,7 @@ def hold_quietly(guest: Guest, exits: int, seconds: float, what: str) -> None:
         drain(guest, POKE_SECONDS)
         if guest.output().count(SUSPEND_EXIT) != exits:
             raise RuntimeError(
-                f"{what}: the guest left its own suspend "
+                f"{what}: the guest left suspend "
                 f"{time.monotonic() - started:.2f} s after entering it, with "
                 "no wake:\n" + guest.output()[-4000:]
             )
@@ -665,6 +704,243 @@ def run_self_wake(arguments, private: pathlib.Path) -> None:
             raise RuntimeError("self-wake: the guest did not power off")
 
 
+def sync_guest(arguments, private: pathlib.Path, arm: str) -> Guest:
+    """A guest with a scratch disk for the frozen file system."""
+    disk = private / f"{arm}.img"
+    with open(disk, "wb") as image:
+        image.truncate(SYNC_DISK_MIB << 20)
+    return Guest(
+        arguments.emulator,
+        arguments.rootfs,
+        "1G",
+        "tmpfs",
+        (f"ncpus={VCPUS}", f"ubd1={disk}"),
+        overlay_shell=True,
+        engine=arguments.engine,
+        payloads={HOLDER: GuestFile(HOLDER_SOURCE.encode(), 0o755)},
+    )
+
+
+def hold_sync(guest: Guest, arm: str) -> str:
+    """Leaves dirty data that the next sync waits on; returns how much."""
+    dirty = guest.check_command(SYNC_HOLD, 60).strip().splitlines()[-1]
+    if int(dirty.split()[0]) < 8 << 10:
+        raise RuntimeError(f"{arm}: only {dirty} stayed dirty")
+    return dirty
+
+
+def rtc_interrupts(guest: Guest) -> int:
+    output = guest.check_command(RTC_INTERRUPTS, 30)
+    return int(output.strip().splitlines()[-1])
+
+
+def run_sync_wake(arguments, private: pathlib.Path) -> None:
+    """A wake sent while the guest's own suspend still syncs file systems,
+    before the PM core prepares it, ends that suspend."""
+    with sync_guest(arguments, private, "sync-wake") as guest:
+        guest.boot_to_shell(180)
+        console = ManagementConsole(guest, private)
+        request = len(guest.output())
+        dirty = hold_sync(guest, "sync-wake")
+
+        exits = guest.output().count(SUSPEND_EXIT)
+        entries = guest.output().count(SUSPEND_ENTRY)
+        syncs = guest.output().count(SYNC_DONE)
+        freezing = guest.output().count(SUSPEND_FREEZING)
+        guest._write(f"python3 {HOLDER} 0 &\n")
+        wait_for_line(guest, SUSPEND_ENTRY, entries, "sync-wake")
+        drain(guest, SYNC_SETTLE_SECONDS)
+        answer = console.request("wake")
+        if "running" not in answer:
+            raise RuntimeError(f"sync-wake: wake replied {answer!r}")
+        if guest.output().count(SYNC_DONE) != syncs:
+            raise RuntimeError(
+                "sync-wake: the file system sync ended before the wake "
+                "arrived, so the arm tested nothing:\n"
+                + guest.output()[request:][-4000:]
+            )
+        guest.check_command(f"fsfreeze -u {SYNC_HELD}", 30)
+        early = wait_for_exit_line(
+            guest, exits,
+            "sync-wake: the guest stayed suspended after a wake sent while "
+            "its own suspend synced file systems",
+        )
+        wait_for_line(guest, "hold-freeze: ", 0, "sync-wake")
+        if HOLDER_REFUSED not in guest.output():
+            raise RuntimeError(
+                "sync-wake: the suspend ran despite a wake sent while it "
+                "synced file systems:\n" + guest.output()[request:][-4000:]
+            )
+        if guest.output().count(SUSPEND_FREEZING) != freezing:
+            raise RuntimeError(
+                "sync-wake: the suspend went on to freeze tasks after a wake "
+                "sent while it synced file systems:\n"
+                + guest.output()[request:][-4000:]
+            )
+
+        # The wake ended that suspend only: the guest's next one holds.
+        exits = guest.output().count(SUSPEND_EXIT)
+        entries = guest.output().count(SUSPEND_ENTRY)
+        guest._write(SELF_SUSPEND)
+        wait_for_line(guest, SUSPEND_ENTRY, entries, "sync-wake")
+        hold_quietly(guest, exits, 2.0, "sync-wake")
+        answer = console.request("wake")
+        if "running" not in answer:
+            raise RuntimeError(f"sync-wake: wake replied {answer!r}")
+        wait_for_exit_line(
+            guest, exits,
+            "sync-wake: the guest stayed in its next suspend after a wake",
+        )
+        guest.check_command("echo sync-wake-running", 60)
+        print(
+            f"sync-wake: a wake sent while a suspend synced {dirty} of dirty "
+            f"data ended it {early:.2f} s after the sync was released, "
+            "before it froze tasks; the next suspend held"
+        )
+        require_clean(guest, "sync-wake", request)
+        if not guest.shutdown(60):
+            raise RuntimeError("sync-wake: the guest did not power off")
+
+
+def run_sync_alarm(arguments, private: pathlib.Path) -> None:
+    """An RTC alarm that fires while a suspend the host asked for still
+    syncs file systems ends that attempt; the guest enters the suspend
+    again, replies that it is suspended, and holds until the host's wake."""
+    with sync_guest(arguments, private, "sync-alarm") as guest:
+        guest.boot_to_shell(180)
+        console = ManagementConsole(guest, private)
+        request = len(guest.output())
+        dirty = hold_sync(guest, "sync-alarm")
+        alarms = rtc_interrupts(guest)
+        exits = guest.output().count(SUSPEND_EXIT)
+        entries = guest.output().count(SUSPEND_ENTRY)
+        syncs = guest.output().count(SYNC_DONE)
+        suspend = console.send("suspend")
+        try:
+            wait_for_line(guest, SUSPEND_ENTRY, entries, "sync-alarm")
+            drain(guest, SYNC_SETTLE_SECONDS)
+            guest.check_command(f"echo +2 > {RTC_ALARM}", 30)
+            deadline = time.monotonic() + REQUEST_SECONDS
+            while rtc_interrupts(guest) == alarms:
+                if time.monotonic() > deadline:
+                    raise RuntimeError("sync-alarm: the RTC alarm never fired")
+                drain(guest, POKE_SECONDS)
+            if guest.output().count(SYNC_DONE) != syncs:
+                raise RuntimeError(
+                    "sync-alarm: the file system sync ended before the alarm "
+                    "fired, so the arm tested nothing:\n"
+                    + guest.output()[request:][-4000:]
+                )
+            # Not a command that waits for its status: the suspend entered
+            # again freezes the shell soon after the sync it releases.
+            guest._write(f"fsfreeze -u {SYNC_HELD}\n")
+            error, answer = console.collect(suspend)
+        finally:
+            suspend.close()
+        if error or "suspended" not in answer:
+            raise RuntimeError(
+                f"sync-alarm: the host's suspend replied {answer!r} after an "
+                "RTC alarm fired while it synced file systems:\n"
+                + guest.output()[request:][-4000:]
+            )
+        # The attempt the alarm ended prints its exit line before the guest
+        # enters the suspend again.
+        deadline = time.monotonic() + RESUME_SECONDS
+        while guest.output().count(SUSPEND_EXIT) == exits:
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    "sync-alarm: the alarm did not end the first attempt, so "
+                    "the arm tested nothing:\n"
+                    + guest.output()[request:][-4000:]
+                )
+            drain(guest, 0.05)
+        exits = guest.output().count(SUSPEND_EXIT)
+        hold_quietly(guest, exits, 2.0, "sync-alarm")
+        answer = console.request("wake")
+        if "running" not in answer:
+            raise RuntimeError(f"sync-alarm: wake replied {answer!r}")
+        resumed = wait_for_exit_line(
+            guest, exits,
+            "sync-alarm: the guest stayed suspended after the host's wake",
+        )
+        guest.check_command("echo sync-alarm-running", 60)
+        attempts = guest.output().count(SUSPEND_ENTRY) - entries
+        if attempts != 2:
+            raise RuntimeError(
+                f"sync-alarm: the host's suspend took {attempts} attempts, "
+                "not the one the alarm ended and one that held:\n"
+                + guest.output()[request:][-4000:]
+            )
+        print(
+            f"sync-alarm: an RTC alarm ended a host suspend syncing {dirty} "
+            "of dirty data; the guest entered it again, held, and resumed "
+            f"{resumed:.2f} s after the host's wake"
+        )
+        require_clean(guest, "sync-alarm", request)
+        if not guest.shutdown(60):
+            raise RuntimeError("sync-alarm: the guest did not power off")
+
+
+def run_sync_host_wake(arguments, private: pathlib.Path) -> None:
+    """The host's wake, sent while a suspend the host asked for still syncs
+    file systems, ends that request without a second attempt."""
+    with sync_guest(arguments, private, "sync-host-wake") as guest:
+        guest.boot_to_shell(180)
+        console = ManagementConsole(guest, private)
+        request = len(guest.output())
+        dirty = hold_sync(guest, "sync-host-wake")
+        exits = guest.output().count(SUSPEND_EXIT)
+        entries = guest.output().count(SUSPEND_ENTRY)
+        syncs = guest.output().count(SYNC_DONE)
+        freezing = guest.output().count(SUSPEND_FREEZING)
+        suspend = console.send("suspend")
+        try:
+            wait_for_line(guest, SUSPEND_ENTRY, entries, "sync-host-wake")
+            drain(guest, SYNC_SETTLE_SECONDS)
+            answer = console.request("wake")
+            if "running" not in answer:
+                raise RuntimeError(f"sync-host-wake: wake replied {answer!r}")
+            if guest.output().count(SYNC_DONE) != syncs:
+                raise RuntimeError(
+                    "sync-host-wake: the file system sync ended before the "
+                    "wake arrived, so the arm tested nothing:\n"
+                    + guest.output()[request:][-4000:]
+                )
+            guest.check_command(f"fsfreeze -u {SYNC_HELD}", 30)
+            error, answer = console.collect(suspend)
+        finally:
+            suspend.close()
+        if not error or not answer.startswith(SUSPEND_FAILED):
+            raise RuntimeError(
+                f"sync-host-wake: the host's suspend replied {answer!r} after "
+                "the host's wake arrived while it synced file systems:\n"
+                + guest.output()[request:][-4000:]
+            )
+        wait_for_exit_line(
+            guest, exits,
+            "sync-host-wake: the guest stayed suspended after the host's wake",
+        )
+        guest.check_command("echo sync-host-wake-running", 60)
+        attempts = guest.output().count(SUSPEND_ENTRY) - entries
+        if attempts != 1 or guest.output().count(SUSPEND_FREEZING) != freezing:
+            raise RuntimeError(
+                f"sync-host-wake: the guest made {attempts} attempts at the "
+                "suspend after the host's wake, or froze tasks:\n"
+                + guest.output()[request:][-4000:]
+            )
+
+        # The wake ended that request only: the host's next suspend holds.
+        hold(guest, console, "sync-host-wake", lambda: None)
+        print(
+            "sync-host-wake: the host's wake ended its suspend syncing "
+            f"{dirty} of dirty data with {answer!r} and no second attempt; "
+            "the next one held"
+        )
+        require_clean(guest, "sync-host-wake", request)
+        if not guest.shutdown(60):
+            raise RuntimeError("sync-host-wake: the guest did not power off")
+
+
 def run_power(arguments, private: pathlib.Path) -> None:
     """A power key forwarded through the VNC display wakes a guest that
     suspended itself, and reaches it exactly once."""
@@ -745,6 +1021,9 @@ ARMS = {
     "vhost-user": run_vhost_user,
     "early-wake": run_early_wake,
     "self-wake": run_self_wake,
+    "sync-wake": run_sync_wake,
+    "sync-alarm": run_sync_alarm,
+    "sync-host-wake": run_sync_host_wake,
     "power": run_power,
 }
 

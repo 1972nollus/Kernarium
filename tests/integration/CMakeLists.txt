@@ -85,17 +85,11 @@ if(UML_V4L2_PROBE_BINARY)
     if(NOT EXISTS "${UML_V4L2_PROBE_BINARY}")
         message(FATAL_ERROR "V4L2 qualification requires its guest probe")
     endif()
-    if(UML_GUEST_16K_PAGES)
-        set(_uml_video_page_size 16384)
-    else()
-        set(_uml_video_page_size 4096)
-    endif()
     # The runner boots a two-vCPU guest.
     uml_add_guest_integration_test(
         NAME guest-v4l2-decode
         SCRIPT video/run_v4l2_decode.py
         ARGS --probe "${UML_V4L2_PROBE_BINARY}"
-            --page-size "${_uml_video_page_size}"
             --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-guest.log"
         LABELS guest;video
         TIMEOUT 600
@@ -108,17 +102,11 @@ if(UML_FUTEX_PROBE_BINARY)
     if(NOT EXISTS "${UML_FUTEX_PROBE_BINARY}")
         message(FATAL_ERROR "Futex qualification requires its compiled guest probe")
     endif()
-    if(UML_GUEST_16K_PAGES)
-        set(_uml_futex_page_size 16384)
-    else()
-        set(_uml_futex_page_size 4096)
-    endif()
     # The runner boots a four-vCPU guest.
     uml_add_guest_integration_test(
         NAME guest-futex-atomic
         SCRIPT futex/run_futex_atomic.py
         ARGS --probe "${UML_FUTEX_PROBE_BINARY}"
-            --page-size "${_uml_futex_page_size}"
             --log "${CMAKE_CURRENT_BINARY_DIR}/futex-guest.log"
         LABELS guest;futex
         TIMEOUT 320
@@ -381,8 +369,10 @@ uml_add_guest_integration_test(
 
 # A system suspend holds through network, console and vhost-user traffic
 # until a wake request, and a wake sent while it is still being entered
-# ends it. A suspend the guest entered by itself ends for a wake or for a
-# power key typed on the VNC display, which reaches the guest once.
+# ends it, even while it still syncs file systems. A suspend the host asked
+# for that one of the guest's own wake sources ended is entered again. A
+# suspend the guest entered by itself ends for a wake or for a power key
+# typed on the VNC display, which reaches the guest once.
 uml_add_guest_integration_test(
     NAME guest-suspend-holds
     SCRIPT kernel/run_guest_suspend_holds.py
@@ -486,16 +476,10 @@ uml_add_guest_payload(UML_GUEST_SHARED_MEMORY_PROBE guest-shared-memory-probe
         -Wl,-z,max-page-size=16384
         -Wl,-s)
 
-if(UML_GUEST_16K_PAGES)
-    set(_uml_shared_memory_page_size 16384)
-else()
-    set(_uml_shared_memory_page_size 4096)
-endif()
 uml_add_guest_integration_test(
     NAME guest-kernel-user-shared-memory
     SCRIPT kernel/run_guest_shared_memory.py
     ARGS --probe ${UML_GUEST_SHARED_MEMORY_PROBE}
-        --page-size ${_uml_shared_memory_page_size}
         --cpus 4
     LABELS guest;kernel;memory
     TIMEOUT 900

@@ -100,13 +100,12 @@ export: --authored-only rewrites the arm64-absent-<feature> records of a
 finished dump in place (the producers' cases, their stripped state, and the
 TBI replacements stay) and refreshes the step's hashes. To
 refresh the failing list, run the rewrite without --failing, run the corpus
-test on that pack in both page profiles with --max-failures 0, and pass both
-logs to --collect-failing with the rewritten dump, the dump it was rewritten
-from as --source, and the failing list in use as --previous. A failing case
-that list names keeps its feature; any other is attributed to the last named
-feature whose state the rewrite stripped from it, since features join the
-list in the order they are retired and a newly failing case lost the newest
-state.
+test on that pack with --max-failures 0, and pass its log to --collect-failing
+with the rewritten dump, the dump it was rewritten from as --source, and the
+failing list in use as --previous. A failing case that list names keeps its
+feature; any other is attributed to the last named feature whose state the
+rewrite stripped from it, since features join the list in the order they are
+retired and a newly failing case lost the newest state.
 """
 from __future__ import annotations
 
@@ -945,7 +944,7 @@ def undefined_record(feature: str, table: str | None) -> dict | None:
         name += f"/options={bits:x}"
     return {
         "record": name, "producer": f"arm64-absent-{feature}",
-        "site": SITE, "profiles": ["16k", "4k"], "options": options,
+        "site": SITE, "profiles": ["4k"], "options": options,
         "programs": programs, "cases": cases,
     }
 

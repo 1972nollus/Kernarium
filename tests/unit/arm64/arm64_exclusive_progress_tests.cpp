@@ -4,9 +4,9 @@
  * engines whatever the TLB holds. The gadget engine runs the host's own
  * exclusives, so a translation miss between the load and the store loses the
  * host monitor, and a loop that takes the same miss on every pass would never
- * finish. These cases put the pages a loop touches into one TLB set (the
- * 4 KiB TLB is direct-mapped and the 16 KiB one has two ways), so a plain
- * store in the loop evicts the target page's write entry on every pass:
+ * finish. These cases put the pages a loop touches into one TLB entry (the
+ * TLB is direct-mapped), so a plain store in the loop evicts the target
+ * page's write entry on every pass:
  *
  * - the shape of ART's MessageStack.pushMessage, whose store sits before the
  *   exclusive load, with one and with two colliding stores;
@@ -152,7 +152,7 @@ static_assert(cbnz_w(4, 24, 0) == 0x35ff'ff44U);
 /* The TLB set of a guest page key: the production table's index. */
 [[nodiscard]] constexpr std::uint64_t tlb_set(std::uint64_t key)
 {
-	return key & (uml::memory::tlb_set_count - 1);
+	return key & (uml::memory::tlb_entry_count - 1);
 }
 
 /* The address of the `ordinal`-th page (1 and up) after the target's whose

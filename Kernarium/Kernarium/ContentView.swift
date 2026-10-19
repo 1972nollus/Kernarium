@@ -1500,15 +1500,12 @@ final class EmulatorLauncher: ObservableObject {
             print("Kernarium: Documents/\(rootfsFilename) is missing")
             return
         }
-        // A bundle that pins a page profile overrides whatever was stored; the
-        // configuration already resolved that, and this keeps a hand-edited
-        // default from reaching a runtime with no kernel for the payload.
-        let pageSize = selection.requiredPageSize ?? configuration.kernelPageSize
+        // Every runtime carries a 4 KiB kernel.
         guard kernarium_runtime_loader_select(
             selection.flavor.rawValue,
-            UInt32(pageSize.rawValue)
+            4096
         ) == 0 else {
-            print("Kernarium: cannot load the \(pageSize.title) runtime")
+            print("Kernarium: cannot load the runtime")
             return
         }
         let boot: PreparedBoot

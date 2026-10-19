@@ -74,7 +74,9 @@ constexpr unsigned long generation = 0x10000;
 constexpr std::array<char, 8> pack_magic{'U', 'M', 'L', 'A',
                                          '6', '4', 'C', '\0'};
 constexpr std::uint32_t pack_version = 2;
-constexpr std::uint8_t profile_bit = page_size == 16384 ? 1U : 2U;
+/* A record's profiles byte: bit 1 is the 4 KiB profile. Bit 0 was the retired
+ * 16 KiB profile, which a pack no longer carries. */
+constexpr std::uint8_t record_profiles = 2U;
 constexpr std::uint32_t unbounded = 0xffff'ffffU;
 constexpr std::uint16_t no_validator = 0xffffU;
 /* Option bits 0 and 1 enabled the retired FEAT_PAuth and FEAT_GCS, and bit 12
@@ -752,6 +754,9 @@ void validate_case(const Record &record, const CorpusCase &test_case,
     record.producer = reader.string16();
     record.site = reader.string16();
     record.profiles = reader.u8();
+    if (record.profiles != record_profiles)
+      throw CorpusError{std::string{record.name} +
+                        ": not a 4 KiB profile record"};
     record.options = reader.u16();
     record.svl = reader.u16();
     if ((record.options & retired_options) != 0U)
@@ -858,9 +863,7 @@ void validate_case(const Record &record, const CorpusCase &test_case,
           throw CorpusError{std::string{record.name} +
                             ": retired allocation tags"};
       }
-      /* Region shapes depend on the page profile a record targets. */
-      if ((record.profiles & profile_bit) != 0U)
-        validate_case(record, test_case, corpus);
+      validate_case(record, test_case, corpus);
     }
   }
   if (!reader.done())
@@ -1303,10 +1306,8 @@ public:
 
 private:
   [[nodiscard]] bool selected(const CorpusCase &test_case) const {
-    const auto ordinal =
-        profile_bit == 1U ? test_case.ordinal_16k : test_case.ordinal_4k;
     if (!options_.ordinals.empty() &&
-        std::ranges::find(options_.ordinals, ordinal) ==
+        std::ranges::find(options_.ordinals, test_case.ordinal_4k) ==
             options_.ordinals.end())
       return false;
     if (options_.cases.empty())
@@ -1571,17 +1572,15 @@ private:
     return std::nullopt;
   }
 
-  /* Names the case by record index and by the producer check ordinal in
-   * each page profile that exported it. */
+  /* Names the case by record index and by the producer check ordinal that
+   * exported it. */
   void report(const Record &record, std::size_t index, Lane lane,
               std::string_view message) const {
     const auto &test_case = record.cases[index];
     const auto &program = record.programs[test_case.program];
     std::string origin{record.producer};
-    if (test_case.ordinal_16k != 0U)
-      origin += " 16k check #" + std::to_string(test_case.ordinal_16k);
     if (test_case.ordinal_4k != 0U)
-      origin += " 4k check #" + std::to_string(test_case.ordinal_4k);
+      origin += " check #" + std::to_string(test_case.ordinal_4k);
     std::fprintf(stderr,
                  "FAIL %.*s case %zu \"%.*s\" (%s) entry %#010x %.*s: %.*s\n",
                  static_cast<int>(record.name.size()), record.name.data(),
@@ -1841,8 +1840,8 @@ void usage() {
       "  --record TEXT      run records whose name contains TEXT (repeatable)\n"
       "  --producer NAME    run records of one producer CTest (repeatable)\n"
       "  --case TEXT        run cases whose name contains TEXT (repeatable)\n"
-      "  --ordinal N        run the case exported by producer check N of this\n"
-      "                     page profile (repeatable, with --producer)\n"
+      "  --ordinal N        run the case exported by producer check N\n"
+      "                     (repeatable, with --producer)\n"
       "  --engine NAME      run only the gadgets or jit lane\n"
       "  --assume-host-feature TOKEN\n"
       "                     translate as if the host had feature TOKEN\n"
@@ -1928,8 +1927,6 @@ void usage() {
 
 [[nodiscard]] bool record_selected(const Record &record,
                                    const Options &options) {
-  if ((record.profiles & profile_bit) == 0U)
-    return false;
   if (!options.producers.empty() &&
       std::ranges::find(options.producers, record.producer) ==
           options.producers.end())

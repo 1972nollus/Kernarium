@@ -72,8 +72,8 @@ void sleep_milliseconds(long milliseconds)
 	raw_syscall(nr_nanosleep, reinterpret_cast<long>(&time), 0);
 }
 
-/* The mutex, the counter it guards and the overlap detector share one page in
- * either page profile, so a copy-on-write of any of them moves all three. */
+/* The mutex, the counter it guards and the overlap detector share one page,
+ * so a copy-on-write of any of them moves all three. */
 struct alignas(16384) Shared {
 	int mutex;
 	int inside;

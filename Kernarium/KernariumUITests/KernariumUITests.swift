@@ -39,9 +39,6 @@ final class KernariumUITests: XCTestCase {
         XCTAssertTrue(app.switches["retinaModeToggle"].exists)
         XCTAssertTrue(app.switches["autoResizeGuestToggle"].exists)
         XCTAssertTrue(
-            app.descendants(matching: .any)["kernelPageSizePicker"].exists
-        )
-        XCTAssertTrue(
             app.descendants(matching: .any)["rootfsPicker"].exists
         )
         XCTAssertTrue(app.buttons["settingsSaveButton"].exists)

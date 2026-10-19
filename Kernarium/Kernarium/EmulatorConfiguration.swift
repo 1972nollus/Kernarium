@@ -1,23 +1,5 @@
 import Foundation
 
-enum KernelPageSize: Int, CaseIterable, Identifiable {
-    static let environmentKey = "KERNARIUM_KERNEL_PAGE_SIZE"
-
-    case fourKiB = 4096
-    case sixteenKiB = 16384
-
-    var id: Int { rawValue }
-
-    var title: String {
-        switch self {
-        case .fourKiB:
-            "4 KB"
-        case .sixteenKiB:
-            "16 KB"
-        }
-    }
-}
-
 enum AndroidBootMode: UInt32, CaseIterable, Identifiable {
     static let environmentKey = "KERNARIUM_ANDROID_BOOT_MODE"
 
@@ -68,7 +50,6 @@ struct EmulatorConfiguration: Equatable {
     }
     static let defaultOverlaySizeGiB = 8
     static let defaultAndroidDiskSizeGiB = 8
-    static let defaultKernelPageSize = KernelPageSize.sixteenKiB
     static let defaultRetinaMode = false
     static let defaultAutoResizeGuest = true
     static let defaultAndroidBootMode = AndroidBootMode.automatic
@@ -78,7 +59,6 @@ struct EmulatorConfiguration: Equatable {
     let overlaySizeGiB: Int
     let androidDiskSizeGiB: Int
     let rootfsFilename: String
-    let kernelPageSize: KernelPageSize
     let retinaMode: Bool
     let autoResizeGuest: Bool
     let androidBootMode: AndroidBootMode
@@ -101,6 +81,9 @@ struct EmulatorConfiguration: Equatable {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         documentsDirectory: URL = RootfsImage.documentsDirectory
     ) -> Self {
+        // The kernel page-size setting is retired. A stored choice of 16 KB
+        // no longer names a runtime, so it is dropped rather than kept.
+        defaults.removeObject(forKey: Key.retiredKernelPageSize)
         let maximumVCPUCount = max(physicalProcessorCount, 1)
         let storedVCPUCount = defaults.object(forKey: Key.vCPUCount) == nil
             ? maximumVCPUCount
@@ -123,16 +106,6 @@ struct EmulatorConfiguration: Equatable {
         let storedRootfsFilename = defaults.string(
             forKey: Key.rootfsFilename
         ) ?? RootfsImage.defaultFilename
-        let storedKernelPageSize = defaults.object(
-            forKey: Key.kernelPageSize
-        ) == nil
-            ? defaultKernelPageSize.rawValue
-            : defaults.integer(forKey: Key.kernelPageSize)
-        let environmentKernelPageSize = environment[
-            KernelPageSize.environmentKey
-        ].flatMap { value in
-            Int(value).flatMap(KernelPageSize.init(rawValue:))
-        }
         let storedRetinaMode = defaults.object(forKey: Key.retinaMode) == nil
             ? defaultRetinaMode
             : defaults.bool(forKey: Key.retinaMode)
@@ -191,23 +164,6 @@ struct EmulatorConfiguration: Equatable {
         let rootfsFilename = RootfsImage.validatedFilename(
             storedRootfsFilename
         ) ?? RootfsImage.defaultFilename
-        let requestedKernelPageSize = environmentKernelPageSize ??
-            KernelPageSize(rawValue: storedKernelPageSize) ??
-            defaultKernelPageSize
-        // A bundle whose kernel exists in only one page profile decides the
-        // profile itself. Honouring a stale stored or environment setting here
-        // would only select a runtime that has no kernel for its payload. The
-        // environment override names what will actually boot, so it is what
-        // the profile has to follow.
-        let requiredKernelPageSize = RootfsImage.selectedFilename(
-            configuredFilename: rootfsFilename,
-            environment: environment
-        ).flatMap { effective in
-            RootfsImage.requiredPageSize(
-                forSelectionNamed: effective,
-                in: documentsDirectory
-            )
-        }
 
         return Self(
             vCPUCount: environmentVCPUCount ?? min(
@@ -227,7 +183,6 @@ struct EmulatorConfiguration: Equatable {
                 androidDiskSizeRangeGiB.upperBound
             ),
             rootfsFilename: rootfsFilename,
-            kernelPageSize: requiredKernelPageSize ?? requestedKernelPageSize,
             retinaMode: environmentRetinaMode ?? storedRetinaMode,
             autoResizeGuest: environmentAutoResizeGuest ??
                 storedAutoResizeGuest,
@@ -245,7 +200,6 @@ struct EmulatorConfiguration: Equatable {
                 RootfsImage.defaultFilename,
             forKey: Key.rootfsFilename
         )
-        defaults.set(kernelPageSize.rawValue, forKey: Key.kernelPageSize)
         defaults.set(retinaMode, forKey: Key.retinaMode)
         defaults.set(autoResizeGuest, forKey: Key.autoResizeGuest)
         defaults.set(androidBootMode.rawValue, forKey: Key.androidBootMode)
@@ -279,7 +233,8 @@ struct EmulatorConfiguration: Equatable {
         static let overlaySizeGiB = "emulator.overlaySizeGiB"
         static let androidDiskSizeGiB = "emulator.androidDiskSizeGiB"
         static let rootfsFilename = "emulator.rootfsFilename"
-        static let kernelPageSize = "emulator.kernelPageSize"
+        /// The retired kernel page-size setting: every guest is 4 KiB.
+        static let retiredKernelPageSize = "emulator.kernelPageSize"
         static let retinaMode = "emulator.retinaMode"
         static let autoResizeGuest = "emulator.autoResizeGuest"
         static let androidBootMode = "emulator.androidBootMode"
@@ -300,17 +255,6 @@ enum GuestSelection {
             flavor
         case let .bundle(bundle):
             bundle.flavor
-        }
-    }
-
-    /// Specialized guests pin the page profile carried by their runtime;
-    /// ordinary Linux images leave the choice to the setting.
-    var requiredPageSize: KernelPageSize? {
-        switch self {
-        case .image:
-            nil
-        case let .bundle(bundle):
-            bundle.requiredPageSize
         }
     }
 }
@@ -371,19 +315,6 @@ enum RootfsImage {
         }
         guard fileManager.fileExists(atPath: url.path) else { return nil }
         return .image(url, flavor: .linux)
-    }
-
-    /// The page profile a stored selection forces, if any. Settings and the
-    /// launcher both consult this so a stale stored profile cannot reach a
-    /// runtime that has no kernel for it.
-    static func requiredPageSize(
-        forSelectionNamed filename: String,
-        in directory: URL = documentsDirectory,
-        fileManager: FileManager = .default
-    ) -> KernelPageSize? {
-        selection(
-            named: filename, in: directory, fileManager: fileManager
-        )?.requiredPageSize
     }
 
     static func selectedFilename(

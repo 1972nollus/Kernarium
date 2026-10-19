@@ -7,8 +7,8 @@
   },
   "configurePresets": [
     {
-      "name": "macos-unit-16k",
-      "displayName": "macOS host unit tests (16 KiB)",
+      "name": "macos-unit",
+      "displayName": "macOS host unit tests",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/.build/presets/${presetName}",
       "toolchainFile": "${sourceDir}/cmake/toolchains/Apple.cmake",
@@ -21,22 +21,13 @@
         "UML_BUILD_GPU": false,
         "UML_BUILD_UNIT_TESTS": true,
         "UML_BUILD_INTEGRATION_TESTS": false,
-        "UML_BUILD_TOOLING_TESTS": true,
-        "UML_GUEST_16K_PAGES": true
-      }
-    },
-    {
-      "name": "macos-unit-4k",
-      "displayName": "macOS host unit tests (4 KiB)",
-      "inherits": "macos-unit-16k",
-      "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false
+        "UML_BUILD_TOOLING_TESTS": true
       }
     },
     {
       "name": "macos-unit-gpu",
       "displayName": "macOS host GPU ownership tests",
-      "inherits": "macos-unit-16k",
+      "inherits": "macos-unit",
       "cacheVariables": {
         "UML_BUILD_GPU": true
       }
@@ -53,20 +44,12 @@
     },
     {
       "name": "macos-unit-gpu-venus",
-      "displayName": "macOS experimental Venus GPU tests (16 KiB)",
+      "displayName": "macOS experimental Venus GPU tests",
       "inherits": "macos-unit-gpu",
       "cacheVariables": {
         "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
         "UML_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/macos-arm64-26",
         "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu-vulkan-experiment/macos-arm64"
-      }
-    },
-    {
-      "name": "macos-unit-gpu-venus-4k",
-      "displayName": "macOS experimental Venus GPU tests (4 KiB)",
-      "inherits": "macos-unit-gpu-venus",
-      "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false
       }
     },
     {
@@ -82,7 +65,7 @@
     {
       "name": "macos-tooling",
       "displayName": "macOS host tooling checks",
-      "inherits": "macos-unit-16k",
+      "inherits": "macos-unit",
       "cacheVariables": {
         "UML_BUILD_UNIT_TESTS": false
       }
@@ -90,7 +73,7 @@
     {
       "name": "macos-integration",
       "displayName": "macOS guest integration tests",
-      "inherits": "macos-unit-16k",
+      "inherits": "macos-unit",
       "cacheVariables": {
         "UML_BUILD_CLI": true,
         "UML_BUILD_KERNEL_RUNNER": true,
@@ -103,17 +86,9 @@
       }
     },
     {
-      "name": "macos-integration-4k",
-      "displayName": "macOS guest integration tests (4 KiB)",
-      "inherits": "macos-integration",
-      "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false
-      }
-    },
-    {
       "name": "macos-x86_64",
       "displayName": "macOS x86_64 userspace compatibility product (4 KiB)",
-      "inherits": "macos-unit-4k",
+      "inherits": "macos-unit",
       "cacheVariables": {
         "UML_BUILD_CLI": true,
         "UML_BUILD_KERNEL_RUNNER": true,
@@ -126,7 +101,7 @@
     },
     {
       "name": "macos-integration-venus",
-      "displayName": "macOS experimental Venus guest integration tests (16 KiB)",
+      "displayName": "macOS experimental Venus guest integration tests",
       "inherits": "macos-integration",
       "cacheVariables": {
         "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
@@ -135,17 +110,9 @@
       }
     },
     {
-      "name": "macos-integration-venus-4k",
-      "displayName": "macOS experimental Venus guest integration tests (4 KiB)",
-      "inherits": "macos-integration-venus",
-      "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false
-      }
-    },
-    {
       "name": "macos-android17",
       "displayName": "macOS Android 17 guest executable",
-      "inherits": "macos-unit-4k",
+      "inherits": "macos-unit",
       "cacheVariables": {
         "UML_BUILD_ANDROID17_CLI": true,
         "UML_BUILD_KERNEL_RUNNER": true,
@@ -165,18 +132,18 @@
       }
     },
     {
-      "name": "macos-unit-16k-asan-ubsan",
+      "name": "macos-unit-asan-ubsan",
       "displayName": "macOS unit tests with ASan/UBSan",
-      "inherits": "macos-unit-16k",
+      "inherits": "macos-unit",
       "cacheVariables": {
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
       }
     },
     {
-      "name": "macos-unit-16k-tsan",
+      "name": "macos-unit-tsan",
       "displayName": "macOS unit tests with TSan",
-      "inherits": "macos-unit-16k",
+      "inherits": "macos-unit",
       "cacheVariables": {
         "CMAKE_CXX_FLAGS": "-fsanitize=thread",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
@@ -196,7 +163,7 @@
     {
       "name": "ios-device",
       "displayName": "iOS device library",
-      "inherits": "macos-unit-16k",
+      "inherits": "macos-unit",
       "cacheVariables": {
         "UML_APPLE_PLATFORM": "ios",
         "UML_BUILD_UNIT_TESTS": false,
@@ -206,7 +173,7 @@
     {
       "name": "ios-simulator",
       "displayName": "iOS simulator library",
-      "inherits": "macos-unit-16k",
+      "inherits": "macos-unit",
       "cacheVariables": {
         "UML_APPLE_PLATFORM": "ios-simulator",
         "UML_BUILD_UNIT_TESTS": false,
@@ -215,9 +182,9 @@
     },
     {
       "name": "kernarium-ios-device",
-      "displayName": "Kernarium iOS device runtime (16 KiB)",
+      "displayName": "Kernarium iOS device runtime",
       "inherits": "ios-device",
-      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-16k",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device",
       "cacheVariables": {
         "UML_BUILD_KERNEL_RUNNER": true,
         "UML_BUILD_NETWORK_PROVIDER": true,
@@ -228,30 +195,12 @@
       }
     },
     {
-      "name": "kernarium-ios-device-4k",
-      "displayName": "Kernarium iOS device runtime (4 KiB)",
-      "inherits": "kernarium-ios-device",
-      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-4k",
-      "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false
-      }
-    },
-    {
       "name": "kernarium-ios-device-automation",
-      "displayName": "Kernarium iOS device automation runtime (16 KiB)",
+      "displayName": "Kernarium iOS device automation runtime",
       "inherits": "kernarium-ios-device",
-      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-automation-16k",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-automation",
       "cacheVariables": {
         "UML_KERNARIUM_AUTOMATION_HARNESS": true
-      }
-    },
-    {
-      "name": "kernarium-ios-device-automation-4k",
-      "displayName": "Kernarium iOS device automation runtime (4 KiB)",
-      "inherits": "kernarium-ios-device-automation",
-      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-automation-4k",
-      "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false
       }
     },
     {
@@ -260,7 +209,6 @@
       "inherits": "kernarium-ios-device",
       "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-android-4k",
       "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false,
         "UML_KERNEL_PRODUCT": "android-17"
       }
     }
@@ -273,12 +221,7 @@
     },
     {
       "name": "unit-test-binaries",
-      "configurePreset": "macos-unit-16k",
-      "targets": ["tooling-test-binaries", "unit-test-binaries", "architecture-audit"]
-    },
-    {
-      "name": "unit-test-binaries-4k",
-      "configurePreset": "macos-unit-4k",
+      "configurePreset": "macos-unit",
       "targets": ["tooling-test-binaries", "unit-test-binaries", "architecture-audit"]
     },
     {
@@ -297,11 +240,6 @@
       "targets": ["tooling-test-binaries", "gpu-unit-test-binaries", "architecture-audit"]
     },
     {
-      "name": "gpu-venus-test-binaries-4k",
-      "configurePreset": "macos-unit-gpu-venus-4k",
-      "targets": ["tooling-test-binaries", "gpu-unit-test-binaries", "architecture-audit"]
-    },
-    {
       "name": "gpu-venus-test-binaries-asan-ubsan",
       "configurePreset": "macos-unit-gpu-venus-asan-ubsan",
       "targets": ["tooling-test-binaries", "gpu-unit-test-binaries", "architecture-audit"]
@@ -312,11 +250,6 @@
       "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
     },
     {
-      "name": "macos-integration-4k",
-      "configurePreset": "macos-integration-4k",
-      "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
-    },
-    {
       "name": "macos-x86_64",
       "configurePreset": "macos-x86_64",
       "targets": ["uml-darwin", "tooling-test-binaries", "architecture-audit"]
@@ -324,11 +257,6 @@
     {
       "name": "macos-integration-venus",
       "configurePreset": "macos-integration-venus",
-      "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
-    },
-    {
-      "name": "macos-integration-venus-4k",
-      "configurePreset": "macos-integration-venus-4k",
       "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
     },
     {
@@ -343,12 +271,12 @@
     },
     {
       "name": "asan-ubsan",
-      "configurePreset": "macos-unit-16k-asan-ubsan",
+      "configurePreset": "macos-unit-asan-ubsan",
       "targets": ["unit-test-binaries"]
     },
     {
       "name": "tsan",
-      "configurePreset": "macos-unit-16k-tsan",
+      "configurePreset": "macos-unit-tsan",
       "targets": ["unit-test-binaries"]
     },
     {
@@ -372,18 +300,8 @@
       "targets": ["KernariumRuntime", "architecture-audit"]
     },
     {
-      "name": "kernarium-ios-device-4k",
-      "configurePreset": "kernarium-ios-device-4k",
-      "targets": ["KernariumRuntime", "architecture-audit"]
-    },
-    {
       "name": "kernarium-ios-device-automation",
       "configurePreset": "kernarium-ios-device-automation",
-      "targets": ["KernariumRuntime", "architecture-audit"]
-    },
-    {
-      "name": "kernarium-ios-device-automation-4k",
-      "configurePreset": "kernarium-ios-device-automation-4k",
       "targets": ["KernariumRuntime", "architecture-audit"]
     },
     {
@@ -407,20 +325,7 @@
     {
       "name": "unit",
       "inherits": "test-defaults",
-      "configurePreset": "macos-unit-16k",
-      "filter": {
-        "include": {
-          "label": "^unit$"
-        }
-      },
-      "execution": {
-        "jobs": 10
-      }
-    },
-    {
-      "name": "unit-4k",
-      "inherits": "test-defaults",
-      "configurePreset": "macos-unit-4k",
+      "configurePreset": "macos-unit",
       "filter": {
         "include": {
           "label": "^unit$"
@@ -456,11 +361,6 @@
       "configurePreset": "macos-unit-gpu-venus"
     },
     {
-      "name": "unit-gpu-venus-4k",
-      "inherits": "unit-gpu",
-      "configurePreset": "macos-unit-gpu-venus-4k"
-    },
-    {
       "name": "unit-gpu-venus-asan-ubsan",
       "inherits": "unit-gpu",
       "configurePreset": "macos-unit-gpu-venus-asan-ubsan"
@@ -487,11 +387,6 @@
       "name": "tooling-gpu-vnc-venus",
       "inherits": "tooling-gpu-vnc",
       "configurePreset": "macos-unit-gpu-venus"
-    },
-    {
-      "name": "tooling-gpu-vnc-venus-4k",
-      "inherits": "tooling-gpu-vnc",
-      "configurePreset": "macos-unit-gpu-venus-4k"
     },
     {
       "name": "tooling-gpu-vnc-venus-asan-ubsan",
@@ -528,24 +423,9 @@
       }
     },
     {
-      "name": "integration-fast-4k",
-      "inherits": "integration-fast",
-      "configurePreset": "macos-integration-4k"
-    },
-    {
       "name": "integration-fast-venus",
       "inherits": "integration-fast",
       "configurePreset": "macos-integration-venus"
-    },
-    {
-      "name": "integration-fast-venus-4k",
-      "inherits": "integration-fast",
-      "configurePreset": "macos-integration-venus-4k"
-    },
-    {
-      "name": "integration-full-4k",
-      "inherits": "integration-full",
-      "configurePreset": "macos-integration-4k"
     },
     {
       "name": "tooling",
@@ -563,12 +443,7 @@
     {
       "name": "tooling-unit",
       "inherits": "tooling",
-      "configurePreset": "macos-unit-16k"
-    },
-    {
-      "name": "tooling-unit-4k",
-      "inherits": "tooling-unit",
-      "configurePreset": "macos-unit-4k"
+      "configurePreset": "macos-unit"
     },
     {
       "name": "tooling-integration",
@@ -579,19 +454,9 @@
       }
     },
     {
-      "name": "tooling-integration-4k",
-      "inherits": "tooling-integration",
-      "configurePreset": "macos-integration-4k"
-    },
-    {
       "name": "tooling-integration-venus",
       "inherits": "tooling-integration",
       "configurePreset": "macos-integration-venus"
-    },
-    {
-      "name": "tooling-integration-venus-4k",
-      "inherits": "tooling-integration",
-      "configurePreset": "macos-integration-venus-4k"
     },
     {
       "name": "tooling-all",
@@ -614,7 +479,7 @@
     {
       "name": "unit-asan-ubsan",
       "inherits": "test-defaults",
-      "configurePreset": "macos-unit-16k-asan-ubsan",
+      "configurePreset": "macos-unit-asan-ubsan",
       "filter": {
         "include": {
           "label": "^unit$"
@@ -624,7 +489,7 @@
     {
       "name": "unit-tsan",
       "inherits": "test-defaults",
-      "configurePreset": "macos-unit-16k-tsan",
+      "configurePreset": "macos-unit-tsan",
       "filter": {
         "include": {
           "label": "tsan"
@@ -660,19 +525,10 @@
     {
       "name": "check-unit",
       "steps": [
-        {"type": "configure", "name": "macos-unit-16k"},
+        {"type": "configure", "name": "macos-unit"},
         {"type": "build", "name": "unit-test-binaries"},
         {"type": "test", "name": "unit"},
         {"type": "test", "name": "tooling-unit"}
-      ]
-    },
-    {
-      "name": "check-unit-4k",
-      "steps": [
-        {"type": "configure", "name": "macos-unit-4k"},
-        {"type": "build", "name": "unit-test-binaries-4k"},
-        {"type": "test", "name": "unit-4k"},
-        {"type": "test", "name": "tooling-unit-4k"}
       ]
     },
     {
@@ -712,15 +568,6 @@
       ]
     },
     {
-      "name": "check-gpu-venus-4k",
-      "steps": [
-        {"type": "configure", "name": "macos-unit-gpu-venus-4k"},
-        {"type": "build", "name": "gpu-venus-test-binaries-4k"},
-        {"type": "test", "name": "unit-gpu-venus-4k"},
-        {"type": "test", "name": "tooling-gpu-vnc-venus-4k"}
-      ]
-    },
-    {
       "name": "check-gpu-venus-asan-ubsan",
       "steps": [
         {"type": "configure", "name": "macos-unit-gpu-venus-asan-ubsan"},
@@ -730,30 +577,12 @@
       ]
     },
     {
-      "name": "check-integration-4k",
-      "steps": [
-        {"type": "configure", "name": "macos-integration-4k"},
-        {"type": "build", "name": "macos-integration-4k"},
-        {"type": "test", "name": "tooling-integration-4k"},
-        {"type": "test", "name": "integration-fast-4k"}
-      ]
-    },
-    {
       "name": "check-integration-venus",
       "steps": [
         {"type": "configure", "name": "macos-integration-venus"},
         {"type": "build", "name": "macos-integration-venus"},
         {"type": "test", "name": "tooling-integration-venus"},
         {"type": "test", "name": "integration-fast-venus"}
-      ]
-    },
-    {
-      "name": "check-integration-venus-4k",
-      "steps": [
-        {"type": "configure", "name": "macos-integration-venus-4k"},
-        {"type": "build", "name": "macos-integration-venus-4k"},
-        {"type": "test", "name": "tooling-integration-venus-4k"},
-        {"type": "test", "name": "integration-fast-venus-4k"}
       ]
     },
     {

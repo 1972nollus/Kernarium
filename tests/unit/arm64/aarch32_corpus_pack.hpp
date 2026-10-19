@@ -45,7 +45,7 @@ constexpr std::uint32_t kDataBase = 0x50000000;
 constexpr std::uint32_t kDataSize = 0x8000;
 constexpr std::uint32_t kReadOnlyBase = 0x50008000;
 constexpr std::uint32_t kReadOnlySize = 0x4000;
-constexpr unsigned kProfileBit = DARWIN_UML_GUEST_PAGE_SIZE == 4096 ? 2U : 1U;
+constexpr unsigned kProfileBit = 2U; /* the 4 KiB profile */
 constexpr unsigned kMaxHalfwords = 0x380;
 constexpr unsigned kRegisters = 15;
 constexpr unsigned kVectors = 32;

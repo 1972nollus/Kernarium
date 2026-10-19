@@ -18,7 +18,9 @@ an artifact is accepted by, and replay commit IDs and binary hashes are
 observations.
 
 The line builds two products from one tree. The Linux product is the desktop
-kernel, in 16 KiB (default) and 4 KiB profiles and the x86_64 userspace slice.
+kernel, in 4 KiB and 16 KiB profiles and the x86_64 userspace slice. The Apple
+products run only the 4 KiB profile; the 16 KiB one, its accepted bundles and
+`page-16k.fragment` stay until a kernel release removes them.
 The [Android product](#android-product) is the 4 KiB arm64 kernel of the
 LineageOS 24 (Android 17) guest. It differs from the Linux product only in its
 configuration overlay: both build the same tree, including nine overlay topics
@@ -124,8 +126,10 @@ artifact.
 
 The normal arm64-userspace profiles are:
 
-- 16 KiB pages from `kernel/common/config/page-16k.fragment` (default); and
-- 4 KiB pages from `kernel/common/config/page-4k.fragment` (compatibility).
+- 4 KiB pages from `kernel/common/config/page-4k.fragment` (the products'
+  profile); and
+- 16 KiB pages from `kernel/common/config/page-16k.fragment` (retired from the
+  products).
 
 The separate x86_64-userspace slice is 4 KiB only. Its
 `slices/x86_64/config/userspace.fragment` follows the shared policy, the Linux
@@ -498,12 +502,22 @@ signal nor a notification collected before the suspend ends it. A wake request
 that arrives while a suspend is still being entered, whether the host or the
 guest started it, is answered at once rather than left on the console, and it
 still ends that suspend: the PM core aborts at its next wakeup check, or the
-CPU does not go to sleep. A guest that is not suspending only answers it.
+CPU does not go to sleep. The PM core keeps every wakeup signaled since the
+suspend began, including one signaled while it syncs file systems, and a
+suspend whose sync saw one ends before it notifies or freezes anything; a
+guest that is not suspending only answers the request, and its next suspend
+discards that wakeup. A suspend the host asked for that ends with `-EBUSY`, as
+when one of the guest's own wake sources such as an RTC alarm fired while it
+was being entered, is entered again up to three more times; the host's wake
+ends the request instead, and a request that gives up replies `Suspend
+failed`.
 Virtio input is not a wake source, because a suspend disables its rings, so a
 host that forwards a power key also sends the wake. `guest-suspend-holds`
 keeps network, console and vhost-user traffic flowing through a suspend, sends
-early wakes, and wakes a suspend the guest entered by itself with a wake and
-with a power key typed on the VNC display.
+early wakes, one of them while a frozen file system holds the suspend's sync,
+fires an RTC alarm during a held sync of the host's suspend, which must still
+hold, and wakes a suspend the guest entered by itself with a wake and with a
+power key typed on the VNC display.
 
 Loadable modules remain disabled. The required guest filesystems, networking,
 Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM
@@ -687,8 +701,8 @@ only the compact runtime/support bundle, with the kernel image's DWARF
 stripped (see [Toolchain](#toolchain)). It never builds, fetches, or changes a
 source checkout. Use the script's `--help` for output and release options.
 
-`artifacts/accepted-16k.env` and `accepted-4k.env` select reviewed arm64 local
-publications below `.build/kernel/artifacts`.
+`artifacts/accepted-4k.env` selects the reviewed arm64 local publication below
+`.build/kernel/artifacts`.
 `slices/x86_64/artifacts/accepted-4k.env` independently selects the x86_64
 userspace publication. `artifacts/accepted-android-4k.env` selects the Android
 product's publication. Artifact identity includes the family and the slice, so

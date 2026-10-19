@@ -86,7 +86,7 @@ def baseline_artifacts(
     ).encode()
     return {
         "renderer.txt": (
-            f"guest_page_size=16384\n"
+            f"guest_page_size=4096\n"
             f"vk_driver_files={icd['manifest_path']}\n"
             "mesa-vulkan-drivers=25.0.7-2+deb13u1\n"
         ).encode(),
@@ -349,7 +349,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIn("--deqp-crashhandler=disable", arguments)
         self.assertIn("--deqp-test-oom=disable", arguments)
         launcher = cts.build_guest_launcher(
-            self.identity, self.selection, page_size=16384, timeout=900,
+            self.identity, self.selection, page_size=4096, timeout=900,
             case_list=cts.GUEST_CASE_LIST_PATH,
         )
         self.assertIn(
@@ -781,7 +781,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         launcher = cts.build_receipt_guest_launcher(
             self.receipt,
             selection,
-            page_size=16384,
+            page_size=4096,
             timeout=900,
             progress_timeout=600,
             case_list=cts.GUEST_CASE_LIST_PATH,
@@ -808,7 +808,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         relaxed = cts.build_receipt_guest_launcher(
             self.receipt,
             selection,
-            page_size=16384,
+            page_size=4096,
             timeout=900,
             progress_timeout=600,
             relax_diagnostics=True,
@@ -898,7 +898,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 options = cts.parse_arguments((
                     "--qualification", "--dry-run", "--mode", "current-must-pass",
                     "--fraction", f"{index},8", "--cpus", "4", "--memory", "4G",
-                    "--page-profile", "16k",
                 ))
                 command = cts.build_receipt_harness_command(
                     options, self.receipt, selection, Path("/tmp/receipt-full-wsi-test")
@@ -938,7 +937,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         launcher = cts.build_receipt_guest_launcher(
             self.receipt,
             selection,
-            page_size=16384,
+            page_size=4096,
             timeout=900,
             progress_timeout=600,
             use_wsi=True,
@@ -1036,7 +1035,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         launcher = cts.build_receipt_guest_launcher(
             self.receipt,
             selection,
-            page_size=16384,
+            page_size=4096,
             timeout=900,
             progress_timeout=600,
             use_wsi=True,
@@ -1125,7 +1124,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
             "current-must-pass", (), None, cts.Fraction(0, 16)
         )
         arguments = {
-            "page_size": 16384,
+            "page_size": 4096,
             "timeout": cts.APPLE_MUSTPASS_TIMEOUT,
             "progress_timeout": cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
         }
@@ -1488,7 +1487,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         launcher = cts.build_receipt_guest_launcher(
             self.receipt,
             selection,
-            page_size=16384,
+            page_size=4096,
             timeout=cts.APPLE_MUSTPASS_TIMEOUT,
             progress_timeout=cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
             device_exclusions=cts.DEVICE_EXCLUSIONS,
@@ -1621,7 +1620,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
             cts.resolve_receipt_selection(
                 "current-must-pass", (), None, cts.Fraction(2, 16)
             ),
-            page_size=16384,
+            page_size=4096,
             timeout=cts.APPLE_MUSTPASS_TIMEOUT,
             progress_timeout=cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
             device_exclusions=cts.DEVICE_EXCLUSIONS,
@@ -1637,7 +1636,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
             cts.resolve_receipt_selection(
                 "current-must-pass", (), None, cts.Fraction(3, 16)
             ),
-            page_size=16384,
+            page_size=4096,
             timeout=cts.APPLE_MUSTPASS_TIMEOUT,
             progress_timeout=cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
             device_exclusions=cts.DEVICE_EXCLUSIONS,
@@ -1880,7 +1879,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
             engine="gadgets",
             memory_mib=cts.APPLE_MUSTPASS_GUEST_MEMORY_MIB,
             cpus=1,
-            page_size=16384,
+            page_size=4096,
             timeout=28200,
             stall_timeout=1800,
         )

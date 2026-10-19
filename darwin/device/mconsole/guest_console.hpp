@@ -88,11 +88,13 @@ guest_console_location();
  * timekeeping stop at a kernel-owned boundary, and sends the explicit wake
  * edge. Older kernels fall back to management-console stop/go.
  *
- * The returned mode records which resume command is required. A sent suspend
- * request that has not replied by the deadline still selects system wake:
- * timeout cannot prove that the kernel did not already enter suspend. None
- * means no request reached the console. Resuming is best effort and reports
- * nothing.
+ * The returned mode records which resume command is required. The guest
+ * replies to a suspend request once it has synced its filesystems, so the
+ * request waits up to eight seconds for that reply, and a guest that reports
+ * within them that it could not suspend is stopped instead. A request that has
+ * not replied by then still selects system wake: timeout cannot prove that the
+ * kernel did not already enter suspend. None means no request reached the
+ * console. Resuming is best effort and reports nothing.
  */
 [[nodiscard]] GuestSuspension suspend_guest(
 	unsigned int writeback_settle_ms,
