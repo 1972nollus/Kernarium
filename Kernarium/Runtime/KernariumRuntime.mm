@@ -16,6 +16,7 @@
 #include "battery/protocol.hpp"
 #include "console/in_process_service.hpp"
 #include "console/protocol.hpp"
+#include "gpu/frame_tap.hpp"
 #include "gpu/in_process_service.hpp"
 #include "gpu/protocol.hpp"
 #include "input/virtio/in_process_service.hpp"
@@ -1131,6 +1132,25 @@ int runtimeSetGpuHold(int held)
     return activeGpu->holdRequests(gpuHoldBudget) ? 1 : 0;
 }
 
+int runtimeSetFrameSink(
+    kernarium_runtime_frame_sink sink,
+    void* context,
+    std::uint32_t maximumWidth,
+    std::uint32_t framesPerSecond)
+{
+    if (sink == nullptr) {
+        uml::gpu::setFrameTap(nullptr, nullptr);
+        return 0;
+    }
+    if (maximumWidth == 0 || framesPerSecond == 0)
+        return -EINVAL;
+    uml::gpu::setFrameTap(
+        sink,
+        context,
+        {.maximumWidth = maximumWidth, .framesPerSecond = framesPerSecond});
+    return 0;
+}
+
 void runtimeSetConsoleOutputCallback(
     kernarium_runtime_console_output_callback callback,
     void* context)
@@ -1161,11 +1181,12 @@ const kernarium_runtime_api runtimeApi {
     .set_console_output_callback = runtimeSetConsoleOutputCallback,
     .send_console_input = runtimeSendConsoleInput,
     .set_gpu_hold = runtimeSetGpuHold,
+    .set_frame_sink = runtimeSetFrameSink,
 };
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v10(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v11(void)
 {
     return &runtimeApi;
 }

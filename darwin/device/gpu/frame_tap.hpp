@@ -8,8 +8,8 @@ namespace uml::gpu {
 /* Receives one copy of the guest's display as a CVPixelBufferRef (an
  * IOSurface-backed BGRA buffer from a pool), upright and aspect-preserved. The
  * buffer is borrowed for the call: a receiver that keeps it retains it. The
- * sink runs on a host thread and must return promptly. */
-using FrameTapSink = void (*)(void* context, void* pixelBuffer) noexcept;
+ * sink runs on a host thread, must return promptly, and must not throw. */
+using FrameTapSink = void (*)(void* context, void* pixelBuffer);
 
 struct FrameTapOptions final {
     /* The copy is no wider than this, and no larger than the guest's display. */
