@@ -251,8 +251,10 @@ SurfaceFlinger reconnects once at the new size with no headless step between.
 `frameworks/base` (route `p0007`) keeps a display's state when a snapshot taken
 between two quick reconnects names an active mode its own list lacks, which
 otherwise crashes `system_server`. Density stays at its launch value. The
-touchscreen's absolute range stays the launch pixel size, and the host maps the
-view into it linearly, so touch stays exact at a coarser resolution.
+touchscreen's absolute range is fixed at 0 through 32767 on both axes, and the
+host maps the guest's visible rectangle onto it
+([`../../docs/graphics.md`](../../docs/graphics.md#dynamic-native-geometry)),
+so touch stays exact at every size the display takes.
 
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under
