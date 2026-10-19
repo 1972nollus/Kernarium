@@ -258,15 +258,6 @@ struct ProgramCodeStamps final {
 	return ProgramSourceComparison::match;
 }
 
-/* An unlinked BlockLink's stream is the one link_exit word in front of it,
- * which takes the RIP from the BlockLink. */
-struct UnlinkedBlockLink final {
-	std::uintptr_t fallback_stream;
-	BlockLink link;
-};
-static_assert(offsetof(UnlinkedBlockLink, link) == sizeof(std::uintptr_t),
-	"link_exit reads the RIP two words past its stream word");
-
 /* Entries no block has claimed name an address no block begins at and carry
  * that address's own fallback, so the translated tier can load the pointer
  * before it has compared the address, and a guest that really does branch
@@ -275,10 +266,10 @@ static_assert(offsetof(UnlinkedBlockLink, link) == sizeof(std::uintptr_t),
 [[nodiscard]] const TargetLinkTable &vacant_target_links() noexcept
 {
 	static const UnlinkedBlockLink vacant{
+		0, ~std::uint64_t{}, ~std::uint64_t{},
 		reinterpret_cast<std::uintptr_t>(
 			native::uml_x86_64_gadget_link_exit),
-		{&vacant.fallback_stream, 0, ~std::uint64_t{}, ~std::uint64_t{},
-			~std::uint64_t{}},
+		{&vacant.fallback_stream, 0, ~std::uint64_t{}},
 	};
 	static const TargetLinkTable table = [] {
 		TargetLinkTable initial{};
@@ -639,30 +630,35 @@ private:
 
 	/* Laid out as an UnlinkedBlockLink, so an unlinked record's stream is
 	 * its own link_exit word. */
-	struct LinkRecord final {
+	struct alignas(16) LinkRecord final {
 		explicit LinkRecord(std::uint64_t address) noexcept
-			: fallback_stream{reinterpret_cast<std::uintptr_t>(
+			: unlinked_begin{address}, unlinked_end{address},
+			  fallback_stream{reinterpret_cast<std::uintptr_t>(
 				native::uml_x86_64_gadget_link_exit)},
-			  link{&fallback_stream, 0, address, address, address}
+			  link{&fallback_stream, 0, address}
 		{}
 
 		void reset() noexcept
 		{
 			link.stream = &fallback_stream;
 			link.instruction_count = 0;
-			link.program_begin = link.guest_rip;
-			link.program_end = link.guest_rip;
 		}
 
+		LinkRecord *next_live{};
+		std::uint64_t unlinked_begin;
+		std::uint64_t unlinked_end;
 		std::uintptr_t fallback_stream;
 		BlockLink link;
 		bool listed{};
-		LinkRecord *next_live{};
 	};
-	static_assert(offsetof(LinkRecord, link) ==
-			offsetof(UnlinkedBlockLink, link) &&
+	static_assert(offsetof(LinkRecord, unlinked_begin) ==
+			offsetof(UnlinkedBlockLink, unlinked_begin) &&
+		offsetof(LinkRecord, fallback_stream) ==
+			offsetof(UnlinkedBlockLink, fallback_stream) &&
+		offsetof(LinkRecord, link) == offsetof(UnlinkedBlockLink, link) &&
 		sizeof(LinkRecord) == 64,
-		"link_exit reads the RIP two words past its stream word");
+		"a link record is laid out as the unlinked state link_exit and "
+		"follow_block_link read");
 
 	struct LinkKey final {
 		[[nodiscard]] std::uint64_t operator()(
@@ -1485,7 +1481,7 @@ private:
 		const auto decoded = replay != 0 ? malloc_good_size(replay) : 0;
 		return {
 			.allocated = malloc_size(slot.translation.get()) +
-				malloc_size(program.native_stream().data()) +
+				malloc_size(program.stream_allocation()) +
 				malloc_size(program.source().data()) + decoded,
 			.decoded = decoded,
 		};
@@ -2034,8 +2030,6 @@ private:
 		record.link.stream = program.native_stream().data();
 		record.link.instruction_count = program.instruction_count();
 		record.link.guest_rip = program.address();
-		record.link.program_begin = program.address();
-		record.link.program_end = program.address() + program.byte_count();
 		/* Publishing here, rather than at a branch that asked for this
 		 * address, is what lets a RET reach a return site it has never
 		 * reached before: the block that runs there announces itself. */
@@ -2327,7 +2321,8 @@ private:
 	}
 
 	/* What a resident translation is charged: its record, its native stream
-	 * and its saved source, as the allocator sizes them. The decoded
+	 * with the bounds in front of it, and its saved source, as the allocator
+	 * sizes them. The decoded
 	 * instructions a budget-limited replay keeps are not: only a block a
 	 * single step or a trap flag ran inside has them. */
 	[[nodiscard]] static std::ptrdiff_t translation_charge(
@@ -2335,7 +2330,8 @@ private:
 	{
 		return static_cast<std::ptrdiff_t>(
 			malloc_good_size(sizeof(Translation)) +
-			malloc_good_size(program.native_stream().size_bytes()) +
+			malloc_good_size(program.native_stream().size_bytes() +
+				stream_header_words * sizeof(std::uintptr_t)) +
 			malloc_good_size(program.source().size()));
 	}
 
