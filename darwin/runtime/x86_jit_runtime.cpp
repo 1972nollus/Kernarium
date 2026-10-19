@@ -154,21 +154,36 @@ X86JitRunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
 	/* The kernel's mark alone decides: a space another agent may observe
 	 * keeps x86's store order. */
 	const bool ordered = mm_shared;
-	sync_engine(*engine, execution, generation, cpu.execution_mode,
-		sequences, ordered);
-	const auto start = cpu.rip;
-	const auto executed = engine->run(cpu, memory, {
-		.generation = generation,
-		.instruction_budget = instruction_budget,
-		.execution_context = execution.context(),
-		.interrupt = &interrupt,
-		.orders_stores = ordered,
-	});
-	result = executed.execution;
-	run.error_code = executed.error_code;
-	if (x86_mm_shared_logging()) [[unlikely]]
-		note_x86_jit_ordering(generation, mm_shared,
-			executed.stores_ordered, start);
+	std::size_t retired = 0;
+	for (auto sequences_now = sequences;;) {
+		sync_engine(*engine, execution, generation, cpu.execution_mode,
+			sequences_now, ordered);
+		const auto start = cpu.rip;
+		const auto executed = engine->run(cpu, memory, {
+			.generation = generation,
+			.instruction_budget = instruction_budget - retired,
+			.execution_context = execution.context(),
+			.interrupt = &interrupt,
+			.orders_stores = ordered,
+		});
+		retired += executed.execution.retired_instructions;
+		result = executed.execution;
+		result.retired_instructions = retired;
+		run.error_code = executed.error_code;
+		if (x86_mm_shared_logging()) [[unlikely]]
+			note_x86_jit_ordering(generation, mm_shared,
+				executed.stores_ordered, start);
+		/* CPUID or IRET: the code after it is what other vCPUs stored
+		 * before it, so the changes they published are handed over
+		 * before it runs, as at any entry. */
+		if (!executed.serialized || retired >= instruction_budget)
+			break;
+		sequences_now = execution.sequences();
+		if (sequences_now.execution_interrupt != 0 ||
+			interrupt.state_pending())
+			break;
+		memory.prepare(generation, sequences_now.mapping_changes);
+	}
 	/* A handler without SA_RESTORER returns to the trampoline, which no
 	 * guest page backs on the x86-64 slice, so the engine stops there with
 	 * a fetch fault. Reaching it means rt_sigreturn, as at entry. */
