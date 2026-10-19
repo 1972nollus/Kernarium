@@ -796,6 +796,22 @@ class AquariumLauncherBudgetTests(unittest.TestCase):
         )
 
 
+class ExitingProcess:
+    """A guest harness that is running until the runner waits for it, and
+    then exits with status 1."""
+
+    def __init__(self) -> None:
+        self.waited = False
+
+    def poll(self) -> int | None:
+        return 1 if self.waited else None
+
+    def wait(self, timeout: float) -> int:
+        del timeout
+        self.waited = True
+        return 1
+
+
 class AquariumResourceMetricTests(unittest.TestCase):
     def test_guest_identity_and_measurement_window_are_parsed(self) -> None:
         transcript = (
@@ -863,6 +879,137 @@ class AquariumResourceMetricTests(unittest.TestCase):
         self.assertEqual(result["active_cpu_seconds"], 3.0)
         self.assertEqual(result["average_cpu_cores"], 1.5)
         self.assertEqual(result["snapshots"], [begin, end])
+
+    EMULATOR_DEATH = (
+        "Darwin POSIX fault signal=11 pc=0x1002897b0 far=0x11a1471b0 "
+        "esr=0x92000007\n"
+        "[   76.186628] Kernel panic - not syncing: Kernel tried to access "
+        "user memory at addr 0x11a1471b0, ip 0x1002897b0\n"
+        "Darwin UML panic: Kernel tried to access user memory at addr "
+        "0x11a1471b0, ip 0x1002897b0\n"
+        "run_gpu_guest.py: emulator exited with status -6\n"
+    )
+
+    def test_emulator_death_is_named_from_the_console(self) -> None:
+        death = run_chromium_webgl.describe_emulator_death(
+            "UML_AQUARIUM_OK|AVG_FPS=27.000\n" + self.EMULATOR_DEATH, 1
+        )
+        self.assertIsNotNone(death)
+        self.assertIn("killed by signal 6 (SIGABRT)", death)
+        self.assertIn("far=0x11a1471b0", death)
+        self.assertIn("Kernel panic", death)
+        self.assertIsNone(
+            run_chromium_webgl.describe_emulator_death("UML_AQUARIUM_OK|\n", 0)
+        )
+        self.assertIsNone(
+            run_chromium_webgl.describe_emulator_death(
+                "UML_AQUARIUM_OK|\n", None
+            )
+        )
+        self.assertIn(
+            "harness exited with status 2",
+            run_chromium_webgl.describe_emulator_death("boot\n", 2),
+        )
+
+    def test_accounting_that_moves_backwards_names_the_dead_emulator(
+        self,
+    ) -> None:
+        """An emulator that dies while the result marker reaches the console
+        leaves the measured process tree with less CPU than it began with;
+        the runner reports the death rather than the accounting."""
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "console.log"
+            log_path.write_text(
+                "UML_AQUARIUM_MEASURE_BEGIN|\n", encoding="utf-8"
+            )
+            snapshots = [
+                {
+                    "pids": [10, 11],
+                    "cpu_seconds": 50.0,
+                    "rss_kib": 100,
+                    "monotonic_seconds": 1.0,
+                },
+                {
+                    "pids": [10],
+                    "cpu_seconds": 1.0,
+                    "rss_kib": 10,
+                    "monotonic_seconds": 2.0,
+                },
+            ]
+
+            def snapshot(pid: int) -> dict[str, object]:
+                del pid
+                if len(snapshots) == 2:
+                    with log_path.open("a", encoding="utf-8") as log:
+                        log.write(
+                            "UML_AQUARIUM_OK|AVG_FPS=27.000\n"
+                            + self.EMULATOR_DEATH
+                        )
+                return snapshots.pop(0)
+
+            process = ExitingProcess()
+            with mock.patch.object(
+                run_chromium_webgl, "process_tree_snapshot", snapshot
+            ), mock.patch.object(run_chromium_webgl.time, "sleep"):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    r"emulator died during the measurement: the emulator "
+                    r"was killed by signal 6 \(SIGABRT\); console: Darwin "
+                    r"POSIX fault",
+                ):
+                    run_chromium_webgl.wait_for_log(
+                        process,
+                        log_path,
+                        run_chromium_webgl.GUEST_RESULT_MARKERS,
+                        60,
+                        host_process_pid=10,
+                    )
+            self.assertTrue(process.waited)
+
+    def test_running_emulator_with_a_clean_console_is_not_waited_for(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "console.log"
+            log_path.write_text("UML_AQUARIUM_OK|\n", encoding="utf-8")
+            process = ExitingProcess()
+            self.assertIsNone(
+                run_chromium_webgl.emulator_death(
+                    process, log_path, settle=False
+                )
+            )
+            self.assertFalse(process.waited)
+            log_path.write_text(
+                "UML_AQUARIUM_OK|\n" + self.EMULATOR_DEATH, encoding="utf-8"
+            )
+            self.assertIn(
+                "signal 6",
+                run_chromium_webgl.emulator_death(
+                    process, log_path, settle=False
+                ),
+            )
+            self.assertTrue(process.waited)
+
+    def test_guest_that_exits_early_names_the_emulator_death(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "console.log"
+            log_path.write_text(
+                "booting\n" + self.EMULATOR_DEATH, encoding="utf-8"
+            )
+            process = mock.Mock()
+            process.poll.return_value = 1
+            process.returncode = 1
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"guest exited before Chromium verification \(status 1\): "
+                r"the emulator was killed by signal 6",
+            ):
+                run_chromium_webgl.wait_for_log(
+                    process,
+                    log_path,
+                    run_chromium_webgl.GUEST_RESULT_MARKERS,
+                    60,
+                )
 
 
 class AquariumCaptureTests(unittest.TestCase):

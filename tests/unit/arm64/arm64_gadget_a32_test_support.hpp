@@ -73,7 +73,8 @@ public:
 		: generation_{generation}
 		, code_{data_pages}
 		, data_{data_pages}
-		, executor_{options_at(level)}
+		, executor_{std::make_unique<gadgets::GadgetExecutor>(
+			  options_at(level))}
 	{
 		map_pages();
 	}
@@ -84,7 +85,8 @@ public:
 		: generation_{generation}
 		, code_{data_pages}
 		, data_{data_pages}
-		, executor_{options_on(level, host)}
+		, executor_{std::make_unique<gadgets::GadgetExecutor>(
+			  options_on(level, host))}
 	{
 		map_pages();
 	}
@@ -98,10 +100,10 @@ public:
 	{
 		return generation_;
 	}
-	[[nodiscard]] StaticGuestMemory &memory() noexcept { return memory_; }
+	[[nodiscard]] StaticGuestMemory &memory() noexcept { return *memory_; }
 	[[nodiscard]] gadgets::GadgetExecutor &executor() noexcept
 	{
-		return executor_;
+		return *executor_;
 	}
 
 	/* Words or halfwords at a code offset. */
@@ -169,13 +171,14 @@ public:
 	{
 		ExecutionRequest request{
 			.cpu = cpu,
-			.memory = memory_,
-			.translated_memory = &memory_,
+			.memory = *memory_,
+			.translated_memory = memory_.get(),
 			.generation = generation_,
 			.instruction_budget = budget,
 			.single_step = single_step,
 		};
-		return arm64::detail::run_translated_aarch32_blocks(executor_, request);
+		return arm64::detail::run_translated_aarch32_blocks(*executor_,
+			request);
 	}
 
 private:
@@ -196,8 +199,12 @@ private:
 	JitBacking code_;
 	JitBacking data_;
 	std::vector<std::unique_ptr<JitBacking>> extra_;
-	StaticGuestMemory memory_;
-	gadgets::GadgetExecutor executor_;
+	/* The memory view and the executor are about a mebibyte each: on the
+	 * heap, since a sanitizer gives every guest that a test function
+	 * inlines into main a stack slot of its own. */
+	std::unique_ptr<StaticGuestMemory> memory_ =
+		std::make_unique<StaticGuestMemory>();
+	std::unique_ptr<gadgets::GadgetExecutor> executor_;
 };
 
 [[nodiscard]] arm64::CpuState a32_state(std::uint32_t pc = code_base)
