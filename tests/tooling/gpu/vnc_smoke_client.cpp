@@ -157,10 +157,13 @@ int main(int argumentCount, char** arguments)
         if (!rfbInitClient(client, nullptr, nullptr))
             throw std::runtime_error("rfbInitClient failed");
 
-        // A full graphical session takes longer to start than the deterministic
-        // 2D fixture, especially under an instrumented UML guest.
-        const auto updateTimeout =
-            captureMode ? std::chrono::seconds(90) : std::chrono::seconds(5);
+        // The wait ends at the first update (a capture's first rendered
+        // frame), or when the server drops the connection. The bound is only
+        // for a server that stays connected and never sends one, so it is
+        // generous for every mode: a full graphical session takes longer to
+        // start than the deterministic 2D fixture, especially under an
+        // instrumented UML guest.
+        constexpr auto updateTimeout = std::chrono::seconds(90);
         const auto deadline = std::chrono::steady_clock::now() + updateTimeout;
         while (std::chrono::steady_clock::now() < deadline) {
             processOneMessage(client);
