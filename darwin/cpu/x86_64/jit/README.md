@@ -139,10 +139,12 @@ The runtime hands an engine the histories at every entry, so a vCPU looks
 for code changes only between runs. x86's protocol for code that another
 processor changes has the writer store the code and then a flag, and the
 processor that runs the code see the flag and then enter the kernel or
-execute a serializing instruction, which in user code is IRET or CPUID. IRET
+execute a serializing instruction, which in user code is IRET or CPUID. Each
 ends the run, which reports it `serialized`, and the runtime hands over the
 histories before the next instruction runs, as at an entry, without leaving
-for the kernel.
+for the kernel. FEXCore runs CPUID in line, so in an embedding it ends with
+an exit after itself (`EMBEDDER_EXIT_SERIALIZE`); IRET is the segment
+model's. SERIALIZE is not decoded and raises #UD, as on the gadget engine.
 
 ## State at every exit
 

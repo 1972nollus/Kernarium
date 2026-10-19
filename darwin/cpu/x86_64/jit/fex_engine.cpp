@@ -1607,8 +1607,8 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	/* After the model retired an instruction: whether the run ends. A step
 	 * ends after one, IRET may have set TF, and a far transfer that changed
 	 * the execution mode needs the caller's sync of the new mode. IRET also
-	 * serializes, and the caller hands over the address space's code
-	 * changes before the next instruction runs. */
+	 * serializes, as CPUID does, and the caller hands over the address
+	 * space's code changes before the next instruction runs. */
 	const auto ends = [&](JitRunResult &run, const SegmentStep &step) noexcept {
 		const auto &done = step.result;
 		++retired;
@@ -1675,9 +1675,9 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 			continue;
 		}
 		/* The one instruction the model checked retired, and the run goes
-		 * on while budget remains. */
+		 * on while budget remains, unless it serialized. */
 		if (bypassed && !run.segment_instruction && result.reason == ::uml::cpu::ExitReason::instruction_budget &&
-			!stepping && !request.single_instruction && retired < budget)
+			!run.serialized && !stepping && !request.single_instruction && retired < budget)
 			continue;
 		if (!run.segment_instruction)
 			return run;
@@ -1834,6 +1834,13 @@ JitRunResult FexEngine::dispatch(CpuState &cpu, GuestAddressSpace &memory, const
 		 * but the status word alone. */
 		result.reason = impl_->stepping && result.retired_instructions != 0 ?
 			::uml::cpu::ExitReason::single_step : ::uml::cpu::ExitReason::instruction_budget;
+		return run;
+	case Core::EMBEDDER_EXIT_SERIALIZE:
+		/* CPUID retired, and the caller hands over the address space's
+		 * code changes before the next instruction runs. */
+		run.serialized = true;
+		result.reason = impl_->stepping ? ::uml::cpu::ExitReason::single_step :
+			::uml::cpu::ExitReason::instruction_budget;
 		return run;
 	case Core::EMBEDDER_EXIT_YIELD:
 		/* Stopped between the elements of a repeated string instruction:

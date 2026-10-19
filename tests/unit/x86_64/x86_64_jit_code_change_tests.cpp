@@ -11,15 +11,16 @@
  *   nothing left to tell it. The address space here records the bytes of
  *   the function at every publication, for a plain store, a locked one and
  *   a repeated one;
- * - IRET, a serializing instruction user code has, ends the run. Here the
- *   load of a flag stands for another vCPU, which rewrites the function and
- *   leaves its change for the next run's hand-over.
+ * - CPUID and IRET, the serializing instructions user code has, end the
+ *   run. Here the load of a flag stands for another vCPU, which rewrites the
+ *   function and leaves its change for the next run's hand-over.
  *
  * Each case calls a function "mov $1, %eax; ret" so the engine translates
  * it, changes it to return 2, calls it again and makes a system call, at
  * which EAX must be 2. */
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
+#include "cpu/x86_64/cpuid.hpp"
 #include "cpu/x86_64/jit/fex_engine.hpp"
 #include "cpu/x86_64/segments.hpp"
 #include "memory/guest_address_space.hpp"
@@ -165,7 +166,7 @@ void expect(bool condition, std::string_view test, const char *what)
  * last, here the function's page once the flag has been read. Returns EAX at
  * the system call, and in `runs` how many runs that took. */
 std::uint64_t run_to_system_call(Memory &memory, unsigned long generation,
-	unsigned &runs, bool &finished)
+	unsigned &runs, bool &finished, x86_64::CpuState *at_end = nullptr)
 {
 	x86_64::jit::FexEngine engine{uml::platform::apple::probed_host_capabilities()};
 	const x86_64::jit::GuestRange function{function_page, page_size};
@@ -202,18 +203,20 @@ std::uint64_t run_to_system_call(Memory &memory, unsigned long generation,
 		if (result.execution.reason != uml::cpu::ExitReason::instruction_budget)
 			break;
 	}
+	if (at_end != nullptr)
+		*at_end = cpu;
 	return cpu.gpr(x86_64::Register::rax);
 }
 
 /* A serializing instruction between the flag and the second call. */
 void test_serializing(std::string_view name, unsigned long generation,
-	std::initializer_list<std::uint8_t> program)
+	std::initializer_list<std::uint8_t> program, x86_64::CpuState *at_end = nullptr)
 {
 	Memory memory{program};
 	memory.change_at_flag = true;
 	unsigned runs = 0;
 	bool finished = false;
-	const auto eax = run_to_system_call(memory, generation, runs, finished);
+	const auto eax = run_to_system_call(memory, generation, runs, finished, at_end);
 	expect(finished, name, "the program did not reach its system call");
 	expect(!memory.change_at_flag, name, "the program did not read the flag");
 	expect(eax == 2, name, "the call after the serializing instruction ran the old code");
@@ -266,6 +269,17 @@ int main()
 	test_store("rep-stosb", 4, {0xbe, 0x00, 0x10, 0x01, 0x00, 0xff, 0xd6, 0x48,
 		0x8d, 0x7e, 0x01, 0xb8, 0x02, 0x00, 0x00, 0x00, 0xb9, 0x01, 0x00, 0x00,
 		0x00, 0xfc, 0xf3, 0xaa, 0xff, 0xd6, 0x0f, 0x05});
+	/* mov $0x11000, %esi; call *%rsi; mov 0x20000, %ebx; xor %eax, %eax;
+	 * xor %ecx, %ecx; cpuid; call *%rsi; syscall. CPUID's own results
+	 * survive its exit (RCX is SYSCALL's). */
+	x86_64::CpuState after_cpuid{};
+	test_serializing("cpuid", 6, {0xbe, 0x00, 0x10, 0x01, 0x00, 0xff, 0xd6,
+		0x8b, 0x1c, 0x25, 0x00, 0x00, 0x02, 0x00, 0x31, 0xc0, 0x31, 0xc9,
+		0x0f, 0xa2, 0xff, 0xd6, 0x0f, 0x05}, &after_cpuid);
+	const auto vendor = x86_64::cpuid(0, 0);
+	expect(after_cpuid.gpr(x86_64::Register::rbx) == vendor.ebx &&
+		after_cpuid.gpr(x86_64::Register::rdx) == vendor.edx,
+		"cpuid", "CPUID's results did not survive its exit");
 	/* mov $0x11000, %esi; call *%rsi; mov 0x20000, %ebx; mov %ss, %eax;
 	 * push %rax; push %rsp; addq $8, (%rsp); pushfq; mov %cs, %eax;
 	 * push %rax; lea 1f(%rip), %rax; push %rax; iretq; 1: call *%rsi;
