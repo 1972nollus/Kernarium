@@ -265,6 +265,16 @@ a branch selects leaves or follows a link on each of its paths -- a
 conditional branch that ends a block takes its two-exit form -- so a block
 that ended at a branch carries none. See X82.
 
+A cached link names its target by a stream pointer and an instruction count,
+one aligned pair that a single paired store replaces. The guest bounds of the
+target's code, which a followed link hands to the context so that a store into
+the running block is recognized, are not in the link: every stream carries them
+in the two words in front of its first, and the engine loads them at
+`[stream, #-16]` after the pair. A link that names no block names its record's
+own link_exit word, behind a `{RIP, RIP}` pair, so a reader can never see the
+bounds of one stream with the count of another. `x86-64-gadget-link-layout`
+holds the layout.
+
 A dispatch's instruction budget bounds how long it runs, not where a block
 may stop: the block that crosses the budget runs to its end, as the arm64
 engines' blocks do, so a dispatch can retire up to one block more than its

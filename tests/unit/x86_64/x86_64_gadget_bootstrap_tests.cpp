@@ -2398,8 +2398,10 @@ read_test_sequences(void *context) noexcept
 		expect(built.program.replay_bytes() == 0,
 			"a translation nothing replayed carries decoded "
 			"instructions") &&
-		expect(malloc_size(built.program.native_stream().data()) <=
-			2 * built.program.native_stream().size_bytes(),
+		expect(malloc_size(built.program.stream_allocation()) != 0 &&
+			malloc_size(built.program.stream_allocation()) <=
+			2 * (built.program.native_stream().size_bytes() +
+				gadgets::stream_header_words * sizeof(std::uintptr_t)),
 			"short cached block retained excess native stream capacity") &&
 		expect(malloc_size(built.program.source().data()) <=
 			2 * built.program.source().size() + 32,

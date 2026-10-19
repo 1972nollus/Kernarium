@@ -159,12 +159,15 @@ Program::Program(ExecutionMode mode, std::uint64_t address,
 	: address_{normalize_instruction_pointer(mode, address)},
 	  mode_{mode}, check_head_{check_head}
 {
-	words_storage_ =
-		std::make_unique_for_overwrite<std::uintptr_t[]>(words.size());
+	words_storage_ = std::make_unique_for_overwrite<std::uintptr_t[]>(
+		stream_header_words + words.size());
 	source_storage_ =
 		std::make_unique_for_overwrite<std::byte[]>(source.size());
+	words_storage_[0] = address_;
+	words_storage_[1] = address_ + source.size();
 	if (!words.empty())
-		std::memcpy(words_storage_.get(), words.data(), words.size_bytes());
+		std::memcpy(words_storage_.get() + stream_header_words,
+			words.data(), words.size_bytes());
 	if (!source.empty())
 		std::memcpy(source_storage_.get(), source.data(), source.size());
 	words_ = static_cast<std::uint32_t>(words.size());

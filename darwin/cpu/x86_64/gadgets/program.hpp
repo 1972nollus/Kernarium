@@ -30,22 +30,51 @@ struct Gadget final {
 
 /* Cached direct branches name stable, data-only link records. A reset link
  * enters its private fallback stream; an active link enters the cached target
- * without modifying executable memory. The target bounds preserve x86's
- * self-modifying-code check while a native chain crosses program objects.
+ * without modifying executable memory. The target's guest bounds, which
+ * preserve x86's self-modifying-code check while a native chain crosses
+ * program objects, are the two words in front of whatever stream the link
+ * names (stream_header_words): a stored program's own, or the record's
+ * {RIP, RIP} in front of its fallback word. A link is therefore retargeted by
+ * its {stream, count} pair alone.
  */
 struct BlockLink final {
 	const std::uintptr_t *stream{};
 	std::size_t instruction_count{};
 	std::uint64_t guest_rip{};
-	std::uint64_t program_begin{};
-	std::uint64_t program_end{};
 };
 static_assert(offsetof(BlockLink, stream) == 0);
 static_assert(offsetof(BlockLink, instruction_count) == 8);
 static_assert(offsetof(BlockLink, guest_rip) == 16);
-static_assert(offsetof(BlockLink, program_begin) == 24);
-static_assert(offsetof(BlockLink, program_end) == 32);
-static_assert(sizeof(BlockLink) == 40);
+static_assert(sizeof(BlockLink) == 24);
+
+/* The words in front of every stream a link can name: the guest begin and end
+ * of the code it runs, which follow_block_link reads at [stream, #-16]. */
+inline constexpr std::size_t stream_header_words = 2;
+
+/* What a link that names no block looks like, and the layout every link
+ * record shares with it. The unlinked state's stream is the record's own
+ * link_exit word, so {begin, end} = {RIP, RIP} sit in front of that word
+ * like any program's header, and link_exit finds the RIP two words past the
+ * word it was entered at, which is the BlockLink's own. The {stream, count}
+ * pair that retargets a link starts on a sixteen-byte boundary, so that one
+ * paired store replaces it whole and a reader's paired load sees one state.
+ */
+struct alignas(16) UnlinkedBlockLink final {
+	std::uint64_t owner;
+	std::uint64_t unlinked_begin;
+	std::uint64_t unlinked_end;
+	std::uintptr_t fallback_stream;
+	BlockLink link;
+};
+static_assert(offsetof(UnlinkedBlockLink, fallback_stream) ==
+		offsetof(UnlinkedBlockLink, unlinked_begin) +
+			sizeof(std::uint64_t) * stream_header_words &&
+	offsetof(UnlinkedBlockLink, link) ==
+		offsetof(UnlinkedBlockLink, fallback_stream) +
+			sizeof(std::uintptr_t),
+	"the bounds precede the fallback word, which precedes the link");
+static_assert(offsetof(UnlinkedBlockLink, link) % 16 == 0,
+	"the link's stream and count are one aligned pair");
 
 struct IndirectLinkEntry final {
 	std::uint64_t guest_rip{};
@@ -144,7 +173,12 @@ public:
 	[[nodiscard]] std::size_t byte_count() const noexcept { return source_; }
 	[[nodiscard]] std::span<const std::uintptr_t> native_stream() const noexcept
 	{
-		return {words_storage_.get(), words_};
+		return {words_storage_.get() + stream_header_words, words_};
+	}
+	/* The allocation holding the stream and its header. */
+	[[nodiscard]] const void *stream_allocation() const noexcept
+	{
+		return words_storage_.get();
 	}
 	[[nodiscard]] std::size_t instruction_count() const noexcept
 	{
