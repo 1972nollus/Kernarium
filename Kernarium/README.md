@@ -237,6 +237,14 @@ it, or when iOS expires it; in the background that quiesces the guest, and in
 the foreground nothing changes. A job belongs to the mode, so choosing another
 mode ends it. `KERNARIUM_BACKGROUND_LIMIT_MINUTES` sets the time for one launch.
 
+An Android guest that is kept running this way has its screen turned off with
+its power key as the application leaves, and on again, after the GPU is back and
+the guest is running, as it returns. A screen that stays on keeps Android busy;
+with it off the guest suspends itself and only its wakelock holders and alarms
+run, as on a phone, so a job that should make progress has to hold a wakelock,
+as Android's own downloads and jobs do. A guest in the Picture in Picture mode
+keeps its screen, because its display is on show.
+
 The Picture in Picture mode needs the `audio` background mode in `Info.plist`,
 which iOS requires for any such window, and an audio session of category playback
 that mixes with other audio; the window sets the session as the application

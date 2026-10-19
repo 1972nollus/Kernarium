@@ -37,7 +37,7 @@ enum BackgroundMode: String, CaseIterable, Identifiable {
             "Tap the keep running button, then leave Kernarium: the guest " +
                 "keeps working, with its graphics paused, until the time " +
                 "is up. iOS shows the progress and lets you stop it at any " +
-                "time."
+                "time. Android turns its screen off meanwhile."
         }
     }
 }
@@ -146,6 +146,11 @@ protocol BackgroundEffects: AnyObject {
     /// Whether the user started a job that iOS is running, so the app may keep
     /// the guest running in the background without a window.
     var jobActive: Bool { get }
+    /// Whether the running guest is Android, which has a screen to turn off.
+    var guestIsAndroid: Bool { get }
+    /// Presses and releases the guest's power key, which turns an Android
+    /// screen off or on and wakes a guest that suspended itself.
+    func pressPowerKey()
 
     /// Whether iOS will start the Picture in Picture window as the app leaves.
     var pictureInPictureCanStart: Bool { get }
@@ -205,6 +210,8 @@ final class BackgroundController {
     private var keepScheduled: (any BackgroundCancellable)?
     private var gpuHeld = false
     private var guestQuiesced = false
+    /// The Android screen this controller turned off, to turn on again.
+    private var screenTurnedOff = false
 
     init(
         effects: any BackgroundEffects,
@@ -231,6 +238,13 @@ final class BackgroundController {
         case .keepRunning where effects.jobActive:
             effects.flushGuest(until: deadline)
             effects.setPageCacheTrimming(true)
+            // An Android screen that stays on keeps the guest busy; with it off
+            // the guest suspends itself and only its wakelock holders and
+            // alarms run, as on a phone.
+            if effects.guestIsAndroid {
+                effects.pressPowerKey()
+                screenTurnedOff = true
+            }
             phase = .jobRunning
         case .off, .pictureInPicture, .keepRunning:
             quiesce(reason: "background", until: deadline)
@@ -307,6 +321,11 @@ final class BackgroundController {
         if guestQuiesced {
             effects.resumeGuest()
             guestQuiesced = false
+        }
+        // The screen needs the GPU and a running guest, so it comes last.
+        if screenTurnedOff {
+            effects.pressPowerKey()
+            screenTurnedOff = false
         }
         phase = .foreground
     }

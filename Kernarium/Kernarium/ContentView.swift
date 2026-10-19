@@ -1447,6 +1447,7 @@ final class EmulatorLauncher: ObservableObject {
     @Published private(set) var phase = GuestRunPhase.idle
     /// The name the running guest's own settings are stored under.
     private(set) var runningGuestName: String?
+    private(set) var runningGuestIsAndroid = false
     private var thermalObserver: NSObjectProtocol?
 
     var retinaMode: Bool { configuration.retinaMode }
@@ -1483,6 +1484,7 @@ final class EmulatorLauncher: ObservableObject {
             return
         }
         runningGuestName = rootfsFilename
+        runningGuestIsAndroid = selection.flavor == .android
         // Every runtime carries a 4 KiB kernel.
         guard kernarium_runtime_loader_select(
             selection.flavor.rawValue,

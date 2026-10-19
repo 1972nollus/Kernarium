@@ -38,6 +38,7 @@ struct BackgroundControllerTests {
         var pictureInPictureCanStart = false
         var pictureInPictureActive = false
         var jobActive = false
+        var guestIsAndroid = false
         var deadlines: [Deadline] = []
 
         func holdGuestGPU() { calls.append("hold") }
@@ -55,6 +56,7 @@ struct BackgroundControllerTests {
         func setBackgroundThrottle(_ enabled: Bool) {
             calls.append("throttle \(enabled ? "on" : "off")")
         }
+        func pressPowerKey() { calls.append("power") }
         func stopPictureInPicture() { calls.append("stop pip") }
         func keepScheduled(named name: String) -> any BackgroundCancellable {
             calls.append("begin \(name)")
@@ -92,6 +94,57 @@ struct BackgroundControllerTests {
         #expect(!effects.calls.contains("resume"))
         #expect(!effects.calls.contains { $0.hasPrefix("throttle") })
         #expect(policy.phase == .foreground)
+    }
+
+    @Test
+    func anAndroidJobTurnsTheScreenOffAndOnAgain() {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.guestIsAndroid = true
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        #expect(effects.calls == ["hold", "flush", "trim on", "power"])
+
+        // The screen comes on after the GPU is back, so it can be drawn.
+        policy.willEnterForeground()
+        #expect(effects.calls.suffix(3) == ["trim off", "release", "power"])
+    }
+
+    @Test
+    func anAndroidJobThatEndedTurnsTheScreenOnAfterTheResume() {
+        let effects = Effects()
+        effects.jobActive = true
+        effects.guestIsAndroid = true
+        let policy = controller(.keepRunning, effects)
+        policy.didEnterBackground()
+        policy.jobDidEnd()
+        effects.calls.removeAll()
+
+        policy.willEnterForeground()
+        #expect(effects.calls == ["release", "resume", "power"])
+    }
+
+    @Test
+    func aGuestThatIsNotAndroidIsNeverSentThePowerKey() {
+        let effects = Effects()
+        effects.jobActive = true
+        let policy = controller(.keepRunning, effects)
+
+        policy.didEnterBackground()
+        policy.willEnterForeground()
+        #expect(!effects.calls.contains("power"))
+    }
+
+    @Test
+    func anAndroidGuestThatPausesKeepsItsScreen() {
+        let effects = Effects()
+        effects.guestIsAndroid = true
+        let policy = controller(.off, effects)
+
+        policy.didEnterBackground()
+        policy.willEnterForeground()
+        #expect(!effects.calls.contains("power"))
     }
 
     @Test
