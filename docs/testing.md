@@ -129,6 +129,15 @@ tests, and the other `unit-gpu*` test presets inherit it. Configure derives the
 filter also adds its binary to every GPU build preset. Configure fails when a
 test preset that inherits `unit-gpu` sets its own filter.
 
+A GPU unit test process keeps Metal's shader cache in its scratch directory,
+not in the `com.apple.metal` cache that every command-line process of the user
+shares (`tests/unit/gpu/metal_shader_cache_isolation.cpp`). The first pipeline
+a process compiles reads that cache's whole index, which a host that has run
+guest GPU workloads leaves at tens of megabytes: a fraction of a second plain,
+and minutes under AddressSanitizer, where every realloc copies. The private
+cache starts empty and is removed at exit, so a test costs the same on any
+host and leaves the host's cache alone.
+
 The experimental macOS Vulkan lane is separately named and opt-in. It needs the
 `apple-gpu-vulkan-experiment` dependency prefix and a private prefix built at
 its raised deployment target, and it is required only when a change crosses the
