@@ -4,6 +4,13 @@
 
 #include <malloc/malloc.h>
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#include <sanitizer/allocator_interface.h>
+#define UML_TEST_SANITIZER_ALLOCATOR 1
+#endif
+#endif
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -184,11 +191,20 @@ void test_concurrent_holders_stay_exact()
 	require(registry.holds(pinned), "the pinned page was released");
 }
 
+/* The bytes the process's live allocations hold. A sanitizer replaces the
+ * allocator, and the malloc zone statistics it reports then measure something
+ * else: AddressSanitizer's count every byte ever allocated, freed or not, and
+ * ThreadSanitizer's do not move at all. Its own count of live bytes answers
+ * instead. */
 std::size_t heap_in_use() noexcept
 {
+#if defined(UML_TEST_SANITIZER_ALLOCATOR)
+	return __sanitizer_get_current_allocated_bytes();
+#else
 	malloc_statistics_t statistics{};
 	malloc_zone_statistics(nullptr, &statistics);
 	return statistics.size_in_use;
+#endif
 }
 
 /* Executors of one address space share its registry, and a guest process
