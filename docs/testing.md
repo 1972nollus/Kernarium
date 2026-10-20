@@ -290,9 +290,12 @@ cmake --build --preset tsan
 ctest --preset unit-tsan
 ```
 
-AddressSanitizer keeps its heap at the product's macOS native window and
-ignores `mlock()`, so under it the cases that need that window or wired guest
-RAM report themselves unsupported instead of running.
+Both sanitizers keep the product's macOS native window for themselves, so a
+sanitized test, and every run it makes through the emulator test variant,
+takes a native window that both leave free
+(`tests/unit/arm64/native_window_test_support.hpp`). AddressSanitizer also
+ignores `mlock()`, so under it the cases that need wired guest RAM report
+themselves unsupported instead of running.
 
 ## Integration prerequisites and workflows
 

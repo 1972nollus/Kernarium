@@ -417,7 +417,9 @@ int block_in_comparator(const void *, const void *)
 
 /* A thread several frames deep in the C library, on a callback of the test's
  * own, has neither its program counter nor its caller there. The frame chain
- * is what shows it. */
+ * is what shows it. The sort is heapsort because the sanitizers intercept
+ * qsort and call the comparator from their own runtime first, which would put
+ * the thread outside the C library. */
 void a_thread_called_from_the_c_library_is_not_held()
 {
 	comparator_blocked.store(true);
@@ -426,7 +428,7 @@ void a_thread_called_from_the_c_library_is_not_held()
 		(void)pthread_setname_np("uml-test-sorter");
 		int values[2] = {2, 1};
 		started.store(true);
-		qsort(values, 2, sizeof values[0], &block_in_comparator);
+		(void)heapsort(values, 2, sizeof values[0], &block_in_comparator);
 	}};
 	while (!started.load())
 		nap(500);

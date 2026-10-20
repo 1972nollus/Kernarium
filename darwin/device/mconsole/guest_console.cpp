@@ -166,7 +166,8 @@ void removeAbandonedRunEntries(const std::filesystem::path &parent,
 	for (std::filesystem::directory_iterator entry {parent, error};
 	     !error && entry != std::filesystem::directory_iterator {};
 	     entry.increment(error)) {
-		std::string_view name = entry->path().filename().native();
+		const auto filename = entry->path().filename();
+		std::string_view name = filename.native();
 		if (!name.ends_with(suffix))
 			continue;
 		name.remove_suffix(suffix.size());

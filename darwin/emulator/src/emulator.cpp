@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -135,7 +136,28 @@ void invoke_admission_hook(
 			callback(address_space_admission_hook_context.load(
 				std::memory_order_acquire));
 }
+
+std::atomic<std::uintptr_t> test_native_kernel_window_start;
 #endif
+
+/* Where a run's native kernel window goes: the product's placement, or in the
+ * test variant the same geometry wherever a test placed the window. */
+[[nodiscard]] ::uml::runtime::NativeKernelLayout run_native_kernel_layout(
+	std::size_t guest_memory) noexcept
+{
+	auto layout = ::uml::runtime::prepare_native_kernel_layout(guest_memory);
+#if UML_EMULATOR_TESTING
+	const auto start = test_native_kernel_window_start.load(
+		std::memory_order_acquire);
+	if (start != 0 && layout.valid && !layout.reserved) {
+		const auto length = layout.window_end - layout.window_start;
+		layout.load_bias += start - layout.window_start;
+		layout.window_start = start;
+		layout.window_end = start + length;
+	}
+#endif
+	return layout;
+}
 
 class ProcessAddressSpaceAdmission final {
 public:
@@ -205,6 +227,19 @@ void set_address_space_admission_hooks(
 		at_wait_boundary, std::memory_order_release);
 	before_gate_release_hook.store(
 		before_gate_release, std::memory_order_release);
+}
+
+void place_native_kernel_window(std::uintptr_t start) noexcept
+{
+	test_native_kernel_window_start.store(start, std::memory_order_release);
+}
+
+NativeKernelWindow native_kernel_window(std::size_t guest_memory) noexcept
+{
+	const auto layout = run_native_kernel_layout(guest_memory);
+	if (!layout.valid)
+		return {};
+	return {.start = layout.window_start, .end = layout.window_end};
 }
 
 } // namespace testing
@@ -309,7 +344,7 @@ public:
 		 * and removes it when the run returns, however the guest ended. */
 		const ::uml::device::GuestConsoleRun console_run{
 			!prepared.informational && prepared.host_console_directory};
-		const auto native_layout = ::uml::runtime::prepare_native_kernel_layout(
+		const auto native_layout = run_native_kernel_layout(
 			prepared.guest_memory_bytes);
 		if (!native_layout.valid)
 			return native_layout.reservation_failed ?

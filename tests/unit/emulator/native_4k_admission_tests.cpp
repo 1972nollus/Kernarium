@@ -3,7 +3,6 @@
 #include "domain_registry_testing.hpp"
 #include "native_window_test_support.hpp"
 #include "require.hpp"
-#include "runtime/native_kernel_layout.hpp"
 #include "scratch_backing.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
@@ -48,10 +47,10 @@ public:
 	NativeSlot() : size_{static_cast<std::size_t>(getpagesize())}
 	{
 		const auto window =
-			uml::runtime::prepare_native_kernel_layout(run_guest_memory);
-		require(window.valid, "could not derive the run's native window");
-		for (auto candidate = window.window_start;
-		     base_ == 0 && candidate <= window.window_end - size_;
+			uml::emulator::testing::native_kernel_window(run_guest_memory);
+		require(window.start != 0, "could not derive the run's native window");
+		for (auto candidate = window.start;
+		     base_ == 0 && candidate <= window.end - size_;
 		     candidate += size_) {
 			mach_vm_address_t reservation = candidate;
 			if (mach_vm_allocate(mach_task_self(), &reservation, size_,
@@ -405,6 +404,11 @@ int main()
 		static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096);
 		require(uml::memory::testing::native_domain_count() == 0,
 			"native admission test started with a retained domain");
+		/* Runs take the test's native window: the product's on an
+		 * ordinary build, one the sanitizer leaves free on a sanitized
+		 * build. */
+		uml::emulator::testing::place_native_kernel_window(
+			uml::testing::native_test_window_start);
 		NativeSlot slot;
 		test_same_address_is_serialized_and_isolated(slot);
 		test_queued_stop_cancels_and_retry_is_fresh(slot);
