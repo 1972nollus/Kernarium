@@ -286,6 +286,15 @@ uml_add_guest_integration_test(
     TIMEOUT 420
     CPUS 4)
 
+# A terminal console leaves the emulator in its launcher's session and
+# process group, so a signal to that group reaches the guest.
+uml_add_guest_integration_test(
+    NAME guest-console-session
+    SCRIPT console/run_guest_console_session.py
+    LABELS guest;console;smoke
+    TIMEOUT 180
+    CPUS 1)
+
 # The interpreter runs BPF callbacks through its fixed entry-point pool.
 uml_add_guest_integration_test(
     NAME guest-bpf-callbacks

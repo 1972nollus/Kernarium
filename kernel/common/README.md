@@ -114,10 +114,19 @@ no tables, could leave a shared mapping of it for the rest of a run.
 
 Every host thread the kernel creates names itself, so host tools, crash
 reports and a host's lifecycle code can tell it from the host's own: the vCPU
-carriers are `uml-vcpu-N-carrier`, and the IRQ notification thread, the RTC
-alarm helper and a terminal console's window-size helper are
-`uml-irq-notify`, `uml-rtc-alarm` and `uml-winch`.
+carriers are `uml-vcpu-N-carrier`, and the IRQ notification thread and the
+RTC alarm helper are `uml-irq-notify` and `uml-rtc-alarm`.
 `guest-kernel-thread-names` lists the emulator's threads and finds each one.
+
+A Darwin kernel never changes the host process's session, process group or
+controlling terminal, so the emulator stays where its launcher put it,
+whatever its console is, and a signal to the launcher's process group, such
+as a timeout's or a Ctrl-C, reaches it. Upstream follows a terminal
+console's size with a helper that takes the terminal as its own controlling
+terminal; on Darwin that helper would be a thread and would make the whole
+emulator a session leader, so a Darwin kernel starts none, and a console
+keeps the size its input terminal had when the line opened.
+`guest-console-session` checks the session and process group.
 
 A Darwin kernel stack trace walks the stack its starting stack pointer lies
 on: a task's own stack in guest memory or, on the current vCPU carrier, the
