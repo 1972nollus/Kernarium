@@ -633,6 +633,24 @@ const char* selectedExecutionEngine()
     return "auto";
 }
 
+/* Whether quiescing also hibernates the guest's RAM. "auto" is what the
+ * emulator decides, which is a physical device, the one host that wires guest
+ * RAM; "off" keeps it wired and resident while paused, and "on" forces it on
+ * the Simulator, for diagnosis. */
+const char* selectedGuestHibernation()
+{
+    const char* requested = std::getenv("KERNARIUM_GUEST_HIBERNATION");
+    if (requested == nullptr)
+        return "auto";
+    for (const char* allowed : {"auto", "off", "on"}) {
+        if (std::strcmp(requested, allowed) == 0)
+            return allowed;
+    }
+    std::fputs(
+        "Kernarium: ignoring unknown KERNARIUM_GUEST_HIBERNATION\n", stderr);
+    return "auto";
+}
+
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
 void appendKernelCommandLine(
     std::vector<std::string>& arguments,
@@ -900,6 +918,7 @@ int runtimeRun(
         std::vector<std::string> arguments {
             "uml-kernarium",
             std::string {"--execution-engine="} + selectedExecutionEngine(),
+            std::string {"--guest-hibernation="} + selectedGuestHibernation(),
             "mem=" + std::to_string(guestMemoryMiB) + "M",
             "ncpus=" + std::to_string(guestProcessorCount),
             /* iOS can reclaim the application without running any more of its

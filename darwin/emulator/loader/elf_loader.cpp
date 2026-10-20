@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 #include "elf_loader.h"
 #include "kernel_signal_scope.hpp"
+#include "kernel_threads.hpp"
 #include "uml_elf64.h"
 
 #include <libkern/OSCacheControl.h>
@@ -227,6 +228,11 @@ private:
 
 [[nodiscard]] void *resolve_symbol(const char *name)
 {
+	/* Every thread the kernel starts is recorded before it runs, so that the
+	 * host can hold them all (kernel_threads.hpp). */
+	if (strcmp(name, "pthread_create") == 0 ||
+	    strcmp(name, "_pthread_create") == 0)
+		return reinterpret_cast<void *>(&uml::runtime::kernel_pthread_create);
 	void *address = dlsym(RTLD_DEFAULT, name);
 	/* Darwin SDK headers give a few libc entry points an asm-label alias. */
 	if (address == nullptr && name[0] == '_')

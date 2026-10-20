@@ -91,6 +91,14 @@ uml_add_unit_test(NAME memory-guest-ram-commitment
     COMMAND uml_guest_ram_commitment_tests)
 set_tests_properties(memory-guest-ram-commitment PROPERTIES RUN_SERIAL TRUE)
 
+# The guest RAM image's footprint assertions read the whole process too.
+add_executable(uml_guest_ram_image_tests guest_ram_image_tests.cpp)
+target_link_libraries(uml_guest_ram_image_tests PRIVATE
+    UML::MemorySharedBacking)
+uml_add_unit_test(NAME memory-guest-ram-image
+    COMMAND uml_guest_ram_image_tests)
+set_tests_properties(memory-guest-ram-image PROPERTIES RUN_SERIAL TRUE)
+
 # Raw MMU compositions carry the shared-backing archive MappedBacking
 # references, as the production memory component does.
 add_executable(uml_static_mmu_batch_tests
