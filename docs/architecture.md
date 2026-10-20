@@ -116,17 +116,17 @@ signed kernel image and the loader tail stay wired from startup. Simulator and
 macOS commit and release without wiring. Wiring prevents compression; it does
 not decide whether a page is mapped. A commit that cannot wire leaves the page
 committed and usable. The one window in which a held page is not wired is a
-hibernation of a paused guest (see [guest lifecycle](#guest-lifecycle)); it
-ends, with every page back and wired again, before any guest code runs. The host caches the same disk blocks as the guest, so a
-large guest page cache mostly holds memory twice. The kernel can trim its
-inactive page cache towards a floor (`page_cache_trim.*`), but only at the
-host's request, because a guest in front of its user pays a host read for every
-evicted page it reads again: `uml_emulator_set_page_cache_trimming()` turns
-periodic trimming on and off, and `uml_emulator_trim_page_cache()` and every
-quiesce run one pass that also hands free memory to the host at once. Kernarium
-trims only while it keeps the guest running in the background. `uml-darwin`
-has no background state, so its guests trim only when started with
-`page_cache_trim.enabled=1`.
+hibernation of a paused guest (see [hibernation](#hibernation)); it ends, with
+every page back and wired again, before any guest code runs. The host caches
+the same disk blocks as the guest, so a large guest page cache mostly holds
+memory twice. The kernel can trim its inactive page cache towards a floor
+(`page_cache_trim.*`), but only at the host's request, because a guest in front
+of its user pays a host read for every evicted page it reads again:
+`uml_emulator_set_page_cache_trimming()` turns periodic trimming on and off,
+and `uml_emulator_trim_page_cache()` and every quiesce run one pass that also
+hands free memory to the host at once. Kernarium trims only while it keeps the
+guest running in the background. `uml-darwin` has no background state, so its
+guests trim only when started with `page_cache_trim.enabled=1`.
 
 The Virtio balloon (`device/balloon`) takes the memory the host GPU uses out of
 the guest. Its target is the larger of the process's Metal allocation
@@ -1500,6 +1500,25 @@ quiesces, with the runtime's `set_gpu_hold` (see the request gate under
 [devices](#devices-and-graphics)), and releases them before it resumes. The
 guest's rings stay disabled until the resume, and what it queued waits in them.
 
+The guest binds the management console as a Unix datagram socket and replies
+to each request's own bound socket, which the host places beside it. Both live
+in a directory the host passes as `uml_dir=`, under short fixed names, never
+loose in the shared `/tmp`. On macOS and the iOS Simulator each run makes its
+own `uml-kern<pid>` directory, mode 0700, in `$TMPDIR`, or in the user's
+temporary directory or `/tmp` when `$TMPDIR` is unset or too long. In the
+Simulator both are its application's `tmp`, too long for `sun_path`, so it uses
+`/tmp/uml-kern<pid>`. The run removes it when it returns, and every terminating
+signal and kernel-driven exit the process observes removes it too; only a
+process killed outright leaves it, and the next run removes the directories of
+runs that have exited. It also removes the `/tmp/uml-kern<pid>-mconsole`
+sockets left by exited runs of older builds, which bound the console loose in
+`/tmp`. An iOS device uses its application temporary directory
+itself and removes a socket left there before booting. Every such path must
+fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
+rather than truncated or moved. The guest prints the console's path when it
+binds it. `guest-host-residue` ends guests by poweroff, SIGTERM, SIGHUP, a
+panic and SIGKILL and finds nothing left in `/tmp` or `$TMPDIR`.
+
 ### Hibernation
 
 On a physical iOS device, where guest RAM is wired and so neither compressible
@@ -1548,25 +1567,6 @@ run reach the same code. The order is the contract:
 
 A quiesce that falls back to the management stop, a guest without a console,
 and a guest kept running (Picture in Picture, the job) never hibernate.
-
-The guest binds the management console as a Unix datagram socket and replies
-to each request's own bound socket, which the host places beside it. Both live
-in a directory the host passes as `uml_dir=`, under short fixed names, never
-loose in the shared `/tmp`. On macOS and the iOS Simulator each run makes its
-own `uml-kern<pid>` directory, mode 0700, in `$TMPDIR`, or in the user's
-temporary directory or `/tmp` when `$TMPDIR` is unset or too long. In the
-Simulator both are its application's `tmp`, too long for `sun_path`, so it uses
-`/tmp/uml-kern<pid>`. The run removes it when it returns, and every terminating
-signal and kernel-driven exit the process observes removes it too; only a
-process killed outright leaves it, and the next run removes the directories of
-runs that have exited. It also removes the `/tmp/uml-kern<pid>-mconsole`
-sockets left by exited runs of older builds, which bound the console loose in
-`/tmp`. An iOS device uses its application temporary directory
-itself and removes a socket left there before booting. Every such path must
-fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
-rather than truncated or moved. The guest prints the console's path when it
-binds it. `guest-host-residue` ends guests by poweroff, SIGTERM, SIGHUP, a
-panic and SIGKILL and finds nothing left in `/tmp` or `$TMPDIR`.
 
 ## Tests and structural audit
 
