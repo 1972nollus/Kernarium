@@ -11,11 +11,12 @@ namespace uml::runtime {
  * The threads an embedded kernel creates.
  *
  * Anything that must stop every thread able to touch guest RAM needs a list of
- * them, and the kernel's threads (its vCPU carriers, the IRQ notification
- * thread, its helper and timer threads) carry no name the host could find them
- * by. The loader therefore resolves the kernel's `pthread_create` import to
- * `kernel_pthread_create`, which records each thread it starts before the
- * thread runs a line of kernel code.
+ * them. The kernel names some of its threads (`uml-*`) and others carry no
+ * name, and a name is set by the thread itself after it has started, so the
+ * host cannot find the kernel's threads that way. The loader therefore
+ * resolves the kernel's `pthread_create` import to `kernel_pthread_create`,
+ * which records each thread it starts before the thread runs a line of kernel
+ * code.
  *
  * The registry is a fixed table of atomics: reading it takes no lock and
  * allocates nothing, so it can be read while other threads are stopped,

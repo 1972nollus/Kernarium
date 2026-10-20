@@ -188,6 +188,61 @@ void a_kernel_thread_that_is_also_named_is_held_once()
 	require(pthread_join(thread, nullptr) == 0, "join");
 }
 
+/* The threads the kernel starts for itself name themselves first thing
+ * (os_set_thread_name: a carrier per vCPU, uml-irq-notify, uml-rtc-alarm,
+ * uml-winch). Each is then both in the registry and named uml-*, and the fence
+ * must hold it once, whichever rule finds it first; a kernel thread that
+ * never names itself is held by the registry alone. */
+void each_named_kernel_thread_is_held_exactly_once()
+{
+	struct Start final {
+		const char *name;
+		Worker *worker;
+	};
+	constexpr const char *names[] = {"uml-vcpu-0-carrier", "uml-irq-notify",
+		"uml-rtc-alarm", "uml-winch", nullptr};
+	constexpr std::size_t count = sizeof names / sizeof names[0];
+	constexpr std::size_t named_count = count - 1;
+	Worker workers[count];
+	Start starts[count];
+	pthread_t threads[count];
+	for (std::size_t index = 0; index < count; ++index) {
+		starts[index] = {names[index], &workers[index]};
+		require(uml::runtime::kernel_pthread_create(&threads[index], nullptr,
+			[](void *argument) -> void * {
+				const auto *start = static_cast<Start *>(argument);
+				if (start->name != nullptr)
+					(void)pthread_setname_np(start->name);
+				return tick_until_stopped(start->worker);
+			}, &starts[index]) == 0, "creating a kernel thread");
+	}
+	for (const Worker &worker : workers)
+		wait_for_ticks(worker);
+	ThreadFence fence;
+	require_hold(fence, 2000, "holding the kernel's threads");
+	require(fence.report().held == count &&
+		fence.report().registered == count &&
+		fence.report().named == named_count,
+		"every kernel thread is held once: all registered, those named "
+		"uml-* also by name");
+	for (std::size_t index = 0; index < count; ++index) {
+		require(suspend_count(pthread_mach_thread_np(threads[index])) == 1,
+			"a kernel thread is held exactly once");
+		require(stood_still(workers[index]),
+			"a kernel thread must not run while it is held");
+	}
+	fence.release();
+	for (std::size_t index = 0; index < count; ++index)
+		require(suspend_count(pthread_mach_thread_np(threads[index])) == 0,
+			"a kernel thread is released exactly once");
+	for (Worker &worker : workers) {
+		wait_for_ticks(worker);
+		worker.stop.store(true);
+	}
+	for (pthread_t thread : threads)
+		require(pthread_join(thread, nullptr) == 0, "join");
+}
+
 /* Runs `action` on a thread of its own, one the fence does not hold, and says
  * whether it finished in time. The thread is made before anything is held. */
 class Probe final {
@@ -565,6 +620,8 @@ int main(int argc, char **argv)
 			a_named_service_thread_is_held_and_others_run},
 		{"a kernel thread that is also named is held once",
 			a_kernel_thread_that_is_also_named_is_held_once},
+		{"each named kernel thread is held exactly once",
+			each_named_kernel_thread_is_held_exactly_once},
 		{"no thread is held inside the allocator or a stream",
 			no_thread_is_held_inside_the_allocator_or_a_stream},
 		{"a thread blocked inside a stream write is not held",

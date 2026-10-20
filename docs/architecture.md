@@ -1514,8 +1514,9 @@ run reach the same code. The order is the contract:
   host's `uml-*` services and every thread the kernel creates. The loader
   resolves the kernel's `pthread_create` to `runtime/kernel_threads`, which
   records each thread before it runs, so no thread of the kernel is found by
-  its name or stack; a thread being created is not held until its child is
-  listed. A thread is held only at a moment when neither its program counter
+  its name or stack (a kernel thread that names itself `uml-*` is in both
+  lists and is held once); a thread being created is not held until its child
+  is listed. A thread is held only at a moment when neither its program counter
   nor any frame return address is in the allocator, the C library, the dynamic
   loader, the Objective-C runtime or the C++ ABI library, so it holds none of
   their locks; otherwise it is let go and tried again. A thread whose creation
