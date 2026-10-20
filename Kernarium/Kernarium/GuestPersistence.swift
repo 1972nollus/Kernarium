@@ -122,8 +122,10 @@ final class GuestPersistence {
                 queue: .main
             ) { _ in
                 MainActor.assumeIsolated {
-                    BackgroundSession.shared.willEnterForeground()
+                    // The policy resumes a quiesced guest, which the session
+                    // must know has begun before it may drop its marker.
                     GuestPersistence.shared.background?.willEnterForeground()
+                    BackgroundSession.shared.willEnterForeground()
                 }
             }
         )
@@ -142,9 +144,16 @@ final class GuestPersistence {
     /// Resumes on the flush queue, behind any quiesce still in flight. A quick
     /// return to the app would otherwise hold the main thread until that
     /// quiesce finished, and resuming first would leave the guest suspended.
+    ///
+    /// A guest whose hibernated RAM cannot be restored ends the process inside
+    /// this call, so the session keeps its background marker until it returns.
     func resumeGuest() {
+        BackgroundSession.shared.guestResumeStarted()
         queue.async {
             kernarium_runtime_loader_resume()
+            Task { @MainActor in
+                BackgroundSession.shared.guestResumeFinished()
+            }
         }
     }
 

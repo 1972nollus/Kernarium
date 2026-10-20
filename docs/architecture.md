@@ -115,16 +115,18 @@ unwires it when it is released, so it wires only the RAM the guest holds; the
 signed kernel image and the loader tail stay wired from startup. Simulator and
 macOS commit and release without wiring. Wiring prevents compression; it does
 not decide whether a page is mapped. A commit that cannot wire leaves the page
-committed and usable. The host caches the same disk blocks as the guest, so a
-large guest page cache mostly holds memory twice. The kernel can trim its
-inactive page cache towards a floor (`page_cache_trim.*`), but only at the
-host's request, because a guest in front of its user pays a host read for every
-evicted page it reads again: `uml_emulator_set_page_cache_trimming()` turns
-periodic trimming on and off, and `uml_emulator_trim_page_cache()` and every
-quiesce run one pass that also hands free memory to the host at once. Kernarium
-trims only while it keeps the guest running in the background. `uml-darwin`
-has no background state, so its guests trim only when started with
-`page_cache_trim.enabled=1`.
+committed and usable. The one window in which a held page is not wired is a
+hibernation of a paused guest (see [hibernation](#hibernation)); it ends, with
+every page back and wired again, before any guest code runs. The host caches
+the same disk blocks as the guest, so a large guest page cache mostly holds
+memory twice. The kernel can trim its inactive page cache towards a floor
+(`page_cache_trim.*`), but only at the host's request, because a guest in front
+of its user pays a host read for every evicted page it reads again:
+`uml_emulator_set_page_cache_trimming()` turns periodic trimming on and off,
+and `uml_emulator_trim_page_cache()` and every quiesce run one pass that also
+hands free memory to the host at once. Kernarium trims only while it keeps the
+guest running in the background. `uml-darwin` has no background state, so its
+guests trim only when started with `page_cache_trim.enabled=1`.
 
 The Virtio balloon (`device/balloon`) takes the memory the host GPU uses out of
 the guest. Its target is the larger of the process's Metal allocation
@@ -1516,6 +1518,55 @@ fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
 rather than truncated or moved. The guest prints the console's path when it
 binds it. `guest-host-residue` ends guests by poweroff, SIGTERM, SIGHUP, a
 panic and SIGKILL and finds nothing left in `/tmp` or `$TMPDIR`.
+
+### Hibernation
+
+On a physical iOS device, where guest RAM is wired and so neither compressible
+nor reclaimable, a quiesce that entered system suspension also hibernates the
+guest's RAM (`runtime/guest_hibernation.*`), so that the paused application is
+small enough for the system to keep. `--guest-hibernation=auto|off|on` selects
+it: `auto` is the host that wires, `off` keeps the RAM wired and resident, and
+`on` forces it on any host, which is how the tests and a Simulator or macOS
+run reach the same code. The order is the contract:
+
+- **Hold.** Every thread that can touch guest RAM is Mach-suspended first: the
+  host's `uml-*` services and every thread the kernel creates. The loader
+  resolves the kernel's `pthread_create` to `runtime/kernel_threads`, which
+  records each thread before it runs, so no thread of the kernel is found by
+  its name or stack (a kernel thread that names itself `uml-*` is in both
+  lists and is held once); a thread being created is not held until its child
+  is listed. A thread is held only at a moment when neither its program counter
+  nor any frame return address is in the allocator, the C library, the dynamic
+  loader, the Objective-C runtime or the C++ ABI library, so it holds none of
+  their locks; otherwise it is let go and tried again. A thread whose creation
+  of another stays unfinished is waiting for a lock a held thread owns (the
+  thread library's), so every thread is let go to let it finish and the hold
+  starts over. The kernel's commit and release calls are then frozen, and the
+  hold is refused while one is in flight. If every thread is
+  not held within two seconds, or the registry overflowed, nothing is held,
+  nothing is written, and the guest stays wired and resident. No code between
+  the hold and the release allocates or writes to a stream.
+- **Write.** The held pages go to `uml-hibernation-<pid>.img` in the
+  application's `$TMPDIR`, never Documents, in 64-page chunks that are stored
+  as LZ4, raw or zero, each hashed, and each taken off the footprint (unwired,
+  `MADV_FREE_REUSABLE`) once written. The file is opened with `F_NOCACHE` and
+  `flock`ed for the life of the process. It persists across backgroundings, and
+  a later hibernation rewrites only the chunks whose hash or held-page set
+  changed. A chunk that fails to write stays resident. A run first deletes the
+  images that a killed process left unlocked.
+- **Restore.** `uml_emulator_resume()` asks any hibernation still writing to
+  leave the chunks it has not reached resident, then restores every chunk
+  (`MADV_FREE_REUSE`, wire, read, verify against its hash), then releases the
+  threads, and only then wakes the guest. `uml_emulator_request_stop()` restores
+  first, since a held thread cannot see a stop.
+- **Failure.** A restore that cannot bring every page back verified wakes
+  nothing, releases nothing and ends the process with a diagnostic, so that the
+  next launch boots the guest again and Kernarium reports the restart notice.
+  Memory a guest ran on while part of it was missing would be corrupt, which is
+  worse than the restart.
+
+A quiesce that falls back to the management stop, a guest without a console,
+and a guest kept running (Picture in Picture, the job) never hibernate.
 
 ## Tests and structural audit
 

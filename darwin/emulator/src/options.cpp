@@ -20,6 +20,7 @@ constexpr std::string_view jit_executor_cache_budget_prefix{
 constexpr std::string_view jit_tier_prefix{"--jit-tier="};
 constexpr std::string_view gadget_cache_budget_prefix{
 	"--gadget-cache-budget="};
+constexpr std::string_view guest_hibernation_prefix{"--guest-hibernation="};
 namespace {
 
 [[nodiscard]] bool has_argument(
@@ -97,6 +98,21 @@ namespace {
 	while (shifts-- != 0)
 		value <<= 10U;
 	return static_cast<std::size_t>(value);
+}
+
+[[nodiscard]] bool parse_guest_hibernation(std::string_view text,
+	::uml::runtime::HibernationMode &mode) noexcept
+{
+	using ::uml::runtime::HibernationMode;
+	if (text == "auto")
+		mode = HibernationMode::automatic;
+	else if (text == "off")
+		mode = HibernationMode::off;
+	else if (text == "on")
+		mode = HibernationMode::on;
+	else
+		return false;
+	return true;
 }
 
 [[nodiscard]] std::optional<int> parse_guest_cpu_count(
@@ -253,6 +269,15 @@ EmulatorOptions prepare_emulator_options(
 				::uml::runtime::parse_translation_cache_quantity(
 					quantity.c_str());
 			if (prepared.gadget_cache_budget == 0) {
+				prepared.valid = false;
+				return prepared;
+			}
+			continue;
+		}
+		if (argument.starts_with(guest_hibernation_prefix)) {
+			if (!parse_guest_hibernation(
+					argument.substr(guest_hibernation_prefix.size()),
+					prepared.guest_hibernation)) {
 				prepared.valid = false;
 				return prepared;
 			}

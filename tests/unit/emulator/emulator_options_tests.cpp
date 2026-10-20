@@ -274,6 +274,43 @@ void test_gadget_cache_budget_option()
 		"the gadget cache budget ignored trailing text");
 }
 
+void test_guest_hibernation_option()
+{
+	using uml::runtime::HibernationMode;
+	const char *absent[]{"uml-test"};
+	require(uml::emulator::prepare_emulator_options(
+		1, absent, "/tmp/rootfs.erofs").guest_hibernation ==
+		HibernationMode::automatic,
+		"hibernation did not default to the host's wiring");
+	struct {
+		const char *argument;
+		HibernationMode mode;
+	} const choices[]{{"--guest-hibernation=auto", HibernationMode::automatic},
+		{"--guest-hibernation=off", HibernationMode::off},
+		{"--guest-hibernation=on", HibernationMode::on}};
+	for (const auto &choice : choices) {
+		const char *argv[]{"uml-test", choice.argument, "ip=dhcp"};
+		const auto options = uml::emulator::prepare_emulator_options(
+			3, argv, "/tmp/rootfs.erofs");
+		require(options.valid && options.guest_hibernation == choice.mode &&
+			!contains(options, choice.argument) &&
+			contains(options, "ip=dhcp"),
+			"the hibernation mode was not consumed by the host");
+	}
+	const char *repeated[]{"uml-test", "--guest-hibernation=off",
+		"--guest-hibernation=on"};
+	require(uml::emulator::prepare_emulator_options(
+		3, repeated, "/tmp/rootfs.erofs").guest_hibernation ==
+		HibernationMode::on, "the last repeated hibernation mode did not win");
+	for (const char *invalid : {"--guest-hibernation=", "--guest-hibernation=yes",
+		     "--guest-hibernation=ON", "--guest-hibernation=off "}) {
+		const char *argv[]{"uml-test", invalid};
+		require(!uml::emulator::prepare_emulator_options(
+			2, argv, "/tmp/rootfs.erofs").valid,
+			"a malformed hibernation mode was accepted");
+	}
+}
+
 void test_jit_tier_option()
 {
 	const char *absent[]{"uml-test"};
@@ -580,6 +617,7 @@ int main()
 		test_guest_memory_budget_matches_kernel_memparse();
 		test_gadget_cache_budget_option();
 		test_jit_tier_option();
+		test_guest_hibernation_option();
 		test_scalable_native_kernel_layout_geometry();
 		test_reserved_native_window_has_no_gap();
 		test_guest_cpu_count_matches_kernel_policy();

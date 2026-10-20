@@ -8,10 +8,12 @@ import Foundation
 /// the guest it hosted is then gone: the next launch boots it again from
 /// scratch. The application cannot observe that ending, so it records the
 /// edge it can observe. It writes the marker as it enters the background and
-/// removes it as it returns to the foreground or is told it will terminate. A
-/// marker found at launch therefore means the previous process ended while it
-/// was in the background, by iOS reclaiming it or by the user closing it from
-/// the app switcher.
+/// removes it once it is back in the foreground and the guest runs again, or
+/// when it is told it will terminate. A marker found at launch therefore means
+/// the previous process ended while it was in the background, by iOS
+/// reclaiming it or by the user closing it from the app switcher, or while the
+/// guest was coming back, as when the RAM a hibernated guest wrote out could
+/// not be restored and the runtime ended the process.
 struct BackgroundMarker {
     struct Record: Codable, Equatable {
         var enteredAt: Date
@@ -94,6 +96,9 @@ final class BackgroundSession: ObservableObject {
     ))
 
     private let marker: BackgroundMarker
+    private var inForeground = true
+    /// Resumes of a quiesced guest that have started and not returned.
+    private var resumesInFlight = 0
     /// Set when this launch follows a process that ended in the background,
     /// until the user dismisses it.
     @Published private(set) var restart: GuestRestart?
@@ -113,15 +118,38 @@ final class BackgroundSession: ObservableObject {
     }
 
     func didEnterBackground() {
+        inForeground = false
         marker.arm()
     }
 
+    /// The marker stays while a resume is under way: a guest whose
+    /// hibernated RAM cannot be restored ends the process inside it, and the
+    /// next launch should still say the guest restarted.
     func willEnterForeground() {
-        marker.disarm()
+        inForeground = true
+        disarmWhenSettled()
     }
 
     func willTerminate() {
         marker.disarm()
+    }
+
+    /// A quiesced guest is being resumed.
+    func guestResumeStarted() {
+        resumesInFlight += 1
+    }
+
+    /// The resume returned, so the guest and everything it hibernated are
+    /// back.
+    func guestResumeFinished() {
+        resumesInFlight = max(resumesInFlight - 1, 0)
+        disarmWhenSettled()
+    }
+
+    private func disarmWhenSettled() {
+        if inForeground && resumesInFlight == 0 {
+            marker.disarm()
+        }
     }
 
     func dismissRestartNotice() {

@@ -5,10 +5,12 @@
 #include "context.hpp"
 #include "guest_sync.hpp"
 #include "guest_console.hpp"
+#include "guest_hibernation.hpp"
 #include "native_kernel_layout.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
 
+#include <atomic>
 #include <cstddef>
 #include <condition_variable>
 #include <memory>
@@ -27,7 +29,6 @@ extern "C" {
 #endif
 
 #if UML_EMULATOR_TESTING
-#include <atomic>
 #include <cstring>
 #endif
 
@@ -256,6 +257,8 @@ public:
 		if (runtime_.set_execution_engine(prepared.engine) != 0)
 			return -UML_EMULATOR_UNSUPPORTED;
 		runtime_.set_top_byte_ignore(prepared.top_byte_ignore);
+		if (!prepared.informational)
+			prepare_guest_hibernation(prepared.guest_hibernation);
 		runtime_.set_x86_jit_tier(prepared.jit_tier_instructions);
 		const bool jit_run = !prepared.informational &&
 			runtime_.execution_engine() ==
@@ -348,6 +351,8 @@ public:
 
 	void request_stop() noexcept
 	{
+		/* A stop reaches threads that run. */
+		bring_back_guest_ram();
 		/* Predicate mutation and wait enrollment share this mutex, so a
 		 * notification cannot land between a false check and wait. */
 		{
@@ -368,12 +373,23 @@ public:
 				guest_suspend_settle_ms);
 		}
 		const auto result = ::uml::runtime::sync_guest_files();
+		/* Last, with the guest asleep and its files on disk. */
+		if (guest_suspension_ == ::uml::device::GuestSuspension::system)
+			hibernate_guest_ram();
 		return static_cast<int>(result.failed);
 	}
 
 	void resume() noexcept
 	{
+		/* A hibernation still writing leaves what it has not reached in the
+		 * process. */
+		request_hibernation_abort();
 		std::lock_guard lock{guest_lifecycle_mutex_};
+		/* The RAM and the threads are back before the guest is woken. A
+		 * restore that fails ends the process and does not return; where
+		 * the end is replaced, nothing is woken either. */
+		if (hibernation_ != nullptr && !hibernation_->restore())
+			return;
 		const auto suspension = std::exchange(guest_suspension_,
 			::uml::device::GuestSuspension::none);
 		::uml::device::resume_guest(suspension);
@@ -420,7 +436,64 @@ public:
 		return runtime_.execution_engine();
 	}
 
+#if UML_EMULATOR_TESTING
+	void use_hibernation(
+		std::unique_ptr<::uml::runtime::HibernationSteps> steps,
+		::uml::runtime::GuestHibernation::FailureHandler on_failure)
+	{
+		std::lock_guard lock{guest_lifecycle_mutex_};
+		hibernation_ = std::make_unique<::uml::runtime::GuestHibernation>(
+			std::move(steps), on_failure);
+		hibernation_pointer_.store(hibernation_.get(),
+			std::memory_order_release);
+	}
+#endif
+
 private:
+	/* Before the guest boots: what the options say about hibernating, and
+	 * the images a process that ended in a hibernation left behind. */
+	void prepare_guest_hibernation(::uml::runtime::HibernationMode mode)
+	{
+		std::lock_guard lock{guest_lifecycle_mutex_};
+		hibernation_mode_ = mode;
+		if (mode != ::uml::runtime::HibernationMode::off)
+			(void)::uml::runtime::remove_stale_hibernation_images(
+				::uml::runtime::hibernation_directory());
+	}
+
+	void hibernate_guest_ram() noexcept
+	{
+		if (hibernation_ == nullptr) {
+			if (hibernation_mode_ == ::uml::runtime::HibernationMode::off)
+				return;
+			try {
+				hibernation_ = ::uml::runtime::GuestHibernation::create(
+					hibernation_mode_,
+					::uml::runtime::hibernation_directory());
+			} catch (...) {
+				return;
+			}
+			hibernation_pointer_.store(hibernation_.get(),
+				std::memory_order_release);
+		}
+		(void)hibernation_->hibernate();
+	}
+
+	void request_hibernation_abort() noexcept
+	{
+		if (auto *const hibernation =
+			    hibernation_pointer_.load(std::memory_order_acquire))
+			hibernation->request_abort();
+	}
+
+	void bring_back_guest_ram() noexcept
+	{
+		request_hibernation_abort();
+		std::lock_guard lock{guest_lifecycle_mutex_};
+		if (hibernation_ != nullptr)
+			(void)hibernation_->restore();
+	}
+
 	[[nodiscard]] static uml::network::Provider network_provider(
 		const uml_emulator_config &config) noexcept
 	{
@@ -445,6 +518,14 @@ private:
 		::uml::device::GuestSuspension::none};
 	/* A trimming change requested while the guest was quiesced. */
 	std::optional<bool> pending_page_cache_trim_;
+	::uml::runtime::HibernationMode hibernation_mode_ {
+		::uml::runtime::HibernationMode::automatic};
+	/* Made by the first quiesce that hibernates. Guarded by the lifecycle
+	 * mutex; the pointer is also published for the abort request, which
+	 * resume sends before it waits for the mutex. */
+	std::unique_ptr<::uml::runtime::GuestHibernation> hibernation_;
+	std::atomic<::uml::runtime::GuestHibernation *> hibernation_pointer_ {
+		nullptr};
 };
 
 } // namespace uml::emulator
@@ -454,6 +535,19 @@ struct uml_emulator {
 
 	uml::emulator::Emulator implementation;
 };
+
+#if UML_EMULATOR_TESTING
+namespace uml::emulator::testing {
+
+void use_hibernation(uml_emulator *emulator,
+	std::unique_ptr<::uml::runtime::HibernationSteps> steps,
+	void (*on_failure)() noexcept)
+{
+	emulator->implementation.use_hibernation(std::move(steps), on_failure);
+}
+
+} // namespace uml::emulator::testing
+#endif
 
 extern "C" int uml_emulator_create(const uml_emulator_config *config,
 				  uml_emulator **result)

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "runtime/execution_engine.hpp"
+#include "runtime/hibernation_mode.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -41,6 +42,12 @@ struct EmulatorOptions final {
 	 * gadget engine before the x86-64 JIT takes it over. Zero is the JIT from
 	 * the first instruction. */
 	std::uint64_t jit_tier_instructions{};
+	/* --guest-hibernation=auto|off|on: whether quiescing also writes the
+	 * guest's RAM to a file and takes it out of the process
+	 * (runtime/guest_hibernation.hpp). Auto is physical iOS, the one host
+	 * that wires guest RAM; on forces it anywhere, for diagnosis. */
+	::uml::runtime::HibernationMode guest_hibernation{
+		::uml::runtime::HibernationMode::automatic};
 	std::size_t guest_memory_bytes{};
 	unsigned guest_cpus{1};
 	bool top_byte_ignore{};

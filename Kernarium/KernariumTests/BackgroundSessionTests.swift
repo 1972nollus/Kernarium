@@ -45,6 +45,32 @@ struct BackgroundSessionTests {
         #expect(BackgroundSession(marker: marker).restart == nil)
     }
 
+    /// A hibernated guest that cannot be restored ends the process inside the
+    /// resume. The marker must still be there, so that the next launch says the
+    /// guest restarted.
+    @Test
+    func theMarkerStaysUntilTheGuestHasResumed() throws {
+        let marker = try scratchMarker()
+        let session = BackgroundSession(marker: marker)
+        session.didEnterBackground()
+        session.guestResumeStarted()
+        session.willEnterForeground()
+        #expect(FileManager.default.fileExists(atPath: marker.url.path))
+        session.guestResumeFinished()
+        #expect(!FileManager.default.fileExists(atPath: marker.url.path))
+        #expect(BackgroundSession(marker: marker).restart == nil)
+    }
+
+    @Test
+    func aResumeThatEndsInTheBackgroundLeavesTheMarker() throws {
+        let marker = try scratchMarker()
+        let session = BackgroundSession(marker: marker)
+        session.didEnterBackground()
+        session.guestResumeStarted()
+        session.guestResumeFinished()
+        #expect(FileManager.default.fileExists(atPath: marker.url.path))
+    }
+
     @Test
     func aProcessThatExitsOnItsOwnAccountLeavesNoMarker() throws {
         let marker = try scratchMarker()

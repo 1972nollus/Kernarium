@@ -2,20 +2,28 @@
 /*
  * The lifecycle calls reach the guest only through its management console, so
  * a datagram socket bound where the guest would bind its console sees exactly
- * what a guest would be asked, in order.
+ * what a guest would be asked, in order. The same socket orders the guest's
+ * wake against the hibernation steps a test supplies: when the guest is woken,
+ * its RAM and threads are already back.
  */
 #include "uml/emulator.h"
 #include "guest_console.hpp"
+#include "guest_hibernation.hpp"
 #include "require.hpp"
+#include "testing.hpp"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <poll.h>
 #include <string>
 #include <string_view>
@@ -109,6 +117,12 @@ public:
 		(void)::unlink(path_.c_str());
 	}
 
+	/* Called on the console's thread with each request, before its reply. */
+	std::function<void(const std::string &)> onRequest;
+	/* A guest without suspend support: it refuses "suspend" and takes the
+	 * management stop instead. */
+	bool refuseSuspend {false};
+
 	/* Answers `count` requests in another thread while `operation` runs,
 	 * and returns them in the order they arrived. */
 	template<typename Operation>
@@ -156,15 +170,24 @@ private:
 			sizeof(request) - maximumConsoleData));
 		const std::string command(request.data.data(),
 			std::min<std::size_t>(request.length, maximumConsoleData));
+		if (onRequest)
+			onRequest(command);
 		std::string_view text = "running";
-		if (command == "suspend")
+		std::uint32_t error = 0U;
+		if (command == "suspend" && refuseSuspend) {
+			text = "Suspend failed: refused by the test";
+			error = 1U;
+		} else if (command == "suspend") {
 			text = "suspended";
-		else if (command == "trim once")
+		} else if (command == "stop") {
+			text = "stopped";
+		}
+		if (command == "trim once")
 			text = "trimmed 0 KiB in 0 ms, compacted in 40 ms, "
 			       "released 0 KiB in 1 ms";
 		else if (command.starts_with("trim "))
 			text = std::string_view {command}.substr(5);
-		Reply reply {0U, 0U, static_cast<std::uint32_t>(text.size()), {}};
+		Reply reply {error, 0U, static_cast<std::uint32_t>(text.size()), {}};
 		std::memcpy(reply.data.data(), text.data(), text.size());
 		require(::sendto(descriptor_, &reply, sizeof(reply), 0,
 			reinterpret_cast<const sockaddr *>(&client), clientLength) ==
@@ -245,6 +268,244 @@ void withoutAConsoleNothingWaits(uml_emulator *emulator)
 		-UML_EMULATOR_INVALID_ARGUMENT);
 }
 
+/* ---- Hibernating the guest's RAM around a quiesce. ---- */
+
+/* What happened, in order, on every thread: hibernation steps and the
+ * guest's console requests share it. */
+class Log final {
+public:
+	void add(std::string entry)
+	{
+		const std::lock_guard lock {mutex_};
+		entries_.push_back(std::move(entry));
+	}
+
+	[[nodiscard]] std::vector<std::string> take()
+	{
+		const std::lock_guard lock {mutex_};
+		return std::exchange(entries_, {});
+	}
+
+private:
+	std::mutex mutex_;
+	std::vector<std::string> entries_;
+};
+
+Log hibernationLog;
+std::atomic<int> restoreFailures {0};
+
+struct Steps final : uml::runtime::HibernationSteps {
+	bool restoreSucceeds {true};
+	/* The write waits for the abort request that resume sends. */
+	bool writeWaitsForAbort {false};
+	std::atomic<bool> aborted {false};
+	std::atomic<bool> writing {false};
+
+	bool prepare() noexcept override
+	{
+		hibernationLog.add("prepare");
+		return true;
+	}
+	bool hold(uml::runtime::HibernationReport &) noexcept override
+	{
+		hibernationLog.add("hold");
+		return true;
+	}
+	bool write(uml::runtime::HibernationReport &) noexcept override
+	{
+		writing = true;
+		if (writeWaitsForAbort) {
+			for (int attempt = 0; attempt < 5000 && !aborted; ++attempt)
+				std::this_thread::sleep_for(std::chrono::milliseconds {2});
+			hibernationLog.add(aborted ? "write:aborted" : "write:timeout");
+		} else {
+			hibernationLog.add("write");
+		}
+		return true;
+	}
+	bool restore(uml::runtime::HibernationReport &) noexcept override
+	{
+		hibernationLog.add("restore");
+		return restoreSucceeds;
+	}
+	void release() noexcept override { hibernationLog.add("release"); }
+	void set_abort(bool abort) noexcept override
+	{
+		if (abort) {
+			hibernationLog.add("abort");
+			aborted = true;
+		} else {
+			aborted = false;
+		}
+	}
+};
+
+void countRestoreFailure() noexcept
+{
+	hibernationLog.add("failure");
+	++restoreFailures;
+}
+
+/* Installs `steps` on `emulator`; they stay owned by it, and the test keeps a
+ * pointer to flip switches. */
+Steps *installSteps(uml_emulator *emulator)
+{
+	auto steps = std::make_unique<Steps>();
+	Steps *const raw = steps.get();
+	uml::emulator::testing::use_hibernation(emulator, std::move(steps),
+		&countRestoreFailure);
+	return raw;
+}
+
+using Entries = std::vector<std::string>;
+
+/* The wake is the first thing the guest can act on, so by then the RAM must be
+ * whole and every thread released. */
+void aHibernatedGuestIsWholeBeforeItIsWoken()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	console.onRequest = [](const std::string &command) {
+		hibernationLog.add("console:" + command);
+	};
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	require(hibernationLog.take() == Entries {"console:trim once",
+		"console:suspend", "prepare", "hold", "write"},
+		"a quiesce hibernates after the guest is asleep");
+	require(console.requests(1U, [&] {
+		uml_emulator_resume(emulator.get());
+	}) == Requests {"wake"});
+	require(hibernationLog.take() == Entries {"abort", "restore", "release",
+		"console:wake"}, "the RAM is back and the threads run before the wake");
+}
+
+void aSecondQuiesceKeepsTheHibernation()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	require(console.requests(0U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}).empty());
+	require(hibernationLog.take() == Entries {"prepare", "hold", "write"},
+		"a guest that is already hibernated is not hibernated again");
+	require(console.requests(1U, [&] {
+		uml_emulator_resume(emulator.get());
+	}) == Requests {"wake"});
+	(void)hibernationLog.take();
+}
+
+void aGuestThatCouldNotSuspendIsNotHibernated()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	console.refuseSuspend = true;
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	const auto requests = console.requests(4U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	});
+	require(requests == Requests {"trim once", "suspend", "sysrq s", "stop"},
+		"a refused suspend falls back to the management stop");
+	require(hibernationLog.take().empty(),
+		"only a system suspension is hibernated");
+	(void)console.requests(1U, [&] { uml_emulator_resume(emulator.get()); });
+}
+
+void aGuestWithoutAConsoleIsNotHibernated()
+{
+	const auto emulator = makeEmulator();
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	require(uml_emulator_quiesce(emulator.get()) == 0);
+	require(hibernationLog.take().empty(), "nothing suspended, nothing to do");
+	uml_emulator_resume(emulator.get());
+}
+
+/* A failed restore must not wake anything: the guest would run on missing
+ * memory. The failure handler ends the process in production. */
+void aFailedRestoreWakesNothing()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	console.onRequest = [](const std::string &command) {
+		hibernationLog.add("console:" + command);
+	};
+	Steps *const steps = installSteps(emulator.get());
+	steps->restoreSucceeds = false;
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	(void)hibernationLog.take();
+	require(console.requests(0U, [&] {
+		uml_emulator_resume(emulator.get());
+	}).empty(), "a guest whose RAM is not back is not woken");
+	require(hibernationLog.take() == Entries {"abort", "restore", "failure"},
+		"the failure is reported and nothing is released");
+	require(restoreFailures.load() == 1, "once");
+	/* The guest stays quiesced; a later resume tries again. */
+	steps->restoreSucceeds = true;
+	require(console.requests(1U, [&] {
+		uml_emulator_resume(emulator.get());
+	}) == Requests {"wake"});
+	require(hibernationLog.take() == Entries {"abort", "restore", "release",
+		"console:wake"}, "and wakes it once the RAM is back");
+}
+
+/* A resume that arrives while the image is still being written does not wait
+ * for the whole write: it asks the write to stop, then restores. */
+void aResumeDuringTheWriteStopsTheWrite()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	Steps *const steps = installSteps(emulator.get());
+	steps->writeWaitsForAbort = true;
+	(void)hibernationLog.take();
+	/* The guest answers the quiesce's two requests and the resume's wake. */
+	Requests heard;
+	std::thread quiescing {[&] {
+		heard = console.requests(3U, [&] {
+			require(uml_emulator_quiesce(emulator.get()) == 0);
+		});
+	}};
+	for (int attempt = 0; attempt < 2500 && !steps->writing; ++attempt)
+		std::this_thread::sleep_for(std::chrono::milliseconds {2});
+	require(steps->writing, "the write must start");
+	uml_emulator_resume(emulator.get());
+	quiescing.join();
+	require(heard == Requests {"trim once", "suspend", "wake"});
+	const auto entries = hibernationLog.take();
+	require(entries == Entries {"prepare", "hold", "abort", "write:aborted",
+		"restore", "release"} || entries == Entries {"prepare", "hold",
+		"abort", "write:aborted", "abort", "restore", "release"},
+		"the resume stops the write, then restores");
+}
+
+/* Threads that are held cannot see a stop, so a stop restores first. */
+void aStopBringsTheRamBack()
+{
+	const auto emulator = makeEmulator();
+	FakeGuestConsole console;
+	(void)installSteps(emulator.get());
+	(void)hibernationLog.take();
+	require(console.requests(2U, [&] {
+		require(uml_emulator_quiesce(emulator.get()) == 0);
+	}) == Requests {"trim once", "suspend"});
+	(void)hibernationLog.take();
+	uml_emulator_request_stop(emulator.get());
+	require(hibernationLog.take() == Entries {"abort", "restore", "release"},
+		"a stop runs the threads that were held");
+	(void)console.requests(1U, [&] { uml_emulator_resume(emulator.get()); });
+}
+
 } // namespace
 
 int main()
@@ -257,5 +518,12 @@ int main()
 	quiesceTrimsBeforeItSuspends(emulator.get(), console);
 	aQuiescedGuestHearsOnlyTheResume(emulator.get(), console);
 	aRunningGuestIsAskedAtOnce(emulator.get(), console);
+	aHibernatedGuestIsWholeBeforeItIsWoken();
+	aSecondQuiesceKeepsTheHibernation();
+	aGuestThatCouldNotSuspendIsNotHibernated();
+	aGuestWithoutAConsoleIsNotHibernated();
+	aFailedRestoreWakesNothing();
+	aResumeDuringTheWriteStopsTheWrite();
+	aStopBringsTheRamBack();
 	return EXIT_SUCCESS;
 }
