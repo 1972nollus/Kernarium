@@ -20,25 +20,15 @@ namespace uml::testing {
 #endif
 #endif
 
-/* AddressSanitizer keeps its allocator heap at 0x600000000000 on arm64 macOS,
- * which is the product's macOS native window. A test that needs a large or
- * fixed part of that window reports this reason and exits with
- * native_test_window_unsupported_status, which its registration names as its
- * skip code. */
-#if defined(UML_NATIVE_TEST_WINDOW_UNDER_ASAN) && DARWIN_UML_NATIVE_HIGH_PLACEMENT
-inline constexpr const char *native_test_window_unsupported =
-	"AddressSanitizer's heap occupies the macOS native window";
-#else
-inline constexpr const char *native_test_window_unsupported = nullptr;
-#endif
-inline constexpr int native_test_window_unsupported_status = 77;
-
-/* Match the product placement: macOS avoids crowded low host VM bands.
- * ThreadSanitizer reserves everything from 0x20000000000 up for itself, the
- * product band included, so a sanitized test takes a window the sanitizer
- * leaves free instead. */
-#if defined(UML_NATIVE_TEST_WINDOW_UNDER_TSAN)
-inline constexpr std::uint64_t native_test_window_start = 0x8000000000ULL;
+/* Match the product placement: macOS avoids crowded low host VM bands. On
+ * arm64 macOS a sanitizer holds the product band itself: AddressSanitizer
+ * keeps its allocator heap at 0x600000000000, and ThreadSanitizer reserves
+ * everything outside its application ranges. A sanitized test takes a window
+ * at the start of ThreadSanitizer's middle application range, 0x550000000000
+ * to 0x5a0000000000, which AddressSanitizer leaves to the application too. */
+#if defined(UML_NATIVE_TEST_WINDOW_UNDER_TSAN) || \
+	defined(UML_NATIVE_TEST_WINDOW_UNDER_ASAN)
+inline constexpr std::uint64_t native_test_window_start = 0x550000000000ULL;
 inline constexpr std::uint64_t native_test_window_end =
 	native_test_window_start +
 	(DARWIN_UML_NATIVE_ADDRESS_END - DARWIN_UML_NATIVE_ADDRESS_START);
