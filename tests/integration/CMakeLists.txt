@@ -403,6 +403,25 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# The kernel describes the virtual machine in SMBIOS tables that userspace
+# reads from sysfs, and provides no /dev/mem.
+uml_add_guest_integration_test(
+    NAME guest-kernel-dmi
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/dmi_probe.py
+        --ncpus 2 --probe-timeout 120
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    CPUS 2)
+
+# The host threads the guest kernel creates carry their names.
+uml_add_guest_integration_test(
+    NAME guest-kernel-thread-names
+    SCRIPT kernel/run_guest_thread_names.py
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    CPUS 2)
+
 # Unmapping user pages beside the native window leaves the kernel's own
 # mappings in it alone.
 uml_add_guest_integration_test(

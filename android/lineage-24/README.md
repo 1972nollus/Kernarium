@@ -205,6 +205,13 @@ The boot animation is off (`androidboot.enable_bootanimation=0`; the vendor
 init script turns `debug.sf.nobootanimation` on for it), so SurfaceFlinger
 draws nothing until the first real frame.
 
+Boot runs with expedited RCU grace periods (`rcupdate.rcu_expedited=1` on the
+command line), which shortens it by a few seconds. Once `sys.boot_completed`
+is set, the vendor init script writes 0 to `/sys/kernel/rcu_expedited`, so a
+running guest returns to normal grace periods and does not interrupt every
+vCPU for each one. The target-files verifier requires that action. Recovery
+loads no vendor init script and stays expedited for its short run.
+
 ## Graphics
 
 Both graphics APIs come from one Mesa build of this project's own guest Mesa
@@ -244,10 +251,10 @@ SurfaceFlinger reconnects once at the new size with no headless step between.
 `frameworks/base` (route `p0007`) keeps a display's state when a snapshot taken
 between two quick reconnects names an active mode its own list lacks, which
 otherwise crashes `system_server`. Density stays at its launch value. The
-touchscreen's absolute range stays the launch pixel size, and the host maps the
-view into it linearly, so touch stays exact at a coarser resolution. Release
-`20261017-los24-r2` predates both routes: until the next signed release is
-accepted, its display keeps its boot resolution.
+touchscreen's absolute range is fixed at 0 through 32767 on both axes, and the
+host maps the guest's visible rectangle onto it
+([`../../docs/graphics.md`](../../docs/graphics.md#dynamic-native-geometry)),
+so touch stays exact at every size the display takes.
 
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under
@@ -484,11 +491,7 @@ remains usable across compatible kernel updates within the `6.18` line. A
 kernel-only update therefore advances only
 [`accepted-android-4k.env`](../../kernel/mainline-6.18/artifacts/accepted-android-4k.env)
 and keeps the accepted release, which then runs a later kernel than the one it
-records. The accepted release records the ACK 6.18 build that qualified it,
-tag included, and runs the mainline kernel line's `android-6.18` artifact. The
-manifest accepts that tag as optional, and the producer records none. The next
-signed release is built from the mainline line; it renames the product family
-and release prefix to the mainline kernel and removes the tag allowance.
+records.
 
 ### Release signing
 

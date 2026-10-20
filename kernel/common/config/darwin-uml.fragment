@@ -29,6 +29,18 @@ CONFIG_IKCONFIG_PROC=y
 CONFIG_PRINTK_TIME=y
 CONFIG_DEVTMPFS=y
 CONFIG_DEVTMPFS_MOUNT=y
+# The kernel writes the SMBIOS tables firmware writes elsewhere (the shared
+# topic "um: describe the virtual machine in SMBIOS tables"). DMIID serves
+# them as /sys/class/dmi/id and DMI_SYSFS as /sys/firmware/dmi/entries, where
+# systemd reads the virtual-machine bit; the raw tables need only DMI.
+CONFIG_DMI=y
+CONFIG_DMIID=y
+CONFIG_DMI_SYSFS=y
+# A UML guest's physical address 0 is the kernel image, and UML has no
+# devmem_is_allowed() to make /dev/mem strict, so /dev/mem would give root the
+# kernel's memory and a mapping past RAM that never resolves. Nothing in a
+# guest needs it; SMBIOS readers use /sys/firmware/dmi.
+# CONFIG_DEVMEM is not set
 
 # --- Block devices and the storage stack ------------------------------------
 CONFIG_BLK_DEV_UBD=y
