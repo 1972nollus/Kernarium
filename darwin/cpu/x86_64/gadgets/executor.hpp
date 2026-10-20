@@ -97,6 +97,14 @@ public:
 	 * stores this one has already translated. */
 	void enter_engine() noexcept;
 	void leave_engine() noexcept;
+	/* Bracket every run of translated code and the handling of its exit,
+	 * which may follow a link into a body that only the address space
+	 * holds, so that executors sharing the address space free no body this
+	 * one may be inside of (DARWIN_UML_GADGET_SHARED_BODIES). An executor
+	 * that never brackets keeps the bodies of its address space for as long
+	 * as it lives. */
+	void begin_run() noexcept;
+	void end_run() noexcept;
 	[[nodiscard]] void *execution_context() const noexcept;
 	[[nodiscard]] std::uint64_t prepared_code_changes() const noexcept;
 	[[nodiscard]] std::uint64_t current_code_changes() const noexcept;

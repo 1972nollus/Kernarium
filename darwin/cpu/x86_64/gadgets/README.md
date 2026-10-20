@@ -845,6 +845,105 @@ interrupt still abandons the validation: those say the memory being read
 through is being replaced, or that this vCPU has been asked to leave, and no
 page stamp describes either.
 
+## Where a translation lives
+
+A cached translation is a body (`translation_body.hpp`) in its address space's
+arena, the native stream directly behind it and the guest bounds in front of
+the stream. The saved source is cold and lives in a second arena, so that
+streams stay dense. The body holds the translation's program, its page stamps,
+its places in the lists of translations per page and the instruction limit it
+was built under; a slot, which exists whether or not it holds a translation,
+keeps a tag, the body and a few words. The program a body holds is a view of
+the stream and source it sits beside and frees only what a replay decoded.
+That decode is published once by a compare-and-swap, so a program replayed on
+several threads keeps one decode. `x86-64-gadget-bodies` holds the layout and
+the replay.
+
+The arenas, the link records and indirect sites the streams name, the
+target link tables and the index of bodies per page of one address space are
+its `Space` (`translation_space.hpp`). A space is charged to one account in the
+byte budget. It belongs to the executors running the address space when they
+share their translations, and to one executor otherwise; the sweep of records
+nothing names is the private owner's to ask for, since it reads the owner's
+slots.
+
+## Sharing translations
+
+Executors that run one address space share its translations, unless
+`DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them to themselves. A space is made
+for an address space generation and the exceptions its blocks are built for
+(`check_exceptions`), because a block is built so that no instruction of it
+needs a check the runtime makes itself; an executor built for other exceptions
+never shares with this one. The space holds the bodies, the link records and
+indirect sites their streams name, the target link tables and a page index; each
+executor keeps its slots, which decide what it holds. A body lives while any
+slot holds it, so the address space costs the union of what its executors hold
+rather than their sum, and the link records, a fifth of a private cache, are
+held once.
+
+A lookup that misses in an executor's slots asks the space for the body indexed
+for the address. The body is validated as a stale slot is, by page stamps and
+then by the saved source, and taken into a slot with no copy or relocation;
+otherwise the executor builds. A build finds the equal body already stored if
+another executor stored it first.
+
+A link is one aligned pair that a single paired store retargets, and a block's
+guest bounds are in front of its stream, so an executor follows a link another
+executor armed and a reader sees one stream with its own count. That needs
+FEAT_LSE2, which the x86 engine requires of the host in any case. A link is armed
+only at the code-change sequence the executor validated the block at.
+
+Code changes reach every executor's links in two ways.
+
+- Whatever the address space publishes -- a mapping, a store the kernel made, a
+  JIT's, another vCPU's -- moves the code-change sequence. The first executor
+  to prepare at the new sequence raises the space's gate and resets the links
+  of the bodies the changed ranges cover, or every live link when the history
+  cannot describe the span; an activation validated before the gate moved is
+  refused. The executors revalidate by stamps and bytes as they do privately.
+  The writer, which found only its own publications in the sequence at a branch,
+  moves the gate without resetting anything: its stores reset what they
+  overlapped.
+- A store by an executor is also seen by the others running the block. The
+  engine checks a vCPU's own code stores only at link boundaries and against
+  the block it is running, so a link another executor armed must never take
+  the writer into bytes from before its own store. A store counts against each
+  page of the space it lands on, and for each body its range overlaps it sets
+  the body stale and resets the record naming it, under the lock of the body's
+  page. A build pins the pages it can cover in the page index before it reads
+  a byte, and its body is not kept if a store landed on one of them since: the
+  program runs once. No link is armed to a stale body, a stale body is never
+  adopted, and a slot that revalidates finds it stale and lets go.
+  Owner-private spaces keep revalidating by stamps and bytes as always.
+
+A body a slot let go of is unpublished at once, but an executor that loaded the
+record before may still be running it. It waits in limbo until every executor
+seen inside translated code has left, which the executors' announcements tell:
+`run_x86_gadgets` brackets a run, and the handling of its exits, with
+`begin_run` and `end_run`. An executor that never brackets keeps the bodies of
+its address space for as long as it lives. A fault inside a block entered
+through a link is attributed through the arena's map of live bodies, since the
+block need not be in any slot of the executor that ran it. A shared space is
+never swept; it dies with its last executor, and its arenas go whole.
+
+What bounds a shared space is renewal. It counts the bytes its arenas hold and
+the bytes of the bodies some slot holds, and once the arenas hold at least as
+much freed space as bodies, and at least two mebibytes, it is closed: it leaves
+the registry, so the next executor to want its address space gets a new one,
+and every executor attached lets go of it before it next enters translated
+code. The old space dies with its last executor, taking its arenas, link
+records and freed bodies with it. A cache closes the space it stores into
+after a store, and a space it lets go of whole (a destroyed address space, or
+its own end) before it detaches, since a mostly dead space receives no
+stores. The byte budget closes a space the same way when it asks it to shed.
+Freed blocks that new bodies fit are reused, so steady churn of equal blocks
+renews nothing; fragmentation and processes that end do.
+
+`x86-64-gadget-shared-bodies`, `x86-64-gadget-shared-store` and
+`x86-64-gadget-shared-concurrent` hold this, `x86-64-gadget-shared-bound` holds
+renewal and the budget, and `x86-64-gadget-bootstrap` runs the bootstrap suite
+with the executors sharing.
+
 ## Address spaces the kernel destroyed
 
 The cache keeps the translations of the eight most recently run address
@@ -867,28 +966,30 @@ generations displace them, which a long-running benchmark process never does.
 Each address space an executor keeps charges an account in the gadget engines'
 process-wide byte budget (`cpu/gadget_cache_budget.hpp`; see
 [`darwin/README.md`](../../../README.md)) with its resident translations --
-record, native stream (with the bounds in front of it) and saved source as the
-allocator sizes them, charged at
-the store and refunded when the translation departs -- and its link and
-indirect records and target link tables. A store that takes the open accounts
+their bodies, each with its native stream and the bounds in front of it, and
+their saved source apart, in two arenas that charge the account as they carve
+and release chunks -- and its link and indirect records and target link
+tables. A store that takes the open accounts
 past the budget asks the largest to shed, which sets a flag on the cache that
 keeps it; `leave_gone_generations` lets go of every such address space at the
 start of the next run, as of a destroyed one but without a tombstone, and the
-address space starts again in a new account. An executor's cache is private,
-so the same address space on four vCPUs is charged four times. When
-translations come to be shared per address space, the shared space owns the
-account, as an arm64 space does: it charges its translations once, its executors
-let go of it at their next run when it is asked to shed, and the registry no
-longer hands it out.
+address space starts again in a new account. A private cache's address space is
+charged to that cache, so the same address space on four vCPUs is charged four
+times. A shared space owns its account, as an arm64 space does: it charges its
+translations once, its executors let go of it at their next run when it is
+asked to shed, and the registry no longer hands it out.
 
 ## Measuring what the cache costs
 
 A `UML_GADGET_CACHE_CENSUS=ON` build makes every executor append what its
-private cache holds, at teardown and optionally at intervals: the committed
-slabs, each resident translation's own allocations as the allocator sized
-them -- its record, native stream and saved source, and the decoded
+cache holds, at teardown and optionally at intervals: the committed
+slabs, each resident translation's own allocations as the arenas sized
+them -- its body and native stream, its saved source, and the decoded
 instructions only a replayed block holds -- the link and indirect records,
 and the target link table each address space owns, with the history of its
-lookups, evictions and retranslations. The record format is the arm64
-engine's, so one analyzer reads a capture from either. See
+lookups, evictions and retranslations. A space the executors share is written
+whole on an `S` record, named by its identity, by every executor that holds
+it, and each translation names its body, so that a reader counts a space and a
+body once. The record format is the arm64 engine's, so one analyzer reads a
+capture from either. See
 [`tests/perf/README.md`](../../../../tests/perf/README.md).

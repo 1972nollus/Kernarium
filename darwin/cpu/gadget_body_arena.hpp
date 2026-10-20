@@ -16,7 +16,7 @@
 
 #include "cpu/gadget_cache_budget.hpp"
 
-namespace uml::cpu::arm64::gadgets {
+namespace uml::cpu::gadget_cache {
 
 /* Storage for stored translations.
  *
@@ -639,4 +639,4 @@ private:
 	std::array<std::uint64_t, (lists + 63) / 64> occupied_{};
 };
 
-} // namespace uml::cpu::arm64::gadgets
+} // namespace uml::cpu::gadget_cache

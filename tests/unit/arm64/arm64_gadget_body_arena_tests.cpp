@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "cpu/arm64/gadgets/body_arena.hpp"
+#include "cpu/gadget_body_arena.hpp"
 #include "require.hpp"
 
 #include <algorithm>
@@ -15,7 +15,7 @@
 
 #include <sys/mman.h>
 
-namespace gadgets = uml::cpu::arm64::gadgets;
+namespace gadgets = uml::cpu::gadget_cache;
 using uml::testing::require;
 
 namespace {

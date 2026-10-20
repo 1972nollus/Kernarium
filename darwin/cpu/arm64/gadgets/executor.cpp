@@ -4,12 +4,13 @@
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
-#include "cpu/arm64/gadgets/body_arena.hpp"
 #include "cpu/arm64/gadgets/a32/a32_builder.hpp"
 #include "cpu/arm64/gadgets/a32_support.hpp"
+#include "cpu/gadget_body_arena.hpp"
 #include "cpu/gadget_cache_budget.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
+#include "cpu/gadget_shared_space.hpp"
 #if UML_GADGET_CACHE_CENSUS
 #include "cpu/gadget_cache_census.hpp"
 #endif
@@ -297,49 +298,16 @@ private:
 	std::size_t bytes_{};
 };
 
-/* What each executor says about itself for the bodies other executors free.
- *
- * Between begin_execution() and end_execution() an executor may hold a stream
- * pointer it loaded from a link, so a body unpublished in that time may only
- * be freed once the executor has left. The sequence is odd from entry until
- * exit and even outside, and moves at both, so a reclaimer that saw an odd
- * value waits for any other. An executor that never brackets its runs stays
- * odd, which only keeps bodies longer. A guest entry runs at most a dispatch
- * budget, so a running executor leaves within a fraction of a millisecond. */
-struct alignas(128) ExecutorAnnouncement final {
-	std::atomic<std::uint64_t> sequence{};
-	bool used{};
-	/* Set by whichever executor closes an address space this one is
-	 * attached to (Space::request_renewal): the next time this executor
-	 * enters translated code it first lets go of every closed address
-	 * space it holds. Written through a pointer to const, since an
-	 * executor sees the announcements of the others that way. */
-	mutable std::atomic<bool> renew{};
-};
-
 namespace {
 
-using Announcement = ExecutorAnnouncement;
-
-/* Publish a pair of words that translated code reads with one `ldp`: a
- * BlockLink's stream and instruction count, or an indirect cell's guest PC
- * and link. With FEAT_LSE2 an aligned sixteen-byte `stp` is a single access,
- * so a vCPU following the pair while another retargets it sees one value or
- * the other, never a stream with another block's count. */
-inline void store_pair(void *at, std::uint64_t first,
-	std::uint64_t second) noexcept
-{
-	assert((reinterpret_cast<std::uintptr_t>(at) & 15U) == 0U);
-	asm volatile("stp %x1, %x2, [%x0]"
-		     :
-		     : "r"(at), "r"(first), "r"(second)
-		     : "memory");
-}
-
-[[nodiscard]] inline std::uint64_t word_of(const void *pointer) noexcept
-{
-	return reinterpret_cast<std::uintptr_t>(pointer);
-}
+using Announcement = gadget_cache::ExecutorAnnouncement;
+using gadget_cache::BodyArena;
+using gadget_cache::acquire_announcement;
+using gadget_cache::announce_entry;
+using gadget_cache::announce_exit;
+using gadget_cache::release_announcement;
+using gadget_cache::store_pair;
+using gadget_cache::word_of;
 
 /* One translation, allocated apart from the slots that index it.
  *
@@ -604,54 +572,6 @@ struct IndirectKey final {
 	}
 };
 
-constexpr std::size_t announcement_capacity = 256;
-Announcement announcements[announcement_capacity];
-std::mutex announcements_mutex;
-
-[[nodiscard]] constexpr bool inside(std::uint64_t sequence) noexcept
-{
-	return (sequence & 1U) != 0U;
-}
-
-[[nodiscard]] constexpr std::uint64_t next_odd(std::uint64_t sequence) noexcept
-{
-	return sequence + (inside(sequence) ? 2U : 1U);
-}
-
-[[nodiscard]] Announcement *acquire_announcement() noexcept
-{
-	const std::lock_guard guard{announcements_mutex};
-	for (auto &announcement : announcements) {
-		if (announcement.used)
-			continue;
-		announcement.used = true;
-		announcement.renew.store(false, std::memory_order_relaxed);
-		announcement.sequence.store(next_odd(announcement.sequence.load(
-			std::memory_order_relaxed)), std::memory_order_relaxed);
-		return &announcement;
-	}
-	return nullptr;
-}
-
-/* The executor may now load stream pointers from links: every body
- * unpublished before this fence is out of its reach. */
-void announce_entry(Announcement &announcement) noexcept
-{
-	announcement.sequence.store(next_odd(announcement.sequence.load(
-		std::memory_order_relaxed)), std::memory_order_relaxed);
-	std::atomic_thread_fence(std::memory_order_seq_cst);
-}
-
-/* The executor holds no stream pointer any more. */
-void announce_exit(Announcement &announcement) noexcept
-{
-	const auto sequence =
-		announcement.sequence.load(std::memory_order_relaxed);
-	if (inside(sequence))
-		announcement.sequence.store(sequence + 1U,
-			std::memory_order_release);
-}
-
 /* Executors running one address space share its translations unless
  * DARWIN_UML_GADGET_SHARED_BODIES=0 keeps every executor's to itself. A
  * shared space bounds the freed arena it accumulates under process churn by
@@ -684,44 +604,6 @@ std::atomic<std::uint64_t> stress_closes{};
 	return renewal_floor_bytes;
 #endif
 }
-
-void release_announcement(Announcement *announcement) noexcept
-{
-	if (announcement == nullptr)
-		return;
-	const auto sequence =
-		announcement->sequence.load(std::memory_order_relaxed);
-	if (inside(sequence))
-		announcement->sequence.store(sequence + 1U,
-			std::memory_order_release);
-	const std::lock_guard guard{announcements_mutex};
-	announcement->used = false;
-}
-
-/* The executors of one address space whose leaving a reclaimer waits for, as
- * they were when it unpublished the bodies it holds back. */
-struct Snapshot final {
-	struct Seen final {
-		const Announcement *announcement;
-		std::uint64_t sequence;
-	};
-	std::vector<Seen> seen;
-
-	/* Every executor seen inside has left since, apart from `self`, which
-	 * holds nothing it could reach through an unpublished body: releases
-	 * happen in C++ before it runs translated code again. */
-	[[nodiscard]] bool elapsed(const Announcement *self) const noexcept
-	{
-		for (const auto &entry : seen) {
-			if (entry.announcement == self || !inside(entry.sequence))
-				continue;
-			if (entry.announcement->sequence.load(
-				    std::memory_order_acquire) == entry.sequence)
-				return false;
-		}
-		return true;
-	}
-};
 
 /* What makes two executors' translations interchangeable: the address space,
  * the SVCR mode they were built for and the build options. A key with an
@@ -806,19 +688,13 @@ public:
 
 	void attach(const Announcement *announcement)
 	{
-		const std::lock_guard guard{attached_mutex_};
-		attached_.push_back(announcement);
+		attached_.attach(announcement);
 	}
 
 	/* Whether this was the last executor. */
 	[[nodiscard]] bool detach(const Announcement *announcement)
 	{
-		const std::lock_guard guard{attached_mutex_};
-		const auto found = std::find(attached_.begin(), attached_.end(),
-			announcement);
-		if (found != attached_.end())
-			attached_.erase(found);
-		return attached_.empty();
+		return attached_.detach(announcement);
 	}
 
 	/* Whether this shared address space holds enough freed arena to be
@@ -826,13 +702,12 @@ public:
 	 * one never is, since its executor's window retires it. */
 	[[nodiscard]] bool renewal_due() const noexcept
 	{
-		return renewal_due_.load(std::memory_order_relaxed) &&
-			!closed_.load(std::memory_order_relaxed);
+		return ledger_.renewal_due();
 	}
 
 	[[nodiscard]] bool closed() const noexcept
 	{
-		return closed_.load(std::memory_order_acquire);
+		return ledger_.closed();
 	}
 
 	/* Whether the gadget-cache budget asked this space to shed: an executor
@@ -852,30 +727,34 @@ public:
 #if UML_GADGET_SWEEP_STRESS
 	[[nodiscard]] std::size_t stress_arena_bytes() const noexcept
 	{
-		return arena_bytes_.load(std::memory_order_relaxed);
+		return ledger_.arena_bytes();
 	}
 	[[nodiscard]] std::size_t stress_held_bytes() const noexcept
 	{
-		return held_bytes_.load(std::memory_order_relaxed);
+		return ledger_.held_bytes();
 	}
 #endif
+
+	/* The registry closed a space: counted by the unit-test variant. */
+	static void note_closed() noexcept
+	{
+#if UML_GADGET_SWEEP_STRESS
+		stress_closes.fetch_add(1, std::memory_order_relaxed);
+#endif
+	}
 
 	/* Close the address space; true for the caller that did, which then
 	 * withdraws it from the registry and calls request_renewal(). */
 	[[nodiscard]] bool close() noexcept
 	{
-		return !closed_.exchange(true, std::memory_order_acq_rel);
+		return ledger_.close();
 	}
 
 	/* Ask every executor attached to let go of this address space before it
 	 * next enters translated code. */
 	void request_renewal()
 	{
-		const std::lock_guard guard{attached_mutex_};
-		for (const auto *announcement : attached_)
-			if (announcement != nullptr)
-				announcement->renew.store(true,
-					std::memory_order_release);
+		attached_.request_renewal();
 	}
 
 	[[nodiscard]] const arm64::gadgets::BlockLink *link(std::uint64_t pc)
@@ -1023,9 +902,7 @@ public:
 		 * them in limbo. */
 		if (record != nullptr && record->names(*body))
 			record->reset();
-		const std::lock_guard limbo{limbo_.mutex};
-		limbo_.incoming.push_back(body);
-		limbo_.pending.store(true, std::memory_order_relaxed);
+		limbo_.push(body);
 	}
 
 	/* Link the record for `pc` to `body`, which the caller holds and
@@ -1208,28 +1085,10 @@ public:
 	 * still be running it. Never waits. */
 	void reclaim(const Announcement *self)
 	{
-		if (!limbo_.pending.load(std::memory_order_relaxed))
-			return;
-		std::unique_lock limbo{limbo_.mutex, std::try_to_lock};
-		if (!limbo.owns_lock())
-			return;
-		if (!limbo_.waiting.empty()) {
-			if (!limbo_.snapshot.elapsed(self))
-				return;
-			free_bodies(limbo_.waiting);
-		}
-		if (!limbo_.incoming.empty()) {
-			/* Every body here was unpublished before this fence, so
-			 * an executor seen outside now can only enter after it
-			 * and never reach one. */
-			std::atomic_thread_fence(std::memory_order_seq_cst);
-			limbo_.waiting.swap(limbo_.incoming);
-			take_snapshot(limbo_.snapshot);
-			if (limbo_.snapshot.elapsed(self))
-				free_bodies(limbo_.waiting);
-		}
-		limbo_.pending.store(!limbo_.waiting.empty(),
-			std::memory_order_relaxed);
+		limbo_.reclaim(self, attached_,
+			[this](std::vector<Body *> &bodies) {
+				free_bodies(bodies);
+			});
 	}
 
 	/* The live body whose allocation holds `address`, or null. A body
@@ -1298,14 +1157,12 @@ public:
 
 	[[nodiscard]] std::size_t attached() const
 	{
-		const std::lock_guard guard{attached_mutex_};
 		return attached_.size();
 	}
 
 	[[nodiscard]] std::size_t limbo_bodies() const
 	{
-		const std::lock_guard limbo{limbo_.mutex};
-		return limbo_.waiting.size() + limbo_.incoming.size();
+		return limbo_.size();
 	}
 
 	template <typename Visit>
@@ -1342,16 +1199,6 @@ private:
 		/* The records and sites holding an activation. */
 		std::vector<LinkRecord *> live_links;
 		std::vector<arm64::gadgets::IndirectLink *> live_indirect;
-	};
-
-	struct Limbo final {
-		mutable std::mutex mutex;
-		/* Unpublished, not yet covered by a snapshot. */
-		std::vector<Body *> incoming;
-		/* Unpublished before `snapshot` was taken. */
-		std::vector<Body *> waiting;
-		Snapshot snapshot;
-		std::atomic<bool> pending{};
 	};
 
 	[[nodiscard]] static std::size_t shard_index(std::uint64_t key) noexcept
@@ -1509,25 +1356,21 @@ private:
 	 * differ from what was last recorded. The caller holds arena_mutex_. */
 	bool note_arena() noexcept
 	{
-		const auto bytes = bodies_.bytes();
-		return arena_bytes_.exchange(bytes, std::memory_order_relaxed) !=
-			bytes;
+		return ledger_.note_arena(bodies_.bytes());
 	}
 
 	/* A body some slot holds now, where none did. The caller holds the shard
 	 * lock of its record. */
 	void note_held(const Body &body) noexcept
 	{
-		held_bytes_.fetch_add(
-			BodyArena::block_bytes(body.allocation_bytes()),
-			std::memory_order_relaxed);
+		ledger_.note_held(BodyArena::block_bytes(body.allocation_bytes()));
 #if UML_GADGET_SWEEP_STRESS
 		const auto period =
 			stress_renewal_period.load(std::memory_order_relaxed);
 		if (period != 0 &&
 		    stress_stores_.fetch_add(1, std::memory_order_relaxed) %
 				period == period - 1U)
-			renewal_due_.store(true, std::memory_order_relaxed);
+			ledger_.mark_due();
 #endif
 	}
 
@@ -1535,22 +1378,16 @@ private:
 	 * record. */
 	void note_released(const Body &body) noexcept
 	{
-		held_bytes_.fetch_sub(
+		ledger_.note_released(
 			BodyArena::block_bytes(body.allocation_bytes()),
-			std::memory_order_relaxed);
-		note_idle();
+			renewal_floor());
 	}
 
 	/* Mark the space for renewal once the arena holds more bytes no body
-	 * uses than bodies do, and at least the floor. Both counts move apart
-	 * from the decision, so this only ever errs by a store or a release. */
+	 * uses than bodies do, and at least the floor. */
 	void note_idle() noexcept
 	{
-		const auto arena = arena_bytes_.load(std::memory_order_relaxed);
-		const auto held = held_bytes_.load(std::memory_order_relaxed);
-		if (arena > held && arena - held >= held &&
-		    arena - held >= renewal_floor())
-			renewal_due_.store(true, std::memory_order_relaxed);
+		ledger_.note_idle(renewal_floor());
 	}
 
 	void free_bodies(std::vector<Body *> &bodies) noexcept
@@ -1576,17 +1413,6 @@ private:
 		}
 	}
 
-	void take_snapshot(Snapshot &snapshot)
-	{
-		snapshot.seen.clear();
-		const std::lock_guard guard{attached_mutex_};
-		for (const auto *announcement : attached_)
-			if (announcement != nullptr)
-				snapshot.seen.push_back({announcement,
-					announcement->sequence.load(
-						std::memory_order_acquire)});
-	}
-
 	SpaceKey key_;
 	std::array<Shard, shard_count> shards_;
 	const arm64::gadgets::BlockLink *empty_link_{};
@@ -1598,24 +1424,19 @@ private:
 	std::mutex targets_mutex_;
 	std::unique_ptr<arm64::gadgets::IndirectLinkEntry[]> targets_storage_;
 	std::atomic<arm64::gadgets::IndirectLinkEntry *> targets_{};
-	Limbo limbo_;
+	gadget_cache::Limbo<Body> limbo_;
 	mutable std::mutex arena_mutex_;
 	CountingResource counted_;
 	BodyArena bodies_;
-	mutable std::mutex attached_mutex_;
-	std::vector<const Announcement *> attached_;
+	gadget_cache::AttachedExecutors attached_;
 	/* For a private address space: the records and sites its last sweep
 	 * kept, and the bodies that have left it since (sweep_due()). */
 	std::size_t kept_{};
 	std::size_t departed_{};
 	/* For a shared one: the bytes of its arena, and of the bodies some slot
-	 * holds (a body counts from its first holder to its last), whether it
-	 * holds enough freed arena to be renewed, and whether it has been
-	 * (renewal_due()). */
-	std::atomic<std::size_t> arena_bytes_{};
-	std::atomic<std::size_t> held_bytes_{};
-	std::atomic<bool> renewal_due_{};
-	std::atomic<bool> closed_{};
+	 * holds, whether it holds enough freed arena to be renewed, and whether
+	 * it has been (renewal_due()). */
+	gadget_cache::RenewalLedger ledger_;
 #if UML_GADGET_SWEEP_STRESS
 	std::atomic<std::uint64_t> stress_stores_{};
 #endif
@@ -1625,137 +1446,7 @@ private:
 };
 
 /* The address spaces whose translations executors share, by key. */
-class SpaceRegistry final {
-public:
-	[[nodiscard]] static SpaceRegistry &instance() noexcept
-	{
-		static SpaceRegistry registry;
-		return registry;
-	}
-
-	/* The space for `key`, made when absent, with `announcement` among
-	 * the executors a reclaimer waits for. A key with an owner is never
-	 * shared and never registered. */
-	[[nodiscard]] Space *attach(SpaceKey key, std::uint64_t changes,
-		const Announcement *announcement)
-	{
-		if (key.owner != nullptr) {
-			auto *space = new Space(std::move(key), changes);
-			space->attach(announcement);
-			return space;
-		}
-		const std::lock_guard guard{mutex_};
-		auto &candidates = spaces_[{key.generation, key.mode}];
-		for (std::size_t index = 0; index < candidates.size();) {
-			auto *space = candidates[index];
-			/* One the budget asked to shed is closed here instead, as
-			 * close() would, if no executor holding it has yet. */
-			if (space->shedding()) {
-				if (space->close()) {
-#if UML_GADGET_SWEEP_STRESS
-					stress_closes.fetch_add(1,
-						std::memory_order_relaxed);
-#endif
-					space->request_renewal();
-				}
-				candidates.erase(candidates.begin() +
-					static_cast<std::ptrdiff_t>(index));
-				continue;
-			}
-			if (space->key().options == key.options) {
-				space->attach(announcement);
-				return space;
-			}
-			++index;
-		}
-		auto space = std::make_unique<Space>(key, changes);
-		space->attach(announcement);
-		candidates.push_back(space.get());
-		return space.release();
-	}
-
-	void detach(Space *space, const Announcement *announcement)
-	{
-		if (space->key().owner != nullptr) {
-			(void)space->detach(announcement);
-			delete space;
-			return;
-		}
-		std::unique_ptr<Space> destroyed;
-		{
-			const std::lock_guard guard{mutex_};
-			if (!space->detach(announcement))
-				return;
-			withdraw(space);
-			destroyed.reset(space);
-		}
-	}
-
-	/* Close a shared space and ask its executors to let go of it. It stays
-	 * alive for as long as some of them have not; no executor attaches to it
-	 * from here on, since attaching happens under the lock that withdraws
-	 * it, so every executor that did is among those asked. */
-	void close(Space *space)
-	{
-		if (!space->close())
-			return;
-#if UML_GADGET_SWEEP_STRESS
-		stress_closes.fetch_add(1, std::memory_order_relaxed);
-#endif
-		const std::lock_guard guard{mutex_};
-		withdraw(space);
-		space->request_renewal();
-	}
-
-#if UML_GADGET_SWEEP_STRESS
-	/* The open spaces of a guest address space, all modes. */
-	[[nodiscard]] std::vector<Space *> open_spaces(unsigned long generation)
-	{
-		const std::lock_guard guard{mutex_};
-		std::vector<Space *> found;
-		for (const auto &[key, candidates] : spaces_)
-			if (key.generation == generation)
-				for (auto *space : candidates)
-					if (!space->closed())
-						found.push_back(space);
-		return found;
-	}
-#endif
-
-private:
-	struct Key final {
-		unsigned long generation;
-		std::uint8_t mode;
-		bool operator==(const Key &) const noexcept = default;
-	};
-	struct KeyHash final {
-		[[nodiscard]] std::size_t operator()(const Key &key) const noexcept
-		{
-			return std::hash<unsigned long>{}(key.generation) ^
-				(std::size_t{key.mode} << 56);
-		}
-	};
-
-	/* Stop handing a space out. It may already be gone, when it was closed.
-	 * The caller holds mutex_. */
-	void withdraw(const Space *space)
-	{
-		const auto found = spaces_.find(
-			{space->key().generation, space->key().mode});
-		if (found == spaces_.end())
-			return;
-		auto &candidates = found->second;
-		const auto at =
-			std::find(candidates.begin(), candidates.end(), space);
-		if (at != candidates.end())
-			candidates.erase(at);
-		if (candidates.empty())
-			spaces_.erase(found);
-	}
-
-	std::mutex mutex_;
-	std::unordered_map<Key, std::vector<Space *>, KeyHash> spaces_;
-};
+using SpaceRegistry = gadget_cache::SpaceRegistry<Space, SpaceKey>;
 
 } // namespace
 

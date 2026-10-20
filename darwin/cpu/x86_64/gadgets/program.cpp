@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -133,9 +134,13 @@ void trace_fatal(const char *stage, const Program &program,
 
 std::span<const Gadget> Program::replay_instructions() const noexcept
 {
-	if (decoded_ != nullptr)
-		return {reinterpret_cast<const Gadget *>(decoded_.get()),
-			instructions_};
+	const auto kept = [this](const std::byte *decoded) {
+		return std::span<const Gadget>{
+			reinterpret_cast<const Gadget *>(decoded), instructions_};
+	};
+	if (const auto *decoded = decoded_.load(std::memory_order_acquire);
+	    decoded != nullptr)
+		return kept(decoded);
 	auto &gadgets = replay_scratch();
 	if (!decode_block(*this, gadgets))
 		return {};
@@ -143,9 +148,12 @@ std::span<const Gadget> Program::replay_instructions() const noexcept
 	try {
 		auto storage = std::make_unique_for_overwrite<std::byte[]>(bytes);
 		std::memcpy(storage.get(), gadgets.data(), bytes);
-		decoded_ = std::move(storage);
-		return {reinterpret_cast<const Gadget *>(decoded_.get()),
-			instructions_};
+		std::byte *expected = nullptr;
+		if (decoded_.compare_exchange_strong(expected, storage.get(),
+			    std::memory_order_acq_rel, std::memory_order_acquire))
+			return kept(storage.release());
+		/* Another executor of a shared program published first. */
+		return kept(expected);
 	} catch (...) {
 		/* Without the storage this decode still stands for this one
 		 * replay; the next one decodes again. */
@@ -157,23 +165,104 @@ Program::Program(ExecutionMode mode, std::uint64_t address,
 	std::span<const Gadget> gadgets, std::span<const std::byte> source,
 	std::span<const std::uintptr_t> words, bool check_head)
 	: address_{normalize_instruction_pointer(mode, address)},
-	  mode_{mode}, check_head_{check_head}
+	  mode_{mode}, check_head_{check_head}, owns_{true}
 {
-	words_storage_ = std::make_unique_for_overwrite<std::uintptr_t[]>(
+	auto stream = std::make_unique_for_overwrite<std::uintptr_t[]>(
 		stream_header_words + words.size());
-	source_storage_ =
-		std::make_unique_for_overwrite<std::byte[]>(source.size());
-	words_storage_[0] = address_;
-	words_storage_[1] = address_ + source.size();
+	auto bytes = std::make_unique_for_overwrite<std::byte[]>(source.size());
+	stream[0] = address_;
+	stream[1] = address_ + source.size();
 	if (!words.empty())
-		std::memcpy(words_storage_.get() + stream_header_words,
-			words.data(), words.size_bytes());
+		std::memcpy(stream.get() + stream_header_words, words.data(),
+			words.size_bytes());
 	if (!source.empty())
-		std::memcpy(source_storage_.get(), source.data(), source.size());
-	words_ = static_cast<std::uint32_t>(words.size());
+		std::memcpy(bytes.get(), source.data(), source.size());
+	words_ = stream.release();
+	source_bytes_ = bytes.release();
+	words_count_ = static_cast<std::uint32_t>(words.size());
 	instructions_ = static_cast<std::uint32_t>(gadgets.size());
 	source_ = static_cast<std::uint32_t>(source.size());
 	terminal_ = !gadgets.empty() && gadgets.back().instruction.terminal();
+}
+
+Program::~Program()
+{
+	release();
+}
+
+Program::Program(Program &&other) noexcept
+	: address_{other.address_}, words_{other.words_},
+	  source_bytes_{other.source_bytes_},
+	  decoded_{other.decoded_.exchange(nullptr, std::memory_order_acq_rel)},
+	  words_count_{other.words_count_}, instructions_{other.instructions_},
+	  source_{other.source_}, mode_{other.mode_},
+	  terminal_{other.terminal_}, check_head_{other.check_head_},
+	  owns_{other.owns_}
+{
+	other.words_ = nullptr;
+	other.source_bytes_ = nullptr;
+	other.words_count_ = 0;
+	other.instructions_ = 0;
+	other.source_ = 0;
+	other.owns_ = false;
+}
+
+Program &Program::operator=(Program &&other) noexcept
+{
+	if (this == &other)
+		return *this;
+	release();
+	address_ = other.address_;
+	words_ = other.words_;
+	source_bytes_ = other.source_bytes_;
+	decoded_.store(other.decoded_.exchange(nullptr,
+		std::memory_order_acq_rel), std::memory_order_release);
+	words_count_ = other.words_count_;
+	instructions_ = other.instructions_;
+	source_ = other.source_;
+	mode_ = other.mode_;
+	terminal_ = other.terminal_;
+	check_head_ = other.check_head_;
+	owns_ = other.owns_;
+	other.words_ = nullptr;
+	other.source_bytes_ = nullptr;
+	other.words_count_ = 0;
+	other.instructions_ = 0;
+	other.source_ = 0;
+	other.owns_ = false;
+	return *this;
+}
+
+void Program::release() noexcept
+{
+	if (owns_) {
+		delete[] words_;
+		delete[] source_bytes_;
+	}
+	delete[] decoded_.exchange(nullptr, std::memory_order_acq_rel);
+	words_ = nullptr;
+	source_bytes_ = nullptr;
+	owns_ = false;
+}
+
+Program Program::view_in(std::uintptr_t *stream, std::byte *source) const noexcept
+{
+	assert(stream != nullptr && (source != nullptr || source_ == 0));
+	std::memcpy(stream, words_, stream_bytes(words_count_));
+	if (source_ != 0)
+		std::memcpy(source, source_bytes_, source_);
+	Program view;
+	view.address_ = address_;
+	view.words_ = stream;
+	view.source_bytes_ = source;
+	view.words_count_ = words_count_;
+	view.instructions_ = instructions_;
+	view.source_ = source_;
+	view.mode_ = mode_;
+	view.terminal_ = terminal_;
+	view.check_head_ = check_head_;
+	view.owns_ = false;
+	return view;
 }
 
 BuildResult build(::uml::memory::GuestAddressSpace &memory,
