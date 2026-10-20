@@ -560,6 +560,16 @@ two minutes. Each cycle must show, in order:
 A `0` after the hold means a GPU request was still running after a second; it
 is a finding, not a pass.
 
+On a device each cycle must also show `uml: hibernated guest RAM` after the
+suspend entry, naming the threads held and the KiB written (a later cycle
+rewrites far less than the first), and `uml: restored guest RAM` before
+`request gate opened`; `guest RAM stays in the process` is a finding (the hold
+failed), and a restore failure ends the process and shows the restart notice at
+the next launch. The unit tests cover the order and the fence on any host
+(`runtime-thread-fence`, `runtime-guest-hibernation`, `emulator-lifecycle`,
+`memory-guest-ram-image`); a Mac run forces the same code with
+`--guest-hibernation=on`.
+
 To check the Picture in Picture mode, launch with
 `KERNARIUM_BACKGROUND_MODE=pictureInPicture`, which overrides the stored mode
 for that launch only, and background the application the same way. The console

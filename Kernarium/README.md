@@ -189,10 +189,23 @@ is the user's choice: paused after the pass, a 4 GiB guest held 141 MiB (KDE)
 and 54 MiB (Android) more than one that trimmed all along, measured on macOS.
 A guest kept running in the background trims as it runs; see below.
 
+On a device the quiesce ends by hibernating the guest's RAM: the runtime holds
+every thread that can touch it, writes it to a file in the application's
+temporary directory and takes it off the footprint, so that a paused Kernarium
+no longer carries the guest's wired gigabyte; the resume restores and rewires it
+before it wakes the guest
+([`../docs/architecture.md`](../docs/architecture.md#hibernation)).
+`KERNARIUM_GUEST_HIBERNATION=off` keeps the RAM wired while paused, and `on`
+forces the hibernation on the Simulator. The `guest-sync` queue serializes the
+resume behind a quiesce, so a quick return waits for the write to end.
+
 iOS may still end a suspended application, and the guest goes with it. The
-application records the background edge in a marker file and removes it on
-foregrounding; a launch that finds one says the guest restarted because
-Kernarium was closed in the background, once, until it is dismissed.
+application records the background edge in a marker file and removes it once
+it is back in the foreground and the resume of a quiesced guest has returned;
+a launch that finds one says the guest restarted because Kernarium was closed
+in the background, once, until it is dismissed. A resume that cannot restore the
+hibernated RAM ends the process inside the call, and the marker it leaves says
+the same.
 
 ### Keeping a guest running in the background
 

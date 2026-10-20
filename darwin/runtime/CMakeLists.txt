@@ -60,6 +60,28 @@ uml_declare_architecture_target(uml_runtime_kernel_signals runtime)
 target_include_directories(uml_runtime_kernel_signals PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
 
+# The threads an embedded kernel creates and the fence that holds them. The
+# loader resolves the kernel's pthread_create to this registry.
+add_library(uml_runtime_thread_fence OBJECT
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/kernel_threads.cpp
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/thread_fence.cpp)
+add_library(UML::RuntimeThreadFence ALIAS uml_runtime_thread_fence)
+uml_declare_architecture_target(uml_runtime_thread_fence runtime)
+target_include_directories(uml_runtime_thread_fence PUBLIC
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+
+# Hibernating a paused guest's RAM: the order of the fence and the image.
+add_library(uml_runtime_hibernation OBJECT
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_hibernation.cpp)
+add_library(UML::RuntimeHibernation ALIAS uml_runtime_hibernation)
+uml_declare_architecture_target(uml_runtime_hibernation runtime)
+target_link_libraries(uml_runtime_hibernation PUBLIC
+    UML::MemorySharedBacking
+    UML::RuntimeThreadFence)
+target_include_directories(uml_runtime_hibernation PUBLIC
+    ${PROJECT_SOURCE_DIR}/darwin
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+
 add_library(uml_runtime_guest_selector OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_selector.cpp)
 uml_declare_architecture_target(uml_runtime_guest_selector runtime)
@@ -92,6 +114,8 @@ target_link_libraries(uml_runtime_objects INTERFACE UML::RuntimeContract)
 target_sources(uml_runtime_objects INTERFACE
 	$<TARGET_OBJECTS:uml_runtime_context>
     $<TARGET_OBJECTS:uml_runtime_kernel_signals>
+    $<TARGET_OBJECTS:uml_runtime_thread_fence>
+    $<TARGET_OBJECTS:uml_runtime_hibernation>
     $<TARGET_OBJECTS:uml_runtime_guest_selector>
     $<TARGET_OBJECTS:uml_runtime_entry>
     $<TARGET_OBJECTS:uml_static_runtime>)
