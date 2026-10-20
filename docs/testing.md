@@ -323,7 +323,11 @@ cgroups and gives the harness a root shell. The console carries commands and
 their output, never files. The harness sends commands through a nonblocking
 pipe and keeps PTY output. This keeps host input pollable when every guest CPU
 is busy while preserving terminal output behavior and bounded writes under
-backpressure.
+backpressure. The emulator stays in the harness's session and process group,
+so a signal to that group, such as a timeout's, a Ctrl-C or CTest's, reaches
+the guest. A watchdog in the same group kills the guest when the harness dies
+alone without closing it, so no way of ending a harness leaves its guest
+running.
 
 `ctest -N -L integration` lists the registered guest tests. Each runner or
 guest probe states in its header what it checks, and a contract's owner, such

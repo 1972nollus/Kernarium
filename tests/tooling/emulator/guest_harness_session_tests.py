@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Prove the guest harness boots its session through the per-run initramfs,
-drives the console, and cannot leave an emulator running after it dies, nor
-its staged guest files for longer than the next guest's start."""
+drives the console, and cannot leave an emulator running after it dies,
+whether its group is killed or it dies alone, nor its staged guest files for
+longer than the next guest's start."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -32,10 +33,12 @@ import guest as guest_support  # noqa: E402
 STAND_IN = "#!/bin/sh\nexec sleep 3600\n"
 
 # A stand-in for a runner, so the test can kill a harness the way a shell job,
-# a CTest timeout or a Ctrl-C does: by signalling its whole process group.
+# a CTest timeout or a Ctrl-C does, by signalling its whole process group, or
+# kill it alone. It prints its guest's and the guest's watchdog's process IDs,
+# then waits, or with "exit" leaves at once without closing its guest.
 HARNESS = "\n".join(
     (
-        "import pathlib, sys, time",
+        "import os, pathlib, sys, time",
         f"sys.path.insert(0, {str(SUPPORT)!r})",
         "import guest as guest_support",
         "emulator = pathlib.Path(sys.argv[1])",
@@ -46,7 +49,9 @@ HARNESS = "\n".join(
         "    workspace='tmpfs',",
         "    init_shell=True,",
         ")",
-        "print(guest.process_id, flush=True)",
+        "print(guest.process_id, guest._watchdog.pid, flush=True)",
+        "if sys.argv[2:] == ['exit']:",
+        "    os._exit(0)",
         "time.sleep(3600)",
     )
 )
@@ -561,12 +566,15 @@ class AttachedGuestSessionTests(unittest.TestCase):
             guest.boot_to_shell(PROCESS_WAIT_SECONDS)
         self.assertIn("UML_SESSION_ERROR:cannot mount /run", guest.output())
 
-    def start_harness(self) -> tuple[subprocess.Popen[str], int]:
+    def start_harness(
+        self, *arguments: str
+    ) -> tuple[subprocess.Popen[str], int, int]:
         """Start HARNESS in a process group of its own and return it with the
-        process ID of its guest. Its guest files go to this test's temporary
-        directory, since a harness killed outright cannot remove them."""
+        process IDs of its guest and the guest's watchdog. Its guest files go to
+        this test's temporary directory, since a harness killed outright
+        cannot remove them."""
         harness = subprocess.Popen(
-            [sys.executable, "-c", HARNESS, str(self.emulator)],
+            [sys.executable, "-c", HARNESS, str(self.emulator), *arguments],
             stdout=subprocess.PIPE,
             text=True,
             start_new_session=True,
@@ -574,12 +582,12 @@ class AttachedGuestSessionTests(unittest.TestCase):
         )
         self.addCleanup(self.reap, harness)
         assert harness.stdout is not None
-        emulator_pid = int(harness.stdout.readline().strip())
+        emulator_pid, watchdog_pid = map(int, harness.stdout.readline().split())
         self.addCleanup(self.reap_emulator, emulator_pid)
-        return harness, emulator_pid
+        return harness, emulator_pid, watchdog_pid
 
     def test_a_killed_harness_group_takes_its_guest_with_it(self) -> None:
-        harness, emulator_pid = self.start_harness()
+        harness, emulator_pid, _ = self.start_harness()
         self.assertTrue(process_alive(emulator_pid))
 
         os.killpg(harness.pid, signal.SIGKILL)
@@ -590,8 +598,89 @@ class AttachedGuestSessionTests(unittest.TestCase):
             "still burns host cores, quietly oversubscribing later benchmarks",
         )
 
+    def assert_dying_alone_takes_the_guest(
+        self, emulator_pid: int, watchdog_pid: int
+    ) -> None:
+        self.assertTrue(
+            wait_until_gone(emulator_pid, PROCESS_WAIT_SECONDS),
+            "the guest outlived a harness that died alone: its watchdog did not "
+            "kill it when the lifeline ended without the stand-down byte",
+        )
+        self.assertTrue(
+            wait_until_gone(watchdog_pid, PROCESS_WAIT_SECONDS),
+            "the watchdog outlived its guest",
+        )
+
+    def test_a_harness_killed_alone_takes_its_guest_with_it(self) -> None:
+        # Killed by its process ID, the harness runs no cleanup, and its
+        # process group, the guest's and the watchdog's, lives on.
+        harness, emulator_pid, watchdog_pid = self.start_harness()
+        self.assertTrue(process_alive(emulator_pid))
+
+        os.kill(harness.pid, signal.SIGKILL)
+        harness.wait()
+        self.assert_dying_alone_takes_the_guest(emulator_pid, watchdog_pid)
+
+    def test_a_harness_leaving_without_closing_takes_its_guest_with_it(
+        self,
+    ) -> None:
+        harness, emulator_pid, watchdog_pid = self.start_harness("exit")
+        harness.wait(timeout=PROCESS_WAIT_SECONDS)
+        self.assertEqual(harness.returncode, 0)
+        self.assert_dying_alone_takes_the_guest(emulator_pid, watchdog_pid)
+
+    def test_a_closed_guest_leaves_its_watchdog_nothing_to_kill(self) -> None:
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        watchdog = guest._watchdog
+        self.stop(guest)
+        # Closing reaps the watchdog, which left without killing anything.
+        self.assertEqual(watchdog.returncode, 0)
+        self.assertFalse(process_alive(guest.process_id))
+
+    def start_lifeline(
+        self,
+    ) -> tuple[subprocess.Popen[bytes], int, subprocess.Popen[bytes]]:
+        """A stand-in emulator, its lifeline and its watchdog."""
+        process = subprocess.Popen(["/bin/sleep", "3600"])
+        self.addCleanup(self.reap, process)
+        lifeline, watchdog = guest_support.start_lifeline(process.pid)
+        self.addCleanup(self.reap, watchdog)
+        return process, lifeline, watchdog
+
+    def test_a_stood_down_watchdog_kills_nothing(self) -> None:
+        process, lifeline, watchdog = self.start_lifeline()
+        os.write(lifeline, guest_support.LIFELINE_STAND_DOWN)
+        os.close(lifeline)
+        self.assertEqual(watchdog.wait(timeout=PROCESS_WAIT_SECONDS), 0)
+        self.assertIsNone(
+            process.poll(), "a watchdog stood down still killed its process"
+        )
+
+    def test_a_lifeline_ending_unannounced_kills_its_process(self) -> None:
+        process, lifeline, watchdog = self.start_lifeline()
+        os.close(lifeline)
+        self.assertEqual(watchdog.wait(timeout=PROCESS_WAIT_SECONDS), 0)
+        self.assertEqual(
+            process.wait(timeout=PROCESS_WAIT_SECONDS), -signal.SIGKILL
+        )
+
+    def test_a_watchdog_ends_with_its_process(self) -> None:
+        # The lifeline stays open: the watchdog leaves because its process
+        # did, so a guest that exits never leaves an orphaned watchdog.
+        process, lifeline, watchdog = self.start_lifeline()
+        self.addCleanup(os.close, lifeline)
+        process.kill()
+        process.wait(timeout=PROCESS_WAIT_SECONDS)
+        self.assertEqual(watchdog.wait(timeout=PROCESS_WAIT_SECONDS), 0)
+
     def test_the_next_guest_removes_a_killed_harness_guest_files(self) -> None:
-        harness, _ = self.start_harness()
+        harness, _, _ = self.start_harness()
         abandoned = list(self.temporary.glob(f"uml-guest-files-{harness.pid}-*"))
         self.assertEqual(len(abandoned), 1)
         # Staged files of a process that is still running are kept.
@@ -678,7 +767,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
         self.assertFalse(abandoned.exists())
         self.assertTrue(live.exists())
 
-    def reap(self, harness: subprocess.Popen[str]) -> None:
+    def reap(self, harness: subprocess.Popen) -> None:
         if harness.poll() is None:
             harness.kill()
         harness.wait()
