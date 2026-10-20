@@ -24,10 +24,10 @@ uml-winch.
  6 files changed, 16 insertions(+)
 
 diff --git a/arch/um/drivers/chan_user.c b/arch/um/drivers/chan_user.c
-index c8b84de612665ed93b9fa1472ebd433cacec17e1..98d1d53d13e4beb8b51dac7d605f4789208fa27e 100644
+index e017e2804e3f992c1f4539d90f648d5161563eca..cff4a9804cd56a55e7cf0d992fa81d710ad63529 100644
 --- a/arch/um/drivers/chan_user.c
 +++ b/arch/um/drivers/chan_user.c
-@@ -181,6 +181,7 @@ static __noreturn int winch_thread(void *arg)
+@@ -196,6 +196,7 @@ static __noreturn int winch_thread(void *arg)
  	char c = 1;
  
  	os_set_pdeathsig();

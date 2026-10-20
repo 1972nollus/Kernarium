@@ -411,6 +411,56 @@ def marker_status(match: re.Match[bytes]) -> int:
 # Accept a lone `\r` as a line start as well.
 LINE_START = rb"(?:^|\r?\n|\r)"
 
+# The watchdog behind every emulator the harness starts. It holds only the
+# read end of the harness's lifeline and waits for whichever comes first: the
+# emulator's exit, after which it has nothing to do, or the lifeline's end.
+# A harness that closes its guest writes one byte first; a lifeline that ends
+# without it belongs to a harness that died, so the watchdog kills the
+# emulator. The kqueue process filter follows the emulator itself, not its
+# process ID, so a process that later reuses the ID is never killed, and one
+# that exited before the watchdog looked ends the watchdog at once.
+LIFELINE_WATCHDOG = """\
+import os, select, signal, sys
+emulator = int(sys.argv[1])
+queue = select.kqueue()
+exit_event = select.kevent(emulator, select.KQ_FILTER_PROC, select.KQ_EV_ADD,
+                           select.KQ_NOTE_EXIT)
+try:
+    queue.control([exit_event, select.kevent(0)], 0)
+except ProcessLookupError:
+    sys.exit()
+def exited(events):
+    return any(event.filter == select.KQ_FILTER_PROC for event in events)
+if exited(queue.control(None, 2)) or os.read(0, 1):
+    sys.exit()
+if not exited(queue.control(None, 2, 0)):
+    try:
+        os.kill(emulator, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+"""
+LIFELINE_STAND_DOWN = b"."
+
+
+def start_lifeline(process_id: int) -> tuple[int, subprocess.Popen[bytes]]:
+    """Start the watchdog of emulator ``process_id`` in this process's group
+    and return the lifeline's write end, which no child inherits, with it."""
+    read_end, write_end = os.pipe()
+    try:
+        watchdog = subprocess.Popen(
+            [sys.executable, "-I", "-S", "-c", LIFELINE_WATCHDOG, str(process_id)],
+            stdin=read_end,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except BaseException:
+        os.close(write_end)
+        raise
+    finally:
+        os.close(read_end)
+    return write_end, watchdog
+
 
 class ConsoleProcess:
     """One emulator process driven through its serial console.
@@ -420,11 +470,17 @@ class ConsoleProcess:
     every guest CPU is busy and a pipe stays pollable at guest timer
     boundaries. Writes have their own deadline. Commands are wrapped in
     unique markers and read back from the ANSI-normalized transcript.
+
+    The emulator shares this harness's session and process group, and a
+    watchdog in that group kills it if the harness dies without closing it,
+    so no way of ending the harness leaves the guest running.
     """
 
     # How long a guest has to exit after SIGTERM before it is killed.
     STOP_GRACE_SECONDS = 2.0
     KILL_WAIT_SECONDS = 30.0
+    # How long a watchdog has to exit once its lifeline is closed.
+    WATCHDOG_WAIT_SECONDS = 30.0
 
     def __init__(
         self,
@@ -461,6 +517,14 @@ class ConsoleProcess:
             os.close(slave)
         assert self._process.stdin is not None
         self._input = self._process.stdin
+        try:
+            self._lifeline, self._watchdog = start_lifeline(self._process.pid)
+        except BaseException:
+            self._process.kill()
+            self._process.wait()
+            self._input.close()
+            os.close(master)
+            raise
         os.set_blocking(self._input.fileno(), False)
 
     def __enter__(self) -> ConsoleProcess:
@@ -493,12 +557,15 @@ class ConsoleProcess:
     def _signal(self, guest_signal: int) -> None:
         """Signal the emulator, which shares this harness's process group.
 
-        The emulator is started attached rather than in a session of its own, so
-        whatever kills the harness's group takes the guest with it. That is the
-        property worth having: a harness killed outright runs no cleanup code,
-        and a guest that survives one boots to idle and still burns one to two
-        host cores indefinitely, quietly oversubscribing every later benchmark
-        on the same host.
+        The emulator is started attached rather than in a session of its own,
+        and the kernel keeps it there, so whatever kills the harness's group
+        takes the guest with it. A harness that dies alone, killed by its
+        process ID or leaving through os._exit(), closes its lifeline without
+        standing the watchdog down, and the watchdog kills the guest. That is
+        the property worth having: a harness killed outright runs no cleanup
+        code, and a guest that survives one boots to idle and still burns one
+        to two host cores indefinitely, quietly oversubscribing every later
+        benchmark on the same host.
         """
         if self._process.poll() is None:
             try:
@@ -623,8 +690,30 @@ class ConsoleProcess:
                     os.close(self._master)
                 except OSError:
                     pass
+                self._release_lifeline()
                 if self._process.poll() is not None:
                     remove_emulator_run_directories(self._process.pid)
+
+    def _release_lifeline(self) -> None:
+        """Stand the watchdog down if the emulator has exited, close the
+        lifeline and reap the watchdog. An emulator still running, because
+        stopping it failed, is left to the watchdog to kill."""
+        lifeline: int | None = self._lifeline
+        self._lifeline = None
+        if lifeline is None:
+            return
+        try:
+            if self._process.poll() is not None:
+                os.write(lifeline, LIFELINE_STAND_DOWN)
+        except OSError:
+            pass  # the watchdog saw the exit first and has gone
+        finally:
+            os.close(lifeline)
+        try:
+            self._watchdog.wait(timeout=self.WATCHDOG_WAIT_SECONDS)
+        except subprocess.TimeoutExpired:
+            self._watchdog.kill()
+            self._watchdog.wait()
 
     def output(self) -> str:
         return self._normal_output(bytes(self._transcript))

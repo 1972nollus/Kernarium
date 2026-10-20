@@ -5,10 +5,10 @@
 Boots a guest to a shell and lists the emulator's threads with libproc, as
 host tools and crash reports see them. The kernel's own threads must be
 there by name, each once: a carrier per vCPU (uml-vcpu-N-carrier), the IRQ
-notification thread (uml-irq-notify), the RTC alarm helper (uml-rtc-alarm)
-and, since the harness gives the guest a terminal console, the console's
-window-size helper (uml-winch). The contract is in kernel/common/README.md.
-macOS only.
+notification thread (uml-irq-notify) and the RTC alarm helper
+(uml-rtc-alarm). A Darwin kernel starts no window-size helper for a terminal
+console (guest-console-session). The contract is in
+kernel/common/README.md. macOS only.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from guest import Guest  # noqa: E402
 VCPUS = 2
 PROC_PIDTHREADINFO = 5
 PROC_PIDLISTTHREADS = 6
-SINGLE_THREADS = ("uml-irq-notify", "uml-rtc-alarm", "uml-winch")
+SINGLE_THREADS = ("uml-irq-notify", "uml-rtc-alarm")
 
 
 class ThreadInfo(ctypes.Structure):

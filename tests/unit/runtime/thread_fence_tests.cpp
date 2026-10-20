@@ -189,8 +189,8 @@ void a_kernel_thread_that_is_also_named_is_held_once()
 }
 
 /* The threads the kernel starts for itself name themselves first thing
- * (os_set_thread_name: a carrier per vCPU, uml-irq-notify, uml-rtc-alarm,
- * uml-winch). Each is then both in the registry and named uml-*, and the fence
+ * (os_set_thread_name: a carrier per vCPU, uml-irq-notify, uml-rtc-alarm).
+ * Each is then both in the registry and named uml-*, and the fence
  * must hold it once, whichever rule finds it first; a kernel thread that
  * never names itself is held by the registry alone. */
 void each_named_kernel_thread_is_held_exactly_once()
@@ -200,7 +200,7 @@ void each_named_kernel_thread_is_held_exactly_once()
 		Worker *worker;
 	};
 	constexpr const char *names[] = {"uml-vcpu-0-carrier", "uml-irq-notify",
-		"uml-rtc-alarm", "uml-winch", nullptr};
+		"uml-rtc-alarm", nullptr};
 	constexpr std::size_t count = sizeof names / sizeof names[0];
 	constexpr std::size_t named_count = count - 1;
 	Worker workers[count];
