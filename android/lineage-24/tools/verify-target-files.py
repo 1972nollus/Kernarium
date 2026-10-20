@@ -381,6 +381,10 @@ UML_INIT_REQUIRED = (
 # every standalone macOS boot.
 UML_INIT_DENSITY_TRIGGER = "early-init && property:ro.boot.lcd_density=*"
 UML_INIT_DENSITY_COPY = "setprop ro.sf.lcd_density ${ro.boot.lcd_density}"
+# The boot command line expedites RCU grace periods until boot completes; the
+# product init script then restores normal ones.
+UML_INIT_RCU_TRIGGER = "property:sys.boot_completed=1"
+UML_INIT_RCU_RESTORE = "write /sys/kernel/rcu_expedited 0"
 # The inherited Cuttlefish graphics script also copied the goldfish composer
 # mode and the ANGLE feature overrides; this product has neither, and their
 # androidboot sources never exist.
@@ -564,6 +568,8 @@ def check_boot_policy(
             fail(f"UML init policy copies the display density under '{trigger}'")
     if UML_INIT_DENSITY_COPY not in actions.get(UML_INIT_DENSITY_TRIGGER, []):
         fail("UML init policy does not copy a host-supplied display density")
+    if UML_INIT_RCU_RESTORE not in actions.get(UML_INIT_RCU_TRIGGER, []):
+        fail("UML init policy does not restore normal RCU grace periods after boot")
 
     ueventd_payload = read_small(
         archive, infos["VENDOR/etc/ueventd.rc"]
