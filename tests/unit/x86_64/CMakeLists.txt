@@ -29,6 +29,57 @@ uml_add_unit_test(
     COMMAND uml_x86_64_gadget_link_layout_tests
     LABELS cpu;x86-64)
 
+# What a cached translation is: a body in the address space's arena, and a
+# program that is a view of it.
+add_executable(uml_x86_64_gadget_body_tests
+    x86_64_gadget_body_tests.cpp)
+target_link_libraries(uml_x86_64_gadget_body_tests PRIVATE
+    uml_x86_64_target
+    uml_x86_64_gadgets
+    uml_test_require
+    UML::CpuContract)
+target_include_directories(uml_x86_64_gadget_body_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME x86-64-gadget-bodies
+    COMMAND uml_x86_64_gadget_body_tests
+    LABELS cpu;x86-64;tsan)
+
+# The same suite with every executor keeping its translations to itself
+# (DARWIN_UML_GADGET_SHARED_BODIES=0); the plain run shares them.
+uml_add_unit_test(
+    NAME x86-64-gadget-bootstrap-private
+    COMMAND uml_x86_64_gadget_bootstrap_tests private
+    LABELS cpu;x86-64)
+
+# Executors that share an address space's translations: what sharing does,
+# the writer's protocol, and executors on their own threads.
+add_executable(uml_x86_64_gadget_shared_tests
+    x86_64_gadget_shared_tests.cpp)
+target_link_libraries(uml_x86_64_gadget_shared_tests PRIVATE
+    uml_x86_64_target
+    uml_x86_64_gadgets
+    uml_test_require
+    UML::CpuContract)
+target_include_directories(uml_x86_64_gadget_shared_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME x86-64-gadget-shared-bodies
+    COMMAND uml_x86_64_gadget_shared_tests bodies
+    LABELS cpu;x86-64)
+uml_add_unit_test(
+    NAME x86-64-gadget-shared-store
+    COMMAND uml_x86_64_gadget_shared_tests store
+    LABELS cpu;x86-64)
+uml_add_unit_test(
+    NAME x86-64-gadget-shared-concurrent
+    COMMAND uml_x86_64_gadget_shared_tests concurrent
+    LABELS cpu;x86-64;tsan)
+uml_add_unit_test(
+    NAME x86-64-gadget-shared-bound
+    COMMAND uml_x86_64_gadget_shared_tests bound
+    LABELS cpu;x86-64;tsan)
+
 # The cache's handling of destroyed address-space generations alone, cheap
 # enough for the sanitizer trees.
 uml_add_unit_test(

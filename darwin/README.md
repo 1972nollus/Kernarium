@@ -108,11 +108,12 @@ validation epoch. An address space's epoch advances when its code-change number
 moves, a slot whose epoch is the current one has matched guest memory since,
 and a sweep of the space's slots when the epoch wraps keeps that exact. An
 arm64 body header is 16 bytes, its build's stop kept in a tail only for a block
-that stopped early or holds no instruction, and an x86 translation record is
-96 bytes. Hit rates and victims are unchanged by this packing: the set still
-hashes the guest's address-space number. The sizes hold with shared bodies
-too, where every executor keeps its own slots and a body's header is paid
-once however many slots hold it.
+that stopped early or holds no instruction, and an x86 body is 128 bytes, its
+stream behind it in the arena and its saved source apart in a second one. Hit
+rates and victims are unchanged by this packing: the set still hashes the
+guest's address-space number. The sizes hold with shared bodies too, where
+every executor keeps its own slots and a body's header is paid once however
+many slots hold it.
 
 The x86 cache takes a translation's set from one multiply of its address
 space, byte-granular RIP and execution mode
@@ -154,7 +155,12 @@ cache, and renewal, below, keeps a shared space from accumulating the freed
 arena and link records that process churn leaves in it, which WebGL
 Aquarium's cache did before (G227, G267, G268). A private cache sweeps away
 the link records and indirect sites that nothing it holds names any more; a
-shared space is never swept, and renewal replaces it instead.
+shared space is never swept, and renewal replaces it instead. The parts of
+this that do not depend on an engine's record types are engine-independent
+headers in `cpu/`: the body arena (`gadget_body_arena.hpp`), and what each
+executor announces, the executors attached to a space, the limbo a body waits
+in, the renewal counts and the registry that hands a space out
+(`gadget_shared_space.hpp`). The arm64 engine builds its space from them.
 
 A shared space bounds its freed arena by renewal. It counts the bytes of its
 arena and of the bodies some slot holds; once it holds at least two mebibytes
@@ -186,8 +192,9 @@ gadget engines also keep a process-wide byte budget
 charges an account with what it holds: an arm64 space its arena chunks with
 their maps, blocks too large for a chunk, link and indirect records and target
 table, once however many executors share it; an x86 address space its
-translations (record, native stream and source, as the allocator sizes them),
-records and target tables, in each executor that keeps it. Slots and per-space
+translation arenas (bodies with their streams, and saved source, as chunks are
+carved and released), records and target tables, once however many executors
+share it, and in each executor that keeps it to itself. Slots and per-space
 slot lists are not charged. A store that finds the open accounts above the
 budget asks the largest to shed until the rest hold seven eighths of it,
 waiting its turn while another thread holds the ledger. An arm64 space asked to
@@ -210,10 +217,12 @@ and 8 GiB the largest, x86 multi-core Geekbench, peaked at a seventh of its
 peaked at 47% of 358 MiB (G282). A census build reports the budget, the bytes
 charged and the reliefs on every `E` record.
 
-x86 gadget executors keep private translations: their links carry the block's
-guest range for self-modifying-store checks, which translated code reads in
-two loads that one atomic store cannot keep consistent. They let go of the
-address spaces of destroyed generations the same way, at the start of each run
+x86 gadget executors share an address space's translations the same way, and
+`DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private. A link's pair and the
+guest bounds in front of every stream let one paired store retarget a link
+another executor follows, and a store over a block's source marks it stale for
+every executor. They let go of the address spaces of destroyed generations the
+same way, at the start of each run
 ([`cpu/x86_64/gadgets/README.md`](cpu/x86_64/gadgets/README.md)).
 
 In both arm64 engines, code another vCPU changed and synchronized takes effect

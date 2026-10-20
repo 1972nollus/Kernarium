@@ -16,12 +16,16 @@
 #include <optional>
 #include <span>
 
-namespace uml::cpu::arm64::gadgets {
+namespace uml::cpu::gadget_cache {
 
-/* Defined with the translation cache: what an executor says about whether it
- * may be running translated code, which executors sharing an address space
+/* Defined in cpu/gadget_shared_space.hpp: what an executor says about whether
+ * it may be running translated code, which executors sharing an address space
  * read before they free a body. */
 struct ExecutorAnnouncement;
+
+} // namespace uml::cpu::gadget_cache
+
+namespace uml::cpu::arm64::gadgets {
 
 struct GadgetCacheDiagnostics final {
 	/* Programs this executor had to produce. */
@@ -185,7 +189,7 @@ private:
 	/* BKPT's immediate, after the last A64 member so that none moves. */
 	std::uint32_t breakpoint_immediate_{};
 	/* Null when the executor keeps its translations to itself. */
-	ExecutorAnnouncement *announcement_{};
+	gadget_cache::ExecutorAnnouncement *announcement_{};
 	bool share_translations_{};
 	/* The MMU's count of destroyed generations when this executor last
 	 * looked for address spaces to let go of. */

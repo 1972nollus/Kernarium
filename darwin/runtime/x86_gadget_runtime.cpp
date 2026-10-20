@@ -140,6 +140,37 @@ void trace_fatal(const char *stage, const x86_64::CpuState &cpu,
 	return static_cast<std::int32_t>((instruction.source.immediate << 3U) | 2U);
 }
 
+/* A run of an executor, and of the checked executors it made, brackets the
+ * time it may be inside translated code, and handling the exit of one, which
+ * can follow a link into a body that only the address space holds, so that
+ * executors sharing an address space free no body this one may be inside of.
+ * A checked executor made during the run is bracketed when it ends. */
+class RunBracket final {
+public:
+	RunBracket(x86_64::gadgets::Executor &executor,
+		X86CheckedExecutors &checked_executors) noexcept
+		: executor_{executor}, checked_executors_{checked_executors}
+	{
+		executor_.begin_run();
+		for (auto &checked_executor : checked_executors_)
+			if (checked_executor)
+				checked_executor->begin_run();
+	}
+	~RunBracket()
+	{
+		executor_.end_run();
+		for (auto &checked_executor : checked_executors_)
+			if (checked_executor)
+				checked_executor->end_run();
+	}
+	RunBracket(const RunBracket &) = delete;
+	RunBracket &operator=(const RunBracket &) = delete;
+
+private:
+	x86_64::gadgets::Executor &executor_;
+	X86CheckedExecutors &checked_executors_;
+};
+
 } // namespace
 
 static_assert((x86_64::gadgets::check_x87 | x86_64::gadgets::check_simd |
@@ -172,6 +203,7 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 		trace_fatal("execution-scope", cpu, generation, errno);
 		return run;
 	}
+	const RunBracket bracket{executor, checked_executors};
 	auto guarded_interrupt = interrupt;
 	guarded_interrupt.poll = execution_interrupt_boundary;
 	guarded_interrupt.poll_context = &execution;
