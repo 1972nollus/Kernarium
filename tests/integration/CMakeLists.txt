@@ -9,8 +9,6 @@ if(NOT EXISTS "${UML_INTEGRATION_ROOTFS}")
         "UML_INTEGRATION_ROOTFS does not exist: ${UML_INTEGRATION_ROOTFS}")
 endif()
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-
 # Build a freestanding static arm64 guest payload into
 # ${CMAKE_CURRENT_BINARY_DIR}/<NAME>, set OUTPUT_VARIABLE to its path, and
 # make integration-test-binaries build it through the uml-<NAME> target.

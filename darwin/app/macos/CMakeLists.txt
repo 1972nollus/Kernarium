@@ -110,9 +110,6 @@ function(uml_add_macos_embedded_kernel_app
 endfunction()
 
 if(UML_BUILD_CLI)
-    if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET)
-        message(FATAL_ERROR "uml-darwin requires a selected mainline artifact")
-    endif()
     uml_add_macos_embedded_kernel_app(
         uml-darwin linux_main.cpp "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
     # Linux guests boot the accepted base archive for their userspace
@@ -134,11 +131,6 @@ if(UML_BUILD_CLI)
 endif()
 
 if(UML_BUILD_ANDROID17_CLI)
-    if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET)
-        message(FATAL_ERROR
-            "uml-darwin-android17 requires a compatible Android kernel "
-            "artifact")
-    endif()
     uml_add_macos_embedded_kernel_app(
         uml-darwin-android17 android17_main.cpp
         "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")

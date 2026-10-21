@@ -15,7 +15,7 @@ target_include_directories(uml_arm64_aarch32_decoder PUBLIC
 # The AArch32 semantic library (semantics.hpp): the engines' slow paths and
 # the corpus's model lane execute any instruction of the profile through it.
 # It works on CpuState alone and includes no engine, so it is a shared CPU
-# target. Nothing links it into a product until an engine calls it.
+# target.
 add_library(uml_arm64_aarch32_semantics OBJECT
     semantics.cpp
     semantics_armv8_float.cpp

@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 # x86-64 code is translated to immutable streams of precompiled host gadgets.
-# The fixed x86 Linux slice uses a 4 KiB guest profile on macOS, whose
-# dependency prefix provides the exact math archives.
+# The macOS dependency prefix provides the exact math archives.
 add_library(uml_x86_64_gadgets OBJECT
     engine.S
     exception_checks.cpp
@@ -23,13 +22,12 @@ target_include_directories(uml_x86_64_gadgets PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_definitions(uml_x86_64_gadgets PRIVATE
     UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
-    UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
+    UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOT_COUNT}
     UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
 # The register-baked scalar bank is enumerated by a generator: one entry
 # per operand combination is thousands of entries, which the assembler's
 # own macro expansion takes minutes to produce.
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(_uml_x86_64_baked_dir ${CMAKE_CURRENT_BINARY_DIR}/x86_64_baked)
 set(_uml_x86_64_baked_generator
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/generate_baked.py)
