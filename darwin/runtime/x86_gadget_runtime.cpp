@@ -178,13 +178,13 @@ static_assert((x86_64::gadgets::check_x87 | x86_64::gadgets::check_simd |
 	std::tuple_size_v<X86CheckedExecutors>,
 	"every set of checked exceptions names its own executor");
 
-X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
+X86RunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	StaticGuestMemory &memory, x86_64::gadgets::Executor &executor,
 	X86CheckedExecutors &checked_executors,
 	unsigned long generation, std::size_t instruction_budget,
 	bool exact_budget, const ::uml::cpu::InterruptToken &interrupt) noexcept
 {
-	X86GadgetRunResult run{};
+	X86RunResult run{};
 	auto &result = run.execution;
 	result.reason = ::uml::cpu::ExitReason::fatal;
 	if (!host_runs_x86_engine())
@@ -372,9 +372,7 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			state->done = true;
 		}
 		if (cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
-			cpu.gpr(x86_64::Register::rax) = 15;
-			cpu.system_call_32bit = false;
-			result.reason = ::uml::cpu::ExitReason::system_call;
+			x86_signal_return(cpu, result);
 			return run;
 		}
 		const auto available = instruction_budget - result.retired_instructions;
