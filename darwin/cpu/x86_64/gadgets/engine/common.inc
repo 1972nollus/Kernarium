@@ -1197,9 +1197,15 @@ Lx86_read_loaded\@:
 .endm
 
 /* Load a `size`-byte vector operand from `base` into v`low`, a 32-byte one
- * into v`low` and v`high`. */
+ * into v`low` and v`high`. A 1, 2, 4 or 8-byte operand loads b, h, s or d. */
 .macro vector_source_load size, low, high, base
-	.if (\size) == 8
+	.if (\size) == 1
+	ldr b\low, [\base]
+	.elseif (\size) == 2
+	ldr h\low, [\base]
+	.elseif (\size) == 4
+	ldr s\low, [\base]
+	.elseif (\size) == 8
 	ldr d\low, [\base]
 	.else
 	ldr q\low, [\base]
@@ -1213,13 +1219,23 @@ Lx86_read_loaded\@:
  * cross-page helper reads from, into v1, and v3 for 32 bytes, or the `low`
  * and `high` registers. An access across a page goes through a `frame`-byte
  * stack buffer, and a fault the MMU raises branches to `fault`, which the
- * gadget defines after its code with `vector_memory_source_fault`. */
-.macro vector_memory_source size, fault, low=1, high=3, frame=32
+ * gadget defines after its code with `vector_memory_source_fault`. `scalar`
+ * sends an access of 8 bytes or less through `cross_page_load` and moves it
+ * with an x register; `single` moves a 4-byte one with a w register. */
+.macro vector_memory_source size, fault, low=1, high=3, frame=32, scalar=0, single=0
 	page_cross_check \size, Lx86_vector_source_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \size
 	vector_source_load \size, \low, \high, x7
 	b Lx86_vector_source_loaded\@
 Lx86_vector_source_cross\@:
+	.if ((\scalar) != 0) && ((\size) <= 8)
+	cross_page_load \size
+	.if ((\single) != 0) && ((\size) == 4)
+	fmov s\low, w0
+	.else
+	fmov d\low, x0
+	.endif
+	.else
 	sub sp, sp, #\frame
 	mov x0, _context
 	mov x1, x25
@@ -1229,6 +1245,7 @@ Lx86_vector_source_cross\@:
 	cbz w0, \fault
 	vector_source_load \size, \low, \high, sp
 	add sp, sp, #\frame
+	.endif
 Lx86_vector_source_loaded\@:
 .endm
 

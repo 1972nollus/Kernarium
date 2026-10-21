@@ -254,43 +254,12 @@ gadget vector_map2_broadcast_\element\()_\width\()_r
 gadget vector_map2_broadcast_\element\()_\width\()_m
 	effective_address
 	mov x25, x7
-	page_cross_check (\element / 8), Lx86_vector_map2_broadcast_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\element / 8)
-	.if \element == 8
-	ldr b1, [x7]
-	.elseif \element == 16
-	ldr h1, [x7]
-	.elseif \element == 32
-	ldr s1, [x7]
-	.elseif \element == 64
-	ldr d1, [x7]
-	.else
-	ldr q1, [x7]
-	.endif
-	b Lx86_vector_map2_broadcast_loaded\@
-Lx86_vector_map2_broadcast_cross\@:
-	.if \element <= 64
-	cross_page_load (\element / 8)
-	fmov d1, x0
-	.else
-	sub sp, sp, #16
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #16
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_map2_broadcast_cross_fault\@
-	ldr q1, [sp]
-	add sp, sp, #16
-	.endif
-Lx86_vector_map2_broadcast_loaded\@:
+	vector_memory_source (\element / 8), Lx86_vector_map2_broadcast_cross_fault\@, frame=16, scalar=1
 	vector_map2_broadcast_body \element, \width
 	vector_map2_misc_write \width, 23
 	retire_and_next
 	.if \element == 128
-Lx86_vector_map2_broadcast_cross_fault\@:
-	add sp, sp, #16
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_map2_broadcast_cross_fault\@, 16
 	.endif
 .endm
 
@@ -335,37 +304,12 @@ gadget vector_map2_half_\width\()_r
 gadget vector_map2_half_\width\()_m
 	effective_address
 	mov x25, x7
-	page_cross_check (\input_size), Lx86_vector_map2_half_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, \input_size
-	.if \input_size == 8
-	ldr d1, [x7]
-	.else
-	ldr q1, [x7]
-	.endif
-	b Lx86_vector_map2_half_loaded\@
-Lx86_vector_map2_half_cross\@:
-	.if \input_size == 8
-	cross_page_load 8
-	fmov d1, x0
-	.else
-	sub sp, sp, #16
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #16
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_map2_half_cross_fault\@
-	ldr q1, [sp]
-	add sp, sp, #16
-	.endif
-Lx86_vector_map2_half_loaded\@:
+	vector_memory_source \input_size, Lx86_vector_map2_half_cross_fault\@, frame=16, scalar=1
 	vector_map2_half_body \width
 	vector_map2_misc_write \width, 23
 	retire_and_next
 	.if \input_size == 16
-Lx86_vector_map2_half_cross_fault\@:
-	add sp, sp, #16
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_map2_half_cross_fault\@, 16
 	.endif
 .endm
 

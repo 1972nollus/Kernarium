@@ -574,44 +574,7 @@ gadget vector_fma_\name\()_\element\()_\shape\()_rm
 	.else
 	.set Lx86_vector_fma_input_size\@, (\width / 8)
 	.endif
-	page_cross_check (Lx86_vector_fma_input_size\@), Lx86_vector_fma_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, Lx86_vector_fma_input_size\@
-	.if \scalar
-	.if \element == 32
-	ldr s2, [x7]
-	.else
-	ldr d2, [x7]
-	.endif
-	.else
-	ldr q2, [x7]
-	.if \width == 256
-	ldr q5, [x7, #16]
-	.endif
-	.endif
-	b Lx86_vector_fma_loaded\@
-Lx86_vector_fma_cross\@:
-	.if \scalar
-	cross_page_load Lx86_vector_fma_input_size\@
-	.if \element == 32
-	fmov s2, w0
-	.else
-	fmov d2, x0
-	.endif
-	.else
-	sub sp, sp, #32
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #Lx86_vector_fma_input_size\@
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_fma_cross_fault\@
-	ldr q2, [sp]
-	.if \width == 256
-	ldr q5, [sp, #16]
-	.endif
-	add sp, sp, #32
-	.endif
-Lx86_vector_fma_loaded\@:
+	vector_memory_source Lx86_vector_fma_input_size\@, Lx86_vector_fma_cross_fault\@, 2, 5, scalar=\scalar, single=1
 	and x9, x23, #0xffff
 	and x10, x26, #0xffff
 	add x9, _cpu, x9
@@ -626,9 +589,7 @@ Lx86_vector_fma_loaded\@:
 	vector_fma_write \width, 23
 	retire_and_next
 	.if !\scalar
-Lx86_vector_fma_cross_fault\@:
-	add sp, sp, #32
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_fma_cross_fault\@
 	.endif
 	vector_fma_paths \form, \operation, \element, \width, \scalar, Lx86_vector_fma_special\@, Lx86_vector_fma_special_back\@, Lx86_vector_fma_exact\@, Lx86_vector_fma_exact_back\@
 .endm
