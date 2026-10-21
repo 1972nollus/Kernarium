@@ -40,7 +40,8 @@ identifier ([Metal shader cache](../docs/graphics.md#metal-shader-cache)).
 Nothing else follows it: privacy permissions are requested under the
 code-signing identifier `uml-darwin` and attributed to the terminal or
 application that launched the emulator, and the process and menu names are
-the executable's.
+the executable's. Signing the executable again with `codesign` binds the
+property list and makes the bundle identifier its code-signing identifier.
 
 The emulator library chooses no guest init and configures no guest network;
 the image owns both. Each Linux product embeds the boot base archive for its
