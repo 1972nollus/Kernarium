@@ -62,9 +62,8 @@ public:
 	 * arm64/aarch32/guest_key.hpp and CpuState describe, with the PC in
 	 * key form. The runtime enters here instead of run() for a task whose
 	 * PSTATE.nRW says AArch32, so an A64 entry pays nothing for it. An
-	 * engine below arm64::A32Support::base, which is every engine until its
-	 * AArch32 milestones land, and an engine of another architecture, take
-	 * it as the illegal-instruction exit without touching the state. */
+	 * engine without AArch32, which today is only a test engine, takes it
+	 * as the illegal-instruction exit without touching the state. */
 	[[nodiscard]] virtual ExecutionResult run_aarch32(
 		ExecutionRequest &) noexcept
 	{

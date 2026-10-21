@@ -215,9 +215,9 @@ inline constexpr std::uint32_t id_aa64mmfr2_el1 = 0xd538'0740U;
 		 * that is not naturally aligned is single-copy atomic rather
 		 * than a fault. */
 		return host.has(ArmFeature::lse2) ? field(1, 32) : 0;
-	/* Every remaining register in the emulated space describes an AArch32
-	 * profile this AArch64-only guest does not implement, an extension no
-	 * engine executes, or state Linux keeps hidden from EL0. */
+	/* Every remaining register in the emulated space describes AArch32
+	 * state or an extension no engine executes, or is state Linux keeps
+	 * hidden from EL0. */
 	return 0;
 }
 
