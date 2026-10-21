@@ -22,10 +22,7 @@ gadget test_bit_branch_\polarity
 	ldr x10, [_cpu, x9]
 	lsr x10, x10, x8
 	tst x10, #1
-	csel x11, x19, x20, \condition
-	str x11, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, wzr
-	b uml_arm64_gadget_leave
+	select_branch_target 0, \condition, x11
 
 gadget test_bit_branch_\polarity\()_linked
 	ldr x8, [_stream], #8
@@ -34,8 +31,7 @@ gadget test_bit_branch_\polarity\()_linked
 	ldr x10, [_cpu, x9]
 	lsr x10, x10, x8
 	tst x10, #1
-	csel x8, x19, x20, \condition
-	follow_block_link x8
+	select_branch_target 1, \condition
 
 /* Fall-through translated inline; see conditional_branch_inline. */
 gadget test_bit_branch_\polarity\()_inline
@@ -54,6 +50,7 @@ test_bit_branch z, eq
 test_bit_branch nz, ne
 
 .purgem test_bit_branch
+.purgem select_branch_target
 
 /* The end of the family, for the table of entries a streaming program may
  * name. */

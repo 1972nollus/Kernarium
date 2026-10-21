@@ -239,6 +239,34 @@ gadget return_cached
 	ldr x10, [_cpu, x8]
 	follow_indirect_link 1
 
+/* The exit of a fused or conditional branch: x19 and x20 hold the two
+ * successors and the flags the condition reads are set. The linked form
+ * follows the chosen BlockLink; the unlinked form stores the chosen guest PC
+ * in `scratch` and leaves. */
+.macro select_branch_target linked, condition, scratch=x9
+	.if \linked
+	csel x8, x19, x20, \condition
+	follow_block_link x8
+	.else
+	csel \scratch, x19, x20, \condition
+	str \scratch, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
+	.endif
+.endm
+
+/* The exit of an inline-fall-through branch: x19 is the taken link and x20 the
+ * number of instructions translated after the branch. Not taken continues
+ * with the next gadget; taken gives that suffix back, which entering the
+ * block precharged, and follows the link. */
+.macro inline_branch_tail condition
+	b.\condition 99f
+	next_gadget
+99:
+	sub x29, x29, x20
+	follow_block_link x19
+.endm
+
 /* B.cond's condition is fixed when its data-only program is built.  Selecting
  * one of these precompiled gadgets avoids a C++ helper call at every loop
  * edge.  EL0 may write NZCV, so CSEL can evaluate the original guest flags
@@ -249,10 +277,7 @@ gadget branch_\name
 	ldr x19, [_stream], #8
 	ldr x20, [_stream]
 	msr nzcv, x27
-	csel x9, x19, x20, \condition
-	str x9, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, wzr
-	b uml_arm64_gadget_leave
+	select_branch_target 0, \condition
 .endm
 
 .macro conditional_branch_linked name, condition
@@ -260,8 +285,7 @@ gadget branch_\name\()_linked
 	ldr x19, [_stream], #8
 	ldr x20, [_stream]
 	msr nzcv, x27
-	csel x8, x19, x20, \condition
-	follow_block_link x8
+	select_branch_target 1, \condition
 .endm
 
 /* A conditional branch whose fall-through is translated inline behind it.
@@ -273,21 +297,18 @@ gadget branch_\name\()_linked
  * changes, and the not-taken case stops being an indirect jump through a link
  * at all.
  *
- * The stream holds the taken link and, where the fall-through link used to sit,
- * the number of instructions translated after this one. Entering a block
- * precharges its whole length, so a taken branch leaving from the middle has to
- * give that suffix back before following its link.
+ * The stream holds the taken link and the number of instructions translated
+ * after this one, in the word where the unfused form keeps the fall-through
+ * link. Entering a block precharges its whole length, so a taken branch
+ * leaving from the middle has to give that suffix back before following its
+ * link.
  */
 .macro conditional_branch_inline name, condition
 gadget branch_\name\()_inline
 	ldr x19, [_stream], #8
 	ldr x20, [_stream], #8
 	msr nzcv, x27
-	b.\condition 99f
-	next_gadget
-99:
-	sub x29, x29, x20
-	follow_block_link x19
+	inline_branch_tail \condition
 .endm
 
 /* G-2 superinstruction: guest CMP of two registers followed by B.cond. The
@@ -317,15 +338,7 @@ gadget compare_register_branch_\width\()_\name
 	subs wzr, w15, w16
 	.endif
 	mrs x27, nzcv
-	.if \linked
-	csel x8, x19, x20, \condition
-	follow_block_link x8
-	.else
-	csel x9, x19, x20, \condition
-	str x9, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, wzr
-	b uml_arm64_gadget_leave
-	.endif
+	select_branch_target \linked, \condition
 .endm
 
 /* Fall-through translated inline; see conditional_branch_inline. */
@@ -344,11 +357,7 @@ gadget compare_register_branch_\width\()_\name\()_inline
 	subs wzr, w15, w16
 	.endif
 	mrs x27, nzcv
-	b.\condition 99f
-	next_gadget
-99:
-	sub x29, x29, x20
-	follow_block_link x19
+	inline_branch_tail \condition
 .endm
 
 .macro compare_register_branch_pair name, condition
@@ -416,15 +425,7 @@ gadget compare_immediate_branch_\width\()_\name
 	subs wzr, w15, w11
 	.endif
 	mrs x27, nzcv
-	.if \linked
-	csel x8, x19, x20, \condition
-	follow_block_link x8
-	.else
-	csel x9, x19, x20, \condition
-	str x9, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, wzr
-	b uml_arm64_gadget_leave
-	.endif
+	select_branch_target \linked, \condition
 .endm
 
 /* Fall-through translated inline; see conditional_branch_inline. */
@@ -442,11 +443,7 @@ gadget compare_immediate_branch_\width\()_\name\()_inline
 	subs wzr, w15, w11
 	.endif
 	mrs x27, nzcv
-	b.\condition 99f
-	next_gadget
-99:
-	sub x29, x29, x20
-	follow_block_link x19
+	inline_branch_tail \condition
 .endm
 
 .macro compare_immediate_branch_pair name, condition
@@ -541,18 +538,14 @@ gadget compare_branch_\width_name\()_\polarity
 	ldp x19, x20, [_stream]
 	ldr \width\()9, [_cpu, x8]
 	cmp \width\()9, #0
-	csel x10, x19, x20, \condition
-	str x10, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, wzr
-	b uml_arm64_gadget_leave
+	select_branch_target 0, \condition, x10
 
 gadget compare_branch_\width_name\()_\polarity\()_linked
 	ldr x8, [_stream], #8
 	ldp x19, x20, [_stream]
 	ldr \width\()9, [_cpu, x8]
 	cmp \width\()9, #0
-	csel x8, x19, x20, \condition
-	follow_block_link x8
+	select_branch_target 1, \condition
 
 /* Fall-through translated inline; see conditional_branch_inline. */
 gadget compare_branch_\width_name\()_\polarity\()_inline
@@ -562,11 +555,7 @@ gadget compare_branch_\width_name\()_\polarity\()_inline
 	and x8, x8, #0xffff
 	ldr \width\()9, [_cpu, x8]
 	cmp \width\()9, #0
-	b.\condition 99f
-	next_gadget
-99:
-	sub x29, x29, x20
-	follow_block_link x19
+	inline_branch_tail \condition
 .endm
 
 compare_branch w, w, z, eq
@@ -582,18 +571,14 @@ gadget test_branch_\polarity
 	ldp x19, x20, [_stream]
 	ldr x10, [_cpu, x8]
 	tst x10, x9
-	csel x11, x19, x20, \condition
-	str x11, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, wzr
-	b uml_arm64_gadget_leave
+	select_branch_target 0, \condition, x11
 
 gadget test_branch_\polarity\()_linked
 	ldp x8, x9, [_stream], #16
 	ldp x19, x20, [_stream]
 	ldr x10, [_cpu, x8]
 	tst x10, x9
-	csel x8, x19, x20, \condition
-	follow_block_link x8
+	select_branch_target 1, \condition
 
 /* Fall-through translated inline; see conditional_branch_inline. */
 gadget test_branch_\polarity\()_inline
@@ -604,11 +589,7 @@ gadget test_branch_\polarity\()_inline
 	and x8, x8, #0xffff
 	ldr x10, [_cpu, x8]
 	tst x10, x9
-	b.\condition 99f
-	next_gadget
-99:
-	sub x29, x29, x20
-	follow_block_link x19
+	inline_branch_tail \condition
 .endm
 
 test_branch z, eq
@@ -618,7 +599,9 @@ test_branch nz, ne
 .purgem compare_branch
 
 .purgem conditional_branch_linked
-/* follow_block_link, follow_indirect_link, train_indirect_cell and
+.purgem inline_branch_tail
+/* select_branch_target stays defined for test_bit_branch.inc, which purges it.
+ * follow_block_link, follow_indirect_link, train_indirect_cell and
  * push_return_record stay defined for test_bit_branch.inc, return_x30.inc and
  * a32.inc. return_x30.inc purges follow_indirect_link; a32.inc, the last to
  * use the other three, purges them. */
