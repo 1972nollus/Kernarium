@@ -54,14 +54,14 @@ struct EmulatorConfiguration: Equatable {
     static let defaultAutoResizeGuest = true
     static let defaultAndroidBootMode = AndroidBootMode.automatic
 
-    let vCPUCount: Int
-    let guestMemoryMiB: Int
-    let overlaySizeGiB: Int
-    let androidDiskSizeGiB: Int
-    let rootfsFilename: String
-    let retinaMode: Bool
-    let autoResizeGuest: Bool
-    let androidBootMode: AndroidBootMode
+    var vCPUCount: Int
+    var guestMemoryMiB: Int
+    var overlaySizeGiB: Int
+    var androidDiskSizeGiB: Int
+    var rootfsFilename: String
+    var retinaMode: Bool
+    var autoResizeGuest: Bool
+    var androidBootMode: AndroidBootMode
 
     static var physicalProcessorCount: Int {
         max(ProcessInfo.processInfo.processorCount, 1)
