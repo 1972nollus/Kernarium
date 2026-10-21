@@ -14,7 +14,6 @@
 #include "cpu/arm64/aarch32/semantics_vector.hpp"
 
 #include <array>
-#include <iterator>
 
 namespace uml::cpu::arm64::aarch32::detail {
 
@@ -358,9 +357,8 @@ constexpr VectorEntry entries[] = {
 
 } // namespace
 
-const VectorEntry *bf16_entries(std::size_t &count) noexcept
+std::span<const VectorEntry> bf16_entries() noexcept
 {
-	count = std::size(entries);
 	return entries;
 }
 
