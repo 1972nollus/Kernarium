@@ -43,7 +43,7 @@ class ReservedSlot final {
 public:
 	explicit ReservedSlot(bool native_bridge_address = false,
 		std::size_t host_pages = 1)
-		: size_{host_pages * static_cast<std::size_t>(getpagesize())}
+		: size_{host_pages * uml::testing::host_page()}
 	{
 		if (native_bridge_address) {
 			address_ = uml::testing::reserve_native_test_window(size_);
@@ -688,10 +688,9 @@ void test_direct_retry_validates_ownership_mapping_and_permissions()
 {
 	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot arena{true, 4};
-	const auto host_page_size = static_cast<std::size_t>(getpagesize());
+	const auto page = uml::testing::host_page();
 	uml::testing::exercise_native_retry_direct(arena.address(),
-		arena.address() + host_page_size,
-		arena.address() + 2 * host_page_size, host_page_size,
+		arena.address() + page, arena.address() + 2 * page, page,
 		backing.descriptor());
 }
 

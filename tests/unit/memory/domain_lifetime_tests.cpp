@@ -7,9 +7,7 @@
 #include "uml_darwin_host.h"
 #include "uml_darwin_static_mmu.h"
 
-#if UML_MEMORY_DOMAIN_TEST_HAS_NATIVE
 #include "native_address_space.hpp"
-#endif
 
 #include <atomic>
 #include <array>
@@ -426,7 +424,6 @@ void test_software_thread_exit_closes_walker()
 	require(uml::memory::testing::software_domain_count() == 0);
 }
 
-#if UML_MEMORY_DOMAIN_TEST_HAS_NATIVE
 void test_native_registry_initialization_retries_once()
 {
 	using uml::memory::testing::AllocationSite;
@@ -541,7 +538,6 @@ void test_native_acquired_space_refuses_post_retirement_work()
 	require(errno == ESHUTDOWN);
 	space.reset();
 }
-#endif
 
 void test_retirement_metadata_stays_bounded_under_run_churn()
 {
@@ -553,18 +549,14 @@ void test_retirement_metadata_stays_bounded_under_run_churn()
 		active_domain.store(domain, std::memory_order_release);
 		if ((iteration % 4096) == 0) {
 			require(darwin_uml_static_vm_activate(generation) == 0);
-#if UML_MEMORY_DOMAIN_TEST_HAS_NATIVE
 			auto native = uml::memory::native_address_space();
 			require(native != nullptr);
-#endif
 		}
 		active_domain.store(0, std::memory_order_release);
 		uml::memory::retire_domain(domain);
 	}
 	require(uml::memory::testing::software_domain_count() == 0);
-#if UML_MEMORY_DOMAIN_TEST_HAS_NATIVE
 	require(uml::memory::testing::native_domain_count() == 0);
-#endif
 }
 
 } // namespace
@@ -581,12 +573,10 @@ int main()
 	test_software_destroyed_generations_move_the_count();
 	test_software_nested_resolution_keeps_a_borrowed_space();
 	test_software_thread_exit_closes_walker();
-#if UML_MEMORY_DOMAIN_TEST_HAS_NATIVE
 	test_native_registry_initialization_retries_once();
 	test_native_delayed_resolver_cannot_recreate_retired_domain();
 	test_native_resolver_retries_after_unrelated_retirement();
 	test_native_acquired_space_refuses_post_retirement_work();
-#endif
 	test_retirement_metadata_stays_bounded_under_run_churn();
 	uml::memory::set_domain_provider(nullptr);
 	std::puts("memory domain lifetime tests passed");

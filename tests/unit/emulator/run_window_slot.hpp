@@ -10,7 +10,6 @@
 #include <cstdint>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
-#include <unistd.h>
 
 namespace uml::testing {
 
@@ -24,7 +23,7 @@ inline constexpr std::size_t run_guest_memory = 256U * 1024U * 1024U;
  * released is returned when it is destroyed. */
 class RunWindowSlot final {
 public:
-	RunWindowSlot() : size_{static_cast<std::size_t>(getpagesize())}
+	RunWindowSlot() : size_{host_page()}
 	{
 		const auto window = ::uml::emulator::testing::native_kernel_window(
 			run_guest_memory);
