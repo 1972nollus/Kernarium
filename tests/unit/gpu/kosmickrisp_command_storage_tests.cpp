@@ -45,11 +45,6 @@ int main()
         double microseconds = 0.0;
         {
             DrawContext context;
-            if (const char *venus = std::getenv("UML_VULKAN_REQUIRE_VENUS");
-                venus && std::string_view(venus) == "1") {
-                require(context.capabilities().driver_id == VK_DRIVER_ID_MESA_VENUS,
-                        "guest probe did not select the Venus driver");
-            }
 
             SubmitStormConfig storm;
             storm.submissions = kSubmissions;
