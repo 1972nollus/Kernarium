@@ -563,16 +563,12 @@ UML_DECLARE_BFLOAT_MULTIPLY_LONG_INDEXED(t, 6)
 UML_DECLARE_BFLOAT_MULTIPLY_LONG_INDEXED(t, 7)
 #undef UML_DECLARE_BFLOAT_MULTIPLY_LONG_INDEXED
 void uml_arm64_gadget_bfloat_multiply_long_software();
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(faddp)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmaxp)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmaxnmp)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fminp)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fminnmp)
 #undef UML_DECLARE_FLOATING_HORIZONTAL_BINARY
-#define UML_DECLARE_FLOATING_HORIZONTAL_PAIR(name) \
-	UML_DECLARE_FLOATING_HORIZONTAL_SCALAR(name##_scalar) \
-	UML_DECLARE_FLOATING_HORIZONTAL_VECTOR(name##_vector)
-UML_DECLARE_FLOATING_HORIZONTAL_PAIR(faddp)
-UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fmaxp)
-UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fmaxnmp)
-UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fminp)
-UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fminnmp)
-#undef UML_DECLARE_FLOATING_HORIZONTAL_PAIR
 #define UML_DECLARE_FLOATING_HORIZONTAL_REDUCE(name) \
 	void uml_arm64_gadget_floating_horizontal_##name##_4h(); \
 	void uml_arm64_gadget_floating_horizontal_##name##_8h(); \
@@ -661,26 +657,27 @@ UML_DECLARE_FLOATING_COMPARE(d)
 UML_ARM64_CONDITIONS(UML_DECLARE_FLOATING_CONDITIONAL_COMPARE)
 #undef UML_DECLARE_FLOATING_CONDITIONAL_COMPARE
 #undef UML_DECLARE_FLOATING_CONDITIONAL_COMPARE_WIDTH
-#define UML_DECLARE_SIMD_FLOATING_COMPARE(name) \
-	void uml_arm64_gadget_simd_fcmp_##name##_h(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_s(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_d(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_4h(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_8h(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_2s(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_4s(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_2d();
-UML_DECLARE_SIMD_FLOATING_COMPARE(eq)
-UML_DECLARE_SIMD_FLOATING_COMPARE(ge)
-UML_DECLARE_SIMD_FLOATING_COMPARE(gt)
-UML_DECLARE_SIMD_FLOATING_COMPARE(facge)
-UML_DECLARE_SIMD_FLOATING_COMPARE(facgt)
-UML_DECLARE_SIMD_FLOATING_COMPARE(eq0)
-UML_DECLARE_SIMD_FLOATING_COMPARE(ge0)
-UML_DECLARE_SIMD_FLOATING_COMPARE(gt0)
-UML_DECLARE_SIMD_FLOATING_COMPARE(le0)
-UML_DECLARE_SIMD_FLOATING_COMPARE(lt0)
-#undef UML_DECLARE_SIMD_FLOATING_COMPARE
+/* The eight shapes of an FP vector gadget family: scalar H, S and D, then
+ * 4H, 8H, 2S, 4S and 2D. */
+#define UML_DECLARE_SIMD_FLOATING_SHAPES(name) \
+	void uml_arm64_gadget_simd_##name##_h(); \
+	void uml_arm64_gadget_simd_##name##_s(); \
+	void uml_arm64_gadget_simd_##name##_d(); \
+	void uml_arm64_gadget_simd_##name##_4h(); \
+	void uml_arm64_gadget_simd_##name##_8h(); \
+	void uml_arm64_gadget_simd_##name##_2s(); \
+	void uml_arm64_gadget_simd_##name##_4s(); \
+	void uml_arm64_gadget_simd_##name##_2d();
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_eq)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_ge)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_gt)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_facge)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_facgt)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_eq0)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_ge0)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_gt0)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_le0)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_lt0)
 void uml_arm64_gadget_simd_fcvtl_hs();
 void uml_arm64_gadget_simd_fcvtl2_hs();
 void uml_arm64_gadget_simd_fcvtl_sd();
@@ -713,26 +710,16 @@ UML_DECLARE_FLOATING_TO_GPR_WIDTHS(fcvtas)
 UML_DECLARE_FLOATING_TO_GPR_WIDTHS(fcvtau)
 #undef UML_DECLARE_FLOATING_TO_GPR_WIDTHS
 #undef UML_DECLARE_FLOATING_TO_GPR
-#define UML_DECLARE_SIMD_FLOATING_TO_INTEGER(operation) \
-	void uml_arm64_gadget_simd_##operation##_h(); \
-	void uml_arm64_gadget_simd_##operation##_s(); \
-	void uml_arm64_gadget_simd_##operation##_d(); \
-	void uml_arm64_gadget_simd_##operation##_4h(); \
-	void uml_arm64_gadget_simd_##operation##_8h(); \
-	void uml_arm64_gadget_simd_##operation##_2s(); \
-	void uml_arm64_gadget_simd_##operation##_4s(); \
-	void uml_arm64_gadget_simd_##operation##_2d();
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtns)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtnu)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtps)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtpu)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtms)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtmu)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtzs)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtzu)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtas)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtau)
-#undef UML_DECLARE_SIMD_FLOATING_TO_INTEGER
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtns)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtnu)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtps)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtpu)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtms)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtmu)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtzs)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtzu)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtas)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtau)
 #define UML_DECLARE_FIXED_TABLE(name) \
 	void uml_arm64_gadget_##name(); \
 	void uml_arm64_gadget_##name##_end();
@@ -751,7 +738,7 @@ UML_DECLARE_FLOATING_TO_GPR_FIXED_WIDTHS(fcvtzs)
 UML_DECLARE_FLOATING_TO_GPR_FIXED_WIDTHS(fcvtzu)
 #undef UML_DECLARE_FLOATING_TO_GPR_FIXED_WIDTHS
 #undef UML_DECLARE_FLOATING_TO_GPR_FIXED
-#define UML_DECLARE_SIMD_FLOATING_TO_INTEGER_FIXED(operation) \
+#define UML_DECLARE_SIMD_FIXED_TABLES(operation) \
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_h) \
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_s) \
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_d) \
@@ -760,10 +747,8 @@ UML_DECLARE_FLOATING_TO_GPR_FIXED_WIDTHS(fcvtzu)
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_2s) \
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_4s) \
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_2d)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER_FIXED(fcvtzs)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER_FIXED(fcvtzu)
-#undef UML_DECLARE_SIMD_FLOATING_TO_INTEGER_FIXED
-#undef UML_DECLARE_FIXED_TABLE
+UML_DECLARE_SIMD_FIXED_TABLES(fcvtzs)
+UML_DECLARE_SIMD_FIXED_TABLES(fcvtzu)
 #define UML_DECLARE_GPR_TO_FLOATING(operation, integer, floating, zero) \
 	void uml_arm64_gadget_gpr_to_floating_##operation##_##integer##_##floating##zero();
 #define UML_DECLARE_GPR_TO_FLOATING_WIDTHS(operation, integer, zero) \
@@ -781,23 +766,11 @@ UML_DECLARE_GPR_TO_FLOATING_VARIANTS(ucvtf)
 #undef UML_DECLARE_GPR_TO_FLOATING_WIDTHS
 #undef UML_DECLARE_GPR_TO_FLOATING
 void uml_arm64_gadget_integer_to_floating_software_fallback();
-#define UML_DECLARE_SIMD_INTEGER_TO_FLOATING(operation) \
-	void uml_arm64_gadget_simd_##operation##_h(); \
-	void uml_arm64_gadget_simd_##operation##_s(); \
-	void uml_arm64_gadget_simd_##operation##_d(); \
-	void uml_arm64_gadget_simd_##operation##_4h(); \
-	void uml_arm64_gadget_simd_##operation##_8h(); \
-	void uml_arm64_gadget_simd_##operation##_2s(); \
-	void uml_arm64_gadget_simd_##operation##_4s(); \
-	void uml_arm64_gadget_simd_##operation##_2d();
-UML_DECLARE_SIMD_INTEGER_TO_FLOATING(scvtf)
-UML_DECLARE_SIMD_INTEGER_TO_FLOATING(ucvtf)
-#undef UML_DECLARE_SIMD_INTEGER_TO_FLOATING
-#define UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(name) \
-	void uml_arm64_gadget_##name(); \
-	void uml_arm64_gadget_##name##_end();
+UML_DECLARE_SIMD_FLOATING_SHAPES(scvtf)
+UML_DECLARE_SIMD_FLOATING_SHAPES(ucvtf)
+#undef UML_DECLARE_SIMD_FLOATING_SHAPES
 #define UML_DECLARE_GPR_TO_FLOATING_FIXED(operation, integer, floating, zero) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE( \
+	UML_DECLARE_FIXED_TABLE( \
 		gpr_to_floating_fixed_##operation##_##integer##_##floating##zero)
 #define UML_DECLARE_GPR_TO_FLOATING_FIXED_WIDTHS(operation, integer, zero) \
 	UML_DECLARE_GPR_TO_FLOATING_FIXED(operation, integer, h, zero) \
@@ -813,19 +786,10 @@ UML_DECLARE_GPR_TO_FLOATING_FIXED_VARIANTS(ucvtf)
 #undef UML_DECLARE_GPR_TO_FLOATING_FIXED_VARIANTS
 #undef UML_DECLARE_GPR_TO_FLOATING_FIXED_WIDTHS
 #undef UML_DECLARE_GPR_TO_FLOATING_FIXED
-#define UML_DECLARE_SIMD_INTEGER_TO_FLOATING_FIXED(operation) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_h) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_s) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_d) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_4h) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_8h) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_2s) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_4s) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_2d)
-UML_DECLARE_SIMD_INTEGER_TO_FLOATING_FIXED(scvtf)
-UML_DECLARE_SIMD_INTEGER_TO_FLOATING_FIXED(ucvtf)
-#undef UML_DECLARE_SIMD_INTEGER_TO_FLOATING_FIXED
-#undef UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE
+UML_DECLARE_SIMD_FIXED_TABLES(scvtf)
+UML_DECLARE_SIMD_FIXED_TABLES(ucvtf)
+#undef UML_DECLARE_SIMD_FIXED_TABLES
+#undef UML_DECLARE_FIXED_TABLE
 #define UML_DECLARE_SIMD_BITWISE(name) \
 	void uml_arm64_gadget_##name##_8b(); \
 	void uml_arm64_gadget_##name##_16b();
