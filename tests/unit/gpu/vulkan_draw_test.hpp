@@ -24,6 +24,37 @@ inline void check(VkResult result, const char *operation,
         uml::testing::fail(std::string(operation) + ": " + std::to_string(result), location);
 }
 
+/* A Vulkan structure of type `type`, otherwise zeroed. */
+template <typename T>
+T structure(VkStructureType type)
+{
+    T value{};
+    value.sType = type;
+    return value;
+}
+
+/* The entry point `name` of `instance` (null for the global ones); the test
+ * fails when the loader has none. */
+template <typename Function>
+Function instance_function(VkInstance instance, const char *name,
+                           const std::source_location location = std::source_location::current())
+{
+    auto result = reinterpret_cast<Function>(vkGetInstanceProcAddr(instance, name));
+    uml::testing::require(result != nullptr, std::string("missing ") + name, location);
+    return result;
+}
+
+/* The first memory type in `mask` that has all of `flags`. */
+[[nodiscard]] inline std::optional<uint32_t> memory_type(
+    const VkPhysicalDeviceMemoryProperties &memory, uint32_t mask, VkMemoryPropertyFlags flags)
+{
+    for (uint32_t type = 0; type < memory.memoryTypeCount; ++type) {
+        if ((mask & (1u << type)) && (memory.memoryTypes[type].propertyFlags & flags) == flags)
+            return type;
+    }
+    return std::nullopt;
+}
+
 struct DrawCapabilities {
     std::string device_name;
     std::string driver_name;
@@ -201,5 +232,12 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+/* With UML_VULKAN_REQUIRE_VENUS=1, which the guest probe runner sets, fails
+ * the test unless `context` is on the Venus driver, then prints the line the
+ * runner requires of a verified guest device. */
+void require_venus_when_asked(
+    const DrawContext &context,
+    const std::source_location location = std::source_location::current());
 
 } // namespace uml::gpu::test

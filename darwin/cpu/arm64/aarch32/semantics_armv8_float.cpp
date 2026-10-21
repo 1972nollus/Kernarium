@@ -10,6 +10,7 @@
 #include "cpu/arm64/aarch32/semantics_fp.hpp"
 #include "cpu/arm64/aarch32/semantics_fp_convert.hpp"
 #include "cpu/arm64/aarch32/semantics_vector.hpp"
+#include "cpu/arm64/detail/half_fused_long.hpp"
 
 #include <iterator>
 
@@ -111,7 +112,7 @@ bool vcvt_rounded_asimd(Exec &x)
 	const bool is_unsigned = x.o.unsigned_;
 	if (x.o.esize == 16)
 		return fp::lanes_of<uint16_t>(x, [=](uint16_t, uint16_t m, uint16_t) {
-			return fp::narrow_integer(fp::to_int_rounded(m, is_unsigned, rounding), is_unsigned);
+			return fp::to_int16_rounded(m, is_unsigned, rounding);
 		});
 	return fp::lanes_of<uint32_t>(x, [=](uint32_t, uint32_t m, uint32_t) {
 		return fp::to_int_rounded(m, is_unsigned, rounding);
@@ -330,10 +331,13 @@ bool vcmla_s(Exec &x)
 }
 
 /* VFMAL and VFMSL: addend + a * b of half-precision elements, accumulated
- * into single-precision lanes. The widening is exact, so the host's fused
- * single-precision multiply-add rounds once, as FPMulAddH() does. The
- * elements of the n (and m) operand are the low halves for the first D
- * register of the result and the high halves for the second. */
+ * into single-precision lanes. FPMulAddH() unpacks each half with FPUnpack
+ * (AHP ignored, FZ16 flushing a denormal) under the Standard FPSCR value and
+ * rounds once. The A64 FMLAL and FMLSL helper's operand expansion does the
+ * unpacking exactly, so the host's fused single-precision multiply-add rounds
+ * once, under one FPCR install for all the lanes. The elements of the n (and
+ * m) operand are the low halves for the first D register of the result and
+ * the high halves for the second. */
 template<bool Scalar>
 bool vfmal(Exec &x)
 {
@@ -346,23 +350,23 @@ bool vfmal(Exec &x)
 	const uint64_t operand1 = regs == 2U ? x.d_reg(n) : uint64_t{x.s_reg(n)};
 	const uint64_t operand2 = regs == 2U ? x.d_reg(m) : uint64_t{x.s_reg(m)};
 	const unsigned index = Scalar ? static_cast<unsigned>(o.index_value) : 0U;
+	const uint32_t fpcr = fp::standard_fpcr(x.cpu.fpcr);
 	std::array<uint64_t, 2> old{};
 	for (unsigned r = 0; r < regs; ++r)
 		old[r] = x.d_reg(d + r);
 	std::array<uint64_t, 2> result{};
-	/* The arithmetic is IEEE half precision whatever FPSCR.AHP says, and the
-	 * conversion to single honors AHP, so it is clear here. */
-	fp::run(x.cpu, fp::standard_fpcr(x.cpu.fpcr) & ~fp::fpcr_ahp, [&] {
+	fp::run(x.cpu, fpcr, [&] {
 		for (unsigned r = 0; r < regs; ++r) {
 			for (unsigned e = 0; e < 2U; ++e) {
-				uint32_t element1 = static_cast<uint16_t>(lane(operand1, 2U * r + e, 16));
-				const uint32_t element2 = static_cast<uint16_t>(
+				uint16_t element1 = static_cast<uint16_t>(lane(operand1, 2U * r + e, 16));
+				const uint16_t element2 = static_cast<uint16_t>(
 					lane(operand2, Scalar ? index : 2U * r + e, 16));
 				if (subtract)
 					element1 ^= 0x8000U;
 				const uint32_t addend = static_cast<uint32_t>(lane(old[r], e, 32));
 				result[r] = with_lane(result[r], e, 32,
-					fp::fused(addend, fp::half_to_single(element1), fp::half_to_single(element2)));
+					fp::fused(addend, ::uml::cpu::arm64::detail::half_fused_operand(element1, fpcr),
+						::uml::cpu::arm64::detail::half_fused_operand(element2, fpcr)));
 			}
 		}
 		return 0;

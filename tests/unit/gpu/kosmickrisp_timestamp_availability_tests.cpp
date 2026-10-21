@@ -15,15 +15,10 @@
 namespace {
 
 using uml::gpu::test::check;
+using uml::gpu::test::instance_function;
+using uml::gpu::test::memory_type;
+using uml::gpu::test::structure;
 using uml::testing::require;
-
-template <typename T>
-T structure(VkStructureType type)
-{
-    T value{};
-    value.sType = type;
-    return value;
-}
 
 struct Result {
     uint64_t value, available;
@@ -50,14 +45,6 @@ struct Context {
     VkDeviceMemory image_memory = VK_NULL_HANDLE;
     void *mapped = nullptr;
     PFN_vkGetDeviceProcAddr get_device = nullptr;
-
-    template <typename T>
-    T instance_function(const char *name) const
-    {
-        auto function = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
-        require(function != nullptr, name);
-        return function;
-    }
 
     template <typename T>
     T device_function(const char *name) const
@@ -96,7 +83,7 @@ struct Context {
             CALL(DestroyDevice, device, nullptr);
         }
         if (instance)
-            instance_function<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);
+            instance_function<PFN_vkDestroyInstance>(instance, "vkDestroyInstance")(instance, nullptr);
     }
 
     void initialize()
@@ -106,10 +93,10 @@ struct Context {
         application.apiVersion = VK_API_VERSION_1_3;
         auto info = structure<VkInstanceCreateInfo>(VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO);
         info.pApplicationInfo = &application;
-        check(instance_function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance),
+        check(instance_function<PFN_vkCreateInstance>(instance, "vkCreateInstance")(&info, nullptr, &instance),
               "vkCreateInstance");
-        get_device = instance_function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
-        auto enumerate = instance_function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
+        get_device = instance_function<PFN_vkGetDeviceProcAddr>(instance, "vkGetDeviceProcAddr");
+        auto enumerate = instance_function<PFN_vkEnumeratePhysicalDevices>(instance, "vkEnumeratePhysicalDevices");
         uint32_t count = 0;
         check(enumerate(instance, &count, nullptr), "physical device count");
         require(count == 1, "expected one directly linked native provider");
@@ -118,7 +105,7 @@ struct Context {
         auto driver = structure<VkPhysicalDeviceDriverProperties>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES);
         auto properties = structure<VkPhysicalDeviceProperties2>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2);
         properties.pNext = &driver;
-        instance_function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(
+        instance_function<PFN_vkGetPhysicalDeviceProperties2>(instance, "vkGetPhysicalDeviceProperties2")(
             physical, &properties);
         require(driver.driverID == VK_DRIVER_ID_MESA_KOSMICKRISP, "unexpected native provider");
 
@@ -127,7 +114,7 @@ struct Context {
         auto v13 = structure<VkPhysicalDeviceVulkan13Features>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES);
         auto features = structure<VkPhysicalDeviceFeatures2>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2);
         features.pNext = &v11; v11.pNext = &v12; v12.pNext = &v13;
-        instance_function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(physical, &features);
+        instance_function<PFN_vkGetPhysicalDeviceFeatures2>(instance, "vkGetPhysicalDeviceFeatures2")(physical, &features);
         require(v11.multiview && v12.hostQueryReset && v13.dynamicRendering,
                 "native timestamp regression prerequisites unavailable");
         v11 = structure<VkPhysicalDeviceVulkan11Features>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES);
@@ -135,7 +122,7 @@ struct Context {
         v13 = structure<VkPhysicalDeviceVulkan13Features>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES);
         v11.pNext = &v12; v12.pNext = &v13;
         v11.multiview = v12.hostQueryReset = v13.dynamicRendering = VK_TRUE;
-        auto get_families = instance_function<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
+        auto get_families = instance_function<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(instance, "vkGetPhysicalDeviceQueueFamilyProperties");
         get_families(physical, &count, nullptr);
         std::vector<VkQueueFamilyProperties> families(count);
         get_families(physical, &count, families.data());
@@ -144,7 +131,7 @@ struct Context {
             if ((families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT) && families[family].timestampValidBits)
                 break;
         require(family < count, "timestamp graphics queue unavailable");
-        auto enumerate_extensions = instance_function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
+        auto enumerate_extensions = instance_function<PFN_vkEnumerateDeviceExtensionProperties>(instance, "vkEnumerateDeviceExtensionProperties");
         check(enumerate_extensions(physical, nullptr, &count, nullptr), "extension count");
         std::vector<VkExtensionProperties> extensions(count);
         check(enumerate_extensions(physical, nullptr, &count, extensions.data()), "extensions");
@@ -163,7 +150,7 @@ struct Context {
         device_info.pQueueCreateInfos = &queue_info;
         device_info.enabledExtensionCount = static_cast<uint32_t>(enabled.size());
         device_info.ppEnabledExtensionNames = enabled.data();
-        check(instance_function<PFN_vkCreateDevice>("vkCreateDevice")(physical, &device_info, nullptr, &device),
+        check(instance_function<PFN_vkCreateDevice>(instance, "vkCreateDevice")(physical, &device_info, nullptr, &device),
               "vkCreateDevice");
         CALL(GetDeviceQueue, device, family, 0, &queue);
         auto command_info = structure<VkCommandPoolCreateInfo>(VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO);
@@ -189,18 +176,14 @@ struct Context {
         VkMemoryRequirements requirements;
         CALL(GetBufferMemoryRequirements, device, buffer, &requirements);
         VkPhysicalDeviceMemoryProperties memory_properties;
-        instance_function<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(
+        instance_function<PFN_vkGetPhysicalDeviceMemoryProperties>(instance, "vkGetPhysicalDeviceMemoryProperties")(
             physical, &memory_properties);
-        uint32_t type = 0;
         constexpr auto flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-        for (; type < memory_properties.memoryTypeCount; ++type)
-            if ((requirements.memoryTypeBits & (1u << type)) &&
-                (memory_properties.memoryTypes[type].propertyFlags & flags) == flags)
-                break;
-        require(type < memory_properties.memoryTypeCount, "coherent native query-copy buffer unavailable");
+        const auto host_type = memory_type(memory_properties, requirements.memoryTypeBits, flags);
+        require(host_type.has_value(), "coherent native query-copy buffer unavailable");
         auto memory_info = structure<VkMemoryAllocateInfo>(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
         memory_info.allocationSize = requirements.size;
-        memory_info.memoryTypeIndex = type;
+        memory_info.memoryTypeIndex = *host_type;
         CHECK(AllocateMemory, device, &memory_info, nullptr, &memory);
         CHECK(BindBufferMemory, device, buffer, memory, 0);
         CHECK(MapMemory, device, memory, 0, VK_WHOLE_SIZE, 0, &mapped);
@@ -218,14 +201,11 @@ struct Context {
         image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         CHECK(CreateImage, device, &image_info, nullptr, &image);
         CALL(GetImageMemoryRequirements, device, image, &requirements);
-        type = 0;
-        for (; type < memory_properties.memoryTypeCount; ++type)
-            if ((requirements.memoryTypeBits & (1u << type)) &&
-                (memory_properties.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
-                break;
-        require(type < memory_properties.memoryTypeCount, "native color-attachment memory unavailable");
+        const auto device_type =
+            memory_type(memory_properties, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        require(device_type.has_value(), "native color-attachment memory unavailable");
         memory_info.allocationSize = requirements.size;
-        memory_info.memoryTypeIndex = type;
+        memory_info.memoryTypeIndex = *device_type;
         CHECK(AllocateMemory, device, &memory_info, nullptr, &image_memory);
         CHECK(BindImageMemory, device, image, image_memory, 0);
         auto view_info = structure<VkImageViewCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);

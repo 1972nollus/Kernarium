@@ -32,6 +32,7 @@
 #include <cstring>
 #include <mutex>
 #include <netinet/in.h>
+#include <span>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <thread>
@@ -42,6 +43,7 @@ namespace {
 
 using uml::gpu::testing::solidImage;
 using uml::gpu::testing::uploadPrivateTexture;
+using uml::gpu::testing::wholeScanout;
 using uml::testing::require;
 
 constexpr std::uint32_t displayExtent = 64;
@@ -257,19 +259,7 @@ id<MTLTexture> makePrivateScanoutTexture(
 
 [[nodiscard]] uml::gpu::MetalScanout wholeScanout(id<MTLTexture> texture)
 {
-    return uml::gpu::MetalScanout {
-        .texture = (__bridge void*)texture,
-        .sourceWidth = displayExtent,
-        .sourceHeight = displayExtent,
-        .sourceX = 0,
-        .sourceY = 0,
-        .width = displayExtent,
-        .height = displayExtent,
-        .damageX = 0,
-        .damageY = 0,
-        .damageWidth = displayExtent,
-        .damageHeight = displayExtent,
-    };
+    return wholeScanout(texture, displayExtent, displayExtent);
 }
 
 void requireImage(
@@ -466,22 +456,25 @@ id<MTLTexture> makeCornerTexture(
         device, cornerImage(width, height, block, flipped), width, height);
 }
 
-[[nodiscard]] uml::gpu::MetalScanout wholeScanout(
-    id<MTLTexture> texture,
+/* Flushes a 2D guest's whole width x height image, as a scanout flush does. */
+void updateWhole(
+    uml::gpu::Display& display,
+    std::span<const std::uint8_t> pixels,
     std::uint32_t width,
-    std::uint32_t height,
-    bool flipped = false)
+    std::uint32_t height)
 {
-    return uml::gpu::MetalScanout {
-        .texture = (__bridge void*)texture,
-        .sourceWidth = width,
-        .sourceHeight = height,
-        .width = width,
-        .height = height,
-        .damageWidth = width,
-        .damageHeight = height,
-        .flipped = flipped,
-    };
+    display.update(
+        pixels,
+        width,
+        height,
+        static_cast<std::size_t>(width) * 4U,
+        uml::gpu::protocol::GpuFormat::b8g8r8x8Unorm,
+        0,
+        0,
+        0,
+        0,
+        width,
+        height);
 }
 
 void requirePixel(
@@ -626,18 +619,7 @@ void oversizedCpuScanoutIsAspectFitted()
             display.guestScanoutChanged(width, height),
             "the VNC display refused an oversized mode");
         const auto pixels = cornerImage(width, height, block);
-        display.update(
-            pixels,
-            width,
-            height,
-            static_cast<std::size_t>(width) * 4U,
-            uml::gpu::protocol::GpuFormat::b8g8r8x8Unorm,
-            0,
-            0,
-            0,
-            0,
-            width,
-            height);
+        updateWhole(display, pixels, width, height);
         waitFor(
             [&] { return !display.needsFullCpuFallback(); },
             "the scaled CPU frame never reached the framebuffer");
@@ -670,18 +652,7 @@ void lateClientReceivesAStagedCpuFrame()
             display->guestScanoutChanged(width, height),
             "the VNC display refused an oversized mode");
         const auto pixels = cornerImage(width, height, block);
-        display->update(
-            pixels,
-            width,
-            height,
-            static_cast<std::size_t>(width) * 4U,
-            uml::gpu::protocol::GpuFormat::b8g8r8x8Unorm,
-            0,
-            0,
-            0,
-            0,
-            width,
-            height);
+        updateWhole(*display, pixels, width, height);
         const auto port = display->vncPort();
         require(port.has_value() && *port != 0, "VNC display has no port");
         Connection connection {*port};

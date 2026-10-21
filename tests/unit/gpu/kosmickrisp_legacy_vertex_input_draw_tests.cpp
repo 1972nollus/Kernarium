@@ -15,6 +15,7 @@ namespace {
 using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
+using uml::gpu::test::require_venus_when_asked;
 using uml::gpu::test::DrawResult;
 using uml::gpu::test::VertexInputDraw;
 
@@ -73,13 +74,7 @@ int main(int argc, char **argv)
 {
     try {
         DrawContext context(true);
-        if (const char *venus = std::getenv("UML_VULKAN_REQUIRE_VENUS");
-            venus && std::string_view(venus) == "1") {
-            require(context.capabilities().driver_id == VK_DRIVER_ID_MESA_VENUS,
-                    "guest probe did not select Venus");
-            std::puts("UML_VULKAN_PROBE_DEVICE: Venus");
-            std::fflush(stdout);
-        }
+        require_venus_when_asked(context);
         std::array<uint8_t, 32> bytes;
         bytes.fill(0xff);
         const std::array<uint32_t, 2> indices{0, 1};

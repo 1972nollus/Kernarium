@@ -1,6 +1,6 @@
 {
   "architecture_archive_sha256": "b389a93f41504376895b723ed6e9861ce369e2253c138e6f4c46e27e95375887",
-  "cases": 38031,
+  "cases": 38383,
   "kind": "aarch32",
   "oracles": {
     "pi4": {
@@ -17,10 +17,12 @@
       "runner": "qemu-arm -cpu max"
     }
   },
-  "pack_sha256": "2f848ede00b1a9fd1849b5c4fb9c8a5f39beb8921d14005472be4a16a8fdef52",
+  "pack_sha256": "7836fa0d77fe40dce048752006872d29e4269c94471b5816c9e1986ec989a1c5",
   "records": {
     "absent-profile": 751,
     "alu-qemu": 7702,
+    "armv8-convert16-qemu": 192,
+    "armv8-fz16-qemu": 160,
     "armv8-memory-qemu": 69,
     "armv8-qemu": 4324,
     "armv8-system-qemu": 4,

@@ -7,19 +7,14 @@
 // caller states how many bytes it owns there, and an image that would reach
 // past them is refused: the layout comes from a guest.
 
-#include "host_gl_provider.hpp"
+#include "host_gl_test_support.hpp"
 #include "require.hpp"
 
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
 
-extern "C" {
-#include <virglrenderer.h>
-}
-
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -36,6 +31,11 @@ extern "C" {
 
 namespace {
 
+using uml::gpu::testing::colourTarget;
+using uml::gpu::testing::compileShader;
+using uml::gpu::testing::linkProgram;
+using uml::gpu::testing::requireCurrentContext;
+using uml::gpu::testing::TextureStorage;
 using uml::testing::require;
 
 // 'AB24': one plane, red in the first byte, matching PIPE_FORMAT_R8G8B8A8_UNORM.
@@ -43,22 +43,6 @@ constexpr std::int32_t kFourccAbgr8888 = 0x34324241;
 constexpr std::uint32_t kWidth = 256;
 constexpr std::uint32_t kHeight = 128;
 constexpr std::size_t kHostPageSize = 16384;
-
-GLuint compile(GLenum stage, const char* source)
-{
-    const GLuint shader = glCreateShader(stage);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-    GLint compiled = 0;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
-    if (compiled == 0) {
-        char log[4096] {};
-        glGetShaderInfoLog(shader, sizeof log, nullptr, log);
-        std::fprintf(stderr, "shader: %s\n", log);
-        std::exit(1);
-    }
-    return shader;
-}
 
 class HostPages final {
 public:
@@ -102,16 +86,7 @@ void hostPointerImageAliasesTheCallersPages()
     require(extensions != nullptr);
     require(std::strstr(extensions, "EGL_MESA_image_host_pointer") != nullptr);
 
-    virgl_renderer_gl_ctx_param parameters {
-        .version = 2,
-        .shared = false,
-        .major_ver = 4,
-        .minor_ver = 6,
-        .compat_ctx = 0,
-    };
-    void* const context = provider.createContext(parameters);
-    require(context != nullptr);
-    require(provider.makeCurrent(context) == 0);
+    void* const context = requireCurrentContext(provider, 4, 6);
 
     const std::size_t pitch = static_cast<std::size_t>(kWidth) * 4;
     const HostPages pages {pitch, kHeight};
@@ -147,41 +122,26 @@ void hostPointerImageAliasesTheCallersPages()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     require(glGetError() == GL_NO_ERROR);
 
-    GLuint target = 0;
-    glGenTextures(1, &target);
-    glBindTexture(GL_TEXTURE_2D, target);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kWidth, kHeight);
-    GLuint framebuffer = 0;
-    glGenFramebuffers(1, &framebuffer);
-    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-    glFramebufferTexture2D(
-        GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target, 0);
-    require(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+    const auto target =
+        colourTarget(kWidth, kHeight, TextureStorage::immutable);
+    require(target.complete);
 
-    const GLuint program = glCreateProgram();
-    glAttachShader(
-        program,
-        compile(
+    const GLuint program = linkProgram({
+        compileShader(
             GL_VERTEX_SHADER,
             "#version 460 core\n"
             "void main(void) {\n"
             "   vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);\n"
             "   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
-            "}\n"));
-    glAttachShader(
-        program,
-        compile(
+            "}\n"),
+        compileShader(
             GL_FRAGMENT_SHADER,
             "#version 460 core\n"
             "uniform sampler2D src;\n"
             "out vec4 colour;\n"
             "void main(void) {\n"
             "   colour = texelFetch(src, ivec2(gl_FragCoord.xy), 0);\n"
-            "}\n"));
-    glLinkProgram(program);
-    GLint linked = 0;
-    glGetProgramiv(program, GL_LINK_STATUS, &linked);
-    require(linked != 0);
+            "}\n")});
     glUseProgram(program);
     glUniform1i(glGetUniformLocation(program, "src"), 0);
 
@@ -298,8 +258,8 @@ void hostPointerImageAliasesTheCallersPages()
 
     glDeleteProgram(program);
     glDeleteVertexArrays(1, &array);
-    glDeleteFramebuffers(1, &framebuffer);
-    glDeleteTextures(1, &target);
+    glDeleteFramebuffers(1, &target.framebuffer);
+    glDeleteTextures(1, &target.texture);
     glDeleteTextures(1, &texture);
     require(eglDestroyImageKHR(display, image) == EGL_TRUE);
     require(provider.makeCurrent(nullptr) == 0);
