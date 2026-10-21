@@ -332,6 +332,7 @@ enum class A32IdRegister : std::uint8_t {
 [[nodiscard]] inline std::uint32_t a32_id_register_value(
 	const HostCapabilities &host, A32IdRegister which) noexcept
 {
+	using aarch32::Feature;
 	const auto features = a32_features(host);
 	const auto field = [](unsigned value, unsigned position) noexcept {
 		return static_cast<std::uint32_t>(value) << position;
@@ -379,21 +380,21 @@ enum class A32IdRegister : std::uint8_t {
 			field(2, 0);
 	case A32IdRegister::isar5:
 		/* VCMA, RDM, CRC32, SHA2, SHA1, AES (2 with PMULL), SEVL. */
-		return field(flag(features.fcma), 28) |
-			field(flag(features.rdm), 24) |
-			field(flag(features.crc32), 16) |
-			field(flag(features.sha2), 12) |
-			field(flag(features.sha1), 8) |
-			field(features.aes ? (features.pmull ? 2 : 1) : 0, 4) |
+		return field(flag(features.has(Feature::fcma)), 28) |
+			field(flag(features.has(Feature::rdm)), 24) |
+			field(flag(features.has(Feature::crc32)), 16) |
+			field(flag(features.has(Feature::sha2)), 12) |
+			field(flag(features.has(Feature::sha1)), 8) |
+			field(features.has(Feature::aes) ? (features.has(Feature::pmull) ? 2 : 1) : 0, 4) |
 			field(1, 0);
 	case A32IdRegister::isar6:
 		/* I8MM, BF16, SB, FHM, DP and JSCVT; SPECRES stays 0. */
-		return field(flag(features.i8mm), 24) |
-			field(flag(features.bf16), 20) |
-			field(flag(features.sb), 12) |
-			field(flag(features.fhm), 8) |
-			field(flag(features.dotprod), 4) |
-			field(flag(features.jscvt), 0);
+		return field(flag(features.has(Feature::i8mm)), 24) |
+			field(flag(features.has(Feature::bf16)), 20) |
+			field(flag(features.has(Feature::sb)), 12) |
+			field(flag(features.has(Feature::fhm)), 8) |
+			field(flag(features.has(Feature::dotprod)), 4) |
+			field(flag(features.has(Feature::jscvt)), 0);
 	case A32IdRegister::mvfr0:
 		/* FPRound, FPSqrt, FPDivide, FPDP 2 and FPSP 2 (VFPv3 and later)
 		 * and SIMDReg 2 (32 doubleword registers); FPShVec 0, since
@@ -406,8 +407,8 @@ enum class A32IdRegister : std::uint8_t {
 		 * the half-precision fields: FPHP 1 for the single-precision
 		 * conversions, 2 with the double-precision ones, 3 with FP16
 		 * arithmetic; SIMDHP 1 for the conversions, 2 with arithmetic. */
-		return field(1, 28) | field(features.fp16 ? 3 : 2, 24) |
-			field(features.fp16 ? 2 : 1, 20) | field(1, 16) |
+		return field(1, 28) | field(features.has(Feature::fp16) ? 3 : 2, 24) |
+			field(features.has(Feature::fp16) ? 2 : 1, 20) | field(1, 16) |
 			field(1, 12) | field(1, 8) | field(1, 4) | field(1, 0);
 	case A32IdRegister::mvfr2:
 		/* FPMisc 4 (VSEL, VMAXNM, VMINNM, VRINT, VCVT with a rounding

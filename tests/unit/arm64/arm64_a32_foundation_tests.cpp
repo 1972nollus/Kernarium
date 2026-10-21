@@ -124,42 +124,13 @@ void state_is_appended_at_the_pinned_offsets()
 /* Each host-dependent part follows exactly its A64 host predicate. */
 void features_follow_the_host()
 {
-	require(arm64::a32_features(HostCapabilities{}) == arm64::A32Features{});
-
-	const auto features = arm64::a32_features(full_host());
-	require(features.crc32 && features.aes && features.pmull &&
-		features.sha1 && features.sha2 && features.fp16 &&
-		features.dotprod && features.fhm && features.bf16 &&
-		features.i8mm && features.sb && features.rdm && features.fcma &&
-		features.jscvt);
+	namespace dec = arm64::aarch32;
+	require(arm64::a32_features(HostCapabilities{}) == dec::FeatureSet{});
+	require(arm64::a32_features(full_host()) == dec::FeatureSet::all());
 
 	for (unsigned bits = 0; bits < 1U << predicate_count; ++bits) {
 		const auto each = predicates_of(bits);
 		const auto got = arm64::a32_features(host_with(each));
-		require(got.crc32 == each.crc32 && got.aes == each.aes &&
-			got.pmull == (each.aes && each.pmull) &&
-			got.sha1 == each.sha1 && got.sha2 == each.sha2 &&
-			got.fp16 == each.fp16 && got.dotprod == each.dotprod &&
-			got.fhm == each.fhm && got.bf16 == each.bf16 &&
-			got.i8mm == each.i8mm && got.sb == each.sb &&
-			got.rdm == each.rdm && got.fcma == each.fcma &&
-			got.jscvt == each.jscvt, "a feature does not follow its host predicate");
-	}
-}
-
-/* The decoder's profile is exactly what the guest is shown: of the optional
- * extensions only the ones the host has, so a form of any other extension is
- * UNDEFINED. */
-void decode_profile_is_what_the_guest_is_shown()
-{
-	namespace dec = arm64::aarch32;
-	require(arm64::a32_decode_profile(full_host()).features ==
-		dec::FeatureSet::all());
-	require(arm64::a32_decode_profile(HostCapabilities{}).features ==
-		dec::FeatureSet{});
-	for (unsigned bits = 0; bits < 1U << predicate_count; ++bits) {
-		const auto each = predicates_of(bits);
-		const auto got = arm64::a32_decode_profile(host_with(each)).features;
 		require(got.has(dec::Feature::crc32) == each.crc32 &&
 			got.has(dec::Feature::aes) == each.aes &&
 			got.has(dec::Feature::pmull) == (each.aes && each.pmull) &&
@@ -174,7 +145,20 @@ void decode_profile_is_what_the_guest_is_shown()
 			got.has(dec::Feature::rdm) == each.rdm &&
 			got.has(dec::Feature::fcma) == each.fcma &&
 			got.has(dec::Feature::jscvt) == each.jscvt,
-			"a decoded extension does not follow its host predicate");
+			"a feature does not follow its host predicate");
+	}
+}
+
+/* The decoder's profile is exactly what the guest is shown: of the optional
+ * extensions only the ones the host has, so a form of any other extension is
+ * UNDEFINED. */
+void decode_profile_is_what_the_guest_is_shown()
+{
+	for (unsigned bits = 0; bits < 1U << predicate_count; ++bits) {
+		const auto host = host_with(predicates_of(bits));
+		require(arm64::a32_decode_profile(host).features ==
+				arm64::a32_features(host),
+			"the decoder's profile is not what the guest is shown");
 	}
 }
 

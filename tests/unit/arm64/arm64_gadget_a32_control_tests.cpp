@@ -36,6 +36,7 @@
 #include <cstdio>
 #include <memory>
 #include <memory_resource>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -2576,8 +2577,8 @@ void single_stepped_floating_point_loads_the_deferred_vectors()
 struct FeatureWord {
 	const char *what;
 	std::uint32_t word;
-	bool arm64::A32Features::*feature; /* null: needs no extension */
-	bool library;                      /* no gadget: the library runs it */
+	std::optional<aarch32::Feature> feature; /* none: needs no extension */
+	bool library;                            /* no gadget: the library runs it */
 };
 
 [[nodiscard]] ::uml::cpu::HostCapabilities bare_host()
@@ -2591,34 +2592,34 @@ struct FeatureWord {
 
 void host_features_decide_what_the_guest_may_execute()
 {
-	using F = arm64::A32Features;
+	using F = aarch32::Feature;
 	const FeatureWord words[] = {
-		{"crc32w r0, r1, r2", 0xe141'0042U, &F::crc32, false},
-		{"crc32cb r0, r1, r2", 0xe101'0242U, &F::crc32, false},
-		{"vsdot.s8 d0, d1, d2", 0xfc21'0d02U, &F::dotprod, false},
-		{"vudot.u8 q0, q1, q2", 0xfc22'0d54U, &F::dotprod, false},
-		{"vsdot.s8 d0, d1, d2[1]", 0xfe21'0d22U, &F::dotprod, false},
-		{"vqrdmlah.s16 d0, d1, d2", 0xf311'0b12U, &F::rdm, false},
-		{"vqrdmlsh.s32 q0, q1, q2", 0xf322'0c54U, &F::rdm, false},
-		{"vqrdmlah.s16 d0, d1, d2[1]", 0xf291'0e4aU, &F::rdm, false},
-		{"vcadd.f32 d0, d1, d2, #90", 0xfc91'0802U, &F::fcma, false},
-		{"vcmla.f32 q0, q1, q2, #180", 0xfd32'0844U, &F::fcma, false},
-		{"vcmla.f32 d0, d1, d2[0], #90", 0xfe91'0802U, &F::fcma, false},
-		{"vfmal.f16 d0, s2, s4", 0xfc21'0812U, &F::fhm, false},
-		{"vfmsl.f16 q0, d2, d4", 0xfca2'0854U, &F::fhm, false},
-		{"vadd.f16 s0, s1, s2", 0xee30'0981U, &F::fp16, false},
-		{"vcvt.s32.f16 s0, s1", 0xeebd'09e0U, &F::fp16, false},
-		{"vmov.f16 s0, #1.0", 0xeeb7'0900U, &F::fp16, false},
-		{"vldr.16 s0, [r2]", 0xed92'0900U, &F::fp16, false},
-		{"aese.8 q0, q1", 0xf3b0'0302U, &F::aes, false},
-		{"sha1c.32 q0, q1, q2", 0xf202'0c44U, &F::sha1, false},
-		{"vmull.p64 q0, d1, d2", 0xf2a1'0e02U, &F::pmull, false},
-		{"vdot.bf16 d0, d1, d2", 0xfc01'0d02U, &F::bf16, true},
-		{"vusdot.s8 d0, d1, d2", 0xfca1'0d02U, &F::i8mm, true},
-		{"vjcvt.s32.f64 s0, d1", 0xeeb9'0bc1U, &F::jscvt, true},
+		{"crc32w r0, r1, r2", 0xe141'0042U, F::crc32, false},
+		{"crc32cb r0, r1, r2", 0xe101'0242U, F::crc32, false},
+		{"vsdot.s8 d0, d1, d2", 0xfc21'0d02U, F::dotprod, false},
+		{"vudot.u8 q0, q1, q2", 0xfc22'0d54U, F::dotprod, false},
+		{"vsdot.s8 d0, d1, d2[1]", 0xfe21'0d22U, F::dotprod, false},
+		{"vqrdmlah.s16 d0, d1, d2", 0xf311'0b12U, F::rdm, false},
+		{"vqrdmlsh.s32 q0, q1, q2", 0xf322'0c54U, F::rdm, false},
+		{"vqrdmlah.s16 d0, d1, d2[1]", 0xf291'0e4aU, F::rdm, false},
+		{"vcadd.f32 d0, d1, d2, #90", 0xfc91'0802U, F::fcma, false},
+		{"vcmla.f32 q0, q1, q2, #180", 0xfd32'0844U, F::fcma, false},
+		{"vcmla.f32 d0, d1, d2[0], #90", 0xfe91'0802U, F::fcma, false},
+		{"vfmal.f16 d0, s2, s4", 0xfc21'0812U, F::fhm, false},
+		{"vfmsl.f16 q0, d2, d4", 0xfca2'0854U, F::fhm, false},
+		{"vadd.f16 s0, s1, s2", 0xee30'0981U, F::fp16, false},
+		{"vcvt.s32.f16 s0, s1", 0xeebd'09e0U, F::fp16, false},
+		{"vmov.f16 s0, #1.0", 0xeeb7'0900U, F::fp16, false},
+		{"vldr.16 s0, [r2]", 0xed92'0900U, F::fp16, false},
+		{"aese.8 q0, q1", 0xf3b0'0302U, F::aes, false},
+		{"sha1c.32 q0, q1, q2", 0xf202'0c44U, F::sha1, false},
+		{"vmull.p64 q0, d1, d2", 0xf2a1'0e02U, F::pmull, false},
+		{"vdot.bf16 d0, d1, d2", 0xfc01'0d02U, F::bf16, true},
+		{"vusdot.s8 d0, d1, d2", 0xfca1'0d02U, F::i8mm, true},
+		{"vjcvt.s32.f64 s0, d1", 0xeeb9'0bc1U, F::jscvt, true},
 		/* The Armv8 floating-point additions every host has. */
-		{"vmaxnm.f32 d0, d1, d2", 0xf301'0f12U, nullptr, false},
-		{"vrinta.f32 d0, d1", 0xf3ba'0501U, nullptr, false},
+		{"vmaxnm.f32 d0, d1, d2", 0xf301'0f12U, std::nullopt, false},
+		{"vrinta.f32 d0, d1", 0xf3ba'0501U, std::nullopt, false},
 	};
 	const auto machine = ::uml::cpu::host_capabilities();
 	const auto bare = bare_host();
@@ -2667,11 +2668,11 @@ void host_features_decide_what_the_guest_may_execute()
 		};
 		const auto native = run(machine);
 		const auto library = run(bare);
-		const bool on_machine = item.feature == nullptr ||
-					machine_features.*item.feature;
+		const bool on_machine = !item.feature ||
+					machine_features.has(*item.feature);
 		expect(native, on_machine, "the machine");
-		expect(library, item.feature == nullptr, "a host with no extension");
-		if (on_machine && item.feature == nullptr) {
+		expect(library, !item.feature, "a host with no extension");
+		if (on_machine && !item.feature) {
 			for (unsigned n = 0; n < 16; ++n)
 				require(reg(native.cpu, n) == reg(library.cpu, n), item.what);
 			for (unsigned n = 0; n < 8; ++n)
