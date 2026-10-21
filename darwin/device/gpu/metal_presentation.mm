@@ -710,13 +710,7 @@ struct MetalPresentationState final :
         if (frameStatisticsInterval() <= 0.0)
             return;
         const DisplayStatistics total = snapshot();
-        displayActivityLog().record(
-            "stats display=native final guest=%llu presented=%llu "
-            "dropped=%llu cpu-fallback=%llu",
-            static_cast<unsigned long long>(total.guestFrames),
-            static_cast<unsigned long long>(total.presentedFrames),
-            static_cast<unsigned long long>(total.droppedFrames),
-            static_cast<unsigned long long>(total.cpuFallbackFrames));
+        recordDisplayStatistics("native", true, total);
         std::fprintf(
             stderr,
             "Native display final: guest %llu presented %llu dropped %llu "
@@ -758,13 +752,7 @@ struct MetalPresentationState final :
         reportedPresentedFrames = total.presentedFrames;
         reportedDroppedFrames = total.droppedFrames;
         reportedCpuFallbackFrames = total.cpuFallbackFrames;
-        displayActivityLog().record(
-            "stats display=native guest=%llu presented=%llu dropped=%llu "
-            "cpu-fallback=%llu",
-            static_cast<unsigned long long>(total.guestFrames),
-            static_cast<unsigned long long>(total.presentedFrames),
-            static_cast<unsigned long long>(total.droppedFrames),
-            static_cast<unsigned long long>(total.cpuFallbackFrames));
+        recordDisplayStatistics("native", false, total);
         std::fprintf(
             stderr,
             "Native display frames: guest %.1f/s presented %.1f/s dropped "

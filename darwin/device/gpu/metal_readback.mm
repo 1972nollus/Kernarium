@@ -809,15 +809,7 @@ struct MetalReadbackState final :
         if (!final && now - reportedAt < std::chrono::seconds(1))
             return;
         reportedAt = now;
-        const auto total = snapshot();
-        activity.record(
-            "stats display=vnc%s guest=%llu presented=%llu dropped=%llu "
-            "cpu-fallback=%llu",
-            final ? " final" : "",
-            static_cast<unsigned long long>(total.guestFrames),
-            static_cast<unsigned long long>(total.presentedFrames),
-            static_cast<unsigned long long>(total.droppedFrames),
-            static_cast<unsigned long long>(total.cpuFallbackFrames));
+        recordDisplayStatistics("vnc", final, snapshot());
     }
 
     DisplayStatistics snapshot() const noexcept
