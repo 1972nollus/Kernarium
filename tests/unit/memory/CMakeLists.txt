@@ -35,11 +35,8 @@ if(TARGET uml_native_mmu_test_variant)
     target_link_libraries(uml_native_window_reservation_tests PRIVATE
         UML::BridgeAbi
         UML::MemoryTestComponent)
-    # The native-window placement helper is shared with the ARM64 white-box
-    # MMU tests and has no architecture content of its own.
     target_include_directories(uml_native_window_reservation_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
     # The test asserts where the host places allocations, which a concurrent
     # VM-heavy test can perturb.
     uml_add_unit_test(NAME memory-native-window-reservation
@@ -57,8 +54,7 @@ if(TARGET uml_native_mmu_test_variant)
         UML::BridgeAbi
         UML::MemoryTestComponent)
     target_include_directories(uml_native_direct_conversion_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
     # Like the other native-window tests, it maps at fixed window addresses
     # that a concurrent VM-heavy test can occupy.
     uml_add_unit_test(NAME memory-native-direct-conversion
@@ -134,8 +130,7 @@ target_link_libraries(uml_native_mmu_tests PRIVATE
     UML::BridgeAbi
     UML::MemorySharedBacking)
 target_include_directories(uml_native_mmu_tests PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
-    ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
 target_compile_definitions(uml_native_mmu_tests PRIVATE
     UML_MEMORY_ALLOCATION_TESTING=1)
 uml_add_unit_test(NAME native-4k-shadow-mmu COMMAND uml_native_mmu_tests)

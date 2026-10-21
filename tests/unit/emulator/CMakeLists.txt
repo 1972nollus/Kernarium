@@ -3,8 +3,8 @@
 # Emulator product tests: options, the C API boundary, the run API, and
 # native-window admission and ownership. Runs enter a test kernel image
 # through the emulator test variant (darwin/emulator/src/testing.hpp). The
-# native-window helpers are shared with the ARM64 white-box tests; every test
-# here links the shared-backing archive MappedBacking references.
+# native-window helpers live in tests/unit/memory; every test here links the
+# shared-backing archive MappedBacking references.
 
 add_executable(uml_emulator_c_api_boundary_tests
     emulator_c_api_boundary_tests.cpp)
@@ -48,7 +48,7 @@ target_link_libraries(uml_emulator_api_tests PRIVATE
     uml_test_allocation_failure)
 target_include_directories(uml_emulator_api_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
-    ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+    ${PROJECT_SOURCE_DIR}/tests/unit/memory)
 target_compile_definitions(uml_emulator_api_tests PRIVATE
     UML_EMULATOR_TEST_HAS_KERNEL_RUNNER=$<BOOL:${UML_BUILD_KERNEL_RUNNER}>
     UML_EMULATOR_TEST_HAS_SLIRP=$<BOOL:${UML_BUILD_NETWORK_PROVIDER}>)
@@ -66,7 +66,7 @@ target_link_libraries(uml_native_4k_admission_tests PRIVATE
 target_include_directories(uml_native_4k_admission_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
-    ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+    ${PROJECT_SOURCE_DIR}/tests/unit/memory)
 uml_add_unit_test(
     NAME emulator-native-4k-admission
     COMMAND uml_native_4k_admission_tests
