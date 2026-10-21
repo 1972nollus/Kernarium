@@ -178,6 +178,14 @@ public:
                       if (const auto flags = weakNotifications.lock())
                           flags->signal(flags->configurationChanged);
                     }];
+        /* iOS 27 deprecates this notification for
+         * AVAudioSessionDidBecomeInactiveNotification and
+         * AVAudioSessionResumptionRecommendationNotification. It is still
+         * posted, and the sink resumes on every end it reports; the
+         * replacements carry a resume recommendation instead, so moving to
+         * them needs a device test of an interruption. */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         interruptionObserver_ = [[NSNotificationCenter defaultCenter]
             addObserverForName:AVAudioSessionInterruptionNotification
                         object:[AVAudioSession sharedInstance]
@@ -195,6 +203,7 @@ public:
                           flags->signal(flags->interruptionEnded);
                       }
                     }];
+#pragma clang diagnostic pop
 #endif
     }
 
