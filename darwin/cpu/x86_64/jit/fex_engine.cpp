@@ -56,11 +56,6 @@ static_assert(callret_size / 2 >= maximum_dispatch_budget * 16,
 constexpr std::size_t maximum_spaces = 8;
 
 constexpr std::uint64_t user_rflags_mask = 0x0000'0000'003f'7fd5ULL;
-constexpr std::uint32_t mxcsr_denormals_are_zero = 1U << 6U;
-constexpr std::uint32_t mxcsr_flush_to_zero = 1U << 15U;
-constexpr std::uint64_t rflags_trap_flag = 1ULL << 8U;
-constexpr std::uint64_t rflags_resume_flag = 1ULL << 16U;
-constexpr std::uint64_t rflags_alignment_check = 1ULL << 18U;
 
 /* UML_X86_FATAL_TRACE, which the gadget runtime also reads, sends FEXCore's
  * own messages and every #UD to stderr. Diagnostic only: the guest console
@@ -1222,7 +1217,7 @@ void load_state(Space &space, const CpuState &cpu) noexcept
 	/* RF only suppresses instruction breakpoints, which this engine has
 	 * none of, and is gone once the first instruction completes. */
 	space.context->SetFlagsFromCompactedEFLAGS(thread,
-		static_cast<std::uint32_t>(cpu.rflags & user_rflags_mask & ~rflags_resume_flag));
+		static_cast<std::uint32_t>(cpu.rflags & user_rflags_mask & ~rflags_resume));
 
 	std::array<__uint128_t, 16> low{};
 	std::array<__uint128_t, 16> high{};
@@ -1288,7 +1283,7 @@ void save_state(Space &space, CpuState &cpu) noexcept
 	const auto flags = space.context->ReconstructCompactedEFLAGS(thread, false, nullptr, 0);
 	/* Every instruction that completes clears RF; the runtime sets it again
 	 * for a fault. */
-	cpu.rflags = ((flags & user_rflags_mask) & ~rflags_resume_flag) | 2U;
+	cpu.rflags = ((flags & user_rflags_mask) & ~rflags_resume) | 2U;
 	cpu.deferred_flags = {};
 
 	std::array<__uint128_t, 16> low{};
@@ -1600,7 +1595,7 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	 * the model completes it, or checks it for a run of it alone. A task
 	 * whose ES, SS or DS has a base or a limit runs every instruction that
 	 * way. */
-	const bool stepping = (cpu.rflags & rflags_trap_flag) != 0;
+	const bool stepping = (cpu.rflags & rflags_trap) != 0;
 	const auto budget = std::max<std::size_t>(request.instruction_budget, 1);
 	std::size_t retired = 0;
 	bool check = false;
@@ -1739,7 +1734,7 @@ JitRunResult FexEngine::dispatch(CpuState &cpu, GuestAddressSpace &memory, const
 	impl_->memory = &memory;
 	impl_->execution_context = request.execution_context;
 	impl_->interrupt = request.interrupt;
-	impl_->stepping = (cpu.rflags & rflags_trap_flag) != 0;
+	impl_->stepping = (cpu.rflags & rflags_trap) != 0;
 
 	auto *thread = space->thread;
 	auto *frame = thread->CurrentFrame;
@@ -1846,7 +1841,7 @@ JitRunResult FexEngine::dispatch(CpuState &cpu, GuestAddressSpace &memory, const
 		/* Stopped between the elements of a repeated string instruction:
 		 * x86 shows RF in the interrupted frame, and raises #DB after each
 		 * iteration under TF. */
-		cpu.rflags |= rflags_resume_flag;
+		cpu.rflags |= rflags_resume;
 		result.reason = impl_->stepping ? ::uml::cpu::ExitReason::single_step :
 			::uml::cpu::ExitReason::instruction_budget;
 		return run;
