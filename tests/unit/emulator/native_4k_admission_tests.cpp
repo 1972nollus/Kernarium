@@ -4,6 +4,7 @@
 #include "emulator_test_support.hpp"
 #include "native_window_test_support.hpp"
 #include "require.hpp"
+#include "run_window_slot.hpp"
 #include "scratch_backing.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
@@ -14,8 +15,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <mach/mach.h>
-#include <mach/mach_vm.h>
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
@@ -35,63 +34,9 @@ constexpr std::string_view backing_name = "uml-native-admission-XXXXXX";
  * from becoming an earlier, independent serialization boundary. */
 constexpr char admission_engine_argument[] = "--execution-engine=gadgets";
 
+using uml::testing::RunWindowSlot;
 using uml::testing::make_emulator;
 using uml::testing::require;
-
-/* A run maps its kernel window where an embedded kernel's run does; default
- * options give the guest 256 MiB. */
-constexpr std::size_t run_guest_memory = 256U * 1024U * 1024U;
-
-/* A free host page inside that window. */
-class NativeSlot final {
-public:
-	NativeSlot() : size_{static_cast<std::size_t>(getpagesize())}
-	{
-		const auto window =
-			uml::emulator::testing::native_kernel_window(run_guest_memory);
-		require(window.start != 0, "could not derive the run's native window");
-		for (auto candidate = window.start;
-		     base_ == 0 && candidate <= window.end - size_;
-		     candidate += size_) {
-			mach_vm_address_t reservation = candidate;
-			if (mach_vm_allocate(mach_task_self(), &reservation, size_,
-				    VM_FLAGS_FIXED) == KERN_SUCCESS)
-				base_ = static_cast<std::uintptr_t>(reservation);
-		}
-		require(base_ != 0,
-			"could not reserve native admission slot in the run's window");
-		require(mach_vm_deallocate(mach_task_self(), base_, size_) ==
-				KERN_SUCCESS,
-			"could not release native admission reservation");
-	}
-
-	~NativeSlot() = default;
-
-	NativeSlot(const NativeSlot &) = delete;
-	NativeSlot &operator=(const NativeSlot &) = delete;
-
-	[[nodiscard]] std::uintptr_t page() const noexcept
-	{
-		return base_ + DARWIN_UML_GUEST_PAGE_SIZE;
-	}
-
-	void require_released() const
-	{
-		require(released(),
-			"native admission slot remained mapped after run");
-	}
-
-	/* Retirement hands the slot back to the guest window's reservation, not
-	 * to the process, so the slot carries no mapping and is not free. */
-	[[nodiscard]] bool released() const noexcept
-	{
-		return uml::testing::released_into_native_window(base_, size_);
-	}
-
-private:
-	std::uintptr_t base_{};
-	std::size_t size_{};
-};
 
 struct KernelState final {
 	std::uintptr_t address{};
@@ -143,7 +88,7 @@ int kernel_b(int, char *const[], char *const[]) { return run_kernel(state_b); }
 struct AdmissionState final {
 	std::mutex mutex;
 	std::condition_variable changed;
-	const NativeSlot *retiring_slot{};
+	const RunWindowSlot *retiring_slot{};
 	int retiring_fd{-1};
 	std::uint8_t retiring_value{};
 	bool handle_admitted{};
@@ -179,7 +124,7 @@ void before_gate_release(void *opaque) noexcept
 		value == state.retiring_value;
 	const bool retired =
 		uml::memory::testing::native_domain_count() == 0 &&
-		state.retiring_slot != nullptr && state.retiring_slot->released() &&
+		state.retiring_slot != nullptr && state.retiring_slot->retired() &&
 		backing_flushed;
 	{
 		std::lock_guard lock{state.mutex};
@@ -247,7 +192,7 @@ bool wait_for_admission(AdmissionState &state)
 	});
 }
 
-void test_same_address_is_serialized_and_isolated(const NativeSlot &slot)
+void test_same_address_is_serialized_and_isolated(const RunWindowSlot &slot)
 {
 	ScratchBacking backing_a{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing_a.put_byte(0, std::byte{0x19});
@@ -297,10 +242,10 @@ void test_same_address_is_serialized_and_isolated(const NativeSlot &slot)
 		"serialized same-address kernels flushed the wrong backing");
 	require(uml::memory::testing::native_domain_count() == 0,
 		"same-address serialization retained a native MMU domain");
-	slot.require_released();
+	require(slot.retired(), "native admission slot remained mapped after run");
 }
 
-void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
+void test_queued_stop_cancels_and_retry_is_fresh(const RunWindowSlot &slot)
 {
 	ScratchBacking backing_a{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing_a.put_byte(0, std::byte{0x35});
@@ -375,7 +320,7 @@ void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 		"queued stop or retry crossed native backing bytes");
 	require(uml::memory::testing::native_domain_count() == 0,
 		"queued stop or retry retained a native MMU domain");
-	slot.require_released();
+	require(slot.retired(), "native admission slot remained mapped after run");
 }
 
 } // namespace
@@ -391,7 +336,8 @@ int main()
 		 * build. */
 		uml::emulator::testing::place_native_kernel_window(
 			uml::testing::native_test_window_start);
-		NativeSlot slot;
+		RunWindowSlot slot;
+		slot.release();
 		test_same_address_is_serialized_and_isolated(slot);
 		test_queued_stop_cancels_and_retry_is_fresh(slot);
 		return EXIT_SUCCESS;

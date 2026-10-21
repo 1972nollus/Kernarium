@@ -11,6 +11,7 @@
 #include "platform/apple/host_features.hpp"
 #include "platform/run_routing.hpp"
 #include "require.hpp"
+#include "run_window_slot.hpp"
 #include "runtime/context.hpp"
 #include "scratch_backing.hpp"
 #include "testing.hpp"
@@ -28,8 +29,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <mach/mach.h>
-#include <mach/mach_vm.h>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -156,65 +155,7 @@ using uml::testing::ScratchBacking;
 
 constexpr std::string_view backing_name = "uml-emulator-native-shadow-XXXXXX";
 
-/* A run maps its kernel window where an embedded kernel's run does; default
- * options give the guest 256 MiB. */
-constexpr std::size_t run_guest_memory = 256U * 1024U * 1024U;
-
-class ReservedNativeSlot final {
-public:
-	ReservedNativeSlot()
-		: size_{static_cast<std::size_t>(getpagesize())}
-	{
-		const auto window =
-			uml::emulator::testing::native_kernel_window(run_guest_memory);
-		require(window.start != 0, "could not derive the run's native window");
-		for (auto candidate = window.start;
-		     address_ == 0 && candidate <= window.end - size_;
-		     candidate += size_) {
-			mach_vm_address_t reservation = candidate;
-			if (mach_vm_allocate(mach_task_self(), &reservation, size_,
-				    VM_FLAGS_FIXED) == KERN_SUCCESS)
-				address_ = static_cast<std::uintptr_t>(reservation);
-		}
-		require(address_ != 0,
-			"could not reserve native-shadow host slot in the run's window");
-	}
-
-	~ReservedNativeSlot()
-	{
-		if (!released_)
-			(void)mach_vm_deallocate(mach_task_self(), address_, size_);
-	}
-
-	ReservedNativeSlot(const ReservedNativeSlot &) = delete;
-	ReservedNativeSlot &operator=(const ReservedNativeSlot &) = delete;
-
-	void release()
-	{
-		require(!released_ &&
-			mach_vm_deallocate(mach_task_self(), address_, size_) ==
-				KERN_SUCCESS,
-			"could not release native-shadow slot reservation");
-		released_ = true;
-	}
-
-	[[nodiscard]] std::uintptr_t page() const noexcept
-	{
-		return address_ + DARWIN_UML_GUEST_PAGE_SIZE;
-	}
-
-	/* Retirement hands the slot back to the run's window reservation, so it
-	 * carries no mapping and is not free. */
-	[[nodiscard]] bool retired() const noexcept
-	{
-		return uml::testing::released_into_native_window(address_, size_);
-	}
-
-private:
-	std::uintptr_t address_{};
-	std::size_t size_{};
-	bool released_{};
-};
+using uml::testing::RunWindowSlot;
 
 int native_shadow_kernel(NativeShadowKernelState &state)
 {
@@ -518,7 +459,7 @@ void test_run_boundary()
 
 
 void test_native_shadow_domains_retire_on_every_handle_exit(
-	ReservedNativeSlot &slot)
+	RunWindowSlot &slot)
 {
 	ScratchBacking backing_a{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing_a.put_byte(0, std::byte{0x31});
@@ -708,7 +649,7 @@ int main()
 		test_stop_requests_belong_to_one_run();
 		test_run_boundary();
 		{
-			ReservedNativeSlot native_shadow_slot;
+			RunWindowSlot native_shadow_slot;
 			test_native_shadow_domains_retire_on_every_handle_exit(
 				native_shadow_slot);
 		}
