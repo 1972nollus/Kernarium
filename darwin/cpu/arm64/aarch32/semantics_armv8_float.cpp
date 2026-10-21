@@ -10,6 +10,7 @@
 #include "cpu/arm64/aarch32/semantics_fp.hpp"
 #include "cpu/arm64/aarch32/semantics_fp_convert.hpp"
 #include "cpu/arm64/aarch32/semantics_vector.hpp"
+#include "cpu/arm64/detail/half_fused_long.hpp"
 
 #include <iterator>
 
@@ -330,10 +331,12 @@ bool vcmla_s(Exec &x)
 }
 
 /* VFMAL and VFMSL: addend + a * b of half-precision elements, accumulated
- * into single-precision lanes. The widening is exact, so the host's fused
- * single-precision multiply-add rounds once, as FPMulAddH() does. The
- * elements of the n (and m) operand are the low halves for the first D
- * register of the result and the high halves for the second. */
+ * into single-precision lanes. FPMulAddH() unpacks each half with FPUnpack
+ * (AHP ignored, FZ16 flushing a denormal) under the Standard FPSCR value and
+ * rounds once; the A64 FMLAL and FMLSL helper does the same, and returns the
+ * flags the one fused multiply-add raised. The elements of the n (and m)
+ * operand are the low halves for the first D register of the result and the
+ * high halves for the second. */
 template<bool Scalar>
 bool vfmal(Exec &x)
 {
@@ -346,27 +349,22 @@ bool vfmal(Exec &x)
 	const uint64_t operand1 = regs == 2U ? x.d_reg(n) : uint64_t{x.s_reg(n)};
 	const uint64_t operand2 = regs == 2U ? x.d_reg(m) : uint64_t{x.s_reg(m)};
 	const unsigned index = Scalar ? static_cast<unsigned>(o.index_value) : 0U;
+	const uint32_t fpcr = fp::standard_fpcr(x.cpu.fpcr);
 	std::array<uint64_t, 2> old{};
 	for (unsigned r = 0; r < regs; ++r)
 		old[r] = x.d_reg(d + r);
 	std::array<uint64_t, 2> result{};
-	/* The arithmetic is IEEE half precision whatever FPSCR.AHP says, and the
-	 * conversion to single honors AHP, so it is clear here. */
-	fp::run(x.cpu, fp::standard_fpcr(x.cpu.fpcr) & ~fp::fpcr_ahp, [&] {
-		for (unsigned r = 0; r < regs; ++r) {
-			for (unsigned e = 0; e < 2U; ++e) {
-				uint32_t element1 = static_cast<uint16_t>(lane(operand1, 2U * r + e, 16));
-				const uint32_t element2 = static_cast<uint16_t>(
-					lane(operand2, Scalar ? index : 2U * r + e, 16));
-				if (subtract)
-					element1 ^= 0x8000U;
-				const uint32_t addend = static_cast<uint32_t>(lane(old[r], e, 32));
-				result[r] = with_lane(result[r], e, 32,
-					fp::fused(addend, fp::half_to_single(element1), fp::half_to_single(element2)));
-			}
+	for (unsigned r = 0; r < regs; ++r) {
+		for (unsigned e = 0; e < 2U; ++e) {
+			const auto fused = ::uml::cpu::arm64::detail::half_fused_multiply_add(
+				static_cast<uint32_t>(lane(old[r], e, 32)),
+				static_cast<uint16_t>(lane(operand1, 2U * r + e, 16)),
+				static_cast<uint16_t>(lane(operand2, Scalar ? index : 2U * r + e, 16)),
+				subtract, fpcr);
+			result[r] = with_lane(result[r], e, 32, fused.bits);
+			x.cpu.fpsr |= fused.exceptions;
 		}
-		return 0;
-	});
+	}
 	for (unsigned r = 0; r < regs; ++r)
 		x.set_d_reg(d + r, result[r]);
 	return true;
