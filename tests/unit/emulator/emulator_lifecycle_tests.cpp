@@ -9,24 +9,19 @@
 #include "uml/emulator.h"
 #include "emulator_test_support.hpp"
 #include "guest_console.hpp"
+#include "guest_console_test_support.hpp"
 #include "guest_hibernation.hpp"
 #include "require.hpp"
 #include "testing.hpp"
 #include "wait_until.hpp"
 
-#include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
-#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
-#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <poll.h>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
@@ -38,56 +33,11 @@
 
 namespace {
 
+using uml::testing::awaitRequest;
+using uml::testing::bindServer;
+using uml::testing::receiveRequest;
 using uml::testing::require;
-
-constexpr std::size_t maximumConsoleData = 512U;
-
-struct Request final {
-	std::uint32_t magic;
-	std::uint32_t version;
-	std::uint32_t length;
-	std::array<char, maximumConsoleData> data;
-};
-
-struct Reply final {
-	std::uint32_t error;
-	std::uint32_t more;
-	std::uint32_t length;
-	std::array<char, maximumConsoleData> data;
-};
-
-/* The console directory goes in a private $TMPDIR, so that this test neither
- * races other runs over the shared one nor leaves anything in it. */
-class PrivateTemporaryDirectory final {
-public:
-	PrivateTemporaryDirectory()
-	{
-		std::array<char, 1024> base {};
-		const auto length = ::confstr(_CS_DARWIN_USER_TEMP_DIR,
-			base.data(), base.size());
-		require(length > 0U && length <= base.size());
-		std::string pattern {base.data()};
-		if (!pattern.ends_with('/'))
-			pattern += '/';
-		pattern += "uml-lifecycle-test.XXXXXX";
-		require(::mkdtemp(pattern.data()) != nullptr);
-		path_ = std::move(pattern);
-		require(::setenv("TMPDIR", path_.c_str(), 1) == 0);
-	}
-
-	PrivateTemporaryDirectory(const PrivateTemporaryDirectory &) = delete;
-	PrivateTemporaryDirectory &operator=(
-		const PrivateTemporaryDirectory &) = delete;
-
-	~PrivateTemporaryDirectory()
-	{
-		std::error_code ignored;
-		std::filesystem::remove_all(path_, ignored);
-	}
-
-private:
-	std::string path_;
-};
+using uml::testing::sendReply;
 
 /* Stands where the guest's console would be and answers every request the
  * way a guest that has the trim command would. */
@@ -98,16 +48,7 @@ public:
 		const auto &location = ::uml::device::guest_console_location();
 		require(location.has_value());
 		path_ = location->console;
-		(void)::unlink(path_.c_str());
-		descriptor_ = ::socket(AF_UNIX, SOCK_DGRAM, 0);
-		require(descriptor_ >= 0);
-		sockaddr_un address {};
-		address.sun_family = AF_UNIX;
-		require(path_.size() < sizeof(address.sun_path));
-		std::memcpy(address.sun_path, path_.c_str(), path_.size() + 1U);
-		require(::bind(descriptor_,
-			reinterpret_cast<const sockaddr *>(&address),
-			sizeof(address)) == 0);
+		descriptor_ = bindServer(path_);
 	}
 
 	FakeGuestConsole(const FakeGuestConsole &) = delete;
@@ -136,7 +77,7 @@ public:
 			for (std::size_t index = 0; index < count; ++index) {
 				/* The operation sends at once; a missing request
 				 * fails the comparison instead of waiting here. */
-				if (!ready(10000))
+				if (!awaitRequest(descriptor_, 10000))
 					return;
 				received.push_back(answer());
 			}
@@ -144,34 +85,16 @@ public:
 		std::forward<Operation>(operation)();
 		guest.join();
 		/* Nothing else arrives either. */
-		require(!ready(200));
+		require(!awaitRequest(descriptor_, 200));
 		return received;
 	}
 
 private:
-	[[nodiscard]] bool ready(int milliseconds) const
-	{
-		pollfd waiting {descriptor_, POLLIN, 0};
-		int result;
-		do {
-			result = ::poll(&waiting, 1, milliseconds);
-		} while (result < 0 && errno == EINTR);
-		require(result >= 0);
-		return result > 0;
-	}
-
 	std::string answer() const
 	{
-		Request request {};
 		sockaddr_un client {};
-		socklen_t clientLength = sizeof(client);
-		const auto received = ::recvfrom(descriptor_, &request,
-			sizeof(request), 0, reinterpret_cast<sockaddr *>(&client),
-			&clientLength);
-		require(received >= static_cast<ssize_t>(
-			sizeof(request) - maximumConsoleData));
-		const std::string command(request.data.data(),
-			std::min<std::size_t>(request.length, maximumConsoleData));
+		socklen_t clientLength {};
+		const auto command = receiveRequest(descriptor_, client, clientLength);
 		if (onRequest)
 			onRequest(command);
 		std::string_view text = "running";
@@ -189,11 +112,7 @@ private:
 			       "released 0 KiB in 1 ms";
 		else if (command.starts_with("trim "))
 			text = std::string_view {command}.substr(5);
-		Reply reply {error, 0U, static_cast<std::uint32_t>(text.size()), {}};
-		std::memcpy(reply.data.data(), text.data(), text.size());
-		require(::sendto(descriptor_, &reply, sizeof(reply), 0,
-			reinterpret_cast<const sockaddr *>(&client), clientLength) ==
-			static_cast<ssize_t>(sizeof(reply)));
+		require(sendReply(descriptor_, client, clientLength, error, text));
 		return command;
 	}
 
@@ -512,7 +431,8 @@ void aStopBringsTheRamBack()
 
 int main()
 {
-	const PrivateTemporaryDirectory temporary;
+	const uml::testing::PrivateTemporaryDirectory temporary {
+		"uml-lifecycle-test.XXXXXX"};
 	const ::uml::device::GuestConsoleRun run {true};
 	const auto emulator = makeEmulator();
 	withoutAConsoleNothingWaits(emulator.get());
