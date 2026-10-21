@@ -2842,6 +2842,40 @@ void malformed3dCommandsUseSpecificErrors()
     require(dependencyCallCount() == before);
 }
 
+/* Whichever kind of resource holds an ID, 2D, Virgl or blob, no create
+ * command takes the ID again: RESOURCE_CREATE_2D answers an invalid
+ * resource, the others an invalid parameter. */
+void aHeldResourceIdIsNotCreatedAgain()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    const auto context = createContext(0xa01, protocol::venusCapsetId);
+    requireOk(device, requestBytes(context));
+
+    const auto blob = [&](std::uint32_t resourceId) {
+        auto create = newRequest<protocol::GpuResourceCreateBlob>(
+            GpuCommand::resourceCreateBlob);
+        create.header.contextId = context.header.contextId;
+        create.resourceId = resourceId;
+        create.memory = protocol::blobMemoryHost3d;
+        create.flags = protocol::blobFlagMappable;
+        create.size = protocol::hostVisibleSharedMemoryAlignment;
+        return create;
+    };
+    requireOk(device, requestBytes(create2d(0xa02)));
+    requireOk(device, requestBytes(create3d(0xa03)));
+    requireOk(device, requestBytes(blob(0xa04)));
+    for (const std::uint32_t id : {0xa02U, 0xa03U, 0xa04U}) {
+        requireResponse(device, requestBytes(create2d(id)),
+            protocol::GpuResponse::errorInvalidResource);
+        requireResponse(device, requestBytes(create3d(id)),
+            protocol::GpuResponse::errorInvalidParameter);
+        requireResponse(device, requestBytes(blob(id)),
+            protocol::GpuResponse::errorInvalidParameter);
+    }
+    require(dependencies.createResourceCount == 2);
+}
+
 /* The cursor virtqueue has no writable reply buffer and the device no cursor
  * plane, so the queue's commands are consumed whatever they carry: nothing is
  * answered and nothing runs, not even a command that belongs on the control
@@ -3275,6 +3309,7 @@ int main()
     blobScanoutUsesNativeTextureAndPersistentVncMapping();
     virglBlobScanoutPresentsItsGlTexture();
     malformed3dCommandsUseSpecificErrors();
+    aHeldResourceIdIsNotCreatedAgain();
     theCursorQueueIsConsumedWithoutAReply();
     std::puts("Virtio-GPU command atomicity tests passed");
     return 0;
