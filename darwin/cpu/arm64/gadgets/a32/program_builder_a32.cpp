@@ -6,6 +6,7 @@
 #include "cpu/arm64/aarch32/decode_support.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/gadgets/a32_layout.h"
+#include "cpu/arm64/gadgets/gadget_symbols.hpp"
 
 #include <algorithm>
 #include <array>
@@ -16,9 +17,9 @@
 #include <vector>
 
 /* The A64 engine's gadgets the AArch32 part shares: control flow, which
- * carries a key where an A64 stream carries a PC; the barriers; and the
- * exclusive-access family, whose host monitor and forward-progress rules are
- * the engine's (system_atomic.inc). */
+ * carries a key where an A64 stream carries a PC; and the exclusive-access
+ * family, whose host monitor and forward-progress rules are the engine's
+ * (system_atomic.inc). */
 extern "C" {
 void uml_arm64_gadget_branch_linked();
 void uml_arm64_gadget_branch();
@@ -26,55 +27,6 @@ void uml_arm64_gadget_interrupt();
 void uml_arm64_gadget_illegal();
 void uml_arm64_gadget_yield();
 void uml_arm64_gadget_clear_exclusive();
-#define UML_A32_DECLARE_CONDITIONAL(cc) \
-	void uml_arm64_gadget_branch_##cc(); \
-	void uml_arm64_gadget_branch_##cc##_linked(); \
-	void uml_arm64_gadget_branch_##cc##_inline();
-UML_A32_DECLARE_CONDITIONAL(eq)
-UML_A32_DECLARE_CONDITIONAL(ne)
-UML_A32_DECLARE_CONDITIONAL(hs)
-UML_A32_DECLARE_CONDITIONAL(lo)
-UML_A32_DECLARE_CONDITIONAL(mi)
-UML_A32_DECLARE_CONDITIONAL(pl)
-UML_A32_DECLARE_CONDITIONAL(vs)
-UML_A32_DECLARE_CONDITIONAL(vc)
-UML_A32_DECLARE_CONDITIONAL(hi)
-UML_A32_DECLARE_CONDITIONAL(ls)
-UML_A32_DECLARE_CONDITIONAL(ge)
-UML_A32_DECLARE_CONDITIONAL(lt)
-UML_A32_DECLARE_CONDITIONAL(gt)
-UML_A32_DECLARE_CONDITIONAL(le)
-#undef UML_A32_DECLARE_CONDITIONAL
-#define UML_A32_DECLARE_COMPARE_BRANCH(cc) \
-	void uml_arm64_gadget_compare_register_branch_w_##cc##_inline(); \
-	void uml_arm64_gadget_compare_immediate_branch_w_##cc##_inline();
-UML_A32_DECLARE_COMPARE_BRANCH(eq)
-UML_A32_DECLARE_COMPARE_BRANCH(ne)
-UML_A32_DECLARE_COMPARE_BRANCH(hs)
-UML_A32_DECLARE_COMPARE_BRANCH(lo)
-UML_A32_DECLARE_COMPARE_BRANCH(mi)
-UML_A32_DECLARE_COMPARE_BRANCH(pl)
-UML_A32_DECLARE_COMPARE_BRANCH(vs)
-UML_A32_DECLARE_COMPARE_BRANCH(vc)
-UML_A32_DECLARE_COMPARE_BRANCH(hi)
-UML_A32_DECLARE_COMPARE_BRANCH(ls)
-UML_A32_DECLARE_COMPARE_BRANCH(ge)
-UML_A32_DECLARE_COMPARE_BRANCH(lt)
-UML_A32_DECLARE_COMPARE_BRANCH(gt)
-UML_A32_DECLARE_COMPARE_BRANCH(le)
-#undef UML_A32_DECLARE_COMPARE_BRANCH
-#define UML_A32_DECLARE_BARRIER(n) \
-	void uml_arm64_gadget_dmb_##n(); \
-	void uml_arm64_gadget_dsb_##n();
-UML_A32_DECLARE_BARRIER(0) UML_A32_DECLARE_BARRIER(1)
-UML_A32_DECLARE_BARRIER(2) UML_A32_DECLARE_BARRIER(3)
-UML_A32_DECLARE_BARRIER(4) UML_A32_DECLARE_BARRIER(5)
-UML_A32_DECLARE_BARRIER(6) UML_A32_DECLARE_BARRIER(7)
-UML_A32_DECLARE_BARRIER(8) UML_A32_DECLARE_BARRIER(9)
-UML_A32_DECLARE_BARRIER(10) UML_A32_DECLARE_BARRIER(11)
-UML_A32_DECLARE_BARRIER(12) UML_A32_DECLARE_BARRIER(13)
-UML_A32_DECLARE_BARRIER(14) UML_A32_DECLARE_BARRIER(15)
-#undef UML_A32_DECLARE_BARRIER
 void uml_arm64_gadget_exclusive_load_relaxed_b_r();
 void uml_arm64_gadget_exclusive_load_relaxed_h_r();
 void uml_arm64_gadget_exclusive_load_relaxed_w_r();
@@ -104,71 +56,25 @@ namespace {
 
 using namespace aarch32;
 
+/* The conditional branches, fused compare-and-branch pairs and barriers are
+ * the A64 bank's, which gadget_symbols.hpp lists. */
 constexpr std::array<void (*)(), 14> conditional_inline{
-	uml_arm64_gadget_branch_eq_inline, uml_arm64_gadget_branch_ne_inline,
-	uml_arm64_gadget_branch_hs_inline, uml_arm64_gadget_branch_lo_inline,
-	uml_arm64_gadget_branch_mi_inline, uml_arm64_gadget_branch_pl_inline,
-	uml_arm64_gadget_branch_vs_inline, uml_arm64_gadget_branch_vc_inline,
-	uml_arm64_gadget_branch_hi_inline, uml_arm64_gadget_branch_ls_inline,
-	uml_arm64_gadget_branch_ge_inline, uml_arm64_gadget_branch_lt_inline,
-	uml_arm64_gadget_branch_gt_inline, uml_arm64_gadget_branch_le_inline};
+	UML_ARM64_CONDITION_GADGETS(selection::uml_arm64_gadget_branch_, _inline)};
 /* The AArch64 bank's fused CMP and B.cond, in the 32-bit form, which read
  * the same CpuState slots an AArch32 register is in: a compare followed at
  * once by a conditional branch whose fall-through is translated inline. */
 constexpr std::array<void (*)(), 14> compare_register_branch_inline{
-	uml_arm64_gadget_compare_register_branch_w_eq_inline,
-	uml_arm64_gadget_compare_register_branch_w_ne_inline,
-	uml_arm64_gadget_compare_register_branch_w_hs_inline,
-	uml_arm64_gadget_compare_register_branch_w_lo_inline,
-	uml_arm64_gadget_compare_register_branch_w_mi_inline,
-	uml_arm64_gadget_compare_register_branch_w_pl_inline,
-	uml_arm64_gadget_compare_register_branch_w_vs_inline,
-	uml_arm64_gadget_compare_register_branch_w_vc_inline,
-	uml_arm64_gadget_compare_register_branch_w_hi_inline,
-	uml_arm64_gadget_compare_register_branch_w_ls_inline,
-	uml_arm64_gadget_compare_register_branch_w_ge_inline,
-	uml_arm64_gadget_compare_register_branch_w_lt_inline,
-	uml_arm64_gadget_compare_register_branch_w_gt_inline,
-	uml_arm64_gadget_compare_register_branch_w_le_inline};
+	UML_ARM64_CONDITION_GADGETS(
+		selection::uml_arm64_gadget_compare_register_branch_w_, _inline)};
 constexpr std::array<void (*)(), 14> compare_immediate_branch_inline{
-	uml_arm64_gadget_compare_immediate_branch_w_eq_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_ne_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_hs_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_lo_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_mi_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_pl_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_vs_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_vc_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_hi_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_ls_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_ge_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_lt_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_gt_inline,
-	uml_arm64_gadget_compare_immediate_branch_w_le_inline};
+	UML_ARM64_CONDITION_GADGETS(
+		selection::uml_arm64_gadget_compare_immediate_branch_w_, _inline)};
 constexpr std::array<void (*)(), 14> conditional_plain{
-	uml_arm64_gadget_branch_eq, uml_arm64_gadget_branch_ne,
-	uml_arm64_gadget_branch_hs, uml_arm64_gadget_branch_lo,
-	uml_arm64_gadget_branch_mi, uml_arm64_gadget_branch_pl,
-	uml_arm64_gadget_branch_vs, uml_arm64_gadget_branch_vc,
-	uml_arm64_gadget_branch_hi, uml_arm64_gadget_branch_ls,
-	uml_arm64_gadget_branch_ge, uml_arm64_gadget_branch_lt,
-	uml_arm64_gadget_branch_gt, uml_arm64_gadget_branch_le};
+	UML_ARM64_CONDITION_GADGETS(selection::uml_arm64_gadget_branch_, )};
 constexpr std::array<void (*)(), 16> data_barrier{
-	uml_arm64_gadget_dmb_0, uml_arm64_gadget_dmb_1, uml_arm64_gadget_dmb_2,
-	uml_arm64_gadget_dmb_3, uml_arm64_gadget_dmb_4, uml_arm64_gadget_dmb_5,
-	uml_arm64_gadget_dmb_6, uml_arm64_gadget_dmb_7, uml_arm64_gadget_dmb_8,
-	uml_arm64_gadget_dmb_9, uml_arm64_gadget_dmb_10,
-	uml_arm64_gadget_dmb_11, uml_arm64_gadget_dmb_12,
-	uml_arm64_gadget_dmb_13, uml_arm64_gadget_dmb_14,
-	uml_arm64_gadget_dmb_15};
+	UML_ARM64_BARRIER_GADGETS(selection::uml_arm64_gadget_dmb_)};
 constexpr std::array<void (*)(), 16> synchronization_barrier{
-	uml_arm64_gadget_dsb_0, uml_arm64_gadget_dsb_1, uml_arm64_gadget_dsb_2,
-	uml_arm64_gadget_dsb_3, uml_arm64_gadget_dsb_4, uml_arm64_gadget_dsb_5,
-	uml_arm64_gadget_dsb_6, uml_arm64_gadget_dsb_7, uml_arm64_gadget_dsb_8,
-	uml_arm64_gadget_dsb_9, uml_arm64_gadget_dsb_10,
-	uml_arm64_gadget_dsb_11, uml_arm64_gadget_dsb_12,
-	uml_arm64_gadget_dsb_13, uml_arm64_gadget_dsb_14,
-	uml_arm64_gadget_dsb_15};
+	UML_ARM64_BARRIER_GADGETS(selection::uml_arm64_gadget_dsb_)};
 
 /* The data-processing operations, as a32_forms.hpp numbers them. */
 enum Op : unsigned {
