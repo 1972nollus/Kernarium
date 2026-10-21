@@ -155,7 +155,6 @@ target_link_libraries(uml_cpu_contract INTERFACE
 # Gadget-engine SME sources: the SME part's selection and helper sources, and
 # the streaming gadget bodies generated at build time from the shared SVE/SME
 # encoding table (cpu/arm64/detail/sme_encodings.hpp).
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(_uml_arm64_streaming_dir ${CMAKE_CURRENT_BINARY_DIR}/arm64_streaming)
 set(_uml_arm64_streaming_generator
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/generate_streaming.py)

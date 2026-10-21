@@ -45,9 +45,8 @@ endif()
 string(REPLACE "_" "-" _kernarium_runtime_bundle_component
     "${KERNARIUM_RUNTIME_FRAMEWORK_NAME}")
 
-find_program(_kernarium_python3 NAMES python3 REQUIRED)
 execute_process(
-    COMMAND "${_kernarium_python3}" -B
+    COMMAND "${Python3_EXECUTABLE}" -B
         "${PROJECT_SOURCE_DIR}/Kernarium/scripts/verify-signed-kernel-carrier.py"
         --image "${_kernarium_kernel_image}"
     RESULT_VARIABLE _kernarium_carrier_result

@@ -28,7 +28,6 @@ target_compile_definitions(uml_x86_64_gadgets PRIVATE
 # The register-baked scalar bank is enumerated by a generator: one entry
 # per operand combination is thousands of entries, which the assembler's
 # own macro expansion takes minutes to produce.
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(_uml_x86_64_baked_dir ${CMAKE_CURRENT_BINARY_DIR}/x86_64_baked)
 set(_uml_x86_64_baked_generator
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/generate_baked.py)
