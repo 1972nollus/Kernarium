@@ -21,11 +21,6 @@ PREPARE="$DEPENDENCY_DIR/prepare.sh"
 TEST_NAME=test-verify-prefix.sh
 . "$(dirname -- "$0")/../support/expect.sh"
 
-sha256_file()
-{
-	shasum -a 256 "$1" | awk '{print $1}'
-}
-
 verify()
 {
 	"$VERIFIER" \
@@ -133,7 +128,6 @@ printf '%s\n' "$required_archives" | while IFS= read -r archive; do
 	cp "$TEST_ROOT/fixture-arm64.a" "$BASE_PREFIX/lib/$archive"
 done
 
-MANIFEST_HASH=$(sha256_file "$MANIFEST")
 cp "$MANIFEST" "$BASE_PREFIX/share/uml-dependencies/manifest.tsv"
 FIXTURE_TREE=$(git -C "$PATCH_REPOSITORY" rev-parse 'HEAD^{tree}')
 printf 'source\ttree\nfixture\t%s\n' "$FIXTURE_TREE" \
@@ -147,7 +141,6 @@ printf '%s\n' fixture \
 
 cat >"$BASE_PREFIX/share/uml-dependencies/receipt.tsv" <<EOF
 schema	2
-manifest_sha256	$MANIFEST_HASH
 platform	macos
 architecture	arm64
 linkage	static
@@ -233,6 +226,16 @@ copy_fixture "$CASE_PREFIX"
 printf '%s\n' 'schema	1' \
 	>>"$CASE_PREFIX/share/uml-dependencies/receipt.tsv"
 expect_failure "duplicate receipt field" verify "$CASE_PREFIX"
+
+# Receipts of prefixes built while the receipt recorded the manifest's hash
+# still verify: the rows and trees identify what a prefix was built from.
+CASE_PREFIX="$TEST_ROOT/receipt-with-manifest-hash"
+copy_fixture "$CASE_PREFIX"
+printf 'manifest_sha256\t%s\n' \
+	0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+	>>"$CASE_PREFIX/share/uml-dependencies/receipt.tsv"
+verify "$CASE_PREFIX" >/dev/null ||
+	fail "a receipt that records the manifest's hash was rejected"
 
 CASE_PREFIX="$TEST_ROOT/missing-sdk-observation"
 copy_fixture "$CASE_PREFIX"
