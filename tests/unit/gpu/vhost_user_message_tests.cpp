@@ -23,54 +23,47 @@ void requireNoDescriptorLeak(Operation operation)
     require(after == before);
 }
 
+/* Sends `header` and `payload` across `sockets` with one open descriptor. */
+void sendOneDescriptorFrame(
+    const SocketPair& sockets,
+    const protocol::VhostHeader& header,
+    std::span<const std::uint8_t> payload = {})
+{
+    const auto sent = openTestDescriptor();
+    const std::array descriptors {sent.get()};
+    sendMessageWithDescriptors(
+        sockets.descriptors[0].get(), header, descriptors, payload);
+}
+
 void malformedVersionDoesNotLeak()
 {
     requireNoDescriptorLeak([] {
-        auto sockets = makeSocketPair();
-        auto sent = openTestDescriptor();
-        const protocol::VhostHeader header {
-            .request = 1,
-            .flags = 2,
-            .size = 0,
-        };
-        const std::array descriptors {sent.get()};
-        sendMessageWithDescriptors(
-            sockets.descriptors[0].get(), header, descriptors);
+        const auto sockets = makeSocketPair();
+        sendOneDescriptorFrame(
+            sockets, {.request = 1, .flags = 2, .size = 0});
         VhostUserMessage message;
-        bool failed = false;
-        try {
+        requireThrows<std::runtime_error>([&] {
             (void)receiveVhostUserMessage(
                 sockets.descriptors[1].get(), message);
-        } catch (const std::runtime_error&) {
-            failed = true;
-        }
-        require(failed);
+        });
     });
 }
 
 void oversizedMessageDoesNotLeak()
 {
     requireNoDescriptorLeak([] {
-        auto sockets = makeSocketPair();
-        auto sent = openTestDescriptor();
-        const protocol::VhostHeader header {
-            .request = 1,
-            .flags = protocol::vhostUserVersion,
-            .size = static_cast<std::uint32_t>(
-                maximumVhostUserMessagePayload + 1U),
-        };
-        const std::array descriptors {sent.get()};
-        sendMessageWithDescriptors(
-            sockets.descriptors[0].get(), header, descriptors);
+        const auto sockets = makeSocketPair();
+        sendOneDescriptorFrame(
+            sockets,
+            {.request = 1,
+             .flags = protocol::vhostUserVersion,
+             .size = static_cast<std::uint32_t>(
+                 maximumVhostUserMessagePayload + 1U)});
         VhostUserMessage message;
-        bool failed = false;
-        try {
+        requireThrows<std::runtime_error>([&] {
             (void)receiveVhostUserMessage(
                 sockets.descriptors[1].get(), message);
-        } catch (const std::runtime_error&) {
-            failed = true;
-        }
-        require(failed);
+        });
     });
 }
 
@@ -112,48 +105,32 @@ void truncatedFramesDoNotLeak()
 void allocationFailureDoesNotLeak()
 {
     requireNoDescriptorLeak([] {
-        auto sockets = makeSocketPair();
-        auto sent = openTestDescriptor();
-        const protocol::VhostHeader header {
-            .request = 1,
-            .flags = protocol::vhostUserVersion,
-            .size = 1,
-        };
+        const auto sockets = makeSocketPair();
         constexpr std::uint8_t payload = 0;
-        const std::array descriptors {sent.get()};
-        sendMessageWithDescriptors(
-            sockets.descriptors[0].get(),
-            header,
-            descriptors,
+        sendOneDescriptorFrame(
+            sockets,
+            {.request = 1, .flags = protocol::vhostUserVersion, .size = 1},
             std::span {&payload, 1U});
         VhostUserMessage message;
         ::uml::testing::fail_next_allocation();
-        bool failed = false;
-        try {
+        requireThrows<std::bad_alloc>([&] {
             (void)receiveVhostUserMessage(
                 sockets.descriptors[1].get(), message);
-        } catch (const std::bad_alloc&) {
-            failed = true;
-        }
+        });
         (void)::uml::testing::cancel_pending_allocation_failure();
-        require(failed);
     });
 }
 
 void validTransferHasSingleOwner()
 {
     requireNoDescriptorLeak([] {
-        auto sockets = makeSocketPair();
-        auto sent = openTestDescriptor();
-        const protocol::VhostHeader header {
-            .request = static_cast<std::uint32_t>(
-                protocol::VhostRequest::setSlaveRequestFd),
-            .flags = protocol::vhostUserVersion,
-            .size = 0,
-        };
-        const std::array descriptors {sent.get()};
-        sendMessageWithDescriptors(
-            sockets.descriptors[0].get(), header, descriptors);
+        const auto sockets = makeSocketPair();
+        sendOneDescriptorFrame(
+            sockets,
+            {.request = static_cast<std::uint32_t>(
+                 protocol::VhostRequest::setSlaveRequestFd),
+             .flags = protocol::vhostUserVersion,
+             .size = 0});
         UniqueDescriptor transferred;
         {
             VhostUserMessage message;
@@ -211,23 +188,29 @@ void fragmentedHeaderAdoptsLaterDescriptors()
     });
 }
 
+/* Sends one frame that carries `Count` open descriptors. */
+template<std::size_t Count>
+void sendDescriptorFrame(const SocketPair& sockets)
+{
+    std::array<UniqueDescriptor, Count> owned;
+    std::array<int, Count> raw {};
+    for (std::size_t index = 0; index < Count; ++index) {
+        owned[index] = openTestDescriptor();
+        raw[index] = owned[index].get();
+    }
+    const protocol::VhostHeader header {
+        .request = 1,
+        .flags = protocol::vhostUserVersion,
+        .size = 0,
+    };
+    sendMessageWithDescriptors(sockets.descriptors[0].get(), header, raw);
+}
+
 void descriptorLimitIsCoherent()
 {
     requireNoDescriptorLeak([] {
-        auto sockets = makeSocketPair();
-        std::array<UniqueDescriptor, maximumVhostUserDescriptors> owned;
-        std::array<int, maximumVhostUserDescriptors> raw {};
-        for (std::size_t index = 0; index < owned.size(); ++index) {
-            owned[index] = openTestDescriptor();
-            raw[index] = owned[index].get();
-        }
-        const protocol::VhostHeader header {
-            .request = 1,
-            .flags = protocol::vhostUserVersion,
-            .size = 0,
-        };
-        sendMessageWithDescriptors(
-            sockets.descriptors[0].get(), header, raw);
+        const auto sockets = makeSocketPair();
+        sendDescriptorFrame<maximumVhostUserDescriptors>(sockets);
         VhostUserMessage message;
         require(receiveVhostUserMessage(
             sockets.descriptors[1].get(), message));
@@ -235,29 +218,13 @@ void descriptorLimitIsCoherent()
     });
 
     requireNoDescriptorLeak([] {
-        auto sockets = makeSocketPair();
-        std::array<UniqueDescriptor, maximumVhostUserDescriptors + 1U> owned;
-        std::array<int, maximumVhostUserDescriptors + 1U> raw {};
-        for (std::size_t index = 0; index < owned.size(); ++index) {
-            owned[index] = openTestDescriptor();
-            raw[index] = owned[index].get();
-        }
-        const protocol::VhostHeader header {
-            .request = 1,
-            .flags = protocol::vhostUserVersion,
-            .size = 0,
-        };
-        sendMessageWithDescriptors(
-            sockets.descriptors[0].get(), header, raw);
+        const auto sockets = makeSocketPair();
+        sendDescriptorFrame<maximumVhostUserDescriptors + 1U>(sockets);
         VhostUserMessage message;
-        bool failed = false;
-        try {
+        requireThrows<std::runtime_error>([&] {
             (void)receiveVhostUserMessage(
                 sockets.descriptors[1].get(), message);
-        } catch (const std::runtime_error&) {
-            failed = true;
-        }
-        require(failed);
+        });
     });
 }
 

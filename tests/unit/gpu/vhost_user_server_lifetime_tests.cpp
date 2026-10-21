@@ -18,24 +18,7 @@ namespace {
 void verifyControlRetry(VhostUserServer& server)
 {
     withServerConnection(server, [](int socket) {
-        sendRequest(
-            socket,
-            protocol::VhostRequest::getFeatures,
-            {},
-            {},
-            false);
-        protocol::VhostHeader reply {};
-        std::uint64_t features {};
-        readExact(socket, &reply, sizeof(reply));
-        readExact(socket, &features, sizeof(features));
-        require(
-            reply.request == static_cast<std::uint32_t>(
-                protocol::VhostRequest::getFeatures));
-        require(
-            reply.flags ==
-            (protocol::vhostUserVersion | protocol::vhostUserReply));
-        require(reply.size == sizeof(features));
-        require(features != 0);
+        require(getFeatures(socket) != 0);
     });
 }
 
@@ -338,17 +321,8 @@ void backpressuredRepliesArriveWholeAndStopEndsTheWait()
         require(::fcntl(peer, F_SETFL, statusFlags) == 0);
         std::uint64_t expectedFeatures = 0;
         for (std::size_t index = 0; index < queued; ++index) {
-            protocol::VhostHeader reply {};
-            std::uint64_t features {};
-            readExact(peer, &reply, sizeof(reply));
-            readExact(peer, &features, sizeof(features));
-            require(
-                reply.request == static_cast<std::uint32_t>(
-                    protocol::VhostRequest::getFeatures));
-            require(
-                reply.flags ==
-                (protocol::vhostUserVersion | protocol::vhostUserReply));
-            require(reply.size == sizeof(features));
+            const auto features = readValueReply<std::uint64_t>(
+                peer, protocol::VhostRequest::getFeatures);
             require(features != 0);
             if (index == 0)
                 expectedFeatures = features;
@@ -381,14 +355,9 @@ void concurrentRendererConstructionFailsAndLaterRetries()
     {
         const auto first = makeGpuVhostUserServer(
             "127.0.0.1", 0, {}, 64, 64, false);
-        bool rejected = false;
-        try {
-            const auto second = makeGpuVhostUserServer(
-                "127.0.0.1", 0, {}, 64, 64, false);
-        } catch (const std::runtime_error&) {
-            rejected = true;
-        }
-        require(rejected);
+        requireThrows<std::runtime_error>([] {
+            (void)makeGpuVhostUserServer("127.0.0.1", 0, {}, 64, 64, false);
+        });
     }
     require(descriptorCount() == before);
     {
@@ -403,30 +372,7 @@ void configureQueueForOneRequest(
     const SplitRing& ring,
     int callDescriptor)
 {
-    constexpr std::size_t requestOffset = 0x300;
-    constexpr std::size_t responseOffset = 0x400;
-
-    const std::array descriptors {
-        protocol::VirtqueueDescriptor {
-            .address = SplitRing::guestBase + requestOffset,
-            .length = sizeof(protocol::GpuControlHeader),
-            .flags = protocol::descriptorNext,
-            .next = 1,
-        },
-        protocol::VirtqueueDescriptor {
-            .address = SplitRing::guestBase + responseOffset,
-            .length = sizeof(protocol::GpuDisplayInfo),
-            .flags = protocol::descriptorWrite,
-            .next = 0,
-        },
-    };
-    constexpr std::array<std::uint16_t, 1> heads {0};
-    ring.publish(descriptors, heads);
-    protocol::GpuControlHeader request {};
-    request.type = static_cast<std::uint32_t>(protocol::GpuCommand::getDisplayInfo);
-    std::memcpy(
-        ring.memory().data() + requestOffset, &request, sizeof(request));
-
+    publishDisplayInfoRequest(ring);
     configureQueue(socket, ring, 0);
     configureCallDescriptor(socket, callDescriptor);
 }
@@ -438,22 +384,11 @@ void configureQueueForOneRequest(
     {
         const SplitRing ring;
         withServerConnection(*server, [&](int socket) {
-            constexpr std::uint64_t deviceFeatures =
-                protocol::vhostFeatureProtocol;
-            sendRequest(
-                socket,
-                protocol::VhostRequest::setFeatures,
-                bytesOf(deviceFeatures),
-                {},
-                false);
             constexpr std::uint64_t protocolFeatures =
                 protocol::protocolFeatureInbandNotifications |
                 protocol::protocolFeatureSlaveRequest |
                 protocol::protocolFeatureReplyAck;
-            sendRequestAndReadAcknowledgement(
-                socket,
-                protocol::VhostRequest::setProtocolFeatures,
-                bytesOf(protocolFeatures));
+            negotiateProtocolFeatures(socket, protocolFeatures);
             configureMemory(socket, ring.descriptor());
             auto call = makePipe();
             configureQueueForOneRequest(socket, ring, call.writeEnd.get());
