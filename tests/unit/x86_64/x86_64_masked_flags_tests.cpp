@@ -49,9 +49,11 @@ constexpr std::uint8_t invalid_operation = 0x01U;
 constexpr std::uint8_t denormal_operand = 0x02U;
 constexpr std::uint8_t underflow = 0x10U;
 constexpr std::uint32_t denormals_are_zero = 0x40U;
+#if !UML_X86_64_SSE_LOOP_JIT
 /* The flags x86 checks before it computes: invalid operation, denormal
  * operand and division by zero. */
 constexpr std::uint8_t precomputation_flags = 0x07U;
+#endif
 
 struct Instruction final {
 	std::string name;
