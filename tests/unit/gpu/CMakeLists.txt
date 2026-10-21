@@ -236,6 +236,14 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # A host without a usable GL stack or renderer skips these with status 77.
+    set_tests_properties(
+        gpu-transfer-context-error gpu-import-bounds
+        gpu-resource-metal-texture gpu-cross-context-readback
+        gpu-depth-format-advertisement gpu-line-loop-statistics
+        gpu-statistics-availability
+        PROPERTIES SKIP_RETURN_CODE 77)
+
     # The renderer and the same-process render server share one fence table.
     # Exercise that ownership without a device: it is a pure lifetime
     # contract, and losing it faults the GPU thread.

@@ -21,7 +21,7 @@
  *
  * "engine" mode executes the control core of SME (SMSTART, SMSTOP, MRS SVCR,
  * TPIDR2, RDSVL, LDR/STR ZA, ZERO ZA, LDR/STR/ZERO ZT0) and needs an engine
- * at SmeSupport control or better; "engine-spin" is the section 4.5 signal
+ * at SmeSupport control or better; "engine-spin" is the signal
  * test with ZA loaded by the engine.
  *
  * "off" mode runs with the policy off, on any host, and checks that a run

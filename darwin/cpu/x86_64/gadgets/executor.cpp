@@ -614,8 +614,6 @@ public:
 		checked_ = static_cast<std::uint8_t>(checked);
 	}
 
-	[[nodiscard]] bool sharing() const noexcept { return share_; }
-
 	void invalidate() noexcept
 	{
 #if UML_GADGET_CACHE_CENSUS
@@ -701,8 +699,10 @@ public:
 	 * window retires in, a tombstone that holds nothing and that the
 	 * least-recently-used rule drops when it reaches it, so the window
 	 * keeps the live address spaces it would have kept. An answer `live`
-	 * cannot give (negative) keeps the address space. */
-	[[nodiscard]] bool leave_gone(GenerationLiveness live) noexcept
+	 * cannot give (negative) keeps the address space. Out of memory part
+	 * way, what was not let go of is still held, and the caller asks
+	 * again. */
+	[[nodiscard]] bool leave_gone(GenerationLiveness live)
 	{
 		std::array<std::uint64_t, resident_generation_limit + 1U> gone{};
 		std::size_t count = 0;
@@ -727,8 +727,9 @@ public:
 	 * asked to shed, or that another executor closed, as of a destroyed one
 	 * but with its place in the window's order, and say whether the one last
 	 * prepared was among them. Only when the budget or an executor has
-	 * asked since the last call, which two loads answer. */
-	[[nodiscard]] bool leave_shedding() noexcept
+	 * asked since the last call, which two loads answer. Out of memory part
+	 * way, what was not let go of is still held and asked for again. */
+	[[nodiscard]] bool leave_shedding()
 	{
 		const bool closed = announcement_ != nullptr &&
 			announcement_->renew.load(std::memory_order_relaxed);
@@ -746,23 +747,29 @@ public:
 				gone[count++] = generation;
 		}
 		bool left_current = false;
-		for (std::size_t index = 0; index < count; ++index) {
-			left_current |= gone[index] == current_generation_;
-			/* A space the budget asked to shed is closed, for every
-			 * other executor holding it to let go of too. */
-			if (const auto held = generations_.find(gone[index]);
-			    held != generations_.end() &&
-			    held->second.space->shedding() &&
-			    held->second.space->shared()) {
-				try {
-					SpaceRegistry::instance().close(
-						held->second.space);
-				} catch (...) {
-					/* Still shedding: no executor takes it up
-					 * again. */
+		try {
+			for (std::size_t index = 0; index < count; ++index) {
+				left_current |= gone[index] == current_generation_;
+				/* A space the budget asked to shed is closed, for
+				 * every other executor holding it to let go of
+				 * too. */
+				if (const auto held = generations_.find(gone[index]);
+				    held != generations_.end() &&
+				    held->second.space->shedding() &&
+				    held->second.space->shared()) {
+					try {
+						SpaceRegistry::instance().close(
+							held->second.space);
+					} catch (...) {
+						/* Still shedding: no executor takes it
+						 * up again. */
+					}
 				}
+				retire(gone[index]);
 			}
-			retire(gone[index]);
+		} catch (...) {
+			shed_requested_.store(true, std::memory_order_relaxed);
+			throw;
 		}
 		return left_current;
 	}
@@ -849,7 +856,6 @@ public:
 	 * the build reads a byte until it publishes are counted. */
 	class Pinned final {
 	public:
-		Pinned() = default;
 		Pinned(Space *space, std::span<const std::uint64_t> pages)
 			: space_{space}, pins_{space->pin(pages)}
 		{}
@@ -1640,13 +1646,13 @@ private:
 		const auto *owner = owner_of(slot);
 		return owner != nullptr && owner->space->shared();
 	}
-#endif
 
 	[[nodiscard]] std::uint64_t generation_of(
 		const Slot &slot) const noexcept
 	{
 		return owners_[slot.owner()]->value;
 	}
+#endif
 
 	/* Give an address space the id its slots' tags will carry. */
 	void enroll(Generation &state, std::uint64_t generation)
@@ -1900,10 +1906,14 @@ private:
 	 * keeps its place there (leave_gone). A number in the order that names
 	 * no address space is such a tombstone: retiring it only drops the
 	 * place. */
-	void retire(std::uint64_t generation, bool tombstone = false) noexcept
+	void retire(std::uint64_t generation, bool tombstone = false)
 	{
 		const auto owner = generations_.find(generation);
 		if (owner != generations_.end()) {
+			/* Everything that can fail comes before anything changes, so
+			 * that a failure leaves the address space held and retirable
+			 * again. */
+			free_ids_.reserve(free_ids_.size() + 1);
 			const auto id = owner->second.id;
 			if (owner->second.slots_complete) {
 				for (const auto index : owner->second.slots)
@@ -2026,15 +2036,6 @@ private:
 			owner->space->release(slot.body, stale);
 		}
 		slot.body = nullptr;
-	}
-
-	/* The budget asks an address space held here to shed: the cache lets go
-	 * of it at the start of its next run (leave_shedding()). Called under the
-	 * budget's lock. */
-	static void shed(void *owner) noexcept
-	{
-		static_cast<ProgramCache *>(owner)->shed_requested_.store(true,
-			std::memory_order_relaxed);
 	}
 
 	/* Close a shared address space that holds enough freed arena
@@ -2166,9 +2167,10 @@ private:
 		return false;
 	}
 
-	/* Set by shed() when the budget asks an address space held here to
-	 * shed; before generations_, whose accounts may call shed() until they
-	 * are destroyed. */
+	/* Set (Space::request_renewal) when the budget asks an address space
+	 * held here to shed, which the cache lets go of at the start of its next
+	 * run (leave_shedding()); before generations_, whose accounts may set it
+	 * until they are destroyed. */
 	std::atomic<bool> shed_requested_{};
 	/* What this cache's executor says about itself for the bodies other
 	 * executors free, null when it shares nothing; whether the cache shares
@@ -2408,16 +2410,24 @@ void Executor::prepare(::uml::memory::GuestAddressSpace &memory,
 void Executor::leave_gone_generations(unsigned long long retirements,
 	GenerationLiveness live) noexcept
 {
-	/* The address spaces the gadget-cache budget asked to shed, first. */
-	if (storage_->programs.leave_shedding())
+	try {
+		/* The address spaces the gadget-cache budget asked to shed,
+		 * first. */
+		if (storage_->programs.leave_shedding())
+			storage_->cache_ready = false;
+		if (retirements == storage_->retirements_seen)
+			return;
+		/* A cache that lost the address space it last prepared must
+		 * prepare again before it is used. */
+		if (storage_->programs.leave_gone(live))
+			storage_->cache_ready = false;
+		storage_->retirements_seen = retirements;
+	} catch (...) {
+		/* Out of memory part way, so some may still be held: the next
+		 * call asks again, and the cache prepares afresh meanwhile,
+		 * since the one last prepared may be among those let go of. */
 		storage_->cache_ready = false;
-	if (retirements == storage_->retirements_seen)
-		return;
-	storage_->retirements_seen = retirements;
-	/* A cache that lost the address space it last prepared must prepare
-	 * again before it is used. */
-	if (storage_->programs.leave_gone(live))
-		storage_->cache_ready = false;
+	}
 }
 
 NativeTlbEntry *Executor::tlb_entries() noexcept

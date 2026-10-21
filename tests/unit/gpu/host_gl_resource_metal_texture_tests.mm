@@ -13,6 +13,7 @@
 // Metal queue of its own, as the display's draw does.
 
 #include "gpu_metal_test_support.hpp"
+#include "host_gl_test_support.hpp"
 #include "require.hpp"
 #include "virgl_renderer.hpp"
 
@@ -31,13 +32,15 @@
 
 namespace {
 
+using uml::gpu::testing::pipeTexture2d;
+using uml::gpu::testing::skip;
+using uml::gpu::testing::skipWithoutRenderer;
+using uml::gpu::testing::virglBindRenderTarget;
+using uml::gpu::testing::virglBindSamplerView;
+using uml::gpu::testing::virglFormatR8g8b8a8Unorm;
 using uml::testing::require;
 
-// virgl_hw.h and p_defines.h values the guest sends on the wire.
-constexpr std::uint32_t pipeTexture2d = 2;
-constexpr std::uint32_t virglFormatR8g8b8a8Unorm = 67;
-constexpr std::uint32_t virglBindRenderTarget = 1U << 1U;
-constexpr std::uint32_t virglBindSamplerView = 1U << 3U;
+// virgl_hw.h value the guest sends on the wire.
 constexpr std::uint32_t virglResourceY0Top = 1U << 0U;
 
 // Not square, so a transposed or reversed copy cannot look right.
@@ -176,19 +179,13 @@ int main()
 {
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-        if (device == nil) {
-            std::fputs("no Metal device; skipping\n", stderr);
-            return 0;
-        }
+        if (device == nil)
+            return skip("no Metal device");
         std::unique_ptr<uml::gpu::VirglRenderer> renderer;
         try {
             renderer = std::make_unique<uml::gpu::VirglRenderer>();
         } catch (const std::exception& error) {
-            std::fprintf(
-                stderr,
-                "Resource Metal texture: renderer unavailable: %s\n",
-                error.what());
-            return 0;
+            return skipWithoutRenderer(error);
         }
         checkResource(*renderer, device, 1, false, 1);
         checkResource(*renderer, device, 2, true, 2);

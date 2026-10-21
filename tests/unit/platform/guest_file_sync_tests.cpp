@@ -18,15 +18,11 @@ namespace {
 
 using uml::testing::require;
 
-std::filesystem::path scratchDirectory()
+const std::filesystem::path &scratchDirectory()
 {
-	static const auto directory = [] {
-		auto candidate = uml::testing::scratch_directory() /
-			("uml-guest-file-sync-" + std::to_string(::getpid()));
-		std::filesystem::create_directories(candidate);
-		return candidate;
-	}();
-	return directory;
+	static const uml::testing::ScratchSubdirectory directory {
+		"uml-guest-file-sync.XXXXXX"};
+	return directory.path();
 }
 
 /* The registry is process-global, and each case here closes what it opened.
@@ -150,7 +146,6 @@ int main()
 	aReusedDescriptorIsRetiredRatherThanFlushed();
 	everyRecordedDescriptorIsFlushed();
 	anUnflushableDescriptorIsReportedWithoutStoppingTheRest();
-	std::filesystem::remove_all(scratchDirectory());
 	std::puts("guest file sync tests passed");
 	return 0;
 }

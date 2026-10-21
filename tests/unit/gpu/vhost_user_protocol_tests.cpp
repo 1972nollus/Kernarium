@@ -18,34 +18,6 @@
 namespace uml::gpu::testing {
 namespace {
 
-template<typename Value>
-Value readValueReply(int socket, protocol::VhostRequest request)
-{
-    protocol::VhostHeader header {};
-    Value value {};
-    readExact(socket, &header, sizeof(header));
-    readExact(socket, &value, sizeof(value));
-    require(header.request == static_cast<std::uint32_t>(request));
-    require((header.flags & protocol::vhostUserReply) != 0);
-    require(header.size == sizeof(value));
-    return value;
-}
-
-std::vector<std::uint8_t> configPayload(
-    protocol::ConfigHeader header,
-    std::span<const std::uint8_t> contents)
-{
-    std::vector<std::uint8_t> payload(sizeof(header) + contents.size());
-    std::memcpy(payload.data(), &header, sizeof(header));
-    if (!contents.empty()) {
-        std::memcpy(
-            payload.data() + sizeof(header),
-            contents.data(),
-            contents.size());
-    }
-    return payload;
-}
-
 template<typename Operation>
 void expectRejected(VhostUserServer& server, Operation operation)
 {
@@ -332,98 +304,21 @@ void configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement()
         /* Publish before SET_SLAVE_REQ_FD to prove the transport retains the
          * notification until it has a channel on which to deliver it. */
         source->trigger();
-        auto backend = makeSocketPair();
-        const std::array descriptors {backend.descriptors[1].get()};
-        sendRequestAndReadAcknowledgement(
-            socket,
-            protocol::VhostRequest::setSlaveRequestFd,
-            {},
-            descriptors);
+        const auto backend = attachBackendChannel(socket);
+        const int channel = backend.descriptors[0].get();
 
-        pollfd ready {
-            .fd = backend.descriptors[0].get(),
-            .events = POLLIN,
-        };
-        require(::poll(&ready, 1, 2000) == 1);
-        protocol::VhostHeader notification {};
-        readExact(
-            backend.descriptors[0].get(),
-            &notification,
-            sizeof(notification));
-        require(notification.request == static_cast<std::uint32_t>(
-            protocol::VhostSlaveRequest::configChange));
-        require(notification.flags ==
-            (protocol::vhostUserVersion | protocol::vhostUserNeedReply));
-        require(notification.size == 0);
+        const auto notification = readBackendRequest(
+            channel, protocol::VhostSlaveRequest::configChange);
         require(source->pending());
 
-        const auto acknowledge = [&](const protocol::VhostHeader& request) {
-            const protocol::VhostHeader acknowledgement {
-                .request = request.request,
-                .flags =
-                    protocol::vhostUserVersion | protocol::vhostUserReply,
-                .size = sizeof(std::uint64_t),
-            };
-            constexpr std::uint64_t status = 0;
-            sendMessageWithDescriptors(
-                backend.descriptors[0].get(),
-                acknowledgement,
-                {},
-                bytesOf(status));
+        const auto waitUntilDelivered = [&](
+            const std::source_location location =
+                std::source_location::current()) {
+            awaitCondition([&] { return !source->pending(); }, location);
         };
-        const auto waitUntilDelivered = [&] {
-            const auto deadline = std::chrono::steady_clock::now() +
-                std::chrono::seconds {2};
-            while (source->pending() &&
-                   std::chrono::steady_clock::now() < deadline) {
-                std::this_thread::yield();
-            }
-            require(!source->pending());
-        };
-        const auto readNotification = [&] {
-            pollfd descriptor {
-                .fd = backend.descriptors[0].get(),
-                .events = POLLIN,
-            };
-            require(::poll(&descriptor, 1, 2000) == 1);
-            protocol::VhostHeader next {};
-            readExact(backend.descriptors[0].get(), &next, sizeof(next));
-            require(next.request == static_cast<std::uint32_t>(
-                protocol::VhostSlaveRequest::configChange));
-            require(next.flags ==
-                (protocol::vhostUserVersion | protocol::vhostUserNeedReply));
-            require(next.size == 0);
-            return next;
-        };
-        const auto readConfig = [&] {
-            const protocol::ConfigHeader header {
-                .offset = 0,
-                .size = sizeof(protocol::GpuConfig),
-                .flags = protocol::configFlagWritable,
-            };
-            const std::array<std::uint8_t, sizeof(protocol::GpuConfig)> zeros {};
-            sendRequest(
-                socket,
-                protocol::VhostRequest::getConfig,
-                configPayload(header, zeros),
-                {},
-                false);
-            protocol::VhostHeader response {};
-            std::array<
-                std::uint8_t,
-                sizeof(protocol::ConfigHeader) + sizeof(protocol::GpuConfig)>
-                payload {};
-            readExact(socket, &response, sizeof(response));
-            readExact(socket, payload.data(), payload.size());
-            require(response.request == static_cast<std::uint32_t>(
-                protocol::VhostRequest::getConfig));
-            require(response.size == payload.size());
-            protocol::GpuConfig config {};
-            std::memcpy(
-                &config,
-                payload.data() + sizeof(protocol::ConfigHeader),
-                sizeof(config));
-            return config;
+        const auto readGpuConfig = [&] {
+            return readConfig(socket, 0, sizeof(protocol::GpuConfig))
+                .as<protocol::GpuConfig>();
         };
         const auto clearDisplayEvent = [&] {
             constexpr std::uint32_t events = protocol::gpuEventDisplay;
@@ -438,62 +333,36 @@ void configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement()
                 configPayload(header, bytesOf(events)));
         };
         const auto readScanoutCount = [&] {
-            const protocol::ConfigHeader header {
-                .offset = offsetof(protocol::GpuConfig, scanoutCount),
-                .size = sizeof(protocol::GpuConfig::scanoutCount),
-                .flags = protocol::configFlagWritable,
-            };
-            const std::array<
-                std::uint8_t,
-                sizeof(protocol::GpuConfig::scanoutCount)> zeros {};
-            sendRequest(
-                socket,
-                protocol::VhostRequest::getConfig,
-                configPayload(header, zeros),
-                {},
-                false);
-            protocol::VhostHeader response {};
-            std::array<
-                std::uint8_t,
-                sizeof(protocol::ConfigHeader) +
-                    sizeof(protocol::GpuConfig::scanoutCount)> payload {};
-            readExact(socket, &response, sizeof(response));
-            readExact(socket, payload.data(), payload.size());
-            require(response.request == static_cast<std::uint32_t>(
-                protocol::VhostRequest::getConfig));
-            require(response.size == payload.size());
-            std::uint32_t scanoutCount {};
-            std::memcpy(
-                &scanoutCount,
-                payload.data() + sizeof(protocol::ConfigHeader),
-                sizeof(scanoutCount));
-            return scanoutCount;
+            return readConfig(
+                       socket,
+                       offsetof(protocol::GpuConfig, scanoutCount),
+                       sizeof(protocol::GpuConfig::scanoutCount))
+                .as<std::uint32_t>();
         };
 
-        acknowledge(notification);
+        replyToBackend(channel, notification);
         waitUntilDelivered();
-        require(readConfig().eventsRead == protocol::gpuEventDisplay);
+        require(readGpuConfig().eventsRead == protocol::gpuEventDisplay);
 
         /* A second resize reaches the IRQ path while the first config work is
          * still represented by its old events_read snapshot. Its interrupt
          * may coalesce, so clearing that snapshot must enqueue another
          * backend notification after SET_CONFIG has been acknowledged. */
         source->trigger();
-        const auto coalesced = readNotification();
-        acknowledge(coalesced);
+        const auto coalesced = readBackendRequest(
+            channel, protocol::VhostSlaveRequest::configChange);
+        replyToBackend(channel, coalesced);
         waitUntilDelivered();
         require(readScanoutCount() == 1);
         clearDisplayEvent();
-        const auto rearmed = readNotification();
-        acknowledge(rearmed);
+        const auto rearmed = readBackendRequest(
+            channel, protocol::VhostSlaveRequest::configChange);
+        replyToBackend(channel, rearmed);
         waitUntilDelivered();
 
-        require(readConfig().eventsRead == protocol::gpuEventDisplay);
+        require(readGpuConfig().eventsRead == protocol::gpuEventDisplay);
         clearDisplayEvent();
-        pollfd unexpected {
-            .fd = backend.descriptors[0].get(),
-            .events = POLLIN,
-        };
+        pollfd unexpected {.fd = channel, .events = POLLIN};
         require(::poll(&unexpected, 1, 100) == 0);
     });
 }
@@ -513,60 +382,16 @@ void configChangeWaitStillAnswersConfigReads()
             protocol::protocolFeatureReplyAck |
             protocol::protocolFeatureSlaveRequest |
             protocol::protocolFeatureConfig;
-        negotiateProtocolFeatures(socket, features);
-        auto backend = makeSocketPair();
-        const std::array descriptors {backend.descriptors[1].get()};
-        sendRequestAndReadAcknowledgement(
-            socket,
-            protocol::VhostRequest::setSlaveRequestFd,
-            {},
-            descriptors);
+        const auto backend = openBackendChannel(socket, features);
 
         source->trigger();
-        pollfd notified {
-            .fd = backend.descriptors[0].get(),
-            .events = POLLIN,
-        };
-        require(::poll(&notified, 1, 2000) == 1);
-        protocol::VhostHeader notification {};
-        readExact(
+        const auto notification = readBackendRequest(
             backend.descriptors[0].get(),
-            &notification,
-            sizeof(notification));
-        require(notification.request == static_cast<std::uint32_t>(
-            protocol::VhostSlaveRequest::configChange));
-        require((notification.flags & protocol::vhostUserNeedReply) != 0);
+            protocol::VhostSlaveRequest::configChange);
 
         // The acknowledgement is withheld: the server is now waiting.
-        const protocol::ConfigHeader configHeader {
-            .offset = 0,
-            .size = sizeof(protocol::GpuConfig),
-            .flags = protocol::configFlagWritable,
-        };
-        const std::array<std::uint8_t, sizeof(protocol::GpuConfig)> zeros {};
-        sendRequest(
-            socket,
-            protocol::VhostRequest::getConfig,
-            configPayload(configHeader, zeros),
-            {},
-            false);
-        pollfd answered {.fd = socket, .events = POLLIN};
-        require(::poll(&answered, 1, 2000) == 1);
-        protocol::VhostHeader response {};
-        std::array<
-            std::uint8_t,
-            sizeof(protocol::ConfigHeader) + sizeof(protocol::GpuConfig)>
-            payload {};
-        readExact(socket, &response, sizeof(response));
-        readExact(socket, payload.data(), payload.size());
-        require(response.request == static_cast<std::uint32_t>(
-            protocol::VhostRequest::getConfig));
-        require(response.size == payload.size());
-        protocol::GpuConfig config {};
-        std::memcpy(
-            &config,
-            payload.data() + sizeof(protocol::ConfigHeader),
-            sizeof(config));
+        const auto config = readConfig(socket, 0, sizeof(protocol::GpuConfig))
+                                .as<protocol::GpuConfig>();
         require(config.eventsRead == protocol::gpuEventDisplay);
 
         // GET_VRING_BASE changes queue state, so it waits for the reply.
@@ -581,27 +406,11 @@ void configChangeWaitStillAnswersConfigReads()
         require(::poll(&early, 1, 200) == 0);
         require(source->pending());
 
-        const protocol::VhostHeader acknowledgement {
-            .request = notification.request,
-            .flags = protocol::vhostUserVersion | protocol::vhostUserReply,
-            .size = sizeof(std::uint64_t),
-        };
-        constexpr std::uint64_t status = 0;
-        sendMessageWithDescriptors(
-            backend.descriptors[0].get(),
-            acknowledgement,
-            {},
-            bytesOf(status));
+        replyToBackend(backend.descriptors[0].get(), notification);
         const auto base = readValueReply<protocol::VringState>(
             socket, protocol::VhostRequest::getVringBase);
         require(base.index == 0 && base.value == 0);
-        const auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds {2};
-        while (source->pending() &&
-               std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::yield();
-        }
-        require(!source->pending());
+        awaitCondition([&] { return !source->pending(); });
     });
 }
 
@@ -676,14 +485,7 @@ void closedBackendChannelEndsTheConnectionQuietly()
                 protocol::protocolFeatureReplyAck |
                 protocol::protocolFeatureSlaveRequest |
                 protocol::protocolFeatureConfig;
-            negotiateProtocolFeatures(socket, features);
-            auto backend = makeSocketPair();
-            const std::array descriptors {backend.descriptors[1].get()};
-            sendRequestAndReadAcknowledgement(
-                socket,
-                protocol::VhostRequest::setSlaveRequestFd,
-                {},
-                descriptors);
+            auto backend = openBackendChannel(socket, features);
             backend.descriptors[1].reset();
 
             capture.emplace();
@@ -828,14 +630,7 @@ void sharedMemoryRequiresBackendAcknowledgements()
     auto device = std::make_unique<SharedMemoryDevice>();
     VhostUserServer server {std::move(device)};
     expectRejected(server, [](int socket) {
-        constexpr std::uint64_t deviceFeatures =
-            protocol::vhostFeatureProtocol;
-        sendRequest(
-            socket,
-            protocol::VhostRequest::setFeatures,
-            bytesOf(deviceFeatures),
-            {},
-            false);
+        sendDeviceFeatures(socket);
         constexpr std::uint64_t incompleteFeatures =
             protocol::protocolFeatureSharedMemoryMap |
             protocol::protocolFeatureSlaveRequest;
@@ -876,34 +671,12 @@ void standardizedSharedMemoryNegotiationBatchesBackendRequestsBeforeReply()
             socket, protocol::VhostRequest::getProtocolFeatures);
         require((offered & protocol::protocolFeatureSharedMemoryMap) != 0);
 
-        constexpr std::uint64_t deviceFeatures =
-            protocol::vhostFeatureProtocol;
-        sendRequest(
-            socket,
-            protocol::VhostRequest::setFeatures,
-            bytesOf(deviceFeatures),
-            {},
-            false);
         constexpr std::uint64_t protocolFeatures =
             protocol::protocolFeatureReplyAck |
             protocol::protocolFeatureSlaveRequest |
             protocol::protocolFeatureSharedMemoryMap;
-        sendRequestAndReadAcknowledgement(
-            socket,
-            protocol::VhostRequest::setProtocolFeatures,
-            bytesOf(protocolFeatures));
-
-        std::array<int, 2> backendSockets {-1, -1};
-        require(::socketpair(
-            AF_UNIX, SOCK_STREAM, 0, backendSockets.data()) == 0);
-        UniqueDescriptor backendClient {backendSockets[0]};
-        UniqueDescriptor backendServer {backendSockets[1]};
-        const std::array backendDescriptors {backendServer.get()};
-        sendRequestAndReadAcknowledgement(
-            socket,
-            protocol::VhostRequest::setSlaveRequestFd,
-            {},
-            backendDescriptors);
+        const auto backend = openBackendChannel(socket, protocolFeatures);
+        const int backendClient = backend.descriptors[0].get();
 
         sendRequest(
             socket,
@@ -925,8 +698,7 @@ void standardizedSharedMemoryNegotiationBatchesBackendRequestsBeforeReply()
             require(::poll(&prematureReply, 1, 50) == 0);
 
             VhostUserMessage backendMessage;
-            require(receiveVhostUserMessage(
-                backendClient.get(), backendMessage));
+            require(receiveVhostUserMessage(backendClient, backendMessage));
             require(backendMessage.header.request == static_cast<std::uint32_t>(
                 protocol::VhostSlaveRequest::sharedMemoryMap));
             require(backendMessage.header.flags ==
@@ -942,20 +714,10 @@ void standardizedSharedMemoryNegotiationBatchesBackendRequestsBeforeReply()
             require(map.length == 0x4000);
             require(map.flags == protocol::sharedMemoryMapReadWrite);
 
-            const std::uint64_t status = 0;
-            const protocol::VhostHeader reply {
-                .request = backendMessage.header.request,
-                .flags = protocol::vhostUserVersion | protocol::vhostUserReply,
-                .size = sizeof(status),
-            };
-            sendMessageWithDescriptors(
-                backendClient.get(), reply, {}, bytesOf(status));
+            replyToBackend(backendClient, backendMessage.header);
         }
         readAcknowledgement(socket, protocol::VhostRequest::resetOwner);
-        sendRequest(
-            socket, protocol::VhostRequest::getFeatures, {}, {}, false);
-        (void)readValueReply<std::uint64_t>(
-            socket, protocol::VhostRequest::getFeatures);
+        (void)getFeatures(socket);
         require(observed->completedAction() == 78);
         require(observed->completedActionCount() == 2);
         require(observed->actionSucceeded());
@@ -972,36 +734,17 @@ void rejectedSharedMemoryActionClosesBackendChannel()
             protocol::protocolFeatureReplyAck |
             protocol::protocolFeatureSlaveRequest |
             protocol::protocolFeatureSharedMemoryMap;
-        negotiateProtocolFeatures(socket, protocolFeatures);
-
-        std::array<int, 2> backendSockets {-1, -1};
-        require(::socketpair(
-            AF_UNIX, SOCK_STREAM, 0, backendSockets.data()) == 0);
-        UniqueDescriptor backendClient {backendSockets[0]};
-        UniqueDescriptor backendServer {backendSockets[1]};
-        const std::array backendDescriptors {backendServer.get()};
-        sendRequestAndReadAcknowledgement(
-            socket,
-            protocol::VhostRequest::setSlaveRequestFd,
-            {},
-            backendDescriptors);
-        backendServer.reset();
+        auto backend = openBackendChannel(socket, protocolFeatures);
+        backend.descriptors[1].reset();
+        const int backendClient = backend.descriptors[0].get();
 
         sendRequest(socket, protocol::VhostRequest::resetOwner, {});
         VhostUserMessage backendMessage;
-        require(receiveVhostUserMessage(
-            backendClient.get(), backendMessage));
+        require(receiveVhostUserMessage(backendClient, backendMessage));
         require(backendMessage.descriptors.size() == 1);
 
-        const std::uint64_t status = 1;
-        const protocol::VhostHeader reply {
-            .request = backendMessage.header.request,
-            .flags = protocol::vhostUserVersion | protocol::vhostUserReply,
-            .size = sizeof(status),
-        };
-        sendMessageWithDescriptors(
-            backendClient.get(), reply, {}, bytesOf(status));
-        waitForConnectionClose(backendClient.get());
+        replyToBackend(backendClient, backendMessage.header, 1);
+        waitForConnectionClose(backendClient);
         require(observed->completedAction() == 77);
         require(!observed->actionSucceeded());
     });
@@ -1018,20 +761,8 @@ void deferredCompletionSupportsFourQueues()
     constexpr std::uint32_t queueIndex = 3;
     constexpr std::size_t requestOffset = 0x300;
     constexpr std::size_t responseOffset = 0x400;
-    const std::array descriptors {
-        protocol::VirtqueueDescriptor {
-            .address = SplitRing::guestBase + requestOffset,
-            .length = 4,
-            .flags = protocol::descriptorNext,
-            .next = 1,
-        },
-        protocol::VirtqueueDescriptor {
-            .address = SplitRing::guestBase + responseOffset,
-            .length = 4,
-            .flags = protocol::descriptorWrite,
-            .next = 0,
-        },
-    };
+    const auto descriptors =
+        requestChain(requestOffset, 4, responseOffset, 4);
     const std::array<std::uint8_t, 4> request {1, 2, 3, 4};
     std::memcpy(memory.data() + requestOffset, request.data(), request.size());
     std::memset(memory.data() + responseOffset, 0xa5, 4);
@@ -1045,10 +776,7 @@ void deferredCompletionSupportsFourQueues()
         negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
         configureMemory(socket, ring.descriptor());
         const auto channels = startQueue(socket, ring, queueIndex);
-        sendRequest(
-            socket, protocol::VhostRequest::getFeatures, {}, {}, false);
-        (void)readValueReply<std::uint64_t>(
-            socket, protocol::VhostRequest::getFeatures);
+        (void)getFeatures(socket);
 
         require(ring.usedIndex() == 0);
         completionSource->complete();
@@ -1076,21 +804,12 @@ void multipleDeferredCompletionsRetainTheirDescriptorChains()
     std::array<std::uint16_t, 3> heads {};
     for (std::size_t index = 0; index < requestOffsets.size(); ++index) {
         const auto requestDescriptor = static_cast<std::uint16_t>(index * 2U);
-        const auto responseDescriptor =
-            static_cast<std::uint16_t>(requestDescriptor + 1U);
         heads[index] = requestDescriptor;
-        descriptors[requestDescriptor] = {
-            .address = SplitRing::guestBase + requestOffsets[index],
-            .length = 1,
-            .flags = protocol::descriptorNext,
-            .next = responseDescriptor,
-        };
-        descriptors[responseDescriptor] = {
-            .address = SplitRing::guestBase + responseOffsets[index],
-            .length = 1,
-            .flags = protocol::descriptorWrite,
-            .next = 0,
-        };
+        const auto chain = requestChain(
+            requestOffsets[index], 1, responseOffsets[index], 1,
+            requestDescriptor);
+        descriptors[requestDescriptor] = chain[0];
+        descriptors[requestDescriptor + 1U] = chain[1];
         memory[requestOffsets[index]] = static_cast<std::uint8_t>(index + 1U);
         memory[responseOffsets[index]] = 0x5a;
     }
@@ -1247,28 +966,10 @@ void aDisabledRingKeepsTheBuffersTheDeviceFills()
     withServerConnection(server, [&](int socket) {
         negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
         configureMemory(socket, ring.descriptor());
-        configureQueue(socket, ring, 0, false);
-        const std::uint64_t queue = 0;
-        QueueChannels channels {.call = makePipe(), .kick = makePipe()};
-        const std::array callDescriptors {channels.call.writeEnd.get()};
-        sendRequestAndReadAcknowledgement(
-            socket,
-            protocol::VhostRequest::setVringCall,
-            bytesOf(queue),
-            callDescriptors);
-        const std::array kickDescriptors {channels.kick.readEnd.get()};
-        sendRequestAndReadAcknowledgement(
-            socket,
-            protocol::VhostRequest::setVringKick,
-            bytesOf(queue),
-            kickDescriptors);
+        const auto channels = startQueue(socket, ring, 0, false);
 
         source->raise();
-        const auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds {2};
-        while (source->drained() == 0 &&
-               std::chrono::steady_clock::now() < deadline)
-            std::this_thread::sleep_for(std::chrono::milliseconds {1});
+        awaitCondition([&] { return source->drained() != 0; });
         require(source->drained() == 1);
         pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
         require(::poll(&call, 1, 200) == 0);
@@ -1394,20 +1095,8 @@ public:
     {
         const std::uint16_t index = published_;
         const std::uint16_t first = static_cast<std::uint16_t>(2U * index);
-        const std::array descriptors {
-            protocol::VirtqueueDescriptor {
-                .address = SplitRing::guestBase + requestOffset + index,
-                .length = 1,
-                .flags = protocol::descriptorNext,
-                .next = static_cast<std::uint16_t>(first + 1U),
-            },
-            protocol::VirtqueueDescriptor {
-                .address = SplitRing::guestBase + responseOffset + index,
-                .length = 1,
-                .flags = protocol::descriptorWrite,
-                .next = 0,
-            },
-        };
+        const auto descriptors = requestChain(
+            requestOffset + index, 1, responseOffset + index, 1, first);
         std::memcpy(
             ring_.memory().data() + SplitRing::descriptorOffset +
                 first * sizeof(protocol::VirtqueueDescriptor),
@@ -1470,10 +1159,7 @@ void heldRequestsRunInOrderAfterRelease()
         negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
         configureMemory(socket, requests.ring().descriptor());
         const auto channels = startQueue(socket, requests.ring());
-        constexpr std::uint64_t kick = 1;
-        require(::write(
-            channels.kick.writeEnd.get(), &kick, sizeof(kick)) ==
-            static_cast<ssize_t>(sizeof(kick)));
+        writeKick(channels.kick);
         require(nothingRuns(requests, *recorder, channels.call.readEnd.get()));
 
         gate->release();
@@ -1503,20 +1189,13 @@ void heldRequestsSurviveADisabledRing(bool deviceKeepsRequests)
         negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
         configureMemory(socket, requests.ring().descriptor());
         const auto channels = startQueue(socket, requests.ring());
-        constexpr std::uint64_t kick = 1;
-        require(::write(
-            channels.kick.writeEnd.get(), &kick, sizeof(kick)) ==
-            static_cast<ssize_t>(sizeof(kick)));
+        writeKick(channels.kick);
         require(nothingRuns(requests, *recorder, channels.call.readEnd.get()));
 
         const auto passOverTheRings = [&] {
             const auto before = recorder->drained();
             recorder->raise();
-            const auto deadline = std::chrono::steady_clock::now() +
-                std::chrono::seconds {2};
-            while (recorder->drained() == before &&
-                   std::chrono::steady_clock::now() < deadline)
-                std::this_thread::sleep_for(std::chrono::milliseconds {1});
+            awaitCondition([&] { return recorder->drained() != before; });
             require(recorder->drained() == before + 1U);
         };
         const protocol::VringState disabled {.index = 0, .value = 0};
@@ -1556,10 +1235,7 @@ void holdWaitsForTheRunningRequestAndStopsTheNext()
         configureMemory(socket, requests.ring().descriptor());
         const auto channels = startQueue(socket, requests.ring());
         requests.append(0);
-        constexpr std::uint64_t kick = 1;
-        require(::write(
-            channels.kick.writeEnd.get(), &kick, sizeof(kick)) ==
-            static_cast<ssize_t>(sizeof(kick)));
+        writeKick(channels.kick);
         recorder->awaitBlocked();
 
         /* Closed, but a request is inside the device: not yet quiet. */
@@ -1571,9 +1247,7 @@ void holdWaitsForTheRunningRequestAndStopsTheNext()
         requests.requireAnswered(1);
 
         requests.append(1);
-        require(::write(
-            channels.kick.writeEnd.get(), &kick, sizeof(kick)) ==
-            static_cast<ssize_t>(sizeof(kick)));
+        writeKick(channels.kick);
         pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
         require(::poll(&call, 1, 200) == 0);
         require(requests.ring().usedIndex() == 1);
@@ -1603,29 +1277,12 @@ void aDisabledRingKeepsRequestsOnlyForADeviceThatAsksForThem()
             negotiateProtocolFeatures(
                 socket, protocol::protocolFeatureReplyAck);
             configureMemory(socket, requests.ring().descriptor());
-            configureQueue(socket, requests.ring(), 0, false);
-            const std::uint64_t queue = 0;
-            QueueChannels channels {.call = makePipe(), .kick = makePipe()};
-            const std::array callDescriptors {channels.call.writeEnd.get()};
-            sendRequestAndReadAcknowledgement(
-                socket,
-                protocol::VhostRequest::setVringCall,
-                bytesOf(queue),
-                callDescriptors);
-            const std::array kickDescriptors {channels.kick.readEnd.get()};
-            sendRequestAndReadAcknowledgement(
-                socket,
-                protocol::VhostRequest::setVringKick,
-                bytesOf(queue),
-                kickDescriptors);
+            const auto channels =
+                startQueue(socket, requests.ring(), 0, false);
 
             const auto before = recorder->drained();
             recorder->raise();
-            const auto deadline = std::chrono::steady_clock::now() +
-                std::chrono::seconds {2};
-            while (recorder->drained() == before &&
-                   std::chrono::steady_clock::now() < deadline)
-                std::this_thread::sleep_for(std::chrono::milliseconds {1});
+            awaitCondition([&] { return recorder->drained() != before; });
             require(recorder->drained() == before + 1U);
             require(recorder->calls().empty());
 
@@ -1677,56 +1334,16 @@ void validConfigurationProtocol(VhostUserServer& server)
                     socket, protocol::VhostRequest::getQueueNum) ==
                 protocol::gpuQueueCount);
 
-        constexpr std::uint64_t deviceFeatures =
-            protocol::vhostFeatureProtocol;
-        sendRequest(
-            socket,
-            protocol::VhostRequest::setFeatures,
-            bytesOf(deviceFeatures),
-            {},
-            false);
         constexpr std::uint64_t features =
             protocol::protocolFeatureMultipleQueues |
             protocol::protocolFeatureConfig;
-        sendRequestAndReadAcknowledgement(
-            socket,
-            protocol::VhostRequest::setProtocolFeatures,
-            bytesOf(features));
+        negotiateProtocolFeatures(socket, features);
 
-        const protocol::ConfigHeader getHeader {
-            .offset = 0,
-            .size = sizeof(protocol::GpuConfig),
-            .flags = protocol::configFlagWritable,
-        };
-        const std::array<std::uint8_t, sizeof(protocol::GpuConfig)> zeros {};
-        const auto getPayload = configPayload(getHeader, zeros);
-        sendRequest(
-            socket,
-            protocol::VhostRequest::getConfig,
-            getPayload,
-            {},
-            false);
-        protocol::VhostHeader response {};
-        std::vector<std::uint8_t> responsePayload(getPayload.size());
-        readExact(socket, &response, sizeof(response));
-        readExact(
-            socket, responsePayload.data(), responsePayload.size());
-        require(
-            response.request ==
-            static_cast<std::uint32_t>(protocol::VhostRequest::getConfig));
-        require((response.flags & protocol::vhostUserReply) != 0);
-        require(response.size == getPayload.size());
-        protocol::ConfigHeader returnedHeader {};
-        protocol::GpuConfig configuration {};
-        std::memcpy(
-            &returnedHeader, responsePayload.data(), sizeof(returnedHeader));
-        std::memcpy(
-            &configuration,
-            responsePayload.data() + sizeof(returnedHeader),
-            sizeof(configuration));
-        require(returnedHeader.offset == 0);
-        require(returnedHeader.size == sizeof(configuration));
-        require(returnedHeader.flags == protocol::configFlagWritable);
+        const auto reply = readConfig(socket, 0, sizeof(protocol::GpuConfig));
+        const auto configuration = reply.as<protocol::GpuConfig>();
+        require(reply.header.offset == 0);
+        require(reply.header.size == sizeof(configuration));
+        require(reply.header.flags == protocol::configFlagWritable);
         require(configuration.eventsRead == 0);
         require(configuration.scanoutCount == 1);
         require(configuration.capsetCount == protocol::venusCapsetIndex + 1U);
@@ -1766,14 +1383,7 @@ void invalidControlMessagesAreRejected(VhostUserServer& server)
             descriptors);
     });
     expectRejected(server, [](int socket) {
-        constexpr std::uint64_t deviceFeatures =
-            protocol::vhostFeatureProtocol;
-        sendRequest(
-            socket,
-            protocol::VhostRequest::setFeatures,
-            bytesOf(deviceFeatures),
-            {},
-            false);
+        sendDeviceFeatures(socket);
         const protocol::VringState enable {.index = 0, .value = 2};
         sendRequest(
             socket,
@@ -1835,14 +1445,7 @@ void invalidControlMessagesAreRejected(VhostUserServer& server)
             bytesOf(kick));
     });
     expectRejected(server, [](int socket) {
-        constexpr std::uint64_t deviceFeatures =
-            protocol::vhostFeatureProtocol;
-        sendRequest(
-            socket,
-            protocol::VhostRequest::setFeatures,
-            bytesOf(deviceFeatures),
-            {},
-            false);
+        sendDeviceFeatures(socket);
         constexpr std::uint64_t invalidFeatures =
             protocol::protocolFeatureInbandNotifications;
         sendRequest(
@@ -2076,22 +1679,15 @@ void queueNotificationProcessesQueue(
         createContext || createResource ?
         sizeof(protocol::GpuControlHeader) :
         sizeof(protocol::GpuDisplayInfo);
-    std::array<protocol::VirtqueueDescriptor, 2> descriptors {
-        protocol::VirtqueueDescriptor {
-            .address = guestBase + requestOffset,
-            .length = static_cast<std::uint32_t>(requestLength),
-            .flags = static_cast<std::uint16_t>(
-                protocol::descriptorNext |
-                (scenario.reservedDescriptorFlag ? 8U : 0U)),
-            .next = 1,
-        },
-        protocol::VirtqueueDescriptor {
-            .address = guestBase + responseOffset,
-            .length = static_cast<std::uint32_t>(responseLength),
-            .flags = protocol::descriptorWrite,
-            .next = 0,
-        },
-    };
+    auto descriptors = requestChain(
+        requestOffset,
+        static_cast<std::uint32_t>(requestLength),
+        responseOffset,
+        responseLength);
+    if (scenario.reservedDescriptorFlag) {
+        descriptors[0].flags =
+            static_cast<std::uint16_t>(descriptors[0].flags | 8U);
+    }
     if (scenario.reversedDescriptorOrder) {
         descriptors = {
             protocol::VirtqueueDescriptor {
@@ -2183,14 +1779,7 @@ void queueNotificationProcessesQueue(
         Pipe call;
         SocketPair backendChannel;
         if (scenario.inbandNotification) {
-            backendChannel = makeSocketPair();
-            const std::array backendDescriptors {
-                backendChannel.descriptors[1].get()};
-            sendRequestAndReadAcknowledgement(
-                socket,
-                protocol::VhostRequest::setSlaveRequestFd,
-                {},
-                backendDescriptors);
+            backendChannel = attachBackendChannel(socket);
         } else if (scenario.pollingCompletion) {
             constexpr std::uint64_t pollingQueue =
                 protocol::vhostVringNoDescriptor;
@@ -2248,16 +1837,11 @@ void queueNotificationProcessesQueue(
                 socket,
                 protocol::VhostRequest::vringKick,
                 bytesOf(inbandKick));
+            const int backend = backendChannel.descriptors[0].get();
             protocol::VhostHeader notification {};
             protocol::VringState notifiedQueue {};
-            readExact(
-                backendChannel.descriptors[0].get(),
-                &notification,
-                sizeof(notification));
-            readExact(
-                backendChannel.descriptors[0].get(),
-                &notifiedQueue,
-                sizeof(notifiedQueue));
+            readExact(backend, &notification, sizeof(notification));
+            readExact(backend, &notifiedQueue, sizeof(notifiedQueue));
             require(
                 notification.request == static_cast<std::uint32_t>(
                     protocol::VhostSlaveRequest::vringCall));
@@ -2269,29 +1853,12 @@ void queueNotificationProcessesQueue(
             require(notifiedQueue.index == 0);
             require(notifiedQueue.value == 0);
 
-            const std::uint64_t status = 0;
-            const protocol::VhostHeader reply {
-                .request = notification.request,
-                .flags = protocol::vhostUserVersion |
-                    protocol::vhostUserReply,
-                .size = sizeof(status),
-            };
-            sendMessageWithDescriptors(
-                backendChannel.descriptors[0].get(),
-                reply,
-                {},
-                bytesOf(status));
+            replyToBackend(backend, notification);
             readAcknowledgement(
                 socket, protocol::VhostRequest::vringKick);
-            sendRequest(
-                socket, protocol::VhostRequest::getFeatures, {}, {}, false);
-            (void)readValueReply<std::uint64_t>(
-                socket, protocol::VhostRequest::getFeatures);
+            (void)getFeatures(socket);
         } else if (scenario.descriptorNotification) {
-            constexpr std::uint64_t kickValue = 1;
-            require(
-                ::write(kick.writeEnd.get(), &kickValue, sizeof(kickValue)) ==
-                static_cast<ssize_t>(sizeof(kickValue)));
+            writeKick(kick);
         }
         if (scenario.availableIndex > 8 ||
             scenario.reservedDescriptorFlag ||
@@ -2374,10 +1941,7 @@ void queueNotificationProcessesQueue(
                 responseSentinel,
                 sizeof(protocol::GpuControlHeader));
             ring.setAvailableIndex(2);
-            constexpr std::uint64_t secondKick = 1;
-            require(::write(
-                kick.writeEnd.get(), &secondKick, sizeof(secondKick)) ==
-                static_cast<ssize_t>(sizeof(secondKick)));
+            writeKick(kick);
 
             awaitCall(call.readEnd.get());
             require(ring.usedIndex() == 2);
@@ -2436,18 +2000,14 @@ void shortResponseBuffersAreAnsweredWithoutRunningTheCommand(
         const auto& chain = chains[index];
         const auto first = static_cast<std::uint16_t>(2 * index);
         heads[index] = first;
-        descriptors[first] = {
-            .address = SplitRing::guestBase + chain.requestOffset,
-            .length = chain.requestLength,
-            .flags = protocol::descriptorNext,
-            .next = static_cast<std::uint16_t>(first + 1),
-        };
-        descriptors[first + 1U] = {
-            .address = SplitRing::guestBase + chain.responseOffset,
-            .length = chain.responseLength,
-            .flags = protocol::descriptorWrite,
-            .next = 0,
-        };
+        const auto pair = requestChain(
+            chain.requestOffset,
+            chain.requestLength,
+            chain.responseOffset,
+            chain.responseLength,
+            first);
+        descriptors[first] = pair[0];
+        descriptors[first + 1U] = pair[1];
     }
     for (const auto& chain : {chains[0], chains[3]}) {
         protocol::GpuControlHeader request {};

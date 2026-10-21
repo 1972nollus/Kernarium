@@ -15,6 +15,8 @@
 // imports and transfers working.
 
 #include "gpu_metal_test_support.hpp"
+#include "host_gl_test_support.hpp"
+#include "protocol.hpp"
 #include "require.hpp"
 #include "scratch_backing.hpp"
 #include "virgl_renderer.hpp"
@@ -55,18 +57,18 @@ void virgl_resource_native_release(std::uint64_t id);
 
 namespace {
 
+using uml::gpu::protocol::virgl2CapsetId;
+using uml::gpu::testing::pipeTexture2d;
+using uml::gpu::testing::skipWithoutRenderer;
+using uml::gpu::testing::virglBindSamplerView;
+using uml::gpu::testing::virglFormatB8g8r8a8Unorm;
 using uml::testing::require;
 using uml::testing::ScratchBacking;
 
-// Stable Virtio-GPU ABI identifier for the virgl2 capability set.
-constexpr std::uint32_t virgl2CapsetId = 2;
-// virgl_protocol.h, virgl_hw.h and p_defines.h values the guest sends.
+// virgl_protocol.h and virgl_hw.h values the guest sends.
 constexpr std::uint32_t virglCommandSetType = 49;
 constexpr std::uint32_t setTypeLength = 10;
-constexpr std::uint32_t virglFormatB8g8r8a8Unorm = 1;
 constexpr std::uint32_t virglFormatDxt1Rgb = 105;
-constexpr std::uint32_t virglBindSamplerView = 1U << 3U;
-constexpr std::uint32_t pipeTexture2d = 2;
 // virgl_resource.h
 constexpr int nativeHandleMetalHeap = 1;
 
@@ -85,6 +87,19 @@ constexpr std::string_view segmentName = "uml-import-bounds.XXXXXX";
     std::uint32_t channel) noexcept
 {
     return static_cast<std::uint8_t>(x * 3U + y * 7U + channel * 61U + 1U);
+}
+
+// `rows` rows of the pattern, each importStride bytes.
+[[nodiscard]] std::vector<std::uint8_t> patternImage(std::uint32_t rows)
+{
+    std::vector<std::uint8_t> pixels(
+        static_cast<std::size_t>(importStride) * rows);
+    for (std::uint32_t y = 0; y < rows; ++y)
+        for (std::uint32_t x = 0; x < importWidth; ++x)
+            for (std::uint32_t channel = 0; channel < bytesPerPixel; ++channel)
+                pixels[static_cast<std::size_t>(y) * importStride +
+                    x * bytesPerPixel + channel] = patternByte(x, y, channel);
+    return pixels;
 }
 
 class Importer final {
@@ -227,14 +242,9 @@ void sharedMemoryImportsFitTheirSegment(
     Importer& importer)
 {
     const ScratchBacking segment {segmentName, segmentSize};
-    std::vector<std::uint8_t> contents(segmentSize);
     const std::uint32_t rows =
         static_cast<std::uint32_t>(segmentSize / importStride);
-    for (std::uint32_t y = 0; y < rows; ++y)
-        for (std::uint32_t x = 0; x < importWidth; ++x)
-            for (std::uint32_t channel = 0; channel < bytesPerPixel; ++channel)
-                contents[static_cast<std::size_t>(y) * importStride +
-                    x * bytesPerPixel + channel] = patternByte(x, y, channel);
+    const auto contents = patternImage(rows);
     require(::pwrite(segment.descriptor(), contents.data(), contents.size(), 0) ==
             static_cast<ssize_t>(contents.size()),
         "the segment could not be filled");
@@ -346,15 +356,7 @@ void textureImportsMatchTheTexturesTexelSize(
 
         const bool matches = format == MTLPixelFormatBGRA8Unorm;
         if (matches) {
-            std::vector<std::uint8_t> pixels(
-                static_cast<std::size_t>(importStride) * side);
-            for (std::uint32_t y = 0; y < side; ++y)
-                for (std::uint32_t x = 0; x < side; ++x)
-                    for (std::uint32_t channel = 0; channel < bytesPerPixel;
-                         ++channel)
-                        pixels[static_cast<std::size_t>(y) * importStride +
-                            x * bytesPerPixel + channel] =
-                            patternByte(x, y, channel);
+            const auto pixels = patternImage(side);
             [texture replaceRegion:MTLRegionMake2D(0, 0, side, side)
                        mipmapLevel:0
                          withBytes:pixels.data()
@@ -491,11 +493,7 @@ int main(int argc, char** argv)
         try {
             renderer = std::make_unique<uml::gpu::VirglRenderer>();
         } catch (const std::exception& error) {
-            std::fprintf(
-                stderr,
-                "Import bounds: renderer unavailable: %s\n",
-                error.what());
-            return 0;
+            return skipWithoutRenderer(error);
         }
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         require(device != nil, "no Metal device");

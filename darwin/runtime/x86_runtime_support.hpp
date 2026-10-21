@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-/* What every x86-64 engine's runtime shares: the static MMU execution scope
- * a dispatch runs in, and the mapping of a non-canonical access to the
- * exception x86 raises for it. */
+/* What every x86-64 engine's runtime shares: the result of a dispatch, the
+ * static MMU execution scope it runs in, how a return to the signal
+ * trampoline ends it, the mapping of a non-canonical access to the exception
+ * x86 raises for it, and whether a generation is live. */
 
 #if DARWIN_UML_X86_64_GUEST
 
+#include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/segments.hpp"
 #include "memory/static_guest_memory.hpp"
@@ -19,6 +21,16 @@ namespace uml::runtime {
 /* x86 exception vectors the runtime reports as a breakpoint's syndrome. */
 inline constexpr std::uint32_t x86_stack_segment_fault = 12;
 inline constexpr std::uint32_t x86_general_protection = 13;
+
+/* What one dispatch of x86 code left. */
+struct X86RunResult final {
+	::uml::cpu::ExecutionResult execution;
+	/* The error code of a #GP or #SS the run ended in: for INT n, the
+	 * vector's IDT entry. For #MF, the x87 status word with the control
+	 * word above it, and for #XM, MXCSR: what Linux derives the signal's
+	 * code from. */
+	std::int32_t error_code{};
+};
 
 class X86StaticExecutionScope final {
 public:
@@ -67,6 +79,25 @@ private:
 [[nodiscard]] std::uint32_t x86_noncanonical_vector(
 	::uml::memory::StaticGuestMemory &memory,
 	const ::uml::cpu::x86_64::CpuState &cpu) noexcept;
+
+/* A return to the signal trampoline is rt_sigreturn, which the run reports
+ * as the system call. */
+inline void x86_signal_return(::uml::cpu::x86_64::CpuState &cpu,
+	::uml::cpu::ExecutionResult &result) noexcept
+{
+	cpu.gpr(::uml::cpu::x86_64::Register::rax) = 15;
+	cpu.system_call_32bit = false;
+	result.reason = ::uml::cpu::ExitReason::system_call;
+}
+
+/* Whether the host still has the generation: it ends with its process. A host
+ * that cannot say counts as live. Static, so that each unit that passes its
+ * address on calls its own copy directly. */
+[[nodiscard]] static inline bool x86_generation_live(
+	unsigned long generation) noexcept
+{
+	return darwin_uml_static_vm_generation_live(generation) != 0;
+}
 
 /* With UML_X86_MM_SHARED_LOG set to a writable path, called for each x86
  * dispatch with the kernel's mark of whether its mm is shared

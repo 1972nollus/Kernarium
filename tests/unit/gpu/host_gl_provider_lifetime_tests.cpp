@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "host_gl_provider.hpp"
+#include "host_gl_test_support.hpp"
+#include "protocol.hpp"
 #include "require.hpp"
 #include "virgl_renderer.hpp"
 
@@ -34,14 +36,18 @@ extern "C" {
 
 namespace {
 
+using uml::gpu::protocol::virgl2CapsetId;
+using uml::gpu::testing::glContextParameters;
+using uml::gpu::testing::pipeTexture3d;
+using uml::gpu::testing::virglBindRenderTarget;
+using uml::gpu::testing::virglBindSamplerView;
+using uml::gpu::testing::virglFormatB8g8r8a8Unorm;
 using uml::testing::require;
 
 // The highest desktop version vrend probes, and the one it then asks for again
 // for every sub-context it creates.
 constexpr int kProbedMajor = 4;
 constexpr int kProbedMinor = 6;
-// The capability set a Linux guest's Virgl contexts use.
-constexpr std::uint32_t kVirgl2CapsetId = 2;
 
 // A component that copies the process environment early leaves that copy
 // pointing at freed memory once the environment is rewritten, so an
@@ -83,13 +89,7 @@ void providerOwnsOneSharedContextTopology()
     require(provider.display() != nullptr);
     require(provider.display() == provider.display());
 
-    virgl_renderer_gl_ctx_param parameters {
-        .version = 2,
-        .shared = true,
-        .major_ver = kProbedMajor,
-        .minor_ver = kProbedMinor,
-        .compat_ctx = 0,
-    };
+    auto parameters = glContextParameters(kProbedMajor, kProbedMinor, true);
     require(provider.createContext(parameters) == nullptr);
 
     parameters.shared = false;
@@ -115,13 +115,7 @@ void providerOwnsOneSharedContextTopology()
 void providerCreatesSharedContextsOnAnyThread()
 {
     uml::gpu::HostGlProvider provider;
-    virgl_renderer_gl_ctx_param parameters {
-        .version = 2,
-        .shared = false,
-        .major_ver = kProbedMajor,
-        .minor_ver = kProbedMinor,
-        .compat_ctx = 0,
-    };
+    auto parameters = glContextParameters(kProbedMajor, kProbedMinor);
     void* root = provider.createContext(parameters);
     require(root != nullptr);
     require(provider.makeCurrent(root) == 0);
@@ -146,13 +140,7 @@ void providerCreatesSharedContextsOnAnyThread()
 void providerRejectsUnsupportedContexts()
 {
     uml::gpu::HostGlProvider provider;
-    virgl_renderer_gl_ctx_param parameters {
-        .version = 2,
-        .shared = false,
-        .major_ver = 3,
-        .minor_ver = 0,
-        .compat_ctx = 1,
-    };
+    auto parameters = glContextParameters(3, 0, false, 1);
     require(provider.createContext(parameters) == nullptr);
     parameters.compat_ctx = 0;
     parameters.major_ver = 1;
@@ -236,13 +224,7 @@ void terminateTheDefaultSurfacelessDisplay()
 void providerKeepsItsDisplayWhenAnotherClientTerminatesTheDefaultOne()
 {
     uml::gpu::HostGlProvider provider;
-    virgl_renderer_gl_ctx_param parameters {
-        .version = 2,
-        .shared = false,
-        .major_ver = kProbedMajor,
-        .minor_ver = kProbedMinor,
-        .compat_ctx = 0,
-    };
+    auto parameters = glContextParameters(kProbedMajor, kProbedMinor);
     void* root = provider.createContext(parameters);
     require(root != nullptr);
     require(provider.display() != eglGetPlatformDisplay(
@@ -268,9 +250,9 @@ void providerKeepsItsDisplayWhenAnotherClientTerminatesTheDefaultOne()
 void rendererCreatesContextsAfterAnotherClientTerminatesTheDefaultDisplay()
 {
     uml::gpu::VirglRenderer renderer;
-    require(renderer.createContext(1, kVirgl2CapsetId, "before") == 0);
+    require(renderer.createContext(1, virgl2CapsetId, "before") == 0);
     terminateTheDefaultSurfacelessDisplay();
-    require(renderer.createContext(2, kVirgl2CapsetId, "after") == 0);
+    require(renderer.createContext(2, virgl2CapsetId, "after") == 0);
     renderer.destroyContext(2);
     renderer.destroyContext(1);
 }
@@ -363,7 +345,7 @@ void rendererRefusesASubContextWithoutAGlContext()
 
     constexpr std::uint32_t context = 1;
     require(virgl_renderer_context_create_with_flags(
-        context, kVirgl2CapsetId, 5, "guest") == 0);
+        context, virgl2CapsetId, 5, "guest") == 0);
     const int nullMakeCurrents = host.nullMakeCurrents;
 
     host.refuseNextContext = true;
@@ -384,7 +366,7 @@ void rendererRefusesASubContextWithoutAGlContext()
     // before it runs any GL.
     host.refuseNextContext = true;
     require(virgl_renderer_context_create_with_flags(
-        2, kVirgl2CapsetId, 5, "empty") != 0);
+        2, virgl2CapsetId, 5, "empty") != 0);
     require(host.refusedContexts == 2);
     require(host.nullMakeCurrents == nullMakeCurrents);
 
@@ -392,23 +374,18 @@ void rendererRefusesASubContextWithoutAGlContext()
     virgl_renderer_cleanup(&host);
 }
 
-// Virgl's blit command and its length in dwords, from virgl_protocol.h, and
-// the texture target, format and bind numbering, from virgl_hw.h.
+// Virgl's blit command and its length in dwords, from virgl_protocol.h.
 constexpr std::uint32_t kVirglBlit = 16;
 constexpr std::uint32_t kVirglBlitLength = 21;
-constexpr std::uint32_t kPipeTexture3d = 3;
-constexpr std::uint32_t kVirglFormatB8G8R8A8Unorm = 1;
-constexpr std::uint32_t kVirglBindRenderTarget = 1U << 1U;
-constexpr std::uint32_t kVirglBindSamplerView = 1U << 3U;
 constexpr std::uint32_t kVolumeSide = 4;
 
 void createVolume(std::uint32_t context, std::uint32_t handle, std::uint32_t depth)
 {
     virgl_renderer_resource_create_args arguments {};
     arguments.handle = handle;
-    arguments.target = kPipeTexture3d;
-    arguments.format = kVirglFormatB8G8R8A8Unorm;
-    arguments.bind = kVirglBindRenderTarget | kVirglBindSamplerView;
+    arguments.target = pipeTexture3d;
+    arguments.format = virglFormatB8g8r8a8Unorm;
+    arguments.bind = virglBindRenderTarget | virglBindSamplerView;
     arguments.width = kVolumeSide;
     arguments.height = kVolumeSide;
     arguments.depth = depth;
@@ -432,7 +409,7 @@ std::array<std::uint32_t, kVirglBlitLength + 1> depthHalvingBlit(
         0,
         destination,
         0,
-        kVirglFormatB8G8R8A8Unorm,
+        virglFormatB8g8r8a8Unorm,
         0,
         0,
         0,
@@ -441,7 +418,7 @@ std::array<std::uint32_t, kVirglBlitLength + 1> depthHalvingBlit(
         1,
         source,
         0,
-        kVirglFormatB8G8R8A8Unorm,
+        virglFormatB8g8r8a8Unorm,
         0,
         0,
         0,
@@ -461,7 +438,7 @@ void rendererSkipsABlitItHasNoGlContextFor()
 
     constexpr std::uint32_t context = 1;
     require(virgl_renderer_context_create_with_flags(
-        context, kVirgl2CapsetId, 5, "guest") == 0);
+        context, virgl2CapsetId, 5, "guest") == 0);
     constexpr std::uint32_t source = 1;
     constexpr std::uint32_t destination = 2;
     createVolume(context, source, 2);
@@ -496,7 +473,7 @@ void rendererSkipsABlitItHasNoGlContextFor()
 void rendererFailsCleanlyAfterLosingItsDisplay()
 {
     uml::gpu::VirglRenderer renderer;
-    require(renderer.createContext(1, kVirgl2CapsetId, "before") == 0);
+    require(renderer.createContext(1, virgl2CapsetId, "before") == 0);
     // The renderer's root context is current on the thread that created it.
     const EGLDisplay display = eglGetCurrentDisplay();
     require(display != EGL_NO_DISPLAY);
@@ -506,9 +483,9 @@ void rendererFailsCleanlyAfterLosingItsDisplay()
     bool capsetRefused = false;
     // vrend serves the guest queue on a thread of its own.
     std::thread guestQueue([&] {
-        created = renderer.createContext(2, kVirgl2CapsetId, "after");
+        created = renderer.createContext(2, virgl2CapsetId, "after");
         try {
-            (void)renderer.capset(kVirgl2CapsetId);
+            (void)renderer.capset(virgl2CapsetId);
         } catch (const std::runtime_error&) {
             capsetRefused = true;
         }

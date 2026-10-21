@@ -23,6 +23,7 @@
 namespace {
 
 using uml::testing::require;
+using uml::testing::requireThrows;
 
 [[nodiscard]] std::size_t descriptorCount()
 {
@@ -118,13 +119,9 @@ void postListenThreadFailureReleasesServer()
     for (unsigned iteration = 0; iteration < 16; ++iteration) {
         const auto before = descriptorCount();
         uml::gpu::testing::failNextEventThreadStart();
-        bool failed = false;
-        try {
+        requireThrows<std::runtime_error>([] {
             uml::gpu::VncDisplay display {"127.0.0.1", 0, {}, 64, 64};
-        } catch (const std::runtime_error&) {
-            failed = true;
-        }
-        require(failed);
+        });
         const auto listenedPort =
             uml::gpu::testing::failedEventThreadPort();
         require(listenedPort != 0);
@@ -141,8 +138,7 @@ void postListenThreadFailureReleasesServer()
 void dimensionsMustFitLibVncServerAbi()
 {
     const auto before = descriptorCount();
-    bool rejected = false;
-    try {
+    requireThrows<std::invalid_argument>([] {
         uml::gpu::VncDisplay display {
             "127.0.0.1",
             0,
@@ -150,10 +146,7 @@ void dimensionsMustFitLibVncServerAbi()
             static_cast<std::uint32_t>(
                 std::numeric_limits<int>::max()) + 1U,
             1};
-    } catch (const std::invalid_argument&) {
-        rejected = true;
-    }
-    require(rejected);
+    });
     require(descriptorCount() == before);
 }
 
@@ -236,31 +229,24 @@ void readbackTracksClientDemandAndReconnects()
     const std::size_t frameRowBytes =
         static_cast<std::size_t>(extent) * uml::gpu::protocol::gpuBytesPerPixel;
     std::vector<std::uint8_t> frame(frameRowBytes * extent, 0x5aU);
-    display.update(
-        frame,
-        extent,
-        extent,
-        frameRowBytes,
-        uml::gpu::protocol::GpuFormat::b8g8r8a8Unorm,
-        0,
-        0,
-        0,
-        0,
-        scanoutWidth - 1U,
-        scanoutHeight);
+    /* Copies the top-left width x scanoutHeight of the frame to the origin. */
+    const auto update = [&](std::uint32_t width) {
+        display.update(
+            frame,
+            extent,
+            extent,
+            frameRowBytes,
+            uml::gpu::protocol::GpuFormat::b8g8r8a8Unorm,
+            0,
+            0,
+            0,
+            0,
+            width,
+            scanoutHeight);
+    };
+    update(scanoutWidth - 1U);
     require(display.needsFullCpuFallback());
-    display.update(
-        frame,
-        extent,
-        extent,
-        frameRowBytes,
-        uml::gpu::protocol::GpuFormat::b8g8r8a8Unorm,
-        0,
-        0,
-        0,
-        0,
-        scanoutWidth,
-        scanoutHeight);
+    update(scanoutWidth);
     require(!display.needsFullCpuFallback());
 
     disconnectClient(client);

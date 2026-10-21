@@ -65,7 +65,8 @@ for the management console's run directory. Each registration owns
 `test-scratch/<test>` in the build tree; a binary run outside CTest uses
 `$TMPDIR`. Unix-domain socket paths use `$TMPDIR` because a build-tree path
 may not fit `sun_path`. Tests remove what they create, so a leftover file
-names the test that leaked it.
+names the test that leaked it. A test that needs a private directory holds a
+`ScratchSubdirectory`, which removes it with its contents.
 
 A unit test that reads data, such as a generated instruction corpus or the
 checked-in video fixtures, takes its path as a registration argument rather
@@ -84,7 +85,10 @@ promotion; the binary assets are not tracked.
 Unit tests assert with `require`, `fail` and `requireThrows` from
 `tests/unit/require/require.hpp`, which every unit binary links. A failure
 prints the caller's `file:line` and its message, then aborts, so no `catch` in
-the test or in the code under test can swallow it.
+the test or in the code under test can swallow it. The same directory holds
+the other shared helpers: `waitUntil` for a bounded wait on a condition,
+`Watchdog` to end a hung binary with a message, `runNamedTests` for a table of
+named cases, and `wire_bytes.hpp` to build and read device records.
 
 For one test, use an anchored expression:
 
@@ -302,7 +306,7 @@ ctest --preset unit-tsan
 Both sanitizers keep the product's macOS native window for themselves, so a
 sanitized test, and every run it makes through the emulator test variant,
 takes a native window that both leave free
-(`tests/unit/arm64/native_window_test_support.hpp`). AddressSanitizer also
+(`tests/unit/memory/native_window_test_support.hpp`). AddressSanitizer also
 ignores `mlock()`, so under it the cases that need wired guest RAM report
 themselves unsupported instead of running.
 

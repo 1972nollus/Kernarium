@@ -21,22 +21,6 @@ using uml::testing::require;
 using namespace uml::gpu::test;
 using Position = std::array<float, 4>;
 
-template <typename T>
-T structure(VkStructureType type)
-{
-    T result{};
-    result.sType = type;
-    return result;
-}
-
-template <typename T>
-T function(VkInstance instance, const char *name)
-{
-    auto result = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
-    require(result != nullptr, name);
-    return result;
-}
-
 std::string verify_properties()
 {
     auto application = structure<VkApplicationInfo>(VK_STRUCTURE_TYPE_APPLICATION_INFO);
@@ -45,22 +29,22 @@ std::string verify_properties()
     auto info = structure<VkInstanceCreateInfo>(VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO);
     info.pApplicationInfo = &application;
     VkInstance instance = VK_NULL_HANDLE;
-    require(function<PFN_vkCreateInstance>(nullptr, "vkCreateInstance")(
+    require(instance_function<PFN_vkCreateInstance>(nullptr, "vkCreateInstance")(
                 &info, nullptr, &instance) == VK_SUCCESS, "vkCreateInstance");
     struct InstanceCleanup {
         VkInstance value;
         ~InstanceCleanup()
         {
-            function<PFN_vkDestroyInstance>(value, "vkDestroyInstance")(value, nullptr);
+            instance_function<PFN_vkDestroyInstance>(value, "vkDestroyInstance")(value, nullptr);
         }
     } cleanup{instance};
-    auto enumerate = function<PFN_vkEnumeratePhysicalDevices>(instance, "vkEnumeratePhysicalDevices");
+    auto enumerate = instance_function<PFN_vkEnumeratePhysicalDevices>(instance, "vkEnumeratePhysicalDevices");
     uint32_t count = 0;
     require(enumerate(instance, &count, nullptr) == VK_SUCCESS && count != 0,
             "physical device count");
     std::vector<VkPhysicalDevice> devices(count);
     require(enumerate(instance, &count, devices.data()) == VK_SUCCESS, "physical devices");
-    auto query = function<PFN_vkGetPhysicalDeviceProperties2>(instance, "vkGetPhysicalDeviceProperties2");
+    auto query = instance_function<PFN_vkGetPhysicalDeviceProperties2>(instance, "vkGetPhysicalDeviceProperties2");
     auto driver = structure<VkPhysicalDeviceDriverProperties>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES);
     auto dedicated = structure<VkPhysicalDevicePointClippingProperties>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_POINT_CLIPPING_PROPERTIES);
     dedicated.pointClippingBehavior = VK_POINT_CLIPPING_BEHAVIOR_MAX_ENUM;
@@ -83,7 +67,7 @@ std::string verify_properties()
     auto features = structure<VkPhysicalDeviceFeatures2>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2);
     auto depth = structure<VkPhysicalDeviceDepthClipEnableFeaturesEXT>(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT);
     features.pNext = &depth;
-    function<PFN_vkGetPhysicalDeviceFeatures2>(instance, "vkGetPhysicalDeviceFeatures2")(
+    instance_function<PFN_vkGetPhysicalDeviceFeatures2>(instance, "vkGetPhysicalDeviceFeatures2")(
         devices.front(), &features);
     require(features.features.largePoints && features.features.geometryShader &&
                 features.features.tessellationShader && features.features.shaderTessellationAndGeometryPointSize &&

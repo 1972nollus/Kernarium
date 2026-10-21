@@ -201,7 +201,7 @@ def msr_mask(fields: dict, word: int) -> int:
 
 
 def coprocessor_register(form: str, word: int) -> str:
-    """The register a permitted coprocessor access names (design 1.1)."""
+    """The register a permitted coprocessor access names."""
     if not word >> 8 & 1:
         return "none"  # coprocessor 14
     read = word >> 20 & 1

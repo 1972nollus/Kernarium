@@ -139,8 +139,9 @@ public:
 	 * generation never runs again, so nothing it holds can be looked up
 	 * again. Its number keeps its place in the order the least recently used
 	 * address space is retired in, so the cache keeps the live address
-	 * spaces it would have kept. The caller runs no translated code of this
-	 * executor until after its next prepare(). */
+	 * spaces it would have kept. Out of memory part way, what was not let go
+	 * of stays held and the next call asks again. The caller runs no
+	 * translated code of this executor until after its next prepare(). */
 	void leave_gone_generations(unsigned long long retirements,
 		GenerationLiveness live) noexcept;
 

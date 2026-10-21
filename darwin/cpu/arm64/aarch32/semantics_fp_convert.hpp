@@ -90,6 +90,33 @@ UML_A32_FP_TO_INT(to_int_au, "fcvtau")
 
 #undef UML_A32_FP_TO_INT
 
+/* Half precision to a 16-bit integer in an H register, as the A64 scalar
+ * forms do: a result out of range saturates and is an invalid operation,
+ * not an inexact one. Converting through 32 bits would need the Inexact
+ * flag undone afterwards, and the lanes of one Advanced SIMD instruction
+ * share the flags. */
+#define UML_A32_HALF_TO_INT16(name, insn)                                                      \
+	[[nodiscard]] inline std::uint16_t name(std::uint16_t a) noexcept                      \
+	{                                                                                      \
+		std::uint32_t r;                                                               \
+		__asm__ volatile("fmov s1, %w1\n\t" insn " h0, h1\n\tfmov %w0, s0"                \
+				 : "=r"(r) : "r"(std::uint32_t{a}) : "v0", "v1");              \
+		return static_cast<std::uint16_t>(r);                                          \
+	}
+
+UML_A32_HALF_TO_INT16(to_int16_zs, "fcvtzs")
+UML_A32_HALF_TO_INT16(to_int16_zu, "fcvtzu")
+UML_A32_HALF_TO_INT16(to_int16_ns, "fcvtns")
+UML_A32_HALF_TO_INT16(to_int16_nu, "fcvtnu")
+UML_A32_HALF_TO_INT16(to_int16_ps, "fcvtps")
+UML_A32_HALF_TO_INT16(to_int16_pu, "fcvtpu")
+UML_A32_HALF_TO_INT16(to_int16_ms, "fcvtms")
+UML_A32_HALF_TO_INT16(to_int16_mu, "fcvtmu")
+UML_A32_HALF_TO_INT16(to_int16_as, "fcvtas")
+UML_A32_HALF_TO_INT16(to_int16_au, "fcvtau")
+
+#undef UML_A32_HALF_TO_INT16
+
 /* Floating point to a 32-bit integer under the FPCR rounding mode `mode`
  * (the FPSCR RMode encoding: 0 nearest, 1 plus infinity, 2 minus infinity,
  * 3 zero). */
@@ -148,6 +175,10 @@ UML_A32_FIXED_OP(FixedSToDouble, std::uint32_t, std::uint64_t, "scvtf d0, %w1, #
 UML_A32_FIXED_OP(FixedUToDouble, std::uint32_t, std::uint64_t, "ucvtf d0, %w1, #%2\n\tfmov %0, d0")
 UML_A32_FIXED_OP(HalfToFixedS, std::uint32_t, std::uint32_t, "fmov s1, %w1\n\tfcvtzs %w0, h1, #%2")
 UML_A32_FIXED_OP(HalfToFixedU, std::uint32_t, std::uint32_t, "fmov s1, %w1\n\tfcvtzu %w0, h1, #%2")
+UML_A32_FIXED_OP(HalfToFixed16S, std::uint32_t, std::uint32_t,
+	"fmov s1, %w1\n\tfcvtzs h0, h1, #%2\n\tfmov %w0, s0")
+UML_A32_FIXED_OP(HalfToFixed16U, std::uint32_t, std::uint32_t,
+	"fmov s1, %w1\n\tfcvtzu h0, h1, #%2\n\tfmov %w0, s0")
 UML_A32_FIXED_OP(FixedSToHalf, std::uint32_t, std::uint32_t, "scvtf h0, %w1, #%2\n\tfmov %w0, s0")
 UML_A32_FIXED_OP(FixedUToHalf, std::uint32_t, std::uint32_t, "ucvtf h0, %w1, #%2\n\tfmov %w0, s0")
 
@@ -162,41 +193,11 @@ template<template<int> typename Op, typename In, typename Out, std::size_t... In
 	return result;
 }
 
-/* Fraction bits 1 to 32. */
-template<template<int> typename Op, typename In, typename Out>
+/* Fraction bits 1 to `Limit`: 32, or 16 for the forms on an H register. */
+template<template<int> typename Op, typename In, typename Out, std::size_t Limit = 32>
 [[nodiscard]] inline Out fixed_convert(unsigned fraction, In a) noexcept
 {
-	return fixed_dispatch<Op, In, Out>(fraction, a, std::make_index_sequence<32>{});
-}
-
-/* A 16-bit conversion the host made in 32 bits overflowed the 16-bit range:
- * the result saturates, and the exception is an invalid operation, not an
- * inexact one. Called inside the local-FPCR region. */
-inline void report_overflow() noexcept
-{
-	std::uint64_t value;
-	__asm__ volatile("mrs %0, fpsr\n\tbic %0, %0, #16\n\torr %0, %0, #1\n\tmsr fpsr, %0"
-			 : "=&r"(value) : : "memory");
-}
-
-/* A 32-bit conversion result narrowed to a 16-bit integer: out of range
- * saturates and is an invalid operation. Called inside the local-FPCR
- * region. */
-[[nodiscard]] inline std::uint16_t narrow_integer(std::uint32_t result, bool is_unsigned) noexcept
-{
-	if (is_unsigned) {
-		if (result > 0xffffU) {
-			fp::report_overflow();
-			return 0xffffU;
-		}
-		return static_cast<std::uint16_t>(result);
-	}
-	const auto value = static_cast<std::int32_t>(result);
-	if (value > 0x7fff || value < -0x8000) {
-		fp::report_overflow();
-		return value > 0 ? std::uint16_t{0x7fff} : std::uint16_t{0x8000};
-	}
-	return static_cast<std::uint16_t>(value);
+	return fixed_dispatch<Op, In, Out>(fraction, a, std::make_index_sequence<Limit>{});
 }
 
 /* Floating point to a 32-bit integer under a rounding the instruction names
@@ -217,6 +218,24 @@ template<typename Float>
 		return is_unsigned ? to_int_au(value) : to_int_as(value);
 	default:
 		return is_unsigned ? to_int_nu(value) : to_int_ns(value);
+	}
+}
+
+/* The same for a half-precision value to a 16-bit integer. */
+[[nodiscard]] inline std::uint16_t to_int16_rounded(std::uint16_t value, bool is_unsigned,
+	FPRounding rounding) noexcept
+{
+	switch (rounding) {
+	case FPRounding::POSINF:
+		return is_unsigned ? to_int16_pu(value) : to_int16_ps(value);
+	case FPRounding::NEGINF:
+		return is_unsigned ? to_int16_mu(value) : to_int16_ms(value);
+	case FPRounding::ZERO:
+		return is_unsigned ? to_int16_zu(value) : to_int16_zs(value);
+	case FPRounding::TIEAWAY:
+		return is_unsigned ? to_int16_au(value) : to_int16_as(value);
+	default:
+		return is_unsigned ? to_int16_nu(value) : to_int16_ns(value);
 	}
 }
 

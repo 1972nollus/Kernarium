@@ -24,15 +24,11 @@ using uml::testing::requireThrows;
 
 /* Socket paths must fit sun_path, so they live in a fresh directory under the
  * host temporary directory rather than the build-tree scratch directory. */
-std::filesystem::path scratchDirectory()
+const std::filesystem::path &scratchDirectory()
 {
-	static const auto directory = [] {
-		auto pattern = ::uml::testing::socket_scratch_template(
-			"uml-socket-path.XXXXXX");
-		require(::mkdtemp(pattern.data()) != nullptr);
-		return std::filesystem::path {pattern};
-	}();
-	return directory;
+	static const uml::testing::ScratchSubdirectory directory {
+		"uml-socket-path.XXXXXX", uml::testing::socket_scratch_parent()};
+	return directory.path();
 }
 
 bool socketExists(const std::filesystem::path &path)
@@ -295,6 +291,5 @@ int main()
 	aDirectoryWithAnUnknownEntryKeepsIt();
 	aReplacedDirectorySurvives();
 	aMissingDirectoryIsRefused();
-	std::filesystem::remove_all(scratchDirectory());
 	return EXIT_SUCCESS;
 }

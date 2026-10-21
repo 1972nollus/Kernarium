@@ -17,10 +17,6 @@ static_assert(offsetof(CpuState, segment_selectors) ==
 	UML_X86_64_CPU_SEGMENT_SELECTORS);
 static_assert(offsetof(CpuState, segment_bypass) ==
 	UML_X86_64_CPU_SEGMENT_BYPASS);
-static_assert(offsetof(CpuState, flat_segments) ==
-	UML_X86_64_CPU_FLAT_SEGMENTS);
-static_assert(offsetof(CpuState, tls_descriptors) ==
-	UML_X86_64_CPU_TLS_DESCRIPTORS);
 static_assert(offsetof(CpuState, rip) == UML_X86_64_CPU_RIP);
 static_assert(offsetof(CpuState, rflags) == UML_X86_64_CPU_RFLAGS);
 static_assert(
@@ -61,7 +57,6 @@ static_assert(offsetof(CpuState, deferred_flags) +
 	offsetof(DeferredFlags, carry_pending) ==
 	UML_X86_64_CPU_DEFERRED_PENDING);
 static_assert(offsetof(CpuState, carry_slot) == UML_X86_64_CPU_CARRY_SLOT);
-static_assert(offsetof(CpuState, ldt) == UML_X86_64_CPU_LDT);
 static_assert(offsetof(CpuState, segments) == UML_X86_64_CPU_SEGMENTS);
 static_assert(sizeof(SegmentCache) == UML_X86_64_SEGMENT_CACHE_SIZE);
 static_assert(offsetof(SegmentCache, check_low) ==

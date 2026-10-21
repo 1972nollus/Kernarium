@@ -16,15 +16,11 @@
 // the read returns -- not the pixels, which are undefined precisely because the
 // writer's work was never submitted.
 
-#include "host_gl_provider.hpp"
+#include "host_gl_test_support.hpp"
 #include "require.hpp"
 
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
-
-extern "C" {
-#include <virglrenderer.h>
-}
 
 #include <atomic>
 #include <chrono>
@@ -37,6 +33,12 @@ extern "C" {
 
 namespace {
 
+using uml::gpu::testing::colourTarget;
+using uml::gpu::testing::compileShader;
+using uml::gpu::testing::glContextParameters;
+using uml::gpu::testing::linkProgram;
+using uml::gpu::testing::skip;
+using uml::gpu::testing::TextureStorage;
 using uml::testing::require;
 
 constexpr GLsizei kWidth = 64;
@@ -46,22 +48,6 @@ constexpr GLsizei kHeight = 64;
 // without it. Allow for that plus a slow host; a regression parks forever, so
 // any finite bound separates the two outcomes.
 constexpr std::chrono::seconds kReadbackDeadline {90};
-
-GLuint compile(GLenum stage, const char* source)
-{
-    const GLuint shader = glCreateShader(stage);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-    GLint compiled = 0;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
-    if (compiled == 0) {
-        char log[4096] {};
-        glGetShaderInfoLog(shader, sizeof log, nullptr, log);
-        std::fprintf(stderr, "shader: %s\n", log);
-        std::abort();
-    }
-    return shader;
-}
 
 class Gate final {
 public:
@@ -127,7 +113,7 @@ private:
     std::thread thread_;
 };
 
-void readBackWhatAnotherContextHasNotFlushed()
+[[nodiscard]] int readBackWhatAnotherContextHasNotFlushed()
 {
     // Run the driver on the calling thread. Gallium's threaded context would
     // otherwise queue the writer's draw and hand it to the driver only when
@@ -137,18 +123,10 @@ void readBackWhatAnotherContextHasNotFlushed()
     ::setenv("GALLIUM_THREAD", "0", 1);
 
     uml::gpu::HostGlProvider provider;
-    if (provider.display() == nullptr) {
-        std::fputs("no host GL display; skipping\n", stderr);
-        return;
-    }
+    if (provider.display() == nullptr)
+        return skip("no host GL display");
 
-    virgl_renderer_gl_ctx_param parameters {
-        .version = 2,
-        .shared = false,
-        .major_ver = 3,
-        .minor_ver = 0,
-        .compat_ctx = 0,
-    };
+    auto parameters = glContextParameters(3, 0);
     void* writer = provider.createContext(parameters);
     require(writer != nullptr);
     parameters.shared = true;
@@ -160,42 +138,25 @@ void readBackWhatAnotherContextHasNotFlushed()
     Gate release;
     std::thread writerThread([&] {
         require(provider.makeCurrent(writer) == 0);
-        GLuint name = 0;
-        glGenTextures(1, &name);
-        glBindTexture(GL_TEXTURE_2D, name);
-        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kWidth, kHeight);
-        GLuint target = 0;
-        glGenFramebuffers(1, &target);
-        glBindFramebuffer(GL_FRAMEBUFFER, target);
-        glFramebufferTexture2D(
-            GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, name, 0);
-        require(
-            glCheckFramebufferStatus(GL_FRAMEBUFFER) ==
-            GL_FRAMEBUFFER_COMPLETE);
+        const auto target =
+            colourTarget(kWidth, kHeight, TextureStorage::immutable);
+        require(target.complete);
 
-        const GLuint program = glCreateProgram();
-        glAttachShader(
-            program,
-            compile(
+        const GLuint program = linkProgram({
+            compileShader(
                 GL_VERTEX_SHADER,
                 "#version 460 core\n"
                 "void main(void) {\n"
                 "   vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);\n"
                 "   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
-                "}\n"));
-        glAttachShader(
-            program,
-            compile(
+                "}\n"),
+            compileShader(
                 GL_FRAGMENT_SHADER,
                 "#version 460 core\n"
                 "out vec4 colour;\n"
                 "void main(void) {\n"
                 "   colour = vec4(0.35, 0.70, 0.15, 1.0);\n"
-                "}\n"));
-        glLinkProgram(program);
-        GLint linked = 0;
-        glGetProgramiv(program, GL_LINK_STATUS, &linked);
-        require(linked != 0);
+                "}\n")});
         glUseProgram(program);
 
         GLuint array = 0;
@@ -208,14 +169,14 @@ void readBackWhatAnotherContextHasNotFlushed()
         glDrawArrays(GL_TRIANGLES, 0, 3);
         require(glGetError() == GL_NO_ERROR);
 
-        texture.store(name, std::memory_order_release);
+        texture.store(target.texture, std::memory_order_release);
         // Deliberately no glFlush and no unbind: park holding the batch, the
         // way a virglrenderer guest context does between command buffers.
         recorded.signal();
         release.wait();
         glDeleteVertexArrays(1, &array);
         glDeleteProgram(program);
-        glDeleteFramebuffers(1, &target);
+        glDeleteFramebuffers(1, &target.framebuffer);
         require(provider.makeCurrent(nullptr) == 0);
     });
 
@@ -261,12 +222,12 @@ void readBackWhatAnotherContextHasNotFlushed()
     require(provider.makeCurrent(nullptr) == 0);
     provider.destroyContext(reader);
     provider.destroyContext(writer);
+    return 0;
 }
 
 } // namespace
 
 int main()
 {
-    readBackWhatAnotherContextHasNotFlushed();
-    return 0;
+    return readBackWhatAnotherContextHasNotFlushed();
 }

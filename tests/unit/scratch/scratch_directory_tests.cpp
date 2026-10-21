@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -72,6 +73,28 @@ int main()
 	require(std::filesystem::equivalent(socket.parent_path(),
 			std::filesystem::temp_directory_path()),
 		"a socket path left the host temporary directory");
+
+	std::filesystem::path subdirectory;
+	{
+		const uml::testing::ScratchSubdirectory scratch{
+			"uml-subdirectory.XXXXXX"};
+		subdirectory = scratch.path();
+		require(subdirectory.parent_path() == perTest &&
+			std::filesystem::is_directory(subdirectory),
+			"a scratch subdirectory is not made inside the scratch directory");
+		std::filesystem::create_directories(subdirectory / "inner");
+		std::ofstream{subdirectory / "inner" / "file"} << "contents";
+	}
+	require(!std::filesystem::exists(subdirectory),
+		"a scratch subdirectory outlived its object");
+	{
+		const uml::testing::ScratchSubdirectory scratch{
+			"uml-socket-subdirectory.XXXXXX",
+			uml::testing::socket_scratch_parent()};
+		require(std::filesystem::equivalent(scratch.path().parent_path(),
+				std::filesystem::temp_directory_path()),
+			"a socket subdirectory left the host temporary directory");
+	}
 
 	std::filesystem::remove_all(hostTemporary);
 	std::filesystem::remove_all(perTest / "created");

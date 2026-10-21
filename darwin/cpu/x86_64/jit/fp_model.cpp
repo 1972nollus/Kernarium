@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/x86_64/jit/fp_model.hpp"
 
+#include "cpu/x86_64/cpu_state.hpp"
+
 #include <SoftFloat-3e/platform.h>
 
 extern "C" {
@@ -21,8 +23,6 @@ constexpr std::uint32_t overflow = 0x08U;
 constexpr std::uint32_t underflow = 0x10U;
 constexpr std::uint32_t precision = 0x20U;
 constexpr std::uint32_t mask_shift = 7U;
-constexpr std::uint32_t mxcsr_denormals_are_zero = 0x40U;
-constexpr std::uint32_t mxcsr_flush_to_zero = 0x8000U;
 
 /* An IEEE binary32 or binary64 lane's classes. */
 struct Format final {

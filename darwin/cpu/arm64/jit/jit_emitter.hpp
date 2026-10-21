@@ -130,9 +130,6 @@ public:
   void set_sme_host_mode(std::uint8_t mode) noexcept {
     sme_host_mode_ = mode;
   }
-  [[nodiscard]] std::uint8_t sme_host_mode() const noexcept {
-    return sme_host_mode_;
-  }
   /* An extended frame also saves x22-x28, which an AArch32 translation uses
    * for its core registers. Every translation of a chain must agree on it. */
   void set_extended_frame(bool extended) noexcept {

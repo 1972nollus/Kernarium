@@ -360,79 +360,63 @@ void test_scalable_native_kernel_layout_geometry()
 	static_assert(DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION ==
 		gib + 32ULL * kib);
 	static_assert(DARWIN_UML_NATIVE_STUB_PAGES == 3);
+	static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4ULL * kib);
 	/* The kernel places its stub pages and the guarded shared-memory
 	 * aperture above the RAM-scaled allowance, so the admitted window
-	 * reserves the same span for every page profile. */
-	constexpr std::uint64_t reserved_16k =
-		DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION +
-		DARWIN_UML_NATIVE_STUB_PAGES * 16ULL * kib;
-	constexpr std::uint64_t reserved_4k =
-		DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION +
-		DARWIN_UML_NATIVE_STUB_PAGES * 4ULL * kib;
+	 * reserves the same span on top of it. */
 	constexpr std::uint64_t product_reserved =
 		DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION +
 		DARWIN_UML_NATIVE_STUB_PAGES * DARWIN_UML_GUEST_PAGE_SIZE;
-	using Geometry = uml::runtime::NativeKernelLayoutGeometry<
-		48ULL * gib, 62ULL * gib, gib, 4ULL * gib, 16ULL * kib,
-		DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION,
-		DARWIN_UML_NATIVE_STUB_PAGES>;
+	using Device = uml::runtime::DeviceNativeKernelGeometry;
 	/* Auxiliary tracks RAM one-for-one between the floor and the ceiling,
 	 * because vmalloc must never be the binding constraint; its pages are
 	 * already bounded by the guest page allocator. */
-	const auto one_gib = Geometry::derive(gib);
+	const auto one_gib = Device::derive(gib);
 	require(one_gib.valid &&
 		one_gib.window_start ==
-			62ULL * gib - 2ULL * gib - reserved_16k &&
+			62ULL * gib - 2ULL * gib - product_reserved &&
 		one_gib.window_end == 62ULL * gib &&
-		one_gib.load_bias == 12ULL * gib - reserved_16k,
+		one_gib.load_bias == 12ULL * gib - product_reserved,
 		"1 GiB RAM did not produce a 1 GiB auxiliary window");
-	const auto two_gib = Geometry::derive(2ULL * gib);
+	const auto two_gib = Device::derive(2ULL * gib);
 	require(two_gib.valid &&
 		two_gib.window_end - two_gib.window_start ==
-			4ULL * gib + reserved_16k,
+			4ULL * gib + product_reserved,
 		"2 GiB RAM did not track its auxiliary window one-for-one");
-	const auto eight_gib = Geometry::derive(8ULL * gib);
+	const auto eight_gib = Device::derive(8ULL * gib);
 	require(eight_gib.valid &&
 		eight_gib.window_end - eight_gib.window_start ==
-			12ULL * gib + reserved_16k &&
-		eight_gib.window_start == 50ULL * gib - reserved_16k,
+			12ULL * gib + product_reserved &&
+		eight_gib.window_start == 50ULL * gib - product_reserved,
 		"8 GiB RAM did not cap its auxiliary window at 4 GiB");
-	const auto small = Geometry::derive(128ULL * mib);
+	const auto small = Device::derive(128ULL * mib);
 	require(small.valid && small.window_end - small.window_start ==
-		128ULL * mib + gib + reserved_16k,
+		128ULL * mib + gib + product_reserved,
 		"small guest did not retain the 1 GiB auxiliary floor");
 	constexpr std::uint64_t envelope_fill =
-		14ULL * gib - 4ULL * gib - reserved_16k;
-	const auto largest = Geometry::derive(envelope_fill);
+		14ULL * gib - 4ULL * gib - product_reserved;
+	const auto largest = Device::derive(envelope_fill);
 	require(largest.valid &&
 		largest.window_end - largest.window_start == 14ULL * gib &&
 		largest.window_start == 48ULL * gib,
 		"the largest guest did not exactly fill the signed envelope");
-	require(!Geometry::derive(envelope_fill + 16ULL * kib).valid,
+	require(!Device::derive(envelope_fill + 4ULL * kib).valid,
 		"RAM and its capped auxiliary window exceeded the signed envelope");
-	const auto rounded = Geometry::derive(1);
+	const auto rounded = Device::derive(1);
 	require(rounded.valid && rounded.window_end - rounded.window_start ==
-		gib + 16ULL * kib + reserved_16k,
+		gib + 4ULL * kib + product_reserved,
 		"native window did not page-round RAM or retain its floor");
-	using FourKGeometry = uml::runtime::NativeKernelLayoutGeometry<
-		48ULL * gib, 62ULL * gib, gib, 4ULL * gib, 4ULL * kib,
-		DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION,
-		DARWIN_UML_NATIVE_STUB_PAGES>;
-	const auto four_kib_rounded = FourKGeometry::derive(gib + 1U);
-	require(four_kib_rounded.valid &&
-		four_kib_rounded.window_end - four_kib_rounded.window_start ==
-			2ULL * gib + 8ULL * kib + reserved_4k,
-		"4 KiB geometry did not independently round RAM and auxiliary space");
-	using HighGeometry = uml::runtime::NativeKernelLayoutGeometry<
-		48ULL * gib, 128ULL * 1024ULL * gib, gib, 4ULL * gib,
-		16ULL * kib, DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION,
-		DARWIN_UML_NATIVE_STUB_PAGES>;
-	const auto high = HighGeometry::derive_at(
+	const auto both_rounded = Device::derive(gib + 1U);
+	require(both_rounded.valid &&
+		both_rounded.window_end - both_rounded.window_start ==
+			2ULL * gib + 8ULL * kib + product_reserved,
+		"the geometry did not independently round RAM and auxiliary space");
+	const auto high = uml::runtime::MacosNativeKernelGeometry::derive_at(
 		8ULL * gib, 96ULL * 1024ULL * gib);
 	require(high.valid &&
 		high.window_start == 96ULL * 1024ULL * gib &&
 		high.window_end - high.window_start ==
-			12ULL * gib + reserved_16k &&
+			12ULL * gib + product_reserved &&
 		high.load_bias == high.window_start - 48ULL * gib,
 		"high native placement did not retain the scalable window");
 	const auto product = uml::runtime::prepare_native_kernel_layout(gib);

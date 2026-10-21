@@ -33,6 +33,7 @@
 namespace uml::gpu::testing {
 
 using ::uml::testing::require;
+using ::uml::testing::requireThrows;
 using ::uml::testing::ScratchBacking;
 
 void runVhostUserServerTests(const char* executable);
@@ -200,9 +201,33 @@ inline void sendRequestAndReadAcknowledgement(
     readAcknowledgement(socket, request);
 }
 
-/* Negotiates the vhost-user protocol features `features` the way a front end
- * does, with the device offering only the protocol-features bit. */
-inline void negotiateProtocolFeatures(int socket, std::uint64_t features)
+/* Reads the reply to `request`, which carries one `Value`. */
+template<typename Value>
+[[nodiscard]] Value readValueReply(int socket, protocol::VhostRequest request)
+{
+    protocol::VhostHeader header {};
+    Value value {};
+    readExact(socket, &header, sizeof(header));
+    readExact(socket, &value, sizeof(value));
+    require(header.request == static_cast<std::uint32_t>(request));
+    require(header.flags ==
+        (protocol::vhostUserVersion | protocol::vhostUserReply));
+    require(header.size == sizeof(value));
+    return value;
+}
+
+/* Returns the device's features. The reply also shows that every request sent
+ * before this one has been handled. */
+[[nodiscard]] inline std::uint64_t getFeatures(int socket)
+{
+    sendRequest(socket, protocol::VhostRequest::getFeatures, {}, {}, false);
+    return readValueReply<std::uint64_t>(
+        socket, protocol::VhostRequest::getFeatures);
+}
+
+/* SET_FEATURES with the device offering only the protocol-features bit, which
+ * the front end sends without asking for a reply. */
+inline void sendDeviceFeatures(int socket)
 {
     constexpr std::uint64_t deviceFeatures =
         protocol::vhostFeatureProtocol;
@@ -212,10 +237,136 @@ inline void negotiateProtocolFeatures(int socket, std::uint64_t features)
         bytesOf(deviceFeatures),
         {},
         false);
+}
+
+/* Negotiates the vhost-user protocol features `features` the way a front end
+ * does, with the device offering only the protocol-features bit. */
+inline void negotiateProtocolFeatures(int socket, std::uint64_t features)
+{
+    sendDeviceFeatures(socket);
     sendRequestAndReadAcknowledgement(
         socket,
         protocol::VhostRequest::setProtocolFeatures,
         bytesOf(features));
+}
+
+/* Hands the server the end of a new socket pair as its backend channel
+ * (SET_SLAVE_REQ_FD). descriptors[0] is this side of the channel;
+ * descriptors[1] stays open here beside the server's copy. */
+[[nodiscard]] inline SocketPair attachBackendChannel(int socket)
+{
+    auto channel = makeSocketPair();
+    const std::array descriptors {channel.descriptors[1].get()};
+    sendRequestAndReadAcknowledgement(
+        socket,
+        protocol::VhostRequest::setSlaveRequestFd,
+        {},
+        descriptors);
+    return channel;
+}
+
+/* Negotiates `protocolFeatures`, which include the slave-request feature, and
+ * attaches a backend channel. */
+[[nodiscard]] inline SocketPair openBackendChannel(
+    int socket,
+    std::uint64_t protocolFeatures)
+{
+    negotiateProtocolFeatures(socket, protocolFeatures);
+    return attachBackendChannel(socket);
+}
+
+/* Reads the next request the server sends on the backend channel within two
+ * seconds, which has no payload and asks for a reply. */
+inline protocol::VhostHeader readBackendRequest(
+    int backend,
+    protocol::VhostSlaveRequest expected)
+{
+    pollfd ready {.fd = backend, .events = POLLIN};
+    require(::poll(&ready, 1, 2000) == 1);
+    protocol::VhostHeader request {};
+    readExact(backend, &request, sizeof(request));
+    require(request.request == static_cast<std::uint32_t>(expected));
+    require(request.flags ==
+        (protocol::vhostUserVersion | protocol::vhostUserNeedReply));
+    require(request.size == 0);
+    return request;
+}
+
+/* Answers `request` on the backend channel the way a front end does. */
+inline void replyToBackend(
+    int backend,
+    const protocol::VhostHeader& request,
+    std::uint64_t status = 0)
+{
+    const protocol::VhostHeader reply {
+        .request = request.request,
+        .flags = protocol::vhostUserVersion | protocol::vhostUserReply,
+        .size = sizeof(status),
+    };
+    sendMessageWithDescriptors(backend, reply, {}, bytesOf(status));
+}
+
+[[nodiscard]] inline std::vector<std::uint8_t> configPayload(
+    protocol::ConfigHeader header,
+    std::span<const std::uint8_t> contents)
+{
+    std::vector<std::uint8_t> payload(sizeof(header) + contents.size());
+    std::memcpy(payload.data(), &header, sizeof(header));
+    if (!contents.empty()) {
+        std::memcpy(
+            payload.data() + sizeof(header),
+            contents.data(),
+            contents.size());
+    }
+    return payload;
+}
+
+/* The header and contents of a GET_CONFIG reply. */
+struct ConfigReply {
+    protocol::ConfigHeader header;
+    std::vector<std::uint8_t> contents;
+
+    template<typename Value>
+    [[nodiscard]] Value as() const
+    {
+        require(contents.size() == sizeof(Value));
+        Value value {};
+        std::memcpy(&value, contents.data(), sizeof(value));
+        return value;
+    }
+};
+
+/* Reads `size` bytes of the configuration at `offset`. */
+[[nodiscard]] inline ConfigReply readConfig(
+    int socket,
+    std::uint32_t offset,
+    std::uint32_t size)
+{
+    const protocol::ConfigHeader request {
+        .offset = offset,
+        .size = size,
+        .flags = protocol::configFlagWritable,
+    };
+    const std::vector<std::uint8_t> zeros(size);
+    sendRequest(
+        socket,
+        protocol::VhostRequest::getConfig,
+        configPayload(request, zeros),
+        {},
+        false);
+    pollfd answered {.fd = socket, .events = POLLIN};
+    require(::poll(&answered, 1, 2000) == 1);
+    protocol::VhostHeader response {};
+    readExact(socket, &response, sizeof(response));
+    require(response.request ==
+        static_cast<std::uint32_t>(protocol::VhostRequest::getConfig));
+    require((response.flags & protocol::vhostUserReply) != 0);
+    require(response.size == sizeof(protocol::ConfigHeader) + size);
+    ConfigReply reply {};
+    readExact(socket, &reply.header, sizeof(reply.header));
+    reply.contents.resize(size);
+    readExact(socket, reply.contents.data(), reply.contents.size());
+    return reply;
 }
 
 [[nodiscard]] inline std::vector<std::uint8_t> memoryTablePayload(
@@ -390,6 +541,55 @@ inline void configureQueue(
         socket, protocol::VhostRequest::setVringEnable, bytesOf(enabled));
 }
 
+/* The two descriptors of a request chained to its response, the first at table
+ * index `first`: the request at `requestOffset` into the ring's page, which the
+ * device reads, and the response at `responseOffset`, which it writes. */
+[[nodiscard]] inline std::array<protocol::VirtqueueDescriptor, 2> requestChain(
+    std::size_t requestOffset,
+    std::uint32_t requestLength,
+    std::size_t responseOffset,
+    std::uint32_t responseLength,
+    std::uint16_t first = 0)
+{
+    return {
+        protocol::VirtqueueDescriptor {
+            .address = SplitRing::guestBase + requestOffset,
+            .length = requestLength,
+            .flags = protocol::descriptorNext,
+            .next = static_cast<std::uint16_t>(first + 1U),
+        },
+        protocol::VirtqueueDescriptor {
+            .address = SplitRing::guestBase + responseOffset,
+            .length = responseLength,
+            .flags = protocol::descriptorWrite,
+            .next = 0,
+        },
+    };
+}
+
+inline constexpr std::size_t displayInfoRequestOffset = 0x300;
+inline constexpr std::size_t displayInfoResponseOffset = 0x400;
+
+/* Queues one GET_DISPLAY_INFO request in `ring`, with room for its reply. */
+inline void publishDisplayInfoRequest(const SplitRing& ring)
+{
+    constexpr std::array<std::uint16_t, 1> heads {0};
+    ring.publish(
+        requestChain(
+            displayInfoRequestOffset,
+            sizeof(protocol::GpuControlHeader),
+            displayInfoResponseOffset,
+            sizeof(protocol::GpuDisplayInfo)),
+        heads);
+    protocol::GpuControlHeader request {};
+    request.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::getDisplayInfo);
+    std::memcpy(
+        ring.memory().data() + displayInfoRequestOffset,
+        &request,
+        sizeof(request));
+}
+
 /* A started queue's notification pipes: the server writes `call` and reads
  * `kick`. */
 struct QueueChannels {
@@ -397,14 +597,15 @@ struct QueueChannels {
     Pipe kick;
 };
 
-/* Configures and enables queue `index`, then hands the server its call and
- * kick pipe ends. */
+/* Configures queue `index`, enables it unless told otherwise, then hands the
+ * server its call and kick pipe ends. */
 [[nodiscard]] inline QueueChannels startQueue(
     int socket,
     const SplitRing& ring,
-    std::uint32_t index = 0)
+    std::uint32_t index = 0,
+    bool enable = true)
 {
-    configureQueue(socket, ring, index);
+    configureQueue(socket, ring, index, enable);
     const std::uint64_t queue = index;
     QueueChannels channels {.call = makePipe(), .kick = {}};
     const std::array callDescriptors {channels.call.writeEnd.get()};
@@ -421,6 +622,28 @@ struct QueueChannels {
         bytesOf(queue),
         kickDescriptors);
     return channels;
+}
+
+/* Writes one kick to a queue's kick pipe. */
+inline void writeKick(const Pipe& kickPipe)
+{
+    constexpr std::uint64_t kick = 1;
+    require(
+        ::write(kickPipe.writeEnd.get(), &kick, sizeof(kick)) ==
+        static_cast<ssize_t>(sizeof(kick)));
+}
+
+/* Requires `condition` to hold within two seconds. */
+template<typename Condition>
+void awaitCondition(
+    Condition condition,
+    const std::source_location location = std::source_location::current())
+{
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds {2};
+    while (!condition() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds {1});
+    require(condition(), "the awaited condition did not hold", location);
 }
 
 /* Requires one call notification on `callRead` within two seconds. */
