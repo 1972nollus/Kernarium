@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* The shared unit-test helpers that do more than assert. */
 
+#include "named_tests.hpp"
 #include "require.hpp"
 #include "wait_until.hpp"
 #include "watchdog.hpp"
@@ -10,6 +11,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 #include <string>
 #include <sys/wait.h>
 #include <thread>
@@ -112,11 +114,45 @@ void aWatchdogOnlyFiresWhenTheGuardedCodeIsLate()
 		"a late call is named");
 }
 
+int cases;
+
+void passes() { ++cases; }
+void throws() { throw std::runtime_error("boom"); }
+
+void runNamedTestsReportsEveryCaseAndFailsOnAThrow()
+{
+	const uml::testing::NamedTest tests[] = {
+		{"first", passes},
+		{"second", throws},
+		{"third", passes, "no such host"},
+		{"fourth", passes},
+	};
+	const auto outcome = inChild([&] {
+		const int result = uml::testing::runNamedTests(tests);
+		return result == 1 && cases == 2 ? 1 : 2;
+	});
+	require(outcome.status == 1, "a throwing case fails the binary");
+	const auto first = outcome.output.find("ok: first (");
+	const auto second = outcome.output.find("FAIL: second: boom");
+	const auto third = outcome.output.find("unsupported: third: no such host");
+	const auto fourth = outcome.output.find("ok: fourth (");
+	require(first < second && second < third && third < fourth &&
+		fourth != std::string::npos,
+		"the cases are reported in order, and the later ones still run");
+	require(!mentions(outcome, "ok: second") &&
+		!mentions(outcome, "ok: third"),
+		"a failed or skipped case is not reported as ok");
+
+	const uml::testing::NamedTest clean[] = {{"only", passes}};
+	require(uml::testing::runNamedTests(clean) == 0, "clean cases return 0");
+}
+
 } // namespace
 
 int main()
 {
 	waitUntilReturnsWhatTheDeadlineLeavesTrue();
 	aWatchdogOnlyFiresWhenTheGuardedCodeIsLate();
+	runNamedTestsReportsEveryCaseAndFailsOnAThrow();
 	return 0;
 }

@@ -6,6 +6,7 @@
 #include "guest_hibernation.hpp"
 #include "kernel_threads.hpp"
 #include "memory/guest_ram_commitment.hpp"
+#include "named_tests.hpp"
 #include "require.hpp"
 #include "scratch_directory.hpp"
 #include "watchdog.hpp"
@@ -341,10 +342,7 @@ int main()
 {
 	const uml::testing::Watchdog watchdog{"the guest hibernation tests",
 		std::chrono::seconds{180}};
-	const struct {
-		const char *name;
-		void (*run)();
-	} tests[] = {
+	const uml::testing::NamedTest tests[] = {
 		{"a hibernation holds before it writes and restores before it releases",
 			a_hibernation_holds_before_it_writes_and_restores_before_it_releases},
 		{"nothing happens when there is nothing to hibernate",
@@ -360,9 +358,5 @@ int main()
 		{"a real hibernation holds the kernel threads and brings the RAM back",
 			a_real_hibernation_holds_the_kernel_threads_and_brings_the_ram_back},
 	};
-	for (const auto &test : tests) {
-		test.run();
-		std::printf("ok: %s\n", test.name);
-	}
-	return 0;
+	return uml::testing::runNamedTests(tests);
 }

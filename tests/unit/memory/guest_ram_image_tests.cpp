@@ -6,6 +6,7 @@
 #include "mach_vm_region_test_support.hpp"
 #include "memory/guest_ram_commitment.hpp"
 #include "memory/guest_ram_image.hpp"
+#include "named_tests.hpp"
 #include "require.hpp"
 #include "scratch_directory.hpp"
 
@@ -798,10 +799,7 @@ void the_image_file_is_exclusive_and_stale_files_are_removed()
 
 int main()
 {
-	const struct {
-		const char *name;
-		void (*run)();
-	} tests[] = {
+	const uml::testing::NamedTest tests[] = {
 		{"the hash sees every byte and the length",
 			the_hash_sees_every_byte_and_the_length},
 		{"a restore returns every held page exactly and wired",
@@ -828,15 +826,5 @@ int main()
 		{"the image file is exclusive and stale files are removed",
 			the_image_file_is_exclusive_and_stale_files_are_removed},
 	};
-	int failures = 0;
-	for (const auto &test : tests) {
-		try {
-			test.run();
-			std::printf("ok: %s\n", test.name);
-		} catch (const std::exception &error) {
-			std::printf("FAIL: %s: %s\n", test.name, error.what());
-			++failures;
-		}
-	}
-	return failures == 0 ? 0 : 1;
+	return uml::testing::runNamedTests(tests);
 }
