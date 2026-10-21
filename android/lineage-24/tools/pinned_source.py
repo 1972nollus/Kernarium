@@ -296,15 +296,13 @@ def verify_repo_routes(
             raise error(f"route {route.route_id} is not based on its pinned base")
 
 
-def verify_device_tree(
-    android_root: Path, tree: str, workspace: Path, error: Error
-) -> None:
+def verify_device_tree(android_root: Path, workspace: Path, error: Error) -> None:
     """Require the workspace's device tree to equal the checked one."""
     tool = android_root / "tools/sync-device-tree.py"
     if not tool.is_file():
         raise error("device-tree sync tool is missing")
     run(
-        str(tool), "--android-root", str(android_root), "--tree", tree,
+        str(tool), "--android-root", str(android_root),
         "--workspace", str(workspace.resolve()), "--verify", error=error,
     )
 

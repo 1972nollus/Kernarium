@@ -51,7 +51,7 @@ def main() -> None:
             args.aosp_source, base_projects, routes, args.expect, "AOSP", error
         )
         if args.expect == "final":
-            pinned_source.verify_device_tree(android_root, "overlay", args.aosp_source, error)
+            pinned_source.verify_device_tree(android_root, args.aosp_source, error)
     print(f"verified {len(routes)} routed AOSP 17 project series")
 
 

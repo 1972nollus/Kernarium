@@ -414,7 +414,7 @@ def check_device_sync(source_root: Path, root: Path) -> None:
         result = subprocess.run(
             (
                 sys.executable, "-B", str(tool), "--android-root", str(android_root),
-                "--tree", "overlay", "--workspace", str(target), *extra,
+                "--workspace", str(target), *extra,
             ),
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True,
