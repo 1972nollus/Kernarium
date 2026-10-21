@@ -262,6 +262,44 @@ private:
     Function function_;
 };
 
+void require_result(VkResult result, std::string_view operation)
+{
+    if (result != VK_SUCCESS) {
+        throw std::runtime_error(std::string(operation) + " failed: " +
+                                 std::to_string(result));
+    }
+}
+
+// The first memory type among those in compatible that has every required
+// property, preferring one that also has every preferred property. Throws
+// failure when none qualifies.
+uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties &memory,
+                          uint32_t compatible,
+                          VkMemoryPropertyFlags required,
+                          VkMemoryPropertyFlags preferred,
+                          const std::string &failure)
+{
+    uint32_t fallback = memory.memoryTypeCount;
+    for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
+        const VkMemoryPropertyFlags flags =
+            memory.memoryTypes[index].propertyFlags;
+        if ((compatible & (1U << index)) == 0 ||
+            (flags & required) != required) {
+            continue;
+        }
+        if ((flags & preferred) == preferred) {
+            return index;
+        }
+        if (fallback == memory.memoryTypeCount) {
+            fallback = index;
+        }
+    }
+    if (fallback == memory.memoryTypeCount) {
+        throw std::runtime_error(failure);
+    }
+    return fallback;
+}
+
 struct CubeAliasReport;
 struct GraphicsPipelineLibraryReport;
 struct DeviceAddressCommandsReport;
@@ -574,17 +612,9 @@ CubeAliasReport ProbeDevice::verify_cube_alias_views(
                        "vkCreateImage");
         VkMemoryRequirements requirements{};
         get_image_memory_requirements(device, image, &requirements);
-        uint32_t memory_type = memory.memoryTypeCount;
-        for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-            if ((requirements.memoryTypeBits & (1U << index)) != 0) {
-                memory_type = index;
-                break;
-            }
-        }
-        if (memory_type == memory.memoryTypeCount) {
-            throw std::runtime_error(
-                "no memory type for cube format " + std::to_string(format));
-        }
+        const uint32_t memory_type = find_memory_type(
+            memory, requirements.memoryTypeBits, 0, 0,
+            "no memory type for cube format " + std::to_string(format));
         const VkMemoryAllocateInfo allocation_info{
             VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
             nullptr,
@@ -706,36 +736,28 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
             destroy_shader_module(device, vertex_module, nullptr);
         }
     }};
-    const auto require_success = [&](VkResult result,
-                                     std::string_view operation) {
-        if (result == VK_SUCCESS) {
-            return;
-        }
-        throw std::runtime_error(
-            std::string(operation) + " failed: " + std::to_string(result));
-    };
 
     VkShaderModuleCreateInfo module_info{};
     module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     module_info.codeSize = gpl_vertex_spirv.size() * sizeof(uint32_t);
     module_info.pCode = gpl_vertex_spirv.data();
-    require_success(create_shader_module(device, &module_info, nullptr,
+    require_result(create_shader_module(device, &module_info, nullptr,
                                          &vertex_module),
                     "GPL vertex shader module creation");
     module_info.codeSize = gpl_fragment_spirv.size() * sizeof(uint32_t);
     module_info.pCode = gpl_fragment_spirv.data();
-    require_success(create_shader_module(device, &module_info, nullptr,
+    require_result(create_shader_module(device, &module_info, nullptr,
                                          &fragment_module),
                     "GPL fragment shader module creation");
 
     VkPipelineLayoutCreateInfo layout_info{};
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    require_success(create_pipeline_layout(device, &layout_info, nullptr,
+    require_result(create_pipeline_layout(device, &layout_info, nullptr,
                                            &layout),
                     "GPL pipeline layout creation");
     VkPipelineCacheCreateInfo cache_info{};
     cache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-    require_success(create_pipeline_cache(device, &cache_info, nullptr,
+    require_result(create_pipeline_cache(device, &cache_info, nullptr,
                                           &cache),
                     "GPL pipeline cache creation");
 
@@ -826,7 +848,7 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     library_infos[3].pMultisampleState = &multisample;
     library_infos[3].pColorBlendState = &blend;
     for (std::size_t index = 0; index < library_infos.size(); ++index) {
-        require_success(create_graphics_pipelines(
+        require_result(create_graphics_pipelines(
                             device, cache, 1, &library_infos[index], nullptr,
                             &libraries[index]),
                         "GPL subset library creation");
@@ -870,11 +892,11 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     };
     report.first_link_result =
         timed_link(0, &first_pipeline, &report.first_link_ns);
-    require_success(report.first_link_result, "GPL final link");
+    require_result(report.first_link_result, "GPL final link");
     report.cached_link_result = timed_link(
         VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT,
         &cached_pipeline, &report.cached_link_ns);
-    require_success(report.cached_link_result, "cached GPL final link");
+    require_result(report.cached_link_result, "cached GPL final link");
 
     // A final pipeline may import shader and state subsets while supplying a
     // missing shader stage directly.  Both representations must participate
@@ -909,7 +931,7 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
         std::chrono::duration_cast<std::chrono::nanoseconds>(mixed_end -
                                                              mixed_begin)
             .count());
-    require_success(report.mixed_link_result,
+    require_result(report.mixed_link_result,
                     "mixed imported/direct GPL final link");
 
     std::array<VkGraphicsPipelineLibraryCreateInfoEXT, 2>
@@ -949,7 +971,7 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     combined_library_infos[1].pDepthStencilState = &depth_stencil;
     for (std::size_t index = 0; index < combined_library_infos.size();
          ++index) {
-        require_success(create_graphics_pipelines(
+        require_result(create_graphics_pipelines(
                             device, cache, 1,
                             &combined_library_infos[index], nullptr,
                             &combined_libraries[index]),
@@ -963,14 +985,14 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     final_info.pNext = &combined_library_link;
     report.combined_link_result =
         timed_link(0, &combined_pipeline, &report.combined_link_ns);
-    require_success(report.combined_link_result,
+    require_result(report.combined_link_result,
                     "combined-subset GPL final link");
 
     final_info.pNext = &library_link;
     report.lto_link_result = timed_link(
         VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT,
         &lto_pipeline, &report.lto_link_ns);
-    require_success(report.lto_link_result, "GPL LTO final link");
+    require_result(report.lto_link_result, "GPL LTO final link");
 
     // A linked pipeline must retain everything it needs after its source
     // libraries have been destroyed.
@@ -986,7 +1008,7 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     VkCommandPoolCreateInfo pool_info{};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pool_info.queueFamilyIndex = queue_family;
-    require_success(create_command_pool(device, &pool_info, nullptr,
+    require_result(create_command_pool(device, &pool_info, nullptr,
                                         &command_pool),
                     "GPL command pool creation");
     VkCommandBufferAllocateInfo allocation_info{};
@@ -996,13 +1018,13 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     allocation_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocation_info.commandBufferCount = 1;
     VkCommandBuffer command_buffer = VK_NULL_HANDLE;
-    require_success(allocate_command_buffers(device, &allocation_info,
+    require_result(allocate_command_buffers(device, &allocation_info,
                                              &command_buffer),
                     "GPL command buffer allocation");
     VkCommandBufferBeginInfo begin_info{};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     const auto bind_begin = std::chrono::steady_clock::now();
-    require_success(begin_command_buffer(command_buffer, &begin_info),
+    require_result(begin_command_buffer(command_buffer, &begin_info),
                     "GPL command buffer begin");
     cmd_bind_pipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       first_pipeline);
@@ -1020,7 +1042,7 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
         std::chrono::duration_cast<std::chrono::nanoseconds>(bind_end -
                                                              bind_begin)
             .count());
-    require_success(report.bind_result, "GPL command buffer bind recording");
+    require_result(report.bind_result, "GPL command buffer bind recording");
 
     return report;
 }
@@ -1159,14 +1181,6 @@ DeviceAddressCommandsReport ProbeDevice::verify_device_address_commands(
             source_memory = VK_NULL_HANDLE;
         }
     }};
-    const auto require_result = [&](VkResult result,
-                                    std::string_view operation) {
-        if (result == VK_SUCCESS) {
-            return;
-        }
-        throw std::runtime_error(std::string(operation) + " failed: " +
-                                 std::to_string(result));
-    };
 
     constexpr VkDeviceSize buffer_size = 256;
     const VkBufferCreateInfo buffer_info{
@@ -1198,31 +1212,10 @@ DeviceAddressCommandsReport ProbeDevice::verify_device_address_commands(
     const uint32_t compatible_memory_types =
         source_requirements.memoryTypeBits &
         destination_requirements.memoryTypeBits;
-    uint32_t memory_type = memory.memoryTypeCount;
-    for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-        const VkMemoryPropertyFlags flags =
-            memory.memoryTypes[index].propertyFlags;
-        if ((compatible_memory_types & (1U << index)) != 0 &&
-            (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 &&
-            (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0) {
-            memory_type = index;
-            break;
-        }
-    }
-    if (memory_type == memory.memoryTypeCount) {
-        for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-            if ((compatible_memory_types & (1U << index)) != 0 &&
-                (memory.memoryTypes[index].propertyFlags &
-                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
-                memory_type = index;
-                break;
-            }
-        }
-    }
-    if (memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error(
-            "no host-visible buffer-device-address memory type");
-    }
+    const uint32_t memory_type = find_memory_type(
+        memory, compatible_memory_types, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        "no host-visible buffer-device-address memory type");
 
     const VkMemoryAllocateFlagsInfo address_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
@@ -1562,34 +1555,6 @@ DynamicLogicOpReport ProbeDevice::verify_dynamic_logic_ops(
             destroy_shader_module(device, vertex_module, nullptr);
         }
     }};
-    const auto require_result = [&](VkResult result,
-                                    std::string_view operation) {
-        if (result == VK_SUCCESS) {
-            return;
-        }
-        throw std::runtime_error(std::string(operation) + " failed: " +
-                                 std::to_string(result));
-    };
-    const auto find_memory_type = [&](uint32_t compatible,
-                                      VkMemoryPropertyFlags required,
-                                      VkMemoryPropertyFlags preferred) {
-        uint32_t fallback = memory.memoryTypeCount;
-        for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-            const VkMemoryPropertyFlags flags =
-                memory.memoryTypes[index].propertyFlags;
-            if ((compatible & (1U << index)) == 0 ||
-                (flags & required) != required) {
-                continue;
-            }
-            if ((flags & preferred) == preferred) {
-                return index;
-            }
-            if (fallback == memory.memoryTypeCount) {
-                fallback = index;
-            }
-        }
-        return fallback;
-    };
 
     VkShaderModuleCreateInfo shader_info{};
     shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -1655,10 +1620,9 @@ DynamicLogicOpReport ProbeDevice::verify_dynamic_logic_ops(
     VkMemoryRequirements image_requirements{};
     get_image_memory_requirements(device, image, &image_requirements);
     const uint32_t image_memory_type = find_memory_type(
-        image_requirements.memoryTypeBits, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (image_memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error("no compatible logic-op image memory type");
-    }
+        memory, image_requirements.memoryTypeBits, 0,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        "no compatible logic-op image memory type");
     const VkMemoryAllocateInfo image_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         nullptr,
@@ -1727,12 +1691,10 @@ DynamicLogicOpReport ProbeDevice::verify_dynamic_logic_ops(
     VkMemoryRequirements buffer_requirements{};
     get_buffer_memory_requirements(device, readback, &buffer_requirements);
     const uint32_t readback_memory_type = find_memory_type(
-        buffer_requirements.memoryTypeBits,
+        memory, buffer_requirements.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (readback_memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error("no host-visible logic-op readback memory type");
-    }
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        "no host-visible logic-op readback memory type");
     const VkMemoryAllocateInfo buffer_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         nullptr,
@@ -2065,34 +2027,6 @@ LegacyVertexAttributesReport ProbeDevice::verify_legacy_vertex_attributes(
             destroy_shader_module(device, vertex_module, nullptr);
         }
     }};
-    const auto require_result = [&](VkResult result,
-                                    std::string_view operation) {
-        if (result == VK_SUCCESS) {
-            return;
-        }
-        throw std::runtime_error(std::string(operation) + " failed: " +
-                                 std::to_string(result));
-    };
-    const auto find_memory_type = [&](uint32_t compatible,
-                                      VkMemoryPropertyFlags required,
-                                      VkMemoryPropertyFlags preferred) {
-        uint32_t fallback = memory.memoryTypeCount;
-        for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-            const VkMemoryPropertyFlags flags =
-                memory.memoryTypes[index].propertyFlags;
-            if ((compatible & (1U << index)) == 0 ||
-                (flags & required) != required) {
-                continue;
-            }
-            if ((flags & preferred) == preferred) {
-                return index;
-            }
-            if (fallback == memory.memoryTypeCount) {
-                fallback = index;
-            }
-        }
-        return fallback;
-    };
 
     VkShaderModuleCreateInfo shader_info{};
     shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -2244,11 +2178,9 @@ LegacyVertexAttributesReport ProbeDevice::verify_legacy_vertex_attributes(
     VkMemoryRequirements image_requirements{};
     get_image_memory_requirements(device, image, &image_requirements);
     const uint32_t image_memory_type = find_memory_type(
-        image_requirements.memoryTypeBits, 0,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (image_memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error("no compatible legacy image memory type");
-    }
+        memory, image_requirements.memoryTypeBits, 0,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        "no compatible legacy image memory type");
     const VkMemoryAllocateInfo image_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         nullptr,
@@ -2301,12 +2233,10 @@ LegacyVertexAttributesReport ProbeDevice::verify_legacy_vertex_attributes(
     get_buffer_memory_requirements(device, vertex_buffer,
                                    &vertex_requirements);
     const uint32_t vertex_memory_type = find_memory_type(
-        vertex_requirements.memoryTypeBits,
+        memory, vertex_requirements.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (vertex_memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error("no host-visible legacy vertex memory type");
-    }
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        "no host-visible legacy vertex memory type");
     const VkMemoryAllocateInfo vertex_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         nullptr,
@@ -2341,12 +2271,10 @@ LegacyVertexAttributesReport ProbeDevice::verify_legacy_vertex_attributes(
     VkMemoryRequirements readback_requirements{};
     get_buffer_memory_requirements(device, readback, &readback_requirements);
     const uint32_t readback_memory_type = find_memory_type(
-        readback_requirements.memoryTypeBits,
+        memory, readback_requirements.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (readback_memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error("no host-visible legacy readback memory type");
-    }
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        "no host-visible legacy readback memory type");
     const VkMemoryAllocateInfo readback_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         nullptr,
