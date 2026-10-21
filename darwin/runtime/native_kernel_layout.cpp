@@ -9,36 +9,12 @@
 #include <sys/mman.h>
 
 namespace uml::runtime {
-namespace {
-
-/* Where the kernel goes in a macOS process. The low canonical range is already
- * spoken for there, so the image sits high, above every ordinary allowance. */
-using MacosGeometry = NativeKernelLayoutGeometry<
-	DARWIN_UML_NATIVE_LINK_ADDRESS,
-	DARWIN_UML_GUEST_ADDRESS_LIMIT,
-	DARWIN_UML_NATIVE_AUXILIARY_MINIMUM,
-	DARWIN_UML_NATIVE_AUXILIARY_MAXIMUM,
-	DARWIN_UML_GUEST_PAGE_SIZE,
-	DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION,
-	DARWIN_UML_NATIVE_STUB_PAGES>;
-
-/* Where it goes on an iOS device, packed against the signed iOS envelope. */
-using DeviceGeometry = NativeKernelLayoutGeometry<
-	DARWIN_UML_NATIVE_LINK_ADDRESS,
-	DARWIN_UML_NATIVE_ADDRESS_CEILING,
-	DARWIN_UML_NATIVE_AUXILIARY_MINIMUM,
-	DARWIN_UML_NATIVE_AUXILIARY_MAXIMUM,
-	DARWIN_UML_GUEST_PAGE_SIZE,
-	DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION,
-	DARWIN_UML_NATIVE_STUB_PAGES>;
-
-} // namespace
 
 NativeKernelLayout prepare_native_kernel_layout(
 	std::size_t guest_memory) noexcept
 {
 #if DARWIN_UML_NATIVE_HIGH_PLACEMENT
-	return MacosGeometry::derive_at(
+	return MacosNativeKernelGeometry::derive_at(
 		guest_memory, DARWIN_UML_MACOS_NATIVE_ADDRESS);
 #else
 	/* The same iOS build runs on an Apple silicon Mac in Designed for iPad
@@ -49,10 +25,10 @@ NativeKernelLayout prepare_native_kernel_layout(
 	 * actually has rather than the SDK it was built against.
 	 */
 	if (::uml::platform::running_ios_app_on_macos()) {
-		return MacosGeometry::derive_at(
+		return MacosNativeKernelGeometry::derive_at(
 			guest_memory, DARWIN_UML_MACOS_NATIVE_ADDRESS);
 	}
-	const auto packed = DeviceGeometry::derive(guest_memory);
+	const auto packed = DeviceNativeKernelGeometry::derive(guest_memory);
 	if (!packed.valid)
 		return packed;
 	const auto reserved = reserve_native_kernel_window(packed);

@@ -388,7 +388,7 @@ index 7a70e528b66dd95c7102ff2f8bc335907c18c985..2a704fcdc2dc64f45e6d1fbe8e47da13
 +#endif
  }
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index c5fe20ffa1fcc3e0f4c569f6fbf2538599bde0d2..dcae659685ae209405fbd3c87241f7dbb42d8b69 100644
+index 6d7076773db49994d94eac24a2b53edb7e92cac0..8af8e4d5d84d11013230a2423ff6198b75c4581a 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -88,6 +88,7 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
@@ -399,7 +399,7 @@ index c5fe20ffa1fcc3e0f4c569f6fbf2538599bde0d2..dcae659685ae209405fbd3c87241f7db
  #define DARWIN_GUEST_X86_TRAP_SS 12
  #define DARWIN_GUEST_X86_TRAP_MF 16
  #define DARWIN_GUEST_X86_TRAP_XM 19
-@@ -477,6 +478,8 @@ void userspace(struct uml_pt_regs *registers)
+@@ -469,6 +470,8 @@ void userspace(struct uml_pt_regs *registers)
  #ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
  		upt_x86_32_set_task_mode(registers,
  					 current_is_x86_32_userspace());
@@ -408,7 +408,7 @@ index c5fe20ffa1fcc3e0f4c569f6fbf2538599bde0d2..dcae659685ae209405fbd3c87241f7db
  #endif
  		guest_tls = current_tls();
  		/* Snapshot before polling so an IPI racing with the poll remains
-@@ -757,17 +760,23 @@ void userspace(struct uml_pt_regs *registers)
+@@ -749,17 +752,23 @@ void userspace(struct uml_pt_regs *registers)
  			} else if (registers->faultinfo.trap_no == 4 ||
  				   registers->faultinfo.trap_no == 5 ||
  				   registers->faultinfo.trap_no ==

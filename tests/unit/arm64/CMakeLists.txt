@@ -99,7 +99,7 @@ uml_add_arm64_unit_test(a32_guest_key WITHOUT_HARNESS NO_OBJECTS)
 # The AArch32 decoder: its generated table, the IT rules, the profile's gates
 # and the operands of the Decode pseudocode, against the generator's
 # independent answers and LLVM MC on stored samples. It composes the decoder
-# alone, which no engine links yet.
+# alone.
 uml_add_arm64_unit_test(aarch32_decoder WITHOUT_HARNESS
     OBJECTS $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
     ARGS ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_decoder)
@@ -110,7 +110,6 @@ uml_add_arm64_unit_test(aarch32_decoder WITHOUT_HARNESS
 uml_add_arm64_unit_test(aarch32_semantics WITHOUT_HARNESS
     OBJECTS $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
             $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>)
-target_link_libraries(uml_arm64_aarch32_semantics_tests PRIVATE UML::GuestPageConfiguration)
 
 # Instruction-family tests: base, memory, then FP and SIMD.
 uml_add_arm64_unit_test(base_arithmetic_allocation)
@@ -186,13 +185,12 @@ uml_add_arm64_unit_test(simd_fcvt_precision_gadget)
 uml_add_arm64_unit_test(simd_fixed_transform_gadget
     NAME arm64-simd-fixed_transform_gadget)
 
-# The AArch32 instruction corpus: until an engine runs AArch32 the runner
-# proves each case consistent with the decoder and with itself.
-# tests/unit/arm64/aarch32_corpus/README.md owns the pack.
+# The AArch32 instruction corpus: this runner proves each case consistent with
+# the decoder and with itself (the engines' lanes, in engine.cmake, run the
+# cases). tests/unit/arm64/aarch32_corpus/README.md owns the pack.
 add_executable(uml_arm64_aarch32_corpus_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_corpus_runner.cpp
     $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>)
-target_link_libraries(uml_arm64_aarch32_corpus_tests PRIVATE UML::GuestPageConfiguration)
 target_include_directories(uml_arm64_aarch32_corpus_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 add_dependencies(uml_arm64_aarch32_corpus_tests uml_arm64_aarch32_corpus)
@@ -205,7 +203,6 @@ add_executable(uml_arm64_aarch32_semantics_corpus_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_semantics_corpus_runner.cpp
     $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
     $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>)
-target_link_libraries(uml_arm64_aarch32_semantics_corpus_tests PRIVATE UML::GuestPageConfiguration)
 target_include_directories(uml_arm64_aarch32_semantics_corpus_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 add_dependencies(uml_arm64_aarch32_semantics_corpus_tests uml_arm64_aarch32_corpus)

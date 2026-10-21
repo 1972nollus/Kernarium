@@ -91,10 +91,10 @@ index dbb4d6cf068d0bbadd846a42d7bbbd117cad5d72..3267358aad21eb46cb76cc8375280bac
   * We give a *copy* of the faultinfo in the regs to segv.
   * This must be done, since nesting SEGVs could overwrite
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index 47da8343f0f9e6cf38541b5babe1c357cf02fd1b..529d80f69819dfd9027a5d4534c56588e175f454 100644
+index a0e9c51ed4c481306e887f48b2102226c3dddfae..3342eb1f97a45c301ae43d1540f72cf0957f3bdb 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
-@@ -17,6 +17,9 @@ void darwin_host_stop_checkpoint(void);
+@@ -16,6 +16,9 @@ void darwin_host_stop_checkpoint(void);
  void __attribute__((noreturn)) darwin_host_stop(void);
  
  #if IS_ENABLED(CONFIG_SMP)
@@ -104,7 +104,7 @@ index 47da8343f0f9e6cf38541b5babe1c357cf02fd1b..529d80f69819dfd9027a5d4534c56588
  void darwin_set_current_cpu(int cpu);
  void darwin_publish_cpu_thread(int cpu, pthread_t thread);
  void darwin_retire_cpu_thread(pthread_t thread);
-@@ -34,6 +37,9 @@ void darwin_ipi_guest_end(void);
+@@ -33,6 +36,9 @@ void darwin_ipi_guest_end(void);
  void darwin_wake_cpu_threads_for_shutdown(void);
  int darwin_join_cpu_carriers(void);
  #else
@@ -115,10 +115,10 @@ index 47da8343f0f9e6cf38541b5babe1c357cf02fd1b..529d80f69819dfd9027a5d4534c56588
  static inline void darwin_publish_cpu_thread(int cpu, pthread_t thread)
  {
 diff --git a/arch/um/os-Darwin/process.c b/arch/um/os-Darwin/process.c
-index 36ee1aa584ef0666d37aea9d979f59b8bafa7abd..8ce3c3ec407e77fb2f4604c7425209c13e13436a 100644
+index 538eb50c2acde4c10a7db2939ae2ce940f459c84..c2354aa094ced8022b9286c0e09c2535da961c47 100644
 --- a/arch/um/os-Darwin/process.c
 +++ b/arch/um/os-Darwin/process.c
-@@ -90,6 +90,11 @@ int can_drop_memory(void)
+@@ -87,6 +87,11 @@ int can_drop_memory(void)
  
  void init_new_thread_signals(void)
  {

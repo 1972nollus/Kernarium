@@ -2589,10 +2589,10 @@ index 9ff2fa2288c4a59014725de16b21af4e5816ba23..766807e1ee60ea42848e8159bdfc5123
  	/*
  	 * If no time passes, then sched_yield may not actually yield, causing
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index a8b3795db98ba90741d79777e074b5abd2c96d68..3e4611423ac5bd74b8b47b24e7f70ec987cc2228 100644
+index 3d99882fe2bff1d2ffde08dba56ed394e57f745b..4ae759c65d830f96026b8be0af635f99b508d0c5 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -444,6 +444,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -436,6 +436,10 @@ void userspace(struct uml_pt_regs *registers)
  		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
  		 */
  		registers->is_user = 1;

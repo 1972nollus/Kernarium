@@ -35,7 +35,10 @@ namespace {
 using uml::memory::GuestRamCommitment;
 using uml::memory::GuestRamImage;
 using uml::memory::ImageStats;
+using uml::testing::host_page;
 using uml::testing::require;
+using uml::testing::task_footprint;
+using uml::testing::wired_count;
 namespace format = uml::memory::image_format;
 
 #if defined(__has_feature)
@@ -53,28 +56,6 @@ constexpr bool wiring_works = true;
 #endif
 
 constexpr std::size_t mib = 1024U * 1024U;
-
-[[nodiscard]] std::size_t host_page() noexcept
-{
-	return static_cast<std::size_t>(getpagesize());
-}
-
-[[nodiscard]] std::uint64_t footprint() noexcept
-{
-	task_vm_info_data_t info{};
-	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-	if (task_info(mach_task_self(), TASK_VM_INFO,
-		    reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
-		return 0;
-	return info.phys_footprint;
-}
-
-[[nodiscard]] unsigned wired(const std::byte *address) noexcept
-{
-	const auto region = uml::testing::region_containing(
-		reinterpret_cast<std::uintptr_t>(address));
-	return region ? region->user_wired_count : 0;
-}
 
 [[nodiscard]] std::uint64_t splitmix(std::uint64_t &state) noexcept
 {
@@ -391,10 +372,10 @@ void a_restore_returns_every_held_page_exactly_and_wired()
 		"the grid must cover the managed pages");
 	require(image->chunk_bytes() == 64 * ram.page(), "one chunk is 64 pages");
 
-	const std::uint64_t before = footprint();
+	const std::uint64_t before = task_footprint();
 	ImageStats written;
 	hibernate_now(*image, written);
-	const std::uint64_t after = footprint();
+	const std::uint64_t after = task_footprint();
 	require(image->evicted(), "chunks must be out of the process");
 	require(written.chunks_held == TestRam::chunks - 1,
 		"every chunk with a held page is taken");
@@ -415,7 +396,7 @@ void a_restore_returns_every_held_page_exactly_and_wired()
 				continue;
 			const unsigned bit = static_cast<unsigned>(
 				__builtin_ctzll(TestRam::held_bits(chunk)));
-			require(wired(ram.page_at(chunk, bit)) == 0,
+			require(wired_count(ram.page_at(chunk, bit)) == 0,
 				"evicted pages must be unwired");
 		}
 	}
@@ -466,7 +447,7 @@ void a_restore_returns_every_held_page_exactly_and_wired()
 				continue;
 			const unsigned bit = static_cast<unsigned>(
 				__builtin_ctzll(TestRam::held_bits(chunk)));
-			require(wired(ram.page_at(chunk, bit)) > 0,
+			require(wired_count(ram.page_at(chunk, bit)) > 0,
 				"restored pages must be wired again");
 		}
 	require(restored.wire_failures == 0, "no page failed to wire");
@@ -655,10 +636,11 @@ void a_failed_write_keeps_the_chunk_resident()
 		(ram.held_pages() - 22 - 20 - 64 - 17) * ram.page(),
 		"the failed chunks stay in the process");
 	if (wiring_works) {
-		require(wired(ram.page_at(4, 0)) > 0 &&
-			wired(ram.page_at(7, 0)) > 0,
+		require(wired_count(ram.page_at(4, 0)) > 0 &&
+			wired_count(ram.page_at(7, 0)) > 0,
 			"a chunk that was not stored stays wired");
-		require(wired(ram.page_at(1, 0)) == 0, "a stored chunk is unwired");
+		require(wired_count(ram.page_at(1, 0)) == 0,
+			"a stored chunk is unwired");
 	}
 	ImageStats restored;
 	require(image->restore(restored), "the stored chunks restore");

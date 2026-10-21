@@ -40,19 +40,10 @@ using EngineKind = uml::cpu::EngineKind;
 
 using uml::testing::require;
 
-class DestructionCounterEngine final : public uml::cpu::CpuEngine {
+/* An engine that never runs a guest; a run is a fatal exit. The engines below
+ * differ in what their destruction does. */
+class FakeEngine : public uml::cpu::CpuEngine {
 public:
-	explicit DestructionCounterEngine(std::atomic_size_t &counter,
-		EngineKind kind = EngineKind::gadgets) noexcept
-		: counter_{counter}, kind_{kind}
-	{
-	}
-
-	~DestructionCounterEngine() override
-	{
-		counter_.fetch_add(1, std::memory_order_release);
-	}
-
 	[[nodiscard]] uml::cpu::EngineKind kind() const noexcept override
 	{
 		return kind_;
@@ -64,12 +55,34 @@ public:
 		return {.reason = uml::cpu::ExitReason::fatal};
 	}
 
+protected:
+	explicit FakeEngine(EngineKind kind = EngineKind::gadgets) noexcept
+		: kind_{kind}
+	{
+	}
+
 private:
-	std::atomic_size_t &counter_;
 	EngineKind kind_;
 };
 
-class DomainRetirementObserverEngine final : public uml::cpu::CpuEngine {
+class DestructionCounterEngine final : public FakeEngine {
+public:
+	explicit DestructionCounterEngine(std::atomic_size_t &counter,
+		EngineKind kind = EngineKind::gadgets) noexcept
+		: FakeEngine{kind}, counter_{counter}
+	{
+	}
+
+	~DestructionCounterEngine() override
+	{
+		counter_.fetch_add(1, std::memory_order_release);
+	}
+
+private:
+	std::atomic_size_t &counter_;
+};
+
+class DomainRetirementObserverEngine final : public FakeEngine {
 public:
 	explicit DomainRetirementObserverEngine(
 		std::atomic_uint64_t &observed) noexcept
@@ -81,17 +94,6 @@ public:
 	{
 		observed_.store(uml::memory::domain_retirement_sequence(),
 			std::memory_order_release);
-	}
-
-	[[nodiscard]] uml::cpu::EngineKind kind() const noexcept override
-	{
-		return uml::cpu::EngineKind::gadgets;
-	}
-
-	[[nodiscard]] uml::cpu::ExecutionResult run(
-		uml::cpu::ExecutionRequest &) noexcept override
-	{
-		return {.reason = uml::cpu::ExitReason::fatal};
 	}
 
 private:
@@ -131,7 +133,7 @@ struct RetirementInterleave final {
 	bool destructor_timed_out{};
 };
 
-class BlockingRetirementEngine final : public uml::cpu::CpuEngine {
+class BlockingRetirementEngine final : public FakeEngine {
 public:
 	explicit BlockingRetirementEngine(RetirementInterleave &interleave) noexcept
 		: interleave_{interleave}
@@ -147,17 +149,6 @@ public:
 			return interleave_.release_destructor;
 		}))
 			interleave_.destructor_timed_out = true;
-	}
-
-	[[nodiscard]] uml::cpu::EngineKind kind() const noexcept override
-	{
-		return uml::cpu::EngineKind::gadgets;
-	}
-
-	[[nodiscard]] uml::cpu::ExecutionResult run(
-		uml::cpu::ExecutionRequest &) noexcept override
-	{
-		return {.reason = uml::cpu::ExitReason::fatal};
 	}
 
 private:

@@ -12,10 +12,12 @@ verifies the SHA-256 in `provenance.json`
 runner,
 [`../aarch32_corpus_runner.cpp`](../aarch32_corpus_runner.cpp), needs only the
 pack and proves each case consistent with the decoder and with itself. An
-engine lane includes the reader,
-[`../aarch32_corpus_pack.hpp`](../aarch32_corpus_pack.hpp), runs each case
-and compares what the pack records; the inventory's `engine_status` moves from
-`pending` to `verified` per entry.
+engine lane includes the reader and case layout,
+[`../aarch32_corpus_pack.hpp`](../aarch32_corpus_pack.hpp), and the state
+conversion,
+[`../aarch32_corpus_cpu_state.hpp`](../aarch32_corpus_cpu_state.hpp), runs each
+case and compares what the pack records; the inventory's `engine_status` moves
+from `pending` to `verified` per entry.
 
 ## A case
 

@@ -388,38 +388,28 @@
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(gadget_runtime WITHOUT_HARNESS)
 
-    # The static MMU and gadget objects precede the runtime's, unlike
-    # UML_ARM64_STATIC_TEST_OBJECTS.
+    # What the gadget-runtime tests link to drive an executor over a static
+    # address space. The static MMU and gadget objects precede the runtime's,
+    # unlike UML_ARM64_STATIC_TEST_OBJECTS.
+    set(UML_ARM64_GADGET_RUNTIME_TEST_OBJECTS
+        $<TARGET_OBJECTS:uml_static_mmu>
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
+        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
     foreach(GADGET_RUNTIME_TEST IN ITEMS cache_validation inline_fallthrough
             a32_control)
         uml_add_arm64_unit_test(gadget_${GADGET_RUNTIME_TEST} WITHOUT_HARNESS
-            OBJECTS
-                $<TARGET_OBJECTS:uml_static_mmu>
-                $<TARGET_OBJECTS:uml_arm64_gadgets>
-                $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
-                $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-                $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-                ${UML_STATIC_RUNTIME_TEST_OBJECTS})
+            OBJECTS ${UML_ARM64_GADGET_RUNTIME_TEST_OBJECTS})
     endforeach()
     # The forms test reads the decoder's stored sample words.
     uml_add_arm64_unit_test(gadget_a32_forms WITHOUT_HARNESS
-        OBJECTS
-            $<TARGET_OBJECTS:uml_static_mmu>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            ${UML_STATIC_RUNTIME_TEST_OBJECTS}
+        OBJECTS ${UML_ARM64_GADGET_RUNTIME_TEST_OBJECTS}
         ARGS ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_decoder)
     # The engine against the AArch32 corpus, at the level it implements.
     uml_add_arm64_unit_test(gadget_a32_corpus WITHOUT_HARNESS
-        OBJECTS
-            $<TARGET_OBJECTS:uml_static_mmu>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            ${UML_STATIC_RUNTIME_TEST_OBJECTS}
+        OBJECTS ${UML_ARM64_GADGET_RUNTIME_TEST_OBJECTS}
         ARGS ${UML_ARM64_AARCH32_CORPUS})
     add_dependencies(uml_arm64_gadget_a32_corpus_tests uml_arm64_aarch32_corpus)
     # The exclusive records with the host interrupting the guest's thread
@@ -432,70 +422,46 @@
         COMMAND uml_arm64_gadget_a32_corpus_tests ${UML_ARM64_AARCH32_CORPUS}
             --record exclusive-qemu,sequences-qemu --passes 200 --interrupt)
     target_compile_definitions(uml_arm64_gadget_cache_validation_tests PRIVATE
-        UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOT_COUNT}
-        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+        UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOT_COUNT})
     # Executors sharing one address space's translations, from several
     # threads at once.
     uml_add_arm64_unit_test(gadget_shared_bodies WITHOUT_HARNESS
-        OBJECTS
-            $<TARGET_OBJECTS:uml_static_mmu>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            ${UML_STATIC_RUNTIME_TEST_OBJECTS}
+        OBJECTS ${UML_ARM64_GADGET_RUNTIME_TEST_OBJECTS}
         LABELS tsan)
-    target_compile_definitions(uml_arm64_gadget_shared_bodies_tests PRIVATE
-        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
     # A shared address space bounds the freed arena it accumulates by renewal.
     # The test links the executor variant that schedules renewals and exposes
     # what a space holds, in place of the production one.
-    set(UML_STATIC_RUNTIME_STRESS_TEST_OBJECTS
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    list(TRANSFORM UML_STATIC_RUNTIME_STRESS_TEST_OBJECTS REPLACE
+    set(UML_ARM64_GADGET_STRESS_TEST_OBJECTS
+        ${UML_ARM64_GADGET_RUNTIME_TEST_OBJECTS})
+    list(TRANSFORM UML_ARM64_GADGET_STRESS_TEST_OBJECTS REPLACE
         "uml_arm64_gadget_executor>"
         "uml_arm64_gadget_sweep_stress_executor>")
     uml_add_arm64_unit_test(gadget_shared_bound WITHOUT_HARNESS
-        OBJECTS
-            $<TARGET_OBJECTS:uml_static_mmu>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            ${UML_STATIC_RUNTIME_STRESS_TEST_OBJECTS}
+        OBJECTS ${UML_ARM64_GADGET_STRESS_TEST_OBJECTS}
         LABELS tsan)
     target_compile_definitions(uml_arm64_gadget_shared_bound_tests PRIVATE
-        UML_GADGET_SWEEP_STRESS=1
-        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+        UML_GADGET_SWEEP_STRESS=1)
 
     # Executors let go of the spaces of generations the MMU destroyed.
     uml_add_arm64_unit_test(gadget_dead_space WITHOUT_HARNESS
-        OBJECTS
-            $<TARGET_OBJECTS:uml_static_mmu>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            ${UML_STATIC_RUNTIME_STRESS_TEST_OBJECTS}
+        OBJECTS ${UML_ARM64_GADGET_STRESS_TEST_OBJECTS}
         LABELS tsan)
     target_compile_definitions(uml_arm64_gadget_dead_space_tests PRIVATE
-        UML_GADGET_SWEEP_STRESS=1
-        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+        UML_GADGET_SWEEP_STRESS=1)
+    target_link_libraries(uml_arm64_gadget_dead_space_tests PRIVATE
+        uml_test_allocation_failure)
 
     # The process's gadget-cache budget bounds what the executors' address
     # spaces keep, from several threads at once.
     uml_add_arm64_unit_test(gadget_budget WITHOUT_HARNESS
-        OBJECTS
-            $<TARGET_OBJECTS:uml_static_mmu>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            ${UML_STATIC_RUNTIME_TEST_OBJECTS}
+        OBJECTS ${UML_ARM64_GADGET_RUNTIME_TEST_OBJECTS}
         LABELS tsan)
-    target_compile_definitions(uml_arm64_gadget_budget_tests PRIVATE
-        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+    foreach(GADGET_RUNTIME_TEST IN ITEMS cache_validation shared_bodies
+            shared_bound dead_space budget)
+        target_compile_definitions(uml_arm64_gadget_${GADGET_RUNTIME_TEST}_tests
+            PRIVATE UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+    endforeach()
 
     # The body arena on its own, against a model of what it hands out.
     uml_add_arm64_unit_test(gadget_body_arena WITHOUT_HARNESS NO_OBJECTS)
@@ -539,3 +505,14 @@
     uml_add_unit_test(NAME gadget-cache-budget
 		COMMAND uml_gadget_cache_budget_tests
 		LABELS tsan)
+
+    # The limbo a shared address space keeps its unpublished bodies in, on
+    # its own, with every allocation of a reclaim failed in turn.
+    add_executable(uml_gadget_shared_space_tests
+		${PROJECT_SOURCE_DIR}/tests/unit/arm64/gadget_shared_space_tests.cpp)
+    target_include_directories(uml_gadget_shared_space_tests PRIVATE
+		${PROJECT_SOURCE_DIR}/darwin)
+    target_link_libraries(uml_gadget_shared_space_tests PRIVATE
+		uml_test_allocation_failure)
+    uml_add_unit_test(NAME gadget-shared-space
+		COMMAND uml_gadget_shared_space_tests)

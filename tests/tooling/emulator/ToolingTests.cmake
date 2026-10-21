@@ -7,6 +7,15 @@ uml_add_tooling_test(
     LABELS emulator;guest
     TIMEOUT 180)
 
+# The shared probe runner's installed files, guest commands and verdicts, with
+# the guest replaced by a recorder.
+uml_add_tooling_test(
+    NAME guest-probe-runner
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/emulator/run_guest_probe_tests.py
+    LABELS emulator;guest
+    TIMEOUT 60)
+
 if(UML_BUILD_KERNEL_RUNNER)
     add_executable(uml_embedded_kernel_serialization_tests
         ${PROJECT_SOURCE_DIR}/tests/tooling/emulator/embedded_kernel_serialization_tests.cpp)

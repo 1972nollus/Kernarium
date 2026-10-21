@@ -64,11 +64,13 @@ function(uml_cache_accepted_artifact_path VARIABLE DEFAULT_VALUE DESCRIPTION)
     set(${VARIABLE} "${_uml_selected_artifact}" PARENT_SCOPE)
 endfunction()
 
+# DESCRIPTOR is optional: an accepted-*.env descriptor whose recorded identity
+# must also match the bundle's manifest.
 function(uml_import_kernel_artifact)
     set(options)
     set(oneValueArgs
         TARGET ARTIFACT_ROOT COMMON_ROOT EXPECTED_FAMILY EXPECTED_SLICE
-        EXPECTED_RELEASE_SERIES)
+        EXPECTED_RELEASE_SERIES DESCRIPTOR)
     cmake_parse_arguments(ARTIFACT "${options}" "${oneValueArgs}" "" ${ARGN})
     foreach(_uml_required IN ITEMS
             TARGET ARTIFACT_ROOT COMMON_ROOT EXPECTED_FAMILY EXPECTED_SLICE
@@ -89,6 +91,10 @@ function(uml_import_kernel_artifact)
     set(_uml_abi_metadata "${ARTIFACT_COMMON_ROOT}/abi/identity.env")
     set(_uml_verifier
         "${ARTIFACT_COMMON_ROOT}/artifacts/verify-kernel-artifact.py")
+    set(_uml_descriptor_arguments)
+    if(ARTIFACT_DESCRIPTOR)
+        set(_uml_descriptor_arguments --descriptor "${ARTIFACT_DESCRIPTOR}")
+    endif()
     execute_process(
         COMMAND "${Python3_EXECUTABLE}" -B "${_uml_verifier}"
             --artifact "${ARTIFACT_ARTIFACT_ROOT}"
@@ -98,6 +104,7 @@ function(uml_import_kernel_artifact)
             --expected-family "${ARTIFACT_EXPECTED_FAMILY}"
             --expected-slice "${ARTIFACT_EXPECTED_SLICE}"
             --expected-release-series "${ARTIFACT_EXPECTED_RELEASE_SERIES}"
+            ${_uml_descriptor_arguments}
         RESULT_VARIABLE _uml_artifact_result
         OUTPUT_VARIABLE _uml_artifact_output
         ERROR_VARIABLE _uml_artifact_error)
@@ -141,6 +148,9 @@ endfunction()
 # holds the bundle's directory: it follows the descriptor and defaults to the
 # bundle below .build/kernel/artifacts, until a caller pins it
 # (uml_cache_accepted_artifact_path). The release series is always 6.18.
+# The descriptor repeats the bundle's identity for the commit that accepted it,
+# and the import fails when the bundle it names disagrees. A pinned bundle with
+# another directory name is not the descriptor's, so it is not compared.
 function(uml_import_accepted_kernel_artifact)
     set(oneValueArgs
         TARGET DESCRIPTOR CACHE_VARIABLE DESCRIPTION FAMILY SLICE)
@@ -157,11 +167,19 @@ function(uml_import_accepted_kernel_artifact)
 
     cmake_path(GET CMAKE_CURRENT_FUNCTION_LIST_DIR PARENT_PATH
         _uml_accepted_common_root)
+    string(REGEX REPLACE "/+$" "" _uml_selected_root
+        "${${ACCEPTED_CACHE_VARIABLE}}")
+    cmake_path(GET _uml_selected_root FILENAME _uml_selected_name)
+    set(_uml_descriptor_check)
+    if(_uml_selected_name STREQUAL _uml_accepted_directory_name)
+        set(_uml_descriptor_check DESCRIPTOR "${ACCEPTED_DESCRIPTOR}")
+    endif()
     uml_import_kernel_artifact(
         TARGET "${ACCEPTED_TARGET}"
         ARTIFACT_ROOT "${${ACCEPTED_CACHE_VARIABLE}}"
         COMMON_ROOT "${_uml_accepted_common_root}"
         EXPECTED_FAMILY "${ACCEPTED_FAMILY}"
         EXPECTED_SLICE "${ACCEPTED_SLICE}"
-        EXPECTED_RELEASE_SERIES 6.18)
+        EXPECTED_RELEASE_SERIES 6.18
+        ${_uml_descriptor_check})
 endfunction()
