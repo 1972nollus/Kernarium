@@ -9,6 +9,7 @@
 #include "named_tests.hpp"
 #include "require.hpp"
 #include "scratch_directory.hpp"
+#include "thread_nap.hpp"
 #include "watchdog.hpp"
 
 #include <atomic>
@@ -16,7 +17,6 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
-#include <mach/mach_time.h>
 #include <memory>
 #include <string>
 #include <sys/mman.h>
@@ -27,6 +27,7 @@
 namespace {
 
 using namespace uml::runtime;
+using uml::testing::nap;
 using uml::testing::require;
 
 enum class Event { prepare, hold, write, restore, release, abort_on, abort_off,
@@ -197,18 +198,6 @@ void the_policy_follows_the_mode_and_the_wiring()
 }
 
 /* ---- Real threads and real guest RAM. ---- */
-
-void nap(unsigned microseconds)
-{
-	static const mach_timebase_info_data_t base = [] {
-		mach_timebase_info_data_t value{};
-		mach_timebase_info(&value);
-		return value;
-	}();
-	mach_wait_until(mach_absolute_time() +
-		static_cast<std::uint64_t>(microseconds) * 1000ULL * base.denom /
-		base.numer);
-}
 
 constexpr std::size_t held_pages = 192;
 constexpr std::size_t spare_pages = 64;
