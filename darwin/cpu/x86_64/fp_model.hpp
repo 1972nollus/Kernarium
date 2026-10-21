@@ -24,6 +24,9 @@ enum class FpKind : std::uint8_t {
 	div,
 	min,
 	max,
+	/* SQRTPS to SQRTSD. The host's root of a positive normal lane is x86's,
+	 * so the model leaves that lane's result and decides only precision;
+	 * it computes the others. */
 	sqrt,
 	rcp,
 	rsqrt,

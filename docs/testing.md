@@ -1151,7 +1151,11 @@ operation, a denormal operand, division by zero or precision unmasked, alone
 and in pairs, and requires the #XM and the flags the Xeon's imply.
 `x86-64-half-round` holds the integer rounding of a single to a half, which
 the model's VCVTPS2PH flags follow, to a second derivation over every finite
-single in all four rounding controls. The
+single in all four rounding controls. `x86-64-fp-model` holds the model's
+two other integer answers, whether a square root is exact and whether an
+integer fits the float it converts to, to SoftFloat's flags over every single
+significand, the squares of integers, random doubles, and the integers around
+every power of two. The
 `ios-products-carry-no-fexcore` tooling test checks the script the iOS
 packaging runs to keep FEXCore out of every iOS product.
 

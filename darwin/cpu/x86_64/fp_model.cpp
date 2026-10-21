@@ -81,9 +81,11 @@ struct Lane final {
  * NaN, quieted, and else the second's; an invalid operation gives the
  * indefinite. Invalid operation and division by zero take precedence over a
  * denormal operand. */
-[[nodiscard]] Lane binary(const Format &f, FpKind kind, std::uint64_t a,
-	std::uint64_t b, std::uint32_t mxcsr) noexcept
+template <bool Dbl>
+[[nodiscard]] Lane binary(FpKind kind, std::uint64_t a, std::uint64_t b,
+	std::uint32_t mxcsr) noexcept
 {
+	constexpr Format f{Dbl};
 	const bool daz = (mxcsr & mxcsr_denormals_are_zero) != 0;
 	if (daz) {
 		a = f.flush(a);
@@ -120,6 +122,53 @@ struct Lane final {
 	if (!daz && (f.denormal(a) || f.denormal(b)))
 		result.before |= denormal;
 	return finish(f, soft_round(value, f.dbl, mxcsr), mxcsr, result.before);
+}
+
+[[nodiscard]] Lane binary(const Format &f, FpKind kind, std::uint64_t a,
+	std::uint64_t b, std::uint32_t mxcsr) noexcept
+{
+	return f.dbl ? binary<true>(kind, a, b, mxcsr) :
+		binary<false>(kind, a, b, mxcsr);
+}
+
+/* The residues a square leaves modulo `modulus`, as the bits of a mask. */
+template <unsigned Modulus>
+[[nodiscard]] constexpr std::uint64_t square_residues() noexcept
+{
+	std::uint64_t mask = 0;
+	for (unsigned residue = 0; residue < Modulus; ++residue)
+		mask |= 1ULL << (residue * residue % Modulus);
+	return mask;
+}
+
+/* Whether the square root of the positive normal number `x` is exact: its
+ * odd significand is a perfect square and its exponent is even, because the
+ * root of anything else is irrational. A few residues of the significand
+ * and its exponent's parity rule out nearly every number in one test, and a
+ * bitwise root settles the rest. */
+[[nodiscard]] bool exact_square_root(const Format &f, std::uint64_t x) noexcept
+{
+	constexpr auto mod64 = square_residues<64>();
+	constexpr auto mod63 = square_residues<63>();
+	constexpr auto mod11 = square_residues<11>();
+	const unsigned fraction = f.dbl ? 52U : 23U;
+	const unsigned bias = f.dbl ? 1023U : 127U;
+	const auto significand = (x & ((1ULL << fraction) - 1U)) | (1ULL << fraction);
+	const auto trailing = static_cast<unsigned>(__builtin_ctzll(significand));
+	const int exponent = static_cast<int>((x & f.exponent()) >> fraction) -
+		static_cast<int>(bias + fraction) + static_cast<int>(trailing);
+	const auto m = significand >> trailing;
+	if (((mod64 >> (m % 64U)) & (mod63 >> (m % 63U)) & (mod11 >> (m % 11U)) &
+			~static_cast<std::uint64_t>(exponent) & 1U) == 0)
+		return false;
+	std::uint64_t root = 0;
+	for (std::uint64_t bit = 1ULL << ((63U - __builtin_clzll(m)) / 2U);
+		bit != 0; bit >>= 1U) {
+		const auto trial = root | bit;
+		if (trial * trial <= m)
+			root = trial;
+	}
+	return root * root == m;
 }
 
 /* SQRT: the square root of a negative number but -0 is invalid. */
@@ -168,10 +217,12 @@ struct Lane final {
 	}
 	if (!daz && (f.denormal(a) || f.denormal(b)))
 		result.before = denormal;
-	if (f.zero(a) && f.zero(b))
-		return result;
-	if (maximum ? f.less(b, a) : f.less(a, b))
-		result.bits = a;
+	/* Two zeros are equal, whatever their signs. A mask picks the result,
+	 * because lanes that compare either way make a branch unpredictable. */
+	const auto left = maximum ? b : a;
+	const auto right = maximum ? a : b;
+	const auto pick_first = 0 - static_cast<std::uint64_t>(f.less(left, right));
+	result.bits = b ^ ((a ^ b) & pick_first);
 	return result;
 }
 
@@ -315,16 +366,27 @@ struct Lane final {
 		steps.after[step] |= sum.after;
 		return sum.bits;
 	};
+	/* The sums of a and b in either order raise the same flags, and
+	 * give the same bits unless a NaN picks the order. */
+	const auto either = [&](std::uint64_t a, std::uint64_t b,
+		std::size_t step, std::uint64_t &first, std::uint64_t &second) {
+		first = add(a, b, step);
+		second = f.nan(a) || f.nan(b) ? add(b, a, step) : first;
+	};
 	std::array<std::uint64_t, 4> sums{};
 	if (f.dbl) {
-		for (std::size_t index = 0; index < 2; ++index)
-			sums[index] = add(products[index], products[index ^ 1U], 1);
+		either(products[0], products[1], 1, sums[0], sums[1]);
 	} else {
 		std::array<std::uint64_t, 4> pairs{};
-		for (std::size_t index = 0; index < 4; ++index)
-			pairs[index] = add(products[index ^ 1U], products[index], 1);
-		for (std::size_t index = 0; index < 4; ++index)
-			sums[index] = add(pairs[index], pairs[index ^ 2U], 2);
+		either(products[1], products[0], 1, pairs[0], pairs[1]);
+		either(products[3], products[2], 1, pairs[2], pairs[3]);
+		if (f.nan(pairs[0]) || f.nan(pairs[1]) || f.nan(pairs[2]) ||
+			f.nan(pairs[3])) {
+			for (std::size_t index = 0; index < 4; ++index)
+				sums[index] = add(pairs[index], pairs[index ^ 2U], 2);
+		} else {
+			sums.fill(add(pairs[0], pairs[2], 2));
+		}
 	}
 	for (std::size_t index = 0; index < count; ++index)
 		set_lane(result, f.dbl, index,
@@ -414,37 +476,22 @@ struct Lane final {
 	return result;
 }
 
-/* A conversion of an integer to a float, which raises precision when it
- * rounds. */
-[[nodiscard]] std::uint32_t from_integer(bool dbl, std::uint64_t x, bool wide,
-	std::uint32_t mxcsr) noexcept
+/* A conversion of an integer to a float, which raises precision when the
+ * float cannot hold it: when the integer spans more bits than its
+ * significand, whatever the rounding. */
+[[nodiscard]] std::uint32_t from_integer(bool dbl, std::uint64_t x,
+	bool wide) noexcept
 {
-	/* Exact in binary128, then rounded. */
 	const auto integer = wide ? static_cast<std::int64_t>(x) :
 		static_cast<std::int64_t>(static_cast<std::int32_t>(x));
-	float128_t value{};
-	if (integer != 0) {
-		const bool negative = integer < 0;
-		const auto magnitude = negative ? 0 - static_cast<std::uint64_t>(integer) :
-			static_cast<std::uint64_t>(integer);
-		const int top = 63 - __builtin_clzll(magnitude);
-		/* The bits below the leading one, as the top of 112 fraction bits. */
-		const auto fraction = static_cast<unsigned __int128>(
-			magnitude & ~(1ULL << static_cast<unsigned>(top))) <<
-			static_cast<unsigned>(112 - top);
-		value.v[0] = static_cast<std::uint64_t>(fraction);
-		value.v[1] = static_cast<std::uint64_t>(fraction >> 64U) |
-			(static_cast<std::uint64_t>(16383 + top) << 48U) |
-			(negative ? 1ULL << 63U : 0U);
-	}
-	softfloat_state state{};
-	state.roundingMode = soft_rounding(mxcsr);
-	if (dbl)
-		(void)f128_to_f64(&state, value);
-	else
-		(void)f128_to_f32(&state, value);
-	return (state.exceptionFlags & softfloat_flag_inexact) != 0 ? precision :
-		0U;
+	if (integer == 0)
+		return 0;
+	const auto magnitude = integer < 0 ?
+		0 - static_cast<std::uint64_t>(integer) :
+		static_cast<std::uint64_t>(integer);
+	const unsigned span = 64U - static_cast<unsigned>(__builtin_clzll(magnitude)) -
+		static_cast<unsigned>(__builtin_ctzll(magnitude));
+	return span > (dbl ? 53U : 24U) ? precision : 0U;
 }
 
 /* ROUNDPS to ROUNDSD: invalid operation for a signalling NaN, and precision
@@ -535,8 +582,18 @@ FpSteps x86_fp_compute(const FpOperation &operation, std::uint32_t mxcsr,
 				mxcsr));
 		break;
 	case FpKind::sqrt:
-		for (std::size_t index = 0; index < lanes; ++index)
-			record(index, square_root(f, lane(first, f.dbl, index), mxcsr));
+		for (std::size_t index = 0; index < lanes; ++index) {
+			const auto x = lane(first, f.dbl, index);
+			/* The host's root of a positive normal number is x86's, and
+			 * raises precision unless it is exact. */
+			if ((x & f.sign()) == 0 && (x & f.exponent()) != 0 &&
+				(x & f.exponent()) != f.exponent()) {
+				if (!exact_square_root(f, x))
+					steps.after[0] |= precision;
+				continue;
+			}
+			record(index, square_root(f, x, mxcsr));
+		}
 		break;
 	case FpKind::rcp:
 	case FpKind::rsqrt:
@@ -633,7 +690,7 @@ FpSteps x86_fp_compute(const FpOperation &operation, std::uint32_t mxcsr,
 		const auto count = std::min<std::size_t>(lanes, wide ? 4U : 8U);
 		for (std::size_t index = 0; index < count; ++index)
 			steps.after[0] |= from_integer(f.dbl,
-				packed_lane(values, wide ? 8U : 4U, index), wide, mxcsr);
+				packed_lane(values, wide ? 8U : 4U, index), wide);
 		break;
 	}
 	case FpKind::round:
