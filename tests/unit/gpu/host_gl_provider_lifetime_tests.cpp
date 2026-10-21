@@ -5,6 +5,7 @@
 #include "protocol.hpp"
 #include "require.hpp"
 #include "virgl_renderer.hpp"
+#include "wait_until.hpp"
 
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
@@ -188,15 +189,17 @@ void rendererRetiresFencesThroughTheExternalProvider()
     require(renderer.createFenceAndWait(0, 0, 1, nullptr) == 0);
     require(renderer.createContext(1, 1, "fence-test") == 0);
     require(renderer.createContextFence(1, 0, 1) == 0);
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(2);
     int status = EBUSY;
-    while (status == EBUSY && std::chrono::steady_clock::now() < deadline) {
-        require(renderer.pollContextFences(1) == 0);
-        status = renderer.contextFenceStatus(1, 0, 1);
-        if (status == EBUSY)
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
-    }
+    require(
+        uml::testing::waitUntil(
+            [&] {
+                require(renderer.pollContextFences(1) == 0);
+                status = renderer.contextFenceStatus(1, 0, 1);
+                return status != EBUSY;
+            },
+            std::chrono::seconds(2),
+            std::chrono::microseconds(100)),
+        "the context fence was never retired");
     require(status == 0);
     renderer.destroyContext(1);
 }

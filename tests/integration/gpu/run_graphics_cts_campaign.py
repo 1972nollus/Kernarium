@@ -892,7 +892,6 @@ def validate_attempt(campaign: Path, spec: dict[str, Any], shard: Shard,
         # the leaf validated rather than against one fixed renderer.
         common.validate_renderer_probe(
             artifacts["renderer.txt"].decode("utf-8"),
-            4096,
             item["renderer"],
             common.host_backend_label(item["renderer"]),
         )

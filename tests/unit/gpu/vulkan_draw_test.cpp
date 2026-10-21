@@ -304,7 +304,8 @@ SubmitStormResult DrawContext::submit_storm(const SubmitStormConfig &config)
         VK_CHECK(CreateFence, api.device, &fence_info, nullptr, &fences[i]);
     }
     if (!config.abandon) {
-        cleanup.actions.emplace_back([&] {
+        // The cleanup runs after `fences`, declared later, is destroyed.
+        cleanup.actions.emplace_back([&, fences] {
             for (VkFence fence : fences)
                 VK_CALL(DestroyFence, api.device, fence, nullptr);
         });
