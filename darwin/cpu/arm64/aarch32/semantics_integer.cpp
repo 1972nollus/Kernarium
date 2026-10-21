@@ -97,36 +97,20 @@ bool exec_data_processing(Exec &x, const OpInfo &info)
 	bool overflow = false;
 	bool compare = false;
 	switch (info.op) {
-	case Op::add: case Op::addw: case Op::cmn: {
-		const auto sum = add_with_carry(a, b, false);
+	case Op::add: case Op::addw: case Op::cmn: case Op::adc:
+	case Op::sub: case Op::subw: case Op::cmp: case Op::sbc:
+	case Op::rsb: case Op::rsc: {
+		/* AddWithCarry(): a subtraction adds the complement of the operand
+		 * it subtracts, the first one for RSB and RSC, and its carry in is
+		 * 1, or the carry flag in the forms that take it. */
+		const bool complement_first = info.op == Op::rsb || info.op == Op::rsc;
+		const bool complement_second = info.op == Op::sub || info.op == Op::subw
+			|| info.op == Op::cmp || info.op == Op::sbc;
+		const bool flag_carry = info.op == Op::adc || info.op == Op::sbc || info.op == Op::rsc;
+		const auto sum = add_with_carry(complement_first ? ~a : a, complement_second ? ~b : b,
+			flag_carry ? x.flag_c() : complement_first || complement_second);
 		result = sum.value; carry = sum.carry; overflow = sum.overflow;
-		compare = info.op == Op::cmn;
-		break;
-	}
-	case Op::adc: {
-		const auto sum = add_with_carry(a, b, x.flag_c());
-		result = sum.value; carry = sum.carry; overflow = sum.overflow;
-		break;
-	}
-	case Op::sub: case Op::subw: case Op::cmp: {
-		const auto sum = add_with_carry(a, ~b, true);
-		result = sum.value; carry = sum.carry; overflow = sum.overflow;
-		compare = info.op == Op::cmp;
-		break;
-	}
-	case Op::sbc: {
-		const auto sum = add_with_carry(a, ~b, x.flag_c());
-		result = sum.value; carry = sum.carry; overflow = sum.overflow;
-		break;
-	}
-	case Op::rsb: {
-		const auto sum = add_with_carry(~a, b, true);
-		result = sum.value; carry = sum.carry; overflow = sum.overflow;
-		break;
-	}
-	case Op::rsc: {
-		const auto sum = add_with_carry(~a, b, x.flag_c());
-		result = sum.value; carry = sum.carry; overflow = sum.overflow;
+		compare = info.op == Op::cmn || info.op == Op::cmp;
 		break;
 	}
 	case Op::and_: case Op::tst:
