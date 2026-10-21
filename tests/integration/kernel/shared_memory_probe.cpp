@@ -4,10 +4,10 @@
 // Each probe shares a buffer between a kernel alias and a user mapping and
 // checks both directions after the user mapping is already established, so
 // that a fresh mapping's first-touch publication cannot hide the defect.
-// On the 4 KiB guest profile every kernel alias outside the linear map is a
-// host-private copy of its frames unless the kernel maps it as whole aligned
-// groups of four pages, so a probe that finds the two views apart names a
-// kernel memory that stopped being shared.
+// Every kernel alias outside the linear map is a host-private copy of its
+// frames unless the kernel maps it as whole aligned groups of four pages, so
+// a probe that finds the two views apart names a kernel memory that stopped
+// being shared.
 //
 // Usage: shared_memory_probe TEST...   TEST is one of
 //   array        BPF_F_MMAPABLE array: syscall update vs mmap, both ways
@@ -577,14 +577,12 @@ void test_ringbuf_size(u32 data_size, const char *name)
 }
 
 /* A ring must be at least one guest page. Rings smaller than a 16 KiB group
- * exercise the synchronization of a wrapped record on a 4 KiB guest; larger
- * rings exercise congruent double mapping. */
+ * exercise the synchronization of a wrapped record; larger rings exercise
+ * congruent double mapping. */
 void test_ringbuf()
 {
-	if (page_size <= 4096)
-		test_ringbuf_size(4096, "ringbuf-4k");
-	if (page_size <= 8192)
-		test_ringbuf_size(8192, "ringbuf-8k");
+	test_ringbuf_size(4096, "ringbuf-4k");
+	test_ringbuf_size(8192, "ringbuf-8k");
 	test_ringbuf_size(16384, "ringbuf-16k");
 	test_ringbuf_size(65536, "ringbuf-64k");
 }
@@ -682,10 +680,8 @@ void test_user_ringbuf_size(u32 data_size, const char *name)
 
 void test_user_ringbuf()
 {
-	if (page_size <= 4096)
-		test_user_ringbuf_size(4096, "user-ringbuf-4k");
-	if (page_size <= 8192)
-		test_user_ringbuf_size(8192, "user-ringbuf-8k");
+	test_user_ringbuf_size(4096, "user-ringbuf-4k");
+	test_user_ringbuf_size(8192, "user-ringbuf-8k");
 	test_user_ringbuf_size(16384, "user-ringbuf-16k");
 	test_user_ringbuf_size(65536, "user-ringbuf-64k");
 }
@@ -1089,10 +1085,9 @@ bool scattered_pages(long len, char *&first, char *&second)
 	return true;
 }
 
-/* A ring in the application's own scattered pages. A 4 KiB guest cannot map
- * it so that the kernel and the application share it, and refuses it, as
- * Linux refuses where the two mappings must be coloured alike. A 16 KiB guest
- * maps every page whole, and runs it. */
+/* A ring in the application's own scattered pages. The guest cannot map it
+ * so that the kernel and the application share it, and refuses it, as Linux
+ * refuses where the two mappings must be coloured alike. */
 void test_uring_user_memory()
 {
 	constexpr u32 entries = 1024;
@@ -1107,23 +1102,12 @@ void test_uring_user_memory()
 	p.sq_off.user_addr = reinterpret_cast<u64>(sqes);
 	p.cq_off.user_addr = reinterpret_cast<u64>(rings);
 	int fd = static_cast<int>(sys(nr_io_uring_setup, entries, ptr(&p)));
-	if (page_size == 4096) {
-		kv("io_uring_setup_no_mmap", fd);
-		result("iouring-user-memory", fd == -einval,
-		       fd == -einval ? "refused: the 4 KiB profile cannot share scattered pages"
-				     : "scattered pages were accepted without being shared");
-		if (fd >= 0)
-			sys(nr_close, fd);
-		return;
-	}
-	if (fd < 0) {
-		kv("io_uring_setup_no_mmap", fd);
-		result("iouring-user-memory", false, "setup failed");
-		return;
-	}
-	bool ok = uring_nop(fd, rings, sqes, p, "user memory rings");
-	result("iouring-user-memory", ok, ok ? "coherent" : "rings disagree");
-	sys(nr_close, fd);
+	kv("io_uring_setup_no_mmap", fd);
+	result("iouring-user-memory", fd == -einval,
+	       fd == -einval ? "refused: the guest cannot share scattered pages"
+			     : "scattered pages were accepted without being shared");
+	if (fd >= 0)
+		sys(nr_close, fd);
 }
 
 void test_iouring()

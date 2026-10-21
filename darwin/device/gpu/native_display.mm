@@ -295,10 +295,8 @@ struct NativeDisplayState final :
     std::optional<DisplaySize> pendingGuestWindowSize;
     native_input::PointerMode pointerMode;
     std::mutex pointerMutex;
-    native_input::DirectTouchContact touchContact;
-    std::optional<DisplayPoint> previousTouchLocation;
-    NSUInteger deliveredPointerButtons {};
-    bool pointerGestureSuppressed {};
+    // AppKit counts y up from the bottom of the view.
+    FittedPointer pointer {FittedPointer::Origin::bottomLeft};
     // AppKit stops delivering keyUp and flagsChanged once the window loses key
     // status, so remember what the guest still believes is held and release it
     // at that boundary. Keyboard codes are all below BTN_MISC.
@@ -995,22 +993,17 @@ void NativeDisplayState::releasePointerInput() noexcept
 void NativeDisplayState::releasePointerInputLocked(
     bool suppressActiveGesture) noexcept
 {
-    if (suppressActiveGesture && deliveredPointerButtons != 0)
-        pointerGestureSuppressed = true;
-    else if (!suppressActiveGesture)
-        pointerGestureSuppressed = false;
     // Pointer contacts live above the tracked keyboard range, so clear them
     // explicitly when the window loses focus.
+    const bool held = pointer.release(suppressActiveGesture);
     if (pointerMode == native_input::PointerMode::touchscreen) {
-        if (touchContact.release())
+        if (held)
             sendLinuxKey(native_input::buttonTouch, 0);
-        previousTouchLocation.reset();
     } else {
         sendLinuxKey(native_input::buttonLeft, 0);
         sendLinuxKey(native_input::buttonMiddle, 0);
         sendLinuxKey(native_input::buttonRight, 0);
     }
-    deliveredPointerButtons = 0;
 }
 
 void NativeDisplayState::sendModifier(NSEvent* event) noexcept
@@ -1040,131 +1033,13 @@ void NativeDisplayState::sendPointer(
     const auto content = guestContentRectangle(bounds, rotation);
     if (content.width <= 0.0 || content.height <= 0.0)
         return;
-    const bool inside = location.x >= content.x &&
-        location.x <= content.x + content.width &&
-        location.y >= content.y &&
-        location.y <= content.y + content.height;
-    const NSUInteger pointerButtons = buttons & 7U;
-    if (pointerGestureSuppressed) {
-        if ((pointerMode == native_input::PointerMode::touchscreen ?
-                (pointerButtons & 1U) : pointerButtons) == 0) {
-            pointerGestureSuppressed = false;
-            previousTouchLocation.reset();
-        }
-        return;
-    }
-    const bool pressed = (buttons & 1U) != 0;
-    const auto guestPoint = [&](DisplayPoint point) {
-        return guestPointFromPresentedPoint(
-            {
-                .x = (point.x - content.x) / content.width,
-                .y = (content.y + content.height - point.y) /
-                    content.height,
-            },
-            rotation);
-    };
-    if (pointerMode == native_input::PointerMode::touchscreen) {
-        const DisplayPoint current {.x = location.x, .y = location.y};
-        const auto deliver = [&](DisplayPoint point, bool active) {
-            if (!touchContact.update(active))
-                return;
-            deliveredPointerButtons = active ? 1U : 0U;
-            const auto guest = guestPoint(point);
-            const std::array events {
-                native_input::VncInputEvent {
-                    .type = native_input::eventAbsolute,
-                    .code = native_input::absoluteX,
-                    .value = native_input::normalizedAbsoluteCoordinate(
-                        guest.x, 1.0),
-                },
-                native_input::VncInputEvent {
-                    .type = native_input::eventAbsolute,
-                    .code = native_input::absoluteY,
-                    .value = native_input::normalizedAbsoluteCoordinate(
-                        guest.y, 1.0),
-                },
-                native_input::VncInputEvent {
-                    .type = native_input::eventKey,
-                    .code = native_input::buttonTouch,
-                    .value = active ? 1 : 0,
-                },
-                native_input::VncInputEvent {
-                    .type = native_input::eventSync,
-                    .code = native_input::syncReport,
-                    .value = 0,
-                },
-            };
-            if (!native_input::tryDeliver(inputSink, events))
-                reportInputFailure();
-        };
-        const auto samePoint = [](DisplayPoint left, DisplayPoint right) {
-            return left.x == right.x && left.y == right.y;
-        };
-        const bool contactActive = deliveredPointerButtons != 0;
+    const DisplayPoint point {.x = location.x, .y = location.y};
+    const bool touchscreen =
+        pointerMode == native_input::PointerMode::touchscreen;
+    const auto samples = touchscreen ?
+        pointer.touch(content, point, (buttons & 1U) != 0) :
+        pointer.mouse(content, point, static_cast<std::uint32_t>(buttons));
 
-        if (!pressed) {
-            if (contactActive) {
-                DisplayPoint release = current;
-                if (!inside && previousTouchLocation) {
-                    if (const auto clipped = clipDisplaySegment(
-                            content, *previousTouchLocation, current)) {
-                        release = clipped->exit;
-                    }
-                }
-                deliver(release, false);
-            } else if (previousTouchLocation) {
-                if (const auto clipped = clipDisplaySegment(
-                        content, *previousTouchLocation, current)) {
-                    deliver(clipped->entry, true);
-                    if (inside) {
-                        if (!samePoint(clipped->entry, current))
-                            deliver(current, true);
-                        deliver(current, false);
-                    } else {
-                        deliver(clipped->exit, false);
-                    }
-                }
-            }
-            previousTouchLocation.reset();
-            return;
-        }
-
-        if (!previousTouchLocation) {
-            previousTouchLocation = current;
-            if (inside)
-                deliver(current, true);
-            return;
-        }
-
-        const auto clipped = clipDisplaySegment(
-            content, *previousTouchLocation, current);
-        if (contactActive) {
-            if (inside) {
-                deliver(current, true);
-            } else {
-                deliver(
-                    clipped ? clipped->exit : *previousTouchLocation,
-                    false);
-            }
-        } else if (clipped) {
-            deliver(clipped->entry, true);
-            if (inside) {
-                if (!samePoint(clipped->entry, current))
-                    deliver(current, true);
-            } else {
-                deliver(clipped->exit, false);
-            }
-        }
-        previousTouchLocation = current;
-        return;
-    }
-    if (!inside && deliveredPointerButtons == 0) {
-        if (pointerButtons != 0)
-            pointerGestureSuppressed = true;
-        return;
-    }
-    deliveredPointerButtons = pointerButtons;
-    const auto guest = guestPoint({.x = location.x, .y = location.y});
     std::array<native_input::VncInputEvent, 10> events {};
     std::size_t count = 0;
     const auto append = [&](std::uint16_t type,
@@ -1172,43 +1047,52 @@ void NativeDisplayState::sendPointer(
                             std::int32_t value) {
         events[count++] = {.type = type, .code = code, .value = value};
     };
-    append(
-        native_input::eventAbsolute,
-        native_input::absoluteX,
-        native_input::normalizedAbsoluteCoordinate(
-            guest.x, 1.0));
-    append(
-        native_input::eventAbsolute,
-        native_input::absoluteY,
-        native_input::normalizedAbsoluteCoordinate(
-            guest.y, 1.0));
-    append(
-        native_input::eventKey,
-        native_input::buttonLeft,
-        pressed ? 1 : 0);
-    append(
-        native_input::eventKey,
-        native_input::buttonMiddle,
-        (buttons & 4U) != 0 ? 1 : 0);
-    append(
-        native_input::eventKey,
-        native_input::buttonRight,
-        (buttons & 2U) != 0 ? 1 : 0);
-    if (verticalWheel != 0.0) {
+    for (const auto& sample : samples) {
+        const auto guest = guestPointFromPresentedPoint(sample.point, rotation);
+        count = 0;
         append(
-            native_input::eventRelative,
-            native_input::relativeWheel,
-            verticalWheel > 0.0 ? 1 : -1);
-    }
-    if (horizontalWheel != 0.0) {
+            native_input::eventAbsolute,
+            native_input::absoluteX,
+            native_input::normalizedAbsoluteCoordinate(guest.x, 1.0));
         append(
-            native_input::eventRelative,
-            native_input::relativeHorizontalWheel,
-            horizontalWheel > 0.0 ? 1 : -1);
+            native_input::eventAbsolute,
+            native_input::absoluteY,
+            native_input::normalizedAbsoluteCoordinate(guest.y, 1.0));
+        if (touchscreen) {
+            append(
+                native_input::eventKey,
+                native_input::buttonTouch,
+                sample.buttons != 0 ? 1 : 0);
+        } else {
+            append(
+                native_input::eventKey,
+                native_input::buttonLeft,
+                (sample.buttons & 1U) != 0 ? 1 : 0);
+            append(
+                native_input::eventKey,
+                native_input::buttonMiddle,
+                (sample.buttons & 4U) != 0 ? 1 : 0);
+            append(
+                native_input::eventKey,
+                native_input::buttonRight,
+                (sample.buttons & 2U) != 0 ? 1 : 0);
+            if (verticalWheel != 0.0) {
+                append(
+                    native_input::eventRelative,
+                    native_input::relativeWheel,
+                    verticalWheel > 0.0 ? 1 : -1);
+            }
+            if (horizontalWheel != 0.0) {
+                append(
+                    native_input::eventRelative,
+                    native_input::relativeHorizontalWheel,
+                    horizontalWheel > 0.0 ? 1 : -1);
+            }
+        }
+        append(native_input::eventSync, native_input::syncReport, 0);
+        if (!native_input::tryDeliver(inputSink, std::span(events).first(count)))
+            reportInputFailure();
     }
-    append(native_input::eventSync, native_input::syncReport, 0);
-    if (!native_input::tryDeliver(inputSink, std::span(events).first(count)))
-        reportInputFailure();
 }
 
 void NativeDisplayState::reportInputFailure() noexcept

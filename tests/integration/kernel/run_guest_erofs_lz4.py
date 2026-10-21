@@ -4,11 +4,11 @@
 
 EROFS decompresses an LZ4 cluster whose output spans several page-cache
 folios through a vm_map_ram() alias of those folios, and readers then see
-the folios through the linear map. On the 4 KiB profile such an alias is a
-private host slot until the kernel writes it back, which flush_cache_vunmap()
-does before the alias goes (kernel/mainline-6.18/README.md). An image built
-as `mkfs.erofs -zlz4hc`, with the default 4 KiB clusters and no big-cluster
-feature, takes that path for most clusters.
+the folios through the linear map. Such an alias is a private host slot until
+the kernel writes it back, which flush_cache_vunmap() does before the alias
+goes (kernel/mainline-6.18/README.md). An image built as `mkfs.erofs
+-zlz4hc`, with the default 4 KiB clusters and no big-cluster feature, takes
+that path for most clusters.
 
 The runner writes seeded, partly compressible files, builds such an image of
 them on the host and checks it with fsck.erofs, then attaches it read-only as

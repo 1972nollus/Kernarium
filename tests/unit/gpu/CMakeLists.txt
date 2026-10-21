@@ -84,7 +84,7 @@ uml_add_gpu_unit_test(gpu-host-graphics-footprint
 set_tests_properties(gpu-host-graphics-footprint PROPERTIES
     SKIP_RETURN_CODE 77)
 
-if(TARGET uml_gpu_kosmickrisp_capability_probe)
+if(TARGET uml_third_party_kosmickrisp)
     uml_add_gpu_unit_test(gpu-kosmickrisp-external-image-alias
         uml_gpu_kosmickrisp_external_image_alias_tests
         kosmickrisp_external_image_alias_tests.cpp
@@ -108,8 +108,17 @@ if(TARGET uml_gpu_kosmickrisp_capability_probe)
         LIBRARIES uml_gpu_vulkan_draw_test_support
         VULKAN)
 
-    # Each runs the KosmicKrisp capability probe and checks one capability in
-    # its report.
+    # The probe writes a JSON report of what KosmicKrisp advertises and what
+    # its verifiers measure. Each capability test runs it and checks one
+    # capability in the report.
+    add_library(uml_gpu_kosmickrisp_capability_probe STATIC
+        kosmickrisp_capability_probe.mm)
+    target_compile_definitions(uml_gpu_kosmickrisp_capability_probe PRIVATE
+        VK_ENABLE_BETA_EXTENSIONS=1)
+    target_link_libraries(uml_gpu_kosmickrisp_capability_probe PRIVATE
+        UML::ThirdPartyKosmicKrisp "-framework Foundation")
+    add_dependencies(uml_gpu_kosmickrisp_capability_probe
+        uml_dependency_prefix_verify)
     foreach(capability
             dynamic_logic_op device_address_commands graphics_pipeline_library
             legacy_vertex_attribute rgb32_texel non_seamless_cube
@@ -118,8 +127,7 @@ if(TARGET uml_gpu_kosmickrisp_capability_probe)
         uml_add_gpu_unit_test(gpu-kosmickrisp-${test_name}-capabilities
             uml_gpu_kosmickrisp_${capability}_capability_tests
             kosmickrisp_${capability}_capability_tests.cpp
-            LIBRARIES UML::GpuKosmicKrispCapabilityProbe
-            INCLUDES ${_uml_gpu_device_directory}
+            LIBRARIES uml_gpu_kosmickrisp_capability_probe
             VULKAN)
     endforeach()
     target_link_libraries(uml_gpu_kosmickrisp_rgb32_texel_capability_tests

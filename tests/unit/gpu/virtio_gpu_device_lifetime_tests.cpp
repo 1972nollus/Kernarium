@@ -8,6 +8,7 @@
 #include "virtio_gpu_device_testing.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdio>
 #include <new>
@@ -1389,6 +1390,19 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.lastFence.contextId == context.header.contextId);
     require(dependencies.lastFence.ringIndex == 0);
     require(dependencies.lastFence.cookie == submit.header.fenceId);
+
+    // A transfer's fence fails alike: the transfer is done, and the failure
+    // is reported once.
+    transfer.header.flags = protocol::gpuFlagFence;
+    transfer.header.fenceId = 19;
+    const auto transfersBeforeFenceFailure = dependencies.transferCount;
+    dependencies.rejectNext(FakeGpuDependencies::Operation::fence);
+    requireResponse(device, requestBytes(transfer),
+        protocol::GpuResponse::errorUnspecified);
+    require(dependencies.transferCount == transfersBeforeFenceFailure + 1);
+    require(dependencies.fenceCount == 0);
+    require(dependencies.lastFence.cookie == transfer.header.fenceId);
+    transfer.header.flags = 0;
 
     auto scanout = newRequest<protocol::GpuSetScanout>(GpuCommand::setScanout);
     scanout.rectangle = {.x = 1, .y = 1, .width = 2, .height = 2};
@@ -2841,6 +2855,133 @@ void malformed3dCommandsUseSpecificErrors()
     require(dependencyCallCount() == before);
 }
 
+/* RESOURCE_UNREF of a mapped blob queues an unmap action for the transport
+ * and keeps the blob, and its ID, until the action completes. A failed unmap
+ * leaves the blob mapped. A completed one retires it in the renderer. */
+void releasingAMappedBlobRetiresItWhenItsUnmapCompletes()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    const auto context = createContext(0xb01, protocol::venusCapsetId);
+    requireOk(device, requestBytes(context));
+
+    auto create = newRequest<protocol::GpuResourceCreateBlob>(
+        GpuCommand::resourceCreateBlob);
+    create.header.contextId = context.header.contextId;
+    create.resourceId = 0xb02;
+    create.memory = protocol::blobMemoryHost3d;
+    create.flags = protocol::blobFlagMappable;
+    create.size = protocol::hostVisibleSharedMemoryAlignment;
+    requireOk(device, requestBytes(create));
+    auto map = newRequest<protocol::GpuResourceMapBlob>(
+        GpuCommand::resourceMapBlob);
+    map.resourceId = create.resourceId;
+    requireResponse(device, requestBytes(map),
+        protocol::GpuResponse::okMapInfo);
+    completeAction(device);
+
+    auto unref = newRequest<protocol::GpuResourceReference>(
+        GpuCommand::resourceUnref);
+    unref.resourceId = create.resourceId;
+    const auto noAction = [&] {
+        return !device.takeSharedMemoryAction().has_value();
+    };
+    const auto released =
+        failEachAllocationBeforeCommit(device, requestBytes(unref), noAction);
+    require(responseType(released.response) ==
+        protocol::GpuResponse::okNoData);
+    const auto action = device.takeSharedMemoryAction();
+    require(action.has_value());
+    require(action->type == VirtioGpuDevice::SharedMemoryAction::Type::unmap);
+    require(action->resourceId == create.resourceId);
+    require(!device.takeSharedMemoryAction().has_value());
+    requireResponse(device, requestBytes(unref),
+        protocol::GpuResponse::errorInvalidParameter);
+
+    /* The unmap fails: the blob is mapped again, and nothing is retired. */
+    device.completeSharedMemoryAction(action->actionId, false);
+    require(dependencies.unrefResourceCount == 0);
+    requireResponse(device, requestBytes(create),
+        protocol::GpuResponse::errorInvalidParameter);
+    requireOk(device, requestBytes(unref));
+    const auto retry = device.takeSharedMemoryAction();
+    require(retry.has_value() && retry->actionId != action->actionId);
+
+    /* Until it completes the blob still holds its ID. */
+    requireResponse(device, requestBytes(create),
+        protocol::GpuResponse::errorInvalidParameter);
+    device.completeSharedMemoryAction(retry->actionId, true);
+    require(dependencies.unrefResourceCount == 1);
+    requireOk(device, requestBytes(create));
+}
+
+/* Whichever kind of resource holds an ID, 2D, Virgl or blob, no create
+ * command takes the ID again: RESOURCE_CREATE_2D answers an invalid
+ * resource, the others an invalid parameter. */
+void aHeldResourceIdIsNotCreatedAgain()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    const auto context = createContext(0xa01, protocol::venusCapsetId);
+    requireOk(device, requestBytes(context));
+
+    const auto blob = [&](std::uint32_t resourceId) {
+        auto create = newRequest<protocol::GpuResourceCreateBlob>(
+            GpuCommand::resourceCreateBlob);
+        create.header.contextId = context.header.contextId;
+        create.resourceId = resourceId;
+        create.memory = protocol::blobMemoryHost3d;
+        create.flags = protocol::blobFlagMappable;
+        create.size = protocol::hostVisibleSharedMemoryAlignment;
+        return create;
+    };
+    requireOk(device, requestBytes(create2d(0xa02)));
+    requireOk(device, requestBytes(create3d(0xa03)));
+    requireOk(device, requestBytes(blob(0xa04)));
+    for (const std::uint32_t id : {0xa02U, 0xa03U, 0xa04U}) {
+        requireResponse(device, requestBytes(create2d(id)),
+            protocol::GpuResponse::errorInvalidResource);
+        requireResponse(device, requestBytes(create3d(id)),
+            protocol::GpuResponse::errorInvalidParameter);
+        requireResponse(device, requestBytes(blob(id)),
+            protocol::GpuResponse::errorInvalidParameter);
+    }
+    require(dependencies.createResourceCount == 2);
+}
+
+/* The cursor virtqueue has no writable reply buffer and the device no cursor
+ * plane, so the queue's commands are consumed whatever they carry: nothing is
+ * answered and nothing runs, not even a command that belongs on the control
+ * queue. Only a request too short for a header is answered. */
+void theCursorQueueIsConsumedWithoutAReply()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+
+    auto cursor = newRequest<protocol::GpuUpdateCursor>(
+        GpuCommand::updateCursor);
+    cursor.position.scanoutId = protocol::primaryScanoutId;
+    require(device.process(requestBytes(cursor), true).empty());
+    cursor.header.type = static_cast<std::uint32_t>(GpuCommand::moveCursor);
+    require(device.process(requestBytes(cursor), true).empty());
+    cursor.position.scanoutId = protocol::primaryScanoutId + 1U;
+    require(device.process(requestBytes(cursor), true).empty());
+    const auto truncated = newRequest<protocol::GpuControlHeader>(
+        GpuCommand::updateCursor);
+    require(device.process(requestBytes(truncated), true).empty());
+
+    /* A control command on the cursor queue does not run: the resource it
+     * would create is still free for the control queue to create. */
+    const auto create = create2d(11);
+    require(device.process(requestBytes(create), true).empty());
+    require(dependencies.displayUpdateCount == 0);
+    requireOk(device, requestBytes(create));
+
+    const std::array<std::uint8_t, 1> tooShort {};
+    require(responseType(device.process(tooShort, true)) ==
+        protocol::GpuResponse::errorInvalidParameter);
+}
+
 /* A context the guest destroys takes its renderer fence slots with it, so a
  * command still held behind one of its fences can never retire through the
  * renderer. The transport completes such commands when the device reports the
@@ -3241,6 +3382,9 @@ int main()
     blobScanoutUsesNativeTextureAndPersistentVncMapping();
     virglBlobScanoutPresentsItsGlTexture();
     malformed3dCommandsUseSpecificErrors();
+    releasingAMappedBlobRetiresItWhenItsUnmapCompletes();
+    aHeldResourceIdIsNotCreatedAgain();
+    theCursorQueueIsConsumedWithoutAReply();
     std::puts("Virtio-GPU command atomicity tests passed");
     return 0;
 }
