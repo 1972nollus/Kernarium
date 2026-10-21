@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "cpu/x86_64/jit/fp_model.hpp"
+#include "cpu/x86_64/fp_model.hpp"
 
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/sse_float.hpp"
@@ -14,7 +14,7 @@ extern "C" {
 #include <cstring>
 #include <initializer_list>
 
-namespace uml::cpu::x86_64::jit {
+namespace uml::cpu::x86_64 {
 namespace {
 
 using namespace sse_float;
@@ -668,4 +668,4 @@ FpOutcome x86_fp_settle(const FpSteps &steps, std::uint32_t mxcsr) noexcept
 	return outcome;
 }
 
-} // namespace uml::cpu::x86_64::jit
+} // namespace uml::cpu::x86_64

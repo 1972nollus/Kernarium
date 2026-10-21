@@ -11,7 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace uml::cpu::x86_64::jit {
+namespace uml::cpu::x86_64 {
 
 /* The x86 operation of one instruction, or of one 128-bit part of it, as
  * FEXCore's EmbedderFPKind names it. */
@@ -125,4 +125,4 @@ FpSteps x86_fp_compute(const FpOperation &operation, std::uint32_t mxcsr,
  * and raises the flags up to that point. */
 FpOutcome x86_fp_settle(const FpSteps &steps, std::uint32_t mxcsr) noexcept;
 
-} // namespace uml::cpu::x86_64::jit
+} // namespace uml::cpu::x86_64

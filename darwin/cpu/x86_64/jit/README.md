@@ -247,7 +247,7 @@ SIMD floating point gives x86's results whatever the host's features. The
 maintained series follows each x86 SIMD floating-point operation, or each
 128-bit part of one, with an `EmbedderFPCheck` op that holds the x86 sources
 and tests the host's result in line for the cases where arm64 arithmetic can
-differ; a cold path hands those to `fp_model.cpp`, which computes x86's result
+differ; a cold path hands those to `../fp_model.cpp`, which computes x86's result
 in integers and SoftFloat because it runs under the guest's FPCR. The model
 covers every operation the op names, with MXCSR's rounding, DAZ, FTZ and
 flags, so a check needs only to find the cases. The checks are the same on
