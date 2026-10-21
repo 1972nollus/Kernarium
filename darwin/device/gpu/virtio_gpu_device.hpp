@@ -194,6 +194,12 @@ private:
         return resources_.contains(id) || virglResources_.contains(id) ||
             blobResources_.contains(id);
     }
+    /* Queues the shared-memory action that unmaps a mapped blob and marks
+     * the resource unmapping, or returns the error to answer: the action IDs
+     * are exhausted, or the queue ran out of memory. An action ID that was
+     * taken is spent either way. */
+    [[nodiscard]] std::optional<protocol::GpuResponse> queueUnmap(
+        std::uint32_t resourceId, BlobResource& resource);
     void releaseBlobScanout() noexcept;
     void clearScanout() noexcept;
     [[nodiscard]] protocol::GpuResponse presentReadback(

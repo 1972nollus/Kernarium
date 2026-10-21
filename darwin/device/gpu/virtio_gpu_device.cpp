@@ -1388,27 +1388,9 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
-        if (nextSharedMemoryActionId_ == 0) {
-            return response(
-                *header, protocol::GpuResponse::errorUnspecified);
-        }
         auto success = response(*header, protocol::GpuResponse::okNoData);
-        const auto actionId = nextSharedMemoryActionId_++;
-        try {
-            sharedMemoryActions_.push_back(SharedMemoryAction {
-                .type = SharedMemoryAction::Type::unmap,
-                .actionId = actionId,
-                .resourceId = unmap->resourceId,
-                .regionId = protocol::hostVisibleSharedMemoryRegionId,
-                .regionOffset = resource.regionOffset,
-                .length = resource.chargedSize,
-            });
-        } catch (const std::bad_alloc&) {
-            return response(
-                *header, protocol::GpuResponse::errorOutOfMemory);
-        }
-        resource.mappingState = BlobResource::MappingState::unmapping;
-        resource.pendingActionId = actionId;
+        if (const auto error = queueUnmap(unmap->resourceId, resource))
+            return response(*header, *error);
         return success;
     }
 
@@ -1560,26 +1542,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                     *header, protocol::GpuResponse::errorInvalidParameter);
             }
             if (resource.mappingState == BlobResource::MappingState::mapped) {
-                if (nextSharedMemoryActionId_ == 0) {
-                    return response(
-                        *header, protocol::GpuResponse::errorUnspecified);
+                if (const auto error =
+                        queueUnmap(reference->resourceId, resource)) {
+                    return response(*header, *error);
                 }
-                const auto actionId = nextSharedMemoryActionId_++;
-                try {
-                    sharedMemoryActions_.push_back(SharedMemoryAction {
-                        .type = SharedMemoryAction::Type::unmap,
-                        .actionId = actionId,
-                        .resourceId = reference->resourceId,
-                        .regionId = protocol::hostVisibleSharedMemoryRegionId,
-                        .regionOffset = resource.regionOffset,
-                        .length = resource.chargedSize,
-                    });
-                } catch (const std::bad_alloc&) {
-                    return response(
-                        *header, protocol::GpuResponse::errorOutOfMemory);
-                }
-                resource.mappingState = BlobResource::MappingState::unmapping;
-                resource.pendingActionId = actionId;
                 resource.retireAfterAction = true;
                 return success;
             }
@@ -2287,6 +2253,29 @@ void VirtioGpuDevice::completeSharedMemoryAction(
     }
 }
 
+std::optional<protocol::GpuResponse> VirtioGpuDevice::queueUnmap(
+    std::uint32_t resourceId, BlobResource& resource)
+{
+    if (nextSharedMemoryActionId_ == 0)
+        return protocol::GpuResponse::errorUnspecified;
+    const auto actionId = nextSharedMemoryActionId_++;
+    try {
+        sharedMemoryActions_.push_back(SharedMemoryAction {
+            .type = SharedMemoryAction::Type::unmap,
+            .actionId = actionId,
+            .resourceId = resourceId,
+            .regionId = protocol::hostVisibleSharedMemoryRegionId,
+            .regionOffset = resource.regionOffset,
+            .length = resource.chargedSize,
+        });
+    } catch (const std::bad_alloc&) {
+        return protocol::GpuResponse::errorOutOfMemory;
+    }
+    resource.mappingState = BlobResource::MappingState::unmapping;
+    resource.pendingActionId = actionId;
+    return std::nullopt;
+}
+
 void VirtioGpuDevice::prepareReset() noexcept
 {
     try {
@@ -2302,19 +2291,8 @@ void VirtioGpuDevice::prepareReset() noexcept
         for (auto& [resourceId, resource] : blobResources_) {
             if (resource.mappingState != BlobResource::MappingState::mapped)
                 continue;
-            if (nextSharedMemoryActionId_ == 0)
+            if (queueUnmap(resourceId, resource))
                 return;
-            const auto actionId = nextSharedMemoryActionId_++;
-            sharedMemoryActions_.push_back(SharedMemoryAction {
-                .type = SharedMemoryAction::Type::unmap,
-                .actionId = actionId,
-                .resourceId = resourceId,
-                .regionId = protocol::hostVisibleSharedMemoryRegionId,
-                .regionOffset = resource.regionOffset,
-                .length = resource.chargedSize,
-            });
-            resource.mappingState = BlobResource::MappingState::unmapping;
-            resource.pendingActionId = actionId;
         }
     } catch (...) {
     }
