@@ -480,44 +480,29 @@ void aRunRemovesOnlyWhatExitedRunsLeft()
 	const auto liveRun = parent / ("uml-kern" + live);
 	const auto padded = parent / ("uml-kern0" + dead);
 	const auto file = parent / ("uml-kern" + std::to_string(exitedPid()));
-	/* Older builds bound the console in /tmp itself, the path under test. */
-	const std::filesystem::path legacyDirectory {"/tmp"};
-	const auto legacy = legacyDirectory / ("uml-kern" + dead + "-mconsole");
-	const auto liveLegacy =
-		legacyDirectory / ("uml-kern" + live + "-mconsole");
-	const auto legacyFile = legacyDirectory /
-		("uml-kern" + std::to_string(exitedPid()) + "-mconsole");
-	const auto misplacedLegacy = parent / ("uml-kern" + dead + "-mconsole");
+	/* A name that only begins like a run's. */
+	const auto foreign = parent / ("uml-kern" + dead + "-mconsole");
 	/* init is a live process that this user may not signal. */
 	const auto unsignalable = parent / "uml-kern1";
 	for (const auto &directory :
-		{abandoned, liveRun, padded, misplacedLegacy, unsignalable})
+		{abandoned, liveRun, padded, foreign, unsignalable})
 		require(std::filesystem::create_directory(directory));
 	const int abandonedConsole = bindServer(abandoned / "mconsole");
-	const int legacyConsole = bindServer(legacy);
-	const int liveLegacyConsole = bindServer(liveLegacy);
 	createFile(file);
-	createFile(legacyFile);
 
 	{
 		const ::uml::device::GuestConsoleRun run {true};
 	}
-	/* Only an exited process's run directory, and its loose console socket
-	 * in /tmp, go. A live run's entries, another program's names, anything
-	 * of another file type and a console name outside /tmp stay. */
+	/* Only an exited process's run directory goes. A live run's, one this
+	 * user may not signal, another program's names and anything of another
+	 * file type stay. */
 	require(!std::filesystem::exists(abandoned));
-	require(!std::filesystem::exists(legacy));
 	require(directoryExists(liveRun) && directoryExists(padded) &&
-		directoryExists(unsignalable) && directoryExists(misplacedLegacy) &&
+		directoryExists(unsignalable) && directoryExists(foreign) &&
 		std::filesystem::is_regular_file(file));
-	require(socketExists(liveLegacy) &&
-		std::filesystem::is_regular_file(legacyFile));
 
-	for (const int descriptor :
-		{abandonedConsole, legacyConsole, liveLegacyConsole})
-		(void)::close(descriptor);
-	for (const auto &path : {liveRun, padded, file, liveLegacy, legacyFile,
-		     misplacedLegacy, unsignalable})
+	(void)::close(abandonedConsole);
+	for (const auto &path : {liveRun, padded, file, foreign, unsignalable})
 		std::filesystem::remove_all(path);
 }
 
