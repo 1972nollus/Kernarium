@@ -60,9 +60,6 @@ void encoders_match_llvm_mc() {
     check("eor w3, w4, w5", enc::eor(3, 4, 5), 0x4a050083U);
     check("eor w9, w10, w11, lsr #7", enc::eor(9, 10, 11, enc::lsr, 7), 0x4a4b1d49U);
     check("eor w0, w30, w17, asr #31", enc::eor(0, 30, 17, enc::asr, 31), 0x4a917fc0U);
-    check("eon w3, w4, w5", enc::eon(3, 4, 5), 0x4a250083U);
-    check("eon w9, w10, w11, lsr #7", enc::eon(9, 10, 11, enc::lsr, 7), 0x4a6b1d49U);
-    check("eon w0, w30, w17, asr #31", enc::eon(0, 30, 17, enc::asr, 31), 0x4ab17fc0U);
     check("orr x3, x4, x5", enc::x::orr(3, 4, 5), 0xaa050083U);
     check("orr x20, x21, x22, lsl #12", enc::x::orr(20, 21, 22, enc::lsl, 12), 0xaa1632b4U);
     check("and x3, x4, x5", enc::x::and_(3, 4, 5), 0x8a050083U);
@@ -217,37 +214,18 @@ void encoders_match_llvm_mc() {
     check("rev16 w3, w4", enc::rev16(3, 4), 0x5ac00483U);
     check("csel w3, w4, w5, eq", enc::csel(3, 4, 5, 0), 0x1a850083U);
     check("csinc w3, w4, w5, eq", enc::csinc(3, 4, 5, 0), 0x1a850483U);
-    check("csinv w3, w4, w5, eq", enc::csinv(3, 4, 5, 0), 0x5a850083U);
-    check("csneg w3, w4, w5, eq", enc::csneg(3, 4, 5, 0), 0x5a850483U);
     check("cset w3, eq", enc::cset(3, 0), 0x1a9f17e3U);
-    check("ccmp w3, w4, #5, eq", enc::ccmp_r(3, 4, 5, 0), 0x7a440065U);
-    check("ccmp w3, #7, #5, eq", enc::ccmp_i(3, 7, 5, 0), 0x7a470865U);
     check("csel w3, w4, w5, ne", enc::csel(3, 4, 5, 1), 0x1a851083U);
     check("csinc w3, w4, w5, ne", enc::csinc(3, 4, 5, 1), 0x1a851483U);
-    check("csinv w3, w4, w5, ne", enc::csinv(3, 4, 5, 1), 0x5a851083U);
-    check("csneg w3, w4, w5, ne", enc::csneg(3, 4, 5, 1), 0x5a851483U);
     check("cset w3, ne", enc::cset(3, 1), 0x1a9f07e3U);
-    check("ccmp w3, w4, #5, ne", enc::ccmp_r(3, 4, 5, 1), 0x7a441065U);
-    check("ccmp w3, #7, #5, ne", enc::ccmp_i(3, 7, 5, 1), 0x7a471865U);
     check("csel w3, w4, w5, ge", enc::csel(3, 4, 5, 10), 0x1a85a083U);
     check("csinc w3, w4, w5, ge", enc::csinc(3, 4, 5, 10), 0x1a85a483U);
-    check("csinv w3, w4, w5, ge", enc::csinv(3, 4, 5, 10), 0x5a85a083U);
-    check("csneg w3, w4, w5, ge", enc::csneg(3, 4, 5, 10), 0x5a85a483U);
     check("cset w3, ge", enc::cset(3, 10), 0x1a9fb7e3U);
-    check("ccmp w3, w4, #5, ge", enc::ccmp_r(3, 4, 5, 10), 0x7a44a065U);
-    check("ccmp w3, #7, #5, ge", enc::ccmp_i(3, 7, 5, 10), 0x7a47a865U);
     check("csel w3, w4, w5, le", enc::csel(3, 4, 5, 13), 0x1a85d083U);
     check("csinc w3, w4, w5, le", enc::csinc(3, 4, 5, 13), 0x1a85d483U);
-    check("csinv w3, w4, w5, le", enc::csinv(3, 4, 5, 13), 0x5a85d083U);
-    check("csneg w3, w4, w5, le", enc::csneg(3, 4, 5, 13), 0x5a85d483U);
     check("cset w3, le", enc::cset(3, 13), 0x1a9fc7e3U);
-    check("ccmp w3, w4, #5, le", enc::ccmp_r(3, 4, 5, 13), 0x7a44d065U);
-    check("ccmp w3, #7, #5, le", enc::ccmp_i(3, 7, 5, 13), 0x7a47d865U);
-    check("mrs x3, nzcv", enc::mrs_nzcv(3), 0xd53b4203U);
     check("msr nzcv, x3", enc::msr_nzcv(3), 0xd51b4203U);
     check("rmif x3, #5, #9", enc::rmif(3, 5, 9), 0xba028469U);
-    check("setf8 w3", enc::setf8(3), 0x3a00086dU);
-    check("setf16 w3", enc::setf16(3), 0x3a00486dU);
     check("ldr w3, [x4, #8]", enc::ldr_w(3, 4, 8), 0xb9400883U);
     check("str w3, [x4, #8]", enc::str_w(3, 4, 8), 0xb9000883U);
     check("ldr x3, [x4, #16]", enc::ldr_x(3, 4, 16), 0xf9400883U);
@@ -260,10 +238,6 @@ void encoders_match_llvm_mc() {
     check("strh w3, [x4, #6]", enc::strh(3, 4, 6), 0x79000c83U);
     check("ldrsb w3, [x4, #5]", enc::ldrsb(3, 4, 5), 0x39c01483U);
     check("ldrsh w3, [x4, #6]", enc::ldrsh(3, 4, 6), 0x79c00c83U);
-    check("ldur w3, [x4, #-9]", enc::ldur_w(3, 4, -9), 0xb85f7083U);
-    check("stur w3, [x4, #-9]", enc::stur_w(3, 4, -9), 0xb81f7083U);
-    check("ldp w3, w5, [x4, #8]", enc::ldp_w(3, 5, 4, 8), 0x29411483U);
-    check("stp w3, w5, [x4, #-8]", enc::stp_w(3, 5, 4, -8), 0x293f1483U);
     check("ldxrb w3, [x4]", enc::ldxr(0, 3, 4), 0x085f7c83U);
     check("ldaxrb w3, [x4]", enc::ldxr(0, 3, 4, true), 0x085ffc83U);
     check("stxrb w6, w3, [x4]", enc::stxr(0, 6, 3, 4), 0x08067c83U);
@@ -288,9 +262,7 @@ void encoders_match_llvm_mc() {
     check("stlr x3, [x4]", enc::stlr(3, 3, 4), 0xc89ffc83U);
     check("nop", enc::nop(), 0xd503201fU);
     check("dmb ish", enc::dmb_ish(), 0xd5033bbfU);
-    check("dmb ishld", enc::dmb_ishld(), 0xd50339bfU);
     check("dmb ishst", enc::dmb_ishst(), 0xd5033abfU);
-    check("dmb sy", enc::dmb_sy(), 0xd5033fbfU);
     check("dsb sy", enc::dsb_sy(), 0xd5033f9fU);
     check("isb", enc::isb(), 0xd5033fdfU);
     check("add v3.8b, v4.8b, v5.8b", enc::v::add(0, 3, 4, 5), 0x0e258483U);
@@ -323,8 +295,6 @@ void encoders_match_llvm_mc() {
     check("uhadd v3.2s, v4.2s, v5.2s", enc::v::uhadd(2, 3, 4, 5), 0x2ea50483U);
     check("shsub v3.2s, v4.2s, v5.2s", enc::v::shsub(2, 3, 4, 5), 0x0ea52483U);
     check("uhsub v3.2s, v4.2s, v5.2s", enc::v::uhsub(2, 3, 4, 5), 0x2ea52483U);
-    check("fmov s3, w4", enc::v::fmov_s_from_w(3, 4), 0x1e270083U);
-    check("fmov w3, s4", enc::v::fmov_w_from_s(3, 4), 0x1e260083U);
   require(mismatches == 0);
 }
 

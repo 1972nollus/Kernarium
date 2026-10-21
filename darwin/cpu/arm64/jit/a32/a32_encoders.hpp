@@ -87,11 +87,6 @@ namespace detail {
 {
 	return detail::three(0x4a00'0000U | (s << 22) | (amount << 10), d, n, m);
 }
-[[nodiscard]] constexpr std::uint32_t eon(unsigned d, unsigned n, unsigned m,
-	Shift s = lsl, unsigned amount = 0) noexcept
-{
-	return detail::three(0x4a20'0000U | (s << 22) | (amount << 10), d, n, m);
-}
 /* MOV Wd, Wm */
 [[nodiscard]] constexpr std::uint32_t mov(unsigned d, unsigned m) noexcept
 {
@@ -434,37 +429,13 @@ namespace detail {
 {
 	return 0x1a80'0400U | (m << 16) | (cond << 12) | (n << 5) | d;
 }
-[[nodiscard]] constexpr std::uint32_t csinv(unsigned d, unsigned n, unsigned m,
-	unsigned cond) noexcept
-{
-	return 0x5a80'0000U | (m << 16) | (cond << 12) | (n << 5) | d;
-}
-[[nodiscard]] constexpr std::uint32_t csneg(unsigned d, unsigned n, unsigned m,
-	unsigned cond) noexcept
-{
-	return 0x5a80'0400U | (m << 16) | (cond << 12) | (n << 5) | d;
-}
 /* CSET Wd, cond */
 [[nodiscard]] constexpr std::uint32_t cset(unsigned d, unsigned cond) noexcept
 {
 	return csinc(d, 31, 31, cond ^ 1U);
 }
-[[nodiscard]] constexpr std::uint32_t ccmp_r(unsigned n, unsigned m,
-	unsigned nzcv, unsigned cond) noexcept
-{
-	return 0x7a40'0000U | (m << 16) | (cond << 12) | (n << 5) | nzcv;
-}
-[[nodiscard]] constexpr std::uint32_t ccmp_i(unsigned n, unsigned imm5,
-	unsigned nzcv, unsigned cond) noexcept
-{
-	return 0x7a40'0800U | (imm5 << 16) | (cond << 12) | (n << 5) | nzcv;
-}
 
 /* The flags. */
-[[nodiscard]] constexpr std::uint32_t mrs_nzcv(unsigned d) noexcept
-{
-	return 0xd53b'4200U | d;
-}
 [[nodiscard]] constexpr std::uint32_t msr_nzcv(unsigned n) noexcept
 {
 	return 0xd51b'4200U | n;
@@ -475,14 +446,6 @@ namespace detail {
 	unsigned mask) noexcept
 {
 	return 0xba00'0400U | (rotate << 15) | (n << 5) | mask;
-}
-[[nodiscard]] constexpr std::uint32_t setf8(unsigned n) noexcept
-{
-	return 0x3a00'080dU | (n << 5);
-}
-[[nodiscard]] constexpr std::uint32_t setf16(unsigned n) noexcept
-{
-	return 0x3a00'480dU | (n << 5);
 }
 
 /* Loads and stores with an unsigned scaled offset (byte offset given). */
@@ -544,28 +507,6 @@ namespace detail {
 {
 	return (transfer & ~0x0100'0000U) | 0x0020'4800U | (m << 16);
 }
-/* Unscaled signed 9-bit offsets (LDUR family). */
-[[nodiscard]] constexpr std::uint32_t ldur_w(unsigned t, unsigned n, int offset) noexcept
-{
-	return 0xb840'0000U | ((static_cast<std::uint32_t>(offset) & 0x1ffU) << 12) | (n << 5) | t;
-}
-[[nodiscard]] constexpr std::uint32_t stur_w(unsigned t, unsigned n, int offset) noexcept
-{
-	return 0xb800'0000U | ((static_cast<std::uint32_t>(offset) & 0x1ffU) << 12) | (n << 5) | t;
-}
-/* LDP/STP W, signed offset in bytes (multiple of 4, -256..252). */
-[[nodiscard]] constexpr std::uint32_t ldp_w(unsigned t, unsigned t2,
-	unsigned n, int offset) noexcept
-{
-	return 0x2940'0000U | ((static_cast<std::uint32_t>(offset / 4) & 0x7fU) << 15)
-		| (t2 << 10) | (n << 5) | t;
-}
-[[nodiscard]] constexpr std::uint32_t stp_w(unsigned t, unsigned t2,
-	unsigned n, int offset) noexcept
-{
-	return 0x2900'0000U | ((static_cast<std::uint32_t>(offset / 4) & 0x7fU) << 15)
-		| (t2 << 10) | (n << 5) | t;
-}
 
 /* Exclusives (the base register is a host address in Xn). size: 0 byte,
  * 1 half, 2 word, 3 doubleword. */
@@ -595,9 +536,7 @@ namespace detail {
 
 [[nodiscard]] constexpr std::uint32_t nop() noexcept { return 0xd503'201fU; }
 [[nodiscard]] constexpr std::uint32_t dmb_ish() noexcept { return 0xd503'3bbfU; }
-[[nodiscard]] constexpr std::uint32_t dmb_ishld() noexcept { return 0xd503'39bfU; }
 [[nodiscard]] constexpr std::uint32_t dmb_ishst() noexcept { return 0xd503'3abfU; }
-[[nodiscard]] constexpr std::uint32_t dmb_sy() noexcept { return 0xd503'3fbfU; }
 [[nodiscard]] constexpr std::uint32_t dsb_sy() noexcept { return 0xd503'3f9fU; }
 [[nodiscard]] constexpr std::uint32_t isb() noexcept { return 0xd503'3fdfU; }
 
@@ -781,15 +720,6 @@ namespace v {
 [[nodiscard]] constexpr std::uint32_t uhsub(unsigned size, unsigned d, unsigned n, unsigned m) noexcept
 {
 	return three_same(0x2e20'2400U | (size << 22), d, n, m);
-}
-/* FMOV Sd, Wn / FMOV Wd, Sn */
-[[nodiscard]] constexpr std::uint32_t fmov_s_from_w(unsigned d, unsigned n) noexcept
-{
-	return 0x1e27'0000U | (n << 5) | d;
-}
-[[nodiscard]] constexpr std::uint32_t fmov_w_from_s(unsigned d, unsigned n) noexcept
-{
-	return 0x1e26'0000U | (n << 5) | d;
 }
 } // namespace v
 
