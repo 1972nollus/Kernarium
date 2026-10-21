@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* The foundation every AArch32 lane builds on: the state CpuState appends
- * and its assembly offsets, the guest-AArch32 policy, the engines' support
- * levels and what a run presents of them, the AArch32 identification
- * registers and compat HWCAPs derived from the profile, and the AArch32
- * entry of an engine below base, which is the illegal-instruction exit
+ * and its assembly offsets, the engines' support levels, the AArch32
+ * identification registers and compat HWCAPs derived from the profile, and
+ * the AArch32 entry of an engine below base, which is the illegal-instruction exit
  * until a lane raises the level. The keys are in arm64-a32-guest-key. */
 #include "cpu/arm64/aarch32/a32_profile.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
@@ -16,14 +15,12 @@
 #include "cpu/engine_factory.hpp"
 #include "cpu/host_capabilities.hpp"
 #include "memory/static_guest_memory.hpp"
-#include "platform/apple/host_features.hpp"
 #include "require.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <memory>
@@ -34,7 +31,6 @@ namespace {
 using ::uml::platform::ArmFeature;
 using ::uml::platform::HostCapabilities;
 using ::uml::testing::require;
-namespace apple = ::uml::platform::apple;
 namespace arm64 = ::uml::cpu::arm64;
 namespace detail = ::uml::cpu::arm64::detail;
 
@@ -145,53 +141,13 @@ void state_is_appended_at_the_pinned_offsets()
 		cpu.a32_fpscr_nzcv == 0 && cpu.a32_tpidruro == 0);
 }
 
-void policy_parses_only_one()
-{
-	using apple::GuestAarch32Policy;
-	for (const char *value : {"", "0", "1 ", " 1", "yes", "11", "true", "on"})
-		require(apple::parse_guest_aarch32_policy(value) ==
-			GuestAarch32Policy::off, value);
-	require(apple::parse_guest_aarch32_policy(nullptr) ==
-		GuestAarch32Policy::off);
-	require(apple::parse_guest_aarch32_policy("1") ==
-		GuestAarch32Policy::on);
-
-	/* The process policy is the environment's, read once, and the other
-	 * policies do not follow it. */
-	const auto policy = apple::parse_guest_aarch32_policy(
-		std::getenv(apple::guest_aarch32_policy_variable));
-	require(apple::guest_aarch32_policy() == policy);
-	std::printf("guest-AArch32 policy %s\n",
-		policy == apple::GuestAarch32Policy::on ? "on" : "off");
-}
-
-/* The policy off presents nothing, whatever the engine implements; on
- * presents exactly the engine's level. */
-void presented_support_follows_policy_and_level()
-{
-	for (const auto level : all_levels) {
-		require(arm64::a32_presented_support(level, false) ==
-			A32Support::none);
-		require(arm64::a32_presented_support(level, true) == level);
-	}
-}
-
-/* Under the policy off an engine presents no AArch32 whatever it implements;
- * on, it presents exactly its level; and the factory agrees with the
- * constants. */
-void engines_present_their_level_under_the_policy()
+/* The factory agrees with the engines' constants. */
+void engines_present_their_level()
 {
 	require(::uml::cpu::engine_a32_support(::uml::cpu::EngineKind::gadgets) ==
 		arm64::gadgets::a32_support);
 	require(::uml::cpu::engine_a32_support(::uml::cpu::EngineKind::jit) ==
 		arm64::jit::a32_support);
-	for (const auto kind : {::uml::cpu::EngineKind::gadgets,
-		     ::uml::cpu::EngineKind::jit}) {
-		const auto level = ::uml::cpu::engine_a32_support(kind);
-		require(arm64::a32_presented_support(level, false) ==
-			A32Support::none);
-		require(arm64::a32_presented_support(level, true) == level);
-	}
 }
 
 /* A level presents its parts and nothing above it, and each host-dependent
@@ -522,9 +478,7 @@ void aarch32_entry_is_illegal_below_base()
 int main()
 {
 	state_is_appended_at_the_pinned_offsets();
-	policy_parses_only_one();
-	presented_support_follows_policy_and_level();
-	engines_present_their_level_under_the_policy();
+	engines_present_their_level();
 	features_follow_level_and_host();
 	decode_profile_is_what_the_guest_is_shown();
 	nothing_is_presented_below_base();

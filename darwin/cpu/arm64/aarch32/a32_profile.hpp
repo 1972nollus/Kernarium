@@ -25,8 +25,7 @@ namespace uml::cpu::arm64 {
  * Advanced SIMD, or all of it. The target is armhf -- hardware VFPv4-D32 and
  * NEON, the hard-float EABI of Debian armhf and Android's armeabi-v7a -- and
  * there is no soft-float-only profile, so base and simd are milestones an
- * engine passes through under the development policy, not products: the
- * policy's default turns on only once both engines are complete. */
+ * engine passes through, not products. Both engines are complete. */
 enum class A32Support : std::uint8_t {
 	/* No AArch32. */
 	none,
@@ -39,19 +38,6 @@ enum class A32Support : std::uint8_t {
 	/* Simd plus every Armv8 extension above. */
 	complete,
 };
-
-/* The level of an engine at `support` that the run presents to its guest.
- * AArch32 is off by default: with the development policy
- * (DARWIN_UML_GUEST_AARCH32, platform/apple/host_features.hpp) on, an engine
- * presents exactly what it implements, so the compat HWCAPs and the
- * identification registers advertise no feature it would treat as illegal.
- * With the policy off nothing is presented, whatever the engine implements,
- * until the policy's default is turned on once both engines are complete. */
-[[nodiscard]] constexpr A32Support a32_presented_support(
-	A32Support support, bool policy_on) noexcept
-{
-	return policy_on ? support : A32Support::none;
-}
 
 /* Which parts of the profile a guest sees at a level on a host. Each field
  * is the A64 host predicate its lowering uses, and a part above the level is

@@ -501,16 +501,7 @@ current_guest_host_capabilities() noexcept
 ::uml::cpu::arm64::A32Support guest_a32_support(
 	::uml::cpu::EngineKind kind) noexcept
 {
-	using ::uml::cpu::EngineKind;
-	const auto present = [](EngineKind of) noexcept {
-		return ::uml::cpu::arm64::a32_presented_support(
-			::uml::cpu::engine_a32_support(of),
-			::uml::platform::apple::guest_aarch32_policy() ==
-				::uml::platform::apple::GuestAarch32Policy::on);
-	};
-	static const auto gadgets = present(EngineKind::gadgets);
-	static const auto jit = present(EngineKind::jit);
-	return kind == EngineKind::jit ? jit : gadgets;
+	return ::uml::cpu::engine_a32_support(kind);
 }
 
 ::uml::cpu::arm64::A32Support guest_a32_support(

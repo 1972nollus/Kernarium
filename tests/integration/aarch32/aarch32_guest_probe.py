@@ -2,22 +2,14 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Guest probe: the guest kernel's AArch32 (armhf) task support.
 
-Run as `aarch32_guest_probe.py --elf PROGRAM --elf-4k PROGRAM4K [--expect
-unsupported|run]` inside an arm64 guest.  PROGRAM is the freestanding armhf
-program built from aarch32_probe.S, and PROGRAM4K the same program laid out for
-4 KiB pages only, as 11 files of a stock Debian armhf image are.
+Run as `aarch32_guest_probe.py --elf PROGRAM --elf-4k PROGRAM4K` inside an
+arm64 guest.  PROGRAM is the freestanding armhf program built from
+aarch32_probe.S, and PROGRAM4K the same program laid out for 4 KiB pages only,
+as 11 files of a stock Debian armhf image are.
 
-What every guest shows, with or without an engine that runs AArch32:
-a 64-bit task sees aarch64 from uname and arm64 Linux's /proc/cpuinfo layout
+A 64-bit task sees aarch64 from uname and arm64 Linux's /proc/cpuinfo layout
 without a model name, vm.mmap_rnd_compat_bits has the range of the page
-profile, and abi.cp15_barrier is present.
-
---expect unsupported (the default) is a host whose engines do not run
-AArch32, so the bridge reports no compat HWCAPs and the guest behaves like an
-arm64 CPU without 32-bit EL0: executing either ELF32 program fails with
-ENOEXEC and personality(PER_LINUX32) with EINVAL.
-
---expect run is a host that does run it.  The program runs its own checks to
+profile, and abi.cp15_barrier is present.  The program runs its own checks to
 a zero failure count, in its default mode and in the "extra" and "tracer"
 modes of aarch32_probe.S; PER_LINUX32 changes uname and /proc/cpuinfo; a
 64-bit tracer sees the program's exec stop and signal stop through the
@@ -42,7 +34,6 @@ import subprocess
 import sys
 
 PER_LINUX32 = 8
-PER_LINUX32_3GB = 0x08000008
 PTRACE_TRACEME = 0
 PTRACE_CONT = 7
 PTRACE_SINGLESTEP = 9
@@ -124,7 +115,7 @@ def read(path):
 
 
 def check_native_view():
-    """What a 64-bit task sees, whatever the host runs."""
+    """What a 64-bit task sees."""
     check("uname is aarch64", os.uname().machine == "aarch64",
           os.uname().machine)
     blocks = [block for block in read("/proc/cpuinfo").split("\n\n")
@@ -175,25 +166,6 @@ def exec_errno(path, argument=None):
     except OSError as error:
         return error.errno, None
     return 0, result.returncode
-
-
-def check_unsupported(elf, elf_4k):
-    """No engine runs AArch32: the guest has no 32-bit EL0."""
-    for name, path in (("an ELF32 program", elf),
-                       ("an ELF32 program laid out for 4 KiB pages", elf_4k)):
-        result = exec_errno(path)[0]
-        check(f"executing {name} fails with ENOEXEC", result == errno.ENOEXEC,
-              errno.errorcode.get(result, str(result)))
-
-    for name, value in (("PER_LINUX32", PER_LINUX32),
-                        ("PER_LINUX32 with ADDR_LIMIT_3GB", PER_LINUX32_3GB)):
-        result = personality(value)
-        check(f"personality({name}) fails with EINVAL",
-              result == -errno.EINVAL, str(result))
-    check("a refused personality() leaves the persona alone",
-          personality(0xffffffff) == 0, str(personality(0xffffffff)))
-    check("uname is still aarch64 after personality()",
-          os.uname().machine == "aarch64")
 
 
 def run_program(elf, mode=None, label="program", minimum=60):
@@ -649,33 +621,28 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--elf", required=True)
     parser.add_argument("--elf-4k", required=True)
-    parser.add_argument("--expect", choices=("unsupported", "run"),
-                        default="unsupported")
     parser.add_argument("--deadline", type=int, default=280,
                         metavar="SECONDS",
-                        help="in run mode, kill the probe after this long")
+                        help="kill the probe after this long")
     arguments = parser.parse_args()
     if os.uname().machine != "aarch64":
         print("SKIP aarch32: not an arm64 guest")
         return 0
 
     check_native_view()
-    if arguments.expect == "unsupported":
-        check_unsupported(arguments.elf, arguments.elf_4k)
-    else:
-        signal.alarm(arguments.deadline)
-        check_personality()
-        check_page_layout(arguments.elf_4k)
-        if run_program(arguments.elf):
-            check_tracer(arguments.elf)
-            run_program(arguments.elf, "extra", "extra checks", 50)
-            run_program(arguments.elf, "tracer", "32-bit tracer", 15)
-            check_fault_modes(arguments.elf)
-            check_syscall_stops(arguments.elf)
-            check_single_step(arguments.elf)
-            check_vfp_frame(arguments.elf)
-            check_core_dump(arguments.elf)
-            check_parallel(arguments.elf)
+    signal.alarm(arguments.deadline)
+    check_personality()
+    check_page_layout(arguments.elf_4k)
+    if run_program(arguments.elf):
+        check_tracer(arguments.elf)
+        run_program(arguments.elf, "extra", "extra checks", 50)
+        run_program(arguments.elf, "tracer", "32-bit tracer", 15)
+        check_fault_modes(arguments.elf)
+        check_syscall_stops(arguments.elf)
+        check_single_step(arguments.elf)
+        check_vfp_frame(arguments.elf)
+        check_core_dump(arguments.elf)
+        check_parallel(arguments.elf)
     print(f"aarch32-probe: {failures} failure(s)", flush=True)
     return min(failures, 100)
 

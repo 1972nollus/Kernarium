@@ -3,17 +3,13 @@
  * FPSCR travel in, how its state loads into and saves out of CpuState around
  * an engine's run_aarch32() (runtime/aarch32_guest.hpp), the bridge event
  * each exit becomes, which entries the kernel may hand over, and how the
- * entry points and the compat HWCAPs follow what the run presents.
- *
- * The argument "policy-on" or "policy-off" sets DARWIN_UML_GUEST_AARCH32
- * before the policy is first read, so the wiring is checked under both. */
+ * entry points and the compat HWCAPs follow what the run presents. */
 #include "cpu/arm64/aarch32/a32_profile.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/state_format.hpp"
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/id_registers.hpp"
 #include "cpu/engine_factory.hpp"
-#include "platform/apple/host_features.hpp"
 #include "runtime/aarch32_guest.hpp"
 #include "runtime/context.hpp"
 #include "uml_darwin_cpu.h"
@@ -31,7 +27,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
-#include <string_view>
 
 namespace {
 
@@ -507,26 +502,14 @@ void exits_become_bridge_events()
 	require(event(exit_of(ExitReason::fatal)) == DARWIN_UML_EVENT_FATAL);
 }
 
-[[nodiscard]] bool policy_is_on() noexcept
-{
-	return ::uml::platform::apple::guest_aarch32_policy() ==
-		::uml::platform::apple::GuestAarch32Policy::on;
-}
-
-/* What the run presents is the engine's level under the policy, in one place,
- * and the compat HWCAPs and the entry follow it. */
-void the_presented_level_is_the_engine_level_under_the_policy()
+/* What the run presents is the engine's level, in one place, and the compat
+ * HWCAPs and the entry follow it. */
+void the_presented_level_is_the_engine_level()
 {
 	::uml::testing::RuntimeTestRoute route;
-	for (const auto kind : {EngineKind::gadgets, EngineKind::jit}) {
-		const auto expected = arm64::a32_presented_support(
-			::uml::cpu::engine_a32_support(kind), policy_is_on());
-		require(::uml::runtime::guest_a32_support(kind) == expected);
-		if (!policy_is_on())
-			require(::uml::runtime::guest_a32_support(kind) ==
-				arm64::A32Support::none,
-				"AArch32 is presented without the policy");
-	}
+	for (const auto kind : {EngineKind::gadgets, EngineKind::jit})
+		require(::uml::runtime::guest_a32_support(kind) ==
+			::uml::cpu::engine_a32_support(kind));
 	using ::uml::runtime::ExecutionEngine;
 	require(::uml::runtime::guest_a32_support(ExecutionEngine::gadgets) ==
 		::uml::runtime::guest_a32_support(EngineKind::gadgets));
@@ -634,21 +617,15 @@ void entries_follow_the_level(Enter enter, EngineKind kind, unsigned long genera
 
 } // namespace
 
-int main(int argc, char **argv)
+int main()
 {
-	if (argc > 1) {
-		const std::string_view mode{argv[1]};
-		require(mode == "policy-on" || mode == "policy-off",
-			"unknown argument");
-		setenv("DARWIN_UML_GUEST_AARCH32", mode == "policy-on" ? "1" : "0", 1);
-	}
 	status_fields_have_their_architectural_positions();
 	load_converts_every_field();
 	save_repacks_what_the_engine_owns();
 	load_then_save_is_the_identity();
 	only_valid_entries_are_accepted();
 	exits_become_bridge_events();
-	the_presented_level_is_the_engine_level_under_the_policy();
+	the_presented_level_is_the_engine_level();
 	compat_hwcaps_follow_the_presented_level();
 	entries_follow_the_level(darwin_uml_static_enter_guest,
 		EngineKind::gadgets, 810);

@@ -10,9 +10,7 @@ namespace uml::cpu::arm64::gadgets {
  * exclusives and the system instructions), VFPv4-D32 and Advanced SIMD, and
  * the Armv8 additions and optional extensions (the complete level). An
  * AArch32 entry (CpuEngine::run_aarch32) runs it through
- * run_translated_aarch32_blocks (engine_execution.hpp); with the development
- * policy off the engine still presents no AArch32 to its guest
- * (a32_presented_support). */
+ * run_translated_aarch32_blocks (engine_execution.hpp). */
 inline constexpr A32Support a32_support = A32Support::complete;
 
 } // namespace uml::cpu::arm64::gadgets

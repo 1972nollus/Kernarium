@@ -3,16 +3,8 @@
 # The guest kernel's AArch32 task support (run_guest_aarch32.py). The armhf
 # program is built with the configured compiler's ARM backend and wrapped
 # into an ELF32 executable by make_elf32.py, because the toolchain has no
-# ARM linker. It is generated here and never committed.
-#
-# Until a host engine runs AArch32 the bridge reports no compat HWCAPs and the
-# test expects the kernel to behave like a CPU without 32-bit EL0: ENOEXEC for
-# the programs and EINVAL for personality(PER_LINUX32). A lane that lands an
-# engine switches UML_AARCH32_EXPECT to run, which executes the program and
-# checks that a program laid out for 4 KiB pages runs.
-set(UML_AARCH32_EXPECT "unsupported" CACHE STRING
-    "What guest-aarch32 expects of the host: unsupported or run")
-set_property(CACHE UML_AARCH32_EXPECT PROPERTY STRINGS unsupported run)
+# ARM linker. It is generated here and never committed. The test executes the
+# program and checks that a program laid out for 4 KiB pages runs.
 
 set(_uml_aarch32_object "${CMAKE_CURRENT_BINARY_DIR}/aarch32_probe.o")
 set(UML_GUEST_AARCH32_PROBE "${CMAKE_CURRENT_BINARY_DIR}/guest-aarch32-probe")
@@ -49,15 +41,16 @@ add_custom_target(uml-guest-aarch32-probe
     DEPENDS "${UML_GUEST_AARCH32_PROBE}" "${UML_GUEST_AARCH32_PROBE_4K}")
 add_dependencies(integration-test-binaries uml-guest-aarch32-probe)
 
+# The timeout is above the runner's longest path: boot, the probe's 900 s
+# bound on the gadget engine, and the closing command.
 uml_add_guest_integration_test(
     NAME guest-aarch32-kernel
     SCRIPT run_guest_aarch32.py
     ARGS --probe ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_guest_probe.py
         --elf ${UML_GUEST_AARCH32_PROBE}
         --elf-4k ${UML_GUEST_AARCH32_PROBE_4K}
-        --expect ${UML_AARCH32_EXPECT}
     LABELS guest;kernel;aarch32;smoke
-    TIMEOUT 420
+    TIMEOUT 1200
     CPUS 2)
 
 # The engine probe: a freestanding armhf program (engine_probe/) that the
@@ -164,9 +157,9 @@ target_include_directories(uml-a32-engine-support PRIVATE
 target_link_libraries(uml-a32-engine-support PRIVATE UML::CpuContract)
 add_dependencies(integration-test-binaries uml-a32-engine-support)
 
-# guest-aarch32-engine-<engine> runs the probe under DARWIN_UML_GUEST_AARCH32=1
-# on an engine that implements AArch32 and skips, naming the reason, on one
-# that does not. The four-vCPU guest gives the exclusives real contention.
+# guest-aarch32-engine-<engine> runs the probe on an engine that implements
+# AArch32 and skips, naming the reason, on one that does not. The four-vCPU
+# guest gives the exclusives real contention.
 foreach(_engine IN ITEMS gadgets jit)
     if(_engine STREQUAL "gadgets")
         set(_timeout 2400)

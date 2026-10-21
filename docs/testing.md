@@ -266,12 +266,9 @@ in the rootfs. The build generates a freestanding
 armhf program from `tests/integration/aarch32/aarch32_probe.S` with the
 configured compiler's ARM backend, wraps it into an ELF32 executable with
 `make_elf32.py` (the toolchain has no ARM linker) in a layout for any page size
-and in one for 4 KiB pages only, and never commits either. While no engine
-implements AArch32 (`UML_AARCH32_EXPECT=unsupported`, the default) the test
-requires `ENOEXEC` for both programs, `EINVAL` for `personality(PER_LINUX32)`,
-and unchanged 64-bit `uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and
-`abi.cp15_barrier`. With `UML_AARCH32_EXPECT=run` it runs the program (kuser
-helpers, signals and VFP state, `cacheflush`, Thumb, `mmap2`, `PER_LINUX32`
+and in one for 4 KiB pages only, and never commits either. The test requires
+unchanged 64-bit `uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and
+`abi.cp15_barrier`, and runs the program (kuser helpers, signals and VFP state, `cacheflush`, Thumb, `mmap2`, `PER_LINUX32`
 views, restarts and exec between ABIs; threads through `clone` and `clone3`,
 fault signals and stack growth, the time64 and socket calls with
 `SCM_RIGHTS`, `vfork`, timers, `seccomp` and a 32-bit tracer), a 64-bit
@@ -894,17 +891,15 @@ streaming record), and undefined SVE instructions.
 ## Guest AArch32 foundation
 
 `arm64-a32-foundation` checks the state `CpuState` appends and its assembly
-offsets, the guest-AArch32 policy, the engines' support levels and what a
-policy presents of them, the AArch32 identification registers and compat
-HWCAP words at each level over every subset of the host features they follow,
+offsets, the engines' support levels, the AArch32 identification registers and
+compat HWCAP words at each level over every subset of the host features they
+follow,
 and that an engine below `base` takes the AArch32 entry as the
 illegal-instruction exit without changing the state. `arm64-a32-guest-key` checks the tagged
 translation keys (round trips, interworking, that no key collides with an A64
 key, the empty cell or a fault position, and the hash-visible bit) and the
 key-aware validation of saved guest units across page boundaries. `arm64-jit-shared-translation-cache` also checks that the
-shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
-policy from their environment as well; the suites must hold unchanged with
-`DARWIN_UML_GUEST_AARCH32=1`.
+shared tier keys and sizes AArch32 translations by ISA.
 
 `arm64-gadget-a32-control` runs small A32 and T32 programs through the gadget
 engine's production AArch32 loop and checks what its translator decides:
@@ -961,20 +956,18 @@ reservation (at most 60 s, because whether a signal lands in the window is
 chance). It requires that one was lost and that every case then agreed.
 Instruction semantics belong to the instruction corpus, not to the first two.
 
-`arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:
+`arm64-a32-host` checks the host runtime side:
 the architectural positions of the status word's fields, the load and save of
 every field around an engine's AArch32 entry (key, flags, GE, IT, FPSCR
 split, TPIDR registers, CP15BEN; load then save is the identity over random
 states in both Thumb and ARM state), which entries the kernel may hand over,
 the bridge event of every exit, and that the compat HWCAPs and the guest entry
-points follow the level the run presents, with the policy off and on. An
-engine that has reached `base` makes the policy-on run enter it for real: an
-entry at an unmapped PC must fault there.
+points follow the level the run presents. An entry at an unmapped PC must
+fault there.
 
 `guest-aarch32-engine-gadgets` and `guest-aarch32-engine-jit` run the engine
 probe, a freestanding armhf program from `tests/integration/aarch32/engine_probe/`
-that boots as the guest's `/init` under `DARWIN_UML_GUEST_AARCH32=1`. The build
-compiles it with the configured compiler's ARM backend and links it with
+that boots as the guest's `/init`. The build compiles it with the configured compiler's ARM backend and links it with
 `link_elf32.py`, in a layout for any page size and in one for 4 KiB pages
 only, which a 4 KiB guest also runs. Its groups cover system calls and errno,
 A32/T32 interworking, signal frames with VFP state through the sigpage and

@@ -22,10 +22,9 @@ namespace uml::cpu {
 	EngineKind kind, HostCapabilities host) noexcept;
 
 /* How much of the AArch32 EL0 profile an engine of `kind` implements
- * (arm64::A32Support). The runtime presents AArch32 only through
- * arm64::a32_presented_support() of this level and the guest-AArch32
- * policy, and derives the compat HWCAPs from what that returns, so a run
- * never advertises more than its engine runs. */
+ * (arm64::A32Support). The runtime presents exactly this level and derives
+ * the compat HWCAPs from it, so a run never advertises more than its engine
+ * runs. */
 [[nodiscard]] arm64::A32Support engine_a32_support(EngineKind kind) noexcept;
 
 /* Publishes the whole-process budget for translated-code caches and the

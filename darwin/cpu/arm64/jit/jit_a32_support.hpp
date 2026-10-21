@@ -10,8 +10,7 @@ namespace uml::cpu::arm64::jit {
  * interworking, IT, the system forms), VFPv4-D32 with Advanced SIMD, and the
  * Armv8 extensions (the complete level), through the entry that a32/a32_loop.hpp
  * provides. What the compiler does not lower, the semantic library runs. The
- * engine presents exactly this to its guest when the development policy is on
- * (a32_presented_support). */
+ * engine presents exactly this to its guest. */
 inline constexpr A32Support a32_support = A32Support::complete;
 
 } // namespace uml::cpu::arm64::jit

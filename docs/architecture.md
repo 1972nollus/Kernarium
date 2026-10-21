@@ -716,13 +716,11 @@ Each engine's `a32_support` names how far it implements it, `none`, `base`
 milestones, not products. `CpuEngine::run_aarch32` is the entry for a task in
 AArch32 state, the A64 `run` is unchanged, and an engine below `base` takes the
 new entry as the illegal-instruction exit without touching the state. The
-gadget engine and the JIT are both at `complete` on macOS. The development
-policy `DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
-`a32_presented_support` gives the level a run presents, nothing with the
-policy off and the engine's level with it on, and the AArch32 identification
-registers and the compat AT_HWCAP and AT_HWCAP2 words derive from that level
-and the host in `cpu/arm64/id_registers.hpp` as arm64 Linux derives them, and
-are zero below `base`. The default turns on once both engines are complete.
+gadget engine and the JIT are both at `complete`, and every arm64 product
+presents AArch32 with no switch and no host token. The AArch32 identification
+registers and the compat AT_HWCAP and AT_HWCAP2 words derive from the engine's
+level and the host in `cpu/arm64/id_registers.hpp` as arm64 Linux derives them,
+and are zero below `base`.
 
 An AArch32 task keeps R0-R14 zero-extended in the integer registers, NZCV in
 the A64 flags and D0-D31 in the low sixteen vectors; what has no A64 field is
@@ -874,7 +872,7 @@ level, and `arm64-gadget-region-layout` the part's placement.
 
 The runtime enters an AArch32 task through `run_aarch32` only while the run
 presents AArch32, which `guest_a32_support()` decides in one place: the
-selected engine's level under the development policy. The compat
+selected engine's level. The compat
 `AT_HWCAP` and `AT_HWCAP2` words the guest selector returns derive from the
 same level, so a run advertises exactly what its engine runs, a non-zero word
 is the kernel's whole evidence that a run executes AArch32, and an AArch32

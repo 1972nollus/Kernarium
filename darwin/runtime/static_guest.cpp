@@ -580,10 +580,10 @@ void debug_check_host_streaming_state() noexcept
 /* An AArch32 task's entry (runtime/aarch32_guest.hpp): the engine's
  * run_aarch32() between load_a32_cpu() and save_a32_cpu(). A task is entered
  * only while the run presents AArch32 -- its engine implements the profile
- * to at least the integer core, and the guest-AArch32 policy is on, which is
- * exactly when the compat HWCAPs are not zero and the kernel runs an
- * AArch32 task at all -- and only in a state the kernel may hand over;
- * anything else is a kernel invariant violation and fatal.
+ * to at least the integer core, which is exactly when the compat HWCAPs are
+ * not zero and the kernel runs an AArch32 task at all -- and only in a state
+ * the kernel may hand over; anything else is a kernel invariant violation
+ * and fatal.
  *
  * Kept out of line and cold: an AArch64 entry reaches it only through the
  * one test of PSTATE.nRW in run_common_guest(). */

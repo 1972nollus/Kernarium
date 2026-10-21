@@ -15,10 +15,9 @@ level; the level it detects from the HWCAP words must equal the engine's
 (A32_PROBE_LEVEL).
 
 An engine that implements no AArch32 yet is skipped, naming the reason, with
-CTest's skip status. Otherwise the runner sets DARWIN_UML_GUEST_AARCH32=1, as
-the development policy requires, boots the probe laid out for any page size
-and, on a 4 KiB guest, the one laid out for 4 KiB pages, and fails on any
-failed check, any SIGILL the probe did not expect (a guest illegal
+CTest's skip status. Otherwise the runner boots the probe laid out for any
+page size and, on a 4 KiB guest, the one laid out for 4 KiB pages, and fails
+on any failed check, any SIGILL the probe did not expect (a guest illegal
 instruction is a blocker) and any crash of the guest or the emulator.
 """
 
@@ -138,7 +137,6 @@ def main() -> int:
               "AArch32 yet (level none)")
         return SKIP
 
-    os.environ["DARWIN_UML_GUEST_AARCH32"] = "1"
     failures = run_probe(arguments, "any page size layout",
                          arguments.probe.resolve(), level)
     failures += run_probe(arguments, "4 KiB layout",

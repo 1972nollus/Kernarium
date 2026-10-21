@@ -175,12 +175,10 @@ private:
 current_guest_host_capabilities() noexcept;
 
 /* How much of the AArch32 EL0 profile a run on `engine` presents to its
- * guest: what the engine implements (cpu::engine_a32_support) while the
- * guest-AArch32 policy (DARWIN_UML_GUEST_AARCH32=1) is on, and none
- * otherwise. The compat HWCAPs derive from it, so a run advertises exactly
- * what its engine runs, and the runtime enters an AArch32 task into the
- * engine only at base or above. An unresolved (automatic) engine presents
- * what both engines do. */
+ * guest: what the engine implements (cpu::engine_a32_support). The compat
+ * HWCAPs derive from it, so a run advertises exactly what its engine runs,
+ * and the runtime enters an AArch32 task into the engine only at base or
+ * above. An unresolved (automatic) engine presents what both engines do. */
 [[nodiscard]] ::uml::cpu::arm64::A32Support guest_a32_support(
 	::uml::cpu::EngineKind kind) noexcept;
 [[nodiscard]] ::uml::cpu::arm64::A32Support guest_a32_support(
