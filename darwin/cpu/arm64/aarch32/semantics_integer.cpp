@@ -96,23 +96,30 @@ bool exec_data_processing(Exec &x, const OpInfo &info)
 	bool carry = false;
 	bool overflow = false;
 	bool compare = false;
-	switch (info.op) {
-	case Op::add: case Op::addw: case Op::cmn: case Op::adc:
-	case Op::sub: case Op::subw: case Op::cmp: case Op::sbc:
-	case Op::rsb: case Op::rsc: {
-		/* AddWithCarry(): a subtraction adds the complement of the operand
-		 * it subtracts, the first one for RSB and RSC, and its carry in is
-		 * 1, or the carry flag in the forms that take it. */
-		const bool complement_first = info.op == Op::rsb || info.op == Op::rsc;
-		const bool complement_second = info.op == Op::sub || info.op == Op::subw
-			|| info.op == Op::cmp || info.op == Op::sbc;
-		const bool flag_carry = info.op == Op::adc || info.op == Op::sbc || info.op == Op::rsc;
-		const auto sum = add_with_carry(complement_first ? ~a : a, complement_second ? ~b : b,
-			flag_carry ? x.flag_c() : complement_first || complement_second);
+	/* AddWithCarry() into the result and the carry and overflow flags. */
+	const auto add = [&](std::uint32_t first, std::uint32_t second, bool carry_in) {
+		const auto sum = add_with_carry(first, second, carry_in);
 		result = sum.value; carry = sum.carry; overflow = sum.overflow;
-		compare = info.op == Op::cmn || info.op == Op::cmp;
+	};
+	switch (info.op) {
+	case Op::add: case Op::addw: case Op::cmn:
+		add(a, b, false); compare = info.op == Op::cmn;
 		break;
-	}
+	case Op::adc:
+		add(a, b, x.flag_c());
+		break;
+	case Op::sub: case Op::subw: case Op::cmp:
+		add(a, ~b, true); compare = info.op == Op::cmp;
+		break;
+	case Op::sbc:
+		add(a, ~b, x.flag_c());
+		break;
+	case Op::rsb:
+		add(~a, b, true);
+		break;
+	case Op::rsc:
+		add(~a, b, x.flag_c());
+		break;
 	case Op::and_: case Op::tst:
 		result = a & b; carry = second.carry; compare = info.op == Op::tst;
 		break;
