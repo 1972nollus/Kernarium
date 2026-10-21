@@ -18,7 +18,7 @@ CONFIG_BOOT_CONFIG=y
 CONFIG_BLK_INLINE_ENCRYPTION=y
 CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK=y
 CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y
-# The AOSP 17 UML fstab selects AES-256-XTS contents with AES-256-HCTR2
+# The LineageOS 24 UML fstab selects AES-256-XTS contents with AES-256-HCTR2
 # filenames. Keep the software HCTR2 transform and everything it selects in
 # the signed kernel because this product cannot load crypto modules on iOS.
 CONFIG_CRYPTO_HCTR2=y
