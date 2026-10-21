@@ -4,6 +4,7 @@
  * the gadgets overlaps one on the JIT, and it never closes. */
 #include "require.hpp"
 #include "runtime/x86_tier.hpp"
+#include "wait_until.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -18,6 +19,7 @@ using uml::runtime::X86TierState;
 using uml::runtime::X86TierTable;
 using Engine = X86TierState::Engine;
 using uml::testing::require;
+using uml::testing::waitUntil;
 
 /* An address space starts on the gadgets, counts what each dispatch retires,
  * and hands over when the sum reaches the threshold and the dispatch that
@@ -70,8 +72,9 @@ void test_the_handover_drains_running_dispatches()
 		auto entry = state.enter();
 		third_engine.store(entry.engine());
 	}};
-	while (!started.load())
-		std::this_thread::yield();
+	require(waitUntil([&] { return started.load(); },
+		std::chrono::seconds{60}, std::chrono::milliseconds{0}),
+		"the third dispatch never started");
 	std::this_thread::sleep_for(std::chrono::milliseconds{50});
 	require(third_engine.load() == Engine::gadgets && !state.on_jit(),
 		"a dispatch started during the handover");
