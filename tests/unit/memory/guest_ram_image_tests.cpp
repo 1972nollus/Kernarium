@@ -6,6 +6,7 @@
 #include "mach_vm_region_test_support.hpp"
 #include "memory/guest_ram_commitment.hpp"
 #include "memory/guest_ram_image.hpp"
+#include "named_tests.hpp"
 #include "require.hpp"
 #include "scratch_directory.hpp"
 
@@ -739,10 +740,8 @@ void freeze_refuses_a_second_hibernate_and_a_missing_freeze()
 
 void the_image_file_is_exclusive_and_stale_files_are_removed()
 {
-	const auto directory = uml::testing::scratch_directory() /
-		("stale-" + std::to_string(getpid()));
-	std::filesystem::remove_all(directory);
-	std::filesystem::create_directories(directory);
+	const uml::testing::ScratchSubdirectory scratch{"stale.XXXXXX"};
+	const auto &directory = scratch.path();
 	const auto name = [&](int pid) {
 		return (directory / uml::memory::guest_ram_image_name(pid)).string();
 	};
@@ -788,7 +787,6 @@ void the_image_file_is_exclusive_and_stale_files_are_removed()
 	live.reset();
 	require(!std::filesystem::exists(options.path),
 		"the image must be deleted with its owner");
-	std::filesystem::remove_all(directory);
 
 	GuestRamImage::Options bad;
 	bad.path = (directory / "missing" / "x.img").string();
@@ -801,10 +799,7 @@ void the_image_file_is_exclusive_and_stale_files_are_removed()
 
 int main()
 {
-	const struct {
-		const char *name;
-		void (*run)();
-	} tests[] = {
+	const uml::testing::NamedTest tests[] = {
 		{"the hash sees every byte and the length",
 			the_hash_sees_every_byte_and_the_length},
 		{"a restore returns every held page exactly and wired",
@@ -831,15 +826,5 @@ int main()
 		{"the image file is exclusive and stale files are removed",
 			the_image_file_is_exclusive_and_stale_files_are_removed},
 	};
-	int failures = 0;
-	for (const auto &test : tests) {
-		try {
-			test.run();
-			std::printf("ok: %s\n", test.name);
-		} catch (const std::exception &error) {
-			std::printf("FAIL: %s: %s\n", test.name, error.what());
-			++failures;
-		}
-	}
-	return failures == 0 ? 0 : 1;
+	return uml::testing::runNamedTests(tests);
 }

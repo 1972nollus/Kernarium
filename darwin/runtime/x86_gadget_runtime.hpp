@@ -7,6 +7,7 @@
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
 #include "memory/static_guest_memory.hpp"
+#include "runtime/x86_runtime_support.hpp"
 
 #include <array>
 #include <cstddef>
@@ -14,15 +15,6 @@
 #include <memory>
 
 namespace uml::runtime {
-
-struct X86GadgetRunResult final {
-	::uml::cpu::ExecutionResult execution;
-	/* The error code of a #GP or #SS the run ended in: for INT n, the
-	 * vector's IDT entry. For #MF, the x87 status word with the control
-	 * word above it, and for #XM, MXCSR: what Linux derives the signal's
-	 * code from. */
-	std::int32_t error_code{};
-};
 
 /* `instruction_budget` bounds how long one dispatch runs, and the block that
  * crosses it runs to its end, as a block of the arm64 engines does. With
@@ -38,7 +30,7 @@ struct X86GadgetRunResult final {
 using X86CheckedExecutors = std::array<
 	std::unique_ptr<::uml::cpu::x86_64::gadgets::Executor>, 8>;
 
-[[nodiscard]] X86GadgetRunResult run_x86_gadgets(
+[[nodiscard]] X86RunResult run_x86_gadgets(
 	::uml::cpu::x86_64::CpuState &cpu,
 	::uml::memory::StaticGuestMemory &memory,
 	::uml::cpu::x86_64::gadgets::Executor &executor,

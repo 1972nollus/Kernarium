@@ -41,7 +41,7 @@ struct Result final {
   std::size_t guest_units{};
 };
 
-/* The AArch32 compiler of the JIT (design 5): a block of A32 or T32
+/* The AArch32 compiler of the JIT: a block of A32 or T32
  * instructions decoded by the shared decoder and lowered onto the same
  * residency, flag state and linked exits as the A64 compiler, with the guest
  * PC in key form. R0-R14 are CpuState registers[0..14], zero-extended; all

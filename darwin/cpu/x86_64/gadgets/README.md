@@ -9,13 +9,11 @@ code-page registry and the split-operand lock are not the engine's own: they
 are `uml_x86_64_target` in the parent directory, which every x86 engine links.
 This file records the contracts that are not obvious from the code.
 
-Private labels take the Mach-O assembler-temporary prefix `L`, which keeps
-them out of the symbol table. A branch to one from another section encodes its
-distance past the nearest named symbol before it as a signed 24-bit addend, so
-such a target must lie within 8 MiB of one; the cold part names only its
-start and is 0.7 MB. The assembler rejects a larger addend, and a named local
-symbol ahead of the target fixes it. `gadget-engine-temporary-labels` fails on
-a `.L` symbol in the engine object.
+Private labels take the Mach-O assembler-temporary prefix `L`, as the arm64
+region's do ([`docs/architecture.md`](../../../../docs/architecture.md) states
+the 8 MiB bound on a branch to one from another section); the cold part names
+only its start and is 0.7 MB. A named local symbol ahead of a target fixes an
+addend the assembler rejects.
 
 ## Region layout
 
@@ -35,10 +33,9 @@ file. What a change moves:
   each group that no longer fits with the slot it needs, its phase and new
   size plus 1 KiB rounded up to a 128-byte line; set those rows' slots to
   it. Every later group then moves by whole lines and keeps its phase, which
-  GX1 measured as neutral: a 2,480-byte shift of most gadgets cost File
-  Compression and Clang 2 to 4 percent, and padding it to 2,560 bytes
-  recovered both. Such a change needs no pad control, but its commit says
-  which slots grew.
+  is neutral ([optimization history](../../../../docs/optimization-history.md):
+  pin the x86-64 gadget region). Such a change needs no pad control, but its
+  commit says which slots grew.
 - A phase never changes; it is what keeps the measured layout.
 - A new group takes a new row with phase 0, a new `engine/*.inc` file's at
   the end of the table and a new baked family's after the last baked one, and
@@ -498,9 +495,9 @@ DPPD and FMA instead keep a common path that assumes DAZ and FTZ clear and no
 SIMD check, and run an exact path while `exception_checks` holds
 `exception_check_simd_exact`: with `exception_check_simd`, or while DAZ or FTZ
 is set, in every run; LDMXCSR, FXRSTOR and XRSTOR keep it current. One load
-and branch thus serve all three, as the check alone did before, and the common
-path adds only a NaN test where x86's NaN differs from the host's. The
-arithmetic gadgets test the same bit before they read MXCSR for DAZ and FTZ.
+and branch thus serve all three, and the common path adds only a NaN test
+where x86's NaN differs from the host's. The arithmetic gadgets test the same
+bit before they read MXCSR for DAZ and FTZ.
 Applications set DAZ and FTZ for good as often as not -- Geekbench's image
 workloads and embree do -- so the exact path is a common path too: it follows
 the gadget inline (FMA's after the gadget's tail), and only its repairs, and
@@ -957,9 +954,11 @@ cannot answer for keeps it. The number keeps its place in the order the
 window retires in, a tombstone that holds nothing and that the
 least-recently-used rule drops when it reaches it, so the cache keeps the live
 address spaces it would have kept; letting go of the place too would be a
-larger window for live spaces. Without the rule a destroyed generation's
-translations, link records and indirect sites stay until eight newer
-generations displace them, which a long-running benchmark process never does.
+larger window for live spaces. Letting go of one first makes room for its
+recycled id, so out of memory it stays held, and the executor asks again at its
+next run. Without the rule a destroyed generation's translations, link records
+and indirect sites stay until eight newer generations displace them, which a
+long-running benchmark process never does.
 
 ## The byte budget
 

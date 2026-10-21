@@ -14,8 +14,8 @@
  * decoder-only runner skips them; the engine raises the illegal-instruction
  * exit for them, which the forms test checks. The `unaligned` and
  * `fpscr-reserved` suites are recorded from hardware (a Raspberry Pi 4): a
- * multi-word access at a misaligned address is an alignment fault, as the
- * SCTLR.A = 0 text of the design says, and Stride and Len read as zero.
+ * multi-word access at a misaligned address is an alignment fault with
+ * SCTLR.A = 0, and Stride and Len read as zero.
  *
  * A store-exclusive may fail without cause, as the architecture allows. The
  * gadgets run the host's own exclusives, and the host's monitor ends at any

@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdio>
 #include <new>
+#include <span>
 
 namespace uml::runtime {
 namespace {
@@ -26,12 +27,16 @@ using ::uml::memory::StaticGuestMemory;
 constexpr std::size_t mapping_change_capacity = 4096;
 constexpr std::size_t code_change_capacity = 1024;
 
-/* A generation the engine holds a space for ends with its process; the
- * engine then makes the space of the next generation out of it. A host that
- * cannot say counts as live. */
-bool generation_live(unsigned long generation) noexcept
+/* The first `count` records of `records` as the engine's ranges, in
+ * `ranges`. */
+template<typename Record, std::size_t Capacity>
+[[gnu::always_inline]] std::span<const x86_64::jit::GuestRange> guest_ranges(
+	const std::array<Record, Capacity> &records, std::size_t count,
+	std::array<x86_64::jit::GuestRange, Capacity> &ranges) noexcept
 {
-	return darwin_uml_static_vm_generation_live(generation) != 0;
+	for (std::size_t index = 0; index < count; ++index)
+		ranges[index] = {records[index].address, records[index].length};
+	return {ranges.data(), count};
 }
 
 /* Hands the engine what changed in the address space since it last ran in
@@ -68,11 +73,8 @@ void sync_engine(x86_64::jit::FexEngine &engine,
 		if (count < 0) {
 			changes.all_mappings = true;
 		} else {
-			const auto ranges = static_cast<std::size_t>(count);
-			for (std::size_t index = 0; index < ranges; ++index)
-				mapping_ranges[index] = {
-					mapped[index].address, mapped[index].length};
-			changes.mapping_ranges = {mapping_ranges.data(), ranges};
+			changes.mapping_ranges = guest_ranges(mapped,
+				static_cast<std::size_t>(count), mapping_ranges);
 			changes.mapping_sequence = current;
 		}
 	}
@@ -90,11 +92,8 @@ void sync_engine(x86_64::jit::FexEngine &engine,
 		if (count < 0) {
 			changes.all_code = true;
 		} else {
-			const auto ranges = static_cast<std::size_t>(count);
-			for (std::size_t index = 0; index < ranges; ++index)
-				code_ranges[index] = {
-					coded[index].address, coded[index].length};
-			changes.code_ranges = {code_ranges.data(), ranges};
+			changes.code_ranges = guest_ranges(coded,
+				static_cast<std::size_t>(count), code_ranges);
 			changes.code_sequence = current;
 		}
 	}
@@ -116,12 +115,12 @@ bool x86_jit_available() noexcept
 	return available;
 }
 
-X86JitRunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
+X86RunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
 	X86JitEngine &engine, unsigned long generation,
 	std::size_t instruction_budget,
 	const ::uml::cpu::InterruptToken &interrupt, bool mm_shared) noexcept
 {
-	X86JitRunResult run{};
+	X86RunResult run{};
 	auto &result = run.execution;
 	result.reason = ::uml::cpu::ExitReason::fatal;
 	if (!x86_jit_available()) {
@@ -132,7 +131,7 @@ X86JitRunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
 	if (!engine) {
 		engine.reset(new (std::nothrow) x86_64::jit::FexEngine(
 			::uml::platform::apple::probed_host_capabilities(),
-			{.generation_live = &generation_live}));
+			{.generation_live = &x86_generation_live}));
 		if (!engine)
 			return run;
 	}
@@ -146,9 +145,7 @@ X86JitRunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
 	}
 	memory.prepare(generation, sequences.mapping_changes);
 	if (cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
-		cpu.gpr(x86_64::Register::rax) = 15;
-		cpu.system_call_32bit = false;
-		result.reason = ::uml::cpu::ExitReason::system_call;
+		x86_signal_return(cpu, result);
 		return run;
 	}
 	/* The kernel's mark alone decides: a space another agent may observe
@@ -190,9 +187,7 @@ X86JitRunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
 	if (result.reason == ::uml::cpu::ExitReason::memory_fault &&
 		result.fault.access == ::uml::memory::MemoryAccess::execute &&
 		cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
-		cpu.gpr(x86_64::Register::rax) = 15;
-		cpu.system_call_32bit = false;
-		result.reason = ::uml::cpu::ExitReason::system_call;
+		x86_signal_return(cpu, result);
 		result.fault = {};
 		return run;
 	}

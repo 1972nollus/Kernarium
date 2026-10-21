@@ -2,6 +2,8 @@
 
 #include "KernariumConsoleInput.hpp"
 #include "require.hpp"
+#include "wait_until.hpp"
+#include "watchdog.hpp"
 
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -22,38 +24,7 @@ namespace {
 using namespace std::chrono_literals;
 
 using uml::testing::require;
-
-/* A wedged call is the defect under test, and a hung test binary would hide
- * it, so every wait for one ends the process instead. */
-class Watchdog final {
-public:
-    Watchdog(const char* what, std::chrono::seconds limit)
-        : thread_([this, what, limit] {
-            const auto deadline = std::chrono::steady_clock::now() + limit;
-            while (!done_.load(std::memory_order_acquire)) {
-                if (std::chrono::steady_clock::now() >= deadline) {
-                    std::fprintf(stderr, "FAIL: %s did not return\n", what);
-                    std::_Exit(EXIT_FAILURE);
-                }
-                std::this_thread::sleep_for(10ms);
-            }
-        })
-    {
-    }
-
-    ~Watchdog()
-    {
-        done_.store(true, std::memory_order_release);
-        thread_.join();
-    }
-
-    Watchdog(const Watchdog&) = delete;
-    Watchdog& operator=(const Watchdog&) = delete;
-
-private:
-    std::atomic<bool> done_ {};
-    std::thread thread_;
-};
+using uml::testing::Watchdog;
 
 struct Console final {
     Console()
@@ -93,16 +64,11 @@ std::vector<std::uint8_t> pattern(std::size_t size)
  * what a writer blocks behind. */
 void waitForQueuedInput(int guest)
 {
-    const auto deadline = std::chrono::steady_clock::now() + 10s;
-    for (;;) {
+    require(uml::testing::waitUntil([guest] {
         int queued = 0;
         require(::ioctl(guest, FIONREAD, &queued) == 0, "FIONREAD");
-        if (queued > 0)
-            return;
-        require(std::chrono::steady_clock::now() < deadline,
-            "the writer never reached the socket");
-        std::this_thread::sleep_for(1ms);
-    }
+        return queued > 0;
+    }, 10s), "the writer never reached the socket");
 }
 
 /* Input larger than the socket holds arrives whole and in order once the

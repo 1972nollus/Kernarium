@@ -28,7 +28,7 @@ inline constexpr std::uint8_t jit_sme_host_zt0_resident = 0x10U;
  * The host mode a translation of guest SVCR mode `mode` runs in. SM=1
  * translations keep the whole guest vector state resident: Z and P, and
  * with ZA set, ZA and (for an SME2 profile) ZT0. Every other translation,
- * SM=0/ZA=1 included, runs with host SME off (design 4.1.2), which is 0.
+ * SM=0/ZA=1 included, runs with host SME off, which is 0.
  */
 [[nodiscard]] constexpr std::uint8_t
 jit_sme_host_mode(std::uint8_t mode, bool sme2) noexcept {

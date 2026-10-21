@@ -32,7 +32,7 @@ inline constexpr std::int32_t breakpoint_exception_class = 0x38;
 inline constexpr std::int32_t software_step_class = 0x32;
 
 /* Whether the kernel may hand `registers` over as an AArch32 entry. Every
- * condition is a kernel invariant (the design's "entry state"): the mode is
+ * condition is a kernel invariant: the mode is
  * User, E is clear (SETEND is undefined, so no AArch32 EL0 code runs
  * big-endian), IT bits come with T, and the task is not in streaming mode. An entry that
  * breaks one is fatal rather than run. */

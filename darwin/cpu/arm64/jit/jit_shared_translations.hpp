@@ -116,13 +116,6 @@ struct SharedTranslationStatistics final {
 
   [[nodiscard]] bool
   operator==(const SharedTranslationStatistics &) const noexcept = default;
-
-  [[nodiscard]] std::uint64_t materialization_failures() const noexcept {
-    return materialization_invalid_metadata_failures +
-           materialization_direct_link_failures +
-           materialization_indirect_link_failures +
-           materialization_arena_failures;
-  }
 };
 
 struct SharedTranslationPublicationSizes final {
