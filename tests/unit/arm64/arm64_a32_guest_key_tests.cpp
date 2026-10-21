@@ -5,7 +5,7 @@
  * cell or with a fault position, that interworking selects the state, and
  * that nothing a cache hashes by loses the instruction address. Validation:
  * that a word and a halfword span match, mismatch and fault in the right
- * order across page boundaries of a 4 KiB and a 16 KiB page. */
+ * order across page boundaries of the guest page. */
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/sme_profile.hpp"
@@ -27,6 +27,9 @@ using ::uml::testing::require;
 namespace aarch32 = ::uml::cpu::arm64::aarch32;
 using aarch32::GuestIsa;
 using aarch32::GuestValidation;
+
+/* The guest page every caller passes the validation. */
+constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 
 /* A small deterministic generator, so a failure repeats. */
 class Lcg final {
@@ -251,107 +254,104 @@ private:
 		per_unit);
 }
 
-/* Match, mismatch and fault, for each ISA and a 4 KiB and a 16 KiB page (the
- * validation takes the size as a parameter), starting before a page boundary
- * so the span splits there. */
+/* Match, mismatch and fault, for each ISA, starting before a page boundary so
+ * the span splits there. */
 void validation_reads_page_bounded_runs()
 {
-	for (const std::uint64_t page_size : {4096ULL, 16384ULL}) {
-		for (const auto isa : {GuestIsa::a64, GuestIsa::a32, GuestIsa::t32}) {
-			const std::size_t unit = aarch32::isa_unit_bytes(isa);
-			/* A span of 24 units whose 5th unit from the end sits on the
-			 * boundary: the run splits in two. */
-			const std::size_t units = 24;
-			const std::uint64_t boundary = 0x4'0000 + page_size;
-			const std::uint64_t start = boundary - (units - 5) * unit;
-			const std::uint64_t key = isa == GuestIsa::a64 ? start :
-				isa == GuestIsa::a32 ?
-				aarch32::a32_key(static_cast<std::uint32_t>(start)) :
-				aarch32::t32_key(static_cast<std::uint32_t>(start));
-			const auto saved = pattern(units * unit, 0x40);
+	for (const auto isa : {GuestIsa::a64, GuestIsa::a32, GuestIsa::t32}) {
+		const std::size_t unit = aarch32::isa_unit_bytes(isa);
+		/* A span of 24 units whose 5th unit from the end sits on the
+		 * boundary: the run splits in two. */
+		const std::size_t units = 24;
+		const std::uint64_t boundary = 0x4'0000 + page_size;
+		const std::uint64_t start = boundary - (units - 5) * unit;
+		const std::uint64_t key = isa == GuestIsa::a64 ? start :
+			isa == GuestIsa::a32 ?
+			aarch32::a32_key(static_cast<std::uint32_t>(start)) :
+			aarch32::t32_key(static_cast<std::uint32_t>(start));
+		const auto saved = pattern(units * unit, 0x40);
 
-			std::vector<std::byte> image(2 * page_size, std::byte{0xee});
-			std::memcpy(image.data() + (start - 0x4'0000), saved.data(),
-				saved.size());
-			FakeMemory memory{0x4'0000, image};
-			for (const bool per_unit : {false, true}) {
-				memory.fetches = 0;
-				require(validate(memory, key, units, saved, page_size,
-					per_unit) == GuestValidation::match,
-					"identical words did not validate");
-				require(memory.fetches == 2,
-					"a span did not read one run per page");
-			}
-			require(validate(memory, key, 0, saved, page_size, false) ==
-				GuestValidation::match);
-
-			/* A difference in each place: first and last unit, either
-			 * side of the page boundary, and the last byte of the span. */
-			for (const std::size_t unit_index : {std::size_t{0},
-				     units - 6, units - 5, units - 1}) {
-				for (const std::size_t byte : {std::size_t{0}, unit - 1}) {
-					auto changed = saved;
-					changed[unit_index * unit + byte] ^= std::byte{0x10};
-					for (const bool per_unit : {false, true})
-						require(validate(memory, key, units, changed,
-							page_size, per_unit) ==
-							GuestValidation::mismatch,
-							"a changed byte validated");
-				}
-			}
-
-			/* Unreadable memory is a fault, from the page it lies in; with
-			 * the per-unit retry a difference before it still wins. */
-			FakeMemory partial{0x4'0000, image};
-			partial.poison(boundary + unit);
-			require(validate(partial, key, units, saved, page_size, false) ==
-				GuestValidation::fault);
-			require(validate(partial, key, units, saved, page_size, true) ==
-				GuestValidation::fault);
-			auto early = saved;
-			early[(units - 5) * unit] ^= std::byte{1};
-			require(validate(partial, key, units, early, page_size, false) ==
-				GuestValidation::fault, "no retry: the fault wins");
-			require(validate(partial, key, units, early, page_size, true) ==
-				GuestValidation::mismatch,
-				"a difference before the unreadable unit was lost");
-			/* A difference in the first page is found before the second
-			 * page is read, with or without the retry. */
-			auto first_page = saved;
-			first_page[0] ^= std::byte{1};
-			require(validate(partial, key, units, first_page, page_size,
-				false) == GuestValidation::mismatch);
-			require(validate(partial, key, units, first_page, page_size,
-				true) == GuestValidation::mismatch);
-
-			/* Poison inside one page's run: the retry reports a mismatch
-			 * that precedes it, a fault only without one. */
-			FakeMemory inner{0x4'0000, image};
-			inner.poison(start + 10 * unit);
-			auto before = saved;
-			before[2 * unit] ^= std::byte{0x80};
-			require(validate(inner, key, units, saved, page_size, false) ==
-				GuestValidation::fault);
-			require(validate(inner, key, units, before, page_size, false) ==
-				GuestValidation::fault);
-			require(validate(inner, key, units, before, page_size, true) ==
-				GuestValidation::mismatch,
-				"a difference before an unreadable unit was lost");
-			require(validate(inner, key, units, saved, page_size, true) ==
-				GuestValidation::fault);
-			auto after = saved;
-			after[12 * unit] ^= std::byte{0x80};
-			require(validate(inner, key, units, after, page_size, true) ==
-				GuestValidation::fault,
-				"a difference after an unreadable unit was reported");
-
-			/* Not mapped at all. */
-			FakeMemory none{0x9'0000, pattern(64, 1)};
-			require(validate(none, key, units, saved, page_size, false) ==
-				GuestValidation::fault);
-			require(validate(none, key, units, saved, page_size, true) ==
-				GuestValidation::fault);
+		std::vector<std::byte> image(2 * page_size, std::byte{0xee});
+		std::memcpy(image.data() + (start - 0x4'0000), saved.data(),
+			saved.size());
+		FakeMemory memory{0x4'0000, image};
+		for (const bool per_unit : {false, true}) {
+			memory.fetches = 0;
+			require(validate(memory, key, units, saved, page_size,
+				per_unit) == GuestValidation::match,
+				"identical words did not validate");
+			require(memory.fetches == 2,
+				"a span did not read one run per page");
 		}
+		require(validate(memory, key, 0, saved, page_size, false) ==
+			GuestValidation::match);
+
+		/* A difference in each place: first and last unit, either
+		 * side of the page boundary, and the last byte of the span. */
+		for (const std::size_t unit_index : {std::size_t{0},
+			     units - 6, units - 5, units - 1}) {
+			for (const std::size_t byte : {std::size_t{0}, unit - 1}) {
+				auto changed = saved;
+				changed[unit_index * unit + byte] ^= std::byte{0x10};
+				for (const bool per_unit : {false, true})
+					require(validate(memory, key, units, changed,
+						page_size, per_unit) ==
+						GuestValidation::mismatch,
+						"a changed byte validated");
+			}
+		}
+
+		/* Unreadable memory is a fault, from the page it lies in; with
+		 * the per-unit retry a difference before it still wins. */
+		FakeMemory partial{0x4'0000, image};
+		partial.poison(boundary + unit);
+		require(validate(partial, key, units, saved, page_size, false) ==
+			GuestValidation::fault);
+		require(validate(partial, key, units, saved, page_size, true) ==
+			GuestValidation::fault);
+		auto early = saved;
+		early[(units - 5) * unit] ^= std::byte{1};
+		require(validate(partial, key, units, early, page_size, false) ==
+			GuestValidation::fault, "no retry: the fault wins");
+		require(validate(partial, key, units, early, page_size, true) ==
+			GuestValidation::mismatch,
+			"a difference before the unreadable unit was lost");
+		/* A difference in the first page is found before the second
+		 * page is read, with or without the retry. */
+		auto first_page = saved;
+		first_page[0] ^= std::byte{1};
+		require(validate(partial, key, units, first_page, page_size,
+			false) == GuestValidation::mismatch);
+		require(validate(partial, key, units, first_page, page_size,
+			true) == GuestValidation::mismatch);
+
+		/* Poison inside one page's run: the retry reports a mismatch
+		 * that precedes it, a fault only without one. */
+		FakeMemory inner{0x4'0000, image};
+		inner.poison(start + 10 * unit);
+		auto before = saved;
+		before[2 * unit] ^= std::byte{0x80};
+		require(validate(inner, key, units, saved, page_size, false) ==
+			GuestValidation::fault);
+		require(validate(inner, key, units, before, page_size, false) ==
+			GuestValidation::fault);
+		require(validate(inner, key, units, before, page_size, true) ==
+			GuestValidation::mismatch,
+			"a difference before an unreadable unit was lost");
+		require(validate(inner, key, units, saved, page_size, true) ==
+			GuestValidation::fault);
+		auto after = saved;
+		after[12 * unit] ^= std::byte{0x80};
+		require(validate(inner, key, units, after, page_size, true) ==
+			GuestValidation::fault,
+			"a difference after an unreadable unit was reported");
+
+		/* Not mapped at all. */
+		FakeMemory none{0x9'0000, pattern(64, 1)};
+		require(validate(none, key, units, saved, page_size, false) ==
+			GuestValidation::fault);
+		require(validate(none, key, units, saved, page_size, true) ==
+			GuestValidation::fault);
 	}
 }
 
@@ -360,30 +360,28 @@ void validation_reads_page_bounded_runs()
  * own page. An odd count of halfwords is the normal case. */
 void thumb_spans_split_between_halfwords()
 {
-	for (const std::uint64_t page_size : {4096ULL, 16384ULL}) {
-		const std::uint64_t boundary = 0x8'0000 + page_size;
-		for (const std::size_t units : {std::size_t{1}, std::size_t{3},
-			     std::size_t{7}, std::size_t{33}}) {
-			for (const std::size_t before : {std::size_t{1}, units - 1U,
-				     std::size_t{0}}) {
-				if (before >= units)
-					continue;
-				const std::uint64_t start = boundary - before * 2;
-				const auto saved = pattern(units * 2, 0x5a);
-				std::vector<std::byte> image(2 * page_size, std::byte{0});
-				std::memcpy(image.data() + (start - 0x8'0000),
-					saved.data(), saved.size());
-				FakeMemory memory{0x8'0000, image};
-				const auto key = aarch32::t32_key(
-					static_cast<std::uint32_t>(start));
-				require(validate(memory, key, units, saved, page_size,
-					false) == GuestValidation::match);
-				require(memory.fetches == (before == 0 ? 1U : 2U));
-				auto changed = saved;
-				changed.back() ^= std::byte{1};
-				require(validate(memory, key, units, changed, page_size,
-					true) == GuestValidation::mismatch);
-			}
+	const std::uint64_t boundary = 0x8'0000 + page_size;
+	for (const std::size_t units : {std::size_t{1}, std::size_t{3},
+		     std::size_t{7}, std::size_t{33}}) {
+		for (const std::size_t before : {std::size_t{1}, units - 1U,
+			     std::size_t{0}}) {
+			if (before >= units)
+				continue;
+			const std::uint64_t start = boundary - before * 2;
+			const auto saved = pattern(units * 2, 0x5a);
+			std::vector<std::byte> image(2 * page_size, std::byte{0});
+			std::memcpy(image.data() + (start - 0x8'0000),
+				saved.data(), saved.size());
+			FakeMemory memory{0x8'0000, image};
+			const auto key = aarch32::t32_key(
+				static_cast<std::uint32_t>(start));
+			require(validate(memory, key, units, saved, page_size,
+				false) == GuestValidation::match);
+			require(memory.fetches == (before == 0 ? 1U : 2U));
+			auto changed = saved;
+			changed.back() ^= std::byte{1};
+			require(validate(memory, key, units, changed, page_size,
+				true) == GuestValidation::mismatch);
 		}
 	}
 }
@@ -392,7 +390,6 @@ void thumb_spans_split_between_halfwords()
  * page) still terminates, with a deterministic answer. */
 void malformed_pc_terminates()
 {
-	constexpr std::uint64_t page_size = 4096;
 	FakeMemory memory{0x1'0000, std::vector<std::byte>(2 * page_size)};
 	const auto saved = pattern(8, 3);
 	std::array<std::byte, 16> scratch{};

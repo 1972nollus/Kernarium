@@ -101,10 +101,6 @@ public:
 		return generation_;
 	}
 	[[nodiscard]] StaticGuestMemory &memory() noexcept { return *memory_; }
-	[[nodiscard]] gadgets::GadgetExecutor &executor() noexcept
-	{
-		return *executor_;
-	}
 
 	/* Words or halfwords at a code offset. */
 	void a32(std::uint32_t offset, std::initializer_list<std::uint32_t> words)
