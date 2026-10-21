@@ -24,7 +24,8 @@ target_link_libraries(uml_emulator_lifecycle_tests PRIVATE
     UML::MemorySharedBacking
     uml_emulator_test_variant)
 target_include_directories(uml_emulator_lifecycle_tests PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+    ${PROJECT_SOURCE_DIR}/darwin/runtime
+    ${PROJECT_SOURCE_DIR}/tests/unit/mconsole)
 uml_add_unit_test(
     NAME emulator-lifecycle
     COMMAND uml_emulator_lifecycle_tests

@@ -2,13 +2,14 @@
 /* The handover of an x86-64 address space from the gadget engine to the JIT:
  * it opens once the address space has retired its threshold, no dispatch on
  * the gadgets overlaps one on the JIT, and it never closes. */
+#include "require.hpp"
 #include "runtime/x86_tier.hpp"
+#include "wait_until.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <thread>
 #include <vector>
 
@@ -17,14 +18,8 @@ namespace {
 using uml::runtime::X86TierState;
 using uml::runtime::X86TierTable;
 using Engine = X86TierState::Engine;
-
-void require(bool condition, const char *message)
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "x86 tier: %s\n", message);
-	std::exit(1);
-}
+using uml::testing::require;
+using uml::testing::waitUntil;
 
 /* An address space starts on the gadgets, counts what each dispatch retires,
  * and hands over when the sum reaches the threshold and the dispatch that
@@ -77,8 +72,9 @@ void test_the_handover_drains_running_dispatches()
 		auto entry = state.enter();
 		third_engine.store(entry.engine());
 	}};
-	while (!started.load())
-		std::this_thread::yield();
+	require(waitUntil([&] { return started.load(); },
+		std::chrono::seconds{60}, std::chrono::milliseconds{0}),
+		"the third dispatch never started");
 	std::this_thread::sleep_for(std::chrono::milliseconds{50});
 	require(third_engine.load() == Engine::gadgets && !state.on_jit(),
 		"a dispatch started during the handover");

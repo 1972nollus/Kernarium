@@ -10,14 +10,13 @@
  * Each mode runs in its own process because the claim outlives every handle.
  */
 #include "uml/emulator.h"
+#include "emulator_test_support.hpp"
 #include "require.hpp"
-#include "testing.hpp"
 #include "uml_darwin_host.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
-#include <memory>
 #include <stdexcept>
 #include <string_view>
 #include <unistd.h>
@@ -32,6 +31,7 @@ constexpr int kernel_left_memory = 43;
 int kernel_entries;
 bool claim_guest_ram = true;
 
+using uml::testing::make_emulator;
 using uml::testing::require;
 
 /* Stands in for the start of a UML boot: setup_physmem() opens guest RAM. */
@@ -46,26 +46,6 @@ int kernel(int, char *const[], char *const[])
 		return kernel_without_memory;
 	(void)::close(memory);
 	return kernel_booted;
-}
-
-using Emulator =
-	std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)>;
-
-Emulator make_emulator()
-{
-	const auto image = uml::emulator::testing::kernel_image(kernel);
-	const uml_emulator_config config{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/uml-sequential-runs.img",
-		.kernel_image = image.data(),
-		.kernel_image_size = image.size(),
-	};
-	uml_emulator *created = nullptr;
-	require(uml_emulator_create(&config, &created) == UML_EMULATOR_OK &&
-			created != nullptr,
-		"could not create an emulator handle");
-	return {created, uml_emulator_destroy};
 }
 
 int run(uml_emulator *emulator)
@@ -94,7 +74,7 @@ void require_refused(uml_emulator *emulator)
 
 void second_run_on_the_same_handle()
 {
-	auto emulator = make_emulator();
+	auto emulator = make_emulator(kernel);
 	require_first_guest(emulator.get());
 	require_refused(emulator.get());
 	require_refused(emulator.get());
@@ -103,22 +83,22 @@ void second_run_on_the_same_handle()
 void second_run_on_a_fresh_handle()
 {
 	{
-		auto first = make_emulator();
+		auto first = make_emulator(kernel);
 		require_first_guest(first.get());
 	}
-	auto second = make_emulator();
+	auto second = make_emulator(kernel);
 	require_refused(second.get());
 }
 
 void run_that_left_guest_ram()
 {
-	auto emulator = make_emulator();
+	auto emulator = make_emulator(kernel);
 	claim_guest_ram = false;
 	require(run(emulator.get()) == kernel_left_memory,
 		"a kernel that left guest RAM did not return its status");
 	claim_guest_ram = true;
 	require_first_guest(emulator.get());
-	require_refused(make_emulator().get());
+	require_refused(make_emulator(kernel).get());
 }
 
 } // namespace
