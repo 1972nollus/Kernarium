@@ -5,6 +5,7 @@
 #include "kernel_threads.hpp"
 #include "require.hpp"
 #include "thread_fence.hpp"
+#include "watchdog.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -589,21 +590,13 @@ void an_overflowed_registry_fails_the_fence_closed()
 		require(pthread_join(thread, nullptr) == 0, "join");
 }
 
-/* A test that hangs is a failed test, not a stuck suite. */
-void start_watchdog(unsigned seconds)
-{
-	std::thread{[seconds] {
-		sleep(seconds);
-		std::fprintf(stderr, "thread fence tests: timed out\n");
-		_exit(86);
-	}}.detach();
-}
-
 } // namespace
 
 int main(int argc, char **argv)
 {
-	start_watchdog(180);
+	/* A test that hangs is a failed test, not a stuck suite. */
+	const uml::testing::Watchdog watchdog{"the thread fence tests",
+		std::chrono::seconds{180}};
 	/* The overflow test leaves the registry unusable for the rest of the
 	 * process, so it runs alone. */
 	const bool overflow = argc > 1 && std::strcmp(argv[1], "overflow") == 0;

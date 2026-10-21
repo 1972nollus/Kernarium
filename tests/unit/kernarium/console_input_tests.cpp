@@ -3,6 +3,7 @@
 #include "KernariumConsoleInput.hpp"
 #include "require.hpp"
 #include "wait_until.hpp"
+#include "watchdog.hpp"
 
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -23,38 +24,7 @@ namespace {
 using namespace std::chrono_literals;
 
 using uml::testing::require;
-
-/* A wedged call is the defect under test, and a hung test binary would hide
- * it, so every wait for one ends the process instead. */
-class Watchdog final {
-public:
-    Watchdog(const char* what, std::chrono::seconds limit)
-        : thread_([this, what, limit] {
-            const auto deadline = std::chrono::steady_clock::now() + limit;
-            while (!done_.load(std::memory_order_acquire)) {
-                if (std::chrono::steady_clock::now() >= deadline) {
-                    std::fprintf(stderr, "FAIL: %s did not return\n", what);
-                    std::_Exit(EXIT_FAILURE);
-                }
-                std::this_thread::sleep_for(10ms);
-            }
-        })
-    {
-    }
-
-    ~Watchdog()
-    {
-        done_.store(true, std::memory_order_release);
-        thread_.join();
-    }
-
-    Watchdog(const Watchdog&) = delete;
-    Watchdog& operator=(const Watchdog&) = delete;
-
-private:
-    std::atomic<bool> done_ {};
-    std::thread thread_;
-};
+using uml::testing::Watchdog;
 
 struct Console final {
     Console()

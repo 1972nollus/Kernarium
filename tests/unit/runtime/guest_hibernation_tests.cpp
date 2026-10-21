@@ -8,6 +8,7 @@
 #include "memory/guest_ram_commitment.hpp"
 #include "require.hpp"
 #include "scratch_directory.hpp"
+#include "watchdog.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -334,20 +335,12 @@ void a_real_hibernation_holds_the_kernel_threads_and_brings_the_ram_back()
 		"the image file must not outlive the hibernation");
 }
 
-void start_watchdog(unsigned seconds)
-{
-	std::thread{[seconds] {
-		sleep(seconds);
-		std::fprintf(stderr, "guest hibernation tests: timed out\n");
-		_exit(86);
-	}}.detach();
-}
-
 } // namespace
 
 int main()
 {
-	start_watchdog(180);
+	const uml::testing::Watchdog watchdog{"the guest hibernation tests",
+		std::chrono::seconds{180}};
 	const struct {
 		const char *name;
 		void (*run)();
