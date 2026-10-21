@@ -2,7 +2,8 @@
 
 add_executable(uml_memory_domain_lifetime_tests
     domain_lifetime_tests.cpp
-    $<TARGET_OBJECTS:uml_static_mmu_test_variant>)
+    $<TARGET_OBJECTS:uml_static_mmu_test_variant>
+    $<TARGET_OBJECTS:uml_native_mmu_test_variant>)
 target_link_libraries(uml_memory_domain_lifetime_tests PRIVATE
     UML::BridgeAbi
     UML::MemorySharedBacking)
@@ -11,15 +12,6 @@ target_include_directories(uml_memory_domain_lifetime_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
 target_compile_definitions(uml_memory_domain_lifetime_tests PRIVATE
     UML_MEMORY_ALLOCATION_TESTING=1)
-if(TARGET uml_native_mmu_test_variant)
-    target_sources(uml_memory_domain_lifetime_tests PRIVATE
-        $<TARGET_OBJECTS:uml_native_mmu_test_variant>)
-    target_compile_definitions(uml_memory_domain_lifetime_tests PRIVATE
-        UML_MEMORY_DOMAIN_TEST_HAS_NATIVE=1)
-else()
-    target_compile_definitions(uml_memory_domain_lifetime_tests PRIVATE
-        UML_MEMORY_DOMAIN_TEST_HAS_NATIVE=0)
-endif()
 uml_add_unit_test(NAME memory-domain-lifetime
     COMMAND uml_memory_domain_lifetime_tests LABELS tsan)
 
@@ -29,39 +21,35 @@ target_link_libraries(uml_memory_address_window_tests PRIVATE
 uml_add_unit_test(NAME memory-address-window-reads
     COMMAND uml_memory_address_window_tests)
 
-if(TARGET uml_native_mmu_test_variant)
-    add_executable(uml_native_window_reservation_tests
-        native_window_reservation_tests.cpp)
-    target_link_libraries(uml_native_window_reservation_tests PRIVATE
-        UML::BridgeAbi
-        UML::MemoryTestComponent)
-    target_include_directories(uml_native_window_reservation_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
-    # The test asserts where the host places allocations, which a concurrent
-    # VM-heavy test can perturb.
-    uml_add_unit_test(NAME memory-native-window-reservation
-        COMMAND uml_native_window_reservation_tests)
-    set_tests_properties(memory-native-window-reservation PROPERTIES
-        RUN_SERIAL TRUE)
-endif()
+add_executable(uml_native_window_reservation_tests
+    native_window_reservation_tests.cpp)
+target_link_libraries(uml_native_window_reservation_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemoryTestComponent)
+target_include_directories(uml_native_window_reservation_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
+# The test asserts where the host places allocations, which a concurrent
+# VM-heavy test can perturb.
+uml_add_unit_test(NAME memory-native-window-reservation
+    COMMAND uml_native_window_reservation_tests)
+set_tests_properties(memory-native-window-reservation PROPERTIES
+    RUN_SERIAL TRUE)
 
 # The direct-to-shadow slot conversion exists because a guest page is smaller
 # than the host page.
-if(TARGET uml_native_mmu_test_variant)
-    add_executable(uml_native_direct_conversion_tests
-        native_direct_conversion_tests.cpp)
-    target_link_libraries(uml_native_direct_conversion_tests PRIVATE
-        UML::BridgeAbi
-        UML::MemoryTestComponent)
-    target_include_directories(uml_native_direct_conversion_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
-    # Like the other native-window tests, it maps at fixed window addresses
-    # that a concurrent VM-heavy test can occupy.
-    uml_add_unit_test(NAME memory-native-direct-conversion
-        COMMAND uml_native_direct_conversion_tests)
-    set_tests_properties(memory-native-direct-conversion PROPERTIES
-        RUN_SERIAL TRUE)
-endif()
+add_executable(uml_native_direct_conversion_tests
+    native_direct_conversion_tests.cpp)
+target_link_libraries(uml_native_direct_conversion_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemoryTestComponent)
+target_include_directories(uml_native_direct_conversion_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
+# Like the other native-window tests, it maps at fixed window addresses
+# that a concurrent VM-heavy test can occupy.
+uml_add_unit_test(NAME memory-native-direct-conversion
+    COMMAND uml_native_direct_conversion_tests)
+set_tests_properties(memory-native-direct-conversion PROPERTIES
+    RUN_SERIAL TRUE)
 
 add_executable(uml_shared_backing_view_tests shared_backing_view_tests.cpp)
 target_link_libraries(uml_shared_backing_view_tests PRIVATE
