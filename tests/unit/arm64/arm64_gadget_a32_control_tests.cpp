@@ -517,6 +517,27 @@ void a_fetch_fault_reports_the_unfetchable_address()
 	require(cpu.pc == aarch32::a32_key(unmapped));
 }
 
+/* A 32-bit T32 instruction whose first halfword ends the last mapped page
+ * has its second halfword on a page that cannot be fetched: the fetch fault
+ * is at that halfword, from a translated block and from the one-instruction
+ * path a single step takes. */
+void a_t32_instruction_split_over_an_unfetchable_page_faults_at_its_second_halfword()
+{
+	constexpr std::uint32_t last = data_pages * page - 2;
+	for (const bool single_step : {false, true}) {
+		Guest guest{single_step ? 1501UL : 1500UL};
+		guest.t32(last, {0xf000});
+		auto cpu = t32_state(code_base + last);
+		const auto result = guest.run(cpu, 10'000, single_step);
+		require(result.reason == ExitReason::memory_fault);
+		require(result.retired_instructions == 0);
+		require(result.fault.address == code_base + last + 2);
+		require(result.fault.access ==
+			::uml::memory::MemoryAccess::execute);
+		require(cpu.pc == aarch32::t32_key(code_base + last));
+	}
+}
+
 void the_pc_reads_as_the_architectural_value()
 {
 	{
@@ -3053,6 +3074,7 @@ int main()
 	interworking_branches_switch_state_both_ways();
 	an_a32_target_with_bit_one_set_is_a_pc_alignment_exit();
 	a_fetch_fault_reports_the_unfetchable_address();
+	a_t32_instruction_split_over_an_unfetchable_page_faults_at_its_second_halfword();
 	the_pc_reads_as_the_architectural_value();
 	the_instruction_budget_ends_a_loop();
 	single_step_retires_one_instruction_at_a_time();
