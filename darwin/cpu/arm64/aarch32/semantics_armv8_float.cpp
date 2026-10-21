@@ -5,11 +5,13 @@
 // VMOVX and VMOV, VJCVT, the complex-number forms VCADD and VCMLA, and the
 // widening half-precision multiply-adds VFMAL and VFMSL. Each operation is
 // the host's own instruction under the FPCR the AArch32 instruction defines
-// (semantics_fp.hpp), except VJCVT, which is exact integer arithmetic.
+// (semantics_fp.hpp), except VJCVT, which is the A64 helper's exact integer
+// arithmetic.
 
 #include "cpu/arm64/aarch32/semantics_fp.hpp"
 #include "cpu/arm64/aarch32/semantics_fp_convert.hpp"
 #include "cpu/arm64/aarch32/semantics_vector.hpp"
+#include "cpu/arm64/detail/floating_integer_conversion.hpp"
 #include "cpu/arm64/detail/half_fused_long.hpp"
 
 #include <iterator>
@@ -165,67 +167,15 @@ bool vmov_half(Exec &x)
 	return true;
 }
 
-constexpr uint32_t idc_flag = 1U << 7;
-
-/* FPToFixedJS(): a double to a signed 32-bit integer rounding toward zero,
- * wrapping modulo 2^32, with Z set when the conversion was exact and the
- * value is not a negative zero. A NaN, an infinity or a value outside the
- * 32-bit range is Invalid Operation, any other inexact result Inexact, and
- * with flush-to-zero a subnormal input becomes a zero that sets Input
- * Denormal. */
-struct JavaScriptConversion final {
-	uint32_t value;
-	bool exact;
-	uint32_t flags;
-};
-
-[[nodiscard]] JavaScriptConversion javascript_convert(uint64_t bits, bool flush) noexcept
-{
-	const bool negative = bits >> 63 != 0U;
-	const unsigned exponent = static_cast<unsigned>(bits >> 52 & 0x7ffU);
-	const uint64_t fraction = bits & ((uint64_t{1} << 52) - 1U);
-	if (exponent == 0x7ffU)
-		return {0, false, fp::invalid_flag};
-	if (exponent == 0U) {
-		/* A zero converts exactly unless it is negative; a subnormal that
-		 * the flush turns into a zero is not exact either. */
-		if (fraction == 0U)
-			return {0, !negative, 0};
-		return {0, false, flush ? idc_flag : fp::inexact_flag};
-	}
-	const uint64_t significand = fraction | uint64_t{1} << 52;
-	const int shift = static_cast<int>(exponent) - 1075;
-	u128 magnitude;
-	bool exact = true;
-	bool huge = false;
-	if (shift >= 0) {
-		if (shift >= 75)
-			huge = true;
-		magnitude = huge ? u128{0} : static_cast<u128>(significand) << shift;
-	} else if (-shift >= 64) {
-		magnitude = 0;
-		exact = false;
-	} else {
-		magnitude = significand >> -shift;
-		exact = (significand & ((uint64_t{1} << -shift) - 1U)) == 0U;
-	}
-	const u128 limit = negative ? u128{1} << 31 : (u128{1} << 31) - 1U;
-	const bool overflow = huge || magnitude > limit;
-	const auto low = static_cast<uint32_t>(magnitude);
-	const uint32_t value = negative ? uint32_t{0} - low : low;
-	if (overflow)
-		return {value, false, fp::invalid_flag};
-	if (!exact)
-		return {value, false, fp::inexact_flag};
-	return {value, true, 0};
-}
-
+/* VJCVT: FPToFixedJS(), a double to a signed 32-bit integer rounding toward
+ * zero and wrapping modulo 2^32, with Z set when the conversion was exact and
+ * the value is not a negative zero. */
 bool vjcvt(Exec &x)
 {
-	const JavaScriptConversion result = javascript_convert(
-		x.d_reg(static_cast<unsigned>(x.o.m)), (x.cpu.fpcr & fp::fpcr_fz) != 0U);
-	x.cpu.fpsr |= result.flags;
-	x.cpu.a32_fpscr_nzcv = result.exact ? 0x4000'0000U : 0U;
+	const auto result = ::uml::cpu::arm64::detail::convert_floating_to_javascript_integer(
+		x.d_reg(static_cast<unsigned>(x.o.m)), x.cpu.fpcr);
+	x.cpu.fpsr |= result.exceptions;
+	x.cpu.a32_fpscr_nzcv = result.sets_z ? 0x4000'0000U : 0U;
 	x.set_s_reg(static_cast<unsigned>(x.o.d), result.value);
 	return true;
 }
