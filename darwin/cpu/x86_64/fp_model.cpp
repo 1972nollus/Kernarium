@@ -338,10 +338,26 @@ struct Lane final {
 	std::size_t bytes, std::size_t index) noexcept
 {
 	const auto offset = index * bytes;
-	std::uint64_t value{};
-	std::memcpy(&value, values.sources[offset < 16U ? 0U : 1U].data() +
-		offset % 16U, bytes);
-	return value;
+	const auto *source = values.sources[offset < 16U ? 0U : 1U].data() +
+		offset % 16U;
+	/* Constant sizes load in line; memcpy of a runtime size calls memmove. */
+	switch (bytes) {
+	case 2: {
+		std::uint16_t value{};
+		std::memcpy(&value, source, 2);
+		return value;
+	}
+	case 4: {
+		std::uint32_t value{};
+		std::memcpy(&value, source, 4);
+		return value;
+	}
+	default: {
+		std::uint64_t value{};
+		std::memcpy(&value, source, 8);
+		return value;
+	}
+	}
 }
 
 /* Whether a comparison predicate signals for a quiet NaN: the legacy
