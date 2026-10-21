@@ -1,21 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "guest_console.hpp"
+#include "guest_console_test_support.hpp"
 #include "require.hpp"
 #include "socket_paths.hpp"
 
-#include <algorithm>
-#include <array>
-#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <functional>
 #include <optional>
-#include <poll.h>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
@@ -29,67 +25,11 @@
 
 namespace {
 
-constexpr std::size_t maximumConsoleData = 512U;
-
-struct Request final {
-	std::uint32_t magic;
-	std::uint32_t version;
-	std::uint32_t length;
-	std::array<char, maximumConsoleData> data;
-};
-
-struct Reply final {
-	std::uint32_t error;
-	std::uint32_t more;
-	std::uint32_t length;
-	std::array<char, maximumConsoleData> data;
-};
-
+using uml::testing::awaitRequest;
+using uml::testing::bindServer;
+using uml::testing::receiveRequest;
 using uml::testing::require;
-
-/*
- * Every run removes what exited runs left in its parent, $TMPDIR, so a test
- * that plants such entries in the shared one races every other run on the
- * host, this test in another build tree included: one of them can
- * remove a planted directory before the test binds into it. The tests that
- * make console directories therefore run under a private $TMPDIR in the
- * user's temporary directory, which is short enough to be the first choice.
- */
-class PrivateTemporaryDirectory final {
-public:
-	PrivateTemporaryDirectory()
-	{
-		std::array<char, 1024> base {};
-		const auto length = ::confstr(_CS_DARWIN_USER_TEMP_DIR, base.data(),
-			base.size());
-		require(length > 0U && length <= base.size());
-		std::string pattern {base.data()};
-		if (!pattern.ends_with('/'))
-			pattern += '/';
-		pattern += "uml-console-test.XXXXXX";
-		require(::mkdtemp(pattern.data()) != nullptr);
-		path_ = std::move(pattern);
-		require(::setenv("TMPDIR", path_.c_str(), 1) == 0);
-	}
-
-	PrivateTemporaryDirectory(const PrivateTemporaryDirectory &) = delete;
-	PrivateTemporaryDirectory &operator=(
-		const PrivateTemporaryDirectory &) = delete;
-
-	~PrivateTemporaryDirectory()
-	{
-		std::error_code ignored;
-		std::filesystem::remove_all(path_, ignored);
-	}
-
-	[[nodiscard]] const std::string &path() const noexcept
-	{
-		return path_;
-	}
-
-private:
-	std::string path_;
-};
+using uml::testing::sendReply;
 
 const ::uml::device::GuestConsoleLocation &processLocation()
 {
@@ -101,46 +41,6 @@ const ::uml::device::GuestConsoleLocation &processLocation()
 std::string consolePath()
 {
 	return processLocation().console;
-}
-
-int bindServer(const std::string &path)
-{
-	(void)::unlink(path.c_str());
-	const int descriptor = ::socket(AF_UNIX, SOCK_DGRAM, 0);
-	require(descriptor >= 0);
-	sockaddr_un address {};
-	address.sun_family = AF_UNIX;
-	require(path.size() < sizeof(address.sun_path));
-	std::memcpy(address.sun_path, path.c_str(), path.size() + 1U);
-	require(::bind(descriptor, reinterpret_cast<const sockaddr *>(&address),
-		sizeof(address)) == 0);
-	return descriptor;
-}
-
-std::string receiveRequest(int descriptor, sockaddr_un &client,
-	socklen_t &clientLength)
-{
-	Request request {};
-	clientLength = sizeof(client);
-	const auto received = ::recvfrom(descriptor, &request, sizeof(request), 0,
-		reinterpret_cast<sockaddr *>(&client), &clientLength);
-	require(received >= static_cast<ssize_t>(sizeof(request) -
-		maximumConsoleData));
-	const auto length = std::min(static_cast<std::size_t>(request.length),
-		maximumConsoleData);
-	return std::string(request.data.data(), length);
-}
-
-/* Waits up to `milliseconds` for a request; false when none arrives. */
-bool awaitRequest(int descriptor, int milliseconds)
-{
-	pollfd waiting {descriptor, POLLIN, 0};
-	int ready;
-	do {
-		ready = ::poll(&waiting, 1, milliseconds);
-	} while (ready < 0 && errno == EINTR);
-	require(ready >= 0);
-	return ready > 0;
 }
 
 void observeRequests(int descriptor, std::vector<std::string> &requests)
@@ -160,13 +60,7 @@ void observeRequests(int descriptor, std::vector<std::string> &requests)
 		return;
 
 	requests.push_back(receiveRequest(descriptor, client, clientLength));
-	constexpr std::string_view acknowledgement = "stopped";
-	Reply reply {0U, 0U, static_cast<std::uint32_t>(acknowledgement.size()), {}};
-	std::memcpy(reply.data.data(), acknowledgement.data(),
-		acknowledgement.size());
-	require(::sendto(descriptor, &reply, sizeof(reply), 0,
-		reinterpret_cast<const sockaddr *>(&client), clientLength) ==
-		static_cast<ssize_t>(sizeof(reply)));
+	require(sendReply(descriptor, client, clientLength, 0U, "stopped"));
 }
 
 void aSuspendTimeoutCannotQueueLegacyStop()
@@ -202,11 +96,7 @@ void answerInOrder(int descriptor, std::chrono::milliseconds firstDelay,
 		requests.push_back(receiveRequest(descriptor, client, clientLength));
 		if (requests.size() == 1U)
 			std::this_thread::sleep_for(firstDelay);
-		Reply reply {error, 0U, static_cast<std::uint32_t>(answer.size()),
-			{}};
-		std::memcpy(reply.data.data(), answer.data(), answer.size());
-		(void)::sendto(descriptor, &reply, sizeof(reply), 0,
-			reinterpret_cast<const sockaddr *>(&client), clientLength);
+		(void)sendReply(descriptor, client, clientLength, error, answer);
 	}
 	while (awaitRequest(descriptor, 500))
 		requests.push_back(receiveRequest(descriptor, client, clientLength));
@@ -281,11 +171,7 @@ void answerOneRequest(int descriptor, std::string_view answer,
 	if (!awaitRequest(descriptor, 10000))
 		return;
 	requests.push_back(receiveRequest(descriptor, client, clientLength));
-	Reply reply {0U, 0U, static_cast<std::uint32_t>(answer.size()), {}};
-	std::memcpy(reply.data.data(), answer.data(), answer.size());
-	require(::sendto(descriptor, &reply, sizeof(reply), 0,
-		reinterpret_cast<const sockaddr *>(&client), clientLength) ==
-		static_cast<ssize_t>(sizeof(reply)));
+	require(sendReply(descriptor, client, clientLength, 0U, answer));
 }
 
 /* The power key's wake is one request, whatever the host last asked for. */
@@ -318,10 +204,7 @@ void answerLater(int descriptor, std::string_view answer, std::uint32_t error,
 		return;
 	requests.push_back(receiveRequest(descriptor, client, clientLength));
 	std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
-	Reply reply {error, 0U, static_cast<std::uint32_t>(answer.size()), {}};
-	std::memcpy(reply.data.data(), answer.data(), answer.size());
-	(void)::sendto(descriptor, &reply, sizeof(reply), 0,
-		reinterpret_cast<const sockaddr *>(&client), clientLength);
+	(void)sendReply(descriptor, client, clientLength, error, answer);
 }
 
 ::uml::device::GuestRequest answeredTrim(int server,
@@ -617,6 +500,17 @@ void aRunRemovesOnlyWhatExitedRunsLeft()
 		std::filesystem::remove_all(path);
 }
 
+/* Runs a group under a private $TMPDIR, which must hold this process's run
+ * directory. */
+void runPrivately(void (*group)())
+{
+	const uml::testing::PrivateTemporaryDirectory temporary {
+		"uml-console-test.XXXXXX"};
+	require(std::filesystem::path {processLocation().directory}
+			.parent_path() == temporary.path());
+	group();
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -628,48 +522,30 @@ int main(int argc, char **argv)
 		aDirectoryMustBeAbsolute();
 		aRunDirectoryGoesInTheFirstParentThatFits();
 		theProcessNamesItsOwnDirectory();
-		return EXIT_SUCCESS;
+	} else if (selected == "run") {
+		runPrivately([] {
+			aRunOwnsItsDirectoryUntilItReturns();
+			theTerminationPathRemovesTheRunDirectory();
+			aDirectoryLeftByThisPidIsReplaced();
+			aRunRemovesOnlyWhatExitedRunsLeft();
+		});
+	} else if (selected == "wake") {
+		runPrivately(aWakeSendsOneWakeRequest);
+	} else if (selected == "suspend-failure") {
+		runPrivately([] {
+			aFailedSuspendFallsBackToStop();
+			aLateSuspendFailureFallsBackToStop();
+			aKernelWithoutSuspendIsStoppedAtOnce();
+		});
+	} else if (selected == "trim") {
+		runPrivately([] {
+			trimmingIsSwitchedByOneRequest();
+			aTrimPassIsWaitedForUpToItsBound();
+		});
+	} else if (selected == "suspend-timeout") {
+		runPrivately(aSuspendTimeoutCannotQueueLegacyStop);
+	} else {
+		return EXIT_FAILURE;
 	}
-	if (selected == "run") {
-		const PrivateTemporaryDirectory temporary;
-		require(std::filesystem::path {processLocation().directory}
-				.parent_path() == temporary.path());
-		aRunOwnsItsDirectoryUntilItReturns();
-		theTerminationPathRemovesTheRunDirectory();
-		aDirectoryLeftByThisPidIsReplaced();
-		aRunRemovesOnlyWhatExitedRunsLeft();
-		return EXIT_SUCCESS;
-	}
-	if (selected == "wake") {
-		const PrivateTemporaryDirectory temporary;
-		require(std::filesystem::path {processLocation().directory}
-				.parent_path() == temporary.path());
-		aWakeSendsOneWakeRequest();
-		return EXIT_SUCCESS;
-	}
-	if (selected == "suspend-failure") {
-		const PrivateTemporaryDirectory temporary;
-		require(std::filesystem::path {processLocation().directory}
-				.parent_path() == temporary.path());
-		aFailedSuspendFallsBackToStop();
-		aLateSuspendFailureFallsBackToStop();
-		aKernelWithoutSuspendIsStoppedAtOnce();
-		return EXIT_SUCCESS;
-	}
-	if (selected == "trim") {
-		const PrivateTemporaryDirectory temporary;
-		require(std::filesystem::path {processLocation().directory}
-				.parent_path() == temporary.path());
-		trimmingIsSwitchedByOneRequest();
-		aTrimPassIsWaitedForUpToItsBound();
-		return EXIT_SUCCESS;
-	}
-	if (selected == "suspend-timeout") {
-		const PrivateTemporaryDirectory temporary;
-		require(std::filesystem::path {processLocation().directory}
-				.parent_path() == temporary.path());
-		aSuspendTimeoutCannotQueueLegacyStop();
-		return EXIT_SUCCESS;
-	}
-	return EXIT_FAILURE;
+	return EXIT_SUCCESS;
 }
