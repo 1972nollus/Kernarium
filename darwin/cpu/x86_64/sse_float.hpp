@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-/* The pieces of x86's SIMD floating-point arithmetic that both engines
- * compute with SoftFloat and integers, because the host's differ: a lane's
- * classes, a result rounded as x86 rounds it, and a single rounded to a
- * half. The gadget engine's checked-run flag correction and the JIT's
- * floating-point model share them. The functions have internal linkage, so
- * that each engine compiles and inlines its own copy and no symbol joins the
- * two. */
+/* The pieces of x86's SIMD floating-point arithmetic that the model computes
+ * with SoftFloat and integers, because the host's differ: a lane's classes,
+ * a result rounded as x86 rounds it, and a single rounded to a half. They
+ * are apart from the model so that a test can hold the half rounding to a
+ * second derivation. The functions have internal linkage, so that the model
+ * inlines its own copy and each test includes one without a symbol. */
 
 #include <SoftFloat-3e/platform.h>
 

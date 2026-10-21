@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "exception_checks.hpp"
 
-#include "cpu/x86_64/sse_float.hpp"
-
-#include <SoftFloat-3e/platform.h>
-
-extern "C" {
-#include <SoftFloat-3e/softfloat.h>
-}
+#include "cpu/x86_64/fp_model.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cstring>
+#include <optional>
 #include <span>
 
 namespace uml::cpu::x86_64::gadgets {
@@ -426,24 +422,7 @@ bool misaligned_access(const CpuState &cpu, const Gadget &gadget) noexcept
 
 namespace {
 
-using namespace sse_float;
-
 using VectorValue = std::array<std::byte, 32>;
-
-/* `x` as MXCSR.DAZ reads it: a denormal is a zero of its sign. */
-[[nodiscard]] std::uint64_t input(const Format &f, std::uint64_t x,
-	bool denormals_are_zero) noexcept
-{
-	return denormals_are_zero ? f.flush(x) : x;
-}
-
-/* A lane of a two-source operation that raises a denormal operand, which a
- * NaN in it overrides. */
-[[nodiscard]] bool denormal_pair(const Format &f, std::uint64_t a,
-	std::uint64_t b) noexcept
-{
-	return (f.denormal(a) || f.denormal(b)) && !f.nan(a) && !f.nan(b);
-}
 
 /* An operand's register, or the bytes its memory operand reads with zeros
  * after them; false when that memory is unreadable. */
@@ -464,596 +443,226 @@ using VectorValue = std::array<std::byte, 32>;
 		std::span<std::byte>{value}.first(bytes));
 }
 
-[[nodiscard]] std::size_t vector_lanes(const Operand &operand,
-	bool dbl) noexcept
+/* The 128-bit part `index` of an operand's bytes. */
+[[nodiscard]] FpVector part(const VectorValue &value,
+	std::size_t index) noexcept
 {
-	return static_cast<std::size_t>(operand.width) / (dbl ? 8U : 4U);
+	FpVector bytes;
+	std::memcpy(bytes.data(), value.data() + index * bytes.size(),
+		bytes.size());
+	return bytes;
 }
 
-/* An FMA's x86 a, b and c of a * b + c, and the signs its lanes give the
- * product and the addend. */
-struct FmaOperands final {
-	VectorValue a{};
-	VectorValue b{};
-	VectorValue c{};
-	bool dbl{};
-	std::size_t lanes{};
-	unsigned operation{};
-
-	[[nodiscard]] bool negate_product() const noexcept
-	{
-		return operation >= 0xcU;
-	}
-	/* FMADDSUB subtracts in its even lanes and FMSUBADD in its odd ones. */
-	[[nodiscard]] bool negate_addend(std::size_t index) const noexcept
-	{
-		if (operation == 6U)
-			return (index & 1U) == 0;
-		if (operation == 7U)
-			return (index & 1U) != 0;
-		return operation == 0xaU || operation == 0xbU ||
-			operation == 0xeU || operation == 0xfU;
-	}
-};
-
-/* False when a memory source is unreadable. */
-[[nodiscard]] bool read_fma_operands(const CpuState &cpu,
-	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory,
-	FmaOperands &operands)
+[[nodiscard]] std::uint32_t operand_bytes(const Operand &operand) noexcept
 {
-	const auto &instruction = gadget.instruction;
-	VectorValue destination{};
-	VectorValue vvvv{};
-	VectorValue rm{};
-	if (!operand_value(cpu, gadget, instruction.destination, memory,
-			destination) ||
-		!operand_value(cpu, gadget, instruction.source, memory, vvvv) ||
-		!operand_value(cpu, gadget, instruction.auxiliary, memory, rm))
-		return false;
-	operands.dbl = instruction.vector_group != 0;
-	operands.operation = instruction.vector_opcode & 0x0fU;
-	const bool scalar = operands.operation >= 9U &&
-		(operands.operation & 1U) != 0;
-	operands.lanes = scalar ? 1U :
-		vector_lanes(instruction.destination, operands.dbl);
-	/* 132 is destination * r/m + vvvv, 213 vvvv * destination + r/m, and
-	 * 231 vvvv * r/m + destination. */
-	const unsigned form = instruction.vector_opcode >> 4U;
-	operands.a = form == 0x9U ? destination : vvvv;
-	operands.b = form == 0xaU ? destination : rm;
-	operands.c = form == 0x9U ? vvvv : form == 0xaU ? rm : destination;
-	return true;
-}
-
-/* Whether an FMA lane raises invalid operation on x86: for a signalling
- * NaN, for infinity times zero plus anything but a quiet NaN, and for
- * infinities of opposite signs added. The host raises it for infinity times
- * zero plus a quiet NaN too. */
-[[nodiscard]] bool fma_lane_invalid(const Format &f, std::uint64_t a,
-	std::uint64_t b, std::uint64_t c, bool product_negative,
-	bool addend_negative) noexcept
-{
-	if (f.signalling(a) || f.signalling(b) || f.signalling(c))
-		return true;
-	if ((f.zero(a) && f.infinite(b)) || (f.infinite(a) && f.zero(b)))
-		return !f.nan(c);
-	if (f.nan(a) || f.nan(b) || f.nan(c))
-		return false;
-	return (f.infinite(a) || f.infinite(b)) && f.infinite(c) &&
-		product_negative != addend_negative;
-}
-
-/* x86's underflow and precision flags for the results an instruction
- * rounds. x86 detects underflow after rounding: a result is tiny when,
- * rounded to full precision as if the exponent were unbounded, it lies below
- * the smallest normal, where the host detects it before rounding. The two
- * differ for a result the host rounds up to exactly the smallest normal.
- * SoftFloat rounds as x86 does, from a result rounded to odd; a product of
- * two lanes is exact in binary128. A tiny result raises underflow when it is
- * inexact, or regardless while MXCSR unmasks underflow. While it masks
- * underflow, FTZ flushes a tiny result to zero, which raises underflow and
- * precision even when it was exact. Beside an unmasked underflow or
- * overflow, which faults, a result raises precision as its significand
- * rounds, and the others as they do: the model then decides precision too.
- */
-struct UnderflowModel final {
-	static constexpr std::uint32_t underflow = 0x10U;
-	static constexpr std::uint32_t precision = 0x20U;
-
-	bool unmasked{};
-	bool overflow_unmasked{};
-	bool flush{};
-	bool faults{};
-	std::uint32_t raised{};
-	std::uint32_t precise{};
-
-	UnderflowModel(std::uint32_t mxcsr, bool flushes) noexcept :
-		unmasked{(mxcsr & (underflow << 7U)) == 0},
-		overflow_unmasked{(mxcsr & (0x08U << 7U)) == 0},
-		flush{flushes && !unmasked &&
-			(mxcsr & mxcsr_flush_to_zero) != 0}
-	{
-	}
-
-	/* Whether FTZ flushes the result. */
-	bool record(const Rounded &result) noexcept
-	{
-		bool inexact = result.inexact;
-		bool flushed{};
-		if (result.tiny && flush) {
-			raised |= underflow | precision;
-			inexact = flushed = true;
-		} else if (result.tiny && unmasked) {
-			raised |= underflow;
-			inexact = result.significand_inexact;
-			faults = true;
-		} else if (result.tiny && result.inexact) {
-			raised |= underflow;
-		} else if (result.overflow && overflow_unmasked) {
-			inexact = result.significand_inexact;
-			faults = true;
-		}
-		if (inexact)
-			precise |= precision;
-		return flushed;
-	}
-
-	/* Precision as x86 raises it, which differs from the host's only beside
-	 * an unmasked underflow or overflow. */
-	[[nodiscard]] std::uint32_t precision_raised() const noexcept
-	{
-		return precise;
-	}
-
-	[[nodiscard]] HostFlagCorrection correction(
-		std::uint32_t decided = 0, std::uint32_t also = 0) const noexcept
-	{
-		return {decided | underflow | (faults ? precision : 0U),
-			raised | also | (faults ? precise : 0U)};
-	}
-};
-
-/* DPPS or DPPD as x86 computes it, in steps: the selected products, their
- * sums in pairs, and for DPPS the sum of those, each step across both
- * halves of a 256-bit DPPS. x86 raises each step's flags in turn and faults
- * at the first that raises an unmasked exception -- before computing it,
- * for invalid operation or a denormal operand -- so that later steps raise
- * nothing. FTZ flushes each tiny result, and DAZ makes a denormal one zero
- * as an input of the next step. An unselected product is zero and raises
- * nothing. The flags are settled: precedence included, and no host flag. */
-[[nodiscard]] HostFlagCorrection dot_product_flags(std::uint32_t mxcsr,
-	bool dbl, unsigned control, std::size_t halves, const VectorValue &first,
-	const VectorValue &second)
-{
-	constexpr std::uint32_t invalid = 0x01U;
-	constexpr std::uint32_t denormal = 0x02U;
-	constexpr std::uint32_t overflow = 0x08U;
-	using Lanes = std::array<std::uint64_t, 8>;
-	const Format f{dbl};
-	const bool denormals_are_zero = (mxcsr & mxcsr_denormals_are_zero) != 0;
-	const std::uint32_t unmasked = ~(mxcsr >> 7U) & 0x3fU;
-	std::uint32_t total{};
-	bool faulted{};
-	/* One step's `count` operations of `left` and `right`, lane by lane. */
-	const auto step = [&](bool multiply, std::size_t count, const Lanes &left,
-		const Lanes &right) {
-		Lanes results{};
-		if (faulted)
-			return results;
-		std::array<float128_t, 8> values{};
-		std::uint32_t before{};
-		for (std::size_t index = 0; index < count; ++index) {
-			const auto a = left[index];
-			const auto b = right[index];
-			std::uint8_t flags{};
-			values[index] = soft_odd([&](auto &state) {
-				const auto x = soft_wide(dbl, a);
-				const auto y = soft_wide(dbl, b);
-				return multiply ? f128_mul(&state, x, y) :
-					f128_add(&state, x, y);
-			}, soft_rounding(mxcsr), flags);
-			if (f.signalling(a) || f.signalling(b) ||
-				(flags & softfloat_flag_invalid) != 0)
-				before |= invalid;
-			else if (denormal_pair(f, a, b))
-				before |= denormal;
-		}
-		total |= before;
-		if ((before & unmasked) != 0) {
-			faulted = true;
-			return results;
-		}
-		UnderflowModel model{mxcsr, true};
-		std::uint32_t after{};
-		for (std::size_t index = 0; index < count; ++index) {
-			const auto result = soft_round(values[index], dbl, mxcsr);
-			if (result.overflow)
-				after |= overflow;
-			results[index] = input(f, model.record(result) ?
-				result.bits & f.sign() : result.bits, denormals_are_zero);
-		}
-		after |= model.raised | model.precision_raised();
-		total |= after;
-		faulted = (after & unmasked) != 0;
-		return results;
-	};
-	const std::size_t per_half = dbl ? 2U : 4U;
-	Lanes left{};
-	Lanes right{};
-	for (std::size_t index = 0; index < halves * per_half; ++index) {
-		if (((control >> (4U + index % per_half)) & 1U) == 0)
-			continue;
-		left[index] = input(f, lane(first, dbl, index), denormals_are_zero);
-		right[index] = input(f, lane(second, dbl, index),
-			denormals_are_zero);
-	}
-	auto sums = step(true, halves * per_half, left, right);
-	for (std::size_t steps = per_half; steps > 1; steps /= 2) {
-		const std::size_t count = halves * steps / 2U;
-		for (std::size_t index = 0; index < count; ++index) {
-			left[index] = sums[2U * index];
-			right[index] = sums[2U * index + 1U];
-		}
-		sums = step(false, count, left, right);
-	}
-	return {0x3fU, total, true};
-}
-
-/* Precision for a conversion of `gadget`'s auxiliary lanes, singles or
- * doubles, to 32- or 64-bit integers, truncated or rounded as MXCSR does:
- * x86 raises it for a lane that is not an integer and converts in range,
- * and only invalid operation for one out of range, which the host raises.
- * Its conversions do not raise it. */
-[[nodiscard]] HostFlagCorrection integer_conversion_precision(
-	const CpuState &cpu, const Gadget &gadget,
-	::uml::memory::GuestAddressSpace &memory, bool dbl, bool truncate,
-	bool wide)
-{
-	const auto &instruction = gadget.instruction;
-	const Format f{dbl};
-	VectorValue source{};
-	if (!operand_value(cpu, gadget, instruction.auxiliary, memory, source))
-		return {};
-	const auto lanes = vector_lanes(instruction.auxiliary, dbl);
-	const bool denormals_are_zero =
-		(cpu.mxcsr & mxcsr_denormals_are_zero) != 0;
-	const auto mode = truncate ? std::uint8_t{softfloat_round_minMag} :
-		soft_rounding(cpu.mxcsr);
-	std::uint32_t raised{};
-	for (std::size_t index = 0; index < lanes; ++index) {
-		const auto x = input(f, lane(source, dbl, index),
-			denormals_are_zero);
-		if (f.nan(x) || f.infinite(x))
-			continue;
-		softfloat_state state{};
-		const auto value = soft_wide(dbl, x);
-		if (wide)
-			(void)f128_to_i64(&state, value, mode, true);
-		else
-			(void)f128_to_i32(&state, value, mode, true);
-		if ((state.exceptionFlags & softfloat_flag_inexact) != 0)
-			raised = UnderflowModel::precision;
-	}
-	return {UnderflowModel::precision, raised};
+	return static_cast<std::uint32_t>(operand.width);
 }
 
 } // namespace
 
-std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
-	::uml::memory::GuestAddressSpace &memory)
+std::optional<FpSteps> simd_fp_steps(const CpuState &cpu,
+	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory)
 {
-	constexpr std::uint32_t raised = 0x02U;
 	const auto &instruction = gadget.instruction;
-	if ((cpu.mxcsr & mxcsr_denormals_are_zero) != 0 ||
-		!simd_floating(instruction))
-		return 0;
 	const auto opcode = instruction.vector_opcode;
 	const auto prefix = instruction.vector_prefix;
+	const auto &destination = instruction.destination;
+	const auto &rm = instruction.auxiliary;
+	const bool ymm = destination.width == OperandWidth::ymm;
+	/* x86's first, second and third sources of the operation. */
+	VectorValue a{};
+	VectorValue b{};
+	VectorValue c{};
 	const auto read = [&](const Operand &operand, VectorValue &value) {
 		return operand_value(cpu, gadget, operand, memory, value);
 	};
-	VectorValue first{};
-	VectorValue second{};
+	FpOperation operation{};
+	/* Whether the operation reads one operand across both of its 128-bit
+	 * halves, and else computes each half of the operands alone. */
+	bool halves = false;
+	std::size_t parts = 1;
+	/* A packed operation on a single or a double of `prefix`. */
+	const auto packed = [&](FpKind kind, bool dbl) {
+		operation = {kind, dbl ? 8U : 4U, dbl ? 2U : 4U, 0, 0};
+		parts = ymm ? 2U : 1U;
+	};
+	const auto scalar = [&](FpKind kind, bool dbl) {
+		operation = {kind, dbl ? 8U : 4U, 1U, 0, 0};
+	};
 	switch (instruction.operation) {
 	case Operation::vector_alu: {
+		FpKind kind{};
+		switch (opcode) {
+		case 0x51: kind = FpKind::sqrt; break;
+		case 0x58: kind = FpKind::add; break;
+		case 0x59: kind = FpKind::mul; break;
+		case 0x5c: kind = FpKind::sub; break;
+		case 0x5d: kind = FpKind::min; break;
+		case 0x5e: kind = FpKind::div; break;
+		case 0x5f: kind = FpKind::max; break;
+		case 0x7c: kind = FpKind::hadd; break;
+		case 0x7d: kind = FpKind::hsub; break;
+		case 0xc2: kind = FpKind::cmp; break;
+		case 0xd0: kind = FpKind::addsub; break;
+		default: return std::nullopt;
+		}
 		/* HADD, HSUB and ADDSUB are PD with 66 and PS with F2; the rest
 		 * PS, PD, SS and SD with none, 66, F3 and F2. */
 		const bool horizontal = opcode == 0x7c || opcode == 0x7d ||
 			opcode == 0xd0;
 		const bool dbl = horizontal ? prefix == 1 :
 			prefix == 1 || prefix == 3;
-		const bool scalar = !horizontal && prefix >= 2;
-		const Format f{dbl};
-		const std::size_t lanes = scalar ? 1U :
-			vector_lanes(instruction.destination, dbl);
-		if (!read(instruction.auxiliary, second))
-			return 0;
+		if (!horizontal && prefix >= 2)
+			scalar(kind, dbl);
+		else
+			packed(kind, dbl);
 		if (opcode == 0x51) {
-			/* The square root of a negative denormal is invalid. */
-			for (std::size_t index = 0; index < lanes; ++index) {
-				const auto x = lane(second, dbl, index);
-				if (f.denormal(x) && !f.negative(x))
-					return raised;
-			}
-			return 0;
+			if (!read(rm, a))
+				return std::nullopt;
+		} else if (!read(instruction.source, a) || !read(rm, b)) {
+			return std::nullopt;
 		}
-		if (!read(instruction.source, first))
-			return 0;
-		if (opcode == 0x7c || opcode == 0x7d) {
-			/* Adjacent pairs of either source, in each 128-bit half. */
-			for (std::size_t pair = 0; pair < lanes; pair += 2)
-				if (denormal_pair(f, lane(first, dbl, pair),
-						lane(first, dbl, pair + 1U)) ||
-					denormal_pair(f, lane(second, dbl, pair),
-						lane(second, dbl, pair + 1U)))
-					return raised;
-			return 0;
+		if (opcode == 0xc2) {
+			operation.immediate = instruction.vector_control;
+			operation.flags = instruction.vex ? fp_cmp_vex : 0U;
 		}
-		for (std::size_t index = 0; index < lanes; ++index) {
-			const auto b = lane(second, dbl, index);
-			/* A division by zero takes precedence. */
-			if (denormal_pair(f, lane(first, dbl, index), b) &&
-				!(opcode == 0x5e && f.zero(b)))
-				return raised;
-		}
-		return 0;
-	}
-	case Operation::vector_compare_flags: {
-		const bool dbl = prefix == 1;
-		if (!read(instruction.source, first) ||
-			!read(instruction.auxiliary, second))
-			return 0;
-		return denormal_pair(Format{dbl}, lane(first, dbl, 0),
-			lane(second, dbl, 0)) ? raised : 0U;
-	}
-	case Operation::vector_convert: {
-		/* CVTPS2PD and CVTSS2SD widen singles, CVTPD2PS and CVTSD2SS
-		 * narrow doubles; the other conversions raise none. */
-		if (opcode != 0x5a || !read(instruction.auxiliary, second))
-			return 0;
-		const bool dbl = prefix == 1 || prefix == 3;
-		const std::size_t lanes = prefix >= 2 ? 1U :
-			vector_lanes(instruction.auxiliary, dbl);
-		for (std::size_t index = 0; index < lanes; ++index)
-			if (Format{dbl}.denormal(lane(second, dbl, index)))
-				return raised;
-		return 0;
+		break;
 	}
 	case Operation::vector_fma: {
-		FmaOperands fma{};
-		if (!read_fma_operands(cpu, gadget, memory, fma))
-			return 0;
-		const Format f{fma.dbl};
-		for (std::size_t index = 0; index < fma.lanes; ++index) {
-			const auto x = lane(fma.a, fma.dbl, index);
-			const auto y = lane(fma.b, fma.dbl, index);
-			const auto z = lane(fma.c, fma.dbl, index);
-			if (f.nan(x) || f.nan(y) || f.nan(z) ||
-				!(f.denormal(x) || f.denormal(y) || f.denormal(z)))
-				continue;
-			/* An invalid operation takes precedence: zero times
-			 * infinity, or infinities of opposite signs added. */
-			const bool product_negative =
-				(f.negative(x) != f.negative(y)) != fma.negate_product();
-			const bool addend_negative =
-				f.negative(z) != fma.negate_addend(index);
-			if (fma_lane_invalid(f, x, y, z, product_negative,
-					addend_negative))
-				continue;
-			return raised;
-		}
-		return 0;
-	}
-	case Operation::vector_integer_map3:
-		if (opcode == 0x1d) {
-			/* VCVTPS2PH narrows singles. */
-			if (!read(instruction.source, first))
-				return 0;
-			const auto lanes = vector_lanes(instruction.source, false);
-			for (std::size_t index = 0; index < lanes; ++index)
-				if (Format{false}.denormal(
-						lane(first, false, index)))
-					return raised;
-			return 0;
-		}
-		/* DPPS and DPPD settle every flag (`host_flag_correction`). */
-		return 0;
-	default:
-		return 0;
-	}
-}
-
-HostFlagCorrection host_flag_correction(const CpuState &cpu,
-	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory)
-{
-	constexpr std::uint32_t invalid = 0x01U;
-	const auto &instruction = gadget.instruction;
-	const bool denormals_are_zero =
-		(cpu.mxcsr & mxcsr_denormals_are_zero) != 0;
-	const unsigned rounding = cpu.mxcsr >> 13U;
-	std::uint8_t flags{};
-	const auto read = [&](const Operand &operand, VectorValue &value) {
-		return operand_value(cpu, gadget, operand, memory, value);
-	};
-	switch (instruction.operation) {
-	case Operation::vector_alu: {
-		const auto opcode = instruction.vector_opcode;
-		const bool horizontal = opcode == 0x7c || opcode == 0x7d ||
-			opcode == 0xd0;
-		if (horizontal || opcode == 0x58 || opcode == 0x59 ||
-			opcode == 0x5c || opcode == 0x5e) {
-			/* ADD, MUL, SUB and DIV, PS, PD, SS and SD with none, 66, F3
-			 * and F2; HADD and HSUB, which add or subtract adjacent pairs
-			 * of either source, and ADDSUB, which subtracts in its even
-			 * lanes, PD with 66 and PS with F2. A quotient never lies close
-			 * enough below the smallest normal to round up to it, nor a
-			 * sum, which is exact that small, but either may be tiny and
-			 * exact. */
-			const auto prefix = instruction.vector_prefix;
-			const bool dbl = horizontal ? prefix == 1 :
-				prefix == 1 || prefix == 3;
-			const Format f{dbl};
-			const std::size_t lanes = !horizontal && prefix >= 2 ? 1U :
-				vector_lanes(instruction.destination, dbl);
-			VectorValue first{};
-			VectorValue second{};
-			if (!read(instruction.source, first) ||
-				!read(instruction.auxiliary, second))
-				return {};
-			UnderflowModel model{cpu.mxcsr, true};
-			const auto compute = [&](std::uint64_t x, std::uint64_t y,
-				bool subtract) {
-				const auto a = soft_wide(dbl, input(f, x, denormals_are_zero));
-				const auto b = soft_wide(dbl, input(f,
-					subtract ? y ^ f.sign() : y, denormals_are_zero));
-				model.record(soft_round(soft_odd([&](auto &state) {
-					return opcode == 0x59 ? f128_mul(&state, a, b) :
-						opcode == 0x5e ? f128_div(&state, a, b) :
-						f128_add(&state, a, b);
-				}, soft_rounding(cpu.mxcsr), flags), dbl, cpu.mxcsr));
-			};
-			if (opcode == 0x7c || opcode == 0x7d) {
-				for (const auto *source : {&first, &second})
-					for (std::size_t pair = 0; pair < lanes; pair += 2)
-						compute(lane(*source, dbl, pair),
-							lane(*source, dbl, pair + 1U),
-							opcode == 0x7d);
-			} else {
-				for (std::size_t index = 0; index < lanes; ++index)
-					compute(lane(first, dbl, index),
-						lane(second, dbl, index), opcode == 0x5c ||
-							(opcode == 0xd0 && (index & 1U) == 0));
-			}
-			return model.correction();
-		}
-		return {};
-	}
-	case Operation::vector_fma: {
-		FmaOperands fma{};
-		if (!read_fma_operands(cpu, gadget, memory, fma))
-			return {};
-		const Format f{fma.dbl};
-		std::uint32_t raised{};
-		UnderflowModel model{cpu.mxcsr, true};
-		for (std::size_t index = 0; index < fma.lanes; ++index) {
-			const auto a = input(f, lane(fma.a, fma.dbl, index),
-				denormals_are_zero);
-			const auto b = input(f, lane(fma.b, fma.dbl, index),
-				denormals_are_zero);
-			const auto c = input(f, lane(fma.c, fma.dbl, index),
-				denormals_are_zero);
-			const bool product_negative =
-				(f.negative(a) != f.negative(b)) != fma.negate_product();
-			const bool addend_negative =
-				f.negative(c) != fma.negate_addend(index);
-			if (fma_lane_invalid(f, a, b, c, product_negative,
-					addend_negative))
-				raised |= invalid;
-			const auto x = soft_wide(fma.dbl,
-				fma.negate_product() ? a ^ f.sign() : a);
-			const auto y = soft_wide(fma.dbl, b);
-			const auto z = soft_wide(fma.dbl,
-				fma.negate_addend(index) ? c ^ f.sign() : c);
-			model.record(soft_round(soft_odd([&](auto &state) {
-				return f128_add(&state, f128_mul(&state, x, y), z);
-			}, soft_rounding(cpu.mxcsr), flags), fma.dbl, cpu.mxcsr));
-		}
-		return model.correction(invalid, raised);
-	}
-	case Operation::vector_convert: {
-		const auto prefix = instruction.vector_prefix;
-		const auto opcode = instruction.vector_opcode;
-		/* CVTPS2DQ and CVTTPS2DQ with 66 and F3, and CVTTPD2DQ and
-		 * CVTPD2DQ with 66 and F2, convert to integers. */
-		if ((opcode == 0x5b && (prefix == 1 || prefix == 2)) ||
-			(opcode == 0xe6 && (prefix == 1 || prefix == 3)))
-			return integer_conversion_precision(cpu, gadget, memory,
-				opcode == 0xe6, prefix == 2 || (opcode == 0xe6 && prefix == 1),
-				false);
-		/* CVTPD2PS and CVTSD2SS narrow doubles, with 66 and F2. */
-		if (opcode != 0x5a || (prefix != 1 && prefix != 3))
-			return {};
+		/* 132 is destination * r/m + vvvv, 213 vvvv * destination + r/m,
+		 * and 231 vvvv * r/m + destination. */
+		VectorValue accumulator{};
+		VectorValue vvvv{};
 		VectorValue source{};
-		if (!read(instruction.auxiliary, source))
-			return {};
-		const std::size_t lanes = prefix == 3 ? 1U :
-			vector_lanes(instruction.auxiliary, true);
-		UnderflowModel model{cpu.mxcsr, true};
-		for (std::size_t index = 0; index < lanes; ++index)
-			model.record(soft_round(soft_wide(true, input(Format{true},
-					lane(source, true, index), denormals_are_zero)),
-				false, cpu.mxcsr));
-		return model.correction();
+		if (!read(destination, accumulator) ||
+			!read(instruction.source, vvvv) || !read(rm, source))
+			return std::nullopt;
+		const unsigned form = opcode >> 4U;
+		const unsigned type = opcode & 0x0fU;
+		a = form == 0x9U ? accumulator : vvvv;
+		b = form == 0xaU ? accumulator : source;
+		c = form == 0x9U ? vvvv : form == 0xaU ? source : accumulator;
+		if (type >= 9U && (type & 1U) != 0)
+			scalar(FpKind::fma, instruction.vector_group != 0);
+		else
+			packed(FpKind::fma, instruction.vector_group != 0);
+		/* FNMADD and FNMSUB negate the product, FMSUB and FNMSUB the
+		 * addend, FMADDSUB in its even lanes and FMSUBADD in its odd
+		 * ones. */
+		if (type >= 0xcU)
+			operation.flags |= fp_fma_negate_product;
+		if (type == 0xaU || type == 0xbU || type == 0xeU || type == 0xfU)
+			operation.flags |= fp_fma_negate_addend;
+		else if (type == 6U)
+			operation.flags |= fp_fma_negate_even_addends;
+		else if (type == 7U)
+			operation.flags |= fp_fma_negate_odd_addends;
+		break;
+	}
+	case Operation::vector_compare_flags:
+		/* COMISS and COMISD with none and 66, and UCOMISS and UCOMISD,
+		 * which signal only for a signalling NaN. */
+		scalar(FpKind::comis, prefix == 1);
+		operation.flags = opcode == 0x2eU ? fp_comis_quiet : 0U;
+		if (!read(instruction.source, a) || !read(rm, b))
+			return std::nullopt;
+		break;
+	case Operation::vector_convert: {
+		if (!read(rm, a))
+			return std::nullopt;
+		const auto bytes = operand_bytes(rm);
+		if (opcode == 0x5a) {
+			/* CVTPS2PD and CVTSS2SD widen singles, with none and F3;
+			 * CVTPD2PS and CVTSD2SS narrow doubles, with 66 and F2. */
+			if (prefix == 0 || prefix == 2) {
+				operation = {FpKind::widen, 4U, bytes / 4U, 0, 0};
+			} else {
+				operation = {FpKind::narrow, 8U, bytes / 8U, 0, 0};
+				halves = true;
+			}
+			break;
+		}
+		/* CVTDQ2PS, CVTPS2DQ and CVTTPS2DQ with none, 66 and F3, and
+		 * CVTTPD2DQ, CVTDQ2PD and CVTPD2DQ with 66, F3 and F2; CVTDQ2PD
+		 * is exact. */
+		if (opcode == 0xe6 && prefix == 2)
+			return std::nullopt;
+		const bool doubles = opcode == 0xe6;
+		const bool from_integer = opcode == 0x5b && prefix == 0;
+		operation = {from_integer ? FpKind::from_int : FpKind::to_int,
+			doubles ? 8U : 4U, bytes / (doubles ? 8U : 4U), 0, 0};
+		if (!from_integer && (prefix == 2 || (doubles && prefix == 1)))
+			operation.flags = fp_to_int_truncate;
+		halves = true;
+		break;
 	}
 	case Operation::vector_scalar_convert: {
 		/* CVTTPS2PI, CVTTPD2PI, CVTTSS2SI and CVTTSD2SI truncate, and
-		 * the CVT forms round as MXCSR does, with none, 66, F3 and F2. */
-		const auto opcode = instruction.vector_opcode;
-		const auto prefix = instruction.vector_prefix;
+		 * the CVT forms round as MXCSR does, with none, 66, F3 and F2.
+		 * Conversions from integers raise precision as the host does. */
 		if (opcode != 0x2c && opcode != 0x2d)
-			return {};
-		return integer_conversion_precision(cpu, gadget, memory,
-			prefix == 1 || prefix == 3, opcode == 0x2c, prefix >= 2 &&
-				instruction.destination.width == OperandWidth::qword);
+			return std::nullopt;
+		if (!read(rm, a))
+			return std::nullopt;
+		const bool dbl = prefix == 1 || prefix == 3;
+		operation = {FpKind::to_int, dbl ? 8U : 4U,
+			operand_bytes(rm) / (dbl ? 8U : 4U), 0, 0};
+		if (opcode == 0x2c)
+			operation.flags |= fp_to_int_truncate;
+		if (prefix >= 2 && destination.width == OperandWidth::qword)
+			operation.flags |= fp_to_int64;
+		break;
 	}
+	case Operation::vector_map2_misc:
+		/* VCVTPH2PS. */
+		if (opcode != 0x13 || !read(rm, a))
+			return std::nullopt;
+		operation = {FpKind::half_widen, 2U, operand_bytes(rm) / 2U, 0, 0};
+		break;
 	case Operation::vector_integer_map3: {
-		const auto opcode = instruction.vector_opcode;
 		const unsigned control = instruction.vector_control;
 		if (opcode >= 0x08 && opcode <= 0x0b) {
-			/* ROUNDPS, ROUNDPD, ROUNDSS and ROUNDSD raise precision for a
-			 * lane that is not an integer, unless bit 3 of the immediate
-			 * suppresses it, whatever the rounding mode. FRINT does not
-			 * raise it. */
-			const bool dbl = (opcode & 1U) != 0;
-			const Format f{dbl};
-			VectorValue source{};
-			if (!read(instruction.auxiliary, source))
-				return {};
-			const std::size_t lanes = opcode >= 0x0a ? 1U :
-				vector_lanes(instruction.destination, dbl);
-			std::uint32_t raised{};
-			for (std::size_t index = 0; index < lanes; ++index) {
-				const auto x = input(f, lane(source, dbl, index),
-					denormals_are_zero);
-				if ((control & 8U) == 0 && !f.nan(x) && !f.infinite(x) &&
-					!integral(f, x))
-					raised = UnderflowModel::precision;
-			}
-			return {UnderflowModel::precision, raised};
+			/* ROUNDPS, ROUNDPD, ROUNDSS and ROUNDSD. */
+			if (!read(rm, a))
+				return std::nullopt;
+			if (opcode >= 0x0a)
+				scalar(FpKind::round, (opcode & 1U) != 0);
+			else
+				packed(FpKind::round, (opcode & 1U) != 0);
+		} else if (opcode == 0x40 || opcode == 0x41) {
+			if (!read(instruction.source, a) || !read(rm, b))
+				return std::nullopt;
+			packed(FpKind::dpp, opcode == 0x41);
+		} else if (opcode == 0x1d) {
+			/* VCVTPS2PH narrows the singles of its source. */
+			if (!read(instruction.source, a))
+				return std::nullopt;
+			operation = {FpKind::half_narrow, 4U,
+				operand_bytes(instruction.source) / 4U, 0, 0};
+			halves = true;
+		} else {
+			return std::nullopt;
 		}
-		if (opcode == 0x40 || opcode == 0x41) {
-			VectorValue first{};
-			VectorValue second{};
-			if (!read(instruction.source, first) ||
-				!read(instruction.auxiliary, second))
-				return {};
-			return dot_product_flags(cpu.mxcsr, opcode == 0x41, control,
-				instruction.destination.width == OperandWidth::ymm ? 2U : 1U,
-				first, second);
-		}
-		/* VCVTPS2PH narrows singles, in the rounding mode its immediate
-		 * names unless its bit 2 defers to MXCSR's. FTZ does not apply. */
-		if (opcode != 0x1d)
-			return {};
-		VectorValue source{};
-		if (!read(instruction.source, source))
-			return {};
-		const auto lanes = vector_lanes(instruction.source, false);
-		UnderflowModel model{cpu.mxcsr, false};
-		for (std::size_t index = 0; index < lanes; ++index) {
-			const Format f{false};
-			const auto x = input(f, lane(source, false, index),
-				denormals_are_zero);
-			if (f.nan(x) || f.infinite(x) || f.zero(x))
-				continue;
-			model.record(half_round(static_cast<std::uint32_t>(x),
-				(control & 4U) != 0 ? rounding : control));
-		}
-		return model.correction();
+		operation.immediate = static_cast<std::uint8_t>(control);
+		break;
 	}
 	default:
-		return {};
+		return std::nullopt;
 	}
+	FpSteps steps{};
+	for (std::size_t index = 0; index < parts; ++index) {
+		FpValues values{};
+		if (halves) {
+			values.sources[0] = part(a, 0);
+			values.sources[1] = part(a, 1);
+		} else {
+			values.sources[0] = part(a, index);
+			values.sources[1] = part(b, index);
+			values.sources[2] = part(c, index);
+		}
+		steps |= x86_fp_compute(operation, cpu.mxcsr, values);
+	}
+	return steps;
 }
 
 void clear_host_floating_exceptions() noexcept

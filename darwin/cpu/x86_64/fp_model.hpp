@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-/* x86's SIMD floating-point results for the JIT, where the host's arithmetic
- * differs: the cold path of FEXCore's EmbedderFPCheck op hands an operation's
- * x86 sources and the host's result here. The model computes in integers and
- * SoftFloat only, because it runs inside a dispatch, under the guest's FPCR.
- */
+/* x86's SIMD floating-point results and MXCSR flags, where the host's
+ * arithmetic differs. The JIT's cold path of FEXCore's EmbedderFPCheck op
+ * hands an operation's x86 sources and the host's result here; the gadget
+ * engine's checked run takes only the flags, from the sources of the
+ * instruction it runs, and keeps its own results. The model computes in
+ * integers and SoftFloat only, because the JIT runs it inside a dispatch,
+ * under the guest's FPCR. */
 
 #include <array>
 #include <cstddef>

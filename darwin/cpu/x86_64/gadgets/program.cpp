@@ -820,12 +820,10 @@ constexpr std::uint64_t x87_compare_rflags = 0x8d5U;
 
 	const CpuState before = cpu;
 	const auto saved = save_store(cpu, first, memory, checked);
-	/* x86 raises a denormal operand before it computes, which no host
-	 * flag shows. */
-	const auto denormal = simd ? denormal_operand(cpu, first, memory) : 0U;
-	/* And it raises some flags otherwise than the host does. */
-	const auto correction = simd ? host_flag_correction(cpu, first, memory) :
-		HostFlagCorrection{};
+	/* x86 raises its flags otherwise than the host does: the model computes
+	 * them from the sources, which the instruction may overwrite. */
+	const auto modelled = simd ? simd_fp_steps(cpu, first, memory) :
+		std::optional<FpSteps>{};
 	std::uint32_t raised{};
 	const auto result = simd ?
 		run_stream<true, true>(program, cpu, memory, executor, stream, 1,
@@ -839,20 +837,23 @@ constexpr std::uint64_t x87_compare_rflags = 0x8d5U;
 		/* #XM is a fault: an unmasked exception leaves the instruction's
 		 * destination and RIP as they were, with MXCSR's flags for it.
 		 * One raised before the computation reports only those, as x86
-		 * does, which settled flags hold already. */
-		auto flags = correction.settled ? correction.raised :
-			(raised & ~correction.decided) | correction.raised | denormal;
-		const auto unmasked = flags & ~(before.mxcsr >> 7U) & 0x3fU;
-		if (unmasked == 0) {
-			cpu.mxcsr |= flags;
+		 * does. The host's flags stand for an instruction the model
+		 * leaves to them. */
+		FpSteps steps{};
+		if (modelled) {
+			steps = *modelled;
+		} else {
+			steps.before[0] = raised & precomputation_exceptions;
+			steps.after[0] = raised & ~precomputation_exceptions;
+		}
+		const auto outcome = x86_fp_settle(steps, before.mxcsr);
+		if (!outcome.fault) {
+			cpu.mxcsr |= outcome.flags;
 			return result;
 		}
-		if (!correction.settled &&
-			(unmasked & precomputation_exceptions) != 0)
-			flags &= precomputation_exceptions;
 		cpu = before;
 		restore_store(saved, memory);
-		cpu.mxcsr |= flags;
+		cpu.mxcsr |= outcome.flags;
 		return floating_point_trap(simd_error_vector, cpu.mxcsr);
 	}
 	const auto pending = x87_pending(cpu);
