@@ -68,8 +68,12 @@ passes the corpus for it, and `verified` after. The gadget engine passes the
 corpus for every executed entry at `complete`, the level it translates at
 (`arm64-gadget-a32-corpus --forms` lists the encodings whose cases ran), except the 38 BF16 and I8MM entries: the engine decodes an
 extension only where the host has it, so on a host without them (the M1 Ultra)
-those cases are skipped, and the entries stay `pending`. The decoder contract is
-[`../darwin/cpu/arm64/aarch32/README.md`](../darwin/cpu/arm64/aarch32/README.md);
+those cases are skipped, and the entries stay `pending`. The decoder's
+interface is
+[`../darwin/cpu/arm64/aarch32/decode.hpp`](../darwin/cpu/arm64/aarch32/decode.hpp),
+and
+[`../darwin/cpu/arm64/aarch32/README.md`](../darwin/cpu/arm64/aarch32/README.md)
+holds its profile choices;
 `generate_a32_encoding_table.py` derives the inventory, the decoder's table
 and its test data from the release, and `a32_profile_policy.py` is the one
 place that holds the profile's choices. The status is the one column the

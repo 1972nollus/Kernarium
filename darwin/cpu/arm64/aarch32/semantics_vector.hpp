@@ -2,6 +2,7 @@
 #pragma once
 
 #include "cpu/arm64/aarch32/semantics_internal.hpp"
+#include "cpu/arm64/aarch32/state_format.hpp"
 
 #include <array>
 #include <cstdint>
@@ -18,27 +19,25 @@ namespace uml::cpu::arm64::aarch32::detail {
 using i128 = __int128;
 using u128 = unsigned __int128;
 
-/* FPSCR is split across CpuState: the control bits the virtual CPU holds
- * (AHP, DN, FZ, RMode, FZ16) in fpcr; QC and the cumulative flags in fpsr;
- * N, Z, C and V in a32_fpscr_nzcv, because the hosts implement FPSR[31:28]
- * as RAZ/WI. Len, Stride and the trap enables read as zero and ignore
- * writes. */
-inline constexpr std::uint32_t fpscr_control_mask = 0x07c8'0000U;
-inline constexpr std::uint32_t fpscr_status_mask = 0x0800'009fU;
-inline constexpr std::uint32_t fpscr_nzcv_mask = 0xf000'0000U;
+/* FPSCR is split across CpuState as state_format.hpp describes: the control
+ * bits in fpcr (fpscr_control_mask), QC and the cumulative flags in fpsr
+ * (fpsr_writable_mask), and N, Z, C and V in a32_fpscr_nzcv (fpscr_nzcv),
+ * because the hosts implement FPSR[31:28] as RAZ/WI. Len, Stride and the trap
+ * enables read as zero and ignore writes. fpscr_status_mask is the bridge's
+ * status half, N, Z, C and V included, so it is not what fpsr holds. */
 inline constexpr std::uint32_t fpscr_qc = 1U << 27;
 
 [[nodiscard]] inline std::uint32_t fpscr_of(const CpuState &cpu) noexcept
 {
-	return (cpu.fpcr & fpscr_control_mask) | (cpu.fpsr & fpscr_status_mask)
-		| (cpu.a32_fpscr_nzcv & fpscr_nzcv_mask);
+	return (cpu.fpcr & fpscr_control_mask) | (cpu.fpsr & fpsr_writable_mask)
+		| (cpu.a32_fpscr_nzcv & fpscr_nzcv);
 }
 
 inline void set_fpscr(CpuState &cpu, std::uint32_t value) noexcept
 {
 	cpu.fpcr = value & fpscr_control_mask;
-	cpu.fpsr = value & fpscr_status_mask;
-	cpu.a32_fpscr_nzcv = value & fpscr_nzcv_mask;
+	cpu.fpsr = value & fpsr_writable_mask;
+	cpu.a32_fpscr_nzcv = value & fpscr_nzcv;
 }
 
 /* The low `bits` bits of a lane. */

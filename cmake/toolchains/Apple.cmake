@@ -24,11 +24,22 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
     COMMAND_ERROR_IS_FATAL ANY)
 set(CMAKE_OSX_SYSROOT "${_uml_apple_sdk_path}" CACHE PATH "Apple SDK" FORCE)
-if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET OR
-        CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
-    set(CMAKE_OSX_DEPLOYMENT_TARGET ${_uml_apple_deployment_target}
-        CACHE STRING "Deployment target")
+# The floor is the only target. A tree configured at an older floor keeps that
+# target in its cache, and a preset does not reset it, so any other value is
+# refused instead of building at it. An unset or empty target takes the floor.
+if(DEFINED CMAKE_OSX_DEPLOYMENT_TARGET AND
+        NOT "${CMAKE_OSX_DEPLOYMENT_TARGET}" STREQUAL "" AND
+        NOT "${CMAKE_OSX_DEPLOYMENT_TARGET}" STREQUAL
+            "${_uml_apple_deployment_target}")
+    message(FATAL_ERROR
+        "CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET} is cached "
+        "or was passed, but every Apple product builds at the deployment "
+        "floor ${_uml_apple_deployment_target}. Do not pass "
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET. Configure with --fresh, or in a new "
+        "binary directory, to drop the cached value.")
 endif()
+set(CMAKE_OSX_DEPLOYMENT_TARGET ${_uml_apple_deployment_target}
+    CACHE STRING "Deployment target" FORCE)
 
 # The macOS arm64 default target enables the optional mnemonics used by the
 # existing assembly bodies. iOS defaults to a more conservative baseline, so

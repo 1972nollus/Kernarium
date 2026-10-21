@@ -8,46 +8,11 @@ engine, holds no state, and is a CPU-layer `shared` target.
 
 ## Contract
 
-`decode.hpp` is the interface:
-
-- `decode_a32(word, profile)` and `decode_thumb(hw1 << 16 | hw2, it, profile)`
-  return an `Instruction`. `thumb_length(hw1)` says how many bytes a Thumb
-  instruction occupies before the second halfword is read.
-- `Status` is `ok`, `nop` or `undefined`. An `undefined` instruction carries a
-  `Reason`: `unallocated`, `unpredictable`, `profile` or `feature`. Anything
-  the profile does not implement, and every UNPREDICTABLE encoding, is
-  undefined; the decoder never guesses. The engine raises the
-  illegal-instruction exit for it.
-- `Profile` is a `Level` (`none`, `base`, `simd`, `complete`, as
-  `A32Support`) and a `FeatureSet` for the optional extensions the host has.
-  An instruction above the level is undefined with reason `profile`; one of a
-  feature the profile lacks is undefined with reason `feature`. An engine
-  builds its profile with `a32_decode_profile(host, support)`
-  (`a32_profile.hpp`): the extensions `a32_features` presents to the guest,
-  so an engine never executes a form the guest was not shown.
-- `Instruction::cond` is the condition the instruction executes under: its own
-  field, the IT block's condition, or 14. `in_it` and `last_in_it` describe a
-  Thumb instruction's place in a block, `next_it` is the IT state after it,
-  and an IT instruction reports `it_length`, the instructions its block holds.
-  The caller advances its IT state with `next_it` and treats a block as
-  running until `next_it` is zero.
-- `Instruction::operands` holds what the XML's Decode pseudocode computes for
-  the form, named for its variables (`d`, `n`, `m`, `t`, `imm32`, `setflags`,
-  `shift_t`, `registers`, `esize`, ...). A member the form's pseudocode does not
-  set is zero. A `bits(N)` value is its bit pattern; `imm32` is the 32-bit
-  pattern, and an integer is its value. `carry_flags` means the carry-out of
-  an expanded immediate is the carry flag; `carry` holds it otherwise.
-- `Instruction::sysreg` names the register of a permitted MCR, MRC or MRRC:
-  TPIDRURO and TPIDRURW, the generic timer's CNTFRQ and CNTVCT, and the CP15
-  barriers. The barriers run only when the guest's CP15BEN is set, which the
-  engine tests; every other coprocessor access is undefined.
-- `Instruction::info()` returns the form's table entry: the XML encoding name,
-  its mnemonic, the level and feature it needs, whether it is conditional, and
-  static traits (loads, stores, exclusives, the kinds of PC write, barriers,
-  hints, exceptions, and fp_state, a read or write of the S, D, Q or V
-  registers or FPSCR) scanned from the XML's Execute pseudocode. fp_state is
-  exactly the XML's FP&SIMD section; an engine that loads the task's vectors
-  lazily loads them for any block that holds such a form.
+`decode.hpp` is the decoder's interface and `semantics.hpp` the semantic
+library's; their comments state what each call takes, returns and guarantees,
+including the fault ordering and what each exit leaves in the PC and
+ITSTATE, which the engines follow. `a32_profile.hpp` builds the `Profile` an
+engine decodes against from the host and the engine's level.
 
 The profile is Armv8-A AArch32 at EL0 (see
 [`../../../../docs/architecture.md`](../../../../docs/architecture.md) and
@@ -109,46 +74,11 @@ corpus's model lane (`semantics.hpp`). It is a CPU-layer `shared` target that
 includes no engine, works on `CpuState` alone and reaches guest memory only
 through the caller's `A32Memory`.
 
-- `execute_a32(cpu, instruction, memory)` runs one decoded instruction;
-  `step_a32(cpu, memory, profile)` fetches, decodes in `cpu.a32_itstate`
-  and executes one, which is the single-instruction entry for what an engine
-  cannot translate as a block. Calling it until ITSTATE is zero leaves an IT
-  block as the architecture does.
-- `A32Memory::translate()` returns the host address of a guest byte, valid to
-  the end of its guest page, or nothing. The library splits every access at
-  a page and reports the address and the access of a fault itself, so an
-  engine records it where its own exit convention wants it. `stored()` reports
-  each host range a store wrote, for the engine's reservation and code
-  invalidation.
-- The result is a `StepEvent`: `retired`, `supervisor_call` (PC and ITSTATE
-  advanced), `breakpoint` (PC and ITSTATE unchanged), `undefined`,
-  `memory_fault` (the 32-bit architectural address, translation or
-  alignment), `pc_alignment` and `fatal`. A fault leaves the registers, PC and
-  ITSTATE as the instruction found them, except that STM and PUSH store the
-  words ahead of the faulting one and leave the base register unchanged.
-- The exclusive monitor is `A32Memory`'s: `load_exclusive()`,
-  `store_exclusive()` and `clear_exclusive()`, which an engine with its own
-  reservation model (a versioned one its fused exclusives and tracked stores
-  share) overrides. The defaults are `CpuState`'s record
-  (`exclusive_address`, `exclusive_key`, `exclusive_value`,
-  `exclusive_value2`, `exclusive_size`) and a host compare-and-swap of the
-  value the load recorded, the gadget engine's mechanism. Ordinary stores,
-  LDA and STL never use it; the library reports every store to `stored()`.
-- `a32_semantics_covers(form)` holds for every implemented form up to
-  `a32_semantics_level()`, which is `complete`; any other word reaching
-  `execute_a32()` is `fatal`, an internal error. The library-exit counters
-  count each call by form.
-
-The library covers the whole profile, A32 and T32: integer, memory (single,
-multiple, exclusive, acquire/release), branch, IT and system forms, the VFP
-and Advanced SIMD moves, bitwise, permute, integer, shift, floating-point,
-conversion and memory forms, half precision, and the Armv8 extensions (VSEL,
-VMAXNM, VRINT and VCVT with a rounding, VINS, VMOVX, VJCVT, VCADD and VCMLA,
-VFMAL and VFMSL, VQRDMLAH and VQRDMLSH, the 8-bit dot products and matrix
-multiplies, CRC32, AES, SHA-1, SHA-256, BFloat16 and SB). The structure
-loads and stores read all their memory before they change a register and
-gather it all before they store, and VSTM and FSTMX store the words ahead of
-a fault like STM.
+The engines reach it through `execute_a32`, with the instruction they
+decoded; `step_a32`, which fetches and decodes as well, is the model lane's
+and the semantic tests' entry. It covers the whole profile, A32 and T32
+([`../../../../docs/a32-instruction-coverage.md`](../../../../docs/a32-instruction-coverage.md)
+lists the forms).
 
 Floating point runs the host's own scalar instruction on bit patterns under
 the FPCR the form defines, the guest's control bits for VFP and the Standard

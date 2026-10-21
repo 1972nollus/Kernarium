@@ -99,12 +99,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 				cpu.exclusive_version == reservation_version(key) &&
 				cpu.exclusive_value == monitored_first &&
 				cpu.exclusive_value2 == monitored_second;
-			cpu.exclusive_address = ~std::uint64_t{0};
-			cpu.exclusive_key = 0;
-			cpu.exclusive_value = 0;
-			cpu.exclusive_value2 = 0;
-			cpu.exclusive_version = 0;
-			cpu.exclusive_size = 0;
+			cpu.clear_exclusive_monitor();
 			if (success) {
 				std::uintptr_t stored_key = 0;
 				const auto store_result = atomic_store_pair_value(memory,
@@ -177,12 +172,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 				cpu.exclusive_key == key &&
 				cpu.exclusive_version == reservation_version(key) &&
 				cpu.exclusive_value == current;
-			cpu.exclusive_address = ~std::uint64_t{0};
-			cpu.exclusive_key = 0;
-			cpu.exclusive_value = 0;
-			cpu.exclusive_value2 = 0;
-			cpu.exclusive_version = 0;
-			cpu.exclusive_size = 0;
+			cpu.clear_exclusive_monitor();
 			if (success) {
 				std::uintptr_t stored_key = 0;
 				const auto store_result = atomic_store_value(
