@@ -29,13 +29,20 @@
 #include <dlfcn.h>
 #include <unistd.h>
 
+#include <cerrno>
+#include <charconv>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <system_error>
+#include <vector>
 
 namespace {
+
+constexpr std::string_view cachePrefix = "metal-shader-cache-";
 
 std::filesystem::path& cacheDirectory()
 {
@@ -47,6 +54,43 @@ void removeCache()
 {
     std::error_code ignored;
     std::filesystem::remove_all(cacheDirectory(), ignored);
+}
+
+/* A child the test starts again and ends with _Exit never runs this
+ * process's exit handler, and a child the test kills cannot. The caches of
+ * processes that are gone are removed by whichever test process exits next,
+ * so the scratch directory ends empty. A directory whose process is running,
+ * such as a second copy of the test, is left alone. */
+void removeCachesOfExitedProcesses()
+{
+    std::vector<std::filesystem::path> exited;
+    std::error_code error;
+    std::filesystem::directory_iterator entry(
+        cacheDirectory().parent_path(), error);
+    for (; !error && entry != std::filesystem::directory_iterator {};
+         entry.increment(error)) {
+        const std::string name = entry->path().filename().string();
+        if (!name.starts_with(cachePrefix))
+            continue;
+        const char* const first = name.data() + cachePrefix.size();
+        const char* const last = name.data() + name.size();
+        int process = 0;
+        const auto parsed = std::from_chars(first, last, process);
+        if (parsed.ec == std::errc {} && parsed.ptr == last && process > 0 &&
+            kill(process, 0) != 0 && errno == ESRCH) {
+            exited.push_back(entry->path());
+        }
+    }
+    for (const std::filesystem::path& directory : exited) {
+        std::error_code ignored;
+        std::filesystem::remove_all(directory, ignored);
+    }
+}
+
+void removeCacheAtExit()
+{
+    removeCache();
+    removeCachesOfExitedProcesses();
 }
 
 [[gnu::constructor(101)]] void isolateMetalShaderCache()
@@ -66,7 +110,7 @@ void removeCache()
     /* One directory per process: a test that runs the same binary twice at
      * once must not remove the other's cache when it exits. */
     cacheDirectory() = uml::testing::scratch_directory() /
-        ("metal-shader-cache-" + std::to_string(getpid()));
+        (std::string {cachePrefix} + std::to_string(getpid()));
     removeCache();
     std::error_code error;
     std::filesystem::create_directories(cacheDirectory(), error);
@@ -75,7 +119,7 @@ void removeCache()
             cacheDirectory().c_str(), error.message().c_str());
         std::abort();
     }
-    std::atexit(removeCache);
+    std::atexit(removeCacheAtExit);
 
     const std::string path = cacheDirectory().string();
     CFStringRef const name = CFStringCreateWithCString(

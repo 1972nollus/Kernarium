@@ -144,8 +144,9 @@ shares (`tests/unit/gpu/metal_shader_cache_isolation.cpp`). The first pipeline
 a process compiles reads that cache's whole index, which a host that has run
 guest GPU workloads leaves at tens of megabytes: a fraction of a second plain,
 and minutes under AddressSanitizer, where every realloc copies. The private
-cache starts empty and is removed at exit, so a test costs the same on any
-host and leaves the host's cache alone.
+cache starts empty and is removed at exit, together with the caches of
+child processes that ended without running exit handlers, so a test costs the
+same on any host and leaves the host's cache alone.
 
 The GPU workflows need the `apple-gpu-vulkan-experiment` dependency prefix. A
 change that crosses the Venus or KosmicKrisp boundary also runs
