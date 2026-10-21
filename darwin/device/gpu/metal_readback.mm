@@ -482,18 +482,14 @@ struct MetalReadbackState final :
                         .width = footprint.width,
                         .height = footprint.height,
                     };
-                    const auto sampling = shaderSampling(
-                        *request.sampling, DisplayRotation::upright);
-                    [draw setRenderPipelineState:pipeline];
-                    [draw setViewport:viewport];
                     [draw setScissorRect:scissor];
-                    [draw setFragmentTexture:request.texture atIndex:0];
-                    [draw setFragmentBytes:&sampling
-                                    length:sizeof(sampling)
-                                   atIndex:0];
-                    [draw drawPrimitives:MTLPrimitiveTypeTriangle
-                             vertexStart:0
-                             vertexCount:3];
+                    encodeScanoutPass(
+                        draw,
+                        pipeline,
+                        request.texture,
+                        *request.sampling,
+                        DisplayRotation::upright,
+                        viewport);
                     [draw endEncoding];
                 }
                 id<MTLBlitCommandEncoder> encoder =

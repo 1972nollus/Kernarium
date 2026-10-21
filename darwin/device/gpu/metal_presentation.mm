@@ -315,24 +315,20 @@ struct MetalPresentationState final :
                     return;
                 }
                 if (source != nil && sampling && scanoutPassSamples(source)) {
-                    [encoder setRenderPipelineState:
-                        pipelines.forTexture(source)];
-                    [encoder setViewport:MTLViewport {
-                        .originX = 0.0,
-                        .originY = 0.0,
-                        .width = static_cast<double>(width),
-                        .height = static_cast<double>(height),
-                        .znear = 0.0,
-                        .zfar = 1.0,
-                    }];
-                    [encoder setFragmentTexture:source atIndex:0];
-                    const auto shader = shaderSampling(*sampling, rotation);
-                    [encoder setFragmentBytes:&shader
-                                        length:sizeof(shader)
-                                       atIndex:0];
-                    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
-                                vertexStart:0
-                                vertexCount:3];
+                    encodeScanoutPass(
+                        encoder,
+                        pipelines.forTexture(source),
+                        source,
+                        *sampling,
+                        rotation,
+                        MTLViewport {
+                            .originX = 0.0,
+                            .originY = 0.0,
+                            .width = static_cast<double>(width),
+                            .height = static_cast<double>(height),
+                            .znear = 0.0,
+                            .zfar = 1.0,
+                        });
                 }
                 [encoder endEncoding];
                 tapInFlight.fetch_add(1, std::memory_order_acq_rel);
@@ -667,18 +663,13 @@ struct MetalPresentationState final :
                     return;
                 }
                 if (drawSource) {
-                    [encoder setRenderPipelineState:
-                        pipelines.forTexture(sourceTexture)];
-                    [encoder setViewport:viewport];
-                    [encoder setFragmentTexture:sourceTexture atIndex:0];
-                    const auto sampling =
-                        shaderSampling(*activeSampling, activeRotation);
-                    [encoder setFragmentBytes:&sampling
-                                        length:sizeof(sampling)
-                                       atIndex:0];
-                    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
-                                vertexStart:0
-                                vertexCount:3];
+                    encodeScanoutPass(
+                        encoder,
+                        pipelines.forTexture(sourceTexture),
+                        sourceTexture,
+                        *activeSampling,
+                        activeRotation,
+                        viewport);
                 }
                 [encoder endEncoding];
                 [buffer presentDrawable:drawable];
