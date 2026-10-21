@@ -70,8 +70,6 @@ constexpr std::uint32_t pstate_mode32 = 0x0000'0010U;
 constexpr std::int32_t x86_64_debug_trap = 1;
 constexpr std::uint32_t x86_64_bound_range = 5;
 constexpr std::uint32_t x86_64_segment_not_present = 11;
-constexpr std::uint32_t x86_64_stack_segment_fault = 12;
-constexpr std::uint32_t x86_64_general_protection = 13;
 constexpr std::int32_t x86_64_alignment_check = 17;
 /* DR6.BS: the #DB is a single step. Reported as its error code, so Linux
  * tells a step from ICEBP, which leaves DR6 clear, as x86 Linux reads DR6. */
@@ -326,14 +324,13 @@ void save_x86_fault_flags(darwin_uml_guest_registers &registers) noexcept
 	registers.x[x86_64_rflags_slot] |= x86_64::rflags_resume;
 }
 
-/* The event a dispatch of x86 code leaves for the kernel. Either engine's
- * result names an ExecutionResult and the error code of the #GP or #SS it
- * ended in. Always inlined, so the gadget entry keeps its single body. */
-template<typename Run>
+/* The event a dispatch of x86 code leaves for the kernel. Always inlined,
+ * so the gadget entry keeps its single body. */
 [[gnu::always_inline]] inline int finish_x86_run(
 	darwin_uml_guest_registers &registers,
 	darwin_uml_guest_fp_registers &fp, ::uml::runtime::Context &context,
-	x86_64::CpuState &cpu, bool stepping, Run &run) noexcept
+	x86_64::CpuState &cpu, bool stepping,
+	::uml::runtime::X86RunResult &run) noexcept
 {
 	if (stepping &&
 		run.execution.reason == uml::cpu::ExitReason::instruction_budget)
@@ -383,8 +380,8 @@ template<typename Run>
 			result.syndrome);
 		if (result.syndrome == x86_64_bound_range ||
 			result.syndrome == x86_64_segment_not_present ||
-			result.syndrome == x86_64_stack_segment_fault ||
-			result.syndrome == x86_64_general_protection)
+			result.syndrome == ::uml::runtime::x86_stack_segment_fault ||
+			result.syndrome == ::uml::runtime::x86_general_protection)
 			save_x86_fault_flags(registers);
 		event = DARWIN_UML_EVENT_BREAKPOINT;
 		break;
@@ -413,11 +410,6 @@ template<typename Run>
 }
 
 #if DARWIN_UML_X86_64_JIT
-[[nodiscard]] bool tier_generation_live(unsigned long generation) noexcept
-{
-	return darwin_uml_static_vm_generation_live(generation) != 0;
-}
-
 /* The tier state of `generation` for this vCPU, or null when the run has no
  * tier threshold. The vCPU keeps the one it last used, which it asks the
  * table for again only when it moves to another address space. */
@@ -426,7 +418,7 @@ template<typename Run>
 	::uml::runtime::ThreadExecutionState &runtime,
 	unsigned long generation) noexcept
 {
-	auto *table = context.x86_tier_table(&tier_generation_live);
+	auto *table = context.x86_tier_table(&::uml::runtime::x86_generation_live);
 	if (table == nullptr)
 		return nullptr;
 	if (runtime.x86_tier == nullptr ||
@@ -448,7 +440,7 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	if (const auto fault = load_x86_cpu(cpu, registers, fp)) {
 		/* Like IRET to a CS or SS it may not load, the entry faults with
 		 * RIP and the selectors as the kernel handed them over. */
-		::uml::runtime::X86GadgetRunResult run{};
+		::uml::runtime::X86RunResult run{};
 		run.execution.reason = uml::cpu::ExitReason::breakpoint;
 		run.execution.syndrome = fault.vector;
 		run.error_code = static_cast<std::int32_t>(fault.error);
@@ -480,7 +472,7 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 				/* The run is stopping while the address space changes
 				 * engine; the kernel sees an interrupt, as it does when
 				 * one arrives before a dispatch. */
-				::uml::runtime::X86GadgetRunResult run{};
+				::uml::runtime::X86RunResult run{};
 				run.execution.reason = uml::cpu::ExitReason::interrupt;
 				return finish_x86_run(registers, fp, context, cpu,
 					stepping, run);

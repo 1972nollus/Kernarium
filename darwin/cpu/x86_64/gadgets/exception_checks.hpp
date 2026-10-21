@@ -25,7 +25,6 @@ enum CheckedException : unsigned {
 	check_alignment = 1U << 2U,
 };
 
-inline constexpr std::uint64_t rflags_alignment_check = 1ULL << 18U;
 /* The status word's error summary and busy bits, which x87 sets together
  * while an unmasked exception is pending. */
 inline constexpr std::uint16_t x87_status_pending = 0x8080U;
@@ -34,8 +33,6 @@ inline constexpr std::uint32_t mxcsr_exception_masks = 0x1f80U;
 /* Underflow, precision and a denormal operand: the gadgets cannot tell from
  * a value whether an instruction raised any of them. */
 inline constexpr std::uint32_t mxcsr_unchecked_masks = 0x1900U;
-inline constexpr std::uint32_t mxcsr_denormals_are_zero = 0x40U;
-inline constexpr std::uint32_t mxcsr_flush_to_zero = 0x8000U;
 inline constexpr std::uint32_t mxcsr_denormal_operand = 0x02U;
 
 /* The unmasked x87 exceptions pending in the status word. */

@@ -5,6 +5,7 @@ add_executable(uml_x86_64_gadget_bootstrap_tests
 target_link_libraries(uml_x86_64_gadget_bootstrap_tests PRIVATE
     uml_x86_64_target
     uml_x86_64_gadgets
+    uml_test_allocation_failure
     UML::CpuContract)
 target_include_directories(uml_x86_64_gadget_bootstrap_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
