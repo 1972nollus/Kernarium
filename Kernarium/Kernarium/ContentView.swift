@@ -838,13 +838,6 @@ struct GuestTouchPath {
         return events
     }
 
-    mutating func cancel(
-        at point: CGPoint,
-        geometry: GuestTouchGeometry?
-    ) -> [GuestTouchEvent] {
-        end(at: point, geometry: geometry)
-    }
-
     mutating func release() -> [GuestTouchEvent] {
         var events: [GuestTouchEvent] = []
         appendLastRelease(to: &events)
@@ -1041,7 +1034,7 @@ private struct GuestDisplayView: UIViewControllerRepresentable {
         _ controller: GuestDisplayViewController,
         coordinator: ()
     ) {
-        controller.metalView.releaseGuestInput()
+        controller.metalView.releaseTrackedTouch()
         controller.metalView.finishHostResize()
         controller.metalView.resignFirstResponder()
     }
@@ -1189,10 +1182,6 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         )
     }
 
-    func releaseGuestInput() {
-        releaseTrackedTouch()
-    }
-
     func setKeyboardVisible(_ visible: Bool) {
         if visible {
             becomeFirstResponder()
@@ -1260,19 +1249,15 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         with event: UIEvent?
     ) {
         super.touchesCancelled(touches, with: event)
-        finishTouch(in: touches, cancelled: true)
+        finishTouch(in: touches)
     }
 
-    private func finishTouch(
-        in touches: Set<UITouch>,
-        cancelled: Bool = false
-    ) {
+    private func finishTouch(in touches: Set<UITouch>) {
         guard let touch = trackedTouch, touches.contains(touch) else { return }
-        let point = touch.location(in: self)
-        let events = cancelled ?
-            touchPath.cancel(at: point, geometry: touchGeometry()) :
-            touchPath.end(at: point, geometry: touchGeometry())
-        sendTouchEvents(events)
+        sendTouchEvents(touchPath.end(
+            at: touch.location(in: self),
+            geometry: touchGeometry()
+        ))
         trackedTouch = nil
     }
 
@@ -1295,7 +1280,7 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         }
     }
 
-    private func releaseTrackedTouch() {
+    func releaseTrackedTouch() {
         guard trackedTouch != nil else { return }
         sendTouchEvents(touchPath.release())
         trackedTouch = nil

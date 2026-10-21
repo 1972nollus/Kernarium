@@ -281,7 +281,7 @@ struct KernariumTests {
             GuestTouchEvent(x: 399, y: 400, pressed: true),
             GuestTouchEvent(x: 280, y: 400, pressed: true),
         ])
-        #expect(path.cancel(
+        #expect(path.end(
             at: CGPoint(x: 50, y: 125),
             geometry: geometry
         ) == [
