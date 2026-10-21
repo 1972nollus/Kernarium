@@ -7,7 +7,7 @@ set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "Apple architectures" FORCE)
 
 # Each platform's SDK and CMake system name. Every Apple product builds at one
 # deployment target, which its dependency prefixes record as well.
-set(_uml_apple_deployment_target 26.0)
+set(_uml_apple_deployment_target 27.0)
 if(UML_APPLE_PLATFORM STREQUAL "macos")
     set(_uml_apple_platform macosx Darwin)
 elseif(UML_APPLE_PLATFORM STREQUAL "ios")

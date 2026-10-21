@@ -239,11 +239,11 @@ embeds every selectable framework, links none at launch, and loads exactly one
 guest flavour for the process lifetime. macOS retains its
 unsigned embedded-loader path.
 
-The macOS, iOS device, and iOS Simulator products build at a 26.0 minimum
+The macOS, iOS device, and iOS Simulator products build at a 27.0 minimum
 (`cmake/toolchains/Apple.cmake`). Their code therefore carries no availability
 guard, fallback path, or dependency build for a release older than that, and
 every macOS and iOS product dependency prefix and platform contract records
-the same 26.0 deployment target.
+the same 27.0 deployment target.
 
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted mainline

@@ -138,10 +138,9 @@ and minutes under AddressSanitizer, where every realloc copies. The private
 cache starts empty and is removed at exit, so a test costs the same on any
 host and leaves the host's cache alone.
 
-The GPU workflows need the `apple-gpu-vulkan-experiment` dependency prefix. Its
-26.0 deployment target, which KosmicKrisp requires, is the one every macOS
-preset builds at. A change that crosses the Venus or KosmicKrisp boundary also
-runs `check-integration`.
+The GPU workflows need the `apple-gpu-vulkan-experiment` dependency prefix. A
+change that crosses the Venus or KosmicKrisp boundary also runs
+`check-integration`.
 
 KosmicKrisp's prebuilt SPIR-V has a cheap guard in the tooling suite and an
 opt-in full comparison that rebuilds `mesa_clc` on the pinned Debian host and

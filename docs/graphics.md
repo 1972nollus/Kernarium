@@ -23,7 +23,7 @@ Apple GPU product links CGL, OpenGL.framework, EAGL, MoltenVK, a Vulkan
 loader, or a second ambient libepoxy/virglrenderer family.
 
 macOS and the iOS device both build that stack from the same sources; the
-prefixes differ only in their platform contract and deployment target. The iOS
+prefixes differ only in their platform contract. The iOS
 Simulator has no build of it, because KosmicKrisp requires Metal 4 and the
 Simulator exposes no Metal 4 device: configuring the GPU product for
 `ios-simulator` fails early with that reason
