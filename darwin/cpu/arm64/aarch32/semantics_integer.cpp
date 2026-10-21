@@ -155,14 +155,6 @@ bool exec_data_processing(Exec &x, const OpInfo &info)
 
 namespace {
 
-[[nodiscard]] std::uint32_t reverse_bits(std::uint32_t value) noexcept
-{
-	value = (value >> 1 & 0x5555'5555U) | (value & 0x5555'5555U) << 1;
-	value = (value >> 2 & 0x3333'3333U) | (value & 0x3333'3333U) << 2;
-	value = (value >> 4 & 0x0f0f'0f0fU) | (value & 0x0f0f'0f0fU) << 4;
-	return __builtin_bswap32(value);
-}
-
 [[nodiscard]] constexpr std::int32_t sext8(std::uint32_t value) noexcept
 {
 	return static_cast<std::int8_t>(value & 0xffU);
@@ -207,7 +199,7 @@ bool exec_bits_and_extend(Exec &x, const OpInfo &info)
 		x.set_reg(o.d, static_cast<std::uint32_t>(std::countl_zero(x.reg(o.m))));
 		return true;
 	case Op::rbit:
-		x.set_reg(o.d, reverse_bits(x.reg(o.m)));
+		x.set_reg(o.d, __builtin_bitreverse32(x.reg(o.m)));
 		return true;
 	case Op::rev:
 		x.set_reg(o.d, __builtin_bswap32(x.reg(o.m)));
@@ -451,7 +443,6 @@ namespace {
  * on lane values extended to integers, and the lane as the destination
  * sees it for the mode. */
 struct ParallelLane final {
-	std::int32_t exact;
 	std::uint32_t out;
 	bool ge;
 };
@@ -461,7 +452,7 @@ struct ParallelLane final {
 {
 	const std::int32_t exact = subtract ? a - b : a + b;
 	const std::uint32_t mask = (1U << width) - 1U;
-	ParallelLane lane{exact, static_cast<std::uint32_t>(exact) & mask, false};
+	ParallelLane lane{static_cast<std::uint32_t>(exact) & mask, false};
 	switch (mode) {
 	case ParallelMode::signed_wrap:
 		lane.ge = exact >= 0;
