@@ -2,6 +2,7 @@
 
 #include "KernariumConsoleInput.hpp"
 #include "require.hpp"
+#include "wait_until.hpp"
 
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -93,16 +94,11 @@ std::vector<std::uint8_t> pattern(std::size_t size)
  * what a writer blocks behind. */
 void waitForQueuedInput(int guest)
 {
-    const auto deadline = std::chrono::steady_clock::now() + 10s;
-    for (;;) {
+    require(uml::testing::waitUntil([guest] {
         int queued = 0;
         require(::ioctl(guest, FIONREAD, &queued) == 0, "FIONREAD");
-        if (queued > 0)
-            return;
-        require(std::chrono::steady_clock::now() < deadline,
-            "the writer never reached the socket");
-        std::this_thread::sleep_for(1ms);
-    }
+        return queued > 0;
+    }, 10s), "the writer never reached the socket");
 }
 
 /* Input larger than the socket holds arrives whole and in order once the

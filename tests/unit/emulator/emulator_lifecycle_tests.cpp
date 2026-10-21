@@ -11,6 +11,7 @@
 #include "guest_hibernation.hpp"
 #include "require.hpp"
 #include "testing.hpp"
+#include "wait_until.hpp"
 
 #include <algorithm>
 #include <array>
@@ -315,9 +316,12 @@ struct Steps final : uml::runtime::HibernationSteps {
 	{
 		writing = true;
 		if (writeWaitsForAbort) {
-			for (int attempt = 0; attempt < 5000 && !aborted; ++attempt)
-				std::this_thread::sleep_for(std::chrono::milliseconds {2});
-			hibernationLog.add(aborted ? "write:aborted" : "write:timeout");
+			const bool abortedInTime = uml::testing::waitUntil(
+				[this] { return aborted.load(); },
+				std::chrono::seconds {10},
+				std::chrono::milliseconds {2});
+			hibernationLog.add(
+				abortedInTime ? "write:aborted" : "write:timeout");
 		} else {
 			hibernationLog.add("write");
 		}
@@ -476,9 +480,9 @@ void aResumeDuringTheWriteStopsTheWrite()
 			require(uml_emulator_quiesce(emulator.get()) == 0);
 		});
 	}};
-	for (int attempt = 0; attempt < 2500 && !steps->writing; ++attempt)
-		std::this_thread::sleep_for(std::chrono::milliseconds {2});
-	require(steps->writing, "the write must start");
+	require(uml::testing::waitUntil([&] { return steps->writing.load(); },
+		std::chrono::seconds {5}, std::chrono::milliseconds {2}),
+		"the write must start");
 	uml_emulator_resume(emulator.get());
 	quiescing.join();
 	require(heard == Requests {"trim once", "suspend", "wake"});

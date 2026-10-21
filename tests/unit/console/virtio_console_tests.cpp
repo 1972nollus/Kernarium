@@ -9,6 +9,7 @@
 #include "unique_descriptor.hpp"
 #include "unix_socket_channel.hpp"
 #include "virtio_console_device.hpp"
+#include "wait_until.hpp"
 
 #include <algorithm>
 #include <array>
@@ -38,6 +39,7 @@ namespace protocol = uml::console::protocol;
 
 using uml::testing::require;
 using uml::testing::requireThrows;
+using uml::testing::waitUntil;
 
 class TestChannel final : public uml::console::ConsoleChannel {
 public:
@@ -455,11 +457,9 @@ void unixSocketChannelNeverExposesAWiderModeWhileListening()
         require((status.st_mode & 0777) == 0600);
         // A loaded host can leave the watcher unscheduled for the whole
         // lifetime of the channel. Keep the socket until it has been seen.
-        const auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (observations.load() == 0 &&
-               std::chrono::steady_clock::now() < deadline)
-            std::this_thread::yield();
+        require(waitUntil([&] { return observations.load() != 0; },
+                    std::chrono::seconds(10), std::chrono::seconds(0)),
+            "the watcher never saw the socket");
         stop.store(true, std::memory_order_relaxed);
         watcher.join();
     }
