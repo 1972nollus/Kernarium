@@ -8,8 +8,27 @@
 #include <mach/mach_vm.h>
 #include <optional>
 #include <stdexcept>
+#include <unistd.h>
 
 namespace uml::testing {
+
+/* The host page, which is what mlock, mmap and the footprint count in. */
+[[nodiscard]] inline std::size_t host_page() noexcept
+{
+	return static_cast<std::size_t>(getpagesize());
+}
+
+/* The task's physical footprint, which a released range leaves and a
+ * committed one rejoins; 0 when the kernel will not report it. */
+[[nodiscard]] inline std::uint64_t task_footprint() noexcept
+{
+	task_vm_info_data_t info{};
+	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+	if (task_info(mach_task_self(), TASK_VM_INFO,
+		    reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
+		return 0;
+	return info.phys_footprint;
+}
 
 /* One map entry of this task, as mach_vm_region() reports it. */
 struct VmRegion final {
@@ -63,6 +82,13 @@ struct VmRegionQuery final {
 	const void *pointer) noexcept
 {
 	return region_containing(reinterpret_cast<std::uintptr_t>(pointer));
+}
+
+/* The user wire count of the map entry holding pointer; 0 when none does. */
+[[nodiscard]] inline unsigned wired_count(const void *pointer) noexcept
+{
+	const auto region = region_containing(pointer);
+	return region ? region->user_wired_count : 0;
 }
 
 [[nodiscard]] inline vm_prot_t current_vm_protection(const void *pointer)

@@ -44,7 +44,7 @@ constexpr std::size_t run_guest_memory = 256U * 1024U * 1024U;
 /* A free host page inside that window. */
 class NativeSlot final {
 public:
-	NativeSlot() : size_{static_cast<std::size_t>(getpagesize())}
+	NativeSlot() : size_{uml::testing::host_page()}
 	{
 		const auto window =
 			uml::emulator::testing::native_kernel_window(run_guest_memory);

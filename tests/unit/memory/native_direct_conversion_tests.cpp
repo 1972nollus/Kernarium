@@ -37,12 +37,8 @@ constexpr std::string_view backing_name = "uml-native-direct.XXXXXX";
 using uml::memory::testing::AllocationSite;
 using uml::testing::ScratchBacking;
 
+using uml::testing::host_page;
 using uml::testing::require;
-
-[[nodiscard]] std::size_t host_page() noexcept
-{
-	return static_cast<std::size_t>(getpagesize());
-}
 
 [[nodiscard]] vm_prot_t protection_at(std::uintptr_t address)
 {

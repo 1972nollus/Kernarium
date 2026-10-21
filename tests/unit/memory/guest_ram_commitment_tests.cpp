@@ -43,29 +43,10 @@ constexpr const char *wiring_unsupported = nullptr;
 
 constexpr std::size_t mib = 1024U * 1024U;
 
+using uml::testing::host_page;
 using uml::testing::require;
-
-[[nodiscard]] std::size_t host_page() noexcept
-{
-	return static_cast<std::size_t>(getpagesize());
-}
-
-[[nodiscard]] std::uint64_t footprint() noexcept
-{
-	task_vm_info_data_t info{};
-	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-	if (task_info(mach_task_self(), TASK_VM_INFO,
-		    reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
-		return 0;
-	return info.phys_footprint;
-}
-
-/* The user wire count of the map entry holding address. */
-[[nodiscard]] unsigned wired(const std::byte *address) noexcept
-{
-	const auto region = uml::testing::region_containing(address);
-	return region ? region->user_wired_count : 0;
-}
+using uml::testing::task_footprint;
+using uml::testing::wired_count;
 
 class Mapping final {
 public:
@@ -106,9 +87,9 @@ void release_leaves_and_commit_restores_the_footprint()
 	require(commitment.released_bytes() == 0,
 		"an unwired host starts with everything committed");
 
-	const std::uint64_t before = footprint();
+	const std::uint64_t before = task_footprint();
 	require(commitment.release(0, size / 2) == 0, "release failed");
-	const std::uint64_t released = footprint();
+	const std::uint64_t released = task_footprint();
 	require(before - released >= size / 2 - 4 * mib,
 		"a released range must leave the footprint");
 	require(commitment.released_bytes() == size / 2,
@@ -116,7 +97,7 @@ void release_leaves_and_commit_restores_the_footprint()
 
 	require(commitment.commit(0, size / 2) == 0, "commit failed");
 	ram.fill(0, size / 2, std::byte{2});
-	require(footprint() >= before - 4 * mib,
+	require(task_footprint() >= before - 4 * mib,
 		"a committed range must be counted again once written");
 	require(commitment.released_bytes() == 0, "commit must clear the range");
 	for (std::size_t offset = 0; offset < size / 2; offset += host_page())
@@ -185,14 +166,15 @@ void a_wired_host_wires_on_commit_and_unwires_on_release()
 	GuestRamCommitment commitment{ram.data(), size, 0, 0, true, page};
 	require(commitment.released_bytes() == size,
 		"a wired host starts with everything released");
-	require(wired(ram.data()) == 0, "nothing is wired before commit");
+	require(wired_count(ram.data()) == 0, "nothing is wired before commit");
 
 	require(commitment.commit(0, 8 * page) == 0, "commit failed");
-	require(wired(ram.data()) > 0, "a committed range must be wired");
-	require(wired(ram.data() + 16 * page) == 0,
+	require(wired_count(ram.data()) > 0, "a committed range must be wired");
+	require(wired_count(ram.data() + 16 * page) == 0,
 		"an uncommitted range must stay unwired");
 	require(commitment.release(0, 8 * page) == 0, "release failed");
-	require(wired(ram.data()) == 0, "a released range must be unwired");
+	require(wired_count(ram.data()) == 0,
+		"a released range must be unwired");
 	require(commitment.wire_failures() == 0, "wiring must not have failed");
 }
 
