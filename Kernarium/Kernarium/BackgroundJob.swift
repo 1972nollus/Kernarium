@@ -89,7 +89,8 @@ final class BackgroundJob: ObservableObject {
         let request = BGContinuedProcessingTaskRequest(
             identifier: Self.identifier,
             title: "\(guestName) is running",
-            subtitle: "Stops after \(Self.describe(minutes: limitMinutes))"
+            subtitle: "Stops after " +
+                BackgroundSettings.limitTitle(minutes: limitMinutes)
         )
         request.strategy = .fail
         do {
@@ -114,12 +115,6 @@ final class BackgroundJob: ObservableObject {
             BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.identifier)
         }
         finish(success: false, reason: "stopped")
-    }
-
-    private static func describe(minutes: Int) -> String {
-        minutes % 60 == 0 ?
-            (minutes == 60 ? "1 hour" : "\(minutes / 60) hours") :
-            "\(minutes) minutes"
     }
 
     private func registerHandler() {

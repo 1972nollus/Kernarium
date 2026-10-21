@@ -479,4 +479,15 @@ struct BackgroundControllerTests {
         defaults.set("someday", forKey: BackgroundSettings.keyPrefix + "x")
         #expect(settings.mode(forGuest: "x") == .off)
     }
+
+    @Test
+    func aLimitIsTitledInWholeHoursWhereItIsOne() {
+        for (minutes, title) in [
+            (15, "15 minutes"), (30, "30 minutes"), (60, "1 hour"),
+            (120, "2 hours"), (90, "90 minutes"), (1, "1 minutes"),
+            (24 * 60, "24 hours"),
+        ] {
+            #expect(BackgroundSettings.limitTitle(minutes: minutes) == title)
+        }
+    }
 }

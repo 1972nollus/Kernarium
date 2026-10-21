@@ -85,13 +85,6 @@ struct EmulatorSettingsView: View {
             .sorted()
     }
 
-    private static func limitTitle(minutes: Int) -> String {
-        if minutes % 60 == 0 {
-            return minutes == 60 ? "1 hour" : "\(minutes / 60) hours"
-        }
-        return "\(minutes) minutes"
-    }
-
     var body: some View {
         NavigationStack {
             Form {
@@ -185,8 +178,10 @@ struct EmulatorSettingsView: View {
                             selection: $backgroundLimitMinutes
                         ) {
                             ForEach(offeredLimitMinutes, id: \.self) { minutes in
-                                Text(Self.limitTitle(minutes: minutes))
-                                    .tag(minutes)
+                                Text(BackgroundSettings.limitTitle(
+                                    minutes: minutes
+                                ))
+                                .tag(minutes)
                             }
                         }
                         .accessibilityIdentifier("backgroundLimitPicker")
