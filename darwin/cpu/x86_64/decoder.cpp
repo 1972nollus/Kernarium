@@ -356,42 +356,28 @@ private:
 						LegacySegment::cs : opcode == 0x36 ?
 						LegacySegment::ss : LegacySegment::ds;
 				}
-				prefixes_.rex = 0;
-				prefixes_.rex_present = false;
-				continue;
+				break;
 			case 0x64:
 				prefixes_.segment = Segment::fs;
 				prefixes_.legacy_segment = LegacySegment::none;
-				prefixes_.rex = 0;
-				prefixes_.rex_present = false;
-				continue;
+				break;
 			case 0x65:
 				prefixes_.segment = Segment::gs;
 				prefixes_.legacy_segment = LegacySegment::none;
-				prefixes_.rex = 0;
-				prefixes_.rex_present = false;
-				continue;
+				break;
 			case 0x66:
 				prefixes_.operand_size = true;
-				prefixes_.rex = 0;
-				prefixes_.rex_present = false;
-				continue;
+				break;
 			case 0x67:
 				prefixes_.address_size = true;
-				prefixes_.rex = 0;
-				prefixes_.rex_present = false;
-				continue;
+				break;
 			case 0xf0:
 				prefixes_.locked = true;
-				prefixes_.rex = 0;
-				prefixes_.rex_present = false;
-				continue;
+				break;
 			case 0xf2:
 			case 0xf3:
 				prefixes_.repeat = opcode;
-				prefixes_.rex = 0;
-				prefixes_.rex_present = false;
-				continue;
+				break;
 			default:
 				if (prefixes_.mode == ExecutionMode::long64 &&
 					opcode >= 0x40 && opcode <= 0x4f) {
@@ -401,6 +387,9 @@ private:
 				}
 				return true;
 			}
+			/* A REX prefix only counts immediately before the opcode. */
+			prefixes_.rex = 0;
+			prefixes_.rex_present = false;
 		}
 	}
 
