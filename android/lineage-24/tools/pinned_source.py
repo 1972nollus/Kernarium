@@ -172,22 +172,21 @@ class Route:
 
 def read_route_table(
     path: Path,
-    header: tuple[str, ...],
     android_root: Path,
-    series_root: str,
     base_projects: dict[str, ET.Element],
     error: Error,
 ) -> list[Route]:
-    """Return a route table's routes, checked against the resolved base manifest.
+    """Return the AOSP route table's routes, checked against the resolved base
+    manifest.
 
     The order column counts from 1, and no route ID, remote and project, or
     checkout path repeats. Each route names its base-manifest project on the
     remote that serves it at the pinned revision and upstream, and its own
-    nonempty series at `<series_root>/<route_id>/series` below the Android
+    nonempty series at `patches/projects/<route_id>/series` below the Android
     root.
     """
     routes: list[Route] = []
-    for index, values in enumerate(table(path, header, error), 1):
+    for index, values in enumerate(table(path, AOSP_ROUTE_HEADER, error), 1):
         (
             order_text, route_id, remote, project, checkout_path, upstream,
             base_commit, base_tree, final_tree, series_dir_text,
@@ -201,7 +200,7 @@ def read_route_table(
         safe_relative(project, "manifest project name", error)
         safe_relative(checkout_path, "checkout path", error)
         safe_relative(series_dir_text, "series directory", error)
-        expected_series_dir = f"{series_root}/{route_id}/series"
+        expected_series_dir = f"patches/projects/{route_id}/series"
         if series_dir_text != expected_series_dir:
             raise error(f"route {route_id} series must be isolated at {expected_series_dir}")
         for label, value in (
@@ -240,10 +239,9 @@ def verify_repo_routes(
     base_projects: dict[str, ET.Element],
     routes: list[Route],
     expect: str,
-    label: str,
     error: Error,
 ) -> None:
-    """Check a routed Repo workspace against its base manifest and routes.
+    """Check a routed AOSP Repo workspace against its base manifest and routes.
 
     Repo must resolve exactly the base manifest's project paths, with every
     unrouted project at its pinned revision and no project dirty. Each route
@@ -253,7 +251,7 @@ def verify_repo_routes(
     """
     source = source.resolve()
     if not (source / ".repo/manifests").is_dir():
-        raise error(f"{label} source lacks Repo metadata: {source}")
+        raise error(f"AOSP source lacks Repo metadata: {source}")
     current_projects = manifest_projects(
         ET.fromstring(run("repo", "manifest", "-r", cwd=source, error=error)), error
     )
@@ -263,15 +261,15 @@ def verify_repo_routes(
     for path, base in base_projects.items():
         moved = current_projects[path].get("revision") != base.get("revision")
         if path not in route_paths and moved:
-            raise error(f"unrouted {label} project moved from its pinned revision: {path}")
+            raise error(f"unrouted AOSP project moved from its pinned revision: {path}")
     dirty = run("repo", "forall", "-c", DIRTY_PROJECTS, cwd=source, error=error)
     if dirty:
-        raise error(f"{label} projects have uncommitted changes: {dirty}")
+        raise error(f"AOSP projects have uncommitted changes: {dirty}")
 
     for route in routes:
         checkout = (source / route.path).resolve()
         if not checkout.is_relative_to(source):
-            raise error(f"route {route.route_id} checkout escapes the {label} source")
+            raise error(f"route {route.route_id} checkout escapes the AOSP source")
         if not (checkout / ".git").exists():
             raise error(f"route {route.route_id} is not a Git checkout")
         head = run("git", "rev-parse", "HEAD", cwd=checkout, error=error)
@@ -296,15 +294,13 @@ def verify_repo_routes(
             raise error(f"route {route.route_id} is not based on its pinned base")
 
 
-def verify_device_tree(
-    android_root: Path, tree: str, workspace: Path, error: Error
-) -> None:
+def verify_device_tree(android_root: Path, workspace: Path, error: Error) -> None:
     """Require the workspace's device tree to equal the checked one."""
     tool = android_root / "tools/sync-device-tree.py"
     if not tool.is_file():
         raise error("device-tree sync tool is missing")
     run(
-        str(tool), "--android-root", str(android_root), "--tree", tree,
+        str(tool), "--android-root", str(android_root),
         "--workspace", str(workspace.resolve()), "--verify", error=error,
     )
 

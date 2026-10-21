@@ -19,8 +19,6 @@ import android_image
 MAX_RAMDISK_SIZE = 256 * 1024 * 1024
 LZ4_LEGACY_MAGIC = b"\x02\x21\x4c\x18"
 LZ4_LEGACY_BLOCK_LIMIT = 8 * 1024 * 1024
-ELF_MAGIC = b"\x7fELF"
-EM_AARCH64 = 183
 REQUIRED_PATHS = {
     "init",
     "prop.default",
@@ -33,11 +31,6 @@ REQUIRED_PATHS = {
     "system/etc/recovery.fstab",
     "system/lib64/librecovery_ui.so",
     "system/lib64/librecovery_ui_ext.so",
-}
-FORBIDDEN_MODULE_METADATA = {
-    "modules.alias", "modules.alias.bin", "modules.builtin",
-    "modules.builtin.modinfo", "modules.dep", "modules.dep.bin",
-    "modules.load", "modules.options", "modules.order", "modules.softdep",
 }
 
 
@@ -145,16 +138,12 @@ def decompress_ramdisk(payload: bytes) -> bytes:
 
 
 def verify_elf(name: str, payload: bytes) -> bool:
-    if not payload.startswith(ELF_MAGIC):
+    if not payload.startswith(android_image.ELF_MAGIC):
         return False
-    if len(payload) < 64 or payload[4] != 2 or payload[5] != 1:
-        fail(f"target ELF is not little-endian ELF64: {name}")
-    machine = struct.unpack_from("<H", payload, 18)[0]
-    if machine != EM_AARCH64:
-        fail(f"target ELF is not AArch64: {name}")
+    android_image.check_aarch64_elf_header(name, payload, VerificationError)
     program_offset = struct.unpack_from("<Q", payload, 32)[0]
     entry_size, entry_count = struct.unpack_from("<HH", payload, 54)
-    if entry_size < 56 or program_offset + entry_size * entry_count > len(payload):
+    if program_offset + entry_size * entry_count > len(payload):
         fail(f"target ELF program headers are malformed: {name}")
     for segment in android_image.program_headers(payload):
         if segment.offset + segment.file_size > len(payload):
@@ -203,8 +192,7 @@ def verify_entries(
     needed_by: dict[str, set[str]] = {}
     available_libraries: set[str] = set()
     for name, entry in entries.items():
-        basename = PurePosixPath(name).name.lower()
-        if basename.endswith(".ko") or ".ko." in basename or basename in FORBIDDEN_MODULE_METADATA:
+        if android_image.is_module_payload(PurePosixPath(name).name):
             fail(f"loadable-module payload remains in recovery: {name}")
         if stat.S_ISREG(entry.mode) and verify_elf(name, entry.payload):
             elf_count += 1
