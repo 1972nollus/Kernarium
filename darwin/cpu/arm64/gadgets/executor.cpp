@@ -3133,6 +3133,39 @@ void forget_returns(arm64::CpuState &cpu) noexcept
 	cpu.gadget_return_top = 0;
 }
 
+#if UML_GADGET_EXECUTION_HISTOGRAM
+/* Why translated execution returned to the executor, for the execution
+ * histogram: a guest-visible event, the chain limit, an indirect miss, or an
+ * unlinked exit. */
+template<typename Programs>
+void note_exit_histogram(GadgetCacheDiagnostics &d, Programs &programs,
+	::uml::cpu::EngineEvent event, const arm64::CpuState &cpu,
+	std::size_t executed)
+{
+	if (event == ::uml::cpu::EngineEvent::system_call)
+		++d.exits_syscall;
+	else if (event == ::uml::cpu::EngineEvent::memory_fault)
+		++d.exits_fault;
+	else if (event == ::uml::cpu::EngineEvent::interrupt)
+		++d.exits_interrupt;
+	else if (event != ::uml::cpu::EngineEvent::continued)
+		++d.exits_other;
+	else if (cpu.gadget_indirect_miss != nullptr) {
+		++d.exits_indirect_miss;
+		if (static_cast<const arm64::gadgets::IndirectLink *>(
+			    cpu.gadget_indirect_miss)->kind != 0)
+			++d.exits_indirect_miss_return;
+		if ((d.exits_indirect_miss & 4095) == 0)
+			d.miss_by_site_targets = programs.miss_distribution();
+	}
+	else if (executed >= 4096)
+		++d.exits_chain_limit;
+	else
+		++d.exits_unlinked;
+	diagnostics::execution_histogram_note_executor(&d);
+}
+#endif
+
 } // namespace
 
 /* Produce and store a translation the cache did not hold. run_block
@@ -3191,30 +3224,7 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 		cpu.gadget_indirect_miss = nullptr;
 	}
 #if UML_GADGET_EXECUTION_HISTOGRAM
-	{
-		auto &d = cache_diagnostics_;
-		if (event == ::uml::cpu::EngineEvent::system_call)
-			++d.exits_syscall;
-		else if (event == ::uml::cpu::EngineEvent::memory_fault)
-			++d.exits_fault;
-		else if (event == ::uml::cpu::EngineEvent::interrupt)
-			++d.exits_interrupt;
-		else if (event != ::uml::cpu::EngineEvent::continued)
-			++d.exits_other;
-		else if (cpu.gadget_indirect_miss != nullptr) {
-			++d.exits_indirect_miss;
-			if (static_cast<const arm64::gadgets::IndirectLink *>(
-				    cpu.gadget_indirect_miss)->kind != 0)
-				++d.exits_indirect_miss_return;
-			if ((d.exits_indirect_miss & 4095) == 0)
-				d.miss_by_site_targets = programs.miss_distribution();
-		}
-		else if (executed >= 4096)
-			++d.exits_chain_limit;
-		else
-			++d.exits_unlinked;
-		diagnostics::execution_histogram_note_executor(&d);
-	}
+	note_exit_histogram(cache_diagnostics_, programs, event, cpu, executed);
 #endif
 	/* A stream pointer left by a non-retiring or FPCR-enable exit was
 	 * consumed and cleared above, so what remains is a cache cell. */
@@ -3679,30 +3689,7 @@ private:
 		breakpoint_immediate_ =
 			arm64::aarch32::read_breakpoint_immediate(memory, cpu.pc);
 #if UML_GADGET_EXECUTION_HISTOGRAM
-	{
-		auto &d = cache_diagnostics_;
-		if (event == ::uml::cpu::EngineEvent::system_call)
-			++d.exits_syscall;
-		else if (event == ::uml::cpu::EngineEvent::memory_fault)
-			++d.exits_fault;
-		else if (event == ::uml::cpu::EngineEvent::interrupt)
-			++d.exits_interrupt;
-		else if (event != ::uml::cpu::EngineEvent::continued)
-			++d.exits_other;
-		else if (cpu.gadget_indirect_miss != nullptr) {
-			++d.exits_indirect_miss;
-			if (static_cast<const arm64::gadgets::IndirectLink *>(
-				    cpu.gadget_indirect_miss)->kind != 0)
-				++d.exits_indirect_miss_return;
-			if ((d.exits_indirect_miss & 4095) == 0)
-				d.miss_by_site_targets = programs.miss_distribution();
-		}
-		else if (executed >= 4096)
-			++d.exits_chain_limit;
-		else
-			++d.exits_unlinked;
-		diagnostics::execution_histogram_note_executor(&d);
-	}
+	note_exit_histogram(cache_diagnostics_, programs, event, cpu, executed);
 #endif
 	if (event == ::uml::cpu::EngineEvent::continued &&
 	    cpu.gadget_indirect_miss != nullptr &&
