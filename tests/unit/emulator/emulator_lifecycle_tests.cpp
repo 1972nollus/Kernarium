@@ -7,6 +7,7 @@
  * its RAM and threads are already back.
  */
 #include "uml/emulator.h"
+#include "emulator_test_support.hpp"
 #include "guest_console.hpp"
 #include "guest_hibernation.hpp"
 #include "require.hpp"
@@ -200,18 +201,15 @@ private:
 	int descriptor_ {-1};
 };
 
-using Emulator = std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)>;
 using Requests = std::vector<std::string>;
 
-Emulator makeEmulator()
+/* A handle with no kernel: the lifecycle calls reach only the console. */
+uml::testing::Emulator makeEmulator()
 {
-	const uml_emulator_config config {
+	return uml::testing::create_emulator({
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
-	};
-	uml_emulator *created = nullptr;
-	require(uml_emulator_create(&config, &created) == UML_EMULATOR_OK);
-	return {created, uml_emulator_destroy};
+	});
 }
 
 /* A quiesced guest keeps what it holds, so it trims before it suspends. */

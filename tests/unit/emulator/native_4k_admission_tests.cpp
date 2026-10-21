@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml/emulator.h"
 #include "domain_registry_testing.hpp"
+#include "emulator_test_support.hpp"
 #include "native_window_test_support.hpp"
 #include "require.hpp"
 #include "scratch_backing.hpp"
@@ -13,7 +14,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <memory>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <mutex>
@@ -35,6 +35,7 @@ constexpr std::string_view backing_name = "uml-native-admission-XXXXXX";
  * from becoming an earlier, independent serialization boundary. */
 constexpr char admission_engine_argument[] = "--execution-engine=gadgets";
 
+using uml::testing::make_emulator;
 using uml::testing::require;
 
 /* A run maps its kernel window where an embedded kernel's run does; default
@@ -209,25 +210,6 @@ public:
 	AdmissionHooks &operator=(const AdmissionHooks &) = delete;
 };
 
-using Emulator = std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)>;
-
-Emulator make_emulator(uml::emulator::testing::KernelEntry entry,
-	const char *rootfs)
-{
-	const auto image = uml::emulator::testing::kernel_image(entry);
-	const uml_emulator_config config{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = rootfs,
-		.kernel_image = image.data(),
-		.kernel_image_size = image.size(),
-	};
-	uml_emulator *created = nullptr;
-	require(uml_emulator_create(&config, &created) == UML_EMULATOR_OK,
-		"could not create native admission emulator");
-	return {created, uml_emulator_destroy};
-}
-
 void reset_state(KernelState &state, std::uintptr_t address, int fd,
 	std::uint8_t expected, std::uint8_t replacement, bool hold)
 {
@@ -273,8 +255,8 @@ void test_same_address_is_serialized_and_isolated(const NativeSlot &slot)
 	backing_b.put_byte(0, std::byte{0xe3});
 	reset_state(state_a, slot.page(), backing_a.descriptor(), 0x19, 0x2a, true);
 	reset_state(state_b, slot.page(), backing_b.descriptor(), 0xe3, 0xf4, false);
-	auto handle_a = make_emulator(kernel_a, "/tmp/native-gate-a.img");
-	auto handle_b = make_emulator(kernel_b, "/tmp/native-gate-b.img");
+	auto handle_a = make_emulator(kernel_a);
+	auto handle_b = make_emulator(kernel_b);
 	const char *arguments[]{
 		"native-4k-same-address", admission_engine_argument};
 	int status_a = -1;
@@ -326,8 +308,8 @@ void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 	backing_b.put_byte(0, std::byte{0xa6});
 	reset_state(state_a, slot.page(), backing_a.descriptor(), 0x35, 0x46, true);
 	reset_state(state_b, slot.page(), backing_b.descriptor(), 0xa6, 0xb7, false);
-	auto handle_a = make_emulator(kernel_a, "/tmp/native-gate-stop-a.img");
-	auto handle_b = make_emulator(kernel_b, "/tmp/native-gate-stop-b.img");
+	auto handle_a = make_emulator(kernel_a);
+	auto handle_b = make_emulator(kernel_b);
 	const char *arguments[]{
 		"native-4k-queued-stop", admission_engine_argument};
 	int status_a = -1;
