@@ -6,11 +6,11 @@
 #include "named_tests.hpp"
 #include "require.hpp"
 #include "thread_fence.hpp"
+#include "thread_nap.hpp"
 #include "watchdog.hpp"
 
 #include <atomic>
 #include <chrono>
-#include <mach/mach_time.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -26,25 +26,12 @@
 namespace {
 
 using uml::runtime::ThreadFence;
+using uml::testing::nap;
 using uml::testing::require;
 
 void sleep_ms(unsigned milliseconds)
 {
 	std::this_thread::sleep_for(std::chrono::milliseconds{milliseconds});
-}
-
-/* Sleeps without leaving libsystem_kernel: usleep is a libsystem_c function,
- * a library the fence keeps its distance from. */
-void nap(unsigned microseconds)
-{
-	static const mach_timebase_info_data_t base = [] {
-		mach_timebase_info_data_t value{};
-		mach_timebase_info(&value);
-		return value;
-	}();
-	mach_wait_until(mach_absolute_time() +
-		static_cast<std::uint64_t>(microseconds) * 1000ULL * base.denom /
-		base.numer);
 }
 
 /* Holds, or stops the test saying why the fence could not. */
