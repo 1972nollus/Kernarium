@@ -112,8 +112,7 @@ option(UML_GADGET_CACHE_CENSUS
     "Write gadget cache census snapshots (diagnostic builds only)"
     OFF)
 
-# x86-64 guests run on the x86_64 tree's engines. The fixed x86 Linux slice
-# uses a 4 KiB guest profile on macOS.
+# x86-64 guests run on the x86_64 tree's engines.
 if(UML_BUILD_X86_64_GUEST)
     add_subdirectory(x86_64)
 endif()
@@ -153,12 +152,9 @@ target_compile_definitions(uml_gadget_histogram_configuration INTERFACE
 target_link_libraries(uml_cpu_contract INTERFACE
     UML::GadgetHistogramConfiguration)
 
-# Gadget-engine SME sources, owned by SME lane S5: the SME part's selection
-# and helper sources. The streaming gadget bodies it generates at build time
-# from the shared SVE/SME encoding table (cpu/arm64/detail/sme_encodings.hpp)
-# are declared in this block too, with their custom command and the
-# OBJECT_DEPENDS of engine.S. The JIT's block below is disjoint, so the two
-# lanes never edit the same lines.
+# Gadget-engine SME sources: the SME part's selection and helper sources, and
+# the streaming gadget bodies generated at build time from the shared SVE/SME
+# encoding table (cpu/arm64/detail/sme_encodings.hpp).
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(_uml_arm64_streaming_dir ${CMAKE_CURRENT_BINARY_DIR}/arm64_streaming)
 set(_uml_arm64_streaming_generator
@@ -196,12 +192,10 @@ set(_uml_arm64_gadget_sme_sources
     arm64/gadgets/sme_helpers.cpp
     ${_uml_arm64_streaming_dir}/streaming_forms.hpp)
 
-# Gadget-engine AArch32 sources, owned by lane A32-G: the AArch32 part's
-# gadget bodies and form tables the generator writes at build time from the
-# decoder's encoding table (arm64/aarch32/a32_encodings.hpp), and the builder
-# that translates A32 and T32 with the shared decoder. engine.S gains their
-# OBJECT_DEPENDS and include directory by appending, so the blocks above stay
-# as they are.
+# Gadget-engine AArch32 sources: the AArch32 part's gadget bodies and form
+# tables the generator writes at build time from the decoder's encoding table
+# (arm64/aarch32/a32_encodings.hpp), and the builder that translates A32 and
+# T32 with the shared decoder. engine.S includes both generated bodies.
 set(_uml_arm64_a32_dir ${CMAKE_CURRENT_BINARY_DIR}/arm64_a32)
 set(_uml_arm64_a32_generator
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/generate_a32.py)
@@ -330,17 +324,16 @@ else()
         "gadget translation IPO unavailable: ${_uml_gadget_ipo_error}")
 endif()
 
-# JIT SME sources, owned by SME lane S4: the compiler's SME sources and the
-# streaming-mode transitions in the first list (absolute paths, like the
-# compiler's), executor-side sources in the second. The gadget engine's
-# block above is disjoint.
+# JIT SME sources: the compiler's SME sources and the streaming-mode
+# transitions in the first list (absolute paths, like the compiler's),
+# executor-side sources in the second.
 set(_uml_cpu_jit_sme_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_sme.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_sme_transition.S)
 set(_uml_cpu_jit_executor_sme_sources
     arm64/jit/jit_semantic_sme.cpp)
 
-# The AArch32 compiler of the JIT (design 5), owned by lane A32-J.
+# The AArch32 compiler of the JIT.
 set(_uml_cpu_jit_a32_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_alu.cpp

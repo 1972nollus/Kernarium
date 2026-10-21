@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 # x86-64 code is translated to immutable streams of precompiled host gadgets.
-# The fixed x86 Linux slice uses a 4 KiB guest profile on macOS, whose
-# dependency prefix provides the exact math archives.
+# The macOS dependency prefix provides the exact math archives.
 add_library(uml_x86_64_gadgets OBJECT
     engine.S
     exception_checks.cpp
