@@ -955,7 +955,6 @@ public:
 #if UML_GADGET_CACHE_CENSUS
 				history_.adopted();
 #endif
-				++adoptions_;
 				cache_hit = true;
 				return program;
 			}
@@ -1056,11 +1055,6 @@ public:
 		if (gadget_cache::over_budget())
 			gadget_cache::relieve();
 		return &slot.body->program;
-	}
-
-	[[nodiscard]] std::uint64_t adoptions() const noexcept
-	{
-		return adoptions_;
 	}
 
 	[[nodiscard]] std::size_t resident_generations() const noexcept
@@ -2198,8 +2192,6 @@ private:
 	CodePageRegistries *registries_{};
 	ProgramCacheCodeChangeReader code_change_reader_{};
 	void *code_change_context_{};
-	/* Translations taken from the address space instead of built. */
-	std::uint64_t adoptions_{};
 #if UML_GADGET_CACHE_CENSUS
 	census::History history_;
 	census::Schedule schedule_;
