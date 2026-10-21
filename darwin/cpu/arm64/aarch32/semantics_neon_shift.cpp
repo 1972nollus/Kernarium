@@ -117,11 +117,16 @@ bool vqshl_r(Exec &x)
 {
 	const unsigned bits = element_bits(x);
 	const bool is_unsigned = x.o.unsigned_;
-	QcTally qc;
+	bool saturated = false;
 	const bool completed = lanewise(x, [&](Raw n, Raw m, Raw) {
-		return qc.take(sat_q(shifted(operand(x, m), register_shift(n), Round), bits, is_unsigned));
+		const Saturation result =
+			sat_q(shifted(operand(x, m), register_shift(n), Round), bits, is_unsigned);
+		saturated = saturated || result.saturated;
+		return result.raw;
 	});
-	return qc.finish(x, completed);
+	if (saturated)
+		set_qc(x.cpu);
+	return completed;
 }
 
 bool vshll(Exec &x)
