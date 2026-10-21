@@ -161,45 +161,6 @@ La32fpdone\@:
 97:
 .endm
 
-/* A direct link: follow the BlockLink \link names, giving up the chain when
- * the linked-instruction limit is reached. Scratch x9, x11. */
-.macro a32_follow_link link
-	ldp _stream, x11, [\link]
-	add x29, x29, x11
-	tbnz x29, #63, 98f
-	ldr x9, [\link, #16]
-	str x9, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, wzr
-	b uml_arm64_gadget_leave
-98:
-	next_gadget
-.endm
-
-.macro a32_push_return_record pc, link
-	ldrb w12, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
-	add x13, _cpu, #UML_GADGET_CPU_RETURN_STACK
-	add x13, x13, x12, lsl #4
-	stp \pc, \link, [x13]
-	add w12, w12, #1
-	and w12, w12, #UML_GADGET_CPU_RETURN_MASK
-	strb w12, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
-.endm
-
-/* As train_indirect_cell: fill the site's first empty cell, if any. */
-.macro a32_train_cell
-	ldr x13, [x9]
-	cmn x13, #1
-	b.eq 1f
-	ldr x13, [x9, #16]
-	cmn x13, #1
-	b.ne 2f
-	stp x10, x12, [x9, #16]
-	b 2f
-1:
-	stp x10, x12, [x9]
-2:
-.endm
-
 /* x10 is the target key and x9 the site's cells: follow the cell that holds
  * the key, else (for a return) the newest return record, else the address
  * space's target table, else leave with the key as the PC and the site in
@@ -222,13 +183,13 @@ La32fpdone\@:
 	cmp x10, x11
 	b.ne 97f
 	strb w13, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
-	a32_train_cell
+	train_indirect_cell
 	b 98f
 97:
 	.endif
 	b La32_target_tier\@
 98:
-	a32_follow_link x12
+	follow_block_link x12
 	.pushsection GADGET_SECTION_A32_COLD
 La32_target_tier\@:
 	ldr x13, [_cpu, #UML_GADGET_CPU_TARGET_TIER]
@@ -239,8 +200,8 @@ La32_target_tier\@:
 	ldp x11, x12, [x13]
 	cmp x10, x11
 	b.ne La32_target_tier_miss\@
-	a32_train_cell
-	a32_follow_link x12
+	train_indirect_cell
+	follow_block_link x12
 La32_target_tier_miss\@:
 	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
 	str x10, [_cpu, #UML_GADGET_CPU_PC]
@@ -341,8 +302,8 @@ gadget a32_bl_linked
 	ldr x9, [x11, #16]
 	a32_return_value w12, x12, x9
 	str w12, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
-	a32_push_return_record x9, x11
-	a32_follow_link x8
+	push_return_record x9, x11
+	follow_block_link x8
 
 /* The unlinked form, for a translation with no link table: the target key,
  * the LR value. */
@@ -394,7 +355,7 @@ gadget a32_blx_cached
 	ldr x11, [x14, #16]
 	a32_return_value w15, x15, x11
 	str w15, [_cpu, #(UML_GADGET_CPU_X0 + 14 * 8)]
-	a32_push_return_record x11, x14
+	push_return_record x11, x14
 	a32_follow_indirect 0
 
 gadget a32_blx
@@ -444,7 +405,7 @@ gadget a32_\name\()_inline
 	next_gadget
 1:
 	sub x29, x29, x20
-	a32_follow_link x19
+	follow_block_link x19
 
 gadget a32_\name\()_linked
 	ldp x8, x19, [_stream], #16
@@ -452,7 +413,7 @@ gadget a32_\name\()_linked
 	ldr w9, [_cpu, x8]
 	cmp w9, #0
 	csel x8, x19, x20, \condition
-	a32_follow_link x8
+	follow_block_link x8
 
 gadget a32_\name\()_plain
 	ldp x8, x19, [_stream], #16
@@ -728,9 +689,9 @@ gadget a32_code_sequence_check
 
 .purgem a32_return_value
 .purgem a32_follow_indirect
-.purgem a32_train_cell
-.purgem a32_push_return_record
-.purgem a32_follow_link
+.purgem train_indirect_cell
+.purgem push_return_record
+.purgem follow_block_link
 .purgem a32_key_interworking
 .purgem a32_key_thumb
 

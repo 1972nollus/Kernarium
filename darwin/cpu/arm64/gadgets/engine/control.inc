@@ -619,5 +619,6 @@ test_branch nz, ne
 
 .purgem conditional_branch_linked
 /* follow_block_link, follow_indirect_link, train_indirect_cell and
- * push_return_record stay defined for test_bit_branch.inc and return_x30.inc;
- * return_x30.inc, the last to use them, purges them. */
+ * push_return_record stay defined for test_bit_branch.inc, return_x30.inc and
+ * a32.inc. return_x30.inc purges follow_indirect_link; a32.inc, the last to
+ * use the other three, purges them. */
