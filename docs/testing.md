@@ -127,11 +127,16 @@ cmake --workflow --preset check-gpu-asan-ubsan
 cmake --workflow --preset check-loader-asan-ubsan
 ```
 
-The `unit-gpu` test preset's name filter is the one list of GPU workflow unit
-tests, and the other `unit-gpu*` test presets inherit it. Configure derives the
-`gpu-unit-test-binaries` target from that filter, so adding a test to the
-filter also adds its binary to every GPU build preset. Configure fails when a
-test preset that inherits `unit-gpu` sets its own filter.
+The `unit-gpu` test preset's name filter is the one selection of GPU workflow
+tests, and the other `unit-gpu*` test presets inherit it. It selects every
+registered test named `gpu-*` (the two `gpu-guest-*` tooling tests among them),
+and the Virtio balloon, battery, console, input, sound and video protocol
+tests and `platform-video-decoder` that the GPU configuration also builds. A
+new GPU test joins the workflow by its name: `uml_add_gpu_unit_test` refuses a
+name that does not start with `gpu-`. Configure derives the
+`gpu-unit-test-binaries` target from that filter, so a selected test's binary
+is built by every GPU build preset. Configure fails when a test preset that
+inherits `unit-gpu` sets its own filter.
 
 A GPU unit test process keeps Metal's shader cache in its scratch directory,
 not in the `com.apple.metal` cache that every command-line process of the user
