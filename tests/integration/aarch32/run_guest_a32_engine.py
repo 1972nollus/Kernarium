@@ -16,10 +16,10 @@ level; the level it detects from the HWCAP words must equal the engine's
 
 An engine that implements no AArch32 yet is skipped, naming the reason, with
 CTest's skip status. Otherwise the runner sets DARWIN_UML_GUEST_AARCH32=1, as
-the development policy requires, boots the probe laid out for any page size
-and, on a 4 KiB guest, the one laid out for 4 KiB pages, and fails on any
-failed check, any SIGILL the probe did not expect (a guest illegal
-instruction is a blocker) and any crash of the guest or the emulator.
+the development policy requires, boots the probe aligned to 64 KiB and the
+one aligned to 4 KiB only, and fails on any failed check, any SIGILL the probe
+did not expect (a guest illegal instruction is a blocker) and any crash of
+the guest or the emulator.
 """
 
 from __future__ import annotations
@@ -116,9 +116,9 @@ def main() -> int:
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
     parser.add_argument("--engine", choices=("jit", "gadgets"), required=True)
     parser.add_argument("--probe", required=True, type=pathlib.Path,
-                        help="the probe laid out for any page size")
+                        help="the probe aligned to 64 KiB")
     parser.add_argument("--probe-4k", required=True, type=pathlib.Path,
-                        help="the probe laid out for 4 KiB pages only")
+                        help="the probe aligned to 4 KiB only")
     parser.add_argument("--engine-support-tool", required=True,
                         type=pathlib.Path)
     parser.add_argument("--groups", help="comma-separated probe groups; "
@@ -139,7 +139,7 @@ def main() -> int:
         return SKIP
 
     os.environ["DARWIN_UML_GUEST_AARCH32"] = "1"
-    failures = run_probe(arguments, "any page size layout",
+    failures = run_probe(arguments, "64 KiB layout",
                          arguments.probe.resolve(), level)
     failures += run_probe(arguments, "4 KiB layout",
                           arguments.probe_4k.resolve(), level)

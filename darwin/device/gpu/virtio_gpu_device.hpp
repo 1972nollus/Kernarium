@@ -188,6 +188,25 @@ private:
         std::uint64_t fenceCookie,
         std::optional<DeferredFence>* deferredFence,
         std::optional<std::uint32_t>* destroyedContextId);
+    /* Whether a 2D, Virgl or blob resource already holds the ID. */
+    [[nodiscard]] bool resourceIdInUse(std::uint32_t id) const noexcept
+    {
+        return resources_.contains(id) || virglResources_.contains(id) ||
+            blobResources_.contains(id);
+    }
+    /* Queues the shared-memory action that unmaps a mapped blob and marks
+     * the resource unmapping, or returns the error to answer: the action IDs
+     * are exhausted, or the queue ran out of memory. An action ID that was
+     * taken is spent either way. */
+    [[nodiscard]] std::optional<protocol::GpuResponse> queueUnmap(
+        std::uint32_t resourceId, BlobResource& resource);
+    /* Finishes a fenced command: defers it to the caller's fence cookie when
+     * its ring can be, otherwise waits for the renderer to retire it. Returns
+     * whether the renderer took the fence. */
+    [[nodiscard]] bool completeFence(
+        const protocol::GpuControlHeader& header,
+        std::uint64_t fenceCookie,
+        std::optional<DeferredFence>* deferredFence);
     void releaseBlobScanout() noexcept;
     void clearScanout() noexcept;
     [[nodiscard]] protocol::GpuResponse presentReadback(
