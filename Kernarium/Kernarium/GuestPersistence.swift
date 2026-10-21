@@ -153,12 +153,7 @@ final class GuestPersistence {
         departure: Departure,
         waitingUntil deadline: DispatchTime?
     ) {
-        let application = UIApplication.shared
-        var assertion = UIBackgroundTaskIdentifier.invalid
-        assertion = application.beginBackgroundTask(withName: "guest-sync") {
-            application.endBackgroundTask(assertion)
-            assertion = .invalid
-        }
+        let assertion = BackgroundTaskAssertion(named: "guest-sync")
         let finished = DispatchSemaphore(value: 0)
         queue.async {
             let unflushed = switch departure {
@@ -168,10 +163,7 @@ final class GuestPersistence {
             finished.signal()
             Task { @MainActor in
                 GuestPersistence.report(reason: reason, unflushed: unflushed)
-                if assertion != .invalid {
-                    application.endBackgroundTask(assertion)
-                    assertion = .invalid
-                }
+                assertion.end()
             }
         }
         if let deadline {
@@ -188,6 +180,29 @@ final class GuestPersistence {
         } else if unflushed == 0 {
             print("Kernarium: guest storage settled on \(reason)")
         }
+    }
+}
+
+/// A background-task assertion that keeps the process scheduled until it
+/// ends: the caller ends it, or iOS expires it. Ending it twice is harmless.
+@MainActor
+final class BackgroundTaskAssertion: BackgroundCancellable {
+    private var identifier = UIBackgroundTaskIdentifier.invalid
+
+    init(named name: String) {
+        identifier = UIApplication.shared.beginBackgroundTask(withName: name) {
+            self.end()
+        }
+    }
+
+    func end() {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
+    }
+
+    func cancel() {
+        end()
     }
 }
 
@@ -301,18 +316,7 @@ final class SystemBackgroundEffects: BackgroundEffects {
     }
 
     func keepScheduled(named name: String) -> any BackgroundCancellable {
-        let application = UIApplication.shared
-        var assertion = UIBackgroundTaskIdentifier.invalid
-        assertion = application.beginBackgroundTask(withName: name) {
-            application.endBackgroundTask(assertion)
-            assertion = .invalid
-        }
-        return Token {
-            if assertion != .invalid {
-                application.endBackgroundTask(assertion)
-                assertion = .invalid
-            }
-        }
+        BackgroundTaskAssertion(named: name)
     }
 
     func schedule(
