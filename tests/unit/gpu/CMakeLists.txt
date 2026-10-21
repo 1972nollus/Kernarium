@@ -10,17 +10,25 @@ set(_uml_host_gl_libraries
     UML::ThirdPartyVirglrenderer
     UML::ThirdPartyEpoxy)
 
+# Every GPU unit test process places Metal's shader cache in its scratch
+# directory instead of opening the host's shared one.
+add_library(uml_gpu_test_metal_shader_cache OBJECT
+    metal_shader_cache_isolation.cpp)
+target_link_libraries(uml_gpu_test_metal_shader_cache PUBLIC
+    "-framework CoreFoundation")
+
 # uml_add_gpu_unit_test(<test> <target> <source>... [LIBRARIES <library>...]
 #     [INCLUDES <directory>...] [VULKAN] [UNIT_DIRECTORY] [TIMEOUT <seconds>])
 #
 # Builds <target> from the sources and registers it as the unit test <test>,
 # labelled gpu, and vulkan for VULKAN. UNIT_DIRECTORY runs it in the unit-test
-# binary directory.
+# binary directory. The target takes its own Metal shader cache.
 function(uml_add_gpu_unit_test TEST TARGET)
     cmake_parse_arguments(PARSE_ARGV 2 _gpu_test
         "VULKAN;UNIT_DIRECTORY" "TIMEOUT" "LIBRARIES;INCLUDES")
     add_executable(${TARGET} ${_gpu_test_UNPARSED_ARGUMENTS})
-    target_link_libraries(${TARGET} PRIVATE ${_gpu_test_LIBRARIES})
+    target_link_libraries(${TARGET} PRIVATE ${_gpu_test_LIBRARIES}
+        uml_gpu_test_metal_shader_cache)
     if(_gpu_test_INCLUDES)
         target_include_directories(${TARGET} PRIVATE ${_gpu_test_INCLUDES})
     endif()

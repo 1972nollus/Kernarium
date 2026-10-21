@@ -1021,10 +1021,13 @@ footprint grows with the index, by several MiB per MB of index, whatever the
 data files hold. A pipeline built from a precompiled metallib skips only the
 `libraries` index. Metal stops each data file near 1.1 GB and evicts from
 there, so a full cache holds about 2.2 GB behind an index of about 23 MB that
-costs around 100 MiB; GPU conformance campaigns fill it. Metal has no call that clears, bounds, splits
-or bypasses the cache: `MTL4CompilerDescriptor` carries a label and a pipeline
-data-set serializer, and binary archives add lookups without taking a
-pipeline off the cache.
+costs around 100 MiB; GPU conformance campaigns fill it. Metal's public API
+has no call that clears, bounds, splits or bypasses the cache:
+`MTL4CompilerDescriptor` carries a label and a pipeline data-set serializer,
+and binary archives add lookups without taking a pipeline off the cache. Its
+binary exports `MTLSetShaderCachePath`, which no header declares and which
+places the whole process's cache in an existing directory before first use;
+only the GPU unit tests call it.
 
 Kernarium therefore sizes its cache as the application starts, before any
 view or runtime exists and so before anything can read it, and removes the
@@ -1055,7 +1058,15 @@ Metal's cache is the only one that outlives a launch.
 The macOS command-line emulator has no bundle identifier. It shares
 `$(getconf DARWIN_USER_CACHE_DIR)/com.apple.metal` with every unsandboxed
 process of the user, one numbered file pair per concurrent process, and leaves
-that cache alone.
+that cache alone. Conformance campaigns through it are what fill the cache: a
+Vulkan CTS case that compiles shaders no earlier case compiled adds 8 to 23 KB
+of data, a repeated case adds nothing, and each pair stops near 1.1 GB while
+more pairs appear with concurrent processes. Nothing bounds the total, and
+every process that compiles reads the index of the first pairs, so a host that
+has run campaigns pays about 90 MiB and half a second for it in each emulator
+and tool. The cache is only an optimization, so removing the directory between
+campaigns is safe. The GPU unit tests keep their own cache for this reason (see
+[`testing.md`](testing.md)).
 
 ## Validation
 
