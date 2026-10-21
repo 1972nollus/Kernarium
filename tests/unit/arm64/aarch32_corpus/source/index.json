@@ -5,6 +5,7 @@
     "states.jsonl",
     "absent-profile.jsonl",
     "alu-qemu.jsonl",
+    "armv8-convert16-qemu.jsonl",
     "armv8-fz16-qemu.jsonl",
     "armv8-memory-qemu.jsonl",
     "armv8-qemu.jsonl",
@@ -33,6 +34,7 @@
   "records": [
     "absent-profile",
     "alu-qemu",
+    "armv8-convert16-qemu",
     "armv8-fz16-qemu",
     "armv8-memory-qemu",
     "armv8-qemu",

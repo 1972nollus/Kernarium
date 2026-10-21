@@ -189,7 +189,11 @@ The `complete` level (the Armv8 additions):
 - `armv8-system`: SB;
 - `armv8-fz16`: VFMAL and VFMSL, vector and by scalar, D and Q, with
   FPSCR.FZ16 set and clear and half-precision denormals, infinities and NaNs
-  among the operands, which the `armv8` suite's states leave unpaired.
+  among the operands, which the `armv8` suite's states leave unpaired;
+- `armv8-convert16`: the Advanced SIMD conversions from half precision to
+  16-bit integers (VCVT, VCVTA, VCVTN, VCVTP, VCVTM) and 16-bit fixed point,
+  D and Q, with FZ16 set and clear and lanes that overflow after lanes that
+  are inexact, so that one lane's saturation leaves another's flags.
 
 LDA, STL, LDAEX, STLEX in every size and SEVL are base: every Armv8 AArch32
 EL0 has them, and arm64 Linux's compat kuser helpers execute STLEX and STLEXD.
@@ -230,8 +234,9 @@ address.
   read-as-zero, write-ignored) and keeps Stride, Len and FZ16. Stride and Len
   are the `fpscr-reserved` suite's, so the `qemu` records never set them.
   FZ16 is FEAT_FP16's and holds wherever that is, as in qemu-arm's `-cpu
-  max`; the `fpscr` and `armv8-fz16` suites write it, and every other suite
-  starts with it clear, because an oracle without FEAT_FP16 reads it as zero.
+  max`; the `fpscr`, `armv8-fz16` and `armv8-convert16` suites write it, and
+  every other suite starts with it clear, because an oracle without FEAT_FP16
+  reads it as zero.
 - CNTFRQ and CNTVCT depend on the host and are not in the corpus.
 
 ## The hardware cross-check

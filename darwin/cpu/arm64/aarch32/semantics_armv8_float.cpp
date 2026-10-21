@@ -112,7 +112,7 @@ bool vcvt_rounded_asimd(Exec &x)
 	const bool is_unsigned = x.o.unsigned_;
 	if (x.o.esize == 16)
 		return fp::lanes_of<uint16_t>(x, [=](uint16_t, uint16_t m, uint16_t) {
-			return fp::narrow_integer(fp::to_int_rounded(m, is_unsigned, rounding), is_unsigned);
+			return fp::to_int16_rounded(m, is_unsigned, rounding);
 		});
 	return fp::lanes_of<uint32_t>(x, [=](uint32_t, uint32_t m, uint32_t) {
 		return fp::to_int_rounded(m, is_unsigned, rounding);

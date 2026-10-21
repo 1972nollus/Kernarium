@@ -300,7 +300,7 @@ bool vcvt_is(Exec &x)
 	if (x.o.esize == 16)
 		return fp::lanes_of<uint16_t>(x, [=](uint16_t, uint16_t m, uint16_t) {
 			if (to_integer)
-				return fp::narrow_integer(is_unsigned ? fp::to_int_zu(m) : fp::to_int_zs(m), is_unsigned);
+				return is_unsigned ? fp::to_int16_zu(m) : fp::to_int16_zs(m);
 			const uint32_t integer = is_unsigned
 				? uint32_t{m}
 				: static_cast<uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(m)));
@@ -350,6 +350,13 @@ bool vcvt_is(Exec &x)
 	return is_unsigned ? fp::fixed_convert<fp::HalfToFixedU, uint32_t, uint32_t>(fraction, a)
 			   : fp::fixed_convert<fp::HalfToFixedS, uint32_t, uint32_t>(fraction, a);
 }
+/* Half precision to a 16-bit fixed-point number with 1 to 16 fraction bits. */
+[[nodiscard]] uint16_t half_to_fixed16(uint16_t a, unsigned fraction, bool is_unsigned) noexcept
+{
+	return static_cast<uint16_t>(
+		is_unsigned ? fp::fixed_convert<fp::HalfToFixed16U, uint32_t, uint32_t, 16>(fraction, a)
+			    : fp::fixed_convert<fp::HalfToFixed16S, uint32_t, uint32_t, 16>(fraction, a));
+}
 [[nodiscard]] uint32_t fixed_to_half(uint32_t a, unsigned fraction, bool is_unsigned) noexcept
 {
 	if (fraction == 0U)
@@ -374,7 +381,7 @@ bool vcvt_xs(Exec &x)
 	if (x.o.esize == 16)
 		return fp::lanes_of<uint16_t>(x, [=](uint16_t, uint16_t m, uint16_t) {
 			if (to_fixed)
-				return fp::narrow_integer(half_to_fixed(m, fraction, is_unsigned), is_unsigned);
+				return half_to_fixed16(m, fraction, is_unsigned);
 			return static_cast<uint16_t>(fixed_to_half(extend16(m, is_unsigned), fraction, is_unsigned));
 		});
 	return fp::lanes_of<uint32_t>(x, [=](uint32_t, uint32_t m, uint32_t) {
