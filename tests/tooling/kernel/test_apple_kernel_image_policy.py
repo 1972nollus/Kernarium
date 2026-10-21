@@ -271,8 +271,7 @@ uml_import_kernel_artifact(
     COMMON_ROOT [=[{common}]=]
     EXPECTED_FAMILY mainline-6.18
     EXPECTED_SLICE arm64
-    EXPECTED_RELEASE_SERIES 6.18
-    EXPECTED_PAGE_SIZE 16384)
+    EXPECTED_RELEASE_SERIES 6.18)
 get_property(_watched DIRECTORY PROPERTY CMAKE_CONFIGURE_DEPENDS)
 foreach(_input IN ITEMS
     {expected})

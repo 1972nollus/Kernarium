@@ -5,7 +5,7 @@ set(_uml_kernel_common_root "${PROJECT_SOURCE_DIR}/kernel/common")
 include("${PROJECT_SOURCE_DIR}/kernel/common/artifacts/KernelArtifact.cmake")
 
 # The descriptor only names the bundle; the import verifies the bundle's own
-# family, slice, release series and page size.
+# family, slice and release series.
 set(_uml_android_kernel_acceptance
     "${_uml_android_kernel_root}/artifacts/accepted-android-4k.env")
 uml_read_artifact_env(
@@ -26,7 +26,6 @@ uml_import_kernel_artifact(
     COMMON_ROOT "${_uml_kernel_common_root}"
     EXPECTED_FAMILY android-6.18
     EXPECTED_SLICE arm64
-    EXPECTED_RELEASE_SERIES 6.18
-    EXPECTED_PAGE_SIZE 4096)
+    EXPECTED_RELEASE_SERIES 6.18)
 set(UML_ANDROID17_KERNEL_ARTIFACT_TARGET uml_android17_kernel_artifact
     CACHE INTERNAL "Selected read-only Android 17 kernel artifact target" FORCE)

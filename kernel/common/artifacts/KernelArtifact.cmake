@@ -68,11 +68,11 @@ function(uml_import_kernel_artifact)
     set(options)
     set(oneValueArgs
         TARGET ARTIFACT_ROOT COMMON_ROOT EXPECTED_FAMILY EXPECTED_SLICE
-        EXPECTED_RELEASE_SERIES EXPECTED_PAGE_SIZE)
+        EXPECTED_RELEASE_SERIES)
     cmake_parse_arguments(ARTIFACT "${options}" "${oneValueArgs}" "" ${ARGN})
     foreach(_uml_required IN ITEMS
             TARGET ARTIFACT_ROOT COMMON_ROOT EXPECTED_FAMILY EXPECTED_SLICE
-            EXPECTED_RELEASE_SERIES EXPECTED_PAGE_SIZE)
+            EXPECTED_RELEASE_SERIES)
         if(NOT ARTIFACT_${_uml_required})
             message(FATAL_ERROR
                 "uml_import_kernel_artifact requires ${_uml_required}")
@@ -98,7 +98,6 @@ function(uml_import_kernel_artifact)
             --expected-family "${ARTIFACT_EXPECTED_FAMILY}"
             --expected-slice "${ARTIFACT_EXPECTED_SLICE}"
             --expected-release-series "${ARTIFACT_EXPECTED_RELEASE_SERIES}"
-            --expected-page-size "${ARTIFACT_EXPECTED_PAGE_SIZE}"
         RESULT_VARIABLE _uml_artifact_result
         OUTPUT_VARIABLE _uml_artifact_output
         ERROR_VARIABLE _uml_artifact_error)

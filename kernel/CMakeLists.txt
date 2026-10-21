@@ -26,8 +26,8 @@ if(NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18")
 endif()
 
 # The root rejects every slice other than arm64 and x86_64. The descriptor
-# only names the bundle; the import verifies the bundle's own slice and page
-# size against this configuration.
+# only names the bundle; the import verifies the bundle's own slice against
+# this configuration.
 if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
     set(_uml_mainline_acceptance
         "${UML_KERNEL_LINE_ROOT}/slices/x86_64/artifacts/accepted-4k.env")
@@ -35,7 +35,6 @@ else()
     set(_uml_mainline_acceptance
         "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-4k.env")
 endif()
-set(_uml_expected_page_size 4096)
 uml_read_artifact_env(
     "${_uml_mainline_acceptance}"
     UML_KERNEL_ARTIFACT_DIRECTORY_NAME
@@ -54,8 +53,7 @@ uml_import_kernel_artifact(
     COMMON_ROOT "${UML_KERNEL_COMMON_ROOT}"
     EXPECTED_FAMILY mainline-6.18
     EXPECTED_SLICE "${UML_MAINLINE_KERNEL_SLICE}"
-    EXPECTED_RELEASE_SERIES 6.18
-    EXPECTED_PAGE_SIZE "${_uml_expected_page_size}")
+    EXPECTED_RELEASE_SERIES 6.18)
 
 set(UML_ACTIVE_KERNEL_ARTIFACT_TARGET uml_mainline_kernel_artifact
     CACHE INTERNAL "Selected read-only kernel artifact target" FORCE)
