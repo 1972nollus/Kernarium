@@ -82,7 +82,7 @@ final class GuestPictureInPicture: NSObject, PictureInPictureWindow {
     private var starting = false
     private var format: CMVideoFormatDescription?
     private var formatSize = CMVideoDimensions(width: 0, height: 0)
-    private var observers: [NSObjectProtocol] = []
+    private var resignObserver: NSObjectProtocol?
     private var framesShown = 0
 
     private override init() {
@@ -139,20 +139,17 @@ final class GuestPictureInPicture: NSObject, PictureInPictureWindow {
         created.requiresLinearPlayback = true
         created.delegate = self
         pictureInPicture = created
-        let center = NotificationCenter.default
-        observers.append(
-            center.addObserver(
-                forName: UIApplication.willResignActiveNotification,
-                object: nil,
-                queue: .main
-            ) { _ in
-                // Guest audio claims and drops the shared session on its own
-                // terms; the window needs it to be ours as the app leaves.
-                MainActor.assumeIsolated {
-                    GuestPictureInPicture.shared.configureAudioSession()
-                }
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            // Guest audio claims and drops the shared session on its own
+            // terms; the window needs it to be ours as the app leaves.
+            MainActor.assumeIsolated {
+                GuestPictureInPicture.shared.configureAudioSession()
             }
-        )
+        }
     }
 
     private func configureAudioSession() {
@@ -208,10 +205,10 @@ final class GuestPictureInPicture: NSObject, PictureInPictureWindow {
         relay = nil
         layer.sampleBufferRenderer.flush(removingDisplayedImage: true)
         format = nil
-        for observer in observers {
-            NotificationCenter.default.removeObserver(observer)
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+            self.resignObserver = nil
         }
-        observers.removeAll()
         if isActive { stop() }
         pictureInPicture = nil
         starting = false
