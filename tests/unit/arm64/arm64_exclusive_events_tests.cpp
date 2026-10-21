@@ -27,6 +27,7 @@
 #include "runtime_test_route.hpp"
 #include "scratch_backing.hpp"
 #include "static_mmu_test_support.hpp"
+#include "wait_until.hpp"
 
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/cpu_state.hpp"
@@ -656,12 +657,9 @@ unsigned run_case(const Case &c, uml::cpu::EngineKind kind,
 				started.store(true, std::memory_order_relaxed);
 			}
 		}};
-		const auto until = std::chrono::steady_clock::now() +
-			std::chrono::seconds{10};
-		while (!started.load(std::memory_order_relaxed) &&
-		       std::chrono::steady_clock::now() < until)
-			std::this_thread::yield();
-		const bool began = started.load(std::memory_order_relaxed);
+		const bool began = uml::testing::waitUntil([&] {
+			return started.load(std::memory_order_relaxed);
+		}, std::chrono::seconds{10}, std::chrono::seconds{0});
 		const bool stored = began && attempt(c, machine, built);
 		stop.store(true);
 		storing.join();
