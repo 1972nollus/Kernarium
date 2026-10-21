@@ -263,11 +263,19 @@ expect_diagnostic "prepared source paths changed" verify "$PREPARED"
 git -C "$PREPARED/clean" config uml.source.paths .
 verify "$PREPARED" >/dev/null
 
-expect_diagnostic "full source is incomplete in the" \
-	env UML_DEPENDENCY_MANIFEST="$MANIFEST" \
-		UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
-		"$PREPARE" --product filtered-fixture \
-		--root "$TEST_ROOT/filtered-prepared" --cache "$CACHE" --no-fetch
+# Preparation refuses a filtered cache whether or not it may fetch, and
+# repairs nothing: GIT_ALLOW_PROTOCOL keeps a regression off the network.
+for fetching in --no-fetch ''; do
+	expect_diagnostic "full source is incomplete in the Git cache" \
+		env GIT_ALLOW_PROTOCOL=file UML_DEPENDENCY_MANIFEST="$MANIFEST" \
+			UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
+			"$PREPARE" --product filtered-fixture \
+			--root "$TEST_ROOT/filtered-prepared" --cache "$CACHE" $fetching
+done
+[ ! -e "$TEST_ROOT/filtered-prepared/filtered" ] ||
+	fail "a refused filtered cache published a source"
+[ "$(git -C "$CACHE/git/filtered" config --bool remote.origin.promisor)" = true ] ||
+	fail "preparation repaired a filtered cache"
 
 CONCURRENT="$TEST_ROOT/concurrent"
 prepare "$CONCURRENT" >"$TEST_ROOT/concurrent-1.out" 2>&1 &
