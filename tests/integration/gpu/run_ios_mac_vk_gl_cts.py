@@ -160,7 +160,7 @@ def known_campaigns(
 def stage_payload(options: argparse.Namespace, documents: Path) -> str:
     """Write the campaign's boot payload into the container; return its name."""
     campaign = kernarium_campaigns.build(
-        options.campaign, image_type="ext4", page_size=4096
+        options.campaign, image_type="ext4"
     )
     options.artifact_root.mkdir(parents=True, exist_ok=True)
     written = campaign.payload().write(

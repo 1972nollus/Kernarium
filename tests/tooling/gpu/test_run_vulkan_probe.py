@@ -46,7 +46,7 @@ class VulkanProbeTests(unittest.TestCase):
     def test_overlay_payload_is_checked_and_driver_is_receipt_bound(self):
         receipt = receipt_fixtures.vulkan_receipt(self)
         payload = self.elf() + b"Vulkan probe data" * 64
-        script = probe.build_probe_script(payload, receipt, 4096, ["a b", "$(false)"])
+        script = probe.build_probe_script(payload, receipt, ["a b", "$(false)"])
         # The probe travels as a guest file; the script only checks it.
         self.assertNotIn("base64", script)
         self.assertIn(
@@ -64,8 +64,6 @@ class VulkanProbeTests(unittest.TestCase):
         for path in (probe.ICD_PATH, probe.LIBRARY_PATH):
             self.assertIn(probe.cts._receipt_file(receipt, path)["sha256"], script)
         subprocess.run(["/bin/sh", "-n"], input=script, text=True, check=True)
-        with self.assertRaises(probe.guest.SafetyError):
-            probe.build_probe_script(payload, receipt, 16384, [])
 
     def test_result_requires_clean_shutdown_and_verified_device(self):
         transcript = (probe.DEVICE_MARKER + "\r\n" + probe.RESULT_MARKER + "\r\n" +

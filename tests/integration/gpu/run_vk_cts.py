@@ -987,7 +987,6 @@ def build_guest_launcher(
     identity: dict[str, Any],
     selection: DevelopmentSelection,
     *,
-    page_size: int,
     timeout: int,
     experimental_venus: bool = False,
     case_list: str | None = None,
@@ -1059,8 +1058,8 @@ install -d -m 0755 -o uml -g uml "$output"
 : > "$qpa"
 chown uml:uml "$qpa"
 actual_page_size=$(getconf PAGESIZE)
-[ "$actual_page_size" -eq {page_size} ] || {{
-    echo "UML_VK_CTS_ERROR: guest page size $actual_page_size does not match {page_size}"
+[ "$actual_page_size" -eq {gpu_guest.GUEST_PAGE_SIZE} ] || {{
+    echo "UML_VK_CTS_ERROR: guest page size $actual_page_size does not match {gpu_guest.GUEST_PAGE_SIZE}"
     exit 1
 }}
 printf 'guest_page_size=%s\n' "$actual_page_size" > "$renderer"
@@ -1137,7 +1136,6 @@ def build_receipt_guest_launcher(
     receipt: dict[str, Any],
     selection: ReceiptSelection,
     *,
-    page_size: int,
     timeout: int,
     progress_timeout: int = 0,
     use_wsi: bool = False,
@@ -1651,8 +1649,8 @@ install -d -m 0755 -o uml -g uml "$output"
 : > "$qpa"
 chown uml:uml "$qpa"
 {skipped_creation}actual_page_size=$(getconf PAGESIZE)
-[ "$actual_page_size" -eq {page_size} ] || {{
-    echo "UML_VK_CTS_ERROR: guest page size $actual_page_size does not match {page_size}"
+[ "$actual_page_size" -eq {gpu_guest.GUEST_PAGE_SIZE} ] || {{
+    echo "UML_VK_CTS_ERROR: guest page size $actual_page_size does not match {gpu_guest.GUEST_PAGE_SIZE}"
     exit 1
 }}
 printf 'guest_page_size=%s\n' "$actual_page_size" > "$renderer"
@@ -1882,7 +1880,6 @@ def plan_harness_command(
         build_guest_launcher(
             identity,
             selection,
-            page_size=4096,
             timeout=options.shard_timeout,
             experimental_venus=options.experimental_venus,
             case_list=GUEST_CASE_LIST_PATH,
@@ -1941,7 +1938,6 @@ def plan_receipt_harness_command(
         build_receipt_guest_launcher(
             receipt,
             selection,
-            page_size=4096,
             timeout=options.shard_timeout,
             progress_timeout=options.console_stall_timeout,
             use_wsi=uses_wsi,

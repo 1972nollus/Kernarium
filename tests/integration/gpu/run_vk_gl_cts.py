@@ -2564,7 +2564,6 @@ def validate_native_x11_probe(text: str) -> None:
 
 def validate_renderer_probe(
     text: str,
-    expected_page_size: int | None = None,
     renderer_backend: str = "virgl",
     host_provider: str = "zink-kosmickrisp",
 ) -> None:
@@ -2595,12 +2594,10 @@ def validate_renderer_probe(
             )
     else:
         raise CampaignError(f"unsupported renderer backend: {renderer_backend}")
-    if (
-        expected_page_size is not None
-        and f"guest_page_size={expected_page_size}" not in text
-    ):
+    if f"guest_page_size={gpu_guest.GUEST_PAGE_SIZE}" not in text:
         raise CampaignError(
-            f"renderer probe did not prove {expected_page_size}-byte guest pages"
+            f"renderer probe did not prove {gpu_guest.GUEST_PAGE_SIZE}-byte "
+            "guest pages"
         )
 
 
@@ -3593,7 +3590,6 @@ def build_guest_launcher(
     selection: Selection | None,
     seed: int,
     timeout: int,
-    guest_page_size: int,
     rootfs_contract: RootfsContract,
     *,
     config_inventory_api: str | None = None,
@@ -4082,8 +4078,8 @@ trap finish EXIT HUP INT TERM
 
 install -d -m 0755 -o uml -g uml "$output"
 actual_page_size=$(getconf PAGESIZE)
-[ "$actual_page_size" -eq {guest_page_size} ] || {{
-    echo "UML_CTS_ERROR: guest page size $actual_page_size does not match {guest_page_size}"
+[ "$actual_page_size" -eq {gpu_guest.GUEST_PAGE_SIZE} ] || {{
+    echo "UML_CTS_ERROR: guest page size $actual_page_size does not match {gpu_guest.GUEST_PAGE_SIZE}"
     exit 1
 }}
 printf 'guest_page_size=%s\n' "$actual_page_size" >> "$renderer"
@@ -4246,7 +4242,6 @@ def plan_harness_command(
             selection,
             options.seed,
             options.shard_timeout,
-            4096,
             options.rootfs_contract,
             config_inventory_api=options.config_inventory,
             matrix=options.matrix_run,
@@ -5141,7 +5136,7 @@ def load_config_inventory_evidence(
             raise CampaignError("config-inventory CTS process failed")
         validate_renderer_probe(
             artifacts["renderer.txt"].decode("utf-8"),
-            4096, renderer,
+            renderer,
             host_backend_label(renderer),
         )
     return configs, digest, attributes
@@ -6150,7 +6145,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
     summary_text = artifacts["summary.txt"].decode("utf-8", errors="strict")
     validate_renderer_probe(
         renderer_text,
-        4096,
         options.renderer,
         host_backend_label(options.renderer),
     )

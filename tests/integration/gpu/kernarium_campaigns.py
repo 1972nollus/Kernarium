@@ -163,7 +163,7 @@ def _selected_cases(
     return "".join(f"{case}\n" for case in selection.source_cases).encode()
 
 
-def build(identifier: str, *, image_type: str, page_size: int) -> Campaign:
+def build(identifier: str, *, image_type: str) -> Campaign:
     """The campaign ``identifier`` for an image of ``image_type``.
 
     Raises CampaignError for an unknown campaign or one the image cannot
@@ -171,10 +171,10 @@ def build(identifier: str, *, image_type: str, page_size: int) -> Campaign:
     campaigns are bound to sealed ext4 derivatives, and the development
     Vulkan identity to the frozen EROFS image.
     """
-    if image_type not in ("erofs", "ext4") or page_size != 4096:
-        raise cts.CampaignError("unsupported image type or page size")
+    if image_type not in ("erofs", "ext4"):
+        raise cts.CampaignError("unsupported image type")
     if identifier in vulkan.apple_campaigns():
-        return _build_vulkan(identifier, image_type, page_size)
+        return _build_vulkan(identifier, image_type)
     identity, campaigns, shards = _gl_inputs()
     contract = gl_contract(identity, image_type)
     campaign = campaigns.get(identifier)
@@ -185,7 +185,6 @@ def build(identifier: str, *, image_type: str, page_size: int) -> Campaign:
                 campaign.selection,
                 campaign.seed,
                 campaign.shard_timeout,
-                page_size,
                 contract,
             ),
         )
@@ -201,7 +200,6 @@ def build(identifier: str, *, image_type: str, page_size: int) -> Campaign:
                 shard.selection,
                 shard.seed,
                 shard.shard_timeout,
-                page_size,
                 contract,
                 matrix=shard.matrix,
                 renderer_backend=shard.renderer_backend,
@@ -212,14 +210,14 @@ def build(identifier: str, *, image_type: str, page_size: int) -> Campaign:
             return _gl_campaign(
                 identifier,
                 cts.build_guest_launcher(
-                    None, 0, 900, page_size, contract,
+                    None, 0, 900, contract,
                     config_inventory_api=api,
                 ),
             )
     raise cts.CampaignError(f"no Kernarium campaign {identifier}")
 
 
-def _build_vulkan(identifier: str, image_type: str, page_size: int) -> Campaign:
+def _build_vulkan(identifier: str, image_type: str) -> Campaign:
     if identifier == vulkan.APPLE_DEVELOPMENT_CAMPAIGN:
         if image_type != "erofs":
             raise cts.CampaignError(
@@ -233,7 +231,6 @@ def _build_vulkan(identifier: str, image_type: str, page_size: int) -> Campaign:
         launcher = vulkan.build_guest_launcher(
             identity,
             selection,
-            page_size=page_size,
             timeout=900,
             experimental_venus=True,
             case_list=vulkan.GUEST_CASE_LIST_PATH,
@@ -280,7 +277,6 @@ def _build_vulkan(identifier: str, image_type: str, page_size: int) -> Campaign:
     launcher = vulkan.build_receipt_guest_launcher(
         receipt,
         selection,
-        page_size=page_size,
         case_list=case_list,
         **options,
     )
