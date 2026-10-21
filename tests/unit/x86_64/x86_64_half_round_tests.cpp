@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* How a single rounds to a half decides VCVTPS2PH's underflow, overflow and
- * precision flags. Two derivations of it exist: one computes with a double,
- * the other in integers. Every finite single, in all four rounding controls,
- * must give both the same four answers; the negative singles, whose sign
- * only picks a direction, are covered by a stride and by the neighbourhoods
- * of every threshold. */
+ * precision flags, and the engines compute it in integers. This test holds
+ * that to a second derivation that computes with a double: every finite
+ * single, in all four rounding controls, must give both the same four
+ * answers; the negative singles, whose sign only picks a direction, are
+ * covered by a stride and by the neighbourhoods of every threshold. */
+#include "cpu/x86_64/sse_float.hpp"
 #include "require.hpp"
 
 #include <algorithm>
@@ -18,8 +19,11 @@
 
 namespace {
 
+using uml::cpu::x86_64::sse_float::Rounded;
+using uml::cpu::x86_64::sse_float::half_round;
 using uml::testing::require;
 
+/* The four flags of a rounding, without its result bits. */
 struct HalfRound final {
 	bool tiny{};
 	bool inexact{};
@@ -28,6 +32,14 @@ struct HalfRound final {
 
 	[[nodiscard]] bool operator==(const HalfRound &) const noexcept = default;
 };
+
+[[nodiscard]] HalfRound integer_half_round(std::uint32_t x,
+	unsigned control) noexcept
+{
+	const Rounded rounded = half_round(x, control);
+	return {rounded.tiny, rounded.inexact, rounded.overflow,
+		rounded.significand_inexact};
+}
 
 /* The double derivation of a single `x` rounded to a half, which SoftFloat
  * here lacks. Just below the smallest normal half, 2^-14, eleven bits step
@@ -67,55 +79,6 @@ struct HalfRound final {
 	}
 	result.overflow = direction == 0 ? magnitude >= 65520.0 :
 		direction == 1 ? magnitude > 65504.0 : magnitude >= 0x1p16;
-	result.inexact = result.overflow || result.significand_inexact;
-	return result;
-}
-
-/* The integer derivation, for a finite single that is not zero. */
-[[nodiscard]] HalfRound integer_half_round(std::uint32_t x,
-	unsigned control) noexcept
-{
-	const bool negative = (x >> 31U) != 0;
-	const unsigned exponent = (x >> 23U) & 0xffU;
-	const std::uint64_t m = exponent == 0 ? x & 0x7fffffU :
-		(x & 0x7fffffU) | 0x800000U;
-	const int shift = exponent == 0 ? -149 : static_cast<int>(exponent) - 150;
-	const unsigned direction = (control & 3U) == 0 ? 0U :
-		(control & 3U) == 3U ? 2U :
-		((control & 3U) == 1U) == negative ? 1U : 2U;
-	const auto versus = [&](std::uint64_t k, int power) {
-		std::uint64_t left = m;
-		std::uint64_t right = k;
-		if (shift >= power) {
-			if (shift - power >= 40)
-				return 1;
-			left <<= static_cast<unsigned>(shift - power);
-		} else {
-			if (power - shift >= 40)
-				return -1;
-			right <<= static_cast<unsigned>(power - shift);
-		}
-		return left < right ? -1 : left > right ? 1 : 0;
-	};
-	const int top = 63 - __builtin_clzll(m);
-	HalfRound result{};
-	result.significand_inexact = exponent == 0 || (top > 10 &&
-		(m & ((1ULL << static_cast<unsigned>(top - 10)) - 1U)) != 0);
-	if (top + shift < -14) {
-		result.tiny = direction == 2 ||
-			(direction == 0 ? versus(4095, -26) < 0 : versus(2047, -25) <= 0);
-		const int below = -(shift + 24);
-		result.inexact = below > top ||
-			(below > 0 &&
-				(m & ((1ULL << static_cast<unsigned>(below)) - 1U)) != 0);
-		return result;
-	}
-	if (top + shift >= 16) {
-		result.overflow = true;
-	} else if (top + shift == 15) {
-		result.overflow = direction == 0 ? versus(4095, 4) >= 0 :
-			direction == 1 ? versus(2047, 5) > 0 : false;
-	}
 	result.inexact = result.overflow || result.significand_inexact;
 	return result;
 }

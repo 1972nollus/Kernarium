@@ -118,7 +118,7 @@ uml_add_unit_test(
 # How a single rounds to a half, which VCVTPS2PH's flags follow, against an
 # independent derivation, over every finite single.
 uml_add_x86_64_test_binary(uml_x86_64_half_round_tests
-    x86_64_half_round_tests.cpp)
+    x86_64_half_round_tests.cpp LIBRARIES UML::ThirdPartySoftFloat)
 uml_add_unit_test(
     NAME x86-64-half-round
     COMMAND uml_x86_64_half_round_tests

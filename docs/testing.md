@@ -1150,7 +1150,10 @@ keeping its own.
 `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel
-Xeon's, except the documented inexact cases the test names. The
+Xeon's, except the documented inexact cases the test names.
+`x86-64-half-round` holds the integer rounding of a single to a half, which
+VCVTPS2PH's flags follow in both engines, to a second derivation over every
+finite single in all four rounding controls. The
 `ios-products-carry-no-fexcore` tooling test checks the script the iOS
 packaging runs to keep FEXCore out of every iOS product.
 

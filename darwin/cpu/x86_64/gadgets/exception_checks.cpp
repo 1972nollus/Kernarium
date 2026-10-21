@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "exception_checks.hpp"
 
+#include "cpu/x86_64/sse_float.hpp"
+
 #include <SoftFloat-3e/platform.h>
 
 extern "C" {
@@ -9,8 +11,6 @@ extern "C" {
 
 #include <algorithm>
 #include <array>
-#include <cmath>
-#include <cstring>
 #include <span>
 
 namespace uml::cpu::x86_64::gadgets {
@@ -426,74 +426,23 @@ bool misaligned_access(const CpuState &cpu, const Gadget &gadget) noexcept
 
 namespace {
 
-/* An IEEE binary32 or binary64 lane's classes. */
-struct FloatFormat final {
-	bool dbl{};
-
-	[[nodiscard]] std::uint64_t sign() const noexcept
-	{
-		return dbl ? 1ULL << 63U : 1ULL << 31U;
-	}
-	[[nodiscard]] std::uint64_t magnitude() const noexcept
-	{
-		return sign() - 1U;
-	}
-	[[nodiscard]] std::uint64_t exponent() const noexcept
-	{
-		return dbl ? 0x7ffULL << 52U : 0xffULL << 23U;
-	}
-	[[nodiscard]] bool nan(std::uint64_t x) const noexcept
-	{
-		return (x & magnitude()) > exponent();
-	}
-	[[nodiscard]] bool infinite(std::uint64_t x) const noexcept
-	{
-		return (x & magnitude()) == exponent();
-	}
-	[[nodiscard]] bool zero(std::uint64_t x) const noexcept
-	{
-		return (x & magnitude()) == 0;
-	}
-	[[nodiscard]] bool denormal(std::uint64_t x) const noexcept
-	{
-		return (x & exponent()) == 0 && !zero(x);
-	}
-	[[nodiscard]] bool negative(std::uint64_t x) const noexcept
-	{
-		return (x & sign()) != 0;
-	}
-	[[nodiscard]] bool signalling(std::uint64_t x) const noexcept
-	{
-		return nan(x) && (x & (dbl ? 1ULL << 51U : 1ULL << 22U)) == 0;
-	}
-	/* `x` as MXCSR.DAZ reads it: a denormal is a zero of its sign. */
-	[[nodiscard]] std::uint64_t input(std::uint64_t x,
-		bool denormals_are_zero) const noexcept
-	{
-		return denormals_are_zero && denormal(x) ? x & sign() : x;
-	}
-	/* A lane of a two-source operation that raises a denormal operand,
-	 * which a NaN in it overrides. */
-	[[nodiscard]] bool denormal_pair(std::uint64_t a,
-		std::uint64_t b) const noexcept
-	{
-		return (denormal(a) || denormal(b)) && !nan(a) && !nan(b);
-	}
-};
+using namespace sse_float;
 
 using VectorValue = std::array<std::byte, 32>;
 
-[[nodiscard]] std::uint64_t value_lane(const VectorValue &value, bool dbl,
-	std::size_t index) noexcept
+/* `x` as MXCSR.DAZ reads it: a denormal is a zero of its sign. */
+[[nodiscard]] std::uint64_t input(const Format &f, std::uint64_t x,
+	bool denormals_are_zero) noexcept
 {
-	if (dbl) {
-		std::uint64_t lane{};
-		std::memcpy(&lane, value.data() + index * 8U, 8U);
-		return lane;
-	}
-	std::uint32_t lane{};
-	std::memcpy(&lane, value.data() + index * 4U, 4U);
-	return lane;
+	return denormals_are_zero ? f.flush(x) : x;
+}
+
+/* A lane of a two-source operation that raises a denormal operand, which a
+ * NaN in it overrides. */
+[[nodiscard]] bool denormal_pair(const Format &f, std::uint64_t a,
+	std::uint64_t b) noexcept
+{
+	return (f.denormal(a) || f.denormal(b)) && !f.nan(a) && !f.nan(b);
 }
 
 /* An operand's register, or the bytes its memory operand reads with zeros
@@ -580,7 +529,7 @@ struct FmaOperands final {
  * NaN, for infinity times zero plus anything but a quiet NaN, and for
  * infinities of opposite signs added. The host raises it for infinity times
  * zero plus a quiet NaN too. */
-[[nodiscard]] bool fma_lane_invalid(const FloatFormat &f, std::uint64_t a,
+[[nodiscard]] bool fma_lane_invalid(const Format &f, std::uint64_t a,
 	std::uint64_t b, std::uint64_t c, bool product_negative,
 	bool addend_negative) noexcept
 {
@@ -594,156 +543,19 @@ struct FmaOperands final {
 		product_negative != addend_negative;
 }
 
-/* x86 detects underflow after rounding: a result is tiny when, rounded to
- * full precision as if the exponent were unbounded, it lies below the
- * smallest normal, where the host detects it before rounding. The two
- * differ for a result the host rounds up to exactly the smallest normal.
- * SoftFloat rounds as x86 does, from a binary128 value that holds the exact
- * result rounded to odd: truncated, with its lowest bit set when that lost
- * anything. A single or double keeps at most 53 of the 113 bits, so
- * rounding it again rounds as the exact result would. A product of two
- * lanes is exact in binary128. */
-
-[[nodiscard]] std::uint8_t soft_rounding(unsigned control) noexcept
-{
-	switch (control & 3U) {
-	case 1: return softfloat_round_min;
-	case 2: return softfloat_round_max;
-	case 3: return softfloat_round_minMag;
-	default: return softfloat_round_near_even;
-	}
-}
-
-/* A lane's value, exactly. */
-[[nodiscard]] float128_t soft_wide(bool dbl, std::uint64_t x) noexcept
-{
-	softfloat_state state{};
-	if (!dbl)
-		return f32_to_f128(&state,
-			float32_t{static_cast<std::uint32_t>(x)});
-	return extF80_to_f128(&state, f64_to_extF80(&state, float64_t{x}));
-}
-
-/* `operation` rounded to odd, with SoftFloat's flags for it in `flags`. */
-template <typename Operation>
-[[nodiscard]] float128_t soft_odd(Operation operation,
-	std::uint8_t *flags = nullptr) noexcept
-{
-	softfloat_state state{};
-	state.roundingMode = softfloat_round_minMag;
-	auto result = operation(state);
-	if ((state.exceptionFlags & softfloat_flag_inexact) != 0)
-		result.v[0] |= 1U;
-	if (flags != nullptr)
-		*flags = state.exceptionFlags;
-	return result;
-}
-
-/* A result rounded as x86 does: whether it is tiny after rounding, whether
- * it is inexact and whether it overflowed, and the result; and whether it
- * is inexact rounded to full precision as if the exponent were unbounded,
- * which is what an unmasked underflow or overflow reports as precision. */
-struct SoftRounding final {
-	bool tiny{};
-	bool inexact{};
-	bool overflow{};
-	bool significand_inexact{};
-	std::uint64_t bits{};
-};
-
-/* `value` rounded to a single or a double in rounding mode `control`. Its
- * significand rounds exactly when the binary128 fraction bits below the
- * format's are clear; every value here is normal in binary128. */
-[[nodiscard]] SoftRounding soft_round(float128_t value, bool dbl,
-	unsigned control) noexcept
-{
-	softfloat_state state{};
-	state.detectTininess = softfloat_tininess_afterRounding;
-	state.roundingMode = soft_rounding(control);
-	SoftRounding result{};
-	result.bits = dbl ? f128_to_f64(&state, value).v :
-		f128_to_f32(&state, value).v;
-	/* SoftFloat raises underflow for a tiny inexact result; an exact one
-	 * is a denormal. */
-	result.tiny = (state.exceptionFlags & softfloat_flag_underflow) != 0 ||
-		FloatFormat{dbl}.denormal(result.bits);
-	result.inexact = (state.exceptionFlags & softfloat_flag_inexact) != 0;
-	result.overflow = (state.exceptionFlags & softfloat_flag_overflow) != 0;
-	/* Of 112 fraction bits, a double keeps 52 and drops 60, and a single
-	 * keeps 23 and drops 89. */
-	result.significand_inexact = dbl ?
-		(value.v[0] & ((1ULL << 60U) - 1U)) != 0 :
-		value.v[0] != 0 || (value.v[1] & ((1ULL << 25U) - 1U)) != 0;
-	return result;
-}
-
-/* The single `x` rounded to a half, which SoftFloat here lacks. Just below
- * the smallest normal half, 2^-14, eleven bits step by 2^-25: rounding to
- * nearest reaches it from within 2^-26 and rounding away from zero from
- * within 2^-25. The halves delivered there step by 2^-24. Just below 2^16,
- * they step by 2^5, and the largest is 65504: rounding to nearest
- * overflows from 65520, rounding away from zero above 65504, and rounding
- * toward zero from 2^16. A double holds the single exactly, and these
- * bounds and scalings too. */
-[[nodiscard]] SoftRounding half_round(std::uint32_t x,
-	unsigned control) noexcept
-{
-	float single{};
-	std::memcpy(&single, &x, sizeof single);
-	const double magnitude = std::fabs(static_cast<double>(single));
-	if (!(magnitude < 0x1p128) || magnitude == 0)
-		return {};
-	const bool negative = (x >> 31U) != 0;
-	/* Rounding to nearest, away from zero, or toward zero. */
-	const unsigned direction = (control & 3U) == 0 ? 0U :
-		(control & 3U) == 3U ? 2U :
-		((control & 3U) == 1U) == negative ? 1U : 2U;
-	int exponent{};
-	const double fraction = std::frexp(magnitude, &exponent);
-	SoftRounding result{};
-	/* x86 reports precision for an unmasked tiny half of a denormal single
-	 * too, as an Intel Xeon 8581C does. */
-	result.significand_inexact =
-		fraction * 0x1p11 != std::floor(fraction * 0x1p11) ||
-		FloatFormat{false}.denormal(x);
-	if (magnitude < 0x1p-14) {
-		const double bound = direction == 0 ? 0x1p-14 - 0x1p-26 :
-			0x1p-14 - 0x1p-25;
-		result.tiny = direction == 2 || (direction == 0 ?
-			magnitude < bound : !(magnitude > bound));
-		const double steps = magnitude * 0x1p24;
-		result.inexact = steps != std::floor(steps);
-		return result;
-	}
-	result.overflow = direction == 0 ? magnitude >= 65520.0 :
-		direction == 1 ? magnitude > 65504.0 : magnitude >= 0x1p16;
-	result.inexact = result.overflow || result.significand_inexact;
-	return result;
-}
-
-/* Whether the finite lane `x` is an integer. */
-[[nodiscard]] bool integral(const FloatFormat &f, std::uint64_t x) noexcept
-{
-	if (f.zero(x))
-		return true;
-	const unsigned fraction = f.dbl ? 52U : 23U;
-	const unsigned bias = f.dbl ? 1023U : 127U;
-	const auto exponent =
-		static_cast<unsigned>((x & f.exponent()) >> fraction);
-	if (exponent >= bias + fraction)
-		return true;
-	if (exponent < bias)
-		return false;
-	return (x & ((1ULL << (bias + fraction - exponent)) - 1U)) == 0;
-}
-
 /* x86's underflow and precision flags for the results an instruction
- * rounds. A tiny result raises underflow when it is inexact, or regardless
- * while MXCSR unmasks underflow. While it masks underflow, FTZ flushes a
- * tiny result to zero, which raises underflow and precision even when it
- * was exact. Beside an unmasked underflow or overflow, which faults, a
- * result raises precision as its significand rounds, and the others as
- * they do: the model then decides precision too. */
+ * rounds. x86 detects underflow after rounding: a result is tiny when,
+ * rounded to full precision as if the exponent were unbounded, it lies below
+ * the smallest normal, where the host detects it before rounding. The two
+ * differ for a result the host rounds up to exactly the smallest normal.
+ * SoftFloat rounds as x86 does, from a result rounded to odd; a product of
+ * two lanes is exact in binary128. A tiny result raises underflow when it is
+ * inexact, or regardless while MXCSR unmasks underflow. While it masks
+ * underflow, FTZ flushes a tiny result to zero, which raises underflow and
+ * precision even when it was exact. Beside an unmasked underflow or
+ * overflow, which faults, a result raises precision as its significand
+ * rounds, and the others as they do: the model then decides precision too.
+ */
 struct UnderflowModel final {
 	static constexpr std::uint32_t underflow = 0x10U;
 	static constexpr std::uint32_t precision = 0x20U;
@@ -764,7 +576,7 @@ struct UnderflowModel final {
 	}
 
 	/* Whether FTZ flushes the result. */
-	bool record(const SoftRounding &result) noexcept
+	bool record(const Rounded &result) noexcept
 	{
 		bool inexact = result.inexact;
 		bool flushed{};
@@ -817,7 +629,7 @@ struct UnderflowModel final {
 	constexpr std::uint32_t denormal = 0x02U;
 	constexpr std::uint32_t overflow = 0x08U;
 	using Lanes = std::array<std::uint64_t, 8>;
-	const FloatFormat f{dbl};
+	const Format f{dbl};
 	const bool denormals_are_zero = (mxcsr & mxcsr_denormals_are_zero) != 0;
 	const std::uint32_t unmasked = ~(mxcsr >> 7U) & 0x3fU;
 	std::uint32_t total{};
@@ -839,11 +651,11 @@ struct UnderflowModel final {
 				const auto y = soft_wide(dbl, b);
 				return multiply ? f128_mul(&state, x, y) :
 					f128_add(&state, x, y);
-			}, &flags);
+			}, soft_rounding(mxcsr), flags);
 			if (f.signalling(a) || f.signalling(b) ||
 				(flags & softfloat_flag_invalid) != 0)
 				before |= invalid;
-			else if (f.denormal_pair(a, b))
+			else if (denormal_pair(f, a, b))
 				before |= denormal;
 		}
 		total |= before;
@@ -854,10 +666,10 @@ struct UnderflowModel final {
 		UnderflowModel model{mxcsr, true};
 		std::uint32_t after{};
 		for (std::size_t index = 0; index < count; ++index) {
-			const auto result = soft_round(values[index], dbl, mxcsr >> 13U);
+			const auto result = soft_round(values[index], dbl, mxcsr);
 			if (result.overflow)
 				after |= overflow;
-			results[index] = f.input(model.record(result) ?
+			results[index] = input(f, model.record(result) ?
 				result.bits & f.sign() : result.bits, denormals_are_zero);
 		}
 		after |= model.raised | model.precision_raised();
@@ -868,11 +680,11 @@ struct UnderflowModel final {
 	const std::size_t per_half = dbl ? 2U : 4U;
 	Lanes left{};
 	Lanes right{};
-	for (std::size_t lane = 0; lane < halves * per_half; ++lane) {
-		if (((control >> (4U + lane % per_half)) & 1U) == 0)
+	for (std::size_t index = 0; index < halves * per_half; ++index) {
+		if (((control >> (4U + index % per_half)) & 1U) == 0)
 			continue;
-		left[lane] = f.input(value_lane(first, dbl, lane), denormals_are_zero);
-		right[lane] = f.input(value_lane(second, dbl, lane),
+		left[index] = input(f, lane(first, dbl, index), denormals_are_zero);
+		right[index] = input(f, lane(second, dbl, index),
 			denormals_are_zero);
 	}
 	auto sums = step(true, halves * per_half, left, right);
@@ -898,7 +710,7 @@ struct UnderflowModel final {
 	bool wide)
 {
 	const auto &instruction = gadget.instruction;
-	const FloatFormat f{dbl};
+	const Format f{dbl};
 	VectorValue source{};
 	if (!operand_value(cpu, gadget, instruction.auxiliary, memory, source))
 		return {};
@@ -906,10 +718,10 @@ struct UnderflowModel final {
 	const bool denormals_are_zero =
 		(cpu.mxcsr & mxcsr_denormals_are_zero) != 0;
 	const auto mode = truncate ? std::uint8_t{softfloat_round_minMag} :
-		soft_rounding(cpu.mxcsr >> 13U);
+		soft_rounding(cpu.mxcsr);
 	std::uint32_t raised{};
 	for (std::size_t index = 0; index < lanes; ++index) {
-		const auto x = f.input(value_lane(source, dbl, index),
+		const auto x = input(f, lane(source, dbl, index),
 			denormals_are_zero);
 		if (f.nan(x) || f.infinite(x))
 			continue;
@@ -951,7 +763,7 @@ std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
 		const bool dbl = horizontal ? prefix == 1 :
 			prefix == 1 || prefix == 3;
 		const bool scalar = !horizontal && prefix >= 2;
-		const FloatFormat f{dbl};
+		const Format f{dbl};
 		const std::size_t lanes = scalar ? 1U :
 			vector_lanes(instruction.destination, dbl);
 		if (!read(instruction.auxiliary, second))
@@ -959,7 +771,7 @@ std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
 		if (opcode == 0x51) {
 			/* The square root of a negative denormal is invalid. */
 			for (std::size_t index = 0; index < lanes; ++index) {
-				const auto x = value_lane(second, dbl, index);
+				const auto x = lane(second, dbl, index);
 				if (f.denormal(x) && !f.negative(x))
 					return raised;
 			}
@@ -970,17 +782,17 @@ std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
 		if (opcode == 0x7c || opcode == 0x7d) {
 			/* Adjacent pairs of either source, in each 128-bit half. */
 			for (std::size_t pair = 0; pair < lanes; pair += 2)
-				if (f.denormal_pair(value_lane(first, dbl, pair),
-						value_lane(first, dbl, pair + 1U)) ||
-					f.denormal_pair(value_lane(second, dbl, pair),
-						value_lane(second, dbl, pair + 1U)))
+				if (denormal_pair(f, lane(first, dbl, pair),
+						lane(first, dbl, pair + 1U)) ||
+					denormal_pair(f, lane(second, dbl, pair),
+						lane(second, dbl, pair + 1U)))
 					return raised;
 			return 0;
 		}
 		for (std::size_t index = 0; index < lanes; ++index) {
-			const auto b = value_lane(second, dbl, index);
+			const auto b = lane(second, dbl, index);
 			/* A division by zero takes precedence. */
-			if (f.denormal_pair(value_lane(first, dbl, index), b) &&
+			if (denormal_pair(f, lane(first, dbl, index), b) &&
 				!(opcode == 0x5e && f.zero(b)))
 				return raised;
 		}
@@ -991,8 +803,8 @@ std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
 		if (!read(instruction.source, first) ||
 			!read(instruction.auxiliary, second))
 			return 0;
-		return FloatFormat{dbl}.denormal_pair(value_lane(first, dbl, 0),
-			value_lane(second, dbl, 0)) ? raised : 0U;
+		return denormal_pair(Format{dbl}, lane(first, dbl, 0),
+			lane(second, dbl, 0)) ? raised : 0U;
 	}
 	case Operation::vector_convert: {
 		/* CVTPS2PD and CVTSS2SD widen singles, CVTPD2PS and CVTSD2SS
@@ -1003,7 +815,7 @@ std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
 		const std::size_t lanes = prefix >= 2 ? 1U :
 			vector_lanes(instruction.auxiliary, dbl);
 		for (std::size_t index = 0; index < lanes; ++index)
-			if (FloatFormat{dbl}.denormal(value_lane(second, dbl, index)))
+			if (Format{dbl}.denormal(lane(second, dbl, index)))
 				return raised;
 		return 0;
 	}
@@ -1011,11 +823,11 @@ std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
 		FmaOperands fma{};
 		if (!read_fma_operands(cpu, gadget, memory, fma))
 			return 0;
-		const FloatFormat f{fma.dbl};
+		const Format f{fma.dbl};
 		for (std::size_t index = 0; index < fma.lanes; ++index) {
-			const auto x = value_lane(fma.a, fma.dbl, index);
-			const auto y = value_lane(fma.b, fma.dbl, index);
-			const auto z = value_lane(fma.c, fma.dbl, index);
+			const auto x = lane(fma.a, fma.dbl, index);
+			const auto y = lane(fma.b, fma.dbl, index);
+			const auto z = lane(fma.c, fma.dbl, index);
 			if (f.nan(x) || f.nan(y) || f.nan(z) ||
 				!(f.denormal(x) || f.denormal(y) || f.denormal(z)))
 				continue;
@@ -1039,8 +851,8 @@ std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
 				return 0;
 			const auto lanes = vector_lanes(instruction.source, false);
 			for (std::size_t index = 0; index < lanes; ++index)
-				if (FloatFormat{false}.denormal(
-						value_lane(first, false, index)))
+				if (Format{false}.denormal(
+						lane(first, false, index)))
 					return raised;
 			return 0;
 		}
@@ -1059,6 +871,7 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 	const bool denormals_are_zero =
 		(cpu.mxcsr & mxcsr_denormals_are_zero) != 0;
 	const unsigned rounding = cpu.mxcsr >> 13U;
+	std::uint8_t flags{};
 	const auto read = [&](const Operand &operand, VectorValue &value) {
 		return operand_value(cpu, gadget, operand, memory, value);
 	};
@@ -1079,7 +892,7 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 			const auto prefix = instruction.vector_prefix;
 			const bool dbl = horizontal ? prefix == 1 :
 				prefix == 1 || prefix == 3;
-			const FloatFormat f{dbl};
+			const Format f{dbl};
 			const std::size_t lanes = !horizontal && prefix >= 2 ? 1U :
 				vector_lanes(instruction.destination, dbl);
 			VectorValue first{};
@@ -1090,25 +903,25 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 			UnderflowModel model{cpu.mxcsr, true};
 			const auto compute = [&](std::uint64_t x, std::uint64_t y,
 				bool subtract) {
-				const auto a = soft_wide(dbl, f.input(x, denormals_are_zero));
-				const auto b = soft_wide(dbl, f.input(
+				const auto a = soft_wide(dbl, input(f, x, denormals_are_zero));
+				const auto b = soft_wide(dbl, input(f,
 					subtract ? y ^ f.sign() : y, denormals_are_zero));
 				model.record(soft_round(soft_odd([&](auto &state) {
 					return opcode == 0x59 ? f128_mul(&state, a, b) :
 						opcode == 0x5e ? f128_div(&state, a, b) :
 						f128_add(&state, a, b);
-				}), dbl, rounding));
+				}, soft_rounding(cpu.mxcsr), flags), dbl, cpu.mxcsr));
 			};
 			if (opcode == 0x7c || opcode == 0x7d) {
 				for (const auto *source : {&first, &second})
 					for (std::size_t pair = 0; pair < lanes; pair += 2)
-						compute(value_lane(*source, dbl, pair),
-							value_lane(*source, dbl, pair + 1U),
+						compute(lane(*source, dbl, pair),
+							lane(*source, dbl, pair + 1U),
 							opcode == 0x7d);
 			} else {
 				for (std::size_t index = 0; index < lanes; ++index)
-					compute(value_lane(first, dbl, index),
-						value_lane(second, dbl, index), opcode == 0x5c ||
+					compute(lane(first, dbl, index),
+						lane(second, dbl, index), opcode == 0x5c ||
 							(opcode == 0xd0 && (index & 1U) == 0));
 			}
 			return model.correction();
@@ -1119,15 +932,15 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 		FmaOperands fma{};
 		if (!read_fma_operands(cpu, gadget, memory, fma))
 			return {};
-		const FloatFormat f{fma.dbl};
+		const Format f{fma.dbl};
 		std::uint32_t raised{};
 		UnderflowModel model{cpu.mxcsr, true};
 		for (std::size_t index = 0; index < fma.lanes; ++index) {
-			const auto a = f.input(value_lane(fma.a, fma.dbl, index),
+			const auto a = input(f, lane(fma.a, fma.dbl, index),
 				denormals_are_zero);
-			const auto b = f.input(value_lane(fma.b, fma.dbl, index),
+			const auto b = input(f, lane(fma.b, fma.dbl, index),
 				denormals_are_zero);
-			const auto c = f.input(value_lane(fma.c, fma.dbl, index),
+			const auto c = input(f, lane(fma.c, fma.dbl, index),
 				denormals_are_zero);
 			const bool product_negative =
 				(f.negative(a) != f.negative(b)) != fma.negate_product();
@@ -1143,7 +956,7 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 				fma.negate_addend(index) ? c ^ f.sign() : c);
 			model.record(soft_round(soft_odd([&](auto &state) {
 				return f128_add(&state, f128_mul(&state, x, y), z);
-			}), fma.dbl, rounding));
+			}, soft_rounding(cpu.mxcsr), flags), fma.dbl, cpu.mxcsr));
 		}
 		return model.correction(invalid, raised);
 	}
@@ -1167,9 +980,9 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 			vector_lanes(instruction.auxiliary, true);
 		UnderflowModel model{cpu.mxcsr, true};
 		for (std::size_t index = 0; index < lanes; ++index)
-			model.record(soft_round(soft_wide(true, FloatFormat{true}.input(
-					value_lane(source, true, index), denormals_are_zero)),
-				false, rounding));
+			model.record(soft_round(soft_wide(true, input(Format{true},
+					lane(source, true, index), denormals_are_zero)),
+				false, cpu.mxcsr));
 		return model.correction();
 	}
 	case Operation::vector_scalar_convert: {
@@ -1192,7 +1005,7 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 			 * suppresses it, whatever the rounding mode. FRINT does not
 			 * raise it. */
 			const bool dbl = (opcode & 1U) != 0;
-			const FloatFormat f{dbl};
+			const Format f{dbl};
 			VectorValue source{};
 			if (!read(instruction.auxiliary, source))
 				return {};
@@ -1200,7 +1013,7 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 				vector_lanes(instruction.destination, dbl);
 			std::uint32_t raised{};
 			for (std::size_t index = 0; index < lanes; ++index) {
-				const auto x = f.input(value_lane(source, dbl, index),
+				const auto x = input(f, lane(source, dbl, index),
 					denormals_are_zero);
 				if ((control & 8U) == 0 && !f.nan(x) && !f.infinite(x) &&
 					!integral(f, x))
@@ -1227,11 +1040,15 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 			return {};
 		const auto lanes = vector_lanes(instruction.source, false);
 		UnderflowModel model{cpu.mxcsr, false};
-		for (std::size_t index = 0; index < lanes; ++index)
-			model.record(half_round(static_cast<std::uint32_t>(
-					FloatFormat{false}.input(value_lane(source, false, index),
-						denormals_are_zero)),
+		for (std::size_t index = 0; index < lanes; ++index) {
+			const Format f{false};
+			const auto x = input(f, lane(source, false, index),
+				denormals_are_zero);
+			if (f.nan(x) || f.infinite(x) || f.zero(x))
+				continue;
+			model.record(half_round(static_cast<std::uint32_t>(x),
 				(control & 4U) != 0 ? rounding : control));
+		}
 		return model.correction();
 	}
 	default:
