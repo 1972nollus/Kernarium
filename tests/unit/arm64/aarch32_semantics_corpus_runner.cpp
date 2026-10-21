@@ -14,6 +14,7 @@
  *   uml_arm64_aarch32_semantics_corpus_tests PACK [--record NAME]
  *       [--case NAME] [--form PREFIX] [--all-failures] [--trace] [--skipped]
  */
+#include "aarch32_corpus_cpu_state.hpp"
 #include "aarch32_corpus_pack.hpp"
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
@@ -42,11 +43,6 @@ using namespace ::uml::testing::aarch32_corpus;
 constexpr std::uint32_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 /* Not an event of the pack: the library refused the word. */
 constexpr unsigned kFatal = 0xfe;
-/* The FPSCR halves the virtual CPU holds: AHP, DN, FZ, RMode and FZ16 in
- * fpcr; QC and the cumulative flags in fpsr; N, Z, C and V in
- * a32_fpscr_nzcv. */
-constexpr std::uint32_t kFpscrControlMask = 0x07c8'0000U;
-constexpr std::uint32_t kFpscrStatusMask = 0x0800'009fU;
 
 /* --- The machine ---------------------------------------------------------------- */
 
@@ -80,63 +76,18 @@ public:
 	 * ends the program. */
 	[[nodiscard]] bool load(const Case &test)
 	{
-		const bool thumb = test.flags & kFlagThumb;
-		std::vector<std::uint8_t> code(kCodeSize, 0);
-		const auto put16 = [&](std::uint32_t offset, std::uint16_t value) {
-			std::memcpy(code.data() + offset, &value, 2);
-		};
-		const auto put32 = [&](std::uint32_t offset, std::uint32_t value) {
-			std::memcpy(code.data() + offset, &value, 4);
-		};
-		for (std::size_t index = 0; index < test.halves.size(); ++index)
-			put16(test.origin + static_cast<std::uint32_t>(2 * index), test.halves[index]);
-		std::uint32_t end = test.origin + static_cast<std::uint32_t>(2 * test.halves.size());
 		bool padded = false;
-		const auto arm_stub = [&](std::uint32_t at) {
-			put32(at, 0xe51ff004U); /* ldr pc, [pc, #-4] */
-			put32(at + 4, kArmEpilogue);
-		};
-		const auto thumb_stub = [&](std::uint32_t at) {
-			put16(at, 0xf8df); /* ldr.w pc, [pc, #0] */
-			put16(at + 2, 0xf000);
-			put32(at + 4, kThumbEpilogue);
-		};
-		/* A program at the end of the region has no room for a stub and falls
-		 * off it. */
-		if (thumb) {
-			if (end % 4 != 0 && end + 2 + 8 <= kCodeSize) {
-				padded = true;
-				put16(end, 0xbf00); /* nop, so the stub is word aligned */
-				end += 2;
-			}
-			if (end + 8 <= kCodeSize)
-				thumb_stub(end);
-		} else if (end + 8 <= kCodeSize) {
-			arm_stub(end);
-		}
-		arm_stub(kArmExit - kCodeBase);
-		thumb_stub(kThumbExit - kCodeBase);
-		put32(kArmEpilogue - kCodeBase, 0);
-		put32(kThumbEpilogue - kCodeBase, 0);
+		const auto code = code_image(test, 0, padded);
 		fill(kCodeBase, code.data(), kCodeSize);
-
-		auto data = data_fill(test.fill);
-		for (const auto &patch : test.data_patches)
-			std::copy(patch.bytes.begin(), patch.bytes.end(), data.begin() + patch.offset);
-		fill(kDataBase, data.data(), kDataSize);
-		expected_data_ = data;
+		initial_data_ = data_before(test);
+		fill(kDataBase, initial_data_.data(), kDataSize);
 		const auto read_only = read_only_fill();
 		fill(kReadOnlyBase, read_only.data(), kReadOnlySize);
 		return padded;
 	}
 
-	[[nodiscard]] std::vector<std::uint8_t> expected_memory(const Case &test) const
-	{
-		auto memory = expected_data_;
-		for (const auto &patch : test.memory_patches)
-			std::copy(patch.bytes.begin(), patch.bytes.end(), memory.begin() + patch.offset);
-		return memory;
-	}
+	/* The data the loaded case started from. */
+	[[nodiscard]] const std::vector<std::uint8_t> &initial_data() const { return initial_data_; }
 
 	[[nodiscard]] std::vector<std::uint8_t> read_data() const
 	{
@@ -190,51 +141,11 @@ private:
 	}
 
 	std::map<std::uint32_t, Page> pages_;
-	std::vector<std::uint8_t> expected_data_;
+	std::vector<std::uint8_t> initial_data_;
 	std::size_t stores_{};
 };
 
 /* --- Running a case ------------------------------------------------------------- */
-
-CpuState cpu_from(const State &state, bool thumb, std::uint32_t entry)
-{
-	CpuState cpu{};
-	cpu.a32 = 1;
-	cpu.pc = thumb ? t32_key(entry) : a32_key(entry);
-	for (unsigned index = 0; index < kRegisters; ++index)
-		cpu.registers[index] = state.r[index];
-	cpu.nzcv = state.apsr & 0xf000'0000U;
-	cpu.a32_q = static_cast<std::uint8_t>(state.apsr >> 27 & 1U);
-	for (unsigned lane = 0; lane < 4; ++lane)
-		if (state.apsr >> (16 + lane) & 1U)
-			cpu.a32_ge_mask |= 0xffU << (8 * lane);
-	cpu.a32_cp15ben = 1;
-	cpu.a32_tpidruro = state.tpidruro;
-	cpu.tls = state.tpidrurw;
-	for (unsigned d = 0; d < 16 * 2; ++d)
-		std::memcpy(cpu.vectors[d / 2].bytes.data() + 8U * (d & 1U), &state.d[d], 8);
-	cpu.fpcr = state.fpscr & kFpscrControlMask;
-	cpu.fpsr = state.fpscr & kFpscrStatusMask;
-	cpu.a32_fpscr_nzcv = state.fpscr & 0xf000'0000U;
-	return cpu;
-}
-
-std::uint32_t fpscr_of(const CpuState &cpu)
-{
-	return (cpu.fpcr & kFpscrControlMask) | (cpu.fpsr & kFpscrStatusMask) |
-		(cpu.a32_fpscr_nzcv & 0xf000'0000U);
-}
-
-std::uint32_t apsr_of(const CpuState &cpu)
-{
-	std::uint32_t apsr = static_cast<std::uint32_t>(cpu.nzcv) & 0xf000'0000U;
-	if (cpu.a32_q != 0U)
-		apsr |= 1U << 27;
-	for (unsigned lane = 0; lane < 4; ++lane)
-		if ((cpu.a32_ge_mask >> (8 * lane) & 0xffU) != 0U)
-			apsr |= 1U << (16 + lane);
-	return apsr;
-}
 
 struct Outcome final {
 	unsigned event{};
@@ -365,36 +276,10 @@ std::string check(Machine &machine, const Case &test, const Profile &profile)
 			return text;
 		}
 	}
-	if (apsr_of(cpu) != test.final.apsr) {
-		std::snprintf(text, sizeof text, "apsr %08x, expected %08x", apsr_of(cpu), test.final.apsr);
-		return text;
-	}
-	if (cpu.a32_tpidruro != test.final.tpidruro || cpu.tls != test.final.tpidrurw)
-		return "a thread register changed";
-	for (unsigned d = 0; d < kVectors; ++d) {
-		std::uint64_t value;
-		std::memcpy(&value, cpu.vectors[d / 2].bytes.data() + 8U * (d & 1U), 8);
-		if (value != test.final.d[d]) {
-			std::snprintf(text, sizeof text, "d%u = %016llx, expected %016llx", d,
-				static_cast<unsigned long long>(value),
-				static_cast<unsigned long long>(test.final.d[d]));
-			return text;
-		}
-	}
-	if (fpscr_of(cpu) != test.final.fpscr) {
-		std::snprintf(text, sizeof text, "fpscr %08x, expected %08x", fpscr_of(cpu), test.final.fpscr);
-		return text;
-	}
-	const auto expected = machine.expected_memory(test);
 	const auto actual = machine.read_data();
-	if (expected != actual) {
-		std::size_t at = 0;
-		while (expected[at] == actual[at])
-			++at;
-		std::snprintf(text, sizeof text, "data differs at +%zx: %02x, expected %02x", at,
-			static_cast<unsigned>(actual[at]), static_cast<unsigned>(expected[at]));
-		return text;
-	}
+	if (const auto difference =
+		    state_difference(cpu, test, actual, data_after(test, machine.initial_data())))
+		return *difference;
 	return {};
 }
 

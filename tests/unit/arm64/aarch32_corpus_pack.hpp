@@ -11,12 +11,14 @@
  * region filled by `data_fill(case.fill)` and then `case.data_patches`, the
  * read-only region holding `read_only_fill()`, and the program placed at
  * kCodeBase + `Case::origin`. `Case::final` is the complete state after the
- * program, and `Case::memory_patches` the data bytes it changed.
+ * program, and `Case::memory_patches` the data bytes it changed. code_image()
+ * and data_before() lay a case out that way.
  */
 #pragma once
 
 #include "require.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -275,6 +277,68 @@ inline std::vector<std::uint8_t> read_only_fill()
 	std::vector<std::uint8_t> data(kReadOnlySize);
 	for (std::uint32_t index = 0; index < kReadOnlySize; ++index)
 		data[index] = static_cast<std::uint8_t>(((0x5AU + index) * 0x9E3779B1U) >> 24);
+	return data;
+}
+
+/* The code region as the oracle prepares it: the program at its origin, an
+ * exit stub after it (a halfword NOP first when a Thumb program leaves the
+ * stub's word unaligned, which `padded` reports), the stubs at the two fixed
+ * exits, and the lane's own exit code, `epilogue_word`, behind the two
+ * epilogues. A program at the end of the region has no room for a stub and
+ * falls off it. */
+inline std::vector<std::uint8_t> code_image(const Case &test, std::uint32_t epilogue_word, bool &padded)
+{
+	std::vector<std::uint8_t> code(kCodeSize, 0);
+	const auto put16 = [&](std::uint32_t offset, std::uint16_t value) {
+		std::memcpy(code.data() + offset, &value, 2);
+	};
+	const auto put32 = [&](std::uint32_t offset, std::uint32_t value) {
+		std::memcpy(code.data() + offset, &value, 4);
+	};
+	const auto arm_stub = [&](std::uint32_t at) {
+		put32(at, 0xe51ff004U); /* ldr pc, [pc, #-4] */
+		put32(at + 4, kArmEpilogue);
+	};
+	const auto thumb_stub = [&](std::uint32_t at) {
+		put16(at, 0xf8df); /* ldr.w pc, [pc, #0] */
+		put16(at + 2, 0xf000);
+		put32(at + 4, kThumbEpilogue);
+	};
+	for (std::size_t index = 0; index < test.halves.size(); ++index)
+		put16(test.origin + static_cast<std::uint32_t>(2 * index), test.halves[index]);
+	std::uint32_t end = test.origin + static_cast<std::uint32_t>(2 * test.halves.size());
+	padded = false;
+	if (test.flags & kFlagThumb) {
+		if (end % 4 != 0 && end + 2 + 8 <= kCodeSize) {
+			padded = true;
+			put16(end, 0xbf00); /* nop, so the stub is word aligned */
+			end += 2;
+		}
+		if (end + 8 <= kCodeSize)
+			thumb_stub(end);
+	} else if (end + 8 <= kCodeSize) {
+		arm_stub(end);
+	}
+	arm_stub(kArmExit - kCodeBase);
+	thumb_stub(kThumbExit - kCodeBase);
+	put32(kArmEpilogue - kCodeBase, epilogue_word);
+	put32(kThumbEpilogue - kCodeBase, epilogue_word);
+	return code;
+}
+
+/* The data region a case starts from, and what it holds after the program. */
+inline std::vector<std::uint8_t> data_before(const Case &test)
+{
+	auto data = data_fill(test.fill);
+	for (const auto &patch : test.data_patches)
+		std::copy(patch.bytes.begin(), patch.bytes.end(), data.begin() + patch.offset);
+	return data;
+}
+
+inline std::vector<std::uint8_t> data_after(const Case &test, std::vector<std::uint8_t> data)
+{
+	for (const auto &patch : test.memory_patches)
+		std::copy(patch.bytes.begin(), patch.bytes.end(), data.begin() + patch.offset);
 	return data;
 }
 
