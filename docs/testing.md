@@ -292,10 +292,13 @@ low-volume stereo tone through the real macOS output and verifies completion
 and restart. It requires access to macOS audio services. It also enables
 `apple-audio-interruption`, which builds the playback sink for the iOS
 Simulator, plays a stream there and posts the audio-session notifications iOS
-posts when another app interrupts it (the Simulator never does): playback must
-stop while interrupted, resume when the system lets the session resume, and
-never wedge. It skips when no iOS Simulator device at the deployment target
-exists.
+posts when another app interrupts it (the Simulator never does), with hooks on
+the session's activation and its hint about other apps' audio and on the
+player's scheduling: playback must stop while interrupted without slowing the
+guest's clock, resume when the system lets the session resume or, with no
+notification, when no other app plays, never take the session from an app that
+does, and never wedge. It skips when no iOS Simulator device at the deployment
+target exists.
 
 The full sanitizer suites remain separate because of their runtime cost:
 

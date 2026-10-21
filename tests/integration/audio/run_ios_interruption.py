@@ -27,7 +27,7 @@ SKIPPED = 77
 RUNTIME = re.compile(r"com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)-(\d+)")
 BOOT_TIMEOUT_SECONDS = 180
 COMPILE_TIMEOUT_SECONDS = 300
-RUN_TIMEOUT_SECONDS = 120
+RUN_TIMEOUT_SECONDS = 240
 
 
 def simctl(*arguments: str, timeout: int = 60) -> subprocess.CompletedProcess:

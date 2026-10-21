@@ -3,14 +3,18 @@
 #include "playback_sink.hpp"
 
 #include "platform/descriptor.hpp"
+#include "playback_mute_clock.hpp"
 #include "protocol.hpp"
 
 #import <AVFAudio/AVFAudio.h>
 #import <Foundation/Foundation.h>
 #import <TargetConditionals.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <span>
@@ -143,6 +147,11 @@ public:
     std::unique_ptr<Slot[]> slots;
     CompletionQueue completions;
     std::atomic<std::uint32_t> pending {};
+#if TARGET_OS_IPHONE
+    // Bumped when a mute takes over the queued periods: the completion
+    // handlers of buffers scheduled before it then stand down.
+    std::atomic<std::uint64_t> epoch {};
+#endif
     std::size_t slotCount {};
     std::uint32_t periodBytes {};
     std::uint64_t nextTicket {1};
@@ -243,6 +252,9 @@ public:
             [player_ stop];
             [engine_ stop];
             deactivateSession();
+#if TARGET_OS_IPHONE
+            endMute();
+#endif
             configured_ = false;
             prepared_ = false;
             running_ = false;
@@ -261,6 +273,9 @@ public:
             const auto frameCapacity = static_cast<AVAudioFrameCount>(
                 parameters.periodBytes /
                 (parameters.channels * parameters.bytesPerSample));
+#if TARGET_OS_IPHONE
+            muteClock_ = MuteClock(parameters.sampleRate, frameCapacity);
+#endif
             for (std::size_t index = 0; index < state->slotCount; ++index) {
                 state->slots[index].buffer = [[AVAudioPCMBuffer alloc]
                     initWithPCMFormat:format_
@@ -313,7 +328,25 @@ public:
     {
         if (!configured_ || !prepared_)
             return false;
+#if TARGET_OS_IPHONE
+        // Another app holds the session: the stream starts muted and the
+        // sink takes the session when that app lets go, not before.
+        applyInterruptionEvents();
+        bool sessionReady = false;
+        if (interrupted_) {
+            if (otherAudioPlaying() || !activateSession()) {
+                running_ = true;
+                faulted_ = false;
+                enterMute();
+                return true;
+            }
+            leaveMute();
+            sessionReady = true;
+        }
+        if (!sessionReady && !activateSession()) {
+#else
         if (!activateSession()) {
+#endif
             faulted_ = true;
             return false;
         }
@@ -342,6 +375,9 @@ public:
         } @catch (NSException*) {
         }
         running_ = false;
+#if TARGET_OS_IPHONE
+        cancelMuteTimer();
+#endif
     }
 
     void release() noexcept override
@@ -353,6 +389,9 @@ public:
         }
         abortPending(true);
         deactivateSession();
+#if TARGET_OS_IPHONE
+        endMute();
+#endif
         prepared_ = false;
         running_ = false;
         faulted_ = false;
@@ -366,6 +405,9 @@ public:
         } @catch (NSException*) {
         }
         deactivateSession();
+#if TARGET_OS_IPHONE
+        endMute();
+#endif
         try {
             state_ = std::make_shared<PlaybackState>(wake_);
         } catch (...) {
@@ -417,19 +459,18 @@ public:
             ticket = state->nextTicket++;
             selected->requestId = requestId;
             selected->ticket.store(ticket, std::memory_order_release);
-            state->pending.fetch_add(1, std::memory_order_release);
-            const auto periodBytes = state->periodBytes;
-            [player_
-                scheduleBuffer:selected->buffer
-                completionCallbackType:AVAudioPlayerNodeCompletionDataConsumed
-                completionHandler:^(AVAudioPlayerNodeCompletionCallbackType) {
-                  auto& slot = state->slots[selectedIndex];
-                  auto expected = ticket;
-                  if (slot.ticket.compare_exchange_strong(
-                          expected, 0, std::memory_order_acq_rel)) {
-                      state->finish(requestId, true, periodBytes);
-                  }
-                }];
+            [[maybe_unused]] const auto queued =
+                state->pending.fetch_add(1, std::memory_order_release);
+#if TARGET_OS_IPHONE
+            if (muted_) {
+                // The mute clock completes the period; nothing is played.
+                if (queued == 0)
+                    muteClock_.restart(MuteClock::Clock::now());
+                armMute();
+                return PlaybackEnqueueResult::accepted;
+            }
+#endif
+            schedule(state, selectedIndex, ticket, requestId);
             return PlaybackEnqueueResult::accepted;
         } @catch (NSException*) {
             if (ticket != 0) {
@@ -453,17 +494,7 @@ public:
         (void)wake_->drain();
         @try {
 #if TARGET_OS_IPHONE
-            if (notifications_->interruptionBegan.exchange(
-                    false, std::memory_order_acq_rel)) {
-                interrupted_ = true;
-                [player_ pause];
-                [engine_ pause];
-            }
-            const bool interruptionEnded =
-                notifications_->interruptionEnded.exchange(
-                    false, std::memory_order_acq_rel);
-            if (interruptionEnded)
-                interrupted_ = false;
+            applyInterruptionEvents();
 #endif
             const bool configurationChanged =
                 notifications_->configurationChanged.exchange(
@@ -471,13 +502,16 @@ public:
             if (configurationChanged && configured_) {
                 [player_ stop];
                 [engine_ stop];
-                abortPending(true);
+#if TARGET_OS_IPHONE
+                // A muted sink's periods belong to the mute clock.
+                if (!muted_)
+#endif
+                    abortPending(true);
                 [engine_ prepare];
                 faulted_ = false;
             }
 #if TARGET_OS_IPHONE
-            if ((interruptionEnded || configurationChanged) && running_ &&
-                !interrupted_)
+            if (configurationChanged && running_ && !muted_)
 #else
             if (configurationChanged && running_)
 #endif
@@ -494,10 +528,16 @@ public:
                     faulted_ = true;
                 }
             }
+#if TARGET_OS_IPHONE
+            serviceMute();
+#endif
         } @catch (NSException*) {
             abortPending(false);
             running_ = false;
             faulted_ = true;
+#if TARGET_OS_IPHONE
+            endMute();
+#endif
         }
     }
 
@@ -508,6 +548,272 @@ public:
     }
 
 private:
+    void schedule(
+        std::shared_ptr<PlaybackState> state,
+        std::size_t index,
+        std::uint64_t ticket,
+        std::uint64_t requestId)
+    {
+        const auto periodBytes = state->periodBytes;
+#if TARGET_OS_IPHONE
+        const auto epoch = state->epoch.load(std::memory_order_acquire);
+#endif
+        [player_
+            scheduleBuffer:state->slots[index].buffer
+            completionCallbackType:AVAudioPlayerNodeCompletionDataConsumed
+            completionHandler:^(AVAudioPlayerNodeCompletionCallbackType) {
+#if TARGET_OS_IPHONE
+              if (state->epoch.load(std::memory_order_acquire) != epoch)
+                  return;
+#endif
+              auto& slot = state->slots[index];
+              auto expected = ticket;
+              if (slot.ticket.compare_exchange_strong(
+                      expected, 0, std::memory_order_acq_rel)) {
+                  state->finish(requestId, true, periodBytes);
+              }
+            }];
+    }
+
+#if TARGET_OS_IPHONE
+    using Clock = MuteClock::Clock;
+
+    // How often a muted sink asks whether the app that took the session is
+    // still playing.
+    static constexpr auto hintPollInterval = std::chrono::seconds(1);
+    // A mute that starts within this long of a recovery is not logged.
+    static constexpr auto flapInterval = std::chrono::seconds(10);
+
+    /* iOS posts the end of an interruption only when the interrupting app
+     * deactivates its session. An app that simply stops, or is killed, posts
+     * none, and a sink that waited for it would stay paused for as long as
+     * the app is in front, while the guest, which sees no pause, times out
+     * every write. So an interrupted sink is muted instead: its queued periods
+     * complete on the schedule the audio hardware would have kept, the guest's
+     * clock keeps running, and the sink takes the session back as soon as the
+     * system's resumption recommendation arrives or no other app is playing
+     * primary audio. */
+    [[nodiscard]] bool otherAudioPlaying() const noexcept
+    {
+        @try {
+            return [AVAudioSession sharedInstance]
+                .secondaryAudioShouldBeSilencedHint;
+        } @catch (NSException*) {
+            return false;
+        }
+    }
+
+    // Acts on the notifications that arrived since the last look, so a
+    // request that follows them sees the interruption they report.
+    void applyInterruptionEvents()
+    {
+        if (notifications_->interruptionBegan.exchange(
+                false, std::memory_order_acq_rel)) {
+            interrupted_ = true;
+            if (running_ && !muted_)
+                enterMute();
+        }
+        if (notifications_->interruptionEnded.exchange(
+                false, std::memory_order_acq_rel)) {
+            endInterruption();
+        }
+    }
+
+    // The system took the session while the stream runs: mute, or restart a
+    // mute the stream was stopped in.
+    void enterMute()
+    {
+        const auto now = Clock::now();
+        if (!muted_) {
+            muted_ = true;
+            muteStarted_ = now;
+            // One line per mute, and none for a mute that follows a recovery
+            // closely: a session the system keeps taking back would otherwise
+            // log every second.
+            muteLogged_ = now - lastResumed_ > flapInterval;
+            // The handlers of buffers the player still holds stand down:
+            // their periods are the clock's from here on.
+            state_->epoch.fetch_add(1, std::memory_order_acq_rel);
+            @try {
+                [player_ stop];
+                [engine_ pause];
+            } @catch (NSException*) {
+            }
+            if (muteLogged_) {
+                std::fputs(
+                    "Audio muted: another app holds the audio session\n",
+                    stderr);
+            }
+        }
+        muteClock_.restart(now);
+        nextHintPoll_ = now + hintPollInterval;
+        armMute();
+    }
+
+    // Hands the periods the mute clock still holds back to the player, oldest
+    // first, and ends the mute without touching the session.
+    void leaveMute()
+    {
+        if (muted_) {
+            const auto state = state_;
+            std::array<std::pair<std::uint64_t, std::size_t>,
+                protocol::maximumPeriods> queued;
+            std::size_t count = 0;
+            for (std::size_t index = 0; index < state->slotCount; ++index) {
+                const auto ticket = state->slots[index].ticket.load(
+                    std::memory_order_acquire);
+                if (ticket != 0)
+                    queued[count++] = {ticket, index};
+            }
+            std::sort(queued.begin(), queued.begin() + count);
+            for (std::size_t position = 0; position < count; ++position) {
+                const auto [ticket, index] = queued[position];
+                schedule(state, index, ticket, state->slots[index].requestId);
+            }
+        }
+        endMute();
+    }
+
+    // Forgets any interruption: the session is released or the sink is reset.
+    void endMute() noexcept
+    {
+        muted_ = false;
+        interrupted_ = false;
+        cancelMuteTimer();
+    }
+
+    // The system says the interrupter let go.
+    void endInterruption()
+    {
+        if (!muted_) {
+            interrupted_ = false;
+            return;
+        }
+        if (running_)
+            (void)resume();
+        else
+            leaveMute();
+    }
+
+    /* Takes the session back and plays again. False when another app still
+     * holds the session, and the sink stays muted; true when the mute is over,
+     * which a failure of the engine itself also ends, as a fault. */
+    [[nodiscard]] bool resume()
+    {
+        if (!activateSession())
+            return false;
+        bool playing = false;
+        @try {
+            NSError* error = nil;
+            if (engine_.isRunning || [engine_ startAndReturnError:&error]) {
+                leaveMute();
+                playing = [player_ playAndReturnError:&error];
+            }
+        } @catch (NSException*) {
+        }
+        if (playing) {
+            faulted_ = false;
+            lastResumed_ = Clock::now();
+            if (muteLogged_) {
+                const auto milliseconds =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        lastResumed_ - muteStarted_);
+                std::fprintf(stderr, "Audio resumed after %lld ms\n",
+                    static_cast<long long>(milliseconds.count()));
+            }
+            return true;
+        }
+        abortPending(false);
+        running_ = false;
+        faulted_ = true;
+        endMute();
+        return true;
+    }
+
+    // Completes the periods that are due and asks whether to take the
+    // session back; runs on the device thread, on every pass and timer tick.
+    void serviceMute()
+    {
+        if (!muted_ || !running_)
+            return;
+        const auto now = Clock::now();
+        const auto state = state_;
+        while (state->pending.load(std::memory_order_acquire) != 0 &&
+               muteClock_.take(now)) {
+            completeOldest(*state);
+        }
+        if (now >= nextHintPoll_) {
+            nextHintPoll_ = now + hintPollInterval;
+            if (!otherAudioPlaying() && resume())
+                return;
+        }
+        armMute();
+    }
+
+    void completeOldest(PlaybackState& state) noexcept
+    {
+        std::size_t oldest = state.slotCount;
+        std::uint64_t oldestTicket {};
+        for (std::size_t index = 0; index < state.slotCount; ++index) {
+            const auto ticket =
+                state.slots[index].ticket.load(std::memory_order_acquire);
+            if (ticket != 0 && (oldest == state.slotCount ||
+                                   ticket < oldestTicket)) {
+                oldest = index;
+                oldestTicket = ticket;
+            }
+        }
+        if (oldest == state.slotCount)
+            return;
+        auto expected = oldestTicket;
+        if (state.slots[oldest].ticket.compare_exchange_strong(
+                expected, 0, std::memory_order_acq_rel)) {
+            state.finish(state.slots[oldest].requestId, true,
+                state.periodBytes);
+        }
+    }
+
+    // Wakes the device thread when the next period or the next poll is due.
+    void armMute()
+    {
+        if (!muted_ || !running_) {
+            cancelMuteTimer();
+            return;
+        }
+        auto next = nextHintPoll_;
+        if (state_->pending.load(std::memory_order_acquire) != 0)
+            next = std::min(next, muteClock_.deadline());
+        if (muteTimer_ == nil) {
+            muteTimer_ = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
+            if (muteTimer_ == nil)
+                return;
+            const std::weak_ptr<NotificationFlags> weakNotifications =
+                notifications_;
+            dispatch_source_set_event_handler(muteTimer_, ^{
+              if (const auto flags = weakNotifications.lock())
+                  (void)flags->wake->notify();
+            });
+            dispatch_resume(muteTimer_);
+        }
+        const auto delay = std::max(
+            Clock::duration::zero(), next - Clock::now());
+        dispatch_source_set_timer(muteTimer_,
+            dispatch_time(DISPATCH_TIME_NOW,
+                std::chrono::duration_cast<std::chrono::nanoseconds>(delay)
+                    .count()),
+            DISPATCH_TIME_FOREVER, NSEC_PER_MSEC);
+    }
+
+    void cancelMuteTimer() noexcept
+    {
+        if (muteTimer_ != nil) {
+            dispatch_source_cancel(muteTimer_);
+            muteTimer_ = nil;
+        }
+    }
+#endif
+
     void abortPending(bool success) noexcept
     {
         auto state = state_;
@@ -565,7 +871,16 @@ private:
     id __strong routeObserver_;
     id __strong deactivationObserver_;
     id __strong resumptionObserver_;
+    // The system has the session, and no end has come yet.
     bool interrupted_ {};
+    // The stream runs but plays nothing: the mute clock completes its periods.
+    bool muted_ {};
+    MuteClock muteClock_;
+    Clock::time_point muteStarted_ {};
+    Clock::time_point nextHintPoll_ {};
+    Clock::time_point lastResumed_ {};
+    bool muteLogged_ {};
+    dispatch_source_t __strong muteTimer_ {};
 #endif
     bool configured_ {};
     bool prepared_ {};

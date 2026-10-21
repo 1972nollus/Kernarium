@@ -340,11 +340,18 @@ The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
 
 The audio device owns a bounded period/completion ring. The callback path does
-not allocate or lock. On iOS the sink pauses when the system interrupts its
-audio session (the app's own deactivations are not interruptions) and resumes
-on the system's resumption recommendation whichever advice it carries: the guest
-cannot see a pause, so a sink left paused would strand its queued periods.
-Route changes restart the engine. Capture and mixer controls are not exposed.
+not allocate or lock. On iOS the sink mutes when the system interrupts its
+audio session (the app's own deactivations are not interruptions): nothing
+reaches the player, and the guest's periods complete on the schedule the
+hardware would have kept, so it sees no pause and its clock keeps its rate.
+The sink takes the session back on the system's resumption recommendation
+whichever advice it carries, and, because iOS posts none when the interrupter
+simply stops or is killed, once no other app plays primary audio, asked once a
+second while the stream runs. It never takes the session from an app that still
+plays, except when the guest starts a stream at a moment nothing interrupts
+it: a stream that starts or resumes during an interruption, or a route change
+during one, joins the mute. Route changes otherwise restart the engine.
+Capture and mixer controls are not exposed.
 
 SLiRP host forwards are owned by the provider so they survive provider reopen.
 An unavailable individual host port is reported without removing the guest's
