@@ -3,13 +3,13 @@
  * Checks the generated AArch32 instruction corpus. tests/unit/arm64/
  * aarch32_corpus/README.md owns the pack format and the oracles.
  *
- * No engine runs AArch32 yet, so a case is checked against what is known
+ * This lane runs no engine, so a case is checked against what is known
  * without one: its program decodes, in order and in the IT state the earlier
  * instructions leave, to legal forms except at the instruction that raised an
  * event; the instruction under test is the form the case names; the event
  * is one the instruction's kind can raise; the retired count, the fault
  * position and address, the state changes and the memory runs are consistent
- * with that; and a case is stored once. Every case of a page profile runs; a
+ * with that; and a case is stored once. Every case of the 4 KiB profile runs; a
  * case whose forms need a level the run does not implement is skipped, so a
  * lane at the base or SIMD level reads the same pack.
  *
@@ -34,10 +34,6 @@
 #include <string_view>
 #include <tuple>
 #include <vector>
-
-#ifndef DARWIN_UML_GUEST_PAGE_SIZE
-#error "the guest page profile selects the corpus records"
-#endif
 
 namespace {
 
@@ -264,7 +260,7 @@ int main(int argc, char **argv)
 			check_case(record, test, profile, level, totals);
 		}
 	}
-	require(totals.records != 0, "no record applies to this page profile");
+	require(totals.records != 0, "no record applies to the 4 KiB profile");
 	std::printf("AArch32 corpus: %zu cases in %zu records (%zu raise an event, %zu skipped below the level)\n",
 		totals.cases, totals.records, totals.events, totals.skipped);
 	for (const auto &[oracle, count] : totals.per_oracle)

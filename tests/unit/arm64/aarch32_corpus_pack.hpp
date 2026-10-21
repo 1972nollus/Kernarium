@@ -25,10 +25,6 @@
 #include <string>
 #include <vector>
 
-#ifndef DARWIN_UML_GUEST_PAGE_SIZE
-#error "the guest page profile selects the corpus records"
-#endif
-
 namespace uml::testing::aarch32_corpus {
 
 /* The memory map every case runs in (tools/arm64-tests/a32_oracle.cpp). */

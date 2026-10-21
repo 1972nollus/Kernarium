@@ -31,10 +31,6 @@
 #include <string_view>
 #include <vector>
 
-#ifndef DARWIN_UML_GUEST_PAGE_SIZE
-#error "the guest page profile selects the corpus records"
-#endif
-
 namespace {
 
 using ::uml::memory::MemoryAccess;
