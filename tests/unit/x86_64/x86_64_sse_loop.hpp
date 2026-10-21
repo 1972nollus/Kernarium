@@ -77,6 +77,36 @@ constexpr std::size_t memory_size = output_address + chunk * output_stride;
 	return bytes;
 }
 
+/* The state the loop starts from, to run `count` rows under `mxcsr`. */
+[[nodiscard]] inline CpuState initial_cpu(std::uint32_t mxcsr,
+	std::size_t count) noexcept
+{
+	CpuState cpu{};
+	cpu.mxcsr = mxcsr;
+	cpu.rip = code_address;
+	cpu.rflags = 0x202;
+	cpu.gpr(Register::rsp) = stack_top;
+	cpu.gpr(Register::rsi) = input_address;
+	cpu.gpr(Register::rdi) = output_address;
+	cpu.gpr(Register::rcx) = count;
+	cpu.gpr(Register::rbx) = control_address;
+	return cpu;
+}
+
+/* Marks the row whose instruction faulted with #XM in `trapped` and steps
+ * over the instruction, so that the loop stores the destination it kept;
+ * false when the row lies outside `trapped`. */
+[[nodiscard]] inline bool skip_trapped_row(CpuState &cpu,
+	std::vector<std::uint8_t> &trapped, std::size_t instruction_length) noexcept
+{
+	const auto row = (cpu.gpr(Register::rsi) - input_address) / input_stride;
+	if (row >= trapped.size())
+		return false;
+	trapped[row] = 1;
+	cpu.rip += instruction_length;
+	return true;
+}
+
 #if UML_X86_64_SSE_LOOP_JIT
 /* The x86-64 JIT, which serves the process as it serves a vCPU thread. Each
  * run starts a fresh address-space generation, so no translation crosses
@@ -102,15 +132,7 @@ inline JitEngine &jit_engine()
 	std::vector<std::uint8_t> *trapped = nullptr)
 {
 	using namespace uml::cpu::x86_64;
-	CpuState cpu{};
-	cpu.mxcsr = mxcsr;
-	cpu.rip = code_address;
-	cpu.rflags = 0x202;
-	cpu.gpr(Register::rsp) = stack_top;
-	cpu.gpr(Register::rsi) = input_address;
-	cpu.gpr(Register::rdi) = output_address;
-	cpu.gpr(Register::rcx) = count;
-	cpu.gpr(Register::rbx) = control_address;
+	CpuState cpu = initial_cpu(mxcsr, count);
 	const auto generation = ++jit.generation;
 	jit.engine.apply_changes(generation, ExecutionMode::long64, {
 		.mapping_sequence = 1,
@@ -136,12 +158,8 @@ inline JitEngine &jit_engine()
 		if (checked && trapped != nullptr &&
 			result.reason == uml::cpu::ExitReason::floating_point_trap &&
 			cpu.rip == code_address + instruction_offset) {
-			const auto row = (cpu.gpr(Register::rsi) - input_address) /
-				input_stride;
-			if (row >= trapped->size())
+			if (!skip_trapped_row(cpu, *trapped, instruction_length))
 				return false;
-			(*trapped)[row] = 1;
-			cpu.rip += instruction_length;
 			continue;
 		}
 		return false;
@@ -160,15 +178,7 @@ inline JitEngine &jit_engine()
 	std::vector<std::uint8_t> *trapped = nullptr)
 {
 	using namespace uml::cpu::x86_64;
-	CpuState cpu{};
-	cpu.mxcsr = mxcsr;
-	cpu.rip = code_address;
-	cpu.rflags = 0x202;
-	cpu.gpr(Register::rsp) = stack_top;
-	cpu.gpr(Register::rsi) = input_address;
-	cpu.gpr(Register::rdi) = output_address;
-	cpu.gpr(Register::rcx) = count;
-	cpu.gpr(Register::rbx) = control_address;
+	CpuState cpu = initial_cpu(mxcsr, count);
 	for (std::size_t dispatch = 0; dispatch < count * 16U + 64U;
 		++dispatch) {
 		const auto selected = executor.select_program(memory, cpu.rip,
@@ -190,12 +200,8 @@ inline JitEngine &jit_engine()
 			result.event == uml::cpu::EngineEvent::floating_point_trap &&
 			result.vector == 19 && result.error == cpu.mxcsr &&
 			cpu.rip == code_address + instruction_offset) {
-			const auto row = (cpu.gpr(Register::rsi) - input_address) /
-				input_stride;
-			if (row >= trapped->size())
+			if (!skip_trapped_row(cpu, *trapped, instruction_length))
 				return false;
-			(*trapped)[row] = 1;
-			cpu.rip += instruction_length;
 			continue;
 		}
 		if (result.event != uml::cpu::EngineEvent::continued)
