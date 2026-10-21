@@ -140,6 +140,12 @@ uml_add_unit_test(
     NAME x86-64-masked-flags
     COMMAND uml_x86_64_masked_flags_tests "${UML_X86_64_MASKED_FLAGS}"
     LABELS cpu;x86-64)
+# The same cases through the gadget engine's checked path, which corrects
+# the flags the ordinary path leaves.
+uml_add_unit_test(
+    NAME x86-64-masked-flags-checked
+    COMMAND uml_x86_64_masked_flags_tests --checked "${UML_X86_64_MASKED_FLAGS}"
+    LABELS cpu;x86-64)
 
 uml_add_x86_64_test_binary(uml_x86_64_code_page_registry_tests
     code_page_registry_tests.cpp)

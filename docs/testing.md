@@ -1151,6 +1151,8 @@ keeping its own.
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel
 Xeon's, except the documented inexact cases the test names.
+`x86-64-masked-flags-checked` runs the same cases through the gadget engine's
+checked path, which corrects those cases, and allows no difference.
 `x86-64-half-round` holds the integer rounding of a single to a half, which
 VCVTPS2PH's flags follow in both engines, to a second derivation over every
 finite single in all four rounding controls. The

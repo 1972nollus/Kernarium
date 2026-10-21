@@ -7,9 +7,12 @@
  * ordinary path, unchecked, in the guest loop that loads MXCSR before the
  * instruction and stores it after, and the six flags it leaves must be the
  * Xeon's. The documented inexact cases are named in `residuals`, and only
- * those may differ. `--show N` prints up to N unexplained cases. The same executable runs
- * XE2's whole request sets from a file the selection tool writes with
- * `--all`. */
+ * those may differ. `--checked` runs the gadget engine's checked path instead,
+ * which corrects the three of them: every instruction runs alone with its
+ * exceptions checked while MXCSR masks them all, and its flags must be the
+ * Xeon's, with no residual and no fault. `--show N` prints up to N
+ * unexplained cases. The same executable runs XE2's whole request sets from
+ * a file the selection tool writes with `--all`. */
 #include "x86_64_sse_loop.hpp"
 
 #include <algorithm>
@@ -177,15 +180,25 @@ private:
 int main(int argc, char **argv)
 {
 	std::size_t show = 20;
+	bool checked = false;
 	const char *path = nullptr;
 	for (int index = 1; index < argc; ++index) {
 		const std::string_view argument{argv[index]};
 		if (argument == "--show" && index + 1 < argc)
 			show = std::strtoull(argv[++index], nullptr, 10);
+#if !UML_X86_64_SSE_LOOP_JIT
+		else if (argument == "--checked")
+			checked = true;
+#endif
 		else if (path == nullptr && !argument.starts_with("--"))
 			path = argv[index];
 		else {
+#if UML_X86_64_SSE_LOOP_JIT
 			std::fprintf(stderr, "usage: %s [--show N] DATA\n", argv[0]);
+#else
+			std::fprintf(stderr, "usage: %s [--show N] [--checked] DATA\n",
+				argv[0]);
+#endif
 			return 2;
 		}
 	}
@@ -232,6 +245,9 @@ int main(int argc, char **argv)
 			(void)memory.write(code_address, code);
 #if !UML_X86_64_SSE_LOOP_JIT
 			executor.emplace();
+			if (checked)
+				executor->check_exceptions(
+					uml::cpu::x86_64::gadgets::check_simd);
 			executor->prepare(memory);
 #endif
 		}
@@ -247,7 +263,10 @@ int main(int argc, char **argv)
 #if UML_X86_64_SSE_LOOP_JIT
 		const bool ran = run_engine(memory, executor, mxcsr, end - begin);
 #else
-		const bool ran = run_engine(memory, *executor, mxcsr, end - begin);
+		std::vector<std::uint8_t> trapped(end - begin);
+		const bool ran = run_engine(memory, *executor, mxcsr, end - begin,
+			checked, instruction.bytes.size(), &trapped,
+			uml::cpu::x86_64::gadgets::check_simd);
 #endif
 		if (!ran) {
 			std::fprintf(stderr, "x86-64 masked flags: %s under MXCSR %#x "
@@ -263,6 +282,15 @@ int main(int argc, char **argv)
 				(row - begin) * output_stride + 48), 4);
 			const auto actual = static_cast<std::uint8_t>(stored & flag_bits);
 			const auto expected = static_cast<std::uint8_t>(c.flags & flag_bits);
+#if !UML_X86_64_SSE_LOOP_JIT
+			/* Every exception is masked, so nothing faults. */
+			if (trapped[row - begin] != 0) {
+				++unexplained;
+				std::fprintf(stderr, "  %s mxcsr %#06x: faulted\n",
+					instruction.name.c_str(), c.mxcsr);
+				continue;
+			}
+#endif
 			if (actual == expected) {
 				++matched;
 				continue;
@@ -273,7 +301,8 @@ int main(int argc, char **argv)
 					continue;
 				const bool spurious = (actual & flag) != 0;
 				bool flag_explained = false;
-				for (std::size_t index = 0; index < residuals.size(); ++index)
+				for (std::size_t index = 0;
+					!checked && index < residuals.size(); ++index)
 					if (residuals[index].explains(c, flag, spurious)) {
 						++explained[index];
 						flag_explained = true;
