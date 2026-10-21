@@ -820,12 +820,31 @@ constexpr std::uint64_t x87_compare_rflags = 0x8d5U;
 		return run_stream<false, true>(program, cpu, memory, executor,
 			stream, 1, instruction_budget);
 
-	const CpuState before = cpu;
-	const auto saved = save_store(cpu, first, memory, checked);
 	/* x86 raises its flags otherwise than the host does: the model computes
 	 * them from the sources, which the instruction may overwrite. */
 	const auto modelled = simd ? simd_fp_steps(cpu, first, memory) :
 		std::optional<FpSteps>{};
+	if (modelled && instruction.destination.kind != OperandKind::memory) {
+		/* #XM is a fault: an unmasked exception leaves the instruction's
+		 * destination and RIP as they were, with MXCSR's flags for it.
+		 * Without a store to undo, the model decides it before the
+		 * instruction runs, and a faulting one never does. */
+		const auto outcome = x86_fp_settle(*modelled, cpu.mxcsr);
+		if (outcome.fault) {
+			cpu.mxcsr |= outcome.flags;
+			return floating_point_trap(simd_error_vector, cpu.mxcsr);
+		}
+		/* The host's flags are not x86's. */
+		std::uint32_t host{};
+		const auto result = run_stream<true, true>(program, cpu, memory,
+			executor, stream, 1, instruction_budget, &host);
+		if (result.event == ::uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == 1)
+			cpu.mxcsr |= outcome.flags;
+		return result;
+	}
+	const CpuState before = cpu;
+	const auto saved = save_store(cpu, first, memory, checked);
 	std::uint32_t raised{};
 	const auto result = simd ?
 		run_stream<true, true>(program, cpu, memory, executor, stream, 1,

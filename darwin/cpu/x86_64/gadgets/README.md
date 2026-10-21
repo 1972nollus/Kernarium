@@ -670,10 +670,11 @@ checks, and runs every other block, linked, as `execute` does:
   first step whose flags MXCSR unmasks, and raises the flags up to it. The
   results stay the gadgets' own. A conversion from an integer keeps the host's
   flags, which are x86's: CVTSI2SS, CVTSI2SD and CVTPI2PS round, and CVTPI2PD
-  and CVTDQ2PD are exact. An unmasked exception restores the state from before
-  it, a memory destination included, and faults; MXCSR then holds only the
-  flags checked before the computation when one of those was unmasked. Masked
-  flags accumulate.
+  and CVTDQ2PD are exact. An unmasked exception faults before the instruction
+  runs and leaves everything as it was; one that stores to memory (VCVTPS2PH)
+  or keeps the host's flags runs first, and the fault restores its state and
+  its store. MXCSR then holds only the flags checked before the computation
+  when one of those was unmasked. Masked flags accumulate.
 - x87, run checked: the softfloat helpers set the status word's flags, a
   denormal operand's included. An unmasked invalid operation, denormal
   operand or division by zero restores the registers, the stack and memory
