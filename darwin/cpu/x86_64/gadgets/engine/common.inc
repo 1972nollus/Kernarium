@@ -2232,6 +2232,23 @@ gadget nop
 	.endif
 .endm
 
+/* The TBL indices in v6 for PSHUFD and VPERMILPS: destination dword n takes
+ * the source dword that bits 2n+1:2n of the immediate in w13 name. */
+.macro vector_shuffle_dword_indices
+	mov w16, #0x0101
+	movk w16, #0x0101, lsl #16
+	mov w17, #0x0100
+	movk w17, #0x0302, lsl #16
+	.irp lane, 0, 1, 2, 3
+	lsr w14, w13, #(\lane * 2)
+	and w14, w14, #3
+	lsl w14, w14, #2
+	mul w14, w14, w16
+	add w14, w14, w17
+	mov v6.s[\lane], w14
+	.endr
+.endm
+
 /* Write the vector result in q4 (and q5 for 256 bits) to the register the
  * descriptor's low half addresses. A 128-bit VEX write, which bit 63 marks,
  * zeroes the upper half; a legacy SSE write leaves it. */

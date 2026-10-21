@@ -20,21 +20,6 @@
 	.endr
 .endm
 
-.macro vector_map3_shuffle_dword_indices
-	mov w16, #0x0101
-	movk w16, #0x0101, lsl #16
-	mov w17, #0x0100
-	movk w17, #0x0302, lsl #16
-	.irp lane, 0, 1, 2, 3
-	lsr w14, w13, #(\lane * 2)
-	and w14, w14, #3
-	lsl w14, w14, #2
-	mul w14, w14, w16
-	add w14, w14, w17
-	mov v6.s[\lane], w14
-	.endr
-.endm
-
 .macro vector_map3_mask_h output
 	movi v\output\().16b, #0
 	.irp lane, 0, 1, 2, 3, 4, 5, 6, 7
@@ -102,7 +87,7 @@ Lx86_vector_map3_select_done\@:
 	mov v5.16b, v7.16b
 	.endif
 	.elseif \opcode == 0x04
-	vector_map3_shuffle_dword_indices
+	vector_shuffle_dword_indices
 	tbl v4.16b, {v1.16b}, v6.16b
 	.if \width == 256
 	tbl v5.16b, {v3.16b}, v6.16b
@@ -304,5 +289,4 @@ vector_map3_shuffle_family 4c
 .purgem vector_map3_variable_blend
 .purgem vector_map3_select_128
 .purgem vector_map3_mask_h
-.purgem vector_map3_shuffle_dword_indices
 .purgem vector_map3_qword_indices

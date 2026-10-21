@@ -224,22 +224,6 @@
 	.endif
 .endm
 
-.macro vector_integer_shuffle_indices_dword
-	movi v6.16b, #0
-	mov w16, #0x0101
-	movk w16, #0x0101, lsl #16
-	mov w17, #0x0100
-	movk w17, #0x0302, lsl #16
-	.irp lane, 0, 1, 2, 3
-	lsr w14, w13, #(\lane * 2)
-	and w14, w14, #3
-	lsl w14, w14, #2
-	mul w14, w14, w16
-	add w14, w14, w17
-	mov v6.s[\lane], w14
-	.endr
-.endm
-
 .macro vector_integer_index_sequence
 	mov w16, #0x0100
 	movk w16, #0x0302, lsl #16
@@ -270,7 +254,8 @@
 
 .macro vector_integer_shuffle prefix, width, output, input
 	.if \prefix == 1
-	vector_integer_shuffle_indices_dword
+	movi v6.16b, #0
+	vector_shuffle_dword_indices
 	.elseif \prefix == 2
 	vector_integer_shuffle_indices_word 4, 4
 	.else
@@ -553,7 +538,6 @@ vector_integer_immediate 73, 7, 256
 .purgem vector_integer_body
 .purgem vector_integer_shuffle
 .purgem vector_integer_shuffle_indices_word
-.purgem vector_integer_shuffle_indices_dword
 .purgem vector_integer_index_sequence
 .purgem vector_integer_lane
 .purgem vector_integer_sad
