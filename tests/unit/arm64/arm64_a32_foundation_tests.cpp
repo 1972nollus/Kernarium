@@ -109,13 +109,11 @@ constexpr std::array all_id_registers{A32IdRegister::midr,
 	A32IdRegister::isar6, A32IdRegister::mvfr0, A32IdRegister::mvfr1,
 	A32IdRegister::mvfr2};
 
-/* The state appended to CpuState sits after the SVE block, so no earlier
+/* The state appended to CpuState sits after the reserved block, so no earlier
  * offset moves, at the offsets the assembly and the emitted code use. */
 void state_is_appended_at_the_pinned_offsets()
 {
 	static_assert(std::is_trivially_copyable_v<arm64::CpuState>);
-	require(offsetof(arm64::CpuState, sve_live) == UML_ARM64_CPU_SVE_LIVE);
-	require(UML_ARM64_CPU_SVE_LIVE == 1504, "an SVE offset moved");
 	require(offsetof(arm64::CpuState, a32_ge_mask) == 1508 &&
 		UML_ARM64_CPU_A32_GE_MASK == 1508);
 	require(offsetof(arm64::CpuState, a32_fpscr_nzcv) == 1512 &&

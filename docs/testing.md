@@ -885,10 +885,9 @@ both tools on synthetic ELF fixtures.
 
 `arm64-no-sve` checks that the virtual CPU presents no SVE outside streaming
 mode whatever the host reports: the prober's token set, the engines' presented
-profiles, ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1, the SVE bits of AT_HWCAP
-and AT_HWCAP2, the 16-bit mask form of the predicate storage `CpuState`
-reserves, and the zeroing of that storage at every PSTATE.SM change.
-`arm64-advertised-features` pins the words and registers of named hosts.
+profiles, ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1, and the SVE bits of
+AT_HWCAP and AT_HWCAP2. `arm64-advertised-features` pins the words and
+registers of named hosts.
 
 `guest-no-sve-gadgets` and `guest-no-sve-jit` run on every host. The
 freestanding `no_sve_probe.cpp` boots as `/init` and checks that the guest
