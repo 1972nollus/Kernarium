@@ -3,7 +3,7 @@
 """Run the guest SME tests on one execution engine.
 
 The tests need a host with SME and an engine at SmeSupport control or better
-(the SME control core of design section 5.3 S4/S5 M1). While the host or the
+(the SME control core). While the host or the
 engine falls short, the runner names the test, says why it is skipped and
 exits with CTest's skip status. Otherwise it runs, with the guest-SME policy
 at its default (on), in order:
@@ -13,7 +13,7 @@ at its default (on), in order:
 - "spin" mode: a vCPU in streaming mode with ZA live while the emulator
   receives SIGUSR1 and SIGCHLD, then the kernel's copy of the state checked;
 - "engine" mode: the control core executed by the engine;
-- "engine-spin" mode: the section 4.5 signal test, with ZA loaded and stored
+- "engine-spin" mode: the signal test, with ZA loaded and stored
   by the engine around the signals;
 - a boot per process-directed terminating signal (SIGTERM, SIGINT, SIGHUP)
   sent while a vCPU spins in streaming mode, which must end the emulator at

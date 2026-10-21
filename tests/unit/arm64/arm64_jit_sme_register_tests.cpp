@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * The JIT's register-only SVE and SME forms at run time (S4 milestone M2).
+ * The JIT's register-only SVE and SME forms at run time.
  * They run natively in SM=1 translations, so every test needs a host whose
  * profile implements SME (an SME host, unless DARWIN_UML_GUEST_SME=0) and
  * is skipped elsewhere; arm64-jit-sme-codegen checks the translations on any

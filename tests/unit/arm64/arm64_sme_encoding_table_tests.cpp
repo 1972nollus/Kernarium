@@ -5,15 +5,14 @@
  * every FP&SIMD row's witness to its own class. Each row's mode must be the
  * one its ASL access checks demand where its streaming-mode requirement
  * holds (FEAT_SME without FEAT_SVE or FEAT_SME_FA64), and its two
- * requirements must agree with its checks as the SVE design's census
- * classifies them, per field value: CheckSVEEnabled executes in both modes,
- * CheckNonStreamingSVEEnabled only outside streaming mode, the streaming
- * checks only inside it, and the SME checks in both under one requirement.
- * Without an SVE feature, the non-streaming requirement must decide exactly
- * what the streaming requirement and mode decide outside streaming mode, so
- * an engine that reads it changes nothing for a virtual CPU without SVE,
- * which is every one. A
- * set of words assembled by LLVM MC must decode as the architecture
+ * requirements must agree with its checks, per field value:
+ * CheckSVEEnabled executes in both modes, CheckNonStreamingSVEEnabled only
+ * outside streaming mode, the streaming checks only inside it, and the SME
+ * checks in both under one requirement. Without an SVE feature, the
+ * non-streaming requirement must decide exactly what the streaming
+ * requirement and mode decide outside streaming mode, so an engine that
+ * reads it changes nothing for a virtual CPU without SVE, which is every
+ * one. A set of words assembled by LLVM MC must decode as the architecture
  * describes them. The generator's freshness test pins the table to the Arm
  * release; this test pins the decoder to the table.
  */
