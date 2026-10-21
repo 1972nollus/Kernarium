@@ -482,18 +482,14 @@ struct MetalReadbackState final :
                         .width = footprint.width,
                         .height = footprint.height,
                     };
-                    const auto sampling = shaderSampling(
-                        *request.sampling, DisplayRotation::upright);
-                    [draw setRenderPipelineState:pipeline];
-                    [draw setViewport:viewport];
                     [draw setScissorRect:scissor];
-                    [draw setFragmentTexture:request.texture atIndex:0];
-                    [draw setFragmentBytes:&sampling
-                                    length:sizeof(sampling)
-                                   atIndex:0];
-                    [draw drawPrimitives:MTLPrimitiveTypeTriangle
-                             vertexStart:0
-                             vertexCount:3];
+                    encodeScanoutPass(
+                        draw,
+                        pipeline,
+                        request.texture,
+                        *request.sampling,
+                        DisplayRotation::upright,
+                        viewport);
                     [draw endEncoding];
                 }
                 id<MTLBlitCommandEncoder> encoder =
@@ -813,15 +809,7 @@ struct MetalReadbackState final :
         if (!final && now - reportedAt < std::chrono::seconds(1))
             return;
         reportedAt = now;
-        const auto total = snapshot();
-        activity.record(
-            "stats display=vnc%s guest=%llu presented=%llu dropped=%llu "
-            "cpu-fallback=%llu",
-            final ? " final" : "",
-            static_cast<unsigned long long>(total.guestFrames),
-            static_cast<unsigned long long>(total.presentedFrames),
-            static_cast<unsigned long long>(total.droppedFrames),
-            static_cast<unsigned long long>(total.cpuFallbackFrames));
+        recordDisplayStatistics("vnc", final, snapshot());
     }
 
     DisplayStatistics snapshot() const noexcept

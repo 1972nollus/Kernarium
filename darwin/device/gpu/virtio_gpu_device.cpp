@@ -889,6 +889,42 @@ int VirtioGpuDevice::contextFenceStatus(
         fence.contextId, fence.ringIndex, fence.cookie);
 }
 
+/* Inlined into both callers: as a call it costs each fenced command 17
+ * instructions. */
+[[gnu::always_inline]] bool VirtioGpuDevice::completeFence(
+    const protocol::GpuControlHeader& header,
+    std::uint64_t fenceCookie,
+    std::optional<DeferredFence>* deferredFence)
+{
+    const std::uint32_t ringIndex =
+        (header.flags & protocol::gpuFlagInfoRingIndex) != 0
+        ? header.ringIndex
+        : 0;
+    /* Venus places each guest ring on its own fence timeline, so any ring of
+     * a Venus context is deferrable; Virgl retires one timeline per context,
+     * so only its ring zero is. Venus ring indexes are already bounded by
+     * validVenusFenceHeader(). */
+    if (deferredFence != nullptr && fenceCookie != 0 &&
+        header.contextId != 0 &&
+        (ringIndex == 0 || venusContexts_.contains(header.contextId))) {
+        if (UML_GPU_RENDERER.createContextFence(
+                header.contextId, ringIndex, fenceCookie) != 0) {
+            return false;
+        }
+        *deferredFence = DeferredFence {
+            .contextId = header.contextId,
+            .ringIndex = ringIndex,
+            .cookie = fenceCookie,
+        };
+        return true;
+    }
+    return UML_GPU_RENDERER.createFenceAndWait(
+               header.contextId,
+               ringIndex,
+               header.fenceId,
+               stopRequested_) == 0;
+}
+
 std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
     std::span<const std::uint8_t> request,
     bool cursorQueue,
@@ -904,20 +940,11 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
     const auto command = static_cast<protocol::GpuCommand>(header->type);
 
     if (cursorQueue) {
-        if (command != protocol::GpuCommand::updateCursor &&
-            command != protocol::GpuCommand::moveCursor) {
-            return {};
-        }
-        const auto* cursor =
-            readStructure<protocol::GpuUpdateCursor>(request);
-        if (cursor == nullptr ||
-            cursor->position.scanoutId != protocol::primaryScanoutId)
-            return {};
         /*
          * The cursor virtqueue has only a device-readable command
          * descriptor. Unlike the control queue, cursor commands do not carry
          * a writable response buffer; completion is reported solely through
-         * the used ring.
+         * the used ring. The device has no cursor plane, so it consumes them.
          */
         return {};
     }
@@ -1114,37 +1141,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorInvalidContext);
         }
-        if ((header->flags & protocol::gpuFlagFence) != 0) {
-            const std::uint32_t ringIndex =
-                (header->flags & protocol::gpuFlagInfoRingIndex) != 0
-                ? header->ringIndex
-                : 0;
-            /* Venus places each guest ring on its own fence timeline, so any
-             * ring of a Venus context is deferrable; Virgl retires one
-             * timeline per context, so only its ring zero is. Venus ring
-             * indexes are already bounded by validVenusFenceHeader(). */
-            if (deferredFence != nullptr && fenceCookie != 0 &&
-                header->contextId != 0 &&
-                (ringIndex == 0 ||
-                 venusContexts_.contains(header->contextId))) {
-                if (UML_GPU_RENDERER.createContextFence(
-                        header->contextId, ringIndex, fenceCookie) != 0) {
-                    return response(
-                        *header, protocol::GpuResponse::errorUnspecified);
-                }
-                *deferredFence = DeferredFence {
-                    .contextId = header->contextId,
-                    .ringIndex = ringIndex,
-                    .cookie = fenceCookie,
-                };
-            } else if (UML_GPU_RENDERER.createFenceAndWait(
-                           header->contextId,
-                           ringIndex,
-                           header->fenceId,
-                           stopRequested_) != 0) {
-                return response(
-                    *header, protocol::GpuResponse::errorUnspecified);
-            }
+        if ((header->flags & protocol::gpuFlagFence) != 0 &&
+            !completeFence(*header, fenceCookie, deferredFence)) {
+            return response(
+                *header, protocol::GpuResponse::errorUnspecified);
         }
         return success;
     }
@@ -1156,9 +1156,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             create->resourceId == protocol::invalidResourceId ||
             create->width == 0 || create->height == 0 ||
             create->depth == 0 || create->arraySize == 0 ||
-            resources_.contains(create->resourceId) ||
-            virglResources_.contains(create->resourceId) ||
-            blobResources_.contains(create->resourceId)) {
+            resourceIdInUse(create->resourceId)) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
@@ -1217,9 +1215,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             (create->flags & ~protocol::blobFlagMask) != 0 ||
             create->memory != protocol::blobMemoryHost3d ||
             create->entryCount != 0 ||
-            resources_.contains(create->resourceId) ||
-            virglResources_.contains(create->resourceId) ||
-            blobResources_.contains(create->resourceId)) {
+            resourceIdInUse(create->resourceId)) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
@@ -1401,27 +1397,9 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
-        if (nextSharedMemoryActionId_ == 0) {
-            return response(
-                *header, protocol::GpuResponse::errorUnspecified);
-        }
         auto success = response(*header, protocol::GpuResponse::okNoData);
-        const auto actionId = nextSharedMemoryActionId_++;
-        try {
-            sharedMemoryActions_.push_back(SharedMemoryAction {
-                .type = SharedMemoryAction::Type::unmap,
-                .actionId = actionId,
-                .resourceId = unmap->resourceId,
-                .regionId = protocol::hostVisibleSharedMemoryRegionId,
-                .regionOffset = resource.regionOffset,
-                .length = resource.chargedSize,
-            });
-        } catch (const std::bad_alloc&) {
-            return response(
-                *header, protocol::GpuResponse::errorOutOfMemory);
-        }
-        resource.mappingState = BlobResource::MappingState::unmapping;
-        resource.pendingActionId = actionId;
+        if (const auto error = queueUnmap(unmap->resourceId, resource))
+            return response(*header, *error);
         return success;
     }
 
@@ -1472,37 +1450,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
-        if ((header->flags & protocol::gpuFlagFence) != 0) {
-            const std::uint32_t ringIndex =
-                (header->flags & protocol::gpuFlagInfoRingIndex) != 0
-                ? header->ringIndex
-                : 0;
-            /* Venus places each guest ring on its own fence timeline, so any
-             * ring of a Venus context is deferrable; Virgl retires one
-             * timeline per context, so only its ring zero is. Venus ring
-             * indexes are already bounded by validVenusFenceHeader(). */
-            if (deferredFence != nullptr && fenceCookie != 0 &&
-                header->contextId != 0 &&
-                (ringIndex == 0 ||
-                 venusContexts_.contains(header->contextId))) {
-                if (UML_GPU_RENDERER.createContextFence(
-                        header->contextId, ringIndex, fenceCookie) != 0) {
-                    return response(
-                        *header, protocol::GpuResponse::errorUnspecified);
-                }
-                *deferredFence = DeferredFence {
-                    .contextId = header->contextId,
-                    .ringIndex = ringIndex,
-                    .cookie = fenceCookie,
-                };
-            } else if (UML_GPU_RENDERER.createFenceAndWait(
-                           header->contextId,
-                           ringIndex,
-                           header->fenceId,
-                           stopRequested_) != 0) {
-                return response(
-                    *header, protocol::GpuResponse::errorUnspecified);
-            }
+        if ((header->flags & protocol::gpuFlagFence) != 0 &&
+            !completeFence(*header, fenceCookie, deferredFence)) {
+            return response(
+                *header, protocol::GpuResponse::errorUnspecified);
         }
         return success;
     }
@@ -1516,9 +1467,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             !supportedFormat(create->format)) {
             return response(*header, protocol::GpuResponse::errorInvalidParameter);
         }
-        if (resources_.contains(create->resourceId) ||
-            virglResources_.contains(create->resourceId) ||
-            blobResources_.contains(create->resourceId)) {
+        if (resourceIdInUse(create->resourceId)) {
             return response(*header, protocol::GpuResponse::errorInvalidResource);
         }
         const auto size = pixelBufferSize(create->width, create->height);
@@ -1575,26 +1524,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                     *header, protocol::GpuResponse::errorInvalidParameter);
             }
             if (resource.mappingState == BlobResource::MappingState::mapped) {
-                if (nextSharedMemoryActionId_ == 0) {
-                    return response(
-                        *header, protocol::GpuResponse::errorUnspecified);
+                if (const auto error =
+                        queueUnmap(reference->resourceId, resource)) {
+                    return response(*header, *error);
                 }
-                const auto actionId = nextSharedMemoryActionId_++;
-                try {
-                    sharedMemoryActions_.push_back(SharedMemoryAction {
-                        .type = SharedMemoryAction::Type::unmap,
-                        .actionId = actionId,
-                        .resourceId = reference->resourceId,
-                        .regionId = protocol::hostVisibleSharedMemoryRegionId,
-                        .regionOffset = resource.regionOffset,
-                        .length = resource.chargedSize,
-                    });
-                } catch (const std::bad_alloc&) {
-                    return response(
-                        *header, protocol::GpuResponse::errorOutOfMemory);
-                }
-                resource.mappingState = BlobResource::MappingState::unmapping;
-                resource.pendingActionId = actionId;
                 resource.retireAfterAction = true;
                 return success;
             }
@@ -2302,6 +2235,29 @@ void VirtioGpuDevice::completeSharedMemoryAction(
     }
 }
 
+std::optional<protocol::GpuResponse> VirtioGpuDevice::queueUnmap(
+    std::uint32_t resourceId, BlobResource& resource)
+{
+    if (nextSharedMemoryActionId_ == 0)
+        return protocol::GpuResponse::errorUnspecified;
+    const auto actionId = nextSharedMemoryActionId_++;
+    try {
+        sharedMemoryActions_.push_back(SharedMemoryAction {
+            .type = SharedMemoryAction::Type::unmap,
+            .actionId = actionId,
+            .resourceId = resourceId,
+            .regionId = protocol::hostVisibleSharedMemoryRegionId,
+            .regionOffset = resource.regionOffset,
+            .length = resource.chargedSize,
+        });
+    } catch (const std::bad_alloc&) {
+        return protocol::GpuResponse::errorOutOfMemory;
+    }
+    resource.mappingState = BlobResource::MappingState::unmapping;
+    resource.pendingActionId = actionId;
+    return std::nullopt;
+}
+
 void VirtioGpuDevice::prepareReset() noexcept
 {
     try {
@@ -2317,19 +2273,8 @@ void VirtioGpuDevice::prepareReset() noexcept
         for (auto& [resourceId, resource] : blobResources_) {
             if (resource.mappingState != BlobResource::MappingState::mapped)
                 continue;
-            if (nextSharedMemoryActionId_ == 0)
+            if (queueUnmap(resourceId, resource))
                 return;
-            const auto actionId = nextSharedMemoryActionId_++;
-            sharedMemoryActions_.push_back(SharedMemoryAction {
-                .type = SharedMemoryAction::Type::unmap,
-                .actionId = actionId,
-                .resourceId = resourceId,
-                .regionId = protocol::hostVisibleSharedMemoryRegionId,
-                .regionOffset = resource.regionOffset,
-                .length = resource.chargedSize,
-            });
-            resource.mappingState = BlobResource::MappingState::unmapping;
-            resource.pendingActionId = actionId;
         }
     } catch (...) {
     }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "display.hpp"
+
 #include <array>
 #include <chrono>
 #include <cstdarg>
@@ -115,6 +117,24 @@ private:
 {
     static DisplayActivityLog log;
     return log;
+}
+
+/* The display's own frame counters, as the line that tells a display which
+ * never received a scanout from one which discarded every frame. */
+inline void recordDisplayStatistics(
+    const char* display,
+    bool final,
+    const DisplayStatistics& total) noexcept
+{
+    displayActivityLog().record(
+        "stats display=%s%s guest=%llu presented=%llu dropped=%llu "
+        "cpu-fallback=%llu",
+        display,
+        final ? " final" : "",
+        static_cast<unsigned long long>(total.guestFrames),
+        static_cast<unsigned long long>(total.presentedFrames),
+        static_cast<unsigned long long>(total.droppedFrames),
+        static_cast<unsigned long long>(total.cpuFallbackFrames));
 }
 
 } // namespace uml::gpu
