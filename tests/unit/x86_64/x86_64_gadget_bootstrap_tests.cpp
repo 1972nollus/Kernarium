@@ -14,6 +14,7 @@
 #include "cpu/x86_64/segments.hpp"
 #include "memory/guest_address_space.hpp"
 #include "require.hpp"
+#include "x86_64_code_change_history.hpp"
 
 #include <algorithm>
 #include <array>
@@ -147,7 +148,6 @@ public:
 
 	[[nodiscard]] bool is_executable(std::uint64_t address) noexcept override
 	{
-		executable_queries_.fetch_add(1, std::memory_order_relaxed);
 		return every_page_executable_ ||
 			(address & ~std::uint64_t{4095}) == executable_page_;
 	}
@@ -301,10 +301,6 @@ public:
 		code_changes_ = code_changes;
 	}
 	[[nodiscard]] std::size_t invalidations() const noexcept { return invalidations_; }
-	[[nodiscard]] std::size_t executable_queries() const noexcept
-	{
-		return executable_queries_.load(std::memory_order_relaxed);
-	}
 
 private:
 	[[nodiscard]] std::uint64_t fold(std::uint64_t address) const noexcept
@@ -336,7 +332,6 @@ private:
 	std::atomic<std::size_t> atomic_pointers_{};
 	bool atomic_pointer_available_{true};
 	bool fetches_fail_{};
-	std::atomic<std::size_t> executable_queries_{};
 	std::size_t code_stamp_queries_{};
 	std::vector<std::uint64_t> code_stamp_versions_;
 	bool code_stamps_available_{};
@@ -2205,49 +2200,9 @@ void fill_add_blocks(TestMemory &memory, std::size_t blocks, std::size_t stride)
  * stream. The two call tests below are about exactly that decision, so they
  * supply the sequence contract a real address space provides.
  */
-struct TestSequences final {
-	std::uint64_t mapping_changes{1};
-	std::uint64_t code_changes{1};
-	std::array<uml::cpu::x86_64::gadgets::ProgramCodeChange, 8> history{};
-	std::size_t recorded{};
-
-	void change(std::uint64_t address, std::uint64_t length) noexcept
-	{
-		if (recorded < history.size())
-			history[recorded] = {address, length};
-		++recorded;
-		++code_changes;
-	}
-};
-
-[[nodiscard]] uml::cpu::x86_64::gadgets::ProgramCacheSequences
-read_test_sequences(void *context) noexcept
-{
-	const auto &state = *static_cast<const TestSequences *>(context);
-	return {state.mapping_changes, state.code_changes, false};
-}
-
-/* Stands in for the address space's own history: the ranges published after
- * `sequence`, or a refusal when it cannot describe the whole span. */
-[[nodiscard]] int read_test_code_changes(void *context, std::uint64_t sequence,
-	uml::cpu::x86_64::gadgets::ProgramCodeChange *changes,
-	std::size_t capacity, std::uint64_t *current_sequence) noexcept
-{
-	const auto &state = *static_cast<const TestSequences *>(context);
-	*current_sequence = state.code_changes;
-	if (sequence >= state.code_changes)
-		return 0;
-	if (state.recorded > state.history.size() ||
-		sequence + state.recorded < state.code_changes)
-		return -1;
-	const auto count = state.code_changes - sequence;
-	if (count > capacity)
-		return -1;
-	for (std::uint64_t index = 0; index < count; ++index)
-		changes[index] = state.history[static_cast<std::size_t>(
-			state.recorded - count + index)];
-	return static_cast<int>(count);
-}
+using uml::test::x86_64_code_change_history::Sequences;
+using uml::test::x86_64_code_change_history::read_code_changes;
+using uml::test::x86_64_code_change_history::read_sequences;
 
 /* A call whose return-address push lands on an executable page publishes that
  * write like any other store, and then follows its link. What makes that safe
@@ -2272,12 +2227,12 @@ read_test_sequences(void *context) noexcept
 	TestMemory memory;
 	memory.load(0, {0xe9, 0x0b, 0x00, 0x00, 0x00});
 	memory.load(16, {0x0f, 0x05});
-	TestSequences sequences;
+	Sequences sequences;
 	memory.set_code_changes(&sequences.code_changes);
 	const auto prepare = [&](gadgets::Executor &executor) {
 		executor.prepare(memory, 42, sequences.mapping_changes,
-			sequences.code_changes, &sequences, read_test_sequences,
-			read_test_code_changes);
+			sequences.code_changes, &sequences, read_sequences,
+			read_code_changes);
 	};
 	/* Only the jump is selected before each run. Selecting the target would
 	 * re-arm its link, which is what the dispatch loop does and what would
@@ -2374,13 +2329,13 @@ read_test_sequences(void *context) noexcept
 	jump_to(0x300, 0x200);
 	memory.load(0x400, {0xb8, 0x4e, 0x00, 0x00, 0x00, 0x0f, 0x05});
 	jump_to(0x500, 0x400);
-	TestSequences sequences;
+	Sequences sequences;
 	memory.set_code_changes(&sequences.code_changes);
 	gadgets::Executor executor;
 	const auto prepare = [&] {
 		executor.prepare(memory, 42, sequences.mapping_changes,
-			sequences.code_changes, &sequences, read_test_sequences,
-			read_test_code_changes);
+			sequences.code_changes, &sequences, read_sequences,
+			read_code_changes);
 	};
 	const auto run = [&](std::uint64_t rip, std::uint64_t rax = 0) {
 		CpuState cpu{};
@@ -2454,11 +2409,11 @@ read_test_sequences(void *context) noexcept
 	memory.load(0, {0xe8, 0x0b, 0x00, 0x00, 0x00});
 	memory.load(16, {0x0f, 0x05});
 	memory.set_executable_page(0);
-	TestSequences sequences;
+	Sequences sequences;
 	memory.set_code_changes(&sequences.code_changes);
 	gadgets::Executor executor;
 	executor.prepare(memory, 42, sequences.mapping_changes,
-		sequences.code_changes, &sequences, read_test_sequences);
+		sequences.code_changes, &sequences, read_sequences);
 	const auto target = executor.select_program(
 		memory, 16, ExecutionMode::long64);
 	const auto call = executor.select_program(
@@ -2492,11 +2447,11 @@ read_test_sequences(void *context) noexcept
 	memory.load(0, {0xe8, 0x0b, 0x00, 0x00, 0x00});
 	memory.load(16, {0x0f, 0x05});
 	memory.set_executable_page(0);
-	TestSequences sequences;
+	Sequences sequences;
 	memory.set_code_changes(&sequences.code_changes);
 	gadgets::Executor executor;
 	executor.prepare(memory, 42, sequences.mapping_changes,
-		sequences.code_changes, &sequences, read_test_sequences);
+		sequences.code_changes, &sequences, read_sequences);
 	const auto target = executor.select_program(
 		memory, 16, ExecutionMode::long64);
 	const auto call = executor.select_program(
@@ -10421,11 +10376,11 @@ struct PositionCase final {
 				load_code(memory, 16, bytes);
 				if (overlap)
 					memory.set_executable_page(0);
-				TestSequences sequences;
+				Sequences sequences;
 				memory.set_code_changes(&sequences.code_changes);
 				gadgets::Executor executor;
 				executor.prepare(memory, 42, sequences.mapping_changes,
-					sequences.code_changes, &sequences, read_test_sequences);
+					sequences.code_changes, &sequences, read_sequences);
 				const auto target = executor.select_program(
 					memory, 16, ExecutionMode::long64);
 				const auto jump = executor.select_program(

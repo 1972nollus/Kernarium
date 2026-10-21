@@ -14,7 +14,7 @@
 #include "cpu/x86_64/jit/fex_engine.hpp"
 #include "platform/apple/host_features.hpp"
 #endif
-#include "memory/guest_address_space.hpp"
+#include "x86_64_flat_memory.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -29,88 +29,7 @@ using uml::cpu::x86_64::ExecutionMode;
 using uml::cpu::x86_64::Register;
 
 /* One flat mapping from address zero: code, stack, inputs and outputs. */
-class FlatMemory final : public uml::memory::GuestAddressSpace {
-public:
-	explicit FlatMemory(std::size_t size) : bytes_(size) {}
-
-	[[nodiscard]] bool read(std::uint64_t address,
-		std::span<std::byte> destination) override
-	{
-		if (!inside(address, destination.size()))
-			return fault(address, uml::memory::MemoryAccess::read);
-		std::memcpy(destination.data(), bytes_.data() + address,
-			destination.size());
-		return true;
-	}
-
-	[[nodiscard]] bool fetch(std::uint64_t address,
-		std::span<std::byte> destination) override
-	{
-		if (!inside(address, destination.size()))
-			return fault(address, uml::memory::MemoryAccess::execute);
-		std::memcpy(destination.data(), bytes_.data() + address,
-			destination.size());
-		return true;
-	}
-
-	[[nodiscard]] bool write(std::uint64_t address,
-		std::span<const std::byte> source) override
-	{
-		if (!inside(address, source.size()))
-			return fault(address, uml::memory::MemoryAccess::write);
-		std::memcpy(bytes_.data() + address, source.data(), source.size());
-		return true;
-	}
-
-	[[nodiscard]] std::byte *atomic_pointer(std::uint64_t address,
-		std::size_t size, uml::memory::MemoryAccess access) override
-	{
-		if (!inside(address, size)) {
-			(void)fault(address, access);
-			return nullptr;
-		}
-		return bytes_.data() + address;
-	}
-
-	[[nodiscard]] uml::memory::MemoryFault last_fault() const noexcept override
-	{
-		return fault_;
-	}
-
-	[[nodiscard]] bool has_fault() const noexcept override { return faulted_; }
-
-#if UML_X86_64_SSE_LOOP_JIT
-	/* The JIT fetches only from executable pages. */
-	[[nodiscard]] bool is_executable(std::uint64_t address) noexcept override
-	{
-		return address < bytes_.size();
-	}
-#endif
-
-	[[nodiscard]] std::byte *at(std::uint64_t address) noexcept
-	{
-		return bytes_.data() + address;
-	}
-
-private:
-	[[nodiscard]] bool inside(std::uint64_t address,
-		std::size_t size) const noexcept
-	{
-		return address <= bytes_.size() && size <= bytes_.size() - address;
-	}
-
-	[[nodiscard]] bool fault(std::uint64_t address,
-		uml::memory::MemoryAccess access) noexcept
-	{
-		fault_ = {address, access};
-		faulted_ = true;
-		return false;
-	}
-
-	std::vector<std::byte> bytes_;
-	uml::memory::MemoryFault fault_{};
-	bool faulted_{};
-};
+using uml::test::x86_64_flat_memory::FlatMemory;
 
 /* ---- the guest loop ---- */
 

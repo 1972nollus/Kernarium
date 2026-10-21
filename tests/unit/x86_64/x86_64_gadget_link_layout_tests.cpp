@@ -16,15 +16,14 @@
 #include "cpu/x86_64/gadgets/executor.hpp"
 #include "cpu/x86_64/gadgets/native_symbols.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
-#include "memory/guest_address_space.hpp"
 #include "require.hpp"
+#include "x86_64_flat_memory.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <thread>
 #include <vector>
 
@@ -33,47 +32,7 @@ namespace {
 using namespace uml::cpu::x86_64;
 using uml::testing::require;
 
-class Memory final : public uml::memory::GuestAddressSpace {
-public:
-	Memory() : bytes_(16384) {}
-
-	void load(std::uint64_t address, std::initializer_list<std::uint8_t> bytes)
-	{
-		for (const auto byte : bytes)
-			bytes_[address++] = static_cast<std::byte>(byte);
-	}
-
-	[[nodiscard]] bool read(std::uint64_t address,
-		std::span<std::byte> destination) override
-	{
-		if (address > bytes_.size() ||
-		    destination.size() > bytes_.size() - address)
-			return false;
-		std::memcpy(destination.data(), bytes_.data() + address,
-			destination.size());
-		return true;
-	}
-
-	[[nodiscard]] bool write(std::uint64_t address,
-		std::span<const std::byte> source) override
-	{
-		if (address > bytes_.size() || source.size() > bytes_.size() - address)
-			return false;
-		std::memcpy(bytes_.data() + address, source.data(), source.size());
-		return true;
-	}
-
-	[[nodiscard]] std::byte *atomic_pointer(std::uint64_t address,
-		std::size_t size, uml::memory::MemoryAccess) override
-	{
-		if (address > bytes_.size() || size > bytes_.size() - address)
-			return nullptr;
-		return bytes_.data() + address;
-	}
-
-private:
-	std::vector<std::byte> bytes_;
-};
+using Memory = uml::test::x86_64_flat_memory::FlatMemory;
 
 /* mov eax, 1 ; mov ebx, 2 ; mov ecx, 3 ; syscall, every block starting at 0. */
 void load_blocks(Memory &memory)
