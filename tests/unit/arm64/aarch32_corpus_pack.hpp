@@ -11,12 +11,16 @@
  * region filled by `data_fill(case.fill)` and then `case.data_patches`, the
  * read-only region holding `read_only_fill()`, and the program placed at
  * kCodeBase + `Case::origin`. `Case::final` is the complete state after the
- * program, and `Case::memory_patches` the data bytes it changed.
+ * program, and `Case::memory_patches` the data bytes it changed. code_image()
+ * and data_before() lay a case out that way, and for_each_instruction() walks
+ * its program through the decoder.
  */
 #pragma once
 
+#include "cpu/arm64/aarch32/decode.hpp"
 #include "require.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -24,10 +28,6 @@
 #include <iterator>
 #include <string>
 #include <vector>
-
-#ifndef DARWIN_UML_GUEST_PAGE_SIZE
-#error "the guest page profile selects the corpus records"
-#endif
 
 namespace uml::testing::aarch32_corpus {
 
@@ -280,6 +280,127 @@ inline std::vector<std::uint8_t> read_only_fill()
 	for (std::uint32_t index = 0; index < kReadOnlySize; ++index)
 		data[index] = static_cast<std::uint8_t>(((0x5AU + index) * 0x9E3779B1U) >> 24);
 	return data;
+}
+
+/* The code region as the oracle prepares it: the program at its origin, an
+ * exit stub after it (a halfword NOP first when a Thumb program leaves the
+ * stub's word unaligned, which `padded` reports), the stubs at the two fixed
+ * exits, and the lane's own exit code, `epilogue_word`, behind the two
+ * epilogues. A program at the end of the region has no room for a stub and
+ * falls off it. */
+inline std::vector<std::uint8_t> code_image(const Case &test, std::uint32_t epilogue_word, bool &padded)
+{
+	std::vector<std::uint8_t> code(kCodeSize, 0);
+	const auto put16 = [&](std::uint32_t offset, std::uint16_t value) {
+		std::memcpy(code.data() + offset, &value, 2);
+	};
+	const auto put32 = [&](std::uint32_t offset, std::uint32_t value) {
+		std::memcpy(code.data() + offset, &value, 4);
+	};
+	const auto arm_stub = [&](std::uint32_t at) {
+		put32(at, 0xe51ff004U); /* ldr pc, [pc, #-4] */
+		put32(at + 4, kArmEpilogue);
+	};
+	const auto thumb_stub = [&](std::uint32_t at) {
+		put16(at, 0xf8df); /* ldr.w pc, [pc, #0] */
+		put16(at + 2, 0xf000);
+		put32(at + 4, kThumbEpilogue);
+	};
+	for (std::size_t index = 0; index < test.halves.size(); ++index)
+		put16(test.origin + static_cast<std::uint32_t>(2 * index), test.halves[index]);
+	std::uint32_t end = test.origin + static_cast<std::uint32_t>(2 * test.halves.size());
+	padded = false;
+	if (test.flags & kFlagThumb) {
+		if (end % 4 != 0 && end + 2 + 8 <= kCodeSize) {
+			padded = true;
+			put16(end, 0xbf00); /* nop, so the stub is word aligned */
+			end += 2;
+		}
+		if (end + 8 <= kCodeSize)
+			thumb_stub(end);
+	} else if (end + 8 <= kCodeSize) {
+		arm_stub(end);
+	}
+	arm_stub(kArmExit - kCodeBase);
+	thumb_stub(kThumbExit - kCodeBase);
+	put32(kArmEpilogue - kCodeBase, epilogue_word);
+	put32(kThumbEpilogue - kCodeBase, epilogue_word);
+	return code;
+}
+
+/* The data region a case starts from, and what it holds after the program. */
+inline std::vector<std::uint8_t> data_before(const Case &test)
+{
+	auto data = data_fill(test.fill);
+	for (const auto &patch : test.data_patches)
+		std::copy(patch.bytes.begin(), patch.bytes.end(), data.begin() + patch.offset);
+	return data;
+}
+
+inline std::vector<std::uint8_t> data_after(const Case &test, std::vector<std::uint8_t> data)
+{
+	for (const auto &patch : test.memory_patches)
+		std::copy(patch.bytes.begin(), patch.bytes.end(), data.begin() + patch.offset);
+	return data;
+}
+
+/* One instruction of a case's program, decoded. */
+struct ProgramStep final {
+	::uml::cpu::arm64::aarch32::Instruction instruction;
+	/* The word as the decoder takes it: the A32 bits, or hw1 << 16 | hw2 (hw1 << 16 for a T16). */
+	std::uint32_t word;
+	/* The IT state before it. */
+	::uml::cpu::arm64::aarch32::ItState before;
+	/* The index of its first halfword. */
+	unsigned half;
+	bool thumb;
+
+	/* The same word, against another profile. */
+	[[nodiscard]] ::uml::cpu::arm64::aarch32::Instruction decode_at(
+		const ::uml::cpu::arm64::aarch32::Profile &profile) const
+	{
+		return thumb ? ::uml::cpu::arm64::aarch32::decode_thumb(word, before, profile)
+			     : ::uml::cpu::arm64::aarch32::decode_a32(word, profile);
+	}
+};
+
+/* How a program's halfwords ended. */
+enum class ProgramEnd { whole, split_word, cut_off };
+
+/* Decodes the program in order against `profile`, carrying the IT state the
+ * earlier instructions leave, and hands each instruction to `visit`, which
+ * returns false to stop. Reports a program that ends in half an A32 word
+ * (`split_word`) or in a Thumb-2 instruction cut off by the end of the code
+ * region (`cut_off`); `whole` otherwise, and when `visit` stopped it. */
+template<typename Visit>
+ProgramEnd for_each_instruction(const Case &test, const ::uml::cpu::arm64::aarch32::Profile &profile, Visit &&visit)
+{
+	namespace dec = ::uml::cpu::arm64::aarch32;
+	const bool thumb = test.flags & kFlagThumb;
+	dec::ItState it;
+	for (unsigned half = 0; half < test.halves.size();) {
+		ProgramStep step{{}, 0, it, half, thumb};
+		unsigned length = 4;
+		if (!thumb) {
+			if (half + 1 >= test.halves.size())
+				return ProgramEnd::split_word;
+			step.word = std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half];
+			step.instruction = dec::decode_a32(step.word, profile);
+		} else {
+			const std::uint16_t first = test.halves[half];
+			length = dec::thumb_length(first);
+			if (half + length / 2 > test.halves.size())
+				return ProgramEnd::cut_off;
+			step.word = length == 4 ? std::uint32_t{first} << 16 | test.halves[half + 1]
+						: std::uint32_t{first} << 16;
+			step.instruction = dec::decode_thumb(step.word, it, profile);
+			it = step.instruction.next_it;
+		}
+		if (!visit(step))
+			return ProgramEnd::whole;
+		half += length / 2;
+	}
+	return ProgramEnd::whole;
 }
 
 } // namespace uml::testing::aarch32_corpus

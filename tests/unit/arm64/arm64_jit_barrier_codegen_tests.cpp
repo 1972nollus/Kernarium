@@ -41,13 +41,6 @@ void require_words(const std::vector<std::uint32_t> &actual,
           message);
 }
 
-template <std::size_t Size>
-[[nodiscard]] bool contains(std::span<const std::uint32_t> words,
-                            const std::array<std::uint32_t, Size> &sequence) {
-  return std::search(words.begin(), words.end(), sequence.begin(),
-                     sequence.end()) != words.end();
-}
-
 void forced_feature_selection() {
   for (const auto base : {dmb_base, dsb_base, isb_base})
     for (unsigned option = 0; option < 16U; ++option) {
