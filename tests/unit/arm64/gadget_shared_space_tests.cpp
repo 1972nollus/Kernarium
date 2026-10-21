@@ -131,11 +131,34 @@ void a_failed_snapshot_keeps_the_next_bodies_waiting()
 		"a body was not freed once every executor had left");
 }
 
+/* A body the limbo has no memory to queue stays where it is, never freed by
+ * the limbo, and the push throws nothing. */
+void a_body_that_cannot_be_queued_is_never_freed()
+{
+	Executors executors;
+	cache::announce_exit(executors.reader);
+	cache::Limbo<Body> limbo;
+	Body body;
+	uml::testing::fail_next_allocation();
+	bool threw = false;
+	try {
+		limbo.push(&body);
+	} catch (const std::bad_alloc &) {
+		threw = true;
+	}
+	require(!uml::testing::cancel_pending_allocation_failure(),
+		"the push made no allocation");
+	require(!threw, "a push threw for want of memory");
+	limbo.reclaim(&executors.self, executors.attached, free_bodies);
+	require(body.frees == 0 && limbo.size() == 0);
+}
+
 } // namespace
 
 int main()
 {
 	a_failed_snapshot_frees_nothing_early();
 	a_failed_snapshot_keeps_the_next_bodies_waiting();
+	a_body_that_cannot_be_queued_is_never_freed();
 	return 0;
 }

@@ -232,15 +232,22 @@ private:
  * reclaim afterwards moves it behind a snapshot of the attached executors, and
  * a reclaim that finds every executor seen inside has left frees it. A caller
  * that cannot take the lock, finds executors still inside, or has no memory
- * for the snapshot never waits: the bodies stay for the next call. A reclaim
- * never throws, so that letting go of a body is never left half done. */
+ * for the snapshot never waits: the bodies stay for the next call. Neither
+ * queueing nor reclaiming throws, so that letting go of a body is never left
+ * half done. */
 template <typename Body>
 class Limbo final {
 public:
-	void push(Body *body)
+	/* Without the memory to queue it, the body stays where it is,
+	 * unreachable, until its arena goes with the address space. */
+	void push(Body *body) noexcept
 	{
 		const std::lock_guard guard{mutex_};
-		incoming_.push_back(body);
+		try {
+			incoming_.push_back(body);
+		} catch (const std::bad_alloc &) {
+			return;
+		}
 		pending_.store(true, std::memory_order_relaxed);
 	}
 

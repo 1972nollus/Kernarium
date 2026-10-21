@@ -496,12 +496,7 @@ void Space::release(Body *body, bool stale) noexcept
 		free_body(body);
 		return;
 	}
-	try {
-		limbo_.push(body);
-	} catch (...) {
-		/* Without the memory to queue it the body stays where it is,
-		 * unreachable, until its arena goes with the address space. */
-	}
+	limbo_.push(body);
 }
 
 void Space::reclaim(const gadget_cache::ExecutorAnnouncement *self) noexcept

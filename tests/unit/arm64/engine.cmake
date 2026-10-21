@@ -482,6 +482,8 @@
     target_compile_definitions(uml_arm64_gadget_dead_space_tests PRIVATE
         UML_GADGET_SWEEP_STRESS=1
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+    target_link_libraries(uml_arm64_gadget_dead_space_tests PRIVATE
+        uml_test_allocation_failure)
 
     # The process's gadget-cache budget bounds what the executors' address
     # spaces keep, from several threads at once.

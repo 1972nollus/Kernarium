@@ -6,6 +6,7 @@
  *
  * Runs against the unit-test variant of the gadget executor
  * (uml_arm64_gadget_sweep_stress_executor), which counts live spaces. */
+#include "allocation_failure.hpp"
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 
@@ -341,6 +342,86 @@ void a_dead_space_keeps_its_window_place(unsigned long first, bool shared)
 	require(executor.cache_diagnostics().translations == later);
 }
 
+/* D6: letting go of a dead space puts the bodies it held in limbo, which
+ * allocates. Whichever allocation of that fails, the entry still runs, the
+ * space is asked for again, and the next entry lets go of it. */
+void a_dead_space_goes_after_a_failed_allocation(unsigned long first,
+	bool shared)
+{
+	set_shared(shared);
+	JitBacking dying_backing{1};
+	put_program(dying_backing, 1, 2);
+	JitBacking live_backing{1};
+	put_program(live_backing, 3, 4);
+	JitMapping live{first + 1, code_base, live_backing, 1};
+	const auto spaces = stress::live_spaces();
+	for (std::size_t allowed = 0;; ++allowed) {
+		require(allowed < 256, "the failure point never moved past the "
+			"end of letting go of a dead space");
+		auto dying = std::make_unique<JitMapping>(first, code_base,
+			dying_backing, 1);
+		const auto vcpu = std::make_unique<Vcpu>();
+		auto &executor = vcpu->executor;
+		auto &memory = vcpu->memory;
+		auto &cpu = vcpu->cpu;
+		require(run_to_system_call(executor, memory, first, cpu,
+			code_base) == 4);
+		require(run_to_system_call(executor, memory, first + 1, cpu,
+			code_base) == 4);
+		require(stress::live_spaces() == spaces + 2);
+		dying.reset();
+		uml::testing::fail_after_allocations(allowed);
+		require(run_to_system_call(executor, memory, first + 1, cpu,
+			code_base) == 4);
+		/* True once the entry made fewer allocations than allowed. */
+		const bool swept =
+			uml::testing::cancel_pending_allocation_failure();
+		require(cpu.registers[0] == 3 && cpu.registers[1] == 4);
+		require(run_to_system_call(executor, memory, first + 1, cpu,
+			code_base) == 4);
+		require(cpu.registers[0] == 3 && cpu.registers[1] == 4);
+		require(stress::live_spaces() == spaces + 1,
+			"a dead space was not let go of at the next entry");
+		if (swept)
+			return;
+	}
+}
+
+/* D7: an executor that goes lets go of every body its caches hold, which
+ * puts them in limbo. Whichever allocation of that fails, it goes whole, and
+ * its address spaces go with it. */
+void an_executor_goes_whole_after_a_failed_allocation(unsigned long first,
+	bool shared)
+{
+	set_shared(shared);
+	JitBacking one_backing{1};
+	put_program(one_backing, 1, 2);
+	JitBacking two_backing{1};
+	put_program(two_backing, 3, 4);
+	JitMapping one{first, code_base, one_backing, 1};
+	JitMapping two{first + 1, code_base, two_backing, 1};
+	const auto spaces = stress::live_spaces();
+	for (std::size_t allowed = 0;; ++allowed) {
+		require(allowed < 256, "the failure point never moved past the "
+			"end of an executor");
+		auto vcpu = std::make_unique<Vcpu>();
+		for (const auto generation : {first, first + 1})
+			require(run_to_system_call(vcpu->executor, vcpu->memory,
+				generation, vcpu->cpu, code_base) == 4);
+		require(stress::live_spaces() == spaces + 2);
+		uml::testing::fail_after_allocations(allowed);
+		vcpu.reset();
+		/* True once the executor's end made fewer allocations than
+		 * allowed. */
+		const bool swept =
+			uml::testing::cancel_pending_allocation_failure();
+		require(stress::live_spaces() == spaces,
+			"an executor that went kept an address space");
+		if (swept)
+			return;
+	}
+}
+
 /* A wait that load can stretch without limit and only a wedge can end: it
  * returns once `done`, and fails when `progress` has not moved for
  * `wedge_limit`. What a run takes is measured in the rounds it completes,
@@ -505,6 +586,10 @@ int main(int argc, char **argv)
 		{"d4s", [] { a_dead_space_goes_from_a_streaming_mode_cache(2060, true); }},
 		{"d5p", [] { a_dead_space_keeps_its_window_place(2100, false); }},
 		{"d5s", [] { a_dead_space_keeps_its_window_place(2120, true); }},
+		{"d6p", [] { a_dead_space_goes_after_a_failed_allocation(2140, false); }},
+		{"d6s", [] { a_dead_space_goes_after_a_failed_allocation(2150, true); }},
+		{"d7p", [] { an_executor_goes_whole_after_a_failed_allocation(2160, false); }},
+		{"d7s", [] { an_executor_goes_whole_after_a_failed_allocation(2170, true); }},
 		{"s1p", [] { concurrent_executors_follow_dead_generations(3000, false); }},
 		{"s1s", [] { concurrent_executors_follow_dead_generations(4000, true); }},
 	};
