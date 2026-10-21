@@ -3043,6 +3043,38 @@ read_test_sequences(void *context) noexcept
 			"ModR/M plus SIB address was not normalized");
 }
 
+/* A REX prefix counts only immediately before the opcode: any legacy prefix
+ * after it voids it. ADD [rax], ebx behind REX.B and each prefix decodes with
+ * the base RAX, and with the prefix first it keeps REX.B and so the base R8. */
+[[nodiscard]] bool a_legacy_prefix_after_rex_voids_it()
+{
+	using namespace uml::cpu::x86_64;
+	{
+		TestMemory memory;
+		memory.load(0, {0x66, 0x41, 0x01, 0x18});
+		const auto kept = decode(memory, 0);
+		if (!expect(kept.status == DecodeStatus::decoded &&
+				kept.instruction.destination.kind == OperandKind::memory &&
+				kept.instruction.destination.memory.base == 8,
+			"a REX prefix before the opcode was not honoured"))
+			return false;
+	}
+	for (const std::uint8_t prefix : {0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65,
+		     0x66, 0x67, 0xf0, 0xf2, 0xf3}) {
+		TestMemory memory;
+		memory.load(0, {0x41, prefix, 0x01, 0x18});
+		const auto voided = decode(memory, 0);
+		if (!expect(voided.status == DecodeStatus::decoded &&
+				voided.instruction.destination.kind ==
+					OperandKind::memory &&
+				voided.instruction.destination.memory.base == 0 &&
+				voided.instruction.length == 4,
+			"a legacy prefix after REX did not void it"))
+			return false;
+	}
+	return true;
+}
+
 [[nodiscard]] bool execute_scalar_control_flow()
 {
 	using namespace uml::cpu::x86_64;
@@ -11158,6 +11190,7 @@ int main(int argc, char **argv)
 				a_shed_address_space_is_asked_for_again_after_a_failed_allocation) &&
 			the_budget_bounds_what_an_executor_keeps() ? 0 : 1;
 	const bool passed = decode_scaled_address() &&
+		a_legacy_prefix_after_rex_voids_it() &&
 		cache_reuses_and_revalidates_programs() &&
 		cache_validates_inline_source_spans() &&
 		cache_counts_validation_faults_and_races() &&
