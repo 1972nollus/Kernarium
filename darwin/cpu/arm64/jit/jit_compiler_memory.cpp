@@ -1012,6 +1012,68 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
     return true;
   }
 
+namespace {
+
+/* The run collect_unsigned_run() found: up to maximum_run operations on one
+ * base and in one direction, and the span of their offsets. */
+template <std::size_t maximum_run, typename Operation>
+struct UnsignedRun final {
+  std::array<Operation, maximum_run> operations{};
+  std::size_t length{};
+  unsigned base{};
+  bool load{};
+  std::uint64_t first_offset{};
+  std::uint64_t maximum_end{};
+};
+
+/* The leading instructions that `decode` accepts as unsigned-offset
+ * operations on the first one's base and in its direction, at most
+ * maximum_run of them, cut from the end until their furthest bytes lie
+ * within one page. A length under two is no run. */
+template <std::size_t maximum_run, typename Operation, typename Decode>
+[[nodiscard]] UnsignedRun<maximum_run, Operation>
+collect_unsigned_run(std::span<const std::uint32_t> instructions,
+                     Decode decode) {
+  UnsignedRun<maximum_run, Operation> run;
+  std::array<std::uint64_t, maximum_run> first_offsets{};
+  std::array<std::uint64_t, maximum_run> maximum_ends{};
+  std::size_t candidates = 0;
+  std::uint64_t first_offset = 0;
+  std::uint64_t maximum_end = 0;
+  while (candidates < run.operations.size() &&
+         candidates < instructions.size()) {
+    Operation operation{};
+    if (!decode(instructions[candidates], operation))
+      break;
+    if (candidates == 0) {
+      run.base = operation.base;
+      run.load = operation.load;
+      first_offset = operation.offset;
+    } else if (operation.base != run.base || operation.load != run.load) {
+      break;
+    }
+    first_offset = std::min(first_offset, operation.offset);
+    maximum_end = std::max(maximum_end, operation.offset + operation.bytes);
+    run.operations[candidates] = operation;
+    first_offsets[candidates] = first_offset;
+    maximum_ends[candidates] = maximum_end;
+    ++candidates;
+  }
+
+  std::size_t length = candidates;
+  while (length >= 2 &&
+         maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
+    --length;
+  if (length >= 2) {
+    run.length = length;
+    run.first_offset = first_offsets[length - 1];
+    run.maximum_end = maximum_ends[length - 1];
+  }
+  return run;
+}
+
+} // namespace
+
 [[nodiscard]] bool JitCompiler::decode_simd_unsigned_memory(
       std::uint32_t instruction,
       UnsignedMemoryOperation &operation) noexcept {
@@ -1046,39 +1108,9 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
         instructions.size() < 2)
       return 0;
 
-    std::array<UnsignedMemoryOperation, maximum_run> operations{};
-    std::array<std::uint64_t, maximum_run> first_offsets{};
-    std::array<std::uint64_t, maximum_run> maximum_ends{};
-    std::size_t candidates = 0;
-    unsigned base = 0;
-    bool load = false;
-    std::uint64_t first_offset = 0;
-    std::uint64_t maximum_end = 0;
-    while (candidates < operations.size() &&
-           candidates < instructions.size()) {
-      UnsignedMemoryOperation operation{};
-      if (!decode_simd_unsigned_memory(instructions[candidates], operation))
-        break;
-      if (candidates == 0) {
-        base = operation.base;
-        load = operation.load;
-        first_offset = operation.offset;
-      } else if (operation.base != base || operation.load != load) {
-        break;
-      }
-      first_offset = std::min(first_offset, operation.offset);
-      maximum_end =
-          std::max(maximum_end, operation.offset + operation.bytes);
-      operations[candidates] = operation;
-      first_offsets[candidates] = first_offset;
-      maximum_ends[candidates] = maximum_end;
-      ++candidates;
-    }
-
-    std::size_t length = candidates;
-    while (length >= 2 &&
-           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
-      --length;
+    const auto [operations, length, base, load, first_offset, maximum_end] =
+        collect_unsigned_run<maximum_run, UnsignedMemoryOperation>(
+            instructions, decode_simd_unsigned_memory);
     if (length < 2)
       return 0;
 
@@ -1111,8 +1143,6 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
       emitter_.compare_zero(slow, 0, false, true);
     }
 
-    first_offset = first_offsets[length - 1];
-    maximum_end = maximum_ends[length - 1];
     RunStraddle straddle{
         .label = emitter_.make_label(),
         .slow = slow,
@@ -1385,38 +1415,13 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
     if (track_direct_stores_ || instructions.size() < 2)
       return 0;
 
-    std::array<UnsignedMemoryOperation, maximum_run> operations{};
-    std::array<std::uint64_t, maximum_run> first_offsets{};
-    std::array<std::uint64_t, maximum_run> maximum_ends{};
-    std::size_t candidates = 0;
-    bool load = false;
-    std::uint64_t first_offset = 0;
-    std::uint64_t maximum_end = 0;
-    while (candidates < operations.size() &&
-           candidates < instructions.size()) {
-      UnsignedMemoryOperation operation{};
-      if (!decode_scalar_unsigned_memory(instructions[candidates], true,
-                                         operation))
-        break;
-      if (candidates == 0) {
-        load = operation.load;
-        first_offset = operation.offset;
-      } else if (operation.load != load) {
-        break;
-      }
-      first_offset = std::min(first_offset, operation.offset);
-      maximum_end =
-          std::max(maximum_end, operation.offset + operation.bytes);
-      operations[candidates] = operation;
-      first_offsets[candidates] = first_offset;
-      maximum_ends[candidates] = maximum_end;
-      ++candidates;
-    }
-
-    std::size_t length = candidates;
-    while (length >= 2 &&
-           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
-      --length;
+    const auto [operations, length, base, load, first_offset, maximum_end] =
+        collect_unsigned_run<maximum_run, UnsignedMemoryOperation>(
+            instructions,
+            [](std::uint32_t instruction, UnsignedMemoryOperation &operation) {
+              return decode_scalar_unsigned_memory(instruction, true,
+                                                   operation);
+            });
     if (length < 2)
       return 0;
 
@@ -1430,8 +1435,6 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
      * alignment once before observing any memory or destination register. */
     emit_misalignment_check(8, 16, alignment);
 
-    first_offset = first_offsets[length - 1];
-    maximum_end = maximum_ends[length - 1];
     RunStraddle straddle{
         .label = emitter_.make_label(),
         .slow = slow,
@@ -1475,48 +1478,20 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
     if (track_direct_stores_ || instructions.size() < 2)
       return 0;
 
-    std::array<UnsignedMemoryOperation, maximum_run> operations{};
-    std::array<std::uint64_t, maximum_run> first_offsets{};
-    std::array<std::uint64_t, maximum_run> maximum_ends{};
-    std::size_t candidates = 0;
-    unsigned base = 0;
-    bool load = false;
-    std::uint64_t first_offset = 0;
-    std::uint64_t maximum_end = 0;
-    while (candidates < operations.size() &&
-           candidates < instructions.size()) {
-      UnsignedMemoryOperation operation{};
-      if (!decode_scalar_unsigned_memory(instructions[candidates], false,
-                                         operation))
-        break;
-      if (candidates == 0) {
-        base = operation.base;
-        load = operation.load;
-        first_offset = operation.offset;
-      } else if (operation.base != base || operation.load != load) {
-        break;
-      }
-      /*
-       * A load into Rn changes the architectural base observed by every
-       * following instruction. Keeping the translated host base in x8 would
-       * therefore be stale. Store Rt==Rn is safe because stores do not change
-       * the source register.
-       */
-      if (load && operation.transfer == base)
-        break;
-      first_offset = std::min(first_offset, operation.offset);
-      maximum_end =
-          std::max(maximum_end, operation.offset + operation.bytes);
-      operations[candidates] = operation;
-      first_offsets[candidates] = first_offset;
-      maximum_ends[candidates] = maximum_end;
-      ++candidates;
-    }
-
-    std::size_t length = candidates;
-    while (length >= 2 &&
-           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
-      --length;
+    const auto [operations, length, base, load, first_offset, maximum_end] =
+        collect_unsigned_run<maximum_run, UnsignedMemoryOperation>(
+            instructions,
+            [](std::uint32_t instruction, UnsignedMemoryOperation &operation) {
+              /*
+               * A load into Rn changes the architectural base observed by
+               * every following instruction. Keeping the translated host
+               * base in x8 would therefore be stale. Store Rt==Rn is safe
+               * because stores do not change the source register.
+               */
+              return decode_scalar_unsigned_memory(instruction, false,
+                                                   operation) &&
+                     !(operation.load && operation.transfer == operation.base);
+            });
     if (length < 2)
       return 0;
 
@@ -1532,8 +1507,6 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
     load_gpr(8, base, true);
     emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
     emitter_.compare_zero(slow, 0, false, true);
-    first_offset = first_offsets[length - 1];
-    maximum_end = maximum_ends[length - 1];
     RunStraddle straddle{
         .label = emitter_.make_label(),
         .slow = slow,
