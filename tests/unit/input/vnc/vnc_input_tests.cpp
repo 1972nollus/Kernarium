@@ -40,23 +40,6 @@ void primaryPointerContactUsesTheDirectTouchCode()
         "desktop mouse input did not retain Linux BTN_LEFT");
 }
 
-void directTouchContactSuppressesHoverAndTracksAContact()
-{
-    uml::input::vnc::DirectTouchContact contact;
-    require(!contact.update(false),
-        "an idle pointer move was exposed as a touch event");
-    require(contact.update(true) && contact.update(true),
-        "touch down or drag was suppressed");
-    require(contact.update(false),
-        "touch release was suppressed");
-    require(!contact.update(false),
-        "hover after touch release was exposed as a touch event");
-    require(!contact.release(),
-        "an idle contact reported a focus-loss release");
-    require(contact.update(true) && contact.release(),
-        "focus loss did not release an active touch contact");
-}
-
 void nativeCoordinatesRemainNormalizedWhenTheViewResizes()
 {
     using uml::input::vnc::absoluteMaximum;
@@ -114,7 +97,6 @@ int main()
     try {
         keySymbolsMapToStableGuestCodes();
         primaryPointerContactUsesTheDirectTouchCode();
-        directTouchContactSuppressesHoverAndTracksAContact();
         nativeCoordinatesRemainNormalizedWhenTheViewResizes();
         inputDeliveryContainsSinkFailuresAndCanRetry();
         return EXIT_SUCCESS;

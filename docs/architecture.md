@@ -1083,9 +1083,10 @@ host-flag fusion rules and the registry contract are in
 [`darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md).
 What any x86 engine shares with the gadget engine is not part of it: the guest
 CPU state, the decoder, CPUID, the software TLB entry, the code-page registry,
-the split-operand lock and the segment model, which runs every selector load,
-far transfer and descriptor inspection for both engines, form
-`uml_x86_64_target` in `darwin/cpu/x86_64/`, a
+the split-operand lock, the SIMD floating-point model that gives the JIT's
+results and the gadget engine's checked flags, and the segment model, which
+runs every selector load, far transfer and descriptor inspection for both
+engines, form `uml_x86_64_target` in `darwin/cpu/x86_64/`, a
 `shared` CPU target that the source audit keeps free of engine includes.
 Exact x87 formats and transcendentals use bounded software-math primitives
 called by those native gadgets. The userspace ISA boundary includes scalar x86
@@ -1513,9 +1514,7 @@ Simulator both are its application's `tmp`, too long for `sun_path`, so it uses
 `/tmp/uml-kern<pid>`. The run removes it when it returns, and every terminating
 signal and kernel-driven exit the process observes removes it too; only a
 process killed outright leaves it, and the next run removes the directories of
-runs that have exited. It also removes the `/tmp/uml-kern<pid>-mconsole`
-sockets left by exited runs of older builds, which bound the console loose in
-`/tmp`. An iOS device uses its application temporary directory
+runs that have exited. An iOS device uses its application temporary directory
 itself and removes a socket left there before booting. Every such path must
 fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
 rather than truncated or moved. The guest prints the console's path when it

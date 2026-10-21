@@ -144,7 +144,6 @@ find_tool PYTHON "${UML_DEPENDENCY_PYTHON:-python3}"
 find_tool MESON_CMAKE_BLOCKER /usr/bin/false
 find_tool XCRUN xcrun
 find_tool INSTALL install
-find_tool SHASUM shasum
 find_tool RSYNC rsync
 find_tool AUTORECONF autoreconf
 find_tool AUTOCONF autoconf
@@ -526,11 +525,8 @@ for patched in $patched_sources; do
 	printf '%s\t%s\n' "$patched" "$patched_tree" \
 		>> "$RECEIPT_DIR/source-trees.tsv"
 done
-# manifest_sha256 is read only by checkouts that predate the row comparison.
-manifest_sha256=$($SHASUM -a 256 "$MANIFEST" | awk '{print $1}')
 {
 	printf 'schema\t2\n'
-	printf 'manifest_sha256\t%s\n' "$manifest_sha256"
 	printf 'platform\tmacos\n'
 	printf 'architecture\tarm64\n'
 	printf 'linkage\tstatic\n'

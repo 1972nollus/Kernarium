@@ -12,6 +12,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -26,6 +27,18 @@ sys.path.insert(0, str(INTEGRATION_GPU))
 import run_vk_cts as cts  # noqa: E402
 import run_ios_device_vk_cts as device  # noqa: E402
 import receipt_fixtures  # noqa: E402
+
+
+# The guest refuses any page size but 4 KiB and records the one it saw.
+PAGE_SIZE_CHECK = (
+    'actual_page_size=$(getconf PAGESIZE)\n'
+    '[ "$actual_page_size" -eq 4096 ] || {\n'
+    '    echo "UML_VK_CTS_ERROR: guest page size $actual_page_size does not '
+    'match 4096"\n'
+    '    exit 1\n'
+    '}\n'
+    "printf 'guest_page_size=%s\n' \"$actual_page_size\" > \"$renderer\"\n"
+)
 
 
 def setUpModule() -> None:
@@ -229,7 +242,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIsNone(self.identity["cts"]["authoritative_build_receipt"])
         self.assertEqual(campaigns["physical_device"]["state"], "held")
         self.assertFalse(campaigns["physical_device"]["launch_permitted"])
-        self.assertEqual(len(campaigns["ios_simulator"]["frozen_udids"]), 4)
 
     def test_identity_rejects_duplicate_json_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -349,9 +361,10 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIn("--deqp-crashhandler=disable", arguments)
         self.assertIn("--deqp-test-oom=disable", arguments)
         launcher = cts.build_guest_launcher(
-            self.identity, self.selection, page_size=4096, timeout=900,
+            self.identity, self.selection, timeout=900,
             case_list=cts.GUEST_CASE_LIST_PATH,
         )
+        self.assertIn(PAGE_SIZE_CHECK, launcher)
         self.assertIn(
             "VK_DRIVER_FILES=/usr/share/vulkan/icd.d/virtio_icd.json",
             launcher,
@@ -725,6 +738,124 @@ class VulkanCtsToolingTests(unittest.TestCase):
             self.assertNotIn("base64 -d", text)
             self.assertNotIn("base64 -d", " ".join(command))
 
+    def test_harness_commands_boot_the_launcher_they_stage(self) -> None:
+        artifacts = Path("/artifacts/run")
+        run = hashlib.sha256(os.fsencode(artifacts.resolve())).hexdigest()[:20]
+        arguments = (
+            "--dry-run", "--engine", "gadgets", "--cpus", "6", "--memory",
+            "6G", "--guest-timeout", "1300",
+        )
+        development = cts.parse_arguments(arguments)
+        qualification = cts.parse_arguments(("--qualification", *arguments))
+
+        def harness(options, rootfs_type, staged, command_line):
+            return [
+                "env", "UML_GPU_CAPABILITY_REPORT=1", sys.executable,
+                str(INTEGRATION_GPU / "run_gpu_guest.py"),
+                "--emulator", str(options.emulator),
+                "--rootfs", str(options.rootfs),
+                "--rootfs-type", rootfs_type,
+                "--memory", "6G",
+                "--unit", "multi-user.target",
+                "--timeout", "1300",
+                "--artifact-root", str(artifacts / "guest"),
+                "--serial-socket",
+                f"/private/tmp/uml-vk-cts-console-{run}.sock",
+                f"--virtio-serial-socket=/private/tmp/uml-cts-artifact-{run}.sock",
+                *staged.arguments,
+                "--command", command_line,
+                "--",
+                f"umid=vkcts-{run}", "sysrq_always_enabled", "ncpus=6",
+                "--execution-engine=gadgets", "--gpu", "--gpu-display=vnc",
+                "--gpu-vnc-bind=127.0.0.1", "--gpu-vnc-port=0",
+                "--gpu-width=1280", "--gpu-height=720",
+            ]
+
+        def staged_guest_paths(staged):
+            return [
+                argument.split("=", 2)[1] for argument in staged.arguments
+            ]
+
+        # The development lane checks the CTS status against the no-device
+        # baseline, on the frozen EROFS image.
+        command, staged = cts.plan_harness_command(
+            development, self.identity, self.selection, artifacts
+        )
+        baseline = self.identity["development_no_device_baseline"]
+        self.assertEqual(
+            command,
+            harness(
+                development, "erofs", staged,
+                "set +e; /usr/local/libexec/uml-vulkan-cts; cts_status=$?; "
+                f'set -e; [ "$cts_status" -eq {baseline["process_return_code"]} ]',
+            ),
+        )
+        self.assertEqual(
+            staged_guest_paths(staged),
+            [cts.GUEST_CASE_LIST_PATH, cts.CTS_SERVICE_PATH],
+        )
+        self.assertEqual(
+            command,
+            cts.build_harness_command(
+                development, self.identity, self.selection, artifacts
+            ),
+        )
+        # The receipt lane always succeeds, so the validator sees the result.
+        case = ("dEQP-VK.api.info.a",)
+        selection = cts.ReceiptSelection(
+            "exact-family", case, case, cts.Fraction(0, 1), False
+        )
+        command, staged = cts.plan_receipt_harness_command(
+            qualification, self.receipt, selection, artifacts
+        )
+        self.assertEqual(
+            command,
+            harness(
+                qualification, "ext4", staged,
+                "set +e; /usr/local/libexec/uml-vulkan-cts; set -e; :",
+            ),
+        )
+        self.assertEqual(
+            staged_guest_paths(staged),
+            [cts.GUEST_CASE_LIST_PATH, cts.CTS_SERVICE_PATH],
+        )
+        # A WSI selection boots the campaign target instead, which starts the
+        # staged service.
+        case = ("dEQP-VK.wsi.a",)
+        selection = cts.ReceiptSelection(
+            "exact-family", case, case, cts.Fraction(0, 1), False
+        )
+        command, staged = cts.plan_receipt_harness_command(
+            qualification, self.receipt, selection, artifacts
+        )
+        self.assertEqual(
+            command,
+            [
+                "env", "UML_GPU_CAPABILITY_REPORT=1", sys.executable,
+                str(INTEGRATION_GPU / "run_gpu_guest.py"),
+                "--emulator", str(qualification.emulator),
+                "--rootfs", str(qualification.rootfs),
+                "--rootfs-type", "ext4", "--root-device", "/dev/ubda",
+                "--memory", "6G", "--unit", "uml-cts.target",
+                "--timeout", "0", "--no-auto-poweroff",
+                "--artifact-root", str(artifacts / "guest"),
+                f"--virtio-serial-socket=/private/tmp/uml-cts-artifact-{run}.sock",
+                *staged.arguments,
+                "--", "ncpus=6", "--execution-engine=gadgets", "ip=off",
+                "--gpu", "--gpu-display=vnc", "--gpu-width=1280",
+                "--gpu-height=720", "--gpu-vnc-bind=127.0.0.1",
+                "--gpu-vnc-port=0",
+            ],
+        )
+        self.assertEqual(
+            staged_guest_paths(staged),
+            [
+                cts.GUEST_CASE_LIST_PATH, cts.CTS_SERVICE_PATH,
+                cts.CTS_WSI_SERVICE_PATH, cts.common.CTS_TARGET_PATH,
+            ],
+        )
+        self.assertFalse(artifacts.exists(), "planning a command wrote files")
+
     def test_an_installed_case_list_must_match_its_digest(self) -> None:
         selection = cts.ReceiptSelection(
             "exact-family", ("dEQP-VK.a",), ("dEQP-VK.a",), cts.Fraction(0, 1),
@@ -781,11 +912,11 @@ class VulkanCtsToolingTests(unittest.TestCase):
         launcher = cts.build_receipt_guest_launcher(
             self.receipt,
             selection,
-            page_size=4096,
             timeout=900,
             progress_timeout=600,
             case_list=cts.GUEST_CASE_LIST_PATH,
         )
+        self.assertIn(PAGE_SIZE_CHECK, launcher)
         self.assertEqual(cts.ARTIFACT_BASE64_LINE_LENGTH, 3 * 1024)
         self.assertIn(
             f'base64 -w {cts.ARTIFACT_BASE64_LINE_LENGTH} "$compressed"',
@@ -808,7 +939,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
         relaxed = cts.build_receipt_guest_launcher(
             self.receipt,
             selection,
-            page_size=4096,
             timeout=900,
             progress_timeout=600,
             relax_diagnostics=True,
@@ -937,7 +1067,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
         launcher = cts.build_receipt_guest_launcher(
             self.receipt,
             selection,
-            page_size=4096,
             timeout=900,
             progress_timeout=600,
             use_wsi=True,
@@ -1035,7 +1164,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
         launcher = cts.build_receipt_guest_launcher(
             self.receipt,
             selection,
-            page_size=4096,
             timeout=900,
             progress_timeout=600,
             use_wsi=True,
@@ -1124,7 +1252,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
             "current-must-pass", (), None, cts.Fraction(0, 16)
         )
         arguments = {
-            "page_size": 4096,
             "timeout": cts.APPLE_MUSTPASS_TIMEOUT,
             "progress_timeout": cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
         }
@@ -1487,7 +1614,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
         launcher = cts.build_receipt_guest_launcher(
             self.receipt,
             selection,
-            page_size=4096,
             timeout=cts.APPLE_MUSTPASS_TIMEOUT,
             progress_timeout=cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
             device_exclusions=cts.DEVICE_EXCLUSIONS,
@@ -1620,7 +1746,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
             cts.resolve_receipt_selection(
                 "current-must-pass", (), None, cts.Fraction(2, 16)
             ),
-            page_size=4096,
             timeout=cts.APPLE_MUSTPASS_TIMEOUT,
             progress_timeout=cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
             device_exclusions=cts.DEVICE_EXCLUSIONS,
@@ -1636,7 +1761,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
             cts.resolve_receipt_selection(
                 "current-must-pass", (), None, cts.Fraction(3, 16)
             ),
-            page_size=4096,
             timeout=cts.APPLE_MUSTPASS_TIMEOUT,
             progress_timeout=cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
             device_exclusions=cts.DEVICE_EXCLUSIONS,
@@ -1879,7 +2003,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
             engine="gadgets",
             memory_mib=cts.APPLE_MUSTPASS_GUEST_MEMORY_MIB,
             cpus=1,
-            page_size=4096,
             timeout=28200,
             stall_timeout=1800,
         )

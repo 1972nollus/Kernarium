@@ -8,8 +8,6 @@
 
 #include "cpu/arm64/aarch32/semantics_vector.hpp"
 
-#include <iterator>
-
 namespace uml::cpu::arm64::aarch32::detail {
 
 namespace {
@@ -30,20 +28,16 @@ bool vqrdmlah(Exec &x)
 		? lane_value(lane(x.d_reg(static_cast<unsigned>(o.m)), static_cast<unsigned>(o.index_value), bits),
 			  bits, true)
 		: i128{0};
-	bool saturated = false;
+	QcTally qc;
 	const bool completed = lanewise(x, [&](Raw n, Raw m, Raw d) {
 		const i128 operand1 = lane_value(n, bits, true);
 		const i128 operand2 = scalar ? scalar_value : lane_value(m, bits, true);
 		const i128 operand3 = lane_value(d, bits, true) * (i128{1} << bits);
 		const i128 product = 2 * (operand1 * operand2);
-		const Saturation result = sat_q(
-			shift_right(Add ? operand3 + product : operand3 - product, bits, true), bits, false);
-		saturated = saturated || result.saturated;
-		return result.raw;
+		return qc.take(sat_q(
+			shift_right(Add ? operand3 + product : operand3 - product, bits, true), bits, false));
 	});
-	if (saturated)
-		set_qc(x.cpu);
-	return completed;
+	return qc.finish(x, completed);
 }
 
 [[nodiscard]] i128 byte_value(Raw source, unsigned index, bool is_unsigned) noexcept
@@ -141,9 +135,8 @@ constexpr VectorEntry entries[] = {
 
 } // namespace
 
-const VectorEntry *armv8_integer_entries(std::size_t &count) noexcept
+std::span<const VectorEntry> armv8_integer_entries() noexcept
 {
-	count = std::size(entries);
 	return entries;
 }
 

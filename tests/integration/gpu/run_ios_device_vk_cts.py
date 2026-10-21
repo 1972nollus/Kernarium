@@ -98,7 +98,6 @@ def stage_payload(options: argparse.Namespace) -> str:
     campaign = kernarium_campaigns.build(
         options.campaign,
         image_type=kernarium.root_type(options.rootfs_filename),
-        page_size=4096,
     )
     written = campaign.payload().write(
         options.artifact_root / "payload.cpio", options.initramfs_tool

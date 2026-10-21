@@ -733,10 +733,10 @@ class VulkanResumptionTests(unittest.TestCase):
             "current-must-pass", [], None, vk.Fraction(0, 8)
         )
         first = vk.build_receipt_guest_launcher(
-            receipt, selection, page_size=4096, timeout=900, progress_timeout=600
+            receipt, selection, timeout=900, progress_timeout=600
         )
         resumed = vk.build_receipt_guest_launcher(
-            receipt, selection, page_size=4096, timeout=900,
+            receipt, selection, timeout=900,
             progress_timeout=600, resume_after=1234,
         )
         self.assertIn("--deqp-fraction=0,8", first)
@@ -783,7 +783,6 @@ class GuestCheckpointProgramTests(unittest.TestCase):
         return vk.build_receipt_guest_launcher(
             receipt,
             selection,
-            page_size=4096,
             timeout=vk.APPLE_MUSTPASS_TIMEOUT,
             progress_timeout=vk.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
             device_exclusions=vk.DEVICE_EXCLUSIONS,
@@ -850,12 +849,12 @@ class GuestCheckpointProgramTests(unittest.TestCase):
         leaf = gl.leaf_identities(gl.load_identity())["gles3"]
         launchers = (
             ("UML_VK_CTS_ERROR:", vk.build_guest_launcher(
-                identity, development, page_size=4096, timeout=900,
+                identity, development, timeout=900,
                 case_list=vk.GUEST_CASE_LIST_PATH,
             )),
             ("UML_VK_CTS_ERROR:", self.device_launcher()),
             ("UML_CTS_ERROR:", gl.build_guest_launcher(
-                gl.Selection(leaf, (), 1, 8), 7, 300, 4096,
+                gl.Selection(leaf, (), 1, 8), 7, 300,
                 gl_fixtures.erofs_contract(), artifact_transport="virtio-serial",
             )),
         )
@@ -1210,7 +1209,7 @@ finish
             "current-must-pass", [], None, vk.Fraction(0, 8)
         )
         launcher = vk.build_receipt_guest_launcher(
-            receipt, selection, page_size=4096, timeout=900, progress_timeout=600
+            receipt, selection, timeout=900, progress_timeout=600
         )
         flush = self.shell_function(launcher, "flush_qpa")
         compress = self.shell_function(launcher, "compress_artifact")
@@ -1264,7 +1263,7 @@ printf '%s %s\\n' "$qpa_offset" "$qpa_segments" > "$output/state"
             "smoke", [], None, vk.Fraction(0, 1)
         )
         launcher = vk.build_receipt_guest_launcher(
-            receipt, selection, page_size=4096, timeout=900,
+            receipt, selection, timeout=900,
             case_list=vk.GUEST_CASE_LIST_PATH,
         )
         flush = self.shell_function(launcher, "flush_qpa")

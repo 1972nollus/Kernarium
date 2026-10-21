@@ -127,11 +127,16 @@ cmake --workflow --preset check-gpu-asan-ubsan
 cmake --workflow --preset check-loader-asan-ubsan
 ```
 
-The `unit-gpu` test preset's name filter is the one list of GPU workflow unit
-tests, and the other `unit-gpu*` test presets inherit it. Configure derives the
-`gpu-unit-test-binaries` target from that filter, so adding a test to the
-filter also adds its binary to every GPU build preset. Configure fails when a
-test preset that inherits `unit-gpu` sets its own filter.
+The `unit-gpu` test preset's name filter is the one selection of GPU workflow
+tests, and the other `unit-gpu*` test presets inherit it. It selects every
+registered test named `gpu-*` (the two `gpu-guest-*` tooling tests among them),
+and the Virtio balloon, battery, console, input, sound and video protocol
+tests and `platform-video-decoder` that the GPU configuration also builds. A
+new GPU test joins the workflow by its name: `uml_add_gpu_unit_test` refuses a
+name that does not start with `gpu-`. Configure derives the
+`gpu-unit-test-binaries` target from that filter, so a selected test's binary
+is built by every GPU build preset. Configure fails when a test preset that
+inherits `unit-gpu` sets its own filter.
 
 A GPU unit test process keeps Metal's shader cache in its scratch directory,
 not in the `com.apple.metal` cache that every command-line process of the user
@@ -139,8 +144,9 @@ shares (`tests/unit/gpu/metal_shader_cache_isolation.cpp`). The first pipeline
 a process compiles reads that cache's whole index, which a host that has run
 guest GPU workloads leaves at tens of megabytes: a fraction of a second plain,
 and minutes under AddressSanitizer, where every realloc copies. The private
-cache starts empty and is removed at exit, so a test costs the same on any
-host and leaves the host's cache alone.
+cache starts empty and is removed at exit, together with the caches of
+child processes that ended without running exit handlers, so a test costs the
+same on any host and leaves the host's cache alone.
 
 The GPU workflows need the `apple-gpu-vulkan-experiment` dependency prefix. A
 change that crosses the Venus or KosmicKrisp boundary also runs
@@ -265,9 +271,9 @@ kernel.
 in the rootfs. The build generates a freestanding
 armhf program from `tests/integration/aarch32/aarch32_probe.S` with the
 configured compiler's ARM backend, wraps it into an ELF32 executable with
-`make_elf32.py` (the toolchain has no ARM linker) in a layout for any page size
-and in one for 4 KiB pages only, and never commits either. While no engine
-implements AArch32 (`UML_AARCH32_EXPECT=unsupported`, the default) the test
+`make_elf32.py` (the toolchain has no ARM linker), aligned to 64 KiB and aligned
+to 4 KiB only, and never commits either. While no engine implements AArch32
+(`UML_AARCH32_EXPECT=unsupported`, the default) the test
 requires `ENOEXEC` for both programs, `EINVAL` for `personality(PER_LINUX32)`,
 and unchanged 64-bit `uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and
 `abi.cp15_barrier`. With `UML_AARCH32_EXPECT=run` it runs the program (kuser
@@ -975,26 +981,25 @@ entry at an unmapped PC must fault there.
 probe, a freestanding armhf program from `tests/integration/aarch32/engine_probe/`
 that boots as the guest's `/init` under `DARWIN_UML_GUEST_AARCH32=1`. The build
 compiles it with the configured compiler's ARM backend and links it with
-`link_elf32.py`, in a layout for any page size and in one for 4 KiB pages
-only, which a 4 KiB guest also runs. Its groups cover system calls and errno,
-A32/T32 interworking, signal frames with VFP state through the sigpage and
-`SA_RESTORER`, every kuser helper, TPIDRURO and TPIDRURW, `cacheflush` with
-self-modifying code, alignment and memory faults, UNDEFINED encodings (UDF,
-SETEND, SWP, a CP15 barrier with `abi.cp15_barrier` cleared), `SIGTRAP` from
-BKPT and `udf #16` under ptrace and a single step through an IT block,
-LDREX/STREX and the kuser cmpxchg under contention across threads and
-processes, VFP, Advanced SIMD and FPSCR semantics (including structure loads
-and stores alone in a block, across a reschedule), and, at the complete
-level, the Armv8 floating-point additions (VRINT, VCVT with a rounding mode,
-VMAXNM/VMINNM) and the crypto, CRC32, dot-product and half-precision
-extensions against known answers. A group
-needing a higher level than the engine's is skipped inside the probe from the
-HWCAP words it sees, and an extension the words leave out must raise `SIGILL`.
-Every SIGILL is counted: one the probe did not expect fails the run. A test
-skips, naming its reason, while its engine implements no AArch32 (the level
-`uml-a32-engine-support` prints is `none`). `A32_PROBE_GROUPS` selects groups
-by hand through the runner's `--groups`, and `A32_PROBE_VERBOSE=1` makes the
-runner print every line of the guest's output, passes included.
+`link_elf32.py`, aligned to 64 KiB and aligned to 4 KiB only. Its groups cover
+system calls and errno, A32/T32 interworking, signal frames with VFP state
+through the sigpage and `SA_RESTORER`, every kuser helper, TPIDRURO and
+TPIDRURW, `cacheflush` with self-modifying code, alignment and memory faults,
+UNDEFINED encodings (UDF, SETEND, SWP, a CP15 barrier with `abi.cp15_barrier`
+cleared), `SIGTRAP` from BKPT and `udf #16` under ptrace and a single step
+through an IT block, LDREX/STREX and the kuser cmpxchg under contention across
+threads and processes, VFP, Advanced SIMD and FPSCR semantics (including
+structure loads and stores alone in a block, across a reschedule), and, at the
+complete level, the Armv8 floating-point additions (VRINT, VCVT with a rounding
+mode, VMAXNM/VMINNM) and the crypto, CRC32, dot-product and half-precision
+extensions against known answers. A group needing a higher level than the
+engine's is skipped inside the probe from the HWCAP words it sees, and an
+extension the words leave out must raise `SIGILL`. Every SIGILL is counted: one
+the probe did not expect fails the run. A test skips, naming its reason, while
+its engine implements no AArch32 (the level `uml-a32-engine-support` prints is
+`none`). `A32_PROBE_GROUPS` selects groups by hand through the runner's
+`--groups`, and `A32_PROBE_VERBOSE=1` makes the runner print every line of the
+guest's output, passes included.
 
 ## AArch32 JIT
 
@@ -1143,7 +1148,19 @@ keeping its own.
 `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel
-Xeon's, except the documented inexact cases the test names. The
+Xeon's, except the documented inexact cases the test names.
+`x86-64-masked-flags-checked` runs the same cases through the gadget engine's
+checked path, whose flags come from the SIMD floating-point model the JIT
+shares, and allows no difference; it then runs each case with invalid
+operation, a denormal operand, division by zero or precision unmasked, alone
+and in pairs, and requires the #XM and the flags the Xeon's imply.
+`x86-64-half-round` holds the integer rounding of a single to a half, which
+the model's VCVTPS2PH flags follow, to a second derivation over every finite
+single in all four rounding controls. `x86-64-fp-model` holds the model's
+two other integer answers, whether a square root is exact and whether an
+integer fits the float it converts to, to SoftFloat's flags over every single
+significand, the squares of integers, random doubles, and the integers around
+every power of two. The
 `ios-products-carry-no-fexcore` tooling test checks the script the iOS
 packaging runs to keep FEXCore out of every iOS product.
 

@@ -231,11 +231,14 @@ namespace {
 
 [[nodiscard]] DisplayPoint guestPoint(
     AspectFitRectangle rectangle,
-    DisplayPoint point) noexcept
+    DisplayPoint point,
+    bool originAtBottom) noexcept
 {
+    const double fromTop = originAtBottom ?
+        rectangle.y + rectangle.height - point.y : point.y - rectangle.y;
     return {
         .x = std::clamp((point.x - rectangle.x) / rectangle.width, 0.0, 1.0),
-        .y = std::clamp((point.y - rectangle.y) / rectangle.height, 0.0, 1.0),
+        .y = std::clamp(fromTop / rectangle.height, 0.0, 1.0),
     };
 }
 
@@ -248,6 +251,7 @@ GuestPointerSamples FittedPointer::mouse(
     DisplayPoint location,
     std::uint32_t buttons) noexcept
 {
+    const bool originAtBottom = origin_ == Origin::bottomLeft;
     buttons &= pointerButtonMask;
     if (suppressed_) {
         if (buttons == 0)
@@ -262,7 +266,7 @@ GuestPointerSamples FittedPointer::mouse(
     deliveredButtons_ = buttons;
     GuestPointerSamples result;
     result.samples[result.count++] = {
-        .point = guestPoint(content, location),
+        .point = guestPoint(content, location, originAtBottom),
         .buttons = buttons,
     };
     return result;
@@ -273,6 +277,7 @@ GuestPointerSamples FittedPointer::touch(
     DisplayPoint location,
     bool pressed) noexcept
 {
+    const bool originAtBottom = origin_ == Origin::bottomLeft;
     GuestPointerSamples result;
     if (suppressed_) {
         if (!pressed) {
@@ -287,7 +292,7 @@ GuestPointerSamples FittedPointer::touch(
             return;
         deliveredButtons_ = active ? 1U : 0U;
         result.samples[result.count++] = {
-            .point = guestPoint(content, point),
+            .point = guestPoint(content, point, originAtBottom),
             .buttons = deliveredButtons_,
         };
     };
@@ -352,10 +357,12 @@ GuestPointerSamples FittedPointer::touch(
     return result;
 }
 
-bool FittedPointer::release() noexcept
+bool FittedPointer::release(bool suppressHeldGesture) noexcept
 {
     const bool held = deliveredButtons_ != 0;
-    if (held)
+    if (!suppressHeldGesture)
+        suppressed_ = false;
+    else if (held)
         suppressed_ = true;
     deliveredButtons_ = 0;
     previousTouch_.reset();

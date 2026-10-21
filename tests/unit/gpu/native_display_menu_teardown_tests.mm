@@ -9,6 +9,8 @@
  * test if the display does not return. */
 
 #include "native_display_application.hpp"
+#include "wait_until.hpp"
+#include "watchdog.hpp"
 
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -17,7 +19,6 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -56,13 +57,10 @@ void openOnMainThread(NSMenu* menu)
 
 bool waitForTracking(int count)
 {
-    const auto deadline = std::chrono::steady_clock::now() + trackingTimeout;
-    while (tracking.load() < count) {
-        if (std::chrono::steady_clock::now() >= deadline)
-            return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return true;
+    return uml::testing::waitUntil(
+        [&] { return tracking.load() >= count; },
+        trackingTimeout,
+        std::chrono::milliseconds(10));
 }
 
 /* The case that was seen: the guest finishes while a menu is open. */
@@ -116,13 +114,9 @@ int main()
         }
         CFRelease(session);
 
-        std::thread([] {
-            sleep(watchdogSeconds);
-            std::fprintf(stderr,
-                "native-display-menu-teardown: the display did not return "
-                "with a menu open\n");
-            std::_Exit(1);
-        }).detach();
+        const uml::testing::Watchdog watchdog {
+            "the native display with a menu open",
+            std::chrono::seconds {watchdogSeconds}};
 
         [NSNotificationCenter.defaultCenter
             addObserverForName:NSMenuDidBeginTrackingNotification

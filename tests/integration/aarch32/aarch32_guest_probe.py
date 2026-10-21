@@ -4,8 +4,8 @@
 
 Run as `aarch32_guest_probe.py --elf PROGRAM --elf-4k PROGRAM4K [--expect
 unsupported|run]` inside an arm64 guest.  PROGRAM is the freestanding armhf
-program built from aarch32_probe.S, and PROGRAM4K the same program laid out for
-4 KiB pages only, as 11 files of a stock Debian armhf image are.
+program built from aarch32_probe.S, aligned to 64 KiB, and PROGRAM4K the same
+program aligned to 4 KiB only, as 11 files of a stock Debian armhf image are.
 
 What every guest shows, with or without an engine that runs AArch32:
 a 64-bit task sees aarch64 from uname and arm64 Linux's /proc/cpuinfo layout

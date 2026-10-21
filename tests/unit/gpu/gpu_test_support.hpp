@@ -6,6 +6,7 @@
 #include "scratch_backing.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_server.hpp"
+#include "wait_until.hpp"
 
 #include <array>
 #include <atomic>
@@ -639,11 +640,10 @@ void awaitCondition(
     Condition condition,
     const std::source_location location = std::source_location::current())
 {
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds {2};
-    while (!condition() && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(std::chrono::milliseconds {1});
-    require(condition(), "the awaited condition did not hold", location);
+    require(
+        ::uml::testing::waitUntil(condition, std::chrono::seconds {2}),
+        "the awaited condition did not hold",
+        location);
 }
 
 /* Requires one call notification on `callRead` within two seconds. */

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace uml::cpu::x86_64 {
 struct NativeTlbEntry;
@@ -86,6 +87,9 @@ public:
 		ProgramCacheCodeChangeReader code_change_reader = nullptr,
 		MappingChangeReader mapping_change_reader = nullptr) noexcept;
 	[[nodiscard]] NativeTlbEntry *tlb_entries() noexcept;
+	/* The words a checked instruction's stream is built in, which a run
+	 * keeps for the next. */
+	[[nodiscard]] std::vector<std::uintptr_t> &checked_stream() noexcept;
 	/* True when this executor holds a translation whose source covers the
 	 * page. A store to a page without one cannot invalidate any cached block.
 	 */
