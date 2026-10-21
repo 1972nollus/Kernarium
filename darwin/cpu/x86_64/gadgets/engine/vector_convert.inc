@@ -121,10 +121,7 @@ Lx86_vector_convert_inputs_ready\@:
 .macro vector_convert_flush_narrowed scalar, input_size
 	tbz w12, #15, Lx86_vector_convert_ftz_ready\@
 	.if \scalar
-	fmov w14, s6
-	lsl w14, w14, #1
-	sub w14, w14, #1
-	tst w14, #0xff000000
+	simd_small_scalar 32
 	b.ne Lx86_vector_convert_ftz_ready\@
 	.else
 	simd_small_lanes 32, 4, 17, 18

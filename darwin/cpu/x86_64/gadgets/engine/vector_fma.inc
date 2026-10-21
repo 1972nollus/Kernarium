@@ -405,17 +405,7 @@ Lx86_vector_fma_special\@:
 Lx86_vector_fma_nan_ready\@:
 	tbz w12, #15, Lx86_vector_fma_tiny_ready\@
 	.if \scalar
-	.if \element_bits == 32
-	fmov w14, s6
-	lsl w14, w14, #1
-	sub w14, w14, #1
-	tst w14, #0xff000000
-	.else
-	fmov x14, d6
-	lsl x14, x14, #1
-	sub x14, x14, #1
-	tst x14, #0xffe0000000000000
-	.endif
+	simd_small_scalar \element_bits
 	b.ne Lx86_vector_fma_tiny_ready\@
 	vector_fma_by_form \form, vector_fma_flush_tiny_scalar, \operation, \element_bits, 6, 0, 1, 2
 	.else

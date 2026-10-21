@@ -583,6 +583,23 @@ Lx86_simd_no_nan\@:
 	.endif
 .endm
 
+/* The scalar form of simd_small_lanes: Z is set when the result in s6 (an
+ * `element` of 32) or d6 is not zero and at most the smallest normal in
+ * magnitude. Uses x14. */
+.macro simd_small_scalar element
+	.if \element == 32
+	fmov w14, s6
+	lsl w14, w14, #1
+	sub w14, w14, #1
+	tst w14, #0xff000000
+	.else
+	fmov x14, d6
+	lsl x14, x14, #1
+	sub x14, x14, #1
+	tst x14, #0xffe0000000000000
+	.endif
+.endm
+
 /* x86 detects underflow after rounding: a result is tiny when, rounded to
  * full precision as if the exponent were unbounded, it lies below the
  * smallest normal. A denormal result always is. A product or quotient the

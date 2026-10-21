@@ -415,17 +415,7 @@ Lx86_vector_fp_special\@:
 	tbz w13, #2, Lx86_vector_fp_ftz_ready\@
 	tbz w12, #15, Lx86_vector_fp_ftz_ready\@
 	.if \scalar
-	.if \element == 32
-	fmov w14, s6
-	lsl w14, w14, #1
-	sub w14, w14, #1
-	tst w14, #0xff000000
-	.else
-	fmov x14, d6
-	lsl x14, x14, #1
-	sub x14, x14, #1
-	tst x14, #0xffe0000000000000
-	.endif
+	simd_small_scalar \element
 	b.ne Lx86_vector_fp_ftz_ready\@
 	.else
 	simd_small_lanes \element, 4, 17, 18
