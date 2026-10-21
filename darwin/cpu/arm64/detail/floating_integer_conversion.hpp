@@ -250,71 +250,21 @@ struct IntegerToFloatingDecode final {
 	    rmode == 3U && (opcode == 4U || opcode == 5U))
 		return {true, false};
 
-	IntegerToFloatingDecode decoded{};
-	const auto match_fixed = [&](bool unsigned_source, bool scalar) constexpr {
-		if (decoded.recognized)
-			return;
-		const std::uint32_t mask = scalar ? 0xff00'fc00U : 0xbf00'fc00U;
-		const std::uint32_t value = (scalar ? 0x5f00'e400U :
-			0x0f00'e400U) | (unsigned_source ? 0x2000'0000U : 0U);
-		if ((instruction & mask) != value)
-			return;
-		const unsigned immediate = (instruction >> 16) & 127U;
-		/* immh == 0000 is not part of the vector fixed-point class: the
-		 * same words belong to AdvSIMD modified-immediate (MOVI/MVNI).
-		 * Scalar encodings have no such overlap and remain reserved. */
-		if (!scalar && immediate < 8U)
-			return;
-		const unsigned width = immediate >= 64U ? 64U :
-			immediate >= 32U ? 32U : 16U;
-		const unsigned bytes = scalar ? width / 8U :
-			(instruction & 0x4000'0000U) != 0U ? 16U : 8U;
-		const unsigned shape = scalar ? (width == 16U ? 0U :
-			width == 32U ? 1U : 2U) : width == 16U ?
-			((instruction & 0x4000'0000U) != 0U ? 4U : 3U) :
-			width == 32U ?
-			((instruction & 0x4000'0000U) != 0U ? 6U : 5U) : 7U;
-		decoded = {true, immediate >= 16U &&
-			(width != 64U || scalar ||
-			 (instruction & 0x4000'0000U) != 0U),
-			false, unsigned_source, scalar, true, width, width, bytes,
-			bytes / (width / 8U), shape, 2U * width - immediate};
-	};
-	match_fixed(false, true);
-	match_fixed(true, true);
-	match_fixed(false, false);
-	match_fixed(true, false);
-	if (decoded.recognized)
-		return decoded;
+	if (const auto fixed = match_fixed_point_shape(instruction, 0xe400U);
+	    fixed.shape.matched) {
+		const auto &shape = fixed.shape;
+		return {true, shape.valid, false, fixed.unsigned_form, shape.scalar,
+			true, shape.width, shape.width, shape.vector_bytes, shape.lanes,
+			shape.shape, fixed.fractional_bits};
+	}
 
-	const auto match = [&](std::uint32_t mask, std::uint32_t value,
-		bool unsigned_source, bool scalar, unsigned width,
-		unsigned shape) constexpr {
-		if (decoded.recognized || (instruction & mask) != value)
-			return;
-		const unsigned bytes = scalar ? width / 8U :
-			(instruction & 0x4000'0000U) != 0U ? 16U : 8U;
-		decoded = {true, true, false, unsigned_source, scalar, false,
-			width, width, bytes, bytes / (width / 8U), shape, 0U};
-	};
-#define UML_MATCH_SIMD_CVTF(unsigned_source, half_base, ordinary_base) \
-	match(0xffff'fc00U, half_base | 0x5000'0000U, unsigned_source, true, 16U, 0U); \
-	match(0xffbf'fc00U, ordinary_base | 0x5000'0000U, unsigned_source, true, \
-		(instruction & 0x0040'0000U) != 0U ? 64U : 32U, \
-		(instruction & 0x0040'0000U) != 0U ? 2U : 1U); \
-	match(0xbfff'fc00U, half_base, unsigned_source, false, 16U, \
-		(instruction & 0x4000'0000U) != 0U ? 4U : 3U); \
-	match(0xbfbf'fc00U, ordinary_base, unsigned_source, false, \
-		(instruction & 0x0040'0000U) != 0U ? 64U : 32U, \
-		(instruction & 0x0040'0000U) != 0U ? 7U : \
-			(instruction & 0x4000'0000U) != 0U ? 6U : 5U)
-	UML_MATCH_SIMD_CVTF(false, 0x0e79'd800U, 0x0e21'd800U);
-	UML_MATCH_SIMD_CVTF(true, 0x2e79'd800U, 0x2e21'd800U);
-#undef UML_MATCH_SIMD_CVTF
-	if (decoded.recognized && !decoded.scalar &&
-	    decoded.integer_width == 64U && decoded.vector_bytes != 16U)
-		decoded.valid = false;
-	return decoded;
+	const auto shape = match_floating_shape(instruction & ~0x2000'0000U,
+		0x0e79'd800U, 0x0e21'd800U, false);
+	if (!shape.matched)
+		return {};
+	return {true, shape.valid, false, (instruction & 0x2000'0000U) != 0U,
+		shape.scalar, false, shape.width, shape.width, shape.vector_bytes,
+		shape.lanes, shape.shape, 0U};
 }
 
 [[nodiscard]] constexpr std::uintptr_t integer_to_floating_operand(
@@ -333,6 +283,25 @@ struct IntegerToFloatingDecode final {
 		(static_cast<std::uintptr_t>(decoded.fractional_bits) << 26) |
 		(static_cast<std::uintptr_t>(decoded.fixed_point) << 33);
 }
+
+namespace floating_to_integer_detail {
+
+struct Form final {
+	FloatingIntegerRounding rounding;
+	std::uint32_t half_base;
+	std::uint32_t ordinary_base;
+};
+
+/* The signed forms; bit 29 selects the unsigned ones. */
+inline constexpr Form forms[] = {
+	{FloatingIntegerRounding::tie_even, 0x0e79'a800U, 0x0e21'a800U},
+	{FloatingIntegerRounding::plus_infinity, 0x0ef9'a800U, 0x0ea1'a800U},
+	{FloatingIntegerRounding::minus_infinity, 0x0e79'b800U, 0x0e21'b800U},
+	{FloatingIntegerRounding::zero, 0x0ef9'b800U, 0x0ea1'b800U},
+	{FloatingIntegerRounding::tie_away, 0x0e79'c800U, 0x0e21'c800U},
+};
+
+} // namespace floating_to_integer_detail
 
 [[nodiscard]] constexpr FloatingToIntegerDecode decode_floating_to_integer(
 	std::uint32_t instruction) noexcept
@@ -407,90 +376,25 @@ struct IntegerToFloatingDecode final {
 			width == 16U ? 0U : width == 32U ? 1U : 2U};
 	}
 
-	FloatingToIntegerDecode decoded{};
-	const auto match_fixed = [&](bool unsigned_result, bool scalar) constexpr {
-		if (decoded.recognized)
-			return;
-		const std::uint32_t mask = scalar ? 0xff00'fc00U : 0xbf00'fc00U;
-		const std::uint32_t value = (scalar ? 0x5f00'fc00U :
-			0x0f00'fc00U) | (unsigned_result ? 0x2000'0000U : 0U);
-		if ((instruction & mask) != value)
-			return;
-		const unsigned immediate = (instruction >> 16) & 127U;
-		/* See decode_integer_to_floating(): immh == 0000 in the vector
-		 * encoding is the modified-immediate allocation. */
-		if (!scalar && immediate < 8U)
-			return;
-		const unsigned width = immediate >= 64U ? 64U :
-			immediate >= 32U ? 32U : 16U;
-		const unsigned bytes = scalar ? width / 8U :
-			(instruction & 0x4000'0000U) != 0U ? 16U : 8U;
-		const unsigned shape = scalar ? (width == 16U ? 0U :
-			width == 32U ? 1U : 2U) : width == 16U ?
-			((instruction & 0x4000'0000U) != 0U ? 4U : 3U) :
-			width == 32U ?
-			((instruction & 0x4000'0000U) != 0U ? 6U : 5U) : 7U;
-		decoded = {true, immediate >= 16U &&
-			(width != 64U || scalar ||
-			 (instruction & 0x4000'0000U) != 0U),
-			false, unsigned_result, scalar, FloatingIntegerRounding::zero,
-			width, width, bytes, bytes / (width / 8U), shape, true,
-			2U * width - immediate};
-	};
-	match_fixed(false, true);
-	match_fixed(true, true);
-	match_fixed(false, false);
-	match_fixed(true, false);
-	if (decoded.recognized)
-		return decoded;
+	if (const auto fixed = match_fixed_point_shape(instruction, 0xfc00U);
+	    fixed.shape.matched) {
+		const auto &shape = fixed.shape;
+		return {true, shape.valid, false, fixed.unsigned_form, shape.scalar,
+			FloatingIntegerRounding::zero, shape.width, shape.width,
+			shape.vector_bytes, shape.lanes, shape.shape, true,
+			fixed.fractional_bits};
+	}
 
-	const auto match = [&](std::uint32_t mask, std::uint32_t value,
-		bool unsigned_result, FloatingIntegerRounding rounding,
-		bool scalar, unsigned width,
-		unsigned shape) constexpr {
-		if (decoded.recognized || (instruction & mask) != value)
-			return;
-		const unsigned bytes = scalar ? width / 8U :
-			(instruction & 0x4000'0000U) != 0U ? 16U : 8U;
-		decoded = {true, true, false, unsigned_result, scalar, rounding,
-			width, width, bytes, bytes / (width / 8U), shape};
-	};
-#define UML_MATCH_SIMD_FCVT(unsigned_result, rounding, half_base, ordinary_base) \
-	match(0xffff'fc00U, half_base | 0x5000'0000U, unsigned_result, rounding, true, 16U, 0U); \
-	match(0xffbf'fc00U, ordinary_base | 0x5000'0000U, unsigned_result, rounding, true, \
-		(instruction & 0x0040'0000U) != 0U ? 64U : 32U, \
-		(instruction & 0x0040'0000U) != 0U ? 2U : 1U); \
-	match(0xbfff'fc00U, half_base, unsigned_result, rounding, false, 16U, \
-		(instruction & 0x4000'0000U) != 0U ? 4U : 3U); \
-	match(0xbfbf'fc00U, ordinary_base, unsigned_result, rounding, false, \
-		(instruction & 0x0040'0000U) != 0U ? 64U : 32U, \
-		(instruction & 0x0040'0000U) != 0U ? 7U : \
-			(instruction & 0x4000'0000U) != 0U ? 6U : 5U)
-	UML_MATCH_SIMD_FCVT(false, FloatingIntegerRounding::tie_even,
-		0x0e79'a800U, 0x0e21'a800U);
-	UML_MATCH_SIMD_FCVT(true, FloatingIntegerRounding::tie_even,
-		0x2e79'a800U, 0x2e21'a800U);
-	UML_MATCH_SIMD_FCVT(false, FloatingIntegerRounding::plus_infinity,
-		0x0ef9'a800U, 0x0ea1'a800U);
-	UML_MATCH_SIMD_FCVT(true, FloatingIntegerRounding::plus_infinity,
-		0x2ef9'a800U, 0x2ea1'a800U);
-	UML_MATCH_SIMD_FCVT(false, FloatingIntegerRounding::minus_infinity,
-		0x0e79'b800U, 0x0e21'b800U);
-	UML_MATCH_SIMD_FCVT(true, FloatingIntegerRounding::minus_infinity,
-		0x2e79'b800U, 0x2e21'b800U);
-	UML_MATCH_SIMD_FCVT(false, FloatingIntegerRounding::zero,
-		0x0ef9'b800U, 0x0ea1'b800U);
-	UML_MATCH_SIMD_FCVT(true, FloatingIntegerRounding::zero,
-		0x2ef9'b800U, 0x2ea1'b800U);
-	UML_MATCH_SIMD_FCVT(false, FloatingIntegerRounding::tie_away,
-		0x0e79'c800U, 0x0e21'c800U);
-	UML_MATCH_SIMD_FCVT(true, FloatingIntegerRounding::tie_away,
-		0x2e79'c800U, 0x2e21'c800U);
-#undef UML_MATCH_SIMD_FCVT
-	if (decoded.recognized && !decoded.scalar && decoded.source_width == 64U &&
-	    decoded.vector_bytes != 16U)
-		decoded.valid = false;
-	return decoded;
+	for (const auto &form : floating_to_integer_detail::forms) {
+		const auto shape = match_floating_shape(instruction & ~0x2000'0000U,
+			form.half_base, form.ordinary_base, false);
+		if (shape.matched)
+			return {true, shape.valid, false,
+				(instruction & 0x2000'0000U) != 0U, shape.scalar,
+				form.rounding, shape.width, shape.width, shape.vector_bytes,
+				shape.lanes, shape.shape};
+	}
+	return {};
 }
 
 [[nodiscard]] constexpr std::uintptr_t floating_to_integer_operand(
