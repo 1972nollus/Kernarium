@@ -10,9 +10,14 @@
  * those may differ. `--checked` runs the gadget engine's checked path instead,
  * which corrects the three of them: every instruction runs alone with its
  * exceptions checked while MXCSR masks them all, and its flags must be the
- * Xeon's, with no residual and no fault. `--show N` prints up to N
- * unexplained cases. The same executable runs XE2's whole request sets from
- * a file the selection tool writes with `--all`. */
+ * Xeon's, with no residual and no fault. It then runs each case again with
+ * invalid operation, a denormal operand, division by zero or precision
+ * unmasked, alone and in pairs, where the Xeon's flags decide the fault: x86
+ * faults with #XM when an unmasked exception was raised, before computing
+ * for the first three, which leaves only their flags, and after it for
+ * precision. `--show N` prints up to N unexplained cases. The same
+ * executable runs XE2's whole request sets from a file the selection tool
+ * writes with `--all`. */
 #include "x86_64_sse_loop.hpp"
 
 #include <algorithm>
@@ -44,6 +49,9 @@ constexpr std::uint8_t invalid_operation = 0x01U;
 constexpr std::uint8_t denormal_operand = 0x02U;
 constexpr std::uint8_t underflow = 0x10U;
 constexpr std::uint32_t denormals_are_zero = 0x40U;
+/* The flags x86 checks before it computes: invalid operation, denormal
+ * operand and division by zero. */
+constexpr std::uint8_t precomputation_flags = 0x07U;
 
 struct Instruction final {
 	std::string name;
@@ -55,6 +63,8 @@ struct Case final {
 	std::uint16_t instruction{};
 	std::uint16_t mxcsr{};
 	std::uint8_t flags{};
+	/* The MXCSR flags a checked run unmasks. */
+	std::uint8_t unmask{};
 	std::array<std::byte, input_stride> input{};
 };
 
@@ -209,6 +219,25 @@ int main(int argc, char **argv)
 			path == nullptr ? "(no data)" : path);
 		return 2;
 	}
+#if !UML_X86_64_SSE_LOOP_JIT
+	if (checked) {
+		/* The exceptions whose faults the Xeon's flags decide. Underflow
+		 * and overflow are not here: unmasked, they change which
+		 * results are tiny or overflow, and so what the Xeon raises. */
+		static constexpr std::array<std::uint8_t, 7> unmasks{
+			0x00U, 0x01U, 0x02U, 0x04U, 0x20U, 0x21U, 0x27U};
+		std::vector<Case> expanded;
+		expanded.reserve(cases.size() * unmasks.size());
+		for (const auto &c : cases)
+			for (const auto unmask : unmasks) {
+				expanded.push_back(c);
+				expanded.back().unmask = unmask;
+				expanded.back().mxcsr = static_cast<std::uint16_t>(
+					c.mxcsr & ~(std::uint32_t{unmask} << 7U));
+			}
+		cases = std::move(expanded);
+	}
+#endif
 	std::vector<std::size_t> order(cases.size());
 	for (std::size_t index = 0; index < order.size(); ++index)
 		order[index] = index;
@@ -281,13 +310,23 @@ int main(int argc, char **argv)
 			std::memcpy(&stored, memory.at(output_address +
 				(row - begin) * output_stride + 48), 4);
 			const auto actual = static_cast<std::uint8_t>(stored & flag_bits);
-			const auto expected = static_cast<std::uint8_t>(c.flags & flag_bits);
+			auto expected = static_cast<std::uint8_t>(c.flags & flag_bits);
 #if !UML_X86_64_SSE_LOOP_JIT
-			/* Every exception is masked, so nothing faults. */
-			if (trapped[row - begin] != 0) {
+			const bool fault = (expected & c.unmask) != 0;
+			if ((trapped[row - begin] != 0) != fault) {
 				++unexplained;
-				std::fprintf(stderr, "  %s mxcsr %#06x: faulted\n",
-					instruction.name.c_str(), c.mxcsr);
+				std::fprintf(stderr, "  %s mxcsr %#06x: %s\n",
+					instruction.name.c_str(), c.mxcsr,
+					fault ? "did not fault" : "faulted");
+				continue;
+			}
+			/* A fault before the computation leaves only the flags
+			 * checked before it. A dot product checks in steps, whose
+			 * flags the Xeon's union does not split. */
+			if (fault && (expected & c.unmask & precomputation_flags) != 0)
+				expected &= precomputation_flags;
+			if (fault && instruction.name.find("dpp") != std::string::npos) {
+				++matched;
 				continue;
 			}
 #endif
