@@ -27,14 +27,11 @@
 // loss -- the host storage does not change, only the guest's belief about it,
 // and the guest falls back to the format the host really has.
 
-#include "host_gl_provider.hpp"
+#include "host_gl_test_support.hpp"
+#include "protocol.hpp"
 #include "virgl_renderer.hpp"
 
 #include <epoxy/gl.h>
-
-extern "C" {
-#include <virglrenderer.h>
-}
 
 #include <array>
 #include <cstdint>
@@ -46,6 +43,10 @@ extern "C" {
 #include <vector>
 
 namespace {
+
+using uml::gpu::testing::currentContext;
+using uml::gpu::testing::skip;
+using uml::gpu::testing::skipWithoutRenderer;
 
 int failureCount = 0;
 
@@ -60,9 +61,6 @@ void check(bool condition, std::string_view description)
         description.data());
     ++failureCount;
 }
-
-// Stable Virtio-GPU ABI identifier for the virgl2 capability set.
-constexpr std::uint32_t virgl2CapsetId = 2;
 
 // virgl_hw.h format identifiers. The guest indexes the capset bitmasks with
 // these, so they are ABI and safe to name here.
@@ -178,26 +176,9 @@ int main()
     // builds its format list on, so nothing is guaranteed current afterwards.
     // This provider is declared first so it outlives the renderer.
     uml::gpu::HostGlProvider provider;
-    if (provider.display() == nullptr) {
-        std::fputs("no host GL display; skipping\n", stderr);
-        return 0;
-    }
-    virgl_renderer_gl_ctx_param parameters {
-        .version = 2,
-        .shared = false,
-        .major_ver = 4,
-        .minor_ver = 6,
-        .compat_ctx = 0,
-    };
-    void* context = provider.createContext(parameters);
-    if (context == nullptr) {
-        std::fputs("no host GL context; skipping\n", stderr);
-        return 0;
-    }
-    if (provider.makeCurrent(context) != 0) {
-        std::fputs("host GL context would not bind; skipping\n", stderr);
-        return 0;
-    }
+    const auto current = currentContext(provider, 4, 6);
+    if (current.context == nullptr)
+        return skip(current.failure);
 
     std::array<HostStorage, depthFormats.size()> storages {};
     for (std::size_t index = 0; index < depthFormats.size(); ++index)
@@ -206,13 +187,9 @@ int main()
     std::vector<std::uint8_t> caps;
     try {
         uml::gpu::VirglRenderer renderer;
-        caps = renderer.capset(virgl2CapsetId).data;
+        caps = renderer.capset(uml::gpu::protocol::virgl2CapsetId).data;
     } catch (const std::exception& error) {
-        std::fprintf(
-            stderr,
-            "Host depth format advertisement: renderer unavailable: %s\n",
-            error.what());
-        return 0;
+        return skipWithoutRenderer(error);
     }
 
     bool advertisedAnyDepthFormat = false;
