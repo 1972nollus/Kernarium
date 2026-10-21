@@ -19,6 +19,7 @@
 #include "display_geometry.hpp"
 #include "gpu_metal_test_support.hpp"
 #include "require.hpp"
+#include "wait_until.hpp"
 
 #import <Metal/Metal.h>
 
@@ -35,7 +36,6 @@
 #include <span>
 #include <stdexcept>
 #include <sys/socket.h>
-#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -294,11 +294,7 @@ void requireImage(
 template<typename Predicate>
 void waitFor(Predicate predicate, const char* message)
 {
-    const auto deadline = std::chrono::steady_clock::now() + operationTimeout;
-    while (!predicate()) {
-        require(std::chrono::steady_clock::now() < deadline, message);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
+    require(uml::testing::waitUntil(predicate, operationTimeout), message);
 }
 
 struct ConnectedDisplay final {

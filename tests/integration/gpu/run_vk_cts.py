@@ -646,31 +646,6 @@ def load_campaigns(path: Path = CAMPAIGNS_PATH) -> dict[str, Any]:
         "swap_permitted": False,
     }:
         raise CampaignError("physical-device Vulkan lane is not explicitly held")
-    simulator = value.get("ios_simulator")
-    if (
-        not isinstance(simulator, dict)
-        or simulator.get("device_type") != "iPhone 17 Pro Max"
-        or simulator.get("model") != "iPhone18,2"
-        or simulator.get("runtime") != "iOS 26.5"
-    ):
-        raise CampaignError("Simulator development target drifted")
-    udids = simulator.get("frozen_udids")
-    if (
-        not isinstance(udids, list)
-        or not 1 <= len(udids) <= 4
-        or len(udids) != len(set(udids))
-        or any(
-            not isinstance(udid, str)
-            or re.fullmatch(
-                r"[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-"
-                r"[0-9A-F]{4}-[0-9A-F]{12}",
-                udid,
-            )
-            is None
-            for udid in udids
-        )
-    ):
-        raise CampaignError("Simulator UDID set is not unique and frozen")
     return value
 
 
@@ -987,7 +962,6 @@ def build_guest_launcher(
     identity: dict[str, Any],
     selection: DevelopmentSelection,
     *,
-    page_size: int,
     timeout: int,
     experimental_venus: bool = False,
     case_list: str | None = None,
@@ -1059,8 +1033,8 @@ install -d -m 0755 -o uml -g uml "$output"
 : > "$qpa"
 chown uml:uml "$qpa"
 actual_page_size=$(getconf PAGESIZE)
-[ "$actual_page_size" -eq {page_size} ] || {{
-    echo "UML_VK_CTS_ERROR: guest page size $actual_page_size does not match {page_size}"
+[ "$actual_page_size" -eq {gpu_guest.GUEST_PAGE_SIZE} ] || {{
+    echo "UML_VK_CTS_ERROR: guest page size $actual_page_size does not match {gpu_guest.GUEST_PAGE_SIZE}"
     exit 1
 }}
 printf 'guest_page_size=%s\n' "$actual_page_size" > "$renderer"
@@ -1137,7 +1111,6 @@ def build_receipt_guest_launcher(
     receipt: dict[str, Any],
     selection: ReceiptSelection,
     *,
-    page_size: int,
     timeout: int,
     progress_timeout: int = 0,
     use_wsi: bool = False,
@@ -1651,8 +1624,8 @@ install -d -m 0755 -o uml -g uml "$output"
 : > "$qpa"
 chown uml:uml "$qpa"
 {skipped_creation}actual_page_size=$(getconf PAGESIZE)
-[ "$actual_page_size" -eq {page_size} ] || {{
-    echo "UML_VK_CTS_ERROR: guest page size $actual_page_size does not match {page_size}"
+[ "$actual_page_size" -eq {gpu_guest.GUEST_PAGE_SIZE} ] || {{
+    echo "UML_VK_CTS_ERROR: guest page size $actual_page_size does not match {gpu_guest.GUEST_PAGE_SIZE}"
     exit 1
 }}
 printf 'guest_page_size=%s\n' "$actual_page_size" > "$renderer"
@@ -1808,6 +1781,64 @@ exit "$status"
 """
 
 
+CAPABILITY_REPORT_ENVIRONMENT = ("env", "UML_GPU_CAPABILITY_REPORT=1")
+
+
+def _guest_command(
+    options: argparse.Namespace,
+    artifact_directory: Path,
+    guest_files: gpu_guest.StagedGuestFiles,
+    *,
+    rootfs_type: str,
+    command: str,
+) -> list[str]:
+    """The run_gpu_guest.py command that installs ``guest_files`` and runs the
+    shell ``command`` in a guest on a ``rootfs_type`` image, with the run's
+    console and artifact sockets named after ``artifact_directory``."""
+    run_identity = hashlib.sha256(
+        os.fsencode(artifact_directory.resolve())
+    ).hexdigest()[:20]
+    serial_socket_path = (
+        Path("/private/tmp") / f"uml-vk-cts-console-{run_identity}.sock"
+    )
+    return [
+        *CAPABILITY_REPORT_ENVIRONMENT,
+        sys.executable,
+        str(INTEGRATION_GPU / "run_gpu_guest.py"),
+        "--emulator",
+        str(options.emulator),
+        "--rootfs",
+        str(options.rootfs),
+        "--rootfs-type",
+        rootfs_type,
+        "--memory",
+        options.memory,
+        "--unit",
+        "multi-user.target",
+        "--timeout",
+        str(options.guest_timeout),
+        "--artifact-root",
+        str(artifact_directory / "guest"),
+        "--serial-socket",
+        str(serial_socket_path),
+        f"--virtio-serial-socket={common.artifact_socket_path(artifact_directory)}",
+        *guest_files.arguments,
+        "--command",
+        command,
+        "--",
+        f"umid=vkcts-{run_identity}",
+        "sysrq_always_enabled",
+        f"ncpus={options.cpus}",
+        f"--execution-engine={options.engine}",
+        "--gpu",
+        "--gpu-display=vnc",
+        "--gpu-vnc-bind=127.0.0.1",
+        "--gpu-vnc-port=0",
+        "--gpu-width=1280",
+        "--gpu-height=720",
+    ]
+
+
 def plan_harness_command(
     options: argparse.Namespace,
     identity: dict[str, Any],
@@ -1815,13 +1846,6 @@ def plan_harness_command(
     artifact_directory: Path,
 ) -> tuple[list[str], gpu_guest.StagedGuestFiles]:
     """The development harness command and the files it installs, unwritten."""
-    socket_path = common.artifact_socket_path(artifact_directory)
-    run_identity = hashlib.sha256(
-        os.fsencode(artifact_directory.resolve())
-    ).hexdigest()[:20]
-    serial_socket_path = (
-        Path("/private/tmp") / f"uml-vk-cts-console-{run_identity}.sock"
-    )
     guest_files = gpu_guest.StagedGuestFiles(
         artifact_directory / gpu_guest.GUEST_FILE_DIRECTORY
     )
@@ -1831,7 +1855,6 @@ def plan_harness_command(
         build_guest_launcher(
             identity,
             selection,
-            page_size=4096,
             timeout=options.shard_timeout,
             experimental_venus=options.experimental_venus,
             case_list=GUEST_CASE_LIST_PATH,
@@ -1845,42 +1868,14 @@ def plan_harness_command(
         f"set +e; {CTS_SERVICE_PATH}; cts_status=$?; set -e; "
         f'[ "$cts_status" -eq {expected_status} ]'
     )
-    command = [
-        sys.executable,
-        str(INTEGRATION_GPU / "run_gpu_guest.py"),
-        "--emulator",
-        str(options.emulator),
-        "--rootfs",
-        str(options.rootfs),
-        "--rootfs-type",
-        "erofs",
-        "--memory",
-        options.memory,
-        "--unit",
-        "multi-user.target",
-        "--timeout",
-        str(options.guest_timeout),
-        "--artifact-root",
-        str(artifact_directory / "guest"),
-        "--serial-socket",
-        str(serial_socket_path),
-        f"--virtio-serial-socket={socket_path}",
-        *guest_files.arguments,
-        "--command",
-        run_and_check,
-        "--",
-        f"umid=vkcts-{run_identity}",
-        "sysrq_always_enabled",
-        f"ncpus={options.cpus}",
-        f"--execution-engine={options.engine}",
-        "--gpu",
-        "--gpu-display=vnc",
-        "--gpu-vnc-bind=127.0.0.1",
-        "--gpu-vnc-port=0",
-        "--gpu-width=1280",
-        "--gpu-height=720",
-    ]
-    return ["env", "UML_GPU_CAPABILITY_REPORT=1", *command], guest_files
+    command = _guest_command(
+        options,
+        artifact_directory,
+        guest_files,
+        rootfs_type="erofs",
+        command=run_and_check,
+    )
+    return command, guest_files
 
 
 def build_harness_command(
@@ -1905,13 +1900,6 @@ def plan_receipt_harness_command(
 
     An explicit case list reaches the guest as its own file, so no count of
     cases lengthens a command line."""
-    socket_path = common.artifact_socket_path(artifact_directory)
-    run_identity = hashlib.sha256(
-        os.fsencode(artifact_directory.resolve())
-    ).hexdigest()[:20]
-    serial_socket_path = (
-        Path("/private/tmp") / f"uml-vk-cts-console-{run_identity}.sock"
-    )
     uses_wsi = receipt_selection_uses_wsi(selection)
     guest_files = gpu_guest.StagedGuestFiles(
         artifact_directory / gpu_guest.GUEST_FILE_DIRECTORY
@@ -1925,7 +1913,6 @@ def plan_receipt_harness_command(
         build_receipt_guest_launcher(
             receipt,
             selection,
-            page_size=4096,
             timeout=options.shard_timeout,
             progress_timeout=options.console_stall_timeout,
             use_wsi=uses_wsi,
@@ -1935,55 +1922,25 @@ def plan_receipt_harness_command(
         ),
         0o755,
     )
-    environment = ["env", "UML_GPU_CAPABILITY_REPORT=1"]
     if uses_wsi:
         guest_files.add(CTS_WSI_SERVICE_PATH, CTS_WSI_SERVICE)
         command = common.native_wsi_harness_command(
             options, artifact_directory, CTS_WSI_SERVICE_NAME,
             guest_files=guest_files,
         )
-        return [*environment, *command], guest_files
+        return [*CAPABILITY_REPORT_ENVIRONMENT, *command], guest_files
     # The launcher records the CTS status in summary.txt and transfers every
     # artifact from its EXIT trap.  Keep the outer guest harness successful so
     # a failing CTS result reaches the host validator instead of being reduced
     # to an uninspectable guest-command failure.
-    run_and_capture = f"set +e; {CTS_SERVICE_PATH}; set -e; :"
-    command = [
-        sys.executable,
-        str(INTEGRATION_GPU / "run_gpu_guest.py"),
-        "--emulator",
-        str(options.emulator),
-        "--rootfs",
-        str(options.rootfs),
-        "--rootfs-type",
-        "ext4",
-        "--memory",
-        options.memory,
-        "--unit",
-        "multi-user.target",
-        "--timeout",
-        str(options.guest_timeout),
-        "--artifact-root",
-        str(artifact_directory / "guest"),
-        "--serial-socket",
-        str(serial_socket_path),
-        f"--virtio-serial-socket={socket_path}",
-        *guest_files.arguments,
-        "--command",
-        run_and_capture,
-        "--",
-        f"umid=vkcts-{run_identity}",
-        "sysrq_always_enabled",
-        f"ncpus={options.cpus}",
-        f"--execution-engine={options.engine}",
-        "--gpu",
-        "--gpu-display=vnc",
-        "--gpu-vnc-bind=127.0.0.1",
-        "--gpu-vnc-port=0",
-        "--gpu-width=1280",
-        "--gpu-height=720",
-    ]
-    return [*environment, *command], guest_files
+    command = _guest_command(
+        options,
+        artifact_directory,
+        guest_files,
+        rootfs_type="ext4",
+        command=f"set +e; {CTS_SERVICE_PATH}; set -e; :",
+    )
+    return command, guest_files
 
 
 def build_receipt_harness_command(

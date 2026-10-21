@@ -5,6 +5,7 @@
 #include "gpu_vhost_user_server.hpp"
 #include "in_process_service_testing.hpp"
 #include "vhost_user_message_testing.hpp"
+#include "wait_until.hpp"
 
 #include <cerrno>
 #include <chrono>
@@ -61,14 +62,12 @@ void verifyControlRetry(VhostUserServer& server)
             if (!testing::waitForStopWaitCount(1, 2000))
                 std::_Exit(102);
             stopRequested.store(true, std::memory_order_release);
-            const auto deadline = std::chrono::steady_clock::now() +
-                std::chrono::seconds {2};
-            while (!finished.load(std::memory_order_acquire) &&
-                   std::chrono::steady_clock::now() < deadline) {
-                std::this_thread::sleep_for(std::chrono::milliseconds {10});
-            }
-            if (!finished.load(std::memory_order_acquire))
+            if (!::uml::testing::waitUntil(
+                    [&] { return finished.load(std::memory_order_acquire); },
+                    std::chrono::seconds {2},
+                    std::chrono::milliseconds {10})) {
                 std::_Exit(101);
+            }
             worker.join();
         }
         verifyControlRetry(*server);
@@ -335,13 +334,10 @@ void backpressuredRepliesArriveWholeAndStopEndsTheWait()
         (void)fillUntilTheServerWaitsToWrite(peer);
         require(!finished.load(std::memory_order_acquire));
         stopRequested.store(true, std::memory_order_release);
-        const auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds {5};
-        while (!finished.load(std::memory_order_acquire) &&
-               std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::sleep_for(std::chrono::milliseconds {10});
-        }
-        const bool stopped = finished.load(std::memory_order_acquire);
+        const bool stopped = ::uml::testing::waitUntil(
+            [&] { return finished.load(std::memory_order_acquire); },
+            std::chrono::seconds {5},
+            std::chrono::milliseconds {10});
         (void)::shutdown(peer, SHUT_RDWR);
         worker.join();
         require(stopped);

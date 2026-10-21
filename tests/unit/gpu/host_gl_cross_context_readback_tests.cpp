@@ -18,6 +18,7 @@
 
 #include "host_gl_test_support.hpp"
 #include "require.hpp"
+#include "watchdog.hpp"
 
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
@@ -25,8 +26,6 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstdio>
-#include <cstdlib>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -70,47 +69,6 @@ private:
     std::mutex mutex_;
     std::condition_variable condition_;
     bool open_ {};
-};
-
-// The readback is the operation that used to hang, so it cannot be bounded
-// from inside itself. Watch it from another thread and end the process with a
-// diagnosis rather than letting the harness kill a silent test.
-class Watchdog final {
-public:
-    explicit Watchdog(std::chrono::seconds deadline)
-        : thread_ {[this, deadline] {
-            std::unique_lock lock(mutex_);
-            if (condition_.wait_for(lock, deadline, [this] { return done_; }))
-                return;
-            std::fprintf(
-                stderr,
-                "cross-context readback did not return within %lld s: the "
-                "reader is waiting for a context nothing will flush\n",
-                static_cast<long long>(deadline.count()));
-            std::fflush(stderr);
-            std::_Exit(1);
-        }}
-    {
-    }
-
-    ~Watchdog()
-    {
-        {
-            std::lock_guard lock(mutex_);
-            done_ = true;
-        }
-        condition_.notify_all();
-        thread_.join();
-    }
-
-    Watchdog(const Watchdog&) = delete;
-    Watchdog& operator=(const Watchdog&) = delete;
-
-private:
-    std::mutex mutex_;
-    std::condition_variable condition_;
-    bool done_ {};
-    std::thread thread_;
 };
 
 [[nodiscard]] int readBackWhatAnotherContextHasNotFlushed()
@@ -198,7 +156,13 @@ private:
     std::vector<std::uint8_t> readback(
         static_cast<std::size_t>(kWidth) * kHeight * 4, 0);
     {
-        Watchdog watchdog {kReadbackDeadline};
+        // The readback is the operation that used to hang, so it cannot be
+        // bounded from inside itself: a watchdog thread ends the process
+        // with a diagnosis instead of leaving the harness a silent test.
+        uml::testing::Watchdog watchdog {
+            "the cross-context readback (a reader waiting for a context "
+            "nothing will flush)",
+            kReadbackDeadline};
         glReadPixels(
             0,
             0,
