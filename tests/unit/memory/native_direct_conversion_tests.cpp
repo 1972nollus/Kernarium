@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* On the 4 KiB profile a 16 KiB native slot stays one shared ("direct")
- * mapping of its backing until a 4 KiB operation needs one quarter to differ.
+/* A 16 KiB native slot, the host page, stays one shared ("direct") mapping
+ * of its backing until a 4 KiB guest operation needs one quarter to differ.
  * The slot then becomes four private quarters built from a snapshot of it.
  * Another carrier can store through the direct slot meanwhile, and the store
  * must not be lost from the native view: the slot is read-only from the
