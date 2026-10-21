@@ -75,12 +75,24 @@ struct Instruction final {
 	SysReg sysreg = SysReg::none;
 	/* For IT: the instructions the block holds (1 to 4). */
 	std::uint8_t it_length = 0;
-	/* The IT state after this instruction. */
+	/* The IT state after this instruction. The caller advances its own state
+	 * with it and treats a block as running until it is zero. */
 	ItState next_it;
 	/* The word as decoded: A32 bits, or hw1 << 16 | hw2 (hw2 zero for T16). */
 	std::uint32_t word = 0;
+	/* What the form's Decode pseudocode computes, named for its variables (d,
+	 * n, m, t, imm32, setflags, shift_t, registers, esize, ...). A bits(N)
+	 * value is its bit pattern, imm32 the 32-bit pattern, and an integer its
+	 * value. */
 	Operands operands;
 
+	/* The form's table entry: the XML encoding name and mnemonic, the level
+	 * and feature it needs, whether it is conditional, and static traits
+	 * scanned from the XML's Execute pseudocode (loads, stores, exclusives,
+	 * the kinds of PC write, barriers, hints, exceptions, and fp_state, a
+	 * read or write of the S, D, Q or V registers or FPSCR). fp_state is
+	 * exactly the XML's FP&SIMD section: an engine that loads the task's
+	 * vectors lazily loads them for any block that holds such a form. */
 	[[nodiscard]] const FormInfo &info() const noexcept
 	{
 		return kForms[static_cast<std::size_t>(form)];

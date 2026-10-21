@@ -218,6 +218,17 @@ struct CpuState final {
 			address & 0x00ff'ffff'ffff'ffffULL : address;
 	}
 
+	/* Drops the exclusive monitor: no address, key, value or size is held. */
+	void clear_exclusive_monitor() noexcept
+	{
+		exclusive_address = ~std::uint64_t{0};
+		exclusive_key = 0;
+		exclusive_value = 0;
+		exclusive_value2 = 0;
+		exclusive_version = 0;
+		exclusive_size = 0;
+	}
+
 	/* Loads a saved context lazily. Its FPCR is masked as an MSR FPCR
 	 * write is, with the host's fpcr_writable_mask_for(), and its FPSR as
 	 * an MSR FPSR write is. */

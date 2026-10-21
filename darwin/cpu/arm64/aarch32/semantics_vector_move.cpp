@@ -192,7 +192,7 @@ bool vmrs(Exec &x)
 {
 	const Operands &o = x.o;
 	if (o.t == 15) {
-		x.cpu.nzcv = (x.cpu.nzcv & ~fpscr_nzcv_mask) | (x.cpu.a32_fpscr_nzcv & fpscr_nzcv_mask);
+		x.cpu.nzcv = (x.cpu.nzcv & ~fpscr_nzcv) | (x.cpu.a32_fpscr_nzcv & fpscr_nzcv);
 	} else {
 		x.set_reg(o.t, fpscr_of(x.cpu));
 	}

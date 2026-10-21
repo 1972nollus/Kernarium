@@ -216,7 +216,7 @@ public:
 	{
 		std::memcpy(cpu.vectors[n >> 2].bytes.data() + 4U * (n & 3U), &value, 4);
 	}
-	/* The bytes of D(n) from `offset`, for the element accesses. */
+	/* The bytes of D(n), for the element accesses. */
 	[[nodiscard]] std::byte *d_bytes(unsigned n) noexcept
 	{
 		return cpu.vectors[n >> 1].bytes.data() + 8U * (n & 1U);
