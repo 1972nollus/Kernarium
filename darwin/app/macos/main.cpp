@@ -439,6 +439,38 @@ bool has_virtio_device_argument(const std::vector<std::string> &arguments,
 	return false;
 }
 
+/* Starts the in-process Virtio device that `make` creates and appends the
+ * kernel argument that hands it to the guest, unless the command line already
+ * names a transport for that device. A refusal or a start failure prints its
+ * reason and returns false: `subject` names what asked for the device,
+ * `device` what failed to start and `transport` (`device` when null) what the
+ * explicit argument would collide with. */
+template<typename Make>
+[[nodiscard]] bool start_virtio_device(
+	std::vector<std::string> &kernel,
+	std::unique_ptr<uml::gpu::InProcessVhostUserService> &service,
+	std::uint32_t device_id, Make make, const char *subject,
+	const char *device, const char *transport = nullptr)
+{
+	if (has_virtio_device_argument(kernel, device_id)) {
+		std::fprintf(stderr,
+			"%s cannot be combined with an explicit %s transport "
+			"argument\n",
+			subject, transport != nullptr ? transport : device);
+		return false;
+	}
+	try {
+		service = make();
+		kernel.emplace_back(uml::gpu::virtioDeviceArgument(
+			service->takeConnectionName(), device_id));
+	} catch (const std::exception &error) {
+		std::fprintf(stderr, "Unable to start in-process %s: %s\n",
+			device, error.what());
+		return false;
+	}
+	return true;
+}
+
 } // namespace
 
 bool uml::app::has_argument(
@@ -575,32 +607,18 @@ int uml::app::runEmbeddedKernel(
 		}
 	}
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> battery_service;
-	if (prepared.battery && !information_only) {
-		if (has_virtio_device_argument(
-			prepared.kernel, uml::battery::protocol::deviceId)) {
-			std::fputs("--battery cannot be combined with an explicit "
-				   "Virtio battery transport argument\n",
-				   stderr);
-			return 1;
-		}
-		try {
-			battery_service = uml::battery::makeInProcessService();
-			/* Android's vendor policy labels the battery's sysfs
-			 * path by its position among the Virtio devices
-			 * (android/lineage-24/overlay/sepolicy/vendor/genfs_contexts).
-			 * Straight after the GPU it is always virtio-uml.1/virtio1,
-			 * whatever optional devices follow. */
-			prepared.kernel.emplace_back(
-				uml::gpu::virtioDeviceArgument(
-					battery_service->takeConnectionName(),
-					uml::battery::protocol::deviceId));
-		} catch (const std::exception &error) {
-			std::fprintf(stderr,
-				"Unable to start in-process Virtio battery: %s\n",
-				error.what());
-			return 1;
-		}
-	}
+	/* Android's vendor policy labels the battery's sysfs path by its
+	 * position among the Virtio devices
+	 * (android/lineage-24/overlay/sepolicy/vendor/genfs_contexts).
+	 * Straight after the GPU it is always virtio-uml.1/virtio1, whatever
+	 * optional devices follow. */
+	if (prepared.battery && !information_only &&
+	    !start_virtio_device(
+		    prepared.kernel, battery_service,
+		    uml::battery::protocol::deviceId,
+		    [] { return uml::battery::makeInProcessService(); },
+		    "--battery", "Virtio battery"))
+		return 1;
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> balloon_service;
 	if (gpu_service && device_memory_limit != 0 &&
 	    !has_virtio_device_argument(
@@ -626,77 +644,43 @@ int uml::app::runEmbeddedKernel(
 		}
 	}
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> video_service;
-	if (prepared.video && !information_only) {
-		if (has_virtio_device_argument(prepared.kernel, uml::video::deviceId)) {
-			std::fputs("--video cannot be combined with an explicit Virtio video transport argument\n", stderr);
-			return 1;
-		}
-		try {
-			video_service = uml::video::makeInProcessService(
-				gpu_service ? shared_memory_regions : nullptr);
-			prepared.kernel.emplace_back(
-				uml::gpu::virtioDeviceArgument(
-					video_service->takeConnectionName(),
-					uml::video::deviceId));
-		} catch (const std::exception& error) {
-			std::fprintf(stderr, "Unable to start in-process Virtio video: %s\n", error.what());
-			return 1;
-		}
-	}
+	if (prepared.video && !information_only &&
+	    !start_virtio_device(
+		    prepared.kernel, video_service, uml::video::deviceId,
+		    [&] {
+			    return uml::video::makeInProcessService(
+				    gpu_service ? shared_memory_regions : nullptr);
+		    },
+		    "--video", "Virtio video"))
+		return 1;
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> audio_service;
-	if (prepared.audio && !information_only) {
-		if (has_virtio_device_argument(
-			prepared.kernel, uml::audio::protocol::deviceId)) {
-			std::fputs("--audio cannot be combined with an explicit "
-				   "Virtio Sound transport argument\n",
-				   stderr);
-			return 1;
-		}
-		try {
-			audio_service = uml::audio::makeInProcessService();
-			prepared.kernel.emplace_back(
-				uml::gpu::virtioDeviceArgument(
-					audio_service->takeConnectionName(),
-					uml::audio::protocol::deviceId));
-		} catch (const std::exception &error) {
-			std::fprintf(stderr,
-				"Unable to start in-process Virtio Sound: %s\n",
-				error.what());
-			return 1;
-		}
-	}
+	if (prepared.audio && !information_only &&
+	    !start_virtio_device(
+		    prepared.kernel, audio_service,
+		    uml::audio::protocol::deviceId,
+		    [] { return uml::audio::makeInProcessService(); },
+		    "--audio", "Virtio Sound"))
+		return 1;
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> console_service;
-	if ((!prepared.console_socket.empty() || !prepared.serial_socket.empty()) &&
-	    !information_only) {
-		const bool named_serial = !prepared.serial_socket.empty();
-		if (has_virtio_device_argument(
-			prepared.kernel, uml::console::protocol::deviceId)) {
-			std::fputs("a host Virtio console or serial socket cannot be "
-				   "combined with an explicit Virtio console transport "
-				   "argument\n",
-				   stderr);
-			return 1;
-		}
-		try {
-			console_service = uml::console::makeInProcessService(
-				named_serial ? prepared.serial_socket :
-					prepared.console_socket,
-				named_serial ?
-					std::string(
-						uml::console::protocol::hostSerialPortName) :
-					std::string {});
-			prepared.kernel.emplace_back(
-				uml::gpu::virtioDeviceArgument(
-					console_service->takeConnectionName(),
-					uml::console::protocol::deviceId));
-		} catch (const std::exception &error) {
-			std::fprintf(
-				stderr, "Unable to start in-process Virtio %s: %s\n",
-				named_serial ? "serial" : "console",
-				error.what());
-			return 1;
-		}
-	}
+	const bool named_serial = !prepared.serial_socket.empty();
+	if ((named_serial || !prepared.console_socket.empty()) &&
+	    !information_only &&
+	    !start_virtio_device(
+		    prepared.kernel, console_service,
+		    uml::console::protocol::deviceId,
+		    [&] {
+			    return named_serial ?
+				    uml::console::makeInProcessService(
+					    prepared.serial_socket,
+					    std::string(uml::console::protocol::
+							hostSerialPortName)) :
+				    uml::console::makeInProcessService(
+					    prepared.console_socket);
+		    },
+		    "a host Virtio console or serial socket",
+		    named_serial ? "Virtio serial" : "Virtio console",
+		    "Virtio console"))
+		return 1;
 	std::vector<const char *> arguments;
 	arguments.reserve(prepared.kernel.size());
 	for (const auto &argument : prepared.kernel)
