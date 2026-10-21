@@ -23,6 +23,7 @@
  * recurs in every one: a store that fails every time is an engine that loses
  * the monitor.
  */
+#include "jit_test_support.hpp"
 #include "require.hpp"
 #include "runtime_test_route.hpp"
 #include "scratch_backing.hpp"
@@ -54,6 +55,7 @@
 namespace {
 
 namespace arm64 = uml::cpu::arm64;
+using uml::emulator::tests::GenerationMapping;
 using uml::testing::require;
 
 constexpr std::uint64_t page = DARWIN_UML_GUEST_PAGE_SIZE;
@@ -414,36 +416,6 @@ struct Program final {
 	return result;
 }
 
-class Mapping final {
-public:
-	Mapping(unsigned long generation, std::uint32_t address,
-		const uml::testing::ScratchBacking &backing, std::size_t pages,
-		int protection, bool code)
-		: generation_{generation}, address_{address},
-		  length_{pages * page}
-	{
-		require(darwin_uml_static_vm_map_generation(generation_,
-			reinterpret_cast<void *>(std::uintptr_t{address_}),
-			backing.descriptor(), 0, length_, protection,
-			code ? 1 : 0, code ? 0 : 1) == 0);
-	}
-
-	~Mapping()
-	{
-		require(darwin_uml_static_vm_unmap_generation(generation_,
-			reinterpret_cast<void *>(std::uintptr_t{address_}),
-			length_) == 0);
-	}
-
-	Mapping(const Mapping &) = delete;
-	Mapping &operator=(const Mapping &) = delete;
-
-private:
-	unsigned long generation_;
-	std::uint32_t address_;
-	std::size_t length_;
-};
-
 class Generation final {
 public:
 	explicit Generation(unsigned long generation) : generation_{generation}
@@ -473,11 +445,11 @@ public:
 	{
 		require(engine_ != nullptr);
 		code_.put(0, built.code.image());
-		code_mapping_ = std::make_unique<Mapping>(generation_.number(),
-			code_base, code_, code_pages,
+		code_mapping_ = std::make_unique<GenerationMapping>(
+			generation_.number(), code_base, code_, code_pages,
 			PROT_READ | PROT_EXEC, true);
-		data_mapping_ = std::make_unique<Mapping>(generation_.number(),
-			data_base, data_, data_pages,
+		data_mapping_ = std::make_unique<GenerationMapping>(
+			generation_.number(), data_base, data_, data_pages,
 			PROT_READ | PROT_WRITE, false);
 	}
 
@@ -538,8 +510,8 @@ private:
 	Generation generation_;
 	uml::testing::ScratchBacking code_;
 	uml::testing::ScratchBacking data_;
-	std::unique_ptr<Mapping> code_mapping_;
-	std::unique_ptr<Mapping> data_mapping_;
+	std::unique_ptr<GenerationMapping> code_mapping_;
+	std::unique_ptr<GenerationMapping> data_mapping_;
 	std::unique_ptr<uml::cpu::CpuEngine> engine_;
 };
 
