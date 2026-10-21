@@ -10,6 +10,7 @@
 
 #include "native_display_application.hpp"
 #include "wait_until.hpp"
+#include "watchdog.hpp"
 
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -18,7 +19,6 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -114,13 +114,9 @@ int main()
         }
         CFRelease(session);
 
-        std::thread([] {
-            sleep(watchdogSeconds);
-            std::fprintf(stderr,
-                "native-display-menu-teardown: the display did not return "
-                "with a menu open\n");
-            std::_Exit(1);
-        }).detach();
+        const uml::testing::Watchdog watchdog {
+            "the native display with a menu open",
+            std::chrono::seconds {watchdogSeconds}};
 
         [NSNotificationCenter.defaultCenter
             addObserverForName:NSMenuDidBeginTrackingNotification
