@@ -847,7 +847,7 @@ def verify_initramfs_fixtures(verifier: Path) -> None:
         # Kernel module files and metadata, in any case, name their cause.
         for module_file in (
             "fixture.ko", "fixture.ko.xz", "modules.dep", "MODULES.Dep",
-            "modules.devname", "modules.symbols",
+            "modules.devname", "modules.symbols", "modules.blocklist",
         ):
             fixture = root / "bad-module.img"
             fixture.write_bytes(synthetic_initramfs(fstab, module_file=module_file))
@@ -1050,6 +1050,14 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
             ("a module object suffix", {"module": "fixture.ko.xz"}, "loadable-module payload"),
             ("module metadata", {"module": "modules.dep"}, "loadable-module payload"),
             ("module metadata in capitals", {"module": "MODULES.Dep"}, "loadable-module payload"),
+            ("a module blocklist", {"module": "modules.blocklist"}, "loadable-module payload"),
+            ("a module device-name index", {"module": "modules.devname"}, "loadable-module payload"),
+            ("a module symbol index", {"module": "modules.symbols.bin"}, "loadable-module payload"),
+            (
+                "a built-in alias index",
+                {"module": "modules.builtin.alias.bin"},
+                "loadable-module payload",
+            ),
             ("a 32-bit ELF", {"elf_edit": ("<B", 4, 1)}, "little-endian ELF64"),
             ("a big-endian ELF", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF64"),
             ("a foreign machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),

@@ -20,12 +20,8 @@ import android_image  # noqa: E402
 from release_common import BUILD_VARIANTS, configured_build_variant, sha256_path  # noqa: E402
 
 
-ELF_MAGIC = b"\x7fELF"
-ELFCLASS64 = 2
-ELFDATA2LSB = 1
 ET_EXEC = 2
 ET_DYN = 3
-EM_AARCH64 = 183
 MAX_PROGRAM_HEADERS_SIZE = 1 << 20
 APEX_PAYLOAD_MAGIC_SIZE = 1024 + 0x38 + 2
 EXT4_MAGIC_OFFSET = 1024 + 0x38
@@ -188,23 +184,6 @@ DLKM_COMPATIBILITY_ENTRIES = {
     "VENDOR_BOOT/RAMDISK/system_dlkm",
     "VENDOR_BOOT/RAMDISK/vendor_dlkm",
     "VENDOR_BOOT/RAMDISK/vendor_dlkm/etc",
-}
-MODULE_METADATA = {
-    "modules.alias",
-    "modules.alias.bin",
-    "modules.blocklist",
-    "modules.builtin",
-    "modules.builtin.alias.bin",
-    "modules.builtin.modinfo",
-    "modules.dep",
-    "modules.dep.bin",
-    "modules.devname",
-    "modules.load",
-    "modules.options",
-    "modules.order",
-    "modules.softdep",
-    "modules.symbols",
-    "modules.symbols.bin",
 }
 TARGET_PARTITIONS = {"SYSTEM", "SYSTEM_EXT", "PRODUCT", "VENDOR", "ODM"}
 FORBIDDEN_STATIC_ENTRIES = {
@@ -436,10 +415,8 @@ def reject_module_payload(path: PurePosixPath) -> None:
     basename = lowered[-1]
     if basename == "dlkm_loader":
         fail(f"kernel module loader is forbidden: {path}")
-    if basename.endswith(".ko") or ".ko." in basename:
-        fail(f"loadable kernel module is forbidden: {path}")
-    if basename in MODULE_METADATA:
-        fail(f"kernel module metadata is forbidden: {path}")
+    if android_image.is_module_payload(basename):
+        fail(f"kernel module or module metadata is forbidden: {path}")
     if any(
         lowered[index : index + 2] == ("lib", "modules")
         for index in range(len(lowered) - 1)
@@ -824,10 +801,9 @@ def read_elf_prefix(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes | 
         return None
     with archive.open(info) as source:
         header = source.read(64)
-        if header[:4] != ELF_MAGIC:
+        if header[:4] != android_image.ELF_MAGIC:
             return None
-        if header[4] != ELFCLASS64 or header[5] != ELFDATA2LSB:
-            fail(f"target ELF is not little-endian ELF64: {info.filename}")
+        android_image.check_elf64_little_endian(info.filename, header, error)
         program_offset = struct.unpack_from("<Q", header, 32)[0]
         entry_size, entry_count = struct.unpack_from("<HH", header, 54)
         program_end = program_offset + entry_size * entry_count
@@ -842,15 +818,9 @@ def read_elf_prefix(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes | 
 
 
 def check_target_elf(info: zipfile.ZipInfo, payload: bytes) -> None:
-    elf_type, machine = struct.unpack_from("<HH", payload, 16)
-    if elf_type not in (ET_EXEC, ET_DYN):
+    if struct.unpack_from("<H", payload, 16)[0] not in (ET_EXEC, ET_DYN):
         return
-    if machine != EM_AARCH64:
-        fail(f"target executable is not AArch64: {info.filename}")
-
-    entry_size = struct.unpack_from("<H", payload, 54)[0]
-    if entry_size < 56:
-        fail(f"malformed ELF program-header size: {info.filename}")
+    android_image.check_aarch64_elf_header(info.filename, payload, error)
     android_image.check_load_alignment(info.filename, payload, error)
 
 
@@ -863,7 +833,7 @@ def check_mesa_gles_stack(
         if payload is None:
             fail(f"Mesa GLES component is not an ELF file: {entry}")
         elf_type, machine = struct.unpack_from("<HH", payload, 16)
-        if elf_type != ET_DYN or machine != EM_AARCH64:
+        if elf_type != ET_DYN or machine != android_image.EM_AARCH64:
             fail(f"Mesa GLES component is not AArch64 ET_DYN: {entry}")
         check_target_elf(info, payload)
         if entry in MESA_EGL_ENTRIES:
