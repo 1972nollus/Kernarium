@@ -9,6 +9,7 @@
  * test if the display does not return. */
 
 #include "native_display_application.hpp"
+#include "wait_until.hpp"
 
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -56,13 +57,10 @@ void openOnMainThread(NSMenu* menu)
 
 bool waitForTracking(int count)
 {
-    const auto deadline = std::chrono::steady_clock::now() + trackingTimeout;
-    while (tracking.load() < count) {
-        if (std::chrono::steady_clock::now() >= deadline)
-            return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return true;
+    return uml::testing::waitUntil(
+        [&] { return tracking.load() >= count; },
+        trackingTimeout,
+        std::chrono::milliseconds(10));
 }
 
 /* The case that was seen: the guest finishes while a menu is open. */
