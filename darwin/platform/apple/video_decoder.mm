@@ -81,11 +81,8 @@ bool high10Available()
 bool vp9Available()
 {
     static const bool available = [] {
-        if (@available(iOS 26.2, *)) {
-            VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9);
-            return bool(VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9));
-        }
-        return false;
+        VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9);
+        return bool(VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9));
     }();
     return available;
 }
