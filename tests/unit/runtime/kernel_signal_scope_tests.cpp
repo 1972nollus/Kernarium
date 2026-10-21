@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "kernel_signal_scope.hpp"
 #include "require.hpp"
+#include "wait_until.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -128,12 +129,9 @@ void arm_real_timer()
 
 void wait_for(const std::atomic_int &phase, int value)
 {
-	const auto deadline = std::chrono::steady_clock::now() + 10s;
-	while (phase.load(std::memory_order_acquire) != value) {
-		require(std::chrono::steady_clock::now() < deadline,
-			"timed out waiting for the other thread");
-		std::this_thread::sleep_for(1ms);
-	}
+	require(uml::testing::waitUntil([&] {
+		return phase.load(std::memory_order_acquire) == value;
+	}, 10s), "timed out waiting for the other thread");
 }
 
 /* Runs on a thread whose SIGALRM mask it inherits from the main thread, and

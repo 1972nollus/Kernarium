@@ -5,6 +5,7 @@
  * only for pages whose state they change. */
 #include "mach_vm_region_test_support.hpp"
 #include "memory/guest_ram_commitment.hpp"
+#include "named_tests.hpp"
 #include "require.hpp"
 
 #include <cerrno>
@@ -230,11 +231,7 @@ void concurrent_callers_keep_the_count_exact()
 
 int main()
 {
-	const struct {
-		const char *name;
-		void (*run)();
-		const char *unsupported{};
-	} tests[] = {
+	const uml::testing::NamedTest tests[] = {
 		{"release leaves and commit restores the footprint",
 			release_leaves_and_commit_restores_the_footprint},
 		{"repeated and overlapping calls change state once",
@@ -247,20 +244,5 @@ int main()
 		{"concurrent callers keep the count exact",
 			concurrent_callers_keep_the_count_exact},
 	};
-	int failures = 0;
-	for (const auto &test : tests) {
-		if (test.unsupported != nullptr) {
-			std::printf("unsupported: %s: %s\n", test.name,
-				test.unsupported);
-			continue;
-		}
-		try {
-			test.run();
-			std::printf("ok: %s\n", test.name);
-		} catch (const std::exception &error) {
-			std::printf("FAIL: %s: %s\n", test.name, error.what());
-			++failures;
-		}
-	}
-	return failures == 0 ? 0 : 1;
+	return uml::testing::runNamedTests(tests);
 }
