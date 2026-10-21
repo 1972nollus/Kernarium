@@ -293,6 +293,19 @@ bool parse_host_integer(std::string_view argument, std::string_view prefix,
 	return true;
 }
 
+/* Records the path of a socket option, which may be given once. */
+void set_socket_path(std::string &destination, std::string_view option,
+		     std::string_view value)
+{
+	if (!destination.empty())
+		throw std::invalid_argument(std::string(option) +
+					    " may be specified only once");
+	if (value.empty())
+		throw std::invalid_argument(std::string(option) +
+					    " requires a path");
+	destination = value;
+}
+
 PreparedArguments prepare_host_arguments(
 	int argc, char *const argv[],
 	const uml::app::LaunchConfiguration &configuration)
@@ -302,6 +315,15 @@ PreparedArguments prepare_host_arguments(
 	for (int index = 0; index < argc; ++index) {
 		const std::string_view argument =
 			argv[index] == nullptr ? std::string_view {} : argv[index];
+		/* Whether `argument` is the option `prefix` names ("--x="), with
+		 * what follows it left in `value`. */
+		std::string_view value;
+		const auto valued = [&](std::string_view prefix) {
+			if (!argument.starts_with(prefix))
+				return false;
+			value = argument.substr(prefix.size());
+			return true;
+		};
 		if (argument == "--gpu") {
 			prepared.gpu.enabled = true;
 		} else if (argument == "--audio") {
@@ -310,67 +332,42 @@ PreparedArguments prepare_host_arguments(
 			prepared.battery = true;
 		} else if (argument == "--video") {
 			prepared.video = true;
-		} else if (argument.starts_with("--virtio-console-socket=")) {
-			if (!prepared.console_socket.empty())
-				throw std::invalid_argument(
-					"--virtio-console-socket may be specified only once");
-			prepared.console_socket = argument.substr(
-				std::string_view{"--virtio-console-socket="}.size());
-			if (prepared.console_socket.empty())
-				throw std::invalid_argument(
-					"--virtio-console-socket requires a path");
-		} else if (argument.starts_with("--virtio-serial-socket=")) {
-			if (!prepared.serial_socket.empty())
-				throw std::invalid_argument(
-					"--virtio-serial-socket may be specified only once");
-			prepared.serial_socket = argument.substr(
-				std::string_view{"--virtio-serial-socket="}.size());
-			if (prepared.serial_socket.empty())
-				throw std::invalid_argument(
-					"--virtio-serial-socket requires a path");
-		} else if (argument.starts_with("--gpu-display=")) {
-			const auto mode = argument.substr(
-				std::string_view{"--gpu-display="}.size());
-			if (mode == "native")
+		} else if (valued("--virtio-console-socket=")) {
+			set_socket_path(prepared.console_socket,
+					"--virtio-console-socket", value);
+		} else if (valued("--virtio-serial-socket=")) {
+			set_socket_path(prepared.serial_socket,
+					"--virtio-serial-socket", value);
+		} else if (valued("--gpu-display=")) {
+			if (value == "native")
 				prepared.gpu.display_mode = uml::gpu::DisplayMode::native;
-			else if (mode == "vnc")
+			else if (value == "vnc")
 				prepared.gpu.display_mode = uml::gpu::DisplayMode::vnc;
 			else
 				throw std::invalid_argument(
 					"--gpu-display must be native or vnc");
 			prepared.gpu.enabled = true;
-		} else if (argument.starts_with("--gpu-vnc-bind=")) {
+		} else if (valued("--gpu-vnc-bind=")) {
 			prepared.gpu.vnc_option_specified = true;
-			const auto address =
-				argument.substr(std::string_view{
-					"--gpu-vnc-bind="}.size());
-			if (address.empty())
+			if (value.empty())
 				throw std::invalid_argument(
 					"invalid host option: " +
 					std::string(argument));
-			prepared.gpu.vnc_bind_address = address;
+			prepared.gpu.vnc_bind_address = value;
 			prepared.gpu.enabled = true;
-		} else if (argument.starts_with("--gpu-vnc-password=")) {
+		} else if (valued("--gpu-vnc-password=")) {
 			prepared.gpu.vnc_option_specified = true;
-			const auto password =
-				argument.substr(std::string_view{
-					"--gpu-vnc-password="}.size());
-			if (password.empty() || password.size() > 8)
+			if (value.empty() || value.size() > 8)
 				throw std::invalid_argument(
 					"VNC password must contain between 1 and "
 					"8 bytes");
-			prepared.gpu.vnc_password = password;
+			prepared.gpu.vnc_password = value;
 			prepared.gpu.enabled = true;
-		} else if (argument.starts_with("--gpu-vnc-port=")) {
-			if (!parse_host_integer(argument, "--gpu-vnc-port=",
-					prepared.gpu.vnc_port, true))
-				throw std::invalid_argument("invalid host option: " +
-					std::string(argument));
+		} else if (parse_host_integer(argument, "--gpu-vnc-port=",
+					      prepared.gpu.vnc_port, true)) {
 			prepared.gpu.vnc_option_specified = true;
 			prepared.gpu.enabled = true;
-		} else if (argument.starts_with("--gpu-auto-resize=")) {
-			const auto value = argument.substr(
-				std::string_view{"--gpu-auto-resize="}.size());
+		} else if (valued("--gpu-auto-resize=")) {
 			if (value == "on")
 				prepared.gpu.auto_resize_guest = true;
 			else if (value == "off")
@@ -380,15 +377,13 @@ PreparedArguments prepare_host_arguments(
 					"--gpu-auto-resize must be on or off");
 			prepared.gpu.auto_resize_guest_specified = true;
 			prepared.gpu.enabled = true;
-		} else if (argument.starts_with("--net-forward=")) {
-			auto specification = std::string{argument.substr(
-				std::string_view{"--net-forward="}.size())};
-			if (specification.empty())
+		} else if (valued("--net-forward=")) {
+			if (value.empty())
 				throw std::invalid_argument(
 					"--net-forward requires "
 					"[PROTO:][HOSTADDR:]HOSTPORT-"
 					"[GUESTADDR:]GUESTPORT");
-			prepared.net_forwards.push_back(std::move(specification));
+			prepared.net_forwards.emplace_back(value);
 		} else if (
 			   parse_host_integer(
 				   argument, "--gpu-width=", prepared.gpu.width) ||
