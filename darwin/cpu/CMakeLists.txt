@@ -30,64 +30,46 @@ add_subdirectory(arm64/aarch32)
 # metric, for 11 to 14 MiB more arm64 cache on four vCPUs (G280). An explicit
 # -DUML_GADGET_CACHE_SLOTS selects another power of two.
 #
-# The variable is a cache entry, so a tree configured under an earlier default
-# would keep it. The help text below names the default a tree was configured
-# with, which tells a value nobody chose from one somebody did: an entry that
-# still carries a configured default's help text and equals it is moved to the
-# current default. Trees configured before the help text named a default hold
-# the default of their day, 262,144 on macOS and 65,536 elsewhere. A
-# command-line -D replaces the help text and so is kept, as is any other value.
-set(_uml_gadget_cache_slots_default "262144")
-set(_uml_gadget_cache_slots_help
-    "Slots in each ISA's private gadget cache; power of two, at least 1024")
-set(_uml_gadget_cache_slots_doc
-    "${_uml_gadget_cache_slots_help}; default ${_uml_gadget_cache_slots_default}")
-if(DEFINED CACHE{UML_GADGET_CACHE_SLOTS})
-    get_property(_uml_gadget_cache_slots_old_doc
-        CACHE UML_GADGET_CACHE_SLOTS PROPERTY HELPSTRING)
-    unset(_uml_gadget_cache_slots_configured)
-    if(_uml_gadget_cache_slots_old_doc STREQUAL _uml_gadget_cache_slots_help)
-        if(UML_APPLE_PLATFORM STREQUAL "macos")
-            set(_uml_gadget_cache_slots_configured "262144")
-        else()
-            set(_uml_gadget_cache_slots_configured "65536")
+# The cache entry is empty unless somebody chose a count, and empty selects the
+# default, so a tree follows the default when it moves. The count in effect is
+# UML_GADGET_CACHE_SLOT_COUNT, which every executor and the tests of the cache
+# geometry compile in. A tree configured while the entry held the default as a
+# value is cleared once: its help text names that default and the entry still
+# equals it. A value somebody chose, on the command line or in an editor, stays.
+function(_uml_select_gadget_cache_slots)
+    set(default 262144)
+    string(CONCAT doc "Slots in each ISA's private gadget cache; power of two, "
+        "at least 1024; empty selects ${default}")
+    set(UML_GADGET_CACHE_SLOTS "" CACHE STRING "${doc}")
+    get_property(old_doc CACHE UML_GADGET_CACHE_SLOTS PROPERTY HELPSTRING)
+    if(old_doc MATCHES "; default ([0-9]+)$")
+        if(UML_GADGET_CACHE_SLOTS STREQUAL "${CMAKE_MATCH_1}")
+            message(STATUS "UML_GADGET_CACHE_SLOTS: ${UML_GADGET_CACHE_SLOTS}, "
+                "a default of an earlier configure, now follows the default")
+            set_property(CACHE UML_GADGET_CACHE_SLOTS PROPERTY VALUE "")
         endif()
-    elseif(_uml_gadget_cache_slots_old_doc MATCHES
-           "^${_uml_gadget_cache_slots_help}; default ([0-9]+)$")
-        set(_uml_gadget_cache_slots_configured "${CMAKE_MATCH_1}")
     endif()
-    if(DEFINED _uml_gadget_cache_slots_configured AND
-       UML_GADGET_CACHE_SLOTS STREQUAL _uml_gadget_cache_slots_configured)
-        if(NOT UML_GADGET_CACHE_SLOTS STREQUAL _uml_gadget_cache_slots_default)
-            message(STATUS "UML_GADGET_CACHE_SLOTS: moving ${UML_GADGET_CACHE_SLOTS}, "
-                           "a former default, to ${_uml_gadget_cache_slots_default}")
-        endif()
-        set(UML_GADGET_CACHE_SLOTS "${_uml_gadget_cache_slots_default}"
-            CACHE STRING "${_uml_gadget_cache_slots_doc}" FORCE)
+    set_property(CACHE UML_GADGET_CACHE_SLOTS PROPERTY HELPSTRING "${doc}")
+    if(UML_GADGET_CACHE_SLOTS STREQUAL "")
+        set(slots "${default}")
+    else()
+        set(slots "${UML_GADGET_CACHE_SLOTS}")
     endif()
-    unset(_uml_gadget_cache_slots_configured)
-    unset(_uml_gadget_cache_slots_old_doc)
-endif()
-set(UML_GADGET_CACHE_SLOTS "${_uml_gadget_cache_slots_default}" CACHE STRING
-    "${_uml_gadget_cache_slots_doc}")
-set_property(CACHE UML_GADGET_CACHE_SLOTS PROPERTY HELPSTRING
-    "${_uml_gadget_cache_slots_doc}")
-unset(_uml_gadget_cache_slots_default)
-unset(_uml_gadget_cache_slots_help)
-unset(_uml_gadget_cache_slots_doc)
-if(NOT UML_GADGET_CACHE_SLOTS MATCHES "^[0-9]+$")
-    message(FATAL_ERROR
-        "UML_GADGET_CACHE_SLOTS must be a positive integer")
-endif()
-math(EXPR _uml_gadget_cache_slots_invalid
-    "${UML_GADGET_CACHE_SLOTS} & (${UML_GADGET_CACHE_SLOTS} - 1)")
-if(UML_GADGET_CACHE_SLOTS LESS 1024 OR
-   NOT _uml_gadget_cache_slots_invalid EQUAL 0)
-    message(FATAL_ERROR
-        "UML_GADGET_CACHE_SLOTS must be a power of two of at least 1024, "
-        "not ${UML_GADGET_CACHE_SLOTS}")
-endif()
-unset(_uml_gadget_cache_slots_invalid)
+    if(NOT slots MATCHES "^[0-9]+$")
+        message(FATAL_ERROR
+            "UML_GADGET_CACHE_SLOTS must be a positive integer")
+    endif()
+    math(EXPR not_power_of_two "${slots} & (${slots} - 1)")
+    if(slots LESS 1024 OR NOT not_power_of_two EQUAL 0)
+        message(FATAL_ERROR
+            "UML_GADGET_CACHE_SLOTS must be a power of two of at least 1024, "
+            "not ${slots}")
+    endif()
+    set(UML_GADGET_CACHE_SLOT_COUNT ${slots} CACHE INTERNAL
+        "Gadget cache slots in effect: UML_GADGET_CACHE_SLOTS or its default")
+endfunction()
+_uml_select_gadget_cache_slots()
+
 # Slots are tagged with the address space they describe, so one pool serves all
 # of them and a switch retains rather than discards. Eight resident address
 # spaces, measured on a browser guest at 65536 slots, reach a 76.2% lookup hit
@@ -459,7 +441,8 @@ function(_uml_add_gadget_executor TARGET SLOTS)
         ${ARGN})
 endfunction()
 
-_uml_add_gadget_executor(uml_arm64_gadget_executor ${UML_GADGET_CACHE_SLOTS})
+_uml_add_gadget_executor(uml_arm64_gadget_executor
+    ${UML_GADGET_CACHE_SLOT_COUNT})
 
 if(UML_BUILD_UNIT_TESTS)
     # The same executor with a schedule for renewing shared address spaces and
