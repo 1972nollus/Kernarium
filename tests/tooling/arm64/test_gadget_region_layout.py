@@ -26,15 +26,13 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import re
-import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-MH_MAGIC_64 = 0xFEEDFACF
-LC_SEGMENT_64 = 0x19
-LC_SYMTAB = 0x2
-N_STAB = 0xE0
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "support"))
+import macho  # noqa: E402
+
 HOST_PAGE = 16384
 CPU = Path(__file__).resolve().parents[3] / "darwin/cpu"
 GADGETS = CPU / "arm64/gadgets"
@@ -65,14 +63,6 @@ class Part:
     name: str
     alignment: int
     phase: int
-
-
-@dataclass(frozen=True)
-class Section:
-    address: int
-    size: int
-    offset: int
-    alignment: int
 
 
 def engine_parts(engine: Path) -> list[Part]:
@@ -109,62 +99,15 @@ def order_parts(order: Path) -> list[str]:
     return names
 
 
-class Image:
+class Image(macho.MachO):
     def __init__(self, path: Path):
-        self.path = path
-        self.data = path.read_bytes()
-        magic, _, _, _, ncmds = struct.unpack_from("<IiiII", self.data, 0)
-        if magic != MH_MAGIC_64:
-            raise ValueError(f"{path}: not a thin 64-bit Mach-O image")
-        self.sections: dict[tuple[str, str], Section] = {}
-        self.text_segment = None
-        self.symbols: dict[str, int] = {}
-        offset = 32
-        for _ in range(ncmds):
-            command, size = struct.unpack_from("<II", self.data, offset)
-            if command == LC_SEGMENT_64:
-                self._segment(offset)
-            elif command == LC_SYMTAB:
-                self._symbols(*struct.unpack_from("<IIII", self.data,
-                                                  offset + 8))
-            offset += size
-
-    def _segment(self, offset: int) -> None:
-        segment = self.data[offset + 8:offset + 24].rstrip(b"\0").decode()
-        address = struct.unpack_from("<Q", self.data, offset + 24)[0]
-        if segment == "__TEXT":
-            self.text_segment = address
-        count = struct.unpack_from("<I", self.data, offset + 64)[0]
-        entry = offset + 72
-        for _ in range(count):
-            name = self.data[entry:entry + 16].rstrip(b"\0").decode()
-            owner = self.data[entry + 16:entry + 32].rstrip(b"\0").decode()
-            address, size, file_offset, alignment = struct.unpack_from(
-                "<QQII", self.data, entry + 32)
-            self.sections[(owner, name)] = Section(address, size, file_offset,
-                                                   alignment)
-            entry += 80
-
-    def _symbols(self, symbol_offset: int, count: int, string_offset: int,
-                 _string_size: int) -> None:
-        for index in range(count):
-            string, kind, _, _, value = struct.unpack_from(
-                "<IBBHQ", self.data, symbol_offset + 16 * index)
-            if kind & N_STAB:
-                continue
-            end = self.data.index(b"\0", string_offset + string)
-            name = self.data[string_offset + string:end].decode()
-            self.symbols.setdefault(name, value)
+        super().__init__(path.read_bytes(), str(path))
 
     def symbol(self, name: str) -> int:
         try:
             return self.symbols["_" + name]
         except KeyError:
-            raise ValueError(f"{self.path}: no symbol {name}") from None
-
-    def words(self, section: Section, begin: int, end: int) -> tuple[int, ...]:
-        start = section.offset + begin - section.address
-        return struct.unpack_from(f"<{(end - begin) // 4}I", self.data, start)
+            raise ValueError(f"{self.name}: no symbol {name}") from None
 
 
 def sve_or_sme(word: int) -> bool:
@@ -200,11 +143,12 @@ def target(word: int, pc: int) -> int | None:
 def check(image: Image, parts: list[Part]) -> list[str]:
     errors = []
     text = image.sections.get(("__TEXT", "__text"))
-    if text is None or image.text_segment is None:
-        return [f"{image.path}: no __TEXT,__text"]
-    if text.alignment < 14 or (text.address - image.text_segment) % HOST_PAGE:
+    base = image.segments.get("__TEXT")
+    if text is None or base is None:
+        return [f"{image.name}: no __TEXT,__text"]
+    if text.alignment < 14 or (text.address - base) % HOST_PAGE:
         errors.append(f"__text is at image offset "
-                      f"0x{text.address - image.text_segment:x} with "
+                      f"0x{text.address - base:x} with "
                       f"alignment 2^{text.alignment}, not on a 16 KiB page")
     region = image.symbol("uml_arm64_gadget_region_bank")
     if region != text.address:
@@ -289,8 +233,9 @@ def main() -> int:
             continue
         region = image.symbol("uml_arm64_gadget_region_bank")
         end = image.symbol(f"{BOUNDS[parts[-1].name]}_end")
-        print(f"{path}: region at image offset "
-              f"0x{region - image.text_segment:x}, {end - region} bytes, "
+        offset = region - image.segments["__TEXT"]
+        print(f"{path}: region at image offset 0x{offset:x}, "
+              f"{end - region} bytes, "
               f"phases {[part.phase for part in parts]}")
     return 1 if failed else 0
 
