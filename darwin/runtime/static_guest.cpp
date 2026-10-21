@@ -528,13 +528,6 @@ void save_floating_point_trap(
 	return true;
 }
 
-template<uml::cpu::EngineKind Kind>
-std::unique_ptr<uml::cpu::CpuEngine> &engine_slot(
-	::uml::runtime::ThreadExecutionState &runtime)
-{
-	return runtime.engines.slot<Kind>();
-}
-
 /* A thread's engine is created by its first entry; every later entry finds
  * it. Kept out of line and cold so that the entry's frame and hot path do not
  * carry the creation. */
@@ -556,7 +549,7 @@ template<uml::cpu::EngineKind Kind>
 uml::cpu::CpuEngine *common_engine(
 	::uml::runtime::ThreadExecutionState &runtime)
 {
-	auto &slot = engine_slot<Kind>(runtime);
+	auto &slot = runtime.engines.slot<Kind>();
 	if (!slot) [[unlikely]]
 		create_common_engine<Kind>(slot);
 	return slot.get();
