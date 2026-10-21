@@ -156,14 +156,14 @@ struct StepResult final {
 /*
  * The single-instruction contract: fetches the instruction at the PC key in
  * `cpu.pc` through `memory` (access `execute`), decodes it against `profile`
- * in the ITSTATE in `cpu.a32_itstate`, and executes it. This is the entry
- * for what an engine cannot translate as a block (a mid-IT entry, a single
- * step) and the corpus's model lane's loop: calling it until ITSTATE is zero
- * leaves an IT block exactly as the architecture does, one instruction and
- * one ITAdvance at a time. A fetch that does not translate is a
- * `memory_fault` for `execute` at the first byte that failed (for a T32
- * instruction whose second halfword is on an unmapped page, the address of
- * that halfword), with the PC at the instruction.
+ * in the ITSTATE in `cpu.a32_itstate`, and executes it. The engines decode
+ * for themselves and call execute_a32(); this is the entry of the corpus's
+ * model lane and the semantic tests, whose loop calls it until ITSTATE is
+ * zero and so leaves an IT block exactly as the architecture does, one
+ * instruction and one ITAdvance at a time. A fetch that does not translate
+ * is a `memory_fault` for `execute` at the first byte that failed (for a
+ * T32 instruction whose second halfword is on an unmapped page, the address
+ * of that halfword), with the PC at the instruction.
  */
 [[nodiscard]] StepResult step_a32(CpuState &cpu, A32Memory &memory,
 	const Profile &profile) noexcept;
@@ -171,9 +171,7 @@ struct StepResult final {
 /*
  * Library-exit counters: with counting on, every execute_a32() call adds to
  * the count of the form it executed, so a test can require a form an engine
- * lowers to stay out of the library from a clean state, and an engine's
- * report can name the hot words that land here (the SVE counters'
- * counterpart).
+ * lowers to stay out of the library from a clean state.
  */
 void count_a32_library_exits(bool enable) noexcept;
 [[nodiscard]] std::uint64_t a32_library_exits(Form form) noexcept;

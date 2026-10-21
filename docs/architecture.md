@@ -239,11 +239,11 @@ embeds every selectable framework, links none at launch, and loads exactly one
 guest flavour for the process lifetime. macOS retains its
 unsigned embedded-loader path.
 
-The iOS device and iOS Simulator products build at an iOS 26.0 minimum. iOS
-code therefore carries no availability guard, fallback path, or dependency
-build for a release older than that, and every iOS dependency prefix and
-platform contract records the same 26.0 deployment target. macOS keeps the
-baseline each macOS product declares.
+The macOS, iOS device, and iOS Simulator products build at a 27.0 minimum
+(`cmake/toolchains/Apple.cmake`). Their code therefore carries no availability
+guard, fallback path, or dependency build for a release older than that, and
+every macOS and iOS product dependency prefix and platform contract records
+the same 27.0 deployment target.
 
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted mainline
@@ -1235,7 +1235,8 @@ the pinned Arm AArch32 XML and its Decode pseudocode. It is a CPU-layer
 `shared` target that includes no engine, so the gadget engine, the JIT and the
 semantic library link the same one, and it implements the Armv8-A AArch32 EL0
 profile: whatever the profile lacks is undefined, never guessed. Its
-[README](../darwin/cpu/arm64/aarch32/README.md) holds the contract.
+interface is `cpu/arm64/aarch32/decode.hpp`, and its
+[README](../darwin/cpu/arm64/aarch32/README.md) holds the profile's choices.
 
 The AArch32 semantic library
 ([`cpu/arm64/aarch32/semantics.hpp`](../darwin/cpu/arm64/aarch32/semantics.hpp))

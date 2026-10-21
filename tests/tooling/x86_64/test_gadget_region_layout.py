@@ -27,15 +27,14 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import re
-import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-MH_MAGIC_64 = 0xFEEDFACF
-LC_SEGMENT_64 = 0x19
-LC_SYMTAB = 0x2
-N_STAB = 0xE0
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "support"))
+import macho  # noqa: E402
+from a64_pc_relative import target  # noqa: E402
+
 HOST_PAGE = 16384
 LINE = 128
 CPU = Path(__file__).resolve().parents[3] / "darwin/cpu"
@@ -54,13 +53,6 @@ class Slot:
     bank_slot: int
     cold_phase: int
     cold_slot: int
-
-
-@dataclass(frozen=True)
-class Section:
-    address: int
-    size: int
-    offset: int
 
 
 def table(region: Path) -> list[Slot]:
@@ -91,51 +83,9 @@ def order_parts(order: Path) -> list[str]:
     return [names[index][1:] for index in ours]
 
 
-class Image:
+class Image(macho.MachO):
     def __init__(self, path: Path):
-        self.path = path
-        self.data = path.read_bytes()
-        magic, _, _, _, ncmds = struct.unpack_from("<IiiII", self.data, 0)
-        if magic != MH_MAGIC_64:
-            raise ValueError(f"{path}: not a thin 64-bit Mach-O image")
-        self.sections: dict[tuple[str, str], Section] = {}
-        self.text_segment = None
-        self.symbols: dict[str, int] = {}
-        offset = 32
-        for _ in range(ncmds):
-            command, size = struct.unpack_from("<II", self.data, offset)
-            if command == LC_SEGMENT_64:
-                self._segment(offset)
-            elif command == LC_SYMTAB:
-                self._symbols(*struct.unpack_from("<III", self.data,
-                                                  offset + 8))
-            offset += size
-
-    def _segment(self, offset: int) -> None:
-        segment = self.data[offset + 8:offset + 24].rstrip(b"\0").decode()
-        if segment == "__TEXT":
-            self.text_segment = struct.unpack_from("<Q", self.data,
-                                                   offset + 24)[0]
-        count = struct.unpack_from("<I", self.data, offset + 64)[0]
-        entry = offset + 72
-        for _ in range(count):
-            name = self.data[entry:entry + 16].rstrip(b"\0").decode()
-            owner = self.data[entry + 16:entry + 32].rstrip(b"\0").decode()
-            address, size, file_offset = struct.unpack_from(
-                "<QQI", self.data, entry + 32)
-            self.sections[(owner, name)] = Section(address, size, file_offset)
-            entry += 80
-
-    def _symbols(self, symbol_offset: int, count: int,
-                 string_offset: int) -> None:
-        for index in range(count):
-            string, kind, _, _, value = struct.unpack_from(
-                "<IBBHQ", self.data, symbol_offset + 16 * index)
-            if kind & N_STAB:
-                continue
-            end = self.data.index(b"\0", string_offset + string)
-            name = self.data[string_offset + string:end].decode()
-            self.symbols.setdefault(name, value)
+        super().__init__(path.read_bytes(), str(path))
 
     def symbol(self, name: str) -> int | None:
         return self.symbols.get("_" + name)
@@ -145,34 +95,6 @@ class Image:
         ends = [value for name, value in self.symbols.items()
                 if ARM64_END.fullmatch(name)]
         return max(ends) if ends else None
-
-    def words(self, section: Section, begin: int, end: int) -> tuple[int, ...]:
-        start = section.offset + begin - section.address
-        return struct.unpack_from(f"<{(end - begin) // 4}I", self.data, start)
-
-
-def sign(value: int, bits: int) -> int:
-    return value - (1 << bits) if value & (1 << (bits - 1)) else value
-
-
-def target(word: int, pc: int) -> int | None:
-    """The address a PC-relative instruction refers to, else None."""
-    if word & 0x7C000000 == 0x14000000:  # B, BL
-        return pc + 4 * sign(word & 0x3FFFFFF, 26)
-    if word & 0xFF000000 == 0x54000000:  # B.cond, BC.cond
-        return pc + 4 * sign((word >> 5) & 0x7FFFF, 19)
-    if word & 0x7E000000 in (0x34000000, 0x36000000):  # CBZ/CBNZ, TBZ/TBNZ
-        if word & 0x02000000:
-            return pc + 4 * sign((word >> 5) & 0x3FFF, 14)
-        return pc + 4 * sign((word >> 5) & 0x7FFFF, 19)
-    if word & 0x1F000000 == 0x10000000:  # ADR, ADRP
-        immediate = sign(((word >> 5) & 0x7FFFF) << 2 | (word >> 29) & 3, 21)
-        if word & 0x80000000:
-            return (pc & ~0xFFF) + (immediate << 12)
-        return pc + immediate
-    if word & 0x3B000000 == 0x18000000:  # LDR, LDRSW, PRFM (literal)
-        return pc + 4 * sign((word >> 5) & 0x7FFFF, 19)
-    return None
 
 
 def unconditional(word: int) -> bool:
@@ -187,8 +109,9 @@ def page(address: int) -> int:
 
 def check(image: Image, slots: list[Slot]) -> tuple[list[str], str]:
     text = image.sections.get(("__TEXT", "__text"))
-    if text is None or image.text_segment is None:
-        return [f"{image.path}: no __TEXT,__text"], ""
+    base = image.segments.get("__TEXT")
+    if text is None or base is None:
+        return [f"{image.name}: no __TEXT,__text"], ""
     errors = []
     bank, cold = image.symbol(BANK), image.symbol(COLD)
     if bank is None or cold is None:
@@ -199,9 +122,9 @@ def check(image: Image, slots: list[Slot]) -> tuple[list[str], str]:
         errors.append(f"the bank starts at 0x{bank:x}, not at 0x{expected:x}"
                       + (" (__text's start)" if arm64_end is None else
                          " (the first page after the arm64 region)"))
-    if (bank - image.text_segment) % HOST_PAGE:
+    if (bank - base) % HOST_PAGE:
         errors.append(f"the bank is at image offset "
-                      f"0x{bank - image.text_segment:x}, off a 16 KiB page")
+                      f"0x{bank - base:x}, off a 16 KiB page")
     bank_end = bank + sum(slot.bank_slot for slot in slots)
     if cold != page(bank_end):
         errors.append(f"the cold part starts at 0x{cold:x}, not on the first "
@@ -261,7 +184,7 @@ def check(image: Image, slots: list[Slot]) -> tuple[list[str], str]:
                                   f"0x{pc:x} refers to 0x{destination:x} "
                                   f"outside the region")
             start += size
-    summary = (f"x86-64 region at image offset 0x{bank - image.text_segment:x}"
+    summary = (f"x86-64 region at image offset 0x{bank - base:x}"
                f", bank {bank_end - bank} and cold part {cold_end - cold} "
                f"bytes in {len(slots)} groups, {gap_bytes} unreachable")
     return errors, summary

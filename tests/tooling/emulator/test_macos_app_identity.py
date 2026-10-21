@@ -19,9 +19,10 @@ import re
 import struct
 import sys
 
-MH_MAGIC_64 = 0xFEEDFACF
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "support"))
+import macho  # noqa: E402
+
 FAT_MAGIC = 0xCAFEBABE
-LC_SEGMENT_64 = 0x19
 # Reverse-DNS form of CFBundleIdentifier: letters, digits, hyphens and dots.
 IDENTIFIER = re.compile(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")
 
@@ -37,26 +38,6 @@ def thin_slices(data: bytes):
         yield data[offset : offset + size]
 
 
-def section(slice_: bytes, segment: str, name: str) -> bytes | None:
-    if struct.unpack_from("<I", slice_)[0] != MH_MAGIC_64:
-        raise SystemExit("not a 64-bit little-endian Mach-O slice")
-    commands = struct.unpack_from("<I", slice_, 16)[0]
-    offset = 32
-    for _ in range(commands):
-        command, size = struct.unpack_from("<II", slice_, offset)
-        if command == LC_SEGMENT_64:
-            sections = struct.unpack_from("<I", slice_, offset + 64)[0]
-            for index in range(sections):
-                base = offset + 72 + 80 * index
-                sect = slice_[base : base + 16].rstrip(b"\0").decode()
-                seg = slice_[base + 16 : base + 32].rstrip(b"\0").decode()
-                if (seg, sect) == (segment, name):
-                    length, position = struct.unpack_from("<QI", slice_, base + 40)
-                    return slice_[position : position + length]
-        offset += size
-    return None
-
-
 def check(executable: Path, identifier: str, name: str) -> list[str]:
     problems = []
     if not IDENTIFIER.fullmatch(identifier):
@@ -65,7 +46,12 @@ def check(executable: Path, identifier: str, name: str) -> list[str]:
     if not slices:
         return problems + [f"{executable}: no Mach-O slice"]
     for number, slice_ in enumerate(slices):
-        text = section(slice_, "__TEXT", "__info_plist")
+        try:
+            image = macho.MachO(slice_, f"{executable}: slice {number}")
+        except ValueError as error:
+            problems.append(str(error))
+            continue
+        text = image.section_bytes("__TEXT", "__info_plist")
         if text is None:
             problems.append(f"{executable}: slice {number} has no __TEXT,__info_plist")
             continue
