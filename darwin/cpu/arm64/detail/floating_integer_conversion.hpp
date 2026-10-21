@@ -37,63 +37,12 @@ convert_integer_to_floating_bits(std::uint64_t input, unsigned integer_width,
 	if (magnitude == 0U)
 		return {0U, 0U};
 
-	std::uint32_t exceptions{};
-	const auto destination = format(destination_width);
-	const auto sign_bit = static_cast<std::uint64_t>(sign) <<
-		(destination_width - 1U);
 	/* FixedToFP delegates to FPRound, which clears AHP but retains the
 	 * destination-width flush control (FZ or FZ16). */
-	const unsigned rounding = (fpcr >> 22) & 3U;
-	const int highest = static_cast<int>(std::bit_width(magnitude)) - 1;
-	const int value_exponent = highest - static_cast<int>(fractional_bits);
-	const int minimum_exponent = 1 - destination.bias;
-	const auto exponent_ones = low_mask(destination.exponent_bits);
-	std::uint64_t result{};
-	if (value_exponent >= minimum_exponent) {
-		auto rounded = round_shift_right(magnitude,
-			highest - static_cast<int>(destination.fraction_bits),
-			rounding, sign);
-		int biased_exponent = value_exponent + destination.bias;
-		if (rounded.value ==
-		    (std::uint64_t{1} << (destination.fraction_bits + 1U))) {
-			rounded.value >>= 1U;
-			++biased_exponent;
-		}
-		if (biased_exponent >= static_cast<int>(exponent_ones)) {
-			const bool to_infinity = rounding == 0U ||
-				(rounding == 1U && !sign) ||
-				(rounding == 2U && sign);
-			result = to_infinity ?
-				infinity(destination_width, sign) :
-				max_normal(destination_width, sign);
-			exceptions |= (1U << 2) | (1U << 4);
-		} else {
-			result = sign_bit |
-				(static_cast<std::uint64_t>(biased_exponent) <<
-					destination.fraction_bits) |
-				(rounded.value & low_mask(destination.fraction_bits));
-			if (rounded.inexact)
-				exceptions |= 1U << 4;
-		}
-	} else if (destination_width == 16U ? (fpcr & (1U << 19)) != 0U :
-		   (fpcr & (1U << 24)) != 0U) {
-		exceptions |= 1U << 3;
-		result = sign_bit;
-	} else {
-		const int unit_exponent = minimum_exponent -
-			static_cast<int>(destination.fraction_bits);
-		const auto rounded = round_shift_right(magnitude,
-			unit_exponent + static_cast<int>(fractional_bits),
-			rounding, sign);
-		const bool became_normal = rounded.value >=
-			(std::uint64_t{1} << destination.fraction_bits);
-		result = sign_bit | (became_normal ?
-			(std::uint64_t{1} << destination.fraction_bits) :
-			rounded.value);
-		if (rounded.inexact)
-			exceptions |= (1U << 3) | (1U << 4);
-	}
-	return {result, exceptions};
+	return round_to_format(magnitude, -static_cast<int>(fractional_bits), sign,
+		destination_width, (fpcr >> 22) & 3U,
+		(fpcr & (destination_width == 16U ? 1U << 19 : 1U << 24)) != 0U,
+		false, 0U);
 }
 
 struct FloatingJavaScriptConversion final {
