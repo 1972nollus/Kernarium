@@ -250,7 +250,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 			return illegal_instruction(context);
 		const auto immediate = static_cast<std::uint8_t>(
 			(instruction >> 13) & 0xffU);
-		const unsigned bitsize = type == 3U ? 16U : type == 0U ? 32U : 64U;
+		const unsigned bitsize = detail::floating_width_from_type(type);
 		const auto bits = expand_vfp_immediate(immediate, bitsize);
 		emit(words, uml_arm64_gadget_floating_move_immediate);
 		emit(words, instruction & 31U);
