@@ -270,8 +270,10 @@ ScanoutRectangle ScanoutFramebuffer::update(
     const auto sourceOffset =
         static_cast<std::size_t>(sourceY) * sourceRowBytes +
         static_cast<std::size_t>(sourceX) * protocol::gpuBytesPerPixel;
-    if (sourceFormat == protocol::GpuFormat::b8g8r8a8Unorm ||
-        sourceFormat == protocol::GpuFormat::b8g8r8x8Unorm) {
+    // Copies the rectangle's rows, each rowStride after the one before, into
+    // the framebuffer unless it was resized meanwhile.
+    const auto copyRows = [&](const std::uint8_t* rows,
+                              std::size_t rowStride) -> ScanoutRectangle {
         std::lock_guard lock(mutex_);
         if (dimensions_.load(std::memory_order_acquire) !=
             framebufferDimensions) {
@@ -285,8 +287,7 @@ ScanoutRectangle ScanoutFramebuffer::update(
                 protocol::gpuBytesPerPixel;
             std::memcpy(
                 pixels_.data() + destinationOffset,
-                source.data() + sourceOffset +
-                    static_cast<std::size_t>(row) * sourceRowBytes,
+                rows + static_cast<std::size_t>(row) * rowStride,
                 convertedRowBytes);
         }
         return {
@@ -295,6 +296,10 @@ ScanoutRectangle ScanoutFramebuffer::update(
             .width = rectangleWidth,
             .height = rectangleHeight,
         };
+    };
+    if (sourceFormat == protocol::GpuFormat::b8g8r8a8Unorm ||
+        sourceFormat == protocol::GpuFormat::b8g8r8x8Unorm) {
+        return copyRows(source.data() + sourceOffset, sourceRowBytes);
     }
     if (rectangleHeight >
         std::numeric_limits<std::size_t>::max() / convertedRowBytes) {
@@ -310,28 +315,7 @@ ScanoutRectangle ScanoutFramebuffer::update(
         sourceRowBytes,
         convertedRowBytes,
         sourceFormat);
-
-    std::lock_guard lock(mutex_);
-    if (dimensions_.load(std::memory_order_acquire) != framebufferDimensions)
-        return {};
-    ensureStorageLocked(framebufferDimensions);
-    for (std::uint32_t row = 0; row < rectangleHeight; ++row) {
-        const auto destinationOffset =
-            (static_cast<std::size_t>(destinationY + row) * destinationWidth +
-                destinationX) *
-            protocol::gpuBytesPerPixel;
-        std::memcpy(
-            pixels_.data() + destinationOffset,
-            converted.data() +
-                static_cast<std::size_t>(row) * convertedRowBytes,
-            convertedRowBytes);
-    }
-    return {
-        .x = destinationX,
-        .y = destinationY,
-        .width = rectangleWidth,
-        .height = rectangleHeight,
-    };
+    return copyRows(converted.data(), convertedRowBytes);
 }
 
 void ScanoutFramebuffer::fillSelfTestPattern()
