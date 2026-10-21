@@ -322,6 +322,20 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
 
     check_route_checkout(verifier, root, workspace, projects, "aosp", "AOSP")
     verifier.accepts("the restored AOSP workspace", "final")
+
+    table = android_root / "patches/projects.tsv"
+    good = table.read_text()
+    for case, expected, text in (
+        ("a route table with another header", "table header is invalid",
+         good.replace("route_id", "route")),
+        ("a route whose series is not at its route directory",
+         "route p0001 series must be isolated at patches/projects/p0001/series",
+         good.replace("patches/projects/p0001/series\n", "patches/projects/p0002/series\n")),
+    ):
+        table.write_text(text)
+        verifier.refuses(case, expected, "final")
+    table.write_text(good)
+    verifier.accepts("the restored route table", "final")
     check_snapshot(source_root, android_root, root, workspace, environment)
 
 
@@ -372,6 +386,71 @@ def check_snapshot(source_root: Path, android_root: Path, root: Path,
         fail("snapshot-source.py recorded a dirty workspace")
 
 
+def tree_entries(root: Path) -> dict[str, tuple[bytes | None, int]]:
+    """Every entry below `root` with its bytes (None for a directory) and mode."""
+    return {
+        str(path.relative_to(root)): (
+            path.read_bytes() if path.is_file() else None, path.stat().st_mode & 0o777
+        )
+        for path in sorted(root.rglob("*"))
+    }
+
+
+def check_device_sync(source_root: Path, root: Path) -> None:
+    """The sync tool replaces the workspace's device tree with the overlay's."""
+    tool = source_root / "android/lineage-24/tools/sync-device-tree.py"
+    android_root = root / "sync-policy"
+    workspace = root / "sync-aosp"
+    (workspace / ".repo/manifests").mkdir(parents=True)
+    overlay = android_root / "overlay"
+    (overlay / "config").mkdir(parents=True)
+    (overlay / "device.mk").write_text("# fixture overlay\n")
+    (overlay / "config/fstab").write_text("fixture\n")
+    (overlay / "config/fstab").chmod(0o640)
+    destination = workspace / "device/kernarium/darwin"
+
+    def sync(case: str, expected: str, *extra: str, accepted: bool = True,
+             target: Path = workspace) -> None:
+        result = subprocess.run(
+            (
+                sys.executable, "-B", str(tool), "--android-root", str(android_root),
+                "--tree", "overlay", "--workspace", str(target), *extra,
+            ),
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True,
+        )
+        if (result.returncode == 0) != accepted or expected not in result.stdout:
+            fail(f"{tool.name} {case}: {result.returncode} {result.stdout.strip()}")
+
+    sync("did not create the device tree", "synchronized exact device overlay")
+    if tree_entries(destination) != tree_entries(overlay):
+        fail("sync-device-tree.py did not copy the overlay exactly")
+    sync("rejected the synchronized tree", "verified exact device overlay", "--verify")
+
+    (destination / "stale.mk").write_text("stale\n")
+    (destination / "device.mk").write_text("# edited\n")
+    sync("accepted a stale device tree", "destination inventory differs",
+         "--verify", accepted=False)
+    (destination / "stale.mk").unlink()
+    sync("accepted an edited file", "destination entry differs: device.mk",
+         "--verify", accepted=False)
+    sync("did not replace the edited tree", "synchronized exact device overlay")
+    if tree_entries(destination) != tree_entries(overlay):
+        fail("sync-device-tree.py kept a stale entry")
+
+    shutil.rmtree(destination)
+    destination.symlink_to(overlay, target_is_directory=True)
+    sync("replaced a linked destination", "destination is not a regular directory",
+         accepted=False)
+    destination.unlink()
+    (overlay / "link.mk").symlink_to("device.mk")
+    sync("copied a linked overlay entry", "non-regular device entry is forbidden: link.mk",
+         accepted=False)
+    (overlay / "link.mk").unlink()
+    sync("accepted a workspace without Repo metadata", "AOSP source lacks Repo metadata",
+         accepted=False, target=root)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
@@ -387,6 +466,7 @@ def main() -> None:
         (tools / "repo").chmod(0o755)
         environment = dict(os.environ, PATH=f"{tools}{os.pathsep}{os.environ['PATH']}")
         check_aosp(source_root, root, environment)
+        check_device_sync(source_root, root)
 
     print("routed AOSP workspace verifier passed")
 
