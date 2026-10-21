@@ -307,14 +307,13 @@ void set_socket_path(std::string &destination, std::string_view option,
 }
 
 PreparedArguments prepare_host_arguments(
-	int argc, char *const argv[],
+	const std::vector<std::string> &command_line,
 	const uml::app::LaunchConfiguration &configuration)
 {
 	PreparedArguments prepared;
-	prepared.kernel.reserve(static_cast<std::size_t>(argc) + 3U);
-	for (int index = 0; index < argc; ++index) {
-		const std::string_view argument =
-			argv[index] == nullptr ? std::string_view {} : argv[index];
+	prepared.kernel.reserve(command_line.size() + 3U);
+	for (const auto &text : command_line) {
+		const std::string_view argument = text;
 		/* Whether `argument` is the option `prefix` names ("--x="), with
 		 * what follows it left in `value`. */
 		std::string_view value;
@@ -394,7 +393,7 @@ PreparedArguments prepare_host_arguments(
 				   prepared.gpu.dots_per_inch)) {
 			prepared.gpu.enabled = true;
 		} else {
-			prepared.kernel.emplace_back(argument);
+			prepared.kernel.push_back(text);
 		}
 	}
 	if (prepared.gpu.display_mode == uml::gpu::DisplayMode::native &&
@@ -466,6 +465,14 @@ template<typename Make>
 	return true;
 }
 
+/* What a run that only prints information (and boots no guest) is asked
+ * with. */
+bool informational_option(std::string_view argument)
+{
+	return argument == "--help" || argument == "--version" ||
+		argument == "--showconfig";
+}
+
 } // namespace
 
 bool uml::app::has_argument(
@@ -479,26 +486,29 @@ bool uml::app::has_argument(
 
 bool uml::app::informational(int argc, char *const argv[])
 {
-	return has_argument(argc, argv, "--help") ||
-		has_argument(argc, argv, "--version") ||
-		has_argument(argc, argv, "--showconfig");
+	for (int index = 1; index < argc; ++index)
+		if (argv[index] != nullptr && informational_option(argv[index]))
+			return true;
+	return false;
 }
 
 int uml::app::runEmbeddedKernel(
-	int argc, char *argv[], char *envp[],
+	const std::vector<std::string> &command_line, char *envp[],
 	const LaunchConfiguration &configuration)
 {
 	install_host_faults();
 	::uml::device::install_socket_path_signal_cleanup();
 	PreparedArguments prepared;
 	try {
-		prepared = prepare_host_arguments(argc, argv, configuration);
+		prepared = prepare_host_arguments(command_line, configuration);
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "Unable to configure host devices: %s\n",
 			     error.what());
 		return 1;
 	}
-	const bool information_only = informational(argc, argv);
+	bool information_only = false;
+	for (std::size_t index = 1; index < command_line.size(); ++index)
+		information_only |= informational_option(command_line[index]);
 	/* Before anything in the process can create a Metal device. */
 	if (prepared.gpu.enabled && !information_only)
 		bound_metal_shader_cache();
