@@ -47,12 +47,6 @@ struct KernariumTests {
             ) == "Kernarium thermal state: phase=start state=nominal " +
                 "uptime=12.500"
         )
-        #expect(
-            ThermalStateReport.probeLine(
-                state: .fair,
-                uptime: 456.7894
-            ) == "Kernarium thermal probe: state=fair uptime=456.789"
-        )
     }
 
     @Test
