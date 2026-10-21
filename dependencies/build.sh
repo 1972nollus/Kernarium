@@ -8,12 +8,12 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SOURCE_ROOT=${UML_DEPENDENCY_SOURCE_ROOT:-"$ROOT_DIR/external/sources"}
-PREFIX=${UML_DEPENDENCY_PREFIX:-"$ROOT_DIR/.build/dependencies/macos-arm64"}
+PREFIX=${UML_DEPENDENCY_PREFIX:-"$ROOT_DIR/.build/dependencies/macos-arm64-26"}
 WORK_ROOT=${UML_DEPENDENCY_BUILD_ROOT:-"$ROOT_DIR/.build/dependency-build"}
 MANIFEST=${UML_DEPENDENCY_MANIFEST:-"$ROOT_DIR/dependencies/manifest.tsv"}
 PREPARE_SCRIPT="$ROOT_DIR/dependencies/prepare.sh"
 JOBS=${UML_DEPENDENCY_JOBS:-8}
-DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-14.0}
+DEPLOYMENT_TARGET=26.0
 CHECK_MANIFEST_ONLY=0
 BUILD_RECIPES='zlib|1.3.2
 pcre2|10.48

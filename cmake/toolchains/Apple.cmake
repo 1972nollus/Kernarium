@@ -5,18 +5,19 @@ set(UML_APPLE_PLATFORM "macos" CACHE STRING "Apple target platform")
 list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES UML_APPLE_PLATFORM)
 set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "Apple architectures" FORCE)
 
-# Each platform's SDK, CMake system name and default deployment target.
+# Each platform's SDK and CMake system name. Every Apple product builds at one
+# deployment target, which its dependency prefixes record as well.
+set(_uml_apple_deployment_target 26.0)
 if(UML_APPLE_PLATFORM STREQUAL "macos")
-    set(_uml_apple_platform macosx Darwin 14.0)
+    set(_uml_apple_platform macosx Darwin)
 elseif(UML_APPLE_PLATFORM STREQUAL "ios")
-    set(_uml_apple_platform iphoneos iOS 26.0)
+    set(_uml_apple_platform iphoneos iOS)
 elseif(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
-    set(_uml_apple_platform iphonesimulator iOS 26.0)
+    set(_uml_apple_platform iphonesimulator iOS)
 else()
     message(FATAL_ERROR "Unknown UML_APPLE_PLATFORM=${UML_APPLE_PLATFORM}")
 endif()
-list(POP_FRONT _uml_apple_platform
-    _uml_apple_sdk CMAKE_SYSTEM_NAME _uml_apple_deployment_target)
+list(POP_FRONT _uml_apple_platform _uml_apple_sdk CMAKE_SYSTEM_NAME)
 execute_process(
     COMMAND xcrun --sdk ${_uml_apple_sdk} --show-sdk-path
     OUTPUT_VARIABLE _uml_apple_sdk_path

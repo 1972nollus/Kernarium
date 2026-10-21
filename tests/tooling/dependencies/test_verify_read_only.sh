@@ -68,7 +68,7 @@ for PREFIX in "$SCRATCH/parent/absent" "$SCRATCH/absent-parent/prefix"; do
 		--work-root "$WORK"
 	expect_read_only_failure "macOS prefix verification of $PREFIX" \
 		"$DEPENDENCIES/verify-prefix.sh" --prefix "$PREFIX" \
-		--manifest "$DEPENDENCIES/manifest.tsv" --deployment-target 14.0
+		--manifest "$DEPENDENCIES/manifest.tsv" --deployment-target 26.0
 	expect_read_only_failure "runtime closure verification of $PREFIX" \
 		"$DEPENDENCIES/verify-runtime-dependencies.sh" \
 		--binary "$PREFIX/uml-darwin" --apple-gpu-prefix "$PREFIX" \

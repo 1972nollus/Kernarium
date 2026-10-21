@@ -6,7 +6,7 @@ project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_root=${UML_XCFRAMEWORK_BUILD_DIR:-"$project_root/.build/xcframework"}
 output=${UML_XCFRAMEWORK_OUTPUT:-"$build_root/UMLEmulator.xcframework"}
 toolchain="$project_root/cmake/toolchains/Apple.cmake"
-dependency_prefix=${UML_DEPENDENCY_PREFIX:-"$project_root/.build/dependencies/macos-arm64"}
+dependency_prefix=${UML_DEPENDENCY_PREFIX:-"$project_root/.build/dependencies/macos-arm64-26"}
 xcframework_stager="$project_root/scripts/create-apple-xcframework.py"
 
 fail()

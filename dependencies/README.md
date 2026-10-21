@@ -19,7 +19,8 @@ private prefixes through the CMake targets in this directory.
 The dependency products are:
 
 - `macos`: non-graphics static host libraries at
-  `.build/dependencies/macos-arm64`;
+  `.build/dependencies/macos-arm64-26`, built and verified at a macOS 26.0
+  deployment target;
 - `apple-gpu-vulkan-experiment`: the macOS and iOS device builds, which add the
   pinned Mesa, Vulkan-Headers, and Venus-protocol sources so that Mesa supplies
   both the KosmicKrisp Vulkan driver and the Zink Gallium OpenGL driver. There
@@ -160,7 +161,9 @@ names, and the absence of undeclared or legacy providers. In iOS and Apple GPU
 prefixes, every object of a checked binary, each archive member included, is
 Mach-O with exactly one build-version command, so an LLVM bitcode member is
 rejected.
-Every iOS prefix builds and verifies at an iOS 26.0 deployment target.
+Every macOS and iOS product prefix builds and verifies at a 26.0 deployment
+target; the kernel host tools, which run only on the build host, are the
+exception.
 
 Every prefix installs the manifest it was built from and compares only the
 rows its product consumes, ignoring the products column, which records only
