@@ -250,12 +250,9 @@ Lx86_arithmetic_rm_cross\@:
 	b Lx86_arithmetic_rm_loaded\@
 .endm
 
-.macro memory_arithmetic_msource operation, instruction, flag_operation, writes, form, width, load, store, host_register, locked
-	.if \locked
-gadget \operation\()_\width\()_m\form\()_locked
-	.else
-gadget \operation\()_\width\()_m\form
-	.endif
+/* The address of a read-modify-write memory destination in x7 and x25, and
+ * its source in x26: the register or immediate that `form` (r or i) names. */
+.macro memory_source_operand form, width, load, host_register
 	effective_address
 	mov x25, x7
 	.ifc \form,r
@@ -266,6 +263,15 @@ gadget \operation\()_\width\()_m\form
 	ldr x26, [_stream], #8
 	normalize_immediate \width, \host_register\()26, \host_register\()26
 	.endif
+.endm
+
+.macro memory_arithmetic_msource operation, instruction, flag_operation, writes, form, width, load, store, host_register, locked
+	.if \locked
+gadget \operation\()_\width\()_m\form\()_locked
+	.else
+gadget \operation\()_\width\()_m\form
+	.endif
+	memory_source_operand \form, \width, \load, \host_register
 	.if \locked
 	locked_aligned \width, Lx86_arithmetic_msource_split\@
 Lx86_arithmetic_msource_exclusive\@:
@@ -374,16 +380,7 @@ gadget \name\()_\width\()_m\form
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x19, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	and w19, w19, #1
-	effective_address
-	mov x25, x7
-	.ifc \form,r
-	and x8, x23, #0xffff
-	\load \host_register\()26, [_cpu, x8]
-	.endif
-	.ifc \form,i
-	ldr x26, [_stream], #8
-	normalize_immediate \width, \host_register\()26, \host_register\()26
-	.endif
+	memory_source_operand \form, \width, \load, \host_register
 	.if \locked
 	locked_aligned \width, Lx86_carry_msource_split\@
 Lx86_carry_msource_exclusive\@:
@@ -598,6 +595,7 @@ memory_unary_width 64, ldr, str, x
 .purgem memory_arithmetic_family
 .purgem memory_arithmetic_width
 .purgem memory_arithmetic_msource
+.purgem memory_source_operand
 .purgem memory_arithmetic_rm
 
 .purgem unary_width
