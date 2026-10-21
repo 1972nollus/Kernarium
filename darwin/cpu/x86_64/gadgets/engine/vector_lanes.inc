@@ -54,41 +54,11 @@ gadget vector_duplicate_\kind\()_\width\()_rr
 gadget vector_duplicate_\kind\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\input_size), Lx86_vector_duplicate_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, \input_size
-	.if \input_size == 8
-	ldr d0, [x7]
-	.else
-	ldr q0, [x7]
-	.endif
-	.if \input_size == 32
-	ldr q1, [x7, #16]
-	.endif
-	b Lx86_vector_duplicate_loaded\@
-Lx86_vector_duplicate_cross\@:
-	sub sp, sp, #32
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #\input_size
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_duplicate_cross_fault\@
-	.if \input_size == 8
-	ldr d0, [sp]
-	.else
-	ldr q0, [sp]
-	.endif
-	.if \input_size == 32
-	ldr q1, [sp, #16]
-	.endif
-	add sp, sp, #32
-Lx86_vector_duplicate_loaded\@:
+	vector_memory_source \input_size, Lx86_vector_duplicate_cross_fault\@, 0, 1
 	vector_duplicate_transform \kind, \width
 	vector_duplicate_write \width, 23
 	retire_and_next
-Lx86_vector_duplicate_cross_fault\@:
-	add sp, sp, #32
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_duplicate_cross_fault\@
 .endm
 
 vector_duplicate_register sldup, 128
