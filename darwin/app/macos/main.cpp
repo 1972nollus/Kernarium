@@ -465,8 +465,8 @@ template<typename Make>
 	return true;
 }
 
-/* What a run that only prints information (and boots no guest) is asked
- * with. */
+/* Whether `argument` asks for a run that only prints information and boots
+ * no guest. */
 bool informational_option(std::string_view argument)
 {
 	return argument == "--help" || argument == "--version" ||
