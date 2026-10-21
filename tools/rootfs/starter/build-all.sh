@@ -35,7 +35,7 @@ usage()
 {
 	cat <<'EOF'
 Usage: tools/rootfs/starter/build-all.sh --work PATH --output PATH [--jobs N]
-       [--product NAME]... [--armhf-profiles LIST]
+       [--product NAME]...
 
 Run as an ordinary user with passwordless sudo on native arm64 Linux. PATHs
 must be absolute and distinct outside the source tree. The output path must
@@ -47,8 +47,7 @@ release holds every product but the armhf one:
   debian-13-plasma-wayland debian-13-minimal-armhf
 
 debian-13-minimal-armhf runs ARM programs under qemu-arm (Debian's qemu-user)
-in private namespaces. --armhf-profiles names the guest page profiles, 16k
-and 4k, that every ELF file of that image must support; the default is both.
+in private namespaces.
 EOF
 }
 
@@ -57,7 +56,6 @@ work_dir=
 output_dir=
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1\n')
 products=
-armhf_profiles=16k,4k
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--work)
@@ -87,11 +85,6 @@ while [ "$#" -gt 0 ]; do
 		products="$products $2"
 		shift 2
 		;;
-	--armhf-profiles)
-		[ "$#" -ge 2 ] || fail "--armhf-profiles requires a list"
-		armhf_profiles=$2
-		shift 2
-		;;
 	-h|--help)
 		usage
 		exit 0
@@ -111,10 +104,6 @@ esac
 [ "$work_dir" != "$output_dir" ] || fail "work and output directories must differ"
 case "$jobs" in ''|*[!0-9]*) fail "--jobs must be a positive integer" ;; esac
 [ "$jobs" -gt 0 ] || fail "--jobs must be a positive integer"
-case "$armhf_profiles" in
-16k,4k|4k) ;;
-*) fail "--armhf-profiles must be 16k,4k or 4k" ;;
-esac
 [ -n "$products" ] || products=$DEFAULT_PRODUCTS
 
 wants()
@@ -743,7 +732,7 @@ build_debian_minimal_armhf()
 	prune_debian "$root"
 	as_root python3 -I "$SCRIPT_DIR/audit-elf.py" --root "$root" \
 		--output "$work_dir/debian-minimal-armhf.elf.tsv" \
-		--machine arm --closed --profiles "$armhf_profiles"
+		--machine arm --closed
 	as_root chown "$owner_uid:$owner_gid" \
 		"$work_dir/debian-minimal-armhf.elf.tsv"
 	# The dynamic programs are the audit's rows that name an interpreter.
@@ -790,7 +779,6 @@ done
 if wants debian-13-minimal-armhf; then
 	set -- "$@" \
 		--debian-armhf-pins "$work_dir/debian-minimal-armhf.pins.json" \
-		--armhf-profiles "$armhf_profiles" \
 		--armhf-include "$ARMHF_INCLUDE" \
 		--debian-mirror "$DEBIAN_MIRROR" \
 		--debootstrap-version "$(debootstrap --version)" \

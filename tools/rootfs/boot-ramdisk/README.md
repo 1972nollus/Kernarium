@@ -178,8 +178,9 @@ tools/rootfs/boot-ramdisk/verify_base.py --descriptor accepted-aarch64.env \
 The verifier requires one gzip member holding a newc archive, the failing stub
 `/init`, the applet links and e2fsprogs programs `/init` calls, and static ELF
 programs for the descriptor's machine whose load segments are 16 KiB aligned,
-so one base serves both guest page profiles. Publish a new release under a new
-name; never replace an accepted one.
+as the accepted bases are built: that is valid on the 4 KiB guest and matches
+the Android userspace's page-agnostic alignment. Publish a new release under a
+new name; never replace an accepted one.
 
 The unit test `boot-initramfs-archive`, the tooling tests
 `rootfs-boot-base-contract` and `rootfs-initramfs-host-tool` and the

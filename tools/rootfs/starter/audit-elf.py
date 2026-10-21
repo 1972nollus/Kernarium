@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Audit every ELF file of a root tree against the guest page profiles.
+"""Audit every ELF file of a root tree against the 4 KiB guest page.
 
 A guest kernel maps each PT_LOAD segment from a file offset that must be
 congruent to its virtual address modulo the page size, and cannot map two
-segments of different permissions from one page. An ELF file therefore runs
-on the 16 KiB profile, on the 4 KiB profile, or on both: a file linked for
-4 KiB pages often shares a 16 KiB page between its text and its data. The
-audit reports the profiles each file supports and fails unless every file
-supports every required profile (both by default). It also checks that the
-tree is the userspace it claims to be (ELF class, machine and, for ARM, the
-hard-float EABI) and that its dynamic linking is closed: every PT_INTERP and
-every DT_NEEDED resolves inside the tree.
+segments of different permissions from one page. The audit fails an ELF file
+that the 4 KiB guest page cannot map. It also checks that the tree is the
+userspace it claims to be (ELF class, machine and, for ARM, the hard-float
+EABI) and that its dynamic linking is closed: every PT_INTERP and every
+DT_NEEDED resolves inside the tree.
 
 The audit reads ELF files only, so it runs on any host and executes nothing
 from the tree. It writes one TSV row per ELF file, sorted by path, and exits
@@ -30,8 +27,7 @@ import struct
 import sys
 from pathlib import Path
 
-# The guest page profiles, largest first.
-PROFILES = {"16k": 16384, "4k": 4096}
+GUEST_PAGE = 4096
 ELF_MAGIC = b"\x7fELF"
 
 ELFCLASS32 = 1
@@ -308,25 +304,20 @@ def expand_origin(entry: str, origin: str, multiarch: str) -> str:
             .replace("${PLATFORM}", "").replace("$PLATFORM", ""))
 
 
-def segment_problems(loads: list[Segment], page: int) -> list[str]:
-    """The reasons a page size cannot map these segments, sorted by address."""
+def segment_problems(elf: Elf) -> list[str]:
+    """The reasons the guest page cannot map the file's segments."""
+    loads = sorted((s for s in elf.segments if s.kind == PT_LOAD),
+                   key=lambda s: s.vaddr)
     problems = []
-    if any((s.vaddr - s.offset) % page for s in loads):
+    if any((s.vaddr - s.offset) % GUEST_PAGE for s in loads):
         problems.append("not-congruent")
     for before, after in zip(loads, loads[1:]):
-        shared = (before.vaddr + before.memsz - 1) // page >= after.vaddr // page
+        shared = ((before.vaddr + before.memsz - 1) // GUEST_PAGE
+                  >= after.vaddr // GUEST_PAGE)
         if shared and before.flags != after.flags:
             problems.append("shares-page")
             break
     return problems
-
-
-def supported_profiles(elf: Elf) -> dict[str, list[str]]:
-    """Map each profile to the reasons the file cannot run on it."""
-    loads = sorted((s for s in elf.segments if s.kind == PT_LOAD),
-                   key=lambda s: s.vaddr)
-    return {name: segment_problems(loads, page)
-            for name, page in PROFILES.items()}
 
 
 def audit_file(tree: Tree, relative: str, elf: Elf, options,
@@ -343,9 +334,7 @@ def audit_file(tree: Tree, relative: str, elf: Elf, options,
             problems.append("not-eabi5")
         if elf.flags & EF_ARM_ABI_FLOAT_SOFT:
             problems.append("soft-float")
-    reasons = supported_profiles(elf)
-    for name in options.profiles:
-        problems += [f"{name}:{reason}" for reason in reasons[name]]
+    problems += segment_problems(elf)
     if elf.interpreter is not None:
         if tree.resolve(elf.interpreter) is None:
             problems.append(f"interpreter-missing:{elf.interpreter}")
@@ -422,8 +411,6 @@ def format_row(row: Row) -> str:
     elf = row.elf
     loads = [s for s in elf.segments if s.kind == PT_LOAD]
     alignment = min((s.align for s in loads), default=0)
-    reasons = supported_profiles(elf)
-    profiles = ",".join(name for name in PROFILES if not reasons[name])
     fields = (
         row.path,
         str(elf.bits),
@@ -433,7 +420,7 @@ def format_row(row: Row) -> str:
         elf.interpreter or "-",
         f"{alignment:#x}" if loads else "-",
         str(len(loads)),
-        profiles or "none",
+        "none" if segment_problems(elf) else "4k",
         ";".join(row.problems) or "ok",
     )
     return "\t".join(fields)
@@ -448,20 +435,11 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--bits", type=int, choices=(32, 64), default=None,
                         help="require this ELF class (default: the "
                         "machine's usual class)")
-    parser.add_argument(
-        "--profiles", default="16k,4k",
-        help="comma-separated page profiles every ELF file must support: "
-        "16k, 4k (default: both)")
     parser.add_argument("--closed", action="store_true",
                         help="require every DT_NEEDED to resolve in the tree")
     options = parser.parse_args(argv)
     if options.bits is None:
         options.bits = 32 if options.machine == "arm" else 64
-    options.profiles = [name for name in options.profiles.split(",") if name]
-    if not options.profiles or any(name not in PROFILES
-                                   for name in options.profiles):
-        parser.error("--profiles takes a comma-separated list of "
-                     + ", ".join(PROFILES))
     return options
 
 
@@ -479,15 +457,7 @@ def main(argv: list[str] | None = None) -> int:
         for row in rows:
             stream.write(format_row(row) + "\n")
     failed = [row for row in rows if row.problems]
-    classes: dict[str, int] = {}
-    for row in rows:
-        reasons = supported_profiles(row.elf)
-        key = ",".join(name for name in PROFILES if not reasons[name]) or "none"
-        classes[key] = classes.get(key, 0) + 1
-    summary = ", ".join(f"{count} {key}" for key, count in sorted(
-        classes.items(), reverse=True))
-    print(f"audited {len(rows)} ELF files; page profiles supported: {summary}; "
-          f"required: {','.join(options.profiles)}")
+    print(f"audited {len(rows)} ELF files")
     for row in failed:
         print(f"audit-elf.py: {row.path}: {';'.join(row.problems)}",
               file=sys.stderr)
