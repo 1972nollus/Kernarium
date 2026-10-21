@@ -5,13 +5,13 @@ Subject: [PATCH] uml: add execution and capability core support
 
 Keep task lifecycle, architecture capability reporting, stack handling, and execution initialization in one reviewable final-state topic.
 ---
- arch/um/kernel/capflags_arm64.c | 17 +++++++++
- arch/um/kernel/exec.c           |  9 +++++
+ arch/um/kernel/capflags_arm64.c | 17 +++++++++++
+ arch/um/kernel/exec.c           |  9 ++++++
  arch/um/kernel/ksyms.c          |  4 ++-
- arch/um/kernel/process.c        | 42 +++++++++++++++++++---
- arch/um/kernel/stacktrace.c     | 13 ++++++-
- arch/um/kernel/um_arch.c        | 62 +++++++++++++++++++++++++++++++--
- 6 files changed, 138 insertions(+), 9 deletions(-)
+ arch/um/kernel/process.c        | 42 +++++++++++++++++++++++----
+ arch/um/kernel/stacktrace.c     | 13 ++++++++-
+ arch/um/kernel/um_arch.c        | 50 +++++++++++++++++++++++++++++++--
+ 6 files changed, 126 insertions(+), 9 deletions(-)
  create mode 100644 arch/um/kernel/capflags_arm64.c
 
 diff --git a/arch/um/kernel/capflags_arm64.c b/arch/um/kernel/capflags_arm64.c
@@ -213,7 +213,7 @@ index fd3b61b3d4d2bd836e354d0e4c42dcc82c1c1c40..f6a76717b89a519f6a69c7b6daec1221
  		if (__kernel_text_address(addr)) {
  			reliable = 0;
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index ed2f67848a50e7d35306d6beda0fe439593e5082..4e2a98df7e9fa594a93e590c40de5e6e58c34fff 100644
+index ed2f67848a50e7d35306d6beda0fe439593e5082..30450cd585995344a780e0f58076f2bfd39de7e1 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -19,6 +19,7 @@
@@ -362,22 +362,3 @@ index ed2f67848a50e7d35306d6beda0fe439593e5082..4e2a98df7e9fa594a93e590c40de5e6e
  }
  
  void apply_seal_endbr(s32 *start, s32 *end)
-@@ -453,6 +499,18 @@ void apply_alternatives(struct alt_instr *start, struct alt_instr *end)
- {
- }
- 
-+#if IS_ENABLED(CONFIG_SMP)
-+void alternatives_smp_module_add(struct module *mod, char *name,
-+				 void *locks, void *locks_end,
-+				 void *text,  void *text_end)
-+{
-+}
-+
-+void alternatives_smp_module_del(struct module *mod)
-+{
-+}
-+#endif
-+
- void *text_poke(void *addr, const void *opcode, size_t len)
- {
- 	/*

@@ -325,7 +325,7 @@ index 433b6fda3da3428817c1ca7e81304b6b6bc02c7a..dbb4d6cf068d0bbadd846a42d7bbbd11
  		panic("Kernel tried to access user memory at addr 0x%lx, ip 0x%lx",
  		       address, ip);
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..87ab3d9503d22267565e895193a234b672357c3a 100644
+index 30450cd585995344a780e0f58076f2bfd39de7e1..9fd3d449bb7ec0bb34f63527add349bb0041d3e3 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -125,6 +125,9 @@ const struct seq_operations cpuinfo_op = {

@@ -42,7 +42,7 @@ index adfebfa05c59914c8d4622bceea47d9e42c8840c..2dde638d10d910fcc9a9110793c36f5c
  #ifdef UML_HOST_DARWIN
  /* drivers/rtc_user.c */
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index c2b65fc0f146e951e76f7a8e678451d717dbde01..88bcf643cf90d6dfc800ee2ec1f39c1fea8ad8b5 100644
+index 36769f617d453dc7480e7847303bb3c83cc3cacb..8fc2974ed990740df90e8dfdc5ecebc60cb19526 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -69,6 +69,21 @@ EXPORT_SYMBOL(boot_cpu_data);

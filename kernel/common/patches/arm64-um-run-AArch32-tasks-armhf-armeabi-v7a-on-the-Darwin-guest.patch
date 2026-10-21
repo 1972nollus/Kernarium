@@ -2352,7 +2352,7 @@ index ae6b892773f3d92d13b839acb0a08ff33469371a..651022c60550de3ea6409725368e82c3
 +}
 +#endif
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 4103b571fa6e1795b8117faa58cac7462c5f994a..2a4a85f24530ca8a2eb08e9209349dd0db66844d 100644
+index 335dbab37bb2c88b5e020181fc2b37352a385bd7..95fabf70e1ee8b0c4f4f0db0cba663664a8cf851 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -9,6 +9,7 @@

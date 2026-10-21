@@ -20,13 +20,12 @@ vhost_user_check_reset() records the loss on the device, whether or not
 the device is still registered. A send that fails because the peer has
 gone, and a read that fails that way, are its loss too, as a read of end
 of file already is. Socket errors are host errno values, so
-os_error_is_disconnect() names them for each host.
+os_error_is_disconnect() names them in the host layer.
 ---
  arch/um/drivers/virtio_uml.c | 37 ++++++++++++++++++++++++++++++------
  arch/um/include/shared/os.h  |  1 +
  arch/um/os-Darwin/file.c     |  6 ++++++
- arch/um/os-Linux/file.c      |  5 +++++
- 4 files changed, 43 insertions(+), 6 deletions(-)
+ 3 files changed, 38 insertions(+), 6 deletions(-)
 
 diff --git a/arch/um/drivers/virtio_uml.c b/arch/um/drivers/virtio_uml.c
 index 8facd5d0bf72554b6b73bc76716222f1d338c7de..186d3bab01d71da414c7f2bff4217fe1be488190 100644
@@ -140,19 +139,3 @@ index 0c9e000c9e74f4839f62beed91643973291c9c9d..b8a5e8144a4ac5df0b4922abece73e55
  int os_pread_file(int fd, void *buffer, int length,
  		  unsigned long long offset)
  {
-diff --git a/arch/um/os-Linux/file.c b/arch/um/os-Linux/file.c
-index f1b87000185456996e18bafdcda01afb38b4539b..20ceb2adaad1e341cc18209913ea7de685e959bf 100644
---- a/arch/um/os-Linux/file.c
-+++ b/arch/um/os-Linux/file.c
-@@ -28,6 +28,11 @@ int os_error_is_would_block(int error)
- 	return error == -EAGAIN || error == -EWOULDBLOCK;
- }
- 
-+int os_error_is_disconnect(int error)
-+{
-+	return error == -EPIPE || error == -ECONNRESET || error == -ENOTCONN;
-+}
-+
- static void copy_stat(struct uml_stat *dst, const struct stat64 *src)
- {
- 	*dst = ((struct uml_stat) {

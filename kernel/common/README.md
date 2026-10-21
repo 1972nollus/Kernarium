@@ -27,6 +27,11 @@ This directory contains only source-family-independent inputs:
 - [`video/`](video/README.md): the private Virtio video wire contract and the
   tool that syncs it into each kernel checkout.
 
+The series supports only the Darwin host. Every product is built with
+`ARCH=um SUBARCH=arm64 UML_HOST_OS=Darwin`, the x86_64 slice included (an
+arm64 kernel for x86-64 userspace). A topic carries no `arch/um/os-Linux`
+change and does not keep the Linux-host UML build compiling.
+
 Pinned commits, configuration overlays, toolchains, source locations, the
 bytes of each line's own overlay series, and build commands stay in the owning
 versioned kernel line. The common artifact verifier is local and read-only; it

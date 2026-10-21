@@ -186,10 +186,10 @@ index 7d8ca4414554983e5ebeb6ad61d6e3dfad8dfd10..43fbd97f093c987887068cdeb8850299
  /* sigio.c */
  extern int add_sigio_fd(int fd);
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 2a4a85f24530ca8a2eb08e9209349dd0db66844d..d80440646058d6827d55f9c2d84d4d12659aba1e 100644
+index 95fabf70e1ee8b0c4f4f0db0cba663664a8cf851..e426227f327d49d16d618709f21d6943dc58f54e 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
-@@ -746,6 +746,22 @@ void uml_pm_wake(void)
+@@ -734,6 +734,22 @@ void uml_pm_wake(void)
  }
  
  #ifdef CONFIG_PM_SLEEP
@@ -212,7 +212,7 @@ index 2a4a85f24530ca8a2eb08e9209349dd0db66844d..d80440646058d6827d55f9c2d84d4d12
  static int um_suspend_valid(suspend_state_t state)
  {
  	return state == PM_SUSPEND_MEM;
-@@ -770,7 +786,19 @@ static int um_suspend_enter(suspend_state_t state)
+@@ -758,7 +774,19 @@ static int um_suspend_enter(suspend_state_t state)
  	 * up on something we actually want to wake up on. All
  	 * timing has also been suspended.
  	 */

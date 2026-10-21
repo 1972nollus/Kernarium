@@ -950,7 +950,7 @@ index af02b5f9911d343b3089f40aea3d6d595b47f7f4..e739fa5ab8f956ab8802ee7a759eb213
  
  	return fd;
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 88bcf643cf90d6dfc800ee2ec1f39c1fea8ad8b5..d652bc357fc73b734fea7f25ebda7b316f385312 100644
+index 8fc2974ed990740df90e8dfdc5ecebc60cb19526..175767459fda9ac776b9395ff5fc3a29b0d86226 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -31,6 +31,7 @@
