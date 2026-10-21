@@ -586,7 +586,7 @@ int main(int argc, char **argv) {
   require(jit_available() == 1);
   require_vector_forms_classified();
   const auto pack = read_pack(read_file(path));
-  const auto profile = dec::Profile::at(dec::Level::complete);
+  const dec::Profile profile;
 
   Machine machine{0x1a32'0300};
   if (exit_report) {

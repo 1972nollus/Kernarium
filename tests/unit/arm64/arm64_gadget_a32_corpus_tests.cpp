@@ -213,7 +213,7 @@ private:
 		::uml::cpu::arm64::gadgets::BuildOptions{});
 	bool absent = false;
 	corpus::for_each_instruction(
-		test, decode::Profile::at(decode::Level::complete),
+		test, decode::Profile{},
 		[&](const corpus::ProgramStep &step) {
 			absent = step.instruction.legal() &&
 				 !step.decode_at(engine).legal();
@@ -412,7 +412,7 @@ private:
 };
 
 /* The program's words and what the decoder says of the instruction under
- * test at the engine's level and at the full profile. */
+ * test. */
 void explain(const corpus::Case &test, std::size_t target)
 {
 	std::fprintf(stderr, "    program %s:", test.flags & corpus::kFlagThumb ? "T32" : "A32");
@@ -446,19 +446,15 @@ void explain(const corpus::Case &test, std::size_t target)
 			word = length == 4 ? std::uint32_t{test.halves[half]} << 16 | test.halves[half + 1]
 					   : std::uint32_t{test.halves[half]} << 16;
 		}
-		for (const auto level : {decode::Level::base, decode::Level::complete}) {
-			const auto profile = decode::Profile::at(level);
-			const auto instruction = thumb ? decode::decode_thumb(word, it, profile)
-						       : decode::decode_a32(word, profile);
-			if (index == target)
-				std::fprintf(stderr, "    %s: %s status %d reason %d cond %u\n",
-					     level == decode::Level::base ? "base" : "complete",
-					     instruction.info().name,
-					     static_cast<int>(instruction.status),
-					     static_cast<int>(instruction.reason), instruction.cond);
-			if (level == decode::Level::complete)
-				it = instruction.next_it;
-		}
+		const decode::Profile profile;
+		const auto instruction = thumb ? decode::decode_thumb(word, it, profile)
+					       : decode::decode_a32(word, profile);
+		if (index == target)
+			std::fprintf(stderr, "    %s status %d reason %d cond %u\n",
+				     instruction.info().name,
+				     static_cast<int>(instruction.status),
+				     static_cast<int>(instruction.reason), instruction.cond);
+		it = instruction.next_it;
 		half += length / 2;
 		++index;
 	}

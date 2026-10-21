@@ -1780,7 +1780,7 @@ void vld1_and_vst1_copies_stay_out_of_the_library()
 	unsigned long generation = 1300;
 	for (const auto &copy : copies) {
 		const auto decoded = aarch32::decode_a32(
-			copy.word, aarch32::Profile::at(aarch32::Level::complete));
+			copy.word, aarch32::Profile{});
 		require(decoded.legal(), "a VLD1 or VST1 word did not decode");
 		Guest guest{generation++};
 		guest.a32(0, {copy.word, a::svc});
@@ -2179,7 +2179,7 @@ void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
 	unsigned long generation = 1500;
 	for (const auto &copy : copies) {
 		const auto decoded = aarch32::decode_a32(
-			copy.word, aarch32::Profile::at(aarch32::Level::complete));
+			copy.word, aarch32::Profile{});
 		require(decoded.legal(), "a VLD1 or VST1 word did not decode");
 		Guest guest{generation++};
 		guest.a32(0, {copy.word, a::svc});
@@ -2409,7 +2409,7 @@ void parallel_arithmetic_and_sel_stay_out_of_the_library()
 	require(guest.run(cpu).reason == ExitReason::system_call);
 	for (const auto &step : steps) {
 		const auto decoded = aarch32::decode_a32(
-			step.word, aarch32::Profile::at(aarch32::Level::complete));
+			step.word, aarch32::Profile{});
 		require(decoded.legal(), "a parallel word did not decode");
 		require(aarch32::a32_library_exits(decoded.form) == 0,
 			"a parallel add or subtract or SEL used the library");
@@ -2634,7 +2634,7 @@ void host_features_decide_what_the_guest_may_execute()
 	};
 	for (const auto &item : words) {
 		const auto decoded = aarch32::decode_a32(
-			item.word, aarch32::Profile::at(aarch32::Level::complete));
+			item.word, aarch32::Profile{});
 		require(decoded.legal(), item.what);
 		const auto run = [&](const ::uml::cpu::HostCapabilities &host) {
 			Guest guest{generation++, host};

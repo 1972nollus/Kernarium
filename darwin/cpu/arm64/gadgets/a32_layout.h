@@ -11,13 +11,12 @@
  * [the instruction's key][operand]; a gadget with a slow path that the
  * library takes over carries the operand as its last stream word. The
  * operand holds what the library's decode needs again at run time: the
- * instruction's word in bits 0-31, the ITSTATE it executes in at bit 32, the
- * decode level at bit 40, whether the target PC of a load that writes PC is
- * to be left as a value in CpuState::registers[15] at bit 42, whether the
- * word is T32 at bit 43, and the form decoded at build time at bit 48, which
- * the run-time decode must find again. */
+ * instruction's word in bits 0-31, the ITSTATE it executes in at bit 32,
+ * whether the target PC of a load that writes PC is to be left as a value in
+ * CpuState::registers[15] at bit 42, whether the word is T32 at bit 43, and
+ * the form decoded at build time at bit 48, which the run-time decode must
+ * find again. */
 #define UML_GADGET_A32_LIBRARY_IT_SHIFT 32
-#define UML_GADGET_A32_LIBRARY_LEVEL_SHIFT 40
 #define UML_GADGET_A32_LIBRARY_PC_VALUE_SHIFT 42
 #define UML_GADGET_A32_LIBRARY_THUMB_SHIFT 43
 #define UML_GADGET_A32_LIBRARY_FORM_SHIFT 48

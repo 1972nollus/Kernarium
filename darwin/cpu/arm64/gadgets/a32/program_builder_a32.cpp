@@ -680,8 +680,6 @@ std::uint64_t Translator::library_operand(const Instruction &in,
 	return std::uint64_t{in.word} |
 	       std::uint64_t{it_.bits()} << UML_GADGET_A32_LIBRARY_IT_SHIFT |
 	       std::uint64_t{thumb_} << UML_GADGET_A32_LIBRARY_THUMB_SHIFT |
-	       std::uint64_t{static_cast<std::uint8_t>(profile_.level)}
-		       << UML_GADGET_A32_LIBRARY_LEVEL_SHIFT |
 	       std::uint64_t{pc_value} << UML_GADGET_A32_LIBRARY_PC_VALUE_SHIFT |
 	       std::uint64_t{static_cast<std::uint16_t>(in.form)}
 		       << UML_GADGET_A32_LIBRARY_FORM_SHIFT;
@@ -1306,7 +1304,7 @@ BuildOutput Translator::run()
 		next_key_ = key_ + 4U * length;
 		const FormPlan plan = kFormPlans[static_cast<std::size_t>(in.form)];
 		/* A coprocessor access the profile does not accept, and a
-		 * coprocessor instruction of a level above the engine's, are
+		 * coprocessor instruction of an extension the profile lacks, are
 		 * undefined only when their condition passes (the pseudocode
 		 * tests ConditionPassed first). Every other undefined word is
 		 * undefined whatever the condition: the profile leaves it out at
@@ -1317,7 +1315,7 @@ BuildOutput Translator::run()
 		 * one takes the word's own field. */
 		if (in.status == Status::undefined) {
 			unsigned cond = 14;
-			const auto full = Profile::at(Level::complete);
+			const Profile full;
 			if (thumb_) {
 				if (in.in_it && (in.reason == Reason::profile ||
 						 in.reason == Reason::feature)) {

@@ -195,9 +195,7 @@ std::array<std::atomic<std::uint64_t>, kFormCount> form_exits{};
 
 [[nodiscard]] bool covered(const FormInfo &form, const OpInfo &info) noexcept
 {
-	if (form.availability != Availability::implemented || info.op == Op::none)
-		return false;
-	return form.level <= a32_semantics_level();
+	return form.availability == Availability::implemented && info.op != Op::none;
 }
 
 namespace {
@@ -294,7 +292,8 @@ StepResult execute_a32(CpuState &cpu, const Instruction &instruction,
 	const FormInfo &form = instruction.info();
 	const OpInfo &info = op_info(instruction.form);
 	/* A reserved hint is a pseudo-form that retires as a NOP; every other
-	 * form is a table row, which the library covers up to its level. */
+	 * form is a table row, which the library covers when it has an
+	 * operation for it. */
 	if (instruction.form != Form::ReservedHint && !covered(form, info)) [[unlikely]]
 		return fatal;
 

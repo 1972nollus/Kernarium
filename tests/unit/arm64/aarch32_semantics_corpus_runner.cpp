@@ -289,7 +289,7 @@ std::string check(Machine &machine, const Case &test, const Profile &profile)
 bool within_coverage(const Case &test)
 {
 	bool covered = true;
-	for_each_instruction(test, Profile::at(Level::complete), [&](const ProgramStep &step) {
+	for_each_instruction(test, Profile{}, [&](const ProgramStep &step) {
 		covered = !step.instruction.legal() || a32_semantics_covers(step.instruction.form);
 		return covered;
 	});
@@ -332,7 +332,7 @@ int main(int argc, char **argv)
 	g_trace = trace;
 	const Pack pack = read_pack(read_file(path));
 	/* The whole profile: the library implements all of it. */
-	const Profile profile = Profile::at(Level::complete);
+	const Profile profile;
 
 	Machine machine;
 	Totals totals;

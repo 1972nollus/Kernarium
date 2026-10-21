@@ -843,8 +843,8 @@ software floating-point helpers do. A saturating instruction leaves QC in the
 cumulative FPSR flags the native environment keeps; `engine/a32_neon.py` and
 `engine/a32_simd.py` document the groups and the operand words.
 
-The complete level adds the Armv8 floating-point additions and the optional
-extensions. The engine decodes in the profile its host gives it
+The Armv8 floating-point additions and the optional extensions are the
+`complete` part of the profile. The engine decodes in the profile its host gives it
 (`a32::decode_profile`): the extensions the host has the A64 feature for
 (`a32_features`), which are the ones the guest is shown, so a form of any other
 extension is UNDEFINED, as the HWCAPs say. The generator
@@ -1029,8 +1029,8 @@ of the first page and the first 32 of the second side by side into
 `CpuState::a32_cross` and reads from there at the guest's offset. A page
 missing from the TLB takes the library, which fills it.
 
-At the complete level the JIT presents the Armv8 extensions as well, each where
-the host has its A64 feature: it decodes against `a32_decode_profile`, the
+The JIT presents the Armv8 extensions as well, each where the host has its A64
+feature: it decodes against `a32_decode_profile`, the
 extensions the guest is shown, so a form of an extension the host lacks is
 UNDEFINED and never reaches the semantic library. It lowers the ones that are
 the host's own instruction on the same operands: CRC32, the AES and SHA-1 and

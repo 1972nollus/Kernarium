@@ -380,8 +380,8 @@ def needs_feature(context, row: dict, present: set[str]) -> bool:
         isa, word = "T16", halves[first] << 16
     # Undefined without the feature: Undefined() or, where the XML says so
     # (the Thumb VMULL.P64 without FEAT_PMULL), UnpredictableProcedure().
-    return (context.reference.decode(isa, word, 0, "complete", plan.FEATURES).status != "undefined"
-            and context.reference.decode(isa, word, 0, "complete", present).status == "undefined")
+    return (context.reference.decode(isa, word, 0, plan.FEATURES).status != "undefined"
+            and context.reference.decode(isa, word, 0, present).status == "undefined")
 
 
 def known_differences() -> list[dict]:

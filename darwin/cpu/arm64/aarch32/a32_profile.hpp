@@ -96,7 +96,7 @@ struct A32Features final {
 	add(shown.rdm, aarch32::Feature::rdm);
 	add(shown.fcma, aarch32::Feature::fcma);
 	add(shown.jscvt, aarch32::Feature::jscvt);
-	return aarch32::Profile{aarch32::Level::complete, features};
+	return aarch32::Profile{features};
 }
 
 } // namespace uml::cpu::arm64

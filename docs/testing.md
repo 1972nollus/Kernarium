@@ -784,11 +784,10 @@ generated AArch32 corpus against the decoder: the program decodes in order,
 in the IT state its instructions leave, to legal forms except at the
 instruction that raised an event; the instruction under test is the form the
 case names; the event is one its kind can raise; and the retired count, fault
-position, state changes and memory runs agree. A case whose forms need a level
-above `--level` is skipped. The `arm64-a32-corpus` tooling test regenerates
-the pack from `tests/unit/arm64/aarch32_corpus/source` and compares it,
-`provenance.json`, `manifest.tsv`, `coverage.tsv` and `excluded.tsv` with the
-checked-in bytes, and requires cases for every executed base inventory entry.
+position, state changes and memory runs agree. The `arm64-a32-corpus` tooling
+test regenerates the pack from `tests/unit/arm64/aarch32_corpus/source` and
+compares it, `provenance.json`, `manifest.tsv`, `coverage.tsv` and
+`excluded.tsv` with the checked-in bytes, and requires cases for every executed base inventory entry.
 Neither needs an oracle. The corpus README owns the format, the oracles and how
 to record a suite with `tools/arm64-tests/a32-corpus.py`; recording runs
 `qemu-arm` on a build host over ssh and is opt-in. With

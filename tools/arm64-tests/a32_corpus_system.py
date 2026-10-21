@@ -84,7 +84,7 @@ def cp15_cases(context: Context, suite: str) -> list[Case]:
                 else:
                     program = (encoded,)
                 result, _ = context.reference.operands("A32" if state == "A" else "T32", encoded, 0,
-                                                       "complete", FEATURES)
+                                                       FEATURES)
                 if result.status == "undefined" or result.sysreg != expected_register:
                     raise ValueError(f"{name} {encoded:08x}: the decoder reads {result.sysreg}")
                 initial = {f"r{register}": 0x12345678, "tpidrurw": 0x70001000 + register}
@@ -171,7 +171,7 @@ def suite_absent(context: Context) -> list[Case]:
     reference = context.reference
 
     def decodes_undefined(isa, word) -> bool:
-        result, _ = reference.operands(isa, word, 0, "complete", FEATURES)
+        result, _ = reference.operands(isa, word, 0, FEATURES)
         return result.status == "undefined"
 
     def force_always(form, isa, word):

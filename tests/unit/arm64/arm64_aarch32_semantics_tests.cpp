@@ -106,7 +106,7 @@ template<typename M>
 struct BasicFixture final {
 	M machine;
 	CpuState cpu{};
-	Profile profile = Profile::at(Level::base);
+	Profile profile{FeatureSet{}};
 
 	BasicFixture()
 	{
@@ -198,14 +198,12 @@ void test_coverage()
 		const auto form = static_cast<Form>(index);
 		const FormInfo &info = kForms[index];
 		const bool pseudo = form == Form::Undefined || form == Form::ReservedHint;
-		/* Every implemented form up to the library's level, and nothing above. */
-		const bool expected = pseudo || (info.availability == Availability::implemented &&
-							info.level <= a32_semantics_level());
+		/* Every implemented form, and nothing else. */
+		const bool expected = pseudo || info.availability == Availability::implemented;
 		require(a32_semantics_covers(form) == expected,
-			"the coverage predicate follows the level");
+			"the coverage predicate follows the form's availability");
 		covered += a32_semantics_covers(form) ? 1 : 0;
 	}
-	require(a32_semantics_level() == Level::complete, "the library implements the whole profile");
 	require(covered > 2100, "the library covers every implemented form");
 }
 
@@ -227,11 +225,11 @@ void test_events()
 
 	/* A word the decoder rejects is undefined. */
 	f.cpu.a32_itstate = 0;
-	const auto simd_only = decode_a32(0xe1010042, Profile::at(Level::simd));
-	require(!simd_only.legal(), "a CRC32 word is above the simd level");
-	result = execute_a32(f.cpu, simd_only, f.machine);
+	const auto no_crc = decode_a32(0xe1010042, Profile{FeatureSet{}});
+	require(!no_crc.legal(), "a CRC32 word needs a feature the profile lacks");
+	result = execute_a32(f.cpu, no_crc, f.machine);
 	require(result.event == StepEvent::undefined && f.pc() == code_base,
-		"a word above the profile's level is undefined at the PC");
+		"a word outside the profile is undefined at the PC");
 
 	/* UDF. */
 	result = f.step_a32_word(0xe7f000f0);
@@ -593,7 +591,7 @@ void test_it_udf()
 void test_vector_memory()
 {
 	Fixture f;
-	f.profile = Profile::at(Level::complete);
+	f.profile = Profile{};
 	const std::uint32_t area = data_base + 0x100;
 	f.cpu.registers[0] = area;
 	f.machine.put(area + 8, std::uint64_t{0x1122'3344'5566'7788});
@@ -676,7 +674,7 @@ void test_vector_memory()
 void test_vector_structures()
 {
 	Fixture f;
-	f.profile = Profile::at(Level::complete);
+	f.profile = Profile{};
 	const std::uint32_t area = data_base + 0x200;
 	for (unsigned n = 0; n < 32; ++n)
 		f.machine.put(area + n, static_cast<std::uint8_t>(n));
@@ -921,8 +919,8 @@ void test_counters()
 	(void)f.step_a32_word(ldr_r1_r0);
 	(void)f.step_a32_word(str_r1_r0);
 	count_a32_library_exits(false);
-	const auto ldr = decode_a32(ldr_r1_r0, Profile::at(Level::base)).form;
-	const auto str = decode_a32(str_r1_r0, Profile::at(Level::base)).form;
+	const auto ldr = decode_a32(ldr_r1_r0, Profile{}).form;
+	const auto str = decode_a32(str_r1_r0, Profile{}).form;
 	require(a32_library_exits(ldr) == 2 && a32_library_exits(str) == 1 && a32_library_exit_total() == 3,
 		"every call counts against its form");
 	reset_a32_library_exits();
@@ -936,7 +934,7 @@ void test_counters()
 void test_floating_point()
 {
 	Fixture f;
-	f.profile = Profile::at(Level::complete);
+	f.profile = Profile{};
 	constexpr std::uint32_t qc = 1U << 27;
 
 	/* VMSR keeps the control, status and flag bits; Len, Stride and the
@@ -1087,7 +1085,7 @@ void test_floating_point()
 void test_armv8_extensions()
 {
 	Fixture f;
-	f.profile = Profile::at(Level::complete);
+	f.profile = Profile{};
 	constexpr std::uint32_t z_flag = 0x4000'0000;
 
 	/* Half precision: the result zero-extends into the S register. */

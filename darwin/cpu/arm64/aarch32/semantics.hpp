@@ -10,10 +10,10 @@
 
 /*
  * The engine-neutral semantics of the AArch32 profile: one C++
- * implementation of every instruction the decoder accepts at the library's
- * level, on CpuState alone, for the engines' slow paths and long tails and
- * for the instruction corpus's model lane. It includes no engine header,
- * and reaches guest memory only through the caller's A32Memory.
+ * implementation of every instruction the decoder accepts, on CpuState
+ * alone, for the engines' slow paths and long tails and for the instruction
+ * corpus's model lane. It includes no engine header, and reaches guest
+ * memory only through the caller's A32Memory.
  *
  * One call executes one decoded instruction, with the architecture's fault
  * ordering:
@@ -123,17 +123,11 @@ struct StepResult final {
 };
 
 /*
- * Whether execute_a32() implements the form: every implemented form up to
- * a32_semantics_level(). Any other form executes as fatal. The corpus's
- * model lane skips a case whose forms are not covered.
+ * Whether execute_a32() implements the form: every implemented form that has
+ * an operation. Any other form executes as fatal. The corpus's model lane
+ * skips a case whose forms are not covered.
  */
 [[nodiscard]] bool a32_semantics_covers(Form form) noexcept;
-
-/* The highest level the library implements in full. */
-[[nodiscard]] constexpr Level a32_semantics_level() noexcept
-{
-	return Level::complete;
-}
 
 /*
  * Executes `instruction`, which decode_a32() or decode_thumb() returned for
