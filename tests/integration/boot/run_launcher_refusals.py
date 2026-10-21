@@ -7,8 +7,8 @@ no guest slot. The launcher must stop with status 1 and one named reason when
 a host device option collides with an explicit ``virtio_uml.device=``
 argument of the same device, when an option is repeated, empty or
 contradicted, and when the in-process service cannot start; it must leave its
-scratch initrd behind in none of them. A device option on an informational run
-(``--version``) starts nothing and refuses nothing.
+scratch initrd behind in none of them. An informational run (``--version`` or
+``--help``) parses every host device option and starts and refuses nothing.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import itertools
 import os
 import pathlib
 import subprocess
@@ -91,6 +92,20 @@ START_FAILURES: list[tuple[list[str], str]] = [
 ]
 
 
+# Informational runs (--version) that every host device option may join: the
+# launcher parses them all and starts nothing.
+ACCEPTED: list[list[str]] = [
+    ["--gpu-display=vnc", "--gpu-vnc-bind=127.0.0.1", "--gpu-vnc-password=secret",
+     "--gpu-vnc-port=0", "--gpu-width=800", "--gpu-height=600", "--gpu-dpi=96",
+     "--net-forward=tcp:127.0.0.1:55555-80",
+     "--virtio-console-socket={tmp}/console.sock"],
+    ["--gpu-display=native", "--gpu-auto-resize=off",
+     "--virtio-serial-socket={tmp}/serial.sock"],
+    ["--gpu", "--battery", "--audio", "--video", explicit(BATTERY),
+     explicit(GPU)],
+]
+
+
 class CaseFailure(RuntimeError):
     pass
 
@@ -100,6 +115,7 @@ def run(
 ) -> subprocess.CompletedProcess[str]:
     """One launch, in a $TMPDIR of its own, which it must leave empty."""
     environment = dict(os.environ, TMPDIR=str(scratch))
+    environment.pop("UML_DISABLE_NETWORK", None)
     result = subprocess.run(
         [str(emulator), NO_ROOTFS, *arguments],
         stdin=subprocess.DEVNULL,
@@ -138,18 +154,15 @@ def check(emulator: pathlib.Path) -> None:
                     f"with {start!r}; stderr:\n{result.stderr}"
                 )
         print("ok: a service that cannot start names its device and exits 1")
-        for flag in ("--version", "--help"):
-            result = run(
-                emulator,
-                scratch,
-                [flag, "--battery", "--audio", "--video", explicit(BATTERY)],
-            )
+        for flag, arguments in itertools.product(("--version", "--help"), ACCEPTED):
+            arguments = [argument.format(tmp=root) for argument in arguments]
+            result = run(emulator, scratch, [flag, *arguments])
             if result.returncode != 0 or "cannot be combined" in result.stderr:
                 raise CaseFailure(
-                    f"{flag}: an informational run refused a device option "
+                    f"{[flag, *arguments]}: an informational run failed "
                     f"(status {result.returncode}):\n{result.stderr}"
                 )
-        print("ok: an informational run starts and refuses no device")
+        print("ok: an informational run parses every host option, starts and refuses no device")
 
 
 def main() -> int:
