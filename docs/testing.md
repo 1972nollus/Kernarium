@@ -306,7 +306,7 @@ ctest --preset unit-tsan
 Both sanitizers keep the product's macOS native window for themselves, so a
 sanitized test, and every run it makes through the emulator test variant,
 takes a native window that both leave free
-(`tests/unit/arm64/native_window_test_support.hpp`). AddressSanitizer also
+(`tests/unit/memory/native_window_test_support.hpp`). AddressSanitizer also
 ignores `mlock()`, so under it the cases that need wired guest RAM report
 themselves unsupported instead of running.
 

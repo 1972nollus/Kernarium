@@ -6,10 +6,12 @@
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "device/network/device.hpp"
+#include "emulator_test_support.hpp"
 #include "native_window_test_support.hpp"
 #include "platform/apple/host_features.hpp"
 #include "platform/run_routing.hpp"
 #include "require.hpp"
+#include "run_window_slot.hpp"
 #include "runtime/context.hpp"
 #include "scratch_backing.hpp"
 #include "testing.hpp"
@@ -27,8 +29,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <mach/mach.h>
-#include <mach/mach_vm.h>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -155,65 +155,7 @@ using uml::testing::ScratchBacking;
 
 constexpr std::string_view backing_name = "uml-emulator-native-shadow-XXXXXX";
 
-/* A run maps its kernel window where an embedded kernel's run does; default
- * options give the guest 256 MiB. */
-constexpr std::size_t run_guest_memory = 256U * 1024U * 1024U;
-
-class ReservedNativeSlot final {
-public:
-	ReservedNativeSlot()
-		: size_{static_cast<std::size_t>(getpagesize())}
-	{
-		const auto window =
-			uml::emulator::testing::native_kernel_window(run_guest_memory);
-		require(window.start != 0, "could not derive the run's native window");
-		for (auto candidate = window.start;
-		     address_ == 0 && candidate <= window.end - size_;
-		     candidate += size_) {
-			mach_vm_address_t reservation = candidate;
-			if (mach_vm_allocate(mach_task_self(), &reservation, size_,
-				    VM_FLAGS_FIXED) == KERN_SUCCESS)
-				address_ = static_cast<std::uintptr_t>(reservation);
-		}
-		require(address_ != 0,
-			"could not reserve native-shadow host slot in the run's window");
-	}
-
-	~ReservedNativeSlot()
-	{
-		if (!released_)
-			(void)mach_vm_deallocate(mach_task_self(), address_, size_);
-	}
-
-	ReservedNativeSlot(const ReservedNativeSlot &) = delete;
-	ReservedNativeSlot &operator=(const ReservedNativeSlot &) = delete;
-
-	void release()
-	{
-		require(!released_ &&
-			mach_vm_deallocate(mach_task_self(), address_, size_) ==
-				KERN_SUCCESS,
-			"could not release native-shadow slot reservation");
-		released_ = true;
-	}
-
-	[[nodiscard]] std::uintptr_t page() const noexcept
-	{
-		return address_ + DARWIN_UML_GUEST_PAGE_SIZE;
-	}
-
-	/* Retirement hands the slot back to the run's window reservation, so it
-	 * carries no mapping and is not free. */
-	[[nodiscard]] bool retired() const noexcept
-	{
-		return uml::testing::released_into_native_window(address_, size_);
-	}
-
-private:
-	std::uintptr_t address_{};
-	std::size_t size_{};
-	bool released_{};
-};
+using uml::testing::RunWindowSlot;
 
 int native_shadow_kernel(NativeShadowKernelState &state)
 {
@@ -319,34 +261,15 @@ int network_kernel(int argc, char *const argv[], char *const[])
 }
 #endif
 
-using Emulator = std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)>;
-
-Emulator make_emulator(uml::emulator::testing::KernelEntry entry)
-{
-	const auto image = uml::emulator::testing::kernel_image(entry);
-	const uml_emulator_config config{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/uml-emulator-api.img",
-		.kernel_image = image.data(),
-		.kernel_image_size = image.size(),
-	};
-	uml_emulator *created = nullptr;
-	require(uml_emulator_create(&config, &created) == UML_EMULATOR_OK,
-		"emulator creation failed");
-	return {created, uml_emulator_destroy};
-}
+using uml::testing::create_emulator;
+using uml::testing::make_emulator;
 
 void test_capabilities_describe_the_kernel()
 {
-	const uml_emulator_config empty_config{
+	const auto empty = create_emulator({
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
-	};
-	uml_emulator *created = nullptr;
-	require(uml_emulator_create(&empty_config, &created) == UML_EMULATOR_OK,
-		"kernelless emulator creation failed");
-	const Emulator empty{created, uml_emulator_destroy};
+	});
 	uml_emulator_capabilities capabilities{
 		.struct_size = sizeof(uml_emulator_capabilities),
 	};
@@ -453,11 +376,7 @@ void test_run_boundary()
 		.kernel_image_size = image.size(),
 		.network = &network,
 	};
-	uml_emulator *created = nullptr;
-	require(uml_emulator_create(&config, &created) == UML_EMULATOR_OK,
-		"emulator creation failed");
-	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> emulator{
-		created, uml_emulator_destroy};
+	const auto emulator = create_emulator(config);
 	rootfs_path[0] = 'X';
 	std::ranges::fill(image, std::byte{0});
 	network.open = nullptr;
@@ -540,7 +459,7 @@ void test_run_boundary()
 
 
 void test_native_shadow_domains_retire_on_every_handle_exit(
-	ReservedNativeSlot &slot)
+	RunWindowSlot &slot)
 {
 	ScratchBacking backing_a{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing_a.put_byte(0, std::byte{0x31});
@@ -561,33 +480,8 @@ void test_native_shadow_domains_retire_on_every_handle_exit(
 		.replacement = 0xb8,
 		.status = 37,
 	};
-	const auto image_a =
-		uml::emulator::testing::kernel_image(native_shadow_kernel_a);
-	const auto image_b =
-		uml::emulator::testing::kernel_image(native_shadow_kernel_b);
-	const uml_emulator_config config_a{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/native-shadow-a.img",
-		.kernel_image = image_a.data(),
-		.kernel_image_size = image_a.size(),
-	};
-	const uml_emulator_config config_b{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/native-shadow-b.img",
-		.kernel_image = image_b.data(),
-		.kernel_image_size = image_b.size(),
-	};
-	uml_emulator *raw_a = nullptr;
-	uml_emulator *raw_b = nullptr;
-	require(uml_emulator_create(&config_a, &raw_a) == UML_EMULATOR_OK &&
-		uml_emulator_create(&config_b, &raw_b) == UML_EMULATOR_OK,
-		"native-shadow handle creation failed");
-	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> handle_a{
-		raw_a, uml_emulator_destroy};
-	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> handle_b{
-		raw_b, uml_emulator_destroy};
+	const auto handle_a = make_emulator(native_shadow_kernel_a);
+	const auto handle_b = make_emulator(native_shadow_kernel_b);
 	const char *arguments[]{"native-shadow-domain"};
 	require(uml_emulator_run(handle_a.get(), 1, arguments, nullptr) == 0 &&
 		native_shadow_a.valid,
@@ -719,8 +613,6 @@ void test_injected_user_network_adds_no_kernel_ip_configuration()
 		"injected user-network creation failed");
 	const std::unique_ptr<void, decltype(&uml_slirp_net_destroy)> network{
 		network_context, uml_slirp_net_destroy};
-	const auto image =
-		uml::emulator::testing::kernel_image(network_kernel);
 	const uml_emulator_network_callbacks callbacks{
 		.struct_size = sizeof(uml_emulator_network_callbacks),
 		.context = network.get(),
@@ -729,19 +621,7 @@ void test_injected_user_network_adds_no_kernel_ip_configuration()
 		.read = uml_slirp_net_read,
 		.write = uml_slirp_net_write,
 	};
-	const uml_emulator_config config{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/rootfs.erofs",
-		.kernel_image = image.data(),
-		.kernel_image_size = image.size(),
-		.network = &callbacks,
-	};
-	uml_emulator *created = nullptr;
-	require(uml_emulator_create(&config, &created) == UML_EMULATOR_OK,
-		"default-network emulator creation failed");
-	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> emulator{
-		created, uml_emulator_destroy};
+	const auto emulator = make_emulator(network_kernel, &callbacks);
 	const char *arguments[]{"uml-test"};
 	require(uml_emulator_run(emulator.get(), 1, arguments, nullptr) == 0,
 		"injected-network emulator run failed");
@@ -769,7 +649,7 @@ int main()
 		test_stop_requests_belong_to_one_run();
 		test_run_boundary();
 		{
-			ReservedNativeSlot native_shadow_slot;
+			RunWindowSlot native_shadow_slot;
 			test_native_shadow_domains_retire_on_every_handle_exit(
 				native_shadow_slot);
 		}
