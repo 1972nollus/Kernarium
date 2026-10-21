@@ -260,48 +260,14 @@ gadget vector_map3_shuffle_\symbol\()_\width\()_rm
 	ldp x26, x27, [_stream], #16
 	mov x25, x7
 	vector_map3_shuffle_input_size \opcode, \width
-	page_cross_check (Lx86_vector_map3_shuffle_input_size), Lx86_vector_map3_shuffle_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, Lx86_vector_map3_shuffle_input_size
-	.if Lx86_vector_map3_shuffle_input_size == 8
-	ldr d1, [x7]
-	.else
-	ldr q1, [x7]
-	.endif
-	.if Lx86_vector_map3_shuffle_input_size == 32
-	ldr q3, [x7, #16]
-	.elseif \width == 256
-	movi v3.16b, #0
-	.endif
-	b Lx86_vector_map3_shuffle_loaded\@
-Lx86_vector_map3_shuffle_cross\@:
-	sub sp, sp, #32
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #Lx86_vector_map3_shuffle_input_size
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_map3_shuffle_cross_fault\@
-	.if Lx86_vector_map3_shuffle_input_size == 8
-	ldr d1, [sp]
-	.else
-	ldr q1, [sp]
-	.endif
-	.if Lx86_vector_map3_shuffle_input_size == 32
-	ldr q3, [sp, #16]
-	.elseif \width == 256
-	movi v3.16b, #0
-	.endif
-	add sp, sp, #32
-Lx86_vector_map3_shuffle_loaded\@:
+	vector_memory_source Lx86_vector_map3_shuffle_input_size, Lx86_vector_map3_shuffle_cross_fault\@, zero_high=(\width == 256)
 	mov w13, w27
 	and x10, x26, #0xffff
 	vector_read \width
 	vector_map3_shuffle_lane \opcode, \width
 	vector_write \width, 23
 	retire_and_next
-Lx86_vector_map3_shuffle_cross_fault\@:
-	add sp, sp, #32
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_map3_shuffle_cross_fault\@
 .endm
 
 .macro vector_map3_shuffle_family opcode

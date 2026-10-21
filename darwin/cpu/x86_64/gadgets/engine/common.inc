@@ -1197,8 +1197,9 @@ Lx86_read_loaded\@:
 .endm
 
 /* Load a `size`-byte vector operand from `base` into v`low`, a 32-byte one
- * into v`low` and v`high`. A 1, 2, 4 or 8-byte operand loads b, h, s or d. */
-.macro vector_source_load size, low, high, base
+ * into v`low` and v`high`. A 1, 2, 4 or 8-byte operand loads b, h, s or d.
+ * `zero_high` clears v`high` for a 256-bit form with a narrower source. */
+.macro vector_source_load size, low, high, base, zero_high=0
 	.if (\size) == 1
 	ldr b\low, [\base]
 	.elseif (\size) == 2
@@ -1212,6 +1213,8 @@ Lx86_read_loaded\@:
 	.endif
 	.if (\size) == 32
 	ldr q\high, [\base, #16]
+	.elseif \zero_high
+	movi v\high\().16b, #0
 	.endif
 .endm
 
@@ -1222,10 +1225,10 @@ Lx86_read_loaded\@:
  * gadget defines after its code with `vector_memory_source_fault`. `scalar`
  * sends an access of 8 bytes or less through `cross_page_load` and moves it
  * with an x register; `single` moves a 4-byte one with a w register. */
-.macro vector_memory_source size, fault, low=1, high=3, frame=32, scalar=0, single=0
+.macro vector_memory_source size, fault, low=1, high=3, frame=32, scalar=0, single=0, zero_high=0
 	page_cross_check \size, Lx86_vector_source_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \size
-	vector_source_load \size, \low, \high, x7
+	vector_source_load \size, \low, \high, x7, \zero_high
 	b Lx86_vector_source_loaded\@
 Lx86_vector_source_cross\@:
 	.if ((\scalar) != 0) && ((\size) <= 8)
@@ -1243,7 +1246,7 @@ Lx86_vector_source_cross\@:
 	mov w3, #\size
 	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbz w0, \fault
-	vector_source_load \size, \low, \high, sp
+	vector_source_load \size, \low, \high, sp, \zero_high
 	add sp, sp, #\frame
 	.endif
 Lx86_vector_source_loaded\@:
