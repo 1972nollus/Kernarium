@@ -188,22 +188,4 @@ inline std::uint32_t data_processing(State &s, DpOp op, std::uint32_t rn,
   return {value, rot == 0 ? carry_in : (value >> 31 & 1U) != 0U};
 }
 
-/* ThumbExpandImm_C. */
-[[nodiscard]] inline Shifted thumb_expand_imm_c(unsigned imm12,
-                                                bool carry_in) noexcept {
-  const std::uint32_t imm8 = imm12 & 0xffU;
-  if ((imm12 >> 10) == 0U) {
-    switch (imm12 >> 8 & 3U) {
-    case 0: return {imm8, carry_in};
-    case 1: return {imm8 << 16 | imm8, carry_in};
-    case 2: return {imm8 << 24 | imm8 << 8, carry_in};
-    default: return {imm8 << 24 | imm8 << 16 | imm8 << 8 | imm8, carry_in};
-    }
-  }
-  const std::uint32_t unrotated = 0x80U | (imm12 & 0x7fU);
-  const auto rot = static_cast<int>(imm12 >> 7);
-  const auto value = std::rotr(unrotated, rot);
-  return {value, (value >> 31 & 1U) != 0U};
-}
-
 } // namespace uml::emulator::tests::a32::ref

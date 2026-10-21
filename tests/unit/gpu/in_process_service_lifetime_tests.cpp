@@ -21,13 +21,9 @@ void forceRepeatedFailure(StartupFailure failure)
     for (unsigned iteration = 0; iteration < 16; ++iteration) {
         const auto before = descriptorCount();
         failNextStartup(failure);
-        bool failed = false;
-        try {
+        requireThrows<std::runtime_error>([] {
             InProcessGpuService service {InProcessGpuOptions {}};
-        } catch (const std::runtime_error&) {
-            failed = true;
-        }
-        require(failed);
+        });
         require(descriptorCount() == before);
     }
 }
@@ -45,19 +41,10 @@ void endpointsTransferExactlyOnce()
     const int input = descriptorFromName(inputName);
     require(transport >= 0 && input >= 0);
 
-    bool transportRejected = false;
-    bool inputRejected = false;
-    try {
-        (void)service.takeConnectionName();
-    } catch (const std::logic_error&) {
-        transportRejected = true;
-    }
-    try {
-        (void)service.takeInputConnectionName();
-    } catch (const std::logic_error&) {
-        inputRejected = true;
-    }
-    require(transportRejected && inputRejected);
+    requireThrows<std::logic_error>(
+        [&] { (void)service.takeConnectionName(); });
+    requireThrows<std::logic_error>(
+        [&] { (void)service.takeInputConnectionName(); });
     require(::close(transport) == 0);
     require(::close(input) == 0);
     service.stop();
@@ -184,35 +171,16 @@ void holdRequestsHoldsTheServicesRequests()
     require(service.holdRequests(std::chrono::milliseconds {100}));
 
     const SplitRing ring;
-    constexpr std::size_t requestOffset = 0x300;
-    constexpr std::size_t responseOffset = 0x400;
-    const std::array descriptors {
-        protocol::VirtqueueDescriptor {
-            .address = SplitRing::guestBase + requestOffset,
-            .length = sizeof(protocol::GpuControlHeader),
-            .flags = protocol::descriptorNext,
-            .next = 1,
-        },
-        protocol::VirtqueueDescriptor {
-            .address = SplitRing::guestBase + responseOffset,
-            .length = sizeof(protocol::GpuDisplayInfo),
-            .flags = protocol::descriptorWrite,
-            .next = 0,
-        },
-    };
-    constexpr std::array<std::uint16_t, 1> heads {0};
-    ring.publish(descriptors, heads);
-    protocol::GpuControlHeader request {};
-    request.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::getDisplayInfo);
-    std::memcpy(ring.memory().data() + requestOffset, &request, sizeof(request));
+    publishDisplayInfoRequest(ring);
     constexpr std::uint8_t sentinel = 0x5a;
-    std::memset(ring.memory().data() + responseOffset, sentinel,
+    std::memset(ring.memory().data() + displayInfoResponseOffset, sentinel,
         sizeof(protocol::GpuDisplayInfo));
     const auto responseType = [&] {
         protocol::GpuControlHeader response {};
         std::memcpy(
-            &response, ring.memory().data() + responseOffset, sizeof(response));
+            &response,
+            ring.memory().data() + displayInfoResponseOffset,
+            sizeof(response));
         return response.type;
     };
 
@@ -220,13 +188,11 @@ void holdRequestsHoldsTheServicesRequests()
     negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
     configureMemory(socket, ring.descriptor());
     const auto channels = startQueue(socket, ring);
-    constexpr std::uint64_t kick = 1;
-    require(::write(channels.kick.writeEnd.get(), &kick, sizeof(kick)) ==
-        static_cast<ssize_t>(sizeof(kick)));
+    writeKick(channels.kick);
     pollfd call {.fd = channels.call.readEnd.get(), .events = POLLIN};
     require(::poll(&call, 1, 200) == 0);
     require(ring.usedIndex() == 0);
-    require(ring.memory()[responseOffset] == sentinel);
+    require(ring.memory()[displayInfoResponseOffset] == sentinel);
 
     service.releaseRequests();
     awaitCall(channels.call.readEnd.get());

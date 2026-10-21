@@ -40,19 +40,11 @@ void verifyPrivateMetalTextureReadback(VncDisplay& display)
         constexpr std::uint32_t damageY = 11;
         constexpr std::uint32_t damageWidth = 13;
         constexpr std::uint32_t damageHeight = 9;
-        require(presentAccepted(display.presentMetal(MetalScanout {
-                    .texture = (__bridge void*)texture,
-                    .sourceWidth = width,
-                    .sourceHeight = height,
-                    .sourceX = 0,
-                    .sourceY = 0,
-                    .width = width,
-                    .height = height,
-                    .damageX = damageX,
-                    .damageY = damageY,
-                    .damageWidth = damageWidth,
-                    .damageHeight = damageHeight,
-                })),
+        require(presentAccepted(display.presentMetal(damagedScanout(
+                    texture,
+                    width,
+                    height,
+                    Damage {damageX, damageY, damageWidth, damageHeight}))),
                 "private Metal texture readback was rejected");
 
         const auto deadline = std::chrono::steady_clock::now() +
@@ -91,38 +83,17 @@ void verifyScaledReadbackIsDamageBounded(VncDisplay& display)
         require(display.guestScanoutChanged(width, height),
                 "the VNC display refused the scaled mode");
 
-        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor
-            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-            width:width
-            height:height
-            mipmapped:NO];
-        descriptor.storageMode = MTLStorageModeShared;
-        descriptor.usage = MTLTextureUsageShaderRead;
-        id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
-        require(texture != nil, "scaled readback texture creation failed");
-        const auto fill = [&](const std::array<std::uint8_t, 4>& pixel) {
-            const auto pixels = solidImage(pixel, width, height);
-            [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
-                       mipmapLevel:0
-                         withBytes:pixels.data()
-                       bytesPerRow:width * 4U];
-        };
+        id<MTLTexture> texture = sharedTexture(device, width, height);
         const auto present = [&](std::uint32_t x,
                                  std::uint32_t y,
                                  std::uint32_t damageWidth,
                                  std::uint32_t damageHeight,
                                  std::uint64_t frames) {
-            require(presentAccepted(display.presentMetal(MetalScanout {
-                        .texture = (__bridge void*)texture,
-                        .sourceWidth = width,
-                        .sourceHeight = height,
-                        .width = width,
-                        .height = height,
-                        .damageX = x,
-                        .damageY = y,
-                        .damageWidth = damageWidth,
-                        .damageHeight = damageHeight,
-                    })),
+            require(presentAccepted(display.presentMetal(damagedScanout(
+                        texture,
+                        width,
+                        height,
+                        Damage {x, y, damageWidth, damageHeight}))),
                     "scaled readback was rejected");
             const auto deadline = std::chrono::steady_clock::now() +
                 std::chrono::seconds(2);
@@ -134,14 +105,14 @@ void verifyScaledReadbackIsDamageBounded(VncDisplay& display)
                     "scaled readback did not complete");
         };
 
-        fill(before);
+        fillTexture(texture, before);
         present(0, 0, width, height, 1);
         require(display.pixelForTesting(0, 0) == before &&
                     display.pixelForTesting(159, 89) == before,
                 "a scaled mode did not fill its placement");
 
         /* Damage 64x64 at 320,160 reaches pixels 79..96 by 39..56. */
-        fill(after);
+        fillTexture(texture, after);
         present(320, 160, 64, 64, 2);
         require(display.pixelForTesting(80, 40) == after &&
                     display.pixelForTesting(95, 55) == after,
@@ -178,37 +149,16 @@ void verifyClearDiscardsEarlierReadbacks(VncDisplay& display)
         require(display.needsFullCpuFallback(),
                 "clear test expects a client with no complete frame");
 
-        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor
-            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-            width:width
-            height:height
-            mipmapped:NO];
-        descriptor.storageMode = MTLStorageModeShared;
-        descriptor.usage = MTLTextureUsageShaderRead;
-        id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
-        require(texture != nil, "clear test texture creation failed");
-        const auto fill = [&](const std::array<std::uint8_t, 4>& pixel) {
-            const auto pixels = solidImage(pixel, width, height);
-            [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
-                       mipmapLevel:0
-                         withBytes:pixels.data()
-                       bytesPerRow:width * 4U];
-        };
+        id<MTLTexture> texture = sharedTexture(device, width, height);
         const auto present = [&](std::uint32_t x,
                                  std::uint32_t y,
                                  std::uint32_t damageWidth,
                                  std::uint32_t damageHeight) {
-            require(presentAccepted(display.presentMetal(MetalScanout {
-                        .texture = (__bridge void*)texture,
-                        .sourceWidth = width,
-                        .sourceHeight = height,
-                        .width = width,
-                        .height = height,
-                        .damageX = x,
-                        .damageY = y,
-                        .damageWidth = damageWidth,
-                        .damageHeight = damageHeight,
-                    })),
+            require(presentAccepted(display.presentMetal(damagedScanout(
+                        texture,
+                        width,
+                        height,
+                        Damage {x, y, damageWidth, damageHeight}))),
                     "clear test readback was rejected");
         };
         const auto waitUntil = [](auto predicate, const char* message) {
@@ -221,7 +171,7 @@ void verifyClearDiscardsEarlierReadbacks(VncDisplay& display)
             require(predicate(), message);
         };
 
-        fill(stale);
+        fillTexture(texture, stale);
         present(0, 0, width, height);
         waitUntil([&] { return !display.needsFullCpuFallback(); },
                   "the first readback was not a complete frame");
@@ -244,7 +194,7 @@ void verifyClearDiscardsEarlierReadbacks(VncDisplay& display)
         require(display.needsFullCpuFallback(),
                 "after clear() the CPU fallback may send damage only");
 
-        fill(fresh);
+        fillTexture(texture, fresh);
         present(0, 0, 1, 1);
         waitUntil([&] { return display.readbackIdleForTesting(); },
                   "the readback after clear() did not finish");
@@ -255,7 +205,7 @@ void verifyClearDiscardsEarlierReadbacks(VncDisplay& display)
         require(!display.needsFullCpuFallback(),
                 "the first readback after clear() was not a complete frame");
 
-        fill(stale);
+        fillTexture(texture, stale);
         holdReadbackCompletions();
         present(0, 0, width, height);
         waitUntil([] { return heldReadbackCompletions() == 1; },

@@ -116,15 +116,6 @@ void writeBootImage(int descriptor, std::uint64_t offset,
 	writeAll(descriptor, offset + 4096, marker);
 }
 
-std::filesystem::path scratchDirectory()
-{
-	const auto path = uml::testing::scratch_directory() /
-		("uml-android-boot-tests-" + std::to_string(getpid()));
-	std::filesystem::remove_all(path);
-	std::filesystem::create_directories(path);
-	return path;
-}
-
 std::filesystem::path makeDisk(const std::filesystem::path &directory,
 			       std::uint64_t diskSize)
 {
@@ -279,51 +270,48 @@ void testWritableDisk(const std::filesystem::path &directory)
 
 int main()
 {
-	const auto directory = scratchDirectory();
-	try {
-		testKernelCommandLine(directory);
-		testWritableDisk(directory);
+	/* An uncaught failure leaves the directory, which names this test. */
+	const uml::testing::ScratchSubdirectory scratch{
+		"uml-android-boot-tests.XXXXXX"};
+	const auto &directory = scratch.path();
+	testKernelCommandLine(directory);
+	testWritableDisk(directory);
 
-		const auto stale = makeDisk(directory, seedDiskSize);
-		std::filesystem::resize_file(stale, expandedDiskSize);
-		requireThrows([&] {
-			(void)uml::android::selectBoot(
-				stale, uml::android::BootMode::normal);
-		});
-		require(std::filesystem::remove(stale));
+	const auto stale = makeDisk(directory, seedDiskSize);
+	std::filesystem::resize_file(stale, expandedDiskSize);
+	requireThrows([&] {
+		(void)uml::android::selectBoot(
+			stale, uml::android::BootMode::normal);
+	});
+	require(std::filesystem::remove(stale));
 
-		const auto disk = makeDisk(directory, expandedDiskSize);
-		require(std::filesystem::file_size(disk) == expandedDiskSize);
-		const auto automatic =
-			uml::android::selectBoot(disk, uml::android::BootMode::automatic);
-		require(automatic.mode == uml::android::BootMode::normal);
-		require(automatic.ramdisk.offset == initBootOffset + 4096U);
-		require(automatic.ramdisk.size == normalRamdiskSize);
+	const auto disk = makeDisk(directory, expandedDiskSize);
+	require(std::filesystem::file_size(disk) == expandedDiskSize);
+	const auto automatic =
+		uml::android::selectBoot(disk, uml::android::BootMode::automatic);
+	require(automatic.mode == uml::android::BootMode::normal);
+	require(automatic.ramdisk.offset == initBootOffset + 4096U);
+	require(automatic.ramdisk.size == normalRamdiskSize);
 
-		const auto explicitRecovery =
-			uml::android::selectBoot(disk, uml::android::BootMode::recovery);
-		require(explicitRecovery.mode == uml::android::BootMode::recovery);
-		require(explicitRecovery.ramdisk.offset == recoveryOffset + 4096U);
-		require(explicitRecovery.ramdisk.size == recoveryRamdiskSize);
+	const auto explicitRecovery =
+		uml::android::selectBoot(disk, uml::android::BootMode::recovery);
+	require(explicitRecovery.mode == uml::android::BootMode::recovery);
+	require(explicitRecovery.ramdisk.offset == recoveryOffset + 4096U);
+	require(explicitRecovery.ramdisk.size == recoveryRamdiskSize);
 
-		requestRecovery(disk);
-		const auto requestedRecovery =
-			uml::android::selectBoot(disk, uml::android::BootMode::automatic);
-		require(requestedRecovery.mode == uml::android::BootMode::recovery);
+	requestRecovery(disk);
+	const auto requestedRecovery =
+		uml::android::selectBoot(disk, uml::android::BootMode::automatic);
+	require(requestedRecovery.mode == uml::android::BootMode::recovery);
 
-		const int descriptor = open(disk.c_str(), O_RDWR);
-		require(descriptor >= 0);
-		std::array<std::byte, 1> corrupt {std::byte{0xff}};
-		writeAll(descriptor, sectorSize + 20U, corrupt);
-		require(close(descriptor) == 0);
-		requireThrows([&] {
-			(void)uml::android::selectBoot(
-				disk, uml::android::BootMode::normal);
-		});
-	} catch (...) {
-		std::filesystem::remove_all(directory);
-		throw;
-	}
-	std::filesystem::remove_all(directory);
+	const int descriptor = open(disk.c_str(), O_RDWR);
+	require(descriptor >= 0);
+	std::array<std::byte, 1> corrupt {std::byte{0xff}};
+	writeAll(descriptor, sectorSize + 20U, corrupt);
+	require(close(descriptor) == 0);
+	requireThrows([&] {
+		(void)uml::android::selectBoot(
+			disk, uml::android::BootMode::normal);
+	});
 	return 0;
 }

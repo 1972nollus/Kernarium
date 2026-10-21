@@ -325,7 +325,7 @@ index 433b6fda3da3428817c1ca7e81304b6b6bc02c7a..dbb4d6cf068d0bbadd846a42d7bbbd11
  		panic("Kernel tried to access user memory at addr 0x%lx, ip 0x%lx",
  		       address, ip);
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..87ab3d9503d22267565e895193a234b672357c3a 100644
+index 30450cd585995344a780e0f58076f2bfd39de7e1..9fd3d449bb7ec0bb34f63527add349bb0041d3e3 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -125,6 +125,9 @@ const struct seq_operations cpuinfo_op = {
@@ -446,7 +446,7 @@ index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..87ab3d9503d22267565e895193a234b6
  
  	if (virtmem_size < physmem_size)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 953ce45635b5694d23d1e2807a2210d6c28b7a8e..538ae52fec2e79103ae2a169c0ee9eb6d5591348 100644
+index 2ea6a61ce805cf312d28fa380522bf3ac98ce724..a860e1afc2be28ae194842b54d6f6747be03e590 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -11,6 +11,7 @@
@@ -468,7 +468,7 @@ index 953ce45635b5694d23d1e2807a2210d6c28b7a8e..538ae52fec2e79103ae2a169c0ee9eb6
  	       "unexpected ABI fingerprint");
  _Static_assert(offsetof(struct uml_pt_regs, orig_x0) ==
  	      DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET,
-@@ -454,7 +455,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -446,7 +447,7 @@ void userspace(struct uml_pt_regs *registers)
  			 * into the shadow MMU before asking Linux to resolve a real
  			 * guest page fault.
  			 */
@@ -477,7 +477,7 @@ index 953ce45635b5694d23d1e2807a2210d6c28b7a8e..538ae52fec2e79103ae2a169c0ee9eb6
  				current_mm_force_sync(fault);
  				retry = darwin_uml_vm_retry_fault(fault,
  					FAULT_EXECUTE(registers->faultinfo),
-@@ -489,7 +490,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -481,7 +482,7 @@ void userspace(struct uml_pt_regs *registers)
  			}
  			segv(registers->faultinfo, UPT_IP(registers), 1,
  			     registers, NULL);

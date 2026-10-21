@@ -6,15 +6,17 @@
 #include "guest_hibernation.hpp"
 #include "kernel_threads.hpp"
 #include "memory/guest_ram_commitment.hpp"
+#include "named_tests.hpp"
 #include "require.hpp"
 #include "scratch_directory.hpp"
+#include "thread_nap.hpp"
+#include "watchdog.hpp"
 
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
-#include <mach/mach_time.h>
 #include <memory>
 #include <string>
 #include <sys/mman.h>
@@ -25,6 +27,7 @@
 namespace {
 
 using namespace uml::runtime;
+using uml::testing::nap;
 using uml::testing::require;
 
 enum class Event { prepare, hold, write, restore, release, abort_on, abort_off,
@@ -196,18 +199,6 @@ void the_policy_follows_the_mode_and_the_wiring()
 
 /* ---- Real threads and real guest RAM. ---- */
 
-void nap(unsigned microseconds)
-{
-	static const mach_timebase_info_data_t base = [] {
-		mach_timebase_info_data_t value{};
-		mach_timebase_info(&value);
-		return value;
-	}();
-	mach_wait_until(mach_absolute_time() +
-		static_cast<std::uint64_t>(microseconds) * 1000ULL * base.denom /
-		base.numer);
-}
-
 constexpr std::size_t held_pages = 192;
 constexpr std::size_t spare_pages = 64;
 
@@ -334,24 +325,13 @@ void a_real_hibernation_holds_the_kernel_threads_and_brings_the_ram_back()
 		"the image file must not outlive the hibernation");
 }
 
-void start_watchdog(unsigned seconds)
-{
-	std::thread{[seconds] {
-		sleep(seconds);
-		std::fprintf(stderr, "guest hibernation tests: timed out\n");
-		_exit(86);
-	}}.detach();
-}
-
 } // namespace
 
 int main()
 {
-	start_watchdog(180);
-	const struct {
-		const char *name;
-		void (*run)();
-	} tests[] = {
+	const uml::testing::Watchdog watchdog{"the guest hibernation tests",
+		std::chrono::seconds{180}};
+	const uml::testing::NamedTest tests[] = {
 		{"a hibernation holds before it writes and restores before it releases",
 			a_hibernation_holds_before_it_writes_and_restores_before_it_releases},
 		{"nothing happens when there is nothing to hibernate",
@@ -367,9 +347,5 @@ int main()
 		{"a real hibernation holds the kernel threads and brings the RAM back",
 			a_real_hibernation_holds_the_kernel_threads_and_brings_the_ram_back},
 	};
-	for (const auto &test : tests) {
-		test.run();
-		std::printf("ok: %s\n", test.name);
-	}
-	return 0;
+	return uml::testing::runNamedTests(tests);
 }

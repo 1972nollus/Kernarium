@@ -59,7 +59,7 @@ index d0f443c195f30b51bd8e011b1dbab1e8b32eaa88..3ebfd69039436852e72bb82bbc324588
  }
  
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 1201432c0a369e5c1e90f30d119905ca5a4ad84a..abb2a2348c160fab9135ae80ed46dc4f110e4ffc 100644
+index 96cde66a5811c2b7e86a868e9b0c2b63e8bb7a63..176920b9e90363d7f48a7b74910f6972ec4d96f1 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -34,9 +34,9 @@ _Static_assert(offsetof(struct uml_pt_regs, syscall) ==
@@ -85,7 +85,7 @@ index 1201432c0a369e5c1e90f30d119905ca5a4ad84a..abb2a2348c160fab9135ae80ed46dc4f
  /* Linux asm-generic/siginfo.h values differ from Darwin's floating-point
   * si_code values, so keep the guest ABI numbers explicit at this boundary. */
  #define DARWIN_GUEST_FPE_FLTDIV 3
-@@ -567,28 +564,6 @@ void userspace(struct uml_pt_regs *registers)
+@@ -559,28 +556,6 @@ void userspace(struct uml_pt_regs *registers)
  			registers->is_user = 0;
  			break;
  		}

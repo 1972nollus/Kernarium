@@ -191,6 +191,11 @@ inline constexpr std::uint64_t rflags_interrupt = 1ULL << 9;
 inline constexpr std::uint64_t rflags_direction = 1ULL << 10;
 inline constexpr std::uint64_t rflags_overflow = 1ULL << 11;
 inline constexpr std::uint64_t rflags_resume = 1ULL << 16;
+inline constexpr std::uint64_t rflags_alignment_check = 1ULL << 18;
+
+/* The MXCSR bits the engines test for denormal handling. */
+inline constexpr std::uint32_t mxcsr_denormals_are_zero = 1U << 6;
+inline constexpr std::uint32_t mxcsr_flush_to_zero = 1U << 15;
 
 void materialize_flags(CpuState &cpu) noexcept;
 

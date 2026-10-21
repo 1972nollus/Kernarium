@@ -19,7 +19,7 @@ Retire both entries and the path, as bridge ABI 17.
  3 files changed, 2 insertions(+), 32 deletions(-)
 
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 26c96498cc4507c1537b71ae92849b55a987cbcb..d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f 100644
+index e7937d6b99c6068a258b8c1c1a33e9a6a83aed65..6927080a90261b5201163b0c728830728855a01f 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -271,30 +271,6 @@ void __attribute__((noreturn)) darwin_host_stop(void)
@@ -53,7 +53,7 @@ index 26c96498cc4507c1537b71ae92849b55a987cbcb..d069b6e05f2f0b35e27c7d9a89d61703
  void halt_skas(void)
  {
  	shutdown_kernel(0);
-@@ -432,10 +408,6 @@ void userspace(struct uml_pt_regs *registers)
+@@ -424,10 +400,6 @@ void userspace(struct uml_pt_regs *registers)
  		 */
  		darwin_timer_poll(registers);
  		registers->is_user = 0;

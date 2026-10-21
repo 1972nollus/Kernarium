@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "allocation_failure.hpp"
 #include "cpu/gadget_cache_budget.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/cpuid.hpp"
@@ -13,6 +14,8 @@
 #include "cpu/x86_64/segments.hpp"
 #include "memory/guest_address_space.hpp"
 #include "require.hpp"
+#include "wait_until.hpp"
+#include "x86_64_code_change_history.hpp"
 
 #include <algorithm>
 #include <array>
@@ -35,6 +38,9 @@
 #include <vector>
 
 namespace {
+
+using uml::testing::fail;
+using uml::testing::require;
 
 class TestMemory : public uml::memory::GuestAddressSpace {
 public:
@@ -146,7 +152,6 @@ public:
 
 	[[nodiscard]] bool is_executable(std::uint64_t address) noexcept override
 	{
-		executable_queries_.fetch_add(1, std::memory_order_relaxed);
 		return every_page_executable_ ||
 			(address & ~std::uint64_t{4095}) == executable_page_;
 	}
@@ -300,10 +305,6 @@ public:
 		code_changes_ = code_changes;
 	}
 	[[nodiscard]] std::size_t invalidations() const noexcept { return invalidations_; }
-	[[nodiscard]] std::size_t executable_queries() const noexcept
-	{
-		return executable_queries_.load(std::memory_order_relaxed);
-	}
 
 private:
 	[[nodiscard]] std::uint64_t fold(std::uint64_t address) const noexcept
@@ -335,7 +336,6 @@ private:
 	std::atomic<std::size_t> atomic_pointers_{};
 	bool atomic_pointer_available_{true};
 	bool fetches_fail_{};
-	std::atomic<std::size_t> executable_queries_{};
 	std::size_t code_stamp_queries_{};
 	std::vector<std::uint64_t> code_stamp_versions_;
 	bool code_stamps_available_{};
@@ -382,20 +382,13 @@ read_moving_code_sequences(void *opaque) noexcept
 	};
 }
 
-[[nodiscard]] bool expect(bool condition, const char *message) noexcept
-{
-	if (!condition)
-		std::fprintf(stderr, "x86-64 gadget bootstrap: %s\n", message);
-	return condition;
-}
-
 /* What a build made, required to be a block: a failure names the caller's
  * line and `message`. */
 [[nodiscard]] uml::cpu::x86_64::gadgets::BuildResult require_built(
 	uml::cpu::x86_64::gadgets::BuildResult result, std::string_view message,
 	const std::source_location location = std::source_location::current())
 {
-	uml::testing::require(
+	require(
 		result.status == uml::cpu::x86_64::gadgets::BuildStatus::built,
 		message, location);
 	return result;
@@ -413,17 +406,17 @@ void run_to_system_call(uml::cpu::x86_64::gadgets::Executor &executor,
 			memory, cpu.rip, ExecutionMode::long64);
 		if (selected.status != gadgets::BuildStatus::built ||
 			selected.program == nullptr)
-			uml::testing::fail(std::string{what} + " did not build",
+			fail(std::string{what} + " did not build",
 				location);
 		const auto result = gadgets::execute(
 			*selected.program, cpu, memory, executor, 64);
 		if (result.event == uml::cpu::EngineEvent::system_call)
 			return;
 		if (result.event != uml::cpu::EngineEvent::continued)
-			uml::testing::fail(std::string{what} + " left unexpectedly",
+			fail(std::string{what} + " left unexpectedly",
 				location);
 	}
-	uml::testing::fail(std::string{what} + " did not reach SYSCALL",
+	fail(std::string{what} + " did not reach SYSCALL",
 		location);
 }
 
@@ -443,7 +436,7 @@ template<typename Body>
 	return healthy.load(std::memory_order_relaxed);
 }
 
-[[nodiscard]] bool cache_reuses_and_revalidates_programs()
+void cache_reuses_and_revalidates_programs()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -457,20 +450,18 @@ template<typename Body>
 	const auto first = executor.select_program(
 		memory, 0, ExecutionMode::long64);
 	const auto cold_fetches = memory.fetches();
-	if (!expect(first.status == gadgets::BuildStatus::built &&
+	require(first.status == gadgets::BuildStatus::built &&
 		first.program != nullptr && !first.cache_hit,
-		"cold program selection did not populate the cache"))
-		return false;
+		"cold program selection did not populate the cache");
 
 	memory.reset_fetches();
 	const auto second = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(second.status == gadgets::BuildStatus::built &&
+	require(second.status == gadgets::BuildStatus::built &&
 		second.program != nullptr && second.cache_hit,
-		"unchanged program did not hit the cache") ||
-		!expect(cold_fetches != 0 && memory.fetches() == 0,
-			"unchanged cache hit fetched instruction bytes"))
-		return false;
+		"unchanged program did not hit the cache");
+	require(cold_fetches != 0 && memory.fetches() == 0,
+		"unchanged cache hit fetched instruction bytes");
 
 	/* A code epoch can advance without changing this block. As in the arm64
 	 * hierarchy, exact validation retains it and records the new epoch once.
@@ -480,12 +471,11 @@ template<typename Body>
 	memory.reset_atomic_pointers();
 	const auto revalidated = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(revalidated.status == gadgets::BuildStatus::built &&
+	require(revalidated.status == gadgets::BuildStatus::built &&
 		revalidated.program != nullptr && revalidated.cache_hit,
-		"identical source was not retained after a code epoch") ||
-		!expect(memory.atomic_pointers() != 0 && memory.fetches() == 0,
-			"exact validation copied directly mapped source bytes"))
-		return false;
+		"identical source was not retained after a code epoch");
+	require(memory.atomic_pointers() != 0 && memory.fetches() == 0,
+		"exact validation copied directly mapped source bytes");
 
 	/* Keep exact validation available to address-space implementations that
 	 * cannot expose a stable page mapping to the cache. */
@@ -495,12 +485,11 @@ template<typename Body>
 	memory.reset_atomic_pointers();
 	const auto fallback = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(fallback.status == gadgets::BuildStatus::built &&
+	require(fallback.status == gadgets::BuildStatus::built &&
 		fallback.program != nullptr && fallback.cache_hit,
-		"fetch fallback did not retain identical source") ||
-		!expect(memory.atomic_pointers() != 0 && memory.fetches() != 0,
-			"unavailable direct mapping skipped the fetch fallback"))
-		return false;
+		"fetch fallback did not retain identical source");
+	require(memory.atomic_pointers() != 0 && memory.fetches() != 0,
+		"unavailable direct mapping skipped the fetch fallback");
 	memory.set_atomic_pointer_available(true);
 
 	memory.load(1, {0x02});
@@ -508,26 +497,25 @@ template<typename Body>
 	memory.reset_fetches();
 	const auto changed = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(changed.status == gadgets::BuildStatus::built &&
+	require(changed.status == gadgets::BuildStatus::built &&
 		changed.program != nullptr && !changed.cache_hit,
-		"changed source bytes reused a stale cached program"))
-		return false;
+		"changed source bytes reused a stale cached program");
 	CpuState cpu{};
 	const auto executed = gadgets::execute(
 		*changed.program, cpu, memory, executor, 64);
 	const auto &diagnostics = executor.cache_diagnostics();
-	return expect(executed.event == uml::cpu::EngineEvent::system_call,
-		"rebuilt cache program did not reach SYSCALL") &&
-		expect(cpu.gpr(Register::rax) == 2,
-			"rebuilt cache program retained the old immediate") &&
-		expect(diagnostics.translations == 2 &&
-			diagnostics.validation_attempts == 3 &&
-			diagnostics.validation_hits == 2 &&
-			diagnostics.validation_mismatches == 1,
-			"cache diagnostics did not describe reuse and replacement");
+	require(executed.event == uml::cpu::EngineEvent::system_call,
+		"rebuilt cache program did not reach SYSCALL");
+	require(cpu.gpr(Register::rax) == 2,
+		"rebuilt cache program retained the old immediate");
+	require(diagnostics.translations == 2 &&
+		diagnostics.validation_attempts == 3 &&
+		diagnostics.validation_hits == 2 &&
+		diagnostics.validation_mismatches == 1,
+		"cache diagnostics did not describe reuse and replacement");
 }
 
-[[nodiscard]] bool cache_validates_inline_source_spans()
+void cache_validates_inline_source_spans()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::array<std::size_t, 13> sizes{
@@ -546,42 +534,37 @@ template<typename Body>
 			source[size - 2] = std::byte{0x0f};
 			source[size - 1] = std::byte{0x05};
 		}
-		if (!expect(memory.write(address,
+		require(memory.write(address,
 				std::span<const std::byte>{source}),
-			"validation-span source did not fit test memory"))
-			return false;
+			"validation-span source did not fit test memory");
 
 		executor.prepare(memory, 42, 1, changes++);
 		const auto cold = executor.select_program(
 			memory, address, ExecutionMode::long64);
-		if (!expect(cold.status == gadgets::BuildStatus::built &&
+		require(cold.status == gadgets::BuildStatus::built &&
 				cold.program != nullptr && !cold.cache_hit,
-			"validation-span source did not populate the cache"))
-			return false;
+			"validation-span source did not populate the cache");
 
 		executor.prepare(memory, 42, 1, changes++);
 		const auto identical = executor.select_program(
 			memory, address, ExecutionMode::long64);
-		if (!expect(identical.status == gadgets::BuildStatus::built &&
+		require(identical.status == gadgets::BuildStatus::built &&
 				identical.program != nullptr && identical.cache_hit,
-			"inline source comparison rejected identical bytes"))
-			return false;
+			"inline source comparison rejected identical bytes");
 
 		source[0] = size == 1 ? std::byte{0xc3} : std::byte{0x91};
-		if (!expect(memory.write(address,
+		require(memory.write(address,
 				std::span<const std::byte>{source}),
-			"changed validation-span source did not fit test memory"))
-			return false;
+			"changed validation-span source did not fit test memory");
 		executor.prepare(memory, 42, 1, changes++);
 		const auto changed = executor.select_program(
 			memory, address, ExecutionMode::long64);
-		if (!expect(changed.status == gadgets::BuildStatus::built &&
+		require(changed.status == gadgets::BuildStatus::built &&
 				changed.program != nullptr && !changed.cache_hit,
-			"inline source comparison accepted changed bytes"))
-			return false;
+			"inline source comparison accepted changed bytes");
 	}
 	const auto &after = executor.cache_diagnostics();
-	return expect(after.validation_attempts - before.validation_attempts ==
+	require(after.validation_attempts - before.validation_attempts ==
 			2 * sizes.size() &&
 			after.validation_hits - before.validation_hits == sizes.size() &&
 			after.validation_mismatches - before.validation_mismatches ==
@@ -591,7 +574,7 @@ template<typename Body>
 
 /* Revalidation abandons a block whose source it cannot read, and a check it
  * made while the address space's mappings moved; each outcome is counted. */
-[[nodiscard]] bool cache_counts_validation_faults_and_races()
+void cache_counts_validation_faults_and_races()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -605,10 +588,9 @@ template<typename Body>
 		read_test_code_sequences);
 	const auto cold = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(cold.status == gadgets::BuildStatus::built &&
+	require(cold.status == gadgets::BuildStatus::built &&
 			!cold.cache_hit,
-		"validation-outcome source did not populate the cache"))
-		return false;
+		"validation-outcome source did not populate the cache");
 	const auto before = executor.cache_diagnostics();
 
 	/* The page stamps still match, but the mapping sequence the reader
@@ -620,10 +602,9 @@ template<typename Body>
 		memory, 0, ExecutionMode::long64);
 	const auto races = executor.cache_diagnostics().validation_sequence_races -
 		before.validation_sequence_races;
-	if (!expect(raced.status == gadgets::BuildStatus::built &&
+	require(raced.status == gadgets::BuildStatus::built &&
 			!raced.cache_hit && races == 1,
-		"a moving mapping did not abandon and count the validation"))
-		return false;
+		"a moving mapping did not abandon and count the validation");
 
 	/* Without stamps or a direct mapping, validation fetches the source,
 	 * and the fetch faults. */
@@ -639,12 +620,12 @@ template<typename Body>
 	memory.set_code_stamps_available(true);
 	const auto faults = executor.cache_diagnostics().validation_faults -
 		before.validation_faults;
-	return expect(faulted.status == gadgets::BuildStatus::fetch_fault &&
+	require(faulted.status == gadgets::BuildStatus::fetch_fault &&
 			faults == 1,
 		"an unreadable cached source was not counted as a fault");
 }
 
-[[nodiscard]] bool cache_rejects_unrelated_code_pages_by_stamp()
+void cache_rejects_unrelated_code_pages_by_stamp()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -658,10 +639,9 @@ template<typename Body>
 	executor.prepare(memory, 42, 1, 1);
 	const auto cold = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(cold.status == gadgets::BuildStatus::built &&
+	require(cold.status == gadgets::BuildStatus::built &&
 		cold.program != nullptr && !cold.cache_hit,
-		"code-stamp source did not populate the cache"))
-		return false;
+		"code-stamp source did not populate the cache");
 
 	/* A publication to a different physical code page must update the cache
 	 * epoch without rereading this program's unchanged bytes. */
@@ -672,13 +652,12 @@ template<typename Body>
 	memory.reset_code_stamp_queries();
 	const auto unrelated = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(unrelated.status == gadgets::BuildStatus::built &&
+	require(unrelated.status == gadgets::BuildStatus::built &&
 		unrelated.program != nullptr && unrelated.cache_hit,
-		"unrelated code-page publication discarded a cached program") ||
-		!expect(memory.code_stamp_queries() != 0 &&
-			memory.atomic_pointers() == 0 && memory.fetches() == 0,
-			"matching code-page stamp still reread source bytes"))
-		return false;
+		"unrelated code-page publication discarded a cached program");
+	require(memory.code_stamp_queries() != 0 &&
+		memory.atomic_pointers() == 0 && memory.fetches() == 0,
+		"matching code-page stamp still reread source bytes");
 
 	/* A publication to the program's own page still falls through to exact
 	 * validation and rebuilds when the saved bytes differ. */
@@ -688,14 +667,14 @@ template<typename Body>
 	const auto changed = executor.select_program(
 		memory, 0, ExecutionMode::long64);
 	const auto &diagnostics = executor.cache_diagnostics();
-	return expect(changed.status == gadgets::BuildStatus::built &&
+	require(changed.status == gadgets::BuildStatus::built &&
 		changed.program != nullptr && !changed.cache_hit,
-		"changed code-page stamp reused stale translated bytes") &&
-		expect(memory.atomic_pointers() != 0,
-			"changed code-page stamp skipped exact source validation") &&
-		expect(diagnostics.validation_stamp_hits == 1 &&
-			diagnostics.validation_mismatches == 1,
-			"code-page stamp diagnostics did not describe both paths");
+		"changed code-page stamp reused stale translated bytes");
+	require(memory.atomic_pointers() != 0,
+		"changed code-page stamp skipped exact source validation");
+	require(diagnostics.validation_stamp_hits == 1 &&
+		diagnostics.validation_mismatches == 1,
+		"code-page stamp diagnostics did not describe both paths");
 }
 
 /* One vCPU publishing code changes at speed must not cost every other vCPU of
@@ -705,7 +684,7 @@ template<typename Body>
  * time. What keeps a program is its pages' stamps and its own saved bytes; a
  * publication that did not touch it moves neither.
  */
-[[nodiscard]] bool a_moving_code_sequence_keeps_unchanged_programs()
+void a_moving_code_sequence_keeps_unchanged_programs()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -720,10 +699,9 @@ template<typename Body>
 		sequences.code_changes, &sequences, read_moving_code_sequences);
 	const auto cold = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(cold.status == gadgets::BuildStatus::built &&
+	require(cold.status == gadgets::BuildStatus::built &&
 		cold.program != nullptr && !cold.cache_hit,
-		"moving code-change sequence did not populate the cache"))
-		return false;
+		"moving code-change sequence did not populate the cache");
 
 	const auto translated = executor.cache_diagnostics().translations;
 	for (int round = 0; round < 16; ++round) {
@@ -732,16 +710,15 @@ template<typename Body>
 			read_moving_code_sequences);
 		const auto again = executor.select_program(
 			memory, 0, ExecutionMode::long64);
-		if (!expect(again.program != nullptr && again.cache_hit,
+		require(again.program != nullptr && again.cache_hit,
 			"a code change published elsewhere rebuilt an untouched "
-			"program"))
-			return false;
+			"program");
 	}
 	const auto &diagnostics = executor.cache_diagnostics();
-	return expect(diagnostics.translations == translated,
-		"a moving code-change sequence retranslated an untouched program") &&
-		expect(diagnostics.validation_stamp_hits != 0,
-			"a moving code-change sequence never reached the page stamp");
+	require(diagnostics.translations == translated,
+		"a moving code-change sequence retranslated an untouched program");
+	require(diagnostics.validation_stamp_hits != 0,
+		"a moving code-change sequence never reached the page stamp");
 }
 
 /* A native program owes one code-change publication per store to an
@@ -749,7 +726,7 @@ template<typename Body>
  * another: the page stamp another vCPU validates against moves only with a
  * publication, and that vCPU may have revalidated between two stores.
  */
-[[nodiscard]] bool slow_executable_writes_publish_every_code_page()
+void slow_executable_writes_publish_every_code_page()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -766,19 +743,19 @@ template<typename Body>
 	/* And back inside the page just published, which owes its own record. */
 	const auto repeated = gadgets::uml_x86_64_gadget_bulk_store(
 		&context, 0x1820, bytes.data(), bytes.size());
-	return expect(first == 1 && second == 1 && repeated == 1,
-		"slow executable stores did not complete") &&
-		expect(memory.invalidations() == 3 &&
-			context.code_publications == 3,
-			"a slow store to a code page published nothing") &&
-		expect(memory.byte(0x800) == 0x55 && memory.byte(0x1800) == 0x55 &&
-			memory.byte(0x1820) == 0x55,
-			"slow executable stores lost guest bytes");
+	require(first == 1 && second == 1 && repeated == 1,
+		"slow executable stores did not complete");
+	require(memory.invalidations() == 3 &&
+		context.code_publications == 3,
+		"a slow store to a code page published nothing");
+	require(memory.byte(0x800) == 0x55 && memory.byte(0x1800) == 0x55 &&
+		memory.byte(0x1820) == 0x55,
+		"slow executable stores lost guest bytes");
 }
 
 /* One store, two pages: a `rep movs` of code over a page boundary, or a
  * relocating loader's wide write. Both halves need their own record. */
-[[nodiscard]] bool a_slow_store_across_a_page_boundary_publishes_both_pages()
+void a_slow_store_across_a_page_boundary_publishes_both_pages()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -790,12 +767,12 @@ template<typename Body>
 	};
 	const auto stored = gadgets::uml_x86_64_gadget_bulk_store(
 		&context, 0x1000 - 8, bytes.data(), bytes.size());
-	return expect(stored == 1, "crossing slow store did not complete") &&
-		expect(memory.invalidations() == 2 &&
-			context.code_publications == 2,
-			"a store spanning two code pages published only one") &&
-		expect(memory.byte(0xff8) == 0x5a && memory.byte(0x1007) == 0x5a,
-			"crossing slow store lost guest bytes");
+	require(stored == 1, "crossing slow store did not complete");
+	require(memory.invalidations() == 2 &&
+		context.code_publications == 2,
+		"a store spanning two code pages published only one");
+	require(memory.byte(0xff8) == 0x5a && memory.byte(0x1007) == 0x5a,
+		"crossing slow store lost guest bytes");
 }
 
 /* The same rule on the engine's own path, where the write translation carries
@@ -804,7 +781,7 @@ template<typename Body>
  * form, which the ordinary bank serves, so the register-baked bank and the
  * hand-written one each have to cross a page here.
  */
-[[nodiscard]] bool native_executable_stores_publish_every_code_page()
+void native_executable_stores_publish_every_code_page()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -827,9 +804,8 @@ template<typename Body>
 		memory, 0x1000, ExecutionMode::long64);
 	const auto block = writer.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(other.program != nullptr && block.program != nullptr,
-		"two-page publication setup did not cache both pages"))
-		return false;
+	require(other.program != nullptr && block.program != nullptr,
+		"two-page publication setup did not cache both pages");
 
 	const auto run = [&] {
 		CpuState cpu{};
@@ -838,27 +814,26 @@ template<typename Body>
 		return gadgets::execute(*block.program, cpu, memory, writer, 64);
 	};
 	const auto cold = run();
-	if (!expect(cold.event == uml::cpu::EngineEvent::system_call &&
+	require(cold.event == uml::cpu::EngineEvent::system_call &&
 			cold.retired_instructions == 4,
-		"two-page publication block did not run") ||
-		!expect(memory.invalidations() == 3,
-			"a native store to a second code page published nothing"))
-		return false;
+		"two-page publication block did not run");
+	require(memory.invalidations() == 3,
+		"a native store to a second code page published nothing");
 	const auto warm = run();
-	return expect(warm.event == uml::cpu::EngineEvent::system_call &&
+	require(warm.event == uml::cpu::EngineEvent::system_call &&
 		warm.retired_instructions == 4,
-		"warm two-page publication block did not run") &&
-		expect(memory.invalidations() == 6,
-			"a warm native store to a second code page published nothing") &&
-		expect(memory.byte(0x800) == 0x6e && memory.dword(0x1800) == 0,
-			"two-page publication block lost its guest stores");
+		"warm two-page publication block did not run");
+	require(memory.invalidations() == 6,
+		"a warm native store to a second code page published nothing");
+	require(memory.byte(0x800) == 0x6e && memory.dword(0x1800) == 0,
+		"two-page publication block lost its guest stores");
 }
 
 /* A store owes a publication, and a followed link settles the publications of
  * the stores before it with the address space and clears what is owed. A store
  * after the link owes its own, however the page stood before it.
  */
-[[nodiscard]] bool a_settled_link_owes_its_page_a_fresh_publication()
+void a_settled_link_owes_its_page_a_fresh_publication()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -875,21 +850,20 @@ template<typename Body>
 		memory, 16, ExecutionMode::long64);
 	const auto source = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(target.program != nullptr && source.program != nullptr,
-		"settled-link setup did not cache both blocks"))
-		return false;
+	require(target.program != nullptr && source.program != nullptr,
+		"settled-link setup did not cache both blocks");
 
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 0x800;
 	const auto result = gadgets::execute(
 		*source.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		result.retired_instructions == 4,
-		"settled-link blocks did not run as one native chain") &&
-		expect(memory.byte(0x800) == 0x6e,
-			"settled-link blocks lost a guest store") &&
-		expect(memory.invalidations() == 2,
-			"a store after a settled link inherited the page's record");
+		"settled-link blocks did not run as one native chain");
+	require(memory.byte(0x800) == 0x6e,
+		"settled-link blocks lost a guest store");
+	require(memory.invalidations() == 2,
+		"a store after a settled link inherited the page's record");
 }
 
 /* What the missing record costs another vCPU. A publication moves the page's
@@ -898,7 +872,7 @@ template<typename Body>
  * moved, gets a stamp hit for its own page, and keeps a program whose bytes
  * have just been rewritten.
  */
-[[nodiscard]] bool an_unpublished_code_page_strands_another_translation()
+void an_unpublished_code_page_strands_another_translation()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -919,33 +893,30 @@ template<typename Body>
 		memory, 0x1000, ExecutionMode::long64);
 	const auto block = writer.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(cached.program != nullptr && block.program != nullptr,
-		"stranded-translation setup did not cache both pages"))
-		return false;
+	require(cached.program != nullptr && block.program != nullptr,
+		"stranded-translation setup did not cache both pages");
 
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 0x800;
 	cpu.gpr(Register::rcx) = 0x1001;
 	const auto result = gadgets::execute(
 		*block.program, cpu, memory, writer, 64);
-	if (!expect(result.event == uml::cpu::EngineEvent::system_call,
-			"stranded-translation writer did not run") ||
-		!expect(memory.byte(0x1001) == 0x6e,
-			"stranded-translation writer lost its second store"))
-		return false;
+	require(result.event == uml::cpu::EngineEvent::system_call,
+			"stranded-translation writer did not run");
+	require(memory.byte(0x1001) == 0x6e,
+		"stranded-translation writer lost its second store");
 
 	reader.prepare(memory, 23, sequences.mapping_changes,
 		sequences.code_changes, &sequences, read_test_code_sequences);
 	const auto again = reader.select_program(
 		memory, 0x1000, ExecutionMode::long64);
-	if (!expect(again.program != nullptr && !again.cache_hit,
-		"another executor kept a translation of an unpublished code page"))
-		return false;
+	require(again.program != nullptr && !again.cache_hit,
+		"another executor kept a translation of an unpublished code page");
 	CpuState other{};
 	other.rip = 0x1000;
 	const auto ran = gadgets::execute(
 		*again.program, other, memory, reader, 64);
-	return expect(ran.event == uml::cpu::EngineEvent::system_call &&
+	require(ran.event == uml::cpu::EngineEvent::system_call &&
 		other.gpr(Register::rax) == 0x6e,
 		"rebuilt translation did not execute the rewritten bytes");
 }
@@ -954,7 +925,7 @@ template<typename Body>
  * base is on one page and a selected element lies wholly on the next, the
  * record the store owes is the next page's: another executor holding a
  * translation there must see its stamp move and rebuild. */
-[[nodiscard]] bool a_masked_store_publishes_the_page_its_elements_reach()
+void a_masked_store_publishes_the_page_its_elements_reach()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -975,9 +946,8 @@ template<typename Body>
 		memory, 0x2000, ExecutionMode::long64);
 	const auto block = writer.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(cached.program != nullptr && block.program != nullptr,
-		"masked-store publication setup did not cache both blocks"))
-		return false;
+	require(cached.program != nullptr && block.program != nullptr,
+		"masked-store publication setup did not cache both blocks");
 
 	/* Only element 2, the dword at 0x2000, is selected; the base and the
 	 * two elements before it are on the page below. */
@@ -990,31 +960,29 @@ template<typename Body>
 	memory.load(0x1ff8, {0x5a});
 	const auto result = gadgets::execute(
 		*block.program, cpu, memory, writer, 64);
-	if (!expect(result.event == uml::cpu::EngineEvent::system_call,
-			"masked-store writer did not run") ||
-		!expect(memory.byte(0x2001) == 0x02 && memory.byte(0x1ff8) == 0x5a,
-			"masked store did not write only its selected element"))
-		return false;
+	require(result.event == uml::cpu::EngineEvent::system_call,
+			"masked-store writer did not run");
+	require(memory.byte(0x2001) == 0x02 && memory.byte(0x1ff8) == 0x5a,
+		"masked store did not write only its selected element");
 
 	reader.prepare(memory, 29, sequences.mapping_changes,
 		sequences.code_changes, &sequences, read_test_code_sequences);
 	const auto again = reader.select_program(
 		memory, 0x2000, ExecutionMode::long64);
-	if (!expect(again.program != nullptr && !again.cache_hit,
-		"a masked store left another executor's translation current"))
-		return false;
+	require(again.program != nullptr && !again.cache_hit,
+		"a masked store left another executor's translation current");
 	CpuState other{};
 	other.rip = 0x2000;
 	const auto ran = gadgets::execute(
 		*again.program, other, memory, reader, 64);
-	return expect(ran.event == uml::cpu::EngineEvent::system_call &&
+	require(ran.event == uml::cpu::EngineEvent::system_call &&
 		other.gpr(Register::rax) == 2,
 		"rebuilt translation did not execute the masked store's bytes");
 }
 
 /* The same publisher must not be able to keep a program whose own bytes have
  * been rewritten. */
-[[nodiscard]] bool a_moving_code_sequence_rebuilds_changed_programs()
+void a_moving_code_sequence_rebuilds_changed_programs()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1027,23 +995,21 @@ template<typename Body>
 	gadgets::Executor executor;
 	executor.prepare(memory, 42, sequences.mapping_changes,
 		sequences.code_changes, &sequences, read_moving_code_sequences);
-	if (!expect(executor.select_program(memory, 0,
+	require(executor.select_program(memory, 0,
 			ExecutionMode::long64).program != nullptr,
-		"changed-program setup did not populate the cache"))
-		return false;
+		"changed-program setup did not populate the cache");
 
 	memory.load(1, {0x02});
 	executor.prepare(memory, 42, sequences.mapping_changes,
 		++sequences.code_changes, &sequences, read_moving_code_sequences);
 	const auto changed = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(changed.program != nullptr && !changed.cache_hit,
-		"a moving code-change sequence kept a rewritten program"))
-		return false;
+	require(changed.program != nullptr && !changed.cache_hit,
+		"a moving code-change sequence kept a rewritten program");
 	CpuState cpu{};
 	const auto result = gadgets::execute(
 		*changed.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		cpu.gpr(Register::rax) == 2,
 		"rebuilt program did not execute the written bytes");
 }
@@ -1053,7 +1019,7 @@ template<typename Body>
  * by the recorded stamp while the recorded source predates it, and the next
  * validation would accept the stale program on a stamp match.
  */
-[[nodiscard]] bool a_recorded_code_stamp_is_no_newer_than_its_source()
+void a_recorded_code_stamp_is_no_newer_than_its_source()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1067,10 +1033,9 @@ template<typename Body>
 	gadgets::Executor executor;
 	executor.prepare(memory, 42, sequences.mapping_changes,
 		sequences.code_changes, &sequences, read_test_code_sequences);
-	if (!expect(executor.select_program(memory, 0,
+	require(executor.select_program(memory, 0,
 			ExecutionMode::long64).program != nullptr,
-		"stamp-order setup did not populate the cache"))
-		return false;
+		"stamp-order setup did not populate the cache");
 
 	/* Move the page's stamp without touching the program, so the next
 	 * validation has to compare the saved source, and arm a write to the
@@ -1080,10 +1045,9 @@ template<typename Body>
 	memory.write_before_code_page_stamp(2, 1, {0x02});
 	executor.prepare(memory, 42, sequences.mapping_changes,
 		++sequences.code_changes, &sequences, read_test_code_sequences);
-	if (!expect(executor.select_program(memory, 0,
+	require(executor.select_program(memory, 0,
 			ExecutionMode::long64).program != nullptr,
-		"stamp-order validation lost its program"))
-		return false;
+		"stamp-order validation lost its program");
 
 	/* Whether that write landed inside the validation or at the start of this
 	 * one, the cached program no longer matches the guest. */
@@ -1091,13 +1055,12 @@ template<typename Body>
 		++sequences.code_changes, &sequences, read_test_code_sequences);
 	const auto after = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(after.program != nullptr && !after.cache_hit,
-		"a stamp recorded after its source accepted a stale program"))
-		return false;
+	require(after.program != nullptr && !after.cache_hit,
+		"a stamp recorded after its source accepted a stale program");
 	CpuState cpu{};
 	const auto result = gadgets::execute(
 		*after.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		cpu.gpr(Register::rax) == 2,
 		"stamp-order rebuild did not execute the written bytes");
 }
@@ -1113,7 +1076,7 @@ template<typename Body>
  * either, because retiring a changed range only unlinks the slot and leaves
  * that same validation to decide.
  */
-[[nodiscard]] bool a_write_racing_a_first_translation_does_not_survive()
+void a_write_racing_a_first_translation_does_not_survive()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1133,28 +1096,26 @@ template<typename Body>
 	memory.write_after_fetching(0, 1, {0x02});
 	const auto racing = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(racing.program != nullptr && !racing.cache_hit,
-		"a raced first translation did not produce a program") ||
-		!expect(memory.write_after_fetching_fired(),
-			"the racing write never landed inside the build"))
-		return false;
+	require(racing.program != nullptr && !racing.cache_hit,
+		"a raced first translation did not produce a program");
+	require(memory.write_after_fetching_fired(),
+		"the racing write never landed inside the build");
 
 	executor.prepare(memory, 42, sequences.mapping_changes,
 		++sequences.code_changes, &sequences, read_test_code_sequences);
 	const auto after = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(after.program != nullptr && !after.cache_hit,
-		"a write that raced the decoder survived as a valid translation"))
-		return false;
+	require(after.program != nullptr && !after.cache_hit,
+		"a write that raced the decoder survived as a valid translation");
 	CpuState cpu{};
 	const auto result = gadgets::execute(
 		*after.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		cpu.gpr(Register::rax) == 2,
 		"the translation after a raced build did not execute the written "
-		"bytes") &&
-		expect(executor.cache_diagnostics().translations == 2,
-			"a raced first translation was served from the cache");
+		"bytes");
+	require(executor.cache_diagnostics().translations == 2,
+		"a raced first translation was served from the cache");
 }
 
 /* The same race on the second page of a block that spans two. Every page a
@@ -1162,7 +1123,7 @@ template<typename Body>
  * a block only reaches at its tail is covered exactly like the page it starts
  * on.
  */
-[[nodiscard]] bool a_write_racing_a_second_page_does_not_survive()
+void a_write_racing_a_second_page_does_not_survive()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1181,25 +1142,23 @@ template<typename Body>
 	memory.write_after_fetching(4096, 4096, {0x02});
 	const auto racing = executor.select_program(
 		memory, 4092, ExecutionMode::long64);
-	if (!expect(racing.program != nullptr && !racing.cache_hit,
-		"a raced second-page translation did not produce a program") ||
-		!expect(memory.write_after_fetching_fired(),
-			"the racing second-page write never landed inside the build"))
-		return false;
+	require(racing.program != nullptr && !racing.cache_hit,
+		"a raced second-page translation did not produce a program");
+	require(memory.write_after_fetching_fired(),
+		"the racing second-page write never landed inside the build");
 
 	executor.prepare(memory, 42, sequences.mapping_changes,
 		++sequences.code_changes, &sequences, read_test_code_sequences);
 	const auto after = executor.select_program(
 		memory, 4092, ExecutionMode::long64);
-	if (!expect(after.program != nullptr && !after.cache_hit,
+	require(after.program != nullptr && !after.cache_hit,
 		"a write to a block's second page survived as a valid "
-		"translation"))
-		return false;
+		"translation");
 	CpuState cpu{};
 	cpu.rip = 4092;
 	const auto result = gadgets::execute(
 		*after.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		cpu.gpr(Register::rax) == 0x201,
 		"the translation after a raced second page did not execute the "
 		"written bytes");
@@ -1219,7 +1178,7 @@ template<typename Body>
  * saved source is the decoder's own bytes, so the comparison the moved stamp
  * forces sees the write.
  */
-[[nodiscard]] bool a_write_stamped_after_a_first_translation_does_not_survive()
+void a_write_stamped_after_a_first_translation_does_not_survive()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1238,11 +1197,10 @@ template<typename Body>
 	memory.write_after_fetching(0, 1, {0x02}, false);
 	const auto racing = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(racing.program != nullptr && !racing.cache_hit,
-		"an unstamped racing write did not produce a program") ||
-		!expect(memory.write_after_fetching_fired(),
-			"the unstamped racing write never landed inside the build"))
-		return false;
+	require(racing.program != nullptr && !racing.cache_hit,
+		"an unstamped racing write did not produce a program");
+	require(memory.write_after_fetching_fired(),
+		"the unstamped racing write never landed inside the build");
 
 	/* The rest of that writer: the page stamp, and then the sequence which
 	 * brings this vCPU back to validate. */
@@ -1251,14 +1209,13 @@ template<typename Body>
 		++sequences.code_changes, &sequences, read_test_code_sequences);
 	const auto after = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(after.program != nullptr && !after.cache_hit,
+	require(after.program != nullptr && !after.cache_hit,
 		"a write that landed before its page stamp survived as a valid "
-		"translation"))
-		return false;
+		"translation");
 	CpuState cpu{};
 	const auto result = gadgets::execute(
 		*after.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		cpu.gpr(Register::rax) == 2,
 		"the translation after a late-stamped write did not execute the "
 		"written bytes");
@@ -1270,7 +1227,7 @@ template<typename Body>
  * a block in the last bytes of a text page next to hot data would otherwise
  * never be cached at all.
  */
-[[nodiscard]] bool an_undisturbed_first_translation_is_still_cached()
+void an_undisturbed_first_translation_is_still_cached()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1312,22 +1269,20 @@ template<typename Body>
 		}
 		const auto cold = executor.select_program(
 			memory, item.address, ExecutionMode::long64);
-		if (!expect(cold.program != nullptr && !cold.cache_hit,
-			"undisturbed translation setup did not build a program") ||
-			!expect(!item.disturb_neighbour ||
-				memory.write_after_fetching_fired(),
-				"the neighbouring write never landed inside the build"))
-			return false;
+		require(cold.program != nullptr && !cold.cache_hit,
+			"undisturbed translation setup did not build a program");
+		require(!item.disturb_neighbour ||
+			memory.write_after_fetching_fired(),
+			"the neighbouring write never landed inside the build");
 
 		executor.prepare(memory, 42, sequences.mapping_changes,
 			++sequences.code_changes, &sequences, read_test_code_sequences);
 		const auto again = executor.select_program(
 			memory, item.address, ExecutionMode::long64);
-		if (!expect(again.program != nullptr && again.cache_hit,
-			item.message))
-			return false;
+		require(again.program != nullptr && again.cache_hit,
+			item.message);
 	}
-	return expect(executor.cache_diagnostics().validation_stamp_hits != 0,
+	require(executor.cache_diagnostics().validation_stamp_hits != 0,
 		"an undisturbed translation never recorded a usable page stamp");
 }
 
@@ -1337,7 +1292,7 @@ template<typename Body>
  * decodes, and one that runs past it reports the fault at the first byte the
  * decoder could not read rather than at the address its window began at.
  */
-[[nodiscard]] bool a_decode_at_a_page_edge_faults_where_it_stopped()
+void a_decode_at_a_page_edge_faults_where_it_stopped()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t edge = 16384;
@@ -1345,18 +1300,17 @@ template<typename Body>
 	/* SYSCALL ending exactly on the last mapped byte. */
 	memory.load(edge - 2U, {0x0f, 0x05});
 	const auto ending = gadgets::build(memory, edge - 2U);
-	if (!expect(ending.status == gadgets::BuildStatus::built &&
+	require(ending.status == gadgets::BuildStatus::built &&
 		ending.program.instruction_count() == 1,
-		"an instruction ending on the last mapped byte did not decode"))
-		return false;
+		"an instruction ending on the last mapped byte did not decode");
 	/* MOV EAX, imm32 whose immediate runs into the unmapped page. */
 	memory.load(edge - 2U, {0xb8, 0x01});
 	const auto crossing = gadgets::build(memory, edge - 2U);
-	return expect(crossing.status == gadgets::BuildStatus::fetch_fault,
-		"an instruction running past the last mapped page decoded") &&
-		expect(crossing.fault_address == edge,
-			"a fetch fault was not reported at the first byte the "
-			"decoder could not read");
+	require(crossing.status == gadgets::BuildStatus::fetch_fault,
+		"an instruction running past the last mapped page decoded");
+	require(crossing.fault_address == edge,
+		"a fetch fault was not reported at the first byte the "
+		"decoder could not read");
 }
 
 /* One fetch window serves a run of instructions, and a block can outrun it.
@@ -1364,7 +1318,7 @@ template<typename Body>
  * address, so a window that forgets where it starts, or one that is refilled
  * from the wrong address, shows up as the wrong immediate here.
  */
-[[nodiscard]] bool a_block_longer_than_the_fetch_window_decodes()
+void a_block_longer_than_the_fetch_window_decodes()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr unsigned count = 40;
@@ -1380,19 +1334,18 @@ template<typename Body>
 	code[count * 5U + 1U] = std::byte{0x05};
 	memory.fill(0, code);
 	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built &&
+	require(built.status == gadgets::BuildStatus::built &&
 		built.program.instruction_count() == count + 1U,
-		"a block longer than one fetch window did not decode whole"))
-		return false;
+		"a block longer than one fetch window did not decode whole");
 	CpuState cpu{};
 	const auto result = gadgets::execute(built.program, cpu, memory, 64);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		cpu.gpr(Register::rax) == count,
 		"a block decoded across a window refill did not run its own "
 		"instructions");
 }
 
-[[nodiscard]] bool cache_retires_the_oldest_generation()
+void cache_retires_the_oldest_generation()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1402,18 +1355,16 @@ template<typename Body>
 		executor.prepare(memory, generation, 1, 1);
 		const auto selected = executor.select_program(
 			memory, 0, ExecutionMode::long64);
-		if (!expect(selected.status == gadgets::BuildStatus::built &&
+		require(selected.status == gadgets::BuildStatus::built &&
 			selected.program != nullptr && !selected.cache_hit,
-			"new address space unexpectedly reused another's program"))
-			return false;
+			"new address space unexpectedly reused another's program");
 	}
-	if (!expect(executor.resident_generations() == 8,
-		"x86 cache did not enforce the arm64 eight-generation limit"))
-		return false;
+	require(executor.resident_generations() == 8,
+		"x86 cache did not enforce the arm64 eight-generation limit");
 	executor.prepare(memory, 1, 1, 1);
 	const auto retired = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	return expect(retired.status == gadgets::BuildStatus::built &&
+	require(retired.status == gadgets::BuildStatus::built &&
 		retired.program != nullptr && !retired.cache_hit,
 		"least-recently-current address space was not retired");
 }
@@ -1423,7 +1374,7 @@ template<typename Body>
  * next to arrive. Every translation of the retired space must be gone by then
  * however many times the ids go round, or the newcomer would be served the
  * old space's program at the same address. */
-[[nodiscard]] bool a_recycled_address_space_id_serves_no_old_translation()
+void a_recycled_address_space_id_serves_no_old_translation()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1434,15 +1385,13 @@ template<typename Body>
 		executor.prepare(memory, generation, 1, 1);
 		const auto fresh = executor.select_program(
 			memory, 0, ExecutionMode::long64);
-		if (!expect(fresh.status == gadgets::BuildStatus::built &&
+		require(fresh.status == gadgets::BuildStatus::built &&
 			fresh.program != nullptr && !fresh.cache_hit,
-			"a new address space was served another's program"))
-			return false;
+			"a new address space was served another's program");
 		const auto again = executor.select_program(
 			memory, 0, ExecutionMode::long64);
-		if (!expect(again.program != nullptr && again.cache_hit,
-			"an address space did not find its own program"))
-			return false;
+		require(again.program != nullptr && again.cache_hit,
+			"an address space did not find its own program");
 	}
 	/* The eight most recent are resident and the rest are gone. */
 	executor.prepare(memory, spaces - 7, 1, 1);
@@ -1451,10 +1400,10 @@ template<typename Body>
 	executor.prepare(memory, 1, 1, 1);
 	const auto retired = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	return expect(kept.program != nullptr && kept.cache_hit,
-		"a resident address space lost its program") &&
-		expect(retired.program != nullptr && !retired.cache_hit,
-			"a retired address space was served its old program");
+	require(kept.program != nullptr && kept.cache_hit,
+		"a resident address space lost its program");
+	require(retired.program != nullptr && !retired.cache_hit,
+		"a retired address space was served its old program");
 }
 
 /* What the MMU says of a generation: the cache is told by function, since a
@@ -1492,7 +1441,7 @@ struct Lookup final {
 /* An address space whose generation the MMU destroyed is let go of the next
  * time the executor looks after the count moved, and not before; one that is
  * live, or that the MMU cannot answer for, keeps its programs. */
-[[nodiscard]] bool a_destroyed_generation_is_let_go_of_when_the_count_moves()
+void a_destroyed_generation_is_let_go_of_when_the_count_moves()
 {
 	using namespace uml::cpu::x86_64;
 	destroyed_generations = unknown_generations = 0;
@@ -1500,61 +1449,37 @@ struct Lookup final {
 	memory.load(0, {0x0f, 0x05});
 	gadgets::Executor executor;
 	for (std::uint64_t generation = 1; generation <= 3; ++generation)
-		if (!expect(look_up(executor, memory, generation).built,
-			"a new address space was not built"))
-			return false;
+		require(look_up(executor, memory, generation).built,
+			"a new address space was not built");
 	destroyed_generations = 1U << 1;
 	unknown_generations = 1U << 2;
 	executor.leave_gone_generations(0, &mmu_says);
-	if (!expect(executor.resident_generations() == 3,
-		"an executor looked before the count moved"))
-		return false;
+	require(executor.resident_generations() == 3,
+		"an executor looked before the count moved");
 	executor.leave_gone_generations(1, &mmu_says);
-	if (!expect(executor.resident_generations() == 2,
-		"a destroyed address space was kept, or a live one let go"))
-		return false;
+	require(executor.resident_generations() == 2,
+		"a destroyed address space was kept, or a live one let go");
 	executor.leave_gone_generations(1, &mmu_says);
 	destroyed_generations |= 1U << 3;
 	executor.leave_gone_generations(1, &mmu_says);
-	if (!expect(executor.resident_generations() == 2,
-		"an executor looked again at the same count"))
-		return false;
+	require(executor.resident_generations() == 2,
+		"an executor looked again at the same count");
 	const auto live = look_up(executor, memory, 3);
 	const auto unknown = look_up(executor, memory, 2);
-	if (!expect(live.hit && unknown.hit,
-		"an address space the MMU cannot answer for lost its program"))
-		return false;
+	require(live.hit && unknown.hit,
+		"an address space the MMU cannot answer for lost its program");
 	executor.leave_gone_generations(2, &mmu_says);
-	if (!expect(executor.resident_generations() == 1,
-		"the last destroyed address space was kept"))
-		return false;
+	require(executor.resident_generations() == 1,
+		"the last destroyed address space was kept");
 	const auto again = look_up(executor, memory, 1);
-	return expect(again.built && !again.hit,
+	require(again.built && !again.hit,
 		"a let-go address space was served its old program");
 }
 
-/* The process's gadget-cache budget bounds what an executor keeps of its
- * address spaces, whatever its slots would hold. A workload of large blocks,
- * each translated once, holds some megabytes under the default budget and is
- * never asked to shed; under a quarter of that, the address space is asked to
- * shed whenever a store takes the executor's address spaces past the budget,
- * the executor lets go of it at its next run, as of a destroyed one, and
- * translates afresh into a new one, so what it keeps stays within the budget
- * and its blocks still run as they should. An executor that goes refunds what
- * it held. */
-[[nodiscard]] bool the_budget_bounds_what_an_executor_keeps()
+/* Fill `memory`, `blocks * stride` bytes from zero, with `blocks` blocks
+ * `stride` bytes apart, each 63 `add rax, 1` and a SYSCALL. */
+void fill_add_blocks(TestMemory &memory, std::size_t blocks, std::size_t stride)
 {
-	using namespace uml::cpu::x86_64;
-	namespace budget = uml::cpu::gadget_cache;
-	constexpr std::size_t blocks = 3000;
-	constexpr std::size_t stride = 256;
-	constexpr std::size_t kib = 1024;
-	/* What one store and its links may add before the next store's check:
-	 * a translation, a record table's growth and a target table. */
-	constexpr std::size_t one_store = 128 * kib;
-	destroyed_generations = unknown_generations = 0;
-	/* Each block is 63 `add rax, 1` and a SYSCALL. */
-	TestMemory memory{0, blocks * stride + 4096};
 	std::vector<std::byte> block(stride, std::byte{0x90});
 	for (std::size_t add = 0; add < 63; ++add) {
 		block[add * 4] = std::byte{0x48};
@@ -1566,6 +1491,30 @@ struct Lookup final {
 	block[253] = std::byte{0x05};
 	for (std::size_t index = 0; index < blocks; ++index)
 		memory.fill(index * stride, block);
+}
+
+/* The process's gadget-cache budget bounds what an executor keeps of its
+ * address spaces, whatever its slots would hold. A workload of large blocks,
+ * each translated once, holds some megabytes under the default budget and is
+ * never asked to shed; under a quarter of that, the address space is asked to
+ * shed whenever a store takes the executor's address spaces past the budget,
+ * the executor lets go of it at its next run, as of a destroyed one, and
+ * translates afresh into a new one, so what it keeps stays within the budget
+ * and its blocks still run as they should. An executor that goes refunds what
+ * it held. */
+void the_budget_bounds_what_an_executor_keeps()
+{
+	using namespace uml::cpu::x86_64;
+	namespace budget = uml::cpu::gadget_cache;
+	constexpr std::size_t blocks = 3000;
+	constexpr std::size_t stride = 256;
+	constexpr std::size_t kib = 1024;
+	/* What one store and its links may add before the next store's check:
+	 * a translation, a record table's growth and a target table. */
+	constexpr std::size_t one_store = 128 * kib;
+	destroyed_generations = unknown_generations = 0;
+	TestMemory memory{0, blocks * stride + 4096};
+	fill_add_blocks(memory, blocks, stride);
 	const auto open = [] {
 		const auto state = budget::ledger_state();
 		return state.total - state.shedding;
@@ -1591,26 +1540,22 @@ struct Lookup final {
 		return peak;
 	};
 	const auto base = budget::ledger_state();
-	if (!expect(base.budget == budget::fallback_budget,
-		"the default budget was not in effect"))
-		return false;
+	require(base.budget == budget::fallback_budget,
+		"the default budget was not in effect");
 	std::size_t control = 0;
 	{
 		gadgets::Executor executor;
 		std::size_t translated = 0;
 		control = std::max(run(executor, translated),
 			run(executor, translated));
-		if (!expect(budget::ledger_state().reliefs == base.reliefs &&
+		require(budget::ledger_state().reliefs == base.reliefs &&
 			translated == blocks && control >= blocks * 63 * 8,
-			"the workload did not fit the default budget"))
-			return false;
+			"the workload did not fit the default budget");
 	}
-	if (!expect(budget::ledger_state().total == base.total,
-		"an executor that went kept its charges"))
-		return false;
+	require(budget::ledger_state().total == base.total,
+		"an executor that went kept its charges");
 	const auto small = std::max(control / 4, 4 * one_store);
 	budget::set_budget(small);
-	bool bounded = false;
 	{
 		gadgets::Executor executor;
 		std::size_t translated = 0;
@@ -1625,65 +1570,107 @@ struct Lookup final {
 		CpuState cpu{};
 		cpu.rip = 0;
 		run_to_system_call(executor, memory, cpu, "a shed block");
-		bounded = expect(peak != 0 && peak <= small + one_store,
-				  "the budget did not bound the address spaces") &&
-			expect(after.reliefs > base.reliefs &&
-				translated > blocks + blocks / 2,
-				"an address space past the budget was not shed") &&
-			expect(cpu.gpr(Register::rax) == 63,
-				"a block translated afresh ran wrongly");
+		require(peak != 0 && peak <= small + one_store,
+			"the budget did not bound the address spaces");
+		require(after.reliefs > base.reliefs &&
+			translated > blocks + blocks / 2,
+			"an address space past the budget was not shed");
+		require(cpu.gpr(Register::rax) == 63,
+			"a block translated afresh ran wrongly");
 	}
 	budget::set_budget(budget::fallback_budget);
-	return bounded && expect(budget::ledger_state().total == base.total,
+	require(budget::ledger_state().total == base.total,
+		"an executor that went kept its charges");
+}
+
+/* An address space the budget asked to shed is let go of at the executor's
+ * next look. A look that finds no room for its id leaves the address space
+ * held and asked for again, so the one after it lets go of it. Run with
+ * with_sharing(false), so that the room is the only allocation of the look. */
+void a_shed_address_space_is_asked_for_again_after_a_failed_allocation()
+{
+	using namespace uml::cpu::x86_64;
+	namespace budget = uml::cpu::gadget_cache;
+	constexpr std::size_t blocks = 1500;
+	constexpr std::size_t stride = 256;
+	constexpr std::size_t small = 512 * 1024;
+	destroyed_generations = unknown_generations = 0;
+	TestMemory memory{0, blocks * stride + 4096};
+	fill_add_blocks(memory, blocks, stride);
+	const auto base = budget::ledger_state();
+	budget::set_budget(small);
+	bool failed = false;
+	bool asked_again = true;
+	{
+		gadgets::Executor executor;
+		for (std::size_t index = 0; index < blocks && asked_again; ++index) {
+			if (budget::ledger_state().shedding != 0) {
+				uml::testing::fail_next_allocation();
+				executor.leave_gone_generations(0, &mmu_says);
+				failed = !uml::testing::cancel_pending_allocation_failure() ||
+					failed;
+				executor.leave_gone_generations(0, &mmu_says);
+				asked_again = budget::ledger_state().shedding == 0;
+			}
+			executor.prepare(memory, 7, 1, 1);
+			const auto selected = executor.select_program(
+				memory, index * stride, ExecutionMode::long64);
+			if (selected.status != gadgets::BuildStatus::built ||
+			    selected.program == nullptr)
+				asked_again = false;
+		}
+	}
+	budget::set_budget(budget::fallback_budget);
+	require(failed, "no look at a shedding address space met a failed "
+		"allocation");
+	require(asked_again, "an address space that could not be let go of "
+		"was not asked for again");
+	require(budget::ledger_state().total == base.total,
 		"an executor that went kept its charges");
 }
 
 /* The address space the cache last prepared may be the one let go of: the
  * executor must prepare again before it is used, and the next address space
  * must work. */
-[[nodiscard]] bool the_prepared_generation_can_be_let_go_of()
+void the_prepared_generation_can_be_let_go_of()
 {
 	using namespace uml::cpu::x86_64;
 	destroyed_generations = unknown_generations = 0;
 	TestMemory memory;
 	memory.load(0, {0x0f, 0x05});
 	gadgets::Executor executor;
-	if (!expect(look_up(executor, memory, 7).built,
-		"a new address space was not built"))
-		return false;
+	require(look_up(executor, memory, 7).built,
+		"a new address space was not built");
 	destroyed_generations = 1U << 7;
 	executor.leave_gone_generations(1, &mmu_says);
-	if (!expect(executor.resident_generations() == 0,
-		"the prepared destroyed address space was kept"))
-		return false;
+	require(executor.resident_generations() == 0,
+		"the prepared destroyed address space was kept");
 	/* Until it prepares again the executor translates without caching, as
 	 * after a failed prepare, rather than bind the address space it let go
 	 * of. */
 	const auto unbound = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(unbound.status == gadgets::BuildStatus::built &&
+	require(unbound.status == gadgets::BuildStatus::built &&
 			executor.resident_generations() == 0,
-		"an executor cached into the address space it let go of"))
-		return false;
+		"an executor cached into the address space it let go of");
 	const auto next = look_up(executor, memory, 8);
 	const auto repeat = look_up(executor, memory, 8);
-	return expect(next.built && !next.hit && repeat.hit,
+	require(next.built && !next.hit && repeat.hit,
 		"an address space after one let go of did not cache");
 }
 
 /* A generation number the MMU gave out again after destroying it (which the
  * kernel never does) names new code: the old address space's program must be
  * gone, not found resident under the same code-change count. */
-[[nodiscard]] bool a_number_given_out_again_runs_its_new_code()
+void a_number_given_out_again_runs_its_new_code()
 {
 	using namespace uml::cpu::x86_64;
 	destroyed_generations = unknown_generations = 0;
 	TestMemory memory;
 	memory.load(0, {0x0f, 0x05});
 	gadgets::Executor executor;
-	if (!expect(look_up(executor, memory, 5).built, "address space not built") ||
-	    !expect(look_up(executor, memory, 6).built, "address space not built"))
-		return false;
+	require(look_up(executor, memory, 5).built, "address space not built");
+	require(look_up(executor, memory, 6).built, "address space not built");
 	destroyed_generations = 1U << 5;
 	executor.leave_gone_generations(1, &mmu_says);
 	destroyed_generations = 0;
@@ -1691,7 +1678,7 @@ struct Lookup final {
 	executor.prepare(memory, 5, 1, 1);
 	const auto selected = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	return expect(selected.status == gadgets::BuildStatus::built &&
+	require(selected.status == gadgets::BuildStatus::built &&
 			selected.program != nullptr && !selected.cache_hit &&
 			selected.program->source().size() == 3,
 		"a number given out again was served the old address space's program");
@@ -1704,7 +1691,7 @@ struct Lookup final {
  * used; with the place given up nothing would be retired and 1 would still
  * hit. Entering 1 retires 2, and a tenth reaches 3's place and drops it, so 4
  * still hits; a place at the back of the order would have retired 4 instead. */
-[[nodiscard]] bool a_destroyed_generation_keeps_its_window_place()
+void a_destroyed_generation_keeps_its_window_place()
 {
 	using namespace uml::cpu::x86_64;
 	destroyed_generations = unknown_generations = 0;
@@ -1712,25 +1699,102 @@ struct Lookup final {
 	memory.load(0, {0x0f, 0x05});
 	gadgets::Executor executor;
 	for (std::uint64_t generation = 1; generation <= 8; ++generation)
-		if (!expect(look_up(executor, memory, generation).built,
-			"a new address space was not built"))
-			return false;
+		require(look_up(executor, memory, generation).built,
+			"a new address space was not built");
 	destroyed_generations = 1U << 3;
 	executor.leave_gone_generations(1, &mmu_says);
-	if (!expect(executor.resident_generations() == 7,
-		"the destroyed address space was kept"))
-		return false;
-	if (!expect(look_up(executor, memory, 9).built, "address space not built"))
-		return false;
+	require(executor.resident_generations() == 7,
+		"the destroyed address space was kept");
+	require(look_up(executor, memory, 9).built, "address space not built");
 	const auto first = look_up(executor, memory, 1);
-	if (!expect(first.built && !first.hit,
-		"the least recently used address space survived a full window"))
-		return false;
-	if (!expect(look_up(executor, memory, 10).built, "address space not built"))
-		return false;
+	require(first.built && !first.hit,
+		"the least recently used address space survived a full window");
+	require(look_up(executor, memory, 10).built, "address space not built");
 	const auto fourth = look_up(executor, memory, 4);
-	return expect(fourth.hit,
+	require(fourth.hit,
 		"a live address space was retired in place of the tombstone");
+}
+
+/* Letting go of an address space frees its id for the next to arrive, and the
+ * room for that is found before anything changes: when it cannot be, the
+ * address space is still held, the executor prepares afresh, and the next look
+ * lets go of it as if nothing had happened. The executor keeps its
+ * translations to itself (with_sharing(false)), so that the room is the only
+ * allocation the look makes; a shared space's bodies also queue and are
+ * reclaimed behind a snapshot of the executors, which allocates too. Every
+ * allocation of the look is failed in turn. */
+void letting_go_of_an_address_space_survives_a_failed_allocation()
+{
+	using namespace uml::cpu::x86_64;
+	bool held = false;
+	for (std::size_t allowed = 0;; ++allowed) {
+		require(allowed < 256, "the failure point never moved past "
+			"the end of letting go of an address space");
+		destroyed_generations = unknown_generations = 0;
+		TestMemory memory;
+		memory.load(0, {0x0f, 0x05});
+		gadgets::Executor executor;
+		for (std::uint64_t generation = 1; generation <= 3; ++generation)
+			require(look_up(executor, memory, generation).built,
+				"a new address space was not built");
+		destroyed_generations = 1U << 2;
+		uml::testing::fail_after_allocations(allowed);
+		executor.leave_gone_generations(1, &mmu_says);
+		/* True once the look made fewer allocations than allowed. */
+		const bool swept = uml::testing::cancel_pending_allocation_failure();
+		held = held || executor.resident_generations() == 3;
+		/* The same count: a look that failed is made again, and one that
+		 * did not has nothing left to do. */
+		executor.leave_gone_generations(1, &mmu_says);
+		require(executor.resident_generations() == 2,
+			"a destroyed address space was not let go of at the next look");
+		const auto first = look_up(executor, memory, 1);
+		const auto second = look_up(executor, memory, 2);
+		const auto third = look_up(executor, memory, 3);
+		require(first.hit && third.hit,
+			"a live address space lost its program to a failed look");
+		require(second.built && !second.hit,
+		"a let-go address space was served its old program");
+		if (swept) {
+			require(held, "no failure left an address space held "
+				"for want of room for its id");
+			return;
+		}
+	}
+}
+
+/* An address space entering a full window retires the least recently used,
+ * which needs room for its id. Whichever allocation of that fails, the
+ * executor goes on working: it prepares afresh, translates, and caches. Run
+ * with with_sharing(false), as above. */
+void retiring_the_oldest_address_space_survives_a_failed_allocation()
+{
+	using namespace uml::cpu::x86_64;
+	destroyed_generations = unknown_generations = 0;
+	for (std::size_t allowed = 0;; ++allowed) {
+		require(allowed < 256, "the failure point never moved past "
+			"the entry of a ninth address space");
+		TestMemory memory;
+		memory.load(0, {0x0f, 0x05});
+		gadgets::Executor executor;
+		for (std::uint64_t generation = 1; generation <= 8; ++generation)
+			require(look_up(executor, memory, generation).built,
+				"a new address space was not built");
+		uml::testing::fail_after_allocations(allowed);
+		executor.prepare(memory, 9, 1, 1);
+		/* True once the prepare made fewer allocations than allowed, so
+		 * that every one of its allocations has failed in turn. */
+		const bool swept =
+			uml::testing::cancel_pending_allocation_failure();
+		const auto ninth = look_up(executor, memory, 9);
+		const auto again = look_up(executor, memory, 9);
+		require(ninth.built && again.hit &&
+				executor.resident_generations() <= 8,
+			"an executor did not recover from a failed allocation "
+			"entering a ninth address space");
+		if (swept)
+			return;
+	}
 }
 
 /* A slot is current when the epoch it carries is its space's, and the epoch
@@ -1742,7 +1806,7 @@ struct Lookup final {
  * Block B then runs through every code change that returns the epoch to A's,
  * and A, never run in between, must be validated against the guest's bytes and
  * rebuilt instead of served stale. */
-[[nodiscard]] bool a_validation_does_not_outlive_the_epochs_it_counts()
+void a_validation_does_not_outlive_the_epochs_it_counts()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1752,41 +1816,38 @@ struct Lookup final {
 	executor.prepare(memory, 42, 1, 1);
 	const auto cold = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(cold.status == gadgets::BuildStatus::built &&
+	require(cold.status == gadgets::BuildStatus::built &&
 		cold.program != nullptr && !cold.cache_hit,
-		"the first program was not built"))
-		return false;
+		"the first program was not built");
 	memory.load(1, {0x09});
 	std::uint64_t changes = 1;
 	for (unsigned change = 0; change < 65'535; ++change) {
 		executor.prepare(memory, 42, 1, ++changes);
 		const auto other = executor.select_program(
 			memory, 0x100, ExecutionMode::long64);
-		if (!expect(other.program != nullptr,
-			"the second program was not selected"))
-			return false;
+		require(other.program != nullptr,
+			"the second program was not selected");
 	}
 	const auto before = executor.cache_diagnostics();
 	const auto rebuilt = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(rebuilt.status == gadgets::BuildStatus::built &&
+	require(rebuilt.status == gadgets::BuildStatus::built &&
 		rebuilt.program != nullptr && !rebuilt.cache_hit,
-		"a stale program survived a whole epoch cycle"))
-		return false;
+		"a stale program survived a whole epoch cycle");
 	CpuState cpu{};
 	const auto executed = gadgets::execute(
 		*rebuilt.program, cpu, memory, executor, 64);
 	const auto after = executor.cache_diagnostics();
-	return expect(executed.event == uml::cpu::EngineEvent::system_call &&
+	require(executed.event == uml::cpu::EngineEvent::system_call &&
 		cpu.gpr(Register::rax) == 9,
-		"the rebuilt program ran the old immediate") &&
-		expect(after.validation_attempts == before.validation_attempts + 1 &&
-			after.validation_mismatches ==
-				before.validation_mismatches + 1,
-			"the program was not validated against the guest's bytes");
+		"the rebuilt program ran the old immediate");
+	require(after.validation_attempts == before.validation_attempts + 1 &&
+		after.validation_mismatches ==
+			before.validation_mismatches + 1,
+		"the program was not validated against the guest's bytes");
 }
 
-[[nodiscard]] bool cache_links_common_successors()
+void cache_links_common_successors()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1802,15 +1863,15 @@ struct Lookup final {
 	const auto before = executor.cache_diagnostics().successor_hits;
 	const auto linked = executor.select_program(
 		memory, 2, ExecutionMode::long64);
-	return expect(first.program != nullptr && successor.program != nullptr &&
+	require(first.program != nullptr && successor.program != nullptr &&
 		returned.program != nullptr && linked.program != nullptr,
-		"successor-link setup did not select both programs") &&
-		expect(linked.cache_hit &&
-			executor.cache_diagnostics().successor_hits == before + 1,
-			"common successor did not bypass the main cache probe");
+		"successor-link setup did not select both programs");
+	require(linked.cache_hit &&
+		executor.cache_diagnostics().successor_hits == before + 1,
+		"common successor did not bypass the main cache probe");
 }
 
-[[nodiscard]] bool cache_chains_direct_branches()
+void cache_chains_direct_branches()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1836,51 +1897,46 @@ struct Lookup final {
 		memory, 32, ExecutionMode::long64);
 	const auto call = executor.select_program(
 		memory, 48, ExecutionMode::long64);
-	if (!expect(target.program != nullptr && direct.program != nullptr &&
+	require(target.program != nullptr && direct.program != nullptr &&
 			conditional.program != nullptr && call.program != nullptr,
-		"direct-link setup did not cache all programs"))
-		return false;
+		"direct-link setup did not cache all programs");
 
 	CpuState cpu{};
 	const auto chained = gadgets::execute(
 		*direct.program, cpu, memory, executor, 64);
-	if (!expect(chained.event == uml::cpu::EngineEvent::system_call &&
+	require(chained.event == uml::cpu::EngineEvent::system_call &&
 			chained.retired_instructions == 3 &&
 			cpu.gpr(Register::rax) == 42 && cpu.rip == 23,
-		"cached direct JMP did not enter its native successor"))
-		return false;
+		"cached direct JMP did not enter its native successor");
 
 	cpu = CpuState{};
 	cpu.rip = 32;
 	const auto conditionally_chained = gadgets::execute(
 		*conditional.program, cpu, memory, executor, 64);
-	if (!expect(conditionally_chained.event ==
+	require(conditionally_chained.event ==
 			uml::cpu::EngineEvent::system_call &&
 			conditionally_chained.retired_instructions == 4 &&
 			cpu.gpr(Register::rax) == 42 && cpu.rip == 23,
-		"cached JE did not enter its native successor"))
-		return false;
+		"cached JE did not enter its native successor");
 
 	cpu = CpuState{};
 	cpu.rip = 48;
 	cpu.gpr(Register::rsp) = 512;
 	const auto call_chained = gadgets::execute(
 		*call.program, cpu, memory, executor, 64);
-	if (!expect(call_chained.event == uml::cpu::EngineEvent::system_call &&
+	require(call_chained.event == uml::cpu::EngineEvent::system_call &&
 			call_chained.retired_instructions == 3 && cpu.rip == 23 &&
 			cpu.gpr(Register::rsp) == 504 && memory.qword(504) == 53,
 		"cached direct CALL did not push its return address and enter its "
-		"native callee"))
-		return false;
+		"native callee");
 
 	cpu = CpuState{};
 	const auto bounded = gadgets::execute(
 		*direct.program, cpu, memory, executor, 1);
-	if (!expect(bounded.event == uml::cpu::EngineEvent::continued &&
+	require(bounded.event == uml::cpu::EngineEvent::continued &&
 			bounded.retired_instructions == 1 &&
 			bounded.instruction_budget_exhausted && cpu.rip == 16,
-		"native direct link crossed the exact instruction budget"))
-		return false;
+		"native direct link crossed the exact instruction budget");
 
 	/* A code epoch resets active native links before exact validation. The
 	 * source may be retained immediately, but it must stop at the reset target
@@ -1889,29 +1945,27 @@ struct Lookup final {
 	executor.prepare(memory, 42, 1, 2);
 	const auto source_after_change = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(source_after_change.program != nullptr &&
+	require(source_after_change.program != nullptr &&
 			source_after_change.cache_hit,
-		"unchanged direct-link source did not survive exact validation"))
-		return false;
+		"unchanged direct-link source did not survive exact validation");
 	cpu = CpuState{};
 	const auto reset = gadgets::execute(
 		*source_after_change.program, cpu, memory, executor, 64);
-	if (!expect(reset.event == uml::cpu::EngineEvent::continued &&
+	require(reset.event == uml::cpu::EngineEvent::continued &&
 			reset.retired_instructions == 1 && cpu.rip == 16,
-		"code epoch left a stale native target active"))
-		return false;
+		"code epoch left a stale native target active");
 
 	const auto target_after_change = executor.select_program(
 		memory, 16, ExecutionMode::long64);
 	cpu = CpuState{};
 	const auto restored = gadgets::execute(
 		*source_after_change.program, cpu, memory, executor, 64);
-	return expect(target_after_change.program != nullptr &&
+	require(target_after_change.program != nullptr &&
 			target_after_change.cache_hit,
-			"unchanged native target did not survive exact validation") &&
-		expect(restored.event == uml::cpu::EngineEvent::system_call &&
-			restored.retired_instructions == 3 && cpu.rip == 23,
-			"validated native target was not reactivated");
+			"unchanged native target did not survive exact validation");
+	require(restored.event == uml::cpu::EngineEvent::system_call &&
+		restored.retired_instructions == 3 && cpu.rip == 23,
+		"validated native target was not reactivated");
 }
 
 /* Every indirect branch in an address space shares one tier keyed on the
@@ -1923,7 +1977,7 @@ struct Lookup final {
  * The private entries stay the first tier and still carry a site's own targets
  * when the shared one evicts them.
  */
-[[nodiscard]] bool cache_chains_indirect_transfers()
+void cache_chains_indirect_transfers()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -1957,19 +2011,17 @@ struct Lookup final {
 		memory, 32, ExecutionMode::long64);
 	const auto call = executor.select_program(
 		memory, 48, ExecutionMode::long64);
-	if (!expect(jump.program != nullptr && ret.program != nullptr &&
+	require(jump.program != nullptr && ret.program != nullptr &&
 			call.program != nullptr,
-		"indirect-link setup did not cache its branch programs"))
-		return false;
+		"indirect-link setup did not cache its branch programs");
 
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 16;
 	const auto cold = gadgets::execute(
 		*jump.program, cpu, memory, executor, 64);
-	if (!expect(cold.event == uml::cpu::EngineEvent::continued &&
+	require(cold.event == uml::cpu::EngineEvent::continued &&
 			cold.retired_instructions == 1 && cpu.rip == 16,
-		"indirect JMP entered a target no block had run at"))
-		return false;
+		"indirect JMP entered a target no block had run at");
 
 	const auto target_a = executor.select_program(
 		memory, 16, ExecutionMode::long64);
@@ -1977,10 +2029,9 @@ struct Lookup final {
 		memory, 24, ExecutionMode::long64);
 	const auto target_c = executor.select_program(
 		memory, 40, ExecutionMode::long64);
-	if (!expect(target_a.program != nullptr && target_b.program != nullptr &&
+	require(target_a.program != nullptr && target_b.program != nullptr &&
 			target_c.program != nullptr,
-		"indirect-link setup did not cache all three targets"))
-		return false;
+		"indirect-link setup did not cache all three targets");
 
 	/* Three targets through a two-entry site, revisited: the third would have
 	 * evicted one of the first two from the site alone. */
@@ -1998,12 +2049,11 @@ struct Lookup final {
 		cpu.gpr(Register::rax) = visit.target;
 		const auto entered = gadgets::execute(
 			*jump.program, cpu, memory, executor, 64);
-		if (!expect(entered.event == uml::cpu::EngineEvent::system_call &&
+		require(entered.event == uml::cpu::EngineEvent::system_call &&
 				entered.retired_instructions == 3 &&
 				cpu.gpr(Register::rax) == visit.result &&
 				cpu.rip == visit.next,
-			"indirect JMP left the stream for a target that had run"))
-			return false;
+			"indirect JMP left the stream for a target that had run");
 	}
 
 	/* This RET has never returned anywhere, and it still enters its return
@@ -2013,21 +2063,19 @@ struct Lookup final {
 	cpu.gpr(Register::rsp) = 512;
 	const auto returned = gadgets::execute(
 		*ret.program, cpu, memory, executor, 64);
-	if (!expect(returned.event == uml::cpu::EngineEvent::system_call &&
+	require(returned.event == uml::cpu::EngineEvent::system_call &&
 			returned.retired_instructions == 3 && cpu.rip == 23 &&
 			cpu.gpr(Register::rsp) == 520,
-		"RET left the stream for a return site that had run"))
-		return false;
+		"RET left the stream for a return site that had run");
 
 	cpu = CpuState{};
 	cpu.gpr(Register::rax) = 16;
 	const auto bounded = gadgets::execute(
 		*jump.program, cpu, memory, executor, 1);
-	if (!expect(bounded.event == uml::cpu::EngineEvent::continued &&
+	require(bounded.event == uml::cpu::EngineEvent::continued &&
 			bounded.retired_instructions == 1 &&
 			bounded.instruction_budget_exhausted && cpu.rip == 16,
-		"native indirect link crossed the exact instruction budget"))
-		return false;
+		"native indirect link crossed the exact instruction budget");
 
 	cpu = CpuState{};
 	cpu.rip = 48;
@@ -2035,26 +2083,24 @@ struct Lookup final {
 	cpu.gpr(Register::rsp) = 1024;
 	const auto called = gadgets::execute(
 		*call.program, cpu, memory, executor, 64);
-	if (!expect(called.event == uml::cpu::EngineEvent::system_call &&
+	require(called.event == uml::cpu::EngineEvent::system_call &&
 			called.retired_instructions == 3 && cpu.rip == 23,
-		"indirect CALL left the stream for a target that had run") ||
-		!expect(cpu.gpr(Register::rsp) == 1016 &&
-			memory.qword(1016) == 50,
-			"indirect CALL lost its architectural stack write"))
-		return false;
+		"indirect CALL left the stream for a target that had run");
+	require(cpu.gpr(Register::rsp) == 1016 &&
+		memory.qword(1016) == 50,
+		"indirect CALL lost its architectural stack write");
 
 	/* Evict the shared entry 16 answers to. The JMP trained its own site on
 	 * the cold miss above, so its private tier still carries the target. */
 	const auto conflicting = executor.select_program(
 		memory, 0x1011, ExecutionMode::long64);
-	if (!expect(conflicting.program != nullptr,
-		"conflicting target did not cache"))
-		return false;
+	require(conflicting.program != nullptr,
+		"conflicting target did not cache");
 	cpu = CpuState{};
 	cpu.gpr(Register::rax) = 16;
 	const auto retained = gadgets::execute(
 		*jump.program, cpu, memory, executor, 64);
-	return expect(retained.event == uml::cpu::EngineEvent::system_call &&
+	require(retained.event == uml::cpu::EngineEvent::system_call &&
 			retained.retired_instructions == 3 &&
 			cpu.gpr(Register::rax) == 42 && cpu.rip == 23,
 		"a shared-tier eviction cost a site its own trained target");
@@ -2065,49 +2111,9 @@ struct Lookup final {
  * stream. The two call tests below are about exactly that decision, so they
  * supply the sequence contract a real address space provides.
  */
-struct TestSequences final {
-	std::uint64_t mapping_changes{1};
-	std::uint64_t code_changes{1};
-	std::array<uml::cpu::x86_64::gadgets::ProgramCodeChange, 8> history{};
-	std::size_t recorded{};
-
-	void change(std::uint64_t address, std::uint64_t length) noexcept
-	{
-		if (recorded < history.size())
-			history[recorded] = {address, length};
-		++recorded;
-		++code_changes;
-	}
-};
-
-[[nodiscard]] uml::cpu::x86_64::gadgets::ProgramCacheSequences
-read_test_sequences(void *context) noexcept
-{
-	const auto &state = *static_cast<const TestSequences *>(context);
-	return {state.mapping_changes, state.code_changes, false};
-}
-
-/* Stands in for the address space's own history: the ranges published after
- * `sequence`, or a refusal when it cannot describe the whole span. */
-[[nodiscard]] int read_test_code_changes(void *context, std::uint64_t sequence,
-	uml::cpu::x86_64::gadgets::ProgramCodeChange *changes,
-	std::size_t capacity, std::uint64_t *current_sequence) noexcept
-{
-	const auto &state = *static_cast<const TestSequences *>(context);
-	*current_sequence = state.code_changes;
-	if (sequence >= state.code_changes)
-		return 0;
-	if (state.recorded > state.history.size() ||
-		sequence + state.recorded < state.code_changes)
-		return -1;
-	const auto count = state.code_changes - sequence;
-	if (count > capacity)
-		return -1;
-	for (std::uint64_t index = 0; index < count; ++index)
-		changes[index] = state.history[static_cast<std::size_t>(
-			state.recorded - count + index)];
-	return static_cast<int>(count);
-}
+using uml::test::x86_64_code_change_history::Sequences;
+using uml::test::x86_64_code_change_history::read_code_changes;
+using uml::test::x86_64_code_change_history::read_sequences;
 
 /* A call whose return-address push lands on an executable page publishes that
  * write like any other store, and then follows its link. What makes that safe
@@ -2126,18 +2132,18 @@ read_test_sequences(void *context) noexcept
  * the same selective retirement the cache already performs for a write it made
  * itself.
  */
-[[nodiscard]] bool an_unrelated_code_change_leaves_a_link_armed()
+void an_unrelated_code_change_leaves_a_link_armed()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
 	memory.load(0, {0xe9, 0x0b, 0x00, 0x00, 0x00});
 	memory.load(16, {0x0f, 0x05});
-	TestSequences sequences;
+	Sequences sequences;
 	memory.set_code_changes(&sequences.code_changes);
 	const auto prepare = [&](gadgets::Executor &executor) {
 		executor.prepare(memory, 42, sequences.mapping_changes,
-			sequences.code_changes, &sequences, read_test_sequences,
-			read_test_code_changes);
+			sequences.code_changes, &sequences, read_sequences,
+			read_code_changes);
 	};
 	/* Only the jump is selected before each run. Selecting the target would
 	 * re-arm its link, which is what the dispatch loop does and what would
@@ -2157,43 +2163,38 @@ read_test_sequences(void *context) noexcept
 
 	gadgets::Executor executor;
 	prepare(executor);
-	if (!expect(seed(executor), "linked jump target did not cache"))
-		return false;
+	require(seed(executor), "linked jump target did not cache");
 	const auto armed = run(executor);
-	if (!expect(armed.event == uml::cpu::EngineEvent::system_call &&
+	require(armed.event == uml::cpu::EngineEvent::system_call &&
 			armed.retired_instructions == 2,
-		"linked jump did not enter its target"))
-		return false;
+		"linked jump did not enter its target");
 
 	/* A page neither block was translated from. */
 	sequences.change(0x2000, 4096);
 	prepare(executor);
 	const auto unrelated = run(executor);
-	if (!expect(unrelated.event == uml::cpu::EngineEvent::system_call &&
+	require(unrelated.event == uml::cpu::EngineEvent::system_call &&
 			unrelated.retired_instructions == 2,
-		"a code change on an untranslated page retired a link"))
-		return false;
+		"a code change on an untranslated page retired a link");
 
 	/* The page the target was translated from. */
 	sequences.change(0, 4096);
 	prepare(executor);
 	const auto covered = run(executor);
-	if (!expect(covered.event == uml::cpu::EngineEvent::continued &&
+	require(covered.event == uml::cpu::EngineEvent::continued &&
 			covered.retired_instructions == 1,
-		"a code change covering the target left its link armed"))
-		return false;
+		"a code change covering the target left its link armed");
 
 	/* And a history that cannot describe the span retires everything. */
 	gadgets::Executor blind;
 	prepare(blind);
-	if (!expect(seed(blind) &&
+	require(seed(blind) &&
 			run(blind).event == uml::cpu::EngineEvent::system_call,
-		"linked jump did not enter its target for the second executor"))
-		return false;
+		"linked jump did not enter its target for the second executor");
 	sequences.recorded = sequences.history.size() + 1;
 	sequences.change(0x2000, 4096);
 	prepare(blind);
-	return expect(run(blind).event == uml::cpu::EngineEvent::continued,
+	require(run(blind).event == uml::cpu::EngineEvent::continued,
 		"an undescribed code change left a link armed");
 }
 
@@ -2210,7 +2211,7 @@ read_test_sequences(void *context) noexcept
  * nothing links to keeps the record its slot remembers and that a block
  * translated later links through.
  */
-[[nodiscard]] bool a_link_sweep_releases_what_only_replaced_blocks_named()
+void a_link_sweep_releases_what_only_replaced_blocks_named()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::size_t rounds = 6000;
@@ -2234,13 +2235,13 @@ read_test_sequences(void *context) noexcept
 	jump_to(0x300, 0x200);
 	memory.load(0x400, {0xb8, 0x4e, 0x00, 0x00, 0x00, 0x0f, 0x05});
 	jump_to(0x500, 0x400);
-	TestSequences sequences;
+	Sequences sequences;
 	memory.set_code_changes(&sequences.code_changes);
 	gadgets::Executor executor;
 	const auto prepare = [&] {
 		executor.prepare(memory, 42, sequences.mapping_changes,
-			sequences.code_changes, &sequences, read_test_sequences,
-			read_test_code_changes);
+			sequences.code_changes, &sequences, read_sequences,
+			read_code_changes);
 	};
 	const auto run = [&](std::uint64_t rip, std::uint64_t rax = 0) {
 		CpuState cpu{};
@@ -2262,13 +2263,12 @@ read_test_sequences(void *context) noexcept
 	};
 
 	prepare();
-	if (!expect(executor.select_program(memory, 0x200,
+	require(executor.select_program(memory, 0x200,
 			ExecutionMode::long64).program != nullptr &&
 			executor.select_program(memory, 0x400,
 				ExecutionMode::long64).program != nullptr &&
 			linked(0x300, 0x4d),
-		"link-sweep setup did not link its resident pair"))
-		return false;
+		"link-sweep setup did not link its resident pair");
 	for (std::size_t round = 0; round < rounds; ++round) {
 		if (round != 0) {
 			jump_to(0, target(round));
@@ -2278,66 +2278,63 @@ read_test_sequences(void *context) noexcept
 			prepare();
 		}
 		const auto [jumped, cpu] = run(0);
-		if (!expect(jumped.event == uml::cpu::EngineEvent::continued &&
+		require(jumped.event == uml::cpu::EngineEvent::continued &&
 				jumped.retired_instructions == 1 &&
 				cpu.rip == target(round),
-			"a rewritten jump did not leave for its new target"))
-			return false;
+			"a rewritten jump did not leave for its new target");
 		if (round == 0)
 			continue;
 		for (const auto asked : {target(round - 1), target(round)}) {
 			const auto [indirect, landed] = run(0x100, asked);
-			if (!expect(indirect.event ==
+			require(indirect.event ==
 					uml::cpu::EngineEvent::continued &&
 					landed.rip == asked,
-				"an indirect site lost a target a sweep released"))
-				return false;
+				"an indirect site lost a target a sweep released");
 		}
 	}
 	const auto &diagnostics = executor.cache_diagnostics();
-	return expect(linked(0x300, 0x4d),
-			"a sweep reset a link between resident blocks") &&
-		expect(executor.select_program(memory, 0x400,
-				ExecutionMode::long64).program != nullptr &&
-			linked(0x500, 0x4e),
-			"a sweep released the record of a resident block") &&
-		expect(diagnostics.link_sweeps != 0 &&
-			diagnostics.released_links >= rounds / 2 &&
-			diagnostics.released_sites == 0,
-			"replaced jumps' targets were not swept");
+	require(linked(0x300, 0x4d),
+			"a sweep reset a link between resident blocks");
+	require(executor.select_program(memory, 0x400,
+			ExecutionMode::long64).program != nullptr &&
+		linked(0x500, 0x4e),
+		"a sweep released the record of a resident block");
+	require(diagnostics.link_sweeps != 0 &&
+		diagnostics.released_links >= rounds / 2 &&
+		diagnostics.released_sites == 0,
+		"replaced jumps' targets were not swept");
 }
 
-[[nodiscard]] bool linked_call_crosses_a_disjoint_executable_stack_write()
+void linked_call_crosses_a_disjoint_executable_stack_write()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
 	memory.load(0, {0xe8, 0x0b, 0x00, 0x00, 0x00});
 	memory.load(16, {0x0f, 0x05});
 	memory.set_executable_page(0);
-	TestSequences sequences;
+	Sequences sequences;
 	memory.set_code_changes(&sequences.code_changes);
 	gadgets::Executor executor;
 	executor.prepare(memory, 42, sequences.mapping_changes,
-		sequences.code_changes, &sequences, read_test_sequences);
+		sequences.code_changes, &sequences, read_sequences);
 	const auto target = executor.select_program(
 		memory, 16, ExecutionMode::long64);
 	const auto call = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(target.program != nullptr && call.program != nullptr,
-		"executable-stack CALL did not populate its direct link"))
-		return false;
+	require(target.program != nullptr && call.program != nullptr,
+		"executable-stack CALL did not populate its direct link");
 
 	CpuState cpu{};
 	cpu.gpr(Register::rsp) = 0x800;
 	const auto result = gadgets::execute(
 		*call.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 			result.retired_instructions == 2 && cpu.rip == 18,
 		"direct CALL left the stream for a stack write that changed "
-		"no instruction it was about to run") &&
-		expect(cpu.gpr(Register::rsp) == 0x7f8 &&
-			memory.qword(0x7f8) == 5 && memory.invalidations() == 1,
-			"code-changing CALL lost its architectural stack write");
+		"no instruction it was about to run");
+	require(cpu.gpr(Register::rsp) == 0x7f8 &&
+		memory.qword(0x7f8) == 5 && memory.invalidations() == 1,
+		"code-changing CALL lost its architectural stack write");
 }
 
 /* The same call, with the push aimed at the callee's own instructions. Nothing
@@ -2345,68 +2342,66 @@ read_test_sequences(void *context) noexcept
  * write overlapped and resets the link it was reached through, so following
  * that link finds the fallback and returns to have the callee retranslated.
  */
-[[nodiscard]] bool linked_call_stops_when_the_stack_write_hits_its_target()
+void linked_call_stops_when_the_stack_write_hits_its_target()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
 	memory.load(0, {0xe8, 0x0b, 0x00, 0x00, 0x00});
 	memory.load(16, {0x0f, 0x05});
 	memory.set_executable_page(0);
-	TestSequences sequences;
+	Sequences sequences;
 	memory.set_code_changes(&sequences.code_changes);
 	gadgets::Executor executor;
 	executor.prepare(memory, 42, sequences.mapping_changes,
-		sequences.code_changes, &sequences, read_test_sequences);
+		sequences.code_changes, &sequences, read_sequences);
 	const auto target = executor.select_program(
 		memory, 16, ExecutionMode::long64);
 	const auto call = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(target.program != nullptr && call.program != nullptr,
-		"overlapping-stack CALL did not populate its direct link"))
-		return false;
+	require(target.program != nullptr && call.program != nullptr,
+		"overlapping-stack CALL did not populate its direct link");
 
 	CpuState cpu{};
 	/* The eight-byte push lands on 16, which is the callee. */
 	cpu.gpr(Register::rsp) = 24;
 	const auto result = gadgets::execute(
 		*call.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 			result.retired_instructions == 1 && cpu.rip == 16,
 		"direct CALL entered a callee its own stack write had just "
-		"overwritten") &&
-		expect(cpu.gpr(Register::rsp) == 16 &&
-			memory.qword(16) == 5 && memory.invalidations() == 1,
-			"overlapping-stack CALL lost its architectural stack write");
+		"overwritten");
+	require(cpu.gpr(Register::rsp) == 16 &&
+		memory.qword(16) == 5 && memory.invalidations() == 1,
+		"overlapping-stack CALL lost its architectural stack write");
 }
 
-[[nodiscard]] bool short_blocks_retain_only_their_translated_storage()
+void short_blocks_retain_only_their_translated_storage()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
 	memory.load(0, {0x0f, 0x05});
 	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built &&
+	require(built.status == gadgets::BuildStatus::built &&
 		built.program.instruction_count() == 1,
-		"short allocation-regression block did not build"))
-		return false;
+		"short allocation-regression block did not build");
 	/* Allow allocator rounding and its smallest bucket, but not a
 	 * maximum-size decoder reservation, and nothing outside the two
 	 * allocations a translation is: the native stream, and the guest bytes
 	 * the decoder read. Inspect the actual allocations rather than an
 	 * implementation counter. */
-	return expect(built.program.source().size() == 2,
-		"short cached block did not save its own two bytes") &&
-		expect(built.program.replay_bytes() == 0,
-			"a translation nothing replayed carries decoded "
-			"instructions") &&
-		expect(malloc_size(built.program.stream_allocation()) != 0 &&
-			malloc_size(built.program.stream_allocation()) <=
-			2 * (built.program.native_stream().size_bytes() +
-				gadgets::stream_header_words * sizeof(std::uintptr_t)),
-			"short cached block retained excess native stream capacity") &&
-		expect(malloc_size(built.program.source().data()) <=
-			2 * built.program.source().size() + 32,
-			"short cached block retained the decoder's spare capacity");
+	require(built.program.source().size() == 2,
+		"short cached block did not save its own two bytes");
+	require(built.program.replay_bytes() == 0,
+		"a translation nothing replayed carries decoded "
+		"instructions");
+	require(malloc_size(built.program.stream_allocation()) != 0 &&
+		malloc_size(built.program.stream_allocation()) <=
+		2 * (built.program.native_stream().size_bytes() +
+			gadgets::stream_header_words * sizeof(std::uintptr_t)),
+		"short cached block retained excess native stream capacity");
+	require(malloc_size(built.program.source().data()) <=
+		2 * built.program.source().size() + 32,
+		"short cached block retained the decoder's spare capacity");
 }
 
 /* What a block keeps, and when. A translation is built with its native stream
@@ -2414,7 +2409,7 @@ read_test_sequences(void *context) noexcept
  * decodes the block out of that source and the block keeps the result, because
  * the dispatches that end inside a block keep ending inside it.
  */
-[[nodiscard]] bool a_replay_keeps_what_it_decoded()
+void a_replay_keeps_what_it_decoded()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2426,44 +2421,41 @@ read_test_sequences(void *context) noexcept
 		0x0f, 0x05,                               // syscall
 	});
 	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built &&
+	require(built.status == gadgets::BuildStatus::built &&
 		built.program.instruction_count() == 5 &&
 		built.program.replay_bytes() == 0,
 		"a fresh translation did not build empty of decoded "
-		"instructions"))
-		return false;
+		"instructions");
 	/* A block entered with the budget to finish it never asks. */
 	CpuState whole{};
 	const auto ran = gadgets::execute(built.program, whole, memory, 5);
-	if (!expect(ran.event == uml::cpu::EngineEvent::system_call &&
+	require(ran.event == uml::cpu::EngineEvent::system_call &&
 		built.program.replay_bytes() == 0,
-		"a block that ran to its end decoded itself again"))
-		return false;
+		"a block that ran to its end decoded itself again");
 	const auto kept = 5 * sizeof(gadgets::Gadget);
 	CpuState cpu{};
 	const auto first = gadgets::execute(built.program, cpu, memory, 2);
-	if (!expect(first.event == uml::cpu::EngineEvent::continued &&
+	require(first.event == uml::cpu::EngineEvent::continued &&
 		first.instruction_budget_exhausted && cpu.rip == 10 &&
 		cpu.gpr(Register::rax) == 2,
-		"a first replay did not stop at its budget") ||
-		!expect(built.program.replay_bytes() == kept,
-			"a replayed block did not keep what it decoded"))
-		return false;
+		"a first replay did not stop at its budget");
+	require(built.program.replay_bytes() == kept,
+		"a replayed block did not keep what it decoded");
 	CpuState second{};
 	const auto again = gadgets::execute(built.program, second, memory, 3);
-	return expect(again.event == uml::cpu::EngineEvent::continued &&
+	require(again.event == uml::cpu::EngineEvent::continued &&
 		again.instruction_budget_exhausted && second.rip == 14 &&
 		second.gpr(Register::rax) == 4,
-		"a second replay did not read the kept instructions") &&
-		expect(built.program.replay_bytes() == kept,
-			"a second replay decoded the block again");
+		"a second replay did not read the kept instructions");
+	require(built.program.replay_bytes() == kept,
+		"a second replay decoded the block again");
 }
 
 /* What a budget shorter than the block replays, against the block itself. A
  * translation keeps no decoded instructions, so the replay decodes them back
  * out of the bytes the build saved, and what it must reproduce is every
  * instruction boundary of the original block. */
-[[nodiscard]] bool budget_limited_replay_matches_the_whole_block()
+void budget_limited_replay_matches_the_whole_block()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2479,32 +2471,30 @@ read_test_sequences(void *context) noexcept
 		0x0f, 0x05,                               // syscall
 	});
 	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built &&
+	require(built.status == gadgets::BuildStatus::built &&
 		built.program.instruction_count() == 7 &&
 		built.program.byte_count() == 26 &&
 		built.program.source().size() == 26,
-		"mixed-length replay block did not build") ||
-		!expect(built.program.terminal(),
-			"a block ending at SYSCALL is not terminal"))
-		return false;
+		"mixed-length replay block did not build");
+	require(built.program.terminal(),
+		"a block ending at SYSCALL is not terminal");
 	static constexpr std::uint64_t boundaries[] = {0, 7, 10, 14, 17, 20, 24};
 	static constexpr std::uint64_t reached[] = {1, 2, 4, 8, 9, 13};
 	for (std::size_t budget = 1; budget < 7; ++budget) {
 		CpuState cpu{};
 		const auto result = gadgets::execute(
 			built.program, cpu, memory, budget);
-		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+		require(result.event == uml::cpu::EngineEvent::continued &&
 			result.instruction_budget_exhausted &&
 			result.retired_instructions == budget,
-			"a budget-limited replay did not stop at its budget") ||
-			!expect(cpu.rip == boundaries[budget] &&
-				cpu.gpr(Register::rax) == reached[budget - 1],
-				"a budget-limited replay lost an instruction "
-				"boundary"))
-			return false;
+			"a budget-limited replay did not stop at its budget");
+		require(cpu.rip == boundaries[budget] &&
+			cpu.gpr(Register::rax) == reached[budget - 1],
+			"a budget-limited replay lost an instruction "
+			"boundary");
 	}
 	const auto cut = gadgets::build(memory, 0, ExecutionMode::long64, 3);
-	return expect(cut.status == gadgets::BuildStatus::built &&
+	require(cut.status == gadgets::BuildStatus::built &&
 		cut.program.instruction_count() == 3 && !cut.program.terminal(),
 		"a block cut at its instruction limit reported itself terminal");
 }
@@ -2513,7 +2503,7 @@ read_test_sequences(void *context) noexcept
  * address now. Guest memory is free to change under a translation -- deciding
  * whether a cached one survives that is the validation's job -- and a block
  * already entered has to finish as itself. */
-[[nodiscard]] bool budget_limited_replay_ignores_rewritten_guest_code()
+void budget_limited_replay_ignores_rewritten_guest_code()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2525,10 +2515,9 @@ read_test_sequences(void *context) noexcept
 		0x0f, 0x05,                               // syscall
 	});
 	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built &&
+	require(built.status == gadgets::BuildStatus::built &&
 		built.program.instruction_count() == 5,
-		"replay-source block did not build"))
-		return false;
+		"replay-source block did not build");
 	/* Six DEC RAX in place of the block. A replay reading guest memory
 	 * decodes those instead, and both the register it leaves and the RIP it
 	 * stops at say which bytes it read. */
@@ -2538,18 +2527,18 @@ read_test_sequences(void *context) noexcept
 	});
 	CpuState cpu{};
 	const auto result = gadgets::execute(built.program, cpu, memory, 3);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 3 &&
 		result.instruction_budget_exhausted,
-		"replay after a code rewrite did not stop at its budget") &&
-		expect(cpu.rip == 14 && cpu.gpr(Register::rax) == 4,
-			"a replay decoded the guest's newer bytes");
+		"replay after a code rewrite did not stop at its budget");
+	require(cpu.rip == 14 && cpu.gpr(Register::rax) == 4,
+		"a replay decoded the guest's newer bytes");
 }
 
 /* A fault inside a replayed prefix reports exactly what the same fault in the
  * whole block reports: the faulting instruction's own RIP, nothing retired for
  * it, and the prefix before it retired. */
-[[nodiscard]] bool budget_limited_replay_faults_where_the_block_does()
+void budget_limited_replay_faults_where_the_block_does()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2562,28 +2551,27 @@ read_test_sequences(void *context) noexcept
 		0x0f, 0x05,                               // syscall
 	});
 	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built &&
+	require(built.status == gadgets::BuildStatus::built &&
 		built.program.instruction_count() == 6,
-		"faulting replay block did not build"))
-		return false;
+		"faulting replay block did not build");
 	CpuState cpu{};
 	cpu.gpr(Register::rbx) = 16383;
 	const auto result = gadgets::execute(built.program, cpu, memory, 4);
-	return expect(result.event == uml::cpu::EngineEvent::memory_fault &&
+	require(result.event == uml::cpu::EngineEvent::memory_fault &&
 		result.fault.address == 16383 &&
 		result.fault.access == uml::memory::MemoryAccess::read,
-		"a replayed prefix lost its precise fault") &&
-		expect(result.retired_instructions == 2 && cpu.rip == 10 &&
-			cpu.gpr(Register::rax) == 2,
-			"a replayed prefix did not stop at the faulting "
-			"instruction");
+		"a replayed prefix lost its precise fault");
+	require(result.retired_instructions == 2 && cpu.rip == 10 &&
+		cpu.gpr(Register::rax) == 2,
+		"a replayed prefix did not stop at the faulting "
+		"instruction");
 }
 
 /* Both stores of a block publish, though they share a page and nothing
  * separates them: another vCPU that revalidated a block of the page after the
  * first would keep the bytes it read until the second moved the stamp again.
  */
-[[nodiscard]] bool executable_stores_publish_a_code_change_each()
+void executable_stores_publish_a_code_change_each()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2600,19 +2588,18 @@ read_test_sequences(void *context) noexcept
 	 * have a translation to protect. */
 	const auto selected = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(selected.program != nullptr,
-		"executable-store block did not build"))
-		return false;
+	require(selected.program != nullptr,
+		"executable-store block did not build");
 	const auto result = gadgets::execute(
 		*selected.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		result.retired_instructions == 3 && cpu.rip == 9,
-		"non-overlapping executable stores did not stay in one native block") &&
-		expect(memory.invalidations() == 2,
-			"a second executable store to a code page published "
-			"nothing") &&
-		expect(memory.byte(0x800) == 0x7f && memory.byte(0x801) == 0x6e,
-			"batched executable stores did not update guest memory");
+		"non-overlapping executable stores did not stay in one native block");
+	require(memory.invalidations() == 2,
+		"a second executable store to a code page published "
+		"nothing");
+	require(memory.byte(0x800) == 0x7f && memory.byte(0x801) == 0x6e,
+		"batched executable stores did not update guest memory");
 }
 
 /* A store publishes a code change to protect cached translations, and only
@@ -2621,7 +2608,7 @@ read_test_sequences(void *context) noexcept
  * caches code on that page, this executor's next store to it publishes even
  * though its own write translation was filled before the page gained code.
  */
-[[nodiscard]] bool store_publishes_only_where_some_executor_caches_code()
+void store_publishes_only_where_some_executor_caches_code()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2633,34 +2620,30 @@ read_test_sequences(void *context) noexcept
 	writer.prepare(memory, 7, 1, 1);
 	const auto block = writer.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(block.program != nullptr, "code-page registry block did not build"))
-		return false;
+	require(block.program != nullptr, "code-page registry block did not build");
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 0x1800;
 	auto result = gadgets::execute(*block.program, cpu, memory, writer, 64);
-	if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		memory.byte(0x1800) == 0x7f,
-		"store to an untranslated executable page did not run") ||
-		!expect(memory.invalidations() == 0,
-			"store to a page holding no cached code published a change"))
-		return false;
+		"store to an untranslated executable page did not run");
+	require(memory.invalidations() == 0,
+		"store to a page holding no cached code published a change");
 
 	gadgets::Executor reader;
 	reader.prepare(memory, 7, 1, 1);
 	const auto target = reader.select_program(
 		memory, 0x1000, ExecutionMode::long64);
-	if (!expect(target.program != nullptr, "code-page registry target did not build"))
-		return false;
+	require(target.program != nullptr, "code-page registry target did not build");
 	cpu = {};
 	cpu.rip = 0;
 	cpu.gpr(Register::rax) = 0x1801;
 	result = gadgets::execute(*block.program, cpu, memory, writer, 64);
-	if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		memory.byte(0x1801) == 0x7f,
-		"store to a newly translated page did not run") ||
-		!expect(memory.invalidations() == 1,
-			"store to a page another executor translated did not publish"))
-		return false;
+		"store to a newly translated page did not run");
+	require(memory.invalidations() == 1,
+		"store to a page another executor translated did not publish");
 
 	/* Retiring the reader's translations takes the page off the list again. */
 	reader = gadgets::Executor{};
@@ -2668,14 +2651,14 @@ read_test_sequences(void *context) noexcept
 	cpu.rip = 0;
 	cpu.gpr(Register::rax) = 0x1802;
 	result = gadgets::execute(*block.program, cpu, memory, writer, 64);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		memory.byte(0x1802) == 0x7f,
-		"store after the other executor retired did not run") &&
-		expect(memory.invalidations() == 1,
-			"store to a page that lost its cached code still published");
+		"store after the other executor retired did not run");
+	require(memory.invalidations() == 1,
+		"store to a page that lost its cached code still published");
 }
 
-[[nodiscard]] bool overlapping_executable_store_stops_immediately()
+void overlapping_executable_store_stops_immediately()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2692,16 +2675,16 @@ read_test_sequences(void *context) noexcept
 	executor.prepare(memory, 1, 1, 1);
 	const auto result = gadgets::execute(
 		built.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 1 && cpu.rip == 3,
-		"overlapping executable store ran stale translated code") &&
-		expect(memory.invalidations() == 1,
-			"overlapping executable store did not publish its change") &&
-		expect(memory.byte(3) == 0x90,
-			"overlapping executable store did not update guest memory");
+		"overlapping executable store ran stale translated code");
+	require(memory.invalidations() == 1,
+		"overlapping executable store did not publish its change");
+	require(memory.byte(3) == 0x90,
+		"overlapping executable store did not update guest memory");
 }
 
-[[nodiscard]] bool executable_store_links_only_to_unchanged_code()
+void executable_store_links_only_to_unchanged_code()
 {
 	using namespace uml::cpu::x86_64;
 	const auto run = [](std::uint64_t destination, bool should_chain,
@@ -2726,9 +2709,8 @@ read_test_sequences(void *context) noexcept
 			memory, 16, ExecutionMode::long64);
 		const auto source = executor.select_program(
 			memory, 0, ExecutionMode::long64);
-		if (!expect(target.program != nullptr && source.program != nullptr,
-			"code-write link setup did not cache both programs"))
-			return false;
+		require(target.program != nullptr && source.program != nullptr,
+			"code-write link setup did not cache both programs");
 		if (concurrent_change)
 			++sequences.code_changes;
 
@@ -2736,24 +2718,26 @@ read_test_sequences(void *context) noexcept
 		cpu.gpr(Register::rax) = destination;
 		const auto result = gadgets::execute(
 			*source.program, cpu, memory, executor, 64);
-		if (should_chain)
-			return expect(
-				result.event == uml::cpu::EngineEvent::system_call &&
+		if (should_chain) {
+			require(result.event == uml::cpu::EngineEvent::system_call &&
 				result.retired_instructions == 3 && cpu.rip == 18,
-				"non-overlapping code write did not retain its safe link") &&
-				expect(memory.invalidations() == 1 &&
-					sequences.code_changes == 2,
-					"safe code-write link published the wrong sequence");
-		return expect(result.event == uml::cpu::EngineEvent::continued &&
+				"non-overlapping code write did not retain its safe link");
+			require(memory.invalidations() == 1 &&
+				sequences.code_changes == 2,
+				"safe code-write link published the wrong sequence");
+			return;
+		}
+		require(result.event == uml::cpu::EngineEvent::continued &&
 			result.retired_instructions == 2 && cpu.rip == 16,
-			"unsafe code write entered a cached target") &&
-			expect(memory.invalidations() == 1,
-				"unsafe code-write link did not publish exactly once") &&
-			expect(destination != 16 || memory.byte(16) == 0x90,
-				"overlapping target write was not committed");
+			"unsafe code write entered a cached target");
+		require(memory.invalidations() == 1,
+			"unsafe code-write link did not publish exactly once");
+		require(destination != 16 || memory.byte(16) == 0x90,
+			"overlapping target write was not committed");
 	};
-	return run(0x800, true) && run(16, false) &&
-		run(0x800, false, true);
+	run(0x800, true);
+	run(16, false);
+	run(0x800, false, true);
 }
 
 /* A store into a cached block far outside the running program is caught by
@@ -2763,7 +2747,7 @@ read_test_sequences(void *context) noexcept
  * run once with a store that changes nothing so the link forms, then again with
  * a store that rewrites the target.
  */
-[[nodiscard]] bool distant_code_write_cools_its_linked_block()
+void distant_code_write_cools_its_linked_block()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t target = 0x800;
@@ -2778,12 +2762,11 @@ read_test_sequences(void *context) noexcept
 	gadgets::Executor executor;
 	executor.prepare(memory, 42, sequences.mapping_changes,
 		sequences.code_changes, &sequences, read_test_code_sequences);
-	if (!expect(executor.select_program(memory, target,
+	require(executor.select_program(memory, target,
 			ExecutionMode::long64).program != nullptr &&
 		executor.select_program(memory, 0,
 			ExecutionMode::long64).program != nullptr,
-		"distant code-write setup did not cache both programs"))
-		return false;
+		"distant code-write setup did not cache both programs");
 
 	const auto run = [&](std::uint8_t value) {
 		const auto source = executor.select_program(
@@ -2801,24 +2784,22 @@ read_test_sequences(void *context) noexcept
 	 * edge is safe to keep and the link is established.
 	 */
 	const auto warm = run(0x01);
-	if (!expect(memory.byte(target + 1) == 0x01,
-			"link-forming run did not perform its store") ||
-		!expect(warm.gpr(Register::rax) == 1,
-			"link-forming run did not reach the cached target"))
-		return false;
+	require(memory.byte(target + 1) == 0x01,
+			"link-forming run did not perform its store");
+	require(warm.gpr(Register::rax) == 1,
+		"link-forming run did not reach the cached target");
 
 	const auto after = run(0x02);
-	if (!expect(memory.byte(target + 1) == 0x02,
-		"distant code write was not committed"))
-		return false;
+	require(memory.byte(target + 1) == 0x02,
+		"distant code write was not committed");
 	if (after.rip == target)
 		/* Stopping at the boundary is correct: the next selection rebuilds. */
-		return true;
-	return expect(after.gpr(Register::rax) == 2,
+		return;
+	require(after.gpr(Register::rax) == 2,
 		"a linked edge entered a stale translation of a written block");
 }
 
-[[nodiscard]] bool code_write_resets_unvalidated_successors()
+void code_write_resets_unvalidated_successors()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2846,23 +2827,22 @@ read_test_sequences(void *context) noexcept
 		memory, 16, ExecutionMode::long64);
 	const auto source = executor.select_program(
 		memory, 0, ExecutionMode::long64);
-	if (!expect(final_target.program != nullptr &&
+	require(final_target.program != nullptr &&
 		intermediary.program != nullptr && source.program != nullptr,
-		"code-write successor reset setup did not cache every program"))
-		return false;
+		"code-write successor reset setup did not cache every program");
 
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 32;
 	const auto result = gadgets::execute(
 		*source.program, cpu, memory, executor, 64);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 3 && cpu.rip == 32,
-		"code write followed an unvalidated stale successor") &&
-		expect(memory.byte(32) == 0x90 && memory.invalidations() == 1,
-			"code-write successor reset lost the guest store");
+		"code write followed an unvalidated stale successor");
+	require(memory.byte(32) == 0x90 && memory.invalidations() == 1,
+		"code-write successor reset lost the guest store");
 }
 
-[[nodiscard]] bool slow_executable_writes_publish_every_store()
+void slow_executable_writes_publish_every_store()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2878,32 +2858,61 @@ read_test_sequences(void *context) noexcept
 		&context, 0x800, first.data(), first.size());
 	const auto second_result = gadgets::uml_x86_64_gadget_bulk_store(
 		&context, 0x810, second.data(), second.size());
-	return expect(first_result == 1 && second_result == 1,
-		"slow executable stores did not complete") &&
-		expect(memory.invalidations() == 2 &&
-			context.code_publications == 2,
-			"a second slow store to a published page published nothing") &&
-		expect(memory.byte(0x800) == 0x55 && memory.byte(0x810) == 0xaa,
-			"slow executable stores lost guest bytes");
+	require(first_result == 1 && second_result == 1,
+		"slow executable stores did not complete");
+	require(memory.invalidations() == 2 &&
+		context.code_publications == 2,
+		"a second slow store to a published page published nothing");
+	require(memory.byte(0x800) == 0x55 && memory.byte(0x810) == 0xaa,
+		"slow executable stores lost guest bytes");
 }
 
-[[nodiscard]] bool decode_scaled_address()
+void decode_scaled_address()
 {
 	TestMemory memory;
 	memory.load(0, {0x48, 0x8b, 0x44, 0x8d, 0xf0});
 	const auto result = uml::cpu::x86_64::decode(memory, 0);
 	const auto &source = result.instruction.source;
-	return expect(result.status == uml::cpu::x86_64::DecodeStatus::decoded,
-		"scaled load did not decode") &&
-		expect(result.instruction.length == 5, "scaled load length is wrong") &&
-		expect(source.kind == uml::cpu::x86_64::OperandKind::memory,
-			"scaled load source is not memory") &&
-		expect(source.memory.base == 5 && source.memory.index == 1 &&
-			source.memory.scale == 4 && source.memory.displacement == -16,
-			"ModR/M plus SIB address was not normalized");
+	require(result.status == uml::cpu::x86_64::DecodeStatus::decoded,
+		"scaled load did not decode");
+	require(result.instruction.length == 5, "scaled load length is wrong");
+	require(source.kind == uml::cpu::x86_64::OperandKind::memory,
+		"scaled load source is not memory");
+	require(source.memory.base == 5 && source.memory.index == 1 &&
+		source.memory.scale == 4 && source.memory.displacement == -16,
+		"ModR/M plus SIB address was not normalized");
 }
 
-[[nodiscard]] bool execute_scalar_control_flow()
+/* A REX prefix counts only immediately before the opcode: any legacy prefix
+ * after it voids it. ADD [rax], ebx behind REX.B and each prefix decodes with
+ * the base RAX, and with the prefix first it keeps REX.B and so the base R8. */
+void a_legacy_prefix_after_rex_voids_it()
+{
+	using namespace uml::cpu::x86_64;
+	{
+		TestMemory memory;
+		memory.load(0, {0x66, 0x41, 0x01, 0x18});
+		const auto kept = decode(memory, 0);
+		require(kept.status == DecodeStatus::decoded &&
+				kept.instruction.destination.kind == OperandKind::memory &&
+				kept.instruction.destination.memory.base == 8,
+			"a REX prefix before the opcode was not honoured");
+	}
+	for (const std::uint8_t prefix : {0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65,
+		     0x66, 0x67, 0xf0, 0xf2, 0xf3}) {
+		TestMemory memory;
+		memory.load(0, {0x41, prefix, 0x01, 0x18});
+		const auto voided = decode(memory, 0);
+		require(voided.status == DecodeStatus::decoded &&
+				voided.instruction.destination.kind ==
+					OperandKind::memory &&
+				voided.instruction.destination.memory.base == 0 &&
+				voided.instruction.length == 4,
+			"a legacy prefix after REX did not void it");
+	}
+}
+
+void execute_scalar_control_flow()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -2920,32 +2929,31 @@ read_test_sequences(void *context) noexcept
 	const auto first = require_built(gadgets::build(memory, 0),
 		"scalar block did not build");
 	const auto first_run = gadgets::execute(first.program, cpu, memory, 64);
-	if (!expect(first_run.event == uml::cpu::EngineEvent::continued,
-		"conditional block returned the wrong event") ||
-		!expect(first_run.retired_instructions == 4,
-			"conditional block retirement is wrong") ||
-		!expect(cpu.gpr(Register::rax) == 8 && cpu.rip == 27,
-			"arithmetic or equal branch result is wrong") ||
-		!expect(cpu.deferred_flags.operation ==
-				DeferredFlagOperation::subtract,
-			"equal branch eagerly materialized the deferred flags"))
-		return false;
+	require(first_run.event == uml::cpu::EngineEvent::continued,
+		"conditional block returned the wrong event");
+	require(first_run.retired_instructions == 4,
+		"conditional block retirement is wrong");
+	require(cpu.gpr(Register::rax) == 8 && cpu.rip == 27,
+		"arithmetic or equal branch result is wrong");
+	require(cpu.deferred_flags.operation ==
+			DeferredFlagOperation::subtract,
+		"equal branch eagerly materialized the deferred flags");
 
 	const auto second = require_built(gadgets::build(memory, cpu.rip),
 		"syscall block did not build");
 	const auto second_run = gadgets::execute(second.program, cpu, memory, 64);
-	return expect(second_run.event == uml::cpu::EngineEvent::system_call,
-		"SYSCALL did not exit the gadget stream") &&
-		expect(second_run.retired_instructions == 2,
-			"SYSCALL block retirement is wrong") &&
-		expect(cpu.gpr(Register::rdi) == 42 && cpu.rip == 36,
-			"SYSCALL state is wrong") &&
-		expect(cpu.gpr(Register::rcx) == 36 &&
-			cpu.gpr(Register::r11) == cpu.rflags,
-			"SYSCALL did not publish RCX/R11");
+	require(second_run.event == uml::cpu::EngineEvent::system_call,
+		"SYSCALL did not exit the gadget stream");
+	require(second_run.retired_instructions == 2,
+		"SYSCALL block retirement is wrong");
+	require(cpu.gpr(Register::rdi) == 42 && cpu.rip == 36,
+		"SYSCALL state is wrong");
+	require(cpu.gpr(Register::rcx) == 36 &&
+		cpu.gpr(Register::r11) == cpu.rflags,
+		"SYSCALL did not publish RCX/R11");
 }
 
-[[nodiscard]] bool execute_absolute_memory_test_branch()
+void execute_absolute_memory_test_branch()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t base = 0x7ffe0000;
@@ -2967,15 +2975,14 @@ read_test_sequences(void *context) noexcept
 	CpuState cpu{};
 	cpu.rip = code;
 	const auto result = gadgets::execute(block.program, cpu, memory, 2);
-	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
-			result.retired_instructions == 2,
-			"absolute TEST/JNE block did not complete") &&
-		expect(cpu.rip == code + 15,
-			"absolute TEST/JNE ignored a set tested bit") &&
-		expect(cpu.deferred_flags.operation == DeferredFlagOperation::logical &&
-			cpu.deferred_flags.result == 1,
-			"absolute TEST recorded the wrong deferred result"))
-		return false;
+	require(result.event == uml::cpu::EngineEvent::continued &&
+		result.retired_instructions == 2,
+		"absolute TEST/JNE block did not complete");
+	require(cpu.rip == code + 15,
+		"absolute TEST/JNE ignored a set tested bit");
+	require(cpu.deferred_flags.operation == DeferredFlagOperation::logical &&
+		cpu.deferred_flags.result == 1,
+		"absolute TEST recorded the wrong deferred result");
 
 	/* Wine's syscall stubs use this exact TEST/JNE sequence.  Exercise it
 	 * through the production cache too, with the taken target already linked,
@@ -2987,20 +2994,19 @@ read_test_sequences(void *context) noexcept
 		memory, code + 15, ExecutionMode::long64);
 	const auto source = executor.select_program(
 		memory, code, ExecutionMode::long64);
-	if (!expect(target.program != nullptr && source.program != nullptr,
-		"absolute TEST/JNE cache setup did not build both blocks"))
-		return false;
+	require(target.program != nullptr && source.program != nullptr,
+		"absolute TEST/JNE cache setup did not build both blocks");
 	cpu = CpuState{};
 	cpu.rip = code;
 	const auto linked = gadgets::execute(
 		*source.program, cpu, memory, executor, 64);
-	return expect(linked.event == uml::cpu::EngineEvent::system_call &&
+	require(linked.event == uml::cpu::EngineEvent::system_call &&
 			linked.retired_instructions == 4 &&
 			cpu.gpr(Register::rax) == 42 && cpu.rip == code + 22,
 			"cached absolute TEST/JNE did not enter its linked target");
 }
 
-[[nodiscard]] bool execute_lazy_zero_branches()
+void execute_lazy_zero_branches()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -3008,10 +3014,9 @@ read_test_sequences(void *context) noexcept
 	memory.load(16, {0x75, 0x05});
 	const auto equal = gadgets::build(memory, 0);
 	const auto not_equal = gadgets::build(memory, 16);
-	if (!expect(equal.status == gadgets::BuildStatus::built &&
+	require(equal.status == gadgets::BuildStatus::built &&
 			not_equal.status == gadgets::BuildStatus::built,
-		"zero-condition branches did not build"))
-		return false;
+		"zero-condition branches did not build");
 
 	const auto run_branch = [&](const gadgets::Program &program, CpuState cpu,
 		std::uint64_t expected_rip,
@@ -3019,7 +3024,7 @@ read_test_sequences(void *context) noexcept
 		const char *message) {
 		cpu.rip = program.address();
 		const auto result = gadgets::execute(program, cpu, memory, 1);
-		return expect(result.event == uml::cpu::EngineEvent::continued &&
+		require(result.event == uml::cpu::EngineEvent::continued &&
 			result.retired_instructions == 1 && cpu.rip == expected_rip &&
 			cpu.deferred_flags.operation == expected_operation, message);
 	};
@@ -3029,42 +3034,39 @@ read_test_sequences(void *context) noexcept
 	cpu.deferred_flags.result = 0;
 	cpu.deferred_flags.operation = DeferredFlagOperation::subtract;
 	cpu.deferred_flags.width = 64;
-	if (!run_branch(equal.program, cpu, 7,
+	run_branch(equal.program, cpu, 7,
 			DeferredFlagOperation::subtract,
-			"JE did not take a deferred zero result") ||
-		!run_branch(not_equal.program, cpu, 18,
-			DeferredFlagOperation::subtract,
-			"JNE took a deferred zero result"))
-		return false;
+			"JE did not take a deferred zero result");
+	run_branch(not_equal.program, cpu, 18,
+		DeferredFlagOperation::subtract,
+		"JNE took a deferred zero result");
 
 	cpu.rflags |= rflags_zero;
 	cpu.deferred_flags.result = 1;
-	if (!run_branch(equal.program, cpu, 2,
+	run_branch(equal.program, cpu, 2,
 			DeferredFlagOperation::subtract,
-			"JE took a deferred nonzero result") ||
-		!run_branch(not_equal.program, cpu, 23,
-			DeferredFlagOperation::subtract,
-			"JNE did not take a deferred nonzero result"))
-		return false;
+			"JE took a deferred nonzero result");
+	run_branch(not_equal.program, cpu, 23,
+		DeferredFlagOperation::subtract,
+		"JNE did not take a deferred nonzero result");
 
 	cpu = CpuState{};
 	cpu.rflags |= rflags_zero;
-	if (!run_branch(equal.program, cpu, 7, DeferredFlagOperation::none,
-			"JE ignored an architectural zero flag") ||
-		!run_branch(not_equal.program, cpu, 18,
-			DeferredFlagOperation::none,
-			"JNE ignored an architectural zero flag"))
-		return false;
+	run_branch(equal.program, cpu, 7, DeferredFlagOperation::none,
+			"JE ignored an architectural zero flag");
+	run_branch(not_equal.program, cpu, 18,
+		DeferredFlagOperation::none,
+		"JNE ignored an architectural zero flag");
 
 	cpu.rflags &= ~rflags_zero;
-	return run_branch(equal.program, cpu, 2, DeferredFlagOperation::none,
-			"JE ignored a clear architectural zero flag") &&
-		run_branch(not_equal.program, cpu, 23,
-			DeferredFlagOperation::none,
-			"JNE ignored a clear architectural zero flag");
+	run_branch(equal.program, cpu, 2, DeferredFlagOperation::none,
+			"JE ignored a clear architectural zero flag");
+	run_branch(not_equal.program, cpu, 23,
+		DeferredFlagOperation::none,
+		"JNE ignored a clear architectural zero flag");
 }
 
-[[nodiscard]] bool zero_conditional_moves_preserve_pending_flags()
+void zero_conditional_moves_preserve_pending_flags()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -3111,21 +3113,18 @@ read_test_sequences(void *context) noexcept
 						(cpu.gpr(Register::rbx) & mask) : cpu.gpr(Register::rax);
 					const auto pending = cpu.deferred_flags;
 					const auto result = gadgets::execute(block.program, cpu, memory, 1);
-					if (!expect(result.retired_instructions == 1 &&
+					require(result.retired_instructions == 1 &&
 						cpu.gpr(Register::rax) == expected &&
 						cpu.deferred_flags.operation == pending.operation &&
 						cpu.deferred_flags.override_mask == pending.override_mask,
-						"conditional move changed pending flags or selected the wrong operand"))
-						return false;
+						"conditional move changed pending flags or selected the wrong operand");
 					materialize_flags(cpu);
-					if (!expect(cpu.rflags == reference.rflags,
-						"conditional move lost flags needed by a later consumer"))
-						return false;
+					require(cpu.rflags == reference.rflags,
+						"conditional move lost flags needed by a later consumer");
 				}
 			}
 		}
 	}
-	return true;
 }
 
 /* glibc's i386 futex wait rejects a positive syscall result with this exact
@@ -3133,7 +3132,7 @@ read_test_sequences(void *context) noexcept
  * 64-bit backing slot, so retain upper garbage here and prove that compat32
  * flags and the signed branch use only the architectural EAX value.
  */
-[[nodiscard]] bool materialized_flags_match_the_reference()
+void materialized_flags_match_the_reference()
 {
 	using namespace uml::cpu::x86_64;
 	/* The engine folds the recorded operation and width into one body per
@@ -3194,26 +3193,22 @@ read_test_sequences(void *context) noexcept
 		materialize_flags(reference);
 
 		const auto run = gadgets::execute(block.program, cpu, memory, 1);
-		if (!expect(run.event == uml::cpu::EngineEvent::continued &&
+		require(run.event == uml::cpu::EngineEvent::continued &&
 			run.retired_instructions == 1,
-			"PUSHFQ did not retire"))
-			return false;
+			"PUSHFQ did not retire");
 		std::uint64_t pushed = 0;
 		std::byte raw[sizeof(pushed)]{};
-		if (!expect(memory.read(stack - sizeof(pushed),
+		require(memory.read(stack - sizeof(pushed),
 				std::span<std::byte>{raw, sizeof(raw)}),
-			"PUSHFQ destination was not readable"))
-			return false;
+			"PUSHFQ destination was not readable");
 		std::memcpy(&pushed, raw, sizeof(pushed));
-		if (!expect(pushed == reference.rflags &&
+		require(pushed == reference.rflags &&
 			cpu.rflags == reference.rflags,
-			"materialized flags disagree with the reference"))
-			return false;
+			"materialized flags disagree with the reference");
 	}
-	return true;
 }
 
-[[nodiscard]] bool carry_branches_match_the_reference()
+void carry_branches_match_the_reference()
 {
 	using namespace uml::cpu::x86_64;
 	/* The four carry-based conditions read CF and ZF straight out of the
@@ -3278,16 +3273,14 @@ read_test_sequences(void *context) noexcept
 				branch.address + (taken ? 7 : 2);
 
 			const auto run = gadgets::execute(built.program, cpu, memory, 1);
-			if (!expect(run.event == uml::cpu::EngineEvent::continued &&
+			require(run.event == uml::cpu::EngineEvent::continued &&
 					run.retired_instructions == 1 && cpu.rip == expected,
-				"a carry-condition branch disagrees with the reference"))
-				return false;
+				"a carry-condition branch disagrees with the reference");
 		}
 	}
-	return true;
 }
 
-[[nodiscard]] bool execute_compat32_test_greater_after_syscall()
+void execute_compat32_test_greater_after_syscall()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -3305,24 +3298,24 @@ read_test_sequences(void *context) noexcept
 		cpu.execution_mode = ExecutionMode::compat32;
 		cpu.gpr(Register::rax) = value;
 		const auto result = gadgets::execute(block.program, cpu, memory, 2);
-		return expect(result.event == uml::cpu::EngineEvent::continued &&
+		require(result.event == uml::cpu::EngineEvent::continued &&
 			result.retired_instructions == 2 && cpu.rip == expected_rip,
 			message);
 	};
 
-	return run(0, 4, "compat32 TEST/JG treated zero as positive") &&
-		run(1, 9, "compat32 TEST/JG rejected a positive result") &&
-		run(0xffff'ffff'ffff'fff5ULL, 4,
-			"compat32 TEST/JG treated sign-extended -EAGAIN as positive") &&
-		run(0x1234'5678'ffff'fff5ULL, 4,
-			"compat32 TEST/JG used bits above EAX for the sign test");
+	run(0, 4, "compat32 TEST/JG treated zero as positive");
+	run(1, 9, "compat32 TEST/JG rejected a positive result");
+	run(0xffff'ffff'ffff'fff5ULL, 4,
+		"compat32 TEST/JG treated sign-extended -EAGAIN as positive");
+	run(0x1234'5678'ffff'fff5ULL, 4,
+		"compat32 TEST/JG used bits above EAX for the sign test");
 }
 
 /* Match glibc's complete i386 futex-result validator.  Its accepted common
  * results pass through signed comparisons and a register-indexed BT before
  * the rare timeout/overflow cases take equality branches.
  */
-[[nodiscard]] bool execute_compat32_futex_result_validator()
+void execute_compat32_futex_result_validator()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -3357,37 +3350,40 @@ read_test_sequences(void *context) noexcept
 				memory, cpu.rip, ExecutionMode::compat32, 64);
 			if (block.status != gadgets::BuildStatus::built ||
 				block.program == nullptr)
-				return expect(false, "compat32 futex validator did not build");
+				fail("compat32 futex validator did not build");
 			const auto result = gadgets::execute(
 				*block.program, cpu, memory, executor, 64);
-			if (result.event == uml::cpu::EngineEvent::system_call)
-				return expect(cpu.gpr(Register::rdi) == marker, message);
+			if (result.event == uml::cpu::EngineEvent::system_call) {
+				require(cpu.gpr(Register::rdi) == marker, message);
+				return;
+			}
 			if (result.event != uml::cpu::EngineEvent::continued)
-				return expect(false, "compat32 futex validator exited early");
+				fail("compat32 futex validator exited early");
 		}
-		return expect(false, "compat32 futex validator did not terminate");
+		fail("compat32 futex validator did not terminate");
 	};
 
 	const auto run_all = [&] {
-		return run(0, 42, "futex validator rejected success") &&
+		run(0, 42, "futex validator rejected success");
 		run(static_cast<std::uint32_t>(-4), 42,
-			"futex validator rejected EINTR") &&
+		"futex validator rejected EINTR");
 		run(static_cast<std::uint32_t>(-11), 42,
-			"futex validator rejected EAGAIN") &&
+		"futex validator rejected EAGAIN");
 		run(static_cast<std::uint32_t>(-22), 42,
-			"futex validator rejected EINVAL") &&
+		"futex validator rejected EINVAL");
 		run(static_cast<std::uint32_t>(-110), 42,
-			"futex validator rejected ETIMEDOUT") &&
+		"futex validator rejected ETIMEDOUT");
 		run(static_cast<std::uint32_t>(-75), 42,
-			"futex validator rejected EOVERFLOW") &&
-		run(1, 99, "futex validator accepted a positive result") &&
+		"futex validator rejected EOVERFLOW");
+		run(1, 99, "futex validator accepted a positive result");
 		run(static_cast<std::uint32_t>(-516), 99,
-			"futex validator accepted an internal restart result");
+		"futex validator accepted an internal restart result");
 	};
-	return run_all() && run_all();
+	run_all();
+	run_all();
 }
 
-[[nodiscard]] bool shifts_overlay_lazy_arithmetic_flags()
+void shifts_overlay_lazy_arithmetic_flags()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory rotate_memory;
@@ -3402,23 +3398,21 @@ read_test_sequences(void *context) noexcept
 	const auto rotate_result = gadgets::execute(
 		rotate.program, cpu, rotate_memory, 2);
 	constexpr auto rotate_mask = rflags_carry | rflags_overflow;
-	if (!expect(rotate_result.event == uml::cpu::EngineEvent::continued &&
+	require(rotate_result.event == uml::cpu::EngineEvent::continued &&
 			rotate_result.retired_instructions == 2 &&
 			cpu.gpr(Register::rax) == 0x8000'0000,
-		"lazy ROR produced the wrong value") ||
-		!expect(cpu.deferred_flags.operation == DeferredFlagOperation::add &&
-			cpu.deferred_flags.override_mask == rotate_mask &&
-			cpu.deferred_flags.override_value == rotate_mask,
-			"ROR eagerly materialized or lost its flag overrides"))
-		return false;
+		"lazy ROR produced the wrong value");
+	require(cpu.deferred_flags.operation == DeferredFlagOperation::add &&
+		cpu.deferred_flags.override_mask == rotate_mask &&
+		cpu.deferred_flags.override_value == rotate_mask,
+		"ROR eagerly materialized or lost its flag overrides");
 	materialize_flags(cpu);
-	if (!expect((cpu.rflags & rotate_mask) == rotate_mask &&
+	require((cpu.rflags & rotate_mask) == rotate_mask &&
 			(cpu.rflags & (rflags_zero | rflags_sign | rflags_parity)) == 0,
-		"materialized ROR flags did not preserve the preceding ADD flags") ||
-		!expect(cpu.deferred_flags.operation == DeferredFlagOperation::none &&
-			cpu.deferred_flags.override_mask == 0,
-			"materialization did not consume the shift overlay"))
-		return false;
+		"materialized ROR flags did not preserve the preceding ADD flags");
+	require(cpu.deferred_flags.operation == DeferredFlagOperation::none &&
+		cpu.deferred_flags.override_mask == 0,
+		"materialization did not consume the shift overlay");
 
 	TestMemory branch_memory;
 	branch_memory.load(0, {
@@ -3435,14 +3429,14 @@ read_test_sequences(void *context) noexcept
 		branch.program, cpu, branch_memory, 3);
 	/* SHL, SHR and SAR record their operands instead of overlaying: the
 	 * zero branch reads the recorded result and leaves the record pending. */
-	return expect(branch_result.event == uml::cpu::EngineEvent::continued &&
+	require(branch_result.event == uml::cpu::EngineEvent::continued &&
 			branch_result.retired_instructions == 3 && cpu.rip == 12,
-		"JE did not consume the deferred shift result") &&
-		expect(cpu.deferred_flags.operation ==
-				DeferredFlagOperation::shift_right &&
-			cpu.deferred_flags.result == 0 &&
-			cpu.deferred_flags.override_mask == 0,
-			"zero-branch fast path materialized the deferred shift");
+		"JE did not consume the deferred shift result");
+	require(cpu.deferred_flags.operation ==
+			DeferredFlagOperation::shift_right &&
+		cpu.deferred_flags.result == 0 &&
+		cpu.deferred_flags.override_mask == 0,
+		"zero-branch fast path materialized the deferred shift");
 }
 
 /* The deferred shift record is materialized by the engine (through the full
@@ -3452,7 +3446,7 @@ read_test_sequences(void *context) noexcept
  * auxiliary flag is undefined and overflow is only defined for a count of
  * one, so those are not compared elsewhere.
  */
-[[nodiscard]] bool lazy_shift_flags_match_the_definition()
+void lazy_shift_flags_match_the_definition()
 {
 	using namespace uml::cpu::x86_64;
 	static constexpr std::array<std::uint64_t, 9> values{
@@ -3497,10 +3491,9 @@ read_test_sequences(void *context) noexcept
 						cpu.gpr(Register::rax) = value;
 						const auto result = gadgets::execute(
 							built.program, cpu, memory, 8);
-						if (!expect(result.event ==
+						require(result.event ==
 							uml::cpu::EngineEvent::system_call,
-							"shift flag program did not reach SYSCALL"))
-							return false;
+							"shift flag program did not reach SYSCALL");
 						materialize_flags(cpu);
 						const auto v = value & mask;
 						std::uint64_t expected_result;
@@ -3564,17 +3557,16 @@ read_test_sequences(void *context) noexcept
 									expected & compared),
 								static_cast<unsigned long long>(
 									cpu.gpr(Register::rax) & mask));
-							return expect(false, message);
+							fail(message);
 						}
 					}
 				}
 			}
 		}
 	}
-	return true;
 }
 
-[[nodiscard]] bool execute_segment_memory()
+void execute_segment_memory()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -3589,13 +3581,13 @@ read_test_sequences(void *context) noexcept
 	const auto built = require_built(gadgets::build(memory, 0, 2),
 		"FS memory block did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 2);
-	return expect(result.event == uml::cpu::EngineEvent::continued,
-		"FS memory block returned the wrong event") &&
-		expect(result.retired_instructions == 2,
-			"FS memory retirement is wrong") &&
-		expect(memory.qword(88) == 0x1122'3344'5566'7788ULL &&
-			cpu.gpr(Register::rcx) == 0x1122'3344'5566'7788ULL,
-			"FS base was not applied to memory operands");
+	require(result.event == uml::cpu::EngineEvent::continued,
+		"FS memory block returned the wrong event");
+	require(result.retired_instructions == 2,
+		"FS memory retirement is wrong");
+	require(memory.qword(88) == 0x1122'3344'5566'7788ULL &&
+		cpu.gpr(Register::rcx) == 0x1122'3344'5566'7788ULL,
+		"FS base was not applied to memory operands");
 }
 
 /* Address generation resolves base, index, scale, segment and address size
@@ -3604,7 +3596,7 @@ read_test_sequences(void *context) noexcept
  * corpus is keyed by operand form rather than addressing shape and cannot
  * cover this.
  */
-[[nodiscard]] bool execute_addressing_shapes()
+void execute_addressing_shapes()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t data = 0x800;
@@ -3653,11 +3645,10 @@ read_test_sequences(void *context) noexcept
 		cpu.fs_base = shape.fs;
 		cpu.gs_base = shape.gs;
 		const auto built = gadgets::build(memory, code, 1);
-		if (!expect(built.status == gadgets::BuildStatus::built, shape.name) ||
-			!expect(gadgets::execute(built.program, cpu, memory, 1).event ==
-				uml::cpu::EngineEvent::continued, shape.name) ||
-			!expect(cpu.gpr(Register::rax) == marker, shape.name))
-			return false;
+		require(built.status == gadgets::BuildStatus::built, shape.name);
+		require(gadgets::execute(built.program, cpu, memory, 1).event ==
+			uml::cpu::EngineEvent::continued, shape.name);
+		require(cpu.gpr(Register::rax) == marker, shape.name);
 		code += 16;
 	}
 
@@ -3678,14 +3669,13 @@ read_test_sequences(void *context) noexcept
 		CpuState cpu{};
 		cpu.rip = rip_code;
 		const auto built = gadgets::build(memory, rip_code, 1);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-				"rip-relative did not build") ||
-			!expect(gadgets::execute(built.program, cpu, memory, 1).event ==
-				uml::cpu::EngineEvent::continued,
-				"rip-relative did not execute") ||
-			!expect(cpu.gpr(Register::rax) == marker,
-				"rip-relative resolved the wrong address"))
-			return false;
+		require(built.status == gadgets::BuildStatus::built,
+				"rip-relative did not build");
+		require(gadgets::execute(built.program, cpu, memory, 1).event ==
+			uml::cpu::EngineEvent::continued,
+			"rip-relative did not execute");
+		require(cpu.gpr(Register::rax) == marker,
+			"rip-relative resolved the wrong address");
 	}
 
 	/* A load that spans a page boundary leaves the inline fast path, so the
@@ -3699,21 +3689,20 @@ read_test_sequences(void *context) noexcept
 		cpu.rip = 0x100;
 		cpu.gpr(Register::rbx) = 0xffc - 16;
 		const auto built = gadgets::build(memory, 0x100, 1);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-				"page-crossing load did not build") ||
-			!expect(gadgets::execute(built.program, cpu, memory, 1).event ==
-				uml::cpu::EngineEvent::continued,
-				"page-crossing load did not execute") ||
-			!expect(cpu.gpr(Register::rax) == marker,
-				"page-crossing load resolved the wrong address"))
-			return false;
+		require(built.status == gadgets::BuildStatus::built,
+				"page-crossing load did not build");
+		require(gadgets::execute(built.program, cpu, memory, 1).event ==
+			uml::cpu::EngineEvent::continued,
+			"page-crossing load did not execute");
+		require(cpu.gpr(Register::rax) == marker,
+			"page-crossing load resolved the wrong address");
 	}
 
 	/* The always-zero slot the absent-register encoding names must stay zero:
 	 * a stray write to it would silently offset every such operand.
 	 */
 	CpuState fresh{};
-	return expect(fresh.segment_zero == 0,
+	require(fresh.segment_zero == 0,
 		"the address-generation zero slot is not zero");
 }
 
@@ -3721,7 +3710,7 @@ read_test_sequences(void *context) noexcept
  * only one or two cases per width, which a lane-ordering mistake can survive,
  * so walk a single set bit through every position instead.
  */
-[[nodiscard]] bool execute_byte_sign_masks()
+void execute_byte_sign_masks()
 {
 	using namespace uml::cpu::x86_64;
 	const auto run = [](std::initializer_list<std::uint8_t> encoding,
@@ -3742,13 +3731,11 @@ read_test_sequences(void *context) noexcept
 	};
 
 	for (std::size_t lane = 0; lane < 16; ++lane)
-		if (!expect(run({0x66, 0x0f, 0xd7, 0xc1}, 16, lane) ==
-			(std::uint64_t{1} << lane), "PMOVMSKB xmm lane"))
-			return false;
+		require(run({0x66, 0x0f, 0xd7, 0xc1}, 16, lane) ==
+			(std::uint64_t{1} << lane), "PMOVMSKB xmm lane");
 	for (std::size_t lane = 0; lane < 32; ++lane)
-		if (!expect(run({0xc5, 0xfd, 0xd7, 0xc1}, 32, lane) ==
-			(std::uint64_t{1} << lane), "VPMOVMSKB ymm lane"))
-			return false;
+		require(run({0xc5, 0xfd, 0xd7, 0xc1}, 32, lane) ==
+			(std::uint64_t{1} << lane), "VPMOVMSKB ymm lane");
 
 	/* All sign bits set, and none, bound the walk at both ends. */
 	TestMemory memory;
@@ -3757,17 +3744,16 @@ read_test_sequences(void *context) noexcept
 	for (auto &lane : cpu.vectors[1])
 		lane = std::byte{0xff};
 	const auto built = gadgets::build(memory, 0, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-			"PMOVMSKB saturated case did not build") ||
-		!expect(gadgets::execute(built.program, cpu, memory, 1).event ==
-			uml::cpu::EngineEvent::continued,
-			"PMOVMSKB saturated case did not execute"))
-		return false;
-	return expect(cpu.gpr(Register::rax) == 0xffff,
+	require(built.status == gadgets::BuildStatus::built,
+			"PMOVMSKB saturated case did not build");
+	require(gadgets::execute(built.program, cpu, memory, 1).event ==
+		uml::cpu::EngineEvent::continued,
+		"PMOVMSKB saturated case did not execute");
+	require(cpu.gpr(Register::rax) == 0xffff,
 		"PMOVMSKB did not set every mask bit");
 }
 
-[[nodiscard]] bool execute_call_and_return()
+void execute_call_and_return()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -3778,21 +3764,20 @@ read_test_sequences(void *context) noexcept
 	const auto caller = require_built(gadgets::build(memory, 0),
 		"CALL did not build");
 	const auto call_result = gadgets::execute(caller.program, cpu, memory, 1);
-	if (!expect(call_result.event == uml::cpu::EngineEvent::continued &&
+	require(call_result.event == uml::cpu::EngineEvent::continued &&
 		cpu.rip == 10 && cpu.gpr(Register::rsp) == 392 &&
 		memory.qword(392) == 5,
-		"CALL did not push its return address"))
-		return false;
+		"CALL did not push its return address");
 	const auto callee = require_built(gadgets::build(memory, cpu.rip),
 		"RET did not build");
 	const auto return_result = gadgets::execute(
 		callee.program, cpu, memory, 1);
-	return expect(return_result.event == uml::cpu::EngineEvent::continued &&
+	require(return_result.event == uml::cpu::EngineEvent::continued &&
 		cpu.rip == 5 && cpu.gpr(Register::rsp) == 400,
 		"RET did not restore RIP/RSP");
 }
 
-[[nodiscard]] bool decode_compat32_defaults()
+void decode_compat32_defaults()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -3801,27 +3786,26 @@ read_test_sequences(void *context) noexcept
 		0x8b, 0x05, 0x00, 0x01, 0x00, 0x00, // mov eax, [0x100]
 	});
 	const auto increment = decode(memory, 0, ExecutionMode::compat32);
-	if (!expect(increment.status == DecodeStatus::decoded &&
+	require(increment.status == DecodeStatus::decoded &&
 		increment.instruction.operation == Operation::increment &&
 		increment.instruction.destination.width == OperandWidth::dword &&
 		increment.instruction.destination.reg.index == 0 &&
 		increment.instruction.length == 1,
-		"compat32 opcode 40 was not decoded as INC EAX"))
-		return false;
+		"compat32 opcode 40 was not decoded as INC EAX");
 	const auto load = decode(memory, 1, ExecutionMode::compat32);
 	const auto &source = load.instruction.source;
-	return expect(load.status == DecodeStatus::decoded &&
+	require(load.status == DecodeStatus::decoded &&
 		load.instruction.destination.width == OperandWidth::dword,
-		"compat32 ordinary operand width is not 32-bit") &&
-		expect(source.kind == OperandKind::memory &&
-			source.memory.address_32 && source.memory.absolute_address &&
-			source.memory.absolute == 0x100 && !source.memory.rip_relative,
-			"compat32 ModR/M rm=5 is not an absolute 32-bit address");
+		"compat32 ordinary operand width is not 32-bit");
+	require(source.kind == OperandKind::memory &&
+		source.memory.address_32 && source.memory.absolute_address &&
+		source.memory.absolute == 0x100 && !source.memory.rip_relative,
+		"compat32 ModR/M rm=5 is not an absolute 32-bit address");
 }
 
 /* A gather whose destination, mask and index registers are not all distinct
  * is #UD; the comparison is between full register numbers. */
-[[nodiscard]] bool decode_gather_register_aliases()
+void decode_gather_register_aliases()
 {
 	using namespace uml::cpu::x86_64;
 	struct Case final {
@@ -3852,17 +3836,15 @@ read_test_sequences(void *context) noexcept
 			decoded.instruction.operation == Operation::vector_gather;
 		const bool illegal =
 			decoded.status == DecodeStatus::illegal_instruction;
-		if (!expect(shape.legal ? legal : illegal, shape.message))
-			return false;
+		require(shape.legal ? legal : illegal, shape.message);
 	}
-	return true;
 }
 
 /* In 32-bit code C4 and C5 are LES and LDS unless the next byte's top two bits
  * are 11, which a memory ModR/M can never produce.  Inside a VEX prefix that
  * does select, VEX.B-bar and the top bit of vvvv are ignored, so only XMM0-7
  * are reachable. */
-[[nodiscard]] bool decode_compat32_vex_aliases()
+void decode_compat32_vex_aliases()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -3876,20 +3858,18 @@ read_test_sequences(void *context) noexcept
 	for (const auto address : {0x40U, 0x50U}) {
 		const auto alias = decode(memory, address, ExecutionMode::compat32);
 		const auto &instruction = alias.instruction;
-		if (!expect(alias.status == DecodeStatus::decoded &&
+		require(alias.status == DecodeStatus::decoded &&
 			instruction.operation == Operation::load_far_pointer &&
 			instruction.vector_group == (address == 0x40U ? 0U : 3U) &&
 			instruction.destination.reg.index == 0 &&
 			instruction.source.memory.base == 1 &&
 			instruction.length == (address == 0x40U ? 2U : 3U),
-			"compat32 LES/LDS form decoded as a VEX prefix"))
-			return false;
+			"compat32 LES/LDS form decoded as a VEX prefix");
 	}
 	const auto wide = decode(memory, 5, ExecutionMode::long64);
-	if (!expect(wide.status == DecodeStatus::decoded &&
+	require(wide.status == DecodeStatus::decoded &&
 		wide.instruction.source.reg.index == 9,
-		"64-bit VEX.B-bar no longer selects XMM8-15"))
-		return false;
+		"64-bit VEX.B-bar no longer selects XMM8-15");
 	const auto built = require_built(
 		gadgets::build(memory, 0, ExecutionMode::compat32),
 		"compat32 VEX block did not build");
@@ -3910,16 +3890,16 @@ read_test_sequences(void *context) noexcept
 	fill(8, 100.0F);
 	fill(9, 200.0F);
 	const auto result = gadgets::execute(built.program, cpu, memory, 3);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		result.retired_instructions == 3,
-		"compat32 VEX block did not reach INT 80h") &&
-		expect(lane0(0) == 3.0F,
-			"compat32 VEX.vvvv[3] selected XMM8") &&
-		expect(lane0(2) == 2.0F,
-			"compat32 VEX.B-bar selected XMM9");
+		"compat32 VEX block did not reach INT 80h");
+	require(lane0(0) == 3.0F,
+		"compat32 VEX.vvvv[3] selected XMM8");
+	require(lane0(2) == 2.0F,
+		"compat32 VEX.B-bar selected XMM9");
 }
 
-[[nodiscard]] bool execute_compat32_stack_and_int80()
+void execute_compat32_stack_and_int80()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -3933,26 +3913,25 @@ read_test_sequences(void *context) noexcept
 	cpu.gpr(Register::rsp) = 0x1'0000'0200ULL;
 	cpu.gpr(Register::rbx) = 0xaaaa'bbbb'1122'3344ULL;
 	const auto built = gadgets::build(memory, 0, ExecutionMode::compat32);
-	if (!expect(built.status == gadgets::BuildStatus::built &&
+	require(built.status == gadgets::BuildStatus::built &&
 		built.program.execution_mode() == ExecutionMode::compat32,
-		"compat32 stack/syscall block did not build with mode identity"))
-		return false;
+		"compat32 stack/syscall block did not build with mode identity");
 	const auto result = gadgets::execute(built.program, cpu, memory, 3);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		result.retired_instructions == 3,
-		"compat32 INT 80h did not exit after the stack operations") &&
-		expect(cpu.gpr(Register::rsp) == 0x200 &&
-			cpu.gpr(Register::rcx) == 0x1122'3344 &&
-			memory.dword(0x1fc) == 0x1122'3344,
-			"compat32 PUSH/POP did not use a wrapping 32-bit stack") &&
-		expect(cpu.system_call_32bit && cpu.rip == 4,
-			"compat32 INT 80h did not publish its syscall convention or EIP");
+		"compat32 INT 80h did not exit after the stack operations");
+	require(cpu.gpr(Register::rsp) == 0x200 &&
+		cpu.gpr(Register::rcx) == 0x1122'3344 &&
+		memory.dword(0x1fc) == 0x1122'3344,
+		"compat32 PUSH/POP did not use a wrapping 32-bit stack");
+	require(cpu.system_call_32bit && cpu.rip == 4,
+		"compat32 INT 80h did not publish its syscall convention or EIP");
 }
 
 /* ENTER's default operand size follows the stack, so an i386 ENTER without a
  * 0x66 prefix builds a 32-bit frame: EBP and each copied frame pointer are
  * dwords, and ESP and EBP are written zero-extended. */
-[[nodiscard]] bool execute_compat32_enter_frames()
+void execute_compat32_enter_frames()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -3969,14 +3948,13 @@ read_test_sequences(void *context) noexcept
 		gadgets::build(memory, 0, ExecutionMode::compat32, 1),
 		"compat32 ENTER did not build");
 	const auto flat_result = gadgets::execute(flat.program, cpu, memory, 1);
-	if (!expect(flat_result.event == uml::cpu::EngineEvent::continued &&
+	require(flat_result.event == uml::cpu::EngineEvent::continued &&
 			flat_result.retired_instructions == 1 && cpu.rip == 4,
-		"compat32 ENTER did not retire") ||
-		!expect(memory.dword(0x1fc) == 0x1234'5678 &&
-			cpu.gpr(Register::rbp) == 0x1fc &&
-			cpu.gpr(Register::rsp) == 0x1ec,
-			"compat32 ENTER did not build a 32-bit frame"))
-		return false;
+		"compat32 ENTER did not retire");
+	require(memory.dword(0x1fc) == 0x1234'5678 &&
+		cpu.gpr(Register::rbp) == 0x1fc &&
+		cpu.gpr(Register::rsp) == 0x1ec,
+		"compat32 ENTER did not build a 32-bit frame");
 
 	cpu.gpr(Register::rsp) = 0x1'0000'0200ULL;
 	cpu.gpr(Register::rbp) = 0xffff'ffff'0000'0180ULL;
@@ -3985,20 +3963,20 @@ read_test_sequences(void *context) noexcept
 		"compat32 nested ENTER did not build");
 	const auto nested_result =
 		gadgets::execute(nested.program, cpu, memory, 1);
-	return expect(nested_result.event ==
+	require(nested_result.event ==
 			uml::cpu::EngineEvent::continued &&
 			nested_result.retired_instructions == 1 && cpu.rip == 8,
-		"compat32 nested ENTER did not retire") &&
-		expect(memory.dword(0x1fc) == 0x180 &&
-			memory.dword(0x1f8) == 0xaaaa'bbbb &&
-			memory.dword(0x1f4) == 0x1fc,
-			"compat32 nested ENTER did not copy dword frame pointers") &&
-		expect(cpu.gpr(Register::rbp) == 0x1fc &&
-			cpu.gpr(Register::rsp) == 0x1ec,
-			"compat32 nested ENTER did not set EBP and ESP");
+		"compat32 nested ENTER did not retire");
+	require(memory.dword(0x1fc) == 0x180 &&
+		memory.dword(0x1f8) == 0xaaaa'bbbb &&
+		memory.dword(0x1f4) == 0x1fc,
+		"compat32 nested ENTER did not copy dword frame pointers");
+	require(cpu.gpr(Register::rbp) == 0x1fc &&
+		cpu.gpr(Register::rsp) == 0x1ec,
+		"compat32 nested ENTER did not set EBP and ESP");
 }
 
-[[nodiscard]] bool execute_compat32_pushfd_popfd()
+void execute_compat32_pushfd_popfd()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -4019,14 +3997,13 @@ read_test_sequences(void *context) noexcept
 		gadgets::build(memory, 0, ExecutionMode::compat32),
 		"compat32 pushfd/popfd block did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 7);
-	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 7,
-		"compat32 pushfd/popfd block did not retire all instructions"))
-		return false;
-	return expect((cpu.rflags & 0x200000ULL) != 0,
-		"compat32 popfd did not set the ID flag in EFLAGS") &&
-		expect((cpu.gpr(Register::rbx) & 0x200000ULL) != 0,
-		"compat32 pushfd did not observe the updated ID flag");
+		"compat32 pushfd/popfd block did not retire all instructions");
+	require((cpu.rflags & 0x200000ULL) != 0,
+		"compat32 popfd did not set the ID flag in EFLAGS");
+	require((cpu.gpr(Register::rbx) & 0x200000ULL) != 0,
+	"compat32 pushfd did not observe the updated ID flag");
 }
 
 
@@ -4044,7 +4021,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	(void)enter_segments(cpu);
 }
 
-[[nodiscard]] bool execute_compat32_legacy_segment_stack()
+void execute_compat32_legacy_segment_stack()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -4060,13 +4037,12 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		gadgets::build( memory, 0, ExecutionMode::compat32, 1),
 		"compat32 POP DS did not build");
 	const auto popped = gadgets::execute(pop_ds.program, cpu, memory, 1);
-	if (!expect(popped.event == uml::cpu::EngineEvent::continued &&
+	require(popped.event == uml::cpu::EngineEvent::continued &&
 			popped.retired_instructions == 1 && cpu.rip == 1,
-		"compat32 POP DS did not retire before IRET") ||
-		!expect(cpu.segment_selectors[3] == 0x2b &&
-			cpu.gpr(Register::rsp) == 0x204,
-			"compat32 POP DS did not load a 32-bit stack slot"))
-		return false;
+		"compat32 POP DS did not retire before IRET");
+	require(cpu.segment_selectors[3] == 0x2b &&
+		cpu.gpr(Register::rsp) == 0x204,
+		"compat32 POP DS did not load a 32-bit stack slot");
 	const auto iret = require_built(
 		gadgets::build( memory, cpu.rip, ExecutionMode::compat32, 1),
 		"compat32 IRET after POP DS did not build");
@@ -4086,14 +4062,13 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		"compat32 segment PUSH/POP pair did not build");
 	const auto transferred = gadgets::execute(
 		round_trip.program, cpu, round_trip_memory, 2);
-	if (!expect(transferred.event == uml::cpu::EngineEvent::continued &&
+	require(transferred.event == uml::cpu::EngineEvent::continued &&
 			transferred.retired_instructions == 2 && cpu.rip == 2,
-		"compat32 segment PUSH/POP pair did not retire") ||
-		!expect(cpu.segment_selectors[0] == 0x33 &&
-			cpu.gpr(Register::rsp) == 0x204 &&
-			round_trip_memory.dword(0x200) == 0x33,
-			"compat32 segment PUSH/POP pair lost its selector"))
-		return false;
+		"compat32 segment PUSH/POP pair did not retire");
+	require(cpu.segment_selectors[0] == 0x33 &&
+		cpu.gpr(Register::rsp) == 0x204 &&
+		round_trip_memory.dword(0x200) == 0x33,
+		"compat32 segment PUSH/POP pair lost its selector");
 
 	TestMemory opcode_memory;
 	opcode_memory.load(0, {0x06, 0x07, 0x0e, 0x16, 0x17, 0x1e, 0x1f});
@@ -4102,19 +4077,18 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	for (std::size_t index = 0; index < segments.size(); ++index) {
 		const auto decoded = decode(
 			opcode_memory, index, ExecutionMode::compat32);
-		if (!expect(decoded.status == DecodeStatus::decoded &&
+		require(decoded.status == DecodeStatus::decoded &&
 				decoded.instruction.operation == Operation::segment_stack &&
 				decoded.instruction.vector_group == segments[index] &&
 				decoded.instruction.vector_control == pushes[index],
-			"legacy i386 segment-stack opcode did not decode"))
-			return false;
+			"legacy i386 segment-stack opcode did not decode");
 	}
-	return expect(decode(opcode_memory, 0, ExecutionMode::long64).status ==
+	require(decode(opcode_memory, 0, ExecutionMode::long64).status ==
 		DecodeStatus::illegal_instruction,
 		"long64 mode accepted a legacy segment-stack opcode");
 }
 
-[[nodiscard]] bool execute_long64_interrupt_return_stack_switch()
+void execute_long64_interrupt_return_stack_switch()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -4130,7 +4104,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		0x2b,
 	};
 	if (!memory.write(stack, std::as_bytes(std::span{frame})))
-		return expect(false, "long64 IRETQ frame setup failed");
+		fail("long64 IRETQ frame setup failed");
 	const auto built = require_built(
 		gadgets::build( memory, 0, ExecutionMode::long64, 1),
 		"long64 IRETQ did not build");
@@ -4142,22 +4116,22 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	/* User mode runs with IF set, which IRET at CPL 3 cannot change. */
 	cpu.rflags = 0x202;
 	const auto result = gadgets::execute(built.program, cpu, memory, 1);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 			result.retired_instructions == 1,
-			"long64 IRETQ did not retire") &&
-		expect(cpu.rip == restored_rip &&
-			cpu.gpr(Register::rsp) == restored_stack,
-			"long64 IRETQ left the restored RSP on its old stack") &&
-		expect(cpu.segment_selectors[1] == 0x33 &&
-			cpu.segment_selectors[2] == 0x2b && cpu.rflags == 0x246,
-			"long64 IRETQ did not restore its selectors and flags");
+			"long64 IRETQ did not retire");
+	require(cpu.rip == restored_rip &&
+		cpu.gpr(Register::rsp) == restored_stack,
+		"long64 IRETQ left the restored RSP on its old stack");
+	require(cpu.segment_selectors[1] == 0x33 &&
+		cpu.segment_selectors[2] == 0x2b && cpu.rflags == 0x246,
+		"long64 IRETQ did not restore its selectors and flags");
 }
 
 /* In 64-bit mode IRET defaults to a 32-bit operand size: REX.W selects IRETQ
  * and 0x66 the 16-bit form, and at every size it pops the five-slot frame,
  * SS:RSP included, without regard to a privilege change. A narrower EIP or
  * ESP (or IP or SP) is zero-extended into RIP and RSP. */
-[[nodiscard]] bool execute_long64_interrupt_return_operand_sizes()
+void execute_long64_interrupt_return_operand_sizes()
 {
 	using namespace uml::cpu::x86_64;
 	struct Case final {
@@ -4189,7 +4163,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 			std::memcpy(word.data(), &frame[index], word.size());
 			if (!memory.write(stack + index * shape.slot,
 				std::span{word.data(), shape.slot}))
-				return expect(false, "64-bit IRET frame setup failed");
+				fail("64-bit IRET frame setup failed");
 		}
 		const auto built = require_built(
 			gadgets::build( memory, base, ExecutionMode::long64, 1),
@@ -4201,23 +4175,21 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		cpu.segment_selectors[2] = 0x23;
 		cpu.rflags = 0x202;
 		const auto result = gadgets::execute(built.program, cpu, memory, 1);
-		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+		require(result.event == uml::cpu::EngineEvent::continued &&
 				result.retired_instructions == 1,
-				"64-bit IRET did not retire") ||
-			!expect(cpu.rip == shape.restored_rip &&
-				cpu.gpr(Register::rsp) == shape.restored_stack &&
-				cpu.segment_selectors[1] == 0x33 &&
-				cpu.segment_selectors[2] == 0x2b &&
-				cpu.rflags == 0x246, shape.message))
-			return false;
+				"64-bit IRET did not retire");
+		require(cpu.rip == shape.restored_rip &&
+			cpu.gpr(Register::rsp) == shape.restored_stack &&
+			cpu.segment_selectors[1] == 0x33 &&
+			cpu.segment_selectors[2] == 0x2b &&
+			cpu.rflags == 0x246, shape.message);
 	}
-	return true;
 }
 
 /* At CPL 3 IRET loads the flags POPF may load, plus RF: IF, IOPL, VM, VIF and
  * VIP keep their values, the reserved bits stay fixed, and a 16-bit IRET
  * leaves the upper half alone. */
-[[nodiscard]] bool interrupt_return_masks_user_flags()
+void interrupt_return_masks_user_flags()
 {
 	using namespace uml::cpu::x86_64;
 	struct Case final {
@@ -4261,7 +4233,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 			std::memcpy(word.data(), &frame[index], word.size());
 			if (!memory.write(stack + index * shape.slot,
 				std::span{word.data(), shape.slot}))
-				return expect(false, "IRET frame setup failed");
+				fail("IRET frame setup failed");
 		}
 		const auto built = require_built(
 			gadgets::build(memory, 0, shape.mode, 1),
@@ -4277,16 +4249,14 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		const auto event = (shape.expected & ~shape.current &
 			rflags_trap) != 0 ? uml::cpu::EngineEvent::trap_flag :
 			uml::cpu::EngineEvent::continued;
-		if (!expect(result.event == event &&
+		require(result.event == event &&
 			result.retired_instructions == 1 && cpu.rip == target,
-			"IRET did not retire") ||
-			!expect(cpu.rflags == shape.expected, shape.message))
-			return false;
+			"IRET did not retire");
+		require(cpu.rflags == shape.expected, shape.message);
 	}
-	return true;
 }
 
-[[nodiscard]] bool expose_consistent_xsave_cpuid_state()
+void expose_consistent_xsave_cpuid_state()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -4294,10 +4264,9 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	memory.load(16, {0x0f, 0x01, 0xd0}); // xgetbv
 	const auto cpuid = gadgets::build(memory, 0, ExecutionMode::long64, 1);
 	const auto xgetbv = gadgets::build(memory, 16, ExecutionMode::long64, 1);
-	if (!expect(cpuid.status == gadgets::BuildStatus::built &&
+	require(cpuid.status == gadgets::BuildStatus::built &&
 			xgetbv.status == gadgets::BuildStatus::built,
-		"extended-state identification instructions did not build"))
-		return false;
+		"extended-state identification instructions did not build");
 
 	const auto run_cpuid = [&](std::uint32_t leaf, std::uint32_t subleaf,
 			CpuState &cpu) {
@@ -4308,54 +4277,49 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	};
 	CpuState cpu{};
 	auto result = run_cpuid(0, 0, cpu);
-	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 			cpu.gpr(Register::rax) == 13,
-		"CPUID omitted its XSAVE enumeration leaf"))
-		return false;
+		"CPUID omitted its XSAVE enumeration leaf");
 	result = run_cpuid(1, 0, cpu);
 	constexpr std::uint64_t through_avx2_leaf_one =
 		(1ULL << 0) | (1ULL << 1) | (1ULL << 9) | (1ULL << 12) |
 		(1ULL << 13) | (1ULL << 19) | (1ULL << 20) | (1ULL << 22) |
 		(1ULL << 23) | (1ULL << 25) | (1ULL << 26) | (1ULL << 27) |
 		(1ULL << 28) | (1ULL << 29) | (1ULL << 30);
-	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 			(cpu.gpr(Register::rcx) & through_avx2_leaf_one) ==
 				through_avx2_leaf_one,
-		"CPUID leaf 1 omitted a qualified through-AVX2 feature"))
-		return false;
+		"CPUID leaf 1 omitted a qualified through-AVX2 feature");
 	result = run_cpuid(7, 0, cpu);
 	constexpr std::uint64_t through_avx2_leaf_seven_ebx =
 		(1ULL << 0) | (1ULL << 3) | (1ULL << 5) | (1ULL << 8) |
 		(1ULL << 9) | (1ULL << 18) | (1ULL << 19) | (1ULL << 23) |
 		(1ULL << 24) | (1ULL << 29);
-	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 			(cpu.gpr(Register::rbx) & through_avx2_leaf_seven_ebx) ==
 				through_avx2_leaf_seven_ebx &&
 			(cpu.gpr(Register::rcx) & (1ULL << 22)) != 0,
-		"CPUID leaf 7 omitted a qualified AVX2-era extension"))
-		return false;
+		"CPUID leaf 7 omitted a qualified AVX2-era extension");
 	result = run_cpuid(13, 0, cpu);
-	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 			cpu.gpr(Register::rax) == 7 &&
 			cpu.gpr(Register::rbx) == 832 &&
 			cpu.gpr(Register::rcx) == 832 &&
 			cpu.gpr(Register::rdx) == 0,
-		"CPUID leaf 0xD did not describe the complete XSAVE image"))
-		return false;
+		"CPUID leaf 0xD did not describe the complete XSAVE image");
 	result = run_cpuid(13, 2, cpu);
-	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 			cpu.gpr(Register::rax) == 256 &&
 			cpu.gpr(Register::rbx) == 576 &&
 			cpu.gpr(Register::rcx) == 0 &&
 			cpu.gpr(Register::rdx) == 0,
-		"CPUID leaf 0xD subleaf 2 did not locate AVX state"))
-		return false;
+		"CPUID leaf 0xD subleaf 2 did not locate AVX state");
 
 	cpu = CpuState{};
 	cpu.rip = 16;
 	cpu.gpr(Register::rcx) = 0;
 	result = gadgets::execute(xgetbv.program, cpu, memory, 1);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 			cpu.gpr(Register::rax) == 7 &&
 			cpu.gpr(Register::rdx) == 0,
 		"XGETBV did not agree with the CPUID XSAVE feature mask");
@@ -4364,7 +4328,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 /* CPUID serializes, so it is a code-change checkpoint: the run leaves after
  * it, with the instructions behind it unrun, and the runtime revalidates what
  * it selects for them. */
-[[nodiscard]] bool cpuid_leaves_the_run()
+void cpuid_leaves_the_run()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -4377,12 +4341,12 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		"CPUID block did not build");
 	CpuState cpu{};
 	const auto result = gadgets::execute(built.program, cpu, memory, 64);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 			result.retired_instructions == 1 && cpu.rip == 2,
 		"CPUID did not leave the run for the instruction after it");
 }
 
-[[nodiscard]] bool wrap_compat32_instruction_pointer()
+void wrap_compat32_instruction_pointer()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t base = 0xffff'f000ULL;
@@ -4396,12 +4360,12 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		gadgets::build( memory, address, ExecutionMode::compat32, 1),
 		"compat32 wrapping JMP did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 1);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 1 && cpu.rip == 0x25,
 		"compat32 relative branch did not wrap EIP at 32 bits");
 }
 
-[[nodiscard]] bool execute_compat32_tls_segment()
+void execute_compat32_tls_segment()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -4418,35 +4382,33 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	CpuState cpu{};
 	cpu.segment_selectors = {0x2b, 0x23, 0x2b, 0x2b, 0, 0};
 	cpu.tls_descriptors[1] = 0xffcf'f3ff'f000'ffffULL;
-	if (!expect(!enter_segments(cpu) &&
+	require(!enter_segments(cpu) &&
 		cpu.execution_mode == ExecutionMode::compat32,
-		"compat32 entry segments did not load"))
-		return false;
+		"compat32 entry segments did not load");
 	cpu.gpr(Register::rbp) = 0x1080;
 	const auto built = require_built(
 		gadgets::build( memory, 0, ExecutionMode::compat32, 3),
 		"compat32 TLS segment block did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 3);
-	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 3,
-		"compat32 TLS segment block did not execute") ||
-		!expect(cpu.segment_selectors[5] == 0x6b &&
-			cpu.gs_base == 0xffff'f000,
-			"compat32 GS selector did not load its TLS base") ||
-		!expect(memory.dword(0x84) == 0xffff'ffff,
-			"compat32 segmented linear address did not wrap at 32 bits"))
-		return false;
+		"compat32 TLS segment block did not execute");
+	require(cpu.segment_selectors[5] == 0x6b &&
+		cpu.gs_base == 0xffff'f000,
+		"compat32 GS selector did not load its TLS base");
+	require(memory.dword(0x84) == 0xffff'ffff,
+		"compat32 segmented linear address did not wrap at 32 bits");
 	const auto stale = require_built(
 		gadgets::build( memory, cpu.rip, ExecutionMode::compat32, 2),
 		"compat32 non-TLS selector block did not build");
 	const auto cleared = gadgets::execute(stale.program, cpu, memory, 2);
-	return expect(cleared.event == uml::cpu::EngineEvent::continued &&
+	require(cleared.event == uml::cpu::EngineEvent::continued &&
 		cleared.retired_instructions == 2 &&
 		cpu.segment_selectors[5] == 0x33 && cpu.gs_base == 0,
 		"compat32 selector 0x33 kept a TLS base");
 }
 
-[[nodiscard]] bool reject_program_mode_mismatch()
+void reject_program_mode_mismatch()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -4456,19 +4418,18 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		"compat32 identity block did not build");
 	CpuState cpu{};
 	const auto mismatch = gadgets::execute(built.program, cpu, memory, 1);
-	if (!expect(mismatch.event == uml::cpu::EngineEvent::fatal &&
+	require(mismatch.event == uml::cpu::EngineEvent::fatal &&
 		mismatch.retired_instructions == 0,
-		"long64 CPU accepted a compat32 native stream"))
-		return false;
+		"long64 CPU accepted a compat32 native stream");
 	cpu.execution_mode = ExecutionMode::compat32;
 	const auto match = gadgets::execute(built.program, cpu, memory, 1);
-	return expect(match.event == uml::cpu::EngineEvent::continued &&
+	require(match.event == uml::cpu::EngineEvent::continued &&
 		match.retired_instructions == 1 &&
 		cpu.gpr(Register::rax) == 1 && cpu.rip == 1,
 		"compat32 CPU did not execute its matching native stream");
 }
 
-[[nodiscard]] bool chunk_repeating_string_for_interrupt()
+void chunk_repeating_string_for_interrupt()
 {
 	using namespace uml::cpu::x86_64;
 	/* A repeated string operation has to hand the executor a boundary so a
@@ -4498,17 +4459,16 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		"descending REP STOSB did not build");
 	const auto element = gadgets::execute(
 		element_built.program, down, descending, 1);
-	if (!expect(element.event == uml::cpu::EngineEvent::continued &&
+	require(element.event == uml::cpu::EngineEvent::continued &&
 		element.retired_instructions == 0 && down.rip == 0 &&
 		down.gpr(Register::rcx) == 1 &&
 		down.gpr(Register::rdi) == 4096 &&
 		descending.byte(8192) == 0x5a && descending.byte(4097) == 0x5a,
-		"descending REP STOSB did not yield after its element budget") ||
-		!expect((down.rflags & rflags_resume) != 0,
-			"REP STOSB stopped by its element budget did not set RF") ||
-		!expect(element.repeat_yielded,
-			"REP STOSB stopped by its element budget did not yield"))
-		return false;
+		"descending REP STOSB did not yield after its element budget");
+	require((down.rflags & rflags_resume) != 0,
+		"REP STOSB stopped by its element budget did not set RF");
+	require(element.repeat_yielded,
+		"REP STOSB stopped by its element budget did not yield");
 
 	TestMemory memory{0, 270336};
 	memory.load(0, {0xf3, 0xaa}); // rep stosb
@@ -4519,18 +4479,17 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	const auto built = require_built(gadgets::build(memory, 0, 1),
 		"REP STOSB did not build");
 	const auto first = gadgets::execute(built.program, cpu, memory, 1);
-	if (!expect(first.event == uml::cpu::EngineEvent::continued &&
+	require(first.event == uml::cpu::EngineEvent::continued &&
 		first.retired_instructions == 0 && cpu.rip == 0,
-		"long REP STOSB did not yield before retiring") ||
-		!expect(cpu.gpr(Register::rcx) == 1 &&
-			cpu.gpr(Register::rdi) == 266240 &&
-			memory.byte(4096) == 0x5a && memory.byte(266239) == 0x5a,
-			"REP STOSB chunk did not preserve its partial state") ||
-		!expect((cpu.rflags & rflags_resume) != 0,
-			"REP STOSB stopped by its run budget did not set RF") ||
-		!expect(first.repeat_yielded,
-			"REP STOSB stopped by its run budget did not yield"))
-		return false;
+		"long REP STOSB did not yield before retiring");
+	require(cpu.gpr(Register::rcx) == 1 &&
+		cpu.gpr(Register::rdi) == 266240 &&
+		memory.byte(4096) == 0x5a && memory.byte(266239) == 0x5a,
+		"REP STOSB chunk did not preserve its partial state");
+	require((cpu.rflags & rflags_resume) != 0,
+		"REP STOSB stopped by its run budget did not set RF");
+	require(first.repeat_yielded,
+		"REP STOSB stopped by its run budget did not yield");
 	/* 32-bit address arithmetic reaches the same run loop. Its yield
 	 * boundary is the cheapest proof: the element loop would have stopped
 	 * after 4096 elements rather than 256 KiB of them.
@@ -4545,12 +4504,11 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		"32-bit REP STOSB did not build");
 	const auto narrow_first = gadgets::execute(
 		narrow_built.program, small, narrow, 1);
-	if (!expect(narrow_first.event == uml::cpu::EngineEvent::continued &&
+	require(narrow_first.event == uml::cpu::EngineEvent::continued &&
 		small.gpr(Register::rcx) == 1 &&
 		small.gpr(Register::rdi) == 266240 &&
 		narrow.byte(266239) == 0x5a,
-		"32-bit REP STOSB did not move its bytes in runs"))
-		return false;
+		"32-bit REP STOSB did not move its bytes in runs");
 
 	unsigned int sequence = 1;
 	const uml::cpu::InterruptToken interrupt{
@@ -4559,27 +4517,26 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	};
 	const auto interrupted = gadgets::execute(
 		built.program, cpu, memory, 1, interrupt);
-	if (!expect(interrupted.event == uml::cpu::EngineEvent::interrupt &&
+	require(interrupted.event == uml::cpu::EngineEvent::interrupt &&
 		interrupted.retired_instructions == 0 &&
 		!interrupted.repeat_yielded &&
 		cpu.gpr(Register::rcx) == 1 && cpu.rip == 0 &&
 		(cpu.rflags & rflags_resume) != 0,
-		"REP STOSB chunk did not expose its interrupt boundary with RF"))
-		return false;
+		"REP STOSB chunk did not expose its interrupt boundary with RF");
 	const auto finished = gadgets::execute(built.program, cpu, memory, 1);
-	return expect(finished.event == uml::cpu::EngineEvent::continued &&
+	require(finished.event == uml::cpu::EngineEvent::continued &&
 		finished.retired_instructions == 1 && cpu.rip == 2 &&
 		!finished.repeat_yielded,
-		"REP STOSB did not retire after resuming") &&
-		expect(cpu.gpr(Register::rcx) == 0 &&
-			cpu.gpr(Register::rdi) == 266241 &&
-			memory.byte(266240) == 0x5a,
-			"REP STOSB did not complete from its partial state") &&
-		expect((cpu.rflags & rflags_resume) == 0,
-			"resumed REP STOSB kept RF");
+		"REP STOSB did not retire after resuming");
+	require(cpu.gpr(Register::rcx) == 0 &&
+		cpu.gpr(Register::rdi) == 266241 &&
+		memory.byte(266240) == 0x5a,
+		"REP STOSB did not complete from its partial state");
+	require((cpu.rflags & rflags_resume) == 0,
+		"resumed REP STOSB kept RF");
 }
 
-[[nodiscard]] bool repeated_store_into_executable_page_publishes_its_run()
+void repeated_store_into_executable_page_publishes_its_run()
 {
 	using namespace uml::cpu::x86_64;
 	/* A repeated store whose destination page can hold code is the one shape
@@ -4602,28 +4559,26 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	/* Cached, so the destination page is on the shared code-page list. */
 	const auto built = executor.select_program(
 		memory, 0, ExecutionMode::long64, 1);
-	if (!expect(built.program != nullptr,
-		"executable-destination REP STOSB did not build"))
-		return false;
+	require(built.program != nullptr,
+		"executable-destination REP STOSB did not build");
 	const auto result = gadgets::execute(
 		*built.program, cpu, memory, executor, 64);
-	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 1 && cpu.rip == 2 &&
 		cpu.gpr(Register::rcx) == 0 && cpu.gpr(Register::rdi) == 0x900,
-		"executable-destination REP STOSB did not end its block"))
-		return false;
+		"executable-destination REP STOSB did not end its block");
 	bool written = true;
 	for (std::uint64_t address = 0x800; address < 0x900; ++address)
 		written = written && memory.byte(address) == 0x5a;
-	return expect(written,
-		"executable-destination REP STOSB did not write its run") &&
-		expect(memory.byte(0x7ff) == 0 && memory.byte(0x900) == 0,
-			"executable-destination REP STOSB wrote past its run") &&
-		expect(memory.invalidations() == 1,
-			"executable-destination REP STOSB did not publish once");
+	require(written,
+		"executable-destination REP STOSB did not write its run");
+	require(memory.byte(0x7ff) == 0 && memory.byte(0x900) == 0,
+		"executable-destination REP STOSB wrote past its run");
+	require(memory.invalidations() == 1,
+		"executable-destination REP STOSB did not publish once");
 }
 
-[[nodiscard]] bool repeated_move_faults_on_a_run_boundary()
+void repeated_move_faults_on_a_run_boundary()
 {
 	using namespace uml::cpu::x86_64;
 	/* A run writes its architectural state back before starting the next
@@ -4645,21 +4600,20 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	const auto result = gadgets::execute(built.program, cpu, memory, 1);
 	/* The first run fills the last mapped page; the second cannot translate
 	 * its destination at all. */
-	if (!expect(result.event == uml::cpu::EngineEvent::memory_fault &&
+	require(result.event == uml::cpu::EngineEvent::memory_fault &&
 		cpu.rip == 0 && cpu.gpr(Register::rcx) == 4096 &&
 		cpu.gpr(Register::rsi) == 8192 &&
 		cpu.gpr(Register::rdi) == 16384,
-		"faulting REP MOVSB did not stop on its run boundary"))
-		return false;
+		"faulting REP MOVSB did not stop on its run boundary");
 	bool copied = true;
 	for (std::uint64_t offset = 0; offset < 4096; ++offset)
 		copied = copied && memory.byte(12288 + offset) ==
 			memory.byte(4096 + offset);
-	return expect(copied,
+	require(copied,
 		"faulting REP MOVSB did not keep the bytes it had moved");
 }
 
-[[nodiscard]] bool bulk_string_runs_match_the_element_definition()
+void bulk_string_runs_match_the_element_definition()
 {
 	using namespace uml::cpu::x86_64;
 	/* The run loop is only a faster spelling of the element loop, so the two
@@ -4732,8 +4686,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 			memory.load(0, {0xf3, item.opcode});
 		}
 		const auto built = gadgets::build(memory, 0, 1);
-		if (!expect(built.status == gadgets::BuildStatus::built, item.name))
-			return false;
+		require(built.status == gadgets::BuildStatus::built, item.name);
 
 		for (const auto descending : {false, true})
 		for (const auto offset : offsets)
@@ -4829,11 +4782,10 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 					static_cast<long long>(offset),
 					static_cast<long long>(lead),
 					static_cast<unsigned long long>(count));
-				return expect(false, message);
+				fail(message);
 			}
 		}
 	}
-	return true;
 }
 /* CMP, SUB, TEST and AND leave compatible host flags for the next condition:
  * zero and unsigned subtraction ordering at narrow widths, and the supported
@@ -4843,7 +4795,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
  * whole correctness claim of the fused path, and it needs no reference model:
  * the established path is the reference.
  */
-[[nodiscard]] bool fused_conditions_match_the_deferred_evaluation()
+void fused_conditions_match_the_deferred_evaluation()
 {
 	using namespace uml::cpu::x86_64;
 	/* CMP, SUB, TEST, AND and ADD register forms, then INC, DEC and NEG. */
@@ -4897,10 +4849,9 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 						TestMemory memory;
 						memory.fill(0, code);
 						const auto built = gadgets::build(memory, 0);
-						if (!expect(built.status ==
+						require(built.status ==
 							gadgets::BuildStatus::built,
-							"fused condition program did not build"))
-							return false;
+							"fused condition program did not build");
 						CpuState cpu{};
 						cpu.gpr(Register::rax) = left;
 						cpu.gpr(Register::rbx) = right;
@@ -4908,10 +4859,9 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 						executor.prepare(memory, 1, 1, 1);
 						const auto result = gadgets::execute(
 							built.program, cpu, memory, executor, 64);
-						if (!expect(result.event ==
+						require(result.event ==
 							uml::cpu::EngineEvent::system_call,
-							"fused condition program did not reach SYSCALL"))
-							return false;
+							"fused condition program did not reach SYSCALL");
 						const auto fused =
 							cpu.gpr(Register::rdx) & 0xffU;
 						const auto deferred =
@@ -4928,14 +4878,13 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 								static_cast<unsigned long long>(right),
 								static_cast<unsigned>(fused),
 								static_cast<unsigned>(deferred));
-							return expect(false, message);
+							fail(message);
 						}
 					}
 				}
 			}
 		}
 	}
-	return true;
 }
 
 /* Compat32 code runs on the ordinary bank, where a byte or word operand is
@@ -4946,7 +4895,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
  * SETcc as above hold every producer, width and condition to the deferred
  * evaluation.
  */
-[[nodiscard]] bool ordinary_bank_conditions_match_the_deferred_evaluation()
+void ordinary_bank_conditions_match_the_deferred_evaluation()
 {
 	using namespace uml::cpu::x86_64;
 	static constexpr std::array<unsigned, 5> producers{
@@ -4987,10 +4936,9 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 				memory.fill(0, code);
 				const auto built = gadgets::build(
 					memory, 0, ExecutionMode::compat32, 3);
-				if (!expect(built.status == gadgets::BuildStatus::built &&
+				require(built.status == gadgets::BuildStatus::built &&
 					built.program.instruction_count() == 3,
-					"ordinary-bank condition program did not build"))
-					return false;
+					"ordinary-bank condition program did not build");
 				for (const auto left : values) {
 					for (const auto right : values) {
 						if (!binary && right != values.front())
@@ -5001,10 +4949,9 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 						cpu.gpr(Register::rbx) = right;
 						const auto result = gadgets::execute(
 							built.program, cpu, memory, 3);
-						if (!expect(result.retired_instructions == 3,
+						require(result.retired_instructions == 3,
 							"ordinary-bank condition program did not "
-							"retire its three instructions"))
-							return false;
+							"retire its three instructions");
 						const auto fused = cpu.gpr(Register::rdx) & 0xffU;
 						const auto deferred =
 							cpu.gpr(Register::rbx) & 0xffU;
@@ -5021,14 +4968,13 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 								static_cast<unsigned long long>(right),
 								static_cast<unsigned>(fused),
 								static_cast<unsigned>(deferred));
-							return expect(false, message);
+							fail(message);
 						}
 					}
 				}
 			}
 		}
 	}
-	return true;
 }
 
 /* INC and DEC preserve the carry flag. When the builder cannot see the
@@ -5040,7 +4986,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
  * inherits the pending bit, an override riding on the record (BT), and the
  * memory form. The other five flags come from the INC or DEC itself.
  */
-[[nodiscard]] bool lazy_carry_reaches_every_reader()
+void lazy_carry_reaches_every_reader()
 {
 	using namespace uml::cpu::x86_64;
 	static constexpr std::array<std::uint64_t, 6> values{
@@ -5142,9 +5088,8 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 			}
 			if (reader == Reader::memory_adc) {
 				const auto stored = memory.byte(0x2000);
-				if (!expect(stored == (decrement ? 0xffU : 0x01U),
-					"the memory INC or DEC did not write its result"))
-					return false;
+				require(stored == (decrement ? 0xffU : 0x01U),
+					"the memory INC or DEC did not write its result");
 			}
 			if (observed != expected) {
 				char message[200];
@@ -5159,11 +5104,10 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 					static_cast<unsigned long long>(right),
 					static_cast<unsigned long long>(expected),
 					static_cast<unsigned long long>(observed));
-				return expect(false, message);
+				fail(message);
 			}
 		}
 	}
-	return true;
 }
 
 /* A record is also hidden from the builder when it no longer exists: every
@@ -5176,7 +5120,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
  * operation-and-width table answer a carry of zero, so the settled carry has
  * to survive the INC or DEC untouched instead.
  */
-[[nodiscard]] bool a_settled_carry_survives_an_increment()
+void a_settled_carry_survives_an_increment()
 {
 	using namespace uml::cpu::x86_64;
 	static constexpr std::array<std::uint64_t, 4> values{
@@ -5296,10 +5240,9 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 				static_cast<unsigned long long>(right),
 				static_cast<unsigned long long>(expected),
 				static_cast<unsigned long long>(observed));
-			return expect(false, message);
+			fail(message);
 		}
 	}
-	return true;
 }
 
 /* A conditional move writes its destination register on either condition: it
@@ -5308,7 +5251,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
  * owe that write -- the deferred one, the one fused to a producer's host
  * flags, and the memory one.
  */
-[[nodiscard]] bool conditional_moves_write_the_destination_either_way()
+void conditional_moves_write_the_destination_either_way()
 {
 	using namespace uml::cpu::x86_64;
 	static constexpr std::uint64_t destination = 0xfedc'ba98'7654'3210ULL;
@@ -5350,9 +5293,8 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 			gadgets::build(memory, 0, ExecutionMode::long64, 4),
 			"conditional move program did not build");
 		const auto result = gadgets::execute(block.program, cpu, memory, 4);
-		if (!expect(result.event == uml::cpu::EngineEvent::system_call,
-			"conditional move program did not reach SYSCALL"))
-			return false;
+		require(result.event == uml::cpu::EngineEvent::system_call,
+			"conditional move program did not reach SYSCALL");
 		const auto chosen = take ? source : destination;
 		const auto expected = width == 64U ? chosen :
 			width == 32U ? (chosen & 0xffff'ffffULL) :
@@ -5365,10 +5307,9 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 				width, static_cast<int>(form), condition,
 				static_cast<unsigned long long>(expected),
 				static_cast<unsigned long long>(cpu.gpr(Register::rax)));
-			return expect(false, message);
+			fail(message);
 		}
 	}
-	return true;
 }
 
 /* The equality above holds whether or not the builder actually fuses, so pin
@@ -5378,7 +5319,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
  * no host-flag form, and after a logical operation neither do the four
  * conditions that read the carry.
  */
-[[nodiscard]] bool fused_conditions_cover_exactly_the_legal_pairs()
+void fused_conditions_cover_exactly_the_legal_pairs()
 {
 	using namespace uml::cpu::x86_64;
 	static constexpr std::array<unsigned, 5> opcodes{
@@ -5438,26 +5379,22 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 				plain_memory.fill(0, plain);
 				const auto built = gadgets::build(fused_memory, 0);
 				const auto separated = gadgets::build(plain_memory, 0);
-				if (!expect(built.status == gadgets::BuildStatus::built &&
+				require(built.status == gadgets::BuildStatus::built &&
 					separated.status == gadgets::BuildStatus::built,
-					"condition pairing program did not build"))
-					return false;
+					"condition pairing program did not build");
 				const auto fused_stream = built.program.native_stream();
 				const auto plain_stream = separated.program.native_stream();
-				if (!expect(fused_stream.size() + 1U == plain_stream.size() &&
+				require(fused_stream.size() + 1U == plain_stream.size() &&
 					fused_stream.size() > 3U,
-					"condition pairing changed the stream layout"))
-					return false;
+					"condition pairing changed the stream layout");
 				const auto consumer = consumer_index(fused_stream, plain_stream);
-				if (!expect(consumer + 1U < fused_stream.size(),
-					"condition pairing streams do not part at the consumer"))
-					return false;
+				require(consumer + 1U < fused_stream.size(),
+					"condition pairing streams do not part at the consumer");
 				const bool differs =
 					fused_stream[consumer] != plain_stream[consumer + 1U];
-				if (!expect(differs == expected_fusion,
+				require(differs == expected_fusion,
 					"the builder fused a condition it should not have, or "
-					"declined one it should have fused"))
-					return false;
+					"declined one it should have fused");
 				/* The same pairing, with a conditional jump as the consumer
 				 * rather than a SETcc. */
 				std::vector<std::byte> fused_jump;
@@ -5494,30 +5431,25 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 				const auto jump_built = gadgets::build(fused_jump_memory, 0);
 				const auto jump_separated =
 					gadgets::build(plain_jump_memory, 0);
-				if (!expect(jump_built.status == gadgets::BuildStatus::built &&
+				require(jump_built.status == gadgets::BuildStatus::built &&
 					jump_separated.status == gadgets::BuildStatus::built,
-					"jump pairing program did not build"))
-					return false;
+					"jump pairing program did not build");
 				const auto jump_fused = jump_built.program.native_stream();
 				const auto jump_plain =
 					jump_separated.program.native_stream();
-				if (!expect(jump_fused.size() + 1U == jump_plain.size() &&
+				require(jump_fused.size() + 1U == jump_plain.size() &&
 					jump_fused.size() > 3U,
-					"jump pairing changed the stream layout"))
-					return false;
+					"jump pairing changed the stream layout");
 				const auto jump_consumer = consumer_index(jump_fused, jump_plain);
-				if (!expect(jump_consumer + 1U < jump_fused.size(),
-					"jump pairing streams do not part at the consumer"))
-					return false;
-				if (!expect((jump_fused[jump_consumer] !=
+				require(jump_consumer + 1U < jump_fused.size(),
+					"jump pairing streams do not part at the consumer");
+				require((jump_fused[jump_consumer] !=
 					jump_plain[jump_consumer + 1U]) == expected_fusion,
 					"the builder fused a conditional jump it should not have, "
-					"or declined one it should have fused"))
-					return false;
+					"or declined one it should have fused");
 			}
 		}
 	}
-	return true;
 }
 
 /* The SETcc equality pins the condition mapping, which the conditional jump
@@ -5527,7 +5459,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
  * wrong successor rather than produce a wrong byte. Run the pair for real,
  * across block boundaries, with the two edges leading to different results.
  */
-[[nodiscard]] bool fused_conditional_jumps_take_the_same_edge()
+void fused_conditional_jumps_take_the_same_edge()
 {
 	using namespace uml::cpu::x86_64;
 	static constexpr std::array<unsigned, 4> producers{0x39, 0x29, 0x85, 0x21};
@@ -5575,16 +5507,14 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 								"fused jump program");
 							taken[barrier] = cpu.gpr(Register::rdx) & 0xffU;
 						}
-						if (!expect(taken[0] == taken[1],
+						require(taken[0] == taken[1],
 							"a fused conditional jump took a different edge "
-							"than the deferred evaluation of the same flags"))
-							return false;
+							"than the deferred evaluation of the same flags");
 					}
 				}
 			}
 		}
 	}
-	return true;
 }
 
 /* The host reports the emulated CPU to the guest kernel from cpuid.hpp, and
@@ -5597,7 +5527,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 /* An exact zero keeps its sign where the SDM gives one: FSIN and FPTAN
  * return a zero operand unchanged, and an FPREM or FPREM1 remainder of zero
  * takes the dividend's sign. */
-[[nodiscard]] bool x87_zero_results_keep_their_sign()
+void x87_zero_results_keep_their_sign()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr X87Register positive_zero{0, 0x0000U};
@@ -5616,16 +5546,13 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	X87Register cosine{};
 	for (const auto &zero : {positive_zero, negative_zero}) {
 		gadgets::uml_x86_64_x87_sine(&cpu, &zero, &result);
-		if (!expect(same(result, zero), "FSIN changed a zero's sign"))
-			return false;
+		require(same(result, zero), "FSIN changed a zero's sign");
 		gadgets::uml_x86_64_x87_sincos(&cpu, &zero, &result, &cosine);
-		if (!expect(same(result, zero),
-			"FSINCOS changed a zero sine's sign"))
-			return false;
+		require(same(result, zero),
+			"FSINCOS changed a zero sine's sign");
 		X87Register second{};
 		gadgets::uml_x86_64_x87_tangent(&cpu, &zero, &result, &second);
-		if (!expect(same(result, zero), "FPTAN changed a zero's sign"))
-			return false;
+		require(same(result, zero), "FPTAN changed a zero's sign");
 	}
 	struct Remainder final {
 		X87Register dividend;
@@ -5639,20 +5566,18 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		Remainder{negative_five, five, negative_zero},
 	}) {
 		gadgets::uml_x86_64_x87_fprem(&cpu, &dividend, &divisor, &result);
-		if (!expect(same(result, expected),
-			"FPREM gave a zero remainder the wrong sign"))
-			return false;
+		require(same(result, expected),
+			"FPREM gave a zero remainder the wrong sign");
 		gadgets::uml_x86_64_x87_fprem1(&cpu, &dividend, &divisor,
 			&result);
-		if (!expect(same(result, expected),
-			"FPREM1 gave a zero remainder the wrong sign"))
-			return false;
+		require(same(result, expected),
+			"FPREM1 gave a zero remainder the wrong sign");
 	}
-	return expect((cpu.x87_status & 0x7fU) == 0,
+	require((cpu.x87_status & 0x7fU) == 0,
 		"an exact zero result raised an x87 exception");
 }
 
-[[nodiscard]] bool cpuid_table_matches_the_gadget()
+void cpuid_table_matches_the_gadget()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -5683,7 +5608,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		std::snprintf(message, sizeof message,
 			"CPUID leaf 0x%08x subleaf %u disagrees with cpuid.hpp",
 			leaf, subleaf);
-		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+		require(result.event == uml::cpu::EngineEvent::continued &&
 				static_cast<std::uint32_t>(
 					cpu.gpr(Register::rax)) == table.eax &&
 				static_cast<std::uint32_t>(
@@ -5692,8 +5617,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 					cpu.gpr(Register::rcx)) == table.ecx &&
 				static_cast<std::uint32_t>(
 					cpu.gpr(Register::rdx)) == table.edx,
-			message))
-			return false;
+			message);
 	}
 
 	/* The brand string is what a guest prints as the model name, so it is
@@ -5708,11 +5632,11 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 				brand[at++] = static_cast<char>(
 					(word >> (8U * byte)) & 0xffU);
 	}
-	return expect(std::string_view(brand) == uml::cpu::guest_cpu_model_name,
+	require(std::string_view(brand) == uml::cpu::guest_cpu_model_name,
 		"the CPUID brand string is not this virtual CPU's own name");
 }
 
-[[nodiscard]] bool preserve_precise_memory_fault()
+void preserve_precise_memory_fault()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -5722,16 +5646,16 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	const auto built = require_built(gadgets::build(memory, 0, 1),
 		"faulting load did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 1);
-	return expect(result.event == uml::cpu::EngineEvent::memory_fault,
-		"faulting load did not exit as a memory fault") &&
-		expect(result.fault.address == 16383 &&
-			result.fault.access == uml::memory::MemoryAccess::read,
-			"faulting load lost precise metadata") &&
-		expect(result.retired_instructions == 0 && cpu.rip == 0,
-			"faulting load retired or advanced RIP");
+	require(result.event == uml::cpu::EngineEvent::memory_fault,
+		"faulting load did not exit as a memory fault");
+	require(result.fault.address == 16383 &&
+		result.fault.access == uml::memory::MemoryAccess::read,
+		"faulting load lost precise metadata");
+	require(result.retired_instructions == 0 && cpu.rip == 0,
+		"faulting load retired or advanced RIP");
 }
 
-[[nodiscard]] bool retire_valid_prefix_before_decode_fault()
+void retire_valid_prefix_before_decode_fault()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -5744,17 +5668,16 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		"valid prefix before UD2 did not build");
 	const auto prefix_result = gadgets::execute(
 		prefix.program, cpu, memory, 64);
-	if (!expect(prefix_result.event == uml::cpu::EngineEvent::continued &&
+	require(prefix_result.event == uml::cpu::EngineEvent::continued &&
 		prefix_result.retired_instructions == 1 && cpu.rip == 5 &&
 		cpu.gpr(Register::rax) == 42,
-		"valid prefix before UD2 did not retire first"))
-		return false;
+		"valid prefix before UD2 did not retire first");
 	const auto illegal = gadgets::build(memory, cpu.rip);
-	return expect(illegal.status == gadgets::BuildStatus::illegal_instruction,
+	require(illegal.status == gadgets::BuildStatus::illegal_instruction,
 		"UD2 boundary was not reported after the valid prefix");
 }
 
-[[nodiscard]] bool migrated_gadgets_are_native_only()
+void migrated_gadgets_are_native_only()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -5792,24 +5715,23 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 0x0102'0304'0506'0708ULL;
 	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"native-only block did not build") ||
-		!expect(built.program.instruction_count() == 29,
-			"native-only block has the wrong instruction count") ||
-		!expect(!built.program.native_stream().empty(),
-			"native-only block has no threaded assembly stream"))
-		return false;
+	require(built.status == gadgets::BuildStatus::built,
+		"native-only block did not build");
+	require(built.program.instruction_count() == 29,
+		"native-only block has the wrong instruction count");
+	require(!built.program.native_stream().empty(),
+		"native-only block has no threaded assembly stream");
 	const auto result = gadgets::execute(built.program, cpu, memory, 2);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 2 &&
 		result.instruction_budget_exhausted,
-		"limited native stream did not exhaust its budget") &&
-		expect(cpu.rip == 4 &&
-			cpu.gpr(Register::rax) == 0x0807'0605'0403'0201ULL,
-			"limited native stream produced the wrong state");
+		"limited native stream did not exhaust its budget");
+	require(cpu.rip == 4 &&
+		cpu.gpr(Register::rax) == 0x0807'0605'0403'0201ULL,
+		"limited native stream produced the wrong state");
 }
 
-[[nodiscard]] bool native_divide_traps_precisely()
+void native_divide_traps_precisely()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -5822,16 +5744,16 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	const auto built = require_built(gadgets::build(memory, 100, 1),
 		"native DIV trap block did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 1);
-	return expect(result.event == uml::cpu::EngineEvent::floating_point_trap,
-		"divide by zero did not return the x86 divide trap") &&
-		expect(result.retired_instructions == 0 && cpu.rip == 100,
-			"divide trap retired or lost its precise RIP") &&
-		expect(cpu.gpr(Register::rax) == 42 &&
-			cpu.gpr(Register::rdx) == 0,
-			"divide trap modified the dividend registers");
+	require(result.event == uml::cpu::EngineEvent::floating_point_trap,
+		"divide by zero did not return the x86 divide trap");
+	require(result.retired_instructions == 0 && cpu.rip == 100,
+		"divide trap retired or lost its precise RIP");
+	require(cpu.gpr(Register::rax) == 42 &&
+		cpu.gpr(Register::rdx) == 0,
+		"divide trap modified the dividend registers");
 }
 
-[[nodiscard]] bool native_into_reports_overflow_precisely()
+void native_into_reports_overflow_precisely()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -5845,17 +5767,16 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	taken.rflags |= rflags_overflow;
 	const auto taken_result = gadgets::execute(
 		built.program, taken, memory, 1);
-	if (!expect(taken_result.event == uml::cpu::EngineEvent::overflow,
-		"taken INTO did not return the overflow trap") ||
-		!expect(taken_result.retired_instructions == 1 && taken.rip == 101,
-			"taken INTO did not preserve trap retirement semantics"))
-		return false;
+	require(taken_result.event == uml::cpu::EngineEvent::overflow,
+		"taken INTO did not return the overflow trap");
+	require(taken_result.retired_instructions == 1 && taken.rip == 101,
+		"taken INTO did not preserve trap retirement semantics");
 	CpuState clear{};
 	clear.execution_mode = ExecutionMode::compat32;
 	clear.rip = 100;
 	const auto clear_result = gadgets::execute(
 		built.program, clear, memory, 1);
-	return expect(clear_result.event == uml::cpu::EngineEvent::continued &&
+	require(clear_result.event == uml::cpu::EngineEvent::continued &&
 		clear_result.instruction_budget_exhausted &&
 		clear_result.retired_instructions == 1 && clear.rip == 101,
 		"clear-overflow INTO did not retire normally");
@@ -5863,7 +5784,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 
 /* ICEBP (INT1) raises #DB as a trap in either mode: it retires, and RIP
  * names the next instruction (audit NC-E10). */
-[[nodiscard]] bool icebp_raises_a_debug_trap_after_itself()
+void icebp_raises_a_debug_trap_after_itself()
 {
 	using namespace uml::cpu::x86_64;
 	for (const auto mode : {ExecutionMode::long64, ExecutionMode::compat32}) {
@@ -5876,12 +5797,10 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		cpu.execution_mode = mode;
 		cpu.rip = 100;
 		const auto result = gadgets::execute(built.program, cpu, memory, 1);
-		if (!expect(result.event == uml::cpu::EngineEvent::debug_trap &&
+		require(result.event == uml::cpu::EngineEvent::debug_trap &&
 			result.retired_instructions == 1 && cpu.rip == 101,
-			"ICEBP did not raise #DB after itself"))
-			return false;
+			"ICEBP did not raise #DB after itself");
 	}
-	return true;
 }
 
 /* BOUND compares the signed index in a register with the pair of bounds at
@@ -5889,7 +5808,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
  * them it raises #BR without retiring. Only the operand size's bits of the
  * register count. A register operand makes the byte an EVEX prefix, and 64-bit
  * mode has no BOUND (audit NC-E10). */
-[[nodiscard]] bool bound_checks_a_signed_range()
+void bound_checks_a_signed_range()
 {
 	using namespace uml::cpu::x86_64;
 	struct Case {
@@ -5938,10 +5857,9 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 			result.event == uml::cpu::EngineEvent::bound_range &&
 				result.retired_instructions == 0 &&
 				cpu.rip == shape.address;
-		if (!expect(ok && cpu.gpr(Register::rbx) == shape.index,
+		require(ok && cpu.gpr(Register::rbx) == shape.index,
 			shape.inside ? "BOUND within its bounds did not retire" :
-				"BOUND outside its bounds did not raise #BR"))
-			return false;
+				"BOUND outside its bounds did not raise #BR");
 	}
 
 	TestMemory unmapped;
@@ -5953,27 +5871,26 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	cpu.execution_mode = ExecutionMode::compat32;
 	cpu.rip = 0x100;
 	const auto fault = gadgets::execute(faulting.program, cpu, unmapped, 1);
-	if (!expect(fault.event == uml::cpu::EngineEvent::memory_fault &&
+	require(fault.event == uml::cpu::EngineEvent::memory_fault &&
 		fault.retired_instructions == 0 && cpu.rip == 0x100 &&
 		fault.fault.address == 0x10000,
-		"BOUND did not fault precisely on unmapped bounds"))
-		return false;
+		"BOUND did not fault precisely on unmapped bounds");
 
 	TestMemory other;
 	other.load(0x100, {0x62, 0xc3});
 	other.load(0x200, {0x62, 0x1d, 0x00, 0x02, 0x00, 0x00});
-	return expect(gadgets::build(other, 0x100, ExecutionMode::compat32, 1)
+	require(gadgets::build(other, 0x100, ExecutionMode::compat32, 1)
 			.status == gadgets::BuildStatus::illegal_instruction,
-		"BOUND with a register operand built") &&
-		expect(gadgets::build(other, 0x200, ExecutionMode::long64, 1)
-			.status == gadgets::BuildStatus::illegal_instruction,
-		"BOUND built in 64-bit mode");
+		"BOUND with a register operand built");
+	require(gadgets::build(other, 0x200, ExecutionMode::long64, 1)
+		.status == gadgets::BuildStatus::illegal_instruction,
+	"BOUND built in 64-bit mode");
 }
 
 /* User mode runs with IOPL 0 and CR4.TSD under PR_SET_TSC: these raise #GP,
  * which Linux delivers as SIGSEGV, rather than #UD. The faulting instruction
  * does not retire. */
-[[nodiscard]] bool privileged_instructions_raise_general_protection()
+void privileged_instructions_raise_general_protection()
 {
 	using namespace uml::cpu::x86_64;
 	const std::vector<std::vector<std::uint8_t>> encodings{
@@ -5991,12 +5908,11 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		CpuState cpu{};
 		cpu.rip = 100;
 		const auto result = gadgets::execute(built.program, cpu, memory, 1);
-		if (!expect(result.event ==
+		require(result.event ==
 				uml::cpu::EngineEvent::general_protection,
-			"privileged instruction did not raise #GP") ||
-			!expect(result.retired_instructions == 0 && cpu.rip == 100,
-				"#GP retired or lost its precise RIP"))
-			return false;
+			"privileged instruction did not raise #GP");
+		require(result.retired_instructions == 0 && cpu.rip == 100,
+			"#GP retired or lost its precise RIP");
 	}
 
 	TestMemory timestamp_memory;
@@ -6013,13 +5929,13 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	disabled.timestamp_faults = true;
 	const auto disabled_result = gadgets::execute(
 		timestamp.program, disabled, timestamp_memory, 1);
-	return expect(enabled_result.event == uml::cpu::EngineEvent::continued &&
-		enabled.rip == 102, "enabled RDTSC did not retire") &&
-		expect(disabled_result.event ==
-			uml::cpu::EngineEvent::general_protection &&
-			disabled_result.retired_instructions == 0 &&
-			disabled.rip == 100,
-			"RDTSC under PR_TSC_SIGSEGV did not raise #GP");
+	require(enabled_result.event == uml::cpu::EngineEvent::continued &&
+		enabled.rip == 102, "enabled RDTSC did not retire");
+	require(disabled_result.event ==
+		uml::cpu::EngineEvent::general_protection &&
+		disabled_result.retired_instructions == 0 &&
+		disabled.rip == 100,
+		"RDTSC under PR_TSC_SIGSEGV did not raise #GP");
 }
 
 /* An instruction that would need a sixteenth byte raises #GP at its first
@@ -6027,7 +5943,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
  * at the sixteenth byte, which a mapped page resolves as spurious, so the
  * guest re-ran the same bytes forever.  A fetch that fails before the limit
  * stays a page fault at the byte it wanted. */
-[[nodiscard]] bool overlong_instructions_raise_general_protection()
+void overlong_instructions_raise_general_protection()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::size_t span = 16384;
@@ -6047,32 +5963,29 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	CpuState fits{};
 	fits.rip = 0x201;
 	const auto fitted = gadgets::execute(legal.program, fits, memory, 1);
-	if (!expect(fitted.event == uml::cpu::EngineEvent::continued &&
+	require(fitted.event == uml::cpu::EngineEvent::continued &&
 		fitted.retired_instructions == 1 && fits.rip == 0x210,
-		"a fifteen-byte instruction did not retire"))
-		return false;
+		"a fifteen-byte instruction did not retire");
 
 	for (const auto start : {0x100U, 0x101U}) {
 		const auto built = gadgets::build(memory, start, 4);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-			"an overlong instruction did not build to #GP") ||
-			!expect(built.program.replay_instructions().size() ==
-				built.program.instruction_count(),
-				"an overlong instruction did not replay from its source"))
-			return false;
+		require(built.status == gadgets::BuildStatus::built,
+			"an overlong instruction did not build to #GP");
+		require(built.program.replay_instructions().size() ==
+			built.program.instruction_count(),
+			"an overlong instruction did not replay from its source");
 		CpuState cpu{};
 		cpu.rip = start;
 		const auto result = gadgets::execute(built.program, cpu, memory, 4);
 		const auto retired = start == 0x100U ? 1U : 0U;
-		if (!expect(result.event ==
+		require(result.event ==
 				uml::cpu::EngineEvent::general_protection &&
 			result.retired_instructions == retired && cpu.rip == 0x101,
-			"an overlong instruction did not raise #GP at its first byte"))
-			return false;
+			"an overlong instruction did not raise #GP at its first byte");
 	}
 
 	const auto short_fetch = gadgets::build(memory, span - 14, 1);
-	return expect(short_fetch.status == gadgets::BuildStatus::fetch_fault &&
+	require(short_fetch.status == gadgets::BuildStatus::fetch_fault &&
 		short_fetch.fault_address == span,
 		"a fetch fault inside the length limit was not a page fault");
 }
@@ -6080,7 +5993,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 /* RDRAND and RDSEED return host CSPRNG output with CF set.  They used to
  * return one xorshift round of the counter XORed with the CpuState address,
  * which a guest could invert and XOR with RDTSC to learn a host pointer. */
-[[nodiscard]] bool random_instructions_expose_no_host_state()
+void random_instructions_expose_no_host_state()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -6112,33 +6025,31 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	for (int round = 0; round < 16; ++round) {
 		CpuState cpu{};
 		const auto result = gadgets::execute(built.program, cpu, memory, 8);
-		if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+		require(result.event == uml::cpu::EngineEvent::system_call &&
 			result.retired_instructions == 6,
-			"RDRAND/RDSEED block did not reach SYSCALL") ||
-			!expect((cpu.rflags & 0x8d5U) == 1U,
-				"RDSEED did not report success with only CF set"))
-			return false;
+			"RDRAND/RDSEED block did not reach SYSCALL");
+		require((cpu.rflags & 0x8d5U) == 1U,
+			"RDSEED did not report success with only CF set");
 		const auto counter = (cpu.gpr(Register::rsi) << 32U) |
 			(cpu.gpr(Register::rdi) & 0xffff'ffffULL);
 		const auto host = reinterpret_cast<std::uintptr_t>(&cpu);
 		for (const auto value :
 			{cpu.gpr(Register::rax), cpu.gpr(Register::rbx)}) {
 			const auto recovered = invert(value) ^ counter;
-			if (!expect((recovered >> 12U) != (host >> 12U),
-				"RDRAND/RDSEED output revealed the CpuState address"))
-				return false;
+			require((recovered >> 12U) != (host >> 12U),
+				"RDRAND/RDSEED output revealed the CpuState address");
 		}
 		if (round == 0)
 			first = cpu.gpr(Register::rax);
 		else if (cpu.gpr(Register::rax) != first)
 			varied = true;
 	}
-	return expect(varied, "RDRAND returned one value sixteen times");
+	require(varied, "RDRAND returned one value sixteen times");
 }
 
 /* A guest vCPU has no processor numbering, so RDPID, RDTSCP's ECX and the
  * limit of the per-CPU segment LSL reads all name processor 0 of node 0. */
-[[nodiscard]] bool processor_numbering_is_cpu_zero_node_zero()
+void processor_numbering_is_cpu_zero_node_zero()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t zero_flag = 1ULL << 6U;
@@ -6179,25 +6090,23 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		CpuState cpu{};
 		cpu.execution_mode = mode;
 		const auto result = gadgets::execute(built.program, cpu, *memory, 7);
-		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+		require(result.event == uml::cpu::EngineEvent::continued &&
 			result.retired_instructions == 7,
-			"processor numbering block did not retire") ||
-			!expect(cpu.gpr(processor) == 0,
-				"RDPID did not report processor 0") ||
-			!expect(cpu.gpr(Register::rcx) == 0,
-				"RDTSCP did not report processor 0 in ECX") ||
-			!expect(cpu.gpr(Register::rsi) == 0 &&
-				(cpu.rflags & zero_flag) != 0,
-				"LSL of the per-CPU segment did not read processor 0"))
-			return false;
+			"processor numbering block did not retire");
+		require(cpu.gpr(processor) == 0,
+			"RDPID did not report processor 0");
+		require(cpu.gpr(Register::rcx) == 0,
+			"RDTSCP did not report processor 0 in ECX");
+		require(cpu.gpr(Register::rsi) == 0 &&
+			(cpu.rflags & zero_flag) != 0,
+			"LSL of the per-CPU segment did not read processor 0");
 	}
-	return true;
 }
 
 /* WRFSBASE and WRGSBASE with a 64-bit operand raise #GP for a non-canonical
  * address and leave the base unchanged; the 32-bit form zero-extends and so
  * cannot fault. */
-[[nodiscard]] bool segment_base_writes_reject_non_canonical_addresses()
+void segment_base_writes_reject_non_canonical_addresses()
 {
 	using namespace uml::cpu::x86_64;
 	struct Case final {
@@ -6235,30 +6144,27 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		const auto base = fs ? cpu.fs_base : cpu.gs_base;
 		const auto other = fs ? cpu.gs_base : cpu.fs_base;
 		if (shape.faults) {
-			if (!expect(result.event ==
+			require(result.event ==
 					uml::cpu::EngineEvent::general_protection &&
 				result.retired_instructions == 0 && cpu.rip == 100,
-				"non-canonical segment base write did not raise #GP") ||
-				!expect(base == original && other == original,
-					"faulting segment base write changed a base"))
-				return false;
+				"non-canonical segment base write did not raise #GP");
+			require(base == original && other == original,
+				"faulting segment base write changed a base");
 			continue;
 		}
 		const auto expected = shape.wide ? shape.value :
 			(shape.value & 0xffff'ffffULL);
-		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+		require(result.event == uml::cpu::EngineEvent::continued &&
 			result.retired_instructions == 1 &&
 			base == expected && other == original,
-			"canonical segment base write did not retire"))
-			return false;
+			"canonical segment base write did not retire");
 	}
-	return true;
 }
 
 /* RFLAGS.TF single-steps: the runtime runs each entry with a budget of one.
  * Once blocks are cached and linked, a one-instruction budget must still
  * stop after exactly one instruction, including across a taken branch. */
-[[nodiscard]] bool one_instruction_budget_steps_linked_programs()
+void one_instruction_budget_steps_linked_programs()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -6287,24 +6193,22 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		for (std::size_t block = 0; block < 8 &&
 			result.event == uml::cpu::EngineEvent::continued; ++block)
 			result = run(warm, 64);
-		if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+		require(result.event == uml::cpu::EngineEvent::system_call &&
 				warm.gpr(Register::rax) == 2,
-			"warm-up run did not reach the system call"))
-			return false;
+			"warm-up run did not reach the system call");
 	}
 
 	CpuState cpu{};
 	constexpr std::array<std::uint64_t, 3> expected_rip{3, 7, 10};
 	for (std::size_t index = 0; index < expected_rip.size(); ++index) {
 		const auto result = run(cpu, 1);
-		if (!expect(result.instruction_budget_exhausted &&
+		require(result.instruction_budget_exhausted &&
 				result.retired_instructions == 1 &&
 				cpu.rip == expected_rip[index],
-			"a one-instruction budget did not stop after one instruction"))
-			return false;
+			"a one-instruction budget did not stop after one instruction");
 	}
 	const auto last = run(cpu, 1);
-	return expect(last.event == uml::cpu::EngineEvent::system_call &&
+	require(last.event == uml::cpu::EngineEvent::system_call &&
 		cpu.gpr(Register::rax) == 2 && cpu.rip == 12,
 		"the stepped system call did not report its own exit");
 }
@@ -6312,7 +6216,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 /* POPF that sets TF arms #DB after the next instruction, so the program
  * leaves at that instruction for the runtime to run it alone. A POPF that
  * leaves TF clear, or finds it already set, runs on. */
-[[nodiscard]] bool popf_setting_trap_flag_leaves_at_the_next_instruction()
+void popf_setting_trap_flag_leaves_at_the_next_instruction()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -6332,20 +6236,19 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	cpu.gpr(Register::rsp) = 0x200;
 	cpu.rflags = 0x2;
 	const auto armed = gadgets::execute(built.program, cpu, memory, 64);
-	if (!expect(armed.event == uml::cpu::EngineEvent::trap_flag &&
+	require(armed.event == uml::cpu::EngineEvent::trap_flag &&
 			armed.retired_instructions == 2 && cpu.rip == 6 &&
 			(cpu.rflags & rflags_trap) != 0 &&
 			cpu.gpr(Register::rax) == 0 &&
 			cpu.gpr(Register::rsp) == 0x200,
-		"POPF setting TF did not leave at the next instruction"))
-		return false;
+		"POPF setting TF did not leave at the next instruction");
 
 	/* Already set: no transition, so the program runs to the system call. */
 	cpu = CpuState{};
 	cpu.gpr(Register::rsp) = 0x200;
 	cpu.rflags = 0x2 | rflags_trap;
 	const auto held = gadgets::execute(built.program, cpu, memory, 64);
-	return expect(held.event == uml::cpu::EngineEvent::system_call &&
+	require(held.event == uml::cpu::EngineEvent::system_call &&
 			held.retired_instructions == 7 &&
 			cpu.gpr(Register::rax) == 2 && (cpu.rflags & rflags_trap) == 0,
 		"POPF with TF already set did not run on");
@@ -6355,7 +6258,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
  * does, so it leaves with the trap-flag event and RIP at that instruction for
  * the runtime to run it alone. One that leaves TF clear, clears it, or finds
  * it already set leaves as before, at every operand size (audit NC-E7). */
-[[nodiscard]] bool iret_setting_trap_flag_arms_the_next_instruction()
+void iret_setting_trap_flag_arms_the_next_instruction()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr auto armed = uml::cpu::EngineEvent::trap_flag;
@@ -6405,7 +6308,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 			std::memcpy(word.data(), &frame[index], word.size());
 			if (!memory.write(stack + index * shape.slot,
 				std::span{word.data(), shape.slot}))
-				return expect(false, "IRET frame setup failed");
+				fail("IRET frame setup failed");
 		}
 		const auto built = require_built(
 			gadgets::build(memory, 0, shape.mode, 1),
@@ -6417,15 +6320,13 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		cpu.segment_selectors[2] = 0x2b;
 		cpu.rflags = shape.current;
 		const auto result = gadgets::execute(built.program, cpu, memory, 64);
-		if (!expect(result.event == shape.event &&
+		require(result.event == shape.event &&
 				result.retired_instructions == 1 &&
 				cpu.rip == target &&
 				(cpu.rflags & rflags_trap) ==
 					(shape.popped & rflags_trap),
-				shape.message))
-			return false;
+				shape.message);
 	}
-	return true;
 }
 
 /* Besides IRET, whose case is in the corpus, RF reaches the engine in the
@@ -6434,7 +6335,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
  * flags a system-call exit gives the kernel for pt_regs and the signal frame
  * shows it. An exit that runs no instruction keeps it, as an interrupt taken
  * before the instruction does (audit NC-E4). */
-[[nodiscard]] bool resume_flag_lasts_until_an_instruction_starts()
+void resume_flag_lasts_until_an_instruction_starts()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t cleared = rflags_interrupt | rflags_reserved;
@@ -6445,10 +6346,9 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	const auto call = gadgets::build(memory, 0, ExecutionMode::long64, 1);
 	const auto compat_call =
 		gadgets::build(memory, 16, ExecutionMode::compat32, 1);
-	if (!expect(call.status == gadgets::BuildStatus::built &&
+	require(call.status == gadgets::BuildStatus::built &&
 			compat_call.status == gadgets::BuildStatus::built,
-		"SYSCALL or INT 80h did not build"))
-		return false;
+		"SYSCALL or INT 80h did not build");
 
 	CpuState cpu{};
 	cpu.rflags = resumed;
@@ -6459,16 +6359,14 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	};
 	const auto interrupted = gadgets::execute(
 		call.program, cpu, memory, 1, interrupt);
-	if (!expect(interrupted.event == uml::cpu::EngineEvent::interrupt &&
+	require(interrupted.event == uml::cpu::EngineEvent::interrupt &&
 			interrupted.retired_instructions == 0 &&
 			cpu.rflags == resumed,
-		"an exit that ran no instruction cleared RF"))
-		return false;
+		"an exit that ran no instruction cleared RF");
 	const auto called = gadgets::execute(call.program, cpu, memory, 1);
-	if (!expect(called.event == uml::cpu::EngineEvent::system_call &&
+	require(called.event == uml::cpu::EngineEvent::system_call &&
 			cpu.gpr(Register::r11) == cleared && cpu.rflags == cleared,
-		"SYSCALL showed the RF its flags started with"))
-		return false;
+		"SYSCALL showed the RF its flags started with");
 
 	CpuState compat{};
 	compat.execution_mode = ExecutionMode::compat32;
@@ -6478,35 +6376,35 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	compat.rflags = resumed;
 	const auto compat_called =
 		gadgets::execute(compat_call.program, compat, memory, 1);
-	return expect(compat_called.event == uml::cpu::EngineEvent::system_call &&
+	require(compat_called.event == uml::cpu::EngineEvent::system_call &&
 			compat.rflags == cleared,
 		"INT 80h showed the RF its flags started with");
 }
 
 /* INT n names its vector for the #GP error code, and FWAIT its opcode for
  * the #MF check. */
-[[nodiscard]] bool decode_names_int_vectors_and_fwait()
+void decode_names_int_vectors_and_fwait()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
 	memory.load(0, {0xcd, 0x41, 0x9b});
 	const auto interrupt = decode(memory, 0);
 	const auto wait = decode(memory, 2);
-	return expect(interrupt.status == DecodeStatus::decoded &&
+	require(interrupt.status == DecodeStatus::decoded &&
 			interrupt.instruction.operation == Operation::privileged &&
 			interrupt.instruction.vector_opcode == 0xcd &&
 			interrupt.instruction.source.immediate == 0x41,
-		"INT 0x41 did not decode with its vector") &&
-		expect(wait.status == DecodeStatus::decoded &&
-			wait.instruction.operation == Operation::nop &&
-			wait.instruction.vector_opcode == 0x9b,
-			"FWAIT did not decode as itself");
+		"INT 0x41 did not decode with its vector");
+	require(wait.status == DecodeStatus::decoded &&
+		wait.instruction.operation == Operation::nop &&
+		wait.instruction.vector_opcode == 0x9b,
+		"FWAIT did not decode as itself");
 }
 
 /* A single step of a repeated string instruction runs one iteration and
  * leaves between elements with RIP naming the instruction, until an
  * iteration ends it, which retires it (audit NC-E12). */
-[[nodiscard]] bool a_single_step_runs_one_repeat_iteration()
+void a_single_step_runs_one_repeat_iteration()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -6527,16 +6425,15 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	for (std::uint64_t left = 4; left >= 3; --left) {
 		const auto step = gadgets::execute(built.program, cpu, memory,
 			executor, 1, {}, true);
-		if (!expect(step.event == uml::cpu::EngineEvent::continued &&
+		require(step.event == uml::cpu::EngineEvent::continued &&
 				step.repeat_yielded &&
 				step.retired_instructions == 0 && cpu.rip == 0 &&
 				cpu.gpr(Register::rcx) == left,
-			"a stepped REPE CMPSB did not stop after one iteration"))
-			return false;
+			"a stepped REPE CMPSB did not stop after one iteration");
 	}
 	const auto last = gadgets::execute(built.program, cpu, memory,
 		executor, 1, {}, true);
-	return expect(last.event == uml::cpu::EngineEvent::continued &&
+	require(last.event == uml::cpu::EngineEvent::continued &&
 			!last.repeat_yielded && last.retired_instructions == 1 &&
 			cpu.rip == 2 && cpu.gpr(Register::rcx) == 2 &&
 			cpu.gpr(Register::rsi) == 0x803,
@@ -6545,7 +6442,7 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 
 /* LDMXCSR keeps what the guest loads, and LDMXCSR and FLDCW that unmask an
  * exception retire and leave, so the runtime checks what follows. */
-[[nodiscard]] bool loads_that_unmask_exceptions_leave()
+void loads_that_unmask_exceptions_leave()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -6569,19 +6466,17 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	};
 	CpuState cpu{};
 	const auto masked = run({0xa0, 0x1f, 0, 0}, {0x7f, 0x03}, cpu);
-	if (!expect(masked.event == uml::cpu::EngineEvent::system_call &&
+	require(masked.event == uml::cpu::EngineEvent::system_call &&
 			cpu.mxcsr == 0x1fa0 && cpu.x87_control == 0x37f &&
 			cpu.gpr(Register::rax) == 2,
-		"LDMXCSR lost the flags it loaded, or a masked load left"))
-		return false;
+		"LDMXCSR lost the flags it loaded, or a masked load left");
 	const auto simd = run({0x80, 0x1d, 0, 0}, {0x7f, 0x03}, cpu);
-	if (!expect(simd.event == uml::cpu::EngineEvent::continued &&
+	require(simd.event == uml::cpu::EngineEvent::continued &&
 			simd.retired_instructions == 1 && cpu.rip == 3 &&
 			cpu.mxcsr == 0x1d80,
-		"LDMXCSR unmasking #Z did not leave after itself"))
-		return false;
+		"LDMXCSR unmasking #Z did not leave after itself");
 	const auto x87 = run({0x80, 0x1f, 0, 0}, {0x7b, 0x03}, cpu);
-	return expect(x87.event == uml::cpu::EngineEvent::continued &&
+	require(x87.event == uml::cpu::EngineEvent::continued &&
 			x87.retired_instructions == 3 && cpu.rip == 8 &&
 			cpu.x87_control == 0x37b && cpu.gpr(Register::rax) == 1,
 		"FLDCW unmasking #Z did not leave after itself");
@@ -6604,7 +6499,7 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 /* While MXCSR unmasks an exception, a SIMD instruction that raises it
  * faults with #XM before its result: the destination keeps its value and
  * MXCSR gains the flag. A masked exception only sets its flag. */
-[[nodiscard]] bool checked_simd_exceptions_fault_before_the_result()
+void checked_simd_exceptions_fault_before_the_result()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -6614,11 +6509,10 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 	});
 	const auto built = gadgets::build(memory, 0, ExecutionMode::long64, 64,
 		{}, gadgets::check_simd);
-	if (!expect(built.status == gadgets::BuildStatus::built &&
+	require(built.status == gadgets::BuildStatus::built &&
 			built.program.check_head() &&
 			built.program.instruction_count() == 1,
-		"DIVSS did not build as a check head"))
-		return false;
+		"DIVSS did not build as a check head");
 	gadgets::Executor executor;
 	executor.prepare(memory);
 	CpuState cpu{};
@@ -6626,18 +6520,17 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 	set_xmm_low(cpu, 0, 0x3f800000);
 	const auto trap = gadgets::execute_checked(built.program, cpu, memory,
 		executor, 64, {}, false, gadgets::checked_exceptions(cpu));
-	if (!expect(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
+	require(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
 			trap.vector == 19 && trap.error == 0x1d84 &&
 			trap.retired_instructions == 0 && cpu.rip == 0 &&
 			cpu.mxcsr == 0x1d84 && xmm_low(cpu, 0) == 0x3f800000,
-		"an unmasked division by zero did not fault with #XM"))
-		return false;
+		"an unmasked division by zero did not fault with #XM");
 	cpu = CpuState{};
 	cpu.mxcsr = 0x0f80;
 	set_xmm_low(cpu, 0, 0x3f800000);
 	const auto masked = gadgets::execute_checked(built.program, cpu, memory,
 		executor, 64, {}, false, gadgets::checked_exceptions(cpu));
-	return expect(masked.event == uml::cpu::EngineEvent::continued &&
+	require(masked.event == uml::cpu::EngineEvent::continued &&
 			masked.retired_instructions == 1 && cpu.rip == 4 &&
 			cpu.mxcsr == 0x0f84 && xmm_low(cpu, 0) == 0x7f800000,
 		"a masked division by zero did not only set its flag");
@@ -6648,7 +6541,7 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
  * the destination, and otherwise its flag beside the others -- but not
  * under DAZ, for a lane with a NaN or for a division by zero, while a DPPS
  * raises it for a denormal product of normal sources too. */
-[[nodiscard]] bool checked_simd_denormal_operands_follow_x86()
+void checked_simd_denormal_operands_follow_x86()
 {
 	using namespace uml::cpu::x86_64;
 	struct Case {
@@ -6693,11 +6586,10 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		cpu.mxcsr = test.mxcsr;
 		set_xmm_low(cpu, 0, test.left);
 		set_xmm_low(cpu, 1, test.right);
-		if (!expect(built.status == gadgets::BuildStatus::built &&
+		require(built.status == gadgets::BuildStatus::built &&
 				built.program.check_head() &&
 				gadgets::checked_exceptions(cpu) == gadgets::check_simd,
-			"a SIMD instruction did not build as a check head"))
-			return false;
+			"a SIMD instruction did not build as a check head");
 		gadgets::Executor executor;
 		executor.prepare(memory);
 		const auto result = gadgets::execute_checked(built.program, cpu,
@@ -6716,17 +6608,15 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 			"mxcsr %#x xmm0 %#x\n", static_cast<int>(test.name.size()),
 			test.name.data(), static_cast<int>(result.event), cpu.mxcsr,
 			xmm_low(cpu, 0));
-		return expect(false,
-			"a denormal operand did not raise what x86 raises");
+		fail("a denormal operand did not raise what x86 raises");
 	}
-	return true;
 }
 
 /* Run singly and checked, an SSE instruction raises invalid operation where
  * x86 does: COMISD for a quiet NaN but UCOMISD only for a signalling one, a
  * conversion to an integer for a value out of that integer's range, and a
  * scalar comparison, minimum or maximum only for the lanes it compares. */
-[[nodiscard]] bool checked_simd_invalid_operations_follow_x86()
+void checked_simd_invalid_operations_follow_x86()
 {
 	using namespace uml::cpu::x86_64;
 	struct Case {
@@ -6780,10 +6670,9 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		memory.fill(0, code);
 		const auto built = gadgets::build(memory, 0, ExecutionMode::long64,
 			64, {}, gadgets::check_simd);
-		if (!expect(built.status == gadgets::BuildStatus::built &&
+		require(built.status == gadgets::BuildStatus::built &&
 				built.program.check_head(),
-			"an SSE instruction did not build as a check head"))
-			return false;
+			"an SSE instruction did not build as a check head");
 		gadgets::Executor executor;
 		executor.prepare(memory);
 		CpuState cpu{};
@@ -6802,11 +6691,10 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 			"error %#llx\n", static_cast<int>(test.name.size()),
 			test.name.data(), static_cast<int>(result.event),
 			static_cast<unsigned long long>(result.error));
-		return expect(false, test.invalid ?
+		fail(test.invalid ?
 			"a checked SSE instruction did not raise invalid operation" :
 			"a checked SSE instruction raised invalid operation");
 	}
-	return true;
 }
 
 /* Runs from RIP as the runtime does, checked while `checked_exceptions`
@@ -6852,7 +6740,7 @@ struct InvalidOperationCase {
  * runtime to run it again checked. Either faults with #XM and keeps xmm0 if
  * x86 raises invalid operation, and otherwise returns x86's result without a
  * flag. */
-[[nodiscard]] bool invalid_operation_follows_x86(
+void invalid_operation_follows_x86(
 	const InvalidOperationCase &test)
 {
 	using namespace uml::cpu::x86_64;
@@ -6902,7 +6790,7 @@ struct InvalidOperationCase {
 			linked.event == uml::cpu::EngineEvent::system_call &&
 			returned(runtime, 0x1900);
 	if (right)
-		return true;
+		return;
 	std::fprintf(stderr, "x86-64 gadget bootstrap: %.*s: checked event %d "
 		"error %#llx mxcsr %#x, runtime event %d error %#llx mxcsr %#x\n",
 		static_cast<int>(test.name.size()), test.name.data(),
@@ -6910,7 +6798,7 @@ struct InvalidOperationCase {
 		static_cast<unsigned long long>(alone.error), checked.mxcsr,
 		static_cast<int>(linked.event),
 		static_cast<unsigned long long>(linked.error), runtime.mxcsr);
-	return expect(false, test.invalid ?
+	fail(test.invalid ?
 		"a SIMD instruction did not raise invalid operation" :
 		"a SIMD instruction raised invalid operation x86 does not");
 }
@@ -6920,7 +6808,7 @@ struct InvalidOperationCase {
  * opposite signs added -- but not for infinity times zero plus a quiet NaN,
  * which it returns, where the host raises it. MXCSR.DAZ makes a denormal
  * factor zero first. */
-[[nodiscard]] bool checked_fma_invalid_operations_follow_x86()
+void checked_fma_invalid_operations_follow_x86()
 {
 	/* Singles: lane 1 is 1.0 unless named high. */
 	constexpr std::uint64_t one = 0x3f80'0000'3f80'0000ULL;
@@ -6970,16 +6858,14 @@ struct InvalidOperationCase {
 		 true, true, 0},
 	};
 	for (const auto &test : cases)
-		if (!invalid_operation_follows_x86(test))
-			return false;
-	return true;
+		invalid_operation_follows_x86(test);
 }
 
 /* A VEX comparison raises invalid operation for a quiet NaN only under a
  * signalling predicate, which bit 4 of the immediate makes of a quiet one in
  * the low four bits and the reverse, and for a signalling NaN under every
  * predicate, false and true included, which compare nothing. */
-[[nodiscard]] bool checked_comparison_invalid_operations_follow_x86()
+void checked_comparison_invalid_operations_follow_x86()
 {
 	/* Singles: lane 1 is 1.0 unless named high. */
 	constexpr std::uint64_t one = 0x3f80'0000'3f80'0000ULL;
@@ -7019,9 +6905,7 @@ struct InvalidOperationCase {
 		 {{{signalling_high, one}, {one, one}, {}}}, false, true, 0},
 	};
 	for (const auto &test : cases)
-		if (!invalid_operation_follows_x86(test))
-			return false;
-	return true;
+		invalid_operation_follows_x86(test);
 }
 
 /* A SIMD instruction with xmm0, xmm1 and xmm2 (low quadword first) as its
@@ -7039,7 +6923,7 @@ struct FlagCase {
 	std::uint64_t result;
 };
 
-[[nodiscard]] bool flags_follow_x86(const FlagCase &test)
+void flags_follow_x86(const FlagCase &test)
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -7070,14 +6954,14 @@ struct FlagCase {
 			result.event == uml::cpu::EngineEvent::continued &&
 				result.retired_instructions == 1 &&
 				cpu.mxcsr == test.after && low == test.result)
-		return true;
+		return;
 	std::fprintf(stderr, "x86-64 gadget bootstrap: %.*s: event %d mxcsr "
 		"%#x (x86 %#x) xmm0 %#llx (x86 %#llx)\n",
 		static_cast<int>(test.name.size()), test.name.data(),
 		static_cast<int>(result.event), cpu.mxcsr, test.after,
 		static_cast<unsigned long long>(low),
 		static_cast<unsigned long long>(test.result));
-	return expect(false, "a checked SIMD instruction raised other flags "
+	fail("a checked SIMD instruction raised other flags "
 		"than x86");
 }
 
@@ -7087,7 +6971,7 @@ struct FlagCase {
  * from itself without adding it, and HSUBPS rounding down subtracts a
  * small negative from the largest single without overflowing the other
  * way. */
-[[nodiscard]] bool checked_horizontal_flags_follow_x86()
+void checked_horizontal_flags_follow_x86()
 {
 	constexpr std::uint64_t ones = 0x3f80'0000'3f80'0000ULL;
 	const std::vector<FlagCase> cases{
@@ -7105,9 +6989,7 @@ struct FlagCase {
 		 0x3f80, 0x3fa0, 0x8000'0000'7f7f'ffffULL},
 	};
 	for (const auto &test : cases)
-		if (!flags_follow_x86(test))
-			return false;
-	return true;
+		flags_follow_x86(test);
 }
 
 /* x86 detects underflow after rounding, where the host detects it before:
@@ -7116,7 +6998,7 @@ struct FlagCase {
  * alone, in rounding to nearest and rounding up alike, while underflow is
  * unmasked too. A tiny result that is exact raises underflow while it is
  * unmasked, and, flushed by FTZ, underflow and precision. */
-[[nodiscard]] bool checked_underflow_follows_x86()
+void checked_underflow_follows_x86()
 {
 	constexpr std::uint64_t one = 0x3f80'0000'3f80'0000ULL;
 	constexpr std::uint64_t below_one = 0x3f80'0000'3f7f'fffeULL;
@@ -7169,9 +7051,7 @@ struct FlagCase {
 		 0},
 	};
 	for (const auto &test : cases)
-		if (!flags_follow_x86(test))
-			return false;
-	return true;
+		flags_follow_x86(test);
 }
 
 /* DPPS and DPPD raise flags step by step, as x86 does: the products, then
@@ -7182,7 +7062,7 @@ struct FlagCase {
  * steps after it raise nothing, a denormal product added included -- unless
  * the exception is invalid operation or a denormal operand, raised before
  * the step computes, which raises nothing else of its step. */
-[[nodiscard]] bool checked_dot_product_flags_follow_x86()
+void checked_dot_product_flags_follow_x86()
 {
 	/* DPPS and DPPD xmm0, xmm1, 0x31: the products of lanes 0 and 1,
 	 * summed into lane 0; DPPS 0xf1 sums all four. */
@@ -7258,9 +7138,7 @@ struct FlagCase {
 		 0x1780, 0x1790, 0},
 	};
 	for (const auto &test : cases)
-		if (!flags_follow_x86(test))
-			return false;
-	return true;
+		flags_follow_x86(test);
 }
 
 /* Beside an unmasked underflow or overflow, which faults, x86 raises
@@ -7268,7 +7146,7 @@ struct FlagCase {
  * unbounded: an inexact tiny product raises it, and a tiny or overflowing
  * result whose significand is exact does not, however its delivery would
  * round -- except a half narrowed from a denormal single, which does. */
-[[nodiscard]] bool checked_unmasked_precision_follows_x86()
+void checked_unmasked_precision_follows_x86()
 {
 	const std::vector<std::uint8_t> mulss{0xf3, 0x0f, 0x59, 0xc1};
 	/* VCVTPS2PH xmm0, xmm1, rounding as MXCSR does. */
@@ -7315,16 +7193,14 @@ struct FlagCase {
 		 0x1388, 0},
 	};
 	for (const auto &test : cases)
-		if (!flags_follow_x86(test))
-			return false;
-	return true;
+		flags_follow_x86(test);
 }
 
 /* A sum or difference that small is exact, yet tiny: FTZ flushing it raises
  * underflow and precision, in a horizontal or alternating one too, and it
  * raises underflow while that is unmasked. Beside an unmasked overflow, it
  * raises precision as its significand rounds. */
-[[nodiscard]] bool checked_sum_flags_follow_x86()
+void checked_sum_flags_follow_x86()
 {
 	const std::vector<std::uint8_t> addss{0xf3, 0x0f, 0x58, 0xc1};
 	constexpr std::uint64_t one = 0x3f80'0000'0000'0000ULL;
@@ -7353,16 +7229,14 @@ struct FlagCase {
 		 0x1380, 0x13a8, 0},
 	};
 	for (const auto &test : cases)
-		if (!flags_follow_x86(test))
-			return false;
-	return true;
+		flags_follow_x86(test);
 }
 
 /* ROUND raises precision for a lane that is not an integer, unless bit 3 of
  * its immediate suppresses it, and a conversion to an integer for one that
  * converts in range, where an out-of-range one raises invalid operation
  * alone; MXCSR.DAZ makes a denormal zero first. */
-[[nodiscard]] bool checked_integer_rounding_precision_follows_x86()
+void checked_integer_rounding_precision_follows_x86()
 {
 	constexpr std::uint64_t one_and_a_half_two = 0x4000'0000'3fc0'0000ULL;
 	constexpr std::uint64_t two_twos = 0x4000'0000'4000'0000ULL;
@@ -7393,14 +7267,12 @@ struct FlagCase {
 		 0x1f00, 0x1f01, 0},
 	};
 	for (const auto &test : cases)
-		if (!flags_follow_x86(test))
-			return false;
-	return true;
+		flags_follow_x86(test);
 }
 
 /* An unmasked x87 exception leaves its operands, sets ES and B, and raises
  * #MF at the next waiting instruction. */
-[[nodiscard]] bool checked_x87_exceptions_wait_for_the_next_instruction()
+void checked_x87_exceptions_wait_for_the_next_instruction()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -7414,7 +7286,7 @@ struct FlagCase {
 	CpuState cpu{};
 	cpu.x87_control = 0x37b;
 	const auto trap = run_until_event(memory, cpu);
-	return expect(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
+	require(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
 			trap.vector == 16 && cpu.rip == 6 &&
 			(trap.error & 0x80ffU) == 0x8084U &&
 			(trap.error >> 16U) == 0x37bU &&
@@ -7425,7 +7297,7 @@ struct FlagCase {
 /* A cache built for enabled exceptions splits its blocks at every
  * instruction that needs a check, so a linked run never reaches one: the
  * block before it runs linked, and a link into it leaves at once. */
-[[nodiscard]] bool checked_builds_stop_before_checked_instructions()
+void checked_builds_stop_before_checked_instructions()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -7440,38 +7312,34 @@ struct FlagCase {
 	executor.check_exceptions(gadgets::check_x87);
 	const auto head = executor.select_program(memory, 0,
 		ExecutionMode::long64);
-	if (!expect(head.status == gadgets::BuildStatus::built &&
+	require(head.status == gadgets::BuildStatus::built &&
 			head.program != nullptr &&
 			head.program->instruction_count() == 1 &&
 			!head.program->check_head(),
-		"a checked build did not end its block before FLD1"))
-		return false;
+		"a checked build did not end its block before FLD1");
 	CpuState cpu{};
 	cpu.x87_control = 0x37b;
 	const auto before = gadgets::execute_checked(*head.program, cpu, memory,
 		executor, 64, {}, false, gadgets::checked_exceptions(cpu));
-	if (!expect(before.event == uml::cpu::EngineEvent::continued &&
+	require(before.event == uml::cpu::EngineEvent::continued &&
 			before.retired_instructions == 1 && cpu.rip == 3 &&
 			cpu.gpr(Register::rax) == 1,
-		"the block before a check head did not stop at it"))
-		return false;
+		"the block before a check head did not stop at it");
 	const auto check = executor.select_program(memory, 3,
 		ExecutionMode::long64);
-	if (!expect(check.status == gadgets::BuildStatus::built &&
+	require(check.status == gadgets::BuildStatus::built &&
 			check.program != nullptr && check.program->check_head(),
-		"FLD1 did not build as a check head"))
-		return false;
+		"FLD1 did not build as a check head");
 	/* Entered as a link would enter it, the stream only leaves. */
 	const auto entered = gadgets::execute(*check.program, cpu, memory,
 		executor, 64);
-	if (!expect(entered.event == uml::cpu::EngineEvent::continued &&
+	require(entered.event == uml::cpu::EngineEvent::continued &&
 			entered.retired_instructions == 0 && cpu.rip == 3 &&
 			cpu.x87_top == 0,
-		"a check head's own stream ran its instruction"))
-		return false;
+		"a check head's own stream ran its instruction");
 	const auto ran = gadgets::execute_checked(*check.program, cpu, memory,
 		executor, 64, {}, false, gadgets::checked_exceptions(cpu));
-	return expect(ran.event == uml::cpu::EngineEvent::continued &&
+	require(ran.event == uml::cpu::EngineEvent::continued &&
 			ran.retired_instructions == 1 && cpu.rip == 5 &&
 			cpu.x87_top == 7,
 		"a check head did not run its instruction checked");
@@ -7482,7 +7350,7 @@ struct FlagCase {
  * raises an unmasked exception leaves before it commits, also inside a
  * block a link reached, and runs again checked, so the run retires it with
  * the exception pending for the next waiting instruction. */
-[[nodiscard]] bool unmasked_x87_exceptions_leave_linked_blocks()
+void unmasked_x87_exceptions_leave_linked_blocks()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -7516,18 +7384,16 @@ struct FlagCase {
 	cold.x87_control = 0x1332;
 	const auto jump = run(cold);
 	const auto block = run(cold);
-	if (!expect(jump.event == uml::cpu::EngineEvent::continued &&
+	require(jump.event == uml::cpu::EngineEvent::continued &&
 			jump.retired_instructions == 1 && raised(block, cold, 3),
-		"an unmasked x87 division by zero did not leave its block"))
-		return false;
+		"an unmasked x87 division by zero did not leave its block");
 	CpuState cpu{};
 	cpu.x87_control = 0x1332;
 	const auto linked = run(cpu);
-	if (!expect(raised(linked, cpu, 4),
-		"an unmasked x87 division by zero did not leave a linked block"))
-		return false;
+	require(raised(linked, cpu, 4),
+		"an unmasked x87 division by zero did not leave a linked block");
 	const auto trap = run_until_event(memory, cpu);
-	return expect(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
+	require(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
 			trap.vector == 16 && cpu.rip == 0x16,
 		"the pending x87 division by zero did not raise #MF at FWAIT");
 }
@@ -7535,7 +7401,7 @@ struct FlagCase {
 /* x87 arithmetic that raises only masked exceptions runs through under an
  * unmasked control word, and a control word load leaves only when the
  * gadgets were not checking or it unmasks a flag already set. */
-[[nodiscard]] bool unmasked_x87_control_words_run_clean_code_through()
+void unmasked_x87_control_words_run_clean_code_through()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -7553,12 +7419,11 @@ struct FlagCase {
 	cpu.x87_control = 0x1332;
 	cpu.gpr(Register::rbx) = 0x800;
 	const auto clean = gadgets::execute(arithmetic.program, cpu, memory, 64);
-	if (!expect(clean.event == uml::cpu::EngineEvent::system_call &&
+	require(clean.event == uml::cpu::EngineEvent::system_call &&
 			clean.retired_instructions == 6 &&
 			memory.qword(0x800) == 0x3ff6'a09e'667f'3bcdULL &&
 			(cpu.x87_status & 0x80a0U) == 0x0020U,
-		"clean x87 arithmetic under FCW $1332 did not run through"))
-		return false;
+		"clean x87 arithmetic under FCW $1332 did not run through");
 
 	memory.load(0x100, {
 		0xd9, 0x2e,       // fldcw [rsi]
@@ -7577,18 +7442,16 @@ struct FlagCase {
 		return gadgets::execute(load.program, cpu, memory, 64);
 	};
 	const auto checking = run(0x37b, 0);
-	if (!expect(checking.event == uml::cpu::EngineEvent::system_call &&
+	require(checking.event == uml::cpu::EngineEvent::system_call &&
 			cpu.x87_control == 0x1332 && cpu.gpr(Register::rax) == 1,
-		"FLDCW $1332 left while the gadgets were already checking"))
-		return false;
+		"FLDCW $1332 left while the gadgets were already checking");
 	const auto unchecked = run(0x37f, 0);
-	if (!expect(unchecked.event == uml::cpu::EngineEvent::continued &&
+	require(unchecked.event == uml::cpu::EngineEvent::continued &&
 			unchecked.retired_instructions == 1 && cpu.rip == 0x102 &&
 			(cpu.x87_status & 0x8080U) == 0,
-		"FLDCW $1332 did not leave when the gadgets were not checking"))
-		return false;
+		"FLDCW $1332 did not leave when the gadgets were not checking");
 	const auto pending = run(0x37b, 0x0001);
-	return expect(pending.event == uml::cpu::EngineEvent::continued &&
+	require(pending.event == uml::cpu::EngineEvent::continued &&
 			pending.retired_instructions == 1 && cpu.rip == 0x102 &&
 			(cpu.x87_status & 0x8081U) == 0x8081U,
 		"FLDCW unmasking a set invalid-operation flag did not leave");
@@ -7599,7 +7462,7 @@ struct FlagCase {
  * runs in ordinary linked blocks. An instruction whose values could have
  * raised an unmasked exception leaves before it stores anything, also inside
  * a block a link reached, and runs again checked, which faults with #XM. */
-[[nodiscard]] bool unmasked_simd_exceptions_leave_linked_blocks()
+void unmasked_simd_exceptions_leave_linked_blocks()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -7642,12 +7505,11 @@ struct FlagCase {
 	auto cold = start();
 	const auto jump = run(cold);
 	const auto block = run(cold);
-	if (!expect(jump.event == uml::cpu::EngineEvent::continued &&
+	require(jump.event == uml::cpu::EngineEvent::continued &&
 			jump.retired_instructions == 1 && faulted(block, cold, 1),
-		"an unmasked SIMD division by zero did not fault in its block"))
-		return false;
+		"an unmasked SIMD division by zero did not fault in its block");
 	auto cpu = start();
-	return expect(faulted(run(cpu), cpu, 2),
+	require(faulted(run(cpu), cpu, 2),
 		"an unmasked SIMD division by zero did not fault in a linked block");
 }
 
@@ -7660,7 +7522,7 @@ struct FlagCase {
  * computed lanes x86 does not, except the denormal operand, which the
  * gadgets raise only for an instruction they run again while MXCSR.DAZ is
  * clear. */
-[[nodiscard]] bool simd_checks_match_the_checked_path()
+void simd_checks_match_the_checked_path()
 {
 	using namespace uml::cpu::x86_64;
 	struct Case {
@@ -7874,18 +7736,17 @@ struct FlagCase {
 				static_cast<unsigned long long>(cpu[0].rip),
 				static_cast<unsigned long long>(cpu[1].rip),
 				cpu[0].mxcsr, cpu[1].mxcsr);
-			return expect(false,
-				"the gadgets' SIMD checks disagree with the checked path");
+			fail("the gadgets' SIMD checks disagree with the checked path");
 		}
 	}
-	return expect(faults > compared / 8U && faults < compared,
+	require(faults > compared / 8U && faults < compared,
 		"the SIMD check comparison raised too few or too many faults");
 }
 
 /* LDMXCSR leaves only when what a run checks changes: when it unmasks an
  * exception while the gadgets do not check SIMD exceptions, or unmasks
  * underflow or precision, which only a checked run sees. */
-[[nodiscard]] bool mxcsr_loads_leave_when_checks_change()
+void mxcsr_loads_leave_when_checks_change()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -7907,28 +7768,24 @@ struct FlagCase {
 		return gadgets::execute(built.program, cpu, memory, 64);
 	};
 	const auto checking = run(0x1900, 0x1d00);
-	if (!expect(checking.event == uml::cpu::EngineEvent::system_call &&
+	require(checking.event == uml::cpu::EngineEvent::system_call &&
 			cpu.mxcsr == 0x1d00 && cpu.gpr(Register::rax) == 1,
-		"LDMXCSR left while the gadgets already checked SIMD exceptions"))
-		return false;
+		"LDMXCSR left while the gadgets already checked SIMD exceptions");
 	const auto unchecked = run(0x1f80, 0x1900);
-	if (!expect(unchecked.event == uml::cpu::EngineEvent::continued &&
+	require(unchecked.event == uml::cpu::EngineEvent::continued &&
 			unchecked.retired_instructions == 1 && cpu.rip == 3 &&
 			cpu.mxcsr == 0x1900,
-		"LDMXCSR $1900 did not leave when the gadgets were not checking"))
-		return false;
+		"LDMXCSR $1900 did not leave when the gadgets were not checking");
 	const auto precision = run(0x1900, 0x0900);
-	if (!expect(precision.event == uml::cpu::EngineEvent::continued &&
+	require(precision.event == uml::cpu::EngineEvent::continued &&
 			precision.retired_instructions == 1 && cpu.rip == 3,
-		"LDMXCSR unmasking precision did not leave"))
-		return false;
+		"LDMXCSR unmasking precision did not leave");
 	const auto denormal = run(0x1900, 0x1800);
-	if (!expect(denormal.event == uml::cpu::EngineEvent::continued &&
+	require(denormal.event == uml::cpu::EngineEvent::continued &&
 			denormal.retired_instructions == 1 && cpu.rip == 3,
-		"LDMXCSR unmasking a denormal operand did not leave"))
-		return false;
+		"LDMXCSR unmasking a denormal operand did not leave");
 	const auto masked = run(0x0900, 0x1f80);
-	return expect(masked.event == uml::cpu::EngineEvent::system_call &&
+	require(masked.event == uml::cpu::EngineEvent::system_call &&
 			cpu.mxcsr == 0x1f80 && cpu.gpr(Register::rax) == 1,
 		"LDMXCSR masking everything left");
 }
@@ -7936,7 +7793,7 @@ struct FlagCase {
 /* XRSTOR, LDMXCSR and FXRSTOR that set MXCSR.DAZ or FTZ within a run send
  * the conversions after them to the SIMD gadgets' exact path, and an XRSTOR
  * that initializes the SSE state clears both. */
-[[nodiscard]] bool mxcsr_loads_switch_the_simd_exact_path()
+void mxcsr_loads_switch_the_simd_exact_path()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -7994,18 +7851,17 @@ struct FlagCase {
 	cpu.gpr(Register::r10) = ~0ULL;
 	cpu.gpr(Register::r13) = ~0ULL;
 	const auto loaded = gadgets::execute(program.program, cpu, memory, 64);
-	if (!expect(loaded.event == uml::cpu::EngineEvent::system_call &&
+	require(loaded.event == uml::cpu::EngineEvent::system_call &&
 			cpu.mxcsr == 0x1fc0,
-		"the MXCSR-loading block did not run to its end") ||
-		!expect(cpu.gpr(Register::r8) == 0,
-			"a conversion after XRSTOR set DAZ kept its denormal input") ||
-		!expect(cpu.gpr(Register::r9) == denormal_single_widened,
-			"a conversion after LDMXCSR cleared DAZ flushed its input") ||
-		!expect(cpu.gpr(Register::r10) == 0,
-			"a narrowing after FXRSTOR set FTZ kept its denormal result") ||
-		!expect(cpu.gpr(Register::r13) == 0,
-			"a conversion after LDMXCSR set DAZ kept its denormal input"))
-		return false;
+		"the MXCSR-loading block did not run to its end");
+	require(cpu.gpr(Register::r8) == 0,
+		"a conversion after XRSTOR set DAZ kept its denormal input");
+	require(cpu.gpr(Register::r9) == denormal_single_widened,
+		"a conversion after LDMXCSR cleared DAZ flushed its input");
+	require(cpu.gpr(Register::r10) == 0,
+		"a narrowing after FXRSTOR set FTZ kept its denormal result");
+	require(cpu.gpr(Register::r13) == 0,
+		"a conversion after LDMXCSR set DAZ kept its denormal input");
 	/* An XSTATE_BV of zero initializes the vector registers, and RFBM still
 	 * selects the SSE component, so XRSTOR loads the image's MXCSR; the
 	 * image now holds one with DAZ clear over the DAZ set before it. */
@@ -8020,7 +7876,7 @@ struct FlagCase {
 	cpu.gpr(Register::rbx) = 0x1000;
 	cpu.gpr(Register::r12) = 1;
 	const auto cleared = gadgets::execute(initial.program, cpu, memory, 64);
-	return expect(cleared.event == uml::cpu::EngineEvent::system_call &&
+	require(cleared.event == uml::cpu::EngineEvent::system_call &&
 			cpu.mxcsr == 0x1f80 &&
 			cpu.gpr(Register::r8) == denormal_single_widened,
 		"a conversion after XRSTOR loaded an MXCSR with DAZ clear "
@@ -8030,7 +7886,7 @@ struct FlagCase {
 /* COMISD raises invalid operation for a NaN, and its #XM leaves RFLAGS as
  * the instruction before it made them, even while those are still only
  * recorded. */
-[[nodiscard]] bool faulting_comisd_keeps_earlier_flags()
+void faulting_comisd_keeps_earlier_flags()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -8047,7 +7903,7 @@ struct FlagCase {
 	std::memcpy(cpu.vectors[0].data(), &nan, sizeof(nan));
 	const auto trap = run_until_event(memory, cpu);
 	materialize_flags(cpu);
-	return expect(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
+	require(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
 			trap.vector == 19 && cpu.rip == 3 && cpu.mxcsr == 0x1901 &&
 			(cpu.rflags & 0x8d5U) == 0x95U,
 		"a faulting COMISD lost the flags the instruction before it set");
@@ -8056,7 +7912,7 @@ struct FlagCase {
 /* While RFLAGS.AC is set, a misaligned access raises #AC before it
  * happens, and POPF that sets AC leaves so the runtime checks what
  * follows. */
-[[nodiscard]] bool alignment_checks_follow_rflags_ac()
+void alignment_checks_follow_rflags_ac()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -8069,17 +7925,15 @@ struct FlagCase {
 	cpu.rflags = 0x2 | (1ULL << 18U);
 	cpu.gpr(Register::rbx) = 0x800;
 	const auto first = run_until_event(memory, cpu);
-	if (!expect(first.event == uml::cpu::EngineEvent::memory_fault &&
+	require(first.event == uml::cpu::EngineEvent::memory_fault &&
 			first.fault.alignment && first.retired_instructions == 0 &&
 			cpu.rip == 0,
-		"a misaligned load under AC did not raise #AC"))
-		return false;
+		"a misaligned load under AC did not raise #AC");
 	cpu.gpr(Register::rbx) = 0x7ff;
 	const auto second = run_until_event(memory, cpu);
-	if (!expect(second.event == uml::cpu::EngineEvent::memory_fault &&
+	require(second.event == uml::cpu::EngineEvent::memory_fault &&
 			second.fault.alignment && cpu.rip == 3,
-		"an aligned load under AC faulted, or the next did not"))
-		return false;
+		"an aligned load under AC faulted, or the next did not");
 
 	TestMemory flags;
 	flags.load(0, {
@@ -8093,7 +7947,7 @@ struct FlagCase {
 	cpu = CpuState{};
 	cpu.gpr(Register::rsp) = 0x200;
 	const auto set = gadgets::execute(built.program, cpu, flags, 64);
-	return expect(set.event == uml::cpu::EngineEvent::continued &&
+	require(set.event == uml::cpu::EngineEvent::continued &&
 			set.retired_instructions == 2 && cpu.rip == 6 &&
 			(cpu.rflags & (1ULL << 18U)) != 0 &&
 			cpu.gpr(Register::rax) == 0,
@@ -8102,7 +7956,7 @@ struct FlagCase {
 
 /* INT 3 and INT 4 are the user-callable software interrupts besides 0x80:
  * both trap after the instruction. */
-[[nodiscard]] bool software_interrupt_vectors_trap()
+void software_interrupt_vectors_trap()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -8110,10 +7964,9 @@ struct FlagCase {
 	memory.load(200, {0xcd, 0x04});
 	const auto int3 = gadgets::build(memory, 100, 1);
 	const auto int4 = gadgets::build(memory, 200, 1);
-	if (!expect(int3.status == gadgets::BuildStatus::built &&
+	require(int3.status == gadgets::BuildStatus::built &&
 		int4.status == gadgets::BuildStatus::built,
-		"INT 3 or INT 4 did not build"))
-		return false;
+		"INT 3 or INT 4 did not build");
 	CpuState breakpoint{};
 	breakpoint.rip = 100;
 	const auto breakpoint_result = gadgets::execute(
@@ -8122,12 +7975,12 @@ struct FlagCase {
 	overflow.rip = 200;
 	const auto overflow_result = gadgets::execute(
 		int4.program, overflow, memory, 1);
-	return expect(breakpoint_result.event ==
+	require(breakpoint_result.event ==
 			uml::cpu::EngineEvent::breakpoint && breakpoint.rip == 102,
-		"INT 3 did not trap after the instruction") &&
-		expect(overflow_result.event == uml::cpu::EngineEvent::overflow &&
-			overflow.rip == 202,
-			"INT 4 did not raise the overflow trap with OF clear");
+		"INT 3 did not trap after the instruction");
+	require(overflow_result.event == uml::cpu::EngineEvent::overflow &&
+		overflow.rip == 202,
+		"INT 4 did not raise the overflow trap with OF clear");
 }
 
 /* PALIGNR, PSRLDQ and PSLLDQ take a byte count as a full eight-bit immediate.
@@ -8137,7 +7990,7 @@ struct FlagCase {
  * 256, so a count of 241 or more used to fold back into the table and
  * resurrect one byte per lane.  Counts below the size must keep working.
  */
-[[nodiscard]] bool byte_shifts_discard_a_lane_for_an_oversized_count()
+void byte_shifts_discard_a_lane_for_an_oversized_count()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -8164,10 +8017,9 @@ struct FlagCase {
 		cpu.vectors[6][lane] = legacy_high;
 	}
 	const auto result = gadgets::execute(built.program, cpu, memory, 8);
-	if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 		result.retired_instructions == 8 && cpu.rip == 40,
-		"oversized byte-shift block did not reach SYSCALL"))
-		return false;
+		"oversized byte-shift block did not reach SYSCALL");
 
 	/* PALIGNR's window is the r/m operand followed by the VEX operand, one
 	 * 128-bit lane at a time; a source byte past that pair reads as zero. */
@@ -8182,40 +8034,36 @@ struct FlagCase {
 	for (std::size_t lane = 0; lane < 2; ++lane)
 	for (std::size_t index = 0; index < 16; ++index) {
 		const auto at = lane * 16 + index;
-		if (!expect(cpu.vectors[2][at] == std::byte{},
-			"VPALIGNR with a count of 241 kept a byte") ||
-			!expect(cpu.vectors[3][at] == std::byte{},
-				"VPSRLDQ with a count of 241 kept a byte") ||
-			!expect(cpu.vectors[4][at] == std::byte{},
-				"VPSLLDQ with a count of 241 kept a byte") ||
-			!expect(cpu.vectors[7][at] == aligned(lane, index, 0x11),
-				"VPALIGNR with a count of 17 is wrong") ||
-			!expect(cpu.vectors[8][at] == aligned(lane, index, 0x05),
-				"VPALIGNR with a count of 5 is wrong"))
-			return false;
+		require(cpu.vectors[2][at] == std::byte{},
+			"VPALIGNR with a count of 241 kept a byte");
+		require(cpu.vectors[3][at] == std::byte{},
+			"VPSRLDQ with a count of 241 kept a byte");
+		require(cpu.vectors[4][at] == std::byte{},
+			"VPSLLDQ with a count of 241 kept a byte");
+		require(cpu.vectors[7][at] == aligned(lane, index, 0x11),
+			"VPALIGNR with a count of 17 is wrong");
+		require(cpu.vectors[8][at] == aligned(lane, index, 0x05),
+			"VPALIGNR with a count of 5 is wrong");
 	}
 	for (std::size_t index = 0; index < 16; ++index) {
-		if (!expect(cpu.vectors[5][index] == std::byte{},
-			"PSRLDQ with a count of 241 kept a byte") ||
-			!expect(cpu.vectors[6][index] == std::byte{},
-				"PSLLDQ with a count of 241 kept a byte"))
-			return false;
+		require(cpu.vectors[5][index] == std::byte{},
+			"PSRLDQ with a count of 241 kept a byte");
+		require(cpu.vectors[6][index] == std::byte{},
+			"PSLLDQ with a count of 241 kept a byte");
 	}
 	/* A legacy SSE shift leaves the upper YMM lane alone. */
 	for (std::size_t index = 16; index < 32; ++index) {
-		if (!expect(cpu.vectors[5][index] == legacy_high &&
+		require(cpu.vectors[5][index] == legacy_high &&
 			cpu.vectors[6][index] == legacy_high,
-			"a legacy byte shift disturbed the upper YMM lane"))
-			return false;
+			"a legacy byte shift disturbed the upper YMM lane");
 	}
-	return true;
 }
 
 /* Clang's AVX2 path uses VMOVLHPS with the r/m source aliased to the
  * destination while saving its lexer stack.  The gadget must capture that
  * source lane before replacing the destination with the VEX merge operand.
  */
-[[nodiscard]] bool vex_vmovlhps_preserves_aliased_source()
+void vex_vmovlhps_preserves_aliased_source()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -8236,14 +8084,14 @@ struct FlagCase {
 	const auto result = gadgets::execute(built.program, cpu, memory, 2);
 	std::array<std::uint64_t, 4> actual{};
 	std::memcpy(actual.data(), cpu.vectors[1].data(), sizeof(actual));
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 			result.retired_instructions == 2 && cpu.rip == 6,
-			"aliased VMOVLHPS did not reach SYSCALL") &&
-		expect(actual[0] == merge_low &&
-			actual[1] == original_destination_low,
-			"aliased VMOVLHPS read its source after writing the destination") &&
-		expect(actual[2] == 0 && actual[3] == 0,
-			"VEX VMOVLHPS did not clear the upper YMM lane");
+			"aliased VMOVLHPS did not reach SYSCALL");
+	require(actual[0] == merge_low &&
+		actual[1] == original_destination_low,
+		"aliased VMOVLHPS read its source after writing the destination");
+	require(actual[2] == 0 && actual[3] == 0,
+		"VEX VMOVLHPS did not clear the upper YMM lane");
 }
 
 /* How many operands a block takes from the vector result registers instead of
@@ -8271,7 +8119,7 @@ struct FlagCase {
  * flags to the next consumer, and the bank's miss tails save NZCV around the
  * calls they make -- but nothing saves the vector registers, so a transfer
  * that reaches guest memory must not hand a vector result on as well. */
-[[nodiscard]] bool vector_results_cross_only_a_transfer_that_stays_inline()
+void vector_results_cross_only_a_transfer_that_stays_inline()
 {
 	/* vpaddb ymm0,ymm1,ymm2; <transfer>; vpaddb ymm3,ymm0,ymm4; syscall */
 	static constexpr std::size_t taken = 1;
@@ -8307,10 +8155,8 @@ struct FlagCase {
 			"a vector operand was taken across a POP"},
 	};
 	for (const auto &item : cases)
-		if (!expect(forwarded_vector_operands(item.code) == item.expected,
-			item.message))
-			return false;
-	return true;
+		require(forwarded_vector_operands(item.code) == item.expected,
+			item.message);
 }
 
 /* The same rule, executed. The address space's own read of a page-crossing
@@ -8356,7 +8202,7 @@ private:
 	}
 };
 
-[[nodiscard]] bool a_call_out_between_vector_gadgets_keeps_the_result()
+void a_call_out_between_vector_gadgets_keeps_the_result()
 {
 	using namespace uml::cpu::x86_64;
 	CallingOutMemory memory;
@@ -8377,14 +8223,14 @@ private:
 	bool exact = true;
 	for (const auto byte : cpu.vectors[3])
 		exact = exact && byte == std::byte{0x66};
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 			result.retired_instructions == 4,
-			"the calling-out vector sequence did not reach SYSCALL") &&
-		expect(exact,
-			"a vector operand survived a call out between two gadgets");
+			"the calling-out vector sequence did not reach SYSCALL");
+	require(exact,
+		"a vector operand survived a call out between two gadgets");
 }
 
-[[nodiscard]] bool a_lane_extract_store_keeps_the_lane_across_a_miss()
+void a_lane_extract_store_keeps_the_lane_across_a_miss()
 {
 	using namespace uml::cpu::x86_64;
 	CallingOutMemory memory;
@@ -8404,14 +8250,14 @@ private:
 	bool exact = true;
 	for (unsigned index = 0; index < 16; ++index)
 		exact = exact && memory.byte(0x2000 + index) == 0x77U;
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 			result.retired_instructions == 2,
-			"the lane-extract store did not reach SYSCALL") &&
-		expect(exact,
-			"a lane extract stored something other than its upper lane");
+			"the lane-extract store did not reach SYSCALL");
+	require(exact,
+		"a lane extract stored something other than its upper lane");
 }
 
-[[nodiscard]] bool a_lane_extract_store_keeps_the_lane_across_a_page()
+void a_lane_extract_store_keeps_the_lane_across_a_page()
 {
 	using namespace uml::cpu::x86_64;
 	CallingOutMemory memory;
@@ -8431,14 +8277,14 @@ private:
 	bool exact = true;
 	for (unsigned index = 0; index < 16; ++index)
 		exact = exact && memory.byte(0x1ff8 + index) == 0x77U;
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 			result.retired_instructions == 2,
-			"the crossing lane-extract store did not reach SYSCALL") &&
-		expect(exact,
-			"a lane extract across a page stored something else");
+			"the crossing lane-extract store did not reach SYSCALL");
+	require(exact,
+		"a lane extract across a page stored something else");
 }
 
-[[nodiscard]] bool a_masked_store_keeps_the_unselected_bytes_across_a_miss()
+void a_masked_store_keeps_the_unselected_bytes_across_a_miss()
 {
 	using namespace uml::cpu::x86_64;
 	CallingOutMemory memory;
@@ -8462,14 +8308,14 @@ private:
 	for (unsigned index = 0; index < 16; ++index)
 		exact = exact && memory.byte(0x2000 + index) ==
 			((index % 2) == 0 ? 0x33U : 0x5aU);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 			result.retired_instructions == 2,
-			"the masked store did not reach SYSCALL") &&
-		expect(exact,
-			"a masked store did not leave the unselected bytes alone");
+			"the masked store did not reach SYSCALL");
+	require(exact,
+		"a masked store did not leave the unselected bytes alone");
 }
 
-[[nodiscard]] bool vector_invalid_results_use_x86_indefinite_nan()
+void vector_invalid_results_use_x86_indefinite_nan()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -8494,15 +8340,15 @@ private:
 	std::memcpy(&square_root, cpu.vectors[2].data(), sizeof(square_root));
 	std::memcpy(&reciprocal_square_root, cpu.vectors[4].data(),
 		sizeof(reciprocal_square_root));
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 			result.retired_instructions == 4 && cpu.rip == 14,
-			"invalid vector floating-point sequence did not reach SYSCALL") &&
-		expect(quotient == 0xfff8'0000'0000'0000ULL,
-			"DIVSD 0/0 did not return the x86 double indefinite NaN") &&
-		expect(square_root == 0xffc0'0000,
-			"SQRTSS of a negative value did not return the x86 indefinite NaN") &&
-		expect(reciprocal_square_root == 0xffc0'0000,
-			"RSQRTSS of a negative value did not return the x86 indefinite NaN");
+			"invalid vector floating-point sequence did not reach SYSCALL");
+	require(quotient == 0xfff8'0000'0000'0000ULL,
+		"DIVSD 0/0 did not return the x86 double indefinite NaN");
+	require(square_root == 0xffc0'0000,
+		"SQRTSS of a negative value did not return the x86 indefinite NaN");
+	require(reciprocal_square_root == 0xffc0'0000,
+		"RSQRTSS of a negative value did not return the x86 indefinite NaN");
 }
 
 /* A packed-integer register form leaves its result in v4, and in v5 with it at
@@ -8514,7 +8360,7 @@ private:
  * the consumer and the engine translates a fresh block there -- must forward
  * nothing, since v4 then holds whatever last ran.
  */
-[[nodiscard]] bool vector_integer_forwards_only_from_the_gadget_before()
+void vector_integer_forwards_only_from_the_gadget_before()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uintptr_t forward_left = std::uintptr_t{1} << 62U;
@@ -8561,57 +8407,52 @@ private:
 
 	CpuState adjacent{};
 	std::uintptr_t adjacent_descriptor{};
-	if (!expect(run({
+	require(run({
 			0xc5, 0xf5, 0xfe, 0xda, // vpaddd ymm3,ymm1,ymm2
 			0xc5, 0xe5, 0xfa, 0xc4, // vpsubd ymm0,ymm3,ymm4
 			0x0f, 0x05,             // syscall
 		}, 0, 3, adjacent, adjacent_descriptor),
-		"forwarded left operand did not reach SYSCALL"))
-		return false;
-	if (!expect((adjacent_descriptor & forward_left) != 0,
+		"forwarded left operand did not reach SYSCALL");
+	require((adjacent_descriptor & forward_left) != 0,
 			"a consumer of the gadget before it did not forward its left "
-			"operand") ||
-		!expect(lane(adjacent, 0, 0) == 0x0102'0000U - 0x4000'0000U &&
-			lane(adjacent, 0, 7) == (0x0102'0000U + 14U * 0x11U) -
-				(0x4000'0000U + 7U * 0x11U),
-			"a forwarded left operand produced the wrong difference"))
-		return false;
+			"operand");
+	require(lane(adjacent, 0, 0) == 0x0102'0000U - 0x4000'0000U &&
+		lane(adjacent, 0, 7) == (0x0102'0000U + 14U * 0x11U) -
+			(0x4000'0000U + 7U * 0x11U),
+		"a forwarded left operand produced the wrong difference");
 
 	/* VMOVDQA ymm3,ymm5 between the two: the consumer must read the slot the
 	 * move has just written, not the registers the producer left.
 	 */
 	CpuState withdrawn{};
 	std::uintptr_t ignored{};
-	if (!expect(run({
+	require(run({
 			0xc5, 0xf5, 0xfe, 0xda, // vpaddd ymm3,ymm1,ymm2
 			0xc5, 0xfd, 0x6f, 0xdd, // vmovdqa ymm3,ymm5
 			0xc5, 0xe5, 0xfa, 0xc4, // vpsubd ymm0,ymm3,ymm4
 			0x0f, 0x05,             // syscall
 		}, 0, 4, withdrawn, ignored),
-		"withdrawn forwarding did not reach SYSCALL"))
-		return false;
-	if (!expect(lane(withdrawn, 0, 0) == 0x0000'0500U - 0x4000'0000U &&
+		"withdrawn forwarding did not reach SYSCALL");
+	require(lane(withdrawn, 0, 0) == 0x0000'0500U - 0x4000'0000U &&
 			lane(withdrawn, 0, 7) == (0x0000'0500U + 7U * 0x11U) -
 				(0x4000'0000U + 7U * 0x11U),
 			"a move between producer and consumer did not withdraw the "
-			"forwarded registers"))
-		return false;
+			"forwarded registers");
 
 	/* The same two instructions, entered at the consumer. */
 	CpuState resumed{};
 	std::uintptr_t first_descriptor{};
-	if (!expect(run({
+	require(run({
 			0xc5, 0xf5, 0xfe, 0xda,
 			0xc5, 0xe5, 0xfa, 0xc4,
 			0x0f, 0x05,
 		}, 4, 2, resumed, first_descriptor),
-		"a block entered at the consumer did not reach SYSCALL"))
-		return false;
-	return expect((first_descriptor & forward_left) == 0,
-			"the first gadget of a block forwarded an operand") &&
-		expect(lane(resumed, 0, 0) == 0x0033'0000U - 0x4000'0000U,
-			"a block entered at the consumer did not read its operand from "
-			"the state");
+		"a block entered at the consumer did not reach SYSCALL");
+	require((first_descriptor & forward_left) == 0,
+			"the first gadget of a block forwarded an operand");
+	require(lane(resumed, 0, 0) == 0x0033'0000U - 0x4000'0000U,
+		"a block entered at the consumer did not read its operand from "
+		"the state");
 }
 
 /* The gadget a block selects for its first instruction. */
@@ -8636,44 +8477,39 @@ private:
  * plain gadget loads and stores separately, which loses a sibling vCPU's
  * update, so pin the selection rather than only the arithmetic result.
  */
-[[nodiscard]] bool locked_memory_updates_select_exclusive_gadgets()
+void locked_memory_updates_select_exclusive_gadgets()
 {
 	using namespace uml::cpu::x86_64::gadgets;
 	/* Every block ends in SYSCALL so it terminates at a known boundary. */
-	return expect(first_native_entry({0xf0, 0xff, 0x00, 0x0f, 0x05}) ==
+	require(first_native_entry({0xf0, 0xff, 0x00, 0x0f, 0x05}) ==
 		gadget_entry(native::uml_x86_64_gadget_increment_32_m_locked),
-		"LOCK INC did not select the exclusive increment gadget") &&
-		expect(first_native_entry({0xf0, 0x01, 0x08, 0x0f, 0x05}) ==
-			gadget_entry(native::uml_x86_64_gadget_add_32_mr_locked),
-			"LOCK ADD register did not select the exclusive gadget") &&
-		expect(first_native_entry({0xf0, 0x83, 0x00, 0x01, 0x0f, 0x05}) ==
-			gadget_entry(native::uml_x86_64_gadget_add_32_mi_locked),
-			"LOCK ADD immediate did not select the exclusive gadget") &&
-		expect(first_native_entry({0xf0, 0x0f, 0xab, 0x08, 0x0f, 0x05}) ==
-			gadget_entry(native::uml_x86_64_gadget_bts_32_mr_locked),
-			"LOCK BTS did not select the exclusive gadget") &&
-		/* CMPXCHG, XADD and XCHG against memory are atomic on x86 whether
-		 * or not the prefix is present, so they have no separate form.
-		 */
-		expect(first_native_entry({0xf0, 0x0f, 0xb1, 0x08, 0x0f, 0x05}) ==
-			gadget_entry(native::uml_x86_64_gadget_cmpxchg_32_mr),
-			"LOCK CMPXCHG did not select the memory gadget") &&
-		expect(first_native_entry({0xf0, 0x0f, 0xc1, 0x08, 0x0f, 0x05}) ==
-			gadget_entry(native::uml_x86_64_gadget_xadd_32_mr),
-			"LOCK XADD did not select the memory gadget") &&
-		expect(first_native_entry({0x87, 0x08, 0x0f, 0x05}) ==
-			gadget_entry(native::uml_x86_64_gadget_exchange_32_mr),
-			"XCHG did not select the memory gadget") &&
-		/* An unprefixed update keeps a cheaper non-exclusive gadget: the
-		 * ordinary one, or the register-baked bank's ECX-into-[RAX] entry. */
-		expect(first_native_entry({0xff, 0x00, 0x0f, 0x05}) ==
-			gadget_entry(native::uml_x86_64_gadget_increment_32_m),
-			"unlocked INC lost its plain gadget") &&
-		expect(first_native_entry({0x01, 0x08, 0x0f, 0x05}) ==
-				gadget_entry(native::uml_x86_64_gadget_add_32_mr) ||
-			first_native_entry({0x01, 0x08, 0x0f, 0x05}) ==
-				baked::uml_x86_64_baked_add_32_mr[1U * baked::base_slots],
-			"unlocked ADD lost its plain gadget");
+		"LOCK INC did not select the exclusive increment gadget");
+	require(first_native_entry({0xf0, 0x01, 0x08, 0x0f, 0x05}) ==
+		gadget_entry(native::uml_x86_64_gadget_add_32_mr_locked),
+		"LOCK ADD register did not select the exclusive gadget");
+	require(first_native_entry({0xf0, 0x83, 0x00, 0x01, 0x0f, 0x05}) ==
+		gadget_entry(native::uml_x86_64_gadget_add_32_mi_locked),
+		"LOCK ADD immediate did not select the exclusive gadget");
+	require(first_native_entry({0xf0, 0x0f, 0xab, 0x08, 0x0f, 0x05}) ==
+		gadget_entry(native::uml_x86_64_gadget_bts_32_mr_locked),
+		"LOCK BTS did not select the exclusive gadget");
+	require(first_native_entry({0xf0, 0x0f, 0xb1, 0x08, 0x0f, 0x05}) ==
+		gadget_entry(native::uml_x86_64_gadget_cmpxchg_32_mr),
+		"LOCK CMPXCHG did not select the memory gadget");
+	require(first_native_entry({0xf0, 0x0f, 0xc1, 0x08, 0x0f, 0x05}) ==
+		gadget_entry(native::uml_x86_64_gadget_xadd_32_mr),
+		"LOCK XADD did not select the memory gadget");
+	require(first_native_entry({0x87, 0x08, 0x0f, 0x05}) ==
+		gadget_entry(native::uml_x86_64_gadget_exchange_32_mr),
+		"XCHG did not select the memory gadget");
+	require(first_native_entry({0xff, 0x00, 0x0f, 0x05}) ==
+		gadget_entry(native::uml_x86_64_gadget_increment_32_m),
+		"unlocked INC lost its plain gadget");
+	require(first_native_entry({0x01, 0x08, 0x0f, 0x05}) ==
+			gadget_entry(native::uml_x86_64_gadget_add_32_mr) ||
+		first_native_entry({0x01, 0x08, 0x0f, 0x05}) ==
+			baked::uml_x86_64_baked_add_32_mr[1U * baked::base_slots],
+		"unlocked ADD lost its plain gadget");
 }
 
 /* glibc's pthread_rwlock_rdlock fast path adds one reader with LOCK XADD,
@@ -8682,7 +8518,7 @@ private:
  * a width, source-register, or deferred-flag regression is observable without
  * a desktop boot.
  */
-[[nodiscard]] bool glibc_rwlock_xadd_fast_path_is_exact()
+void glibc_rwlock_xadd_fast_path_is_exact()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t lock = 0x800;
@@ -8700,14 +8536,14 @@ private:
 	cpu.gpr(Register::rbx) = lock;
 	const auto result = gadgets::execute(built.program, cpu, memory, 64);
 	materialize_flags(cpu);
-	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+	require(result.event == uml::cpu::EngineEvent::system_call &&
 			result.retired_instructions == 5 && cpu.rip == 16,
-			"glibc rwlock XADD sequence did not reach SYSCALL") &&
-		expect(memory.dword(lock) == 8 &&
-			cpu.gpr(Register::rax) == 8,
-			"glibc rwlock XADD returned or stored the wrong state") &&
-		expect((cpu.rflags & (rflags_sign | rflags_zero)) == 0,
-			"glibc rwlock XADD produced an impossible failure state");
+			"glibc rwlock XADD sequence did not reach SYSCALL");
+	require(memory.dword(lock) == 8 &&
+		cpu.gpr(Register::rax) == 8,
+		"glibc rwlock XADD returned or stored the wrong state");
+	require((cpu.rflags & (rflags_sign | rflags_zero)) == 0,
+		"glibc rwlock XADD produced an impossible failure state");
 }
 
 /* GObject stores closure state in one packed dword. Its invalidation path
@@ -8715,7 +8551,7 @@ private:
  * before a dword CMPXCHG. Pressure-vessel exposed an impossible count in this
  * exact loop, so retain the complete register-width and immediate semantics.
  */
-[[nodiscard]] bool gobject_closure_bitfield_cmpxchg_is_exact()
+void gobject_closure_bitfield_cmpxchg_is_exact()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t closure = 0x800;
@@ -8745,10 +8581,9 @@ private:
 		0x0f, 0x0b,                         // failure: ud2
 	});
 	const std::array<std::uint32_t, 1> closure_word{initial};
-	if (!expect(memory.write(closure,
+	require(memory.write(closure,
 			std::as_bytes(std::span{closure_word})),
-		"GObject closure state did not fit test memory"))
-		return false;
+		"GObject closure state did not fit test memory");
 	const auto built = require_built(gadgets::build(memory, 0),
 		"GObject closure CMPXCHG sequence did not build");
 	CpuState cpu{};
@@ -8757,36 +8592,36 @@ private:
 	const auto result = gadgets::execute(built.program, cpu, memory, 64);
 	const auto deferred = cpu.deferred_flags;
 	materialize_flags(cpu);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
+	require(result.event == uml::cpu::EngineEvent::continued &&
 			result.retired_instructions == 17 && cpu.rip == 67,
-			"GObject closure CMPXCHG took its failure branch after success") &&
-		expect(memory.dword(closure) == expected,
-			"GObject closure CMPXCHG corrupted the packed notifier count") &&
-		expect(cpu.gpr(Register::rax) == initial,
-			"GObject closure CMPXCHG changed EAX after success") &&
-		expect(cpu.gpr(Register::rcx) == 0,
-			"GObject closure bitfield extraction produced the wrong count") &&
-		expect(cpu.gpr(Register::rdx) == expected,
-			"GObject closure bitfield update produced the wrong source") &&
-		expect(deferred.operation == DeferredFlagOperation::subtract,
-			"GObject closure CMPXCHG recorded the wrong flag operation") &&
-		expect(deferred.left == initial,
-			"GObject closure CMPXCHG recorded the wrong expected value") &&
-		expect(deferred.right == initial,
-			"GObject closure CMPXCHG recorded the wrong observed value") &&
-		expect(deferred.result == 0,
-			"GObject closure CMPXCHG recorded a nonzero comparison") &&
-		expect(deferred.width == 4,
-			"GObject closure CMPXCHG recorded the wrong flag width") &&
-		expect((cpu.rflags & rflags_zero) != 0,
-			"GObject closure CMPXCHG lost its success flag");
+			"GObject closure CMPXCHG took its failure branch after success");
+	require(memory.dword(closure) == expected,
+		"GObject closure CMPXCHG corrupted the packed notifier count");
+	require(cpu.gpr(Register::rax) == initial,
+		"GObject closure CMPXCHG changed EAX after success");
+	require(cpu.gpr(Register::rcx) == 0,
+		"GObject closure bitfield extraction produced the wrong count");
+	require(cpu.gpr(Register::rdx) == expected,
+		"GObject closure bitfield update produced the wrong source");
+	require(deferred.operation == DeferredFlagOperation::subtract,
+		"GObject closure CMPXCHG recorded the wrong flag operation");
+	require(deferred.left == initial,
+		"GObject closure CMPXCHG recorded the wrong expected value");
+	require(deferred.right == initial,
+		"GObject closure CMPXCHG recorded the wrong observed value");
+	require(deferred.result == 0,
+		"GObject closure CMPXCHG recorded a nonzero comparison");
+	require(deferred.width == 4,
+		"GObject closure CMPXCHG recorded the wrong flag width");
+	require((cpu.rflags & rflags_zero) != 0,
+		"GObject closure CMPXCHG lost its success flag");
 }
 
 /* XADD is implicitly atomic against memory even without relying on a distinct
  * LOCK-prefixed gadget. Exercise the same aligned dword operation from the
  * host threads that represent concurrent guest vCPUs.
  */
-[[nodiscard]] bool xadd_survives_concurrent_vcpus()
+void xadd_survives_concurrent_vcpus()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr unsigned thread_count = 4;
@@ -8810,11 +8645,11 @@ private:
 			}
 		}
 	});
-	return expect(all_healthy,
-		"a contended XADD thread left the gadget stream early") &&
-		expect(memory.dword(counter) ==
-			thread_count * iterations * 8,
-			"concurrent XADD lost updates");
+	require(all_healthy,
+		"a contended XADD thread left the gadget stream early");
+	require(memory.dword(counter) ==
+		thread_count * iterations * 8,
+		"concurrent XADD lost updates");
 }
 
 /* Model the compare/exchange retry used by glibc and libstdc++ locks. A failed
@@ -8831,7 +8666,7 @@ private:
  * other thread goes uncounted; a count that stays still across many failures
  * means the failure path itself returns the wrong value or flags.
  */
-[[nodiscard]] bool cmpxchg_survives_concurrent_vcpus()
+void cmpxchg_survives_concurrent_vcpus()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr unsigned thread_count = 4;
@@ -8886,16 +8721,16 @@ private:
 			}
 		}
 	});
-	return expect(all_healthy,
-		"a contended CMPXCHG retry failed with no thread succeeding") &&
-		expect(memory.dword(counter) == thread_count * iterations,
-			"concurrent CMPXCHG lost successful updates");
+	require(all_healthy,
+		"a contended CMPXCHG retry failed with no thread succeeding");
+	require(memory.dword(counter) == thread_count * iterations,
+		"concurrent CMPXCHG lost successful updates");
 }
 
 /* vCPU threads execute guest code concurrently, so a guest LOCK update has to
  * stay atomic against the host threads running the other vCPUs.
  */
-[[nodiscard]] bool locked_increment_survives_concurrent_vcpus()
+void locked_increment_survives_concurrent_vcpus()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr unsigned thread_count = 4;
@@ -8917,10 +8752,10 @@ private:
 			}
 		}
 	});
-	return expect(all_healthy,
-		"a locked increment thread left the gadget stream early") &&
-		expect(memory.dword(counter) == thread_count * iterations,
-			"concurrent LOCK INC lost updates");
+	require(all_healthy,
+		"a locked increment thread left the gadget stream early");
+	require(memory.dword(counter) == thread_count * iterations,
+		"concurrent LOCK INC lost updates");
 }
 
 /* Where a locked operand can sit: naturally aligned, unaligned inside one
@@ -8934,7 +8769,7 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 /* Every locked form computes the same result wherever its operand sits and
  * whichever path that sends it down, and writes nothing outside it.
  */
-[[nodiscard]] bool locked_forms_agree_at_every_operand_address()
+void locked_forms_agree_at_every_operand_address()
 {
 	using namespace uml::cpu::x86_64;
 	struct Form {
@@ -9023,23 +8858,20 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 	};
 	for (const auto &form : forms) {
 		Outcome reference{};
-		if (!expect(run(form, locked_operand_addresses.front(), reference),
-			form.name))
-			return false;
+		require(run(form, locked_operand_addresses.front(), reference),
+			form.name);
 		for (const auto address : locked_operand_addresses) {
 			Outcome outcome{};
-			if (!expect(run(form, address, outcome) &&
-				outcome == reference, form.name))
-				return false;
+			require(run(form, address, outcome) &&
+				outcome == reference, form.name);
 		}
 	}
-	return true;
 }
 
 /* CMPXCHG16B compares and stores an aligned operand, and raises #GP(0) for
  * any other before it reads or writes anything, as a Xeon does, locked or
  * not. */
-[[nodiscard]] bool compare_exchange_pair_requires_alignment()
+void compare_exchange_pair_requires_alignment()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t low = 0x8877665544332211ULL;
@@ -9071,20 +8903,19 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 				const auto stored = memory.qword(address);
 				const auto stored_high = memory.qword(address + 8);
 				if (!aligned) {
-					if (!expect(result.event ==
+					require(result.event ==
 							uml::cpu::EngineEvent::general_protection &&
 							result.retired_instructions == 0 &&
 							cpu.rip == 0 && stored == low &&
 							stored_high == high &&
 							cpu.gpr(Register::rdx) ==
 								(equal ? high : high + 1),
-						"misaligned CMPXCHG16B did not raise #GP(0)"))
-						return false;
+						"misaligned CMPXCHG16B did not raise #GP(0)");
 					continue;
 				}
 				materialize_flags(cpu);
 				const bool zero = (cpu.rflags & 0x40U) != 0;
-				if (!expect(result.event ==
+				require(result.event ==
 						uml::cpu::EngineEvent::system_call &&
 						zero == equal &&
 						stored == (equal ? 0x0fedcba987654321ULL : low) &&
@@ -9092,18 +8923,16 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 							high) &&
 						cpu.gpr(Register::rax) == low &&
 						cpu.gpr(Register::rdx) == high,
-					"aligned CMPXCHG16B did not compare and exchange"))
-					return false;
+					"aligned CMPXCHG16B did not compare and exchange");
 			}
 		}
 	}
-	return true;
 }
 
 /* An unaligned LOCK INC stays atomic against the other vCPUs on the exclusive
  * path FEAT_LSE2 allows inside a granule and on the split lock across one.
  */
-[[nodiscard]] bool unaligned_locked_increment_survives_concurrent_vcpus()
+void unaligned_locked_increment_survives_concurrent_vcpus()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr unsigned thread_count = 4;
@@ -9129,19 +8958,17 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 				}
 			}
 		});
-		if (!expect(all_healthy,
-			"an unaligned locked increment left the stream early") ||
-			!expect(memory.qword(counter) == thread_count * iterations,
-				"concurrent unaligned LOCK INC lost updates"))
-			return false;
+		require(all_healthy,
+			"an unaligned locked increment left the stream early");
+		require(memory.qword(counter) == thread_count * iterations,
+			"concurrent unaligned LOCK INC lost updates");
 	}
-	return true;
 }
 
 /* MASKMOVDQU writes only the bytes its mask selects, so a LOCK INC on another
  * vCPU that targets an unselected byte of the same sixteen is never undone.
  * The gadget used to read the whole block, merge and write it back. */
-[[nodiscard]] bool mask_store_keeps_concurrent_unselected_bytes()
+void mask_store_keeps_concurrent_unselected_bytes()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t block = 0x800;
@@ -9199,18 +9026,18 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 	}
 	done.store(true);
 	writer.join();
-	return expect(healthy.load(),
-		"concurrent MASKMOVDQU or LOCK INC left the stream") &&
-		expect(memory.byte(block) == 0x5a,
-			"MASKMOVDQU did not write its selected byte") &&
-		expect(memory.byte(block + 1) == (increments & 0xffU),
-			"MASKMOVDQU wrote back an unselected byte another vCPU "
-			"had changed");
+	require(healthy.load(),
+		"concurrent MASKMOVDQU or LOCK INC left the stream");
+	require(memory.byte(block) == 0x5a,
+		"MASKMOVDQU did not write its selected byte");
+	require(memory.byte(block + 1) == (increments & 0xffU),
+		"MASKMOVDQU wrote back an unselected byte another vCPU "
+		"had changed");
 }
 
 /* MASKMOVQ and MASKMOVDQU store through DS:(E/R)DI: a segment override adds
  * its base and 0x67 takes EDI, and only the selected bytes change. */
-[[nodiscard]] bool mask_store_uses_its_segment_and_address_size()
+void mask_store_uses_its_segment_and_address_size()
 {
 	using namespace uml::cpu::x86_64;
 	struct Case final {
@@ -9265,31 +9092,27 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 		cpu.mmx[0] = data;
 		cpu.mmx[1] = mask;
 		const auto result = gadgets::execute(built.program, cpu, memory, 4);
-		if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
-			result.retired_instructions == 2, shape.message))
-			return false;
+		require(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 2, shape.message);
 		const std::size_t bytes = shape.mmx ? 8 : 16;
 		for (std::size_t index = 0; index < 16; ++index) {
 			const bool selected = index < bytes &&
 				(index == 0 || index == 5 || index == 11);
 			const auto expected = selected ?
 				static_cast<std::uint8_t>(0x10U + index) : 0xeeU;
-			if (!expect(memory.byte(shape.target + index) == expected,
-				shape.message))
-				return false;
-			if (shape.rdi < 0x4000 && shape.rdi != shape.target &&
-				!expect(memory.byte(shape.rdi + index) == 0xdd,
-					shape.message))
-				return false;
+			require(memory.byte(shape.target + index) == expected,
+				shape.message);
+			if (shape.rdi < 0x4000 && shape.rdi != shape.target)
+				require(memory.byte(shape.rdi + index) == 0xdd,
+					shape.message);
 		}
 	}
-	return true;
 }
 
 /* A locked operand that faults under the split lock gives the lock back: the
  * next one, on another thread, still gets through.
  */
-[[nodiscard]] bool faulting_split_operand_releases_the_lock()
+void faulting_split_operand_releases_the_lock()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -9299,9 +9122,8 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 16384 - 2;
 	const auto faulted = gadgets::execute(built.program, cpu, memory, 64);
-	if (!expect(faulted.event == uml::cpu::EngineEvent::memory_fault,
-		"a locked operand past the end of memory did not fault"))
-		return false;
+	require(faulted.event == uml::cpu::EngineEvent::memory_fault,
+		"a locked operand past the end of memory did not fault");
 	std::atomic<bool> finished{false};
 	std::atomic<bool> completed{false};
 	std::thread successor{[&] {
@@ -9313,17 +9135,11 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 			result.event == uml::cpu::EngineEvent::system_call);
 		finished.store(true);
 	}};
-	const auto deadline =
-		std::chrono::steady_clock::now() + std::chrono::seconds{10};
-	while (!finished.load() && std::chrono::steady_clock::now() < deadline)
-		std::this_thread::sleep_for(std::chrono::milliseconds{1});
-	if (!finished.load()) {
-		successor.detach();
-		return expect(false,
-			"a faulting locked operand kept the split lock");
-	}
+	require(uml::testing::waitUntil([&] { return finished.load(); },
+			std::chrono::seconds{10}),
+		"a faulting locked operand kept the split lock");
 	successor.join();
-	return expect(completed.load() && memory.dword(0x80e) == 1,
+	require(completed.load() && memory.dword(0x80e) == 1,
 		"the locked operand after a fault did not complete");
 }
 
@@ -9334,7 +9150,7 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
  * then to a line of its own; the observer orders its own two loads, so seeing
  * the later store and missing the earlier one can only be the vCPU's doing.
  */
-[[nodiscard]] bool guest_stores_reach_other_cpus_in_program_order()
+void guest_stores_reach_other_cpus_in_program_order()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr unsigned rounds = 40000;
@@ -9403,17 +9219,17 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 		}
 	}
 	vcpu.join();
-	return expect(healthy.load(std::memory_order_relaxed),
-		"the storing vCPU left the gadget stream early") &&
-		expect(overtaken == 0,
-			"another CPU saw a later guest store before an earlier one");
+	require(healthy.load(std::memory_order_relaxed),
+		"the storing vCPU left the gadget stream early");
+	require(overtaken == 0,
+		"another CPU saw a later guest store before an earlier one");
 }
 
 /* Total store order is kept by a barrier on the way out of every gadget that
  * touches guest memory, so the first way out of each of these has to carry
  * one. The scan stops at the dispatch that ends the gadget's fast path.
  */
-[[nodiscard]] bool guest_memory_gadgets_end_in_an_ordering_barrier()
+void guest_memory_gadgets_end_in_an_ordering_barrier()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint32_t barrier = 0xd503'3bbfU;
@@ -9447,9 +9263,8 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 		TestMemory memory;
 		memory.load(0, item.code);
 		const auto built = gadgets::build(memory, 0);
-		if (!expect(built.status == gadgets::BuildStatus::built &&
-			!built.program.native_stream().empty(), item.message))
-			return false;
+		require(built.status == gadgets::BuildStatus::built &&
+			!built.program.native_stream().empty(), item.message);
 		const auto *code = reinterpret_cast<const std::uint32_t *>(
 			built.program.native_stream().front());
 		bool fenced = false;
@@ -9459,10 +9274,8 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 			if (code[index] == dispatch)
 				break;
 		}
-		if (!expect(fenced, item.message))
-			return false;
+		require(fenced, item.message);
 	}
-	return true;
 }
 
 /* ---- the instruction position --------------------------------------------
@@ -9558,7 +9371,7 @@ struct FaultingAccess final {
 constexpr std::uint64_t unmapped_address = 0x20000;
 constexpr std::uint64_t page_end_address = 16383;
 
-[[nodiscard]] bool baked_faults_rebuild_the_rip_from_the_block_start()
+void baked_faults_rebuild_the_rip_from_the_block_start()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t code = 0x1230;
@@ -9616,27 +9429,25 @@ constexpr std::uint64_t page_end_address = 16383;
 						std::to_string(position) + ", budget " +
 						std::to_string(budget) + ", address " +
 						std::to_string(target);
-					if (!expect(result.event ==
+					require(result.event ==
 								uml::cpu::EngineEvent::memory_fault,
-							(where + " did not fault").c_str()) ||
-						!expect(retired == padding &&
-								cpu.rip == code + at,
-							(where + " reported the wrong RIP or retirement")
-								.c_str()) ||
-						!expect(result.fault.access == access.access ||
-								access.read_modify_write,
-							(where + " reported the wrong access").c_str()))
-						return false;
+							(where + " did not fault").c_str());
+					require(retired == padding &&
+							cpu.rip == code + at,
+						(where + " reported the wrong RIP or retirement")
+							.c_str());
+					require(result.fault.access == access.access ||
+							access.read_modify_write,
+						(where + " reported the wrong access").c_str());
 				}
 			}
 		}
 	}
-	return true;
 }
 
 /* An access takes the baked bank while it lies within 1024 bytes of its
  * block's start, and the block ends before it beyond. */
-[[nodiscard]] bool baked_accesses_stop_at_the_position_field()
+void baked_accesses_stop_at_the_position_field()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t code = 0x1230;
@@ -9655,16 +9466,14 @@ constexpr std::uint64_t page_end_address = 16383;
 		const auto stream = built.program.native_stream();
 		const bool baked_form =
 			std::ranges::find(stream, baked_load) != stream.end();
-		if (!expect(baked_form == (position < 1024U),
-			"the baked bank's position limit moved"))
-			return false;
+		require(baked_form == (position < 1024U),
+			"the baked bank's position limit moved");
 	}
-	return true;
 }
 
 /* A store into the block that is running leaves through the overlap exit with
  * the RIP after the store, rebuilt from the same position. */
-[[nodiscard]] bool baked_overlap_exits_rebuild_the_rip_from_the_block_start()
+void baked_overlap_exits_rebuild_the_rip_from_the_block_start()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t code = 0x1100;
@@ -9720,16 +9529,14 @@ constexpr std::uint64_t page_end_address = 16383;
 			}
 			const auto where = std::string{store.name} + " at " +
 				std::to_string(position);
-			if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+			require(result.event == uml::cpu::EngineEvent::continued &&
 					retired == padding + 1U &&
 					cpu.rip == end,
-					(where + " left the block with the wrong RIP").c_str()) ||
-				!expect(memory.invalidations() == 1,
-					(where + " did not publish its change").c_str()))
-				return false;
+					(where + " left the block with the wrong RIP").c_str());
+			require(memory.invalidations() == 1,
+				(where + " did not publish its change").c_str());
 		}
 	}
-	return true;
 }
 
 /* ---- the ordinary forms' position -----------------------------------------
@@ -9855,7 +9662,7 @@ struct PositionCase final {
 /* Runs `test` at `position` bytes into a block that starts at `code`, with
  * the memory's base at `base`, from the whole block and from a replay of
  * the instructions up to it. */
-[[nodiscard]] bool position_case_reports_its_address(
+void position_case_reports_its_address(
 	const PositionCase &test, uml::cpu::x86_64::ExecutionMode mode,
 	TestMemory &memory, std::uint64_t base, std::uint64_t code,
 	std::size_t position)
@@ -9905,17 +9712,15 @@ struct PositionCase final {
 			std::to_string(position) + (compat ? " (32-bit" : " (64-bit") +
 			", base " + std::to_string(base) + ", budget " +
 			std::to_string(budget) + ")";
-		if (!expect(result.event == test.event,
+		require(result.event == test.event,
 				(where + " left with event " +
-					std::to_string(static_cast<int>(result.event))).c_str()) ||
-			!expect(result.retired_instructions == padding &&
-				cpu.rip == ((code + at) & mask),
-				(where + " reported RIP " + std::to_string(cpu.rip) +
-					" after retiring " +
-					std::to_string(result.retired_instructions)).c_str()))
-			return false;
+					std::to_string(static_cast<int>(result.event))).c_str());
+		require(result.retired_instructions == padding &&
+			cpu.rip == ((code + at) & mask),
+			(where + " reported RIP " + std::to_string(cpu.rip) +
+				" after retiring " +
+				std::to_string(result.retired_instructions)).c_str());
 	}
-	return true;
 }
 
 /* ---- the stack forms' recovery --------------------------------------------
@@ -9952,7 +9757,7 @@ struct PositionCase final {
 /* Every register's PUSH and POP faults on an unmapped stack with its own
  * address, whichever stream runs it: the block's own, where the instruction
  * has no word, and a fragment, where it keeps its position. */
-[[nodiscard]] bool baked_stack_faults_report_their_instruction()
+void baked_stack_faults_report_their_instruction()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::array<std::size_t, 8> positions{0, 1, 6, 7, 63, 100, 500,
@@ -9967,30 +9772,27 @@ struct PositionCase final {
 					PositionCase::Setup::stack};
 				for (const auto position : positions) {
 					TestMemory memory;
-					if (!position_case_reports_its_address(
-							test, mode, memory, 0, 0x1230, position))
-						return false;
+					position_case_reports_its_address(
+							test, mode, memory, 0, 0x1230, position);
 				}
 				if (mode == ExecutionMode::long64) {
 					for (const auto position : {std::size_t{0},
 						std::size_t{9}}) {
 						constexpr std::uint64_t base = 0x7f00'0000'0000ULL;
 						TestMemory memory{base};
-						if (!position_case_reports_its_address(test, mode,
-								memory, base, base + 0x1230, position))
-							return false;
+						position_case_reports_its_address(test, mode,
+								memory, base, base + 0x1230, position);
 					}
 				}
 			}
 		}
 	}
-	return true;
 }
 
 /* The same instructions at the top of a 32-bit space, where a compatibility
  * mode block wraps to zero; those take the ordinary bank and must keep
  * reporting the wrapped address. */
-[[nodiscard]] bool compat32_stack_faults_wrap_at_4gib()
+void compat32_stack_faults_wrap_at_4gib()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t base = 0xffff'f000ULL;
@@ -10005,19 +9807,17 @@ struct PositionCase final {
 				10U, 16U, 30U}) {
 				TestMemory memory{base};
 				memory.set_wrap32(true);
-				if (!position_case_reports_its_address(test,
+				position_case_reports_its_address(test,
 						ExecutionMode::compat32, memory, base, code,
-						position))
-					return false;
+						position);
 			}
 		}
 	}
-	return true;
 }
 
 /* A store of the stack's eight bytes that lands in the running block retires
  * and leaves for the instruction after it, from every register. */
-[[nodiscard]] bool baked_stack_overlaps_report_the_next_instruction()
+void baked_stack_overlaps_report_the_next_instruction()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t code = 0x1100;
@@ -10056,27 +9856,25 @@ struct PositionCase final {
 				const auto where = stack_name(true, index) + " at " +
 					std::to_string(position) + ", budget " +
 					std::to_string(limit);
-				if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+				require(result.event == uml::cpu::EngineEvent::continued &&
 						result.retired_instructions == padding + 1U &&
 						cpu.rip == end,
 						(where + " left the block with the wrong RIP")
-							.c_str()) ||
-					!expect(memory.qword(end) == stored &&
-						cpu.gpr(Register::rsp) == end &&
-						memory.invalidations() == 1,
-						(where + " lost its store").c_str()))
-					return false;
+							.c_str());
+				require(memory.qword(end) == stored &&
+					cpu.gpr(Register::rsp) == end &&
+					memory.invalidations() == 1,
+					(where + " lost its store").c_str());
 			}
 		}
 	}
-	return true;
 }
 
 /* A stack access across a page edge goes through the crossing tails, which
  * start a PUSH's publication flag clear because no word does: the store
  * lands, and a crossing access off the end of memory faults at the
  * instruction. */
-[[nodiscard]] bool baked_stack_crosses_page_edges()
+void baked_stack_crosses_page_edges()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t code = 0x3000;
@@ -10116,30 +9914,28 @@ struct PositionCase final {
 					const auto result = gadgets::execute(
 						built.program, cpu, memory, 1000);
 					if (!inside) {
-						if (!expect(result.event ==
+						require(result.event ==
 								uml::cpu::EngineEvent::memory_fault &&
 							result.retired_instructions == padding &&
 							cpu.rip == code + at,
 							(where + " off the end of memory reported the "
-								"wrong RIP").c_str()))
-							return false;
+								"wrong RIP").c_str());
 						continue;
 					}
 					/* INT3 ends the block without touching RCX or R11. */
-					if (!expect(result.event ==
+					require(result.event ==
 								uml::cpu::EngineEvent::breakpoint &&
 							result.retired_instructions >= padding + 1U,
 						(where + " across a page edge did not retire")
-							.c_str()))
-						return false;
+							.c_str());
 					if (push) {
-						if (!expect(memory.qword(address) == pushed &&
+						require(memory.qword(address) == pushed &&
 								cpu.gpr(Register::rsp) == address,
 							(where + " across a page edge lost its store")
-								.c_str()))
-							return false;
-					} else if (!expect(
-							cpu.gpr(static_cast<Register>(index)) == value &&
+								.c_str());
+					} else {
+						require(cpu.gpr(static_cast<Register>(index)) ==
+									value &&
 								(index == 4U ||
 								cpu.gpr(Register::rsp) == address + 8U),
 							(where + " across a page edge lost its load at " +
@@ -10148,20 +9944,18 @@ struct PositionCase final {
 									static_cast<Register>(index))) +
 								", rsp " +
 								std::to_string(cpu.gpr(Register::rsp)))
-								.c_str())) {
-						return false;
+								.c_str());
 					}
 				}
 			}
 		}
 	}
-	return true;
 }
 
 /* A block of many PUSH, POP and ordinary instructions faults at the right
  * one wherever the stack gives out, so the recovery counts the words of the
  * headerless entries before it. */
-[[nodiscard]] bool baked_stack_faults_inside_a_long_block()
+void baked_stack_faults_inside_a_long_block()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t code = 0x1230;
@@ -10216,24 +10010,21 @@ struct PositionCase final {
 			built.program, cpu, memory, 1000);
 		const auto where = "stack block from depth " + std::to_string(depth);
 		if (fault == steps.size()) {
-			if (!expect(result.event == uml::cpu::EngineEvent::system_call,
-					(where + " did not reach its end").c_str()))
-				return false;
+			require(result.event == uml::cpu::EngineEvent::system_call,
+					(where + " did not reach its end").c_str());
 			continue;
 		}
-		if (!expect(result.event == uml::cpu::EngineEvent::memory_fault &&
+		require(result.event == uml::cpu::EngineEvent::memory_fault &&
 				result.retired_instructions == fault &&
 				cpu.rip == code + offsets[fault],
-				(where + " faulted at the wrong instruction").c_str()))
-			return false;
+				(where + " faulted at the wrong instruction").c_str());
 	}
-	return true;
 }
 
 /* A PUSH in a block that a link enters, and one in a program the executor
  * did not cache, are found from the context's program begin and from the
  * program the run was entered with. */
-[[nodiscard]] bool a_linked_block_recovers_its_stack_instruction()
+void a_linked_block_recovers_its_stack_instruction()
 {
 	using namespace uml::cpu::x86_64;
 	for (const bool overlap : {false, true}) {
@@ -10249,19 +10040,18 @@ struct PositionCase final {
 				load_code(memory, 16, bytes);
 				if (overlap)
 					memory.set_executable_page(0);
-				TestSequences sequences;
+				Sequences sequences;
 				memory.set_code_changes(&sequences.code_changes);
 				gadgets::Executor executor;
 				executor.prepare(memory, 42, sequences.mapping_changes,
-					sequences.code_changes, &sequences, read_test_sequences);
+					sequences.code_changes, &sequences, read_sequences);
 				const auto target = executor.select_program(
 					memory, 16, ExecutionMode::long64);
 				const auto jump = executor.select_program(
 					memory, 0, ExecutionMode::long64);
-				if (!expect(target.program != nullptr &&
+				require(target.program != nullptr &&
 						jump.program != nullptr,
-					"linked stack block did not populate its link"))
-					return false;
+					"linked stack block did not populate its link");
 				CpuState cpu{};
 				const std::uint64_t end = 16U + padding + 1U;
 				/* The push lands on the instruction after it, or nowhere. */
@@ -10273,29 +10063,28 @@ struct PositionCase final {
 					(overlap ? " (overlap)" : " (fault)") + " behind a link, "
 					"padding " + std::to_string(padding);
 				if (overlap) {
-					if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+					require(result.event == uml::cpu::EngineEvent::continued &&
 							result.retired_instructions == 2U + padding &&
 							cpu.rip == end &&
 							memory.qword(end) == 0x55,
-						(where + " left with the wrong RIP").c_str()))
-						return false;
-				} else if (!expect(result.event ==
-						uml::cpu::EngineEvent::memory_fault &&
+						(where + " left with the wrong RIP").c_str());
+				} else {
+					require(result.event ==
+							uml::cpu::EngineEvent::memory_fault &&
 						result.retired_instructions == 1U + padding &&
 						cpu.rip == 16U + padding,
-					(where + " faulted at the wrong instruction").c_str())) {
-					return false;
+						(where + " faulted at the wrong instruction")
+							.c_str());
 				}
 			}
 		}
 	}
-	return true;
 }
 
 /* An exception the guest unmasked, found behind PUSH and POP, is raised at
  * its own instruction: the recovery for it builds the block's stream as the
  * block's own, whose entries have no word. */
-[[nodiscard]] bool an_unmasked_exception_is_found_behind_stack_instructions()
+void an_unmasked_exception_is_found_behind_stack_instructions()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -10317,7 +10106,7 @@ struct PositionCase final {
 	set_xmm_low(cpu, 0, 0x3f800000);
 	const auto trap = gadgets::execute(
 		built.program, cpu, memory, executor, 64);
-	return expect(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
+	require(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
 			trap.vector == 19 && trap.retired_instructions == 4 &&
 			cpu.rip == 6 && cpu.gpr(Register::rsp) == 0x800,
 		"an unmasked exception behind PUSH and POP was not raised at its "
@@ -10325,7 +10114,7 @@ struct PositionCase final {
 }
 
 /* A block's own stream holds the entries alone, and only there. */
-[[nodiscard]] bool baked_stack_entries_carry_no_stream_word()
+void baked_stack_entries_carry_no_stream_word()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
@@ -10344,13 +10133,13 @@ struct PositionCase final {
 			(push ? gadgets::baked::uml_x86_64_baked_push_64_r :
 				gadgets::baked::uml_x86_64_baked_pop_64_r)[index]);
 	};
-	return expect(stream.size() >= 4 && stream[0] == entry(true, 3) &&
+	require(stream.size() >= 4 && stream[0] == entry(true, 3) &&
 			stream[1] == entry(true, 15) && stream[2] == entry(false, 5) &&
 			stream[3] == entry(false, 8),
 		"PUSH and POP in a block's stream do not follow one another");
 }
 
-[[nodiscard]] bool ordinary_forms_report_their_position()
+void ordinary_forms_report_their_position()
 {
 	using namespace uml::cpu::x86_64;
 	/* A block 1000 bytes in is the furthest an instruction of the longest
@@ -10361,9 +10150,8 @@ struct PositionCase final {
 		for (const auto &test : position_cases(mode)) {
 			for (const auto position : positions) {
 				TestMemory memory;
-				if (!position_case_reports_its_address(
-						test, mode, memory, 0, 0x1230, position))
-					return false;
+				position_case_reports_its_address(
+						test, mode, memory, 0, 0x1230, position);
 			}
 			/* Above 4 GiB, where long mode keeps the high bits of every
 			 * address it rebuilds. */
@@ -10371,21 +10159,19 @@ struct PositionCase final {
 				for (const auto position : {std::size_t{0}, std::size_t{9}}) {
 					constexpr std::uint64_t base = 0x7f00'0000'0000ULL;
 					TestMemory memory{base};
-					if (!position_case_reports_its_address(test, mode, memory,
-							base, base + 0x1230, position))
-						return false;
+					position_case_reports_its_address(test, mode, memory,
+							base, base + 0x1230, position);
 				}
 			}
 		}
 	}
-	return true;
 }
 
 /* A compatibility-mode block that runs across the top of the address space
  * continues at address zero. Every RIP the exits rebuild from the block's
  * start and a position wraps with it, so an instruction at the top is reported
  * at its own 32-bit address and one past it at its small one. */
-[[nodiscard]] bool ordinary_forms_report_their_position_across_4gib()
+void ordinary_forms_report_their_position_across_4gib()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t base = 0xffff'f000ULL;
@@ -10395,19 +10181,17 @@ struct PositionCase final {
 			16U, 30U}) {
 			TestMemory memory{base};
 			memory.set_wrap32(true);
-			if (!position_case_reports_its_address(test,
-					ExecutionMode::compat32, memory, base, code, position))
-				return false;
+			position_case_reports_its_address(test,
+					ExecutionMode::compat32, memory, base, code, position);
 		}
 	}
-	return true;
 }
 
 /* A store that lands in the block that is running retires, and the run
  * leaves for the instruction after it, whose bytes may have changed: the RIP
  * the ordinary stores and the call rebuild is the address after the
  * instruction, wrapped at 4 GiB in compatibility mode. */
-[[nodiscard]] bool ordinary_overlap_exits_report_the_next_address()
+void ordinary_overlap_exits_report_the_next_address()
 {
 	using namespace uml::cpu::x86_64;
 	struct Store final {
@@ -10470,28 +10254,26 @@ struct PositionCase final {
 					const auto where = std::string{store.name} + " at " +
 						std::to_string(position) + (compat ? " (32-bit" :
 							" (64-bit") + (wrap ? ", across 4 GiB)" : ")");
-					if (!expect(result.event ==
+					require(result.event ==
 								uml::cpu::EngineEvent::continued &&
 							result.retired_instructions == padding + 1U &&
 							cpu.rip == (end & mask),
-							(where + " left with the wrong RIP").c_str()) ||
-						!expect(compat || memory.invalidations() == 1,
-							(where + " published " +
-								std::to_string(memory.invalidations()) +
-								" times").c_str()))
-						return false;
+							(where + " left with the wrong RIP").c_str());
+					require(compat || memory.invalidations() == 1,
+						(where + " published " +
+							std::to_string(memory.invalidations()) +
+							" times").c_str());
 				}
 			}
 		}
 	}
-	return true;
 }
 
 /* A CALL pushes the address after it. The five-byte form carries no
  * position and its fault recovers the CALL as five bytes before that address,
  * in either width and across 4 GiB; a prefixed one carries the position. Both
  * push the right address, and a CALL that faults pushing is not retired. */
-[[nodiscard]] bool call_pushes_and_reports_the_next_and_own_address()
+void call_pushes_and_reports_the_next_and_own_address()
 {
 	using namespace uml::cpu::x86_64;
 	for (const auto mode : {ExecutionMode::long64, ExecutionMode::compat32}) {
@@ -10537,12 +10319,11 @@ struct PositionCase final {
 							memory.dword(base + 0x800 - 4U) :
 							memory.qword(base + 0x800 - 8U);
 						/* The CALL ends the block, at its target. */
-						if (!expect(result.event ==
+						require(result.event ==
 									uml::cpu::EngineEvent::continued &&
 								cpu.rip == (next & mask) &&
 								pushed == (next & mask),
-								(where + " pushed the wrong address").c_str()))
-							return false;
+								(where + " pushed the wrong address").c_str());
 					}
 					{
 						/* The push faults. */
@@ -10552,23 +10333,21 @@ struct PositionCase final {
 						cpu.gpr(Register::rsp) = base + unmapped_address;
 						const auto result = gadgets::execute(
 							built.program, cpu, memory, 1000);
-						if (!expect(result.event ==
+						require(result.event ==
 									uml::cpu::EngineEvent::memory_fault &&
 								result.retired_instructions == padding &&
 								cpu.rip == ((code + at) & mask),
 								(where + " reported the wrong RIP when it "
-									"faulted pushing").c_str()))
-							return false;
+									"faulted pushing").c_str());
 					}
 				}
 			}
 		}
 	}
-	return true;
 }
 
 /* LEA of a RIP-relative operand, once its address word is gone. */
-[[nodiscard]] bool rip_relative_lea_needs_no_rip_word()
+void rip_relative_lea_needs_no_rip_word()
 {
 	using namespace uml::cpu::x86_64;
 	for (const auto position : {std::size_t{0}, std::size_t{37}}) {
@@ -10584,12 +10363,10 @@ struct PositionCase final {
 		CpuState cpu{};
 		cpu.rip = 0x1000;
 		const auto result = gadgets::execute(built.program, cpu, memory, 1000);
-		if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+		require(result.event == uml::cpu::EngineEvent::system_call &&
 				cpu.gpr(Register::rax) == 0x1000 + position + 7U + 0x10U,
-				"a RIP-relative LEA computed the wrong address"))
-			return false;
+				"a RIP-relative LEA computed the wrong address");
 	}
-	return true;
 }
 
 /* Every opcode of the one-byte, 0F, 0F 38 and 0F 3A maps, and the VEX forms of
@@ -10598,7 +10375,7 @@ struct PositionCase final {
  * leaves with a fault, or a trap, without retiring names itself in RIP. This
  * reaches the forms the cases above do not list, and any gadget that spends
  * the stream word its exit reads the position from. It runs in both modes. */
-[[nodiscard]] bool every_faulting_form_reports_its_position()
+void every_faulting_form_reports_its_position()
 {
 	using namespace uml::cpu::x86_64;
 	/* The bytes before the opcode, and how many reg fields to try: the groups
@@ -10699,7 +10476,7 @@ struct PositionCase final {
 							 event != Event::bound_range))
 							continue;
 						++faulted;
-						if (!expect(cpu.rip == ((0x1230 + at) & mask),
+						require(cpu.rip == ((0x1230 + at) & mask),
 								("opcode " + std::to_string(opcode) + " /" +
 									std::to_string(reg) + " after " +
 									std::to_string(prefix.size()) +
@@ -10708,15 +10485,14 @@ struct PositionCase final {
 									" left with event " +
 									std::to_string(static_cast<int>(event)) +
 									" and RIP " + std::to_string(cpu.rip))
-									.c_str()))
-							return false;
+									.c_str());
 					}
 				}
 			}
 		}
 	}
 	/* The sweep reaches the forms; it must not pass by reaching none. */
-	return expect(faulted > 40000U,
+	require(faulted > 40000U,
 		("only " + std::to_string(faulted) +
 			" encodings faulted in the sweep").c_str());
 }
@@ -10765,7 +10541,7 @@ enum class ImmediateOp : std::uint8_t {
 /* ALU and MOV against memory with every width and immediates on either side of
  * what the access word holds, against the same operation on a register, which
  * carries its immediate in a word of its own. */
-[[nodiscard]] bool memory_immediates_match_the_register_form()
+void memory_immediates_match_the_register_form()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t data = 0x800;
@@ -10837,42 +10613,39 @@ enum class ImmediateOp : std::uint8_t {
 							std::to_string(immediate) + ", operand " +
 							std::to_string(value) +
 							(indexed ? ", indexed" : ", based");
-						if (!expect(memory_result.event ==
+						require(memory_result.event ==
 									uml::cpu::EngineEvent::system_call &&
 								register_result.event ==
 									uml::cpu::EngineEvent::system_call,
-								(where + " did not reach SYSCALL").c_str()))
-							return false;
+								(where + " did not reach SYSCALL").c_str());
 						const auto stored = with_memory.qword(data);
 						const bool writes = op != ImmediateOp::compare &&
 							op != ImmediateOp::test;
 						const std::uint64_t expected = writes ?
 							(register_cpu.gpr(Register::rdx) & mask) :
 							(value & mask);
-						if (!expect((stored & mask) == expected,
-								(where + " stored the wrong value").c_str()) ||
-							!expect((stored & ~mask) == (value & ~mask),
-								(where + " wrote beyond its width").c_str()))
-							return false;
+						require((stored & mask) == expected,
+								(where + " stored the wrong value").c_str());
+						require((stored & ~mask) == (value & ~mask),
+							(where + " wrote beyond its width").c_str());
 						materialize_flags(memory_cpu);
 						materialize_flags(register_cpu);
-						if (op != ImmediateOp::move &&
-							!expect((memory_cpu.rflags & 0x8d5U) ==
+						if (op != ImmediateOp::move)
+							require((memory_cpu.rflags & 0x8d5U) ==
 									(register_cpu.rflags & 0x8d5U),
-								(where + " set different flags").c_str()))
-							return false;
+								(where + " set different flags").c_str());
 						++checked;
 					}
 				}
 			}
 		}
 	}
-	return expect(checked > 2000, "the immediate sweep ran too few cases");
+	require(checked > 2000, "the immediate sweep ran too few cases");
 }
 
 /* An immediate the access word holds selects the baked bank, and one it
  * cannot hold the ordinary bank. */
-[[nodiscard]] bool wide_memory_immediates_take_the_ordinary_bank()
+void wide_memory_immediates_take_the_ordinary_bank()
 {
 	using namespace uml::cpu::x86_64;
 	const auto baked_add = reinterpret_cast<std::uintptr_t>(
@@ -10885,19 +10658,19 @@ enum class ImmediateOp : std::uint8_t {
 			static_cast<std::uint8_t>(word >> 16U),
 			static_cast<std::uint8_t>(word >> 24U), 0x0f, 0x05});
 	};
-	return expect(entry(8191) == baked_add,
-			"an immediate of 8191 left the baked bank") &&
-		expect(entry(-8192) == baked_add,
-			"an immediate of -8192 left the baked bank") &&
-		expect(entry(8192) != baked_add,
-			"an immediate of 8192 stayed in a bank that cannot hold it") &&
-		expect(entry(-8193) != baked_add,
-			"an immediate of -8193 stayed in a bank that cannot hold it");
+	require(entry(8191) == baked_add,
+			"an immediate of 8191 left the baked bank");
+	require(entry(-8192) == baked_add,
+		"an immediate of -8192 left the baked bank");
+	require(entry(8192) != baked_add,
+		"an immediate of 8192 stayed in a bank that cannot hold it");
+	require(entry(-8193) != baked_add,
+		"an immediate of -8193 stayed in a bank that cannot hold it");
 }
 
 /* The address entry hands its access word to the access entry behind it, and
  * an LEA that shares the entry takes only the displacement. */
-[[nodiscard]] bool indexed_addresses_resolve_every_displacement()
+void indexed_addresses_resolve_every_displacement()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr std::uint64_t data = 0x800;
@@ -10946,11 +10719,10 @@ enum class ImmediateOp : std::uint8_t {
 						built.program, cpu, memory, 64);
 					const auto expected = wide ? address :
 						(address & 0xffffffffU);
-					if (!expect(result.event ==
+					require(result.event ==
 								uml::cpu::EngineEvent::system_call &&
 							cpu.gpr(Register::rax) == expected,
-						"an indexed LEA computed the wrong address"))
-						return false;
+						"an indexed LEA computed the wrong address");
 				}
 				if (address != data)
 					continue;
@@ -10966,14 +10738,12 @@ enum class ImmediateOp : std::uint8_t {
 					gadgets::build(memory, 0x100), "indexed load did not build");
 				const auto result = gadgets::execute(
 					built.program, cpu, memory, 64);
-				if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+				require(result.event == uml::cpu::EngineEvent::system_call &&
 						cpu.gpr(Register::rax) == marker,
-					"an indexed load read the wrong address"))
-					return false;
+					"an indexed load read the wrong address");
 			}
 		}
 	}
-	return true;
 }
 
 } // namespace
@@ -10982,19 +10752,18 @@ enum class ImmediateOp : std::uint8_t {
  * keep them to themselves, whatever the environment says. The variable is
  * read as each executor is made. */
 template <typename Test>
-[[nodiscard]] bool with_sharing(bool shared, Test test)
+void with_sharing(bool shared, Test test)
 {
 	constexpr const char *name = "DARWIN_UML_GADGET_SHARED_BODIES";
 	const char *held = std::getenv(name);
 	const std::string previous = held != nullptr ? held : "";
 	const bool had = held != nullptr;
 	setenv(name, shared ? "1" : "0", 1);
-	const bool passed = test();
+	test();
 	if (had)
 		setenv(name, previous.c_str(), 1);
 	else
 		unsetenv(name);
-	return passed;
 }
 
 int main(int argc, char **argv)
@@ -11005,185 +10774,199 @@ int main(int argc, char **argv)
 		setenv("DARWIN_UML_GADGET_SHARED_BODIES", "0", 1);
 	/* The address spaces the kernel destroyed alone, which a sanitizer tree
 	 * can afford to run; the rest of the suite is long. */
-	if (argc > 1 && std::strcmp(argv[1], "dead-generations") == 0)
-		return a_destroyed_generation_is_let_go_of_when_the_count_moves() &&
-			the_prepared_generation_can_be_let_go_of() &&
-			a_number_given_out_again_runs_its_new_code() &&
-			a_destroyed_generation_keeps_its_window_place() &&
-			the_budget_bounds_what_an_executor_keeps() ? 0 : 1;
-	const bool passed = decode_scaled_address() &&
-		cache_reuses_and_revalidates_programs() &&
-		cache_validates_inline_source_spans() &&
-		cache_counts_validation_faults_and_races() &&
-		cache_rejects_unrelated_code_pages_by_stamp() &&
-		a_moving_code_sequence_keeps_unchanged_programs() &&
-		slow_executable_writes_publish_every_code_page() &&
-		a_slow_store_across_a_page_boundary_publishes_both_pages() &&
-		native_executable_stores_publish_every_code_page() &&
-		a_settled_link_owes_its_page_a_fresh_publication() &&
-		an_unpublished_code_page_strands_another_translation() &&
-		a_masked_store_publishes_the_page_its_elements_reach() &&
-		a_moving_code_sequence_rebuilds_changed_programs() &&
-		a_recorded_code_stamp_is_no_newer_than_its_source() &&
-		a_write_racing_a_first_translation_does_not_survive() &&
-		a_write_racing_a_second_page_does_not_survive() &&
-		a_write_stamped_after_a_first_translation_does_not_survive() &&
-		an_undisturbed_first_translation_is_still_cached() &&
-		a_decode_at_a_page_edge_faults_where_it_stopped() &&
-		a_block_longer_than_the_fetch_window_decodes() &&
-		cache_retires_the_oldest_generation() &&
-		a_recycled_address_space_id_serves_no_old_translation() &&
-		a_destroyed_generation_is_let_go_of_when_the_count_moves() &&
-		the_prepared_generation_can_be_let_go_of() &&
-		a_number_given_out_again_runs_its_new_code() &&
-		a_destroyed_generation_keeps_its_window_place() &&
-		the_budget_bounds_what_an_executor_keeps() &&
-		a_validation_does_not_outlive_the_epochs_it_counts() &&
-		cache_links_common_successors() &&
-		cache_chains_direct_branches() &&
-		cache_chains_indirect_transfers() &&
-		an_unrelated_code_change_leaves_a_link_armed() &&
+	if (argc > 1 && std::strcmp(argv[1], "dead-generations") == 0) {
+		a_destroyed_generation_is_let_go_of_when_the_count_moves();
+		the_prepared_generation_can_be_let_go_of();
+		a_number_given_out_again_runs_its_new_code();
+		a_destroyed_generation_keeps_its_window_place();
 		with_sharing(false,
-			a_link_sweep_releases_what_only_replaced_blocks_named) &&
-		linked_call_crosses_a_disjoint_executable_stack_write() &&
-		linked_call_stops_when_the_stack_write_hits_its_target() &&
-		short_blocks_retain_only_their_translated_storage() &&
-		a_replay_keeps_what_it_decoded() &&
-		budget_limited_replay_matches_the_whole_block() &&
-		budget_limited_replay_ignores_rewritten_guest_code() &&
-		budget_limited_replay_faults_where_the_block_does() &&
-		executable_stores_publish_a_code_change_each() &&
-		store_publishes_only_where_some_executor_caches_code() &&
-		overlapping_executable_store_stops_immediately() &&
-		executable_store_links_only_to_unchanged_code() &&
-		distant_code_write_cools_its_linked_block() &&
-		code_write_resets_unvalidated_successors() &&
-		slow_executable_writes_publish_every_store() &&
-		execute_scalar_control_flow() &&
-		materialized_flags_match_the_reference() &&
-		carry_branches_match_the_reference() &&
-		execute_absolute_memory_test_branch() &&
-		execute_lazy_zero_branches() &&
-		zero_conditional_moves_preserve_pending_flags() &&
-		execute_compat32_test_greater_after_syscall() &&
-		execute_compat32_futex_result_validator() &&
-		shifts_overlay_lazy_arithmetic_flags() &&
-		lazy_shift_flags_match_the_definition() &&
-		execute_segment_memory() &&
-		execute_addressing_shapes() &&
-		execute_byte_sign_masks() &&
-		execute_call_and_return() &&
-		decode_compat32_defaults() &&
-		decode_compat32_vex_aliases() &&
-		decode_gather_register_aliases() &&
-		execute_compat32_stack_and_int80() &&
-		execute_compat32_pushfd_popfd() &&
-		execute_compat32_enter_frames() &&
-		execute_compat32_legacy_segment_stack() &&
-		execute_long64_interrupt_return_stack_switch() &&
-		execute_long64_interrupt_return_operand_sizes() &&
-		interrupt_return_masks_user_flags() &&
-		expose_consistent_xsave_cpuid_state() &&
-		cpuid_leaves_the_run() &&
-		wrap_compat32_instruction_pointer() &&
-		execute_compat32_tls_segment() &&
-		reject_program_mode_mismatch() &&
-		chunk_repeating_string_for_interrupt() &&
-		bulk_string_runs_match_the_element_definition() &&
-		repeated_store_into_executable_page_publishes_its_run() &&
-		repeated_move_faults_on_a_run_boundary() &&
-		fused_conditions_match_the_deferred_evaluation() &&
-		ordinary_bank_conditions_match_the_deferred_evaluation() &&
-		fused_conditions_cover_exactly_the_legal_pairs() &&
-		lazy_carry_reaches_every_reader() &&
-		a_settled_carry_survives_an_increment() &&
-		conditional_moves_write_the_destination_either_way() &&
-		fused_conditional_jumps_take_the_same_edge() &&
-		cpuid_table_matches_the_gadget() &&
-		x87_zero_results_keep_their_sign() &&
-		preserve_precise_memory_fault() &&
-		retire_valid_prefix_before_decode_fault() &&
-		migrated_gadgets_are_native_only() &&
-		native_divide_traps_precisely() &&
-		native_into_reports_overflow_precisely() &&
-		icebp_raises_a_debug_trap_after_itself() &&
-		bound_checks_a_signed_range() &&
-		privileged_instructions_raise_general_protection() &&
-		segment_base_writes_reject_non_canonical_addresses() &&
-		overlong_instructions_raise_general_protection() &&
-		random_instructions_expose_no_host_state() &&
-		processor_numbering_is_cpu_zero_node_zero() &&
-		software_interrupt_vectors_trap() &&
-		one_instruction_budget_steps_linked_programs() &&
-		popf_setting_trap_flag_leaves_at_the_next_instruction() &&
-		iret_setting_trap_flag_arms_the_next_instruction() &&
-		resume_flag_lasts_until_an_instruction_starts() &&
-		decode_names_int_vectors_and_fwait() &&
-		a_single_step_runs_one_repeat_iteration() &&
-		loads_that_unmask_exceptions_leave() &&
-		checked_simd_exceptions_fault_before_the_result() &&
-		checked_simd_denormal_operands_follow_x86() &&
-		checked_simd_invalid_operations_follow_x86() &&
-		checked_fma_invalid_operations_follow_x86() &&
-		checked_comparison_invalid_operations_follow_x86() &&
-		checked_horizontal_flags_follow_x86() &&
-		checked_underflow_follows_x86() &&
-		checked_dot_product_flags_follow_x86() &&
-		checked_unmasked_precision_follows_x86() &&
-		checked_sum_flags_follow_x86() &&
-		checked_integer_rounding_precision_follows_x86() &&
-		checked_x87_exceptions_wait_for_the_next_instruction() &&
-		checked_builds_stop_before_checked_instructions() &&
-		unmasked_x87_exceptions_leave_linked_blocks() &&
-		unmasked_x87_control_words_run_clean_code_through() &&
-		unmasked_simd_exceptions_leave_linked_blocks() &&
-		simd_checks_match_the_checked_path() &&
-		mxcsr_loads_leave_when_checks_change() &&
-		mxcsr_loads_switch_the_simd_exact_path() &&
-		faulting_comisd_keeps_earlier_flags() &&
-		alignment_checks_follow_rflags_ac() &&
-		byte_shifts_discard_a_lane_for_an_oversized_count() &&
-		vex_vmovlhps_preserves_aliased_source() &&
-		vector_results_cross_only_a_transfer_that_stays_inline() &&
-		a_call_out_between_vector_gadgets_keeps_the_result() &&
-		vector_integer_forwards_only_from_the_gadget_before() &&
-		a_lane_extract_store_keeps_the_lane_across_a_miss() &&
-		a_lane_extract_store_keeps_the_lane_across_a_page() &&
-		a_masked_store_keeps_the_unselected_bytes_across_a_miss() &&
-		vector_invalid_results_use_x86_indefinite_nan() &&
-		locked_memory_updates_select_exclusive_gadgets() &&
-		glibc_rwlock_xadd_fast_path_is_exact() &&
-		gobject_closure_bitfield_cmpxchg_is_exact() &&
-		xadd_survives_concurrent_vcpus() &&
-		cmpxchg_survives_concurrent_vcpus() &&
-		locked_increment_survives_concurrent_vcpus() &&
-		locked_forms_agree_at_every_operand_address() &&
-		compare_exchange_pair_requires_alignment() &&
-		unaligned_locked_increment_survives_concurrent_vcpus() &&
-		mask_store_uses_its_segment_and_address_size() &&
-		mask_store_keeps_concurrent_unselected_bytes() &&
-		faulting_split_operand_releases_the_lock() &&
-		guest_stores_reach_other_cpus_in_program_order() &&
-		guest_memory_gadgets_end_in_an_ordering_barrier() &&
-		baked_faults_rebuild_the_rip_from_the_block_start() &&
-		baked_accesses_stop_at_the_position_field() &&
-		baked_overlap_exits_rebuild_the_rip_from_the_block_start() &&
-		baked_stack_entries_carry_no_stream_word() &&
-		baked_stack_faults_report_their_instruction() &&
-		compat32_stack_faults_wrap_at_4gib() &&
-		baked_stack_overlaps_report_the_next_instruction() &&
-		baked_stack_crosses_page_edges() &&
-		baked_stack_faults_inside_a_long_block() &&
-		a_linked_block_recovers_its_stack_instruction() &&
-		an_unmasked_exception_is_found_behind_stack_instructions() &&
-		ordinary_forms_report_their_position() &&
-		ordinary_forms_report_their_position_across_4gib() &&
-		ordinary_overlap_exits_report_the_next_address() &&
-		call_pushes_and_reports_the_next_and_own_address() &&
-		rip_relative_lea_needs_no_rip_word() &&
-		every_faulting_form_reports_its_position() &&
-		memory_immediates_match_the_register_form() &&
-		wide_memory_immediates_take_the_ordinary_bank() &&
-		indexed_addresses_resolve_every_displacement();
-	return passed ? 0 : 1;
+			letting_go_of_an_address_space_survives_a_failed_allocation);
+		with_sharing(false,
+			retiring_the_oldest_address_space_survives_a_failed_allocation);
+		with_sharing(false,
+			a_shed_address_space_is_asked_for_again_after_a_failed_allocation);
+		the_budget_bounds_what_an_executor_keeps();
+		return 0;
+	}
+	decode_scaled_address();
+	a_legacy_prefix_after_rex_voids_it();
+	cache_reuses_and_revalidates_programs();
+	cache_validates_inline_source_spans();
+	cache_counts_validation_faults_and_races();
+	cache_rejects_unrelated_code_pages_by_stamp();
+	a_moving_code_sequence_keeps_unchanged_programs();
+	slow_executable_writes_publish_every_code_page();
+	a_slow_store_across_a_page_boundary_publishes_both_pages();
+	native_executable_stores_publish_every_code_page();
+	a_settled_link_owes_its_page_a_fresh_publication();
+	an_unpublished_code_page_strands_another_translation();
+	a_masked_store_publishes_the_page_its_elements_reach();
+	a_moving_code_sequence_rebuilds_changed_programs();
+	a_recorded_code_stamp_is_no_newer_than_its_source();
+	a_write_racing_a_first_translation_does_not_survive();
+	a_write_racing_a_second_page_does_not_survive();
+	a_write_stamped_after_a_first_translation_does_not_survive();
+	an_undisturbed_first_translation_is_still_cached();
+	a_decode_at_a_page_edge_faults_where_it_stopped();
+	a_block_longer_than_the_fetch_window_decodes();
+	cache_retires_the_oldest_generation();
+	a_recycled_address_space_id_serves_no_old_translation();
+	a_destroyed_generation_is_let_go_of_when_the_count_moves();
+	the_prepared_generation_can_be_let_go_of();
+	a_number_given_out_again_runs_its_new_code();
+	a_destroyed_generation_keeps_its_window_place();
+	with_sharing(false,
+		letting_go_of_an_address_space_survives_a_failed_allocation);
+	with_sharing(false,
+		retiring_the_oldest_address_space_survives_a_failed_allocation);
+	with_sharing(false,
+		a_shed_address_space_is_asked_for_again_after_a_failed_allocation);
+	the_budget_bounds_what_an_executor_keeps();
+	a_validation_does_not_outlive_the_epochs_it_counts();
+	cache_links_common_successors();
+	cache_chains_direct_branches();
+	cache_chains_indirect_transfers();
+	an_unrelated_code_change_leaves_a_link_armed();
+	with_sharing(false, a_link_sweep_releases_what_only_replaced_blocks_named);
+	linked_call_crosses_a_disjoint_executable_stack_write();
+	linked_call_stops_when_the_stack_write_hits_its_target();
+	short_blocks_retain_only_their_translated_storage();
+	a_replay_keeps_what_it_decoded();
+	budget_limited_replay_matches_the_whole_block();
+	budget_limited_replay_ignores_rewritten_guest_code();
+	budget_limited_replay_faults_where_the_block_does();
+	executable_stores_publish_a_code_change_each();
+	store_publishes_only_where_some_executor_caches_code();
+	overlapping_executable_store_stops_immediately();
+	executable_store_links_only_to_unchanged_code();
+	distant_code_write_cools_its_linked_block();
+	code_write_resets_unvalidated_successors();
+	slow_executable_writes_publish_every_store();
+	execute_scalar_control_flow();
+	materialized_flags_match_the_reference();
+	carry_branches_match_the_reference();
+	execute_absolute_memory_test_branch();
+	execute_lazy_zero_branches();
+	zero_conditional_moves_preserve_pending_flags();
+	execute_compat32_test_greater_after_syscall();
+	execute_compat32_futex_result_validator();
+	shifts_overlay_lazy_arithmetic_flags();
+	lazy_shift_flags_match_the_definition();
+	execute_segment_memory();
+	execute_addressing_shapes();
+	execute_byte_sign_masks();
+	execute_call_and_return();
+	decode_compat32_defaults();
+	decode_compat32_vex_aliases();
+	decode_gather_register_aliases();
+	execute_compat32_stack_and_int80();
+	execute_compat32_pushfd_popfd();
+	execute_compat32_enter_frames();
+	execute_compat32_legacy_segment_stack();
+	execute_long64_interrupt_return_stack_switch();
+	execute_long64_interrupt_return_operand_sizes();
+	interrupt_return_masks_user_flags();
+	expose_consistent_xsave_cpuid_state();
+	cpuid_leaves_the_run();
+	wrap_compat32_instruction_pointer();
+	execute_compat32_tls_segment();
+	reject_program_mode_mismatch();
+	chunk_repeating_string_for_interrupt();
+	bulk_string_runs_match_the_element_definition();
+	repeated_store_into_executable_page_publishes_its_run();
+	repeated_move_faults_on_a_run_boundary();
+	fused_conditions_match_the_deferred_evaluation();
+	ordinary_bank_conditions_match_the_deferred_evaluation();
+	fused_conditions_cover_exactly_the_legal_pairs();
+	lazy_carry_reaches_every_reader();
+	a_settled_carry_survives_an_increment();
+	conditional_moves_write_the_destination_either_way();
+	fused_conditional_jumps_take_the_same_edge();
+	cpuid_table_matches_the_gadget();
+	x87_zero_results_keep_their_sign();
+	preserve_precise_memory_fault();
+	retire_valid_prefix_before_decode_fault();
+	migrated_gadgets_are_native_only();
+	native_divide_traps_precisely();
+	native_into_reports_overflow_precisely();
+	icebp_raises_a_debug_trap_after_itself();
+	bound_checks_a_signed_range();
+	privileged_instructions_raise_general_protection();
+	segment_base_writes_reject_non_canonical_addresses();
+	overlong_instructions_raise_general_protection();
+	random_instructions_expose_no_host_state();
+	processor_numbering_is_cpu_zero_node_zero();
+	software_interrupt_vectors_trap();
+	one_instruction_budget_steps_linked_programs();
+	popf_setting_trap_flag_leaves_at_the_next_instruction();
+	iret_setting_trap_flag_arms_the_next_instruction();
+	resume_flag_lasts_until_an_instruction_starts();
+	decode_names_int_vectors_and_fwait();
+	a_single_step_runs_one_repeat_iteration();
+	loads_that_unmask_exceptions_leave();
+	checked_simd_exceptions_fault_before_the_result();
+	checked_simd_denormal_operands_follow_x86();
+	checked_simd_invalid_operations_follow_x86();
+	checked_fma_invalid_operations_follow_x86();
+	checked_comparison_invalid_operations_follow_x86();
+	checked_horizontal_flags_follow_x86();
+	checked_underflow_follows_x86();
+	checked_dot_product_flags_follow_x86();
+	checked_unmasked_precision_follows_x86();
+	checked_sum_flags_follow_x86();
+	checked_integer_rounding_precision_follows_x86();
+	checked_x87_exceptions_wait_for_the_next_instruction();
+	checked_builds_stop_before_checked_instructions();
+	unmasked_x87_exceptions_leave_linked_blocks();
+	unmasked_x87_control_words_run_clean_code_through();
+	unmasked_simd_exceptions_leave_linked_blocks();
+	simd_checks_match_the_checked_path();
+	mxcsr_loads_leave_when_checks_change();
+	mxcsr_loads_switch_the_simd_exact_path();
+	faulting_comisd_keeps_earlier_flags();
+	alignment_checks_follow_rflags_ac();
+	byte_shifts_discard_a_lane_for_an_oversized_count();
+	vex_vmovlhps_preserves_aliased_source();
+	vector_results_cross_only_a_transfer_that_stays_inline();
+	a_call_out_between_vector_gadgets_keeps_the_result();
+	vector_integer_forwards_only_from_the_gadget_before();
+	a_lane_extract_store_keeps_the_lane_across_a_miss();
+	a_lane_extract_store_keeps_the_lane_across_a_page();
+	a_masked_store_keeps_the_unselected_bytes_across_a_miss();
+	vector_invalid_results_use_x86_indefinite_nan();
+	locked_memory_updates_select_exclusive_gadgets();
+	glibc_rwlock_xadd_fast_path_is_exact();
+	gobject_closure_bitfield_cmpxchg_is_exact();
+	xadd_survives_concurrent_vcpus();
+	cmpxchg_survives_concurrent_vcpus();
+	locked_increment_survives_concurrent_vcpus();
+	locked_forms_agree_at_every_operand_address();
+	compare_exchange_pair_requires_alignment();
+	unaligned_locked_increment_survives_concurrent_vcpus();
+	mask_store_uses_its_segment_and_address_size();
+	mask_store_keeps_concurrent_unselected_bytes();
+	faulting_split_operand_releases_the_lock();
+	guest_stores_reach_other_cpus_in_program_order();
+	guest_memory_gadgets_end_in_an_ordering_barrier();
+	baked_faults_rebuild_the_rip_from_the_block_start();
+	baked_accesses_stop_at_the_position_field();
+	baked_overlap_exits_rebuild_the_rip_from_the_block_start();
+	baked_stack_entries_carry_no_stream_word();
+	baked_stack_faults_report_their_instruction();
+	compat32_stack_faults_wrap_at_4gib();
+	baked_stack_overlaps_report_the_next_instruction();
+	baked_stack_crosses_page_edges();
+	baked_stack_faults_inside_a_long_block();
+	a_linked_block_recovers_its_stack_instruction();
+	an_unmasked_exception_is_found_behind_stack_instructions();
+	ordinary_forms_report_their_position();
+	ordinary_forms_report_their_position_across_4gib();
+	ordinary_overlap_exits_report_the_next_address();
+	call_pushes_and_reports_the_next_and_own_address();
+	rip_relative_lea_needs_no_rip_word();
+	every_faulting_form_reports_its_position();
+	memory_immediates_match_the_register_form();
+	wide_memory_immediates_take_the_ordinary_bank();
+	indexed_addresses_resolve_every_displacement();
+	return 0;
 }

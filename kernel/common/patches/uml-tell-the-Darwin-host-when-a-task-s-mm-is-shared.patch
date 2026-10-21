@@ -287,7 +287,7 @@ index e770c638bc22feef6238890837e6d3f50bae46f4..7a70e528b66dd95c7102ff2f8bc33590
  	id->sock = -1;
  	id->syscall_data_len = 0;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f..8c1ab173f3850c7da37b8d048d0bdf5c05070b31 100644
+index 6927080a90261b5201163b0c728830728855a01f..cdf178045d08ff70e525b3e7c6e1f9e3463d46e0 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -106,6 +106,38 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
@@ -329,7 +329,7 @@ index d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f..8c1ab173f3850c7da37b8d048d0bdf5c
  static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
  static int shutdown_mode = -1;
-@@ -331,6 +363,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -323,6 +355,7 @@ void userspace(struct uml_pt_regs *registers)
  		unsigned long guest_tls;
  		const unsigned int *guest_ipi_sequence;
  		unsigned int guest_ipi_snapshot;
@@ -337,7 +337,7 @@ index d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f..8c1ab173f3850c7da37b8d048d0bdf5c
  		int event;
  		int stepping;
  
-@@ -376,12 +409,14 @@ void userspace(struct uml_pt_regs *registers)
+@@ -368,12 +401,14 @@ void userspace(struct uml_pt_regs *registers)
  			guest_ipi_sequence, guest_ipi_snapshot) < 0)
  			fatal_userspace(registers, "interrupt registration", -1);
  		stepping = begin_guest_step(registers);

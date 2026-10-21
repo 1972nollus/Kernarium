@@ -12,10 +12,12 @@ verifies the SHA-256 in `provenance.json`
 runner,
 [`../aarch32_corpus_runner.cpp`](../aarch32_corpus_runner.cpp), needs only the
 pack and proves each case consistent with the decoder and with itself. An
-engine lane includes the reader,
-[`../aarch32_corpus_pack.hpp`](../aarch32_corpus_pack.hpp), runs each case
-and compares what the pack records; the inventory's `engine_status` moves from
-`pending` to `verified` per entry.
+engine lane includes the reader and case layout,
+[`../aarch32_corpus_pack.hpp`](../aarch32_corpus_pack.hpp), and the state
+conversion,
+[`../aarch32_corpus_cpu_state.hpp`](../aarch32_corpus_cpu_state.hpp), runs each
+case and compares what the pack records; the inventory's `engine_status` moves
+from `pending` to `verified` per entry.
 
 ## A case
 
@@ -186,7 +188,14 @@ The `complete` level (the Armv8 additions):
   multiply-accumulate forms, in the simd suite's states plus half-precision
   lanes;
 - `armv8-memory`: the half-precision VLDR and VSTR;
-- `armv8-system`: SB.
+- `armv8-system`: SB;
+- `armv8-fz16`: VFMAL and VFMSL, vector and by scalar, D and Q, with
+  FPSCR.FZ16 set and clear and half-precision denormals, infinities and NaNs
+  among the operands, which the `armv8` suite's states leave unpaired;
+- `armv8-convert16`: the Advanced SIMD conversions from half precision to
+  16-bit integers (VCVT, VCVTA, VCVTN, VCVTP, VCVTM) and 16-bit fixed point,
+  D and Q, with FZ16 set and clear and lanes that overflow after lanes that
+  are inexact, so that one lane's saturation leaves another's flags.
 
 LDA, STL, LDAEX, STLEX in every size and SEVL are base: every Armv8 AArch32
 EL0 has them, and arm64 Linux's compat kuser helpers execute STLEX and STLEXD.
@@ -227,8 +236,9 @@ address.
   read-as-zero, write-ignored) and keeps Stride, Len and FZ16. Stride and Len
   are the `fpscr-reserved` suite's, so the `qemu` records never set them.
   FZ16 is FEAT_FP16's and holds wherever that is, as in qemu-arm's `-cpu
-  max`; the `fpscr` suite writes it, and every other suite starts with it
-  clear, because an oracle without FEAT_FP16 reads it as zero.
+  max`; the `fpscr`, `armv8-fz16` and `armv8-convert16` suites write it, and
+  every other suite starts with it clear, because an oracle without FEAT_FP16
+  reads it as zero.
 - CNTFRQ and CNTVCT depend on the host and are not in the corpus.
 
 ## The hardware cross-check

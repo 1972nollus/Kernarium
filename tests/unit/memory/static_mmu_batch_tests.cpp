@@ -6,6 +6,7 @@
 #include "address_space_types.hpp"
 #include "allocation_fault.hpp"
 #include "require.hpp"
+#include "wait_until.hpp"
 #include "scratch_backing.hpp"
 
 #include <algorithm>
@@ -988,13 +989,10 @@ void test_waiting_execution_context_cannot_enter_retired_generation()
 		destroy_result.store(darwin_uml_static_vm_destroy(generation),
 			std::memory_order_release);
 	}};
-	const auto deadline = std::chrono::steady_clock::now() + 5s;
-	while (darwin_uml_static_vm_execution_context_sequences(
-			active).execution_interrupt == 0 &&
-	       std::chrono::steady_clock::now() < deadline)
-		std::this_thread::yield();
-	require(darwin_uml_static_vm_execution_context_sequences(
-		active).execution_interrupt != 0);
+	require(uml::testing::waitUntil([&] {
+		return darwin_uml_static_vm_execution_context_sequences(
+			active).execution_interrupt != 0;
+	}, 5s, 0ms), "destroying the generation never interrupted the executor");
 
 	std::atomic_int waiting_result{-2};
 	std::thread waiter{[&] {

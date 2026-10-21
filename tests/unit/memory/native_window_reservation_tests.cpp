@@ -26,13 +26,8 @@
 
 namespace {
 
+using uml::testing::host_page;
 using uml::testing::require;
-
-[[nodiscard]] std::size_t host_page() noexcept
-{
-	static const auto size = static_cast<std::size_t>(getpagesize());
-	return size;
-}
 
 [[nodiscard]] std::string describe(std::uintptr_t address, std::size_t length)
 {

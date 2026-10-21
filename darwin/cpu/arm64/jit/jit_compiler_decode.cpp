@@ -117,9 +117,9 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emit_streaming_word(*plan);
       return Action::keep_going;
     }
-    /* Every SVE and SME word goes through the profile's table first
-     * (design 4.1.4); without SME it stays on the path that makes it the
-     * illegal exit, unchanged. */
+    /* Every SVE and SME word goes through the profile's table first.
+     * Without SME it stays on the path that makes it the illegal exit,
+     * unchanged. */
     if (arm64::detail::sme_encoding_space(instruction)) {
       const auto &host = host_capabilities();
       /*

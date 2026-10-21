@@ -298,19 +298,7 @@ enum Permute : unsigned {
 	       ((imm8 >> 5) << 16) | (cmode << 12) | ((imm8 & 31U) << 5) | d;
 }
 
-/* Scalar three same (64-bit lanes): 01 U 11110 size 1 Rm opcode 1 Rn Rd. */
-[[nodiscard]] constexpr std::uint32_t scalar_same(Same op, unsigned size,
-	unsigned d, unsigned n, unsigned m) noexcept
-{
-	return 0x5e20'0400U | ((op >> 5) << 29) | (size << 22) | (m << 16) |
-	       ((op & 31U) << 11) | (n << 5) | d;
-}
-
 /* Scalar floating point: type 0 = single, 1 = double, 3 = half. */
-[[nodiscard]] constexpr std::uint32_t fp_type(bool double_precision) noexcept
-{
-	return double_precision ? 1U : 0U;
-}
 /* One source: 0 0 0 11110 type 1 opcode 10000 Rn Rd. */
 enum Float1 : unsigned {
 	fmov = 0, fabs_s = 1, fneg_s = 2, fsqrt_s = 3,
@@ -470,26 +458,8 @@ enum FloatInt : unsigned {
 	       ((op & 7U) << 16) | ((64U - fractional_bits) << 10) | (n << 5) | d;
 }
 
-/* Loads and stores. SIMD&FP register, unsigned offset (the offset in bytes,
- * a multiple of the size): size 2 = S, 3 = D, 4 = Q. */
-[[nodiscard]] constexpr std::uint32_t ldr_simd(unsigned log2_size,
-	unsigned t, unsigned n, unsigned offset) noexcept
-{
-	const unsigned size = log2_size == 4U ? 0U : log2_size;
-	const unsigned opc = log2_size == 4U ? 3U : 1U;
-	return 0x3d00'0000U | (size << 30) | (opc << 22) |
-	       ((offset >> log2_size) << 10) | (n << 5) | t;
-}
-[[nodiscard]] constexpr std::uint32_t str_simd(unsigned log2_size,
-	unsigned t, unsigned n, unsigned offset) noexcept
-{
-	const unsigned size = log2_size == 4U ? 0U : log2_size;
-	const unsigned opc = log2_size == 4U ? 2U : 0U;
-	return 0x3d00'0000U | (size << 30) | (opc << 22) |
-	       ((offset >> log2_size) << 10) | (n << 5) | t;
-}
-/* LDUR/STUR of a SIMD&FP register: the unscaled form, signed offset -256..255
- * in bytes whatever the size. */
+/* Loads and stores. LDUR/STUR of a SIMD&FP register: the unscaled form,
+ * signed offset -256..255 in bytes whatever the size (2 = S, 3 = D, 4 = Q). */
 [[nodiscard]] constexpr std::uint32_t ldur_simd(unsigned log2_size,
 	unsigned t, unsigned n, int offset) noexcept
 {

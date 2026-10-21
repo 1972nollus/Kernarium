@@ -11,11 +11,11 @@
 
 namespace uml::cpu::arm64::jit {
 
-/* How much of the SME profile the JIT implements (design 5.3, S4): all of
- * it but the SME2 forms. The control core (M1), the register-only forms
- * (M2) and the SVE, SME1 and SIMD&FP memory forms (M3) cover every row of
- * the profile outside SME2, and every instruction the JIT runs at SVCR 0
- * but AdvSIMD also runs in streaming mode. SMSTART, SMSTOP, MRS and MSR
+/* How much of the SME profile the JIT implements: all of it but the SME2
+ * forms. The control core, the register-only forms and the SVE, SME1 and
+ * SIMD&FP memory forms cover every row of the profile outside SME2, and
+ * every instruction the JIT runs at SVCR 0 but AdvSIMD also runs in
+ * streaming mode. SMSTART, SMSTOP, MRS and MSR
  * SVCR and TPIDR2_EL0 are base-space system instructions; the table rows
  * are those implements_sme_row() names, less the reserved words
  * sme_word_reserved() finds, and the SIMD&FP loads and stores those

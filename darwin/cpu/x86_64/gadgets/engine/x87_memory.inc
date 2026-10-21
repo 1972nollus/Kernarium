@@ -71,7 +71,9 @@ Lx86_x87_load_bcd_fault:
 	add sp, sp, #32
 	b Lx86_memory_fault
 
-.macro x87_store_float name, size, helper, pop
+/* Store ST(0) to memory through the SoftFloat conversion `helper`. The integer
+ * helpers take `truncate`, which FISTTP sets. */
+.macro x87_store_memory name, size, helper, pop, truncate=
 gadget x87_store_\name
 	effective_address
 	mov x25, x7
@@ -81,33 +83,9 @@ gadget x87_store_\name
 	x87_store_value sp, x9, w10
 	mov x0, _cpu
 	mov x1, sp
-	helper_call uml_x86_64_x87_to_\helper
-	x87_leave_if_raised
-	mov x9, x0
-	add sp, sp, #16
-	x87_scalar_store \size, x9
-	.if \pop
-	x87_pop
-	.endif
-	finish_store \size
-.endm
-
-x87_store_float f32_keep, 4, f32, 0
-x87_store_float f32_pop, 4, f32, 1
-x87_store_float f64_keep, 8, f64, 0
-x87_store_float f64_pop, 8, f64, 1
-
-.macro x87_store_integer name, size, helper, truncate, pop
-gadget x87_store_\name
-	effective_address
-	mov x25, x7
-	sub sp, sp, #16
-	mov w13, #0
-	x87_load_stack w13, x9, w10
-	x87_store_value sp, x9, w10
-	mov x0, _cpu
-	mov x1, sp
+	.ifnb \truncate
 	mov w2, #\truncate
+	.endif
 	helper_call uml_x86_64_x87_to_\helper
 	x87_leave_if_raised
 	mov x9, x0
@@ -119,14 +97,19 @@ gadget x87_store_\name
 	finish_store \size
 .endm
 
-x87_store_integer i16_truncate_pop, 2, i16, 1, 1
-x87_store_integer i16_keep, 2, i16, 0, 0
-x87_store_integer i16_pop, 2, i16, 0, 1
-x87_store_integer i32_truncate_pop, 4, i32, 1, 1
-x87_store_integer i32_keep, 4, i32, 0, 0
-x87_store_integer i32_pop, 4, i32, 0, 1
-x87_store_integer i64_truncate_pop, 8, i64, 1, 1
-x87_store_integer i64_pop, 8, i64, 0, 1
+x87_store_memory f32_keep, 4, f32, 0
+x87_store_memory f32_pop, 4, f32, 1
+x87_store_memory f64_keep, 8, f64, 0
+x87_store_memory f64_pop, 8, f64, 1
+
+x87_store_memory i16_truncate_pop, 2, i16, 1, 1
+x87_store_memory i16_keep, 2, i16, 0, 0
+x87_store_memory i16_pop, 2, i16, 1, 0
+x87_store_memory i32_truncate_pop, 4, i32, 1, 1
+x87_store_memory i32_keep, 4, i32, 0, 0
+x87_store_memory i32_pop, 4, i32, 1, 0
+x87_store_memory i64_truncate_pop, 8, i64, 1, 1
+x87_store_memory i64_pop, 8, i64, 1, 0
 
 gadget x87_store_f80_pop
 	effective_address
@@ -325,6 +308,5 @@ x87_environment_save state108, 28, 1
 
 .purgem x87_environment_save
 .purgem x87_environment_restore
-.purgem x87_store_integer
-.purgem x87_store_float
+.purgem x87_store_memory
 .purgem x87_load_converted

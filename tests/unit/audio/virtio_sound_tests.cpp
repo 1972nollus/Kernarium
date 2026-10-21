@@ -3,6 +3,7 @@
 #include "protocol.hpp"
 #include "require.hpp"
 #include "virtio_sound_device.hpp"
+#include "wire_bytes.hpp"
 
 #include <array>
 #include <cstdlib>
@@ -18,31 +19,9 @@ namespace {
 
 namespace protocol = uml::audio::protocol;
 
+using uml::testing::bytes;
+using uml::testing::load;
 using uml::testing::require;
-
-template<typename... Values>
-std::vector<std::uint8_t> bytes(const Values&... values)
-{
-    const std::size_t size = (sizeof(values) + ... + 0U);
-    std::vector<std::uint8_t> result(size);
-    std::size_t offset = 0;
-    const auto append = [&](const auto& value) {
-        std::memcpy(result.data() + offset, &value, sizeof(value));
-        offset += sizeof(value);
-    };
-    (append(values), ...);
-    return result;
-}
-
-template<typename Value>
-Value load(std::span<const std::uint8_t> source, std::size_t offset = 0)
-{
-    static_assert(std::is_trivially_copyable_v<Value>);
-    require(offset <= source.size() && sizeof(Value) <= source.size() - offset);
-    Value result {};
-    std::memcpy(&result, source.data() + offset, sizeof(result));
-    return result;
-}
 
 class TestSink final : public uml::audio::PlaybackSink {
 public:

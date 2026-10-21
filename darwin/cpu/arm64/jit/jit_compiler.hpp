@@ -280,7 +280,7 @@ private:
                              bool load);
   /* x9 = the register file's ZT0, from CpuState and the run-time SVL. */
   void emit_sme_zt0_address();
-  /* A register-only word an SM=1 translation runs natively (M2): the
+  /* A register-only word an SM=1 translation runs natively: the
    * guest word with its general-register fields re-encoded to host
    * registers, and what it needs around it (jit_compiler_sme.cpp). */
   struct StreamingWord final {
@@ -314,7 +314,7 @@ private:
   plan_streaming_fp_simd(std::uint32_t instruction);
   void emit_streaming_word(const StreamingWord &plan);
   void emit_movprfx(std::uint32_t instruction, bool predicated);
-  /* The SVE and SME1 memory forms in a streaming translation (M3). */
+  /* The SVE and SME1 memory forms in a streaming translation. */
   [[nodiscard]] bool emit_streaming_memory(const detail::SmeEncoding &row,
                                            std::uint32_t instruction,
                                            std::uint64_t pc);

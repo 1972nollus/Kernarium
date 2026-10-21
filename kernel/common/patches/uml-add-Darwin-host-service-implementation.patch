@@ -13,29 +13,30 @@ lookup live here together.
 uml_dir= puts the machine's files directly in the directory it names,
 without upstream's <umid>/ level, because Darwin's sun_path holds 104 bytes.
 ---
+ arch/um/kernel/ksyms.c           |   2 -
  arch/um/os-Darwin/Makefile       |  15 +
  arch/um/os-Darwin/bridge.h       |   8 +
  arch/um/os-Darwin/compat.c       | 125 ++++++
- arch/um/os-Darwin/file.c         | 544 ++++++++++++++++++++++++++
- arch/um/os-Darwin/helper.c       | 204 ++++++++++
- arch/um/os-Darwin/internal.h     |  75 ++++
+ arch/um/os-Darwin/file.c         | 532 ++++++++++++++++++++++++++
+ arch/um/os-Darwin/helper.c       |  43 +++
+ arch/um/os-Darwin/internal.h     |  74 ++++
  arch/um/os-Darwin/irq.c          | 351 +++++++++++++++++
  arch/um/os-Darwin/irq.h          |  10 +
  arch/um/os-Darwin/main.c         |  66 ++++
  arch/um/os-Darwin/mem.c          |  41 ++
- arch/um/os-Darwin/process.c      | 105 +++++
+ arch/um/os-Darwin/process.c      | 102 +++++
  arch/um/os-Darwin/sigio.c        |  34 ++
- arch/um/os-Darwin/signal.c       | 318 +++++++++++++++
+ arch/um/os-Darwin/signal.c       | 318 ++++++++++++++++
  arch/um/os-Darwin/skas/Makefile  |   7 +
  arch/um/os-Darwin/skas/mem.c     |  33 ++
- arch/um/os-Darwin/skas/process.c | 639 +++++++++++++++++++++++++++++++
- arch/um/os-Darwin/smp.c          | 612 +++++++++++++++++++++++++++++
+ arch/um/os-Darwin/skas/process.c | 631 +++++++++++++++++++++++++++++++
+ arch/um/os-Darwin/smp.c          | 612 ++++++++++++++++++++++++++++++
  arch/um/os-Darwin/start_up.c     |  72 ++++
  arch/um/os-Darwin/time.c         | 335 ++++++++++++++++
  arch/um/os-Darwin/tty.c          |  22 ++
  arch/um/os-Darwin/umid.c         |  93 +++++
- arch/um/os-Darwin/util.c         | 133 +++++++
- 22 files changed, 3842 insertions(+)
+ arch/um/os-Darwin/util.c         | 126 ++++++
+ 23 files changed, 3650 insertions(+), 2 deletions(-)
  create mode 100644 arch/um/os-Darwin/Makefile
  create mode 100644 arch/um/os-Darwin/bridge.h
  create mode 100644 arch/um/os-Darwin/compat.c
@@ -59,6 +60,24 @@ without upstream's <umid>/ level, because Darwin's sun_path holds 104 bytes.
  create mode 100644 arch/um/os-Darwin/umid.c
  create mode 100644 arch/um/os-Darwin/util.c
 
+diff --git a/arch/um/kernel/ksyms.c b/arch/um/kernel/ksyms.c
+index 9449ad05fc7df19b2d2f7e05e4d16d1d18fce8b0..c6bc88b5e24bca087b19cca550694fc60655a283 100644
+--- a/arch/um/kernel/ksyms.c
++++ b/arch/um/kernel/ksyms.c
+@@ -28,13 +28,11 @@ EXPORT_SYMBOL(os_flush_stdout);
+ EXPORT_SYMBOL(os_close_file);
+ EXPORT_SYMBOL(os_set_fd_async);
+ EXPORT_SYMBOL(os_set_fd_block);
+-EXPORT_SYMBOL(helper_wait);
+ EXPORT_SYMBOL(os_shutdown_socket);
+ EXPORT_SYMBOL(os_create_unix_socket);
+ EXPORT_SYMBOL(os_connect_socket);
+ EXPORT_SYMBOL(os_accept_connection);
+ EXPORT_SYMBOL(os_rcv_fd_msg);
+-EXPORT_SYMBOL(run_helper);
+ EXPORT_SYMBOL(os_major);
+ EXPORT_SYMBOL(os_minor);
+ EXPORT_SYMBOL(os_makedev);
 diff --git a/arch/um/os-Darwin/Makefile b/arch/um/os-Darwin/Makefile
 new file mode 100644
 index 0000000000000000000000000000000000000000..5198f30224d81b37c844027754f026a37f0bbe23
@@ -227,10 +246,10 @@ index 0000000000000000000000000000000000000000..12d70d6cb35c1e20f51fed4a0ec8fa38
 +}
 diff --git a/arch/um/os-Darwin/file.c b/arch/um/os-Darwin/file.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..0c9e000c9e74f4839f62beed91643973291c9c9d
+index 0000000000000000000000000000000000000000..4e03a2424252b6cf64aa8cb97850a8a144455a66
 --- /dev/null
 +++ b/arch/um/os-Darwin/file.c
-@@ -0,0 +1,544 @@
+@@ -0,0 +1,532 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
@@ -307,18 +326,6 @@ index 0000000000000000000000000000000000000000..0c9e000c9e74f4839f62beed91643973
 +	int result = darwin_uml_ioctl(fd, command, (void *)argument);
 +
 +	return result < 0 ? -errno : result;
-+}
-+
-+int os_get_ifname(int fd, char *name)
-+{
-+	(void)fd;
-+	(void)name;
-+	return -EOPNOTSUPP;
-+}
-+
-+int os_mode_fd(int fd, int mode)
-+{
-+	return fchmod(fd, mode) < 0 ? -errno : 0;
 +}
 +
 +int os_file_type(char *path)
@@ -777,10 +784,10 @@ index 0000000000000000000000000000000000000000..0c9e000c9e74f4839f62beed91643973
 +}
 diff --git a/arch/um/os-Darwin/helper.c b/arch/um/os-Darwin/helper.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..540269e0b402d16ab238778191b72e07970ba404
+index 0000000000000000000000000000000000000000..1293f3d4af672fe5b3fbe84acdd9ebd1a14b41a1
 --- /dev/null
 +++ b/arch/um/os-Darwin/helper.c
-@@ -0,0 +1,204 @@
+@@ -0,0 +1,43 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
@@ -788,171 +795,10 @@ index 0000000000000000000000000000000000000000..540269e0b402d16ab238778191b72e07
 +#include <signal.h>
 +#include <stdlib.h>
 +#include <os.h>
-+#include "internal.h"
-+
-+#define DARWIN_MAX_INTEGER_HELPERS 64
 +
 +struct os_helper_thread {
 +	pthread_t handle;
 +};
-+
-+int run_helper(void (*pre_exec)(void *), void *pre_data, char **argv)
-+{
-+	(void)pre_exec;
-+	(void)pre_data;
-+	(void)argv;
-+	/* A host exec would violate the single-process execution contract. */
-+	return -EOPNOTSUPP;
-+}
-+
-+struct integer_helper {
-+	int (*routine)(void *);
-+	void *argument;
-+};
-+
-+struct integer_helper_slot {
-+	pthread_t handle;
-+	int in_use;
-+	int stopping;
-+};
-+
-+static pthread_mutex_t integer_helpers_lock = PTHREAD_MUTEX_INITIALIZER;
-+static struct integer_helper_slot
-+	integer_helpers[DARWIN_MAX_INTEGER_HELPERS];
-+
-+static int reserve_integer_helper(void)
-+{
-+	int index;
-+
-+	pthread_mutex_lock(&integer_helpers_lock);
-+	for (index = 0; index < DARWIN_MAX_INTEGER_HELPERS; index++) {
-+		if (integer_helpers[index].in_use)
-+			continue;
-+		integer_helpers[index].in_use = 1;
-+		integer_helpers[index].stopping = 0;
-+		integer_helpers[index].handle = (pthread_t)0;
-+		pthread_mutex_unlock(&integer_helpers_lock);
-+		return index + 1;
-+	}
-+	pthread_mutex_unlock(&integer_helpers_lock);
-+	return -EAGAIN;
-+}
-+
-+static void release_integer_helper(int identifier)
-+{
-+	struct integer_helper_slot *slot;
-+
-+	if (identifier <= 0 || identifier > DARWIN_MAX_INTEGER_HELPERS)
-+		return;
-+	slot = &integer_helpers[identifier - 1];
-+	pthread_mutex_lock(&integer_helpers_lock);
-+	slot->handle = (pthread_t)0;
-+	slot->stopping = 0;
-+	slot->in_use = 0;
-+	pthread_mutex_unlock(&integer_helpers_lock);
-+}
-+
-+static pthread_t claim_integer_helper(int identifier)
-+{
-+	struct integer_helper_slot *slot;
-+	pthread_t handle = (pthread_t)0;
-+
-+	if (identifier <= 0 || identifier > DARWIN_MAX_INTEGER_HELPERS)
-+		return handle;
-+	slot = &integer_helpers[identifier - 1];
-+	pthread_mutex_lock(&integer_helpers_lock);
-+	if (slot->in_use && !slot->stopping && slot->handle != (pthread_t)0) {
-+		slot->stopping = 1;
-+		handle = slot->handle;
-+	}
-+	pthread_mutex_unlock(&integer_helpers_lock);
-+	return handle;
-+}
-+
-+static void *integer_helper_entry(void *argument)
-+{
-+	struct integer_helper *helper = argument;
-+	int (*routine)(void *) = helper->routine;
-+	void *routine_argument = helper->argument;
-+
-+	free(helper);
-+	return (void *)(long)routine(routine_argument);
-+}
-+
-+int run_helper_thread(int (*routine)(void *), void *argument,
-+		      unsigned int flags, unsigned long *stack_out)
-+{
-+	struct integer_helper *helper = malloc(sizeof(*helper));
-+	pthread_attr_t attributes;
-+	pthread_t thread;
-+	void *result;
-+	int identifier = 0;
-+	int error;
-+
-+	(void)flags;
-+	if (helper == NULL)
-+		return -ENOMEM;
-+	helper->routine = routine;
-+	helper->argument = argument;
-+	if (stack_out != NULL) {
-+		identifier = reserve_integer_helper();
-+		if (identifier < 0) {
-+			free(helper);
-+			return identifier;
-+		}
-+	}
-+	error = pthread_attr_init(&attributes);
-+	if (error != 0) {
-+		release_integer_helper(identifier);
-+		free(helper);
-+		return -error;
-+	}
-+	if (error == 0)
-+		error = pthread_create(&thread, &attributes,
-+				       integer_helper_entry, helper);
-+	pthread_attr_destroy(&attributes);
-+	if (error != 0) {
-+		release_integer_helper(identifier);
-+		free(helper);
-+		return -error;
-+	}
-+	if (stack_out != NULL) {
-+		pthread_mutex_lock(&integer_helpers_lock);
-+		integer_helpers[identifier - 1].handle = thread;
-+		pthread_mutex_unlock(&integer_helpers_lock);
-+		*stack_out = 0;
-+		return identifier;
-+	}
-+	pthread_join(thread, &result);
-+	return (int)(long)result;
-+}
-+
-+int helper_wait(int id)
-+{
-+	pthread_t thread = claim_integer_helper(id);
-+	int error;
-+
-+	if (thread == (pthread_t)0)
-+		return -ESRCH;
-+	error = pthread_join(thread, NULL);
-+	release_integer_helper(id);
-+	return error == 0 ? 0 : -error;
-+}
-+
-+void darwin_kill_integer_helper(int identifier)
-+{
-+	pthread_t thread = claim_integer_helper(identifier);
-+
-+	if (thread == (pthread_t)0)
-+		return;
-+	(void)pthread_cancel(thread);
-+	/* The winch helper normally sleeps in sigsuspend()/pause().  Supply its
-+	 * permitted wake signal as well so cancellation cannot remain latent in
-+	 * a host wait while the embedded kernel is being retired. */
-+	(void)pthread_kill(thread, SIGWINCH);
-+	(void)pthread_join(thread, NULL);
-+	release_integer_helper(identifier);
-+}
 +
 +int os_run_helper_thread(struct os_helper_thread **thread_out,
 +			 void *(*routine)(void *), void *argument)
@@ -987,10 +833,10 @@ index 0000000000000000000000000000000000000000..540269e0b402d16ab238778191b72e07
 +}
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..afbf1cb0661f5e92c90f9d0674dc2eda9c5dbbb4
+index 0000000000000000000000000000000000000000..9dbe6b1c19ca3346259fa7644945d0578b57b4e9
 --- /dev/null
 +++ b/arch/um/os-Darwin/internal.h
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,74 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef __UM_OS_DARWIN_INTERNAL_H
 +#define __UM_OS_DARWIN_INTERNAL_H
@@ -1001,7 +847,6 @@ index 0000000000000000000000000000000000000000..afbf1cb0661f5e92c90f9d0674dc2eda
 +
 +#define DARWIN_IPI_SIGNAL SIGUSR1
 +
-+void darwin_kill_integer_helper(int identifier);
 +int darwin_task_shutdown_requested(void);
 +int darwin_reserve_embedded_thread(void);
 +void darwin_release_embedded_thread(void);
@@ -1560,10 +1405,10 @@ index 0000000000000000000000000000000000000000..968c0de1b7ac9079e5379fd796fb81cf
 +}
 diff --git a/arch/um/os-Darwin/process.c b/arch/um/os-Darwin/process.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..36ee1aa584ef0666d37aea9d979f59b8bafa7abd
+index 0000000000000000000000000000000000000000..538eb50c2acde4c10a7db2939ae2ce940f459c84
 --- /dev/null
 +++ b/arch/um/os-Darwin/process.c
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,102 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
@@ -1600,12 +1445,9 @@ index 0000000000000000000000000000000000000000..36ee1aa584ef0666d37aea9d979f59b8
 +
 +void os_kill_process(int pid, int reap_child)
 +{
-+	/* Darwin helper "processes" are joinable pthreads registered by
-+	 * run_helper_thread().  Always join them: unlike Linux children they share
-+	 * the embedded kernel image, so leaving one alive across shutdown would
-+	 * make unloading that image unsafe. */
++	/* No helper process exists on Darwin. */
++	(void)pid;
 +	(void)reap_child;
-+	darwin_kill_integer_helper(pid);
 +}
 +
 +void os_kill_ptraced_process(int pid, int reap_child)
@@ -2087,10 +1929,10 @@ index 0000000000000000000000000000000000000000..66322482ae2fc166561d4fd0bc3f3651
 +}
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..953ce45635b5694d23d1e2807a2210d6c28b7a8e
+index 0000000000000000000000000000000000000000..2ea6a61ce805cf312d28fa380522bf3ac98ce724
 --- /dev/null
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -0,0 +1,639 @@
+@@ -0,0 +1,631 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
@@ -2386,14 +2228,6 @@ index 0000000000000000000000000000000000000000..953ce45635b5694d23d1e2807a2210d6
 +void reboot_skas(void)
 +{
 +	shutdown_kernel(1);
-+}
-+
-+int is_skas_winch(int pid, int fd, void *data)
-+{
-+	(void)pid;
-+	(void)fd;
-+	(void)data;
-+	return 0;
 +}
 +
 +static void fatal_userspace(struct uml_pt_regs *registers,
@@ -3896,10 +3730,10 @@ index 0000000000000000000000000000000000000000..ed24b37fa7f66dc49d6245b2d1fad57e
 +);
 diff --git a/arch/um/os-Darwin/util.c b/arch/um/os-Darwin/util.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..3bdb9963266452e938a8c95d10b7ef1aa2f99a37
+index 0000000000000000000000000000000000000000..d988ee7fb619b8c9c67315536db8eeb7378a56f7
 --- /dev/null
 +++ b/arch/um/os-Darwin/util.c
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,126 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
@@ -3972,13 +3806,6 @@ index 0000000000000000000000000000000000000000..3bdb9963266452e938a8c95d10b7ef1a
 +	if (getentropy(buffer, length) == 0)
 +		return (ssize_t)length;
 +	return -1;
-+}
-+
-+void os_fix_helper_signals(void)
-+{
-+	signal(SIGWINCH, SIG_IGN);
-+	signal(SIGINT, SIG_DFL);
-+	signal(SIGTERM, SIG_DFL);
 +}
 +
 +void os_dump_core(void)

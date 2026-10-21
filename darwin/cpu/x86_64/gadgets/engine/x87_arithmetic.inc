@@ -20,20 +20,7 @@ gadget x87_register_\opcode\()_\group
 	add x11, sp, #16
 	x87_store_value x11, x9, w10
 	.endif
-	mov x0, _cpu
-	.if \reverse
-	add x1, sp, #16
-	mov x2, sp
-	.else
-	mov x1, sp
-	add x2, sp, #16
-	.endif
-	add x3, sp, #32
-	helper_call uml_x86_64_x87_\helper
-	x87_leave_if_raised
-	add x11, sp, #32
-	x87_load_value x11, x9, w10
-	add sp, sp, #48
+	x87_binary_call \helper, \reverse
 	.if \left_index
 	x87_store_stack w24, x9, w10
 	.else
@@ -208,20 +195,7 @@ gadget x87_memory_\type\()_\name
 	mov w13, #0
 	x87_load_stack w13, x9, w10
 	x87_store_value x19, x9, w10
-	mov x0, _cpu
-	.if \reverse
-	add x1, sp, #16
-	mov x2, sp
-	.else
-	mov x1, sp
-	add x2, sp, #16
-	.endif
-	add x3, sp, #32
-	helper_call uml_x86_64_x87_\helper
-	x87_leave_if_raised
-	add x11, sp, #32
-	x87_load_value x11, x9, w10
-	add sp, sp, #48
+	x87_binary_call \helper, \reverse
 	mov w13, #0
 	x87_store_stack w13, x9, w10
 	retire_and_next

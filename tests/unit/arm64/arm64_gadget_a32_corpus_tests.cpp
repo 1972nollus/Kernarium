@@ -14,8 +14,8 @@
  * decoder-only runner skips them; the engine raises the illegal-instruction
  * exit for them, which the forms test checks. The `unaligned` and
  * `fpscr-reserved` suites are recorded from hardware (a Raspberry Pi 4): a
- * multi-word access at a misaligned address is an alignment fault, as the
- * SCTLR.A = 0 text of the design says, and Stride and Len read as zero.
+ * multi-word access at a misaligned address is an alignment fault with
+ * SCTLR.A = 0, and Stride and Len read as zero.
  *
  * A store-exclusive may fail without cause, as the architecture allows. The
  * gadgets run the host's own exclusives, and the host's monitor ends at any
@@ -35,6 +35,7 @@
  *       [--record NAME[,NAME...]] [--case TEXT] [--limit N] [--forms FILE]
  *       [--passes N] [--interrupt]
  */
+#include "aarch32_corpus_cpu_state.hpp"
 #include "aarch32_corpus_pack.hpp"
 #include "arm64_gadget_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
@@ -128,52 +129,14 @@ public:
 		return generation_;
 	}
 
-	/* Code as the oracle prepares it: the program, an exit stub after it
-	 * (a halfword NOP first when a Thumb program leaves the stub's word
-	 * unaligned), the stubs at the two fixed exits, and this engine's exit
-	 * code, a supervisor call, behind the two epilogues. */
-	void install(const corpus::Case &test, std::uint32_t origin)
+	/* Code as the oracle prepares it, and this engine's exit code, a
+	 * supervisor call, behind the two epilogues; returns whether a NOP
+	 * precedes the exit stub that ends the program. */
+	[[nodiscard]] bool install(const corpus::Case &test)
 	{
-		std::vector<std::uint8_t> image(corpus::kCodeSize, 0);
-		const bool thumb = (test.flags & corpus::kFlagThumb) != 0;
-		const auto put16 = [&](std::uint32_t address, std::uint16_t value) {
-			std::memcpy(&image[address - corpus::kCodeBase], &value, 2);
-		};
-		const auto put32 = [&](std::uint32_t address, std::uint32_t value) {
-			std::memcpy(&image[address - corpus::kCodeBase], &value, 4);
-		};
-		const auto arm_stub = [&](std::uint32_t address, std::uint32_t target) {
-			put32(address, 0xe51ff004U); /* ldr pc, [pc, #-4] */
-			put32(address + 4, target);
-		};
-		const auto thumb_stub = [&](std::uint32_t address, std::uint32_t target) {
-			put16(address, 0xf8df); /* ldr.w pc, [pc, #0] */
-			put16(address + 2, 0xf000);
-			put32(address + 4, target);
-		};
-		for (std::size_t half = 0; half < test.halves.size(); ++half)
-			put16(corpus::kCodeBase + origin + 2U * static_cast<std::uint32_t>(half),
-			      test.halves[half]);
-		/* The stub after the program exists only when it fits in the
-		 * region, so a program at the end of the region falls off it. */
-		const std::uint32_t end = corpus::kCodeBase + origin +
-			2U * static_cast<std::uint32_t>(test.halves.size());
-		const std::uint32_t limit = corpus::kCodeBase + corpus::kCodeSize;
-		if (thumb) {
-			const auto stub = (end + 3U) & ~3U;
-			if (stub + 8 <= limit) {
-				if (end % 4 != 0)
-					put16(end, 0xbf00); /* nop */
-				thumb_stub(stub, corpus::kThumbEpilogue);
-			}
-		} else if (end + 8 <= limit) {
-			arm_stub(end, corpus::kArmEpilogue);
-		}
-		put32(corpus::kArmEpilogue, svc_word);
-		put32(corpus::kThumbEpilogue, svc_word);
-		arm_stub(corpus::kArmExit, corpus::kArmEpilogue);
-		thumb_stub(corpus::kThumbExit, corpus::kThumbEpilogue);
-		copy(corpus::kCodeBase, image);
+		bool padded = false;
+		copy(corpus::kCodeBase, corpus::code_image(test, svc_word, padded));
+		return padded;
 	}
 
 	/* Written through the guest mapping, so the host pages are already
@@ -260,41 +223,19 @@ private:
 [[nodiscard]] bool needs_higher_level(const corpus::Case &test,
 				      decode::Level level)
 {
-	const auto profile = decode::Profile::at(decode::Level::complete);
 	const auto engine = ::uml::cpu::arm64::gadgets::a32::decode_profile(
 		options_at(static_cast<::uml::cpu::arm64::A32Support>(level)));
-	const bool thumb = (test.flags & corpus::kFlagThumb) != 0;
-	decode::ItState it;
-	for (std::size_t half = 0; half < test.halves.size();) {
-		decode::Instruction instruction;
-		decode::Instruction known;
-		if (!thumb) {
-			if (half + 1 >= test.halves.size())
-				break;
-			const std::uint32_t word =
-				std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half];
-			instruction = decode::decode_a32(word, profile);
-			known = decode::decode_a32(word, engine);
-			half += 2;
-		} else {
-			const std::uint16_t first = test.halves[half];
-			const auto length = decode::thumb_length(first);
-			if (half + length / 2 > test.halves.size())
-				break;
-			const std::uint32_t word = length == 4 ?
-				std::uint32_t{first} << 16 | test.halves[half + 1] :
-				std::uint32_t{first} << 16;
-			instruction = decode::decode_thumb(word, it, profile);
-			known = decode::decode_thumb(word, it, engine);
-			it = instruction.next_it;
-			half += length / 2;
-		}
-		if (instruction.legal() &&
-		    (static_cast<int>(instruction.info().level) > static_cast<int>(level) ||
-		     !known.legal()))
-			return true;
-	}
-	return false;
+	bool higher = false;
+	corpus::for_each_instruction(
+		test, decode::Profile::at(decode::Level::complete),
+		[&](const corpus::ProgramStep &step) {
+			higher = step.instruction.legal() &&
+				 (static_cast<int>(step.instruction.info().level) >
+					  static_cast<int>(level) ||
+				  !step.decode_at(engine).legal());
+			return !higher;
+		});
+	return higher;
 }
 
 [[nodiscard]] bool linux_breakpoint(std::uint32_t word, bool thumb)
@@ -405,16 +346,6 @@ void load_state(::uml::cpu::arm64::CpuState &cpu, SavedVectors &saved,
 	cpu.a32_cp15ben = 1;
 	cpu.a32 = 1;
 	cpu.pc = thumb ? decode::t32_key(entry) : decode::a32_key(entry);
-}
-
-[[nodiscard]] std::uint32_t apsr_of(const ::uml::cpu::arm64::CpuState &cpu)
-{
-	std::uint32_t ge = 0;
-	for (unsigned lane = 0; lane < 4; ++lane)
-		if ((cpu.a32_ge_mask >> (8 * lane)) & 0xffU)
-			ge |= 1U << (16 + lane);
-	return (static_cast<std::uint32_t>(cpu.nzcv) & 0xf000'0000U) |
-	       (std::uint32_t{cpu.a32_q} << 27) | ge;
 }
 
 struct Totals final {
@@ -569,7 +500,7 @@ struct Attempt final {
 {
 	const bool thumb = (test.flags & corpus::kFlagThumb) != 0;
 	const std::uint32_t origin = test.origin;
-	machine.install(test, origin);
+	const bool nop_before_stub = machine.install(test);
 	machine.set_data(initial_data);
 	::uml::cpu::arm64::CpuState cpu{};
 	SavedVectors saved{};
@@ -623,14 +554,11 @@ struct Attempt final {
 		 * exit stub's load and the exit's system call, and a system call
 		 * or a breakpoint itself. */
 		std::size_t expected = test.retired;
-		bool padded = false;
+		/* A Thumb program that leaves the stub's word unaligned has a NOP
+		 * before it, executed only when the program falls off its end. */
+		const bool padded = nop_before_stub && test.event == 0;
 		if (test.event == 0) {
 			expected += 2;
-			/* A Thumb program that leaves the stub's word unaligned has
-			 * a NOP before it, executed only when the program falls off
-			 * its end. */
-			padded = thumb && (corpus::kCodeBase + origin +
-					   2U * test.halves.size()) % 4U != 0U;
 		} else if (test.event == corpus::kEventSvc ||
 			   result.reason == ExitReason::breakpoint) {
 			expected += 1;
@@ -646,7 +574,7 @@ struct Attempt final {
 					++lost_status;
 			}
 		}
-		const auto apsr = apsr_of(cpu);
+		const auto apsr = corpus::apsr_of(cpu);
 		if (apsr != (test.final.apsr & 0xf80f'0000U))
 			note("apsr %#x vs %#x", test.final.apsr & 0xf80f'0000U, apsr);
 		for (unsigned index = 0; index < corpus::kVectors; ++index) {
@@ -692,14 +620,8 @@ void check_case(Machine &machine, const corpus::Record &record,
 		++totals.skipped;
 		return;
 	}
-	auto initial_data = corpus::data_fill(test.fill);
-	for (const auto &patch : test.data_patches)
-		std::copy(patch.bytes.begin(), patch.bytes.end(),
-			  initial_data.begin() + patch.offset);
-	auto expected_data = initial_data;
-	for (const auto &patch : test.memory_patches)
-		std::copy(patch.bytes.begin(), patch.bytes.end(),
-			  expected_data.begin() + patch.offset);
+	const auto initial_data = corpus::data_before(test);
+	const auto expected_data = corpus::data_after(test, initial_data);
 	++totals.run;
 	totals.forms.insert(test.form);
 
