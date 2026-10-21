@@ -143,12 +143,12 @@ template <unsigned Modulus>
 
 /* Whether the square root of the positive normal number `x` is exact: its
  * odd significand is a perfect square and its exponent is even, because the
- * root of anything else is irrational. A few residues of the significand
- * and its exponent's parity rule out nearly every number in one test, and a
- * bitwise root settles the rest. */
+ * root of anything else is irrational. An odd square is 1 modulo 8, which
+ * with the exponent's parity rules out seven lanes in eight; residues
+ * modulo 63 and 11 rule out most of the rest, and a bitwise root settles
+ * them. */
 [[nodiscard]] bool exact_square_root(const Format &f, std::uint64_t x) noexcept
 {
-	constexpr auto mod64 = square_residues<64>();
 	constexpr auto mod63 = square_residues<63>();
 	constexpr auto mod11 = square_residues<11>();
 	const unsigned fraction = f.dbl ? 52U : 23U;
@@ -158,8 +158,8 @@ template <unsigned Modulus>
 	const int exponent = static_cast<int>((x & f.exponent()) >> fraction) -
 		static_cast<int>(bias + fraction) + static_cast<int>(trailing);
 	const auto m = significand >> trailing;
-	if (((mod64 >> (m % 64U)) & (mod63 >> (m % 63U)) & (mod11 >> (m % 11U)) &
-			~static_cast<std::uint64_t>(exponent) & 1U) == 0)
+	if ((((m & 7U) ^ 1U) | (static_cast<std::uint64_t>(exponent) & 1U)) != 0 ||
+		((mod63 >> (m % 63U)) & (mod11 >> (m % 11U)) & 1U) == 0)
 		return false;
 	std::uint64_t root = 0;
 	for (std::uint64_t bit = 1ULL << ((63U - __builtin_clzll(m)) / 2U);
