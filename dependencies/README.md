@@ -19,7 +19,7 @@ private prefixes through the CMake targets in this directory.
 The dependency products are:
 
 - `macos`: non-graphics static host libraries at
-  `.build/dependencies/macos-arm64-26`, built and verified at a macOS 26.0
+  `.build/dependencies/macos-arm64-27`, built and verified at a macOS 27.0
   deployment target;
 - `apple-gpu-vulkan-experiment`: the macOS and iOS device builds, which add the
   pinned Mesa, Vulkan-Headers, and Venus-protocol sources so that Mesa supplies
@@ -161,7 +161,7 @@ names, and the absence of undeclared or legacy providers. In iOS and Apple GPU
 prefixes, every object of a checked binary, each archive member included, is
 Mach-O with exactly one build-version command, so an LLVM bitcode member is
 rejected.
-Every macOS and iOS product prefix builds and verifies at a 26.0 deployment
+Every macOS and iOS product prefix builds and verifies at a 27.0 deployment
 target; the kernel host tools, which run only on the build host, are the
 exception.
 
@@ -175,9 +175,9 @@ rows still requires a rebuild.
 
 `apple-gpu-vulkan-experiment` is a separately named product built for macOS
 and for the iOS device, from one source matrix and one set of patches; its
-`--platform ios` build differs only in SDK, deployment target, platform
-contract, and its need for a native-machine pass for the compilers Mesa runs
-during the build. It builds upstream virglrenderer and libepoxy and adds Mesa,
+`--platform ios` build differs only in SDK, platform contract, and its need
+for a native-machine pass for the compilers Mesa runs during the build. It
+builds upstream virglrenderer and libepoxy and adds Mesa,
 which supplies both the KosmicKrisp Vulkan driver and the Zink Gallium OpenGL
 driver, plus the standalone Vulkan SDK headers and the Venus protocol
 generator.
