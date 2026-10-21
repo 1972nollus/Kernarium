@@ -255,9 +255,17 @@ public:
                     return false;
             }
             [engine_ disconnectNodeOutput:player_];
-            [engine_ connect:player_
-                          to:engine_.mainMixerNode
-                      format:format_];
+            NSError* connectError = nil;
+            if (![engine_ connect:player_
+                               to:engine_.mainMixerNode
+                           format:format_
+                            error:&connectError]) {
+                configured_ = false;
+                prepared_ = false;
+                running_ = false;
+                faulted_ = true;
+                return false;
+            }
             configured_ = true;
             prepared_ = false;
             running_ = false;
@@ -297,12 +305,12 @@ public:
         }
         @try {
             NSError* error = nil;
-            if (!engine_.isRunning && ![engine_ startAndReturnError:&error]) {
+            if ((!engine_.isRunning && ![engine_ startAndReturnError:&error]) ||
+                ![player_ playAndReturnError:&error]) {
                 deactivateSession();
                 faulted_ = true;
                 return false;
             }
-            [player_ play];
             running_ = true;
             faulted_ = false;
             return true;
@@ -463,8 +471,8 @@ public:
                 NSError* error = nil;
                 if (activateSession() &&
                     (engine_.isRunning ||
-                     [engine_ startAndReturnError:&error])) {
-                    [player_ play];
+                     [engine_ startAndReturnError:&error]) &&
+                    [player_ playAndReturnError:&error]) {
                     faulted_ = false;
                 } else {
                     abortPending(false);
