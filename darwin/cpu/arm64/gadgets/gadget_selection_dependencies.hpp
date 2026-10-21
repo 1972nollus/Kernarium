@@ -20,6 +20,7 @@
 #include "../detail/floating_integer_conversion.hpp"
 #include "../detail/floating_reciprocal.hpp"
 #include "../detail/floating_round.hpp"
+#include "../detail/floating_shape.hpp"
 #include "../detail/fp_state_access.hpp"
 #include "../detail/half_fused_long.hpp"
 #include "../detail/instruction_primitives.hpp"

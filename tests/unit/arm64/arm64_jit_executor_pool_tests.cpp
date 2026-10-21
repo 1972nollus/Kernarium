@@ -7,6 +7,7 @@
 #include "runtime_test_route.hpp"
 #include "memory/static_guest_memory.hpp"
 #include "require.hpp"
+#include "wait_until.hpp"
 
 #include <array>
 #include <atomic>
@@ -41,19 +42,9 @@ constexpr std::uint64_t initial_x8 = 0x1234'5678'9abc'def0ULL;
 constexpr std::uint64_t initial_x9 = 0x0fed'cba9'8765'4321ULL;
 constexpr std::uint32_t system_call = 0xd400'0001U;
 
-using uml::testing::fail;
+using namespace std::chrono_literals;
 using uml::testing::require;
-
-template <typename Predicate>
-void wait_until(Predicate predicate, const char *message) {
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds{5};
-  while (!predicate()) {
-    if (std::chrono::steady_clock::now() >= deadline)
-      fail(message);
-    std::this_thread::yield();
-  }
-}
+using uml::testing::waitUntil;
 
 struct RunObservation final {
   ExitReason reason{ExitReason::fatal};
@@ -168,12 +159,14 @@ void sequential_task_wrappers_reuse_one_across_states_and_generations() {
       retire.wait(false, std::memory_order_acquire);
     }};
   }
-  wait_until([&] { return ready.load(std::memory_order_acquire) == wrapper_count; },
-             "persistent wrapper threads did not become ready");
+  require(waitUntil([&] {
+    return ready.load(std::memory_order_acquire) == wrapper_count;
+  }, 5s, 0ms), "persistent wrapper threads did not become ready");
   start.store(true, std::memory_order_release);
   start.notify_all();
-  wait_until([&] { return turn.load(std::memory_order_acquire) == wrapper_count; },
-             "sequential wrapper runs did not finish");
+  require(waitUntil([&] {
+    return turn.load(std::memory_order_acquire) == wrapper_count;
+  }, 5s, 0ms), "sequential wrapper runs did not finish");
 
   for (std::size_t index = 0; index < results.size(); ++index)
     require_success(results[index], values[index],
@@ -217,9 +210,9 @@ void a_queued_waiter_precedes_a_tight_preferred_reborrow() {
     waiter_order.store(next_order.fetch_add(1, std::memory_order_relaxed) + 1U,
                        std::memory_order_release);
   }};
-  wait_until([] {
+  require(waitUntil([] {
     return arm64::jit_executor_pool_diagnostics().waiters == 1;
-  }, "the fairness borrower did not queue behind the held slot");
+  }, 5s, 0ms), "the fairness borrower did not queue behind the held slot");
 
   holder.reset();
   unsigned reborrow_order = 0;
@@ -260,8 +253,9 @@ void an_n_plus_one_task_waits_and_wakes_without_a_fatal_exit() {
     first_result = run_program(*first, first_generation,
                                &hold_boundary, &boundary);
   }};
-  wait_until([&] { return boundary.entered.load(std::memory_order_acquire); },
-             "the one-slot holder did not reach its execution boundary");
+  require(waitUntil([&] {
+    return boundary.entered.load(std::memory_order_acquire);
+  }, 5s, 0ms), "the one-slot holder did not reach its execution boundary");
   std::thread waiter{[&] {
     second_started.store(true, std::memory_order_release);
     second_started.notify_all();
@@ -269,11 +263,12 @@ void an_n_plus_one_task_waits_and_wakes_without_a_fatal_exit() {
     second_finished.store(true, std::memory_order_release);
     second_finished.notify_all();
   }};
-  wait_until([&] { return second_started.load(std::memory_order_acquire); },
-             "the N+1 task did not start");
-  wait_until([] {
+  require(waitUntil([&] {
+    return second_started.load(std::memory_order_acquire);
+  }, 5s, 0ms), "the N+1 task did not start");
+  require(waitUntil([] {
     return arm64::jit_executor_pool_diagnostics().waiters == 1;
-  }, "the N+1 task did not reach the bounded pool wait");
+  }, 5s, 0ms), "the N+1 task did not reach the bounded pool wait");
   require(!second_finished.load(std::memory_order_acquire),
           "the N+1 task crossed a concurrently borrowed one-slot pool");
 
@@ -309,18 +304,20 @@ void misordered_drain_is_safe_stale_and_recoverable() {
     holder_result = run_program(*holder_engine, first_generation,
                                 &hold_boundary, &boundary);
   }};
-  wait_until([&] { return boundary.entered.load(std::memory_order_acquire); },
-             "the drain holder did not reach its execution boundary");
+  require(waitUntil([&] {
+    return boundary.entered.load(std::memory_order_acquire);
+  }, 5s, 0ms), "the drain holder did not reach its execution boundary");
   std::thread waiter{[&] {
     waiter_started.store(true, std::memory_order_release);
     waiter_started.notify_all();
     waiter_result = run_program(*waiter_engine, second_generation);
   }};
-  wait_until([&] { return waiter_started.load(std::memory_order_acquire); },
-             "the drain waiter did not start");
-  wait_until([] {
+  require(waitUntil([&] {
+    return waiter_started.load(std::memory_order_acquire);
+  }, 5s, 0ms), "the drain waiter did not start");
+  require(waitUntil([] {
     return arm64::jit_executor_pool_diagnostics().waiters == 1;
-  }, "the drain test waiter did not reach pool exhaustion");
+  }, 5s, 0ms), "the drain test waiter did not reach pool exhaustion");
 
   arm64::release_jit_cache_run_session();
   waiter.join();
@@ -338,10 +335,10 @@ void misordered_drain_is_safe_stale_and_recoverable() {
   holder.join();
   require_success(holder_result, first_value,
                   "an active borrow did not survive safe deferred drain");
-  wait_until([] {
+  require(waitUntil([] {
     const auto state = arm64::jit_executor_pool_diagnostics();
     return !state.active && !state.draining && state.created == 0;
-  }, "the final active borrow did not complete deferred teardown");
+  }, 5s, 0ms), "the final active borrow did not complete deferred teardown");
 
   require(arm64::acquire_jit_cache_run_session(),
           "the pool/session gate did not recover after deferred teardown");

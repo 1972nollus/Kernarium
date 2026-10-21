@@ -8,57 +8,17 @@
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 #include "uml_darwin_guest.h"
+#include "allocation_failure.hpp"
 #include "require.hpp"
 
 #include <array>
-#include <atomic>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
-#include <new>
 #include <span>
 #include <stdexcept>
 #include <utility>
-
-namespace allocation_injection {
-std::atomic_bool fail_next{};
-}
-
-void *operator new(std::size_t size)
-{
-	if (allocation_injection::fail_next.exchange(
-			false, std::memory_order_acq_rel))
-		throw std::bad_alloc{};
-	if (auto *memory = std::malloc(size == 0 ? 1 : size); memory != nullptr)
-		return memory;
-	throw std::bad_alloc{};
-}
-
-void *operator new[](std::size_t size)
-{
-	return ::operator new(size);
-}
-
-void operator delete(void *memory) noexcept
-{
-	std::free(memory);
-}
-
-void operator delete[](void *memory) noexcept
-{
-	std::free(memory);
-}
-
-void operator delete(void *memory, std::size_t) noexcept
-{
-	std::free(memory);
-}
-
-void operator delete[](void *memory, std::size_t) noexcept
-{
-	std::free(memory);
-}
 
 namespace {
 
@@ -238,7 +198,7 @@ struct AllocationBoundary final {
 {
 	auto &state = *static_cast<AllocationBoundary *>(opaque);
 	if (++state.blocks == 1)
-		allocation_injection::fail_next.store(true, std::memory_order_release);
+		uml::testing::fail_next_allocation();
 	return false;
 }
 
@@ -648,7 +608,7 @@ void test_production_translated_exception_contract()
 			failed.retired_instructions == 2 && cpu.pc == target,
 			"second-block allocation failure lost its retired prefix");
 		require(boundary.blocks == 1 &&
-			!allocation_injection::fail_next.load(std::memory_order_acquire),
+			!uml::testing::cancel_pending_allocation_failure(),
 			"second-block allocation injection was not consumed precisely");
 		require(!cpu.gadget_fp_active && native_fpcr() == caller_fpcr,
 			"fatal translated cleanup leaked the guest host environment");
@@ -718,12 +678,12 @@ void test_gadget_post_execution_failure_preserves_prefix_and_reuse()
 	 * already retired and advanced the architectural PC. */
 	cpu.pc = base;
 	cpu.registers[0] = second_target;
-	allocation_injection::fail_next.store(true, std::memory_order_release);
+	uml::testing::fail_next_allocation();
 	const auto failed = engine->run(request);
 	require(failed.reason == uml::cpu::ExitReason::fatal &&
 		failed.retired_instructions == 1 && cpu.pc == second_target,
 		"post-execution cache failure lost the committed instruction prefix");
-	require(!allocation_injection::fail_next.load(std::memory_order_acquire),
+	require(!uml::testing::cancel_pending_allocation_failure(),
 		"post-execution cache allocation injection was not consumed");
 	require(cpu.gadget_indirect_miss == nullptr &&
 		!cpu.gadget_fp_active &&
