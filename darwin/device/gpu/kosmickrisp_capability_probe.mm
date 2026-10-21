@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "kosmickrisp_capability_probe.hpp"
 
-#include <Metal/Metal.h>
 #include <vulkan/vulkan.h>
 
 #include <algorithm>
@@ -390,15 +389,6 @@ std::string json_string(std::string_view value)
     return output.str();
 }
 
-std::string version_string(uint32_t version)
-{
-    std::ostringstream output;
-    output << VK_API_VERSION_MAJOR(version) << '.'
-           << VK_API_VERSION_MINOR(version) << '.'
-           << VK_API_VERSION_PATCH(version);
-    return output.str();
-}
-
 template <typename Property>
 bool has_extension(const std::vector<Property> &properties,
                    std::string_view name)
@@ -445,169 +435,6 @@ std::vector<Property> enumerate_properties(Enumerate enumerate)
     }
     properties.resize(count);
     return properties;
-}
-
-void write_uuid(std::ostream &output,
-                const uint8_t (&uuid)[VK_UUID_SIZE])
-{
-    output << '"' << std::hex << std::setfill('0');
-    for (const auto byte : uuid) {
-        output << std::setw(2) << static_cast<unsigned>(byte);
-    }
-    output << std::dec << std::setfill(' ') << '"';
-}
-
-void write_core_features(std::ostream &output,
-                         const VkPhysicalDeviceFeatures &features)
-{
-    bool first = true;
-#define UML_WRITE_FEATURE(member)                                             \
-    do {                                                                       \
-        if (!first) {                                                          \
-            output << ',';                                                     \
-        }                                                                      \
-        first = false;                                                         \
-        output << "\"" #member "\":" << (features.member ? "true" : "false"); \
-    } while (false)
-    output << '{';
-    UML_WRITE_FEATURE(robustBufferAccess);
-    UML_WRITE_FEATURE(fullDrawIndexUint32);
-    UML_WRITE_FEATURE(imageCubeArray);
-    UML_WRITE_FEATURE(independentBlend);
-    UML_WRITE_FEATURE(geometryShader);
-    UML_WRITE_FEATURE(tessellationShader);
-    UML_WRITE_FEATURE(sampleRateShading);
-    UML_WRITE_FEATURE(dualSrcBlend);
-    UML_WRITE_FEATURE(logicOp);
-    UML_WRITE_FEATURE(multiDrawIndirect);
-    UML_WRITE_FEATURE(drawIndirectFirstInstance);
-    UML_WRITE_FEATURE(depthClamp);
-    UML_WRITE_FEATURE(depthBiasClamp);
-    UML_WRITE_FEATURE(fillModeNonSolid);
-    UML_WRITE_FEATURE(depthBounds);
-    UML_WRITE_FEATURE(wideLines);
-    UML_WRITE_FEATURE(largePoints);
-    UML_WRITE_FEATURE(alphaToOne);
-    UML_WRITE_FEATURE(multiViewport);
-    UML_WRITE_FEATURE(samplerAnisotropy);
-    UML_WRITE_FEATURE(textureCompressionETC2);
-    UML_WRITE_FEATURE(textureCompressionASTC_LDR);
-    UML_WRITE_FEATURE(textureCompressionBC);
-    UML_WRITE_FEATURE(occlusionQueryPrecise);
-    UML_WRITE_FEATURE(pipelineStatisticsQuery);
-    UML_WRITE_FEATURE(vertexPipelineStoresAndAtomics);
-    UML_WRITE_FEATURE(fragmentStoresAndAtomics);
-    UML_WRITE_FEATURE(shaderTessellationAndGeometryPointSize);
-    UML_WRITE_FEATURE(shaderImageGatherExtended);
-    UML_WRITE_FEATURE(shaderStorageImageExtendedFormats);
-    UML_WRITE_FEATURE(shaderStorageImageMultisample);
-    UML_WRITE_FEATURE(shaderStorageImageReadWithoutFormat);
-    UML_WRITE_FEATURE(shaderStorageImageWriteWithoutFormat);
-    UML_WRITE_FEATURE(shaderUniformBufferArrayDynamicIndexing);
-    UML_WRITE_FEATURE(shaderSampledImageArrayDynamicIndexing);
-    UML_WRITE_FEATURE(shaderStorageBufferArrayDynamicIndexing);
-    UML_WRITE_FEATURE(shaderStorageImageArrayDynamicIndexing);
-    UML_WRITE_FEATURE(shaderClipDistance);
-    UML_WRITE_FEATURE(shaderCullDistance);
-    UML_WRITE_FEATURE(shaderFloat64);
-    UML_WRITE_FEATURE(shaderInt64);
-    UML_WRITE_FEATURE(shaderInt16);
-    UML_WRITE_FEATURE(shaderResourceResidency);
-    UML_WRITE_FEATURE(shaderResourceMinLod);
-    UML_WRITE_FEATURE(sparseBinding);
-    UML_WRITE_FEATURE(sparseResidencyBuffer);
-    UML_WRITE_FEATURE(sparseResidencyImage2D);
-    UML_WRITE_FEATURE(sparseResidencyImage3D);
-    UML_WRITE_FEATURE(sparseResidency2Samples);
-    UML_WRITE_FEATURE(sparseResidency4Samples);
-    UML_WRITE_FEATURE(sparseResidency8Samples);
-    UML_WRITE_FEATURE(sparseResidency16Samples);
-    UML_WRITE_FEATURE(sparseResidencyAliased);
-    UML_WRITE_FEATURE(variableMultisampleRate);
-    UML_WRITE_FEATURE(inheritedQueries);
-    output << '}';
-#undef UML_WRITE_FEATURE
-}
-
-void write_portability_features(
-    std::ostream &output,
-    const VkPhysicalDevicePortabilitySubsetFeaturesKHR &features)
-{
-    bool first = true;
-#define UML_WRITE_PORTABILITY_FEATURE(member)                                 \
-    do {                                                                       \
-        if (!first) {                                                          \
-            output << ',';                                                     \
-        }                                                                      \
-        first = false;                                                         \
-        output << "\"" #member "\":" << (features.member ? "true" : "false"); \
-    } while (false)
-    output << '{';
-    UML_WRITE_PORTABILITY_FEATURE(constantAlphaColorBlendFactors);
-    UML_WRITE_PORTABILITY_FEATURE(events);
-    UML_WRITE_PORTABILITY_FEATURE(imageViewFormatReinterpretation);
-    UML_WRITE_PORTABILITY_FEATURE(imageViewFormatSwizzle);
-    UML_WRITE_PORTABILITY_FEATURE(imageView2DOn3DImage);
-    UML_WRITE_PORTABILITY_FEATURE(multisampleArrayImage);
-    UML_WRITE_PORTABILITY_FEATURE(mutableComparisonSamplers);
-    UML_WRITE_PORTABILITY_FEATURE(pointPolygons);
-    UML_WRITE_PORTABILITY_FEATURE(samplerMipLodBias);
-    UML_WRITE_PORTABILITY_FEATURE(separateStencilMaskRef);
-    UML_WRITE_PORTABILITY_FEATURE(shaderSampleRateInterpolationFunctions);
-    UML_WRITE_PORTABILITY_FEATURE(tessellationIsolines);
-    UML_WRITE_PORTABILITY_FEATURE(tessellationPointMode);
-    UML_WRITE_PORTABILITY_FEATURE(triangleFans);
-    UML_WRITE_PORTABILITY_FEATURE(vertexAttributeAccessBeyondStride);
-    output << '}';
-#undef UML_WRITE_PORTABILITY_FEATURE
-}
-
-void write_memory(std::ostream &output,
-                  const VkPhysicalDeviceMemoryProperties &memory)
-{
-    output << "{\"heaps\":[";
-    for (uint32_t index = 0; index < memory.memoryHeapCount; ++index) {
-        if (index != 0) {
-            output << ',';
-        }
-        output << "{\"size\":" << memory.memoryHeaps[index].size
-               << ",\"flags\":" << memory.memoryHeaps[index].flags << '}';
-    }
-    output << "],\"types\":[";
-    for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-        if (index != 0) {
-            output << ',';
-        }
-        output << "{\"heap\":" << memory.memoryTypes[index].heapIndex
-               << ",\"flags\":" << memory.memoryTypes[index].propertyFlags
-               << '}';
-    }
-    output << "]}";
-}
-
-void write_metal_families(std::ostream &output, id<MTLDevice> device)
-{
-    constexpr std::array<std::pair<int64_t, const char *>, 16> families{{
-        {1001, "Apple1"}, {1002, "Apple2"}, {1003, "Apple3"},
-        {1004, "Apple4"}, {1005, "Apple5"}, {1006, "Apple6"},
-        {1007, "Apple7"}, {1008, "Apple8"}, {1009, "Apple9"},
-        {1010, "Apple10"}, {2002, "Mac2"}, {3001, "Common1"},
-        {3002, "Common2"}, {3003, "Common3"}, {5001, "Metal3"},
-        {5002, "Metal4"},
-    }};
-    output << '[';
-    bool first = true;
-    for (const auto &[value, name] : families) {
-        if (![device supportsFamily:static_cast<MTLGPUFamily>(value)]) {
-            continue;
-        }
-        if (!first) {
-            output << ',';
-        }
-        first = false;
-        output << json_string(name);
-    }
-    output << ']';
 }
 
 std::vector<VkFormat> cube_format_candidates()
@@ -663,7 +490,7 @@ VkImageAspectFlags format_aspects(VkFormat format)
 }
 
 struct CubeAliasReport {
-    std::vector<VkFormat> formats;
+    uint32_t supported_format_count = 0;
     uint32_t cube_view_count = 0;
     uint32_t cube_array_view_count = 0;
 };
@@ -791,7 +618,7 @@ CubeAliasReport ProbeDevice::verify_cube_alias_views(
                                          &cube_array_view),
                        "vkCreateImageView(CUBE_ARRAY)");
         ++report.cube_array_view_count;
-        report.formats.push_back(format);
+        ++report.supported_format_count;
     }
     return report;
 }
@@ -799,17 +626,10 @@ CubeAliasReport ProbeDevice::verify_cube_alias_views(
 void write_cube_alias_report(std::ostream &output,
                              const CubeAliasReport &report)
 {
-    output << "{\"supported_format_count\":" << report.formats.size()
+    output << "{\"supported_format_count\":" << report.supported_format_count
            << ",\"cube_view_count\":" << report.cube_view_count
            << ",\"cube_array_view_count\":"
-           << report.cube_array_view_count << ",\"formats\":[";
-    for (std::size_t index = 0; index < report.formats.size(); ++index) {
-        if (index != 0) {
-            output << ',';
-        }
-        output << report.formats[index];
-    }
-    output << "]}";
+           << report.cube_array_view_count << '}';
 }
 
 struct GraphicsPipelineLibraryReport {
@@ -2924,17 +2744,7 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                     "vkEnumeratePhysicalDevices payload failed");
             }
 
-            output << "{\"schema\":1,\"entrypoint\":"
-                   << json_string("direct-vkGetInstanceProcAddr")
-                   << ",\"loader_api_version\":"
-                   << json_string(version_string(loader_version))
-                   << ",\"portability_enumeration_advertised\":"
-                   << (has_portability_enumeration ? "true" : "false")
-                   << ",\"portability_enumeration_flag_enabled\":"
-                   << (has_portability_enumeration ? "true" : "false")
-                   << ",\"instance_extensions\":";
-            write_extensions(output, instance_extensions);
-            output << ",\"devices\":[";
+            output << "{\"devices\":[";
 
             for (uint32_t device_index = 0; device_index < physical_count;
                  ++device_index) {
@@ -2951,8 +2761,6 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                         });
                 const bool has_portability_subset = has_extension(
                     device_extensions, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
-                const bool has_external_memory_host = has_extension(
-                    device_extensions, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
                 const bool has_dynamic_rendering_unused_attachments =
                     has_extension(
                         device_extensions,
@@ -2992,16 +2800,6 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                     legacy_vertex_attributes_properties{};
                 legacy_vertex_attributes_properties.sType =
                     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LEGACY_VERTEX_ATTRIBUTES_PROPERTIES_EXT;
-                VkPhysicalDeviceExternalMemoryHostPropertiesEXT host_memory{
-                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT,
-                    nullptr,
-                    0,
-                };
-                VkPhysicalDevicePortabilitySubsetPropertiesKHR subset_properties{
-                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_PROPERTIES_KHR,
-                    nullptr,
-                    0,
-                };
                 void *properties_next = nullptr;
                 const auto prepend_property = [&properties_next](auto &value) {
                     value.pNext = properties_next;
@@ -3011,10 +2809,6 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                     prepend_property(legacy_vertex_attributes_properties);
                 if (has_graphics_pipeline_library)
                     prepend_property(graphics_pipeline_library_properties);
-                if (has_external_memory_host)
-                    prepend_property(host_memory);
-                if (has_portability_subset)
-                    prepend_property(subset_properties);
                 VkPhysicalDeviceProperties2 properties{};
                 properties.sType =
                     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
@@ -3092,46 +2886,8 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                 std::vector<VkQueueFamilyProperties> queues(queue_count);
                 get_queues(physical, &queue_count, queues.data());
 
-                output << "{\"name\":"
-                       << json_string(properties.properties.deviceName)
-                       << ",\"api_version\":"
-                       << json_string(
-                              version_string(properties.properties.apiVersion))
-                       << ",\"driver_version\":"
-                       << properties.properties.driverVersion
-                       << ",\"vendor_id\":"
-                       << properties.properties.vendorID
-                       << ",\"device_id\":"
-                       << properties.properties.deviceID
-                       << ",\"device_type\":"
-                       << properties.properties.deviceType
-                       << ",\"pipeline_cache_uuid\":";
-                write_uuid(output, properties.properties.pipelineCacheUUID);
-                output << ",\"extensions\":";
+                output << "{\"extensions\":";
                 write_extensions(output, device_extensions);
-                output << ",\"core_features\":";
-                write_core_features(output, features.features);
-                output << ",\"portability_features\":";
-                if (has_portability_subset) {
-                    write_portability_features(output, subset_features);
-                } else {
-                    output << "null";
-                }
-                output << ",\"portability_properties\":";
-                if (has_portability_subset) {
-                    output << "{\"min_vertex_input_binding_stride_alignment\":"
-                           << subset_properties
-                                  .minVertexInputBindingStrideAlignment
-                           << '}';
-                } else {
-                    output << "null";
-                }
-                output << ",\"external_memory_host_alignment\":";
-                if (has_external_memory_host) {
-                    output << host_memory.minImportedHostPointerAlignment;
-                } else {
-                    output << "null";
-                }
                 output
                     << ",\"dynamic_rendering_unused_attachments\":{\"extension\":"
                     << (has_dynamic_rendering_unused_attachments ? "true"
@@ -3227,20 +2983,7 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                                ? "true"
                                : "false")
                        << '}';
-                output << ",\"memory\":";
-                write_memory(output, memory);
-                output << ",\"queue_families\":[";
-                for (uint32_t queue_index = 0; queue_index < queue_count;
-                     ++queue_index) {
-                    if (queue_index != 0) {
-                        output << ',';
-                    }
-                    output << "{\"flags\":" << queues[queue_index].queueFlags
-                           << ",\"count\":" << queues[queue_index].queueCount
-                           << ",\"timestamp_bits\":"
-                           << queues[queue_index].timestampValidBits << '}';
-                }
-                output << "],\"supported_core_formats\":[";
+                output << ",\"supported_core_formats\":[";
                 bool first_format = true;
                 for (int format = VK_FORMAT_R4G4_UNORM_PACK8;
                      format <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK; ++format) {
@@ -3264,26 +3007,7 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                            << ",\"buffer\":"
                            << format_properties.bufferFeatures << '}';
                 }
-                output << "],\"limits\":{\"max_image_2d\":"
-                       << properties.properties.limits.maxImageDimension2D
-                       << ",\"max_memory_allocation_count\":"
-                       << properties.properties.limits.maxMemoryAllocationCount
-                       << ",\"max_bound_descriptor_sets\":"
-                       << properties.properties.limits.maxBoundDescriptorSets
-                       << ",\"max_per_stage_resources\":"
-                       << properties.properties.limits.maxPerStageResources
-                       << ",\"max_vertex_output_components\":"
-                       << properties.properties.limits
-                              .maxVertexOutputComponents
-                       << ",\"max_fragment_input_components\":"
-                       << properties.properties.limits
-                              .maxFragmentInputComponents
-                       << ",\"max_compute_work_group_invocations\":"
-                       << properties.properties.limits
-                              .maxComputeWorkGroupInvocations
-                       << ",\"non_coherent_atom_size\":"
-                       << properties.properties.limits.nonCoherentAtomSize
-                       << "},\"device_create_result\":";
+                output << "],\"device_create_result\":";
 
                 int32_t device_result = VK_ERROR_FEATURE_NOT_PRESENT;
                 uint32_t selected_queue = 0;
@@ -3521,19 +3245,7 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                 output << '}';
             }
 
-            id<MTLDevice> metal_device = MTLCreateSystemDefaultDevice();
-            output << "],\"metal\":{\"name\":"
-                   << json_string(metal_device == nil
-                                      ? ""
-                                      : std::string(
-                                            [metal_device.name UTF8String]))
-                   << ",\"families\":";
-            if (metal_device == nil) {
-                output << "[]";
-            } else {
-                write_metal_families(output, metal_device);
-            }
-            output << "}}\n";
+            output << "]}\n";
             destroy_instance(instance, nullptr);
             return 0;
         } catch (const std::exception &error) {
