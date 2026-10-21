@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -11,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unistd.h>
 #include <vector>
 
 namespace kernarium::harness {
@@ -59,6 +61,36 @@ inline constexpr std::uintmax_t maximumPayloadBytes = 64U << 20;
         throw std::invalid_argument(
             "KERNARIUM_BOOT_PAYLOAD is not a padded newc segment: " +
             path.string());
+    return contents;
+}
+
+/* KERNARIUM_PAYLOAD_REMOVE: "1" asks the runtime to delete the payload once it
+ * holds the bytes, "0", empty or unset keeps the file. A launch that reuses
+ * one copied payload must not ask. */
+[[nodiscard]] inline bool removalRequested(const char* setting)
+{
+    const std::string_view value {setting != nullptr ? setting : ""};
+    if (value.empty() || value == "0")
+        return false;
+    if (value == "1")
+        return true;
+    throw std::invalid_argument("KERNARIUM_PAYLOAD_REMOVE must be 0 or 1");
+}
+
+/* readPayload(), then, when `remove` is set, unlinks exactly that file. The
+ * bytes are in memory by then, so a failed unlink does not fail the read: its
+ * error is left in `removal`, and `removal` is clear otherwise. */
+[[nodiscard]] inline std::vector<std::byte> takePayload(
+    const std::filesystem::path& documents, std::string_view name, bool remove,
+    std::error_code& removal)
+{
+    auto contents = readPayload(documents, name);
+    removal.clear();
+    if (remove) {
+        const auto path = payloadPath(documents, name);
+        if (::unlink(path.c_str()) != 0)
+            removal = std::error_code {errno, std::generic_category()};
+    }
     return contents;
 }
 

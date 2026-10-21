@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -18,6 +19,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <sys/socket.h>
+#include <system_error>
 #include <thread>
 #include <unistd.h>
 
@@ -323,7 +325,20 @@ std::unique_ptr<AutomationBoot> AutomationBoot::fromEnvironment(
         boot->systemdUnit_ = unit;
     }
     if (hasPayload) {
-        boot->payload_ = readPayload(documentsDirectory(), payload);
+        const bool remove =
+            removalRequested(std::getenv("KERNARIUM_PAYLOAD_REMOVE"));
+        std::error_code removal;
+        boot->payload_ =
+            takePayload(documentsDirectory(), payload, remove, removal);
+        if (removal)
+            std::fprintf(
+                stderr,
+                "Kernarium: cannot remove the boot payload Documents/%s: %s\n",
+                payload, removal.message().c_str());
+        else if (remove)
+            std::fprintf(
+                stderr, "Kernarium: removed the boot payload Documents/%s\n",
+                payload);
         boot->relay_ = std::make_unique<ArtifactRelay>(consoleStdoutMutex);
     }
     return boot;
