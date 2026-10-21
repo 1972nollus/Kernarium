@@ -213,13 +213,6 @@ cp -R "$ROOT_DIR/dependencies/patches/mesa" \
 	"$CASE_PREFIX/share/uml-dependencies/patches/"
 expect_failure "installed patch files" verify "$CASE_PREFIX"
 
-CASE_PREFIX="$TEST_ROOT/invalid-protocol-identity"
-copy_fixture "$CASE_PREFIX"
-sed 's/^venus_protocol_generated_sha256.*/venus_protocol_generated_sha256\tunknown/' \
-	"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" \
-	>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
-expect_failure "invalid protocol build identity" verify "$CASE_PREFIX"
-
 # The installed platform contract must be the checked-in one.
 CASE_PREFIX="$TEST_ROOT/edited-contract"
 copy_fixture "$CASE_PREFIX"
@@ -230,25 +223,68 @@ expect_failure "edited platform contract" verify "$CASE_PREFIX"
 grep -q 'provenance does not match' "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" ||
 	fail "an edited platform contract was not reported as a provenance mismatch"
 
-CASE_PREFIX="$TEST_ROOT/empty-sdk-name"
-copy_fixture "$CASE_PREFIX"
-sed 's/^sdk_name\t.*/sdk_name\t/' \
-	"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" \
-	>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
-expect_failure "empty receipt SDK name" verify "$CASE_PREFIX"
+# Each receipt case rewrites the receipt of RECEIPT_PREFIX. receipt_case
+# [AWK-PROGRAM] makes it the base receipt filtered through the awk program,
+# over tab-separated fields.
+RECEIPT_PREFIX="$TEST_ROOT/receipt-cases"
+copy_fixture "$RECEIPT_PREFIX"
+receipt_case()
+{
+	awk -F '\t' -v OFS='\t' "${1:-1}" \
+		"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" \
+		>"$RECEIPT_PREFIX/share/uml-dependencies/build-receipt.tsv"
+}
 
-CASE_PREFIX="$TEST_ROOT/wrong-receipt-product"
-copy_fixture "$CASE_PREFIX"
-sed 's/^product\t.*/product\tother/' \
-	"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" \
-	>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
-expect_failure "receipt for another product" verify "$CASE_PREFIX"
+receipt_case '{ print } $1 == "sdk_name" { print }'
+expect_cmake_diagnostic \
+	"Unexpected or duplicate Apple GPU receipt field: sdk_name" \
+	verify "$RECEIPT_PREFIX"
+receipt_case '{ print } END { print "network_input", "https://invalid.example/source" }'
+expect_cmake_diagnostic \
+	"Unexpected or duplicate Apple GPU receipt field: network_input" \
+	verify "$RECEIPT_PREFIX"
+receipt_case '$1 != "compiler"'
+expect_cmake_diagnostic "Apple GPU build receipt is incomplete" \
+	verify "$RECEIPT_PREFIX"
+receipt_case '$1 == "compiler" { $3 = "extra" } { print }'
+expect_cmake_diagnostic "Malformed Apple GPU build receipt row" \
+	verify "$RECEIPT_PREFIX"
+receipt_case '$1 == "compiler" { $2 = "clang;extra" } { print }'
+expect_cmake_diagnostic "Malformed Apple GPU build receipt row" \
+	verify "$RECEIPT_PREFIX"
+receipt_case 'NR == 3 { print "" } { print }'
+verify "$RECEIPT_PREFIX" >/dev/null || fail "a blank receipt row was rejected"
 
-CASE_PREFIX="$TEST_ROOT/hidden-network-input"
-copy_fixture "$CASE_PREFIX"
-printf 'network_input\thttps://invalid.example/source\n' \
-	>>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
-expect_failure "hidden network input" verify "$CASE_PREFIX"
+receipt_case '$1 == "format" { $2 = "3" } { print }'
+expect_cmake_diagnostic "format is 3, expected 2" verify "$RECEIPT_PREFIX"
+receipt_case '$1 == "product" { $2 = "other" } { print }'
+expect_cmake_diagnostic \
+	"product is other, expected apple-gpu-vulkan-experiment" \
+	verify "$RECEIPT_PREFIX"
+receipt_case '$1 == "platform" { $2 = "ios" } { print }'
+expect_cmake_diagnostic "platform is ios, expected macos" \
+	verify "$RECEIPT_PREFIX"
+
+# The protocol identity is exactly 64 lowercase hexadecimal digits.
+for identity in unknown \
+	0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde \
+	0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0 \
+	0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef; do
+	receipt_case "\$1 == \"venus_protocol_generated_sha256\" { \$2 = \"$identity\" } { print }"
+	expect_cmake_diagnostic "Invalid protocol build identity" \
+		verify "$RECEIPT_PREFIX"
+done
+
+# No field is empty. The SDK, compiler, and build-time fields say so.
+for field in sdk_name sdk_version sdk_path compiler built_at_utc; do
+	receipt_case "\$1 == \"$field\" { \$2 = \"\" } { print }"
+	expect_cmake_diagnostic "Apple GPU build receipt has invalid $field" \
+		verify "$RECEIPT_PREFIX"
+done
+for field in format product platform venus_protocol_generated_sha256; do
+	receipt_case "\$1 == \"$field\" { \$2 = \"\" } { print }"
+	expect_failure "empty receipt $field" verify "$RECEIPT_PREFIX"
+done
 
 CASE_PREFIX="$TEST_ROOT/duplicate-provider"
 copy_fixture "$CASE_PREFIX"
