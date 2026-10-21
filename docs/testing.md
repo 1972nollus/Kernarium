@@ -638,8 +638,9 @@ and launch it again: the console reports that the previous process ended in
 the background and the guest display carries the dismissible Guest Restarted
 card. A guest this large can also be reclaimed by iOS in the first seconds of
 the background, which looks like a missing hold and is not; the next launch
-shows the notice. Remove the guest bundles and payloads the check copied to the
-application's Documents afterwards.
+shows the notice. Remove the guest bundles the check copied to the
+application's Documents afterwards, and any payload it launched without
+`KERNARIUM_PAYLOAD_REMOVE=1`.
 
 ## LTP
 
