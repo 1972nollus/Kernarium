@@ -700,21 +700,8 @@ int run_common_guest(
 		event = DARWIN_UML_EVENT_SYSCALL;
 		break;
 	case uml::cpu::ExitReason::memory_fault:
-		switch (result.fault.access) {
-		case uml::memory::MemoryAccess::read:
-			mutable_registers.fault.error_code = 0;
-			break;
-		case uml::memory::MemoryAccess::write:
-			mutable_registers.fault.error_code = DARWIN_UML_FAULT_WRITE;
-			break;
-		case uml::memory::MemoryAccess::execute:
-			mutable_registers.fault.error_code = DARWIN_UML_FAULT_EXECUTE;
-			break;
-		}
-		mutable_registers.fault.address = result.fault.address;
-		mutable_registers.fault.trap_number = DARWIN_UML_FAULT_PAGE;
-		event = result.fault.alignment ? DARWIN_UML_EVENT_DATA_ALIGNMENT :
-			DARWIN_UML_EVENT_FAULT;
+		event = ::uml::runtime::report_memory_fault(
+			mutable_registers, result.fault);
 		break;
 	case uml::cpu::ExitReason::interrupt:
 		if (context->stop_requested()) {

@@ -150,21 +150,7 @@ inline void save_a32_cpu(arm64::CpuState &cpu,
 	case ExitReason::system_call:
 		return DARWIN_UML_EVENT_SYSCALL;
 	case ExitReason::memory_fault:
-		switch (result.fault.access) {
-		case ::uml::memory::MemoryAccess::read:
-			registers.fault.error_code = 0;
-			break;
-		case ::uml::memory::MemoryAccess::write:
-			registers.fault.error_code = DARWIN_UML_FAULT_WRITE;
-			break;
-		case ::uml::memory::MemoryAccess::execute:
-			registers.fault.error_code = DARWIN_UML_FAULT_EXECUTE;
-			break;
-		}
-		registers.fault.address = result.fault.address;
-		registers.fault.trap_number = DARWIN_UML_FAULT_PAGE;
-		return result.fault.alignment ? DARWIN_UML_EVENT_DATA_ALIGNMENT :
-			DARWIN_UML_EVENT_FAULT;
+		return ::uml::runtime::report_memory_fault(registers, result.fault);
 	case ExitReason::interrupt:
 		if (stop_requested)
 			return DARWIN_UML_EVENT_STOP;
