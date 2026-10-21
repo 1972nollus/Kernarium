@@ -4,6 +4,7 @@
 #include "protocol.hpp"
 #include "require.hpp"
 #include "virtio_battery_device.hpp"
+#include "wire_bytes.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -16,26 +17,9 @@ namespace {
 
 namespace protocol = uml::battery::protocol;
 
+using uml::testing::bytes;
+using uml::testing::loadExact;
 using uml::testing::require;
-
-template<typename Value>
-std::vector<std::uint8_t> bytes(const Value& value)
-{
-    static_assert(std::is_trivially_copyable_v<Value>);
-    std::vector<std::uint8_t> result(sizeof(value));
-    std::memcpy(result.data(), &value, sizeof(value));
-    return result;
-}
-
-template<typename Value>
-Value load(std::span<const std::uint8_t> source)
-{
-    static_assert(std::is_trivially_copyable_v<Value>);
-    require(source.size() == sizeof(Value));
-    Value result {};
-    std::memcpy(&result, source.data(), sizeof(result));
-    return result;
-}
 
 class TestProvider final : public uml::platform::HostBatteryProvider {
 public:
@@ -83,7 +67,7 @@ void reportsHostPercentageAndChargingState()
     const auto result = fixture.device->processQueue(
         protocol::statusQueue, 1, bytes(request), sizeof(protocol::State));
     require(result.action == uml::virtio::VhostUserQueueAction::complete);
-    const auto state = load<protocol::State>(result.response);
+    const auto state = loadExact<protocol::State>(result.response);
     require(state.version == protocol::version);
     require(state.percentage == 64);
     require(state.status == protocol::ChargeStatus::charging);
@@ -98,7 +82,7 @@ void preservesTheBatterylessHostFallback()
     const protocol::Request request {.version = protocol::version};
     const auto result = fixture.device->processQueue(
         protocol::statusQueue, 2, bytes(request), sizeof(protocol::State));
-    const auto state = load<protocol::State>(result.response);
+    const auto state = loadExact<protocol::State>(result.response);
     require(state.percentage == 100);
     require(state.status == protocol::ChargeStatus::charging);
     require(state.present == 1);

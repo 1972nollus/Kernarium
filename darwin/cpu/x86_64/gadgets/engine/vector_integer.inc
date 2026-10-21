@@ -224,22 +224,6 @@
 	.endif
 .endm
 
-.macro vector_integer_shuffle_indices_dword
-	movi v6.16b, #0
-	mov w16, #0x0101
-	movk w16, #0x0101, lsl #16
-	mov w17, #0x0100
-	movk w17, #0x0302, lsl #16
-	.irp lane, 0, 1, 2, 3
-	lsr w14, w13, #(\lane * 2)
-	and w14, w14, #3
-	lsl w14, w14, #2
-	mul w14, w14, w16
-	add w14, w14, w17
-	mov v6.s[\lane], w14
-	.endr
-.endm
-
 .macro vector_integer_index_sequence
 	mov w16, #0x0100
 	movk w16, #0x0302, lsl #16
@@ -270,7 +254,8 @@
 
 .macro vector_integer_shuffle prefix, width, output, input
 	.if \prefix == 1
-	vector_integer_shuffle_indices_dword
+	movi v6.16b, #0
+	vector_shuffle_dword_indices
 	.elseif \prefix == 2
 	vector_integer_shuffle_indices_word 4, 4
 	.else
@@ -373,35 +358,7 @@ gadget vector_integer_\opcode\()_\width\()_rm
 	ldr x27, [_stream], #8
 	.endif
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_vector_integer_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	.if \width == 64
-	ldr d1, [x7]
-	.else
-	ldr q1, [x7]
-	.if \width == 256
-	ldr q3, [x7, #16]
-	.endif
-	.endif
-	b Lx86_vector_integer_loaded\@
-Lx86_vector_integer_cross\@:
-	sub sp, sp, #32
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #(\width / 8)
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_integer_cross_fault\@
-	.if \width == 64
-	ldr d1, [sp]
-	.else
-	ldr q1, [sp]
-	.if \width == 256
-	ldr q3, [sp, #16]
-	.endif
-	.endif
-	add sp, sp, #32
-Lx86_vector_integer_loaded\@:
+	vector_memory_source (\width / 8), Lx86_vector_integer_cross_fault\@
 	.if 0x\opcode == 0x70
 	ubfx w14, w27, #8, #8
 	and w13, w27, #0xff
@@ -411,9 +368,7 @@ Lx86_vector_integer_loaded\@:
 	vector_integer_body 0x\opcode, \width
 	vector_write \width, 23
 	retire_and_next
-Lx86_vector_integer_cross_fault\@:
-	add sp, sp, #32
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_integer_cross_fault\@
 .endm
 
 .macro vector_integer_family opcode
@@ -583,7 +538,6 @@ vector_integer_immediate 73, 7, 256
 .purgem vector_integer_body
 .purgem vector_integer_shuffle
 .purgem vector_integer_shuffle_indices_word
-.purgem vector_integer_shuffle_indices_dword
 .purgem vector_integer_index_sequence
 .purgem vector_integer_lane
 .purgem vector_integer_sad

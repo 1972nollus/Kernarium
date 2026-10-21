@@ -13,12 +13,9 @@
 
 namespace {
 using uml::gpu::test::check;
-template <typename T> T structure(VkStructureType type)
-{
-    T value{};
-    value.sType = type;
-    return value;
-}
+using uml::gpu::test::instance_function;
+using uml::gpu::test::memory_type;
+using uml::gpu::test::structure;
 struct Context {
     VkInstance instance{};
     VkPhysicalDevice physical{};
@@ -35,12 +32,6 @@ struct Context {
     PFN_vkGetDeviceProcAddr get_device{};
     VkPhysicalDeviceMemoryProperties memory_properties{};
 
-    template <typename T> T instance_function(const char *name)
-    {
-        auto function = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
-        if (!function) throw std::runtime_error(name);
-        return function;
-    }
     template <typename T> T function(const char *name)
     {
         auto result = reinterpret_cast<T>(get_device(device, name));
@@ -63,7 +54,7 @@ struct Context {
             CALL(DestroyDevice, device, nullptr);
         }
         if (instance)
-            instance_function<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);
+            instance_function<PFN_vkDestroyInstance>(instance, "vkDestroyInstance")(instance, nullptr);
     }
     void initialize()
     {
@@ -71,10 +62,10 @@ struct Context {
         app.apiVersion = VK_API_VERSION_1_3;
         auto info = structure<VkInstanceCreateInfo>(VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO);
         info.pApplicationInfo = &app;
-        check(instance_function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "create instance");
+        check(instance_function<PFN_vkCreateInstance>(instance, "vkCreateInstance")(&info, nullptr, &instance), "create instance");
         uint32_t count = 1;
-        check(instance_function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices")(instance, &count, &physical), "physical device");
-        instance_function<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(physical, &memory_properties);
+        check(instance_function<PFN_vkEnumeratePhysicalDevices>(instance, "vkEnumeratePhysicalDevices")(instance, &count, &physical), "physical device");
+        instance_function<PFN_vkGetPhysicalDeviceMemoryProperties>(instance, "vkGetPhysicalDeviceMemoryProperties")(physical, &memory_properties);
         float priority = 1;
         auto qi = structure<VkDeviceQueueCreateInfo>(VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO);
         qi.queueCount = 1;
@@ -85,8 +76,8 @@ struct Context {
         di.pQueueCreateInfos = &qi;
         di.enabledExtensionCount = 1;
         di.ppEnabledExtensionNames = &extension;
-        check(instance_function<PFN_vkCreateDevice>("vkCreateDevice")(physical, &di, nullptr, &device), "create device");
-        get_device = instance_function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
+        check(instance_function<PFN_vkCreateDevice>(instance, "vkCreateDevice")(physical, &di, nullptr, &device), "create device");
+        get_device = instance_function<PFN_vkGetDeviceProcAddr>(instance, "vkGetDeviceProcAddr");
         CALL(GetDeviceQueue, device, 0, 0, &queue);
         auto pi = structure<VkCommandPoolCreateInfo>(VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO);
         CHECK(CreateCommandPool, device, &pi, nullptr, &pool);
@@ -101,16 +92,9 @@ struct Context {
         auto info = structure<VkMemoryAllocateInfo>(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
         info.pNext = next;
         info.allocationSize = requirements.size;
-        bool found = false;
-        for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i) {
-            if ((requirements.memoryTypeBits & (1u << i)) &&
-                (memory_properties.memoryTypes[i].propertyFlags & flags) == flags) {
-                info.memoryTypeIndex = i;
-                found = true;
-                break;
-            }
-        }
-        if (!found) throw std::runtime_error("memory type unavailable");
+        const auto type = memory_type(memory_properties, requirements.memoryTypeBits, flags);
+        if (!type) throw std::runtime_error("memory type unavailable");
+        info.memoryTypeIndex = *type;
         VkDeviceMemory memory{};
         CHECK(AllocateMemory, device, &info, nullptr, &memory);
         allocations.push_back(memory);

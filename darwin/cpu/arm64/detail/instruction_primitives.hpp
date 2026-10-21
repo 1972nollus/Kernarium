@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "../cpu_state.hpp"
-
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include <optional>
 #include <span>
@@ -232,21 +229,6 @@ decode_simd_modified_immediate(std::uint32_t instruction)
 		pattern = ~pattern;
 	return SimdModifiedImmediate{
 		pattern, combine ? (invert ? 2U : 1U) : 0U};
-}
-
-inline std::uint64_t vector_half(const VectorRegister &vector, unsigned half)
-{
-	std::uint64_t value;
-	std::memcpy(&value, vector.bytes.data() + half * sizeof(value),
-		    sizeof(value));
-	return value;
-}
-
-inline void set_vector_half(VectorRegister &vector, unsigned half,
-			    std::uint64_t value)
-{
-	std::memcpy(vector.bytes.data() + half * sizeof(value), &value,
-		    sizeof(value));
 }
 
 } // namespace uml::cpu::arm64::detail

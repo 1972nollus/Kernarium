@@ -583,6 +583,23 @@ Lx86_simd_no_nan\@:
 	.endif
 .endm
 
+/* The scalar form of simd_small_lanes: Z is set when the result in s6 (an
+ * `element` of 32) or d6 is not zero and at most the smallest normal in
+ * magnitude. Uses x14. */
+.macro simd_small_scalar element
+	.if \element == 32
+	fmov w14, s6
+	lsl w14, w14, #1
+	sub w14, w14, #1
+	tst w14, #0xff000000
+	.else
+	fmov x14, d6
+	lsl x14, x14, #1
+	sub x14, x14, #1
+	tst x14, #0xffe0000000000000
+	.endif
+.endm
+
 /* x86 detects underflow after rounding: a result is tiny when, rounded to
  * full precision as if the exponent were unbounded, it lies below the
  * smallest normal. A denormal result always is. A product or quotient the
@@ -1196,6 +1213,69 @@ Lx86_read_cross\@:
 Lx86_read_loaded\@:
 .endm
 
+/* Load a `size`-byte vector operand from `base` into v`low`, a 32-byte one
+ * into v`low` and v`high`. A 1, 2, 4 or 8-byte operand loads b, h, s or d.
+ * `zero_high` clears v`high` for a 256-bit form with a narrower source. */
+.macro vector_source_load size, low, high, base, zero_high=0
+	.if (\size) == 1
+	ldr b\low, [\base]
+	.elseif (\size) == 2
+	ldr h\low, [\base]
+	.elseif (\size) == 4
+	ldr s\low, [\base]
+	.elseif (\size) == 8
+	ldr d\low, [\base]
+	.else
+	ldr q\low, [\base]
+	.endif
+	.if (\size) == 32
+	ldr q\high, [\base, #16]
+	.elseif \zero_high
+	movi v\high\().16b, #0
+	.endif
+.endm
+
+/* Read a `size`-byte vector memory operand at x7, with x25 the copy the
+ * cross-page helper reads from, into v1, and v3 for 32 bytes, or the `low`
+ * and `high` registers. An access across a page goes through a `frame`-byte
+ * stack buffer, and a fault the MMU raises branches to `fault`, which the
+ * gadget defines after its code with `vector_memory_source_fault`. `scalar`
+ * sends an access of 8 bytes or less through `cross_page_load` and moves it
+ * with an x register; `single` moves a 4-byte one with a w register. */
+.macro vector_memory_source size, fault, low=1, high=3, frame=32, scalar=0, single=0, zero_high=0
+	page_cross_check \size, Lx86_vector_source_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, \size
+	vector_source_load \size, \low, \high, x7, \zero_high
+	b Lx86_vector_source_loaded\@
+Lx86_vector_source_cross\@:
+	.if ((\scalar) != 0) && ((\size) <= 8)
+	cross_page_load \size
+	.if ((\single) != 0) && ((\size) == 4)
+	fmov s\low, w0
+	.else
+	fmov d\low, x0
+	.endif
+	.else
+	sub sp, sp, #\frame
+	mov x0, _context
+	mov x1, x25
+	mov x2, sp
+	mov w3, #\size
+	helper_call uml_x86_64_gadget_cross_page_vector_load
+	cbz w0, \fault
+	vector_source_load \size, \low, \high, sp, \zero_high
+	add sp, sp, #\frame
+	.endif
+Lx86_vector_source_loaded\@:
+.endm
+
+/* The out-of-line tail a `vector_memory_source` branches to on a fault. */
+.macro vector_memory_source_fault label, frame=32
+\label:
+	add sp, sp, #\frame
+	b Lx86_memory_fault
+.endm
+
 /* x86 LOCK-prefixed read-modify-write.
  *
  * A locked gadget must be atomic against the other vCPU threads that execute
@@ -1616,16 +1696,11 @@ Lx86_leave_rounding_ready:
 	b \exit
 .endm
 
-.macro flags_body operation, width
-	add x6, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
-	ldp x7, x8, [x6]
-	ldr x10, [x6, #16]
-	.if (\operation) == 0
-	ldrb w16, [x6, #26]
-	.elseif ((\operation) == 6) || ((\operation) == 7)
-	ldrb w16, [x6, #26]
-	.endif
-	/* Narrow the recorded operands to the width that produced them. */
+/* Narrow the deferred record's left, right and result, which x7, x8 and x10
+ * hold, to the width that produced them. A width of zero is the run-time
+ * form: it reads the width from the record at x6 and leaves its sign mask
+ * in x12. */
+.macro deferred_narrow width
 	.if (\width) == 1
 	and x7, x7, #0xff
 	and x8, x8, #0xff
@@ -1641,33 +1716,45 @@ Lx86_leave_rounding_ready:
 	.elseif (\width) == 0
 	ldrb w11, [x6, #25]
 	cmp w11, #1
-	b.ne 1f
+	b.ne Lx86_narrow_half\@
 	and x7, x7, #0xff
 	and x8, x8, #0xff
 	and x10, x10, #0xff
 	mov x12, #0x80
-	b 4f
-1:
+	b Lx86_narrow_done\@
+Lx86_narrow_half\@:
 	cmp w11, #2
-	b.ne 2f
+	b.ne Lx86_narrow_word\@
 	uxth w7, w7
 	uxth w8, w8
 	uxth w10, w10
 	mov x12, #0x8000
-	b 4f
-2:
+	b Lx86_narrow_done\@
+Lx86_narrow_word\@:
 	cmp w11, #4
-	b.ne 3f
+	b.ne Lx86_narrow_quad\@
 	mov w7, w7
 	mov w8, w8
 	mov w10, w10
 	mov x12, #0x80000000
-	b 4f
-3:
+	b Lx86_narrow_done\@
+Lx86_narrow_quad\@:
 	mov x12, #1
 	lsl x12, x12, #63
-4:
+Lx86_narrow_done\@:
 	.endif
+.endm
+
+.macro flags_body operation, width
+	add x6, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
+	ldp x7, x8, [x6]
+	ldr x10, [x6, #16]
+	.if (\operation) == 0
+	ldrb w16, [x6, #26]
+	.elseif ((\operation) == 6) || ((\operation) == 7)
+	ldrb w16, [x6, #26]
+	.endif
+	deferred_narrow \width
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	/* INC and DEC preserve CF; every other recorded operation defines it. */
 	.if (\operation) == 0
@@ -1924,48 +2011,7 @@ Lx86_flags_store:
 	.if ((\operation) == 0) || ((\operation) == 6) || ((\operation) == 7)
 	ldrb w16, [x6, #26]
 	.endif
-	.if (\width) == 1
-	and x7, x7, #0xff
-	and x8, x8, #0xff
-	and x10, x10, #0xff
-	.elseif (\width) == 2
-	uxth w7, w7
-	uxth w8, w8
-	uxth w10, w10
-	.elseif (\width) == 4
-	mov w7, w7
-	mov w8, w8
-	mov w10, w10
-	.elseif (\width) == 0
-	ldrb w11, [x6, #25]
-	cmp w11, #1
-	b.ne 11f
-	and x7, x7, #0xff
-	and x8, x8, #0xff
-	and x10, x10, #0xff
-	mov x12, #0x80
-	b 14f
-11:
-	cmp w11, #2
-	b.ne 12f
-	uxth w7, w7
-	uxth w8, w8
-	uxth w10, w10
-	mov x12, #0x8000
-	b 14f
-12:
-	cmp w11, #4
-	b.ne 13f
-	mov w7, w7
-	mov w8, w8
-	mov w10, w10
-	mov x12, #0x80000000
-	b 14f
-13:
-	mov x12, #1
-	lsl x12, x12, #63
-14:
-	.endif
+	deferred_narrow \width
 	.if \load_flags
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	.endif
@@ -2201,6 +2247,23 @@ gadget nop
 	ldr q2, [x10, #16]
 	ldr q3, [x11, #16]
 	.endif
+.endm
+
+/* The TBL indices in v6 for PSHUFD and VPERMILPS: destination dword n takes
+ * the source dword that bits 2n+1:2n of the immediate in w13 name. */
+.macro vector_shuffle_dword_indices
+	mov w16, #0x0101
+	movk w16, #0x0101, lsl #16
+	mov w17, #0x0100
+	movk w17, #0x0302, lsl #16
+	.irp lane, 0, 1, 2, 3
+	lsr w14, w13, #(\lane * 2)
+	and w14, w14, #3
+	lsl w14, w14, #2
+	mul w14, w14, w16
+	add w14, w14, w17
+	mov v6.s[\lane], w14
+	.endr
 .endm
 
 /* Write the vector result in q4 (and q5 for 256 bits) to the register the

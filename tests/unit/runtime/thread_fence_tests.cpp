@@ -3,8 +3,10 @@
  * held and nothing else is, the process's locks are never left in the hands
  * of a held thread, and no thread of the kernel can be started and missed. */
 #include "kernel_threads.hpp"
+#include "named_tests.hpp"
 #include "require.hpp"
 #include "thread_fence.hpp"
+#include "watchdog.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -589,21 +591,13 @@ void an_overflowed_registry_fails_the_fence_closed()
 		require(pthread_join(thread, nullptr) == 0, "join");
 }
 
-/* A test that hangs is a failed test, not a stuck suite. */
-void start_watchdog(unsigned seconds)
-{
-	std::thread{[seconds] {
-		sleep(seconds);
-		std::fprintf(stderr, "thread fence tests: timed out\n");
-		_exit(86);
-	}}.detach();
-}
-
 } // namespace
 
 int main(int argc, char **argv)
 {
-	start_watchdog(180);
+	/* A test that hangs is a failed test, not a stuck suite. */
+	const uml::testing::Watchdog watchdog{"the thread fence tests",
+		std::chrono::seconds{180}};
 	/* The overflow test leaves the registry unusable for the rest of the
 	 * process, so it runs alone. */
 	const bool overflow = argc > 1 && std::strcmp(argv[1], "overflow") == 0;
@@ -612,10 +606,7 @@ int main(int argc, char **argv)
 		std::puts("ok: an overflowed registry fails the fence closed");
 		return 0;
 	}
-	const struct {
-		const char *name;
-		void (*run)();
-	} tests[] = {
+	const uml::testing::NamedTest tests[] = {
 		{"a thread the kernel created is held and then released",
 			a_thread_the_kernel_created_is_held_and_then_released},
 		{"a named service thread is held and others run",
@@ -635,13 +626,5 @@ int main(int argc, char **argv)
 		{"the settled condition is judged with every thread held",
 			the_settled_condition_is_judged_with_every_thread_held},
 	};
-	for (const auto &test : tests) {
-		const auto started = std::chrono::steady_clock::now();
-		test.run();
-		const auto elapsed = std::chrono::duration_cast<
-			std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
-		std::printf("ok: %s (%lld ms)\n", test.name,
-			static_cast<long long>(elapsed.count()));
-	}
-	return 0;
+	return uml::testing::runNamedTests(tests);
 }

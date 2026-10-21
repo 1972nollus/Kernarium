@@ -16,6 +16,7 @@ namespace {
 using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
+using uml::gpu::test::require_venus_when_asked;
 using uml::gpu::test::DrawResult;
 
 void verify(const DrawResult &result, uint32_t invocations, uint32_t primitives)
@@ -100,12 +101,7 @@ int main(int argc, char **argv)
         require(argc <= 2, "expected at most one exact test selector");
         DrawContext context;
         const auto &capabilities = context.capabilities();
-        const char *venus = std::getenv("UML_VULKAN_REQUIRE_VENUS");
-        if (venus && std::string_view(venus) == "1") {
-            require(capabilities.driver_id == VK_DRIVER_ID_MESA_VENUS,
-                    "guest probe did not select Venus");
-            std::puts("UML_VULKAN_PROBE_DEVICE: Venus");
-        }
+        require_venus_when_asked(context);
         require(capabilities.geometry_shader && capabilities.transform_feedback &&
                     capabilities.geometry_streams &&
                     capabilities.transform_feedback_streams_lines_triangles,

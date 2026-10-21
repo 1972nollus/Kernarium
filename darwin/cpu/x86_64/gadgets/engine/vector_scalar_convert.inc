@@ -379,38 +379,13 @@ gadget vector_f\element\()_pi_\truncate\()_rr
 gadget vector_f\element\()_pi_\truncate\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\element / 4), Lx86_vector_fp_to_pi_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\element / 4)
-	.if \element == 32
-	ldr d1, [x7]
-	.else
-	ldr q1, [x7]
-	.endif
-	b Lx86_vector_fp_to_pi_loaded\@
-Lx86_vector_fp_to_pi_cross\@:
-	.if \element == 32
-	cross_page_load 8
-	fmov d1, x0
-	.else
-	sub sp, sp, #16
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #16
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_fp_to_pi_cross_fault\@
-	ldr q1, [sp]
-	add sp, sp, #16
-	.endif
-Lx86_vector_fp_to_pi_loaded\@:
+	vector_memory_source (\element / 4), Lx86_vector_fp_to_pi_cross_fault\@, frame=16, scalar=1
 	vector_fp_to_pi_body \element, \truncate, Lx86_vector_fp_to_pi_save\@
 	vector_write 64, 23
 	retire_and_next
 	simd_save_status_path Lx86_vector_fp_to_pi_save\@
 	.if \element == 64
-Lx86_vector_fp_to_pi_cross_fault\@:
-	add sp, sp, #16
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_fp_to_pi_cross_fault\@, 16
 	.endif
 .endm
 

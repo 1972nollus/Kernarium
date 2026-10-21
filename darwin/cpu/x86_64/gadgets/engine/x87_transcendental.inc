@@ -26,7 +26,7 @@ x87_unary round, round
 x87_unary sine, sine
 x87_unary cosine, cosine
 
-.macro x87_two_input name, helper, destination, pop
+.macro x87_two_input name, helper, destination, pop, reverse=0
 gadget x87_\name
 	sub sp, sp, #48
 	mov w13, #0
@@ -36,20 +36,7 @@ gadget x87_\name
 	x87_load_stack w13, x9, w10
 	add x11, sp, #16
 	x87_store_value x11, x9, w10
-	mov x0, _cpu
-	.ifc \name,atan
-	add x1, sp, #16
-	mov x2, sp
-	.else
-	mov x1, sp
-	add x2, sp, #16
-	.endif
-	add x3, sp, #32
-	helper_call uml_x86_64_x87_\helper
-	x87_leave_if_raised
-	add x11, sp, #32
-	x87_load_value x11, x9, w10
-	add sp, sp, #48
+	x87_binary_call \helper, \reverse
 	mov w13, #\destination
 	x87_store_stack w13, x9, w10
 	.if \pop
@@ -60,7 +47,7 @@ gadget x87_\name
 
 x87_two_input fyl2x, fyl2x, 1, 1
 x87_two_input fyl2xp1, fyl2xp1, 1, 1
-x87_two_input atan, atan, 1, 1
+x87_two_input atan, atan, 1, 1, 1
 x87_two_input scale, scale, 0, 0
 
 gadget x87_tangent
@@ -188,6 +175,7 @@ x87_remainder fprem1
 .purgem x87_scalar_load
 .purgem x87_set_integer_compare
 .purgem x87_set_status_compare
+.purgem x87_binary_call
 .purgem x87_load_value
 .purgem x87_store_value
 .purgem x87_pop

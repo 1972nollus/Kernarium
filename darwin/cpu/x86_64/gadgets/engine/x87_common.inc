@@ -196,6 +196,26 @@ Lx86_x87_push_fault_none\@:
 	ldrh \exponent, [\pointer, #8]
 .endm
 
+/* Call the SoftFloat helper that combines the operands the caller stored at
+ * sp and sp+16 and leaves its result at sp+32, `reverse` swapping them, then
+ * load the result and release the 48-byte frame. */
+.macro x87_binary_call helper, reverse
+	mov x0, _cpu
+	.if \reverse
+	add x1, sp, #16
+	mov x2, sp
+	.else
+	mov x1, sp
+	add x2, sp, #16
+	.endif
+	add x3, sp, #32
+	helper_call uml_x86_64_x87_\helper
+	x87_leave_if_raised
+	add x11, sp, #32
+	x87_load_value x11, x9, w10
+	add sp, sp, #48
+.endm
+
 .macro x87_set_status_compare result
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	mov w10, #0x4700
