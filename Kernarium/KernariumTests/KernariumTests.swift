@@ -657,6 +657,78 @@ struct KernariumTests {
     }
 
     @Test
+    func savedConfigurationUsesTheStoredKeysEveryBuildWrote() {
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        EmulatorConfiguration(
+            vCPUCount: 3,
+            guestMemoryMiB: 1536,
+            overlaySizeGiB: 12,
+            androidDiskSizeGiB: 20,
+            rootfsFilename: "phosh.erofs",
+            retinaMode: true,
+            autoResizeGuest: false,
+            androidBootMode: .normal
+        ).save(defaults: defaults)
+
+        #expect(defaults.integer(forKey: "emulator.vCPUCount") == 3)
+        #expect(defaults.integer(forKey: "emulator.guestMemoryMiB") == 1536)
+        #expect(defaults.integer(forKey: "emulator.overlaySizeGiB") == 12)
+        #expect(defaults.integer(forKey: "emulator.androidDiskSizeGiB") == 20)
+        #expect(defaults.string(forKey: "emulator.rootfsFilename") == "phosh.erofs")
+        #expect(defaults.object(forKey: "emulator.retinaMode") as? Bool == true)
+        #expect(
+            defaults.object(forKey: "emulator.autoResizeGuest") as? Bool == false
+        )
+        #expect(defaults.integer(forKey: "emulator.androidBootMode") == 1)
+        // Nothing else is stored.
+        #expect(
+            defaults.dictionaryRepresentation().keys
+                .filter { $0.hasPrefix("emulator.") }.count == 8
+        )
+    }
+
+    @Test
+    func storedValuesOfTheWrongKindFallBackToTheirBounds() {
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("four", forKey: "emulator.vCPUCount")
+        defaults.set("big", forKey: "emulator.guestMemoryMiB")
+        defaults.set("x", forKey: "emulator.overlaySizeGiB")
+        defaults.set("x", forKey: "emulator.androidDiskSizeGiB")
+        defaults.set(99, forKey: "emulator.androidBootMode")
+
+        let configuration = EmulatorConfiguration.load(
+            defaults: defaults,
+            physicalProcessorCount: 6
+        )
+
+        #expect(configuration.vCPUCount == 1)
+        #expect(configuration.guestMemoryMiB == 512)
+        #expect(configuration.overlaySizeGiB == 1)
+        #expect(configuration.androidDiskSizeGiB == 4)
+        #expect(configuration.androidBootMode == .automatic)
+
+        // Only "0" and "1" choose a switch from the environment.
+        for ignored in ["", " 1", "yes", "true", "01"] {
+            let loaded = EmulatorConfiguration.load(
+                defaults: defaults,
+                physicalProcessorCount: 6,
+                environment: [
+                    EmulatorConfiguration.retinaEnvironmentKey: ignored,
+                    EmulatorConfiguration.autoResizeGuestEnvironmentKey: ignored,
+                ]
+            )
+            #expect(loaded.retinaMode == EmulatorConfiguration.defaultRetinaMode)
+            #expect(
+                loaded.autoResizeGuest ==
+                    EmulatorConfiguration.defaultAutoResizeGuest
+            )
+        }
+    }
+
+    @Test
     func storedUnifiedImageSelectionOutlivesTheDesktopDefault() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
