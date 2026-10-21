@@ -2352,7 +2352,7 @@ index ae6b892773f3d92d13b839acb0a08ff33469371a..651022c60550de3ea6409725368e82c3
 +}
 +#endif
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 4103b571fa6e1795b8117faa58cac7462c5f994a..2a4a85f24530ca8a2eb08e9209349dd0db66844d 100644
+index 335dbab37bb2c88b5e020181fc2b37352a385bd7..95fabf70e1ee8b0c4f4f0db0cba663664a8cf851 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -9,6 +9,7 @@
@@ -2428,7 +2428,7 @@ index feb6c2eb55b5db90284304c3402d4d06c7d475fb..75201de007c9a3ee075664d6d5c6463e
  
  #endif
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 8c1ab173f3850c7da37b8d048d0bdf5c05070b31..2aa3b998b27f59a2551913dd86056127e8f717ec 100644
+index cdf178045d08ff70e525b3e7c6e1f9e3463d46e0..7d81a61fc00d443796cac2e18323851da910ba6c 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -38,6 +38,9 @@ _Static_assert(offsetof(struct uml_pt_regs, fpmr) ==
@@ -2453,7 +2453,7 @@ index 8c1ab173f3850c7da37b8d048d0bdf5c05070b31..2aa3b998b27f59a2551913dd86056127
  #endif
  	if (set)
  		*flags |= set;
-@@ -543,6 +551,8 @@ void userspace(struct uml_pt_regs *registers)
+@@ -535,6 +543,8 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION:
  		{
  			siginfo_t signal_info = { 0 };
@@ -2462,7 +2462,7 @@ index 8c1ab173f3850c7da37b8d048d0bdf5c05070b31..2aa3b998b27f59a2551913dd86056127
  
  			/* UDF and other architecturally undefined instructions are
  			 * guest events, not failures of the host dispatcher.  Preserve
-@@ -552,13 +562,22 @@ void userspace(struct uml_pt_regs *registers)
+@@ -544,13 +554,22 @@ void userspace(struct uml_pt_regs *registers)
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
  			registers->faultinfo.trap_no = 0;

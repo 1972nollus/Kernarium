@@ -136,7 +136,7 @@ index 0000000000000000000000000000000000000000..ae6b892773f3d92d13b839acb0a08ff3
 +	return feature < ARRAY_SIZE(hwcap_str) ? hwcap_str[feature] : NULL;
 +}
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index d652bc357fc73b734fea7f25ebda7b316f385312..4103b571fa6e1795b8117faa58cac7462c5f994a 100644
+index 175767459fda9ac776b9395ff5fc3a29b0d86226..335dbab37bb2c88b5e020181fc2b37352a385bd7 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -74,9 +74,11 @@ static char host_info[(__NEW_UTS_LEN + 1) * 5];

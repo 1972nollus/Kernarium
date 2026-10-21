@@ -4,37 +4,21 @@ Date: Tue, 20 Oct 2026 00:46:50 +0900
 Subject: [PATCH] um: name the host threads the kernel creates
 
 Beside its vCPU carriers, which name themselves, the kernel starts host
-threads of its own: the Darwin IRQ notification thread, the RTC alarm
-helper and a terminal console's window-size helper. They had no names,
-so host tools, crash reports and a host's lifecycle code saw anonymous
-threads running kernel code over guest RAM, and could not tell them
-from the host's own.
+threads of its own: the Darwin IRQ notification thread and the RTC alarm
+helper. They had no names, so host tools, crash reports and a host's
+lifecycle code saw anonymous threads running kernel code over guest RAM,
+and could not tell them from the host's own.
 
-os_set_thread_name() names the calling host thread, with
-pthread_setname_np() on Darwin and PR_SET_NAME on Linux, and each of
-those threads calls it first: uml-irq-notify, uml-rtc-alarm and
-uml-winch.
+os_set_thread_name() names the calling host thread with
+pthread_setname_np(), and each of those threads calls it first:
+uml-irq-notify and uml-rtc-alarm.
 ---
- arch/um/drivers/chan_user.c | 1 +
  arch/um/drivers/rtc_user.c  | 1 +
  arch/um/include/shared/os.h | 2 ++
  arch/um/os-Darwin/irq.c     | 1 +
  arch/um/os-Darwin/process.c | 6 ++++++
- arch/um/os-Linux/process.c  | 5 +++++
- 6 files changed, 16 insertions(+)
+ 4 files changed, 10 insertions(+)
 
-diff --git a/arch/um/drivers/chan_user.c b/arch/um/drivers/chan_user.c
-index e017e2804e3f992c1f4539d90f648d5161563eca..cff4a9804cd56a55e7cf0d992fa81d710ad63529 100644
---- a/arch/um/drivers/chan_user.c
-+++ b/arch/um/drivers/chan_user.c
-@@ -196,6 +196,7 @@ static __noreturn int winch_thread(void *arg)
- 	char c = 1;
- 
- 	os_set_pdeathsig();
-+	os_set_thread_name("uml-winch");
- 
- 	pty_fd = data->pty_fd;
- 	pipe_fd = data->pipe_fd;
 diff --git a/arch/um/drivers/rtc_user.c b/arch/um/drivers/rtc_user.c
 index dfc7cafc52123d05064f41ce5b4eb9ce9fd254e9..522da40d6ba29e04f11380f7effaa34812c44a6c 100644
 --- a/arch/um/drivers/rtc_user.c
@@ -61,7 +45,7 @@ index 43fbd97f093c987887068cdeb8850299e1e39c17..bb6fb24d7d7721ccee69c209073b498b
  int os_futex_wait(void *uaddr, unsigned int val);
  int os_futex_wake(void *uaddr);
 diff --git a/arch/um/os-Darwin/irq.c b/arch/um/os-Darwin/irq.c
-index 36e4124304314c1352cb2a99a51e0beec39fd09a..dbd1380d87371928c5c5706b38bcdecee2442b1b 100644
+index c73632a809ba6ebddc2362470315fbc10343cbf3..a2e13ae4e165e9f939f0feaed65d35d6bf7a0f1c 100644
 --- a/arch/um/os-Darwin/irq.c
 +++ b/arch/um/os-Darwin/irq.c
 @@ -51,6 +51,7 @@ static void *notification_thread(void *unused)
@@ -73,7 +57,7 @@ index 36e4124304314c1352cb2a99a51e0beec39fd09a..dbd1380d87371928c5c5706b38bcdece
  	 * timers.  Never let the process-wide ITIMER_REAL select it as the
  	 * recipient: the guest clock must run on the UML kernel/idle thread.
 diff --git a/arch/um/os-Darwin/process.c b/arch/um/os-Darwin/process.c
-index 8ce3c3ec407e77fb2f4604c7425209c13e13436a..6ed6f545ae4673312521ba01af06a960d8719a3b 100644
+index c2354aa094ced8022b9286c0e09c2535da961c47..725891d175f64136cb9ca208208ee0efb12e81cd 100644
 --- a/arch/um/os-Darwin/process.c
 +++ b/arch/um/os-Darwin/process.c
 @@ -1,6 +1,7 @@
@@ -84,7 +68,7 @@ index 8ce3c3ec407e77fb2f4604c7425209c13e13436a..6ed6f545ae4673312521ba01af06a960
  #include <signal.h>
  #include <sys/mman.h>
  #include <unistd.h>
-@@ -108,3 +109,8 @@ void init_new_thread_signals(void)
+@@ -105,3 +106,8 @@ void init_new_thread_signals(void)
  void os_set_pdeathsig(void)
  {
  }
@@ -93,19 +77,3 @@ index 8ce3c3ec407e77fb2f4604c7425209c13e13436a..6ed6f545ae4673312521ba01af06a960
 +{
 +	(void)pthread_setname_np(name);
 +}
-diff --git a/arch/um/os-Linux/process.c b/arch/um/os-Linux/process.c
-index 3a2a84ab93257de541fa5fbb6fd880f346d67ad5..be630a5bd577e894c26ed00d2fa3e5103eeedf48 100644
---- a/arch/um/os-Linux/process.c
-+++ b/arch/um/os-Linux/process.c
-@@ -192,6 +192,11 @@ void os_set_pdeathsig(void)
- 	prctl(PR_SET_PDEATHSIG, SIGKILL);
- }
- 
-+void os_set_thread_name(const char *name)
-+{
-+	prctl(PR_SET_NAME, (unsigned long)name, 0, 0, 0);
-+}
-+
- int os_futex_wait(void *uaddr, unsigned int val)
- {
- 	int r;
