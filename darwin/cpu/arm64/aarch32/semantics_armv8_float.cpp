@@ -12,8 +12,6 @@
 #include "cpu/arm64/aarch32/semantics_vector.hpp"
 #include "cpu/arm64/detail/half_fused_long.hpp"
 
-#include <iterator>
-
 namespace uml::cpu::arm64::aarch32::detail {
 
 namespace {
@@ -396,9 +394,8 @@ constexpr VectorEntry entries[] = {
 
 } // namespace
 
-const VectorEntry *armv8_float_entries(std::size_t &count) noexcept
+std::span<const VectorEntry> armv8_float_entries() noexcept
 {
-	count = std::size(entries);
 	return entries;
 }
 

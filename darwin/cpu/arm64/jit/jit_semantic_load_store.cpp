@@ -20,6 +20,10 @@ using arm64::detail::decode_little_endian;
 using arm64::detail::encode_little_endian;
 using arm64::detail::sign_extend;
 
+/* The access check and register transfer at the end of this handler and of
+ * load_store_other are the same text on purpose: one shared helper changed
+ * both handlers' lowering and measured slower (docs/optimization-history.md,
+ * JIT semantic-helper exits). */
 RunResult load_store_unsigned(CpuState &cpu, GuestMemory &memory,
 					  std::uint32_t instruction)
 {

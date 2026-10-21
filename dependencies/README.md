@@ -143,6 +143,10 @@ script's `--help` owns non-default paths and options. A relative path, in an
 option or an environment override, is relative to the caller's working
 directory.
 
+A cache entry holds every object of its pinned commit. Preparation refuses one
+that does not, such as a blob-filtered clone, with a diagnostic and does not
+repair it; remove the entry and prepare again.
+
 Series replay commits as whoever Git resolves for the caller, and export
 refuses a topic whose author is a placeholder. See
 [`kernel/mainline-6.18/README.md`](../kernel/mainline-6.18/README.md) for the

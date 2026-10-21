@@ -147,27 +147,11 @@ constexpr Named named_ops[] = {
 		for (const auto &named : named_ops)
 			by_name.emplace(named.mnemonic, named.op);
 		std::unordered_map<std::string_view, VectorHandler> by_stem;
-		const auto add_stems = [&](const VectorEntry *entries, std::size_t count) {
-			for (std::size_t index = 0; index < count; ++index)
-				by_stem.emplace(entries[index].stem, entries[index].handler);
-		};
-		std::size_t count = 0;
-		const VectorEntry *entries = vector_move_entries(count);
-		add_stems(entries, count);
-		entries = neon_integer_entries(count);
-		add_stems(entries, count);
-		entries = neon_shift_entries(count);
-		add_stems(entries, count);
-		entries = vector_float_entries(count);
-		add_stems(entries, count);
-		entries = armv8_float_entries(count);
-		add_stems(entries, count);
-		entries = armv8_integer_entries(count);
-		add_stems(entries, count);
-		entries = crypto_entries(count);
-		add_stems(entries, count);
-		entries = bf16_entries(count);
-		add_stems(entries, count);
+		for (const auto entries : {vector_move_entries(), neon_integer_entries(), neon_shift_entries(),
+				 vector_float_entries(), armv8_float_entries(), armv8_integer_entries(),
+				 crypto_entries(), bf16_entries()})
+			for (const VectorEntry &entry : entries)
+				by_stem.emplace(entry.stem, entry.handler);
 		for (std::size_t index = 0; index < kFormCount; ++index) {
 			const std::string_view name = kForms[index].mnemonic;
 			const std::string_view form = kForms[index].name;

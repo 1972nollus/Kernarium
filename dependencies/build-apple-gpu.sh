@@ -615,8 +615,6 @@ cp "$MANIFEST" "$STAGE/share/uml-dependencies/manifest.tsv"
 SDK_VERSION=$($XCRUN --sdk "$SDK_NAME" --show-sdk-version)
 COMPILER_VERSION=$("$CC" --version | sed -n '1p')
 BUILD_TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-MANIFEST_SHA256=$(shasum -a 256 "$MANIFEST" | awk '{print $1}')
-CONTRACT_SHA256=$(shasum -a 256 "$PLATFORM_CONTRACT" | awk '{print $1}')
 {
 	printf '%s\n' 'field	value'
 	printf 'format\t2\n'
@@ -627,12 +625,6 @@ CONTRACT_SHA256=$(shasum -a 256 "$PLATFORM_CONTRACT" | awk '{print $1}')
 	printf 'sdk_path\t%s\n' "$SDK_ROOT"
 	printf 'compiler\t%s\n' "$COMPILER_VERSION"
 	printf 'built_at_utc\t%s\n' "$BUILD_TIMESTAMP"
-	printf 'source_manifest_sha256\t%s\n' "$MANIFEST_SHA256"
-	printf 'platform_contract_sha256\t%s\n' "$CONTRACT_SHA256"
-	printf 'mesa_base_commit\t%s\n' \
-		"$(awk -F '\t' '$1 == "mesa" { print $5 }' "$MANIFEST")"
-	printf 'vulkan_headers_base_commit\t%s\n' \
-		"$(git -C "$VULKAN_HEADERS_SOURCE" rev-parse HEAD)"
 	printf 'venus_protocol_generated_sha256\t%s\n' \
 		"$VENUS_PROTOCOL_GENERATED_SHA256"
 } > "$STAGE/share/uml-dependencies/build-receipt.tsv"
