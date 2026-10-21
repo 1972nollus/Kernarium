@@ -14,6 +14,7 @@
  * instruction it translated in an earlier round. Both engines, in A64 and in
  * A32 with the ARMv8 ISB and the CP15 ISB.
  */
+#include "jit_test_support.hpp"
 #include "require.hpp"
 #include "runtime_test_route.hpp"
 #include "scratch_backing.hpp"
@@ -42,6 +43,7 @@
 namespace {
 
 namespace arm64 = uml::cpu::arm64;
+using uml::emulator::tests::GenerationMapping;
 using uml::testing::require;
 
 constexpr std::uint64_t page = DARWIN_UML_GUEST_PAGE_SIZE;
@@ -130,34 +132,6 @@ struct Program final {
 	return result;
 }
 
-class Mapping final {
-public:
-	Mapping(unsigned long generation, std::uint32_t address,
-		const uml::testing::ScratchBacking &backing, int protection,
-		bool code)
-		: generation_{generation}, address_{address}
-	{
-		require(darwin_uml_static_vm_map_generation(generation_,
-			reinterpret_cast<void *>(std::uintptr_t{address_}),
-			backing.descriptor(), 0, page, protection, code ? 1 : 0,
-			code ? 0 : 1) == 0);
-	}
-
-	~Mapping()
-	{
-		require(darwin_uml_static_vm_unmap_generation(generation_,
-			reinterpret_cast<void *>(std::uintptr_t{address_}),
-			page) == 0);
-	}
-
-	Mapping(const Mapping &) = delete;
-	Mapping &operator=(const Mapping &) = delete;
-
-private:
-	unsigned long generation_;
-	std::uint32_t address_;
-};
-
 [[nodiscard]] const char *name(Guest guest) noexcept
 {
 	switch (guest) {
@@ -189,9 +163,9 @@ void run_case(uml::cpu::EngineKind kind, Guest guest, unsigned long generation,
 		uml::testing::ScratchBacking code{"uml-isb-code.XXXXXX", page};
 		uml::testing::ScratchBacking data{"uml-isb-data.XXXXXX", page};
 		code.put(0, std::as_bytes(std::span{built.words}));
-		const Mapping code_mapping{generation, code_base, code,
+		const GenerationMapping code_mapping{generation, code_base, code, 1,
 			PROT_READ | PROT_EXEC, true};
-		const Mapping data_mapping{generation, data_base, data,
+		const GenerationMapping data_mapping{generation, data_base, data, 1,
 			PROT_READ | PROT_WRITE, false};
 		void *host = nullptr;
 		require(darwin_uml_static_vm_translate(generation, data_base,

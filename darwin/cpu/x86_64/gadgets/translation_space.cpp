@@ -496,18 +496,15 @@ void Space::release(Body *body, bool stale) noexcept
 		free_body(body);
 		return;
 	}
-	try {
-		limbo_.push(body);
-	} catch (...) {
-		/* Without the memory to queue it the body stays where it is,
-		 * unreachable, until its arena goes with the address space. */
-	}
+	limbo_.push(body);
 }
 
-void Space::reclaim(const gadget_cache::ExecutorAnnouncement *self)
+void Space::reclaim(const gadget_cache::ExecutorAnnouncement *self) noexcept
 {
 	limbo_.reclaim(self, attached_,
-		[this](std::vector<Body *> &bodies) { free_bodies(bodies); });
+		[this](std::vector<Body *> &bodies) noexcept {
+			free_bodies(bodies);
+		});
 }
 
 const Body *Space::owner(const void *address) const noexcept

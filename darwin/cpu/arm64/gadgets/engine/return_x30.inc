@@ -19,6 +19,3 @@ gadget return_x30_cached
 	follow_indirect_link 1
 
 .purgem follow_indirect_link
-.purgem train_indirect_cell
-.purgem push_return_record
-.purgem follow_block_link

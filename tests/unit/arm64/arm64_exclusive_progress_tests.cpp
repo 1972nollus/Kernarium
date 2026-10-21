@@ -21,6 +21,7 @@
  * as a wrong terminal event; a finished one is checked for state and memory.
  */
 #include "arm64_engine_test_support.hpp"
+#include "jit_test_support.hpp"
 #include "require.hpp"
 #include "scratch_backing.hpp"
 #include "static_mmu_test_support.hpp"
@@ -41,6 +42,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -669,20 +671,11 @@ public:
 	Page(unsigned long generation, std::uint64_t address,
 		std::span<const std::byte> contents, int protection,
 		bool guest_code = false)
-		: generation_{generation}, address_{address},
-		  backing_{"uml-exclusive.XXXXXX", page}
+		: backing_{"uml-exclusive.XXXXXX", page}
 	{
 		backing_.put(0, contents);
-		require(darwin_uml_static_vm_map_generation(generation_,
-			reinterpret_cast<void *>(address_), backing_.descriptor(),
-			0, page, protection, guest_code ? 1 : 0,
-			guest_code ? 0 : 1) == 0);
-	}
-
-	~Page()
-	{
-		require(darwin_uml_static_vm_unmap_generation(generation_,
-			reinterpret_cast<void *>(address_), page) == 0);
+		mapping_.emplace(generation, address, backing_, 1, protection,
+			guest_code);
 	}
 
 	Page(const Page &) = delete;
@@ -696,9 +689,8 @@ public:
 	}
 
 private:
-	unsigned long generation_;
-	std::uint64_t address_;
 	uml::testing::ScratchBacking backing_;
+	std::optional<uml::emulator::tests::GenerationMapping> mapping_;
 };
 
 /* ART's loop on a page the guest may only read, so the store-exclusive

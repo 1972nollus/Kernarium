@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_shape.hpp"
+
 #include <cstdint>
 
 namespace uml::cpu::arm64::detail {
@@ -42,8 +44,7 @@ decode_basic_floating_arithmetic(std::uint32_t instruction) noexcept
 		}
 		const unsigned type = (instruction >> 22) & 3U;
 		return {true, type != 2U, true, false,
-			type == 3U ? 16U : type == 0U ? 32U : 64U, 16U,
-			operation};
+			floating_width_from_type(type), 16U, operation};
 	}
 
 	/* Scalar FSQRT is operation 3 of the one-source allocation. */
@@ -51,7 +52,7 @@ decode_basic_floating_arithmetic(std::uint32_t instruction) noexcept
 	    ((instruction >> 15) & 0x3fU) == 3U) {
 		const unsigned type = (instruction >> 22) & 3U;
 		return {true, type != 2U, true, true,
-			type == 3U ? 16U : type == 0U ? 32U : 64U, 16U,
+			floating_width_from_type(type), 16U,
 			BasicFloatingOperation::square_root};
 	}
 

@@ -624,7 +624,6 @@ def resolve_zstd(value: Path | None) -> Path:
 
 def verify_semantics(
     release_root: Path,
-    manifest: dict,
     android_root: Path,
     zstd: Path | None,
     expanded_disk: Path | None,
@@ -707,8 +706,6 @@ def verify_semantics(
             structural=not enforce_tracked_policy,
         )
 
-    if manifest["kernel"]["page_size"] != 4096:
-        fail("semantic verification received a non-4-KiB kernel")
     schema = android_root / "support/release/release-manifest.schema.json"
     if not schema.is_file():
         fail("tracked release-manifest schema is missing")
@@ -746,7 +743,6 @@ def verify_release(
     if semantic:
         verify_semantics(
             release_root,
-            manifest,
             android_root,
             zstd,
             expanded_disk,

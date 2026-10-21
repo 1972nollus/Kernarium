@@ -833,7 +833,7 @@ public:
 		 * changed.  Let unrelated page copies and translations proceed in
 		 * parallel.  Copying only the bytes changed by uaccess is essential:
 		 * a sibling guest thread may update another byte in the same guest page
-		 * while the 4 KiB fallback operates through a Darwin 16 KiB shadow.
+		 * through its Darwin 16 KiB host-page shadow.
 		 */
 		const auto &active = active_thread_generation();
 		const auto generation = generation_for(page,

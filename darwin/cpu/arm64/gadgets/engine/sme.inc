@@ -665,6 +665,7 @@ scalar_unsigned_fast 1, 1, 0, 0, load64_unsigned_fast_r
 scalar_unsigned_fast 1, 1, 0, 1, load64_unsigned_fast_r_sp
 .set Lsme_twin_of_base, 1
 .purgem scalar_unsigned_fast
+.purgem sp_alignment_check
 
 .macro sme_inplace_twins prefix, twin
 	.irp reg, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30
