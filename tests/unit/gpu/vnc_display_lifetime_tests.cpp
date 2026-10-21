@@ -4,6 +4,7 @@
 #include "scanout_framebuffer.hpp"
 #include "vnc_display.hpp"
 #include "vnc_display_testing.hpp"
+#include "wait_until.hpp"
 
 #include <algorithm>
 #include <array>
@@ -16,7 +17,6 @@
 #include <netinet/in.h>
 #include <stdexcept>
 #include <sys/socket.h>
-#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -162,14 +162,13 @@ void awaitClientEvent(const uml::gpu::VncDisplay& display)
 {
     constexpr std::uint64_t passesPastTheEvent = 2;
     constexpr auto deadlineSpan = std::chrono::seconds(180);
-    const auto deadline = std::chrono::steady_clock::now() + deadlineSpan;
     const auto target =
         display.eventLoopPassesForTesting() + passesPastTheEvent;
-    while (display.eventLoopPassesForTesting() < target) {
-        if (std::chrono::steady_clock::now() >= deadline)
-            uml::testing::fail("the VNC event thread stopped running");
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
+    require(
+        uml::testing::waitUntil(
+            [&] { return display.eventLoopPassesForTesting() >= target; },
+            deadlineSpan),
+        "the VNC event thread stopped running");
 }
 
 [[nodiscard]] int connectClient(const std::uint16_t port)

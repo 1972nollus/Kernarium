@@ -64,6 +64,8 @@ BOOT_PARAMETERS_GUEST_PATH = "/boot.env"
 IMAGE_INIT = "/sbin/init"
 # Where a caller stages the files it generates, beside its own artifacts.
 GUEST_FILE_DIRECTORY = "guest-files"
+# Every arm64 Linux guest has 4 KiB pages; the CTS launchers refuse any other.
+GUEST_PAGE_SIZE = 4096
 # Guest paths this runner writes itself; a caller's file may not replace one.
 RUNNER_GUEST_PATHS = (
     BOOT_PARAMETERS_GUEST_PATH,

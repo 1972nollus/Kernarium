@@ -10,7 +10,6 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include <iterator>
 
 namespace uml::cpu::arm64::aarch32::detail {
 
@@ -119,9 +118,8 @@ constexpr VectorEntry entries[] = {
 
 } // namespace
 
-const VectorEntry *crypto_entries(std::size_t &count) noexcept
+std::span<const VectorEntry> crypto_entries() noexcept
 {
-	count = std::size(entries);
 	return entries;
 }
 

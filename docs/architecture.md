@@ -1503,9 +1503,7 @@ Simulator both are its application's `tmp`, too long for `sun_path`, so it uses
 `/tmp/uml-kern<pid>`. The run removes it when it returns, and every terminating
 signal and kernel-driven exit the process observes removes it too; only a
 process killed outright leaves it, and the next run removes the directories of
-runs that have exited. It also removes the `/tmp/uml-kern<pid>-mconsole`
-sockets left by exited runs of older builds, which bound the console loose in
-`/tmp`. An iOS device uses its application temporary directory
+runs that have exited. An iOS device uses its application temporary directory
 itself and removes a socket left there before booting. Every such path must
 fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
 rather than truncated or moved. The guest prints the console's path when it

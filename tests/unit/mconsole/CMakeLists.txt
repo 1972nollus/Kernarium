@@ -19,6 +19,9 @@ uml_add_unit_test(NAME guest-console-run
 uml_add_unit_test(NAME guest-console-wake
     COMMAND uml_guest_console_tests wake
     LABELS console)
+uml_add_unit_test(NAME guest-console-writeback
+    COMMAND uml_guest_console_tests writeback
+    LABELS console)
 uml_add_unit_test(NAME guest-console-trim
     COMMAND uml_guest_console_tests trim
     LABELS console)

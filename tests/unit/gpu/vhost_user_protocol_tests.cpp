@@ -2,6 +2,7 @@
 
 #include "gpu_test_support.hpp"
 #include "gpu_vhost_user_server.hpp"
+#include "wait_until.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -1871,16 +1872,10 @@ void queueNotificationProcessesQueue(
             // The subsequent main-channel reply above is the completion
             // synchronization point after the backend acknowledgement.
         } else if (scenario.pollingCompletion || scenario.suppressInterrupt) {
-            const auto deadline = std::chrono::steady_clock::now() +
-                std::chrono::seconds(2);
-            std::uint16_t observedUsedIndex {};
-            do {
-                observedUsedIndex = ring.usedIndex();
-                if (observedUsedIndex == 1)
-                    break;
-                std::this_thread::yield();
-            } while (std::chrono::steady_clock::now() < deadline);
-            require(observedUsedIndex == 1);
+            require(::uml::testing::waitUntil(
+                [&] { return ring.usedIndex() == 1; },
+                std::chrono::seconds(2),
+                std::chrono::steady_clock::duration::zero()));
             if (scenario.suppressInterrupt &&
                 !scenario.pollingCompletion) {
                 pollfd completion {.fd = call.readEnd.get(), .events = POLLIN};

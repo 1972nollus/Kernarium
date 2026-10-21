@@ -17,25 +17,6 @@
       "expected_outcome": "no-device"
     }
   },
-  "ios_simulator": {
-    "device_type": "iPhone 17 Pro Max",
-    "model": "iPhone18,2",
-    "runtime": "iOS 26.5",
-    "frozen_udids": [
-      "4E6609BA-F458-4741-84EE-FEC9C5C1B230",
-      "5803C8D8-4BBE-44FB-A4A4-0D9E507A9549",
-      "F23C7D57-20D6-4758-9E99-C96C91436F11",
-      "A2665090-EBC4-49C9-BBC2-B55D61DBCED3"
-    ],
-    "smoke": {
-      "mode": "smoke",
-      "page_profile": "4k",
-      "engine": "gadgets",
-      "memory_mib": 4096,
-      "outer_timeout_seconds": 1200,
-      "expected_outcome": "no-device"
-    }
-  },
   "qualification_modes": {
     "frozen-regression": "blocked-until-authorized-receipt",
     "current-must-pass": "blocked-until-authorized-receipt",

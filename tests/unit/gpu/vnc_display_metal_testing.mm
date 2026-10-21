@@ -4,6 +4,7 @@
 #include "require.hpp"
 #include "vnc_display.hpp"
 #include "vnc_display_testing.hpp"
+#include "wait_until.hpp"
 
 #import <Metal/Metal.h>
 
@@ -11,7 +12,6 @@
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
-#include <thread>
 #include <vector>
 
 namespace uml::gpu::testing {
@@ -47,13 +47,10 @@ void verifyPrivateMetalTextureReadback(VncDisplay& display)
                     Damage {damageX, damageY, damageWidth, damageHeight}))),
                 "private Metal texture readback was rejected");
 
-        const auto deadline = std::chrono::steady_clock::now() +
-            std::chrono::seconds(2);
-        while (display.statistics().presentedFrames == 0 &&
-               std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        require(display.statistics().presentedFrames == 1,
+        require(uml::testing::waitUntil(
+                    [&] { return display.statistics().presentedFrames != 0; },
+                    std::chrono::seconds(2)) &&
+                    display.statistics().presentedFrames == 1,
                 "private Metal texture readback did not complete");
         require(display.pixelForTesting(damageX, damageY) == expectedPixel,
                 "private Metal texture readback pixel mismatch");
@@ -95,13 +92,13 @@ void verifyScaledReadbackIsDamageBounded(VncDisplay& display)
                         height,
                         Damage {x, y, damageWidth, damageHeight}))),
                     "scaled readback was rejected");
-            const auto deadline = std::chrono::steady_clock::now() +
-                std::chrono::seconds(2);
-            while (display.statistics().presentedFrames < frames &&
-                   std::chrono::steady_clock::now() < deadline) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-            require(display.statistics().presentedFrames == frames,
+            require(uml::testing::waitUntil(
+                        [&] {
+                            return display.statistics().presentedFrames >=
+                                frames;
+                        },
+                        std::chrono::seconds(2)) &&
+                        display.statistics().presentedFrames == frames,
                     "scaled readback did not complete");
         };
 
@@ -162,13 +159,8 @@ void verifyClearDiscardsEarlierReadbacks(VncDisplay& display)
                     "clear test readback was rejected");
         };
         const auto waitUntil = [](auto predicate, const char* message) {
-            const auto deadline = std::chrono::steady_clock::now() +
-                std::chrono::seconds(5);
-            while (!predicate() &&
-                   std::chrono::steady_clock::now() < deadline) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-            require(predicate(), message);
+            require(uml::testing::waitUntil(predicate, std::chrono::seconds(5)),
+                    message);
         };
 
         fillTexture(texture, stale);
