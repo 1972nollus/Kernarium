@@ -263,8 +263,7 @@ public:
 	 * in T32, in the current instruction set. */
 	void branch_write_pc(std::uint32_t address) noexcept
 	{
-		cpu.pc = thumb ? t32_key(address & ~1U) : a32_key(address & ~3U);
-		pc_written = true;
+		branch_to(thumb, address);
 	}
 	/* BranchWritePC() after SelectInstrSet(): a BL or BLX immediate. */
 	void branch_to(bool to_thumb, std::uint32_t address) noexcept
@@ -308,23 +307,24 @@ public:
 		result.event = StepEvent::fatal;
 		return false;
 	}
-	bool raise_fault(std::uint32_t address,
-		::uml::memory::MemoryAccess access) noexcept
+	bool raise_memory(std::uint32_t address, ::uml::memory::MemoryAccess access,
+		bool alignment) noexcept
 	{
 		result.event = StepEvent::memory_fault;
-		result.alignment = false;
+		result.alignment = alignment;
 		result.access = access;
 		result.fault_address = address;
 		return false;
 	}
+	bool raise_fault(std::uint32_t address,
+		::uml::memory::MemoryAccess access) noexcept
+	{
+		return raise_memory(address, access, false);
+	}
 	bool raise_alignment(std::uint32_t address,
 		::uml::memory::MemoryAccess access) noexcept
 	{
-		result.event = StepEvent::memory_fault;
-		result.alignment = true;
-		result.access = access;
-		result.fault_address = address;
-		return false;
+		return raise_memory(address, access, true);
 	}
 
 	/* Memory. read() and write() are single accesses of up to a page
