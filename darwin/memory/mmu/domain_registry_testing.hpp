@@ -14,7 +14,6 @@ using SoftwareAddressSpaceAcquiredHook = void (*)() noexcept;
 
 [[nodiscard]] std::size_t software_domain_count() noexcept;
 [[nodiscard]] std::size_t native_domain_count() noexcept;
-[[nodiscard]] std::size_t native_host_mapping_count() noexcept;
 void set_software_address_space_acquired_hook(
 	SoftwareAddressSpaceAcquiredHook hook) noexcept;
 
