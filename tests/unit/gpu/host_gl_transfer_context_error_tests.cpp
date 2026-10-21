@@ -11,6 +11,8 @@
 // The contract under test: after a refused transfer, the same context
 // transfers normally once the resource is attached to it.
 
+#include "host_gl_test_support.hpp"
+#include "protocol.hpp"
 #include "require.hpp"
 #include "virgl_renderer.hpp"
 
@@ -28,15 +30,13 @@
 
 namespace {
 
+using uml::gpu::protocol::virgl2CapsetId;
+using uml::gpu::testing::pipeTexture2d;
+using uml::gpu::testing::skipWithoutRenderer;
+using uml::gpu::testing::virglBindRenderTarget;
+using uml::gpu::testing::virglBindSamplerView;
+using uml::gpu::testing::virglFormatR8g8b8a8Unorm;
 using uml::testing::require;
-
-// Stable Virtio-GPU ABI identifier for the virgl2 capability set.
-constexpr std::uint32_t virgl2CapsetId = 2;
-// virgl_hw.h and p_defines.h values the guest sends on the wire.
-constexpr std::uint32_t pipeTexture2d = 2;
-constexpr std::uint32_t virglFormatR8g8b8a8Unorm = 67;
-constexpr std::uint32_t virglBindRenderTarget = 1U << 1U;
-constexpr std::uint32_t virglBindSamplerView = 1U << 3U;
 
 constexpr std::uint32_t contextId = 1;
 constexpr std::uint32_t resourceId = 1;
@@ -50,11 +50,7 @@ int main()
     try {
         renderer = std::make_unique<uml::gpu::VirglRenderer>();
     } catch (const std::exception& error) {
-        std::fprintf(
-            stderr,
-            "Transfer context error: renderer unavailable: %s\n",
-            error.what());
-        return 0;
+        return skipWithoutRenderer(error);
     }
 
     require(renderer->createContext(contextId, virgl2CapsetId, "mapper") == 0,

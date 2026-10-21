@@ -13,13 +13,9 @@
 // virtio transport: a statistics query that a poll finds available already
 // holds its counts, for every single-statistic target a draw feeds.
 
-#include "host_gl_provider.hpp"
+#include "host_gl_test_support.hpp"
 
 #include <epoxy/gl.h>
-
-extern "C" {
-#include <virglrenderer.h>
-}
 
 #include <array>
 #include <chrono>
@@ -27,6 +23,12 @@ extern "C" {
 #include <cstdlib>
 
 namespace {
+
+using uml::gpu::testing::colourTarget;
+using uml::gpu::testing::compileShader;
+using uml::gpu::testing::currentContext;
+using uml::gpu::testing::linkProgram;
+using uml::gpu::testing::skip;
 
 constexpr int iterations = 200;
 
@@ -54,81 +56,25 @@ constexpr std::array<Statistic, 4> statistics {{
     {GL_CLIPPING_INPUT_PRIMITIVES_ARB, "GL_CLIPPING_INPUT_PRIMITIVES_ARB", 1},
 }};
 
-[[nodiscard]] GLuint compile(GLenum stage, const char* source)
-{
-    const GLuint shader = glCreateShader(stage);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-    GLint compiled = GL_FALSE;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
-    if (compiled == GL_FALSE) {
-        std::array<char, 512> log {};
-        glGetShaderInfoLog(shader, log.size(), nullptr, log.data());
-        std::fprintf(stderr, "Host statistics availability: shader: %s\n", log.data());
-        glDeleteShader(shader);
-        return 0;
-    }
-    return shader;
-}
-
 } // namespace
 
 int main()
 {
     uml::gpu::HostGlProvider provider;
-    if (provider.display() == nullptr) {
-        std::fputs("no host GL display; skipping\n", stderr);
-        return 0;
-    }
-    virgl_renderer_gl_ctx_param parameters {
-        .version = 2,
-        .shared = false,
-        .major_ver = 4,
-        .minor_ver = 6,
-        .compat_ctx = 0,
-    };
-    void* context = provider.createContext(parameters);
-    if (context == nullptr) {
-        std::fputs("no host GL context; skipping\n", stderr);
-        return 0;
-    }
-    if (provider.makeCurrent(context) != 0) {
-        std::fputs("host GL context would not bind; skipping\n", stderr);
-        return 0;
-    }
-    if (epoxy_gl_version() < 46 && !epoxy_has_gl_extension("GL_ARB_pipeline_statistics_query")) {
-        std::fputs("no ARB_pipeline_statistics_query; skipping\n", stderr);
-        return 0;
-    }
+    const auto current = currentContext(provider, 4, 6);
+    if (current.context == nullptr)
+        return skip(current.failure);
+    if (epoxy_gl_version() < 46 && !epoxy_has_gl_extension("GL_ARB_pipeline_statistics_query"))
+        return skip("no ARB_pipeline_statistics_query");
 
-    GLuint colour = 0;
-    glGenTextures(1, &colour);
-    glBindTexture(GL_TEXTURE_2D, colour);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    GLuint framebuffer = 0;
-    glGenFramebuffers(1, &framebuffer);
-    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colour, 0);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::fputs("host framebuffer incomplete; skipping\n", stderr);
-        return 0;
-    }
+    const auto target = colourTarget(64, 64);
+    if (!target.complete)
+        return skip("host framebuffer incomplete");
     glViewport(0, 0, 64, 64);
 
-    const GLuint vertex = compile(GL_VERTEX_SHADER, vertexSource);
-    const GLuint fragment = compile(GL_FRAGMENT_SHADER, fragmentSource);
-    if (vertex == 0 || fragment == 0)
-        return EXIT_FAILURE;
-    const GLuint program = glCreateProgram();
-    glAttachShader(program, vertex);
-    glAttachShader(program, fragment);
-    glLinkProgram(program);
-    GLint linked = GL_FALSE;
-    glGetProgramiv(program, GL_LINK_STATUS, &linked);
-    if (linked != GL_TRUE) {
-        std::fputs("Host statistics availability: the probe program did not link\n", stderr);
-        return EXIT_FAILURE;
-    }
+    const GLuint vertex = compileShader(GL_VERTEX_SHADER, vertexSource);
+    const GLuint fragment = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
+    const GLuint program = linkProgram({vertex, fragment});
     glUseProgram(program);
 
     constexpr std::array<float, 6> positions {-0.5F, -0.5F, 0.5F, -0.5F, 0.0F, 0.5F};
@@ -211,7 +157,7 @@ int main()
     glDeleteProgram(program);
     glDeleteShader(vertex);
     glDeleteShader(fragment);
-    glDeleteFramebuffers(1, &framebuffer);
-    glDeleteTextures(1, &colour);
+    glDeleteFramebuffers(1, &target.framebuffer);
+    glDeleteTextures(1, &target.texture);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

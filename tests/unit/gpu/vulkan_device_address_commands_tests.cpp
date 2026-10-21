@@ -19,6 +19,7 @@ namespace {
 using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
+using uml::gpu::test::require_venus_when_asked;
 using uml::gpu::test::DrawExtensions;
 using uml::gpu::test::DrawResult;
 using uml::gpu::test::VertexInputDraw;
@@ -80,12 +81,7 @@ int main(int argc, char **argv)
         require(argc <= 2, "expected at most one exact test selector");
         constexpr DrawExtensions extensions{true, true, true};
         DrawContext context(true, true, true, extensions);
-        if (const char *venus = std::getenv("UML_VULKAN_REQUIRE_VENUS");
-            venus && std::string_view(venus) == "1") {
-            require(context.capabilities().driver_id == VK_DRIVER_ID_MESA_VENUS,
-                    "guest probe did not select Venus");
-            std::puts("UML_VULKAN_PROBE_DEVICE: Venus");
-        }
+        require_venus_when_asked(context);
         const auto &properties = context.capabilities().maintenance10;
         require(!properties.rgba4OpaqueBlackSwizzled &&
                     properties.resolveSrgbFormatAppliesTransferFunction &&

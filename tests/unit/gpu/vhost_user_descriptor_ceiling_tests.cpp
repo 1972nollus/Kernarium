@@ -90,13 +90,11 @@ constexpr std::size_t fillMargin = 256;
     return held;
 }
 
-void releaseDescriptors(std::vector<int>& held, std::size_t count)
+void releaseDescriptors(std::vector<int>& held)
 {
-    while (count != 0 && !held.empty()) {
-        (void)::close(held.back());
-        held.pop_back();
-        --count;
-    }
+    for (const int descriptor : held)
+        (void)::close(descriptor);
+    held.clear();
 }
 
 void aFullTableNamesItself()
@@ -151,7 +149,7 @@ void aFullTableNamesItself()
         require(stripped.header.request == header.request);
         require(stripped.descriptors.empty());
 
-        releaseDescriptors(held, held.size());
+        releaseDescriptors(held);
 
         VhostUserMessage plain;
         require(receiveVhostUserMessage(sockets.descriptors[1].get(), plain));

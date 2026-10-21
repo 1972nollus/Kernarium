@@ -17,6 +17,7 @@ namespace {
 using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
+using uml::gpu::test::require_venus_when_asked;
 using uml::gpu::test::DrawResult;
 
 void verify(const DrawResult &result, unsigned shape, bool capture,
@@ -128,12 +129,7 @@ int main(int argc, char **argv)
         require(argc <= 2, "expected at most one exact GS test selector");
         DrawContext context;
         const auto &capabilities = context.capabilities();
-        const char *venus = std::getenv("UML_VULKAN_REQUIRE_VENUS");
-        if (venus && std::string_view(venus) == "1") {
-            require(capabilities.driver_id == VK_DRIVER_ID_MESA_VENUS,
-                    "guest probe did not select the Venus driver");
-            std::puts("UML_VULKAN_PROBE_DEVICE: Venus");
-        }
+        require_venus_when_asked(context);
         require(capabilities.geometry_shader, "geometryShader unavailable");
         require(capabilities.transform_feedback, "transformFeedback unavailable");
         if (argc == 2 && (std::string_view(argv[1]) == "performance" ||
