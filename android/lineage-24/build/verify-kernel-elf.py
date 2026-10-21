@@ -25,7 +25,6 @@ def main() -> None:
     args = parser.parse_args()
     verify_elf_geometry(
         args.kernel.read_bytes(),
-        4096,
         lambda message: SystemExit(f"Android kernel ELF verifier: {message}"),
     )
     print("verified 4 KiB AArch64 ET_DYN Android kernel ELF")

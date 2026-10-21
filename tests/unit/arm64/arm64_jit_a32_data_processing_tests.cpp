@@ -72,10 +72,6 @@ std::uint32_t a32_dp_rsr(unsigned cond, ref::DpOp op, bool s, unsigned rd,
          rn << 16 | rd << 12 | rs << 8 | type << 5 | 1U << 4 | rm;
 }
 
-struct Machine final {
-  ref::State s;
-};
-
 void a32_reference_step(ref::State &s, std::uint32_t word) {
   const unsigned cond = word >> 28;
   if (!condition_passed(s, cond))

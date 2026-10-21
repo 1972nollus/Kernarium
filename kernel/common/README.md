@@ -5,10 +5,10 @@ This directory contains only source-family-independent inputs:
 - [`abi/`](abi/README.md): canonical plain-C host/kernel bridge, identity,
   generated-copy authority, and import policy;
 - `config/darwin-uml.fragment`: the kernel configuration policy every product
-  shares. Each product applies its own overlay after it, which lists only the
-  settings in which that product differs and whose README says why;
-- `config/page-4k.fragment`: the 4 KiB guest page size and the 128 KiB
-  task-stack geometry it implies, which every line's build applies;
+  shares, including the 4 KiB guest page size and the 128 KiB task-stack
+  geometry it implies. Each product applies its own overlay after it, which
+  lists only the settings in which that product differs and whose README says
+  why;
 - `artifacts/`: compact prebuilt-kernel bundle schema and verifier, plus the
   shared `KEY='value'` metadata parser in `contract_checks.py`;
 - `patches/`: the generated topic series every maintained line applies

@@ -7,6 +7,7 @@
  * stay within the budget, the guest computes what it would have, and the
  * address spaces that go refund what they held. Under the default budget the
  * same workload is never asked to shed. */
+#include "arm64_gadget_runtime_test_support.hpp"
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 
@@ -30,12 +31,10 @@ namespace cache = uml::cpu::gadget_cache;
 using uml::emulator::tests::JitBacking;
 using uml::emulator::tests::JitMapping;
 using uml::emulator::tests::require;
-using uml::memory::StaticGuestMemory;
+using namespace uml::emulator::tests::gadget_runtime;
 
 namespace {
 
-constexpr std::uint64_t code_base = 0xd0'0000;
-constexpr std::uint32_t system_call = 0xd400'0001U;
 /* A block is the whole fetch window: 63 additions and a branch. */
 constexpr std::size_t width = 64;
 constexpr std::size_t kib = std::size_t{1} << 10;
@@ -50,30 +49,11 @@ std::size_t small_budget = mib;
 
 [[nodiscard]] gadgets::BuildOptions options(bool sharing)
 {
-	gadgets::BuildOptions options;
-	if (sharing)
-		options.host_capabilities.supported.set(
-			static_cast<std::size_t>(uml::cpu::ArmFeature::lse2));
-	return options;
+	return sharing ? sharing_options() : gadgets::BuildOptions{};
 }
 
 /* `add x2, x2, #1`. */
 constexpr std::uint32_t add_one = 0x9100'0442U;
-
-[[nodiscard]] std::uint32_t branch(std::uint64_t source, std::uint64_t to)
-{
-	const auto displacement = static_cast<std::int64_t>(to) -
-		static_cast<std::int64_t>(source);
-	require((displacement & 3) == 0);
-	return 0x1400'0000U |
-		(static_cast<std::uint32_t>(displacement >> 2) & 0x03ff'ffffU);
-}
-
-[[nodiscard]] constexpr std::size_t pages_for(std::size_t bytes) noexcept
-{
-	return (bytes + DARWIN_UML_GUEST_PAGE_SIZE - 1) /
-		DARWIN_UML_GUEST_PAGE_SIZE;
-}
 
 /* `blocks` blocks of `width` instructions, each adding its 63 to x2 and
  * branching to the next, then a system call. */
@@ -97,15 +77,6 @@ struct Chain final {
 	std::size_t blocks;
 	JitBacking backing;
 	JitMapping mapping;
-};
-
-/* A vCPU's executor, memory view and CPU state are larger than the stack a
- * sanitizer leaves a test, so tests keep them on the heap. */
-struct Vcpu final {
-	explicit Vcpu(bool sharing) : executor{options(sharing)} {}
-	StaticGuestMemory memory;
-	gadgets::GadgetExecutor executor;
-	arm64::CpuState cpu{};
 };
 
 /* What the open spaces hold, counted exactly. */
@@ -150,7 +121,7 @@ void the_budget_bounds_one_address_space(unsigned long generation,
 	const auto before = cache::ledger_state();
 	{
 		const Chain chain{generation, 4000};
-		const auto vcpu = std::make_unique<Vcpu>(sharing);
+		const auto vcpu = std::make_unique<Vcpu>(options(sharing));
 		std::size_t peak = 0;
 		for (int pass = 0; pass < 3; ++pass)
 			peak = std::max(peak, run_chain(*vcpu, generation, chain));
@@ -184,7 +155,7 @@ void the_default_budget_never_sheds_it(unsigned long generation)
 	const auto before = cache::ledger_state();
 	{
 		const Chain chain{generation, 4000};
-		const auto vcpu = std::make_unique<Vcpu>(false);
+		const auto vcpu = std::make_unique<Vcpu>(options(false));
 		std::size_t peak = 0;
 		for (int pass = 0; pass < 3; ++pass)
 			peak = std::max(peak, run_chain(*vcpu, generation, chain));
@@ -212,7 +183,7 @@ void the_largest_sheds_first(unsigned long small_generation,
 	{
 		const Chain small{small_generation, 50};
 		const Chain large{large_generation, 4000};
-		const auto vcpu = std::make_unique<Vcpu>(false);
+		const auto vcpu = std::make_unique<Vcpu>(options(false));
 		(void)run_chain(*vcpu, small_generation, small);
 		const auto translated =
 			vcpu->executor.cache_diagnostics().translations;
@@ -244,7 +215,7 @@ void vcpus_sharing_a_shed_space(unsigned long generation)
 		std::vector<std::thread> threads;
 		for (std::size_t index = 0; index < vcpus; ++index)
 			threads.emplace_back([&] {
-				const auto vcpu = std::make_unique<Vcpu>(true);
+				const auto vcpu = std::make_unique<Vcpu>(options(true));
 				for (int pass = 0; pass < 3; ++pass) {
 					const auto seen = run_chain(*vcpu,
 						generation, chain);

@@ -35,9 +35,9 @@ and the static libelf used for BTF come from UML_KERNEL_HOST_TOOLS_PREFIX
 dependencies/build-kernel-host-tools.sh); UML_KERNEL_PAHOLE may select another
 pahole v1.29 or newer.
 The configuration is the shared kernel/common/config/darwin-uml.fragment
-policy, then this line's overlay for the product, then the 4 KiB page
-fragment. The linux product (the default) uses config/mainline.fragment. The
-x86_64 userspace slice applies its own config fragment after those. The android
+policy, then this line's overlay for the product. The linux product (the
+default) uses config/mainline.fragment. The x86_64 userspace slice applies its
+own config fragment after those. The android
 product uses config/android.fragment instead; it is the arm64 slice only, and
 the build refuses a configuration that lacks a symbol of
 config/android-required-builtins.txt or has one of
@@ -257,8 +257,7 @@ run_make()
 		"LD=$UML_KERNEL_LD" "CROSS_COMPILE=$UML_KERNEL_CROSS_COMPILE" "$@"
 }
 
-set -- "$COMMON_ROOT/config/darwin-uml.fragment" "$PRODUCT_FRAGMENT" \
-	"$COMMON_ROOT/config/page-4k.fragment"
+set -- "$COMMON_ROOT/config/darwin-uml.fragment" "$PRODUCT_FRAGMENT"
 if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
 	set -- "$@" "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
 fi

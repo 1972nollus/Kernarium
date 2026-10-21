@@ -3,13 +3,13 @@
  * Checks the generated AArch32 instruction corpus. tests/unit/arm64/
  * aarch32_corpus/README.md owns the pack format and the oracles.
  *
- * No engine runs AArch32 yet, so a case is checked against what is known
+ * This lane runs no engine, so a case is checked against what is known
  * without one: its program decodes, in order and in the IT state the earlier
  * instructions leave, to legal forms except at the instruction that raised an
  * event; the instruction under test is the form the case names; the event
  * is one the instruction's kind can raise; the retired count, the fault
  * position and address, the state changes and the memory runs are consistent
- * with that; and a case is stored once. Every case of a page profile runs; a
+ * with that; and a case is stored once. Every case of the 4 KiB profile runs; a
  * case whose forms need a level the run does not implement is skipped, so a
  * lane at the base or SIMD level reads the same pack.
  *
@@ -35,10 +35,6 @@
 #include <tuple>
 #include <vector>
 
-#ifndef DARWIN_UML_GUEST_PAGE_SIZE
-#error "the guest page profile selects the corpus records"
-#endif
-
 namespace {
 
 using ::uml::testing::require;
@@ -55,47 +51,21 @@ void require_in(const std::string &context, bool condition, const char *what)
 	}
 }
 
-struct Decoded final {
-	Instruction instruction;
-	unsigned half; /* halfword index of its first halfword */
-};
-
-std::vector<Decoded> decode_program(const std::string &context, const Case &test, const Profile &profile,
+std::vector<ProgramStep> decode_program(const std::string &context, const Case &test, const Profile &profile,
 	bool &truncated)
 {
-	std::vector<Decoded> result;
-	truncated = false;
-	const bool thumb = test.flags & kFlagThumb;
-	ItState it;
-	for (unsigned half = 0; half < test.halves.size();) {
-		Instruction instruction;
-		if (!thumb) {
-			if (half + 1 >= test.halves.size()) {
-				/* A program that switches state can end in a half of a word. */
-				require_in(context, !(test.flags & kFlagStraight), "an A32 program is whole words");
-				break;
-			}
-			instruction = decode_a32(std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half], profile);
-			result.push_back({instruction, half});
-			half += 2;
-			continue;
-		}
-		const std::uint16_t first = test.halves[half];
-		const unsigned length = thumb_length(first);
-		if (half + length / 2 > test.halves.size()) {
-			/* The words of A32 code a program branches into end this way, and so does a
-			 * Thumb-2 instruction cut off by the end of the code region. */
-			require_in(context, !(test.flags & kFlagStraight), "a Thumb program ends inside an instruction");
-			truncated = true;
-			break;
-		}
-		const std::uint32_t word =
-			length == 4 ? std::uint32_t{first} << 16 | test.halves[half + 1] : std::uint32_t{first} << 16;
-		instruction = decode_thumb(word, it, profile);
-		it = instruction.next_it;
-		result.push_back({instruction, half});
-		half += length / 2;
-	}
+	std::vector<ProgramStep> result;
+	const auto end = for_each_instruction(test, profile, [&](const ProgramStep &step) {
+		result.push_back(step);
+		return true;
+	});
+	/* A program that switches state can end in a half of a word. */
+	require_in(context, end != ProgramEnd::split_word || !(test.flags & kFlagStraight),
+		"an A32 program is whole words");
+	/* The words of A32 code a program branches into end a Thumb program this way, and so does a
+	 * Thumb-2 instruction cut off by the end of the code region. */
+	truncated = end == ProgramEnd::cut_off;
+	require_in(context, !truncated || !(test.flags & kFlagStraight), "a Thumb program ends inside an instruction");
 	return result;
 }
 
@@ -116,6 +86,46 @@ bool is_linux_breakpoint(const Instruction &instruction)
 	 * arm's): A32 0xe7f001f0, T16 0xde01 and T32 0xf7f0a000. */
 	return instruction.word == 0xE7F001F0 || instruction.word == 0xDE010000 ||
 		instruction.word == 0xF7F0A000;
+}
+
+/* for_each_instruction() hands every lane the program as the decoder reads it:
+ * A32 words, or Thumb instructions in the IT state the earlier ones leave. */
+void check_program_walk()
+{
+	const Profile profile = Profile::at(Level::complete);
+	struct Seen final {
+		unsigned half, cond;
+		bool in_it, last_in_it;
+	};
+	const auto walk = [&](const Case &test, std::size_t stop_after, std::vector<Seen> &seen) {
+		return for_each_instruction(test, profile, [&](const ProgramStep &step) {
+			seen.push_back({step.half, step.instruction.cond, step.instruction.in_it,
+				step.instruction.last_in_it});
+			return seen.size() < stop_after;
+		});
+	};
+	std::vector<Seen> seen;
+	Case thumb;
+	thumb.flags = kFlagThumb;
+	thumb.halves = {0xbf04, 0x2001, 0x2102, 0x2203}; /* itt eq; movs; movs; movs */
+	require(walk(thumb, 99, seen) == ProgramEnd::whole && seen.size() == 4, "a Thumb program is walked whole");
+	require(seen[0].cond == 14 && !seen[0].in_it, "an IT instruction is not in its block");
+	require(seen[1].half == 1 && seen[1].cond == 0 && seen[1].in_it && !seen[1].last_in_it,
+		"the IT state reaches the next instruction");
+	require(seen[2].half == 2 && seen[2].cond == 0 && seen[2].in_it && seen[2].last_in_it,
+		"the IT state follows the block");
+	require(seen[3].cond == 14 && !seen[3].in_it, "the IT block ends");
+	seen.clear();
+	require(walk(thumb, 2, seen) == ProgramEnd::whole && seen.size() == 2, "a visitor stops the walk");
+	seen.clear();
+	thumb.halves = {0x2001, 0xf000};
+	require(walk(thumb, 99, seen) == ProgramEnd::cut_off && seen.size() == 1,
+		"a Thumb-2 instruction cut off is reported");
+	seen.clear();
+	Case arm;
+	arm.halves = {0x0000, 0xe1a0, 0x0000, 0xe1a0, 0x1234};
+	require(walk(arm, 99, seen) == ProgramEnd::split_word && seen.size() == 2 && seen[1].half == 2,
+		"half an A32 word is reported");
 }
 
 struct Totals final {
@@ -182,7 +192,7 @@ void check_case(const Record &record, const Case &test, const Profile &profile, 
 			test.event != kSigFpe && test.event != kSigSegv && test.event != kEventSvc && test.event != 14)
 			fail("names an event that does not exist");
 		const auto position = std::find_if(program.begin(), program.end(),
-			[&](const Decoded &decoded) { return decoded.half == test.fault_instruction; });
+			[&](const ProgramStep &decoded) { return decoded.half == test.fault_instruction; });
 		if (straight) {
 			if (position == program.end())
 				fail("the fault is not at an instruction");
@@ -248,6 +258,7 @@ int main(int argc, char **argv)
 	}
 	require(path != nullptr, "usage: PACK [--level L] [--record NAME]");
 
+	check_program_walk();
 	const Pack pack = read_pack(read_file(path));
 	const Profile profile = Profile::at(Level::complete);
 	Totals totals;
@@ -264,7 +275,7 @@ int main(int argc, char **argv)
 			check_case(record, test, profile, level, totals);
 		}
 	}
-	require(totals.records != 0, "no record applies to this page profile");
+	require(totals.records != 0, "no record applies to the 4 KiB profile");
 	std::printf("AArch32 corpus: %zu cases in %zu records (%zu raise an event, %zu skipped below the level)\n",
 		totals.cases, totals.records, totals.events, totals.skipped);
 	for (const auto &[oracle, count] : totals.per_oracle)

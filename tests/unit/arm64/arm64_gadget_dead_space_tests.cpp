@@ -7,6 +7,7 @@
  * Runs against the unit-test variant of the gadget executor
  * (uml_arm64_gadget_sweep_stress_executor), which counts live spaces. */
 #include "allocation_failure.hpp"
+#include "arm64_gadget_runtime_test_support.hpp"
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 
@@ -34,84 +35,9 @@ namespace stress = gadgets::stress;
 using uml::emulator::tests::JitBacking;
 using uml::emulator::tests::JitMapping;
 using uml::emulator::tests::require;
-using uml::memory::StaticGuestMemory;
+using namespace uml::emulator::tests::gadget_runtime;
 
 namespace {
-
-constexpr std::uint64_t code_base = 0xd0'0000;
-constexpr std::uint64_t target = code_base + 0x100;
-constexpr std::uint32_t system_call = 0xd400'0001U;
-
-[[nodiscard]] gadgets::BuildOptions sharing_options()
-{
-	gadgets::BuildOptions options;
-	options.host_capabilities.supported.set(
-		static_cast<std::size_t>(uml::cpu::ArmFeature::lse2));
-	return options;
-}
-
-struct Outcome final {
-	::uml::cpu::EngineEvent event;
-	std::size_t executed;
-};
-
-[[nodiscard]] Outcome run_once(gadgets::GadgetExecutor &executor,
-	StaticGuestMemory &memory, unsigned long generation, arm64::CpuState &cpu)
-{
-	require(executor.begin_execution(generation, cpu.pc));
-	std::size_t executed = 0;
-	const auto event = executor.run_block(cpu, memory, generation, executed);
-	executor.end_execution();
-	return {event, executed};
-}
-
-[[nodiscard]] std::size_t run_to_system_call(
-	gadgets::GadgetExecutor &executor, StaticGuestMemory &memory,
-	unsigned long generation, arm64::CpuState &cpu, std::uint64_t pc,
-	std::size_t limit = 4)
-{
-	cpu = {};
-	cpu.pc = pc;
-	std::size_t executed = 0;
-	for (std::size_t block = 0; block < limit; ++block) {
-		const auto outcome = run_once(executor, memory, generation, cpu);
-		executed += outcome.executed;
-		if (outcome.event == ::uml::cpu::EngineEvent::system_call)
-			return executed;
-		require(outcome.event == ::uml::cpu::EngineEvent::continued);
-	}
-	require(false);
-	return executed;
-}
-
-[[nodiscard]] constexpr std::uint32_t move_immediate(
-	unsigned reg, unsigned value) noexcept
-{
-	return 0xd280'0000U | ((value & 0xffffU) << 5U) | (reg & 31U);
-}
-
-[[nodiscard]] std::uint32_t branch(std::uint64_t source, std::uint64_t to)
-{
-	const auto displacement = static_cast<std::int64_t>(to) -
-		static_cast<std::int64_t>(source);
-	return 0x1400'0000U |
-		(static_cast<std::uint32_t>(displacement >> 2) & 0x03ff'ffffU);
-}
-
-void put_program(JitBacking &backing, unsigned first, unsigned second)
-{
-	backing.put32(0, move_immediate(0, first));
-	backing.put32(4, branch(code_base + 4, target));
-	backing.put32(target - code_base, move_immediate(1, second));
-	backing.put32(target - code_base + 4, system_call);
-}
-
-struct Vcpu final {
-	Vcpu() : executor{sharing_options()} {}
-	StaticGuestMemory memory;
-	gadgets::GadgetExecutor executor;
-	arm64::CpuState cpu{};
-};
 
 void set_shared(bool shared)
 {

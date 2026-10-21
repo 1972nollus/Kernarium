@@ -34,9 +34,6 @@ from bridge_imports import (  # noqa: E402
 
 
 SCHEMA_VERSION = 3
-# Schema 2 bundles also recorded a patch count and a digest of a series
-# manifest. Both are still accepted; the final tree is the source identity.
-SUPPORTED_SCHEMA_VERSIONS = (2, 3)
 # Every kernel runs 4 KiB guest pages; the manifest records the size so a
 # consumer checks the profile it was built for.
 GUEST_PAGE_SIZE = 4096
@@ -63,7 +60,6 @@ SOURCE_KEYS = {
     "base_tree",
     "final_tree",
 }
-SCHEMA_2_SOURCE_KEYS = SOURCE_KEYS | {"patch_count", "patch_manifest_sha256"}
 ABI_KEYS = {"version", "fingerprint"}
 INVENTORY_KEYS = {"path", "role", "format", "size"}
 
@@ -101,8 +97,7 @@ DWARF_SECTION_PREFIXES = (".debug_", ".zdebug_")
 
 def validate_manifest(value: object) -> dict:
     manifest = require_exact_keys(value, TOP_LEVEL_KEYS, "artifact manifest")
-    schema = manifest["schema_version"]
-    if schema not in SUPPORTED_SCHEMA_VERSIONS or isinstance(schema, bool):
+    if manifest["schema_version"] != SCHEMA_VERSION:
         fail("artifact manifest schema version is unsupported")
     release_id = require_string(manifest["release_id"], "release ID")
     if RELEASE_ID_RE.fullmatch(release_id) is None:
@@ -134,22 +129,11 @@ def validate_manifest(value: object) -> dict:
     if manifest["elf_role"] != "darwin-uml":
         fail("kernel ELF role is not darwin-uml")
 
-    source = require_exact_keys(
-        manifest["source"],
-        SCHEMA_2_SOURCE_KEYS if schema == 2 else SOURCE_KEYS,
-        "source",
-    )
+    source = require_exact_keys(manifest["source"], SOURCE_KEYS, "source")
     for key in ("repository", "branch"):
         require_string(source[key], f"source.{key}")
     for key in ("base_commit", "base_tree", "final_tree"):
         require_hex(source[key], 40, f"source.{key}")
-    if schema == 2:
-        require_integer(source["patch_count"], "source.patch_count", minimum=1)
-        require_hex(
-            source["patch_manifest_sha256"],
-            64,
-            "source.patch_manifest_sha256",
-        )
 
     abi = require_exact_keys(manifest["abi"], ABI_KEYS, "abi")
     require_integer(abi["version"], "abi.version", minimum=1)
@@ -277,7 +261,6 @@ def verify_config_policy(
 
 def verify_elf_geometry(
     payload: bytes,
-    page_size: int,
     error: Callable[[str], BaseException] = _CHECKS.error,
 ) -> None:
     """Check a kernel image's AArch64 ET_DYN layout and separated W^X loads."""
@@ -317,7 +300,7 @@ def verify_elf_geometry(
         load_count += 1
         if flags & PF_W and flags & PF_X:
             raise error(f"ELF load segment {index} is writable and executable")
-        if alignment < page_size or alignment & (alignment - 1):
+        if alignment < GUEST_PAGE_SIZE or alignment & (alignment - 1):
             raise error(f"ELF load segment {index} has invalid alignment {alignment:#x}")
         if virtual_address % alignment != file_offset % alignment:
             raise error(f"ELF load segment {index} violates alignment congruence")
@@ -327,12 +310,10 @@ def verify_elf_geometry(
         raise error("kernel lacks separated executable and writable load segments")
 
 
-def verify_elf(
-    path: Path, page_size: int, common_root: Path, kernel_slice: str
-) -> bytes:
+def verify_elf(path: Path, common_root: Path, kernel_slice: str) -> bytes:
     """Check the kernel's ELF geometry and bridge imports; return its bytes."""
     payload = path.read_bytes()
-    verify_elf_geometry(payload, page_size)
+    verify_elf_geometry(payload)
     verify_imports(
         undefined_symbols(payload, error),
         kernel_slice,
@@ -458,12 +439,49 @@ def verify_abi_identity(manifest: dict, abi_metadata_path: Path) -> None:
             fail(f"artifact ABI identity differs from tracked {key}")
 
 
+def verify_descriptor(manifest: dict, descriptor_path: Path) -> None:
+    """Check that an accepted-*.env descriptor still repeats its bundle.
+
+    A descriptor names the bundle an Apple configure imports and keeps the
+    bundle's identity as provenance for the commit that accepted it. Configure
+    reads only the directory name, so this check is what stops the rest from
+    drifting away from the manifest.
+    """
+    expected = {
+        "SCHEMA": manifest["schema_version"],
+        "RELEASE_ID": manifest["release_id"],
+        "DIRECTORY_NAME": manifest["directory_name"],
+        "FAMILY": manifest["family"],
+        "SLICE": manifest["slice"],
+        "RELEASE": manifest["release"],
+        "PAGE_SIZE": manifest["page_size"],
+        "FINAL_TREE": manifest["source"]["final_tree"],
+        "ABI_VERSION": manifest["abi"]["version"],
+        "ABI_FINGERPRINT": manifest["abi"]["fingerprint"],
+    }
+    descriptor = parse_env(descriptor_path)
+    expected = {f"UML_KERNEL_ARTIFACT_{key}": str(value) for key, value in expected.items()}
+    if set(descriptor) != set(expected):
+        fail(
+            f"accepted descriptor {descriptor_path} keys differ "
+            f"(missing={sorted(set(expected) - set(descriptor))}, "
+            f"extra={sorted(set(descriptor) - set(expected))})"
+        )
+    for key, value in expected.items():
+        if descriptor[key] != value:
+            fail(
+                f"accepted descriptor {descriptor_path} has {key}="
+                f"{descriptor[key]}, but the bundle manifest has {value}"
+            )
+
+
 def verify_compatible_identity(
     manifest: dict,
     abi_metadata_path: Path,
     expected_family: str,
     expected_slice: str,
     expected_release_series: str,
+    descriptor_path: Path | None = None,
 ) -> None:
     verify_abi_identity(manifest, abi_metadata_path)
     if manifest["family"] != expected_family:
@@ -485,6 +503,8 @@ def verify_compatible_identity(
             f"kernel release {release} is outside required "
             f"{expected_release_series} series"
         )
+    if descriptor_path is not None:
+        verify_descriptor(manifest, descriptor_path)
 
 
 def _verify_bundle(
@@ -509,10 +529,7 @@ def _verify_bundle(
         fail("kernel release payload differs from its manifest")
     verify_config(artifact_root / "kernel/config", manifest["slice"])
     payload = verify_elf(
-        artifact_root / "kernel/vmlinux",
-        manifest["page_size"],
-        common_root,
-        manifest["slice"],
+        artifact_root / "kernel/vmlinux", common_root, manifest["slice"]
     )
     verify_runtime_image(payload)
     return manifest
@@ -540,6 +557,7 @@ def verify_compatible_artifact(
     expected_family: str,
     expected_slice: str,
     expected_release_series: str,
+    descriptor_path: Path | None = None,
 ) -> dict:
     return _verify_bundle(
         artifact_root,
@@ -550,6 +568,7 @@ def verify_compatible_artifact(
             expected_family,
             expected_slice,
             expected_release_series,
+            descriptor_path,
         ),
     )
 
