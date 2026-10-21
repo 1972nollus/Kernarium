@@ -7,6 +7,31 @@ gadget nop
 	next_gadget
 #endif
 
+/* The alignment check of an SP base, which must be 16-byte aligned: a
+ * misaligned one takes the alignment fault of the direction, \load selecting
+ * the read or the write. A forwarding variant reaches it through its own cold
+ * stub, \read_stub or \write_stub; the labels come from the caller because a
+ * nested macro's \@ is its own. A direction the caller never takes may pass 0
+ * for its stub. The fault targets default to the scalar families'. The file
+ * leaves it defined for scalar_unsigned_fast's other users, which purge it
+ * with that macro (inplace_memory.inc and sme.inc). */
+.macro sp_alignment_check base, load, forward, read_stub, write_stub, read_fault=Lscalar_alignment_fault_read_indexed, write_fault=Lscalar_alignment_fault_write_indexed
+	tst \base, #0xf
+	.if \load
+		.if \forward
+	b.ne \read_stub
+		.else
+	b.ne \read_fault
+		.endif
+	.else
+		.if \forward
+	b.ne \write_stub
+		.else
+	b.ne \write_fault
+		.endif
+	.endif
+.endm
+
 /* Literal form invariants are resolved while translating. The near entries'
  * one operand word holds the target address in bits 47:0, the destination in
  * bits 55:48 (an integer register's CpuState byte offset, or a vector
@@ -179,20 +204,7 @@ scalar_entry \suffix, \forward, (17 - \load), Lsd\@, Lsn\@, Lsm\@, Lscalar_none,
 	ubfx x21, x8, #32, #16
 	scalar_read \forward, 1, x7, x20
 	.if \base_sp
-	tst x7, #0xf
-		.if \load
-	.if \forward
-	b.ne Lscalar_forward_alignment_read\@
-	.else
-	b.ne Lscalar_alignment_fault_read_indexed
-	.endif
-		.else
-	.if \forward
-	b.ne Lscalar_forward_alignment_write\@
-	.else
-	b.ne Lscalar_alignment_fault_write_indexed
-	.endif
-		.endif
+	sp_alignment_check x7, \load, \forward, Lscalar_forward_alignment_read\@, Lscalar_forward_alignment_write\@
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
@@ -353,12 +365,7 @@ scalar_entry \name, \forward, (17 - 1), Lsd\@, Lsn\@, Lscalar_none, Lscalar_none
 	ubfx x21, x8, #32, #16
 	scalar_read \forward, 1, x7, x20
 	.if \base_sp
-	tst x7, #0xf
-	.if \forward
-	b.ne Lscalar_forward_alignment_read\@
-	.else
-	b.ne Lscalar_alignment_fault_read_indexed
-	.endif
+	sp_alignment_check x7, 1, \forward, Lscalar_forward_alignment_read\@, 0
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
@@ -441,12 +448,7 @@ scalar_entry \name, \forward, (17 - 0), Lscalar_none, Lsn\@, Lsm\@, Lscalar_none
 	ubfx x21, x8, #32, #16
 	scalar_read \forward, 1, x7, x20
 	.if \base_sp
-	tst x7, #0xf
-	.if \forward
-	b.ne Lscalar_forward_alignment_write\@
-	.else
-	b.ne Lscalar_alignment_fault_write_indexed
-	.endif
+	sp_alignment_check x7, 0, \forward, 0, Lscalar_forward_alignment_write\@
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
@@ -514,20 +516,7 @@ scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, L
 	ubfx x21, x8, #32, #16
 	scalar_read \forward, 1, x7, x20
 	.if \base_sp
-	tst x7, #0xf
-		.if \load
-	.if \forward
-	b.ne Lscalar_forward_alignment_read\@
-	.else
-	b.ne Lscalar_alignment_fault_read_indexed
-	.endif
-		.else
-	.if \forward
-	b.ne Lscalar_forward_alignment_write\@
-	.else
-	b.ne Lscalar_alignment_fault_write_indexed
-	.endif
-		.endif
+	sp_alignment_check x7, \load, \forward, Lscalar_forward_alignment_read\@, Lscalar_forward_alignment_write\@
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
@@ -623,20 +612,7 @@ scalar_entry \name, \forward, (17 - \load), Lsd\@, Lsn\@, Lsm\@, Lscalar_none, 1
 	sbfx x21, x8, #32, #16
 	scalar_read \forward, 1, x24, x20
 	.if \base_sp
-	tst x24, #0xf
-		.if \load
-	.if \forward
-	b.ne Lscalar_forward_alignment_read\@
-	.else
-	b.ne Lscalar_alignment_fault_read_indexed
-	.endif
-		.else
-	.if \forward
-	b.ne Lscalar_forward_alignment_write\@
-	.else
-	b.ne Lscalar_alignment_fault_write_indexed
-	.endif
-		.endif
+	sp_alignment_check x24, \load, \forward, Lscalar_forward_alignment_read\@, Lscalar_forward_alignment_write\@
 	.endif
 	add x25, x24, x21
 	.if \mode >= 2
@@ -816,20 +792,7 @@ scalar_entry \name, \forward, (17 - \load), Lsd\@, Lsn\@, Lsm\@, Lsa\@, 1
 	ubfx x21, x8, #32, #16
 	scalar_read \forward, 1, x24, x20
 	.if \base_sp
-	tst x24, #0xf
-		.if \load
-	.if \forward
-	b.ne Lscalar_forward_alignment_read\@
-	.else
-	b.ne Lscalar_alignment_fault_read_indexed
-	.endif
-		.else
-	.if \forward
-	b.ne Lscalar_forward_alignment_write\@
-	.else
-	b.ne Lscalar_alignment_fault_write_indexed
-	.endif
-		.endif
+	sp_alignment_check x24, \load, \forward, Lscalar_forward_alignment_read\@, Lscalar_forward_alignment_write\@
 	.endif
 	scalar_read \forward, 2, x26, x21
 	.if \address_extension == 0
@@ -977,20 +940,7 @@ scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, L
 	sbfx x21, x8, #32, #16
 	scalar_read \forward, 1, x24, x20
 	.if \base_sp
-	tst x24, #0xf
-		.if \load
-	.if \forward
-	b.ne Lscalar_forward_alignment_read\@
-	.else
-	b.ne Lscalar_alignment_fault_read_indexed
-	.endif
-		.else
-	.if \forward
-	b.ne Lscalar_forward_alignment_write\@
-	.else
-	b.ne Lscalar_alignment_fault_write_indexed
-	.endif
-		.endif
+	sp_alignment_check x24, \load, \forward, Lscalar_forward_alignment_read\@, Lscalar_forward_alignment_write\@
 	.endif
 	add x25, x24, x21
 	.if \mode == 2
@@ -1072,20 +1022,7 @@ scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lsm\@, Lscalar_
 	ubfx x21, x8, #32, #16
 	scalar_read \forward, 1, x24, x20
 	.if \base_sp
-	tst x24, #0xf
-		.if \load
-	.if \forward
-	b.ne Lscalar_forward_alignment_read\@
-	.else
-	b.ne Lscalar_alignment_fault_read_indexed
-	.endif
-		.else
-	.if \forward
-	b.ne Lscalar_forward_alignment_write\@
-	.else
-	b.ne Lscalar_alignment_fault_write_indexed
-	.endif
-		.endif
+	sp_alignment_check x24, \load, \forward, Lscalar_forward_alignment_read\@, Lscalar_forward_alignment_write\@
 	.endif
 	scalar_read \forward, 2, x26, x21
 	.if \extension == 0
@@ -1202,20 +1139,7 @@ scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, L
 	sbfx x6, x8, #18, #14
 	scalar_read \forward, 1, x16, x24
 	.if \sp_base
-	tst x16, #0xf
-		.if \load
-	.if \forward
-	b.ne Lscalar_forward_alignment_pair_read\@
-	.else
-	b.ne uml_arm64_gadget_pair_alignment_fault_read_indexed
-	.endif
-		.else
-	.if \forward
-	b.ne Lscalar_forward_alignment_pair_write\@
-	.else
-	b.ne uml_arm64_gadget_pair_alignment_fault_write_indexed
-	.endif
-		.endif
+	sp_alignment_check x16, \load, \forward, Lscalar_forward_alignment_pair_read\@, Lscalar_forward_alignment_pair_write\@, uml_arm64_gadget_pair_alignment_fault_read_indexed, uml_arm64_gadget_pair_alignment_fault_write_indexed
 	.endif
 	add x21, x16, x6
 	.if \mode >= 2
@@ -1396,20 +1320,7 @@ scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, L
 	sbfx x6, x8, #36, #12
 	scalar_read \forward, 1, x16, x24
 	.if \sp_base
-	tst x16, #0xf
-		.if \load
-	.if \forward
-	b.ne Lscalar_forward_alignment_pair_read\@
-	.else
-	b.ne uml_arm64_gadget_pair_alignment_fault_read_indexed
-	.endif
-		.else
-	.if \forward
-	b.ne Lscalar_forward_alignment_pair_write\@
-	.else
-	b.ne uml_arm64_gadget_pair_alignment_fault_write_indexed
-	.endif
-		.endif
+	sp_alignment_check x16, \load, \forward, Lscalar_forward_alignment_pair_read\@, Lscalar_forward_alignment_pair_write\@, uml_arm64_gadget_pair_alignment_fault_read_indexed, uml_arm64_gadget_pair_alignment_fault_write_indexed
 	.endif
 	add x21, x16, x6
 	.if \mode == 2

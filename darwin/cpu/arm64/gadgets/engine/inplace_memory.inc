@@ -76,4 +76,5 @@ scalar_unsigned_inplace_row load64_unsigned_inplace, r_sp
 .purgem scalar_unsigned_inplace_modes
 .purgem scalar_unsigned_inplace_register
 .purgem scalar_unsigned_fast
+.purgem sp_alignment_check
 

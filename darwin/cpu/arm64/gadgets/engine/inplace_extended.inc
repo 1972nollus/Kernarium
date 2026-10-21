@@ -141,33 +141,9 @@ scalar_entry add_sub_register_inplace_\suffix\()_\reg, \forward, 2, Lipr\@, Lipr
 	ldr x16, [_cpu, x11]
 	.endif
 	.if \bits64
-		.if \subtract
-			.if \flags
-	subs _scalar_x7, x15, x16
-			.else
-	sub _scalar_x7, x15, x16
-			.endif
-		.else
-			.if \flags
-	adds _scalar_x7, x15, x16
-			.else
-	add _scalar_x7, x15, x16
-			.endif
-		.endif
+	add_sub_op \subtract, \flags, _scalar_x7, x15, x16
 	.else
-		.if \subtract
-			.if \flags
-	subs _scalar_w7, w15, w16
-			.else
-	sub _scalar_w7, w15, w16
-			.endif
-		.else
-			.if \flags
-	adds _scalar_w7, w15, w16
-			.else
-	add _scalar_w7, w15, w16
-			.endif
-		.endif
+	add_sub_op \subtract, \flags, _scalar_w7, w15, w16
 	.endif
 	.if \flags
 	mrs x27, nzcv
@@ -320,6 +296,7 @@ inplace_row_32 simd_fused_inplace_fmls_2d
 .purgem add_sub_reg_inplace_modes
 .purgem add_sub_reg_inplace_register
 .purgem add_sub_reg_inplace_entry
+.purgem add_sub_op
 .purgem move_keep_inplace_modes
 .purgem move_keep_inplace_register
 .purgem move_keep_inplace_entry
