@@ -2,11 +2,11 @@
 
 #include "a32_loop.hpp"
 
+#include "cpu/arm64/aarch32/breakpoint_immediate.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/engine_execution.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -16,25 +16,6 @@ namespace {
 
 using ::uml::cpu::EngineEvent;
 namespace memory = ::uml::memory;
-
-/* The immediate of the BKPT the task's PC key names: 16 bits in A32, the low
- * 8 in T32. It is read back from the guest here, on the cold exit, rather
- * than carried by the translation. */
-[[nodiscard]] std::uint32_t breakpoint_immediate(
-    memory::StaticGuestMemory &guest, std::uint64_t key) {
-  std::array<std::byte, 4> bytes{};
-  const bool thumb = aarch32::key_is_thumb(key);
-  const std::size_t size = thumb ? 2U : 4U;
-  if (!guest.fetch(aarch32::key_pc(key),
-                   std::span<std::byte>{bytes.data(), size}))
-    return 0;
-  std::uint32_t word = 0;
-  for (std::size_t index = 0; index < size; ++index)
-    word |= std::to_integer<std::uint32_t>(bytes[index]) << (8U * index);
-  if (thumb)
-    return word & 0xffU;
-  return (word >> 4U & 0xfff0U) | (word & 0xfU);
-}
 
 /* What the shared entry loop (engine_execution.hpp) takes from an AArch32
  * task of the JIT: cpu.pc is a key for the whole entry, the host loads the
@@ -70,7 +51,7 @@ struct JitA32Entry : detail::EntryDefaults {
   [[nodiscard]] static std::uint32_t breakpoint_syndrome(
       JitExecutor &, const ExecutionRequest &request,
       memory::StaticGuestMemory &guest) {
-    return breakpoint_immediate(guest, request.cpu.pc);
+    return aarch32::read_breakpoint_immediate(guest, request.cpu.pc);
   }
 };
 

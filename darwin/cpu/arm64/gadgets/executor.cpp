@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "executor.hpp"
 
+#include "cpu/arm64/aarch32/breakpoint_immediate.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
@@ -172,25 +173,6 @@ static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
 		count += run;
 	}
 	return count;
-}
-
-/* BKPT's immediate, from the instruction at `key`: imm12:imm4 for A32 and
- * imm8 for T32. */
-[[nodiscard]] std::uint32_t read_breakpoint_immediate(
-	StaticGuestMemory &memory, std::uint64_t key) noexcept
-{
-	if (arm64::aarch32::key_is_thumb(key)) {
-		std::uint16_t halfword = 0;
-		if (!memory.fetch(arm64::aarch32::key_pc(key),
-				  std::as_writable_bytes(std::span{&halfword, 1})))
-			return 0;
-		return halfword & 0xffU;
-	}
-	std::uint32_t word = 0;
-	if (!memory.fetch(arm64::aarch32::key_pc(key),
-			  std::as_writable_bytes(std::span{&word, 1})))
-		return 0;
-	return (word >> 4 & 0xfff0U) | (word & 0xfU);
 }
 
 void correct_terminal_instruction_count(
@@ -3629,7 +3611,8 @@ private:
 	    event == ::uml::cpu::EngineEvent::system_call)
 		cpu.a32_itstate = output.next_it.bits();
 	if (event == ::uml::cpu::EngineEvent::breakpoint)
-		breakpoint_immediate_ = read_breakpoint_immediate(memory, cpu.pc);
+		breakpoint_immediate_ =
+			arm64::aarch32::read_breakpoint_immediate(memory, cpu.pc);
 	/* A one-instruction fallthrough ends in the synthetic interrupt gadget:
 	 * an internal cold boundary, not a guest-visible interrupt. */
 	return event == ::uml::cpu::EngineEvent::interrupt ?
@@ -3693,7 +3676,8 @@ private:
 		cpu.gadget_indirect_miss = nullptr;
 	}
 	if (event == ::uml::cpu::EngineEvent::breakpoint)
-		breakpoint_immediate_ = read_breakpoint_immediate(memory, cpu.pc);
+		breakpoint_immediate_ =
+			arm64::aarch32::read_breakpoint_immediate(memory, cpu.pc);
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	{
 		auto &d = cache_diagnostics_;
