@@ -288,7 +288,7 @@ def require_kernel_elf(
 ) -> None:
     path.write_bytes(image)
     try:
-        module.verify_elf(path, module.GUEST_PAGE_SIZE, common_root, kernel_slice)
+        module.verify_elf(path, common_root, kernel_slice)
     except SystemExit as error:
         require(
             diagnostic is not None and diagnostic in str(error),

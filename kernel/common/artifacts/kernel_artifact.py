@@ -261,7 +261,6 @@ def verify_config_policy(
 
 def verify_elf_geometry(
     payload: bytes,
-    page_size: int,
     error: Callable[[str], BaseException] = _CHECKS.error,
 ) -> None:
     """Check a kernel image's AArch64 ET_DYN layout and separated W^X loads."""
@@ -301,7 +300,7 @@ def verify_elf_geometry(
         load_count += 1
         if flags & PF_W and flags & PF_X:
             raise error(f"ELF load segment {index} is writable and executable")
-        if alignment < page_size or alignment & (alignment - 1):
+        if alignment < GUEST_PAGE_SIZE or alignment & (alignment - 1):
             raise error(f"ELF load segment {index} has invalid alignment {alignment:#x}")
         if virtual_address % alignment != file_offset % alignment:
             raise error(f"ELF load segment {index} violates alignment congruence")
@@ -311,12 +310,10 @@ def verify_elf_geometry(
         raise error("kernel lacks separated executable and writable load segments")
 
 
-def verify_elf(
-    path: Path, page_size: int, common_root: Path, kernel_slice: str
-) -> bytes:
+def verify_elf(path: Path, common_root: Path, kernel_slice: str) -> bytes:
     """Check the kernel's ELF geometry and bridge imports; return its bytes."""
     payload = path.read_bytes()
-    verify_elf_geometry(payload, page_size)
+    verify_elf_geometry(payload)
     verify_imports(
         undefined_symbols(payload, error),
         kernel_slice,
@@ -493,10 +490,7 @@ def _verify_bundle(
         fail("kernel release payload differs from its manifest")
     verify_config(artifact_root / "kernel/config", manifest["slice"])
     payload = verify_elf(
-        artifact_root / "kernel/vmlinux",
-        manifest["page_size"],
-        common_root,
-        manifest["slice"],
+        artifact_root / "kernel/vmlinux", common_root, manifest["slice"]
     )
     verify_runtime_image(payload)
     return manifest
