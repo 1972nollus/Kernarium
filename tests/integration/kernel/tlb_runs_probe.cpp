@@ -23,7 +23,7 @@
 //   churn     a thread changes the protection of one region while the main
 //             thread checks another, so batches are rejected and walked again
 // Output lines are "RESULT <test> PASS|FAIL <detail>". The exit status is the
-// number of failures.
+// number of failures; a test that reports nothing counts as one.
 
 #include <atomic>
 #include <csetjmp>
@@ -83,9 +83,11 @@ bool load_faults(volatile unsigned char *address)
 }
 
 int failures;
+int reported;
 
 void result(const char *test, bool pass, const char *detail)
 {
+	reported++;
 	std::printf("RESULT %s %s %s\n", test, pass ? "PASS" : "FAIL", detail);
 	std::fflush(stdout);
 	if (!pass)
@@ -514,21 +516,22 @@ int main(int argc, char **argv)
 	sigaction(SIGBUS, &action, nullptr);
 	setvbuf(stdout, nullptr, _IOLBF, 0);
 	const char *only = argc > 1 ? argv[1] : nullptr;
-	const auto wanted = [&](const char *name) {
-		return only == nullptr || std::strcmp(only, name) == 0;
+	// A test that returns without a RESULT line has not checked anything.
+	const auto run = [&](const char *name, void (*test)()) {
+		if (only != nullptr && std::strcmp(only, name) != 0)
+			return;
+		const int before = reported;
+		test();
+		if (reported == before)
+			result(name, false, "reported nothing");
 	};
 	// The fork test runs first, while freed pages have not yet scattered the
 	// frames a new file takes.
-	if (wanted("fork"))
-		test_fork();
-	if (wanted("blocks"))
-		test_blocks();
-	if (wanted("file"))
-		test_file();
-	if (wanted("unmap"))
-		test_unmap();
-	if (wanted("churn"))
-		test_churn();
+	run("fork", test_fork);
+	run("blocks", test_blocks);
+	run("file", test_file);
+	run("unmap", test_unmap);
+	run("churn", test_churn);
 	std::printf("SUMMARY failures=%d\n", failures);
 	return failures;
 }

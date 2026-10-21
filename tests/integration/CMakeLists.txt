@@ -465,7 +465,10 @@ uml_add_guest_integration_test(
 # handler and cancellation of a thread blocked in a system call.
 uml_add_guest_integration_test(
     NAME guest-signal-unwind
-    SCRIPT kernel/run_guest_signal_unwind.py
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/signal_unwind_probe.cpp
+        "--cxxflags=-g -fno-omit-frame-pointer -rdynamic -pthread"
+        --ncpus 2 --probe-timeout 150
     LABELS guest;kernel;smoke
     TIMEOUT 420
     CPUS 2)
@@ -475,16 +478,23 @@ uml_add_guest_integration_test(
 # while another thread's invalidations make it walk batches again.
 uml_add_guest_integration_test(
     NAME guest-tlb-replay-runs
-    SCRIPT kernel/run_guest_tlb_runs.py
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/tlb_runs_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror -pthread"
+        --ncpus 2 --probe-timeout 300
     LABELS guest;kernel;memory
     TIMEOUT 600
     CPUS 2)
 
 # A system call or a fault taken with a bad stack pointer, again and again
-# on one vCPU, gets native arm64's result and never kills the task.
+# on one vCPU, gets native arm64's result and never kills the task, and the
+# kernel prints no failed Darwin host call.
 uml_add_guest_integration_test(
     NAME guest-stack-pointer
-    SCRIPT kernel/run_guest_stack_pointer.py
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/stack_pointer_probe.cpp
+        --console-failure "Darwin: .*failed"
+        --ncpus 2 --probe-timeout 120
     LABELS guest;kernel;smoke
     TIMEOUT 420
     CPUS 2)

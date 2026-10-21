@@ -350,6 +350,13 @@ guest probe states in its header what it checks, and a contract's owner, such
 as [`../kernel/common/README.md`](../kernel/common/README.md), names the tests
 that check it.
 
+A behaviour that one program checks inside the guest runs through
+`tests/integration/support/run_guest_probe.py`: a `.py` probe runs under
+`python3`, and a `.cpp` probe is built in the guest with the registration's
+`--cxxflags`. The probe's exit status is its failure count, and the test also
+fails on a console line that the registration's `--console-failure` pattern
+matches.
+
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
 `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; do not override individual files.
