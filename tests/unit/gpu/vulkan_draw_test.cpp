@@ -4,32 +4,19 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace uml::gpu::test {
 namespace {
 
 using uml::testing::require;
-
-template <typename T>
-T structure(VkStructureType type)
-{
-    T value{};
-    value.sType = type;
-    return value;
-}
-
-template <typename Function>
-Function instance_function(VkInstance instance, const char *name)
-{
-    auto result = reinterpret_cast<Function>(vkGetInstanceProcAddr(instance, name));
-    require(result != nullptr, std::string("missing ") + name);
-    return result;
-}
 
 struct Cleanup {
     std::vector<std::function<void()>> actions;
@@ -88,12 +75,10 @@ struct DrawContext::Impl {
 
     uint32_t memory_type(uint32_t mask, VkMemoryPropertyFlags flags) const
     {
-        for (uint32_t type = 0; type < memory.memoryTypeCount; ++type) {
-            if ((mask & (1u << type)) &&
-                (memory.memoryTypes[type].propertyFlags & flags) == flags)
-                return type;
-        }
-        throw std::runtime_error("required Vulkan memory type unavailable");
+        const auto type = uml::gpu::test::memory_type(memory, mask, flags);
+        if (!type)
+            throw std::runtime_error("required Vulkan memory type unavailable");
+        return *type;
     }
 };
 
@@ -251,6 +236,17 @@ DrawContext::~DrawContext()
 const DrawCapabilities &DrawContext::capabilities() const
 {
     return impl_->capabilities;
+}
+
+void require_venus_when_asked(const DrawContext &context, const std::source_location location)
+{
+    const char *venus = std::getenv("UML_VULKAN_REQUIRE_VENUS");
+    if (!venus || std::string_view(venus) != "1")
+        return;
+    require(context.capabilities().driver_id == VK_DRIVER_ID_MESA_VENUS,
+            "guest probe did not select the Venus driver", location);
+    std::puts("UML_VULKAN_PROBE_DEVICE: Venus");
+    std::fflush(stdout);
 }
 
 SubmitStormResult DrawContext::submit_storm(const SubmitStormConfig &config)
