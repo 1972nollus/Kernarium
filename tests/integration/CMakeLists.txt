@@ -535,9 +535,9 @@ uml_add_guest_integration_test(
 
 # Memory the kernel shares with user space, through a vmalloc or vmap alias
 # (BPF arrays and ring buffers, perf, PACKET_MMAP, io_uring), reads the same
-# from both sides. On the 4 KiB profile an alias that is not whole groups of
-# four pages is a private copy of its frames, and a ring in the application's
-# scattered pages cannot be shared and is refused.
+# from both sides. An alias that is not whole groups of four pages is a
+# private copy of its frames, and a ring in the application's scattered pages
+# cannot be shared and is refused.
 uml_add_freestanding_cxx_payload(UML_GUEST_SHARED_MEMORY_PROBE
     guest-shared-memory-probe
     kernel/shared_memory_probe.cpp
