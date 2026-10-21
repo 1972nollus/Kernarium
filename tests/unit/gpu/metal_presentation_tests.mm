@@ -13,6 +13,7 @@
 #include "frame_tap.hpp"
 #include "gpu_metal_test_support.hpp"
 #include "metal_presentation.hpp"
+#include "wait_until.hpp"
 
 #import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
@@ -364,13 +365,10 @@ struct TapRecorder final {
         std::uint64_t wanted,
         std::chrono::seconds limit = std::chrono::seconds(60))
     {
-        const auto deadline = std::chrono::steady_clock::now() + limit;
-        while (std::chrono::steady_clock::now() < deadline) {
-            if (delivered() >= wanted)
-                return true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-        return false;
+        return uml::testing::waitUntil(
+            [&] { return delivered() >= wanted; },
+            limit,
+            std::chrono::milliseconds(5));
     }
 
     /* Waits for a delivered frame that satisfies `accept`. The limit only
@@ -380,16 +378,13 @@ struct TapRecorder final {
         const std::function<bool(const Frame&)>& accept,
         std::chrono::seconds limit = std::chrono::seconds(60))
     {
-        const auto deadline = std::chrono::steady_clock::now() + limit;
-        while (std::chrono::steady_clock::now() < deadline) {
-            {
+        return uml::testing::waitUntil(
+            [&] {
                 std::lock_guard lock(mutex);
-                if (count != 0 && accept(latest))
-                    return true;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-        return false;
+                return count != 0 && accept(latest);
+            },
+            limit,
+            std::chrono::milliseconds(5));
     }
 };
 

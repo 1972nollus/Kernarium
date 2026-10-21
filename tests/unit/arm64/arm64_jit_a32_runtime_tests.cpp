@@ -66,6 +66,60 @@ void bkpt_reports_its_immediate() {
   require(cpu.registers[0] == 1);
 }
 
+void t32_bkpt_reports_its_immediate() {
+  Fixture fixture{0x1a32'0004};
+  fixture.code16(0, {
+      0x2001, // movs r0, #1
+      0xbe42, // bkpt #0x42
+  });
+  auto cpu = Fixture::task(true);
+  const auto result = fixture.run(cpu);
+  require(result.reason == ExitReason::breakpoint);
+  require(result.syndrome == 0x42U);
+  require(cpu.pc == key::t32_key(code_base + 2));
+  require(cpu.registers[0] == 1);
+}
+
+/* The PC key is checked at every block boundary: an A32 target with bit 1 set
+ * is a PC-alignment exit at that PC, a PC that is no AArch32 key is fatal,
+ * and a key with bits outside its 32-bit address is a PC-alignment exit at
+ * the PC its low bits name. */
+void a_misaligned_or_foreign_pc_key_ends_the_entry() {
+  {
+    Fixture fixture{0x1a32'0005};
+    fixture.code32(0, {
+        0xe3a01002U, // mov r1, #2
+        0xe12fff10U, // bx r0
+    });
+    auto cpu = Fixture::task(false);
+    cpu.registers[0] = code_base + 0x102;
+    const auto result = fixture.run(cpu);
+    require(result.reason == ExitReason::pc_alignment);
+    require(result.retired_instructions == 2);
+    require(result.fault.address == code_base + 0x102);
+    require(result.fault.access == ::uml::memory::MemoryAccess::execute);
+    require(cpu.registers[1] == 2);
+  }
+  {
+    Fixture fixture{0x1a32'0006};
+    auto cpu = Fixture::task(false);
+    cpu.pc = code_base;
+    const auto result = fixture.run(cpu);
+    require(result.reason == ExitReason::fatal);
+    require(result.retired_instructions == 0);
+  }
+  {
+    Fixture fixture{0x1a32'0007};
+    auto cpu = Fixture::task(false);
+    cpu.pc = key::a32_key(code_base) | std::uint64_t{1} << 40;
+    const auto result = fixture.run(cpu);
+    require(result.reason == ExitReason::pc_alignment);
+    require(result.retired_instructions == 0);
+    require(result.fault.address == code_base);
+    require(result.fault.access == ::uml::memory::MemoryAccess::execute);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -80,6 +134,8 @@ int main() {
   a32_arithmetic_and_svc();
   t32_arithmetic_and_svc();
   bkpt_reports_its_immediate();
+  t32_bkpt_reports_its_immediate();
+  a_misaligned_or_foreign_pc_key_ends_the_entry();
   std::puts("arm64-jit-a32-runtime: ok");
   return 0;
 }

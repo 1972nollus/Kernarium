@@ -117,7 +117,7 @@ public:
                                 acquire ? std::memory_order_acquire
                                         : std::memory_order_relaxed,
                                 value, key)) {
-      clear(cpu);
+      cpu.clear_exclusive_monitor();
       return 0;
     }
     cpu.exclusive_address = address;
@@ -145,7 +145,7 @@ public:
                    cpu.exclusive_size == size && cpu.exclusive_key == key &&
                    cpu.exclusive_version == sem::reservation_version(key) &&
                    cpu.exclusive_value == current;
-    clear(cpu);
+    cpu.clear_exclusive_monitor();
     if (!success)
       return false;
     std::uintptr_t stored_key = 0;
@@ -160,15 +160,6 @@ public:
   }
 
 private:
-  static void clear(CpuState &cpu) noexcept {
-    cpu.exclusive_address = ~std::uint64_t{0};
-    cpu.exclusive_key = 0;
-    cpu.exclusive_value = 0;
-    cpu.exclusive_value2 = 0;
-    cpu.exclusive_version = 0;
-    cpu.exclusive_size = 0;
-  }
-
   Tlb &tlb_;
   TlbMemory memory_;
 };

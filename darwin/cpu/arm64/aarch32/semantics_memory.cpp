@@ -194,16 +194,6 @@ bool exec_multiple_transfer(Exec &x, const OpInfo &info)
 
 namespace {
 
-void clear_monitor(CpuState &cpu) noexcept
-{
-	cpu.exclusive_address = ~std::uint64_t{0};
-	cpu.exclusive_key = 0;
-	cpu.exclusive_value = 0;
-	cpu.exclusive_value2 = 0;
-	cpu.exclusive_version = 0;
-	cpu.exclusive_size = 0;
-}
-
 [[nodiscard]] std::uint64_t atomic_load(const std::byte *host, unsigned size,
 	int order) noexcept
 {
@@ -370,14 +360,14 @@ bool A32Memory::store_exclusive(CpuState &cpu, std::uint32_t address, std::byte 
 	const bool held = cpu.exclusive_size == size && cpu.exclusive_address == address
 		&& cpu.exclusive_key == reinterpret_cast<std::uintptr_t>(host);
 	const std::uint64_t expected = cpu.exclusive_value;
-	detail::clear_monitor(cpu);
+	cpu.clear_exclusive_monitor();
 	return held && detail::atomic_swap(host, size, expected, value,
 		release ? __ATOMIC_RELEASE : __ATOMIC_RELAXED);
 }
 
 void A32Memory::clear_exclusive(CpuState &cpu) noexcept
 {
-	detail::clear_monitor(cpu);
+	cpu.clear_exclusive_monitor();
 }
 
 } // namespace uml::cpu::arm64::aarch32

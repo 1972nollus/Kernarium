@@ -46,11 +46,9 @@ def load_probe(path: Path) -> bytes:
     return payload
 
 
-def build_probe_script(payload: bytes, receipt: dict, page_size: int,
+def build_probe_script(payload: bytes, receipt: dict,
                        arguments: Sequence[str]) -> str:
     """The guest check around the probe, which is installed as a guest file."""
-    if page_size != 4096:
-        raise guest.SafetyError("unsupported guest page size")
     digest = hashlib.sha256(payload).hexdigest()
     identities = [cts._receipt_file(receipt, path) for path in (ICD_PATH, LIBRARY_PATH)]
     checks = "\n".join(
@@ -59,7 +57,7 @@ def build_probe_script(payload: bytes, receipt: dict, page_size: int,
     )
     invocation = shlex.join([PROBE_GUEST_PATH, *arguments])
     return f"""test "$(nproc)" = 4
-test "$(getconf PAGESIZE)" = {page_size}
+test "$(getconf PAGESIZE)" = {guest.GUEST_PAGE_SIZE}
 # UML consumes mem= before publishing /proc/cmdline. Check the usable amount
 # as well as the host's fixed 4G boot argument, allowing kernel reservations.
 awk '/^MemTotal:/ {{ print; found=1; if ($2 < 4000000 || $2 > 4194304) exit 1 }} END {{ if (!found) exit 1 }}' /proc/meminfo
@@ -110,7 +108,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if probe_arguments[:1] == ["--"]:
         probe_arguments = probe_arguments[1:]
     script = guest.make_test_script(
-        [build_probe_script(payload, receipt, 4096, probe_arguments)],
+        [build_probe_script(payload, receipt, probe_arguments)],
         auto_poweroff=True, lower_filesystem_type="ext4")
     directory = options.artifact_root.resolve() / (
         time.strftime("%Y%m%d-%H%M%S-") + str(os.getpid()))
@@ -134,7 +132,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "schema_version": 1, "formal_conformance": False,
         "scope": "supplemental Vulkan behavioral regression, not CTS",
         "command": command, "cpus": 4, "memory": "4G",
-        "page_size": 4096, "probe": str(probe),
+        "page_size": guest.GUEST_PAGE_SIZE, "probe": str(probe),
         "probe_arguments": probe_arguments,
         "probe_sha256": hashlib.sha256(payload).hexdigest(),
         "emulator_sha256": receipt_contract.sha256_file(emulator),

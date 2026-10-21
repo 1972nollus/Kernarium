@@ -90,7 +90,7 @@ inline constexpr std::size_t block_limit = 64;
 	std::size_t unit, const aarch32::Profile &profile) noexcept;
 
 /* Whether the engine leaves a form to the AArch32 semantic library
- * (a32_library_helpers.cpp): the rare forms it does not lower, and, for the
+ * (library_helpers.cpp): the rare forms it does not lower, and, for the
  * block transfers (LDM, STM, PUSH, POP, VLDM, VSTM) that cross a page and an
  * STM that stores the PC, the instruction that does. A form that does not may
  * never reach the library; the library-exit count gates hold the engine to

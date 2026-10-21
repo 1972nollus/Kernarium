@@ -9,15 +9,6 @@
 
 namespace uml::cpu::arm64::gadgets::a32::detail {
 
-namespace {
-
-[[nodiscard]] std::uint64_t core(int number) noexcept
-{
-	return static_cast<std::uint64_t>(number) * 8U;
-}
-
-} // namespace
-
 Translator::Result Translator::emit_neon(const Instruction &in,
 					 const FormPlan &plan)
 {

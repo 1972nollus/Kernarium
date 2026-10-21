@@ -248,7 +248,7 @@ class GlesCtsPlanTests(unittest.TestCase):
                     plan.runner_arguments(self.manifest, run, "/run/selected.txt"),
                 )
                 script = common.build_guest_launcher(
-                    matrix.selection, 0, 60, 4096, contract,
+                    matrix.selection, 0, 60, contract,
                     matrix=matrix, renderer_backend="virgl",
                 )
                 self.assertIn(matrix.mustpass_xml_sha256, script)
@@ -316,7 +316,7 @@ class GlesCtsPlanTests(unittest.TestCase):
         _, contract = common.load_zink_gl_derivative_receipt(
             receipt, common.load_identity())
         script = common.build_guest_launcher(
-            None, 0, 60, 4096, contract, config_inventory_api="gles32",
+            None, 0, 60, contract, config_inventory_api="gles32",
             renderer_backend="virgl")
         # Two cases need a caselist: --deqp-case selects one filter, and both
         # results must land in one session's QPA.
@@ -327,7 +327,7 @@ class GlesCtsPlanTests(unittest.TestCase):
             subprocess.run(["/bin/sh", "-n"], input=script, text=True,
                            capture_output=True).returncode, 0)
         narrow = common.build_guest_launcher(
-            None, 0, 60, 4096, contract, config_inventory_api="gl46",
+            None, 0, 60, contract, config_inventory_api="gl46",
             renderer_backend="virgl")
         self.assertIn("--deqp-case=CTS-Configs.gl46", narrow)
         self.assertNotIn("configs.txt", narrow)

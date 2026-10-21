@@ -597,7 +597,6 @@ class VkGlCtsToolingTests(unittest.TestCase):
                 cts.Selection(options.leaves["gles3"], (), 0, 1),
                 0,
                 900,
-                4096,
                 options.rootfs_contract,
             )
             self.assertIn("688cb152-ce4b-4ac4-9b5d-3def792791f3", launcher)
@@ -652,7 +651,6 @@ class VkGlCtsToolingTests(unittest.TestCase):
                 selection,
                 0,
                 900,
-                4096,
                 options.rootfs_contract,
                 renderer_backend="zink",
             )
@@ -882,6 +880,7 @@ x11_glamor=1
 x11_connected=1
 x11_drm_fd=1
 x11_blanking=off
+guest_page_size=4096
 OpenGL renderer string: zink Vulkan 1.4 (Virtio-GPU Venus)
 """
         cts.validate_renderer_probe(valid, renderer_backend="zink")
@@ -1214,12 +1213,18 @@ x11_glamor=1
 x11_connected=1
 x11_drm_fd=1
 x11_blanking=off
+guest_page_size=4096
 OpenGL renderer string: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))
 """
         cts.validate_renderer_probe(valid)
-        cts.validate_renderer_probe(valid + "guest_page_size=4096\n", 4096)
-        with self.assertRaisesRegex(cts.CampaignError, "4096-byte guest pages"):
-            cts.validate_renderer_probe(valid + "guest_page_size=16384\n", 4096)
+        for other in (
+            valid.replace("guest_page_size=4096\n", ""),
+            valid.replace("guest_page_size=4096", "guest_page_size=16384"),
+        ):
+            with self.assertRaisesRegex(
+                cts.CampaignError, "4096-byte guest pages"
+            ):
+                cts.validate_renderer_probe(other)
         other_host = valid.replace(
             "(zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))", "(Apple GPU)"
         )
@@ -1295,13 +1300,13 @@ OpenGL compatibility profile renderer: virgl (zink Vulkan 1.4(Apple M1 Ultra (ME
 OpenGL ES profile renderer: virgl (zink Vulkan 1.4(Apple M1 Ultra (MESA_KOSMICKRISP)))
 """
         cts.validate_renderer_probe(
-            recorded, 4096, "virgl", cts.host_backend_label("virgl")
+            recorded, "virgl", cts.host_backend_label("virgl")
         )
         with self.assertRaisesRegex(
             cts.CampaignError, "Zink over Virtio-GPU Venus"
         ):
             cts.validate_renderer_probe(
-                recorded, 4096, "zink", cts.host_backend_label("zink")
+                recorded, "zink", cts.host_backend_label("zink")
             )
 
     def test_native_x11_setup_separates_display_driver_and_wayland(self) -> None:
@@ -1635,7 +1640,6 @@ native_display_cleanup
             selection,
             seed=7,
             timeout=300,
-            guest_page_size=4096,
             rootfs_contract=erofs_contract(),
         )
         self.assertIn(leaf.path, launcher)
@@ -1653,8 +1657,17 @@ native_display_cleanup
         self.assertNotIn("DISPLAY=:0", launcher)
         self.assertIn("pgrep -x Xvfb", launcher)
         self.assertIn("/dev/dri/renderD128", launcher)
-        self.assertIn("guest_page_size=", launcher)
-        self.assertIn("does not match 4096", launcher)
+        self.assertIn(
+            'actual_page_size=$(getconf PAGESIZE)\n'
+            '[ "$actual_page_size" -eq 4096 ] || {\n'
+            '    echo "UML_CTS_ERROR: guest page size $actual_page_size does '
+            'not match 4096"\n'
+            '    exit 1\n'
+            '}\n'
+            "printf 'guest_page_size=%s\n' \"$actual_page_size\" "
+            '>> "$renderer"\n',
+            launcher,
+        )
         self.assertIn("UML_CTS_ARTIFACT_BEGIN", launcher)
         self.assertIn("systemctl poweroff", launcher)
         self.assertNotIn("apt ", launcher)
@@ -1676,7 +1689,6 @@ native_display_cleanup
             ),
             seed=7,
             timeout=300,
-            guest_page_size=4096,
             rootfs_contract=erofs_contract(),
         )
         self.assertIn(
@@ -1697,7 +1709,6 @@ native_display_cleanup
             selection,
             seed=7,
             timeout=300,
-            guest_page_size=4096,
             rootfs_contract=erofs_contract(),
             artifact_transport="virtio-serial",
         )
@@ -1727,14 +1738,13 @@ native_display_cleanup
                 selection,
                 7,
                 300,
-                4096,
                 erofs_contract(),
                 artifact_transport="virtiofs",
             )
 
     def test_inventory_launcher_scopes_the_real_display_to_gles(self) -> None:
         launcher = cts.build_guest_launcher(
-            None, 0, 900, 4096, erofs_contract()
+            None, 0, 900, erofs_contract()
         )
         self.assertIn("--deqp-runmode=txt-caselist", launcher)
         self.assertIn(
@@ -1797,7 +1807,6 @@ native_display_cleanup
             None,
             0,
             900,
-            4096,
             erofs_contract(),
             config_inventory_api="gles3",
         )
@@ -1914,7 +1923,6 @@ native_display_cleanup
                         selection,
                         options.seed,
                         options.shard_timeout,
-                        4096,
                         options.rootfs_contract,
                         matrix=options.matrix_run,
                         renderer_backend=backend,
@@ -2005,7 +2013,6 @@ native_display_cleanup
                 matrix.selection,
                 options.seed,
                 options.shard_timeout,
-                4096,
                 options.rootfs_contract,
                 matrix=matrix,
             )
@@ -2131,7 +2138,7 @@ native_display_cleanup
 
         def launcher(identifier: str, image_type: str) -> str:
             campaign = kernarium_campaigns.build(
-                identifier, image_type=image_type, page_size=4096
+                identifier, image_type=image_type
             )
             self.assertEqual(campaign.unit, "uml-cts.target")
             path = next(
@@ -2163,7 +2170,6 @@ native_display_cleanup
 
         sentinel = kernarium_campaigns.build(
             "gles3-declaration-sentinel-v1", image_type="erofs",
-            page_size=4096,
         )
         self.assertEqual(
             {path: mode for path, (_, mode) in sentinel.files.items()},
@@ -2208,11 +2214,11 @@ native_display_cleanup
         ):
             kernarium_campaigns.build(
                 "gl46-matrix-cfg00-xml01-001of032-virgl-v1",
-                image_type="erofs", page_size=4096,
+                image_type="erofs",
             )
 
         development = kernarium_campaigns.build(
-            "vulkan-info-development-v1", image_type="erofs", page_size=4096
+            "vulkan-info-development-v1", image_type="erofs"
         )
         self.assertIn(
             "expected no-device status 137",
@@ -2231,7 +2237,6 @@ native_display_cleanup
         with self.assertRaisesRegex(cts.CampaignError, "frozen EROFS image"):
             kernarium_campaigns.build(
                 "vulkan-info-development-v1", image_type="ext4",
-                page_size=4096,
             )
         smoke = launcher("vulkan-info-receipt-smoke-v1", "ext4")
         self.assertIn(cts.sha256_file(vulkan_receipt), smoke)
@@ -2240,7 +2245,6 @@ native_display_cleanup
         with self.assertRaisesRegex(cts.CampaignError, "ext4 derivative"):
             kernarium_campaigns.build(
                 "vulkan-info-receipt-smoke-v1", image_type="erofs",
-                page_size=4096,
             )
         mustpass = launcher("vulkan-mustpass-03of16-v4", "ext4")
         self.assertIn(
@@ -2251,7 +2255,7 @@ native_display_cleanup
         self.assertIn("settle_limit=$((settle_start + 60))", mustpass)
         with self.assertRaisesRegex(cts.CampaignError, "no Kernarium campaign"):
             kernarium_campaigns.build(
-                "no-such-campaign", image_type="erofs", page_size=4096
+                "no-such-campaign", image_type="erofs"
             )
 
     def test_signed_apple_matrix_freezes_complete_current_geometry(self) -> None:
@@ -2430,7 +2434,6 @@ native_display_cleanup
                     selection,
                     options.seed,
                     options.shard_timeout,
-                    4096,
                     options.rootfs_contract,
                     artifact_transport="virtio-serial",
                     renderer_backend=options.renderer,
@@ -3006,7 +3009,7 @@ class WaiverTests(unittest.TestCase):
 
         digest = hashlib.sha256(xml.encode("utf-8")).hexdigest()
         launcher = cts.build_guest_launcher(
-            matrix.selection, 1, 300, 4096, erofs_contract(),
+            matrix.selection, 1, 300, erofs_contract(),
             matrix=matrix, renderer_backend="zink", waiver_sha256=digest,
         )
         self.assertIn(
@@ -3015,7 +3018,7 @@ class WaiverTests(unittest.TestCase):
         self.assertIn(digest, launcher)
         self.assertIn("waiver list identity changed", launcher)
         unwaived = cts.build_guest_launcher(
-            matrix.selection, 1, 300, 4096, erofs_contract(),
+            matrix.selection, 1, 300, erofs_contract(),
             matrix=matrix, renderer_backend="zink",
         )
         self.assertNotIn("--deqp-waiver-file", unwaived)
@@ -3028,14 +3031,14 @@ class WaiverTests(unittest.TestCase):
                 cts.CampaignError, "waiver list needs"
             ):
                 cts.build_guest_launcher(
-                    matrix.selection, 1, 300, 4096, erofs_contract(),
+                    matrix.selection, 1, 300, erofs_contract(),
                     renderer_backend="zink", **arguments,
                 )
 
     def test_busy_stall_bound_keeps_a_computing_case_and_cuts_a_wedged_one(self) -> None:
         matrix = self.matrix()
         busy = cts.build_guest_launcher(
-            matrix.selection, 1, 300, 4096, erofs_contract(),
+            matrix.selection, 1, 300, erofs_contract(),
             matrix=matrix, renderer_backend="zink", progress_timeout=600,
             progress_busy_timeout=3600,
         )
@@ -3053,7 +3056,7 @@ class WaiverTests(unittest.TestCase):
         self.assertIn('[ "$idle_seconds" -ge "$progress_timeout" ]', busy)
         self.assertIn('[ "$stalled_seconds" -ge "$progress_busy_timeout" ]', busy)
         plain = cts.build_guest_launcher(
-            matrix.selection, 1, 300, 4096, erofs_contract(),
+            matrix.selection, 1, 300, erofs_contract(),
             matrix=matrix, renderer_backend="zink", progress_timeout=600,
         )
         self.assertIn("progress_busy_timeout=0\n", plain)
@@ -3063,7 +3066,7 @@ class WaiverTests(unittest.TestCase):
                 cts.CampaignError, "busy stall bound"
             ):
                 cts.build_guest_launcher(
-                    matrix.selection, 1, 300, 4096, erofs_contract(),
+                    matrix.selection, 1, 300, erofs_contract(),
                     matrix=matrix, renderer_backend="zink", progress_timeout=600,
                     progress_busy_timeout=bound,
                 )

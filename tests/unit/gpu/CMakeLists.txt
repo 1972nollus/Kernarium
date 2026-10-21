@@ -22,10 +22,16 @@ target_link_libraries(uml_gpu_test_metal_shader_cache PUBLIC
 #
 # Builds <target> from the sources and registers it as the unit test <test>,
 # labelled gpu, and vulkan for VULKAN. UNIT_DIRECTORY runs it in the unit-test
-# binary directory. The target takes its own Metal shader cache.
+# binary directory. The target takes its own Metal shader cache. The unit-gpu
+# test preset selects every test named gpu-*, so <test> must be.
 function(uml_add_gpu_unit_test TEST TARGET)
     cmake_parse_arguments(PARSE_ARGV 2 _gpu_test
         "VULKAN;UNIT_DIRECTORY" "TIMEOUT" "LIBRARIES;INCLUDES")
+    if(NOT "${TEST}" MATCHES "^gpu-")
+        message(FATAL_ERROR
+            "${TEST}: a GPU unit test is named gpu-*, which is how the "
+            "unit-gpu test preset selects it")
+    endif()
     add_executable(${TARGET} ${_gpu_test_UNPARSED_ARGUMENTS})
     target_link_libraries(${TARGET} PRIVATE ${_gpu_test_LIBRARIES}
         uml_gpu_test_metal_shader_cache)
@@ -71,14 +77,12 @@ if(TARGET uml_gpu_device_memory_pool)
 endif()
 
 # The balloon follows host GPU memory that Metal's allocated size omits.
-if(TARGET uml_balloon_device)
-    uml_add_gpu_unit_test(gpu-host-graphics-footprint
-        uml_gpu_host_graphics_footprint_tests host_graphics_footprint_tests.mm
-        LIBRARIES UML::BalloonDevice UML::HostGpuMemory "-framework Metal"
-        TIMEOUT 60)
-    set_tests_properties(gpu-host-graphics-footprint PROPERTIES
-        SKIP_RETURN_CODE 77)
-endif()
+uml_add_gpu_unit_test(gpu-host-graphics-footprint
+    uml_gpu_host_graphics_footprint_tests host_graphics_footprint_tests.mm
+    LIBRARIES UML::BalloonDevice UML::HostGpuMemory "-framework Metal"
+    TIMEOUT 60)
+set_tests_properties(gpu-host-graphics-footprint PROPERTIES
+    SKIP_RETURN_CODE 77)
 
 if(TARGET uml_gpu_kosmickrisp_capability_probe)
     uml_add_gpu_unit_test(gpu-kosmickrisp-external-image-alias

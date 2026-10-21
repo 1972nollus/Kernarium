@@ -157,7 +157,7 @@ class OpenGLPlanTests(unittest.TestCase):
                 )
                 _, contract = common.load_zink_gl_derivative_receipt(receipt, common.load_identity())
                 script = common.build_guest_launcher(
-                    matrix.selection, 0, 60, 4096, contract,
+                    matrix.selection, 0, 60, contract,
                     matrix=matrix, renderer_backend="zink",
                 )
                 self.assertIn(matrix.mustpass_xml_sha256, script)

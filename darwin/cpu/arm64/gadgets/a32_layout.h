@@ -31,7 +31,7 @@
  * reads the PC. */
 #define UML_GADGET_A32_POSITION_SHIFT 24
 
-/* What uml_arm64_gadget_a32_execute (a32_library_helpers.cpp) returns to the
+/* What uml_arm64_gadget_a32_execute (a32/library_helpers.cpp) returns to the
  * gadget: the instruction retired; it faulted, with the fault in the TLB;
  * it is UNDEFINED; or it reached an internal error, the engine's fatal
  * event. */

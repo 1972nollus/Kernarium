@@ -338,7 +338,9 @@ void aGuestThatCouldNotSuspendIsNotHibernated()
 		"a refused suspend falls back to the management stop");
 	require(hibernationLog.take().empty(),
 		"only a system suspension is hibernated");
-	(void)console.requests(1U, [&] { uml_emulator_resume(emulator.get()); });
+	require(console.requests(1U, [&] { uml_emulator_resume(emulator.get()); }) ==
+			Requests {"go"},
+		"a stopped guest is resumed with go");
 }
 
 void aGuestWithoutAConsoleIsNotHibernated()

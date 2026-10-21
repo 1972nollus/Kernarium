@@ -33,6 +33,13 @@ constexpr std::uintptr_t scratch1 = 16 * 8;
  * (engine/generate_a32.py). */
 constexpr unsigned block_word_registers = 6;
 
+/* The CpuState offset of core register `number`, as an operand word packs
+ * it. */
+[[nodiscard]] inline std::uint64_t core(int number) noexcept
+{
+	return static_cast<std::uint64_t>(number) * 8U;
+}
+
 /* Whether condition `cond` passes, for each NZCV value n (N in bit 3, V in
  * bit 0): bit n of the result. The truth table a select gadget tests. */
 [[nodiscard]] inline constexpr std::uint64_t condition_table(unsigned cond) noexcept
