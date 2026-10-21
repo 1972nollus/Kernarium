@@ -528,14 +528,35 @@ void fittedMousePointersKeepTheNativeBarRules()
      * gesture out of the guest. */
     require(pointer.mouse(content, {100.0, 100.0}, 4).count == 1,
         "a secondary press inside the guest was not delivered");
-    require(pointer.release(),
+    require(pointer.release(true),
         "releasing held buttons did not report them");
     require(pointer.mouse(content, {100.0, 100.0}, 4).count == 0,
         "a gesture continued into the guest after a mode change");
     require(pointer.mouse(content, {100.0, 100.0}, 0).count == 0 &&
             pointer.mouse(content, {100.0, 100.0}, 0).count == 1,
         "the guest stayed suppressed after the released gesture ended");
-    require(!pointer.release(), "releasing an idle pointer reported buttons");
+    require(!pointer.release(true),
+        "releasing an idle pointer reported buttons");
+
+    /* Losing focus releases held buttons but starts the next gesture
+     * afresh, so a button still held when the window regains focus is
+     * delivered. */
+    require(pointer.mouse(content, {100.0, 100.0}, 4).count == 1,
+        "a press inside the guest was not delivered after a release");
+    require(pointer.release(false),
+        "releasing held buttons for a focus change did not report them");
+    require(pointer.mouse(content, {100.0, 100.0}, 4).count == 1,
+        "a button held across a focus change was kept out of the guest");
+    require(pointer.mouse(content, {100.0, 100.0}, 0).count == 1,
+        "releasing a button after a focus change was not delivered");
+
+    /* It also forgets a gesture that began in a bar. */
+    require(pointer.mouse(content, {640.0, 10.0}, 1).count == 0,
+        "a press in a letterbox bar reached the guest after a release");
+    require(!pointer.release(false),
+        "a gesture kept in a bar was reported as held buttons");
+    require(pointer.mouse(content, {100.0, 100.0}, 1).count == 1,
+        "a gesture begun in a bar stayed suppressed after a focus change");
 }
 
 void fittedTouchesEnterAndLeaveAtTheGuestEdge()
@@ -574,12 +595,71 @@ void fittedTouchesEnterAndLeaveAtTheGuestEdge()
 
     samples = pointer.touch(content, {10.0, 100.0}, true);
     require(samples.count == 1, "a second touch was not delivered");
-    require(pointer.release(), "releasing a contact did not report it");
+    require(pointer.release(true), "releasing a contact did not report it");
     require(pointer.touch(content, {20.0, 100.0}, true).count == 0,
         "a touch continued into the guest after a mode change");
     require(pointer.touch(content, {20.0, 100.0}, false).count == 0 &&
             pointer.touch(content, {20.0, 100.0}, true).count == 1,
         "the guest stayed suppressed after the released touch ended");
+
+    /* Losing focus ends the contact but not the touch that follows. */
+    require(pointer.touch(content, {10.0, 100.0}, true).count == 1,
+        "a touch inside the guest was not delivered after a release");
+    require(pointer.release(false),
+        "releasing a contact for a focus change did not report it");
+    samples = pointer.touch(content, {20.0, 100.0}, true);
+    require(samples.count == 1 && samples.samples[0].buttons == 1,
+        "a touch held across a focus change was kept out of the guest");
+    require(pointer.release(true), "releasing a contact did not report it");
+    require(!pointer.release(false),
+        "releasing an idle pointer reported a contact");
+    require(pointer.touch(content, {20.0, 100.0}, false).count == 0 &&
+            pointer.touch(content, {20.0, 100.0}, true).count == 1,
+        "a focus change left the guest suppressed after its touch ended");
+}
+
+void bottomLeftPointersMapTheSameRectangleUpsideDown()
+{
+    using uml::gpu::AspectFitRectangle;
+    using uml::gpu::FittedPointer;
+    /* An AppKit view counts y up from its bottom, so the same bars sit at
+     * the other ends: 23 above the bottom and 22 below the top of 720. */
+    const AspectFitRectangle content {
+        .x = 0.0, .y = 23.0, .width = 1280.0, .height = 675.0};
+    FittedPointer pointer {FittedPointer::Origin::bottomLeft};
+
+    auto samples = pointer.mouse(content, {640.0, 360.5}, 0);
+    require(samples.count == 1 && near(samples.samples[0].point.x, 0.5) &&
+            near(samples.samples[0].point.y, 0.5),
+        "hover at the centre did not map to the guest centre");
+    samples = pointer.mouse(content, {320.0, 23.0 + 675.0 * 0.75}, 0);
+    require(samples.count == 1 && near(samples.samples[0].point.y, 0.25),
+        "a point three quarters up the view was not a quarter down the guest");
+    require(pointer.mouse(content, {640.0, 10.0}, 0).count == 0,
+        "hover in the bar below the guest reached it");
+    require(pointer.mouse(content, {640.0, 710.0}, 0).count == 0,
+        "hover in the bar above the guest reached it");
+
+    /* A drag out through the bottom bar is clamped to the guest's bottom. */
+    require(pointer.mouse(content, {100.0, 100.0}, 1).count == 1,
+        "a press inside the guest was not delivered");
+    samples = pointer.mouse(content, {100.0, 5.0}, 1);
+    require(samples.count == 1 && near(samples.samples[0].point.y, 1.0),
+        "a drag into the bottom bar was not clamped to the guest's bottom");
+    require(pointer.mouse(content, {100.0, 5.0}, 0).count == 1,
+        "releasing a drag in the bottom bar did not reach the guest");
+
+    /* A touch from the top bar enters at the guest's top edge. */
+    samples = pointer.touch(content, {640.0, 715.0}, true);
+    require(samples.count == 0, "a touch in the top bar reached the guest");
+    samples = pointer.touch(content, {640.0, 360.5}, true);
+    require(samples.count == 2 && near(samples.samples[0].point.y, 0.0) &&
+            near(samples.samples[1].point.y, 0.5),
+        "a touch entering from above did not begin at the guest's top edge");
+    samples = pointer.touch(content, {640.0, 5.0}, true);
+    require(samples.count == 1 && near(samples.samples[0].point.y, 1.0) &&
+            samples.samples[0].buttons == 0,
+        "a touch leaving through the bottom did not end at the guest's edge");
 }
 
 void guestModesetsNeverDisableHostResize()
@@ -737,6 +817,7 @@ int main()
         fixedFramebufferPlacementsUseWholePixels();
         fittedMousePointersKeepTheNativeBarRules();
         fittedTouchesEnterAndLeaveAtTheGuestEdge();
+        bottomLeftPointersMapTheSameRectangleUpsideDown();
         guestModesetsNeverDisableHostResize();
         returningBeforeTheGuestFollowsIsAdvertisedAgain();
         configuredOffAlwaysKeepsHostResizeSilent();
