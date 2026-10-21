@@ -1679,16 +1679,11 @@ Lx86_leave_rounding_ready:
 	b \exit
 .endm
 
-.macro flags_body operation, width
-	add x6, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
-	ldp x7, x8, [x6]
-	ldr x10, [x6, #16]
-	.if (\operation) == 0
-	ldrb w16, [x6, #26]
-	.elseif ((\operation) == 6) || ((\operation) == 7)
-	ldrb w16, [x6, #26]
-	.endif
-	/* Narrow the recorded operands to the width that produced them. */
+/* Narrow the deferred record's left, right and result, which x7, x8 and x10
+ * hold, to the width that produced them. A width of zero is the run-time
+ * form: it reads the width from the record at x6 and leaves its sign mask
+ * in x12. */
+.macro deferred_narrow width
 	.if (\width) == 1
 	and x7, x7, #0xff
 	and x8, x8, #0xff
@@ -1704,33 +1699,45 @@ Lx86_leave_rounding_ready:
 	.elseif (\width) == 0
 	ldrb w11, [x6, #25]
 	cmp w11, #1
-	b.ne 1f
+	b.ne Lx86_narrow_half\@
 	and x7, x7, #0xff
 	and x8, x8, #0xff
 	and x10, x10, #0xff
 	mov x12, #0x80
-	b 4f
-1:
+	b Lx86_narrow_done\@
+Lx86_narrow_half\@:
 	cmp w11, #2
-	b.ne 2f
+	b.ne Lx86_narrow_word\@
 	uxth w7, w7
 	uxth w8, w8
 	uxth w10, w10
 	mov x12, #0x8000
-	b 4f
-2:
+	b Lx86_narrow_done\@
+Lx86_narrow_word\@:
 	cmp w11, #4
-	b.ne 3f
+	b.ne Lx86_narrow_quad\@
 	mov w7, w7
 	mov w8, w8
 	mov w10, w10
 	mov x12, #0x80000000
-	b 4f
-3:
+	b Lx86_narrow_done\@
+Lx86_narrow_quad\@:
 	mov x12, #1
 	lsl x12, x12, #63
-4:
+Lx86_narrow_done\@:
 	.endif
+.endm
+
+.macro flags_body operation, width
+	add x6, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
+	ldp x7, x8, [x6]
+	ldr x10, [x6, #16]
+	.if (\operation) == 0
+	ldrb w16, [x6, #26]
+	.elseif ((\operation) == 6) || ((\operation) == 7)
+	ldrb w16, [x6, #26]
+	.endif
+	deferred_narrow \width
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	/* INC and DEC preserve CF; every other recorded operation defines it. */
 	.if (\operation) == 0
@@ -1987,48 +1994,7 @@ Lx86_flags_store:
 	.if ((\operation) == 0) || ((\operation) == 6) || ((\operation) == 7)
 	ldrb w16, [x6, #26]
 	.endif
-	.if (\width) == 1
-	and x7, x7, #0xff
-	and x8, x8, #0xff
-	and x10, x10, #0xff
-	.elseif (\width) == 2
-	uxth w7, w7
-	uxth w8, w8
-	uxth w10, w10
-	.elseif (\width) == 4
-	mov w7, w7
-	mov w8, w8
-	mov w10, w10
-	.elseif (\width) == 0
-	ldrb w11, [x6, #25]
-	cmp w11, #1
-	b.ne 11f
-	and x7, x7, #0xff
-	and x8, x8, #0xff
-	and x10, x10, #0xff
-	mov x12, #0x80
-	b 14f
-11:
-	cmp w11, #2
-	b.ne 12f
-	uxth w7, w7
-	uxth w8, w8
-	uxth w10, w10
-	mov x12, #0x8000
-	b 14f
-12:
-	cmp w11, #4
-	b.ne 13f
-	mov w7, w7
-	mov w8, w8
-	mov w10, w10
-	mov x12, #0x80000000
-	b 14f
-13:
-	mov x12, #1
-	lsl x12, x12, #63
-14:
-	.endif
+	deferred_narrow \width
 	.if \load_flags
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	.endif
