@@ -5,6 +5,8 @@
 
 #include <cstdint>
 
+#include "floating_shape.hpp"
+
 namespace uml::cpu::arm64::detail {
 
 enum class FloatingHorizontalOperation : unsigned {
@@ -32,12 +34,6 @@ struct FloatingHorizontal final {
 	unsigned width{};
 	unsigned vector_bytes{};
 };
-
-[[nodiscard]] constexpr unsigned floating_width_from_type(unsigned type)
-	noexcept
-{
-	return type == 3U ? 16U : type == 0U ? 32U : 64U;
-}
 
 [[nodiscard]] constexpr FloatingHorizontal decode_floating_horizontal(
 	std::uint32_t instruction) noexcept

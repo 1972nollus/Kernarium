@@ -2,6 +2,7 @@
 #pragma once
 
 #include "floating_conversion.hpp"
+#include "floating_shape.hpp"
 
 #include <bit>
 #include <cstdint>
@@ -279,8 +280,7 @@ struct IntegerToFloatingDecode final {
 	    rmode == 0U && (opcode == 2U || opcode == 3U) &&
 	    (fixed || (instruction & 0x0000'fc00U) == 0U)) {
 		const unsigned type = (instruction >> 22) & 3U;
-		const unsigned destination_width =
-			type == 3U ? 16U : type == 0U ? 32U : 64U;
+		const unsigned destination_width = floating_width_from_type(type);
 		const unsigned integer_width =
 			(instruction & 0x8000'0000U) != 0U ? 64U : 32U;
 		const unsigned fractional_bits = fixed ?
@@ -393,7 +393,7 @@ struct IntegerToFloatingDecode final {
 	    ((instruction >> 19) & 3U) == 3U &&
 	    ((instruction >> 16) & 7U) <= 1U) {
 		const unsigned type = (instruction >> 22) & 3U;
-		const unsigned width = type == 3U ? 16U : type == 0U ? 32U : 64U;
+		const unsigned width = floating_width_from_type(type);
 		const unsigned integer_width =
 			(instruction & 0x8000'0000U) != 0U ? 64U : 32U;
 		const unsigned fractional_bits =
@@ -449,7 +449,7 @@ struct IntegerToFloatingDecode final {
 		}
 		if (!recognized)
 			return {};
-		const unsigned width = type == 3U ? 16U : type == 0U ? 32U : 64U;
+		const unsigned width = floating_width_from_type(type);
 		const unsigned integer_width =
 			(instruction & 0x8000'0000U) != 0U ? 64U : 32U;
 		return {true, opcode_valid && type != 2U, true,

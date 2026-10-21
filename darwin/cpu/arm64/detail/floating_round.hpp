@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_shape.hpp"
+
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -54,7 +56,7 @@ struct FloatingRound final {
 		if ((opcode >= 8U && opcode <= 12U) || opcode == 14U || opcode == 15U) {
 			const unsigned type = (instruction >> 22) & 3U;
 			return {true, type != 2U, true,
-				type == 3U ? 16U : type == 0U ? 32U : 64U, 16U,
+				floating_width_from_type(type), 16U,
 				standard_round_operation(opcode)};
 		}
 	}
