@@ -12,10 +12,12 @@
  * read-only region holding `read_only_fill()`, and the program placed at
  * kCodeBase + `Case::origin`. `Case::final` is the complete state after the
  * program, and `Case::memory_patches` the data bytes it changed. code_image()
- * and data_before() lay a case out that way.
+ * and data_before() lay a case out that way, and for_each_instruction() walks
+ * its program through the decoder.
  */
 #pragma once
 
+#include "cpu/arm64/aarch32/decode.hpp"
 #include "require.hpp"
 
 #include <algorithm>
@@ -340,6 +342,65 @@ inline std::vector<std::uint8_t> data_after(const Case &test, std::vector<std::u
 	for (const auto &patch : test.memory_patches)
 		std::copy(patch.bytes.begin(), patch.bytes.end(), data.begin() + patch.offset);
 	return data;
+}
+
+/* One instruction of a case's program, decoded. */
+struct ProgramStep final {
+	::uml::cpu::arm64::aarch32::Instruction instruction;
+	/* The word as the decoder takes it: the A32 bits, or hw1 << 16 | hw2 (hw1 << 16 for a T16). */
+	std::uint32_t word;
+	/* The IT state before it. */
+	::uml::cpu::arm64::aarch32::ItState before;
+	/* The index of its first halfword. */
+	unsigned half;
+	bool thumb;
+
+	/* The same word, against another profile. */
+	[[nodiscard]] ::uml::cpu::arm64::aarch32::Instruction decode_at(
+		const ::uml::cpu::arm64::aarch32::Profile &profile) const
+	{
+		return thumb ? ::uml::cpu::arm64::aarch32::decode_thumb(word, before, profile)
+			     : ::uml::cpu::arm64::aarch32::decode_a32(word, profile);
+	}
+};
+
+/* How a program's halfwords ended. */
+enum class ProgramEnd { whole, split_word, cut_off };
+
+/* Decodes the program in order against `profile`, carrying the IT state the
+ * earlier instructions leave, and hands each instruction to `visit`, which
+ * returns false to stop. Reports a program that ends in half an A32 word
+ * (`split_word`) or in a Thumb-2 instruction cut off by the end of the code
+ * region (`cut_off`); `whole` otherwise, and when `visit` stopped it. */
+template<typename Visit>
+ProgramEnd for_each_instruction(const Case &test, const ::uml::cpu::arm64::aarch32::Profile &profile, Visit &&visit)
+{
+	namespace dec = ::uml::cpu::arm64::aarch32;
+	const bool thumb = test.flags & kFlagThumb;
+	dec::ItState it;
+	for (unsigned half = 0; half < test.halves.size();) {
+		ProgramStep step{{}, 0, it, half, thumb};
+		unsigned length = 4;
+		if (!thumb) {
+			if (half + 1 >= test.halves.size())
+				return ProgramEnd::split_word;
+			step.word = std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half];
+			step.instruction = dec::decode_a32(step.word, profile);
+		} else {
+			const std::uint16_t first = test.halves[half];
+			length = dec::thumb_length(first);
+			if (half + length / 2 > test.halves.size())
+				return ProgramEnd::cut_off;
+			step.word = length == 4 ? std::uint32_t{first} << 16 | test.halves[half + 1]
+						: std::uint32_t{first} << 16;
+			step.instruction = dec::decode_thumb(step.word, it, profile);
+			it = step.instruction.next_it;
+		}
+		if (!visit(step))
+			return ProgramEnd::whole;
+		half += length / 2;
+	}
+	return ProgramEnd::whole;
 }
 
 } // namespace uml::testing::aarch32_corpus

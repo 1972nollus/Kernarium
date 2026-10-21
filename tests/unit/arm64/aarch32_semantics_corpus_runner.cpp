@@ -288,32 +288,12 @@ std::string check(Machine &machine, const Case &test, const Profile &profile)
  * coverage is a failure of the lane, not a case to leave out. */
 bool within_coverage(const Case &test)
 {
-	const bool thumb = test.flags & kFlagThumb;
-	const Profile complete = Profile::at(Level::complete);
-	ItState it;
-	for (unsigned half = 0; half < test.halves.size();) {
-		Instruction instruction;
-		if (!thumb) {
-			if (half + 1 >= test.halves.size())
-				break;
-			const std::uint32_t word = std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half];
-			instruction = decode_a32(word, complete);
-			half += 2;
-		} else {
-			const std::uint16_t first = test.halves[half];
-			const unsigned length = thumb_length(first);
-			if (half + length / 2 > test.halves.size())
-				break;
-			const std::uint32_t word = length == 4
-				? std::uint32_t{first} << 16 | test.halves[half + 1] : std::uint32_t{first} << 16;
-			instruction = decode_thumb(word, it, complete);
-			it = instruction.next_it;
-			half += length / 2;
-		}
-		if (instruction.legal() && !a32_semantics_covers(instruction.form))
-			return false;
-	}
-	return true;
+	bool covered = true;
+	for_each_instruction(test, Profile::at(Level::complete), [&](const ProgramStep &step) {
+		covered = !step.instruction.legal() || a32_semantics_covers(step.instruction.form);
+		return covered;
+	});
+	return covered;
 }
 
 struct Totals final {

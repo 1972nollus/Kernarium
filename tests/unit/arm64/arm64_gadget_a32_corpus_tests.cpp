@@ -223,41 +223,19 @@ private:
 [[nodiscard]] bool needs_higher_level(const corpus::Case &test,
 				      decode::Level level)
 {
-	const auto profile = decode::Profile::at(decode::Level::complete);
 	const auto engine = ::uml::cpu::arm64::gadgets::a32::decode_profile(
 		options_at(static_cast<::uml::cpu::arm64::A32Support>(level)));
-	const bool thumb = (test.flags & corpus::kFlagThumb) != 0;
-	decode::ItState it;
-	for (std::size_t half = 0; half < test.halves.size();) {
-		decode::Instruction instruction;
-		decode::Instruction known;
-		if (!thumb) {
-			if (half + 1 >= test.halves.size())
-				break;
-			const std::uint32_t word =
-				std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half];
-			instruction = decode::decode_a32(word, profile);
-			known = decode::decode_a32(word, engine);
-			half += 2;
-		} else {
-			const std::uint16_t first = test.halves[half];
-			const auto length = decode::thumb_length(first);
-			if (half + length / 2 > test.halves.size())
-				break;
-			const std::uint32_t word = length == 4 ?
-				std::uint32_t{first} << 16 | test.halves[half + 1] :
-				std::uint32_t{first} << 16;
-			instruction = decode::decode_thumb(word, it, profile);
-			known = decode::decode_thumb(word, it, engine);
-			it = instruction.next_it;
-			half += length / 2;
-		}
-		if (instruction.legal() &&
-		    (static_cast<int>(instruction.info().level) > static_cast<int>(level) ||
-		     !known.legal()))
-			return true;
-	}
-	return false;
+	bool higher = false;
+	corpus::for_each_instruction(
+		test, decode::Profile::at(decode::Level::complete),
+		[&](const corpus::ProgramStep &step) {
+			higher = step.instruction.legal() &&
+				 (static_cast<int>(step.instruction.info().level) >
+					  static_cast<int>(level) ||
+				  !step.decode_at(engine).legal());
+			return !higher;
+		});
+	return higher;
 }
 
 [[nodiscard]] bool linux_breakpoint(std::uint32_t word, bool thumb)

@@ -357,55 +357,23 @@ Attempt check(Machine &machine, const Case &test) {
   return {};
 }
 
-/* Whether the JIT's level implements every instruction of the program. */
+/* Whether the JIT's level implements every instruction of the program, and
+ * its own profile accepts each: an encoding the oracle executes but the JIT's
+ * profile leaves out (the extensions this host lacks, such as BF16 and I8MM on
+ * the M1 Ultra: the guest is shown none of them and the JIT treats them as
+ * UNDEFINED) is not the JIT's to run. */
 bool within_level(const Case &test, const dec::Profile &profile) {
-  const bool thumb = test.flags & kFlagThumb;
-  dec::ItState it;
-  for (unsigned half = 0; half < test.halves.size();) {
-    dec::Instruction instruction;
-    const unsigned first_half = half;
-    const dec::ItState before_it = it;
-    if (!thumb) {
-      if (half + 1 >= test.halves.size())
-        break;
-      instruction = dec::decode_a32(
-          std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half], profile);
-      half += 2;
-    } else {
-      const std::uint16_t first = test.halves[half];
-      const unsigned length = dec::thumb_length(first);
-      if (half + length / 2 > test.halves.size())
-        break;
-      const std::uint32_t word = length == 4
-                                     ? std::uint32_t{first} << 16 | test.halves[half + 1]
-                                     : std::uint32_t{first} << 16;
-      instruction = dec::decode_thumb(word, it, profile);
-      it = instruction.next_it;
-      half += length / 2;
-    }
-    if (instruction.legal() &&
-        static_cast<int>(instruction.info().level) >
-            static_cast<int>(::uml::cpu::arm64::jit::a32::a32_level()))
-      return false;
-    /* An encoding the oracle executes but the JIT's own profile leaves out
-     * (the extensions this host lacks, such as BF16 and I8MM on the M1
-     * Ultra: the guest is shown none of them and the JIT treats them as
-     * UNDEFINED). */
-    if (instruction.legal()) {
-      const auto own = ::uml::cpu::arm64::jit::a32::decode_profile();
-      const auto word_at = [&](unsigned at) {
-        return thumb ? (dec::thumb_length(test.halves[at]) == 4
-                            ? std::uint32_t{test.halves[at]} << 16 | test.halves[at + 1]
-                            : std::uint32_t{test.halves[at]} << 16)
-                     : std::uint32_t{test.halves[at + 1]} << 16 | test.halves[at];
-      };
-      const auto again = thumb ? dec::decode_thumb(word_at(first_half), before_it, own)
-                               : dec::decode_a32(word_at(first_half), own);
-      if (!again.legal())
-        return false;
-    }
-  }
-  return true;
+  bool within = true;
+  for_each_instruction(test, profile, [&](const ProgramStep &step) {
+    const auto &instruction = step.instruction;
+    within = !instruction.legal() ||
+             (static_cast<int>(instruction.info().level) <=
+                  static_cast<int>(::uml::cpu::arm64::jit::a32::a32_level()) &&
+              step.decode_at(::uml::cpu::arm64::jit::a32::decode_profile())
+                  .legal());
+    return within;
+  });
+  return within;
 }
 
 /* The compiler classifies every vector form the simd level has, so that none
@@ -431,33 +399,15 @@ void require_vector_forms_classified() {
 bool target_always_executes(const Case &test, const dec::Profile &profile) {
   if ((test.flags & kFlagStraight) == 0)
     return false;
-  const bool thumb = test.flags & kFlagThumb;
-  dec::ItState it;
   unsigned ordinal = 0;
-  for (unsigned half = 0; half < test.halves.size(); ++ordinal) {
-    dec::Instruction instruction;
-    unsigned length = 4;
-    if (!thumb) {
-      if (half + 1 >= test.halves.size())
-        return false;
-      instruction = dec::decode_a32(
-          std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half], profile);
-    } else {
-      const std::uint16_t first = test.halves[half];
-      length = dec::thumb_length(first);
-      if (half + length / 2 > test.halves.size())
-        return false;
-      const std::uint32_t word = length == 4
-                                     ? std::uint32_t{first} << 16 | test.halves[half + 1]
-                                     : std::uint32_t{first} << 16;
-      instruction = dec::decode_thumb(word, it, profile);
-      it = instruction.next_it;
-    }
-    if (ordinal == test.target)
-      return instruction.cond >= 14U;
-    half += length / 2;
-  }
-  return false;
+  bool always = false;
+  for_each_instruction(test, profile, [&](const ProgramStep &step) {
+    if (ordinal++ != test.target)
+      return true;
+    always = step.instruction.cond >= 14U;
+    return false;
+  });
+  return always;
 }
 
 /* The library-exit gate: a form the compiler lowers stays out of the slow
