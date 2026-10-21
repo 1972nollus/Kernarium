@@ -770,16 +770,6 @@ obtain_cache()
 	[ -d "$cache_repository/.git" ] || fail "$name Git cache is malformed"
 	[ "$(git -C "$cache_repository" remote get-url origin 2>/dev/null || true)" = \
 		"$repository" ] || fail "$name Git cache origin changed"
-	# A cache an earlier checkout filtered cannot serve a full source.
-	if [ "$(git -C "$cache_repository" config --bool remote.origin.promisor 2>/dev/null || true)" = \
-		true ]; then
-		[ "$FETCH" -eq 1 ] || fail "$name full source is incomplete in the offline cache"
-		git -C "$cache_repository" fetch --refetch --no-filter --no-tags \
-			--depth 1 origin "$commit" >/dev/null
-		git -C "$cache_repository" config --unset-all remote.origin.promisor || true
-		git -C "$cache_repository" config --unset-all \
-			remote.origin.partialclonefilter || true
-	fi
 	if ! env GIT_NO_LAZY_FETCH=1 git -C "$cache_repository" cat-file -e \
 		"$commit^{commit}" 2>/dev/null; then
 		[ "$FETCH" -eq 1 ] || fail "$name commit is absent from the offline cache"
