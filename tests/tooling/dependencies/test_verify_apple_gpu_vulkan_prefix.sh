@@ -159,9 +159,6 @@ series_tree()
 	printf 'venus-protocol\t%s\n' \
 		"$(series_tree "$ROOT_DIR/tools/rootfs/vulkan/patches/venus-protocol")"
 } >"$BASE_PREFIX/share/uml-dependencies/source-trees.tsv"
-MANIFEST_SHA=$(shasum -a 256 "$ROOT_DIR/dependencies/manifest.tsv" | awk '{print $1}')
-CONTRACT_SHA=$(shasum -a 256 \
-	"$ROOT_DIR/dependencies/platforms/macos-gpu-vulkan-arm64.tsv" | awk '{print $1}')
 cat >"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" <<EOF
 field	value
 format	2
@@ -172,10 +169,6 @@ sdk_version	fixture
 sdk_path	/fixture/MacOSX.sdk
 compiler	fixture clang
 built_at_utc	2026-08-23T00:00:00Z
-source_manifest_sha256	$MANIFEST_SHA
-platform_contract_sha256	$CONTRACT_SHA
-mesa_base_commit	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-vulkan_headers_base_commit	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 venus_protocol_generated_sha256	0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 EOF
 
@@ -254,6 +247,14 @@ expect_cmake_diagnostic "Malformed Apple GPU build receipt row" \
 	verify "$RECEIPT_PREFIX"
 receipt_case 'NR == 3 { print "" } { print }'
 verify "$RECEIPT_PREFIX" >/dev/null || fail "a blank receipt row was rejected"
+# Receipts written before these four fields were dropped still verify.
+receipt_case '{ print } END {
+	print "source_manifest_sha256", "0123456789abcdef"
+	print "platform_contract_sha256", "0123456789abcdef"
+	print "mesa_base_commit", "0123456789abcdef"
+	print "vulkan_headers_base_commit", "0123456789abcdef" }'
+verify "$RECEIPT_PREFIX" >/dev/null ||
+	fail "a receipt with the dropped manifest and base-commit fields was rejected"
 
 receipt_case '$1 == "format" { $2 = "3" } { print }'
 expect_cmake_diagnostic "format is 3, expected 2" verify "$RECEIPT_PREFIX"
