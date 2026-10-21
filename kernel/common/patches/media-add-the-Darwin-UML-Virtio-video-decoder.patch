@@ -37,16 +37,16 @@ stream.
  drivers/media/virtio/Kconfig                |    9 +
  drivers/media/virtio/Makefile               |    6 +
  drivers/media/virtio/README                 |   11 +
- drivers/media/virtio/virtio_video.h         |  450 +++++++
+ drivers/media/virtio/virtio_video.h         |  442 +++++++
  drivers/media/virtio/virtio_video_blob.c    |  157 +++
  drivers/media/virtio/virtio_video_caps.c    |  515 ++++++++
  drivers/media/virtio/virtio_video_dec.c     |  479 +++++++
  drivers/media/virtio/virtio_video_device.c  | 1297 +++++++++++++++++++
  drivers/media/virtio/virtio_video_driver.c  |  261 ++++
- drivers/media/virtio/virtio_video_helpers.c |  253 ++++
- drivers/media/virtio/virtio_video_vq.c      | 1135 ++++++++++++++++
+ drivers/media/virtio/virtio_video_helpers.c |  198 +++
+ drivers/media/virtio/virtio_video_vq.c      | 1077 +++++++++++++++
  include/uapi/linux/virtio_video.h           |  539 ++++++++
- 14 files changed, 5116 insertions(+)
+ 14 files changed, 4995 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -129,10 +129,10 @@ index 0000000000000000000000000000000000000000..90e8a3531bb86bec3aca28050a7e4950
 +in the owning Darwin host repository.
 diff --git a/drivers/media/virtio/virtio_video.h b/drivers/media/virtio/virtio_video.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..9b2099f6de32b3235c21a615e608f42e340e3d6d
+index 0000000000000000000000000000000000000000..826fcf95c06abf96f7e516e0a822b1d874d62a23
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video.h
-@@ -0,0 +1,450 @@
+@@ -0,0 +1,442 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/* Common header for virtio video driver.
 + *
@@ -506,10 +506,6 @@ index 0000000000000000000000000000000000000000..9b2099f6de32b3235c21a615e608f42e
 +int virtio_video_cmd_get_params(struct virtio_video_device *vvd,
 +				struct virtio_video_stream *stream,
 +				enum virtio_video_queue_type queue_type);
-+int virtio_video_cmd_set_control(struct virtio_video_device *vvd,
-+				 uint32_t stream_id,
-+				 enum virtio_video_control_type control,
-+				 uint32_t value);
 +int virtio_video_cmd_get_control(struct virtio_video_device *vvd,
 +				 struct virtio_video_stream *stream,
 +				 enum virtio_video_control_type control);
@@ -559,13 +555,9 @@ index 0000000000000000000000000000000000000000..9b2099f6de32b3235c21a615e608f42e
 +void virtio_video_clean_control(struct virtio_video_device *vvd);
 +
 +uint32_t virtio_video_format_to_v4l2(uint32_t format);
-+uint32_t virtio_video_control_to_v4l2(uint32_t control);
 +uint32_t virtio_video_profile_to_v4l2(uint32_t profile);
 +uint32_t virtio_video_level_to_v4l2(uint32_t level);
 +uint32_t virtio_video_v4l2_format_to_virtio(uint32_t v4l2_format);
-+uint32_t virtio_video_v4l2_control_to_virtio(uint32_t v4l2_control);
-+uint32_t virtio_video_v4l2_profile_to_virtio(uint32_t v4l2_profile);
-+uint32_t virtio_video_v4l2_level_to_virtio(uint32_t v4l2_level);
 +
 +struct video_format *virtio_video_find_video_format(struct list_head *fmts_list,
 +						    uint32_t fourcc);
@@ -3324,10 +3316,10 @@ index 0000000000000000000000000000000000000000..1f73c6beb1fe81627b675f87d655c162
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/virtio/virtio_video_helpers.c b/drivers/media/virtio/virtio_video_helpers.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..2ccfa84c3d1ae9525e0c7c92341aec07ad4074b0
+index 0000000000000000000000000000000000000000..e6bb2fbfaff1f1bf68ca57547fe2b2f041a92472
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_helpers.c
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,198 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -3399,18 +3391,6 @@ index 0000000000000000000000000000000000000000..2ccfa84c3d1ae9525e0c7c92341aec07
 +	return 0;
 +}
 +
-+uint32_t virtio_video_v4l2_level_to_virtio(uint32_t v4l2_level)
-+{
-+	size_t idx;
-+
-+	for (idx = 0; idx < ARRAY_SIZE(level_table); idx++) {
-+		if (level_table[idx].v4l2_value == v4l2_level)
-+			return level_table[idx].virtio_value;
-+	}
-+
-+	return 0;
-+}
-+
 +static struct virtio_video_convert_table profile_table[] = {
 +	{ VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE, V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE },
 +	{ VIRTIO_VIDEO_PROFILE_HEVC_MAIN, V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN },
@@ -3445,18 +3425,6 @@ index 0000000000000000000000000000000000000000..2ccfa84c3d1ae9525e0c7c92341aec07
 +	for (idx = 0; idx < ARRAY_SIZE(profile_table); idx++) {
 +		if (profile_table[idx].virtio_value == profile)
 +			return profile_table[idx].v4l2_value;
-+	}
-+
-+	return 0;
-+}
-+
-+uint32_t virtio_video_v4l2_profile_to_virtio(uint32_t v4l2_profile)
-+{
-+	size_t idx;
-+
-+	for (idx = 0; idx < ARRAY_SIZE(profile_table); idx++) {
-+		if (profile_table[idx].v4l2_value == v4l2_profile)
-+			return profile_table[idx].virtio_value;
 +	}
 +
 +	return 0;
@@ -3500,37 +3468,6 @@ index 0000000000000000000000000000000000000000..2ccfa84c3d1ae9525e0c7c92341aec07
 +	for (idx = 0; idx < ARRAY_SIZE(format_table); idx++) {
 +		if (format_table[idx].v4l2_value == v4l2_format)
 +			return format_table[idx].virtio_value;
-+	}
-+
-+	return 0;
-+}
-+
-+static struct virtio_video_convert_table control_table[] = {
-+	{ VIRTIO_VIDEO_CONTROL_BITRATE, V4L2_CID_MPEG_VIDEO_BITRATE },
-+	{ VIRTIO_VIDEO_CONTROL_PROFILE, V4L2_CID_MPEG_VIDEO_H264_PROFILE },
-+	{ VIRTIO_VIDEO_CONTROL_LEVEL, V4L2_CID_MPEG_VIDEO_H264_LEVEL },
-+	{ 0 },
-+};
-+
-+uint32_t virtio_video_control_to_v4l2(uint32_t control)
-+{
-+	size_t idx;
-+
-+	for (idx = 0; idx < ARRAY_SIZE(control_table); idx++) {
-+		if (control_table[idx].virtio_value == control)
-+			return control_table[idx].v4l2_value;
-+	}
-+
-+	return 0;
-+}
-+
-+uint32_t virtio_video_v4l2_control_to_virtio(uint32_t v4l2_control)
-+{
-+	size_t idx;
-+
-+	for (idx = 0; idx < ARRAY_SIZE(control_table); idx++) {
-+		if (control_table[idx].v4l2_value == v4l2_control)
-+			return control_table[idx].virtio_value;
 +	}
 +
 +	return 0;
@@ -3583,10 +3520,10 @@ index 0000000000000000000000000000000000000000..2ccfa84c3d1ae9525e0c7c92341aec07
 +}
 diff --git a/drivers/media/virtio/virtio_video_vq.c b/drivers/media/virtio/virtio_video_vq.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..13357d3513869296f9921b83dc9909900a0e93ba
+index 0000000000000000000000000000000000000000..dd904e0f413caf4668c19bd8e0f78cda44f51744
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_vq.c
-@@ -0,0 +1,1135 @@
+@@ -0,0 +1,1077 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -4662,64 +4599,6 @@ index 0000000000000000000000000000000000000000..13357d3513869296f9921b83dc990990
 +		v4l2_err(&vvd->v4l2_dev,
 +			 "timed out waiting for get_control\n");
 +	return ret;
-+}
-+
-+int virtio_video_cmd_set_control(struct virtio_video_device *vvd,
-+				 uint32_t stream_id,
-+				 enum virtio_video_control_type control,
-+				 uint32_t value)
-+{
-+	struct virtio_video_set_control *req_p;
-+	struct virtio_video_vbuffer *vbuf;
-+	struct virtio_video_control_val_level *ctrl_l;
-+	struct virtio_video_control_val_profile *ctrl_p;
-+	struct virtio_video_control_val_bitrate *ctrl_b;
-+	size_t size;
-+
-+	if (value == 0)
-+		return -EINVAL;
-+
-+	switch (control) {
-+	case VIRTIO_VIDEO_CONTROL_PROFILE:
-+		size = sizeof(struct virtio_video_control_val_profile);
-+		break;
-+	case VIRTIO_VIDEO_CONTROL_LEVEL:
-+		size = sizeof(struct virtio_video_control_val_level);
-+		break;
-+	case VIRTIO_VIDEO_CONTROL_BITRATE:
-+		size = sizeof(struct virtio_video_control_val_bitrate);
-+		break;
-+	default:
-+		return -EINVAL;
-+	}
-+
-+	req_p = virtio_video_alloc_req(vvd, &vbuf, size + sizeof(*req_p));
-+	if (IS_ERR(req_p))
-+		return PTR_ERR(req_p);
-+
-+	req_p->hdr.type = cpu_to_le32(VIRTIO_VIDEO_CMD_SET_CONTROL);
-+	req_p->hdr.stream_id = cpu_to_le32(stream_id);
-+	req_p->control = cpu_to_le32(control);
-+
-+	switch (control) {
-+	case VIRTIO_VIDEO_CONTROL_PROFILE:
-+		ctrl_p = (void *)((char *)req_p +
-+				  sizeof(struct virtio_video_set_control));
-+		ctrl_p->profile = cpu_to_le32(value);
-+		break;
-+	case VIRTIO_VIDEO_CONTROL_LEVEL:
-+		ctrl_l = (void *)((char *)req_p +
-+				 sizeof(struct virtio_video_set_control));
-+		ctrl_l->level = cpu_to_le32(value);
-+		break;
-+	case VIRTIO_VIDEO_CONTROL_BITRATE:
-+		ctrl_b = (void *)((char *)req_p +
-+				 sizeof(struct virtio_video_set_control));
-+		ctrl_b->bitrate = cpu_to_le32(value);
-+		break;
-+	}
-+
-+	return virtio_video_queue_cmd_buffer(vvd, vbuf);
 +}
 +
 diff --git a/include/uapi/linux/virtio_video.h b/include/uapi/linux/virtio_video.h

@@ -19,7 +19,7 @@ on return so no saved or traced register carries it.
  1 file changed, 34 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index ca8a128b66d4a3d1af752d47505aad47ba034d04..39353ad8a225a1ecdab515f6334ac1923d131ada 100644
+index 7734bb4843add9f185d0d909944e3b91fd6f09c1..d31df98a9c15506c163f3de731285a2dd7ca7491 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -67,6 +67,31 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
@@ -54,7 +54,7 @@ index ca8a128b66d4a3d1af752d47505aad47ba034d04..39353ad8a225a1ecdab515f6334ac192
  
  static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
-@@ -349,6 +374,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -341,6 +366,7 @@ void userspace(struct uml_pt_regs *registers)
  		const unsigned int *guest_ipi_sequence;
  		unsigned int guest_ipi_snapshot;
  		int event;
@@ -62,7 +62,7 @@ index ca8a128b66d4a3d1af752d47505aad47ba034d04..39353ad8a225a1ecdab515f6334ac192
  		int snapshots_mm;
  
  		/*
-@@ -392,12 +418,14 @@ void userspace(struct uml_pt_regs *registers)
+@@ -384,12 +410,14 @@ void userspace(struct uml_pt_regs *registers)
  		if (darwin_uml_static_guest_interrupt_sequence(
  			guest_ipi_sequence, guest_ipi_snapshot) < 0)
  			fatal_userspace(registers, "interrupt registration", -1);
@@ -77,7 +77,7 @@ index ca8a128b66d4a3d1af752d47505aad47ba034d04..39353ad8a225a1ecdab515f6334ac192
  		if (event == DARWIN_UML_EVENT_STOP)
  			darwin_host_stop();
  		/*
-@@ -634,12 +662,17 @@ void userspace(struct uml_pt_regs *registers)
+@@ -626,12 +654,17 @@ void userspace(struct uml_pt_regs *registers)
  		{
  			siginfo_t signal_info = { 0 };
  

@@ -30,8 +30,8 @@
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "memory/guest_address_space.hpp"
 #include "require.hpp"
+#include "x86_64_code_change_history.hpp"
 
-#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -53,49 +53,9 @@ using namespace uml::cpu::x86_64;
 using uml::cpu::EngineEvent;
 using uml::testing::require;
 
-/* The code-change sequence the address space publishes, and the ranges it
- * remembers, as the MMU does. */
-struct Sequences final {
-	std::uint64_t mapping_changes{1};
-	std::uint64_t code_changes{1};
-	std::array<gadgets::ProgramCodeChange, 16> history{};
-	std::size_t recorded{};
-
-	void change(std::uint64_t address, std::uint64_t length) noexcept
-	{
-		if (recorded < history.size())
-			history[recorded] = {address, length};
-		++recorded;
-		++code_changes;
-	}
-};
-
-[[nodiscard]] gadgets::ProgramCacheSequences read_sequences(
-	void *context) noexcept
-{
-	const auto &state = *static_cast<const Sequences *>(context);
-	return {state.mapping_changes, state.code_changes, false};
-}
-
-[[nodiscard]] int read_code_changes(void *context, std::uint64_t sequence,
-	gadgets::ProgramCodeChange *changes, std::size_t capacity,
-	std::uint64_t *current_sequence) noexcept
-{
-	const auto &state = *static_cast<const Sequences *>(context);
-	*current_sequence = state.code_changes;
-	if (sequence >= state.code_changes)
-		return 0;
-	if (state.recorded > state.history.size() ||
-	    sequence + state.recorded < state.code_changes)
-		return -1;
-	const auto count = state.code_changes - sequence;
-	if (count > capacity)
-		return -1;
-	for (std::uint64_t index = 0; index < count; ++index)
-		changes[index] = state.history[static_cast<std::size_t>(
-			state.recorded - count + index)];
-	return static_cast<int>(count);
-}
+using uml::test::x86_64_code_change_history::Sequences;
+using uml::test::x86_64_code_change_history::read_code_changes;
+using uml::test::x86_64_code_change_history::read_sequences;
 
 class Memory final : public uml::memory::GuestAddressSpace {
 public:
