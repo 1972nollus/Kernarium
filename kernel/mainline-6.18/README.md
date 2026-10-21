@@ -104,10 +104,9 @@ The shipped policy is the shared
 [`kernel/common/config/darwin-uml.fragment`](../common/config/darwin-uml.fragment)
 plus the overlay of the product, `config/mainline.fragment` for Linux or
 `config/android.fragment` for [Android](#android-product). The build copies the
-shared policy as the starting `.config`, applies the overlay and the 4 KiB
-page fragment, runs `olddefconfig`, and verifies that every requested symbol
-resolved as declared. The Linux overlay holds only what differs from the
-Android product:
+shared policy as the starting `.config`, applies the overlay, runs
+`olddefconfig`, and verifies that every requested symbol resolved as declared.
+The Linux overlay holds only what differs from the Android product:
 
 - `CHECKPOINT_RESTORE` stays on for Linux guests. Its Kconfig dependency
   excludes `MSEAL_SYSTEM_MAPPINGS`, which Android enables instead.
@@ -123,11 +122,11 @@ last, for a lock-checking probe with lockdep, its hardirq-state tracking,
 through `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; it is never an accepted
 artifact.
 
-Every kernel has 4 KiB pages, from `kernel/common/config/page-4k.fragment`.
-The separate x86_64-userspace slice's
-`slices/x86_64/config/userspace.fragment` follows the shared policy, the Linux
-overlay and that fragment, and it applies only the patches in
-`slices/x86_64/patches`. The kernel still executes its UML kernel mode as native arm64, but its userspace ABI is
+Every kernel has 4 KiB pages, from the shared policy. The separate
+x86_64-userspace slice's `slices/x86_64/config/userspace.fragment` follows the
+shared policy and the Linux overlay, and it applies only the patches in
+`slices/x86_64/patches`. The kernel still executes its UML kernel mode as
+native arm64, but its userspace ABI is
 fixed to the x86 family: it accepts x86_64 and i386 tasks and never arm64
 userspace. Signal delivery exposes the native x86 XSAVE layout for x87, SSE,
 and AVX state and restores user edits through the matching ABI's signal-return
