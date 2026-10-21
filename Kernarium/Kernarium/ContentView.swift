@@ -16,7 +16,7 @@ struct ContentView: View {
     /// mode sets it; the serial console's keyboard is its terminal's focus.
     @State private var framebufferKeyboardVisible = false
     @State private var specialKeysExpanded = false
-    @State private var presentedSheet: PresentedSheet?
+    @State private var settingsPresented = false
     /// Whether the window scene fills the screen. Until the view is in a
     /// scene, it is taken to be a window, which is the system's own default.
     @State private var sceneCoversScreen = false
@@ -77,11 +77,8 @@ struct ContentView: View {
         .background {
             SceneCoverageReader { sceneCoversScreen = $0 }
         }
-        .sheet(item: $presentedSheet) { destination in
-            switch destination {
-            case .settings:
-                EmulatorSettingsView()
-            }
+        .sheet(isPresented: $settingsPresented) {
+            EmulatorSettingsView()
         }
         .onAppear {
             serialConsole.startObserving()
@@ -196,7 +193,7 @@ struct ContentView: View {
             accessibilityLabel: "Emulator Settings",
             identifier: "settingsButton"
         ) {
-            presentedSheet = .settings
+            settingsPresented = true
         }
     }
 
@@ -463,12 +460,6 @@ enum GuestSpecialKey: UInt16, CaseIterable, Identifiable {
         case .home: "guestHomeButton"
         }
     }
-}
-
-private enum PresentedSheet: String, Identifiable {
-    case settings
-
-    var id: String { rawValue }
 }
 
 private struct GuestDisplayGeometry {
@@ -1567,13 +1558,10 @@ final class EmulatorLauncher: ObservableObject {
         let size = GuestInputCoordinateSpace.boundedDisplaySize(
             geometry.pixelSize
         )
-        view.setGuestDisplay(
-            width: UInt32(size.width.rounded(.down)),
-            height: UInt32(size.height.rounded(.down))
-        )
-        UIApplication.shared.isIdleTimerDisabled = true
         let width = UInt32(size.width.rounded(.down))
         let height = UInt32(size.height.rounded(.down))
+        view.setGuestDisplay(width: width, height: height)
+        UIApplication.shared.isIdleTimerDisabled = true
         let guestMemoryMiB = UInt32(configuration.guestMemoryMiB)
         let vCPUCount = UInt32(configuration.vCPUCount)
         let dotsPerInch = geometry.dotsPerInch
