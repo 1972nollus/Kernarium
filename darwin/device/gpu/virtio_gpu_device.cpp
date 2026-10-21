@@ -904,20 +904,11 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
     const auto command = static_cast<protocol::GpuCommand>(header->type);
 
     if (cursorQueue) {
-        if (command != protocol::GpuCommand::updateCursor &&
-            command != protocol::GpuCommand::moveCursor) {
-            return {};
-        }
-        const auto* cursor =
-            readStructure<protocol::GpuUpdateCursor>(request);
-        if (cursor == nullptr ||
-            cursor->position.scanoutId != protocol::primaryScanoutId)
-            return {};
         /*
          * The cursor virtqueue has only a device-readable command
          * descriptor. Unlike the control queue, cursor commands do not carry
          * a writable response buffer; completion is reported solely through
-         * the used ring.
+         * the used ring. The device has no cursor plane, so it consumes them.
          */
         return {};
     }
