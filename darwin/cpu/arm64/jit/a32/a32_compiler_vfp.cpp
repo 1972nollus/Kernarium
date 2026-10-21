@@ -16,6 +16,7 @@
 #include "a32_encoders.hpp"
 #include "a32_operations.hpp"
 #include "a32_vector_encoders.hpp"
+#include "cpu/arm64/aarch32/state_format.hpp"
 
 namespace uml::cpu::arm64::jit::a32 {
 
@@ -27,9 +28,6 @@ constexpr unsigned scratch_result = 5;
 constexpr unsigned scratch_d = 6;
 constexpr unsigned fallback_n = 9;
 constexpr unsigned fallback_m = 10;
-
-constexpr std::uint32_t fpscr_control_mask = 0x07c8'0000U;
-constexpr std::uint32_t fpscr_status_mask = 0x0800'009fU;
 
 } // namespace
 
@@ -561,12 +559,12 @@ A32Compiler::Flow A32Compiler::emit_fpscr(const VInfo &v) {
     // FPSCR: the flags, QC and the cumulative bits, then the control bits.
     emitter_.load_w(0, 15, offsetof(CpuState, a32_fpscr_nzcv));
     emit(0xd53b'4421U); // mrs x1, fpsr
-    emit(enc::movz(2, fpscr_status_mask & 0xffffU));
-    emit(enc::movk(2, fpscr_status_mask >> 16, 1));
+    emit(enc::movz(2, fpsr_writable_mask & 0xffffU));
+    emit(enc::movk(2, fpsr_writable_mask >> 16, 1));
     emit(enc::and_(1, 1, 2));
     emit(enc::orr(0, 0, 1));
     emitter_.load_w(1, 15, offsetof(CpuState, fpcr));
-    emit(enc::movz(2, fpscr_control_mask >> 16, 1));
+    emit(enc::movz(2, aarch32::fpscr_control_mask >> 16, 1));
     emit(enc::and_(1, 1, 2));
     emit(enc::orr(0, 0, 1));
     const auto dest = def(t, false, fallback_n);
@@ -577,12 +575,12 @@ A32Compiler::Flow A32Compiler::emit_fpscr(const VInfo &v) {
   // VMSR FPSCR, Rt. The host FPCR takes the written control bits, so the
   // translation continues in the guest's mode.
   const unsigned source = use(t, fallback_n);
-  emit(enc::movz(1, fpscr_control_mask >> 16, 1));
+  emit(enc::movz(1, aarch32::fpscr_control_mask >> 16, 1));
   emit(enc::and_(1, 1, source));
   emitter_.store_w(1, 15, offsetof(CpuState, fpcr));
   emit(0xd51b'4401U); // msr fpcr, x1
-  emit(enc::movz(2, fpscr_status_mask & 0xffffU));
-  emit(enc::movk(2, fpscr_status_mask >> 16, 1));
+  emit(enc::movz(2, fpsr_writable_mask & 0xffffU));
+  emit(enc::movk(2, fpsr_writable_mask >> 16, 1));
   emit(enc::and_(2, 2, source));
   emitter_.store_w(2, 15, offsetof(CpuState, fpsr));
   emit(0xd51b'4422U); // msr fpsr, x2
