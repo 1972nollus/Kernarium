@@ -12,15 +12,13 @@
  * checks the forms themselves against the M4.
  */
 #include "arm64_jit_sme_test_support.hpp"
+#include "arm64_kernel_stops.hpp"
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 
-#include <mach/mach.h>
-
-#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cstddef>
@@ -28,7 +26,6 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
-#include <thread>
 #include <vector>
 
 using namespace uml::emulator::tests;
@@ -280,34 +277,15 @@ void fp_flags_survive_kernel_entries() {
   cpu.registers[2] = iterations;
   cpu.registers[4] = 0x7fc0'0000U; // quiet NaN
   cpu.registers[21] = 0;
-  const auto target = mach_thread_self();
-  std::atomic<bool> running{true};
-  std::atomic<unsigned> stops{0};
-  std::thread interrupter{[&] {
-    while (running.load(std::memory_order_relaxed)) {
-      if (thread_suspend(target) == KERN_SUCCESS) {
-        /* Reading the state waits until the thread has stopped. */
-        arm_thread_state64_t state{};
-        mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
-        if (thread_get_state(target, ARM_THREAD_STATE64,
-                             reinterpret_cast<thread_state_t>(&state),
-                             &count) == KERN_SUCCESS)
-          stops.fetch_add(1, std::memory_order_relaxed);
-        thread_resume(target);
-      }
-      std::this_thread::sleep_for(std::chrono::microseconds(100));
-    }
-  }};
+  KernelStops interrupter{std::chrono::microseconds{100}};
   std::size_t retired = 0;
   const auto event = machine.run(retired, 1'000'000);
-  running.store(false, std::memory_order_relaxed);
-  interrupter.join();
-  mach_port_deallocate(mach_task_self(), target);
+  const auto stops = interrupter.stop();
   require(event == Event::system_call);
   std::fprintf(stderr, "FP loop stopped in the kernel %u times, %llu "
-               "iterations miscounted their flags\n", stops.load(),
+               "iterations miscounted their flags\n", stops,
                static_cast<unsigned long long>(cpu.registers[21]));
-  require(stops.load() >= 10U);
+  require(stops >= 10U);
   require(cpu.registers[21] == 0U);
   require(cpu.registers[3] == 0x1U);
   require(machine.guest_fpsr() == 0x1U);
@@ -445,33 +423,15 @@ void scalar_fp_flags_survive_kernel_entries() {
   cpu.registers[2] = iterations;
   cpu.registers[4] = 0x7fc0'0000U; // quiet NaN
   cpu.registers[21] = 0;
-  const auto target = mach_thread_self();
-  std::atomic<bool> running{true};
-  std::atomic<unsigned> stops{0};
-  std::thread interrupter{[&] {
-    while (running.load(std::memory_order_relaxed)) {
-      if (thread_suspend(target) == KERN_SUCCESS) {
-        arm_thread_state64_t state{};
-        mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
-        if (thread_get_state(target, ARM_THREAD_STATE64,
-                             reinterpret_cast<thread_state_t>(&state),
-                             &count) == KERN_SUCCESS)
-          stops.fetch_add(1, std::memory_order_relaxed);
-        thread_resume(target);
-      }
-      std::this_thread::sleep_for(std::chrono::microseconds(100));
-    }
-  }};
+  KernelStops interrupter{std::chrono::microseconds{100}};
   std::size_t retired = 0;
   const auto event = machine.run(retired, 1'000'000);
-  running.store(false, std::memory_order_relaxed);
-  interrupter.join();
-  mach_port_deallocate(mach_task_self(), target);
+  const auto stops = interrupter.stop();
   require(event == Event::system_call);
   std::fprintf(stderr, "scalar FP loop stopped in the kernel %u times, %llu "
-               "iterations miscounted their flags\n", stops.load(),
+               "iterations miscounted their flags\n", stops,
                static_cast<unsigned long long>(cpu.registers[21]));
-  require(stops.load() >= 10U);
+  require(stops >= 10U);
   require(cpu.registers[21] == 0U);
   require(cpu.registers[3] == 0x1U);
   const auto file = machine.file();

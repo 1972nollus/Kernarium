@@ -8,6 +8,7 @@
  * host, and only SM=1 code needs the hardware.
  */
 #include "arm64_jit_sme_test_support.hpp"
+#include "arm64_kernel_stops.hpp"
 #include "arm64_sm0_vector_length_support.hpp"
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
@@ -16,19 +17,14 @@
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 
-#include <mach/mach.h>
-
 #include <algorithm>
 #include <array>
-#include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <span>
-#include <thread>
 #include <vector>
 
 using namespace uml::emulator::tests;
@@ -541,34 +537,14 @@ void fp_controls_survive_kernel_entries_in_streaming_mode() {
   machine.cpu.registers[1] = written_fpsr;
   machine.cpu.registers[2] = 40'000'000;
   machine.cpu.registers[4] = written_fpcr;
-  const auto target = mach_thread_self();
-  std::atomic<bool> running{true};
-  std::atomic<unsigned> stops{0};
-  std::thread interrupter{[&] {
-    while (running.load(std::memory_order_relaxed)) {
-      if (thread_suspend(target) == KERN_SUCCESS) {
-        /* Reading the state waits until the thread has stopped, so it
-         * has entered the kernel before it resumes. */
-        arm_thread_state64_t state{};
-        mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
-        if (thread_get_state(target, ARM_THREAD_STATE64,
-                             reinterpret_cast<thread_state_t>(&state),
-                             &count) == KERN_SUCCESS)
-          stops.fetch_add(1, std::memory_order_relaxed);
-        thread_resume(target);
-      }
-      std::this_thread::sleep_for(std::chrono::microseconds(200));
-    }
-  }};
+  KernelStops interrupter;
   std::size_t retired = 0;
   const auto event = machine.run(retired, 1'000'000);
-  running.store(false, std::memory_order_relaxed);
-  interrupter.join();
-  mach_port_deallocate(mach_task_self(), target);
+  const auto stops = interrupter.stop();
   require(event == Event::system_call);
   std::fprintf(stderr, "streaming loop stopped in the kernel %u times\n",
-               stops.load());
-  require(stops.load() >= 10U);
+               stops);
+  require(stops >= 10U);
   require(machine.cpu.svcr == arm64::svcr_sm);
   require(machine.cpu.registers[3] == written_fpsr);
   require(machine.cpu.registers[5] == written_fpcr);
