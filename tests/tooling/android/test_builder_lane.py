@@ -50,7 +50,9 @@ def run_tool(
 def synthetic_aarch64_elf(
     alignment: int = 16384,
     needed: tuple[str, ...] = (),
+    edit: tuple[str, int, int] | None = None,
 ) -> bytes:
+    """An AArch64 ET_DYN; `edit` is a (struct format, offset, value) overwrite."""
     program_headers = 2 if needed else 1
     dynamic_entries = 3 + len(needed) if needed else 0
     dynamic_offset = 64 + 56 * program_headers
@@ -107,6 +109,8 @@ def synthetic_aarch64_elf(
         for index, (tag, value) in enumerate(entries):
             struct.pack_into("<qQ", payload, dynamic_offset + index * 16, tag, value)
         payload[string_offset:] = string_table
+    if edit is not None:
+        struct.pack_into(edit[0], payload, edit[1], edit[2])
     return bytes(payload)
 
 
@@ -289,6 +293,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_product_model: bool = False,
                           wide_fdroid_permissions: bool = False,
                           mesa_gles_alignment: int = 16384,
+                          elf_edit: tuple[str, int, int] | None = None,
                           init_variant: str | None = None,
                           extra_entry: str | None = None,
                           build_variant: str = tracked_variant,
@@ -364,7 +369,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     f"{'Android 17 on Darwin UML' if wrong_product_model else 'Darwin UML'}\n",
                 )
                 archive.writestr(
-                    "SYSTEM/bin/android-fixture", synthetic_aarch64_elf(alignment)
+                    "SYSTEM/bin/android-fixture",
+                    synthetic_aarch64_elf(alignment, edit=elf_edit),
                 )
                 for tool in ("e2fsck", "resize2fs"):
                     archive.writestr(
@@ -706,6 +712,25 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             if result.returncode != 1:
                 fail(f"target-files verifier did not reject the {label} fixture: {result.stdout}")
 
+        # Rejections that must name their cause: kernel module files and
+        # metadata in any case, and a target ELF whose header is not an
+        # AArch64 little-endian ELF64 with whole program-header entries.
+        for label, options, reason in (
+            ("module-object-suffix", {"extra_entry": "VENDOR/etc/fixture.ko.xz"}, "kernel module"),
+            ("module-metadata", {"extra_entry": "VENDOR/etc/modules.dep"}, "kernel module"),
+            ("module-metadata-case", {"extra_entry": "VENDOR/etc/MODULES.Dep"}, "kernel module"),
+            ("module-blocklist", {"extra_entry": "VENDOR/etc/modules.blocklist"}, "kernel module"),
+            ("elf32", {"elf_edit": ("<B", 4, 1)}, "little-endian ELF64"),
+            ("elf-big-endian", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF64"),
+            ("elf-machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
+            ("elf-program-header-size", {"elf_edit": ("<H", 54, 32)}, "program.header"),
+        ):
+            fixture = root / f"bad-{label}.zip"
+            write_fixture(fixture, **options)
+            result = run_tool(verifier, "--target-files", fixture, *kernel_options)
+            if result.returncode != 1 or not re.search(reason, result.stdout):
+                fail(f"target-files verifier did not reject the {label} fixture for {reason!r}: {result.stdout}")
+
 
 def verify_hal_selections(android_root: Path) -> None:
     # The boot command line is the one writer of each graphics HAL selection,
@@ -777,7 +802,8 @@ def newc_entry(name: str, mode: int, payload: bytes, inode: int) -> bytes:
 
 def synthetic_initramfs(fstab: str, *, wrong_fstab: bool = False,
                         module_loader: bool = False,
-                        duplicate_file: bool = False) -> bytes:
+                        duplicate_file: bool = False,
+                        module_file: str | None = None) -> bytes:
     if wrong_fstab:
         fstab = erofs_system_fstab(fstab)
     entries = [
@@ -795,6 +821,8 @@ def synthetic_initramfs(fstab: str, *, wrong_fstab: bool = False,
         entries.append(newc_entry("system/bin/modprobe", 0o120777, b"toybox", 5))
     if duplicate_file:
         entries.append(newc_entry("init", 0o100750, b"init", 6))
+    if module_file is not None:
+        entries.append(newc_entry(f"lib/modules/{module_file}", 0o100644, b"module", 7))
     entries.append(newc_entry("TRAILER!!!", 0, b"", len(entries) + 1))
     return b"".join(entries)
 
@@ -816,6 +844,16 @@ def verify_initramfs_fixtures(verifier: Path) -> None:
             result = run_tool(verifier, fixture)
             if result.returncode == 0:
                 fail(f"initramfs verifier accepted the {label} fixture")
+        # Kernel module files and metadata, in any case, name their cause.
+        for module_file in (
+            "fixture.ko", "fixture.ko.xz", "modules.dep", "MODULES.Dep",
+            "modules.devname", "modules.symbols",
+        ):
+            fixture = root / "bad-module.img"
+            fixture.write_bytes(synthetic_initramfs(fstab, module_file=module_file))
+            result = run_tool(verifier, fixture)
+            if result.returncode == 0 or "loadable-module payload" not in result.stdout:
+                fail(f"initramfs verifier did not reject {module_file} as a module: {result.stdout}")
 
 
 def synthetic_boot_image(
@@ -885,10 +923,13 @@ def lz4_legacy_frame(payload: bytes, block_size: int = 1 << 20) -> bytes:
 def synthetic_lineage_recovery_ramdisk(
     fstab: bytes, *, alignment: int = 16384, omit_dependency: bool = False,
     interface: bytes = b"eth0\0", compression: str = "lz4",
-    module: bool = False, no_memfd: bool = False,
+    module: str | None = None, no_memfd: bool = False,
+    elf_edit: tuple[str, int, int] | None = None,
 ) -> bytes:
     entries = [
-        newc_entry("init", 0o100750, synthetic_aarch64_elf(alignment), 1),
+        newc_entry(
+            "init", 0o100750, synthetic_aarch64_elf(alignment, edit=elf_edit), 1
+        ),
         newc_entry(
             "prop.default",
             0o100644,
@@ -925,7 +966,7 @@ def synthetic_lineage_recovery_ramdisk(
                 synthetic_aarch64_elf(alignment), 12,
             )
         ]),
-        *([newc_entry("lib/modules/fixture.ko", 0o100644, b"module", 13)] if module else []),
+        *([newc_entry(f"lib/modules/{module}", 0o100644, b"module", 13)] if module else []),
     ]
     entries.append(newc_entry("TRAILER!!!", 0, b"", len(entries) + 1))
     archive = b"".join(entries)
@@ -981,7 +1022,10 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
                 "the Cuttlefish interface",
                 synthetic_lineage_recovery_ramdisk(fstab, interface=b"eth1\0"),
             ),
-            ("a loadable module", synthetic_lineage_recovery_ramdisk(fstab, module=True)),
+            (
+                "a loadable module",
+                synthetic_lineage_recovery_ramdisk(fstab, module="fixture.ko"),
+            ),
             (
                 "properties without sys.use_memfd",
                 synthetic_lineage_recovery_ramdisk(fstab, no_memfd=True),
@@ -999,6 +1043,25 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
             bad.write_bytes(synthetic_boot_image(ramdisk))
             if run(bad).returncode == 0:
                 fail(f"Lineage recovery verifier accepted {label}")
+        # Rejections that must name their cause: kernel module files and
+        # metadata in any case, and an ELF whose header is not an AArch64
+        # little-endian ELF64 with whole program-header entries.
+        for label, options, reason in (
+            ("a module object suffix", {"module": "fixture.ko.xz"}, "loadable-module payload"),
+            ("module metadata", {"module": "modules.dep"}, "loadable-module payload"),
+            ("module metadata in capitals", {"module": "MODULES.Dep"}, "loadable-module payload"),
+            ("a 32-bit ELF", {"elf_edit": ("<B", 4, 1)}, "little-endian ELF64"),
+            ("a big-endian ELF", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF64"),
+            ("a foreign machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
+            ("a short program-header entry", {"elf_edit": ("<H", 54, 32)}, "program.header"),
+        ):
+            bad = root / "recovery-bad.img"
+            bad.write_bytes(
+                synthetic_boot_image(synthetic_lineage_recovery_ramdisk(fstab, **options))
+            )
+            result = run(bad)
+            if result.returncode == 0 or not re.search(reason, result.stdout):
+                fail(f"Lineage recovery verifier did not reject {label} for {reason!r}: {result.stdout}")
 
 
 def synthetic_sparse_image() -> bytes:
