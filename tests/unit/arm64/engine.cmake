@@ -164,7 +164,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/cpu_engine_contract_tests.cpp)
 	target_link_libraries(uml_cpu_engine_contract_tests PRIVATE
 		UML::BridgeAbi
-		UML::Emulator)
+		UML::Emulator
+		uml_test_allocation_failure)
 	target_include_directories(uml_cpu_engine_contract_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/emulator)
@@ -176,6 +177,8 @@
         UML::Emulator)
 
     uml_add_arm64_unit_test(floating_exception WITHOUT_HARNESS NO_OBJECTS)
+
+    uml_add_arm64_unit_test(floating_conversion WITHOUT_HARNESS NO_OBJECTS)
 
     uml_add_arm64_unit_test(floating_trap_control)
 

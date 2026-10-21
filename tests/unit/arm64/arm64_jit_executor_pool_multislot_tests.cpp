@@ -3,6 +3,7 @@
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor_pool.hpp"
 #include "require.hpp"
+#include "wait_until.hpp"
 
 #include <array>
 #include <atomic>
@@ -20,19 +21,9 @@ constexpr unsigned pool_capacity = 4;
 constexpr unsigned stress_thread_count = 8;
 constexpr unsigned stress_iterations = 512;
 
-using uml::testing::fail;
+using namespace std::chrono_literals;
 using uml::testing::require;
-
-template <typename Predicate>
-void wait_until(Predicate predicate, const char *message) {
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds{5};
-  while (!predicate()) {
-    if (std::chrono::steady_clock::now() >= deadline)
-      fail(message);
-    std::this_thread::yield();
-  }
-}
+using uml::testing::waitUntil;
 
 using Borrow = arm64::JitExecutorPoolBorrow;
 using HeldBorrow = std::optional<Borrow>;
@@ -117,9 +108,9 @@ void queued_borrowers_keep_fifo_priority_across_one_free_cell(
       orders[index].notify_all();
       releases[index].wait(false, std::memory_order_acquire);
     }};
-    wait_until([index] {
+    require(waitUntil([index] {
       return arm64::jit_executor_pool_diagnostics().waiters == index + 1U;
-    }, "FIFO borrowers did not queue in observed order");
+    }, 5s, 0ms), "FIFO borrowers did not queue in observed order");
   }
 
   std::atomic<unsigned> reborrow_order{};
@@ -133,24 +124,24 @@ void queued_borrowers_keep_fifo_priority_across_one_free_cell(
         std::memory_order_release);
     reborrow_order.notify_all();
   }};
-  wait_until([&] {
+  require(waitUntil([&] {
     return arm64::jit_executor_pool_diagnostics().waiters == waiter_count + 1U;
-  }, "the tight reborrow did not queue behind existing borrowers");
+  }, 5s, 0ms), "the tight reborrow did not queue behind existing borrowers");
 
   holders[released_slot].reset();
   for (unsigned index = 0; index < waiter_count; ++index) {
-    wait_until([&, index] {
+    require(waitUntil([&, index] {
       return orders[index].load(std::memory_order_acquire) != 0;
-    }, "a FIFO borrower did not wake");
+    }, 5s, 0ms), "a FIFO borrower did not wake");
     require(orders[index].load(std::memory_order_acquire) == index + 1U &&
                 reborrow_order.load(std::memory_order_acquire) == 0,
             "a queued borrower or tight reborrow bypassed FIFO order");
     releases[index].store(true, std::memory_order_release);
     releases[index].notify_all();
   }
-  wait_until([&] {
+  require(waitUntil([&] {
     return reborrow_order.load(std::memory_order_acquire) != 0;
-  }, "the tight reborrow did not receive the final handoff");
+  }, 5s, 0ms), "the tight reborrow did not receive the final handoff");
   require(reborrow_order.load(std::memory_order_acquire) == waiter_count + 1U,
           "the tight preferred reborrow bypassed a queued borrower");
   for (auto &waiter : waiters)
@@ -191,9 +182,9 @@ void concurrent_slot_transfers_never_duplicate_ownership(
       }
     }};
   }
-  wait_until([&] {
+  require(waitUntil([&] {
     return ready.load(std::memory_order_acquire) == workers.size();
-  }, "multi-slot stress workers did not become ready");
+  }, 5s, 0ms), "multi-slot stress workers did not become ready");
   start.store(true, std::memory_order_release);
   start.notify_all();
   for (auto &worker : workers)
@@ -223,8 +214,9 @@ void return_cannot_notify_before_a_queued_borrower_waits(
             "the paused borrower did not receive the returned cell");
     borrowed.store(true, std::memory_order_release);
   }};
-  wait_until([&] { return pause.reached.load(std::memory_order_acquire); },
-             "the borrower did not pause between its predicate and wait");
+  require(waitUntil([&] {
+    return pause.reached.load(std::memory_order_acquire);
+  }, 5s, 0ms), "the borrower did not pause between its predicate and wait");
 
   std::atomic<bool> return_started{};
   std::atomic<bool> return_finished{};
@@ -233,14 +225,16 @@ void return_cannot_notify_before_a_queued_borrower_waits(
     holders[released_slot].reset();
     return_finished.store(true, std::memory_order_release);
   }};
-  wait_until([&] { return return_started.load(std::memory_order_acquire); },
-             "the concurrent executor return did not start");
+  require(waitUntil([&] {
+    return return_started.load(std::memory_order_acquire);
+  }, 5s, 0ms), "the concurrent executor return did not start");
   std::this_thread::sleep_for(std::chrono::milliseconds{20});
   const bool premature = return_finished.load(std::memory_order_acquire);
   pause.resume.store(true, std::memory_order_release);
   pause.resume.notify_all();
-  wait_until([&] { return borrowed.load(std::memory_order_acquire); },
-             "an executor return was lost between the predicate and wait");
+  require(waitUntil([&] {
+    return borrowed.load(std::memory_order_acquire);
+  }, 5s, 0ms), "an executor return was lost between the predicate and wait");
   waiter.join();
   returning.join();
   require(!premature,
@@ -270,11 +264,11 @@ void drain_destroys_idle_slots_and_defers_active_slots(
               one_left.borrowed == 1,
           "the first active return changed the other slot's lifetime");
   second.reset();
-  wait_until([] {
+  require(waitUntil([] {
     const auto diagnostics = arm64::jit_executor_pool_diagnostics();
     return !diagnostics.active && !diagnostics.draining &&
            diagnostics.created == 0;
-  }, "the last active cell did not finish multi-slot drain");
+  }, 5s, 0ms), "the last active cell did not finish multi-slot drain");
 
   require(arm64::acquire_jit_cache_run_session(),
           "a fresh session could not follow deferred multi-slot drain");
@@ -322,8 +316,9 @@ void stale_checked_borrow_cannot_claim_a_restarted_session() {
     stale_finished.store(true, std::memory_order_release);
     stale_finished.notify_all();
   }};
-  wait_until([&] { return pause.reached.load(std::memory_order_acquire); },
-             "the stale borrower did not pause after its session check");
+  require(waitUntil([&] {
+    return pause.reached.load(std::memory_order_acquire);
+  }, 5s, 0ms), "the stale borrower did not pause after its session check");
 
   arm64::release_jit_cache_run_session();
   const auto old_drained = arm64::jit_executor_pool_diagnostics();
@@ -352,9 +347,9 @@ void stale_checked_borrow_cannot_claim_a_restarted_session() {
 
   pause.resume.store(true, std::memory_order_release);
   pause.resume.notify_all();
-  wait_until([&] {
+  require(waitUntil([&] {
     return stale_finished.load(std::memory_order_acquire);
-  }, "the stale borrower hung after replacement-session publication");
+  }, 5s, 0ms), "the stale borrower hung after replacement-session publication");
   stale.join();
   require(!stale_succeeded.load(std::memory_order_acquire),
           "a stale borrower claimed the replacement session's executor");
@@ -398,8 +393,9 @@ void standalone_executor_cannot_enter_managed_activation() {
     activation_finished.store(true, std::memory_order_release);
     activation_finished.notify_all();
   }};
-  wait_until([&] { return pause.reached.load(std::memory_order_acquire); },
-             "managed activation did not pause after registry reservation");
+  require(waitUntil([&] {
+    return pause.reached.load(std::memory_order_acquire);
+  }, 5s, 0ms), "managed activation did not pause after registry reservation");
 
   {
     arm64::JitExecutor standalone;
@@ -408,9 +404,10 @@ void standalone_executor_cannot_enter_managed_activation() {
   }
   pause.resume.store(true, std::memory_order_release);
   pause.resume.notify_all();
-  wait_until([&] {
+  require(waitUntil([&] {
     return activation_finished.load(std::memory_order_acquire);
-  }, "managed activation hung after standalone admission was rejected");
+  }, 5s, 0ms),
+          "managed activation hung after standalone admission was rejected");
   activation.join();
   require(activation_admitted.load(std::memory_order_acquire),
           "managed activation failed after rejecting a standalone lease");

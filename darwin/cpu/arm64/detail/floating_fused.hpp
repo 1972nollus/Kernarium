@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_shape.hpp"
+
 #include <cstdint>
 
 namespace uml::cpu::arm64::detail {
@@ -24,7 +26,7 @@ decode_fused_floating_arithmetic(std::uint32_t instruction) noexcept
 		return {true, type != 2U, true,
 			(instruction & 0x0020'0000U) != 0U,
 			(instruction & 0x0000'8000U) != 0U,
-			type == 3U ? 16U : type == 0U ? 32U : 64U, 16U};
+			floating_width_from_type(type), 16U};
 	}
 	const bool q = (instruction & 0x4000'0000U) != 0U;
 	/* FP16 FMLA/FMLS use bit 23 to select subtract. */
