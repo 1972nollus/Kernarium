@@ -77,7 +77,7 @@ option(UML_ENABLE_EXTERNAL_NETWORK_TESTS
 set(UML_EXTERNAL_NETWORK_TEST_HOST "example.com" CACHE STRING
     "Public host used only when UML_ENABLE_EXTERNAL_NETWORK_TESTS is enabled")
 set(UML_DEPENDENCY_PREFIX
-    "${PROJECT_SOURCE_DIR}/.build/dependencies/macos-arm64"
+    "${PROJECT_SOURCE_DIR}/.build/dependencies/macos-arm64-27"
     CACHE PATH "Private prefix containing source-built host dependencies")
 option(UML_BUILD_GPU "Build the host GPU/display provider" ${UML_TARGET_MACOS})
 option(UML_BUILD_AUDIO "Build the host Virtio Sound playback provider"

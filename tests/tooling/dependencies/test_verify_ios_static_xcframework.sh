@@ -27,9 +27,9 @@ verify_zstd()
 slice_binary()
 {
 	case "$2" in
-	ios-arm64) sdk=iphoneos target=arm64-apple-ios26.0 ;;
+	ios-arm64) sdk=iphoneos target=arm64-apple-ios27.0 ;;
 	ios-arm64-simulator) sdk=iphonesimulator
-		target=arm64-apple-ios26.0-simulator ;;
+		target=arm64-apple-ios27.0-simulator ;;
 	esac
 	target=${4:-$target}
 	object="$TEST_ROOT/object-$$.o"
@@ -115,7 +115,7 @@ verify_zstd "$ZSTD" >/dev/null || fail "a valid zstd prefix was rejected"
 DEVICE_GPTFDISK="GPTFDisk.xcframework/ios-arm64/GPTFDisk.framework"
 SIMULATOR_GPTFDISK="GPTFDisk.xcframework/ios-arm64-simulator/GPTFDisk.framework"
 
-# Each slice is an arm64 archive for its platform at iOS 26.0.
+# Each slice is an arm64 archive for its platform at iOS 27.0.
 CASE="$TEST_ROOT/simulator-in-device-slice"
 copy_fixture "$STORAGE" "$CASE"
 cp "$STORAGE/$SIMULATOR_GPTFDISK/GPTFDisk" "$CASE/$DEVICE_GPTFDISK/GPTFDisk"
@@ -135,7 +135,7 @@ expect_cmake_diagnostic "$DEVICE_GPTFDISK/GPTFDisk" verify_storage "$CASE"
 CASE="$TEST_ROOT/intel-slice"
 copy_fixture "$STORAGE" "$CASE"
 slice_binary "$CASE/$SIMULATOR_GPTFDISK/GPTFDisk" ios-arm64-simulator \
-	"$TEST_ROOT/gptfdisk.c" x86_64-apple-ios26.0-simulator
+	"$TEST_ROOT/gptfdisk.c" x86_64-apple-ios27.0-simulator
 expect_cmake_diagnostic "$SIMULATOR_GPTFDISK/GPTFDisk" verify_storage "$CASE"
 
 # Each slice exports its symbol contract and nothing forbidden.
