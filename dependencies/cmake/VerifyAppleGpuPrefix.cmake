@@ -28,7 +28,7 @@ elseif(PLATFORM STREQUAL "ios-simulator")
 else()
     message(FATAL_ERROR "Unsupported Apple GPU platform: ${PLATFORM}")
 endif()
-set(_deployment_target 26.0)
+set(_deployment_target 27.0)
 
 if(NOT IS_DIRECTORY "${PREFIX}" OR IS_SYMLINK "${PREFIX}")
     message(FATAL_ERROR "Invalid Apple GPU dependency prefix: ${PREFIX}")

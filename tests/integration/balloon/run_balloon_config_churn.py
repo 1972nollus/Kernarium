@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Keep a guest running while its balloon reports a config change every 2 ms.
 
 An external test backend serves the guest's Virtio balloon. Every 2 ms it

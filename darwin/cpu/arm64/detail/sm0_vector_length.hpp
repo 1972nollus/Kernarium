@@ -41,9 +41,9 @@ namespace uml::cpu::arm64::detail {
  *   MUL VL), which move 2 bytes.
  *
  * Z_n is V_n, so a Z access is a 16-byte access of the V register. The CPU
- * has no predicate state at SM = 0 (a mode change zeroes P, and no word it
- * executes writes one): STR P stores two zero bytes, and LDR P performs its
- * 2-byte access, faulting as a load does, and discards the data.
+ * has no predicate state at SM = 0: STR P stores two zero bytes, and LDR P
+ * performs its 2-byte access, faulting as a load does, and discards the
+ * data.
  *
  * Every other SVE word at SM = 0 stays UNDEFINED, so a binary that computes
  * with SVE outside streaming mode still takes SIGILL. In streaming mode the

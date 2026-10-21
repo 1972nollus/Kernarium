@@ -16,42 +16,23 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import struct
 import sys
 from pathlib import Path
 
-MH_MAGIC_64 = 0xFEEDFACF
-MH_OBJECT = 0x1
-LC_SYMTAB = 0x2
-N_STAB = 0xE0
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "support"))
+import macho  # noqa: E402
+
 SHOWN = 20
 
 
 def symbol_names(path: Path) -> list[str]:
     """Every non-debug symbol name in a thin 64-bit Mach-O object."""
-    data = path.read_bytes()
-    if len(data) < 32:
-        raise ValueError(f"{path}: too short for a Mach-O header")
-    magic, _, _, filetype, ncmds = struct.unpack_from("<IiiII", data, 0)
-    if magic != MH_MAGIC_64 or filetype != MH_OBJECT:
+    image = macho.MachO(path.read_bytes(), str(path))
+    if image.filetype != macho.MH_OBJECT:
         raise ValueError(f"{path}: not a thin 64-bit Mach-O object")
-    offset = 32
-    for _ in range(ncmds):
-        command, size = struct.unpack_from("<II", data, offset)
-        if command == LC_SYMTAB:
-            symbols, count, strings, _ = struct.unpack_from(
-                "<IIII", data, offset + 8)
-            names = []
-            for index in range(count):
-                string, kind = struct.unpack_from(
-                    "<IB", data, symbols + 16 * index)
-                if kind & N_STAB:
-                    continue
-                end = data.index(b"\0", strings + string)
-                names.append(data[strings + string:end].decode())
-            return names
-        offset += size
-    raise ValueError(f"{path}: no symbol table")
+    if image.symbol_names is None:
+        raise ValueError(f"{path}: no symbol table")
+    return image.symbol_names
 
 
 def main() -> int:

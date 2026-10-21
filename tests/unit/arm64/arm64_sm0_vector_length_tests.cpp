@@ -299,10 +299,6 @@ void slow_path_executes_the_spill_words()
 			for (unsigned byte = 0; byte < 16U; ++byte)
 				cpu.vectors[reg].bytes[byte] =
 					static_cast<std::byte>(reg * 16U + byte + 1U);
-		/* Non-zero predicate state the word must neither read nor change. */
-		for (auto &predicate : cpu.sve_p)
-			predicate.fill(0xffU);
-		cpu.sve_live = 0;
 		const std::uint64_t target = base + 0x8000;
 		const std::uint64_t pointer = target - static_cast<std::uint64_t>(
 			spill.offset());
@@ -322,7 +318,6 @@ void slow_path_executes_the_spill_words()
 		for (std::size_t index = 0; index < window; ++index)
 			expected.memory[index] =
 				static_cast<std::uint8_t>(memory.bytes_[index]);
-		const auto before_predicates = cpu.sve_p;
 		const auto result =
 			detail::execute_sm0_spill(cpu, spill.word(), memory);
 		require(result.event == detail::Sm0Event::retired);
@@ -335,8 +330,6 @@ void slow_path_executes_the_spill_words()
 		for (std::size_t index = 0; index < window; ++index)
 			require(static_cast<std::uint8_t>(memory.bytes_[index]) ==
 				expected.memory[index]);
-		require(cpu.sve_p == before_predicates);
-		require(cpu.sve_live == 0U);
 		require(memory.stores == (spill.store ? 1U : 0U));
 	}
 }

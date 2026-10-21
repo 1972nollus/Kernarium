@@ -19,8 +19,7 @@ Xwayland and OpenGL clients. This
 qualifies neither game rendering nor Vulkan conformance.
 
 `lsof` is required for Steam to authenticate its loopback WebUI connections.
-The image uses the accepted 4 KiB x86-64 kernel and the `uml-darwin` emulator;
-there is no 16 KiB Steam product.
+The image uses the accepted 4 KiB x86-64 kernel and the `uml-darwin` emulator.
 
 ## Input pinning
 

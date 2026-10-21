@@ -239,11 +239,11 @@ embeds every selectable framework, links none at launch, and loads exactly one
 guest flavour for the process lifetime. macOS retains its
 unsigned embedded-loader path.
 
-The iOS device and iOS Simulator products build at an iOS 26.0 minimum. iOS
-code therefore carries no availability guard, fallback path, or dependency
-build for a release older than that, and every iOS dependency prefix and
-platform contract records the same 26.0 deployment target. macOS keeps the
-baseline each macOS product declares.
+The macOS, iOS device, and iOS Simulator products build at a 27.0 minimum
+(`cmake/toolchains/Apple.cmake`). Their code therefore carries no availability
+guard, fallback path, or dependency build for a release older than that, and
+every macOS and iOS product dependency prefix and platform contract records
+the same 27.0 deployment target.
 
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted mainline
@@ -652,18 +652,17 @@ with GPR copies. SM=1 code reads SVL with RDSVL and SM=0 code from
 The arm64 virtual CPU has no SVE outside streaming mode, whatever the host
 reports, and advertises none: ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1 read
 zero, the SVE HWCAP bits are clear, and `platform::without_sve` clears the
-SVE tokens from the prober's and every engine's presented profile. The
-engine-neutral vector length of 16 bytes, the mask form of a predicate and
-`CpuState`'s P0-P15 and FFR remain in
-[`cpu/arm64/sve_profile.hpp`](../darwin/cpu/arm64/sve_profile.hpp) as the
-reserved storage the SM = 0 family and streaming mode share: every change of
-PSTATE.SM zeroes them, and no instruction writes them. Every SVE word outside
-streaming mode, other than the family below, is the illegal-instruction exit
-in both engines, so a binary that computes with SVE outside streaming mode
-takes SIGILL. A reserved bitmask immediate is the illegal-instruction exit
-everywhere. The generated encoding table keeps every SVE row, with the
-non-streaming requirement of the rows no engine executes outside streaming
-mode unimplemented.
+SVE tokens from the prober's and every engine's presented profile.
+`CpuState` keeps no predicate state outside streaming mode: the bytes the
+removed profile used stay reserved so that no later offset moves, and
+[`cpu/arm64/sve_profile.hpp`](../darwin/cpu/arm64/sve_profile.hpp) keeps only
+the predicate-pattern arithmetic that streaming mode and the SM = 0 family
+share. Every SVE word outside streaming mode, other than the family below, is
+the illegal-instruction exit in both engines, so a binary that computes with
+SVE outside streaming mode takes SIGILL. A reserved bitmask immediate is the
+illegal-instruction exit everywhere. The generated encoding table keeps every
+SVE row, with the non-streaming requirement of the rows no engine executes
+outside streaming mode unimplemented.
 
 One deliberate departure from the architecture covers a virtual CPU with
 FEAT_SME, which is every one that implements SME. CNTB, CNTH, CNTW and CNTD,

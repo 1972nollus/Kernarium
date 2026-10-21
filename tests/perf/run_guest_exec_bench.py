@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Measure cold translation and exec throughput with repeated /bin/true."""
 
 from __future__ import annotations
