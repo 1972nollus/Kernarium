@@ -40,6 +40,8 @@ import typing
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
+# python3 -I leaves the script's own directory off sys.path.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from guest import Guest, GuestFile  # noqa: E402
 from mm_shared_log import (  # noqa: E402
