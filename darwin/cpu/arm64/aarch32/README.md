@@ -160,14 +160,17 @@ writes. VRECPS and VRSQRTS are AArch32's unfused steps, not the A64 fused
 ones, and the fixed-point VCVT to floating point rounds to nearest even as
 its pseudocode says. A half-precision result zero-extends into its S
 register, and the arithmetic ignores FPSCR.AHP, which only the conversions
-read.
+read. The Advanced SIMD conversions from half precision to 16-bit integers
+use the host's H-register forms, whose saturation raises Invalid Operation
+for that lane alone, because the lanes of one instruction share the flags.
 
 The profile presents BFloat16, the 8-bit matrix multiply and FHM only where
 the host has them, but the library implements all three without them, so the
 corpus model lane tests every form on any host: the BFloat16 dot product,
 matrix multiply and conversions are the architecture's round-to-odd
-arithmetic in integers, the 8-bit forms are integer, and VFMAL widens its
-half-precision operands exactly into the host's fused single-precision
+arithmetic in integers, the 8-bit forms are integer, and VFMAL unpacks its
+half-precision operands as the A64 FMLAL helper does (FZ16 flushes a
+denormal, AHP is ignored) into the host's fused single-precision
 multiply-add. VJCVT is integer arithmetic too, because the architecture
 clears Z for a negative zero and for a subnormal that FPSCR.FZ flushes,
 which the host's FJCVTZS does not do on every core. AES and SHA run as the
