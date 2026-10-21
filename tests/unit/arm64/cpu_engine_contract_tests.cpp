@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "cpu/engine.hpp"
 #include "cpu/engine_factory.hpp"
+#include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/engine_execution.hpp"
 #include "platform/apple/host_features.hpp"
 #include "memory/static_guest_memory.hpp"
@@ -127,6 +128,74 @@ public:
 	std::size_t begin_calls{};
 	std::size_t end_calls{};
 	std::size_t block_calls{};
+};
+
+/* An executor that answers every block of either ISA with one scripted
+ * event, and reports distinctive fault, syndrome and BKPT values so a test
+ * can tell which of them an entry loop forwarded. */
+class ScriptedExecutor final {
+public:
+	static constexpr std::uint64_t fault_location = 0x7000;
+	static constexpr std::uint32_t trap_syndrome = 0x1b;
+	static constexpr std::uint32_t bkpt_immediate = 0x1234;
+
+	[[nodiscard]] bool begin_execution(unsigned long, std::uint64_t pc)
+	{
+		begin_pc = pc;
+		++begin_calls;
+		return true;
+	}
+
+	void end_execution() noexcept
+	{
+		++end_calls;
+	}
+
+	void set_single_step(bool) noexcept {}
+
+	[[nodiscard]] uml::cpu::EngineEvent run_block(
+		uml::cpu::arm64::CpuState &, uml::memory::StaticGuestMemory &,
+		unsigned long, std::size_t &executed)
+	{
+		++a64_calls;
+		executed = 1;
+		return event;
+	}
+
+	[[nodiscard]] uml::cpu::EngineEvent run_a32_block(
+		uml::cpu::arm64::CpuState &, uml::memory::StaticGuestMemory &,
+		unsigned long, std::size_t &executed)
+	{
+		++a32_calls;
+		executed = 1;
+		return event;
+	}
+
+	[[nodiscard]] bool preempted() const noexcept { return false; }
+	[[nodiscard]] std::uint64_t fault_address() const noexcept
+	{
+		return fault_location;
+	}
+	[[nodiscard]] bool fault_alignment() const noexcept { return true; }
+	[[nodiscard]] uml::memory::Access fault_access() const noexcept
+	{
+		return uml::memory::Access::write;
+	}
+	[[nodiscard]] std::uint32_t floating_point_syndrome() const noexcept
+	{
+		return trap_syndrome;
+	}
+	[[nodiscard]] std::uint32_t breakpoint_immediate() const noexcept
+	{
+		return bkpt_immediate;
+	}
+
+	uml::cpu::EngineEvent event{uml::cpu::EngineEvent::fatal};
+	std::uint64_t begin_pc{};
+	std::size_t begin_calls{};
+	std::size_t end_calls{};
+	std::size_t a64_calls{};
+	std::size_t a32_calls{};
 };
 
 struct InterruptPollState final {
@@ -793,6 +862,146 @@ void test_translated_cleanup_is_exception_safe()
 		"retried translated entry did not retain balanced cleanup");
 }
 
+/* The two translated entries answer one block event with the exit the
+ * runtime expects of the ISA: the A64 entry reports floating-point traps and
+ * SME accesses as themselves and a BKPT without a syndrome, and the AArch32
+ * entry (an executor's run_a32_block) reports neither trap as anything but
+ * fatal, carries BKPT's immediate, and names the PC, never the key. */
+void test_translated_entries_report_the_exit_of_their_isa()
+{
+	using uml::cpu::EngineEvent;
+	using uml::cpu::ExitReason;
+	namespace key = uml::cpu::arm64::aarch32;
+	constexpr std::uint64_t pc = 0x4000;
+	struct Run final {
+		uml::cpu::ExecutionResult result;
+		ScriptedExecutor executor;
+	};
+	const auto run = [](bool aarch32, EngineEvent event) {
+		Run run;
+		run.executor.event = event;
+		uml::memory::StaticGuestMemory memory;
+		uml::cpu::arm64::CpuState cpu;
+		cpu.pc = aarch32 ? key::a32_key(static_cast<std::uint32_t>(pc)) : pc;
+		uml::cpu::ExecutionRequest request{
+			.cpu = cpu,
+			.memory = memory,
+			.translated_memory = &memory,
+			.generation = 5,
+			.instruction_budget = 64,
+		};
+		run.result = aarch32 ?
+			uml::cpu::arm64::detail::run_translated_aarch32_blocks(
+				run.executor, request) :
+			uml::cpu::arm64::detail::run_translated(run.executor, request);
+		return run;
+	};
+
+	for (const bool aarch32 : {false, true}) {
+		const auto trap = run(aarch32, EngineEvent::floating_point_trap);
+		require(trap.result.reason == (aarch32 ?
+				ExitReason::fatal : ExitReason::floating_point_trap),
+			"floating-point trap exit changed");
+		require(trap.result.syndrome == (aarch32 ?
+				0U : ScriptedExecutor::trap_syndrome),
+			"floating-point trap syndrome changed");
+		const auto sme = run(aarch32, EngineEvent::sme_access);
+		require(sme.result.reason == (aarch32 ?
+				ExitReason::fatal : ExitReason::sme_access),
+			"SME access exit changed");
+		const auto bkpt = run(aarch32, EngineEvent::breakpoint);
+		require(bkpt.result.reason == ExitReason::breakpoint &&
+			bkpt.result.syndrome == (aarch32 ?
+				ScriptedExecutor::bkpt_immediate : 0U) &&
+			bkpt.result.retired_instructions == 1,
+			"breakpoint exit changed");
+		const auto alignment = run(aarch32, EngineEvent::pc_alignment);
+		require(alignment.result.reason == ExitReason::pc_alignment &&
+			alignment.result.fault.address == pc &&
+			alignment.result.fault.access ==
+				uml::memory::MemoryAccess::execute,
+			"PC-alignment event does not name the PC");
+		const auto fault = run(aarch32, EngineEvent::memory_fault);
+		require(fault.result.reason == ExitReason::memory_fault &&
+			fault.result.fault.address ==
+				ScriptedExecutor::fault_location &&
+			fault.result.fault.access ==
+				uml::memory::MemoryAccess::write &&
+			fault.result.fault.alignment,
+			"memory fault does not carry the executor's fault");
+		for (const auto event : {EngineEvent::overflow,
+			EngineEvent::general_protection, EngineEvent::trap_flag,
+			EngineEvent::debug_trap, EngineEvent::bound_range,
+			EngineEvent::fatal})
+			require(run(aarch32, event).result.reason ==
+				ExitReason::fatal, "non-arm64 event is not fatal");
+		const auto system_call = run(aarch32, EngineEvent::system_call);
+		require(system_call.result.reason == ExitReason::system_call &&
+			system_call.executor.begin_pc == pc &&
+			system_call.executor.a64_calls == (aarch32 ? 0U : 1U) &&
+			system_call.executor.a32_calls == (aarch32 ? 1U : 0U) &&
+			system_call.executor.end_calls == 1,
+			"entry did not run its ISA's block from the PC");
+	}
+}
+
+/* A PC that is not an instruction boundary of its ISA ends the entry before
+ * any block runs: any A64 PC with a low bit set, and an A32 key with bit 1
+ * set; a T32 key's halfword PC is valid and runs. */
+void test_translated_entries_check_the_pc_at_each_block_boundary()
+{
+	using uml::cpu::EngineEvent;
+	using uml::cpu::ExitReason;
+	namespace key = uml::cpu::arm64::aarch32;
+	const auto run = [](bool aarch32, std::uint64_t pc,
+			    ScriptedExecutor &executor) {
+		uml::memory::StaticGuestMemory memory;
+		uml::cpu::arm64::CpuState cpu;
+		cpu.pc = pc;
+		uml::cpu::ExecutionRequest request{
+			.cpu = cpu,
+			.memory = memory,
+			.translated_memory = &memory,
+			.generation = 5,
+			.instruction_budget = 64,
+		};
+		return aarch32 ?
+			uml::cpu::arm64::detail::run_translated_aarch32_blocks(
+				executor, request) :
+			uml::cpu::arm64::detail::run_translated(executor, request);
+	};
+	for (const std::uint64_t pc : {0x4001ULL, 0x4002ULL, 0x4003ULL}) {
+		ScriptedExecutor executor;
+		const auto result = run(false, pc, executor);
+		require(result.reason == ExitReason::pc_alignment &&
+			result.retired_instructions == 0 &&
+			result.fault.address == pc &&
+			result.fault.access == uml::memory::MemoryAccess::execute &&
+			executor.a64_calls == 0 && executor.begin_pc == pc &&
+			executor.begin_calls == 1 && executor.end_calls == 1,
+			"misaligned A64 PC reached a block");
+	}
+	{
+		ScriptedExecutor executor;
+		const auto result = run(true, key::a32_key(0x4002), executor);
+		require(result.reason == ExitReason::pc_alignment &&
+			result.retired_instructions == 0 &&
+			result.fault.address == 0x4002 &&
+			result.fault.access == uml::memory::MemoryAccess::execute &&
+			executor.a32_calls == 0 && executor.begin_pc == 0x4002 &&
+			executor.end_calls == 1,
+			"A32 key with bit 1 set reached a block");
+	}
+	{
+		ScriptedExecutor executor;
+		executor.event = EngineEvent::system_call;
+		const auto result = run(true, key::t32_key(0x4002), executor);
+		require(result.reason == ExitReason::system_call &&
+			executor.a32_calls == 1 && executor.begin_pc == 0x4002,
+			"T32 halfword PC did not run");
+	}
+}
+
 } // namespace
 
 int main()
@@ -811,6 +1020,8 @@ int main()
 		test_translated_internal_interrupt_obeys_fairness_budget();
 		test_translated_internal_interrupt_delivers_pending_interrupt();
 		test_translated_cleanup_is_exception_safe();
+		test_translated_entries_report_the_exit_of_their_isa();
+		test_translated_entries_check_the_pc_at_each_block_boundary();
 		return EXIT_SUCCESS;
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "CPU engine contract test failed: %s\n",

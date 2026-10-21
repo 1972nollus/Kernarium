@@ -181,14 +181,14 @@ for name in clean patched; do
 	git -C "$CACHE/git/$name" update-ref refs/heads/uml-pin "$BASE"
 done
 
-# A cache that an earlier checkout filtered keeps its promisor marker. It
-# cannot serve a full source, so an offline preparation refuses it.
-git clone --quiet "$UPSTREAM" "$CACHE/git/filtered"
+# A cache that an earlier checkout filtered holds commits and trees but no
+# blobs. It cannot serve a full source.
+git -C "$UPSTREAM" config uploadpack.allowFilter true
+git clone --quiet --no-checkout --filter=blob:none "file://$UPSTREAM" \
+	"$CACHE/git/filtered"
 git -C "$CACHE/git/filtered" remote set-url origin \
 	https://example.invalid/filtered.git
 git -C "$CACHE/git/filtered" update-ref refs/heads/uml-pin "$BASE"
-git -C "$CACHE/git/filtered" config remote.origin.promisor true
-git -C "$CACHE/git/filtered" config remote.origin.partialclonefilter blob:none
 
 cat >"$MANIFEST" <<EOF
 name	version	products	repository	commit	source_paths	patch_series
@@ -263,11 +263,19 @@ expect_diagnostic "prepared source paths changed" verify "$PREPARED"
 git -C "$PREPARED/clean" config uml.source.paths .
 verify "$PREPARED" >/dev/null
 
-expect_diagnostic "full source is incomplete in the offline cache" \
-	env UML_DEPENDENCY_MANIFEST="$MANIFEST" \
-		UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
-		"$PREPARE" --product filtered-fixture \
-		--root "$TEST_ROOT/filtered-prepared" --cache "$CACHE" --no-fetch
+# Preparation refuses a filtered cache whether or not it may fetch, and
+# repairs nothing: GIT_ALLOW_PROTOCOL keeps a regression off the network.
+for fetching in --no-fetch ''; do
+	expect_diagnostic "full source is incomplete in the Git cache" \
+		env GIT_ALLOW_PROTOCOL=file UML_DEPENDENCY_MANIFEST="$MANIFEST" \
+			UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
+			"$PREPARE" --product filtered-fixture \
+			--root "$TEST_ROOT/filtered-prepared" --cache "$CACHE" $fetching
+done
+[ ! -e "$TEST_ROOT/filtered-prepared/filtered" ] ||
+	fail "a refused filtered cache published a source"
+[ "$(git -C "$CACHE/git/filtered" config --bool remote.origin.promisor)" = true ] ||
+	fail "preparation repaired a filtered cache"
 
 CONCURRENT="$TEST_ROOT/concurrent"
 prepare "$CONCURRENT" >"$TEST_ROOT/concurrent-1.out" 2>&1 &

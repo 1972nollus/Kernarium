@@ -7,39 +7,13 @@
 #include <fstream>
 #include <string>
 #include <system_error>
-#include <unistd.h>
 
 namespace {
 
 using uml::gpu::MetalShaderCacheOutcome;
 using uml::testing::require;
+using uml::testing::ScratchSubdirectory;
 namespace fs = std::filesystem;
-
-/* A user cache directory of this test alone, removed when the case ends. */
-class Root final {
-public:
-	Root()
-		: path_(uml::testing::scratch_directory() /
-			("uml-metal-cache-" + std::to_string(::getpid())))
-	{
-		fs::remove_all(path_);
-		fs::create_directories(path_);
-	}
-
-	~Root()
-	{
-		std::error_code ignored;
-		fs::remove_all(path_, ignored);
-	}
-
-	Root(const Root &) = delete;
-	Root &operator=(const Root &) = delete;
-
-	[[nodiscard]] const fs::path &path() const noexcept { return path_; }
-
-private:
-	fs::path path_;
-};
 
 void write(const fs::path &file, std::size_t bytes)
 {
@@ -69,7 +43,7 @@ void theDirectoryIsNamedAfterTheBundleIdentifier()
 
 void anAbsentCacheIsReportedAbsent()
 {
-	const Root root;
+	const ScratchSubdirectory root{"uml-metal-cache-XXXXXX"};
 	const auto cache = uml::gpu::metal_shader_cache_directory(
 		root.path(), "com.example.app");
 	require(!uml::gpu::metal_shader_cache_size(cache));
@@ -82,7 +56,7 @@ void anAbsentCacheIsReportedAbsent()
 
 void indexAndDataAreCountedSeparately()
 {
-	const Root root;
+	const ScratchSubdirectory root{"uml-metal-cache-XXXXXX"};
 	const auto cache = uml::gpu::metal_shader_cache_directory(
 		root.path(), "com.example.app");
 	populate(cache, 600, 400);
@@ -94,7 +68,7 @@ void indexAndDataAreCountedSeparately()
 
 void aCacheAtTheLimitIsKept()
 {
-	const Root root;
+	const ScratchSubdirectory root{"uml-metal-cache-XXXXXX"};
 	const auto cache = uml::gpu::metal_shader_cache_directory(
 		root.path(), "com.example.app");
 	populate(cache, 600, 400);
@@ -109,7 +83,7 @@ void aCacheAtTheLimitIsKept()
 
 void aCacheOverTheLimitIsRemovedWhole()
 {
-	const Root root;
+	const ScratchSubdirectory root{"uml-metal-cache-XXXXXX"};
 	const auto cache = uml::gpu::metal_shader_cache_directory(
 		root.path(), "com.example.app");
 	populate(cache, 601, 400);
@@ -128,7 +102,7 @@ void aCacheOverTheLimitIsRemovedWhole()
  * cache, so a bounded cache takes nothing else with it. */
 void onlyTheCacheOfThatIdentifierIsRemoved()
 {
-	const Root root;
+	const ScratchSubdirectory root{"uml-metal-cache-XXXXXX"};
 	const auto own = uml::gpu::metal_shader_cache_directory(
 		root.path(), "com.example.app");
 	const auto other = uml::gpu::metal_shader_cache_directory(
@@ -150,7 +124,7 @@ void onlyTheCacheOfThatIdentifierIsRemoved()
  * nor when removing. */
 void aSymlinkIsNeitherCountedNorFollowed()
 {
-	const Root root;
+	const ScratchSubdirectory root{"uml-metal-cache-XXXXXX"};
 	const auto cache = uml::gpu::metal_shader_cache_directory(
 		root.path(), "com.example.app");
 	const auto outside = root.path() / "outside";

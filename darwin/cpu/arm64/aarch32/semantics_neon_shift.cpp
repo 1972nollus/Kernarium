@@ -6,8 +6,6 @@
 
 #include "cpu/arm64/aarch32/semantics_vector.hpp"
 
-#include <iterator>
-
 namespace uml::cpu::arm64::aarch32::detail {
 
 namespace {
@@ -90,17 +88,12 @@ bool vqshrn(Exec &x)
 	const unsigned shift = amount(x);
 	const bool source_unsigned = x.o.src_unsigned;
 	const bool destination_unsigned = x.o.dest_unsigned;
-	bool saturated = false;
+	QcTally qc;
 	const bool completed = narrow_lanes(x, [&](Raw, Raw m) {
 		const i128 element = lane_value(m, 2U * bits, !source_unsigned);
-		const Saturation result =
-			sat_q(shift_right(element, shift, Round), bits, destination_unsigned);
-		saturated = saturated || result.saturated;
-		return result.raw;
+		return qc.take(sat_q(shift_right(element, shift, Round), bits, destination_unsigned));
 	});
-	if (saturated)
-		set_qc(x.cpu);
-	return completed;
+	return qc.finish(x, completed);
 }
 
 /* VQSHL and VQSHLU by immediate. */
@@ -110,16 +103,12 @@ bool vqshl_i(Exec &x)
 	const unsigned shift = amount(x);
 	const bool source_unsigned = x.o.src_unsigned;
 	const bool destination_unsigned = x.o.dest_unsigned;
-	bool saturated = false;
+	QcTally qc;
 	const bool completed = lanewise(x, [&](Raw, Raw m, Raw) {
-		const Saturation result = sat_q(
-			shift_left_exact(lane_value(m, bits, !source_unsigned), shift), bits, destination_unsigned);
-		saturated = saturated || result.saturated;
-		return result.raw;
+		return qc.take(sat_q(
+			shift_left_exact(lane_value(m, bits, !source_unsigned), shift), bits, destination_unsigned));
 	});
-	if (saturated)
-		set_qc(x.cpu);
-	return completed;
+	return qc.finish(x, completed);
 }
 
 /* VQSHL and VQRSHL by register. */
@@ -181,9 +170,8 @@ constexpr VectorEntry entries[] = {
 
 } // namespace
 
-const VectorEntry *neon_shift_entries(std::size_t &count) noexcept
+std::span<const VectorEntry> neon_shift_entries() noexcept
 {
-	count = std::size(entries);
 	return entries;
 }
 
