@@ -5,6 +5,7 @@
 #include "cpu/arm64/aarch32/state_format.hpp"
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/execution_types.hpp"
+#include "runtime/guest_entry.hpp"
 #include "uml_darwin_abi.h"
 
 #include <cstddef>
@@ -84,16 +85,7 @@ inline void load_a32_cpu(arm64::CpuState &cpu,
 	cpu.tls = static_cast<std::uint32_t>(tls);
 	cpu.pstate_dit = false;
 	cpu.pstate_daif = 0;
-	/* An exception return may clear the local monitor and the bridge has no
-	 * reservation token, so none survives an entry (load_cpu). */
-	cpu.exclusive_address = ~std::uint64_t{0};
-	cpu.exclusive_key = 0;
-	cpu.exclusive_value = 0;
-	cpu.exclusive_value2 = 0;
-	cpu.exclusive_version = 0;
-	cpu.exclusive_size = 0;
-	cpu.gadget_zero = 0;
-	cpu.gadget_indirect_miss = nullptr;
+	::uml::runtime::clear_entry_monitor(cpu);
 	cpu.svcr = 0;
 	cpu.sme_loaded = 0;
 	cpu.sme_dirty = 0;

@@ -17,6 +17,7 @@
 #include "runtime/aarch32_guest.hpp"
 #include "runtime/context.hpp"
 #include "runtime/execution_state.hpp"
+#include "runtime/guest_entry.hpp"
 #include "uml_darwin_guest.h"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
@@ -128,19 +129,7 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.pstate_daif = static_cast<std::uint8_t>(
 		(registers.pstate & pstate_daif) >> 6);
 	cpu.tls = tls;
-	/* An exception return may clear the local monitor, and the emulator has
-	 * no architectural reservation token in uml_pt_regs.  Clear every
-	 * diagnostic field so reusing the large CpuState scratch object cannot
-	 * make a later STXR succeed spuriously.
-	 */
-	cpu.exclusive_address = ~std::uint64_t{0};
-	cpu.exclusive_key = 0;
-	cpu.exclusive_value = 0;
-	cpu.exclusive_value2 = 0;
-	cpu.exclusive_version = 0;
-	cpu.exclusive_size = 0;
-	cpu.gadget_zero = 0;
-	cpu.gadget_indirect_miss = nullptr;
+	::uml::runtime::clear_entry_monitor(cpu);
 	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr, restored_fpcr_mask());
 }
 
