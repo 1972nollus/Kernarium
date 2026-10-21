@@ -27,16 +27,6 @@ def require(condition: bool, message: str) -> None:
         sys.exit(f"test_apple_deployment_floor.py: {message}")
 
 
-def floor_of(toolchain: Path) -> str:
-    match = re.search(
-        r"^set\(_uml_apple_deployment_target ([0-9.]+)\)",
-        toolchain.read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    require(match is not None, f"{toolchain} does not name the deployment floor")
-    return match.group(1)
-
-
 def write_source(root: Path, languages: str) -> Path:
     source = root / "source"
     source.mkdir()
@@ -95,13 +85,25 @@ def main() -> int:
     parser.add_argument("--toolchain", type=Path, required=True)
     options = parser.parse_args()
     toolchain = options.toolchain.resolve()
-    floor = floor_of(toolchain)
-    stale = "14.0"
-    require(stale != floor, "the stale fixture value must differ from the floor")
 
     with tempfile.TemporaryDirectory(prefix="uml-deployment-floor.") as scratch:
         root = Path(scratch)
         bare = write_source(root, "NONE")
+
+        # The toolchain's own default is the floor, one for every platform.
+        # Targets below and above it are the others a tree must refuse.
+        floors = set()
+        for platform in PLATFORMS:
+            build = root / f"{platform}-probe"
+            result = configure(options.cmake, toolchain, bare, build, platform)
+            require(result.returncode == 0, f"{platform}: {result.stdout}")
+            floors.add(cached_target(build))
+        require(len(floors) == 1, f"the platforms disagree on the floor: {floors}")
+        floor = floors.pop()
+        version = re.fullmatch(r"([0-9]+)\.0", floor)
+        require(version is not None, f"the floor {floor!r} is not a major version")
+        stale = f"{int(version.group(1)) - 1}.0"
+        above = f"{int(version.group(1)) + 1}.0"
 
         # The floor configures on every platform and a second configure of the
         # same tree stays at it. An empty value is no target and takes the floor.
@@ -158,7 +160,7 @@ def main() -> int:
 
         # Any other target passed on the command line is refused, below the
         # floor or above it.
-        for passed in (stale, "28.0"):
+        for passed in (stale, above):
             result = configure(
                 options.cmake,
                 toolchain,
