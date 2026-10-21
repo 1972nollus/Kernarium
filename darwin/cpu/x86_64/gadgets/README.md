@@ -957,9 +957,11 @@ cannot answer for keeps it. The number keeps its place in the order the
 window retires in, a tombstone that holds nothing and that the
 least-recently-used rule drops when it reaches it, so the cache keeps the live
 address spaces it would have kept; letting go of the place too would be a
-larger window for live spaces. Without the rule a destroyed generation's
-translations, link records and indirect sites stay until eight newer
-generations displace them, which a long-running benchmark process never does.
+larger window for live spaces. Letting go of one first makes room for its
+recycled id, so out of memory it stays held, and the executor asks again at its
+next run. Without the rule a destroyed generation's translations, link records
+and indirect sites stay until eight newer generations displace them, which a
+long-running benchmark process never does.
 
 ## The byte budget
 

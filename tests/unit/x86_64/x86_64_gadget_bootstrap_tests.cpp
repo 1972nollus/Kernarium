@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "allocation_failure.hpp"
 #include "cpu/gadget_cache_budget.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/cpuid.hpp"
@@ -1533,6 +1534,23 @@ struct Lookup final {
 		"a let-go address space was served its old program");
 }
 
+/* Fill `memory`, `blocks * stride` bytes from zero, with `blocks` blocks
+ * `stride` bytes apart, each 63 `add rax, 1` and a SYSCALL. */
+void fill_add_blocks(TestMemory &memory, std::size_t blocks, std::size_t stride)
+{
+	std::vector<std::byte> block(stride, std::byte{0x90});
+	for (std::size_t add = 0; add < 63; ++add) {
+		block[add * 4] = std::byte{0x48};
+		block[add * 4 + 1] = std::byte{0x83};
+		block[add * 4 + 2] = std::byte{0xc0};
+		block[add * 4 + 3] = std::byte{0x01};
+	}
+	block[252] = std::byte{0x0f};
+	block[253] = std::byte{0x05};
+	for (std::size_t index = 0; index < blocks; ++index)
+		memory.fill(index * stride, block);
+}
+
 /* The process's gadget-cache budget bounds what an executor keeps of its
  * address spaces, whatever its slots would hold. A workload of large blocks,
  * each translated once, holds some megabytes under the default budget and is
@@ -1553,19 +1571,8 @@ struct Lookup final {
 	 * a translation, a record table's growth and a target table. */
 	constexpr std::size_t one_store = 128 * kib;
 	destroyed_generations = unknown_generations = 0;
-	/* Each block is 63 `add rax, 1` and a SYSCALL. */
 	TestMemory memory{0, blocks * stride + 4096};
-	std::vector<std::byte> block(stride, std::byte{0x90});
-	for (std::size_t add = 0; add < 63; ++add) {
-		block[add * 4] = std::byte{0x48};
-		block[add * 4 + 1] = std::byte{0x83};
-		block[add * 4 + 2] = std::byte{0xc0};
-		block[add * 4 + 3] = std::byte{0x01};
-	}
-	block[252] = std::byte{0x0f};
-	block[253] = std::byte{0x05};
-	for (std::size_t index = 0; index < blocks; ++index)
-		memory.fill(index * stride, block);
+	fill_add_blocks(memory, blocks, stride);
 	const auto open = [] {
 		const auto state = budget::ledger_state();
 		return state.total - state.shedding;
@@ -1636,6 +1643,52 @@ struct Lookup final {
 	budget::set_budget(budget::fallback_budget);
 	return bounded && expect(budget::ledger_state().total == base.total,
 		"an executor that went kept its charges");
+}
+
+/* An address space the budget asked to shed is let go of at the executor's
+ * next look. A look that finds no room for its id leaves the address space
+ * held and asked for again, so the one after it lets go of it. Run with
+ * with_sharing(false), so that the room is the only allocation of the look. */
+[[nodiscard]] bool a_shed_address_space_is_asked_for_again_after_a_failed_allocation()
+{
+	using namespace uml::cpu::x86_64;
+	namespace budget = uml::cpu::gadget_cache;
+	constexpr std::size_t blocks = 1500;
+	constexpr std::size_t stride = 256;
+	constexpr std::size_t small = 512 * 1024;
+	destroyed_generations = unknown_generations = 0;
+	TestMemory memory{0, blocks * stride + 4096};
+	fill_add_blocks(memory, blocks, stride);
+	const auto base = budget::ledger_state();
+	budget::set_budget(small);
+	bool failed = false;
+	bool asked_again = true;
+	{
+		gadgets::Executor executor;
+		for (std::size_t index = 0; index < blocks && asked_again; ++index) {
+			if (budget::ledger_state().shedding != 0) {
+				uml::testing::fail_next_allocation();
+				executor.leave_gone_generations(0, &mmu_says);
+				failed = !uml::testing::cancel_pending_allocation_failure() ||
+					failed;
+				executor.leave_gone_generations(0, &mmu_says);
+				asked_again = budget::ledger_state().shedding == 0;
+			}
+			executor.prepare(memory, 7, 1, 1);
+			const auto selected = executor.select_program(
+				memory, index * stride, ExecutionMode::long64);
+			if (selected.status != gadgets::BuildStatus::built ||
+			    selected.program == nullptr)
+				asked_again = false;
+		}
+	}
+	budget::set_budget(budget::fallback_budget);
+	return expect(failed, "no look at a shedding address space met a failed "
+		"allocation") &&
+		expect(asked_again, "an address space that could not be let go of "
+			"was not asked for again") &&
+		expect(budget::ledger_state().total == base.total,
+			"an executor that went kept its charges");
 }
 
 /* The address space the cache last prepared may be the one let go of: the
@@ -1731,6 +1784,93 @@ struct Lookup final {
 	const auto fourth = look_up(executor, memory, 4);
 	return expect(fourth.hit,
 		"a live address space was retired in place of the tombstone");
+}
+
+/* Letting go of an address space frees its id for the next to arrive, and the
+ * room for that is found before anything changes: when it cannot be, the
+ * address space is still held, the executor prepares afresh, and the next look
+ * lets go of it as if nothing had happened. The executor keeps its
+ * translations to itself (with_sharing(false)), so that the room is the only
+ * allocation the look makes; a shared space's bodies also queue and are
+ * reclaimed behind a snapshot of the executors, which allocates too. Every
+ * allocation of the look is failed in turn. */
+[[nodiscard]] bool letting_go_of_an_address_space_survives_a_failed_allocation()
+{
+	using namespace uml::cpu::x86_64;
+	bool held = false;
+	for (std::size_t allowed = 0;; ++allowed) {
+		if (!expect(allowed < 256, "the failure point never moved past "
+			"the end of letting go of an address space"))
+			return false;
+		destroyed_generations = unknown_generations = 0;
+		TestMemory memory;
+		memory.load(0, {0x0f, 0x05});
+		gadgets::Executor executor;
+		for (std::uint64_t generation = 1; generation <= 3; ++generation)
+			if (!expect(look_up(executor, memory, generation).built,
+				"a new address space was not built"))
+				return false;
+		destroyed_generations = 1U << 2;
+		uml::testing::fail_after_allocations(allowed);
+		executor.leave_gone_generations(1, &mmu_says);
+		/* True once the look made fewer allocations than allowed. */
+		const bool swept = uml::testing::cancel_pending_allocation_failure();
+		held = held || executor.resident_generations() == 3;
+		/* The same count: a look that failed is made again, and one that
+		 * did not has nothing left to do. */
+		executor.leave_gone_generations(1, &mmu_says);
+		if (!expect(executor.resident_generations() == 2,
+			"a destroyed address space was not let go of at the next look"))
+			return false;
+		const auto first = look_up(executor, memory, 1);
+		const auto second = look_up(executor, memory, 2);
+		const auto third = look_up(executor, memory, 3);
+		if (!expect(first.hit && third.hit,
+			"a live address space lost its program to a failed look") ||
+		    !expect(second.built && !second.hit,
+			"a let-go address space was served its old program"))
+			return false;
+		if (swept)
+			return expect(held, "no failure left an address space held "
+				"for want of room for its id");
+	}
+}
+
+/* An address space entering a full window retires the least recently used,
+ * which needs room for its id. Whichever allocation of that fails, the
+ * executor goes on working: it prepares afresh, translates, and caches. Run
+ * with with_sharing(false), as above. */
+[[nodiscard]] bool retiring_the_oldest_address_space_survives_a_failed_allocation()
+{
+	using namespace uml::cpu::x86_64;
+	destroyed_generations = unknown_generations = 0;
+	for (std::size_t allowed = 0;; ++allowed) {
+		if (!expect(allowed < 256, "the failure point never moved past "
+			"the entry of a ninth address space"))
+			return false;
+		TestMemory memory;
+		memory.load(0, {0x0f, 0x05});
+		gadgets::Executor executor;
+		for (std::uint64_t generation = 1; generation <= 8; ++generation)
+			if (!expect(look_up(executor, memory, generation).built,
+				"a new address space was not built"))
+				return false;
+		uml::testing::fail_after_allocations(allowed);
+		executor.prepare(memory, 9, 1, 1);
+		/* True once the prepare made fewer allocations than allowed, so
+		 * that every one of its allocations has failed in turn. */
+		const bool swept =
+			uml::testing::cancel_pending_allocation_failure();
+		const auto ninth = look_up(executor, memory, 9);
+		const auto again = look_up(executor, memory, 9);
+		if (!expect(ninth.built && again.hit &&
+				executor.resident_generations() <= 8,
+			"an executor did not recover from a failed allocation "
+			"entering a ninth address space"))
+			return false;
+		if (swept)
+			return true;
+	}
 }
 
 /* A slot is current when the epoch it carries is its space's, and the epoch
@@ -11010,6 +11150,12 @@ int main(int argc, char **argv)
 			the_prepared_generation_can_be_let_go_of() &&
 			a_number_given_out_again_runs_its_new_code() &&
 			a_destroyed_generation_keeps_its_window_place() &&
+			with_sharing(false,
+				letting_go_of_an_address_space_survives_a_failed_allocation) &&
+			with_sharing(false,
+				retiring_the_oldest_address_space_survives_a_failed_allocation) &&
+			with_sharing(false,
+				a_shed_address_space_is_asked_for_again_after_a_failed_allocation) &&
 			the_budget_bounds_what_an_executor_keeps() ? 0 : 1;
 	const bool passed = decode_scaled_address() &&
 		cache_reuses_and_revalidates_programs() &&
@@ -11037,6 +11183,12 @@ int main(int argc, char **argv)
 		the_prepared_generation_can_be_let_go_of() &&
 		a_number_given_out_again_runs_its_new_code() &&
 		a_destroyed_generation_keeps_its_window_place() &&
+		with_sharing(false,
+			letting_go_of_an_address_space_survives_a_failed_allocation) &&
+		with_sharing(false,
+			retiring_the_oldest_address_space_survives_a_failed_allocation) &&
+		with_sharing(false,
+			a_shed_address_space_is_asked_for_again_after_a_failed_allocation) &&
 		the_budget_bounds_what_an_executor_keeps() &&
 		a_validation_does_not_outlive_the_epochs_it_counts() &&
 		cache_links_common_successors() &&
