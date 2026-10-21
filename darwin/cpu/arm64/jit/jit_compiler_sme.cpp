@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * SME in the arm64 JIT (design 4.1 and 4.2): the control core (S4 milestone
- * M1) and the register-only forms (M2). Every size and layout that depends
- * on the streaming vector length is read at run time, so a translation is
- * the same for every SVL: with RDSVL and ADDSVL in SM=1 translations, from
- * CpuState::sme_svl in the others.
+ * SME in the arm64 JIT: the control core and the register-only forms. Every
+ * size and layout that depends on the streaming vector length is read at
+ * run time, so a translation is the same for every SVL: with RDSVL and
+ * ADDSVL in SM=1 translations, from CpuState::sme_svl in the others.
  *
  * SM=1 translations execute the ZA and ZT0 forms, the register-only forms
- * and the memory forms (M3) natively on the guest's resident state, with
+ * and the memory forms natively on the guest's resident state, with
  * only their general register fields re-encoded and a memory form's base
  * rebased into the host page. SM=0 translations run with host SME off and
  * contain no SVE or SME instruction: they copy between guest memory and the
- * register file with GPRs (design 4.1.2).
+ * register file with GPRs.
  */
 #include "jit_compiler.hpp"
 #include "jit_sme_support.hpp"
@@ -671,7 +670,7 @@ void JitCompiler::emit_movprfx(std::uint32_t instruction, bool predicated) {
   /*
    * MOVPRFX runs as the move it is architecturally, never paired with the
    * guest's next word: nothing the translation puts around that word can
-   * then come between a native pair (design 1.4).
+   * then come between a native pair.
    */
   const unsigned destination = instruction & 31U;
   const unsigned source = (instruction >> 5) & 31U;
@@ -721,12 +720,12 @@ bool JitCompiler::emit_streaming_memory(const detail::SmeEncoding &row,
                                         std::uint32_t instruction,
                                         std::uint64_t pc) {
   /*
-   * Design 4.1.5: the guest address in x8; when every byte the access can
-   * span, whichever elements are active, lies in one guest page that the
-   * TLB holds, the guest's own word runs on the host address with its
-   * offset zeroed. A crossing, a miss, a misaligned SP base or a tagged
-   * base takes the helper, which alone knows which elements are active,
-   * so a failed translation goes there too rather than to a fault exit.
+   * The guest address is in x8. When every byte the access can span,
+   * whichever elements are active, lies in one guest page that the TLB
+   * holds, the guest's own word runs on the host address with its offset
+   * zeroed. A crossing, a miss, a misaligned SP base or a tagged base
+   * takes the helper, which alone knows which elements are active, so a
+   * failed translation goes there too rather than to a fault exit.
    */
   using Shape = detail::SmeMemoryShape;
   const auto &memory = *detail::sme_encoding_memory_of(row);
@@ -742,7 +741,8 @@ bool JitCompiler::emit_streaming_memory(const detail::SmeEncoding &row,
       (index_operand != nullptr && !one_field(*index_operand, 5)))
     return false;
   const bool za = memory.shape == Shape::za_slice;
-  /* A ZA slice's index register, W12-W15, runs in W12 as in M2. */
+  /* A ZA slice's index register, W12-W15, runs in W12, as for the
+   * register-only forms. */
   const detail::SmeOperand *slice_operand = nullptr;
   for (unsigned index = 0; za && index < row.operand_count; ++index) {
     const auto &operand = operands[index];
