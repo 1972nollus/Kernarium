@@ -123,10 +123,10 @@ index 2dde638d10d910fcc9a9110793c36f5c29495e66..8ebb9e59271b2cca93efb75d62f25cf7
  extern int os_file_size(const char *file, unsigned long long *size_out);
  extern int os_pread_file(int fd, void *buf, int len, unsigned long long offset);
 diff --git a/arch/um/os-Darwin/file.c b/arch/um/os-Darwin/file.c
-index 0c9e000c9e74f4839f62beed91643973291c9c9d..b8a5e8144a4ac5df0b4922abece73e554fa3da29 100644
+index 4e03a2424252b6cf64aa8cb97850a8a144455a66..2af88421f7a2d6d47b0462532f0ed7417af4b178 100644
 --- a/arch/um/os-Darwin/file.c
 +++ b/arch/um/os-Darwin/file.c
-@@ -221,6 +221,12 @@ int os_error_is_would_block(int error)
+@@ -209,6 +209,12 @@ int os_error_is_would_block(int error)
  	return error == -EAGAIN || error == -EWOULDBLOCK;
  }
  

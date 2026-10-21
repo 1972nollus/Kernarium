@@ -62,7 +62,7 @@ index 838272e9b62f582c94227f216f0b8ca2943ce8a8..9489651287b3d7fbe264d32eaeeb8977
  
  void arch_cpu_idle_prepare(void)
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index 529d80f69819dfd9027a5d4534c56588e175f454..ea7f97e61fa4699fef95c96c15525f9594179c02 100644
+index 3342eb1f97a45c301ae43d1540f72cf0957f3bdb..340e3e3f3341eb845b4554d1479be36e816c4d33 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
 @@ -5,9 +5,54 @@
@@ -117,9 +117,9 @@ index 529d80f69819dfd9027a5d4534c56588e175f454..ea7f97e61fa4699fef95c96c15525f95
 +	unblock_signals();
 +}
 +
- void darwin_kill_integer_helper(int identifier);
  int darwin_task_shutdown_requested(void);
  int darwin_reserve_embedded_thread(void);
+ void darwin_release_embedded_thread(void);
 diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
 index 28ab8dbe589f95dfba5654a2fb08c756c190bf19..dfcf40a0ea376cd35d2467e4323235130a622724 100644
 --- a/arch/um/os-Darwin/signal.c
@@ -185,10 +185,10 @@ index 28ab8dbe589f95dfba5654a2fb08c756c190bf19..dfcf40a0ea376cd35d2467e432323513
  
  void block_signals_hard(void)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 436487f38255638853bb73996d26e8edd3344d90..2f78659001bc78d5cc38dd44d786faddf84ba00b 100644
+index f7e902e4c2d826156278182b2fc7df005be946af..a08cb179663fe2011be0990430f526e98886d380 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -385,7 +385,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -377,7 +377,7 @@ void userspace(struct uml_pt_regs *registers)
  		 * user mode; do the equivalent explicitly before both guest execution
  		 * and the syscall entry which follows it.
  		 */

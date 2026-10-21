@@ -44,10 +44,10 @@ the host's own wake has arrived.
  arch/um/drivers/mconsole_kern.c    |  53 ++++++++-
  arch/um/include/shared/kern_util.h |   1 +
  arch/um/include/shared/os.h        |   4 +
- arch/um/kernel/um_arch.c           |  30 ++++-
+ arch/um/kernel/um_arch.c           |  30 +++++-
  arch/um/os-Darwin/file.c           |  15 ++-
- arch/um/os-Darwin/irq.c            | 174 ++++++++++++++++++++++++-----
- 6 files changed, 239 insertions(+), 38 deletions(-)
+ arch/um/os-Darwin/irq.c            | 168 +++++++++++++++++++++++------
+ 6 files changed, 231 insertions(+), 40 deletions(-)
 
 diff --git a/arch/um/drivers/mconsole_kern.c b/arch/um/drivers/mconsole_kern.c
 index 5abd0dfd66c7f1da714c1895760ada28ac1b2a74..5a0c3b28f9cfef9e38a5014c87efde6f510b7cc8 100644
@@ -234,10 +234,10 @@ index 95fabf70e1ee8b0c4f4f0db0cba663664a8cf851..e426227f327d49d16d618709f21d6943
  }
  
 diff --git a/arch/um/os-Darwin/file.c b/arch/um/os-Darwin/file.c
-index b8a5e8144a4ac5df0b4922abece73e554fa3da29..42cd89b93862d1ce3e6514afb725e9613bd1fbc4 100644
+index 2af88421f7a2d6d47b0462532f0ed7417af4b178..5e761c77071aca2d8e2e5cfaa8cb9def952133c4 100644
 --- a/arch/um/os-Darwin/file.c
 +++ b/arch/um/os-Darwin/file.c
-@@ -301,20 +301,25 @@ int os_set_fd_async(int fd)
+@@ -289,20 +289,25 @@ int os_set_fd_async(int fd)
  
  	if (flags < 0)
  		return -errno;
@@ -269,7 +269,7 @@ index b8a5e8144a4ac5df0b4922abece73e554fa3da29..42cd89b93862d1ce3e6514afb725e961
  		-errno : 0;
  }
 diff --git a/arch/um/os-Darwin/irq.c b/arch/um/os-Darwin/irq.c
-index 45aa9db0b03f72d597a8ee90a3e0b037d1f7fdb3..36e4124304314c1352cb2a99a51e0beec39fd09a 100644
+index 45aa9db0b03f72d597a8ee90a3e0b037d1f7fdb3..c73632a809ba6ebddc2362470315fbc10343cbf3 100644
 --- a/arch/um/os-Darwin/irq.c
 +++ b/arch/um/os-Darwin/irq.c
 @@ -1,6 +1,7 @@
@@ -425,93 +425,85 @@ index 45aa9db0b03f72d597a8ee90a3e0b037d1f7fdb3..36e4124304314c1352cb2a99a51e0bee
  	pthread_mutex_lock(&idle_waiter_lock);
  	notification_stopping = 0;
  	pthread_mutex_unlock(&idle_waiter_lock);
-@@ -255,61 +342,84 @@ int os_waiting_for_events_epoll(void)
+@@ -255,61 +342,74 @@ int os_waiting_for_events_epoll(void)
  	return count;
  }
  
+-int os_add_epoll_fd(int events, int fd, void *data)
+-{
+-	int result = os_mod_epoll_fd(events, fd, data);
+-
+-	if (result != -ENOENT)
+-		return result;
+-	if (watched_count >= DARWIN_MAX_EVENTS)
+-		return -ENOSPC;
+-	result = update_registration(fd, events, data);
+-	if (result < 0) {
+-		(void)update_registration(fd, 0, NULL);
+-		return result;
+-	}
+-	watched[watched_count++] = (struct watched_fd) {
+-		.fd = fd, .events = events, .data = data,
+-	};
+-	return 0;
+-}
+-
+-int os_mod_epoll_fd(int events, int fd, void *data)
 +static int modify_watched(int events, int fd, void *data)
-+{
-+	int index;
-+
-+	for (index = 0; index < watched_count; index++) {
+ {
+ 	int index;
+ 
+ 	for (index = 0; index < watched_count; index++) {
+-		if (watched[index].fd == fd) {
+-			int result = update_registration(fd, events, data);
 +		struct watched_fd *entry = &watched[index];
 +
 +		if (entry->fd == fd) {
 +			int result = update_registration(fd, events, data,
 +							 entry->notify);
-+
-+			if (result < 0) {
+ 
+ 			if (result < 0) {
+-				(void)update_registration(fd, watched[index].events,
+-							  watched[index].data);
 +				(void)update_registration(fd, entry->events,
 +							  entry->data,
 +							  entry->notify);
-+				return result;
-+			}
+ 				return result;
+ 			}
+-			watched[index].events = events;
+-			watched[index].data = data;
 +			entry->events = events;
 +			entry->data = data;
-+			return 0;
-+		}
-+	}
-+	return -ENOENT;
-+}
-+
- int os_add_epoll_fd(int events, int fd, void *data)
- {
--	int result = os_mod_epoll_fd(events, fd, data);
-+	int result;
+ 			return 0;
+ 		}
+ 	}
+ 	return -ENOENT;
+ }
  
++int os_add_epoll_fd(int events, int fd, void *data)
++{
++	int result;
++
 +	pthread_mutex_lock(&watched_lock);
 +	result = modify_watched(events, fd, data);
- 	if (result != -ENOENT)
--		return result;
++	if (result != -ENOENT)
 +		goto out;
 +	result = -ENOSPC;
- 	if (watched_count >= DARWIN_MAX_EVENTS)
--		return -ENOSPC;
--	result = update_registration(fd, events, data);
++	if (watched_count >= DARWIN_MAX_EVENTS)
 +		goto out;
 +	result = update_registration(fd, events, data, 1);
- 	if (result < 0) {
--		(void)update_registration(fd, 0, NULL);
--		return result;
++	if (result < 0) {
 +		(void)update_registration(fd, 0, NULL, 0);
 +		goto out;
- 	}
- 	watched[watched_count++] = (struct watched_fd) {
--		.fd = fd, .events = events, .data = data,
++	}
++	watched[watched_count++] = (struct watched_fd) {
 +		.fd = fd, .events = events, .data = data, .notify = 1,
- 	};
--	return 0;
++	};
 +out:
 +	pthread_mutex_unlock(&watched_lock);
 +	return result;
- }
- 
- int os_mod_epoll_fd(int events, int fd, void *data)
- {
--	int index;
--
--	for (index = 0; index < watched_count; index++) {
--		if (watched[index].fd == fd) {
--			int result = update_registration(fd, events, data);
-+	int result;
- 
--			if (result < 0) {
--				(void)update_registration(fd, watched[index].events,
--							  watched[index].data);
--				return result;
--			}
--			watched[index].events = events;
--			watched[index].data = data;
--			return 0;
--		}
--	}
--	return -ENOENT;
-+	pthread_mutex_lock(&watched_lock);
-+	result = modify_watched(events, fd, data);
-+	pthread_mutex_unlock(&watched_lock);
-+	return result;
- }
- 
++}
++
  int os_del_epoll_fd(int fd)
  {
  	int index;
@@ -537,7 +529,7 @@ index 45aa9db0b03f72d597a8ee90a3e0b037d1f7fdb3..36e4124304314c1352cb2a99a51e0bee
  }
  
  void os_set_ioignore(void)
-@@ -322,7 +432,9 @@ void os_close_epoll_fd(void)
+@@ -322,7 +422,9 @@ void os_close_epoll_fd(void)
  	struct kevent stop_event;
  	int error;
  

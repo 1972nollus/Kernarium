@@ -45,7 +45,7 @@ index 43fbd97f093c987887068cdeb8850299e1e39c17..bb6fb24d7d7721ccee69c209073b498b
  int os_futex_wait(void *uaddr, unsigned int val);
  int os_futex_wake(void *uaddr);
 diff --git a/arch/um/os-Darwin/irq.c b/arch/um/os-Darwin/irq.c
-index 36e4124304314c1352cb2a99a51e0beec39fd09a..dbd1380d87371928c5c5706b38bcdecee2442b1b 100644
+index c73632a809ba6ebddc2362470315fbc10343cbf3..a2e13ae4e165e9f939f0feaed65d35d6bf7a0f1c 100644
 --- a/arch/um/os-Darwin/irq.c
 +++ b/arch/um/os-Darwin/irq.c
 @@ -51,6 +51,7 @@ static void *notification_thread(void *unused)
@@ -57,7 +57,7 @@ index 36e4124304314c1352cb2a99a51e0beec39fd09a..dbd1380d87371928c5c5706b38bcdece
  	 * timers.  Never let the process-wide ITIMER_REAL select it as the
  	 * recipient: the guest clock must run on the UML kernel/idle thread.
 diff --git a/arch/um/os-Darwin/process.c b/arch/um/os-Darwin/process.c
-index 8ce3c3ec407e77fb2f4604c7425209c13e13436a..6ed6f545ae4673312521ba01af06a960d8719a3b 100644
+index c2354aa094ced8022b9286c0e09c2535da961c47..725891d175f64136cb9ca208208ee0efb12e81cd 100644
 --- a/arch/um/os-Darwin/process.c
 +++ b/arch/um/os-Darwin/process.c
 @@ -1,6 +1,7 @@
@@ -68,7 +68,7 @@ index 8ce3c3ec407e77fb2f4604c7425209c13e13436a..6ed6f545ae4673312521ba01af06a960
  #include <signal.h>
  #include <sys/mman.h>
  #include <unistd.h>
-@@ -108,3 +109,8 @@ void init_new_thread_signals(void)
+@@ -105,3 +106,8 @@ void init_new_thread_signals(void)
  void os_set_pdeathsig(void)
  {
  }

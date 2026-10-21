@@ -109,10 +109,10 @@ index cc0c6c58a384ebdf37713d4fa7e09deef3b505a5..afbd7c2728430ab2119ba07251b8a7b6
  		pr_err("CPU#%d received unknown IPI (vector=%d)!\n", cpu, vector);
  		break;
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index afbf1cb0661f5e92c90f9d0674dc2eda9c5dbbb4..47da8343f0f9e6cf38541b5babe1c357cf02fd1b 100644
+index 9dbe6b1c19ca3346259fa7644945d0578b57b4e9..a0e9c51ed4c481306e887f48b2102226c3dddfae 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
-@@ -25,6 +25,7 @@ void __attribute__((noreturn)) darwin_exit_cpu_carrier(void);
+@@ -24,6 +24,7 @@ void __attribute__((noreturn)) darwin_exit_cpu_carrier(void);
  void darwin_ipi_poll(void);
  int darwin_ipi_idle_fd(void);
  void darwin_ipi_idle_begin(void);
@@ -120,7 +120,7 @@ index afbf1cb0661f5e92c90f9d0674dc2eda9c5dbbb4..47da8343f0f9e6cf38541b5babe1c357
  void darwin_ipi_idle_end(void);
  void darwin_ipi_idle_drain(void);
  unsigned int darwin_ipi_guest_snapshot(const unsigned int **sequence);
-@@ -58,6 +59,7 @@ static inline void __attribute__((noreturn)) darwin_exit_cpu_carrier(void)
+@@ -57,6 +58,7 @@ static inline void __attribute__((noreturn)) darwin_exit_cpu_carrier(void)
  static inline void darwin_ipi_poll(void) { }
  static inline int darwin_ipi_idle_fd(void) { return -1; }
  static inline void darwin_ipi_idle_begin(void) { }
