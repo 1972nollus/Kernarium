@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Keep serial console input whole while two CPUs drain it.
 
 A reader on guest CPU 1 takes a numbered 1 MiB stream from ttyS0 while the

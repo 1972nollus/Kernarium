@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Keep serial console input alive after an input burst throttles the tty.
 
 The runner sends ttyS0 a burst larger than the line discipline's 4 KiB input

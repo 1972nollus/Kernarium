@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Exercise BPF callbacks on an interpreter-only guest kernel.
 
 This runs inside the guest as root. It assembles programs by hand, describes
