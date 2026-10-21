@@ -70,9 +70,7 @@ function(uml_add_freestanding_cxx_payload OUTPUT_VARIABLE NAME SOURCE)
             -fno-stack-protector
             -fno-asynchronous-unwind-tables
             ${_no_pic}
-        LINK_OPTIONS
-            -Wl,-z,max-page-size=16384
-            -Wl,-s)
+        LINK_OPTIONS -Wl,-s)
     set(${OUTPUT_VARIABLE} "${${OUTPUT_VARIABLE}}" PARENT_SCOPE)
 endfunction()
 
