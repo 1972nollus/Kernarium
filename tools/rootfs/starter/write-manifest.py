@@ -32,7 +32,6 @@ PRODUCTS = ("boot-base-aarch64", "boot-base-x86_64", "alpine",
 # What each row of the armhf image's package inventory records.
 ARMHF_INVENTORY_COLUMNS = ["package", "version", "architecture", "size",
                            "sha256"]
-PROFILES = ("16k", "4k")
 
 
 def digest(path: Path) -> str:
@@ -51,11 +50,9 @@ def sidecar(output: Path, name: str, what: str) -> dict[str, object]:
             "size": path.stat().st_size}
 
 
-def elf_audit(output: Path, image: str, profiles: list[str]
-              ) -> dict[str, object]:
+def elf_audit(output: Path, image: str) -> dict[str, object]:
     """Summarise the ELF audit report, which the producer's audit passed."""
     entry = sidecar(output, f"{image}.elf.tsv", "ELF audit report")
-    supported = {name: 0 for name in PROFILES}
     files = 0
     for line in (output / str(entry["path"])).read_text().splitlines():
         fields = line.split("\t")
@@ -63,15 +60,7 @@ def elf_audit(output: Path, image: str, profiles: list[str]
         if fields[9] != "ok":
             raise SystemExit(
                 f"starter manifest: {fields[0]} failed the ELF audit")
-        for name in fields[8].split(","):
-            if name in supported:
-                supported[name] += 1
-        if not set(profiles) <= set(fields[8].split(",")):
-            raise SystemExit(
-                f"starter manifest: {fields[0]} lacks a required page profile")
     entry["files"] = files
-    entry["supported_files"] = supported
-    entry["required_profiles"] = profiles
     return entry
 
 
@@ -87,7 +76,6 @@ def main() -> int:
     parser.add_argument("--debian-version")
     parser.add_argument("--debian-mirror")
     parser.add_argument("--debian-armhf-pins", type=Path)
-    parser.add_argument("--armhf-profiles")
     parser.add_argument("--armhf-include")
     parser.add_argument("--debootstrap-version")
     parser.add_argument("--emulator-version")
@@ -123,14 +111,10 @@ def main() -> int:
         require("debian_suite", "debian_version")
         sources["debian"] = {"suite": arguments.debian_suite,
                              "version": arguments.debian_version}
-    profiles: list[str] = []
     pins: dict[str, object] = {}
     if "debian-13-minimal-armhf" in products:
-        require("debian_armhf_pins", "armhf_profiles", "armhf_include",
-                "debian_mirror", "debootstrap_version", "emulator_version")
-        profiles = arguments.armhf_profiles.split(",")
-        if not profiles or any(name not in PROFILES for name in profiles):
-            parser.error("--armhf-profiles takes 16k and 4k")
+        require("debian_armhf_pins", "armhf_include", "debian_mirror",
+                "debootstrap_version", "emulator_version")
         pins = json.loads(arguments.debian_armhf_pins.read_text())
         sources["debian_armhf"] = {
             "mirror": arguments.debian_mirror,
@@ -168,8 +152,7 @@ def main() -> int:
                 inventory["columns"] = ARMHF_INVENTORY_COLUMNS
                 inventory["packages"] = pins["downloads"]["packages"]
                 entry["architecture"] = "armhf"
-                entry["page_profiles"] = profiles
-                entry["elf_audit"] = elf_audit(output, name, profiles)
+                entry["elf_audit"] = elf_audit(output, name)
             entry["package_inventory"] = inventory
         products_manifest[name] = entry
     manifest = {

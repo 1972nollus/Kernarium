@@ -306,6 +306,25 @@ scalar_entry move_wide_constant, 0, 0, Lscalar_offset0, Lscalar_none, Lscalar_no
 	str _scalar_x11, [x13, x8]
 	next_gadget
 
+/* The ADD, SUB, ADDS or SUBS of \rn and \rm into \rd that \subtract and \flags
+ * select. `add` and `sub` name the mnemonics, so passing adc and sbc selects
+ * ADC, SBC, ADCS or SBCS. inplace_extended.inc, the last user, purges it. */
+.macro add_sub_op subtract, flags, rd, rn, rm, add=add, sub=sub
+	.if \subtract
+		.if \flags
+	\sub\()s \rd, \rn, \rm
+		.else
+	\sub \rd, \rn, \rm
+		.endif
+	.else
+		.if \flags
+	\add\()s \rd, \rn, \rm
+		.else
+	\add \rd, \rn, \rm
+		.endif
+	.endif
+.endm
+
 /* Production ADD/SUB-immediate entries.  Width, operation, flag update and
  * both architectural register-31 meanings are fixed by the translator.  The
  * compact operand is Rd[4:0], Rn[12:8], immediate[39:16].  These variants
@@ -334,33 +353,9 @@ scalar_entry add_sub_immediate_\suffix, \forward, 1, Lsd\@, Lsn\@, Lscalar_none,
 	.endif
 	lsr x11, x8, #16
 	.if \bits64
-		.if \subtract
-			.if \flags
-	subs _scalar_x16, x15, x11
-			.else
-	sub _scalar_x16, x15, x11
-			.endif
-		.else
-			.if \flags
-	adds _scalar_x16, x15, x11
-			.else
-	add _scalar_x16, x15, x11
-			.endif
-		.endif
+	add_sub_op \subtract, \flags, _scalar_x16, x15, x11
 	.else
-		.if \subtract
-			.if \flags
-	subs _scalar_w16, w15, w11
-			.else
-	sub _scalar_w16, w15, w11
-			.endif
-		.else
-			.if \flags
-	adds _scalar_w16, w15, w11
-			.else
-	add _scalar_w16, w15, w11
-			.endif
-		.endif
+	add_sub_op \subtract, \flags, _scalar_w16, w15, w11
 	.endif
 	.if \flags
 	mrs x27, nzcv
@@ -402,33 +397,9 @@ add_sub_immediate_modes 1, 1, 1, x_sub_s
  * behavior are all entry-point constants. */
 .macro add_sub_register_finish bits64, subtract, flags, destination_discard
 	.if \bits64
-		.if \subtract
-			.if \flags
-	subs _scalar_x7, x15, x16
-			.else
-	sub _scalar_x7, x15, x16
-			.endif
-		.else
-			.if \flags
-	adds _scalar_x7, x15, x16
-			.else
-	add _scalar_x7, x15, x16
-			.endif
-		.endif
+	add_sub_op \subtract, \flags, _scalar_x7, x15, x16
 	.else
-		.if \subtract
-			.if \flags
-	subs _scalar_w7, w15, w16
-			.else
-	sub _scalar_w7, w15, w16
-			.endif
-		.else
-			.if \flags
-	adds _scalar_w7, w15, w16
-			.else
-	add _scalar_w7, w15, w16
-			.endif
-		.endif
+	add_sub_op \subtract, \flags, _scalar_w7, w15, w16
 	.endif
 	.if \flags
 	mrs x27, nzcv
@@ -630,33 +601,9 @@ scalar_entry add_sub_carry_\suffix, \forward, 4, Lsd\@, Lsn\@, Lsm\@, Lscalar_no
 	.endif
 	msr nzcv, x27
 	.if \bits64
-		.if \subtract
-			.if \flags
-	sbcs _scalar_x7, x15, x16
-			.else
-	sbc _scalar_x7, x15, x16
-			.endif
-		.else
-			.if \flags
-	adcs _scalar_x7, x15, x16
-			.else
-	adc _scalar_x7, x15, x16
-			.endif
-		.endif
+	add_sub_op \subtract, \flags, _scalar_x7, x15, x16, adc, sbc
 	.else
-		.if \subtract
-			.if \flags
-	sbcs _scalar_w7, w15, w16
-			.else
-	sbc _scalar_w7, w15, w16
-			.endif
-		.else
-			.if \flags
-	adcs _scalar_w7, w15, w16
-			.else
-	adc _scalar_w7, w15, w16
-			.endif
-		.endif
+	add_sub_op \subtract, \flags, _scalar_w7, w15, w16, adc, sbc
 	.endif
 	.if \flags
 	mrs x27, nzcv

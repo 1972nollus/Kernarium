@@ -82,18 +82,6 @@ static_assert(UML_ARM64_SME_ZT0_BYTES == sme_zt0_bytes);
 static_assert(sme_layout_matches(16) && sme_layout_matches(32) &&
 	sme_layout_matches(64) && sme_layout_matches(128) &&
 	sme_layout_matches(256));
-static_assert(offsetof(CpuState, sve_p) == UML_ARM64_CPU_SVE_P);
-static_assert(offsetof(CpuState, sve_ffr) == UML_ARM64_CPU_SVE_FFR);
-static_assert(offsetof(CpuState, sve_live) == UML_ARM64_CPU_SVE_LIVE);
-static_assert(UML_ARM64_SVE_VECTOR_LENGTH == sve_vector_length);
-static_assert(sizeof(CpuState::sve_p) ==
-	sve_p_registers * UML_ARM64_SVE_VECTOR_LENGTH);
-/* Every SVE state offset, and the last byte of the block, fits the 16-bit
- * operand a gadget carries and the scaled 12-bit immediate of a 16-byte
- * load or store the JIT emits. */
-static_assert(UML_ARM64_CPU_SVE_LIVE < 0x1'0000);
-static_assert(UML_ARM64_CPU_SVE_P % 16 == 0 &&
-	UML_ARM64_CPU_SVE_FFR % 16 == 0 && UML_ARM64_CPU_SVE_FFR < 4096 * 16);
 static_assert(offsetof(CpuState, a32_ge_mask) == UML_ARM64_CPU_A32_GE_MASK);
 static_assert(offsetof(CpuState, a32_fpscr_nzcv) ==
 	UML_ARM64_CPU_A32_FPSCR_NZCV);
@@ -104,11 +92,10 @@ static_assert(offsetof(CpuState, a32_cp15ben) == UML_ARM64_CPU_A32_CP15BEN);
 static_assert(offsetof(CpuState, a32) == UML_ARM64_CPU_A32);
 static_assert(offsetof(CpuState, a32_fp_standard) ==
 	      UML_ARM64_CPU_A32_FP_STANDARD);
-/* The AArch32 block follows the SVE block and every earlier offset stands, so
- * no existing gadget or emitted instruction changes; its last byte fits the
- * 16-bit operand a gadget carries. */
-static_assert(UML_ARM64_CPU_A32_GE_MASK > UML_ARM64_CPU_SVE_LIVE &&
-	UML_ARM64_CPU_A32_FP_STANDARD < 0x1'0000);
+/* The AArch32 block follows the reserved block and every earlier offset
+ * stands, so no existing gadget or emitted instruction changes; its last
+ * byte fits the 16-bit operand a gadget carries. */
+static_assert(UML_ARM64_CPU_A32_FP_STANDARD < 0x1'0000);
 static_assert(offsetof(CpuState, code_sequence) == UML_ARM64_CPU_CODE_SEQUENCE);
 static_assert(offsetof(CpuState, code_sequence_seen) ==
 	UML_ARM64_CPU_CODE_SEQUENCE_SEEN);

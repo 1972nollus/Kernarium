@@ -180,7 +180,6 @@ void vector_length_family_runs_outside_streaming_mode() {
       require(machine.cpu.sp == expected.sp);
       require(machine.cpu.nzcv == initial_nzcv);
       require(machine.cpu.svcr == mode);
-      require(machine.cpu.sve_live == 0U);
       require(machine.vectors_unchanged());
       require(machine.file() == before);
     }
@@ -248,10 +247,6 @@ void spill_words_run_outside_streaming_mode() {
       }
       require(retired == 2U);
       require(machine.cpu.svcr == 0U);
-      require(machine.cpu.sve_live == 0U);
-      const arm64::CpuState reference;
-      require(machine.cpu.sve_p == reference.sve_p &&
-              machine.cpu.sve_ffr == reference.sve_ffr);
       machine.require_preserved();
       arm64::restore_native_fp_environment(machine.cpu);
       machine.cpu.access_fp_state();
@@ -303,7 +298,6 @@ void spill_words_fault_like_their_accesses() {
                 (store ? uml::memory::Access::write : uml::memory::Access::read));
         require(!machine.executor().fault_alignment());
         require(machine.get(machine.data(page - 16U), 16U) == before);
-        require(machine.cpu.sve_live == 0U);
         machine.require_preserved();
       }
       {
