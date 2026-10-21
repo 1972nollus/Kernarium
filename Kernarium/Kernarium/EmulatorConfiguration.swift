@@ -82,44 +82,38 @@ struct EmulatorConfiguration: Equatable {
         documentsDirectory: URL = RootfsImage.documentsDirectory
     ) -> Self {
         let maximumVCPUCount = max(physicalProcessorCount, 1)
-        let storedVCPUCount = defaults.object(forKey: Key.vCPUCount) == nil
-            ? maximumVCPUCount
-            : defaults.integer(forKey: Key.vCPUCount)
-        let storedGuestMemoryMiB = defaults.object(
-            forKey: Key.guestMemoryMiB
-        ) == nil
-            ? defaultGuestMemoryMiB
-            : defaults.integer(forKey: Key.guestMemoryMiB)
-        let storedOverlaySizeGiB = defaults.object(
-            forKey: Key.overlaySizeGiB
-        ) == nil
-            ? defaultOverlaySizeGiB
-            : defaults.integer(forKey: Key.overlaySizeGiB)
-        let storedAndroidDiskSizeGiB = defaults.object(
-            forKey: Key.androidDiskSizeGiB
-        ) == nil
-            ? defaultAndroidDiskSizeGiB
-            : defaults.integer(forKey: Key.androidDiskSizeGiB)
+        func stored(_ key: String, _ fallback: Int) -> Int {
+            defaults.object(forKey: key) == nil
+                ? fallback
+                : defaults.integer(forKey: key)
+        }
+        func stored(_ key: String, _ fallback: Bool) -> Bool {
+            defaults.object(forKey: key) == nil
+                ? fallback
+                : defaults.bool(forKey: key)
+        }
+        let storedVCPUCount = stored(Key.vCPUCount, maximumVCPUCount)
+        let storedGuestMemoryMiB = stored(
+            Key.guestMemoryMiB, defaultGuestMemoryMiB
+        )
+        let storedOverlaySizeGiB = stored(
+            Key.overlaySizeGiB, defaultOverlaySizeGiB
+        )
+        let storedAndroidDiskSizeGiB = stored(
+            Key.androidDiskSizeGiB, defaultAndroidDiskSizeGiB
+        )
         let storedRootfsFilename = defaults.string(
             forKey: Key.rootfsFilename
         ) ?? RootfsImage.defaultFilename
-        let storedRetinaMode = defaults.object(forKey: Key.retinaMode) == nil
-            ? defaultRetinaMode
-            : defaults.bool(forKey: Key.retinaMode)
-        let storedAutoResizeGuest = defaults.object(
-            forKey: Key.autoResizeGuest
-        ) == nil
-            ? defaultAutoResizeGuest
-            : defaults.bool(forKey: Key.autoResizeGuest)
-        let storedAndroidBootMode = defaults.object(
-            forKey: Key.androidBootMode
-        ) == nil
-            ? defaultAndroidBootMode
-            : AndroidBootMode(
-                rawValue: UInt32(clamping: defaults.integer(
-                    forKey: Key.androidBootMode
-                ))
-            ) ?? defaultAndroidBootMode
+        let storedRetinaMode = stored(Key.retinaMode, defaultRetinaMode)
+        let storedAutoResizeGuest = stored(
+            Key.autoResizeGuest, defaultAutoResizeGuest
+        )
+        let storedAndroidBootMode = AndroidBootMode(
+            rawValue: UInt32(clamping: stored(
+                Key.androidBootMode, Int(defaultAndroidBootMode.rawValue)
+            ))
+        ) ?? defaultAndroidBootMode
         let environmentVCPUCount = environmentInteger(
             environment[vCPUEnvironmentKey], in: 1...maximumVCPUCount
         )
@@ -137,23 +131,17 @@ struct EmulatorConfiguration: Equatable {
             environment[androidDiskSizeEnvironmentKey],
             in: androidDiskSizeRangeGiB
         )
-        let environmentRetinaMode = environment[retinaEnvironmentKey].flatMap {
-            value in
-            switch value {
-            case "0": false
-            case "1": true
+        func environmentFlag(_ key: String) -> Bool? {
+            switch environment[key] {
+            case "0"?: false
+            case "1"?: true
             default: nil
             }
         }
-        let environmentAutoResizeGuest = environment[
+        let environmentRetinaMode = environmentFlag(retinaEnvironmentKey)
+        let environmentAutoResizeGuest = environmentFlag(
             autoResizeGuestEnvironmentKey
-        ].flatMap { value in
-            switch value {
-            case "0": false
-            case "1": true
-            default: nil
-            }
-        }
+        )
         let environmentAndroidBootMode = environment[
             AndroidBootMode.environmentKey
         ].flatMap(AndroidBootMode.init(environmentValue:))
