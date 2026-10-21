@@ -510,28 +510,33 @@ struct GuestInputCoordinateSpace {
             contentSize: contentSize,
             in: drawableSize
         ) else { return nil }
-        var drawablePoint = CGPoint(
+        let drawablePoint = CGPoint(
             x: point.x * drawableSize.width / bounds.width,
             y: point.y * drawableSize.height / bounds.height
         )
-        if clampToContent {
-            drawablePoint.x = min(
-                max(drawablePoint.x, viewport.minX), viewport.maxX
-            )
-            drawablePoint.y = min(
-                max(drawablePoint.y, viewport.minY), viewport.maxY
-            )
-        } else if drawablePoint.x < viewport.minX ||
-                    drawablePoint.x > viewport.maxX ||
-                    drawablePoint.y < viewport.minY ||
-                    drawablePoint.y > viewport.maxY {
+        if !clampToContent, drawablePoint.x < viewport.minX ||
+            drawablePoint.x > viewport.maxX ||
+            drawablePoint.y < viewport.minY ||
+            drawablePoint.y > viewport.maxY {
             return nil
         }
+        return coordinate(ofDrawable: drawablePoint, in: viewport)
+    }
+
+    /// The position `drawablePoint` has in this space once it is clamped into
+    /// `viewport`, the aspect-fit rectangle the guest's display occupies.
+    func coordinate(
+        ofDrawable drawablePoint: CGPoint,
+        in viewport: CGRect
+    ) -> (x: UInt32, y: UInt32) {
+        let clamped = CGPoint(
+            x: min(max(drawablePoint.x, viewport.minX), viewport.maxX),
+            y: min(max(drawablePoint.y, viewport.minY), viewport.maxY)
+        )
         let x = min(
             max(
                 (
-                    (drawablePoint.x - viewport.minX) * size.width /
-                        viewport.width
+                    (clamped.x - viewport.minX) * size.width / viewport.width
                 ).rounded(.down),
                 0
             ),
@@ -540,8 +545,7 @@ struct GuestInputCoordinateSpace {
         let y = min(
             max(
                 (
-                    (drawablePoint.y - viewport.minY) * size.height /
-                        viewport.height
+                    (clamped.y - viewport.minY) * size.height / viewport.height
                 ).rounded(.down),
                 0
             ),
@@ -597,7 +601,6 @@ struct GuestTouchGeometry {
     private let coordinateSpace: GuestInputCoordinateSpace
     private let boundsSize: CGSize
     private let drawableSize: CGSize
-    private let contentSize: CGSize
     private let viewport: CGRect
 
     init?(
@@ -617,7 +620,6 @@ struct GuestTouchGeometry {
         self.coordinateSpace = coordinateSpace
         self.boundsSize = boundsSize
         self.drawableSize = drawableSize
-        self.contentSize = contentSize
         self.viewport = viewport
     }
 
@@ -642,17 +644,13 @@ struct GuestTouchGeometry {
         at drawablePoint: CGPoint,
         pressed: Bool
     ) -> GuestTouchEvent? {
-        let boundsPoint = CGPoint(
-            x: drawablePoint.x * boundsSize.width / drawableSize.width,
-            y: drawablePoint.y * boundsSize.height / drawableSize.height
+        guard drawablePoint.x.isFinite, drawablePoint.y.isFinite else {
+            return nil
+        }
+        let location = coordinateSpace.coordinate(
+            ofDrawable: drawablePoint,
+            in: viewport
         )
-        guard let location = coordinateSpace.location(
-            boundsPoint,
-            in: boundsSize,
-            drawableSize: drawableSize,
-            contentSize: contentSize,
-            clampToContent: true
-        ) else { return nil }
         return GuestTouchEvent(
             x: location.x,
             y: location.y,
