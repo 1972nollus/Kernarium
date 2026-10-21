@@ -21,7 +21,9 @@ nonisolated enum MetalShaderCache {
     /// glmark2, WebGL Aquarium and a Steam boot together leave about 0.12 MB,
     /// and repeating them adds nothing. An index costs about 3.5 MiB per MB
     /// on an iPad mini 6 and 5 MiB per MB on an M1 Ultra, and one that Metal
-    /// has let grow to its own ceiling, about 23 MB, costs 80 to 115 MiB.
+    /// has let grow to its own ceiling, about 23 MB, costs 80 to 115 MiB. The
+    /// macOS emulators bound their cache by the same limit
+    /// (`darwin/device/gpu/metal_shader_cache.hpp`); the two change together.
     static let indexLimit: UInt64 = 1_000_000
 
     /// The bytes a cache holds: `index` in its `.list` files, which the

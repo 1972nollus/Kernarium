@@ -10,6 +10,7 @@
 #include "console/in_process_service.hpp"
 #include "console/protocol.hpp"
 #include "gpu/in_process_service.hpp"
+#include "gpu/metal_shader_cache.hpp"
 #include "gpu/native_display_application.hpp"
 #include "gpu/protocol.hpp"
 #include "launcher.hpp"
@@ -208,6 +209,35 @@ void install_host_faults()
 	for (const int signal : signals)
 		if (sigaction(signal, &action, nullptr) < 0)
 			std::abort();
+}
+
+/* Metal reads the whole index of the process's shader cache at its first
+ * compile, and conformance campaigns grow that index without bound. Cache the
+ * guest's shaders only while the index is small; a removal is the only event
+ * worth a line. */
+void bound_metal_shader_cache()
+{
+	std::error_code error;
+	const auto outcome = uml::gpu::bound_own_metal_shader_cache(error);
+	if (!outcome)
+		return;
+	if (error) {
+		std::fprintf(stderr,
+			"Unable to remove the Metal shader cache %s: %s\n",
+			outcome->directory.c_str(), error.message().c_str());
+		return;
+	}
+	if (outcome->action ==
+	    uml::gpu::MetalShaderCacheOutcome::Action::removed)
+		std::fprintf(stderr,
+			"Removed the Metal shader cache %s: index %.1f MB over "
+			"%.1f MB, data %.1f MB\n",
+			outcome->directory.c_str(),
+			static_cast<double>(outcome->size.index) / 1e6,
+			static_cast<double>(
+				uml::gpu::metal_shader_cache_index_limit) /
+				1e6,
+			static_cast<double>(outcome->size.data) / 1e6);
 }
 
 struct HostGpuOptions {
@@ -442,6 +472,9 @@ int uml::app::runEmbeddedKernel(
 		return 1;
 	}
 	const bool information_only = informational(argc, argv);
+	/* Before anything in the process can create a Metal device. */
+	if (prepared.gpu.enabled && !information_only)
+		bound_metal_shader_cache();
 	std::unique_ptr<AppNetwork> app_network;
 	uml_emulator_network_callbacks network_callbacks{};
 	if (user_network_enabled()) {

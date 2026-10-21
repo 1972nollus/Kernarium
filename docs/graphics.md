@@ -1055,18 +1055,34 @@ application also sets `MESA_SHADER_CACHE_DISABLE`: Mesa's own disk cache would
 live below `$HOME/.cache`, which a device container does not let it create, so
 Metal's cache is the only one that outlives a launch.
 
-The macOS command-line emulator has no bundle identifier. It shares
-`$(getconf DARWIN_USER_CACHE_DIR)/com.apple.metal` with every unsandboxed
-process of the user, one numbered file pair per concurrent process, and leaves
-that cache alone. Conformance campaigns through it are what fill the cache: a
-Vulkan CTS case that compiles shaders no earlier case compiled adds 8 to 23 KB
-of data, a repeated case adds nothing, and each pair stops near 1.1 GB while
-more pairs appear with concurrent processes. Nothing bounds the total, and
-every process that compiles reads the index of the first pairs, so a host that
-has run campaigns pays about 90 MiB and half a second for it in each emulator
-and tool. The cache is only an optimization, so removing the directory between
-campaigns is safe. The GPU unit tests keep their own cache for this reason (see
-[`testing.md`](testing.md)).
+The macOS command-line emulators, `uml-darwin` and `uml-darwin-android17`,
+carry the bundle identifier `com.imxieyi.uml-darwin` in an Info.plist embedded
+in the executable (`darwin/app/macos`), so their cache is
+`$(getconf DARWIN_USER_CACHE_DIR)/com.imxieyi.uml-darwin/com.apple.metal`, one
+numbered file pair per concurrent process. Both executables share it because
+they compile the same Mesa and KosmicKrisp shaders. A process with no bundle
+identifier, such as a script or a unit test, shares `com.apple.metal` in that
+directory with every other unsandboxed process of the user, so what an
+emulator caches never reaches the host's other tools. Conformance campaigns
+are what fill the emulator's cache: a Vulkan CTS case that compiles shaders no
+earlier case compiled adds 8 to 23 KB of data and about 160 bytes of index, a
+repeated case adds nothing, and each pair stops near 1.1 GB while more pairs
+appear with concurrent processes.
+
+The emulator bounds that cache the way Kernarium bounds its own, with the same
+limit. When it starts with a GPU device, before anything in the process can
+create a Metal device, it removes the cache once its `.list` index files
+together hold more than 1 MB, and says so on stderr
+(`darwin/device/gpu/metal_shader_cache.hpp`). That is the index of some 6,000
+CTS cases' new shaders, and the cache costs a few MiB at the limit instead of
+about 100 MiB at Metal's own ceiling. Processes that run on the cache when
+another one removes it keep the files they have open and lose only what they
+add afterwards, and a process that finds the directory gone creates it again,
+so shards that start together need no coordination. A process without a bundle
+identifier, such as a script or a unit test, shares `com.apple.metal` with
+every other such process and is not bounded: the GPU unit tests keep their own
+cache for this reason (see [`testing.md`](testing.md)), and a shared cache that
+earlier emulators grew may simply be deleted.
 
 ## Validation
 

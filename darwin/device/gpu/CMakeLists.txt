@@ -26,6 +26,13 @@ endif()
 # Keep the renderer, display, protocol device, transport, and in-process
 # service as independently owned units. Their dependency direction follows
 # the data path and contains no reverse service callbacks.
+# Bounds the process's own Metal shader cache; see metal_shader_cache.hpp.
+add_library(uml_gpu_metal_shader_cache STATIC metal_shader_cache.cpp)
+add_library(UML::GpuMetalShaderCache ALIAS uml_gpu_metal_shader_cache)
+uml_configure_gpu_component(uml_gpu_metal_shader_cache)
+target_link_libraries(uml_gpu_metal_shader_cache PRIVATE
+    "-framework CoreFoundation")
+
 add_library(uml_gpu_device_memory_pool STATIC device_memory_pool.cpp)
 add_library(UML::GpuDeviceMemoryPool ALIAS uml_gpu_device_memory_pool)
 uml_configure_gpu_component(uml_gpu_device_memory_pool)

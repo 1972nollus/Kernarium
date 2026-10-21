@@ -50,6 +50,18 @@ uml_add_gpu_unit_test(gpu-metal-submit-timing-collector
     LIBRARIES Threads::Threads
     VULKAN)
 
+# The emulator bounds its own Metal shader cache by its index; the test needs
+# no Metal device.
+if(TARGET uml_gpu_metal_shader_cache)
+    add_executable(uml_gpu_metal_shader_cache_tests
+        metal_shader_cache_tests.cpp)
+    target_link_libraries(uml_gpu_metal_shader_cache_tests PRIVATE
+        UML::GpuMetalShaderCache)
+    uml_add_unit_test(NAME gpu-metal-shader-cache
+        COMMAND uml_gpu_metal_shader_cache_tests
+        LABELS gpu)
+endif()
+
 # Guest allocations and the host GPU driver's own share one reserving pool.
 if(TARGET uml_gpu_device_memory_pool)
     uml_add_gpu_unit_test(gpu-device-memory-pool
