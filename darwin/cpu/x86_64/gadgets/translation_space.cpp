@@ -504,10 +504,12 @@ void Space::release(Body *body, bool stale) noexcept
 	}
 }
 
-void Space::reclaim(const gadget_cache::ExecutorAnnouncement *self)
+void Space::reclaim(const gadget_cache::ExecutorAnnouncement *self) noexcept
 {
 	limbo_.reclaim(self, attached_,
-		[this](std::vector<Body *> &bodies) { free_bodies(bodies); });
+		[this](std::vector<Body *> &bodies) noexcept {
+			free_bodies(bodies);
+		});
 }
 
 const Body *Space::owner(const void *address) const noexcept

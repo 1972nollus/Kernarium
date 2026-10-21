@@ -1083,10 +1083,10 @@ public:
 
 	/* Free what was unpublished long enough ago that no other executor can
 	 * still be running it. Never waits. */
-	void reclaim(const Announcement *self)
+	void reclaim(const Announcement *self) noexcept
 	{
 		limbo_.reclaim(self, attached_,
-			[this](std::vector<Body *> &bodies) {
+			[this](std::vector<Body *> &bodies) noexcept {
 				free_bodies(bodies);
 			});
 	}

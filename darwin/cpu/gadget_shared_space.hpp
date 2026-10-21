@@ -9,6 +9,8 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <new>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -192,15 +194,23 @@ public:
 					std::memory_order_release);
 	}
 
-	void take_snapshot(Snapshot &snapshot) const
+	/* Note where every executor attached is, or, without the memory for
+	 * that, leave `snapshot` as it was and say so. */
+	[[nodiscard]] bool take_snapshot(Snapshot &snapshot) const noexcept
 	{
-		snapshot.seen.clear();
 		const std::lock_guard guard{mutex_};
+		try {
+			snapshot.seen.reserve(attached_.size());
+		} catch (const std::bad_alloc &) {
+			return false;
+		}
+		snapshot.seen.clear();
 		for (const auto *announcement : attached_)
 			if (announcement != nullptr)
 				snapshot.seen.push_back({announcement,
 					announcement->sequence.load(
 						std::memory_order_acquire)});
+		return true;
 	}
 
 	[[nodiscard]] std::size_t size() const
@@ -221,8 +231,9 @@ private:
  * record before may still be running it, so it goes to `incoming`; the first
  * reclaim afterwards moves it behind a snapshot of the attached executors, and
  * a reclaim that finds every executor seen inside has left frees it. A caller
- * that cannot take the lock, or finds executors still inside, never waits: the
- * bodies stay for the next call. */
+ * that cannot take the lock, finds executors still inside, or has no memory
+ * for the snapshot never waits: the bodies stay for the next call. A reclaim
+ * never throws, so that letting go of a body is never left half done. */
 template <typename Body>
 class Limbo final {
 public:
@@ -238,8 +249,10 @@ public:
 	 * Never waits. */
 	template <typename Free>
 	void reclaim(const ExecutorAnnouncement *self,
-		const AttachedExecutors &attached, Free &&free_bodies)
+		const AttachedExecutors &attached, Free &&free_bodies) noexcept
 	{
+		static_assert(std::is_nothrow_invocable_v<Free &,
+			std::vector<Body *> &>);
 		if (!pending_.load(std::memory_order_relaxed))
 			return;
 		std::unique_lock limbo{mutex_, std::try_to_lock};
@@ -253,14 +266,17 @@ public:
 		if (!incoming_.empty()) {
 			/* Every body here was unpublished before this fence, so
 			 * an executor seen outside now can only enter after it
-			 * and never reach one. */
+			 * and never reach one. The bodies wait behind the
+			 * snapshot only once it is whole. */
 			std::atomic_thread_fence(std::memory_order_seq_cst);
-			waiting_.swap(incoming_);
-			attached.take_snapshot(snapshot_);
-			if (snapshot_.elapsed(self))
-				free_bodies(waiting_);
+			if (attached.take_snapshot(snapshot_)) {
+				waiting_.swap(incoming_);
+				if (snapshot_.elapsed(self))
+					free_bodies(waiting_);
+			}
 		}
-		pending_.store(!waiting_.empty(), std::memory_order_relaxed);
+		pending_.store(!waiting_.empty() || !incoming_.empty(),
+			std::memory_order_relaxed);
 	}
 
 	[[nodiscard]] std::size_t size() const

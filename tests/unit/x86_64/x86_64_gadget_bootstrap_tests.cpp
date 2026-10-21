@@ -1647,8 +1647,9 @@ void fill_add_blocks(TestMemory &memory, std::size_t blocks, std::size_t stride)
 
 /* An address space the budget asked to shed is let go of at the executor's
  * next look. A look that finds no room for its id leaves the address space
- * held and asked for again, so the one after it lets go of it. Run with
- * with_sharing(false), so that the room is the only allocation of the look. */
+ * held and asked for again, so the one after it lets go of it. The room is
+ * the look's first allocation, whether the executor keeps its translations to
+ * itself or shares them (in_both_modes). */
 [[nodiscard]] bool a_shed_address_space_is_asked_for_again_after_a_failed_allocation()
 {
 	using namespace uml::cpu::x86_64;
@@ -1789,11 +1790,11 @@ void fill_add_blocks(TestMemory &memory, std::size_t blocks, std::size_t stride)
 /* Letting go of an address space frees its id for the next to arrive, and the
  * room for that is found before anything changes: when it cannot be, the
  * address space is still held, the executor prepares afresh, and the next look
- * lets go of it as if nothing had happened. The executor keeps its
- * translations to itself (with_sharing(false)), so that the room is the only
- * allocation the look makes; a shared space's bodies also queue and are
- * reclaimed behind a snapshot of the executors, which allocates too. Every
- * allocation of the look is failed in turn. */
+ * lets go of it as if nothing had happened. Every allocation of the look is
+ * failed in turn, with an executor that keeps its translations to itself, for
+ * which the room is the only one, and with one that shares them
+ * (in_both_modes), whose bodies also queue and are reclaimed behind a snapshot
+ * of the executors: a failure there only leaves them for a later reclaim. */
 [[nodiscard]] bool letting_go_of_an_address_space_survives_a_failed_allocation()
 {
 	using namespace uml::cpu::x86_64;
@@ -1839,7 +1840,7 @@ void fill_add_blocks(TestMemory &memory, std::size_t blocks, std::size_t stride)
 /* An address space entering a full window retires the least recently used,
  * which needs room for its id. Whichever allocation of that fails, the
  * executor goes on working: it prepares afresh, translates, and caches. Run
- * with with_sharing(false), as above. */
+ * in both modes, as above. */
 [[nodiscard]] bool retiring_the_oldest_address_space_survives_a_failed_allocation()
 {
 	using namespace uml::cpu::x86_64;
@@ -11169,6 +11170,14 @@ template <typename Test>
 	return passed;
 }
 
+/* Runs a test with executors that keep their translations to themselves, then
+ * with executors that share them. */
+template <typename Test>
+[[nodiscard]] bool in_both_modes(Test test)
+{
+	return with_sharing(false, test) && with_sharing(true, test);
+}
+
 int main(int argc, char **argv)
 {
 	/* The suite once more with every executor keeping its translations to
@@ -11182,11 +11191,11 @@ int main(int argc, char **argv)
 			the_prepared_generation_can_be_let_go_of() &&
 			a_number_given_out_again_runs_its_new_code() &&
 			a_destroyed_generation_keeps_its_window_place() &&
-			with_sharing(false,
+			in_both_modes(
 				letting_go_of_an_address_space_survives_a_failed_allocation) &&
-			with_sharing(false,
+			in_both_modes(
 				retiring_the_oldest_address_space_survives_a_failed_allocation) &&
-			with_sharing(false,
+			in_both_modes(
 				a_shed_address_space_is_asked_for_again_after_a_failed_allocation) &&
 			the_budget_bounds_what_an_executor_keeps() ? 0 : 1;
 	const bool passed = decode_scaled_address() &&
@@ -11216,11 +11225,11 @@ int main(int argc, char **argv)
 		the_prepared_generation_can_be_let_go_of() &&
 		a_number_given_out_again_runs_its_new_code() &&
 		a_destroyed_generation_keeps_its_window_place() &&
-		with_sharing(false,
+		in_both_modes(
 			letting_go_of_an_address_space_survives_a_failed_allocation) &&
-		with_sharing(false,
+		in_both_modes(
 			retiring_the_oldest_address_space_survives_a_failed_allocation) &&
-		with_sharing(false,
+		in_both_modes(
 			a_shed_address_space_is_asked_for_again_after_a_failed_allocation) &&
 		the_budget_bounds_what_an_executor_keeps() &&
 		a_validation_does_not_outlive_the_epochs_it_counts() &&

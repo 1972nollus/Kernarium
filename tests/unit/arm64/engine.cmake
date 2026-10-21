@@ -539,3 +539,14 @@
     uml_add_unit_test(NAME gadget-cache-budget
 		COMMAND uml_gadget_cache_budget_tests
 		LABELS tsan)
+
+    # The limbo a shared address space keeps its unpublished bodies in, on
+    # its own, with every allocation of a reclaim failed in turn.
+    add_executable(uml_gadget_shared_space_tests
+		${PROJECT_SOURCE_DIR}/tests/unit/arm64/gadget_shared_space_tests.cpp)
+    target_include_directories(uml_gadget_shared_space_tests PRIVATE
+		${PROJECT_SOURCE_DIR}/darwin)
+    target_link_libraries(uml_gadget_shared_space_tests PRIVATE
+		uml_test_allocation_failure)
+    uml_add_unit_test(NAME gadget-shared-space
+		COMMAND uml_gadget_shared_space_tests)

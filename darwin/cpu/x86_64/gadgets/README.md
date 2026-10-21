@@ -918,10 +918,12 @@ record before may still be running it. It waits in limbo until every executor
 seen inside translated code has left, which the executors' announcements tell:
 `run_x86_gadgets` brackets a run, and the handling of its exits, with
 `begin_run` and `end_run`. An executor that never brackets keeps the bodies of
-its address space for as long as it lives. A fault inside a block entered
-through a link is attributed through the arena's map of live bodies, since the
-block need not be in any slot of the executor that ran it. A shared space is
-never swept; it dies with its last executor, and its arenas go whole.
+its address space for as long as it lives. Running out of memory only delays
+this: a reclaim that cannot take its snapshot of the executors throws nothing
+and leaves the bodies for the next. A fault inside a block entered through a
+link is attributed through the arena's map of live bodies, since the block
+need not be in any slot of the executor that ran it. A shared space is never
+swept; it dies with its last executor, and its arenas go whole.
 
 What bounds a shared space is renewal. It counts the bytes its arenas hold and
 the bytes of the bodies some slot holds, and once the arenas hold at least as
