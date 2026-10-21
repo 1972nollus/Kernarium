@@ -6,6 +6,7 @@
 #include "protocol.hpp"
 #include "require.hpp"
 #include "virtio_balloon_device.hpp"
+#include "wire_bytes.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -73,12 +74,8 @@ struct Fixture final {
 
     [[nodiscard]] protocol::Configuration configuration() const
     {
-        const auto bytes = device->configuration();
-        require(bytes.size() == sizeof(protocol::Configuration),
-            "the configuration has the standard size");
-        protocol::Configuration result {};
-        std::memcpy(&result, bytes.data(), sizeof(result));
-        return result;
+        return uml::testing::loadExact<protocol::Configuration>(
+            device->configuration());
     }
 
     void send(std::uint32_t queue, const std::vector<std::uint32_t>& frames)
@@ -153,8 +150,7 @@ void the_driver_reports_what_it_holds()
 {
     Fixture fixture;
     const std::uint32_t actual = 4096;
-    std::uint8_t bytes[sizeof(actual)];
-    std::memcpy(bytes, &actual, sizeof(actual));
+    const auto bytes = uml::testing::bytes(actual);
     fixture.device->writeConfiguration(protocol::actualOffset, 0, bytes);
     require(fixture.configuration().actual == actual,
         "the driver's actual count is kept");

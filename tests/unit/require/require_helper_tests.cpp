@@ -5,17 +5,21 @@
 #include "require.hpp"
 #include "wait_until.hpp"
 #include "watchdog.hpp"
+#include "wire_bytes.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -147,6 +151,45 @@ void runNamedTestsReportsEveryCaseAndFailsOnAThrow()
 	require(uml::testing::runNamedTests(clean) == 0, "clean cases return 0");
 }
 
+struct Header final {
+	std::uint16_t kind;
+	std::uint32_t length;
+};
+
+void wireBytesRoundTripAndRefuseTheWrongSize()
+{
+	using uml::testing::load;
+	using uml::testing::loadExact;
+
+	const Header header{7, 0x01020304};
+	auto wire = uml::testing::bytes(header);
+	require(wire.size() == sizeof header, "bytes() is the record");
+	uml::testing::append(wire, std::uint8_t{9});
+	require(uml::testing::bytes(std::uint16_t{1}, std::uint32_t{2}).size() == 6,
+		"bytes() joins its values");
+	require(load<Header>(wire).kind == 7 &&
+		load<Header>(wire).length == 0x01020304,
+		"load() reads the record");
+	require(load<std::uint8_t>(wire, sizeof header) == 9,
+		"load() reads at an offset");
+	const auto exact = std::span<const std::uint8_t>{wire}.first(sizeof header);
+	require(loadExact<Header>(exact).kind == 7,
+		"loadExact() reads a record of exactly that size");
+
+	const auto refused = [](auto &&read) {
+		return inChild([&] { read(); return 0; }).status == aborted;
+	};
+	const auto shortBytes = std::span<const std::uint8_t>{wire}.first(5);
+	require(refused([&] { (void)load<Header>(shortBytes); }),
+		"load() refuses bytes that are too short");
+	require(refused([&] { (void)load<Header>(wire, wire.size()); }),
+		"load() refuses an offset past the record");
+	require(refused([&] { (void)loadExact<Header>(wire); }),
+		"loadExact() refuses bytes that are too long");
+	require(refused([&] { (void)loadExact<Header>(shortBytes); }),
+		"loadExact() refuses bytes that are too short");
+}
+
 } // namespace
 
 int main()
@@ -154,5 +197,6 @@ int main()
 	waitUntilReturnsWhatTheDeadlineLeavesTrue();
 	aWatchdogOnlyFiresWhenTheGuardedCodeIsLate();
 	runNamedTestsReportsEveryCaseAndFailsOnAThrow();
+	wireBytesRoundTripAndRefuseTheWrongSize();
 	return 0;
 }

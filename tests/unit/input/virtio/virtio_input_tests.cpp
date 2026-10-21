@@ -2,6 +2,7 @@
 
 #include "require.hpp"
 #include "virtio_input_device.hpp"
+#include "wire_bytes.hpp"
 
 #include <array>
 #include <cstdlib>
@@ -20,11 +21,8 @@ using uml::testing::require;
 
 protocol::InputConfig configuration(VirtioInputDevice& device)
 {
-    const auto bytes = device.configuration();
-    require(bytes.size() == sizeof(protocol::InputConfig));
-    protocol::InputConfig result {};
-    std::memcpy(&result, bytes.data(), sizeof(result));
-    return result;
+    return uml::testing::loadExact<protocol::InputConfig>(
+        device.configuration());
 }
 
 void select(
@@ -127,9 +125,8 @@ void eventQueueDefersAndThenReturnsOneWireEvent()
     device.drainEventSource();
     const auto result = device.processQueue(protocol::eventQueue, 2, {}, 8);
     require(result.action == uml::virtio::VhostUserQueueAction::complete);
-    require(result.response.size() == sizeof(protocol::InputEvent));
-    protocol::InputEvent returned {};
-    std::memcpy(&returned, result.response.data(), sizeof(returned));
+    const auto returned =
+        uml::testing::loadExact<protocol::InputEvent>(result.response);
     require(returned.type == protocol::eventAbsolute);
     require(returned.code == protocol::absoluteX);
     require(returned.value == 123);
