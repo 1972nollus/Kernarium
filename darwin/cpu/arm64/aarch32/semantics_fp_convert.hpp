@@ -2,7 +2,6 @@
 #pragma once
 
 #include "cpu/arm64/aarch32/a32_encodings.hpp"
-#include "cpu/arm64/aarch32/semantics_fp.hpp"
 
 #include <cstdint>
 #include <utility>
@@ -118,6 +117,24 @@ UML_A32_HALF_TO_INT16(to_int16_au, "fcvtau")
 
 #undef UML_A32_HALF_TO_INT16
 
+/* Floating point to a 32-bit integer under the FPCR rounding mode `mode`
+ * (the FPSCR RMode encoding: 0 nearest, 1 plus infinity, 2 minus infinity,
+ * 3 zero). */
+template<typename Float>
+[[nodiscard]] inline std::uint32_t to_int(Float value, bool is_unsigned, unsigned mode) noexcept
+{
+	switch (mode & 3U) {
+	case 0:
+		return is_unsigned ? to_int_nu(value) : to_int_ns(value);
+	case 1:
+		return is_unsigned ? to_int_pu(value) : to_int_ps(value);
+	case 2:
+		return is_unsigned ? to_int_mu(value) : to_int_ms(value);
+	default:
+		return is_unsigned ? to_int_zu(value) : to_int_zs(value);
+	}
+}
+
 /* A 32-bit integer to floating point, under the FPCR rounding mode. */
 #define UML_A32_INT_TO_FP(name, insn, reg, result_type, move)                            \
 	[[nodiscard]] inline result_type name(std::uint32_t a) noexcept                  \
@@ -220,24 +237,6 @@ template<typename Float>
 	default:
 		return is_unsigned ? to_int16_nu(value) : to_int16_ns(value);
 	}
-}
-
-/* VFP: the 32-bit integer in S(d) from the half, single or double of the
- * instruction's m register, converted with `rounding` under the guest
- * FPSCR. */
-inline bool vfp_to_int(Exec &x, FPRounding rounding)
-{
-	const Operands &o = x.o;
-	const unsigned m = static_cast<unsigned>(o.m);
-	const bool is_unsigned = o.unsigned_;
-	x.set_s_reg(static_cast<unsigned>(o.d), run_effective(x.cpu, [&] {
-		if (o.esize == 64)
-			return to_int_rounded(x.d_reg(m), is_unsigned, rounding);
-		if (o.esize == 16)
-			return to_int_rounded(static_cast<std::uint16_t>(x.s_reg(m)), is_unsigned, rounding);
-		return to_int_rounded(x.s_reg(m), is_unsigned, rounding);
-	}));
-	return true;
 }
 
 } // namespace uml::cpu::arm64::aarch32::detail::fp
