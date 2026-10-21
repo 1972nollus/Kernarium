@@ -34,9 +34,6 @@ from bridge_imports import (  # noqa: E402
 
 
 SCHEMA_VERSION = 3
-# Schema 2 bundles also recorded a patch count and a digest of a series
-# manifest. Both are still accepted; the final tree is the source identity.
-SUPPORTED_SCHEMA_VERSIONS = (2, 3)
 # Every kernel runs 4 KiB guest pages; the manifest records the size so a
 # consumer checks the profile it was built for.
 GUEST_PAGE_SIZE = 4096
@@ -63,7 +60,6 @@ SOURCE_KEYS = {
     "base_tree",
     "final_tree",
 }
-SCHEMA_2_SOURCE_KEYS = SOURCE_KEYS | {"patch_count", "patch_manifest_sha256"}
 ABI_KEYS = {"version", "fingerprint"}
 INVENTORY_KEYS = {"path", "role", "format", "size"}
 
@@ -101,8 +97,7 @@ DWARF_SECTION_PREFIXES = (".debug_", ".zdebug_")
 
 def validate_manifest(value: object) -> dict:
     manifest = require_exact_keys(value, TOP_LEVEL_KEYS, "artifact manifest")
-    schema = manifest["schema_version"]
-    if schema not in SUPPORTED_SCHEMA_VERSIONS or isinstance(schema, bool):
+    if manifest["schema_version"] != SCHEMA_VERSION:
         fail("artifact manifest schema version is unsupported")
     release_id = require_string(manifest["release_id"], "release ID")
     if RELEASE_ID_RE.fullmatch(release_id) is None:
@@ -134,22 +129,11 @@ def validate_manifest(value: object) -> dict:
     if manifest["elf_role"] != "darwin-uml":
         fail("kernel ELF role is not darwin-uml")
 
-    source = require_exact_keys(
-        manifest["source"],
-        SCHEMA_2_SOURCE_KEYS if schema == 2 else SOURCE_KEYS,
-        "source",
-    )
+    source = require_exact_keys(manifest["source"], SOURCE_KEYS, "source")
     for key in ("repository", "branch"):
         require_string(source[key], f"source.{key}")
     for key in ("base_commit", "base_tree", "final_tree"):
         require_hex(source[key], 40, f"source.{key}")
-    if schema == 2:
-        require_integer(source["patch_count"], "source.patch_count", minimum=1)
-        require_hex(
-            source["patch_manifest_sha256"],
-            64,
-            "source.patch_manifest_sha256",
-        )
 
     abi = require_exact_keys(manifest["abi"], ABI_KEYS, "abi")
     require_integer(abi["version"], "abi.version", minimum=1)

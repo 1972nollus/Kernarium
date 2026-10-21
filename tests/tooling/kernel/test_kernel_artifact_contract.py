@@ -45,11 +45,10 @@ def manifest(
     family: str,
     kernel_slice: str,
     page_size: int,
-    schema: int | None = None,
 ) -> dict:
     release_id = "contract-test"
-    value = {
-        "schema_version": module.SCHEMA_VERSION if schema is None else schema,
+    return {
+        "schema_version": module.SCHEMA_VERSION,
         "release_id": release_id,
         "directory_name": (
             f"{family}-{kernel_slice}-{page_size // 1024}k-{release_id}"
@@ -81,11 +80,6 @@ def manifest(
             for path, (role, file_format) in sorted(module.PAYLOAD_SPECS.items())
         ],
     }
-    if value["schema_version"] == 2:
-        # Schema 2 bundles also named their patch count and series manifest.
-        value["source"]["patch_count"] = 1
-        value["source"]["patch_manifest_sha256"] = "3" * 64
-    return value
 
 
 def require_accepted(
@@ -590,16 +584,25 @@ def main() -> int:
     )
     for identity in SUPPORTED_IDENTITIES:
         require_accepted(module, *identity)
-        # Accepted schema 2 bundles stay importable beside schema 3 ones.
-        module.validate_manifest(manifest(module, *identity, schema=2))
-    legacy = manifest(module, "mainline-6.18", "arm64", 4096)
-    legacy["source"]["patch_count"] = 1
-    try:
-        module.validate_manifest(legacy)
-    except SystemExit as error:
-        require("source" in str(error), f"schema 3 patch count rejected oddly: {error}")
-    else:
-        raise AssertionError("a schema 3 manifest accepted a patch count")
+    # Only the current schema is a manifest: the previous one, a schema 3
+    # manifest with the previous one's patch count, and a boolean are not.
+    retired = manifest(module, "mainline-6.18", "arm64", 4096)
+    retired["schema_version"] = 2
+    patch_count = manifest(module, "mainline-6.18", "arm64", 4096)
+    patch_count["source"]["patch_count"] = 1
+    boolean = manifest(module, "mainline-6.18", "arm64", 4096)
+    boolean["schema_version"] = True
+    for value, diagnostic in (
+        (retired, "artifact manifest schema version is unsupported"),
+        (boolean, "artifact manifest schema version is unsupported"),
+        (patch_count, "source keys differ"),
+    ):
+        try:
+            module.validate_manifest(value)
+        except SystemExit as error:
+            require(diagnostic in str(error), f"manifest rejected oddly: {error}")
+        else:
+            raise AssertionError(f"a manifest was accepted, expected: {diagnostic}")
 
     require_rejected(
         module,
