@@ -15,6 +15,7 @@
 #include <source_location>
 #include <stdexcept>
 #include <sys/event.h>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -25,6 +26,7 @@ namespace {
 using ::uml::testing::cancel_pending_allocation_failure;
 using ::uml::testing::fail;
 using ::uml::testing::fail_after_allocations;
+using protocol::GpuCommand;
 
 class FakeGpuDependencies final : public VirtioGpuDeviceDependencies {
 public:
@@ -342,7 +344,6 @@ public:
         std::uint32_t resourceId,
         VirglRenderer::NativeTexture& texture) noexcept override
     {
-        ++nativeResourceRequestCount;
         texture = {};
         if (!nativeResourceAvailable)
             return ENOTSUP;
@@ -390,7 +391,6 @@ public:
         const std::atomic_bool* stopRequested) noexcept override
     {
         lastFence = {contextId, ringIndex, fenceId};
-        lastFenceStopRequest = stopRequested;
         if (stopRequested != nullptr &&
             stopRequested->load(std::memory_order_acquire)) {
             return ECANCELED;
@@ -415,15 +415,11 @@ public:
         } catch (...) {
             return ENOMEM;
         }
-        ++contextFenceCount;
         return 0;
     }
 
-    [[nodiscard]] int pollContextFences(
-        std::uint32_t contextId) noexcept override
+    [[nodiscard]] int pollContextFences(std::uint32_t) noexcept override
     {
-        lastPolledContext = contextId;
-        ++contextFencePollCount;
         return 0;
     }
 
@@ -558,7 +554,6 @@ public:
     std::size_t lastReadDestinationBytes {};
     const std::uint8_t* lastReadDestination {};
     std::uint8_t readResourceTag {0x5aU};
-    unsigned nativeResourceRequestCount {};
     unsigned resourceMetalTextureCount {};
     unsigned directPresentationCount {};
     unsigned directPresentationDropCount {};
@@ -604,14 +599,10 @@ public:
     void* lastReleasedBlobScanout {};
     MetalScanout lastMetalScanout {};
     unsigned fenceCount {};
-    unsigned contextFenceCount {};
-    unsigned contextFencePollCount {};
     unsigned rendererPollCount {};
     bool rendererPendingWork {};
-    std::uint32_t lastPolledContext {};
     std::vector<std::uint64_t> contextFenceCookies;
     VirtioGpuDevice::DeferredFence lastFence {};
-    const std::atomic_bool* lastFenceStopRequest {};
     unsigned unrefResourceCount {};
     unsigned attachBackingCount {};
     unsigned detachBackingCount {};
@@ -669,6 +660,19 @@ template<typename Request>
         reinterpret_cast<const std::uint8_t*>(&request),
         sizeof(request),
     };
+}
+
+/* A zeroed `Request` for `command`. A request begins with its control header,
+ * which is all of a bare header. */
+template<typename Request>
+[[nodiscard]] Request newRequest(GpuCommand command)
+{
+    Request request {};
+    if constexpr (std::is_same_v<Request, protocol::GpuControlHeader>)
+        request.type = static_cast<std::uint32_t>(command);
+    else
+        request.header.type = static_cast<std::uint32_t>(command);
+    return request;
 }
 
 [[nodiscard]] protocol::GpuResponse responseType(
@@ -745,6 +749,37 @@ template<typename Header>
     std::memcpy(request.data(), &header, sizeof(header));
     std::memcpy(request.data() + sizeof(header), &entry, sizeof(entry));
     return request;
+}
+
+/* Gives `resourceId` the `length` bytes of guest memory at 0x1000. */
+[[nodiscard]] std::vector<std::uint8_t> attachBackingRequest(
+    std::uint32_t resourceId,
+    std::size_t length)
+{
+    auto attach = newRequest<protocol::GpuAttachBacking>(
+        GpuCommand::resourceAttachBacking);
+    attach.resourceId = resourceId;
+    attach.entryCount = 1;
+    return requestWithEntry(
+        attach,
+        protocol::GpuMemoryEntry {
+            .address = 0x1000,
+            .length = static_cast<std::uint32_t>(length),
+        });
+}
+
+/* Takes the shared-memory action the device queued and completes it, as having
+ * succeeded or not. Returns the action. */
+VirtioGpuDevice::SharedMemoryAction completeAction(
+    VirtioGpuDevice& device,
+    bool succeeded = true,
+    const std::source_location location = std::source_location::current())
+{
+    auto action = device.takeSharedMemoryAction();
+    require(action.has_value(), "the device queued no shared-memory action",
+        location);
+    device.completeSharedMemoryAction(action->actionId, succeeded);
+    return std::move(*action);
 }
 
 /* What a command did on the attempts that ran out of memory. */
@@ -891,9 +926,8 @@ AllocationSweep failEachAllocationBeforeDeferral(
     std::uint32_t width = 4,
     std::uint32_t height = 4)
 {
-    protocol::GpuResourceCreate2d create {};
-    create.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::resourceCreate2d);
+    auto create = newRequest<protocol::GpuResourceCreate2d>(
+        GpuCommand::resourceCreate2d);
     create.resourceId = resourceId;
     create.format =
         static_cast<std::uint32_t>(protocol::GpuFormat::b8g8r8a8Unorm);
@@ -907,9 +941,8 @@ AllocationSweep failEachAllocationBeforeDeferral(
     std::uint32_t width = 4,
     std::uint32_t height = 4)
 {
-    protocol::GpuResourceCreate3d create {};
-    create.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::resourceCreate3d);
+    auto create = newRequest<protocol::GpuResourceCreate3d>(
+        GpuCommand::resourceCreate3d);
     create.resourceId = resourceId;
     create.target = 2;
     create.format =
@@ -926,9 +959,8 @@ AllocationSweep failEachAllocationBeforeDeferral(
     std::uint32_t contextId,
     std::uint32_t contextInit = protocol::virglCapsetId)
 {
-    protocol::GpuContextCreate context {};
-    context.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::contextCreate);
+    auto context = newRequest<protocol::GpuContextCreate>(
+        GpuCommand::contextCreate);
     context.header.contextId = contextId;
     context.contextInit = contextInit;
     return context;
@@ -945,9 +977,8 @@ void contextInitUsesVirgl2ForTheDeviceSelectedDefault()
 
     auto resource = create3d(402);
     requireOk(device, requestBytes(resource));
-    protocol::GpuContextResource association {};
-    association.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::contextAttachResource);
+    auto association = newRequest<protocol::GpuContextResource>(
+        GpuCommand::contextAttachResource);
     association.header.contextId = deviceSelected.header.contextId;
     association.resourceId = resource.resourceId;
     requireOk(device, requestBytes(association));
@@ -990,11 +1021,10 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     require(dependencies.createResourceCount == 1);
 
-    protocol::GpuContextResource association {};
+    auto association = newRequest<protocol::GpuContextResource>(
+        GpuCommand::contextAttachResource);
     association.header.contextId = context.header.contextId;
     association.resourceId = rendered.resourceId;
-    association.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::contextAttachResource);
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::attach_resource);
     requireResponse(device, requestBytes(association),
@@ -1019,16 +1049,8 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     require(dependencies.detachResourceCount == 1);
 
-    protocol::GpuAttachBacking attach {};
-    attach.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceAttachBacking);
-    attach.resourceId = rendered.resourceId;
-    attach.entryCount = 1;
-    const protocol::GpuMemoryEntry entry {
-        .address = 0x1000,
-        .length = static_cast<std::uint32_t>(guestMemory.size()),
-    };
-    const auto attachRequest = requestWithEntry(attach, entry);
+    const auto attachRequest = attachBackingRequest(
+        rendered.resourceId, guestMemory.size());
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::attach_backing);
     requireResponse(device, attachRequest,
@@ -1042,10 +1064,9 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     require(dependencies.attachBackingCount == 1);
     require(dependencies.attachedBackingAddress != nullptr);
 
-    protocol::GpuResourceReference reference {};
+    auto reference = newRequest<protocol::GpuResourceReference>(
+        GpuCommand::resourceDetachBacking);
     reference.resourceId = rendered.resourceId;
-    reference.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceDetachBacking);
     sweep = failEachAllocationBeforeCommit(
         device, requestBytes(reference), [&] {
             return dependencies.detachBackingCount == 0 &&
@@ -1083,9 +1104,8 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     sweep = failEachAllocationBeforeCommit(device, requestBytes(software));
     require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
 
-    attach.resourceId = software.resourceId;
-    const auto softwareAttachRequest = requestWithEntry(attach, entry);
-    sweep = failEachAllocationBeforeCommit(device, softwareAttachRequest);
+    sweep = failEachAllocationBeforeCommit(
+        device, attachBackingRequest(software.resourceId, guestMemory.size()));
     require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     reference.resourceId = software.resourceId;
     reference.header.type = static_cast<std::uint32_t>(
@@ -1115,9 +1135,7 @@ void contextCreateIsRetryableAfterEachAllocationFailure()
             static_cast<std::uint32_t>(protocol::GpuCommand::contextDestroy);
         /* A ring without a fence: Venus rejects the header, Virgl takes it,
          * and an unknown context is reported as one. */
-        protocol::GpuSubmit3d probe {};
-        probe.header.type =
-            static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+        auto probe = newRequest<protocol::GpuSubmit3d>(GpuCommand::submit3d);
         probe.header.contextId = context.header.contextId;
         probe.header.flags = protocol::gpuFlagInfoRingIndex;
         const auto createdKind = venus
@@ -1155,9 +1173,8 @@ void blobCommandsAllocateBeforeCommitAndRetry()
     const auto context = createContext(0x901, protocol::venusCapsetId);
     requireOk(device, requestBytes(context));
 
-    protocol::GpuResourceCreateBlob create {};
-    create.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceCreateBlob);
+    auto create = newRequest<protocol::GpuResourceCreateBlob>(
+        GpuCommand::resourceCreateBlob);
     create.header.contextId = context.header.contextId;
     create.resourceId = 0x902;
     create.memory = protocol::blobMemoryHost3d;
@@ -1176,29 +1193,23 @@ void blobCommandsAllocateBeforeCommitAndRetry()
     const auto noAction = [&] {
         return !device.takeSharedMemoryAction().has_value();
     };
-    protocol::GpuResourceMapBlob map {};
-    map.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceMapBlob);
+    auto map = newRequest<protocol::GpuResourceMapBlob>(
+        GpuCommand::resourceMapBlob);
     map.resourceId = create.resourceId;
     const auto mapped =
         failEachAllocationBeforeCommit(device, requestBytes(map), noAction);
     require(responseType(mapped.response) ==
         protocol::GpuResponse::okMapInfo);
-    auto action = device.takeSharedMemoryAction();
-    require(action.has_value());
-    device.completeSharedMemoryAction(action->actionId, true);
+    completeAction(device);
 
-    protocol::GpuResourceUnmapBlob unmap {};
-    unmap.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceUnmapBlob);
+    auto unmap = newRequest<protocol::GpuResourceUnmapBlob>(
+        GpuCommand::resourceUnmapBlob);
     unmap.resourceId = create.resourceId;
     const auto unmapped =
         failEachAllocationBeforeCommit(device, requestBytes(unmap), noAction);
     require(responseType(unmapped.response) ==
         protocol::GpuResponse::okNoData);
-    action = device.takeSharedMemoryAction();
-    require(action.has_value());
-    device.completeSharedMemoryAction(action->actionId, true);
+    completeAction(device);
 }
 
 void edidReportsDisplayPixelsAndEffectiveDensity()
@@ -1210,9 +1221,7 @@ void edidReportsDisplayPixelsAndEffectiveDensity()
     VirtioGpuDevice device {
         dependencies, noGuestReads, noGuestMappings, dotsPerInch};
 
-    protocol::GpuGetEdid request {};
-    request.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::getEdid);
+    auto request = newRequest<protocol::GpuGetEdid>(GpuCommand::getEdid);
     request.header.flags = protocol::gpuFlagFence;
     request.header.fenceId = 0x1234;
     request.scanoutId = protocol::primaryScanoutId;
@@ -1250,9 +1259,8 @@ void edidReportsDisplayPixelsAndEffectiveDensity()
     request.scanoutId = 1;
     requireResponse(device, requestBytes(request),
         protocol::GpuResponse::errorInvalidScanout);
-    protocol::GpuControlHeader truncated {};
-    truncated.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::getEdid);
+    auto truncated = newRequest<protocol::GpuControlHeader>(
+        GpuCommand::getEdid);
     requireResponse(device, requestBytes(truncated),
         protocol::GpuResponse::errorInvalidParameter);
 }
@@ -1291,9 +1299,8 @@ void displayChangeEventsPreserveAResizeThatRacesGuestClear()
 
     dependencies.displayWidth = 1024;
     dependencies.displayHeight = 768;
-    protocol::GpuControlHeader request {};
-    request.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::getDisplayInfo);
+    auto request = newRequest<protocol::GpuControlHeader>(
+        GpuCommand::getDisplayInfo);
     const auto bytes = device.process(requestBytes(request), false);
     require(bytes.size() == sizeof(protocol::GpuDisplayInfo));
     protocol::GpuDisplayInfo information {};
@@ -1331,21 +1338,11 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(!dependencies.resources.contains(resource.resourceId));
     requireOk(device, requestBytes(resource));
 
-    protocol::GpuAttachBacking attach {};
-    attach.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceAttachBacking);
-    attach.resourceId = resource.resourceId;
-    attach.entryCount = 1;
-    const protocol::GpuMemoryEntry entry {
-        .address = 0x1000,
-        .length = static_cast<std::uint32_t>(guestMemory.size()),
-    };
-    const auto attachRequest = requestWithEntry(attach, entry);
+    const auto attachRequest = attachBackingRequest(
+        resource.resourceId, guestMemory.size());
     requireOk(device, attachRequest);
 
-    protocol::GpuSubmit3d submit {};
-    submit.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    auto submit = newRequest<protocol::GpuSubmit3d>(GpuCommand::submit3d);
     submit.header.contextId = context.header.contextId;
     dependencies.rejectNext(FakeGpuDependencies::Operation::submit);
     requireResponse(device, requestBytes(submit),
@@ -1393,9 +1390,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.lastFence.ringIndex == 0);
     require(dependencies.lastFence.cookie == submit.header.fenceId);
 
-    protocol::GpuSetScanout scanout {};
-    scanout.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::setScanout);
+    auto scanout = newRequest<protocol::GpuSetScanout>(GpuCommand::setScanout);
     scanout.rectangle = {.x = 1, .y = 1, .width = 2, .height = 2};
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = resource.resourceId;
@@ -1409,9 +1404,8 @@ void rendererExecutionFailuresPreserveDeviceState()
         protocol::GpuResponse::okNoData);
     require(dependencies.guestScanoutChangeCount == scanoutChangesBefore + 1);
 
-    protocol::GpuResourceFlush flush {};
-    flush.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::resourceFlush);
+    auto flush = newRequest<protocol::GpuResourceFlush>(
+        GpuCommand::resourceFlush);
     flush.rectangle = scanout.rectangle;
     flush.resourceId = resource.resourceId;
     require(dependencies.readResourceCount == 0);
@@ -1447,16 +1441,8 @@ void rendererExecutionFailuresPreserveDeviceState()
     // Once the first readback has sized the packed staging area, a fallback
     // flush allocates only its response. Any second allocation is a regression
     // to per-frame staging or cloning.
-    std::vector<std::uint8_t> warmedFlush;
-    bool warmedFlushAllocated = false;
-    fail_after_allocations(1);
-    try {
-        warmedFlush = device.process(requestBytes(flush), false);
-    } catch (const std::bad_alloc&) {
-        warmedFlushAllocated = true;
-    }
-    (void)cancel_pending_allocation_failure();
-    require(!warmedFlushAllocated);
+    const auto warmedFlush =
+        processAllocatingOnlyTheReply(device, requestBytes(flush));
     require(responseType(warmedFlush) == protocol::GpuResponse::okNoData);
     require(dependencies.readResourceCount == 4);
     require(dependencies.displayUpdateCount == 2);
@@ -1603,9 +1589,8 @@ void rendererExecutionFailuresPreserveDeviceState()
 
     scanout.resourceId = resource.resourceId;
     requireOk(device, requestBytes(scanout));
-    protocol::GpuResourceReference unref {};
-    unref.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::resourceUnref);
+    auto unref = newRequest<protocol::GpuResourceReference>(
+        GpuCommand::resourceUnref);
     unref.resourceId = resource.resourceId;
     const auto clearsBeforeUnref = dependencies.clearCount;
     requireOk(device, requestBytes(unref));
@@ -1624,9 +1609,7 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
             std::copy(pixel.begin(), pixel.end(), destination.begin());
             return true;
         },
-        [](std::uint64_t, std::size_t) {
-            return std::span<std::uint8_t> {};
-        }};
+        noGuestMappings};
 
     const auto context = createContext(811, protocol::venusCapsetId);
     const auto software = create2d(812, 1, 1);
@@ -1635,26 +1618,13 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
     requireOk(device, requestBytes(software));
     requireOk(device, requestBytes(rendered));
 
-    protocol::GpuAttachBacking attach {};
-    attach.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceAttachBacking);
-    attach.resourceId = software.resourceId;
-    attach.entryCount = 1;
-    const protocol::GpuMemoryEntry entry {
-        .address = 0x1000,
-        .length = static_cast<std::uint32_t>(pixel.size()),
-    };
-    requireOk(device, requestWithEntry(attach, entry));
-    protocol::GpuSetScanout scanout {};
-    scanout.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::setScanout);
+    requireOk(device, attachBackingRequest(software.resourceId, pixel.size()));
+    auto scanout = newRequest<protocol::GpuSetScanout>(GpuCommand::setScanout);
     scanout.rectangle = {.x = 0, .y = 0, .width = 1, .height = 1};
     scanout.resourceId = software.resourceId;
     requireOk(device, requestBytes(scanout));
 
-    protocol::GpuSubmit3d waitSubmit {};
-    waitSubmit.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::submit3d);
+    auto waitSubmit = newRequest<protocol::GpuSubmit3d>(GpuCommand::submit3d);
     waitSubmit.header.contextId = context.header.contextId;
     waitSubmit.header.flags =
         protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
@@ -1667,16 +1637,14 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
     /* A console update can precede the submit carrying the host semaphore
      * signal. Both software commands must pass the transport's production
      * predicate without retiring the renderer fence. */
-    protocol::GpuTransferToHost2d transfer {};
-    transfer.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::transferToHost2d);
+    auto transfer = newRequest<protocol::GpuTransferToHost2d>(
+        GpuCommand::transferToHost2d);
     transfer.rectangle = scanout.rectangle;
     transfer.resourceId = software.resourceId;
     require(device.canProcessWhileFencesPending(requestBytes(transfer), false));
     requireOk(device, requestBytes(transfer));
-    protocol::GpuResourceFlush flush {};
-    flush.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceFlush);
+    auto flush = newRequest<protocol::GpuResourceFlush>(
+        GpuCommand::resourceFlush);
     flush.rectangle = scanout.rectangle;
     flush.resourceId = software.resourceId;
     require(device.canProcessWhileFencesPending(requestBytes(flush), false));
@@ -1703,8 +1671,7 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
              protocol::GpuCommand::contextDetachResource,
              protocol::GpuCommand::contextDestroy,
          }) {
-        protocol::GpuResourceReference mutation {};
-        mutation.header.type = static_cast<std::uint32_t>(command);
+        auto mutation = newRequest<protocol::GpuResourceReference>(command);
         mutation.header.contextId = context.header.contextId;
         mutation.resourceId = rendered.resourceId;
         require(!device.canProcessWhileFencesPending(
@@ -1722,9 +1689,8 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
     require(device.contextFenceStatus(*pending.fence) == 0);
 
     /* Classification follows current ownership when an ID is recycled. */
-    protocol::GpuResourceReference unref {};
-    unref.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceUnref);
+    auto unref = newRequest<protocol::GpuResourceReference>(
+        GpuCommand::resourceUnref);
     unref.resourceId = software.resourceId;
     requireOk(device, requestBytes(unref));
     flush.resourceId = software.resourceId;
@@ -1747,9 +1713,7 @@ void deferredFencesUseHostTimelineAndMergedRetirement()
     constexpr std::array<std::uint64_t, 3> guestFenceIds {900, 2, 900};
     constexpr std::array<std::uint64_t, 3> hostFenceCookies {11, 12, 13};
     for (std::size_t index = 0; index < guestFenceIds.size(); ++index) {
-        protocol::GpuSubmit3d submit {};
-        submit.header.type =
-            static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+        auto submit = newRequest<protocol::GpuSubmit3d>(GpuCommand::submit3d);
         submit.header.flags = protocol::gpuFlagFence;
         submit.header.contextId = firstContext.header.contextId;
         submit.header.fenceId = guestFenceIds[index];
@@ -1783,9 +1747,7 @@ void deferredFencesUseHostTimelineAndMergedRetirement()
                 }) == 0);
     }
 
-    protocol::GpuSubmit3d otherSubmit {};
-    otherSubmit.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    auto otherSubmit = newRequest<protocol::GpuSubmit3d>(GpuCommand::submit3d);
     otherSubmit.header.flags = protocol::gpuFlagFence;
     otherSubmit.header.contextId = secondContext.header.contextId;
     otherSubmit.header.fenceId = 1;
@@ -1796,9 +1758,7 @@ void deferredFencesUseHostTimelineAndMergedRetirement()
     dependencies.retireContextFence(secondContext.header.contextId, 0, 20);
     require(device.contextFenceStatus(*otherResult.fence) == 0);
 
-    protocol::GpuSubmit3d nonzeroRing {};
-    nonzeroRing.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    auto nonzeroRing = newRequest<protocol::GpuSubmit3d>(GpuCommand::submit3d);
     nonzeroRing.header.flags =
         protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
     nonzeroRing.header.contextId = firstContext.header.contextId;
@@ -1811,9 +1771,7 @@ void deferredFencesUseHostTimelineAndMergedRetirement()
         protocol::GpuResponse::okNoData);
     require(dependencies.fenceCount == 1);
 
-    protocol::GpuSubmit3d failedFence {};
-    failedFence.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    auto failedFence = newRequest<protocol::GpuSubmit3d>(GpuCommand::submit3d);
     failedFence.header.flags = protocol::gpuFlagFence;
     failedFence.header.contextId = firstContext.header.contextId;
     dependencies.rejectNext(FakeGpuDependencies::Operation::fence);
@@ -1840,16 +1798,8 @@ void resetRetiresEachExternalOwnerExactlyOnce()
     requireOk(device, requestBytes(first));
     requireOk(device, requestBytes(second));
 
-    protocol::GpuAttachBacking attach {};
-    attach.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceAttachBacking);
-    attach.resourceId = first.resourceId;
-    attach.entryCount = 1;
-    const protocol::GpuMemoryEntry entry {
-        .address = 0x1000,
-        .length = static_cast<std::uint32_t>(guestMemory.size()),
-    };
-    requireOk(device, requestWithEntry(attach, entry));
+    requireOk(device, attachBackingRequest(
+        first.resourceId, guestMemory.size()));
 
     device.reset();
     require(dependencies.detachBackingCount == 1);
@@ -1877,11 +1827,7 @@ void resetIsPristineAndAllocationRetryIsAtomic()
     FakeGpuDependencies dependencies;
     VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
 
-    protocol::GpuContextCreate context {};
-    context.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::contextCreate);
-    context.header.contextId = 41;
-    context.contextInit = protocol::virglCapsetId;
+    auto context = createContext(41);
     requireOk(device, requestBytes(context));
 
     auto resource = create2d(73);
@@ -1929,27 +1875,14 @@ void rendererBackingAttachIsRetryableAfterAllocationFailure()
 
     const auto create = create3d(75);
     requireOk(device, requestBytes(create));
-    protocol::GpuAttachBacking attach {};
-    attach.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceAttachBacking);
-    attach.resourceId = create.resourceId;
-    attach.entryCount = 1;
-    const protocol::GpuMemoryEntry entry {
-        .address = 0x1000,
-        .length = static_cast<std::uint32_t>(guestMemory.size()),
-    };
-    const auto request = requestWithEntry(attach, entry);
+    const auto request = attachBackingRequest(
+        create.resourceId, guestMemory.size());
 
     // The response is allocated first; the backing's iovec array second.
     fail_after_allocations(1);
-    bool failed = false;
-    try {
-        (void)device.process(request, false);
-    } catch (const std::bad_alloc&) {
-        failed = true;
-    }
+    requireThrows<std::bad_alloc>(
+        [&] { (void)device.process(request, false); });
     (void)cancel_pending_allocation_failure();
-    require(failed);
     requireOk(device, request);
 }
 
@@ -1960,7 +1893,7 @@ void backingRangesAndAttachStateAreValidated()
     FakeGpuDependencies dependencies;
     VirtioGpuDevice device {
         dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
+        noGuestReads,
         [&](std::uint64_t address, std::size_t size) {
             ++mapperCalls;
             if (address != 0x1000 || size > guestMemory.size())
@@ -1974,9 +1907,8 @@ void backingRangesAndAttachStateAreValidated()
     requireOk(device, requestBytes(rendered));
 
     for (const auto resourceId : {software.resourceId, rendered.resourceId}) {
-        protocol::GpuAttachBacking attach {};
-        attach.header.type = static_cast<std::uint32_t>(
-            protocol::GpuCommand::resourceAttachBacking);
+        auto attach = newRequest<protocol::GpuAttachBacking>(
+            GpuCommand::resourceAttachBacking);
         attach.resourceId = resourceId;
         attach.entryCount = 0;
         requireResponse(device, requestBytes(attach),
@@ -1999,9 +1931,8 @@ void backingRangesAndAttachStateAreValidated()
         requireResponse(device, request,
             protocol::GpuResponse::errorInvalidParameter);
 
-        protocol::GpuResourceReference detach {};
-        detach.header.type = static_cast<std::uint32_t>(
-            protocol::GpuCommand::resourceDetachBacking);
+        auto detach = newRequest<protocol::GpuResourceReference>(
+            GpuCommand::resourceDetachBacking);
         detach.resourceId = resourceId;
         requireOk(device, requestBytes(detach));
         requireOk(device, request);
@@ -2037,34 +1968,20 @@ void failedTransferDoesNotPartiallyCommitPixels()
                 destination.size());
             return true;
         },
-        [](std::uint64_t, std::size_t) {
-            return std::span<std::uint8_t> {};
-        }};
+        noGuestMappings};
 
     const auto create = create2d(83, 2, 2);
     requireOk(device, requestBytes(create));
-    protocol::GpuAttachBacking attach {};
-    attach.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceAttachBacking);
-    attach.resourceId = create.resourceId;
-    attach.entryCount = 1;
-    const protocol::GpuMemoryEntry entry {
-        .address = 0x1000,
-        .length = static_cast<std::uint32_t>(backing.size()),
-    };
-    requireOk(device, requestWithEntry(attach, entry));
+    requireOk(device, attachBackingRequest(create.resourceId, backing.size()));
 
-    protocol::GpuSetScanout scanout {};
-    scanout.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::setScanout);
+    auto scanout = newRequest<protocol::GpuSetScanout>(GpuCommand::setScanout);
     scanout.rectangle = {.x = 0, .y = 0, .width = 2, .height = 2};
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = create.resourceId;
     requireOk(device, requestBytes(scanout));
 
-    protocol::GpuTransferToHost2d transfer {};
-    transfer.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::transferToHost2d);
+    auto transfer = newRequest<protocol::GpuTransferToHost2d>(
+        GpuCommand::transferToHost2d);
     transfer.rectangle = scanout.rectangle;
     transfer.offset = 0;
     transfer.resourceId = create.resourceId;
@@ -2081,9 +1998,8 @@ void failedTransferDoesNotPartiallyCommitPixels()
     require(responseType(failedTransfer.response) ==
         protocol::GpuResponse::errorInvalidParameter);
 
-    protocol::GpuResourceFlush flush {};
-    flush.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::resourceFlush);
+    auto flush = newRequest<protocol::GpuResourceFlush>(
+        GpuCommand::resourceFlush);
     flush.rectangle = scanout.rectangle;
     flush.resourceId = create.resourceId;
     requireOk(device, requestBytes(flush));
@@ -2131,9 +2047,7 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
     const auto create = create3d(84);
     requireOk(device, requestBytes(create));
 
-    protocol::GpuSetScanout scanout {};
-    scanout.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::setScanout);
+    auto scanout = newRequest<protocol::GpuSetScanout>(GpuCommand::setScanout);
     scanout.rectangle = {.x = 0, .y = 0, .width = 4, .height = 4};
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = create.resourceId;
@@ -2198,15 +2112,12 @@ void readbackStagingIsAllocatedByTheFirstReadback()
     requireOk(device, requestBytes(second));
     requireOk(device, requestBytes(software));
 
-    protocol::GpuSetScanout scanout {};
-    scanout.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::setScanout);
+    auto scanout = newRequest<protocol::GpuSetScanout>(GpuCommand::setScanout);
     scanout.rectangle = {.x = 0, .y = 0, .width = 4, .height = 4};
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = first.resourceId;
-    protocol::GpuResourceFlush flush {};
-    flush.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::resourceFlush);
+    auto flush = newRequest<protocol::GpuResourceFlush>(
+        GpuCommand::resourceFlush);
     flush.rectangle = scanout.rectangle;
     flush.resourceId = first.resourceId;
 
@@ -2274,13 +2185,10 @@ void unanswerableCapabilityQueriesFailOnlyThemselves()
 {
     FakeGpuDependencies dependencies;
     VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
-    protocol::GpuGetCapsetInfo information {};
-    information.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::getCapsetInfo);
+    auto information = newRequest<protocol::GpuGetCapsetInfo>(
+        GpuCommand::getCapsetInfo);
     information.capsetIndex = protocol::virgl2CapsetIndex;
-    protocol::GpuGetCapset capset {};
-    capset.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::getCapset);
+    auto capset = newRequest<protocol::GpuGetCapset>(GpuCommand::getCapset);
     capset.capsetId = protocol::virgl2CapsetId;
     capset.version = 1;
 
@@ -2300,9 +2208,8 @@ void venusBlobsAndFencesUseStandardWireState()
     FakeGpuDependencies dependencies;
     VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     require(device.config().capsetCount == protocol::venusCapsetIndex + 1U);
-    protocol::GpuGetCapsetInfo capsetInfo {};
-    capsetInfo.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::getCapsetInfo);
+    auto capsetInfo = newRequest<protocol::GpuGetCapsetInfo>(
+        GpuCommand::getCapsetInfo);
     capsetInfo.capsetIndex = protocol::venusCapsetIndex;
     const auto enabledInfo = device.process(requestBytes(capsetInfo), false);
     protocol::GpuCapsetInfo venusInfo {};
@@ -2318,9 +2225,8 @@ void venusBlobsAndFencesUseStandardWireState()
     requireResponse(device, requestBytes(invalidContextFlags),
         protocol::GpuResponse::errorInvalidParameter);
 
-    protocol::GpuResourceCreateBlob create {};
-    create.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceCreateBlob);
+    auto create = newRequest<protocol::GpuResourceCreateBlob>(
+        GpuCommand::resourceCreateBlob);
     create.header.contextId = context.header.contextId;
     create.resourceId = 0x501;
     create.memory = protocol::blobMemoryHost3d;
@@ -2335,9 +2241,8 @@ void venusBlobsAndFencesUseStandardWireState()
     requireOk(device, requestBytes(apertureCreate));
     /* Unmapped renderer storage does not consume aperture address space. */
     requireOk(device, requestBytes(create));
-    protocol::GpuResourceReference apertureUnref {};
-    apertureUnref.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::resourceUnref);
+    auto apertureUnref = newRequest<protocol::GpuResourceReference>(
+        GpuCommand::resourceUnref);
     apertureUnref.resourceId = apertureCreate.resourceId;
     requireOk(device, requestBytes(apertureUnref));
 
@@ -2345,9 +2250,8 @@ void venusBlobsAndFencesUseStandardWireState()
     crossDeviceCreate.resourceId = 0x502;
     crossDeviceCreate.flags |= protocol::blobFlagCrossDevice;
     requireOk(device, requestBytes(crossDeviceCreate));
-    protocol::GpuResourceReference crossDeviceUnref {};
-    crossDeviceUnref.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceUnref);
+    auto crossDeviceUnref = newRequest<protocol::GpuResourceReference>(
+        GpuCommand::resourceUnref);
     crossDeviceUnref.resourceId = crossDeviceCreate.resourceId;
     requireOk(device, requestBytes(crossDeviceUnref));
 
@@ -2361,9 +2265,8 @@ void venusBlobsAndFencesUseStandardWireState()
     rendererBlobCreate.blobId = 0x12345678;
     requireOk(device, requestBytes(rendererBlobCreate));
     require(dependencies.lastBlobId == rendererBlobCreate.blobId);
-    protocol::GpuResourceReference rendererBlobUnref {};
-    rendererBlobUnref.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceUnref);
+    auto rendererBlobUnref = newRequest<protocol::GpuResourceReference>(
+        GpuCommand::resourceUnref);
     rendererBlobUnref.resourceId = rendererBlobCreate.resourceId;
     requireOk(device, requestBytes(rendererBlobUnref));
 
@@ -2377,33 +2280,25 @@ void venusBlobsAndFencesUseStandardWireState()
     virglBlobCreate.header.contextId = virglContext.header.contextId;
     virglBlobCreate.resourceId = 0x5fe;
     requireOk(device, requestBytes(virglBlobCreate));
-    auto virglBlobMap = protocol::GpuResourceMapBlob {};
-    virglBlobMap.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceMapBlob);
+    auto virglBlobMap = newRequest<protocol::GpuResourceMapBlob>(
+        GpuCommand::resourceMapBlob);
     virglBlobMap.resourceId = virglBlobCreate.resourceId;
     virglBlobMap.offset = 0;
     requireResponse(device, requestBytes(virglBlobMap),
         protocol::GpuResponse::okMapInfo);
-    auto virglBlobAction = device.takeSharedMemoryAction();
-    require(virglBlobAction.has_value());
-    device.completeSharedMemoryAction(virglBlobAction->actionId, true);
-    auto virglBlobUnmap = protocol::GpuResourceUnmapBlob {};
-    virglBlobUnmap.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceUnmapBlob);
+    completeAction(device);
+    auto virglBlobUnmap = newRequest<protocol::GpuResourceUnmapBlob>(
+        GpuCommand::resourceUnmapBlob);
     virglBlobUnmap.resourceId = virglBlobCreate.resourceId;
     requireOk(device, requestBytes(virglBlobUnmap));
-    auto virglBlobUnmapAction = device.takeSharedMemoryAction();
-    require(virglBlobUnmapAction.has_value());
-    device.completeSharedMemoryAction(virglBlobUnmapAction->actionId, true);
-    protocol::GpuResourceReference virglBlobUnref {};
-    virglBlobUnref.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceUnref);
+    completeAction(device);
+    auto virglBlobUnref = newRequest<protocol::GpuResourceReference>(
+        GpuCommand::resourceUnref);
     virglBlobUnref.resourceId = virglBlobCreate.resourceId;
     requireOk(device, requestBytes(virglBlobUnref));
 
-    protocol::GpuResourceMapBlob map {};
-    map.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceMapBlob);
+    auto map = newRequest<protocol::GpuResourceMapBlob>(
+        GpuCommand::resourceMapBlob);
     map.resourceId = create.resourceId;
     map.offset = protocol::hostVisibleSharedMemoryAlignment;
     const auto mapResponse = device.process(requestBytes(map), false);
@@ -2423,9 +2318,8 @@ void venusBlobsAndFencesUseStandardWireState()
     require(mapAction->length ==
         protocol::hostVisibleSharedMemoryAlignment);
 
-    protocol::GpuResourceUnmapBlob unmap {};
-    unmap.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceUnmapBlob);
+    auto unmap = newRequest<protocol::GpuResourceUnmapBlob>(
+        GpuCommand::resourceUnmapBlob);
     unmap.resourceId = create.resourceId;
     requireResponse(device, requestBytes(unmap),
         protocol::GpuResponse::errorInvalidParameter);
@@ -2441,21 +2335,15 @@ void venusBlobsAndFencesUseStandardWireState()
     secondMap.offset += protocol::hostVisibleSharedMemoryAlignment;
     requireResponse(device, requestBytes(secondMap),
         protocol::GpuResponse::okMapInfo);
-    auto secondMapAction = device.takeSharedMemoryAction();
-    require(secondMapAction.has_value());
-    device.completeSharedMemoryAction(secondMapAction->actionId, false);
+    completeAction(device, false);
     requireResponse(device, requestBytes(secondMap),
         protocol::GpuResponse::okMapInfo);
-    secondMapAction = device.takeSharedMemoryAction();
-    require(secondMapAction.has_value());
-    device.completeSharedMemoryAction(secondMapAction->actionId, true);
+    completeAction(device);
 
     auto secondUnmap = unmap;
     secondUnmap.resourceId = secondCreate.resourceId;
     requireOk(device, requestBytes(secondUnmap));
-    auto secondUnmapAction = device.takeSharedMemoryAction();
-    require(secondUnmapAction.has_value());
-    device.completeSharedMemoryAction(secondUnmapAction->actionId, true);
+    completeAction(device);
 
     requireOk(device, requestBytes(unmap));
     auto unmapAction = device.takeSharedMemoryAction();
@@ -2465,13 +2353,9 @@ void venusBlobsAndFencesUseStandardWireState()
     require(unmapAction->descriptor.get() < 0);
     device.completeSharedMemoryAction(unmapAction->actionId, false);
     requireOk(device, requestBytes(unmap));
-    unmapAction = device.takeSharedMemoryAction();
-    require(unmapAction.has_value());
-    device.completeSharedMemoryAction(unmapAction->actionId, true);
+    completeAction(device);
 
-    protocol::GpuSubmit3d submit {};
-    submit.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    auto submit = newRequest<protocol::GpuSubmit3d>(GpuCommand::submit3d);
     submit.header.contextId = context.header.contextId;
     submit.header.flags =
         protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
@@ -2507,17 +2391,14 @@ void venusBlobsAndFencesUseStandardWireState()
     requireResponse(device, requestBytes(invalidRingSubmit),
         protocol::GpuResponse::errorInvalidParameter);
 
-    protocol::GpuResourceReference unref {};
-    unref.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::resourceUnref);
+    auto unref = newRequest<protocol::GpuResourceReference>(
+        GpuCommand::resourceUnref);
     unref.resourceId = secondCreate.resourceId;
     requireOk(device, requestBytes(unref));
 
     requireResponse(device, requestBytes(map),
         protocol::GpuResponse::okMapInfo);
-    mapAction = device.takeSharedMemoryAction();
-    require(mapAction.has_value());
-    device.completeSharedMemoryAction(mapAction->actionId, true);
+    completeAction(device);
     unref.resourceId = create.resourceId;
     requireOk(device, requestBytes(unref));
     unmapAction = device.takeSharedMemoryAction();
@@ -2533,9 +2414,7 @@ void venusBlobsAndFencesUseStandardWireState()
     resetMap.resourceId = resetCreate.resourceId;
     requireResponse(device, requestBytes(resetMap),
         protocol::GpuResponse::okMapInfo);
-    auto resetMapAction = device.takeSharedMemoryAction();
-    require(resetMapAction.has_value());
-    device.completeSharedMemoryAction(resetMapAction->actionId, true);
+    completeAction(device);
     device.prepareReset();
     auto resetUnmapAction = device.takeSharedMemoryAction();
     require(resetUnmapAction.has_value());
@@ -2552,16 +2431,14 @@ void blobMappingCapacityFollowsTheAperture()
     const auto context = createContext(0x601, protocol::venusCapsetId);
     requireOk(device, requestBytes(context));
 
-    protocol::GpuResourceCreateBlob create {};
-    create.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceCreateBlob);
+    auto create = newRequest<protocol::GpuResourceCreateBlob>(
+        GpuCommand::resourceCreateBlob);
     create.header.contextId = context.header.contextId;
     create.memory = protocol::blobMemoryHost3d;
     create.flags = protocol::blobFlagMappable;
     create.size = protocol::hostVisibleSharedMemoryAlignment;
-    protocol::GpuResourceMapBlob map {};
-    map.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceMapBlob);
+    auto map = newRequest<protocol::GpuResourceMapBlob>(
+        GpuCommand::resourceMapBlob);
 
     // Small mappings must not exhaust a record-count limit before the aperture.
     constexpr std::uint32_t smallMappings = 1025;
@@ -2587,9 +2464,7 @@ void blobMappingCapacityFollowsTheAperture()
     requireOk(device, requestBytes(create));
     requireResponse(device, requestBytes(map),
         protocol::GpuResponse::okMapInfo);
-    auto action = device.takeSharedMemoryAction();
-    require(action.has_value());
-    device.completeSharedMemoryAction(action->actionId, true);
+    completeAction(device);
 
     ++create.resourceId;
     create.size = protocol::hostVisibleSharedMemoryAlignment;
@@ -2602,20 +2477,15 @@ void blobMappingCapacityFollowsTheAperture()
     requireResponse(device, requestBytes(map),
         protocol::GpuResponse::errorInvalidParameter);
 
-    protocol::GpuResourceUnmapBlob unmap {};
-    unmap.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceUnmapBlob);
+    auto unmap = newRequest<protocol::GpuResourceUnmapBlob>(
+        GpuCommand::resourceUnmapBlob);
     unmap.resourceId = 1;
     requireOk(device, requestBytes(unmap));
-    action = device.takeSharedMemoryAction();
-    require(action.has_value());
-    device.completeSharedMemoryAction(action->actionId, true);
+    completeAction(device);
     map.offset = 0;
     requireResponse(device, requestBytes(map),
         protocol::GpuResponse::okMapInfo);
-    action = device.takeSharedMemoryAction();
-    require(action.has_value());
-    device.completeSharedMemoryAction(action->actionId, true);
+    completeAction(device);
     device.prepareReset();
     std::uint32_t unmapped = 0;
     while (auto pending = device.takeSharedMemoryAction()) {
@@ -2632,9 +2502,8 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
 {
     FakeGpuDependencies dependencies;
     VirtioGpuDevice empty {dependencies, noGuestReads, noGuestMappings};
-    protocol::GpuSetScanoutBlob scanout {};
-    scanout.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::setScanoutBlob);
+    auto scanout = newRequest<protocol::GpuSetScanoutBlob>(
+        GpuCommand::setScanoutBlob);
     scanout.rectangle = {.width = 8, .height = 8};
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = 0x702;
@@ -2650,9 +2519,8 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     const auto context = createContext(0x701, protocol::venusCapsetId);
     requireOk(device, requestBytes(context));
-    protocol::GpuResourceCreateBlob create {};
-    create.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceCreateBlob);
+    auto create = newRequest<protocol::GpuResourceCreateBlob>(
+        GpuCommand::resourceCreateBlob);
     create.header.contextId = context.header.contextId;
     create.resourceId = scanout.resourceId;
     create.memory = protocol::blobMemoryHost3d;
@@ -2695,9 +2563,8 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     require(dependencies.lastBlobScanoutStride == scanout.strides[0]);
     require(dependencies.lastBlobScanoutOffset == scanout.offsets[0]);
 
-    protocol::GpuResourceFlush flush {};
-    flush.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceFlush);
+    auto flush = newRequest<protocol::GpuResourceFlush>(
+        GpuCommand::resourceFlush);
     flush.rectangle = scanout.rectangle;
     flush.resourceId = scanout.resourceId;
     dependencies.directPresentationEnabled = true;
@@ -2761,9 +2628,8 @@ void virglBlobScanoutPresentsItsGlTexture()
     VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     const auto context = createContext(0x801, protocol::virgl2CapsetId);
     requireOk(device, requestBytes(context));
-    protocol::GpuResourceCreateBlob create {};
-    create.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceCreateBlob);
+    auto create = newRequest<protocol::GpuResourceCreateBlob>(
+        GpuCommand::resourceCreateBlob);
     create.header.contextId = context.header.contextId;
     create.resourceId = 0x802;
     create.memory = protocol::blobMemoryHost3d;
@@ -2772,9 +2638,8 @@ void virglBlobScanoutPresentsItsGlTexture()
     create.size = dependencies.blobPixels.size();
     requireOk(device, requestBytes(create));
 
-    protocol::GpuSetScanoutBlob scanout {};
-    scanout.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::setScanoutBlob);
+    auto scanout = newRequest<protocol::GpuSetScanoutBlob>(
+        GpuCommand::setScanoutBlob);
     scanout.rectangle = {.width = 8, .height = 8};
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = create.resourceId;
@@ -2799,9 +2664,8 @@ void virglBlobScanoutPresentsItsGlTexture()
     require(dependencies.lastGuestScanoutWidth == scanout.rectangle.width);
     require(dependencies.lastGuestScanoutHeight == scanout.rectangle.height);
 
-    protocol::GpuResourceFlush flush {};
-    flush.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceFlush);
+    auto flush = newRequest<protocol::GpuResourceFlush>(
+        GpuCommand::resourceFlush);
     flush.rectangle = {.x = 2, .y = 3, .width = 4, .height = 2};
     flush.resourceId = scanout.resourceId;
     dependencies.directPresentationEnabled = true;
@@ -2929,15 +2793,12 @@ void malformed3dCommandsUseSpecificErrors()
 {
     FakeGpuDependencies dependencies;
     VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
-    protocol::GpuControlHeader transfer {};
-    transfer.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::transferToHost3d);
+    auto transfer = newRequest<protocol::GpuControlHeader>(
+        GpuCommand::transferToHost3d);
     requireResponse(device, requestBytes(transfer),
         protocol::GpuResponse::errorInvalidParameter);
 
-    protocol::GpuSubmit3d submit {};
-    submit.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+    auto submit = newRequest<protocol::GpuSubmit3d>(GpuCommand::submit3d);
     submit.header.contextId = 99;
     requireResponse(device, requestBytes(submit),
         protocol::GpuResponse::errorInvalidContext);
@@ -2973,8 +2834,7 @@ void malformed3dCommandsUseSpecificErrors()
              protocol::GpuCommand::submit3d,
              protocol::GpuCommand::updateCursor,
              protocol::GpuCommand::moveCursor}) {
-        protocol::GpuControlHeader truncated {};
-        truncated.type = static_cast<std::uint32_t>(command);
+        const auto truncated = newRequest<protocol::GpuControlHeader>(command);
         const auto result = device.process(requestBytes(truncated), false);
         require(responseType(result) != protocol::GpuResponse::okNoData);
     }
@@ -2999,9 +2859,7 @@ void aDestroyedContextsHeldFencesComplete()
     auto now = DeferredFences::Clock::now();
     const auto deferSubmit = [&](std::uint32_t contextId,
                                  std::uint64_t requestId) {
-        protocol::GpuSubmit3d submit {};
-        submit.header.type =
-            static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+        auto submit = newRequest<protocol::GpuSubmit3d>(GpuCommand::submit3d);
         submit.header.flags = protocol::gpuFlagFence;
         submit.header.contextId = contextId;
         submit.header.fenceId = requestId;
@@ -3031,9 +2889,8 @@ void aDestroyedContextsHeldFencesComplete()
     fences.retire(now, status);
     require(fences.orderingRelaxed());
 
-    protocol::GpuControlHeader destroy {};
-    destroy.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::contextDestroy);
+    auto destroy = newRequest<protocol::GpuControlHeader>(
+        GpuCommand::contextDestroy);
     destroy.contextId = exiting.header.contextId;
     const auto destroyed = device.processWithDeferredFence(
         requestBytes(destroy), false, 0, headerReplyCapacity);
@@ -3207,16 +3064,8 @@ void deferredCommandsAllocateBeforeTheDeviceCommits()
         dependencies, noGuestReads, guestMemoryAt0x1000(guestMemory)};
     const auto resource = create3d(850);
     requireOk(device, requestBytes(resource));
-    protocol::GpuAttachBacking attach {};
-    attach.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceAttachBacking);
-    attach.resourceId = resource.resourceId;
-    attach.entryCount = 1;
-    const protocol::GpuMemoryEntry entry {
-        .address = 0x1000,
-        .length = static_cast<std::uint32_t>(guestMemory.size()),
-    };
-    requireOk(device, requestWithEntry(attach, entry));
+    requireOk(device, attachBackingRequest(
+        resource.resourceId, guestMemory.size()));
 
     /* The fake renderer records each fence in containers of its own, where
      * the real one allocates in C, out of the sweep's reach. Make room in
@@ -3290,9 +3139,8 @@ void repliesThatDoNotFitAreRefusedBeforeTheCommandRuns()
         dependencies, noGuestReads, noGuestMappings, dotsPerInch};
     const auto context = createContext(0x921, protocol::venusCapsetId);
     requireOk(device, requestBytes(context));
-    protocol::GpuResourceCreateBlob create {};
-    create.header.type = static_cast<std::uint32_t>(
-        protocol::GpuCommand::resourceCreateBlob);
+    auto create = newRequest<protocol::GpuResourceCreateBlob>(
+        GpuCommand::resourceCreateBlob);
     create.header.contextId = context.header.contextId;
     create.resourceId = 0x922;
     create.memory = protocol::blobMemoryHost3d;
@@ -3300,25 +3148,18 @@ void repliesThatDoNotFitAreRefusedBeforeTheCommandRuns()
     create.size = protocol::hostVisibleSharedMemoryAlignment;
     requireOk(device, requestBytes(create));
 
-    protocol::GpuControlHeader displayInfo {};
-    displayInfo.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::getDisplayInfo);
-    protocol::GpuGetEdid edid {};
-    edid.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::getEdid);
+    auto displayInfo = newRequest<protocol::GpuControlHeader>(
+        GpuCommand::getDisplayInfo);
+    auto edid = newRequest<protocol::GpuGetEdid>(GpuCommand::getEdid);
     edid.scanoutId = protocol::primaryScanoutId;
-    protocol::GpuGetCapsetInfo capsetInfo {};
-    capsetInfo.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::getCapsetInfo);
+    auto capsetInfo = newRequest<protocol::GpuGetCapsetInfo>(
+        GpuCommand::getCapsetInfo);
     capsetInfo.capsetIndex = protocol::virgl2CapsetIndex;
-    protocol::GpuGetCapset capset {};
-    capset.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::getCapset);
+    auto capset = newRequest<protocol::GpuGetCapset>(GpuCommand::getCapset);
     capset.capsetId = protocol::virgl2CapsetId;
     capset.version = 1;
-    protocol::GpuResourceMapBlob map {};
-    map.header.type =
-        static_cast<std::uint32_t>(protocol::GpuCommand::resourceMapBlob);
+    auto map = newRequest<protocol::GpuResourceMapBlob>(
+        GpuCommand::resourceMapBlob);
     map.resourceId = create.resourceId;
 
     struct Command {

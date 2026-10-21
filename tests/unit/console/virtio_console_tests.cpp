@@ -9,6 +9,8 @@
 #include "unique_descriptor.hpp"
 #include "unix_socket_channel.hpp"
 #include "virtio_console_device.hpp"
+#include "wait_until.hpp"
+#include "wire_bytes.hpp"
 
 #include <algorithm>
 #include <array>
@@ -36,8 +38,10 @@ namespace {
 
 namespace protocol = uml::console::protocol;
 
+using uml::testing::load;
 using uml::testing::require;
 using uml::testing::requireThrows;
+using uml::testing::waitUntil;
 
 class TestChannel final : public uml::console::ConsoleChannel {
 public:
@@ -106,24 +110,13 @@ struct NamedDeviceFixture final {
     std::unique_ptr<uml::console::VirtioConsoleDevice> device;
 };
 
-class TemporaryDirectory final {
-public:
-    TemporaryDirectory()
-    {
-        auto pattern = uml::testing::socket_scratch_template(
-            "uml-console-test.XXXXXX");
-        char* created = ::mkdtemp(pattern.data());
-        require(created != nullptr);
-        path_ = created;
-    }
-
-    ~TemporaryDirectory() { (void)::rmdir(path_.c_str()); }
-
-    const std::filesystem::path& path() const noexcept { return path_; }
-
-private:
-    std::filesystem::path path_;
-};
+/* Socket paths must fit sun_path, so the directory is in the host temporary
+ * directory. */
+uml::testing::ScratchSubdirectory socketDirectory()
+{
+    return uml::testing::ScratchSubdirectory {
+        "uml-console-test.XXXXXX", uml::testing::socket_scratch_parent()};
+}
 
 void waitReadable(int descriptor)
 {
@@ -162,16 +155,7 @@ std::vector<std::uint8_t> controlMessage(
         .event = static_cast<std::uint16_t>(event),
         .value = value,
     };
-    const auto* first = reinterpret_cast<const std::uint8_t*>(&control);
-    return {first, first + sizeof(control)};
-}
-
-protocol::Control decodeControl(std::span<const std::uint8_t> message)
-{
-    require(message.size() >= sizeof(protocol::Control));
-    protocol::Control control {};
-    std::memcpy(&control, message.data(), sizeof(control));
-    return control;
+    return uml::testing::bytes(control);
 }
 
 void deviceImplementsTheTwoQueueConsoleContract()
@@ -230,11 +214,8 @@ void deviceImplementsTheNamedSerialControlHandshake()
     NamedDeviceFixture fixture;
     require(fixture.device->features() == protocol::featureMultiport);
     require(fixture.device->queueCount() == protocol::namedSerialQueueCount);
-    const auto configurationBytes = fixture.device->configuration();
-    require(configurationBytes.size() == sizeof(protocol::Configuration));
-    protocol::Configuration configuration {};
-    std::memcpy(
-        &configuration, configurationBytes.data(), sizeof(configuration));
+    const auto configuration = uml::testing::loadExact<protocol::Configuration>(
+        fixture.device->configuration());
     require(configuration.maximumPorts == 1);
 
     const auto empty = fixture.device->processQueue(
@@ -257,7 +238,7 @@ void deviceImplementsTheNamedSerialControlHandshake()
     const auto add = fixture.device->processQueue(
         protocol::controlInputQueue, 4, {}, 512);
     require(add.action == uml::virtio::VhostUserQueueAction::complete);
-    const auto addControl = decodeControl(add.response);
+    const auto addControl = load<protocol::Control>(add.response);
     require(addControl.id == protocol::hostSerialPortId);
     require(addControl.event ==
             static_cast<std::uint16_t>(protocol::ControlEvent::portAdd));
@@ -275,7 +256,7 @@ void deviceImplementsTheNamedSerialControlHandshake()
     const auto name = fixture.device->processQueue(
         protocol::controlInputQueue, 6, {}, 512);
     require(name.action == uml::virtio::VhostUserQueueAction::complete);
-    const auto nameControl = decodeControl(name.response);
+    const auto nameControl = load<protocol::Control>(name.response);
     require(nameControl.id == protocol::hostSerialPortId);
     require(nameControl.event ==
             static_cast<std::uint16_t>(protocol::ControlEvent::portName));
@@ -288,7 +269,7 @@ void deviceImplementsTheNamedSerialControlHandshake()
     const auto open = fixture.device->processQueue(
         protocol::controlInputQueue, 7, {}, 512);
     require(open.action == uml::virtio::VhostUserQueueAction::complete);
-    const auto openControl = decodeControl(open.response);
+    const auto openControl = load<protocol::Control>(open.response);
     require(openControl.id == protocol::hostSerialPortId);
     require(openControl.event ==
             static_cast<std::uint16_t>(protocol::ControlEvent::portOpen));
@@ -323,7 +304,7 @@ void deviceImplementsTheNamedSerialControlHandshake()
 
 void unixSocketChannelSupportsTailInputAndReconnect()
 {
-    TemporaryDirectory temporary;
+    const auto temporary = socketDirectory();
     const auto path = temporary.path() / "console.sock";
     {
         uml::console::UnixSocketChannel channel(path);
@@ -386,7 +367,7 @@ void unixSocketChannelSupportsTailInputAndReconnect()
  */
 void namedSerialPortFollowsAClientThatLeftDuringAWrite()
 {
-    TemporaryDirectory temporary;
+    const auto temporary = socketDirectory();
     const auto path = temporary.path() / "serial.sock";
     {
         uml::console::VirtioConsoleDevice device(
@@ -425,7 +406,7 @@ void namedSerialPortFollowsAClientThatLeftDuringAWrite()
  */
 void unixSocketChannelNeverExposesAWiderModeWhileListening()
 {
-    TemporaryDirectory temporary;
+    const auto temporary = socketDirectory();
     const auto path = temporary.path() / "console.sock";
     const mode_t previous = ::umask(022);
     ::umask(previous);
@@ -455,11 +436,9 @@ void unixSocketChannelNeverExposesAWiderModeWhileListening()
         require((status.st_mode & 0777) == 0600);
         // A loaded host can leave the watcher unscheduled for the whole
         // lifetime of the channel. Keep the socket until it has been seen.
-        const auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (observations.load() == 0 &&
-               std::chrono::steady_clock::now() < deadline)
-            std::this_thread::yield();
+        require(waitUntil([&] { return observations.load() != 0; },
+                    std::chrono::seconds(10), std::chrono::seconds(0)),
+            "the watcher never saw the socket");
         stop.store(true, std::memory_order_relaxed);
         watcher.join();
     }
@@ -472,7 +451,7 @@ void unixSocketChannelNeverExposesAWiderModeWhileListening()
 
 void unixSocketChannelRejectsAClientThatClosedBeforeAccept()
 {
-    TemporaryDirectory temporary;
+    const auto temporary = socketDirectory();
     const auto path = temporary.path() / "console.sock";
     uml::console::UnixSocketChannel channel(path);
 
@@ -610,7 +589,7 @@ void connectedSerialPortKeepsOutputTheRelayHasNoRoomFor()
 
 void inProcessServicePublishesAndRemovesTheExternalSocket()
 {
-    TemporaryDirectory temporary;
+    const auto temporary = socketDirectory();
     const auto path = temporary.path() / "service.sock";
     const auto service = uml::console::makeInProcessService(path);
     struct stat status {};

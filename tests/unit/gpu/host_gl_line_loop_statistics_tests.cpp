@@ -22,13 +22,9 @@
 // vertex that closes the loop -- so both are accepted, and only the doubled
 // count is a failure.
 
-#include "host_gl_provider.hpp"
+#include "host_gl_test_support.hpp"
 
 #include <epoxy/gl.h>
-
-extern "C" {
-#include <virglrenderer.h>
-}
 
 #include <array>
 #include <cmath>
@@ -39,6 +35,12 @@ extern "C" {
 #include <string_view>
 
 namespace {
+
+using uml::gpu::testing::colourTarget;
+using uml::gpu::testing::compileShader;
+using uml::gpu::testing::currentContext;
+using uml::gpu::testing::linkProgram;
+using uml::gpu::testing::skip;
 
 int failureCount = 0;
 
@@ -66,88 +68,33 @@ constexpr const char* fragmentSource =
     "out vec4 colour;\n"
     "void main() { colour = vec4(1.0); }\n";
 
-[[nodiscard]] GLuint compile(GLenum stage, const char* source)
-{
-    const GLuint shader = glCreateShader(stage);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-    GLint compiled = GL_FALSE;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
-    if (compiled == GL_FALSE) {
-        std::array<char, 512> log {};
-        glGetShaderInfoLog(shader, log.size(), nullptr, log.data());
-        std::fprintf(stderr, "Host line-loop statistics: shader: %s\n", log.data());
-        glDeleteShader(shader);
-        return 0;
-    }
-    return shader;
-}
-
 } // namespace
 
 int main()
 {
     uml::gpu::HostGlProvider provider;
-    if (provider.display() == nullptr) {
-        std::fputs("no host GL display; skipping\n", stderr);
-        return 0;
-    }
     // virglrenderer builds its contexts either way depending on
     // use_core_profile, and the statistic path may differ between them, so let
     // the probe cover both.
     const char* compat = std::getenv("UML_LINE_LOOP_COMPAT_CTX");
-    virgl_renderer_gl_ctx_param parameters {
-        .version = 2,
-        .shared = false,
-        .major_ver = 4,
-        .minor_ver = 6,
-        .compat_ctx = (compat != nullptr && compat[0] == '1') ? 1 : 0,
-    };
-    void* context = provider.createContext(parameters);
-    if (context == nullptr) {
-        std::fputs("no host GL context; skipping\n", stderr);
-        return 0;
-    }
-    if (provider.makeCurrent(context) != 0) {
-        std::fputs("host GL context would not bind; skipping\n", stderr);
-        return 0;
-    }
+    const auto current =
+        currentContext(provider, 4, 6, compat != nullptr && compat[0] == '1');
+    if (current.context == nullptr)
+        return skip(current.failure);
 
     // The statistic is an ARB_pipeline_statistics_query counter; without it
     // there is nothing to assert against.
-    if (epoxy_gl_version() < 46 && !epoxy_has_gl_extension("GL_ARB_pipeline_statistics_query")) {
-        std::fputs("no ARB_pipeline_statistics_query; skipping\n", stderr);
-        return 0;
-    }
+    if (epoxy_gl_version() < 46 && !epoxy_has_gl_extension("GL_ARB_pipeline_statistics_query"))
+        return skip("no ARB_pipeline_statistics_query");
 
-    GLuint colour = 0;
-    glGenTextures(1, &colour);
-    glBindTexture(GL_TEXTURE_2D, colour);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    GLuint framebuffer = 0;
-    glGenFramebuffers(1, &framebuffer);
-    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-    glFramebufferTexture2D(
-        GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colour, 0);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::fputs("host framebuffer incomplete; skipping\n", stderr);
-        return 0;
-    }
+    const auto target = colourTarget(64, 64);
+    if (!target.complete)
+        return skip("host framebuffer incomplete");
     glViewport(0, 0, 64, 64);
 
-    const GLuint vertex = compile(GL_VERTEX_SHADER, vertexSource);
-    const GLuint fragment = compile(GL_FRAGMENT_SHADER, fragmentSource);
-    if (vertex == 0 || fragment == 0)
-        return EXIT_FAILURE;
-    const GLuint program = glCreateProgram();
-    glAttachShader(program, vertex);
-    glAttachShader(program, fragment);
-    glLinkProgram(program);
-    GLint linked = GL_FALSE;
-    glGetProgramiv(program, GL_LINK_STATUS, &linked);
-    check(linked == GL_TRUE, "the probe program did not link");
-    if (linked != GL_TRUE)
-        return EXIT_FAILURE;
+    const GLuint vertex = compileShader(GL_VERTEX_SHADER, vertexSource);
+    const GLuint fragment = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
+    const GLuint program = linkProgram({vertex, fragment});
     glUseProgram(program);
 
     // A regular heptagon, so every vertex is distinct and inside the viewport.
@@ -614,12 +561,12 @@ int main()
         glBindFramebuffer(GL_FRAMEBUFFER, scratchFramebuffer);
         glFramebufferTexture2D(
             GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, scratchColour, 0);
-        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        glBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
 
         const auto breakRenderpass = [&] {
             glBindFramebuffer(GL_FRAMEBUFFER, scratchFramebuffer);
             glClear(GL_COLOR_BUFFER_BIT);
-            glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+            glBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
         };
 
         long stressFailures = 0;

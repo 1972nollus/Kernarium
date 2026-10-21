@@ -2,9 +2,11 @@
 /* The Virtio balloon against a recording host: the target it publishes, and
  * which host pages its inflate and deflate requests release and commit. */
 
+#include "named_tests.hpp"
 #include "protocol.hpp"
 #include "require.hpp"
 #include "virtio_balloon_device.hpp"
+#include "wire_bytes.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -72,12 +74,8 @@ struct Fixture final {
 
     [[nodiscard]] protocol::Configuration configuration() const
     {
-        const auto bytes = device->configuration();
-        require(bytes.size() == sizeof(protocol::Configuration),
-            "the configuration has the standard size");
-        protocol::Configuration result {};
-        std::memcpy(&result, bytes.data(), sizeof(result));
-        return result;
+        return uml::testing::loadExact<protocol::Configuration>(
+            device->configuration());
     }
 
     void send(std::uint32_t queue, const std::vector<std::uint32_t>& frames)
@@ -152,8 +150,7 @@ void the_driver_reports_what_it_holds()
 {
     Fixture fixture;
     const std::uint32_t actual = 4096;
-    std::uint8_t bytes[sizeof(actual)];
-    std::memcpy(bytes, &actual, sizeof(actual));
+    const auto bytes = uml::testing::bytes(actual);
     fixture.device->writeConfiguration(protocol::actualOffset, 0, bytes);
     require(fixture.configuration().actual == actual,
         "the driver's actual count is kept");
@@ -254,10 +251,7 @@ void the_timer_wakes_the_transport()
 
 int main()
 {
-    const struct {
-        const char* name;
-        void (*run)();
-    } tests[] = {
+    const uml::testing::NamedTest tests[] = {
         {"advertises the standard device", advertises_the_standard_device},
         {"the target follows whole granules", the_target_follows_whole_granules},
         {"the driver reports what it holds", the_driver_reports_what_it_holds},
@@ -267,15 +261,5 @@ int main()
         {"a 4k host releases every frame", a_4k_host_releases_every_frame},
         {"the timer wakes the transport", the_timer_wakes_the_transport},
     };
-    int failures = 0;
-    for (const auto& test : tests) {
-        try {
-            test.run();
-            std::printf("ok: %s\n", test.name);
-        } catch (const std::exception& error) {
-            std::printf("FAIL: %s: %s\n", test.name, error.what());
-            ++failures;
-        }
-    }
-    return failures == 0 ? 0 : 1;
+    return uml::testing::runNamedTests(tests);
 }

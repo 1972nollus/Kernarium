@@ -19,6 +19,7 @@ namespace {
 using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
+using uml::gpu::test::require_venus_when_asked;
 using uml::gpu::test::DrawResult;
 
 bool diamond_exit(std::array<double, 2> a, std::array<double, 2> b,
@@ -321,12 +322,7 @@ int main(int argc, char **argv)
     try {
         require(argc <= 2, "expected at most one exact stage selector");
         DrawContext context;
-        if (const char *venus = std::getenv("UML_VULKAN_REQUIRE_VENUS");
-            venus && std::string_view(venus) == "1") {
-            require(context.capabilities().driver_id == VK_DRIVER_ID_MESA_VENUS,
-                    "guest probe did not select Venus");
-            std::puts("UML_VULKAN_PROBE_DEVICE: Venus");
-        }
+        require_venus_when_asked(context);
         if (argc == 2 && std::string_view(argv[1]) == "endpoints") {
             std::printf("Line endpoint probe: %u draws passed\n", verify_endpoints(context));
             return 0;

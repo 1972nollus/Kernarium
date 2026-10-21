@@ -2,9 +2,9 @@
 #include "cpu/arm64/layout/assembly_offsets.h"
 
 /*
- * Host streaming-mode transitions for SM=1 JIT translations (design 4.1.2
- * and 4.2). Guest Z, P, ZA and ZT0 live in the identically numbered host
- * registers while SM=1 translations run, and in the vCPU's register file
+ * Host streaming-mode transitions for SM=1 JIT translations. Guest Z, P,
+ * ZA and ZT0 live in the identically numbered host registers while SM=1
+ * translations run, and in the vCPU's register file
  * (CpuState::sme_registers, laid out by sme_profile.hpp) everywhere else.
  *
  * Generated code calls these routines with x15 = CpuState. They change no

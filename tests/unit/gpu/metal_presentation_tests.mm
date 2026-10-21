@@ -82,15 +82,8 @@ void require(bool condition, const char* message)
 
 id<MTLTexture> makeQuadrantTexture(id<MTLDevice> device)
 {
-    MTLTextureDescriptor* descriptor = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-        width:sourceWidth
-        height:sourceHeight
-        mipmapped:NO];
-    descriptor.storageMode = MTLStorageModeShared;
-    descriptor.usage = MTLTextureUsageShaderRead;
-    id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
-    require(texture != nil, "could not create the source texture");
+    id<MTLTexture> texture =
+        uml::gpu::testing::sharedTexture(device, sourceWidth, sourceHeight);
     std::vector<std::uint8_t> pixels(sourceWidth * sourceHeight * 4);
     for (std::uint32_t y = 0; y < sourceHeight; ++y) {
         for (std::uint32_t x = 0; x < sourceWidth; ++x) {
@@ -101,10 +94,7 @@ id<MTLTexture> makeQuadrantTexture(id<MTLDevice> device)
             std::memcpy(&pixels[(y * sourceWidth + x) * 4], colour.data(), 4);
         }
     }
-    [texture replaceRegion:MTLRegionMake2D(0, 0, sourceWidth, sourceHeight)
-               mipmapLevel:0
-                 withBytes:pixels.data()
-               bytesPerRow:sourceWidth * 4];
+    uml::gpu::testing::writeTexture(texture, pixels);
     return texture;
 }
 
@@ -232,12 +222,7 @@ void writeCpuFrame(MetalPresentation& presentation, const Pixel& colour)
     auto& framebuffer = presentation.framebuffer();
     const auto width = framebuffer.width();
     const auto height = framebuffer.height();
-    std::vector<std::uint8_t> source(
-        static_cast<std::size_t>(width) * height * colour.size());
-    for (std::size_t offset = 0; offset < source.size();
-         offset += colour.size()) {
-        std::memcpy(&source[offset], colour.data(), colour.size());
-    }
+    const auto source = uml::gpu::testing::solidImage(colour, width, height);
     const auto written = framebuffer.update(
         source,
         width,

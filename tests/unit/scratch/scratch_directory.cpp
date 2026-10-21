@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "scratch_directory.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <system_error>
+#include <unistd.h>
+#include <utility>
 
 namespace uml::testing {
 namespace {
@@ -63,7 +66,28 @@ std::string scratch_template(std::string_view name)
 
 std::string socket_scratch_template(std::string_view name)
 {
-	return make_template(host_temporary_directory(), name);
+	return make_template(socket_scratch_parent(), name);
+}
+
+std::filesystem::path socket_scratch_parent()
+{
+	return host_temporary_directory();
+}
+
+ScratchSubdirectory::ScratchSubdirectory(std::string_view name,
+	const std::filesystem::path &parent)
+{
+	auto pattern = make_template(parent, name);
+	if (::mkdtemp(pattern.data()) == nullptr)
+		fail("cannot create", pattern,
+			std::error_code{errno, std::generic_category()});
+	path_ = std::move(pattern);
+}
+
+ScratchSubdirectory::~ScratchSubdirectory()
+{
+	std::error_code ignored;
+	std::filesystem::remove_all(path_, ignored);
 }
 
 } // namespace uml::testing
