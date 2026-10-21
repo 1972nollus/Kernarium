@@ -10,6 +10,7 @@
 #include "unix_socket_channel.hpp"
 #include "virtio_console_device.hpp"
 #include "wait_until.hpp"
+#include "wire_bytes.hpp"
 
 #include <algorithm>
 #include <array>
@@ -37,6 +38,7 @@ namespace {
 
 namespace protocol = uml::console::protocol;
 
+using uml::testing::load;
 using uml::testing::require;
 using uml::testing::requireThrows;
 using uml::testing::waitUntil;
@@ -153,16 +155,7 @@ std::vector<std::uint8_t> controlMessage(
         .event = static_cast<std::uint16_t>(event),
         .value = value,
     };
-    const auto* first = reinterpret_cast<const std::uint8_t*>(&control);
-    return {first, first + sizeof(control)};
-}
-
-protocol::Control decodeControl(std::span<const std::uint8_t> message)
-{
-    require(message.size() >= sizeof(protocol::Control));
-    protocol::Control control {};
-    std::memcpy(&control, message.data(), sizeof(control));
-    return control;
+    return uml::testing::bytes(control);
 }
 
 void deviceImplementsTheTwoQueueConsoleContract()
@@ -221,11 +214,8 @@ void deviceImplementsTheNamedSerialControlHandshake()
     NamedDeviceFixture fixture;
     require(fixture.device->features() == protocol::featureMultiport);
     require(fixture.device->queueCount() == protocol::namedSerialQueueCount);
-    const auto configurationBytes = fixture.device->configuration();
-    require(configurationBytes.size() == sizeof(protocol::Configuration));
-    protocol::Configuration configuration {};
-    std::memcpy(
-        &configuration, configurationBytes.data(), sizeof(configuration));
+    const auto configuration = uml::testing::loadExact<protocol::Configuration>(
+        fixture.device->configuration());
     require(configuration.maximumPorts == 1);
 
     const auto empty = fixture.device->processQueue(
@@ -248,7 +238,7 @@ void deviceImplementsTheNamedSerialControlHandshake()
     const auto add = fixture.device->processQueue(
         protocol::controlInputQueue, 4, {}, 512);
     require(add.action == uml::virtio::VhostUserQueueAction::complete);
-    const auto addControl = decodeControl(add.response);
+    const auto addControl = load<protocol::Control>(add.response);
     require(addControl.id == protocol::hostSerialPortId);
     require(addControl.event ==
             static_cast<std::uint16_t>(protocol::ControlEvent::portAdd));
@@ -266,7 +256,7 @@ void deviceImplementsTheNamedSerialControlHandshake()
     const auto name = fixture.device->processQueue(
         protocol::controlInputQueue, 6, {}, 512);
     require(name.action == uml::virtio::VhostUserQueueAction::complete);
-    const auto nameControl = decodeControl(name.response);
+    const auto nameControl = load<protocol::Control>(name.response);
     require(nameControl.id == protocol::hostSerialPortId);
     require(nameControl.event ==
             static_cast<std::uint16_t>(protocol::ControlEvent::portName));
@@ -279,7 +269,7 @@ void deviceImplementsTheNamedSerialControlHandshake()
     const auto open = fixture.device->processQueue(
         protocol::controlInputQueue, 7, {}, 512);
     require(open.action == uml::virtio::VhostUserQueueAction::complete);
-    const auto openControl = decodeControl(open.response);
+    const auto openControl = load<protocol::Control>(open.response);
     require(openControl.id == protocol::hostSerialPortId);
     require(openControl.event ==
             static_cast<std::uint16_t>(protocol::ControlEvent::portOpen));
