@@ -183,7 +183,13 @@ void load_converts_every_field()
 		cpu.sp = sentinel + 3;
 		cpu.tbi_enabled = true;
 		cpu.exclusive_address = 0x1000;
+		cpu.exclusive_key = 0x1001;
+		cpu.exclusive_value = 0x1002;
+		cpu.exclusive_value2 = 0x1003;
+		cpu.exclusive_version = 0x1004;
 		cpu.exclusive_size = 8;
+		cpu.gadget_zero = 0x1005;
+		cpu.gadget_indirect_miss = &cpu;
 		cpu.svcr = 3;
 		const unsigned long tls = 0xcafe'f00d'1234'5678UL;
 		guest::load_a32_cpu(cpu, registers, fp, tls,
@@ -209,7 +215,11 @@ void load_converts_every_field()
 		require(cpu.a32_tpidruro == 0xb6f0'0004U);
 		require(cpu.tls == 0x1234'5678U);
 		require(cpu.exclusive_address == ~std::uint64_t{0} &&
-			cpu.exclusive_size == 0, "the monitor survived the entry");
+			cpu.exclusive_key == 0 && cpu.exclusive_value == 0 &&
+			cpu.exclusive_value2 == 0 && cpu.exclusive_version == 0 &&
+			cpu.exclusive_size == 0 && cpu.gadget_zero == 0 &&
+			cpu.gadget_indirect_miss == nullptr,
+			"the monitor survived the entry");
 		require(cpu.svcr == 0 && cpu.sme_task == nullptr);
 		require(cpu.a32_fpscr_nzcv == 0xf000'0000U);
 		require(!cpu.fp_loaded, "the vectors are not loaded lazily");

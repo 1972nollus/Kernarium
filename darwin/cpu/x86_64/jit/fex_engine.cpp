@@ -5,7 +5,7 @@
 #include "cpu/x86_64/code_page_registry.hpp"
 #include "cpu/x86_64/cpuid.hpp"
 #include "cpu/x86_64/decoder.hpp"
-#include "cpu/x86_64/jit/fp_model.hpp"
+#include "cpu/x86_64/fp_model.hpp"
 #include "cpu/x86_64/segments.hpp"
 #include "cpu/x86_64/split_operand_lock.hpp"
 

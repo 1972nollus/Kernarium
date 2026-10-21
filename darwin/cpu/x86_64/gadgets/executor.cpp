@@ -955,7 +955,6 @@ public:
 #if UML_GADGET_CACHE_CENSUS
 				history_.adopted();
 #endif
-				++adoptions_;
 				cache_hit = true;
 				return program;
 			}
@@ -1056,11 +1055,6 @@ public:
 		if (gadget_cache::over_budget())
 			gadget_cache::relieve();
 		return &slot.body->program;
-	}
-
-	[[nodiscard]] std::uint64_t adoptions() const noexcept
-	{
-		return adoptions_;
 	}
 
 	[[nodiscard]] std::size_t resident_generations() const noexcept
@@ -2198,8 +2192,6 @@ private:
 	CodePageRegistries *registries_{};
 	ProgramCacheCodeChangeReader code_change_reader_{};
 	void *code_change_context_{};
-	/* Translations taken from the address space instead of built. */
-	std::uint64_t adoptions_{};
 #if UML_GADGET_CACHE_CENSUS
 	census::History history_;
 	census::Schedule schedule_;
@@ -2284,6 +2276,7 @@ struct Executor::Storage final {
 	bool prepared{};
 	bool cache_ready{};
 	unsigned checked{};
+	std::vector<std::uintptr_t> checked_stream;
 };
 
 Executor::Executor() : storage_{std::make_unique<Storage>()}
@@ -2433,6 +2426,11 @@ void Executor::leave_gone_generations(unsigned long long retirements,
 NativeTlbEntry *Executor::tlb_entries() noexcept
 {
 	return storage_->entries.data();
+}
+
+std::vector<std::uintptr_t> &Executor::checked_stream() noexcept
+{
+	return storage_->checked_stream;
 }
 
 bool Executor::page_holds_cached_code(std::uint64_t address) noexcept

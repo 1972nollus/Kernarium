@@ -1148,7 +1148,19 @@ keeping its own.
 `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel
-Xeon's, except the documented inexact cases the test names. The
+Xeon's, except the documented inexact cases the test names.
+`x86-64-masked-flags-checked` runs the same cases through the gadget engine's
+checked path, whose flags come from the SIMD floating-point model the JIT
+shares, and allows no difference; it then runs each case with invalid
+operation, a denormal operand, division by zero or precision unmasked, alone
+and in pairs, and requires the #XM and the flags the Xeon's imply.
+`x86-64-half-round` holds the integer rounding of a single to a half, which
+the model's VCVTPS2PH flags follow, to a second derivation over every finite
+single in all four rounding controls. `x86-64-fp-model` holds the model's
+two other integer answers, whether a square root is exact and whether an
+integer fits the float it converts to, to SoftFloat's flags over every single
+significand, the squares of integers, random doubles, and the integers around
+every power of two. The
 `ios-products-carry-no-fexcore` tooling test checks the script the iOS
 packaging runs to keep FEXCore out of every iOS product.
 

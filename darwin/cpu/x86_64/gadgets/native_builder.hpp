@@ -51,6 +51,13 @@ enum class StreamKind : std::uint8_t { fragment, block };
 	ExecutionMode mode, std::uint64_t program_begin,
 	ProgramLinkResolver links = {});
 
+/* `build_native_stream` into `stream`, whose storage it keeps, for a caller
+ * that builds one stream after another. */
+void build_native_stream_into(std::vector<std::uintptr_t> &stream,
+	std::span<const Gadget> gadgets, std::uint64_t final_rip,
+	ExecutionMode mode, std::uint64_t program_begin,
+	ProgramLinkResolver links = {});
+
 /* Whether the instruction is a string operation with a REP, REPE or REPNE
  * prefix. */
 [[nodiscard]] bool repeated_string(const Instruction &instruction) noexcept;
