@@ -333,10 +333,11 @@ bool vcmla_s(Exec &x)
 /* VFMAL and VFMSL: addend + a * b of half-precision elements, accumulated
  * into single-precision lanes. FPMulAddH() unpacks each half with FPUnpack
  * (AHP ignored, FZ16 flushing a denormal) under the Standard FPSCR value and
- * rounds once; the A64 FMLAL and FMLSL helper does the same, and returns the
- * flags the one fused multiply-add raised. The elements of the n (and m)
- * operand are the low halves for the first D register of the result and the
- * high halves for the second. */
+ * rounds once. The A64 FMLAL and FMLSL helper's operand expansion does the
+ * unpacking exactly, so the host's fused single-precision multiply-add rounds
+ * once, under one FPCR install for all the lanes. The elements of the n (and
+ * m) operand are the low halves for the first D register of the result and
+ * the high halves for the second. */
 template<bool Scalar>
 bool vfmal(Exec &x)
 {
@@ -354,17 +355,22 @@ bool vfmal(Exec &x)
 	for (unsigned r = 0; r < regs; ++r)
 		old[r] = x.d_reg(d + r);
 	std::array<uint64_t, 2> result{};
-	for (unsigned r = 0; r < regs; ++r) {
-		for (unsigned e = 0; e < 2U; ++e) {
-			const auto fused = ::uml::cpu::arm64::detail::half_fused_multiply_add(
-				static_cast<uint32_t>(lane(old[r], e, 32)),
-				static_cast<uint16_t>(lane(operand1, 2U * r + e, 16)),
-				static_cast<uint16_t>(lane(operand2, Scalar ? index : 2U * r + e, 16)),
-				subtract, fpcr);
-			result[r] = with_lane(result[r], e, 32, fused.bits);
-			x.cpu.fpsr |= fused.exceptions;
+	fp::run(x.cpu, fpcr, [&] {
+		for (unsigned r = 0; r < regs; ++r) {
+			for (unsigned e = 0; e < 2U; ++e) {
+				uint16_t element1 = static_cast<uint16_t>(lane(operand1, 2U * r + e, 16));
+				const uint16_t element2 = static_cast<uint16_t>(
+					lane(operand2, Scalar ? index : 2U * r + e, 16));
+				if (subtract)
+					element1 ^= 0x8000U;
+				const uint32_t addend = static_cast<uint32_t>(lane(old[r], e, 32));
+				result[r] = with_lane(result[r], e, 32,
+					fp::fused(addend, ::uml::cpu::arm64::detail::half_fused_operand(element1, fpcr),
+						::uml::cpu::arm64::detail::half_fused_operand(element2, fpcr)));
+			}
 		}
-	}
+		return 0;
+	});
 	for (unsigned r = 0; r < regs; ++r)
 		x.set_d_reg(d + r, result[r]);
 	return true;
