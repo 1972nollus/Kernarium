@@ -35,12 +35,12 @@ manager, instead of BusyBox mdev, and lists no boot-time modules.
 
 The base archives are compressed cpio initramfs parts, never another UBD
 device or a legacy `/dev/ram0` block ramdisk; only the persistent GPT disk is
-attached as `ubd0`. Their static executables use 16 KiB ELF segment
-boundaries, so one base boots with both supported guest page profiles.
-Buildroot builds its own cross toolchain, so the arm64 builder also produces
-the x86-64 base. The kernel releases the compressed initrd after unpacking it,
-and BusyBox `switch_root` removes the initramfs contents before executing the
-real init.
+attached as `ubd0`. Their static executables keep the 16 KiB ELF segment
+alignment the accepted bases are built with: it is valid on the 4 KiB guest
+and matches the Android userspace's page-agnostic alignment. Buildroot builds
+its own cross toolchain, so the arm64 builder also produces the x86-64 base.
+The kernel releases the compressed initrd after unpacking it, and BusyBox
+`switch_root` removes the initramfs contents before executing the real init.
 
 A starter disk boots through the generic per-run `/init` with
 [`boot.env`](boot.env): its sole ext4 partition becomes the read-write root.
