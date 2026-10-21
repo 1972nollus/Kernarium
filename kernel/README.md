@@ -12,9 +12,9 @@ Kernel inputs are scoped by source family and version:
 - [`CMakeLists.txt`](CMakeLists.txt) imports accepted local artifacts for Apple
   products without reading a source checkout or invoking Kbuild.
 
-The AOSP product and rootfs release are independently owned by
-[`../android/lineage-24`](../android/lineage-24/README.md). Kernel and rootfs release
-selection must remain independent.
+The Android product (LineageOS 24) and its rootfs release are independently
+owned by [`../android/lineage-24`](../android/lineage-24/README.md). Kernel and
+rootfs release selection must remain independent.
 
 Maintained kernel changes are local to this project. Generated patch series,
 not replay checkouts, are the outer repository's source of truth.

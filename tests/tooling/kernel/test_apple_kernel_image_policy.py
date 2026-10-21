@@ -237,7 +237,10 @@ endif()
 
 
 def verify_accepted_import(artifact_cmake: Path) -> None:
-    """The accepted import follows its descriptor until a caller pins the bundle."""
+    """The accepted import follows its descriptor until a caller pins the bundle.
+
+    The bundle the descriptor names is also checked against it.
+    """
     with tempfile.TemporaryDirectory(prefix="accepted-import-") as directory:
         root = Path(directory).resolve()
         common = root / "common"
@@ -245,13 +248,18 @@ def verify_accepted_import(artifact_cmake: Path) -> None:
         build = root / "build"
         descriptor = root / "accepted.env"
         recorded = root / "arguments.txt"
+        refusal = root / "refusal.txt"
         (common / "abi").mkdir(parents=True)
         (common / "artifacts").mkdir()
         shutil.copyfile(artifact_cmake, common / "artifacts/KernelArtifact.cmake")
         (common / "abi/identity.env").write_text("", encoding="utf-8")
-        # The fixture verifier admits any bundle and records its command line.
+        # The fixture verifier records its command line and admits any bundle,
+        # unless a refusal message is waiting for it.
         (common / "artifacts/verify-kernel-artifact.py").write_text(
-            f"import sys\nopen({str(recorded)!r}, 'w').write(' '.join(sys.argv[1:]))\n",
+            "import os, sys\n"
+            f"open({str(recorded)!r}, 'w').write(' '.join(sys.argv[1:]))\n"
+            f"if os.path.exists({str(refusal)!r}):\n"
+            f"    sys.exit(open({str(refusal)!r}).read())\n",
             encoding="utf-8",
         )
         source.mkdir()
@@ -275,6 +283,7 @@ endif()
         )
         managed = source / ".build/kernel/artifacts"
         pinned = root / "pinned"
+        same_name = root / "elsewhere/bundle-v6"
         # Each step: the descriptor's bundle, extra configure arguments, the
         # bundle the import must verify, and whether it still follows.
         steps = (
@@ -283,6 +292,7 @@ endif()
             ("bundle-v3", [f"-DFIXTURE_KERNEL_ARTIFACT_DIR={pinned}"], pinned, False),
             ("bundle-v4", [], pinned, False),
             ("bundle-v5", ["-DFIXTURE_KERNEL_ARTIFACT_DIR="], managed / "bundle-v5", True),
+            ("bundle-v6", [f"-DFIXTURE_KERNEL_ARTIFACT_DIR={same_name}"], same_name, False),
         )
         for name, extra, bundle, follows in steps:
             descriptor.write_text(
@@ -314,10 +324,32 @@ endif()
                 "--expected-family android-6.18 --expected-slice arm64 "
                 "--expected-release-series 6.18"
             )
+            # Only a bundle that carries the descriptor's name is compared with
+            # it; a bundle pinned under another name is not the descriptor's.
+            if bundle.name == name:
+                expected += f" --descriptor {descriptor}"
             require(
                 recorded.read_text(encoding="utf-8") == expected,
                 f"at {name}, the verifier ran as: {recorded.read_text(encoding='utf-8')}",
             )
+
+        # A verifier that refuses the bundle, as it does for a descriptor that
+        # drifted from its manifest, fails the configure with its message.
+        message = "descriptor FINAL_TREE=aaa, but the bundle manifest has bbb"
+        refusal.write_text(message, encoding="utf-8")
+        refused = subprocess.run(
+            ["cmake", "-G", "Ninja", "-S", str(source), "-B", str(build)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        require(
+            refused.returncode != 0
+            and "Cannot import the compatible kernel artifact" in refused.stderr
+            and message in refused.stderr,
+            f"a refused bundle did not fail the configure:\n{refused.stdout}{refused.stderr}",
+        )
 
 
 def verify_artifact_configure_inputs(artifact_cmake: Path) -> None:

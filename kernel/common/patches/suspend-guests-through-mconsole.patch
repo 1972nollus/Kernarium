@@ -150,10 +150,10 @@ index 960950e4030b167de0f480ac09b5d74b5e2662e1..d36d5b8f77bdc4cc689ee4da965eab07
  void kasan_map_memory(void *start, size_t len);
  
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 87ab3d9503d22267565e895193a234b672357c3a..c2b65fc0f146e951e76f7a8e678451d717dbde01 100644
+index 9fd3d449bb7ec0bb34f63527add349bb0041d3e3..36769f617d453dc7480e7847303bb3c83cc3cacb 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
-@@ -604,6 +604,7 @@ static int um_suspend_enter(suspend_state_t state)
+@@ -592,6 +592,7 @@ static int um_suspend_enter(suspend_state_t state)
  	if (WARN_ON(state != PM_SUSPEND_MEM))
  		return -EINVAL;
  

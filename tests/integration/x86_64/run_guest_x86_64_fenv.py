@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Check what glibc shows of x86's sticky floating-point exception flags.
 
 Boots an x86-64 image with a C++ toolchain and glibc, such as the x86-64 LTP
@@ -17,20 +18,21 @@ from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
-import argparse
-import os
 import pathlib
 import sys
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
+# python3 -I leaves the script's own directory off sys.path.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from guest import Guest, GuestFile  # noqa: E402
+from probe_runner import GUEST_DIRECTORY, parse_arguments  # noqa: E402
 
 
 PROBE = pathlib.Path(__file__).with_name("fenv_probe.cpp")
-GUEST_SOURCE = "/usr/local/libexec/uml-test/fenv_probe.cpp"
+GUEST_SOURCE = f"{GUEST_DIRECTORY}/fenv_probe.cpp"
 GUEST_BINARY = "/tmp/fenv-probe"
 BUILD = (f"g++ -std=c++20 -O2 -Wall -Wextra -Werror -o {GUEST_BINARY} "
          f"{GUEST_SOURCE}")
@@ -110,26 +112,12 @@ def compare(actual: tuple[set[str], int], want: tuple[set[str], int]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--emulator", required=True, type=pathlib.Path)
-    parser.add_argument("--rootfs", required=True, type=pathlib.Path,
-                        help="x86-64 image with g++ and glibc")
-    parser.add_argument("--engine", choices=("gadgets", "jit"), default="gadgets")
-    parser.add_argument("--timeout", type=int, default=180)
-    arguments = parser.parse_args()
-
-    emulator = arguments.emulator.resolve()
-    rootfs = arguments.rootfs.resolve()
-    if not emulator.is_file() or not os.access(emulator, os.X_OK):
-        parser.error(f"emulator is not executable: {emulator}")
-    if not rootfs.is_file():
-        parser.error(f"rootfs is not a regular file: {rootfs}")
-    if arguments.timeout <= 0:
-        parser.error("timeout must be positive")
+    arguments = parse_arguments(
+        __doc__, compiler_help=None, rootfs_help="x86-64 image with g++ and glibc")
 
     with Guest(
-        emulator,
-        rootfs,
+        arguments.emulator,
+        arguments.rootfs,
         "1G",
         "tmpfs",
         init_shell=True,

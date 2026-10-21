@@ -5,10 +5,10 @@ This directory contains only source-family-independent inputs:
 - [`abi/`](abi/README.md): canonical plain-C host/kernel bridge, identity,
   generated-copy authority, and import policy;
 - `config/darwin-uml.fragment`: the kernel configuration policy every product
-  shares. Each product applies its own overlay after it, which lists only the
-  settings in which that product differs and whose README says why;
-- `config/page-4k.fragment`: the 4 KiB guest page size and the 128 KiB
-  task-stack geometry it implies, which every line's build applies;
+  shares, including the 4 KiB guest page size and the 128 KiB task-stack
+  geometry it implies. Each product applies its own overlay after it, which
+  lists only the settings in which that product differs and whose README says
+  why;
 - `artifacts/`: compact prebuilt-kernel bundle schema and verifier, plus the
   shared `KEY='value'` metadata parser in `contract_checks.py`;
 - `patches/`: the generated topic series every maintained line applies
@@ -26,6 +26,11 @@ This directory contains only source-family-independent inputs:
   console PTY assertion described below; and
 - [`video/`](video/README.md): the private Virtio video wire contract and the
   tool that syncs it into each kernel checkout.
+
+The series supports only the Darwin host. Every product is built with
+`ARCH=um SUBARCH=arm64 UML_HOST_OS=Darwin`, the x86_64 slice included (an
+arm64 kernel for x86-64 userspace). A topic carries no `arch/um/os-Linux`
+change and does not keep the Linux-host UML build compiling.
 
 Pinned commits, configuration overlays, toolchains, source locations, the
 bytes of each line's own overlay series, and build commands stay in the owning

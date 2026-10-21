@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Boot the pure x86-64 smoke rootfs on the 4 KiB x86-64 runtime."""
 
 from __future__ import annotations
@@ -6,7 +7,6 @@ from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
-import argparse
 import os
 import pathlib
 import pty
@@ -19,11 +19,14 @@ import time
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
+# python3 -I leaves the script's own directory off sys.path.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from guest import (  # noqa: E402
     emulator_arguments,
     remove_emulator_run_directories,
 )
+from probe_runner import parse_arguments  # noqa: E402
 
 
 SUCCESS = b"x86_64 gadgets rootfs: syscall tls signal xstate ok"
@@ -110,25 +113,11 @@ def boot(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--emulator", required=True, type=pathlib.Path)
-    parser.add_argument("--rootfs", required=True, type=pathlib.Path)
-    parser.add_argument("--engine", choices=("gadgets", "jit"), default="gadgets")
-    parser.add_argument("--timeout", type=int, default=180)
-    arguments = parser.parse_args()
-
-    emulator = arguments.emulator.resolve()
-    rootfs = arguments.rootfs.resolve()
-    if not emulator.is_file() or not os.access(emulator, os.X_OK):
-        parser.error(f"emulator is not executable: {emulator}")
-    if not rootfs.is_file():
-        parser.error(f"rootfs is not a regular file: {rootfs}")
-    if arguments.timeout <= 0:
-        parser.error("timeout must be positive")
+    arguments = parse_arguments(__doc__, compiler_help=None)
 
     try:
         transcript = boot(
-            emulator, rootfs, arguments.engine, arguments.timeout
+            arguments.emulator, arguments.rootfs, arguments.engine, arguments.timeout
         )
         if SUCCESS not in transcript:
             raise RuntimeError("x86-64 smoke success marker is missing")
