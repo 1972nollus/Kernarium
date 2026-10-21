@@ -130,14 +130,8 @@ records the index digests and the download totals, and
 its version, architecture, size and SHA-256.
 
 [`audit-elf.py`](audit-elf.py) checks every ELF file of the image against the
-guest page profiles `--armhf-profiles` names (`16k,4k` or `4k`; both by
-default), and `debian-13-minimal-armhf.img.elf.tsv` reports each file. A file
-that a required profile cannot map fails the build. Stock Debian armhf does
-not meet `16k`: `find`, `grep`, `hostname`, `xargs`, and the libraries
-`libacl`, `libbsd`, `libbz2`, `libdb`, `libelf`, `libgmp` and `libz` are laid
-out for 4 KiB pages only, and systemd's shared library needs `libacl` and
-`libz`. The image is therefore built with `--armhf-profiles 4k`, and its
-manifest entry records `page_profiles` as `["4k"]`.
+4 KiB guest page, and `debian-13-minimal-armhf.img.elf.tsv` reports each file.
+A file the page cannot map fails the build.
 [`armhf-verify.sh`](armhf-verify.sh) then runs the image's systemd, getty and
 core programs under `qemu-arm` and resolves the libraries of every dynamic
 program.

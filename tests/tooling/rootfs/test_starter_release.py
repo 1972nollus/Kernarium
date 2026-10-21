@@ -104,15 +104,14 @@ class ManifestTests(unittest.TestCase):
         return [
             "--product", "debian-13-minimal-armhf",
             "--debian-suite", "trixie", "--debian-version", "13.7",
-            "--debian-armhf-pins", str(pins), "--armhf-profiles", "4k",
-            "--armhf-include", "a,b",
+            "--debian-armhf-pins", str(pins), "--armhf-include", "a,b",
             "--debian-mirror", "http://mirror", "--debootstrap-version",
             "debootstrap 1", "--emulator-version", "qemu-arm 10",
         ]
 
     def test_an_armhf_only_release_records_its_pins_and_audit(self) -> None:
         arguments = self.armhf_release([
-            "usr/bin/a\t32\tarm\tdyn\teabi5-hard\t-\t0x10000\t1\t16k,4k\tok",
+            "usr/bin/a\t32\tarm\tdyn\teabi5-hard\t-\t0x10000\t1\t4k\tok",
             "usr/bin/b\t32\tarm\tdyn\teabi5-hard\t-\t0x1000\t2\t4k\tok",
         ])
         self.manifest(*arguments)
@@ -125,29 +124,22 @@ class ManifestTests(unittest.TestCase):
                                                "total_bytes": 123})
         entry, = manifest["artifacts"].values()
         self.assertEqual(entry["architecture"], "armhf")
-        self.assertEqual(entry["page_profiles"], ["4k"])
         audit = entry["elf_audit"]
+        self.assertEqual(sorted(audit), ["files", "path", "sha256", "size"])
         self.assertEqual(audit["path"], "debian-13-minimal-armhf.img.elf.tsv")
-        self.assertEqual((audit["files"], audit["supported_files"]),
-                         (2, {"16k": 1, "4k": 2}))
-        self.assertEqual(audit["required_profiles"], ["4k"])
+        self.assertEqual(audit["files"], 2)
         inventory = entry["package_inventory"]
         self.assertEqual(inventory["columns"], [
             "package", "version", "architecture", "size", "sha256"])
         self.assertEqual(inventory["packages"], 97)
 
-    def test_a_failed_or_short_audit_row_stops_the_manifest(self) -> None:
+    def test_a_failed_audit_row_stops_the_manifest(self) -> None:
         arguments = self.armhf_release([
             "usr/bin/a\t32\tarm\tdyn\teabi5-hard\t-\t0x1000\t1\t4k\t"
             "interpreter-missing:/lib/ld.so"])
         result = self.manifest(*arguments, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("failed the ELF audit", result.stderr)
-        arguments[arguments.index("--armhf-profiles") + 1] = "16k,4k"
-        (self.output / "debian-13-minimal-armhf.img.elf.tsv").write_text(
-            "usr/bin/a\t32\tarm\tdyn\teabi5-hard\t-\t0x1000\t1\t4k\tok\n")
-        result = self.manifest(*arguments, check=False)
-        self.assertIn("lacks a required page profile", result.stderr)
 
     def test_a_product_needs_its_own_pins(self) -> None:
         self.image("debian-13-minimal-armhf.img")
@@ -277,11 +269,10 @@ class ProducerOptionTests(unittest.TestCase):
         return run("sh", str(STARTER / "build-all.sh"), *arguments,
                    check=False)
 
-    def test_help_names_the_products_and_the_armhf_profiles(self) -> None:
+    def test_help_names_the_products(self) -> None:
         result = self.producer("--help")
         self.assertEqual(result.returncode, 0)
         self.assertIn("debian-13-minimal-armhf", result.stdout)
-        self.assertIn("--armhf-profiles", result.stdout)
 
     def test_bad_product_options_fail_before_any_work(self) -> None:
         arguments = ("--work", "/nonexistent/work", "--output",
@@ -290,8 +281,6 @@ class ProducerOptionTests(unittest.TestCase):
             (("--product", "debian-13"), "unknown product: debian-13"),
             (("--product", "alpine", "--product", "alpine"),
              "product named twice: alpine"),
-            (("--armhf-profiles", "8k"),
-             "--armhf-profiles must be 16k,4k or 4k"),
             (("--product",), "--product requires a name"),
         ):
             result = self.producer(*arguments, *options)
