@@ -692,20 +692,6 @@ struct KernariumTests {
     }
 
     @Test
-    func retiredKernelPageSizeSettingIsDroppedOnLoad() {
-        let (defaults, suiteName) = isolatedDefaults()
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(16384, forKey: "emulator.kernelPageSize")
-
-        _ = EmulatorConfiguration.load(
-            defaults: defaults,
-            physicalProcessorCount: 6
-        )
-
-        #expect(defaults.object(forKey: "emulator.kernelPageSize") == nil)
-    }
-
-    @Test
     func environmentCanFreezePerformanceConfiguration() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }

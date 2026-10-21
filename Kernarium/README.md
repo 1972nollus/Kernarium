@@ -12,8 +12,7 @@ mode. Build, launch, and test commands are in
 ```text
 Kernarium/            SwiftUI application: settings, guest selection, disk
                       capacity, decompression, console, shader cache
-Runtime/              runtime framework target, one per kernel flavour and page
-                      profile
+Runtime/              runtime framework target, one per kernel flavour
 KernariumTests/       hosted application and runtime tests
 KernariumUITests/     UI tests
 KernariumAutomation/  long-lived UI-automation host for a connected device

@@ -136,8 +136,8 @@ typedef int (*kernarium_runtime_set_page_cache_trimming_function)(int enabled);
 
 /* The application resolves only this versioned getter after loading exactly
  * one runtime framework. The table is immutable and remains valid until
- * process exit. The selected framework owns one page-profile-specific host
- * runtime and its matching code-signed kernel carrier. */
+ * process exit. The selected framework owns one host runtime and its
+ * matching code-signed kernel carrier. */
 typedef struct kernarium_runtime_api {
     uint32_t abi_version;
     uint32_t struct_size;

@@ -1550,10 +1550,8 @@ final class EmulatorLauncher: ObservableObject {
         }
         runningGuestName = rootfsFilename
         runningGuestIsAndroid = selection.flavor == .android
-        // Every runtime carries a 4 KiB kernel.
         guard kernarium_runtime_loader_select(
-            selection.flavor.rawValue,
-            4096
+            selection.flavor.rawValue
         ) == 0 else {
             print("Kernarium: cannot load the runtime")
             return

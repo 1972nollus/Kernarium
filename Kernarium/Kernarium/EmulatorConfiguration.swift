@@ -81,9 +81,6 @@ struct EmulatorConfiguration: Equatable {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         documentsDirectory: URL = RootfsImage.documentsDirectory
     ) -> Self {
-        // The kernel page-size setting is retired. A stored choice of 16 KB
-        // no longer names a runtime, so it is dropped rather than kept.
-        defaults.removeObject(forKey: Key.retiredKernelPageSize)
         let maximumVCPUCount = max(physicalProcessorCount, 1)
         let storedVCPUCount = defaults.object(forKey: Key.vCPUCount) == nil
             ? maximumVCPUCount
@@ -233,8 +230,6 @@ struct EmulatorConfiguration: Equatable {
         static let overlaySizeGiB = "emulator.overlaySizeGiB"
         static let androidDiskSizeGiB = "emulator.androidDiskSizeGiB"
         static let rootfsFilename = "emulator.rootfsFilename"
-        /// The retired kernel page-size setting: every guest is 4 KiB.
-        static let retiredKernelPageSize = "emulator.kernelPageSize"
         static let retinaMode = "emulator.retinaMode"
         static let autoResizeGuest = "emulator.autoResizeGuest"
         static let androidBootMode = "emulator.androidBootMode"

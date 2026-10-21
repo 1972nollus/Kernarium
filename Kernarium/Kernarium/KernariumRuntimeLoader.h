@@ -20,9 +20,7 @@ extern "C" {
 /* Selects and loads one bundled runtime for the lifetime of the process. The
  * flavour names exactly one embedded framework; every runtime has 4 KiB
  * guest pages. */
-int kernarium_runtime_loader_select(
-    uint32_t guest_flavor,
-    uint32_t guest_page_size);
+int kernarium_runtime_loader_select(uint32_t guest_flavor);
 
 int kernarium_runtime_loader_run(
     MTKView* view,
