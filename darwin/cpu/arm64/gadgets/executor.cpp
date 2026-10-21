@@ -252,34 +252,6 @@ constexpr std::size_t uml_gadget_resident_generations =
 extern "C" void uml_arm64_gadget_link_exit();
 extern "C" void uml_arm64_gadget_fp_link_entry();
 
-class CountingResource final : public std::pmr::memory_resource {
-public:
-	[[nodiscard]] std::size_t bytes() const noexcept { return bytes_; }
-
-private:
-	void *do_allocate(std::size_t bytes, std::size_t alignment) override
-	{
-		bytes_ += bytes;
-		return std::pmr::new_delete_resource()->allocate(bytes, alignment);
-	}
-
-	void do_deallocate(void *pointer, std::size_t bytes,
-			   std::size_t alignment) override
-	{
-		bytes_ -= bytes;
-		std::pmr::new_delete_resource()->deallocate(
-			pointer, bytes, alignment);
-	}
-
-	[[nodiscard]] bool do_is_equal(
-		const std::pmr::memory_resource &other) const noexcept override
-	{
-		return this == &other;
-	}
-
-	std::size_t bytes_{};
-};
-
 namespace {
 
 using Announcement = gadget_cache::ExecutorAnnouncement;
@@ -295,9 +267,8 @@ using gadget_cache::word_of;
  *
  * A set way exists whether or not it holds a translation, so every byte kept
  * inline is paid for by the whole cache. With the program, its stream and its
- * validation words moved into one separately allocated body, an empty way
- * costs a tag rather than a full BuildResult, and the words a spilling stream
- * used to allocate on their own now share the body's allocation.
+ * validation words in one separately allocated body, an empty way costs a tag
+ * rather than a full BuildResult.
  *
  * The body is also paid for by every translation the cache holds, so it keeps
  * only what a stored block cannot recompute. A BuildResult carries a words
@@ -632,7 +603,7 @@ class Space final {
 public:
 	explicit Space(SpaceKey key, std::uint64_t changes)
 		: key_{std::move(key)}, gate_{changes}, reset_done_{changes},
-		  bodies_{&counted_}, account_{shed, this}
+		  bodies_{std::pmr::new_delete_resource()}, account_{shed, this}
 	{
 		bodies_.meter(&account_);
 		for (auto &shard : shards_) {
@@ -1408,7 +1379,6 @@ private:
 	std::atomic<arm64::gadgets::IndirectLinkEntry *> targets_{};
 	gadget_cache::Limbo<Body> limbo_;
 	mutable std::mutex arena_mutex_;
-	CountingResource counted_;
 	BodyArena bodies_;
 	gadget_cache::AttachedExecutors attached_;
 	/* For a private address space: the records and sites its last sweep
