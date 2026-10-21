@@ -14,6 +14,7 @@
 #include "cpu/x86_64/segments.hpp"
 #include "memory/guest_address_space.hpp"
 #include "require.hpp"
+#include "wait_until.hpp"
 #include "x86_64_code_change_history.hpp"
 
 #include <algorithm>
@@ -9134,14 +9135,9 @@ void faulting_split_operand_releases_the_lock()
 			result.event == uml::cpu::EngineEvent::system_call);
 		finished.store(true);
 	}};
-	const auto deadline =
-		std::chrono::steady_clock::now() + std::chrono::seconds{10};
-	while (!finished.load() && std::chrono::steady_clock::now() < deadline)
-		std::this_thread::sleep_for(std::chrono::milliseconds{1});
-	if (!finished.load()) {
-		successor.detach();
-		fail("a faulting locked operand kept the split lock");
-	}
+	require(uml::testing::waitUntil([&] { return finished.load(); },
+			std::chrono::seconds{10}),
+		"a faulting locked operand kept the split lock");
 	successor.join();
 	require(completed.load() && memory.dword(0x80e) == 1,
 		"the locked operand after a fault did not complete");
