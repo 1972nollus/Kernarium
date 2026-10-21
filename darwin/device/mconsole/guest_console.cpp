@@ -531,22 +531,6 @@ void resume_guest(GuestSuspension suspension) noexcept
 	}
 }
 
-bool wake_guest() noexcept
-{
-	try {
-		std::lock_guard lock(consoleMutex);
-		const auto &location = guest_console_location();
-		if (!location)
-			return false;
-		adoptConsolePath(location->console);
-		std::string response;
-		return exchange(*location, "wake", response) ==
-			ExchangeResult::accepted;
-	} catch (...) {
-		return false;
-	}
-}
-
 namespace {
 
 [[nodiscard]] GuestRequest requestGuest(std::string_view command,
@@ -576,6 +560,11 @@ namespace {
 }
 
 } // namespace
+
+bool wake_guest() noexcept
+{
+	return requestGuest("wake", replyWait) == GuestRequest::done;
+}
 
 GuestRequest set_guest_page_cache_trim(bool enabled) noexcept
 {
