@@ -56,7 +56,9 @@ private let runtimeFrameSink: kernarium_runtime_frame_sink = { context, buffer i
 /// process scheduled for as long as the user leaves it open.
 ///
 /// It owns a sample-buffer layer fed from the runtime's copy of the guest's
-/// display. While the guest's background mode asks for the window, a slow
+/// display, through the receiver of a render synchronizer that runs on the host
+/// clock, so a frame stamped with the time it is made is due as it arrives.
+/// While the guest's background mode asks for the window, a slow
 /// trickle of frames keeps the layer holding a current picture, which iOS
 /// needs before it starts the window on its own as the app leaves; the rate
 /// rises once the window is up.
@@ -75,6 +77,8 @@ final class GuestPictureInPicture: NSObject, PictureInPictureWindow {
     var wanted: () -> Bool = { false }
 
     let layer = AVSampleBufferDisplayLayer()
+    private let synchronizer = AVSampleBufferRenderSynchronizer()
+    private var receiver: AVSampleBufferVideoRenderer.Receiver?
     private var pictureInPicture: AVPictureInPictureController?
     private var relay: FrameRelay?
     private var guestRunning = false
@@ -130,6 +134,15 @@ final class GuestPictureInPicture: NSObject, PictureInPictureWindow {
     private func prepareController() {
         guard pictureInPicture == nil else { return }
         configureAudioSession()
+        if receiver == nil {
+            receiver = synchronizer.sampleBufferReceiver(
+                adding: layer.sampleBufferRenderer
+            )
+        }
+        // The timeline is the host clock: no wait for media before it runs.
+        let now = CMClockGetTime(CMClockGetHostTimeClock())
+        synchronizer.delaysRateChangeUntilHasSufficientMediaData = false
+        synchronizer.setRate(1, time: now, atHostTime: now)
         let source = AVPictureInPictureController.ContentSource(
             sampleBufferDisplayLayer: layer,
             playbackDelegate: self
@@ -203,7 +216,9 @@ final class GuestPictureInPicture: NSObject, PictureInPictureWindow {
             armedRate = nil
         }
         relay = nil
-        layer.sampleBufferRenderer.flush(removingDisplayedImage: true)
+        if let receiver {
+            Task { await receiver.flush(removingDisplayedImage: true) }
+        }
         format = nil
         if let resignObserver {
             NotificationCenter.default.removeObserver(resignObserver)
@@ -246,28 +261,21 @@ final class GuestPictureInPicture: NSObject, PictureInPictureWindow {
             sampleTiming: &timing,
             sampleBufferOut: &sample
         ) == noErr, let sample else { return }
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(
-            sample, createIfNecessary: true
-        ), CFArrayGetCount(attachments) > 0 {
-            let dictionary = unsafeBitCast(
-                CFArrayGetValueAtIndex(attachments, 0),
-                to: CFMutableDictionary.self
-            )
-            CFDictionarySetValue(
-                dictionary,
-                Unmanaged.passUnretained(
-                    kCMSampleAttachmentKey_DisplayImmediately
-                ).toOpaque(),
-                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
-            )
+        guard let receiver else { return }
+        let ready = CMReadySampleBuffer<CMSampleBuffer.DynamicContent>(
+            unsafeBuffer: sample
+        )
+        switch receiver.enqueueImmediately(ready) {
+        case let .cancelledDueToFlushRequiredToResume(error),
+             let .cancelledDueToError(error):
+            // iOS interrupts the layer as the app changes state (-11847); it
+            // takes a flush to accept frames again.
+            print("Kernarium: picture in picture layer flushed: \(error)")
+            receiver.flush()
+            _ = receiver.enqueueImmediately(ready)
+        default:
+            break
         }
-        let renderer = layer.sampleBufferRenderer
-        // iOS interrupts the layer as the app changes state (-11847); it
-        // takes a flush to accept frames again.
-        if renderer.status == .failed {
-            renderer.flush()
-        }
-        renderer.enqueue(sample)
         framesShown += 1
         if framesShown % 150 == 1 {
             print(
