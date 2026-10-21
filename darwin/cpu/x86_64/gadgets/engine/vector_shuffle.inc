@@ -283,27 +283,7 @@ gadget vector_\operation\()_\element\()_\width\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_vector_shuffle_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	ldr q1, [x7]
-	.if \width == 256
-	ldr q3, [x7, #16]
-	.endif
-	b Lx86_vector_shuffle_loaded\@
-Lx86_vector_shuffle_cross\@:
-	sub sp, sp, #32
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #(\width / 8)
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_shuffle_cross_fault\@
-	ldr q1, [sp]
-	.if \width == 256
-	ldr q3, [sp, #16]
-	.endif
-	add sp, sp, #32
-Lx86_vector_shuffle_loaded\@:
+	vector_memory_source (\width / 8), Lx86_vector_shuffle_cross_fault\@
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
 	ldr q0, [x10]
@@ -316,9 +296,7 @@ Lx86_vector_shuffle_loaded\@:
 	vector_shuffle_body \operation, \element, \width
 	vector_write_xmm \width, 23
 	retire_and_next
-Lx86_vector_shuffle_cross_fault\@:
-	add sp, sp, #32
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_shuffle_cross_fault\@
 .endm
 
 .macro vector_shuffle_family operation, element, width, control=0

@@ -1196,6 +1196,49 @@ Lx86_read_cross\@:
 Lx86_read_loaded\@:
 .endm
 
+/* Load a `size`-byte vector operand from `base` into v`low`, a 32-byte one
+ * into v`low` and v`high`. */
+.macro vector_source_load size, low, high, base
+	.if (\size) == 8
+	ldr d\low, [\base]
+	.else
+	ldr q\low, [\base]
+	.endif
+	.if (\size) == 32
+	ldr q\high, [\base, #16]
+	.endif
+.endm
+
+/* Read a `size`-byte vector memory operand at x7, with x25 the copy the
+ * cross-page helper reads from, into v1, and v3 for 32 bytes, or the `low`
+ * and `high` registers. An access across a page goes through a `frame`-byte
+ * stack buffer, and a fault the MMU raises branches to `fault`, which the
+ * gadget defines after its code with `vector_memory_source_fault`. */
+.macro vector_memory_source size, fault, low=1, high=3, frame=32
+	page_cross_check \size, Lx86_vector_source_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, \size
+	vector_source_load \size, \low, \high, x7
+	b Lx86_vector_source_loaded\@
+Lx86_vector_source_cross\@:
+	sub sp, sp, #\frame
+	mov x0, _context
+	mov x1, x25
+	mov x2, sp
+	mov w3, #\size
+	helper_call uml_x86_64_gadget_cross_page_vector_load
+	cbz w0, \fault
+	vector_source_load \size, \low, \high, sp
+	add sp, sp, #\frame
+Lx86_vector_source_loaded\@:
+.endm
+
+/* The out-of-line tail a `vector_memory_source` branches to on a fault. */
+.macro vector_memory_source_fault label, frame=32
+\label:
+	add sp, sp, #\frame
+	b Lx86_memory_fault
+.endm
+
 /* x86 LOCK-prefixed read-modify-write.
  *
  * A locked gadget must be atomic against the other vCPU threads that execute

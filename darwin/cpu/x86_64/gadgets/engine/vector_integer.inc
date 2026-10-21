@@ -373,35 +373,7 @@ gadget vector_integer_\opcode\()_\width\()_rm
 	ldr x27, [_stream], #8
 	.endif
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_vector_integer_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	.if \width == 64
-	ldr d1, [x7]
-	.else
-	ldr q1, [x7]
-	.if \width == 256
-	ldr q3, [x7, #16]
-	.endif
-	.endif
-	b Lx86_vector_integer_loaded\@
-Lx86_vector_integer_cross\@:
-	sub sp, sp, #32
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #(\width / 8)
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_integer_cross_fault\@
-	.if \width == 64
-	ldr d1, [sp]
-	.else
-	ldr q1, [sp]
-	.if \width == 256
-	ldr q3, [sp, #16]
-	.endif
-	.endif
-	add sp, sp, #32
-Lx86_vector_integer_loaded\@:
+	vector_memory_source (\width / 8), Lx86_vector_integer_cross_fault\@
 	.if 0x\opcode == 0x70
 	ubfx w14, w27, #8, #8
 	and w13, w27, #0xff
@@ -411,9 +383,7 @@ Lx86_vector_integer_loaded\@:
 	vector_integer_body 0x\opcode, \width
 	vector_write \width, 23
 	retire_and_next
-Lx86_vector_integer_cross_fault\@:
-	add sp, sp, #32
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_integer_cross_fault\@
 .endm
 
 .macro vector_integer_family opcode

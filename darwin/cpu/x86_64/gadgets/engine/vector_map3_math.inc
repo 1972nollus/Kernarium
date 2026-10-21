@@ -187,27 +187,7 @@ gadget vector_map3_math_\symbol\()_\width\()_rm
 	effective_address
 	ldp x26, x27, [_stream], #16
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_vector_map3_math_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	ldr q1, [x7]
-	.if \width == 256
-	ldr q3, [x7, #16]
-	.endif
-	b Lx86_vector_map3_math_loaded\@
-Lx86_vector_map3_math_cross\@:
-	sub sp, sp, #32
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #(\width / 8)
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_map3_math_cross_fault\@
-	ldr q1, [sp]
-	.if \width == 256
-	ldr q3, [sp, #16]
-	.endif
-	add sp, sp, #32
-Lx86_vector_map3_math_loaded\@:
+	vector_memory_source (\width / 8), Lx86_vector_map3_math_cross_fault\@
 	mov w13, w27
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
@@ -218,9 +198,7 @@ Lx86_vector_map3_math_loaded\@:
 	vector_map3_math_body \opcode, \width
 	vector_write_xmm \width, 23
 	retire_and_next
-Lx86_vector_map3_math_cross_fault\@:
-	add sp, sp, #32
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_map3_math_cross_fault\@
 .endm
 
 .macro vector_map3_math_family symbol, opcode
