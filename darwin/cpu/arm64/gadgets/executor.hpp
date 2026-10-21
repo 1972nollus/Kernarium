@@ -2,7 +2,6 @@
 #pragma once
 
 #include "cpu/arm64/cpu_state.hpp"
-#include "cpu/arm64/detail/sme_encodings.hpp"
 #include "cpu/arm64/gadgets/execution_histogram.hpp"
 #include "cpu/arm64/gadgets/guest_sampler.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
