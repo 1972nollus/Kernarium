@@ -108,7 +108,7 @@ python3 tests/perf/run_ios_device_discard_bench.py \
 ## Native RGB32 texel buffers
 
 The manual `uml-kosmickrisp-rgb32-texel-bench` target links only the verified
-KosmicKrisp provider. Configure a `macos-unit-gpu-venus` build with explicit
+KosmicKrisp provider. Configure a `macos-unit-gpu` build with explicit
 accepted non-GPU and experimental GPU prefixes, then build and run it directly:
 
 ```sh

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Exercise the deterministic SLiRP guest network without external traffic.
 
 The guest kernel deliberately has no ``CONFIG_IP_PNP``, so nothing is

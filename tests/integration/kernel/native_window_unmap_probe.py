@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Unmap user memory on both sides of the kernel's native window.
 
 This runs inside the guest as root. The Darwin kernel shares its address space

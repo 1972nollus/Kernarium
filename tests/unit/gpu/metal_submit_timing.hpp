@@ -9,7 +9,6 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -113,21 +112,6 @@ private:
         const auto result = std::from_chars(text.data(), text.data() + text.size(), destination);
         if (result.ec != std::errc{} || result.ptr != text.data() + text.size())
             throw std::runtime_error("invalid submit timing number");
-    }
-    // Floating-point std::from_chars is unavailable below the newest Apple
-    // deployment target, and this validator also builds for the ordinary
-    // macOS product. Consume the whole field exactly as from_chars would.
-    static void number(std::string_view text, double &destination)
-    {
-        const std::string digits(text);
-        errno = 0;
-        char *end = nullptr;
-        const double parsed = std::strtod(digits.c_str(), &end);
-        if (errno != 0 || end != digits.c_str() + digits.size() ||
-            digits.empty()) {
-            throw std::runtime_error("invalid submit timing number");
-        }
-        destination = parsed;
     }
     static void number(std::string_view text, uintptr_t &destination, int base)
     {

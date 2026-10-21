@@ -8,6 +8,7 @@
  * host, and only SM=1 code needs the hardware.
  */
 #include "arm64_jit_sme_test_support.hpp"
+#include "arm64_kernel_stops.hpp"
 #include "arm64_sm0_vector_length_support.hpp"
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
@@ -16,19 +17,14 @@
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 
-#include <mach/mach.h>
-
 #include <algorithm>
 #include <array>
-#include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <span>
-#include <thread>
 #include <vector>
 
 using namespace uml::emulator::tests;
@@ -180,7 +176,6 @@ void vector_length_family_runs_outside_streaming_mode() {
       require(machine.cpu.sp == expected.sp);
       require(machine.cpu.nzcv == initial_nzcv);
       require(machine.cpu.svcr == mode);
-      require(machine.cpu.sve_live == 0U);
       require(machine.vectors_unchanged());
       require(machine.file() == before);
     }
@@ -248,10 +243,6 @@ void spill_words_run_outside_streaming_mode() {
       }
       require(retired == 2U);
       require(machine.cpu.svcr == 0U);
-      require(machine.cpu.sve_live == 0U);
-      const arm64::CpuState reference;
-      require(machine.cpu.sve_p == reference.sve_p &&
-              machine.cpu.sve_ffr == reference.sve_ffr);
       machine.require_preserved();
       arm64::restore_native_fp_environment(machine.cpu);
       machine.cpu.access_fp_state();
@@ -303,7 +294,6 @@ void spill_words_fault_like_their_accesses() {
                 (store ? uml::memory::Access::write : uml::memory::Access::read));
         require(!machine.executor().fault_alignment());
         require(machine.get(machine.data(page - 16U), 16U) == before);
-        require(machine.cpu.sve_live == 0U);
         machine.require_preserved();
       }
       {
@@ -541,34 +531,14 @@ void fp_controls_survive_kernel_entries_in_streaming_mode() {
   machine.cpu.registers[1] = written_fpsr;
   machine.cpu.registers[2] = 40'000'000;
   machine.cpu.registers[4] = written_fpcr;
-  const auto target = mach_thread_self();
-  std::atomic<bool> running{true};
-  std::atomic<unsigned> stops{0};
-  std::thread interrupter{[&] {
-    while (running.load(std::memory_order_relaxed)) {
-      if (thread_suspend(target) == KERN_SUCCESS) {
-        /* Reading the state waits until the thread has stopped, so it
-         * has entered the kernel before it resumes. */
-        arm_thread_state64_t state{};
-        mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
-        if (thread_get_state(target, ARM_THREAD_STATE64,
-                             reinterpret_cast<thread_state_t>(&state),
-                             &count) == KERN_SUCCESS)
-          stops.fetch_add(1, std::memory_order_relaxed);
-        thread_resume(target);
-      }
-      std::this_thread::sleep_for(std::chrono::microseconds(200));
-    }
-  }};
+  KernelStops interrupter;
   std::size_t retired = 0;
   const auto event = machine.run(retired, 1'000'000);
-  running.store(false, std::memory_order_relaxed);
-  interrupter.join();
-  mach_port_deallocate(mach_task_self(), target);
+  const auto stops = interrupter.stop();
   require(event == Event::system_call);
   std::fprintf(stderr, "streaming loop stopped in the kernel %u times\n",
-               stops.load());
-  require(stops.load() >= 10U);
+               stops);
+  require(stops >= 10U);
   require(machine.cpu.svcr == arm64::svcr_sm);
   require(machine.cpu.registers[3] == written_fpsr);
   require(machine.cpu.registers[5] == written_fpcr);

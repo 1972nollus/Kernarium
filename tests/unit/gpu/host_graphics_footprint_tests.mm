@@ -30,7 +30,7 @@ constexpr unsigned copiesPerEncoder = 65536;
 
 /* Grows one allocator by recording many copy commands and returns its
  * storage, checking what each counter charges while it is held. */
-API_AVAILABLE(macos(26.0)) std::uint64_t recordAndCheck(id<MTLDevice> device,
+std::uint64_t recordAndCheck(id<MTLDevice> device,
     const std::function<std::uint64_t()>& target, std::uint64_t footprintBefore,
     std::uint64_t allocatedBefore, std::uint64_t targetBefore)
 {
@@ -86,32 +86,27 @@ int main()
 {
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-        if (@available(macOS 26.0, *)) {
-            if (device == nil) {
-                std::puts("SKIP host graphics footprint: no Metal device");
-                return 77;
-            }
-            const auto target = uml::balloon::hostGpuMemoryTarget(
-                std::numeric_limits<std::uint64_t>::max());
-            const std::uint64_t allocatedBefore =
-                uml::platform::hostGpuAllocatedBytes();
-            const std::uint64_t footprintBefore =
-                uml::platform::hostGraphicsFootprintBytes();
-            const std::uint64_t targetBefore = target();
-            const std::uint64_t storage = recordAndCheck(device, target,
-                footprintBefore, allocatedBefore, targetBefore);
-
-            /* Releasing the allocator returns its storage. */
-            const std::uint64_t released =
-                uml::platform::hostGraphicsFootprintBytes();
-            std::printf("released: graphics footprint %+.1f MiB against the start\n",
-                (static_cast<double>(released) - footprintBefore) / mib);
-            require(released < footprintBefore + storage / 2,
-                "the released allocator stays in the graphics footprint");
-        } else {
-            std::puts("SKIP host graphics footprint: no Metal 4");
+        if (device == nil) {
+            std::puts("SKIP host graphics footprint: no Metal device");
             return 77;
         }
+        const auto target = uml::balloon::hostGpuMemoryTarget(
+            std::numeric_limits<std::uint64_t>::max());
+        const std::uint64_t allocatedBefore =
+            uml::platform::hostGpuAllocatedBytes();
+        const std::uint64_t footprintBefore =
+            uml::platform::hostGraphicsFootprintBytes();
+        const std::uint64_t targetBefore = target();
+        const std::uint64_t storage = recordAndCheck(device, target,
+            footprintBefore, allocatedBefore, targetBefore);
+
+        /* Releasing the allocator returns its storage. */
+        const std::uint64_t released =
+            uml::platform::hostGraphicsFootprintBytes();
+        std::printf("released: graphics footprint %+.1f MiB against the start\n",
+            (static_cast<double>(released) - footprintBefore) / mib);
+        require(released < footprintBefore + storage / 2,
+            "the released allocator stays in the graphics footprint");
     }
     std::puts("PASS host graphics footprint");
     return 0;

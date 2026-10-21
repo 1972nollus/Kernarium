@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Shared serial-console guest harness for integration and performance runners."""
 
 from __future__ import annotations

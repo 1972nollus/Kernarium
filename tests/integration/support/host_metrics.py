@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Host-side metrics shared by guest integration and benchmark runners."""
 
 from __future__ import annotations

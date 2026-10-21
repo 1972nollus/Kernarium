@@ -2,7 +2,6 @@
 #pragma once
 
 #include "cpu/arm64/detail/sme_encoding_types.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/host_capabilities.hpp"
 
 #include <cstddef>
@@ -197,9 +196,7 @@ static_assert(sme_storage_size(256) == 256U * 34U + 256U * 256U + 64U);
  * rules (SetPSTATE_SM, SetPSTATE_ZA, ResetSVEState, ResetSMEState):
  * - SM 0->1 zeroes Z and P, and 1->0 zeroes Z and P too, which outside
  *   streaming mode leaves the V registers zero; either sets FPSR to
- *   0x0800009f and zeroes FFR, and the non-streaming P and FFR are kept
- *   apart from the streaming ones (sve_profile.hpp), so either zeroes
- *   those too;
+ *   0x0800009f. The virtual CPU has no FFR and no non-streaming P to zero;
  * - ZA 0->1 zeroes ZA and ZT0; 1->0 leaves them ARBITRARY, and the next 0->1
  *   zeroes them anyway;
  * - writing the value a bit already holds changes nothing.
@@ -214,8 +211,6 @@ struct SvcrWrite final {
 	bool zero_vectors{};
 	/* SM changed: FPSR := streaming_mode_change_fpsr. */
 	bool reset_fpsr{};
-	/* SM changed: zero the non-streaming P0-P15 and FFR. */
-	bool zero_sve_predicates{};
 	/* ZA 0->1: zero ZA and ZT0. */
 	bool zero_za{};
 	bool needs_storage{};
@@ -236,7 +231,6 @@ struct SvcrWrite final {
 		.zero_streaming = (enabled & svcr_sm) != 0U,
 		.zero_vectors = streaming_changed && (next & svcr_sm) == 0U,
 		.reset_fpsr = streaming_changed,
-		.zero_sve_predicates = streaming_changed,
 		.zero_za = (enabled & svcr_za) != 0U,
 	};
 }
@@ -246,10 +240,6 @@ static_assert(svcr_write(0, svcr_mask, svcr_mask, true).zero_za);
 static_assert(svcr_write(svcr_mask, svcr_sm, 0, true).zero_vectors);
 static_assert(svcr_write(svcr_mask, svcr_sm, 0, true).svcr == svcr_za);
 static_assert(!svcr_write(svcr_sm, svcr_sm, svcr_sm, true).reset_fpsr);
-static_assert(svcr_write(0, svcr_sm, svcr_sm, true).zero_sve_predicates);
-static_assert(svcr_write(svcr_sm, svcr_sm, 0, true).zero_sve_predicates);
-static_assert(!svcr_write(svcr_sm, svcr_sm, svcr_sm, true).zero_sve_predicates);
-static_assert(!svcr_write(0, svcr_za, svcr_za, true).zero_sve_predicates);
 static_assert(svcr_write(0, svcr_za, svcr_za, false).needs_storage);
 static_assert(!svcr_write(0, svcr_za, 0, false).needs_storage);
 

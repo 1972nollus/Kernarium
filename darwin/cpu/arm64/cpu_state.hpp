@@ -2,7 +2,6 @@
 #pragma once
 
 #include "cpu/arm64/sme_profile.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 
 #include <array>
 #include <cstddef>
@@ -160,15 +159,10 @@ struct CpuState final {
 	 * bytes, or null when the run does not implement SME. While SM is set,
 	 * guest V_n is the low 16 bytes of Z_n here and `vectors` is stale. */
 	std::byte *sme_registers{};
-	/* The storage of the removed non-streaming SVE profile
-	 * (sve_profile.hpp), reserved so that no offset after it moves: P0-P15
-	 * and FFR in mask form, apart from the streaming P in the SME register
-	 * file, and a live flag. The virtual CPU implements no SVE outside
-	 * streaming mode, so nothing sets them; a change of PSTATE.SM zeroes P
-	 * and FFR. */
-	alignas(16) std::array<SvePredicate, sve_p_registers> sve_p{};
-	alignas(16) SvePredicate sve_ffr{};
-	std::uint8_t sve_live{};
+	/* Bytes 1232 to 1507 are the storage of the removed non-streaming SVE
+	 * profile, kept so that no offset after them moves. The virtual CPU has
+	 * no SVE outside streaming mode, so nothing reads or writes them. */
+	alignas(16) std::array<std::byte, 276> reserved_sve{};
 	/* AArch32 EL0 state (cpu/arm64/aarch32/a32_profile.hpp), appended so that
 	 * no earlier offset moves. An AArch32 task keeps R0-R14 in registers[0..14]
 	 * zero-extended, N, Z, C and V in nzcv, D0-D31 in the low sixteen vectors,
@@ -353,10 +347,6 @@ struct CpuState final {
 			std::memset(sme_registers, 0, sme_za_offset(sme_svl, 0));
 		if (write.zero_vectors)
 			vectors = {};
-		if (write.zero_sve_predicates) {
-			sve_p = {};
-			sve_ffr = {};
-		}
 		if (write.zero_za)
 			std::memset(sme_registers + sme_za_offset(sme_svl, 0), 0,
 				sme_storage_size(sme_svl) -

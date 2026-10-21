@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Exercise authenticated rootfs provisioning with a small image fixture."""
 
 from __future__ import annotations
