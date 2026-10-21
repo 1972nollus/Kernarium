@@ -74,3 +74,14 @@ if(_uml_x86_64_gadget_region_images AND APPLE AND CMAKE_GENERATOR MATCHES "Ninja
         LABELS cpu;x86-64
         TIMEOUT 600)
 endif()
+
+# The manual x86-64 guest runners: their options, their refusals and the
+# compiler commands that pin their probes' bytes, without a guest. Each runs
+# under python3 -I, which leaves a script's own directory off sys.path.
+uml_add_tooling_test(
+    NAME x86-64-guest-runners
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/x86_64/test_guest_runners.py
+        --runners ${PROJECT_SOURCE_DIR}/tests/integration/x86_64
+    LABELS x86-64
+    TIMEOUT 120)

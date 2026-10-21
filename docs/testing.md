@@ -393,7 +393,9 @@ x86-64 Linux host and the bounded
 `tests/integration/x86_64/run_guest_x86_64_smoke.py` boot check. The slice
 registers no CTest suites, so its other runners also run directly, each with
 the `macos-x86_64` `uml-darwin` and an x86-64 EROFS image such as the
-[x86-64 LTP rootfs](../tools/rootfs/ltp-x86_64/README.md). That `uml-darwin`
+[x86-64 LTP rootfs](../tools/rootfs/ltp-x86_64/README.md); the tooling test
+`x86-64-guest-runners` checks their options, refusals and probe compiler
+commands without a guest. That `uml-darwin`
 embeds the x86-64 boot base, so
 `tests/integration/boot/run_guest_boot_initramfs.py --engine gadgets` checks it
 with the x86-64 base and a `uml-initramfs`.

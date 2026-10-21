@@ -17,106 +17,48 @@ from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
-import argparse
-import os
 import pathlib
 import re
-import subprocess
 import sys
-import tempfile
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
+# python3 -I leaves the script's own directory off sys.path.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from guest import Guest, GuestFile  # noqa: E402
+from guest import Guest  # noqa: E402
+from probe_runner import (  # noqa: E402
+    GUEST_DIRECTORY, I386, X86_64, build_probes, parse_arguments)
 
 
 PROBE = pathlib.Path(__file__).with_name("fork_cow_probe.cpp")
-GUEST_DIRECTORY = "/usr/local/libexec/uml-test"
-COMMON_FLAGS = (
-    "-std=c++20",
-    "-O2",
-    "-Wall",
-    "-Wextra",
-    "-Werror",
-    "-ffreestanding",
-    "-fno-exceptions",
-    "-fno-rtti",
-    "-fno-stack-protector",
-    "-fno-asynchronous-unwind-tables",
-    "-fno-pic",
-    "-nostdlib",
-    "-static",
-    "-fuse-ld=lld",
-    "-Wl,-e,_start",
-    "-Wl,-z,max-page-size=4096",
-    "-Wl,-s",
-)
 PROBES = {
-    "fork-cow-probe": ("x86-64", ("--target=x86_64-unknown-linux-gnu", "-mno-red-zone")),
-    "fork-cow-probe32": ("i386", ("--target=i686-unknown-linux-gnu", "-march=i686")),
+    "fork-cow-probe": ("x86-64", X86_64),
+    "fork-cow-probe32": ("i386", I386),
 }
 RESULT = re.compile(
     r"fork-cow: abi=(\S+) forks=(\d+) increments=(\d+) counter=(\d+) "
     r"overlaps=(\d+) lost=(\d+) verdict=(\S+)"
 )
 CPUS = 4
-BUILD_TIMEOUT_SECONDS = 120
 PROBE_TIMEOUT_SECONDS = 120
 
 
-def build_probes(compiler: str) -> dict[str, bytes]:
-    binaries = {}
-    with tempfile.TemporaryDirectory(prefix="uml-fork-cow-probe-") as directory:
-        for name, (_, target_flags) in PROBES.items():
-            output = pathlib.Path(directory) / name
-            subprocess.run(
-                [compiler, *target_flags, *COMMON_FLAGS, str(PROBE), "-o", str(output)],
-                check=True,
-                stdin=subprocess.DEVNULL,
-                timeout=BUILD_TIMEOUT_SECONDS,
-            )
-            binaries[name] = output.read_bytes()
-    return binaries
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--emulator", required=True, type=pathlib.Path)
-    parser.add_argument("--rootfs", required=True, type=pathlib.Path)
-    parser.add_argument("--engine", choices=("gadgets", "jit"), default="gadgets")
-    parser.add_argument(
-        "--compiler",
-        default="clang++",
-        help="clang driver with x86-64 and i386 Linux targets and ld.lld",
-    )
-    parser.add_argument("--timeout", type=int, default=180, help="boot timeout")
-    arguments = parser.parse_args()
+    arguments = parse_arguments(__doc__, timeout_help="boot timeout")
 
-    emulator = arguments.emulator.resolve()
-    rootfs = arguments.rootfs.resolve()
-    if not emulator.is_file() or not os.access(emulator, os.X_OK):
-        parser.error(f"emulator is not executable: {emulator}")
-    if not rootfs.is_file():
-        parser.error(f"rootfs is not a regular file: {rootfs}")
-    if arguments.timeout <= 0:
-        parser.error("timeout must be positive")
-
-    binaries = build_probes(arguments.compiler)
+    payloads = build_probes(arguments.compiler, PROBE, PROBES)
     failures = []
     with Guest(
-        emulator,
-        rootfs,
+        arguments.emulator,
+        arguments.rootfs,
         "512M",
         "tmpfs",
         (f"ncpus={CPUS}",),
         init_shell=True,
         engine=arguments.engine,
-        payloads={
-            f"{GUEST_DIRECTORY}/{name}": GuestFile(contents, 0o755)
-            for name, contents in binaries.items()
-        },
+        payloads=payloads,
     ) as guest:
         guest.boot_to_shell(arguments.timeout)
         for name, (abi, _) in PROBES.items():
