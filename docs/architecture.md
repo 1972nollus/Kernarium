@@ -1235,7 +1235,8 @@ the pinned Arm AArch32 XML and its Decode pseudocode. It is a CPU-layer
 `shared` target that includes no engine, so the gadget engine, the JIT and the
 semantic library link the same one, and it implements the Armv8-A AArch32 EL0
 profile: whatever the profile lacks is undefined, never guessed. Its
-[README](../darwin/cpu/arm64/aarch32/README.md) holds the contract.
+`decode.hpp` is the interface and its
+[README](../darwin/cpu/arm64/aarch32/README.md) holds the profile's choices.
 
 The AArch32 semantic library
 ([`cpu/arm64/aarch32/semantics.hpp`](../darwin/cpu/arm64/aarch32/semantics.hpp))
