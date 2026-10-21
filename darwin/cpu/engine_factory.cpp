@@ -64,7 +64,6 @@ void materialize_architectural_state(arm64::CpuState &cpu) noexcept
 	arm64::restore_native_fp_environment(cpu);
 }
 
-
 bool set_translation_cache_budget(std::size_t total_bytes,
 	unsigned executors, std::size_t per_executor_bytes) noexcept
 {
