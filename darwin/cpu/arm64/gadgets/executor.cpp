@@ -123,39 +123,11 @@ static_assert(compact_tag_key(0x0000'8000'0000'1000U) == unmatchable_tag);
 static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
 	unmatchable_tag);
 
-[[nodiscard]] std::size_t fetch_instruction_window(
-	StaticGuestMemory &memory, std::uint64_t pc,
-	std::span<std::uint32_t> instructions)
-{
-	std::size_t count = 0;
-	auto bytes = std::as_writable_bytes(instructions);
-	while (count < instructions.size()) {
-		const auto address = pc + count * sizeof(std::uint32_t);
-		const auto page_remaining =
-			guest_page_size - (address & (guest_page_size - 1));
-		auto page_instructions = std::min<std::size_t>(
-			instructions.size() - count,
-			static_cast<std::size_t>(
-				page_remaining / sizeof(std::uint32_t)));
-		/* A valid A64 PC is word aligned. Preserve deterministic fault
-		 * handling for a malformed PC instead of constructing an empty span.
-		 */
-		if (page_instructions == 0)
-			page_instructions = 1;
-		const auto offset = count * sizeof(std::uint32_t);
-		const auto length = page_instructions * sizeof(std::uint32_t);
-		if (!memory.fetch(address, bytes.subspan(offset, length)))
-			break;
-		count += page_instructions;
-	}
-	return count;
-}
-
-/* The guest units of an AArch32 translation window starting at `address`,
- * fetched a page at a time as fetch_instruction_window does, in units of
- * `unit` bytes (a word for A32, a halfword for T32). A page that cannot be
- * fetched ends the window; none at all is zero. */
-[[nodiscard]] std::size_t fetch_a32_units(StaticGuestMemory &memory,
+/* The guest units of a translation window starting at `address`, fetched a
+ * page at a time, in units of `unit` bytes (a word for A64 and A32, a
+ * halfword for T32). A page that cannot be fetched ends the window; none at
+ * all is zero. */
+[[nodiscard]] std::size_t fetch_units(StaticGuestMemory &memory,
 	std::uint64_t address, std::size_t unit, std::span<std::byte> bytes)
 {
 	const std::size_t capacity = bytes.size() / unit;
@@ -166,6 +138,9 @@ static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
 			guest_page_size - (at & (guest_page_size - 1));
 		auto run = std::min<std::size_t>(capacity - count,
 			static_cast<std::size_t>(page_remaining / unit));
+		/* A valid A64 or A32 PC is word aligned. Preserve deterministic
+		 * fault handling for a malformed PC instead of constructing an
+		 * empty span. */
 		if (run == 0)
 			run = 1;
 		if (!memory.fetch(at, bytes.subspan(count * unit, run * unit)))
@@ -173,6 +148,14 @@ static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
 		count += run;
 	}
 	return count;
+}
+
+[[nodiscard]] std::size_t fetch_instruction_window(
+	StaticGuestMemory &memory, std::uint64_t pc,
+	std::span<std::uint32_t> instructions)
+{
+	return fetch_units(memory, pc, sizeof(std::uint32_t),
+		std::as_writable_bytes(instructions));
 }
 
 void correct_terminal_instruction_count(
@@ -3483,7 +3466,7 @@ private:
 		std::array<std::uint32_t, block_instruction_count> window;
 		const auto bytes = std::as_writable_bytes(std::span{window});
 		const auto address = arm64::aarch32::key_pc(key);
-		const auto count = fetch_a32_units(memory, address, unit, bytes);
+		const auto count = fetch_units(memory, address, unit, bytes);
 		if (count == 0) {
 			const auto fault = memory.last_fault();
 			tlb_.fault_address = fault.address;
@@ -3549,7 +3532,7 @@ private:
 	std::array<std::uint32_t, 1> window;
 	const auto bytes = std::as_writable_bytes(std::span{window});
 	const auto address = arm64::aarch32::key_pc(key);
-	const auto count = fetch_a32_units(memory, address, unit, bytes);
+	const auto count = fetch_units(memory, address, unit, bytes);
 	if (count == 0) {
 		const auto fault = memory.last_fault();
 		tlb_.fault_address = fault.address;
