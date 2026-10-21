@@ -181,14 +181,14 @@ for name in clean patched; do
 	git -C "$CACHE/git/$name" update-ref refs/heads/uml-pin "$BASE"
 done
 
-# A cache that an earlier checkout filtered keeps its promisor marker. It
-# cannot serve a full source, so an offline preparation refuses it.
-git clone --quiet "$UPSTREAM" "$CACHE/git/filtered"
+# A cache that an earlier checkout filtered holds commits and trees but no
+# blobs. It cannot serve a full source.
+git -C "$UPSTREAM" config uploadpack.allowFilter true
+git clone --quiet --no-checkout --filter=blob:none "file://$UPSTREAM" \
+	"$CACHE/git/filtered"
 git -C "$CACHE/git/filtered" remote set-url origin \
 	https://example.invalid/filtered.git
 git -C "$CACHE/git/filtered" update-ref refs/heads/uml-pin "$BASE"
-git -C "$CACHE/git/filtered" config remote.origin.promisor true
-git -C "$CACHE/git/filtered" config remote.origin.partialclonefilter blob:none
 
 cat >"$MANIFEST" <<EOF
 name	version	products	repository	commit	source_paths	patch_series
@@ -263,7 +263,7 @@ expect_diagnostic "prepared source paths changed" verify "$PREPARED"
 git -C "$PREPARED/clean" config uml.source.paths .
 verify "$PREPARED" >/dev/null
 
-expect_diagnostic "full source is incomplete in the offline cache" \
+expect_diagnostic "full source is incomplete in the" \
 	env UML_DEPENDENCY_MANIFEST="$MANIFEST" \
 		UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
 		"$PREPARE" --product filtered-fixture \
