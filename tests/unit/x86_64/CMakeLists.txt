@@ -115,6 +115,16 @@ uml_add_unit_test(
     COMMAND uml_x86_64_gadget_cache_index_tests
     LABELS cpu;x86-64)
 
+# How a single rounds to a half, which VCVTPS2PH's flags follow, against an
+# independent derivation, over every finite single.
+uml_add_x86_64_test_binary(uml_x86_64_half_round_tests
+    x86_64_half_round_tests.cpp)
+uml_add_unit_test(
+    NAME x86-64-half-round
+    COMMAND uml_x86_64_half_round_tests
+    LABELS cpu;x86-64
+    PROCESSORS 4)
+
 uml_add_x86_64_test_binary(uml_x86_64_sse_exactness_tests
     x86_64_sse_exactness_tests.cpp GADGETS)
 uml_add_unit_test(
