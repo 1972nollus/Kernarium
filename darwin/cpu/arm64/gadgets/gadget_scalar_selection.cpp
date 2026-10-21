@@ -13,13 +13,8 @@ namespace uml::cpu::arm64::gadgets::selection {
 		 (instruction & 31U) != 31U);
 }
 
-/* The gadgets of one family, one per condition in encoding order, as the
- * entries of an array or the cases of a switch:
- * UML_CONDITION_GADGETS(uml_arm64_gadget_branch_, _inline) lists
- * uml_arm64_gadget_branch_eq_inline, uml_arm64_gadget_branch_ne_inline, ... */
-#define UML_CONDITION_GADGET(index, name, prefix, suffix) prefix##name##suffix,
-#define UML_CONDITION_GADGETS(prefix, suffix) \
-	UML_ARM64_CONDITIONS(UML_CONDITION_GADGET, prefix, suffix)
+/* The cases of a switch over the conditions for one family of gadgets, as
+ * UML_ARM64_CONDITION_GADGETS lists its entries. */
 #define UML_CONDITION_CASE(index, name, prefix, suffix) \
 	case index: return prefix##name##suffix;
 #define UML_CONDITION_CASES(prefix, suffix) \
@@ -29,13 +24,13 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget compare_register_branch_gadget(
 	bool wide, unsigned condition, bool linked) noexcept
 {
-	static constexpr std::array wide_direct{UML_CONDITION_GADGETS(
+	static constexpr std::array wide_direct{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_register_branch_x_, )};
-	static constexpr std::array narrow_direct{UML_CONDITION_GADGETS(
+	static constexpr std::array narrow_direct{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_register_branch_w_, )};
-	static constexpr std::array wide_linked{UML_CONDITION_GADGETS(
+	static constexpr std::array wide_linked{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_register_branch_x_, _linked)};
-	static constexpr std::array narrow_linked{UML_CONDITION_GADGETS(
+	static constexpr std::array narrow_linked{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_register_branch_w_, _linked)};
 	if (condition >= wide_direct.size())
 		return nullptr;
@@ -50,13 +45,13 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget compare_immediate_branch_gadget(
 	bool wide, unsigned condition, bool linked) noexcept
 {
-	static constexpr std::array wide_direct{UML_CONDITION_GADGETS(
+	static constexpr std::array wide_direct{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_immediate_branch_x_, )};
-	static constexpr std::array narrow_direct{UML_CONDITION_GADGETS(
+	static constexpr std::array narrow_direct{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_immediate_branch_w_, )};
-	static constexpr std::array wide_linked{UML_CONDITION_GADGETS(
+	static constexpr std::array wide_linked{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_immediate_branch_x_, _linked)};
-	static constexpr std::array narrow_linked{UML_CONDITION_GADGETS(
+	static constexpr std::array narrow_linked{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_immediate_branch_w_, _linked)};
 	if (condition >= wide_direct.size())
 		return nullptr;
@@ -69,9 +64,9 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget compare_immediate_branch_inline_gadget(
 	bool wide, unsigned condition) noexcept
 {
-	static constexpr std::array wide_inline{UML_CONDITION_GADGETS(
+	static constexpr std::array wide_inline{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_immediate_branch_x_, _inline)};
-	static constexpr std::array narrow_inline{UML_CONDITION_GADGETS(
+	static constexpr std::array narrow_inline{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_immediate_branch_w_, _inline)};
 	if (condition >= wide_inline.size())
 		return nullptr;
@@ -82,9 +77,9 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget compare_register_branch_inline_gadget(
 	bool wide, unsigned condition) noexcept
 {
-	static constexpr std::array wide_inline{UML_CONDITION_GADGETS(
+	static constexpr std::array wide_inline{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_register_branch_x_, _inline)};
-	static constexpr std::array narrow_inline{UML_CONDITION_GADGETS(
+	static constexpr std::array narrow_inline{UML_ARM64_CONDITION_GADGETS(
 		uml_arm64_gadget_compare_register_branch_w_, _inline)};
 	if (condition >= wide_inline.size())
 		return nullptr;
@@ -121,8 +116,6 @@ namespace uml::cpu::arm64::gadgets::selection {
 
 #undef UML_CONDITION_CASES
 #undef UML_CONDITION_CASE
-#undef UML_CONDITION_GADGETS
-#undef UML_CONDITION_GADGET
 
 /* The fall-through translated inline behind the branch. */
 [[nodiscard]] Gadget compare_branch_inline_gadget(
@@ -359,23 +352,9 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 	bool synchronization, unsigned option) noexcept
 {
 	static constexpr std::array<Gadget, 16> dmb{
-		uml_arm64_gadget_dmb_0, uml_arm64_gadget_dmb_1,
-		uml_arm64_gadget_dmb_2, uml_arm64_gadget_dmb_3,
-		uml_arm64_gadget_dmb_4, uml_arm64_gadget_dmb_5,
-		uml_arm64_gadget_dmb_6, uml_arm64_gadget_dmb_7,
-		uml_arm64_gadget_dmb_8, uml_arm64_gadget_dmb_9,
-		uml_arm64_gadget_dmb_10, uml_arm64_gadget_dmb_11,
-		uml_arm64_gadget_dmb_12, uml_arm64_gadget_dmb_13,
-		uml_arm64_gadget_dmb_14, uml_arm64_gadget_dmb_15};
+		UML_ARM64_BARRIER_GADGETS(uml_arm64_gadget_dmb_)};
 	static constexpr std::array<Gadget, 16> dsb{
-		uml_arm64_gadget_dsb_0, uml_arm64_gadget_dsb_1,
-		uml_arm64_gadget_dsb_2, uml_arm64_gadget_dsb_3,
-		uml_arm64_gadget_dsb_4, uml_arm64_gadget_dsb_5,
-		uml_arm64_gadget_dsb_6, uml_arm64_gadget_dsb_7,
-		uml_arm64_gadget_dsb_8, uml_arm64_gadget_dsb_9,
-		uml_arm64_gadget_dsb_10, uml_arm64_gadget_dsb_11,
-		uml_arm64_gadget_dsb_12, uml_arm64_gadget_dsb_13,
-		uml_arm64_gadget_dsb_14, uml_arm64_gadget_dsb_15};
+		UML_ARM64_BARRIER_GADGETS(uml_arm64_gadget_dsb_)};
 	return (synchronization ? dsb : dmb)[option & 15U];
 }
 

@@ -23,6 +23,39 @@
 	X(12, gt __VA_OPT__(,) __VA_ARGS__) \
 	X(13, le __VA_OPT__(,) __VA_ARGS__)
 
+/* The gadgets of one family, one per condition in encoding order, as the
+ * elements of an initializer list:
+ * UML_ARM64_CONDITION_GADGETS(uml_arm64_gadget_branch_, _inline) lists
+ * uml_arm64_gadget_branch_eq_inline, uml_arm64_gadget_branch_ne_inline, ... */
+#define UML_ARM64_CONDITION_GADGET(index, name, prefix, suffix) \
+	prefix##name##suffix,
+#define UML_ARM64_CONDITION_GADGETS(prefix, suffix) \
+	UML_ARM64_CONDITIONS(UML_ARM64_CONDITION_GADGET, prefix, suffix)
+
+/* The sixteen DMB and DSB options, expanded as UML_ARM64_CONDITIONS is; and
+ * UML_ARM64_BARRIER_GADGETS(uml_arm64_gadget_dmb_) lists uml_arm64_gadget_dmb_0
+ * to uml_arm64_gadget_dmb_15 as the elements of an initializer list. */
+#define UML_ARM64_BARRIER_OPTIONS(X, ...) \
+	X(0 __VA_OPT__(,) __VA_ARGS__) \
+	X(1 __VA_OPT__(,) __VA_ARGS__) \
+	X(2 __VA_OPT__(,) __VA_ARGS__) \
+	X(3 __VA_OPT__(,) __VA_ARGS__) \
+	X(4 __VA_OPT__(,) __VA_ARGS__) \
+	X(5 __VA_OPT__(,) __VA_ARGS__) \
+	X(6 __VA_OPT__(,) __VA_ARGS__) \
+	X(7 __VA_OPT__(,) __VA_ARGS__) \
+	X(8 __VA_OPT__(,) __VA_ARGS__) \
+	X(9 __VA_OPT__(,) __VA_ARGS__) \
+	X(10 __VA_OPT__(,) __VA_ARGS__) \
+	X(11 __VA_OPT__(,) __VA_ARGS__) \
+	X(12 __VA_OPT__(,) __VA_ARGS__) \
+	X(13 __VA_OPT__(,) __VA_ARGS__) \
+	X(14 __VA_OPT__(,) __VA_ARGS__) \
+	X(15 __VA_OPT__(,) __VA_ARGS__)
+#define UML_ARM64_BARRIER_GADGET(option, prefix) prefix##option,
+#define UML_ARM64_BARRIER_GADGETS(prefix) \
+	UML_ARM64_BARRIER_OPTIONS(UML_ARM64_BARRIER_GADGET, prefix)
+
 namespace uml::cpu::arm64::gadgets::selection {
 
 extern "C" {
@@ -1589,22 +1622,7 @@ UML_DECLARE_PSTATE_DAIF_IMMEDIATE(15)
 #define DECLARE_MEMORY_BARRIER_OPTION(option) \
 	DECLARE_MEMORY_BARRIER(dmb, option) \
 	DECLARE_MEMORY_BARRIER(dsb, option)
-DECLARE_MEMORY_BARRIER_OPTION(0)
-DECLARE_MEMORY_BARRIER_OPTION(1)
-DECLARE_MEMORY_BARRIER_OPTION(2)
-DECLARE_MEMORY_BARRIER_OPTION(3)
-DECLARE_MEMORY_BARRIER_OPTION(4)
-DECLARE_MEMORY_BARRIER_OPTION(5)
-DECLARE_MEMORY_BARRIER_OPTION(6)
-DECLARE_MEMORY_BARRIER_OPTION(7)
-DECLARE_MEMORY_BARRIER_OPTION(8)
-DECLARE_MEMORY_BARRIER_OPTION(9)
-DECLARE_MEMORY_BARRIER_OPTION(10)
-DECLARE_MEMORY_BARRIER_OPTION(11)
-DECLARE_MEMORY_BARRIER_OPTION(12)
-DECLARE_MEMORY_BARRIER_OPTION(13)
-DECLARE_MEMORY_BARRIER_OPTION(14)
-DECLARE_MEMORY_BARRIER_OPTION(15)
+UML_ARM64_BARRIER_OPTIONS(DECLARE_MEMORY_BARRIER_OPTION)
 #undef DECLARE_MEMORY_BARRIER_OPTION
 #undef DECLARE_MEMORY_BARRIER
 void uml_arm64_gadget_isb();
