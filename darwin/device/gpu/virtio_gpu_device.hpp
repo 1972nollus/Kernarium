@@ -188,6 +188,12 @@ private:
         std::uint64_t fenceCookie,
         std::optional<DeferredFence>* deferredFence,
         std::optional<std::uint32_t>* destroyedContextId);
+    /* Whether a 2D, Virgl or blob resource already holds the ID. */
+    [[nodiscard]] bool resourceIdInUse(std::uint32_t id) const noexcept
+    {
+        return resources_.contains(id) || virglResources_.contains(id) ||
+            blobResources_.contains(id);
+    }
     void releaseBlobScanout() noexcept;
     void clearScanout() noexcept;
     [[nodiscard]] protocol::GpuResponse presentReadback(

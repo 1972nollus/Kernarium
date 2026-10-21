@@ -1147,9 +1147,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             create->resourceId == protocol::invalidResourceId ||
             create->width == 0 || create->height == 0 ||
             create->depth == 0 || create->arraySize == 0 ||
-            resources_.contains(create->resourceId) ||
-            virglResources_.contains(create->resourceId) ||
-            blobResources_.contains(create->resourceId)) {
+            resourceIdInUse(create->resourceId)) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
@@ -1208,9 +1206,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             (create->flags & ~protocol::blobFlagMask) != 0 ||
             create->memory != protocol::blobMemoryHost3d ||
             create->entryCount != 0 ||
-            resources_.contains(create->resourceId) ||
-            virglResources_.contains(create->resourceId) ||
-            blobResources_.contains(create->resourceId)) {
+            resourceIdInUse(create->resourceId)) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
@@ -1507,9 +1503,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             !supportedFormat(create->format)) {
             return response(*header, protocol::GpuResponse::errorInvalidParameter);
         }
-        if (resources_.contains(create->resourceId) ||
-            virglResources_.contains(create->resourceId) ||
-            blobResources_.contains(create->resourceId)) {
+        if (resourceIdInUse(create->resourceId)) {
             return response(*header, protocol::GpuResponse::errorInvalidResource);
         }
         const auto size = pixelBufferSize(create->width, create->height);
