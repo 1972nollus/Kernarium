@@ -229,31 +229,24 @@ void readbackTracksClientDemandAndReconnects()
     const std::size_t frameRowBytes =
         static_cast<std::size_t>(extent) * uml::gpu::protocol::gpuBytesPerPixel;
     std::vector<std::uint8_t> frame(frameRowBytes * extent, 0x5aU);
-    display.update(
-        frame,
-        extent,
-        extent,
-        frameRowBytes,
-        uml::gpu::protocol::GpuFormat::b8g8r8a8Unorm,
-        0,
-        0,
-        0,
-        0,
-        scanoutWidth - 1U,
-        scanoutHeight);
+    /* Copies the top-left width x scanoutHeight of the frame to the origin. */
+    const auto update = [&](std::uint32_t width) {
+        display.update(
+            frame,
+            extent,
+            extent,
+            frameRowBytes,
+            uml::gpu::protocol::GpuFormat::b8g8r8a8Unorm,
+            0,
+            0,
+            0,
+            0,
+            width,
+            scanoutHeight);
+    };
+    update(scanoutWidth - 1U);
     require(display.needsFullCpuFallback());
-    display.update(
-        frame,
-        extent,
-        extent,
-        frameRowBytes,
-        uml::gpu::protocol::GpuFormat::b8g8r8a8Unorm,
-        0,
-        0,
-        0,
-        0,
-        scanoutWidth,
-        scanoutHeight);
+    update(scanoutWidth);
     require(!display.needsFullCpuFallback());
 
     disconnectClient(client);
