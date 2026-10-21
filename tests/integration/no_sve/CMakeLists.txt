@@ -2,26 +2,10 @@
 
 # The guest no-SVE test (run_guest_no_sve.py): on every host and engine the
 # guest shows no SVE.
-uml_add_guest_payload(UML_GUEST_NO_SVE_PROBE guest-no-sve-probe
+uml_add_freestanding_cxx_payload(UML_GUEST_NO_SVE_PROBE guest-no-sve-probe
     no_sve_probe.cpp
     COMMENT "Building the freestanding arm64 guest no-SVE probe"
-    COMPILE_OPTIONS
-        -std=c++20
-        -O2
-        -Wall
-        -Wextra
-        -Werror
-        -march=armv8-a
-        -mgeneral-regs-only
-        -ffreestanding
-        -fno-exceptions
-        -fno-rtti
-        -fno-stack-protector
-        -fno-asynchronous-unwind-tables
-        -fno-pic
-    LINK_OPTIONS
-        -Wl,-z,max-page-size=16384
-        -Wl,-s)
+    ARCH_OPTIONS -march=armv8-a -mgeneral-regs-only NO_PIC)
 
 foreach(_engine IN ITEMS gadgets jit)
     uml_add_guest_integration_test(

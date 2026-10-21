@@ -4,26 +4,10 @@
 # with SME for an engine whose SME support is control or better and skips,
 # naming the reason, otherwise; guest-sme-off-<engine> checks on every host
 # that a run with the policy forced off shows no SME.
-uml_add_guest_payload(UML_GUEST_SME_PROBE guest-sme-probe
+uml_add_freestanding_cxx_payload(UML_GUEST_SME_PROBE guest-sme-probe
     sme_probe.cpp
     COMMENT "Building the freestanding arm64 guest SME probe"
-    COMPILE_OPTIONS
-        -std=c++20
-        -O2
-        -Wall
-        -Wextra
-        -Werror
-        -march=armv8-a
-        -mgeneral-regs-only
-        -ffreestanding
-        -fno-exceptions
-        -fno-rtti
-        -fno-stack-protector
-        -fno-asynchronous-unwind-tables
-        -fno-pic
-    LINK_OPTIONS
-        -Wl,-z,max-page-size=16384
-        -Wl,-s)
+    ARCH_OPTIONS -march=armv8-a -mgeneral-regs-only NO_PIC)
 
 # Test support only: reports each engine's SME support level.
 add_executable(uml-sme-engine-support sme_engine_support.cpp)

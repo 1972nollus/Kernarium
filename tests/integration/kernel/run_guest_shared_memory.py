@@ -5,11 +5,11 @@
 The guest runs shared_memory_probe, which shares BPF arrays and ring buffers,
 a perf ring, PACKET_MMAP rings and io_uring rings between a kernel alias and
 the application's mapping, and checks both directions after the mapping
-exists. On the 4 KiB profile every kernel alias outside the linear map is a
-host-private copy of its frames unless the kernel maps it as whole aligned
-groups of four pages, so a view that stops following the other names the
-kernel memory that lost its sharing. An io_uring ring in the application's own
-scattered pages cannot be shared on that profile and must be refused.
+exists. Every kernel alias outside the linear map is a host-private copy of
+its frames unless the kernel maps it as whole aligned groups of four pages, so
+a view that stops following the other names the kernel memory that lost its
+sharing. An io_uring ring in the application's own scattered pages cannot be
+shared and must be refused.
 """
 
 from __future__ import annotations

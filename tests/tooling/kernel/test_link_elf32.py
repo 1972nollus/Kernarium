@@ -175,14 +175,14 @@ def main() -> int:
         first = assemble("first", FIRST)
         second = assemble("second", SECOND)
 
-        def link(output, *objects, layout="16k"):
+        def link(output, *objects, layout="64k"):
             return subprocess.run(
                 [sys.executable, "-I", str(arguments.linker),
-                 *(["--layout", layout] if layout != "16k" else []),
+                 *(["--layout", layout] if layout != "64k" else []),
                  str(output), *map(str, objects)],
                 stdin=subprocess.DEVNULL, capture_output=True, text=True)
 
-        for layout, base, align in (("16k", 0x10000, 0x10000),
+        for layout, base, align in (("64k", 0x10000, 0x10000),
                                     ("4k", 0x11000, 0x1000)):
             output = root / f"program-{layout}"
             result = link(output, first, second, layout=layout)
