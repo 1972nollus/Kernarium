@@ -32,11 +32,7 @@ using aarch32::SRType;
 
 namespace {
 
-constexpr unsigned fallback_n = 9;
-constexpr unsigned fallback_m = 10;
 constexpr unsigned writeback_m = 1;
-constexpr unsigned address_register = 8;
-constexpr unsigned temp0 = 0;
 
 } // namespace
 
