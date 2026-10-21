@@ -2842,6 +2842,66 @@ void malformed3dCommandsUseSpecificErrors()
     require(dependencyCallCount() == before);
 }
 
+/* RESOURCE_UNREF of a mapped blob queues an unmap action for the transport
+ * and keeps the blob, and its ID, until the action completes. A failed unmap
+ * leaves the blob mapped. A completed one retires it in the renderer. */
+void releasingAMappedBlobRetiresItWhenItsUnmapCompletes()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    const auto context = createContext(0xb01, protocol::venusCapsetId);
+    requireOk(device, requestBytes(context));
+
+    auto create = newRequest<protocol::GpuResourceCreateBlob>(
+        GpuCommand::resourceCreateBlob);
+    create.header.contextId = context.header.contextId;
+    create.resourceId = 0xb02;
+    create.memory = protocol::blobMemoryHost3d;
+    create.flags = protocol::blobFlagMappable;
+    create.size = protocol::hostVisibleSharedMemoryAlignment;
+    requireOk(device, requestBytes(create));
+    auto map = newRequest<protocol::GpuResourceMapBlob>(
+        GpuCommand::resourceMapBlob);
+    map.resourceId = create.resourceId;
+    requireResponse(device, requestBytes(map),
+        protocol::GpuResponse::okMapInfo);
+    completeAction(device);
+
+    auto unref = newRequest<protocol::GpuResourceReference>(
+        GpuCommand::resourceUnref);
+    unref.resourceId = create.resourceId;
+    const auto noAction = [&] {
+        return !device.takeSharedMemoryAction().has_value();
+    };
+    const auto released =
+        failEachAllocationBeforeCommit(device, requestBytes(unref), noAction);
+    require(responseType(released.response) ==
+        protocol::GpuResponse::okNoData);
+    const auto action = device.takeSharedMemoryAction();
+    require(action.has_value());
+    require(action->type == VirtioGpuDevice::SharedMemoryAction::Type::unmap);
+    require(action->resourceId == create.resourceId);
+    require(!device.takeSharedMemoryAction().has_value());
+    requireResponse(device, requestBytes(unref),
+        protocol::GpuResponse::errorInvalidParameter);
+
+    /* The unmap fails: the blob is mapped again, and nothing is retired. */
+    device.completeSharedMemoryAction(action->actionId, false);
+    require(dependencies.unrefResourceCount == 0);
+    requireResponse(device, requestBytes(create),
+        protocol::GpuResponse::errorInvalidParameter);
+    requireOk(device, requestBytes(unref));
+    const auto retry = device.takeSharedMemoryAction();
+    require(retry.has_value() && retry->actionId != action->actionId);
+
+    /* Until it completes the blob still holds its ID. */
+    requireResponse(device, requestBytes(create),
+        protocol::GpuResponse::errorInvalidParameter);
+    device.completeSharedMemoryAction(retry->actionId, true);
+    require(dependencies.unrefResourceCount == 1);
+    requireOk(device, requestBytes(create));
+}
+
 /* Whichever kind of resource holds an ID, 2D, Virgl or blob, no create
  * command takes the ID again: RESOURCE_CREATE_2D answers an invalid
  * resource, the others an invalid parameter. */
@@ -3309,6 +3369,7 @@ int main()
     blobScanoutUsesNativeTextureAndPersistentVncMapping();
     virglBlobScanoutPresentsItsGlTexture();
     malformed3dCommandsUseSpecificErrors();
+    releasingAMappedBlobRetiresItWhenItsUnmapCompletes();
     aHeldResourceIdIsNotCreatedAgain();
     theCursorQueueIsConsumedWithoutAReply();
     std::puts("Virtio-GPU command atomicity tests passed");
