@@ -124,62 +124,51 @@ set(_receipt_fields
     built_at_utc source_manifest_sha256 platform_contract_sha256
     mesa_base_commit vulkan_headers_base_commit
     venus_protocol_generated_sha256)
-set(_seen_receipt_fields)
+# A row is a field and its value, with no list separator in either. Each field
+# is known and appears once; _receipt_value_<field> holds its value.
 foreach(_row IN LISTS _receipt_rows)
     if(_row STREQUAL "" OR _row STREQUAL "field\tvalue")
         continue()
     endif()
-    string(REPLACE "\t" ";" _values "${_row}")
-    list(LENGTH _values _value_count)
-    if(NOT _value_count EQUAL 2)
+    if(NOT _row MATCHES "^([^\t;]*)\t([^\t;]*)$")
         message(FATAL_ERROR
             "Malformed Apple GPU build receipt row: ${_row}")
     endif()
-    list(GET _values 0 _field)
+    set(_field "${CMAKE_MATCH_1}")
+    set(_value "${CMAKE_MATCH_2}")
     list(FIND _receipt_fields "${_field}" _field_index)
-    list(FIND _seen_receipt_fields "${_field}" _seen_index)
-    if(_field_index EQUAL -1 OR NOT _seen_index EQUAL -1)
+    if(_field_index EQUAL -1 OR DEFINED _receipt_value_${_field})
         message(FATAL_ERROR
             "Unexpected or duplicate Apple GPU receipt field: ${_field}")
     endif()
-    list(APPEND _seen_receipt_fields "${_field}")
+    set(_receipt_value_${_field} "${_value}")
 endforeach()
-list(LENGTH _receipt_fields _expected_receipt_count)
-list(LENGTH _seen_receipt_fields _actual_receipt_count)
-if(NOT _actual_receipt_count EQUAL _expected_receipt_count)
-    message(FATAL_ERROR "Apple GPU build receipt is incomplete")
-endif()
-# The loop above admits each receipt field exactly once.
-function(_receipt_expect _field _expected)
-    foreach(_row IN LISTS _receipt_rows)
-        if(_row MATCHES "^${_field}\t(.*)$")
-            if(NOT CMAKE_MATCH_1 STREQUAL "${_expected}")
-                message(FATAL_ERROR
-                    "Apple GPU build receipt ${_field} is ${CMAKE_MATCH_1}, expected ${_expected}")
-            endif()
-            return()
-        endif()
-    endforeach()
-endfunction()
+foreach(_field IN LISTS _receipt_fields)
+    if(NOT DEFINED _receipt_value_${_field})
+        message(FATAL_ERROR "Apple GPU build receipt is incomplete")
+    endif()
+endforeach()
 # The manifest rows and source trees above identify what the prefix was built
 # from, and the platform contract is compared byte for byte. The receipt's
 # manifest, contract, and base-commit fields remain for older checkouts only.
+function(_receipt_expect _field _expected)
+    if(NOT _receipt_value_${_field} STREQUAL "${_expected}")
+        message(FATAL_ERROR
+            "Apple GPU build receipt ${_field} is ${_receipt_value_${_field}}, expected ${_expected}")
+    endif()
+endfunction()
 _receipt_expect(format 2)
 _receipt_expect(product apple-gpu-vulkan-experiment)
 _receipt_expect(platform "${PLATFORM}")
-foreach(_row IN LISTS _receipt_rows)
-    if(_row MATCHES "^venus_protocol_generated_sha256\t(.*)$")
-        string(LENGTH "${CMAKE_MATCH_1}" _length)
-        if(NOT CMAKE_MATCH_1 MATCHES "^[0-9a-f]+$" OR NOT _length EQUAL 64)
-            message(FATAL_ERROR
-                "Invalid protocol build identity: venus_protocol_generated_sha256")
-        endif()
-    endif()
-endforeach()
-foreach(_row IN LISTS _receipt_rows)
-    if(_row MATCHES "^(sdk_name|sdk_version|sdk_path|compiler|built_at_utc)\t$")
-        message(FATAL_ERROR
-            "Apple GPU build receipt has invalid ${CMAKE_MATCH_1}")
+string(LENGTH "${_receipt_value_venus_protocol_generated_sha256}" _length)
+if(NOT _receipt_value_venus_protocol_generated_sha256 MATCHES "^[0-9a-f]+$" OR
+   NOT _length EQUAL 64)
+    message(FATAL_ERROR
+        "Invalid protocol build identity: venus_protocol_generated_sha256")
+endif()
+foreach(_field IN ITEMS sdk_name sdk_version sdk_path compiler built_at_utc)
+    if(_receipt_value_${_field} STREQUAL "")
+        message(FATAL_ERROR "Apple GPU build receipt has invalid ${_field}")
     endif()
 endforeach()
 
