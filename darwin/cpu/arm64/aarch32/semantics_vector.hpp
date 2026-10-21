@@ -199,6 +199,26 @@ using Raw = std::uint64_t;
 	return static_cast<unsigned>(x.o.esize);
 }
 
+/* The QC bookkeeping of the saturating forms: each lane's result passes
+ * through take(), and finish() sets QC when any lane saturated. */
+class QcTally final {
+public:
+	Raw take(const Saturation &result) noexcept
+	{
+		saturated_ = saturated_ || result.saturated;
+		return result.raw;
+	}
+	[[nodiscard]] bool finish(Exec &x, bool completed) const noexcept
+	{
+		if (saturated_)
+			set_qc(x.cpu);
+		return completed;
+	}
+
+private:
+	bool saturated_ = false;
+};
+
 [[nodiscard]] inline i128 absolute(i128 value) noexcept
 {
 	return value < 0 ? -value : value;
