@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""The iPad automation script sends rotations and coordinate gestures.
+"""The iPad automation script sends rotations, coordinate gestures and Siri
+requests.
 
 `orientation` sets XCUIDevice's orientation only to one of the four interface
 orientations and otherwise just reports it. `tap --x --y` and `drag` name
@@ -100,6 +101,16 @@ class CoordinateTapTests(unittest.TestCase):
 
     def test_a_coordinate_tap_needs_both_offsets(self) -> None:
         self.assertTrue(refused_by_parser("tap", "--x", "12"))
+
+
+
+class SiriTests(unittest.TestCase):
+    def test_a_siri_request_carries_its_typed_text(self) -> None:
+        self.assertEqual(command("siri", "What time is it"),
+                         {"op": "siri", "text": "What time is it"})
+
+    def test_a_siri_request_needs_text(self) -> None:
+        self.assertTrue(refused_by_parser("siri"))
 
 
 if __name__ == "__main__":
