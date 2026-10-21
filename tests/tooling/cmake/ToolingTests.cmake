@@ -88,3 +88,14 @@ uml_add_tooling_test(
         --audit ${PROJECT_SOURCE_DIR}/scripts/audit-cmake-file-api.cmake
     LABELS audit;cpu
     TIMEOUT 240)
+
+# Every Apple product builds at the toolchain's one deployment target, so a
+# tree that caches another target, or is handed one, must fail to configure.
+uml_add_tooling_test(
+    NAME apple-deployment-floor
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_apple_deployment_floor.py
+        --cmake ${CMAKE_COMMAND}
+        --toolchain ${PROJECT_SOURCE_DIR}/cmake/toolchains/Apple.cmake
+    LABELS audit
+    TIMEOUT 120)

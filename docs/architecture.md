@@ -243,7 +243,10 @@ The macOS, iOS device, and iOS Simulator products build at a 27.0 minimum
 (`cmake/toolchains/Apple.cmake`). Their code therefore carries no availability
 guard, fallback path, or dependency build for a release older than that, and
 every macOS and iOS product dependency prefix and platform contract records
-the same 27.0 deployment target.
+the same 27.0 deployment target. The toolchain refuses any other
+`CMAKE_OSX_DEPLOYMENT_TARGET`, cached or passed, and an empty one takes the
+floor; a build tree configured before the floor moved is reconfigured with
+`--fresh` or in a new binary directory.
 
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted mainline
