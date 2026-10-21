@@ -10,8 +10,6 @@
 #include "cpu/arm64/aarch32/semantics_fp.hpp"
 #include "cpu/arm64/aarch32/semantics_vector.hpp"
 
-#include <iterator>
-
 namespace uml::cpu::arm64::aarch32::detail {
 
 namespace {
@@ -101,17 +99,13 @@ bool vqadd_sub(Exec &x, bool subtract)
 {
 	const unsigned bits = element_bits(x);
 	const bool is_unsigned = x.o.unsigned_;
-	bool saturated = false;
+	QcTally qc;
 	const bool completed = lanewise(x, [&](Raw n, Raw m, Raw) {
 		const i128 a = lane_value(n, bits, !is_unsigned);
 		const i128 b = lane_value(m, bits, !is_unsigned);
-		const Saturation result = sat_q(subtract ? a - b : a + b, bits, is_unsigned);
-		saturated = saturated || result.saturated;
-		return result.raw;
+		return qc.take(sat_q(subtract ? a - b : a + b, bits, is_unsigned));
 	});
-	if (saturated)
-		set_qc(x.cpu);
-	return completed;
+	return qc.finish(x, completed);
 }
 bool vqadd(Exec &x)
 {
@@ -125,16 +119,12 @@ bool vqsub(Exec &x)
 bool vqabs_neg(Exec &x, bool negate)
 {
 	const unsigned bits = element_bits(x);
-	bool saturated = false;
+	QcTally qc;
 	const bool completed = lanewise(x, [&](Raw, Raw m, Raw) {
 		const i128 value = lane_value(m, bits, true);
-		const Saturation result = sat_q(negate ? -value : absolute(value), bits, false);
-		saturated = saturated || result.saturated;
-		return result.raw;
+		return qc.take(sat_q(negate ? -value : absolute(value), bits, false));
 	});
-	if (saturated)
-		set_qc(x.cpu);
-	return completed;
+	return qc.finish(x, completed);
 }
 bool vqabs(Exec &x)
 {
@@ -149,17 +139,12 @@ bool vqneg(Exec &x)
 bool vqdmulh_family(Exec &x, bool round)
 {
 	const unsigned bits = element_bits(x);
-	bool saturated = false;
+	QcTally qc;
 	const auto element = [&](Raw n, Raw m, Raw) {
 		const i128 doubled = 2 * lane_value(n, bits, true) * lane_value(m, bits, true);
-		const Saturation result = sat_q(shift_right(doubled, bits, round), bits, false);
-		saturated = saturated || result.saturated;
-		return result.raw;
+		return qc.take(sat_q(shift_right(doubled, bits, round), bits, false));
 	};
-	const bool completed = x.o.scalar_form ? lanewise_scalar(x, element) : lanewise(x, element);
-	if (saturated)
-		set_qc(x.cpu);
-	return completed;
+	return qc.finish(x, x.o.scalar_form ? lanewise_scalar(x, element) : lanewise(x, element));
 }
 bool vqdmulh(Exec &x)
 {
@@ -431,35 +416,27 @@ bool vmlal_s(Exec &x)
 bool vqdmull(Exec &x)
 {
 	const unsigned bits = element_bits(x);
-	bool saturated = false;
+	QcTally qc;
 	const bool completed = long_lanes(x, false, x.o.scalar_form, [&](Raw n, Raw m, Raw) {
-		const Saturation product =
-			sat_q(2 * lane_value(n, bits, true) * lane_value(m, bits, true), 2U * bits, false);
-		saturated = saturated || product.saturated;
-		return product.raw;
+		return qc.take(
+			sat_q(2 * lane_value(n, bits, true) * lane_value(m, bits, true), 2U * bits, false));
 	});
-	if (saturated)
-		set_qc(x.cpu);
-	return completed;
+	return qc.finish(x, completed);
 }
 
 bool vqdmlal(Exec &x)
 {
 	const unsigned bits = element_bits(x);
 	const bool add = x.o.add;
-	bool saturated = false;
+	QcTally qc;
 	const bool completed = long_lanes(x, false, x.o.scalar_form, [&](Raw n, Raw m, Raw d) {
-		const Saturation product =
-			sat_q(2 * lane_value(n, bits, true) * lane_value(m, bits, true), 2U * bits, false);
+		const Raw product = qc.take(
+			sat_q(2 * lane_value(n, bits, true) * lane_value(m, bits, true), 2U * bits, false));
 		const i128 accumulated = lane_value(d, 2U * bits, true)
-			+ (add ? 1 : -1) * lane_value(product.raw, 2U * bits, true);
-		const Saturation result = sat_q(accumulated, 2U * bits, false);
-		saturated = saturated || product.saturated || result.saturated;
-		return result.raw;
+			+ (add ? 1 : -1) * lane_value(product, 2U * bits, true);
+		return qc.take(sat_q(accumulated, 2U * bits, false));
 	});
-	if (saturated)
-		set_qc(x.cpu);
-	return completed;
+	return qc.finish(x, completed);
 }
 
 bool vmovl(Exec &x)
@@ -481,16 +458,12 @@ bool vqmovn(Exec &x)
 	const unsigned bits = element_bits(x);
 	const bool source_unsigned = x.o.src_unsigned;
 	const bool destination_unsigned = x.o.dest_unsigned;
-	bool saturated = false;
+	QcTally qc;
 	const bool completed = narrow_lanes(x, [&](Raw, Raw m) {
-		const Saturation result =
-			sat_q(lane_value(m, 2U * bits, !source_unsigned), bits, destination_unsigned);
-		saturated = saturated || result.saturated;
-		return result.raw;
+		return qc.take(
+			sat_q(lane_value(m, 2U * bits, !source_unsigned), bits, destination_unsigned));
 	});
-	if (saturated)
-		set_qc(x.cpu);
-	return completed;
+	return qc.finish(x, completed);
 }
 
 /* VADDHN, VSUBHN and the rounding forms: the high half of the sum or
@@ -591,9 +564,8 @@ constexpr VectorEntry entries[] = {
 
 } // namespace
 
-const VectorEntry *neon_integer_entries(std::size_t &count) noexcept
+std::span<const VectorEntry> neon_integer_entries() noexcept
 {
-	count = std::size(entries);
 	return entries;
 }
 

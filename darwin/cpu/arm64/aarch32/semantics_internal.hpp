@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <span>
 
 /*
  * What the AArch32 semantic library's sources share (semantics.hpp): the
@@ -117,14 +118,14 @@ struct VectorEntry final {
 };
 
 /* The handlers each source file defines. */
-[[nodiscard]] const VectorEntry *vector_move_entries(std::size_t &count) noexcept;
-[[nodiscard]] const VectorEntry *neon_integer_entries(std::size_t &count) noexcept;
-[[nodiscard]] const VectorEntry *neon_shift_entries(std::size_t &count) noexcept;
-[[nodiscard]] const VectorEntry *vector_float_entries(std::size_t &count) noexcept;
-[[nodiscard]] const VectorEntry *armv8_float_entries(std::size_t &count) noexcept;
-[[nodiscard]] const VectorEntry *armv8_integer_entries(std::size_t &count) noexcept;
-[[nodiscard]] const VectorEntry *crypto_entries(std::size_t &count) noexcept;
-[[nodiscard]] const VectorEntry *bf16_entries(std::size_t &count) noexcept;
+[[nodiscard]] std::span<const VectorEntry> vector_move_entries() noexcept;
+[[nodiscard]] std::span<const VectorEntry> neon_integer_entries() noexcept;
+[[nodiscard]] std::span<const VectorEntry> neon_shift_entries() noexcept;
+[[nodiscard]] std::span<const VectorEntry> vector_float_entries() noexcept;
+[[nodiscard]] std::span<const VectorEntry> armv8_float_entries() noexcept;
+[[nodiscard]] std::span<const VectorEntry> armv8_integer_entries() noexcept;
+[[nodiscard]] std::span<const VectorEntry> crypto_entries() noexcept;
+[[nodiscard]] std::span<const VectorEntry> bf16_entries() noexcept;
 
 [[nodiscard]] const OpInfo &op_info(Form form) noexcept;
 
@@ -215,7 +216,7 @@ public:
 	{
 		std::memcpy(cpu.vectors[n >> 2].bytes.data() + 4U * (n & 3U), &value, 4);
 	}
-	/* The bytes of D(n) from `offset`, for the element accesses. */
+	/* The bytes of D(n), for the element accesses. */
 	[[nodiscard]] std::byte *d_bytes(unsigned n) noexcept
 	{
 		return cpu.vectors[n >> 1].bytes.data() + 8U * (n & 1U);
@@ -262,8 +263,7 @@ public:
 	 * in T32, in the current instruction set. */
 	void branch_write_pc(std::uint32_t address) noexcept
 	{
-		cpu.pc = thumb ? t32_key(address & ~1U) : a32_key(address & ~3U);
-		pc_written = true;
+		branch_to(thumb, address);
 	}
 	/* BranchWritePC() after SelectInstrSet(): a BL or BLX immediate. */
 	void branch_to(bool to_thumb, std::uint32_t address) noexcept
@@ -307,23 +307,24 @@ public:
 		result.event = StepEvent::fatal;
 		return false;
 	}
-	bool raise_fault(std::uint32_t address,
-		::uml::memory::MemoryAccess access) noexcept
+	bool raise_memory(std::uint32_t address, ::uml::memory::MemoryAccess access,
+		bool alignment) noexcept
 	{
 		result.event = StepEvent::memory_fault;
-		result.alignment = false;
+		result.alignment = alignment;
 		result.access = access;
 		result.fault_address = address;
 		return false;
 	}
+	bool raise_fault(std::uint32_t address,
+		::uml::memory::MemoryAccess access) noexcept
+	{
+		return raise_memory(address, access, false);
+	}
 	bool raise_alignment(std::uint32_t address,
 		::uml::memory::MemoryAccess access) noexcept
 	{
-		result.event = StepEvent::memory_fault;
-		result.alignment = true;
-		result.access = access;
-		result.fault_address = address;
-		return false;
+		return raise_memory(address, access, true);
 	}
 
 	/* Memory. read() and write() are single accesses of up to a page

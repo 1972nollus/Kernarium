@@ -243,7 +243,10 @@ The macOS, iOS device, and iOS Simulator products build at a 27.0 minimum
 (`cmake/toolchains/Apple.cmake`). Their code therefore carries no availability
 guard, fallback path, or dependency build for a release older than that, and
 every macOS and iOS product dependency prefix and platform contract records
-the same 27.0 deployment target.
+the same 27.0 deployment target. The toolchain refuses any other
+`CMAKE_OSX_DEPLOYMENT_TARGET`, cached or passed, and an empty one takes the
+floor; a build tree configured before the floor moved is reconfigured with
+`--fresh` or in a new binary directory.
 
 Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted mainline
@@ -1236,7 +1239,8 @@ the pinned Arm AArch32 XML and its Decode pseudocode. It is a CPU-layer
 `shared` target that includes no engine, so the gadget engine, the JIT and the
 semantic library link the same one, and it implements the Armv8-A AArch32 EL0
 profile: whatever the profile lacks is undefined, never guessed. Its
-[README](../darwin/cpu/arm64/aarch32/README.md) holds the contract.
+interface is `cpu/arm64/aarch32/decode.hpp`, and its
+[README](../darwin/cpu/arm64/aarch32/README.md) holds the profile's choices.
 
 The AArch32 semantic library
 ([`cpu/arm64/aarch32/semantics.hpp`](../darwin/cpu/arm64/aarch32/semantics.hpp))
@@ -1510,9 +1514,7 @@ Simulator both are its application's `tmp`, too long for `sun_path`, so it uses
 `/tmp/uml-kern<pid>`. The run removes it when it returns, and every terminating
 signal and kernel-driven exit the process observes removes it too; only a
 process killed outright leaves it, and the next run removes the directories of
-runs that have exited. It also removes the `/tmp/uml-kern<pid>-mconsole`
-sockets left by exited runs of older builds, which bound the console loose in
-`/tmp`. An iOS device uses its application temporary directory
+runs that have exited. An iOS device uses its application temporary directory
 itself and removes a socket left there before booting. Every such path must
 fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
 rather than truncated or moved. The guest prints the console's path when it

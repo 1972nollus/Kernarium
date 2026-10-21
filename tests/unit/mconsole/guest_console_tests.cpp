@@ -43,6 +43,14 @@ std::string consolePath()
 	return processLocation().console;
 }
 
+/* The host narrows the guest's console to its owner once it sends to it. */
+void requireOwnerOnly(const std::string &path)
+{
+	struct stat details {};
+	require(::lstat(path.c_str(), &details) == 0 &&
+		(details.st_mode & 0777) == (S_IRUSR | S_IWUSR));
+}
+
 void observeRequests(int descriptor, std::vector<std::string> &requests)
 {
 	sockaddr_un client {};
@@ -121,6 +129,7 @@ void aFailedSuspendFallsBackToStop()
 	require(suspension == ::uml::device::GuestSuspension::managementStop);
 	require(requests ==
 		std::vector<std::string> {"suspend", "sysrq s", "stop"});
+	requireOwnerOnly(consolePath());
 	(void)::close(server);
 }
 
@@ -163,36 +172,6 @@ void aKernelWithoutSuspendIsStoppedAtOnce()
 	(void)::close(server);
 }
 
-void answerOneRequest(int descriptor, std::string_view answer,
-	std::vector<std::string> &requests)
-{
-	sockaddr_un client {};
-	socklen_t clientLength {};
-	if (!awaitRequest(descriptor, 10000))
-		return;
-	requests.push_back(receiveRequest(descriptor, client, clientLength));
-	require(sendReply(descriptor, client, clientLength, 0U, answer));
-}
-
-/* The power key's wake is one request, whatever the host last asked for. */
-void aWakeSendsOneWakeRequest()
-{
-	const ::uml::device::GuestConsoleRun run {true};
-	const auto path = consolePath();
-	/* No guest console yet: nothing answers and nothing waits. */
-	require(!::uml::device::wake_guest());
-	const int server = bindServer(path);
-	std::vector<std::string> requests;
-	std::thread observer {answerOneRequest, server, "running",
-		std::ref(requests)};
-	const bool answered = ::uml::device::wake_guest();
-	observer.join();
-	require(answered);
-	require(requests == std::vector<std::string> {"wake"});
-	require(!awaitRequest(server, 200));
-	(void)::close(server);
-}
-
 /* Answers one request with `answer` and `error` after `delayMs`. A client
  * that stopped waiting has removed its socket, so that reply goes nowhere. */
 void answerLater(int descriptor, std::string_view answer, std::uint32_t error,
@@ -207,10 +186,11 @@ void answerLater(int descriptor, std::string_view answer, std::uint32_t error,
 	(void)sendReply(descriptor, client, clientLength, error, answer);
 }
 
-::uml::device::GuestRequest answeredTrim(int server,
-	const std::function<::uml::device::GuestRequest()> &request,
-	std::string_view answer, std::uint32_t error, int delayMs,
-	std::string_view expected)
+/* Runs `request` while the console answers its command, which must be
+ * `expected`, and returns the result. */
+template<typename Request>
+auto answered(int server, Request &&request, std::string_view answer,
+	std::uint32_t error, int delayMs, std::string_view expected)
 {
 	std::vector<std::string> requests;
 	std::thread observer {answerLater, server, answer, error, delayMs,
@@ -219,6 +199,43 @@ void answerLater(int descriptor, std::string_view answer, std::uint32_t error,
 	observer.join();
 	require(requests == std::vector<std::string> {std::string {expected}});
 	return result;
+}
+
+/* The power key's wake is one request, whatever the host last asked for. */
+void aWakeSendsOneWakeRequest()
+{
+	const ::uml::device::GuestConsoleRun run {true};
+	const auto path = consolePath();
+	/* No guest console yet: nothing answers and nothing waits. */
+	require(!::uml::device::wake_guest());
+	const int server = bindServer(path);
+	require(answered(server, ::uml::device::wake_guest, "running", 0U, 0,
+		"wake"));
+	requireOwnerOnly(path);
+	/* Only a guest that did it has woken. */
+	require(!answered(server, ::uml::device::wake_guest, "Unknown command",
+		1U, 0, "wake"));
+	require(!awaitRequest(server, 200));
+	(void)::close(server);
+}
+
+/* A sync is one emergency sync, which counts only if the guest started it. */
+void aWritebackIsOneEmergencySync()
+{
+	using ::uml::device::request_guest_writeback;
+	const ::uml::device::GuestConsoleRun run {true};
+	const auto path = consolePath();
+	require(!request_guest_writeback(0U));
+	const int server = bindServer(path);
+	const auto writeback = [] { return request_guest_writeback(0U); };
+	require(answered(server, writeback, "SysRq : Emergency Sync", 0U, 0,
+		"sysrq s"));
+	requireOwnerOnly(path);
+	/* A guest with magic SysRq disabled takes the request and does nothing. */
+	require(!answered(server, writeback, "SysRq : This sysrq operation is "
+		"disabled.", 0U, 0, "sysrq s"));
+	require(!awaitRequest(server, 200));
+	(void)::close(server);
 }
 
 /* Turning trimming on or off is one request, which a kernel without the
@@ -232,11 +249,12 @@ void trimmingIsSwitchedByOneRequest()
 	/* No guest console yet: nothing is sent and nothing waits. */
 	require(set_guest_page_cache_trim(true) == GuestRequest::unreachable);
 	const int server = bindServer(path);
-	require(answeredTrim(server, [] { return set_guest_page_cache_trim(true); },
+	require(answered(server, [] { return set_guest_page_cache_trim(true); },
 			"on", 0U, 0, "trim on") == GuestRequest::done);
-	require(answeredTrim(server, [] { return set_guest_page_cache_trim(false); },
+	requireOwnerOnly(path);
+	require(answered(server, [] { return set_guest_page_cache_trim(false); },
 			"off", 0U, 0, "trim off") == GuestRequest::done);
-	require(answeredTrim(server, [] { return set_guest_page_cache_trim(true); },
+	require(answered(server, [] { return set_guest_page_cache_trim(true); },
 			"Unknown command", 1U, 0, "trim on") == GuestRequest::refused);
 	require(!awaitRequest(server, 200));
 	(void)::close(server);
@@ -250,7 +268,7 @@ void aTrimPassIsWaitedForUpToItsBound()
 	using ::uml::device::trim_guest_page_cache;
 	const ::uml::device::GuestConsoleRun run {true};
 	const int server = bindServer(consolePath());
-	require(answeredTrim(server, [] { return trim_guest_page_cache(8000U); },
+	require(answered(server, [] { return trim_guest_page_cache(8000U); },
 			"trimmed 4096 KiB in 3 ms, compacted in 40 ms, "
 			"released 4096 KiB in 2 ms",
 			0U, 2500,
@@ -258,7 +276,7 @@ void aTrimPassIsWaitedForUpToItsBound()
 	/* The reply comes 2.5 seconds late; the request gives up long
 	 * before, and before an ordinary request's two seconds. */
 	std::chrono::steady_clock::duration waited {};
-	require(answeredTrim(server,
+	require(answered(server,
 			[&waited] {
 				const auto start = std::chrono::steady_clock::now();
 				const auto result = trim_guest_page_cache(200U);
@@ -462,41 +480,29 @@ void aRunRemovesOnlyWhatExitedRunsLeft()
 	const auto liveRun = parent / ("uml-kern" + live);
 	const auto padded = parent / ("uml-kern0" + dead);
 	const auto file = parent / ("uml-kern" + std::to_string(exitedPid()));
-	/* Older builds bound the console in /tmp itself, the path under test. */
-	const std::filesystem::path legacyDirectory {"/tmp"};
-	const auto legacy = legacyDirectory / ("uml-kern" + dead + "-mconsole");
-	const auto liveLegacy =
-		legacyDirectory / ("uml-kern" + live + "-mconsole");
-	const auto legacyFile = legacyDirectory /
-		("uml-kern" + std::to_string(exitedPid()) + "-mconsole");
-	const auto misplacedLegacy = parent / ("uml-kern" + dead + "-mconsole");
-	for (const auto &directory : {abandoned, liveRun, padded})
+	/* A name that only begins like a run's. */
+	const auto foreign = parent / ("uml-kern" + dead + "-mconsole");
+	/* init is a live process that this user may not signal. */
+	const auto unsignalable = parent / "uml-kern1";
+	for (const auto &directory :
+		{abandoned, liveRun, padded, foreign, unsignalable})
 		require(std::filesystem::create_directory(directory));
 	const int abandonedConsole = bindServer(abandoned / "mconsole");
-	const int legacyConsole = bindServer(legacy);
-	const int liveLegacyConsole = bindServer(liveLegacy);
-	const int misplacedConsole = bindServer(misplacedLegacy);
 	createFile(file);
-	createFile(legacyFile);
 
 	{
 		const ::uml::device::GuestConsoleRun run {true};
 	}
-	/* Only an exited process's run directory, and its loose console socket
-	 * in /tmp, go. A live run's entries, another program's names, anything
-	 * of another file type and a console name outside /tmp stay. */
+	/* Only an exited process's run directory goes. A live run's, one this
+	 * user may not signal, another program's names and anything of another
+	 * file type stay. */
 	require(!std::filesystem::exists(abandoned));
-	require(!std::filesystem::exists(legacy));
 	require(directoryExists(liveRun) && directoryExists(padded) &&
+		directoryExists(unsignalable) && directoryExists(foreign) &&
 		std::filesystem::is_regular_file(file));
-	require(socketExists(liveLegacy) && socketExists(misplacedLegacy) &&
-		std::filesystem::is_regular_file(legacyFile));
 
-	for (const int descriptor : {abandonedConsole, legacyConsole,
-		     liveLegacyConsole, misplacedConsole})
-		(void)::close(descriptor);
-	for (const auto &path :
-		{liveRun, padded, file, liveLegacy, legacyFile, misplacedLegacy})
+	(void)::close(abandonedConsole);
+	for (const auto &path : {liveRun, padded, file, foreign, unsignalable})
 		std::filesystem::remove_all(path);
 }
 
@@ -504,6 +510,9 @@ void aRunRemovesOnlyWhatExitedRunsLeft()
  * directory. */
 void runPrivately(void (*group)())
 {
+	/* The guest's console is not narrowed to its owner until the host
+	 * sends to it, whatever the umask. */
+	(void)::umask(0);
 	const uml::testing::PrivateTemporaryDirectory temporary {
 		"uml-console-test.XXXXXX"};
 	require(std::filesystem::path {processLocation().directory}
@@ -531,6 +540,8 @@ int main(int argc, char **argv)
 		});
 	} else if (selected == "wake") {
 		runPrivately(aWakeSendsOneWakeRequest);
+	} else if (selected == "writeback") {
+		runPrivately(aWritebackIsOneEmergencySync);
 	} else if (selected == "suspend-failure") {
 		runPrivately([] {
 			aFailedSuspendFallsBackToStop();

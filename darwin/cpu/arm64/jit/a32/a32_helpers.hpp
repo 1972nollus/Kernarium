@@ -29,8 +29,7 @@ namespace uml::cpu::arm64::jit::a32 {
 
 /* Library-exit counters, off by default: with counting enabled every call of
  * uml_arm64_jit_a32_execute adds to the count of the form it executed, so
- * that a test can require a lowered form to stay inline from a clean state
- * (the SVE counters' counterpart). */
+ * that a test can require a lowered form to stay inline from a clean state. */
 void count_helper_exits(bool enable) noexcept;
 [[nodiscard]] std::uint64_t helper_exits(aarch32::Form form) noexcept;
 [[nodiscard]] std::uint64_t helper_exit_total() noexcept;

@@ -31,38 +31,20 @@ bool exec_register_transfer(Exec &x, const OpInfo &info)
 	if ((address & (alignment - 1U)) != 0U)
 		return x.raise_alignment(address, access);
 	const unsigned d = static_cast<unsigned>(o.d);
-	if (size == 2U) {
-		/* H(d): the half word in the low 16 bits of S(d), the rest zero. */
-		if (load) {
-			std::uint16_t half;
-			if (!x.read(address, &half, 2))
-				return false;
-			x.set_s_reg(d, half);
-			return true;
-		}
-		const auto half = static_cast<std::uint16_t>(x.s_reg(d));
-		return x.write(address, &half, 2);
-	}
-	if (size == 4U) {
-		if (load) {
-			std::uint32_t word;
-			if (!x.read(address, &word, 4))
-				return false;
-			x.set_s_reg(d, word);
-			return true;
-		}
-		const std::uint32_t word = x.s_reg(d);
-		return x.write(address, &word, 4);
-	}
+	/* The transfer moves the low `size` bytes of a doubleword: H(d) and S(d)
+	 * are the low halfword and word of S(d), and a load zeroes the rest. */
+	std::uint64_t value = 0;
 	if (load) {
-		std::uint64_t value;
-		if (!x.read(address, &value, 8))
+		if (!x.read(address, &value, size))
 			return false;
-		x.set_d_reg(d, value);
+		if (size == 8U)
+			x.set_d_reg(d, value);
+		else
+			x.set_s_reg(d, static_cast<std::uint32_t>(value));
 		return true;
 	}
-	const std::uint64_t value = x.d_reg(d);
-	return x.write(address, &value, 8);
+	value = size == 8U ? x.d_reg(d) : x.s_reg(d);
+	return x.write(address, &value, size);
 }
 
 /* VLDM and VSTM, increment-after or decrement-before, with optional

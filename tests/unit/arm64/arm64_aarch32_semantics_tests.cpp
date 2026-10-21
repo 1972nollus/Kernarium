@@ -463,8 +463,13 @@ void test_exclusives()
 
 	/* CLREX. */
 	(void)f.step_a32_word(ldrex_r1_r0);
+	f.cpu.exclusive_value2 = 7;
+	f.cpu.exclusive_version = 9;
 	result = f.step_a32_word(clrex);
-	require(result.event == StepEvent::retired && f.cpu.exclusive_size == 0, "CLREX clears the monitor");
+	require(result.event == StepEvent::retired && f.cpu.exclusive_address == ~std::uint64_t{0} &&
+			f.cpu.exclusive_key == 0 && f.cpu.exclusive_value == 0 && f.cpu.exclusive_value2 == 0 &&
+			f.cpu.exclusive_version == 0 && f.cpu.exclusive_size == 0,
+		"CLREX clears every field of the monitor");
 	(void)f.step_a32_word(strex_r2_r3_r0);
 	require(f.r(2) == 1, "STREX after CLREX fails");
 

@@ -6,8 +6,6 @@
 
 #include "cpu/arm64/aarch32/semantics_vector.hpp"
 
-#include <iterator>
-
 namespace uml::cpu::arm64::aarch32::detail {
 
 namespace {
@@ -194,7 +192,7 @@ bool vmrs(Exec &x)
 {
 	const Operands &o = x.o;
 	if (o.t == 15) {
-		x.cpu.nzcv = (x.cpu.nzcv & ~fpscr_nzcv_mask) | (x.cpu.a32_fpscr_nzcv & fpscr_nzcv_mask);
+		x.cpu.nzcv = (x.cpu.nzcv & ~fpscr_nzcv) | (x.cpu.a32_fpscr_nzcv & fpscr_nzcv);
 	} else {
 		x.set_reg(o.t, fpscr_of(x.cpu));
 	}
@@ -396,9 +394,8 @@ constexpr VectorEntry entries[] = {
 
 } // namespace
 
-const VectorEntry *vector_move_entries(std::size_t &count) noexcept
+std::span<const VectorEntry> vector_move_entries() noexcept
 {
-	count = std::size(entries);
 	return entries;
 }
 
