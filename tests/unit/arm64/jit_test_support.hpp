@@ -76,6 +76,37 @@ private:
 	int protection_;
 };
 
+/* `pages` guest pages of `backing` at `address` in one generation, unmapped
+ * again when it goes out of scope. Guest code is tracked for changes; data
+ * is guest-writable. */
+class GenerationMapping final {
+public:
+	GenerationMapping(unsigned long generation, std::uint64_t address,
+		const ::uml::testing::ScratchBacking &backing,
+		std::size_t pages, int protection, bool code)
+		: generation_{generation}, address_{address},
+		  length_{pages * DARWIN_UML_GUEST_PAGE_SIZE}
+	{
+		require(darwin_uml_static_vm_map_generation(generation_,
+			reinterpret_cast<void *>(address_), backing.descriptor(),
+			0, length_, protection, code ? 1 : 0, code ? 0 : 1) == 0);
+	}
+
+	~GenerationMapping()
+	{
+		require(darwin_uml_static_vm_unmap_generation(generation_,
+			reinterpret_cast<void *>(address_), length_) == 0);
+	}
+
+	GenerationMapping(const GenerationMapping &) = delete;
+	GenerationMapping &operator=(const GenerationMapping &) = delete;
+
+private:
+	unsigned long generation_;
+	std::uint64_t address_;
+	std::size_t length_;
+};
+
 inline int enter_jit(darwin_uml_guest_registers &registers,
 		     uml::testing::GuestFpTail &fp,
 		     unsigned long generation)
