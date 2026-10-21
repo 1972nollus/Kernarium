@@ -303,9 +303,7 @@ final class SystemBackgroundEffects: BackgroundEffects {
     var guestIsAndroid: Bool { EmulatorLauncher.shared.runningGuestIsAndroid }
 
     func pressPowerKey() {
-        let power = GuestSpecialKey.power.code
-        kernarium_runtime_loader_send_key(power, 1)
-        kernarium_runtime_loader_send_key(power, 0)
+        GuestSpecialKey.power.press()
     }
 
     var pictureInPictureCanStart: Bool { window?.canStart ?? false }

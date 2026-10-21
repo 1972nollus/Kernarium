@@ -248,7 +248,7 @@ struct ContentView: View {
             accessibilityLabel: key.accessibilityLabel,
             identifier: key.accessibilityIdentifier
         ) {
-            sendGuestKey(key.code)
+            key.press()
         }
     }
 
@@ -304,11 +304,6 @@ struct ContentView: View {
             serialConsole.resignFirstResponder()
             guestViewMode = .framebuffer
         }
-    }
-
-    private func sendGuestKey(_ code: UInt16) {
-        kernarium_runtime_loader_send_key(code, 1)
-        kernarium_runtime_loader_send_key(code, 0)
     }
 }
 
@@ -427,6 +422,12 @@ enum GuestSpecialKey: UInt16, CaseIterable, Identifiable {
 
     var id: Self { self }
     var code: UInt16 { rawValue }
+
+    /// Presses and releases the key.
+    func press() {
+        kernarium_runtime_loader_send_key(code, 1)
+        kernarium_runtime_loader_send_key(code, 0)
+    }
 
     var systemName: String {
         switch self {
