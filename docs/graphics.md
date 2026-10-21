@@ -1065,15 +1065,24 @@ identifier, such as a script or a unit test, shares `com.apple.metal` in that
 directory with every other unsandboxed process of the user, so what an
 emulator caches never reaches the host's other tools. Conformance campaigns
 are what fill the emulator's cache: a Vulkan CTS case that compiles shaders no
-earlier case compiled adds 8 to 23 KB of data, a repeated case adds nothing,
-and each pair stops near 1.1 GB while more pairs appear with concurrent
-processes. Every emulator that compiles reads the index of the first pairs, so
-a host that has run campaigns pays about 90 MiB and half a second for it in
-each. Nothing bounds the total. The cache is only an optimization, so removing
-the directory between campaigns is safe, and so is removing a shared
-`com.apple.metal` that earlier emulators grew. The GPU unit tests have no
-bundle identifier either, and keep their own cache for the same reason (see
-[`testing.md`](testing.md)).
+earlier case compiled adds 8 to 23 KB of data and about 160 bytes of index, a
+repeated case adds nothing, and each pair stops near 1.1 GB while more pairs
+appear with concurrent processes.
+
+The emulator bounds that cache the way Kernarium bounds its own, with the same
+limit. When it starts with a GPU device, before anything in the process can
+create a Metal device, it removes the cache once its `.list` index files
+together hold more than 1 MB, and says so on stderr
+(`darwin/device/gpu/metal_shader_cache.hpp`). That is the index of some 6,000
+CTS cases' new shaders, and the cache costs a few MiB at the limit instead of
+about 100 MiB at Metal's own ceiling. Processes that run on the cache when
+another one removes it keep the files they have open and lose only what they
+add afterwards, and a process that finds the directory gone creates it again,
+so shards that start together need no coordination. A process without a bundle
+identifier, such as a script or a unit test, shares `com.apple.metal` with
+every other such process and is not bounded: the GPU unit tests keep their own
+cache for this reason (see [`testing.md`](testing.md)), and a shared cache that
+earlier emulators grew may simply be deleted.
 
 ## Validation
 

@@ -61,6 +61,7 @@ function(uml_add_macos_embedded_kernel_app
         UML::VideoDevice
         UML::ConsoleDevice
         UML::GpuDevice
+        UML::GpuMetalShaderCache
         UML::VirtioInput)
     if(TARGET uml_network_provider)
         target_link_libraries("${TARGET_NAME}" PRIVATE UML::NetworkProvider)
