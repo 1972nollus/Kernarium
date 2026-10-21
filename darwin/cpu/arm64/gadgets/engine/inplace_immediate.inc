@@ -46,33 +46,9 @@ scalar_entry add_sub_immediate_inplace_\suffix\()_\reg, \forward, 1, Lipd\@, Lip
 	.endif
 	lsr x11, x8, #16
 	.if \bits64
-		.if \subtract
-			.if \flags
-	subs _scalar_x16, x15, x11
-			.else
-	sub _scalar_x16, x15, x11
-			.endif
-		.else
-			.if \flags
-	adds _scalar_x16, x15, x11
-			.else
-	add _scalar_x16, x15, x11
-			.endif
-		.endif
+	add_sub_op \subtract, \flags, _scalar_x16, x15, x11
 	.else
-		.if \subtract
-			.if \flags
-	subs _scalar_w16, w15, w11
-			.else
-	sub _scalar_w16, w15, w11
-			.endif
-		.else
-			.if \flags
-	adds _scalar_w16, w15, w11
-			.else
-	add _scalar_w16, w15, w11
-			.endif
-		.endif
+	add_sub_op \subtract, \flags, _scalar_w16, w15, w11
 	.endif
 	.if \flags
 	mrs x27, nzcv

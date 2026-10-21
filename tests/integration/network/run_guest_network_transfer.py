@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Prove guest TCP uploads through the SLiRP network reach the host promptly.
 
 The guest connects to a listener on the host's loopback through the SLiRP

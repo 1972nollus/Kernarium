@@ -294,9 +294,7 @@ trees, and the generator refuses a replay whose tree is not the recorded one.
 The codec's first line names the two trees rather than venus-protocol's replay
 commit, which changes whenever a replay is recreated, so the same pins always
 reproduce the same bytes; `--check` compares a checkout's codec with that
-generation. Release s35 predates these pins: it was built from port tree
-`e3c8c759`, whose codec is byte-identical to the pinned generation apart from
-that first line.
+generation.
 
 The converter is a pinned builder input too:
 `third_party/meson2hermetic/` records its upstream commit and a local series,
@@ -513,14 +511,11 @@ key survives. Signing also replaces the OTA certificates, and the tool then
 requires the system's and the recovery's `otacerts.zip` to trust the release
 certificate and no public AOSP or LineageOS certificate; the product clears
 `PRODUCT_EXTRA_RECOVERY_KEYS`, which would add LineageOS's release certificate
-to the recovery. Release `20261017-los24-r1` was signed without this
-replacement: its recovery and system trust the public AOSP test key, so anyone
-who can reach its ADB can sideload an update. Release r2 supersedes r1 for that
-reason, and r1 must not be used or distributed. The presigned F-Droid APKs keep
-their upstream signature and are named in the build receipt, which also records
-the SHA-256 of each platform certificate. The AOSP host tools need
-`sign_target_files_apks` (built with `otatools`). The key directory, its backup
-and the transfer to the builder are the maintainer's responsibility.
+to the recovery. The presigned F-Droid APKs keep their upstream signature and
+are named in the build receipt, which also records the SHA-256 of each platform
+certificate. The AOSP host tools need `sign_target_files_apks` (built with
+`otatools`). The key directory, its backup and the transfer to the builder are
+the maintainer's responsibility.
 
 ### Superseded releases
 
@@ -561,10 +556,9 @@ Kernarium represents one Android guest as a `.kern` directory containing:
 The kernel is supplied by the runtime framework and is not bundle payload. The
 manifest is provenance rather than a runtime compatibility token, and legacy
 bundles without it remain selectable. Missing files and malformed disk images
-fail when opened or parsed. Android fixes Kernarium's page selection at 4 KiB
-and appends the host-owned display density, ADB authorization policy, and
-tagged-pointer option at launch. Launches write persistent guest changes
-directly into the image inside the `.kern` bundle.
+fail when opened or parsed. Android appends the host-owned display density,
+ADB authorization policy, and tagged-pointer option at launch. Launches write
+persistent guest changes directly into the image inside the `.kern` bundle.
 
 How Kernarium keeps, relaunches, and copies a bundle is in
 [`../../Kernarium/README.md`](../../Kernarium/README.md#guest-storage).

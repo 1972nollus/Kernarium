@@ -691,18 +691,6 @@ public:
 		}
 	}
 
-#if UML_MEMORY_ALLOCATION_TESTING
-	[[nodiscard]] std::size_t size_for_testing() const noexcept
-	{
-		try {
-			std::lock_guard lock{mutex_};
-			return owners_.size();
-		} catch (...) {
-			return std::numeric_limits<std::size_t>::max();
-		}
-	}
-#endif
-
 private:
 	mutable std::mutex mutex_;
 	PageAddressMap<Ownership> owners_;
@@ -2583,13 +2571,6 @@ std::size_t native_domain_count() noexcept
 	if (auto *registry = native_address_space_registry(); registry != nullptr)
 		return registry->size_for_testing();
 	return 0;
-}
-
-std::size_t native_host_mapping_count() noexcept
-{
-	if (auto *registry = host_ownership_registry(); registry != nullptr)
-		return registry->size_for_testing();
-	return std::numeric_limits<std::size_t>::max();
 }
 
 } // namespace testing

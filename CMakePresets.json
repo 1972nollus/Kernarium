@@ -43,26 +43,6 @@
       }
     },
     {
-      "name": "macos-unit-gpu-venus",
-      "displayName": "macOS experimental Venus GPU tests",
-      "inherits": "macos-unit-gpu",
-      "cacheVariables": {
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
-        "UML_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/macos-arm64-26",
-        "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu-vulkan-experiment/macos-arm64"
-      }
-    },
-    {
-      "name": "macos-unit-gpu-venus-asan-ubsan",
-      "displayName": "macOS experimental Venus GPU tests with ASan/UBSan",
-      "inherits": "macos-unit-gpu-venus",
-      "cacheVariables": {
-        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
-        "CMAKE_OBJCXX_FLAGS": "-fsanitize=address,undefined",
-        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
-      }
-    },
-    {
       "name": "macos-tooling",
       "displayName": "macOS host tooling checks",
       "inherits": "macos-unit",
@@ -97,16 +77,6 @@
         "UML_BUILD_UNIT_TESTS": false,
         "UML_KERNEL_PRODUCT": "mainline-6.18",
         "UML_MAINLINE_KERNEL_SLICE": "x86_64"
-      }
-    },
-    {
-      "name": "macos-integration-venus",
-      "displayName": "macOS experimental Venus guest integration tests",
-      "inherits": "macos-integration",
-      "cacheVariables": {
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
-        "UML_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/macos-arm64-26",
-        "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu-vulkan-experiment/macos-arm64"
       }
     },
     {
@@ -235,16 +205,6 @@
       "targets": ["tooling-test-binaries", "gpu-unit-test-binaries", "architecture-audit"]
     },
     {
-      "name": "gpu-venus-test-binaries",
-      "configurePreset": "macos-unit-gpu-venus",
-      "targets": ["tooling-test-binaries", "gpu-unit-test-binaries", "architecture-audit"]
-    },
-    {
-      "name": "gpu-venus-test-binaries-asan-ubsan",
-      "configurePreset": "macos-unit-gpu-venus-asan-ubsan",
-      "targets": ["tooling-test-binaries", "gpu-unit-test-binaries", "architecture-audit"]
-    },
-    {
       "name": "macos-integration",
       "configurePreset": "macos-integration",
       "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
@@ -253,11 +213,6 @@
       "name": "macos-x86_64",
       "configurePreset": "macos-x86_64",
       "targets": ["uml-darwin", "tooling-test-binaries", "architecture-audit"]
-    },
-    {
-      "name": "macos-integration-venus",
-      "configurePreset": "macos-integration-venus",
-      "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
     },
     {
       "name": "macos-android17",
@@ -356,16 +311,6 @@
       "configurePreset": "macos-unit-gpu-asan-ubsan"
     },
     {
-      "name": "unit-gpu-venus",
-      "inherits": "unit-gpu",
-      "configurePreset": "macos-unit-gpu-venus"
-    },
-    {
-      "name": "unit-gpu-venus-asan-ubsan",
-      "inherits": "unit-gpu",
-      "configurePreset": "macos-unit-gpu-venus-asan-ubsan"
-    },
-    {
       "name": "tooling-gpu-vnc",
       "inherits": "test-defaults",
       "configurePreset": "macos-unit-gpu",
@@ -382,16 +327,6 @@
       "name": "tooling-gpu-vnc-asan-ubsan",
       "inherits": "tooling-gpu-vnc",
       "configurePreset": "macos-unit-gpu-asan-ubsan"
-    },
-    {
-      "name": "tooling-gpu-vnc-venus",
-      "inherits": "tooling-gpu-vnc",
-      "configurePreset": "macos-unit-gpu-venus"
-    },
-    {
-      "name": "tooling-gpu-vnc-venus-asan-ubsan",
-      "inherits": "tooling-gpu-vnc",
-      "configurePreset": "macos-unit-gpu-venus-asan-ubsan"
     },
     {
       "name": "integration-fast",
@@ -423,11 +358,6 @@
       }
     },
     {
-      "name": "integration-fast-venus",
-      "inherits": "integration-fast",
-      "configurePreset": "macos-integration-venus"
-    },
-    {
       "name": "tooling",
       "inherits": "test-defaults",
       "configurePreset": "macos-tooling",
@@ -452,11 +382,6 @@
       "execution": {
         "jobs": 1
       }
-    },
-    {
-      "name": "tooling-integration-venus",
-      "inherits": "tooling-integration",
-      "configurePreset": "macos-integration-venus"
     },
     {
       "name": "tooling-all",
@@ -556,33 +481,6 @@
         {"type": "build", "name": "gpu-unit-test-binaries-asan-ubsan"},
         {"type": "test", "name": "unit-gpu-asan-ubsan"},
         {"type": "test", "name": "tooling-gpu-vnc-asan-ubsan"}
-      ]
-    },
-    {
-      "name": "check-gpu-venus",
-      "steps": [
-        {"type": "configure", "name": "macos-unit-gpu-venus"},
-        {"type": "build", "name": "gpu-venus-test-binaries"},
-        {"type": "test", "name": "unit-gpu-venus"},
-        {"type": "test", "name": "tooling-gpu-vnc-venus"}
-      ]
-    },
-    {
-      "name": "check-gpu-venus-asan-ubsan",
-      "steps": [
-        {"type": "configure", "name": "macos-unit-gpu-venus-asan-ubsan"},
-        {"type": "build", "name": "gpu-venus-test-binaries-asan-ubsan"},
-        {"type": "test", "name": "unit-gpu-venus-asan-ubsan"},
-        {"type": "test", "name": "tooling-gpu-vnc-venus-asan-ubsan"}
-      ]
-    },
-    {
-      "name": "check-integration-venus",
-      "steps": [
-        {"type": "configure", "name": "macos-integration-venus"},
-        {"type": "build", "name": "macos-integration-venus"},
-        {"type": "test", "name": "tooling-integration-venus"},
-        {"type": "test", "name": "integration-fast-venus"}
       ]
     },
     {

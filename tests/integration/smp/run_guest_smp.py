@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Verify that Darwin UML runs guest work on multiple host cores."""
 
 from __future__ import annotations

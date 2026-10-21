@@ -20,22 +20,6 @@ FORBIDDEN_PATHS = {
     "system/bin/snapuserd_ramdisk",
     "system/etc/init/snapuserd.rc",
 }
-MODULE_METADATA = {
-    "modules.alias",
-    "modules.alias.bin",
-    "modules.builtin",
-    "modules.builtin.alias.bin",
-    "modules.builtin.modinfo",
-    "modules.dep",
-    "modules.dep.bin",
-    "modules.devname",
-    "modules.load",
-    "modules.options",
-    "modules.order",
-    "modules.softdep",
-    "modules.symbols",
-    "modules.symbols.bin",
-}
 
 
 def error(message: str) -> SystemExit:
@@ -89,10 +73,9 @@ def main() -> None:
 
     for name, entry in entries.items():
         path = PurePosixPath(name)
-        lowered = path.name.lower()
         if name in FORBIDDEN_PATHS:
             fail(f"forbidden module or snapshot helper remains: {name}")
-        if lowered.endswith(".ko") or ".ko." in lowered or lowered in MODULE_METADATA:
+        if android_image.is_module_payload(path.name):
             fail(f"loadable-module payload remains: {name}")
         if entry.payload is not None and stat.S_ISLNK(entry.mode):
             target = entry.payload.decode("utf-8", errors="strict")

@@ -588,33 +588,35 @@ namespace uml::cpu::arm64::gadgets::selection {
 	return opcode == 10U && !alternate ? cmlt[shape] : nullptr;
 }
 
+/* The eight shapes of an FP vector gadget family: scalar H, S and D, then
+ * 4H, 8H, 2S, 4S and 2D. */
+#define UML_SIMD_FLOATING_SHAPES(name) \
+	std::array<Gadget, 8>{ \
+		uml_arm64_gadget_simd_##name##_h, \
+		uml_arm64_gadget_simd_##name##_s, \
+		uml_arm64_gadget_simd_##name##_d, \
+		uml_arm64_gadget_simd_##name##_4h, \
+		uml_arm64_gadget_simd_##name##_8h, \
+		uml_arm64_gadget_simd_##name##_2s, \
+		uml_arm64_gadget_simd_##name##_4s, \
+		uml_arm64_gadget_simd_##name##_2d}
+
 [[nodiscard]] Gadget simd_floating_compare_gadget(
 	const detail::SimdFloatingCompareDecode &decoded) noexcept
 {
-#define UML_SIMD_FLOATING_COMPARE_GADGETS(name) \
-	std::array<Gadget, 8>{ \
-		uml_arm64_gadget_simd_fcmp_##name##_h, \
-		uml_arm64_gadget_simd_fcmp_##name##_s, \
-		uml_arm64_gadget_simd_fcmp_##name##_d, \
-		uml_arm64_gadget_simd_fcmp_##name##_4h, \
-		uml_arm64_gadget_simd_fcmp_##name##_8h, \
-		uml_arm64_gadget_simd_fcmp_##name##_2s, \
-		uml_arm64_gadget_simd_fcmp_##name##_4s, \
-		uml_arm64_gadget_simd_fcmp_##name##_2d}
-	static constexpr auto equal = UML_SIMD_FLOATING_COMPARE_GADGETS(eq);
-	static constexpr auto greater_equal = UML_SIMD_FLOATING_COMPARE_GADGETS(ge);
-	static constexpr auto greater = UML_SIMD_FLOATING_COMPARE_GADGETS(gt);
+	static constexpr auto equal = UML_SIMD_FLOATING_SHAPES(fcmp_eq);
+	static constexpr auto greater_equal = UML_SIMD_FLOATING_SHAPES(fcmp_ge);
+	static constexpr auto greater = UML_SIMD_FLOATING_SHAPES(fcmp_gt);
 	static constexpr auto absolute_greater_equal =
-		UML_SIMD_FLOATING_COMPARE_GADGETS(facge);
+		UML_SIMD_FLOATING_SHAPES(fcmp_facge);
 	static constexpr auto absolute_greater =
-		UML_SIMD_FLOATING_COMPARE_GADGETS(facgt);
-	static constexpr auto equal_zero = UML_SIMD_FLOATING_COMPARE_GADGETS(eq0);
+		UML_SIMD_FLOATING_SHAPES(fcmp_facgt);
+	static constexpr auto equal_zero = UML_SIMD_FLOATING_SHAPES(fcmp_eq0);
 	static constexpr auto greater_equal_zero =
-		UML_SIMD_FLOATING_COMPARE_GADGETS(ge0);
-	static constexpr auto greater_zero = UML_SIMD_FLOATING_COMPARE_GADGETS(gt0);
-	static constexpr auto less_equal_zero = UML_SIMD_FLOATING_COMPARE_GADGETS(le0);
-	static constexpr auto less_zero = UML_SIMD_FLOATING_COMPARE_GADGETS(lt0);
-#undef UML_SIMD_FLOATING_COMPARE_GADGETS
+		UML_SIMD_FLOATING_SHAPES(fcmp_ge0);
+	static constexpr auto greater_zero = UML_SIMD_FLOATING_SHAPES(fcmp_gt0);
+	static constexpr auto less_equal_zero = UML_SIMD_FLOATING_SHAPES(fcmp_le0);
+	static constexpr auto less_zero = UML_SIMD_FLOATING_SHAPES(fcmp_lt0);
 	using detail::SimdFloatingCompareOperation;
 	if (decoded.operation == SimdFloatingCompareOperation::equal)
 		return (decoded.zero ? equal_zero : equal)[decoded.shape];
@@ -653,6 +655,20 @@ namespace uml::cpu::arm64::gadgets::selection {
 	return (decoded.upper ? upper : lower)[decoded.shape];
 }
 
+#define UML_FIXED_TABLE(name) \
+	std::array<Gadget, 2>{uml_arm64_gadget_##name, \
+		uml_arm64_gadget_##name##_end}
+#define UML_SIMD_FIXED_TABLES(operation) \
+	std::array<std::array<Gadget, 2>, 8>{ \
+		UML_FIXED_TABLE(simd_fixed_##operation##_h), \
+		UML_FIXED_TABLE(simd_fixed_##operation##_s), \
+		UML_FIXED_TABLE(simd_fixed_##operation##_d), \
+		UML_FIXED_TABLE(simd_fixed_##operation##_4h), \
+		UML_FIXED_TABLE(simd_fixed_##operation##_8h), \
+		UML_FIXED_TABLE(simd_fixed_##operation##_2s), \
+		UML_FIXED_TABLE(simd_fixed_##operation##_4s), \
+		UML_FIXED_TABLE(simd_fixed_##operation##_2d)}
+
 [[nodiscard]] Gadget floating_to_integer_gadget(
 	const detail::FloatingToIntegerDecode &decoded, bool discard) noexcept
 {
@@ -665,9 +681,6 @@ namespace uml::cpu::arm64::gadgets::selection {
 		return reinterpret_cast<Gadget>(
 			first + (limit - first) / count * index);
 	};
-#define UML_FIXED_TABLE(name) \
-	std::array<Gadget, 2>{uml_arm64_gadget_##name, \
-		uml_arm64_gadget_##name##_end}
 #define UML_FLOATING_TO_GPR_FIXED(operation, suffix) \
 	std::array<std::array<Gadget, 2>, 6>{ \
 		UML_FIXED_TABLE(floating_to_gpr_fixed_##operation##_w_h##suffix), \
@@ -676,16 +689,6 @@ namespace uml::cpu::arm64::gadgets::selection {
 		UML_FIXED_TABLE(floating_to_gpr_fixed_##operation##_x_h##suffix), \
 		UML_FIXED_TABLE(floating_to_gpr_fixed_##operation##_x_s##suffix), \
 		UML_FIXED_TABLE(floating_to_gpr_fixed_##operation##_x_d##suffix)}
-#define UML_SIMD_FLOATING_TO_INTEGER_FIXED(operation) \
-	std::array<std::array<Gadget, 2>, 8>{ \
-		UML_FIXED_TABLE(simd_fixed_##operation##_h), \
-		UML_FIXED_TABLE(simd_fixed_##operation##_s), \
-		UML_FIXED_TABLE(simd_fixed_##operation##_d), \
-		UML_FIXED_TABLE(simd_fixed_##operation##_4h), \
-		UML_FIXED_TABLE(simd_fixed_##operation##_8h), \
-		UML_FIXED_TABLE(simd_fixed_##operation##_2s), \
-		UML_FIXED_TABLE(simd_fixed_##operation##_4s), \
-		UML_FIXED_TABLE(simd_fixed_##operation##_2d)}
 	static constexpr auto signed_fixed =
 		UML_FLOATING_TO_GPR_FIXED(fcvtzs, );
 	static constexpr auto unsigned_fixed =
@@ -695,12 +698,10 @@ namespace uml::cpu::arm64::gadgets::selection {
 	static constexpr auto unsigned_fixed_discard =
 		UML_FLOATING_TO_GPR_FIXED(fcvtzu, _discard);
 	static constexpr auto signed_simd_fixed =
-		UML_SIMD_FLOATING_TO_INTEGER_FIXED(fcvtzs);
+		UML_SIMD_FIXED_TABLES(fcvtzs);
 	static constexpr auto unsigned_simd_fixed =
-		UML_SIMD_FLOATING_TO_INTEGER_FIXED(fcvtzu);
-#undef UML_SIMD_FLOATING_TO_INTEGER_FIXED
+		UML_SIMD_FIXED_TABLES(fcvtzu);
 #undef UML_FLOATING_TO_GPR_FIXED
-#undef UML_FIXED_TABLE
 	if (decoded.fixed_point) {
 		const unsigned offset = decoded.fractional_bits - 1U;
 		if (!decoded.destination_gpr) {
@@ -749,29 +750,18 @@ namespace uml::cpu::arm64::gadgets::selection {
 		UML_FLOATING_TO_GPR(fcvtzu, _discard),
 		UML_FLOATING_TO_GPR(fcvtau, _discard)};
 #undef UML_FLOATING_TO_GPR
-#define UML_SIMD_FLOATING_TO_INTEGER(operation) \
-	std::array<Gadget, 8>{ \
-		uml_arm64_gadget_simd_##operation##_h, \
-		uml_arm64_gadget_simd_##operation##_s, \
-		uml_arm64_gadget_simd_##operation##_d, \
-		uml_arm64_gadget_simd_##operation##_4h, \
-		uml_arm64_gadget_simd_##operation##_8h, \
-		uml_arm64_gadget_simd_##operation##_2s, \
-		uml_arm64_gadget_simd_##operation##_4s, \
-		uml_arm64_gadget_simd_##operation##_2d}
 	static constexpr std::array signed_simd{
-		UML_SIMD_FLOATING_TO_INTEGER(fcvtns),
-		UML_SIMD_FLOATING_TO_INTEGER(fcvtps),
-		UML_SIMD_FLOATING_TO_INTEGER(fcvtms),
-		UML_SIMD_FLOATING_TO_INTEGER(fcvtzs),
-		UML_SIMD_FLOATING_TO_INTEGER(fcvtas)};
+		UML_SIMD_FLOATING_SHAPES(fcvtns),
+		UML_SIMD_FLOATING_SHAPES(fcvtps),
+		UML_SIMD_FLOATING_SHAPES(fcvtms),
+		UML_SIMD_FLOATING_SHAPES(fcvtzs),
+		UML_SIMD_FLOATING_SHAPES(fcvtas)};
 	static constexpr std::array unsigned_simd{
-		UML_SIMD_FLOATING_TO_INTEGER(fcvtnu),
-		UML_SIMD_FLOATING_TO_INTEGER(fcvtpu),
-		UML_SIMD_FLOATING_TO_INTEGER(fcvtmu),
-		UML_SIMD_FLOATING_TO_INTEGER(fcvtzu),
-		UML_SIMD_FLOATING_TO_INTEGER(fcvtau)};
-#undef UML_SIMD_FLOATING_TO_INTEGER
+		UML_SIMD_FLOATING_SHAPES(fcvtnu),
+		UML_SIMD_FLOATING_SHAPES(fcvtpu),
+		UML_SIMD_FLOATING_SHAPES(fcvtmu),
+		UML_SIMD_FLOATING_SHAPES(fcvtzu),
+		UML_SIMD_FLOATING_SHAPES(fcvtau)};
 	const unsigned rounding = static_cast<unsigned>(decoded.rounding);
 	if (!decoded.destination_gpr)
 		return (decoded.unsigned_result ? unsigned_simd : signed_simd)
@@ -797,33 +787,20 @@ namespace uml::cpu::arm64::gadgets::selection {
 		return reinterpret_cast<Gadget>(
 			first + (limit - first) / count * index);
 	};
-#define UML_INTEGER_FLOAT_FIXED_TABLE(name) \
-	std::array<Gadget, 2>{uml_arm64_gadget_##name, \
-		uml_arm64_gadget_##name##_end}
 #define UML_GPR_TO_FLOATING_FIXED(operation, zero) \
 	std::array<std::array<Gadget, 2>, 6>{ \
-		UML_INTEGER_FLOAT_FIXED_TABLE( \
+		UML_FIXED_TABLE( \
 			gpr_to_floating_fixed_##operation##_w_h##zero), \
-		UML_INTEGER_FLOAT_FIXED_TABLE( \
+		UML_FIXED_TABLE( \
 			gpr_to_floating_fixed_##operation##_w_s##zero), \
-		UML_INTEGER_FLOAT_FIXED_TABLE( \
+		UML_FIXED_TABLE( \
 			gpr_to_floating_fixed_##operation##_w_d##zero), \
-		UML_INTEGER_FLOAT_FIXED_TABLE( \
+		UML_FIXED_TABLE( \
 			gpr_to_floating_fixed_##operation##_x_h##zero), \
-		UML_INTEGER_FLOAT_FIXED_TABLE( \
+		UML_FIXED_TABLE( \
 			gpr_to_floating_fixed_##operation##_x_s##zero), \
-		UML_INTEGER_FLOAT_FIXED_TABLE( \
+		UML_FIXED_TABLE( \
 			gpr_to_floating_fixed_##operation##_x_d##zero)}
-#define UML_SIMD_INTEGER_TO_FLOATING_FIXED(operation) \
-	std::array<std::array<Gadget, 2>, 8>{ \
-		UML_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_h), \
-		UML_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_s), \
-		UML_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_d), \
-		UML_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_4h), \
-		UML_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_8h), \
-		UML_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_2s), \
-		UML_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_4s), \
-		UML_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_2d)}
 	static constexpr auto signed_gpr_fixed =
 		UML_GPR_TO_FLOATING_FIXED(scvtf, 0);
 	static constexpr auto unsigned_gpr_fixed =
@@ -833,12 +810,10 @@ namespace uml::cpu::arm64::gadgets::selection {
 	static constexpr auto unsigned_zero_fixed =
 		UML_GPR_TO_FLOATING_FIXED(ucvtf, 1);
 	static constexpr auto signed_simd_fixed =
-		UML_SIMD_INTEGER_TO_FLOATING_FIXED(scvtf);
+		UML_SIMD_FIXED_TABLES(scvtf);
 	static constexpr auto unsigned_simd_fixed =
-		UML_SIMD_INTEGER_TO_FLOATING_FIXED(ucvtf);
-#undef UML_SIMD_INTEGER_TO_FLOATING_FIXED
+		UML_SIMD_FIXED_TABLES(ucvtf);
 #undef UML_GPR_TO_FLOATING_FIXED
-#undef UML_INTEGER_FLOAT_FIXED_TABLE
 	if (decoded.fixed_point) {
 		const unsigned offset = decoded.fractional_bits - 1U;
 		if (!decoded.source_gpr) {
@@ -872,19 +847,8 @@ namespace uml::cpu::arm64::gadgets::selection {
 	static constexpr auto signed_zero = UML_GPR_TO_FLOATING(scvtf, 1);
 	static constexpr auto unsigned_zero = UML_GPR_TO_FLOATING(ucvtf, 1);
 #undef UML_GPR_TO_FLOATING
-#define UML_SIMD_INTEGER_TO_FLOATING(operation) \
-	std::array<Gadget, 8>{ \
-		uml_arm64_gadget_simd_##operation##_h, \
-		uml_arm64_gadget_simd_##operation##_s, \
-		uml_arm64_gadget_simd_##operation##_d, \
-		uml_arm64_gadget_simd_##operation##_4h, \
-		uml_arm64_gadget_simd_##operation##_8h, \
-		uml_arm64_gadget_simd_##operation##_2s, \
-		uml_arm64_gadget_simd_##operation##_4s, \
-		uml_arm64_gadget_simd_##operation##_2d}
-	static constexpr auto signed_simd = UML_SIMD_INTEGER_TO_FLOATING(scvtf);
-	static constexpr auto unsigned_simd = UML_SIMD_INTEGER_TO_FLOATING(ucvtf);
-#undef UML_SIMD_INTEGER_TO_FLOATING
+	static constexpr auto signed_simd = UML_SIMD_FLOATING_SHAPES(scvtf);
+	static constexpr auto unsigned_simd = UML_SIMD_FLOATING_SHAPES(ucvtf);
 	if (decoded.source_gpr) {
 		const unsigned index = (decoded.integer_width == 64U ? 3U : 0U) +
 			decoded.shape;
@@ -896,6 +860,11 @@ namespace uml::cpu::arm64::gadgets::selection {
 	return (decoded.unsigned_source ? unsigned_simd : signed_simd)[
 		decoded.shape];
 }
+
+#undef UML_SIMD_FLOATING_SHAPES
+
+#undef UML_SIMD_FIXED_TABLES
+#undef UML_FIXED_TABLE
 
 [[nodiscard]] Gadget simd_reverse_native_gadget(unsigned block_bits,
 	bool q, unsigned size) noexcept
@@ -1021,6 +990,17 @@ namespace uml::cpu::arm64::gadgets::selection {
 	}
 }
 
+/* The column of a floating-point vector gadget table, whose columns are 4H,
+ * 8H, 2S, 4S and 2D, for a decode's lane `width` and `vector_bytes`. */
+#define UML_FLOATING_VECTOR_SHAPE(decoded) \
+	((decoded).width == 16U ? \
+		((decoded).vector_bytes == 16U ? 1U : 0U) : \
+		(decoded).width == 32U ? \
+		((decoded).vector_bytes == 16U ? 3U : 2U) : 4U)
+/* The column of a scalar floating-point gadget table: H, S and D. */
+#define UML_FLOATING_SCALAR_SHAPE(decoded) \
+	((decoded).width == 16U ? 0U : (decoded).width == 32U ? 1U : 2U)
+
 [[nodiscard]] Gadget basic_floating_arithmetic_gadget(
 	const detail::BasicFloatingArithmetic &decoded) noexcept
 {
@@ -1065,10 +1045,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 				uml_arm64_gadget_floating_sqrt_double;
 		}
 	}
-	const unsigned shape = decoded.width == 16U ?
-		(decoded.vector_bytes == 16U ? 1U : 0U) :
-		decoded.width == 32U ?
-		(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
+	const unsigned shape = UML_FLOATING_VECTOR_SHAPE(decoded);
 #define UML_BASIC_FLOATING_VECTOR(operation) std::array<Gadget, 5>{ \
 	uml_arm64_gadget_simd_basic_##operation##_4h, \
 	uml_arm64_gadget_simd_basic_##operation##_8h, \
@@ -1140,14 +1117,10 @@ namespace uml::cpu::arm64::gadgets::selection {
 			UML_VECTOR_ROUND(i)};
 #undef UML_VECTOR_ROUND
 		if (decoded.scalar) {
-			const unsigned shape = decoded.width == 16U ? 0U :
-				decoded.width == 32U ? 1U : 2U;
+			const unsigned shape = UML_FLOATING_SCALAR_SHAPE(decoded);
 			return scalar[operation][shape];
 		}
-		const unsigned shape = decoded.width == 16U ?
-			(decoded.vector_bytes == 16U ? 1U : 0U) :
-			decoded.width == 32U ?
-			(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
+		const unsigned shape = UML_FLOATING_VECTOR_SHAPE(decoded);
 		return vector[operation][shape];
 	}
 	if (!host_capabilities().has(ArmFeature::frintts))
@@ -1187,12 +1160,8 @@ namespace uml::cpu::arm64::gadgets::selection {
 	const detail::FloatingHorizontal &decoded) noexcept
 {
 	const unsigned operation = static_cast<unsigned>(decoded.operation);
-	const unsigned scalar_shape = decoded.width == 16U ? 0U :
-		decoded.width == 32U ? 1U : 2U;
-	const unsigned vector_shape = decoded.width == 16U ?
-		(decoded.vector_bytes == 16U ? 1U : 0U) :
-		decoded.width == 32U ?
-		(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
+	const unsigned scalar_shape = UML_FLOATING_SCALAR_SHAPE(decoded);
+	const unsigned vector_shape = UML_FLOATING_VECTOR_SHAPE(decoded);
 #define UML_HORIZONTAL_SCALAR(name) std::array<Gadget, 3>{ \
 	uml_arm64_gadget_floating_horizontal_##name##_h, \
 	uml_arm64_gadget_floating_horizontal_##name##_s, \
@@ -1407,24 +1376,17 @@ namespace uml::cpu::arm64::gadgets::selection {
 #undef UML_RECIPROCAL_SCALAR
 	const unsigned operation = static_cast<unsigned>(decoded.operation);
 	if (decoded.scalar) {
-		const unsigned shape = decoded.width == 16U ? 0U :
-			decoded.width == 32U ? 1U : 2U;
+		const unsigned shape = UML_FLOATING_SCALAR_SHAPE(decoded);
 		return scalar[operation][shape];
 	}
-	const unsigned shape = decoded.width == 16U ?
-		(decoded.vector_bytes == 16U ? 1U : 0U) :
-		decoded.width == 32U ?
-		(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
+	const unsigned shape = UML_FLOATING_VECTOR_SHAPE(decoded);
 	return vector[operation][shape];
 }
 
 [[nodiscard]] Gadget floating_complex_gadget(
 	const detail::FloatingComplex &decoded) noexcept
 {
-	const unsigned shape = decoded.width == 16U ?
-		(decoded.vector_bytes == 16U ? 1U : 0U) :
-		decoded.width == 32U ?
-		(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
+	const unsigned shape = UML_FLOATING_VECTOR_SHAPE(decoded);
 #define UML_COMPLEX_ADD(shape) std::array<Gadget, 2>{ \
 	uml_arm64_gadget_floating_complex_fcadd_##shape##_90, \
 	uml_arm64_gadget_floating_complex_fcadd_##shape##_270}
@@ -1557,12 +1519,12 @@ namespace uml::cpu::arm64::gadgets::selection {
 		return UML_SCALAR_FUSED_WIDTH(nmsub);
 #undef UML_SCALAR_FUSED_WIDTH
 	}
-	const unsigned shape = decoded.width == 16U ?
-		(decoded.vector_bytes == 16U ? 1U : 0U) :
-		decoded.width == 32U ?
-		(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
+	const unsigned shape = UML_FLOATING_VECTOR_SHAPE(decoded);
 	return simd_fused_inplace_gadget(decoded.subtract, shape, destination);
 }
+
+#undef UML_FLOATING_SCALAR_SHAPE
+#undef UML_FLOATING_VECTOR_SHAPE
 
 [[nodiscard]] Gadget simd_bitwise_gadget(unsigned operation, bool q) noexcept
 {
@@ -2027,9 +1989,6 @@ decode_simd_saturating_shift_left(std::uint32_t instruction) noexcept
 	return families[family][shape][index];
 }
 
-[[nodiscard]] Gadget simd_indexed_saturating_long_gadget(unsigned operation,
-	unsigned size, bool scalar, bool high, unsigned index) noexcept
-{
 #define UML_SIMD_INDEXED_SATURATING_FAMILY(name) \
 	std::array<std::array<Gadget, 8>, 6>{ \
 		UML_SIMD_INDEXED_ARRAY_8(name, h_low), \
@@ -2038,11 +1997,14 @@ decode_simd_saturating_shift_left(std::uint32_t instruction) noexcept
 		UML_SIMD_INDEXED_ARRAY_4(name, s_low), \
 		UML_SIMD_INDEXED_ARRAY_4(name, s_high), \
 		UML_SIMD_INDEXED_ARRAY_4(name, s_scalar)}
+
+[[nodiscard]] Gadget simd_indexed_saturating_long_gadget(unsigned operation,
+	unsigned size, bool scalar, bool high, unsigned index) noexcept
+{
 	static constexpr std::array families{
 		UML_SIMD_INDEXED_SATURATING_FAMILY(sqdmlal),
 		UML_SIMD_INDEXED_SATURATING_FAMILY(sqdmlsl),
 		UML_SIMD_INDEXED_SATURATING_FAMILY(sqdmull)};
-#undef UML_SIMD_INDEXED_SATURATING_FAMILY
 	const unsigned family = (operation - 3U) / 4U;
 	const unsigned shape = (size == 2U ? 3U : 0U) +
 		(scalar ? 2U : high ? 1U : 0U);
@@ -2052,18 +2014,9 @@ decode_simd_saturating_shift_left(std::uint32_t instruction) noexcept
 [[nodiscard]] Gadget simd_indexed_saturating_high_gadget(unsigned operation,
 	unsigned size, bool scalar, bool wide, unsigned index) noexcept
 {
-#define UML_SIMD_INDEXED_SATURATING_FAMILY(name) \
-	std::array<std::array<Gadget, 8>, 6>{ \
-		UML_SIMD_INDEXED_ARRAY_8(name, h_low), \
-		UML_SIMD_INDEXED_ARRAY_8(name, h_high), \
-		UML_SIMD_INDEXED_ARRAY_8(name, h_scalar), \
-		UML_SIMD_INDEXED_ARRAY_4(name, s_low), \
-		UML_SIMD_INDEXED_ARRAY_4(name, s_high), \
-		UML_SIMD_INDEXED_ARRAY_4(name, s_scalar)}
 	static constexpr std::array families{
 		UML_SIMD_INDEXED_SATURATING_FAMILY(sqdmulh),
 		UML_SIMD_INDEXED_SATURATING_FAMILY(sqrdmulh)};
-#undef UML_SIMD_INDEXED_SATURATING_FAMILY
 	const unsigned shape = (size == 2U ? 3U : 0U) +
 		(scalar ? 2U : wide ? 1U : 0U);
 	return families[operation - 12U][shape][index];
@@ -2073,22 +2026,15 @@ decode_simd_saturating_shift_left(std::uint32_t instruction) noexcept
 	unsigned operation, unsigned size, bool scalar, bool wide,
 	unsigned index) noexcept
 {
-#define UML_SIMD_INDEXED_SATURATING_FAMILY(name) \
-	std::array<std::array<Gadget, 8>, 6>{ \
-		UML_SIMD_INDEXED_ARRAY_8(name, h_low), \
-		UML_SIMD_INDEXED_ARRAY_8(name, h_high), \
-		UML_SIMD_INDEXED_ARRAY_8(name, h_scalar), \
-		UML_SIMD_INDEXED_ARRAY_4(name, s_low), \
-		UML_SIMD_INDEXED_ARRAY_4(name, s_high), \
-		UML_SIMD_INDEXED_ARRAY_4(name, s_scalar)}
 	static constexpr std::array families{
 		UML_SIMD_INDEXED_SATURATING_FAMILY(sqrdmlah),
 		UML_SIMD_INDEXED_SATURATING_FAMILY(sqrdmlsh)};
-#undef UML_SIMD_INDEXED_SATURATING_FAMILY
 	const unsigned shape = (size == 2U ? 3U : 0U) +
 		(scalar ? 2U : wide ? 1U : 0U);
 	return families[(operation - 13U) / 2U][shape][index];
 }
+
+#undef UML_SIMD_INDEXED_SATURATING_FAMILY
 
 [[nodiscard]] Gadget simd_indexed_integer_gadget(unsigned operation,
 	bool unsigned_group, bool scalar, bool q, unsigned size,
@@ -2525,23 +2471,13 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 	(type == 3U ? uml_arm64_gadget_floating_select_##name##_h : \
 	 type == 1U ? uml_arm64_gadget_floating_select_##name##_d : \
 	 uml_arm64_gadget_floating_select_##name##_s)
+#define UML_FLOATING_SELECT_CASE(index, name) \
+	case index: return UML_FLOATING_SELECT_WIDTH(name);
 	switch (condition) {
-	case 0: return UML_FLOATING_SELECT_WIDTH(eq);
-	case 1: return UML_FLOATING_SELECT_WIDTH(ne);
-	case 2: return UML_FLOATING_SELECT_WIDTH(hs);
-	case 3: return UML_FLOATING_SELECT_WIDTH(lo);
-	case 4: return UML_FLOATING_SELECT_WIDTH(mi);
-	case 5: return UML_FLOATING_SELECT_WIDTH(pl);
-	case 6: return UML_FLOATING_SELECT_WIDTH(vs);
-	case 7: return UML_FLOATING_SELECT_WIDTH(vc);
-	case 8: return UML_FLOATING_SELECT_WIDTH(hi);
-	case 9: return UML_FLOATING_SELECT_WIDTH(ls);
-	case 10: return UML_FLOATING_SELECT_WIDTH(ge);
-	case 11: return UML_FLOATING_SELECT_WIDTH(lt);
-	case 12: return UML_FLOATING_SELECT_WIDTH(gt);
-	case 13: return UML_FLOATING_SELECT_WIDTH(le);
+	UML_ARM64_CONDITIONS(UML_FLOATING_SELECT_CASE)
 	default: return UML_FLOATING_SELECT_WIDTH(always);
 	}
+#undef UML_FLOATING_SELECT_CASE
 #undef UML_FLOATING_SELECT_WIDTH
 }
 
@@ -2586,23 +2522,13 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 #define UML_FLOATING_CONDITIONAL_COMPARE_KIND(name) \
 	(signaling ? UML_FLOATING_CONDITIONAL_COMPARE_WIDTH(name, signaling) : \
 	 UML_FLOATING_CONDITIONAL_COMPARE_WIDTH(name, quiet))
+#define UML_FLOATING_CONDITIONAL_COMPARE_CASE(index, name) \
+	case index: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(name);
 	switch (condition) {
-	case 0: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(eq);
-	case 1: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(ne);
-	case 2: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(hs);
-	case 3: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(lo);
-	case 4: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(mi);
-	case 5: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(pl);
-	case 6: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(vs);
-	case 7: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(vc);
-	case 8: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(hi);
-	case 9: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(ls);
-	case 10: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(ge);
-	case 11: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(lt);
-	case 12: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(gt);
-	case 13: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(le);
+	UML_ARM64_CONDITIONS(UML_FLOATING_CONDITIONAL_COMPARE_CASE)
 	default: return floating_compare_gadget(type, signaling, false);
 	}
+#undef UML_FLOATING_CONDITIONAL_COMPARE_CASE
 #undef UML_FLOATING_CONDITIONAL_COMPARE_KIND
 #undef UML_FLOATING_CONDITIONAL_COMPARE_WIDTH
 }

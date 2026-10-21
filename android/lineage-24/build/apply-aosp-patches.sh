@@ -68,8 +68,7 @@ while IFS="$(printf '\t')" read -r route_id checkout_path final_tree series_dir;
 		fail "could not apply the $route_id series"
 done
 
-"$DEVICE_SYNC" --android-root "$ANDROID_ROOT" --tree overlay \
-	--workspace "$AOSP_SOURCE"
+"$DEVICE_SYNC" --android-root "$ANDROID_ROOT" --workspace "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
 printf '%s\n' "applied routed AOSP 17 project patches"

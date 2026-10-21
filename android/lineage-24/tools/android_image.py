@@ -5,8 +5,9 @@ boot-image.py, verify-initramfs.py, verify-target-files.py and
 verify-lineage-recovery.py read the same formats: the kernelless boot-image
 v4 header, a partition's range in partition-layout.json, uncompressed newc
 archives and the program headers of AArch64 ELF payloads. They also compare
-against the same tracked first-stage fstab. Each caller passes its own error
-type, so diagnostics keep their per-tool prefixes.
+against the same tracked first-stage fstab and reject the same kernel
+module files. Each caller passes its own error type, so diagnostics keep
+their per-tool prefixes.
 """
 
 from __future__ import annotations
@@ -31,6 +32,29 @@ BOOT_PAGE_SIZE = 4096
 NEWC_HEADER_SIZE = 110
 MAX_NEWC_ENTRY_SIZE = 128 * 1024 * 1024
 MAX_PAGE_SIZE_SUPPORTED = 16384
+ELF_MAGIC = b"\x7fELF"
+ELFCLASS64 = 2
+ELFDATA2LSB = 1
+EM_AARCH64 = 183
+ELF64_HEADER_SIZE = 64
+ELF64_PROGRAM_HEADER_SIZE = 56
+MODULE_METADATA = frozenset({
+    "modules.alias",
+    "modules.alias.bin",
+    "modules.blocklist",
+    "modules.builtin",
+    "modules.builtin.alias.bin",
+    "modules.builtin.modinfo",
+    "modules.dep",
+    "modules.dep.bin",
+    "modules.devname",
+    "modules.load",
+    "modules.options",
+    "modules.order",
+    "modules.softdep",
+    "modules.symbols",
+    "modules.symbols.bin",
+})
 PT_LOAD = 1
 PT_DYNAMIC = 2
 DT_NULL = 0
@@ -45,6 +69,15 @@ def tracked_fstab(error: Error) -> bytes:
     if path.is_symlink() or not path.is_file():
         raise error(f"tracked UML fstab is missing: {path}")
     return path.read_bytes()
+
+
+def is_module_payload(basename: str) -> bool:
+    """Whether a file name is a kernel module or a module-tool index.
+
+    The product's kernel is built in only, so no image carries either.
+    """
+    lowered = basename.lower()
+    return lowered.endswith(".ko") or ".ko." in lowered or lowered in MODULE_METADATA
 
 
 def read_exact(source: BinaryIO, count: int, label: str, error: Error) -> bytes:
@@ -264,6 +297,25 @@ class Segment:
     address: int
     file_size: int
     alignment: int
+
+
+def check_elf64_little_endian(name: str, header: bytes, error: Error) -> None:
+    if (
+        len(header) < ELF64_HEADER_SIZE
+        or header[4] != ELFCLASS64
+        or header[5] != ELFDATA2LSB
+    ):
+        raise error(f"target ELF is not little-endian ELF64: {name}")
+
+
+def check_aarch64_elf_header(name: str, header: bytes, error: Error) -> None:
+    """Require a little-endian AArch64 ELF64 header whose program-header
+    entries are whole, which program_headers relies on."""
+    check_elf64_little_endian(name, header, error)
+    if struct.unpack_from("<H", header, 18)[0] != EM_AARCH64:
+        raise error(f"target ELF is not AArch64: {name}")
+    if struct.unpack_from("<H", header, 54)[0] < ELF64_PROGRAM_HEADER_SIZE:
+        raise error(f"target ELF program-header size is malformed: {name}")
 
 
 def program_headers(payload: bytes) -> list[Segment]:

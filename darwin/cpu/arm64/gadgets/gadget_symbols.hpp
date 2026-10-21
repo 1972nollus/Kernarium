@@ -3,6 +3,59 @@
 
 #include "gadget_entry.hpp"
 
+/* The fourteen A64 conditions in encoding order; the always forms (14 and 15)
+ * get entries of their own where a family has them. Expands
+ * X(index, name[, extra arguments]) once per condition, so a declaration
+ * list, a table or a switch over the conditions is one line. */
+#define UML_ARM64_CONDITIONS(X, ...) \
+	X(0, eq __VA_OPT__(,) __VA_ARGS__) \
+	X(1, ne __VA_OPT__(,) __VA_ARGS__) \
+	X(2, hs __VA_OPT__(,) __VA_ARGS__) \
+	X(3, lo __VA_OPT__(,) __VA_ARGS__) \
+	X(4, mi __VA_OPT__(,) __VA_ARGS__) \
+	X(5, pl __VA_OPT__(,) __VA_ARGS__) \
+	X(6, vs __VA_OPT__(,) __VA_ARGS__) \
+	X(7, vc __VA_OPT__(,) __VA_ARGS__) \
+	X(8, hi __VA_OPT__(,) __VA_ARGS__) \
+	X(9, ls __VA_OPT__(,) __VA_ARGS__) \
+	X(10, ge __VA_OPT__(,) __VA_ARGS__) \
+	X(11, lt __VA_OPT__(,) __VA_ARGS__) \
+	X(12, gt __VA_OPT__(,) __VA_ARGS__) \
+	X(13, le __VA_OPT__(,) __VA_ARGS__)
+
+/* The gadgets of one family, one per condition in encoding order, as the
+ * elements of an initializer list:
+ * UML_ARM64_CONDITION_GADGETS(uml_arm64_gadget_branch_, _inline) lists
+ * uml_arm64_gadget_branch_eq_inline, uml_arm64_gadget_branch_ne_inline, ... */
+#define UML_ARM64_CONDITION_GADGET(index, name, prefix, suffix) \
+	prefix##name##suffix,
+#define UML_ARM64_CONDITION_GADGETS(prefix, suffix) \
+	UML_ARM64_CONDITIONS(UML_ARM64_CONDITION_GADGET, prefix, suffix)
+
+/* The sixteen DMB and DSB options, expanded as UML_ARM64_CONDITIONS is; and
+ * UML_ARM64_BARRIER_GADGETS(uml_arm64_gadget_dmb_) lists uml_arm64_gadget_dmb_0
+ * to uml_arm64_gadget_dmb_15 as the elements of an initializer list. */
+#define UML_ARM64_BARRIER_OPTIONS(X, ...) \
+	X(0 __VA_OPT__(,) __VA_ARGS__) \
+	X(1 __VA_OPT__(,) __VA_ARGS__) \
+	X(2 __VA_OPT__(,) __VA_ARGS__) \
+	X(3 __VA_OPT__(,) __VA_ARGS__) \
+	X(4 __VA_OPT__(,) __VA_ARGS__) \
+	X(5 __VA_OPT__(,) __VA_ARGS__) \
+	X(6 __VA_OPT__(,) __VA_ARGS__) \
+	X(7 __VA_OPT__(,) __VA_ARGS__) \
+	X(8 __VA_OPT__(,) __VA_ARGS__) \
+	X(9 __VA_OPT__(,) __VA_ARGS__) \
+	X(10 __VA_OPT__(,) __VA_ARGS__) \
+	X(11 __VA_OPT__(,) __VA_ARGS__) \
+	X(12 __VA_OPT__(,) __VA_ARGS__) \
+	X(13 __VA_OPT__(,) __VA_ARGS__) \
+	X(14 __VA_OPT__(,) __VA_ARGS__) \
+	X(15 __VA_OPT__(,) __VA_ARGS__)
+#define UML_ARM64_BARRIER_GADGET(option, prefix) prefix##option,
+#define UML_ARM64_BARRIER_GADGETS(prefix) \
+	UML_ARM64_BARRIER_OPTIONS(UML_ARM64_BARRIER_GADGET, prefix)
+
 namespace uml::cpu::arm64::gadgets::selection {
 
 extern "C" {
@@ -191,7 +244,7 @@ UML_DECLARE_EXTRACT_SOURCES(x_n)
 UML_DECLARE_EXTRACT_SOURCES(x_s)
 #undef UML_DECLARE_EXTRACT_SOURCES
 #undef UML_DECLARE_EXTRACT_DESTINATIONS
-#define UML_DECLARE_CONDITIONAL_SELECT_FAST(name) \
+#define UML_DECLARE_CONDITIONAL_SELECT_FAST(index, name) \
 	void uml_arm64_gadget_conditional_select_fast_##name##_w_sel(); \
 	void uml_arm64_gadget_conditional_select_fast_##name##_x_sel(); \
 	void uml_arm64_gadget_conditional_select_fast_##name##_w_inc(); \
@@ -200,24 +253,11 @@ UML_DECLARE_EXTRACT_SOURCES(x_s)
 	void uml_arm64_gadget_conditional_select_fast_##name##_x_inv(); \
 	void uml_arm64_gadget_conditional_select_fast_##name##_w_neg(); \
 	void uml_arm64_gadget_conditional_select_fast_##name##_x_neg();
-UML_DECLARE_CONDITIONAL_SELECT_FAST(eq)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(ne)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(hs)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(lo)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(mi)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(pl)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(vs)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(vc)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(hi)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(ls)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(ge)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(lt)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(gt)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(le)
+UML_ARM64_CONDITIONS(UML_DECLARE_CONDITIONAL_SELECT_FAST)
 #undef UML_DECLARE_CONDITIONAL_SELECT_FAST
 void uml_arm64_gadget_conditional_select_fast_always_w();
 void uml_arm64_gadget_conditional_select_fast_always_x();
-#define UML_DECLARE_CONDITIONAL_COMPARE_FAST(name) \
+#define UML_DECLARE_CONDITIONAL_COMPARE_FAST(index, name) \
 	void uml_arm64_gadget_conditional_compare_fast_##name##_w_cmn_r(); \
 	void uml_arm64_gadget_conditional_compare_fast_##name##_w_cmn_i(); \
 	void uml_arm64_gadget_conditional_compare_fast_##name##_x_cmn_r(); \
@@ -226,21 +266,8 @@ void uml_arm64_gadget_conditional_select_fast_always_x();
 	void uml_arm64_gadget_conditional_compare_fast_##name##_w_cmp_i(); \
 	void uml_arm64_gadget_conditional_compare_fast_##name##_x_cmp_r(); \
 	void uml_arm64_gadget_conditional_compare_fast_##name##_x_cmp_i();
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(eq)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(ne)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(hs)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(lo)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(mi)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(pl)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(vs)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(vc)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(hi)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(ls)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(ge)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(lt)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(gt)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(le)
-UML_DECLARE_CONDITIONAL_COMPARE_FAST(always)
+UML_ARM64_CONDITIONS(UML_DECLARE_CONDITIONAL_COMPARE_FAST)
+UML_DECLARE_CONDITIONAL_COMPARE_FAST(14, always)
 #undef UML_DECLARE_CONDITIONAL_COMPARE_FAST
 #define UML_DECLARE_LOGICAL_SHIFTED_RESULT_SOURCES(prefix) \
 	void uml_arm64_gadget_logical_shifted_##prefix##_rr_r(); \
@@ -569,16 +596,12 @@ UML_DECLARE_BFLOAT_MULTIPLY_LONG_INDEXED(t, 6)
 UML_DECLARE_BFLOAT_MULTIPLY_LONG_INDEXED(t, 7)
 #undef UML_DECLARE_BFLOAT_MULTIPLY_LONG_INDEXED
 void uml_arm64_gadget_bfloat_multiply_long_software();
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(faddp)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmaxp)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmaxnmp)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fminp)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fminnmp)
 #undef UML_DECLARE_FLOATING_HORIZONTAL_BINARY
-#define UML_DECLARE_FLOATING_HORIZONTAL_PAIR(name) \
-	UML_DECLARE_FLOATING_HORIZONTAL_SCALAR(name##_scalar) \
-	UML_DECLARE_FLOATING_HORIZONTAL_VECTOR(name##_vector)
-UML_DECLARE_FLOATING_HORIZONTAL_PAIR(faddp)
-UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fmaxp)
-UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fmaxnmp)
-UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fminp)
-UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fminnmp)
-#undef UML_DECLARE_FLOATING_HORIZONTAL_PAIR
 #define UML_DECLARE_FLOATING_HORIZONTAL_REDUCE(name) \
 	void uml_arm64_gadget_floating_horizontal_##name##_4h(); \
 	void uml_arm64_gadget_floating_horizontal_##name##_8h(); \
@@ -660,46 +683,34 @@ UML_DECLARE_FLOATING_COMPARE(d)
 #define UML_DECLARE_FLOATING_CONDITIONAL_COMPARE_WIDTH(name, width) \
 	void uml_arm64_gadget_floating_conditional_compare_##name##_quiet_##width(); \
 	void uml_arm64_gadget_floating_conditional_compare_##name##_signaling_##width();
-#define UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(name) \
+#define UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(index, name) \
 	UML_DECLARE_FLOATING_CONDITIONAL_COMPARE_WIDTH(name, h) \
 	UML_DECLARE_FLOATING_CONDITIONAL_COMPARE_WIDTH(name, s) \
 	UML_DECLARE_FLOATING_CONDITIONAL_COMPARE_WIDTH(name, d)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(eq)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(ne)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(hs)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(lo)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(mi)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(pl)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(vs)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(vc)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(hi)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(ls)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(ge)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(lt)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(gt)
-UML_DECLARE_FLOATING_CONDITIONAL_COMPARE(le)
+UML_ARM64_CONDITIONS(UML_DECLARE_FLOATING_CONDITIONAL_COMPARE)
 #undef UML_DECLARE_FLOATING_CONDITIONAL_COMPARE
 #undef UML_DECLARE_FLOATING_CONDITIONAL_COMPARE_WIDTH
-#define UML_DECLARE_SIMD_FLOATING_COMPARE(name) \
-	void uml_arm64_gadget_simd_fcmp_##name##_h(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_s(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_d(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_4h(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_8h(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_2s(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_4s(); \
-	void uml_arm64_gadget_simd_fcmp_##name##_2d();
-UML_DECLARE_SIMD_FLOATING_COMPARE(eq)
-UML_DECLARE_SIMD_FLOATING_COMPARE(ge)
-UML_DECLARE_SIMD_FLOATING_COMPARE(gt)
-UML_DECLARE_SIMD_FLOATING_COMPARE(facge)
-UML_DECLARE_SIMD_FLOATING_COMPARE(facgt)
-UML_DECLARE_SIMD_FLOATING_COMPARE(eq0)
-UML_DECLARE_SIMD_FLOATING_COMPARE(ge0)
-UML_DECLARE_SIMD_FLOATING_COMPARE(gt0)
-UML_DECLARE_SIMD_FLOATING_COMPARE(le0)
-UML_DECLARE_SIMD_FLOATING_COMPARE(lt0)
-#undef UML_DECLARE_SIMD_FLOATING_COMPARE
+/* The eight shapes of an FP vector gadget family: scalar H, S and D, then
+ * 4H, 8H, 2S, 4S and 2D. */
+#define UML_DECLARE_SIMD_FLOATING_SHAPES(name) \
+	void uml_arm64_gadget_simd_##name##_h(); \
+	void uml_arm64_gadget_simd_##name##_s(); \
+	void uml_arm64_gadget_simd_##name##_d(); \
+	void uml_arm64_gadget_simd_##name##_4h(); \
+	void uml_arm64_gadget_simd_##name##_8h(); \
+	void uml_arm64_gadget_simd_##name##_2s(); \
+	void uml_arm64_gadget_simd_##name##_4s(); \
+	void uml_arm64_gadget_simd_##name##_2d();
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_eq)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_ge)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_gt)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_facge)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_facgt)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_eq0)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_ge0)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_gt0)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_le0)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcmp_lt0)
 void uml_arm64_gadget_simd_fcvtl_hs();
 void uml_arm64_gadget_simd_fcvtl2_hs();
 void uml_arm64_gadget_simd_fcvtl_sd();
@@ -732,26 +743,16 @@ UML_DECLARE_FLOATING_TO_GPR_WIDTHS(fcvtas)
 UML_DECLARE_FLOATING_TO_GPR_WIDTHS(fcvtau)
 #undef UML_DECLARE_FLOATING_TO_GPR_WIDTHS
 #undef UML_DECLARE_FLOATING_TO_GPR
-#define UML_DECLARE_SIMD_FLOATING_TO_INTEGER(operation) \
-	void uml_arm64_gadget_simd_##operation##_h(); \
-	void uml_arm64_gadget_simd_##operation##_s(); \
-	void uml_arm64_gadget_simd_##operation##_d(); \
-	void uml_arm64_gadget_simd_##operation##_4h(); \
-	void uml_arm64_gadget_simd_##operation##_8h(); \
-	void uml_arm64_gadget_simd_##operation##_2s(); \
-	void uml_arm64_gadget_simd_##operation##_4s(); \
-	void uml_arm64_gadget_simd_##operation##_2d();
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtns)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtnu)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtps)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtpu)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtms)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtmu)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtzs)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtzu)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtas)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtau)
-#undef UML_DECLARE_SIMD_FLOATING_TO_INTEGER
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtns)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtnu)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtps)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtpu)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtms)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtmu)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtzs)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtzu)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtas)
+UML_DECLARE_SIMD_FLOATING_SHAPES(fcvtau)
 #define UML_DECLARE_FIXED_TABLE(name) \
 	void uml_arm64_gadget_##name(); \
 	void uml_arm64_gadget_##name##_end();
@@ -770,7 +771,7 @@ UML_DECLARE_FLOATING_TO_GPR_FIXED_WIDTHS(fcvtzs)
 UML_DECLARE_FLOATING_TO_GPR_FIXED_WIDTHS(fcvtzu)
 #undef UML_DECLARE_FLOATING_TO_GPR_FIXED_WIDTHS
 #undef UML_DECLARE_FLOATING_TO_GPR_FIXED
-#define UML_DECLARE_SIMD_FLOATING_TO_INTEGER_FIXED(operation) \
+#define UML_DECLARE_SIMD_FIXED_TABLES(operation) \
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_h) \
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_s) \
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_d) \
@@ -779,10 +780,8 @@ UML_DECLARE_FLOATING_TO_GPR_FIXED_WIDTHS(fcvtzu)
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_2s) \
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_4s) \
 	UML_DECLARE_FIXED_TABLE(simd_fixed_##operation##_2d)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER_FIXED(fcvtzs)
-UML_DECLARE_SIMD_FLOATING_TO_INTEGER_FIXED(fcvtzu)
-#undef UML_DECLARE_SIMD_FLOATING_TO_INTEGER_FIXED
-#undef UML_DECLARE_FIXED_TABLE
+UML_DECLARE_SIMD_FIXED_TABLES(fcvtzs)
+UML_DECLARE_SIMD_FIXED_TABLES(fcvtzu)
 #define UML_DECLARE_GPR_TO_FLOATING(operation, integer, floating, zero) \
 	void uml_arm64_gadget_gpr_to_floating_##operation##_##integer##_##floating##zero();
 #define UML_DECLARE_GPR_TO_FLOATING_WIDTHS(operation, integer, zero) \
@@ -800,23 +799,11 @@ UML_DECLARE_GPR_TO_FLOATING_VARIANTS(ucvtf)
 #undef UML_DECLARE_GPR_TO_FLOATING_WIDTHS
 #undef UML_DECLARE_GPR_TO_FLOATING
 void uml_arm64_gadget_integer_to_floating_software_fallback();
-#define UML_DECLARE_SIMD_INTEGER_TO_FLOATING(operation) \
-	void uml_arm64_gadget_simd_##operation##_h(); \
-	void uml_arm64_gadget_simd_##operation##_s(); \
-	void uml_arm64_gadget_simd_##operation##_d(); \
-	void uml_arm64_gadget_simd_##operation##_4h(); \
-	void uml_arm64_gadget_simd_##operation##_8h(); \
-	void uml_arm64_gadget_simd_##operation##_2s(); \
-	void uml_arm64_gadget_simd_##operation##_4s(); \
-	void uml_arm64_gadget_simd_##operation##_2d();
-UML_DECLARE_SIMD_INTEGER_TO_FLOATING(scvtf)
-UML_DECLARE_SIMD_INTEGER_TO_FLOATING(ucvtf)
-#undef UML_DECLARE_SIMD_INTEGER_TO_FLOATING
-#define UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(name) \
-	void uml_arm64_gadget_##name(); \
-	void uml_arm64_gadget_##name##_end();
+UML_DECLARE_SIMD_FLOATING_SHAPES(scvtf)
+UML_DECLARE_SIMD_FLOATING_SHAPES(ucvtf)
+#undef UML_DECLARE_SIMD_FLOATING_SHAPES
 #define UML_DECLARE_GPR_TO_FLOATING_FIXED(operation, integer, floating, zero) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE( \
+	UML_DECLARE_FIXED_TABLE( \
 		gpr_to_floating_fixed_##operation##_##integer##_##floating##zero)
 #define UML_DECLARE_GPR_TO_FLOATING_FIXED_WIDTHS(operation, integer, zero) \
 	UML_DECLARE_GPR_TO_FLOATING_FIXED(operation, integer, h, zero) \
@@ -832,19 +819,10 @@ UML_DECLARE_GPR_TO_FLOATING_FIXED_VARIANTS(ucvtf)
 #undef UML_DECLARE_GPR_TO_FLOATING_FIXED_VARIANTS
 #undef UML_DECLARE_GPR_TO_FLOATING_FIXED_WIDTHS
 #undef UML_DECLARE_GPR_TO_FLOATING_FIXED
-#define UML_DECLARE_SIMD_INTEGER_TO_FLOATING_FIXED(operation) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_h) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_s) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_d) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_4h) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_8h) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_2s) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_4s) \
-	UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE(simd_fixed_##operation##_2d)
-UML_DECLARE_SIMD_INTEGER_TO_FLOATING_FIXED(scvtf)
-UML_DECLARE_SIMD_INTEGER_TO_FLOATING_FIXED(ucvtf)
-#undef UML_DECLARE_SIMD_INTEGER_TO_FLOATING_FIXED
-#undef UML_DECLARE_INTEGER_FLOAT_FIXED_TABLE
+UML_DECLARE_SIMD_FIXED_TABLES(scvtf)
+UML_DECLARE_SIMD_FIXED_TABLES(ucvtf)
+#undef UML_DECLARE_SIMD_FIXED_TABLES
+#undef UML_DECLARE_FIXED_TABLE
 #define UML_DECLARE_SIMD_BITWISE(name) \
 	void uml_arm64_gadget_##name##_8b(); \
 	void uml_arm64_gadget_##name##_16b();
@@ -1578,25 +1556,12 @@ void uml_arm64_gadget_gpr_to_vector_64_low_zero();
 void uml_arm64_gadget_vector_to_gpr_64_high();
 void uml_arm64_gadget_gpr_to_vector_64_high();
 void uml_arm64_gadget_gpr_to_vector_64_high_zero();
-#define UML_DECLARE_FLOATING_SELECT(name) \
+#define UML_DECLARE_FLOATING_SELECT(index, name) \
 	void uml_arm64_gadget_floating_select_##name##_h(); \
 	void uml_arm64_gadget_floating_select_##name##_s(); \
 	void uml_arm64_gadget_floating_select_##name##_d();
-UML_DECLARE_FLOATING_SELECT(eq)
-UML_DECLARE_FLOATING_SELECT(ne)
-UML_DECLARE_FLOATING_SELECT(hs)
-UML_DECLARE_FLOATING_SELECT(lo)
-UML_DECLARE_FLOATING_SELECT(mi)
-UML_DECLARE_FLOATING_SELECT(pl)
-UML_DECLARE_FLOATING_SELECT(vs)
-UML_DECLARE_FLOATING_SELECT(vc)
-UML_DECLARE_FLOATING_SELECT(hi)
-UML_DECLARE_FLOATING_SELECT(ls)
-UML_DECLARE_FLOATING_SELECT(ge)
-UML_DECLARE_FLOATING_SELECT(lt)
-UML_DECLARE_FLOATING_SELECT(gt)
-UML_DECLARE_FLOATING_SELECT(le)
-UML_DECLARE_FLOATING_SELECT(always)
+UML_ARM64_CONDITIONS(UML_DECLARE_FLOATING_SELECT)
+UML_DECLARE_FLOATING_SELECT(14, always)
 #undef UML_DECLARE_FLOATING_SELECT
 void uml_arm64_gadget_pc_relative();
 void uml_arm64_gadget_sysreg_tls_read();
@@ -1657,22 +1622,7 @@ UML_DECLARE_PSTATE_DAIF_IMMEDIATE(15)
 #define DECLARE_MEMORY_BARRIER_OPTION(option) \
 	DECLARE_MEMORY_BARRIER(dmb, option) \
 	DECLARE_MEMORY_BARRIER(dsb, option)
-DECLARE_MEMORY_BARRIER_OPTION(0)
-DECLARE_MEMORY_BARRIER_OPTION(1)
-DECLARE_MEMORY_BARRIER_OPTION(2)
-DECLARE_MEMORY_BARRIER_OPTION(3)
-DECLARE_MEMORY_BARRIER_OPTION(4)
-DECLARE_MEMORY_BARRIER_OPTION(5)
-DECLARE_MEMORY_BARRIER_OPTION(6)
-DECLARE_MEMORY_BARRIER_OPTION(7)
-DECLARE_MEMORY_BARRIER_OPTION(8)
-DECLARE_MEMORY_BARRIER_OPTION(9)
-DECLARE_MEMORY_BARRIER_OPTION(10)
-DECLARE_MEMORY_BARRIER_OPTION(11)
-DECLARE_MEMORY_BARRIER_OPTION(12)
-DECLARE_MEMORY_BARRIER_OPTION(13)
-DECLARE_MEMORY_BARRIER_OPTION(14)
-DECLARE_MEMORY_BARRIER_OPTION(15)
+UML_ARM64_BARRIER_OPTIONS(DECLARE_MEMORY_BARRIER_OPTION)
 #undef DECLARE_MEMORY_BARRIER_OPTION
 #undef DECLARE_MEMORY_BARRIER
 void uml_arm64_gadget_isb();
@@ -2083,229 +2033,31 @@ void uml_arm64_gadget_branch_link_register_cached();
 void uml_arm64_gadget_return_cached();
 void uml_arm64_gadget_return_x30_cached();
 void uml_arm64_gadget_return();
-/* Fused guest CMP of two registers + B.cond, see compare_register_branch. */
-void uml_arm64_gadget_compare_register_branch_x_eq();
-void uml_arm64_gadget_compare_register_branch_x_eq_linked();
-void uml_arm64_gadget_compare_register_branch_w_eq();
-void uml_arm64_gadget_compare_register_branch_w_eq_linked();
-void uml_arm64_gadget_compare_register_branch_x_ne();
-void uml_arm64_gadget_compare_register_branch_x_ne_linked();
-void uml_arm64_gadget_compare_register_branch_w_ne();
-void uml_arm64_gadget_compare_register_branch_w_ne_linked();
-void uml_arm64_gadget_compare_register_branch_x_hs();
-void uml_arm64_gadget_compare_register_branch_x_hs_linked();
-void uml_arm64_gadget_compare_register_branch_w_hs();
-void uml_arm64_gadget_compare_register_branch_w_hs_linked();
-void uml_arm64_gadget_compare_register_branch_x_lo();
-void uml_arm64_gadget_compare_register_branch_x_lo_linked();
-void uml_arm64_gadget_compare_register_branch_w_lo();
-void uml_arm64_gadget_compare_register_branch_w_lo_linked();
-void uml_arm64_gadget_compare_register_branch_x_mi();
-void uml_arm64_gadget_compare_register_branch_x_mi_linked();
-void uml_arm64_gadget_compare_register_branch_w_mi();
-void uml_arm64_gadget_compare_register_branch_w_mi_linked();
-void uml_arm64_gadget_compare_register_branch_x_pl();
-void uml_arm64_gadget_compare_register_branch_x_pl_linked();
-void uml_arm64_gadget_compare_register_branch_w_pl();
-void uml_arm64_gadget_compare_register_branch_w_pl_linked();
-void uml_arm64_gadget_compare_register_branch_x_vs();
-void uml_arm64_gadget_compare_register_branch_x_vs_linked();
-void uml_arm64_gadget_compare_register_branch_w_vs();
-void uml_arm64_gadget_compare_register_branch_w_vs_linked();
-void uml_arm64_gadget_compare_register_branch_x_vc();
-void uml_arm64_gadget_compare_register_branch_x_vc_linked();
-void uml_arm64_gadget_compare_register_branch_w_vc();
-void uml_arm64_gadget_compare_register_branch_w_vc_linked();
-void uml_arm64_gadget_compare_register_branch_x_hi();
-void uml_arm64_gadget_compare_register_branch_x_hi_linked();
-void uml_arm64_gadget_compare_register_branch_w_hi();
-void uml_arm64_gadget_compare_register_branch_w_hi_linked();
-void uml_arm64_gadget_compare_register_branch_x_ls();
-void uml_arm64_gadget_compare_register_branch_x_ls_linked();
-void uml_arm64_gadget_compare_register_branch_w_ls();
-void uml_arm64_gadget_compare_register_branch_w_ls_linked();
-void uml_arm64_gadget_compare_register_branch_x_ge();
-void uml_arm64_gadget_compare_register_branch_x_ge_linked();
-void uml_arm64_gadget_compare_register_branch_w_ge();
-void uml_arm64_gadget_compare_register_branch_w_ge_linked();
-void uml_arm64_gadget_compare_register_branch_x_lt();
-void uml_arm64_gadget_compare_register_branch_x_lt_linked();
-void uml_arm64_gadget_compare_register_branch_w_lt();
-void uml_arm64_gadget_compare_register_branch_w_lt_linked();
-void uml_arm64_gadget_compare_register_branch_x_gt();
-void uml_arm64_gadget_compare_register_branch_x_gt_linked();
-void uml_arm64_gadget_compare_register_branch_w_gt();
-void uml_arm64_gadget_compare_register_branch_w_gt_linked();
-void uml_arm64_gadget_compare_register_branch_x_le();
-void uml_arm64_gadget_compare_register_branch_x_le_linked();
-void uml_arm64_gadget_compare_register_branch_w_le();
-void uml_arm64_gadget_compare_register_branch_w_le_linked();
-/* Fused guest CMP-immediate + B.cond, see compare_immediate_branch. */
-void uml_arm64_gadget_compare_immediate_branch_x_eq();
-void uml_arm64_gadget_compare_immediate_branch_x_eq_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_eq();
-void uml_arm64_gadget_compare_immediate_branch_w_eq_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_ne();
-void uml_arm64_gadget_compare_immediate_branch_x_ne_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_ne();
-void uml_arm64_gadget_compare_immediate_branch_w_ne_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_hs();
-void uml_arm64_gadget_compare_immediate_branch_x_hs_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_hs();
-void uml_arm64_gadget_compare_immediate_branch_w_hs_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_lo();
-void uml_arm64_gadget_compare_immediate_branch_x_lo_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_lo();
-void uml_arm64_gadget_compare_immediate_branch_w_lo_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_mi();
-void uml_arm64_gadget_compare_immediate_branch_x_mi_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_mi();
-void uml_arm64_gadget_compare_immediate_branch_w_mi_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_pl();
-void uml_arm64_gadget_compare_immediate_branch_x_pl_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_pl();
-void uml_arm64_gadget_compare_immediate_branch_w_pl_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_vs();
-void uml_arm64_gadget_compare_immediate_branch_x_vs_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_vs();
-void uml_arm64_gadget_compare_immediate_branch_w_vs_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_vc();
-void uml_arm64_gadget_compare_immediate_branch_x_vc_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_vc();
-void uml_arm64_gadget_compare_immediate_branch_w_vc_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_hi();
-void uml_arm64_gadget_compare_immediate_branch_x_hi_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_hi();
-void uml_arm64_gadget_compare_immediate_branch_w_hi_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_ls();
-void uml_arm64_gadget_compare_immediate_branch_x_ls_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_ls();
-void uml_arm64_gadget_compare_immediate_branch_w_ls_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_ge();
-void uml_arm64_gadget_compare_immediate_branch_x_ge_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_ge();
-void uml_arm64_gadget_compare_immediate_branch_w_ge_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_lt();
-void uml_arm64_gadget_compare_immediate_branch_x_lt_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_lt();
-void uml_arm64_gadget_compare_immediate_branch_w_lt_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_gt();
-void uml_arm64_gadget_compare_immediate_branch_x_gt_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_gt();
-void uml_arm64_gadget_compare_immediate_branch_w_gt_linked();
-void uml_arm64_gadget_compare_immediate_branch_x_le();
-void uml_arm64_gadget_compare_immediate_branch_x_le_linked();
-void uml_arm64_gadget_compare_immediate_branch_w_le();
-void uml_arm64_gadget_compare_immediate_branch_w_le_linked();
-void uml_arm64_gadget_branch_eq();
-void uml_arm64_gadget_branch_ne();
-void uml_arm64_gadget_branch_hs();
-void uml_arm64_gadget_branch_lo();
-void uml_arm64_gadget_branch_mi();
-void uml_arm64_gadget_branch_pl();
-void uml_arm64_gadget_branch_vs();
-void uml_arm64_gadget_branch_vc();
-void uml_arm64_gadget_branch_hi();
-void uml_arm64_gadget_branch_ls();
-void uml_arm64_gadget_branch_ge();
-void uml_arm64_gadget_branch_lt();
-void uml_arm64_gadget_branch_gt();
-void uml_arm64_gadget_branch_le();
-#define UML_DECLARE_LINKED_CONDITION(name) \
-	void uml_arm64_gadget_branch_##name##_linked();
-UML_DECLARE_LINKED_CONDITION(eq)
-UML_DECLARE_LINKED_CONDITION(ne)
-UML_DECLARE_LINKED_CONDITION(hs)
-UML_DECLARE_LINKED_CONDITION(lo)
-UML_DECLARE_LINKED_CONDITION(mi)
-UML_DECLARE_LINKED_CONDITION(pl)
-UML_DECLARE_LINKED_CONDITION(vs)
-UML_DECLARE_LINKED_CONDITION(vc)
-UML_DECLARE_LINKED_CONDITION(hi)
-UML_DECLARE_LINKED_CONDITION(ls)
-UML_DECLARE_LINKED_CONDITION(ge)
-UML_DECLARE_LINKED_CONDITION(lt)
-UML_DECLARE_LINKED_CONDITION(gt)
-UML_DECLARE_LINKED_CONDITION(le)
-#undef UML_DECLARE_LINKED_CONDITION
+/* Everything a condition has: the branch, its linked and inline forms, and
+ * the fused CMP and B.cond in both widths with the same three forms. */
+#define UML_DECLARE_FUSED_COMPARE_BRANCH(kind, width, name) \
+	void uml_arm64_gadget_##kind##_branch_##width##_##name(); \
+	void uml_arm64_gadget_##kind##_branch_##width##_##name##_linked(); \
+	void uml_arm64_gadget_##kind##_branch_##width##_##name##_inline();
+#define UML_DECLARE_CONDITION_BRANCHES(index, name) \
+	void uml_arm64_gadget_branch_##name(); \
+	void uml_arm64_gadget_branch_##name##_linked(); \
+	void uml_arm64_gadget_branch_##name##_inline(); \
+	UML_DECLARE_FUSED_COMPARE_BRANCH(compare_register, x, name) \
+	UML_DECLARE_FUSED_COMPARE_BRANCH(compare_register, w, name) \
+	UML_DECLARE_FUSED_COMPARE_BRANCH(compare_immediate, x, name) \
+	UML_DECLARE_FUSED_COMPARE_BRANCH(compare_immediate, w, name)
+UML_ARM64_CONDITIONS(UML_DECLARE_CONDITION_BRANCHES)
+#undef UML_DECLARE_CONDITION_BRANCHES
+#undef UML_DECLARE_FUSED_COMPARE_BRANCH
 void uml_arm64_gadget_branch_always();
 void uml_arm64_gadget_branch_always_linked();
-void uml_arm64_gadget_branch_eq_inline();
-void uml_arm64_gadget_branch_ne_inline();
-void uml_arm64_gadget_branch_hs_inline();
-void uml_arm64_gadget_branch_lo_inline();
-void uml_arm64_gadget_branch_mi_inline();
-void uml_arm64_gadget_branch_pl_inline();
-void uml_arm64_gadget_branch_vs_inline();
-void uml_arm64_gadget_branch_vc_inline();
-void uml_arm64_gadget_branch_hi_inline();
-void uml_arm64_gadget_branch_ls_inline();
-void uml_arm64_gadget_branch_ge_inline();
-void uml_arm64_gadget_branch_lt_inline();
-void uml_arm64_gadget_branch_gt_inline();
-void uml_arm64_gadget_branch_le_inline();
 void uml_arm64_gadget_compare_branch_w_z_inline();
 void uml_arm64_gadget_compare_branch_w_nz_inline();
 void uml_arm64_gadget_compare_branch_x_z_inline();
 void uml_arm64_gadget_compare_branch_x_nz_inline();
 void uml_arm64_gadget_test_bit_branch_z_inline();
 void uml_arm64_gadget_test_bit_branch_nz_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_eq_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_ne_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_hs_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_lo_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_mi_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_pl_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_vs_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_vc_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_hi_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_ls_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_ge_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_lt_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_gt_inline();
-void uml_arm64_gadget_compare_immediate_branch_x_le_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_eq_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_ne_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_hs_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_lo_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_mi_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_pl_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_vs_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_vc_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_hi_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_ls_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_ge_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_lt_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_gt_inline();
-void uml_arm64_gadget_compare_immediate_branch_w_le_inline();
-void uml_arm64_gadget_compare_register_branch_x_eq_inline();
-void uml_arm64_gadget_compare_register_branch_x_ne_inline();
-void uml_arm64_gadget_compare_register_branch_x_hs_inline();
-void uml_arm64_gadget_compare_register_branch_x_lo_inline();
-void uml_arm64_gadget_compare_register_branch_x_mi_inline();
-void uml_arm64_gadget_compare_register_branch_x_pl_inline();
-void uml_arm64_gadget_compare_register_branch_x_vs_inline();
-void uml_arm64_gadget_compare_register_branch_x_vc_inline();
-void uml_arm64_gadget_compare_register_branch_x_hi_inline();
-void uml_arm64_gadget_compare_register_branch_x_ls_inline();
-void uml_arm64_gadget_compare_register_branch_x_ge_inline();
-void uml_arm64_gadget_compare_register_branch_x_lt_inline();
-void uml_arm64_gadget_compare_register_branch_x_gt_inline();
-void uml_arm64_gadget_compare_register_branch_x_le_inline();
-void uml_arm64_gadget_compare_register_branch_w_eq_inline();
-void uml_arm64_gadget_compare_register_branch_w_ne_inline();
-void uml_arm64_gadget_compare_register_branch_w_hs_inline();
-void uml_arm64_gadget_compare_register_branch_w_lo_inline();
-void uml_arm64_gadget_compare_register_branch_w_mi_inline();
-void uml_arm64_gadget_compare_register_branch_w_pl_inline();
-void uml_arm64_gadget_compare_register_branch_w_vs_inline();
-void uml_arm64_gadget_compare_register_branch_w_vc_inline();
-void uml_arm64_gadget_compare_register_branch_w_hi_inline();
-void uml_arm64_gadget_compare_register_branch_w_ls_inline();
-void uml_arm64_gadget_compare_register_branch_w_ge_inline();
-void uml_arm64_gadget_compare_register_branch_w_lt_inline();
-void uml_arm64_gadget_compare_register_branch_w_gt_inline();
-void uml_arm64_gadget_compare_register_branch_w_le_inline();
 #define UML_DECLARE_COMPARE_BRANCH(width, polarity) \
 	void uml_arm64_gadget_compare_branch_##width##_##polarity(); \
 	void uml_arm64_gadget_compare_branch_##width##_##polarity##_linked();

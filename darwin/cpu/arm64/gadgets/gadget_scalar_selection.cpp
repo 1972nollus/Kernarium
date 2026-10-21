@@ -13,74 +13,25 @@ namespace uml::cpu::arm64::gadgets::selection {
 		 (instruction & 31U) != 31U);
 }
 
+/* The cases of a switch over the conditions for one family of gadgets, as
+ * UML_ARM64_CONDITION_GADGETS lists its entries. */
+#define UML_CONDITION_CASE(index, name, prefix, suffix) \
+	case index: return prefix##name##suffix;
+#define UML_CONDITION_CASES(prefix, suffix) \
+	UML_ARM64_CONDITIONS(UML_CONDITION_CASE, prefix, suffix)
+
 /* Fused CMP of two registers + B.cond (G116); the builder says why. */
 [[nodiscard]] Gadget compare_register_branch_gadget(
 	bool wide, unsigned condition, bool linked) noexcept
 {
-	static constexpr std::array wide_direct{
-		uml_arm64_gadget_compare_register_branch_x_eq,
-		uml_arm64_gadget_compare_register_branch_x_ne,
-		uml_arm64_gadget_compare_register_branch_x_hs,
-		uml_arm64_gadget_compare_register_branch_x_lo,
-		uml_arm64_gadget_compare_register_branch_x_mi,
-		uml_arm64_gadget_compare_register_branch_x_pl,
-		uml_arm64_gadget_compare_register_branch_x_vs,
-		uml_arm64_gadget_compare_register_branch_x_vc,
-		uml_arm64_gadget_compare_register_branch_x_hi,
-		uml_arm64_gadget_compare_register_branch_x_ls,
-		uml_arm64_gadget_compare_register_branch_x_ge,
-		uml_arm64_gadget_compare_register_branch_x_lt,
-		uml_arm64_gadget_compare_register_branch_x_gt,
-		uml_arm64_gadget_compare_register_branch_x_le,
-	};
-	static constexpr std::array narrow_direct{
-		uml_arm64_gadget_compare_register_branch_w_eq,
-		uml_arm64_gadget_compare_register_branch_w_ne,
-		uml_arm64_gadget_compare_register_branch_w_hs,
-		uml_arm64_gadget_compare_register_branch_w_lo,
-		uml_arm64_gadget_compare_register_branch_w_mi,
-		uml_arm64_gadget_compare_register_branch_w_pl,
-		uml_arm64_gadget_compare_register_branch_w_vs,
-		uml_arm64_gadget_compare_register_branch_w_vc,
-		uml_arm64_gadget_compare_register_branch_w_hi,
-		uml_arm64_gadget_compare_register_branch_w_ls,
-		uml_arm64_gadget_compare_register_branch_w_ge,
-		uml_arm64_gadget_compare_register_branch_w_lt,
-		uml_arm64_gadget_compare_register_branch_w_gt,
-		uml_arm64_gadget_compare_register_branch_w_le,
-	};
-	static constexpr std::array wide_linked{
-		uml_arm64_gadget_compare_register_branch_x_eq_linked,
-		uml_arm64_gadget_compare_register_branch_x_ne_linked,
-		uml_arm64_gadget_compare_register_branch_x_hs_linked,
-		uml_arm64_gadget_compare_register_branch_x_lo_linked,
-		uml_arm64_gadget_compare_register_branch_x_mi_linked,
-		uml_arm64_gadget_compare_register_branch_x_pl_linked,
-		uml_arm64_gadget_compare_register_branch_x_vs_linked,
-		uml_arm64_gadget_compare_register_branch_x_vc_linked,
-		uml_arm64_gadget_compare_register_branch_x_hi_linked,
-		uml_arm64_gadget_compare_register_branch_x_ls_linked,
-		uml_arm64_gadget_compare_register_branch_x_ge_linked,
-		uml_arm64_gadget_compare_register_branch_x_lt_linked,
-		uml_arm64_gadget_compare_register_branch_x_gt_linked,
-		uml_arm64_gadget_compare_register_branch_x_le_linked,
-	};
-	static constexpr std::array narrow_linked{
-		uml_arm64_gadget_compare_register_branch_w_eq_linked,
-		uml_arm64_gadget_compare_register_branch_w_ne_linked,
-		uml_arm64_gadget_compare_register_branch_w_hs_linked,
-		uml_arm64_gadget_compare_register_branch_w_lo_linked,
-		uml_arm64_gadget_compare_register_branch_w_mi_linked,
-		uml_arm64_gadget_compare_register_branch_w_pl_linked,
-		uml_arm64_gadget_compare_register_branch_w_vs_linked,
-		uml_arm64_gadget_compare_register_branch_w_vc_linked,
-		uml_arm64_gadget_compare_register_branch_w_hi_linked,
-		uml_arm64_gadget_compare_register_branch_w_ls_linked,
-		uml_arm64_gadget_compare_register_branch_w_ge_linked,
-		uml_arm64_gadget_compare_register_branch_w_lt_linked,
-		uml_arm64_gadget_compare_register_branch_w_gt_linked,
-		uml_arm64_gadget_compare_register_branch_w_le_linked,
-	};
+	static constexpr std::array wide_direct{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_register_branch_x_, )};
+	static constexpr std::array narrow_direct{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_register_branch_w_, )};
+	static constexpr std::array wide_linked{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_register_branch_x_, _linked)};
+	static constexpr std::array narrow_linked{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_register_branch_w_, _linked)};
 	if (condition >= wide_direct.size())
 		return nullptr;
 	if (linked)
@@ -94,70 +45,14 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget compare_immediate_branch_gadget(
 	bool wide, unsigned condition, bool linked) noexcept
 {
-	static constexpr std::array wide_direct{
-		uml_arm64_gadget_compare_immediate_branch_x_eq,
-		uml_arm64_gadget_compare_immediate_branch_x_ne,
-		uml_arm64_gadget_compare_immediate_branch_x_hs,
-		uml_arm64_gadget_compare_immediate_branch_x_lo,
-		uml_arm64_gadget_compare_immediate_branch_x_mi,
-		uml_arm64_gadget_compare_immediate_branch_x_pl,
-		uml_arm64_gadget_compare_immediate_branch_x_vs,
-		uml_arm64_gadget_compare_immediate_branch_x_vc,
-		uml_arm64_gadget_compare_immediate_branch_x_hi,
-		uml_arm64_gadget_compare_immediate_branch_x_ls,
-		uml_arm64_gadget_compare_immediate_branch_x_ge,
-		uml_arm64_gadget_compare_immediate_branch_x_lt,
-		uml_arm64_gadget_compare_immediate_branch_x_gt,
-		uml_arm64_gadget_compare_immediate_branch_x_le,
-	};
-	static constexpr std::array narrow_direct{
-		uml_arm64_gadget_compare_immediate_branch_w_eq,
-		uml_arm64_gadget_compare_immediate_branch_w_ne,
-		uml_arm64_gadget_compare_immediate_branch_w_hs,
-		uml_arm64_gadget_compare_immediate_branch_w_lo,
-		uml_arm64_gadget_compare_immediate_branch_w_mi,
-		uml_arm64_gadget_compare_immediate_branch_w_pl,
-		uml_arm64_gadget_compare_immediate_branch_w_vs,
-		uml_arm64_gadget_compare_immediate_branch_w_vc,
-		uml_arm64_gadget_compare_immediate_branch_w_hi,
-		uml_arm64_gadget_compare_immediate_branch_w_ls,
-		uml_arm64_gadget_compare_immediate_branch_w_ge,
-		uml_arm64_gadget_compare_immediate_branch_w_lt,
-		uml_arm64_gadget_compare_immediate_branch_w_gt,
-		uml_arm64_gadget_compare_immediate_branch_w_le,
-	};
-	static constexpr std::array wide_linked{
-		uml_arm64_gadget_compare_immediate_branch_x_eq_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_ne_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_hs_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_lo_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_mi_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_pl_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_vs_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_vc_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_hi_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_ls_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_ge_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_lt_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_gt_linked,
-		uml_arm64_gadget_compare_immediate_branch_x_le_linked,
-	};
-	static constexpr std::array narrow_linked{
-		uml_arm64_gadget_compare_immediate_branch_w_eq_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_ne_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_hs_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_lo_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_mi_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_pl_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_vs_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_vc_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_hi_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_ls_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_ge_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_lt_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_gt_linked,
-		uml_arm64_gadget_compare_immediate_branch_w_le_linked,
-	};
+	static constexpr std::array wide_direct{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_immediate_branch_x_, )};
+	static constexpr std::array narrow_direct{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_immediate_branch_w_, )};
+	static constexpr std::array wide_linked{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_immediate_branch_x_, _linked)};
+	static constexpr std::array narrow_linked{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_immediate_branch_w_, _linked)};
 	if (condition >= wide_direct.size())
 		return nullptr;
 	if (linked)
@@ -169,38 +64,10 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget compare_immediate_branch_inline_gadget(
 	bool wide, unsigned condition) noexcept
 {
-	static constexpr std::array wide_inline{
-		uml_arm64_gadget_compare_immediate_branch_x_eq_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_ne_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_hs_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_lo_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_mi_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_pl_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_vs_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_vc_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_hi_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_ls_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_ge_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_lt_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_gt_inline,
-		uml_arm64_gadget_compare_immediate_branch_x_le_inline,
-	};
-	static constexpr std::array narrow_inline{
-		uml_arm64_gadget_compare_immediate_branch_w_eq_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_ne_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_hs_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_lo_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_mi_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_pl_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_vs_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_vc_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_hi_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_ls_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_ge_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_lt_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_gt_inline,
-		uml_arm64_gadget_compare_immediate_branch_w_le_inline,
-	};
+	static constexpr std::array wide_inline{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_immediate_branch_x_, _inline)};
+	static constexpr std::array narrow_inline{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_immediate_branch_w_, _inline)};
 	if (condition >= wide_inline.size())
 		return nullptr;
 	return wide ? wide_inline[condition] : narrow_inline[condition];
@@ -210,38 +77,10 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget compare_register_branch_inline_gadget(
 	bool wide, unsigned condition) noexcept
 {
-	static constexpr std::array wide_inline{
-		uml_arm64_gadget_compare_register_branch_x_eq_inline,
-		uml_arm64_gadget_compare_register_branch_x_ne_inline,
-		uml_arm64_gadget_compare_register_branch_x_hs_inline,
-		uml_arm64_gadget_compare_register_branch_x_lo_inline,
-		uml_arm64_gadget_compare_register_branch_x_mi_inline,
-		uml_arm64_gadget_compare_register_branch_x_pl_inline,
-		uml_arm64_gadget_compare_register_branch_x_vs_inline,
-		uml_arm64_gadget_compare_register_branch_x_vc_inline,
-		uml_arm64_gadget_compare_register_branch_x_hi_inline,
-		uml_arm64_gadget_compare_register_branch_x_ls_inline,
-		uml_arm64_gadget_compare_register_branch_x_ge_inline,
-		uml_arm64_gadget_compare_register_branch_x_lt_inline,
-		uml_arm64_gadget_compare_register_branch_x_gt_inline,
-		uml_arm64_gadget_compare_register_branch_x_le_inline,
-	};
-	static constexpr std::array narrow_inline{
-		uml_arm64_gadget_compare_register_branch_w_eq_inline,
-		uml_arm64_gadget_compare_register_branch_w_ne_inline,
-		uml_arm64_gadget_compare_register_branch_w_hs_inline,
-		uml_arm64_gadget_compare_register_branch_w_lo_inline,
-		uml_arm64_gadget_compare_register_branch_w_mi_inline,
-		uml_arm64_gadget_compare_register_branch_w_pl_inline,
-		uml_arm64_gadget_compare_register_branch_w_vs_inline,
-		uml_arm64_gadget_compare_register_branch_w_vc_inline,
-		uml_arm64_gadget_compare_register_branch_w_hi_inline,
-		uml_arm64_gadget_compare_register_branch_w_ls_inline,
-		uml_arm64_gadget_compare_register_branch_w_ge_inline,
-		uml_arm64_gadget_compare_register_branch_w_lt_inline,
-		uml_arm64_gadget_compare_register_branch_w_gt_inline,
-		uml_arm64_gadget_compare_register_branch_w_le_inline,
-	};
+	static constexpr std::array wide_inline{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_register_branch_x_, _inline)};
+	static constexpr std::array narrow_inline{UML_ARM64_CONDITION_GADGETS(
+		uml_arm64_gadget_compare_register_branch_w_, _inline)};
 	if (condition >= wide_inline.size())
 		return nullptr;
 	return wide ? wide_inline[condition] : narrow_inline[condition];
@@ -250,20 +89,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget conditional_branch_gadget(unsigned condition) noexcept
 {
 	switch (condition) {
-	case 0: return uml_arm64_gadget_branch_eq;
-	case 1: return uml_arm64_gadget_branch_ne;
-	case 2: return uml_arm64_gadget_branch_hs;
-	case 3: return uml_arm64_gadget_branch_lo;
-	case 4: return uml_arm64_gadget_branch_mi;
-	case 5: return uml_arm64_gadget_branch_pl;
-	case 6: return uml_arm64_gadget_branch_vs;
-	case 7: return uml_arm64_gadget_branch_vc;
-	case 8: return uml_arm64_gadget_branch_hi;
-	case 9: return uml_arm64_gadget_branch_ls;
-	case 10: return uml_arm64_gadget_branch_ge;
-	case 11: return uml_arm64_gadget_branch_lt;
-	case 12: return uml_arm64_gadget_branch_gt;
-	case 13: return uml_arm64_gadget_branch_le;
+	UML_CONDITION_CASES(uml_arm64_gadget_branch_, )
 	default: return uml_arm64_gadget_branch_always;
 	}
 }
@@ -272,20 +98,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 	unsigned condition) noexcept
 {
 	switch (condition) {
-	case 0: return uml_arm64_gadget_branch_eq_linked;
-	case 1: return uml_arm64_gadget_branch_ne_linked;
-	case 2: return uml_arm64_gadget_branch_hs_linked;
-	case 3: return uml_arm64_gadget_branch_lo_linked;
-	case 4: return uml_arm64_gadget_branch_mi_linked;
-	case 5: return uml_arm64_gadget_branch_pl_linked;
-	case 6: return uml_arm64_gadget_branch_vs_linked;
-	case 7: return uml_arm64_gadget_branch_vc_linked;
-	case 8: return uml_arm64_gadget_branch_hi_linked;
-	case 9: return uml_arm64_gadget_branch_ls_linked;
-	case 10: return uml_arm64_gadget_branch_ge_linked;
-	case 11: return uml_arm64_gadget_branch_lt_linked;
-	case 12: return uml_arm64_gadget_branch_gt_linked;
-	case 13: return uml_arm64_gadget_branch_le_linked;
+	UML_CONDITION_CASES(uml_arm64_gadget_branch_, _linked)
 	default: return uml_arm64_gadget_branch_always_linked;
 	}
 }
@@ -296,23 +109,13 @@ namespace uml::cpu::arm64::gadgets::selection {
 	unsigned condition) noexcept
 {
 	switch (condition) {
-	case 0: return uml_arm64_gadget_branch_eq_inline;
-	case 1: return uml_arm64_gadget_branch_ne_inline;
-	case 2: return uml_arm64_gadget_branch_hs_inline;
-	case 3: return uml_arm64_gadget_branch_lo_inline;
-	case 4: return uml_arm64_gadget_branch_mi_inline;
-	case 5: return uml_arm64_gadget_branch_pl_inline;
-	case 6: return uml_arm64_gadget_branch_vs_inline;
-	case 7: return uml_arm64_gadget_branch_vc_inline;
-	case 8: return uml_arm64_gadget_branch_hi_inline;
-	case 9: return uml_arm64_gadget_branch_ls_inline;
-	case 10: return uml_arm64_gadget_branch_ge_inline;
-	case 11: return uml_arm64_gadget_branch_lt_inline;
-	case 12: return uml_arm64_gadget_branch_gt_inline;
-	case 13: return uml_arm64_gadget_branch_le_inline;
+	UML_CONDITION_CASES(uml_arm64_gadget_branch_, _inline)
 	default: return nullptr;
 	}
 }
+
+#undef UML_CONDITION_CASES
+#undef UML_CONDITION_CASE
 
 /* The fall-through translated inline behind the branch. */
 [[nodiscard]] Gadget compare_branch_inline_gadget(
@@ -497,7 +300,7 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 	return {uml_arm64_gadget_sysreg_cntvct_read, true};
 }
 
-#define UML_CONDITIONAL_COMPARE_FAST_ROW(name) \
+#define UML_CONDITIONAL_COMPARE_FAST_ROW(index, name) \
 	std::array<Gadget, 8>{ \
 		uml_arm64_gadget_conditional_compare_fast_##name##_w_cmn_r, \
 		uml_arm64_gadget_conditional_compare_fast_##name##_w_cmn_i, \
@@ -506,34 +309,21 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 		uml_arm64_gadget_conditional_compare_fast_##name##_w_cmp_r, \
 		uml_arm64_gadget_conditional_compare_fast_##name##_w_cmp_i, \
 		uml_arm64_gadget_conditional_compare_fast_##name##_x_cmp_r, \
-		uml_arm64_gadget_conditional_compare_fast_##name##_x_cmp_i}
+		uml_arm64_gadget_conditional_compare_fast_##name##_x_cmp_i},
 
 [[nodiscard]] Gadget conditional_compare_gadget(unsigned condition,
 	bool subtract, bool is_64_bit, bool immediate) noexcept
 {
 	static constexpr std::array table{
-		UML_CONDITIONAL_COMPARE_FAST_ROW(eq),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(ne),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(hs),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(lo),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(mi),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(pl),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(vs),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(vc),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(hi),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(ls),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(ge),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(lt),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(gt),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(le),
-		UML_CONDITIONAL_COMPARE_FAST_ROW(always)};
+		UML_ARM64_CONDITIONS(UML_CONDITIONAL_COMPARE_FAST_ROW)
+		UML_CONDITIONAL_COMPARE_FAST_ROW(14, always)};
 	return table[condition < 14U ? condition : 14U]
 		[subtract * 4U + is_64_bit * 2U + immediate];
 }
 
 #undef UML_CONDITIONAL_COMPARE_FAST_ROW
 
-#define UML_CONDITIONAL_SELECT_FAST_ROW(name) \
+#define UML_CONDITIONAL_SELECT_FAST_ROW(index, name) \
 	std::array<Gadget, 8>{ \
 		uml_arm64_gadget_conditional_select_fast_##name##_w_sel, \
 		uml_arm64_gadget_conditional_select_fast_##name##_x_sel, \
@@ -542,26 +332,13 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 		uml_arm64_gadget_conditional_select_fast_##name##_w_inv, \
 		uml_arm64_gadget_conditional_select_fast_##name##_x_inv, \
 		uml_arm64_gadget_conditional_select_fast_##name##_w_neg, \
-		uml_arm64_gadget_conditional_select_fast_##name##_x_neg}
+		uml_arm64_gadget_conditional_select_fast_##name##_x_neg},
 
 [[nodiscard]] Gadget conditional_select_gadget(unsigned condition,
 	unsigned operation, bool is_64_bit) noexcept
 {
 	static constexpr std::array table{
-		UML_CONDITIONAL_SELECT_FAST_ROW(eq),
-		UML_CONDITIONAL_SELECT_FAST_ROW(ne),
-		UML_CONDITIONAL_SELECT_FAST_ROW(hs),
-		UML_CONDITIONAL_SELECT_FAST_ROW(lo),
-		UML_CONDITIONAL_SELECT_FAST_ROW(mi),
-		UML_CONDITIONAL_SELECT_FAST_ROW(pl),
-		UML_CONDITIONAL_SELECT_FAST_ROW(vs),
-		UML_CONDITIONAL_SELECT_FAST_ROW(vc),
-		UML_CONDITIONAL_SELECT_FAST_ROW(hi),
-		UML_CONDITIONAL_SELECT_FAST_ROW(ls),
-		UML_CONDITIONAL_SELECT_FAST_ROW(ge),
-		UML_CONDITIONAL_SELECT_FAST_ROW(lt),
-		UML_CONDITIONAL_SELECT_FAST_ROW(gt),
-		UML_CONDITIONAL_SELECT_FAST_ROW(le)};
+		UML_ARM64_CONDITIONS(UML_CONDITIONAL_SELECT_FAST_ROW)};
 	if (condition >= 14U)
 		return is_64_bit ?
 			uml_arm64_gadget_conditional_select_fast_always_x :
@@ -575,23 +352,9 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 	bool synchronization, unsigned option) noexcept
 {
 	static constexpr std::array<Gadget, 16> dmb{
-		uml_arm64_gadget_dmb_0, uml_arm64_gadget_dmb_1,
-		uml_arm64_gadget_dmb_2, uml_arm64_gadget_dmb_3,
-		uml_arm64_gadget_dmb_4, uml_arm64_gadget_dmb_5,
-		uml_arm64_gadget_dmb_6, uml_arm64_gadget_dmb_7,
-		uml_arm64_gadget_dmb_8, uml_arm64_gadget_dmb_9,
-		uml_arm64_gadget_dmb_10, uml_arm64_gadget_dmb_11,
-		uml_arm64_gadget_dmb_12, uml_arm64_gadget_dmb_13,
-		uml_arm64_gadget_dmb_14, uml_arm64_gadget_dmb_15};
+		UML_ARM64_BARRIER_GADGETS(uml_arm64_gadget_dmb_)};
 	static constexpr std::array<Gadget, 16> dsb{
-		uml_arm64_gadget_dsb_0, uml_arm64_gadget_dsb_1,
-		uml_arm64_gadget_dsb_2, uml_arm64_gadget_dsb_3,
-		uml_arm64_gadget_dsb_4, uml_arm64_gadget_dsb_5,
-		uml_arm64_gadget_dsb_6, uml_arm64_gadget_dsb_7,
-		uml_arm64_gadget_dsb_8, uml_arm64_gadget_dsb_9,
-		uml_arm64_gadget_dsb_10, uml_arm64_gadget_dsb_11,
-		uml_arm64_gadget_dsb_12, uml_arm64_gadget_dsb_13,
-		uml_arm64_gadget_dsb_14, uml_arm64_gadget_dsb_15};
+		UML_ARM64_BARRIER_GADGETS(uml_arm64_gadget_dsb_)};
 	return (synchronization ? dsb : dmb)[option & 15U];
 }
 

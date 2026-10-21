@@ -142,15 +142,9 @@ and minutes under AddressSanitizer, where every realloc copies. The private
 cache starts empty and is removed at exit, so a test costs the same on any
 host and leaves the host's cache alone.
 
-The experimental macOS Vulkan lane is separately named and opt-in. It needs the
-`apple-gpu-vulkan-experiment` dependency prefix and a private prefix built at
-its raised deployment target, and it is required only when a change crosses the
-Venus or KosmicKrisp boundary:
-
-```sh
-cmake --workflow --preset check-gpu-venus
-cmake --workflow --preset check-integration-venus
-```
+The GPU workflows need the `apple-gpu-vulkan-experiment` dependency prefix. A
+change that crosses the Venus or KosmicKrisp boundary also runs
+`check-integration`.
 
 KosmicKrisp's prebuilt SPIR-V has a cheap guard in the tooling suite and an
 opt-in full comparison that rebuilds `mesa_clc` on the pinned Debian host and
@@ -176,11 +170,11 @@ A whole CTS campaign runs in that application through the opt-in
 sealed rendered image, so it registers only when the image is named:
 
 ```sh
-cmake --preset macos-integration-venus \
+cmake --preset macos-integration \
     -DUML_IOS_MAC_CTS_ROOTFS=<image>.ext4 \
     -DUML_IOS_MAC_CTS_ROOTFS_RECEIPT=<image>.receipt.json \
     -DUML_IOS_MAC_CTS_CAMPAIGN=gl46-matrix-cfg00-xml01-001of032-zink-v1
-ctest --test-dir .build/presets/macos-integration-venus \
+ctest --test-dir .build/presets/macos-integration \
     -R apple-ios-mac-vk-gl-cts
 ```
 
@@ -201,10 +195,10 @@ and reads the artifact frames from the launch console, because the
 guest-session log is an XCTest path that a device launch does not take:
 
 ```sh
-cmake --preset macos-integration-venus \
+cmake --preset macos-integration \
     -DUML_IOS_DEVICE_VK_CTS_DEVICE=<udid> \
     -DUML_IOS_DEVICE_VK_CTS_CAMPAIGN=vulkan-info-receipt-smoke-v1
-ctest --test-dir .build/presets/macos-integration-venus \
+ctest --test-dir .build/presets/macos-integration \
     -R apple-ios-device-vk-cts
 ```
 
@@ -885,10 +879,9 @@ both tools on synthetic ELF fixtures.
 
 `arm64-no-sve` checks that the virtual CPU presents no SVE outside streaming
 mode whatever the host reports: the prober's token set, the engines' presented
-profiles, ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1, the SVE bits of AT_HWCAP
-and AT_HWCAP2, the 16-bit mask form of the predicate storage `CpuState`
-reserves, and the zeroing of that storage at every PSTATE.SM change.
-`arm64-advertised-features` pins the words and registers of named hosts.
+profiles, ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1, and the SVE bits of
+AT_HWCAP and AT_HWCAP2. `arm64-advertised-features` pins the words and
+registers of named hosts.
 
 `guest-no-sve-gadgets` and `guest-no-sve-jit` run on every host. The
 freestanding `no_sve_probe.cpp` boots as `/init` and checks that the guest
@@ -1183,7 +1176,7 @@ summarized in [`graphics.md`](graphics.md).
 ## Graphics conformance campaigns
 
 Guest CTS qualification is opt-in, receipt-bound, and separate from the
-`*-venus*` workflows above, which never launch a guest or make a Vulkan support
+`check-gpu` workflows above, which never launch a guest or make a Vulkan support
 claim. Every campaign guest is JIT with exactly four vCPUs and 4 GiB.
 
 Two rules bound what any graphics run may be used to claim.

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Check how the kernel copies path and name strings from user memory.
 
 This runs inside the guest as root. Every check passes a string at a chosen

@@ -37,6 +37,15 @@ NAME(uml_arm64_afp_twin_begin):
 	afp_twin_row NAME(uml_arm64_gadget_\name), NAME(uml_arm64_gadget_\name) + 4, NAME(uml_arm64_gadget_\name\()_afp), NAME(uml_arm64_gadget_\name\()_afp) + 4
 .endm
 
+/* The gadget \name, or with \afp its twin. */
+.macro gadget_or_twin name, afp
+	.if \afp
+	afp_gadget \name
+	.else
+	gadget \name
+	.endif
+.endm
+
 /* The row of a fixed-point table whose twin is \name\()_afp. */
 .macro afp_table_row name
 	afp_twin_row NAME(uml_arm64_gadget_\name), NAME(uml_arm64_gadget_\name\()_end), NAME(uml_arm64_gadget_\name\()_afp), NAME(uml_arm64_gadget_\name\()_afp_end)

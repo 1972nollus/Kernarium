@@ -38,20 +38,15 @@ def main() -> None:
         fail("resolved base-manifest digest differs from AOSP metadata")
     base_projects = pinned_source.manifest_projects(ET.parse(base_manifest).getroot(), error)
     routes = pinned_source.read_route_table(
-        android_root / "patches/projects.tsv",
-        pinned_source.AOSP_ROUTE_HEADER,
-        android_root,
-        "patches/projects",
-        base_projects,
-        error,
+        android_root / "patches/projects.tsv", android_root, base_projects, error
     )
 
     if args.aosp_source is not None:
         pinned_source.verify_repo_routes(
-            args.aosp_source, base_projects, routes, args.expect, "AOSP", error
+            args.aosp_source, base_projects, routes, args.expect, error
         )
         if args.expect == "final":
-            pinned_source.verify_device_tree(android_root, "overlay", args.aosp_source, error)
+            pinned_source.verify_device_tree(android_root, args.aosp_source, error)
     print(f"verified {len(routes)} routed AOSP 17 project series")
 
 

@@ -10,21 +10,10 @@ import argparse
 import os
 import shutil
 import stat
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 
 DESTINATION = PurePosixPath("device/kernarium/darwin")
-
-
-@dataclass(frozen=True)
-class Tree:
-    source: str
-    workspace: str
-    label: str
-
-
-TREES = {"overlay": Tree("overlay", "AOSP source", "device overlay")}
 
 
 def fail(message: str) -> None:
@@ -101,31 +90,29 @@ def synchronize(source: Path, destination: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--android-root", type=Path, required=True)
-    parser.add_argument("--tree", choices=sorted(TREES), required=True)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
-    tree = TREES[args.tree]
 
     android_root = checked_root(args.android_root, "Android policy root")
-    workspace = checked_root(args.workspace, tree.workspace)
+    workspace = checked_root(args.workspace, "AOSP source")
     if not (workspace / ".repo/manifests").is_dir():
-        fail(f"{tree.workspace} lacks Repo metadata")
-    source = android_root / tree.source
+        fail("AOSP source lacks Repo metadata")
+    source = android_root / "overlay"
     if not source.is_dir() or source.is_symlink():
-        fail(f"checked {tree.label} is missing or unsafe")
+        fail("checked device overlay is missing or unsafe")
     destination = workspace / Path(DESTINATION)
     try:
         destination.parent.resolve().relative_to(workspace)
     except ValueError:
-        fail(f"device destination escapes the {tree.workspace}")
+        fail("device destination escapes the AOSP source")
 
     if args.verify:
         verify(source, destination)
-        print(f"verified exact {tree.label}: {destination}")
+        print(f"verified exact device overlay: {destination}")
     else:
         synchronize(source, destination)
-        print(f"synchronized exact {tree.label}: {destination}")
+        print(f"synchronized exact device overlay: {destination}")
 
 
 if __name__ == "__main__":
