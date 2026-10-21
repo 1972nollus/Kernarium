@@ -1653,8 +1653,17 @@ native_display_cleanup
         self.assertNotIn("DISPLAY=:0", launcher)
         self.assertIn("pgrep -x Xvfb", launcher)
         self.assertIn("/dev/dri/renderD128", launcher)
-        self.assertIn("guest_page_size=", launcher)
-        self.assertIn("does not match 4096", launcher)
+        self.assertIn(
+            'actual_page_size=$(getconf PAGESIZE)\n'
+            '[ "$actual_page_size" -eq 4096 ] || {\n'
+            '    echo "UML_CTS_ERROR: guest page size $actual_page_size does '
+            'not match 4096"\n'
+            '    exit 1\n'
+            '}\n'
+            "printf 'guest_page_size=%s\n' \"$actual_page_size\" "
+            '>> "$renderer"\n',
+            launcher,
+        )
         self.assertIn("UML_CTS_ARTIFACT_BEGIN", launcher)
         self.assertIn("systemctl poweroff", launcher)
         self.assertNotIn("apt ", launcher)
