@@ -557,6 +557,26 @@ def verify_config_policy_contract(module: ModuleType, root: Path) -> None:
         raise AssertionError("config policy accepted a missing list")
 
 
+def verify_bundle_page_size_contract(module: ModuleType, root: Path) -> None:
+    """Verifying a bundle checks its manifest, and its page size, first."""
+    for kernel_slice in ("arm64", "x86_64"):
+        value = manifest(module, "mainline-6.18", kernel_slice, 16384)
+        bundle = root / value["directory_name"]
+        bundle.mkdir()
+        (bundle / "kernel-artifact.json").write_text(
+            json.dumps(value), encoding="utf-8"
+        )
+        try:
+            module.verify_artifact(bundle, root, root / "kernel.env", root / "abi.env")
+        except SystemExit as error:
+            require(
+                "kernel page size is unsupported" in str(error),
+                f"a 16 KiB bundle was rejected for the wrong reason: {error}",
+            )
+        else:
+            raise AssertionError(f"a 16 KiB {kernel_slice} bundle was verified")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-module", type=Path, required=True)
@@ -600,6 +620,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="uml-kernel-config-contract-") as raw:
         root = Path(raw)
+        verify_bundle_page_size_contract(module, root)
         for kernel_slice in ("arm64", "x86_64"):
             expected = config_values(kernel_slice)
             require_config_accepted(module, root, kernel_slice, expected)

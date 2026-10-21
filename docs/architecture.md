@@ -1256,9 +1256,9 @@ declines.
 generated patch series, and standalone build policy of both the Linux and the
 Android kernel products. `kernel/common` owns only contracts shared across
 families. The Apple CMake graph imports compact artifacts and checks their
-bridge ABI, page profile, product family, and `6.18` release series. Patch
-releases, commit identities, and producer provenance do not become runtime
-compatibility keys.
+bridge ABI, product family, and `6.18` release series; the manifest admits only
+the 4 KiB guest page size. Patch releases, commit identities, and producer
+provenance do not become runtime compatibility keys.
 
 `android/lineage-24` owns the Android product, static GPT layout, ramdisks,
 rootfs release, and producer tools. Kernel and rootfs releases are selected

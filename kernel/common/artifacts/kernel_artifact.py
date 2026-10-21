@@ -464,7 +464,6 @@ def verify_compatible_identity(
     expected_family: str,
     expected_slice: str,
     expected_release_series: str,
-    expected_page_size: int,
 ) -> None:
     verify_abi_identity(manifest, abi_metadata_path)
     if manifest["family"] != expected_family:
@@ -476,11 +475,6 @@ def verify_compatible_identity(
         fail(
             f"artifact slice {manifest['slice']} differs from "
             f"required {expected_slice}"
-        )
-    if manifest["page_size"] != expected_page_size:
-        fail(
-            f"artifact page size {manifest['page_size']} differs from "
-            f"required {expected_page_size}"
         )
     release = manifest["release"]
     release_pattern = re.compile(
@@ -546,7 +540,6 @@ def verify_compatible_artifact(
     expected_family: str,
     expected_slice: str,
     expected_release_series: str,
-    expected_page_size: int,
 ) -> dict:
     return _verify_bundle(
         artifact_root,
@@ -557,7 +550,6 @@ def verify_compatible_artifact(
             expected_family,
             expected_slice,
             expected_release_series,
-            expected_page_size,
         ),
     )
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import shutil
 import struct
 import subprocess
 import sys
@@ -235,6 +236,90 @@ endif()
         )
 
 
+def verify_accepted_import(artifact_cmake: Path) -> None:
+    """The accepted import follows its descriptor until a caller pins the bundle."""
+    with tempfile.TemporaryDirectory(prefix="accepted-import-") as directory:
+        root = Path(directory).resolve()
+        common = root / "common"
+        source = root / "source"
+        build = root / "build"
+        descriptor = root / "accepted.env"
+        recorded = root / "arguments.txt"
+        (common / "abi").mkdir(parents=True)
+        (common / "artifacts").mkdir()
+        shutil.copyfile(artifact_cmake, common / "artifacts/KernelArtifact.cmake")
+        (common / "abi/identity.env").write_text("", encoding="utf-8")
+        # The fixture verifier admits any bundle and records its command line.
+        (common / "artifacts/verify-kernel-artifact.py").write_text(
+            f"import sys\nopen({str(recorded)!r}, 'w').write(' '.join(sys.argv[1:]))\n",
+            encoding="utf-8",
+        )
+        source.mkdir()
+        (source / "CMakeLists.txt").write_text(
+            f'''cmake_minimum_required(VERSION 3.27)
+project(accepted_import LANGUAGES NONE)
+include([=[{common}/artifacts/KernelArtifact.cmake]=])
+uml_import_accepted_kernel_artifact(
+    TARGET fixture_kernel_artifact
+    DESCRIPTOR [=[{descriptor}]=]
+    CACHE_VARIABLE FIXTURE_KERNEL_ARTIFACT_DIR
+    DESCRIPTION "fixture"
+    FAMILY android-6.18
+    SLICE arm64)
+get_property(_watched DIRECTORY PROPERTY CMAKE_CONFIGURE_DEPENDS)
+if(NOT [=[{descriptor}]=] IN_LIST _watched)
+    message(FATAL_ERROR "configure does not watch the descriptor")
+endif()
+''',
+            encoding="utf-8",
+        )
+        managed = source / ".build/kernel/artifacts"
+        pinned = root / "pinned"
+        # Each step: the descriptor's bundle, extra configure arguments, the
+        # bundle the import must verify, and whether it still follows.
+        steps = (
+            ("bundle-v1", [], managed / "bundle-v1", True),
+            ("bundle-v2", [], managed / "bundle-v2", True),
+            ("bundle-v3", [f"-DFIXTURE_KERNEL_ARTIFACT_DIR={pinned}"], pinned, False),
+            ("bundle-v4", [], pinned, False),
+            ("bundle-v5", ["-DFIXTURE_KERNEL_ARTIFACT_DIR="], managed / "bundle-v5", True),
+        )
+        for name, extra, bundle, follows in steps:
+            descriptor.write_text(
+                f"UML_KERNEL_ARTIFACT_DIRECTORY_NAME='{name}'\n", encoding="utf-8"
+            )
+            configured = subprocess.run(
+                ["cmake", "-G", "Ninja", "-S", str(source), "-B", str(build), *extra],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            require(
+                configured.returncode == 0,
+                f"accepted import failed at {name}:\n"
+                f"{configured.stdout}{configured.stderr}",
+            )
+            cache = (build / "CMakeCache.txt").read_text(encoding="utf-8")
+            variable = "FIXTURE_KERNEL_ARTIFACT_DIR"
+            for entry in (
+                f"{variable}:PATH={bundle}",
+                f"{variable}_ACCEPTED_DEFAULT:INTERNAL={managed / name}",
+                f"{variable}_FOLLOW_ACCEPTED:INTERNAL={'ON' if follows else 'OFF'}",
+            ):
+                require(entry in cache.splitlines(), f"at {name}, the cache lacks {entry}")
+            expected = (
+                f"--artifact {bundle} --common-root {common} "
+                f"--abi-metadata {common / 'abi/identity.env'} --compatible "
+                "--expected-family android-6.18 --expected-slice arm64 "
+                "--expected-release-series 6.18"
+            )
+            require(
+                recorded.read_text(encoding="utf-8") == expected,
+                f"at {name}, the verifier ran as: {recorded.read_text(encoding='utf-8')}",
+            )
+
+
 def verify_artifact_configure_inputs(artifact_cmake: Path) -> None:
     """An imported bundle is re-verified when anything its verifier reads changes."""
     with tempfile.TemporaryDirectory(prefix="artifact-configure-inputs-") as directory:
@@ -271,8 +356,7 @@ uml_import_kernel_artifact(
     COMMON_ROOT [=[{common}]=]
     EXPECTED_FAMILY mainline-6.18
     EXPECTED_SLICE arm64
-    EXPECTED_RELEASE_SERIES 6.18
-    EXPECTED_PAGE_SIZE 16384)
+    EXPECTED_RELEASE_SERIES 6.18)
 get_property(_watched DIRECTORY PROPERTY CMAKE_CONFIGURE_DEPENDS)
 foreach(_input IN ITEMS
     {expected})
@@ -304,6 +388,7 @@ def main() -> int:
     arguments = parser.parse_args()
 
     verify_accepted_artifact_cache(arguments.artifact_cmake)
+    verify_accepted_import(arguments.artifact_cmake)
     verify_artifact_configure_inputs(arguments.artifact_cmake)
     verify_carrier_tool(arguments.carrier_verifier)
 
