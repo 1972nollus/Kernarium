@@ -59,16 +59,12 @@ struct NativeExecutionContext final {
 	std::uint32_t segment_error{};
 };
 
-static_assert(offsetof(NativeExecutionContext, memory) ==
-	UML_X86_64_CONTEXT_MEMORY);
 static_assert(offsetof(NativeExecutionContext, tlb_entries) ==
 	UML_X86_64_CONTEXT_TLB);
 static_assert(offsetof(NativeExecutionContext, program_begin) ==
 	UML_X86_64_CONTEXT_PROGRAM_BEGIN);
 static_assert(offsetof(NativeExecutionContext, program_end) ==
 	UML_X86_64_CONTEXT_PROGRAM_END);
-static_assert(offsetof(NativeExecutionContext, fault) ==
-	UML_X86_64_CONTEXT_FAULT_ADDRESS);
 static_assert(offsetof(NativeExecutionContext, write_code) ==
 	UML_X86_64_CONTEXT_WRITE_CODE);
 /* A store translation asks whether a publication is still owed by testing this

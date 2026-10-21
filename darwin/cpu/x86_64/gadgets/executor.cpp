@@ -614,8 +614,6 @@ public:
 		checked_ = static_cast<std::uint8_t>(checked);
 	}
 
-	[[nodiscard]] bool sharing() const noexcept { return share_; }
-
 	void invalidate() noexcept
 	{
 #if UML_GADGET_CACHE_CENSUS
@@ -858,7 +856,6 @@ public:
 	 * the build reads a byte until it publishes are counted. */
 	class Pinned final {
 	public:
-		Pinned() = default;
 		Pinned(Space *space, std::span<const std::uint64_t> pages)
 			: space_{space}, pins_{space->pin(pages)}
 		{}
@@ -1649,13 +1646,13 @@ private:
 		const auto *owner = owner_of(slot);
 		return owner != nullptr && owner->space->shared();
 	}
-#endif
 
 	[[nodiscard]] std::uint64_t generation_of(
 		const Slot &slot) const noexcept
 	{
 		return owners_[slot.owner()]->value;
 	}
+#endif
 
 	/* Give an address space the id its slots' tags will carry. */
 	void enroll(Generation &state, std::uint64_t generation)
@@ -2041,15 +2038,6 @@ private:
 		slot.body = nullptr;
 	}
 
-	/* The budget asks an address space held here to shed: the cache lets go
-	 * of it at the start of its next run (leave_shedding()). Called under the
-	 * budget's lock. */
-	static void shed(void *owner) noexcept
-	{
-		static_cast<ProgramCache *>(owner)->shed_requested_.store(true,
-			std::memory_order_relaxed);
-	}
-
 	/* Close a shared address space that holds enough freed arena
 	 * (Space::renewal_due), for every executor attached to let go of. Only
 	 * one this cache holds, and so is attached to throughout: a cache closes
@@ -2179,9 +2167,10 @@ private:
 		return false;
 	}
 
-	/* Set by shed() when the budget asks an address space held here to
-	 * shed; before generations_, whose accounts may call shed() until they
-	 * are destroyed. */
+	/* Set (Space::request_renewal) when the budget asks an address space
+	 * held here to shed, which the cache lets go of at the start of its next
+	 * run (leave_shedding()); before generations_, whose accounts may set it
+	 * until they are destroyed. */
 	std::atomic<bool> shed_requested_{};
 	/* What this cache's executor says about itself for the bodies other
 	 * executors free, null when it shares nothing; whether the cache shares
