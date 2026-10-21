@@ -7,12 +7,13 @@
 // product and sum is computed exactly, rounded to odd to a 24-bit
 // significand, with denormals flushed and no exceptions, which no host
 // instruction is required to match, so it is the exact integer arithmetic
-// the A64 forms share (cpu/arm64/detail/bfloat_dot.hpp). The multiply-adds
-// are the host's fused single-precision instruction on the exactly widened
-// operands.
+// the A64 forms share (cpu/arm64/detail/bfloat_dot.hpp), and so are the
+// conversions (bfloat_conversion.hpp). The multiply-adds are the host's
+// fused single-precision instruction on the exactly widened operands.
 
 #include "cpu/arm64/aarch32/semantics_fp.hpp"
 #include "cpu/arm64/aarch32/semantics_vector.hpp"
+#include "cpu/arm64/detail/bfloat_conversion.hpp"
 #include "cpu/arm64/detail/bfloat_dot.hpp"
 
 #include <array>
@@ -27,11 +28,7 @@ using std::uint32_t;
 using std::uint64_t;
 
 using ::uml::cpu::arm64::detail::bfloat_dot_add;
-
-constexpr uint32_t default_nan = 0x7fc0'0000U;
-constexpr uint32_t overflow_flag = 1U << 2;
-constexpr uint32_t underflow_flag = 1U << 3;
-constexpr uint32_t input_denormal_flag = 1U << 7;
+using ::uml::cpu::arm64::detail::convert_to_bfloat;
 
 /* VDOT, vector and by-element. */
 bool vdot(Exec &x, bool by_element)
@@ -128,75 +125,9 @@ bool vfma_bfs(Exec &x)
  * and rounding controls of `fpcr`; the flags it raises go to the FPSR. */
 [[nodiscard]] uint16_t convert(CpuState &cpu, uint32_t fpcr, uint32_t operand) noexcept
 {
-	const bool flush = (fpcr & fp::fpcr_fz) != 0U;
-	const unsigned rounding = fpcr >> 22 & 3U;
-	const bool negative = operand >> 31 != 0U;
-	const auto sign = static_cast<uint16_t>(negative ? 0x8000U : 0U);
-	const uint32_t exponent = operand >> 23 & 0xffU;
-	const uint32_t fraction = operand & 0x7f'ffffU;
-	if (exponent == 0xffU) {
-		if (fraction == 0U)
-			return sign | 0x7f80U;
-		if ((fraction & 0x40'0000U) == 0U)
-			cpu.fpsr |= fp::invalid_flag;
-		return static_cast<uint16_t>(((fpcr & fp::fpcr_dn) != 0U ? default_nan : operand | 0x40'0000U) >> 16);
-	}
-	if (exponent == 0U && fraction == 0U)
-		return sign;
-	if (exponent == 0U && flush) {
-		cpu.fpsr |= input_denormal_flag;
-		return sign;
-	}
-	uint32_t biased = exponent;
-	const uint32_t significand = exponent == 0U ? fraction : fraction | 1U << 23;
-	uint32_t mantissa = significand >> 16;
-	const uint32_t remainder = significand & 0xffffU;
-	const bool inexact = remainder != 0U;
-	uint32_t flags = 0;
-	if (biased == 0U && inexact)
-		flags |= underflow_flag;
-	bool round_up;
-	bool overflow_to_infinity;
-	switch (rounding) {
-	case 1:
-		round_up = inexact && !negative;
-		overflow_to_infinity = !negative;
-		break;
-	case 2:
-		round_up = inexact && negative;
-		overflow_to_infinity = negative;
-		break;
-	case 3:
-		round_up = false;
-		overflow_to_infinity = false;
-		break;
-	default:
-		round_up = remainder > 0x8000U || (remainder == 0x8000U && (mantissa & 1U) != 0U);
-		overflow_to_infinity = true;
-		break;
-	}
-	if (round_up) {
-		++mantissa;
-		if (biased == 0U && mantissa == 128U)
-			biased = 1;
-		if (mantissa == 256U) {
-			++biased;
-			mantissa = 128;
-		}
-	}
-	uint16_t result;
-	bool error = inexact;
-	if (biased >= 255U) {
-		result = static_cast<uint16_t>(sign | (overflow_to_infinity ? 0x7f80U : 0x7f7fU));
-		flags |= overflow_flag;
-		error = true;
-	} else {
-		result = static_cast<uint16_t>(sign | biased << 7 | (mantissa & 0x7fU));
-	}
-	if (error)
-		flags |= fp::inexact_flag;
-	cpu.fpsr |= flags;
-	return result;
+	const auto converted = convert_to_bfloat(operand, fpcr);
+	cpu.fpsr |= converted.exceptions;
+	return converted.bits;
 }
 
 /* VCVT: four singles of Qm to four bfloat16 in Dd, under the Standard FPSCR
