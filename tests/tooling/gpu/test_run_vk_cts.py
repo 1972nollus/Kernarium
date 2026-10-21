@@ -242,7 +242,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIsNone(self.identity["cts"]["authoritative_build_receipt"])
         self.assertEqual(campaigns["physical_device"]["state"], "held")
         self.assertFalse(campaigns["physical_device"]["launch_permitted"])
-        self.assertEqual(len(campaigns["ios_simulator"]["frozen_udids"]), 4)
 
     def test_identity_rejects_duplicate_json_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

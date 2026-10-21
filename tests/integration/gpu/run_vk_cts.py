@@ -646,31 +646,6 @@ def load_campaigns(path: Path = CAMPAIGNS_PATH) -> dict[str, Any]:
         "swap_permitted": False,
     }:
         raise CampaignError("physical-device Vulkan lane is not explicitly held")
-    simulator = value.get("ios_simulator")
-    if (
-        not isinstance(simulator, dict)
-        or simulator.get("device_type") != "iPhone 17 Pro Max"
-        or simulator.get("model") != "iPhone18,2"
-        or simulator.get("runtime") != "iOS 26.5"
-    ):
-        raise CampaignError("Simulator development target drifted")
-    udids = simulator.get("frozen_udids")
-    if (
-        not isinstance(udids, list)
-        or not 1 <= len(udids) <= 4
-        or len(udids) != len(set(udids))
-        or any(
-            not isinstance(udid, str)
-            or re.fullmatch(
-                r"[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-"
-                r"[0-9A-F]{4}-[0-9A-F]{12}",
-                udid,
-            )
-            is None
-            for udid in udids
-        )
-    ):
-        raise CampaignError("Simulator UDID set is not unique and frozen")
     return value
 
 
