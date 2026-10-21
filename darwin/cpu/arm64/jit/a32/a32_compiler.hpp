@@ -331,6 +331,9 @@ private:
   /* The address of a single or paired transfer in x8 (the base for a
    * post-indexed one). */
   void form_address(const Transfer &transfer);
+  /* destination = base plus or minus the shifted register offset m. */
+  void emit_register_offset(unsigned destination, unsigned base,
+                            const Transfer &transfer, unsigned m);
   /* The base register after a writeback transfer, from the registers as
    * they stand (they hold the values the address used). */
   void write_back(const Transfer &transfer);
