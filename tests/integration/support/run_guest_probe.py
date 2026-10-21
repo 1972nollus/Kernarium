@@ -42,7 +42,7 @@ def main() -> int:
     parser.add_argument(
         "--cxxflags",
         default="",
-        help="compiler flags of a .cpp probe, as one quoted string",
+        help='compiler flags of a .cpp probe, as --cxxflags="FLAG FLAG"',
     )
     parser.add_argument(
         "--console-failure",

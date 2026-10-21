@@ -134,7 +134,7 @@ class ProbeRunnerTests(unittest.TestCase):
 
     def test_cpp_probe_is_built_in_the_guest_with_its_flags(self) -> None:
         guest, _, failure = self.run_probe(
-            "probe_b.cpp", "--cxxflags", "-g -fno-omit-frame-pointer -pthread")
+            "probe_b.cpp", "--cxxflags=-g -fno-omit-frame-pointer -pthread")
         self.assertIsNone(failure)
         installed = guest.constructed["payloads"]
         self.assertEqual(list(installed), [f"{GUEST_DIRECTORY}/probe.cpp"])
@@ -147,10 +147,16 @@ class ProbeRunnerTests(unittest.TestCase):
             ALIVE,
         ])
 
-    def test_cpp_probe_without_flags_builds_with_the_defaults(self) -> None:
-        guest, _, failure = self.run_probe("probe_b.cpp")
-        self.assertIsNone(failure)
-        self.assertIn(("check", BUILD.format(""), 180), guest.events)
+    def test_cpp_probe_takes_one_flag_or_none(self) -> None:
+        for options, flags in (
+            ((), ""),
+            (("--cxxflags=-pthread",), "-pthread "),
+        ):
+            with self.subTest(options=options):
+                guest, _, failure = self.run_probe("probe_b.cpp", *options)
+                self.assertIsNone(failure)
+                self.assertIn(
+                    ("check", BUILD.format(flags), 180), guest.events)
 
     def test_a_failing_cpp_probe_fails_before_the_final_command(
             self) -> None:
@@ -162,7 +168,7 @@ class ProbeRunnerTests(unittest.TestCase):
         errors = io.StringIO()
         with contextlib.redirect_stderr(errors):
             with self.assertRaises(SystemExit) as stopped:
-                self.run_probe("probe_a.py", "--cxxflags", "-Wall -Werror")
+                self.run_probe("probe_a.py", "--cxxflags=-Wall -Werror")
         self.assertEqual(stopped.exception.code, 2)
         self.assertIn("--cxxflags applies to a .cpp probe", errors.getvalue())
 
