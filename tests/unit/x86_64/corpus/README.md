@@ -6,11 +6,12 @@ derived from the pinned K x86-64 semantics tests, complementary handwritten
 FEX assembly programs, and the repository's own cases in `cases/`. CMake
 generates it from `source/` with Python's standard library and no upstream
 checkout, assembler, network, Git history, or reference hardware. CTest and
-the test executable need only the generated pack. The x86-64 guest exists only in
-4 KiB builds, so the test runs in the 4 KiB unit tree. There the same pack
-also runs through the macOS-only x86-64 JIT, as `x86-64-jit-instruction-corpus`
-and `x86-64-jit-code-buffer-growth`, against the classed exclusion list
-`../jit_corpus_exclusions.tsv`.
+the test executable need only the generated pack. The same pack also runs
+through the macOS-only x86-64 JIT, as `x86-64-jit-instruction-corpus`,
+`x86-64-jit-code-buffer-growth` and `x86-64-jit-emitted-registers`, against
+the classed exclusion list `../jit_corpus_exclusions.tsv`, and through the
+tiered engine as `x86-64-tier-switch-corpus`, against
+`../tier_switch_exclusions.tsv`.
 
 The profile is portable x86-64-v3 userspace plus the AES, PCLMUL, XSAVE,
 FSGSBASE, and ADX extensions already owned by the product contract. Intel-only

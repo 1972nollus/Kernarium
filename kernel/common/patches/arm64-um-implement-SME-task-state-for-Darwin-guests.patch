@@ -1714,7 +1714,7 @@ index 9489651287b3d7fbe264d32eaeeb8977954a5a95..e04b03437b9a89c2f8e9edd02af04953
  	return 0;
  }
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index abb2a2348c160fab9135ae80ed46dc4f110e4ffc..26c96498cc4507c1537b71ae92849b55a987cbcb 100644
+index 176920b9e90363d7f48a7b74910f6972ec4d96f1..e7937d6b99c6068a258b8c1c1a33e9a6a83aed65 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -15,6 +15,7 @@
@@ -1752,7 +1752,7 @@ index abb2a2348c160fab9135ae80ed46dc4f110e4ffc..26c96498cc4507c1537b71ae92849b55
  
  /* relay_signal consumes Linux signal numbers, not Darwin SIGBUS (10). */
  #define DARWIN_GUEST_SIGBUS 7
-@@ -422,6 +443,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -414,6 +435,10 @@ void userspace(struct uml_pt_regs *registers)
  		UPT_SYSCALL_NR(registers) = -1;
  		switch (event) {
  		case DARWIN_UML_EVENT_SYSCALL:
@@ -1763,7 +1763,7 @@ index abb2a2348c160fab9135ae80ed46dc4f110e4ffc..26c96498cc4507c1537b71ae92849b55
  			registers->orig_x0 = UPT_X(registers, 0);
  			handle_syscall(registers);
  			/* copy_mm() records the parent's COW protection changes in
-@@ -480,6 +505,15 @@ void userspace(struct uml_pt_regs *registers)
+@@ -472,6 +497,15 @@ void userspace(struct uml_pt_regs *registers)
  		}
  		case DARWIN_UML_EVENT_INTERRUPT:
  			break;

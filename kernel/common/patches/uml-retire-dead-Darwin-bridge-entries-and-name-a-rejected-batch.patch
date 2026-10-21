@@ -122,7 +122,7 @@ index 3a5f76bb07ac2f841628dbe3d0687ed7ab5be968..813730531f97e2f4d7a01cfb3054177d
  			if (full)
  				ret = 0;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 2f78659001bc78d5cc38dd44d786faddf84ba00b..1201432c0a369e5c1e90f30d119905ca5a4ad84a 100644
+index a08cb179663fe2011be0990430f526e98886d380..96cde66a5811c2b7e86a868e9b0c2b63e8bb7a63 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -7,7 +7,6 @@
@@ -189,7 +189,7 @@ index 2f78659001bc78d5cc38dd44d786faddf84ba00b..1201432c0a369e5c1e90f30d119905ca
  void halt_skas(void)
  {
  	shutdown_kernel(0);
-@@ -375,7 +339,6 @@ void userspace(struct uml_pt_regs *registers)
+@@ -367,7 +331,6 @@ void userspace(struct uml_pt_regs *registers)
  		unsigned int guest_ipi_snapshot;
  		int event;
  		int stepping;
@@ -197,7 +197,7 @@ index 2f78659001bc78d5cc38dd44d786faddf84ba00b..1201432c0a369e5c1e90f30d119905ca
  
  		/*
  		 * This loop is Darwin's user-mode return path.  Cooperative timer or
-@@ -463,9 +426,6 @@ void userspace(struct uml_pt_regs *registers)
+@@ -455,9 +418,6 @@ void userspace(struct uml_pt_regs *registers)
  		switch (event) {
  		case DARWIN_UML_EVENT_SYSCALL:
  			registers->orig_x0 = UPT_X(registers, 0);
@@ -207,7 +207,7 @@ index 2f78659001bc78d5cc38dd44d786faddf84ba00b..1201432c0a369e5c1e90f30d119905ca
  			handle_syscall(registers);
  			/* copy_mm() records the parent's COW protection changes in
  			 * UML's normal TLB synchronization state.  The next userspace
-@@ -496,29 +456,6 @@ void userspace(struct uml_pt_regs *registers)
+@@ -488,29 +448,6 @@ void userspace(struct uml_pt_regs *registers)
  					FAULT_WRITE(registers->faultinfo));
  				if (retry < 0)
  					fatal_userspace(registers, "fault retry", retry);
@@ -237,7 +237,7 @@ index 2f78659001bc78d5cc38dd44d786faddf84ba00b..1201432c0a369e5c1e90f30d119905ca
  				if (retry > 0)
  					break;
  			}
-@@ -533,19 +470,13 @@ void userspace(struct uml_pt_regs *registers)
+@@ -525,19 +462,13 @@ void userspace(struct uml_pt_regs *registers)
  				/* A store which Linux just resolved should not take a
  				 * second protection fault merely to mark its clean Darwin
  				 * shadow dirty.  Grant the now-writable slot before retrying

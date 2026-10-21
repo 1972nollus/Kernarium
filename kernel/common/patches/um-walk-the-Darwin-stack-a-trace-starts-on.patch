@@ -248,7 +248,7 @@ index f6a76717b89a519f6a69c7b6daec1221b35921e4..e2a27cbfa2586c5434ebeef497ffb0e7
  		return;
  
 diff --git a/arch/um/os-Darwin/util.c b/arch/um/os-Darwin/util.c
-index 3bdb9963266452e938a8c95d10b7ef1aa2f99a37..11e80320ceaecea798dbf1f8cfc3c67f32612502 100644
+index d988ee7fb619b8c9c67315536db8eeb7378a56f7..1bdc45cac735577c202a61247449cd0f27f9dd61 100644
 --- a/arch/um/os-Darwin/util.c
 +++ b/arch/um/os-Darwin/util.c
 @@ -24,9 +24,29 @@ void stack_protections(unsigned long address)

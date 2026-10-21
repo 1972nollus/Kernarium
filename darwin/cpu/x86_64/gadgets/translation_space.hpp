@@ -302,7 +302,7 @@ public:
 	void release(Body *body, bool stale) noexcept;
 	/* Free what was unpublished long enough ago that no other executor can
 	 * still be running it. Never waits. */
-	void reclaim(const gadget_cache::ExecutorAnnouncement *self);
+	void reclaim(const gadget_cache::ExecutorAnnouncement *self) noexcept;
 	/* The live body whose allocation holds `address`, or null. A body
 	 * waiting in limbo is still live here, so an exit inside a successor that
 	 * was unpublished while it ran is still attributed to it. */

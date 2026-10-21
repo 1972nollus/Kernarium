@@ -3,8 +3,7 @@
 # kernel/common/config/darwin-uml.fragment. It replaces config/mainline.fragment
 # for that product and lists only the settings in which the Android product
 # differs from the Linux desktop one. build/build-kernel.sh --product android
-# applies it after the shared policy and before
-# kernel/common/config/page-4k.fragment, then runs `olddefconfig`.
+# applies it after the shared policy, then runs `olddefconfig`.
 
 # --- Boot, init, and image identity -----------------------------------------
 # Android init consumes bootconfig when one is supplied by the image builder.
@@ -19,9 +18,12 @@ CONFIG_BOOT_CONFIG=y
 CONFIG_BLK_INLINE_ENCRYPTION=y
 CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK=y
 CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y
-# The AOSP 17 UML fstab selects AES-256-XTS contents with AES-256-HCTR2
-# filenames. Keep the software HCTR2 transform and everything it selects in
-# the signed kernel because this product cannot load crypto modules on iOS.
+# Android's file-based encryption names AES-256-HCTR2 for filenames beside
+# AES-256-XTS for contents (fileencryption=aes-256-xts:aes-256-hctr2). The
+# product's fstab.uml leaves userdata unencrypted, so no policy asks for it
+# today, but it stays a required built-in (android-required-builtins.txt):
+# the signed kernel must carry the software HCTR2 transform and everything it
+# selects, because this product cannot load crypto modules on iOS.
 CONFIG_CRYPTO_HCTR2=y
 
 # --- Root and general-purpose filesystems -----------------------------------

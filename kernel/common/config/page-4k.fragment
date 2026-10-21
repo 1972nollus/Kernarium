@@ -1,5 +1,0 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# Darwin UML guest pages are 4 KiB. An order-5 kernel stack of 4 KiB pages is
-# the 128 KiB stackful Darwin task contexts need.
-CONFIG_PAGE_SIZE_4KB=y
-CONFIG_KERNEL_STACK_ORDER=5

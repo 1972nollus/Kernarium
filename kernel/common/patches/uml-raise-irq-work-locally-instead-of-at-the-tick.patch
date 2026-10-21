@@ -42,8 +42,7 @@ mask after publishing the idle state and polls instead of blocking.
  arch/um/os-Darwin/internal.h |  2 ++
  arch/um/os-Darwin/smp.c      | 36 ++++++++++++++++++++++++++++++++++++
  arch/um/os-Darwin/time.c     |  8 ++++++++
- arch/um/os-Linux/smp.c       | 10 ++++++++++
- 6 files changed, 82 insertions(+)
+ 5 files changed, 72 insertions(+)
 
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
 index fdf83b9b617ca7df5dbe2065fc69d5fc2a3f750d..adfebfa05c59914c8d4622bceea47d9e42c8840c 100644
@@ -110,10 +109,10 @@ index cc0c6c58a384ebdf37713d4fa7e09deef3b505a5..afbd7c2728430ab2119ba07251b8a7b6
  		pr_err("CPU#%d received unknown IPI (vector=%d)!\n", cpu, vector);
  		break;
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index afbf1cb0661f5e92c90f9d0674dc2eda9c5dbbb4..47da8343f0f9e6cf38541b5babe1c357cf02fd1b 100644
+index 9dbe6b1c19ca3346259fa7644945d0578b57b4e9..a0e9c51ed4c481306e887f48b2102226c3dddfae 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
-@@ -25,6 +25,7 @@ void __attribute__((noreturn)) darwin_exit_cpu_carrier(void);
+@@ -24,6 +24,7 @@ void __attribute__((noreturn)) darwin_exit_cpu_carrier(void);
  void darwin_ipi_poll(void);
  int darwin_ipi_idle_fd(void);
  void darwin_ipi_idle_begin(void);
@@ -121,7 +120,7 @@ index afbf1cb0661f5e92c90f9d0674dc2eda9c5dbbb4..47da8343f0f9e6cf38541b5babe1c357
  void darwin_ipi_idle_end(void);
  void darwin_ipi_idle_drain(void);
  unsigned int darwin_ipi_guest_snapshot(const unsigned int **sequence);
-@@ -58,6 +59,7 @@ static inline void __attribute__((noreturn)) darwin_exit_cpu_carrier(void)
+@@ -57,6 +58,7 @@ static inline void __attribute__((noreturn)) darwin_exit_cpu_carrier(void)
  static inline void darwin_ipi_poll(void) { }
  static inline int darwin_ipi_idle_fd(void) { return -1; }
  static inline void darwin_ipi_idle_begin(void) { }
@@ -202,24 +201,3 @@ index 50c8f60d0412c1948fc618a899cc87572e865179..b21584641a57a3033c85f577b38e80a5
  		(void)pselect(wake_fd >= 0 ? wake_fd + 1 : 0,
  			      wake_fd >= 0 ? &read_fds : NULL, NULL, NULL,
  			      timeout_pointer, &mask);
-diff --git a/arch/um/os-Linux/smp.c b/arch/um/os-Linux/smp.c
-index 18d3858a7cd2945a48b18387919f66d84c5c10c8..77b150e1e847c2bbbaaf20d084441a0745a6facb 100644
---- a/arch/um/os-Linux/smp.c
-+++ b/arch/um/os-Linux/smp.c
-@@ -96,6 +96,16 @@ int os_send_ipi(int cpu, int vector)
- 	return pthread_sigqueue(cpu_threads[cpu], IPI_SIGNAL, value);
- }
- 
-+/*
-+ * The host queues a self-directed signal while it is blocked and delivers it
-+ * once os_local_ipi_enable() unblocks IPI_SIGNAL, so the ordinary send is
-+ * already the correct local raise here.
-+ */
-+void os_raise_local_ipi(int vector)
-+{
-+	os_send_ipi(uml_curr_cpu(), vector);
-+}
-+
- static void __local_ipi_set(int enable)
- {
- 	sigset_t sigset;

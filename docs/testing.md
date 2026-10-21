@@ -350,6 +350,13 @@ guest probe states in its header what it checks, and a contract's owner, such
 as [`../kernel/common/README.md`](../kernel/common/README.md), names the tests
 that check it.
 
+A behaviour that one program checks inside the guest runs through
+`tests/integration/support/run_guest_probe.py`: a `.py` probe runs under
+`python3`, and a `.cpp` probe is built in the guest with the registration's
+`--cxxflags`. The probe's exit status is its failure count, and the test also
+fails on a console line that the registration's `--console-failure` pattern
+matches.
+
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
 `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; do not override individual files.
@@ -393,7 +400,9 @@ x86-64 Linux host and the bounded
 `tests/integration/x86_64/run_guest_x86_64_smoke.py` boot check. The slice
 registers no CTest suites, so its other runners also run directly, each with
 the `macos-x86_64` `uml-darwin` and an x86-64 EROFS image such as the
-[x86-64 LTP rootfs](../tools/rootfs/ltp-x86_64/README.md). That `uml-darwin`
+[x86-64 LTP rootfs](../tools/rootfs/ltp-x86_64/README.md); the tooling test
+`x86-64-guest-runners` checks their options, refusals and probe compiler
+commands without a guest. That `uml-darwin`
 embeds the x86-64 boot base, so
 `tests/integration/boot/run_guest_boot_initramfs.py --engine gadgets` checks it
 with the x86-64 base and a `uml-initramfs`.
