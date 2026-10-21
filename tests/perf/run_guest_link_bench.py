@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Measure cached gadget-block link throughput in a standalone guest."""
 
 from __future__ import annotations

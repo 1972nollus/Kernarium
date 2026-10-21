@@ -18,28 +18,19 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
-import argparse
 import subprocess
 import sys
 from pathlib import Path
 
+from freshness import archive_or_skip, run
 
-SKIP = 77
+
 REPOSITORY = Path(__file__).resolve().parents[3]
 TIMEOUT_SECONDS = 600
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--architecture-archive", default="")
-    options = parser.parse_args()
-    if not options.architecture_archive:
-        print("skipped: UML_A32_ARCHITECTURE_ARCHIVE is not set")
-        return SKIP
-    archive = Path(options.architecture_archive)
-    if not archive.is_file():
-        print(f"skipped: {archive} does not exist")
-        return SKIP
+    archive = archive_or_skip("UML_A32_ARCHITECTURE_ARCHIVE")
     result = subprocess.run(
         [
             sys.executable,
@@ -56,8 +47,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except (OSError, subprocess.SubprocessError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        sys.exit(1)
+    run(main)
