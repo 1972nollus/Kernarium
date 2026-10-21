@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 cmake_minimum_required(VERSION 3.27)
 
 project(uml_apple LANGUAGES C CXX ASM)

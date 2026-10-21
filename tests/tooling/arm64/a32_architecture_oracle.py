@@ -23,7 +23,7 @@ import hashlib
 import re
 import tarfile
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 from a64_architecture_oracle import (
@@ -208,15 +208,6 @@ class Partition:
         return word & self.mask == self.value and all(
             constraint.matches(word) for constraint in self.constraints
         )
-
-
-def _shift_constraint(constraint: FieldConstraint, shift: int) -> FieldConstraint:
-    return FieldConstraint(
-        constraint.name,
-        constraint.low + shift,
-        constraint.width,
-        constraint.expression,
-    )
 
 
 def _layout_shift(form: str) -> int:

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Boot one Darwin UML engine and validate its lightweight guest contract."""
 
 from __future__ import annotations
