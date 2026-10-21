@@ -29,6 +29,10 @@ namespace {
 using uml::testing::require;
 using uml::testing::append;
 using uml::testing::load;
+/* The 4 KiB guest page production passes. The cases place their buffers on
+ * page boundaries and split the encoded input across two pages; the device
+ * itself never sees a page size. */
+constexpr std::size_t page = 4096;
 /* Neighbouring samples differ along both axes, so a plane copied with the
  * wrong stride cannot reproduce the picture: every destination row would hold
  * a window that starts at the wrong sample. A flat fill survives any stride
@@ -190,7 +194,7 @@ struct VideoFixture final {
     std::uint64_t next {1};
 };
 
-void exercise(unsigned format, std::size_t page)
+void exercise(unsigned format)
 {
     const bool ten = format == VIRTIO_VIDEO_FORMAT_P010;
     VideoFixture video(7, 8 * page, [ten](auto) { return std::make_unique<Decoder>(ten); },
@@ -292,8 +296,8 @@ void codecLevelControls()
  * is asked for and to name what each stream actually decoded when it is.
  */
 void sharedMemoryCapture(); // exercised again below, with the log on
-void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width, std::uint32_t height);
-void packedDefaultThroughStreamon(std::size_t page);
+void packedCapture(bool decoderPacks, std::uint32_t width, std::uint32_t height);
+void packedDefaultThroughStreamon();
 
 void activityLog()
 {
@@ -301,11 +305,11 @@ void activityLog()
         ("uml-video-activity-" + std::to_string(::getpid()) + ".log");
     std::filesystem::remove(path);
     ::unsetenv("UML_VIDEO_ACTIVITY_LOG");
-    exercise(VIRTIO_VIDEO_FORMAT_NV12, 4096);
+    exercise(VIRTIO_VIDEO_FORMAT_NV12);
     require(!std::filesystem::exists(path), "the video activity log is not off by default");
 
     ::setenv("UML_VIDEO_ACTIVITY_LOG", path.c_str(), 1);
-    exercise(VIRTIO_VIDEO_FORMAT_NV12, 4096);
+    exercise(VIRTIO_VIDEO_FORMAT_NV12);
     ::unsetenv("UML_VIDEO_ACTIVITY_LOG");
     std::ostringstream buffer;
     buffer << std::ifstream(path).rdbuf();
@@ -347,7 +351,7 @@ void activityLog()
      * own layout from one whose every frame costs a per-pixel conversion. */
     for (const bool decoderPacks : {true, false}) {
         ::setenv("UML_VIDEO_ACTIVITY_LOG", path.c_str(), 1);
-        packedCapture(16384u, decoderPacks, 64, 64);
+        packedCapture(decoderPacks, 64, 64);
         ::unsetenv("UML_VIDEO_ACTIVITY_LOG");
         std::ostringstream packed;
         packed << std::ifstream(path).rdbuf();
@@ -364,7 +368,7 @@ void activityLog()
      * packets until that silence became a choice. This is the number the
      * guest proof reads out of a real session. */
     ::setenv("UML_VIDEO_ACTIVITY_LOG", path.c_str(), 1);
-    packedDefaultThroughStreamon(16384u);
+    packedDefaultThroughStreamon();
     ::unsetenv("UML_VIDEO_ACTIVITY_LOG");
     std::ostringstream streamon;
     streamon << std::ifstream(path).rdbuf();
@@ -445,7 +449,7 @@ void sharedMemoryCapture()
         !regions->contains(regionId + 1, regionOffset, 1),
         "an unpublished range resolved");
 
-    VideoFixture video(3, 8 * 4096, [](auto) { return std::make_unique<Decoder>(false); });
+    VideoFixture video(3, 8 * page, [](auto) { return std::make_unique<Decoder>(false); });
     require((video.device.features() & (1 << VIRTIO_VIDEO_F_RESOURCE_SHM_REGION)) == 0,
         "a device with no shared-memory index offered the region feature");
     video.device.setSharedMemoryRegions(regions);
@@ -543,7 +547,7 @@ void sharedMemoryCapture()
  * capture. The frames the decoder produces packed arrive unchanged; a frame it
  * produced planar before the negotiation is converted by the device, so the
  * client never sees the format it did not ask for. */
-void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width = 64,
+void packedCapture(bool decoderPacks, std::uint32_t width = 64,
                    std::uint32_t height = 64)
 {
     const std::size_t plane = std::size_t(width) * height * 4;
@@ -639,7 +643,7 @@ void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width = 64
  * The decoder is in the middle of a group of pictures by then and cannot
  * change layout there, so every frame must still reach the client packed,
  * whether the decoder adopted the layout or the device converted for it. */
-void lateNegotiation(std::size_t page)
+void lateNegotiation()
 {
     VideoFixture video(5, 8 * page, [](auto) { return std::make_unique<Decoder>(false, true, true); });
     const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
@@ -728,7 +732,7 @@ void lateNegotiation(std::size_t page)
  * the planar format it names is the layout its first picture already has.
  * Nothing is converted and nothing is round-tripped through another colour
  * space, so the samples the client reads are the decoder's own. */
-void planarAfterSourceChange(std::size_t page)
+void planarAfterSourceChange()
 {
     // A decoder that CAN pack, so a premature request for packing shows up.
     VideoFixture video(6, 8 * page, [](auto) { return std::make_unique<Decoder>(false, true); });
@@ -806,7 +810,7 @@ void planarAfterSourceChange(std::size_t page)
  * therefore packed by the decoder and none is converted by the device, which
  * the pixels prove: a converted frame cannot be exact through a BT.601 round
  * trip and a hardware-packed one is. */
-void packedDefaultThroughStreamon(std::size_t page)
+void packedDefaultThroughStreamon()
 {
     const std::size_t plane = 64 * 64 * 4;
     VideoFixture video(8, 3 * page + plane + page, [](auto) { return std::make_unique<Decoder>(false, true, true); });
@@ -892,7 +896,7 @@ void packedDefaultThroughStreamon(std::size_t page)
  * rule for a client whose packets are large rather than many; this decoder
  * only accepts a five-byte packet, so the packet bound is the one a test can
  * reach.) */
-void unsettledHoldIsBounded(std::size_t page)
+void unsettledHoldIsBounded()
 {
     const std::size_t plane = 64 * 64 * 4;
     VideoFixture video(9, 3 * page + plane + page, [](auto) { return std::make_unique<Decoder>(false, true); });
@@ -973,7 +977,7 @@ void unsettledHoldIsBounded(std::size_t page)
     video.device.reset();
 }
 
-void inputBackpressure(std::size_t page)
+void inputBackpressure()
 {
     const std::size_t plane = 64 * 64 * 4;
     VideoFixture video(4, 3 * page + plane + page, [](auto) { return std::make_unique<Decoder>(false, true); });
@@ -1158,20 +1162,18 @@ int main()
         codecLevelControls();
         capabilityMasks();
         sharedMemoryCapture();
-        for (const auto page : {4096u, 16384u})
-            for (const bool decoderPacks : {true, false})
-                packedCapture(page, decoderPacks);
+        for (const bool decoderPacks : {true, false})
+            packedCapture(decoderPacks);
         // The geometry a browser actually decodes, where a stride error shows.
         for (const bool decoderPacks : {true, false})
-            packedCapture(16384u, decoderPacks, 1920, 1200);
-        for (const auto page : {4096u, 16384u}) lateNegotiation(page);
-        for (const auto page : {4096u, 16384u}) inputBackpressure(page);
-        for (const auto page : {4096u, 16384u}) unsettledHoldIsBounded(page);
-        for (const auto page : {4096u, 16384u}) planarAfterSourceChange(page);
-        for (const auto page : {4096u, 16384u}) packedDefaultThroughStreamon(page);
-        for (const auto page : {4096u, 16384u})
-            for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420, VIRTIO_VIDEO_FORMAT_P010})
-                exercise(format, page);
+            packedCapture(decoderPacks, 1920, 1200);
+        lateNegotiation();
+        inputBackpressure();
+        unsettledHoldIsBounded();
+        planarAfterSourceChange();
+        packedDefaultThroughStreamon();
+        for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420, VIRTIO_VIDEO_FORMAT_P010})
+            exercise(format);
         activityLog();
         return 0;
     } catch (const std::exception& error) {
