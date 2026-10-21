@@ -169,6 +169,18 @@ static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
 	return ::uml::cpu::EngineEvent::memory_fault;
 }
 
+/* A T32 instruction whose second halfword lies on a page that cannot be
+ * fetched: the fetch fault is at that halfword, `address`. */
+[[nodiscard]] inline ::uml::cpu::EngineEvent fetch_fault_after(
+	::uml::memory::Tlb &tlb, StaticGuestMemory &memory,
+	std::uint64_t address)
+{
+	std::uint16_t halfword = 0;
+	(void)memory.fetch(address,
+		std::as_writable_bytes(std::span{&halfword, 1}));
+	return fetch_fault(tlb, memory);
+}
+
 void correct_terminal_instruction_count(
 	const arm64::gadgets::Program &program, ::uml::cpu::EngineEvent event,
 	std::uint64_t fault_pc, std::size_t &executed) noexcept
@@ -3490,10 +3502,7 @@ private:
 			/* A T32 instruction whose second halfword lies on a page
 			 * that cannot be fetched: the fetch fault is at that
 			 * halfword. */
-			std::uint16_t halfword = 0;
-			(void)memory.fetch(address + count * unit,
-				std::as_writable_bytes(std::span{&halfword, 1}));
-			return fetch_fault(tlb_, memory);
+			return fetch_fault_after(tlb_, memory, address + count * unit);
 		}
 		const auto sweeps = cache_diagnostics_.link_sweeps;
 		selected.emplace(programs_->store_validated(key, output.result,
@@ -3538,10 +3547,7 @@ private:
 		a32::decode_profile(build_options_),
 		block_instruction_count);
 	if (output.units == 0) {
-		std::uint16_t halfword = 0;
-		(void)memory.fetch(address + count * unit,
-			std::as_writable_bytes(std::span{&halfword, 1}));
-		return fetch_fault(tlb_, memory);
+		return fetch_fault_after(tlb_, memory, address + count * unit);
 	}
 	const auto &built = output.result;
 	if (built.program.instruction_count() == 0) {
