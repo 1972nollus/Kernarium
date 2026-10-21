@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #pragma once
 
-#include "cpu/arm64/aarch32/a32_profile.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/engine.hpp"
@@ -326,22 +325,6 @@ template<typename Executor>
 			executor, request, *request.translated_memory);
 	return run_translated_aarch32_loop<false>(
 		executor, request, *request.translated_memory);
-}
-
-/* An AArch32 entry of an engine whose AArch32 level is `Support`. Nothing
- * below base runs AArch32, so the entry is the illegal-instruction exit and
- * leaves the state as it found it; it needs no executor, so a pooled JIT
- * engine borrows none. Raising an engine's level above none stops this
- * compiling, which is the point: the milestone that does so supplies the
- * loop, taking the executor then, in the same change, so no engine ever
- * presents a level its entry does not run. */
-template<A32Support Support>
-[[nodiscard]] ExecutionResult run_translated_aarch32(
-	ExecutionRequest &) noexcept
-{
-	static_assert(Support == A32Support::none,
-		"an engine above A32Support::none needs an AArch32 entry loop");
-	return {.reason = ExitReason::illegal_instruction};
 }
 
 } // namespace uml::cpu::arm64::detail

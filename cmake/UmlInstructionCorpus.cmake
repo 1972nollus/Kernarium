@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 function(uml_generate_instruction_corpus NAME SOURCE_DIRECTORY PACK_NAME)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(_source "${SOURCE_DIRECTORY}/source")
     set(_index "${_source}/index.json")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_index}")

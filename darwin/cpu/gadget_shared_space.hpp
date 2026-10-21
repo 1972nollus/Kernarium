@@ -20,12 +20,7 @@ namespace uml::cpu::gadget_cache {
  * to an address space, the limbo a body waits in before it is freed, the
  * counts that decide a shared space is renewed, and the registry that hands an
  * address space out. An engine keeps its own body, record and space types and
- * builds its space from these parts.
- *
- * The executor that stores a translation is not the only one that may run it.
- * Between begin_execution() and end_execution() an executor may hold a stream
- * pointer it loaded from a link, so a body unpublished in that time may only
- * be freed once every such executor has left, which the announcements tell. */
+ * builds its space from these parts. */
 
 /* What each executor says about itself for the bodies other executors free.
  *

@@ -2,7 +2,6 @@
 #include "cpu/arm64/engine_adapters.hpp"
 
 #include "cpu/arm64/engine_execution.hpp"
-#include "cpu/arm64/gadgets/a32_support.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
 
 #include <memory>
@@ -36,14 +35,10 @@ public:
 	[[nodiscard]] ExecutionResult run_aarch32(
 		ExecutionRequest &request) noexcept override
 	{
-		if constexpr (gadgets::a32_support == A32Support::none) {
-			return run_translated_aarch32<gadgets::a32_support>(request);
-		} else {
-			try {
-				return run_translated_aarch32_blocks(executor_, request);
-			} catch (...) {
-				return {.reason = ExitReason::fatal};
-			}
+		try {
+			return run_translated_aarch32_blocks(executor_, request);
+		} catch (...) {
+			return {.reason = ExitReason::fatal};
 		}
 	}
 

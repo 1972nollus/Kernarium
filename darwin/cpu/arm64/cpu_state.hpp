@@ -24,7 +24,7 @@ namespace uml::cpu::arm64 {
  *   which both engines implement;
  * - Len and Stride serve only to save and restore the AArch32 FPSCR, and
  *   whether they are programmable or RAZ/WI is IMPLEMENTATION DEFINED.
- *   Without AArch32 they are RAZ/WI.
+ *   This CPU has no short vectors, so they are RAZ/WI.
  * This and fpcr_afp_controls are the one definition of the mask:
  * fpcr_writable_mask_for() selects the host's, the JIT, the context restore
  * path and the tests read it, and the gadget assembly's
@@ -42,9 +42,10 @@ static_assert((fpcr_writable_mask & fpcr_afp_controls) == 0U);
  * 2026-06), for this virtual CPU: QC and the cumulative exception flags,
  * IDC included, are unconditional fields, and N, Z, C and V, the AArch32
  * floating-point comparison flags, exist only when AArch32 is implemented.
- * The guest is AArch64-only, so they are RES0, and the hosts implement them
- * as RAZ/WI. The JIT, the context restore path and the tests read this mask,
- * and the gadget assembly's UML_ARM64_FPSR_WRITABLE is checked against it. */
+ * The hosts implement them as RAZ/WI, so the A64 FPSR omits them and an
+ * AArch32 task keeps its flags in a32_fpscr_nzcv. The JIT, the context
+ * restore path and the tests read this mask, and the gadget assembly's
+ * UML_ARM64_FPSR_WRITABLE is checked against it. */
 inline constexpr std::uint32_t fpsr_writable_mask = 0x0800'009fU;
 
 /* The code-change sequence of a CpuState no engine has bound to an address
