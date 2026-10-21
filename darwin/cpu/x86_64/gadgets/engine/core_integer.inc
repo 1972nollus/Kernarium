@@ -80,14 +80,9 @@ arithmetic_family xor, eor, 3, 1
 arithmetic_family cmp, sub, 2, 0, 1
 arithmetic_family test, and, 3, 0, 1
 
-.macro scalar_carry_rr name, instruction, flag_operation, width, load, store, host_register, store_register
-gadget \name\()_\width\()_rr
-	bl uml_x86_64_gadget_materialize_carry
-	ldr x8, [_stream], #8
-	and x9, x8, #0xffff
-	ubfx x10, x8, #16, #16
-	\load \host_register\()11, [_cpu, x9]
-	\load \host_register\()12, [_cpu, x10]
+/* ADC or SBB of the operands in x11 and x12 with the carry flag, stored to
+ * the register at x9, and the flags it defines recorded. */
+.macro scalar_carry_finish instruction, flag_operation, width, host_register, store, store_register
 	ldr x16, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	and w16, w16, #1
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
@@ -99,6 +94,17 @@ gadget \name\()_\width\()_rr
 	retire_and_next
 .endm
 
+.macro scalar_carry_rr name, instruction, flag_operation, width, load, store, host_register, store_register
+gadget \name\()_\width\()_rr
+	bl uml_x86_64_gadget_materialize_carry
+	ldr x8, [_stream], #8
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	\load \host_register\()11, [_cpu, x9]
+	\load \host_register\()12, [_cpu, x10]
+	scalar_carry_finish \instruction, \flag_operation, \width, \host_register, \store, \store_register
+.endm
+
 .macro scalar_carry_ri name, instruction, flag_operation, width, load, store, host_register, store_register
 gadget \name\()_\width\()_ri
 	bl uml_x86_64_gadget_materialize_carry
@@ -106,15 +112,7 @@ gadget \name\()_\width\()_ri
 	and x9, x8, #0xffff
 	\load \host_register\()11, [_cpu, x9]
 	normalize_immediate \width, \host_register\()12, \host_register\()12
-	ldr x16, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	and w16, w16, #1
-	\instruction \host_register\()13, \host_register\()11, \host_register\()12
-	\instruction \host_register\()13, \host_register\()13, \host_register\()16
-	normalize_result \width, \host_register\()13
-	\store \store_register\()13, [_cpu, x9]
-	record_deferred \flag_operation, \width
-	strb w16, [_cpu, #UML_X86_64_CPU_DEFERRED_CARRY]
-	retire_and_next
+	scalar_carry_finish \instruction, \flag_operation, \width, \host_register, \store, \store_register
 .endm
 
 .macro scalar_carry_width name, instruction, flag_operation, width, load, store, host_register, store_register
@@ -136,6 +134,7 @@ scalar_carry_family sbb, sub, 7
 .purgem scalar_carry_width
 .purgem scalar_carry_ri
 .purgem scalar_carry_rr
+.purgem scalar_carry_finish
 
 .purgem arithmetic_family
 .purgem arithmetic_width
