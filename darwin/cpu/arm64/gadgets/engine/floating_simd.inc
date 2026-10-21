@@ -1506,7 +1506,11 @@ afp_twins_end
 .purgem gpr_to_floating_widths
 .purgem gpr_to_floating
 
-.macro simd_integer_to_floating_scalar name, operation, element, afp=0
+/* The SIMD&FP conversions between integer and floating-point elements: SCVTF
+ * and UCVTF, then the FCVT* group, define the same gadgets with different
+ * operations. A scalar element zeroes the rest of the destination unless the
+ * FEAT_AFP twin merges into the old Vd. Purged after the FCVT* group. */
+.macro simd_fp_convert_scalar name, operation, element, afp=0
 .if \afp
 afp_gadget \name
 .else
@@ -1530,7 +1534,7 @@ gadget \name
 	next_gadget
 .endm
 
-.macro simd_integer_to_floating_vector name, operation, arrangement
+.macro simd_fp_convert_vector name, operation, arrangement
 gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -1545,30 +1549,26 @@ gadget \name
 	next_gadget
 .endm
 
-.macro simd_integer_to_floating_variants name, operation
-	simd_integer_to_floating_scalar simd_\name\()_h, \operation, h
-	simd_integer_to_floating_scalar simd_\name\()_s, \operation, s
-	simd_integer_to_floating_scalar simd_\name\()_d, \operation, d
-	simd_integer_to_floating_vector simd_\name\()_4h, \operation, 4h
-	simd_integer_to_floating_vector simd_\name\()_8h, \operation, 8h
-	simd_integer_to_floating_vector simd_\name\()_2s, \operation, 2s
-	simd_integer_to_floating_vector simd_\name\()_4s, \operation, 4s
-	simd_integer_to_floating_vector simd_\name\()_2d, \operation, 2d
+.macro simd_fp_convert_variants name, operation
+	simd_fp_convert_scalar simd_\name\()_h, \operation, h
+	simd_fp_convert_scalar simd_\name\()_s, \operation, s
+	simd_fp_convert_scalar simd_\name\()_d, \operation, d
+	simd_fp_convert_vector simd_\name\()_4h, \operation, 4h
+	simd_fp_convert_vector simd_\name\()_8h, \operation, 8h
+	simd_fp_convert_vector simd_\name\()_2s, \operation, 2s
+	simd_fp_convert_vector simd_\name\()_4s, \operation, 4s
+	simd_fp_convert_vector simd_\name\()_2d, \operation, 2d
 .endm
 
-simd_integer_to_floating_variants scvtf, scvtf
-simd_integer_to_floating_variants ucvtf, ucvtf
+simd_fp_convert_variants scvtf, scvtf
+simd_fp_convert_variants ucvtf, ucvtf
 
 afp_twins_begin
 .irp element, h, s, d
-simd_integer_to_floating_scalar simd_scvtf_\element, scvtf, \element, 1
-simd_integer_to_floating_scalar simd_ucvtf_\element, ucvtf, \element, 1
+simd_fp_convert_scalar simd_scvtf_\element, scvtf, \element, 1
+simd_fp_convert_scalar simd_ucvtf_\element, ucvtf, \element, 1
 .endr
 afp_twins_end
-
-.purgem simd_integer_to_floating_variants
-.purgem simd_integer_to_floating_vector
-.purgem simd_integer_to_floating_scalar
 
 .macro floating_to_gpr name, operation, integer, floating, discard
 gadget \name
@@ -1615,78 +1615,28 @@ floating_to_gpr_variants fcvtau, fcvtau
 .purgem floating_to_gpr_widths
 .purgem floating_to_gpr
 
-.macro simd_floating_to_integer_scalar name, operation, element, afp=0
-.if \afp
-afp_gadget \name
-.else
-gadget \name
-.endif
-	ensure_fp_environment
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
-	ldr \element\()0, [x12]
-	.if \afp
-	ldr q2, [x13]
-	.else
-	movi v2.16b, #0
-	.endif
-	\operation \element\()2, \element\()0
-	str q2, [x13]
-	next_gadget
-.endm
-
-.macro simd_floating_to_integer_vector name, operation, arrangement
-gadget \name
-	ensure_fp_environment
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
-	ldr q0, [x12]
-	\operation v2.\arrangement, v0.\arrangement
-	str q2, [x13]
-	next_gadget
-.endm
-
-.macro simd_floating_to_integer_variants name, operation
-	simd_floating_to_integer_scalar simd_\name\()_h, \operation, h
-	simd_floating_to_integer_scalar simd_\name\()_s, \operation, s
-	simd_floating_to_integer_scalar simd_\name\()_d, \operation, d
-	simd_floating_to_integer_vector simd_\name\()_4h, \operation, 4h
-	simd_floating_to_integer_vector simd_\name\()_8h, \operation, 8h
-	simd_floating_to_integer_vector simd_\name\()_2s, \operation, 2s
-	simd_floating_to_integer_vector simd_\name\()_4s, \operation, 4s
-	simd_floating_to_integer_vector simd_\name\()_2d, \operation, 2d
-.endm
-
-simd_floating_to_integer_variants fcvtns, fcvtns
-simd_floating_to_integer_variants fcvtnu, fcvtnu
-simd_floating_to_integer_variants fcvtps, fcvtps
-simd_floating_to_integer_variants fcvtpu, fcvtpu
-simd_floating_to_integer_variants fcvtms, fcvtms
-simd_floating_to_integer_variants fcvtmu, fcvtmu
-simd_floating_to_integer_variants fcvtzs, fcvtzs
-simd_floating_to_integer_variants fcvtzu, fcvtzu
-simd_floating_to_integer_variants fcvtas, fcvtas
-simd_floating_to_integer_variants fcvtau, fcvtau
+simd_fp_convert_variants fcvtns, fcvtns
+simd_fp_convert_variants fcvtnu, fcvtnu
+simd_fp_convert_variants fcvtps, fcvtps
+simd_fp_convert_variants fcvtpu, fcvtpu
+simd_fp_convert_variants fcvtms, fcvtms
+simd_fp_convert_variants fcvtmu, fcvtmu
+simd_fp_convert_variants fcvtzs, fcvtzs
+simd_fp_convert_variants fcvtzu, fcvtzu
+simd_fp_convert_variants fcvtas, fcvtas
+simd_fp_convert_variants fcvtau, fcvtau
 
 afp_twins_begin
 .irp operation, fcvtns, fcvtnu, fcvtps, fcvtpu, fcvtms, fcvtmu, fcvtzs, fcvtzu, fcvtas, fcvtau
 .irp element, h, s, d
-simd_floating_to_integer_scalar simd_\operation\()_\element, \operation, \element, 1
+simd_fp_convert_scalar simd_\operation\()_\element, \operation, \element, 1
 .endr
 .endr
 afp_twins_end
 
-.purgem simd_floating_to_integer_variants
-.purgem simd_floating_to_integer_vector
-.purgem simd_floating_to_integer_scalar
+.purgem simd_fp_convert_variants
+.purgem simd_fp_convert_vector
+.purgem simd_fp_convert_scalar
 
 /* Fixed-point conversions have an architectural immediate scale. Emit dense,
  * equal-stride tables so the builder selects one exact native gadget at
@@ -1770,7 +1720,9 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 .purgem floating_to_gpr_fixed_table
 .purgem floating_to_gpr_fixed_body
 
-.macro simd_floating_to_integer_fixed_scalar_body operation, element, fraction, afp=0
+/* The fixed-point forms of the same conversions, FCVTZS and FCVTZU first and
+ * then SCVTF and UCVTF, share these tables. Purged after SCVTF and UCVTF. */
+.macro simd_fp_convert_fixed_scalar_body operation, element, fraction, afp=0
 	.p2align 4
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -1790,7 +1742,7 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 	next_gadget
 .endm
 
-.macro simd_floating_to_integer_fixed_vector_body operation, arrangement, fraction
+.macro simd_fp_convert_fixed_vector_body operation, arrangement, fraction
 	.p2align 4
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -1805,46 +1757,41 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 	next_gadget
 .endm
 
-.macro simd_floating_to_integer_fixed_table name, operation, shape, scalar, count, afp=0
+.macro simd_fp_convert_fixed_table name, operation, shape, scalar, count, afp=0
 	floating_fixed_twin_begin \name, \afp
 	.irp fraction, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64
 		.if \fraction <= \count
 			.if \scalar
-				simd_floating_to_integer_fixed_scalar_body \operation, \shape, \fraction, \afp
+				simd_fp_convert_fixed_scalar_body \operation, \shape, \fraction, \afp
 			.else
-				simd_floating_to_integer_fixed_vector_body \operation, \shape, \fraction
+				simd_fp_convert_fixed_vector_body \operation, \shape, \fraction
 			.endif
 		.endif
 	.endr
 	floating_fixed_twin_end \name, \afp
 .endm
 
-.macro simd_floating_to_integer_fixed_variants name, operation
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_h, \operation, h, 1, 16
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_s, \operation, s, 1, 32
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_d, \operation, d, 1, 64
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_4h, \operation, 4h, 0, 16
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_8h, \operation, 8h, 0, 16
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_2s, \operation, 2s, 0, 32
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_4s, \operation, 4s, 0, 32
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_2d, \operation, 2d, 0, 64
+.macro simd_fp_convert_fixed_variants name, operation
+	simd_fp_convert_fixed_table simd_fixed_\name\()_h, \operation, h, 1, 16
+	simd_fp_convert_fixed_table simd_fixed_\name\()_s, \operation, s, 1, 32
+	simd_fp_convert_fixed_table simd_fixed_\name\()_d, \operation, d, 1, 64
+	simd_fp_convert_fixed_table simd_fixed_\name\()_4h, \operation, 4h, 0, 16
+	simd_fp_convert_fixed_table simd_fixed_\name\()_8h, \operation, 8h, 0, 16
+	simd_fp_convert_fixed_table simd_fixed_\name\()_2s, \operation, 2s, 0, 32
+	simd_fp_convert_fixed_table simd_fixed_\name\()_4s, \operation, 4s, 0, 32
+	simd_fp_convert_fixed_table simd_fixed_\name\()_2d, \operation, 2d, 0, 64
 .endm
 
-simd_floating_to_integer_fixed_variants fcvtzs, fcvtzs
-simd_floating_to_integer_fixed_variants fcvtzu, fcvtzu
+simd_fp_convert_fixed_variants fcvtzs, fcvtzs
+simd_fp_convert_fixed_variants fcvtzu, fcvtzu
 
 afp_twins_begin
 .irp operation, fcvtzs, fcvtzu
-simd_floating_to_integer_fixed_table simd_fixed_\operation\()_h, \operation, h, 1, 16, 1
-simd_floating_to_integer_fixed_table simd_fixed_\operation\()_s, \operation, s, 1, 32, 1
-simd_floating_to_integer_fixed_table simd_fixed_\operation\()_d, \operation, d, 1, 64, 1
+simd_fp_convert_fixed_table simd_fixed_\operation\()_h, \operation, h, 1, 16, 1
+simd_fp_convert_fixed_table simd_fixed_\operation\()_s, \operation, s, 1, 32, 1
+simd_fp_convert_fixed_table simd_fixed_\operation\()_d, \operation, d, 1, 64, 1
 .endr
 afp_twins_end
-
-.purgem simd_floating_to_integer_fixed_variants
-.purgem simd_floating_to_integer_fixed_table
-.purgem simd_floating_to_integer_fixed_vector_body
-.purgem simd_floating_to_integer_fixed_scalar_body
 
 .macro gpr_to_floating_fixed_body operation, integer, floating, element, zero, fraction, afp=0
 	.p2align 4
@@ -1906,81 +1853,21 @@ afp_twins_end
 .purgem gpr_to_floating_fixed_table
 .purgem gpr_to_floating_fixed_body
 
-.macro simd_integer_to_floating_fixed_scalar_body operation, element, fraction, afp=0
-	.p2align 4
-	ensure_fp_environment
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
-	ldr \element\()0, [x12]
-	.if \afp
-	ldr q2, [x13]
-	.else
-	movi v2.16b, #0
-	.endif
-	\operation \element\()2, \element\()0, #\fraction
-	str q2, [x13]
-	next_gadget
-.endm
-
-.macro simd_integer_to_floating_fixed_vector_body operation, arrangement, fraction
-	.p2align 4
-	ensure_fp_environment
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
-	ldr q0, [x12]
-	\operation v2.\arrangement, v0.\arrangement, #\fraction
-	str q2, [x13]
-	next_gadget
-.endm
-
-.macro simd_integer_to_floating_fixed_table name, operation, shape, scalar, count, afp=0
-	floating_fixed_twin_begin \name, \afp
-	.irp fraction, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64
-		.if \fraction <= \count
-			.if \scalar
-				simd_integer_to_floating_fixed_scalar_body \operation, \shape, \fraction, \afp
-			.else
-				simd_integer_to_floating_fixed_vector_body \operation, \shape, \fraction
-			.endif
-		.endif
-	.endr
-	floating_fixed_twin_end \name, \afp
-.endm
-
-.macro simd_integer_to_floating_fixed_variants name, operation
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_h, \operation, h, 1, 16
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_s, \operation, s, 1, 32
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_d, \operation, d, 1, 64
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_4h, \operation, 4h, 0, 16
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_8h, \operation, 8h, 0, 16
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_2s, \operation, 2s, 0, 32
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_4s, \operation, 4s, 0, 32
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_2d, \operation, 2d, 0, 64
-.endm
-
-simd_integer_to_floating_fixed_variants scvtf, scvtf
-simd_integer_to_floating_fixed_variants ucvtf, ucvtf
+simd_fp_convert_fixed_variants scvtf, scvtf
+simd_fp_convert_fixed_variants ucvtf, ucvtf
 
 afp_twins_begin
 .irp operation, scvtf, ucvtf
-simd_integer_to_floating_fixed_table simd_fixed_\operation\()_h, \operation, h, 1, 16, 1
-simd_integer_to_floating_fixed_table simd_fixed_\operation\()_s, \operation, s, 1, 32, 1
-simd_integer_to_floating_fixed_table simd_fixed_\operation\()_d, \operation, d, 1, 64, 1
+simd_fp_convert_fixed_table simd_fixed_\operation\()_h, \operation, h, 1, 16, 1
+simd_fp_convert_fixed_table simd_fixed_\operation\()_s, \operation, s, 1, 32, 1
+simd_fp_convert_fixed_table simd_fixed_\operation\()_d, \operation, d, 1, 64, 1
 .endr
 afp_twins_end
 
-.purgem simd_integer_to_floating_fixed_variants
-.purgem simd_integer_to_floating_fixed_table
-.purgem simd_integer_to_floating_fixed_vector_body
-.purgem simd_integer_to_floating_fixed_scalar_body
+.purgem simd_fp_convert_fixed_variants
+.purgem simd_fp_convert_fixed_table
+.purgem simd_fp_convert_fixed_vector_body
+.purgem simd_fp_convert_fixed_scalar_body
 .purgem floating_fixed_twin_end
 .purgem floating_fixed_twin_begin
 .purgem floating_fixed_table_end
