@@ -510,17 +510,10 @@ bool exec_saturate_and_parallel(Exec &x, const OpInfo &info)
 		const auto operand = static_cast<std::int32_t>(shift_c(x.reg(o.n), o.shift_t,
 			static_cast<unsigned>(o.shift_n), x.flag_c()).value);
 		const unsigned bits = static_cast<unsigned>(o.saturate_to);
-		if (info.op == Op::ssat) {
-			const auto result = signed_sat(operand, bits);
-			x.set_reg(o.d, static_cast<std::uint32_t>(result.value));
-			if (result.saturated)
-				x.set_q();
-		} else {
-			const auto result = unsigned_sat(operand, bits);
-			x.set_reg(o.d, static_cast<std::uint32_t>(result.value));
-			if (result.saturated)
-				x.set_q();
-		}
+		const auto result = info.op == Op::ssat ? signed_sat(operand, bits) : unsigned_sat(operand, bits);
+		x.set_reg(o.d, static_cast<std::uint32_t>(result.value));
+		if (result.saturated)
+			x.set_q();
 		return true;
 	}
 	case Op::ssat16: case Op::usat16: {
