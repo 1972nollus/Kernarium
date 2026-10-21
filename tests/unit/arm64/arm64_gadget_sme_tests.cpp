@@ -15,6 +15,7 @@
  * twins as through their base entries, and every register-only form of the
  * encoding table selects its generated gadget, which names the guest's
  * registers in the guest's instruction. */
+#include "arm64_kernel_stops.hpp"
 #include "arm64_sm0_vector_length_support.hpp"
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
@@ -34,12 +35,9 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
-#include <chrono>
 #include <cerrno>
 #include <compare>
 #include <crt_externs.h>
-#include <mach/mach.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -54,7 +52,6 @@
 #include <string>
 #include <sys/mman.h>
 #include <sys/wait.h>
-#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -889,63 +886,6 @@ void streaming_control_core()
 		require(equal(loading.z(0), bytes));
 	}
 }
-
-/* Another thread that stops this one in the kernel every 200 us while it
- * lives, as preemption does at random: each stop is a kernel entry. */
-class KernelStops final {
-public:
-	KernelStops()
-		: target_{mach_thread_self()}, thread_{[this] { interrupt(); }}
-	{
-	}
-
-	KernelStops(const KernelStops &) = delete;
-	KernelStops &operator=(const KernelStops &) = delete;
-
-	~KernelStops()
-	{
-		stop();
-		mach_port_deallocate(mach_task_self(), target_);
-	}
-
-	/* Ends the stops and returns how many there were. */
-	unsigned stop()
-	{
-		running_.store(false, std::memory_order_relaxed);
-		if (thread_.joinable())
-			thread_.join();
-		return stops_.load();
-	}
-
-private:
-	void interrupt()
-	{
-		while (running_.load(std::memory_order_relaxed)) {
-			if (thread_suspend(target_) == KERN_SUCCESS) {
-				/* Reading the state waits until the thread has
-				 * stopped, so it entered the kernel before it
-				 * resumes. */
-				arm_thread_state64_t state{};
-				mach_msg_type_number_t count =
-					ARM_THREAD_STATE64_COUNT;
-				if (thread_get_state(target_, ARM_THREAD_STATE64,
-					    reinterpret_cast<thread_state_t>(
-						    &state),
-					    &count) == KERN_SUCCESS)
-					stops_.fetch_add(1,
-						std::memory_order_relaxed);
-				thread_resume(target_);
-			}
-			std::this_thread::sleep_for(
-				std::chrono::microseconds(200));
-		}
-	}
-
-	mach_port_t target_;
-	std::atomic<bool> running_{true};
-	std::atomic<unsigned> stops_{0};
-	std::thread thread_;
-};
 
 /*
  * XNU resets FPSR to 0x0800009F on return from any kernel entry while a
