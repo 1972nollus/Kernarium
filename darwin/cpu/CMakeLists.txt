@@ -183,9 +183,6 @@ add_custom_command(
         ${_uml_arm64_streaming_table}
     COMMENT "Generating the arm64 streaming gadgets"
     VERBATIM)
-set_source_files_properties(arm64/gadgets/engine.S PROPERTIES
-    OBJECT_DEPENDS "${_uml_arm64_streaming_assembly}"
-    INCLUDE_DIRECTORIES ${_uml_arm64_streaming_dir})
 set_source_files_properties(arm64/gadgets/program_builder_streaming.cpp
     PROPERTIES INCLUDE_DIRECTORIES ${_uml_arm64_streaming_dir})
 # The generated header for the tests that check the forms against the table.
@@ -231,10 +228,10 @@ add_custom_command(
         ${_uml_arm64_a32_table_rows} ${_uml_arm64_a32_hand_written}
     COMMENT "Generating the arm64 AArch32 gadgets"
     VERBATIM)
-set_property(SOURCE arm64/gadgets/engine.S APPEND PROPERTY
-    OBJECT_DEPENDS ${_uml_arm64_a32_dir}/a32_generated.inc)
-set_property(SOURCE arm64/gadgets/engine.S APPEND PROPERTY
-    INCLUDE_DIRECTORIES ${_uml_arm64_a32_dir})
+set_source_files_properties(arm64/gadgets/engine.S PROPERTIES
+    OBJECT_DEPENDS
+        "${_uml_arm64_streaming_assembly};${_uml_arm64_a32_dir}/a32_generated.inc"
+    INCLUDE_DIRECTORIES "${_uml_arm64_streaming_dir};${_uml_arm64_a32_dir}")
 set_source_files_properties(arm64/gadgets/a32/program_builder_a32.cpp
     arm64/gadgets/a32/program_builder_a32_vfp.cpp
     arm64/gadgets/a32/program_builder_a32_neon.cpp
@@ -294,23 +291,21 @@ target_link_libraries(uml_arm64_gadgets PUBLIC
 add_library(uml_gadget_region_layout INTERFACE)
 add_library(UML::GadgetRegionLayout ALIAS uml_gadget_region_layout)
 uml_declare_architecture_target(uml_gadget_region_layout cpu gadget)
-if(APPLE)
-    set(_uml_gadget_region_order
-        ${CMAKE_CURRENT_SOURCE_DIR}/gadget_region.order)
-    set(_uml_gadget_region_options)
-    foreach(_uml_gadget_region_section IN ITEMS
-            __a64_bank __a64_forward __a64_vforward __a64_cold __a64_afp
-            __a64_veneer __a64_sme __a32_bank __a32_cold __a32_veneer
-            __x86_bank __x86_cold)
-        list(APPEND _uml_gadget_region_options
-            "LINKER:-rename_section,__TEXT,${_uml_gadget_region_section},__TEXT,__text")
-    endforeach()
-    target_link_options(uml_gadget_region_layout INTERFACE
-        ${_uml_gadget_region_options}
-        "LINKER:-order_file,${_uml_gadget_region_order}")
-    set_property(TARGET uml_gadget_region_layout APPEND PROPERTY
-        INTERFACE_LINK_DEPENDS ${_uml_gadget_region_order})
-endif()
+set(_uml_gadget_region_order
+    ${CMAKE_CURRENT_SOURCE_DIR}/gadget_region.order)
+set(_uml_gadget_region_options)
+foreach(_uml_gadget_region_section IN ITEMS
+        __a64_bank __a64_forward __a64_vforward __a64_cold __a64_afp
+        __a64_veneer __a64_sme __a32_bank __a32_cold __a32_veneer
+        __x86_bank __x86_cold)
+    list(APPEND _uml_gadget_region_options
+        "LINKER:-rename_section,__TEXT,${_uml_gadget_region_section},__TEXT,__text")
+endforeach()
+target_link_options(uml_gadget_region_layout INTERFACE
+    ${_uml_gadget_region_options}
+    "LINKER:-order_file,${_uml_gadget_region_order}")
+set_property(TARGET uml_gadget_region_layout APPEND PROPERTY
+    INTERFACE_LINK_DEPENDS ${_uml_gadget_region_order})
 
 # The gadget library is still many translation units, and the selection tables
 # the decode families call into are among them. Interprocedural optimization
@@ -598,8 +593,6 @@ target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
     $<TARGET_OBJECTS:uml_arm64_gadgets>
-    $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
-    $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 if(TARGET uml_x86_64_gadgets)
     target_link_libraries(uml_cpu_engine_objects INTERFACE
