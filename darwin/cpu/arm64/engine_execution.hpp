@@ -34,17 +34,17 @@ struct EntryDefaults {
 		return pc;
 	}
 
-	/* A PC that no entry of this ISA can run at all. */
-	[[nodiscard]] static constexpr bool foreign_pc(std::uint64_t) noexcept
+	/* Whether `pc` can be the PC of an entry of this ISA at all. */
+	[[nodiscard]] static constexpr bool native_pc(std::uint64_t) noexcept
 	{
-		return false;
+		return true;
 	}
 
-	/* AArch64 checks PC alignment at the next instruction boundary. */
-	[[nodiscard]] static constexpr bool misaligned_pc(
-		std::uint64_t pc) noexcept
+	/* Whether `pc` is on an instruction boundary: AArch64 checks PC
+	 * alignment at the next instruction boundary. */
+	[[nodiscard]] static constexpr bool aligned_pc(std::uint64_t pc) noexcept
 	{
-		return (pc & (alignof(std::uint32_t) - 1U)) != 0U;
+		return (pc & (alignof(std::uint32_t) - 1U)) == 0U;
 	}
 
 	/* Runs once, after the execution scope is open and before the first
@@ -162,11 +162,12 @@ template<typename Entry, bool PollCallback, typename Executor>
 			 * pay one cold block-boundary branch, while a misaligned
 			 * indirect target retains the already-retired branch prefix and
 			 * never reaches host code. */
-			if (Entry::foreign_pc(request.cpu.pc))
+			const std::uint64_t pc = request.cpu.pc;
+			if (!Entry::native_pc(pc))
 				return finish(ExitReason::fatal, retired);
-			if (Entry::misaligned_pc(request.cpu.pc))
+			if (!Entry::aligned_pc(pc))
 				return finish(ExitReason::pc_alignment, retired,
-					Entry::guest_pc(request.cpu.pc),
+					Entry::guest_pc(pc),
 					::uml::memory::MemoryAccess::execute);
 			std::size_t block_instructions = 0;
 			EngineEvent event;
