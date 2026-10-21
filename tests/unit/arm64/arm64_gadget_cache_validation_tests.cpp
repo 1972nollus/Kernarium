@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_gadget_runtime_test_support.hpp"
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 
@@ -22,43 +23,9 @@ namespace gadgets = arm64::gadgets;
 using uml::emulator::tests::JitBacking;
 using uml::emulator::tests::JitMapping;
 using uml::emulator::tests::require;
-using uml::memory::StaticGuestMemory;
+using namespace uml::emulator::tests::gadget_runtime;
 
 namespace {
-
-constexpr std::uint64_t code_base = 0xd0'0000;
-constexpr std::uint32_t system_call = 0xd400'0001U;
-
-struct Outcome final {
-	::uml::cpu::EngineEvent event;
-	std::size_t executed;
-};
-
-[[nodiscard]] Outcome run_once(gadgets::GadgetExecutor &executor,
-	StaticGuestMemory &memory, unsigned long generation, arm64::CpuState &cpu)
-{
-	require(executor.begin_execution(generation, cpu.pc));
-	std::size_t executed = 0;
-	const auto event = executor.run_block(cpu, memory, generation, executed);
-	executor.end_execution();
-	return {event, executed};
-}
-
-[[nodiscard]] constexpr std::uint32_t move_immediate(
-	unsigned reg, unsigned value) noexcept
-{
-	return 0xd280'0000U | ((value & 0xffffU) << 5U) | (reg & 31U);
-}
-
-[[nodiscard]] std::uint32_t branch(
-	std::uint64_t source, std::uint64_t target)
-{
-	const auto displacement = static_cast<std::int64_t>(target) -
-		static_cast<std::int64_t>(source);
-	require((displacement & 3) == 0);
-	return 0x1400'0000U |
-		(static_cast<std::uint32_t>(displacement >> 2) & 0x03ff'ffffU);
-}
 
 void write_mapped32(unsigned long generation, std::uint64_t address,
 	std::uint32_t value)
