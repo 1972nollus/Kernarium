@@ -1,5 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+# Every macOS executable shares one bundle identifier. Metal keeps its shader
+# cache below the process's bundle identifier, and a process without one shares
+# the cache of every other command-line process of the user. The Linux and the
+# Android executables compile the same Mesa and KosmicKrisp shaders, so they
+# share a cache as well.
+set(UML_MACOS_APP_BUNDLE_IDENTIFIER "com.imxieyi.uml-darwin")
+
 function(uml_add_macos_embedded_kernel_app
         TARGET_NAME MAIN_SOURCE ARTIFACT_TARGET)
     if(NOT TARGET "${ARTIFACT_TARGET}")
@@ -60,15 +67,28 @@ function(uml_add_macos_embedded_kernel_app
     endif()
     target_compile_definitions("${TARGET_NAME}" PRIVATE
         UML_APP_HAS_SLIRP=$<BOOL:${UML_BUILD_NETWORK_PROVIDER}>)
+    # The executable carries its property list in __TEXT,__info_plist, where
+    # CoreFoundation reads the identifier of a process that is not an
+    # application bundle.
+    set(UML_MACOS_APP_NAME "${TARGET_NAME}")
+    set(_uml_info_plist "${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-Info.plist")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in" "${_uml_info_plist}"
+        @ONLY)
+    set_property(TARGET "${TARGET_NAME}" APPEND PROPERTY LINK_DEPENDS
+        "${_uml_info_plist}")
+    set_property(GLOBAL APPEND PROPERTY UML_MACOS_APP_TARGETS "${TARGET_NAME}")
     target_link_options("${TARGET_NAME}" PRIVATE
         "LINKER:-export_dynamic"
         # The embedded ELF resolves this fixed-arity ABI with dlsym(). These
         # symbols have no native Mach-O callers, so force-load the deliberately
         # aggregated emulator product at the application boundary.
         "LINKER:-force_load,$<TARGET_FILE:uml_emulator>"
-        "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_kernel_image}")
+        "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_kernel_image}"
+        "LINKER:-sectcreate,__TEXT,__info_plist,${_uml_info_plist}")
 
     set_target_properties("${TARGET_NAME}" PROPERTIES
+        UML_BUNDLE_IDENTIFIER "${UML_MACOS_APP_BUNDLE_IDENTIFIER}"
         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH "@executable_path/Frameworks"

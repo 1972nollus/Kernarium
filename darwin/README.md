@@ -33,6 +33,15 @@ accounting remains available, while kernel-object charging is outside this
 compatibility slice. An explicit `cgroup.memory=` argument overrides the
 default.
 
+Each macOS executable, Linux and Android alike, embeds an Info.plist
+(`app/macos/Info.plist.in`) that names the bundle identifier
+`com.imxieyi.uml-darwin`. Metal places the process's shader cache by that
+identifier ([Metal shader cache](../docs/graphics.md#metal-shader-cache)).
+Nothing else follows it: privacy permissions are requested under the
+code-signing identifier `uml-darwin` and attributed to the terminal or
+application that launched the emulator, and the process and menu names are
+the executable's.
+
 The emulator library chooses no guest init and configures no guest network;
 the image owns both. Each Linux product embeds the boot base archive for its
 userspace architecture. Unless the command line names `init=` or `initrd=`, the
