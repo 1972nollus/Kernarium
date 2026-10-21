@@ -211,8 +211,7 @@ struct Rounded final {
 
 [[nodiscard]] constexpr FloatingPrecisionConversion convert_floating_precision(
 	std::uint64_t input, unsigned source_width, unsigned destination_width,
-	std::uint32_t fpcr, unsigned rounding_override = ~0U,
-	int exponent_adjust = 0) noexcept
+	std::uint32_t fpcr, unsigned rounding_override = ~0U) noexcept
 {
 	using namespace floating_conversion_detail;
 	std::uint32_t exceptions{};
@@ -245,7 +244,7 @@ struct Rounded final {
 	const unsigned rounding = rounding_override == ~0U ?
 		(fpcr >> 22) & 3U : rounding_override;
 	const int highest = static_cast<int>(std::bit_width(source.significand)) - 1;
-	const int value_exponent = highest + source.exponent + exponent_adjust;
+	const int value_exponent = highest + source.exponent;
 	const int minimum_exponent = 1 - destination.bias;
 	const auto exponent_ones = low_mask(destination.exponent_bits);
 	std::uint64_t result{};
@@ -289,8 +288,7 @@ struct Rounded final {
 		const int unit_exponent = minimum_exponent -
 			static_cast<int>(destination.fraction_bits);
 		const auto rounded = round_shift_right(source.significand,
-			unit_exponent - source.exponent - exponent_adjust,
-			rounding, source.sign);
+			unit_exponent - source.exponent, rounding, source.sign);
 		const bool became_normal = rounded.value >=
 			(std::uint64_t{1} << destination.fraction_bits);
 		result = sign_bit | (became_normal ?
