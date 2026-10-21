@@ -117,7 +117,17 @@ if(UML_BUILD_X86_64_GUEST)
     add_subdirectory(x86_64)
 endif()
 
-add_library(uml_arm64_execution_helpers OBJECT
+# An object library of this directory: the sources and engine kind it names,
+# the bridge ABI and CPU contract every one of them compiles against, and the
+# darwin include root. The caller adds what the target publishes.
+function(_uml_add_cpu_objects TARGET KIND)
+    add_library(${TARGET} OBJECT ${ARGN})
+    uml_declare_architecture_target(${TARGET} cpu ${KIND})
+    target_link_libraries(${TARGET} PRIVATE UML::BridgeAbi UML::CpuContract)
+    target_include_directories(${TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/darwin)
+endfunction()
+
+_uml_add_cpu_objects(uml_arm64_execution_helpers shared
     arm64/code_synchronization.cpp
     arm64/detail/sm0_spill.cpp
     arm64/floating_exception.cpp
@@ -125,12 +135,6 @@ add_library(uml_arm64_execution_helpers OBJECT
     arm64/memory_transfer.cpp
     arm64/native_environment.S
     arm64/tlb.cpp)
-uml_declare_architecture_target(uml_arm64_execution_helpers cpu shared)
-target_link_libraries(uml_arm64_execution_helpers PRIVATE
-    UML::BridgeAbi
-    UML::CpuContract)
-target_include_directories(uml_arm64_execution_helpers PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin)
 
 # Off by default so ordinary translation has no diagnostic instrumentation. A
 # threaded counter gadget indexes a table keyed by the exact selected entry,
@@ -246,7 +250,7 @@ set(_uml_arm64_gadget_a32_sources
 # enough to be cut off by it rather than ending at a branch.
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
     "Guest instructions fetched per translation attempt")
-add_library(uml_arm64_gadgets OBJECT
+_uml_add_cpu_objects(uml_arm64_gadgets gadget
     arm64/gadgets/afp_twin.cpp
     arm64/gadgets/gadget_memory_selection.cpp
     arm64/gadgets/gadget_scalar_selection.cpp
@@ -266,13 +270,8 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/engine.S
     ${_uml_arm64_gadget_sme_sources}
     ${_uml_arm64_gadget_a32_sources})
-uml_declare_architecture_target(uml_arm64_gadgets cpu gadget)
-target_link_libraries(uml_arm64_gadgets PRIVATE UML::BridgeAbi UML::CpuContract)
 target_link_libraries(uml_arm64_gadgets PUBLIC uml_arm64_execution_helpers
-    uml_arm64_aarch32_decoder uml_arm64_aarch32_semantics)
-target_include_directories(uml_arm64_gadgets PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin)
-target_link_libraries(uml_arm64_gadgets PUBLIC
+    uml_arm64_aarch32_decoder uml_arm64_aarch32_semantics
     UML::GadgetHistogramConfiguration)
 
 # Every image that carries uml_arm64_gadgets or uml_x86_64_gadgets links this,
@@ -368,16 +367,11 @@ set(_uml_cpu_jit_sources
     ${_uml_cpu_jit_sme_sources}
     ${_uml_cpu_jit_a32_sources})
 
-add_library(uml_arm64_jit OBJECT ${_uml_cpu_jit_sources})
-uml_declare_architecture_target(uml_arm64_jit cpu native)
+_uml_add_cpu_objects(uml_arm64_jit native ${_uml_cpu_jit_sources})
 target_link_libraries(uml_arm64_jit PRIVATE
-    UML::BridgeAbi
-    UML::CpuContract
     uml_cpu_executable_memory
     uml_arm64_aarch32_decoder
     uml_arm64_aarch32_semantics)
-target_include_directories(uml_arm64_jit PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin)
 
 set(_uml_cpu_jit_executor_sources
     arm64/jit/a32/a32_execute.cpp
@@ -399,39 +393,24 @@ set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_shared_translations.cpp
     ${_uml_cpu_jit_executor_sme_sources})
 
-add_library(uml_arm64_jit_executor OBJECT
-    ${_uml_cpu_jit_executor_sources})
-uml_declare_architecture_target(uml_arm64_jit_executor cpu native)
-target_link_libraries(uml_arm64_jit_executor PRIVATE
-    UML::BridgeAbi
-    UML::CpuContract)
-target_link_libraries(uml_arm64_jit_executor PUBLIC
-    uml_arm64_jit
-    uml_arm64_execution_helpers)
-target_include_directories(uml_arm64_jit_executor PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_definitions(uml_arm64_jit_executor PRIVATE
-    UML_JIT_RUNTIME_DIAGNOSTICS=0)
+# The executor and its diagnostics variant differ in one definition.
+function(_uml_add_jit_executor TARGET DIAGNOSTICS)
+    _uml_add_cpu_objects(${TARGET} native ${_uml_cpu_jit_executor_sources})
+    target_link_libraries(${TARGET} PUBLIC
+        uml_arm64_jit
+        uml_arm64_execution_helpers)
+    target_compile_definitions(${TARGET} PRIVATE
+        UML_JIT_RUNTIME_DIAGNOSTICS=${DIAGNOSTICS})
+endfunction()
+
+_uml_add_jit_executor(uml_arm64_jit_executor 0)
 
 if(UML_BUILD_UNIT_TESTS)
     # Counter-heavy cache/link diagnostics are useful for focused unit tests,
     # but add stores to translation and block-link paths. Recompile only this
     # narrow variant; ordinary products and conformance tests use the exact
     # production executor above with every diagnostic site preprocessed out.
-    add_library(uml_arm64_jit_diagnostics_executor OBJECT
-        ${_uml_cpu_jit_executor_sources})
-    uml_declare_architecture_target(
-        uml_arm64_jit_diagnostics_executor cpu native)
-    target_link_libraries(uml_arm64_jit_diagnostics_executor PRIVATE
-        UML::BridgeAbi
-        UML::CpuContract)
-    target_link_libraries(uml_arm64_jit_diagnostics_executor PUBLIC
-        uml_arm64_jit
-        uml_arm64_execution_helpers)
-    target_include_directories(uml_arm64_jit_diagnostics_executor PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_definitions(uml_arm64_jit_diagnostics_executor PRIVATE
-        UML_JIT_RUNTIME_DIAGNOSTICS=1)
+    _uml_add_jit_executor(uml_arm64_jit_diagnostics_executor 1)
 endif()
 
 # Some CPU implementation translation units contain inline assembly using the
@@ -460,33 +439,27 @@ if(UML_BUILD_UNIT_TESTS)
     # Test-only diagnostics and publication-gate probes are a separate source
     # owner. Focused tests link this object beside the exact production
     # executor instead of recompiling that executor with test definitions.
-    add_library(uml_arm64_jit_test_support OBJECT
+    _uml_add_cpu_objects(uml_arm64_jit_test_support native
         arm64/jit/jit_test_support.cpp)
-    uml_declare_architecture_target(uml_arm64_jit_test_support cpu native)
-    target_link_libraries(uml_arm64_jit_test_support PRIVATE
-        UML::BridgeAbi
-        UML::CpuContract)
     target_link_libraries(uml_arm64_jit_test_support PUBLIC
         uml_arm64_jit
         uml_arm64_execution_helpers)
-    target_include_directories(uml_arm64_jit_test_support PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
 endif()
 
-add_library(uml_arm64_gadget_executor OBJECT
-    arm64/gadgets/executor.cpp)
-uml_declare_architecture_target(uml_arm64_gadget_executor cpu gadget)
-target_link_libraries(uml_arm64_gadget_executor PRIVATE
-    UML::BridgeAbi
-    UML::CpuContract)
-target_link_libraries(uml_arm64_gadget_executor PUBLIC uml_arm64_gadgets)
-target_include_directories(uml_arm64_gadget_executor PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_definitions(uml_arm64_gadget_executor PRIVATE
-    UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
-    UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
-    UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
-    UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+# The gadget executor with SLOTS cache slots; ARGN adds definitions after the
+# shared ones.
+function(_uml_add_gadget_executor TARGET SLOTS)
+    _uml_add_cpu_objects(${TARGET} gadget arm64/gadgets/executor.cpp)
+    target_link_libraries(${TARGET} PUBLIC uml_arm64_gadgets)
+    target_compile_definitions(${TARGET} PRIVATE
+        UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
+        UML_GADGET_CACHE_SLOTS=${SLOTS}
+        UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS}
+        ${ARGN})
+endfunction()
+
+_uml_add_gadget_executor(uml_arm64_gadget_executor ${UML_GADGET_CACHE_SLOTS})
 
 if(UML_BUILD_UNIT_TESTS)
     # The same executor with a schedule for renewing shared address spaces and
@@ -496,56 +469,24 @@ if(UML_BUILD_UNIT_TESTS)
     # of a shared space's bound link it, in place of the production executor
     # above; the executor's cache geometry is private to its translation
     # unit.
-    add_library(uml_arm64_gadget_sweep_stress_executor OBJECT
-        arm64/gadgets/executor.cpp)
-    uml_declare_architecture_target(
-        uml_arm64_gadget_sweep_stress_executor cpu gadget)
-    target_link_libraries(uml_arm64_gadget_sweep_stress_executor PRIVATE
-        UML::BridgeAbi
-        UML::CpuContract)
-    target_link_libraries(uml_arm64_gadget_sweep_stress_executor PUBLIC
-        uml_arm64_gadgets)
-    target_include_directories(uml_arm64_gadget_sweep_stress_executor PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_definitions(uml_arm64_gadget_sweep_stress_executor PRIVATE
-        UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
-        UML_GADGET_CACHE_SLOTS=1024
-        UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
-        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS}
+    _uml_add_gadget_executor(uml_arm64_gadget_sweep_stress_executor 1024
         UML_GADGET_SWEEP_STRESS=1)
 endif()
 
-add_library(uml_arm64_gadget_engine OBJECT arm64/gadgets/engine_adapter.cpp)
-uml_declare_architecture_target(uml_arm64_gadget_engine cpu gadget)
-target_link_libraries(uml_arm64_gadget_engine PRIVATE
-    UML::BridgeAbi
-    UML::CpuContract)
+_uml_add_cpu_objects(uml_arm64_gadget_engine gadget
+    arm64/gadgets/engine_adapter.cpp)
 target_link_libraries(uml_arm64_gadget_engine PUBLIC uml_arm64_gadget_executor)
-target_include_directories(uml_arm64_gadget_engine PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin)
 
-add_library(uml_arm64_jit_engine OBJECT arm64/jit/engine_adapter.cpp)
-uml_declare_architecture_target(uml_arm64_jit_engine cpu native)
-target_link_libraries(uml_arm64_jit_engine PRIVATE
-    UML::BridgeAbi
-    UML::CpuContract)
+_uml_add_cpu_objects(uml_arm64_jit_engine native arm64/jit/engine_adapter.cpp)
 target_link_libraries(uml_arm64_jit_engine PUBLIC
     uml_arm64_jit
     uml_arm64_jit_executor)
-target_include_directories(uml_arm64_jit_engine PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin)
 
-add_library(uml_cpu_engine_factory OBJECT engine_factory.cpp)
-uml_declare_architecture_target(uml_cpu_engine_factory cpu mixed)
-target_link_libraries(uml_cpu_engine_factory PRIVATE
-    UML::BridgeAbi
-    UML::CpuContract)
+_uml_add_cpu_objects(uml_cpu_engine_factory mixed engine_factory.cpp)
 target_link_libraries(uml_cpu_engine_factory PUBLIC
     uml_arm64_gadget_engine
     uml_arm64_jit_engine
     uml_arm64_execution_helpers)
-target_include_directories(uml_cpu_engine_factory PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin)
 
 # OBJECT libraries avoid duplicate compilation, but CMake does not propagate
 # their contents transitively. These link components expose the supported
