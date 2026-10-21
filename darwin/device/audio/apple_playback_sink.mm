@@ -178,32 +178,35 @@ public:
                       if (const auto flags = weakNotifications.lock())
                           flags->signal(flags->configurationChanged);
                     }];
-        /* iOS 27 deprecates this notification for
-         * AVAudioSessionDidBecomeInactiveNotification and
-         * AVAudioSessionResumptionRecommendationNotification. It is still
-         * posted, and the sink resumes on every end it reports; the
-         * replacements carry a resume recommendation instead, so moving to
-         * them needs a device test of an interruption. */
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        interruptionObserver_ = [[NSNotificationCenter defaultCenter]
-            addObserverForName:AVAudioSessionInterruptionNotification
+        /* iOS 27 replaces the interruption notification with two: the session
+         * becoming inactive, which also reports the app's own deactivations,
+         * and the system's resumption recommendation. An interruption is a
+         * deactivation that carries an interruption context. The sink
+         * resumes on every recommendation, whether it says to resume or not:
+         * the guest cannot see a pause, so a sink left paused would strand
+         * its queued periods until the guest restarts the stream. */
+        deactivationObserver_ = [[NSNotificationCenter defaultCenter]
+            addObserverForName:AVAudioSessionDidBecomeInactiveNotification
                         object:[AVAudioSession sharedInstance]
                          queue:nil
                     usingBlock:^(NSNotification* notification) {
                       const auto flags = weakNotifications.lock();
                       if (!flags)
                           return;
-                      const NSNumber* type = notification.userInfo[
-                          AVAudioSessionInterruptionTypeKey];
-                      if (type.unsignedIntegerValue ==
-                          AVAudioSessionInterruptionTypeBegan) {
+                      const AVAudioSessionDeactivationContext* context =
+                          notification.userInfo[
+                              AVAudioSessionDeactivationContextKey];
+                      if (context.interruptionContext != nil)
                           flags->signal(flags->interruptionBegan);
-                      } else {
-                          flags->signal(flags->interruptionEnded);
-                      }
                     }];
-#pragma clang diagnostic pop
+        resumptionObserver_ = [[NSNotificationCenter defaultCenter]
+            addObserverForName:AVAudioSessionResumptionRecommendationNotification
+                        object:[AVAudioSession sharedInstance]
+                         queue:nil
+                    usingBlock:^(NSNotification*) {
+                      if (const auto flags = weakNotifications.lock())
+                          flags->signal(flags->interruptionEnded);
+                    }];
 #endif
     }
 
@@ -215,7 +218,9 @@ public:
 #if TARGET_OS_IPHONE
             [[NSNotificationCenter defaultCenter] removeObserver:routeObserver_];
             [[NSNotificationCenter defaultCenter]
-                removeObserver:interruptionObserver_];
+                removeObserver:deactivationObserver_];
+            [[NSNotificationCenter defaultCenter]
+                removeObserver:resumptionObserver_];
 #endif
         } @catch (NSException*) {
         }
@@ -558,7 +563,8 @@ private:
     id __strong configurationObserver_;
 #if TARGET_OS_IPHONE
     id __strong routeObserver_;
-    id __strong interruptionObserver_;
+    id __strong deactivationObserver_;
+    id __strong resumptionObserver_;
     bool interrupted_ {};
 #endif
     bool configured_ {};

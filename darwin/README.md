@@ -340,8 +340,11 @@ The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
 
 The audio device owns a bounded period/completion ring. The callback path does
-not allocate or lock. iOS owns AVAudioSession interruption and route recovery.
-Capture and mixer controls are not exposed.
+not allocate or lock. On iOS the sink pauses when the system interrupts its
+audio session (the app's own deactivations are not interruptions) and resumes
+on the system's resumption recommendation whichever advice it carries: the guest
+cannot see a pause, so a sink left paused would strand its queued periods.
+Route changes restart the engine. Capture and mixer controls are not exposed.
 
 SLiRP host forwards are owned by the provider so they survive provider reopen.
 An unavailable individual host port is reported without removing the guest's

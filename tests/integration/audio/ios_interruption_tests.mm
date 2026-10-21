@@ -12,6 +12,7 @@
 
 #import <AVFAudio/AVFAudio.h>
 #import <Foundation/Foundation.h>
+#import <objc/runtime.h>
 
 #include <poll.h>
 
@@ -145,37 +146,93 @@ private:
     bool failed_ {};
 };
 
-// What iOS posts, as the sink received it before iOS 27: one notification for
-// the interruption beginning and one for it ending, whether or not the system
-// advises resuming.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-void postInterruptionBegan()
+} // namespace
+
+// iOS creates the contexts its notifications carry and offers no initializer,
+// so each is a subclass that answers the reads the sink makes.
+@interface InterruptionContextDouble : AVAudioSessionInterruptionContext
+@end
+
+@implementation InterruptionContextDouble
+- (AVAudioSessionInterruptionReason)reason
 {
+    return AVAudioSessionInterruptionReasonDefault;
+}
+@end
+
+@interface DeactivationContextDouble : AVAudioSessionDeactivationContext
+@property(nonatomic) AVAudioSessionDeactivationSource sourceDouble;
+@property(nonatomic, strong) AVAudioSessionInterruptionContext* interruptionDouble;
+@end
+
+@implementation DeactivationContextDouble
+- (AVAudioSessionDeactivationSource)source
+{
+    return self.sourceDouble;
+}
+
+- (AVAudioSessionInterruptionContext*)interruptionContext
+{
+    return self.interruptionDouble;
+}
+@end
+
+@interface ResumptionContextDouble : AVAudioSessionResumptionContext
+@property(nonatomic) AVAudioSessionResumptionRecommendation recommendationDouble;
+@end
+
+@implementation ResumptionContextDouble
+- (AVAudioSessionResumptionRecommendation)recommendation
+{
+    return self.recommendationDouble;
+}
+@end
+
+namespace {
+
+template <class Context> Context* make()
+{
+    return static_cast<Context*>(class_createInstance([Context class], 0));
+}
+
+// What iOS 27 posts when the session becomes inactive: for the app's own
+// deactivation, or for the system's, which carries an interruption context
+// when another app caused it.
+void postDeactivation(
+    AVAudioSessionDeactivationSource source, bool interrupted)
+{
+    auto* context = make<DeactivationContextDouble>();
+    context.sourceDouble = source;
+    context.interruptionDouble =
+        interrupted ? make<InterruptionContextDouble>() : nil;
     [[NSNotificationCenter defaultCenter]
-        postNotificationName:AVAudioSessionInterruptionNotification
+        postNotificationName:AVAudioSessionDidBecomeInactiveNotification
                       object:[AVAudioSession sharedInstance]
                     userInfo:@{
-                        AVAudioSessionInterruptionTypeKey :
-                            @(AVAudioSessionInterruptionTypeBegan)
+                        AVAudioSessionDeactivationContextKey : context
                     }];
 }
 
+void postInterruptionBegan()
+{
+    postDeactivation(AVAudioSessionDeactivationSourceSystem, true);
+}
+
+// What iOS 27 posts when the interrupter lets go, with the system's advice on
+// resuming.
 void postInterruptionEnded(bool shouldResume)
 {
+    auto* context = make<ResumptionContextDouble>();
+    context.recommendationDouble = shouldResume ?
+        AVAudioSessionResumptionRecommendationShouldResume :
+        AVAudioSessionResumptionRecommendationShouldNotResume;
     [[NSNotificationCenter defaultCenter]
-        postNotificationName:AVAudioSessionInterruptionNotification
+        postNotificationName:AVAudioSessionResumptionRecommendationNotification
                       object:[AVAudioSession sharedInstance]
                     userInfo:@{
-                        AVAudioSessionInterruptionTypeKey :
-                            @(AVAudioSessionInterruptionTypeEnded),
-                        AVAudioSessionInterruptionOptionKey :
-                            @(shouldResume ?
-                                    AVAudioSessionInterruptionOptionShouldResume :
-                                    0)
+                        AVAudioSessionResumptionContextKey : context
                     }];
 }
-#pragma clang diagnostic pop
 
 void interruptionPausesAndResumes()
 {
@@ -184,6 +241,17 @@ void interruptionPausesAndResumes()
     check(stream.open(), "the stream opens");
     auto played = stream.window(500ms, 1500ms);
     check(played >= playingPerWindow, "the stream plays", counted(played));
+
+    postDeactivation(AVAudioSessionDeactivationSourceApp, false);
+    played = stream.window(400ms, 1500ms);
+    check(played >= playingPerWindow,
+        "the app's own deactivation leaves playback running",
+        counted(played));
+    postDeactivation(AVAudioSessionDeactivationSourceSystem, false);
+    played = stream.window(400ms, 1500ms);
+    check(played >= playingPerWindow,
+        "a system deactivation that interrupts nothing leaves playback running",
+        counted(played));
 
     postInterruptionBegan();
     auto paused = stream.window(400ms, 800ms);
