@@ -27,11 +27,9 @@
 #include "cpu/arm64/jit/jit_semantic_reservation.hpp"
 #include "cpu/arm64/memory.hpp"
 
-#include <algorithm>
 #include <array>
 #include <atomic>
 #include <bit>
-#include <cstring>
 #include <mutex>
 #include <span>
 
@@ -45,84 +43,24 @@ namespace a32 = jit::a32;
 namespace sem = jit::semantic;
 using aarch32::Instruction;
 
-/* The executor's view of guest memory for one instruction: the Tlb's
- * translations, with the failing page recorded in the Tlb's fault fields as
- * the generated code's own translations record it. A copy of the A64
- * semantic path's view (jit_semantic_memory.cpp), which is private to that
- * file. */
+/* The exclusive monitor's view of guest memory, for sem::atomic_load_value
+ * and sem::atomic_store_value: the translated page of one access the library
+ * has already checked for natural alignment (1, 2, 4 or 8 bytes), which the
+ * monitor performs as one host access. has_fault() is true, so a failed
+ * translation is the access's fault, which the library reports, and neither
+ * helper falls back to read or write. */
 class TlbMemory final : public GuestMemory {
 public:
   explicit TlbMemory(Tlb &tlb) noexcept : tlb_{tlb} {}
 
-  bool read(std::uint64_t address, std::span<std::byte> destination) override {
-    while (!destination.empty()) {
-      auto *source = tlb_.translate(address, Access::read);
-      if (source == nullptr)
-        return false;
-      const auto count = std::min(
-          destination.size(),
-          static_cast<std::size_t>(page_size - (address & (page_size - 1U))));
-      std::memcpy(destination.data(), source, count);
-      address += count;
-      destination = destination.subspan(count);
-    }
-    return true;
+  bool read(std::uint64_t, std::span<std::byte>) override { return false; }
+
+  bool write(std::uint64_t, std::span<const std::byte>) override {
+    return false;
   }
 
-  bool write(std::uint64_t address,
-             std::span<const std::byte> source) override {
-    /* A store is one access: translate every page it touches before the first
-     * host store, so a fault on a later page exposes no partial update. A
-     * transfer spans at most two pages. */
-    std::array<std::byte *, 2> destinations{};
-    std::array<std::size_t, 2> lengths{};
-    std::size_t pages = 0;
-    std::size_t completed = 0;
-    while (completed != source.size()) {
-      if (pages == destinations.size())
-        return false;
-      const auto current = address + completed;
-      tlb_.discard(current);
-      auto *destination = tlb_.translate(current, Access::write);
-      if (destination == nullptr)
-        return false;
-      const auto count = std::min(
-          source.size() - completed,
-          static_cast<std::size_t>(page_size - (current & (page_size - 1U))));
-      destinations[pages] = destination;
-      lengths[pages] = count;
-      ++pages;
-      completed += count;
-    }
-    completed = 0;
-    for (std::size_t page = 0; page < pages; ++page) {
-      std::memcpy(destinations[page], source.data() + completed, lengths[page]);
-      completed += lengths[page];
-    }
-    return true;
-  }
-
-  bool validate_access(std::uint64_t address, std::size_t size,
-                       ::uml::memory::MemoryAccess access) override {
-    const auto direction = access == ::uml::memory::MemoryAccess::write
-                               ? Access::write
-                               : Access::read;
-    std::size_t completed = 0;
-    while (completed < size) {
-      const auto current = address + completed;
-      if (tlb_.translate(current, direction) == nullptr)
-        return false;
-      completed += std::min(
-          size - completed,
-          static_cast<std::size_t>(page_size - (current & (page_size - 1U))));
-    }
-    return true;
-  }
-
-  /* One host access on the translated page, for the exclusives. The caller
-   * has checked natural alignment, so the access never crosses a page. The
-   * dynamic loader can change COW permissions between accesses, so a write
-   * translation is revalidated here. */
+  /* The dynamic loader can change COW permissions between accesses, so a
+   * write translation is revalidated here. */
   std::byte *atomic_pointer(std::uint64_t address, std::size_t size,
                             ::uml::memory::MemoryAccess access) override {
     if (size == 0 || size > 8U || (size & (size - 1U)) != 0 ||
@@ -132,18 +70,6 @@ public:
     if (direction == Access::write)
       tlb_.discard(address);
     return tlb_.translate(address, direction);
-  }
-
-  std::byte *reservation_pointer(std::uint64_t address, std::size_t size,
-                                 ::uml::memory::MemoryAccess access) override {
-    if (size == 0 || size > page_size - (address & (page_size - 1U)))
-      return nullptr;
-    return tlb_.translate(address, ::uml::memory::translated_access(access));
-  }
-
-  [[nodiscard]] ::uml::memory::MemoryFault
-  last_fault() const noexcept override {
-    return {tlb_.fault_address, ::uml::memory::guest_access(tlb_.fault_access)};
   }
 
   [[nodiscard]] bool has_fault() const noexcept override { return true; }
