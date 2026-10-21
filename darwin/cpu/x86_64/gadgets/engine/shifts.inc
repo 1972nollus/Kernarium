@@ -296,6 +296,59 @@ Lx86_shift_override_ready\@:
 	strh w11, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 .endm
 
+/* The part of a shift or rotate of the value in `host_register`24 by the count
+ * in w26 that its register and memory forms share: mask the count and compute
+ * the result into `host_register`27. A zero count branches to `store`, which
+ * keeps the value, and the result is ready at `write`; both are labels this
+ * defines. */
+.macro shift_apply operation, width, host_register, store, write
+	.if \width == 64
+	and w26, w26, #0x3f
+	.else
+	and w26, w26, #0x1f
+	.endif
+	cbz w26, \store
+	.ifc \operation,rcl
+	bl uml_x86_64_gadget_materialize_flags
+	.endif
+	.ifc \operation,rcr
+	bl uml_x86_64_gadget_materialize_flags
+	.endif
+	shift_prepare_count \operation, \width
+	.ifc \operation,rcl
+	cbz w26, \store
+	.endif
+	.ifc \operation,rcr
+	cbz w26, \store
+	.endif
+	shift_compute \operation, \width, \host_register
+	.ifc \operation,rol
+	cbnz w26, \write
+	mov w26, #\width
+	.endif
+	.ifc \operation,ror
+	cbnz w26, \write
+	mov w26, #\width
+	.endif
+	b \write
+\store:
+	mov \host_register\()27, \host_register\()24
+\write:
+.endm
+
+/* Record the flags a shift or rotate defines. */
+.macro shift_flags operation, width, host_register
+	.ifc \operation,rcl
+	shift_update_flags \operation, \width, \host_register
+	.else
+	.ifc \operation,rcr
+	shift_update_flags \operation, \width, \host_register
+	.else
+	shift_record_flags \operation, \width, \host_register
+	.endif
+	.endif
+.endm
+
 .macro shift_register operation, width, load, store, host_register, store_register, form
 gadget \operation\()_\width\()_r\form
 	.ifc \form,i
@@ -307,49 +360,10 @@ gadget \operation\()_\width\()_r\form
 	ldrb w26, [_cpu, x9]
 	.endif
 	\load \host_register\()24, [_cpu, x25]
-	.if \width == 64
-	and w26, w26, #0x3f
-	.else
-	and w26, w26, #0x1f
-	.endif
-	cbz w26, Lx86_shift_register_store\@
-	.ifc \operation,rcl
-	bl uml_x86_64_gadget_materialize_flags
-	.endif
-	.ifc \operation,rcr
-	bl uml_x86_64_gadget_materialize_flags
-	.endif
-	shift_prepare_count \operation, \width
-	.ifc \operation,rcl
-	cbz w26, Lx86_shift_register_store\@
-	.endif
-	.ifc \operation,rcr
-	cbz w26, Lx86_shift_register_store\@
-	.endif
-	shift_compute \operation, \width, \host_register
-	.ifc \operation,rol
-	cbnz w26, Lx86_shift_register_write\@
-	mov w26, #\width
-	.endif
-	.ifc \operation,ror
-	cbnz w26, Lx86_shift_register_write\@
-	mov w26, #\width
-	.endif
-	b Lx86_shift_register_write\@
-Lx86_shift_register_store\@:
-	mov \host_register\()27, \host_register\()24
-Lx86_shift_register_write\@:
+	shift_apply \operation, \width, \host_register, Lx86_shift_register_store\@, Lx86_shift_register_write\@
 	\store \store_register\()27, [_cpu, x25]
 	cbz w26, Lx86_shift_register_done\@
-	.ifc \operation,rcl
-	shift_update_flags \operation, \width, \host_register
-	.else
-	.ifc \operation,rcr
-	shift_update_flags \operation, \width, \host_register
-	.else
-	shift_record_flags \operation, \width, \host_register
-	.endif
-	.endif
+	shift_flags \operation, \width, \host_register
 Lx86_shift_register_done\@:
 	retire_and_next
 .endm
@@ -365,38 +379,7 @@ gadget \operation\()_\width\()_m\form
 	ldr x26, [_stream], #8
 	.endif
 	read_operand (\width / 8), \load, \host_register, 24
-	.if \width == 64
-	and w26, w26, #0x3f
-	.else
-	and w26, w26, #0x1f
-	.endif
-	cbz w26, Lx86_shift_memory_store\@
-	.ifc \operation,rcl
-	bl uml_x86_64_gadget_materialize_flags
-	.endif
-	.ifc \operation,rcr
-	bl uml_x86_64_gadget_materialize_flags
-	.endif
-	shift_prepare_count \operation, \width
-	.ifc \operation,rcl
-	cbz w26, Lx86_shift_memory_store\@
-	.endif
-	.ifc \operation,rcr
-	cbz w26, Lx86_shift_memory_store\@
-	.endif
-	shift_compute \operation, \width, \host_register
-	.ifc \operation,rol
-	cbnz w26, Lx86_shift_memory_write\@
-	mov w26, #\width
-	.endif
-	.ifc \operation,ror
-	cbnz w26, Lx86_shift_memory_write\@
-	mov w26, #\width
-	.endif
-	b Lx86_shift_memory_write\@
-Lx86_shift_memory_store\@:
-	mov \host_register\()27, \host_register\()24
-Lx86_shift_memory_write\@:
+	shift_apply \operation, \width, \host_register, Lx86_shift_memory_store\@, Lx86_shift_memory_write\@
 	mov x7, x25
 	page_cross_check (\width / 8), Lx86_shift_memory_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
@@ -406,15 +389,7 @@ Lx86_shift_memory_write_cross\@:
 	cross_page_store x27, (\width / 8)
 Lx86_shift_memory_written\@:
 	cbz w26, Lx86_shift_memory_done\@
-	.ifc \operation,rcl
-	shift_update_flags \operation, \width, \host_register
-	.else
-	.ifc \operation,rcr
-	shift_update_flags \operation, \width, \host_register
-	.else
-	shift_record_flags \operation, \width, \host_register
-	.endif
-	.endif
+	shift_flags \operation, \width, \host_register
 Lx86_shift_memory_done\@:
 	finish_store (\width / 8)
 .endm
@@ -565,6 +540,8 @@ double_shift_family shrd
 .purgem shift_width
 .purgem shift_memory
 .purgem shift_register
+.purgem shift_flags
+.purgem shift_apply
 .purgem shift_record_flags
 .purgem shift_update_flags
 .purgem shift_set_szp

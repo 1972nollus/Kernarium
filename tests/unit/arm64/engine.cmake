@@ -184,7 +184,7 @@
     uml_add_arm64_unit_test(gadget_terminal_count WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
     target_compile_definitions(uml_arm64_gadget_terminal_count_tests PRIVATE
-        UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
+        UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOT_COUNT}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
     # Every memory transfer's fault names its instruction by the position in
     # its operand; the executor turns that back into the PC.
@@ -432,7 +432,7 @@
         COMMAND uml_arm64_gadget_a32_corpus_tests ${UML_ARM64_AARCH32_CORPUS}
             --record exclusive-qemu,sequences-qemu --passes 200 --interrupt)
     target_compile_definitions(uml_arm64_gadget_cache_validation_tests PRIVATE
-        UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
+        UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOT_COUNT}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
     # Executors sharing one address space's translations, from several
     # threads at once.

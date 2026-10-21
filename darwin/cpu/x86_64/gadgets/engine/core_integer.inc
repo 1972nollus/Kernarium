@@ -80,14 +80,9 @@ arithmetic_family xor, eor, 3, 1
 arithmetic_family cmp, sub, 2, 0, 1
 arithmetic_family test, and, 3, 0, 1
 
-.macro scalar_carry_rr name, instruction, flag_operation, width, load, store, host_register, store_register
-gadget \name\()_\width\()_rr
-	bl uml_x86_64_gadget_materialize_carry
-	ldr x8, [_stream], #8
-	and x9, x8, #0xffff
-	ubfx x10, x8, #16, #16
-	\load \host_register\()11, [_cpu, x9]
-	\load \host_register\()12, [_cpu, x10]
+/* ADC or SBB of the operands in x11 and x12 with the carry flag, stored to
+ * the register at x9, and the flags it defines recorded. */
+.macro scalar_carry_finish instruction, flag_operation, width, host_register, store, store_register
 	ldr x16, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	and w16, w16, #1
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
@@ -99,6 +94,17 @@ gadget \name\()_\width\()_rr
 	retire_and_next
 .endm
 
+.macro scalar_carry_rr name, instruction, flag_operation, width, load, store, host_register, store_register
+gadget \name\()_\width\()_rr
+	bl uml_x86_64_gadget_materialize_carry
+	ldr x8, [_stream], #8
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	\load \host_register\()11, [_cpu, x9]
+	\load \host_register\()12, [_cpu, x10]
+	scalar_carry_finish \instruction, \flag_operation, \width, \host_register, \store, \store_register
+.endm
+
 .macro scalar_carry_ri name, instruction, flag_operation, width, load, store, host_register, store_register
 gadget \name\()_\width\()_ri
 	bl uml_x86_64_gadget_materialize_carry
@@ -106,15 +112,7 @@ gadget \name\()_\width\()_ri
 	and x9, x8, #0xffff
 	\load \host_register\()11, [_cpu, x9]
 	normalize_immediate \width, \host_register\()12, \host_register\()12
-	ldr x16, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	and w16, w16, #1
-	\instruction \host_register\()13, \host_register\()11, \host_register\()12
-	\instruction \host_register\()13, \host_register\()13, \host_register\()16
-	normalize_result \width, \host_register\()13
-	\store \store_register\()13, [_cpu, x9]
-	record_deferred \flag_operation, \width
-	strb w16, [_cpu, #UML_X86_64_CPU_DEFERRED_CARRY]
-	retire_and_next
+	scalar_carry_finish \instruction, \flag_operation, \width, \host_register, \store, \store_register
 .endm
 
 .macro scalar_carry_width name, instruction, flag_operation, width, load, store, host_register, store_register
@@ -136,6 +134,7 @@ scalar_carry_family sbb, sub, 7
 .purgem scalar_carry_width
 .purgem scalar_carry_ri
 .purgem scalar_carry_rr
+.purgem scalar_carry_finish
 
 .purgem arithmetic_family
 .purgem arithmetic_width
@@ -251,12 +250,9 @@ Lx86_arithmetic_rm_cross\@:
 	b Lx86_arithmetic_rm_loaded\@
 .endm
 
-.macro memory_arithmetic_msource operation, instruction, flag_operation, writes, form, width, load, store, host_register, locked
-	.if \locked
-gadget \operation\()_\width\()_m\form\()_locked
-	.else
-gadget \operation\()_\width\()_m\form
-	.endif
+/* The address of a read-modify-write memory destination in x7 and x25, and
+ * its source in x26: the register or immediate that `form` (r or i) names. */
+.macro memory_source_operand form, width, load, host_register
 	effective_address
 	mov x25, x7
 	.ifc \form,r
@@ -267,6 +263,15 @@ gadget \operation\()_\width\()_m\form
 	ldr x26, [_stream], #8
 	normalize_immediate \width, \host_register\()26, \host_register\()26
 	.endif
+.endm
+
+.macro memory_arithmetic_msource operation, instruction, flag_operation, writes, form, width, load, store, host_register, locked
+	.if \locked
+gadget \operation\()_\width\()_m\form\()_locked
+	.else
+gadget \operation\()_\width\()_m\form
+	.endif
+	memory_source_operand \form, \width, \load, \host_register
 	.if \locked
 	locked_aligned \width, Lx86_arithmetic_msource_split\@
 Lx86_arithmetic_msource_exclusive\@:
@@ -375,16 +380,7 @@ gadget \name\()_\width\()_m\form
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x19, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	and w19, w19, #1
-	effective_address
-	mov x25, x7
-	.ifc \form,r
-	and x8, x23, #0xffff
-	\load \host_register\()26, [_cpu, x8]
-	.endif
-	.ifc \form,i
-	ldr x26, [_stream], #8
-	normalize_immediate \width, \host_register\()26, \host_register\()26
-	.endif
+	memory_source_operand \form, \width, \load, \host_register
 	.if \locked
 	locked_aligned \width, Lx86_carry_msource_split\@
 Lx86_carry_msource_exclusive\@:
@@ -492,6 +488,44 @@ memory_exchange 64, ldr, str, x, str, x
 
 .purgem memory_exchange
 
+/* The new value in x27 from the old one in x24. */
+.macro memory_unary_compute instruction, host_register
+	.ifc \instruction,add
+	add \host_register\()27, \host_register\()24, #1
+	.endif
+	.ifc \instruction,sub
+	sub \host_register\()27, \host_register\()24, #1
+	.endif
+	.ifc \instruction,neg
+	neg \host_register\()27, \host_register\()24
+	.endif
+	.ifc \instruction,not
+	mvn \host_register\()27, \host_register\()24
+	.endif
+.endm
+
+/* The deferred record of a unary operation that defines flags, from the old
+ * value in x24 and the new one in x27: NEG records a subtraction from zero,
+ * and `materialize` marks INC and DEC, whose record keeps their pending
+ * carry. */
+.macro memory_unary_record instruction, flag_operation, materialize, width
+	.if \flag_operation
+	.ifc \instruction,neg
+	mov x11, xzr
+	mov x12, x24
+	.else
+	mov x11, x24
+	mov x12, #1
+	.endif
+	mov x13, x27
+	.if \materialize
+	record_deferred_pending \flag_operation, \width
+	.else
+	record_deferred \flag_operation, \width
+	.endif
+	.endif
+.endm
+
 .macro memory_unary operation, instruction, flag_operation, materialize, width, load, store, host_register, locked
 	.if \locked
 gadget \operation\()_\width\()_m_locked
@@ -510,53 +544,17 @@ Lx86_unary_exclusive\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 1:
 	load_exclusive \width, 24, x7
-	.ifc \instruction,add
-	add \host_register\()27, \host_register\()24, #1
-	.endif
-	.ifc \instruction,sub
-	sub \host_register\()27, \host_register\()24, #1
-	.endif
-	.ifc \instruction,neg
-	neg \host_register\()27, \host_register\()24
-	.endif
-	.ifc \instruction,not
-	mvn \host_register\()27, \host_register\()24
-	.endif
+	memory_unary_compute \instruction, \host_register
 	normalize_result \width, \host_register\()27
 	store_exclusive \width, 9, 27, x7
 	cbnz w9, 1b
-	.if \flag_operation
-	.ifc \instruction,neg
-	mov x11, xzr
-	mov x12, x24
-	.else
-	mov x11, x24
-	mov x12, #1
-	.endif
-	mov x13, x27
-	.if \materialize
-	record_deferred_pending \flag_operation, \width
-	.else
-	record_deferred \flag_operation, \width
-	.endif
-	.endif
+	memory_unary_record \instruction, \flag_operation, \materialize, \width
 	finish_store (\width / 8)
 Lx86_unary_split\@:
 	split_operand (\width / 8), Lx86_unary_exclusive\@
 	.endif
 	read_operand (\width / 8), \load, \host_register, 24
-	.ifc \instruction,add
-	add \host_register\()27, \host_register\()24, #1
-	.endif
-	.ifc \instruction,sub
-	sub \host_register\()27, \host_register\()24, #1
-	.endif
-	.ifc \instruction,neg
-	neg \host_register\()27, \host_register\()24
-	.endif
-	.ifc \instruction,not
-	mvn \host_register\()27, \host_register\()24
-	.endif
+	memory_unary_compute \instruction, \host_register
 	normalize_result \width, \host_register\()27
 	mov x7, x25
 	page_cross_check (\width / 8), Lx86_unary_write_cross\@
@@ -569,21 +567,7 @@ Lx86_unary_written\@:
 	.if \locked
 	split_lock_leave
 	.endif
-	.if \flag_operation
-	.ifc \instruction,neg
-	mov x11, xzr
-	mov x12, x24
-	.else
-	mov x11, x24
-	mov x12, #1
-	.endif
-	mov x13, x27
-	.if \materialize
-	record_deferred_pending \flag_operation, \width
-	.else
-	record_deferred \flag_operation, \width
-	.endif
-	.endif
+	memory_unary_record \instruction, \flag_operation, \materialize, \width
 	finish_store (\width / 8)
 .endm
 
@@ -605,10 +589,13 @@ memory_unary_width 64, ldr, str, x
 
 .purgem memory_unary_width
 .purgem memory_unary
+.purgem memory_unary_record
+.purgem memory_unary_compute
 
 .purgem memory_arithmetic_family
 .purgem memory_arithmetic_width
 .purgem memory_arithmetic_msource
+.purgem memory_source_operand
 .purgem memory_arithmetic_rm
 
 .purgem unary_width

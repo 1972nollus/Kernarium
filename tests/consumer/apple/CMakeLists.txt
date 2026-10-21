@@ -10,8 +10,6 @@ set(UML_EMULATOR_HEADERS "" CACHE PATH
     "Raw UMLEmulator include root used only for final-slice verification")
 set(UML_EMULATOR_XCFRAMEWORK "" CACHE PATH
     "Final UMLEmulator XCFramework used for Xcode slice-selection verification")
-set(UML_EXPECTED_GUEST_PAGE_SIZE "4096" CACHE STRING
-    "Expected installed package guest page size")
 set(UML_EXPECTED_GUEST_SLICE "arm64" CACHE STRING
     "Expected installed package userspace ISA slice")
 
@@ -34,10 +32,9 @@ if(UML_EMULATOR_PACKAGE_PREFIX)
         message(FATAL_ERROR
             "Installed package platform ${UMLEmulator_APPLE_PLATFORM} does not match ${UML_APPLE_PLATFORM}")
     endif()
-    if(NOT "${UMLEmulator_GUEST_PAGE_SIZE}" STREQUAL
-       "${UML_EXPECTED_GUEST_PAGE_SIZE}")
+    if(NOT "${UMLEmulator_GUEST_PAGE_SIZE}" STREQUAL "4096")
         message(FATAL_ERROR
-            "Installed package page size ${UMLEmulator_GUEST_PAGE_SIZE} does not match ${UML_EXPECTED_GUEST_PAGE_SIZE}")
+            "Installed package page size ${UMLEmulator_GUEST_PAGE_SIZE} is not 4096")
     endif()
     if(NOT "${UMLEmulator_GUEST_SLICE}" STREQUAL
        "${UML_EXPECTED_GUEST_SLICE}")

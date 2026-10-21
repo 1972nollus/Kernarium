@@ -68,11 +68,11 @@ function(uml_import_kernel_artifact)
     set(options)
     set(oneValueArgs
         TARGET ARTIFACT_ROOT COMMON_ROOT EXPECTED_FAMILY EXPECTED_SLICE
-        EXPECTED_RELEASE_SERIES EXPECTED_PAGE_SIZE)
+        EXPECTED_RELEASE_SERIES)
     cmake_parse_arguments(ARTIFACT "${options}" "${oneValueArgs}" "" ${ARGN})
     foreach(_uml_required IN ITEMS
             TARGET ARTIFACT_ROOT COMMON_ROOT EXPECTED_FAMILY EXPECTED_SLICE
-            EXPECTED_RELEASE_SERIES EXPECTED_PAGE_SIZE)
+            EXPECTED_RELEASE_SERIES)
         if(NOT ARTIFACT_${_uml_required})
             message(FATAL_ERROR
                 "uml_import_kernel_artifact requires ${_uml_required}")
@@ -98,7 +98,6 @@ function(uml_import_kernel_artifact)
             --expected-family "${ARTIFACT_EXPECTED_FAMILY}"
             --expected-slice "${ARTIFACT_EXPECTED_SLICE}"
             --expected-release-series "${ARTIFACT_EXPECTED_RELEASE_SERIES}"
-            --expected-page-size "${ARTIFACT_EXPECTED_PAGE_SIZE}"
         RESULT_VARIABLE _uml_artifact_result
         OUTPUT_VARIABLE _uml_artifact_output
         ERROR_VARIABLE _uml_artifact_error)
@@ -136,4 +135,33 @@ function(uml_import_kernel_artifact)
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/kernel.release"
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/modules.builtin"
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/modules.builtin.modinfo")
+endfunction()
+
+# Import the bundle that an accepted-*.env descriptor names. CACHE_VARIABLE
+# holds the bundle's directory: it follows the descriptor and defaults to the
+# bundle below .build/kernel/artifacts, until a caller pins it
+# (uml_cache_accepted_artifact_path). The release series is always 6.18.
+function(uml_import_accepted_kernel_artifact)
+    set(oneValueArgs
+        TARGET DESCRIPTOR CACHE_VARIABLE DESCRIPTION FAMILY SLICE)
+    cmake_parse_arguments(ACCEPTED "" "${oneValueArgs}" "" ${ARGN})
+    uml_read_artifact_env(
+        "${ACCEPTED_DESCRIPTOR}"
+        UML_KERNEL_ARTIFACT_DIRECTORY_NAME
+        _uml_accepted_directory_name)
+    uml_watch_artifact_inputs("${ACCEPTED_DESCRIPTOR}")
+    uml_cache_accepted_artifact_path(
+        "${ACCEPTED_CACHE_VARIABLE}"
+        "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/${_uml_accepted_directory_name}"
+        "${ACCEPTED_DESCRIPTION}")
+
+    cmake_path(GET CMAKE_CURRENT_FUNCTION_LIST_DIR PARENT_PATH
+        _uml_accepted_common_root)
+    uml_import_kernel_artifact(
+        TARGET "${ACCEPTED_TARGET}"
+        ARTIFACT_ROOT "${${ACCEPTED_CACHE_VARIABLE}}"
+        COMMON_ROOT "${_uml_accepted_common_root}"
+        EXPECTED_FAMILY "${ACCEPTED_FAMILY}"
+        EXPECTED_SLICE "${ACCEPTED_SLICE}"
+        EXPECTED_RELEASE_SERIES 6.18)
 endfunction()

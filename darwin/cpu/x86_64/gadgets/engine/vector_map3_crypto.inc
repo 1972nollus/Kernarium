@@ -40,27 +40,7 @@ gadget vector_map3_pclmul_\width\()_rm
 	effective_address
 	ldp x26, x27, [_stream], #16
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_vector_map3_pclmul_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	ldr q1, [x7]
-	.if \width == 256
-	ldr q3, [x7, #16]
-	.endif
-	b Lx86_vector_map3_pclmul_loaded\@
-Lx86_vector_map3_pclmul_cross\@:
-	sub sp, sp, #32
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #(\width / 8)
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_map3_pclmul_cross_fault\@
-	ldr q1, [sp]
-	.if \width == 256
-	ldr q3, [sp, #16]
-	.endif
-	add sp, sp, #32
-Lx86_vector_map3_pclmul_loaded\@:
+	vector_memory_source (\width / 8), Lx86_vector_map3_pclmul_cross_fault\@
 	mov w13, w27
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
@@ -71,9 +51,7 @@ Lx86_vector_map3_pclmul_loaded\@:
 	vector_map3_pclmul_body \width
 	vector_write_xmm \width, 23
 	retire_and_next
-Lx86_vector_map3_pclmul_cross_fault\@:
-	add sp, sp, #32
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_map3_pclmul_cross_fault\@
 .endm
 
 vector_map3_pclmul_register 128
@@ -175,30 +153,14 @@ gadget vector_map3_sha1rnds4_rm
 	effective_address
 	ldp x26, x27, [_stream], #16
 	mov x25, x7
-	page_cross_check 16, Lx86_vector_map3_sha1_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 16
-	ldr q1, [x7]
-	b Lx86_vector_map3_sha1_loaded
-Lx86_vector_map3_sha1_cross:
-	sub sp, sp, #16
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #16
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_map3_sha1_cross_fault
-	ldr q1, [sp]
-	add sp, sp, #16
-Lx86_vector_map3_sha1_loaded:
+	vector_memory_source 16, Lx86_vector_map3_sha1_cross_fault, frame=16
 	mov w13, w27
 	and x10, x26, #0xffff
 	ldr q0, [_cpu, x10]
 	vector_map3_sha1_body
 	vector_write_xmm 128, 23
 	retire_and_next
-Lx86_vector_map3_sha1_cross_fault:
-	add sp, sp, #16
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_map3_sha1_cross_fault, 16
 
 .purgem vector_map3_sha1_body
 .purgem vector_map3_sha1_round
@@ -239,27 +201,11 @@ gadget vector_map3_aeskeygen_rm
 	effective_address
 	ldr x27, [_stream], #8
 	mov x25, x7
-	page_cross_check 16, Lx86_vector_map3_aeskeygen_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 16
-	ldr q1, [x7]
-	b Lx86_vector_map3_aeskeygen_loaded
-Lx86_vector_map3_aeskeygen_cross:
-	sub sp, sp, #16
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #16
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_map3_aeskeygen_cross_fault
-	ldr q1, [sp]
-	add sp, sp, #16
-Lx86_vector_map3_aeskeygen_loaded:
+	vector_memory_source 16, Lx86_vector_map3_aeskeygen_cross_fault, frame=16
 	mov w13, w27
 	vector_map3_aeskeygen_body
 	vector_write_xmm 128, 23
 	retire_and_next
-Lx86_vector_map3_aeskeygen_cross_fault:
-	add sp, sp, #16
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_map3_aeskeygen_cross_fault, 16
 
 .purgem vector_map3_aeskeygen_body

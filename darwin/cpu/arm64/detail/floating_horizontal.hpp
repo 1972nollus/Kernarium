@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "floating_bits.hpp"
-
 #include <cstdint>
 
 #include "floating_shape.hpp"

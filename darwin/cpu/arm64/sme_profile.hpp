@@ -29,11 +29,11 @@ enum class SmeProfile : std::uint8_t {
 	sme2,
 };
 
-/* How far an engine implements the profile: nothing yet (every SVE and SME
+/* How far an engine implements the profile: nothing (every SVE and SME
  * word is the illegal-instruction exit), the control core, all of it but
- * the SME2 forms, or all of it. The guest-SME policy stays off by default
- * until both engines are complete, and a guest sees FEAT_SME2 only from an
- * engine at sme2 (sme_host_for_support). */
+ * the SME2 forms, or all of it. Both engines are at complete (checked in
+ * engine_factory.cpp), and a guest sees FEAT_SME2 only from an engine at
+ * sme2 (sme_host_for_support). */
 enum class SmeSupport : std::uint8_t {
 	none,
 	control,

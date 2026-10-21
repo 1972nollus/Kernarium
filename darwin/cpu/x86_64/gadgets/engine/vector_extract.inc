@@ -100,14 +100,10 @@ vector_pextrw 256
 
 .purgem vector_pextrw
 
-.macro vector_insert_register width, vex
-gadget vector_insert_\width\()_rr\vex
-	ldp x8, x11, [_stream], #16
-	and x9, x8, #0xffff
-	ubfx x10, x8, #16, #16
-	ubfx x12, x8, #32, #16
-	ldrh w13, [_cpu, x12]
-	and x11, x11, #(\width / 16 - 1)
+/* PINSRW and VPINSRW: copy the source register, whose state offset x10 holds,
+ * over the destination at offset x9 with the 16-bit `word` stored to element
+ * x11, and synchronize an MMX destination with the x87 registers. */
+.macro vector_insert_word width, vex, word
 	add x9, _cpu, x9
 	add x10, _cpu, x10
 	.if \width == 64
@@ -117,7 +113,7 @@ gadget vector_insert_\width\()_rr\vex
 	ldr q0, [x10]
 	str q0, [x9]
 	.endif
-	strh w13, [x9, x11, lsl #1]
+	strh \word, [x9, x11, lsl #1]
 	.ifc \vex,_vex
 	movi v0.16b, #0
 	str q0, [x9, #16]
@@ -128,6 +124,17 @@ gadget vector_insert_\width\()_rr\vex
 	synchronize_mmx x12, x14, x12, x15, w13
 	.endif
 	retire_and_next
+.endm
+
+.macro vector_insert_register width, vex
+gadget vector_insert_\width\()_rr\vex
+	ldp x8, x11, [_stream], #16
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	ubfx x12, x8, #32, #16
+	ldrh w13, [_cpu, x12]
+	and x11, x11, #(\width / 16 - 1)
+	vector_insert_word \width, \vex, w13
 .endm
 
 vector_insert_register 64,
@@ -146,26 +153,7 @@ gadget vector_insert_\width\()_rm\vex
 	and x10, x24, #0xffff
 	ubfx x11, x24, #16, #8
 	and x11, x11, #(\width / 16 - 1)
-	add x9, _cpu, x9
-	add x10, _cpu, x10
-	.if \width == 64
-	ldr x14, [x10]
-	str x14, [x9]
-	.else
-	ldr q0, [x10]
-	str q0, [x9]
-	.endif
-	strh w27, [x9, x11, lsl #1]
-	.ifc \vex,_vex
-	movi v0.16b, #0
-	str q0, [x9, #16]
-	.endif
-	.if \width == 64
-	ldr x14, [x9]
-	sub x12, x9, _cpu
-	synchronize_mmx x12, x14, x12, x15, w13
-	.endif
-	retire_and_next
+	vector_insert_word \width, \vex, w27
 .endm
 
 vector_insert_memory 64,
@@ -173,3 +161,4 @@ vector_insert_memory 128,
 vector_insert_memory 128, _vex
 
 .purgem vector_insert_memory
+.purgem vector_insert_word
