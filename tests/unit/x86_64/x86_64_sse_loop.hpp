@@ -14,7 +14,7 @@
 #include "cpu/x86_64/jit/fex_engine.hpp"
 #include "platform/apple/host_features.hpp"
 #endif
-#include "memory/guest_address_space.hpp"
+#include "x86_64_flat_memory.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -29,88 +29,7 @@ using uml::cpu::x86_64::ExecutionMode;
 using uml::cpu::x86_64::Register;
 
 /* One flat mapping from address zero: code, stack, inputs and outputs. */
-class FlatMemory final : public uml::memory::GuestAddressSpace {
-public:
-	explicit FlatMemory(std::size_t size) : bytes_(size) {}
-
-	[[nodiscard]] bool read(std::uint64_t address,
-		std::span<std::byte> destination) override
-	{
-		if (!inside(address, destination.size()))
-			return fault(address, uml::memory::MemoryAccess::read);
-		std::memcpy(destination.data(), bytes_.data() + address,
-			destination.size());
-		return true;
-	}
-
-	[[nodiscard]] bool fetch(std::uint64_t address,
-		std::span<std::byte> destination) override
-	{
-		if (!inside(address, destination.size()))
-			return fault(address, uml::memory::MemoryAccess::execute);
-		std::memcpy(destination.data(), bytes_.data() + address,
-			destination.size());
-		return true;
-	}
-
-	[[nodiscard]] bool write(std::uint64_t address,
-		std::span<const std::byte> source) override
-	{
-		if (!inside(address, source.size()))
-			return fault(address, uml::memory::MemoryAccess::write);
-		std::memcpy(bytes_.data() + address, source.data(), source.size());
-		return true;
-	}
-
-	[[nodiscard]] std::byte *atomic_pointer(std::uint64_t address,
-		std::size_t size, uml::memory::MemoryAccess access) override
-	{
-		if (!inside(address, size)) {
-			(void)fault(address, access);
-			return nullptr;
-		}
-		return bytes_.data() + address;
-	}
-
-	[[nodiscard]] uml::memory::MemoryFault last_fault() const noexcept override
-	{
-		return fault_;
-	}
-
-	[[nodiscard]] bool has_fault() const noexcept override { return faulted_; }
-
-#if UML_X86_64_SSE_LOOP_JIT
-	/* The JIT fetches only from executable pages. */
-	[[nodiscard]] bool is_executable(std::uint64_t address) noexcept override
-	{
-		return address < bytes_.size();
-	}
-#endif
-
-	[[nodiscard]] std::byte *at(std::uint64_t address) noexcept
-	{
-		return bytes_.data() + address;
-	}
-
-private:
-	[[nodiscard]] bool inside(std::uint64_t address,
-		std::size_t size) const noexcept
-	{
-		return address <= bytes_.size() && size <= bytes_.size() - address;
-	}
-
-	[[nodiscard]] bool fault(std::uint64_t address,
-		uml::memory::MemoryAccess access) noexcept
-	{
-		fault_ = {address, access};
-		faulted_ = true;
-		return false;
-	}
-
-	std::vector<std::byte> bytes_;
-	uml::memory::MemoryFault fault_{};
-	bool faulted_{};
-};
+using uml::test::x86_64_flat_memory::FlatMemory;
 
 /* ---- the guest loop ---- */
 
@@ -158,6 +77,36 @@ constexpr std::size_t memory_size = output_address + chunk * output_stride;
 	return bytes;
 }
 
+/* The state the loop starts from, to run `count` rows under `mxcsr`. */
+[[nodiscard]] inline CpuState initial_cpu(std::uint32_t mxcsr,
+	std::size_t count) noexcept
+{
+	CpuState cpu{};
+	cpu.mxcsr = mxcsr;
+	cpu.rip = code_address;
+	cpu.rflags = 0x202;
+	cpu.gpr(Register::rsp) = stack_top;
+	cpu.gpr(Register::rsi) = input_address;
+	cpu.gpr(Register::rdi) = output_address;
+	cpu.gpr(Register::rcx) = count;
+	cpu.gpr(Register::rbx) = control_address;
+	return cpu;
+}
+
+/* Marks the row whose instruction faulted with #XM in `trapped` and steps
+ * over the instruction, so that the loop stores the destination it kept;
+ * false when the row lies outside `trapped`. */
+[[nodiscard]] inline bool skip_trapped_row(CpuState &cpu,
+	std::vector<std::uint8_t> &trapped, std::size_t instruction_length) noexcept
+{
+	const auto row = (cpu.gpr(Register::rsi) - input_address) / input_stride;
+	if (row >= trapped.size())
+		return false;
+	trapped[row] = 1;
+	cpu.rip += instruction_length;
+	return true;
+}
+
 #if UML_X86_64_SSE_LOOP_JIT
 /* The x86-64 JIT, which serves the process as it serves a vCPU thread. Each
  * run starts a fresh address-space generation, so no translation crosses
@@ -183,15 +132,7 @@ inline JitEngine &jit_engine()
 	std::vector<std::uint8_t> *trapped = nullptr)
 {
 	using namespace uml::cpu::x86_64;
-	CpuState cpu{};
-	cpu.mxcsr = mxcsr;
-	cpu.rip = code_address;
-	cpu.rflags = 0x202;
-	cpu.gpr(Register::rsp) = stack_top;
-	cpu.gpr(Register::rsi) = input_address;
-	cpu.gpr(Register::rdi) = output_address;
-	cpu.gpr(Register::rcx) = count;
-	cpu.gpr(Register::rbx) = control_address;
+	CpuState cpu = initial_cpu(mxcsr, count);
 	const auto generation = ++jit.generation;
 	jit.engine.apply_changes(generation, ExecutionMode::long64, {
 		.mapping_sequence = 1,
@@ -217,12 +158,8 @@ inline JitEngine &jit_engine()
 		if (checked && trapped != nullptr &&
 			result.reason == uml::cpu::ExitReason::floating_point_trap &&
 			cpu.rip == code_address + instruction_offset) {
-			const auto row = (cpu.gpr(Register::rsi) - input_address) /
-				input_stride;
-			if (row >= trapped->size())
+			if (!skip_trapped_row(cpu, *trapped, instruction_length))
 				return false;
-			(*trapped)[row] = 1;
-			cpu.rip += instruction_length;
 			continue;
 		}
 		return false;
@@ -241,15 +178,7 @@ inline JitEngine &jit_engine()
 	std::vector<std::uint8_t> *trapped = nullptr)
 {
 	using namespace uml::cpu::x86_64;
-	CpuState cpu{};
-	cpu.mxcsr = mxcsr;
-	cpu.rip = code_address;
-	cpu.rflags = 0x202;
-	cpu.gpr(Register::rsp) = stack_top;
-	cpu.gpr(Register::rsi) = input_address;
-	cpu.gpr(Register::rdi) = output_address;
-	cpu.gpr(Register::rcx) = count;
-	cpu.gpr(Register::rbx) = control_address;
+	CpuState cpu = initial_cpu(mxcsr, count);
 	for (std::size_t dispatch = 0; dispatch < count * 16U + 64U;
 		++dispatch) {
 		const auto selected = executor.select_program(memory, cpu.rip,
@@ -271,12 +200,8 @@ inline JitEngine &jit_engine()
 			result.event == uml::cpu::EngineEvent::floating_point_trap &&
 			result.vector == 19 && result.error == cpu.mxcsr &&
 			cpu.rip == code_address + instruction_offset) {
-			const auto row = (cpu.gpr(Register::rsi) - input_address) /
-				input_stride;
-			if (row >= trapped->size())
+			if (!skip_trapped_row(cpu, *trapped, instruction_length))
 				return false;
-			(*trapped)[row] = 1;
-			cpu.rip += instruction_length;
 			continue;
 		}
 		if (result.event != uml::cpu::EngineEvent::continued)

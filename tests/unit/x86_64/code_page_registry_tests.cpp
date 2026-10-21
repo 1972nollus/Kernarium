@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "cpu/x86_64/code_page_registry.hpp"
 #include "cpu/x86_64/software_tlb.hpp"
+#include "require.hpp"
 
 #include <malloc/malloc.h>
 
@@ -14,8 +15,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -26,14 +25,7 @@ using uml::cpu::x86_64::CodePageRegistry;
 using uml::cpu::x86_64::NativeTlbEntry;
 using uml::cpu::x86_64::native_tlb_entry_count;
 using uml::cpu::x86_64::native_tlb_index;
-
-void require(bool condition, const char *message)
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "code page registry: %s\n", message);
-	std::exit(1);
-}
+using uml::testing::require;
 
 constexpr std::uint64_t page_at(std::uint64_t number) noexcept
 {
