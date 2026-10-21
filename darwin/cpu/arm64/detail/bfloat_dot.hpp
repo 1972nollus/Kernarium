@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "floating_bits.hpp"
-
 #include <algorithm>
 #include <bit>
 #include <cstdint>
@@ -31,7 +29,8 @@ struct BFloatDot final {
 
 namespace bfloat_dot_detail {
 
-using floating_bits::default_nan;
+/* FPDefaultNaN for binary32: positive, quiet, with no payload. */
+inline constexpr std::uint32_t default_nan = 0x7fc0'0000U;
 
 enum class Class : unsigned { zero, finite, infinity, nan };
 
@@ -170,10 +169,10 @@ struct Value final {
 	const auto left = unpack_standard_bfloat(left_bits);
 	const auto right = unpack_standard_bfloat(right_bits);
 	if (left.type == Class::nan || right.type == Class::nan)
-		return default_nan<std::uint32_t>();
+		return default_nan;
 	if ((left.type == Class::infinity && right.type == Class::zero) ||
 	    (left.type == Class::zero && right.type == Class::infinity))
-		return default_nan<std::uint32_t>();
+		return default_nan;
 	const bool sign = left.sign != right.sign;
 	if (left.type == Class::infinity || right.type == Class::infinity)
 		return (static_cast<std::uint32_t>(sign) << 31) | 0x7f80'0000U;
@@ -189,10 +188,10 @@ struct Value final {
 	const auto left = unpack_standard_single(left_bits);
 	const auto right = unpack_standard_single(right_bits);
 	if (left.type == Class::nan || right.type == Class::nan)
-		return default_nan<std::uint32_t>();
+		return default_nan;
 	if (left.type == Class::infinity && right.type == Class::infinity &&
 	    left.sign != right.sign)
-		return default_nan<std::uint32_t>();
+		return default_nan;
 	if (left.type == Class::infinity)
 		return left_bits;
 	if (right.type == Class::infinity)

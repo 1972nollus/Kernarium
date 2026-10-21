@@ -98,6 +98,14 @@ namespace half_fused_long_detail {
 
 } // namespace half_fused_long_detail
 
+/* A half operand of FPMulAddH() as the single precision FMADD takes it:
+ * FPUnpack ignores AHP and flushes a denormal under FZ16. */
+[[nodiscard]] constexpr std::uint32_t half_fused_operand(
+	std::uint16_t bits, std::uint32_t fpcr) noexcept
+{
+	return half_fused_long_detail::expand_half(bits, fpcr);
+}
+
 [[nodiscard]] inline HalfFusedLongResult half_fused_multiply_add(
 	std::uint32_t addend, std::uint16_t left_half, std::uint16_t right_half,
 	bool subtract, std::uint32_t fpcr) noexcept

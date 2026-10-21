@@ -214,6 +214,27 @@ Lx86_vector_map3_insertps_done\@:
 	retire_and_next
 .endm
 
+/* Insert w24 into the lane of v4 that the 2-bit field in w14 selects. */
+.macro vector_map3_insertps_destination
+	cmp w14, #1
+	b.eq Lx86_insertps_lane_1\@
+	cmp w14, #2
+	b.eq Lx86_insertps_lane_2\@
+	cmp w14, #3
+	b.eq Lx86_insertps_lane_3\@
+	mov v4.s[0], w24
+	b Lx86_insertps_lane_done\@
+Lx86_insertps_lane_1\@:
+	mov v4.s[1], w24
+	b Lx86_insertps_lane_done\@
+Lx86_insertps_lane_2\@:
+	mov v4.s[2], w24
+	b Lx86_insertps_lane_done\@
+Lx86_insertps_lane_3\@:
+	mov v4.s[3], w24
+Lx86_insertps_lane_done\@:
+.endm
+
 gadget vector_map3_insertps_rr
 	ldp x8, x13, [_stream], #16
 	ubfx x10, x8, #16, #16
@@ -241,23 +262,7 @@ Lx86_vector_map3_insertps_source_3:
 	umov w24, v1.s[3]
 Lx86_vector_map3_insertps_source_done:
 	ubfx w14, w13, #4, #2
-	cmp w14, #1
-	b.eq Lx86_vector_map3_insertps_destination_1
-	cmp w14, #2
-	b.eq Lx86_vector_map3_insertps_destination_2
-	cmp w14, #3
-	b.eq Lx86_vector_map3_insertps_destination_3
-	mov v4.s[0], w24
-	b Lx86_vector_map3_insertps_destination_done
-Lx86_vector_map3_insertps_destination_1:
-	mov v4.s[1], w24
-	b Lx86_vector_map3_insertps_destination_done
-Lx86_vector_map3_insertps_destination_2:
-	mov v4.s[2], w24
-	b Lx86_vector_map3_insertps_destination_done
-Lx86_vector_map3_insertps_destination_3:
-	mov v4.s[3], w24
-Lx86_vector_map3_insertps_destination_done:
+	vector_map3_insertps_destination
 	vector_map3_insertps_finish 8, 13
 
 gadget vector_map3_insertps_rm
@@ -269,24 +274,9 @@ gadget vector_map3_insertps_rm
 	add x10, _cpu, x10
 	ldr q4, [x10]
 	ubfx w14, w26, #20, #2
-	cmp w14, #1
-	b.eq Lx86_vector_map3_insertps_memory_destination_1
-	cmp w14, #2
-	b.eq Lx86_vector_map3_insertps_memory_destination_2
-	cmp w14, #3
-	b.eq Lx86_vector_map3_insertps_memory_destination_3
-	mov v4.s[0], w24
-	b Lx86_vector_map3_insertps_memory_destination_done
-Lx86_vector_map3_insertps_memory_destination_1:
-	mov v4.s[1], w24
-	b Lx86_vector_map3_insertps_memory_destination_done
-Lx86_vector_map3_insertps_memory_destination_2:
-	mov v4.s[2], w24
-	b Lx86_vector_map3_insertps_memory_destination_done
-Lx86_vector_map3_insertps_memory_destination_3:
-	mov v4.s[3], w24
-Lx86_vector_map3_insertps_memory_destination_done:
+	vector_map3_insertps_destination
 	lsr w13, w26, #16
 	vector_map3_insertps_finish 23, 13
 
+.purgem vector_map3_insertps_destination
 .purgem vector_map3_insertps_finish

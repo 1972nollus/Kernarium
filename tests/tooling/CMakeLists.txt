@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-
 # Keep every registration in this directory scope so its default working
 # directory and the manifest-visible CTest order remain stable. The final
 # three modules own conditional fixtures that intentionally register last.

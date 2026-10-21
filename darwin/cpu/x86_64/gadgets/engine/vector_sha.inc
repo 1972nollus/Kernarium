@@ -151,30 +151,14 @@ gadget vector_sha_\opcode\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check 16, Lx86_vector_sha_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, 16
-	ldr q1, [x7]
-	b Lx86_vector_sha_loaded\@
-Lx86_vector_sha_cross\@:
-	sub sp, sp, #16
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #16
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_sha_cross_fault\@
-	ldr q1, [sp]
-	add sp, sp, #16
-Lx86_vector_sha_loaded\@:
+	vector_memory_source 16, Lx86_vector_sha_cross_fault\@, frame=16
 	and x10, x26, #0xffff
 	ldr q0, [_cpu, x10]
 	vector_sha_body 0x\opcode
 	and x9, x23, #0xffff
 	str q4, [_cpu, x9]
 	retire_and_next
-Lx86_vector_sha_cross_fault\@:
-	add sp, sp, #16
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_sha_cross_fault\@, 16
 .endm
 
 .macro vector_sha_family opcode

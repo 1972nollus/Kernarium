@@ -103,46 +103,38 @@ gadget lea_64
 	str x7, [_cpu, x8]
 	retire_and_next
 
+/* Push the value in `host_register`24 as a `width`-bit stack element, ending
+ * the gadget. */
+.macro push_value width, store, host_register
+	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	sub x25, x25, #(\width / 8)
+	.if \width == 32
+	mov w25, w25
+	.endif
+	mov x7, x25
+	page_cross_check (\width / 8), Lx86_push_value_cross\@
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
+	\store \host_register\()24, [x7]
+Lx86_push_value_done\@:
+	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
+	finish_store (\width / 8)
+Lx86_push_value_cross\@:
+	cross_page_store x24, (\width / 8)
+	b Lx86_push_value_done\@
+.endm
+
 .macro push_register width, load, host_register, store
 gadget push_\width\()_r
 	ldr x23, [_stream], #8
 	and x8, x23, #0xffff
 	\load \host_register\()24, [_cpu, x8]
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	sub x25, x25, #(\width / 8)
-	.if \width == 32
-	mov w25, w25
-	.endif
-	mov x7, x25
-	page_cross_check (\width / 8), Lx86_push_cross\@
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
-	\store \host_register\()24, [x7]
-Lx86_push_done\@:
-	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	finish_store (\width / 8)
-Lx86_push_cross\@:
-	cross_page_store x24, (\width / 8)
-	b Lx86_push_done\@
+	push_value \width, \store, \host_register
 .endm
 
 .macro push_immediate width, host_register, store
 gadget push_\width\()_i
 	ldp x23, x24, [_stream], #16
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	sub x25, x25, #(\width / 8)
-	.if \width == 32
-	mov w25, w25
-	.endif
-	mov x7, x25
-	page_cross_check (\width / 8), Lx86_push_immediate_cross\@
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
-	\store \host_register\()24, [x7]
-Lx86_push_immediate_done\@:
-	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	finish_store (\width / 8)
-Lx86_push_immediate_cross\@:
-	cross_page_store x24, (\width / 8)
-	b Lx86_push_immediate_done\@
+	push_value \width, \store, \host_register
 .endm
 
 .macro pop_register width, load, host_register, store, store_register
@@ -193,21 +185,7 @@ gadget push_flags_\width
 	 * loaded RF. */
 	and x24, x24, #~0x30000
 	ldr x23, [_stream], #8
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	sub x25, x25, #(\width / 8)
-	.if \width == 32
-	mov w25, w25
-	.endif
-	mov x7, x25
-	page_cross_check (\width / 8), Lx86_push_flags_cross\@
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
-	\store \host_register\()24, [x7]
-Lx86_push_flags_done\@:
-	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	finish_store (\width / 8)
-Lx86_push_flags_cross\@:
-	cross_page_store x24, (\width / 8)
-	b Lx86_push_flags_done\@
+	push_value \width, \store, \host_register
 .endm
 
 push_flags 16, strh, w
@@ -324,21 +302,7 @@ Lx86_push_memory_source_cross\@:
 	cbz x1, Lx86_memory_fault
 	mov x24, x0
 Lx86_push_memory_source_done\@:
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	sub x25, x25, #(\width / 8)
-	.if \width == 32
-	mov w25, w25
-	.endif
-	mov x7, x25
-	page_cross_check (\width / 8), Lx86_push_memory_stack_cross\@
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
-	\store \store_register\()24, [x7]
-Lx86_push_memory_done\@:
-	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	finish_store (\width / 8)
-Lx86_push_memory_stack_cross\@:
-	cross_page_store x24, (\width / 8)
-	b Lx86_push_memory_done\@
+	push_value \width, \store, \store_register
 .endm
 
 push_memory 16, ldrh, w, strh, w
@@ -346,6 +310,7 @@ push_memory 32, ldr, w, str, w
 push_memory 64, ldr, x, str, x
 
 .purgem push_memory
+.purgem push_value
 
 .macro pop_memory width, load, load_register, store, store_register
 gadget pop_\width\()_m

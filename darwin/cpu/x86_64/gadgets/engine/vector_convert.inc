@@ -121,10 +121,7 @@ Lx86_vector_convert_inputs_ready\@:
 .macro vector_convert_flush_narrowed scalar, input_size
 	tbz w12, #15, Lx86_vector_convert_ftz_ready\@
 	.if \scalar
-	fmov w14, s6
-	lsl w14, w14, #1
-	sub w14, w14, #1
-	tst w14, #0xff000000
+	simd_small_scalar 32
 	b.ne Lx86_vector_convert_ftz_ready\@
 	.else
 	simd_small_lanes 32, 4, 17, 18
@@ -333,42 +330,7 @@ gadget vector_convert_\name\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check (\input_size), Lx86_vector_convert_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, \input_size
-	.if \input_size == 4
-	ldr s1, [x7]
-	.elseif \input_size == 8
-	ldr d1, [x7]
-	.else
-	ldr q1, [x7]
-	.if \input_size == 32
-	ldr q3, [x7, #16]
-	.endif
-	.endif
-	b Lx86_vector_convert_loaded\@
-Lx86_vector_convert_cross\@:
-	.if \input_size <= 8
-	cross_page_load \input_size
-	.if \input_size == 4
-	fmov s1, w0
-	.else
-	fmov d1, x0
-	.endif
-	.else
-	sub sp, sp, #32
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #\input_size
-	helper_call uml_x86_64_gadget_cross_page_vector_load
-	cbz w0, Lx86_vector_convert_cross_fault\@
-	ldr q1, [sp]
-	.if \input_size == 32
-	ldr q3, [sp, #16]
-	.endif
-	add sp, sp, #32
-	.endif
-Lx86_vector_convert_loaded\@:
+	vector_memory_source \input_size, Lx86_vector_convert_cross_fault\@, scalar=1, single=1
 	.if \scalar
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
@@ -378,9 +340,7 @@ Lx86_vector_convert_loaded\@:
 	vector_write_xmm \output_width, 23
 	retire_and_next
 	.if \input_size > 8
-Lx86_vector_convert_cross_fault\@:
-	add sp, sp, #32
-	b Lx86_memory_fault
+	vector_memory_source_fault Lx86_vector_convert_cross_fault\@
 	.endif
 .endm
 
