@@ -23,6 +23,30 @@ def fail(message: str) -> None:
     raise SystemExit(f"android builder lane fixture: {message}")
 
 
+def run_tool(
+    tool: Path, *arguments: object, check: bool = False, **options: object
+) -> subprocess.CompletedProcess[str]:
+    """Run a Python tool with stdin closed.
+
+    A checked run raises on failure and keeps the test's own output streams.
+    Any other run captures stdout and stderr together as text, unless
+    `options` name the streams.
+    """
+    if not check:
+        options = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            **options,
+        }
+    return subprocess.run(
+        [sys.executable, "-B", str(tool), *map(str, arguments)],
+        check=check,
+        stdin=subprocess.DEVNULL,
+        **options,
+    )
+
+
 def synthetic_aarch64_elf(
     alignment: int = 16384,
     needed: tuple[str, ...] = (),
@@ -188,12 +212,7 @@ def verify_kernel_elf_fixtures(verifier: Path) -> None:
 
         def verify(payload: bytes) -> subprocess.CompletedProcess:
             kernel.write_bytes(payload)
-            return subprocess.run(
-                [sys.executable, "-B", str(verifier), str(kernel)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
+            return run_tool(verifier, kernel, stderr=subprocess.PIPE)
 
         accepted = verify(synthetic_kernel_elf())
         if accepted.returncode != 0:
@@ -626,37 +645,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
 
         good = root / "good.zip"
         write_fixture(good)
-        subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(verifier),
-                "--target-files",
-                str(good),
-                *kernel_options,
-            ],
-            check=True,
-        )
+        run_tool(verifier, "--target-files", good, *kernel_options, check=True)
         # Every supported variant verifies as itself and is rejected as any
         # other: the build-type properties follow the requested variant.
         for variant in BUILD_VARIANTS:
             for requested in BUILD_VARIANTS:
                 fixture = root / f"{variant}-as-{requested}.zip"
                 write_fixture(fixture, build_variant=variant)
-                result = subprocess.run(
-                    [
-                        sys.executable,
-                        "-B",
-                        str(verifier),
-                        "--target-files",
-                        str(fixture),
-                        "--build-variant",
-                        requested,
-                        *kernel_options,
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
+                result = run_tool(
+                    verifier, "--target-files", fixture,
+                    "--build-variant", requested, *kernel_options,
                 )
                 if (result.returncode == 0) != (variant == requested):
                     fail(
@@ -724,19 +722,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-B",
-                    str(verifier),
-                    "--target-files",
-                    str(fixture),
-                    *kernel_options,
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
+            result = run_tool(verifier, "--target-files", fixture, *kernel_options)
             if result.returncode == 0:
                 fail(f"target-files verifier accepted the {label} fixture")
             if result.returncode != 1:
@@ -848,7 +834,7 @@ def verify_initramfs_fixtures(verifier: Path) -> None:
         root = Path(temporary)
         good = root / "ramdisk.img"
         good.write_bytes(synthetic_initramfs())
-        subprocess.run([sys.executable, "-B", str(verifier), str(good)], check=True)
+        run_tool(verifier, good, check=True)
         for label, options in (
             ("wrong-fstab", {"wrong_fstab": True}),
             ("module-loader", {"module_loader": True}),
@@ -856,12 +842,7 @@ def verify_initramfs_fixtures(verifier: Path) -> None:
         ):
             fixture = root / f"bad-{label}.img"
             fixture.write_bytes(synthetic_initramfs(**options))
-            result = subprocess.run(
-                [sys.executable, "-B", str(verifier), str(fixture)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
+            result = run_tool(verifier, fixture)
             if result.returncode == 0:
                 fail(f"initramfs verifier accepted the {label} fixture")
 
@@ -887,31 +868,10 @@ def verify_boot_image_fixtures(verifier: Path) -> None:
         ramdisk.write_bytes(b"fixture-initramfs")
         good = root / "init_boot.img"
         good.write_bytes(synthetic_boot_image(ramdisk.read_bytes()))
-        subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(verifier),
-                "verify",
-                "--image",
-                str(good),
-                "--ramdisk",
-                str(ramdisk),
-            ],
-            check=True,
-        )
-        selected_range = subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(verifier),
-                "range",
-                "--image",
-                str(good),
-            ],
-            check=True,
-            stdout=subprocess.PIPE,
-            text=True,
+        run_tool(verifier, "verify", "--image", good, "--ramdisk", ramdisk, check=True)
+        selected_range = run_tool(
+            verifier, "range", "--image", good,
+            check=True, stdout=subprocess.PIPE, text=True,
         )
         parsed = json.loads(selected_range.stdout)
         if parsed["ramdisk_offset"] != 4096 or parsed["ramdisk_size"] != ramdisk.stat().st_size:
@@ -923,19 +883,7 @@ def verify_boot_image_fixtures(verifier: Path) -> None:
         ):
             fixture = root / f"bad-{label}.img"
             fixture.write_bytes(payload)
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-B",
-                    str(verifier),
-                    "verify",
-                    "--image",
-                    str(fixture),
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
+            result = run_tool(verifier, "verify", "--image", fixture)
             if result.returncode == 0:
                 fail(f"boot-image verifier accepted {label}")
 
@@ -1043,14 +991,8 @@ def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None
         fail(f"LZ4 block decoder accepted {label}")
 
     def run(image: Path) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [
-                sys.executable, "-B", str(verifier),
-                "--android-root", str(android_root), "--image", str(image),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
+        return run_tool(
+            verifier, "--android-root", android_root, "--image", image
         )
 
     with tempfile.TemporaryDirectory(prefix="android-lineage-recovery-") as temporary:
@@ -1122,17 +1064,7 @@ def synthetic_sparse_image() -> bytes:
 
 
 def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-B",
-            str(tool),
-            "validate",
-            "--layout",
-            str(production_layout),
-        ],
-        check=True,
-    )
+    run_tool(tool, "validate", "--layout", production_layout, check=True)
 
     with tempfile.TemporaryDirectory(prefix="android-ubd-disk-") as temporary:
         root = Path(temporary)
@@ -1177,34 +1109,11 @@ def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
             + "\n"
         )
         disk = root / "android.img"
-        subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(tool),
-                "assemble",
-                "--layout",
-                str(fixture_layout),
-                "--images-dir",
-                str(images),
-                "--output",
-                str(disk),
-            ],
-            check=True,
+        run_tool(
+            tool, "assemble", "--layout", fixture_layout,
+            "--images-dir", images, "--output", disk, check=True,
         )
-        subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(tool),
-                "verify",
-                "--layout",
-                str(fixture_layout),
-                "--disk",
-                str(disk),
-            ],
-            check=True,
-        )
+        run_tool(tool, "verify", "--layout", fixture_layout, "--disk", disk, check=True)
         if disk.stat().st_size != 16 * 1024 * 1024:
             fail("assembled UBD fixture has the wrong logical size")
         with disk.open("rb") as image:
@@ -1220,64 +1129,25 @@ def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
             if image.read(32) != b"\0" * 32:
                 fail("Android sparse DONT_CARE chunk is not a disk hole")
 
-        existing = subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(tool),
-                "assemble",
-                "--layout",
-                str(fixture_layout),
-                "--images-dir",
-                str(images),
-                "--output",
-                str(disk),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
+        existing = run_tool(
+            tool, "assemble", "--layout", fixture_layout,
+            "--images-dir", images, "--output", disk,
         )
         if existing.returncode == 0:
             fail("UBD assembler replaced an existing disk without permission")
 
         (images / "userdata.img").unlink()
-        missing = subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(tool),
-                "assemble",
-                "--layout",
-                str(fixture_layout),
-                "--images-dir",
-                str(images),
-                "--output",
-                str(root / "missing.img"),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
+        missing = run_tool(
+            tool, "assemble", "--layout", fixture_layout,
+            "--images-dir", images, "--output", root / "missing.img",
         )
         if missing.returncode == 0:
             fail("UBD assembler silently accepted a missing writable image")
 
         blank = root / "blank.img"
-        subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(tool),
-                "assemble",
-                "--layout",
-                str(fixture_layout),
-                "--images-dir",
-                str(images),
-                "--blank-partition",
-                "userdata",
-                "--output",
-                str(blank),
-            ],
-            check=True,
+        run_tool(
+            tool, "assemble", "--layout", fixture_layout, "--images-dir", images,
+            "--blank-partition", "userdata", "--output", blank, check=True,
         )
         with blank.open("rb") as image:
             image.seek(3 * 1024 * 1024)
@@ -1285,24 +1155,10 @@ def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
                 fail("explicit blank UBD partition is not zero initialized")
 
         for label, partition in (("immutable", "system"), ("unknown", "missing")):
-            rejected = subprocess.run(
-                [
-                    sys.executable,
-                    "-B",
-                    str(tool),
-                    "assemble",
-                    "--layout",
-                    str(fixture_layout),
-                    "--images-dir",
-                    str(images),
-                    "--blank-partition",
-                    partition,
-                    "--output",
-                    str(root / f"bad-blank-{label}.img"),
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
+            rejected = run_tool(
+                tool, "assemble", "--layout", fixture_layout,
+                "--images-dir", images, "--blank-partition", partition,
+                "--output", root / f"bad-blank-{label}.img",
             )
             if rejected.returncode == 0:
                 fail(f"UBD assembler accepted an {label} blank partition")
@@ -1313,41 +1169,16 @@ def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
             byte = image.read(1)
             image.seek(512 + 20)
             image.write(bytes((byte[0] ^ 0x80,)))
-        corrupted = subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(tool),
-                "verify",
-                "--layout",
-                str(fixture_layout),
-                "--disk",
-                str(disk),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
+        corrupted = run_tool(
+            tool, "verify", "--layout", fixture_layout, "--disk", disk
         )
         if corrupted.returncode == 0:
             fail("UBD verifier accepted a corrupted primary GPT")
 
         (images / "system.img").write_bytes(b"X" * (2 * 1024 * 1024 + 1))
-        oversized = subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(tool),
-                "assemble",
-                "--layout",
-                str(fixture_layout),
-                "--images-dir",
-                str(images),
-                "--output",
-                str(root / "oversized.img"),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
+        oversized = run_tool(
+            tool, "assemble", "--layout", fixture_layout,
+            "--images-dir", images, "--output", root / "oversized.img",
         )
         if oversized.returncode == 0:
             fail("UBD assembler accepted a partition payload that exceeds its capacity")
@@ -1369,11 +1200,7 @@ def verify_pin_manifest(tool: Path) -> None:
             'upstream="refs/heads/other"/></manifest>'
         )
         pin = root / "local_manifests/pin.xml"
-        subprocess.run(
-            [sys.executable, "-B", str(tool), "--base-manifest", str(base),
-             "--output", str(pin)],
-            check=True,
-        )
+        run_tool(tool, "--base-manifest", base, "--output", pin, check=True)
         expected = (
             '<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n'
             f'  <extend-project name="branch" path="a/branch" revision="{commit}" '
@@ -1384,10 +1211,8 @@ def verify_pin_manifest(tool: Path) -> None:
         if pin.read_text() != expected:
             fail(f"pin manifest differs from the expected local manifest: {pin.read_text()}")
         base.write_text(base.read_text().replace(commit, "refs/heads/moving", 1))
-        refused = subprocess.run(
-            [sys.executable, "-B", str(tool), "--base-manifest", str(base),
-             "--output", str(root / "refused.xml")],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        refused = run_tool(
+            tool, "--base-manifest", base, "--output", root / "refused.xml"
         )
         if refused.returncode == 0 or "not pinned to a commit" not in refused.stdout:
             fail("pin manifest rendering accepted a project not pinned to a commit")
