@@ -6,7 +6,7 @@ The launcher embeds the base and boots every Linux guest through it, so a new
 base is accepted only when this check passes: the descriptor's size and
 SHA-256, one gzip member holding a newc archive, the fail-loud /init, the
 programs the per-run /init calls, and static ELF programs for the
-descriptor's architecture that load under both guest page sizes.
+descriptor's architecture with 16 KiB segment alignment.
 """
 
 from __future__ import annotations
@@ -33,7 +33,8 @@ TRAILER = "TRAILER!!!"
 # Unpacking happens in boot memory before the guest has reclaimed anything; a
 # base far above today's size would squeeze every guest's payload.
 MAXIMUM_UNPACKED_BYTES = 16 * 1024 * 1024
-# Programs must load at 16 KiB alignment so both page profiles can map them.
+# The accepted bases are built with 16 KiB segment alignment, which the 4 KiB
+# guest maps and which matches the Android userspace's page-agnostic alignment.
 MINIMUM_SEGMENT_ALIGNMENT = 0x4000
 ELF_MACHINES = {"aarch64": 183, "x86_64": 62}
 DESCRIPTOR_KEYS = ("SCHEMA", "RELEASE", "FILE", "ARCHITECTURE", "SIZE", "SHA256")

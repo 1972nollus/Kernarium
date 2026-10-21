@@ -98,7 +98,6 @@ def relocatable() -> bytes:
 class Options(argparse.Namespace):
     machine = "arm"
     bits = 32
-    profiles = ["16k", "4k"]
     closed = True
 
 
@@ -149,38 +148,31 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(
             AUDIT.format_row(rows["usr/bin/tool"]),
             "usr/bin/tool\t32\tarm\tdyn\teabi5-hard\t"
-            "/lib/ld-linux-armhf.so.3\t0x10000\t1\t16k,4k\tok")
+            "/lib/ld-linux-armhf.so.3\t0x10000\t1\t4k\tok")
 
-    def test_a_segment_that_is_only_4k_congruent_supports_only_4k(self) -> None:
-        # Address 0x11000 against file offset 0 differs by a 4 KiB page.
-        self.put("usr/bin/bad", elf32(ET_EXEC, base=0x11000, align=0x1000))
-        self.assertEqual(self.problems(),
-                         {"usr/bin/bad": ["16k:not-congruent"]})
-        self.assertEqual(self.problems(profiles=["4k"]), {})
-        row, = [r for r in self.audit() if r.path == "usr/bin/bad"]
-        self.assertEqual(AUDIT.format_row(row).split("\t")[8:],
-                         ["4k", "16k:not-congruent"])
-
-    def test_a_segment_congruent_to_neither_profile_fails_both(self) -> None:
+    def test_a_segment_not_congruent_to_the_page_fails(self) -> None:
         self.put("usr/bin/odd", elf32(ET_EXEC, base=0x10800, align=0x1000))
-        self.assertEqual(self.problems(profiles=["4k"]),
-                         {"usr/bin/odd": ["4k:not-congruent"]})
+        self.assertEqual(self.problems(),
+                         {"usr/bin/odd": ["not-congruent"]})
         row, = [r for r in self.audit() if r.path == "usr/bin/odd"]
-        self.assertEqual(AUDIT.format_row(row).split("\t")[8], "none")
+        self.assertEqual(AUDIT.format_row(row).split("\t")[8:],
+                         ["none", "not-congruent"])
 
     def test_a_small_alignment_that_still_maps_passes(self) -> None:
+        # Address 0x11000 against file offset 0 differs by one 4 KiB page.
         self.put("usr/bin/small", elf32(ET_EXEC, base=0x14000, align=0x1000))
+        self.put("usr/bin/offset", elf32(ET_EXEC, base=0x11000, align=0x1000))
         self.assertEqual(self.problems(), {})
 
     def test_segments_of_different_permissions_may_not_share_a_page(self) -> None:
-        # The data segment starts 4 KiB after the text and in the same page.
+        # The data segment starts 2 KiB after the text and in the same page.
+        self.put("usr/bin/shared", elf32(
+            ET_EXEC, extra=[(0x800, 0x10800, 0x400, RW, 0x1000)]))
+        self.assertEqual(self.problems(),
+                         {"usr/bin/shared": ["shares-page"]})
+        # 4 KiB after the text it is in the next page.
         self.put("usr/bin/shared", elf32(
             ET_EXEC, extra=[(0x1000, 0x11000, 0x400, RW, 0x1000)]))
-        self.assertEqual(self.problems(),
-                         {"usr/bin/shared": ["16k:shares-page"]})
-        self.assertEqual(self.problems(profiles=["4k"]), {})
-        self.put("usr/bin/shared", elf32(
-            ET_EXEC, extra=[(0x10000, 0x20000, 0x400, RW, 0x10000)]))
         self.assertEqual(self.problems(), {})
 
     def test_soft_float_wrong_machine_and_old_abi_fail(self) -> None:
@@ -236,7 +228,7 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(rows["usr/lib/module.o"].problems, [])
         self.assertEqual(AUDIT.format_row(rows["usr/lib/module.o"]),
                          "usr/lib/module.o\t32\tarm\trel\teabi5-hard\t-\t-\t0\t"
-                         "16k,4k\tok")
+                         "4k\tok")
 
     def test_a_truncated_or_big_endian_file_stops_the_audit(self) -> None:
         self.put("usr/bin/cut", elf32(ET_EXEC)[:40])
@@ -247,7 +239,7 @@ class AuditTests(unittest.TestCase):
             self.audit()
 
     def test_the_command_writes_a_sorted_report_and_fails_on_a_problem(self) -> None:
-        self.put("usr/bin/bad", elf32(ET_EXEC, base=0x11000, align=0x1000))
+        self.put("usr/bin/bad", elf32(ET_EXEC, base=0x10800, align=0x1000))
         report = Path(self.directory.name, "report.tsv")
         arguments = ["--root", str(self.root), "--output", str(report),
                      "--machine", "arm", "--closed"]
@@ -259,16 +251,15 @@ class AuditTests(unittest.TestCase):
         lines = report.read_text().splitlines()
         self.assertEqual(lines, sorted(lines))
         self.assertIn("usr/bin/bad\t32\tarm\texec\teabi5-hard\t-\t0x1000\t1\t"
-                      "4k\t16k:not-congruent", lines)
-        self.assertIn("usr/bin/bad: 16k:not-congruent", error.getvalue())
+                      "none\tnot-congruent", lines)
+        self.assertIn("usr/bin/bad: not-congruent", error.getvalue())
         (self.root / "usr/bin/bad").unlink()
         report.unlink()
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             status = AUDIT.main(arguments)
         self.assertEqual(status, 0)
-        self.assertIn("audited 2 ELF files; page profiles supported: "
-                      "2 16k,4k; required: 16k,4k", output.getvalue())
+        self.assertIn("audited 2 ELF files", output.getvalue())
 
 
 if __name__ == "__main__":
