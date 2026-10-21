@@ -308,14 +308,17 @@ void adoptConsolePath(const std::string &path)
 	}
 }
 
-/* Sends one command from a client of its own and collects the reply. */
+/* Sends one command to the location's console from a client of its own and
+ * collects the reply. */
 [[nodiscard]] ExchangeResult exchange(
 	const GuestConsoleLocation &location,
-	const sockaddr_un &address,
 	std::string_view command,
 	std::string &response,
 	std::chrono::milliseconds wait = replyWait)
 {
+	sockaddr_un address {};
+	if (!fillAddress(address, location.console))
+		return ExchangeResult::notSent;
 	Client client {location, wait};
 	if (!client.usable())
 		return ExchangeResult::notSent;
@@ -346,11 +349,10 @@ void adoptConsolePath(const std::string &path)
 }
 
 [[nodiscard]] bool requestWriteback(const GuestConsoleLocation &location,
-	const sockaddr_un &address, unsigned int settleMs)
+	unsigned int settleMs)
 {
 	std::string response;
-	if (exchange(location, address, "sysrq s", response) !=
-	    ExchangeResult::accepted)
+	if (exchange(location, "sysrq s", response) != ExchangeResult::accepted)
 		return false;
 	if (response.find(writebackAcknowledgement) == std::string::npos) {
 		std::fputs(
@@ -442,10 +444,7 @@ bool request_guest_writeback(unsigned int settleMs) noexcept
 		if (!location)
 			return false;
 		adoptConsolePath(location->console);
-		sockaddr_un address {};
-		if (!fillAddress(address, location->console))
-			return false;
-		return requestWriteback(*location, address, settleMs);
+		return requestWriteback(*location, settleMs);
 	} catch (...) {
 		return false;
 	}
@@ -460,16 +459,13 @@ GuestSuspension suspend_guest(unsigned int writebackSettleMs,
 		if (!location)
 			return GuestSuspension::none;
 		adoptConsolePath(location->console);
-		sockaddr_un address {};
-		if (!fillAddress(address, location->console))
-			return GuestSuspension::none;
 		std::string response;
 		/* A suspend-capable guest replies only after devices, secondary
 		 * CPUs, interrupts, and timekeeping have reached the platform sleep
 		 * boundary. The separate wake request remains queued on the console
 		 * descriptor until the kernel has resumed it. */
-		const auto suspendResult = exchange(*location, address, "suspend",
-			response, suspendReplyWait);
+		const auto suspendResult = exchange(*location, "suspend", response,
+			suspendReplyWait);
 		if (suspendResult == ExchangeResult::accepted) {
 			if (response.find(suspendAcknowledgement) == std::string::npos) {
 				std::fputs("Guest console returned an unexpected suspend reply\n",
@@ -498,8 +494,8 @@ GuestSuspension suspend_guest(unsigned int writebackSettleMs,
 		 * The stop path does not sync filesystems, so preserve the old
 		 * writeback step only on this fallback. A suspend that holds performs
 		 * the sync itself and avoids spending the iOS background budget twice. */
-		(void)requestWriteback(*location, address, writebackSettleMs);
-		const auto stopResult = exchange(*location, address, "stop", response);
+		(void)requestWriteback(*location, writebackSettleMs);
+		const auto stopResult = exchange(*location, "stop", response);
 		if (stopResult == ExchangeResult::notSent ||
 		    stopResult == ExchangeResult::rejected ||
 		    (stopResult == ExchangeResult::accepted &&
@@ -525,13 +521,12 @@ void resume_guest(GuestSuspension suspension) noexcept
 	try {
 		std::lock_guard lock(consoleMutex);
 		const auto &location = guest_console_location();
-		sockaddr_un address {};
-		if (!location || !fillAddress(address, location->console))
+		if (!location)
 			return;
 		std::string response;
 		const auto command = suspension == GuestSuspension::system ?
 			"wake" : "go";
-		(void)exchange(*location, address, command, response);
+		(void)exchange(*location, command, response);
 	} catch (...) {
 	}
 }
@@ -541,12 +536,11 @@ bool wake_guest() noexcept
 	try {
 		std::lock_guard lock(consoleMutex);
 		const auto &location = guest_console_location();
-		sockaddr_un address {};
-		if (!location || !fillAddress(address, location->console))
+		if (!location)
 			return false;
 		adoptConsolePath(location->console);
 		std::string response;
-		return exchange(*location, address, "wake", response) ==
+		return exchange(*location, "wake", response) ==
 			ExchangeResult::accepted;
 	} catch (...) {
 		return false;
@@ -561,12 +555,11 @@ namespace {
 	try {
 		std::lock_guard lock(consoleMutex);
 		const auto &location = guest_console_location();
-		sockaddr_un address {};
-		if (!location || !fillAddress(address, location->console))
+		if (!location)
 			return GuestRequest::unreachable;
 		adoptConsolePath(location->console);
 		std::string response;
-		switch (exchange(*location, address, command, response, wait)) {
+		switch (exchange(*location, command, response, wait)) {
 		case ExchangeResult::notSent:
 			return GuestRequest::unreachable;
 		case ExchangeResult::pending:
