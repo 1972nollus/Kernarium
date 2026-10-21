@@ -200,6 +200,13 @@ private:
      * taken is spent either way. */
     [[nodiscard]] std::optional<protocol::GpuResponse> queueUnmap(
         std::uint32_t resourceId, BlobResource& resource);
+    /* Finishes a fenced command: defers it to the caller's fence cookie when
+     * its ring can be, otherwise waits for the renderer to retire it. Returns
+     * whether the renderer took the fence. */
+    [[nodiscard]] bool completeFence(
+        const protocol::GpuControlHeader& header,
+        std::uint64_t fenceCookie,
+        std::optional<DeferredFence>* deferredFence);
     void releaseBlobScanout() noexcept;
     void clearScanout() noexcept;
     [[nodiscard]] protocol::GpuResponse presentReadback(
