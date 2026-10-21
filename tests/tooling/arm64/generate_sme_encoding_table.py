@@ -2041,7 +2041,7 @@ def main() -> int:
 
 def sve_index_modes(rows: list[TableRow]) -> str:
     """The SVE index's encodings by the modes in which the profile executes
-    them, for comparison with the SVE design's inventory."""
+    them."""
     modes: dict[tuple[str, str], set[tuple[bool, bool]]] = {}
     sources: dict[tuple[str, str], EncodingSource] = {}
     for table_row in rows:
