@@ -2525,23 +2525,13 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 	(type == 3U ? uml_arm64_gadget_floating_select_##name##_h : \
 	 type == 1U ? uml_arm64_gadget_floating_select_##name##_d : \
 	 uml_arm64_gadget_floating_select_##name##_s)
+#define UML_FLOATING_SELECT_CASE(index, name) \
+	case index: return UML_FLOATING_SELECT_WIDTH(name);
 	switch (condition) {
-	case 0: return UML_FLOATING_SELECT_WIDTH(eq);
-	case 1: return UML_FLOATING_SELECT_WIDTH(ne);
-	case 2: return UML_FLOATING_SELECT_WIDTH(hs);
-	case 3: return UML_FLOATING_SELECT_WIDTH(lo);
-	case 4: return UML_FLOATING_SELECT_WIDTH(mi);
-	case 5: return UML_FLOATING_SELECT_WIDTH(pl);
-	case 6: return UML_FLOATING_SELECT_WIDTH(vs);
-	case 7: return UML_FLOATING_SELECT_WIDTH(vc);
-	case 8: return UML_FLOATING_SELECT_WIDTH(hi);
-	case 9: return UML_FLOATING_SELECT_WIDTH(ls);
-	case 10: return UML_FLOATING_SELECT_WIDTH(ge);
-	case 11: return UML_FLOATING_SELECT_WIDTH(lt);
-	case 12: return UML_FLOATING_SELECT_WIDTH(gt);
-	case 13: return UML_FLOATING_SELECT_WIDTH(le);
+	UML_ARM64_CONDITIONS(UML_FLOATING_SELECT_CASE)
 	default: return UML_FLOATING_SELECT_WIDTH(always);
 	}
+#undef UML_FLOATING_SELECT_CASE
 #undef UML_FLOATING_SELECT_WIDTH
 }
 
@@ -2586,23 +2576,13 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 #define UML_FLOATING_CONDITIONAL_COMPARE_KIND(name) \
 	(signaling ? UML_FLOATING_CONDITIONAL_COMPARE_WIDTH(name, signaling) : \
 	 UML_FLOATING_CONDITIONAL_COMPARE_WIDTH(name, quiet))
+#define UML_FLOATING_CONDITIONAL_COMPARE_CASE(index, name) \
+	case index: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(name);
 	switch (condition) {
-	case 0: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(eq);
-	case 1: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(ne);
-	case 2: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(hs);
-	case 3: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(lo);
-	case 4: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(mi);
-	case 5: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(pl);
-	case 6: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(vs);
-	case 7: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(vc);
-	case 8: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(hi);
-	case 9: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(ls);
-	case 10: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(ge);
-	case 11: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(lt);
-	case 12: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(gt);
-	case 13: return UML_FLOATING_CONDITIONAL_COMPARE_KIND(le);
+	UML_ARM64_CONDITIONS(UML_FLOATING_CONDITIONAL_COMPARE_CASE)
 	default: return floating_compare_gadget(type, signaling, false);
 	}
+#undef UML_FLOATING_CONDITIONAL_COMPARE_CASE
 #undef UML_FLOATING_CONDITIONAL_COMPARE_KIND
 #undef UML_FLOATING_CONDITIONAL_COMPARE_WIDTH
 }
