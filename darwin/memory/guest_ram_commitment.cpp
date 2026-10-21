@@ -144,7 +144,7 @@ int GuestRamCommitment::readmit(std::size_t first_page,
 	}
 	/* As a commit does: the page stays usable when it cannot be wired, only
 	 * compressible. */
-	if (wire_ && mlock(address, length) != 0) {
+	if (wire_ && wire_host_range(address, length) != 0) {
 		const int error = errno;
 		wire_failures_.fetch_add(1, std::memory_order_relaxed);
 		report_mapping_failure("guest RAM wire", address, length, error);
@@ -258,7 +258,7 @@ int GuestRamCommitment::apply(Change kind, std::size_t first_page,
 		errno = error;
 		return -1;
 	}
-	if (wire_ && mlock(address, length) != 0) {
+	if (wire_ && wire_host_range(address, length) != 0) {
 		/* The page stays committed and usable, only compressible. */
 		const int error = errno;
 		wire_failures_.fetch_add(1, std::memory_order_relaxed);

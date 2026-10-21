@@ -115,9 +115,12 @@ unwires it when it is released, so it wires only the RAM the guest holds; the
 signed kernel image and the loader tail stay wired from startup. Simulator and
 macOS commit and release without wiring. Wiring prevents compression; it does
 not decide whether a page is mapped. A commit that cannot wire leaves the page
-committed and usable. The one window in which a held page is not wired is a
-hibernation of a paused guest (see [hibernation](#hibernation)); it ends, with
-every page back and wired again, before any guest code runs. The host caches
+committed and usable. Every wire holds the calling thread's asynchronous
+signals: XNU ends a wire whose page faults have to wait when a signal reaches
+the thread, and guest CPU threads take IPI signals while they commit. The one
+window in which a held page is not wired is a hibernation of a paused guest
+(see [hibernation](#hibernation)); it ends, with every page back and wired
+again, before any guest code runs. The host caches
 the same disk blocks as the guest, so a large guest page cache mostly holds
 memory twice. The kernel can trim its inactive page cache towards a floor
 (`page_cache_trim.*`), but only at the host's request, because a guest in front
