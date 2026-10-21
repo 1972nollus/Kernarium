@@ -349,19 +349,11 @@ private struct GuestEndedNotice: View {
     let end: GuestRunEnd
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: end.systemName)
-                .font(.title)
-            Text(end.title)
-                .font(.headline)
-            Text(end.message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(20)
-        .frame(maxWidth: 320)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        GuestNoticeCard(
+            systemName: end.systemName,
+            title: end.title,
+            message: end.message
+        )
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("guestEndedNotice")
     }
@@ -377,27 +369,49 @@ private struct GuestRestartedNotice: View {
 
     var body: some View {
         Button(action: dismiss) {
-            VStack(spacing: 8) {
-                Image(systemName: restart.systemName)
-                    .font(.title)
-                Text(restart.title)
-                    .font(.headline)
-                Text(restart.message)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.center)
-                Text("Tap to dismiss")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(20)
-            .frame(maxWidth: 320)
-            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            GuestNoticeCard(
+                systemName: restart.systemName,
+                title: restart.title,
+                message: restart.message,
+                messageStyle: .primary,
+                footer: "Tap to dismiss"
+            )
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("guestRestartedNotice")
+    }
+}
+
+/// The card both notices share: an icon, a headline and a message, with an
+/// optional line beneath.
+private struct GuestNoticeCard: View {
+    let systemName: String
+    let title: String
+    let message: String
+    var messageStyle = HierarchicalShapeStyle.secondary
+    var footer: String?
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: systemName)
+                .font(.title)
+            Text(title)
+                .font(.headline)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(messageStyle)
+                .multilineTextAlignment(.center)
+            if let footer {
+                Text(footer)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: 320)
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
     }
 }
 
