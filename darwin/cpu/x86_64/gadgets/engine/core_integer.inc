@@ -492,6 +492,44 @@ memory_exchange 64, ldr, str, x, str, x
 
 .purgem memory_exchange
 
+/* The new value in x27 from the old one in x24. */
+.macro memory_unary_compute instruction, host_register
+	.ifc \instruction,add
+	add \host_register\()27, \host_register\()24, #1
+	.endif
+	.ifc \instruction,sub
+	sub \host_register\()27, \host_register\()24, #1
+	.endif
+	.ifc \instruction,neg
+	neg \host_register\()27, \host_register\()24
+	.endif
+	.ifc \instruction,not
+	mvn \host_register\()27, \host_register\()24
+	.endif
+.endm
+
+/* The deferred record of a unary operation that defines flags, from the old
+ * value in x24 and the new one in x27: NEG records a subtraction from zero,
+ * and `materialize` marks INC and DEC, whose record keeps their pending
+ * carry. */
+.macro memory_unary_record instruction, flag_operation, materialize, width
+	.if \flag_operation
+	.ifc \instruction,neg
+	mov x11, xzr
+	mov x12, x24
+	.else
+	mov x11, x24
+	mov x12, #1
+	.endif
+	mov x13, x27
+	.if \materialize
+	record_deferred_pending \flag_operation, \width
+	.else
+	record_deferred \flag_operation, \width
+	.endif
+	.endif
+.endm
+
 .macro memory_unary operation, instruction, flag_operation, materialize, width, load, store, host_register, locked
 	.if \locked
 gadget \operation\()_\width\()_m_locked
@@ -510,53 +548,17 @@ Lx86_unary_exclusive\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 1:
 	load_exclusive \width, 24, x7
-	.ifc \instruction,add
-	add \host_register\()27, \host_register\()24, #1
-	.endif
-	.ifc \instruction,sub
-	sub \host_register\()27, \host_register\()24, #1
-	.endif
-	.ifc \instruction,neg
-	neg \host_register\()27, \host_register\()24
-	.endif
-	.ifc \instruction,not
-	mvn \host_register\()27, \host_register\()24
-	.endif
+	memory_unary_compute \instruction, \host_register
 	normalize_result \width, \host_register\()27
 	store_exclusive \width, 9, 27, x7
 	cbnz w9, 1b
-	.if \flag_operation
-	.ifc \instruction,neg
-	mov x11, xzr
-	mov x12, x24
-	.else
-	mov x11, x24
-	mov x12, #1
-	.endif
-	mov x13, x27
-	.if \materialize
-	record_deferred_pending \flag_operation, \width
-	.else
-	record_deferred \flag_operation, \width
-	.endif
-	.endif
+	memory_unary_record \instruction, \flag_operation, \materialize, \width
 	finish_store (\width / 8)
 Lx86_unary_split\@:
 	split_operand (\width / 8), Lx86_unary_exclusive\@
 	.endif
 	read_operand (\width / 8), \load, \host_register, 24
-	.ifc \instruction,add
-	add \host_register\()27, \host_register\()24, #1
-	.endif
-	.ifc \instruction,sub
-	sub \host_register\()27, \host_register\()24, #1
-	.endif
-	.ifc \instruction,neg
-	neg \host_register\()27, \host_register\()24
-	.endif
-	.ifc \instruction,not
-	mvn \host_register\()27, \host_register\()24
-	.endif
+	memory_unary_compute \instruction, \host_register
 	normalize_result \width, \host_register\()27
 	mov x7, x25
 	page_cross_check (\width / 8), Lx86_unary_write_cross\@
@@ -569,21 +571,7 @@ Lx86_unary_written\@:
 	.if \locked
 	split_lock_leave
 	.endif
-	.if \flag_operation
-	.ifc \instruction,neg
-	mov x11, xzr
-	mov x12, x24
-	.else
-	mov x11, x24
-	mov x12, #1
-	.endif
-	mov x13, x27
-	.if \materialize
-	record_deferred_pending \flag_operation, \width
-	.else
-	record_deferred \flag_operation, \width
-	.endif
-	.endif
+	memory_unary_record \instruction, \flag_operation, \materialize, \width
 	finish_store (\width / 8)
 .endm
 
@@ -605,6 +593,8 @@ memory_unary_width 64, ldr, str, x
 
 .purgem memory_unary_width
 .purgem memory_unary
+.purgem memory_unary_record
+.purgem memory_unary_compute
 
 .purgem memory_arithmetic_family
 .purgem memory_arithmetic_width
