@@ -439,12 +439,49 @@ def verify_abi_identity(manifest: dict, abi_metadata_path: Path) -> None:
             fail(f"artifact ABI identity differs from tracked {key}")
 
 
+def verify_descriptor(manifest: dict, descriptor_path: Path) -> None:
+    """Check that an accepted-*.env descriptor still repeats its bundle.
+
+    A descriptor names the bundle an Apple configure imports and keeps the
+    bundle's identity as provenance for the commit that accepted it. Configure
+    reads only the directory name, so this check is what stops the rest from
+    drifting away from the manifest.
+    """
+    expected = {
+        "SCHEMA": manifest["schema_version"],
+        "RELEASE_ID": manifest["release_id"],
+        "DIRECTORY_NAME": manifest["directory_name"],
+        "FAMILY": manifest["family"],
+        "SLICE": manifest["slice"],
+        "RELEASE": manifest["release"],
+        "PAGE_SIZE": manifest["page_size"],
+        "FINAL_TREE": manifest["source"]["final_tree"],
+        "ABI_VERSION": manifest["abi"]["version"],
+        "ABI_FINGERPRINT": manifest["abi"]["fingerprint"],
+    }
+    descriptor = parse_env(descriptor_path)
+    expected = {f"UML_KERNEL_ARTIFACT_{key}": str(value) for key, value in expected.items()}
+    if set(descriptor) != set(expected):
+        fail(
+            f"accepted descriptor {descriptor_path} keys differ "
+            f"(missing={sorted(set(expected) - set(descriptor))}, "
+            f"extra={sorted(set(descriptor) - set(expected))})"
+        )
+    for key, value in expected.items():
+        if descriptor[key] != value:
+            fail(
+                f"accepted descriptor {descriptor_path} has {key}="
+                f"{descriptor[key]}, but the bundle manifest has {value}"
+            )
+
+
 def verify_compatible_identity(
     manifest: dict,
     abi_metadata_path: Path,
     expected_family: str,
     expected_slice: str,
     expected_release_series: str,
+    descriptor_path: Path | None = None,
 ) -> None:
     verify_abi_identity(manifest, abi_metadata_path)
     if manifest["family"] != expected_family:
@@ -466,6 +503,8 @@ def verify_compatible_identity(
             f"kernel release {release} is outside required "
             f"{expected_release_series} series"
         )
+    if descriptor_path is not None:
+        verify_descriptor(manifest, descriptor_path)
 
 
 def _verify_bundle(
@@ -518,6 +557,7 @@ def verify_compatible_artifact(
     expected_family: str,
     expected_slice: str,
     expected_release_series: str,
+    descriptor_path: Path | None = None,
 ) -> dict:
     return _verify_bundle(
         artifact_root,
@@ -528,6 +568,7 @@ def verify_compatible_artifact(
             expected_family,
             expected_slice,
             expected_release_series,
+            descriptor_path,
         ),
     )
 

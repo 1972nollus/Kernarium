@@ -707,7 +707,12 @@ source checkout. Use the script's `--help` for output and release options.
 `.build/kernel/artifacts`.
 `slices/x86_64/artifacts/accepted-4k.env` independently selects the x86_64
 userspace publication. `artifacts/accepted-android-4k.env` selects the Android
-product's publication. Artifact identity includes the family and the slice, so
+product's publication. A descriptor also records the identity of its bundle
+(schema, release ID, family, slice, release, page size, final tree and bridge
+ABI) for the commit that accepts it. Configure names the bundle by directory
+and fails, with both values, when the bundle's manifest differs in any field;
+a bundle pinned under another directory name is not the descriptor's, so it is
+not compared. Artifact identity includes the family and the slice, so
 a Linux 4 KiB kernel cannot satisfy an Android selection, nor an arm64 4 KiB
 kernel an x86_64 one. The Android kernel keeps the `android-6.18` family name:
 the Apple CMake graph and Kernarium key Android mode on it. They validate the
