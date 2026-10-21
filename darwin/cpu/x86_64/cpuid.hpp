@@ -39,8 +39,7 @@ namespace detail {
  * The architecture spells the brand as plain little-endian bytes, so byte
  * `offset` is the low byte of its register and the tail past the name reads as
  * the NUL padding CPUID requires. Deriving the words rather than transcribing
- * them keeps the name in exactly one place: the transposition this replaces
- * had leaf 0x80000002 spelling its first four bytes backwards.
+ * them keeps the name in exactly one place.
  */
 [[nodiscard]] constexpr std::uint32_t brand_word(std::size_t offset) noexcept
 {
