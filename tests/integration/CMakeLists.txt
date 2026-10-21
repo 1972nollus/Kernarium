@@ -328,6 +328,16 @@ uml_add_guest_integration_test(
     TIMEOUT 600
     CPUS 1)
 
+# A host device option the launcher cannot honour stops it with a named reason
+# before any guest boots.
+uml_add_integration_test(
+    NAME launcher-host-device-refusals
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/boot/run_launcher_refusals.py"
+        --emulator "$<TARGET_FILE:uml-darwin>"
+    LABELS launcher;boot
+    TIMEOUT 180)
+
 # A faulting nofault kernel read resumes at its recovery point.
 uml_add_guest_integration_test(
     NAME guest-kernel-nofault
