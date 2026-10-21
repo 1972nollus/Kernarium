@@ -8,6 +8,7 @@
 #include "virtio_gpu_device_testing.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdio>
 #include <new>
@@ -2841,6 +2842,39 @@ void malformed3dCommandsUseSpecificErrors()
     require(dependencyCallCount() == before);
 }
 
+/* The cursor virtqueue has no writable reply buffer and the device no cursor
+ * plane, so the queue's commands are consumed whatever they carry: nothing is
+ * answered and nothing runs, not even a command that belongs on the control
+ * queue. Only a request too short for a header is answered. */
+void theCursorQueueIsConsumedWithoutAReply()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+
+    auto cursor = newRequest<protocol::GpuUpdateCursor>(
+        GpuCommand::updateCursor);
+    cursor.position.scanoutId = protocol::primaryScanoutId;
+    require(device.process(requestBytes(cursor), true).empty());
+    cursor.header.type = static_cast<std::uint32_t>(GpuCommand::moveCursor);
+    require(device.process(requestBytes(cursor), true).empty());
+    cursor.position.scanoutId = protocol::primaryScanoutId + 1U;
+    require(device.process(requestBytes(cursor), true).empty());
+    const auto truncated = newRequest<protocol::GpuControlHeader>(
+        GpuCommand::updateCursor);
+    require(device.process(requestBytes(truncated), true).empty());
+
+    /* A control command on the cursor queue does not run: the resource it
+     * would create is still free for the control queue to create. */
+    const auto create = create2d(11);
+    require(device.process(requestBytes(create), true).empty());
+    require(dependencies.displayUpdateCount == 0);
+    requireOk(device, requestBytes(create));
+
+    const std::array<std::uint8_t, 1> tooShort {};
+    require(responseType(device.process(tooShort, true)) ==
+        protocol::GpuResponse::errorInvalidParameter);
+}
+
 /* A context the guest destroys takes its renderer fence slots with it, so a
  * command still held behind one of its fences can never retire through the
  * renderer. The transport completes such commands when the device reports the
@@ -3241,6 +3275,7 @@ int main()
     blobScanoutUsesNativeTextureAndPersistentVncMapping();
     virglBlobScanoutPresentsItsGlTexture();
     malformed3dCommandsUseSpecificErrors();
+    theCursorQueueIsConsumedWithoutAReply();
     std::puts("Virtio-GPU command atomicity tests passed");
     return 0;
 }
