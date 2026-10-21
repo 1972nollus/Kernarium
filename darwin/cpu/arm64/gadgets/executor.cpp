@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "executor.hpp"
 
+#include "cpu/arm64/aarch32/breakpoint_immediate.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
@@ -122,39 +123,11 @@ static_assert(compact_tag_key(0x0000'8000'0000'1000U) == unmatchable_tag);
 static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
 	unmatchable_tag);
 
-[[nodiscard]] std::size_t fetch_instruction_window(
-	StaticGuestMemory &memory, std::uint64_t pc,
-	std::span<std::uint32_t> instructions)
-{
-	std::size_t count = 0;
-	auto bytes = std::as_writable_bytes(instructions);
-	while (count < instructions.size()) {
-		const auto address = pc + count * sizeof(std::uint32_t);
-		const auto page_remaining =
-			guest_page_size - (address & (guest_page_size - 1));
-		auto page_instructions = std::min<std::size_t>(
-			instructions.size() - count,
-			static_cast<std::size_t>(
-				page_remaining / sizeof(std::uint32_t)));
-		/* A valid A64 PC is word aligned. Preserve deterministic fault
-		 * handling for a malformed PC instead of constructing an empty span.
-		 */
-		if (page_instructions == 0)
-			page_instructions = 1;
-		const auto offset = count * sizeof(std::uint32_t);
-		const auto length = page_instructions * sizeof(std::uint32_t);
-		if (!memory.fetch(address, bytes.subspan(offset, length)))
-			break;
-		count += page_instructions;
-	}
-	return count;
-}
-
-/* The guest units of an AArch32 translation window starting at `address`,
- * fetched a page at a time as fetch_instruction_window does, in units of
- * `unit` bytes (a word for A32, a halfword for T32). A page that cannot be
- * fetched ends the window; none at all is zero. */
-[[nodiscard]] std::size_t fetch_a32_units(StaticGuestMemory &memory,
+/* The guest units of a translation window starting at `address`, fetched a
+ * page at a time, in units of `unit` bytes (a word for A64 and A32, a
+ * halfword for T32). A page that cannot be fetched ends the window; none at
+ * all is zero. */
+[[nodiscard]] std::size_t fetch_units(StaticGuestMemory &memory,
 	std::uint64_t address, std::size_t unit, std::span<std::byte> bytes)
 {
 	const std::size_t capacity = bytes.size() / unit;
@@ -165,6 +138,9 @@ static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
 			guest_page_size - (at & (guest_page_size - 1));
 		auto run = std::min<std::size_t>(capacity - count,
 			static_cast<std::size_t>(page_remaining / unit));
+		/* A valid A64 or A32 PC is word aligned. Preserve deterministic
+		 * fault handling for a malformed PC instead of constructing an
+		 * empty span. */
 		if (run == 0)
 			run = 1;
 		if (!memory.fetch(at, bytes.subspan(count * unit, run * unit)))
@@ -174,23 +150,35 @@ static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
 	return count;
 }
 
-/* BKPT's immediate, from the instruction at `key`: imm12:imm4 for A32 and
- * imm8 for T32. */
-[[nodiscard]] std::uint32_t read_breakpoint_immediate(
-	StaticGuestMemory &memory, std::uint64_t key) noexcept
+[[nodiscard]] std::size_t fetch_instruction_window(
+	StaticGuestMemory &memory, std::uint64_t pc,
+	std::span<std::uint32_t> instructions)
 {
-	if (arm64::aarch32::key_is_thumb(key)) {
-		std::uint16_t halfword = 0;
-		if (!memory.fetch(arm64::aarch32::key_pc(key),
-				  std::as_writable_bytes(std::span{&halfword, 1})))
-			return 0;
-		return halfword & 0xffU;
-	}
-	std::uint32_t word = 0;
-	if (!memory.fetch(arm64::aarch32::key_pc(key),
-			  std::as_writable_bytes(std::span{&word, 1})))
-		return 0;
-	return (word >> 4 & 0xfff0U) | (word & 0xfU);
+	return fetch_units(memory, pc, sizeof(std::uint32_t),
+		std::as_writable_bytes(instructions));
+}
+
+/* A guest fetch failed: report the fault it left in `memory` as the memory
+ * fault of the block that wanted the bytes. */
+[[nodiscard]] inline ::uml::cpu::EngineEvent fetch_fault(
+	::uml::memory::Tlb &tlb, StaticGuestMemory &memory)
+{
+	const auto fault = memory.last_fault();
+	tlb.fault_address = fault.address;
+	tlb.fault_access = ::uml::memory::translated_access(fault.access);
+	return ::uml::cpu::EngineEvent::memory_fault;
+}
+
+/* A T32 instruction whose second halfword lies on a page that cannot be
+ * fetched: the fetch fault is at that halfword, `address`. */
+[[nodiscard]] inline ::uml::cpu::EngineEvent fetch_fault_after(
+	::uml::memory::Tlb &tlb, StaticGuestMemory &memory,
+	std::uint64_t address)
+{
+	std::uint16_t halfword = 0;
+	(void)memory.fetch(address,
+		std::as_writable_bytes(std::span{&halfword, 1}));
+	return fetch_fault(tlb, memory);
 }
 
 void correct_terminal_instruction_count(
@@ -270,34 +258,6 @@ constexpr std::size_t uml_gadget_resident_generations =
 extern "C" void uml_arm64_gadget_link_exit();
 extern "C" void uml_arm64_gadget_fp_link_entry();
 
-class CountingResource final : public std::pmr::memory_resource {
-public:
-	[[nodiscard]] std::size_t bytes() const noexcept { return bytes_; }
-
-private:
-	void *do_allocate(std::size_t bytes, std::size_t alignment) override
-	{
-		bytes_ += bytes;
-		return std::pmr::new_delete_resource()->allocate(bytes, alignment);
-	}
-
-	void do_deallocate(void *pointer, std::size_t bytes,
-			   std::size_t alignment) override
-	{
-		bytes_ -= bytes;
-		std::pmr::new_delete_resource()->deallocate(
-			pointer, bytes, alignment);
-	}
-
-	[[nodiscard]] bool do_is_equal(
-		const std::pmr::memory_resource &other) const noexcept override
-	{
-		return this == &other;
-	}
-
-	std::size_t bytes_{};
-};
-
 namespace {
 
 using Announcement = gadget_cache::ExecutorAnnouncement;
@@ -313,9 +273,8 @@ using gadget_cache::word_of;
  *
  * A set way exists whether or not it holds a translation, so every byte kept
  * inline is paid for by the whole cache. With the program, its stream and its
- * validation words moved into one separately allocated body, an empty way
- * costs a tag rather than a full BuildResult, and the words a spilling stream
- * used to allocate on their own now share the body's allocation.
+ * validation words in one separately allocated body, an empty way costs a tag
+ * rather than a full BuildResult.
  *
  * The body is also paid for by every translation the cache holds, so it keeps
  * only what a stored block cannot recompute. A BuildResult carries a words
@@ -650,7 +609,7 @@ class Space final {
 public:
 	explicit Space(SpaceKey key, std::uint64_t changes)
 		: key_{std::move(key)}, gate_{changes}, reset_done_{changes},
-		  bodies_{&counted_}, account_{shed, this}
+		  bodies_{std::pmr::new_delete_resource()}, account_{shed, this}
 	{
 		bodies_.meter(&account_);
 		for (auto &shard : shards_) {
@@ -1426,7 +1385,6 @@ private:
 	std::atomic<arm64::gadgets::IndirectLinkEntry *> targets_{};
 	gadget_cache::Limbo<Body> limbo_;
 	mutable std::mutex arena_mutex_;
-	CountingResource counted_;
 	BodyArena bodies_;
 	gadget_cache::AttachedExecutors attached_;
 	/* For a private address space: the records and sites its last sweep
@@ -3151,6 +3109,39 @@ void forget_returns(arm64::CpuState &cpu) noexcept
 	cpu.gadget_return_top = 0;
 }
 
+#if UML_GADGET_EXECUTION_HISTOGRAM
+/* Why translated execution returned to the executor, for the execution
+ * histogram: a guest-visible event, the chain limit, an indirect miss, or an
+ * unlinked exit. */
+template<typename Programs>
+void note_exit_histogram(GadgetCacheDiagnostics &d, Programs &programs,
+	::uml::cpu::EngineEvent event, const arm64::CpuState &cpu,
+	std::size_t executed)
+{
+	if (event == ::uml::cpu::EngineEvent::system_call)
+		++d.exits_syscall;
+	else if (event == ::uml::cpu::EngineEvent::memory_fault)
+		++d.exits_fault;
+	else if (event == ::uml::cpu::EngineEvent::interrupt)
+		++d.exits_interrupt;
+	else if (event != ::uml::cpu::EngineEvent::continued)
+		++d.exits_other;
+	else if (cpu.gadget_indirect_miss != nullptr) {
+		++d.exits_indirect_miss;
+		if (static_cast<const arm64::gadgets::IndirectLink *>(
+			    cpu.gadget_indirect_miss)->kind != 0)
+			++d.exits_indirect_miss_return;
+		if ((d.exits_indirect_miss & 4095) == 0)
+			d.miss_by_site_targets = programs.miss_distribution();
+	}
+	else if (executed >= 4096)
+		++d.exits_chain_limit;
+	else
+		++d.exits_unlinked;
+	diagnostics::execution_histogram_note_executor(&d);
+}
+#endif
+
 } // namespace
 
 /* Produce and store a translation the cache did not hold. run_block
@@ -3209,30 +3200,7 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 		cpu.gadget_indirect_miss = nullptr;
 	}
 #if UML_GADGET_EXECUTION_HISTOGRAM
-	{
-		auto &d = cache_diagnostics_;
-		if (event == ::uml::cpu::EngineEvent::system_call)
-			++d.exits_syscall;
-		else if (event == ::uml::cpu::EngineEvent::memory_fault)
-			++d.exits_fault;
-		else if (event == ::uml::cpu::EngineEvent::interrupt)
-			++d.exits_interrupt;
-		else if (event != ::uml::cpu::EngineEvent::continued)
-			++d.exits_other;
-		else if (cpu.gadget_indirect_miss != nullptr) {
-			++d.exits_indirect_miss;
-			if (static_cast<const arm64::gadgets::IndirectLink *>(
-				    cpu.gadget_indirect_miss)->kind != 0)
-				++d.exits_indirect_miss_return;
-			if ((d.exits_indirect_miss & 4095) == 0)
-				d.miss_by_site_targets = programs.miss_distribution();
-		}
-		else if (executed >= 4096)
-			++d.exits_chain_limit;
-		else
-			++d.exits_unlinked;
-		diagnostics::execution_histogram_note_executor(&d);
-	}
+	note_exit_histogram(cache_diagnostics_, programs, event, cpu, executed);
 #endif
 	/* A stream pointer left by a non-retiring or FPCR-enable exit was
 	 * consumed and cleared above, so what remains is a cache cell. */
@@ -3303,11 +3271,7 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 		const auto count = fetch_instruction_window(
 			memory, cpu.pc, instructions);
 		if (count == 0) {
-			const auto fault = memory.last_fault();
-			tlb_.fault_address = fault.address;
-			tlb_.fault_access = ::uml::memory::translated_access(
-				fault.access);
-			return ::uml::cpu::EngineEvent::memory_fault;
+			return fetch_fault(tlb_, memory);
 		}
 		const auto window = std::span{instructions}.first(count);
 		++cache_diagnostics_.translations;
@@ -3377,11 +3341,7 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 		const auto count = fetch_instruction_window(
 			memory, cpu.pc, instructions);
 		if (count == 0) {
-			const auto fault = memory.last_fault();
-			tlb_.fault_address = fault.address;
-			tlb_.fault_access = ::uml::memory::translated_access(
-				fault.access);
-			return ::uml::cpu::EngineEvent::memory_fault;
+			return fetch_fault(tlb_, memory);
 		}
 		const auto window = std::span{instructions}.first(count);
 		++cache_diagnostics_.translations;
@@ -3521,13 +3481,9 @@ private:
 		std::array<std::uint32_t, block_instruction_count> window;
 		const auto bytes = std::as_writable_bytes(std::span{window});
 		const auto address = arm64::aarch32::key_pc(key);
-		const auto count = fetch_a32_units(memory, address, unit, bytes);
+		const auto count = fetch_units(memory, address, unit, bytes);
 		if (count == 0) {
-			const auto fault = memory.last_fault();
-			tlb_.fault_address = fault.address;
-			tlb_.fault_access = ::uml::memory::translated_access(
-				fault.access);
-			return ::uml::cpu::EngineEvent::memory_fault;
+			return fetch_fault(tlb_, memory);
 		}
 		++cache_diagnostics_.translations;
 		const auto output = arm64::gadgets::a32::build(
@@ -3546,14 +3502,7 @@ private:
 			/* A T32 instruction whose second halfword lies on a page
 			 * that cannot be fetched: the fetch fault is at that
 			 * halfword. */
-			std::uint16_t halfword = 0;
-			(void)memory.fetch(address + count * unit,
-				std::as_writable_bytes(std::span{&halfword, 1}));
-			const auto fault = memory.last_fault();
-			tlb_.fault_address = fault.address;
-			tlb_.fault_access = ::uml::memory::translated_access(
-				fault.access);
-			return ::uml::cpu::EngineEvent::memory_fault;
+			return fetch_fault_after(tlb_, memory, address + count * unit);
 		}
 		const auto sweeps = cache_diagnostics_.link_sweeps;
 		selected.emplace(programs_->store_validated(key, output.result,
@@ -3587,12 +3536,9 @@ private:
 	std::array<std::uint32_t, 1> window;
 	const auto bytes = std::as_writable_bytes(std::span{window});
 	const auto address = arm64::aarch32::key_pc(key);
-	const auto count = fetch_a32_units(memory, address, unit, bytes);
+	const auto count = fetch_units(memory, address, unit, bytes);
 	if (count == 0) {
-		const auto fault = memory.last_fault();
-		tlb_.fault_address = fault.address;
-		tlb_.fault_access = ::uml::memory::translated_access(fault.access);
-		return ::uml::cpu::EngineEvent::memory_fault;
+		return fetch_fault(tlb_, memory);
 	}
 	const auto output = arm64::gadgets::a32::build(
 		{.key = key, .code = bytes.first(count * unit),
@@ -3601,13 +3547,7 @@ private:
 		a32::decode_profile(build_options_),
 		block_instruction_count);
 	if (output.units == 0) {
-		std::uint16_t halfword = 0;
-		(void)memory.fetch(address + count * unit,
-			std::as_writable_bytes(std::span{&halfword, 1}));
-		const auto fault = memory.last_fault();
-		tlb_.fault_address = fault.address;
-		tlb_.fault_access = ::uml::memory::translated_access(fault.access);
-		return ::uml::cpu::EngineEvent::memory_fault;
+		return fetch_fault_after(tlb_, memory, address + count * unit);
 	}
 	const auto &built = output.result;
 	if (built.program.instruction_count() == 0) {
@@ -3629,7 +3569,8 @@ private:
 	    event == ::uml::cpu::EngineEvent::system_call)
 		cpu.a32_itstate = output.next_it.bits();
 	if (event == ::uml::cpu::EngineEvent::breakpoint)
-		breakpoint_immediate_ = read_breakpoint_immediate(memory, cpu.pc);
+		breakpoint_immediate_ =
+			arm64::aarch32::read_breakpoint_immediate(memory, cpu.pc);
 	/* A one-instruction fallthrough ends in the synthetic interrupt gadget:
 	 * an internal cold boundary, not a guest-visible interrupt. */
 	return event == ::uml::cpu::EngineEvent::interrupt ?
@@ -3693,32 +3634,10 @@ private:
 		cpu.gadget_indirect_miss = nullptr;
 	}
 	if (event == ::uml::cpu::EngineEvent::breakpoint)
-		breakpoint_immediate_ = read_breakpoint_immediate(memory, cpu.pc);
+		breakpoint_immediate_ =
+			arm64::aarch32::read_breakpoint_immediate(memory, cpu.pc);
 #if UML_GADGET_EXECUTION_HISTOGRAM
-	{
-		auto &d = cache_diagnostics_;
-		if (event == ::uml::cpu::EngineEvent::system_call)
-			++d.exits_syscall;
-		else if (event == ::uml::cpu::EngineEvent::memory_fault)
-			++d.exits_fault;
-		else if (event == ::uml::cpu::EngineEvent::interrupt)
-			++d.exits_interrupt;
-		else if (event != ::uml::cpu::EngineEvent::continued)
-			++d.exits_other;
-		else if (cpu.gadget_indirect_miss != nullptr) {
-			++d.exits_indirect_miss;
-			if (static_cast<const arm64::gadgets::IndirectLink *>(
-				    cpu.gadget_indirect_miss)->kind != 0)
-				++d.exits_indirect_miss_return;
-			if ((d.exits_indirect_miss & 4095) == 0)
-				d.miss_by_site_targets = programs.miss_distribution();
-		}
-		else if (executed >= 4096)
-			++d.exits_chain_limit;
-		else
-			++d.exits_unlinked;
-		diagnostics::execution_histogram_note_executor(&d);
-	}
+	note_exit_histogram(cache_diagnostics_, programs, event, cpu, executed);
 #endif
 	if (event == ::uml::cpu::EngineEvent::continued &&
 	    cpu.gadget_indirect_miss != nullptr &&
@@ -3749,10 +3668,7 @@ private:
 	std::uint32_t instruction = 0;
 	auto encoded = std::as_writable_bytes(std::span{&instruction, 1});
 	if (!memory.fetch(cpu.pc, encoded)) {
-		const auto fault = memory.last_fault();
-		tlb_.fault_address = fault.address;
-		tlb_.fault_access = ::uml::memory::translated_access(fault.access);
-		return ::uml::cpu::EngineEvent::memory_fault;
+		return fetch_fault(tlb_, memory);
 	}
 
 	auto options = build_options_;
