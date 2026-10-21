@@ -2,8 +2,7 @@
 # The Linux desktop product's overlay on the shared Darwin UML kernel policy in
 # kernel/common/config/darwin-uml.fragment. It lists only the settings in
 # which that product differs from the Android one, android.fragment;
-# build/build-kernel.sh applies it after the shared policy and before the
-# page-size fragment.
+# build/build-kernel.sh applies it after the shared policy.
 
 # Linux guests keep checkpoint/restore. Its Kconfig dependency excludes
 # MSEAL_SYSTEM_MAPPINGS, which the Android product enables instead.

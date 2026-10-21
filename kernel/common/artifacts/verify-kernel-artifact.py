@@ -21,6 +21,7 @@ def main() -> None:
     parser.add_argument("--expected-family")
     parser.add_argument("--expected-slice")
     parser.add_argument("--expected-release-series")
+    parser.add_argument("--descriptor", type=Path)
     args = parser.parse_args()
 
     if args.compatible:
@@ -41,10 +42,14 @@ def main() -> None:
             args.expected_family,
             args.expected_slice,
             args.expected_release_series,
+            args.descriptor,
         )
     else:
-        if args.kernel_metadata is None:
-            parser.error("tracked verification requires --kernel-metadata")
+        if args.kernel_metadata is None or args.descriptor is not None:
+            parser.error(
+                "tracked verification requires --kernel-metadata and takes "
+                "no --descriptor"
+            )
         manifest = verify_artifact(
             args.artifact,
             args.common_root,

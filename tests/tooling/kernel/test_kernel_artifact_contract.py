@@ -45,11 +45,10 @@ def manifest(
     family: str,
     kernel_slice: str,
     page_size: int,
-    schema: int | None = None,
 ) -> dict:
     release_id = "contract-test"
-    value = {
-        "schema_version": module.SCHEMA_VERSION if schema is None else schema,
+    return {
+        "schema_version": module.SCHEMA_VERSION,
         "release_id": release_id,
         "directory_name": (
             f"{family}-{kernel_slice}-{page_size // 1024}k-{release_id}"
@@ -81,11 +80,6 @@ def manifest(
             for path, (role, file_format) in sorted(module.PAYLOAD_SPECS.items())
         ],
     }
-    if value["schema_version"] == 2:
-        # Schema 2 bundles also named their patch count and series manifest.
-        value["source"]["patch_count"] = 1
-        value["source"]["patch_manifest_sha256"] = "3" * 64
-    return value
 
 
 def require_accepted(
@@ -294,7 +288,7 @@ def require_kernel_elf(
 ) -> None:
     path.write_bytes(image)
     try:
-        module.verify_elf(path, module.GUEST_PAGE_SIZE, common_root, kernel_slice)
+        module.verify_elf(path, common_root, kernel_slice)
     except SystemExit as error:
         require(
             diagnostic is not None and diagnostic in str(error),
@@ -577,6 +571,132 @@ def verify_bundle_page_size_contract(module: ModuleType, root: Path) -> None:
             raise AssertionError(f"a 16 KiB {kernel_slice} bundle was verified")
 
 
+DESCRIPTOR_PREFIX = "UML_KERNEL_ARTIFACT_"
+# Each descriptor field, as the bundle's manifest above spells it, and a value
+# that differs from it in the same format.
+DESCRIPTOR_FIELDS = {
+    "SCHEMA": ("3", "4"),
+    "RELEASE_ID": ("contract-test", "other-release"),
+    "DIRECTORY_NAME": ("mainline-6.18-arm64-4k-contract-test", "other-bundle"),
+    "FAMILY": ("mainline-6.18", "android-6.18"),
+    "SLICE": ("arm64", "x86_64"),
+    "RELEASE": ("6.18.0-contract-test", "6.18.1-other"),
+    "PAGE_SIZE": ("4096", "16384"),
+    "FINAL_TREE": ("2" * 40, "3" * 40),
+    "ABI_VERSION": ("1", "2"),
+    "ABI_FINGERPRINT": ("0x0000000000000001", "0x0000000000000002"),
+}
+
+
+def write_descriptor(path: Path, fields: dict[str, str]) -> None:
+    """Write an accepted-*.env descriptor: counts bare, everything else quoted."""
+    rows = ["# SPDX-License-Identifier: GPL-2.0-or-later"]
+    for key, value in fields.items():
+        text = value if value.isdigit() else f"'{value}'"
+        rows.append(f"{DESCRIPTOR_PREFIX}{key}={text}")
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def verify_descriptor_contract(module: ModuleType, root: Path) -> None:
+    """An accepted descriptor must repeat every identity field of its bundle."""
+    value = manifest(module, "mainline-6.18", "arm64", 4096)
+    abi = root / "descriptor-abi.env"
+    abi.write_text(
+        "DARWIN_UML_ABI_VERSION=1\n"
+        "DARWIN_UML_ABI_FINGERPRINT='0x0000000000000001'\n",
+        encoding="utf-8",
+    )
+    descriptor = root / "accepted.env"
+    matching = {key: expected for key, (expected, _) in DESCRIPTOR_FIELDS.items()}
+    require(
+        matching["DIRECTORY_NAME"] == value["directory_name"],
+        "the descriptor fixture does not describe the manifest fixture",
+    )
+
+    def check(fields: dict[str, str], diagnostic: str | None) -> None:
+        write_descriptor(descriptor, fields)
+        try:
+            module.verify_compatible_identity(
+                module.validate_manifest(value),
+                abi,
+                "mainline-6.18",
+                "arm64",
+                "6.18",
+                descriptor,
+            )
+        except SystemExit as error:
+            require(
+                diagnostic is not None and diagnostic in str(error),
+                f"a descriptor was rejected for the wrong reason: {error}",
+            )
+        else:
+            require(diagnostic is None, f"a descriptor was accepted: {diagnostic}")
+
+    check(matching, None)
+    # A drifted field names itself and both values.
+    for key, (expected, drifted) in DESCRIPTOR_FIELDS.items():
+        check(
+            {**matching, key: drifted},
+            f"{DESCRIPTOR_PREFIX}{key}={drifted}, but the bundle manifest has {expected}",
+        )
+        check(
+            {name: item for name, item in matching.items() if name != key},
+            f"keys differ (missing=['{DESCRIPTOR_PREFIX}{key}'], extra=[])",
+        )
+    check(
+        {**matching, "NOTE": "x"},
+        f"keys differ (missing=[], extra=['{DESCRIPTOR_PREFIX}NOTE'])",
+    )
+
+    # The command line a configure runs: the bundle's directory name is its
+    # basename, and only the manifest is read before the descriptor.
+    bundle = root / value["directory_name"]
+    bundle.mkdir()
+    (bundle / "kernel-artifact.json").write_text(json.dumps(value), encoding="utf-8")
+    verifier = Path(module.__file__).resolve().parent / "verify-kernel-artifact.py"
+
+    def run(*arguments: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [
+                sys.executable, "-B", str(verifier),
+                "--artifact", str(bundle), "--common-root", str(root),
+                "--abi-metadata", str(abi), *arguments,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    compatible = (
+        "--compatible", "--expected-family", "mainline-6.18",
+        "--expected-slice", "arm64", "--expected-release-series", "6.18",
+        "--descriptor", str(descriptor),
+    )
+    write_descriptor(descriptor, {**matching, "FINAL_TREE": "3" * 40})
+    drifted = run(*compatible)
+    require(
+        drifted.returncode != 0
+        and f"{DESCRIPTOR_PREFIX}FINAL_TREE={'3' * 40}, but the bundle manifest has "
+        f"{'2' * 40}" in drifted.stderr,
+        f"a drifted descriptor did not fail the verifier: {drifted}",
+    )
+    # With a matching descriptor the check passes, and the bundle, which holds
+    # only its manifest, fails the payload inventory that follows it.
+    write_descriptor(descriptor, matching)
+    inventory = run(*compatible)
+    require(
+        inventory.returncode != 0
+        and "artifact tree differs from its fixed contract" in inventory.stderr
+        and "accepted descriptor" not in inventory.stderr,
+        f"a matching descriptor did not reach the inventory check: {inventory}",
+    )
+    tracked = run("--kernel-metadata", str(root / "kernel.env"), "--descriptor", str(descriptor))
+    require(
+        tracked.returncode == 2 and "takes no --descriptor" in tracked.stderr,
+        f"tracked verification accepted a descriptor: {tracked}",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-module", type=Path, required=True)
@@ -590,16 +710,25 @@ def main() -> int:
     )
     for identity in SUPPORTED_IDENTITIES:
         require_accepted(module, *identity)
-        # Accepted schema 2 bundles stay importable beside schema 3 ones.
-        module.validate_manifest(manifest(module, *identity, schema=2))
-    legacy = manifest(module, "mainline-6.18", "arm64", 4096)
-    legacy["source"]["patch_count"] = 1
-    try:
-        module.validate_manifest(legacy)
-    except SystemExit as error:
-        require("source" in str(error), f"schema 3 patch count rejected oddly: {error}")
-    else:
-        raise AssertionError("a schema 3 manifest accepted a patch count")
+    # Only the current schema is a manifest: the previous one, a schema 3
+    # manifest with the previous one's patch count, and a boolean are not.
+    retired = manifest(module, "mainline-6.18", "arm64", 4096)
+    retired["schema_version"] = 2
+    patch_count = manifest(module, "mainline-6.18", "arm64", 4096)
+    patch_count["source"]["patch_count"] = 1
+    boolean = manifest(module, "mainline-6.18", "arm64", 4096)
+    boolean["schema_version"] = True
+    for value, diagnostic in (
+        (retired, "artifact manifest schema version is unsupported"),
+        (boolean, "artifact manifest schema version is unsupported"),
+        (patch_count, "source keys differ"),
+    ):
+        try:
+            module.validate_manifest(value)
+        except SystemExit as error:
+            require(diagnostic in str(error), f"manifest rejected oddly: {error}")
+        else:
+            raise AssertionError(f"a manifest was accepted, expected: {diagnostic}")
 
     require_rejected(
         module,
@@ -621,6 +750,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="uml-kernel-config-contract-") as raw:
         root = Path(raw)
         verify_bundle_page_size_contract(module, root)
+        verify_descriptor_contract(module, root)
         for kernel_slice in ("arm64", "x86_64"):
             expected = config_values(kernel_slice)
             require_config_accepted(module, root, kernel_slice, expected)
