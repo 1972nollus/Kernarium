@@ -158,6 +158,17 @@ static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
 		std::as_writable_bytes(instructions));
 }
 
+/* A guest fetch failed: report the fault it left in `memory` as the memory
+ * fault of the block that wanted the bytes. */
+[[nodiscard]] inline ::uml::cpu::EngineEvent fetch_fault(
+	::uml::memory::Tlb &tlb, StaticGuestMemory &memory)
+{
+	const auto fault = memory.last_fault();
+	tlb.fault_address = fault.address;
+	tlb.fault_access = ::uml::memory::translated_access(fault.access);
+	return ::uml::cpu::EngineEvent::memory_fault;
+}
+
 void correct_terminal_instruction_count(
 	const arm64::gadgets::Program &program, ::uml::cpu::EngineEvent event,
 	std::uint64_t fault_pc, std::size_t &executed) noexcept
@@ -3248,11 +3259,7 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 		const auto count = fetch_instruction_window(
 			memory, cpu.pc, instructions);
 		if (count == 0) {
-			const auto fault = memory.last_fault();
-			tlb_.fault_address = fault.address;
-			tlb_.fault_access = ::uml::memory::translated_access(
-				fault.access);
-			return ::uml::cpu::EngineEvent::memory_fault;
+			return fetch_fault(tlb_, memory);
 		}
 		const auto window = std::span{instructions}.first(count);
 		++cache_diagnostics_.translations;
@@ -3322,11 +3329,7 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 		const auto count = fetch_instruction_window(
 			memory, cpu.pc, instructions);
 		if (count == 0) {
-			const auto fault = memory.last_fault();
-			tlb_.fault_address = fault.address;
-			tlb_.fault_access = ::uml::memory::translated_access(
-				fault.access);
-			return ::uml::cpu::EngineEvent::memory_fault;
+			return fetch_fault(tlb_, memory);
 		}
 		const auto window = std::span{instructions}.first(count);
 		++cache_diagnostics_.translations;
@@ -3468,11 +3471,7 @@ private:
 		const auto address = arm64::aarch32::key_pc(key);
 		const auto count = fetch_units(memory, address, unit, bytes);
 		if (count == 0) {
-			const auto fault = memory.last_fault();
-			tlb_.fault_address = fault.address;
-			tlb_.fault_access = ::uml::memory::translated_access(
-				fault.access);
-			return ::uml::cpu::EngineEvent::memory_fault;
+			return fetch_fault(tlb_, memory);
 		}
 		++cache_diagnostics_.translations;
 		const auto output = arm64::gadgets::a32::build(
@@ -3494,11 +3493,7 @@ private:
 			std::uint16_t halfword = 0;
 			(void)memory.fetch(address + count * unit,
 				std::as_writable_bytes(std::span{&halfword, 1}));
-			const auto fault = memory.last_fault();
-			tlb_.fault_address = fault.address;
-			tlb_.fault_access = ::uml::memory::translated_access(
-				fault.access);
-			return ::uml::cpu::EngineEvent::memory_fault;
+			return fetch_fault(tlb_, memory);
 		}
 		const auto sweeps = cache_diagnostics_.link_sweeps;
 		selected.emplace(programs_->store_validated(key, output.result,
@@ -3534,10 +3529,7 @@ private:
 	const auto address = arm64::aarch32::key_pc(key);
 	const auto count = fetch_units(memory, address, unit, bytes);
 	if (count == 0) {
-		const auto fault = memory.last_fault();
-		tlb_.fault_address = fault.address;
-		tlb_.fault_access = ::uml::memory::translated_access(fault.access);
-		return ::uml::cpu::EngineEvent::memory_fault;
+		return fetch_fault(tlb_, memory);
 	}
 	const auto output = arm64::gadgets::a32::build(
 		{.key = key, .code = bytes.first(count * unit),
@@ -3549,10 +3541,7 @@ private:
 		std::uint16_t halfword = 0;
 		(void)memory.fetch(address + count * unit,
 			std::as_writable_bytes(std::span{&halfword, 1}));
-		const auto fault = memory.last_fault();
-		tlb_.fault_address = fault.address;
-		tlb_.fault_access = ::uml::memory::translated_access(fault.access);
-		return ::uml::cpu::EngineEvent::memory_fault;
+		return fetch_fault(tlb_, memory);
 	}
 	const auto &built = output.result;
 	if (built.program.instruction_count() == 0) {
@@ -3673,10 +3662,7 @@ private:
 	std::uint32_t instruction = 0;
 	auto encoded = std::as_writable_bytes(std::span{&instruction, 1});
 	if (!memory.fetch(cpu.pc, encoded)) {
-		const auto fault = memory.last_fault();
-		tlb_.fault_address = fault.address;
-		tlb_.fault_access = ::uml::memory::translated_access(fault.access);
-		return ::uml::cpu::EngineEvent::memory_fault;
+		return fetch_fault(tlb_, memory);
 	}
 
 	auto options = build_options_;
