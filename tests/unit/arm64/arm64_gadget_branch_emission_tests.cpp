@@ -3,7 +3,7 @@
  * selection tables name, its operand, and the two edges as block links or as
  * guest addresses. Covers the fused CMP + B.cond pairs, CBZ, CBNZ, TBZ, TBNZ
  * and B.cond, each linked, unlinked and with the inline suffix table full, and
- * the conditional branches on XZR that fold to an unconditional transfer. */
+ * the branches on XZR that fold to an unconditional transfer. */
 #include "arm64_base_control_test_support.hpp"
 
 #include "cpu/arm64/gadgets/gadget_selection_api.hpp"
@@ -12,7 +12,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <span>
+#include <utility>
 #include <vector>
 
 extern "C" void uml_arm64_gadget_branch_always();
@@ -25,13 +25,28 @@ namespace gadgets = arm64::gadgets;
 namespace selection = gadgets::selection;
 
 constexpr auto base = engine_test_code_base;
-constexpr std::size_t inline_suffix_slots = gadgets::InlineSuffixes::capacity;
 constexpr std::uint32_t nop = 0xd503'201fU;
-constexpr std::int64_t displacement = 0x40;
-/* Conditions 14 and 15 (AL, NV) have no inline or fused entry. */
+constexpr std::size_t inline_suffix_slots = gadgets::InlineSuffixes::capacity;
+/* The always forms, conditions 14 and 15, have no inline or fused entry. */
 constexpr unsigned selectable_conditions = 14;
 
-/* The block link the builder names for each guest address. */
+/* Byte displacements of the 19-bit and the 14-bit branch immediates: a short
+ * branch forward and backward, then each extreme of the field. */
+constexpr std::array<std::int64_t, 4> long_displacements{
+	0x40, -0x20, 0xffffc, -0x100000};
+constexpr std::array<std::int64_t, 4> short_displacements{
+	0x40, -0x20, 0x7ffc, -0x8000};
+
+/* The guest address `displacement` bytes from the instruction at `index`. */
+[[nodiscard]] constexpr std::uint64_t at(
+	std::size_t index, std::int64_t displacement = 0)
+{
+	return base + 4U * index + static_cast<std::uint64_t>(displacement);
+}
+
+/* The block link the builder names for each guest address. Targets are far
+ * apart, so cells repeat, but one branch's target and fall-through never
+ * share one. */
 class Cells final {
 public:
 	[[nodiscard]] gadgets::Builder::LinkResolver resolver()
@@ -47,9 +62,8 @@ public:
 private:
 	[[nodiscard]] static std::size_t index(std::uint64_t pc)
 	{
-		const auto cell = (pc - base) / sizeof(std::uint32_t);
-		require(cell < 1024U, "branch target outside the test's cells");
-		return static_cast<std::size_t>(cell);
+		return static_cast<std::size_t>(
+			((pc - base) / sizeof(std::uint32_t)) % 1024U);
 	}
 
 	std::array<gadgets::BlockLink, 1024> cells_{};
@@ -73,21 +87,22 @@ private:
 	return offsetof(arm64::CpuState, registers) + index * 8U;
 }
 
-/* CMP Xn/Wn, #imm12 {, LSL #12} and CMP Xn/Wm, Xm/Wm. */
+/* CMP Xn/Wn, #imm12 {, LSL #12} and CMP Xn/Wn, Xm/Wm. */
 [[nodiscard]] constexpr std::uint32_t compare_immediate(
 	bool wide, unsigned source, unsigned immediate, bool shifted)
 {
-	return (wide ? 0xf100'001fU : 0x7100'001fU) | (shifted ? 0x0040'0000U : 0U) |
-		(immediate << 10) | (source << 5);
+	return (wide ? 0xf100'001fU : 0x7100'001fU) |
+		(shifted ? 0x0040'0000U : 0U) | (immediate << 10) | (source << 5);
 }
 
 [[nodiscard]] constexpr std::uint32_t compare_register(
 	bool wide, unsigned left, unsigned right)
 {
-	return (wide ? 0xeb00'001fU : 0x6b00'001fU) | (right << 16) | (left << 5);
+	return (wide ? 0xeb00'001fU : 0x6b00'001fU) | (right << 16) |
+		(left << 5);
 }
 
-/* The operand words of the compares above, as the fused entries read them. */
+/* The operands of the compares above, as the fused entries read them. */
 [[nodiscard]] constexpr std::uintptr_t immediate_operand(
 	unsigned source, std::uintptr_t immediate)
 {
@@ -98,29 +113,29 @@ private:
 	unsigned left, unsigned right)
 {
 	return offsetof(arm64::CpuState, sp) |
-		(std::uintptr_t{left * 8U} << 16) | (std::uintptr_t{right * 8U} << 32);
+		(std::uintptr_t{left * 8U} << 16) |
+		(std::uintptr_t{right * 8U} << 32);
 }
 
-/* Sixty-four conditional branches take every slot of the inline suffix table,
- * so the next conditional branch ends the block instead. */
+/* Sixty-four CBZ take every slot of the inline suffix table, three stream
+ * words each, so the next conditional branch ends the block. */
 [[nodiscard]] std::vector<std::uint32_t> full_table()
 {
 	return std::vector<std::uint32_t>(inline_suffix_slots,
 		encode_compare_branch(true, false, 8, 1));
 }
 
-/* The stream after the table's 64 inline CBZ, three words each. */
 constexpr std::size_t full_table_words = 3U * inline_suffix_slots;
 
-void unlinked_fused_pairs()
+void unlinked_fused_pairs(std::int64_t displacement)
 {
 	for (const bool wide : {false, true})
 		for (unsigned condition = 0; condition < selectable_conditions;
 		     ++condition) {
 			const auto branch = encode_conditional_branch(
 				false, condition, displacement);
-			const auto target = base + 4 + displacement;
-			const auto fallthrough = base + 8;
+			const auto target = at(1, displacement);
+			const auto fallthrough = at(2);
 			for (const bool shifted : {false, true}) {
 				const auto built = build({compare_immediate(
 					wide, 3, 5, shifted), branch, nop}, nullptr);
@@ -152,16 +167,15 @@ void unlinked_fused_pairs()
 		}
 }
 
-void linked_fused_pairs_inline_their_fall_through()
+void linked_fused_pairs_inline_their_fall_through(std::int64_t displacement)
 {
 	for (const bool wide : {false, true})
 		for (unsigned condition = 0; condition < selectable_conditions;
 		     ++condition) {
 			const auto branch = encode_conditional_branch(
 				false, condition, displacement);
-			const auto target = base + 4 + displacement;
-			Cells cells;
 			/* The two instructions behind the pair are the suffix. */
+			Cells cells;
 			auto built = build({compare_immediate(wide, 3, 5, false),
 				branch, nop, nop}, &cells);
 			auto words = built.program.words();
@@ -171,12 +185,11 @@ void linked_fused_pairs_inline_their_fall_through()
 					compare_immediate_branch_inline_gadget(
 						wide, condition)) &&
 					words[1] == (immediate_operand(3, 5) | (2ULL << 40)) &&
-					words[2] == cells.word(target),
+					words[2] == cells.word(at(1, displacement)),
 				"linked CMP immediate + B.cond inline fields changed");
 
-			Cells register_cells;
 			built = build({compare_register(wide, 3, 4), branch, nop, nop},
-				&register_cells);
+				&cells);
 			words = built.program.words();
 			require(built.complete && built.program.instruction_count() == 4U,
 				"linked CMP register + B.cond did not translate the block");
@@ -184,27 +197,24 @@ void linked_fused_pairs_inline_their_fall_through()
 					compare_register_branch_inline_gadget(
 						wide, condition)) &&
 					words[1] == (register_operand(3, 4) | (2ULL << 48)) &&
-					words[2] == register_cells.word(target),
+					words[2] == cells.word(at(1, displacement)),
 				"linked CMP register + B.cond inline fields changed");
 		}
 }
 
-void a_full_suffix_table_ends_the_block_at_a_fused_pair()
+void a_full_suffix_table_ends_the_block_at_a_fused_pair(
+	std::int64_t displacement)
 {
 	for (const bool wide : {false, true})
 		for (unsigned condition = 0; condition < selectable_conditions;
-		     ++condition) {
-			const auto branch = encode_conditional_branch(
-				false, condition, displacement);
-			const auto target = base + 4 * (inline_suffix_slots + 1) +
-				displacement;
-			const auto fallthrough = base + 4 * (inline_suffix_slots + 2);
+		     ++condition)
 			for (const bool immediate : {false, true}) {
 				auto block = full_table();
 				block.push_back(immediate ?
 					compare_immediate(wide, 3, 5, false) :
 					compare_register(wide, 3, 4));
-				block.push_back(branch);
+				block.push_back(encode_conditional_branch(
+					false, condition, displacement));
 				block.push_back(nop);
 				Cells cells;
 				const auto built = build(block, &cells);
@@ -222,20 +232,18 @@ void a_full_suffix_table_ends_the_block_at_a_fused_pair()
 						words[full_table_words + 1] == (immediate ?
 							immediate_operand(3, 5) :
 							register_operand(3, 4)) &&
-						words[full_table_words + 2] ==
-							cells.word(target) &&
-						words[full_table_words + 3] ==
-							cells.word(fallthrough),
+						words[full_table_words + 2] == cells.word(at(
+							inline_suffix_slots + 1, displacement)) &&
+						words[full_table_words + 3] == cells.word(
+							at(inline_suffix_slots + 2)),
 					"the terminal fused pair fields changed");
 			}
-		}
 }
 
-void linked_compare_and_test_branches()
+void linked_compare_branches(std::int64_t displacement)
 {
 	for (const bool wide : {false, true})
 		for (const bool nonzero : {false, true}) {
-			const auto target = base + displacement;
 			Cells cells;
 			auto built = build({encode_compare_branch(
 				wide, nonzero, displacement, 7), nop, nop}, &cells);
@@ -245,15 +253,13 @@ void linked_compare_and_test_branches()
 			require(words[0] == entry(selection::compare_branch_inline_gadget(
 					wide, nonzero)) &&
 					words[1] == (register_offset(7) | (2ULL << 16)) &&
-					words[2] == cells.word(target),
+					words[2] == cells.word(at(0, displacement)),
 				"linked compare branch inline fields changed");
 
 			auto block = full_table();
-			block.push_back(encode_compare_branch(wide, nonzero, displacement, 7));
-			const auto full_target = base + 4 * inline_suffix_slots +
-				displacement;
-			Cells full_cells;
-			built = build(block, &full_cells);
+			block.push_back(encode_compare_branch(
+				wide, nonzero, displacement, 7));
+			built = build(block, &cells);
 			words = built.program.words();
 			require(built.complete && words.size() == full_table_words + 4U &&
 					built.program.instruction_count() ==
@@ -262,16 +268,18 @@ void linked_compare_and_test_branches()
 			require(words[full_table_words] == entry(selection::
 					compare_branch_gadget(wide, nonzero, true)) &&
 					words[full_table_words + 1] == register_offset(7) &&
-					words[full_table_words + 2] ==
-						full_cells.word(full_target) &&
-					words[full_table_words + 3] ==
-						full_cells.word(base + 4 * (inline_suffix_slots + 1)),
+					words[full_table_words + 2] == cells.word(at(
+						inline_suffix_slots, displacement)) &&
+					words[full_table_words + 3] == cells.word(
+						at(inline_suffix_slots + 1)),
 				"the terminal compare branch fields changed");
 		}
+}
 
+void linked_test_branches(std::int64_t displacement)
+{
 	for (const bool nonzero : {false, true})
 		for (const unsigned bit : {0U, 31U, 32U, 63U}) {
-			const auto target = base + displacement;
 			Cells cells;
 			auto built = build({encode_test_branch(
 				nonzero, bit, displacement, 11), nop, nop}, &cells);
@@ -282,15 +290,13 @@ void linked_compare_and_test_branches()
 					nonzero)) &&
 					words[1] == (bit | (register_offset(11) << 16) |
 						(2ULL << 32)) &&
-					words[2] == cells.word(target),
+					words[2] == cells.word(at(0, displacement)),
 				"linked test branch inline fields changed");
 
 			auto block = full_table();
-			block.push_back(encode_test_branch(nonzero, bit, displacement, 11));
-			const auto full_target = base + 4 * inline_suffix_slots +
-				displacement;
-			Cells full_cells;
-			built = build(block, &full_cells);
+			block.push_back(encode_test_branch(
+				nonzero, bit, displacement, 11));
+			built = build(block, &cells);
 			words = built.program.words();
 			require(built.complete && words.size() == full_table_words + 4U,
 				"a full table did not end the block at a test branch");
@@ -298,20 +304,19 @@ void linked_compare_and_test_branches()
 					test_bit_branch_gadget(nonzero, true)) &&
 					words[full_table_words + 1] ==
 						(bit | (register_offset(11) << 16)) &&
-					words[full_table_words + 2] ==
-						full_cells.word(full_target) &&
-					words[full_table_words + 3] ==
-						full_cells.word(base + 4 * (inline_suffix_slots + 1)),
+					words[full_table_words + 2] == cells.word(at(
+						inline_suffix_slots, displacement)) &&
+					words[full_table_words + 3] == cells.word(
+						at(inline_suffix_slots + 1)),
 				"the terminal test branch fields changed");
 		}
 }
 
-void linked_conditional_branches()
+void linked_conditional_branches(std::int64_t displacement)
 {
 	for (unsigned condition = 0; condition < 16; ++condition) {
 		const auto branch = encode_conditional_branch(
 			false, condition, displacement);
-		const auto target = base + displacement;
 		Cells cells;
 		auto built = build({branch, nop, nop}, &cells);
 		auto words = built.program.words();
@@ -320,47 +325,49 @@ void linked_conditional_branches()
 				"linked B.cond did not translate the block");
 			require(words[0] == entry(selection::
 					conditional_branch_inline_gadget(condition)) &&
-					words[1] == cells.word(target) && words[2] == 2U,
+					words[1] == cells.word(at(0, displacement)) &&
+					words[2] == 2U,
 				"linked B.cond inline fields changed");
 		} else {
-			/* The always forms have no inline entry and end the block. */
 			require(built.complete && built.program.instruction_count() == 1U &&
 					words.size() == 3U,
 				"linked B.AL did not end the block");
 			require(words[0] == entry(selection::
 					conditional_branch_linked_gadget(condition)) &&
-					words[1] == cells.word(target) &&
-					words[2] == cells.word(base + 4),
+					words[1] == cells.word(at(0, displacement)) &&
+					words[2] == cells.word(at(1)),
 				"linked B.AL fields changed");
 		}
 
 		auto block = full_table();
 		block.push_back(branch);
-		const auto full_target = base + 4 * inline_suffix_slots + displacement;
-		Cells full_cells;
-		built = build(block, &full_cells);
+		built = build(block, &cells);
 		words = built.program.words();
 		require(built.complete && words.size() == full_table_words + 3U &&
 				built.program.instruction_count() == inline_suffix_slots + 1U,
 			"a full table did not end the block at B.cond");
 		require(words[full_table_words] == entry(selection::
 				conditional_branch_linked_gadget(condition)) &&
-				words[full_table_words + 1] == full_cells.word(full_target) &&
-				words[full_table_words + 2] ==
-					full_cells.word(base + 4 * (inline_suffix_slots + 1)),
+				words[full_table_words + 1] == cells.word(
+					at(inline_suffix_slots, displacement)) &&
+				words[full_table_words + 2] == cells.word(
+					at(inline_suffix_slots + 1)),
 			"the terminal B.cond fields changed");
 	}
 }
 
-void linked_branches_on_xzr_are_unconditional()
+void branches_on_xzr_are_unconditional(
+	std::int64_t displacement, std::int64_t test_displacement)
 {
-	for (const bool nonzero : {false, true}) {
-		/* XZR is zero: CBZ and TBZ always branch, CBNZ and TBNZ never. */
-		const auto target = base + displacement;
-		const auto selected = nonzero ? base + 4 : target;
-		for (const auto instruction : {
-			     encode_compare_branch(true, nonzero, displacement, 31),
-			     encode_test_branch(nonzero, 63, displacement, 31)}) {
+	/* XZR is zero: CBZ and TBZ always branch, CBNZ and TBNZ never. */
+	for (const bool nonzero : {false, true})
+		for (const auto &[instruction, selected] : {
+			     std::pair{encode_compare_branch(
+				     true, nonzero, displacement, 31),
+				     nonzero ? at(1) : at(0, displacement)},
+			     std::pair{encode_test_branch(
+				     nonzero, 63, test_displacement, 31),
+				     nonzero ? at(1) : at(0, test_displacement)}}) {
 			Cells cells;
 			const auto built = build({instruction, nop}, &cells);
 			const auto words = built.program.words();
@@ -378,7 +385,6 @@ void linked_branches_on_xzr_are_unconditional()
 					unlinked.program.words()[1] == selected,
 				"an unlinked branch on XZR was not one unconditional address");
 		}
-	}
 }
 
 } // namespace
@@ -387,11 +393,16 @@ void linked_branches_on_xzr_are_unconditional()
 int main()
 {
 	using namespace uml::emulator::tests::base_control;
-	unlinked_fused_pairs();
-	linked_fused_pairs_inline_their_fall_through();
-	a_full_suffix_table_ends_the_block_at_a_fused_pair();
-	linked_compare_and_test_branches();
-	linked_conditional_branches();
-	linked_branches_on_xzr_are_unconditional();
+	for (std::size_t i = 0; i < long_displacements.size(); ++i) {
+		const auto displacement = long_displacements[i];
+		unlinked_fused_pairs(displacement);
+		linked_fused_pairs_inline_their_fall_through(displacement);
+		a_full_suffix_table_ends_the_block_at_a_fused_pair(displacement);
+		linked_compare_branches(displacement);
+		linked_conditional_branches(displacement);
+		linked_test_branches(short_displacements[i]);
+		branches_on_xzr_are_unconditional(displacement,
+			short_displacements[i]);
+	}
 	return 0;
 }
