@@ -42,6 +42,40 @@ function(uml_add_guest_payload OUTPUT_VARIABLE NAME SOURCE)
     set(${OUTPUT_VARIABLE} "${_output}" PARENT_SCOPE)
 endfunction()
 
+# uml_add_freestanding_cxx_payload(<var> <name> <source> COMMENT <text>
+#     [ARCH_OPTIONS <flag>...] [NO_PIC])
+#
+# uml_add_guest_payload for a freestanding C++20 probe: warning-clean at -O2
+# without exceptions, RTTI, a stack protector or unwind tables, and stripped.
+# ARCH_OPTIONS carries the -march group the probe needs.
+function(uml_add_freestanding_cxx_payload OUTPUT_VARIABLE NAME SOURCE)
+    cmake_parse_arguments(PARSE_ARGV 3 _cxx "NO_PIC" "COMMENT"
+        "ARCH_OPTIONS")
+    set(_no_pic)
+    if(_cxx_NO_PIC)
+        set(_no_pic -fno-pic)
+    endif()
+    uml_add_guest_payload(${OUTPUT_VARIABLE} ${NAME} ${SOURCE}
+        COMMENT "${_cxx_COMMENT}"
+        COMPILE_OPTIONS
+            -std=c++20
+            -O2
+            -Wall
+            -Wextra
+            -Werror
+            ${_cxx_ARCH_OPTIONS}
+            -ffreestanding
+            -fno-exceptions
+            -fno-rtti
+            -fno-stack-protector
+            -fno-asynchronous-unwind-tables
+            ${_no_pic}
+        LINK_OPTIONS
+            -Wl,-z,max-page-size=16384
+            -Wl,-s)
+    set(${OUTPUT_VARIABLE} "${${OUTPUT_VARIABLE}}" PARENT_SCOPE)
+endfunction()
+
 option(UML_TEST_APPLE_AUDIO "Qualify the real Apple audio output with a short stereo tone" OFF)
 if(UML_TEST_APPLE_AUDIO)
     add_subdirectory(audio)
@@ -504,25 +538,11 @@ uml_add_guest_integration_test(
 # from both sides. On the 4 KiB profile an alias that is not whole groups of
 # four pages is a private copy of its frames, and a ring in the application's
 # scattered pages cannot be shared and is refused.
-uml_add_guest_payload(UML_GUEST_SHARED_MEMORY_PROBE guest-shared-memory-probe
+uml_add_freestanding_cxx_payload(UML_GUEST_SHARED_MEMORY_PROBE
+    guest-shared-memory-probe
     kernel/shared_memory_probe.cpp
     COMMENT "Building the freestanding arm64 kernel/user shared-memory probe"
-    COMPILE_OPTIONS
-        -std=c++20
-        -O2
-        -Wall
-        -Wextra
-        -Werror
-        -march=armv8.1-a
-        -mno-outline-atomics
-        -ffreestanding
-        -fno-exceptions
-        -fno-rtti
-        -fno-stack-protector
-        -fno-asynchronous-unwind-tables
-    LINK_OPTIONS
-        -Wl,-z,max-page-size=16384
-        -Wl,-s)
+    ARCH_OPTIONS -march=armv8.1-a -mno-outline-atomics)
 
 uml_add_guest_integration_test(
     NAME guest-kernel-user-shared-memory
@@ -560,25 +580,11 @@ uml_add_integration_test(
 # it reaches only memory the driver kept for it, and an open that fails after
 # the device made its stream destroys that stream. The device is the
 # production one behind a test-only shim that answers late.
-uml_add_guest_payload(UML_GUEST_VIDEO_LATE_ANSWER_INIT
+uml_add_freestanding_cxx_payload(UML_GUEST_VIDEO_LATE_ANSWER_INIT
     guest-video-late-answer-init
     video/video_late_answer_init.cpp
     COMMENT "Building the freestanding arm64 init of the late video answer test"
-    COMPILE_OPTIONS
-        -std=c++20
-        -O2
-        -Wall
-        -Wextra
-        -Werror
-        -march=armv8-a
-        -ffreestanding
-        -fno-exceptions
-        -fno-rtti
-        -fno-stack-protector
-        -fno-asynchronous-unwind-tables
-    LINK_OPTIONS
-        -Wl,-z,max-page-size=16384
-        -Wl,-s)
+    ARCH_OPTIONS -march=armv8-a)
 add_executable(uml_video_late_answer_tests video/video_late_answer_tests.cpp)
 target_link_libraries(uml_video_late_answer_tests PRIVATE
     UML::BootInitramfs
@@ -607,25 +613,11 @@ uml_add_integration_test(
 # Configuration reads and in-band kicks that several vCPUs start at once on
 # one vhost-user socket each keep their own reply: a console that keeps
 # resizing, and answers late, stays bound while every vCPU writes to it.
-uml_add_guest_payload(UML_GUEST_VHOST_USER_ROUND_TRIPS_INIT
+uml_add_freestanding_cxx_payload(UML_GUEST_VHOST_USER_ROUND_TRIPS_INIT
     guest-vhost-user-round-trips-init
     kernel/vhost_user_round_trips_init.cpp
     COMMENT "Building the freestanding arm64 init of the vhost-user round-trip test"
-    COMPILE_OPTIONS
-        -std=c++20
-        -O2
-        -Wall
-        -Wextra
-        -Werror
-        -march=armv8-a
-        -ffreestanding
-        -fno-exceptions
-        -fno-rtti
-        -fno-stack-protector
-        -fno-asynchronous-unwind-tables
-    LINK_OPTIONS
-        -Wl,-z,max-page-size=16384
-        -Wl,-s)
+    ARCH_OPTIONS -march=armv8-a)
 add_executable(uml_vhost_user_round_trips_tests
     kernel/vhost_user_round_trips_tests.cpp)
 target_link_libraries(uml_vhost_user_round_trips_tests PRIVATE
@@ -667,45 +659,16 @@ uml_add_guest_payload(UML_GUEST_SHARED_MMAP_STRESS guest-shared-mmap-stress
     smp/guest_shared_mmap_stress.S
     COMMENT "Building the freestanding arm64 shared-MM guest stress binary")
 
-uml_add_guest_payload(UML_GUEST_FORK_COW_COHERENCE guest-fork-cow-coherence
+uml_add_freestanding_cxx_payload(UML_GUEST_FORK_COW_COHERENCE
+    guest-fork-cow-coherence
     smp/guest_fork_cow_coherence.cpp
     COMMENT "Building the freestanding arm64 fork copy-on-write guest stress binary"
-    COMPILE_OPTIONS
-        -std=c++20
-        -O2
-        -Wall
-        -Wextra
-        -Werror
-        -march=armv8.1-a
-        -mno-outline-atomics
-        -ffreestanding
-        -fno-exceptions
-        -fno-rtti
-        -fno-stack-protector
-        -fno-asynchronous-unwind-tables
-    LINK_OPTIONS
-        -Wl,-z,max-page-size=16384
-        -Wl,-s)
+    ARCH_OPTIONS -march=armv8.1-a -mno-outline-atomics)
 
-uml_add_guest_payload(UML_GUEST_CODE_CHANGE guest-code-change
+uml_add_freestanding_cxx_payload(UML_GUEST_CODE_CHANGE guest-code-change
     smp/guest_code_change.cpp
     COMMENT "Building the freestanding arm64 guest code-change probe"
-    COMPILE_OPTIONS
-        -std=c++20
-        -O2
-        -Wall
-        -Wextra
-        -Werror
-        -march=armv8.1-a
-        -mno-outline-atomics
-        -ffreestanding
-        -fno-exceptions
-        -fno-rtti
-        -fno-stack-protector
-        -fno-asynchronous-unwind-tables
-    LINK_OPTIONS
-        -Wl,-z,max-page-size=16384
-        -Wl,-s)
+    ARCH_OPTIONS -march=armv8.1-a -mno-outline-atomics)
 
 # Code changed by stores, protection, fork, remapping and the address space's
 # other vCPUs, on each engine.
