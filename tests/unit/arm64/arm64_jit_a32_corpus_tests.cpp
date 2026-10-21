@@ -357,23 +357,20 @@ Attempt check(Machine &machine, const Case &test) {
   return {};
 }
 
-/* Whether the JIT's level implements every instruction of the program, and
- * its own profile accepts each: an encoding the oracle executes but the JIT's
- * profile leaves out (the extensions this host lacks, such as BF16 and I8MM on
- * the M1 Ultra: the guest is shown none of them and the JIT treats them as
+/* Whether the JIT's own profile accepts every instruction of the program that
+ * the oracle executes: an encoding the oracle executes but the JIT's profile
+ * leaves out (the extensions this host lacks, such as BF16 and I8MM on the M1
+ * Ultra: the guest is shown none of them and the JIT treats them as
  * UNDEFINED) is not the JIT's to run. */
-bool within_level(const Case &test, const dec::Profile &profile) {
-  bool within = true;
+bool jit_accepts(const Case &test, const dec::Profile &profile) {
+  bool accepted = true;
   for_each_instruction(test, profile, [&](const ProgramStep &step) {
-    const auto &instruction = step.instruction;
-    within = !instruction.legal() ||
-             (static_cast<int>(instruction.info().level) <=
-                  static_cast<int>(::uml::cpu::arm64::jit::a32::a32_level()) &&
-              step.decode_at(::uml::cpu::arm64::jit::a32::decode_profile())
-                  .legal());
-    return within;
+    accepted = !step.instruction.legal() ||
+               step.decode_at(::uml::cpu::arm64::jit::a32::decode_profile())
+                   .legal();
+    return accepted;
   });
-  return within;
+  return accepted;
 }
 
 /* The compiler classifies every vector form the simd level has, so that none
@@ -433,7 +430,7 @@ std::map<std::string, ExitTally> measure_helper_exits(
     if ((record.profiles & kProfileBit) == 0)
       continue;
     for (const auto &test : record.cases) {
-      if (test.event != 0 || !within_level(test, profile))
+      if (test.event != 0 || !jit_accepts(test, profile))
         continue;
       const auto form = forms.find(test.form);
       require(form != forms.end());
@@ -614,7 +611,7 @@ int main(int argc, char **argv) {
           continue;
         if (!only_form.empty() && !test.form.starts_with(only_form))
           continue;
-        if (!within_level(test, profile)) {
+        if (!jit_accepts(test, profile)) {
           ++totals.skipped;
           continue;
         }

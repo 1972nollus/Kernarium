@@ -1449,7 +1449,7 @@ aarch32::Profile decode_profile(const BuildOptions &options) noexcept
 {
 	/* The shared profile (a32_decode_profile): a form of a shown extension
 	 * that has no gadget is the semantic library's. */
-	return a32_decode_profile(options.host_capabilities, options.a32_level);
+	return a32_decode_profile(options.host_capabilities);
 }
 
 std::optional<std::size_t> thumb_position(

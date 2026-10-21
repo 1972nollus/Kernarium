@@ -56,9 +56,9 @@ uml_add_guest_integration_test(
 # The engine probe: a freestanding armhf program (engine_probe/) that the
 # AArch32 execution engines run as the guest's /init. Its C++ and assembly
 # objects are compiled with the configured compiler's ARM backend and linked
-# by link_elf32.py, because the toolchain has no ARM linker. Groups the engine
-# does not yet implement are skipped inside the probe from the HWCAP words it
-# sees, so one program serves every engine level. Every run counts SIGILLs.
+# by link_elf32.py, because the toolchain has no ARM linker. Groups that need
+# an extension the host lacks are skipped inside the probe from the HWCAP words
+# it sees, so one program serves every host. Every run counts SIGILLs.
 set(_uml_a32_probe_directory "${CMAKE_CURRENT_SOURCE_DIR}/engine_probe")
 set(_uml_a32_probe_objects "${CMAKE_CURRENT_BINARY_DIR}/engine_probe")
 set(_uml_a32_probe_header "${_uml_a32_probe_directory}/engine_probe.hpp")
@@ -149,16 +149,7 @@ add_custom_target(uml-guest-aarch32-engine-probe
         "${UML_GUEST_AARCH32_ENGINE_PROBE_4K}")
 add_dependencies(integration-test-binaries uml-guest-aarch32-engine-probe)
 
-# Test support only: reports how much of the AArch32 profile each engine
-# implements, as "gadgets=<level> jit=<level>".
-add_executable(uml-a32-engine-support a32_engine_support.cpp)
-target_include_directories(uml-a32-engine-support PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin)
-target_link_libraries(uml-a32-engine-support PRIVATE UML::CpuContract)
-add_dependencies(integration-test-binaries uml-a32-engine-support)
-
-# guest-aarch32-engine-<engine> runs the probe on an engine that implements
-# AArch32 and skips, naming the reason, on one that does not. The four-vCPU
+# guest-aarch32-engine-<engine> runs the probe on an engine. The four-vCPU
 # guest gives the exclusives real contention.
 foreach(_engine IN ITEMS gadgets jit)
     if(_engine STREQUAL "gadgets")
@@ -172,11 +163,8 @@ foreach(_engine IN ITEMS gadgets jit)
         ARGS --engine ${_engine}
             --probe ${UML_GUEST_AARCH32_ENGINE_PROBE}
             --probe-4k ${UML_GUEST_AARCH32_ENGINE_PROBE_4K}
-            --engine-support-tool $<TARGET_FILE:uml-a32-engine-support>
             --timeout ${_timeout}
         LABELS guest;aarch32;kernel;${_engine}
         TIMEOUT ${_timeout}
         CPUS 4)
-    set_tests_properties(guest-aarch32-engine-${_engine}
-        PROPERTIES SKIP_RETURN_CODE 77)
 endforeach()

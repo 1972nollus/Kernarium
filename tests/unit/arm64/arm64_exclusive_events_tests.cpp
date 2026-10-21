@@ -668,13 +668,9 @@ int main(int argc, char **argv)
 				static_cast<int>(engine.size()), engine.data());
 			continue;
 		}
-		const bool a32 = uml::cpu::engine_a32_support(kind) !=
-			arm64::A32Support::none;
 		unsigned cases = 0;
 		unsigned retried = 0;
 		for (const auto isa : {Isa::a64, Isa::a32, Isa::t32}) {
-			if (isa != Isa::a64 && !a32)
-				continue;
 			for (const auto width : {Width::single, Width::pair})
 				for (const auto between : {Between::nothing,
 					     Between::translated_branch,

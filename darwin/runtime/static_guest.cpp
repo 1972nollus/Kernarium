@@ -579,11 +579,8 @@ void debug_check_host_streaming_state() noexcept
 
 /* An AArch32 task's entry (runtime/aarch32_guest.hpp): the engine's
  * run_aarch32() between load_a32_cpu() and save_a32_cpu(). A task is entered
- * only while the run presents AArch32 -- its engine implements the profile
- * to at least the integer core, which is exactly when the compat HWCAPs are
- * not zero and the kernel runs an AArch32 task at all -- and only in a state
- * the kernel may hand over; anything else is a kernel invariant violation
- * and fatal.
+ * only in a state the kernel may hand over; anything else is a kernel
+ * invariant violation and fatal.
  *
  * Kept out of line and cold: an AArch64 entry reaches it only through the
  * one test of PSTATE.nRW in run_common_guest(). */
@@ -596,8 +593,7 @@ template<uml::cpu::EngineKind Kind>
 	::uml::runtime::ThreadExecutionState &runtime)
 {
 	namespace a32 = ::uml::runtime::aarch32;
-	if (::uml::runtime::guest_a32_support(Kind) < arm64::A32Support::base ||
-	    !a32::entry_is_valid(registers))
+	if (!a32::entry_is_valid(registers))
 		return DARWIN_UML_EVENT_FATAL;
 	auto *engine = common_engine<Kind>(runtime);
 	if (engine == nullptr)

@@ -19,7 +19,6 @@
 #include "require.hpp"
 #include "runtime_test_route.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -502,71 +501,33 @@ void exits_become_bridge_events()
 	require(event(exit_of(ExitReason::fatal)) == DARWIN_UML_EVENT_FATAL);
 }
 
-/* What the run presents is the engine's level, in one place, and the compat
- * HWCAPs and the entry follow it. */
-void the_presented_level_is_the_engine_level()
+void compat_hwcaps_follow_the_host()
 {
 	::uml::testing::RuntimeTestRoute route;
-	for (const auto kind : {EngineKind::gadgets, EngineKind::jit})
-		require(::uml::runtime::guest_a32_support(kind) ==
-			::uml::cpu::engine_a32_support(kind));
-	using ::uml::runtime::ExecutionEngine;
-	require(::uml::runtime::guest_a32_support(ExecutionEngine::gadgets) ==
-		::uml::runtime::guest_a32_support(EngineKind::gadgets));
-	require(::uml::runtime::guest_a32_support(ExecutionEngine::jit) ==
-		::uml::runtime::guest_a32_support(EngineKind::jit));
-	require(::uml::runtime::guest_a32_support(ExecutionEngine::automatic) ==
-		std::min(::uml::runtime::guest_a32_support(EngineKind::gadgets),
-			::uml::runtime::guest_a32_support(EngineKind::jit)));
-	require(::uml::runtime::current_guest_a32_support() ==
-		::uml::runtime::guest_a32_support(
-			::uml::runtime::current_context()->execution_engine()));
-}
-
-void compat_hwcaps_follow_the_presented_level()
-{
-	::uml::testing::RuntimeTestRoute route;
-	const auto level = ::uml::runtime::current_guest_a32_support();
 	const auto words = arm64::detail::guest_compat_hwcaps(
-		::uml::runtime::current_guest_host_capabilities(), level);
+		::uml::runtime::current_guest_host_capabilities());
 	require(darwin_uml_guest_compat_hwcap() == words[0]);
 	require(darwin_uml_guest_compat_hwcap2() == words[1]);
 	/* A non-zero word is the single source of truth that this run executes
-	 * AArch32, and zero is that it does not. */
-	require((darwin_uml_guest_compat_hwcap() != 0) ==
-		(level >= arm64::A32Support::base));
-	if (level < arm64::A32Support::base) {
-		require(darwin_uml_guest_compat_hwcap() == 0 &&
-			darwin_uml_guest_compat_hwcap2() == 0,
-			"a compat HWCAP is set while no engine runs AArch32");
-	} else {
-		/* Every run that presents AArch32 sets the words arm64 Linux
-		 * sets for any 32-bit task, and no more than the level has. */
-		require((darwin_uml_guest_compat_hwcap() &
-			arm64::detail::a32_default_hwcap) ==
-			arm64::detail::a32_default_hwcap);
-		const bool simd = level >= arm64::A32Support::simd;
-		require(((darwin_uml_guest_compat_hwcap() &
-			arm64::detail::a32_hwcap_neon) != 0) == simd,
-			"NEON is advertised exactly from the simd level");
-		if (level < arm64::A32Support::complete)
-			require(darwin_uml_guest_compat_hwcap2() == 0,
-				"a crypto or CRC32 bit below the complete level");
-	}
+	 * AArch32: every run sets the words arm64 Linux sets for any 32-bit
+	 * task, and NEON. */
+	require((darwin_uml_guest_compat_hwcap() &
+		arm64::detail::a32_default_hwcap) ==
+		arm64::detail::a32_default_hwcap);
+	require((darwin_uml_guest_compat_hwcap() &
+		arm64::detail::a32_hwcap_neon) != 0);
 	/* The 64-bit words are untouched by any of it. */
 	require(darwin_uml_guest_hwcap() ==
 		arm64::detail::guest_hwcaps(
 			::uml::runtime::current_guest_host_capabilities())[0]);
 }
 
-/* A valid state is entered in an engine only where the run presents AArch32;
- * everywhere else, and for every state the kernel may not hand over, the
- * entry is fatal and changes nothing. */
+/* A valid state is entered in the engine; every state the kernel may not
+ * hand over is fatal. */
 template<typename Enter>
-void entries_follow_the_level(Enter enter, EngineKind kind, unsigned long generation)
+void entries_follow_the_kernel_contract(Enter enter, unsigned long generation)
 {
 	::uml::testing::RuntimeTestRoute route;
-	const auto level = ::uml::runtime::guest_a32_support(kind);
 	Random random{5};
 
 	for (const bool thumb : {false, true}) {
@@ -574,8 +535,6 @@ void entries_follow_the_level(Enter enter, EngineKind kind, unsigned long genera
 		registers.pc = 0x0070'0000U | (thumb ? 0U : 0U);
 		registers.pstate &= ~(ss_bit | a32::psr_it);
 		GuestFpTail fp = sample_fp(random);
-		const auto before = registers;
-		const auto fp_before = fp;
 		unsigned long tls = 0x77;
 		/* A generation is never reused: an engine may cache the context it
 		 * built for one, so the Thumb entry gets its own. */
@@ -584,25 +543,17 @@ void entries_follow_the_level(Enter enter, EngineKind kind, unsigned long genera
 		const int event = enter(&registers, &fp, sizeof(fp),
 			entry_generation, &tls);
 		require(darwin_uml_static_vm_destroy(entry_generation) == 0);
-		if (level < arm64::A32Support::base) {
-			require(event == DARWIN_UML_EVENT_FATAL,
-				"an AArch32 entry ran with no engine that runs it");
-			require(std::memcmp(&registers, &before, sizeof(registers)) == 0 &&
-				std::memcmp(&fp, &fp_before, sizeof(fp)) == 0 && tls == 0x77,
-				"a refused AArch32 entry changed the state");
-		} else {
-			/* Nothing is mapped, so the first fetch faults at the PC. */
-			require(event == DARWIN_UML_EVENT_FAULT,
-				"an AArch32 entry at an unmapped PC did not fault");
-			require(registers.fault.address == 0x0070'0000U &&
-				registers.fault.error_code == DARWIN_UML_FAULT_EXECUTE &&
-				registers.pc == 0x0070'0000U);
-			require(((registers.pstate & a32::psr_t) != 0) == thumb &&
-				(registers.pstate & a32::psr_mode_mask) == a32::psr_mode_user);
-		}
+		/* Nothing is mapped, so the first fetch faults at the PC. */
+		require(event == DARWIN_UML_EVENT_FAULT,
+			"an AArch32 entry at an unmapped PC did not fault");
+		require(registers.fault.address == 0x0070'0000U &&
+			registers.fault.error_code == DARWIN_UML_FAULT_EXECUTE &&
+			registers.pc == 0x0070'0000U);
+		require(((registers.pstate & a32::psr_t) != 0) == thumb &&
+			(registers.pstate & a32::psr_mode_mask) == a32::psr_mode_user);
 	}
 
-	/* An invalid state is fatal at every level. */
+	/* An invalid state is fatal. */
 	auto registers = sample_registers(random, false);
 	registers.pstate |= a32::psr_e;
 	GuestFpTail fp = sample_fp(random);
@@ -625,13 +576,10 @@ int main()
 	load_then_save_is_the_identity();
 	only_valid_entries_are_accepted();
 	exits_become_bridge_events();
-	the_presented_level_is_the_engine_level();
-	compat_hwcaps_follow_the_presented_level();
-	entries_follow_the_level(darwin_uml_static_enter_guest,
-		EngineKind::gadgets, 810);
+	compat_hwcaps_follow_the_host();
+	entries_follow_the_kernel_contract(darwin_uml_static_enter_guest, 810);
 	if (::uml::cpu::cpu_engine_available(EngineKind::jit))
-		entries_follow_the_level(darwin_uml_jit_enter_guest,
-			EngineKind::jit, 812);
+		entries_follow_the_kernel_contract(darwin_uml_jit_enter_guest, 812);
 	std::puts("arm64-a32-host passed");
 	return 0;
 }

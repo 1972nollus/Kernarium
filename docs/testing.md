@@ -891,11 +891,8 @@ streaming record), and undefined SVE instructions.
 ## Guest AArch32 foundation
 
 `arm64-a32-foundation` checks the state `CpuState` appends and its assembly
-offsets, the engines' support levels, the AArch32 identification registers and
-compat HWCAP words at each level over every subset of the host features they
-follow,
-and that an engine below `base` takes the AArch32 entry as the
-illegal-instruction exit without changing the state. `arm64-a32-guest-key` checks the tagged
+offsets, and the AArch32 identification registers and compat HWCAP words over
+every subset of the host features they follow. `arm64-a32-guest-key` checks the tagged
 translation keys (round trips, interworking, that no key collides with an A64
 key, the empty cell or a fault position, and the hash-visible bit) and the
 key-aware validation of saved guest units across page boundaries. `arm64-jit-shared-translation-cache` also checks that the
@@ -920,8 +917,7 @@ flags and environment left checked against the host's own instruction under
 the matching FPCR, that no gadget writes the callee-saved halves of V8-V15
 (the corpus runner checks them around every case), that every writeback of a
 VLD1 or VST1 copy moves the bytes and the base inside a page and across one,
-that a VFP word is illegal when the engine translates at the base
-level, and that at the complete level a form of an extension (CRC32, AES,
+and that a form of an extension (CRC32, AES,
 SHA-1, PMULL, FP16, DotProd, RDM, FCMA, FHM, BF16, I8MM, JSCVT) executes on a
 host that has it, as a gadget or in the semantic library, and is the
 illegal-instruction exit, not retired, on one that does not (the test builds
@@ -929,19 +925,16 @@ one guest on the machine's capabilities and one on a host with none of the
 optional ones). `arm64-gadget-a32-forms` runs every
 stored sample word of the decoder's data and the whole 16-bit Thumb space and
 requires the engine to raise the illegal-instruction exit exactly where the
-decoder, at the engine's level, rejects the word. Both also hold the
+decoder, against the engine's profile, rejects the word. Both also hold the
 library-exit count gate: with the semantic library's exit counters on from a
 clean state, only a form the engine leaves to the library, or a block transfer
 that crossed a page, may reach it, and the forms the engine leaves to it do.
 `arm64-gadget-a32-corpus`
-runs the cases of the AArch32 corpus whose instructions the engine's level
-implements in the oracle's memory map and compares the signal or system call,
+runs the cases of the AArch32 corpus whose instructions the engine decodes in
+the oracle's memory map and compares the signal or system call,
 the instruction and address it was raised at, the registers, flags, Q, GE,
 D0-D31, FPSCR, the data region and the retired count (a case whose forms need an
-extension the host lacks, BF16 and I8MM on the M1 Ultra, is skipped);
-`--level` runs the
-cases of another level with the engine translating at it, which is how a
-level is brought up before the engine's own moves. The `unaligned` and
+extension the host lacks, BF16 and I8MM on the M1 Ultra, is skipped). The `unaligned` and
 `fpscr-reserved` suites are recorded from hardware (a Raspberry Pi 4), as the
 corpus README describes. A store-exclusive may fail
 without cause, and the gadgets' fails whenever a host interrupt lands between
@@ -962,7 +955,7 @@ every field around an engine's AArch32 entry (key, flags, GE, IT, FPSCR
 split, TPIDR registers, CP15BEN; load then save is the identity over random
 states in both Thumb and ARM state), which entries the kernel may hand over,
 the bridge event of every exit, and that the compat HWCAPs and the guest entry
-points follow the level the run presents. An entry at an unmapped PC must
+points follow the host the run presents. An entry at an unmapped PC must
 fault there.
 
 `guest-aarch32-engine-gadgets` and `guest-aarch32-engine-jit` run the engine
@@ -977,15 +970,11 @@ SETEND, SWP, a CP15 barrier with `abi.cp15_barrier` cleared), `SIGTRAP` from
 BKPT and `udf #16` under ptrace and a single step through an IT block,
 LDREX/STREX and the kuser cmpxchg under contention across threads and
 processes, VFP, Advanced SIMD and FPSCR semantics (including structure loads
-and stores alone in a block, across a reschedule), and, at the complete
-level, the Armv8 floating-point additions (VRINT, VCVT with a rounding mode,
+and stores alone in a block, across a reschedule), the Armv8 floating-point additions (VRINT, VCVT with a rounding mode,
 VMAXNM/VMINNM) and the crypto, CRC32, dot-product and half-precision
-extensions against known answers. A group
-needing a higher level than the engine's is skipped inside the probe from the
-HWCAP words it sees, and an extension the words leave out must raise `SIGILL`.
-Every SIGILL is counted: one the probe did not expect fails the run. A test
-skips, naming its reason, while its engine implements no AArch32 (the level
-`uml-a32-engine-support` prints is `none`). `A32_PROBE_GROUPS` selects groups
+extensions against known answers. A group needing an extension the HWCAP words
+leave out is skipped inside the probe, and the extension must raise `SIGILL`.
+Every SIGILL is counted: one the probe did not expect fails the run. `A32_PROBE_GROUPS` selects groups
 by hand through the runner's `--groups`, and `A32_PROBE_VERBOSE=1` makes the
 runner print every line of the guest's output, passes included.
 

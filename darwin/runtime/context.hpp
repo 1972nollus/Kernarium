@@ -174,21 +174,6 @@ private:
 [[nodiscard]] const ::uml::platform::HostCapabilities &
 current_guest_host_capabilities() noexcept;
 
-/* How much of the AArch32 EL0 profile a run on `engine` presents to its
- * guest: what the engine implements (cpu::engine_a32_support). The compat
- * HWCAPs derive from it, so a run advertises exactly what its engine runs,
- * and the runtime enters an AArch32 task into the engine only at base or
- * above. An unresolved (automatic) engine presents what both engines do. */
-[[nodiscard]] ::uml::cpu::arm64::A32Support guest_a32_support(
-	::uml::cpu::EngineKind kind) noexcept;
-[[nodiscard]] ::uml::cpu::arm64::A32Support guest_a32_support(
-	ExecutionEngine engine) noexcept;
-
-/* That of the current context's engine, from which the bridge derives the
- * guest's compat HWCAPs; with no context, what both engines present. */
-[[nodiscard]] ::uml::cpu::arm64::A32Support
-current_guest_a32_support() noexcept;
-
 /* A process runs one guest. Its guest is spent once a run's kernel has claimed
  * guest RAM, which the host hands out once per process and never takes back. */
 [[nodiscard]] bool process_guest_spent() noexcept;

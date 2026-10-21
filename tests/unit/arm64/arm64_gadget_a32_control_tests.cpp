@@ -17,9 +17,9 @@
  * - LDM, STM and LDRD across a page boundary, mapped and not, and the
  *   memory gadgets' TLB probe hitting inside a page and not across one, and
  *   in the set the TLB's own fill path chose; and
- * - at the complete level, that a form of an extension the host has runs
- *   (as a gadget, or in the semantic library when none lowers it) and one of
- *   an extension it lacks is UNDEFINED.
+ * - that a form of an extension the host has runs (as a gadget, or in the
+ *   semantic library when none lowers it) and one of an extension it lacks
+ *   is UNDEFINED.
  *
  * Everything runs the production loop (run_translated_aarch32_blocks)
  * over the gadget executor. */
@@ -185,7 +185,7 @@ namespace {
 {
 	static const std::uintptr_t skips[] = {
 		UML_A32_ALL_SKIPS(UML_A32_SKIP_ADDRESS)};
-	const auto options = options_at(gadgets::a32_support);
+	const gadgets::BuildOptions options;
 	const auto output = gadgets::a32::build(
 		{.key = aarch32::a32_key(code_base), .code = std::as_bytes(words)},
 		{}, std::pmr::get_default_resource(), {}, options,
@@ -1830,7 +1830,7 @@ namespace {
 [[nodiscard]] bool translation_holds(std::span<const std::uint32_t> words,
 				     void (*gadget)())
 {
-	const auto options = options_at(gadgets::a32_support);
+	const gadgets::BuildOptions options;
 	const auto output = gadgets::a32::build(
 		{.key = aarch32::a32_key(code_base), .code = std::as_bytes(words)},
 		{}, std::pmr::get_default_resource(), {}, options,
@@ -2110,7 +2110,7 @@ void an_a32_block_holds_all_sixty_four_instructions()
 	words.fill(add_r0_1);
 	std::array<std::uint16_t, 80> halfwords;
 	halfwords.fill(0x3001U); /* adds r0, #1 */
-	const auto options = options_at(gadgets::a32_support);
+	const gadgets::BuildOptions options;
 	const auto count = [&](std::uint64_t key,
 			       std::span<const std::byte> code,
 			       std::size_t window) {
@@ -2563,21 +2563,9 @@ void single_stepped_floating_point_loads_the_deferred_vectors()
 		"VFP did not keep the denormal");
 }
 
-/* A VFP word is illegal at the base level: the level is what makes it so. */
-void a_vfp_word_is_illegal_at_the_base_level()
-{
-	Guest guest{994, arm64::A32Support::base};
-	guest.a32(0, {a::mov_r0_1, v::vadd_f32_s8_s2_s4, a::svc});
-	auto cpu = a32_state();
-	const auto result = guest.run(cpu);
-	require(result.reason == ExitReason::illegal_instruction);
-	require(result.retired_instructions == 1);
-	require(cpu.pc == aarch32::a32_key(code_base + 4));
-}
+/* ------------------------------------------------- the optional extensions */
 
-/* ------------------------------------------------- the complete level */
-
-/* The complete level shows a guest the extensions the host has the A64
+/* The engine shows a guest the extensions the host has the A64
  * feature for (a32_features), and a form of any other extension is
  * UNDEFINED, as the HWCAPs say. A word is run in a guest translating on the
  * machine's own capabilities and in one on a host with none of the optional
@@ -2635,7 +2623,7 @@ void host_features_decide_what_the_guest_may_execute()
 	const auto machine = ::uml::cpu::host_capabilities();
 	const auto bare = bare_host();
 	const auto machine_features =
-		arm64::a32_features(machine, arm64::A32Support::complete);
+		arm64::a32_features(machine);
 	aarch32::count_a32_library_exits(true);
 	unsigned long generation = 1100;
 	struct Outcome {
@@ -2649,7 +2637,7 @@ void host_features_decide_what_the_guest_may_execute()
 			item.word, aarch32::Profile::at(aarch32::Level::complete));
 		require(decoded.legal(), item.what);
 		const auto run = [&](const ::uml::cpu::HostCapabilities &host) {
-			Guest guest{generation++, arm64::A32Support::complete, host};
+			Guest guest{generation++, host};
 			guest.a32(0, {item.word, a::svc});
 			guest.data32(0, 0x3c00'4000U);
 			auto cpu = a32_state();
@@ -2911,7 +2899,7 @@ void the_tlb_probe_hits_inside_a_page_and_not_across_one()
 	};
 	fill(first, host.data());
 	fill(second, host.data() + page + gap);
-	const auto options = options_at(gadgets::a32_support);
+	const gadgets::BuildOptions options;
 	const auto run = [&](std::uint32_t word, std::uint32_t address,
 			     std::uint32_t value) {
 		const auto output = gadgets::a32::build(
@@ -2997,7 +2985,7 @@ void an_entry_the_tlb_fills_hits_through_the_emitted_probe()
 		guest.map_data(address);
 	}
 	std::vector<std::uint8_t> decoy(page, 0xdd);
-	const auto options = options_at(gadgets::a32_support);
+	const gadgets::BuildOptions options;
 	const auto run = [&](::uml::memory::Tlb &tlb, std::uint32_t word,
 			     std::uint32_t address, std::uint32_t value) {
 		const auto output = gadgets::a32::build(
@@ -3125,7 +3113,6 @@ int main()
 	parallel_arithmetic_and_sel_stay_out_of_the_library();
 	structure_and_library_blocks_load_the_deferred_vectors();
 	single_stepped_floating_point_loads_the_deferred_vectors();
-	a_vfp_word_is_illegal_at_the_base_level();
 	host_features_decide_what_the_guest_may_execute();
 	std::puts("arm64-gadget-a32-control: ok");
 	return 0;

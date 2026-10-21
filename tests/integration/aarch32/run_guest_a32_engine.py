@@ -9,16 +9,14 @@ VFP state, every kuser helper, TPIDRURO and TPIDRURW, cacheflush with
 self-modifying code, alignment and memory faults, UNDEFINED instructions,
 ptrace and single steps through an IT block, exclusives and kuser cmpxchg
 under contention across threads and processes, and then the VFP, Advanced
-SIMD and Armv8 extensions as far as the engine's level goes. A group needs a
-least level and the probe skips it below that, so one program serves every
-level; the level it detects from the HWCAP words must equal the engine's
-(A32_PROBE_LEVEL).
+SIMD and Armv8 extensions. A group needs a least level and the probe skips it
+below that; the level it detects from the HWCAP words must be the complete
+one (A32_PROBE_LEVEL).
 
-An engine that implements no AArch32 yet is skipped, naming the reason, with
-CTest's skip status. Otherwise the runner boots the probe laid out for any
-page size and, on a 4 KiB guest, the one laid out for 4 KiB pages, and fails
-on any failed check, any SIGILL the probe did not expect (a guest illegal
-instruction is a blocker) and any crash of the guest or the emulator.
+The runner boots the probe laid out for any page size and, on a 4 KiB guest,
+the one laid out for 4 KiB pages, and fails on any failed check, any SIGILL
+the probe did not expect (a guest illegal instruction is a blocker) and any
+crash of the guest or the emulator.
 """
 
 from __future__ import annotations
@@ -29,7 +27,6 @@ import argparse
 import os
 import pathlib
 import re
-import subprocess
 import sys
 
 # The harness's directory.
@@ -38,8 +35,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "support"))
 from guest import ConsoleProcess, emulator_arguments  # noqa: E402
 
 
-SKIP = 77
-LEVELS = ("none", "base", "simd", "complete")
+LEVEL = "complete"
 SUMMARY = re.compile(
     rb"a32-engine-probe: (?P<failures>\d+) failure\(s\) in (?P<checks>\d+) "
     rb"check\(s\), sigill expected (?P<expected>\d+) unexpected "
@@ -53,18 +49,10 @@ HOST_CRASH = re.compile(
     r"Attempted to kill init|segfault at")
 
 
-def engine_level(tool: pathlib.Path, engine: str) -> str:
-    output = subprocess.run(
-        [str(tool)], capture_output=True, text=True, check=True,
-        stdin=subprocess.DEVNULL, timeout=30,
-    ).stdout
-    return dict(field.split("=", 1) for field in output.split())[engine]
-
-
 def run_probe(arguments: argparse.Namespace, label: str,
-              elf: pathlib.Path, level: str) -> int:
+              elf: pathlib.Path) -> int:
     """Boot `elf` as /init and return the failures it reports."""
-    kernel = [f"ncpus={arguments.ncpus}", f"A32_PROBE_LEVEL={level}"]
+    kernel = [f"ncpus={arguments.ncpus}", f"A32_PROBE_LEVEL={LEVEL}"]
     if arguments.groups:
         kernel.append(f"A32_PROBE_GROUPS={arguments.groups}")
     command = emulator_arguments(
@@ -94,10 +82,10 @@ def run_probe(arguments: argparse.Namespace, label: str,
         print("\n".join(crashes))
         raise RuntimeError(f"{label}: the guest or the emulator crashed")
     detected = DETECTED.search(output)
-    if detected is None or detected.group(1) != level:
+    if detected is None or detected.group(1) != LEVEL:
         raise RuntimeError(
             f"{label}: the probe saw the level "
-            f"{detected.group(1) if detected else 'nothing'}, not {level}")
+            f"{detected.group(1) if detected else 'nothing'}, not {LEVEL}")
     if int(match.group("checks")) == 0:
         raise RuntimeError(f"{label}: the probe ran no checks")
     failures = int(match.group("failures"))
@@ -118,10 +106,8 @@ def main() -> int:
                         help="the probe laid out for any page size")
     parser.add_argument("--probe-4k", required=True, type=pathlib.Path,
                         help="the probe laid out for 4 KiB pages only")
-    parser.add_argument("--engine-support-tool", required=True,
-                        type=pathlib.Path)
     parser.add_argument("--groups", help="comma-separated probe groups; "
-                        "default every group the level allows")
+                        "default every group")
     parser.add_argument("--ncpus", type=int, default=4)
     parser.add_argument("--timeout", type=int, default=1200, metavar="SECONDS",
                         help="the longest a probe boot may take to report")
@@ -131,19 +117,13 @@ def main() -> int:
     arguments.rootfs = arguments.rootfs.resolve()
     name = f"guest-aarch32-engine-{arguments.engine}"
 
-    level = engine_level(arguments.engine_support_tool, arguments.engine)
-    if level == "none":
-        print(f"{name}: SKIP: the {arguments.engine} engine implements no "
-              "AArch32 yet (level none)")
-        return SKIP
-
     failures = run_probe(arguments, "any page size layout",
-                         arguments.probe.resolve(), level)
+                         arguments.probe.resolve())
     failures += run_probe(arguments, "4 KiB layout",
-                          arguments.probe_4k.resolve(), level)
+                          arguments.probe_4k.resolve())
     if failures:
         raise RuntimeError(f"{name}: {failures} failure(s)")
-    print(f"{name}: the probe passed at the {level} level")
+    print(f"{name}: the probe passed at the {LEVEL} level")
     return 0
 
 

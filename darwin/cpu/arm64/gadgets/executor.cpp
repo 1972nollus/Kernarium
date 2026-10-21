@@ -6,7 +6,6 @@
 #include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/gadgets/a32/a32_builder.hpp"
-#include "cpu/arm64/gadgets/a32_support.hpp"
 #include "cpu/gadget_body_arena.hpp"
 #include "cpu/gadget_cache_budget.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
