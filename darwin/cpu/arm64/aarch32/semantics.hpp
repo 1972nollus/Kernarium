@@ -107,8 +107,7 @@ enum class StepEvent : std::uint8_t {
 	 * the PC. */
 	pc_alignment,
 	/* The instruction is outside the library's contract (a form it does not
-	 * cover, or a Level the caller's decode did not apply): an internal
-	 * error that changes nothing. */
+	 * cover): an internal error that changes nothing. */
 	fatal,
 };
 
