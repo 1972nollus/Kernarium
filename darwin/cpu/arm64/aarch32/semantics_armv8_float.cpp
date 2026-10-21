@@ -125,19 +125,7 @@ bool vcvt_rounded_asimd(Exec &x)
  * precision. */
 bool vcvt_rounded_vfp(Exec &x)
 {
-	const Operands &o = x.o;
-	const unsigned d = static_cast<unsigned>(o.d);
-	const unsigned m = static_cast<unsigned>(o.m);
-	const FPRounding rounding = o.rounding;
-	const bool is_unsigned = o.unsigned_;
-	x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
-		if (o.esize == 64)
-			return fp::to_int_rounded(x.d_reg(m), is_unsigned, rounding);
-		if (o.esize == 16)
-			return fp::to_int_rounded(static_cast<uint16_t>(x.s_reg(m)), is_unsigned, rounding);
-		return fp::to_int_rounded(x.s_reg(m), is_unsigned, rounding);
-	}));
-	return true;
+	return fp::vfp_to_int(x, x.o.rounding);
 }
 
 /* VINS: Hm into the top half of Sd. */

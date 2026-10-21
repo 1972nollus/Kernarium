@@ -268,14 +268,9 @@ bool vcvt_integer(Exec &x)
 	const bool is_unsigned = o.unsigned_;
 	if (o.to_integer) {
 		const unsigned mode = o.zero_rounding ? 3U : x.cpu.fpcr >> 22 & 3U;
-		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
-			if (o.esize == 64)
-				return fp::to_int(x.d_reg(m), is_unsigned, mode);
-			if (o.esize == 16)
-				return fp::to_int(static_cast<uint16_t>(x.s_reg(m)), is_unsigned, mode);
-			return fp::to_int(x.s_reg(m), is_unsigned, mode);
-		}));
-	} else if (o.esize == 64) {
+		return fp::vfp_to_int(x, static_cast<FPRounding>(mode));
+	}
+	if (o.esize == 64) {
 		x.set_d_reg(d, fp::run_effective(x.cpu, [&] {
 			return is_unsigned ? fp::u32_to_double(x.s_reg(m)) : fp::s32_to_double(x.s_reg(m));
 		}));
