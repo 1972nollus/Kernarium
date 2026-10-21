@@ -28,11 +28,9 @@ from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
-import argparse
 import os
 import pathlib
 import re
-import subprocess
 import sys
 import tempfile
 import typing
@@ -43,33 +41,17 @@ sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 # python3 -I leaves the script's own directory off sys.path.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from guest import Guest, GuestFile  # noqa: E402
+from guest import Guest  # noqa: E402
 from mm_shared_log import (  # noqa: E402
     MARK, ORDERING, UNORDERED_SHARED, Entry, changes, history, logged)
+from probe_runner import (  # noqa: E402
+    GUEST_DIRECTORY, X86_64, build_probes, parse_arguments)
 
 
 PROBE = pathlib.Path(__file__).with_name("mm_shared_probe.cpp")
-GUEST_PROBE = "/usr/local/libexec/uml-test/mm-shared-probe"
-FLAGS = (
-    "--target=x86_64-unknown-linux-gnu",
-    "-std=c++20",
-    "-O2",
-    "-Wall",
-    "-Wextra",
-    "-Werror",
-    "-ffreestanding",
-    "-fno-exceptions",
-    "-fno-rtti",
-    "-fno-stack-protector",
-    "-fno-asynchronous-unwind-tables",
-    "-fno-pic",
-    "-nostdlib",
-    "-static",
-    "-fuse-ld=lld",
-    "-Wl,-e,_start",
-    "-Wl,-z,max-page-size=4096",
-    "-Wl,-s",
-)
+# Unlike the other probes, this one is built without -mno-red-zone.
+PROBES = {"mm-shared-probe": ("x86-64", X86_64[:1])}
+GUEST_PROBE = f"{GUEST_DIRECTORY}/mm-shared-probe"
 # Each mode: the number of address spaces it marks shared (the probe's own,
 # and for fork-shared its child's as well); whether the probe's sharing must
 # end again; and whether its start and its end come at the return of the
@@ -107,19 +89,7 @@ RANGE = re.compile(
     r"mm-shared-probe: mode=([\w-]+) range=(0x[0-9a-f]+)-(0x[0-9a-f]+) "
     r"share=(0x[0-9a-f]+) unshare=(0x[0-9a-f]+)"
 )
-BUILD_TIMEOUT_SECONDS = 120
 PROBE_TIMEOUT_SECONDS = 60
-
-
-def build_probe(compiler: str, directory: pathlib.Path) -> bytes:
-    output = directory / "mm-shared-probe"
-    subprocess.run(
-        [compiler, *FLAGS, str(PROBE), "-o", str(output)],
-        check=True,
-        stdin=subprocess.DEVNULL,
-        timeout=BUILD_TIMEOUT_SECONDS,
-    )
-    return output.read_bytes()
 
 
 def check_ending(expect: Expect, changed: list[Entry], share: int,
@@ -176,40 +146,22 @@ def check_mode(expect: Expect, hits: list[Entry], engine: str, share: int,
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--emulator", required=True, type=pathlib.Path)
-    parser.add_argument("--rootfs", required=True, type=pathlib.Path)
-    parser.add_argument("--engine", choices=("gadgets", "jit"), default="gadgets")
-    parser.add_argument(
-        "--compiler",
-        default="clang++",
-        help="clang driver with an x86-64 Linux target and ld.lld",
-    )
-    parser.add_argument("--timeout", type=int, default=180)
-    arguments = parser.parse_args()
+    arguments = parse_arguments(
+        __doc__, compiler_help="clang driver with an x86-64 Linux target and ld.lld")
 
-    emulator = arguments.emulator.resolve()
-    rootfs = arguments.rootfs.resolve()
-    if not emulator.is_file() or not os.access(emulator, os.X_OK):
-        parser.error(f"emulator is not executable: {emulator}")
-    if not rootfs.is_file():
-        parser.error(f"rootfs is not a regular file: {rootfs}")
-    if arguments.timeout <= 0:
-        parser.error("timeout must be positive")
-
+    payloads = build_probes(arguments.compiler, PROBE, PROBES)
     failures = 0
     with tempfile.TemporaryDirectory(prefix="uml-mm-shared-") as directory:
-        probe = build_probe(arguments.compiler, pathlib.Path(directory))
         log = pathlib.Path(directory) / "mm-shared.log"
         os.environ["UML_X86_MM_SHARED_LOG"] = str(log)
         with Guest(
-            emulator,
-            rootfs,
+            arguments.emulator,
+            arguments.rootfs,
             "512M",
             "tmpfs",
             init_shell=True,
             engine=arguments.engine,
-            payloads={GUEST_PROBE: GuestFile(probe, 0o755)},
+            payloads=payloads,
         ) as guest:
             guest.boot_to_shell(arguments.timeout)
             for mode, expect in MODES.items():

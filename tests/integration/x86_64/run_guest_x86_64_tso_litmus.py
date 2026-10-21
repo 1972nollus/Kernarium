@@ -36,7 +36,6 @@ import argparse
 import os
 import pathlib
 import re
-import subprocess
 import sys
 import tempfile
 
@@ -49,32 +48,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from guest import Guest, GuestFile  # noqa: E402
 from mm_shared_log import (  # noqa: E402
     MARK, ORDERING, UNORDERED_SHARED, Entry, changes, history, logged)
+from probe_runner import (  # noqa: E402
+    GUEST_DIRECTORY, I386, X86_64, add_arguments, build_probes, check_files)
 
 
 PROBE = pathlib.Path(__file__).with_name("tso_litmus_probe.cpp")
-GUEST_DIRECTORY = "/usr/local/libexec/uml-test"
-COMMON_FLAGS = (
-    "-std=c++20",
-    "-O2",
-    "-Wall",
-    "-Wextra",
-    "-Werror",
-    "-ffreestanding",
-    "-fno-exceptions",
-    "-fno-rtti",
-    "-fno-stack-protector",
-    "-fno-asynchronous-unwind-tables",
-    "-fno-pic",
-    "-nostdlib",
-    "-static",
-    "-fuse-ld=lld",
-    "-Wl,-e,_start",
-    "-Wl,-z,max-page-size=4096",
-    "-Wl,-s",
-)
 PROBES = {
-    "tso-litmus-probe": ("x86-64", ("--target=x86_64-unknown-linux-gnu", "-mno-red-zone")),
-    "tso-litmus-probe32": ("i386", ("--target=i686-unknown-linux-gnu", "-march=i686")),
+    "tso-litmus-probe": ("x86-64", X86_64),
+    "tso-litmus-probe32": ("i386", I386),
 }
 THREAD_TESTS = ("mp", "mp-stack-load", "mp-stack-store", "sb", "sb-mfence", "iriw")
 PROCESS_TESTS = ("mp", "sb", "sb-mfence", "iriw")
@@ -101,22 +82,6 @@ RANGE = re.compile(
     r"clone=(0x[0-9a-f]+) share=(0x[0-9a-f]+) unshare=(0x[0-9a-f]+)"
 )
 CPUS = 4
-BUILD_TIMEOUT_SECONDS = 120
-
-
-def build_probes(compiler: str) -> dict[str, bytes]:
-    binaries = {}
-    with tempfile.TemporaryDirectory(prefix="uml-tso-litmus-") as directory:
-        for name, (_, target_flags) in PROBES.items():
-            output = pathlib.Path(directory) / name
-            subprocess.run(
-                [compiler, *target_flags, *COMMON_FLAGS, str(PROBE), "-o", str(output)],
-                check=True,
-                stdin=subprocess.DEVNULL,
-                timeout=BUILD_TIMEOUT_SECONDS,
-            )
-            binaries[name] = output.read_bytes()
-    return binaries
 
 
 def check_cycle(case: str, hits: list[Entry], engine: str, start: int,
@@ -171,7 +136,7 @@ def check_cycle(case: str, hits: list[Entry], engine: str, start: int,
 
 def run_cases(
     arguments: argparse.Namespace,
-    binaries: dict[str, bytes],
+    payloads: dict[str, GuestFile],
     cases: tuple[str, ...],
     rounds: int,
     log: pathlib.Path,
@@ -182,17 +147,14 @@ def run_cases(
     counts: dict[tuple[str, str, int, str], int] = {}
     problems = []
     with Guest(
-        arguments.emulator.resolve(),
-        arguments.rootfs.resolve(),
+        arguments.emulator,
+        arguments.rootfs,
         "1G",
         "tmpfs",
         (f"ncpus={CPUS}",),
         init_shell=True,
         engine=arguments.engine,
-        payloads={
-            f"{GUEST_DIRECTORY}/{name}": GuestFile(contents, 0o755)
-            for name, contents in binaries.items()
-        },
+        payloads=payloads,
     ) as guest:
         guest.boot_to_shell(arguments.timeout)
         for name, (abi, _) in PROBES.items():
@@ -235,14 +197,7 @@ def run_cases(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--emulator", required=True, type=pathlib.Path)
-    parser.add_argument("--rootfs", required=True, type=pathlib.Path)
-    parser.add_argument("--engine", choices=("gadgets", "jit"), default="gadgets")
-    parser.add_argument(
-        "--compiler",
-        default="clang++",
-        help="clang driver with x86-64 and i386 Linux targets and ld.lld",
-    )
+    add_arguments(parser)
     parser.add_argument("--rounds", type=int, default=1_000_000,
                         help="rounds of each test in each case and ABI")
     parser.add_argument("--timeout", type=int, default=180, help="boot timeout")
@@ -250,20 +205,16 @@ def main() -> int:
                         help="timeout of one case under one ABI")
     arguments = parser.parse_args()
 
-    emulator = arguments.emulator.resolve()
-    if not emulator.is_file() or not os.access(emulator, os.X_OK):
-        parser.error(f"emulator is not executable: {emulator}")
-    if not arguments.rootfs.resolve().is_file():
-        parser.error(f"rootfs is not a regular file: {arguments.rootfs}")
+    check_files(parser, arguments)
     if min(arguments.rounds, arguments.timeout, arguments.probe_timeout) <= 0:
         parser.error("rounds and timeouts must be positive")
 
-    binaries = build_probes(arguments.compiler)
+    payloads = build_probes(arguments.compiler, PROBE, PROBES)
     failures = 0
     with tempfile.TemporaryDirectory(prefix="uml-tso-litmus-log-") as directory:
         log = pathlib.Path(directory) / "mm-shared.log"
         os.environ["UML_X86_MM_SHARED_LOG"] = str(log)
-        counts, problems = run_cases(arguments, binaries, CASES, arguments.rounds, log)
+        counts, problems = run_cases(arguments, payloads, CASES, arguments.rounds, log)
     for (abi, case, phase, test), count in sorted(counts.items()):
         if test == "sb":
             continue
