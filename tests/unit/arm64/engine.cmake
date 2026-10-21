@@ -177,6 +177,8 @@
 
     uml_add_arm64_unit_test(floating_exception WITHOUT_HARNESS NO_OBJECTS)
 
+    uml_add_arm64_unit_test(floating_conversion WITHOUT_HARNESS NO_OBJECTS)
+
     uml_add_arm64_unit_test(floating_trap_control)
 
     uml_add_arm64_unit_test(floating_trap_runtime WITHOUT_HARNESS
