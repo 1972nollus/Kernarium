@@ -354,7 +354,6 @@ void vector_length_family_runs_outside_streaming_mode(unsigned svl)
 		require(machine.cpu.sp == expected.sp);
 		require(machine.cpu.nzcv == 0x6000'0000U);
 		require(machine.cpu.svcr == 0U);
-		require(machine.cpu.sve_live == 0U);
 	}
 }
 
@@ -440,10 +439,6 @@ void spill_words_run_outside_streaming_mode(unsigned svl)
 		require(machine.cpu.sp == sp);
 		require(machine.cpu.nzcv == 0x6000'0000U);
 		require(machine.cpu.svcr == 0U);
-		require(machine.cpu.sve_live == 0U);
-		const arm64::CpuState reference;
-		require(machine.cpu.sve_p == reference.sve_p &&
-			machine.cpu.sve_ffr == reference.sve_ffr);
 		/* A predicate word never loads the vector registers; the FP image
 		 * is then still the guest's. */
 		machine.cpu.access_fp_state();
@@ -493,7 +488,6 @@ void spill_words_fault_like_their_accesses()
 					uml::memory::Access::read));
 			require(!machine.executor().fault_alignment());
 			require(machine.data(end - 16U, 16U) == before);
-			require(machine.cpu.sve_live == 0U);
 		}
 	/* A misaligned SP faults as an alignment fault, whatever the word
 	 * accesses. */

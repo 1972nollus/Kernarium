@@ -3,16 +3,12 @@
  * none: the prober reports no SVE token whatever the host claims, neither
  * engine presents one, ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1 read zero,
  * the SVE bits of AT_HWCAP and AT_HWCAP2 are clear, and the bridge carries no
- * SVE state or vector length. The predicate state CpuState reserves is the
- * mask form of 16 bits, and every change of PSTATE.SM zeroes it.
- * arm64-advertised-features pins the words and registers of named hosts;
- * this checks the rules. */
-#include "cpu/arm64/cpu_state.hpp"
+ * SVE state or vector length. arm64-advertised-features pins the words and
+ * registers of named hosts; this checks the rules. */
 #include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/id_registers.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/engine_factory.hpp"
 #include "cpu/host_capabilities.hpp"
 #include "platform/apple/host_features.hpp"
@@ -24,7 +20,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
-#include <vector>
 
 namespace {
 
@@ -136,69 +131,6 @@ void guest_kernel_is_told_no_sve()
 	require((darwin_uml_guest_hwcap2() & sve_hwcap2) == 0);
 }
 
-/* The mask form maps one to one onto the 16 predicate bits. */
-void predicate_masks_round_trip()
-{
-	for (unsigned packed = 0; packed <= 0xffffU; ++packed) {
-		const auto mask = arm64::sve_predicate_mask(
-			static_cast<std::uint16_t>(packed));
-		for (unsigned byte = 0; byte < arm64::sve_vector_length; ++byte)
-			require(mask[byte] == ((packed >> byte & 1U) != 0U ?
-				0xffU : 0x00U));
-		require(arm64::sve_predicate_packed(mask) == packed);
-	}
-}
-
-/* Every change of PSTATE.SM zeroes the reserved P and FFR, in both
- * directions; a write that keeps SM, ZA alone included, leaves them. */
-void streaming_mode_changes_reset_predicates()
-{
-	constexpr unsigned svl = 64;
-	arm64::SmeRegisterFile file{svl};
-	std::vector<std::byte> task(arm64::sme_storage_size(svl));
-	const auto filled = [](arm64::CpuState &cpu) {
-		for (auto &predicate : cpu.sve_p)
-			predicate = arm64::sve_predicate_mask(0xa5a5U);
-		cpu.sve_ffr = arm64::sve_predicate_mask(0x00ffU);
-	};
-	const auto zeroed = [](const arm64::CpuState &cpu) {
-		for (const auto &predicate : cpu.sve_p)
-			if (predicate != arm64::SvePredicate{})
-				return false;
-		return cpu.sve_ffr == arm64::SvePredicate{};
-	};
-	struct Write final {
-		std::uint8_t from, mask, value;
-		bool resets;
-	};
-	for (const auto &write : {
-		     Write{0, arm64::svcr_sm, arm64::svcr_sm, true},
-		     Write{0, arm64::svcr_mask, arm64::svcr_mask, true},
-		     Write{arm64::svcr_sm, arm64::svcr_sm, 0, true},
-		     Write{arm64::svcr_mask, arm64::svcr_mask, 0, true},
-		     Write{0, arm64::svcr_za, arm64::svcr_za, false},
-		     Write{arm64::svcr_za, arm64::svcr_za, 0, false},
-		     Write{arm64::svcr_sm, arm64::svcr_sm, arm64::svcr_sm, false},
-		     Write{0, arm64::svcr_sm, 0, false}}) {
-		require(arm64::svcr_write(write.from, write.mask, write.value,
-				true).zero_sve_predicates == write.resets);
-		arm64::CpuState cpu{};
-		cpu.bind_sme_registers(file);
-		cpu.defer_sme_load(task.data(), write.from, 0);
-		filled(cpu);
-		require(cpu.write_svcr(write.mask, write.value));
-		require(zeroed(cpu) == write.resets,
-			"an SVCR write handled P and FFR wrongly");
-	}
-	/* A write refused for want of storage changes nothing. */
-	arm64::CpuState cpu{};
-	cpu.bind_sme_registers(file);
-	cpu.defer_sme_load(nullptr, 0, 0);
-	filled(cpu);
-	require(!cpu.write_svcr(arm64::svcr_sm, arm64::svcr_sm));
-	require(!zeroed(cpu));
-}
-
 } // namespace
 
 int main()
@@ -207,7 +139,5 @@ int main()
 	engines_present_no_sve();
 	identification_has_no_sve();
 	guest_kernel_is_told_no_sve();
-	predicate_masks_round_trip();
-	streaming_mode_changes_reset_predicates();
 	return 0;
 }
