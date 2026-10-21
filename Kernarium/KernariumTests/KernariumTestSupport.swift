@@ -20,6 +20,27 @@ func eventually(
     return true
 }
 
+/// A new, empty directory below the temporary directory, named for `label`
+/// and a UUID, with `pathExtension` when given. The test removes it.
+func makeScratchDirectory(
+    _ label: String,
+    pathExtension: String? = nil
+) throws -> URL {
+    var directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+            "\(label)-\(UUID().uuidString)",
+            isDirectory: true
+        )
+    if let pathExtension {
+        directory.appendPathExtension(pathExtension)
+    }
+    try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true
+    )
+    return directory
+}
+
 /// The application's window scene.
 @MainActor
 func windowScene() throws -> UIWindowScene {

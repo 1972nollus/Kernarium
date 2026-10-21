@@ -495,14 +495,7 @@ struct KernariumTests {
     @MainActor
     func overlayDiskIsRecreatedAtRequestedSize() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        try manager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        let directory = try makeScratchDirectory("overlay-disk")
         defer { try? manager.removeItem(at: directory) }
 
         let first = try OverlayDisk.recreate(sizeGiB: 3, in: directory)
@@ -525,14 +518,7 @@ struct KernariumTests {
     @Test
     func diskUtilExpandsRawImageWithoutChangingItsPrefix() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        try manager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        let directory = try makeScratchDirectory("disk-util")
         defer { try? manager.removeItem(at: directory) }
         let image = directory.appendingPathComponent("disk.img")
         let original = Data([0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54])
@@ -551,16 +537,13 @@ struct KernariumTests {
     @Test
     func bundlePreparesItsDirectlyWritableDisk() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
+        let directory = try makeScratchDirectory("bundle-disk")
+        defer { try? manager.removeItem(at: directory) }
         let guestDirectory = directory.appendingPathComponent("guest")
         try manager.createDirectory(
             at: guestDirectory,
             withIntermediateDirectories: true
         )
-        defer { try? manager.removeItem(at: directory) }
         let disk = guestDirectory.appendingPathComponent("disk.img")
         #expect(manager.createFile(atPath: disk.path, contents: Data([1])))
         let bundle = GuestBundle(
@@ -581,15 +564,16 @@ struct KernariumTests {
     @Test
     func androidBundleSelectionDoesNotRequireReleaseMetadata() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension(GuestBundle.pathExtension)
+        let directory = try makeScratchDirectory(
+            "bundle-selection",
+            pathExtension: GuestBundle.pathExtension
+        )
+        defer { try? manager.removeItem(at: directory) }
         let guestDirectory = directory.appendingPathComponent("guest")
         try manager.createDirectory(
             at: guestDirectory,
             withIntermediateDirectories: true
         )
-        defer { try? manager.removeItem(at: directory) }
         let disk = guestDirectory.appendingPathComponent("legacy.img")
         #expect(manager.createFile(atPath: disk.path, contents: Data()))
 
@@ -796,14 +780,7 @@ struct KernariumTests {
     @Test
     func rootfsEnumerationIncludesOnlyRegularSupportedImages() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        try manager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        let directory = try makeScratchDirectory("rootfs-enumeration")
         defer { try? manager.removeItem(at: directory) }
 
         #expect(
@@ -856,14 +833,7 @@ struct KernariumTests {
     @Test
     func zstdUtilReportsProgressAndCreatesSparseOutput() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        try manager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        let directory = try makeScratchDirectory("zstd-sparse")
         defer { try? manager.removeItem(at: directory) }
 
         let source = directory.appendingPathComponent("disk.img.zst")
@@ -916,14 +886,7 @@ struct KernariumTests {
     @Test
     func zstdUtilLeavesExistingDestinationUntouchedOnFailure() throws {
         let manager = FileManager.default
-        let directory = manager.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString,
-            isDirectory: true
-        )
-        try manager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        let directory = try makeScratchDirectory("zstd-failure")
         defer { try? manager.removeItem(at: directory) }
 
         let source = directory.appendingPathComponent("invalid.zst")
