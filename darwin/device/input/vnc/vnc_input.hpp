@@ -40,15 +40,6 @@ constexpr std::uint16_t buttonTouch = 0x14a;
 
 constexpr std::int32_t absoluteMaximum = 32767;
 
-class DirectTouchContact final {
-public:
-    [[nodiscard]] bool update(bool pressed) noexcept;
-    [[nodiscard]] bool release() noexcept;
-
-private:
-    bool active_ {};
-};
-
 /* Native windows use a stable absolute tablet range. Mapping through the
  * current host extent keeps the same visual location after either side
  * changes resolution. */

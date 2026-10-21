@@ -6,6 +6,7 @@
 #if DARWIN_UML_X86_64_GUEST
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
+#include "runtime/x86_gadget_runtime.hpp"
 #endif
 #if DARWIN_UML_X86_64_JIT
 #include "runtime/x86_jit_runtime.hpp"
@@ -14,7 +15,6 @@
 #include "memory/static_guest_memory.hpp"
 #include "platform/apple/host_features.hpp"
 
-#include <array>
 #include <cstddef>
 #include <memory>
 
@@ -30,32 +30,10 @@ public:
 	template<::uml::cpu::EngineKind Kind>
 	[[nodiscard]] std::unique_ptr<::uml::cpu::CpuEngine> &slot() noexcept
 	{
-		if constexpr (Kind == ::uml::cpu::EngineKind::gadgets)
-			return gadgets_;
-		else if constexpr (Kind == ::uml::cpu::EngineKind::jit)
-			return jit_;
-		else {
-			static_assert(Kind == ::uml::cpu::EngineKind::gadgets ||
-				Kind == ::uml::cpu::EngineKind::jit,
-				"unsupported CPU engine kind");
-			return gadgets_;
-		}
-	}
-
-	template<::uml::cpu::EngineKind Kind>
-	[[nodiscard]] const std::unique_ptr<::uml::cpu::CpuEngine> &slot()
-		const noexcept
-	{
-		if constexpr (Kind == ::uml::cpu::EngineKind::gadgets)
-			return gadgets_;
-		else if constexpr (Kind == ::uml::cpu::EngineKind::jit)
-			return jit_;
-		else {
-			static_assert(Kind == ::uml::cpu::EngineKind::gadgets ||
-				Kind == ::uml::cpu::EngineKind::jit,
-				"unsupported CPU engine kind");
-			return gadgets_;
-		}
+		static_assert(Kind == ::uml::cpu::EngineKind::gadgets ||
+			Kind == ::uml::cpu::EngineKind::jit,
+			"unsupported CPU engine kind");
+		return Kind == ::uml::cpu::EngineKind::gadgets ? gadgets_ : jit_;
 	}
 
 	[[nodiscard]] bool empty() const noexcept
@@ -96,8 +74,7 @@ struct ThreadExecutionState final {
 	::uml::cpu::x86_64::gadgets::Executor x86_executor{};
 	/* One for each set of exceptions the runtime checks
 	 * (`checked_exceptions`), made the first time the guest needs it. */
-	std::array<std::unique_ptr<::uml::cpu::x86_64::gadgets::Executor>, 8>
-		x86_checked_executors;
+	X86CheckedExecutors x86_checked_executors;
 #endif
 	::uml::memory::StaticGuestMemory memory;
 	ThreadEngineSlots engines;

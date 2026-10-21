@@ -5,12 +5,13 @@ passes and arm64 backend, embedded so that guest memory stays behind the static
 MMU. It is a macOS product only;
 [Architecture](../../../../docs/architecture.md#cpu-execution-and-scheduling)
 records how the build, the audit and the iOS packaging prove it. The guest CPU
-state, decoder, CPUID, software TLB entry, code-page registry and split-operand
-lock are `uml_x86_64_target` in the parent directory, shared with the
-[gadget engine](../gadgets/README.md); this target links that and the
-executable-memory owner, never the gadget engine. Outside this directory only
-the runtime seam, `darwin/runtime/x86_jit_runtime.cpp`, includes it. This file
-records the contracts that are not obvious from the code.
+state, decoder, CPUID, software TLB entry, code-page registry, split-operand
+lock and SIMD floating-point model are `uml_x86_64_target` in the parent
+directory, shared with the [gadget engine](../gadgets/README.md); this target
+links that and the executable-memory owner, never the gadget engine. Outside
+this directory only the runtime seam, `darwin/runtime/x86_jit_runtime.cpp`,
+includes it. This file records the contracts that are not obvious from the
+code.
 
 ## Selection
 
@@ -247,11 +248,12 @@ SIMD floating point gives x86's results whatever the host's features. The
 maintained series follows each x86 SIMD floating-point operation, or each
 128-bit part of one, with an `EmbedderFPCheck` op that holds the x86 sources
 and tests the host's result in line for the cases where arm64 arithmetic can
-differ; a cold path hands those to `fp_model.cpp`, which computes x86's result
-in integers and SoftFloat because it runs under the guest's FPCR. The model
-covers every operation the op names, with MXCSR's rounding, DAZ, FTZ and
+differ; a cold path hands those to `../fp_model.cpp`, which computes x86's
+result in integers and SoftFloat because it runs under the guest's FPCR. The
+model covers every operation the op names, with MXCSR's rounding, DAZ, FTZ and
 flags, so a check needs only to find the cases. The checks are the same on
-every host. FEXCore's FEAT_AFP path stays off: it sets FPCR.NEP with AH, and
+every host, and the gadget engine's checked run settles its SIMD flags with the
+same model. FEXCore's FEAT_AFP path stays off: it sets FPCR.NEP with AH, and
 NEP gives a one-input scalar instruction a false dependency on its
 destination, while AH and FIZ would take over only the NaN and DAZ cases of
 plain arithmetic and the M1 has no FEAT_AFP

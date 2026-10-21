@@ -293,15 +293,36 @@ bool parse_host_integer(std::string_view argument, std::string_view prefix,
 	return true;
 }
 
+/* Records the path of a socket option, which may be given once. */
+void set_socket_path(std::string &destination, std::string_view option,
+		     std::string_view value)
+{
+	if (!destination.empty())
+		throw std::invalid_argument(std::string(option) +
+					    " may be specified only once");
+	if (value.empty())
+		throw std::invalid_argument(std::string(option) +
+					    " requires a path");
+	destination = value;
+}
+
 PreparedArguments prepare_host_arguments(
-	int argc, char *const argv[],
+	const std::vector<std::string> &command_line,
 	const uml::app::LaunchConfiguration &configuration)
 {
 	PreparedArguments prepared;
-	prepared.kernel.reserve(static_cast<std::size_t>(argc) + 3U);
-	for (int index = 0; index < argc; ++index) {
-		const std::string_view argument =
-			argv[index] == nullptr ? std::string_view {} : argv[index];
+	prepared.kernel.reserve(command_line.size() + 3U);
+	for (const auto &text : command_line) {
+		const std::string_view argument = text;
+		/* Whether `argument` is the option `prefix` names ("--x="), with
+		 * what follows it left in `value`. */
+		std::string_view value;
+		const auto valued = [&](std::string_view prefix) {
+			if (!argument.starts_with(prefix))
+				return false;
+			value = argument.substr(prefix.size());
+			return true;
+		};
 		if (argument == "--gpu") {
 			prepared.gpu.enabled = true;
 		} else if (argument == "--audio") {
@@ -310,67 +331,42 @@ PreparedArguments prepare_host_arguments(
 			prepared.battery = true;
 		} else if (argument == "--video") {
 			prepared.video = true;
-		} else if (argument.starts_with("--virtio-console-socket=")) {
-			if (!prepared.console_socket.empty())
-				throw std::invalid_argument(
-					"--virtio-console-socket may be specified only once");
-			prepared.console_socket = argument.substr(
-				std::string_view{"--virtio-console-socket="}.size());
-			if (prepared.console_socket.empty())
-				throw std::invalid_argument(
-					"--virtio-console-socket requires a path");
-		} else if (argument.starts_with("--virtio-serial-socket=")) {
-			if (!prepared.serial_socket.empty())
-				throw std::invalid_argument(
-					"--virtio-serial-socket may be specified only once");
-			prepared.serial_socket = argument.substr(
-				std::string_view{"--virtio-serial-socket="}.size());
-			if (prepared.serial_socket.empty())
-				throw std::invalid_argument(
-					"--virtio-serial-socket requires a path");
-		} else if (argument.starts_with("--gpu-display=")) {
-			const auto mode = argument.substr(
-				std::string_view{"--gpu-display="}.size());
-			if (mode == "native")
+		} else if (valued("--virtio-console-socket=")) {
+			set_socket_path(prepared.console_socket,
+					"--virtio-console-socket", value);
+		} else if (valued("--virtio-serial-socket=")) {
+			set_socket_path(prepared.serial_socket,
+					"--virtio-serial-socket", value);
+		} else if (valued("--gpu-display=")) {
+			if (value == "native")
 				prepared.gpu.display_mode = uml::gpu::DisplayMode::native;
-			else if (mode == "vnc")
+			else if (value == "vnc")
 				prepared.gpu.display_mode = uml::gpu::DisplayMode::vnc;
 			else
 				throw std::invalid_argument(
 					"--gpu-display must be native or vnc");
 			prepared.gpu.enabled = true;
-		} else if (argument.starts_with("--gpu-vnc-bind=")) {
+		} else if (valued("--gpu-vnc-bind=")) {
 			prepared.gpu.vnc_option_specified = true;
-			const auto address =
-				argument.substr(std::string_view{
-					"--gpu-vnc-bind="}.size());
-			if (address.empty())
+			if (value.empty())
 				throw std::invalid_argument(
 					"invalid host option: " +
 					std::string(argument));
-			prepared.gpu.vnc_bind_address = address;
+			prepared.gpu.vnc_bind_address = value;
 			prepared.gpu.enabled = true;
-		} else if (argument.starts_with("--gpu-vnc-password=")) {
+		} else if (valued("--gpu-vnc-password=")) {
 			prepared.gpu.vnc_option_specified = true;
-			const auto password =
-				argument.substr(std::string_view{
-					"--gpu-vnc-password="}.size());
-			if (password.empty() || password.size() > 8)
+			if (value.empty() || value.size() > 8)
 				throw std::invalid_argument(
 					"VNC password must contain between 1 and "
 					"8 bytes");
-			prepared.gpu.vnc_password = password;
+			prepared.gpu.vnc_password = value;
 			prepared.gpu.enabled = true;
-		} else if (argument.starts_with("--gpu-vnc-port=")) {
-			if (!parse_host_integer(argument, "--gpu-vnc-port=",
-					prepared.gpu.vnc_port, true))
-				throw std::invalid_argument("invalid host option: " +
-					std::string(argument));
+		} else if (parse_host_integer(argument, "--gpu-vnc-port=",
+					      prepared.gpu.vnc_port, true)) {
 			prepared.gpu.vnc_option_specified = true;
 			prepared.gpu.enabled = true;
-		} else if (argument.starts_with("--gpu-auto-resize=")) {
-			const auto value = argument.substr(
-				std::string_view{"--gpu-auto-resize="}.size());
+		} else if (valued("--gpu-auto-resize=")) {
 			if (value == "on")
 				prepared.gpu.auto_resize_guest = true;
 			else if (value == "off")
@@ -380,15 +376,13 @@ PreparedArguments prepare_host_arguments(
 					"--gpu-auto-resize must be on or off");
 			prepared.gpu.auto_resize_guest_specified = true;
 			prepared.gpu.enabled = true;
-		} else if (argument.starts_with("--net-forward=")) {
-			auto specification = std::string{argument.substr(
-				std::string_view{"--net-forward="}.size())};
-			if (specification.empty())
+		} else if (valued("--net-forward=")) {
+			if (value.empty())
 				throw std::invalid_argument(
 					"--net-forward requires "
 					"[PROTO:][HOSTADDR:]HOSTPORT-"
 					"[GUESTADDR:]GUESTPORT");
-			prepared.net_forwards.push_back(std::move(specification));
+			prepared.net_forwards.emplace_back(value);
 		} else if (
 			   parse_host_integer(
 				   argument, "--gpu-width=", prepared.gpu.width) ||
@@ -399,7 +393,7 @@ PreparedArguments prepare_host_arguments(
 				   prepared.gpu.dots_per_inch)) {
 			prepared.gpu.enabled = true;
 		} else {
-			prepared.kernel.emplace_back(argument);
+			prepared.kernel.push_back(text);
 		}
 	}
 	if (prepared.gpu.display_mode == uml::gpu::DisplayMode::native &&
@@ -439,6 +433,46 @@ bool has_virtio_device_argument(const std::vector<std::string> &arguments,
 	return false;
 }
 
+/* Starts the in-process Virtio device that `make` creates and appends the
+ * kernel argument that hands it to the guest, unless the command line already
+ * names a transport for that device. A refusal or a start failure prints its
+ * reason and returns false: `subject` names what asked for the device,
+ * `device` what failed to start and `transport` (`device` when null) what the
+ * explicit argument would collide with. */
+template<typename Make>
+[[nodiscard]] bool start_virtio_device(
+	std::vector<std::string> &kernel,
+	std::unique_ptr<uml::gpu::InProcessVhostUserService> &service,
+	std::uint32_t device_id, Make make, const char *subject,
+	const char *device, const char *transport = nullptr)
+{
+	if (has_virtio_device_argument(kernel, device_id)) {
+		std::fprintf(stderr,
+			"%s cannot be combined with an explicit %s transport "
+			"argument\n",
+			subject, transport != nullptr ? transport : device);
+		return false;
+	}
+	try {
+		service = make();
+		kernel.emplace_back(uml::gpu::virtioDeviceArgument(
+			service->takeConnectionName(), device_id));
+	} catch (const std::exception &error) {
+		std::fprintf(stderr, "Unable to start in-process %s: %s\n",
+			device, error.what());
+		return false;
+	}
+	return true;
+}
+
+/* Whether `argument` asks for a run that only prints information and boots
+ * no guest. */
+bool informational_option(std::string_view argument)
+{
+	return argument == "--help" || argument == "--version" ||
+		argument == "--showconfig";
+}
+
 } // namespace
 
 bool uml::app::has_argument(
@@ -452,26 +486,29 @@ bool uml::app::has_argument(
 
 bool uml::app::informational(int argc, char *const argv[])
 {
-	return has_argument(argc, argv, "--help") ||
-		has_argument(argc, argv, "--version") ||
-		has_argument(argc, argv, "--showconfig");
+	for (int index = 1; index < argc; ++index)
+		if (argv[index] != nullptr && informational_option(argv[index]))
+			return true;
+	return false;
 }
 
 int uml::app::runEmbeddedKernel(
-	int argc, char *argv[], char *envp[],
+	const std::vector<std::string> &command_line, char *envp[],
 	const LaunchConfiguration &configuration)
 {
 	install_host_faults();
 	::uml::device::install_socket_path_signal_cleanup();
 	PreparedArguments prepared;
 	try {
-		prepared = prepare_host_arguments(argc, argv, configuration);
+		prepared = prepare_host_arguments(command_line, configuration);
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "Unable to configure host devices: %s\n",
 			     error.what());
 		return 1;
 	}
-	const bool information_only = informational(argc, argv);
+	bool information_only = false;
+	for (std::size_t index = 1; index < command_line.size(); ++index)
+		information_only |= informational_option(command_line[index]);
 	/* Before anything in the process can create a Metal device. */
 	if (prepared.gpu.enabled && !information_only)
 		bound_metal_shader_cache();
@@ -575,32 +612,18 @@ int uml::app::runEmbeddedKernel(
 		}
 	}
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> battery_service;
-	if (prepared.battery && !information_only) {
-		if (has_virtio_device_argument(
-			prepared.kernel, uml::battery::protocol::deviceId)) {
-			std::fputs("--battery cannot be combined with an explicit "
-				   "Virtio battery transport argument\n",
-				   stderr);
-			return 1;
-		}
-		try {
-			battery_service = uml::battery::makeInProcessService();
-			/* Android's vendor policy labels the battery's sysfs
-			 * path by its position among the Virtio devices
-			 * (android/lineage-24/overlay/sepolicy/vendor/genfs_contexts).
-			 * Straight after the GPU it is always virtio-uml.1/virtio1,
-			 * whatever optional devices follow. */
-			prepared.kernel.emplace_back(
-				uml::gpu::virtioDeviceArgument(
-					battery_service->takeConnectionName(),
-					uml::battery::protocol::deviceId));
-		} catch (const std::exception &error) {
-			std::fprintf(stderr,
-				"Unable to start in-process Virtio battery: %s\n",
-				error.what());
-			return 1;
-		}
-	}
+	/* Android's vendor policy labels the battery's sysfs path by its
+	 * position among the Virtio devices
+	 * (android/lineage-24/overlay/sepolicy/vendor/genfs_contexts).
+	 * Straight after the GPU it is always virtio-uml.1/virtio1, whatever
+	 * optional devices follow. */
+	if (prepared.battery && !information_only &&
+	    !start_virtio_device(
+		    prepared.kernel, battery_service,
+		    uml::battery::protocol::deviceId,
+		    [] { return uml::battery::makeInProcessService(); },
+		    "--battery", "Virtio battery"))
+		return 1;
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> balloon_service;
 	if (gpu_service && device_memory_limit != 0 &&
 	    !has_virtio_device_argument(
@@ -626,77 +649,43 @@ int uml::app::runEmbeddedKernel(
 		}
 	}
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> video_service;
-	if (prepared.video && !information_only) {
-		if (has_virtio_device_argument(prepared.kernel, uml::video::deviceId)) {
-			std::fputs("--video cannot be combined with an explicit Virtio video transport argument\n", stderr);
-			return 1;
-		}
-		try {
-			video_service = uml::video::makeInProcessService(
-				gpu_service ? shared_memory_regions : nullptr);
-			prepared.kernel.emplace_back(
-				uml::gpu::virtioDeviceArgument(
-					video_service->takeConnectionName(),
-					uml::video::deviceId));
-		} catch (const std::exception& error) {
-			std::fprintf(stderr, "Unable to start in-process Virtio video: %s\n", error.what());
-			return 1;
-		}
-	}
+	if (prepared.video && !information_only &&
+	    !start_virtio_device(
+		    prepared.kernel, video_service, uml::video::deviceId,
+		    [&] {
+			    return uml::video::makeInProcessService(
+				    gpu_service ? shared_memory_regions : nullptr);
+		    },
+		    "--video", "Virtio video"))
+		return 1;
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> audio_service;
-	if (prepared.audio && !information_only) {
-		if (has_virtio_device_argument(
-			prepared.kernel, uml::audio::protocol::deviceId)) {
-			std::fputs("--audio cannot be combined with an explicit "
-				   "Virtio Sound transport argument\n",
-				   stderr);
-			return 1;
-		}
-		try {
-			audio_service = uml::audio::makeInProcessService();
-			prepared.kernel.emplace_back(
-				uml::gpu::virtioDeviceArgument(
-					audio_service->takeConnectionName(),
-					uml::audio::protocol::deviceId));
-		} catch (const std::exception &error) {
-			std::fprintf(stderr,
-				"Unable to start in-process Virtio Sound: %s\n",
-				error.what());
-			return 1;
-		}
-	}
+	if (prepared.audio && !information_only &&
+	    !start_virtio_device(
+		    prepared.kernel, audio_service,
+		    uml::audio::protocol::deviceId,
+		    [] { return uml::audio::makeInProcessService(); },
+		    "--audio", "Virtio Sound"))
+		return 1;
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> console_service;
-	if ((!prepared.console_socket.empty() || !prepared.serial_socket.empty()) &&
-	    !information_only) {
-		const bool named_serial = !prepared.serial_socket.empty();
-		if (has_virtio_device_argument(
-			prepared.kernel, uml::console::protocol::deviceId)) {
-			std::fputs("a host Virtio console or serial socket cannot be "
-				   "combined with an explicit Virtio console transport "
-				   "argument\n",
-				   stderr);
-			return 1;
-		}
-		try {
-			console_service = uml::console::makeInProcessService(
-				named_serial ? prepared.serial_socket :
-					prepared.console_socket,
-				named_serial ?
-					std::string(
-						uml::console::protocol::hostSerialPortName) :
-					std::string {});
-			prepared.kernel.emplace_back(
-				uml::gpu::virtioDeviceArgument(
-					console_service->takeConnectionName(),
-					uml::console::protocol::deviceId));
-		} catch (const std::exception &error) {
-			std::fprintf(
-				stderr, "Unable to start in-process Virtio %s: %s\n",
-				named_serial ? "serial" : "console",
-				error.what());
-			return 1;
-		}
-	}
+	const bool named_serial = !prepared.serial_socket.empty();
+	if ((named_serial || !prepared.console_socket.empty()) &&
+	    !information_only &&
+	    !start_virtio_device(
+		    prepared.kernel, console_service,
+		    uml::console::protocol::deviceId,
+		    [&] {
+			    return named_serial ?
+				    uml::console::makeInProcessService(
+					    prepared.serial_socket,
+					    std::string(uml::console::protocol::
+							hostSerialPortName)) :
+				    uml::console::makeInProcessService(
+					    prepared.console_socket);
+		    },
+		    "a host Virtio console or serial socket",
+		    named_serial ? "Virtio serial" : "Virtio console",
+		    "Virtio console"))
+		return 1;
 	std::vector<const char *> arguments;
 	arguments.reserve(prepared.kernel.size());
 	for (const auto &argument : prepared.kernel)

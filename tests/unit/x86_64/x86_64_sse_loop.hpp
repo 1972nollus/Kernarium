@@ -170,12 +170,13 @@ inline JitEngine &jit_engine()
 
 /* Runs the loop over `count` rows. A checked run's executor builds for
  * #XM, and an instruction that faults with it is marked in `trapped` and
- * skipped, so that the loop stores the destination it kept. */
+ * skipped, so that the loop stores the destination it kept. A checked run
+ * checks what MXCSR and RFLAGS ask for, and the `forced` checks too. */
 [[nodiscard]] inline bool run_engine(FlatMemory &memory,
 	uml::cpu::x86_64::gadgets::Executor &executor, std::uint32_t mxcsr,
 	std::size_t count, bool checked = false,
 	std::size_t instruction_length = 0,
-	std::vector<std::uint8_t> *trapped = nullptr)
+	std::vector<std::uint8_t> *trapped = nullptr, unsigned forced = 0)
 {
 	using namespace uml::cpu::x86_64;
 	CpuState cpu = initial_cpu(mxcsr, count);
@@ -189,7 +190,7 @@ inline JitEngine &jit_engine()
 		const auto result = checked ?
 			gadgets::execute_checked(*selected.program, cpu, memory,
 				executor, 1U << 20U, {}, false,
-				gadgets::checked_exceptions(cpu)) :
+				gadgets::checked_exceptions(cpu) | forced) :
 			gadgets::execute(*selected.program, cpu, memory, executor,
 				1U << 20U);
 		/* SYSCALL leaves its return address in RCX. */

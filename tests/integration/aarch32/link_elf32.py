@@ -11,10 +11,10 @@ program of the kernel probe; this handles what a compiler emits.
 Each object may allocate .text, .rodata, .data and .bss sections (any
 .text.*, .rodata.* and so on), and nothing else but sections it discards
 (.ARM.exidx, .ARM.extab). They are laid out in one read-execute PT_LOAD at
-0x10000 (code, then read-only data), aligned to 64 KiB so that it maps under a
-4 KiB or a 16 KiB page size, and, when the object has writable sections, one
-read-write PT_LOAD after it, then a non-executable PT_GNU_STACK. The entry
-point is _start. Every symbol must be defined, and a relocation must be one
+0x10000 (code, then read-only data), aligned to 64 KiB as GNU ld lays out an
+armhf program, and, when the object has writable sections, one read-write
+PT_LOAD after it, then a non-executable PT_GNU_STACK. The entry point is
+_start. Every symbol must be defined, and a relocation must be one
 this knows; it fails otherwise, naming it. Calls between ARM and Thumb code
 are interworking BL/BLX; a branch, as opposed to a call, may not change state
 since that would need a veneer. No range check is silent: every displacement is
@@ -22,10 +22,10 @@ range checked. A global or weak symbol an object leaves undefined is resolved
 against the other objects' global definitions, and a local symbol never leaves
 its object; a global defined twice is an error.
 
---layout 4k places the first segment at 0x11000 with the 4 KiB alignment of a
-program linked for 4 KiB pages only, as make_elf32.py does.
+--layout 4k places the first segment at 0x11000, aligned to 4 KiB only, as
+make_elf32.py does.
 
-usage: link_elf32.py [--layout 16k|4k] OUTPUT INPUT.o [INPUT.o ...]
+usage: link_elf32.py [--layout 64k|4k] OUTPUT INPUT.o [INPUT.o ...]
 """
 
 import struct
@@ -328,7 +328,7 @@ def apply_relocation(body, offset, relocation, symbol_address, thumb_target,
         raise LinkError(f"{where}: relocation type {relocation}")
 
 
-def link(blobs, layout="16k"):
+def link(blobs, layout="64k"):
     load_base, load_align = LAYOUTS[layout]
     objects = [read_object(data) for data in blobs]
     tables = [table for table, _ in objects]
@@ -410,7 +410,7 @@ def link(blobs, layout="16k"):
 
 
 def main(arguments):
-    layout = "16k"
+    layout = "64k"
     arguments = arguments[1:]
     if arguments[:1] == ["--layout"] and len(arguments) > 1:
         layout = arguments[1]

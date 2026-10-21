@@ -2,7 +2,9 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace uml::app {
 
@@ -19,8 +21,11 @@ struct LaunchConfiguration {
 	std::filesystem::path run_scratch;
 };
 
-int runEmbeddedKernel(int argc, char *argv[], char *envp[],
-		      const LaunchConfiguration &configuration);
+/* Runs the embedded kernel with `command_line` (the program name first,
+ * then the host device options and the kernel's arguments) and returns its
+ * exit status. */
+int runEmbeddedKernel(const std::vector<std::string> &command_line,
+		      char *envp[], const LaunchConfiguration &configuration);
 
 /* Whether one of argv[1..argc) is exactly `argument`. */
 [[nodiscard]] bool has_argument(

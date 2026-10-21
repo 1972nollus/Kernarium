@@ -5,17 +5,15 @@
 The object has one allocated section, .text, a global _start, and no
 relocation but the R_ARM_CALL of a bl to a symbol of that section, which is
 resolved here.  The executable has one read-execute PT_LOAD at 0x10000,
-aligned to 64 KiB so that it maps under a 4 KiB or a 16 KiB page size, and
-a non-executable PT_GNU_STACK.  It is an ARM EABI5 hard-float program, which
-is what the guest kernel's AArch32 loader accepts.  No linker is involved.
+aligned to 64 KiB as GNU ld lays out an armhf program, and a non-executable
+PT_GNU_STACK.  It is an ARM EABI5 hard-float program, which is what the guest
+kernel's AArch32 loader accepts.  No linker is involved.
 
---layout 4k instead places the segment at 0x11000 with the 4 KiB alignment of
-a program linked for 4 KiB pages only, as 11 files of a stock Debian armhf
-image are: its file offset and address are not congruent modulo 16 KiB, so a
-16 KiB guest cannot map it and kills the new process with SIGSEGV, while a
-4 KiB guest runs it.
+--layout 4k instead places the segment at 0x11000, aligned to 4 KiB only, as
+11 files of a stock Debian armhf image are: its file offset and address are
+congruent modulo 4 KiB but not modulo 64 KiB.
 
-usage: make_elf32.py [--layout 16k|4k] INPUT.o OUTPUT
+usage: make_elf32.py [--layout 64k|4k] INPUT.o OUTPUT
 """
 
 import struct
@@ -24,7 +22,7 @@ import sys
 LAYOUTS = {
     # Segment address and alignment: congruent to its file offset modulo
     # 64 KiB, or only modulo 4 KiB.
-    "16k": (0x10000, 0x10000),
+    "64k": (0x10000, 0x10000),
     "4k": (0x11000, 0x1000),
 }
 EHDR_SIZE = 52
@@ -109,7 +107,7 @@ def resolve_calls(data, table, text_index, symtab, body):
     return bytes(body)
 
 
-def wrap(data, layout="16k"):
+def wrap(data, layout="64k"):
     load_base, load_align = LAYOUTS[layout]
     table = sections(data)
     text = None
@@ -160,7 +158,7 @@ def wrap(data, layout="16k"):
 
 
 def main(arguments):
-    layout = "16k"
+    layout = "64k"
     arguments = arguments[1:]
     if arguments[:1] == ["--layout"] and len(arguments) > 1:
         layout = arguments[1]

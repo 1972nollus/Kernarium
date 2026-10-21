@@ -424,7 +424,7 @@ def build_command(options):
         if op == "wait":
             command["gone"] = options.gone
         command["timeout"] = options.element_timeout
-    elif op == "type":
+    elif op in ("type", "siri"):
         command["text"] = options.text
     elif op == "key":
         command["key"] = key_character(options.key)
@@ -533,6 +533,9 @@ def parse(argv):
     orientation.add_argument("orientation", nargs="?", choices=ORIENTATIONS)
     type_ = commands.add_parser("type", help="type text into the focused element")
     type_.add_argument("text")
+    siri = commands.add_parser(
+        "siri", help="start a Siri request with typed text (interrupts the app's audio)")
+    siri.add_argument("text")
     key = commands.add_parser("key", help="press one hardware-keyboard key")
     key.add_argument("key", help="one character, or return, tab, space, up, down, left, "
                                  "right; XCTest cannot press delete or escape")
