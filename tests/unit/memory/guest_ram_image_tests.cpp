@@ -739,10 +739,8 @@ void freeze_refuses_a_second_hibernate_and_a_missing_freeze()
 
 void the_image_file_is_exclusive_and_stale_files_are_removed()
 {
-	const auto directory = uml::testing::scratch_directory() /
-		("stale-" + std::to_string(getpid()));
-	std::filesystem::remove_all(directory);
-	std::filesystem::create_directories(directory);
+	const uml::testing::ScratchSubdirectory scratch{"stale.XXXXXX"};
+	const auto &directory = scratch.path();
 	const auto name = [&](int pid) {
 		return (directory / uml::memory::guest_ram_image_name(pid)).string();
 	};
@@ -788,7 +786,6 @@ void the_image_file_is_exclusive_and_stale_files_are_removed()
 	live.reset();
 	require(!std::filesystem::exists(options.path),
 		"the image must be deleted with its owner");
-	std::filesystem::remove_all(directory);
 
 	GuestRamImage::Options bad;
 	bad.path = (directory / "missing" / "x.img").string();

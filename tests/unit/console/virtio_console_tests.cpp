@@ -108,24 +108,13 @@ struct NamedDeviceFixture final {
     std::unique_ptr<uml::console::VirtioConsoleDevice> device;
 };
 
-class TemporaryDirectory final {
-public:
-    TemporaryDirectory()
-    {
-        auto pattern = uml::testing::socket_scratch_template(
-            "uml-console-test.XXXXXX");
-        char* created = ::mkdtemp(pattern.data());
-        require(created != nullptr);
-        path_ = created;
-    }
-
-    ~TemporaryDirectory() { (void)::rmdir(path_.c_str()); }
-
-    const std::filesystem::path& path() const noexcept { return path_; }
-
-private:
-    std::filesystem::path path_;
-};
+/* Socket paths must fit sun_path, so the directory is in the host temporary
+ * directory. */
+uml::testing::ScratchSubdirectory socketDirectory()
+{
+    return uml::testing::ScratchSubdirectory {
+        "uml-console-test.XXXXXX", uml::testing::socket_scratch_parent()};
+}
 
 void waitReadable(int descriptor)
 {
@@ -325,7 +314,7 @@ void deviceImplementsTheNamedSerialControlHandshake()
 
 void unixSocketChannelSupportsTailInputAndReconnect()
 {
-    TemporaryDirectory temporary;
+    const auto temporary = socketDirectory();
     const auto path = temporary.path() / "console.sock";
     {
         uml::console::UnixSocketChannel channel(path);
@@ -388,7 +377,7 @@ void unixSocketChannelSupportsTailInputAndReconnect()
  */
 void namedSerialPortFollowsAClientThatLeftDuringAWrite()
 {
-    TemporaryDirectory temporary;
+    const auto temporary = socketDirectory();
     const auto path = temporary.path() / "serial.sock";
     {
         uml::console::VirtioConsoleDevice device(
@@ -427,7 +416,7 @@ void namedSerialPortFollowsAClientThatLeftDuringAWrite()
  */
 void unixSocketChannelNeverExposesAWiderModeWhileListening()
 {
-    TemporaryDirectory temporary;
+    const auto temporary = socketDirectory();
     const auto path = temporary.path() / "console.sock";
     const mode_t previous = ::umask(022);
     ::umask(previous);
@@ -472,7 +461,7 @@ void unixSocketChannelNeverExposesAWiderModeWhileListening()
 
 void unixSocketChannelRejectsAClientThatClosedBeforeAccept()
 {
-    TemporaryDirectory temporary;
+    const auto temporary = socketDirectory();
     const auto path = temporary.path() / "console.sock";
     uml::console::UnixSocketChannel channel(path);
 
@@ -610,7 +599,7 @@ void connectedSerialPortKeepsOutputTheRelayHasNoRoomFor()
 
 void inProcessServicePublishesAndRemovesTheExternalSocket()
 {
-    TemporaryDirectory temporary;
+    const auto temporary = socketDirectory();
     const auto path = temporary.path() / "service.sock";
     const auto service = uml::console::makeInProcessService(path);
     struct stat status {};
