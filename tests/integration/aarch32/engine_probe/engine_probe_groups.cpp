@@ -1,25 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* The groups of the AArch32 engine probe, in the order they run, with the
- * least level of the profile each needs. */
+/* The groups of the AArch32 engine probe, in the order they run. */
 #include "engine_probe.hpp"
 
 namespace probe {
 
 const Group groups[] = {
-	{"basic", 0, group_basic},
-	{"interwork", 0, group_interwork},
-	{"signals", 0, group_signals},
-	{"kuser", 0, group_kuser},
-	{"tls", 0, group_tls},
-	{"cacheflush", 0, group_cacheflush},
-	{"faults", 0, group_faults},
-	{"ill", 0, group_ill},
-	{"ptrace", 0, group_ptrace},
-	{"atomics", 0, group_atomics},
-	{"absent", 0, group_absent},
-	{"simd", 1, group_simd},
-	{"armv8fp", 2, group_armv8_fp},
-	{"complete", 2, group_complete},
+	{"basic", group_basic},
+	{"interwork", group_interwork},
+	{"signals", group_signals},
+	{"kuser", group_kuser},
+	{"tls", group_tls},
+	{"cacheflush", group_cacheflush},
+	{"faults", group_faults},
+	{"ill", group_ill},
+	{"ptrace", group_ptrace},
+	{"atomics", group_atomics},
+	{"absent", group_absent},
+	{"simd", group_simd},
+	{"armv8fp", group_armv8_fp},
+	{"complete", group_complete},
 };
 const unsigned group_count = sizeof(groups) / sizeof(groups[0]);
 

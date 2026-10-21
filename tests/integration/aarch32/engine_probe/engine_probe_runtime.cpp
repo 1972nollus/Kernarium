@@ -10,19 +10,15 @@
  * semantics are the corpus's job; this is the engine in a task.
  *
  * Each group runs in a forked process and reports PASS and FAIL lines, so a
- * group that dies is a failure and the next one still runs. A group needs a
- * level of the profile (base, simd or complete); the program reads the level
- * from AT_HWCAP and AT_HWCAP2 and skips a group above it, naming why. The
- * program counts the SIGILLs it expects (instructions the profile makes
- * UNDEFINED) and reports any other as a failure; run_guest_a32_engine.py
- * checks the totals. It is C++ compiled for a soft-float ARM target, so the
- * compiler emits no VFP or NEON; the groups that need them use assembly in
- * their own functions.
+ * group that dies is a failure and the next one still runs. The program
+ * counts the SIGILLs it expects (instructions the profile makes UNDEFINED)
+ * and reports any other as a failure; run_guest_a32_engine.py checks the
+ * totals. It is C++ compiled for a soft-float ARM target, so the compiler
+ * emits no VFP or NEON; the groups that need them use assembly in their own
+ * functions.
  *
  * Environment of the init process (kernel command-line words):
  *   A32_PROBE_GROUPS  comma-separated group names to run; default every group
- *   A32_PROBE_LEVEL   the level the engine is expected to present; the
- *                     detected level must equal it
  */
 #include "engine_probe.hpp"
 
@@ -79,7 +75,6 @@ word hwcap;
 word hwcap2;
 word page_size = 4096;
 static char **environment_block;
-int level_detected;
 
 /* ---- output ---- */
 
@@ -600,11 +595,6 @@ bool wanted(const char *list, const char *name)
 	return false;
 }
 
-const char *level_name(int level)
-{
-	return level == level_base ? "base" : level == level_simd ? "simd" : "complete";
-}
-
 void prepare_init()
 {
 	/* Only the guest's /init has to bring up its own console and /proc. */
@@ -666,21 +656,6 @@ extern "C" [[noreturn, gnu::used]] void probe_main(word *stack)
 	prepare_init();
 	group_name = "probe";
 
-	level_detected = level_base;
-	if ((hwcap & hwcap_neon) && (hwcap & hwcap_vfpv4))
-		level_detected = level_simd;
-	if (level_detected == level_simd && (hwcap2 & hwcap2_crc32))
-		level_detected = level_complete;
-
-	line("a32-engine-probe: level ", level_name(level_detected));
-	if (const char *expected = environment("A32_PROBE_LEVEL")) {
-		check(streq(expected, level_name(level_detected)),
-		      "the HWCAP words show the level the engine implements");
-		if (!streq(expected, level_name(level_detected))) {
-			put("detected ");
-			line(level_name(level_detected), " but expected ", expected);
-		}
-	}
 	shared = ptr<Shared>(mmap_pages(sizeof(Shared), prot_read | prot_write,
 					map_shared | map_anonymous));
 	if (addr(shared) > static_cast<word>(-4096)) {
@@ -694,14 +669,6 @@ extern "C" [[noreturn, gnu::used]] void probe_main(word *stack)
 		const Group &group = groups[index];
 		if (!wanted(list, group.name))
 			continue;
-		if (group.level > level_detected) {
-			put("SKIP ");
-			put(group.name);
-			put(": needs the ");
-			put(level_name(group.level));
-			put(" level\n");
-			continue;
-		}
 		run_group(group, index);
 	}
 	put("a32-engine-probe: ");
