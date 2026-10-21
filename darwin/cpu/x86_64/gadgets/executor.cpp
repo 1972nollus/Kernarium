@@ -2276,6 +2276,7 @@ struct Executor::Storage final {
 	bool prepared{};
 	bool cache_ready{};
 	unsigned checked{};
+	std::vector<std::uintptr_t> checked_stream;
 };
 
 Executor::Executor() : storage_{std::make_unique<Storage>()}
@@ -2425,6 +2426,11 @@ void Executor::leave_gone_generations(unsigned long long retirements,
 NativeTlbEntry *Executor::tlb_entries() noexcept
 {
 	return storage_->entries.data();
+}
+
+std::vector<std::uintptr_t> &Executor::checked_stream() noexcept
+{
+	return storage_->checked_stream;
 }
 
 bool Executor::page_holds_cached_code(std::uint64_t address) noexcept

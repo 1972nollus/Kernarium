@@ -7047,16 +7047,26 @@ std::optional<std::size_t> instruction_at_word(
 	return std::nullopt;
 }
 
+void build_native_stream_into(std::vector<std::uintptr_t> &stream,
+	std::span<const Gadget> gadgets, std::uint64_t final_rip,
+	ExecutionMode mode, std::uint64_t program_begin,
+	ProgramLinkResolver links)
+{
+	stream.clear();
+	if (append_native_stream(stream, gadgets, final_rip, mode,
+		program_begin, links))
+		throw std::logic_error{
+			"x86-64 operation has no native assembly gadget"};
+}
+
 std::vector<std::uintptr_t> build_native_stream(
 	std::span<const Gadget> gadgets, std::uint64_t final_rip,
 	ExecutionMode mode, std::uint64_t program_begin,
 	ProgramLinkResolver links)
 {
 	std::vector<std::uintptr_t> stream;
-	if (append_native_stream(stream, gadgets, final_rip, mode,
-		program_begin, links))
-		throw std::logic_error{
-			"x86-64 operation has no native assembly gadget"};
+	build_native_stream_into(stream, gadgets, final_rip, mode,
+		program_begin, links);
 	return stream;
 }
 

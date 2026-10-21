@@ -806,10 +806,12 @@ constexpr std::uint64_t x87_compare_rflags = 0x8d5U;
 		return {::uml::cpu::EngineEvent::memory_fault, 0,
 			{0, ::uml::memory::MemoryAccess::read, true}, false, false};
 
-	const auto stream = step_string ?
-		build_repeat_step_stream(first, mode, program.address()) :
-		build_native_stream(gadgets.subspan(index, 1), final_rip, mode,
-			program.address());
+	auto &stream = executor.checked_stream();
+	if (step_string)
+		stream = build_repeat_step_stream(first, mode, program.address());
+	else
+		build_native_stream_into(stream, gadgets.subspan(index, 1),
+			final_rip, mode, program.address());
 	const bool simd = (checked & check_simd) != 0 &&
 		simd_floating(instruction);
 	const bool x87 = (checked & check_x87) != 0 &&
