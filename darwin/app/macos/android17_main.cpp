@@ -148,15 +148,6 @@ std::filesystem::path validated_release_root(
 	return release;
 }
 
-std::vector<char *> argument_pointers(std::vector<std::string> &arguments)
-{
-	std::vector<char *> pointers;
-	pointers.reserve(arguments.size());
-	for (auto &argument : arguments)
-		pointers.push_back(argument.data());
-	return pointers;
-}
-
 void print_usage()
 {
 	std::fputs(
@@ -212,9 +203,8 @@ int main(int argc, char *argv[], char *envp[])
 						? "recovery" : "normal",
 					disk.c_str());
 		}
-		auto pointers = argument_pointers(options.forwarded);
 		return uml::app::runEmbeddedKernel(
-			static_cast<int>(pointers.size()), pointers.data(), envp,
+			options.forwarded, envp,
 			{
 				.rootfs_path = nullptr,
 				.default_guest_memory = android_default_guest_memory,
