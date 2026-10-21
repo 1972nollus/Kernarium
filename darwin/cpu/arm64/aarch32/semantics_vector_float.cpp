@@ -11,8 +11,6 @@
 #include "cpu/arm64/aarch32/semantics_fp_convert.hpp"
 #include "cpu/arm64/aarch32/semantics_vector.hpp"
 
-#include <iterator>
-
 namespace uml::cpu::arm64::aarch32::detail {
 
 namespace {
@@ -485,9 +483,8 @@ constexpr VectorEntry entries[] = {
 
 } // namespace
 
-const VectorEntry *vector_float_entries(std::size_t &count) noexcept
+std::span<const VectorEntry> vector_float_entries() noexcept
 {
-	count = std::size(entries);
 	return entries;
 }
 
