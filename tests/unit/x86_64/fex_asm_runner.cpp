@@ -695,6 +695,58 @@ void linux_segments(uml::cpu::x86_64::CpuState &cpu,
 	return true;
 }
 
+/* HLT, the end marker, at RIP ends a case: its registers are compared with
+ * the expected ones and the result reported. Returns the exit code, or
+ * nothing when the instruction at RIP, whose bytes are `opcode`, is not the
+ * marker. */
+[[nodiscard]] std::optional<int> finish_at_marker(
+	const Configuration &configuration,
+	const uml::cpu::x86_64::CpuState &cpu, std::span<const std::byte> opcode,
+	std::size_t retired, bool quiet_success, std::string_view test)
+{
+	if (opcode.empty() || opcode.front() != std::byte{0xf4})
+		return std::nullopt;
+	std::string status;
+	std::string detail;
+	const auto passed = compare_registers(configuration, cpu, status, detail);
+	if (!passed || !quiet_success)
+		print_result(status, retired, cpu.rip, opcode, detail, test);
+	return passed ? 0 : 1;
+}
+
+/* Answers the system calls a few tests make for their own sake, which keeps
+ * Linux ABI emulation outside the CPU engines; returns whether `cpu`, stopped
+ * at a system call, was one of them.
+ *
+ * One upstream decoder test uses Linux time(2) only to prove that SYSCALL
+ * reached a live boundary, and a repository case to read the flags SYSCALL
+ * saves in R11. FEX's compatibility-ABI regression invokes 32-bit
+ * clock_gettime(2) through INT 80h and observes only the successful return.
+ * Its inline-syscall decoder regression issues getrandom(2) with a
+ * zero-length buffer and needs only the architecturally successful boundary.
+ */
+[[nodiscard]] bool serve_test_system_call(
+	uml::cpu::x86_64::CpuState &cpu) noexcept
+{
+	using uml::cpu::x86_64::Register;
+	const auto low = [&](Register reg) {
+		return static_cast<std::uint32_t>(cpu.gpr(reg));
+	};
+	if (cpu.gpr(Register::rax) == 201 && cpu.gpr(Register::rdi) == 0) {
+		cpu.gpr(Register::rax) = 1;
+		return true;
+	}
+	if (!cpu.system_call_32bit)
+		return false;
+	if ((low(Register::rax) == 265U && low(Register::rbx) == 0U) ||
+		(low(Register::rax) == 355U && low(Register::rbx) == 0U &&
+		 low(Register::rcx) == 0U && low(Register::rdx) == 0U)) {
+		cpu.gpr(Register::rax) = 0;
+		return true;
+	}
+	return false;
+}
+
 #if UML_FEX_ASM_JIT
 [[nodiscard]] const char *reason_name(uml::cpu::ExitReason reason) noexcept
 {
@@ -999,15 +1051,9 @@ private:
 	std::size_t retired{};
 	while (retired < instruction_limit) {
 		const auto opcode = memory.snapshot(cpu.rip, 15);
-		if (!opcode.empty() && opcode.front() == std::byte{0xf4}) {
-			std::string status;
-			std::string detail;
-			const auto passed = compare_registers(
-				configuration, cpu, status, detail);
-			if (!passed || !quiet_success)
-				print_result(status, retired, cpu.rip, opcode, detail, test);
-			return passed ? 0 : 1;
-		}
+		if (const auto finished = finish_at_marker(configuration, cpu, opcode,
+			retired, quiet_success, test))
+			return *finished;
 #if UML_FEX_ASM_SWITCH
 		uml::cpu::ExecutionResult dispatched;
 		if (gadgets && gadgets->budget() != 0) {
@@ -1031,35 +1077,9 @@ private:
 			cpu.rflags &= ~rflags_resume;
 			continue;
 		}
-		/* The same test-local system calls as the gadget loop below. */
 		if (result.reason == uml::cpu::ExitReason::system_call &&
-			cpu.gpr(uml::cpu::x86_64::Register::rax) == 201 &&
-			cpu.gpr(uml::cpu::x86_64::Register::rdi) == 0) {
-			cpu.gpr(uml::cpu::x86_64::Register::rax) = 1;
+			serve_test_system_call(cpu))
 			continue;
-		}
-		if (result.reason == uml::cpu::ExitReason::system_call &&
-			cpu.system_call_32bit &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rax)) == 265U &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rbx)) == 0U) {
-			cpu.gpr(uml::cpu::x86_64::Register::rax) = 0;
-			continue;
-		}
-		if (result.reason == uml::cpu::ExitReason::system_call &&
-			cpu.system_call_32bit &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rax)) == 355U &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rbx)) == 0U &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rcx)) == 0U &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rdx)) == 0U) {
-			cpu.gpr(uml::cpu::x86_64::Register::rax) = 0;
-			continue;
-		}
 		/* HLT, the end marker, raises #GP at user privilege. */
 		if (result.reason == uml::cpu::ExitReason::breakpoint &&
 			result.syndrome == vector_general_protection) {
@@ -1102,15 +1122,9 @@ private:
 	std::size_t retired{};
 	while (retired < instruction_limit) {
 		const auto opcode = memory.snapshot(cpu.rip, 15);
-		if (!opcode.empty() && opcode.front() == std::byte{0xf4}) {
-			std::string status;
-			std::string detail;
-			const auto passed = compare_registers(
-				configuration, cpu, status, detail);
-			if (!passed || !quiet_success)
-				print_result(status, retired, cpu.rip, opcode, detail, test);
-			return passed ? 0 : 1;
-		}
+		if (const auto finished = finish_at_marker(configuration, cpu, opcode,
+			retired, quiet_success, test))
+			return *finished;
 
 		uml::cpu::x86_64::gadgets::BuildResult built{};
 		const uml::cpu::x86_64::gadgets::Program *program{};
@@ -1148,47 +1162,9 @@ private:
 		retired += result.retired_instructions;
 		if (dispatch == Dispatch::cached)
 			prepared_code_changes = executor.prepared_code_changes();
-		/* One upstream decoder test uses Linux time(2) only to prove that
-		 * SYSCALL reached a live boundary, and a repository case to read the
-		 * flags SYSCALL saves in R11. Keep that test-local service in the
-		 * adapter instead of teaching the CPU engine about Linux ABIs.
-		 */
 		if (result.event == uml::cpu::EngineEvent::system_call &&
-			cpu.gpr(uml::cpu::x86_64::Register::rax) == 201 &&
-			cpu.gpr(uml::cpu::x86_64::Register::rdi) == 0) {
-			cpu.gpr(uml::cpu::x86_64::Register::rax) = 1;
+			serve_test_system_call(cpu))
 			continue;
-		}
-		/* FEX's compatibility-ABI regression invokes 32-bit
-		 * clock_gettime(2) through INT 80h. The test observes only the
-		 * successful return; Linux ABI emulation remains outside the CPU.
-		 */
-		if (result.event == uml::cpu::EngineEvent::system_call &&
-			cpu.system_call_32bit &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rax)) == 265U &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rbx)) == 0U) {
-			cpu.gpr(uml::cpu::x86_64::Register::rax) = 0;
-			continue;
-		}
-		/* FEX's inline-syscall decoder regression issues getrandom(2) with a
-		 * zero-length buffer. It needs only the architecturally successful
-		 * boundary; Linux syscall emulation remains outside this adapter.
-		 */
-		if (result.event == uml::cpu::EngineEvent::system_call &&
-			cpu.system_call_32bit &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rax)) == 355U &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rbx)) == 0U &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rcx)) == 0U &&
-			static_cast<std::uint32_t>(
-				cpu.gpr(uml::cpu::x86_64::Register::rdx)) == 0U) {
-			cpu.gpr(uml::cpu::x86_64::Register::rax) = 0;
-			continue;
-		}
 		/* HLT, the test's end marker, raises #GP at user privilege without
 		 * retiring. The loop head recognizes it and compares the state. */
 		if (result.event == uml::cpu::EngineEvent::general_protection) {

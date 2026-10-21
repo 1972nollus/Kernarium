@@ -47,6 +47,7 @@
 #include "cpu/x86_64/jit/fex_engine.hpp"
 #include "memory/guest_address_space.hpp"
 #include "platform/apple/host_features.hpp"
+#include "watchdog.hpp"
 
 #include <barrier>
 #include <chrono>
@@ -220,8 +221,8 @@ struct Agent final {
 	bool stores_ordered{};
 	const char *failure{};
 
-	void run(LitmusMemory &memory, unsigned long generation, bool ordered,
-		std::chrono::steady_clock::time_point deadline) noexcept
+	void run(LitmusMemory &memory, unsigned long generation,
+		bool ordered) noexcept
 	{
 		uml::cpu::InterruptToken interrupt{};
 		if (!synced) {
@@ -257,10 +258,6 @@ struct Agent final {
 			if (result.execution.reason !=
 				uml::cpu::ExitReason::instruction_budget) {
 				failure = "the program stopped short of its system call";
-				return;
-			}
-			if (std::chrono::steady_clock::now() > deadline) {
-				failure = "the program did not finish in time";
 				return;
 			}
 		}
@@ -307,6 +304,7 @@ int judge(const Case &test, const LitmusMemory &memory, const Agent &reader,
 int run_case(const Case &test, std::initializer_list<bool> orders,
 	unsigned long generation)
 {
+	uml::testing::Watchdog watchdog{test.name, time_limit};
 	LitmusMemory memory;
 	Agent reader{test.reader_entry};
 	Agent writer{test.writer_entry};
@@ -314,8 +312,7 @@ int run_case(const Case &test, std::initializer_list<bool> orders,
 	std::thread writer_thread{[&] {
 		for (const bool ordered : orders) {
 			phase.arrive_and_wait();
-			writer.run(memory, generation, ordered,
-				std::chrono::steady_clock::now() + time_limit);
+			writer.run(memory, generation, ordered);
 			phase.arrive_and_wait();
 		}
 	}};
@@ -323,8 +320,7 @@ int run_case(const Case &test, std::initializer_list<bool> orders,
 	for (const bool ordered : orders) {
 		memory.reset_data();
 		phase.arrive_and_wait();
-		reader.run(memory, generation, ordered,
-			std::chrono::steady_clock::now() + time_limit);
+		reader.run(memory, generation, ordered);
 		phase.arrive_and_wait();
 		failures += judge(test, memory, reader, writer, ordered);
 	}
