@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 cmake_minimum_required(VERSION 3.25)
 
 project(uml_emulator_external_consumer LANGUAGES C CXX OBJC)

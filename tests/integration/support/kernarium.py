@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Host side of a Kernarium automation run.
 
 Only the automation build of the Kernarium Linux runtime boots a host payload
