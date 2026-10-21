@@ -959,7 +959,6 @@ UML_X86_DEFINE_LOCKED_MEMORY_ARITHMETIC_SELECTOR(sbb)
 	default: return 0;
 	}
 #undef UML_X86_MEMORY_MOVE
-	return 0;
 }
 
 struct EncodedMemory final {
@@ -4900,7 +4899,6 @@ struct FlagState final {
 	default: return nullptr;
 	}
 #undef UML_X86_STRING_WIDTH
-	return nullptr;
 }
 
 [[nodiscard]] bool append_string(StreamWords &stream,

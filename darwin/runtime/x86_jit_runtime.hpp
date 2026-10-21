@@ -11,6 +11,7 @@
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "memory/static_guest_memory.hpp"
+#include "runtime/x86_runtime_support.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -30,21 +31,15 @@ struct X86JitEngineDeleter final {
 using X86JitEngine = std::unique_ptr<::uml::cpu::x86_64::jit::FexEngine,
 	X86JitEngineDeleter>;
 
-struct X86JitRunResult final {
-	::uml::cpu::ExecutionResult execution;
-	/* As X86GadgetRunResult::error_code. */
-	std::int32_t error_code{};
-};
-
 /* Whether this host can run the engine. Decided once. */
 [[nodiscard]] bool x86_jit_available() noexcept;
 
-/* One dispatch of x86 code. The result means what the gadget runtime's
- * does, so the caller reports it to Linux the same way. `mm_shared` is the
+/* One dispatch of x86 code. The result is the gadget runtime's, so the
+ * caller reports it to Linux the same way. `mm_shared` is the
  * kernel's mark that another agent may observe the address space's memory
  * (DARWIN_UML_DISPATCH_MM_SHARED): the dispatch then keeps x86's total
  * store order. */
-[[nodiscard]] X86JitRunResult run_x86_jit(
+[[nodiscard]] X86RunResult run_x86_jit(
 	::uml::cpu::x86_64::CpuState &cpu,
 	::uml::memory::StaticGuestMemory &memory, X86JitEngine &engine,
 	unsigned long generation, std::size_t instruction_budget,
