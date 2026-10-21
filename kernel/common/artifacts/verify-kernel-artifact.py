@@ -21,7 +21,6 @@ def main() -> None:
     parser.add_argument("--expected-family")
     parser.add_argument("--expected-slice")
     parser.add_argument("--expected-release-series")
-    parser.add_argument("--expected-page-size", type=int)
     args = parser.parse_args()
 
     if args.compatible:
@@ -29,12 +28,11 @@ def main() -> None:
             args.expected_family is None
             or args.expected_slice is None
             or args.expected_release_series is None
-            or args.expected_page_size is None
             or args.kernel_metadata is not None
         ):
             parser.error(
-                "--compatible requires expected family, slice, release series, "
-                "and page size without tracked-source inputs"
+                "--compatible requires expected family, slice, and release "
+                "series without tracked-source inputs"
             )
         manifest = verify_compatible_artifact(
             args.artifact,
@@ -43,7 +41,6 @@ def main() -> None:
             args.expected_family,
             args.expected_slice,
             args.expected_release_series,
-            args.expected_page_size,
         )
     else:
         if args.kernel_metadata is None:

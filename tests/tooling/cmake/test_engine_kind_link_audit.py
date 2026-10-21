@@ -16,6 +16,19 @@ from pathlib import Path
 
 ENGINE_KINDS = ("native", "gadget", "shared", "mixed")
 
+# The dependency direction of AGENTS.md: the layers each layer may link besides
+# itself. API and platform link nothing else.
+LAYER_EDGES = {
+    "api": (),
+    "platform": (),
+    "memory": ("platform",),
+    "cpu": ("memory", "platform"),
+    "device": ("memory", "platform"),
+    "runtime": ("cpu", "memory", "device", "platform"),
+    "emulator": ("api", "runtime", "device"),
+    "app": ("api", "emulator", "device"),
+}
+
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -29,6 +42,12 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 def normalized(output: str) -> str:
     return re.sub(r"\s+", " ", output)
+
+
+def layer_declaration(target: str, layer: str) -> str:
+    """Declare target in layer, as a shared engine kind when it is a CPU one."""
+    engine_kind = " shared" if layer == "cpu" else ""
+    return f"uml_declare_architecture_target({target} {layer}{engine_kind})"
 
 
 def configure(
@@ -192,6 +211,95 @@ def main() -> int:
                     failures.append(
                         f"accepted forbidden {label}:\n{audited.stdout}"
                     )
+
+        # Every ordered pair of declared layers, in one configured graph each:
+        # a layer may link itself and the layers LAYER_EDGES lists for it.
+        for source_layer, destination_layer in itertools.product(
+            LAYER_EDGES, repeat=2
+        ):
+            label = f"{source_layer} -> {destination_layer}"
+            fixture = root / f"layer-{source_layer}-{destination_layer}"
+            configured = configure(
+                options.cmake,
+                module,
+                fixture,
+                [
+                    "add_library(source_target INTERFACE)",
+                    "add_library(destination_target INTERFACE)",
+                    layer_declaration("source_target", source_layer),
+                    layer_declaration("destination_target", destination_layer),
+                    "target_link_libraries(source_target INTERFACE "
+                    "destination_target)",
+                    "uml_write_architecture_manifest()",
+                ],
+            )
+            if configured.returncode != 0:
+                failures.append(
+                    f"could not configure {label}:\n{configured.stdout}"
+                )
+                continue
+            audited = run(
+                [
+                    str(options.cmake),
+                    f"-DBUILD_ROOT={fixture / 'build'}",
+                    "-P",
+                    str(options.audit),
+                ]
+            )
+            if (
+                source_layer == destination_layer
+                or destination_layer in LAYER_EDGES[source_layer]
+            ):
+                accepted += 1
+                if audited.returncode != 0:
+                    failures.append(
+                        f"rejected allowed {label}:\n{audited.stdout}"
+                    )
+            else:
+                rejected += 1
+                if (
+                    audited.returncode == 0
+                    or "Forbidden declared link architecture edge: "
+                    f"source_target ({source_layer}) -> "
+                    f"destination_target ({destination_layer})"
+                    not in normalized(audited.stdout)
+                ):
+                    failures.append(
+                        f"accepted forbidden {label}:\n{audited.stdout}"
+                    )
+
+        # A dependency the manifest does not declare has no layer, and no layer
+        # may link it. The configure step cannot write such a row, so the
+        # manifest is written by hand.
+        fixture = root / "undeclared"
+        configured = configure(
+            options.cmake, module, fixture, ["uml_write_architecture_manifest()"]
+        )
+        if configured.returncode != 0:
+            failures.append(
+                f"could not configure undeclared:\n{configured.stdout}"
+            )
+        else:
+            (fixture / "build" / "uml-architecture-targets.tsv").write_text(
+                "# target\tlayer\ttarget_kind\tengine_kind\tdependencies\n"
+                "declared\tmemory\tinterface\t-\tlink@undeclared\n",
+                encoding="utf-8",
+            )
+            audited = run(
+                [
+                    str(options.cmake),
+                    f"-DBUILD_ROOT={fixture / 'build'}",
+                    "-P",
+                    str(options.audit),
+                ]
+            )
+            rejected += 1
+            if audited.returncode == 0 or (
+                "Forbidden declared link architecture edge: "
+                "declared (memory) -> undeclared ()"
+                not in normalized(audited.stdout)
+            ):
+                failures.append(f"accepted undeclared:\n{audited.stdout}")
 
         # The same audit rejects a declared cycle, a link against the layer
         # direction, a declared target the codemodel lacks, and a dependency
