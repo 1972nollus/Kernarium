@@ -1391,6 +1391,19 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.lastFence.ringIndex == 0);
     require(dependencies.lastFence.cookie == submit.header.fenceId);
 
+    // A transfer's fence fails alike: the transfer is done, and the failure
+    // is reported once.
+    transfer.header.flags = protocol::gpuFlagFence;
+    transfer.header.fenceId = 19;
+    const auto transfersBeforeFenceFailure = dependencies.transferCount;
+    dependencies.rejectNext(FakeGpuDependencies::Operation::fence);
+    requireResponse(device, requestBytes(transfer),
+        protocol::GpuResponse::errorUnspecified);
+    require(dependencies.transferCount == transfersBeforeFenceFailure + 1);
+    require(dependencies.fenceCount == 0);
+    require(dependencies.lastFence.cookie == transfer.header.fenceId);
+    transfer.header.flags = 0;
+
     auto scanout = newRequest<protocol::GpuSetScanout>(GpuCommand::setScanout);
     scanout.rectangle = {.x = 1, .y = 1, .width = 2, .height = 2};
     scanout.scanoutId = protocol::primaryScanoutId;
