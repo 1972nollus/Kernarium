@@ -938,14 +938,7 @@ def synthetic_lineage_recovery_ramdisk(
 
 def verify_lineage_recovery_fixtures(verifier: Path, android_root: Path) -> None:
     fstab = (android_root / "overlay/config/recovery.fstab").read_bytes()
-    spec = importlib.util.spec_from_file_location("verify_lineage_recovery", verifier)
-    assert spec is not None and spec.loader is not None
-    sys.path.insert(0, str(verifier.parent))
-    module = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.remove(str(verifier.parent))
+    module = load_tool(verifier)
     # A match whose offset is shorter than its length repeats the pattern.
     if module.lz4_block(b"\x35abc\x03\x00\x20de", 1 << 20) != b"abcabcabcabcde":
         fail("LZ4 block decoder mis-decoded an overlapping match")
