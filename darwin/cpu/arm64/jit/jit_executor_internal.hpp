@@ -126,46 +126,6 @@ private:
     tlb_.fault_address = fault.address;
     tlb_.fault_access = ::uml::memory::translated_access(fault.access);
   }
-  /* The start of a block entry, A64 or AArch32. begin_entry resets the
-   * entry's state and reads the address space's sequences, leaving preempted_
-   * set when another vCPU wants this one back; prepare_entry then readies the
-   * memory, TLB and link tables for `generation`. */
-  [[nodiscard, gnu::always_inline]] darwin_uml_static_sequences
-  begin_entry(CpuState &cpu, std::size_t &executed) {
-    executed = 0;
-    floating_point_syndrome_ = 0;
-    tlb_.fault_alignment = 0;
-    select_cpu(cpu);
-    const auto sequences =
-        darwin_uml_static_vm_execution_context_sequences(execution_context_);
-    preempted_ = sequences.execution_interrupt != 0;
-    return sequences;
-  }
-  [[gnu::always_inline]] void
-  prepare_entry(CpuState &cpu, StaticGuestMemory &memory,
-                unsigned long generation,
-                const darwin_uml_static_sequences &sequences) {
-    /* What the translations this run reaches are validated at, below: an ISB
-     * leaves when the address space's code has changed since. */
-    cpu.code_sequence = code_sequence_;
-    cpu.code_sequence_seen = sequences.code_changes;
-    const bool mapping_changed = mapping_generation_ != generation ||
-                                 mapping_changes_ != sequences.mapping_changes;
-    /* StaticGuestMemory belongs to the task-carrier thread, while a pooled JIT
-     * executor may serve a different carrier on its next guest entry. Prepare
-     * each distinct per-entry memory object even when the executor's global
-     * generation/change view is already current. */
-    if (prepared_memory_ != &memory || mapping_changed) {
-      memory.prepare(generation, sequences.mapping_changes);
-      prepared_memory_ = &memory;
-    }
-    if (mapping_changed) {
-      tlb_.prepare(generation, sequences.mapping_changes);
-      mapping_generation_ = generation;
-      mapping_changes_ = sequences.mapping_changes;
-    }
-    prepare_links(generation, sequences.code_changes);
-  }
   /* Builds the translation in the single-instruction arena, replacing the
    * previous one. Empty when the instruction cannot be lowered or stored.
    */

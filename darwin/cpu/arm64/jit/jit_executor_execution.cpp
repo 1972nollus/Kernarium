@@ -32,10 +32,35 @@ namespace {
   }
   const ::uml::cpu::HostCapabilitiesScope capabilities_scope{
       host_capabilities_};
-  const auto sequences = begin_entry(cpu, executed);
+  executed = 0;
+  floating_point_syndrome_ = 0;
+  tlb_.fault_alignment = 0;
+  select_cpu(cpu);
+  const auto sequences =
+      darwin_uml_static_vm_execution_context_sequences(execution_context_);
+  preempted_ = sequences.execution_interrupt != 0;
   if (preempted_)
     return Event::interrupt;
-  prepare_entry(cpu, memory, generation, sequences);
+  /* What the translations this run reaches are validated at, below: an ISB
+   * leaves when the address space's code has changed since. */
+  cpu.code_sequence = code_sequence_;
+  cpu.code_sequence_seen = sequences.code_changes;
+  const bool mapping_changed = mapping_generation_ != generation ||
+                               mapping_changes_ != sequences.mapping_changes;
+  /* StaticGuestMemory belongs to the task-carrier thread, while a pooled JIT
+   * executor may serve a different carrier on its next guest entry. Prepare
+   * each distinct per-entry memory object even when the executor's global
+   * generation/change view is already current. */
+  if (prepared_memory_ != &memory || mapping_changed) {
+    memory.prepare(generation, sequences.mapping_changes);
+    prepared_memory_ = &memory;
+  }
+  if (mapping_changed) {
+    tlb_.prepare(generation, sequences.mapping_changes);
+    mapping_generation_ = generation;
+    mapping_changes_ = sequences.mapping_changes;
+  }
+  prepare_links(generation, sequences.code_changes);
   /*
    * The guest SVCR mode selects the translation (translation_key()). Only
    * a run that implements SME can be in a nonzero mode, and the state that
