@@ -81,22 +81,7 @@ JitExecutor::Implementation::translate_a32_single(
                         .bytes = bytes,
                         .itstate = aarch32::ItState{itstate},
                         .single = true});
-  const auto &translation = compiled.translation;
-  if (translation.words.empty() || translation.guest_instructions != 1U ||
-      !valid_link_state_metadata(translation.accesses_fp_state,
-                                 translation.native_fp))
-    return std::nullopt;
-  single_instruction_arena_.reset();
-  auto *code = single_instruction_arena_.store(translation.words);
-  if (code == nullptr)
-    return std::nullopt;
-  return SingleInstructionTranslation{
-      .function = sign_jit_function<JitFunction>(code),
-      .memory_write_mask = translation.memory_write_mask,
-      .direct_memory_write_mask = translation.direct_memory_write_mask,
-      .accesses_fp_state = translation.accesses_fp_state,
-      .native_fp = translation.native_fp,
-  };
+  return store_single_translation(compiled.translation);
 }
 
 /* The exclusive a translation deferred (its cold path returned with the
@@ -144,25 +129,15 @@ JitExecutor::Implementation::translate_a32_single(
   if (!translation)
     return Event::fatal;
   std::uint32_t deferred_exclusive = 0;
-  Event event{};
-  if (translation->direct_memory_write_mask == 0) {
-    event = invoke_single_instruction(*translation, cpu, false, false,
-                                      executed, deferred_exclusive);
-  } else {
-    JitBlockPublication publication{store_participant_, cpu};
-    if (!publication.needs_tracking()) {
-      event = invoke_single_instruction(*translation, cpu, false, false,
-                                        executed, deferred_exclusive);
-    } else {
-      const auto tracked =
-          translate_a32_single(key, bytes_view, cpu.a32_itstate, true);
-      if (!tracked || tracked->direct_memory_write_mask !=
-                          translation->direct_memory_write_mask)
-        return Event::fatal;
-      event = invoke_single_instruction(*tracked, cpu, true, false, executed,
-                                        deferred_exclusive);
-    }
-  }
+  const auto published = invoke_single_instruction_published(
+      cpu, *translation,
+      [&] {
+        return translate_a32_single(key, bytes_view, cpu.a32_itstate, true);
+      },
+      executed, deferred_exclusive);
+  if (!published)
+    return Event::fatal;
+  auto event = *published;
   if (deferred_exclusive != 0U)
     event = run_deferred_a32_exclusive(cpu, deferred_exclusive, executed);
   reconcile_reservation(cpu);

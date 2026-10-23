@@ -474,8 +474,14 @@ JitExecutor::Implementation::translate_single_instruction(
     std::uint8_t mode) {
   JitCompiler compiler{nullptr, nullptr, track_direct_stores};
   compiler.set_sme_mode(mode);
-  const auto compiled =
-      compiler.compile(pc, std::span{&instruction, std::size_t{1}});
+  return store_single_translation(
+      compiler.compile(pc, std::span{&instruction, std::size_t{1}}));
+}
+
+[[nodiscard]] std::optional<
+    JitExecutor::Implementation::SingleInstructionTranslation>
+JitExecutor::Implementation::store_single_translation(
+    const JitCompiler::Result &compiled) {
   if (compiled.words.empty() || compiled.guest_instructions != 1U ||
       !valid_link_state_metadata(compiled.accesses_fp_state,
                                  compiled.native_fp))
@@ -542,25 +548,16 @@ JitExecutor::Implementation::translate_single_instruction(
   if (!translation)
     return Event::fatal;
   std::uint32_t deferred_exclusive = 0;
-  Event event{};
-  if (translation->direct_memory_write_mask == 0) {
-    event = invoke_single_instruction(*translation, cpu, false, false,
-                                      executed, deferred_exclusive);
-  } else {
-    JitBlockPublication publication{store_participant_, cpu};
-    if (!publication.needs_tracking()) {
-      event = invoke_single_instruction(*translation, cpu, false, false,
-                                        executed, deferred_exclusive);
-    } else {
-      const auto tracked =
-          translate_single_instruction(cpu.pc, instruction, true, cpu.svcr);
-      if (!tracked || tracked->direct_memory_write_mask !=
-                          translation->direct_memory_write_mask)
-        return Event::fatal;
-      event = invoke_single_instruction(*tracked, cpu, true, false,
-                                        executed, deferred_exclusive);
-    }
-  }
+  const auto published = invoke_single_instruction_published(
+      cpu, *translation,
+      [&] {
+        return translate_single_instruction(cpu.pc, instruction, true,
+                                            cpu.svcr);
+      },
+      executed, deferred_exclusive);
+  if (!published)
+    return Event::fatal;
+  auto event = *published;
   if (deferred_exclusive != 0U) {
     const auto retired_prefix = executed;
     std::size_t exclusive_executed = 0;

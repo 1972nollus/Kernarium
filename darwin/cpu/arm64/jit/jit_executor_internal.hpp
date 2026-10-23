@@ -125,10 +125,38 @@ private:
   [[nodiscard]] std::optional<SingleInstructionTranslation>
   translate_single_instruction(std::uint64_t pc, std::uint32_t instruction,
                                bool track_direct_stores, std::uint8_t mode);
+  /* The translation of one instruction, built by a compiler for it, stored
+   * in the single-instruction arena. Empty when it is not exactly one
+   * instruction with a usable link state, or does not fit. */
+  [[nodiscard]] std::optional<SingleInstructionTranslation>
+  store_single_translation(const JitCompiler::Result &compiled);
   [[nodiscard]] Event invoke_single_instruction(
       const SingleInstructionTranslation &translation, CpuState &target,
       bool tracked_stores, bool restore_environment, std::size_t &executed,
       std::uint32_t &deferred_exclusive);
+  /* Runs `translation`, the untracked translation of the instruction at the
+   * PC, under the store-publication protocol: as it is when no other vCPU
+   * reserves, or as `tracked_translation()` builds it again when one does.
+   * Empty when that variant does not write memory as the first does. */
+  template <typename TrackedTranslation>
+  [[nodiscard]] std::optional<Event> invoke_single_instruction_published(
+      CpuState &cpu, const SingleInstructionTranslation &translation,
+      TrackedTranslation &&tracked_translation, std::size_t &executed,
+      std::uint32_t &deferred_exclusive) {
+    if (translation.direct_memory_write_mask == 0)
+      return invoke_single_instruction(translation, cpu, false, false,
+                                       executed, deferred_exclusive);
+    JitBlockPublication publication{store_participant_, cpu};
+    if (!publication.needs_tracking())
+      return invoke_single_instruction(translation, cpu, false, false,
+                                       executed, deferred_exclusive);
+    const auto tracked = tracked_translation();
+    if (!tracked || tracked->direct_memory_write_mask !=
+                        translation.direct_memory_write_mask)
+      return std::nullopt;
+    return invoke_single_instruction(*tracked, cpu, true, false, executed,
+                                     deferred_exclusive);
+  }
   /*
    * Runs one guest instruction when its block cannot run natively: the block
    * translation failed, did not fit the arena, or its tracked variant could
