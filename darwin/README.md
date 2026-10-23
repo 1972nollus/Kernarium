@@ -77,8 +77,11 @@ sections.
 Engine selection, executable-memory ownership, the JIT's semantic slow path,
 the x86_64 slice's userspace profile, and the gadget cache's address-space tags
 are in the
-[architecture](../docs/architecture.md#cpu-execution-and-scheduling). This
-section owns the engines' internal detail.
+[architecture](../docs/architecture.md#cpu-execution-and-scheduling). Each
+engine's lowering is in the README beside it, for the arm64
+[gadgets](cpu/arm64/gadgets/README.md) and [JIT](cpu/arm64/jit/README.md) as
+for the x86_64 engines; this section owns the rest of the engines' internal
+detail.
 
 The x86_64 backend's CPUID advertises ERMS: a repeated string operation moves
 whole page-bounded blocks, so the REP MOVSB that ERMS steers libc onto is this
