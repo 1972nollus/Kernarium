@@ -271,12 +271,11 @@ def fill_zt0() -> bytes:
 
 
 def feature_tokens() -> tuple[str, ...]:
-    text = FEATURES.read_text(encoding="utf-8")
-    start = text.index("arm_feature_tokens{")
-    end = text.index("};", start)
+    # The X(token, "Label") rows of the header's feature lists, in order.
     tokens = tuple(
-        item.split('"')[1]
-        for item in text[start:end].split("std::string_view{")[1:]
+        line.strip()[2:].split(",")[0]
+        for line in FEATURES.read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("X(")
     )
     if len(tokens) < 100 or len(set(tokens)) != len(tokens):
         fail("cannot read the stable ArmFeature token table")

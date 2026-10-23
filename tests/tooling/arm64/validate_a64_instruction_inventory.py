@@ -117,22 +117,22 @@ def main() -> int:
         rows = list(reader)
 
     feature_source = host_features.read_text(encoding="utf-8")
-    enum_match = re.search(
-        r"enum class ArmFeature\s*:[^{]+\{(?P<body>.*?)"
-        r"\binventory_count\s*,",
+    # The inventory features are the X(token, "Label") rows of
+    # UML_ARM_INVENTORY_FEATURES; the extra ones after them have no row.
+    inventory_match = re.search(
+        r"#define UML_ARM_INVENTORY_FEATURES\(X\)"
+        r"(?P<body>(?:[^\n]*\\\n)*[^\n]*)",
         feature_source,
-        re.DOTALL,
     )
-    if enum_match is None:
+    if inventory_match is None:
         fail("cannot parse ArmFeature inventory members")
-    enum_features = {
-        match.group(1)
-        for match in re.finditer(
-            r"^\s*([a-z][a-z0-9_]*)\s*,",
-            enum_match.group("body"),
+    enum_features = set(
+        re.findall(
+            r"^\s*X\(([a-z][a-z0-9_]*),",
+            inventory_match.group("body"),
             re.MULTILINE,
         )
-    }
+    )
     if not enum_features:
         fail("ArmFeature lists no inventory members")
     counts = Counter(row["section"] for row in rows)
