@@ -917,7 +917,7 @@ cases have lost a reservation, and requires that every case then agreed.
 
 ## x86 instruction conformance
 
-The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
+The x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
 from the pinned FEX `x86-conformance` dependency as its external instruction
 campaign. For the gadget engine FEX is a test input only; FEXCore is linked
 into nothing but the macOS-only x86-64 JIT.
