@@ -381,11 +381,14 @@ time compared and the release accepted.
 
 ## Static disk and boot contract
 
-`support/image/partition-layout.json` owns a compact 2,803 MiB seed GPT with
+`support/image/partition-layout.json` owns a compact 3,123 MiB seed GPT with
 separate Android payload, metadata, `init_boot`, `misc`, recovery, and a
-128 MiB userdata filesystem. Userdata is the final partition. Before its first
+128 MiB userdata filesystem. The payload partitions hold both userspaces:
+system is 1,600 MiB, system_ext 512, product 576 and vendor 256. Userdata is
+the final partition. Before its first
 boot, the Apple app's generic Swift `DiskUtil` expands the bundle-local raw
-file to the selected whole-GiB capacity from 4 through 64 GiB and uses the
+file to the selected whole-GiB capacity from 6 through 64 GiB, which leaves
+userdata about 3 GiB at the smallest, and uses the
 statically linked GPT fdisk core to relocate the backup GPT and extend
 userdata. The standalone macOS wrapper performs the same transactional
 host-side operation with the system `truncate` utility and GPT fdisk's

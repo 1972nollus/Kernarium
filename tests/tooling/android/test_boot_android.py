@@ -179,7 +179,7 @@ class BootAndroidTests(unittest.TestCase):
             self.assertIn("--move-second-header", mutation)
             self.assertIn("--delete=10", mutation)
             self.assertIn(
-                "--new=10:5476352:8386559",
+                "--new=10:6131712:8386559",
                 mutation,
             )
 

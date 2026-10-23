@@ -26,12 +26,12 @@ namespace {
 
 constexpr std::uint64_t sectorSize = 512;
 constexpr std::uint64_t backupGptReservation = 1'048'576ULL;
-constexpr std::uint64_t seedDiskSize = 2'939'158'528ULL;
+constexpr std::uint64_t seedDiskSize = 3'274'702'848ULL;
 constexpr std::uint64_t expandedDiskSize = 8'589'934'592ULL;
-constexpr std::uint64_t initBootOffset = 2'773'483'520ULL;
+constexpr std::uint64_t initBootOffset = 3'109'027'840ULL;
 constexpr std::uint64_t initBootSize = 8'388'608ULL;
-constexpr std::uint64_t miscOffset = 2'781'872'128ULL;
-constexpr std::uint64_t recoveryOffset = 2'782'920'704ULL;
+constexpr std::uint64_t miscOffset = 3'117'416'448ULL;
+constexpr std::uint64_t recoveryOffset = 3'118'465'024ULL;
 constexpr std::uint64_t recoverySize = 20'971'520ULL;
 constexpr std::uint64_t normalRamdiskSize = 8192;
 constexpr std::uint64_t recoveryRamdiskSize = 12288;
@@ -43,16 +43,16 @@ struct Partition {
 };
 
 constexpr std::array partitions {
-	Partition{"system", 1'048'576ULL, 1'409'286'144ULL},
-	Partition{"system_ext", 1'410'334'720ULL, 536'870'912ULL},
-	Partition{"product", 1'947'205'632ULL, 536'870'912ULL},
-	Partition{"vendor", 2'484'076'544ULL, 268'435'456ULL},
-	Partition{"odm", 2'752'512'000ULL, 4'194'304ULL},
-	Partition{"metadata", 2'756'706'304ULL, 16'777'216ULL},
+	Partition{"system", 1'048'576ULL, 1'677'721'600ULL},
+	Partition{"system_ext", 1'678'770'176ULL, 536'870'912ULL},
+	Partition{"product", 2'215'641'088ULL, 603'979'776ULL},
+	Partition{"vendor", 2'819'620'864ULL, 268'435'456ULL},
+	Partition{"odm", 3'088'056'320ULL, 4'194'304ULL},
+	Partition{"metadata", 3'092'250'624ULL, 16'777'216ULL},
 	Partition{"init_boot", initBootOffset, initBootSize},
 	Partition{"misc", miscOffset, 1'048'576ULL},
 	Partition{"recovery", recoveryOffset, recoverySize},
-	Partition{"userdata", 2'803'892'224ULL, 134'217'728ULL},
+	Partition{"userdata", 3'139'436'544ULL, 134'217'728ULL},
 };
 
 using uml::testing::require;
@@ -284,6 +284,30 @@ int main()
 			stale, uml::android::BootMode::normal);
 	});
 	require(std::filesystem::remove(stale));
+
+	/* The product's capacity is 6 through 64 whole GiB: a smaller disk would
+	 * leave userdata too little room beside the 32-bit userspace. */
+	constexpr std::uint64_t gibibyte = 1'073'741'824ULL;
+	for (const auto gibibytes : {5ULL, 6ULL, 64ULL, 65ULL}) {
+		const auto sized = makeDisk(directory, gibibytes * gibibyte);
+		if (gibibytes == 6 || gibibytes == 64)
+			(void)uml::android::selectBoot(
+				sized, uml::android::BootMode::normal);
+		else
+			requireThrows([&] {
+				(void)uml::android::selectBoot(
+					sized, uml::android::BootMode::normal);
+			});
+		require(std::filesystem::remove(sized));
+	}
+	{
+		const auto fractional = makeDisk(directory, 6 * gibibyte + 4096);
+		requireThrows([&] {
+			(void)uml::android::selectBoot(
+				fractional, uml::android::BootMode::normal);
+		});
+		require(std::filesystem::remove(fractional));
+	}
 
 	const auto disk = makeDisk(directory, expandedDiskSize);
 	require(std::filesystem::file_size(disk) == expandedDiskSize);
