@@ -11,6 +11,7 @@
 
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/semantics.hpp"
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
 #include "cpu/arm64/engine_execution.hpp"
 #include "cpu/arm64/gadgets/a32/a32_builder.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"

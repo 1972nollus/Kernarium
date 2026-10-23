@@ -28,8 +28,8 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/aarch32/decode.hpp"
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
 #include "cpu/arm64/jit/a32/a32_compiler.hpp"
-#include "cpu/arm64/jit/a32/a32_helpers.hpp"
 #include "cpu/arm64/jit/a32/a32_operations.hpp"
 #include "cpu/arm64/jit/a32/a32_vector_operations.hpp"
 
@@ -425,7 +425,7 @@ std::map<std::string, ExitTally> measure_helper_exits(
   for (std::size_t index = 0; index < dec::kFormCount; ++index)
     forms.emplace(dec::kForms[index].name, static_cast<dec::Form>(index));
   std::map<std::string, ExitTally> tallies;
-  ::uml::cpu::arm64::jit::a32::count_helper_exits(true);
+  ::uml::cpu::arm64::aarch32::count_a32_library_exits(true);
   for (const auto &record : pack.records) {
     if ((record.profiles & kProfileBit) == 0)
       continue;
@@ -439,11 +439,11 @@ std::map<std::string, ExitTally> measure_helper_exits(
       for (unsigned pass = 0; pass < 2; ++pass) {
         machine.load(test);
         auto cpu = cpu_from(test.initial, thumb, kCodeBase + test.origin);
-        before = ::uml::cpu::arm64::jit::a32::helper_exits(form->second);
+        before = ::uml::cpu::arm64::aarch32::a32_library_exits(form->second);
         (void)machine.run(cpu);
       }
       const auto taken =
-          ::uml::cpu::arm64::jit::a32::helper_exits(form->second) - before;
+          ::uml::cpu::arm64::aarch32::a32_library_exits(form->second) - before;
       auto &tally = tallies[test.form];
       ++tally.cases;
       tally.clean += taken == 0 ? 1U : 0U;
@@ -457,7 +457,7 @@ std::map<std::string, ExitTally> measure_helper_exits(
                      static_cast<std::size_t>(taken));
     }
   }
-  ::uml::cpu::arm64::jit::a32::count_helper_exits(false);
+  ::uml::cpu::arm64::aarch32::count_a32_library_exits(false);
   return tallies;
 }
 

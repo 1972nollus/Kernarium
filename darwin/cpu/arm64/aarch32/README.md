@@ -60,6 +60,11 @@ tooling-time oracle that no build uses. Never edit them.
   `a32_operand_codegen.py`. The helpers it calls are Arm's shared
   pseudocode functions in `decode_support.hpp`. A construct the translator
   does not know fails the generation.
+- `form_operation.hpp` groups the forms into operations (`Op`) by mnemonic,
+  with each form's operand shape and SP base read from its name. It is the
+  one such table: the semantic library adds its handlers and transfer modes
+  to it, and the JIT's compiler adds its classes for the VFP, Advanced SIMD
+  and Armv8 forms.
 - The unit test `arm64-aarch32-decoder` decodes the stored sample words of
   every row and the whole 16-bit Thumb space and compares the answers
   against `a32_expected.py`, an independent evaluation of the same pseudocode
@@ -78,7 +83,10 @@ The engines reach it through `execute_a32`, with the instruction they
 decoded; `step_a32`, which fetches and decodes as well, is the model lane's
 and the semantic tests' entry. It covers the whole profile, A32 and T32
 ([`../../../../docs/a32-instruction-coverage.md`](../../../../docs/a32-instruction-coverage.md)
-lists the forms).
+lists the forms). The unit tests that require a lowered form to stay out of
+the library link `uml_arm64_aarch32_semantics_exit_counting`, the library
+built with per-form counters of `execute_a32` calls
+(`semantics_exit_counters.hpp`); the library the products link has none.
 
 Floating point runs the host's own scalar instruction on bit patterns under
 the FPCR the form defines, the guest's control bits for VFP and the Standard

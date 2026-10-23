@@ -23,6 +23,7 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/aarch32/decode.hpp"
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
 #include "cpu/arm64/gadgets/a32/a32_builder.hpp"
 
 #include <cstddef>

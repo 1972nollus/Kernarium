@@ -796,8 +796,9 @@ VSTR, TBB, TBH and the block transfers carry no key: their operand holds the
 instruction's position in bits 31:24
 (`darwin/cpu/arm64/gadgets/a32_layout.h`), which a fault reports as the A64
 transfers do, and a block transfer's crossing path passes it to the library
-in place of the key. The library-exit counters name any lowered form that
-reaches the library, and the unit tests require none does.
+in place of the key. The semantic library's unit-test variant counts its exits
+per form, which names any lowered form that reaches the library, and the unit
+tests that link it require none does.
 
 VFP and Advanced SIMD are lowered onto the A64 instructions with the same
 lanes. D0-D31 and S0-S31 are byte offsets into `CpuState::vectors`, and a

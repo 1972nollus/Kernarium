@@ -812,7 +812,8 @@ before the table goes stale; it skips without the archive.
 `arm64-aarch32-semantics` (unit) checks the library's
 contract that the corpus cannot record: fault ordering and the unchanged
 state at a fault, the exclusive monitor, the single-instruction entry's IT
-handling, the events, the library-exit counters and the coverage predicate.
+handling, the events, the library-exit counters (which only the library's
+counting variant has) and the coverage predicate.
 `arm64-aarch32-semantics-corpus` is the corpus's model lane: it runs every
 case of the pack through `step_a32()` on a model of the oracle's address space
 (page by page, so a crossing access splits across separate host pages) and

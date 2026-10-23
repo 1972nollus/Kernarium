@@ -161,14 +161,4 @@ struct StepResult final {
 [[nodiscard]] StepResult step_a32(CpuState &cpu, A32Memory &memory,
 	const Profile &profile) noexcept;
 
-/*
- * Library-exit counters: with counting on, every execute_a32() call adds to
- * the count of the form it executed, so a test can require a form an engine
- * lowers to stay out of the library from a clean state.
- */
-void count_a32_library_exits(bool enable) noexcept;
-[[nodiscard]] std::uint64_t a32_library_exits(Form form) noexcept;
-[[nodiscard]] std::uint64_t a32_library_exit_total() noexcept;
-void reset_a32_library_exits() noexcept;
-
 } // namespace uml::cpu::arm64::aarch32

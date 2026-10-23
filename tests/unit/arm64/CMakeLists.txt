@@ -104,10 +104,11 @@ uml_add_arm64_unit_test(aarch32_decoder WITHOUT_HARNESS
 
 # The AArch32 semantic library's own contract: fault ordering, the exclusive
 # monitor, the single-instruction entry's IT handling, the events and the
-# library-exit counters. The corpus's model lane (below) covers its answers.
+# library-exit counters, which only the library's counting variant has. The
+# corpus's model lane (below) covers its answers.
 uml_add_arm64_unit_test(aarch32_semantics WITHOUT_HARNESS
     OBJECTS $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>)
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics_exit_counting>)
 
 # Instruction-family tests: base, memory, then FP and SIMD.
 uml_add_arm64_unit_test(base_arithmetic_allocation)
