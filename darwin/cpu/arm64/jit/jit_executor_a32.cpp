@@ -29,11 +29,12 @@ constexpr std::size_t maximum_block_bytes =
     maximum_block_instructions * sizeof(std::uint32_t);
 constexpr std::size_t maximum_block_elements = maximum_block_instructions;
 
-} // namespace
-
-[[nodiscard]] std::size_t JitExecutor::Implementation::fetch_a32_bytes(
-    StaticGuestMemory &memory, std::uint64_t key,
-    std::span<std::byte> bytes) {
+/* Up to bytes.size() guest bytes where the AArch32 key's code lies, the
+ * count read: a page at a time, ending at an unreadable page and at the end
+ * of the 4 GiB address space. Out of line, as the block entry is hot. */
+[[nodiscard, gnu::noinline]] std::size_t
+fetch_a32_bytes(StaticGuestMemory &memory, std::uint64_t key,
+                std::span<std::byte> bytes) {
   const std::uint64_t base = aarch32::key_fetch_address(key);
   const std::uint64_t limit = std::uint64_t{1} << 32;
   const std::size_t wanted = static_cast<std::size_t>(
@@ -44,6 +45,33 @@ constexpr std::size_t maximum_block_elements = maximum_block_instructions;
         return memory.fetch(address, out);
       });
 }
+
+/* The code read at an AArch32 key. */
+struct A32Code {
+  std::size_t available;  // bytes read, up to the buffer's size
+  std::size_t length;     // bytes of the first instruction; 0: not all read
+};
+
+/* Reads up to bytes.size() bytes of code at the key and works out the length
+ * of its first instruction. Inline, as the two entries are hot functions
+ * whose register allocation an out-of-line copy would change. */
+[[nodiscard, gnu::always_inline]] inline A32Code
+fetch_a32_code(StaticGuestMemory &memory, std::uint64_t key,
+               std::span<std::byte> bytes) {
+  const auto available = fetch_a32_bytes(memory, key, bytes);
+  std::size_t length = 4;
+  if (aarch32::key_isa(key) == aarch32::GuestIsa::t32) {
+    length = 2;
+    if (available >= 2) {
+      std::uint16_t first;
+      std::memcpy(&first, bytes.data(), sizeof first);
+      length = aarch32::thumb_length(first);
+    }
+  }
+  return {.available = available, .length = available < length ? 0 : length};
+}
+
+} // namespace
 
 /* The tracked-store variant of a block (jit_executor_execution.cpp's
  * tracked_store_function) for an AArch32 translation. */
@@ -101,24 +129,12 @@ JitExecutor::Implementation::translate_a32_single(
   executed = 0;
   alignas(8) std::array<std::byte, 4> bytes{};
   const auto key = cpu.pc;
-  const auto fetched = fetch_a32_bytes(memory, key, bytes);
-  const auto isa = aarch32::key_isa(key);
-  std::size_t need = 4;
-  if (isa == aarch32::GuestIsa::t32) {
-    need = 2;
-    if (fetched >= 2) {
-      std::uint16_t first;
-      std::memcpy(&first, bytes.data(), sizeof first);
-      need = aarch32::thumb_length(first);
-    }
-  }
-  if (fetched < need) {
-    const auto fault = memory.last_fault();
-    tlb_.fault_address = fault.address;
-    tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+  const auto code = fetch_a32_code(memory, key, bytes);
+  if (code.length == 0) {
+    record_fetch_fault(memory);
     return Event::memory_fault;
   }
-  const auto bytes_view = std::span<const std::byte>{bytes}.first(need);
+  const auto bytes_view = std::span<const std::byte>{bytes}.first(code.length);
   const auto translation =
       translate_a32_single(key, bytes_view, cpu.a32_itstate, false);
   if (!translation)
@@ -192,22 +208,12 @@ JitExecutor::Implementation::translate_a32_single(
   if (block == nullptr) {
     alignas(8) std::array<std::byte, maximum_block_bytes> bytes{};
     const auto isa = aarch32::key_isa(key);
-    const auto length = fetch_a32_bytes(memory, key, bytes);
-    std::size_t need = 4;
-    if (isa == aarch32::GuestIsa::t32) {
-      need = 2;
-      if (length >= 2) {
-        std::uint16_t first;
-        std::memcpy(&first, bytes.data(), sizeof first);
-        need = aarch32::thumb_length(first);
-      }
-    }
-    if (length < need) {
-      const auto fault = memory.last_fault();
-      tlb_.fault_address = fault.address;
-      tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+    const auto code = fetch_a32_code(memory, key, bytes);
+    if (code.length == 0) {
+      record_fetch_fault(memory);
       return Event::memory_fault;
     }
+    const auto length = code.available;
     std::array<std::uint32_t, maximum_block_elements> elements{};
     std::memcpy(elements.data(), bytes.data(), length);
     const auto element_count = (length + sizeof(std::uint32_t) - 1U) /

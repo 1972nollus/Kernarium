@@ -137,9 +137,7 @@ namespace {
       }
     }
     if (count == 0) {
-      const auto fault = memory.last_fault();
-      tlb_.fault_address = fault.address;
-      tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+      record_fetch_fault(memory);
       return Event::memory_fault;
     }
     /*
@@ -461,9 +459,7 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
   if (memory.fetch(pc, std::as_writable_bytes(
                            std::span{&instruction, std::size_t{1}})))
     return true;
-  const auto fault = memory.last_fault();
-  tlb_.fault_address = fault.address;
-  tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+  record_fetch_fault(memory);
   return false;
 }
 

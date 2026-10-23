@@ -119,6 +119,13 @@ private:
   [[nodiscard]] bool fetch_instruction(StaticGuestMemory &memory,
                                        std::uint64_t pc,
                                        std::uint32_t &instruction);
+  /* Leaves the fault of the guest fetch that just failed in `memory` in the
+   * TLB, for the entry to report as Event::memory_fault. */
+  void record_fetch_fault(StaticGuestMemory &memory) noexcept {
+    const auto fault = memory.last_fault();
+    tlb_.fault_address = fault.address;
+    tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+  }
   /* Builds the translation in the single-instruction arena, replacing the
    * previous one. Empty when the instruction cannot be lowered or stored.
    */
@@ -271,9 +278,6 @@ private:
   // The AArch32 entry (jit_executor_a32.cpp). The guest bytes a block reads
   // are fetched as halfwords or words from the key's address; a T32 block
   // counts its saved halfwords apart from its instructions.
-  [[nodiscard]] std::size_t fetch_a32_bytes(StaticGuestMemory &memory,
-                                            std::uint64_t key,
-                                            std::span<std::byte> bytes);
   [[nodiscard]] JitFunction
   tracked_store_function_a32(CompiledBlock &block, StaticGuestMemory &memory);
   [[nodiscard]] std::optional<SingleInstructionTranslation>
