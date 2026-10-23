@@ -275,9 +275,9 @@ private:
   );
   void clear_cache() noexcept;
 
-  // The AArch32 entry (jit_executor_a32.cpp). The guest bytes a block reads
-  // are fetched as halfwords or words from the key's address; a T32 block
-  // counts its saved halfwords apart from its instructions.
+  // The AArch32 entry (jit_executor_a32.cpp), which stores, installs and
+  // publishes through the A64 functions above; a T32 block counts its saved
+  // halfwords apart from its instructions.
   [[nodiscard]] JitFunction
   tracked_store_function_a32(CompiledBlock &block, StaticGuestMemory &memory);
   [[nodiscard]] std::optional<SingleInstructionTranslation>
