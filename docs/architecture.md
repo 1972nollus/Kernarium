@@ -1130,33 +1130,10 @@ tagged by address space, retirement drops one address space's owned state, and
 same-generation stale programs are reused only after exact page-bounded word
 validation. Both gadget engines share an address space's bodies and link state
 among every executor running it, while each executor keeps its own slots and
-retirement order; `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private, as
-[`../darwin/README.md`](../darwin/README.md) records. An address space a
-single executor keeps to itself sweeps its link records and indirect sites once
-they number half again what its last sweep kept and enough of its translations
-have left the cache to have left some unnamed: one that no resident
-translation's stream names and that is no resident block's own record is
-released for reuse, and the site cells and target-table entries naming it are
-emptied, so link state follows what the cache holds rather than all the code
-the address space ever ran. A shared address space is not swept, but is
-renewed once its arena holds at least two mebibytes no body uses and more than
-its bodies do: it is closed, and each executor attached lets go of it at the
-start of its next entry into translated code, so the next one to run the
-address space makes a new one and the old one dies with its last executor.
-An executor also lets go of an address space whose generation the MMU has
-destroyed, at the same point and as the count of destroyed generations moves,
-leaving its number in the window's order until the least-recently-used rule
-reaches it; the x86 gadget executors do the same at the start of each run.
-Both gadget engines charge what each address space keeps (bodies or
-translations, link and indirect records, target tables; not slots) to one
-process-wide byte budget (`cpu/gadget_cache_budget.hpp`), a translation shared
-by several executors once. A store that takes the open address spaces past
-the budget asks the largest to shed; every executor holding one lets go of it
-at the same point as of a renewed space, so the open spaces stay within the
-budget and the whole within twice it. The emulator sets the budget before the
-first executor from guest memory and the host's process memory limit, or from
-`--gadget-cache-budget=`.
-Cached
+retirement order; `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private. How
+the cache sweeps, renews and lets go of an address space's state, and the
+process byte budget that bounds all of it, are in
+[`../darwin/README.md`](../darwin/README.md). Cached
 returns consult a private per-carrier return-record ring after their site
 cells miss: linked calls push the return PC with its block link, a matching
 record follows that link and fills an empty cell of the site, and the executor
