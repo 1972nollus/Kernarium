@@ -129,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
         cpus=options.cpus,
         memory_mib=options.memory_mib,
         engine=options.engine,
+        # The one launch below is the only use of the copy just made.
+        remove_payload=True,
     )
     log = artifact / "console.log"
     started = time.monotonic()
@@ -142,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     elapsed = time.monotonic() - started
     kernarium.require_automation_boot(transcript)
+    kernarium.report_payload_removal(transcript, name)
     status = kernarium.session_exit(transcript)
     runtime = kernarium.runtime_result(transcript)
     summary = {

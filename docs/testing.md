@@ -198,7 +198,9 @@ device through the opt-in `apple-ios-device-vk-cts` lane. It registers only
 when the device is named, expects the application and the authenticated Venus
 image to be on the device already, copies the campaign's payload beside them,
 and reads the artifact frames from the launch console, because the
-guest-session log is an XCTest path that a device launch does not take:
+guest-session log is an XCTest path that a device launch does not take. The
+launch sets `KERNARIUM_PAYLOAD_REMOVE=1`, so the runtime deletes that payload
+once it has read it and the lane leaves nothing but the image behind:
 
 ```sh
 cmake --preset macos-integration \
@@ -636,8 +638,9 @@ and launch it again: the console reports that the previous process ended in
 the background and the guest display carries the dismissible Guest Restarted
 card. A guest this large can also be reclaimed by iOS in the first seconds of
 the background, which looks like a missing hold and is not; the next launch
-shows the notice. Remove the guest bundles and payloads the check copied to the
-application's Documents afterwards.
+shows the notice. Remove the guest bundles the check copied to the
+application's Documents afterwards, and any payload it launched without
+`KERNARIUM_PAYLOAD_REMOVE=1`.
 
 ## LTP
 

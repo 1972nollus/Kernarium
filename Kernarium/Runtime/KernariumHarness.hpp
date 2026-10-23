@@ -23,6 +23,8 @@ class ArtifactRelay;
  * the runtime's /boot.env. KERNARIUM_SYSTEMD_UNIT names the systemd target
  * the guest boots instead of graphical.target. A payload also attaches the
  * artifact relay, a virtio-serial port whose frames reach standard output.
+ * KERNARIUM_PAYLOAD_REMOVE=1 deletes the payload file once the runtime holds
+ * its bytes; a launch that reuses one copied payload leaves it unset.
  */
 class AutomationBoot final {
 public:

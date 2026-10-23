@@ -75,7 +75,8 @@ if(UML_KERNARIUM_AUTOMATION_HARNESS)
     endif()
     target_sources(KernariumRuntime PRIVATE
         KernariumHarness.hpp
-        KernariumHarness.mm)
+        KernariumHarness.mm
+        KernariumPayloadFile.hpp)
     set(_kernarium_automation_harness 1)
 else()
     set(_kernarium_automation_harness 0)

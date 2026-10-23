@@ -79,9 +79,12 @@ which only the automation build of the runtime boots
 ([Kernarium/README.md](../../Kernarium/README.md#automation-runs)); the
 harness session runs it over the image's overlay root without systemd or a
 desktop, prints `UML_SESSION_EXIT:<status>` and powers the guest off. Nothing
-is typed, so a script's own markers are safe to key on. A successful run
-reaches its markers, a zero session status, and a status-zero managed
-emulator return:
+is typed, so a script's own markers are safe to key on. The runner sets
+`KERNARIUM_PAYLOAD_REMOVE=1`, so the runtime deletes the copied payload once
+it has read it (`devicectl` cannot remove a file in the container), and the
+runner warns when the console does not show that. A successful run reaches
+its markers, a zero session status, and a status-zero managed emulator
+return:
 
 ```sh
 python3 tests/perf/run_ios_device_workload.py --device DEVICE-IDENTIFIER \

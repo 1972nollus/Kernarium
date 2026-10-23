@@ -103,9 +103,16 @@ the release one. Only it reads:
 - `KERNARIUM_BOOT_PAYLOAD`, a plain file name in Documents: a padded newc
   segment of at most 64 MiB, written by `uml-initramfs`, that the runtime
   appends after its own, so its files, `/boot.env` included, replace the
-  runtime's; and
+  runtime's;
 - `KERNARIUM_SYSTEMD_UNIT`, the `*.target` the guest boots instead of
-  `graphical.target`.
+  `graphical.target`; and
+- `KERNARIUM_PAYLOAD_REMOVE=1`, which makes the runtime delete the payload
+  file once it holds the bytes and print `Kernarium: removed the boot payload
+  Documents/<name>` (or one line naming why it could not, which does not stop
+  the boot). A host copies a payload for one launch and sets it; a launch that
+  reuses a copied payload leaves it unset. `devicectl` cannot remove a file in
+  an application container, so this is how the device runners avoid leaving
+  one payload per run behind.
 
 A payload also attaches the artifact relay, a Virtio serial port whose
 acknowledged frames the runtime prints on standard output. The runtime prints

@@ -15,7 +15,8 @@ launched process with the prefix removed, and the runtime relays the guest's
 artifact frames to its console, so they arrive without a session log. The
 image and the payload are copied with ``devicectl device copy to``, which never
 replaces a file already there; an iOS application reads nothing outside its
-own container.
+own container. The one launch sets ``KERNARIUM_PAYLOAD_REMOVE=1``, so the
+runtime deletes the payload once it has read it, because ``devicectl`` cannot.
 """
 
 from __future__ import annotations
@@ -125,6 +126,9 @@ def launch_environment(options: argparse.Namespace) -> dict[str, str]:
             cpus=options.cpus,
             memory_mib=options.memory_mib,
             engine=options.engine,
+            # One invocation stages the campaign's payload and launches it
+            # once.
+            remove_payload=True,
             extra={
                 "UML_GPU_CAPABILITY_REPORT": "1",
                 "UML_GPU_FRAME_STATS": "1",
@@ -541,6 +545,7 @@ def main(argv: list[str] | None = None) -> int:
     transcript, oom_report, transport_report = run_campaign(options, log)
     print(f"console closed after {time.monotonic() - started:.0f}s: {log}")
     kernarium.require_automation_boot(transcript)
+    kernarium.report_payload_removal(transcript, options.payload)
     rejected: list[str] = []
     artifacts = cts.decode_artifacts(
         transcript, partial=True, rejected=rejected

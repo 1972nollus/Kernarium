@@ -2,6 +2,7 @@
 
 #include "KernariumHarness.hpp"
 
+#include "KernariumPayloadFile.hpp"
 #include "console/in_process_service.hpp"
 #include "console/protocol.hpp"
 
@@ -9,25 +10,22 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <pthread.h>
 #include <stdexcept>
 #include <string_view>
 #include <sys/socket.h>
+#include <system_error>
 #include <thread>
 #include <unistd.h>
 
 namespace kernarium::harness {
 
 namespace {
-
-/* The kernel copies the whole initrd into boot memory before unpacking it,
- * and an archive larger than that memory panics the guest. */
-constexpr std::uintmax_t maximumPayloadBytes = 64U << 20;
 
 std::filesystem::path documentsDirectory()
 {
@@ -38,39 +36,6 @@ std::filesystem::path documentsDirectory()
         throw std::invalid_argument(
             "KERNARIUM_BOOT_PAYLOAD: no Documents directory");
     return std::filesystem::path {directory.fileSystemRepresentation};
-}
-
-std::vector<std::byte> readPayload(std::string_view name)
-{
-    if (name.empty() || name == "." || name == ".." ||
-        name.find('/') != std::string_view::npos) {
-        throw std::invalid_argument(
-            "KERNARIUM_BOOT_PAYLOAD must name a file in Documents");
-    }
-    const auto path = documentsDirectory() / std::string {name};
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(path, error) || error)
-        throw std::invalid_argument(
-            "KERNARIUM_BOOT_PAYLOAD is not a regular file: " + path.string());
-    const auto size = std::filesystem::file_size(path, error);
-    if (error || size > maximumPayloadBytes)
-        throw std::invalid_argument(
-            "KERNARIUM_BOOT_PAYLOAD exceeds 64 MiB: " + path.string());
-    std::vector<std::byte> contents(static_cast<std::size_t>(size));
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream.read(reinterpret_cast<char*>(contents.data()),
-            static_cast<std::streamsize>(contents.size())))
-        throw std::invalid_argument(
-            "KERNARIUM_BOOT_PAYLOAD cannot be read: " + path.string());
-    /* A newc segment the kernel can read after the runtime's own, which
-     * uml-initramfs pads to four bytes. */
-    constexpr std::string_view magic {"070701"};
-    if (contents.size() < magic.size() || contents.size() % 4U != 0U ||
-        std::memcmp(contents.data(), magic.data(), magic.size()) != 0)
-        throw std::invalid_argument(
-            "KERNARIUM_BOOT_PAYLOAD is not a padded newc segment: " +
-            path.string());
-    return contents;
 }
 
 bool validSystemdTarget(std::string_view unit) noexcept
@@ -360,7 +325,20 @@ std::unique_ptr<AutomationBoot> AutomationBoot::fromEnvironment(
         boot->systemdUnit_ = unit;
     }
     if (hasPayload) {
-        boot->payload_ = readPayload(payload);
+        const bool remove =
+            removalRequested(std::getenv("KERNARIUM_PAYLOAD_REMOVE"));
+        std::error_code removal;
+        boot->payload_ =
+            takePayload(documentsDirectory(), payload, remove, removal);
+        if (removal)
+            std::fprintf(
+                stderr,
+                "Kernarium: cannot remove the boot payload Documents/%s: %s\n",
+                payload, removal.message().c_str());
+        else if (remove)
+            std::fprintf(
+                stderr, "Kernarium: removed the boot payload Documents/%s\n",
+                payload);
         boot->relay_ = std::make_unique<ArtifactRelay>(consoleStdoutMutex);
     }
     return boot;
