@@ -243,12 +243,33 @@ void tracked_variant_runs_the_block(Isa isa, unsigned long generation)
 	std::printf("tracked variant runs the %s block\n", name(isa));
 }
 
+/* How code rewritten behind the cache's back differs from the block: it ends
+ * sooner (fewer instructions and units), it has fewer units for the same
+ * instructions, more instructions in the same units, or it no longer stores
+ * (the same instructions and units, other writes). */
+enum class Rewrite { shorter, fewer_units, more_instructions, no_store };
+
+[[nodiscard]] const char *name(Rewrite rewrite) noexcept
+{
+	switch (rewrite) {
+	case Rewrite::shorter:
+		return "shorter";
+	case Rewrite::fewer_units:
+		return "fewer units";
+	case Rewrite::more_instructions:
+		return "more instructions";
+	case Rewrite::no_store:
+		return "storeless";
+	}
+	return "";
+}
+
 /* The tracked variant is built again from the code in memory. Code rewritten
  * without a published change leaves the cached block valid for an untracked
  * run, but a tracked run compiles something else and so makes progress one
  * instruction at a time instead. */
 void tracked_variant_that_no_longer_matches_runs_one_instruction(Isa isa,
-	unsigned long generation, bool same_instruction_count = false)
+	unsigned long generation, Rewrite rewrite)
 {
 	Region region{generation, code_base};
 	write_tracking_program(region, isa);
@@ -260,19 +281,34 @@ void tracked_variant_that_no_longer_matches_runs_one_instruction(Isa isa,
 		require(run_to_svc(executor, memory, generation, isa, cpu) == 4);
 	}
 	region.put32(data_offset, 0);
-	/* Rewrite behind the cache's back: the third instruction becomes the SVC,
-	 * or, for T32, the 32-bit store becomes a 16-bit one and the SVC moves
-	 * up, which keeps the instruction count and changes the halfword count. */
-	if (isa == Isa::a64) {
-		region.put32(8, a64_svc);
-	} else if (isa == Isa::a32) {
-		region.put32(8, a32_svc);
-	} else if (same_instruction_count) {
+	/* The programs are add; store; add; svc, the T32 one with its 32-bit
+	 * store in halfwords 1 and 2 and its SVC in halfword 4. */
+	constexpr std::uint16_t t32_add_w[] = {0xf100, 0x0001}; // add.w r0, r0, #1
+	switch (rewrite) {
+	case Rewrite::shorter:
+		if (isa == Isa::t32)
+			region.put16(6, t32_svc);
+		else
+			region.put32(8, isa == Isa::a64 ? a64_svc : a32_svc);
+		break;
+	case Rewrite::fewer_units:
 		region.put16(2, t32_str);
 		region.put16(4, t32_adds_r0);
 		region.put16(6, t32_svc);
-	} else {
-		region.put16(6, t32_svc);
+		break;
+	case Rewrite::more_instructions:
+		/* adds; str; adds; adds; svc, in the five halfwords. */
+		region.put16(2, t32_str);
+		region.put16(4, t32_adds_r0);
+		break;
+	case Rewrite::no_store:
+		if (isa == Isa::t32) {
+			region.put16(2, t32_add_w[0]);
+			region.put16(4, t32_add_w[1]);
+		} else {
+			region.put32(4, isa == Isa::a64 ? a64_add_x0 : a32_add_r0);
+		}
+		break;
 	}
 	{
 		/* Nobody reserves: the cached block runs as it was. */
@@ -294,10 +330,11 @@ void tracked_variant_that_no_longer_matches_runs_one_instruction(Isa isa,
 		/* And the rest runs on from there. */
 		const auto rest = run_to_svc(executor, memory, generation, isa, cpu);
 		require(rest >= 2);
-		require(data_word(region) == stored_value);
+		require(data_word(region) ==
+			(rewrite == Rewrite::no_store ? 0 : stored_value));
 	}
-	std::printf("tracked variant of a changed %s block%s runs one instruction\n",
-		name(isa), same_instruction_count ? " (same count)" : "");
+	std::printf("tracked variant of a %s %s block runs one instruction\n",
+		name(rewrite), name(isa));
 }
 
 /* A step that stores runs as a one-instruction translation, and the tracked
@@ -531,13 +568,16 @@ int main()
 	unsigned long generation = 0x30a3'2000UL;
 	for (const auto isa : {Isa::a64, Isa::a32, Isa::t32}) {
 		tracked_variant_runs_the_block(isa, generation++);
-		tracked_variant_that_no_longer_matches_runs_one_instruction(
-			isa, generation++);
+		for (const auto rewrite : {Rewrite::shorter, Rewrite::no_store})
+			tracked_variant_that_no_longer_matches_runs_one_instruction(
+				isa, generation++, rewrite);
 		single_step_stores(isa, generation++);
 		a_block_ends_at_the_end_of_the_mapping(isa, generation++);
 	}
-	tracked_variant_that_no_longer_matches_runs_one_instruction(
-		Isa::t32, generation++, true);
+	for (const auto rewrite :
+	     {Rewrite::fewer_units, Rewrite::more_instructions})
+		tracked_variant_that_no_longer_matches_runs_one_instruction(
+			Isa::t32, generation++, rewrite);
 	it_block_entry_stores(false, generation++);
 	it_block_entry_stores(true, generation++);
 	std::uint32_t base = code_base;
