@@ -347,11 +347,19 @@ JitExecutor::Implementation::publish_shared_translation(
     std::uint64_t pc, std::uint8_t mode,
     std::span<const std::uint32_t> guest_words,
     const JitCompiler::Result &compiled) {
+  return publish_shared_translation(
+      pc, mode, guest_words.first(compiled.guest_instructions),
+      compiled.guest_instructions, compiled);
+}
+
+std::shared_ptr<const SharedTranslation>
+JitExecutor::Implementation::publish_shared_translation(
+    std::uint64_t pc, std::uint8_t mode,
+    std::span<const std::uint32_t> validation_words,
+    std::size_t guest_word_count, const JitCompiler::Result &compiled) {
   auto &cache = SharedTranslationCache::instance();
   if (!compiled.relocatable)
     return nullptr;
-  const auto validation_words =
-      guest_words.first(compiled.guest_instructions);
   const auto profile = shared_codegen_profile(mode);
   const auto preflight = cache.preflight_publication(
       profile, pc, validation_words,
@@ -394,7 +402,7 @@ JitExecutor::Implementation::publish_shared_translation(
     translation->indirect_link_refusals = compiled.indirect_link_refusals;
     translation->isa = static_cast<std::uint8_t>(aarch32::key_isa(pc));
     translation->guest_words = std::move(saved_guest_words);
-    translation->guest_word_count = validation_words.size();
+    translation->guest_word_count = guest_word_count;
     translation->guest_instructions = compiled.guest_instructions;
     translation->hot_words = compiled.hot_words;
     translation->internal_entry_word = compiled.internal_entry_word;

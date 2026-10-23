@@ -178,11 +178,22 @@ private:
   [[nodiscard]] CompiledBlock *install_shared_translation(
       unsigned long generation, std::uint64_t changes, std::uint64_t pc,
       std::uint8_t mode, std::span<const std::uint32_t> guest_words);
+  /* Publishes the translation to the shared tier, keyed by `pc` (an A64 PC,
+   * or an AArch32 key with mode 0) and the fetched words its identity
+   * covers; null when it cannot be shared. The first form is the A64 one:
+   * the identity is the translation's instructions, a word each. In the
+   * second, `validation_words` are the elements that hold `guest_word_count`
+   * units of the key's ISA, halfwords for T32. */
   [[nodiscard]] std::shared_ptr<const SharedTranslation>
   publish_shared_translation(
       std::uint64_t pc, std::uint8_t mode,
       std::span<const std::uint32_t> guest_words,
       const JitCompiler::Result &compiled);
+  [[nodiscard]] std::shared_ptr<const SharedTranslation>
+  publish_shared_translation(
+      std::uint64_t pc, std::uint8_t mode,
+      std::span<const std::uint32_t> validation_words,
+      std::size_t guest_word_count, const JitCompiler::Result &compiled);
 
   [[nodiscard]] JitCacheValidationResult validate_stale_block(
       const CompiledBlock &block, std::uint64_t changes,
@@ -225,10 +236,6 @@ private:
   [[nodiscard]] std::size_t fetch_a32_bytes(StaticGuestMemory &memory,
                                             std::uint64_t key,
                                             std::span<std::byte> bytes);
-  [[nodiscard]] std::shared_ptr<const SharedTranslation>
-  publish_shared_translation_a32(std::uint64_t key,
-                                 std::span<const std::uint32_t> guest_elements,
-                                 const jit::a32::Result &result);
   [[nodiscard]] JitFunction
   tracked_store_function_a32(CompiledBlock &block, StaticGuestMemory &memory);
   [[nodiscard]] std::optional<SingleInstructionTranslation>

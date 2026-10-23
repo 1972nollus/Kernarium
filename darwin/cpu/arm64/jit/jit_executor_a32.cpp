@@ -50,67 +50,6 @@ constexpr std::size_t maximum_block_elements = maximum_block_instructions;
   return total;
 }
 
-[[nodiscard]] std::shared_ptr<const SharedTranslation>
-JitExecutor::Implementation::publish_shared_translation_a32(
-    std::uint64_t key, std::span<const std::uint32_t> guest_elements,
-    const jit::a32::Result &result) {
-  auto &cache = SharedTranslationCache::instance();
-  const auto &compiled = result.translation;
-  if (!compiled.relocatable)
-    return nullptr;
-  const auto isa = aarch32::key_isa(key);
-  const auto identity_bytes = result.guest_units * aarch32::isa_unit_bytes(isa);
-  const auto identity_elements =
-      (identity_bytes + sizeof(std::uint32_t) - 1U) / sizeof(std::uint32_t);
-  const auto validation_words = guest_elements.first(identity_elements);
-  const auto profile = shared_codegen_profile(0);
-  const auto preflight = cache.preflight_publication(
-      profile, key, validation_words,
-      {.host_words = compiled.words.size(),
-       .relocations = compiled.relocations.size(),
-       .guest_words = validation_words.size()},
-      compiled.direct_link_refusals, compiled.indirect_link_refusals);
-  if (preflight.canonical != nullptr)
-    return preflight.canonical;
-  if (!preflight.may_construct)
-    return nullptr;
-  try {
-    auto translation = std::make_shared<SharedTranslation>();
-    auto saved_guest_words =
-        std::make_shared_for_overwrite<std::uint32_t[]>(identity_elements);
-    std::copy(validation_words.begin(), validation_words.end(),
-              saved_guest_words.get());
-    translation->words.assign(compiled.words.begin(), compiled.words.end());
-    translation->relocations.assign(compiled.relocations.begin(),
-                                    compiled.relocations.end());
-    for (const auto &relocation : translation->relocations) {
-      if (relocation.word >= translation->words.size() ||
-          translation->words.size() - relocation.word < 2U)
-        return nullptr;
-      translation->words[relocation.word] = 0;
-      translation->words[relocation.word + 1U] = 0;
-    }
-    translation->direct_link_refusals = compiled.direct_link_refusals;
-    translation->indirect_link_refusals = compiled.indirect_link_refusals;
-    translation->isa = static_cast<std::uint8_t>(isa);
-    translation->guest_words = std::move(saved_guest_words);
-    translation->guest_word_count = result.guest_units;
-    translation->guest_instructions = compiled.guest_instructions;
-    translation->hot_words = compiled.hot_words;
-    translation->internal_entry_word = compiled.internal_entry_word;
-    translation->memory_write_mask = compiled.memory_write_mask;
-    translation->direct_memory_write_mask = compiled.direct_memory_write_mask;
-    translation->accesses_fp_state = compiled.accesses_fp_state;
-    translation->link_target_safe = compiled.link_target_safe;
-    translation->native_fp = compiled.native_fp;
-    translation->guest_illegal = compiled.guest_illegal;
-    return cache.insert(profile, key, validation_words,
-                        std::move(translation));
-  } catch (const std::bad_alloc &) {
-    return nullptr;
-  }
-}
-
 /* The tracked-store variant of a block (jit_executor_execution.cpp's
  * tracked_store_function) for an AArch32 translation. */
 [[nodiscard]] JitFunction JitExecutor::Implementation::tracked_store_function_a32(
@@ -384,8 +323,9 @@ JitExecutor::Implementation::translate_a32_single(
                                     compiled.translation.relocations, {},
                                     links_, empty_link_, generation);
       if (stored) {
-        auto published =
-            publish_shared_translation_a32(key, fetched_elements, compiled);
+        auto published = publish_shared_translation(
+            key, 0, elements_of(compiled), compiled.guest_units,
+            compiled.translation);
         block = install(compiled, stored, published);
       } else {
         clear_cache();
@@ -399,8 +339,8 @@ JitExecutor::Implementation::translate_a32_single(
                                     empty_link_, generation);
         if (!stored)
           return run_a32_single(cpu, memory, executed);
-        auto published =
-            publish_shared_translation_a32(key, fetched_elements, retry);
+        auto published = publish_shared_translation(
+            key, 0, elements_of(retry), retry.guest_units, retry.translation);
         block = install(retry, stored, published);
       }
     }
