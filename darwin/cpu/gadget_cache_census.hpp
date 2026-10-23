@@ -122,6 +122,34 @@ inline constexpr std::uint64_t digest_seed = 0xcbf29ce484222325ULL;
 	return next++;
 }
 
+/* The host's floating-point control and status, set aside while the census
+ * writes. A snapshot can be written at a lookup, between two blocks of a run,
+ * where the guest's own floating-point environment may be live in the host's
+ * registers: the arm64 engine restores its native one only as the run ends.
+ * The writer's arithmetic runs in the default environment instead, and the
+ * guest's comes back as it was, cumulative flags included. */
+class DefaultFloatingEnvironment final {
+public:
+	DefaultFloatingEnvironment() noexcept
+	{
+		__asm__ volatile("mrs %0, fpcr" : "=r"(fpcr_) : : "memory");
+		__asm__ volatile("mrs %0, fpsr" : "=r"(fpsr_) : : "memory");
+		__asm__ volatile("msr fpcr, xzr" : : : "memory");
+	}
+	~DefaultFloatingEnvironment()
+	{
+		__asm__ volatile("msr fpcr, %0" : : "r"(fpcr_) : "memory");
+		__asm__ volatile("msr fpsr, %0" : : "r"(fpsr_) : "memory");
+	}
+	DefaultFloatingEnvironment(const DefaultFloatingEnvironment &) = delete;
+	DefaultFloatingEnvironment &operator=(
+		const DefaultFloatingEnvironment &) = delete;
+
+private:
+	std::uint64_t fpcr_{};
+	std::uint64_t fpsr_{};
+};
+
 /* Append one cache's records. Every executor of a run appends to the same
  * file, so whole records are serialised here; they are formatted in memory
  * first, so a vCPU writing a large cache holds up the others only while its
@@ -139,6 +167,7 @@ void append(Write &&write) noexcept
 	std::FILE *buffer = open_memstream(&text, &size);
 	if (buffer == nullptr)
 		return;
+	const DefaultFloatingEnvironment environment;
 	bool whole = true;
 	try {
 		write(buffer);
@@ -236,8 +265,12 @@ public:
 		const auto interval = interval_seconds();
 		if (interval == 0 || path() == nullptr)
 			return 0;
+		/* In whole seconds, as integers: a lookup asks, while the guest's
+		 * floating-point environment may be live (append()). */
 		const auto number = static_cast<std::uint64_t>(
-			elapsed_seconds() / static_cast<double>(interval));
+			std::chrono::duration_cast<std::chrono::seconds>(
+				std::chrono::steady_clock::now() - start())
+				.count()) / interval;
 		if (number <= written_)
 			return 0;
 		written_ = number;
