@@ -27,7 +27,7 @@ kernel and the separate x86_64-userspace kernel, both with 4 KiB guest pages.
 When omitted, `mem=` defaults to 8 GiB and `ncpus=`
 to 10; explicit kernel arguments override either value independently.
 `cmake --preset macos-x86_64` selects the dedicated x86_64 artifact and host
-gadget backend; ordinary 4 KiB presets continue to select arm64 userspace. The
+gadget backend; the other presets select arm64 userspace. The
 x86_64 product defaults to `cgroup.memory=nokmem`: userspace memory-controller
 accounting remains available, while kernel-object charging is outside this
 compatibility slice. An explicit `cgroup.memory=` argument overrides the
