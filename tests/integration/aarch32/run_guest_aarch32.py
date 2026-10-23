@@ -6,8 +6,8 @@ The guest boots an init shell on a tmpfs root with /tmp mounted and runs
 aarch32_guest_probe.py with python3 -B against the armhf program built from
 aarch32_probe.S, aligned to 64 KiB and aligned to 4 KiB only, then runs one
 more command, so a probe that leaves the kernel unable to start a task fails
-too.  The probe's docstring states what each --expect mode checks; its exit
-status is its failure count.
+too.  The probe's docstring states what it checks; its exit status is its
+failure count.
 """
 
 from __future__ import annotations
@@ -37,8 +37,6 @@ def main() -> int:
     parser.add_argument("--probe", required=True, type=pathlib.Path)
     parser.add_argument("--elf", required=True, type=pathlib.Path)
     parser.add_argument("--elf-4k", required=True, type=pathlib.Path)
-    parser.add_argument("--expect", choices=("unsupported", "run"),
-                        default="unsupported")
     parser.add_argument("--ncpus", type=int, default=2)
     parser.add_argument("--probe-timeout", type=int, metavar="SECONDS",
                         help="the probe's whole run; default 300 on the JIT "
@@ -65,7 +63,7 @@ def main() -> int:
         guest.check_command("mount -t tmpfs -o mode=1777 tmpfs /tmp", 20)
         result = guest.run_command(
             f"python3 -B {GUEST_PROBE} --elf {GUEST_ELF} "
-            f"--elf-4k {GUEST_ELF_4K} --expect {arguments.expect} "
+            f"--elf-4k {GUEST_ELF_4K} "
             f"--deadline {arguments.probe_timeout - 20}",
             arguments.probe_timeout,
         )

@@ -256,7 +256,7 @@ bool extension_lowered(aarch32::Form form) noexcept {
 }
 
 aarch32::Profile decode_profile() noexcept {
-  return a32_decode_profile(::uml::cpu::host_capabilities(), a32_support);
+  return a32_decode_profile(::uml::cpu::host_capabilities());
 }
 
 bool is_library_form(aarch32::Form form) noexcept {

@@ -20,14 +20,14 @@ By level there are 898 `base`, 948 `simd` and 374 `complete` encodings.
 
 ## Levels and features
 
-A guest sees the level the engine's `A32Support` says: `base` is the integer
+The inventory and the decoder's table classify every encoding by the part of
+the profile it belongs to, and a guest sees all three: `base` is the integer
 core with Thumb-2 and the Armv8 load-acquire and store-release group (LDA,
 STL, LDAEX, STLEX in every size, and SEVL), which every Armv8 AArch32 EL0
-has and which arm64 Linux's compat kuser helpers execute; `simd` adds
-VFPv4-D32 and Advanced SIMD, and `complete` adds the other Armv8 additions
+has and which arm64 Linux's compat kuser helpers execute; `simd` is
+VFPv4-D32 and Advanced SIMD, and `complete` is the other Armv8 additions
 (VSEL, VMAXNM, VMINNM, VRINT*, VCVT[ANPM], the double/half conversions) and
-the optional extensions. Below `complete` an encoding of a higher level is
-UNDEFINED.
+the optional extensions.
 
 The optional extensions are FEAT_FP16, FEAT_AES, FEAT_PMULL, FEAT_SHA1,
 FEAT_SHA256, FEAT_CRC32, FEAT_DotProd, FEAT_FHM, FEAT_AA32BF16,
@@ -65,8 +65,8 @@ zero and ignore writes.
 
 An entry is `absent` when no word of it executes, `pending` until an engine
 passes the corpus for it, and `verified` after. The gadget engine passes the
-corpus for every executed entry at `complete`, the level it translates at
-(`arm64-gadget-a32-corpus --forms` lists the encodings whose cases ran), except the 38 BF16 and I8MM entries: the engine decodes an
+corpus for every executed entry (`arm64-gadget-a32-corpus --forms` lists the
+encodings whose cases ran), except the 38 BF16 and I8MM entries: the engine decodes an
 extension only where the host has it, so on a host without them (the M1 Ultra)
 those cases are skipped, and the entries stay `pending`. The decoder's
 interface is

@@ -19,10 +19,9 @@ static_assert(static_cast<unsigned>(Feature::sb) == 10);
 static_assert(static_cast<unsigned>(Feature::rdm) == 11);
 static_assert(static_cast<unsigned>(Feature::fcma) == 12);
 static_assert(static_cast<unsigned>(Feature::jscvt) == 13);
-static_assert(static_cast<unsigned>(Level::none) == 0);
-static_assert(static_cast<unsigned>(Level::base) == 1);
-static_assert(static_cast<unsigned>(Level::simd) == 2);
-static_assert(static_cast<unsigned>(Level::complete) == 3);
+static_assert(static_cast<unsigned>(Level::base) == 0);
+static_assert(static_cast<unsigned>(Level::simd) == 1);
+static_assert(static_cast<unsigned>(Level::complete) == 2);
 
 const FormInfo kForms[kFormCount] = {
 	{"Undefined", "", 0x00000000u, 0x00000000u, 0x00000000u, kNoProgram, 0, Isa::a32, Level::base, Availability::implemented, Check::none, kNoFeature, kNoCond, false, false, false},

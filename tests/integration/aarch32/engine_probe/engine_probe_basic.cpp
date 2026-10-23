@@ -45,15 +45,9 @@ void group_basic()
 		check_eq(hwcap & ((1U << 0) | (1U << 19)), 0,
 			 "AT_HWCAP names neither swp nor vfpd32");
 	}
-	if (level_detected == level_base) {
-		check_eq(hwcap & ((1U << 3) | (1U << 6) | (1U << 12) | (1U << 13) | (1U << 16)), 0,
-			 "a base engine advertises no FPA, VFP, NEON, VFPv3 or VFPv4");
-		check_eq(hwcap2, 0, "a base engine advertises no AT_HWCAP2");
-	} else {
-		check_eq(hwcap & (hwcap_neon | hwcap_vfpv3 | hwcap_vfpv4 | (1U << 6)),
-			 hwcap_neon | hwcap_vfpv3 | hwcap_vfpv4 | (1U << 6),
-			 "a simd engine advertises vfp, vfpv3, vfpv4 and neon");
-	}
+	check_eq(hwcap & (hwcap_neon | hwcap_vfpv3 | hwcap_vfpv4 | (1U << 6)),
+		 hwcap_neon | hwcap_vfpv3 | hwcap_vfpv4 | (1U << 6),
+		 "AT_HWCAP names vfp, vfpv3, vfpv4 and neon");
 
 	/* errno. */
 	const long pid = getpid();

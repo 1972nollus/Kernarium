@@ -224,7 +224,7 @@ def render_header(model: tm.Model) -> str:
         "\tstd::uint16_t program;",
         "\tstd::uint16_t traits;",
         "\tIsa isa;",
-        "\t/* The smallest profile level that implements the form. */",
+        "\t/* The part of the profile the form belongs to. */",
         "\tLevel level;",
         "\tAvailability availability;",
         "\tCheck check;",
@@ -367,7 +367,7 @@ def render_tables(model: tm.Model, witnesses: dict[str, int]) -> str:
         lines.append(
             f"static_assert(static_cast<unsigned>(Feature::{name}) == {position});"
         )
-    for level, name in enumerate(("none", "base", "simd", "complete")):
+    for level, name in enumerate(("base", "simd", "complete")):
         lines.append(
             f"static_assert(static_cast<unsigned>(Level::{name}) == {level});"
         )

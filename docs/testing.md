@@ -274,12 +274,10 @@ in the rootfs. The build generates a freestanding
 armhf program from `tests/integration/aarch32/aarch32_probe.S` with the
 configured compiler's ARM backend, wraps it into an ELF32 executable with
 `make_elf32.py` (the toolchain has no ARM linker), aligned to 64 KiB and aligned
-to 4 KiB only, and never commits either. While no engine implements AArch32
-(`UML_AARCH32_EXPECT=unsupported`, the default) the test
-requires `ENOEXEC` for both programs, `EINVAL` for `personality(PER_LINUX32)`,
-and unchanged 64-bit `uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and
-`abi.cp15_barrier`. With `UML_AARCH32_EXPECT=run` it runs the program (kuser
-helpers, signals and VFP state, `cacheflush`, Thumb, `mmap2`, `PER_LINUX32`
+to 4 KiB only, and never commits either. The test requires unchanged 64-bit
+`uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and `abi.cp15_barrier`, and
+runs the program (kuser helpers, signals and VFP state, `cacheflush`, Thumb,
+`mmap2`, `PER_LINUX32`
 views, restarts and exec between ABIs; threads through `clone` and `clone3`,
 fault signals and stack growth, the time64 and socket calls with
 `SCM_RIGHTS`, `vfork`, timers, `seccomp` and a 32-bit tracer), a 64-bit
@@ -796,11 +794,10 @@ generated AArch32 corpus against the decoder: the program decodes in order,
 in the IT state its instructions leave, to legal forms except at the
 instruction that raised an event; the instruction under test is the form the
 case names; the event is one its kind can raise; and the retired count, fault
-position, state changes and memory runs agree. A case whose forms need a level
-above `--level` is skipped. The `arm64-a32-corpus` tooling test regenerates
-the pack from `tests/unit/arm64/aarch32_corpus/source` and compares it,
-`provenance.json`, `manifest.tsv`, `coverage.tsv` and `excluded.tsv` with the
-checked-in bytes, and requires cases for every executed base inventory entry.
+position, state changes and memory runs agree. The `arm64-a32-corpus` tooling
+test regenerates the pack from `tests/unit/arm64/aarch32_corpus/source` and
+compares it, `provenance.json`, `manifest.tsv`, `coverage.tsv` and
+`excluded.tsv` with the checked-in bytes, and requires cases for every executed base inventory entry.
 Neither needs an oracle. The corpus README owns the format, the oracles and how
 to record a suite with `tools/arm64-tests/a32-corpus.py`; recording runs
 `qemu-arm` on a build host over ssh and is opt-in. With
@@ -903,17 +900,12 @@ streaming record), and undefined SVE instructions.
 ## Guest AArch32 foundation
 
 `arm64-a32-foundation` checks the state `CpuState` appends and its assembly
-offsets, the guest-AArch32 policy, the engines' support levels and what a
-policy presents of them, the AArch32 identification registers and compat
-HWCAP words at each level over every subset of the host features they follow,
-and that an engine below `base` takes the AArch32 entry as the
-illegal-instruction exit without changing the state. `arm64-a32-guest-key` checks the tagged
+offsets, and the AArch32 identification registers and compat HWCAP words over
+every subset of the host features they follow. `arm64-a32-guest-key` checks the tagged
 translation keys (round trips, interworking, that no key collides with an A64
 key, the empty cell or a fault position, and the hash-visible bit) and the
 key-aware validation of saved guest units across page boundaries. `arm64-jit-shared-translation-cache` also checks that the
-shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
-policy from their environment as well; the suites must hold unchanged with
-`DARWIN_UML_GUEST_AARCH32=1`.
+shared tier keys and sizes AArch32 translations by ISA.
 
 `arm64-gadget-a32-control` runs small A32 and T32 programs through the gadget
 engine's production AArch32 loop and checks what its translator decides:
@@ -934,8 +926,7 @@ flags and environment left checked against the host's own instruction under
 the matching FPCR, that no gadget writes the callee-saved halves of V8-V15
 (the corpus runner checks them around every case), that every writeback of a
 VLD1 or VST1 copy moves the bytes and the base inside a page and across one,
-that a VFP word is illegal when the engine translates at the base
-level, and that at the complete level a form of an extension (CRC32, AES,
+and that a form of an extension (CRC32, AES,
 SHA-1, PMULL, FP16, DotProd, RDM, FCMA, FHM, BF16, I8MM, JSCVT) executes on a
 host that has it, as a gadget or in the semantic library, and is the
 illegal-instruction exit, not retired, on one that does not (the test builds
@@ -943,19 +934,16 @@ one guest on the machine's capabilities and one on a host with none of the
 optional ones). `arm64-gadget-a32-forms` runs every
 stored sample word of the decoder's data and the whole 16-bit Thumb space and
 requires the engine to raise the illegal-instruction exit exactly where the
-decoder, at the engine's level, rejects the word. Both also hold the
+decoder, against the engine's profile, rejects the word. Both also hold the
 library-exit count gate: with the semantic library's exit counters on from a
 clean state, only a form the engine leaves to the library, or a block transfer
 that crossed a page, may reach it, and the forms the engine leaves to it do.
 `arm64-gadget-a32-corpus`
-runs the cases of the AArch32 corpus whose instructions the engine's level
-implements in the oracle's memory map and compares the signal or system call,
+runs the cases of the AArch32 corpus whose instructions the engine decodes in
+the oracle's memory map and compares the signal or system call,
 the instruction and address it was raised at, the registers, flags, Q, GE,
 D0-D31, FPSCR, the data region and the retired count (a case whose forms need an
-extension the host lacks, BF16 and I8MM on the M1 Ultra, is skipped);
-`--level` runs the
-cases of another level with the engine translating at it, which is how a
-level is brought up before the engine's own moves. The `unaligned` and
+extension the host lacks, BF16 and I8MM on the M1 Ultra, is skipped). The `unaligned` and
 `fpscr-reserved` suites are recorded from hardware (a Raspberry Pi 4), as the
 corpus README describes. A store-exclusive may fail
 without cause, and the gadgets' fails whenever a host interrupt lands between
@@ -970,39 +958,35 @@ reservation (at most 60 s, because whether a signal lands in the window is
 chance). It requires that one was lost and that every case then agreed.
 Instruction semantics belong to the instruction corpus, not to the first two.
 
-`arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:
+`arm64-a32-host` checks the host runtime side:
 the architectural positions of the status word's fields, the load and save of
 every field around an engine's AArch32 entry (key, flags, GE, IT, FPSCR
 split, TPIDR registers, CP15BEN; load then save is the identity over random
 states in both Thumb and ARM state), which entries the kernel may hand over,
 the bridge event of every exit, and that the compat HWCAPs and the guest entry
-points follow the level the run presents, with the policy off and on. An
-engine that has reached `base` makes the policy-on run enter it for real: an
-entry at an unmapped PC must fault there.
+points follow the host the run presents. An entry at an unmapped PC must
+fault there.
 
 `guest-aarch32-engine-gadgets` and `guest-aarch32-engine-jit` run the engine
 probe, a freestanding armhf program from `tests/integration/aarch32/engine_probe/`
-that boots as the guest's `/init` under `DARWIN_UML_GUEST_AARCH32=1`. The build
-compiles it with the configured compiler's ARM backend and links it with
-`link_elf32.py`, aligned to 64 KiB and aligned to 4 KiB only. Its groups cover
-system calls and errno, A32/T32 interworking, signal frames with VFP state
-through the sigpage and `SA_RESTORER`, every kuser helper, TPIDRURO and
-TPIDRURW, `cacheflush` with self-modifying code, alignment and memory faults,
-UNDEFINED encodings (UDF, SETEND, SWP, a CP15 barrier with `abi.cp15_barrier`
-cleared), `SIGTRAP` from BKPT and `udf #16` under ptrace and a single step
-through an IT block, LDREX/STREX and the kuser cmpxchg under contention across
-threads and processes, VFP, Advanced SIMD and FPSCR semantics (including
-structure loads and stores alone in a block, across a reschedule), and, at the
-complete level, the Armv8 floating-point additions (VRINT, VCVT with a rounding
-mode, VMAXNM/VMINNM) and the crypto, CRC32, dot-product and half-precision
-extensions against known answers. A group needing a higher level than the
-engine's is skipped inside the probe from the HWCAP words it sees, and an
-extension the words leave out must raise `SIGILL`. Every SIGILL is counted: one
-the probe did not expect fails the run. A test skips, naming its reason, while
-its engine implements no AArch32 (the level `uml-a32-engine-support` prints is
-`none`). `A32_PROBE_GROUPS` selects groups by hand through the runner's
-`--groups`, and `A32_PROBE_VERBOSE=1` makes the runner print every line of the
-guest's output, passes included.
+that boots as the guest's `/init`. The build compiles it with the configured
+compiler's ARM backend and links it with `link_elf32.py`, aligned to 64 KiB and
+aligned to 4 KiB only. Its groups cover system calls and errno, A32/T32
+interworking, signal frames with VFP state through the sigpage and
+`SA_RESTORER`, every kuser helper, TPIDRURO and TPIDRURW, `cacheflush` with
+self-modifying code, alignment and memory faults, UNDEFINED encodings (UDF,
+SETEND, SWP, a CP15 barrier with `abi.cp15_barrier` cleared), `SIGTRAP` from
+BKPT and `udf #16` under ptrace and a single step through an IT block,
+LDREX/STREX and the kuser cmpxchg under contention across threads and
+processes, VFP, Advanced SIMD and FPSCR semantics (including structure loads
+and stores alone in a block, across a reschedule), the Armv8 floating-point
+additions (VRINT, VCVT with a rounding mode, VMAXNM/VMINNM) and the crypto,
+CRC32, dot-product and half-precision extensions against known answers. A group
+needing an extension the HWCAP words leave out is skipped inside the probe, and
+the extension must raise `SIGILL`. Every SIGILL is counted: one the probe did
+not expect fails the run. `A32_PROBE_GROUPS` selects groups by hand through the
+runner's `--groups`, and `A32_PROBE_VERBOSE=1` makes the runner print every line
+of the guest's output, passes included.
 
 ## AArch32 JIT
 

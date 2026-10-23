@@ -24,7 +24,6 @@
 
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/gadgets/a32/a32_builder.hpp"
-#include "cpu/arm64/gadgets/a32_support.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -111,7 +110,7 @@ public:
 	Runner()
 		: guest_{1100}
 		, profile_{::uml::cpu::arm64::gadgets::a32::decode_profile(
-			  options_at(::uml::cpu::arm64::gadgets::a32_support))}
+			  ::uml::cpu::arm64::gadgets::BuildOptions{})}
 	{
 		/* The code around a word is benign in both instruction sets: as
 		 * A32 a conditional supervisor call that fails its condition,
@@ -181,7 +180,7 @@ private:
 		const auto output = ::uml::cpu::arm64::gadgets::a32::build(
 			{.key = key, .code = code, .single = true}, {},
 			std::pmr::get_default_resource(), {},
-			options_at(::uml::cpu::arm64::gadgets::a32_support), profile_,
+			::uml::cpu::arm64::gadgets::BuildOptions{}, profile_,
 			budget);
 		if (output.result.program.accesses_fp_state() != trait) {
 			std::fprintf(stderr,

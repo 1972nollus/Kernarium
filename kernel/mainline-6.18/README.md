@@ -209,9 +209,8 @@ Android build none of them.
 instruction execution is qualified against the pinned FEX handwritten x86-64
 corpus; distribution and complete Linux syscall compatibility require separate
 guest qualification. The slice accepts no AArch32 executable (its
-`UML_ARM64_AARCH32` is off); the arm64 kernels accept `EM_AARCH64` and, once
-the run's engine implements AArch32, 32-bit ARM EABI executables, and run
-stock armhf userspace ([shared README](../common/README.md)).
+`UML_ARM64_AARCH32` is off); the arm64 kernels accept `EM_AARCH64` and
+32-bit ARM EABI executables, and run stock armhf userspace ([shared README](../common/README.md)).
 Android does not consume the x86_64 overlay. The slice's overlay turns off
 `UML_ARM64_SME`, so it builds none of the shared SME task state,
 which x86 tasks do not have; the shared mm-shared mark stays, for the x86-64

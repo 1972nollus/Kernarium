@@ -12,7 +12,7 @@ engine, holds no state, and is a CPU-layer `shared` target.
 library's; their comments state what each call takes, returns and guarantees,
 including the fault ordering and what each exit leaves in the PC and
 ITSTATE, which the engines follow. `a32_profile.hpp` builds the `Profile` an
-engine decodes against from the host and the engine's level.
+engine decodes against from the host.
 
 The profile is Armv8-A AArch32 at EL0 (see
 [`../../../../docs/architecture.md`](../../../../docs/architecture.md) and

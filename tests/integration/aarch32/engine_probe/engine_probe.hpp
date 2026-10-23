@@ -263,10 +263,6 @@ extern word hwcap;
 extern word hwcap2;
 extern word page_size;
 
-/* The level of the profile the process detected from its HWCAP words. */
-enum : int { level_base, level_simd, level_complete };
-extern int level_detected;
-
 /* AT_HWCAP and AT_HWCAP2 bits (arch/arm/include/uapi/asm/hwcap.h). */
 enum : word {
 	hwcap_neon = 1U << 12,
@@ -378,8 +374,6 @@ void release_signal(int signal);
 
 struct Group {
 	const char *name;
-	/* 0 base, 1 simd, 2 complete: the least level that can run it. */
-	int level;
 	void (*run)();
 };
 

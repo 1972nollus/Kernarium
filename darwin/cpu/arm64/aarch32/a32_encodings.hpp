@@ -2424,7 +2424,7 @@ struct FormInfo final {
 	std::uint16_t program;
 	std::uint16_t traits;
 	Isa isa;
-	/* The smallest profile level that implements the form. */
+	/* The part of the profile the form belongs to. */
 	Level level;
 	Availability availability;
 	Check check;

@@ -107,7 +107,7 @@ Instruction decode(Isa isa, std::uint32_t word, const Profile &profile, ItState 
 	return isa == Isa::a32 ? decode_a32(word, profile) : decode_thumb(word, it, profile);
 }
 
-const Profile complete = Profile::at(Level::complete);
+const Profile complete;
 
 [[noreturn]] void fail_word(const char *what, Isa isa, std::uint32_t word, const Instruction &result)
 {
@@ -272,41 +272,32 @@ void test_forms()
 		expect(want);
 }
 
-void test_levels_and_features()
+void test_features()
 {
-	/* Integer instructions and the Armv8 acquire/release group need base; VFP
-	 * and NEON need simd; the other Armv8 additions need complete. */
+	/* The profile has the integer instructions, the Armv8 acquire/release
+	 * group, VFP and NEON, and the other Armv8 additions whatever the
+	 * optional features are. */
 	const Expectation integer{Isa::a32, 0xe0910002, "ADDS_r_A1", Status::ok, Reason::none};
 	const Expectation neon{Isa::a32, 0xf2220844, "VADD_i_A1_Q", Status::ok, Reason::none};
 	const Expectation lda{Isa::a32, 0xe1910c9f, "LDA_A1", Status::ok, Reason::none};
 	const Expectation vsel{Isa::a32, 0xfe800a81, "VMAXNM_A2_S", Status::ok, Reason::none};
-	const Level levels[] = {Level::none, Level::base, Level::simd, Level::complete};
-	const Expectation *all[] = {&integer, &neon, &lda, &vsel};
-	const unsigned needs[] = {1, 2, 1, 3};
-	for (const Level level : levels) {
-		for (std::size_t index = 0; index < 4; ++index) {
-			const bool available = static_cast<unsigned>(level) >= needs[index];
-			Expectation want = *all[index];
-			if (!available) {
-				want.status = Status::undefined;
-				want.reason = Reason::profile;
-			}
-			expect(want, Profile::at(level));
-		}
+	for (const Expectation &want : {integer, neon, lda, vsel}) {
+		expect(want);
+		expect(want, Profile{FeatureSet{}});
 	}
 	/* A feature the profile lacks makes its instructions UNDEFINED, and no
 	 * other. */
-	Profile no_crc{Level::complete, FeatureSet::all().without(Feature::crc32)};
+	Profile no_crc{FeatureSet::all().without(Feature::crc32)};
 	expect({Isa::a32, 0xe1010042, "CRC32B_A1", Status::undefined, Reason::feature}, no_crc);
 	expect({Isa::t16, 0x18880000, "ADD_r_T1", Status::ok, Reason::none}, no_crc);
-	Profile no_aes{Level::complete, FeatureSet::all().without(Feature::aes)};
+	Profile no_aes{FeatureSet::all().without(Feature::aes)};
 	expect({Isa::a32, 0xf3b00302, "AESE_A1", Status::undefined, Reason::feature}, no_aes);
 	/* VMULL.P64 checks FEAT_PMULL in its Decode pseudocode. */
-	Profile no_pmull{Level::complete, FeatureSet::all().without(Feature::pmull)};
+	Profile no_pmull{FeatureSet::all().without(Feature::pmull)};
 	expect({Isa::a32, 0xf2a10e02, "VMULL_i_A1", Status::ok, Reason::none});
 	expect({Isa::a32, 0xf2a10e02, "VMULL_i_A1", Status::undefined, Reason::feature}, no_pmull);
 	/* FEAT_FP16 gates the half-precision forms of VABS. */
-	Profile no_fp16{Level::complete, FeatureSet::all().without(Feature::fp16)};
+	Profile no_fp16{FeatureSet::all().without(Feature::fp16)};
 	const Instruction half = decode_a32(0xeeb009c1, complete);
 	require(half.status == Status::ok);
 	const Instruction half_no = decode_a32(0xeeb009c1, no_fp16);
@@ -504,7 +495,7 @@ int main(int argc, char **argv)
 	test_it_state();
 	test_support_helpers();
 	test_forms();
-	test_levels_and_features();
+	test_features();
 	test_coprocessor_registers();
 	test_operands();
 	test_thumb_it();

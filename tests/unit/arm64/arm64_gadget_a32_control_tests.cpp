@@ -17,9 +17,9 @@
  * - LDM, STM and LDRD across a page boundary, mapped and not, and the
  *   memory gadgets' TLB probe hitting inside a page and not across one, and
  *   in the set the TLB's own fill path chose; and
- * - at the complete level, that a form of an extension the host has runs
- *   (as a gadget, or in the semantic library when none lowers it) and one of
- *   an extension it lacks is UNDEFINED.
+ * - that a form of an extension the host has runs (as a gadget, or in the
+ *   semantic library when none lowers it) and one of an extension it lacks
+ *   is UNDEFINED.
  *
  * Everything runs the production loop (run_translated_aarch32_blocks)
  * over the gadget executor. */
@@ -36,6 +36,7 @@
 #include <cstdio>
 #include <memory>
 #include <memory_resource>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -185,7 +186,7 @@ namespace {
 {
 	static const std::uintptr_t skips[] = {
 		UML_A32_ALL_SKIPS(UML_A32_SKIP_ADDRESS)};
-	const auto options = options_at(gadgets::a32_support);
+	const gadgets::BuildOptions options;
 	const auto output = gadgets::a32::build(
 		{.key = aarch32::a32_key(code_base), .code = std::as_bytes(words)},
 		{}, std::pmr::get_default_resource(), {}, options,
@@ -1780,7 +1781,7 @@ void vld1_and_vst1_copies_stay_out_of_the_library()
 	unsigned long generation = 1300;
 	for (const auto &copy : copies) {
 		const auto decoded = aarch32::decode_a32(
-			copy.word, aarch32::Profile::at(aarch32::Level::complete));
+			copy.word, aarch32::Profile{});
 		require(decoded.legal(), "a VLD1 or VST1 word did not decode");
 		Guest guest{generation++};
 		guest.a32(0, {copy.word, a::svc});
@@ -1830,7 +1831,7 @@ namespace {
 [[nodiscard]] bool translation_holds(std::span<const std::uint32_t> words,
 				     void (*gadget)())
 {
-	const auto options = options_at(gadgets::a32_support);
+	const gadgets::BuildOptions options;
 	const auto output = gadgets::a32::build(
 		{.key = aarch32::a32_key(code_base), .code = std::as_bytes(words)},
 		{}, std::pmr::get_default_resource(), {}, options,
@@ -2110,7 +2111,7 @@ void an_a32_block_holds_all_sixty_four_instructions()
 	words.fill(add_r0_1);
 	std::array<std::uint16_t, 80> halfwords;
 	halfwords.fill(0x3001U); /* adds r0, #1 */
-	const auto options = options_at(gadgets::a32_support);
+	const gadgets::BuildOptions options;
 	const auto count = [&](std::uint64_t key,
 			       std::span<const std::byte> code,
 			       std::size_t window) {
@@ -2179,7 +2180,7 @@ void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
 	unsigned long generation = 1500;
 	for (const auto &copy : copies) {
 		const auto decoded = aarch32::decode_a32(
-			copy.word, aarch32::Profile::at(aarch32::Level::complete));
+			copy.word, aarch32::Profile{});
 		require(decoded.legal(), "a VLD1 or VST1 word did not decode");
 		Guest guest{generation++};
 		guest.a32(0, {copy.word, a::svc});
@@ -2409,7 +2410,7 @@ void parallel_arithmetic_and_sel_stay_out_of_the_library()
 	require(guest.run(cpu).reason == ExitReason::system_call);
 	for (const auto &step : steps) {
 		const auto decoded = aarch32::decode_a32(
-			step.word, aarch32::Profile::at(aarch32::Level::complete));
+			step.word, aarch32::Profile{});
 		require(decoded.legal(), "a parallel word did not decode");
 		require(aarch32::a32_library_exits(decoded.form) == 0,
 			"a parallel add or subtract or SEL used the library");
@@ -2563,21 +2564,9 @@ void single_stepped_floating_point_loads_the_deferred_vectors()
 		"VFP did not keep the denormal");
 }
 
-/* A VFP word is illegal at the base level: the level is what makes it so. */
-void a_vfp_word_is_illegal_at_the_base_level()
-{
-	Guest guest{994, arm64::A32Support::base};
-	guest.a32(0, {a::mov_r0_1, v::vadd_f32_s8_s2_s4, a::svc});
-	auto cpu = a32_state();
-	const auto result = guest.run(cpu);
-	require(result.reason == ExitReason::illegal_instruction);
-	require(result.retired_instructions == 1);
-	require(cpu.pc == aarch32::a32_key(code_base + 4));
-}
+/* ------------------------------------------------- the optional extensions */
 
-/* ------------------------------------------------- the complete level */
-
-/* The complete level shows a guest the extensions the host has the A64
+/* The engine shows a guest the extensions the host has the A64
  * feature for (a32_features), and a form of any other extension is
  * UNDEFINED, as the HWCAPs say. A word is run in a guest translating on the
  * machine's own capabilities and in one on a host with none of the optional
@@ -2588,8 +2577,8 @@ void a_vfp_word_is_illegal_at_the_base_level()
 struct FeatureWord {
 	const char *what;
 	std::uint32_t word;
-	bool arm64::A32Features::*feature; /* null: needs no extension */
-	bool library;                      /* no gadget: the library runs it */
+	std::optional<aarch32::Feature> feature; /* none: needs no extension */
+	bool library;                            /* no gadget: the library runs it */
 };
 
 [[nodiscard]] ::uml::cpu::HostCapabilities bare_host()
@@ -2603,39 +2592,39 @@ struct FeatureWord {
 
 void host_features_decide_what_the_guest_may_execute()
 {
-	using F = arm64::A32Features;
+	using F = aarch32::Feature;
 	const FeatureWord words[] = {
-		{"crc32w r0, r1, r2", 0xe141'0042U, &F::crc32, false},
-		{"crc32cb r0, r1, r2", 0xe101'0242U, &F::crc32, false},
-		{"vsdot.s8 d0, d1, d2", 0xfc21'0d02U, &F::dotprod, false},
-		{"vudot.u8 q0, q1, q2", 0xfc22'0d54U, &F::dotprod, false},
-		{"vsdot.s8 d0, d1, d2[1]", 0xfe21'0d22U, &F::dotprod, false},
-		{"vqrdmlah.s16 d0, d1, d2", 0xf311'0b12U, &F::rdm, false},
-		{"vqrdmlsh.s32 q0, q1, q2", 0xf322'0c54U, &F::rdm, false},
-		{"vqrdmlah.s16 d0, d1, d2[1]", 0xf291'0e4aU, &F::rdm, false},
-		{"vcadd.f32 d0, d1, d2, #90", 0xfc91'0802U, &F::fcma, false},
-		{"vcmla.f32 q0, q1, q2, #180", 0xfd32'0844U, &F::fcma, false},
-		{"vcmla.f32 d0, d1, d2[0], #90", 0xfe91'0802U, &F::fcma, false},
-		{"vfmal.f16 d0, s2, s4", 0xfc21'0812U, &F::fhm, false},
-		{"vfmsl.f16 q0, d2, d4", 0xfca2'0854U, &F::fhm, false},
-		{"vadd.f16 s0, s1, s2", 0xee30'0981U, &F::fp16, false},
-		{"vcvt.s32.f16 s0, s1", 0xeebd'09e0U, &F::fp16, false},
-		{"vmov.f16 s0, #1.0", 0xeeb7'0900U, &F::fp16, false},
-		{"vldr.16 s0, [r2]", 0xed92'0900U, &F::fp16, false},
-		{"aese.8 q0, q1", 0xf3b0'0302U, &F::aes, false},
-		{"sha1c.32 q0, q1, q2", 0xf202'0c44U, &F::sha1, false},
-		{"vmull.p64 q0, d1, d2", 0xf2a1'0e02U, &F::pmull, false},
-		{"vdot.bf16 d0, d1, d2", 0xfc01'0d02U, &F::bf16, true},
-		{"vusdot.s8 d0, d1, d2", 0xfca1'0d02U, &F::i8mm, true},
-		{"vjcvt.s32.f64 s0, d1", 0xeeb9'0bc1U, &F::jscvt, true},
+		{"crc32w r0, r1, r2", 0xe141'0042U, F::crc32, false},
+		{"crc32cb r0, r1, r2", 0xe101'0242U, F::crc32, false},
+		{"vsdot.s8 d0, d1, d2", 0xfc21'0d02U, F::dotprod, false},
+		{"vudot.u8 q0, q1, q2", 0xfc22'0d54U, F::dotprod, false},
+		{"vsdot.s8 d0, d1, d2[1]", 0xfe21'0d22U, F::dotprod, false},
+		{"vqrdmlah.s16 d0, d1, d2", 0xf311'0b12U, F::rdm, false},
+		{"vqrdmlsh.s32 q0, q1, q2", 0xf322'0c54U, F::rdm, false},
+		{"vqrdmlah.s16 d0, d1, d2[1]", 0xf291'0e4aU, F::rdm, false},
+		{"vcadd.f32 d0, d1, d2, #90", 0xfc91'0802U, F::fcma, false},
+		{"vcmla.f32 q0, q1, q2, #180", 0xfd32'0844U, F::fcma, false},
+		{"vcmla.f32 d0, d1, d2[0], #90", 0xfe91'0802U, F::fcma, false},
+		{"vfmal.f16 d0, s2, s4", 0xfc21'0812U, F::fhm, false},
+		{"vfmsl.f16 q0, d2, d4", 0xfca2'0854U, F::fhm, false},
+		{"vadd.f16 s0, s1, s2", 0xee30'0981U, F::fp16, false},
+		{"vcvt.s32.f16 s0, s1", 0xeebd'09e0U, F::fp16, false},
+		{"vmov.f16 s0, #1.0", 0xeeb7'0900U, F::fp16, false},
+		{"vldr.16 s0, [r2]", 0xed92'0900U, F::fp16, false},
+		{"aese.8 q0, q1", 0xf3b0'0302U, F::aes, false},
+		{"sha1c.32 q0, q1, q2", 0xf202'0c44U, F::sha1, false},
+		{"vmull.p64 q0, d1, d2", 0xf2a1'0e02U, F::pmull, false},
+		{"vdot.bf16 d0, d1, d2", 0xfc01'0d02U, F::bf16, true},
+		{"vusdot.s8 d0, d1, d2", 0xfca1'0d02U, F::i8mm, true},
+		{"vjcvt.s32.f64 s0, d1", 0xeeb9'0bc1U, F::jscvt, true},
 		/* The Armv8 floating-point additions every host has. */
-		{"vmaxnm.f32 d0, d1, d2", 0xf301'0f12U, nullptr, false},
-		{"vrinta.f32 d0, d1", 0xf3ba'0501U, nullptr, false},
+		{"vmaxnm.f32 d0, d1, d2", 0xf301'0f12U, std::nullopt, false},
+		{"vrinta.f32 d0, d1", 0xf3ba'0501U, std::nullopt, false},
 	};
 	const auto machine = ::uml::cpu::host_capabilities();
 	const auto bare = bare_host();
 	const auto machine_features =
-		arm64::a32_features(machine, arm64::A32Support::complete);
+		arm64::a32_features(machine);
 	aarch32::count_a32_library_exits(true);
 	unsigned long generation = 1100;
 	struct Outcome {
@@ -2646,10 +2635,10 @@ void host_features_decide_what_the_guest_may_execute()
 	};
 	for (const auto &item : words) {
 		const auto decoded = aarch32::decode_a32(
-			item.word, aarch32::Profile::at(aarch32::Level::complete));
+			item.word, aarch32::Profile{});
 		require(decoded.legal(), item.what);
 		const auto run = [&](const ::uml::cpu::HostCapabilities &host) {
-			Guest guest{generation++, arm64::A32Support::complete, host};
+			Guest guest{generation++, host};
 			guest.a32(0, {item.word, a::svc});
 			guest.data32(0, 0x3c00'4000U);
 			auto cpu = a32_state();
@@ -2679,11 +2668,11 @@ void host_features_decide_what_the_guest_may_execute()
 		};
 		const auto native = run(machine);
 		const auto library = run(bare);
-		const bool on_machine = item.feature == nullptr ||
-					machine_features.*item.feature;
+		const bool on_machine = !item.feature ||
+					machine_features.has(*item.feature);
 		expect(native, on_machine, "the machine");
-		expect(library, item.feature == nullptr, "a host with no extension");
-		if (on_machine && item.feature == nullptr) {
+		expect(library, !item.feature, "a host with no extension");
+		if (on_machine && !item.feature) {
 			for (unsigned n = 0; n < 16; ++n)
 				require(reg(native.cpu, n) == reg(library.cpu, n), item.what);
 			for (unsigned n = 0; n < 8; ++n)
@@ -2911,7 +2900,7 @@ void the_tlb_probe_hits_inside_a_page_and_not_across_one()
 	};
 	fill(first, host.data());
 	fill(second, host.data() + page + gap);
-	const auto options = options_at(gadgets::a32_support);
+	const gadgets::BuildOptions options;
 	const auto run = [&](std::uint32_t word, std::uint32_t address,
 			     std::uint32_t value) {
 		const auto output = gadgets::a32::build(
@@ -2997,7 +2986,7 @@ void an_entry_the_tlb_fills_hits_through_the_emitted_probe()
 		guest.map_data(address);
 	}
 	std::vector<std::uint8_t> decoy(page, 0xdd);
-	const auto options = options_at(gadgets::a32_support);
+	const gadgets::BuildOptions options;
 	const auto run = [&](::uml::memory::Tlb &tlb, std::uint32_t word,
 			     std::uint32_t address, std::uint32_t value) {
 		const auto output = gadgets::a32::build(
@@ -3125,7 +3114,6 @@ int main()
 	parallel_arithmetic_and_sel_stay_out_of_the_library();
 	structure_and_library_blocks_load_the_deferred_vectors();
 	single_stepped_floating_point_loads_the_deferred_vectors();
-	a_vfp_word_is_illegal_at_the_base_level();
 	host_features_decide_what_the_guest_may_execute();
 	std::puts("arm64-gadget-a32-control: ok");
 	return 0;

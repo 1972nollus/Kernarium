@@ -709,23 +709,17 @@ the bridge imports no SVE vector length and its register tail holds FP and SME
 state only (bridge ABI 23), so a task has no SVE state to carry across an
 entry.
 
-The arm64 engines are growing a 32-bit Arm guest: AArch32 EL0, A32 and T32
-with interworking and IT, for the armhf userspace of Debian and Android's
+Both arm64 engines run a 32-bit Arm guest: AArch32 EL0, A32 and T32 with
+interworking and IT, for the armhf userspace of Debian and Android's
 armeabi-v7a, which needs hardware VFPv4-D32 and Advanced SIMD, so there is no
-soft-float-only profile. The profile, derived from the host as the SME profile is, is in
+soft-float-only profile. The profile, derived from the host as the SME profile
+is, is in
 [`cpu/arm64/aarch32/a32_profile.hpp`](../darwin/cpu/arm64/aarch32/a32_profile.hpp).
-Each engine's `a32_support` names how far it implements it, `none`, `base`
-(the integer core), `simd` or `complete`, and `base` and `simd` are
-milestones, not products. `CpuEngine::run_aarch32` is the entry for a task in
-AArch32 state, the A64 `run` is unchanged, and an engine below `base` takes the
-new entry as the illegal-instruction exit without touching the state. The
-gadget engine and the JIT are both at `complete` on macOS. The development
-policy `DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
-`a32_presented_support` gives the level a run presents, nothing with the
-policy off and the engine's level with it on, and the AArch32 identification
-registers and the compat AT_HWCAP and AT_HWCAP2 words derive from that level
-and the host in `cpu/arm64/id_registers.hpp` as arm64 Linux derives them, and
-are zero below `base`. The default turns on once both engines are complete.
+Every arm64 product presents all of it with no switch and no host token, and
+the AArch32 identification registers and the compat AT_HWCAP and AT_HWCAP2
+words derive from the host in `cpu/arm64/id_registers.hpp` as arm64 Linux
+derives them. `CpuEngine::run_aarch32` is the entry for a task in AArch32
+state, and the A64 `run` is unchanged.
 
 An AArch32 task keeps R0-R14 zero-extended in the integer registers, NZCV in
 the A64 flags and D0-D31 in the low sixteen vectors; what has no A64 field is
@@ -775,9 +769,8 @@ CpuState slots a register lives in, so the pair costs one dispatch. An
 unconditional VCMP or VCMPE followed at once by an unconditional VMRS
 APSR_nzcv is likewise one gadget that sets FPSCR's flags and copies them to
 NZCV. ADD and SUB of an immediate to the same register have an entry per
-register R0 to R14 with the displacement baked in. A word the decoder rejects, a coprocessor word the profile lacks and
-a form above the engine's level end the block in the illegal-instruction exit
-at the word whatever its condition, except a coprocessor word that is not
+register R0 to R14 with the displacement baked in. A word the decoder rejects and a coprocessor word the profile lacks end the
+block in the illegal-instruction exit at the word whatever its condition, except a coprocessor word that is not
 UNPREDICTABLE in the complete profile, which a failing condition skips like
 any other instruction. SVC, BKPT and a retiring exit count their instruction;
 a fault or undefined exit does not. SVC leaves PC after itself and ITSTATE
@@ -853,8 +846,8 @@ software floating-point helpers do. A saturating instruction leaves QC in the
 cumulative FPSR flags the native environment keeps; `engine/a32_neon.py` and
 `engine/a32_simd.py` document the groups and the operand words.
 
-The complete level adds the Armv8 floating-point additions and the optional
-extensions. The engine decodes in the profile its host gives it
+The Armv8 floating-point additions and the optional extensions are the
+`complete` part of the profile. The engine decodes in the profile its host gives it
 (`a32::decode_profile`): the extensions the host has the A64 feature for
 (`a32_features`), which are the ones the guest is shown, so a form of any other
 extension is UNDEFINED, as the HWCAPs say. The generator
@@ -868,20 +861,17 @@ the semantic library's, run through the `a32_library` gadget: the BF16 and
 Int8 matrix forms and VJCVT, on a host that has them. The FP16 VFP forms share
 the single-precision plans (aux bit 2) and store a half whole through its S
 register, which a half result zero-extends into.
-The level the engine translates at is `a32_support`; a test or a bring-up
-names another one in `BuildOptions::a32_level`, and the runtime never does.
 `arm64-gadget-a32-control` checks the contract above, `arm64-gadget-a32-forms`
-that the engine defines exactly what the decoder defines at its level,
-`arm64-gadget-a32-corpus` that it matches the AArch32 corpus records of that
-level, and `arm64-gadget-region-layout` the part's placement.
+that the engine defines exactly what the decoder defines, `arm64-gadget-a32-corpus`
+that it matches the AArch32 corpus records, and `arm64-gadget-region-layout`
+the part's placement.
 
-The runtime enters an AArch32 task through `run_aarch32` only while the run
-presents AArch32, which `guest_a32_support()` decides in one place: the
-selected engine's level under the development policy. The compat
+The runtime enters an AArch32 task through `run_aarch32`. The compat
 `AT_HWCAP` and `AT_HWCAP2` words the guest selector returns derive from the
-same level, so a run advertises exactly what its engine runs, a non-zero word
-is the kernel's whole evidence that a run executes AArch32, and an AArch32
-entry the run does not present is a fatal event. The conversions live in
+host the selected engine presents, so a run advertises exactly what its engine
+runs, and a non-zero word is the kernel's whole evidence that a run executes
+AArch32. An AArch32 entry in a state the kernel may not hand over is a fatal
+event. The conversions live in
 [`runtime/aarch32_guest.hpp`](../darwin/runtime/aarch32_guest.hpp) and the
 formats of the status word and FPSCR in
 [`cpu/arm64/aarch32/state_format.hpp`](../darwin/cpu/arm64/aarch32/state_format.hpp).
@@ -1042,8 +1032,8 @@ of the first page and the first 32 of the second side by side into
 `CpuState::a32_cross` and reads from there at the guest's offset. A page
 missing from the TLB takes the library, which fills it.
 
-At the complete level the JIT presents the Armv8 extensions as well, each where
-the host has its A64 feature: it decodes against `a32_decode_profile`, the
+The JIT presents the Armv8 extensions as well, each where the host has its A64
+feature: it decodes against `a32_decode_profile`, the
 extensions the guest is shown, so a form of an extension the host lacks is
 UNDEFINED and never reaches the semantic library. It lowers the ones that are
 the host's own instruction on the same operands: CRC32, the AES and SHA-1 and
