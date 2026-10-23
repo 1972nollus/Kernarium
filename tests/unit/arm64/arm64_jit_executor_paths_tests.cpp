@@ -56,6 +56,15 @@ constexpr std::uint16_t t32_str_w_4[] = {0xf8c2, 0x1004}; // str.w r1, [r2, #4]
 constexpr std::uint32_t a64_add_x0 = 0x9100'0400U;  // add x0, x0, #1
 constexpr std::uint32_t a64_str = 0xf900'0041U;     // str x1, [x2]
 constexpr std::uint32_t a64_svc = 0xd400'0001U;     // svc #0
+constexpr std::uint32_t a64_ldxr = 0xc85f'7c23U;    // ldxr x3, [x1]
+constexpr std::uint32_t a64_str_x1 = 0xf900'0022U;  // str x2, [x1]
+constexpr std::uint32_t a64_stxr = 0xc805'7c24U;    // stxr w5, x4, [x1]
+constexpr std::uint32_t a32_ldrex = 0xe190'2f9fU;   // ldrex r2, [r0]
+constexpr std::uint32_t a32_str_r0 = 0xe580'1000U;  // str r1, [r0]
+constexpr std::uint32_t a32_strex = 0xe180'3f92U;   // strex r3, r2, [r0]
+constexpr std::uint16_t t32_ldrex[] = {0xe850, 0x2f00}; // ldrex r2, [r0]
+constexpr std::uint16_t t32_str_r0 = 0x6001;            // str r1, [r0]
+constexpr std::uint16_t t32_strex[] = {0xe840, 0x2300}; // strex r3, r2, [r0]
 
 enum class Isa { a64, a32, t32 };
 
@@ -377,6 +386,118 @@ void single_step_stores(Isa isa, unsigned long generation)
 	std::printf("single-stepped %s stores\n", name(isa));
 }
 
+/* One entry in single-step mode: exactly one instruction retires. */
+[[nodiscard]] EngineEvent step_once(JitExecutor &executor,
+	StaticGuestMemory &memory, unsigned long generation, Isa isa,
+	arm64::CpuState &cpu)
+{
+	std::size_t executed = 0;
+	const auto event = isa == Isa::a64 ?
+		executor.run_block(cpu, memory, generation, executed) :
+		executor.run_a32_block(cpu, memory, generation, executed);
+	require(executed == 1);
+	return event;
+}
+
+/* A plain store from a stepped vCPU, while another holds a reservation on the
+ * word, ends that reservation: the store-exclusive after it fails, and
+ * succeeds when nothing stored in between. Both vCPUs step one instruction
+ * at a time, so the first's load-exclusive runs through the semantic helper
+ * and its reservation outlives the entry. */
+void a_stepped_store_ends_another_vcpus_reservation(Isa isa, bool intervening,
+	unsigned long generation)
+{
+	Region region{generation, code_base};
+	const std::uint32_t data = code_base + data_offset;
+	const auto program = [&](std::size_t offset, auto... words) {
+		std::size_t at = offset;
+		if (isa == Isa::t32)
+			((region.put16(at, static_cast<std::uint16_t>(words)), at += 2), ...);
+		else
+			((region.put32(at, static_cast<std::uint32_t>(words)), at += 4), ...);
+	};
+	if (isa == Isa::a64) {
+		program(0, a64_ldxr);
+		program(0x40, a64_str_x1);
+		program(0x80, a64_stxr);
+	} else if (isa == Isa::a32) {
+		program(0, a32_ldrex);
+		program(0x40, a32_str_r0);
+		program(0x80, a32_strex);
+	} else {
+		program(0, t32_ldrex[0], t32_ldrex[1]);
+		program(0x40, t32_str_r0);
+		program(0x80, t32_strex[0], t32_strex[1]);
+	}
+	region.changed(0, 0x100);
+	/* The intervening store writes the value the word already holds, so
+	 * only the reservation, not a changed value, can fail the store-
+	 * exclusive. */
+	region.put32(data_offset, stored_value);
+
+	const auto cpu_at = [&](std::size_t offset) {
+		auto cpu = task(isa, code_base + static_cast<std::uint32_t>(offset),
+			code_base);
+		if (isa == Isa::a64) {
+			cpu.registers[1] = data;
+			cpu.registers[2] = stored_value;
+			cpu.registers[4] = 0x2222'2222U;
+			/* Checked semantic reservations, not the host's monitor. */
+			cpu.tbi_enabled = true;
+		} else {
+			cpu.registers[0] = data;
+			cpu.registers[1] = stored_value;
+			cpu.registers[2] = 0x2222'2222U;
+		}
+		return cpu;
+	};
+	JitExecutor first;
+	JitExecutor second;
+	first.set_single_step(true);
+	second.set_single_step(true);
+	StaticGuestMemory first_memory;
+	StaticGuestMemory second_memory;
+	/* A vCPU's reservation is released when its executor stops executing, so
+	 * both stay in execution throughout. */
+	require(first.begin_execution(generation, code_base));
+	require(second.begin_execution(generation, code_base));
+	if (intervening) {
+		/* The second vCPU's TLB holds the data page before the reservation
+		 * exists, so its store is the executor's own, not the helper that
+		 * a TLB miss runs (which ends reservations by itself). */
+		auto second_cpu = cpu_at(0x40);
+		require(step_once(second, second_memory, generation, isa,
+			second_cpu) == EngineEvent::continued);
+	}
+	auto first_cpu = cpu_at(0);
+	require(step_once(first, first_memory, generation, isa, first_cpu) ==
+		EngineEvent::continued);
+	require(first_cpu.exclusive_size != 0);
+	if (intervening) {
+		auto second_cpu = cpu_at(0x40);
+		require(step_once(second, second_memory, generation, isa,
+			second_cpu) == EngineEvent::continued);
+	}
+	const auto next = cpu_at(0x80);
+	first_cpu.pc = next.pc;
+	if (isa != Isa::a64) {
+		/* The store-exclusive stores r2, which the load-exclusive loaded. */
+		first_cpu.registers[2] = 0x2222'2222U;
+	}
+	require(step_once(first, first_memory, generation, isa, first_cpu) ==
+		EngineEvent::continued);
+	const auto status = first_cpu.registers[isa == Isa::a64 ? 5 : 3];
+	require(status == (intervening ? 1U : 0U));
+	require(region.get32(data_offset) ==
+		(intervening ? stored_value : 0x2222'2222U));
+	require(region.get32(data_offset + 4) == 0);
+	require(first_cpu.exclusive_size == 0);
+	second.end_execution();
+	first.end_execution();
+	std::printf("%s stepped store %s a reservation\n", name(isa),
+		intervening ? "ends" : "leaves");
+}
+
 /* An entry in the middle of an IT block runs one instruction as its own
  * translation with the ITSTATE it holds, and leaves the ITSTATE that follows.
  * ITSTATE 0xe8 is "IT AL": the store is the block's only instruction. */
@@ -578,6 +699,10 @@ int main()
 	     {Rewrite::fewer_units, Rewrite::more_instructions})
 		tracked_variant_that_no_longer_matches_runs_one_instruction(
 			Isa::t32, generation++, rewrite);
+	for (const auto isa : {Isa::a64, Isa::a32, Isa::t32})
+		for (const bool intervening : {false, true})
+			a_stepped_store_ends_another_vcpus_reservation(
+				isa, intervening, generation++);
 	it_block_entry_stores(false, generation++);
 	it_block_entry_stores(true, generation++);
 	std::uint32_t base = code_base;
