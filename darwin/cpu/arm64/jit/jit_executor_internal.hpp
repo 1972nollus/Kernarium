@@ -171,6 +171,10 @@ private:
    */
   [[nodiscard]] std::optional<SharedTranslationMaterializationFailure>
   materialize_shared_translation(const SharedTranslation &translation);
+  /* Installs the shared translation of the fetched `guest_words` at `pc`
+   * (an A64 PC, or an AArch32 key with mode 0), or returns null. The words
+   * are the fetched prefix, any padding included, and the translation's
+   * identity is a prefix of them. */
   [[nodiscard]] CompiledBlock *install_shared_translation(
       unsigned long generation, std::uint64_t changes, std::uint64_t pc,
       std::uint8_t mode, std::span<const std::uint32_t> guest_words);
@@ -221,9 +225,6 @@ private:
   [[nodiscard]] std::size_t fetch_a32_bytes(StaticGuestMemory &memory,
                                             std::uint64_t key,
                                             std::span<std::byte> bytes);
-  [[nodiscard]] CompiledBlock *install_shared_translation_a32(
-      unsigned long generation, std::uint64_t changes, std::uint64_t key,
-      std::span<const std::uint32_t> guest_elements);
   [[nodiscard]] std::shared_ptr<const SharedTranslation>
   publish_shared_translation_a32(std::uint64_t key,
                                  std::span<const std::uint32_t> guest_elements,

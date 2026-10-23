@@ -50,50 +50,6 @@ constexpr std::size_t maximum_block_elements = maximum_block_instructions;
   return total;
 }
 
-[[nodiscard]] CompiledBlock *
-JitExecutor::Implementation::install_shared_translation_a32(
-    unsigned long generation, std::uint64_t changes, std::uint64_t key,
-    std::span<const std::uint32_t> guest_elements) {
-  auto &cache = SharedTranslationCache::instance();
-  const auto translation =
-      cache.find(shared_codegen_profile(0), key, guest_elements);
-  if (translation == nullptr)
-    return nullptr;
-  if (!valid_shared_translation(*translation, guest_elements)) {
-    cache.record_materialization_failure(
-        SharedTranslationMaterializationFailure::invalid_metadata);
-    return nullptr;
-  }
-  if (const auto failure = materialize_shared_translation(*translation)) {
-    cache.record_materialization_failure(*failure);
-    return nullptr;
-  }
-  const auto stored = arena_.store_block(
-      key, translation->words, translation->relocations,
-      relocated_link_pointers_, links_, empty_link_, generation);
-  if (!stored) {
-    cache.record_materialization_failure(
-        stored.links_exhausted
-            ? SharedTranslationMaterializationFailure::direct_link_capacity
-            : SharedTranslationMaterializationFailure::arena_exhaustion);
-    return nullptr;
-  }
-  const auto internal_entry = reinterpret_cast<std::uintptr_t>(stored.code) +
-                              translation->internal_entry_word *
-                                  sizeof(std::uint32_t);
-  auto *block = &store_native(
-      generation, changes, key, sign_jit_function<JitFunction>(stored.code),
-      internal_entry, stored.target_link, translation->relocations,
-      stored.direct_link_refusals, guest_elements, translation->guest_words,
-      translation->guest_instructions, translation->guest_word_count,
-      translation->memory_write_mask,
-      translation->direct_memory_write_mask, translation->accesses_fp_state,
-      translation->link_target_safe, translation->native_fp,
-      translation->guest_illegal);
-  cache.record_reuse();
-  return block;
-}
-
 [[nodiscard]] std::shared_ptr<const SharedTranslation>
 JitExecutor::Implementation::publish_shared_translation_a32(
     std::uint64_t key, std::span<const std::uint32_t> guest_elements,
@@ -364,8 +320,8 @@ JitExecutor::Implementation::translate_a32_single(
                                sizeof(std::uint32_t);
     const auto fetched_elements =
         std::span<const std::uint32_t>{elements}.first(element_count);
-    auto *shared = install_shared_translation_a32(
-        generation, sequences.code_changes, key, fetched_elements);
+    auto *shared = install_shared_translation(
+        generation, sequences.code_changes, key, 0, fetched_elements);
     if (shared != nullptr) {
       block = shared;
     } else {
