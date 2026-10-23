@@ -226,10 +226,15 @@ void tracked_variant_runs_the_block(Isa isa, unsigned long generation)
 	}
 	region.put32(data_offset, 0);
 	{
+		/* One entry runs the whole block, so the tracked variant was
+		 * built (the first round) and found again (the second). */
 		ForeignReservation foreign;
 		for (unsigned round = 0; round < 2; ++round) {
 			auto cpu = task(isa, address, code_base);
-			require(run_to_svc(executor, memory, generation, isa, cpu) == 4);
+			const auto outcome =
+				enter(executor, memory, generation, isa, cpu);
+			require(outcome.event == EngineEvent::system_call);
+			require(outcome.executed == 4);
 			require(cpu.registers[0] == 2);
 			require(data_word(region) == stored_value);
 			region.put32(data_offset, 0);
