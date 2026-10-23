@@ -5,9 +5,10 @@
 Three files come out of a Model: a32_encodings.hpp (the Form enumeration, the
 Operands record and the table types), a32_encodings.cpp (the form, row,
 constraint and decision-tree tables) and a32_operand_decode.cpp (one function
-per distinct Decode pseudocode). The decision tree is built here and walked
-by an equivalent Python function so the generator can prove, before anything
-is written, that it finds the row the official index partition names.
+per distinct translation of the Decode pseudocode). The decision tree is built
+here and walked by an equivalent Python function so the generator can prove,
+before anything is written, that it finds the row the official index
+partition names.
 """
 
 from __future__ import annotations
@@ -58,6 +59,16 @@ class Trees:
     leaf_rows: list[int]
     roots: dict[str, int]
     leaf_offsets: dict[tuple[int, ...], int] = field(default_factory=dict)
+    # A subtree that is already in nodes, by its fields: the trees share it.
+    slots: dict[tuple[int, int, int], int] = field(default_factory=dict)
+
+    def intern(self, node: Node) -> int:
+        key = (node.bit, node.first, node.second)
+        slot = self.slots.get(key)
+        if slot is None:
+            slot = self.slots[key] = len(self.nodes)
+            self.nodes.append(node)
+        return slot
 
 
 def _rows_for_bit(rows, indexes, bit):
@@ -88,20 +99,16 @@ def _build(rows, indexes, trees: Trees, used_bits: frozenset[int]) -> int:
                 best = (cost, bit, zeros, ones)
         if best is not None:
             _cost, bit, zeros, ones = best
-            slot = len(trees.nodes)
-            trees.nodes.append(Node(bit, 0, 0))
             next_used = used_bits | {bit}
-            trees.nodes[slot].first = _build(rows, zeros, trees, next_used)
-            trees.nodes[slot].second = _build(rows, ones, trees, next_used)
-            return slot
-    slot = len(trees.nodes)
+            first = _build(rows, zeros, trees, next_used)
+            second = _build(rows, ones, trees, next_used)
+            return trees.intern(Node(bit, first, second))
     key = tuple(indexes)
     offset = trees.leaf_offsets.get(key)
     if offset is None:
         offset = trees.leaf_offsets[key] = len(trees.leaf_rows)
         trees.leaf_rows.extend(indexes)
-    trees.nodes.append(Node(-1, offset, len(indexes)))
-    return slot
+    return trees.intern(Node(-1, offset, len(indexes)))
 
 
 def build_trees(model: tm.Model) -> tuple[Trees, list[tm.RowModel], dict[str, tuple[int, int]]]:
@@ -271,7 +278,9 @@ def render_header(model: tm.Model) -> str:
         "",
         "/* A node of the per-instruction-set decision trees. An inner node tests",
         " * the bit and continues at its zero or one child; a leaf holds a count",
-        " * of candidate rows, tried in order, at an offset in kLeafRows. */",
+        " * of candidate rows, tried in order, at an offset in kLeafRows. A subtree",
+        " * that occurs more than once is stored once, and a child precedes its",
+        " * parent. */",
         "struct Node final {",
         "\tstd::int16_t bit;",
         "\tstd::uint16_t first;",

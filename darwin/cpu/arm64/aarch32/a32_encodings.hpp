@@ -2249,7 +2249,7 @@ enum class Form : std::uint16_t {
 
 inline constexpr std::size_t kFormCount = 2222;
 inline constexpr std::size_t kRowCount = 2306;
-inline constexpr std::size_t kProgramCount = 665;
+inline constexpr std::size_t kProgramCount = 549;
 
 /* The values the Decode pseudocode of an encoding computes, named for
  * its variables (docs/a32-instruction-coverage.md). A member a form's
@@ -2471,14 +2471,16 @@ struct Row final {
 
 /* A node of the per-instruction-set decision trees. An inner node tests
  * the bit and continues at its zero or one child; a leaf holds a count
- * of candidate rows, tried in order, at an offset in kLeafRows. */
+ * of candidate rows, tried in order, at an offset in kLeafRows. A subtree
+ * that occurs more than once is stored once, and a child precedes its
+ * parent. */
 struct Node final {
 	std::int16_t bit;
 	std::uint16_t first;
 	std::uint16_t second;
 };
 
-inline constexpr std::size_t kNodeCount = 5537;
+inline constexpr std::size_t kNodeCount = 4584;
 inline constexpr std::size_t kLeafRowCount = 6813;
 inline constexpr std::size_t kConstraintCount = 239;
 

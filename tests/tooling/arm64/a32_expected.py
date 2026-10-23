@@ -43,16 +43,19 @@ class Reference:
         self.model = model
         cache = render.tables(model)
         self.trees, self.rows = cache["trees"], cache["rows"]
-        self.parsed: dict[int, list] = {}
+        self.parsed: dict[tuple[str, str], list] = {}
         self.catalog = catalog
         self.storage = {id(m): storage_type(m.cpp) for m in model.member_list}
         self.last: evaluator.Evaluator | None = None
 
     def program_ast(self, form: tm.FormModel):
-        key = form.program
+        """The form's own Decode pseudocode, parsed: forms that share an
+        operand program may differ in text, and each is evaluated from its
+        own."""
+        encoding = form.encoding
+        key = (encoding.file, encoding.psname)
         if key not in self.parsed:
-            encoding = form.encoding
-            text = self.catalog.decode_text(encoding.file, encoding.psname)
+            text = self.catalog.decode_text(*key)
             self.parsed[key] = asl.parse(text, strict=True)
         return self.parsed[key]
 
