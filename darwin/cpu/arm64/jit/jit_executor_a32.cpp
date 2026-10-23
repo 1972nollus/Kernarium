@@ -53,8 +53,8 @@ struct A32Code {
 };
 
 /* Reads up to bytes.size() bytes of code at the key and works out the length
- * of its first instruction. Inline, as the two entries are hot functions
- * whose register allocation an out-of-line copy would change. */
+ * of its first instruction. Inline in the block entry, which is hot: an
+ * out-of-line copy changes the registers its hit path uses. */
 [[nodiscard, gnu::always_inline]] inline A32Code
 fetch_a32_code(StaticGuestMemory &memory, std::uint64_t key,
                std::span<std::byte> bytes) {
