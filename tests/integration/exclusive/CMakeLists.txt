@@ -3,27 +3,11 @@
 # Load/store-exclusive loops make progress when the pages they touch share a
 # TLB entry and when a copy-on-write break lands between the pair
 # (run_exclusive_progress.py), on each engine.
-uml_add_guest_payload(UML_GUEST_EXCLUSIVE_PROGRESS_PROBE
+uml_add_freestanding_cxx_payload(UML_GUEST_EXCLUSIVE_PROGRESS_PROBE
     guest-exclusive-progress-probe
     exclusive_progress_probe.cpp
     COMMENT "Building the freestanding arm64 guest exclusive-progress probe"
-    COMPILE_OPTIONS
-        -std=c++20
-        -O2
-        -Wall
-        -Wextra
-        -Werror
-        -march=armv8-a
-        -mgeneral-regs-only
-        -ffreestanding
-        -fno-exceptions
-        -fno-rtti
-        -fno-stack-protector
-        -fno-asynchronous-unwind-tables
-        -fno-pic
-    LINK_OPTIONS
-        -Wl,-z,max-page-size=16384
-        -Wl,-s)
+    ARCH_OPTIONS -march=armv8-a -mgeneral-regs-only NO_PIC)
 
 foreach(_engine IN ITEMS gadgets jit)
     uml_add_guest_integration_test(

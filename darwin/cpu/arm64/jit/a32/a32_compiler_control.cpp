@@ -13,13 +13,6 @@ namespace uml::cpu::arm64::jit::a32 {
 using aarch32::InstrSet;
 using aarch32::Status;
 
-namespace {
-
-constexpr unsigned fallback_n = 9;
-constexpr unsigned fallback_m = 10;
-
-} // namespace
-
 A32Compiler::Flow A32Compiler::emit_operation() {
   const auto &inst = cur().inst;
   if (inst.status == Status::nop)

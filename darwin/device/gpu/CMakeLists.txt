@@ -7,22 +7,6 @@ function(uml_configure_gpu_component target)
         ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
 endfunction()
 
-if(TARGET uml_third_party_kosmickrisp)
-    add_library(uml_gpu_kosmickrisp_capability_probe STATIC
-        kosmickrisp_capability_probe.mm)
-    add_library(UML::GpuKosmicKrispCapabilityProbe ALIAS
-        uml_gpu_kosmickrisp_capability_probe)
-    uml_configure_gpu_component(uml_gpu_kosmickrisp_capability_probe)
-    target_compile_definitions(uml_gpu_kosmickrisp_capability_probe PRIVATE
-        VK_ENABLE_BETA_EXTENSIONS=1)
-    target_link_libraries(uml_gpu_kosmickrisp_capability_probe PRIVATE
-        UML::ThirdPartyKosmicKrisp
-        "-framework Foundation"
-        "-framework Metal")
-    add_dependencies(uml_gpu_kosmickrisp_capability_probe
-        uml_dependency_prefix_verify)
-endif()
-
 # Keep the renderer, display, protocol device, transport, and in-process
 # service as independently owned units. Their dependency direction follows
 # the data path and contains no reverse service callbacks.

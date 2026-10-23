@@ -22,12 +22,7 @@ namespace uml::cpu::arm64::jit::a32 {
 
 namespace {
 
-constexpr unsigned scratch_n = 3;
-constexpr unsigned scratch_m = 4;
-constexpr unsigned scratch_result = 5;
 constexpr unsigned scratch_d = 6;
-constexpr unsigned fallback_n = 9;
-constexpr unsigned fallback_m = 10;
 
 } // namespace
 

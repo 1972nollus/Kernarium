@@ -271,10 +271,11 @@ kernel.
 in the rootfs. The build generates a freestanding
 armhf program from `tests/integration/aarch32/aarch32_probe.S` with the
 configured compiler's ARM backend, wraps it into an ELF32 executable with
-`make_elf32.py` (the toolchain has no ARM linker) in a layout for any page size
-and in one for 4 KiB pages only, and never commits either. The test requires
-unchanged 64-bit `uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and
-`abi.cp15_barrier`, and runs the program (kuser helpers, signals and VFP state, `cacheflush`, Thumb, `mmap2`, `PER_LINUX32`
+`make_elf32.py` (the toolchain has no ARM linker), aligned to 64 KiB and aligned
+to 4 KiB only, and never commits either. The test requires unchanged 64-bit
+`uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and `abi.cp15_barrier`, and
+runs the program (kuser helpers, signals and VFP state, `cacheflush`, Thumb,
+`mmap2`, `PER_LINUX32`
 views, restarts and exec between ABIs; threads through `clone` and `clone3`,
 fault signals and stack growth, the time64 and socket calls with
 `SCM_RIGHTS`, `vfork`, timers, `seccomp` and a 32-bit tracer), a 64-bit
@@ -965,23 +966,24 @@ fault there.
 
 `guest-aarch32-engine-gadgets` and `guest-aarch32-engine-jit` run the engine
 probe, a freestanding armhf program from `tests/integration/aarch32/engine_probe/`
-that boots as the guest's `/init`. The build compiles it with the configured compiler's ARM backend and links it with
-`link_elf32.py`, in a layout for any page size and in one for 4 KiB pages
-only, which a 4 KiB guest also runs. Its groups cover system calls and errno,
-A32/T32 interworking, signal frames with VFP state through the sigpage and
+that boots as the guest's `/init`. The build compiles it with the configured
+compiler's ARM backend and links it with `link_elf32.py`, aligned to 64 KiB and
+aligned to 4 KiB only. Its groups cover system calls and errno, A32/T32
+interworking, signal frames with VFP state through the sigpage and
 `SA_RESTORER`, every kuser helper, TPIDRURO and TPIDRURW, `cacheflush` with
 self-modifying code, alignment and memory faults, UNDEFINED encodings (UDF,
 SETEND, SWP, a CP15 barrier with `abi.cp15_barrier` cleared), `SIGTRAP` from
 BKPT and `udf #16` under ptrace and a single step through an IT block,
 LDREX/STREX and the kuser cmpxchg under contention across threads and
 processes, VFP, Advanced SIMD and FPSCR semantics (including structure loads
-and stores alone in a block, across a reschedule), the Armv8 floating-point additions (VRINT, VCVT with a rounding mode,
-VMAXNM/VMINNM) and the crypto, CRC32, dot-product and half-precision
-extensions against known answers. A group needing an extension the HWCAP words
-leave out is skipped inside the probe, and the extension must raise `SIGILL`.
-Every SIGILL is counted: one the probe did not expect fails the run. `A32_PROBE_GROUPS` selects groups
-by hand through the runner's `--groups`, and `A32_PROBE_VERBOSE=1` makes the
-runner print every line of the guest's output, passes included.
+and stores alone in a block, across a reschedule), the Armv8 floating-point
+additions (VRINT, VCVT with a rounding mode, VMAXNM/VMINNM) and the crypto,
+CRC32, dot-product and half-precision extensions against known answers. A group
+needing an extension the HWCAP words leave out is skipped inside the probe, and
+the extension must raise `SIGILL`. Every SIGILL is counted: one the probe did
+not expect fails the run. `A32_PROBE_GROUPS` selects groups by hand through the
+runner's `--groups`, and `A32_PROBE_VERBOSE=1` makes the runner print every line
+of the guest's output, passes included.
 
 ## AArch32 JIT
 
@@ -1130,7 +1132,19 @@ keeping its own.
 `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel
-Xeon's, except the documented inexact cases the test names. The
+Xeon's, except the documented inexact cases the test names.
+`x86-64-masked-flags-checked` runs the same cases through the gadget engine's
+checked path, whose flags come from the SIMD floating-point model the JIT
+shares, and allows no difference; it then runs each case with invalid
+operation, a denormal operand, division by zero or precision unmasked, alone
+and in pairs, and requires the #XM and the flags the Xeon's imply.
+`x86-64-half-round` holds the integer rounding of a single to a half, which
+the model's VCVTPS2PH flags follow, to a second derivation over every finite
+single in all four rounding controls. `x86-64-fp-model` holds the model's
+two other integer answers, whether a square root is exact and whether an
+integer fits the float it converts to, to SoftFloat's flags over every single
+significand, the squares of integers, random doubles, and the integers around
+every power of two. The
 `ios-products-carry-no-fexcore` tooling test checks the script the iOS
 packaging runs to keep FEXCore out of every iOS product.
 

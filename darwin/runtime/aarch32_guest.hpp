@@ -5,6 +5,7 @@
 #include "cpu/arm64/aarch32/state_format.hpp"
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/execution_types.hpp"
+#include "runtime/guest_entry.hpp"
 #include "uml_darwin_abi.h"
 
 #include <cstddef>
@@ -84,16 +85,7 @@ inline void load_a32_cpu(arm64::CpuState &cpu,
 	cpu.tls = static_cast<std::uint32_t>(tls);
 	cpu.pstate_dit = false;
 	cpu.pstate_daif = 0;
-	/* An exception return may clear the local monitor and the bridge has no
-	 * reservation token, so none survives an entry (load_cpu). */
-	cpu.exclusive_address = ~std::uint64_t{0};
-	cpu.exclusive_key = 0;
-	cpu.exclusive_value = 0;
-	cpu.exclusive_value2 = 0;
-	cpu.exclusive_version = 0;
-	cpu.exclusive_size = 0;
-	cpu.gadget_zero = 0;
-	cpu.gadget_indirect_miss = nullptr;
+	::uml::runtime::clear_entry_monitor(cpu);
 	cpu.svcr = 0;
 	cpu.sme_loaded = 0;
 	cpu.sme_dirty = 0;
@@ -158,21 +150,7 @@ inline void save_a32_cpu(arm64::CpuState &cpu,
 	case ExitReason::system_call:
 		return DARWIN_UML_EVENT_SYSCALL;
 	case ExitReason::memory_fault:
-		switch (result.fault.access) {
-		case ::uml::memory::MemoryAccess::read:
-			registers.fault.error_code = 0;
-			break;
-		case ::uml::memory::MemoryAccess::write:
-			registers.fault.error_code = DARWIN_UML_FAULT_WRITE;
-			break;
-		case ::uml::memory::MemoryAccess::execute:
-			registers.fault.error_code = DARWIN_UML_FAULT_EXECUTE;
-			break;
-		}
-		registers.fault.address = result.fault.address;
-		registers.fault.trap_number = DARWIN_UML_FAULT_PAGE;
-		return result.fault.alignment ? DARWIN_UML_EVENT_DATA_ALIGNMENT :
-			DARWIN_UML_EVENT_FAULT;
+		return ::uml::runtime::report_memory_fault(registers, result.fault);
 	case ExitReason::interrupt:
 		if (stop_requested)
 			return DARWIN_UML_EVENT_STOP;

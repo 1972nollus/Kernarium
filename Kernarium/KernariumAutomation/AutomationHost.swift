@@ -466,6 +466,15 @@ private struct Executor {
             }
             return ["orientation": Self.name(of: XCUIDevice.shared.orientation)]
 
+        case "siri":
+            // A typed request starts a real Siri session, which interrupts
+            // the audio session of the application under test.
+            guard let text = command["text"] as? String, !text.isEmpty else {
+                throw Failure(message: "the command names no Siri request")
+            }
+            XCUIDevice.shared.siriService.activate(voiceRecognitionText: text)
+            return [:]
+
         case "wait":
             let app = application(command)
             let target = try element(command, in: app)

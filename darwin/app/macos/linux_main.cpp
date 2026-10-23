@@ -238,15 +238,6 @@ std::filesystem::path write_run_initrd(std::span<const std::byte> segment,
 	return scratch;
 }
 
-std::vector<char *> argument_pointers(std::vector<std::string> &arguments)
-{
-	std::vector<char *> pointers;
-	pointers.reserve(arguments.size());
-	for (auto &argument : arguments)
-		pointers.push_back(argument.data());
-	return pointers;
-}
-
 void print_usage()
 {
 	std::fputs(
@@ -309,9 +300,8 @@ int main(int argc, char *argv[], char *envp[])
 		}
 		rootfs = located->string();
 	}
-	auto pointers = argument_pointers(options.forwarded);
 	const int status = uml::app::runEmbeddedKernel(
-		static_cast<int>(pointers.size()), pointers.data(), envp,
+		options.forwarded, envp,
 		{
 			.rootfs_path = rootfs.empty() ? nullptr : rootfs.c_str(),
 			.default_guest_memory = macos_default_guest_memory,

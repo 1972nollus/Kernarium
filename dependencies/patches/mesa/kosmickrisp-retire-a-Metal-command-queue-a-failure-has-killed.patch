@@ -328,10 +328,10 @@ index ae0a65d8b2223d23eaaf1be9c6c18b0459f004a7..015e724e083ea39ca33200b0f709dca5
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.c b/src/kosmickrisp/vulkan/kk_queue_error.c
-index 4a8e6459aa9e58a0a61cb5880fbffd72fc616735..e07e75b33811dc0ebbb18ad18c543f1efc92bd33 100644
+index 4e7106a49802a96fb68de3ba2eb0e7e9a7048391..b9145b6f503ef4e019d4f3a4cc5107e60c180172 100644
 --- a/src/kosmickrisp/vulkan/kk_queue_error.c
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.c
-@@ -65,17 +65,18 @@ kk_queue_error_is_device_lost(const struct mtl_feedback_data *data)
+@@ -42,17 +42,18 @@ kk_queue_error_is_device_lost(const struct mtl_feedback_data *data)
     if (data->error == MTL_COMMAND_QUEUE_ERROR_NONE)
        return false;
  
@@ -356,10 +356,10 @@ index 4a8e6459aa9e58a0a61cb5880fbffd72fc616735..e07e75b33811dc0ebbb18ad18c543f1e
  }
  
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.h b/src/kosmickrisp/vulkan/kk_queue_error.h
-index 60415bc7dbb4ae115af3da7df4770685814509ac..734ea775206d8d338e915a19b635e80987c0eb37 100644
+index 87df7b13e24e98c10f606f58a6281bec1c135a7c..64a940bebb01df1f02727afa21c1a9a48078ee1a 100644
 --- a/src/kosmickrisp/vulkan/kk_queue_error.h
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.h
-@@ -28,13 +28,13 @@ kk_queue_error_has_execution_interval(const struct mtl_feedback_data *data);
+@@ -24,13 +24,13 @@ kk_queue_error_has_execution_interval(const struct mtl_feedback_data *data);
  /* Whether this failure destroyed the device.
   *
   * A Metal command queue timeout says one submission exceeded the time the

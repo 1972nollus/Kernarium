@@ -168,10 +168,18 @@ struct GuestPointerSamples final {
  * inside, clamped to the edge; buttons pressed outside stay with the host
  * until all are released. A touch that starts outside begins a guest contact
  * where its path enters the rectangle, and a contact ends where the path
- * leaves. Host positions and the rectangle share one top-left-origin
- * coordinate system. */
+ * leaves. Host positions and the rectangle share one coordinate system,
+ * whose origin is at the top left or, as in an AppKit view, the bottom
+ * left; the samples are always in the guest's top-left-origin square. */
 class FittedPointer final {
 public:
+    enum class Origin : std::uint8_t { topLeft, bottomLeft };
+
+    explicit FittedPointer(Origin origin = Origin::topLeft) noexcept
+        : origin_(origin)
+    {
+    }
+
     /* buttons holds the primary, middle and secondary buttons in bits 0-2. */
     [[nodiscard]] GuestPointerSamples mouse(
         AspectFitRectangle content,
@@ -183,11 +191,13 @@ public:
         bool pressed) noexcept;
     /* Ends the contact or buttons the guest holds, for a mode change that
      * moves the rectangle under them. Returns whether any were held, so the
-     * caller releases them in the guest; the rest of that host gesture then
-     * stays outside the guest. */
-    [[nodiscard]] bool release() noexcept;
+     * caller releases them in the guest. With suppressHeldGesture the rest
+     * of that host gesture then stays outside the guest; without it, as when
+     * the window loses focus, the next event starts a gesture afresh. */
+    [[nodiscard]] bool release(bool suppressHeldGesture) noexcept;
 
 private:
+    Origin origin_;
     std::optional<DisplayPoint> previousTouch_;
     std::uint32_t deliveredButtons_ {};
     bool suppressed_ {};

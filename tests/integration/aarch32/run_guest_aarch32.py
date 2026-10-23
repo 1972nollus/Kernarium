@@ -4,10 +4,10 @@
 
 The guest boots an init shell on a tmpfs root with /tmp mounted and runs
 aarch32_guest_probe.py with python3 -B against the armhf program built from
-aarch32_probe.S, in a layout for any page size and in one for 4 KiB pages
-only, then runs one more command, so a probe that leaves the kernel unable to
-start a task fails too.  The probe's docstring states what it checks; its
-exit status is its failure count.
+aarch32_probe.S, aligned to 64 KiB and aligned to 4 KiB only, then runs one
+more command, so a probe that leaves the kernel unable to start a task fails
+too.  The probe's docstring states what it checks; its exit status is its
+failure count.
 """
 
 from __future__ import annotations

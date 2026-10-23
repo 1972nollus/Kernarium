@@ -115,6 +115,26 @@ uml_add_unit_test(
     COMMAND uml_x86_64_gadget_cache_index_tests
     LABELS cpu;x86-64)
 
+# How a single rounds to a half, which VCVTPS2PH's flags follow, against an
+# independent derivation, over every finite single.
+uml_add_x86_64_test_binary(uml_x86_64_half_round_tests
+    x86_64_half_round_tests.cpp LIBRARIES UML::ThirdPartySoftFloat)
+uml_add_unit_test(
+    NAME x86-64-half-round
+    COMMAND uml_x86_64_half_round_tests
+    LABELS cpu;x86-64
+    PROCESSORS 4)
+
+# What the model decides in integers -- whether a square root is exact, and
+# whether an integer fits the float it converts to -- against SoftFloat's flags.
+uml_add_x86_64_test_binary(uml_x86_64_fp_model_tests
+    x86_64_fp_model_tests.cpp LIBRARIES UML::ThirdPartySoftFloat)
+uml_add_unit_test(
+    NAME x86-64-fp-model
+    COMMAND uml_x86_64_fp_model_tests
+    LABELS cpu;x86-64
+    PROCESSORS 4)
+
 uml_add_x86_64_test_binary(uml_x86_64_sse_exactness_tests
     x86_64_sse_exactness_tests.cpp GADGETS)
 uml_add_unit_test(
@@ -129,6 +149,12 @@ uml_add_x86_64_test_binary(uml_x86_64_masked_flags_tests
 uml_add_unit_test(
     NAME x86-64-masked-flags
     COMMAND uml_x86_64_masked_flags_tests "${UML_X86_64_MASKED_FLAGS}"
+    LABELS cpu;x86-64)
+# The same cases through the gadget engine's checked path, which corrects
+# the flags the ordinary path leaves.
+uml_add_unit_test(
+    NAME x86-64-masked-flags-checked
+    COMMAND uml_x86_64_masked_flags_tests --checked "${UML_X86_64_MASKED_FLAGS}"
     LABELS cpu;x86-64)
 
 uml_add_x86_64_test_binary(uml_x86_64_code_page_registry_tests

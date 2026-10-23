@@ -11,10 +11,10 @@ ptrace and single steps through an IT block, exclusives and kuser cmpxchg
 under contention across threads and processes, and then the VFP, Advanced
 SIMD and Armv8 extensions, each extension where the HWCAP words show it.
 
-The runner boots the probe laid out for any page size and, on a 4 KiB guest,
-the one laid out for 4 KiB pages, and fails on any failed check, any SIGILL
-the probe did not expect (a guest illegal instruction is a blocker) and any
-crash of the guest or the emulator.
+The runner boots the probe aligned to 64 KiB and the one aligned to 4 KiB
+only, and fails on any failed check, any SIGILL the probe did not expect (a
+guest illegal instruction is a blocker) and any crash of the guest or the
+emulator.
 """
 
 from __future__ import annotations
@@ -94,9 +94,9 @@ def main() -> int:
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
     parser.add_argument("--engine", choices=("jit", "gadgets"), required=True)
     parser.add_argument("--probe", required=True, type=pathlib.Path,
-                        help="the probe laid out for any page size")
+                        help="the probe aligned to 64 KiB")
     parser.add_argument("--probe-4k", required=True, type=pathlib.Path,
-                        help="the probe laid out for 4 KiB pages only")
+                        help="the probe aligned to 4 KiB only")
     parser.add_argument("--groups", help="comma-separated probe groups; "
                         "default every group")
     parser.add_argument("--ncpus", type=int, default=4)
@@ -108,7 +108,7 @@ def main() -> int:
     arguments.rootfs = arguments.rootfs.resolve()
     name = f"guest-aarch32-engine-{arguments.engine}"
 
-    failures = run_probe(arguments, "any page size layout",
+    failures = run_probe(arguments, "64 KiB layout",
                          arguments.probe.resolve())
     failures += run_probe(arguments, "4 KiB layout",
                           arguments.probe_4k.resolve())

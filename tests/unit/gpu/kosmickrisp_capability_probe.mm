@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "kosmickrisp_capability_probe.hpp"
 
-#include <Metal/Metal.h>
 #include <vulkan/vulkan.h>
 
 #include <algorithm>
@@ -13,6 +12,7 @@
 #include <initializer_list>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -263,6 +263,44 @@ private:
     Function function_;
 };
 
+void require_result(VkResult result, std::string_view operation)
+{
+    if (result != VK_SUCCESS) {
+        throw std::runtime_error(std::string(operation) + " failed: " +
+                                 std::to_string(result));
+    }
+}
+
+// The first memory type among those in compatible that has every required
+// property, preferring one that also has every preferred property. Throws
+// failure when none qualifies.
+uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties &memory,
+                          uint32_t compatible,
+                          VkMemoryPropertyFlags required,
+                          VkMemoryPropertyFlags preferred,
+                          const std::string &failure)
+{
+    uint32_t fallback = memory.memoryTypeCount;
+    for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
+        const VkMemoryPropertyFlags flags =
+            memory.memoryTypes[index].propertyFlags;
+        if ((compatible & (1U << index)) == 0 ||
+            (flags & required) != required) {
+            continue;
+        }
+        if ((flags & preferred) == preferred) {
+            return index;
+        }
+        if (fallback == memory.memoryTypeCount) {
+            fallback = index;
+        }
+    }
+    if (fallback == memory.memoryTypeCount) {
+        throw std::runtime_error(failure);
+    }
+    return fallback;
+}
+
 struct CubeAliasReport;
 struct GraphicsPipelineLibraryReport;
 struct DeviceAddressCommandsReport;
@@ -349,6 +387,11 @@ struct ProbeDevice {
     UML_DEVICE_FUNCTION(unmap_memory, UnmapMemory);
 };
 
+const char *json_bool(bool value)
+{
+    return value ? "true" : "false";
+}
+
 std::string json_string(std::string_view value)
 {
     std::ostringstream output;
@@ -387,15 +430,6 @@ std::string json_string(std::string_view value)
         }
     }
     output << '"';
-    return output.str();
-}
-
-std::string version_string(uint32_t version)
-{
-    std::ostringstream output;
-    output << VK_API_VERSION_MAJOR(version) << '.'
-           << VK_API_VERSION_MINOR(version) << '.'
-           << VK_API_VERSION_PATCH(version);
     return output.str();
 }
 
@@ -445,169 +479,6 @@ std::vector<Property> enumerate_properties(Enumerate enumerate)
     }
     properties.resize(count);
     return properties;
-}
-
-void write_uuid(std::ostream &output,
-                const uint8_t (&uuid)[VK_UUID_SIZE])
-{
-    output << '"' << std::hex << std::setfill('0');
-    for (const auto byte : uuid) {
-        output << std::setw(2) << static_cast<unsigned>(byte);
-    }
-    output << std::dec << std::setfill(' ') << '"';
-}
-
-void write_core_features(std::ostream &output,
-                         const VkPhysicalDeviceFeatures &features)
-{
-    bool first = true;
-#define UML_WRITE_FEATURE(member)                                             \
-    do {                                                                       \
-        if (!first) {                                                          \
-            output << ',';                                                     \
-        }                                                                      \
-        first = false;                                                         \
-        output << "\"" #member "\":" << (features.member ? "true" : "false"); \
-    } while (false)
-    output << '{';
-    UML_WRITE_FEATURE(robustBufferAccess);
-    UML_WRITE_FEATURE(fullDrawIndexUint32);
-    UML_WRITE_FEATURE(imageCubeArray);
-    UML_WRITE_FEATURE(independentBlend);
-    UML_WRITE_FEATURE(geometryShader);
-    UML_WRITE_FEATURE(tessellationShader);
-    UML_WRITE_FEATURE(sampleRateShading);
-    UML_WRITE_FEATURE(dualSrcBlend);
-    UML_WRITE_FEATURE(logicOp);
-    UML_WRITE_FEATURE(multiDrawIndirect);
-    UML_WRITE_FEATURE(drawIndirectFirstInstance);
-    UML_WRITE_FEATURE(depthClamp);
-    UML_WRITE_FEATURE(depthBiasClamp);
-    UML_WRITE_FEATURE(fillModeNonSolid);
-    UML_WRITE_FEATURE(depthBounds);
-    UML_WRITE_FEATURE(wideLines);
-    UML_WRITE_FEATURE(largePoints);
-    UML_WRITE_FEATURE(alphaToOne);
-    UML_WRITE_FEATURE(multiViewport);
-    UML_WRITE_FEATURE(samplerAnisotropy);
-    UML_WRITE_FEATURE(textureCompressionETC2);
-    UML_WRITE_FEATURE(textureCompressionASTC_LDR);
-    UML_WRITE_FEATURE(textureCompressionBC);
-    UML_WRITE_FEATURE(occlusionQueryPrecise);
-    UML_WRITE_FEATURE(pipelineStatisticsQuery);
-    UML_WRITE_FEATURE(vertexPipelineStoresAndAtomics);
-    UML_WRITE_FEATURE(fragmentStoresAndAtomics);
-    UML_WRITE_FEATURE(shaderTessellationAndGeometryPointSize);
-    UML_WRITE_FEATURE(shaderImageGatherExtended);
-    UML_WRITE_FEATURE(shaderStorageImageExtendedFormats);
-    UML_WRITE_FEATURE(shaderStorageImageMultisample);
-    UML_WRITE_FEATURE(shaderStorageImageReadWithoutFormat);
-    UML_WRITE_FEATURE(shaderStorageImageWriteWithoutFormat);
-    UML_WRITE_FEATURE(shaderUniformBufferArrayDynamicIndexing);
-    UML_WRITE_FEATURE(shaderSampledImageArrayDynamicIndexing);
-    UML_WRITE_FEATURE(shaderStorageBufferArrayDynamicIndexing);
-    UML_WRITE_FEATURE(shaderStorageImageArrayDynamicIndexing);
-    UML_WRITE_FEATURE(shaderClipDistance);
-    UML_WRITE_FEATURE(shaderCullDistance);
-    UML_WRITE_FEATURE(shaderFloat64);
-    UML_WRITE_FEATURE(shaderInt64);
-    UML_WRITE_FEATURE(shaderInt16);
-    UML_WRITE_FEATURE(shaderResourceResidency);
-    UML_WRITE_FEATURE(shaderResourceMinLod);
-    UML_WRITE_FEATURE(sparseBinding);
-    UML_WRITE_FEATURE(sparseResidencyBuffer);
-    UML_WRITE_FEATURE(sparseResidencyImage2D);
-    UML_WRITE_FEATURE(sparseResidencyImage3D);
-    UML_WRITE_FEATURE(sparseResidency2Samples);
-    UML_WRITE_FEATURE(sparseResidency4Samples);
-    UML_WRITE_FEATURE(sparseResidency8Samples);
-    UML_WRITE_FEATURE(sparseResidency16Samples);
-    UML_WRITE_FEATURE(sparseResidencyAliased);
-    UML_WRITE_FEATURE(variableMultisampleRate);
-    UML_WRITE_FEATURE(inheritedQueries);
-    output << '}';
-#undef UML_WRITE_FEATURE
-}
-
-void write_portability_features(
-    std::ostream &output,
-    const VkPhysicalDevicePortabilitySubsetFeaturesKHR &features)
-{
-    bool first = true;
-#define UML_WRITE_PORTABILITY_FEATURE(member)                                 \
-    do {                                                                       \
-        if (!first) {                                                          \
-            output << ',';                                                     \
-        }                                                                      \
-        first = false;                                                         \
-        output << "\"" #member "\":" << (features.member ? "true" : "false"); \
-    } while (false)
-    output << '{';
-    UML_WRITE_PORTABILITY_FEATURE(constantAlphaColorBlendFactors);
-    UML_WRITE_PORTABILITY_FEATURE(events);
-    UML_WRITE_PORTABILITY_FEATURE(imageViewFormatReinterpretation);
-    UML_WRITE_PORTABILITY_FEATURE(imageViewFormatSwizzle);
-    UML_WRITE_PORTABILITY_FEATURE(imageView2DOn3DImage);
-    UML_WRITE_PORTABILITY_FEATURE(multisampleArrayImage);
-    UML_WRITE_PORTABILITY_FEATURE(mutableComparisonSamplers);
-    UML_WRITE_PORTABILITY_FEATURE(pointPolygons);
-    UML_WRITE_PORTABILITY_FEATURE(samplerMipLodBias);
-    UML_WRITE_PORTABILITY_FEATURE(separateStencilMaskRef);
-    UML_WRITE_PORTABILITY_FEATURE(shaderSampleRateInterpolationFunctions);
-    UML_WRITE_PORTABILITY_FEATURE(tessellationIsolines);
-    UML_WRITE_PORTABILITY_FEATURE(tessellationPointMode);
-    UML_WRITE_PORTABILITY_FEATURE(triangleFans);
-    UML_WRITE_PORTABILITY_FEATURE(vertexAttributeAccessBeyondStride);
-    output << '}';
-#undef UML_WRITE_PORTABILITY_FEATURE
-}
-
-void write_memory(std::ostream &output,
-                  const VkPhysicalDeviceMemoryProperties &memory)
-{
-    output << "{\"heaps\":[";
-    for (uint32_t index = 0; index < memory.memoryHeapCount; ++index) {
-        if (index != 0) {
-            output << ',';
-        }
-        output << "{\"size\":" << memory.memoryHeaps[index].size
-               << ",\"flags\":" << memory.memoryHeaps[index].flags << '}';
-    }
-    output << "],\"types\":[";
-    for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-        if (index != 0) {
-            output << ',';
-        }
-        output << "{\"heap\":" << memory.memoryTypes[index].heapIndex
-               << ",\"flags\":" << memory.memoryTypes[index].propertyFlags
-               << '}';
-    }
-    output << "]}";
-}
-
-void write_metal_families(std::ostream &output, id<MTLDevice> device)
-{
-    constexpr std::array<std::pair<int64_t, const char *>, 16> families{{
-        {1001, "Apple1"}, {1002, "Apple2"}, {1003, "Apple3"},
-        {1004, "Apple4"}, {1005, "Apple5"}, {1006, "Apple6"},
-        {1007, "Apple7"}, {1008, "Apple8"}, {1009, "Apple9"},
-        {1010, "Apple10"}, {2002, "Mac2"}, {3001, "Common1"},
-        {3002, "Common2"}, {3003, "Common3"}, {5001, "Metal3"},
-        {5002, "Metal4"},
-    }};
-    output << '[';
-    bool first = true;
-    for (const auto &[value, name] : families) {
-        if (![device supportsFamily:static_cast<MTLGPUFamily>(value)]) {
-            continue;
-        }
-        if (!first) {
-            output << ',';
-        }
-        first = false;
-        output << json_string(name);
-    }
-    output << ']';
 }
 
 std::vector<VkFormat> cube_format_candidates()
@@ -663,7 +534,7 @@ VkImageAspectFlags format_aspects(VkFormat format)
 }
 
 struct CubeAliasReport {
-    std::vector<VkFormat> formats;
+    uint32_t supported_format_count = 0;
     uint32_t cube_view_count = 0;
     uint32_t cube_array_view_count = 0;
 };
@@ -747,17 +618,9 @@ CubeAliasReport ProbeDevice::verify_cube_alias_views(
                        "vkCreateImage");
         VkMemoryRequirements requirements{};
         get_image_memory_requirements(device, image, &requirements);
-        uint32_t memory_type = memory.memoryTypeCount;
-        for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-            if ((requirements.memoryTypeBits & (1U << index)) != 0) {
-                memory_type = index;
-                break;
-            }
-        }
-        if (memory_type == memory.memoryTypeCount) {
-            throw std::runtime_error(
-                "no memory type for cube format " + std::to_string(format));
-        }
+        const uint32_t memory_type = find_memory_type(
+            memory, requirements.memoryTypeBits, 0, 0,
+            "no memory type for cube format " + std::to_string(format));
         const VkMemoryAllocateInfo allocation_info{
             VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
             nullptr,
@@ -791,7 +654,7 @@ CubeAliasReport ProbeDevice::verify_cube_alias_views(
                                          &cube_array_view),
                        "vkCreateImageView(CUBE_ARRAY)");
         ++report.cube_array_view_count;
-        report.formats.push_back(format);
+        ++report.supported_format_count;
     }
     return report;
 }
@@ -799,17 +662,10 @@ CubeAliasReport ProbeDevice::verify_cube_alias_views(
 void write_cube_alias_report(std::ostream &output,
                              const CubeAliasReport &report)
 {
-    output << "{\"supported_format_count\":" << report.formats.size()
+    output << "{\"supported_format_count\":" << report.supported_format_count
            << ",\"cube_view_count\":" << report.cube_view_count
            << ",\"cube_array_view_count\":"
-           << report.cube_array_view_count << ",\"formats\":[";
-    for (std::size_t index = 0; index < report.formats.size(); ++index) {
-        if (index != 0) {
-            output << ',';
-        }
-        output << report.formats[index];
-    }
-    output << "]}";
+           << report.cube_array_view_count << '}';
 }
 
 struct GraphicsPipelineLibraryReport {
@@ -886,36 +742,28 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
             destroy_shader_module(device, vertex_module, nullptr);
         }
     }};
-    const auto require_success = [&](VkResult result,
-                                     std::string_view operation) {
-        if (result == VK_SUCCESS) {
-            return;
-        }
-        throw std::runtime_error(
-            std::string(operation) + " failed: " + std::to_string(result));
-    };
 
     VkShaderModuleCreateInfo module_info{};
     module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     module_info.codeSize = gpl_vertex_spirv.size() * sizeof(uint32_t);
     module_info.pCode = gpl_vertex_spirv.data();
-    require_success(create_shader_module(device, &module_info, nullptr,
+    require_result(create_shader_module(device, &module_info, nullptr,
                                          &vertex_module),
                     "GPL vertex shader module creation");
     module_info.codeSize = gpl_fragment_spirv.size() * sizeof(uint32_t);
     module_info.pCode = gpl_fragment_spirv.data();
-    require_success(create_shader_module(device, &module_info, nullptr,
+    require_result(create_shader_module(device, &module_info, nullptr,
                                          &fragment_module),
                     "GPL fragment shader module creation");
 
     VkPipelineLayoutCreateInfo layout_info{};
     layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    require_success(create_pipeline_layout(device, &layout_info, nullptr,
+    require_result(create_pipeline_layout(device, &layout_info, nullptr,
                                            &layout),
                     "GPL pipeline layout creation");
     VkPipelineCacheCreateInfo cache_info{};
     cache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-    require_success(create_pipeline_cache(device, &cache_info, nullptr,
+    require_result(create_pipeline_cache(device, &cache_info, nullptr,
                                           &cache),
                     "GPL pipeline cache creation");
 
@@ -1006,7 +854,7 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     library_infos[3].pMultisampleState = &multisample;
     library_infos[3].pColorBlendState = &blend;
     for (std::size_t index = 0; index < library_infos.size(); ++index) {
-        require_success(create_graphics_pipelines(
+        require_result(create_graphics_pipelines(
                             device, cache, 1, &library_infos[index], nullptr,
                             &libraries[index]),
                         "GPL subset library creation");
@@ -1050,11 +898,11 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     };
     report.first_link_result =
         timed_link(0, &first_pipeline, &report.first_link_ns);
-    require_success(report.first_link_result, "GPL final link");
+    require_result(report.first_link_result, "GPL final link");
     report.cached_link_result = timed_link(
         VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT,
         &cached_pipeline, &report.cached_link_ns);
-    require_success(report.cached_link_result, "cached GPL final link");
+    require_result(report.cached_link_result, "cached GPL final link");
 
     // A final pipeline may import shader and state subsets while supplying a
     // missing shader stage directly.  Both representations must participate
@@ -1089,7 +937,7 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
         std::chrono::duration_cast<std::chrono::nanoseconds>(mixed_end -
                                                              mixed_begin)
             .count());
-    require_success(report.mixed_link_result,
+    require_result(report.mixed_link_result,
                     "mixed imported/direct GPL final link");
 
     std::array<VkGraphicsPipelineLibraryCreateInfoEXT, 2>
@@ -1129,7 +977,7 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     combined_library_infos[1].pDepthStencilState = &depth_stencil;
     for (std::size_t index = 0; index < combined_library_infos.size();
          ++index) {
-        require_success(create_graphics_pipelines(
+        require_result(create_graphics_pipelines(
                             device, cache, 1,
                             &combined_library_infos[index], nullptr,
                             &combined_libraries[index]),
@@ -1143,14 +991,14 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     final_info.pNext = &combined_library_link;
     report.combined_link_result =
         timed_link(0, &combined_pipeline, &report.combined_link_ns);
-    require_success(report.combined_link_result,
+    require_result(report.combined_link_result,
                     "combined-subset GPL final link");
 
     final_info.pNext = &library_link;
     report.lto_link_result = timed_link(
         VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT,
         &lto_pipeline, &report.lto_link_ns);
-    require_success(report.lto_link_result, "GPL LTO final link");
+    require_result(report.lto_link_result, "GPL LTO final link");
 
     // A linked pipeline must retain everything it needs after its source
     // libraries have been destroyed.
@@ -1166,7 +1014,7 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     VkCommandPoolCreateInfo pool_info{};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pool_info.queueFamilyIndex = queue_family;
-    require_success(create_command_pool(device, &pool_info, nullptr,
+    require_result(create_command_pool(device, &pool_info, nullptr,
                                         &command_pool),
                     "GPL command pool creation");
     VkCommandBufferAllocateInfo allocation_info{};
@@ -1176,13 +1024,13 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
     allocation_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocation_info.commandBufferCount = 1;
     VkCommandBuffer command_buffer = VK_NULL_HANDLE;
-    require_success(allocate_command_buffers(device, &allocation_info,
+    require_result(allocate_command_buffers(device, &allocation_info,
                                              &command_buffer),
                     "GPL command buffer allocation");
     VkCommandBufferBeginInfo begin_info{};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     const auto bind_begin = std::chrono::steady_clock::now();
-    require_success(begin_command_buffer(command_buffer, &begin_info),
+    require_result(begin_command_buffer(command_buffer, &begin_info),
                     "GPL command buffer begin");
     cmd_bind_pipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       first_pipeline);
@@ -1200,7 +1048,7 @@ GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
         std::chrono::duration_cast<std::chrono::nanoseconds>(bind_end -
                                                              bind_begin)
             .count());
-    require_success(report.bind_result, "GPL command buffer bind recording");
+    require_result(report.bind_result, "GPL command buffer bind recording");
 
     return report;
 }
@@ -1339,14 +1187,6 @@ DeviceAddressCommandsReport ProbeDevice::verify_device_address_commands(
             source_memory = VK_NULL_HANDLE;
         }
     }};
-    const auto require_result = [&](VkResult result,
-                                    std::string_view operation) {
-        if (result == VK_SUCCESS) {
-            return;
-        }
-        throw std::runtime_error(std::string(operation) + " failed: " +
-                                 std::to_string(result));
-    };
 
     constexpr VkDeviceSize buffer_size = 256;
     const VkBufferCreateInfo buffer_info{
@@ -1378,31 +1218,10 @@ DeviceAddressCommandsReport ProbeDevice::verify_device_address_commands(
     const uint32_t compatible_memory_types =
         source_requirements.memoryTypeBits &
         destination_requirements.memoryTypeBits;
-    uint32_t memory_type = memory.memoryTypeCount;
-    for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-        const VkMemoryPropertyFlags flags =
-            memory.memoryTypes[index].propertyFlags;
-        if ((compatible_memory_types & (1U << index)) != 0 &&
-            (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 &&
-            (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0) {
-            memory_type = index;
-            break;
-        }
-    }
-    if (memory_type == memory.memoryTypeCount) {
-        for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-            if ((compatible_memory_types & (1U << index)) != 0 &&
-                (memory.memoryTypes[index].propertyFlags &
-                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
-                memory_type = index;
-                break;
-            }
-        }
-    }
-    if (memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error(
-            "no host-visible buffer-device-address memory type");
-    }
+    const uint32_t memory_type = find_memory_type(
+        memory, compatible_memory_types, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        "no host-visible buffer-device-address memory type");
 
     const VkMemoryAllocateFlagsInfo address_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
@@ -1627,9 +1446,9 @@ void write_device_address_commands_report(
 {
     output << "{\"entrypoint_count\":" << report.entrypoint_count
            << ",\"state_commands_recorded\":"
-           << (report.state_commands_recorded ? "true" : "false")
+           << json_bool(report.state_commands_recorded)
            << ",\"transfer_verified\":"
-           << (report.transfer_verified ? "true" : "false") << '}';
+           << json_bool(report.transfer_verified) << '}';
 }
 
 struct DynamicLogicOpReport {
@@ -1742,34 +1561,6 @@ DynamicLogicOpReport ProbeDevice::verify_dynamic_logic_ops(
             destroy_shader_module(device, vertex_module, nullptr);
         }
     }};
-    const auto require_result = [&](VkResult result,
-                                    std::string_view operation) {
-        if (result == VK_SUCCESS) {
-            return;
-        }
-        throw std::runtime_error(std::string(operation) + " failed: " +
-                                 std::to_string(result));
-    };
-    const auto find_memory_type = [&](uint32_t compatible,
-                                      VkMemoryPropertyFlags required,
-                                      VkMemoryPropertyFlags preferred) {
-        uint32_t fallback = memory.memoryTypeCount;
-        for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-            const VkMemoryPropertyFlags flags =
-                memory.memoryTypes[index].propertyFlags;
-            if ((compatible & (1U << index)) == 0 ||
-                (flags & required) != required) {
-                continue;
-            }
-            if ((flags & preferred) == preferred) {
-                return index;
-            }
-            if (fallback == memory.memoryTypeCount) {
-                fallback = index;
-            }
-        }
-        return fallback;
-    };
 
     VkShaderModuleCreateInfo shader_info{};
     shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -1835,10 +1626,9 @@ DynamicLogicOpReport ProbeDevice::verify_dynamic_logic_ops(
     VkMemoryRequirements image_requirements{};
     get_image_memory_requirements(device, image, &image_requirements);
     const uint32_t image_memory_type = find_memory_type(
-        image_requirements.memoryTypeBits, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (image_memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error("no compatible logic-op image memory type");
-    }
+        memory, image_requirements.memoryTypeBits, 0,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        "no compatible logic-op image memory type");
     const VkMemoryAllocateInfo image_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         nullptr,
@@ -1907,12 +1697,10 @@ DynamicLogicOpReport ProbeDevice::verify_dynamic_logic_ops(
     VkMemoryRequirements buffer_requirements{};
     get_buffer_memory_requirements(device, readback, &buffer_requirements);
     const uint32_t readback_memory_type = find_memory_type(
-        buffer_requirements.memoryTypeBits,
+        memory, buffer_requirements.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (readback_memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error("no host-visible logic-op readback memory type");
-    }
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        "no host-visible logic-op readback memory type");
     const VkMemoryAllocateInfo buffer_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         nullptr,
@@ -2144,9 +1932,9 @@ void write_dynamic_logic_op_report(
     output << "{\"entrypoint_count\":" << report.entrypoint_count
            << ",\"operation_count\":" << report.operation_count
            << ",\"results_verified\":"
-           << (report.results_verified ? "true" : "false")
+           << json_bool(report.results_verified)
            << ",\"pipeline_reuse_verified\":"
-           << (report.pipeline_reuse_verified ? "true" : "false") << '}';
+           << json_bool(report.pipeline_reuse_verified) << '}';
 }
 
 struct LegacyVertexAttributesReport {
@@ -2245,34 +2033,6 @@ LegacyVertexAttributesReport ProbeDevice::verify_legacy_vertex_attributes(
             destroy_shader_module(device, vertex_module, nullptr);
         }
     }};
-    const auto require_result = [&](VkResult result,
-                                    std::string_view operation) {
-        if (result == VK_SUCCESS) {
-            return;
-        }
-        throw std::runtime_error(std::string(operation) + " failed: " +
-                                 std::to_string(result));
-    };
-    const auto find_memory_type = [&](uint32_t compatible,
-                                      VkMemoryPropertyFlags required,
-                                      VkMemoryPropertyFlags preferred) {
-        uint32_t fallback = memory.memoryTypeCount;
-        for (uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-            const VkMemoryPropertyFlags flags =
-                memory.memoryTypes[index].propertyFlags;
-            if ((compatible & (1U << index)) == 0 ||
-                (flags & required) != required) {
-                continue;
-            }
-            if ((flags & preferred) == preferred) {
-                return index;
-            }
-            if (fallback == memory.memoryTypeCount) {
-                fallback = index;
-            }
-        }
-        return fallback;
-    };
 
     VkShaderModuleCreateInfo shader_info{};
     shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -2424,11 +2184,9 @@ LegacyVertexAttributesReport ProbeDevice::verify_legacy_vertex_attributes(
     VkMemoryRequirements image_requirements{};
     get_image_memory_requirements(device, image, &image_requirements);
     const uint32_t image_memory_type = find_memory_type(
-        image_requirements.memoryTypeBits, 0,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (image_memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error("no compatible legacy image memory type");
-    }
+        memory, image_requirements.memoryTypeBits, 0,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        "no compatible legacy image memory type");
     const VkMemoryAllocateInfo image_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         nullptr,
@@ -2481,12 +2239,10 @@ LegacyVertexAttributesReport ProbeDevice::verify_legacy_vertex_attributes(
     get_buffer_memory_requirements(device, vertex_buffer,
                                    &vertex_requirements);
     const uint32_t vertex_memory_type = find_memory_type(
-        vertex_requirements.memoryTypeBits,
+        memory, vertex_requirements.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (vertex_memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error("no host-visible legacy vertex memory type");
-    }
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        "no host-visible legacy vertex memory type");
     const VkMemoryAllocateInfo vertex_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         nullptr,
@@ -2521,12 +2277,10 @@ LegacyVertexAttributesReport ProbeDevice::verify_legacy_vertex_attributes(
     VkMemoryRequirements readback_requirements{};
     get_buffer_memory_requirements(device, readback, &readback_requirements);
     const uint32_t readback_memory_type = find_memory_type(
-        readback_requirements.memoryTypeBits,
+        memory, readback_requirements.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (readback_memory_type == memory.memoryTypeCount) {
-        throw std::runtime_error("no host-visible legacy readback memory type");
-    }
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        "no host-visible legacy readback memory type");
     const VkMemoryAllocateInfo readback_allocation{
         VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         nullptr,
@@ -2809,13 +2563,13 @@ void write_legacy_vertex_attributes_report(
            << report.concurrent_draw_ns[0] << ','
            << report.concurrent_draw_ns[1]
            << "],\"same_key_race_recorded\":"
-           << (report.same_key_race_recorded ? "true" : "false")
+           << json_bool(report.same_key_race_recorded)
            << ",\"numeric_mismatch_verified\":"
-           << (report.numeric_mismatch_verified ? "true" : "false")
+           << json_bool(report.numeric_mismatch_verified)
            << ",\"unaligned_offset_stride_verified\":"
-           << (report.unaligned_offset_stride_verified ? "true" : "false")
+           << json_bool(report.unaligned_offset_stride_verified)
            << ",\"parent_destroy_verified\":"
-           << (report.parent_destroy_verified ? "true" : "false") << '}';
+           << json_bool(report.parent_destroy_verified) << '}';
 }
 
 }  // namespace
@@ -2924,17 +2678,7 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                     "vkEnumeratePhysicalDevices payload failed");
             }
 
-            output << "{\"schema\":1,\"entrypoint\":"
-                   << json_string("direct-vkGetInstanceProcAddr")
-                   << ",\"loader_api_version\":"
-                   << json_string(version_string(loader_version))
-                   << ",\"portability_enumeration_advertised\":"
-                   << (has_portability_enumeration ? "true" : "false")
-                   << ",\"portability_enumeration_flag_enabled\":"
-                   << (has_portability_enumeration ? "true" : "false")
-                   << ",\"instance_extensions\":";
-            write_extensions(output, instance_extensions);
-            output << ",\"devices\":[";
+            output << "{\"devices\":[";
 
             for (uint32_t device_index = 0; device_index < physical_count;
                  ++device_index) {
@@ -2951,8 +2695,6 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                         });
                 const bool has_portability_subset = has_extension(
                     device_extensions, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
-                const bool has_external_memory_host = has_extension(
-                    device_extensions, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
                 const bool has_dynamic_rendering_unused_attachments =
                     has_extension(
                         device_extensions,
@@ -2992,16 +2734,6 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                     legacy_vertex_attributes_properties{};
                 legacy_vertex_attributes_properties.sType =
                     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LEGACY_VERTEX_ATTRIBUTES_PROPERTIES_EXT;
-                VkPhysicalDeviceExternalMemoryHostPropertiesEXT host_memory{
-                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT,
-                    nullptr,
-                    0,
-                };
-                VkPhysicalDevicePortabilitySubsetPropertiesKHR subset_properties{
-                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_PROPERTIES_KHR,
-                    nullptr,
-                    0,
-                };
                 void *properties_next = nullptr;
                 const auto prepend_property = [&properties_next](auto &value) {
                     value.pNext = properties_next;
@@ -3011,10 +2743,6 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                     prepend_property(legacy_vertex_attributes_properties);
                 if (has_graphics_pipeline_library)
                     prepend_property(graphics_pipeline_library_properties);
-                if (has_external_memory_host)
-                    prepend_property(host_memory);
-                if (has_portability_subset)
-                    prepend_property(subset_properties);
                 VkPhysicalDeviceProperties2 properties{};
                 properties.sType =
                     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
@@ -3092,155 +2820,79 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                 std::vector<VkQueueFamilyProperties> queues(queue_count);
                 get_queues(physical, &queue_count, queues.data());
 
-                output << "{\"name\":"
-                       << json_string(properties.properties.deviceName)
-                       << ",\"api_version\":"
-                       << json_string(
-                              version_string(properties.properties.apiVersion))
-                       << ",\"driver_version\":"
-                       << properties.properties.driverVersion
-                       << ",\"vendor_id\":"
-                       << properties.properties.vendorID
-                       << ",\"device_id\":"
-                       << properties.properties.deviceID
-                       << ",\"device_type\":"
-                       << properties.properties.deviceType
-                       << ",\"pipeline_cache_uuid\":";
-                write_uuid(output, properties.properties.pipelineCacheUUID);
-                output << ",\"extensions\":";
+                output << "{\"extensions\":";
                 write_extensions(output, device_extensions);
-                output << ",\"core_features\":";
-                write_core_features(output, features.features);
-                output << ",\"portability_features\":";
-                if (has_portability_subset) {
-                    write_portability_features(output, subset_features);
-                } else {
-                    output << "null";
-                }
-                output << ",\"portability_properties\":";
-                if (has_portability_subset) {
-                    output << "{\"min_vertex_input_binding_stride_alignment\":"
-                           << subset_properties
-                                  .minVertexInputBindingStrideAlignment
-                           << '}';
-                } else {
-                    output << "null";
-                }
-                output << ",\"external_memory_host_alignment\":";
-                if (has_external_memory_host) {
-                    output << host_memory.minImportedHostPointerAlignment;
-                } else {
-                    output << "null";
-                }
-                output
-                    << ",\"dynamic_rendering_unused_attachments\":{\"extension\":"
-                    << (has_dynamic_rendering_unused_attachments ? "true"
-                                                                 : "false")
-                    << ",\"feature\":"
-                    << (unused_attachments_features
-                                .dynamicRenderingUnusedAttachments
-                            ? "true"
-                            : "false")
-                    << '}';
-                output << ",\"incremental_present\":{\"extension\":"
-                       << (has_incremental_present ? "true" : "false")
-                       << ",\"swapchain_extension\":"
-                       << (has_swapchain ? "true" : "false") << '}';
-                output << ",\"non_seamless_cube_map\":{\"extension\":"
-                       << (has_non_seamless_cube_map ? "true" : "false")
+                output << ",\"dynamic_rendering_unused_attachments\":"
+                          "{\"extension\":"
+                       << json_bool(has_dynamic_rendering_unused_attachments)
                        << ",\"feature\":"
-                       << (non_seamless_cube_map_features.nonSeamlessCubeMap
-                               ? "true"
-                               : "false")
+                       << json_bool(unused_attachments_features
+                                        .dynamicRenderingUnusedAttachments)
                        << '}';
-                output
-                    << ",\"graphics_pipeline_library\":{\"pipeline_library_extension\":"
-                    << (has_pipeline_library ? "true" : "false")
-                    << ",\"graphics_pipeline_library_extension\":"
-                    << (has_graphics_pipeline_library ? "true" : "false")
-                    << ",\"feature\":"
-                    << (graphics_pipeline_library_features
-                                .graphicsPipelineLibrary
-                            ? "true"
-                            : "false")
-                    << ",\"fast_linking\":"
-                    << (graphics_pipeline_library_properties
-                                .graphicsPipelineLibraryFastLinking
-                            ? "true"
-                            : "false")
-                    << ",\"independent_interpolation_decoration\":"
-                    << (graphics_pipeline_library_properties
-                                .graphicsPipelineLibraryIndependentInterpolationDecoration
-                            ? "true"
-                            : "false")
-                    << '}';
-                output << ",\"device_address_commands\":{\"extension\":"
-                       << (has_device_address_commands ? "true" : "false")
+                output << ",\"incremental_present\":{\"extension\":"
+                       << json_bool(has_incremental_present)
+                       << ",\"swapchain_extension\":"
+                       << json_bool(has_swapchain) << '}';
+                output << ",\"non_seamless_cube_map\":{\"extension\":"
+                       << json_bool(has_non_seamless_cube_map)
                        << ",\"feature\":"
-                       << (device_address_commands_features
-                                   .deviceAddressCommands
-                               ? "true"
-                               : "false")
+                       << json_bool(non_seamless_cube_map_features
+                                        .nonSeamlessCubeMap)
+                       << '}';
+                output << ",\"graphics_pipeline_library\":"
+                          "{\"pipeline_library_extension\":"
+                       << json_bool(has_pipeline_library)
+                       << ",\"graphics_pipeline_library_extension\":"
+                       << json_bool(has_graphics_pipeline_library)
+                       << ",\"feature\":"
+                       << json_bool(graphics_pipeline_library_features
+                                        .graphicsPipelineLibrary)
+                       << ",\"fast_linking\":"
+                       << json_bool(graphics_pipeline_library_properties
+                                        .graphicsPipelineLibraryFastLinking)
+                       << ",\"independent_interpolation_decoration\":"
+                       << json_bool(
+                              graphics_pipeline_library_properties
+                                  .graphicsPipelineLibraryIndependentInterpolationDecoration)
+                       << '}';
+                output << ",\"device_address_commands\":{\"extension\":"
+                       << json_bool(has_device_address_commands)
+                       << ",\"feature\":"
+                       << json_bool(device_address_commands_features
+                                        .deviceAddressCommands)
                        << ",\"buffer_device_address\":"
-                       << (buffer_device_address_features
-                                   .bufferDeviceAddress
-                               ? "true"
-                               : "false")
+                       << json_bool(buffer_device_address_features
+                                        .bufferDeviceAddress)
                        << '}';
                 output << ",\"extended_dynamic_state2\":{\"extension\":"
-                       << (has_extended_dynamic_state2 ? "true" : "false")
+                       << json_bool(has_extended_dynamic_state2)
                        << ",\"feature\":"
-                       << (extended_dynamic_state2_features
-                                   .extendedDynamicState2
-                               ? "true"
-                               : "false")
+                       << json_bool(extended_dynamic_state2_features
+                                        .extendedDynamicState2)
                        << ",\"logic_op\":"
-                       << (extended_dynamic_state2_features
-                                   .extendedDynamicState2LogicOp
-                               ? "true"
-                               : "false")
+                       << json_bool(extended_dynamic_state2_features
+                                        .extendedDynamicState2LogicOp)
                        << ",\"patch_control_points\":"
-                       << (extended_dynamic_state2_features
-                                   .extendedDynamicState2PatchControlPoints
-                               ? "true"
-                               : "false")
+                       << json_bool(
+                              extended_dynamic_state2_features
+                                  .extendedDynamicState2PatchControlPoints)
                        << '}';
-                output
-                    << ",\"vertex_input_dynamic_state\":{\"extension\":"
-                    << (has_vertex_input_dynamic_state ? "true" : "false")
-                    << ",\"feature\":"
-                    << (vertex_input_dynamic_state_features
-                                .vertexInputDynamicState
-                            ? "true"
-                            : "false")
-                    << '}';
-                output << ",\"legacy_vertex_attributes\":{\"extension\":"
-                       << (has_legacy_vertex_attributes ? "true" : "false")
+                output << ",\"vertex_input_dynamic_state\":{\"extension\":"
+                       << json_bool(has_vertex_input_dynamic_state)
                        << ",\"feature\":"
-                       << (legacy_vertex_attributes_features
-                                   .legacyVertexAttributes
-                               ? "true"
-                               : "false")
-                       << ",\"native_unaligned_performance\":"
-                       << (legacy_vertex_attributes_properties
-                                   .nativeUnalignedPerformance
-                               ? "true"
-                               : "false")
+                       << json_bool(vertex_input_dynamic_state_features
+                                        .vertexInputDynamicState)
                        << '}';
-                output << ",\"memory\":";
-                write_memory(output, memory);
-                output << ",\"queue_families\":[";
-                for (uint32_t queue_index = 0; queue_index < queue_count;
-                     ++queue_index) {
-                    if (queue_index != 0) {
-                        output << ',';
-                    }
-                    output << "{\"flags\":" << queues[queue_index].queueFlags
-                           << ",\"count\":" << queues[queue_index].queueCount
-                           << ",\"timestamp_bits\":"
-                           << queues[queue_index].timestampValidBits << '}';
-                }
-                output << "],\"supported_core_formats\":[";
+                output << ",\"legacy_vertex_attributes\":{\"extension\":"
+                       << json_bool(has_legacy_vertex_attributes)
+                       << ",\"feature\":"
+                       << json_bool(legacy_vertex_attributes_features
+                                        .legacyVertexAttributes)
+                       << ",\"native_unaligned_performance\":"
+                       << json_bool(legacy_vertex_attributes_properties
+                                        .nativeUnalignedPerformance)
+                       << '}';
+                output << ",\"supported_core_formats\":[";
                 bool first_format = true;
                 for (int format = VK_FORMAT_R4G4_UNORM_PACK8;
                      format <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK; ++format) {
@@ -3264,121 +2916,89 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                            << ",\"buffer\":"
                            << format_properties.bufferFeatures << '}';
                 }
-                output << "],\"limits\":{\"max_image_2d\":"
-                       << properties.properties.limits.maxImageDimension2D
-                       << ",\"max_memory_allocation_count\":"
-                       << properties.properties.limits.maxMemoryAllocationCount
-                       << ",\"max_bound_descriptor_sets\":"
-                       << properties.properties.limits.maxBoundDescriptorSets
-                       << ",\"max_per_stage_resources\":"
-                       << properties.properties.limits.maxPerStageResources
-                       << ",\"max_vertex_output_components\":"
-                       << properties.properties.limits
-                              .maxVertexOutputComponents
-                       << ",\"max_fragment_input_components\":"
-                       << properties.properties.limits
-                              .maxFragmentInputComponents
-                       << ",\"max_compute_work_group_invocations\":"
-                       << properties.properties.limits
-                              .maxComputeWorkGroupInvocations
-                       << ",\"non_coherent_atom_size\":"
-                       << properties.properties.limits.nonCoherentAtomSize
-                       << "},\"device_create_result\":";
+                output << "],\"device_create_result\":";
 
-                int32_t device_result = VK_ERROR_FEATURE_NOT_PRESENT;
-                uint32_t selected_queue = 0;
-                bool found_queue = false;
-                for (uint32_t queue_index = 0; queue_index < queue_count;
-                     ++queue_index) {
-                    if (queues[queue_index].queueCount != 0 &&
-                        (!(graphics_pipeline_library_features
-                               .graphicsPipelineLibrary ||
-                           extended_dynamic_state2_features
-                               .extendedDynamicState2LogicOp) ||
-                         (queues[queue_index].queueFlags &
-                          VK_QUEUE_GRAPHICS_BIT) != 0) &&
-                        (!device_address_commands_features
-                              .deviceAddressCommands ||
-                         !buffer_device_address_features.bufferDeviceAddress ||
-                         (queues[queue_index].queueFlags &
-                          VK_QUEUE_TRANSFER_BIT) != 0)) {
-                        selected_queue = queue_index;
-                        found_queue = true;
-                        break;
-                    }
-                }
-                if (!found_queue) {
+                // The first queue family that can run every verifier this
+                // device will get, or else the first that can run its
+                // graphics ones.
+                const bool uses_graphics =
+                    graphics_pipeline_library_features
+                        .graphicsPipelineLibrary ||
+                    extended_dynamic_state2_features
+                        .extendedDynamicState2LogicOp;
+                const bool uses_transfer =
+                    device_address_commands_features.deviceAddressCommands &&
+                    buffer_device_address_features.bufferDeviceAddress;
+                const auto find_queue = [&](bool need_transfer)
+                    -> std::optional<uint32_t> {
                     for (uint32_t queue_index = 0; queue_index < queue_count;
                          ++queue_index) {
+                        const VkQueueFlags flags =
+                            queues[queue_index].queueFlags;
                         if (queues[queue_index].queueCount != 0 &&
-                            (!(graphics_pipeline_library_features
-                                   .graphicsPipelineLibrary ||
-                               extended_dynamic_state2_features
-                                   .extendedDynamicState2LogicOp) ||
-                             (queues[queue_index].queueFlags &
-                              VK_QUEUE_GRAPHICS_BIT) != 0)) {
-                            selected_queue = queue_index;
-                            found_queue = true;
-                            break;
+                            (!uses_graphics ||
+                             (flags & VK_QUEUE_GRAPHICS_BIT) != 0) &&
+                            (!need_transfer ||
+                             (flags & VK_QUEUE_TRANSFER_BIT) != 0)) {
+                            return queue_index;
                         }
                     }
+                    return std::nullopt;
+                };
+                std::optional<uint32_t> selected_queue =
+                    find_queue(uses_transfer);
+                if (!selected_queue) {
+                    selected_queue = find_queue(false);
                 }
-                if (found_queue) {
+
+                const bool use_graphics_pipeline_library =
+                    has_pipeline_library && has_graphics_pipeline_library &&
+                    graphics_pipeline_library_features
+                        .graphicsPipelineLibrary;
+                int32_t device_result = VK_ERROR_FEATURE_NOT_PRESENT;
+                VkDevice device = VK_NULL_HANDLE;
+                if (selected_queue) {
                     constexpr float priority = 1.0F;
                     const VkDeviceQueueCreateInfo queue_info{
                         VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
                         nullptr,
                         0,
-                        selected_queue,
+                        *selected_queue,
                         1,
                         &priority,
                     };
-                    std::array<const char *, 11> device_extensions_to_enable{};
+                    const std::array<std::pair<bool, const char *>, 11>
+                        candidate_extensions{{
+                            {has_portability_subset,
+                             VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME},
+                            {has_dynamic_rendering_unused_attachments,
+                             VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME},
+                            {has_swapchain, VK_KHR_SWAPCHAIN_EXTENSION_NAME},
+                            {has_incremental_present,
+                             VK_KHR_INCREMENTAL_PRESENT_EXTENSION_NAME},
+                            {has_non_seamless_cube_map,
+                             VK_EXT_NON_SEAMLESS_CUBE_MAP_EXTENSION_NAME},
+                            {use_graphics_pipeline_library,
+                             VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME},
+                            {use_graphics_pipeline_library,
+                             VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME},
+                            {has_device_address_commands,
+                             VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME},
+                            {has_extended_dynamic_state2,
+                             VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME},
+                            {has_vertex_input_dynamic_state,
+                             VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME},
+                            {has_legacy_vertex_attributes,
+                             VK_EXT_LEGACY_VERTEX_ATTRIBUTES_EXTENSION_NAME},
+                        }};
+                    std::array<const char *, candidate_extensions.size()>
+                        device_extensions_to_enable{};
                     uint32_t device_extension_count = 0;
-                    if (has_portability_subset) {
-                        device_extensions_to_enable[device_extension_count++] =
-                            VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
-                    }
-                    if (has_dynamic_rendering_unused_attachments) {
-                        device_extensions_to_enable[device_extension_count++] =
-                            VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME;
-                    }
-                    if (has_swapchain) {
-                        device_extensions_to_enable[device_extension_count++] =
-                            VK_KHR_SWAPCHAIN_EXTENSION_NAME;
-                    }
-                    if (has_incremental_present) {
-                        device_extensions_to_enable[device_extension_count++] =
-                            VK_KHR_INCREMENTAL_PRESENT_EXTENSION_NAME;
-                    }
-                    if (has_non_seamless_cube_map) {
-                        device_extensions_to_enable[device_extension_count++] =
-                            VK_EXT_NON_SEAMLESS_CUBE_MAP_EXTENSION_NAME;
-                    }
-                    if (has_pipeline_library &&
-                        has_graphics_pipeline_library &&
-                        graphics_pipeline_library_features
-                            .graphicsPipelineLibrary) {
-                        device_extensions_to_enable[device_extension_count++] =
-                            VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME;
-                        device_extensions_to_enable[device_extension_count++] =
-                            VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME;
-                    }
-                    if (has_device_address_commands) {
-                        device_extensions_to_enable[device_extension_count++] =
-                            VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME;
-                    }
-                    if (has_extended_dynamic_state2) {
-                        device_extensions_to_enable[device_extension_count++] =
-                            VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME;
-                    }
-                    if (has_vertex_input_dynamic_state) {
-                        device_extensions_to_enable[device_extension_count++] =
-                            VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME;
-                    }
-                    if (has_legacy_vertex_attributes) {
-                        device_extensions_to_enable[device_extension_count++] =
-                            VK_EXT_LEGACY_VERTEX_ATTRIBUTES_EXTENSION_NAME;
+                    for (const auto &[wanted, name] : candidate_extensions) {
+                        if (wanted) {
+                            device_extensions_to_enable
+                                [device_extension_count++] = name;
+                        }
                     }
                     VkPhysicalDeviceFeatures enabled_core_features{};
                     enabled_core_features.imageCubeArray =
@@ -3396,120 +3016,101 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                         device_extensions_to_enable.data(),
                         &enabled_core_features,
                     };
-                    VkDevice device = VK_NULL_HANDLE;
                     device_result =
                         create_device(physical, &device_info, nullptr, &device);
-                    if (device_result == VK_SUCCESS) {
-                        const ProbeDevice probe{
-                            device,
-                            load_function<PFN_vkGetDeviceProcAddr>(
-                                instance, "vkGetDeviceProcAddr")};
-                        DeviceAddressCommandsReport address_commands_report;
-                        const bool verify_address_commands =
-                            has_device_address_commands &&
-                            device_address_commands_features
-                                .deviceAddressCommands &&
-                            buffer_device_address_features
-                                .bufferDeviceAddress &&
-                            (queues[selected_queue].queueFlags &
-                             VK_QUEUE_TRANSFER_BIT) != 0;
-                        if (verify_address_commands) {
-                            address_commands_report =
-                                probe.verify_device_address_commands(
-                                    properties.properties.apiVersion,
-                                    selected_queue, memory,
-                                    device_extensions);
-                        }
-                        DynamicLogicOpReport dynamic_logic_op_report;
-                        const bool verify_dynamic_logic_op =
-                            has_extended_dynamic_state2 &&
-                            extended_dynamic_state2_features
-                                .extendedDynamicState2LogicOp &&
-                            features.features.logicOp &&
-                            (queues[selected_queue].queueFlags &
-                             VK_QUEUE_GRAPHICS_BIT) != 0;
-                        if (verify_dynamic_logic_op) {
-                            dynamic_logic_op_report =
-                                probe.verify_dynamic_logic_ops(
-                                    selected_queue, memory);
-                        }
-                        LegacyVertexAttributesReport
-                            legacy_vertex_attributes_report;
-                        const bool run_legacy_vertex_attributes =
-                            has_vertex_input_dynamic_state &&
-                            vertex_input_dynamic_state_features
-                                .vertexInputDynamicState &&
-                            has_legacy_vertex_attributes &&
-                            legacy_vertex_attributes_features
-                                .legacyVertexAttributes &&
-                            (queues[selected_queue].queueFlags &
-                             VK_QUEUE_GRAPHICS_BIT) != 0;
-                        if (run_legacy_vertex_attributes) {
-                            legacy_vertex_attributes_report =
-                                probe.verify_legacy_vertex_attributes(
-                                    selected_queue, memory);
-                        }
-                        CubeAliasReport alias_report;
-                        GraphicsPipelineLibraryReport
-                            graphics_pipeline_library_report;
-                        if (has_non_seamless_cube_map &&
-                            non_seamless_cube_map_features
-                                .nonSeamlessCubeMap) {
-                            alias_report = probe.verify_cube_alias_views(
-                                physical, memory,
-                                get_image_format_properties);
-                        }
-                        const bool run_graphics_pipeline_library =
-                            has_pipeline_library &&
-                            has_graphics_pipeline_library &&
-                            graphics_pipeline_library_features
-                                .graphicsPipelineLibrary;
-                        if (run_graphics_pipeline_library) {
-                            graphics_pipeline_library_report =
-                                probe.verify_graphics_pipeline_library(
-                                    selected_queue);
-                        }
-                        output << device_result
-                               << ",\"device_address_commands_execution\":";
-                        if (verify_address_commands) {
-                            write_device_address_commands_report(
-                                output, address_commands_report);
-                        } else {
-                            output << "null";
-                        }
-                        output << ",\"dynamic_logic_op_execution\":";
-                        if (verify_dynamic_logic_op) {
-                            write_dynamic_logic_op_report(
-                                output, dynamic_logic_op_report);
-                        } else {
-                            output << "null";
-                        }
-                        output << ",\"cube_alias_views\":";
-                        write_cube_alias_report(output, alias_report);
-                        output << ",\"graphics_pipeline_library_probe\":";
-                        if (run_graphics_pipeline_library) {
-                            write_graphics_pipeline_library_report(
-                                output, graphics_pipeline_library_report);
-                        } else {
-                            output << "null";
-                        }
-                        output
-                            << ",\"legacy_vertex_attributes_probe\":";
-                        if (run_legacy_vertex_attributes) {
-                            write_legacy_vertex_attributes_report(
-                                output, legacy_vertex_attributes_report);
-                        } else {
-                            output << "null";
-                        }
-                        probe.destroy_device(device, nullptr);
-                    } else {
-                        output << device_result
-                               << ",\"device_address_commands_execution\":null"
-                               << ",\"dynamic_logic_op_execution\":null"
-                               << ",\"cube_alias_views\":null"
-                               << ",\"graphics_pipeline_library_probe\":null"
-                               << ",\"legacy_vertex_attributes_probe\":null";
+                }
+
+                if (device_result == VK_SUCCESS) {
+                    const uint32_t queue_family = *selected_queue;
+                    const ProbeDevice probe{
+                        device,
+                        load_function<PFN_vkGetDeviceProcAddr>(
+                            instance, "vkGetDeviceProcAddr")};
+                    DeviceAddressCommandsReport address_commands_report;
+                    const bool verify_address_commands =
+                        has_device_address_commands && uses_transfer &&
+                        (queues[queue_family].queueFlags &
+                         VK_QUEUE_TRANSFER_BIT) != 0;
+                    if (verify_address_commands) {
+                        address_commands_report =
+                            probe.verify_device_address_commands(
+                                properties.properties.apiVersion,
+                                queue_family, memory, device_extensions);
                     }
+                    DynamicLogicOpReport dynamic_logic_op_report;
+                    const bool verify_dynamic_logic_op =
+                        has_extended_dynamic_state2 &&
+                        extended_dynamic_state2_features
+                            .extendedDynamicState2LogicOp &&
+                        features.features.logicOp &&
+                        (queues[queue_family].queueFlags &
+                         VK_QUEUE_GRAPHICS_BIT) != 0;
+                    if (verify_dynamic_logic_op) {
+                        dynamic_logic_op_report =
+                            probe.verify_dynamic_logic_ops(queue_family,
+                                                           memory);
+                    }
+                    LegacyVertexAttributesReport
+                        legacy_vertex_attributes_report;
+                    const bool run_legacy_vertex_attributes =
+                        has_vertex_input_dynamic_state &&
+                        vertex_input_dynamic_state_features
+                            .vertexInputDynamicState &&
+                        has_legacy_vertex_attributes &&
+                        legacy_vertex_attributes_features
+                            .legacyVertexAttributes &&
+                        (queues[queue_family].queueFlags &
+                         VK_QUEUE_GRAPHICS_BIT) != 0;
+                    if (run_legacy_vertex_attributes) {
+                        legacy_vertex_attributes_report =
+                            probe.verify_legacy_vertex_attributes(
+                                queue_family, memory);
+                    }
+                    CubeAliasReport alias_report;
+                    GraphicsPipelineLibraryReport
+                        graphics_pipeline_library_report;
+                    if (has_non_seamless_cube_map &&
+                        non_seamless_cube_map_features.nonSeamlessCubeMap) {
+                        alias_report = probe.verify_cube_alias_views(
+                            physical, memory, get_image_format_properties);
+                    }
+                    if (use_graphics_pipeline_library) {
+                        graphics_pipeline_library_report =
+                            probe.verify_graphics_pipeline_library(
+                                queue_family);
+                    }
+                    output << device_result
+                           << ",\"device_address_commands_execution\":";
+                    if (verify_address_commands) {
+                        write_device_address_commands_report(
+                            output, address_commands_report);
+                    } else {
+                        output << "null";
+                    }
+                    output << ",\"dynamic_logic_op_execution\":";
+                    if (verify_dynamic_logic_op) {
+                        write_dynamic_logic_op_report(
+                            output, dynamic_logic_op_report);
+                    } else {
+                        output << "null";
+                    }
+                    output << ",\"cube_alias_views\":";
+                    write_cube_alias_report(output, alias_report);
+                    output << ",\"graphics_pipeline_library_probe\":";
+                    if (use_graphics_pipeline_library) {
+                        write_graphics_pipeline_library_report(
+                            output, graphics_pipeline_library_report);
+                    } else {
+                        output << "null";
+                    }
+                    output << ",\"legacy_vertex_attributes_probe\":";
+                    if (run_legacy_vertex_attributes) {
+                        write_legacy_vertex_attributes_report(
+                            output, legacy_vertex_attributes_report);
+                    } else {
+                        output << "null";
+                    }
+                    probe.destroy_device(device, nullptr);
                 } else {
                     output << device_result
                            << ",\"device_address_commands_execution\":null"
@@ -3521,19 +3122,7 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                 output << '}';
             }
 
-            id<MTLDevice> metal_device = MTLCreateSystemDefaultDevice();
-            output << "],\"metal\":{\"name\":"
-                   << json_string(metal_device == nil
-                                      ? ""
-                                      : std::string(
-                                            [metal_device.name UTF8String]))
-                   << ",\"families\":";
-            if (metal_device == nil) {
-                output << "[]";
-            } else {
-                write_metal_families(output, metal_device);
-            }
-            output << "}}\n";
+            output << "]}\n";
             destroy_instance(instance, nullptr);
             return 0;
         } catch (const std::exception &error) {

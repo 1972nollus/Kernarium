@@ -185,17 +185,22 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
        */
       publish_cold_flags(cold.flags);
       assume_flags_in_memory();
+      /* The cold arms that call one C++ helper and leave the block. */
+      const auto terminal = [&](auto *helper) {
+        emit_terminal_helper(reinterpret_cast<const void *>(helper),
+                             cold.instruction, cold.pc, cold.count);
+      };
       if (cold.action == ColdPath::Action::memory_fault) {
         store_pc(cold.pc);
         emitter_.return_constant(Event::memory_fault, cold.count);
       } else if (cold.action == ColdPath::Action::pair_slow) {
-        emit_pair_slow(cold.instruction, cold.pc, cold.count);
+        terminal(&uml_arm64_jit_execute_pair);
       } else if (cold.action == ColdPath::Action::simd_structure_slow) {
-        emit_simd_structure_slow(cold.instruction, cold.pc, cold.count);
+        terminal(&uml_arm64_jit_execute_simd_structure);
       } else if (cold.action == ColdPath::Action::alignment_fault) {
-        emit_alignment_fault(cold.instruction, cold.pc, cold.count);
+        terminal(&uml_arm64_jit_alignment_fault);
       } else if (cold.action == ColdPath::Action::ordered_slow) {
-        emit_ordered_slow(cold.instruction, cold.pc, cold.count);
+        terminal(&uml_arm64_jit_execute_ordered);
       } else if (cold.action == ColdPath::Action::exclusive_slow) {
         /*
          * A native atomic block publishes its possible direct store for the
@@ -209,22 +214,18 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
           emit_deferred_exclusive_slow(cold.instruction, cold.pc,
                                        cold.count);
         else
-          emit_exclusive_slow(cold.instruction, cold.pc, cold.count);
+          terminal(&uml_arm64_jit_execute_exclusive);
       } else if (cold.action ==
                  ColdPath::Action::deferred_exclusive_slow) {
         emit_deferred_exclusive_slow(cold.instruction, cold.pc, cold.count);
       } else if (cold.action == ColdPath::Action::memory_slow) {
-        emit_memory_slow(cold.instruction, cold.pc, cold.count);
+        terminal(&uml_arm64_jit_execute_memory);
       } else if (cold.action == ColdPath::Action::memory_copy_set_slow) {
         emit_memory_copy_set(cold.instruction, cold.pc, cold.count, 3U);
       } else if (cold.action == ColdPath::Action::sme_slow) {
-        emit_terminal_helper(
-            reinterpret_cast<const void *>(&uml_arm64_jit_execute_sme),
-            cold.instruction, cold.pc, cold.count);
+        terminal(&uml_arm64_jit_execute_sme);
       } else if (cold.action == ColdPath::Action::sm0_spill_slow) {
-        emit_terminal_helper(
-            reinterpret_cast<const void *>(&uml_arm64_jit_execute_sm0_spill),
-            cold.instruction, cold.pc, cold.count);
+        terminal(&uml_arm64_jit_execute_sm0_spill);
       } else if (cold.action == ColdPath::Action::code_changed) {
         store_pc(cold.pc);
         emitter_.return_constant(Event::continued, cold.count);
@@ -662,65 +663,6 @@ void JitCompiler::emit_code_synchronize(std::uint32_t instruction, std::uint64_t
     emitter_.return_constant(Event::continued, count);
   }
 
-void JitCompiler::emit_pair_slow(std::uint32_t instruction, std::uint64_t pc,
-                      std::size_t count) {
-    store_pc(pc);
-    spill_gprs_for_terminal_call();
-    emitter_.move_x(0, 15);
-    emitter_.move_x(1, 14);
-    emitter_.load_constant(2, instruction);
-    emitter_.call(reinterpret_cast<const void *>(&uml_arm64_jit_execute_pair));
-    emitter_.return_dynamic(count);
-  }
-
-void JitCompiler::emit_simd_structure_slow(std::uint32_t instruction, std::uint64_t pc,
-                                std::size_t count) {
-    store_pc(pc);
-    spill_gprs_for_terminal_call();
-    emitter_.move_x(0, 15);
-    emitter_.move_x(1, 14);
-    emitter_.load_constant(2, instruction);
-    emitter_.call(
-        reinterpret_cast<const void *>(&uml_arm64_jit_execute_simd_structure));
-    emitter_.return_dynamic(count);
-  }
-
-void JitCompiler::emit_alignment_fault(std::uint32_t instruction, std::uint64_t pc,
-                            std::size_t count) {
-    store_pc(pc);
-    spill_gprs_for_terminal_call();
-    emitter_.move_x(0, 15);
-    emitter_.move_x(1, 14);
-    emitter_.load_constant(2, instruction);
-    emitter_.call(
-        reinterpret_cast<const void *>(&uml_arm64_jit_alignment_fault));
-    emitter_.return_dynamic(count);
-  }
-
-void JitCompiler::emit_ordered_slow(std::uint32_t instruction, std::uint64_t pc,
-                         std::size_t count) {
-    store_pc(pc);
-    spill_gprs_for_terminal_call();
-    emitter_.move_x(0, 15);
-    emitter_.move_x(1, 14);
-    emitter_.load_constant(2, instruction);
-    emitter_.call(
-        reinterpret_cast<const void *>(&uml_arm64_jit_execute_ordered));
-    emitter_.return_dynamic(count);
-  }
-
-void JitCompiler::emit_exclusive_slow(std::uint32_t instruction, std::uint64_t pc,
-                           std::size_t count) {
-    store_pc(pc);
-    spill_gprs_for_terminal_call();
-    emitter_.move_x(0, 15);
-    emitter_.move_x(1, 14);
-    emitter_.load_constant(2, instruction);
-    emitter_.call(
-        reinterpret_cast<const void *>(&uml_arm64_jit_execute_exclusive));
-    emitter_.return_dynamic(count);
-  }
-
 void JitCompiler::emit_deferred_exclusive_slow(std::uint32_t instruction,
                                     std::uint64_t pc,
                                     std::size_t count) {
@@ -734,18 +676,6 @@ void JitCompiler::emit_deferred_exclusive_slow(std::uint32_t instruction,
      */
     emitter_.return_constant(Event::continued,
                              count == 0U ? 0U : count - 1U);
-  }
-
-void JitCompiler::emit_memory_slow(std::uint32_t instruction, std::uint64_t pc,
-                        std::size_t count) {
-    store_pc(pc);
-    spill_gprs_for_terminal_call();
-    emitter_.move_x(0, 15);
-    emitter_.move_x(1, 14);
-    emitter_.load_constant(2, instruction);
-    emitter_.call(
-        reinterpret_cast<const void *>(&uml_arm64_jit_execute_memory));
-    emitter_.return_dynamic(count);
   }
 
 void JitCompiler::emit_memory_copy_set(std::uint32_t instruction,

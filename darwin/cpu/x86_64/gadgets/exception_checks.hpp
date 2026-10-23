@@ -3,11 +3,13 @@
 
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/decoder.hpp"
+#include "cpu/x86_64/fp_model.hpp"
 #include "memory/guest_address_space.hpp"
 #include "program.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace uml::cpu::x86_64::gadgets {
 
@@ -141,42 +143,15 @@ enum class X87Compare : std::uint8_t {
 [[nodiscard]] bool misaligned_access(const CpuState &cpu,
 	const Gadget &gadget) noexcept;
 
-/* MXCSR.DE for the SIMD floating-point instruction `gadget`, from the state
- * before it runs, which the host's flags do not show: x86 raises it for a
- * denormal source in a lane it computes, unless MXCSR.DAZ makes the source
- * zero, or the lane holds a NaN or raises invalid operation or division by
- * zero, which take precedence. Rounding, RCP, RSQRT, VCVTPH2PS and
- * conversions to integers raise none, and DPPS and DPPD leave it to
- * `host_flag_correction`. Zero when a memory source is unreadable, which
- * the instruction then faults on. */
-[[nodiscard]] std::uint32_t denormal_operand(const CpuState &cpu,
-	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory);
-
-/* MXCSR flags the host's floating-point operations raise differently from
- * x86 for an instruction run checked: the flags in `decided` take their
- * values from `raised` rather than from the host. `settled` flags are all
- * of x86's, the denormal operand and the precedence of an unmasked
- * exception included. */
-struct HostFlagCorrection final {
-	std::uint32_t decided{};
-	std::uint32_t raised{};
-	bool settled{};
-};
-
-/* The correction for the SIMD floating-point instruction `gadget`, from the
- * state before it runs. An FMA decides invalid operation, which the host
- * raises for infinity times zero plus a quiet NaN and x86 does not. A sum,
- * difference, product, quotient, FMA or narrowing to a single or half
- * decides underflow, which x86 detects after rounding and the host before,
- * and which x86 raises for an exact tiny result while underflow is unmasked
- * or FTZ flushes it, with precision then; beside an unmasked underflow or
- * overflow, it decides precision too, which x86 raises as the significand
- * rounds. ROUND and conversions to integers decide precision, which ROUND's
- * gadget raises in software, outside the host flags a checked run reads.
- * DPPS and DPPD settle their flags, which x86 raises step by step, faulting
- * at the first step that raises an unmasked exception. Nothing when a
- * memory source is unreadable, which the instruction then faults on. */
-[[nodiscard]] HostFlagCorrection host_flag_correction(const CpuState &cpu,
+/* The MXCSR flags x86 raises for the SIMD floating-point instruction
+ * `gadget`, by step, from the state before it runs. The host's are not x86's
+ * -- it detects underflow before rounding, shows no denormal operand, and
+ * differs in precision and invalid operation -- so the model the JIT shares
+ * (`fp_model.hpp`) computes them from the instruction's sources, and
+ * `x86_fp_settle` settles them against MXCSR's masks. Nothing when the host's
+ * flags stand, as for a conversion from an integer, or when a memory source
+ * is unreadable, which the instruction then faults on. */
+[[nodiscard]] std::optional<FpSteps> simd_fp_steps(const CpuState &cpu,
 	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory);
 
 /* The host's cumulative floating-point exception flags, as the MXCSR flags

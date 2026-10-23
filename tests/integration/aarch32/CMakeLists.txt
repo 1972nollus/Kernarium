@@ -10,8 +10,8 @@ set(_uml_aarch32_object "${CMAKE_CURRENT_BINARY_DIR}/aarch32_probe.o")
 set(UML_GUEST_AARCH32_PROBE "${CMAKE_CURRENT_BINARY_DIR}/guest-aarch32-probe")
 set(UML_GUEST_AARCH32_PROBE_4K
     "${CMAKE_CURRENT_BINARY_DIR}/guest-aarch32-probe-4k")
-# The same program twice: laid out for any page size, and for 4 KiB pages
-# only, as 11 files of a stock Debian armhf image are.
+# The same program twice: aligned to 64 KiB, and to 4 KiB only, as 11 files of
+# a stock Debian armhf image are.
 add_custom_command(
     OUTPUT "${UML_GUEST_AARCH32_PROBE}" "${UML_GUEST_AARCH32_PROBE_4K}"
     COMMAND "${CMAKE_CXX_COMPILER}"
