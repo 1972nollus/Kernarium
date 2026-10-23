@@ -74,10 +74,10 @@ index c9696a3a1e39c095624822797e6c74b179e758cd..91ed11fad6f28cc5309d3153403f26cb
  
  static void
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 1db4e29e1c3041572447cdd006361c9724e83ea1..f5763f16931a1c03257acf0dd528584b61b685e7 100644
+index 1b1d0a9bb70d75fb14a76fd7720b4a15a57eae9e..e3d1a676e0913cdb27f2095bdcaea1fbf11d3361 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -706,6 +706,7 @@ if with_tests
+@@ -707,6 +707,7 @@ if with_tests
      '16bit_varying_io',
      'msl_temporaries',
      'msl_coherent_access',
