@@ -359,70 +359,21 @@ profile is cumulative, so copy it at a phase boundary and pass that copy as
 ## Cache census
 
 A separate `UML_GADGET_CACHE_CENSUS=ON` build reports what every executor's
-cache holds and how it came to hold it. Set `DARWIN_UML_GADGET_CACHE_CENSUS`
-to a path; each cache appends a snapshot of itself when its executor is
+cache holds and how it came to hold it. Set `DARWIN_UML_GADGET_CACHE_CENSUS` to
+a path; each cache appends a snapshot of itself when its executor is
 destroyed, and another every `DARWIN_UML_GADGET_CACHE_CENSUS_SECONDS` seconds
-when that is set, taken by its own vCPU at its next lookup. Summarize a
-capture with `analyze_gadget_cache_census.py --help`: it reports one snapshot
-(`--snapshot`, by default the one taken at teardown) or one line per snapshot
-(`--series`).
-
-A snapshot is an `E` record with the cache's geometry, measured footprint and
-history, a `G` record per resident address space, a `P` record per resident
-translation, and, for one in every `DARWIN_UML_GADGET_CACHE_CENSUS_WORDS`
-bodies and link records, a `W` record listing the body's stream word by word
-as a gadget, a link or indirect record named by guest PC, or another operand,
-and an `L` record naming the link record's guest PC. Both gadget engines write
-the same records, so a private cache costs measured bytes rather than an
-estimate on either; a field an engine has no counterpart for is simply absent.
-The footprint is the committed slabs, every resident translation's allocations
-as the allocator sized them, the link and indirect records and target tables,
-and the per-address-space indexes the cache owns; on arm64 it also says how
-much of the body arena is chunks that hold no live body. The `E` record also
-counts the link sweeps, the link records and indirect sites they released, and
-the time they took. A `P` record carries its translation's allocation and the
-header, stream and validation bytes in it. Every `E` record also carries the
-process's gadget-cache budget (`budget=`), what every address space is charged
-against it (`metered=`, of which `metered_shedding=` is in address spaces
-asked to shed), the most the open ones held when a store passed the budget
-(`metered_peak=`), and how many reliefs asked how many address spaces to shed
-(`reliefs=`, `shed=`); an x86 `E` record adds what its own address spaces are
-charged (`charged=`), and an arm64 `S` record what its space is charged and
-whether it is shedding. The report states the budget line.
-
-When arm64 executors share an address space's translations, an `E` record
-counts only what its cache owns (slot slabs and slot lists), each `G` record
-names the space its slots point into, every cache holding a space writes the
-space's arena, link and indirect bytes on an `S` record, and a `P` record
-names its body. The report counts each space and each body once, and the
-history counts the misses that adopted another cache's body. Each `G` and `S`
-record also says whether the MMU still has the address space's generation
-(`alive=1`) or has destroyed it (`alive=0`; negative when it cannot say from the
-thread taking the snapshot), and the report counts the bytes of the destroyed
-ones. An x86 cache, which keeps its address spaces to itself, writes `alive=`
-and the bytes of the address space's translations (`held=`) on its `G` record.
-
-The history counts how each lookup ended, why each departing translation
-left (way eviction, address-space retirement, or a discard), and, for every
-store, whether the cache had held the same code under the same key before and
-why it was gone. A store of code that another cache translated first is
-counted against the executors of its own address space or against another
-address space. For a translation evicted and later stored again unchanged,
-the number of evictions in between goes into a power-of-two histogram, which
-says how many of those misses an exclusive victim tier of a given size would
-have served.
+when that is set. `DARWIN_UML_GADGET_CACHE_CENSUS_WORDS=N` also writes one in
+every N bodies' streams word by word, and
+`DARWIN_UML_GADGET_CACHE_CENSUS_TOTALS=1` only each cache's totals, which is
+what a browser guest on a loaded host can afford. Summarize a capture with
+`analyze_gadget_cache_census.py`, whose `--help` describes the records: it
+reports one snapshot (`--snapshot`, by default the one taken at teardown) or
+one line per snapshot (`--series`).
 
 A census build pays for this on every store and pauses a vCPU for each
 snapshot, so it runs slower than a default build; its timings are not
-measurements. `DARWIN_UML_GADGET_CACHE_CENSUS_TOTALS=1` keeps only the `E` and
-`G` records and leaves stores unmatched against other caches, which is what a
-browser guest on a loaded host can afford; read such a capture with
-`--series`.
-
-Identity is the consumed guest code, not the produced stream, because two
-executors translating the same code embed pointers to their own link records.
-That is what lets the report separate duplication between executors sharing an
-address space from the same code translated again for another address space.
+measurements. `check-unit-census` checks such a build
+([testing](../../docs/testing.md)).
 
 ## Focused assembly probes
 

@@ -24,6 +24,7 @@
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
 #include <mutex>
+#include <new>
 #include <span>
 #include <unordered_map>
 #include <utility>
@@ -121,10 +122,40 @@ inline constexpr std::uint64_t digest_seed = 0xcbf29ce484222325ULL;
 	return next++;
 }
 
+/* The host's floating-point control and status, set aside while the census
+ * writes. A snapshot can be written at a lookup, between two blocks of a run,
+ * where the guest's own floating-point environment may be live in the host's
+ * registers: the arm64 engine restores its native one only as the run ends.
+ * The writer's arithmetic runs in the default environment instead, and the
+ * guest's comes back as it was, cumulative flags included. */
+class DefaultFloatingEnvironment final {
+public:
+	DefaultFloatingEnvironment() noexcept
+	{
+		__asm__ volatile("mrs %0, fpcr" : "=r"(fpcr_) : : "memory");
+		__asm__ volatile("mrs %0, fpsr" : "=r"(fpsr_) : : "memory");
+		__asm__ volatile("msr fpcr, xzr" : : : "memory");
+	}
+	~DefaultFloatingEnvironment()
+	{
+		__asm__ volatile("msr fpcr, %0" : : "r"(fpcr_) : "memory");
+		__asm__ volatile("msr fpsr, %0" : : "r"(fpsr_) : "memory");
+	}
+	DefaultFloatingEnvironment(const DefaultFloatingEnvironment &) = delete;
+	DefaultFloatingEnvironment &operator=(
+		const DefaultFloatingEnvironment &) = delete;
+
+private:
+	std::uint64_t fpcr_{};
+	std::uint64_t fpsr_{};
+};
+
 /* Append one cache's records. Every executor of a run appends to the same
  * file, so whole records are serialised here; they are formatted in memory
  * first, so a vCPU writing a large cache holds up the others only while its
- * text reaches the file. */
+ * text reaches the file. A snapshot is taken at a lookup or at an executor's
+ * teardown, neither of which may fail for it, so one the census has no memory
+ * to finish is left out whole rather than written in part. */
 template <typename Write>
 void append(Write &&write) noexcept
 {
@@ -136,9 +167,15 @@ void append(Write &&write) noexcept
 	std::FILE *buffer = open_memstream(&text, &size);
 	if (buffer == nullptr)
 		return;
-	write(buffer);
+	const DefaultFloatingEnvironment environment;
+	bool whole = true;
+	try {
+		write(buffer);
+	} catch (const std::bad_alloc &) {
+		whole = false;
+	}
 	std::fclose(buffer);
-	{
+	if (whole) {
 		static std::mutex mutex;
 		const std::lock_guard guard{mutex};
 		if (std::FILE *out = std::fopen(file, "ae"); out != nullptr) {
@@ -228,8 +265,12 @@ public:
 		const auto interval = interval_seconds();
 		if (interval == 0 || path() == nullptr)
 			return 0;
+		/* In whole seconds, as integers: a lookup asks, while the guest's
+		 * floating-point environment may be live (append()). */
 		const auto number = static_cast<std::uint64_t>(
-			elapsed_seconds() / static_cast<double>(interval));
+			std::chrono::duration_cast<std::chrono::seconds>(
+				std::chrono::steady_clock::now() - start())
+				.count()) / interval;
 		if (number <= written_)
 			return 0;
 		written_ = number;
@@ -338,7 +379,13 @@ enum class Departure : std::uint8_t {
 	discarded,
 };
 
-/* How one cache's lookups ended and how its translations came and went. */
+/* How one cache's lookups ended and how its translations came and went.
+ * Recording never fails: a cache records from operations that a default
+ * build performs without allocating, some of them noexcept, and a census
+ * build's cache must do there what a default build's does. A departure or
+ * store the census has no memory to remember is counted as unrecorded
+ * instead, so the counts stay exact and only the matching of stores to
+ * earlier departures and to other caches is a lower bound. */
 class History final {
 public:
 	static constexpr std::size_t distance_buckets = 48;
@@ -353,10 +400,13 @@ public:
 	[[nodiscard]] std::uint64_t lookups() const noexcept { return lookups_; }
 
 	void depart(std::uint64_t generation, std::uint64_t pc,
-		std::uint64_t digest, std::size_t bytes, Departure why)
+		std::uint64_t digest, std::size_t bytes, Departure why) noexcept
 	{
-		auto &entry = departed_[Key{generation, pc}];
-		entry = {digest, evictions_, why};
+		try {
+			departed_[Key{generation, pc}] = {digest, evictions_, why};
+		} catch (const std::bad_alloc &) {
+			++unrecorded_;
+		}
 		switch (why) {
 		case Departure::evicted:
 			++evictions_;
@@ -375,11 +425,18 @@ public:
 	 * any other, held the same code before. `restored` says the cache
 	 * still held its own copy, which a lookup could not use. */
 	void arrive(unsigned cache, std::uint64_t generation, std::uint64_t pc,
-		std::uint64_t digest, bool restored)
+		std::uint64_t digest, bool restored) noexcept
 	{
 		++stores_;
-		switch (totals_only() ? Repeat::none :
-				Registry::note(cache, generation, pc, digest)) {
+		auto repeat = Repeat::none;
+		if (!totals_only()) {
+			try {
+				repeat = Registry::note(cache, generation, pc, digest);
+			} catch (const std::bad_alloc &) {
+				++unrecorded_;
+			}
+		}
+		switch (repeat) {
 		case Repeat::none:
 			break;
 		case Repeat::other_executor:
@@ -433,7 +490,7 @@ public:
 			" again_retired=%llu again_discarded=%llu changed=%llu"
 			" restored=%llu other_executor=%llu other_space=%llu"
 			" evictions=%llu evicted_bytes=%llu retirements=%llu"
-			" discards=%llu departed=%zu distance=",
+			" discards=%llu departed=%zu unrecorded=%llu distance=",
 			value(lookups_), value(hits_), value(revalidated_),
 			value(misses_), value(adopted_), value(stores_),
 			value(first_),
@@ -442,7 +499,7 @@ public:
 			value(restored_), value(other_executor_),
 			value(other_space_), value(evictions_),
 			value(evicted_bytes_), value(retirements_),
-			value(discards_), departed_.size());
+			value(discards_), departed_.size(), value(unrecorded_));
 		std::size_t used = distance_buckets;
 		while (used > 1 && distance_[used - 1U] == 0)
 			--used;
@@ -485,6 +542,7 @@ private:
 	std::uint64_t other_executor_{}, other_space_{};
 	std::uint64_t evictions_{}, evicted_bytes_{}, retirements_{},
 		discards_{};
+	std::uint64_t unrecorded_{};
 	/* Evictions between a translation's eviction and the store of the
 	 * same code under the same key, by bit width: bucket b holds
 	 * distances below 2^b and at least 2^(b-1). An exclusive victim tier
