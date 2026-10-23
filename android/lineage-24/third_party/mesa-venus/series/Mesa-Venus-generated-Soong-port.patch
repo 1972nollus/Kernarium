@@ -1,53 +1,56 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
-Date: Sun, 27 Sep 2026 00:01:22 +0000
+Date: Sat, 24 Oct 2026 00:58:27 +0900
 Subject: [PATCH] Mesa Venus generated Soong port
 
 Describe the port with the Android.bp files tools/generate-mesa-venus-port.py
-generates: the Venus Vulkan HAL and the Virgl EGL and GLES libraries the
-Android EGL loader finds through ro.hardware.egl=kernarium, and only the
-modules those four build from or link. Every other module is scoped with a
-venus_ prefix.
+generates for arm64 and arm: the Venus Vulkan HAL and the Virgl EGL and GLES
+libraries the Android EGL loader finds through ro.hardware.egl=kernarium, and
+only the modules those four build from or link. Every other module is scoped
+with a venus_ prefix.
+
+The OpenGL command marshalling bakes in the pointer size, so each instruction
+set generates its own copy and the library selects it by arch.
 
 Soong refuses any Android.mk under a denylisted directory, and this port is
 described entirely by generated Android.bp files. The removed makefile builds
 nothing this product installs.
 ---
- Android.bp                                    | 382 +++++++++
- android/Android.mk                            | 214 -----
+ Android.bp                                    | 390 +++++++
+ android/Android.mk                            | 214 ----
  bin/Android.bp                                |  27 +
  include/Android.bp                            |  23 +
- src/Android.bp                                |  53 ++
+ src/Android.bp                                |  53 +
  src/c11/impl/Android.bp                       |  42 +
  src/compiler/Android.bp                       | 133 +++
- src/compiler/glsl/Android.bp                  | 473 ++++++++++
- src/compiler/glsl/glcpp/Android.bp            | 150 ++++
- src/compiler/nir/Android.bp                   | 573 +++++++++++++
- src/compiler/spirv/Android.bp                 | 220 +++++
+ src/compiler/glsl/Android.bp                  | 473 +++++++++
+ src/compiler/glsl/glcpp/Android.bp            | 150 +++
+ src/compiler/nir/Android.bp                   | 573 ++++++++++
+ src/compiler/spirv/Android.bp                 | 220 ++++
  src/egl/Android.bp                            | 124 +++
  src/egl/drivers/dri2/Android.bp               |  33 +
  src/egl/main/Android.bp                       |  42 +
  src/gallium/Android.bp                        |  24 +
- src/gallium/auxiliary/Android.bp              | 324 +++++++
+ src/gallium/auxiliary/Android.bp              | 324 ++++++
  src/gallium/auxiliary/cso_cache/Android.bp    |  32 +
  src/gallium/auxiliary/draw/Android.bp         |  81 ++
  .../auxiliary/driver_ddebug/Android.bp        |  32 +
  src/gallium/auxiliary/driver_noop/Android.bp  |  31 +
  src/gallium/auxiliary/driver_trace/Android.bp |  47 +
  src/gallium/auxiliary/hud/Android.bp          |  38 +
- src/gallium/auxiliary/indices/Android.bp      |  54 ++
+ src/gallium/auxiliary/indices/Android.bp      |  54 +
  src/gallium/auxiliary/nir/Android.bp          |  32 +
  src/gallium/auxiliary/pipe-loader/Android.bp  |  91 ++
  src/gallium/auxiliary/pipebuffer/Android.bp   |  36 +
  src/gallium/auxiliary/renderonly/Android.bp   |  30 +
  src/gallium/auxiliary/rtasm/Android.bp        |  31 +
- src/gallium/auxiliary/tgsi/Android.bp         |  48 ++
+ src/gallium/auxiliary/tgsi/Android.bp         |  48 +
  src/gallium/auxiliary/translate/Android.bp    |  33 +
  src/gallium/auxiliary/util/Android.bp         |  82 ++
  src/gallium/auxiliary/vl/Android.bp           |  41 +
  src/gallium/drivers/Android.bp                |  23 +
  src/gallium/drivers/virgl/Android.bp          | 117 +++
- src/gallium/frontends/dri/Android.bp          | 113 +++
+ src/gallium/frontends/dri/Android.bp          | 113 ++
  src/gallium/include/Android.bp                |  23 +
  src/gallium/include/pipe/Android.bp           |  29 +
  src/gallium/targets/dri/Android.bp            | 120 +++
@@ -57,38 +60,38 @@ nothing this product installs.
  src/gallium/winsys/sw/null/Android.bp         |  84 ++
  src/gallium/winsys/sw/wrapper/Android.bp      |  84 ++
  src/gallium/winsys/virgl/common/Android.bp    |  93 ++
- src/gallium/winsys/virgl/drm/Android.bp       |  96 +++
+ src/gallium/winsys/virgl/drm/Android.bp       |  96 ++
  src/gallium/winsys/virgl/vtest/Android.bp     |  89 ++
  src/glx/Android.bp                            |  29 +
- src/loader/Android.bp                         | 102 +++
- src/mesa/Android.bp                           | 205 +++++
+ src/loader/Android.bp                         | 102 ++
+ src/mesa/Android.bp                           | 229 ++++
  src/mesa/glapi/Android.bp                     |  29 +
- src/mesa/glapi/es1api/Android.bp              |  97 +++
- src/mesa/glapi/es2api/Android.bp              |  97 +++
- src/mesa/glapi/glapi/gen/Android.bp           | 805 ++++++++++++++++++
+ src/mesa/glapi/es1api/Android.bp              |  97 ++
+ src/mesa/glapi/es2api/Android.bp              |  97 ++
+ src/mesa/glapi/glapi/gen/Android.bp           | 994 ++++++++++++++++++
  src/mesa/glapi/glapi/registry/Android.bp      |  29 +
  src/mesa/glapi/new/Android.bp                 |  34 +
- src/mesa/glapi/shared-glapi/Android.bp        | 113 +++
- src/mesa/main/Android.bp                      | 213 +++++
+ src/mesa/glapi/shared-glapi/Android.bp        | 113 ++
+ src/mesa/main/Android.bp                      | 213 ++++
  src/mesa/math/Android.bp                      |  31 +
- src/mesa/program/Android.bp                   | 105 +++
+ src/mesa/program/Android.bp                   | 105 ++
  src/mesa/state_tracker/Android.bp             |  88 ++
  src/mesa/vbo/Android.bp                       |  40 +
- src/util/Android.bp                           | 385 +++++++++
- src/util/blake3/Android.bp                    |  42 +
- src/util/format/Android.bp                    | 110 +++
+ src/util/Android.bp                           | 392 +++++++
+ src/util/blake3/Android.bp                    |  46 +
+ src/util/format/Android.bp                    | 110 ++
  src/util/perf/Android.bp                      |  37 +
- src/util/u_gralloc/Android.bp                 |  56 ++
+ src/util/u_gralloc/Android.bp                 |  56 +
  src/virtio/Android.bp                         |  23 +
  src/virtio/venus-protocol/Android.bp          |  23 +
- src/virtio/vulkan/Android.bp                  | 257 ++++++
+ src/virtio/vulkan/Android.bp                  | 257 +++++
  src/vulkan/Android.bp                         |  23 +
  src/vulkan/registry/Android.bp                |  22 +
- src/vulkan/runtime/Android.bp                 | 582 +++++++++++++
+ src/vulkan/runtime/Android.bp                 | 582 ++++++++++
  src/vulkan/runtime/rmv/Android.bp             |  23 +
- src/vulkan/util/Android.bp                    | 393 +++++++++
- src/vulkan/wsi/Android.bp                     | 148 ++++
- 75 files changed, 8565 insertions(+), 214 deletions(-)
+ src/vulkan/util/Android.bp                    | 393 +++++++
+ src/vulkan/wsi/Android.bp                     | 148 +++
+ 75 files changed, 8797 insertions(+), 214 deletions(-)
  create mode 100644 Android.bp
  delete mode 100644 android/Android.mk
  create mode 100644 bin/Android.bp
@@ -167,10 +170,10 @@ nothing this product installs.
 
 diff --git a/Android.bp b/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..c90f89d0c6b1490046bcd686c3fe73381398826c
+index 0000000000000000000000000000000000000000..78dcfcb022e218bb78965d92dd3b9a710b61941e
 --- /dev/null
 +++ b/Android.bp
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,390 @@
 +/*
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -304,7 +307,6 @@ index 0000000000000000000000000000000000000000..c90f89d0c6b1490046bcd686c3fe7338
 +        "-DHAVE_SYS_INOTIFY_H",
 +        "-DHAVE_SYS_SHM_H",
 +        "-DHAVE_THRD_CREATE",
-+        "-DHAVE_UINT128",
 +        "-DHAVE_VIRGL",
 +        "-DHAVE_XLOCALE_H",
 +        "-DHAVE_ZLIB",
@@ -367,7 +369,12 @@ index 0000000000000000000000000000000000000000..c90f89d0c6b1490046bcd686c3fe7338
 +        "-fno-emulated-tls",
 +        "-fno-math-errno",
 +        "-fno-trapping-math",
-+    ],
++    ] + select(arch(), {
++        "arm64": [
++            "-DHAVE_UINT128",
++        ],
++        default: [],
++    }),
 +}
 +
 +cc_defaults {
@@ -443,7 +450,6 @@ index 0000000000000000000000000000000000000000..c90f89d0c6b1490046bcd686c3fe7338
 +        "-DHAVE_SYS_INOTIFY_H",
 +        "-DHAVE_SYS_SHM_H",
 +        "-DHAVE_THRD_CREATE",
-+        "-DHAVE_UINT128",
 +        "-DHAVE_VIRGL",
 +        "-DHAVE_XLOCALE_H",
 +        "-DHAVE_ZLIB",
@@ -499,7 +505,12 @@ index 0000000000000000000000000000000000000000..c90f89d0c6b1490046bcd686c3fe7338
 +        "-fno-emulated-tls",
 +        "-fno-math-errno",
 +        "-fno-trapping-math",
-+    ],
++    ] + select(arch(), {
++        "arm64": [
++            "-DHAVE_UINT128",
++        ],
++        default: [],
++    }),
 +}
 +
 +cc_defaults {
@@ -5224,10 +5235,10 @@ index 0000000000000000000000000000000000000000..327901e9008893e7a69ed675ad5cc97c
 +}
 diff --git a/src/mesa/Android.bp b/src/mesa/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..2246539e027cc89c45648420704e19915b1c0834
+index 0000000000000000000000000000000000000000..eac2c9d8e945f9b920c29b331a10916eb5649dc4
 --- /dev/null
 +++ b/src/mesa/Android.bp
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,229 @@
 +/*
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -5379,7 +5390,6 @@ index 0000000000000000000000000000000000000000..2246539e027cc89c45648420704e1991
 +        "venus_get_hash.h",
 +        "venus_git_sha1.h",
 +        "venus_ir_expression_operation.h",
-+        "venus_marshal_generated.h",
 +        "venus_nir_builder_opcodes.h",
 +        "venus_nir_intrinsics.h",
 +        "venus_nir_intrinsics_indices.h",
@@ -5399,17 +5409,8 @@ index 0000000000000000000000000000000000000000..2246539e027cc89c45648420704e1991
 +        ":venus_files_libmesa_3",
 +        ":venus_files_libmesa_4",
 +        ":venus_format_fallback.c",
-+        ":venus_marshal_generated0.c",
-+        ":venus_marshal_generated1.c",
-+        ":venus_marshal_generated2.c",
-+        ":venus_marshal_generated3.c",
-+        ":venus_marshal_generated4.c",
-+        ":venus_marshal_generated5.c",
-+        ":venus_marshal_generated6.c",
-+        ":venus_marshal_generated7.c",
 +        ":venus_mesa_lex",
 +        ":venus_program_parse_tab.ch_impl",
-+        ":venus_unmarshal_table.c",
 +    ],
 +    static_libs: [
 +        "venus_blake3",
@@ -5432,6 +5433,40 @@ index 0000000000000000000000000000000000000000..2246539e027cc89c45648420704e1991
 +        "libz",
 +        "libzstd",
 +    ],
++    arch: {
++        arm: {
++            generated_headers: [
++                "venus_marshal_generated.h_arm",
++            ],
++            srcs: [
++                ":venus_marshal_generated0.c_arm",
++                ":venus_marshal_generated1.c_arm",
++                ":venus_marshal_generated2.c_arm",
++                ":venus_marshal_generated3.c_arm",
++                ":venus_marshal_generated4.c_arm",
++                ":venus_marshal_generated5.c_arm",
++                ":venus_marshal_generated6.c_arm",
++                ":venus_marshal_generated7.c_arm",
++                ":venus_unmarshal_table.c_arm",
++            ],
++        },
++        arm64: {
++            generated_headers: [
++                "venus_marshal_generated.h",
++            ],
++            srcs: [
++                ":venus_marshal_generated0.c",
++                ":venus_marshal_generated1.c",
++                ":venus_marshal_generated2.c",
++                ":venus_marshal_generated3.c",
++                ":venus_marshal_generated4.c",
++                ":venus_marshal_generated5.c",
++                ":venus_marshal_generated6.c",
++                ":venus_marshal_generated7.c",
++                ":venus_unmarshal_table.c",
++            ],
++        },
++    },
 +}
 diff --git a/src/mesa/glapi/Android.bp b/src/mesa/glapi/Android.bp
 new file mode 100644
@@ -5676,10 +5711,10 @@ index 0000000000000000000000000000000000000000..714f04877c9190b51dfcdde3260a41e8
 +}
 diff --git a/src/mesa/glapi/glapi/gen/Android.bp b/src/mesa/glapi/glapi/gen/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa5931c642c7
+index 0000000000000000000000000000000000000000..edc84e28dfa4cc0a4ed4a7a20315cacc8837d862
 --- /dev/null
 +++ b/src/mesa/glapi/glapi/gen/Android.bp
-@@ -0,0 +1,805 @@
+@@ -0,0 +1,994 @@
 +/*
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -6294,6 +6329,42 @@ index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa59
 +}
 +
 +genrule {
++    name: "venus_marshal_generated4.c",
++    out: [
++        "marshal_generated4.c",
++    ],
++    srcs: [
++        ":venus_glapi_xml_py_deps",
++        ":venus_glapi_xml_py_deps_1",
++        ":venus_glapi_xml_py_deps_2",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "venus_marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 4 8 8 > $(location marshal_generated4.c)",
++}
++
++genrule {
++    name: "venus_marshal_generated4.c_arm",
++    out: [
++        "marshal_generated4.c",
++    ],
++    srcs: [
++        ":venus_glapi_xml_py_deps",
++        ":venus_glapi_xml_py_deps_1",
++        ":venus_glapi_xml_py_deps_2",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "venus_marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 4 8 4 > $(location marshal_generated4.c)",
++}
++
++genrule {
 +    name: "venus_marshal_generated.h",
 +    out: [
 +        "src/mesa/glapi/glapi/gen/marshal_generated.h",
@@ -6320,6 +6391,32 @@ index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa59
 +}
 +
 +genrule {
++    name: "venus_marshal_generated.h_arm",
++    out: [
++        "src/mesa/glapi/glapi/gen/marshal_generated.h",
++    ],
++    srcs: [
++        ":venus_glapi_xml_py_deps",
++        ":venus_glapi_xml_py_deps_1",
++        ":venus_glapi_xml_py_deps_2",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "venus_marshal_generated_h_py_binary",
++    ],
++    export_include_dirs: [
++        "src",
++        "src/mesa",
++        "src/mesa/glapi",
++        "src/mesa/glapi/glapi",
++        "src/mesa/glapi/glapi/gen",
++    ],
++    cmd: "$(location venus_marshal_generated_h_py_binary) $(location " +
++        "gl_and_es_API.xml) 4 > $(location " +
++        "src/mesa/glapi/glapi/gen/marshal_generated.h)",
++}
++
++genrule {
 +    name: "venus_marshal_generated0.c",
 +    out: [
 +        "marshal_generated0.c",
@@ -6335,6 +6432,24 @@ index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa59
 +    ],
 +    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
 +        "gl_and_es_API.xml) 0 8 8 > $(location marshal_generated0.c)",
++}
++
++genrule {
++    name: "venus_marshal_generated0.c_arm",
++    out: [
++        "marshal_generated0.c",
++    ],
++    srcs: [
++        ":venus_glapi_xml_py_deps",
++        ":venus_glapi_xml_py_deps_1",
++        ":venus_glapi_xml_py_deps_2",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "venus_marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 0 8 4 > $(location marshal_generated0.c)",
 +}
 +
 +genrule {
@@ -6356,6 +6471,24 @@ index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa59
 +}
 +
 +genrule {
++    name: "venus_marshal_generated1.c_arm",
++    out: [
++        "marshal_generated1.c",
++    ],
++    srcs: [
++        ":venus_glapi_xml_py_deps",
++        ":venus_glapi_xml_py_deps_1",
++        ":venus_glapi_xml_py_deps_2",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "venus_marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 1 8 4 > $(location marshal_generated1.c)",
++}
++
++genrule {
 +    name: "venus_marshal_generated2.c",
 +    out: [
 +        "marshal_generated2.c",
@@ -6371,6 +6504,24 @@ index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa59
 +    ],
 +    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
 +        "gl_and_es_API.xml) 2 8 8 > $(location marshal_generated2.c)",
++}
++
++genrule {
++    name: "venus_marshal_generated2.c_arm",
++    out: [
++        "marshal_generated2.c",
++    ],
++    srcs: [
++        ":venus_glapi_xml_py_deps",
++        ":venus_glapi_xml_py_deps_1",
++        ":venus_glapi_xml_py_deps_2",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "venus_marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 2 8 4 > $(location marshal_generated2.c)",
 +}
 +
 +genrule {
@@ -6392,9 +6543,9 @@ index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa59
 +}
 +
 +genrule {
-+    name: "venus_marshal_generated4.c",
++    name: "venus_marshal_generated3.c_arm",
 +    out: [
-+        "marshal_generated4.c",
++        "marshal_generated3.c",
 +    ],
 +    srcs: [
 +        ":venus_glapi_xml_py_deps",
@@ -6406,7 +6557,7 @@ index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa59
 +        "venus_marshal_generated_c_py_binary",
 +    ],
 +    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
-+        "gl_and_es_API.xml) 4 8 8 > $(location marshal_generated4.c)",
++        "gl_and_es_API.xml) 3 8 4 > $(location marshal_generated3.c)",
 +}
 +
 +genrule {
@@ -6428,6 +6579,24 @@ index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa59
 +}
 +
 +genrule {
++    name: "venus_marshal_generated5.c_arm",
++    out: [
++        "marshal_generated5.c",
++    ],
++    srcs: [
++        ":venus_glapi_xml_py_deps",
++        ":venus_glapi_xml_py_deps_1",
++        ":venus_glapi_xml_py_deps_2",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "venus_marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 5 8 4 > $(location marshal_generated5.c)",
++}
++
++genrule {
 +    name: "venus_marshal_generated6.c",
 +    out: [
 +        "marshal_generated6.c",
@@ -6443,6 +6612,24 @@ index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa59
 +    ],
 +    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
 +        "gl_and_es_API.xml) 6 8 8 > $(location marshal_generated6.c)",
++}
++
++genrule {
++    name: "venus_marshal_generated6.c_arm",
++    out: [
++        "marshal_generated6.c",
++    ],
++    srcs: [
++        ":venus_glapi_xml_py_deps",
++        ":venus_glapi_xml_py_deps_1",
++        ":venus_glapi_xml_py_deps_2",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "venus_marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 6 8 4 > $(location marshal_generated6.c)",
 +}
 +
 +genrule {
@@ -6464,6 +6651,24 @@ index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa59
 +}
 +
 +genrule {
++    name: "venus_marshal_generated7.c_arm",
++    out: [
++        "marshal_generated7.c",
++    ],
++    srcs: [
++        ":venus_glapi_xml_py_deps",
++        ":venus_glapi_xml_py_deps_1",
++        ":venus_glapi_xml_py_deps_2",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "venus_marshal_generated_c_py_binary",
++    ],
++    cmd: "$(location venus_marshal_generated_c_py_binary) $(location " +
++        "gl_and_es_API.xml) 7 8 4 > $(location marshal_generated7.c)",
++}
++
++genrule {
 +    name: "venus_unmarshal_table.c",
 +    out: [
 +        "unmarshal_table.c",
@@ -6480,6 +6685,25 @@ index 0000000000000000000000000000000000000000..f28c1d967368e45a79ba2f7854abaa59
 +    cmd: "$(location venus_unmarshal_table_c_py_binary) $(location gl_and_es_API.xml) " +
 +        "8 > $(location unmarshal_table.c)",
 +}
++
++genrule {
++    name: "venus_unmarshal_table.c_arm",
++    out: [
++        "unmarshal_table.c",
++    ],
++    srcs: [
++        ":venus_glapi_xml_py_deps",
++        ":venus_glapi_xml_py_deps_1",
++        ":venus_glapi_xml_py_deps_2",
++        "gl_and_es_API.xml",
++    ],
++    tools: [
++        "venus_unmarshal_table_c_py_binary",
++    ],
++    cmd: "$(location venus_unmarshal_table_c_py_binary) $(location gl_and_es_API.xml) " +
++        "4 > $(location unmarshal_table.c)",
++}
++
 +
 +python_library_host {
 +    name: "venus_pylib_src_mesa_glapi_glapi_gen",
@@ -7188,10 +7412,10 @@ index 0000000000000000000000000000000000000000..7ddd338ba2c4da851806528e75d371b5
 +}
 diff --git a/src/util/Android.bp b/src/util/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..c2320657548383e4d629de5fb493d81ad6ce89c3
+index 0000000000000000000000000000000000000000..31d4ab3bd8f0aac1b87c88b279b52297cd0fa997
 --- /dev/null
 +++ b/src/util/Android.bp
-@@ -0,0 +1,385 @@
+@@ -0,0 +1,392 @@
 +/*
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -7417,7 +7641,6 @@ index 0000000000000000000000000000000000000000..c2320657548383e4d629de5fb493d81a
 +        "bitscan.c",
 +        "blob.c",
 +        "build_id.c",
-+        "cache_ops_aarch64.c",
 +        "cnd_monotonic.c",
 +        "compress.c",
 +        "crc32.c",
@@ -7489,7 +7712,15 @@ index 0000000000000000000000000000000000000000..c2320657548383e4d629de5fb493d81a
 +        "u_worklist.c",
 +        "vl_zscan_data.c",
 +        "vma.c",
-+    ],
++    ] + select(arch(), {
++        "arm64": [
++            "cache_ops_aarch64.c",
++        ],
++        "arm": [
++            "cache_ops_null.c",
++        ],
++        default: [],
++    }),
 +    static_libs: [
 +        "venus_blake3",
 +        "venus_mesa_util_c11",
@@ -7579,10 +7810,10 @@ index 0000000000000000000000000000000000000000..c2320657548383e4d629de5fb493d81a
 +}
 diff --git a/src/util/blake3/Android.bp b/src/util/blake3/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..c413d95fada271fb46ed6e98d46fcaf03492b104
+index 0000000000000000000000000000000000000000..22f7cdb3c9e187bb0845e445c4cb800de1c27768
 --- /dev/null
 +++ b/src/util/blake3/Android.bp
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,46 @@
 +/*
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -7621,9 +7852,13 @@ index 0000000000000000000000000000000000000000..c413d95fada271fb46ed6e98d46fcaf0
 +    srcs: [
 +        "blake3.c",
 +        "blake3_dispatch.c",
-+        "blake3_neon.c",
 +        "blake3_portable.c",
-+    ],
++    ] + select(arch(), {
++        "arm64": [
++            "blake3_neon.c",
++        ],
++        default: [],
++    }),
 +}
 diff --git a/src/util/format/Android.bp b/src/util/format/Android.bp
 new file mode 100644

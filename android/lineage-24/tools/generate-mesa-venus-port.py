@@ -26,10 +26,21 @@ EGL and GLES libraries. It also deletes Mesa's legacy Android.mk makefiles:
 Soong refuses a makefile under a denylisted directory, and the Android.bp
 files alone describe the port.
 
+The port builds for each host platform `soong-port.toml` names, one per
+instruction set. The converter merges the platforms' differences into `select`
+expressions, but it drops a generated source whose command differs between
+platforms, such as the OpenGL dispatch code that bakes in the pointer size, and
+Soong generates a source once for every instruction set. This tool therefore
+converts each platform alone as well, keeps the first platform's generator as
+the module the dropped name still means, adds the others as
+`<name>_<arch>` modules, and has every library that uses one select its own
+instruction set's generator through an `arch` block.
+
 The converter is a builder toolchain input pinned by `third_party/meson2hermetic`:
 an upstream commit and a local series. This tool refuses a converter checkout
-whose tree is not the recorded final tree. The builder-local platform
-description stays outside this repository.
+whose tree is not the recorded final tree. The platform description it feeds
+the converter is tracked beside the port configuration, so the same pins always
+reproduce the same port.
 
 Run each step on the maintained topic branch and commit its result into its
 own topic: `protocol` into "Mesa Venus pair the generated protocol headers",
@@ -44,6 +55,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -538,6 +550,26 @@ class Port:
             )
         self.gl_front_ends = self.keep - {hal_module}
         self.warning_exceptions = warning_exceptions(table)
+        self.host_platforms, self.platform_arch = host_platforms(table)
+
+
+def host_platforms(table: dict[str, object]) -> tuple[list[str], dict[str, str]]:
+    """The host platforms the port converts, and the Soong arch of each."""
+    configs = table.get("config", [])
+    if len(configs) != 1:
+        raise SystemExit("generate-mesa-venus-port.py: the port needs exactly one [[config]]")
+    platforms = list(configs[0].get("platforms", {}).get("host_platforms", []))
+    if not platforms:
+        raise SystemExit("generate-mesa-venus-port.py: the port names no host platform")
+    arches = dict(table.get("kernarium", {}).get("platform_arch", {}))
+    if len(platforms) > 1 and (
+        set(arches) != set(platforms) or len(set(arches.values())) != len(arches)
+    ):
+        raise SystemExit(
+            "generate-mesa-venus-port.py: [kernarium.platform_arch] must give each host "
+            "platform its own Soong arch"
+        )
+    return platforms, arches
 
 
 def repair(root: Path, blueprints: list[Blueprint], port: Port) -> None:
@@ -640,18 +672,205 @@ def repair_warnings(blueprints: list[Blueprint], exceptions: list[dict[str, obje
     return repaired
 
 
-def convert(args: argparse.Namespace) -> None:
+def convert(
+    args: argparse.Namespace, config: Path | None = None, checkout: Path | None = None
+) -> None:
+    config = config or args.config
+    checkout = checkout or args.checkout
     command = [
         sys.executable,
         str(args.converter),
         "convert",
-        f"--config={args.config}",
+        f"--config={config}",
         f"--platforms={args.platforms}",
-        f"--project-dir={args.checkout}",
-        f"--output-dir={args.checkout}",
+        f"--project-dir={checkout}",
+        f"--output-dir={checkout}",
         f"--dependencies={args.dependencies}",
     ]
-    subprocess.run(command, cwd=args.checkout, check=True)
+    subprocess.run(command, cwd=checkout, check=True)
+
+
+HOST_PLATFORMS = re.compile(r"^host_platforms\s*=\s*\[[^\]]*\]\s*$", re.MULTILINE)
+TOP_LIST = re.compile(r"^    ([a-z_0-9]+):\s*\[\s*$")
+ARCH_FIELDS = {"srcs", "generated_headers", "generated_sources", "export_generated_headers"}
+Genrules = dict[tuple[str, str], list[str]]
+
+
+def platform_genrules(args: argparse.Namespace, port: Port) -> dict[str, Genrules]:
+    """The genrule blocks the converter writes for each host platform alone.
+
+    The converter drops a generated source whose command differs between the
+    platforms it merges, so the merged output cannot say what each platform
+    needs. A copy of the pristine checkout holds each platform's run."""
+    variants: dict[str, Genrules] = {}
+    with tempfile.TemporaryDirectory(prefix="mesa-venus-platforms-") as scratch:
+        for platform in port.host_platforms:
+            copy = Path(scratch) / platform
+            shutil.copytree(
+                args.checkout, copy, symlinks=True, ignore=shutil.ignore_patterns(".git")
+            )
+            text, count = HOST_PLATFORMS.subn(
+                f'host_platforms = ["{platform}"]', args.config.read_text(), count=1
+            )
+            if count != 1:
+                raise SystemExit(
+                    "generate-mesa-venus-port.py: the port configuration has no "
+                    "host_platforms line to narrow"
+                )
+            config = Path(scratch) / f"{platform}.toml"
+            config.write_text(text)
+            convert(args, config, copy)
+            variants[platform] = {
+                (bp.path.relative_to(copy).as_posix(), name): block
+                for bp in load(copy)
+                for block in bp.blocks
+                if block_kind(block) == "genrule" and (name := block_name(block)) is not None
+            }
+    return variants
+
+
+def retarget(block: list[str], name: str, new_name: str) -> list[str]:
+    out = []
+    for line in block:
+        match = NAME_LINE.match(line)
+        if match is not None and match.group(2) == name:
+            line = f'{match.group(1)}name: "{new_name}"{match.group(3)}'
+        out.append(line)
+    return out
+
+
+def trimmed(block: list[str]) -> list[str]:
+    end = len(block)
+    while end and not block[end - 1].strip():
+        end -= 1
+    return block[:end]
+
+
+def top_list_end(block: list[str], start: int) -> tuple[int, bool]:
+    """The line that closes the top-level list opened at `start`, and whether
+    the field ends there: a list followed by a `select` does not."""
+    for index in range(start + 1, len(block)):
+        line = block[index]
+        if line.startswith("    ]") and not line.startswith("     "):
+            return index, line.strip() == "],"
+    raise SystemExit("generate-mesa-venus-port.py: a list field is not closed")
+
+
+def split_consumer(
+    block: list[str], renames: dict[str, dict[str, str]]
+) -> tuple[list[str], dict[str, dict[str, list[str]]]]:
+    """Take the references to arch-specific generators out of a module's lists.
+
+    Returns the module without them and, per arch, the fields that name that
+    arch's generator instead."""
+    moved: dict[str, dict[str, list[str]]] = {}
+    out = list(block)
+    for field in sorted({m.group(1) for line in block if (m := TOP_LIST.match(line))}):
+        start = next(
+            i for i, line in enumerate(out)
+            if (m := TOP_LIST.match(line)) is not None and m.group(1) == field
+        )
+        end, plain = top_list_end(out, start)
+        refs = [
+            item for line in out[start + 1:end] for item in QUOTED.findall(line)
+            if item.removeprefix(":") in renames
+        ]
+        if not plain:
+            body = out[start:]
+            for index in range(1, len(body)):
+                if re.match(r"^    [a-z_0-9]+:", body[index]):
+                    body = body[:index]
+                    break
+            if any(item.removeprefix(":") in renames for line in body for item in QUOTED.findall(line)):
+                raise SystemExit(
+                    f"generate-mesa-venus-port.py: {block_name(block)} names an arch-specific "
+                    f"generator inside a conditional {field}"
+                )
+            continue
+        if not refs:
+            continue
+        if field not in ARCH_FIELDS or block_kind(block) not in COMPAT_TYPES:
+            raise SystemExit(
+                f"generate-mesa-venus-port.py: {block_name(block)} names an arch-specific "
+                f"generator in its {field}, which an arch block cannot carry"
+            )
+        items = list_items(out, field)
+        for item in items:
+            base = item.removeprefix(":")
+            if base in renames:
+                prefix = ":" if item.startswith(":") else ""
+                for arch, name in renames[base].items():
+                    moved.setdefault(arch, {}).setdefault(field, []).append(prefix + name)
+        out = set_list(out, field, [i for i in items if i.removeprefix(":") not in renames])
+    return out, moved
+
+
+def arch_block(moved: dict[str, dict[str, list[str]]]) -> list[str]:
+    lines = ["    arch: {"]
+    for arch in sorted(moved):
+        lines.append(f"        {arch}: {{")
+        for field in sorted(moved[arch]):
+            lines.append(f"            {field}: [")
+            lines.extend(f'                "{item}",' for item in moved[arch][field])
+            lines.append("            ],")
+        lines.append("        },")
+    lines.append("    },")
+    return lines
+
+
+def split_arch_genrules(
+    root: Path, blueprints: list[Blueprint], variants: dict[str, Genrules], port: Port
+) -> int:
+    """Give every platform its own copy of a generator whose command differs.
+
+    The first host platform keeps the generator's name; each other platform's
+    copy is named `<name>_<arch>`. Libraries that use the generator select by
+    arch. Returns the number of generators split."""
+    default, *others = port.host_platforms
+    shared = set(variants[default])
+    for platform in others:
+        shared &= set(variants[platform])
+    differing = sorted(
+        key for key in shared
+        if len({tuple(variants[platform][key]) for platform in port.host_platforms}) > 1
+    )
+    files = {bp.path.relative_to(root).as_posix(): bp for bp in blueprints}
+    renames: dict[str, dict[str, str]] = {}
+    for path, name in differing:
+        bp = files.get(path)
+        if bp is None:
+            raise SystemExit(f"generate-mesa-venus-port.py: the converter wrote no {path}")
+        arch_names = {port.platform_arch[default]: name}
+        group = [trimmed(variants[default][(path, name)])]
+        for platform in others:
+            arch = port.platform_arch[platform]
+            arch_names[arch] = f"{name}_{arch}"
+            group.append(retarget(trimmed(variants[platform][(path, name)]), name, arch_names[arch]))
+        renames[name] = arch_names
+        # A block is one module; it carries the blank lines that follow it.
+        copies = [block + [""] for block in group]
+        index = next((i for i, b in enumerate(bp.blocks) if block_name(b) == name), None)
+        if index is None:
+            if bp.blocks and bp.blocks[-1] and bp.blocks[-1][-1].strip():
+                bp.blocks[-1].append("")
+            bp.blocks.extend(copies)
+        else:
+            blanks = len(bp.blocks[index]) - len(trimmed(bp.blocks[index]))
+            copies[-1] = copies[-1][:-1] + [""] * blanks
+            bp.blocks[index:index + 1] = copies
+    if not renames:
+        return 0
+    for bp in blueprints:
+        for index, block in enumerate(bp.blocks):
+            if block_kind(block) == "genrule":
+                continue
+            updated, moved = split_consumer(block, renames)
+            if not moved:
+                continue
+            end = max(i for i, line in enumerate(updated) if BLOCK_END.match(line))
+            updated[end:end] = arch_block(moved)
+            bp.blocks[index] = updated
+    return len(renames)
 
 
 PROTOCOL_DIRECTORY = "src/virtio/venus-protocol"
@@ -764,6 +983,10 @@ def generate_soong(args: argparse.Namespace, metadata: dict[str, str]) -> None:
     args.config = args.android_root / "third_party/mesa-venus/soong-port.toml"
     if not args.config.is_file():
         raise SystemExit("generate-mesa-venus-port.py: the port configuration is missing")
+    if args.platforms is None:
+        args.platforms = args.android_root / "third_party/mesa-venus/soong-platforms.toml"
+    if not args.platforms.is_file():
+        raise SystemExit("generate-mesa-venus-port.py: the platform description is missing")
     if args.dependencies is None:
         args.dependencies = (
             args.android_root / "third_party/mesa-venus/soong-dependencies.toml"
@@ -772,9 +995,13 @@ def generate_soong(args: argparse.Namespace, metadata: dict[str, str]) -> None:
         raise SystemExit("generate-mesa-venus-port.py: the dependency map is missing")
     port = Port(args.config, metadata.get("MESA_VENUS_HAL_MODULE", ""))
     verify_converter(args.android_root, args.converter)
+    variants = platform_genrules(args, port) if len(port.host_platforms) > 1 else {}
     convert(args)
     remove_makefiles(args.checkout)
     blueprints = load(args.checkout)
+    if variants:
+        split = split_arch_genrules(args.checkout, blueprints, variants, port)
+        print(f"split {split} generators that differ between host platforms")
     repair(args.checkout, blueprints, port)
     blueprints = prune(blueprints, port.keep)
     scope(args.checkout, blueprints, port.keep)
@@ -813,7 +1040,9 @@ def main() -> None:
         help="builder-local meson2hermetic meson.py",
     )
     soong.add_argument(
-        "--platforms", type=Path, required=True, help="builder-local platforms toml"
+        "--platforms",
+        type=Path,
+        help="platform description override; defaults to the port's own",
     )
     soong.add_argument(
         "--dependencies",
