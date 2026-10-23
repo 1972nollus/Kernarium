@@ -1171,7 +1171,7 @@ public:
 	 * source identifies the work. The parts of its allocations go out with
 	 * it because they decide what a translation costs.
 	 */
-	void census(std::FILE *out, std::uint64_t snapshot) const noexcept
+	void census(std::FILE *out, std::uint64_t snapshot) const
 	{
 		const auto parts = footprint();
 		/* sizeof(Slot) is reported because the slab total covers the

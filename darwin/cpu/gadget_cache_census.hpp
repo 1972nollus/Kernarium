@@ -125,7 +125,9 @@ inline constexpr std::uint64_t digest_seed = 0xcbf29ce484222325ULL;
 /* Append one cache's records. Every executor of a run appends to the same
  * file, so whole records are serialised here; they are formatted in memory
  * first, so a vCPU writing a large cache holds up the others only while its
- * text reaches the file. */
+ * text reaches the file. A snapshot is taken at a lookup or at an executor's
+ * teardown, neither of which may fail for it, so one the census has no memory
+ * to finish is left out whole rather than written in part. */
 template <typename Write>
 void append(Write &&write) noexcept
 {
@@ -137,9 +139,14 @@ void append(Write &&write) noexcept
 	std::FILE *buffer = open_memstream(&text, &size);
 	if (buffer == nullptr)
 		return;
-	write(buffer);
+	bool whole = true;
+	try {
+		write(buffer);
+	} catch (const std::bad_alloc &) {
+		whole = false;
+	}
 	std::fclose(buffer);
-	{
+	if (whole) {
 		static std::mutex mutex;
 		const std::lock_guard guard{mutex};
 		if (std::FILE *out = std::fopen(file, "ae"); out != nullptr) {
