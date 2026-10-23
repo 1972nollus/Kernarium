@@ -415,8 +415,9 @@ history counts the misses that adopted another cache's body. Each `G` and `S`
 record also says whether the MMU still has the address space's generation
 (`alive=1`) or has destroyed it (`alive=0`; negative when it cannot say from the
 thread taking the snapshot), and the report counts the bytes of the destroyed
-ones. An x86 cache, which keeps its address spaces to itself, writes `alive=`
-and the bytes of the address space's translations (`held=`) on its `G` record.
+ones. An x86 cache asks as its runtime does at the start of each run, so it
+cannot say before its first, and its `G` record also carries the bytes of its
+own translations of the address space (`held=`).
 
 The history counts how each lookup ended, why each departing translation
 left (way eviction, address-space retirement, or a discard), and, for every

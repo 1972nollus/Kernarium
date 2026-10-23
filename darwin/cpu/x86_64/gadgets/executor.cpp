@@ -1152,6 +1152,13 @@ public:
 		return occupied;
 	}
 
+	/* How the runtime last said to ask whether a generation is alive
+	 * (Executor::leave_gone_generations), which the census asks too. */
+	void census_liveness(GenerationLiveness live) noexcept
+	{
+		census_live_ = live;
+	}
+
 	/* Write what this cache holds and how it came to hold it, so
 	 * duplication, dormancy and lost work can be counted instead of
 	 * estimated. `snapshot` numbers a periodic snapshot; zero is the one
@@ -1225,10 +1232,13 @@ public:
 			const bool running =
 				generation == window_.current_generation;
 			const auto bytes = generation_bytes(state);
-			/* Whether the MMU still has the address space: 1 live, 0
-			 * destroyed, negative when it cannot say from this thread. */
-			const int alive = darwin_uml_static_vm_generation_live(
-				static_cast<unsigned long>(generation));
+			/* Whether the MMU still has the address space, asked as the
+			 * runtime asks: 1 live, 0 destroyed, negative when it cannot
+			 * say from this thread or the cache has not been told how
+			 * to ask. */
+			const int alive = census_live_ != nullptr ?
+				census_live_(static_cast<unsigned long>(generation)) :
+				-1;
 			/* The G line's bytes are this cache's own list of its slots
 			 * in the space, and all of a private space's; a shared
 			 * space is on its S line, named by its identity, which
@@ -2097,6 +2107,7 @@ private:
 	 * the tombstones of those the window's order retired. */
 	std::uint64_t dead_left_{};
 	std::uint64_t lru_tomb_{};
+	GenerationLiveness census_live_{};
 #endif
 };
 
@@ -2293,6 +2304,9 @@ void Executor::prepare(::uml::memory::GuestAddressSpace &memory,
 void Executor::leave_gone_generations(unsigned long long retirements,
 	GenerationLiveness live) noexcept
 {
+#if UML_GADGET_CACHE_CENSUS
+	storage_->programs.census_liveness(live);
+#endif
 	try {
 		/* The address spaces the gadget-cache budget asked to shed,
 		 * first. */
