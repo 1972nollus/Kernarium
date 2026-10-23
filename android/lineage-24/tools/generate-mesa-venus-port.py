@@ -36,6 +36,14 @@ the module the dropped name still means, adds the others as
 `<name>_<arch>` modules, and has every library that uses one select its own
 instruction set's generator through an `arch` block.
 
+Soong accepts a `select` only on a property it declares configurable, and the
+converter writes one on any property that differs between platforms. The tool
+keeps a `select` on a property Soong makes configurable and moves the values
+of every other property that Soong lets an `arch` block set into one. It
+refuses a `select` on a property whose configurability it has not been told,
+rather than leave Soong to reject the port: SOONG_CONFIGURABLE and
+SOONG_ARCH_VARIANT list what Soong's own property structs declare.
+
 The converter is a builder toolchain input pinned by `third_party/meson2hermetic`:
 an upstream commit and a local series. This tool refuses a converter checkout
 whose tree is not the recorded final tree. The platform description it feeds
@@ -61,6 +69,7 @@ import sys
 import tempfile
 import tomllib
 from pathlib import Path
+from typing import NamedTuple
 
 import pinned_source
 # pinned_source puts the contract checks on sys.path.
@@ -695,6 +704,215 @@ TOP_LIST = re.compile(r"^    ([a-z_0-9]+):\s*\[\s*$")
 ARCH_FIELDS = {"srcs", "generated_headers", "generated_sources", "export_generated_headers"}
 Genrules = dict[tuple[str, str], list[str]]
 
+# Soong accepts `select` only on a property whose Go type is
+# proptools.Configurable, and `arch: {...}` only on one tagged arch_variant.
+# Read from the property structs of build/soong at 5ea23647 (the LineageOS
+# lineage-24.0 workspace the Android build uses):
+#   cc:      cc/compiler.go BaseCompilerProperties, cc/linker.go
+#            BaseLinkerProperties, cc/library.go FlagExporterProperties and
+#            cc/cc.go BaseProperties;
+#   genrule: genrule/genrule.go generatorProperties and genRuleProperties.
+# Every other module type the port holds (filegroup, python, package, license)
+# takes no select on a property the converter writes.
+SELECT_GROUP = {
+    "cc_binary": "cc",
+    "cc_defaults": "cc",
+    "cc_library_headers": "cc",
+    "cc_library_shared": "cc",
+    "cc_library_static": "cc",
+    "cc_object": "cc",
+    "genrule": "genrule",
+}
+SOONG_CONFIGURABLE = {
+    "cc": frozenset({
+        "cflags", "cppflags", "device_first_generated_headers", "exclude_srcs",
+        "export_cflags", "export_header_lib_headers", "export_include_dirs",
+        "generated_headers", "header_libs", "include_dirs", "ldflags",
+        "local_include_dirs", "min_sdk_version", "shared_libs", "srcs",
+        "static_libs", "whole_static_libs",
+    }),
+    "genrule": frozenset({
+        "cmd", "common_os_srcs", "device_common_srcs", "device_first_srcs",
+        "host_first_srcs", "host_second_srcs", "srcs",
+    }),
+}
+SOONG_ARCH_VARIANT = {
+    "cc": frozenset({
+        "allow_undefined_symbols", "asflags", "clang", "clang_asflags",
+        "clang_cflags", "conlyflags", "exclude_generated_sources",
+        "exclude_runtime_libs", "export_generated_headers",
+        "export_shared_lib_headers", "export_static_lib_headers",
+        "export_system_include_dirs", "generated_sources", "group_static_libs",
+        "host_ldlibs", "ignore_max_page_size", "installable", "instruction_set",
+        "no_crt_pad_segment", "no_libcrt", "nocrt", "optimize_for_size", "rtti",
+        "runtime_libs", "system_shared_libs", "tidy_disabled_srcs",
+        "tidy_timeout_srcs",
+    }),
+    "genrule": frozenset({"exclude_srcs", "out"}),
+}
+SELECT_CLOSE = "    ] + select(arch(), {"
+SELECT_END = "    }),"
+BRANCH_OPEN = re.compile(r'^        (?:"([a-z0-9_]+)"|(default)): \[(.*)$')
+ARCH_OPEN = "    arch: {"
+
+
+class Select(NamedTuple):
+    """A top-level list followed by `+ select(arch(), {...})`, as the converter
+    writes it: `first` is the line closing the list, `last` the line closing
+    the select, and `branches` maps each arch (or `default`) to its items."""
+
+    field: str
+    first: int
+    last: int
+    branches: dict[str, list[str]]
+
+
+def selects(block: list[str]) -> list[Select]:
+    found: list[Select] = []
+    field: str | None = None
+    index = 0
+    while index < len(block):
+        line = block[index]
+        opened = TOP_LIST.match(line)
+        if opened is not None:
+            field = opened.group(1)
+        if "select(" not in line:
+            index += 1
+            continue
+        if line != SELECT_CLOSE or field is None:
+            raise SystemExit(
+                f"generate-mesa-venus-port.py: {block_name(block)} has a select this tool "
+                f"cannot read: {line.strip()}"
+            )
+        branches: dict[str, list[str]] = {}
+        end = index + 1
+        while end < len(block) and block[end] != SELECT_END:
+            branch = BRANCH_OPEN.match(block[end])
+            if branch is None:
+                raise SystemExit(
+                    f"generate-mesa-venus-port.py: {block_name(block)} has a select branch "
+                    f"this tool cannot read: {block[end].strip()}"
+                )
+            items = QUOTED.findall(branch.group(3))
+            if "]" not in branch.group(3):
+                end += 1
+                while end < len(block) and block[end] != "        ],":
+                    items.extend(QUOTED.findall(block[end]))
+                    end += 1
+            branches[branch.group(1) or "default"] = items
+            end += 1
+        if end >= len(block):
+            raise SystemExit(
+                f"generate-mesa-venus-port.py: {block_name(block)} has an unclosed select"
+            )
+        found.append(Select(field, index, end, branches))
+        index = end + 1
+    return found
+
+
+def take_arch(block: list[str]) -> tuple[list[str], dict[str, dict[str, list[str]]]]:
+    """Remove the block's `arch` field, as arch_block writes it, and return it."""
+    if ARCH_OPEN not in block:
+        return block, {}
+    start = block.index(ARCH_OPEN)
+    end = next((i for i in range(start + 1, len(block)) if block[i] == "    },"), None)
+    if end is None:
+        raise SystemExit(f"generate-mesa-venus-port.py: {block_name(block)} has an unclosed arch")
+    arches: dict[str, dict[str, list[str]]] = {}
+    arch: str | None = None
+    field: str | None = None
+    for line in block[start + 1:end]:
+        if (m := re.match(r"^        ([a-z0-9_]+): \{$", line)) is not None:
+            arch = m.group(1)
+            arches.setdefault(arch, {})
+        elif (m := re.match(r"^            ([a-z_0-9]+): \[$", line)) is not None and arch:
+            field = m.group(1)
+            arches[arch].setdefault(field, [])
+        elif line == "            ]," and field:
+            field = None
+        elif line == "        }," and arch and field is None:
+            arch = None
+        elif (m := re.match(r'^                "([^"]*)",$', line)) is not None and arch and field:
+            arches[arch][field].append(m.group(1))
+        else:
+            raise SystemExit(
+                f"generate-mesa-venus-port.py: {block_name(block)} has an arch block "
+                f"this tool cannot read: {line.strip()}"
+            )
+    return block[:start] + block[end + 1:], arches
+
+
+def add_arch(block: list[str], moved: dict[str, dict[str, list[str]]]) -> list[str]:
+    """Add per-arch field values to the block's `arch` field, making it if absent."""
+    block, arches = take_arch(block)
+    for arch in moved:
+        for field, items in moved[arch].items():
+            arches.setdefault(arch, {}).setdefault(field, []).extend(items)
+    end = max(i for i, line in enumerate(block) if BLOCK_END.match(line))
+    block[end:end] = arch_block(arches)
+    return block
+
+
+def lift_arch_selects(blueprints: list[Blueprint], port: Port) -> int:
+    """Move the select on a property Soong does not make configurable into an
+    `arch` block; keep one on a configurable property. Returns the number moved."""
+    arches = set(port.platform_arch.values())
+    lifted = 0
+    for bp in blueprints:
+        for index, block in enumerate(bp.blocks):
+            found = selects(block)
+            if not found:
+                continue
+            group = SELECT_GROUP.get(block_kind(block), "")
+            lines = list(block)
+            moved: dict[str, dict[str, list[str]]] = {}
+            for choice in reversed(found):
+                if choice.field in SOONG_CONFIGURABLE.get(group, frozenset()):
+                    continue
+                if choice.field not in SOONG_ARCH_VARIANT.get(group, frozenset()):
+                    raise SystemExit(
+                        f"generate-mesa-venus-port.py: {block_name(block)} selects "
+                        f"{choice.field}, which Soong neither makes configurable nor lets an "
+                        f"arch block set; add it to the tables with Soong's evidence"
+                    )
+                unknown = set(choice.branches) - arches - {"default"}
+                if unknown:
+                    raise SystemExit(
+                        f"generate-mesa-venus-port.py: {block_name(block)} selects "
+                        f"{choice.field} on {sorted(unknown)}, which is no host platform's arch"
+                    )
+                for arch in sorted(arches):
+                    items = choice.branches.get(arch, choice.branches.get("default", []))
+                    if items:
+                        moved.setdefault(arch, {})[choice.field] = items
+                start = choice.first
+                if (m := TOP_LIST.match(lines[start - 1])) is not None and m.group(1) == choice.field:
+                    start -= 1  # nothing precedes the select: drop the empty list too
+                    lines[start:choice.last + 1] = []
+                else:
+                    lines[start:choice.last + 1] = ["    ],"]
+                lifted += 1
+            if moved:
+                lines = add_arch(lines, moved)
+            bp.blocks[index] = lines
+    return lifted
+
+
+def audit_selects(blueprints: list[Blueprint]) -> int:
+    """Refuse a select on a property Soong does not make configurable."""
+    count = 0
+    for bp in blueprints:
+        for block in bp.blocks:
+            group = SELECT_GROUP.get(block_kind(block), "")
+            for choice in selects(block):
+                if choice.field not in SOONG_CONFIGURABLE.get(group, frozenset()):
+                    raise SystemExit(
+                        f"generate-mesa-venus-port.py: {block_name(block)} still selects "
+                        f"{choice.field}, which Soong does not make configurable"
+                    )
+                count += 1
+    return count
+
 
 def platform_genrules(args: argparse.Namespace, port: Port) -> dict[str, Genrules]:
     """The genrule blocks the converter writes for each host platform alone.
@@ -867,9 +1085,7 @@ def split_arch_genrules(
             updated, moved = split_consumer(block, renames)
             if not moved:
                 continue
-            end = max(i for i, line in enumerate(updated) if BLOCK_END.match(line))
-            updated[end:end] = arch_block(moved)
-            bp.blocks[index] = updated
+            bp.blocks[index] = add_arch(updated, moved)
     return len(renames)
 
 
@@ -999,12 +1215,18 @@ def generate_soong(args: argparse.Namespace, metadata: dict[str, str]) -> None:
     convert(args)
     remove_makefiles(args.checkout)
     blueprints = load(args.checkout)
+    lifted = lift_arch_selects(blueprints, port)
+    if lifted:
+        print(f"moved {lifted} selects on properties Soong does not make configurable into arch blocks")
     if variants:
         split = split_arch_genrules(args.checkout, blueprints, variants, port)
         print(f"split {split} generators that differ between host platforms")
     repair(args.checkout, blueprints, port)
     blueprints = prune(blueprints, port.keep)
     scope(args.checkout, blueprints, port.keep)
+    kept = audit_selects(blueprints)
+    if kept:
+        print(f"kept {kept} selects on properties Soong makes configurable")
     saved = sum(1 for bp in blueprints if bp.save())
     print(f"wrote {saved} Android.bp files")
 

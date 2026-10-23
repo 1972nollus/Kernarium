@@ -306,7 +306,12 @@ The port itself is generated. `tools/generate-mesa-venus-port.py soong` runs AOS
 description beside it, `soong-platforms.toml`, for two host platforms: arm64
 and arm. The description answers Mesa's configure-time checks for each
 instruction set (the converter runs no compiler), and the converter merges the
-platforms into `select(arch())` expressions. It drops a generated source whose
+platforms into `select(arch())` expressions. Soong accepts a select only on a
+property whose Go type is `proptools.Configurable`, so the tool keeps the
+selects on `srcs` and `cppflags` and moves the values of a property like
+`conlyflags` into an `arch` block; it refuses a select on any property that
+its tables, taken from Soong's property structs, do not list. The converter
+drops a generated source whose
 command differs between platforms, and the OpenGL command marshalling bakes in
 the pointer size, so the tool converts each platform alone as well, keeps the
 first platform's generators under their names, adds the others as

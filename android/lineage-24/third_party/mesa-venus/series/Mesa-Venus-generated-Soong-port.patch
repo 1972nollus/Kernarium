@@ -12,11 +12,14 @@ with a venus_ prefix.
 The OpenGL command marshalling bakes in the pointer size, so each instruction
 set generates its own copy and the library selects it by arch.
 
+A flag only the arm64 platform sets is a select where Soong makes the property
+configurable and an arch block where it does not (conlyflags is a plain list).
+
 Soong refuses any Android.mk under a denylisted directory, and this port is
 described entirely by generated Android.bp files. The removed makefile builds
 nothing this product installs.
 ---
- Android.bp                                    | 390 +++++++
+ Android.bp                                    | 392 +++++++
  android/Android.mk                            | 214 ----
  bin/Android.bp                                |  27 +
  include/Android.bp                            |  23 +
@@ -91,7 +94,7 @@ nothing this product installs.
  src/vulkan/runtime/rmv/Android.bp             |  23 +
  src/vulkan/util/Android.bp                    | 393 +++++++
  src/vulkan/wsi/Android.bp                     | 148 +++
- 75 files changed, 8797 insertions(+), 214 deletions(-)
+ 75 files changed, 8799 insertions(+), 214 deletions(-)
  create mode 100644 Android.bp
  delete mode 100644 android/Android.mk
  create mode 100644 bin/Android.bp
@@ -170,10 +173,10 @@ nothing this product installs.
 
 diff --git a/Android.bp b/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..78dcfcb022e218bb78965d92dd3b9a710b61941e
+index 0000000000000000000000000000000000000000..3c708185c0beab2dc8b67df0eea5eb1a22179185
 --- /dev/null
 +++ b/Android.bp
-@@ -0,0 +1,390 @@
+@@ -0,0 +1,392 @@
 +/*
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -369,12 +372,14 @@ index 0000000000000000000000000000000000000000..78dcfcb022e218bb78965d92dd3b9a71
 +        "-fno-emulated-tls",
 +        "-fno-math-errno",
 +        "-fno-trapping-math",
-+    ] + select(arch(), {
-+        "arm64": [
-+            "-DHAVE_UINT128",
-+        ],
-+        default: [],
-+    }),
++    ],
++    arch: {
++        arm64: {
++            conlyflags: [
++                "-DHAVE_UINT128",
++            ],
++        },
++    },
 +}
 +
 +cc_defaults {

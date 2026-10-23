@@ -7,7 +7,15 @@ platforms it merges. The generator converts each platform alone, keeps the
 first platform's generator under its name, adds the others as `<name>_<arch>`,
 and has each library that uses one select by arch. This test drives those
 steps on synthetic Android.bp files, without the converter, and checks that
-the tracked platform description covers the platforms the port names."""
+the tracked platform description covers the platforms the port names.
+
+Soong accepts a select only on a property whose Go type is
+proptools.Configurable. The converter writes one on any property that differs
+between platforms, so the generator moves the values of a property Soong does
+not make configurable into an arch block. The test pins the properties Soong's
+own structs declare, checks the generator's tables against them, drives the
+move on synthetic modules, and refuses the committed port if it still selects
+a property outside the pinned list."""
 
 from __future__ import annotations
 
@@ -16,6 +24,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import importlib.util
 import sys
+import re
 import tempfile
 import tomllib
 from pathlib import Path
@@ -95,6 +104,58 @@ def variants_for(generator, scratch: Path, sizes: dict[str, str]) -> dict:
         out[platform] = blocks(generator, root, "gen/Android.bp")
     return out
 
+
+# The property structs of build/soong at 5ea23647 (the LineageOS lineage-24.0
+# workspace the Android build uses), per module-type group: the properties
+# whose type is proptools.Configurable, the only ones blueprint lets a select
+# set (build/blueprint/proptools/unpack.go, selectOnNonConfigurablePropertyError),
+# and the other properties tagged arch_variant, the only ones an arch block may
+# set. The cc module types read these four structs; genrule reads the last two.
+SOONG_STRUCTS = {
+    ("cc", "cc/compiler.go", "BaseCompilerProperties"): (
+        ["cflags", "cppflags", "device_first_generated_headers", "exclude_srcs",
+         "generated_headers", "include_dirs", "local_include_dirs", "srcs"],
+        ["asflags", "clang_asflags", "clang_cflags", "conlyflags",
+         "exclude_generated_sources", "generated_sources", "instruction_set",
+         "rtti", "tidy_disabled_srcs", "tidy_timeout_srcs"],
+    ),
+    ("cc", "cc/linker.go", "BaseLinkerProperties"): (
+        ["export_header_lib_headers", "header_libs", "ldflags", "shared_libs",
+         "static_libs", "whole_static_libs"],
+        ["allow_undefined_symbols", "exclude_runtime_libs",
+         "export_generated_headers", "export_shared_lib_headers",
+         "export_static_lib_headers", "group_static_libs", "host_ldlibs",
+         "ignore_max_page_size", "no_crt_pad_segment", "no_libcrt", "nocrt",
+         "runtime_libs", "system_shared_libs"],
+    ),
+    ("cc", "cc/library.go", "FlagExporterProperties"): (
+        ["export_cflags", "export_include_dirs"],
+        ["export_system_include_dirs"],
+    ),
+    ("cc", "cc/cc.go", "BaseProperties"): (
+        ["min_sdk_version"],
+        ["clang", "installable", "optimize_for_size"],
+    ),
+    ("genrule", "genrule/genrule.go", "generatorProperties"): (
+        ["cmd", "common_os_srcs", "device_common_srcs", "device_first_srcs",
+         "host_first_srcs", "host_second_srcs", "srcs"],
+        ["exclude_srcs"],
+    ),
+    ("genrule", "genrule/genrule.go", "genRuleProperties"): ([], ["out"]),
+}
+CONFIGURABLE = {
+    group: frozenset(n for (g, _, _), (conf, _) in SOONG_STRUCTS.items() if g == group for n in conf)
+    for group in ("cc", "genrule")
+}
+ARCH_VARIANT = {
+    group: frozenset(n for (g, _, _), (_, av) in SOONG_STRUCTS.items() if g == group for n in av)
+    for group in ("cc", "genrule")
+}
+GROUPS = {
+    "cc_binary": "cc", "cc_defaults": "cc", "cc_library_headers": "cc",
+    "cc_library_shared": "cc", "cc_library_static": "cc", "cc_object": "cc",
+    "genrule": "genrule",
+}
 
 PORT = SimpleNamespace(
     host_platforms=["p64", "p32"], platform_arch={"p64": "arm64", "p32": "arm"}
@@ -220,6 +281,284 @@ def check_refusals(generator, scratch: Path) -> None:
         fail(f"a module that cannot take an arch block is refused: {message}")
 
 
+def check_soong_tables(generator) -> None:
+    for group in CONFIGURABLE:
+        if CONFIGURABLE[group] & ARCH_VARIANT[group]:
+            fail(f"{group}: a property is both configurable and plain in the pinned list")
+    if dict(generator.SOONG_CONFIGURABLE) != CONFIGURABLE:
+        fail("the generator's SOONG_CONFIGURABLE differs from the pinned Soong list")
+    if dict(generator.SOONG_ARCH_VARIANT) != ARCH_VARIANT:
+        fail("the generator's SOONG_ARCH_VARIANT differs from the pinned Soong list")
+    if dict(generator.SELECT_GROUP) != GROUPS:
+        fail("the generator's SELECT_GROUP differs from the pinned module types")
+    # The property that failed the first Soong run: a plain list, not configurable.
+    if "conlyflags" in CONFIGURABLE["cc"] or "conlyflags" not in ARCH_VARIANT["cc"]:
+        fail("cc conlyflags is a plain arch_variant list in Soong")
+    if "cppflags" not in CONFIGURABLE["cc"] or "srcs" not in CONFIGURABLE["cc"]:
+        fail("cc cppflags and srcs are configurable in Soong")
+
+
+LIFT_INPUT = '''cc_defaults {
+    name: "defs",
+    conlyflags: [
+        "-DA",
+    ] + select(arch(), {
+        "arm64": [
+            "-DB",
+        ],
+        default: [],
+    }),
+    cppflags: [
+        "-DC",
+    ] + select(arch(), {
+        "arm64": [
+            "-DD",
+        ],
+        default: [],
+    }),
+}
+
+cc_library_static {
+    name: "lib",
+    srcs: [
+        "a.c",
+    ] + select(arch(), {
+        "arm64": [
+            "b.c",
+        ],
+        "arm": [
+            "c.c",
+        ],
+        default: [],
+    }),
+    asflags: [
+    ] + select(arch(), {
+        "arm": [
+            "-x",
+        ],
+        default: ["-y"],
+    }),
+    conlyflags: [
+        "-DE",
+    ] + select(arch(), {
+        "arm": [
+            "-DF",
+        ],
+        default: [],
+    }),
+    arch: {
+        arm: {
+            srcs: [
+                ":gen_arm",
+            ],
+        },
+        arm64: {
+            srcs: [
+                ":gen",
+            ],
+        },
+    },
+}
+'''
+
+
+def check_lift(generator, scratch: Path) -> None:
+    root = scratch / "lift"
+    write(root, "Android.bp", LIFT_INPUT)
+    blueprints = generator.load(root)
+    if generator.lift_arch_selects(blueprints, PORT) != 3:
+        fail("three selects are on properties Soong does not make configurable")
+    for bp in blueprints:
+        bp.save()
+    text = (root / "Android.bp").read_text()
+    defaults, library = text.split("\ncc_library_static {\n")
+    for wanted in (
+        '''    conlyflags: [
+        "-DA",
+    ],
+    cppflags: [
+        "-DC",
+    ] + select(arch(), {
+        "arm64": [
+            "-DD",
+        ],
+        default: [],
+    }),
+    arch: {
+        arm64: {
+            conlyflags: [
+                "-DB",
+            ],
+        },
+    },
+}''',
+    ):
+        if wanted not in defaults:
+            fail(f"the defaults lack:\n{wanted}\nin\n{defaults}")
+    for wanted in (
+        '''    srcs: [
+        "a.c",
+    ] + select(arch(), {''',
+        # The empty list before a lifted select goes with it.
+        '''    conlyflags: [
+        "-DE",
+    ],
+    arch: {
+        arm: {
+            asflags: [
+                "-x",
+            ],
+            conlyflags: [
+                "-DF",
+            ],
+            srcs: [
+                ":gen_arm",
+            ],
+        },
+        arm64: {
+            asflags: [
+                "-y",
+            ],
+            srcs: [
+                ":gen",
+            ],
+        },
+    },
+}''',
+    ):
+        if wanted not in library:
+            fail(f"the library lacks:\n{wanted}\nin\n{library}")
+    if "asflags: [\n    ]" in library:
+        fail("a lifted select leaves no empty list behind")
+    if library.count("arch: {") != 1:
+        fail("lifted values join the arch block the module already has")
+    # What remains selects only configurable properties.
+    if generator.audit_selects(generator.load(root)) != 2:
+        fail("the cppflags and srcs selects stay")
+    again = generator.load(root)
+    if generator.lift_arch_selects(again, PORT) != 0 or any(bp.save() for bp in again):
+        fail("lifting is idempotent")
+
+
+def check_lift_refusals(generator, scratch: Path) -> None:
+    def lift(name: str, text: str, audit: bool = False):
+        root = scratch / name
+        write(root, "Android.bp", text)
+        blueprints = generator.load(root)
+        try:
+            if audit:
+                generator.audit_selects(blueprints)
+            else:
+                generator.lift_arch_selects(blueprints, PORT)
+        except SystemExit as error:
+            return str(error)
+        fail(f"{name} must be refused")
+        return ""
+
+    def module(kind: str, field: str, extra: str = "") -> str:
+        return f'''{kind} {{
+    name: "m",
+    {field}: [
+        "x",
+    ] + select(arch(), {{
+        "arm64": [
+            "y",
+        ],
+        default: [],
+    }}),
+{extra}}}
+'''
+
+    message = lift("plain", module("genrule", "tools"))
+    if "neither makes configurable nor lets an arch block set" not in message:
+        fail(f"a select on a property outside both lists is refused: {message}")
+    message = lift("kind", module("filegroup", "srcs"))
+    if "neither makes configurable" not in message:
+        fail(f"a module type the tables do not name is refused: {message}")
+    message = lift("nested", '''cc_library_static {
+    name: "m",
+    target: {
+        android: {
+            cflags: [
+                "x",
+            ] + select(arch(), {
+                default: [],
+            }),
+        },
+    },
+}
+''')
+    if "cannot read" not in message:
+        fail(f"a select below the top level is refused: {message}")
+    message = lift("bare", '''cc_library_static {
+    name: "m",
+    srcs: select(arch(), {
+        default: [],
+    }),
+}
+''')
+    if "cannot read" not in message:
+        fail(f"a select with no list before it is refused: {message}")
+    message = lift("other-arch", module("cc_defaults", "conlyflags").replace("arm64", "x86"))
+    if "no host platform's arch" not in message:
+        fail(f"a select on an arch no host platform has is refused: {message}")
+    message = lift("audit", module("cc_defaults", "conlyflags"), audit=True)
+    if "still selects conlyflags" not in message:
+        fail(f"a select left on conlyflags fails the audit: {message}")
+    message = lift("arch-shape", module(
+        "cc_defaults", "conlyflags", "    arch: {\n        arm: { cflags: [\"x\"] },\n    },\n"))
+    if "arch block" not in message:
+        fail(f"an arch block the tool did not write is refused: {message}")
+
+
+def committed_port_files(source_root: Path, scratch: Path) -> Path:
+    """The Android.bp files the committed port series adds, written under scratch."""
+    series = source_root / "android/lineage-24/third_party/mesa-venus/series"
+    patch = (series / "Mesa-Venus-generated-Soong-port.patch").read_text()
+    root = scratch / "committed"
+    count = 0
+    for section in patch.split("\ndiff --git ")[1:]:
+        lines = section.splitlines()
+        target = next((l for l in lines if l.startswith("+++ ")), "")
+        if not target.endswith("Android.bp"):
+            continue
+        if not any(l == "--- /dev/null" for l in lines):
+            fail(f"{target} is not a new file, so the patch cannot restate it whole")
+        body = [l[1:] for l in lines[lines.index("--- /dev/null") + 3:] if l.startswith("+")]
+        write(root, target.removeprefix("+++ b/"), "\n".join(body) + "\n")
+        count += 1
+    if count < 50:
+        fail(f"the committed port adds {count} Android.bp files")
+    return root
+
+
+def check_committed_port(generator, source_root: Path, scratch: Path) -> None:
+    root = committed_port_files(source_root, scratch)
+    kept: list[tuple[str, str, str]] = []
+    for bp in generator.load(root):
+        for block in bp.blocks:
+            kind = generator.block_kind(block)
+            for choice in generator.selects(block):
+                group = GROUPS.get(kind)
+                where = f"{bp.path.relative_to(root)} {generator.block_name(block)}"
+                if group is None or choice.field not in CONFIGURABLE[group]:
+                    fail(f"{where} selects {choice.field}, which Soong does not make configurable")
+                kept.append((kind, choice.field, where))
+    if not kept:
+        fail("the committed port selects nothing; the fixture would pass without checking")
+    # Any select is a first of its line, and no other property carries one.
+    text = "\n".join(bp.text() for bp in generator.load(root))
+    if len(re.findall(r"select\(", text)) != len(kept):
+        fail("a select in the committed port was not parsed")
+    # The one flag the arm64 platform alone sets reaches the arch block.
+    defaults = [
+        b for bp in generator.load(root) for b in bp.blocks
+        if generator.block_name(b) == "venus_aosp_mesa_venus_c_project_args"
+    ]
+    if len(defaults) != 1 or "            conlyflags: [\n                \"-DHAVE_UINT128\",\n" not in "\n".join(defaults[0]):
+        fail("-DHAVE_UINT128 belongs in an arm64 arch block of the C defaults")
+
+
 def check_host_platforms(generator) -> None:
     ok = {
         "config": [{"platforms": {"host_platforms": ["p64", "p32"]}}],
@@ -277,11 +616,15 @@ def main() -> int:
     generator = load(args.source_root)
     check_host_platforms(generator)
     check_tracked_platforms(args.source_root)
+    check_soong_tables(generator)
     with tempfile.TemporaryDirectory(prefix="mesa-port-generator.") as name:
         scratch = Path(name)
         check_split(generator, scratch)
         check_unchanged(generator, scratch)
         check_refusals(generator, scratch)
+        check_lift(generator, scratch)
+        check_lift_refusals(generator, scratch)
+        check_committed_port(generator, args.source_root, scratch)
     print("Mesa port generator fixture passed")
     return 0
 
