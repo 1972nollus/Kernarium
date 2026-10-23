@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "gadget_operand_encoding.hpp"
 #include "gadget_selection_api.hpp"
 #include "program.hpp"
 
@@ -86,6 +87,34 @@ inline void emit_link(DecodeContext &context, std::uint64_t target)
 		context.resolve_link(target)));
 }
 
+/* The target of the B.cond, CBZ or CBNZ at `address`: its imm19, in words.
+ *
+ * This, emit_edges and emit_fused_compare_branch are forced inline because
+ * they stand for code that was written out at each branch decoder. Translation
+ * reaches them once per branch; a call would add to every one of those and
+ * move the text behind them. */
+[[nodiscard, gnu::always_inline]] inline std::uint64_t branch19_target(
+	std::uint64_t address, std::uint32_t word) noexcept
+{
+	return static_cast<std::uint64_t>(static_cast<std::int64_t>(address) +
+		selection::sign_extend(static_cast<std::uint64_t>(
+			(word >> 5) & 0x7ffffU) << 2, 21));
+}
+
+/* The two edges of a conditional transfer, the taken one first: the cells of
+ * their blocks when the builder links, else their guest addresses. */
+[[gnu::always_inline]] inline void emit_edges(
+	DecodeContext &context, std::uint64_t target, std::uint64_t fallthrough)
+{
+	if (context.resolve_link) {
+		emit_link(context, target);
+		emit_link(context, fallthrough);
+	} else {
+		selection::emit(context.words, target);
+		selection::emit(context.words, fallthrough);
+	}
+}
+
 /* Emit the cell an indirect branch reads its trained targets through. This one
  * names the branch site rather than a target, because the site is what owns the
  * trained cells. */
@@ -107,10 +136,10 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
  * conditional branches are the only large category of block ends whose
  * continuation keeps the guest addresses contiguous; see G162.
  *
- * The taken edge keeps its link. The word where the fall-through link used to
- * sit becomes the count of instructions translated after this one, which the
- * taken path gives back to the precharged total before it leaves. `build` fills
- * that in; here it is only reserved and recorded.
+ * The taken edge keeps its link. The word after it holds the count of
+ * instructions translated after this one, which the taken path gives back to
+ * the precharged total before it leaves. `build` fills that in; here it is
+ * only reserved and recorded.
  *
  * Returns false when the block must end at this branch after all, in which case
  * the caller emits its ordinary terminal form and nothing has been written.
@@ -170,6 +199,33 @@ enum class DecodeResult : std::uint8_t {
 	selection::emit(context.words, selection::uml_arm64_gadget_illegal);
 	selection::emit(context.words, context.address);
 	++context.compiled;
+	return DecodeResult::terminal;
+}
+
+/* A compare and the B.cond after it, translated as one entry. `branch` is the
+ * B.cond word and `operand` the compare's operand, with room above
+ * `suffix_shift` for an inline suffix. A non-null `inline_entry` translates the
+ * fall-through of the pair behind it, exactly as for an unfused branch; the
+ * loop then advances past the compare itself and the pair's second instruction
+ * is counted here. Otherwise `fused` ends the block, with both instructions
+ * retired. */
+[[nodiscard, gnu::always_inline]] inline DecodeResult
+emit_fused_compare_branch(
+	DecodeContext &context, std::uint32_t branch, selection::Gadget fused,
+	selection::Gadget inline_entry, std::uintptr_t operand,
+	std::uint8_t suffix_shift)
+{
+	const auto branch_address = context.address + sizeof(std::uint32_t);
+	const auto target = branch19_target(branch_address, branch);
+	if (emit_inlined_packed_compare_branch(context, inline_entry, operand,
+					       target, suffix_shift, 2)) {
+		++context.compiled;
+		return DecodeResult::decoded;
+	}
+	selection::emit(context.words, fused);
+	selection::emit(context.words, operand);
+	emit_edges(context, target, branch_address + sizeof(std::uint32_t));
+	context.compiled += 2;
 	return DecodeResult::terminal;
 }
 

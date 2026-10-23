@@ -8,9 +8,7 @@ using namespace selection;
 
 DecodeResult decode_data_processing(DecodeContext &context)
 {
-	const auto address = context.address;
 	const auto instruction = context.instruction;
-	auto &compiled = context.compiled;
 	auto &words = context.words;
 	const auto &options = context.options;
 	const auto &resolve_link = context.resolve_link;
@@ -117,44 +115,12 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			if (const auto fused = compare_immediate_branch_gadget(
 				    wide, branch & 15U, resolve_link != nullptr);
 			    fused != nullptr) {
-				const auto branch_address =
-					address + sizeof(instruction);
-				const auto displacement = sign_extend(
-					static_cast<std::uint64_t>(
-						(branch >> 5) & 0x7ffffU) << 2,
-					21);
-				const auto target = static_cast<std::uint64_t>(
-					static_cast<std::int64_t>(branch_address) +
-					displacement);
-				const auto fallthrough =
-					branch_address + sizeof(branch);
-				/* The fall-through of the fused pair is
-				 * translated inline behind it, exactly as for
-				 * the unfused branch. */
-				if (resolve_link &&
-				    emit_inlined_packed_compare_branch(
-					    context,
-					    compare_immediate_branch_inline_gadget(
-						    wide, branch & 15U),
-					    operand, target, 40, 2)) {
-					/* The loop advances past this
-					 * instruction itself; the pair's second
-					 * one is ours. */
-					++compiled;
-					return DecodeResult::decoded;
-				}
-				emit(words, fused);
-				emit(words, operand);
-				if (resolve_link) {
-					emit_link(context, target);
-					emit_link(context, fallthrough);
-				} else {
-					emit(words, target);
-					emit(words, fallthrough);
-				}
-				/* Both guest instructions retired. */
-				compiled += 2;
-				return DecodeResult::terminal;
+				return emit_fused_compare_branch(
+					context, branch, fused,
+					resolve_link ?
+					compare_immediate_branch_inline_gadget(
+						wide, branch & 15U) : nullptr,
+					operand, 40);
 			}
 		}
 		/* Rd == Rn and neither is the SP/XZR encoding: the entry can
@@ -221,43 +187,12 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			if (const auto fused = compare_register_branch_gadget(
 				    is_64_bit, branch & 15U, resolve_link != nullptr);
 			    fused != nullptr) {
-				const auto branch_address =
-					address + sizeof(instruction);
-				const auto displacement = sign_extend(
-					static_cast<std::uint64_t>(
-						(branch >> 5) & 0x7ffffU) << 2,
-					21);
-				const auto target = static_cast<std::uint64_t>(
-					static_cast<std::int64_t>(branch_address) +
-					displacement);
-				const auto fallthrough =
-					branch_address + sizeof(branch);
-				/* The fall-through of the fused pair is
-				 * translated inline behind it, exactly as for
-				 * the unfused branch. */
-				if (resolve_link &&
-				    emit_inlined_packed_compare_branch(
-					    context,
-					    compare_register_branch_inline_gadget(
-						    is_64_bit, branch & 15U),
-					    operand, target, 48, 2)) {
-					/* The loop advances past this
-					 * instruction itself; the pair's second
-					 * one is ours. */
-					++compiled;
-					return DecodeResult::decoded;
-				}
-				emit(words, fused);
-				emit(words, operand);
-				if (resolve_link) {
-					emit_link(context, target);
-					emit_link(context, fallthrough);
-				} else {
-					emit(words, target);
-					emit(words, fallthrough);
-				}
-				compiled += 2;
-				return DecodeResult::terminal;
+				return emit_fused_compare_branch(
+					context, branch, fused,
+					resolve_link ?
+					compare_register_branch_inline_gadget(
+						is_64_bit, branch & 15U) : nullptr,
+					operand, 48);
 			}
 		}
 		/* "add/sub Rd, Rd, Rm" with no shift or extension: the

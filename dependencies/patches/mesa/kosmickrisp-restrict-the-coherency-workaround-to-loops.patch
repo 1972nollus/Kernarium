@@ -160,7 +160,7 @@ index 76b3cc9740463a32d5b4dc1ebad096a7bc09fc05..318a0cbd32a608cab739ff7ebc066b1b
                                    ? "coherent device"
                                    : "device";
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 47514024b4729b97d9eed91c6d694dfb580e8a2f..6b13b91cb77ef98cf70d0f4744752ccb8f17cd8e 100644
+index 6c4626675a06f9e2bb437c1cd186acbf453d6279..3113d5fbad3c41824f223378264b2d4fab2eacd2 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -497,6 +497,20 @@ if with_tests
