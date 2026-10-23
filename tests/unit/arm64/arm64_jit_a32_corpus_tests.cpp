@@ -18,6 +18,19 @@
  * N times, until kReservationsWanted cases have lost a reservation, and fails
  * if none did. --attempts N replaces the limit (1 makes the storm fail).
  *
+ * The corpus also holds every lowered form out of the slow helper from a
+ * clean state: each event-free case runs twice (the first run warms the
+ * translation and the TLB), and past the first run one case in which the
+ * form always executes must take no helper exit (the others cross a page or
+ * write back over the loaded register). The forms the semantic library runs
+ * (the parallel arithmetic and the Armv8 extensions the compiler does not
+ * lower) must take it in all of them, and every vector form of the simd level
+ * must have a lowering. A case whose form is of an extension the host lacks
+ * (BFloat16 and the 8-bit matrix forms on an M1) is skipped, because the JIT
+ * decodes it as UNDEFINED there. The VJCVT cases include a flush-to-zero
+ * subnormal input, which exercises the correction for a host whose FJCVTZS
+ * reports it as exact.
+ *
  *   uml_arm64_jit_a32_corpus_tests PACK [--record NAME] [--case NAME]
  *       [--form PREFIX] [--list-failures] [--passes N] [--interrupt]
  *       [--attempts N]

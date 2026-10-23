@@ -705,23 +705,19 @@ holds a vector length or non-streaming SVE state. The `arm64-absent-sve`
 records pin every SVE encoding that the removed profile executed UNDEFINED
 outside the SM = 0 family below, in both engines on every host.
 
-A virtual CPU with SME and without SVE executes CNT, INC, DEC, RDVL, ADDVL and
-ADDPL at SM = 0 for a vector length of 16 bytes, and LDR and STR of Z and P
-registers (16 and 2 bytes), a deliberate departure from the architecture (see
-[CPU execution and
-scheduling](architecture.md#cpu-execution-and-scheduling)). No host observes
-the results, because an M4 traps those words, so the `arm64-sm0-vl` record
-holds the project's own, written from the pseudocode, with the spills' pages,
-faults, tagged pointers and misaligned SPs and controls that stay UNDEFINED
-beside them, and `arm64-instruction-corpus-sm0-vl` re-derives it. The
-`arm64-sme-native` records hold no family word at SM = 0, and
+The SM = 0 family is the one set of SVE words that a virtual CPU with SME and
+without SVE executes outside streaming mode, at a vector length of 16 bytes: a
+deliberate departure from the architecture that [CPU execution and
+scheduling](architecture.md#cpu-execution-and-scheduling) defines. No host
+observes its results, because an M4 traps those words, so the `arm64-sm0-vl`
+record holds the project's own, written from the pseudocode, and
+`arm64-instruction-corpus-sm0-vl` re-derives it. The `arm64-sme-native`
+records hold no family word at SM = 0, and
 `arm64-instruction-corpus-sm0-vl-profile` runs the `arm64-sm0-vl`,
 `arm64-absent-sve` and `arm64-absent-sme` records for a virtual CPU with the
-SME profile assumed on any host, which also pins every other SVE word
-UNDEFINED at SM = 0 in both engines. The unit tests `arm64-sm0-vector-length`,
+SME profile assumed on any host. The unit tests `arm64-sm0-vector-length`,
 `arm64-gadget-sme`, `arm64-jit-sme-control` and `arm64-jit-sme-codegen` check
-the family against a model of the pseudocode, run it in each engine, and pin
-the same for the rest of the encoding table.
+the family against a model of the pseudocode and run it in each engine.
 
 The `arm64-floating-trap-native` records, and the outcomes of the
 register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
@@ -767,13 +763,10 @@ M4 or newer Mac.
 
 ## AArch32 decoder
 
-`arm64-aarch32-decoder` (unit) decodes the stored sample
-words of every row of the encoding table and the whole 16-bit Thumb space. It
-compares each answer with the one `tests/tooling/arm64/a32_expected.py`
-computes from the same XML pseudocode independently of the C++ translation,
-and requires LLVM MC to have decoded whatever the decoder accepts. The
-`arm64-a32-encoding-table` tooling test checks the generated tables and the
-test data against each other offline.
+`arm64-aarch32-decoder` (unit) checks the decoder against the answers
+`tests/tooling/arm64/a32_expected.py` computes independently of the C++
+translation, and against LLVM MC. The `arm64-a32-encoding-table` tooling test
+checks the generated tables and the test data against each other offline.
 
 To change the table, the profile policy (`a32_profile_policy.py`) or the pinned
 release, run `tests/tooling/arm64/generate_a32_encoding_table.py
@@ -789,15 +782,12 @@ the decoder's table and the counts in
 
 ## AArch32 corpus
 
-`arm64-aarch32-corpus` (unit) checks every case of the
-generated AArch32 corpus against the decoder: the program decodes in order,
-in the IT state its instructions leave, to legal forms except at the
-instruction that raised an event; the instruction under test is the form the
-case names; the event is one its kind can raise; and the retired count, fault
-position, state changes and memory runs agree. The `arm64-a32-corpus` tooling
+`arm64-aarch32-corpus` (unit) checks every case of the generated AArch32
+corpus against the decoder, running no engine. The `arm64-a32-corpus` tooling
 test regenerates the pack from `tests/unit/arm64/aarch32_corpus/source` and
 compares it, `provenance.json`, `manifest.tsv`, `coverage.tsv` and
-`excluded.tsv` with the checked-in bytes, and requires cases for every executed base inventory entry.
+`excluded.tsv` with the checked-in bytes, and requires cases for every
+executed base inventory entry.
 Neither needs an oracle. The corpus README owns the format, the oracles and how
 to record a suite with `tools/arm64-tests/a32-corpus.py`; recording runs
 `qemu-arm` on a build host over ssh and is opt-in. With
@@ -809,37 +799,25 @@ before the table goes stale; it skips without the archive.
 
 ## AArch32 semantic library
 
-`arm64-aarch32-semantics` (unit) checks the library's
-contract that the corpus cannot record: fault ordering and the unchanged
-state at a fault, the exclusive monitor, the single-instruction entry's IT
-handling, the events, the library-exit counters (which only the library's
-counting variant has) and the coverage predicate.
-`arm64-aarch32-semantics-corpus` is the corpus's model lane: it runs every
-case of the pack through `step_a32()` on a model of the oracle's address space
-(page by page, so a crossing access splits across separate host pages) and
-requires the recorded event, retired count, fault address, registers, flags,
-FPSCR, D registers, thread registers and data bytes, with 0 failures. The
-library covers the whole profile, so a case with a form it does not cover is a
-failure of the lane too; `--skipped` lists such forms. It runs the BFloat16,
-8-bit matrix multiply and FHM forms on any host, because the library does not
-need those features. Run one record with
+`arm64-aarch32-semantics` (unit) checks the library's own contract, which the
+corpus cannot record. `arm64-aarch32-semantics-corpus` is the corpus's model
+lane: it runs every case of the pack through the library on a model of the
+oracle's address space and requires 0 failures. It runs the BFloat16, 8-bit
+matrix multiply and FHM forms on any host, because the library does not need
+those features. Run one record with
 `uml_arm64_aarch32_semantics_corpus_tests <pack> --record <name>`, one case
-with `--case`, and `--trace` for its steps and initial state.
+with `--case`, and `--trace` for its steps and initial state; `--skipped` lists
+the forms of a case the library does not cover, which fail the lane.
 
 ## Guest SME policy
 
 Unit binaries take the guest-SME policy from their environment, like any
 run: on by default, off with `DARWIN_UML_GUEST_SME=0`. The suites hold
-either way on every host, and a host without SME sees no difference.
-`arm64-sme-foundation` checks the prober against the host's own sysctls under
-either policy, and the identification registers and HWCAP2 against arm64
-Linux's table with injected SME hosts at every SVL from 16 to 256 bytes and
-every engine support level. On
-an SME host, an M4 Mac, also run it, `arm64-advertised-features`,
-`arm64-jit-sme-control`, `arm64-jit-sme-register`,
-`arm64-jit-sme-memory` and `arm64-instruction-corpus`, which then runs the
-native SME records on both engines, with the policy at its default and with
-`DARWIN_UML_GUEST_SME=0`.
+either way on every host, and a host without SME sees no difference. On an SME
+host, an M4 Mac, also run `arm64-sme-foundation`, `arm64-advertised-features`,
+`arm64-jit-sme-control`, `arm64-jit-sme-register`, `arm64-jit-sme-memory` and
+`arm64-instruction-corpus`, which then runs the native SME records on both
+engines, with the policy at its default and with `DARWIN_UML_GUEST_SME=0`.
 Elsewhere `arm64-jit-sme-control` runs only its SM=0 cases, on an injected
 profile, `arm64-jit-sme-register` and `arm64-jit-sme-memory` skip, and the
 corpus skips its native SME records. Integration runs read the policy the same
@@ -847,19 +825,11 @@ way: on an M4, `guest-gadgets-smoke` and `guest-jit-smoke` expect the SME
 HWCAP2 bits and `guest-hwcap-sanity` executes the SME families.
 
 `guest-sme-gadgets` and `guest-sme-jit` check the guest kernel's SME contract
-with the policy at its default. Each skips, naming its reason, unless the host has SME
-and its engine's SME support is `control` or better. The freestanding
-`sme_probe.cpp` boots as `/init` and checks signal frames, invalid
-sigreturns, the system-call exit from streaming mode, fork, vfork, clone,
-exec, regsets, `AT_MINSIGSTKSZ`, prctl and the sysctl, first through
-sigreturn and ptrace alone, then with SME executed by the engine; further
-boots send host signals and each terminating signal while a vCPU streams,
-and `glibc_za_probe.py` checks the image's glibc and libgcc SME ABI: the ZA
-lazy-save commits at fork, spawn, thread creation, longjmp and siglongjmp,
-a glibc-installed handler for a signal that interrupts a streaming region,
-returning or leaving by siglongjmp, and libgcc's SME support routines. The
-`kernel`, `spin` and `terminate` modes need no engine support; on an SME host
-they run by hand with
+with the policy at its default, in the modes
+`tests/integration/sme/run_guest_sme.py` lists. Each skips, naming its reason,
+unless the host has SME and its engine's SME support is `control` or better.
+The `kernel`, `spin` and `terminate` modes need no engine support; on an SME
+host they run by hand with
 `run_guest_sme.py --minimum-support none --modes kernel,spin,terminate`.
 `guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
 that with the policy forced off the probe sees no SME.
@@ -885,187 +855,69 @@ both tools on synthetic ELF fixtures.
 ## No guest SVE
 
 `arm64-no-sve` checks that the virtual CPU presents no SVE outside streaming
-mode whatever the host reports: the prober's token set, the engines' presented
-profiles, ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1, and the SVE bits of
-AT_HWCAP and AT_HWCAP2. `arm64-advertised-features` pins the words and
-registers of named hosts.
-
-`guest-no-sve-gadgets` and `guest-no-sve-jit` run on every host. The
-freestanding `no_sve_probe.cpp` boots as `/init` and checks that the guest
-kernel and the engine agree: no SVE bit in AT_HWCAP or AT_HWCAP2, no SVE
-prctl, sysctl or ptrace regset, no sve_context in a signal frame without SME
-and only its bare header outside streaming mode with it (as Linux gives a CPU
-with SME and without SVE; `guest-sme-gadgets` and `guest-sme-jit` check the
-streaming record), and undefined SVE instructions.
+mode whatever the host reports, and `arm64-advertised-features` pins the words
+and registers of named hosts. `guest-no-sve-gadgets` and `guest-no-sve-jit` run
+on every host: the freestanding `no_sve_probe.cpp` boots as `/init` and checks
+that the guest kernel and the engine agree, and `guest-sme-gadgets` and
+`guest-sme-jit` check the streaming record.
 
 ## Guest AArch32 foundation
 
-`arm64-a32-foundation` checks the state `CpuState` appends and its assembly
-offsets, and the AArch32 identification registers and compat HWCAP words over
-every subset of the host features they follow. `arm64-a32-guest-key` checks the tagged
-translation keys (round trips, interworking, that no key collides with an A64
-key, the empty cell or a fault position, and the hash-visible bit), the
-key-aware validation of saved guest units across page boundaries and the
-page-bounded fetch of a translation window that both engines use.
-`arm64-jit-shared-translation-cache` also checks that the
-shared tier keys and sizes AArch32 translations by ISA.
+The AArch32 foundation and gadget-engine tests are `arm64-a32-foundation`,
+`arm64-a32-guest-key`, `arm64-a32-host` and `arm64-gadget-a32-*`;
+`ctest -N -R '^arm64-(a32-|gadget-a32-)'` lists them, with the AArch32
+tooling tests, and each test's header states what it checks. Instruction
+semantics belong to the instruction corpus, not to `arm64-gadget-a32-control`,
+which pins the translator's control behaviour, or `arm64-gadget-a32-forms`,
+which holds the engine to the decoder's answer for every stored sample word.
 
-`arm64-gadget-a32-control` runs small A32 and T32 programs through the gadget
-engine's production AArch32 loop and checks what its translator decides:
-retirement counts (skipped conditional instructions retire, a fault or an
-undefined word does not), the key left in the PC, the architectural fault
-address, ITSTATE at an SVC, at a fault and when an entry resumes in the middle
-of a block, interworking in both directions, the A32 target with bit 1 set,
-the instruction budget, single step, code that changes in place, the
-exclusives and the Armv8 acquire and release forms (including loops whose
-plain stores share the target's TLB set and the compare-and-swap helpers of
-the kernel's user-helper page), the CP15 and counter reads, and LDM, STM and
-LDRD across a page, mapped and not, and that Advanced SIMD floating point
-runs under the standard FPSCR value while VFP keeps the guest's (in either
-order, in a skipped conditional run and across a block that ends inside a
-run), that the conversions, VMAX, VMIN, VADD, VSUB and VMUL run in whichever
-environment is native exactly when their operands allow it, with the value,
-flags and environment left checked against the host's own instruction under
-the matching FPCR, that no gadget writes the callee-saved halves of V8-V15
-(the corpus runner checks them around every case), that every writeback of a
-VLD1 or VST1 copy moves the bytes and the base inside a page and across one,
-and that a form of an extension (CRC32, AES,
-SHA-1, PMULL, FP16, DotProd, RDM, FCMA, FHM, BF16, I8MM, JSCVT) executes on a
-host that has it, as a gadget or in the semantic library, and is the
-illegal-instruction exit, not retired, on one that does not (the test builds
-one guest on the machine's capabilities and one on a host with none of the
-optional ones). `arm64-gadget-a32-forms` runs every
-stored sample word of the decoder's data and the whole 16-bit Thumb space and
-requires the engine to raise the illegal-instruction exit exactly where the
-decoder, against the engine's profile, rejects the word. Both also hold the
-library-exit count gate: with the semantic library's exit counters on from a
-clean state, only a form the engine leaves to the library, or a block transfer
-that crossed a page, may reach it, and the forms the engine leaves to it do.
-`arm64-gadget-a32-corpus`
-runs the cases of the AArch32 corpus whose instructions the engine decodes in
-the oracle's memory map and compares the signal or system call,
-the instruction and address it was raised at, the registers, flags, Q, GE,
-D0-D31, FPSCR, the data region and the retired count (a case whose forms need an
-extension the host lacks, BF16 and I8MM on the M1 Ultra, is skipped). The `unaligned` and
+`arm64-gadget-a32-corpus` runs the cases of the AArch32 corpus whose
+instructions the engine decodes. A case whose forms need an extension the host
+lacks (BF16 and I8MM on the M1 Ultra) is skipped. The `unaligned` and
 `fpscr-reserved` suites are recorded from hardware (a Raspberry Pi 4), as the
-corpus README describes. A store-exclusive may fail
-without cause, and the gadgets' fails whenever a host interrupt lands between
-the load and the store, which a loaded host makes frequent enough to see in a
-gate; the oracle's never does. A case whose only difference is that failure
-runs again, up to 16 attempts in all, and the summary counts the cases that
-needed it. `arm64-gadget-a32-corpus-interrupted` runs the `exclusive-qemu`
-and `sequences-qemu` records (`--record` takes a comma-separated list) at
-least 200 times with a timer signal every few microseconds aimed at the
-guest's thread, and goes on past that until a store-exclusive has lost its
-reservation (at most 60 s, because whether a signal lands in the window is
-chance). It requires that one was lost and that every case then agreed.
-Instruction semantics belong to the instruction corpus, not to the first two.
-
-`arm64-a32-host` checks the host runtime side:
-the architectural positions of the status word's fields, the load and save of
-every field around an engine's AArch32 entry (key, flags, GE, IT, FPSCR
-split, TPIDR registers, CP15BEN; load then save is the identity over random
-states in both Thumb and ARM state), which entries the kernel may hand over,
-the bridge event of every exit, and that the compat HWCAPs and the guest entry
-points follow the host the run presents. An entry at an unmapped PC must
-fault there.
+corpus README describes. A store-exclusive may fail without cause, and the
+gadgets' fails whenever a host interrupt lands between the load and the store,
+which a loaded host makes frequent enough to see in a gate; a case whose only
+difference is that failure runs again, up to 16 attempts in all, and the
+summary counts the cases that needed it. `arm64-gadget-a32-corpus-interrupted`
+makes the failure happen on purpose: it runs the `exclusive-qemu` and
+`sequences-qemu` records (`--record` takes a comma-separated list) under a
+timer signal aimed at the guest's thread, and requires that a store-exclusive
+lost its reservation and that every case then agreed (it waits for that at
+most 60 s, because whether a signal lands in the window is chance).
 
 `guest-aarch32-engine-gadgets` and `guest-aarch32-engine-jit` run the engine
 probe, a freestanding armhf program from `tests/integration/aarch32/engine_probe/`
 that boots as the guest's `/init`. The build compiles it with the configured
 compiler's ARM backend and links it with `link_elf32.py`, aligned to 64 KiB and
-aligned to 4 KiB only. Its groups cover system calls and errno, A32/T32
-interworking, signal frames with VFP state through the sigpage and
-`SA_RESTORER`, every kuser helper, TPIDRURO and TPIDRURW, `cacheflush` with
-self-modifying code, alignment and memory faults, UNDEFINED encodings (UDF,
-SETEND, SWP, a CP15 barrier with `abi.cp15_barrier` cleared), `SIGTRAP` from
-BKPT and `udf #16` under ptrace and a single step through an IT block,
-LDREX/STREX and the kuser cmpxchg under contention across threads and
-processes, VFP, Advanced SIMD and FPSCR semantics (including structure loads
-and stores alone in a block, across a reschedule), the Armv8 floating-point
-additions (VRINT, VCVT with a rounding mode, VMAXNM/VMINNM) and the crypto,
-CRC32, dot-product and half-precision extensions against known answers. A group
-needing an extension the HWCAP words leave out is skipped inside the probe, and
-the extension must raise `SIGILL`. Every SIGILL is counted: one the probe did
-not expect fails the run. `A32_PROBE_GROUPS` selects groups by hand through the
-runner's `--groups`, and `A32_PROBE_VERBOSE=1` makes the runner print every line
-of the guest's output, passes included.
+aligned to 4 KiB only. Each group's source states what it checks, and a group
+needing an extension the HWCAP words leave out is skipped inside the probe.
+Every SIGILL is counted: one the probe did not expect fails the run.
+`A32_PROBE_GROUPS` selects groups by hand through the runner's `--groups`, and
+`A32_PROBE_VERBOSE=1` makes the runner print every line of the guest's output,
+passes included.
 
 ## AArch32 JIT
 
-The JIT's AArch32 tests run on the macOS JIT only.
-`arm64-jit-a32-corpus` runs every case of the AArch32 corpus pack
-through `CpuEngine::run_aarch32` on the oracle's memory map, with an svc at
-each of the oracle's two epilogues, and compares registers, APSR, thread
-registers, changed data, event, fault address and retired count. A
-store-exclusive may fail without cause, and the JIT's fails whenever a host
-interrupt lands between the load and the store; a case whose only difference
-is that failure (a status of 1 where the pack has 0, and the store not made)
-runs again, up to 16 attempts in all, and the summary counts the cases that
-needed it. `arm64-jit-a32-corpus-interrupted` runs the `exclusive-qemu` record
-with a signal storm aimed at the guest's thread until four cases have lost a
-reservation, and requires that every case then agreed. The corpus then
-requires every lowered form to stay out of the slow helper from a clean state:
-each event-free case runs twice, and past the first run one case
-in which the form always executes must take no helper exit (the others cross a
-page or write back over the loaded register). The forms that the semantic
-library runs (the parallel arithmetic and the Armv8 extensions the compiler does
-not lower) must take it in all of them, and every vector form of the simd level
-must have a lowering. A case whose form is of an extension the host lacks
-(BFloat16 and the 8-bit matrix forms on an M1) is skipped, because the JIT
-decodes it as UNDEFINED there. The corpus's VJCVT cases include a flush-to-zero
-subnormal input, which exercises the correction for a host whose FJCVTZS
-reports it as exact. `arm64-jit-a32-runtime`,
-`arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
-programs, conditions included, against an independent reference of the
-instruction forms (the corpus carries T32); `arm64-jit-a32-data-processing` also runs every parallel add and
-subtract form against a lane model and requires the lowered ones to stay out
-of the library.
-`arm64-jit-a32-exclusive` covers the fused LL/SC runs, the compare-and-swap
-idiom, the monitor rules, fault and alignment exits, two threads counting
-exactly and an ordinary store clearing a reservation, and requires the fused
-loop to make no helper call, also with a compare and conditional branch or a
-CBNZ between the load and the store (A32 and T32). `arm64-jit-a32-acquire-release` covers LDA and
-STL with their byte and halfword forms, the always-checked alignment, the fused
-and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
-helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a
-step at a time and from the middle, random A32 and T32 programs of
-conditional branches, forward and back (B, CBZ, CBNZ), among data processing
-whole and one instruction at a time, the shape of a block that goes on past a
-branch back and of one that ends at a branch to its own first instruction, the
-code shape of a linked block (the fifteen core registers loaded once before its
-internal entry, none written back before a link) and the registers across the
-budget returns of a chain with a call and a return, random loops with memory, Advanced SIMD and
-side exits in their bodies that end by a count, a branch out or a fault, and
-the counted loop's translation as a host loop through the chain budget, long blocks under a small budget, code
-rewritten under translations, and one form of each optional extension on hosts
-with every extension and on hosts lacking one (the form is UNDEFINED, A32 and
-T32, and nothing else changes). `arm64-jit-a32-vector` covers what the corpus
-does not see of VFP and Advanced SIMD: the guest's FPCR for a VFP instruction
-and the Standard FPSCR value for a Neon one across a conditional arm, a chained
-branch, an exit and alternating blocks (the host FPCR keeps its mode across
-them), VMAX, VMIN, VADD, VSUB, VMUL, VMLA and VMLS on every special operand,
-rounding mode and flush mode in the contexts that guard them and the one that
-does not, QC across runs, the flags of VCMP and VCMPE reaching the APSR
-through VMRS (adjacent or not, conditional or not), and the vector memory forms staying inline and
-taking the library, with its data and faults, across a page, on a misalignment
-and into an unmapped page (every load form across a page at every offset, with
-the two pages adjacent in the host and not, and with no library call once the
-TLB holds both), where the library leaves the guest's FP environment
-installed. `arm64-jit-a32-encoder` compares the compiler's A64 encoders with LLVM
-MC, and `arm64-jit-a32-vector-encoder` those of the vector instruction
-classes. `arm64-jit-executor-paths` covers the JIT executor's A64, A32 and T32
-entries where they leave the cached block: a peer executor reusing the
-AArch32 translations of the first (and finding code rewritten under them), the tracked
-variant of a block that stores while another vCPU holds a reservation and its
-fall back to one instruction when the code no longer matches, single steps and
-an entry in the middle of an IT block, a stepped store ending another vCPU's
-reservation, a fetch fault at the first unit that cannot be read, and a block
-ending where its mapping or the 32-bit address space ends.
+The JIT's AArch32 tests run on the macOS JIT only. They are `arm64-jit-a32-*`
+and `arm64-jit-executor-paths`; `ctest -N -R '^arm64-jit-(a32-|executor-paths)'`
+lists them, and each test's header states what it checks.
+
+`arm64-jit-a32-corpus` runs every case of the AArch32 corpus pack through
+`CpuEngine::run_aarch32` on the oracle's memory map. A case whose form is of
+an extension the host lacks (BFloat16 and the 8-bit matrix forms on an M1) is
+skipped, because the JIT decodes it as UNDEFINED there. A store-exclusive may
+fail without cause, and the JIT's fails whenever a host interrupt lands between
+the load and the store; a case whose only difference is that failure (a status
+of 1 where the pack has 0, and the store not made) runs again, up to 16
+attempts in all, and the summary counts the cases that needed it.
+`arm64-jit-a32-corpus-interrupted` makes it happen on purpose: it runs the
+`exclusive-qemu` record under a signal storm aimed at the guest's thread until
+cases have lost a reservation, and requires that every case then agreed.
 
 ## x86 instruction conformance
 
-The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
+The x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
 from the pinned FEX `x86-conformance` dependency as its external instruction
 campaign. For the gadget engine FEX is a test input only; FEXCore is linked
 into nothing but the macOS-only x86-64 JIT.
@@ -1090,76 +942,19 @@ context. The macOS unit tree also runs the build-generated x86-64 corpus
 through the x86-64 JIT. `x86-64-jit-instruction-corpus` holds it to
 `tests/unit/x86_64/jit_corpus_exclusions.tsv`, whose rows name each record the
 engine is known to fail with its class and fail the test when the record passes
-or names nothing. `x86-64-jit-emitted-registers` repeats the run and walks
-every block FEXCore translates, failing on a reachable instruction that names
-x18 or that the same oracle cannot classify, or on a block that does not parse.
-`x86-64-jit-code-buffer-growth` repeats the run from one byte
-of host code per IR node, requires the code buffer to grow, and requires the
-same results. `x86-64-retirement` and `x86-64-jit-retirement` hold the gadget
-engine and the JIT to the same count of retired instructions before each kind
-of stop, in long64 and compat32, including a store into the code of the block
-running it. `x86-64-jit-space-recycling` has an engine make a gone address
-space's space over for the next one and requires the new bytes to run.
-`x86-64-jit-code-change` has a program rewrite a function it has run, with a
-plain, a locked and a repeated store, and requires every publication of the
-change to follow the store; it also has a function rewritten, as another vCPU
-would, behind a flag the program reads before CPUID or IRET, and requires the
-call after either to run the new code.
-`x86-64-tier-switch-corpus` and `x86-64-tier-switch-retirement` run the corpus
-and the retirement cases on the gadget engine for the first K retired
-instructions and on the JIT for the rest, over a sweep of K, and require each
-case to end as the engines alone do; `tests/unit/x86_64/tier_switch_exclusions.tsv`
-lists the one record that differs, in a result the architecture leaves
-undefined.
-`x86-64-gadget-link-layout` holds the layout translated code reads a cached
-link by -- an aligned stream-and-count pair, with the target's guest bounds in
-the two words in front of its stream -- against real programs and the
-executor's own records, and shows a reader following a link that writers
-retarget never sees bounds that belong to another stream; the same reader
-does see them torn when the bounds are stored apart from the pair.
-`x86-64-gadget-bodies` holds what a cached translation is: a body in its address
-space's arena with its stream behind it and its source apart, the program a
-view of both, the move of an owning program, a replay on a stored program, and
-several threads racing to replay one program and agreeing on a single decode.
-`x86-64-gadget-shared-bodies` holds what sharing an address space's
-translations does: a second executor adopts a block instead of building it, a
-code change reaches the links another executor armed, an executor letting go
-leaves the others their blocks, executors built for different exceptions share
-nothing, a shared space is never swept while a private one is under the same
-churn, and a fault in a block only the address space holds is reported where it
-is. `x86-64-gadget-shared-store` holds the writer's protocol: a store resets the
-link another executor armed, a build a store landed across is kept by nobody,
-and no link is armed to a stale body; dropping the stale check at arming, the
-store count at publication, or the reset at the store each fails it.
-`x86-64-gadget-shared-concurrent` runs executors on threads through rounds of
-code an engine store patches, and carries the `tsan` label.
-`x86-64-gadget-shared-bound` closes a shared space that executors let go of
-down to the bodies of one, whether by destroying the executor or by the MMU
-destroying the address space, and leaves a smaller one alone; shows the
-byte budget reaching the second executor of a space it asks to shed; and runs
-four executors on threads while the budget has the space shed and replaced
-under them. It carries the `tsan` label.
-`x86-64-gadget-bootstrap` runs the whole bootstrap suite with the executors
-sharing, as they do by default, and `x86-64-gadget-bootstrap-private` with each
-keeping its own.
-`x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
-of XE2's request sets through each engine's ordinary path with every
-exception masked and hold the MXCSR flags each instruction leaves to an Intel
-Xeon's, except the documented inexact cases the test names.
-`x86-64-masked-flags-checked` runs the same cases through the gadget engine's
-checked path, whose flags come from the SIMD floating-point model the JIT
-shares, and allows no difference; it then runs each case with invalid
-operation, a denormal operand, division by zero or precision unmasked, alone
-and in pairs, and requires the #XM and the flags the Xeon's imply.
-`x86-64-half-round` holds the integer rounding of a single to a half, which
-the model's VCVTPS2PH flags follow, to a second derivation over every finite
-single in all four rounding controls. `x86-64-fp-model` holds the model's
-two other integer answers, whether a square root is exact and whether an
-integer fits the float it converts to, to SoftFloat's flags over every single
-significand, the squares of integers, random doubles, and the integers around
-every power of two. The
-`ios-products-carry-no-fexcore` tooling test checks the script the iOS
-packaging runs to keep FEXCore out of every iOS product.
+or names nothing. `x86-64-tier-switch-corpus` runs the corpus on the gadget
+engine for the first K retired instructions and on the JIT for the rest, over a
+sweep of K, and requires each case to end as the engines alone do;
+`tests/unit/x86_64/tier_switch_exclusions.tsv` lists the one record that
+differs, in a result the architecture leaves undefined.
+
+The other x86-64 unit tests (`ctest -N -L x86-64` lists them) state in their
+headers, or in the comment above their registration in
+`tests/unit/x86_64/CMakeLists.txt`, what they check. The `x86-64-jit-*` and
+tier-switch tests exist only where the JIT does, on macOS, and the `tsan` label
+marks those the TSan workflow also runs. The `ios-products-carry-no-fexcore`
+tooling test checks the script the iOS packaging runs to keep FEXCore out of
+every iOS product.
 
 ## Performance and external campaigns
 

@@ -80,7 +80,7 @@ public:
 	/* run_block for an AArch32 task (a32/a32_builder.hpp): cpu.pc is an
 	 * A32 or T32 key (aarch32/guest_key.hpp) and every exit leaves it one.
 	 * Retirement, fault positions and ITSTATE follow the contract in
-	 * aarch32/README.md; a breakpoint exit leaves BKPT's immediate in
+	 * aarch32/semantics.hpp; a breakpoint exit leaves BKPT's immediate in
 	 * breakpoint_immediate(). */
 	[[nodiscard]] ::uml::cpu::EngineEvent run_a32_block(
 		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,

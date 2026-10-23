@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* The host runtime side of AArch32: the formats an AArch32 task's status and
- * FPSCR travel in, how its state loads into and saves out of CpuState around
- * an engine's run_aarch32() (runtime/aarch32_guest.hpp), the bridge event
- * each exit becomes, which entries the kernel may hand over, and how the
- * entry points and the compat HWCAPs follow what the run presents. */
+ * FPSCR travel in (the architectural positions of the status word's fields),
+ * how its state loads into and saves out of CpuState around an engine's
+ * run_aarch32() (runtime/aarch32_guest.hpp: key, flags, GE, IT, the FPSCR
+ * split, the TPIDR registers and CP15BEN; load then save is the identity
+ * over random states in both Thumb and ARM state), the bridge event each exit
+ * becomes, which entries the kernel may hand over (an entry at an unmapped PC
+ * faults there), and how the entry points and the compat HWCAPs follow what
+ * the run presents. */
 #include "cpu/arm64/aarch32/a32_profile.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/state_format.hpp"
