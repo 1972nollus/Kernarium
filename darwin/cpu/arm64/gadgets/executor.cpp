@@ -1648,7 +1648,7 @@ public:
 		window_.current_generation = generation;
 		window_.current = nullptr;
 		auto &state = current();
-		window_.touch(generation);
+		touch(generation);
 		if (state.changes == changes)
 			return;
 		state.space->observe(changes);
@@ -2199,6 +2199,8 @@ private:
 		};
 	}
 
+	void touch(unsigned long generation) { window_.touch(generation); }
+
 	/* Let go of one address space: its resident translations, and the
 	 * cache's hold on the space, which goes with the last executor that
 	 * held it.
@@ -2243,7 +2245,7 @@ private:
 		 * mostly freed arena. This cache still holds the space,
 		 * which is what makes it safe to close. */
 		renew_if_due(*space);
-		window_.leave(owner);
+		window_.leave(owner, id);
 		SpaceRegistry::instance().detach(space, announcement_);
 		if (!tombstone)
 			window_.forget_place(generation);
@@ -2414,7 +2416,7 @@ private:
 					.options = options_,
 				},
 				state.changes, announcement_);
-			window_.touch(window_.current_generation);
+			touch(window_.current_generation);
 			window_.trim([this](unsigned long generation) {
 #if UML_GADGET_CACHE_CENSUS
 				if (!window_.generations.contains(generation))

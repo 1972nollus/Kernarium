@@ -38,7 +38,7 @@ void retire(Window &window, unsigned long generation, bool tombstone = false)
 	const auto owner = window.generations.find(generation);
 	if (owner != window.generations.end()) {
 		window.reserve_id();
-		window.leave(owner);
+		window.leave(owner, owner->second.id);
 	}
 	if (!tombstone)
 		window.forget_place(generation);

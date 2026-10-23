@@ -117,15 +117,16 @@ struct GenerationWindow final {
 			current_epoch = state.epoch;
 	}
 
-	/* Make `generation` the most recently current. */
-	void touch(Number generation)
+	/* Make `generation` the most recently current. Inlined into the
+	 * engine's own touch(), which is the function it was. */
+	[[gnu::always_inline]] void touch(Number generation)
 	{
 		forget_place(generation);
 		order.push_back(generation);
 	}
 
 	/* Drop a generation's place in the order. */
-	void forget_place(Number generation) noexcept
+	void forget_place(Number generation)
 	{
 		const auto found = std::find(order.begin(), order.end(), generation);
 		if (found != order.end())
@@ -152,12 +153,15 @@ struct GenerationWindow final {
 
 	/* Take a retired address space out: its id is free again and, if it was
 	 * the running one, nothing is. Its place in the order is the caller's to
-	 * drop (forget_place()), or to keep as a tombstone. After reserve_id(). */
-	void leave(typename std::unordered_map<Number, State>::iterator owner)
+	 * drop (forget_place()), or to keep as a tombstone. After reserve_id().
+	 * Inlined into the engine's retirement, which has read the id already. */
+	[[gnu::always_inline]] void leave(
+		typename std::unordered_map<Number, State>::iterator owner,
+		const std::uint16_t &id)
 	{
+		assert(owner->second.id == id);
 		if (current == &owner->second)
 			unbind();
-		const auto id = owner->second.id;
 		owners[id] = nullptr;
 		free_ids.push_back(id);
 		generations.erase(owner);
