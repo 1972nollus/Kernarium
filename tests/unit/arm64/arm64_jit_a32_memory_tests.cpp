@@ -9,7 +9,7 @@
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
-#include "cpu/arm64/jit/a32/a32_helpers.hpp"
+#include "cpu/arm64/aarch32/semantics.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -23,7 +23,7 @@ using ::uml::cpu::ExitReason;
 
 namespace {
 
-namespace jit_a32 = ::uml::cpu::arm64::jit::a32;
+namespace aarch32 = ::uml::cpu::arm64::aarch32;
 
 constexpr std::size_t data_pages = 2;
 constexpr std::size_t data_bytes = data_pages * guest_page;
@@ -591,8 +591,8 @@ void loads_over_the_offset() {
   constexpr std::size_t code_pages = 8;
   Fixture fixture{0x1a32'0201, code_pages, data_pages};
   code_end = code_base + static_cast<std::uint32_t>(code_pages * guest_page);
-  jit_a32::reset_helper_exits();
-  jit_a32::count_helper_exits(true);
+  aarch32::reset_a32_library_exits();
+  aarch32::count_a32_library_exits(true);
   std::size_t offset = 0;
   for (const auto &program : programs) {
     for (const std::uint32_t flags : {std::uint32_t{0}, z_flag, c_flag}) {
@@ -622,8 +622,8 @@ void loads_over_the_offset() {
       }
     }
   }
-  require(jit_a32::helper_exit_total() == 0U);
-  jit_a32::count_helper_exits(false);
+  require(aarch32::a32_library_exit_total() == 0U);
+  aarch32::count_a32_library_exits(false);
 }
 
 } // namespace

@@ -27,8 +27,6 @@
 #include "cpu/arm64/jit/jit_semantic_reservation.hpp"
 #include "cpu/arm64/memory.hpp"
 
-#include <array>
-#include <atomic>
 #include <bit>
 #include <mutex>
 #include <span>
@@ -217,34 +215,7 @@ private:
   return pack_jit_result(Event::fatal, 0);
 }
 
-std::atomic<bool> counting_exits{false};
-std::atomic<std::uint64_t> exit_total{0};
-std::array<std::atomic<std::uint64_t>, aarch32::kFormCount> form_exits{};
-
 } // namespace
-
-namespace jit::a32 {
-
-void count_helper_exits(bool enable) noexcept {
-  counting_exits.store(enable, std::memory_order_relaxed);
-}
-
-std::uint64_t helper_exits(aarch32::Form form) noexcept {
-  return form_exits[static_cast<std::size_t>(form)].load(
-      std::memory_order_relaxed);
-}
-
-std::uint64_t helper_exit_total() noexcept {
-  return exit_total.load(std::memory_order_relaxed);
-}
-
-void reset_helper_exits() noexcept {
-  exit_total.store(0, std::memory_order_relaxed);
-  for (auto &count : form_exits)
-    count.store(0, std::memory_order_relaxed);
-}
-
-} // namespace jit::a32
 
 extern "C" std::uint64_t uml_arm64_jit_a32_execute(
     CpuState *cpu, Tlb *tlb, std::uint32_t word, std::uint64_t key,
@@ -265,11 +236,6 @@ extern "C" std::uint64_t uml_arm64_jit_a32_execute(
    * of the run restores the host's. */
   if (needs_host_fp_environment(inst))
     arm64::restore_native_fp_environment(*cpu);
-  if (counting_exits.load(std::memory_order_relaxed)) {
-    form_exits[static_cast<std::size_t>(inst.form)].fetch_add(
-        1, std::memory_order_relaxed);
-    exit_total.fetch_add(1, std::memory_order_relaxed);
-  }
   const auto traits = inst.info().traits;
   if ((traits & aarch32::trait::exclusive) == 0U)
     return execute_in_library(*cpu, *tlb, inst, key, itstate);

@@ -7,7 +7,7 @@
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
-#include "cpu/arm64/jit/a32/a32_helpers.hpp"
+#include "cpu/arm64/aarch32/semantics.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 
 #include <cstdio>
@@ -19,7 +19,7 @@ using ::uml::cpu::ExitReason;
 
 namespace {
 
-namespace jit_a32 = ::uml::cpu::arm64::jit::a32;
+namespace aarch32 = ::uml::cpu::arm64::aarch32;
 
 constexpr unsigned ne = 1;
 constexpr std::uint32_t arm_svc = 0xef00'0000U;
@@ -66,11 +66,11 @@ std::size_t block_instructions(Fixture &fixture, std::size_t offset,
  * STL are lowered to ldar and stlr in line. */
 struct ExitCount final {
   ExitCount() {
-    jit_a32::reset_helper_exits();
-    jit_a32::count_helper_exits(true);
+    aarch32::reset_a32_library_exits();
+    aarch32::count_a32_library_exits(true);
   }
-  ~ExitCount() { jit_a32::count_helper_exits(false); }
-  [[nodiscard]] static std::size_t total() { return jit_a32::helper_exit_total(); }
+  ~ExitCount() { aarch32::count_a32_library_exits(false); }
+  [[nodiscard]] static std::size_t total() { return aarch32::a32_library_exit_total(); }
 };
 
 void round_trip(unsigned long generation, bool thumb) {
