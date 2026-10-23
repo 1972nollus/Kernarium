@@ -4,7 +4,7 @@
 boot-image.py, verify-initramfs.py, verify-target-files.py and
 verify-lineage-recovery.py read the same formats: the kernelless boot-image
 v4 header, a partition's range in partition-layout.json, uncompressed newc
-archives and the program headers of AArch64 ELF payloads. They also compare
+archives and the program headers of AArch64 and Arm ELF payloads. They also compare
 against the same tracked first-stage fstab and reject the same kernel
 module files. Each caller passes its own error type, so diagnostics keep
 their per-tool prefixes.
@@ -33,11 +33,23 @@ NEWC_HEADER_SIZE = 110
 MAX_NEWC_ENTRY_SIZE = 128 * 1024 * 1024
 MAX_PAGE_SIZE_SUPPORTED = 16384
 ELF_MAGIC = b"\x7fELF"
+ELFCLASS32 = 1
 ELFCLASS64 = 2
 ELFDATA2LSB = 1
+EM_ARM = 40
 EM_AARCH64 = 183
+ELF32_HEADER_SIZE = 52
+ELF32_PROGRAM_HEADER_SIZE = 32
 ELF64_HEADER_SIZE = 64
 ELF64_PROGRAM_HEADER_SIZE = 56
+# The 32-bit userspace is armeabi-v7a: the Arm EABI, version 5, in its softfp
+# form (floating-point arguments in integer registers), never hard-float.
+EF_ARM_EABIMASK = 0xFF000000
+EF_ARM_EABI_VER5 = 0x05000000
+EF_ARM_ABI_FLOAT_HARD = 0x00000400
+# Arm's 32-bit userspace is linked for 4 KiB pages. The kernel's pages are
+# 4 KiB, and no 32-bit library is mapped on a larger page.
+MIN_ARM_PAGE_SIZE = 4096
 MODULE_METADATA = frozenset({
     "modules.alias",
     "modules.alias.bin",
@@ -299,6 +311,54 @@ class Segment:
     alignment: int
 
 
+@dataclass(frozen=True)
+class ElfFormat:
+    """Where one little-endian ELF class keeps what the verifiers read."""
+
+    elf_class: int
+    header_size: int
+    program_offset_at: int
+    program_offset_format: str
+    entry_size_at: int
+    program_header_size: int
+    program_header_format: str
+    dynamic_format: str
+    min_page_size: int
+
+
+ELF32 = ElfFormat(
+    ELFCLASS32, ELF32_HEADER_SIZE, 28, "<I", 42, ELF32_PROGRAM_HEADER_SIZE,
+    "<IIIIIIII", "<iI", MIN_ARM_PAGE_SIZE,
+)
+ELF64 = ElfFormat(
+    ELFCLASS64, ELF64_HEADER_SIZE, 32, "<Q", 54, ELF64_PROGRAM_HEADER_SIZE,
+    "<IIQQQQQQ", "<qQ", MAX_PAGE_SIZE_SUPPORTED,
+)
+ELF_FORMATS = {ELFCLASS32: ELF32, ELFCLASS64: ELF64}
+
+
+def elf_format(name: str, header: bytes, error: Error) -> ElfFormat:
+    """Classify a little-endian ELF header; refuse every other image."""
+    if (
+        len(header) < ELF32_HEADER_SIZE
+        or header[:4] != ELF_MAGIC
+        or header[5] != ELFDATA2LSB
+        or header[4] not in ELF_FORMATS
+    ):
+        raise error(f"target ELF is not a little-endian ELF32 or ELF64: {name}")
+    elf = ELF_FORMATS[header[4]]
+    if len(header) < elf.header_size:
+        raise error(f"truncated ELF header: {name}")
+    return elf
+
+
+def program_table(elf: ElfFormat, header: bytes) -> tuple[int, int, int]:
+    """Return the program-header table's offset, entry size and entry count."""
+    offset = struct.unpack_from(elf.program_offset_format, header, elf.program_offset_at)[0]
+    entry_size, entry_count = struct.unpack_from("<HH", header, elf.entry_size_at)
+    return offset, entry_size, entry_count
+
+
 def check_elf64_little_endian(name: str, header: bytes, error: Error) -> None:
     if (
         len(header) < ELF64_HEADER_SIZE
@@ -318,31 +378,60 @@ def check_aarch64_elf_header(name: str, header: bytes, error: Error) -> None:
         raise error(f"target ELF program-header size is malformed: {name}")
 
 
+def check_arm_elf_header(name: str, header: bytes, error: Error) -> None:
+    """Require a little-endian Arm ELF32 header of the softfp EABI, version 5,
+    whose program-header entries are whole, which program_headers relies on."""
+    if (
+        len(header) < ELF32_HEADER_SIZE
+        or header[:4] != ELF_MAGIC
+        or header[4] != ELFCLASS32
+        or header[5] != ELFDATA2LSB
+    ):
+        raise error(f"target ELF is not little-endian ELF32: {name}")
+    if struct.unpack_from("<H", header, 18)[0] != EM_ARM:
+        raise error(f"target ELF is not Arm: {name}")
+    if struct.unpack_from("<H", header, 42)[0] < ELF32_PROGRAM_HEADER_SIZE:
+        raise error(f"target ELF program-header size is malformed: {name}")
+    flags = struct.unpack_from("<I", header, 36)[0]
+    if flags & EF_ARM_EABIMASK != EF_ARM_EABI_VER5:
+        raise error(f"target ELF is not Arm EABI version 5: {name}")
+    if flags & EF_ARM_ABI_FLOAT_HARD:
+        raise error(f"target ELF is hard-float, but armeabi-v7a is softfp: {name}")
+
+
 def program_headers(payload: bytes) -> list[Segment]:
-    """Return an ELF64 payload's program headers; the caller bounds the table."""
-    program_offset = struct.unpack_from("<Q", payload, 32)[0]
-    entry_size, entry_count = struct.unpack_from("<HH", payload, 54)
+    """Return an ELF payload's program headers; the caller bounds the table
+    and has classified the payload with elf_format."""
+    elf = ELF_FORMATS[payload[4]]
+    program_offset, entry_size, entry_count = program_table(elf, payload)
     segments = []
     for index in range(entry_count):
-        kind, _, offset, address, _, file_size, _, alignment = struct.unpack_from(
-            "<IIQQQQQQ", payload, program_offset + index * entry_size
+        fields = struct.unpack_from(
+            elf.program_header_format, payload, program_offset + index * entry_size
         )
+        if elf.elf_class == ELFCLASS64:
+            kind, _, offset, address, _, file_size, _, alignment = fields
+        else:
+            kind, offset, address, _, file_size, _, _, alignment = fields
         segments.append(Segment(kind, offset, address, file_size, alignment))
     return segments
 
 
 def check_load_alignment(name: str, payload: bytes, error: Error) -> int:
-    """Require load segments aligned to the 16 KiB maximum page size the
-    page-agnostic 64-bit userspace promises; return how many there are."""
+    """Require load segments aligned to the page size the class promises: the
+    16 KiB maximum of the page-agnostic 64-bit userspace, and the 4 KiB of the
+    32-bit one. Return how many load segments there are."""
+    minimum = ELF_FORMATS[payload[4]].min_page_size
     loads = 0
     for segment in program_headers(payload):
         if segment.kind != PT_LOAD:
             continue
         loads += 1
         alignment = segment.alignment
-        if alignment < MAX_PAGE_SIZE_SUPPORTED or alignment & (alignment - 1):
+        if alignment < minimum or alignment & (alignment - 1):
             raise error(
-                f"target ELF load alignment is below 16 KiB: {name} ({alignment:#x})"
+                f"target ELF load alignment is below {minimum // 1024} KiB: "
+                f"{name} ({alignment:#x})"
             )
         if segment.address % alignment != segment.offset % alignment:
             raise error(f"target ELF load alignment is incongruent: {name}")
@@ -350,7 +439,9 @@ def check_load_alignment(name: str, payload: bytes, error: Error) -> int:
 
 
 def elf_needed(name: str, payload: bytes, error: Error) -> set[str]:
-    """Return the DT_NEEDED names of a whole ELF64 payload."""
+    """Return the DT_NEEDED names of a whole ELF32 or ELF64 payload."""
+    elf = ELF_FORMATS[payload[4]]
+    entry_size = struct.calcsize(elf.dynamic_format)
     loads: list[Segment] = []
     dynamic: Segment | None = None
     for segment in program_headers(payload):
@@ -365,14 +456,14 @@ def elf_needed(name: str, payload: bytes, error: Error) -> set[str]:
     if dynamic is None:
         return set()
 
-    if dynamic.file_size % 16:
+    if dynamic.file_size % entry_size:
         raise error(f"ELF dynamic segment is malformed: {name}")
     string_address: int | None = None
     string_size: int | None = None
     needed_offsets: list[int] = []
     terminated = False
-    for offset in range(dynamic.offset, dynamic.offset + dynamic.file_size, 16):
-        tag, value = struct.unpack_from("<qQ", payload, offset)
+    for offset in range(dynamic.offset, dynamic.offset + dynamic.file_size, entry_size):
+        tag, value = struct.unpack_from(elf.dynamic_format, payload, offset)
         if tag == DT_NULL:
             terminated = True
             break

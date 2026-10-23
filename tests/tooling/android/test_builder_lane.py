@@ -114,6 +114,57 @@ def synthetic_aarch64_elf(
     return bytes(payload)
 
 
+def synthetic_arm_elf(
+    alignment: int = 4096,
+    needed: tuple[str, ...] = (),
+    edit: tuple[str, int, int] | None = None,
+    flags: int = 0x05000200,
+) -> bytes:
+    """An Arm ET_DYN of the softfp EABI; `edit` is a (struct format, offset,
+    value) overwrite."""
+    program_headers = 2 if needed else 1
+    dynamic_entries = 3 + len(needed) if needed else 0
+    dynamic_offset = 52 + 32 * program_headers
+    string_table = bytearray(b"\0")
+    string_offsets: dict[str, int] = {}
+    for item in needed:
+        string_offsets[item] = len(string_table)
+        string_table.extend(item.encode())
+        string_table.append(0)
+    payload_size = dynamic_offset + 8 * dynamic_entries
+    string_offset = payload_size
+    if needed:
+        payload_size += len(string_table)
+    payload = bytearray(payload_size)
+    payload[:4] = b"\x7fELF"
+    payload[4] = 1
+    payload[5] = 1
+    payload[6] = 1
+    struct.pack_into("<HHI", payload, 16, 3, 40, 1)
+    struct.pack_into("<I", payload, 28, 52)
+    struct.pack_into("<I", payload, 36, flags)
+    struct.pack_into("<HHH", payload, 40, 52, 32, program_headers)
+    struct.pack_into(
+        "<IIIIIIII", payload, 52, 1, 0, 0, 0, len(payload), len(payload), 5, alignment
+    )
+    if needed:
+        dynamic_size = 8 * dynamic_entries
+        struct.pack_into(
+            "<IIIIIIII", payload, 84, 2, dynamic_offset, dynamic_offset,
+            dynamic_offset, dynamic_size, dynamic_size, 4, 4,
+        )
+        entries = [(5, string_offset), (10, len(string_table))]
+        for name in needed:
+            entries.append((1, string_offsets[name]))
+        entries.append((0, 0))
+        for index, (tag, value) in enumerate(entries):
+            struct.pack_into("<iI", payload, dynamic_offset + index * 8, tag, value)
+        payload[string_offset:] = string_table
+    if edit is not None:
+        struct.pack_into(edit[0], payload, edit[1], edit[2])
+    return bytes(payload)
+
+
 def load_tool(path: Path):
     """Import a tool whose hyphenated file name is not a module name."""
     spec = importlib.util.spec_from_file_location(
@@ -221,6 +272,23 @@ def verify_kernel_elf_fixtures(verifier: Path) -> None:
                 )
 
 
+def adjust_archive(path: Path, entries: dict[str, bytes | None]) -> None:
+    """Rewrite a fixture archive: drop the entries mapped to None and add or
+    replace the others."""
+    with zipfile.ZipFile(path) as source:
+        kept = [
+            (info.filename, source.read(info))
+            for info in source.infolist()
+            if info.filename not in entries
+        ]
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, payload in kept:
+            archive.writestr(name, payload)
+        for name, payload in entries.items():
+            if payload is not None:
+                archive.writestr(name, payload)
+
+
 def verify_target_files_fixtures(verifier: Path) -> None:
     sys.path.insert(0, str(verifier.parent))
     from release_common import BUILD_VARIANTS, configured_build_variant
@@ -231,6 +299,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         entry for entry in tool.REQUIRED_ENTRIES
         if entry.endswith(".apk") and entry not in tool.REQUIRED_PREOPT_APKS
     )
+    arm_preopt_apks = sorted(tool.REQUIRED_ARM_PREOPT_APKS)
     permission_files = [
         entry for entry in tool.REQUIRED_ENTRIES
         if entry.startswith("PRODUCT/etc/permissions/")
@@ -264,7 +333,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         def write_fixture(path: Path, *, module: bool = False,
                           module_loader: bool = False, dlkm_image: bool = False,
                           dynamic_image: bool = False, ota_tool: bool = False,
-                          virtual_ab: bool = False, abi32: bool = False,
+                          virtual_ab: bool = False,
                           wrong_fstab: bool = False, stock_fstab: bool = False,
                           wrong_filesystem: bool = False,
                           wrong_apex_filesystem: bool = False,
@@ -294,6 +363,15 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wide_fdroid_permissions: bool = False,
                           mesa_gles_alignment: int = 16384,
                           elf_edit: tuple[str, int, int] | None = None,
+                          abilist32: str = "armeabi-v7a",
+                          vendor_abilist32: str = "armeabi-v7a",
+                          zygote: str = "zygote64_32",
+                          dex2oat64: bool = True,
+                          arm_alignment: int = 4096,
+                          arm_flags: int = 0x05000200,
+                          arm_edit: tuple[str, int, int] | None = None,
+                          missing_arm_gallium_dependency: bool = False,
+                          entries: dict[str, bytes | None] | None = None,
                           init_variant: str | None = None,
                           extra_entry: str | None = None,
                           build_variant: str = tracked_variant,
@@ -340,13 +418,20 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     archive.writestr(f"IMAGES/{image}", b"image")
                 archive.writestr("ROOT/system_dlkm/", b"")
                 archive.writestr("SYSTEM/system_dlkm/etc/build.prop", "")
-                abilist32 = "armeabi-v7a" if abi32 else ""
                 virtual_ab_property = "ro.virtual_ab.enabled=true\n" if virtual_ab else ""
+
+                def abi_properties(partition: str, thirty_two: str) -> str:
+                    abilist = "arm64-v8a" + ("," + thirty_two if thirty_two else "")
+                    return (
+                        f"ro.{partition}.product.cpu.abilist={abilist}\n"
+                        f"ro.{partition}.product.cpu.abilist32={thirty_two}\n"
+                        f"ro.{partition}.product.cpu.abilist64=arm64-v8a\n"
+                    )
+
                 archive.writestr(
                     "SYSTEM/build.prop",
                     "ro.product.cpu.abi=arm64-v8a\n"
-                    "ro.product.cpu.abilist=arm64-v8a\n"
-                    f"ro.product.cpu.abilist32={abilist32}\n"
+                    + abi_properties("system", abilist32)
                     + "".join(
                         f"{name}={value}\n"
                         for name, value in BUILD_VARIANTS[build_variant].items()
@@ -377,6 +462,23 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"SYSTEM/bin/{tool}",
                         synthetic_aarch64_elf(alignment),
                     )
+                # The 32-bit runtime: the second zygote's process, the
+                # bootstrap linker, the BoringSSL self test and the ART boot
+                # image of the arm ISA.
+                archive.writestr(
+                    "SYSTEM/bin/app_process32",
+                    synthetic_arm_elf(arm_alignment, edit=arm_edit, flags=arm_flags),
+                )
+                for entry in (
+                    "SYSTEM/bin/bootstrap/linker",
+                    "SYSTEM/bin/boringssl_self_test32",
+                    "SYSTEM/framework/arm/boot.oat",
+                    "SYSTEM/framework/arm/boot-framework.oat",
+                ):
+                    archive.writestr(entry, synthetic_arm_elf())
+                archive.writestr(
+                    "SYSTEM/etc/init/hw/init.zygote64_32.rc", "service zygote_secondary\n"
+                )
                 archive.writestr(
                     "SYSTEM/apex/com.android.fixture.apex",
                     synthetic_apex(
@@ -516,6 +618,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
                     archive.writestr(apk, b"apk")
+                for apk in arm_preopt_apks:
+                    apk_path = Path(apk)
+                    for isa in ("arm64", "arm"):
+                        artifact = apk_path.parent / "oat" / isa / apk_path.stem
+                        archive.writestr(f"{artifact}.odex", b"odex")
+                        archive.writestr(f"{artifact}.vdex", b"vdex")
                 archive.writestr(
                     fdroid_permissions,
                     '<permissions><privapp-permissions '
@@ -576,6 +684,23 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         )
                     )
                     archive.writestr(entry, payload)
+                for index, entry in enumerate((
+                    "VENDOR/lib/venus_gallium_dri.so",
+                    "VENDOR/lib/egl/libEGL_kernarium.so",
+                    "VENDOR/lib/egl/libGLESv1_CM_kernarium.so",
+                    "VENDOR/lib/egl/libGLESv2_kernarium.so",
+                )):
+                    archive.writestr(
+                        entry,
+                        synthetic_arm_elf(
+                            needed=()
+                            if missing_arm_gallium_dependency or index == 0
+                            else ("venus_gallium_dri.so",)
+                        ),
+                    )
+                for hal in ("vulkan.virtio", "gralloc.minigbm", "mapper.minigbm"):
+                    archive.writestr(f"VENDOR/lib64/hw/{hal}.so", synthetic_aarch64_elf())
+                    archive.writestr(f"VENDOR/lib/hw/{hal}.so", synthetic_arm_elf())
                 if retired_egl_library:
                     archive.writestr(
                         "VENDOR/lib64/egl/libGLES_mesa.so", synthetic_aarch64_elf()
@@ -587,12 +712,21 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "VENDOR/build.prop",
                     "ro.vendor.build.fingerprint=kernarium\n"
+                    + abi_properties("vendor", vendor_abilist32)
+                    + f"ro.zygote={zygote}\n"
+                    "# Removed by post_process_props.py because overridden by "
+                    "ro.zygote=zygote64_32\n#ro.zygote?=zygote32\n"
+                    + ("dalvik.vm.dex2oat64.enabled=true\n" if dex2oat64 else "")
+                    + "ro.bionic.2nd_arch=arm\n"
+                    "ro.bionic.2nd_cpu_variant=cortex-a53\n"
+                    "dalvik.vm.isa.arm.variant=cortex-a53\n"
                     + (
                         f"ro.hardware.{vendor_hal_property}=selected\n"
                         if vendor_hal_property
                         else ""
                     ),
                 )
+                archive.writestr("ODM/etc/build.prop", abi_properties("odm", "armeabi-v7a"))
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
                 if module_loader:
@@ -626,6 +760,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "SYSTEM/apex/com.android.hardware.rebootescrow.apex",
                         synthetic_apex("ext4"),
                     )
+            if entries:
+                adjust_archive(path, entries)
 
         good = root / "good.zip"
         write_fixture(good)
@@ -653,7 +789,48 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("dynamic-image", {"dynamic_image": True}),
             ("ota-tool", {"ota_tool": True}),
             ("virtual-ab", {"virtual_ab": True}),
-            ("abi32", {"abi32": True}),
+            ("no-32-bit-abi", {"abilist32": ""}),
+            ("no-32-bit-vendor-abi", {"vendor_abilist32": ""}),
+            ("single-zygote", {"zygote": "zygote64"}),
+            ("no-64-bit-compiler", {"dex2oat64": False}),
+            ("missing-32-bit-runtime",
+             {"entries": {"SYSTEM/bin/app_process32": None}}),
+            ("missing-32-bit-boot-image",
+             {"entries": {"SYSTEM/framework/arm/boot-framework.oat": None}}),
+            ("missing-32-bit-gallium-driver",
+             {"entries": {"VENDOR/lib/venus_gallium_dri.so": None}}),
+            ("missing-32-bit-egl",
+             {"entries": {"VENDOR/lib/egl/libGLESv2_kernarium.so": None}}),
+            ("missing-32-bit-vulkan-hal",
+             {"entries": {"VENDOR/lib/hw/vulkan.virtio.so": None}}),
+            ("missing-32-bit-gralloc",
+             {"entries": {"VENDOR/lib/hw/gralloc.minigbm.so": None}}),
+            ("missing-32-bit-mapper",
+             {"entries": {"VENDOR/lib/hw/mapper.minigbm.so": None}}),
+            ("32-bit-gallium-dependency", {"missing_arm_gallium_dependency": True}),
+            ("32-bit-egl-is-aarch64",
+             {"entries": {"VENDOR/lib/egl/libEGL_kernarium.so": synthetic_aarch64_elf()}}),
+            ("64-bit-egl-is-arm",
+             {"entries": {"VENDOR/lib64/egl/libEGL_kernarium.so": synthetic_arm_elf()}}),
+            ("missing-webview-32-bit-odex",
+             {"entries": {"PRODUCT/app/webview/oat/arm/webview.odex": None}}),
+            ("missing-webview-32-bit-vdex",
+             {"entries": {"PRODUCT/app/webview/oat/arm/webview.vdex": None}}),
+            ("32-bit-odex-without-arm64",
+             {"entries": {"PRODUCT/app/Orphan/oat/arm/Orphan.odex": b"odex",
+                          "PRODUCT/app/Orphan/oat/arm/Orphan.vdex": b"vdex"}}),
+            ("unknown-isa",
+             {"entries": {"PRODUCT/app/Jelly/oat/x86_64/Jelly.odex": b"odex"}}),
+            ("32-bit-elf-in-lib64",
+             {"entries": {"VENDOR/lib64/libfixture.so": synthetic_arm_elf()}}),
+            ("64-bit-elf-in-lib",
+             {"entries": {"SYSTEM/lib/libfixture.so": synthetic_aarch64_elf()}}),
+            ("32-bit-daemon",
+             {"entries": {"SYSTEM/bin/mediaserver": synthetic_arm_elf()}}),
+            ("32-bit-vendor-daemon",
+             {"entries": {"VENDOR/bin/hw/android.hardware.fixture-service": synthetic_arm_elf()}}),
+            ("32-bit-alignment", {"arm_alignment": 2048}),
+            ("32-bit-hard-float", {"arm_flags": 0x05000400}),
             ("alignment", {"alignment": 4096}),
             ("untracked-variant", {"build_variant": other_variant}),
             ("wrong-fstab", {"wrong_fstab": True}),
@@ -709,7 +886,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             result = run_tool(verifier, "--target-files", fixture, *kernel_options)
             if result.returncode == 0:
                 fail(f"target-files verifier accepted the {label} fixture")
-            if result.returncode != 1:
+            if result.returncode != 1 or "Android target-files verifier: " not in result.stdout:
                 fail(f"target-files verifier did not reject the {label} fixture: {result.stdout}")
 
         # Rejections that must name their cause: kernel module files and
@@ -720,10 +897,49 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("module-metadata", {"extra_entry": "VENDOR/etc/modules.dep"}, "kernel module"),
             ("module-metadata-case", {"extra_entry": "VENDOR/etc/MODULES.Dep"}, "kernel module"),
             ("module-blocklist", {"extra_entry": "VENDOR/etc/modules.blocklist"}, "kernel module"),
-            ("elf32", {"elf_edit": ("<B", 4, 1)}, "little-endian ELF64"),
-            ("elf-big-endian", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF64"),
+            ("elf-class", {"elf_edit": ("<B", 4, 3)}, "ELF32 or ELF64"),
+            ("elf-big-endian", {"elf_edit": ("<B", 5, 2)}, "little-endian ELF32 or ELF64"),
             ("elf-machine", {"elf_edit": ("<H", 18, 62)}, "not AArch64"),
             ("elf-program-header-size", {"elf_edit": ("<H", 54, 32)}, "program.header"),
+            ("armeabi", {"abilist32": "armeabi-v7a,armeabi"}, "armeabi is forbidden|legacy armeabi"),
+            ("no-32-bit-abi-cause", {"abilist32": ""}, "unexpected ABI"),
+            ("single-zygote-cause", {"zygote": "zygote64"}, "zygote"),
+            ("no-64-bit-compiler-cause", {"dex2oat64": False}, "dalvik.vm.dex2oat64.enabled"),
+            ("missing-32-bit-runtime-cause",
+             {"entries": {"SYSTEM/bin/app_process32": None}}, "required entries are missing"),
+            ("32-bit-gallium-dependency-cause",
+             {"missing_arm_gallium_dependency": True}, "does not link the gallium driver"),
+            ("32-bit-egl-is-aarch64-cause",
+             {"entries": {"VENDOR/lib/egl/libEGL_kernarium.so": synthetic_aarch64_elf()}},
+             "64-bit ELF in a 32-bit library directory"),
+            ("64-bit-egl-is-arm-cause",
+             {"entries": {"VENDOR/lib64/egl/libEGL_kernarium.so": synthetic_arm_elf()}},
+             "32-bit ELF outside"),
+            ("missing-webview-32-bit-odex-cause",
+             {"entries": {"PRODUCT/app/webview/oat/arm/webview.odex": None}},
+             "32-bit application dexpreopt artifact is missing"),
+            ("32-bit-odex-without-arm64-cause",
+             {"entries": {"PRODUCT/app/Orphan/oat/arm/Orphan.odex": b"odex",
+                          "PRODUCT/app/Orphan/oat/arm/Orphan.vdex": b"vdex"}},
+             "has no ARM64 one"),
+            ("unknown-isa-cause",
+             {"entries": {"PRODUCT/app/Jelly/oat/x86_64/Jelly.odex": b"odex"}},
+             "not for an ISA of this product"),
+            ("32-bit-elf-in-lib64-cause",
+             {"entries": {"VENDOR/lib64/libfixture.so": synthetic_arm_elf()}},
+             "32-bit ELF outside"),
+            ("64-bit-elf-in-lib-cause",
+             {"entries": {"SYSTEM/lib/libfixture.so": synthetic_aarch64_elf()}},
+             "64-bit ELF in a 32-bit library directory"),
+            ("32-bit-daemon-cause",
+             {"entries": {"SYSTEM/bin/mediaserver": synthetic_arm_elf()}},
+             "32-bit ELF outside"),
+            ("32-bit-alignment-cause", {"arm_alignment": 2048}, "below 4 KiB"),
+            ("32-bit-hard-float-cause", {"arm_flags": 0x05000400}, "hard-float"),
+            ("32-bit-eabi-version", {"arm_flags": 0x04000000}, "EABI version 5"),
+            ("32-bit-machine", {"arm_edit": ("<H", 18, 62)}, "not Arm"),
+            ("32-bit-big-endian", {"arm_edit": ("<B", 5, 2)}, "little-endian ELF32 or ELF64"),
+            ("32-bit-program-header-size", {"arm_edit": ("<H", 42, 16)}, "program.header"),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)

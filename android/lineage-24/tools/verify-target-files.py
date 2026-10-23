@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import hashlib
 import io
+import re
 import struct
 import sys
 import zipfile
@@ -33,13 +34,26 @@ EROFS_MAGIC = b"\xe2\xe1\xf5\xe0"
 # command line's androidboot.hardware.egl must name the same suffix.
 MESA_EGL_SUFFIX = "kernarium"
 MESA_GALLIUM_DRIVER = "venus_gallium_dri.so"
-MESA_EGL_DIRECTORY = "VENDOR/lib64/egl/"
+# Both userspace ABIs load the stack: a 64-bit application finds it in lib64,
+# and an armeabi-v7a one in lib. The ABI directory decides the ELF class
+# check_mesa_gles_stack requires.
+MESA_ABI_DIRECTORIES = {"lib64": android_image.EM_AARCH64, "lib": android_image.EM_ARM}
 MESA_EGL_ENTRIES = {
-    f"{MESA_EGL_DIRECTORY}libEGL_{MESA_EGL_SUFFIX}.so",
-    f"{MESA_EGL_DIRECTORY}libGLESv1_CM_{MESA_EGL_SUFFIX}.so",
-    f"{MESA_EGL_DIRECTORY}libGLESv2_{MESA_EGL_SUFFIX}.so",
+    f"VENDOR/{abi}/egl/lib{name}_{MESA_EGL_SUFFIX}.so"
+    for abi in MESA_ABI_DIRECTORIES
+    for name in ("EGL", "GLESv1_CM", "GLESv2")
 }
-MESA_ELF_ENTRIES = {f"VENDOR/lib64/{MESA_GALLIUM_DRIVER}", *MESA_EGL_ENTRIES}
+MESA_ELF_ENTRIES = {
+    *(f"VENDOR/{abi}/{MESA_GALLIUM_DRIVER}" for abi in MESA_ABI_DIRECTORIES),
+    *MESA_EGL_ENTRIES,
+}
+# The Vulkan HAL and the buffer allocator and mapper Mesa queries through
+# gralloc: same-process HALs of each ABI.
+MESA_HAL_ENTRIES = {
+    f"VENDOR/{abi}/hw/{module}.so"
+    for abi in MESA_ABI_DIRECTORIES
+    for module in ("vulkan.virtio", "gralloc.minigbm", "mapper.minigbm")
+}
 # The graphics HAL selections. The product init script copies each
 # androidboot.hardware.<name> into ro.hardware.<name> at early-init, so the
 # boot command line is each property's one writer and must name these values;
@@ -52,12 +66,11 @@ BOOT_HAL_SELECTIONS = {
 # The retired AOSP external/mesa3d stack: its EGL and GLES libraries, and the
 # directory it loaded its driver from.
 RETIRED_EGL_ENTRIES = {
-    f"{MESA_EGL_DIRECTORY}libGLES_mesa.so",
-    f"{MESA_EGL_DIRECTORY}libEGL_mesa.so",
-    f"{MESA_EGL_DIRECTORY}libGLESv1_CM_mesa.so",
-    f"{MESA_EGL_DIRECTORY}libGLESv2_mesa.so",
+    f"VENDOR/{abi}/egl/{name}.so"
+    for abi in MESA_ABI_DIRECTORIES
+    for name in ("libGLES_mesa", "libEGL_mesa", "libGLESv1_CM_mesa", "libGLESv2_mesa")
 }
-RETIRED_DRI_DIRECTORY = "VENDOR/lib64/dri/"
+RETIRED_DRI_DIRECTORIES = tuple(f"VENDOR/{abi}/dri/" for abi in MESA_ABI_DIRECTORIES)
 REQUIRED_SDK_APEX_ENTRIES = {
     "SYSTEM/apex/com.android.bt.apex",
     "SYSTEM/apex/com.android.devicelock.apex",
@@ -69,6 +82,39 @@ REQUIRED_SDK_APEX_ENTRIES = {
     "SYSTEM/apex/com.android.virt.apex",
     "SYSTEM/apex/com.android.wifi.apex",
 }
+
+# The product runs 64-bit applications natively and armeabi-v7a ones beside
+# them, never the older armeabi. The build writes each ABI list per partition
+# (ro.<partition>.product.cpu.abilist*) and the runtime derives the unprefixed
+# ones from them.
+ABI_PROPERTY = re.compile(
+    r"ro\.(?:(?:system|vendor|odm)\.product|product)\.cpu\.(abi|abi2|abilist|abilist32|abilist64)"
+)
+EXPECTED_ABIS = {
+    "abi": "arm64-v8a",
+    "abi2": "",
+    "abilist": "arm64-v8a,armeabi-v7a",
+    "abilist32": "armeabi-v7a",
+    "abilist64": "arm64-v8a",
+}
+# Partitions whose build properties list the ABIs, with the properties a
+# multilib product must carry in them.
+ABI_LIST_PROPERTY_FILES = {
+    "SYSTEM/build.prop": "system",
+    "VENDOR/build.prop": "vendor",
+    "ODM/etc/build.prop": "odm",
+}
+# What only the vendor properties describe: the second zygote that starts the
+# 32-bit applications, the 64-bit compiler ART Service runs for both ISAs, and
+# the second architecture's variant for dex2oat and bionic.
+VENDOR_MULTILIB_PROPERTIES = {
+    "ro.zygote": "zygote64_32",
+    "dalvik.vm.dex2oat64.enabled": "true",
+    "ro.bionic.2nd_arch": "arm",
+    "ro.bionic.2nd_cpu_variant": "cortex-a53",
+    "dalvik.vm.isa.arm.variant": "cortex-a53",
+}
+
 
 REQUIRED_ENTRIES = {
     "BOOT/kernel",
@@ -125,8 +171,19 @@ REQUIRED_ENTRIES = {
     "VENDOR/etc/vintf/manifest.xml",
     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
     "VENDOR/build.prop",
+    *ABI_LIST_PROPERTY_FILES,
     *MESA_ELF_ENTRIES,
+    *MESA_HAL_ENTRIES,
     *REQUIRED_SDK_APEX_ENTRIES,
+    # The 32-bit runtime the product adds beside the 64-bit one: the second
+    # zygote's process, the ART boot image of its ISA, and the bootstrap
+    # linker that starts it.
+    "SYSTEM/bin/app_process32",
+    "SYSTEM/bin/bootstrap/linker",
+    "SYSTEM/bin/boringssl_self_test32",
+    "SYSTEM/framework/arm/boot.oat",
+    "SYSTEM/framework/arm/boot-framework.oat",
+    "SYSTEM/etc/init/hw/init.zygote64_32.rc",
 }
 REQUIRED_PREOPT_APKS = {
     "PRODUCT/app/Jelly/Jelly.apk",
@@ -158,6 +215,12 @@ REQUIRED_PREOPT_APKS = {
     "SYSTEM_EXT/priv-app/SystemUI/SystemUI.apk",
     "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
 }
+# The one application whose WebView renderer and in-process library run under
+# either zygote: it carries libraries for both ABIs and declares multiArch.
+REQUIRED_ARM_PREOPT_APKS = {
+    "PRODUCT/app/webview/webview.apk",
+}
+APP_ISAS = {"arm64", "arm"}
 DLKM_COMPONENTS = {"system_dlkm", "vendor_dlkm", "odm_dlkm"}
 DLKM_COMPATIBILITY_ENTRIES = {
     "RECOVERY/RAMDISK/odm_dlkm",
@@ -186,6 +249,9 @@ DLKM_COMPATIBILITY_ENTRIES = {
     "VENDOR_BOOT/RAMDISK/vendor_dlkm/etc",
 }
 TARGET_PARTITIONS = {"SYSTEM", "SYSTEM_EXT", "PRODUCT", "VENDOR", "ODM"}
+# The one 32-bit executable that does not carry the 32 stem suffix of a binary
+# built for both ABIs: the bootstrap linker that starts the first processes.
+ELF32_BIN_EXCEPTIONS = {"SYSTEM/bin/bootstrap/linker"}
 FORBIDDEN_STATIC_ENTRIES = {
     "IMAGES/super.img",
     "IMAGES/super_empty.img",
@@ -622,9 +688,9 @@ def check_hardware_features(
                 fail(f"absent hardware feature is advertised in {name}: {feature}")
 
 
-def app_preopt_paths(apk: str) -> tuple[str, str]:
+def app_preopt_paths(apk: str, isa: str = "arm64") -> tuple[str, str]:
     apk_path = PurePosixPath(apk)
-    artifact_base = apk_path.parent / "oat" / "arm64" / apk_path.stem
+    artifact_base = apk_path.parent / "oat" / isa / apk_path.stem
     return f"{artifact_base}.odex", f"{artifact_base}.vdex"
 
 
@@ -635,6 +701,14 @@ def check_app_dexpreopt(seen: set[str]) -> None:
         for artifact in app_preopt_paths(apk):
             if artifact not in seen:
                 fail(f"required application dexpreopt artifact is missing: {artifact}")
+    # An application that carries libraries for both ABIs runs under either
+    # zygote, so ART Service would compile its secondary ISA on first boot.
+    for apk in sorted(REQUIRED_ARM_PREOPT_APKS):
+        if apk not in seen:
+            fail(f"required multi-ABI application is missing: {apk}")
+        for artifact in app_preopt_paths(apk, "arm"):
+            if artifact not in seen:
+                fail(f"required 32-bit application dexpreopt artifact is missing: {artifact}")
 
     for canonical in sorted(seen):
         path = PurePosixPath(canonical)
@@ -644,12 +718,17 @@ def check_app_dexpreopt(seen: set[str]) -> None:
             continue
         if path.parts[-3] != "oat":
             continue
-        if path.parts[-2] != "arm64":
-            fail(f"application dexpreopt artifact is not ARM64: {path}")
+        if path.parts[-2] not in APP_ISAS:
+            fail(f"application dexpreopt artifact is not for an ISA of this product: {path}")
         companion_suffix = ".vdex" if path.suffix == ".odex" else ".odex"
         companion = str(path.with_suffix(companion_suffix))
         if companion not in seen:
             fail(f"application dexpreopt artifact lacks its pair: {path}")
+        if path.parts[-2] == "arm":
+            # The secondary ISA only ever adds to the primary one.
+            primary = path.parent.parent / "arm64" / path.name
+            if str(primary) not in seen:
+                fail(f"32-bit application dexpreopt artifact has no ARM64 one: {path}")
 
 
 def check_kernel_policy(
@@ -678,25 +757,58 @@ def check_kernel_policy(
         fail("Android 17 vendor policy does not enable policycap memfd_class")
 
 
+def parse_properties(payload: str) -> dict[str, str]:
+    properties: dict[str, str] = {}
+    for line in payload.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and not key.startswith("#"):
+            properties[key] = value.strip()
+    return properties
+
+
 def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None:
     if info.file_size > 1 << 20:
         fail(f"property file is unexpectedly large: {info.filename}")
     payload = archive.read(info).decode("utf-8", errors="strict")
-    for line in payload.splitlines():
-        key, separator, value = line.partition("=")
-        if not separator:
-            continue
-        value = value.strip()
+    for key, value in parse_properties(payload).items():
         if key.startswith("ro.virtual_ab."):
             fail(f"Virtual A/B property is forbidden in {info.filename}: {key}")
         if key == "ro.build.ab_update" and value == "true":
             fail(f"A/B update property is enabled in {info.filename}")
-        if key == "ro.product.cpu.abilist32" and value:
-            fail(f"32-bit ABI list is not empty in {info.filename}: {value}")
-        if key in {"ro.product.cpu.abi", "ro.product.cpu.abilist"}:
-            abis = {item.strip() for item in value.split(",") if item.strip()}
-            if abis - {"arm64-v8a"}:
-                fail(f"non-arm64 ABI in {info.filename}: {value}")
+        abi_property = ABI_PROPERTY.fullmatch(key)
+        if abi_property is not None:
+            if "armeabi" in {item.strip() for item in value.split(",")}:
+                fail(f"the legacy armeabi ABI is forbidden in {info.filename}: {key}={value}")
+            expected = EXPECTED_ABIS[abi_property.group(1)]
+            if value != expected:
+                fail(f"unexpected ABI in {info.filename}: {key}={value!r}, not {expected!r}")
+        if key == "ro.zygote" and value != VENDOR_MULTILIB_PROPERTIES["ro.zygote"]:
+            fail(f"unexpected zygote in {info.filename}: {value}")
+
+
+def check_multilib_properties(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The partitions state both ABIs, and the vendor describes the second."""
+    for name, partition in ABI_LIST_PROPERTY_FILES.items():
+        properties = parse_properties(
+            read_small(archive, infos[name]).decode("utf-8", errors="strict")
+        )
+        for suffix in ("abilist", "abilist32", "abilist64"):
+            key = f"ro.{partition}.product.cpu.{suffix}"
+            if properties.get(key) != EXPECTED_ABIS[suffix]:
+                fail(f"{name} lacks {key}={EXPECTED_ABIS[suffix]}: {properties.get(key)!r}")
+    vendor = parse_properties(
+        read_small(archive, infos["VENDOR/build.prop"]).decode("utf-8", errors="strict")
+    )
+    for key, expected in VENDOR_MULTILIB_PROPERTIES.items():
+        if vendor.get(key) != expected:
+            fail(f"VENDOR/build.prop lacks {key}={expected}: {vendor.get(key)!r}")
+    system = parse_properties(
+        read_small(archive, infos["SYSTEM/build.prop"]).decode("utf-8", errors="strict")
+    )
+    if system.get("ro.product.cpu.abi") != EXPECTED_ABIS["abi"]:
+        fail(f"SYSTEM/build.prop lacks ro.product.cpu.abi=arm64-v8a: {system.get('ro.product.cpu.abi')!r}")
 
 
 def check_audio_policy(
@@ -797,15 +909,16 @@ def check_audio_policy(
 
 
 def read_elf_prefix(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes | None:
-    if info.file_size < 64:
+    """Return an ELF file's header and program-header table, or None for any
+    other file."""
+    if info.file_size < android_image.ELF32_HEADER_SIZE:
         return None
     with archive.open(info) as source:
-        header = source.read(64)
+        header = source.read(android_image.ELF64_HEADER_SIZE)
         if header[:4] != android_image.ELF_MAGIC:
             return None
-        android_image.check_elf64_little_endian(info.filename, header, error)
-        program_offset = struct.unpack_from("<Q", header, 32)[0]
-        entry_size, entry_count = struct.unpack_from("<HH", header, 54)
+        elf = android_image.elf_format(info.filename, header, error)
+        program_offset, entry_size, entry_count = android_image.program_table(elf, header)
         program_end = program_offset + entry_size * entry_count
         if program_end > info.file_size or program_end > MAX_PROGRAM_HEADERS_SIZE:
             fail(f"malformed ELF program headers: {info.filename}")
@@ -817,24 +930,73 @@ def read_elf_prefix(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes | 
         return prefix
 
 
+def elf_directories(path: PurePosixPath) -> set[tuple[str, str]]:
+    return set(zip(path.parts, path.parts[1:]))
+
+
+def elf32_placement_ok(path: PurePosixPath) -> bool:
+    """Whether a 32-bit ELF may sit at this target-files path.
+
+    The ABI directories hold the libraries: lib in a partition, and lib/arm
+    beside an application's own. ART writes its images and compiled code under
+    arm directories. An executable built for both ABIs takes the stem suffix
+    32, and the bootstrap linker is the one 32-bit executable without it.
+    Anything else is a 32-bit daemon, which this product does not have.
+    """
+    parts = path.parts
+    directories = elf_directories(path)
+    if len(parts) > 1 and parts[1] == "lib":
+        return True
+    if ("lib", "arm") in directories or ("oat", "arm") in directories:
+        return True
+    if parts[1:3] == ("framework", "arm"):
+        return True
+    if len(parts) > 2 and parts[1] == "bin":
+        return path.name.endswith("32") or str(path) in ELF32_BIN_EXCEPTIONS
+    return False
+
+
+def elf64_placement_ok(path: PurePosixPath) -> bool:
+    """Whether a 64-bit ELF may sit at this target-files path: not where the
+    32-bit libraries live."""
+    return not (
+        (len(path.parts) > 1 and path.parts[1] == "lib")
+        or ("lib", "arm") in elf_directories(path)
+    )
+
+
 def check_target_elf(info: zipfile.ZipInfo, payload: bytes) -> None:
+    elf = android_image.elf_format(info.filename, payload, error)
     if struct.unpack_from("<H", payload, 16)[0] not in (ET_EXEC, ET_DYN):
         return
-    android_image.check_aarch64_elf_header(info.filename, payload, error)
+    path = PurePosixPath(info.filename)
+    if elf is android_image.ELF32:
+        android_image.check_arm_elf_header(info.filename, payload, error)
+        if not elf32_placement_ok(path):
+            fail(f"32-bit ELF outside the 32-bit library and runtime paths: {info.filename}")
+    else:
+        android_image.check_aarch64_elf_header(info.filename, payload, error)
+        if not elf64_placement_ok(path):
+            fail(f"64-bit ELF in a 32-bit library directory: {info.filename}")
     android_image.check_load_alignment(info.filename, payload, error)
 
 
 def check_mesa_gles_stack(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
-    for entry in sorted(MESA_ELF_ENTRIES):
+    for entry in sorted(MESA_ELF_ENTRIES | MESA_HAL_ENTRIES):
         info = infos[entry]
         payload = read_elf_prefix(archive, info)
         if payload is None:
-            fail(f"Mesa GLES component is not an ELF file: {entry}")
+            fail(f"Mesa component is not an ELF file: {entry}")
         elf_type, machine = struct.unpack_from("<HH", payload, 16)
-        if elf_type != ET_DYN or machine != android_image.EM_AARCH64:
-            fail(f"Mesa GLES component is not AArch64 ET_DYN: {entry}")
+        expected_machine = MESA_ABI_DIRECTORIES[PurePosixPath(entry).parts[1]]
+        if elf_type != ET_DYN or machine != expected_machine:
+            fail(
+                "Mesa component is not "
+                f"{'AArch64' if expected_machine == android_image.EM_AARCH64 else 'Arm'}"
+                f" ET_DYN: {entry}"
+            )
         check_target_elf(info, payload)
         if entry in MESA_EGL_ENTRIES:
             needed = android_image.elf_needed(info.filename, archive.read(info), error)
@@ -844,7 +1006,7 @@ def check_mesa_gles_stack(
     for name in infos:
         if name in RETIRED_EGL_ENTRIES:
             fail(f"retired AOSP Mesa EGL or GLES library is forbidden: {name}")
-        if name.startswith(RETIRED_DRI_DIRECTORY):
+        if name.startswith(RETIRED_DRI_DIRECTORIES):
             fail(f"retired DRI driver payload is forbidden: {name}")
 
     vendor_properties = {
@@ -920,8 +1082,6 @@ def main() -> None:
                 check_property_file(archive, info)
             if path.parts[0] not in TARGET_PARTITIONS:
                 continue
-            if len(path.parts) > 1 and path.parts[1] == "lib":
-                fail(f"32-bit target library directory is forbidden: {path}")
             payload = read_elf_prefix(archive, info)
             if payload is not None:
                 elf_count += 1
@@ -936,6 +1096,7 @@ def main() -> None:
         check_hardware_features(archive, infos)
         check_fdroid(archive, infos)
         check_audio_policy(archive, infos)
+        check_multilib_properties(archive, infos)
         check_mesa_gles_stack(archive, infos)
         check_boot_policy(archive, infos, build_variant)
         check_kernel_policy(
