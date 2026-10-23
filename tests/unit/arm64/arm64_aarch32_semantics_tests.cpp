@@ -9,6 +9,7 @@
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/semantics.hpp"
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
 #include "require.hpp"
 
 #include <array>

@@ -40,6 +40,7 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/aarch32/decode.hpp"
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
 #include "cpu/arm64/aarch32/state_format.hpp"
 #include "scratch_backing.hpp"
 

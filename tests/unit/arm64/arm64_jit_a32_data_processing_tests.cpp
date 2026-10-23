@@ -7,7 +7,7 @@
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
-#include "cpu/arm64/aarch32/semantics.hpp"
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
 
 #include <cstdio>
 #include <cstdlib>

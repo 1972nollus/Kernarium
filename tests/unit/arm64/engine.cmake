@@ -60,6 +60,13 @@
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
         ${UML_STATIC_RUNTIME_TEST_OBJECTS})
+    # The tests that read the AArch32 library-exit counters, with the
+    # semantic library variant that has them in place of the library.
+    set(UML_ARM64_COUNTING_RUNTIME_TEST_OBJECTS
+        ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    list(TRANSFORM UML_ARM64_COUNTING_RUNTIME_TEST_OBJECTS REPLACE
+        "uml_arm64_aarch32_semantics>"
+        "uml_arm64_aarch32_semantics_exit_counting>")
 
     # The instruction corpus is zlib-compressed. Reuse the checked private
     # zlib when desktop dependencies are enabled; otherwise import only the
@@ -291,22 +298,22 @@
     uml_add_arm64_unit_test(jit_a32_runtime WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_a32_data_processing WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+        OBJECTS ${UML_ARM64_COUNTING_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_a32_memory WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+        OBJECTS ${UML_ARM64_COUNTING_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_a32_exclusive WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+        OBJECTS ${UML_ARM64_COUNTING_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_a32_acquire_release WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+        OBJECTS ${UML_ARM64_COUNTING_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_a32_encoder WITHOUT_HARNESS NO_OBJECTS)
     uml_add_arm64_unit_test(jit_a32_vector_encoder WITHOUT_HARNESS NO_OBJECTS)
     uml_add_arm64_unit_test(jit_a32_control WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_a32_vector WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+        OBJECTS ${UML_ARM64_COUNTING_RUNTIME_TEST_OBJECTS})
     # The AArch32 instruction corpus (aarch32_corpus/README.md) on the JIT.
     uml_add_arm64_unit_test(jit_a32_corpus WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
+        OBJECTS ${UML_ARM64_COUNTING_RUNTIME_TEST_OBJECTS}
         ARGS ${UML_ARM64_AARCH32_CORPUS})
     add_dependencies(uml_arm64_jit_a32_corpus_tests uml_arm64_aarch32_corpus)
     # The exclusive records with the host interrupting the guest's thread
@@ -401,18 +408,26 @@
         $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    foreach(GADGET_RUNTIME_TEST IN ITEMS cache_validation inline_fallthrough
-            a32_control)
+    foreach(GADGET_RUNTIME_TEST IN ITEMS cache_validation inline_fallthrough)
         uml_add_arm64_unit_test(gadget_${GADGET_RUNTIME_TEST} WITHOUT_HARNESS
             OBJECTS ${UML_ARM64_GADGET_RUNTIME_TEST_OBJECTS})
     endforeach()
+    # The AArch32 gadget tests read the library-exit counters, which only the
+    # semantic library's counting variant has.
+    set(UML_ARM64_COUNTING_GADGET_RUNTIME_TEST_OBJECTS
+        ${UML_ARM64_GADGET_RUNTIME_TEST_OBJECTS})
+    list(TRANSFORM UML_ARM64_COUNTING_GADGET_RUNTIME_TEST_OBJECTS REPLACE
+        "uml_arm64_aarch32_semantics>"
+        "uml_arm64_aarch32_semantics_exit_counting>")
+    uml_add_arm64_unit_test(gadget_a32_control WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_COUNTING_GADGET_RUNTIME_TEST_OBJECTS})
     # The forms test reads the decoder's stored sample words.
     uml_add_arm64_unit_test(gadget_a32_forms WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_GADGET_RUNTIME_TEST_OBJECTS}
+        OBJECTS ${UML_ARM64_COUNTING_GADGET_RUNTIME_TEST_OBJECTS}
         ARGS ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_decoder)
     # The engine against the AArch32 corpus, at the level it implements.
     uml_add_arm64_unit_test(gadget_a32_corpus WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_GADGET_RUNTIME_TEST_OBJECTS}
+        OBJECTS ${UML_ARM64_COUNTING_GADGET_RUNTIME_TEST_OBJECTS}
         ARGS ${UML_ARM64_AARCH32_CORPUS})
     add_dependencies(uml_arm64_gadget_a32_corpus_tests uml_arm64_aarch32_corpus)
     # The exclusive records with the host interrupting the guest's thread

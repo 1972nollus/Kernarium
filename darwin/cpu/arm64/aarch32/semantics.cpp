@@ -2,12 +2,14 @@
 //
 // The AArch32 semantic library's entry point: the condition, the memory
 // accesses with their fault ordering, the dispatch to the operation
-// families and the library-exit counters (semantics.hpp).
+// families (semantics.hpp).
 
 #include "cpu/arm64/aarch32/semantics_internal.hpp"
+#if UML_A32_LIBRARY_EXIT_COUNTERS
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
+#endif
 
 #include <array>
-#include <atomic>
 #include <cstring>
 
 namespace uml::cpu::arm64::aarch32 {
@@ -185,14 +187,6 @@ std::byte *Exec::atomic_pointer(std::uint32_t address, unsigned size,
 	return host;
 }
 
-namespace {
-
-std::atomic<bool> counting_exits{false};
-std::atomic<std::uint64_t> exit_total{0};
-std::array<std::atomic<std::uint64_t>, kFormCount> form_exits{};
-
-}
-
 [[nodiscard]] bool covered(const FormInfo &form, const OpInfo &info) noexcept
 {
 	return form.availability == Availability::implemented && info.op != Op::none;
@@ -279,11 +273,9 @@ StepResult execute_a32(CpuState &cpu, const Instruction &instruction,
 	A32Memory &memory) noexcept
 {
 	using namespace detail;
-	if (counting_exits.load(std::memory_order_relaxed)) {
-		form_exits[static_cast<std::size_t>(instruction.form)].fetch_add(
-			1, std::memory_order_relaxed);
-		exit_total.fetch_add(1, std::memory_order_relaxed);
-	}
+#if UML_A32_LIBRARY_EXIT_COUNTERS
+	note_library_exit(instruction.form);
+#endif
 	StepResult fatal;
 	fatal.event = StepEvent::fatal;
 	if (!key_is_aarch32(cpu.pc)) [[unlikely]]
@@ -355,29 +347,6 @@ StepResult step_a32(CpuState &cpu, A32Memory &memory, const Profile &profile) no
 			ItState{cpu.a32_itstate}, profile);
 	}
 	return execute_a32(cpu, instruction, memory);
-}
-
-void count_a32_library_exits(bool enable) noexcept
-{
-	detail::counting_exits.store(enable, std::memory_order_relaxed);
-}
-
-std::uint64_t a32_library_exits(Form form) noexcept
-{
-	return detail::form_exits[static_cast<std::size_t>(form)].load(
-		std::memory_order_relaxed);
-}
-
-std::uint64_t a32_library_exit_total() noexcept
-{
-	return detail::exit_total.load(std::memory_order_relaxed);
-}
-
-void reset_a32_library_exits() noexcept
-{
-	detail::exit_total.store(0, std::memory_order_relaxed);
-	for (auto &count : detail::form_exits)
-		count.store(0, std::memory_order_relaxed);
 }
 
 } // namespace uml::cpu::arm64::aarch32
