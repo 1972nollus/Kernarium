@@ -169,6 +169,7 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
                             std::span<const std::uint32_t> guest_words,
                             std::shared_ptr<const std::uint32_t[]>
                                 saved_guest_words,
+                            std::size_t instruction_count, std::size_t units,
                             std::uint64_t memory_write_mask,
                             std::uint64_t direct_memory_write_mask,
                             bool accesses_fp_state, bool link_target_safe,
@@ -202,8 +203,8 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
     cache_validation_diagnostics_.direct_link_table_high_water =
         links_.size();
 #endif
-  block.instruction_count = guest_words.size();
-  block.saved_units = static_cast<std::uint8_t>(guest_words.size());
+  block.instruction_count = instruction_count;
+  block.saved_units = static_cast<std::uint8_t>(units);
   block.saved_guest_words = std::move(saved_guest_words);
   block.memory_write_mask = memory_write_mask;
   block.direct_memory_write_mask = direct_memory_write_mask;
@@ -330,9 +331,8 @@ JitExecutor::Implementation::install_shared_translation(
       generation, changes, translation_key(pc, mode),
       sign_jit_function<JitFunction>(stored.code), internal_entry,
       stored.target_link, translation->relocations,
-      stored.direct_link_refusals,
-      guest_words.first(translation->guest_instructions),
-      translation->guest_words,
+      stored.direct_link_refusals, guest_words, translation->guest_words,
+      translation->guest_instructions, translation->guest_word_count,
       translation->memory_write_mask, translation->direct_memory_write_mask,
       translation->accesses_fp_state, translation->link_target_safe,
       translation->native_fp,

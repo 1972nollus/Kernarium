@@ -2,8 +2,8 @@
 //
 // The AArch32 side of the JIT executor: the block entry for an A32 or T32
 // translation (run_a32_block), which finds or compiles the block for the key
-// the task's PC holds, and the cache stores that know a T32 block counts
-// halfwords. The cache, arena, link tables and shared tier are the A64 ones.
+// the task's PC holds. The cache, arena, link tables and shared tier are the
+// A64 ones.
 
 #include "jit_executor_internal.hpp"
 
@@ -50,48 +50,6 @@ constexpr std::size_t maximum_block_elements = maximum_block_instructions;
   return total;
 }
 
-[[nodiscard]] CompiledBlock &JitExecutor::Implementation::store_native_a32(
-    unsigned long generation, std::uint64_t changes, std::uint64_t key,
-    JitFunction function, std::uintptr_t internal_entry,
-    JitBlockLink *target_link, std::span<const JitRelocation> relocations,
-    std::span<const std::uint32_t> guest_elements,
-    std::shared_ptr<const std::uint32_t[]> saved_guest_words,
-    std::size_t instruction_count, std::size_t units,
-    std::uint64_t memory_write_mask, std::uint64_t direct_memory_write_mask,
-    bool accesses_fp_state, bool link_target_safe, bool native_fp,
-    bool guest_illegal) {
-  const auto selected = replacement(generation, changes, key);
-  auto &block = *selected.block;
-  if (saved_guest_words == nullptr) {
-    std::copy(guest_elements.begin(), guest_elements.end(),
-              selected.fallback_guest_words->begin());
-    saved_guest_words = std::shared_ptr<const std::uint32_t[]>{
-        fallback_saved_guest_words_, selected.fallback_guest_words->data()};
-  }
-  block.function = function;
-  block.internal_entry = internal_entry;
-  block.link = target_link;
-  block.instruction_count = instruction_count;
-  block.saved_units = static_cast<std::uint8_t>(units);
-  block.saved_guest_words = std::move(saved_guest_words);
-  block.memory_write_mask = memory_write_mask;
-  block.direct_memory_write_mask = direct_memory_write_mask;
-  block.accesses_fp_state = accesses_fp_state;
-  block.link_target_safe = link_target_safe;
-  block.native_fp = native_fp;
-  block.guest_illegal = guest_illegal;
-#if UML_JIT_RUNTIME_DIAGNOSTICS
-  ++cache_validation_diagnostics_.translations;
-  cache_validation_diagnostics_.target_link_refusals += block.link == nullptr;
-#endif
-  ++compiled_in_link_sequence_;
-  for (const auto &relocation : relocations)
-    if (relocation.kind == JitRelocationKind::direct_link)
-      refresh_cached_link_target(relocation.key);
-  activate_link(block);
-  return block;
-}
-
 [[nodiscard]] CompiledBlock *
 JitExecutor::Implementation::install_shared_translation_a32(
     unsigned long generation, std::uint64_t changes, std::uint64_t key,
@@ -123,11 +81,12 @@ JitExecutor::Implementation::install_shared_translation_a32(
   const auto internal_entry = reinterpret_cast<std::uintptr_t>(stored.code) +
                               translation->internal_entry_word *
                                   sizeof(std::uint32_t);
-  auto *block = &store_native_a32(
+  auto *block = &store_native(
       generation, changes, key, sign_jit_function<JitFunction>(stored.code),
       internal_entry, stored.target_link, translation->relocations,
-      guest_elements, translation->guest_words, translation->guest_instructions,
-      translation->guest_word_count, translation->memory_write_mask,
+      stored.direct_link_refusals, guest_elements, translation->guest_words,
+      translation->guest_instructions, translation->guest_word_count,
+      translation->memory_write_mask,
       translation->direct_memory_write_mask, translation->accesses_fp_state,
       translation->link_target_safe, translation->native_fp,
       translation->guest_illegal);
@@ -449,12 +408,13 @@ JitExecutor::Implementation::translate_a32_single(
         auto saved = translation == nullptr
                          ? std::shared_ptr<const std::uint32_t[]>{}
                          : translation->guest_words;
-        return &store_native_a32(
+        return &store_native(
             generation, sequences.code_changes, key,
             sign_jit_function<JitFunction>(stored.code), internal_entry,
             stored.target_link, compiled_translation.relocations,
-            elements_of(candidate), std::move(saved),
-            compiled_translation.guest_instructions, candidate.guest_units,
+            stored.direct_link_refusals, elements_of(candidate),
+            std::move(saved), compiled_translation.guest_instructions,
+            candidate.guest_units,
             compiled_translation.memory_write_mask,
             compiled_translation.direct_memory_write_mask,
             compiled_translation.accesses_fp_state,

@@ -191,6 +191,11 @@ private:
   [[nodiscard]] CacheSlot replacement(unsigned long generation,
                                       std::uint64_t changes,
                                       std::uint64_t key);
+  /* Stores a translation as the cache slot's block. `guest_words` holds the
+   * validation words kept in the executor's fallback slab when the
+   * translation has none of its own (`saved_guest_words` empty). The block
+   * counts `instruction_count` instructions and validates `units` guest
+   * units: words for A64 and A32, halfwords for T32. */
   CompiledBlock &store_native(unsigned long generation, std::uint64_t changes,
                               std::uint64_t key, JitFunction function,
                               std::uintptr_t internal_entry,
@@ -200,6 +205,8 @@ private:
                               std::span<const std::uint32_t> guest_words,
                               std::shared_ptr<const std::uint32_t[]>
                                   saved_guest_words,
+                              std::size_t instruction_count,
+                              std::size_t units,
                               std::uint64_t memory_write_mask,
                               std::uint64_t direct_memory_write_mask,
                               bool accesses_fp_state, bool link_target_safe,
@@ -214,16 +221,6 @@ private:
   [[nodiscard]] std::size_t fetch_a32_bytes(StaticGuestMemory &memory,
                                             std::uint64_t key,
                                             std::span<std::byte> bytes);
-  CompiledBlock &store_native_a32(
-      unsigned long generation, std::uint64_t changes, std::uint64_t key,
-      JitFunction function, std::uintptr_t internal_entry,
-      JitBlockLink *target_link, std::span<const JitRelocation> relocations,
-      std::span<const std::uint32_t> guest_elements,
-      std::shared_ptr<const std::uint32_t[]> saved_guest_words,
-      std::size_t instruction_count, std::size_t units,
-      std::uint64_t memory_write_mask, std::uint64_t direct_memory_write_mask,
-      bool accesses_fp_state, bool link_target_safe, bool native_fp,
-      bool guest_illegal);
   [[nodiscard]] CompiledBlock *install_shared_translation_a32(
       unsigned long generation, std::uint64_t changes, std::uint64_t key,
       std::span<const std::uint32_t> guest_elements);
