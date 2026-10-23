@@ -123,18 +123,6 @@ std::optional<std::uint16_t> keyCode(std::uint32_t keySymbol) noexcept
     return find(specialKeys, keySymbol);
 }
 
-bool DirectTouchContact::update(bool pressed) noexcept
-{
-    const bool deliver = pressed || active_;
-    active_ = pressed;
-    return deliver;
-}
-
-bool DirectTouchContact::release() noexcept
-{
-    return std::exchange(active_, false);
-}
-
 std::int32_t normalizedAbsoluteCoordinate(
     double coordinate,
     double extent) noexcept

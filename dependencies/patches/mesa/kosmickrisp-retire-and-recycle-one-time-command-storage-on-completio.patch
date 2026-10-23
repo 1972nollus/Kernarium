@@ -559,7 +559,7 @@ index 985352222940c90815d7c9938e8e0ae01f4e2db4..f35020cb5adbcbbe7d92e0a9b9596382
  
  static inline struct kk_device *
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 8215464f9654579461f952a19b3bc4585c4eb15d..f7db82085a604a7e234488cede8678bc2d777489 100644
+index ee47b277137ebbf97140d36170ee567034fb4774..2067a00c0a4b8f674f1493e8f2d25539a8e93555 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -601,6 +601,28 @@ if with_tests

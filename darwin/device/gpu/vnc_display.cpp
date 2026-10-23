@@ -891,7 +891,7 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
 
 void VncDisplay::releasePointerLocked() noexcept
 {
-    if (!pointer_.release() || !inputSink_)
+    if (!pointer_.release(true) || !inputSink_)
         return;
     const auto release = [&](auto... codes) {
         const std::array events {

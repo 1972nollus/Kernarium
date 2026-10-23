@@ -1086,9 +1086,10 @@ host-flag fusion rules and the registry contract are in
 [`darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md).
 What any x86 engine shares with the gadget engine is not part of it: the guest
 CPU state, the decoder, CPUID, the software TLB entry, the code-page registry,
-the split-operand lock and the segment model, which runs every selector load,
-far transfer and descriptor inspection for both engines, form
-`uml_x86_64_target` in `darwin/cpu/x86_64/`, a
+the split-operand lock, the SIMD floating-point model that gives the JIT's
+results and the gadget engine's checked flags, and the segment model, which
+runs every selector load, far transfer and descriptor inspection for both
+engines, form `uml_x86_64_target` in `darwin/cpu/x86_64/`, a
 `shared` CPU target that the source audit keeps free of engine includes.
 Exact x87 formats and transcendentals use bounded software-math primitives
 called by those native gadgets. The userspace ISA boundary includes scalar x86

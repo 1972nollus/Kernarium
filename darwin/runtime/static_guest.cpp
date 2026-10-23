@@ -17,6 +17,7 @@
 #include "runtime/aarch32_guest.hpp"
 #include "runtime/context.hpp"
 #include "runtime/execution_state.hpp"
+#include "runtime/guest_entry.hpp"
 #include "uml_darwin_guest.h"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
@@ -128,19 +129,7 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.pstate_daif = static_cast<std::uint8_t>(
 		(registers.pstate & pstate_daif) >> 6);
 	cpu.tls = tls;
-	/* An exception return may clear the local monitor, and the emulator has
-	 * no architectural reservation token in uml_pt_regs.  Clear every
-	 * diagnostic field so reusing the large CpuState scratch object cannot
-	 * make a later STXR succeed spuriously.
-	 */
-	cpu.exclusive_address = ~std::uint64_t{0};
-	cpu.exclusive_key = 0;
-	cpu.exclusive_value = 0;
-	cpu.exclusive_value2 = 0;
-	cpu.exclusive_version = 0;
-	cpu.exclusive_size = 0;
-	cpu.gadget_zero = 0;
-	cpu.gadget_indirect_miss = nullptr;
+	::uml::runtime::clear_entry_monitor(cpu);
 	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr, restored_fpcr_mask());
 }
 
@@ -528,13 +517,6 @@ void save_floating_point_trap(
 	return true;
 }
 
-template<uml::cpu::EngineKind Kind>
-std::unique_ptr<uml::cpu::CpuEngine> &engine_slot(
-	::uml::runtime::ThreadExecutionState &runtime)
-{
-	return runtime.engines.slot<Kind>();
-}
-
 /* A thread's engine is created by its first entry; every later entry finds
  * it. Kept out of line and cold so that the entry's frame and hot path do not
  * carry the creation. */
@@ -556,7 +538,7 @@ template<uml::cpu::EngineKind Kind>
 uml::cpu::CpuEngine *common_engine(
 	::uml::runtime::ThreadExecutionState &runtime)
 {
-	auto &slot = engine_slot<Kind>(runtime);
+	auto &slot = runtime.engines.slot<Kind>();
 	if (!slot) [[unlikely]]
 		create_common_engine<Kind>(slot);
 	return slot.get();
@@ -718,21 +700,8 @@ int run_common_guest(
 		event = DARWIN_UML_EVENT_SYSCALL;
 		break;
 	case uml::cpu::ExitReason::memory_fault:
-		switch (result.fault.access) {
-		case uml::memory::MemoryAccess::read:
-			mutable_registers.fault.error_code = 0;
-			break;
-		case uml::memory::MemoryAccess::write:
-			mutable_registers.fault.error_code = DARWIN_UML_FAULT_WRITE;
-			break;
-		case uml::memory::MemoryAccess::execute:
-			mutable_registers.fault.error_code = DARWIN_UML_FAULT_EXECUTE;
-			break;
-		}
-		mutable_registers.fault.address = result.fault.address;
-		mutable_registers.fault.trap_number = DARWIN_UML_FAULT_PAGE;
-		event = result.fault.alignment ? DARWIN_UML_EVENT_DATA_ALIGNMENT :
-			DARWIN_UML_EVENT_FAULT;
+		event = ::uml::runtime::report_memory_fault(
+			mutable_registers, result.fault);
 		break;
 	case uml::cpu::ExitReason::interrupt:
 		if (context->stop_requested()) {

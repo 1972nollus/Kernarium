@@ -44,6 +44,28 @@ static_assert(sizeof(ShaderScanoutSampling) == 40);
     id<MTLTexture> texture,
     const MetalScanout& scanout) noexcept;
 
+/* Draws a scanout in the pass: its pipeline for the texture's kind, the
+ * viewport the guest's unit square covers, the texture, how it is sampled and
+ * turned, and the covering triangle. Any scissor is set beforehand. The
+ * objects are borrowed, which keeps ARC from retaining each around the pass. */
+[[gnu::always_inline]] inline void encodeScanoutPass(
+    __unsafe_unretained id<MTLRenderCommandEncoder> encoder,
+    __unsafe_unretained id<MTLRenderPipelineState> pipeline,
+    __unsafe_unretained id<MTLTexture> texture,
+    const ScanoutSampling& sampling,
+    DisplayRotation rotation,
+    const MTLViewport& viewport) noexcept
+{
+    [encoder setRenderPipelineState:pipeline];
+    [encoder setViewport:viewport];
+    [encoder setFragmentTexture:texture atIndex:0];
+    const auto shader = shaderSampling(sampling, rotation);
+    [encoder setFragmentBytes:&shader length:sizeof(shader) atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                vertexStart:0
+                vertexCount:3];
+}
+
 /* The pass for one colour attachment format. A one-layer 2D-array texture
  * needs its own fragment stage; forTexture() picks the one that reads it. */
 struct ScanoutPipelines final {

@@ -5,7 +5,7 @@
 Assembles a small ARM EABI hard-float object with the given compiler, wraps it
 in each layout, and checks the executable the guest kernel's loader sees: the
 header, one read-execute PT_LOAD whose offset and address are congruent modulo
-64 KiB (16k) or only modulo 4 KiB (4k), a non-executable PT_GNU_STACK, and the
+64 KiB (64k) or only modulo 4 KiB (4k), a non-executable PT_GNU_STACK, and the
 bl of the object resolved to its target.
 """
 
@@ -60,11 +60,11 @@ def main() -> int:
              "-mfpu=neon-vfpv4", "-mfloat-abi=hard", "-c", str(source),
              "-o", str(obj)])
 
-        for layout, base, align in (("16k", 0x10000, 0x10000),
+        for layout, base, align in (("64k", 0x10000, 0x10000),
                                     ("4k", 0x11000, 0x1000)):
             output = root / f"program-{layout}"
             run([sys.executable, "-I", str(arguments.wrapper),
-                 *(["--layout", layout] if layout != "16k" else []),
+                 *(["--layout", layout] if layout != "64k" else []),
                  str(obj), str(output)])
             data = output.read_bytes()
             (ident, e_type, machine, _, entry, phoff, _, flags, ehsize,
@@ -87,9 +87,9 @@ def main() -> int:
                 check(f"{layout}: read-execute", pflags == 5, hex(pflags))
                 check(f"{layout}: whole file mapped",
                       offset == 0 and filesz == len(data) and memsz >= filesz)
-                congruent = (vaddr - offset) % 0x4000 == 0
-                check(f"{layout}: 16 KiB congruence is {layout == '16k'}",
-                      congruent == (layout == "16k"))
+                congruent = (vaddr - offset) % 0x10000 == 0
+                check(f"{layout}: 64 KiB congruence is {layout == '64k'}",
+                      congruent == (layout == "64k"))
                 check(f"{layout}: entry is in the segment",
                       vaddr <= entry < vaddr + filesz, hex(entry))
                 # bl helper at the entry: A32 BL, branch offset in words
@@ -103,7 +103,7 @@ def main() -> int:
                   len(stacks) == 1 and stacks[0][6] == 6, str(stacks))
 
         bad = subprocess.run([sys.executable, "-I", str(arguments.wrapper),
-                              "--layout", "64k", str(obj), str(root / "bad")],
+                              "--layout", "16k", str(obj), str(root / "bad")],
                              stdin=subprocess.DEVNULL, capture_output=True)
         check("an unknown layout is refused", bad.returncode != 0
               and not (root / "bad").exists())
