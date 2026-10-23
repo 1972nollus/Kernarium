@@ -164,31 +164,10 @@ JitExecutor::Implementation::translate_a32_single(
   }
   const ::uml::cpu::HostCapabilitiesScope capabilities_scope{
       host_capabilities_};
-  executed = 0;
-  floating_point_syndrome_ = 0;
-  tlb_.fault_alignment = 0;
-  select_cpu(cpu);
-  const auto sequences =
-      darwin_uml_static_vm_execution_context_sequences(execution_context_);
-  preempted_ = sequences.execution_interrupt != 0;
+  const auto sequences = begin_entry(cpu, executed);
   if (preempted_)
     return Event::interrupt;
-  /* What the translations this run reaches are validated at, below: an ISB
-   * leaves when the address space's code has changed since. */
-  cpu.code_sequence = code_sequence_;
-  cpu.code_sequence_seen = sequences.code_changes;
-  const bool mapping_changed = mapping_generation_ != generation ||
-                               mapping_changes_ != sequences.mapping_changes;
-  if (prepared_memory_ != &memory || mapping_changed) {
-    memory.prepare(generation, sequences.mapping_changes);
-    prepared_memory_ = &memory;
-  }
-  if (mapping_changed) {
-    tlb_.prepare(generation, sequences.mapping_changes);
-    mapping_generation_ = generation;
-    mapping_changes_ = sequences.mapping_changes;
-  }
-  prepare_links(generation, sequences.code_changes);
+  prepare_entry(cpu, memory, generation, sequences);
   if (a32_targets_ == nullptr)
     a32_targets_ = std::make_unique<JitIndirectTarget[]>(
         jit_indirect_target_count);
