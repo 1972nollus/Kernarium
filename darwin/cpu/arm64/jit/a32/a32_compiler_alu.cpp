@@ -25,12 +25,7 @@ using aarch32::SRType;
 
 namespace {
 
-constexpr unsigned fallback_n = 9;
-constexpr unsigned fallback_m = 10;
 constexpr unsigned fallback_s = 1;
-constexpr unsigned temp0 = 0;
-constexpr unsigned temp1 = 1;
-constexpr unsigned temp2 = 8;
 constexpr unsigned shifted = 16;
 constexpr unsigned image = 11;
 /* Where a predicated instruction builds its result. */
