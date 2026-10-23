@@ -106,4 +106,16 @@ struct AnonymousBackingMemory final {
 void report_mapping_failure(const char *what, const void *address,
 	std::size_t length, int error) noexcept;
 
+/* mlock(2) with the calling thread's asynchronous signals held for the call.
+ *
+ * XNU wires a range by faulting each page in, and a fault that has to wait,
+ * for a page being read in or one another fault holds, waits abortably: a
+ * signal posted to the thread meanwhile ends the wire, and mlock unwires what
+ * it had wired and fails with ENOMEM. Guest CPU threads take the IPI wake
+ * signal while they run kernel code, which is where they commit guest RAM, so
+ * a commit that waited for memory, as commits do right after a resume, lost
+ * its wiring to an IPI. A signal posted during the call is delivered when it
+ * returns. 0 on success, -1 with errno set. */
+[[nodiscard]] int wire_host_range(void *address, std::size_t length) noexcept;
+
 } // namespace uml::memory

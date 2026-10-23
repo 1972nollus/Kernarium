@@ -12,6 +12,8 @@
 #include <mach/mach.h>
 #include <mutex>
 #include <new>
+#include <pthread.h>
+#include <signal.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -52,6 +54,26 @@ void report_mapping_failure(const char *what, const void *address,
 		what, length, address, error,
 		seen + 1 == reported_limit ? "; further failures are not reported"
 					   : "");
+}
+
+int wire_host_range(void *address, std::size_t length) noexcept
+{
+	/* Every signal that only arrives asynchronously. A fault signal is
+	 * never held: a thread that faults with it blocked re-executes the
+	 * faulting instruction forever. */
+	sigset_t held;
+	sigfillset(&held);
+	for (const int synchronous : {SIGILL, SIGTRAP, SIGABRT, SIGEMT, SIGFPE,
+		     SIGBUS, SIGSEGV, SIGSYS})
+		sigdelset(&held, synchronous);
+	sigset_t previous;
+	const bool masked = pthread_sigmask(SIG_BLOCK, &held, &previous) == 0;
+	const int result = mlock(address, length);
+	const int error = errno;
+	if (masked)
+		(void)pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+	errno = error;
+	return result;
 }
 
 namespace {
@@ -282,7 +304,8 @@ struct AnonymousTail final {
 	/* Guest RAM is wired so that it is never compressed, but only as the
 	 * guest commits it; see guest_ram_commitment.hpp. The reserved tail sits
 	 * below everything the guest allocates and is wired now. */
-	if (tail.address != nullptr && mlock(tail.address, tail.length) != 0) {
+	if (tail.address != nullptr &&
+	    wire_host_range(tail.address, tail.length) != 0) {
 		const int saved_errno = errno;
 		dprintf(STDERR_FILENO,
 			"Darwin anonymous guest RAM: failed to wire the %zu-byte "
@@ -400,7 +423,7 @@ int release_alias(void *address, std::size_t length, bool fixed) noexcept
 				std::min<std::size_t>(length, managed - offset) : 0;
 		}
 		if (protection != PROT_NONE && unmanaged != 0 &&
-		    mlock(address, unmanaged) != 0)
+		    wire_host_range(address, unmanaged) != 0)
 			report_mapping_failure("guest RAM wiring", address,
 				unmanaged, errno);
 #endif

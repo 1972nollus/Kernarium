@@ -2,19 +2,26 @@
 /* Guest RAM commitment against real anonymous memory: a released range must
  * leave the process footprint, a committed one must be counted (and wired)
  * again, and repeated, overlapping or concurrent calls must reach the host
- * only for pages whose state they change. */
+ * only for pages whose state they change. A wire must also survive the
+ * signals guest CPU threads take while they commit. */
 #include "mach_vm_region_test_support.hpp"
 #include "memory/guest_ram_commitment.hpp"
 #include "named_tests.hpp"
 #include "require.hpp"
+#include "scratch_directory.hpp"
 
+#include <atomic>
 #include <cerrno>
+#include <chrono>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fcntl.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <pthread.h>
 #include <stdexcept>
 #include <string>
 #include <sys/mman.h>
@@ -209,6 +216,147 @@ void concurrent_callers_keep_the_count_exact()
 		"concurrent release and commit must balance");
 }
 
+/* A shared file mapping of pages the host has never cached: a wire of it
+ * reads every page from storage, so the wire's faults wait, as they wait for
+ * memory on a device under pressure. */
+class ColdFile final {
+public:
+	explicit ColdFile(std::size_t size) : size_(size)
+	{
+		std::string path =
+			uml::testing::scratch_template("cold-wire-XXXXXX");
+		descriptor_ = mkstemp(path.data());
+		require(descriptor_ >= 0, "cannot create the file to wire");
+		(void)unlink(path.c_str());
+		require(fcntl(descriptor_, F_NOCACHE, 1) == 0,
+			"cannot keep the file out of the host cache");
+		const std::vector<std::byte> block(mib, std::byte{0x5a});
+		for (std::size_t offset = 0; offset < size; offset += mib)
+			require(pwrite(descriptor_, block.data(), mib,
+					static_cast<off_t>(offset)) ==
+					static_cast<ssize_t>(mib),
+				"cannot fill the file to wire");
+		require(fsync(descriptor_) == 0,
+			"cannot flush the file to wire");
+		void *mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE,
+			MAP_SHARED, descriptor_, 0);
+		require(mapping != MAP_FAILED, "cannot map the file to wire");
+		data_ = static_cast<std::byte *>(mapping);
+	}
+	~ColdFile()
+	{
+		(void)munlock(data_, size_);
+		(void)munmap(data_, size_);
+		(void)close(descriptor_);
+	}
+	ColdFile(const ColdFile &) = delete;
+	ColdFile &operator=(const ColdFile &) = delete;
+
+	[[nodiscard]] std::byte *data() const noexcept { return data_; }
+
+private:
+	std::byte *data_{};
+	std::size_t size_{};
+	int descriptor_{-1};
+};
+
+std::atomic<unsigned long> signals_taken{0};
+
+void take_signal(int) noexcept
+{
+	signals_taken.fetch_add(1, std::memory_order_relaxed);
+}
+
+/* Posts SIGUSR1 to one thread every few microseconds while it lives, as
+ * guest CPUs post their IPI wake signal to one another. The handler stays
+ * installed, so a signal still pending when the storm ends is harmless. */
+class SignalStorm final {
+public:
+	explicit SignalStorm(pthread_t target)
+	{
+		struct sigaction action {};
+		action.sa_handler = take_signal;
+		sigemptyset(&action.sa_mask);
+		require(sigaction(SIGUSR1, &action, nullptr) == 0,
+			"cannot catch SIGUSR1");
+		sender_ = std::thread([this, target] {
+			while (!stopping_.load(std::memory_order_relaxed)) {
+				(void)pthread_kill(target, SIGUSR1);
+				std::this_thread::sleep_for(
+					std::chrono::microseconds{20});
+			}
+		});
+	}
+	~SignalStorm()
+	{
+		stopping_.store(true, std::memory_order_relaxed);
+		sender_.join();
+	}
+	SignalStorm(const SignalStorm &) = delete;
+	SignalStorm &operator=(const SignalStorm &) = delete;
+
+private:
+	std::atomic<bool> stopping_{false};
+	std::thread sender_;
+};
+
+constexpr std::size_t cold_size = 8 * mib;
+constexpr unsigned cold_attempts = 4;
+
+/* XNU ends a wire whose faults wait when a signal reaches the thread, and
+ * mlock then fails with ENOMEM. This is the hazard the commitment guards
+ * against; if a host stops showing it, the guard and this case need a new
+ * look rather than a quiet pass. */
+void a_signalled_wire_of_cold_pages_fails_with_enomem()
+{
+	bool ended = false;
+	int error = 0;
+	SignalStorm storm{pthread_self()};
+	for (unsigned attempt = 0; attempt < cold_attempts && !ended;
+	     ++attempt) {
+		const ColdFile file{cold_size};
+		errno = 0;
+		ended = mlock(file.data(), cold_size) != 0;
+		error = errno;
+	}
+	require(ended && error == ENOMEM,
+		"a signalled mlock of cold pages must fail with ENOMEM");
+}
+
+/* Guest CPU threads take IPI signals while they commit; a commit, and the
+ * readmission that ends a hibernation, must wire regardless. */
+void a_signal_does_not_cost_a_commit_its_wiring()
+{
+	const std::size_t page = host_page();
+	const unsigned long before =
+		signals_taken.load(std::memory_order_relaxed);
+	SignalStorm storm{pthread_self()};
+	for (unsigned attempt = 0; attempt < cold_attempts; ++attempt) {
+		const ColdFile committed{cold_size};
+		GuestRamCommitment commitment{committed.data(), cold_size, 0, 0,
+			true, page};
+		require(commitment.commit(0, cold_size) == 0,
+			"a signalled commit must succeed");
+		require(commitment.wire_failures() == 0,
+			"a signalled commit must wire");
+		require(wired_count(committed.data()) > 0,
+			"a signalled commit must leave its range wired");
+
+		const ColdFile readmitted{cold_size};
+		GuestRamCommitment held{readmitted.data(), cold_size, 0,
+			cold_size, true, page};
+		require(held.evict(0, cold_size / page) == 0, "evict failed");
+		require(held.readmit(0, cold_size / page) == 0,
+			"readmit failed");
+		require(held.wire_failures() == 0,
+			"a signalled readmission must wire");
+		require(wired_count(readmitted.data()) > 0,
+			"a signalled readmission must leave its range wired");
+	}
+	require(signals_taken.load(std::memory_order_relaxed) > before,
+		"the committing thread must have taken signals");
+}
+
 } // namespace
 
 int main()
@@ -225,6 +373,12 @@ int main()
 			wiring_unsupported},
 		{"concurrent callers keep the count exact",
 			concurrent_callers_keep_the_count_exact},
+		{"a signalled wire of cold pages fails with ENOMEM",
+			a_signalled_wire_of_cold_pages_fails_with_enomem,
+			wiring_unsupported},
+		{"a signal does not cost a commit its wiring",
+			a_signal_does_not_cost_a_commit_its_wiring,
+			wiring_unsupported},
 	};
 	return uml::testing::runNamedTests(tests);
 }
