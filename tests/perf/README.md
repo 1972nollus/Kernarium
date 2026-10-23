@@ -381,7 +381,8 @@ destroyed, and another every `DARWIN_UML_GADGET_CACHE_CENSUS_SECONDS` seconds
 when that is set, taken by its own vCPU at its next lookup. Summarize a
 capture with `analyze_gadget_cache_census.py --help`: it reports one snapshot
 (`--snapshot`, by default the one taken at teardown) or one line per snapshot
-(`--series`).
+(`--series`). `check-unit-census` checks such a build
+([testing](../../docs/testing.md)).
 
 A snapshot is an `E` record with the cache's geometry, measured footprint and
 history, a `G` record per resident address space, a `P` record per resident

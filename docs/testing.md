@@ -310,6 +310,20 @@ takes a native window that both leave free
 ignores `mlock()`, so under it the cases that need wired guest RAM report
 themselves unsupported instead of running.
 
+The gadget cache census
+([`tests/perf/README.md`](../tests/perf/README.md#cache-census)) compiles
+diagnostic code into both gadget engines. A change to either gadget cache or
+to the census runs:
+
+```sh
+cmake --workflow --preset check-unit-census
+```
+
+It builds the unit suite with `UML_GADGET_CACHE_CENSUS=ON` and runs every unit
+test with the census writing to `/dev/null`, every stream sampled and a
+snapshot due each second, so a census build must give a default build's
+results, under failed allocations too.
+
 ## Integration prerequisites and workflows
 
 Integration needs four local inputs:
