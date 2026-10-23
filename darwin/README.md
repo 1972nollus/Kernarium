@@ -138,7 +138,11 @@ product, so that macOS behaves like iOS, and a slot is committed whether or not
 it is occupied; an explicit `-DUML_GADGET_CACHE_SLOTS` selects another power
 of two. Their payloads and mutable branch links remain ISA-specific. Cached
 x86 programs release spare decoder and native-stream capacity before
-publication.
+publication. The resident address spaces themselves, with the ids a slot's tag
+names its owner by, the epochs that validate a slot and the order that retires
+the least recently current, are one template shared by both caches
+(`cpu/gadget_generation_window.hpp`); the engines keep the slot layout, lookup
+and what retiring an address space releases.
 
 Unless `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private, arm64 gadget
 executors running one address space with the same build options and SVCR mode
