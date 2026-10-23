@@ -22,11 +22,13 @@ namespace uml::cpu::arm64 {
 
 /* How far an engine implements the profile: nothing yet (every AArch32 entry
  * is the illegal-instruction exit), the integer core, that plus VFP and
- * Advanced SIMD, or all of it. The target is armhf -- hardware VFPv4-D32 and
- * NEON, the hard-float EABI of Debian armhf and Android's armeabi-v7a -- and
- * there is no soft-float-only profile, so base and simd are milestones an
- * engine passes through under the development policy, not products: the
- * policy's default turns on only once both engines are complete. */
+ * Advanced SIMD, or all of it. The target is hardware VFPv4-D32 and NEON, for
+ * the hard-float EABI of Debian armhf and the softfp EABI of Android's
+ * armeabi-v7a (which passes floating-point arguments in integer registers but
+ * executes the same VFP and NEON instructions). There is no soft-float-only
+ * profile, so base and simd are milestones an engine passes through under the
+ * development policy, not products: the policy's default turns on only once
+ * both engines are complete. */
 enum class A32Support : std::uint8_t {
 	/* No AArch32. */
 	none,

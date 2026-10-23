@@ -1220,8 +1220,9 @@ target mm's generation. That call moves the code stamp of each executable page
 and publishes the range, as a guest code synchronization would. Pages mapped
 without execute permission are skipped, so data transfers publish nothing.
 
-The kernel runs AArch32 tasks (armhf and Android's armeabi-v7a: ARMv7-A and
-Armv8 AArch32 with VFPv4-D32, NEON and EABI hard-float) beside AArch64 ones, as
+The kernel runs AArch32 tasks (armhf with the hard-float EABI and Android's
+armeabi-v7a with the softfp EABI, both ARMv7-A and Armv8 AArch32 on hardware
+VFPv4-D32 and NEON) beside AArch64 ones, as
 arm64 Linux's `COMPAT` does. The bridge identifies one by PSTATE.nRW in the
 entry's pstate, with R0-R14 in x0-x14, D0-D31 in V0-V15, FPSCR split between
 fpsr and fpcr, TPIDRURW in the guest's TLS value and TPIDRURO in the `tpidrro`

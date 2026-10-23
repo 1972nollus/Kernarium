@@ -300,8 +300,9 @@ auxiliary vector, MRS and the kernel's `CONFIG_HZ`, and require LLVM to see the
 host's NEON. The x86_64-userspace slice describes its emulated x86 CPU
 instead.
 
-The normal arm64 kernels run AArch32 tasks, armhf (ARMv7-A and Armv8 AArch32
-with VFPv4-D32 and NEON, EABI hard-float) and Android's armeabi-v7a, beside
+The normal arm64 kernels run AArch32 tasks, armhf (the hard-float EABI) and
+Android's armeabi-v7a (the softfp EABI), both ARMv7-A and Armv8 AArch32 with
+VFPv4-D32 and NEON in hardware, beside
 AArch64 ones, as arm64 Linux's `COMPAT` does. Two shared topics carry it. The
 generic `arch/um` topic gives a task its own ABI: `TIF_32BIT` with its own
 `TASK_SIZE`, `STACK_TOP` and mmap base, a syscall table, count, `sched_yield`
