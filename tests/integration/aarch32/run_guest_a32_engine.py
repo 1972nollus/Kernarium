@@ -11,10 +11,15 @@ ptrace and single steps through an IT block, exclusives and kuser cmpxchg
 under contention across threads and processes, and then the VFP, Advanced
 SIMD and Armv8 extensions, each extension where the HWCAP words show it.
 
+A group that needs an extension the HWCAP words leave out is skipped inside
+the probe, and the extension's instructions must raise SIGILL instead.
+
 The runner boots the probe aligned to 64 KiB and the one aligned to 4 KiB
 only, and fails on any failed check, any SIGILL the probe did not expect (a
 guest illegal instruction is a blocker) and any crash of the guest or the
-emulator.
+emulator. --groups selects probe groups by hand (A32_PROBE_GROUPS in the
+guest), and A32_PROBE_VERBOSE=1 makes the runner print every line of the
+guest's output, passes included.
 """
 
 from __future__ import annotations
