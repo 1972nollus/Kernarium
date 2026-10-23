@@ -17,7 +17,9 @@ seconds since emulator exec through one clock anchor, read in a command of its
 own and bracketed by host monotonic readings so it is paired with the host time
 it really happened at. Readiness is polled, so its resolution is the poll
 interval; the other phases resolve to half an anchor round trip, which each
-record reports as ``phase_anchor_round_trip``.
+record reports as ``phase_anchor_round_trip``. Storage preparation completes
+before the console exists, so it is recovered from the progress file's
+modification time rather than observed live.
 
 Run ``--help`` for the measurement knobs. A campaign over two images is
 counterbalanced (ABBA) and strictly sequential.
