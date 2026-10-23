@@ -427,7 +427,9 @@ counted against the executors of its own address space or against another
 address space. For a translation evicted and later stored again unchanged,
 the number of evictions in between goes into a power-of-two histogram, which
 says how many of those misses an exclusive victim tier of a given size would
-have served.
+have served. Recording never fails the cache: a departure or store the census
+has no memory to remember is counted as `unrecorded=`, and the report then
+calls the repeats lower bounds.
 
 A census build pays for this on every store and pauses a vCPU for each
 snapshot, so it runs slower than a default build; its timings are not

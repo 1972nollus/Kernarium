@@ -705,6 +705,10 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
         print(f"  translated first in another address space          "
               f"{history['other_space']:>11,}  "
               f"{share(history['other_space'], stores)}")
+        if history["unrecorded"]:
+            print(f"  departures and stores the census had no memory to "
+                  f"record {history['unrecorded']:,}: the repeats above "
+                  f"are lower bounds")
         evictions = history["evictions"]
         mean_evicted = history["evicted_bytes"] / evictions if evictions else 0.0
         print(f"  departures: evicted {evictions:,} (mean {mean_evicted:.0f} B)"

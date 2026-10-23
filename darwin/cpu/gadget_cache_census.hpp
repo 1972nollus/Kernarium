@@ -24,6 +24,7 @@
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
 #include <mutex>
+#include <new>
 #include <span>
 #include <unordered_map>
 #include <utility>
@@ -338,7 +339,13 @@ enum class Departure : std::uint8_t {
 	discarded,
 };
 
-/* How one cache's lookups ended and how its translations came and went. */
+/* How one cache's lookups ended and how its translations came and went.
+ * Recording never fails: a cache records from operations that a default
+ * build performs without allocating, some of them noexcept, and a census
+ * build's cache must do there what a default build's does. A departure or
+ * store the census has no memory to remember is counted as unrecorded
+ * instead, so the counts stay exact and only the matching of stores to
+ * earlier departures and to other caches is a lower bound. */
 class History final {
 public:
 	static constexpr std::size_t distance_buckets = 48;
@@ -353,10 +360,13 @@ public:
 	[[nodiscard]] std::uint64_t lookups() const noexcept { return lookups_; }
 
 	void depart(std::uint64_t generation, std::uint64_t pc,
-		std::uint64_t digest, std::size_t bytes, Departure why)
+		std::uint64_t digest, std::size_t bytes, Departure why) noexcept
 	{
-		auto &entry = departed_[Key{generation, pc}];
-		entry = {digest, evictions_, why};
+		try {
+			departed_[Key{generation, pc}] = {digest, evictions_, why};
+		} catch (const std::bad_alloc &) {
+			++unrecorded_;
+		}
 		switch (why) {
 		case Departure::evicted:
 			++evictions_;
@@ -375,11 +385,18 @@ public:
 	 * any other, held the same code before. `restored` says the cache
 	 * still held its own copy, which a lookup could not use. */
 	void arrive(unsigned cache, std::uint64_t generation, std::uint64_t pc,
-		std::uint64_t digest, bool restored)
+		std::uint64_t digest, bool restored) noexcept
 	{
 		++stores_;
-		switch (totals_only() ? Repeat::none :
-				Registry::note(cache, generation, pc, digest)) {
+		auto repeat = Repeat::none;
+		if (!totals_only()) {
+			try {
+				repeat = Registry::note(cache, generation, pc, digest);
+			} catch (const std::bad_alloc &) {
+				++unrecorded_;
+			}
+		}
+		switch (repeat) {
 		case Repeat::none:
 			break;
 		case Repeat::other_executor:
@@ -433,7 +450,7 @@ public:
 			" again_retired=%llu again_discarded=%llu changed=%llu"
 			" restored=%llu other_executor=%llu other_space=%llu"
 			" evictions=%llu evicted_bytes=%llu retirements=%llu"
-			" discards=%llu departed=%zu distance=",
+			" discards=%llu departed=%zu unrecorded=%llu distance=",
 			value(lookups_), value(hits_), value(revalidated_),
 			value(misses_), value(adopted_), value(stores_),
 			value(first_),
@@ -442,7 +459,7 @@ public:
 			value(restored_), value(other_executor_),
 			value(other_space_), value(evictions_),
 			value(evicted_bytes_), value(retirements_),
-			value(discards_), departed_.size());
+			value(discards_), departed_.size(), value(unrecorded_));
 		std::size_t used = distance_buckets;
 		while (used > 1 && distance_[used - 1U] == 0)
 			--used;
@@ -485,6 +502,7 @@ private:
 	std::uint64_t other_executor_{}, other_space_{};
 	std::uint64_t evictions_{}, evicted_bytes_{}, retirements_{},
 		discards_{};
+	std::uint64_t unrecorded_{};
 	/* Evictions between a translation's eviction and the store of the
 	 * same code under the same key, by bit width: bucket b holds
 	 * distances below 2^b and at least 2^(b-1). An exclusive victim tier
