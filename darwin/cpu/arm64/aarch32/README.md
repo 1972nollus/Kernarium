@@ -60,6 +60,11 @@ tooling-time oracle that no build uses. Never edit them.
   `a32_operand_codegen.py`. The helpers it calls are Arm's shared
   pseudocode functions in `decode_support.hpp`. A construct the translator
   does not know fails the generation.
+- `form_operation.hpp` groups the forms into operations (`Op`) by mnemonic,
+  with each form's operand shape and SP base read from its name. It is the
+  one such table: the semantic library adds its handlers and transfer modes
+  to it, and the JIT's compiler adds its classes for the VFP, Advanced SIMD
+  and Armv8 forms.
 - The unit test `arm64-aarch32-decoder` decodes the stored sample words of
   every row and the whole 16-bit Thumb space and compares the answers
   against `a32_expected.py`, an independent evaluation of the same pseudocode

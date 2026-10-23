@@ -205,6 +205,7 @@ bool dispatch(Exec &x, const OpInfo &info)
 {
 	switch (info.op) {
 	case Op::none:
+	case Op::library:
 		return x.raise_fatal();
 	case Op::adc: case Op::add: case Op::addw: case Op::adr: case Op::and_:
 	case Op::bic: case Op::cmn: case Op::cmp: case Op::eor: case Op::mov:

@@ -7,7 +7,8 @@
 add_library(uml_arm64_aarch32_decoder OBJECT
     a32_encodings.cpp
     a32_operand_decode.cpp
-    decode.cpp)
+    decode.cpp
+    form_operation.cpp)
 uml_declare_architecture_target(uml_arm64_aarch32_decoder cpu shared)
 target_include_directories(uml_arm64_aarch32_decoder PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin)
