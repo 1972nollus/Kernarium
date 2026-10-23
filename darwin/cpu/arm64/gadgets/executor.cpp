@@ -1561,7 +1561,7 @@ public:
 			     window_.generations)
 				state.space->for_each_link(
 					[&, generation](const LinkRecord &record) {
-						if (census_sampled(
+						if (census::sampled(
 							    record.link.guest_pc,
 							    sample))
 							std::fprintf(out,
@@ -1603,7 +1603,7 @@ public:
 						body.source_unit(),
 					static_cast<const void *>(&body));
 				if (sample != 0 &&
-				    census_sampled(slot.key(), sample))
+				    census::sampled(slot.key(), sample))
 					census_words(out, slot, text, records);
 			}
 		}
@@ -1663,7 +1663,7 @@ public:
 	{
 #if UML_GADGET_CACHE_CENSUS
 		if ((history_.lookups() & 4095U) == 0)
-			snapshot_if_due();
+			census::snapshot_if_due(schedule_, *this);
 #endif
 		assert(window_.current == nullptr ||
 		       window_.current->changes == changes);
@@ -2311,24 +2311,12 @@ private:
 			~(granule - 1);
 	}
 
-	/* What each record a stream can point at names, by the record's
-	 * address, for each address space: a link record by the guest PC it
-	 * links to, an indirect site by the branch that owns it. */
-	using CensusRecords = std::unordered_map<unsigned long,
-		std::unordered_map<std::uintptr_t, std::pair<char, std::uint64_t>>>;
+	/* What each record a stream can point at names, for each address
+	 * space. */
+	using CensusRecords =
+		std::unordered_map<unsigned long, census::RecordNames>;
 
-	[[nodiscard]] static bool census_sampled(
-		std::uint64_t pc, std::uint64_t one_in) noexcept
-	{
-		auto value = pc * 0x9e3779b97f4a7c15ULL;
-		value ^= value >> 29;
-		return value % one_in == 0;
-	}
-
-	/* One sampled body's stream, entry word included, word by word:
-	 * `g` a gadget by its offset in the executable's text, `l` a link
-	 * record by the guest PC it links to, `i` an indirect site by the
-	 * branch that owns it, and `o` any other word as it is. */
+	/* One sampled body's stream, entry word included. */
 	void census_words(std::FILE *out, const Slot &slot,
 		census::TextRange text, CensusRecords &records) const
 	{
@@ -2352,34 +2340,9 @@ private:
 			}
 		}
 		const auto &body = *slot.body;
-		std::fprintf(out, "W 0x%llx",
-			static_cast<unsigned long long>(slot.key()));
-		const auto *end = body.words() + body.word_count;
-		for (const auto *word = body.link_entry(); word != end; ++word) {
-			const auto value = *word;
-			if (text.contains(value)) {
-				std::fprintf(out, " g%llx",
-					static_cast<unsigned long long>(
-						value - text.begin));
-			} else if (const auto found = named->second.find(value);
-				   found != named->second.end()) {
-				std::fprintf(out, " %c%llx", found->second.first,
-					static_cast<unsigned long long>(
-						found->second.second));
-			} else {
-				std::fprintf(out, " o%llx",
-					static_cast<unsigned long long>(value));
-			}
-		}
-		std::fputc('\n', out);
-	}
-
-	void snapshot_if_due()
-	{
-		if (const auto number = schedule_.due(); number != 0)
-			census::append([this, number](std::FILE *out) {
-				census(out, number);
-			});
+		census::write_words(out, slot.key(),
+			{body.link_entry(), body.words() + body.word_count},
+			text, named->second);
 	}
 #endif
 

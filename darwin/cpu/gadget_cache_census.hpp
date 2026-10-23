@@ -24,7 +24,9 @@
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
 #include <mutex>
+#include <span>
 #include <unordered_map>
+#include <utility>
 
 namespace uml::cpu::gadget_cache::census {
 
@@ -71,6 +73,17 @@ inline constexpr std::uint64_t digest_seed = 0xcbf29ce484222325ULL;
 	static const std::uint64_t one_in =
 		environment_count("DARWIN_UML_GADGET_CACHE_CENSUS_WORDS");
 	return one_in;
+}
+
+/* Whether the body at guest PC `key` is one of the one in `one_in` whose
+ * stream is written word by word. A hash of the PC chooses, so every cache
+ * samples the same code. */
+[[nodiscard]] inline bool sampled(
+	std::uint64_t key, std::uint64_t one_in) noexcept
+{
+	auto value = key * 0x9e3779b97f4a7c15ULL;
+	value ^= value >> 29;
+	return value % one_in == 0;
 }
 
 /* Whether snapshots carry only their E and G records and stores go unmatched
@@ -173,6 +186,38 @@ struct TextRange final {
 	return {begin, begin + size};
 }
 
+/* What each record a stream can point at names, by the record's address, for
+ * one address space: a link record by the guest PC it links to (`l`), an
+ * indirect site by the branch that owns it (`i`). */
+using RecordNames =
+	std::unordered_map<std::uintptr_t, std::pair<char, std::uint64_t>>;
+
+/* One sampled body's stream, word by word: `g` a gadget by its offset in the
+ * executable's text, `l` and `i` a record by `names`, and `o` any other word
+ * as it is. */
+inline void write_words(std::FILE *out, std::uint64_t key,
+	std::span<const std::uintptr_t> words, TextRange text,
+	const RecordNames &names)
+{
+	std::fprintf(out, "W 0x%llx", static_cast<unsigned long long>(key));
+	for (const auto value : words) {
+		if (text.contains(value)) {
+			std::fprintf(out, " g%llx",
+				static_cast<unsigned long long>(
+					value - text.begin));
+		} else if (const auto found = names.find(value);
+			   found != names.end()) {
+			std::fprintf(out, " %c%llx", found->second.first,
+				static_cast<unsigned long long>(
+					found->second.second));
+		} else {
+			std::fprintf(out, " o%llx",
+				static_cast<unsigned long long>(value));
+		}
+	}
+	std::fputc('\n', out);
+}
+
 /* Periodic snapshots are numbered from one by the interval they fall in, so
  * the records every cache writes for the same moment share a number. */
 class Schedule final {
@@ -194,6 +239,16 @@ public:
 private:
 	std::uint64_t written_{};
 };
+
+/* Write `cache`'s snapshot if one is due. */
+template <typename Cache>
+void snapshot_if_due(Schedule &schedule, const Cache &cache)
+{
+	if (const auto number = schedule.due(); number != 0)
+		append([&cache, number](std::FILE *out) {
+			cache.census(out, number);
+		});
+}
 
 /* Whether some other cache translated the same guest code first: another
  * executor of the same address space, which a body shared between executors
