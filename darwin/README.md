@@ -168,13 +168,19 @@ Apple Silicon product has): it halves the four-vCPU Geekbench multi-core
 cache, and renewal, below, keeps a shared space from accumulating the freed
 arena and link records that process churn leaves in it, which WebGL
 Aquarium's cache did before (G227, G267, G268). A private cache sweeps away
-the link records and indirect sites that nothing it holds names any more; a
-shared space is never swept, and renewal replaces it instead. The parts of
-this that do not depend on an engine's record types are engine-independent
-headers in `cpu/`: the body arena (`gadget_body_arena.hpp`), and what each
-executor announces, the executors attached to a space, the limbo a body waits
-in, the renewal counts and the registry that hands a space out
-(`gadget_shared_space.hpp`). The arm64 engine builds its space from them.
+the link records and indirect sites that nothing it holds names any more, once
+they number half again what its last sweep kept and enough of its translations
+have left the cache to have left some unnamed: a record no resident
+translation's stream names and no resident block owns is released for reuse,
+and the site cells and target-table entries naming it are emptied, so link
+state follows what the cache holds rather than all the code the address space
+ever ran. A shared space is never swept, and renewal replaces it instead. The
+parts of this that do not depend on an engine's record types are
+engine-independent headers in `cpu/`: the body arena
+(`gadget_body_arena.hpp`), and what each executor announces, the executors
+attached to a space, the limbo a body waits in, the renewal counts and the
+registry that hands a space out (`gadget_shared_space.hpp`). The arm64 engine
+builds its space from them.
 
 A shared space bounds its freed arena by renewal. It counts the bytes of its
 arena and of the bodies some slot holds; once it holds at least two mebibytes

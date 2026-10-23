@@ -7,7 +7,15 @@
  * cumulative saturation flag. The vector memory forms: that they stay out of
  * the semantic library on an ordinary access, and take it, with its data and
  * its faults, on a page crossing, a misalignment and an unmapped page. The
- * words were assembled with LLVM MC at authoring time. */
+ * words were assembled with LLVM MC at authoring time.
+ *
+ * VMAX, VMIN, VADD, VSUB, VMUL, VMLA and VMLS run on every special operand,
+ * rounding mode and flush mode in the contexts that guard them and the one
+ * that does not, and QC across runs. The flags of VCMP and VCMPE reach the
+ * APSR through VMRS, adjacent or not, conditional or not. Every vector load
+ * form crosses a page at every offset, with the two pages adjacent in the
+ * host and not, and takes no library call once the TLB holds both; the
+ * library leaves the guest's FP environment installed. */
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 

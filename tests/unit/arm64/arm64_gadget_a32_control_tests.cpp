@@ -12,14 +12,34 @@
  * - interworking branches in both directions and the A32 target with
  *   bit 1 set;
  * - the instruction budget, single step and code that changes in place;
- * - exclusives, the Armv8 acquire and release forms, the CP15 and counter
- *   reads and the system forms;
+ * - exclusives (including loops whose plain stores share the target's TLB
+ *   set), the Armv8 acquire and release forms, the compare-and-swap helpers
+ *   of the kernel's user-helper page, the CP15 and counter reads and the
+ *   system forms;
  * - LDM, STM and LDRD across a page boundary, mapped and not, and the
  *   memory gadgets' TLB probe hitting inside a page and not across one, and
- *   in the set the TLB's own fill path chose; and
- * - that a form of an extension the host has runs (as a gadget, or in the
- *   semantic library when none lowers it) and one of an extension it lacks
- *   is UNDEFINED.
+ *   in the set the TLB's own fill path chose;
+ * - the floating-point environment: Advanced SIMD floating point runs under
+ *   the standard FPSCR value while VFP keeps the guest's (in either order, in
+ *   a skipped conditional run and across a block that ends inside a run), and
+ *   the conversions, VMAX, VMIN, VADD, VSUB and VMUL run in whichever
+ *   environment is native exactly when their operands allow it, with the
+ *   value, flags and environment left checked against the host's own
+ *   instruction under the matching FPCR;
+ * - that no gadget writes the callee-saved halves of V8-V15 (the corpus
+ *   runner checks them around every case), and that every writeback of a
+ *   VLD1 or VST1 copy moves the bytes and the base inside a page and across
+ *   one;
+ * - the library-exit count gate: with the semantic library's exit counters
+ *   on from a clean state, only a form the engine leaves to the library, or
+ *   a block transfer that crossed a page, reaches it, and the forms the
+ *   engine leaves to it do; and
+ * - that a form of an extension (CRC32, AES, SHA-1, PMULL, FP16, DotProd,
+ *   RDM, FCMA, FHM, BF16, I8MM, JSCVT) the host has runs (as a gadget, or in
+ *   the semantic library when none lowers it) and one of an extension it
+ *   lacks is UNDEFINED, in the illegal-instruction exit and not retired.
+ *   The test builds one guest on the machine's capabilities and one on a
+ *   host with none of the optional ones.
  *
  * Everything runs the production loop (run_translated_aarch32_blocks)
  * over the gadget executor. */

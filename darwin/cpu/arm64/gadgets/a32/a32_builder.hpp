@@ -25,7 +25,7 @@ namespace uml::cpu::arm64::gadgets::a32 {
  *
  * The PC of a program as the engine reports it on an exit is the key of the
  * instruction that did not retire, or of the next instruction for one that
- * did (SVC, BKPT excepted: aarch32/README.md). */
+ * did (SVC, BKPT excepted: aarch32/semantics.hpp). */
 
 struct BuildInput final {
 	/* The key the block starts at. */

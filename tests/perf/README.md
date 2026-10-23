@@ -192,12 +192,11 @@ correctness threshold.
 
 ## Steam appliance boot time
 
-`run_steam_boot_bench.py` measures how long a Kernarium Steam appliance takes
-to reach its own readiness contract: an X window named `Steam Big Picture Mode`
-whose map state is `IsViewable`. One run creates a fresh GPT user-data disk,
-times a first boot while Steam downloads and installs its own update, shuts the
-guest down through systemd, then times a second boot on that same disk with no
-download. It works for any image that uses the Kernarium init and session
+`run_steam_boot_bench.py` times a Kernarium Steam appliance from emulator exec
+to its own readiness contract, first on a fresh disk while Steam downloads and
+installs its own update and then on the same, seeded disk. Its docstring
+describes the phases and how the harness reads them without modifying an
+image. It works for any image that uses the Kernarium init and session
 supervisor, so two images or two emulator builds are directly comparable.
 
 ```sh
@@ -206,10 +205,6 @@ python3 tests/perf/run_steam_boot_bench.py \
   --image candidate --emulator BUILD-B/bin/uml-darwin --rootfs B.erofs \
   --output-dir RESULTS --runs 3
 ```
-
-The readiness query runs as the user who owns the display socket rather than as
-the console's root shell, because the session's X server refuses an
-unauthorized client whatever its window state is.
 
 Runs are strictly sequential and counterbalanced across images, so host drift
 cannot masquerade as an image difference. Each run records host load and memory
@@ -229,17 +224,6 @@ is gone. The kept path is printed to the run log and recorded as
 `userdata_image` in `run.json` and in the campaign's `results.json`.
 `--discard-failed-disks` deletes it anyway, for a long unattended campaign on a
 full volume; `--keep-disks` keeps every run's disk, successful ones included.
-
-The harness never modifies an image. Phase times therefore come from records an
-unmodified appliance already keeps — systemd's monotonic unit timestamps, the
-storage stage's progress file, and Steam's `bootstrap_log.txt` — read once per
-boot over the ttyS0 console and converted to seconds since emulator exec through
-one clock anchor that is read in a command of its own and bracketed by host
-monotonic readings. Readiness is polled, so its resolution is the poll interval;
-the other phases resolve to half an anchor round trip, reported per boot as
-`phase_anchor_round_trip`. Storage preparation completes before the console
-exists, so it is recovered from that progress file's modification time rather
-than observed live.
 
 The display is `--gpu-display=vnc` with no client attached, which accepts and
 drops each scanout: measured boots are unattended and free of window-server

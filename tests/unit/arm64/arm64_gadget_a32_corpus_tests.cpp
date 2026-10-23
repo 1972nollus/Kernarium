@@ -2,13 +2,13 @@
 /* The gadget engine against the AArch32 instruction corpus
  * (tests/unit/arm64/aarch32_corpus/README.md owns the pack). Every case whose
  * forms the engine decodes is run through the production AArch32 loop in the
- * oracle's memory map, with the oracle's
- * exit stubs, and what the pack records is compared: the signal or system
- * call that ended it and the instruction and address it was raised at, every
- * general register, the APSR flags, Q and GE, TPIDRURW, the data region, and
- * the retired count (the pack counts the program's instructions; the engine
- * also retires the exit stub's load and, for a system call or a breakpoint,
- * that instruction).
+ * oracle's memory map, with the oracle's exit stubs, and what the pack
+ * records is compared: the signal or system call that ended it and the
+ * instruction and address it was raised at, every general register, the APSR
+ * flags, Q and GE, D0-D31, FPSCR, TPIDRURW, the data region, and the retired
+ * count (the pack counts the program's instructions; the engine also retires
+ * the exit stub's load and, for a system call or a breakpoint, that
+ * instruction).
  *
  * A case whose forms need an extension the engine's host lacks is skipped;
  * the engine raises the illegal-instruction exit for them, which the forms

@@ -4,7 +4,20 @@
  * keeps in one translation and the instruction budget across them; rewritten
  * code (A32 words, T32 halfwords of a 32-bit instruction, one byte) seen by
  * the translations that held the old code; and the complete level's optional
- * extensions, which decode only where the host has them. */
+ * extensions, which decode only where the host has them.
+ *
+ * Random A32 and T32 programs run too: conditional branches, forward and back
+ * (B, CBZ, CBNZ), among data processing, whole and one instruction at a time;
+ * loops with memory, Advanced SIMD and side exits in their bodies that end by
+ * a count, a branch out or a fault; and the counted loop's translation as a
+ * host loop through the chain budget. The shapes of blocks are pinned: one
+ * that goes on past a branch back, one that ends at a branch to its own first
+ * instruction, and a linked block (the fifteen core registers loaded once
+ * before its internal entry, none written back before a link), with the
+ * registers across the budget returns of a chain with a call and a return.
+ * For one form of each optional extension, hosts with every extension and
+ * hosts lacking one are compared: the form is UNDEFINED, A32 and T32, and
+ * nothing else changes. */
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
