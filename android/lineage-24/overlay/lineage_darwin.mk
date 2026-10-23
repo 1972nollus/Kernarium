@@ -392,6 +392,14 @@ PRODUCT_PRODUCT_PROPERTIES := $(filter-out \
 PRODUCT_PRODUCT_PROPERTIES += \
     persist.sys.usb.config=adb
 
+# The WebView provider declares use32bitAbi. Left alone, that makes its 32-bit
+# libraries primary, and every WebView renderer, including those of 64-bit
+# applications, a 32-bit process. Keep the 64-bit ABI primary: 32-bit
+# applications still load the 32-bit WebView library in their own process and
+# talk to a 64-bit renderer.
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.config.ignore_use32bitabi=true
+
 # The Virtio sound transport has no MMAP or exclusive hardware path. These
 # read-only defaults seed a fresh Settings database; persisted user volume
 # choices continue to take precedence after first boot.
