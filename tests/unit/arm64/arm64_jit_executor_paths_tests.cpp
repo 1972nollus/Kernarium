@@ -10,7 +10,9 @@
  * - a single step, and an entry in the middle of an IT block, run one
  *   instruction as its own translation, tracked or not;
  * - a fetch that cannot supply the first instruction reports the fault at the
- *   first unit it could not read, whichever entry or fetch ran. */
+ *   first unit it could not read, whichever entry or fetch ran;
+ * - a block ends where its mapping ends, and an AArch32 block where the 32-bit
+ *   address space ends, whatever lies beyond. */
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 
@@ -679,6 +681,43 @@ void a_block_ends_at_the_end_of_the_mapping(Isa isa, unsigned long generation)
 	std::printf("%s block ends at the end of the mapping\n", name(isa));
 }
 
+/* A block never runs past the end of the 32-bit address space, even where
+ * the guest memory beyond it holds more code: the last page of the space
+ * and the page after it are mapped, and the program has no branch. */
+void a_block_stops_at_the_end_of_the_address_space(Isa isa,
+	unsigned long generation)
+{
+	constexpr std::uint32_t last_page = 0xffff'f000U;
+	Region region{generation, last_page, 2};
+	const std::size_t unit = isa == Isa::t32 ? 2U : 4U;
+	const std::size_t adds = 8U / unit;
+	for (std::size_t index = 0; index < adds; ++index) {
+		if (isa == Isa::t32)
+			region.put16(page - 8U + index * unit, t32_adds_r0);
+		else
+			region.put32(page - 8U + index * unit, a32_add_r0);
+	}
+	/* What lies beyond: another add and the system call. */
+	if (isa == Isa::t32) {
+		region.put16(page, t32_adds_r0);
+		region.put16(page + 2U, t32_svc);
+	} else {
+		region.put32(page, a32_add_r0);
+		region.put32(page + 4U, a32_svc);
+	}
+	region.changed(0, 2U * page);
+	JitExecutor executor;
+	StaticGuestMemory memory;
+	auto cpu = task(isa, last_page + static_cast<std::uint32_t>(page - 8U),
+		last_page);
+	const auto outcome = enter(executor, memory, generation, isa, cpu);
+	require(outcome.event == EngineEvent::continued,
+		"a block ran into the memory past the 32-bit address space");
+	require(outcome.executed == adds && cpu.registers[0] == adds);
+	std::printf("%s block stops at the end of the address space\n",
+		name(isa));
+}
+
 } // namespace
 
 int main()
@@ -695,6 +734,8 @@ int main()
 		single_step_stores(isa, generation++);
 		a_block_ends_at_the_end_of_the_mapping(isa, generation++);
 	}
+	for (const auto isa : {Isa::a32, Isa::t32})
+		a_block_stops_at_the_end_of_the_address_space(isa, generation++);
 	for (const auto rewrite :
 	     {Rewrite::fewer_units, Rewrite::more_instructions})
 		tracked_variant_that_no_longer_matches_runs_one_instruction(
