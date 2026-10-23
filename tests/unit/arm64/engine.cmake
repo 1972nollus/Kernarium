@@ -546,3 +546,15 @@
 		uml_test_allocation_failure)
     uml_add_unit_test(NAME gadget-shared-space
 		COMMAND uml_gadget_shared_space_tests)
+
+    # What the gadget caches' census records and writes, on its own: it never
+    # fails the cache operation it records from, with every allocation it
+    # makes failed, and leaves the guest's floating-point state as it was.
+    add_executable(uml_gadget_cache_census_tests
+		${PROJECT_SOURCE_DIR}/tests/unit/arm64/gadget_cache_census_tests.cpp)
+    target_include_directories(uml_gadget_cache_census_tests PRIVATE
+		${PROJECT_SOURCE_DIR}/darwin)
+    target_link_libraries(uml_gadget_cache_census_tests PRIVATE
+		uml_test_allocation_failure)
+    uml_add_unit_test(NAME gadget-cache-census
+		COMMAND uml_gadget_cache_census_tests)
