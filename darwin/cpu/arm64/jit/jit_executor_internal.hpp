@@ -100,6 +100,16 @@ private:
 
   [[nodiscard]] JitFunction
   tracked_store_function(CompiledBlock &block, StaticGuestMemory &memory);
+  /* The tracked variant of `block`, stored in the tracked-store arena, when
+   * `compiled` (the block's code built again from memory with tracking on,
+   * `guest_units` units of the key's ISA) is the same translation: its
+   * instruction and unit counts, link state and direct writes are the
+   * block's. Null otherwise, or when the arena has no room even after a
+   * reset. */
+  [[nodiscard]] JitFunction
+  store_tracked_variant(CompiledBlock &block,
+                        const JitCompiler::Result &compiled,
+                        std::size_t guest_units);
   void clear_tracked_store_cache() noexcept;
   [[nodiscard]] Event run_floating_exception_mode(
       CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed);
@@ -109,16 +119,51 @@ private:
   [[nodiscard]] bool fetch_instruction(StaticGuestMemory &memory,
                                        std::uint64_t pc,
                                        std::uint32_t &instruction);
+  /* Leaves the fault of the guest fetch that just failed in `memory` in the
+   * TLB, for the entry to report as Event::memory_fault. */
+  void record_fetch_fault(StaticGuestMemory &memory) noexcept {
+    const auto fault = memory.last_fault();
+    tlb_.fault_address = fault.address;
+    tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+  }
   /* Builds the translation in the single-instruction arena, replacing the
    * previous one. Empty when the instruction cannot be lowered or stored.
    */
   [[nodiscard]] std::optional<SingleInstructionTranslation>
   translate_single_instruction(std::uint64_t pc, std::uint32_t instruction,
                                bool track_direct_stores, std::uint8_t mode);
+  /* The translation of one instruction, built by a compiler for it, stored
+   * in the single-instruction arena. Empty when it is not exactly one
+   * instruction with a usable link state, or does not fit. */
+  [[nodiscard]] std::optional<SingleInstructionTranslation>
+  store_single_translation(const JitCompiler::Result &compiled);
   [[nodiscard]] Event invoke_single_instruction(
       const SingleInstructionTranslation &translation, CpuState &target,
       bool tracked_stores, bool restore_environment, std::size_t &executed,
       std::uint32_t &deferred_exclusive);
+  /* Runs `translation`, the untracked translation of the instruction at the
+   * PC, under the store-publication protocol: as it is when no other vCPU
+   * reserves, or as `tracked_translation()` builds it again when one does.
+   * Empty when that variant does not write memory as the first does. */
+  template <typename TrackedTranslation>
+  [[nodiscard]] std::optional<Event> invoke_single_instruction_published(
+      CpuState &cpu, const SingleInstructionTranslation &translation,
+      TrackedTranslation &&tracked_translation, std::size_t &executed,
+      std::uint32_t &deferred_exclusive) {
+    if (translation.direct_memory_write_mask == 0)
+      return invoke_single_instruction(translation, cpu, false, false,
+                                       executed, deferred_exclusive);
+    JitBlockPublication publication{store_participant_, cpu};
+    if (!publication.needs_tracking())
+      return invoke_single_instruction(translation, cpu, false, false,
+                                       executed, deferred_exclusive);
+    const auto tracked = tracked_translation();
+    if (!tracked || tracked->direct_memory_write_mask !=
+                        translation.direct_memory_write_mask)
+      return std::nullopt;
+    return invoke_single_instruction(*tracked, cpu, true, false, executed,
+                                     deferred_exclusive);
+  }
   /*
    * Runs one guest instruction when its block cannot run natively: the block
    * translation failed, did not fit the arena, or its tracked variant could
@@ -171,14 +216,29 @@ private:
    */
   [[nodiscard]] std::optional<SharedTranslationMaterializationFailure>
   materialize_shared_translation(const SharedTranslation &translation);
+  /* Installs the shared translation of the fetched `guest_words` at `pc`
+   * (an A64 PC, or an AArch32 key with mode 0), or returns null. The words
+   * are the fetched prefix, any padding included, and the translation's
+   * identity is a prefix of them. */
   [[nodiscard]] CompiledBlock *install_shared_translation(
       unsigned long generation, std::uint64_t changes, std::uint64_t pc,
       std::uint8_t mode, std::span<const std::uint32_t> guest_words);
+  /* Publishes the translation to the shared tier, keyed by `pc` (an A64 PC,
+   * or an AArch32 key with mode 0) and the fetched words its identity
+   * covers; null when it cannot be shared. The first form is the A64 one:
+   * the identity is the translation's instructions, a word each. In the
+   * second, `validation_words` are the elements that hold `guest_word_count`
+   * units of the key's ISA, halfwords for T32. */
   [[nodiscard]] std::shared_ptr<const SharedTranslation>
   publish_shared_translation(
       std::uint64_t pc, std::uint8_t mode,
       std::span<const std::uint32_t> guest_words,
       const JitCompiler::Result &compiled);
+  [[nodiscard]] std::shared_ptr<const SharedTranslation>
+  publish_shared_translation(
+      std::uint64_t pc, std::uint8_t mode,
+      std::span<const std::uint32_t> validation_words,
+      std::size_t guest_word_count, const JitCompiler::Result &compiled);
 
   [[nodiscard]] JitCacheValidationResult validate_stale_block(
       const CompiledBlock &block, std::uint64_t changes,
@@ -191,6 +251,11 @@ private:
   [[nodiscard]] CacheSlot replacement(unsigned long generation,
                                       std::uint64_t changes,
                                       std::uint64_t key);
+  /* Stores a translation as the cache slot's block. `guest_words` holds the
+   * validation words kept in the executor's fallback slab when the
+   * translation has none of its own (`saved_guest_words` empty). The block
+   * counts `instruction_count` instructions and validates `units` guest
+   * units: words for A64 and A32, halfwords for T32. */
   CompiledBlock &store_native(unsigned long generation, std::uint64_t changes,
                               std::uint64_t key, JitFunction function,
                               std::uintptr_t internal_entry,
@@ -200,6 +265,8 @@ private:
                               std::span<const std::uint32_t> guest_words,
                               std::shared_ptr<const std::uint32_t[]>
                                   saved_guest_words,
+                              std::size_t instruction_count,
+                              std::size_t units,
                               std::uint64_t memory_write_mask,
                               std::uint64_t direct_memory_write_mask,
                               bool accesses_fp_state, bool link_target_safe,
@@ -208,29 +275,9 @@ private:
   );
   void clear_cache() noexcept;
 
-  // The AArch32 entry (jit_executor_a32.cpp). The guest bytes a block reads
-  // are fetched as halfwords or words from the key's address; a T32 block
-  // counts its saved halfwords apart from its instructions.
-  [[nodiscard]] std::size_t fetch_a32_bytes(StaticGuestMemory &memory,
-                                            std::uint64_t key,
-                                            std::span<std::byte> bytes);
-  CompiledBlock &store_native_a32(
-      unsigned long generation, std::uint64_t changes, std::uint64_t key,
-      JitFunction function, std::uintptr_t internal_entry,
-      JitBlockLink *target_link, std::span<const JitRelocation> relocations,
-      std::span<const std::uint32_t> guest_elements,
-      std::shared_ptr<const std::uint32_t[]> saved_guest_words,
-      std::size_t instruction_count, std::size_t units,
-      std::uint64_t memory_write_mask, std::uint64_t direct_memory_write_mask,
-      bool accesses_fp_state, bool link_target_safe, bool native_fp,
-      bool guest_illegal);
-  [[nodiscard]] CompiledBlock *install_shared_translation_a32(
-      unsigned long generation, std::uint64_t changes, std::uint64_t key,
-      std::span<const std::uint32_t> guest_elements);
-  [[nodiscard]] std::shared_ptr<const SharedTranslation>
-  publish_shared_translation_a32(std::uint64_t key,
-                                 std::span<const std::uint32_t> guest_elements,
-                                 const jit::a32::Result &result);
+  // The AArch32 entry (jit_executor_a32.cpp), which stores, installs and
+  // publishes through the A64 functions above; a T32 block counts its saved
+  // halfwords apart from its instructions.
   [[nodiscard]] JitFunction
   tracked_store_function_a32(CompiledBlock &block, StaticGuestMemory &memory);
   [[nodiscard]] std::optional<SingleInstructionTranslation>

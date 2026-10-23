@@ -2,8 +2,8 @@
 //
 // The AArch32 side of the JIT executor: the block entry for an A32 or T32
 // translation (run_a32_block), which finds or compiles the block for the key
-// the task's PC holds, and the cache stores that know a T32 block counts
-// halfwords. The cache, arena, link tables and shared tier are the A64 ones.
+// the task's PC holds. The cache, arena, link tables and shared tier are the
+// A64 ones.
 
 #include "jit_executor_internal.hpp"
 
@@ -11,6 +11,7 @@
 #include "a32/a32_helpers.hpp"
 #include "jit_semantic_reservation.hpp"
 
+#include "cpu/arm64/aarch32/guest_fetch.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 
 #include <algorithm>
@@ -28,173 +29,49 @@ constexpr std::size_t maximum_block_bytes =
     maximum_block_instructions * sizeof(std::uint32_t);
 constexpr std::size_t maximum_block_elements = maximum_block_instructions;
 
-} // namespace
-
-[[nodiscard]] std::size_t JitExecutor::Implementation::fetch_a32_bytes(
-    StaticGuestMemory &memory, std::uint64_t key,
-    std::span<std::byte> bytes) {
+/* Up to bytes.size() guest bytes where the AArch32 key's code lies, the
+ * count read: a page at a time, ending at an unreadable page and at the end
+ * of the 4 GiB address space. Out of line, as the block entry is hot. */
+[[nodiscard, gnu::noinline]] std::size_t
+fetch_a32_bytes(StaticGuestMemory &memory, std::uint64_t key,
+                std::span<std::byte> bytes) {
   const std::uint64_t base = aarch32::key_fetch_address(key);
   const std::uint64_t limit = std::uint64_t{1} << 32;
   const std::size_t wanted = static_cast<std::size_t>(
       std::min<std::uint64_t>(bytes.size(), limit - base));
-  std::size_t total = 0;
-  while (total < wanted) {
-    const auto address = base + total;
-    const auto in_page = page_size - (address & (page_size - 1U));
-    const auto count = static_cast<std::size_t>(
-        std::min<std::uint64_t>(wanted - total, in_page));
-    if (!memory.fetch(address, bytes.subspan(total, count)))
-      break;
-    total += count;
-  }
-  return total;
+  return aarch32::fetch_guest_units(
+      base, 1, bytes.first(wanted), page_size,
+      [&memory](std::uint64_t address, std::span<std::byte> out) {
+        return memory.fetch(address, out);
+      });
 }
 
-[[nodiscard]] CompiledBlock &JitExecutor::Implementation::store_native_a32(
-    unsigned long generation, std::uint64_t changes, std::uint64_t key,
-    JitFunction function, std::uintptr_t internal_entry,
-    JitBlockLink *target_link, std::span<const JitRelocation> relocations,
-    std::span<const std::uint32_t> guest_elements,
-    std::shared_ptr<const std::uint32_t[]> saved_guest_words,
-    std::size_t instruction_count, std::size_t units,
-    std::uint64_t memory_write_mask, std::uint64_t direct_memory_write_mask,
-    bool accesses_fp_state, bool link_target_safe, bool native_fp,
-    bool guest_illegal) {
-  const auto selected = replacement(generation, changes, key);
-  auto &block = *selected.block;
-  if (saved_guest_words == nullptr) {
-    std::copy(guest_elements.begin(), guest_elements.end(),
-              selected.fallback_guest_words->begin());
-    saved_guest_words = std::shared_ptr<const std::uint32_t[]>{
-        fallback_saved_guest_words_, selected.fallback_guest_words->data()};
-  }
-  block.function = function;
-  block.internal_entry = internal_entry;
-  block.link = target_link;
-  block.instruction_count = instruction_count;
-  block.saved_units = static_cast<std::uint8_t>(units);
-  block.saved_guest_words = std::move(saved_guest_words);
-  block.memory_write_mask = memory_write_mask;
-  block.direct_memory_write_mask = direct_memory_write_mask;
-  block.accesses_fp_state = accesses_fp_state;
-  block.link_target_safe = link_target_safe;
-  block.native_fp = native_fp;
-  block.guest_illegal = guest_illegal;
-#if UML_JIT_RUNTIME_DIAGNOSTICS
-  ++cache_validation_diagnostics_.translations;
-  cache_validation_diagnostics_.target_link_refusals += block.link == nullptr;
-#endif
-  ++compiled_in_link_sequence_;
-  for (const auto &relocation : relocations)
-    if (relocation.kind == JitRelocationKind::direct_link)
-      refresh_cached_link_target(relocation.key);
-  activate_link(block);
-  return block;
-}
+/* The code read at an AArch32 key. */
+struct A32Code {
+  std::size_t available;  // bytes read, up to the buffer's size
+  std::size_t length;     // bytes of the first instruction; 0: not all read
+};
 
-[[nodiscard]] CompiledBlock *
-JitExecutor::Implementation::install_shared_translation_a32(
-    unsigned long generation, std::uint64_t changes, std::uint64_t key,
-    std::span<const std::uint32_t> guest_elements) {
-  auto &cache = SharedTranslationCache::instance();
-  const auto translation =
-      cache.find(shared_codegen_profile(0), key, guest_elements);
-  if (translation == nullptr)
-    return nullptr;
-  if (!valid_shared_translation(*translation, guest_elements)) {
-    cache.record_materialization_failure(
-        SharedTranslationMaterializationFailure::invalid_metadata);
-    return nullptr;
-  }
-  if (const auto failure = materialize_shared_translation(*translation)) {
-    cache.record_materialization_failure(*failure);
-    return nullptr;
-  }
-  const auto stored = arena_.store_block(
-      key, translation->words, translation->relocations,
-      relocated_link_pointers_, links_, empty_link_, generation);
-  if (!stored) {
-    cache.record_materialization_failure(
-        stored.links_exhausted
-            ? SharedTranslationMaterializationFailure::direct_link_capacity
-            : SharedTranslationMaterializationFailure::arena_exhaustion);
-    return nullptr;
-  }
-  const auto internal_entry = reinterpret_cast<std::uintptr_t>(stored.code) +
-                              translation->internal_entry_word *
-                                  sizeof(std::uint32_t);
-  auto *block = &store_native_a32(
-      generation, changes, key, sign_jit_function<JitFunction>(stored.code),
-      internal_entry, stored.target_link, translation->relocations,
-      guest_elements, translation->guest_words, translation->guest_instructions,
-      translation->guest_word_count, translation->memory_write_mask,
-      translation->direct_memory_write_mask, translation->accesses_fp_state,
-      translation->link_target_safe, translation->native_fp,
-      translation->guest_illegal);
-  cache.record_reuse();
-  return block;
-}
-
-[[nodiscard]] std::shared_ptr<const SharedTranslation>
-JitExecutor::Implementation::publish_shared_translation_a32(
-    std::uint64_t key, std::span<const std::uint32_t> guest_elements,
-    const jit::a32::Result &result) {
-  auto &cache = SharedTranslationCache::instance();
-  const auto &compiled = result.translation;
-  if (!compiled.relocatable)
-    return nullptr;
-  const auto isa = aarch32::key_isa(key);
-  const auto identity_bytes = result.guest_units * aarch32::isa_unit_bytes(isa);
-  const auto identity_elements =
-      (identity_bytes + sizeof(std::uint32_t) - 1U) / sizeof(std::uint32_t);
-  const auto validation_words = guest_elements.first(identity_elements);
-  const auto profile = shared_codegen_profile(0);
-  const auto preflight = cache.preflight_publication(
-      profile, key, validation_words,
-      {.host_words = compiled.words.size(),
-       .relocations = compiled.relocations.size(),
-       .guest_words = validation_words.size()},
-      compiled.direct_link_refusals, compiled.indirect_link_refusals);
-  if (preflight.canonical != nullptr)
-    return preflight.canonical;
-  if (!preflight.may_construct)
-    return nullptr;
-  try {
-    auto translation = std::make_shared<SharedTranslation>();
-    auto saved_guest_words =
-        std::make_shared_for_overwrite<std::uint32_t[]>(identity_elements);
-    std::copy(validation_words.begin(), validation_words.end(),
-              saved_guest_words.get());
-    translation->words.assign(compiled.words.begin(), compiled.words.end());
-    translation->relocations.assign(compiled.relocations.begin(),
-                                    compiled.relocations.end());
-    for (const auto &relocation : translation->relocations) {
-      if (relocation.word >= translation->words.size() ||
-          translation->words.size() - relocation.word < 2U)
-        return nullptr;
-      translation->words[relocation.word] = 0;
-      translation->words[relocation.word + 1U] = 0;
+/* Reads up to bytes.size() bytes of code at the key and works out the length
+ * of its first instruction. Inline in the block entry, which is hot: an
+ * out-of-line copy changes the registers its hit path uses. */
+[[nodiscard, gnu::always_inline]] inline A32Code
+fetch_a32_code(StaticGuestMemory &memory, std::uint64_t key,
+               std::span<std::byte> bytes) {
+  const auto available = fetch_a32_bytes(memory, key, bytes);
+  std::size_t length = 4;
+  if (aarch32::key_isa(key) == aarch32::GuestIsa::t32) {
+    length = 2;
+    if (available >= 2) {
+      std::uint16_t first;
+      std::memcpy(&first, bytes.data(), sizeof first);
+      length = aarch32::thumb_length(first);
     }
-    translation->direct_link_refusals = compiled.direct_link_refusals;
-    translation->indirect_link_refusals = compiled.indirect_link_refusals;
-    translation->isa = static_cast<std::uint8_t>(isa);
-    translation->guest_words = std::move(saved_guest_words);
-    translation->guest_word_count = result.guest_units;
-    translation->guest_instructions = compiled.guest_instructions;
-    translation->hot_words = compiled.hot_words;
-    translation->internal_entry_word = compiled.internal_entry_word;
-    translation->memory_write_mask = compiled.memory_write_mask;
-    translation->direct_memory_write_mask = compiled.direct_memory_write_mask;
-    translation->accesses_fp_state = compiled.accesses_fp_state;
-    translation->link_target_safe = compiled.link_target_safe;
-    translation->native_fp = compiled.native_fp;
-    translation->guest_illegal = compiled.guest_illegal;
-    return cache.insert(profile, key, validation_words,
-                        std::move(translation));
-  } catch (const std::bad_alloc &) {
-    return nullptr;
   }
+  return {.available = available, .length = available < length ? 0 : length};
 }
+
+} // namespace
 
 /* The tracked-store variant of a block (jit_executor_execution.cpp's
  * tracked_store_function) for an AArch32 translation. */
@@ -211,23 +88,8 @@ JitExecutor::Implementation::publish_shared_translation_a32(
   jit::a32::A32Compiler compiler{nullptr, nullptr, true};
   const auto compiled =
       compiler.compile({.key = block.key, .bytes = std::span{bytes}.first(length)});
-  const auto &translation = compiled.translation;
-  if (translation.words.empty() ||
-      translation.guest_instructions != block.instruction_count ||
-      compiled.guest_units != block.saved_units ||
-      !valid_link_state_metadata(translation.accesses_fp_state,
-                                 translation.native_fp) ||
-      translation.direct_memory_write_mask != block.direct_memory_write_mask)
-    return nullptr;
-  auto *code = tracked_store_arena_.store(translation.words);
-  if (code == nullptr) {
-    clear_tracked_store_cache();
-    code = tracked_store_arena_.store(translation.words);
-    if (code == nullptr)
-      return nullptr;
-  }
-  block.tracked_function = sign_jit_function<JitFunction>(code);
-  return block.tracked_function;
+  return store_tracked_variant(block, compiled.translation,
+                               compiled.guest_units);
 }
 
 /* A private translation of exactly the first instruction, with the ITSTATE
@@ -242,22 +104,7 @@ JitExecutor::Implementation::translate_a32_single(
                         .bytes = bytes,
                         .itstate = aarch32::ItState{itstate},
                         .single = true});
-  const auto &translation = compiled.translation;
-  if (translation.words.empty() || translation.guest_instructions != 1U ||
-      !valid_link_state_metadata(translation.accesses_fp_state,
-                                 translation.native_fp))
-    return std::nullopt;
-  single_instruction_arena_.reset();
-  auto *code = single_instruction_arena_.store(translation.words);
-  if (code == nullptr)
-    return std::nullopt;
-  return SingleInstructionTranslation{
-      .function = sign_jit_function<JitFunction>(code),
-      .memory_write_mask = translation.memory_write_mask,
-      .direct_memory_write_mask = translation.direct_memory_write_mask,
-      .accesses_fp_state = translation.accesses_fp_state,
-      .native_fp = translation.native_fp,
-  };
+  return store_single_translation(compiled.translation);
 }
 
 /* The exclusive a translation deferred (its cold path returned with the
@@ -282,48 +129,26 @@ JitExecutor::Implementation::translate_a32_single(
   executed = 0;
   alignas(8) std::array<std::byte, 4> bytes{};
   const auto key = cpu.pc;
-  const auto fetched = fetch_a32_bytes(memory, key, bytes);
-  const auto isa = aarch32::key_isa(key);
-  std::size_t need = 4;
-  if (isa == aarch32::GuestIsa::t32) {
-    need = 2;
-    if (fetched >= 2) {
-      std::uint16_t first;
-      std::memcpy(&first, bytes.data(), sizeof first);
-      need = aarch32::thumb_length(first);
-    }
-  }
-  if (fetched < need) {
-    const auto fault = memory.last_fault();
-    tlb_.fault_address = fault.address;
-    tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+  const auto code = fetch_a32_code(memory, key, bytes);
+  if (code.length == 0) {
+    record_fetch_fault(memory);
     return Event::memory_fault;
   }
-  const auto bytes_view = std::span<const std::byte>{bytes}.first(need);
+  const auto bytes_view = std::span<const std::byte>{bytes}.first(code.length);
   const auto translation =
       translate_a32_single(key, bytes_view, cpu.a32_itstate, false);
   if (!translation)
     return Event::fatal;
   std::uint32_t deferred_exclusive = 0;
-  Event event{};
-  if (translation->direct_memory_write_mask == 0) {
-    event = invoke_single_instruction(*translation, cpu, false, false,
-                                      executed, deferred_exclusive);
-  } else {
-    JitBlockPublication publication{store_participant_, cpu};
-    if (!publication.needs_tracking()) {
-      event = invoke_single_instruction(*translation, cpu, false, false,
-                                        executed, deferred_exclusive);
-    } else {
-      const auto tracked =
-          translate_a32_single(key, bytes_view, cpu.a32_itstate, true);
-      if (!tracked || tracked->direct_memory_write_mask !=
-                          translation->direct_memory_write_mask)
-        return Event::fatal;
-      event = invoke_single_instruction(*tracked, cpu, true, false, executed,
-                                        deferred_exclusive);
-    }
-  }
+  const auto published = invoke_single_instruction_published(
+      cpu, *translation,
+      [&] {
+        return translate_a32_single(key, bytes_view, cpu.a32_itstate, true);
+      },
+      executed, deferred_exclusive);
+  if (!published)
+    return Event::fatal;
+  auto event = *published;
   if (deferred_exclusive != 0U)
     event = run_deferred_a32_exclusive(cpu, deferred_exclusive, executed);
   reconcile_reservation(cpu);
@@ -383,30 +208,20 @@ JitExecutor::Implementation::translate_a32_single(
   if (block == nullptr) {
     alignas(8) std::array<std::byte, maximum_block_bytes> bytes{};
     const auto isa = aarch32::key_isa(key);
-    const auto length = fetch_a32_bytes(memory, key, bytes);
-    std::size_t need = 4;
-    if (isa == aarch32::GuestIsa::t32) {
-      need = 2;
-      if (length >= 2) {
-        std::uint16_t first;
-        std::memcpy(&first, bytes.data(), sizeof first);
-        need = aarch32::thumb_length(first);
-      }
-    }
-    if (length < need) {
-      const auto fault = memory.last_fault();
-      tlb_.fault_address = fault.address;
-      tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+    const auto code = fetch_a32_code(memory, key, bytes);
+    if (code.length == 0) {
+      record_fetch_fault(memory);
       return Event::memory_fault;
     }
+    const auto length = code.available;
     std::array<std::uint32_t, maximum_block_elements> elements{};
     std::memcpy(elements.data(), bytes.data(), length);
     const auto element_count = (length + sizeof(std::uint32_t) - 1U) /
                                sizeof(std::uint32_t);
     const auto fetched_elements =
         std::span<const std::uint32_t>{elements}.first(element_count);
-    auto *shared = install_shared_translation_a32(
-        generation, sequences.code_changes, key, fetched_elements);
+    auto *shared = install_shared_translation(
+        generation, sequences.code_changes, key, 0, fetched_elements);
     if (shared != nullptr) {
       block = shared;
     } else {
@@ -449,12 +264,13 @@ JitExecutor::Implementation::translate_a32_single(
         auto saved = translation == nullptr
                          ? std::shared_ptr<const std::uint32_t[]>{}
                          : translation->guest_words;
-        return &store_native_a32(
+        return &store_native(
             generation, sequences.code_changes, key,
             sign_jit_function<JitFunction>(stored.code), internal_entry,
             stored.target_link, compiled_translation.relocations,
-            elements_of(candidate), std::move(saved),
-            compiled_translation.guest_instructions, candidate.guest_units,
+            stored.direct_link_refusals, elements_of(candidate),
+            std::move(saved), compiled_translation.guest_instructions,
+            candidate.guest_units,
             compiled_translation.memory_write_mask,
             compiled_translation.direct_memory_write_mask,
             compiled_translation.accesses_fp_state,
@@ -468,8 +284,9 @@ JitExecutor::Implementation::translate_a32_single(
                                     compiled.translation.relocations, {},
                                     links_, empty_link_, generation);
       if (stored) {
-        auto published =
-            publish_shared_translation_a32(key, fetched_elements, compiled);
+        auto published = publish_shared_translation(
+            key, 0, elements_of(compiled), compiled.guest_units,
+            compiled.translation);
         block = install(compiled, stored, published);
       } else {
         clear_cache();
@@ -483,8 +300,8 @@ JitExecutor::Implementation::translate_a32_single(
                                     empty_link_, generation);
         if (!stored)
           return run_a32_single(cpu, memory, executed);
-        auto published =
-            publish_shared_translation_a32(key, fetched_elements, retry);
+        auto published = publish_shared_translation(
+            key, 0, elements_of(retry), retry.guest_units, retry.translation);
         block = install(retry, stored, published);
       }
     }

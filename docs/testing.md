@@ -903,8 +903,10 @@ streaming record), and undefined SVE instructions.
 offsets, and the AArch32 identification registers and compat HWCAP words over
 every subset of the host features they follow. `arm64-a32-guest-key` checks the tagged
 translation keys (round trips, interworking, that no key collides with an A64
-key, the empty cell or a fault position, and the hash-visible bit) and the
-key-aware validation of saved guest units across page boundaries. `arm64-jit-shared-translation-cache` also checks that the
+key, the empty cell or a fault position, and the hash-visible bit), the
+key-aware validation of saved guest units across page boundaries and the
+page-bounded fetch of a translation window that both engines use.
+`arm64-jit-shared-translation-cache` also checks that the
 shared tier keys and sizes AArch32 translations by ISA.
 
 `arm64-gadget-a32-control` runs small A32 and T32 programs through the gadget
@@ -1051,7 +1053,14 @@ the two pages adjacent in the host and not, and with no library call once the
 TLB holds both), where the library leaves the guest's FP environment
 installed. `arm64-jit-a32-encoder` compares the compiler's A64 encoders with LLVM
 MC, and `arm64-jit-a32-vector-encoder` those of the vector instruction
-classes.
+classes. `arm64-jit-executor-paths` covers the JIT executor's A64, A32 and T32
+entries where they leave the cached block: a peer executor reusing the
+AArch32 translations of the first (and finding code rewritten under them), the tracked
+variant of a block that stores while another vCPU holds a reservation and its
+fall back to one instruction when the code no longer matches, single steps and
+an entry in the middle of an IT block, a stepped store ending another vCPU's
+reservation, a fetch fault at the first unit that cannot be read, and a block
+ending where its mapping or the 32-bit address space ends.
 
 ## x86 instruction conformance
 

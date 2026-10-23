@@ -2,6 +2,7 @@
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 #include "allocation_failure.hpp"
+#include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_cache.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
@@ -1669,6 +1670,71 @@ void exclusive_and_system_blocks_are_translated()
 	require(run.executed >= 1);
 }
 
+/* The AArch32 entry stores what it translates the way the A64 one does: each
+ * block is a translation, one with a direct exit takes a link record, and the
+ * validation words of a block the shared tier holds are the shared ones. The
+ * first executor publishes both blocks; the second reuses them, relocated
+ * for its own link table. */
+void aarch32_blocks_are_counted_like_aarch64_ones()
+{
+	constexpr unsigned long generation = 19'706U;
+	constexpr std::uint32_t base = 0x460'0000U;
+	constexpr std::uint32_t target = base + 0x40U;
+	JitBacking backing{1};
+	backing.put32(0, 0xe280'0001U); // add r0, r0, #1
+	/* b target: the offset counts words from the PC, which reads eight
+	 * ahead of the branch. */
+	backing.put32(4, 0xea00'0000U |
+		((target - (base + 4U + 8U)) / 4U & 0x00ff'ffffU));
+	backing.put32(0x40, 0xe280'000aU); // add r0, r0, #10
+	backing.put32(0x44, 0xef00'0000U); // svc #0
+	JitMapping mapping{generation, base, backing, 1};
+	StaticGuestMemory memory;
+	const auto run_to_svc = [&](JitExecutor &executor) {
+		arm64::CpuState cpu{};
+		cpu.a32 = 1;
+		cpu.pc = arm64::aarch32::a32_key(base);
+		for (unsigned step = 0; step < 4; ++step) {
+			require(executor.begin_execution(generation, cpu.pc));
+			std::size_t executed = 0;
+			const auto event = executor.run_a32_block(
+				cpu, memory, generation, executed);
+			executor.end_execution();
+			if (event == ::uml::cpu::EngineEvent::system_call) {
+				require(cpu.registers[0] == 11);
+				return;
+			}
+			require(event == ::uml::cpu::EngineEvent::continued);
+		}
+		require(false);
+	};
+	/* Sharing is only enabled for concurrent executors; the second does not
+	 * run until the first is gone, so a missed relocation reads freed
+	 * memory. */
+	JitExecutor second;
+	{
+		JitExecutor first;
+		run_to_svc(first);
+		const auto diagnostics = first.cache_validation_diagnostics();
+		require(diagnostics.translations == 2);
+		require(diagnostics.target_link_refusals == 0);
+		require(diagnostics.direct_link_table_high_water > 0);
+		require(diagnostics.shared_validation_word_installs == 2);
+		require(diagnostics.private_validation_word_installs == 0);
+	}
+	const auto published =
+		arm64::SharedTranslationCache::instance().statistics();
+	run_to_svc(second);
+	const auto reused = arm64::SharedTranslationCache::instance().statistics();
+	require(reused.reuses >= published.reuses + 2);
+	const auto diagnostics = second.cache_validation_diagnostics();
+	require(diagnostics.translations == 2);
+	require(diagnostics.target_link_refusals == 0);
+	require(diagnostics.direct_link_table_high_water > 0);
+	require(diagnostics.shared_validation_word_installs == 2);
+	require(diagnostics.private_validation_word_installs == 0);
+}
+
 } // namespace
 
 int main()
@@ -1679,6 +1745,7 @@ int main()
 	native_translation_preserves_fault_prefixes();
 	exclusive_and_system_blocks_are_translated();
 	pointer_authentication_instructions_are_undefined();
+	aarch32_blocks_are_counted_like_aarch64_ones();
 	peer_translation_reuse_requires_current_code();
 	publication_allocation_failures_install_private_code();
 	defensive_install_rejects_mutated_canonical_metadata();
