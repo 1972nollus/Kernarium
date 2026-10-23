@@ -1069,6 +1069,53 @@ installed. `arm64-jit-a32-encoder` compares the compiler's A64 encoders with LLV
 MC, and `arm64-jit-a32-vector-encoder` those of the vector instruction
 classes.
 
+## Android 32-bit userspace
+
+The Android product runs `armeabi-v7a` applications beside `arm64-v8a` ones
+([`../android/lineage-24/README.md`](../android/lineage-24/README.md#android-product)).
+The build side needs no Android build. `lineage24-builder-lane` drives the
+target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
+placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files)
+and the builder's assertions; `lineage24-first-boot-precompile` covers the
+ISA set of a package and the per-ISA artifacts and manifest;
+`lineage24-mesa-venus-port-generator` covers the per-ISA generators of the
+Mesa port; and `lineage24-mesa-venus-source-contract` pins the regenerated
+series. `KernariumTests` covers the disk range the larger seed GPT needs.
+
+A release candidate is qualified on its image, opt-in, on every engine that
+runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
+`SIGILL` anywhere is a blocker, as everywhere.
+
+- **Boot.** `boot_completed` with `ro.product.cpu.abilist` listing
+  `arm64-v8a,armeabi-v7a`, `ro.zygote=zygote64_32` and the secondary zygote
+  running without restarts; SELinux enforcing with no denial from the 32-bit
+  zygote, `crash_dump32`, the WebView zygote or its RELRO process; native
+  daemons and HALs 64-bit. ART Service's first-boot pass skips every package,
+  the WebView's `arm` artifacts included, and `odrefresh` compiles nothing for
+  either ISA.
+- **Applications.** A set of real 32-bit applications: some `armeabi-v7a`
+  only, some dual-ABI installed with `adb install --abi armeabi-v7a` against a
+  64-bit control install, and a Java-only one forced to 32 bits. Each shows
+  `primaryCpuAbi=armeabi-v7a` in `dumpsys package`, descends from the
+  secondary zygote, draws through GLES and, where it uses it, Vulkan, and
+  leaves no tombstone. A deliberate `SIGSEGV` in one must leave a symbolized
+  `crash_dump32` tombstone. The 64-bit browser's pages load through the 64-bit
+  WebView renderer, and a 32-bit application's WebView talks to it.
+- **CTS.** The 32-bit and 64-bit variants of the bionic, binder, OS, JNI,
+  seccomp, ABI-override and ASLR modules run on the same candidate; a test that
+  fails only on `armeabi-v7a` is triaged before acceptance.
+- **Alignment.** The engine probe (`tests/integration/aarch32/engine_probe`)
+  runs from `/data/local/tmp` on both engines: its fault section must give
+  `SIGBUS` with `BUS_ADRALN` for misaligned LDM, STM, LDRD, STRD and VLDM while
+  unaligned LDR, LDRH, STR and STRH succeed, as on Linux guests (the kernel has
+  no `COMPAT_ALIGNMENT_FIXUPS`).
+- **Cost.** Boot to `sys.boot_completed` (dmesg), cold and warm, in an
+  ABBA order against the previous release on the same host build; `MemAvailable`
+  after a settle and `dumpsys meminfo` for the zygotes and the WebView zygote;
+  and the image and compressed sizes. The stock secondary zygote stays unless
+  it costs more than 3 s of iPad cold boot or 100 MiB of guest `MemAvailable`;
+  then one started on demand is designed.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites

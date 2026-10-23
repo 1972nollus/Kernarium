@@ -84,11 +84,32 @@ described in [`kernel/mainline-6.18/README.md`](../../kernel/mainline-6.18/READM
 
 ## Android product
 
-The product is ARM64-only, 4 KiB-only, and built-in-kernel-only. The kernel
-runs 4 KiB pages, because Android's 32-bit libraries are 4 KiB aligned; the
-64-bit userspace stays page-agnostic (a 16 KiB maximum ELF alignment and no
-compile-time bionic page-size macro), so it is valid on a kernel of either
-size, and `ro.product.page_size` reports 4096.
+The product is a 64-bit system with a 32-bit application ABI, 4 KiB-only, and
+built-in-kernel-only. Applications of both ABIs run from one image:
+`arm64-v8a` and `armeabi-v7a`, in that order. The 32-bit side is ARMv8-A
+AArch32 on a cortex-a53, built as the softfp `armeabi-v7a` ABI; the image lists
+no `armeabi`, and `ro.zygote` is `zygote64_32`. Every daemon and HAL stays
+64-bit (`IGNORE_PREFER32_ON_DEVICE`), so 32-bit code runs only in applications,
+the two zygotes and the WebView RELRO process. Recovery, `init_boot` and the
+vendor ramdisk are 64-bit only. The kernel runs 4 KiB pages, because Android's
+32-bit libraries are 4 KiB aligned; the 64-bit userspace stays page-agnostic (a
+16 KiB maximum ELF alignment and no compile-time bionic page-size macro), so it
+is valid on a kernel of either size, and `ro.product.page_size` reports 4096.
+
+A `device/google/cuttlefish` topic (route `p0001`) adds the
+`UML_ANDROID_MULTILIB` switch, which makes the page-agnostic phone inherit
+`core_64_bit.mk` instead of `core_64_bit_only.mk`; `overlay/lineage_darwin.mk`
+sets it and `overlay/BoardConfig.mk` defines the second architecture. The
+builder asserts that configuration, and the target-files verifier checks the
+image: the ABI lists, the 32-bit runtime, the placement of every ELF (32-bit
+files are 4 KiB aligned EABI5 softfp objects under `lib/`, `lib/arm` or
+`bin/*32`, and 64-bit ones never sit there), and ART's per-ISA artifacts. The
+LineageOS WebView declares `use32bitAbi`, which would make its 32-bit libraries
+primary and every renderer a 32-bit process. A `frameworks/base` topic (route
+`p0007`) lets a product disregard that attribute for system packages, and the
+product sets `ro.config.ignore_use32bitabi`: renderers stay 64-bit, and a
+32-bit application loads the 32-bit WebView library in its own process and
+talks to a 64-bit renderer.
 
 The build variant is the single `LINEAGE24_BUILD_VARIANT` setting in
 `metadata/lineage.env`, `user` or `userdebug`. Lunch, the target-files verifier,
@@ -180,22 +201,31 @@ The product uses software KeyMint/gatekeeper, SELinux enforcing policy, no
 `system_other` image, and no loadable modules or DLKM partitions.
 
 A first boot compiles nothing. ART Service would otherwise compile every
-package without a usable artifact on a fresh `/data` (reason `first-boot`,
-filter `verify`), and Soong leaves two groups without one: the applications
-packaged inside updatable APEXes, which it never dexpreopts, and the presigned
-F-Droid client and Privileged Extension, whose prebuilt modules opt out.
+package without a usable artifact, for each instruction set the package runs
+in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves
+three groups without one: the applications
+packaged inside updatable APEXes, which it never dexpreopts, the presigned
+F-Droid client and Privileged Extension, whose prebuilt modules opt out, and
+the second instruction set of any package, since Soong dexpreopts an
+application for the first only.
 `tools/precompile-first-boot-apps.py` compiles exactly those after a first
-`target-files-package` pass, with the host `dex2oat`, Soong's own recorded
-application flags, filter `verify` and the class loader context ART Service
-derives on the device (the manifest's libraries plus the implicit ones
-`PackageBackwardCompatibility` adds). It writes the artifacts where ART looks
-first: `/system/framework/oat/arm64/apex@<apex>@<path>@classes.{odex,vdex}` for
-an APK under `/apex`, and `oat/arm64` beside every other APK. A second pass
+`target-files-package` pass, with the host `dex2oat`, Soong's own application
+flags recorded for that instruction set, filter `verify` and the class loader
+context ART Service derives on the device (the manifest's libraries plus the
+implicit ones `PackageBackwardCompatibility` adds). A package runs in arm64
+unless native code puts it elsewhere: a multiArch package with libraries for
+both ABIs runs in both, so the multi-ABI WebView needs `arm` artifacts too, and
+a package with libraries for one ABI only runs in that ABI's instruction set.
+The tool derives the set the way `PackageAbiHelperImpl` does, from the APK and
+the library directories beside it, and records each artifact's ISA in its
+manifest. It writes the artifacts where ART looks first:
+`/system/framework/oat/<isa>/apex@<apex>@<path>@classes.{odex,vdex}` for an APK
+under `/apex`, and `oat/<isa>` beside every other APK. A second pass
 installs them through a generated `PRODUCT_COPY_FILES` fragment named by
 `LINEAGE24_FIRST_BOOT_OAT_MK`, which `overlay/lineage_darwin.mk` includes, and
 `build-aosp.sh` then runs the tool's `verify` against the packaged tree: every
-APK with dex code must carry artifacts, and the tool's own must match its
-manifest and the packaged APK's dex checksums. An unchanged result skips the
+APK with dex code must carry artifacts for its whole ISA set, and the tool's
+own must match its manifest and the packaged APK's dex checksums. An unchanged result skips the
 second pass. The artifacts are tied to the exact dex checksums and class loader
 context, so a package that is later replaced (an APEX update, a different
 class path) is recompiled by ART Service as usual; the image has no such
@@ -220,7 +250,9 @@ Linux guest run the same drivers against the same renderer. GLES is Mesa's
 Virgl gallium driver behind `libEGL_kernarium`, `libGLESv1_CM_kernarium` and
 `libGLESv2_kernarium` in `/vendor/lib64/egl`, which the platform EGL loader
 selects through `ro.hardware.egl=kernarium`; the three libraries link
-`venus_gallium_dri.so` in `/vendor/lib64`. The product excludes the inherited
+`venus_gallium_dri.so` in `/vendor/lib64`. HWUI renders in the application
+process, so a 32-bit application loads the 32-bit builds of the same libraries
+from `/vendor/lib/egl` and `/vendor/lib`. The product excludes the inherited
 Cuttlefish `libGLES_mesa`, and the AOSP `external/mesa3d` project stays at its
 pinned revision. The Vulkan HAL is Mesa's Venus driver,
 `VK_DRIVER_ID_MESA_VENUS` over Virtio-GPU, selected through
@@ -270,7 +302,15 @@ regeneration; the verifier refuses a guest series that changed underneath the
 recorded pin.
 
 The port itself is generated. `tools/generate-mesa-venus-port.py soong` runs AOSP's
-`meson2hermetic` converter with the checked `soong-port.toml`, repairs the few
+`meson2hermetic` converter with the checked `soong-port.toml` and the platform
+description beside it, `soong-platforms.toml`, for two host platforms: arm64
+and arm. The description answers Mesa's configure-time checks for each
+instruction set (the converter runs no compiler), and the converter merges the
+platforms into `select(arch())` expressions. It drops a generated source whose
+command differs between platforms, and the OpenGL command marshalling bakes in
+the pointer size, so the tool converts each platform alone as well, keeps the
+first platform's generators under their names, adds the others as
+`<name>_<arch>`, and has each library that uses one select it by arch. It also repairs the few
 places where Soong needs more than Meson states, drops every module the
 installed modules neither build from nor link, and then scopes every remaining
 module name with a `venus_` prefix because `external/mesa3d` already defines
@@ -306,7 +346,7 @@ passes Meson's C arguments to C sources only.
 `vulkan.virtio.so` is a same-process HAL: it is loaded into every application
 that uses Vulkan, so the product labels it `same_process_hal_file`. The platform
 labels `/vendor/lib64/egl` the same way, and the product adds the label for the
-gallium driver those libraries link.
+gallium driver those libraries link, in both library directories.
 
 Mesa reads a buffer's DRM format, modifier and plane layout through gralloc, so
 the product installs the allocator's own `gralloc.minigbm` module and selects
@@ -530,6 +570,10 @@ invocation and canonical output root, and delete only explicit Android paths.
 Preserve the current accepted release and its active writable bundle, the
 Android source and patch-producer checkouts, accepted kernel inputs, dependency
 prefixes, non-Android guests, and unrelated files beside a bundle.
+
+The second architecture adds a variant to nearly every module, so the first
+multilib release is built in a fresh output directory, never over the 64-bit-only
+one; that output is a superseded build once the multilib release is accepted.
 
 ## Apple consumers and guest bundles
 

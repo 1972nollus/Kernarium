@@ -1102,8 +1102,8 @@ privileged, real-mode, virtual-machine, enclave, and system-management
 instructions are outside this Linux userspace profile, and AMD's 3DNow!, SSE4a
 and CLZERO raise #UD, as on an Intel core. That gate is not proof of an
 arbitrary distribution or complete Linux syscall compatibility. The normal
-mainline slices and Android remain arm64-userspace-only and contain
-none of the x86_64 kernel overlay.
+mainline slices and Android remain arm64 kernels and contain none of
+the x86_64 kernel overlay.
 
 On macOS the x86_64 product can instead run long64 and compat32 tasks on the
 x86-64 JIT, FEXCore embedded behind the static MMU, which
