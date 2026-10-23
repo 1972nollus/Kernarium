@@ -11,6 +11,7 @@
 #include "a32/a32_helpers.hpp"
 #include "jit_semantic_reservation.hpp"
 
+#include "cpu/arm64/aarch32/guest_fetch.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 
 #include <algorithm>
@@ -37,17 +38,11 @@ constexpr std::size_t maximum_block_elements = maximum_block_instructions;
   const std::uint64_t limit = std::uint64_t{1} << 32;
   const std::size_t wanted = static_cast<std::size_t>(
       std::min<std::uint64_t>(bytes.size(), limit - base));
-  std::size_t total = 0;
-  while (total < wanted) {
-    const auto address = base + total;
-    const auto in_page = page_size - (address & (page_size - 1U));
-    const auto count = static_cast<std::size_t>(
-        std::min<std::uint64_t>(wanted - total, in_page));
-    if (!memory.fetch(address, bytes.subspan(total, count)))
-      break;
-    total += count;
-  }
-  return total;
+  return aarch32::fetch_guest_units(
+      base, 1, bytes.first(wanted), page_size,
+      [&memory](std::uint64_t address, std::span<std::byte> out) {
+        return memory.fetch(address, out);
+      });
 }
 
 /* The tracked-store variant of a block (jit_executor_execution.cpp's

@@ -32,7 +32,7 @@ JitExecutor::Implementation::validate_stale_block(
   /*
    * This runs on every stale hit in production builds, so it fetches
    * page-bounded runs and compares each run once, with the page-splitting
-   * loop fetch_instruction_window() uses in the gadget executor.
+   * loop fetch_guest_units() (aarch32/guest_fetch.hpp) uses for a window.
    *
    * Validation reports mismatch at the first differing word, and fault only
    * for an unreadable word it reaches before any mismatch. A failed bulk fetch

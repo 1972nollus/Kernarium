@@ -2,6 +2,7 @@
 #include "executor.hpp"
 
 #include "cpu/arm64/aarch32/breakpoint_immediate.hpp"
+#include "cpu/arm64/aarch32/guest_fetch.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
@@ -129,24 +130,11 @@ static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
 [[nodiscard]] std::size_t fetch_units(StaticGuestMemory &memory,
 	std::uint64_t address, std::size_t unit, std::span<std::byte> bytes)
 {
-	const std::size_t capacity = bytes.size() / unit;
-	std::size_t count = 0;
-	while (count < capacity) {
-		const auto at = address + count * unit;
-		const auto page_remaining =
-			guest_page_size - (at & (guest_page_size - 1));
-		auto run = std::min<std::size_t>(capacity - count,
-			static_cast<std::size_t>(page_remaining / unit));
-		/* A valid A64 or A32 PC is word aligned. Preserve deterministic
-		 * fault handling for a malformed PC instead of constructing an
-		 * empty span. */
-		if (run == 0)
-			run = 1;
-		if (!memory.fetch(at, bytes.subspan(count * unit, run * unit)))
-			break;
-		count += run;
-	}
-	return count;
+	return arm64::aarch32::fetch_guest_units(address, unit, bytes,
+		guest_page_size,
+		[&memory](std::uint64_t at, std::span<std::byte> out) {
+			return memory.fetch(at, out);
+		});
 }
 
 [[nodiscard]] std::size_t fetch_instruction_window(
