@@ -57,9 +57,10 @@ tooling-time oracle that no build uses. Never edit them.
   selects the candidate rows, which the row's mask, value and constraints then
   confirm.
 - An operand program is a form's Decode pseudocode translated to C++ by
-  `a32_operand_codegen.py`. The helpers it calls are Arm's shared
-  pseudocode functions in `decode_support.hpp`. A construct the translator
-  does not know fails the generation.
+  `a32_operand_codegen.py`. Forms whose pseudocode translates to the same C++
+  share one program. The helpers it calls are Arm's shared pseudocode
+  functions in `decode_support.hpp`. A construct the translator does not know
+  fails the generation.
 - The unit test `arm64-aarch32-decoder` decodes the stored sample words of
   every row and the whole 16-bit Thumb space and compares the answers
   against `a32_expected.py`, an independent evaluation of the same pseudocode

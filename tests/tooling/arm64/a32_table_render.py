@@ -5,9 +5,10 @@
 Three files come out of a Model: a32_encodings.hpp (the Form enumeration, the
 Operands record and the table types), a32_encodings.cpp (the form, row,
 constraint and decision-tree tables) and a32_operand_decode.cpp (one function
-per distinct Decode pseudocode). The decision tree is built here and walked
-by an equivalent Python function so the generator can prove, before anything
-is written, that it finds the row the official index partition names.
+per distinct translation of the Decode pseudocode). The decision tree is built
+here and walked by an equivalent Python function so the generator can prove,
+before anything is written, that it finds the row the official index
+partition names.
 """
 
 from __future__ import annotations

@@ -7,7 +7,7 @@ the exact partition of the A32 and T32 encoding spaces into those encodings.
 This module combines them with the profile's choices
 (a32_profile_policy.py) into the model the generator renders as C++ and the
 tests check against: one Form per XML encoding, one Row per allocated index
-partition, and one operand program per distinct Decode pseudocode.
+partition, and one operand program per distinct translated Decode pseudocode.
 """
 
 from __future__ import annotations
@@ -360,7 +360,12 @@ def build_rows(
 def build_programs(
     catalog: oracle.ArchitectureCatalog, forms: list[FormModel]
 ) -> tuple[list[ProgramModel], dict, list]:
-    """Translate every distinct Decode pseudocode of the implemented forms."""
+    """Translate every distinct Decode pseudocode of the implemented forms.
+
+    A program is the C++ the translation renders: pseudocode that differs in
+    text but translates to the same field extraction and body shares one
+    program.
+    """
     parsed: dict[str, list] = {}
     users: dict[tuple[str, tuple], list[FormModel]] = {}
     members = codegen.Members()
@@ -375,18 +380,24 @@ def build_programs(
         users.setdefault((text, encoding.fields), []).append(form)
     resolved = members.resolve()
     programs: list[ProgramModel] = []
+    rendered: dict[tuple, int] = {}
     for (text, fields), forms_using in users.items():
-        translator = codegen.Translator(
-            {f.name: (f.low, f.width) for f in fields}, resolved,
-            forms_using[0].name,
-        )
+        extents = {f.name: (f.low, f.width) for f in fields}
+        translator = codegen.Translator(extents, resolved, forms_using[0].name)
         translator.statements(parsed[text])
-        program = ProgramModel(
-            len(programs), fields, translator.out, forms_using[0].name
+        translation = translator.out
+        key = (
+            tuple((name, *extents[name]) for name in sorted(translation.fields_used)),
+            tuple(translation.body),
         )
-        programs.append(program)
+        index = rendered.get(key)
+        if index is None:
+            index = rendered[key] = len(programs)
+            programs.append(
+                ProgramModel(index, fields, translation, forms_using[0].name)
+            )
         for form in forms_using:
-            form.program = program.index
+            form.program = index
     unique = {id(m): m for m in resolved.values()}
     member_list = sorted(unique.values(), key=lambda m: m.name)
     return programs, resolved, member_list

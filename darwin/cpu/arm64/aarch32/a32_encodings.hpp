@@ -2249,7 +2249,7 @@ enum class Form : std::uint16_t {
 
 inline constexpr std::size_t kFormCount = 2222;
 inline constexpr std::size_t kRowCount = 2306;
-inline constexpr std::size_t kProgramCount = 665;
+inline constexpr std::size_t kProgramCount = 549;
 
 /* The values the Decode pseudocode of an encoding computes, named for
  * its variables (docs/a32-instruction-coverage.md). A member a form's
