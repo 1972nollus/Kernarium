@@ -55,7 +55,7 @@ tooling-time oracle that no build uses. Never edit them.
   partitions the space exactly, so the rows that remain after the unallocated
   ones are dropped decide every word. A decision tree per instruction set
   selects the candidate rows, which the row's mask, value and constraints then
-  confirm.
+  confirm; a subtree that occurs more than once is stored once.
 - An operand program is a form's Decode pseudocode translated to C++ by
   `a32_operand_codegen.py`. Forms whose pseudocode translates to the same C++
   share one program. The helpers it calls are Arm's shared pseudocode
