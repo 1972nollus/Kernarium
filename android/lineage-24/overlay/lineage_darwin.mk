@@ -26,6 +26,7 @@ UML_ANDROID_DISABLE_AVF := true
 UML_ANDROID_DISABLE_IDENTITY := true
 UML_ANDROID_DISABLE_REBOOT_ESCROW := true
 UML_ANDROID_DISABLE_LEGACY_VNDK := true
+UML_ANDROID_MULTILIB := true
 BOARD_HAVE_BLUETOOTH := false
 CF_VENDOR_NO_UWB := true
 CF_VENDOR_NO_THREADNETWORK := true
@@ -79,7 +80,7 @@ $(call inherit-product, vendor/lineage/config/common_full_tablet_wifionly.mk)
 # The inherited desktop product installs the complete historical AOSP sound
 # library. Keep its compact alarm, notification, and UI defaults, but omit the
 # legacy ringtone banks: this product has no telephony stack and the files
-# otherwise crowd useful app payloads out of the fixed 256 MiB product image.
+# otherwise crowd useful app payloads out of the fixed product image.
 PRODUCT_COPY_FILES_EXCLUDE += \
     frameworks/base/data/sounds/newwavelabs/% \
     frameworks/base/data/sounds/ringtones/%

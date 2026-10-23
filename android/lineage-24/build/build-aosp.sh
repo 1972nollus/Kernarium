@@ -1,7 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache-2.0
-# Build the fixed LineageOS 24 arm64-only UML product: page-agnostic userspace
-# on the 4 KiB kernel.
+# Build the fixed LineageOS 24 UML product: page-agnostic arm64 userspace with
+# a 32-bit armeabi-v7a second architecture for applications, on the 4 KiB
+# kernel.
 set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -196,7 +197,24 @@ lunch "${LINEAGE24_PRODUCT}-${LINEAGE24_RELEASE_CONFIG}-${LINEAGE24_BUILD_VARIAN
 [[ "$(get_build_var TARGET_BUILD_VARIANT)" == "$LINEAGE24_BUILD_VARIANT" ]] ||
 	fail "lunch selected the wrong build variant"
 [[ "$(get_build_var TARGET_ARCH)" == arm64 ]] || fail "product is not arm64"
-[[ -z "$(get_build_var TARGET_2ND_ARCH)" ]] || fail "product has a 32-bit secondary ABI"
+# The second architecture is the softfp armeabi-v7a ABI and nothing else: no
+# armeabi, and no 32-bit daemon (IGNORE_PREFER32_ON_DEVICE keeps prefer32
+# modules 64-bit). Applications of both ABIs run from zygote64_32.
+[[ "$(get_build_var TARGET_2ND_ARCH)" == arm ]] || fail "product has no arm secondary architecture"
+[[ "$(get_build_var TARGET_2ND_ARCH_VARIANT)" == armv8-a ]] ||
+	fail "secondary architecture variant is not armv8-a"
+[[ "$(get_build_var TARGET_2ND_CPU_VARIANT)" == cortex-a53 ]] ||
+	fail "secondary CPU variant is not cortex-a53"
+[[ "$(get_build_var TARGET_2ND_CPU_ABI)" == armeabi-v7a ]] ||
+	fail "secondary ABI is not armeabi-v7a"
+[[ -z "$(get_build_var TARGET_2ND_CPU_ABI2)" ]] ||
+	fail "product lists a further 32-bit ABI; armeabi-v7a is the only one"
+[[ "$(get_build_var TARGET_SUPPORTS_32_BIT_APPS)" == true ]] ||
+	fail "product does not support 32-bit applications"
+[[ -z "$(get_build_var ZYGOTE_FORCE_64)" ]] ||
+	fail "ZYGOTE_FORCE_64 would leave no 32-bit ABI"
+[[ "$(get_build_var IGNORE_PREFER32_ON_DEVICE)" == true ]] ||
+	fail "native daemons must stay 64-bit (IGNORE_PREFER32_ON_DEVICE)"
 [[ "$(get_build_var TARGET_MAX_PAGE_SIZE_SUPPORTED)" == "$LINEAGE24_MAX_PAGE_SIZE_SUPPORTED" ]] ||
 	fail "product maximum page size differs from metadata"
 [[ "$(get_build_var TARGET_NO_BIONIC_PAGE_SIZE_MACRO)" == true ]] ||
@@ -339,6 +357,7 @@ for package in \
 	F-Droid \
 	F-DroidPrivilegedExtension \
 	Glimpse \
+	init.zygote64_32.rc \
 	Jelly \
 	LatinIME \
 	Launcher3QuickStep \

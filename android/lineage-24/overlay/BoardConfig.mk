@@ -14,10 +14,26 @@
 # limitations under the License.
 #
 
-# Retain the tested 64-bit-only, page-agnostic Cuttlefish board foundation.
-# The product makefile removes transports and HALs that Darwin UML cannot
-# provide, while this board owns its static storage and module-free kernel.
+# Retain the tested page-agnostic Cuttlefish board foundation. The product
+# makefile removes transports and HALs that Darwin UML cannot provide, while
+# this board owns its static storage and module-free kernel.
 include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk
+
+# 32-bit applications run beside the 64-bit ones. The second architecture is
+# ARMv8-A AArch32 built as the softfp armeabi-v7a ABI, the only 32-bit ABI the
+# image lists (no armeabi). The parent board is 64-bit only; the
+# UML_ANDROID_MULTILIB switch of the product makes it start the secondary
+# zygote. Native daemons and HALs stay 64-bit: IGNORE_PREFER32_ON_DEVICE turns
+# every prefer32 module into a 64-bit one, so only applications, the zygotes
+# and the WebView RELRO process run 32-bit code. Recovery, init_boot and the
+# vendor ramdisk are primary-architecture images and stay 64-bit.
+TARGET_2ND_ARCH := arm
+TARGET_2ND_ARCH_VARIANT := armv8-a
+TARGET_2ND_CPU_ABI := armeabi-v7a
+TARGET_2ND_CPU_ABI2 :=
+TARGET_2ND_CPU_VARIANT := cortex-a53
+TARGET_TRANSLATE_2ND_ARCH := false
+IGNORE_PREFER32_ON_DEVICE := true
 
 # The inherited page-size-agnostic product boots a 16 KiB kernel. This guest
 # runs 4 KiB pages, so clear that choice and let ro.product.page_size report
