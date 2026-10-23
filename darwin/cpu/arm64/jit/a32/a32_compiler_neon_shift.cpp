@@ -16,16 +16,6 @@
 
 namespace uml::cpu::arm64::jit::a32 {
 
-namespace {
-
-constexpr unsigned s_n = 0;
-constexpr unsigned s_m = 1;
-constexpr unsigned s_acc = 2;
-constexpr unsigned s_result = 5;
-constexpr unsigned s_extra = 6;
-
-} // namespace
-
 // ---------------------------------------------------------------------------
 // Shifts by an immediate on registers of one width.
 

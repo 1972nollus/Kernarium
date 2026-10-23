@@ -227,26 +227,8 @@ private:
 
   void emit_code_change_check(std::uint32_t instruction, std::uint64_t pc);
 
-  void emit_pair_slow(std::uint32_t instruction, std::uint64_t pc,
-                      std::size_t count);
-
-  void emit_simd_structure_slow(std::uint32_t instruction, std::uint64_t pc,
-                                std::size_t count);
-
-  void emit_alignment_fault(std::uint32_t instruction, std::uint64_t pc,
-                            std::size_t count);
-
-  void emit_ordered_slow(std::uint32_t instruction, std::uint64_t pc,
-                         std::size_t count);
-
-  void emit_exclusive_slow(std::uint32_t instruction, std::uint64_t pc,
-                           std::size_t count);
-
   void emit_deferred_exclusive_slow(std::uint32_t instruction,
                                     std::uint64_t pc, std::size_t count);
-
-  void emit_memory_slow(std::uint32_t instruction, std::uint64_t pc,
-                        std::size_t count);
 
   /* Moves 1 to 63 bytes between host pointers, from the given start and
    * end registers, then branches to done. A fill uses v0's low byte. */

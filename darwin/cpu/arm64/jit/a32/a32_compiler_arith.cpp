@@ -24,13 +24,8 @@ using aarch32::SRType;
 
 namespace {
 
-constexpr unsigned fallback_n = 9;
-constexpr unsigned fallback_m = 10;
 constexpr unsigned fallback_a = 2;
 constexpr unsigned fallback_hi = 8;
-constexpr unsigned temp0 = 0;
-constexpr unsigned temp1 = 1;
-constexpr unsigned temp2 = 8;
 constexpr unsigned temp3 = 16;
 constexpr unsigned image = 11;
 

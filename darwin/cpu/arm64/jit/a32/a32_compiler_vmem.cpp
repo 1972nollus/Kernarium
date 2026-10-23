@@ -40,9 +40,6 @@ using ::uml::memory::Access;
 
 namespace {
 
-constexpr unsigned fallback_n = 9;
-constexpr unsigned fallback_m = 10;
-constexpr unsigned address_register = 8;
 constexpr unsigned s_data = 0;
 constexpr unsigned s_view = 6;
 

@@ -264,6 +264,26 @@ private:
   [[nodiscard]] std::uint32_t pc_align_read() const noexcept {
     return pc_read() & ~3U;
   }
+  /* The host registers the lowering borrows. A guest register that is not in
+   * a resident host register (the PC, which reads as a constant) is staged
+   * in fallback_n or fallback_m; address_register holds a transfer's address;
+   * temp0 to temp2 are integer temporaries; the s_ and scratch_ numbers name
+   * the vector registers that carry the operands, accumulator and result of
+   * a Neon or VFP form. */
+  static constexpr unsigned fallback_n = 9;
+  static constexpr unsigned fallback_m = 10;
+  static constexpr unsigned address_register = 8;
+  static constexpr unsigned temp0 = 0;
+  static constexpr unsigned temp1 = 1;
+  static constexpr unsigned temp2 = 8;
+  static constexpr unsigned s_n = 0;
+  static constexpr unsigned s_m = 1;
+  static constexpr unsigned s_acc = 2;
+  static constexpr unsigned s_result = 5;
+  static constexpr unsigned s_extra = 6;
+  static constexpr unsigned scratch_n = 3;
+  static constexpr unsigned scratch_m = 4;
+  static constexpr unsigned scratch_result = 5;
   /* The host register holding guest register r (the PC's value for r15). */
   [[nodiscard]] unsigned use(unsigned r, unsigned fallback);
   [[nodiscard]] Dest def(unsigned r, bool reads_old, unsigned fallback);
@@ -311,6 +331,9 @@ private:
   /* The address of a single or paired transfer in x8 (the base for a
    * post-indexed one). */
   void form_address(const Transfer &transfer);
+  /* destination = base plus or minus the shifted register offset m. */
+  void emit_register_offset(unsigned destination, unsigned base,
+                            const Transfer &transfer, unsigned m);
   /* The base register after a writeback transfer, from the registers as
    * they stand (they hold the values the address used). */
   void write_back(const Transfer &transfer);

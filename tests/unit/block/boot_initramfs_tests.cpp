@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -25,6 +26,7 @@
 namespace {
 
 constexpr std::size_t headerSize = 110;
+constexpr time_t hostFileModified = 1700000000;
 
 using uml::testing::require;
 using uml::testing::requireThrows;
@@ -292,10 +294,22 @@ void testHostFilesAndOutput()
 			"cannot write the host file fixture");
 		require(::fchmod(descriptor, 0750) == 0,
 			"cannot set the host file fixture's mode");
+		const timespec times[2] = {{0, UTIME_OMIT}, {hostFileModified, 0}};
+		require(::futimens(descriptor, times) == 0,
+			"cannot set the host file fixture's time");
+		::close(descriptor);
+	}
+	const auto empty = directory / "boot-initramfs-empty";
+	std::filesystem::remove(empty);
+	{
+		const int descriptor = ::open(empty.c_str(),
+			O_WRONLY | O_CREAT | O_EXCL, 0600);
+		require(descriptor >= 0, "cannot create the empty host file fixture");
 		::close(descriptor);
 	}
 	uml::boot::InitramfsArchive archive;
 	archive.addHostFile("/payload/host", source);
+	archive.addHostFile("/payload/empty", empty, 0700);
 	requireThrows<std::invalid_argument>(
 		[&] { archive.addHostFile("/payload/dir", directory); },
 		"a host directory was added as a file");
@@ -305,9 +319,13 @@ void testHostFilesAndOutput()
 	const auto segment = archive.serialize();
 	std::size_t offset = 0;
 	const auto records = parseSegment(segment, offset);
-	require(records.size() == 2 && records[1].contents == "host" &&
-			records[1].mode == 0100750,
-		"a host file lost its contents or permission bits");
+	require(records.size() == 3 && records[1].contents == "host" &&
+			records[1].mode == 0100750 &&
+			records[1].modified == hostFileModified,
+		"a host file lost its contents, permission bits or time");
+	require(records[2].name == "payload/empty" && records[2].contents.empty() &&
+			records[2].mode == 0100700,
+		"an empty host file or a permission override was not kept");
 
 	const auto base = bytes("0707010000");
 	uml::boot::writeInitrd(output, base, segment);
@@ -321,6 +339,7 @@ void testHostFilesAndOutput()
 		[&] { uml::boot::writeInitrd(output, base, segment); },
 		"an existing initrd was replaced");
 	std::filesystem::remove(source);
+	std::filesystem::remove(empty);
 	std::filesystem::remove(output);
 }
 
