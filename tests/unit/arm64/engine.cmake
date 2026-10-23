@@ -500,6 +500,14 @@
     uml_add_unit_test(NAME gadget-record-table
 		COMMAND uml_gadget_record_table_tests)
 
+    # The window of address spaces a gadget cache holds, on its own.
+    add_executable(uml_gadget_generation_window_tests
+		${PROJECT_SOURCE_DIR}/tests/unit/arm64/gadget_generation_window_tests.cpp)
+    target_include_directories(uml_gadget_generation_window_tests PRIVATE
+		${PROJECT_SOURCE_DIR}/darwin)
+    uml_add_unit_test(NAME gadget-generation-window
+		COMMAND uml_gadget_generation_window_tests)
+
     # The process's byte budget for the gadget caches, on its own.
     add_executable(uml_gadget_cache_budget_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/gadget_cache_budget_tests.cpp)
