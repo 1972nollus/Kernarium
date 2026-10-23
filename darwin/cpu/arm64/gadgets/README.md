@@ -93,67 +93,61 @@ does not hold is looked up in the map under its reader lock.
 
 ## Streaming mode
 
-The gadget engine implements all of the profile but the SME2 forms
-(`sme_support` is `complete`). Its control core is SMSTART and SMSTOP, MRS
-and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and ADDSPL, LDR and STR of ZA
-and ZT0, and ZERO of ZA and ZT0, with every size read from the vCPU's SVL at
-run time. Its SME part follows the veneer island, so appending to it moves
-no base entry and re-encodes no veneer call. A translation belongs to one SVCR mode, PSTATE.SM and
-PSTATE.ZA: each mode has its own program cache and links, an SVCR write
-ends its block, and a mode change empties the return ring. A program
-translated with SM = 0 and ZA = 1 reaches ZA and ZT0 through a helper on the
-register file. One translated with SM = 1 runs with the host in streaming
-mode and, when ZA = 1, with guest ZA, and ZT0 under SME2, resident in the
-host's; a helper call leaves streaming mode around itself, spilling and
-refilling them, so no C++ runs in streaming mode. XNU resets FPSR on every
-kernel entry while a thread is in streaming mode, so a streaming program
-keeps the guest's FPSR in `CpuState` and never runs with the native FP
-environment active: only the guest's FPCR, with its trap enables clear, is
-the host's while it runs, and MSR FPCR runs as a twin that sets both
-copies. Such a program may select
-only the entries that `engine/sme.inc` lists: the control core, the base
-gadgets that execute no AdvSIMD instruction and call no helper, and the
-streaming twins of the base GPR gadgets that do. A twin is its base gadget
-assembled a second time from the same source, as `uml_arm64_gadget_sm_`
-plus the base name, with each helper call made through a trampoline that
-leaves streaming mode around it and each AdvSIMD word of a slow path
-replaced by an FMOV; CSSC CNT's twin counts in GPRs. A table maps each base
-entry to its twin, and the builder selects the twin. Twins cover the integer
-loads, stores and pairs, atomics and exclusives, DC ZVA, IC IVAU, the MOPS
-forms and CSSC CNT, so their hot paths run in streaming mode unchanged and
-only a TLB miss, a page crossing or an alignment fault leaves it. A
-streaming program also runs every register-only SVE, SVE2 and SME form of
-the SME1 profile, and every FP&SIMD data-processing class legal in streaming
-mode, from gadgets that `engine/generate_streaming.py` writes at build time
-from the encoding table, one per value of a form's bits that are not
-register numbers. Each loads the registers its instruction names from the
-register file at offsets the builder computes from the SVL, or from
-`CpuState` for general registers, into fixed host registers, runs the
-instruction on them and stores its destination back. A form whose
-immediates would take hundreds of gadgets runs an equivalent register form
-on an immediate, or a count from the SVL, that the builder computes. A
-gadget that may change NZCV runs with the guest's flags in the host's, and a
-floating-point one ORs the exceptions it raised into the guest's FPSR, and
-runs again if FPSR.QC shows that a kernel entry reset the host's. RDVL,
-ADDVL and ADDPL run as RDSVL, ADDSVL and ADDSPL. Every SVE and SME1 load and
-store, and every SIMD&FP load and store legal in streaming mode, runs from
-a generated vector memory gadget, one per instruction the host executes for
-it (shape, direction, sizes, extension, ZA tile and slice direction), with
-the address mode, registers and shape resolved by the builder into the
-stream `darwin/cpu/arm64/gadgets/sme_layout.h` describes. Its fast path
-forms the address, and when every byte the access spans lies in one guest
-page the TLB holds, runs the native instruction on registers loaded from the
-register file. Anything else takes a helper that does the whole access on
-the register file: it touches only active elements, translates every page
-they lie in before it moves a byte, and reports a fault as M4 hardware does,
-a predicated access at its first faulting active byte rounded down to
-4 KiB and an unpredicated one at that byte. SVE prefetches are NOPs. The
-builder ends a block at the illegal-instruction exit on any other word:
-AdvSIMD, a word outside the profile, or an SME2 form, which the guest is
-not told of.
+Both engines run a guest in streaming mode on the host's own, and the rules in
+the next two paragraphs hold for the [JIT](../jit/README.md#streaming-mode)
+too.
+
+A translation belongs to one SVCR mode, PSTATE.SM and PSTATE.ZA, and an SVCR
+write ends its block. A program translated with SM = 1 runs with the host in
+streaming mode and, when ZA = 1, with guest ZA, and ZT0 under SME2, resident in
+the host's. No C++ runs in streaming mode: a helper call leaves it, spilling
+that state. XNU resets FPSR on every kernel entry while a thread is in
+streaming mode, so a streaming program keeps the guest's FPSR in `CpuState` and
+never runs with the native FP environment active: only the guest's FPCR, with
+its trap enables clear, is the host's while it runs, and MSR FPCR sets both
+copies. A floating-point form ORs the exceptions it raised into the guest's
+FPSR, and runs again if FPSR.QC shows that a kernel entry reset the host's; a
+form that may change NZCV runs with the guest's flags in the host's.
+
+A streaming program runs every register-only SVE, SVE2 and SME form of the SME1
+profile, every FP&SIMD data-processing class legal in streaming mode, and every
+SVE and SME1 load and store and SIMD&FP load and store legal there. SVE
+prefetches are NOPs. AdvSIMD, a word outside the profile and an SME2 form,
+which the guest is not told of, are the illegal-instruction exit. A memory
+access the native instruction cannot take goes to a helper that does the whole
+access on the register file: it touches only active elements, translates every
+page they lie in before it moves a byte, and reports a fault as M4 hardware
+does, a predicated access at its first faulting active byte rounded down to
+4 KiB and an unpredicated one at that byte (`sme_helpers.cpp`; the JIT's is
+`jit/jit_semantic_sme.cpp`).
+
+The gadget engine's control core is SMSTART and SMSTOP, MRS and MSR of SVCR and
+TPIDR2_EL0, RDSVL, ADDSVL and ADDSPL, LDR and STR of ZA and ZT0, and ZERO of ZA
+and ZT0, with every size read from the vCPU's SVL at run time; RDVL, ADDVL and
+ADDPL run as RDSVL, ADDSVL and ADDSPL. Its SME part follows the veneer island,
+so appending to it moves no base entry and re-encodes no veneer call. Each SVCR
+mode has its own program cache and links, and a mode change empties the return
+ring. A program translated with SM = 0 and ZA = 1 reaches ZA and ZT0 through a
+helper on the register file.
+
+A streaming program may select only the entries that `engine/sme.inc` lists:
+the control core, the base gadgets that execute no AdvSIMD instruction and call
+no helper, and the streaming twins of the base GPR gadgets that do (`sme.inc`
+says how a twin is assembled and how its helper calls leave streaming mode and
+enter it again). The twins cover the integer loads, stores and pairs, atomics
+and exclusives, DC ZVA, IC IVAU, the MOPS forms and CSSC CNT, so their hot
+paths run in streaming mode unchanged and only a TLB miss, a page crossing or
+an alignment fault leaves it. The register-only forms and the vector memory
+forms run from gadgets that `engine/generate_streaming.py` writes at build time
+from the encoding table; its docstring says how each gadget loads and stores
+its registers, and the builder resolves a memory form's address mode, registers
+and shape into the stream `darwin/cpu/arm64/gadgets/sme_layout.h` describes. A
+memory gadget's fast path forms the address and, when every byte the access
+spans lies in one guest page the TLB holds, runs the native instruction on
+registers loaded from the register file; anything else takes the helper above.
 `arm64-gadget-streaming-safety` walks every listed entry, and every 16-byte
-boundary of the generated gadgets, in the images each tree links and fails
-on an AdvSIMD word executed in streaming mode, a helper called there, or an
+boundary of the generated gadgets, in the images each tree links and fails on
+an AdvSIMD word executed in streaming mode, a helper called there, or an
 indirect call.
 
 ## AArch32
