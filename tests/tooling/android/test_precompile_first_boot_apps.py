@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Check the first-boot precompile tool: manifest rules, artifact naming, the
-PRODUCT_COPY_FILES fragment, reuse of earlier output, and the packaged-tree check."""
+"""Check the first-boot precompile tool: manifest rules, artifact naming per
+instruction set, the ABI-set rules of a multilib image, the PRODUCT_COPY_FILES
+fragment, reuse of earlier output, and the packaged-tree check."""
 
 from __future__ import annotations
 
@@ -57,6 +58,15 @@ N: android=http://schemas.android.com/apk/res/android (line=2)
           A: http://schemas.android.com/apk/res/android:required(0x0101028e)=(type 0x12)0x0
 """
 
+MULTI_ARCH_ATTRIBUTE = (
+    "        A: http://schemas.android.com/apk/res/android:multiArch(0x010104ee)=(type 0x12)0xffffffff\n")
+MULTI_ARCH_XMLTREE = XMLTREE.replace(
+    "      E: application (line=14)\n", "      E: application (line=14)\n" + MULTI_ARCH_ATTRIBUTE)
+NOT_MULTI_ARCH_XMLTREE = XMLTREE.replace(
+    "      E: application (line=14)\n",
+    "      E: application (line=14)\n"
+    "        A: http://schemas.android.com/apk/res/android:multiArch(0x010104ee)=false\n")
+
 FAKE_AAPT2 = r'''#!/usr/bin/env python3
 import sys, zipfile
 apk = sys.argv[-1]
@@ -85,12 +95,14 @@ def write_executable(path: Path, text: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def make_apk(path: Path, manifest: str, dex: bytes | None) -> None:
+def make_apk(path: Path, manifest: str, dex: bytes | None, libs: tuple[str, ...] = ()) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("manifest.txt", manifest)
         if dex is not None:
             archive.writestr("classes.dex", dex)
+        for abi in libs:
+            archive.writestr(f"lib/{abi}/libnative.so", b"\x7fELF")
 
 
 def check_pure_functions(tool) -> None:
@@ -110,6 +122,14 @@ def check_pure_functions(tool) -> None:
     required, _ = tool.apply_backward_compatibility(29, False, [], [])
     if required != [tool.TEST_BASE]:
         fail(f"a Q app gains only android.test.base: {required}")
+    for text, wanted in ((XMLTREE, False), (MULTI_ARCH_XMLTREE, True), (NOT_MULTI_ARCH_XMLTREE, False)):
+        if tool.parse_multi_arch(text) is not wanted:
+            fail(f"multiArch of the application element: expected {wanted}")
+    # Only the application element counts, not an element that merely shares the name.
+    elsewhere = XMLTREE.replace("      E: uses-feature (line=11)\n",
+                                "      E: uses-feature (line=11)\n" + MULTI_ARCH_ATTRIBUTE)
+    if tool.parse_multi_arch(elsewhere):
+        fail("multiArch outside the application element must not count")
     if tool.class_loader_context([]) != "PCL[]":
         fail("empty class loader context")
     if tool.class_loader_context(["/a.jar", "/b.jar"]) != "PCL[]{PCL[/a.jar]#PCL[/b.jar]}":
@@ -126,6 +146,7 @@ def check_makefile(tool, scratch: Path) -> None:
         {"odex": "system/framework/oat/arm64/apex@a@app@X@X.apk@classes.odex",
          "vdex": "system/framework/oat/arm64/apex@a@app@X@X.apk@classes.vdex"},
         {"odex": "product/app/F/oat/arm64/F.odex", "vdex": "product/app/F/oat/arm64/F.vdex"},
+        {"odex": "product/app/F/oat/arm/F.odex", "vdex": "product/app/F/oat/arm/F.vdex"},
     ])
     lines = (out / "first-boot-oat.mk").read_text().splitlines()
     wanted = [
@@ -136,6 +157,8 @@ def check_makefile(tool, scratch: Path) -> None:
         "system/framework/oat/arm64/apex@a@app@X@X.apk@classes.vdex",
         "PRODUCT_COPY_FILES += $(LINEAGE24_FIRST_BOOT_OAT_DIR)product/app/F/oat/arm64/F.vdex"
         ":$(TARGET_COPY_OUT_PRODUCT)/app/F/oat/arm64/F.vdex",
+        "PRODUCT_COPY_FILES += $(LINEAGE24_FIRST_BOOT_OAT_DIR)product/app/F/oat/arm/F.odex"
+        ":$(TARGET_COPY_OUT_PRODUCT)/app/F/oat/arm/F.odex",
     ]
     for line in wanted:
         if line not in lines:
@@ -151,16 +174,19 @@ def build_fixture(root: Path) -> Path:
     write_executable(bin_dir / "aapt2", FAKE_AAPT2)
     write_executable(bin_dir / "debugfs", "#!/bin/sh\nexit 1\n")
     write_executable(bin_dir / "dex2oatd64", FAKE_DEX2OAT)
-    invocation = aosp / "out/soong/.intermediates/x/dexpreopt/App/oat/arm64/package.invocation"
-    invocation.parent.mkdir(parents=True)
-    tokens = [
-        "out/host/linux-x86/bin/dex2oatd64", "--boot-image=/system/framework/boot.art",
-        "-Xbootclasspath:/system/framework/core-oj.jar", "--dex-location=/system/app/App/App.apk",
-        "--dex-file=out/App.apk", "--oat-file=out/App.odex", "--compiler-filter=speed",
-        "--compilation-reason=prebuilt", "--class-loader-context=PCL[]", "--strip",
-        "--generate-debug-info", "--instruction-set=arm64", "--no-inline-from=core-oj.jar",
-    ]
-    invocation.write_text("\n".join(tokens) + "\n", encoding="utf-8")
+    for isa, variant in (("arm64", "cortex-a53"), ("arm", "cortex-a53")):
+        invocation = aosp / f"out/soong/.intermediates/x/dexpreopt/App/oat/{isa}/package.invocation"
+        invocation.parent.mkdir(parents=True)
+        boot = "/system/framework/boot.art" if isa == "arm64" else "/system/framework/arm/boot.art"
+        tokens = [
+            "out/host/linux-x86/bin/dex2oatd64", f"--boot-image={boot}",
+            "-Xbootclasspath:/system/framework/core-oj.jar", "--dex-location=/system/app/App/App.apk",
+            "--dex-file=out/App.apk", "--oat-file=out/App.odex", "--compiler-filter=speed",
+            "--compilation-reason=prebuilt", "--class-loader-context=PCL[]", "--strip",
+            "--generate-debug-info", f"--instruction-set={isa}",
+            f"--instruction-set-variant={variant}", "--no-inline-from=core-oj.jar",
+        ]
+        invocation.write_text("\n".join(tokens) + "\n", encoding="utf-8")
     product = aosp / "out/target/product/darwin"
     make_apk(product / "product/app/Foo/Foo.apk", XMLTREE, b"dex-foo")
     make_apk(product / "product/app/Own/Own.apk", XMLTREE, b"dex-own")
@@ -169,6 +195,22 @@ def build_fixture(root: Path) -> Path:
     (own_oat / "Own.odex").write_text("soong odex")
     (own_oat / "Own.vdex").write_text("soong vdex")
     make_apk(product / "product/app/Resources/Resources.apk", XMLTREE, None)
+    # The ABI-set rules: a multiArch package with both ABIs runs in both ISAs; a
+    # package with both ABIs that is not multiArch takes the first; one with
+    # armeabi-v7a libraries only runs in arm; preinstalled libraries for both ISAs
+    # beside the APK make both.
+    both_abis = ("arm64-v8a", "armeabi-v7a")
+    make_apk(product / "product/app/webview/webview.apk", MULTI_ARCH_XMLTREE, b"dex-web", both_abis)
+    make_apk(product / "product/app/Plain/Plain.apk", NOT_MULTI_ARCH_XMLTREE, b"dex-plain", both_abis)
+    make_apk(product / "product/app/Only32/Only32.apk", XMLTREE, b"dex-only32", ("armeabi-v7a",))
+    make_apk(product / "product/app/Bundled/Bundled.apk", XMLTREE, b"dex-bundled")
+    for isa in ("arm64", "arm"):
+        (product / "product/app/Bundled/lib" / isa).mkdir(parents=True)
+        (product / "product/app/Bundled/lib" / isa / "libnative.so").write_text("elf")
+    bundled_oat = product / "product/app/Bundled/oat/arm64"
+    bundled_oat.mkdir(parents=True)
+    (bundled_oat / "Bundled.odex").write_text("soong odex")
+    (bundled_oat / "Bundled.vdex").write_text("soong vdex")
     permissions = product / "system/etc/permissions"
     permissions.mkdir(parents=True)
     (permissions / "libs.xml").write_text(
@@ -207,6 +249,17 @@ def run_tool(tool, *argv: str, expect_fail: bool = False) -> str:
     return buffer.getvalue()
 
 
+def invocations(log: Path) -> dict[tuple[str, str], list[str]]:
+    """The dex2oat arguments by (dex location, ISA directory of the odex)."""
+    found = {}
+    for line in log.read_text().splitlines():
+        args = json.loads(line)
+        location = next(a.split("=", 1)[1] for a in args if a.startswith("--dex-location="))
+        oat = next(a.split("=", 1)[1] for a in args if a.startswith("--oat-file="))
+        found[(location, Path(oat).parent.name)] = args
+    return found
+
+
 def check_build_and_verify(tool, scratch: Path) -> None:
     import os
 
@@ -214,33 +267,67 @@ def check_build_and_verify(tool, scratch: Path) -> None:
     log = scratch / "dex2oat.log"
     os.environ["FIXTURE_LOG"] = str(log)
     common = ["--aosp-source", str(aosp), "--out-dir", "out"]
+
+    # An ISA with no recorded Soong invocation cannot be compiled.
+    arm_invocation = aosp / "out/soong/.intermediates/x/dexpreopt/App/oat/arm/package.invocation"
+    saved = arm_invocation.read_bytes()
+    arm_invocation.unlink()
+    message = run_tool(tool, "build", *common, "--product", "darwin",
+                       "--output", str(scratch / "no-arm"), expect_fail=True)
+    if "no recorded arm dex2oat invocation" not in message:
+        fail(f"a missing arm template must be named: {message}")
+    arm_invocation.write_bytes(saved)
+
     first = scratch / "first"
     run_tool(tool, "build", *common, "--product", "darwin", "--output", str(first), "--jobs", "2")
     manifest = json.loads((first / "manifest.json").read_text())
-    locations = [p["location"] for p in manifest["packages"]]
-    if locations != ["/product/app/Foo/Foo.apk"]:
-        fail(f"only the application without artifacts is compiled, not Soong's or a dexless one: {locations}")
-    entry = manifest["packages"][0]
+    if "isa" in manifest:
+        fail("the ISA belongs to each entry, not to the manifest")
+    compiled = [(p["location"], p["isa"]) for p in manifest["packages"]]
+    expected = [
+        ("/product/app/Bundled/Bundled.apk", "arm"),
+        ("/product/app/Foo/Foo.apk", "arm64"),
+        ("/product/app/Only32/Only32.apk", "arm"),
+        ("/product/app/Plain/Plain.apk", "arm64"),
+        ("/product/app/webview/webview.apk", "arm64"),
+        ("/product/app/webview/webview.apk", "arm"),
+    ]
+    if compiled != expected:
+        fail("only the ISAs without artifacts are compiled, never Soong's or a dexless package's, "
+             f"and each package gets its whole ISA set: {compiled}")
+    entries = {(p["location"], p["isa"]): p for p in manifest["packages"]}
+    entry = entries[("/product/app/Foo/Foo.apk", "arm64")]
     if entry["odex"] != "product/app/Foo/oat/arm64/Foo.odex" or entry["filter"] != "verify":
         fail(f"manifest entry: {entry}")
+    if entries[("/product/app/webview/webview.apk", "arm")]["odex"] != \
+            "product/app/webview/oat/arm/webview.odex":
+        fail("the arm artifacts belong in oat/arm")
     if entry["target_sdk"] != 36 or entry["class_loader_context"] != \
             "PCL[]{PCL[/system/framework/libreq.jar]#PCL[/system/framework/libopt.jar]}":
         fail(f"class loader context or target SDK: {entry}")
-    (invocation,) = [json.loads(line) for line in log.read_text().splitlines()]
-    flags = {a.split("=", 1)[0] for a in invocation if a.startswith("--")}
-    for dropped in ("--strip", "--generate-debug-info"):
-        if dropped in flags:
-            fail(f"{dropped} must not be passed")
-    for kept in ("--boot-image", "--instruction-set"):
-        if kept not in flags:
-            fail(f"{kept} is Soong's flag and must be kept")
-    for token, wanted in (("--compiler-filter", "verify"), ("--compilation-reason", "prebuilt"),
-                          ("--dex-location", "/product/app/Foo/Foo.apk")):
-        values = [a for a in invocation if a.startswith(token + "=")]
-        if values != [f"{token}={wanted}"]:
-            fail(f"{token} must be set once to {wanted}: {values}")
-    if invocation[invocation.index("--runtime-arg") + 1] != "-Xtarget-sdk-version:36":
-        fail("target SDK runtime argument")
+    runs = invocations(log)
+    if set(runs) != {(location, isa) for location, isa in expected}:
+        fail(f"one dex2oat run per artifact set: {sorted(runs)}")
+    for (location, isa), invocation in runs.items():
+        flags = {a.split("=", 1)[0] for a in invocation if a.startswith("--")}
+        for dropped in ("--strip", "--generate-debug-info"):
+            if dropped in flags:
+                fail(f"{dropped} must not be passed")
+        for kept in ("--boot-image", "--instruction-set", "--instruction-set-variant"):
+            if kept not in flags:
+                fail(f"{kept} is Soong's flag and must be kept")
+        # Each ISA compiles with the flags Soong recorded for that ISA.
+        if f"--instruction-set={isa}" not in invocation or \
+                f"--boot-image={'/system/framework/arm/boot.art' if isa == 'arm' else '/system/framework/boot.art'}" \
+                not in invocation:
+            fail(f"{location} ({isa}) used another ISA's template: {invocation}")
+        for token, wanted in (("--compiler-filter", "verify"), ("--compilation-reason", "prebuilt"),
+                              ("--dex-location", location)):
+            values = [a for a in invocation if a.startswith(token + "=")]
+            if values != [f"{token}={wanted}"]:
+                fail(f"{token} must be set once to {wanted}: {values}")
+        if invocation[invocation.index("--runtime-arg") + 1] != "-Xtarget-sdk-version:36":
+            fail("target SDK runtime argument")
 
     staging = scratch / "target-files"
     target_files_tree(aosp, first, staging)
@@ -271,8 +358,19 @@ def check_build_and_verify(tool, scratch: Path) -> None:
     # The packaged-tree check names each way first boot would still compile.
     (staging / "PRODUCT/app/Foo/oat/arm64/Foo.odex").unlink()
     message = run_tool(tool, *verify, expect_fail=True)
-    if "first boot would compile /product/app/Foo/Foo.apk" not in message:
+    if "first boot would compile /product/app/Foo/Foo.apk for arm64" not in message:
         fail(f"missing odex not reported: {message}")
+    target_files_tree(aosp, first, staging)
+    (staging / "PRODUCT/app/webview/oat/arm/webview.vdex").unlink()
+    message = run_tool(tool, *verify, expect_fail=True)
+    if "first boot would compile /product/app/webview/webview.apk for arm:" not in message or \
+            "webview.apk for arm64" in message:
+        fail(f"a missing artifact of one ISA must name only that ISA: {message}")
+    target_files_tree(aosp, first, staging)
+    (staging / "PRODUCT/app/Bundled/oat/arm/Bundled.odex").unlink()
+    message = run_tool(tool, *verify, expect_fail=True)
+    if "first boot would compile /product/app/Bundled/Bundled.apk for arm:" not in message:
+        fail(f"a package with Soong's arm64 artifacts still needs arm: {message}")
     target_files_tree(aosp, first, staging)
     (staging / "PRODUCT/app/Foo/oat/arm64/Foo.vdex").write_text("tampered")
     message = run_tool(tool, *verify, expect_fail=True)
@@ -286,8 +384,27 @@ def check_build_and_verify(tool, scratch: Path) -> None:
     target_files_tree(aosp, first, staging)
     make_apk(staging / "PRODUCT/app/Extra/Extra.apk", XMLTREE, b"extra dex")
     message = run_tool(tool, *verify, expect_fail=True)
-    if "first boot would compile /product/app/Extra/Extra.apk" not in message:
+    if "first boot would compile /product/app/Extra/Extra.apk for arm64" not in message:
         fail(f"a new application without artifacts not reported: {message}")
+    # A package that stops carrying 32-bit libraries no longer runs in arm, so its
+    # arm artifacts are stale.
+    target_files_tree(aosp, first, staging)
+    make_apk(staging / "PRODUCT/app/webview/webview.apk", MULTI_ARCH_XMLTREE, b"dex-web", ("arm64-v8a",))
+    message = run_tool(tool, *verify, expect_fail=True)
+    if "not in the image: /product/app/webview/webview.apk (arm)" not in message:
+        fail(f"artifacts of an ISA the package no longer runs in not reported: {message}")
+    # A manifest from before per-ISA artifacts cannot be verified against.
+    target_files_tree(aosp, first, staging)
+    old = scratch / "old-manifest"
+    old.mkdir()
+    legacy = json.loads((first / "manifest.json").read_text())
+    for package in legacy["packages"]:
+        del package["isa"]
+    (old / "manifest.json").write_text(json.dumps(legacy))
+    message = run_tool(tool, "verify", "--host-bin", str(aosp / "out/host/linux-x86/bin"),
+                       "--target-files-dir", str(staging), "--artifacts", str(old), expect_fail=True)
+    if "predates per-ISA artifacts" not in message:
+        fail(f"a manifest without ISAs must be refused: {message}")
 
 
 def main() -> int:
