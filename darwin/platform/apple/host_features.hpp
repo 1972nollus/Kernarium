@@ -15,12 +15,6 @@
 
 namespace uml::platform::apple {
 
-using ::uml::platform::ArmFeature;
-using ::uml::platform::ArmFeatureSet;
-using ::uml::platform::arm_feature_count;
-using ::uml::platform::arm_feature_labels;
-using ::uml::platform::arm_inventory_feature_count;
-
 enum class HostCapabilityResult : std::uint8_t {
 	unsupported,
 	supported,
