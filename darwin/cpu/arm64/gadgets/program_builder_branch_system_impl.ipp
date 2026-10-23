@@ -82,11 +82,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		 * implement. */
 		return illegal_instruction(context);
 	} else if ((instruction & 0xff00'0010U) == 0x5400'0000U) {
-		const auto displacement = sign_extend(
-			static_cast<std::uint64_t>((instruction >> 5) & 0x7ffffU) << 2,
-			21);
-		const auto target = static_cast<std::uint64_t>(
-			static_cast<std::int64_t>(address) + displacement);
+		const auto target = branch19_target(address, instruction);
 		const auto fallthrough = address + sizeof(instruction);
 		if (resolve_link) {
 			/* Translating the fall-through behind the branch keeps
@@ -114,11 +110,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		 * class is unallocated. */
 		return illegal_instruction(context);
 	} else if ((instruction & 0x7e00'0000U) == 0x3400'0000U) {
-		const auto displacement = sign_extend(
-			static_cast<std::uint64_t>((instruction >> 5) & 0x7ffffU) << 2,
-			21);
-		const auto target = static_cast<std::uint64_t>(
-			static_cast<std::int64_t>(address) + displacement);
+		const auto target = branch19_target(address, instruction);
 		const auto fallthrough = address + sizeof(instruction);
 		const unsigned source = instruction & 31U;
 		const bool nonzero = (instruction & 0x0100'0000U) != 0;
@@ -144,13 +136,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 				(instruction >> 31) != 0, nonzero,
 				static_cast<bool>(resolve_link)));
 			emit(words, offsetof(CpuState, registers) + source * 8U);
-			if (resolve_link) {
-				emit_link(context, target);
-				emit_link(context, fallthrough);
-			} else {
-				emit(words, target);
-				emit(words, fallthrough);
-			}
+			emit_edges(context, target, fallthrough);
 		}
 		++compiled;
 		return DecodeResult::terminal;
@@ -186,13 +172,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 				static_cast<bool>(resolve_link)));
 			emit(words, bit | ((offsetof(CpuState, registers) +
 				source * 8U) << 16));
-			if (resolve_link) {
-				emit_link(context, target);
-				emit_link(context, fallthrough);
-			} else {
-				emit(words, target);
-				emit(words, fallthrough);
-			}
+			emit_edges(context, target, fallthrough);
 		}
 		++compiled;
 		return DecodeResult::terminal;
