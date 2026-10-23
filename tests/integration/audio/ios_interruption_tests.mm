@@ -204,20 +204,37 @@ public:
     }
 
     // What happened over `span`, after `settle` for the state change under
-    // test.
-    [[nodiscard]] Observed window(
-        std::chrono::milliseconds settle, std::chrono::milliseconds span)
+    // test. `eventFirst` has the device thread look at what iOS just posted
+    // inside the window, before it writes again, as a real one does.
+    [[nodiscard]] Observed window(std::chrono::milliseconds settle,
+        std::chrono::milliseconds span, bool eventFirst = false)
     {
         if (settle > 0ms)
             pump(settle);
         const auto begun = std::chrono::steady_clock::now();
         const auto completed = completed_;
         const auto scheduled = scheduledPeriods.load();
+        if (eventFirst) {
+            sink_.drainEventSource();
+            collect();
+        }
         pump(span);
         return {.completed = completed_ - completed,
             .scheduled = scheduledPeriods.load() - scheduled,
             .seconds = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - begun).count()};
+    }
+
+    // The guest writes nothing for `span`: the sink only keeps time.
+    void idle(std::chrono::milliseconds span)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + span;
+        do {
+            pollfd descriptor {sink_.eventDescriptor(), POLLIN, 0};
+            (void)poll(&descriptor, 1, 10);
+            sink_.drainEventSource();
+            collect();
+        } while (std::chrono::steady_clock::now() < deadline);
     }
 
     // How long until a period reaches the player again, or `limit`.
@@ -451,10 +468,11 @@ void beganWithNoEnd()
     const auto mark = activations.load();
     postInterruptionBegan();
     // The periods the player held when it was cut off complete on the clock
-    // too, not all at once: 120 ms hold five or six periods, and a burst of the
-    // four the player held would make nine or ten.
-    seen = stream.window(0ms, 120ms);
-    check(seen.completed >= 3 && seen.completed <= 8 && seen.scheduled == 0,
+    // too, not all at once: 60 ms hold two or three periods, and a burst of
+    // the four the player held would make six or seven.
+    seen = stream.window(0ms, 60ms, true);
+    check(seen.completed <= nominalRate * seen.seconds + 2 &&
+            seen.scheduled == 0,
         "the periods the player held complete on the mute clock, not at once",
         seen.text());
     seen = stream.window(0ms, 4000ms);
@@ -494,6 +512,36 @@ void beganWithNoEnd()
     seen = stream.window(300ms, 1000ms);
     check(seen.playing() && stream.healthy(),
         "the stream plays after the retries", seen.text());
+    stream.close();
+}
+
+// A muted stream whose guest wrote nothing for a while owes nothing: the
+// periods it writes next complete at the rate of real audio, not in a burst
+// that makes up the time that passed.
+void idleMuteBuildsNoCredit()
+{
+    auto sink = uml::audio::makeApplePlaybackSink();
+    Stream stream(*sink);
+    otherAudioPlaying = false;
+    check(stream.open(), "the stream opens for the idle mute");
+    (void)stream.window(300ms, 300ms);
+    otherAudioPlaying = true;
+    postInterruptionBegan();
+    auto seen = stream.window(400ms, 500ms);
+    check(seen.scheduled == 0, "an interruption stops the stream that goes idle",
+        seen.text());
+
+    stream.idle(2000ms);
+    seen = stream.window(0ms, 300ms);
+    // About 14 periods fit in 300 ms, and the queue refills as they complete;
+    // making up two seconds would complete more than a hundred.
+    check(seen.scheduled == 0 &&
+            seen.completed <= nominalRate * seen.seconds + 4,
+        "periods written after an idle mute complete at the rate of real audio",
+        seen.text());
+    seen = stream.window(0ms, 2000ms);
+    check(seen.muted(), "and the mute keeps the guest's rate", seen.text());
+    check(stream.healthy(), "the idle mute failed no period");
     stream.close();
 }
 
@@ -631,6 +679,7 @@ int main()
         installHooks();
         interruptionMutesAndResumes();
         beganWithNoEnd();
+        idleMuteBuildsNoCredit();
         noActivationWhileInterrupted();
         interruptionBeforeStart();
         restartDuringInterruption();
