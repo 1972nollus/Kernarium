@@ -363,8 +363,15 @@ JitExecutor::Implementation::tracked_store_function(CompiledBlock &block, Static
   const auto compiled = compiler.compile(
       translation_key_pc(block.key),
       std::span{instructions}.first(block.instruction_count));
+  return store_tracked_variant(block, compiled, compiled.guest_instructions);
+}
+
+[[nodiscard]] JitFunction JitExecutor::Implementation::store_tracked_variant(
+    CompiledBlock &block, const JitCompiler::Result &compiled,
+    std::size_t guest_units) {
   if (compiled.words.empty() ||
       compiled.guest_instructions != block.instruction_count ||
+      guest_units != block.saved_units ||
       !valid_link_state_metadata(compiled.accesses_fp_state,
                                  compiled.native_fp) ||
       compiled.direct_memory_write_mask != block.direct_memory_write_mask)

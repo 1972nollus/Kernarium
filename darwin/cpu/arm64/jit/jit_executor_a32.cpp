@@ -65,23 +65,8 @@ constexpr std::size_t maximum_block_elements = maximum_block_instructions;
   jit::a32::A32Compiler compiler{nullptr, nullptr, true};
   const auto compiled =
       compiler.compile({.key = block.key, .bytes = std::span{bytes}.first(length)});
-  const auto &translation = compiled.translation;
-  if (translation.words.empty() ||
-      translation.guest_instructions != block.instruction_count ||
-      compiled.guest_units != block.saved_units ||
-      !valid_link_state_metadata(translation.accesses_fp_state,
-                                 translation.native_fp) ||
-      translation.direct_memory_write_mask != block.direct_memory_write_mask)
-    return nullptr;
-  auto *code = tracked_store_arena_.store(translation.words);
-  if (code == nullptr) {
-    clear_tracked_store_cache();
-    code = tracked_store_arena_.store(translation.words);
-    if (code == nullptr)
-      return nullptr;
-  }
-  block.tracked_function = sign_jit_function<JitFunction>(code);
-  return block.tracked_function;
+  return store_tracked_variant(block, compiled.translation,
+                               compiled.guest_units);
 }
 
 /* A private translation of exactly the first instruction, with the ITSTATE

@@ -100,6 +100,16 @@ private:
 
   [[nodiscard]] JitFunction
   tracked_store_function(CompiledBlock &block, StaticGuestMemory &memory);
+  /* The tracked variant of `block`, stored in the tracked-store arena, when
+   * `compiled` (the block's code built again from memory with tracking on,
+   * `guest_units` units of the key's ISA) is the same translation: its
+   * instruction and unit counts, link state and direct writes are the
+   * block's. Null otherwise, or when the arena has no room even after a
+   * reset. */
+  [[nodiscard]] JitFunction
+  store_tracked_variant(CompiledBlock &block,
+                        const JitCompiler::Result &compiled,
+                        std::size_t guest_units);
   void clear_tracked_store_cache() noexcept;
   [[nodiscard]] Event run_floating_exception_mode(
       CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed);
