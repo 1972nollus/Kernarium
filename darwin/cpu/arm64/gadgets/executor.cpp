@@ -2121,6 +2121,14 @@ private:
 		std::size_t offset;
 	};
 
+	static constexpr std::size_t link_memo_entries = 4096;
+	struct LinkMemoEntry final {
+		std::uint64_t pc;
+		unsigned long generation;
+		const arm64::gadgets::BlockLink *link;
+	};
+	using LinkMemo = std::array<LinkMemoEntry, link_memo_entries>;
+
 	/* What this cache keeps about one address space it holds: the space,
 	 * shared with other executors or not, the code-change mark it last
 	 * answered, and the slots it stored into.
@@ -2130,44 +2138,8 @@ private:
 	 * That matters because retirement is not rare on a desktop guest: it
 	 * happens on every first sight of a ninth address space. See G167.
 	 */
-	static constexpr std::size_t link_memo_entries = 4096;
-	struct LinkMemoEntry final {
-		std::uint64_t pc;
-		unsigned long generation;
-		const arm64::gadgets::BlockLink *link;
-	};
-	using LinkMemo = std::array<LinkMemoEntry, link_memo_entries>;
-
-	struct Generation final {
-		Generation() = default;
-		Generation(const Generation &) = delete;
-		Generation &operator=(const Generation &) = delete;
-		Generation(Generation &&) = delete;
-		Generation &operator=(Generation &&) = delete;
-
-		Space *space{};
-		std::uint64_t changes{};
-		/* The guest's number for the address space, and the cache's own
-		 * for it: the id a slot's tag carries, from one up, recycled
-		 * once the address space is retired and its slots released. */
-		unsigned long value{};
-		std::uint16_t id{};
-		/* How many times the address space's code is known to have
-		 * changed, as far as a slot's validation can tell: a slot whose
-		 * epoch equals this one has matched guest memory since the
-		 * last change. It runs from one to its maximum and starts over
-		 * after a sweep of the slots that carry it, so a slot's epoch
-		 * is never mistaken for the current one. */
-		std::uint16_t epoch{1};
-		/* Slots this address space has stored into, as flat slot
-		 * indices. It may name a slot another address space has since
-		 * taken, and may name one twice, so retirement checks every
-		 * entry; it can only *miss* a slot by having overflowed, which
-		 * `slots_complete` records and retirement answers with the whole
-		 * sweep.
-		 */
-		std::vector<std::uint32_t> slots;
-		bool slots_complete{true};
+	struct Generation final
+		: gadget_cache::GenerationState<Space, unsigned long> {
 #if UML_GADGET_CACHE_CENSUS
 		/* When the cache last left this address space, in switches and
 		 * in seconds. */

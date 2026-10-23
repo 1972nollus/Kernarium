@@ -21,11 +21,46 @@ inline constexpr std::uint64_t no_owner = std::uint64_t{0xffffU}
 /* The most code changes a slot's epoch can count. */
 inline constexpr std::uint16_t max_epoch = 0xffffU;
 
+/* What a cache keeps about one address space it holds: its translation
+ * `Space`, which the cache shares with the other executors running the
+ * address space or keeps to itself, and the rest of what the window and
+ * the cache's slots need of it. An engine derives from this to add what is
+ * its own. */
+template <typename Space, typename Number>
+struct GenerationState {
+	GenerationState() = default;
+	GenerationState(const GenerationState &) = delete;
+	GenerationState &operator=(const GenerationState &) = delete;
+
+	Space *space{};
+	/* The code-change sequence the cache last answered for the address
+	 * space. */
+	std::uint64_t changes{};
+	/* The guest's number for the address space, and the cache's own for
+	 * it: the id a slot's tag carries, from one up, recycled once the
+	 * address space is retired and its slots released. */
+	Number value{};
+	std::uint16_t id{};
+	/* How many times the address space's code is known to have changed, as
+	 * far as a slot's validation can tell: a slot whose epoch equals this
+	 * one has matched guest memory since the last change. It runs from one
+	 * to its maximum and starts over after a sweep of the slots that carry
+	 * it, so a slot's epoch is never mistaken for the current one. */
+	std::uint16_t epoch{1};
+	/* Slots this address space has stored into, as flat slot indices. It
+	 * may name a slot another address space has since taken, and may name
+	 * one twice, so retirement checks every entry; it can only *miss* a
+	 * slot by having overflowed, which `slots_complete` records and
+	 * retirement answers with the whole sweep. */
+	std::vector<std::uint32_t> slots;
+	bool slots_complete{true};
+};
+
 /* The address spaces ("generations") a gadget cache holds translations for,
  * which one is running, and the order that bounds them.
  *
  * Translations for several address spaces share one cache, so each slot's
- * tag names its owner by an id (`State::id`), from one up, which the cache
+ * tag names its owner by an id (`id`), from one up, which the cache
  * hands out when it first sees the address space and takes back when it
  * retires it. `owners` finds the state of an id, with id zero never used, so
  * a slot with no owner, and a tag made while no address space is running,
@@ -43,13 +78,11 @@ inline constexpr std::uint16_t max_epoch = 0xffffU;
  * may keep its place in the order without being held, a tombstone that
  * retiring only drops.
  *
- * `State` is the engine's record of one address space, kept in `generations`
- * and so at a stable address. It has `id`, an unsigned 16-bit number zero
- * until enroll() gives it one; `epoch`, the same, starting at one; and
- * `value`, the guest's `Number` for the address space. Retiring an address
- * space, which also releases its slots and its translation space, is the
- * engine's: it calls reserve_id() before it changes anything, and leave()
- * once the rest is done.
+ * `State` is the engine's record of one address space, a GenerationState or
+ * a type derived from it, kept in `generations` and so at a stable address.
+ * Retiring an address space, which also releases its slots and its
+ * translation space, is the engine's: it calls reserve_id() before it
+ * changes anything, and leave() once the rest is done.
  */
 template <typename Number, typename State, std::size_t Limit>
 struct GenerationWindow final {

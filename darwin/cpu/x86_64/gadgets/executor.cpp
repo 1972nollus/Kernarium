@@ -569,23 +569,8 @@ private:
 	 * keeps in the process's gadget-cache budget (gadget_cache_budget.hpp),
 	 * which may ask the cache to let go of it (leave_shedding()).
 	 */
-	struct Generation final {
-		Space *space{};
-		std::uint64_t changes{};
-		/* The guest's number for the address space, and the cache's own
-		 * for it: the id a slot's tag carries, from one up, recycled once
-		 * the address space is retired and its slots released. */
-		std::uint64_t value{};
-		std::uint16_t id{};
-		/* How many times the address space's code is known to have
-		 * changed, as far as a slot's validation can tell: a slot whose
-		 * epoch equals this one has matched guest memory since the last
-		 * change. It runs from one to its maximum and starts over after a
-		 * sweep of the slots that carry it, so a slot's epoch is never
-		 * mistaken for the current one. */
-		std::uint16_t epoch{1};
-		std::vector<std::uint32_t> slots;
-		bool slots_complete{true};
+	struct Generation final
+		: gadget_cache::GenerationState<Space, std::uint64_t> {
 #if UML_GADGET_CACHE_CENSUS
 		/* When the cache last left this address space, in switches and
 		 * in seconds. */

@@ -12,11 +12,8 @@ namespace {
 
 using uml::testing::require;
 
-struct State final {
-	std::uint16_t id{};
-	std::uint16_t epoch{1};
-	unsigned long value{};
-};
+/* The translation space is no part of the window's bookkeeping. */
+using State = cache::GenerationState<int, unsigned long>;
 
 constexpr std::size_t limit = 3;
 using Window = cache::GenerationWindow<unsigned long, State, limit>;
