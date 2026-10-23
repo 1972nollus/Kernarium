@@ -4,7 +4,7 @@
 # program is built with the configured compiler's ARM backend and wrapped
 # into an ELF32 executable by make_elf32.py, because the toolchain has no
 # ARM linker. It is generated here and never committed. The test executes the
-# program and checks that a program laid out for 4 KiB pages runs.
+# program and checks that the one aligned to 4 KiB only runs.
 
 set(_uml_aarch32_object "${CMAKE_CURRENT_BINARY_DIR}/aarch32_probe.o")
 set(UML_GUEST_AARCH32_PROBE "${CMAKE_CURRENT_BINARY_DIR}/guest-aarch32-probe")
