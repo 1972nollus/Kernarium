@@ -153,7 +153,11 @@ cold section and a veneer island of their own after the SME part, so no A64
 entry moves and the part holds no SVE or SME word. The generators' docstrings
 (`engine/a32_*.py`) and `a32.inc` state each family's operand layout and
 lowering, and the memory transfers that carry no key report their position as
-the A64 ones do (`a32_layout.h`).
+the A64 ones do (`a32_layout.h`). The exclusive and ordered transfers are the
+A64 part's gadgets, which read an address slot whole, so every slot a stream
+reads holds a zero-extended value: R0-R14 as the runtime loads and the
+gadgets write them, and the two scratch slots the part borrows past them,
+which hold what the virtual CPU ran before, cleared at each entry.
 
 A block never ends inside an IT block: one the block limit cuts off ends in an
 unlinked exit with ITSTATE stored, and an entry with ITSTATE set, like a single

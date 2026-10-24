@@ -236,7 +236,9 @@ struct Outcome final {
 	unsigned event{};
 	bool exit_thumb{};
 	std::uint32_t half{};
-	std::uint32_t address{};
+	/* Whole: an AArch32 fault address is a 32-bit one, and wider is the
+	 * engine's error, not the guest's. */
+	std::uint64_t address{};
 	std::size_t retired{};
 	bool valid{true};
 };
@@ -273,7 +275,7 @@ struct Outcome final {
 		outcome.event = result.fault.alignment ? corpus::kSigBus :
 							 corpus::kSigSegv;
 		outcome.half = half_of(pc);
-		outcome.address = static_cast<std::uint32_t>(result.fault.address);
+		outcome.address = result.fault.address;
 		break;
 	case ExitReason::illegal_instruction:
 		outcome.half = half_of(pc);
@@ -291,7 +293,7 @@ struct Outcome final {
 		 * instruction retired, which the engine does not name. */
 		outcome.event = corpus::kSigBus;
 		outcome.half = ~0U;
-		outcome.address = static_cast<std::uint32_t>(result.fault.address);
+		outcome.address = result.fault.address;
 		break;
 	case ExitReason::instruction_budget:
 		outcome.event = 14;
@@ -483,6 +485,7 @@ struct Attempt final {
 	const bool nop_before_stub = machine.install(test);
 	machine.set_data(initial_data);
 	::uml::cpu::arm64::CpuState cpu{};
+	corpus::leave_aarch64_task_state(cpu);
 	SavedVectors saved{};
 	load_state(cpu, saved, test.initial, thumb, corpus::kCodeBase + origin);
 	const auto result = machine.run(cpu);
@@ -527,8 +530,8 @@ struct Attempt final {
 			if ((test.event == corpus::kSigSegv || test.event == corpus::kSigBus ||
 			     test.event == corpus::kSigIll) &&
 			    test.fault_address != outcome.address)
-				note("fault address %#x vs %#x", test.fault_address,
-				     outcome.address);
+				note("fault address %#x vs %#llx", test.fault_address,
+				     static_cast<unsigned long long>(outcome.address));
 		}
 		/* The pack counts the program's instructions: the engine adds the
 		 * exit stub's load and the exit's system call, and a system call
@@ -547,6 +550,11 @@ struct Attempt final {
 			note("retired %zu vs %zu", test.retired, outcome.retired);
 		for (unsigned index = 0; index < corpus::kRegisters; ++index) {
 			const auto value = static_cast<std::uint32_t>(cpu.registers[index]);
+			/* A register's slot stays zero-extended: the shared A64
+			 * gadgets read it whole. */
+			if ((cpu.registers[index] >> 32) != 0)
+				note("r%u's slot %#llx is not zero-extended", index,
+				     static_cast<unsigned long long>(cpu.registers[index]));
 			if (value != test.final.r[index]) {
 				note("r%u %#x vs %#x", index, test.final.r[index], value);
 				/* A store-exclusive's status: 0 stored, 1 did not. */
