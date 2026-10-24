@@ -186,7 +186,10 @@ encode on Linux is VA-API. Valve's x86-64 CEF carries no stateful V4L2 decoder,
 only VA-API. The guest therefore ships a VA-API driver over the same V4L2 nodes,
 [`uml_drv_video.so`](../tools/video/va-v4l2/README.md): the Debian Chromium
 images select it through `/etc/chromium.d/kernarium-video`, and it gives
-Chromium and any other VA-API client H.264 encode on both guest architectures.
+FFmpeg, GStreamer and any other VA-API client H.264 and HEVC encode on both
+guest architectures. Chromium's own encode is off by default there, because the
+guest's Mesa gbm cannot allocate the NV12 frames it encodes and cannot let the
+CPU read frames the GPU painted; the driver README owns the limit.
 An application that speaks V4L2 itself, such as FFmpeg's `*_v4l2m2m` codecs or
 GStreamer's `v4l2` elements, reaches the service without it.
 

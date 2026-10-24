@@ -311,17 +311,33 @@ which `/usr/bin/chromium` sources at start. The file names the driver
 (`LIBVA_DRIVER_NAME=uml`, because libva would otherwise map the virtio-gpu node
 to Mesa's driver, which has nothing to offer), passes
 `--render-node-override=/dev/dri/renderD128` (the guest's render node is not a
-PCI device, so Chromium finds none itself and leaves VA-API off), and enables
-`AcceleratedVideoEncoder`, off by default on Linux, and `ChromeOSHWVBREncoding`,
-which arm64 needs for variable-bitrate profiles. No udev rule, session
-environment or other package is involved.
+PCI device, so Chromium finds none itself and leaves VA-API off). No udev rule,
+session environment or other package is involved.
 
-With it Chromium's hardware encode is H.264 on both architectures, and its VA-API
-decode goes through this driver as well: VP9 is hardware, and H.264 and HEVC
-decode stay in software because the driver does not offer them.
+With it Chromium's VA-API decode goes through this driver: VP9 is hardware, and
+H.264 and HEVC decode stay in software because the driver does not offer them.
 `--disable-accelerated-video-decode` would also skip the initialisation that
-encode needs. Chromium has no HEVC encode on Linux; HEVC reaches the service
-through FFmpeg and GStreamer.
+encode needs.
+
+Chromium's own hardware encode (WebCodecs `VideoEncoder`, WebRTC) is H.264
+only, since it has no HEVC encode on Linux, and it stays off unless the
+environment sets `KERNARIUM_CHROMIUM_VIDEO_ENCODE=1`, which adds
+`AcceleratedVideoEncoder` and `ChromeOSHWVBREncoding` (arm64 needs the latter
+for variable-bitrate profiles). The driver does its part, but Chromium's
+encoder works on frames in GPU memory that it allocates through gbm, and the
+guest's Mesa gbm has two limits that the driver cannot lift:
+
+- It cannot allocate NV12, so the GPU process aborts when the first encode
+  starts.
+- Pixels the guest GPU wrote (canvas, video and page content composited on
+  the GPU) are not readable by the guest CPU, which is the only reader the
+  driver has. Such frames encode as black. Frames built in ordinary memory
+  (a `VideoFrame` made from a buffer) work once gbm allocates NV12.
+
+The driver maps a surface imported read-only, which is how Mesa exports its
+buffers. A gbm that allocates NV12 and a CPU-visible path from the GPU belong
+to the guest graphics stack; until then FFmpeg and GStreamer reach the encoder
+through VA-API and V4L2 for H.264 and HEVC.
 
 [`tools/rootfs/producer.sh`](../../rootfs/producer.sh) builds the driver inside
 an image's own root (`producer_install_uml_va_driver`), against the libva and
