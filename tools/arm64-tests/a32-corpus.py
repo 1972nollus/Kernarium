@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Produce the AArch32 instruction corpus source tables.
 
-  a32-corpus.py observe --archive TAR.GZ --suite alu[,memory...] --host HOST
+  a32-corpus.py observe --archive TAR.GZ --suite alu[,memory...] [--host HOST]
                         [--runner 'qemu-arm -cpu max'] [--oracle qemu]
                         [--host-directory DIR]
                         [--source tests/unit/arm64/aarch32_corpus/source]
@@ -12,7 +12,8 @@
                         [--archive TAR.GZ --absent FEATURE,...] [--show N]
 
 observe plans the cases of each suite, runs them twice through the oracle on
-HOST (tools/arm64-tests/a32-oracle.sh), requires both runs to agree except in
+HOST (tools/arm64-tests/a32-oracle.sh; a suite no oracle runs, the absent one,
+needs no HOST), requires both runs to agree except in
 the fields known-differences.tsv leaves open for that oracle, and writes the
 suite's source table beside the state recipes. finish generates
 the pack from the source tables (tools/instruction-corpus/source.py does the
@@ -216,7 +217,7 @@ def observe(arguments) -> int:
     context = plan.build_context(arguments.archive)
     source = pathlib.Path(arguments.source)
     source.mkdir(parents=True, exist_ok=True)
-    identity = describe_host(arguments)
+    identity = ""
     for suite in arguments.suite.split(","):
         if suite in HARDWARE_ONLY and arguments.oracle == "qemu":
             raise SystemExit(f"{suite}: only hardware records settle this suite")
@@ -230,6 +231,10 @@ def observe(arguments) -> int:
             rows = [source_row(case, context.recipes, predicted_observation(case, context.recipes))
                     for case in cases]
             cases = []
+        if cases and not identity:
+            if not arguments.host:
+                raise SystemExit(f"{suite}: an oracle runs this suite, so observe needs --host")
+            identity = describe_host(arguments)
         for start in range(0, len(cases), CHUNK):
             chunk = cases[start:start + CHUNK]
             meta, observations = run_oracle(arguments, suite, chunk, context.recipes,
@@ -457,7 +462,7 @@ def main() -> int:
         command.add_argument("--archive", required=name != "finish", type=pathlib.Path)
         if name == "observe":
             command.add_argument("--suite", required=True)
-            command.add_argument("--host", required=True)
+            command.add_argument("--host", default="")
             command.add_argument("--runner", default="")
             command.add_argument("--oracle", default="qemu")
             command.add_argument("--host-directory", default="",
