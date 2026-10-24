@@ -86,7 +86,8 @@ RunResult load_store_unsigned(CpuState &cpu, GuestMemory &memory,
 		else
 			encode_little_endian(cpu.read_register(transfer, false),
 				std::span{bytes}.first(size));
-		if (!ordinary_store(memory, address, std::span{bytes}.first(size)))
+		if (!ordinary_store(cpu, memory, address,
+				std::span{bytes}.first(size)))
 			return memory_fault(address, instruction, true);
 	}
 	cpu.pc += 4;
@@ -230,7 +231,8 @@ RunResult load_store_other(CpuState &cpu, GuestMemory &memory,
 		else
 			encode_little_endian(cpu.read_register(transfer, false),
 				std::span{bytes}.first(size));
-		if (!ordinary_store(memory, address, std::span{bytes}.first(size)))
+		if (!ordinary_store(cpu, memory, address,
+				std::span{bytes}.first(size)))
 			return memory_fault(address, instruction, true);
 	}
 	/* The 2026-06 architectural constraint selection suppresses writeback for

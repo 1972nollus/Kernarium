@@ -142,8 +142,9 @@ private:
       bool tracked_stores, bool restore_environment, std::size_t &executed,
       std::uint32_t &deferred_exclusive);
   /* Runs `translation`, the untracked translation of the instruction at the
-   * PC, under the store-publication protocol: as it is when no other vCPU
-   * reserves, or as `tracked_translation()` builds it again when one does.
+   * PC, under the store-publication protocol: as it is when no vCPU holds a
+   * reservation, or as `tracked_translation()` builds it again when one
+   * does.
    * Empty when that variant does not write memory as the first does. */
   template <typename TrackedTranslation>
   [[nodiscard]] std::optional<Event> invoke_single_instruction_published(
@@ -153,7 +154,7 @@ private:
     if (translation.direct_memory_write_mask == 0)
       return invoke_single_instruction(translation, cpu, false, false,
                                        executed, deferred_exclusive);
-    JitBlockPublication publication{store_participant_, cpu};
+    JitBlockPublication publication{store_participant_};
     if (!publication.needs_tracking())
       return invoke_single_instruction(translation, cpu, false, false,
                                        executed, deferred_exclusive);

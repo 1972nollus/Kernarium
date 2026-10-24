@@ -3,7 +3,7 @@
  * register arithmetic and a store-exclusive become one host pair), the same
  * instructions through the slow helper, and the monitor rules between them.
  * The compare-and-swap idiom, fault and alignment exits, two threads counting
- * exactly and an ordinary store clearing a reservation are covered too. The
+ * exactly and an ordinary store beating a reservation are covered too. The
  * fused loop must make no helper call, also with a compare and conditional
  * branch or a CBNZ between the load and the store (A32 and T32). */
 #include "arm64_jit_a32_test_support.hpp"

@@ -16,9 +16,9 @@
 // tests/unit/arm64/arm64_exclusive_progress_tests.cpp, which guards them.
 //
 // With the argument "inside" the loops also store between the exclusive load
-// and the store-exclusive. The architecture does not promise progress there,
-// and the JIT clears its monitor at an ordinary store, so only the gadget
-// engine is asked.
+// and the store-exclusive, to another page. The architecture does not promise
+// progress there, but both engines keep the monitor across a store of the
+// guest's own, as a register spill between the pair needs.
 //
 // A copy-on-write break between the pair is covered by running the loop in
 // a forked child on a page it shares with its parent.

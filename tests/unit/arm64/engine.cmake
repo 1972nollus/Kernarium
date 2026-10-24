@@ -251,7 +251,8 @@
             barrier_runtime
             illegal_runtime
             publication_gate
-            reservation_alias)
+            reservation_alias
+            exclusive_completion)
         set(_jit_test_objects ${UML_ARM64_RUNTIME_TEST_OBJECTS})
         if(JIT_TEST STREQUAL "cache_validation")
             set(_jit_test_objects ${UML_ARM64_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})

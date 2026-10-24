@@ -337,6 +337,7 @@ private:
   void emit_misalignment_check(unsigned address, std::size_t alignment,
                                Arm64Emitter::Label misaligned);
 
+  /* Ends the software monitor at the end of a fused pair. */
   void clear_local_exclusive_monitor();
 
   [[nodiscard]] std::size_t

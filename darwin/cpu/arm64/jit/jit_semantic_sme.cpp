@@ -49,9 +49,8 @@ void materialize(CpuState &cpu) noexcept {
  * at `address` and `file`. Every page is translated before any byte moves,
  * so a store is never half applied, and a fault reports the first byte of
  * the first page that fails, as the M4 does (the S3b native records). A
- * store revalidates write permission at this boundary, invalidates the
- * software reservations it overlaps and clears the local monitor, as the
- * native fast path does.
+ * store revalidates write permission at this boundary and invalidates the
+ * software reservations it overlaps, as the native fast path does.
  */
 [[nodiscard]] std::uint64_t transfer(CpuState &cpu, Tlb &tlb,
                                      std::uint64_t address, std::byte *file,
@@ -88,11 +87,9 @@ void materialize(CpuState &cpu) noexcept {
     }
     completed += lengths[page];
   }
-  if (!load) {
+  if (!load)
     jit::semantic::invalidate_store_ranges(
-        std::span<const JitStoreRange>{stored}.first(pages));
-    cpu.exclusive_size = 0;
-  }
+        cpu, std::span<const JitStoreRange>{stored}.first(pages));
   return retire(cpu);
 }
 
@@ -165,8 +162,7 @@ public:
             reinterpret_cast<std::uintptr_t>(hosts_[index] + low_[index]),
             high_[index] - low_[index]};
     jit::semantic::invalidate_store_ranges(
-        std::span<const JitStoreRange>{stored}.first(ranges));
-    cpu.exclusive_size = 0;
+        cpu, std::span<const JitStoreRange>{stored}.first(ranges));
   }
 
 private:

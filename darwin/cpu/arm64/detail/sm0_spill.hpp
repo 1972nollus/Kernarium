@@ -67,9 +67,8 @@ struct Sm0Result final {
  * defers it (the function makes it accessible). An SP base must be 16-byte
  * aligned, which is checked before the access. The address is untagged as a
  * data address (CpuState::untag_data_address) and the access is all or
- * nothing: a fault leaves every register as it was and memory unwritten. A
- * store that completes clears the local exclusive monitor. PC is not
- * changed. Any other word is a fatal error that changes nothing.
+ * nothing: a fault leaves every register as it was and memory unwritten. The
+ * exclusive monitor is untouched. PC is not changed. Any other word is a fatal error that changes nothing.
  */
 [[nodiscard]] Sm0Result execute_sm0_spill(CpuState &cpu, std::uint32_t word,
 	Sm0Memory &memory) noexcept;

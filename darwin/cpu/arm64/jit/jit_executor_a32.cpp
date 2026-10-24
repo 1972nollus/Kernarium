@@ -340,8 +340,8 @@ JitExecutor::Implementation::translate_a32_single(
     const auto result = function(&cpu, &tlb_, &chain);
     if (tracked_stores)
       jit::semantic::invalidate_store_ranges(
-          std::span<const JitStoreRange>{tracked_store_ranges_}.first(
-              block->instruction_count));
+          cpu, std::span<const JitStoreRange>{tracked_store_ranges_}.first(
+                   block->instruction_count));
     const auto [event, current_executed] = unpack_jit_result(result);
     deferred_exclusive = chain.deferred_exclusive_instruction;
     executed = maximum_chain_instructions -
@@ -362,7 +362,7 @@ JitExecutor::Implementation::translate_a32_single(
   Event event{};
   bool tracked_unavailable = false;
   {
-    JitBlockPublication publication{store_participant_, cpu};
+    JitBlockPublication publication{store_participant_};
     if (!publication.needs_tracking()) {
       event = execute_native(block->function, false);
     } else {
