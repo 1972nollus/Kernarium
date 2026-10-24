@@ -510,6 +510,7 @@ int main()
     uml::va::test::runPoolTests();
     uml::va::test::runEncoderTests();
     uml::va::test::runDriverEncodeTests();
+    uml::va::test::runAnnexbTests();
     if (const int failures = uml::va::test::failureCount()) {
         std::fprintf(stderr, "UML_VA_V4L2_TESTS: FAIL (%d)\n", failures);
         return 1;

@@ -271,10 +271,31 @@ LIBVA_DRIVER_NAME=uml LIBVA_DRIVERS_PATH=$PWD/build \
 `--vpp` additionally converts every decoded frame to ARGB through a
 `VAProfileNone` video-processing context, and `--export` exports a decoded
 surface as `DRM_PRIME_2`, re-imports the descriptor and compares the pixels.
-Those are the two paths a browser uses beyond decoding. Both binaries are Linux
-guest programs; the unit test also runs on any Linux build host. Any other
-VA-API client works too, because the driver implements the public interface
-and nothing else.
+Those are the two paths a browser uses beyond decoding.
+
+`build/va_encode_probe` is the encode counterpart. It submits pictures the way
+Chromium's `VaapiVideoEncodeAccelerator` does - surfaces and coded buffers at
+the aligned size, every parameter buffer with every picture, several pictures in
+flight - and writes an Annex B stream. It checks what needs no decoder: every
+frame came back, key frames fall where they were asked for and carry their
+parameter sets, and the stream's own sequence parameter set declares the size
+asked for, cropping included. `--list` prints the encode profiles and their
+attributes; `--sessions` and `--contexts` repeat and interleave sessions, which
+exercises descriptor reuse.
+
+```sh
+LIBVA_DRIVER_NAME=uml LIBVA_DRIVERS_PATH=$PWD/build \
+  ./build/va_encode_probe --codec h264 --size 1920x1080 --rate cbr --out out.h264
+```
+
+`tests/probe_selftest.sh build` runs the probe through libva's own loader
+against `fake_drv_video`, the same driver over the in-memory encoder node, with
+`drm_node_shim.so` preloaded so libva-drm takes a descriptor that is no DRM
+node. That covers the whole path except the Virtio video device, on a host that
+has none. The decode and encode probes are Linux guest programs; the unit test
+and the self-test also run on any Linux build host. Any other VA-API client
+works too, because the driver implements the public interface and nothing
+else.
 
 ## In the Steam x86-64 image
 

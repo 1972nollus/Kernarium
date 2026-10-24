@@ -39,6 +39,130 @@ void appendBig(std::vector<std::uint8_t>& out, std::uint64_t value, unsigned byt
     for (unsigned index = bytes; index-- > 0;) out.push_back(std::uint8_t(value >> (8 * index)) ^ 0x5a);
 }
 
+
+// Bits for a parameter set, written the way the standards write them.
+class BitWriter {
+public:
+    void u(std::uint64_t value, unsigned count)
+    {
+        for (unsigned index = count; index-- > 0;) bit(unsigned(value >> index) & 1u);
+    }
+    void ue(std::uint64_t value)
+    {
+        const std::uint64_t coded = value + 1;
+        unsigned length = 0;
+        while ((coded >> length) > 1) ++length;
+        u(0, length);
+        u(coded, length + 1);
+    }
+    // The payload with the stop bit, zero padding and emulation prevention.
+    std::vector<std::uint8_t> finish()
+    {
+        bit(1);
+        while (count_ % 8) bit(0);
+        std::vector<std::uint8_t> out;
+        int zeros = 0;
+        for (const std::uint8_t byte : bytes_) {
+            if (zeros >= 2 && byte <= 3) {
+                out.push_back(3);
+                zeros = 0;
+            }
+            out.push_back(byte);
+            zeros = byte == 0 ? zeros + 1 : 0;
+        }
+        return out;
+    }
+
+private:
+    void bit(unsigned value)
+    {
+        if (count_ % 8 == 0) bytes_.push_back(0);
+        bytes_.back() |= std::uint8_t(value << (7 - count_ % 8));
+        ++count_;
+    }
+    std::vector<std::uint8_t> bytes_;
+    std::size_t count_ {};
+};
+
+unsigned alignUp(unsigned value, unsigned to) { return (value + to - 1) / to * to; }
+
+constexpr std::uint8_t kH264LevelIdc[] {10, 9, 11, 12, 13, 20, 21, 22, 30, 31, 32, 40, 41, 42, 50, 51, 52, 60, 61, 62};
+constexpr std::uint8_t kHevcLevelIdc[] {30, 60, 63, 90, 93, 120, 123, 150, 153, 156, 180, 183, 186};
+
+// An H.264 sequence parameter set for a picture of the given size, cropped from
+// the macroblock-aligned size the way an encoder crops.
+std::vector<std::uint8_t> h264Sps(std::int64_t profileItem, std::int64_t levelItem, unsigned width, unsigned height)
+{
+    const unsigned profile = profileItem == 0 || profileItem == 1 ? 66 : profileItem == 2 ? 77 : profileItem == 3 ? 88 : 100;
+    const unsigned level = levelItem >= 0 && levelItem < std::int64_t(sizeof(kH264LevelIdc)) ? kH264LevelIdc[levelItem] : 40;
+    const unsigned codedWidth = alignUp(width, 16);
+    const unsigned codedHeight = alignUp(height, 16);
+    BitWriter bits;
+    bits.u(profile, 8);
+    bits.u(profileItem == 1 ? 0x40 : 0, 8);
+    bits.u(level, 8);
+    bits.ue(0);
+    if (profile == 100) {
+        bits.ue(1);
+        bits.ue(0);
+        bits.ue(0);
+        bits.u(0, 2);
+    }
+    bits.ue(0);
+    bits.ue(2);
+    bits.ue(1);
+    bits.u(0, 1);
+    bits.ue(codedWidth / 16 - 1);
+    bits.ue(codedHeight / 16 - 1);
+    bits.u(1, 1);
+    bits.u(1, 1);
+    const bool crop = codedWidth != width || codedHeight != height;
+    bits.u(crop, 1);
+    if (crop) {
+        bits.ue(0);
+        bits.ue((codedWidth - width) / 2);
+        bits.ue(0);
+        bits.ue((codedHeight - height) / 2);
+    }
+    bits.u(0, 1);
+    return bits.finish();
+}
+
+// The start of an HEVC sequence parameter set: enough to say the profile, the
+// level, the size and the cropping.
+std::vector<std::uint8_t> hevcSps(std::int64_t profileItem, std::int64_t levelItem, std::int64_t tier, unsigned width,
+                                  unsigned height)
+{
+    const unsigned profile = profileItem == 1 ? 3 : profileItem == 2 ? 2 : 1;
+    const unsigned level = levelItem >= 0 && levelItem < std::int64_t(sizeof(kHevcLevelIdc)) ? kHevcLevelIdc[levelItem] : 120;
+    const unsigned codedWidth = alignUp(width, 8);
+    const unsigned codedHeight = alignUp(height, 8);
+    BitWriter bits;
+    bits.u(0, 4);
+    bits.u(0, 3);
+    bits.u(1, 1);
+    bits.u(0, 2);
+    bits.u(tier != 0, 1);
+    bits.u(profile, 5);
+    bits.u(std::uint64_t(1) << (31 - profile), 32);
+    bits.u(0x9, 4);
+    bits.u(0, 44);
+    bits.u(level, 8);
+    bits.ue(0);
+    bits.ue(1);
+    bits.ue(codedWidth);
+    bits.ue(codedHeight);
+    const bool crop = codedWidth != width || codedHeight != height;
+    bits.u(crop, 1);
+    if (crop) {
+        bits.ue(0);
+        bits.ue((codedWidth - width) / 2);
+        bits.ue(0);
+        bits.ue((codedHeight - height) / 2);
+    }
+    return bits.finish();
+}
+
 }
 
 FakeEncoderNode::FakeEncoderNode() { buildTable(); }
@@ -390,19 +514,17 @@ void FakeEncoderNode::encodeOne(Session& session, unsigned index)
     if (key && session.values[V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR]) {
         if (hevc) {
             append(coded.data, {0, 0, 0, 1, 0x40, 0x01});
-            append(coded.data, {0, 0, 0, 1, 0x42, 0x01, std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_HEVC_PROFILE]),
-                                std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_HEVC_LEVEL]),
-                                std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_HEVC_TIER])});
-            appendBig(coded.data, width, 2);
-            appendBig(coded.data, height, 2);
-            coded.data.push_back(std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_BITRATE_MODE]));
+            append(coded.data, {0, 0, 0, 1, 0x42, 0x01});
+            const auto sps = hevcSps(session.values[V4L2_CID_MPEG_VIDEO_HEVC_PROFILE],
+                                     session.values[V4L2_CID_MPEG_VIDEO_HEVC_LEVEL],
+                                     session.values[V4L2_CID_MPEG_VIDEO_HEVC_TIER], width, height);
+            coded.data.insert(coded.data.end(), sps.begin(), sps.end());
             append(coded.data, {0, 0, 0, 1, 0x44, 0x01});
         } else {
-            append(coded.data, {0, 0, 0, 1, 0x67, std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_PROFILE]),
-                                std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_LEVEL])});
-            appendBig(coded.data, width, 2);
-            appendBig(coded.data, height, 2);
-            coded.data.push_back(std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_BITRATE_MODE]));
+            append(coded.data, {0, 0, 0, 1, 0x67});
+            const auto sps = h264Sps(session.values[V4L2_CID_MPEG_VIDEO_H264_PROFILE],
+                                     session.values[V4L2_CID_MPEG_VIDEO_H264_LEVEL], width, height);
+            coded.data.insert(coded.data.end(), sps.begin(), sps.end());
             append(coded.data, {0, 0, 0, 1, 0x68, std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE]),
                                 std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_8X8_TRANSFORM])});
         }

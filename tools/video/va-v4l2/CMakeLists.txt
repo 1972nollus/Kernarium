@@ -44,8 +44,23 @@ add_executable(uml_va_v4l2_tests
     tests/pool_tests.cpp
     tests/fake_v4l2.cpp
     tests/encoder_tests.cpp
-    tests/encode_driver_tests.cpp)
+    tests/encode_driver_tests.cpp
+    tests/annexb_tests.cpp)
 target_link_libraries(uml_va_v4l2_tests PRIVATE uml_va_v4l2_core)
+
+# The same driver over the in-memory encoder node, for running the probes through
+# libva's loader on a host with no Virtio video device.
+add_library(fake_drv_video MODULE tests/fake_entry.cpp tests/fake_v4l2.cpp)
+target_link_libraries(fake_drv_video PRIVATE uml_va_v4l2_core)
+set_target_properties(fake_drv_video PROPERTIES PREFIX "" OUTPUT_NAME "fake_drv_video")
+target_link_options(fake_drv_video PRIVATE
+    "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/driver.map" "-Wl,--no-undefined")
+
+# Preloaded into a probe so libva-drm accepts a descriptor that is no DRM node.
+add_library(drm_node_shim MODULE tests/drm_shim.cpp)
+target_link_libraries(drm_node_shim PRIVATE PkgConfig::LIBDRM)
+target_compile_options(drm_node_shim PRIVATE -Wall -Wextra -Werror)
+set_target_properties(drm_node_shim PROPERTIES PREFIX "" OUTPUT_NAME "drm_node_shim")
 
 # The guest-side qualification client. It talks to libva, not to this driver
 # directly, so it also runs against any other VA-API backend.
@@ -53,6 +68,12 @@ add_executable(va_decode_probe tests/va_decode_probe.cpp)
 target_link_libraries(va_decode_probe PRIVATE uml_va_v4l2_core)
 pkg_check_modules(LIBVA_DRM REQUIRED IMPORTED_TARGET libva-drm)
 target_link_libraries(va_decode_probe PRIVATE PkgConfig::LIBVA_DRM)
+
+# The guest-side encode client: Chromium's submission, an Annex B stream out.
+add_executable(va_encode_probe tests/va_encode_probe.cpp)
+target_link_libraries(va_encode_probe PRIVATE PkgConfig::LIBVA PkgConfig::LIBVA_DRM)
+target_compile_options(va_encode_probe PRIVATE -Wall -Wextra -Werror)
+target_compile_features(va_encode_probe PRIVATE cxx_std_20)
 
 include(GNUInstallDirs)
 install(TARGETS uml_drv_video LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/dri)
