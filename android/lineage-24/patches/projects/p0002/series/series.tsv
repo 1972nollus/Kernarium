@@ -3,3 +3,4 @@
 # export again; never edit this directory by hand.
 patch	build-omit-OTA-only-outputs-when-OTA-is-skipped.patch
 patch	build-allow-inherited-payload-exclusions.patch
+patch	build-forward-the-userdata-ext4-inode-count.patch

@@ -135,6 +135,11 @@ BOARD_VENDORIMAGE_PARTITION_SIZE := 268435456
 BOARD_ODMIMAGE_PARTITION_SIZE := 4194304
 BOARD_METADATAIMAGE_PARTITION_SIZE := 16777216
 BOARD_USERDATAIMAGE_PARTITION_SIZE := 134217728
+# mke2fs gives a filesystem under 512 MiB one inode per 4 KiB, and the first
+# boot's resize2fs keeps the inodes per group, so the grown /data would hold
+# more inodes than blocks. 8192 inodes in the image's one 32768-block group is
+# one per 16 KiB, ext4's default ratio, and survives the resize.
+BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT := 8192
 BOARD_INIT_BOOT_IMAGE_PARTITION_SIZE := 8388608
 BOARD_RECOVERYIMAGE_PARTITION_SIZE := 20971520
 

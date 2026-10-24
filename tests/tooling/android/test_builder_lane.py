@@ -386,6 +386,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           virtual_ab: bool = False,
                           wrong_fstab: bool = False, stock_fstab: bool = False,
                           wrong_filesystem: bool = False,
+                          wrong_userdata_inodes: bool = False,
                           wrong_apex_filesystem: bool = False,
                           seriallogging: bool = False,
                           boot_control: bool = False,
@@ -452,6 +453,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "product_fs_type=ext4\n"
                         "vendor_fs_type=ext4\n"
                         "odm_fs_type=ext4\n"
+                        + (
+                            "userdata_extfs_inode_count=32768\n"
+                            if wrong_userdata_inodes
+                            else "userdata_extfs_inode_count=8192\n"
+                        )
                     ),
                 )
                 archive.writestr("META/ramdisk_node_list", "")
@@ -894,6 +900,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("untracked-variant", {"build_variant": other_variant}),
             ("wrong-fstab", {"wrong_fstab": True}),
             ("wrong-filesystem", {"wrong_filesystem": True}),
+            ("wrong-userdata-inodes", {"wrong_userdata_inodes": True}),
             ("wrong-apex-filesystem", {"wrong_apex_filesystem": True}),
             ("stock-fstab", {"stock_fstab": True}),
             ("seriallogging", {"seriallogging": True}),

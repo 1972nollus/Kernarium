@@ -459,10 +459,16 @@ disk-capacity parameter and rejects a GPT that does not match the file. The
 resized image is opened directly as writable storage; Android launch never
 constructs or accepts a UBD COW pair. Normal Android asks the ext4
 `resize2fs` tool to fill userdata before mounting `/data`; the tool is
-idempotent when the host has not enlarged the partition. Recovery does not grow
-userdata: it mounts the filesystem at its current extent, and its factory reset
-formats the whole partition. Neither guest rewrites or refreshes a live
-partition table. There is no `super`,
+idempotent when the host has not enlarged the partition. The image carries
+8,192 inodes (`BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT`, which a `build/make`
+topic, route `p0002`, forwards to the image builder as it does for the
+read-only partitions), one per 16 KiB, ext4's default ratio. `resize2fs` keeps
+the inodes per group, so mke2fs's own choice for so small a filesystem, one per
+4 KiB, would leave the grown `/data` with more inodes than blocks, which
+Android's storage tests reject; the verifier requires the count. Recovery does
+not grow userdata: it mounts the filesystem at its current extent, and its
+factory reset formats the whole partition. Neither guest rewrites or refreshes
+a live partition table. There is no `super`,
 dynamic partition, Virtual A/B, AVB, OTA slot, or DLKM partition.
 
 The image keeps `/system/bin/sgdisk`, which `vold` runs for every disk it scans

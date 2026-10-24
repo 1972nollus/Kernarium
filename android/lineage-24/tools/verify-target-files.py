@@ -422,6 +422,9 @@ READ_ONLY_FILESYSTEMS = {
     "vendor_fs_type": "ext4",
     "odm_fs_type": "ext4",
 }
+# The image's inode count, which the first-boot resize keeps per block group
+# (BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT in overlay/BoardConfig.mk).
+USERDATA_EXTFS_INODE_COUNT = "8192"
 UML_INIT_REQUIRED = (
     "mount_all --early",
     "exec -- /system/bin/resize2fs /dev/block/by-name/userdata",
@@ -597,6 +600,11 @@ def check_boot_policy(
     for key, expected in READ_ONLY_FILESYSTEMS.items():
         if misc_info.get(key) != expected:
             fail(f"{key} must select read-only ext4 images")
+    if misc_info.get("userdata_extfs_inode_count") != USERDATA_EXTFS_INODE_COUNT:
+        fail(
+            "userdata_extfs_inode_count must be "
+            f"{USERDATA_EXTFS_INODE_COUNT}: {misc_info.get('userdata_extfs_inode_count')!r}"
+        )
     if "system_erofs_blocksize" in misc_info:
         fail("system EROFS image policy remains enabled")
 
