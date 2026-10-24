@@ -115,6 +115,8 @@ The Linux overlay holds only what differs from the Android product:
   excludes `MSEAL_SYSTEM_MAPPINGS`, which Android enables instead.
 - Smack is the exclusive LSM, with the matching `CONFIG_LSM` order, because
   the recorded LTP results depend on it. Android uses SELinux.
+- Auxiliary POSIX clocks (`CONFIG_POSIX_AUX_CLOCKS`), which Linux 6.17
+  added and LTP's `timer_create02` covers (see the Android overlay below).
 - SysV IPC, the NFS client and SCTP, which desktop software and NFS mounts
   use and Android forbids or has no use for (see the Android overlay below).
   SCTP creates no listener and the SLiRP network never forwards it, so it
@@ -607,6 +609,10 @@ The overlay holds only what differs from the Linux product:
   the overlay leaves both out, and SCTP too, which Android has no use for. The
   forbidden list also names RDS, so that no overlay brings back its
   listener.
+- Auxiliary POSIX clocks are off, as in GKI. With them, clock IDs 16 to 23
+  name the auxiliary clocks, which have no timers, so `timer_create()` on
+  clock 16 fails with `EOPNOTSUPP` where Bionic's `time.timer_create_EINVAL`
+  and the CTS expect `EINVAL`.
 - Settings the shared policy leaves to their Kconfig defaults, which the
   overlay pins: seccomp, delay accounting, utilization clamping (off), policy
   routing, XFRM interfaces and statistics, conntrack events and netlink, and

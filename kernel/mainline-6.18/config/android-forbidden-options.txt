@@ -2,7 +2,8 @@
 # These symbols must be disabled or absent from the Android product's kernel:
 # the desktop-only choices, the ACK-only features the product does without, and
 # what Android's CTS and security requirements forbid (the NFS client, SysV
-# IPC, and RDS, whose TCP transport is a kernel listener on port 16385).
+# IPC, auxiliary POSIX clocks, and RDS, whose TCP transport is a kernel
+# listener on port 16385).
 CONFIG_ANDROID_BINDER_IPC_RUST
 CONFIG_ASHMEM
 CONFIG_BPF_JIT
@@ -16,6 +17,7 @@ CONFIG_IP_PNP_DHCP
 CONFIG_IP_SCTP
 CONFIG_MODULES
 CONFIG_NFS_FS
+CONFIG_POSIX_AUX_CLOCKS
 CONFIG_RDS
 CONFIG_RDS_TCP
 CONFIG_SECURITY_SMACK

@@ -24,3 +24,7 @@ CONFIG_NFS_V4=y
 CONFIG_NFS_V4_1=y
 CONFIG_NFS_V4_2=y
 CONFIG_IP_SCTP=y
+
+# Linux 6.17's auxiliary POSIX clocks, which LTP's timer_create02 covers. The
+# Android product leaves them off, as GKI does (see android.fragment).
+CONFIG_POSIX_AUX_CLOCKS=y
