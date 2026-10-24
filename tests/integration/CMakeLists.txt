@@ -541,6 +541,18 @@ uml_add_guest_integration_test(
     TIMEOUT 420
     CPUS 4)
 
+# A parent's kernel write into its private page after fork() never reaches the
+# child: a uaccess write pins its page, so fork() copies it for the child.
+uml_add_guest_integration_test(
+    NAME guest-uaccess-fork-isolation
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/uaccess_fork_isolation_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror -pthread"
+        --ncpus 4 --probe-timeout 120
+    LABELS guest;kernel;memory
+    TIMEOUT 420
+    CPUS 4)
+
 # A system call or a fault taken with a bad stack pointer, again and again
 # on one vCPU, gets native arm64's result and never kills the task, and the
 # kernel prints no failed Darwin host call.

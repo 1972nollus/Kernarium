@@ -47,10 +47,10 @@ index 2b1a007cd64b3197b25b8d994240e0bc28379237..7d8ca4414554983e5ebeb6ad61d6e3df
  extern int raw(int fd);
  extern void setup_machinename(char *machine_out);
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index a572d49c871fec8c833bbbeac0c4da4a74b063e1..897c9dfba765617b9e1d8293dc29373d4b30ee4f 100644
+index 8e1b2d593cb65acf7f5bee3ea6259751afa8791f..1b50acbd2077fa4389b1dadfebe3e4d8fd0d0763 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -241,26 +241,20 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+@@ -269,26 +269,20 @@ static struct page *maybe_map(unsigned long virt, int is_write)
  		unsigned long long offset;
  		unsigned long phys = page_to_phys(page);
  		int fd = phys_mapping(phys, &offset);

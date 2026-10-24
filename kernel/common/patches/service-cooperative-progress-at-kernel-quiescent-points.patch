@@ -38,10 +38,10 @@ index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 6716f4aff55c2f9b630b7246dbe7124ce0b7bfd0..96b7559b9d6da9c35ba562b4d7ab349d74e35b0d 100644
+index f98d4f2ab51092ee2527b3fc8d61acdc8b77e076..34aeec80642a53b0d33567f432266eadae0b7ae9 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -158,6 +158,31 @@ static void mark_user_page_dirty(unsigned long addr, struct page *page,
+@@ -184,6 +184,31 @@ static void mark_user_page_dirty(unsigned long addr, struct page *page,
  		folio_set_dirty(folio);
  }
  
@@ -73,7 +73,7 @@ index 6716f4aff55c2f9b630b7246dbe7124ce0b7bfd0..96b7559b9d6da9c35ba562b4d7ab349d
  static struct page *maybe_map(unsigned long virt, int is_write)
  {
  	struct page *page;
-@@ -184,6 +209,10 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+@@ -210,6 +235,10 @@ static struct page *maybe_map(unsigned long virt, int is_write)
  		if (handle_page_fault(virt, 0, is_write, 1, &dummy_code) ||
  		    fatal_signal_pending(current))
  			return NULL;
@@ -82,9 +82,9 @@ index 6716f4aff55c2f9b630b7246dbe7124ce0b7bfd0..96b7559b9d6da9c35ba562b4d7ab349d
 +		darwin_uaccess_checkpoint(true);
 +#endif
  	}
- 
- #ifdef UML_HOST_DARWIN
-@@ -252,8 +281,12 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+ 	if (IS_ERR(page))
+ 		return NULL;
+@@ -280,8 +309,12 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  		page = NULL;
  	}
  #endif
@@ -98,10 +98,10 @@ index 6716f4aff55c2f9b630b7246dbe7124ce0b7bfd0..96b7559b9d6da9c35ba562b4d7ab349d
  
  #ifdef CONFIG_64BIT
  	pagefault_disable();
-@@ -284,6 +317,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -312,6 +345,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	if (is_write && n >= 0)
  		mark_user_page_dirty(user_addr, page, may_sleep);
- 	put_page(page);
+ 	unpin_user_mapping(page, is_write);
 +#ifdef UML_HOST_DARWIN
 +	darwin_uaccess_checkpoint(may_sleep);
 +#endif

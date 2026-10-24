@@ -2548,7 +2548,7 @@ index ae6b892773f3d92d13b839acb0a08ff33469371a..651022c60550de3ea6409725368e82c3
 +}
 +#endif
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 897c9dfba765617b9e1d8293dc29373d4b30ee4f..0f2eb67079123275f379e0eaddb70379a05921fc 100644
+index 1b50acbd2077fa4389b1dadfebe3e4d8fd0d0763..46992c2d4f40144dcf9cb0a0c8d1bebf6a0c44a3 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -15,6 +15,9 @@
@@ -2561,7 +2561,7 @@ index 897c9dfba765617b9e1d8293dc29373d4b30ee4f..0f2eb67079123275f379e0eaddb70379
  #include <mem_user.h>
  #include <os.h>
  #include <skas.h>
-@@ -621,3 +624,55 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -649,3 +652,55 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  	return ret;
  }
  EXPORT_SYMBOL(futex_atomic_cmpxchg_inatomic);
@@ -2613,7 +2613,7 @@ index 897c9dfba765617b9e1d8293dc29373d4b30ee4f..0f2eb67079123275f379e0eaddb70379
 +	preempt_enable();
 +
 +	mark_user_page_dirty(addr, page, true);
-+	put_page(page);
++	unpin_user_mapping(page, 1);
 +	return 0;
 +}
 +#endif
