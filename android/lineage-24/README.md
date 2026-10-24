@@ -465,6 +465,11 @@ formats the whole partition. Neither guest rewrites or refreshes a live
 partition table. There is no `super`,
 dynamic partition, Virtual A/B, AVB, OTA slot, or DLKM partition.
 
+The image keeps `/system/bin/sgdisk`, which `vold` runs for every disk it scans
+or partitions. The fstab has no `voldmanaged` entry, so `vold` never manages the
+system disk; it reaches sgdisk only for the loop-backed virtual disk of
+`sm set-virtual-disk`.
+
 The immutable Android payload filesystems and APEX payloads are ext4. Userdata
 is an ordinary unencrypted ext4 filesystem in the directly writable image; this
 emulator does not expose a hardware-backed KeyMint service and the guest bundle

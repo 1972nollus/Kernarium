@@ -182,6 +182,9 @@ REQUIRED_ENTRIES = {
     *MESA_ELF_ENTRIES,
     *MESA_HAL_ENTRIES,
     *REQUIRED_SDK_APEX_ENTRIES,
+    # vold executes sgdisk to scan and partition any disk it manages; without
+    # it every such operation fails with ENOENT.
+    "SYSTEM/bin/sgdisk",
     # The 32-bit runtime the product adds beside the 64-bit one: the second
     # zygote's process, the ART boot image of its ISA, and the bootstrap
     # linker that starts it.
@@ -334,7 +337,6 @@ FORBIDDEN_EXECUTABLE_FILENAMES = {
     "gsi_tool",
     "gsid",
     "pmgd",
-    "sgdisk",
     "snapshotctl",
     "snapuserd",
     "socket_vsock_proxy",

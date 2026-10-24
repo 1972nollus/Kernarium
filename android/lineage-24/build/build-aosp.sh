@@ -448,7 +448,6 @@ for package in \
 	gsid \
 	messaging \
 	pmg_daemon \
-	sgdisk \
 	snapshotctl \
 	snapuserd \
 	snapuserd_ramdisk \

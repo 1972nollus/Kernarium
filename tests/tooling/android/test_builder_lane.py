@@ -507,7 +507,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "SYSTEM/bin/android-fixture",
                     synthetic_aarch64_elf(alignment, edit=elf_edit),
                 )
-                for tool in ("e2fsck", "resize2fs"):
+                for tool in ("e2fsck", "resize2fs", "sgdisk"):
                     archive.writestr(
                         f"SYSTEM/bin/{tool}",
                         synthetic_aarch64_elf(alignment),
@@ -852,6 +852,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("no-64-bit-compiler", {"dex2oat64": False}),
             ("missing-32-bit-runtime",
              {"entries": {"SYSTEM/bin/app_process32": None}}),
+            ("missing-sgdisk",
+             {"entries": {"SYSTEM/bin/sgdisk": None}}),
             ("missing-32-bit-boot-image",
              {"entries": {"SYSTEM/framework/arm/boot-framework.oat": None}}),
             ("missing-32-bit-gallium-driver",
@@ -964,6 +966,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("no-64-bit-compiler-cause", {"dex2oat64": False}, "dalvik.vm.dex2oat64.enabled"),
             ("missing-32-bit-runtime-cause",
              {"entries": {"SYSTEM/bin/app_process32": None}}, "required entries are missing"),
+            ("missing-sgdisk-cause",
+             {"entries": {"SYSTEM/bin/sgdisk": None}}, "SYSTEM/bin/sgdisk"),
             ("32-bit-gallium-dependency-cause",
              {"missing_arm_gallium_dependency": True}, "does not link the gallium driver"),
             ("32-bit-egl-is-aarch64-cause",

@@ -173,7 +173,9 @@ PRODUCT_COPY_FILES += \
 
 # Remove obsolete first-party applications and packages backed by hardware
 # that the Darwin UML machine does not expose. Providers and framework APIs
-# useful to ordinary third-party applications remain installed.
+# useful to ordinary third-party applications remain installed, and so does
+# sgdisk: vold executes /system/bin/sgdisk to scan and partition any disk it
+# manages, such as the virtual disk of `sm set-virtual-disk`.
 KERNARIUM_REMOVED_PACKAGES := \
     BasicDreams \
     BluetoothMidiService \
@@ -257,7 +259,6 @@ KERNARIUM_REMOVED_PACKAGES := \
     messaging \
     pmg_daemon \
     sample_camera_extensions.xml \
-    sgdisk \
     snapshotctl \
     snapuserd \
     snapuserd_ramdisk \
