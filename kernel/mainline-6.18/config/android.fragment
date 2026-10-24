@@ -28,6 +28,8 @@ CONFIG_CRYPTO_HCTR2=y
 
 # --- Root and general-purpose filesystems -----------------------------------
 CONFIG_UNICODE=y
+# The CTS requires that no NFS client filesystem is registered.
+# CONFIG_NFS_FS is not set
 # MediaProvider serves shared storage through FUSE and names the file under
 # each FUSE path, so that an app's FileObserver sees the changes MediaProvider
 # and other writers make to the underlying file. The desktop product's FUSE
@@ -63,6 +65,9 @@ CONFIG_VIRTIO_DMA_SHARED_BUFFER=y
 
 # --- Processes, scheduling, and namespaces ----------------------------------
 # CONFIG_CHECKPOINT_RESTORE is not set
+# Android implements no SysV IPC: its CTS and Bionic tests expect ENOSYS from
+# the msg, sem and shm calls and no /proc/sysvipc.
+# CONFIG_SYSVIPC is not set
 # system_server moves apps between the cpu, cpuset and blkio groups of its
 # scheduling classes without running as root. Without this every move fails
 # with EACCES and apps never leave the groups their zygote child gave them.
@@ -77,6 +82,8 @@ CONFIG_TASK_DELAY_ACCT=y
 # CONFIG_UCLAMP_TASK_GROUP is not set
 
 # --- Core networking --------------------------------------------------------
+# Android has no use for SCTP, which the Linux product keeps.
+# CONFIG_IP_SCTP is not set
 CONFIG_IP_ADVANCED_ROUTER=y
 CONFIG_IP_MULTIPLE_TABLES=y
 CONFIG_IPV6_MULTIPLE_TABLES=y

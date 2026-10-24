@@ -115,6 +115,17 @@ The Linux overlay holds only what differs from the Android product:
   excludes `MSEAL_SYSTEM_MAPPINGS`, which Android enables instead.
 - Smack is the exclusive LSM, with the matching `CONFIG_LSM` order, because
   the recorded LTP results depend on it. Android uses SELinux.
+- SysV IPC, the NFS client and SCTP, which desktop software and NFS mounts
+  use and Android forbids or has no use for (see the Android overlay below).
+  SCTP creates no listener and the SLiRP network never forwards it, so it
+  joins endpoints inside the guest.
+
+Every product has IPv4 multicast, which Kconfig leaves off and mDNS and SSDP
+discovery need, and SafeSetID, which restricts only the IDs a policy written
+to securityfs names. No product has RDS: its TCP transport opens a kernel
+listener on port 16385 in every network namespace for any local user to
+reach, and nothing in a guest uses it, so the LTP case that needs it,
+`recvmsg03`, is in `disabled-tests.tsv`.
 
 DWARF stays uncompressed in both products, in the shared policy, for the Darwin
 host's pahole, whose elfutils is built without zstd.
@@ -590,6 +601,11 @@ The overlay holds only what differs from the Linux product:
   the network statistics path, socket destruction for netd, further xtables
   matches and targets, the gpu_mem tracepoints, the Kernarium battery, and hvc
   for the single-port Virtio console.
+- Android's CTS requires that SysV IPC (`CONFIG_SYSVIPC`, whose system calls
+  must answer `ENOSYS`) and the NFS client (`CONFIG_NFS_FS`) are absent, so
+  the overlay leaves both out, and SCTP too, which Android has no use for. The
+  forbidden list also names RDS, so that no overlay brings back its
+  listener.
 - Settings the shared policy leaves to their Kconfig defaults, which the
   overlay pins: seccomp, delay accounting, utilization clamping (off), policy
   routing, XFRM interfaces and statistics, conntrack events and netlink, and

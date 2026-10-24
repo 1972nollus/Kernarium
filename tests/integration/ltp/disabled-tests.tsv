@@ -52,6 +52,7 @@ syscalls	cachestat03	Requires CONFIG_HUGETLBFS, which is intentionally disabled 
 syscalls	futex_wake04	Requires CONFIG_HUGETLBFS, which is intentionally disabled for Darwin UML
 syscalls	memfd_create03	Requires CONFIG_HUGETLBFS, which is intentionally disabled for Darwin UML
 syscalls	memfd_create04	Requires CONFIG_HUGETLBFS, which is intentionally disabled for Darwin UML
+syscalls	recvmsg03	Requires CONFIG_RDS, which is intentionally disabled for Darwin UML
 controllers	cgroup_fj_function_hugetlb	Requires CONFIG_HUGETLBFS, which is intentionally disabled for Darwin UML
 hugetlb	hugefallocate01	Requires CONFIG_HUGETLBFS, which is intentionally disabled for Darwin UML
 hugetlb	hugefallocate02	Requires CONFIG_HUGETLBFS, which is intentionally disabled for Darwin UML
