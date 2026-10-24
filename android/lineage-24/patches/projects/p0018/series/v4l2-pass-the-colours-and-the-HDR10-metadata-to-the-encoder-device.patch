@@ -307,7 +307,7 @@ index bf207e895c9311bdf8413683acb61f90394af60d..d05f1caa5e6624e5ac1a237f6a6ab248
  
      // The InputFrame class can be used to store raw video frames.
 diff --git a/v4l2/V4L2Device.cpp b/v4l2/V4L2Device.cpp
-index a9ff06399514aa2c92d0f47662b5fe94d59bce38..a28cbc01eeeebc7e39e8175178a3d2e434d0714a 100644
+index a9ff06399514aa2c92d0f47662b5fe94d59bce38..ac4b8876c4c7c6ca09e6d770f8ec6310dc8cda81 100644
 --- a/v4l2/V4L2Device.cpp
 +++ b/v4l2/V4L2Device.cpp
 @@ -95,6 +95,11 @@ V4L2ExtCtrl::V4L2ExtCtrl(uint32_t id, int32_t val) : V4L2ExtCtrl(id) {
@@ -340,10 +340,10 @@ index a9ff06399514aa2c92d0f47662b5fe94d59bce38..a28cbc01eeeebc7e39e8175178a3d2e4
      if (mDevice->ioctl(VIDIOC_S_FMT, &format) != 0 || format.fmt.pix_mp.pixelformat != fourcc) {
          ALOGEQ("Failed to set format (format_fourcc=0x%" PRIx32 ")", fourcc);
          return std::nullopt;
-@@ -1877,6 +1889,93 @@ int32_t V4L2Device::h264LevelIdcToV4L2H264Level(uint8_t levelIdc) {
+@@ -1876,6 +1888,93 @@ int32_t V4L2Device::h264LevelIdcToV4L2H264Level(uint8_t levelIdc) {
+     }
  }
  
- // static
 +// static
 +V4L2Colorimetry V4L2Device::c2ColorAspectsToV4L2Colorimetry(C2Color::range_t range,
 +                                                            C2Color::primaries_t primaries,
@@ -431,9 +431,9 @@ index a9ff06399514aa2c92d0f47662b5fe94d59bce38..a28cbc01eeeebc7e39e8175178a3d2e4
 +    return colorimetry;
 +}
 +
+ // static
  v4l2_mpeg_video_bitrate_mode V4L2Device::c2BitrateModeToV4L2BitrateMode(
          C2Config::bitrate_mode_t bitrateMode) {
-     switch (bitrateMode) {
 @@ -2490,6 +2589,28 @@ void V4L2Device::queryEncoderControls(VideoCodec codec, uint32_t pixFmt,
      if (isCtrlExposed(isHEVC ? V4L2_CID_MPEG_VIDEO_HEVC_LEVEL : V4L2_CID_MPEG_VIDEO_H264_LEVEL)) {
          caps->supportedLevels = queryC2Levels(pixFmt);
