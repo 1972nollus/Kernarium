@@ -8,7 +8,7 @@ investigation date.
 | Architecture, dependency direction, runtime boundaries | [`architecture.md`](architecture.md) |
 | Build, test, guest, sanitizer, and package entry points | [`testing.md`](testing.md) |
 | Apple graphics support and limits | [`graphics.md`](graphics.md) |
-| Virtio video decoding and private wire contract | [`../darwin/device/video/README.md`](../darwin/device/video/README.md) and [`../kernel/common/video/README.md`](../kernel/common/video/README.md) |
+| Virtio video decoding, encoding and the private wire contract | [`../darwin/device/video/README.md`](../darwin/device/video/README.md) and [`../kernel/common/video/README.md`](../kernel/common/video/README.md) |
 | Guest VA-API backend over the video decoder | [`../tools/video/va-v4l2/README.md`](../tools/video/va-v4l2/README.md) |
 | Attempted performance work | [`optimization-history.md`](optimization-history.md) |
 | Performance tools, probes, and profilers | [`../tests/perf/README.md`](../tests/perf/README.md) |

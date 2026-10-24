@@ -8,6 +8,7 @@
 #include "wire_bytes.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -33,6 +34,21 @@ using uml::testing::load;
  * page boundaries and split the encoded input across two pages; the device
  * itself never sees a page size. */
 constexpr std::size_t page = 4096;
+/* The encoder commands are laid out for a kernel that compiles the same
+ * header, so each structure keeps its size and every 64-bit member its
+ * natural alignment, with no compiler padding to disagree about. */
+static_assert(sizeof(virtio_video_query_v4l2_controls) == 16);
+static_assert(sizeof(virtio_video_query_v4l2_controls_resp) == 16);
+static_assert(sizeof(virtio_video_v4l2_control_desc) == 64);
+static_assert(offsetof(virtio_video_v4l2_control_desc, menu_skip_mask) == 40);
+static_assert(offsetof(virtio_video_v4l2_control_desc, coded_formats) == 56);
+static_assert(sizeof(virtio_video_v4l2_control_value) == 16);
+static_assert(sizeof(virtio_video_v4l2_controls) == 16);
+static_assert(sizeof(virtio_video_v4l2_controls_resp) == 16);
+static_assert(sizeof(virtio_video_stream_info) == 32);
+static_assert(sizeof(virtio_video_set_stream_info) == 40);
+static_assert(sizeof(virtio_video_get_stream_info) == 16);
+static_assert(sizeof(virtio_video_get_stream_info_resp) == 40);
 /* Neighbouring samples differ along both axes, so a plane copied with the
  * wrong stride cannot reproduce the picture: every destination row would hold
  * a window that starts at the wrong sample. A flat fill survives any stride
@@ -311,6 +327,32 @@ void codecLevelControls()
                 VIRTIO_VIDEO_LEVEL_HEVC_6_2), "level belongs to the wrong codec");
         }
     }
+}
+
+/* The encoder's commands share this header, but a decoder never offers
+ * VIRTIO_VIDEO_F_V4L2_CONTROLS, and one that receives such a command anyway
+ * answers an error and leaves its stream as it was. */
+void decoderRejectsEncoderCommands()
+{
+    VideoFixture video(7, 4 * page, [](auto) { return std::make_unique<Decoder>(false); });
+    require((video.device.features() & (1ull << VIRTIO_VIDEO_F_V4L2_CONTROLS)) == 0,
+            "a decoder offered the encoder control feature");
+    video.createStream();
+    const auto rejected = [&video](const auto& value, const char* what) {
+        require(load<virtio_video_cmd_hdr>(video.command(value).response).type >=
+                VIRTIO_VIDEO_RESP_ERR_INVALID_OPERATION, what);
+    };
+    rejected(virtio_video_query_v4l2_controls{{VIRTIO_VIDEO_CMD_QUERY_V4L2_CONTROLS, 0}, 0, {}},
+             "a decoder answered a control query");
+    rejected(virtio_video_v4l2_controls{{VIRTIO_VIDEO_CMD_SET_V4L2_CONTROLS, video.stream}, 0, {}},
+             "a decoder accepted control values");
+    rejected(virtio_video_get_stream_info{{VIRTIO_VIDEO_CMD_GET_STREAM_INFO, video.stream},
+                                          VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, {}},
+             "a decoder answered a stream information query");
+    rejected(virtio_video_set_stream_info{{VIRTIO_VIDEO_CMD_SET_STREAM_INFO, video.stream},
+                                          {VIRTIO_VIDEO_QUEUE_TYPE_INPUT, 1, 30, 0, 0, 0, 0, {}}},
+             "a decoder accepted stream information");
+    video.setOutputFormat(VIRTIO_VIDEO_FORMAT_NV12);
 }
 
 /* The activity log is how an observer outside the guest tells a real hardware
@@ -1098,6 +1140,7 @@ int main()
 {
     try {
         codecLevelControls();
+        decoderRejectsEncoderCommands();
         capabilityMasks();
         sharedMemoryCapture();
         for (const bool decoderPacks : {true, false})
