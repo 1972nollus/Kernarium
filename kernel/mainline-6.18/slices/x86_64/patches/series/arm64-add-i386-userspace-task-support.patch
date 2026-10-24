@@ -105,7 +105,7 @@ index d2b7d4874a237154ad994c0f6689733579948c5e..2cc6a971387eb3223b0434afe436e39f
  config KUSER_HELPERS
  	bool "Enable kuser helpers page for 32-bit applications"
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index 6421e5c3f00b847682a16d31c9263deced9440de..43e54d19ab21df8276c0baf338183b1827dd77b3 100644
+index 078c348206ff2ec16ca5300fe7bb420108b020cc..4da74bbf11696fd01ab5ba37bdc67cfe9bca6ae7 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
 @@ -6,22 +6,29 @@ obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
@@ -138,8 +138,8 @@ index 6421e5c3f00b847682a16d31c9263deced9440de..43e54d19ab21df8276c0baf338183b18
 -targets += x86_syscalls_64.h
 +targets += x86_syscalls_32.h x86_syscalls_64.h
  
- $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
- targets += user-offsets.s
+ # The emulation tracepoint is arm64 Linux's own.
+ CFLAGS_armv8_deprecated.o := -I$(srctree)/arch/arm64/kernel
 diff --git a/arch/arm64/um/asm/compat-abi.h b/arch/arm64/um/asm/compat-abi.h
 index 2b50984d56d48945c5485c230fdf7348b6963e33..6fd5df2e757ef1b0e51b8bd1e312e73dc5c206d2 100644
 --- a/arch/arm64/um/asm/compat-abi.h
@@ -2589,7 +2589,7 @@ index 9ff2fa2288c4a59014725de16b21af4e5816ba23..766807e1ee60ea42848e8159bdfc5123
  	/*
  	 * If no time passes, then sched_yield may not actually yield, causing
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 3d99882fe2bff1d2ffde08dba56ed394e57f745b..4ae759c65d830f96026b8be0af635f99b508d0c5 100644
+index 27a1851bf97b3fdcbcfdcd8d90df12dea7fa7fe9..720f4479b1557a2a340dd30bf53588281fd2e1f0 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -436,6 +436,10 @@ void userspace(struct uml_pt_regs *registers)

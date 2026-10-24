@@ -102,7 +102,7 @@ set(_uml_a32_probe_complete_asm_flags
 
 set(_uml_a32_probe_object_files)
 foreach(_name IN ITEMS runtime groups basic interwork signals kuser tls
-        cacheflush faults ill ptrace atomics absent simd complete)
+        cacheflush faults ill ptrace swp atomics absent simd complete)
     set(_source "${_uml_a32_probe_directory}/engine_probe_${_name}.cpp")
     set(_object "${_uml_a32_probe_objects}/${_name}.o")
     add_custom_command(
@@ -118,7 +118,7 @@ endforeach()
 # Assembly: the simd file needs VFP and NEON, the complete ones the Armv8.2
 # extensions, and the rest nothing but the integer instruction set.
 foreach(_name IN ITEMS start threads basic interwork signals kuser
-        cacheflush faults ill ptrace atomics simd absent_complete complete)
+        cacheflush faults ill ptrace swp atomics simd absent_complete complete)
     if(_name MATCHES "_complete$|^complete$")
         set(_flags ${_uml_a32_probe_complete_asm_flags})
     elseif(_name STREQUAL "simd")

@@ -219,3 +219,68 @@
 	body_monitor
 	func_thumb at_monitor_thumb
 	body_monitor
+
+@ ---- u32 at_swap_<kind>(void *p, u32 token, u32 n): n exchanges of a token ----
+@ Each exchange stores the token the thread holds and takes the one that was
+@ there, so the tokens of all threads and the word stay a permutation of what
+@ they began as unless an exchange or a store is lost. Returns the token held
+@ at the end. SWP and SWPB exist in A32 only, and are emulated by the kernel
+@ while abi.swp is 1.
+	func_arm at_swap_swp_arm
+1:	swp	r1, r1, [r0]
+	subs	r2, r2, #1
+	bne	1b
+	mov	r0, r1
+	bx	lr
+
+	func_arm at_swap_swpb_arm
+1:	swpb	r1, r1, [r0]
+	subs	r2, r2, #1
+	bne	1b
+	and	r0, r1, #0xff
+	bx	lr
+
+	.macro	body_swap_ldrex
+1:	ldrex	r3, [r0]
+	strex	r12, r1, [r0]
+	cmp	r12, #0
+	bne	1b
+	mov	r1, r3
+	subs	r2, r2, #1
+	bne	1b
+	mov	r0, r1
+	bx	lr
+	.endm
+
+	func_arm at_swap_ldrex_arm
+	body_swap_ldrex
+	func_thumb at_swap_ldrex_thumb
+	body_swap_ldrex
+
+@ The same through the kernel's cmpxchg helper: replace the word if it still
+@ holds the value just read.
+	.macro	body_swap_cmpxchg
+	push	{r4-r7, lr}
+	mov	r4, r0
+	mov	r5, r1
+	mov	r6, r2
+1:	ldr	r7, [r4]
+	mov	r0, r7
+	mov	r1, r5
+	mov	r2, r4
+	movw	r3, #0x0fc0
+	movt	r3, #0xffff
+	blx	r3
+	cmp	r0, #0
+	bne	1b
+	mov	r5, r7
+	subs	r6, r6, #1
+	bne	1b
+	mov	r0, r5
+	pop	{r4-r7, pc}
+	.endm
+
+	func_arm at_swap_cmpxchg_arm
+	body_swap_cmpxchg
+	func_thumb at_swap_cmpxchg_thumb
+	body_swap_cmpxchg

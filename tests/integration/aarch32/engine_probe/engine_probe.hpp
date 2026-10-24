@@ -312,6 +312,17 @@ bool under_qemu();
  * "[sigpage]"): its start and end. */
 bool find_mapping(const char *name, word *start, word *end);
 
+/* ---- abi.swp ---- */
+
+/* The value of /proc/sys/abi/swp (0: SWP and SWPB raise SIGILL, 1: the kernel
+ * emulates them), or a negative errno. */
+long swp_setting();
+/* Writes it; false when the write is refused, as it is to a shell. The first
+ * write of a process remembers the value it found, and restore_swp() puts that
+ * back; quit() calls it, and only the process that wrote it restores it. */
+bool swp_set(int value);
+void restore_swp();
+
 /* ---- helpers every group uses ---- */
 
 word mmap_pages(word length, word protection, word flags = map_private | map_anonymous);
@@ -357,6 +368,8 @@ struct Caught {
 	word address;
 	word pc;
 	word cpsr;
+	/* The sigcontext's fault_address. */
+	word fault_address;
 };
 extern Caught caught;
 
@@ -389,6 +402,7 @@ void group_cacheflush();
 void group_faults();
 void group_ill();
 void group_ptrace();
+void group_swp();
 void group_atomics();
 void group_simd();
 void group_armv8_fp();

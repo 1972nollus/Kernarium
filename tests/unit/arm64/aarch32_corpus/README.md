@@ -130,7 +130,9 @@ no floating point or SIMD):
 - `system`: barriers, hints, CPS, the APSR instructions, TPIDRURO, TPIDRURW,
   the CP15 barriers, BKPT and the encodings Linux turns into SIGTRAP;
 - `absent`: UNDEFINED, UNPREDICTABLE, unallocated and absent-feature
-  encodings raise SIGILL; SVC raises the system-call event.
+  encodings raise SIGILL, SWP and SWPB under every condition among them
+  (the guest kernel emulates them behind `abi.swp`); SVC raises the
+  system-call event.
 
 On a boundary (any level):
 

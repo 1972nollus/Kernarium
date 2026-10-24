@@ -35,7 +35,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  arch/arm64/um/asm/user.h              |  29 +-
  arch/arm64/um/mmap.c                  | 128 ++++
  arch/arm64/um/ptrace.c                | 265 ++++-----
- arch/arm64/um/shared/sysdep/ptrace.h  | 176 ++++--
+ arch/arm64/um/shared/sysdep/ptrace.h  | 187 ++++--
  arch/arm64/um/signal.c                | 622 ++++++++++++++------
  arch/arm64/um/tls.c                   |  10 +-
  arch/arm64/um/x86_64_syscalls.c       | 806 ++++++++++++++++++++++++++
@@ -50,7 +50,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
  include/linux/fs.h                    |   2 +
- 26 files changed, 2004 insertions(+), 532 deletions(-)
+ 26 files changed, 2004 insertions(+), 543 deletions(-)
  create mode 100644 arch/arm64/um/asm/unistd.h
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
@@ -93,7 +93,7 @@ index e195e71dc38a3774ed660e4f7b722f6fe50705da..d2b7d4874a237154ad994c0f66897335
  	select AUDIT_ARCH_COMPAT_GENERIC
  	select COMPAT_OLD_SIGACTION
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index bc1a5cf91ff8dac93986b266eadbe3f193a8c616..6421e5c3f00b847682a16d31c9263deced9440de 100644
+index 52e93d87551bb9ede3c0a780eabe8d66a1061475..078c348206ff2ec16ca5300fe7bb420108b020cc 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
 @@ -1,10 +1,27 @@
@@ -123,8 +123,8 @@ index bc1a5cf91ff8dac93986b266eadbe3f193a8c616..6421e5c3f00b847682a16d31c9263dec
 +
 +targets += x86_syscalls_64.h
  
- $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
- targets += user-offsets.s
+ # The emulation tracepoint is arm64 Linux's own.
+ CFLAGS_armv8_deprecated.o := -I$(srctree)/arch/arm64/kernel
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
 index 2dc1b1be43dca961e4ce25ff7b2407caa3ccf894..3bfa08cbdb8451ae06f112a645439aa7fccbdbf6 100644
 --- a/arch/arm64/um/asm/elf.h
@@ -1027,7 +1027,7 @@ index e4c01527abe73ff1a238096db6bc3f60ba7819eb..9b5193e03c41bc20f551bb236f9d96f7
 +	return &uml_x86_64_view;
  }
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1be3d230de 100644
+index 8e88cd3dd6089d2b90aa105b5567ef3f8a88caa2..d233d6e25a6672ef1f94c0df52d51b1be3d230de 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
 @@ -22,29 +22,25 @@
@@ -1079,7 +1079,7 @@ index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1b
  
  struct uml_pt_regs {
  	unsigned long gp[MAX_REG_NR];
-@@ -69,34 +65,136 @@ struct uml_pt_regs {
+@@ -69,45 +65,136 @@ struct uml_pt_regs {
  	unsigned long compat_tls[3][2];
  	/*
  	 * TPIDRURO of an AArch32 task, in bits 31:0, which the host reads and
@@ -1228,6 +1228,17 @@ index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1b
 -extern int uml_arm64_aarch32_break(struct uml_pt_regs *regs);
 -/* Whether abi.cp15_barrier lets an AArch32 task execute CP15 barriers. */
 -extern int uml_arm64_cp15_barrier_enabled(void);
+-
+-/*
+- * What uml_arm64_aarch32_emulate() made of the undefined instruction at an
+- * AArch32 task's pc (armv8_deprecated.c): it is not one the kernel emulates
+- * here, so the task gets SIGILL; it was emulated and the pc is past it; or
+- * it raised a signal itself and left the pc at the instruction.
+- */
+-#define UML_ARM64_A32_UNDEFINED 0
+-#define UML_ARM64_A32_RETIRED 1
+-#define UML_ARM64_A32_SIGNALLED 2
+-extern int uml_arm64_aarch32_emulate(struct uml_pt_regs *regs);
 -
  extern unsigned long host_fp_size;
  extern int arch_init_registers(int pid);
@@ -2916,7 +2927,7 @@ index 67bb5bc16c01d7a95ca2b3aa82d21b3b0b4f5e9d..4fabe9205a7a023142b01450a4730433
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 7d81a61fc00d443796cac2e18323851da910ba6c..3d99882fe2bff1d2ffde08dba56ed394e57f745b 100644
+index 3c1e95c811b6f5a0d237723edd5148fd42d1f2e1..27a1851bf97b3fdcbcfdcd8d90df12dea7fa7fe9 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -77,12 +77,24 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
@@ -3042,9 +3053,9 @@ index 7d81a61fc00d443796cac2e18323851da910ba6c..3d99882fe2bff1d2ffde08dba56ed394
  			registers->faultinfo.trap_no = 0;
 +#endif
  #ifdef CONFIG_UML_ARM64_AARCH32
- 			/* The three encodings a debugger plants on an AArch32
- 			 * program are breakpoints, as on arm64 Linux. */
-@@ -625,16 +692,52 @@ void userspace(struct uml_pt_regs *registers)
+ 			if (UPT_AARCH32(registers)) {
+ 				/* The three encodings a debugger plants on an
+@@ -647,16 +714,52 @@ void userspace(struct uml_pt_regs *registers)
  			int stepped = registers->faultinfo.trap_no ==
  				DARWIN_GUEST_SOFTWARE_STEP;
  

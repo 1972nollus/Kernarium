@@ -19,7 +19,10 @@ The profile is Armv8-A AArch32 at EL0 (see
 [`../../../../docs/a32-instruction-coverage.md`](../../../../docs/a32-instruction-coverage.md)).
 The decoder implements these choices on top of the XML:
 
-- SWP and SWPB, which Armv8 AArch32 does not have, decode as unallocated;
+- SWP and SWPB, which Armv8 AArch32 does not have, decode as unallocated, so
+  an engine raises the undefined-instruction event for them whatever the
+  condition and leaves the choice to the guest kernel, which emulates them
+  behind `abi.swp` ([`kernel/common/README.md`](../../../../kernel/common/README.md));
   SETEND, SETPAN, SRS, RFE, ERET, HVC, SMC, HLT, DCPS, the banked-register and
   user-register forms of MRS, MSR, LDM and STM, and LDC and STC are undefined
   at EL0;

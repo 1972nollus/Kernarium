@@ -11,11 +11,13 @@ Keep page-table synchronization, precise nested invalidation ranges, same-proces
  arch/um/kernel/skas/mmu.c        |  33 ++-
  arch/um/kernel/skas/mmu_darwin.c |  98 +++++++
  arch/um/kernel/skas/process.c    |  90 +++++-
- arch/um/kernel/skas/uaccess.c    | 327 +++++++++++++++++----
+ arch/um/kernel/skas/uaccess.c    | 359 +++++++++++++++++++----
  arch/um/kernel/tlb.c             | 489 +++++++++++++++++++++++++++++--
  arch/um/kernel/trap.c            |  58 +++-
+ include/linux/mm.h               |   2 +
+ mm/gup.c                         |  47 +++
  mm/mmu_gather.c                  |   7 +-
- 10 files changed, 1011 insertions(+), 112 deletions(-)
+ 12 files changed, 1092 insertions(+), 112 deletions(-)
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
 diff --git a/arch/um/include/asm/tlb.h b/arch/um/include/asm/tlb.h
@@ -389,10 +391,10 @@ index 5881b17eb9874256cef33ca69643aa0f737e4cab..5e153236cbc104c5ac60297c9de16773
 +	return 0;
  }
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b006597d9f6591 100644
+index 198269e384c43b174208d683ec4f18242d726fac..f98d4f2ab51092ee2527b3fc8d61acdc8b77e076 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -7,72 +7,250 @@
+@@ -7,72 +7,282 @@
  #include <linux/highmem.h>
  #include <linux/mm.h>
  #include <linux/module.h>
@@ -466,7 +468,21 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  		return NULL;
 +	return pte_offset_map_lock(walk->mm, pmd, addr, ptlp);
 +}
-+
+ 
+-	return pte_offset_kernel(pmd, addr);
++/*
++ * The page a present PTE of mm maps at addr with the access is_write needs,
++ * NULL when it maps none, or ERR_PTR(-EFAULT) when it cannot be held.
++ *
++ * The access goes through the kernel's alias of the page after the PTE lock
++ * is gone, so nothing in the page table stops it.  A read only needs the page
++ * kept alive.  A write takes a FOLL_PIN under the PTE lock: a sibling's fork()
++ * copies the PTE under that lock and, seeing the pin, gives the child its own
++ * copy of the page instead of sharing it read-only.  Otherwise the write,
++ * still landing in the shared page, would reach the child, and a parent that
++ * broke the copy-on-write first would lose it.  Release with
++ * unpin_user_mapping().
++ */
 +static struct page *pin_user_mapping(struct mm_struct *mm, unsigned long addr,
 +				     int is_write)
 +{
@@ -474,8 +490,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
 +	spinlock_t *ptl;
 +	pte_t *ptep;
 +	struct page *page = NULL;
- 
--	return pte_offset_kernel(pmd, addr);
++
 +	if (mm == NULL)
 +		return NULL;
 +
@@ -488,7 +503,11 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
 +		if (pte_present(value) &&
 +		    (is_write ? pte_write(value) : pte_read(value))) {
 +			page = pte_page(value);
-+			get_page(page);
++			if (!is_write)
++				get_page(page);
++			else if (pin_folio_from_locked_pte(mm,
++							  page_folio(page)))
++				page = ERR_PTR(-EFAULT);
 +		}
 +		pte_unmap_unlock(ptep, ptl);
 +	}
@@ -497,6 +516,15 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  }
  
 -static pte_t *maybe_map(unsigned long virt, int is_write)
++/* Drop what pin_user_mapping() took for an access of this direction. */
++static void unpin_user_mapping(struct page *page, int is_write)
++{
++	if (is_write)
++		unpin_folio_from_locked_pte(page_folio(page));
++	else
++		put_page(page);
++}
++
 +/*
 + * Mark a page written through its kernel alias dirty, after the write.  The
 + * write bypassed the user PTE, so writeback can have cleaned the folio since
@@ -547,11 +575,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
 +	ptep = user_walk_lock_pte(&walk, addr, &ptl);
 +	if (ptep != NULL) {
 +		pte_t value = ptep_get(ptep);
- 
--	if ((pte == NULL) || !pte_present(*pte) ||
--	    (is_write && !pte_write(*pte))) {
--		err = handle_page_fault(virt, 0, is_write, 1, &dummy_code);
--		if (err)
++
 +		if (pte_present(value) && pte_page(value) == page) {
 +			folio_mark_dirty(folio);
 +			marked = true;
@@ -562,7 +586,11 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
 +	if (!marked && (folio_test_anon(folio) || folio_test_swapbacked(folio)))
 +		folio_set_dirty(folio);
 +}
-+
+ 
+-	if ((pte == NULL) || !pte_present(*pte) ||
+-	    (is_write && !pte_write(*pte))) {
+-		err = handle_page_fault(virt, 0, is_write, 1, &dummy_code);
+-		if (err)
 +static struct page *maybe_map(unsigned long virt, int is_write)
 +{
 +	struct page *page;
@@ -575,22 +603,27 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
 +	 * pin_user_mapping() samples the entry under the appropriate page-table
 +	 * lock and returns a reference without changing the long-standing UML
 +	 * fault contract.  On a miss, handle_page_fault() still performs demand
-+	 * paging, COW, and stack expansion; the second lookup then pins the
-+	 * resulting base page.
++	 * paging, COW, and stack expansion, and the lookup runs again.
++	 *
++	 * The fault and that lookup do not share one hold of mmap_lock.  A
++	 * sibling's fork() queued behind the fault takes the lock first and
++	 * write-protects every private PTE again, and reclaim or migration can
++	 * unmap the page without the lock at all.  Native uaccess re-executes
++	 * its access after every fault until the fault handler gives up, so a
++	 * miss here likewise ends only when handle_page_fault() fails or the
++	 * task is dying; a lost race is never -EFAULT.
 +	 */
-+	page = pin_user_mapping(current->mm, virt, is_write);
-+	if (page == NULL) {
-+		if (handle_page_fault(virt, 0, is_write, 1, &dummy_code))
-+			return NULL;
-+		page = pin_user_mapping(current->mm, virt, is_write);
-+		if (page == NULL)
++	while ((page = pin_user_mapping(current->mm, virt, is_write)) == NULL) {
++		if (handle_page_fault(virt, 0, is_write, 1, &dummy_code) ||
++		    fatal_signal_pending(current))
  			return NULL;
 -		pte = virt_to_pte(current->mm, virt);
  	}
 -	if (!pte_present(*pte))
 -		pte = NULL;
- 
--	return pte;
++	if (IS_ERR(page))
++		return NULL;
++
 +#ifdef UML_HOST_DARWIN
 +	/* A task can resume inside a syscall after a child left a different mm
 +	 * active.  Restore the current generation and verify that a concurrently
@@ -626,12 +659,13 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
 +			goto fail;
 +	}
 +#endif
-+
+ 
+-	return pte;
 +	return page;
 +
 +#ifdef UML_HOST_DARWIN
 +fail:
-+	put_page(page);
++	unpin_user_mapping(page, is_write);
 +	return NULL;
 +#endif
  }
@@ -657,7 +691,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
 +	 */
 +	if (page != NULL && darwin_uml_vm_sync_from_backing(
 +			(unsigned long)page_address(page)) < 0) {
-+		put_page(page);
++		unpin_user_mapping(page, is_write);
 +		page = NULL;
 +	}
 +#endif
@@ -668,7 +702,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	addr = (unsigned long) page_address(page) +
-@@ -89,6 +267,19 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -89,6 +299,19 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	kunmap_atomic((void *)addr);
  #endif
  
@@ -684,11 +718,11 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
 +
 +	if (is_write && n >= 0)
 +		mark_user_page_dirty(user_addr, page, may_sleep);
-+	put_page(page);
++	unpin_user_mapping(page, is_write);
  	return n;
  }
  
-@@ -223,7 +414,7 @@ long strnlen_user(const char __user *str, long len)
+@@ -223,7 +446,7 @@ long strnlen_user(const char __user *str, long len)
  	int count = 0, n;
  
  	if (!access_ok(str, 1))
@@ -697,7 +731,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  	n = buffer_op((unsigned long) str, len, 0, strnlen_chunk, &count);
  	if (n == 0)
  		return count + 1;
-@@ -250,20 +441,20 @@ EXPORT_SYMBOL(strnlen_user);
+@@ -250,20 +473,20 @@ EXPORT_SYMBOL(strnlen_user);
  
  int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
  {
@@ -724,7 +758,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	addr = (unsigned long) page_address(page) +
-@@ -273,37 +464,46 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
+@@ -273,37 +496,46 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
  		((unsigned long) addr & ~PAGE_MASK);
  #endif
  	uaddr = (u32 *) addr;
@@ -789,11 +823,11 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  	preempt_enable();
 +	if (ret == 0)
 +		mark_user_page_dirty(user_addr, page, false);
-+	put_page(page);
++	unpin_user_mapping(page, 1);
  
  	if (ret == 0)
  		*oval = oldval;
-@@ -331,18 +531,17 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -331,18 +563,17 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  			      u32 oldval, u32 newval)
  {
  	struct page *page;
@@ -816,7 +850,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	uaddr = page_address(page) + (((unsigned long) uaddr) & ~PAGE_MASK);
-@@ -350,9 +549,8 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -350,9 +581,8 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  	uaddr = kmap_atomic(page) + ((unsigned long) uaddr & ~PAGE_MASK);
  #endif
  
@@ -828,7 +862,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  
  #ifdef CONFIG_64BIT
  	pagefault_enable();
-@@ -361,8 +559,11 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -361,8 +591,11 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  #endif
  	ret = 0;
  
@@ -837,7 +871,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
 +	/* A failed compare wrote nothing. */
 +	if (ret == 0 && *uval == oldval)
 +		mark_user_page_dirty(user_addr, page, false);
-+	put_page(page);
++	unpin_user_mapping(page, 1);
  	return ret;
  }
  EXPORT_SYMBOL(futex_atomic_cmpxchg_inatomic);
@@ -1583,6 +1617,77 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..433b6fda3da3428817c1ca7e81304b6b
  	show_segv_info(regs);
  
  	if (err == -EACCES) {
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index 2c0503bbcc1902d1558bedbbdb658c84d10e7f42..a27d472d699f63eb45bf8f5dcb35ecc3f456448b 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -1631,6 +1631,8 @@ static inline void put_page(struct page *page)
+ #define GUP_PIN_COUNTING_BIAS (1U << 10)
+ 
+ void unpin_user_page(struct page *page);
++int pin_folio_from_locked_pte(struct mm_struct *mm, struct folio *folio);
++void unpin_folio_from_locked_pte(struct folio *folio);
+ void unpin_folio(struct folio *folio);
+ void unpin_user_pages_dirty_lock(struct page **pages, unsigned long npages,
+ 				 bool make_dirty);
+diff --git a/mm/gup.c b/mm/gup.c
+index 2264a36bc773f84cb3408cacc8bebc85d20bcba0..1c06cf8ab1b0e41357823fe715c93c24492a52a5 100644
+--- a/mm/gup.c
++++ b/mm/gup.c
+@@ -482,6 +482,53 @@ static inline void mm_set_has_pinned_flag(struct mm_struct *mm)
+ 		mm_flags_set(MMF_HAS_PINNED, mm);
+ }
+ 
++/**
++ * pin_folio_from_locked_pte() - FOLL_PIN a folio that a locked PTE maps.
++ * @mm:    the mm whose page table maps @folio
++ * @folio: the folio a present PTE of @mm maps
++ *
++ * The caller holds that PTE's lock, so fork(), which copies the PTE under the
++ * same lock, sees the pin and gives the child a copy of an exclusive
++ * anonymous page instead of sharing it.  An architecture whose uaccess writes
++ * a user page through the kernel's alias of it, after the PTE lock is gone,
++ * needs that so its write cannot reach a child forked meanwhile.
++ *
++ * The pin lasts for one access, so unlike a GUP pin it is not counted in
++ * nr_foll_pin_acquired: that node statistic disables interrupts on an
++ * architecture without a local cmpxchg.  Release it with
++ * unpin_folio_from_locked_pte().
++ *
++ * Return: 0, or -ENOMEM if @folio has no reference to add to.
++ */
++int pin_folio_from_locked_pte(struct mm_struct *mm, struct folio *folio)
++{
++	if (WARN_ON_ONCE(folio_ref_count(folio) <= 0))
++		return -ENOMEM;
++	if (is_zero_folio(folio))
++		return 0;
++	mm_set_has_pinned_flag(mm);
++	if (folio_has_pincount(folio)) {
++		folio_ref_inc(folio);
++		atomic_inc(&folio->_pincount);
++	} else {
++		folio_ref_add(folio, GUP_PIN_COUNTING_BIAS);
++	}
++	return 0;
++}
++
++/* Release a pin_folio_from_locked_pte() pin. */
++void unpin_folio_from_locked_pte(struct folio *folio)
++{
++	if (is_zero_folio(folio))
++		return;
++	if (folio_has_pincount(folio)) {
++		atomic_dec(&folio->_pincount);
++		folio_put(folio);
++	} else {
++		folio_put_refs(folio, GUP_PIN_COUNTING_BIAS);
++	}
++}
++
+ #ifdef CONFIG_MMU
+ 
+ #ifdef CONFIG_HAVE_GUP_FAST
 diff --git a/mm/mmu_gather.c b/mm/mmu_gather.c
 index 5619ee967f3c7d853c6c873d4d164537a6c75f3f..ac7842d2a4fc802e7173055f11939cfb82dec586 100644
 --- a/mm/mmu_gather.c

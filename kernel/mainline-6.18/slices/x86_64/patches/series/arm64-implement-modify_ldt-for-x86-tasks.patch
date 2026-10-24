@@ -39,7 +39,7 @@ selector in the error code, as on x86 Linux.
  create mode 100644 arch/arm64/um/ldt.c
 
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index 43e54d19ab21df8276c0baf338183b1827dd77b3..7f19b44c5f079889af28268730e76028e0c68324 100644
+index 4da74bbf11696fd01ab5ba37bdc67cfe9bca6ae7..00fb0c66737c0ba7999655275ca6ea7bd4a05801 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
 @@ -7,7 +7,7 @@ obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
@@ -388,7 +388,7 @@ index 7a70e528b66dd95c7102ff2f8bc335907c18c985..2a704fcdc2dc64f45e6d1fbe8e47da13
 +#endif
  }
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 6d7076773db49994d94eac24a2b53edb7e92cac0..8af8e4d5d84d11013230a2423ff6198b75c4581a 100644
+index 8a2d4845962c4807951f919730dd46eddf8f7968..4a533dde8515c45f428b8bb7f970883eddbefef4 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -88,6 +88,7 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
@@ -408,7 +408,7 @@ index 6d7076773db49994d94eac24a2b53edb7e92cac0..8af8e4d5d84d11013230a2423ff6198b
  #endif
  		guest_tls = current_tls();
  		/* Snapshot before polling so an IPI racing with the poll remains
-@@ -749,17 +752,23 @@ void userspace(struct uml_pt_regs *registers)
+@@ -771,17 +774,23 @@ void userspace(struct uml_pt_regs *registers)
  			} else if (registers->faultinfo.trap_no == 4 ||
  				   registers->faultinfo.trap_no == 5 ||
  				   registers->faultinfo.trap_no ==
