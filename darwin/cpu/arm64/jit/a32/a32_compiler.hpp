@@ -344,6 +344,7 @@ private:
    * the block's start it lowered to a host load-exclusive/store-exclusive
    * run, or 0 when it declined. */
   [[nodiscard]] std::size_t try_fuse_exclusive();
+  /* Ends the software monitor: a CLREX and the end of a fused pair. */
   void clear_exclusive_monitor();
 
   // Multiplies, bit manipulation, extension, saturation and DSP forms

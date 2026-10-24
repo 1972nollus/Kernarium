@@ -448,11 +448,18 @@ A fault between the pair leaves the loop for the kernel, whose next entry
 clears the record (an exception return ends the monitor; `arm64-static-runtime`
 checks it), and the loop retries from its head. The JIT's fused regions check
 both mappings before the monitor, and its semantic path keeps a software
-reservation; its ordinary stores clear the monitor, as the architecture
-permits. `arm64-exclusive-progress` and `arm64-tlb` check the gadget contract
-on both engines, `arm64-exclusive-events` checks in A64, A32 and T32 that a
-branch, a link, an indirect lookup, a translation, a TLB refill or a library
-call between a pair does not fail its store, and
+reservation: a table of versions of 16-byte host granules, in which a store to
+a granule fails the store-exclusive that reserved it. The monitor ends at a
+store-exclusive, a CLREX, an exception and a store to the reserved granule. A
+store of the guest's own to another granule leaves it standing, as on hardware
+and as a register spill between a pair needs, also when the two granules share
+a version slot. While any vCPU holds a reservation, every vCPU's native stores
+(its own included) run their tracked variants, which record the granules they
+wrote. `arm64-exclusive-progress` and `arm64-tlb` check the contract on both
+engines, `arm64-exclusive-events` checks in A64, A32 and T32 that a
+branch, a link, an indirect lookup, a translation, a TLB refill, a library
+call or a store of the guest's own to another line between a pair does not
+fail its store, and
 `guest-exclusive-progress-gadgets` and `guest-exclusive-progress-jit` check the
 contract in a guest.
 

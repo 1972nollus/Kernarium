@@ -722,6 +722,7 @@ memory-heavy single-core workloads, so a shorter probe is a general saving.
 | Attempt | Disposition and lesson |
 | --- | --- |
 | Probe the 4 KiB TLB in two fewer instructions, skip the crossing test of an access aligned to its size, and fold the crossing test into the tag compare | Accepted as three changes with one measurement: single-core +5.6% over the block before them, 11 of the 12 workloads level or faster (Machine Learning 1.14, Gaussian Blur 1.11). The A32 probe is its own copy of the shared sequence: bit i of the index is bit 12+i of the address xor bit 25+i, which is one xor with the address shifted by 13 and one extract, and the tag compare shifts the address itself. Comparing the tag with the page of the last byte makes the crossing test free, because the entry belongs to another page when the access crosses; an access aligned to its size cannot cross. The tests compare the emitted words, because a probe with a wrong index passes every behavioral test by missing. |
+| Keep the exclusive monitor across ordinary stores (A64 and A32) | Accepted as a correctness fix. Clearing the monitor at every store, as the architecture permits, made a spill between a LDREX and its STREX fail the pair on every retry: ART's card-table update stores a register pair there, and the 32-bit zygote's collector spun forever on the JIT. Hardware keeps the monitor across a store to another granule, so the JIT now clears only where a pair ends and relies on the reservation versions for the rest: a store to the reserved granule, the reserving vCPU's own included, fails the store-exclusive. In the AArch32 workloads the clears were 0.5% to 1.3% of the executed host instructions. |
 | Add the TLB delta in the access, as `[x9, w8, uxtw]`, instead of before it | Accepted. The add was 2.8% to 5.1% of the executed host instructions and three quarters of the accesses after it have the register-offset form. Single-core +4.8% over the step before it together with the revert of the skip region below (Speech Recognition 1.16, Camera 1.12, Text Compression 1.05). A pair, a multiple transfer, an acquire or release, a lane transfer and a store that records its host range keep the add. |
 
 ## AArch32 JIT: blocks, links and registers
@@ -743,9 +744,8 @@ memory-heavy single-core workloads, so a shorter probe is a general saving.
 | Attempt | Disposition and lesson |
 | --- | --- |
 | Cache the last page ahead of the TLB probe | Rejected before building. The crossing test an access needs beside the cached page compare costs what the cache saves. |
-| Skip clearing the exclusive monitor on ordinary stores | Rejected. An ordinary store may clear the local monitor, and a reservation left standing lets a later store-exclusive succeed where the architecture says it fails. |
 | Keep the vector registers in the host across links as the core registers are | Not built. Vector spills and fills are 2% to 6% of the executed host instructions in the floating-point workloads, an expected 1% of the single-core score, for a fixed binding of the A64 compiler's dynamic vector residency and every helper that reads the vectors. |
-| Fold the alignment test into the tag compare, and drop the repeated monitor clear after a store in the same block | Not built. The alignment test is 0.2% to 1.9% of the executed host instructions (5.2% in N-Body) and the clears 0.5% to 1.3%; neither is a gain a paired run resolves. |
+| Fold the alignment test into the tag compare | Not built. The alignment test is 0.2% to 1.9% of the executed host instructions (5.2% in N-Body), not a gain a paired run resolves. |
 
 ## AArch32: AES-XTS and Face Detection
 

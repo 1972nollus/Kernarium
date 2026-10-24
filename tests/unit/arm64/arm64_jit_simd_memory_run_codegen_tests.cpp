@@ -103,8 +103,8 @@ void every_valid_variant_coalesces_for_both_base_kinds() {
       require(compiled.memory_write_mask == expected_mask &&
                   compiled.direct_memory_write_mask == expected_mask,
               "SIMD pair has the wrong store masks");
-      require(count_word(hot, monitor_clear) == (variant.load ? 0U : 1U),
-              "SIMD store pair did not use one monitor clear");
+      require(count_word(hot, monitor_clear) == 0U,
+              "SIMD pair cleared the local monitor");
 
       if (!variant.load) {
         const auto tracked = jit_test::compile_tracked_block(
@@ -358,8 +358,8 @@ void store_masks_cover_dirty_prefix_and_complete_run() {
           "eight-store SIMD run omitted prefixed store-mask bits");
   require(count_word(hot, translation_probe) == 1,
           "eight-store SIMD run repeated its permission translation");
-  require(count_word(hot, monitor_clear) == 1,
-          "eight-store SIMD run repeated its monitor clear");
+  require(count_word(hot, monitor_clear) == 0,
+          "eight-store SIMD run cleared the local monitor");
 }
 
 } // namespace

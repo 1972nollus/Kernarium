@@ -83,7 +83,8 @@ private:
  * exclusive monitor is the JIT's software reservation. */
 class LibraryMemory final : public aarch32::A32Memory {
 public:
-  explicit LibraryMemory(Tlb &tlb) noexcept : tlb_{tlb}, memory_{tlb} {}
+  LibraryMemory(CpuState &cpu, Tlb &tlb) noexcept
+      : cpu_{cpu}, tlb_{tlb}, memory_{tlb} {}
 
   std::byte *translate(std::uint64_t address,
                        ::uml::memory::MemoryAccess access) noexcept override {
@@ -98,7 +99,7 @@ public:
   void stored(std::byte *host, std::size_t size) noexcept override {
     const JitStoreRange range{reinterpret_cast<std::uint64_t>(host),
                                    size};
-    sem::invalidate_store_ranges(std::span{&range, 1});
+    sem::invalidate_store_ranges(cpu_, std::span{&range, 1});
   }
 
   /* LDREX: the value and the reservation (the granule's key and version)
@@ -153,11 +154,12 @@ public:
         stored_key);
     if (result != sem::AtomicStoreResult::stored)
       return false;
-    sem::reservation_store(stored_key);
+    sem::reservation_store(cpu, stored_key);
     return true;
   }
 
 private:
+  CpuState &cpu_;
   Tlb &tlb_;
   TlbMemory memory_;
 };
@@ -185,7 +187,7 @@ private:
                                                std::uint32_t itstate) noexcept {
   cpu.pc = key;
   cpu.a32_itstate = static_cast<std::uint8_t>(itstate);
-  LibraryMemory memory{tlb};
+  LibraryMemory memory{cpu, tlb};
   aarch32::StepResult result;
   const auto traits = inst.info().traits;
   if ((traits & aarch32::trait::stores) != 0U &&

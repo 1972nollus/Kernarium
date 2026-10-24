@@ -75,7 +75,7 @@ A32Compiler::Flow A32Compiler::emit_operation() {
     return Flow::next;
   case Op::clrex:
     emit(0xd503'3f5fU); // clrex
-    emitter_.store_b(31, 15, offsetof(CpuState, exclusive_size));
+    clear_exclusive_monitor();
     return Flow::next;
   case Op::ldr: case Op::ldrb: case Op::ldrh: case Op::ldrsb: case Op::ldrsh:
   case Op::ldrd: case Op::ldm: case Op::str: case Op::strb: case Op::strh:

@@ -110,7 +110,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 				if (store_result == AtomicStoreResult::fault)
 					return memory_fault(address, instruction, true);
 				if (store_result == AtomicStoreResult::stored)
-					reservation_store(stored_key);
+					reservation_store(cpu, stored_key);
 				else
 					success = false;
 			}
@@ -183,7 +183,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 				if (store_result == AtomicStoreResult::fault)
 					return memory_fault(address, instruction, true);
 				if (store_result == AtomicStoreResult::stored)
-					reservation_store(stored_key);
+					reservation_store(cpu, stored_key);
 				else {
 					success = false;
 				}
@@ -200,7 +200,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 			 * translated host reservation granule, so shared aliases observe
 			 * the invalidation without unrelated atomics causing livelock.
 			 */
-			reservation_store(key);
+			reservation_store(cpu, key);
 		}
 	}
 	cpu.pc += 4;
@@ -237,7 +237,7 @@ RunResult load_store_compare_swap(CpuState &cpu,
 	/* The architecture permits a CAS read to clear reservations even when its
 	 * comparison fails. This implementation consistently chooses that behavior.
 	 */
-	reservation_store(key);
+	reservation_store(cpu, key);
 	cpu.write_register(compare_register, observed, false);
 	cpu.pc += 4;
 	return continue_after(pc, instruction);
@@ -281,7 +281,7 @@ RunResult load_store_compare_swap_pair(CpuState &cpu,
 			replacement_second, acquire, release, observed_first,
 			observed_second, key))
 		return memory_fault(address, instruction, true);
-	reservation_store(key);
+	reservation_store(cpu, key);
 	cpu.write_register(compare_register, observed_first, false);
 	cpu.write_register(compare_register + 1, observed_second, false);
 	cpu.pc += 4;
@@ -317,7 +317,7 @@ RunResult load_store_atomic(CpuState &cpu, GuestMemory &memory,
 	if (!atomic_rmw_value(memory, address, size, operation, operand, acquire,
 			release, observed, key))
 		return memory_fault(address, instruction, true);
-	reservation_store(key);
+	reservation_store(cpu, key);
 	cpu.write_register(destination, observed, false);
 	cpu.pc += 4;
 	return continue_after(pc, instruction);
@@ -371,7 +371,7 @@ RunResult load_store_rcpc(CpuState &cpu, GuestMemory &memory,
 				std::memory_order_release, nullptr, key) !=
 		    AtomicStoreResult::stored)
 			return memory_fault(address, instruction, true);
-		reservation_store(key);
+		reservation_store(cpu, key);
 	}
 	cpu.pc += 4;
 	return continue_after(pc, instruction);

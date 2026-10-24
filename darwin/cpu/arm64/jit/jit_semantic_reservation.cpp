@@ -50,7 +50,8 @@ std::array<ReservationSlot, reservation_slot_count> reservation_slots;
 		(address & ~(reservation_granule - 1)) | 1);
 }
 
-[[nodiscard]] std::uintptr_t host_reservation_key(std::byte *pointer) noexcept
+[[nodiscard]] std::uintptr_t host_reservation_key(
+	const std::byte *pointer) noexcept
 {
 	return reinterpret_cast<std::uintptr_t>(pointer) &
 		~(reservation_granule - 1);
@@ -64,11 +65,21 @@ std::array<ReservationSlot, reservation_slot_count> reservation_slots;
 		fallback_reservation_key(address);
 }
 
-[[nodiscard]] ReservationSlot &reservation_slot(std::uintptr_t key) noexcept
+[[nodiscard]] std::size_t slot_index(std::uintptr_t key) noexcept
 {
 	auto hash = key >> 4;
 	hash ^= hash >> 17;
-	return reservation_slots[hash & (reservation_slot_count - 1)];
+	return hash & (reservation_slot_count - 1);
+}
+
+[[nodiscard]] ReservationSlot &reservation_slot(std::uintptr_t key) noexcept
+{
+	return reservation_slots[slot_index(key)];
+}
+
+[[nodiscard]] std::size_t reservation_slot_index(const std::byte *host) noexcept
+{
+	return slot_index(host_reservation_key(host));
 }
 
 [[nodiscard]] std::uint64_t reservation_version(std::uintptr_t key) noexcept
@@ -76,9 +87,22 @@ std::array<ReservationSlot, reservation_slot_count> reservation_slots;
 	return reservation_slot(key).version.load(std::memory_order_acquire);
 }
 
-void reservation_store(std::uintptr_t key) noexcept
+void reservation_store(CpuState &writer, std::uintptr_t key) noexcept
 {
-	reservation_slot(key).version.fetch_add(1, std::memory_order_release);
+	auto &slot = reservation_slot(key);
+	const auto before = slot.version.fetch_add(1, std::memory_order_release);
+	/*
+	 * The writer's own reservation survives a store to another granule,
+	 * also one that hashes to the reserved granule's slot: when no other
+	 * store has touched the slot since the writer's snapshot (`before` is
+	 * still its version), the writer's snapshot moves up with the slot.
+	 * The store of any other vCPU moved the version first, and fails the
+	 * writer's store-exclusive as a collision may.
+	 */
+	if (writer.exclusive_size != 0 && writer.exclusive_version == before &&
+	    key != writer.exclusive_key &&
+	    &slot == &reservation_slot(writer.exclusive_key))
+		writer.exclusive_version = before + 1;
 }
 
 template<typename Integer>
@@ -637,8 +661,8 @@ template<typename Integer>
 		AtomicStoreResult::stored : AtomicStoreResult::fault;
 }
 
-void invalidate_reservations_for_store_locked(GuestMemory &memory,
-	std::uint64_t address, std::size_t size)
+void invalidate_reservations_for_store_locked(CpuState &writer,
+	GuestMemory &memory, std::uint64_t address, std::size_t size)
 {
 	/* Every successful ordinary store invalidates every reservation granule it
 	 * touches, even when the stored bits compare equal to the old value. Keep
@@ -649,7 +673,8 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 		const auto current = address + offset;
 		auto *pointer = memory.reservation_pointer(
 			current, 1, MemoryAccess::write);
-		reservation_store(pointer != nullptr ? host_reservation_key(pointer) :
+		reservation_store(writer, pointer != nullptr ?
+			host_reservation_key(pointer) :
 			fallback_reservation_key(current));
 		const auto remaining_in_granule = reservation_granule -
 			(static_cast<std::uintptr_t>(current) &
@@ -659,8 +684,8 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 	}
 }
 
-[[nodiscard]] bool ordinary_store(GuestMemory &memory, std::uint64_t address,
-	std::span<const std::byte> bytes)
+[[nodiscard]] bool ordinary_store(CpuState &writer, GuestMemory &memory,
+	std::uint64_t address, std::span<const std::byte> bytes)
 {
 	/* Serialize the write itself with the exclusive operations. Doing
 	 * only the version update under the lock leaves a window in which STXR can
@@ -669,7 +694,8 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 	std::scoped_lock lock{exclusive_memory_mutex};
 	if (!memory.write(address, bytes))
 		return false;
-	invalidate_reservations_for_store_locked(memory, address, bytes.size());
+	invalidate_reservations_for_store_locked(writer, memory, address,
+		bytes.size());
 	return true;
 }
 
@@ -692,12 +718,13 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 	return true;
 }
 
-void invalidate_store_ranges(std::span<const JitStoreRange> ranges) noexcept
+void invalidate_store_ranges(CpuState &writer,
+	std::span<const JitStoreRange> ranges) noexcept
 {
 	for (const auto &range : ranges) {
 		for (std::uint64_t offset = 0; offset < range.size;) {
 			const auto current = range.address + offset;
-			reservation_store(host_reservation_key(
+			reservation_store(writer, host_reservation_key(
 				reinterpret_cast<std::byte *>(current)));
 			const auto remaining_in_granule = reservation_granule -
 				(static_cast<std::uintptr_t>(current) &
