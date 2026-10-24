@@ -34,10 +34,10 @@ run of B-frames.
  .../v4l2_codec2/components/VideoEncoder.h     |  21 ++
  v4l2/V4L2Device.cpp                           |  96 +++++-
  v4l2/V4L2EncodeComponent.cpp                  |  22 +-
- v4l2/V4L2Encoder.cpp                          | 123 ++++++--
+ v4l2/V4L2Encoder.cpp                          | 126 ++++++--
  v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |   4 +
  v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |  38 ++-
- 12 files changed, 628 insertions(+), 67 deletions(-)
+ 12 files changed, 630 insertions(+), 68 deletions(-)
 
 diff --git a/common/EncodeHelpers.cpp b/common/EncodeHelpers.cpp
 index 68c940063e7369b1dda0069d4d930c2acbec1976..6ab578bfa2f04aaeeccd6649a470ccca23f752b9 100644
@@ -812,7 +812,7 @@ index 7d1940e1a5c1c53d724a0a16acf55f8f280affab..f60fd64f1fa3870333cb27d04b1d4fed
              ::base::BindRepeating(&V4L2EncodeComponent::onInputBufferDone, mWeakThis),
              ::base::BindRepeating(&V4L2EncodeComponent::onOutputBufferDone, mWeakThis),
 diff --git a/v4l2/V4L2Encoder.cpp b/v4l2/V4L2Encoder.cpp
-index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae84e62f65 100644
+index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..241e7c0cf83b88f249fc35296cdd254ca0eff7bc 100644
 --- a/v4l2/V4L2Encoder.cpp
 +++ b/v4l2/V4L2Encoder.cpp
 @@ -8,7 +8,9 @@
@@ -825,16 +825,19 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
  #include <vector>
  
  #include <base/bind.h>
-@@ -56,7 +58,7 @@ std::unique_ptr<VideoEncoder> V4L2Encoder::create(
+@@ -56,8 +58,9 @@ std::unique_ptr<VideoEncoder> V4L2Encoder::create(
          C2Config::profile_t outputProfile, std::optional<uint8_t> level,
          const ui::Size& visibleSize, uint32_t stride, uint32_t keyFramePeriod,
          C2Config::bitrate_mode_t bitrateMode, uint32_t bitrate, std::optional<uint32_t> peakBitrate,
 -        FetchOutputBufferCB fetchOutputBufferCb, InputBufferDoneCB inputBufferDoneCb,
-+        const EncodingParams& params, FetchOutputBufferCB fetchOutputBufferCb, InputBufferDoneCB inputBufferDoneCb,
-         OutputBufferDoneCB outputBufferDoneCb, DrainDoneCB drainDoneCb, ErrorCB errorCb,
+-        OutputBufferDoneCB outputBufferDoneCb, DrainDoneCB drainDoneCb, ErrorCB errorCb,
++        const EncodingParams& params, FetchOutputBufferCB fetchOutputBufferCb,
++        InputBufferDoneCB inputBufferDoneCb, OutputBufferDoneCB outputBufferDoneCb,
++        DrainDoneCB drainDoneCb, ErrorCB errorCb,
          scoped_refptr<::base::SequencedTaskRunner> taskRunner) {
      ALOGV("%s()", __func__);
-@@ -65,7 +67,7 @@ std::unique_ptr<VideoEncoder> V4L2Encoder::create(
+ 
+@@ -65,7 +68,7 @@ std::unique_ptr<VideoEncoder> V4L2Encoder::create(
              std::move(taskRunner), std::move(fetchOutputBufferCb), std::move(inputBufferDoneCb),
              std::move(outputBufferDoneCb), std::move(drainDoneCb), std::move(errorCb)));
      if (!encoder->initialize(outputProfile, level, visibleSize, stride, keyFramePeriod, bitrateMode,
@@ -843,7 +846,7 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
          return nullptr;
      }
      return encoder;
-@@ -168,6 +170,10 @@ bool V4L2Encoder::setPeakBitrate(uint32_t peakBitrate) {
+@@ -168,6 +171,10 @@ bool V4L2Encoder::setPeakBitrate(uint32_t peakBitrate) {
      ALOGV("%s()", __func__);
      ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
  
@@ -854,7 +857,7 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
      if (!mDevice->setExtCtrls(V4L2_CTRL_CLASS_MPEG,
                                {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_BITRATE_PEAK, peakBitrate)})) {
          // TODO(b/190336806): Our stack doesn't support dynamic peak bitrate changes yet, ignore
-@@ -177,6 +183,18 @@ bool V4L2Encoder::setPeakBitrate(uint32_t peakBitrate) {
+@@ -177,6 +184,18 @@ bool V4L2Encoder::setPeakBitrate(uint32_t peakBitrate) {
      return true;
  }
  
@@ -873,7 +876,7 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
  bool V4L2Encoder::setFramerate(uint32_t framerate) {
      ALOGV("%s()", __func__);
      ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
-@@ -212,7 +230,7 @@ VideoPixelFormat V4L2Encoder::inputFormat() const {
+@@ -212,7 +231,7 @@ VideoPixelFormat V4L2Encoder::inputFormat() const {
  bool V4L2Encoder::initialize(C2Config::profile_t outputProfile, std::optional<uint8_t> level,
                               const ui::Size& visibleSize, uint32_t stride, uint32_t keyFramePeriod,
                               C2Config::bitrate_mode_t bitrateMode, uint32_t bitrate,
@@ -882,7 +885,7 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
      ALOGV("%s()", __func__);
      ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
      ALOG_ASSERT(keyFramePeriod > 0);
-@@ -266,6 +284,11 @@ bool V4L2Encoder::initialize(C2Config::profile_t outputProfile, std::optional<ui
+@@ -266,6 +285,11 @@ bool V4L2Encoder::initialize(C2Config::profile_t outputProfile, std::optional<ui
      // If the bitrate mode is VBR we also need to configure the peak bitrate on the device.
      if ((bitrateMode == C2Config::BITRATE_VARIABLE) && !setPeakBitrate(*peakBitrate)) return false;
  
@@ -894,7 +897,7 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
      // First try to configure the specified output format, as changing the output format can affect
      // the configured input format.
      if (!configureOutputFormat(outputProfile)) return false;
-@@ -278,7 +301,7 @@ bool V4L2Encoder::initialize(C2Config::profile_t outputProfile, std::optional<ui
+@@ -278,7 +302,7 @@ bool V4L2Encoder::initialize(C2Config::profile_t outputProfile, std::optional<ui
      if (!createInputBuffers() || !createOutputBuffers()) return false;
  
      // Configure the device, setting all required controls.
@@ -903,7 +906,7 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
  
      // We're ready to start encoding now.
      setState(State::WAITING_FOR_INPUT_FRAME);
-@@ -591,7 +614,8 @@ bool V4L2Encoder::configureOutputFormat(C2Config::profile_t outputProfile) {
+@@ -591,7 +615,8 @@ bool V4L2Encoder::configureOutputFormat(C2Config::profile_t outputProfile) {
  }
  
  bool V4L2Encoder::configureDevice(C2Config::profile_t outputProfile,
@@ -913,7 +916,7 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
      ALOGV("%s()", __func__);
      ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
  
-@@ -612,17 +636,18 @@ bool V4L2Encoder::configureDevice(C2Config::profile_t outputProfile,
+@@ -612,17 +637,18 @@ bool V4L2Encoder::configureDevice(C2Config::profile_t outputProfile,
      // All controls below are codec-specific, so we can return here if the profile is neither H.264
      // nor HEVC.
      if (isH264Profile(outputProfile)) {
@@ -935,7 +938,7 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
      // When encoding H.264 we want to prepend SPS and PPS to each IDR for resilience. Some
      // devices support this through the V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR control.
      // Otherwise we have to cache the latest SPS and PPS and inject these manually.
-@@ -651,12 +676,18 @@ bool V4L2Encoder::configureH264(C2Config::profile_t outputProfile,
+@@ -651,12 +677,18 @@ bool V4L2Encoder::configureH264(C2Config::profile_t outputProfile,
          return false;
      }
  
@@ -959,7 +962,7 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
  
      // Set H.264 output level. Use Level 4.0 as fallback default.
      int32_t h264Level =
-@@ -674,7 +705,8 @@ bool V4L2Encoder::configureH264(C2Config::profile_t outputProfile,
+@@ -674,7 +706,8 @@ bool V4L2Encoder::configureH264(C2Config::profile_t outputProfile,
  }
  
  bool V4L2Encoder::configureHEVC(C2Config::profile_t outputProfile,
@@ -969,7 +972,7 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
      // The device writes the VPS, SPS and PPS in front of each IDR unless it is told not to, so the
      // stream needs no manual injection. Some devices expose the control to make that explicit.
      mInjectParamsBeforeIDR = false;
-@@ -711,10 +743,14 @@ bool V4L2Encoder::configureHEVC(C2Config::profile_t outputProfile,
+@@ -711,10 +744,14 @@ bool V4L2Encoder::configureHEVC(C2Config::profile_t outputProfile,
      mDevice->setExtCtrls(V4L2_CTRL_CLASS_MPEG,
                           {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_HEVC_TIER,
                                        V4L2_MPEG_VIDEO_HEVC_TIER_MAIN)});
@@ -988,7 +991,7 @@ index 0ce6916523bb57be0a50ecf690fc09cbf3e9babb..299fa04ea8d9a5d3a690116dd6a230ae
      // Ask not to put the parameter sets into separate bitstream buffers.
      mDevice->setExtCtrls(V4L2_CTRL_CLASS_MPEG,
                           {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_HEADER_MODE,
-@@ -723,6 +759,57 @@ bool V4L2Encoder::configureHEVC(C2Config::profile_t outputProfile,
+@@ -723,6 +760,57 @@ bool V4L2Encoder::configureHEVC(C2Config::profile_t outputProfile,
      return true;
  }
  

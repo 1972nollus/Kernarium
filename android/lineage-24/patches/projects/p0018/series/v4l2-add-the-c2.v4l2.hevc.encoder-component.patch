@@ -25,7 +25,7 @@ first coded frame, and the frame rate ceiling follows the HEVC level.
  components/EncodeInterface.cpp                | 117 ++++++++++++++++++
  .../v4l2_codec2/components/EncodeComponent.h  |   2 +
  .../v4l2_codec2/components/EncodeInterface.h  |   6 +
- v4l2/V4L2ComponentCommon.cpp                  |   7 +-
+ v4l2/V4L2ComponentCommon.cpp                  |  12 +-
  v4l2/V4L2ComponentStore.cpp                   |   3 +
  v4l2/V4L2Device.cpp                           |  15 +++
  v4l2/V4L2EncodeComponent.cpp                  |  16 ++-
@@ -33,7 +33,7 @@ first coded frame, and the frame rate ceiling follows the HEVC level.
  .../v4l2_codec2/v4l2/V4L2ComponentCommon.h    |   1 +
  v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |   2 +
  v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |   5 +-
- 18 files changed, 422 insertions(+), 14 deletions(-)
+ 18 files changed, 425 insertions(+), 16 deletions(-)
  create mode 100644 common/HEVC.cpp
  create mode 100644 common/include/v4l2_codec2/common/HEVC.h
 
@@ -528,7 +528,7 @@ index e59f58cfd5e85e98020246de03369f2a166cd8a3..26e8dc9dc670668c36734dd387847a62
      // Constant parameters
  
 diff --git a/v4l2/V4L2ComponentCommon.cpp b/v4l2/V4L2ComponentCommon.cpp
-index 2123bd00fbc0a2ef3993827500278c30a5715369..161298224595fab9f91335e3034bc0701a16535f 100644
+index 2123bd00fbc0a2ef3993827500278c30a5715369..13605502c50c5c74805d532baad170bd69c1bca1 100644
 --- a/v4l2/V4L2ComponentCommon.cpp
 +++ b/v4l2/V4L2ComponentCommon.cpp
 @@ -15,6 +15,7 @@ namespace android {
@@ -539,16 +539,20 @@ index 2123bd00fbc0a2ef3993827500278c30a5715369..161298224595fab9f91335e3034bc070
  
  const std::string V4L2ComponentName::kH264Decoder = "c2.v4l2.avc.decoder";
  const std::string V4L2ComponentName::kVP8Decoder = "c2.v4l2.vp8.decoder";
-@@ -29,7 +30,7 @@ const std::string V4L2ComponentName::kHEVCSecureDecoder = "c2.v4l2.hevc.decoder.
+@@ -29,16 +30,18 @@ const std::string V4L2ComponentName::kHEVCSecureDecoder = "c2.v4l2.hevc.decoder.
  // static
  bool V4L2ComponentName::isValid(const std::string& name) {
      return name == kH264Encoder || name == kVP8Encoder || name == kVP9Encoder ||
 -           name == kH264Decoder || name == kVP8Decoder || name == kVP9Decoder ||
-+           name == kHEVCEncoder || name == kH264Decoder || name == kVP8Decoder || name == kVP9Decoder ||
-            name == kHEVCDecoder || name == kAV1Decoder || name == kH264SecureDecoder ||
-            name == kVP8SecureDecoder || name == kVP9SecureDecoder || name == kHEVCSecureDecoder;
+-           name == kHEVCDecoder || name == kAV1Decoder || name == kH264SecureDecoder ||
+-           name == kVP8SecureDecoder || name == kVP9SecureDecoder || name == kHEVCSecureDecoder;
++           name == kHEVCEncoder || name == kH264Decoder || name == kVP8Decoder ||
++           name == kVP9Decoder || name == kHEVCDecoder || name == kAV1Decoder ||
++           name == kH264SecureDecoder || name == kVP8SecureDecoder || name == kVP9SecureDecoder ||
++           name == kHEVCSecureDecoder;
  }
-@@ -38,7 +39,8 @@ bool V4L2ComponentName::isValid(const std::string& name) {
+ 
+ // static
  bool V4L2ComponentName::isEncoder(const std::string& name) {
      ALOG_ASSERT(isValid(name));
  
@@ -558,7 +562,7 @@ index 2123bd00fbc0a2ef3993827500278c30a5715369..161298224595fab9f91335e3034bc070
  }
  
  // static
-@@ -67,6 +69,7 @@ std::optional<VideoCodec> V4L2ComponentName::getCodec(const std::string& name) {
+@@ -67,6 +70,7 @@ std::optional<VideoCodec> V4L2ComponentName::getCodec(const std::string& name) {
              {kVP9Encoder, VideoCodec::VP9},
  
              {kHEVCDecoder, VideoCodec::HEVC}, {kHEVCSecureDecoder, VideoCodec::HEVC},

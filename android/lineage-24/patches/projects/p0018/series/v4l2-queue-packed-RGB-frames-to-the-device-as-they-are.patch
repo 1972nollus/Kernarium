@@ -103,7 +103,7 @@ index d05f1caa5e6624e5ac1a237f6a6ab2486f500df1..28a3de53f2d306600d2cbecf820a8003
      virtual const ui::Size& visibleSize() const = 0;
      virtual const ui::Size& codedSize() const = 0;
 diff --git a/v4l2/V4L2Encoder.cpp b/v4l2/V4L2Encoder.cpp
-index 2ea2e1dc02fb7d8c990a98bdf46a7c021871b80f..4c21230806a7eb8e21f53fc3c027f80e6014a566 100644
+index dbf3a1ff62fddc3434a1ef4cf316673174d87fa8..4b6ee205f0eb229242dffffdd70e5ba764ca4d7e 100644
 --- a/v4l2/V4L2Encoder.cpp
 +++ b/v4l2/V4L2Encoder.cpp
 @@ -48,6 +48,21 @@ size_t GetMaxOutputBufferSize(const ui::Size& size) {
@@ -128,7 +128,7 @@ index 2ea2e1dc02fb7d8c990a98bdf46a7c021871b80f..4c21230806a7eb8e21f53fc3c027f80e
  // Define V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR control code if not present in header files.
  #ifndef V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR
  #define V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR (V4L2_CID_MPEG_BASE + 644)
-@@ -225,6 +240,36 @@ void V4L2Encoder::requestKeyframe() {
+@@ -226,6 +241,36 @@ void V4L2Encoder::requestKeyframe() {
      mKeyFrameCounter = 0;
  }
  
@@ -165,7 +165,7 @@ index 2ea2e1dc02fb7d8c990a98bdf46a7c021871b80f..4c21230806a7eb8e21f53fc3c027f80e
  VideoPixelFormat V4L2Encoder::inputFormat() const {
      return mInputLayout ? mInputLayout.value().mFormat : VideoPixelFormat::UNKNOWN;
  }
-@@ -238,6 +283,7 @@ bool V4L2Encoder::initialize(C2Config::profile_t outputProfile, std::optional<ui
+@@ -239,6 +284,7 @@ bool V4L2Encoder::initialize(C2Config::profile_t outputProfile, std::optional<ui
      ALOG_ASSERT(keyFramePeriod > 0);
  
      mVisibleSize = visibleSize;
@@ -173,7 +173,7 @@ index 2ea2e1dc02fb7d8c990a98bdf46a7c021871b80f..4c21230806a7eb8e21f53fc3c027f80e
      mKeyFramePeriod = keyFramePeriod;
      mKeyFrameCounter = 0;
  
-@@ -490,13 +536,13 @@ bool V4L2Encoder::configureInputFormat(VideoPixelFormat inputFormat, uint32_t st
+@@ -491,13 +537,13 @@ bool V4L2Encoder::configureInputFormat(VideoPixelFormat inputFormat, uint32_t st
                                         const V4L2Colorimetry& colorimetry) {
      ALOGV("%s()", __func__);
      ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
