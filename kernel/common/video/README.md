@@ -45,6 +45,18 @@ separate stream-information command. The
 [device README](../../../darwin/device/video/README.md#encoder-controls) owns
 which controls the host publishes.
 
+The encoder driver gives the host these guarantees. It sends a raw frame only
+once the coded queue streams and no drain is pending, so the host builds its
+session from settled controls; until then the frames wait in the driver. It
+reports the host's own plane layout and ignores a client's strides. A
+format's coded and raw masks are read in both directions, and a raw format
+is listed under its contiguous V4L2 name, and also under the per-plane name
+when the host reports `PER_PLANE`. STREAMOFF on either queue sends
+`QUEUE_CLEAR`, and STREAMOFF of the raw queue during a drain sends
+`STREAM_DRAIN` again, so the next coded buffer is the empty end of stream.
+A `CODEC_CONFIG` buffer reaches the client with no frame-type flag, because
+V4L2 has none for it.
+
 `virtio_video_v4l2_ids.h` lists the V4L2 numbers the host uses, one
 `#define UML_<kernel symbol> <number>` per value. `sync-protocol.py` checks each
 against the UAPI headers (`v4l2-controls.h` and `videodev2.h`) of the tree it
