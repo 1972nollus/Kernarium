@@ -261,6 +261,20 @@ The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
 an x86-64 probe and an x86-64 rootfs, the way its boot check below is run.
 
+The optional `guest-v4l2-encode` test qualifies the Virtio video encoder the
+same way. Build `tests/integration/video/v4l2_encode_probe.cpp` as a static
+C++20 executable for the guest architecture and configure
+`UML_V4L2_ENCODE_PROBE_BINARY`. The guest boots with `--video` and
+`--video-encoder`, and the probe finds the encoder and the decoder by their
+card names. For every advertised coded format, profile and raw layout it
+encodes generated pictures from mapped and imported dma-buf input, and checks
+the key-frame flags, header buffers, timestamps, forced key frames, controls
+refused while streaming, crop, drain with the last flag and end-of-stream
+event, resumption, a restart after STREAMOFF without a drain, and a resolution
+change. Each stream is decoded back through the guest decoder and compared
+with the pictures by luma PSNR. The x86_64 slice runs `run_v4l2_encode.py`
+directly, like the decoder.
+
 The optional `guest-futex-atomic` test checks the futex contract in
 [`../kernel/common/README.md`](../kernel/common/README.md). Configure
 `UML_FUTEX_PROBE_BINARY` with a static C++20 build of

@@ -126,6 +126,23 @@ if(UML_V4L2_PROBE_BINARY)
         CPUS 2)
 endif()
 
+set(UML_V4L2_ENCODE_PROBE_BINARY "" CACHE FILEPATH
+    "Static guest V4L2 encoder executable built from tests/integration/video/v4l2_encode_probe.cpp")
+if(UML_V4L2_ENCODE_PROBE_BINARY)
+    if(NOT EXISTS "${UML_V4L2_ENCODE_PROBE_BINARY}")
+        message(FATAL_ERROR "V4L2 encoder qualification requires its guest probe")
+    endif()
+    # The runner boots a two-vCPU guest with the decoder and the encoder.
+    uml_add_guest_integration_test(
+        NAME guest-v4l2-encode
+        SCRIPT video/run_v4l2_encode.py
+        ARGS --probe "${UML_V4L2_ENCODE_PROBE_BINARY}"
+            --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-encode-guest.log"
+        LABELS guest;video
+        TIMEOUT 720
+        CPUS 2)
+endif()
+
 set(UML_FUTEX_PROBE_BINARY "" CACHE FILEPATH
     "Static guest executable built from tests/integration/futex/futex_atomic_probe.cpp")
 if(UML_FUTEX_PROBE_BINARY)
@@ -399,14 +416,15 @@ uml_add_guest_integration_test(
     TIMEOUT 900
     CPUS 2)
 
-# Removing the Virtio video decoder by unbind, management-console halt or
-# forced power-off, while files are open and buffers queued, resets it first,
-# returns everything it held and frees nothing an open file still uses.
+# Removing the Virtio video decoder and encoder by unbind, management-console
+# halt or forced power-off, while files are open and buffers queued, resets
+# each first, returns everything it held and frees nothing an open file still
+# uses.
 uml_add_guest_integration_test(
     NAME guest-video-teardown
     SCRIPT kernel/run_guest_video_teardown.py
     LABELS guest;kernel;video;smoke
-    TIMEOUT 300
+    TIMEOUT 600
     CPUS 4)
 
 # Files of an LZ4 EROFS image with 4 KiB clusters, which EROFS decompresses
