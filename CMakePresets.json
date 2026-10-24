@@ -314,7 +314,7 @@
       },
       "filter": {
         "include": {
-          "name": "^(gpu-|platform-video-decoder$|virtio-(balloon|battery|console|input|sound|video)-protocol$)"
+          "name": "^(gpu-|platform-video-(decoder|encoder(-recovery|-cache)?)$|virtio-(balloon|battery|console|input|sound|video)-protocol$)"
         }
       },
       "execution": {

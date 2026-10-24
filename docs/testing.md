@@ -131,7 +131,8 @@ The `unit-gpu` test preset's name filter is the one selection of GPU workflow
 tests, and the other `unit-gpu*` test presets inherit it. It selects every
 registered test named `gpu-*` (the two `gpu-guest-*` tooling tests among them),
 and the Virtio balloon, battery, console, input, sound and video protocol
-tests and `platform-video-decoder` that the GPU configuration also builds. A
+tests, `platform-video-decoder`, and the hardware `platform-video-encoder`,
+`-recovery` and `-cache` tests that the GPU configuration also builds. A
 new GPU test joins the workflow by its name: `uml_add_gpu_unit_test` refuses a
 name that does not start with `gpu-`. Configure derives the
 `gpu-unit-test-binaries` target from that filter, so a selected test's binary
@@ -493,9 +494,10 @@ and no Simulator variant; see
 [`graphics.md`](graphics.md#current-path).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
-Xcode. It also packages the Apple battery provider's archive, as the Android
-runtime links it, as `HostBattery.xcframework`; only `KernariumTests` links
-it, so the test process reaches the provider without loading a second runtime.
+Xcode. It also packages the Apple battery provider's archive and the hardware
+video encoder's, as the Android runtime links them, as `HostBattery.xcframework`
+and `HostVideoEncoder.xcframework`; only `KernariumTests` links them, so the
+test process reaches each without loading a second runtime.
 `dependencies/build-ios-storage.sh --verify-only` and
 `dependencies/build-ios-zstd.sh --verify-only` check both arm64 Apple slices,
 their provenance and deployment targets, required APIs, and the absence of
