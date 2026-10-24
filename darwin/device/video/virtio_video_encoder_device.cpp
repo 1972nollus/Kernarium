@@ -718,7 +718,9 @@ public:
                 ++stream.errors;
                 continue;
             }
-            stream.encoder->submit(std::move(frame), held.timestamp, held.forceKey || std::exchange(stream.recoverKey, false));
+            /* Both requests are consumed by this frame, whichever asked. */
+            const bool recover = std::exchange(stream.recoverKey, false);
+            stream.encoder->submit(std::move(frame), held.timestamp, held.forceKey || recover);
             ++stream.inFlight;
             ++stream.framesIn;
             completeHeld(id, held, 0, stream);
@@ -802,6 +804,7 @@ public:
             if (!descriptor) return fail(index, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL);
             if (descriptor->flags & VIRTIO_VIDEO_V4L2_CTRL_F_READ_ONLY) return fail(index, VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER);
             std::vector<std::uint8_t> payload;
+            if (descriptor->elem_size == 0 && entry.size != 0) return fail(index, VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER);
             if (descriptor->elem_size != 0) {
                 if (entry.size != descriptor->elem_size || entry.value % 8 != 0 || entry.value > area.size() ||
                     area.size() - entry.value < entry.size)

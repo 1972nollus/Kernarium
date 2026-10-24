@@ -733,6 +733,14 @@ void controlCommands()
     refusedAt(ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE, 2), VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, 0, "boolean");
     refusedAt(ControlSet().scalar(UML_V4L2_CID_MIN_BUFFERS_FOR_OUTPUT, 3), VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, 0,
               "a read-only control was set");
+    {
+        auto request = ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 3'000'000).bytes(VIRTIO_VIDEO_CMD_SET_V4L2_CONTROLS, 1);
+        const std::uint32_t size = 4;
+        std::memcpy(request.data() + sizeof(virtio_video_v4l2_controls) + offsetof(virtio_video_v4l2_control_value, size), &size, sizeof(size));
+        const auto result = f.device.processQueue(0, f.next++, request, 16384);
+        require(Fixture::type(result) == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER && controlsResponse(result).error_index == 0,
+                "a scalar carrying a payload size was accepted");
+    }
     refusedAt(ControlSet().compound(UML_V4L2_CID_COLORIMETRY_HDR10_CLL_INFO, {1, 2, 3}), VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, 0,
               "a compound payload of the wrong size");
     // A set applies every value or none.
@@ -1154,11 +1162,18 @@ void failures()
         require(bad.flags == VIRTIO_VIDEO_DEQUEUE_FLAG_ERR && bad.data_sizes[0] == 0, "an oversize frame was written or not reported");
         require(f.memory[codedBase(0)] == 0xcc, "an oversize frame was partly written");
         const auto good = f.queueCoded(1, 1);
+        require(Fixture::type(setControls(f, 1, ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME, 1))) ==
+                VIRTIO_VIDEO_RESP_OK_V4L2_CONTROLS, "force key");
         f.queueRaw(1, 2, 20);
         done = f.completions();
         require(f.encoder().submitted.size() == 2 && f.encoder().submitted[1].forceKey && !f.encoder().submitted[0].forceKey,
                 "the frame after an oversize one must be a key frame");
         require(Fixture::completionOf(done, good).buffer().flags == VIRTIO_VIDEO_DEQUEUE_FLAG_KEY_FRAME, "recovery key frame");
+        // The recovery is spent by that frame, even when the guest asked for a key frame on the same one.
+        f.attachCodedOk(1, 2);
+        f.queueCoded(1, 2);
+        f.queueRaw(1, 3, 30);
+        require(!f.encoder().submitted[2].forceKey, "a recovery key frame was requested twice");
     }
     {
         // A frame the platform failed comes back as an error with its own timestamp.
