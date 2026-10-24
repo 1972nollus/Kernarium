@@ -117,6 +117,52 @@ void Driver::note(const char* message) const
     }
 }
 
+namespace {
+
+// UML_VA_V4L2_TRACE=1 logs every entry point a client calls, and what it
+// answered, to the UML_VA_V4L2_LOG file. The line is written before the call,
+// so the last line of a client that died inside the driver names the call.
+bool traceRequested() noexcept
+{
+    const char* request = std::getenv("UML_VA_V4L2_TRACE");
+    return request && *request && std::strcmp(request, "0") != 0;
+}
+
+void traceLine(const char* format, const char* name, long value)
+{
+    static const char* path = std::getenv("UML_VA_V4L2_LOG");
+    if (!path || !*path) return;
+    if (std::FILE* file = std::fopen(path, "ae")) {
+        std::fprintf(file, format, int(getpid()), name, value);
+        std::fclose(file);
+    }
+}
+
+template <std::size_t N>
+struct EntryName {
+    char text[N];
+    constexpr EntryName(const char (&source)[N])
+    {
+        for (std::size_t index = 0; index < N; ++index) text[index] = source[index];
+    }
+};
+
+template <EntryName label, auto Function>
+struct Traced;
+
+template <EntryName label, typename Result, typename... Arguments, Result (*Function)(Arguments...)>
+struct Traced<label, Function> {
+    static Result call(Arguments... arguments)
+    {
+        traceLine("uml-va %d call %s %ld\n", label.text, 0);
+        const Result result = Function(arguments...);
+        traceLine("uml-va %d done %s %ld\n", label.text, long(result));
+        return result;
+    }
+};
+
+}
+
 void Driver::probeCodecs()
 {
     // The descriptors a session will need are opened here, at initialisation,
@@ -898,6 +944,12 @@ VAStatus createSurfaces2(VADriverContextP ctx, unsigned format, unsigned width, 
     if (!fourcc || !supportedFourcc(fourcc)) return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     if (descriptor && count != 1) return VA_STATUS_ERROR_INVALID_PARAMETER;
 
+    if (traceRequested()) {
+        char text[160];
+        std::snprintf(text, sizeof(text), "createSurfaces2 %ux%u x%u format=0x%x fourcc=0x%08x memory=0x%x descriptor=%d",
+                      width, height, count, format, fourcc, memoryType, descriptor ? 1 : 0);
+        driver.note(text);
+    }
     for (unsigned index = 0; index < count; ++index) {
         auto surface = std::make_unique<Surface>();
         surface->width = width;
@@ -1702,56 +1754,59 @@ VAStatus initializeDriver(VADriverContextP ctx, DescriptorPool& pool)
     ctx->pDriverData = driver;
 
     auto* table = ctx->vtable;
-    table->vaTerminate = terminate;
-    table->vaQueryConfigProfiles = queryConfigProfiles;
-    table->vaQueryConfigEntrypoints = queryConfigEntrypoints;
-    table->vaGetConfigAttributes = getConfigAttributes;
-    table->vaCreateConfig = createConfig;
-    table->vaDestroyConfig = destroyConfig;
-    table->vaQueryConfigAttributes = queryConfigAttributes;
-    table->vaCreateSurfaces = createSurfaces;
-    table->vaCreateSurfaces2 = createSurfaces2;
-    table->vaDestroySurfaces = destroySurfaces;
-    table->vaQuerySurfaceAttributes = querySurfaceAttributes;
-    table->vaCreateContext = createContext;
-    table->vaDestroyContext = destroyContext;
-    table->vaCreateBuffer = createBuffer;
-    table->vaBufferSetNumElements = bufferSetNumElements;
-    table->vaMapBuffer = mapBuffer;
-    table->vaMapBuffer2 = mapBuffer2;
-    table->vaUnmapBuffer = unmapBuffer;
-    table->vaDestroyBuffer = destroyBuffer;
-    table->vaBufferInfo = bufferInfo;
-    table->vaBeginPicture = beginPicture;
-    table->vaRenderPicture = renderPicture;
-    table->vaEndPicture = endPicture;
-    table->vaSyncSurface = syncSurface;
-    table->vaSyncSurface2 = syncSurface2;
-    table->vaSyncBuffer = syncBuffer;
-    table->vaQuerySurfaceStatus = querySurfaceStatus;
-    table->vaQuerySurfaceError = querySurfaceError;
-    table->vaPutSurface = putSurface;
-    table->vaQueryImageFormats = queryImageFormats;
-    table->vaCreateImage = createImage;
-    table->vaDeriveImage = deriveImage;
-    table->vaDestroyImage = destroyImage;
-    table->vaGetImage = getImage;
-    table->vaPutImage = putImage;
-    table->vaQuerySubpictureFormats = querySubpictureFormats;
-    table->vaQueryDisplayAttributes = queryDisplayAttributes;
-    table->vaGetDisplayAttributes = getDisplayAttributes;
-    table->vaSetDisplayAttributes = setDisplayAttributes;
-    table->vaSetImagePalette = setImagePalette;
-    table->vaCreateSubpicture = createSubpicture;
-    table->vaDestroySubpicture = destroySubpicture;
-    table->vaSetSubpictureImage = setSubpictureImage;
-    table->vaSetSubpictureChromakey = setSubpictureChromakey;
-    table->vaSetSubpictureGlobalAlpha = setSubpictureGlobalAlpha;
-    table->vaAssociateSubpicture = associateSubpicture;
-    table->vaDeassociateSubpicture = deassociateSubpicture;
-    table->vaLockSurface = lockSurface;
-    table->vaUnlockSurface = unlockSurface;
-    table->vaExportSurfaceHandle = exportSurfaceHandle;
+    const bool trace = traceRequested();
+    // The tracing form wraps the same function; a name appears once.
+#define UML_BIND(field, function) table->field = trace ? &Traced<#field, function>::call : function
+    UML_BIND(vaTerminate, terminate);
+    UML_BIND(vaQueryConfigProfiles, queryConfigProfiles);
+    UML_BIND(vaQueryConfigEntrypoints, queryConfigEntrypoints);
+    UML_BIND(vaGetConfigAttributes, getConfigAttributes);
+    UML_BIND(vaCreateConfig, createConfig);
+    UML_BIND(vaDestroyConfig, destroyConfig);
+    UML_BIND(vaQueryConfigAttributes, queryConfigAttributes);
+    UML_BIND(vaCreateSurfaces, createSurfaces);
+    UML_BIND(vaCreateSurfaces2, createSurfaces2);
+    UML_BIND(vaDestroySurfaces, destroySurfaces);
+    UML_BIND(vaQuerySurfaceAttributes, querySurfaceAttributes);
+    UML_BIND(vaCreateContext, createContext);
+    UML_BIND(vaDestroyContext, destroyContext);
+    UML_BIND(vaCreateBuffer, createBuffer);
+    UML_BIND(vaBufferSetNumElements, bufferSetNumElements);
+    UML_BIND(vaMapBuffer, mapBuffer);
+    UML_BIND(vaMapBuffer2, mapBuffer2);
+    UML_BIND(vaUnmapBuffer, unmapBuffer);
+    UML_BIND(vaDestroyBuffer, destroyBuffer);
+    UML_BIND(vaBufferInfo, bufferInfo);
+    UML_BIND(vaBeginPicture, beginPicture);
+    UML_BIND(vaRenderPicture, renderPicture);
+    UML_BIND(vaEndPicture, endPicture);
+    UML_BIND(vaSyncSurface, syncSurface);
+    UML_BIND(vaSyncSurface2, syncSurface2);
+    UML_BIND(vaSyncBuffer, syncBuffer);
+    UML_BIND(vaQuerySurfaceStatus, querySurfaceStatus);
+    UML_BIND(vaQuerySurfaceError, querySurfaceError);
+    UML_BIND(vaPutSurface, putSurface);
+    UML_BIND(vaQueryImageFormats, queryImageFormats);
+    UML_BIND(vaCreateImage, createImage);
+    UML_BIND(vaDeriveImage, deriveImage);
+    UML_BIND(vaDestroyImage, destroyImage);
+    UML_BIND(vaGetImage, getImage);
+    UML_BIND(vaPutImage, putImage);
+    UML_BIND(vaQuerySubpictureFormats, querySubpictureFormats);
+    UML_BIND(vaQueryDisplayAttributes, queryDisplayAttributes);
+    UML_BIND(vaGetDisplayAttributes, getDisplayAttributes);
+    UML_BIND(vaSetDisplayAttributes, setDisplayAttributes);
+    UML_BIND(vaSetImagePalette, setImagePalette);
+    UML_BIND(vaCreateSubpicture, createSubpicture);
+    UML_BIND(vaDestroySubpicture, destroySubpicture);
+    UML_BIND(vaSetSubpictureImage, setSubpictureImage);
+    UML_BIND(vaSetSubpictureChromakey, setSubpictureChromakey);
+    UML_BIND(vaSetSubpictureGlobalAlpha, setSubpictureGlobalAlpha);
+    UML_BIND(vaAssociateSubpicture, associateSubpicture);
+    UML_BIND(vaDeassociateSubpicture, deassociateSubpicture);
+    UML_BIND(vaLockSurface, lockSurface);
+    UML_BIND(vaUnlockSurface, unlockSurface);
+    UML_BIND(vaExportSurfaceHandle, exportSurfaceHandle);
 
     if (auto* vpp = ctx->vtable_vpp) {
         vpp->version = VA_DRIVER_VTABLE_VPP_VERSION;
@@ -1759,6 +1814,7 @@ VAStatus initializeDriver(VADriverContextP ctx, DescriptorPool& pool)
         vpp->vaQueryVideoProcFilterCaps = queryVideoProcFilterCaps;
         vpp->vaQueryVideoProcPipelineCaps = queryVideoProcPipelineCaps;
     }
+#undef UML_BIND
     return VA_STATUS_SUCCESS;
 }
 
