@@ -20,5 +20,6 @@ inline void check(bool condition, const char* what)
 
 void runPoolTests();
 void runEncoderTests();
+void runDriverEncodeTests();
 
 }

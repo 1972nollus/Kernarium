@@ -91,7 +91,7 @@ bool resizeOwned(std::vector<std::uint8_t>& owned, std::uint64_t size) noexcept
 
 }
 
-Driver::Driver(VADriverContextP context)
+Driver::Driver(VADriverContextP context, DescriptorPool& pool) : pool_(pool)
 {
     if (const auto* state = static_cast<const drm_state*>(context->drm_state))
         useClientDrmDescriptor(state->fd);
@@ -102,6 +102,7 @@ Driver::Driver(VADriverContextP context)
     rgbPolicy_ = rgbCaptureRequest(std::getenv("UML_VA_V4L2_RGB"));
     capturePolicy_ = captureMemoryRequest(std::getenv("UML_VA_V4L2_CAPTURE"));
     probeCodecs();
+    probeEncoding();
 }
 
 Driver::~Driver() = default;
@@ -121,7 +122,7 @@ void Driver::probeCodecs()
     // The descriptors a session will need are opened here, at initialisation,
     // because a browser engages its sandbox after initialising VA-API and no
     // device node can be opened after that.
-    auto& pool = DescriptorPool::process();
+    auto& pool = pool_;
     const PoolSizes sizes = poolSizes(std::getenv("UML_VA_V4L2_POOL"));
     pool.setTarget(Role::decoder, sizes.decoders);
     pool.setTarget(Role::encoder, sizes.encoders);
@@ -140,7 +141,7 @@ void Driver::probeCodecs()
     codecs_.push_back(vp9);
     probeCapture(lease.fd());
     // Nothing above changed the descriptor's state, so it goes back as it was.
-    lease.giveBack(true);
+    lease.giveBack(true, false);
 }
 
 void Driver::probeCapture(int descriptor)
@@ -492,9 +493,12 @@ void Driver::harvest(Context& context, std::chrono::milliseconds wait)
 
 VAStatus Driver::waitFor(Surface& target, std::chrono::milliseconds wait)
 {
-    if (target.state == Surface::State::failed) return VA_STATUS_ERROR_DECODING_ERROR;
+    if (target.state == Surface::State::failed)
+        return context(target.owner) && context(target.owner)->encoder ? VA_STATUS_ERROR_ENCODING_ERROR
+                                                                        : VA_STATUS_ERROR_DECODING_ERROR;
     if (target.state != Surface::State::pending) return VA_STATUS_SUCCESS;
     Context* owner = context(target.owner);
+    if (owner && owner->encoder) return waitForEncode(target, wait);
     if (!owner || !owner->decoder) { target.state = Surface::State::failed; return VA_STATUS_ERROR_DECODING_ERROR; }
     const auto deadline = std::chrono::steady_clock::now() + wait;
     while (target.state == Surface::State::pending) {
@@ -697,6 +701,9 @@ VAStatus queryConfigProfiles(VADriverContextP ctx, VAProfile* profiles, int* cou
     std::lock_guard guard(driver.lock());
     int written = 0;
     for (const auto& codec : driver.codecs()) profiles[written++] = codec.profile;
+    std::vector<VAProfile> encoding;
+    driver.encodeProfiles(encoding);
+    for (const VAProfile profile : encoding) profiles[written++] = profile;
     profiles[written++] = VAProfileNone;
     *count = written;
     return VA_STATUS_SUCCESS;
@@ -711,9 +718,14 @@ VAStatus queryConfigEntrypoints(VADriverContextP ctx, VAProfile profile, VAEntry
         *count = 1;
         return VA_STATUS_SUCCESS;
     }
-    if (!driver.codec(profile)) return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
-    entrypoints[0] = VAEntrypointVLD;
-    *count = 1;
+    int written = 0;
+    if (driver.codec(profile)) entrypoints[written++] = VAEntrypointVLD;
+    if (driver.isEncodeProfile(profile)) {
+        entrypoints[written++] = VAEntrypointEncSlice;
+        entrypoints[written++] = VAEntrypointEncSliceLP;
+    }
+    if (!written) return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
+    *count = written;
     return VA_STATUS_SUCCESS;
 }
 
@@ -722,6 +734,8 @@ VAStatus getConfigAttributes(VADriverContextP ctx, VAProfile profile, VAEntrypoi
 {
     auto& driver = driverOf(ctx);
     std::lock_guard guard(driver.lock());
+    if (isEncodeEntrypoint(entrypoint) && driver.isEncodeProfile(profile))
+        return driver.encodeAttributes(profile, attributes, count);
     const bool proc = profile == VAProfileNone && entrypoint == VAEntrypointVideoProc;
     if (!proc && (!driver.codec(profile) || entrypoint != VAEntrypointVLD))
         return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
@@ -752,6 +766,14 @@ VAStatus createConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entr
 {
     auto& driver = driverOf(ctx);
     std::lock_guard guard(driver.lock());
+    if (isEncodeEntrypoint(entrypoint)) {
+        Config encoding;
+        const VAStatus status = driver.createEncodeConfig(profile, entrypoint, attributes, count, encoding);
+        if (status != VA_STATUS_SUCCESS) return status;
+        *id = driver.nextConfig++;
+        driver.configs.emplace(*id, encoding);
+        return VA_STATUS_SUCCESS;
+    }
     const bool proc = profile == VAProfileNone && entrypoint == VAEntrypointVideoProc;
     if (!proc) {
         if (!driver.codec(profile)) return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
@@ -792,6 +814,13 @@ VAStatus queryConfigAttributes(VADriverContextP ctx, VAConfigID id, VAProfile* p
     attributes[0].type = VAConfigAttribRTFormat;
     attributes[0].value = found->second.rtFormat;
     *count = 1;
+    if (isEncodeEntrypoint(found->second.entrypoint)) {
+        attributes[1].type = VAConfigAttribRateControl;
+        attributes[1].value = found->second.rateControl;
+        attributes[2].type = VAConfigAttribEncPackedHeaders;
+        attributes[2].value = VA_ENC_PACKED_HEADER_NONE;
+        *count = 3;
+    }
     return VA_STATUS_SUCCESS;
 }
 
@@ -802,8 +831,10 @@ VAStatus querySurfaceAttributes(VADriverContextP ctx, VAConfigID id, VASurfaceAt
     const auto found = driver.configs.find(id);
     if (found == driver.configs.end()) return VA_STATUS_ERROR_INVALID_CONFIG;
     const bool proc = found->second.entrypoint == VAEntrypointVideoProc;
-    const CodecSupport* codec = proc ? nullptr : driver.codec(found->second.profile);
-    if (!proc && !codec) return VA_STATUS_ERROR_INVALID_CONFIG;
+    const bool encode = isEncodeEntrypoint(found->second.entrypoint);
+    const CodecSupport* codec = proc || encode ? nullptr : driver.codec(found->second.profile);
+    const EncodeCodec* limits = encode && driver.encoding() ? driver.encoding()->limits(found->second.profile) : nullptr;
+    if (!proc && !codec && !limits) return VA_STATUS_ERROR_INVALID_CONFIG;
     std::vector<VASurfaceAttrib> list;
     const auto pixelFormat = [&list](std::uint32_t fourcc) {
         VASurfaceAttrib attribute {};
@@ -823,10 +854,10 @@ VAStatus querySurfaceAttributes(VADriverContextP ctx, VAConfigID id, VASurfaceAt
     };
     pixelFormat(VA_FOURCC_NV12);
     if (proc) pixelFormat(VA_FOURCC_ARGB);
-    integer(VASurfaceAttribMinWidth, proc ? 16 : int(codec->minWidth));
-    integer(VASurfaceAttribMinHeight, proc ? 16 : int(codec->minHeight));
-    integer(VASurfaceAttribMaxWidth, proc ? 4096 : int(codec->maxWidth));
-    integer(VASurfaceAttribMaxHeight, proc ? 4096 : int(codec->maxHeight));
+    integer(VASurfaceAttribMinWidth, proc ? 16 : int(limits ? limits->minWidth : codec->minWidth));
+    integer(VASurfaceAttribMinHeight, proc ? 16 : int(limits ? limits->minHeight : codec->minHeight));
+    integer(VASurfaceAttribMaxWidth, proc ? 4096 : int(limits ? limits->maxWidth : codec->maxWidth));
+    integer(VASurfaceAttribMaxHeight, proc ? 4096 : int(limits ? limits->maxHeight : codec->maxHeight));
     VASurfaceAttrib memory {};
     memory.type = VASurfaceAttribMemoryType;
     memory.flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
@@ -984,7 +1015,7 @@ VAStatus createContext(VADriverContextP ctx, VAConfigID configId, int width, int
         if (!width || !height) return VA_STATUS_ERROR_INVALID_PARAMETER;
         std::string error;
         // A pooled descriptor is the one a sandboxed process can still get.
-        Lease lease = DescriptorPool::process().acquire(Role::decoder, driver.device(), error);
+        Lease lease = driver.pool().acquire(Role::decoder, driver.device(), error);
         if (!lease) { driver.note(error.c_str()); return VA_STATUS_ERROR_MAX_NUM_EXCEEDED; }
         context->decoder = V4l2Decoder::open(std::move(lease), codec->v4l2Format, unsigned(width),
                                              unsigned(height), driver.preferredCapture(), error);
@@ -1004,6 +1035,10 @@ VAStatus createContext(VADriverContextP ctx, VAConfigID configId, int width, int
         // The decoded format is only settled when the decoder has parsed the
         // stream, so it is reported with the layout at the first picture.
         context->reportLayout = true;
+    } else if (isEncodeEntrypoint(context->entrypoint)) {
+        if (!width || !height) return VA_STATUS_ERROR_INVALID_PARAMETER;
+        const VAStatus status = driver.openEncoder(*context, found->second);
+        if (status != VA_STATUS_SUCCESS) return status;
     }
     *id = driver.nextContext++;
     driver.contexts.emplace(*id, std::move(context));
@@ -1042,6 +1077,10 @@ VAStatus createBuffer(VADriverContextP ctx, VAContextID, VABufferType type, unsi
     buffer->elements = elements;
     if (!resizeOwned(buffer->owned, std::uint64_t(size) * elements)) return VA_STATUS_ERROR_ALLOCATION_FAILED;
     if (data) std::memcpy(buffer->owned.data(), data, buffer->owned.size());
+    if (type == VAEncCodedBufferType) {
+        buffer->coded.is = true;
+        buffer->coded.segment.buf = buffer->owned.data();
+    }
     *id = driver.nextBuffer++;
     driver.buffers.emplace(*id, std::move(buffer));
     return VA_STATUS_SUCCESS;
@@ -1064,6 +1103,14 @@ VAStatus mapBuffer(VADriverContextP ctx, VABufferID id, void** address)
     std::lock_guard guard(driver.lock());
     Buffer* buffer = driver.buffer(id);
     if (!buffer) return VA_STATUS_ERROR_INVALID_BUFFER;
+    if (buffer->coded.is) {
+        // Mapping a coded buffer waits for the frame that fills it, so a
+        // client that never calls vaSyncSurface still gets the whole frame.
+        const VAStatus status = driver.waitForCoded(*buffer);
+        if (status != VA_STATUS_SUCCESS) return status;
+        *address = &buffer->coded.segment;
+        return VA_STATUS_SUCCESS;
+    }
     std::uint8_t* data = buffer->data();
     if (!data) return VA_STATUS_ERROR_OPERATION_FAILED;
     *address = data;
@@ -1111,6 +1158,7 @@ VAStatus beginPicture(VADriverContextP ctx, VAContextID id, VASurfaceID target)
     context->target = target;
     context->picture = true;
     context->sliceData.clear();
+    if (context->encoder) context->encoder->beginPicture();
     context->havePipeline = false;
     context->pipelineSourceValid = false;
     context->pipelineDestinationValid = false;
@@ -1126,6 +1174,11 @@ VAStatus renderPicture(VADriverContextP ctx, VAContextID id, VABufferID* ids, in
     for (int index = 0; index < count; ++index) {
         Buffer* buffer = driver.buffer(ids[index]);
         if (!buffer) return VA_STATUS_ERROR_INVALID_BUFFER;
+        if (context->encoder) {
+            const VAStatus status = driver.addEncodeBuffer(*context, *buffer);
+            if (status != VA_STATUS_SUCCESS) return status;
+            continue;
+        }
         switch (buffer->type) {
         case VASliceDataBufferType: {
             const std::uint8_t* data = buffer->data();
@@ -1173,7 +1226,8 @@ VAStatus endPicture(VADriverContextP ctx, VAContextID id)
     target->owner = id;
     const auto status = context->entrypoint == VAEntrypointVideoProc
         ? driver.process(*context, *target)
-        : driver.submitFrame(*context, context->target, *target);
+        : context->encoder ? driver.submitEncode(*context, context->target, *target)
+                           : driver.submitFrame(*context, context->target, *target);
     context->sliceData.clear();
     return status;
 }
@@ -1624,28 +1678,24 @@ VAStatus queryVideoProcPipelineCaps(VADriverContextP, VAContextID, VABufferID*, 
 }
 
 }
-}
 
-extern "C" VAStatus __vaDriverInit_1_22(VADriverContextP ctx);
-
-extern "C" VAStatus __vaDriverInit_1_22(VADriverContextP ctx)
+VAStatus initializeDriver(VADriverContextP ctx, DescriptorPool& pool)
 {
-    using namespace uml::va;
     if (!ctx) return VA_STATUS_ERROR_INVALID_CONTEXT;
     ctx->version_major = VA_MAJOR_VERSION;
     ctx->version_minor = VA_MINOR_VERSION;
-    ctx->max_profiles = 8;
-    ctx->max_entrypoints = 2;
-    ctx->max_attributes = 8;
+    ctx->max_profiles = 16;
+    ctx->max_entrypoints = 4;
+    ctx->max_attributes = 16;
     ctx->max_image_formats = 4;
     ctx->max_subpic_formats = 1;
     ctx->max_display_attributes = 1;
     ctx->str_vendor = kVendor;
 
-    auto* driver = new (std::nothrow) Driver(ctx);
+    auto* driver = new (std::nothrow) Driver(ctx, pool);
     if (!driver) return VA_STATUS_ERROR_ALLOCATION_FAILED;
-    if (driver->codecs().empty()) {
-        driver->note("no usable decoder; refusing to initialise");
+    if (driver->codecs().empty() && !driver->encoding()) {
+        driver->note("no usable decoder or encoder; refusing to initialise");
         delete driver;
         return VA_STATUS_ERROR_HW_BUSY;
     }
@@ -1710,4 +1760,6 @@ extern "C" VAStatus __vaDriverInit_1_22(VADriverContextP ctx)
         vpp->vaQueryVideoProcPipelineCaps = queryVideoProcPipelineCaps;
     }
     return VA_STATUS_SUCCESS;
+}
+
 }

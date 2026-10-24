@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "encode.hpp"
 #include "storage.hpp"
 #include "v4l2_decoder.hpp"
 #include "vp9.hpp"
@@ -37,7 +38,14 @@ struct Config {
     VAProfile profile {VAProfileNone};
     VAEntrypoint entrypoint {VAEntrypointVLD};
     unsigned rtFormat {};
+    // The one VA_RC_* mode an encode configuration runs in.
+    unsigned rateControl {};
 };
+
+inline bool isEncodeEntrypoint(VAEntrypoint entrypoint) noexcept
+{
+    return entrypoint == VAEntrypointEncSlice || entrypoint == VAEntrypointEncSliceLP;
+}
 
 struct Buffer {
     VABufferType type {};
@@ -51,6 +59,17 @@ struct Buffer {
     // Keeps the surface allocation an image was derived from alive, because a
     // surface that decodes again may be handed a different buffer.
     std::shared_ptr<PixelBuffer> pin;
+    // A coded buffer is where an encoder delivers a finished frame. A client
+    // maps it to a VACodedBufferSegment that describes the frame, and the
+    // frame's bytes are in `owned`.
+    struct Coded {
+        bool is {};
+        VACodedBufferSegment segment {};
+        // The input surface of the frame that will fill the buffer, while
+        // there is one in flight.
+        bool pending {};
+        VASurfaceID surface {VA_INVALID_SURFACE};
+    } coded;
     std::uint8_t* data() { return external ? external : owned.data(); }
     // How many bytes data() addresses. An application may resize a buffer it
     // was handed, so an image's buffer is checked against the image's size
@@ -85,6 +104,9 @@ struct Context {
     unsigned width {};
     unsigned height {};
     std::unique_ptr<V4l2Decoder> decoder;
+    std::unique_ptr<VaEncoder> encoder;
+    // An ARGB input converted to NV12 for the encoder.
+    std::vector<std::uint8_t> encodeScratch;
     bool reportLayout {};
     Vp9Context vp9;
     std::uint64_t sequence {};
@@ -117,14 +139,22 @@ struct Image {
 
 class Driver {
 public:
-    explicit Driver(VADriverContextP context);
+    // `pool` is where the driver gets the V4L2 descriptors its sessions run on;
+    // a process has one, and a test brings its own.
+    explicit Driver(VADriverContextP context, DescriptorPool& pool);
     ~Driver();
+
+    DescriptorPool& pool() noexcept { return pool_; }
 
     std::mutex& lock() noexcept { return lock_; }
 
     const std::vector<CodecSupport>& codecs() const noexcept { return codecs_; }
     const CodecSupport* codec(VAProfile profile) const noexcept;
     const std::string& device() const noexcept { return device_; }
+    // What the encoder node lets this driver advertise; null when there is no
+    // encoder.
+    const EncodeSupport* encoding() const noexcept { return encoding_.get(); }
+    const std::string& encoderDevice() const noexcept { return encoderDevice_; }
 
     std::map<VAConfigID, Config> configs;
     std::map<VAContextID, std::unique_ptr<Context>> contexts;
@@ -170,6 +200,23 @@ public:
     bool storePacked(Surface& target, const ConstPlaneView& source, unsigned width, unsigned height);
     VAStatus process(Context& context, Surface& target);
 
+    // Encode plumbing. Profiles come from the encoder node, so a profile it
+    // did not verify is never listed.
+    void encodeProfiles(std::vector<VAProfile>& out) const;
+    bool isEncodeProfile(VAProfile profile) const noexcept;
+    VAStatus encodeAttributes(VAProfile profile, VAConfigAttrib* attributes, int count) const;
+    VAStatus createEncodeConfig(VAProfile profile, VAEntrypoint entrypoint, const VAConfigAttrib* attributes,
+                                int count, Config& config) const;
+    VAStatus openEncoder(Context& context, const Config& config);
+    // One buffer of the picture being assembled.
+    VAStatus addEncodeBuffer(Context& context, const Buffer& buffer);
+    VAStatus submitEncode(Context& context, VASurfaceID id, Surface& target);
+    // Collects finished frames into their coded buffers.
+    void harvestEncode(Context& context, std::chrono::milliseconds wait);
+    VAStatus waitForEncode(Surface& surface, std::chrono::milliseconds wait);
+    // Waits for the frame that will fill a coded buffer.
+    VAStatus waitForCoded(Buffer& buffer);
+
     // Fills a surface's NV12 buffer from its RGB shadow, if it has one and the
     // buffer is not already current. A client that only ever uses the video
     // processing path never pays for this.
@@ -190,13 +237,18 @@ public:
 
 private:
     void probeCodecs();
+    // Learns once what the encoder node offers.
+    void probeEncoding();
     // Learns once what the decoder's capture queue can do, on a descriptor the
     // pool lent for the purpose.
     void probeCapture(int descriptor);
 
+    DescriptorPool& pool_;
     std::mutex lock_;
     std::vector<CodecSupport> codecs_;
     std::string device_;
+    std::shared_ptr<const EncodeSupport> encoding_;
+    std::string encoderDevice_;
     RgbCapture rgbPolicy_ {RgbCapture::automatic};
     CaptureMemory capturePolicy_ {CaptureMemory::automatic};
     // Probed once at initialisation, before a sandbox can close the device nodes.
@@ -206,5 +258,10 @@ private:
     int reportedPictures_ {};
     int reportLimit_ {-1};
 };
+
+// Fills a libva driver context with this driver's entry points over a new
+// Driver, which the context owns from then on. __vaDriverInit_1_22 is this
+// function on the process's pool.
+VAStatus initializeDriver(VADriverContextP ctx, DescriptorPool& pool);
 
 }

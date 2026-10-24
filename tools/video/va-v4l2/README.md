@@ -1,12 +1,13 @@
-# VA-API backend over the Virtio video decoder
+# VA-API backend over the Virtio video decoder and encoder
 
 `uml_drv_video.so` is a libva backend driver that lets a VA-API client in a
-Linux guest decode video through the [Virtio video
-decoder](../../../darwin/device/video/README.md), whose V4L2 stateful
-mem2mem node the guest kernel publishes as `/dev/video0` and the Steam
-image aliases to `/dev/video-dec0`. It exists because Valve's x86-64 CEF
-carries only the VA-API decode path, while the device speaks V4L2, and because
-no packaged libva backend drives a *stateful* decoder.
+Linux guest decode and encode video through the [Virtio video
+device](../../../darwin/device/video/README.md), whose V4L2 stateful mem2mem
+nodes the guest kernel publishes as `/dev/videoN` (the Steam image aliases the
+decoder to `/dev/video-dec0`). It exists because Valve's x86-64 CEF carries
+only the VA-API decode path while the device speaks V4L2, because Debian's
+Chromium uses VA-API for hardware video encode as well as decode, and because
+no packaged libva backend drives a *stateful* codec.
 
 It is a guest component: it is built natively for the guest it runs in, against
 that guest's own libva and libdrm, and is never part of the Apple host build.
@@ -18,6 +19,7 @@ that guest's own libva and libdrm, and is never part of the Apple host build.
 | entry point | `__vaDriverInit_1_22` (VA-API 1.22, libva 2.22 - Debian trixie) |
 | driver name | `uml`, so `LIBVA_DRIVER_NAME=uml` loads `uml_drv_video.so` |
 | decode | `VAProfileVP9Profile0` + `VAEntrypointVLD`, `VA_RT_FORMAT_YUV420`, NV12 |
+| encode | H.264 Constrained Baseline, Main and High and HEVC Main, with `VAEntrypointEncSlice` and `VAEntrypointEncSliceLP`, as [Encoding](#encoding) describes |
 | video processing | `VAProfileNone` + `VAEntrypointVideoProc`: NV12 or ARGB in, NV12 or ARGB out, cropping and nearest-neighbour scaling |
 | surfaces | driver-allocated NV12 and ARGB, or a client buffer imported through `VASurfaceAttribExternalBufferDescriptor` (`DRM_PRIME` and `DRM_PRIME_2`) |
 | export | `vaExportSurfaceHandle` with `DRM_PRIME_2`, **one object** holding every plane at its own offset, separate or composed layers |
@@ -145,6 +147,55 @@ planes is refused and an NV12 decode keeps the decoder's own buffers. When the
 capture queue learns to take one object carrying both planes, the probe finds
 it with no other change.
 
+## Encoding
+
+An encode profile is listed only when the encoder node's menus offer that
+codec and profile, and a rate-control mode only when the node offers it, so
+the driver never advertises what the host did not verify. Both entry points are
+the same encoder.
+
+| attribute | value |
+| --- | --- |
+| `VAConfigAttribRTFormat` | `VA_RT_FORMAT_YUV420` |
+| `VAConfigAttribRateControl` | the node's modes among `VA_RC_CBR`, `VA_RC_VBR`, `VA_RC_CQP` (frame rate control off, fixed quantisers) and `VA_RC_ICQ` (constant quality) |
+| `VAConfigAttribEncPackedHeaders` | none: the host writes the parameter sets |
+| `VAConfigAttribEncMaxRefFrames` | 1: every picture after the first predicts from the one before it |
+| `VAConfigAttribEncMaxSlices` | 1 |
+| `VAConfigAttribMaxPictureWidth` / `Height` | the codec's limits from `VIDIOC_ENUM_FRAMESIZES` |
+
+A VA context takes one descriptor from the pool and runs one V4L2 encode
+session on it. The session starts with the first picture, because the controls
+that configure a stream (profile, level, rate-control mode, key frame interval,
+entropy coder) cannot change while it runs and VA-API names them only in the
+first picture's buffers. After that, what a client changes between pictures -
+the bit rate, the peak rate, the quantiser bounds, the constant quantiser, the
+quality, the frame rate - is applied as dynamic controls before the next frame
+goes in. A stream cannot change its size; the client creates a new context.
+
+| VA-API buffer | becomes |
+| --- | --- |
+| sequence parameters | the stream size (H.264 cropping gives a smaller size than the coded one; HEVC carries none, so its stream is the coded size), level, tier, key frame interval, and the frame rate from the VUI timing |
+| picture parameters | a forced key frame for an IDR picture, CABAC and the 8x8 transform, the initial quantiser, the coded buffer that receives the frame |
+| slice parameters | the quantiser delta that, with the initial quantiser, gives the constant quantiser |
+| `RateControl` | bit rate and peak (variable rate: the peak is the client's rate and the target is its percentage), quantiser bounds, ICQ quality (libva's factor, 1 best, maps linearly onto V4L2's 1..100) |
+| `FrameRate`, `HRD` | the frame rate, and the buffer size |
+| packed headers | ignored; the host's own are used |
+
+Pictures go to the node as NV12 in whichever of `NV12M` and `NV12` it takes,
+from NV12 surfaces directly or from ARGB ones after one conversion. Every key
+frame carries its parameter sets in the same buffer. `vaEndPicture` returns
+once the frame is queued; `vaSyncSurface` on the input and `vaMapBuffer` on the
+coded buffer wait up to four seconds for the frame, which comes back with the
+timestamp of the picture it encodes. A frame larger than its coded buffer is
+cut to it and flagged `VA_CODED_BUF_STATUS_SLICE_OVERFLOW_MASK`; a frame the
+host failed is `VA_STATUS_ERROR_ENCODING_ERROR` on its surface alone.
+
+Not offered, and refused or absent rather than approximated: B-frames
+(`ip_period` above 1 is `VA_STATUS_ERROR_INVALID_PARAMETER`), more than one
+slice, temporal layers, regions of interest, HEVC Main 10 and P010, and
+picture encoding. The first picture of a context must carry sequence
+parameters. Input handed over as a dma-buf is copied, not shared.
+
 ## Device access in a sandboxed process
 
 A browser's GPU process initialises VA-API before it engages its sandbox, and
@@ -183,6 +234,7 @@ reason.
 | --- | --- |
 | `LIBVA_DRIVER_NAME=uml`, `LIBVA_DRIVERS_PATH` | how libva finds this driver |
 | `UML_VA_V4L2_DEVICE` | the decoder node, instead of `/dev/video-dec0` or a scan of `/dev/video*` |
+| `UML_VA_V4L2_ENCODER_DEVICE` | the encoder node, instead of a scan of `/dev/video*` for a stateful encoder |
 | `UML_VA_V4L2_POOL` | how many descriptors to open ahead for each role, as above |
 | `UML_VA_V4L2_SURFACES` | the backing store, as above |
 | `UML_VA_V4L2_HIDDEN` | `show` (default) or `skip`, as above |
@@ -201,7 +253,8 @@ driver talks to the video decoder whatever device the display names.
 
 ```sh
 cmake --preset guest && cmake --build --preset guest
-./build/uml_va_v4l2_tests          # VP9 headers, superframes, pixel paths
+./build/uml_va_v4l2_tests          # VP9 headers, superframes, pixel paths, the pool,
+                                   # and encode against an encoder node held in memory
 ```
 
 `build/va_decode_probe` is the guest-side qualification client. It drives libva

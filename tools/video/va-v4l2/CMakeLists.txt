@@ -14,6 +14,10 @@ pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
 
 add_library(uml_va_v4l2_core OBJECT
     convert.cpp
+    driver.cpp
+    driver_encode.cpp
+    encode.cpp
+    encode_map.cpp
     storage.cpp
     v4l2_decoder.cpp
     v4l2_encoder.cpp
@@ -27,7 +31,7 @@ target_include_directories(uml_va_v4l2_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_property(TARGET uml_va_v4l2_core PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 # libva loads <LIBVA_DRIVER_NAME>_drv_video.so out of its driver directory.
-add_library(uml_drv_video MODULE driver.cpp)
+add_library(uml_drv_video MODULE entry.cpp)
 target_link_libraries(uml_drv_video PRIVATE uml_va_v4l2_core)
 set_target_properties(uml_drv_video PROPERTIES PREFIX "" OUTPUT_NAME "uml_drv_video")
 # Nothing outside the one libva entry point is part of the contract.
@@ -39,7 +43,8 @@ add_executable(uml_va_v4l2_tests
     tests/va_v4l2_tests.cpp
     tests/pool_tests.cpp
     tests/fake_v4l2.cpp
-    tests/encoder_tests.cpp)
+    tests/encoder_tests.cpp
+    tests/encode_driver_tests.cpp)
 target_link_libraries(uml_va_v4l2_tests PRIVATE uml_va_v4l2_core)
 
 # The guest-side qualification client. It talks to libva, not to this driver
