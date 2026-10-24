@@ -5,11 +5,13 @@
  * after the SME part, so no earlier part moves for it, and it holds no SVE or
  * SME instruction: sme.inc has turned those extensions off.
  *
- * State: R0-R14 are CpuState::registers[0..14], each a 64-bit slot of which
- * only the low 32 bits are the register, so a write is always a 32-bit store.
- * registers[15] and registers[16] are the part's own scratch slots, where the
- * builder puts the value of PC read as an operand (PC is not a register
- * here). NZCV is the guest's, in x27, as everywhere in the engine; Q, GE and
+ * State: R0-R14 are CpuState::registers[0..14], each a 64-bit slot that
+ * holds the register zero-extended: the runtime loads it so, and a write is
+ * always a 32-bit store. registers[15] and registers[16] are the part's own
+ * scratch slots, where the builder puts the value of PC read as an operand
+ * (PC is not a register here) and the address of a T32 exclusive transfer
+ * with an offset; every entry clears them, because the A64 part's exclusive
+ * and ordered gadgets read an address slot whole (a32_layout.h). NZCV is the guest's, in x27, as everywhere in the engine; Q, GE and
  * ITSTATE are in CpuState (a32_q, a32_ge_mask, a32_itstate).
  *
  * The PC of a translated stream is a key (cpu/arm64/aarch32/guest_key.hpp):

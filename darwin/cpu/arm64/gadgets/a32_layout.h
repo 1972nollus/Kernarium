@@ -30,6 +30,18 @@
  * reads the PC. */
 #define UML_GADGET_A32_POSITION_SHIFT 24
 
+/* The two CpuState::registers slots past R0-R14 that the part borrows: for
+ * the value of PC read as an operand, a destination PC, and the address of a
+ * T32 LDREX or STREX with an offset. No AArch32 register is in them, so the
+ * runtime does not load them, and they hold whatever the virtual CPU ran
+ * last, an AArch64 task's x15 and x16 among it. The exclusive and ordered
+ * transfers are the A64 part's gadgets, which read an address slot whole, so
+ * every slot a stream reads holds a zero-extended value: R0-R14 are loaded
+ * so and every write keeps them so, and each entry clears these two
+ * (GadgetExecutor::enter_aarch32). */
+#define UML_GADGET_A32_SCRATCH0_SLOT 15
+#define UML_GADGET_A32_SCRATCH1_SLOT 16
+
 /* What uml_arm64_gadget_a32_execute (a32/library_helpers.cpp) returns to the
  * gadget: the instruction retired; it faulted, with the fault in the TLB;
  * it is UNDEFINED; or it reached an internal error, the engine's fatal

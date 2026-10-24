@@ -49,9 +49,28 @@ uml_add_guest_integration_test(
     ARGS --probe ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_guest_probe.py
         --elf ${UML_GUEST_AARCH32_PROBE}
         --elf-4k ${UML_GUEST_AARCH32_PROBE_4K}
+        --aarch64-helper ${CMAKE_CURRENT_SOURCE_DIR}/aarch64_dirty.s
     LABELS guest;kernel;aarch32;smoke
     TIMEOUT 1200
     CPUS 2)
+
+# guest-aarch32-exclusives-<engine> runs the probe's exclusives check alone on
+# an engine: every exclusive and ordered form on each of four CPUs, right
+# after a 64-bit task left its registers there.
+foreach(_engine IN ITEMS gadgets jit)
+    uml_add_guest_integration_test(
+        NAME guest-aarch32-exclusives-${_engine}
+        SCRIPT run_guest_aarch32.py
+        ARGS --engine ${_engine} --ncpus 4 --only exclusives
+            --probe ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_guest_probe.py
+            --elf ${UML_GUEST_AARCH32_PROBE}
+            --elf-4k ${UML_GUEST_AARCH32_PROBE_4K}
+            --aarch64-helper ${CMAKE_CURRENT_SOURCE_DIR}/aarch64_dirty.s
+            --probe-timeout 600
+        LABELS guest;kernel;aarch32;${_engine}
+        TIMEOUT 900
+        CPUS 4)
+endforeach()
 
 # The engine probe: a freestanding armhf program (engine_probe/) that the
 # AArch32 execution engines run as the guest's /init. Its C++ and assembly

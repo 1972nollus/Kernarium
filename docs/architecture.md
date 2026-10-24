@@ -629,7 +629,9 @@ is fatal unless the status is User mode with E clear, IT comes with T, and
 the task is neither streaming nor holds live SVE registers. An engine's exit
 becomes the bridge event for a 32-bit task: BKPT carries its immediate and
 the BKPT32 exception class, a completed single step the software-step class,
-and a PC alignment fault the 32-bit target address.
+and a PC alignment fault the 32-bit target address. A fault address wider
+than 32 bits is an engine error and the fatal event, never a guest SIGSEGV
+whose compat siginfo would hide the upper half.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
