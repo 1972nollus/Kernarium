@@ -449,17 +449,22 @@ clears the record (an exception return ends the monitor; `arm64-static-runtime`
 checks it), and the loop retries from its head. The JIT's fused regions check
 both mappings before the monitor, and its semantic path keeps a software
 reservation: a table of versions of 16-byte host granules, in which a store to
-a granule fails the store-exclusive that reserved it. The monitor ends at a
-store-exclusive, a CLREX, an exception and a store to the reserved granule. A
-store of the guest's own to another granule leaves it standing, as on hardware
-and as a register spill between a pair needs, also when the two granules share
-a version slot. While any vCPU holds a reservation, every vCPU's native stores
-(its own included) run their tracked variants, which record the granules they
-wrote. `arm64-exclusive-progress` and `arm64-tlb` check the contract on both
+a granule fails the store-exclusive that reserved it. Its store-exclusive is
+one host compare-and-swap from the value the load read, so a write that does
+not take the exclusive lock between its check and its store (the kernel's
+futex and SWP emulation, DMA) fails it instead of being overwritten; that
+check is also value-based. The monitor ends at a store-exclusive, a CLREX, an
+exception and a store to the reserved granule. A store of the guest's own to
+another granule leaves it standing, as on hardware and as a register spill
+between a pair needs, also when the two granules share a version slot. While
+any vCPU holds a reservation, every vCPU's native stores (its own included)
+run their tracked variants, which record the granules they wrote.
+`arm64-exclusive-progress` and `arm64-tlb` check the contract on both
 engines, `arm64-exclusive-events` checks in A64, A32 and T32 that a
 branch, a link, an indirect lookup, a translation, a TLB refill, a library
 call or a store of the guest's own to another line between a pair does not
-fail its store, and
+fail its store, `arm64-jit-exclusive_completion` checks that a write outside
+the exclusive lock fails a semantic store-exclusive, and
 `guest-exclusive-progress-gadgets` and `guest-exclusive-progress-jit` check the
 contract in a guest.
 

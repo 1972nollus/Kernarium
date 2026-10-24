@@ -56,6 +56,16 @@ enum class AtomicStoreResult {
 	fault,
 };
 
+/* What a store-exclusive completes against: the host granule its
+ * load-exclusive reserved and the value it read, in address order (a pair of
+ * 4-byte elements is one 8-byte `first`; a pair of 8-byte elements is `first`
+ * and `second`). */
+struct MonitoredValue final {
+	std::uintptr_t key;
+	std::uint64_t first;
+	std::uint64_t second;
+};
+
 /* Invalidates reservation granule `key` for a store of `writer`'s. Another
  * vCPU's reservation of the granule, or of any granule that shares its slot,
  * fails. `writer`'s own reservation fails only if the store is to its
@@ -73,8 +83,18 @@ void reservation_store(CpuState &writer, std::uintptr_t key) noexcept;
 
 [[nodiscard]] AtomicStoreResult atomic_store_value(GuestMemory &memory,
 	std::uint64_t address, std::size_t size, std::uint64_t value,
-	std::memory_order order, const std::uintptr_t *expected_key,
-	std::uintptr_t &key);
+	std::memory_order order, std::uintptr_t &key);
+
+/* The store of a store-exclusive: one compare-and-swap of the monitored value
+ * for `value`. It stores only if the location is still the reserved granule
+ * and still holds what the load-exclusive read, so a write that does not take
+ * the exclusive gate (the kernel's futex and SWP emulation, DMA) fails the
+ * store-exclusive instead of being overwritten. The check is by value: a write
+ * that restored the value is not seen. */
+[[nodiscard]] AtomicStoreResult atomic_store_exclusive_value(
+	GuestMemory &memory, std::uint64_t address, std::size_t size,
+	const MonitoredValue &monitored, std::uint64_t value,
+	std::memory_order order, std::uintptr_t &key);
 
 [[nodiscard]] bool atomic_compare_swap_value(GuestMemory &memory,
 	std::uint64_t address, std::size_t size, std::uint64_t compare,
@@ -98,10 +118,11 @@ void reservation_store(CpuState &writer, std::uintptr_t key) noexcept;
 	std::uint64_t address, std::size_t element_size, std::memory_order order,
 	std::uint64_t &first, std::uint64_t &second, std::uintptr_t &key);
 
-[[nodiscard]] AtomicStoreResult atomic_store_pair_value(GuestMemory &memory,
-	std::uint64_t address, std::size_t element_size, std::uint64_t first,
-	std::uint64_t second, std::memory_order order,
-	const std::uintptr_t *expected_key, std::uintptr_t &key);
+/* The same for a pair of elements. */
+[[nodiscard]] AtomicStoreResult atomic_store_exclusive_pair_value(
+	GuestMemory &memory, std::uint64_t address, std::size_t element_size,
+	const MonitoredValue &monitored, std::uint64_t first,
+	std::uint64_t second, std::memory_order order, std::uintptr_t &key);
 
 [[nodiscard]] bool ordinary_store(CpuState &writer, GuestMemory &memory,
 	std::uint64_t address, std::span<const std::byte> bytes);

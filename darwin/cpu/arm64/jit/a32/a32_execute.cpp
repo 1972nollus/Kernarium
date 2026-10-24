@@ -42,11 +42,11 @@ namespace sem = jit::semantic;
 using aarch32::Instruction;
 
 /* The exclusive monitor's view of guest memory, for sem::atomic_load_value
- * and sem::atomic_store_value: the translated page of one access the library
- * has already checked for natural alignment (1, 2, 4 or 8 bytes), which the
- * monitor performs as one host access. has_fault() is true, so a failed
- * translation is the access's fault, which the library reports, and neither
- * helper falls back to read or write. */
+ * and sem::atomic_store_exclusive_value: the translated page of one access
+ * the library has already checked for natural alignment (1, 2, 4 or 8
+ * bytes), which the monitor performs as one host access. has_fault() is
+ * true, so a failed translation is the access's fault, which the library
+ * reports, and neither helper falls back to read or write. */
 class TlbMemory final : public GuestMemory {
 public:
   explicit TlbMemory(Tlb &tlb) noexcept : tlb_{tlb} {}
@@ -130,7 +130,10 @@ public:
 
   /* STREX passes when the monitor still names this location, no store has
    * invalidated its granule and the location holds the value the load read;
-   * the monitor is cleared either way. */
+   * the monitor is cleared either way. The store itself is a compare-and-swap
+   * from that value, so a write that does not take the exclusive lock (the
+   * kernel's futex and SWP emulation) between the check and the store fails
+   * the STREX instead of being overwritten. */
   bool store_exclusive(CpuState &cpu, std::uint32_t address, std::byte *,
                        unsigned size, std::uint64_t value,
                        bool release) noexcept override {
@@ -144,13 +147,15 @@ public:
                    cpu.exclusive_size == size && cpu.exclusive_key == key &&
                    cpu.exclusive_version == sem::reservation_version(key) &&
                    cpu.exclusive_value == current;
+    const sem::MonitoredValue monitored{cpu.exclusive_key, cpu.exclusive_value,
+                                        0};
     cpu.clear_exclusive_monitor();
     if (!success)
       return false;
     std::uintptr_t stored_key = 0;
-    const auto result = sem::atomic_store_value(
-        memory_, address, size, value,
-        release ? std::memory_order_release : std::memory_order_relaxed, &key,
+    const auto result = sem::atomic_store_exclusive_value(
+        memory_, address, size, monitored, value,
+        release ? std::memory_order_release : std::memory_order_relaxed,
         stored_key);
     if (result != sem::AtomicStoreResult::stored)
       return false;
