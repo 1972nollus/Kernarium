@@ -614,7 +614,6 @@ void JitCompiler::emit_cache_zero(std::uint32_t instruction, std::uint64_t pc) {
     for (unsigned offset = 0; offset < 64; offset += 16)
       emitter_.emit(0xa900'0000U | ((offset / 8U) << 15) | (31U << 10) |
                     (8U << 5) | 31U);
-    clear_local_exclusive_monitor();
   }
 
 /*

@@ -711,7 +711,7 @@ struct Run final {
   return {event, executed};
 }
 
-void jit_local_monitor_is_cleared() {
+void jit_local_monitor_survives_stores() {
   constexpr unsigned long generation = 9551;
   constexpr std::uint64_t base = 0xd8'0000;
   const auto &store = memory::single_variants[8];
@@ -736,7 +736,8 @@ void jit_local_monitor_is_cleared() {
       run_once(executor, guest_memory, generation, cpu);
   engine::require(run.event == ::uml::cpu::EngineEvent::system_call);
   engine::require(run.executed == 3);
-  engine::require(cpu.exclusive_size == 0);
+  // A store of the guest's own leaves the monitor standing.
+  engine::require(cpu.exclusive_size == 16);
 }
 
 void remapped_page_uses_new_backing() {
@@ -1042,7 +1043,7 @@ int main() {
   engine::require(counts.jit_unavailable == 0);
   harness.print_summary("arm64-jit-simd-memory-run-runtime");
   if (engine::host_supports(memory::single_native())) {
-    jit_local_monitor_is_cleared();
+    jit_local_monitor_survives_stores();
     remapped_page_uses_new_backing();
     tracked_store_runs_track_every_range();
   }

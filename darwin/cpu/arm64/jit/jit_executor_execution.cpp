@@ -287,8 +287,8 @@ namespace {
     debug_check_host_streaming_state(host_capabilities_);
     if (tracked_stores)
       jit::semantic::invalidate_store_ranges(
-          std::span<const JitStoreRange>{tracked_store_ranges_}.first(
-              block->instruction_count));
+          cpu, std::span<const JitStoreRange>{tracked_store_ranges_}.first(
+                   block->instruction_count));
     const auto [event, current_executed] = unpack_jit_result(result);
     deferred_exclusive = chain.deferred_exclusive_instruction;
     executed = maximum_chain_instructions -
@@ -310,7 +310,7 @@ namespace {
   Event event{};
   bool tracked_unavailable = false;
   {
-    JitBlockPublication publication{store_participant_, cpu};
+    JitBlockPublication publication{store_participant_};
     if (!publication.needs_tracking()) {
       event = execute_native(block->function, false);
     } else {
@@ -526,6 +526,7 @@ JitExecutor::Implementation::store_single_translation(
     arm64::restore_native_fp_environment(target);
   if (tracked_stores)
     jit::semantic::invalidate_store_ranges(
+        target,
         std::span<const JitStoreRange>{tracked_store_ranges_}.first(1U));
   const auto unpacked = unpack_jit_result(result);
   executed = unpacked.retired;

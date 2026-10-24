@@ -106,7 +106,6 @@ Sm0Result execute_sm0_spill(CpuState &cpu, std::uint32_t word,
 		    unreachable))
 		return fault_at(unreachable, false);
 	move(memory, address, image.data(), size, false);
-	cpu.exclusive_size = 0;
 	return {};
 }
 
