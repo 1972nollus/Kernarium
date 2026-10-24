@@ -109,7 +109,12 @@ primary and every renderer a 32-bit process. A `frameworks/base` topic (route
 `p0007`) lets a product disregard that attribute for system packages, and the
 product sets `ro.config.ignore_use32bitabi`: renderers stay 64-bit, and a
 32-bit application loads the 32-bit WebView library in its own process and
-talks to a 64-bit renderer.
+talks to a 64-bit renderer. The same project's route also carries a LineageOS
+correction: its WebView service drops the configured providers that are not
+installed, asking the package manager for every user, and does so under the
+identity of the calling application, which the package manager refuses without
+`INTERACT_ACROSS_USERS`. The topic runs that availability check as the system,
+so any application reads the provider list, as on AOSP.
 
 The build variant is the single `LINEAGE24_BUILD_VARIANT` setting in
 `metadata/lineage.env`, `user` or `userdebug`. Lunch, the target-files verifier,

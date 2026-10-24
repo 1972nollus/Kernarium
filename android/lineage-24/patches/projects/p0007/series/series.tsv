@@ -8,3 +8,4 @@ patch	notification-show-silent-status-icons-by-default.patch
 patch	support-wireless-debugging-over-Ethernet.patch
 patch	display-ignore-a-snapshot-that-lacks-its-active-mode.patch
 patch	pm-ignore-use32bitAbi-of-system-packages-on-request.patch
+patch	webkit-check-provider-availability-as-the-system.patch
