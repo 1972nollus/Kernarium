@@ -23,6 +23,12 @@ assembles aarch64_dirty.s, a 64-bit program that leaves x15-x30 set, and the
 program's every exclusive and ordered form runs on each CPU right after it:
 first through its execve, then between sched_yield calls of a copy that
 spins on the same CPU.  --only exclusives runs that check alone.
+abi.swp is present and 0, so SWP ends the program in SIGILL, with 1 the
+program's SWP and SWPB run (their conditions, pages, and faults), and the
+pc as an operand is SIGILL either way; with the helper, the program's SWP and
+SWPB trade tokens through a page it shares with a 64-bit task that uses
+load/store-exclusive pairs on the same words, which stay a permutation of
+the tokens only if every swap is atomic against them.
 Prints one line per check and exits with the number of failures.
 """
 
@@ -636,6 +642,113 @@ def check_exclusives_after_aarch64(elf, helper):
               f"status {result.returncode}: {result.stdout.strip()[-300:]}")
 
 
+def write_swp(value):
+    with open("/proc/sys/abi/swp", "w") as sink:
+        sink.write(f"{value}\n")
+
+
+def check_swp_tokens(elf, helper):
+    """SWP and SWPB beside load/store-exclusive pairs of a 64-bit task."""
+    path = "/tmp/a32-swp-tokens"
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.unlink(path)
+    # The word slot holds 4 and the byte slot 4: the two tasks hold 1 and 2.
+    os.write(descriptor, struct.pack("<I", 4) + bytes(4) + struct.pack("<I", 4)
+             + bytes(4096 - 12))
+    shared = os.dup2(descriptor, 9)
+    os.close(descriptor)
+    processes = []
+    try:
+        for command in ([elf, "swp-tokens"], [helper, "tokens"]):
+            processes.append(subprocess.Popen(
+                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, pass_fds=(shared,)))
+        codes = []
+        for process in processes:
+            try:
+                codes.append(process.wait(timeout=240))
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                codes.append("timeout")
+        check("the swapping tasks both finish", codes == [0, 0], str(codes))
+        page = os.pread(shared, 56, 0)
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        os.close(shared)
+    if len(page) != 56:
+        check("the shared page reads back", False, str(len(page)))
+        return
+    (slot, ready, byte_slot, _, own_word, own_byte, other_word, seen_word,
+     seen_byte, rounds, done, other_byte,
+     other_swaps) = struct.unpack("<12IQ", page)
+    check("the page was set up and used by both tasks", ready == 2 and done == 1,
+          f"ready {ready} done {done}")
+    check("the words are a permutation of the tokens, so no swap tore",
+          sorted((slot, own_word, other_word)) == [1, 2, 4],
+          f"slot {slot} SWP task {own_word} exclusives task {other_word}")
+    check("the bytes are a permutation of the tokens",
+          sorted((byte_slot & 0xff, own_byte, other_byte)) == [1, 2, 4],
+          f"slot {byte_slot:#x} SWPB task {own_byte} exclusives task "
+          f"{other_byte}")
+    check("SWPB wrote one byte of its slot", byte_slot >> 8 == 0,
+          hex(byte_slot))
+    check("the SWP task met all three tokens, so the tasks overlapped",
+          seen_word == 7 and seen_byte == 7,
+          f"{seen_word} {seen_byte} after {rounds} rounds")
+    check("the exclusives task swapped as well", other_swaps > 0,
+          str(other_swaps))
+
+
+def check_swp(elf, helper):
+    """abi.swp: SWP and SWPB are UNDEFINED by default, emulated with 1."""
+    path = "/proc/sys/abi/swp"
+    check("abi.swp is present", os.path.exists(path))
+    if not os.path.exists(path):
+        return
+    original = int(read(path))
+    check("abi.swp defaults to 0, so SWP is UNDEFINED", original == 0,
+          str(original))
+    for bad in ("2", "-1", "x"):
+        try:
+            with open(path, "w") as sink:
+                sink.write(f"{bad}\n")
+            refused = False
+        except OSError as error:
+            refused = error.errno == errno.EINVAL
+        check(f"abi.swp refuses {bad}", refused)
+    try:
+        for value in (1, 0):
+            write_swp(value)
+            check(f"abi.swp accepts {value}", int(read(path)) == value)
+        result = subprocess.run([elf, "swp-one"], stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=60)
+        check("SWP ends the program in SIGILL with abi.swp 0",
+              result.returncode == -signal.SIGILL, str(result.returncode))
+        write_swp(1)
+        result = subprocess.run([elf, "swp-one"], stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=60)
+        check("SWP runs with abi.swp 1", result.returncode == 6,
+              str(result.returncode))
+        result = subprocess.run([elf, "swp-pc"], stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=60)
+        check("SWP with the pc as Rt is SIGILL with abi.swp 1",
+              result.returncode == -signal.SIGILL, str(result.returncode))
+        run_program(elf, "swp", "swp checks", 60)
+        if helper:
+            check_swp_tokens(elf, helper)
+    finally:
+        write_swp(original)
+    check("abi.swp is back to its value", int(read(path)) == original)
+    result = subprocess.run([elf, "swp-one"], stdin=subprocess.DEVNULL,
+                            capture_output=True, timeout=60)
+    check("SWP is UNDEFINED again", result.returncode == -signal.SIGILL,
+          str(result.returncode))
+
+
 def check_parallel(elf):
     """Many AArch32 programs at once, each one on its own."""
     codes = [subprocess.run([elf, "leaf"],
@@ -703,10 +816,11 @@ def main():
         check_vfp_frame(arguments.elf)
         check_core_dump(arguments.elf)
         check_parallel(arguments.elf)
-        if arguments.aarch64_helper:
-            helper = build_aarch64_helper(arguments.aarch64_helper)
-            if helper:
-                check_exclusives_after_aarch64(arguments.elf, helper)
+        helper = (build_aarch64_helper(arguments.aarch64_helper)
+                  if arguments.aarch64_helper else None)
+        check_swp(arguments.elf, helper)
+        if helper:
+            check_exclusives_after_aarch64(arguments.elf, helper)
     print(f"aarch32-probe: {failures} failure(s)", flush=True)
     return min(failures, 100)
 

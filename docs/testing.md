@@ -276,7 +276,8 @@ configured compiler's ARM backend, wraps it into an ELF32 executable with
 `make_elf32.py` (the toolchain has no ARM linker), aligned to 64 KiB and aligned
 to 4 KiB only, and never commits either. The test requires unchanged 64-bit
 `uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and `abi.cp15_barrier`, and
-runs the program (kuser helpers, signals and VFP state, `cacheflush`, Thumb,
+that `abi.swp` is 0, makes SWP end the program in SIGILL, then sets it to 1 and
+runs the program's SWP and SWPB checks, and runs the program (kuser helpers, signals and VFP state, `cacheflush`, Thumb,
 `mmap2`, `PER_LINUX32`
 views, restarts and exec between ABIs; threads through `clone` and `clone3`,
 fault signals and stack growth, the time64 and socket calls with
@@ -286,7 +287,9 @@ VFP state), a core dump and many runs at once, and requires the 4 KiB-only
 program to run on the guest. Last, the guest assembles `aarch64_dirty.s`, a
 64-bit program that leaves x15-x30 set, and the program runs every exclusive
 and ordered transfer on each CPU right after it, through its execve and
-between its `sched_yield` calls. `guest-aarch32-exclusives-gadgets` and
+between its `sched_yield` calls; the same two programs trade tokens through a
+shared page, the armhf one with SWP and SWPB and the 64-bit one with
+load/store-exclusive pairs, and every token must remain. `guest-aarch32-exclusives-gadgets` and
 `-jit` run that check alone on four vCPUs of each engine. The tooling test
 `aarch32-elf32-wrapper` checks the two layouts the wrapper writes, and
 `aarch32-elf32-linker` the multi-object linker of the engine probe below.

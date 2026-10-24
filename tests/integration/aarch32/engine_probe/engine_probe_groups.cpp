@@ -14,6 +14,7 @@ const Group groups[] = {
 	{"faults", group_faults},
 	{"ill", group_ill},
 	{"ptrace", group_ptrace},
+	{"swp", group_swp},
 	{"atomics", group_atomics},
 	{"absent", group_absent},
 	{"simd", group_simd},

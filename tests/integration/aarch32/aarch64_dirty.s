@@ -9,6 +9,12 @@
 //   spin                  sets them before every sched_yield, forever
 //   exec PROGRAM ARGS...  sets them and executes PROGRAM; exits 65 if
 //                         execve fails
+//   tokens                swaps a word and a byte of the page that
+//                         descriptor 9 maps shared with LDAXR/STLXR pairs,
+//                         against the program's SWP and SWPB ("swp-tokens"
+//                         in aarch32_probe.S, which documents the page)
+//                         until that program is done; exits 0, 3 if the
+//                         program never came, 4 if the page did not map
 //
 // Any other use exits 64. Every value has both halves set.
 
@@ -45,6 +51,8 @@ _start:
 	b.eq	spin
 	cmp	w12, #'e'
 	b.eq	run
+	cmp	w12, #'t'
+	b.eq	tokens
 usage:
 	mov	x0, #64
 	mov	x8, #94			// exit_group
@@ -69,6 +77,61 @@ run:
 	mov	x0, #65
 	mov	x8, #94
 	svc	#0
+
+// The tokens: this task holds 2 and the other 1; the slots start at 4.
+tokens:
+	mov	x0, #0
+	mov	x1, #4096
+	mov	x2, #3			// PROT_READ | PROT_WRITE
+	mov	x3, #1			// MAP_SHARED
+	mov	x4, #9
+	mov	x5, #0
+	mov	x8, #222		// mmap
+	svc	#0
+	cmn	x0, #4096
+	b.hi	tokens_nomap
+	mov	x19, x0
+	add	x1, x19, #4		// ready: wait for both tasks
+1:	ldaxr	w2, [x1]
+	add	w2, w2, #1
+	stlxr	w3, w2, [x1]
+	cbnz	w3, 1b
+	ldr	x5, =200000
+2:	ldar	w2, [x1]
+	cmp	w2, #2
+	b.hs	3f
+	mov	x8, #124		// sched_yield
+	svc	#0
+	subs	x5, x5, #1
+	b.ne	2b
+	mov	x0, #3
+	b	tokens_exit
+3:	mov	w20, #2			// the word token
+	mov	w21, #2			// the byte token
+	mov	x22, #0			// the swaps
+	add	x23, x19, #8		// the byte slot
+	add	x24, x19, #40		// the done flag
+4:	ldaxr	w1, [x19]
+	stlxr	w2, w20, [x19]
+	cbnz	w2, 4b
+	mov	w20, w1
+5:	ldaxrb	w1, [x23]
+	stlxrb	w2, w21, [x23]
+	cbnz	w2, 5b
+	mov	w21, w1
+	add	x22, x22, #1
+	ldar	w1, [x24]
+	cbz	w1, 4b
+	str	w20, [x19, #24]
+	str	w21, [x19, #44]
+	str	x22, [x19, #48]
+	mov	x0, #0
+tokens_exit:
+	mov	x8, #94
+	svc	#0
+tokens_nomap:
+	mov	x0, #4
+	b	tokens_exit
 
 	.ltorg
 
