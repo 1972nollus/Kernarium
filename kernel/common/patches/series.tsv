@@ -81,3 +81,4 @@ patch	um-let-VNC-input-wake-a-suspended-guest.patch
 patch	um-send-a-run-of-Darwin-user-PTEs-as-one-host-call.patch
 patch	um-describe-the-virtual-machine-in-SMBIOS-tables.patch
 patch	um-name-the-host-threads-the-kernel-creates.patch
+patch	arm64-um-show-system-call-stops-as-native-arm64-does.patch

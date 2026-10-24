@@ -1171,7 +1171,7 @@ index 0000000000000000000000000000000000000000..37fb45bfd63c73d635d7c8ad61f50234
 +
 +#endif
 diff --git a/arch/um/kernel/ptrace.c b/arch/um/kernel/ptrace.c
-index 0a163b169829f9a3a77031ee0c3a2d8065982d13..baf661e140557fd091db057e0e98ad99e76a8565 100644
+index 980cb4daeef7de8a48034a42cd2a5759f12fcff1..8f39b59dc820cb707b29193c9bcb100cedf0d4e9 100644
 --- a/arch/um/kernel/ptrace.c
 +++ b/arch/um/kernel/ptrace.c
 @@ -4,7 +4,6 @@

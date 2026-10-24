@@ -8,14 +8,19 @@
 // uses; the exit stop shows the return value; and a call with no number
 // behind it (syscall(-1)) returns ENOSYS. On arm64 the first argument and
 // the return value share x0, so the entry stop shows -ENOSYS in x0 for
-// syscall(-1) alone. x86-64 keeps the arguments elsewhere and -ENOSYS in rax
-// at every entry stop. For each of
+// syscall(-1) alone; x7 (r12 of an AArch32 task) holds 0 at an entry stop and
+// 1 at an exit stop and has the task's value again afterwards; and
+// NT_ARM_SYSTEM_CALL reads and sets the call's number, which a tracer sets to
+// -1 to skip the call. x86-64 keeps the arguments elsewhere and -ENOSYS in
+// rax at every entry stop. For each of
 //
 //   write(77, ...)      fd 77 is closed; the tracer rewrites the first argument
 //                       to a pipe at the entry stop, so the data reaches it
 //   close(4242)         untouched; EBADF
 //   syscall(-1)         ENOSYS
 //   syscall(9999)       ENOSYS; arm64 shows the argument at its entry stop
+//   getpid()            arm64: the tracer skips it and sets EPERM
+//   getppid()           arm64: the tracer changes it to getpid
 //   write(78, ...)      the tracer replaces the arguments with
 //                       PTRACE_SET_SYSCALL_INFO
 //   read(pipe, ...)     a signal interrupts it, the handler returns and the
@@ -24,9 +29,9 @@
 //
 // the probe checks the entry stop's registers, PTRACE_GET_SYSCALL_INFO, the
 // exit stop, the data and the value the child itself sees. On arm64 the same
-// goes for an AArch32 child (a 140-byte program the probe writes as an ELF
-// file), which also makes the ARM-private cacheflush and set_tls calls, whose
-// arguments are the registers at the stop.
+// goes for an AArch32 child (a program of about 250 bytes the probe writes as
+// an ELF file), which also makes the ARM-private cacheflush and set_tls calls,
+// whose arguments are the registers at the stop.
 // Prints one line per check and exits with the number of failures.
 //
 // Build in the guest: c++ -std=c++20 -O2 ptrace_syscall_args_probe.cpp
@@ -119,6 +124,12 @@ void check(const char *name, bool passed, const char *format = nullptr, ...)
 		failures++;
 }
 
+#if defined(__aarch64__)
+// How many of the child's system calls changed x7, which a call leaves alone
+// whatever a tracer saw in it.
+volatile long x7_clobbered;
+#endif
+
 // One system call from the child with no libc between it and the kernel.
 inline long raw_syscall(long number, long a0 = 0, long a1 = 0, long a2 = 0)
 {
@@ -127,11 +138,14 @@ inline long raw_syscall(long number, long a0 = 0, long a1 = 0, long a2 = 0)
 	register long x0 asm("x0") = a0;
 	register long x1 asm("x1") = a1;
 	register long x2 asm("x2") = a2;
+	register long x7 asm("x7") = 0x77;
 
 	asm volatile("svc #0"
-		     : "+r"(x0)
+		     : "+r"(x0), "+r"(x7)
 		     : "r"(x8), "r"(x1), "r"(x2)
 		     : "memory");
+	if (x7 != 0x77)
+		x7_clobbered = x7_clobbered + 1;
 	return x0;
 #else
 	long result;
@@ -153,6 +167,7 @@ struct Stop {
 	uint64_t nr = 0;	// the call's number as the tracer reads it
 	uint64_t args[3] = {};	// the registers that hold the first arguments
 	uint64_t ret = 0;	// the register that holds the return value
+	uint64_t marker = 0;	// x7, r12 of an AArch32 task
 	SyscallInfo info{};
 };
 
@@ -229,6 +244,7 @@ bool read_stop(pid_t pid, Abi abi, Stop &stop)
 		for (int i = 0; i < 3; i++)
 			stop.args[i] = regs.r[i];
 		stop.ret = regs.r[0];
+		stop.marker = regs.r[12];
 	} else {
 		NativeRegs regs;
 
@@ -240,6 +256,7 @@ bool read_stop(pid_t pid, Abi abi, Stop &stop)
 		stop.args[1] = regs.regs[1];
 		stop.args[2] = regs.regs[2];
 		stop.ret = regs.regs[0];
+		stop.marker = regs.regs[7];
 #else
 		stop.nr = regs.orig_rax;
 		stop.args[0] = regs.rdi;
@@ -257,6 +274,32 @@ bool read_info(pid_t pid, SyscallInfo &info)
 	return ptrace((__ptrace_request)ptrace_get_syscall_info, pid,
 		      (void *)sizeof(info), &info) > 0;
 }
+
+#if defined(__aarch64__)
+// How many system call stops the tracer looked at, and how many of them
+// lacked their marker in x7 (r12 of an AArch32 task).
+int markers_seen;
+int markers_wrong;
+
+constexpr int nt_arm_system_call = 0x404;
+
+// NT_ARM_SYSTEM_CALL, the number of the call the task is in.
+bool get_system_call(pid_t pid, int &number)
+{
+	iovec vector = {&number, sizeof(number)};
+
+	return ptrace(PTRACE_GETREGSET, pid, (void *)(long)nt_arm_system_call,
+		      &vector) == 0 && vector.iov_len == sizeof(number);
+}
+
+bool set_system_call(pid_t pid, int number)
+{
+	iovec vector = {&number, sizeof(number)};
+
+	return ptrace(PTRACE_SETREGSET, pid, (void *)(long)nt_arm_system_call,
+		      &vector) == 0;
+}
+#endif
 
 // The next system call stop. A stop of any other kind comes back with
 // *status filled in and false.
@@ -278,6 +321,11 @@ bool resume(pid_t pid, Abi abi, Stop &stop, int signal = 0, int *status = nullpt
 	if (!read_info(pid, stop.info) || !read_stop(pid, abi, stop))
 		return false;
 	stop.entry = stop.info.op == syscall_info_entry;
+#if defined(__aarch64__)
+	markers_seen++;
+	if (stop.marker != (stop.entry ? 0 : 1))
+		markers_wrong++;
+#endif
 	return true;
 }
 
@@ -327,8 +375,11 @@ struct Shared {
 	long close_result;
 	long nosys_result;
 	long unimplemented_result;
+	long skipped_result;
+	long swapped_result;
 	long replaced_result;
 	long read_result;
+	long x7_clobbered;
 	char read_byte;
 };
 
@@ -359,10 +410,15 @@ void on_signal(int)
 	shared_state->nosys_result = raw_syscall(-1);
 	shared_state->unimplemented_result =
 		raw_syscall(unimplemented_number, 7);
+	shared_state->skipped_result = raw_syscall(SYS_getpid, 7);
+	shared_state->swapped_result = raw_syscall(SYS_getppid);
 	shared_state->replaced_result =
 		raw_syscall(SYS_write, replaced_fd, (long)message, message_length);
 	shared_state->read_result =
 		raw_syscall(SYS_read, restart_pipe[0], (long)&shared_state->read_byte, 1);
+#if defined(__aarch64__)
+	shared_state->x7_clobbered = x7_clobbered;
+#endif
 	raw_syscall(SYS_exit_group, 0);
 	for (;;)
 		;
@@ -499,6 +555,56 @@ void check_native()
 	check(label("unimplemented exit stop shows -ENOSYS"),
 	      stop.ret == minus_enosys, "%s", describe(stop).c_str());
 
+	// getpid(7): on arm64 the tracer skips it and sets its result.
+	if (!resume(pid, Abi::native, stop) ||
+	    !expect(label("getpid entry"), stop, true, SYS_getpid))
+		return kill_child(pid);
+#if defined(__aarch64__)
+	{
+		int number = 0;
+
+		check(label("NT_ARM_SYSTEM_CALL reads the number of the call"),
+		      get_system_call(pid, number) && number == SYS_getpid, "%d",
+		      number);
+		check(label("a tracer sets the number of the call to -1"),
+		      set_system_call(pid, -1), "%s", strerror(errno));
+		check(label("NT_ARM_SYSTEM_CALL reads back -1"),
+		      get_system_call(pid, number) && number == -1, "%d", number);
+		Stop after;
+		check(label("PTRACE_GET_SYSCALL_INFO names -1 after the change"),
+		      read_info(pid, after.info) &&
+		      after.info.entry.nr == (uint64_t)-1, "%#llx",
+		      (unsigned long long)after.info.entry.nr);
+		check(label("a tracer sets the result of the skipped call"),
+		      set_first_argument(pid, Abi::native, (uint64_t)-EPERM), "%s",
+		      strerror(errno));
+	}
+#endif
+	if (!resume(pid, Abi::native, stop) ||
+	    !expect(label("getpid exit"), stop, false, SYS_getpid))
+		return kill_child(pid);
+#if defined(__aarch64__)
+	check(label("a skipped call's exit stop shows what the tracer wrote"),
+	      stop.ret == (uint64_t)-EPERM, "%s", describe(stop).c_str());
+#endif
+
+	// getppid(): on arm64 the tracer changes it to getpid.
+	if (!resume(pid, Abi::native, stop) ||
+	    !expect(label("getppid entry"), stop, true, SYS_getppid))
+		return kill_child(pid);
+#if defined(__aarch64__)
+	check(label("a tracer sets the number of the call to another call"),
+	      set_system_call(pid, SYS_getpid), "%s", strerror(errno));
+#endif
+	if (!resume(pid, Abi::native, stop) ||
+	    !expect(label("getppid exit"), stop, false, SYS_getppid))
+		return kill_child(pid);
+#if defined(__aarch64__)
+	check(label("the other call ran: the exit stop shows the child's pid"),
+	      stop.ret == (uint64_t)pid, "%s pid %d", describe(stop).c_str(),
+	      (int)pid);
+#endif
+
 	// PTRACE_SET_SYSCALL_INFO replaces write(78, ...) by a write to the pipe.
 	if (!resume(pid, Abi::native, stop) ||
 	    !expect(label("replaced write entry"), stop, true, SYS_write))
@@ -604,6 +710,17 @@ void check_native()
 	check(label("an unimplemented call returned -ENOSYS to the child"),
 	      shared_state->unimplemented_result == -ENOSYS, "%ld",
 	      shared_state->unimplemented_result);
+#if defined(__aarch64__)
+	check(label("the skipped call returned the tracer's result to the child"),
+	      shared_state->skipped_result == -EPERM, "%ld",
+	      shared_state->skipped_result);
+	check(label("the other call returned the child's pid to the child"),
+	      shared_state->swapped_result == (long)pid, "%ld, pid %d",
+	      shared_state->swapped_result, (int)pid);
+	check(label("the child's x7 survives every stop"),
+	      shared_state->x7_clobbered == 0, "%ld changes",
+	      shared_state->x7_clobbered);
+#endif
 	check(label("the replaced write returned the length to the child"),
 	      shared_state->replaced_result == (long)message_length, "%ld",
 	      shared_state->replaced_result);
@@ -618,27 +735,32 @@ void check_native()
 // assembly below, whose exit status says which of its checks held. Its
 // message is the 28 bytes at the end.
 //
-//	mov r8, #0 ; movw r5, #0x5678 ; movt r5, #0x1234
+//	mov r8, #0 ; movw r5, #0x5678 ; movt r5, #0x1234 ; mov r12, #0x77
 //	write(77, msg, 28)                  ; r8 |= 1 if it returned 28
+//	                                    ; r8 |= 64 if r12 is still 0x77
 //	close(4242)                         ; r8 |= 2 if it returned -EBADF
 //	syscall(-1) with r0 = 7             ; r8 |= 4 if it returned -ENOSYS
 //	syscall(9999) with r0 = 7           ; r8 |= 8 if it returned -ENOSYS
+//	getpid() with r0 = 7                ; r8 |= 128 if it returned -EPERM
+//	getppid()
 //	cacheflush(0x10000, 0x10100, 0)     ; r8 |= 16 if it returned 0
 //	set_tls(0x12345678), mrc TPIDRURO   ; r8 |= 32 if it reads the value
 //	exit_group(r8)
 constexpr uint32_t a32_code[] = {
-	0xe3a08000, 0xe3055678, 0xe3415234, 0xe3a0004d, 0xe28f1098,
-	0xe3a0201c, 0xe3a07004, 0xef000000, 0xe350001c, 0x03888001,
-	0xe3010092, 0xe3a07006, 0xef000000, 0xe3700009, 0x03888002,
-	0xe3a00007, 0xe3e07000, 0xef000000, 0xe3700026, 0x03888004,
-	0xe3a00007, 0xe302770f, 0xef000000, 0xe3700026, 0x03888008,
+	0xe3a08000, 0xe3055678, 0xe3415234, 0xe3a0c077, 0xe3a0004d,
+	0xe28f10bc, 0xe3a0201c, 0xe3a07004, 0xef000000, 0xe350001c,
+	0x03888001, 0xe35c0077, 0x03888040, 0xe3010092, 0xe3a07006,
+	0xef000000, 0xe3700009, 0x03888002, 0xe3a00007, 0xe3e07000,
+	0xef000000, 0xe3700026, 0x03888004, 0xe3a00007, 0xe302770f,
+	0xef000000, 0xe3700026, 0x03888008, 0xe3a00007, 0xe3a07014,
+	0xef000000, 0xe3700001, 0x03888080, 0xe3a07040, 0xef000000,
 	0xe3000000, 0xe3400001, 0xe2801c01, 0xe3a02000, 0xe3007002,
 	0xe340700f, 0xef000000, 0xe3500000, 0x03888010, 0xe1a00005,
 	0xe3007005, 0xe340700f, 0xef000000, 0xee1d1f70, 0xe1510005,
 	0x03888020, 0xe1a00008, 0xe3a070f8, 0xef000000,
 };
 constexpr char a32_message[] = "a32: fd 77 became the pipe!\n";
-constexpr uint32_t a32_checks = 63;
+constexpr uint32_t a32_checks = 255;
 constexpr uint32_t a32_load_address = 0x10000;
 constexpr uint32_t a32_code_offset = sizeof(Elf32_Ehdr) + 2 * sizeof(Elf32_Phdr);
 constexpr uint32_t a32_message_address =
@@ -779,6 +901,47 @@ void check_aarch32()
 	check(label("unimplemented exit stop shows -ENOSYS"),
 	      (uint32_t)stop.ret == (uint32_t)-ENOSYS, "%s", describe(stop).c_str());
 
+	// getpid(7): the tracer skips it and sets its result.
+	if (!resume(pid, Abi::aarch32, stop) ||
+	    !expect(label("getpid entry"), stop, true, 20))
+		return kill_child(pid);
+	{
+		int number = 0;
+
+		check(label("NT_ARM_SYSTEM_CALL reads the number of the call"),
+		      get_system_call(pid, number) && number == 20, "%d", number);
+		check(label("a tracer sets the number of the call to -1"),
+		      set_system_call(pid, -1), "%s", strerror(errno));
+		check(label("NT_ARM_SYSTEM_CALL reads back -1"),
+		      get_system_call(pid, number) && number == -1, "%d", number);
+		Stop after;
+		check(label("PTRACE_GET_SYSCALL_INFO names -1 after the change"),
+		      read_info(pid, after.info) &&
+		      after.info.entry.nr == (uint64_t)-1, "%#llx",
+		      (unsigned long long)after.info.entry.nr);
+		check(label("a tracer sets the result of the skipped call"),
+		      set_first_argument(pid, Abi::aarch32, (uint32_t)-EPERM), "%s",
+		      strerror(errno));
+	}
+	if (!resume(pid, Abi::aarch32, stop) ||
+	    !expect(label("getpid exit"), stop, false, 20))
+		return kill_child(pid);
+	check(label("a skipped call's exit stop shows what the tracer wrote"),
+	      (uint32_t)stop.ret == (uint32_t)-EPERM, "%s", describe(stop).c_str());
+
+	// getppid(): the tracer changes it to getpid.
+	if (!resume(pid, Abi::aarch32, stop) ||
+	    !expect(label("getppid entry"), stop, true, 64))
+		return kill_child(pid);
+	check(label("a tracer sets the number of the call to another call"),
+	      set_system_call(pid, 20), "%s", strerror(errno));
+	if (!resume(pid, Abi::aarch32, stop) ||
+	    !expect(label("getppid exit"), stop, false, 64))
+		return kill_child(pid);
+	check(label("the other call ran: the exit stop shows the child's pid"),
+	      stop.ret == (uint32_t)pid, "%s pid %d", describe(stop).c_str(),
+	      (int)pid);
+
 	// ARM's private calls take r0-r2 as they stand at the stop.
 	if (!resume(pid, Abi::aarch32, stop) ||
 	    !expect(label("cacheflush entry"), stop, true, 0xf0002))
@@ -824,6 +987,9 @@ int main()
 	check_native();
 #if defined(__aarch64__)
 	check_aarch32();
+	check("x7 (r12) is 0 at an entry stop and 1 at an exit stop",
+	      markers_seen > 0 && markers_wrong == 0, "%d of %d stops",
+	      markers_wrong, markers_seen);
 #endif
 	printf("%d failure(s)\n", failures);
 	return failures;
