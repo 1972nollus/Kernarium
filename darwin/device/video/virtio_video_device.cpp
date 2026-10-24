@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "virtio_video_device.hpp"
+#include "activity_log.hpp"
+#include "guest_buffers.hpp"
 #include "video_capabilities.hpp"
 #include "vhost_user_protocol.hpp"
 
@@ -19,7 +21,6 @@ using uml::virtio::VhostUserQueueAction;
 using uml::virtio::VhostUserQueueCompletion;
 using uml::virtio::VhostUserQueueResult;
 constexpr std::size_t maximumPacket = 8 * 1024 * 1024;
-constexpr std::size_t maximumResource = 128 * 1024 * 1024;
 
 using uml::virtio::toBytes;
 template<class T> T load(std::span<const std::uint8_t> bytes)
@@ -134,77 +135,6 @@ const char* profileName(uml::platform::VideoProfile profile) noexcept
     return "unknown";
 }
 
-/* Whether an application really decoded in hardware cannot be answered from
- * inside the guest: a player that silently falls back to software shows the
- * same correct picture, and the guest only sees that it opened a device node.
- * Setting `UML_VIDEO_ACTIVITY_LOG` to a writable path makes the device append
- * what it advertised, every stream a guest opened, and what each stream
- * actually decoded. It is a file rather than stderr because the emulator's
- * stderr shares the guest console and loses lines under load. Nothing is
- * opened, formatted, or written when the variable is unset.
- */
-class ActivityLog final {
-public:
-    ActivityLog()
-    {
-        const char* path = std::getenv("UML_VIDEO_ACTIVITY_LOG");
-        if (path != nullptr && path[0] != '\0') file_ = std::fopen(path, "ae");
-    }
-    ~ActivityLog() { if (file_ != nullptr) std::fclose(file_); }
-    ActivityLog(const ActivityLog&) = delete;
-    ActivityLog& operator=(const ActivityLog&) = delete;
-
-    void advertised(const char* codec, const char* profile, std::uint32_t width,
-                    std::uint32_t height, std::uint32_t bitDepth)
-    {
-        if (file_ == nullptr) return;
-        std::fprintf(file_, "uml-video %.3f advertise codec=%s profile=%s max=%ux%u depth=%u\n",
-            elapsed(), codec, profile, width, height, bitDepth);
-        std::fflush(file_);
-    }
-    void opened(std::uint32_t stream, const char* codec, const char* profile)
-    {
-        if (file_ == nullptr) return;
-        std::fprintf(file_, "uml-video %.3f stream=%u open codec=%s profile=%s\n",
-            elapsed(), stream, codec, profile);
-        std::fflush(file_);
-    }
-    /* The capture fields are appended, so a reader that only knows the older
-     * line keeps working. They answer, without any tool inside the guest,
-     * where a client's capture memory lives and whether it ever gives a
-     * filled buffer back: a client that queues each buffer once and stops has
-     * starved its own pool, while re-queues that stop being filled are the
-     * device's or the driver's fault. */
-    void closed(std::uint32_t stream, const char* reason, std::uint64_t packets,
-                std::uint64_t packetBytes, std::uint64_t frames,
-                std::uint32_t width, std::uint32_t height, const char* capture,
-                std::uint64_t queuedBuffers, std::uint64_t distinctBuffers,
-                std::uint64_t requeuedBuffers, std::size_t pending, const char* raw,
-                std::uint64_t converted, const char* codec)
-    {
-        if (file_ == nullptr) return;
-        std::fprintf(file_,
-            "uml-video %.3f stream=%u close=%s packets=%llu bytes=%llu frames=%llu output=%ux%u"
-            " capture=%s queued=%llu distinct=%llu requeued=%llu pending_at_close=%zu"
-            " raw=%s converted=%llu coded=%s\n",
-            elapsed(), stream, reason, static_cast<unsigned long long>(packets),
-            static_cast<unsigned long long>(packetBytes),
-            static_cast<unsigned long long>(frames), width, height, capture,
-            static_cast<unsigned long long>(queuedBuffers),
-            static_cast<unsigned long long>(distinctBuffers),
-            static_cast<unsigned long long>(requeuedBuffers), pending, raw,
-            static_cast<unsigned long long>(converted), codec);
-        std::fflush(file_);
-    }
-
-private:
-    [[nodiscard]] double elapsed() const noexcept
-    {
-        return std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
-    }
-    std::FILE* file_ {};
-    std::chrono::steady_clock::time_point start_ {std::chrono::steady_clock::now()};
-};
 virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint32_t width, std::uint32_t height)
 {
     virtio_video_params p {};
@@ -244,14 +174,7 @@ virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint3
 
 class VirtioVideoDevice::Implementation {
 public:
-    /* `address` is a guest-physical address, or an offset in shared-memory
-     * region `region` when the guest marked the entry shared. */
-    struct Segment {
-        std::uint64_t address;
-        std::uint32_t length;
-        bool shared {};
-        std::uint8_t region {};
-    };
+    using Segment = GuestSegment;
     struct Resource {
         std::vector<std::vector<Segment>> planes;
         bool queued {};
@@ -382,36 +305,9 @@ public:
         stream.outputs.clear();
     }
 
-    /* A shared-memory range is resolved again for every transfer: the
-     * backend that owns the region withdraws it from the index before the
-     * guest unmaps it, so a resource whose blob has gone completes with an
-     * error instead of writing into memory the guest no longer has. */
     bool transfer(const std::vector<Segment>& segments, std::span<std::uint8_t> data, bool write)
     {
-        std::size_t offset = 0;
-        for (const auto segment : segments) {
-            const auto size = std::min<std::size_t>(data.size() - offset, segment.length);
-            if (!size) break;
-            if (segment.shared) {
-                bool copied = false;
-                const auto copy = [&](std::span<std::uint8_t> memory) {
-                    if (memory.size() != size) return;
-                    if (write) std::memcpy(memory.data(), data.data() + offset, size);
-                    else std::memcpy(data.data() + offset, memory.data(), size);
-                    copied = true;
-                };
-                if (!regions || !regions->resolve(segment.region, segment.address, size, copy) ||
-                    !copied)
-                    return false;
-            } else {
-                auto memory = mapper ? mapper(segment.address, size) : std::span<std::uint8_t>{};
-                if (memory.size() != size) return false;
-                if (write) std::memcpy(memory.data(), data.data() + offset, size);
-                else std::memcpy(data.data() + offset, memory.data(), size);
-            }
-            offset += size;
-        }
-        return offset == data.size();
+        return transferSegments(mapper, regions.get(), segments, data, write);
     }
 
     /* How many decoded frames the device keeps before it stops taking encoded
@@ -669,40 +565,9 @@ public:
             if (previous == stream.resources.end() && stream.resources.size() >= 128)
                 throw std::invalid_argument("invalid video resource");
             const auto& p = q.queue_type == VIRTIO_VIDEO_QUEUE_TYPE_INPUT ? stream.input : stream.output;
-            auto payload = request.subspan(sizeof(q));
             Resource resource;
-            std::size_t total = 0;
-            for (unsigned plane = 0; plane < p.num_planes; ++plane) {
-                if (payload.size() < 8) throw std::invalid_argument("short video scatter list");
-                const auto count = load<std::uint32_t>(payload);
-                payload = payload.subspan(8);
-                if (!count || count > 32768 || count > payload.size() / sizeof(virtio_video_resource_sg_entry))
-                    throw std::invalid_argument("invalid video scatter list length");
-                resource.planes.emplace_back();
-                for (unsigned i = 0; i < count; ++i) {
-                    const auto entry = load<virtio_video_resource_sg_entry>(payload);
-                    payload = payload.subspan(sizeof(entry));
-                    if ((entry.flags & ~VIRTIO_VIDEO_RESOURCE_SG_FLAG_MASK) != 0)
-                        throw std::invalid_argument("unknown video scatter entry flags");
-                    const bool shared = (entry.flags & VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION) != 0;
-                    const auto region = static_cast<std::uint8_t>(
-                        (entry.flags & VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_MASK) >>
-                        VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_SHIFT);
-                    if (!entry.length || entry.length > maximumResource - total ||
-                        (!shared && region != 0))
-                        throw std::invalid_argument("invalid video scatter entry");
-                    if (shared) {
-                        if (!regions || !regions->contains(region, entry.addr, entry.length))
-                            throw std::invalid_argument(
-                                "video resource is not in a published shared-memory region");
-                    } else if (!mapper || mapper(entry.addr, entry.length).size() != entry.length) {
-                        throw std::invalid_argument("video resource lies outside guest memory");
-                    }
-                    total += entry.length;
-                    resource.planes.back().push_back({entry.addr, entry.length, shared, region});
-                }
-            }
-            if (!payload.empty()) throw std::invalid_argument("trailing video resource data");
+            resource.planes = parseScatterLists(request.subspan(sizeof(q)), p.num_planes, mapper,
+                                                regions.get());
             if (previous != stream.resources.end()) previous->second = std::move(resource);
             else stream.resources.emplace(key, std::move(resource));
             return done(reply(id));

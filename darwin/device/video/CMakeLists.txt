@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 add_library(uml_video_device STATIC
+    guest_buffers.cpp
     in_process_service.cpp
     video_capabilities.cpp
     virtio_video_device.cpp)
