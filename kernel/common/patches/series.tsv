@@ -31,6 +31,7 @@ patch	uml-fall-back-to-an-RCU-page-table-walk-under-mmap-contention.patch
 patch	virtio-name-a-host-visible-blob-s-shared-memory-region.patch
 patch	virtio-gpu-allocate-host-visible-blobs-for-in-kernel-consumers.patch
 patch	media-add-the-Darwin-UML-Virtio-video-decoder.patch
+patch	media-add-the-Darwin-UML-Virtio-video-encoder.patch
 patch	deliver-data-alignment-faults-to-guest-signal-handlers.patch
 patch	uml-replay-user-mappings-concurrently.patch
 patch	uml-complete-or-report-a-Darwin-kernel-range-TLB-flush.patch

@@ -41,12 +41,12 @@ stream.
  drivers/media/virtio/virtio_video_blob.c    |  157 +++
  drivers/media/virtio/virtio_video_caps.c    |  515 ++++++++
  drivers/media/virtio/virtio_video_dec.c     |  479 +++++++
- drivers/media/virtio/virtio_video_device.c  | 1297 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_device.c  | 1301 +++++++++++++++++++
  drivers/media/virtio/virtio_video_driver.c  |  261 ++++
  drivers/media/virtio/virtio_video_helpers.c |  198 +++
  drivers/media/virtio/virtio_video_vq.c      | 1077 +++++++++++++++
  include/uapi/linux/virtio_video.h           |  539 ++++++++
- 14 files changed, 4995 insertions(+)
+ 14 files changed, 4999 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -1746,10 +1746,10 @@ index 0000000000000000000000000000000000000000..d3ec77840dc7e7e2d2265dac1e15ea0e
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06bb7d916a9
+index 0000000000000000000000000000000000000000..cae18f2589e15db9e15c55e1656a4a8c3c9739f1
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -0,0 +1,1297 @@
+@@ -0,0 +1,1301 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -2313,15 +2313,17 @@ index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06b
 +	if (fmt == NULL)
 +		return -EINVAL;
 +
-+	for (f_idx = 0; f_idx <= fmt->desc.num_frames; f_idx++) {
-+		frm = &fmt->frames[f_idx];
-+		frame = &frm->frame;
++	frm = NULL;
++	for (f_idx = 0; f_idx < fmt->desc.num_frames; f_idx++) {
++		frame = &fmt->frames[f_idx].frame;
 +		if (in_stepped_interval(frame->width, f->width) &&
-+		    in_stepped_interval(frame->height, f->height))
++		    in_stepped_interval(frame->height, f->height)) {
++			frm = &fmt->frames[f_idx];
 +			break;
++		}
 +	}
 +
-+	if (frame == NULL || f->index >= frame->num_rates)
++	if (!frm || f->index >= frm->frame.num_rates)
 +		return -EINVAL;
 +
 +	frate = &frm->frame_rates[idx];
@@ -2830,6 +2832,7 @@ index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06b
 +	mutex_unlock(video_dev->lock);
 +err_init_ctx:
 +	v4l2_fh_exit(&stream->fh);
++	v4l2_ctrl_handler_free(&stream->ctrl_handler);
 +err_stream_destroy:
 +	/* The device made the stream; it must not outlive the failed open. */
 +	virtio_video_cmd_stream_destroy(vvd, stream_id);
@@ -2851,6 +2854,7 @@ index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06b
 +	v4l2_m2m_ctx_release(stream->fh.m2m_ctx);
 +
 +	v4l2_fh_exit(&stream->fh);
++	v4l2_ctrl_handler_free(&stream->ctrl_handler);
 +
 +	virtio_video_cmd_stream_destroy(vvd, stream->stream_id);
 +	virtio_video_stream_id_put(vvd, stream->stream_id);

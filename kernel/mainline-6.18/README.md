@@ -25,10 +25,13 @@ overlay: both build the same tree, including nine overlay topics that matter
 only to Android. Every guest page is 4 KiB. The Darwin host's page is 16 KiB,
 which the congruent-slot, aperture and linker rules below account for.
 
-The shared stateful Virtio video decoder is built in for every product in this
-line. Its [wire contract](../common/video/README.md) is synchronized from the
-canonical header and its implementation is a topic in the shared series.
-The host exposes hardware decoding through V4L2 independently of the GPU.
+The shared stateful Virtio video decoder and encoder are built in for every
+product in this line. Their [wire contract](../common/video/README.md) is
+synchronized from the canonical header and their implementations are topics in
+the shared series; the encoder is the Virtio device with ID 30, which the
+driver binds only when it negotiates `VIRTIO_VIDEO_F_V4L2_CONTROLS`, and it
+registers the controls its device lists. The host exposes hardware decoding and
+encoding through V4L2 independently of the GPU.
 
 The shared series also carries topics Android relies on: an initrd read from a
 byte range of a host file (`initrd_offset=` and `initrd_size=`), arm64 kernel
@@ -469,13 +472,13 @@ its queue until the run ends, as on a machine that has stopped.
 `guest-ubd-poweroff` powers guests off with direct reads in flight on every
 vCPU. A management-console halt or reboot, an unbind and a lost vhost-user
 backend reach a driver's removal without `device_shutdown()`. The Virtio
-video decoder's removal resets the device and deletes its queues before it
-returns anything the device held, then answers every pending command as
-failed, so a queued buffer returns to vb2 in error, and flushes its event
-work. Its state lasts until the last open file is closed, which no longer
-reaches the device. `guest-video-teardown` removes it by unbind, halt and
-forced power-off while it has open files, queued buffers and commands in
-flight.
+video driver's removal, for a decoder and an encoder alike, resets the device
+and deletes its queues before it returns anything the device held, then
+answers every pending command as failed, so a queued buffer returns to vb2 in
+error, and flushes its event work. Its state lasts until the last open file is
+closed, which no longer reaches the device. `guest-video-teardown` removes
+each device by unbind, halt and forced power-off while it has open files,
+queued buffers and commands in flight.
 A synchronous video command waits five seconds for its answer. On Darwin its
 answer is already in guest memory when the kick returns, because the backend
 runs the queue before it acknowledges the kick and the device answers such a
