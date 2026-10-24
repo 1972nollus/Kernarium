@@ -182,7 +182,9 @@ goes in. A stream cannot change its size; the client creates a new context.
 | packed headers | ignored; the host's own are used |
 
 Pictures go to the node as NV12 in whichever of `NV12M` and `NV12` it takes,
-from NV12 surfaces directly or from ARGB ones after one conversion. Every key
+from NV12 surfaces directly or from ARGB ones after one conversion. The
+encoder only reads a surface, so a descriptor a client imported read-only (the
+state of one a graphics stack exports) is mapped read-only and serves. Every key
 frame carries its parameter sets in the same buffer. `vaEndPicture` returns
 once the frame is queued; `vaSyncSurface` on the input and `vaMapBuffer` on the
 coded buffer wait up to four seconds for the frame, which comes back with the
@@ -242,7 +244,7 @@ reason.
 | `UML_VA_V4L2_CAPTURE` | `auto` (default) or `device`: who owns the decoded pictures' memory, as above |
 | `UML_VA_DRM_DEVICE` | the render node for GBM surfaces, instead of `/dev/dri/renderD128` |
 | `UML_VA_V4L2_LOG` | a file to append diagnostics to; unset, the driver writes nothing |
-| `UML_VA_V4L2_TRACE` | `1` also logs every entry point a client calls, before it runs and with its answer after, so a client that dies inside the driver leaves the call behind |
+| `UML_VA_V4L2_TRACE` | `1` also logs every entry point a client calls, before it runs and with its answer after, so a client that dies inside the driver leaves the call behind, and a mean of each encode input's samples, to tell pictures from empty memory |
 | `UML_VA_V4L2_REPORT` | how many captured pictures to report to the log, exactly as the capture queue delivered them (default one) |
 | `UML_VA_V4L2_DUMP` | a file to write one captured picture to, before any conversion or blit |
 | `UML_VA_V4L2_DUMP_FRAME` | which captured picture that is, counted from the first (default zero) |

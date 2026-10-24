@@ -1755,6 +1755,7 @@ VAStatus initializeDriver(VADriverContextP ctx, DescriptorPool& pool)
 
     auto* table = ctx->vtable;
     const bool trace = traceRequested();
+    driver->setTracing(trace);
     // The tracing form wraps the same function; a name appears once.
 #define UML_BIND(field, function) table->field = trace ? &Traced<#field, function>::call : function
     UML_BIND(vaTerminate, terminate);

@@ -4,12 +4,17 @@
 // advertises, how one picture's buffers become a V4L2 frame, how a finished
 // frame reaches the coded buffer, and what happens when a client does something
 // the encoder cannot.
+#include <fcntl.h>
 #include <linux/videodev2.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <va/va_backend.h>
 #include <va/va_backend_vpp.h>
+#include <va/va_drmcommon.h>
 #include <va/va_enc_h264.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -858,6 +863,82 @@ void testInitialisedAgainInsideASandbox()
     va.table.vaDestroyContext(&va.context, context);
 }
 
+// A client that allocates its pictures itself hands the driver a descriptor.
+// A graphics stack exports one it can only read, which is all an encoder needs
+// of its input.
+void testImportedInput()
+{
+    Va va;
+    if (!va.ok()) { check(false, "the rig initialises"); return; }
+    VAConfigID config = VA_INVALID_ID;
+    va.config(VAProfileH264Main, VA_RC_CBR, config);
+    const VAContextID context = va.encodeContext(config, kCodedWidth, kCodedHeight);
+
+    const Picture picture(kCodedWidth, kCodedHeight, 7);
+    const std::size_t lumaBytes = std::size_t(kCodedWidth) * kCodedHeight;
+    const std::size_t size = lumaBytes + lumaBytes / 2;
+    const int writer = memfd_create("va-v4l2-encode-input", MFD_CLOEXEC);
+    check(writer >= 0 && ftruncate(writer, off_t(size)) == 0, "an input fixture exists");
+    if (writer < 0) return;
+    void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, writer, 0);
+    if (mapped == MAP_FAILED) { ::close(writer); check(false, "the fixture maps"); return; }
+    auto* bytes = static_cast<std::uint8_t*>(mapped);
+    for (unsigned row = 0; row < kCodedHeight; ++row)
+        std::memcpy(bytes + std::size_t(row) * kCodedWidth, picture.luma.data() + row * picture.lumaPitch, kCodedWidth);
+    for (unsigned row = 0; row < kCodedHeight / 2; ++row)
+        std::memcpy(bytes + lumaBytes + std::size_t(row) * kCodedWidth,
+                    picture.chroma.data() + row * picture.chromaPitch, kCodedWidth);
+    munmap(mapped, size);
+    // The same memory, opened for reading only.
+    char path[64];
+    std::snprintf(path, sizeof path, "/proc/self/fd/%d", writer);
+    const int reader = open(path, O_RDONLY | O_CLOEXEC);
+    ::close(writer);
+    check(reader >= 0, "the fixture reopens read-only");
+    if (reader < 0) return;
+
+    VADRMPRIMESurfaceDescriptor descriptor {};
+    descriptor.width = kCodedWidth;
+    descriptor.height = kCodedHeight;
+    descriptor.fourcc = VA_FOURCC_NV12;
+    descriptor.num_objects = 1;
+    descriptor.objects[0].fd = reader;
+    descriptor.objects[0].size = std::uint32_t(size);
+    descriptor.num_layers = 2;
+    descriptor.layers[0].drm_format = 0x20203852; // R8
+    descriptor.layers[0].num_planes = 1;
+    descriptor.layers[0].pitch[0] = kCodedWidth;
+    descriptor.layers[1].drm_format = 0x38385247; // GR88
+    descriptor.layers[1].num_planes = 1;
+    descriptor.layers[1].offset[0] = std::uint32_t(lumaBytes);
+    descriptor.layers[1].pitch[0] = kCodedWidth;
+    VASurfaceAttrib attributes[2] {};
+    attributes[0].type = VASurfaceAttribMemoryType;
+    attributes[0].flags = VA_SURFACE_ATTRIB_SETTABLE;
+    attributes[0].value.type = VAGenericValueTypeInteger;
+    attributes[0].value.value.i = VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2;
+    attributes[1].type = VASurfaceAttribExternalBufferDescriptor;
+    attributes[1].flags = VA_SURFACE_ATTRIB_SETTABLE;
+    attributes[1].value.type = VAGenericValueTypePointer;
+    attributes[1].value.value.p = &descriptor;
+    VASurfaceID imported = VA_INVALID_SURFACE;
+    const VAStatus made = va.table.vaCreateSurfaces2(&va.context, VA_RT_FORMAT_YUV420, kCodedWidth, kCodedHeight,
+                                                     &imported, 1, attributes, 2);
+    ::close(reader);
+    check(made == VA_STATUS_SUCCESS, "a read-only descriptor is imported as a surface");
+    if (made != VA_STATUS_SUCCESS) return;
+
+    const VABufferID coded = va.buffer(context, VAEncCodedBufferType, nullptr, 1u << 20);
+    Stream stream;
+    check(va.encode(context, imported, coded, stream, true) == VA_STATUS_SUCCESS,
+          "a picture in an imported read-only surface is accepted");
+    const auto read = va.read(imported, coded);
+    const SliceInfo slice = parseSlice(read.data);
+    check(read.status == VA_STATUS_SUCCESS && slice.found && slice.checksum == picture.checksum(kCodedWidth, kVisibleHeight),
+          "and the encoder was given its pixels");
+    va.table.vaDestroyContext(&va.context, context);
+}
+
 void testDescriptors()
 {
     // Two descriptors in the pool, and the node refuses to be opened again, as
@@ -927,6 +1008,7 @@ void runDriverEncodeTests()
     testRefusals();
     testHevc();
     testInitialisedAgainInsideASandbox();
+    testImportedInput();
     testDescriptors();
 }
 

@@ -43,6 +43,10 @@ public:
     // The CPU mapping, created on demand. Null when the buffer cannot be mapped.
     std::uint8_t* map();
     const std::uint8_t* map() const { return const_cast<PixelBuffer*>(this)->map(); }
+    // The CPU mapping, or when the descriptor was opened read-only (the usual
+    // state of a descriptor a graphics stack exports) a read-only mapping:
+    // all an encoder needs of its input. Null when neither can be made.
+    const std::uint8_t* mapForRead();
 
     StorageKind kind() const noexcept { return kind_; }
     std::uint32_t fourcc() const noexcept { return fourcc_; }
@@ -79,6 +83,8 @@ private:
     std::uint64_t identity_ {};
     int fd_ {-1};
     std::uint8_t* map_ {};
+    // Set instead of map_ when only a read-only mapping could be made.
+    const std::uint8_t* readMap_ {};
     void* bo_ {};
     // A GBM buffer is mapped through GBM itself: the descriptor it exports
     // need not be writable, and mapping that descriptor then fails.

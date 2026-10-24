@@ -5,8 +5,10 @@
 #include <linux/videodev2.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #include "convert.hpp"
 #include "driver.hpp"
@@ -202,8 +204,16 @@ VAStatus rawFrameOf(Driver& driver, Context& owner, Surface& target, RawFrame& f
     // A surface a decoder wrote as packed RGB is converted back to the NV12
     // the encoder takes.
     driver.materialise(target);
-    std::uint8_t* base = target.buffer->map();
-    if (!base) return VA_STATUS_ERROR_OPERATION_FAILED;
+    // The encoder only reads the surface, so a descriptor a client exported
+    // read-only is enough.
+    errno = 0;
+    const std::uint8_t* base = target.buffer->mapForRead();
+    if (!base) {
+        const int reason = errno;
+        driver.note(("cannot map the memory of an encode input surface: " +
+                     std::string(reason ? std::strerror(reason) : "no reason given")).c_str());
+        return VA_STATUS_ERROR_OPERATION_FAILED;
+    }
     const unsigned width = std::min(target.width, target.buffer->width());
     const unsigned height = std::min(target.height, target.buffer->height());
     if (target.fourcc == VA_FOURCC_NV12) {
@@ -249,6 +259,22 @@ VAStatus Driver::submitEncode(Context& owner, VASurfaceID id, Surface& target)
     if (status != VA_STATUS_SUCCESS) return status;
     std::string error;
     std::uint64_t token = 0;
+    if (tracing()) {
+        // Whether real pictures arrive: the mean of a sparse sample of each plane.
+        unsigned long luma = 0, cb = 0, cr = 0, lumaCount = 0, chromaCount = 0;
+        for (unsigned y = 0; y < frame.height; y += 8)
+            for (unsigned x = 0; x < frame.width; x += 8, ++lumaCount) luma += frame.luma[y * frame.lumaPitch + x];
+        for (unsigned y = 0; y < (frame.height + 1) / 2; y += 4)
+            for (unsigned x = 0; x + 1 < frame.width; x += 8, ++chromaCount) {
+                cb += frame.chroma[y * frame.chromaPitch + x];
+                cr += frame.chroma[y * frame.chromaPitch + x + 1];
+            }
+        char text[120];
+        std::snprintf(text, sizeof text, "encode input %ux%u mean Y %lu U %lu V %lu", frame.width, frame.height,
+                      lumaCount ? luma / lumaCount : 0, chromaCount ? cb / chromaCount : 0,
+                      chromaCount ? cr / chromaCount : 0);
+        note(text);
+    }
     status = encoder.encode(frame, id, token, error);
     for (const auto& text : encoder.takeNotes()) note(text.c_str());
     if (status != VA_STATUS_SUCCESS) {

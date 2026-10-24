@@ -388,6 +388,7 @@ PixelBuffer::~PixelBuffer()
 {
     if (map_ && boMapping_) gbm().boUnmap(bo_, boMapping_);
     else if (map_) munmap(map_, size_);
+    if (readMap_) munmap(const_cast<std::uint8_t*>(readMap_), size_);
     if (bo_) gbm().boDestroy(bo_);
     if (fd_ >= 0) ::close(fd_);
 }
@@ -396,6 +397,17 @@ int PixelBuffer::exportDescriptor() const
 {
     if (fd_ < 0) return -1;
     return fcntl(fd_, F_DUPFD_CLOEXEC, 0);
+}
+
+const std::uint8_t* PixelBuffer::mapForRead()
+{
+    if (const std::uint8_t* writable = map()) return writable;
+    if (readMap_) return readMap_;
+    if (fd_ < 0 || !size_) return nullptr;
+    void* address = mmap(nullptr, size_, PROT_READ, MAP_SHARED, fd_, 0);
+    if (address == MAP_FAILED) return nullptr;
+    readMap_ = static_cast<const std::uint8_t*>(address);
+    return readMap_;
 }
 
 std::uint8_t* PixelBuffer::map()

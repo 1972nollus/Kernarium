@@ -234,8 +234,12 @@ public:
     bool importsCapture();
 
     void note(const char* message) const;
+    // Whether UML_VA_V4L2_TRACE asked for the extra diagnostics.
+    bool tracing() const noexcept { return tracing_; }
+    void setTracing(bool on) noexcept { tracing_ = on; }
 
 private:
+    bool tracing_ {};
     void probeCodecs();
     // Learns once what the encoder node offers.
     void probeEncoding();
