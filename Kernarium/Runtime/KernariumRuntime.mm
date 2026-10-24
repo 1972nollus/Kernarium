@@ -9,6 +9,7 @@
 #include "audio/in_process_service.hpp"
 #include "video/in_process_service.hpp"
 #include "video/virtio_video_device.hpp"
+#include "video/virtio_video_encoder_device.hpp"
 #include "audio/protocol.hpp"
 #include "balloon/in_process_service.hpp"
 #include "balloon/protocol.hpp"
@@ -910,6 +911,12 @@ int runtimeRun(
         std::unique_ptr<uml::gpu::InProcessVhostUserService> videoService;
         if (!uml::platform::videoDecodeCapabilities().empty())
             videoService = uml::video::makeInProcessService(sharedMemoryRegions);
+        /* Discovery of the hardware encoder takes test encodes, so it starts
+         * now and the capability check below finds it done or nearly. */
+        uml::platform::prepareVideoEncodeCapabilities();
+        std::unique_ptr<uml::gpu::InProcessVhostUserService> videoEncoderService;
+        if (!uml::platform::videoEncodeCapabilities().empty())
+            videoEncoderService = uml::video::makeInProcessEncoderService(sharedMemoryRegions);
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         const auto batteryService = uml::battery::makeInProcessService();
 #endif
@@ -997,6 +1004,10 @@ int runtimeRun(
         if (videoService) {
             arguments.emplace_back(uml::gpu::virtioDeviceArgument(
                 videoService->takeConnectionName(), uml::video::deviceId));
+        }
+        if (videoEncoderService) {
+            arguments.emplace_back(uml::gpu::virtioDeviceArgument(
+                videoEncoderService->takeConnectionName(), uml::video::encoderDeviceId));
         }
 #if KERNARIUM_AUTOMATION_HARNESS && !KERNARIUM_RUNTIME_ANDROID_GUEST
         if (automation) {

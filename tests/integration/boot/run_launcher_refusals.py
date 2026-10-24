@@ -27,7 +27,7 @@ TIMEOUT_SECONDS = 30
 # Skips the rootfs lookup; no case boots far enough to open it.
 NO_ROOTFS = "ubd0=/dev/null"
 # The Virtio device identifiers of the explicit transport arguments.
-BATTERY, CONSOLE, AUDIO, VIDEO, GPU = 65535, 3, 25, 31, 16
+BATTERY, CONSOLE, AUDIO, VIDEO, VIDEO_ENCODER, GPU = 65535, 3, 25, 31, 30, 16
 
 
 def explicit(device_id: int) -> str:
@@ -44,6 +44,8 @@ CONFIGURE = "Unable to configure host devices: "
 REFUSALS: list[tuple[list[str], str]] = [
     (["--battery", explicit(BATTERY)], COLLISION.format("--battery", "Virtio battery")),
     (["--video", explicit(VIDEO)], COLLISION.format("--video", "Virtio video")),
+    (["--video-encoder", explicit(VIDEO_ENCODER)],
+     COLLISION.format("--video-encoder", "Virtio video encoder")),
     (["--audio", explicit(AUDIO)], COLLISION.format("--audio", "Virtio Sound")),
     (["--gpu", explicit(GPU)], COLLISION.format("--gpu", "Virtio-GPU")),
     (["--virtio-console-socket={tmp}/console.sock", explicit(CONSOLE)],
@@ -101,8 +103,8 @@ ACCEPTED: list[list[str]] = [
      "--virtio-console-socket={tmp}/console.sock"],
     ["--gpu-display=native", "--gpu-auto-resize=off",
      "--virtio-serial-socket={tmp}/serial.sock"],
-    ["--gpu", "--battery", "--audio", "--video", explicit(BATTERY),
-     explicit(GPU)],
+    ["--gpu", "--battery", "--audio", "--video", "--video-encoder",
+     explicit(BATTERY), explicit(GPU)],
 ]
 
 
