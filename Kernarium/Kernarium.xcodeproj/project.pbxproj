@@ -15,6 +15,7 @@
 		A10000000000000000000009 /* GPTFDisk.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* GPTFDisk.xcframework */; };
 		A1000000000000000000000A /* LibZstd.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* LibZstd.xcframework */; };
 		A1000000000000000000000E /* HostBattery.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* HostBattery.xcframework */; };
+		A1000000000000000000000F /* HostVideoEncoder.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* HostVideoEncoder.xcframework */; };
 		B20000000000000000000001 /* GhosttyTerminal in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000003 /* GhosttyTerminal */; };
 /* End PBXBuildFile section */
 
@@ -65,6 +66,7 @@
 		A10000000000000000000017 /* LibZstd.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LibZstd.xcframework; path = "../.build/kernarium-xcframeworks/LibZstd.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000019 /* KosmicKrisp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KosmicKrisp.xcframework; path = "../.build/kernarium-xcframeworks/KosmicKrisp.xcframework"; sourceTree = SOURCE_ROOT; };
 		A1000000000000000000001A /* HostBattery.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = HostBattery.xcframework; path = "../.build/kernarium-xcframeworks/HostBattery.xcframework"; sourceTree = SOURCE_ROOT; };
+		A1000000000000000000001B /* HostVideoEncoder.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = HostVideoEncoder.xcframework; path = "../.build/kernarium-xcframeworks/HostVideoEncoder.xcframework"; sourceTree = SOURCE_ROOT; };
 		C30000000000000000000001 /* KernariumAutomation.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernariumAutomation.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -107,6 +109,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000000000000000000000E /* HostBattery.xcframework in Frameworks */,
+				A1000000000000000000000F /* HostVideoEncoder.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -161,6 +164,7 @@
 				A10000000000000000000013 /* MesaGallium.xcframework */,
 				A10000000000000000000019 /* KosmicKrisp.xcframework */,
 				A1000000000000000000001A /* HostBattery.xcframework */,
+				A1000000000000000000001B /* HostVideoEncoder.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -623,6 +627,14 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					VideoToolbox,
+					"-framework",
+					CoreMedia,
+					"-framework",
+					CoreVideo,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.imxieyi.KernariumTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -649,6 +661,14 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					VideoToolbox,
+					"-framework",
+					CoreMedia,
+					"-framework",
+					CoreVideo,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.imxieyi.KernariumTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
