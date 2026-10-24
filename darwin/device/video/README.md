@@ -84,7 +84,11 @@ stderr shares the guest console. Unset, the device opens and writes nothing.
 `virtio-video-protocol` exercises buffer layouts across 4 KiB and 16 KiB
 memory boundaries, stream lifecycle, EOS, and event backpressure with a synthetic
 decoder. `platform-video-decoder` decodes the checked-in generated fixtures on
-Apple hardware. Both are included in the `check-gpu` workflow. The optional `guest-v4l2-decode` CTest runs the actual V4L2 driver
+Apple hardware. `virtio-video-encoder-protocol` drives the encoder device over
+both queues in front of the synthetic encoder in `tests/support/video`, and
+`video-encoder-capabilities` checks the capability responses, control tables and
+control-to-settings mapping without a device. All four are included in the
+`check-gpu` workflow. The optional `guest-v4l2-decode` CTest runs the actual V4L2 driver
 against every advertised codec profile and verifies pixels and clean shutdown.
 See [testing](../../../docs/testing.md) for the guest probe input.
 
@@ -99,8 +103,12 @@ and the platform interface (`darwin/platform/video_encoder.hpp`) are its
 contract; the device depends only on that interface, the memory layer and the
 device contracts, and never on VideoToolbox.
 
-The device and the platform backend are not in this tree yet: this section and
-those two headers are what they are built against.
+macOS enables the encoder with `--video-encoder`; `--video` stays decoder-only,
+so a qualification can turn either side off. The Android launcher passes both.
+Kernarium creates the encoder service beside the decoder's whenever the platform
+reports a hardware encoder. On macOS an explicit `--video-encoder` on a host
+without one fails to start rather than advertise a device its guest could not
+use.
 
 A guest reaches the encoder as a stateful V4L2 encoder (`stateful-encoder`
 video node). Raw frames are copied once, from guest pages or from a host-visible
@@ -114,6 +122,60 @@ proved: a profile, input layout, size or rate-control mode that did not encode
 is absent. The guest therefore learns the host's capability from which formats,
 controls and menu items exist, and a control that is not published is
 unsupported, which is the truthful answer.
+
+### Encoder behavior
+
+`UML::VideoDevice` implements the device in `virtio_video_encoder_device.cpp`,
+with the capability and control tables as pure functions of the platform's
+capabilities in `encoder_capabilities.cpp` and `encoder_controls.cpp`. The device
+guarantees:
+
+- **Session.** The platform session is created at a stream's first raw frame,
+  from the controls and formats the guest settled by then, so the guest may set
+  them in any order before it. From then on a control that is not dynamic, and
+  the raw or coded format, answer `ERR_BUSY`. A set of controls applies every
+  value or none. `QUEUE_CLEAR` on either queue ends the session and returns the
+  buffers that queue held with an error; the next frame configures a new
+  session and starts at a key frame.
+- **Layout.** The device decides each raw plane's size and stride (tight, with
+  odd chroma rounded up) and reports them in `GET_PARAMS`; a buffer smaller than
+  that is refused at attach. A crop is rounded inside the frame to the
+  platform's alignment, and the coded size is the crop's. Planar 8-bit formats
+  take a buffer per plane or one buffer, as the guest negotiated.
+- **Buffers.** A raw buffer completes once the host has copied it into a frame
+  the platform provided, before the frame is encoded. When the platform has no
+  free frame the device holds the raw buffers, so the guest sees them not come
+  back; when the platform reports none in flight and still offers no frame, the
+  stream fails. At most eight coded frames wait in the device for coded buffers,
+  and the rest stay in the platform until buffers arrive.
+- **Output.** Coded buffers complete in decode order with their source frame's
+  timestamp and `KEY_FRAME`, `PFRAME` or `BFRAME`. A frame larger than its
+  buffer completes with `ERR` and the next frame submitted is a key frame; a
+  frame the platform failed completes with `ERR` and its timestamp.
+- **Parameter sets.** With `PREPEND_SPSPPS_TO_IDR` on, every key frame carries
+  its parameter sets. With it off, the device removes them from key frames after
+  the first, and under `HEADER_MODE_SEPARATE` the platform's parameter sets
+  arrive in a buffer of their own flagged `CODEC_CONFIG`.
+- **Drain.** `STREAM_DRAIN` completes when the platform has returned every
+  frame submitted before it, and the next coded buffer completes empty with
+  `EOS`. A drain with nothing encoded completes at once, and encoding resumes on
+  the same session afterwards.
+- **Failure.** A session the platform refuses completes the stream's frames with
+  `ERR` and sends `VIRTIO_VIDEO_EVENT_ERROR`; the guest recovers with
+  `QUEUE_CLEAR`. Destroying a stream or resetting the device returns everything
+  still queued.
+- **Limits.** At most eight streams, or the platform's reported concurrent
+  session limit if lower. The configuration advertises 16 KiB for capability and
+  control-descriptor responses, and the device splits a control query at
+  `next_index` to fit the buffer the guest gave.
+
+With `UML_VIDEO_ACTIVITY_LOG` set the encoder appends lines marked `encoder`:
+what it advertised for each codec, each stream's open with its codec, the
+settings its session started with (profile, rate control, bitrate, size, frame
+rate, input layout, B-frames, layers and the platform's status), and the frame,
+key frame, byte and error totals when the stream closes. They are the evidence
+that the hardware encoded, since a guest that falls back to a software encoder
+looks the same from inside.
 
 ### Encoder controls
 
@@ -133,7 +195,7 @@ Rate control and quality:
 | --- | --- | --- | --- | --- | --- |
 | `MPEG_VIDEO_BITRATE_MODE` | menu | VBR, CBR, CQ; the skip mask removes unverified modes; default VBR | no | always | VBR: `AverageBitRate` and `DataRateLimits` from the peak. CBR: `ConstantBitRate` (the standard encoder only). CQ: `ConstantQualityFactor`, else `Quality` |
 | `MPEG_VIDEO_BITRATE` | int | 1000 to the codec maximum; default 2,000,000 | yes | always | `AverageBitRate` or `ConstantBitRate` |
-| `MPEG_VIDEO_BITRATE_PEAK` | int | 1000 to the codec maximum; default 0 (none) | yes | VBR verified | `DataRateLimits`, one second |
+| `MPEG_VIDEO_BITRATE_PEAK` | int | 0 to the codec maximum; default 0 (none) | yes | VBR verified | `DataRateLimits`, one second |
 | `MPEG_VIDEO_CONSTANT_QUALITY` | int | 1 to 100; default 50 | yes | CQ verified | `ConstantQualityFactor`, else `Quality` = q/100 |
 | `MPEG_VIDEO_FRAME_RC_ENABLE` | bool | default 1 | no | constant QP verified | 0 selects constant QP from the `*_FRAME_QP` controls |
 | `MPEG_VIDEO_MB_RC_ENABLE` | bool | default 1 | no | always | accepted; the encoder's own spatial adaptation |
