@@ -303,6 +303,9 @@ cmake --build --preset tsan
 ctest --preset unit-tsan
 ```
 
+Every sanitizer preset, these two and the GPU and embedded-loader ones,
+instruments Objective-C++ as well as C++.
+
 Both sanitizers keep the product's macOS native window for themselves, so a
 sanitized test, and every run it makes through the emulator test variant,
 takes a native window that both leave free

@@ -107,6 +107,7 @@
       "inherits": "macos-unit",
       "cacheVariables": {
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_OBJCXX_FLAGS": "-fsanitize=address,undefined",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
       }
     },
@@ -116,6 +117,7 @@
       "inherits": "macos-unit",
       "cacheVariables": {
         "CMAKE_CXX_FLAGS": "-fsanitize=thread",
+        "CMAKE_OBJCXX_FLAGS": "-fsanitize=thread",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
       }
     },
@@ -134,6 +136,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_OBJCXX_FLAGS": "-fsanitize=address,undefined",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
         "UML_BUILD_KERNEL_RUNNER": true
       }
