@@ -174,7 +174,7 @@ goes in. A stream cannot change its size; the client creates a new context.
 
 | VA-API buffer | becomes |
 | --- | --- |
-| sequence parameters | the stream size (H.264 cropping gives a smaller size than the coded one; HEVC carries none, so its stream is the coded size), level, tier, key frame interval, and the frame rate from the VUI timing |
+| sequence parameters | the stream size (H.264 cropping gives a smaller size than the coded one; HEVC carries none, so a surface up to 15 rows or columns short of the coded size is taken as the picture and the host crops the alignment), level, tier, key frame interval, and the frame rate from the VUI timing |
 | picture parameters | a forced key frame for an IDR picture, CABAC and the 8x8 transform, the initial quantiser, the coded buffer that receives the frame |
 | slice parameters | the quantiser delta that, with the initial quantiser, gives the constant quantiser |
 | `RateControl` | bit rate and peak (variable rate: the peak is the client's rate and the target is its percentage), quantiser bounds, ICQ quality (libva's factor, 1 best, maps linearly onto V4L2's 1..100) |

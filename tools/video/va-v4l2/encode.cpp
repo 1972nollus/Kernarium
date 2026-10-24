@@ -62,15 +62,27 @@ VAStatus VaEncoder::add(VABufferType type, const void* data, std::size_t size)
     }
 }
 
-VAStatus VaEncoder::start(std::string& error)
+VAStatus VaEncoder::start(const RawFrame& frame, std::string& error)
 {
     const SequenceInfo& sequence = state_.sequence;
     if (!sequence.valid) { error = "the first picture came without sequence parameters"; return VA_STATUS_ERROR_INVALID_PARAMETER; }
     if (sequence.ipPeriod > 1) { error = "B-frames are not offered"; return VA_STATUS_ERROR_INVALID_PARAMETER; }
     if ((sequence.width | sequence.height) & 1u) { error = "an odd picture size"; return VA_STATUS_ERROR_INVALID_PARAMETER; }
-    if (sequence.codedWidth > width_ + 15 || sequence.codedHeight > height_ + 15 || sequence.width > width_ ||
-        sequence.height > height_) {
+    // The coded size a client names is rounded up to the encoder's alignment, so
+    // a context and its surfaces may be a few rows short of it.
+    if (sequence.codedWidth > width_ + 15 || sequence.codedHeight > height_ + 15 || sequence.width > width_ + 15 ||
+        sequence.height > height_ + 15) {
         error = "the sequence is larger than the context";
+        return VA_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    // A surface a few rows short of the stream is the picture: HEVC sequence
+    // parameters cannot name a crop, so a client that rounds its coded size up
+    // (FFmpeg does, to 16) hands in surfaces of the size it actually wants.
+    // Anything shorter than that is a client error.
+    const unsigned width = std::min(sequence.width, frame.width) & ~1u;
+    const unsigned height = std::min(sequence.height, frame.height) & ~1u;
+    if (sequence.width - width > 15 || sequence.height - height > 15 || !width || !height) {
+        error = "the surface is smaller than the stream";
         return VA_STATUS_ERROR_INVALID_PARAMETER;
     }
     if (!state_.picture.valid) { error = "the first picture came without picture parameters"; return VA_STATUS_ERROR_INVALID_PARAMETER; }
@@ -79,16 +91,18 @@ VAStatus VaEncoder::start(std::string& error)
 
     V4l2Encoder::Settings settings;
     settings.codec = profile->codec;
-    settings.width = sequence.width;
-    settings.height = sequence.height;
+    settings.width = width;
+    settings.height = height;
     const FrameRateInfo rate = effectiveFrameRate(state_);
     settings.frameRateNumerator = rate.numerator;
     settings.frameRateDenominator = rate.denominator;
     settings.controls = startupControls(*support_, profile_, rateControl_, state_);
     encoder_ = V4l2Encoder::open(std::move(lease_), support_->capabilities, settings, error);
     if (!encoder_) return VA_STATUS_ERROR_ALLOCATION_FAILED;
-    streamWidth_ = sequence.width;
-    streamHeight_ = sequence.height;
+    sequenceWidth_ = sequence.width;
+    sequenceHeight_ = sequence.height;
+    streamWidth_ = width;
+    streamHeight_ = height;
     applied_ = state_;
     for (auto& note : encoder_->notes()) notes_.push_back(std::move(note));
     encoder_->clearNotes();
@@ -99,11 +113,11 @@ VAStatus VaEncoder::encode(const RawFrame& frame, VASurfaceID surface, std::uint
 {
     if (failed_) { error = "the encoder failed earlier"; return VA_STATUS_ERROR_ENCODING_ERROR; }
     if (!encoder_) {
-        const VAStatus status = start(error);
+        const VAStatus status = start(frame, error);
         if (status != VA_STATUS_SUCCESS) { failed_ = true; return status; }
     } else {
         if (state_.sequence.valid &&
-            (state_.sequence.width != streamWidth_ || state_.sequence.height != streamHeight_)) {
+            (state_.sequence.width != sequenceWidth_ || state_.sequence.height != sequenceHeight_)) {
             error = "a stream cannot change its size; the client needs a new context";
             return VA_STATUS_ERROR_INVALID_PARAMETER;
         }

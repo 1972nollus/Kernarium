@@ -81,7 +81,7 @@ private:
         bool keyWanted {};
     };
 
-    VAStatus start(std::string& error);
+    VAStatus start(const RawFrame& frame, std::string& error);
 
     std::shared_ptr<const EncodeSupport> support_;
     VAProfile profile_;
@@ -95,6 +95,10 @@ private:
     EncodeState applied_;
     std::deque<Pending> pending_;
     std::uint64_t counter_ {};
+    // The size the first picture's sequence parameters named, which a later
+    // picture must not change, and the size of the stream that came of it.
+    unsigned sequenceWidth_ {};
+    unsigned sequenceHeight_ {};
     unsigned streamWidth_ {};
     unsigned streamHeight_ {};
     bool failed_ {};

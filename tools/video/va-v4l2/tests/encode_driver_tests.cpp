@@ -792,6 +792,34 @@ void testHevc()
     check(pixels, "every HEVC frame holds the picture that named it");
     check(keys, "the first HEVC frame is a key frame with its parameter sets, and the others are not");
 
+    // A client that rounds the coded size up to 16 (FFmpeg does) says 368 rows in
+    // the sequence parameters and hands in surfaces of the 360 it wants: the
+    // surface is the picture, and the host crops the alignment.
+    {
+        const VAContextID rounded = va.encodeContext(config, kCodedWidth, kVisibleHeight);
+        Stream roundedStream = stream;
+        roundedStream.codedHeight = kCodedHeight;
+        VASurfaceID shortSurface = va.surface(kCodedWidth, kVisibleHeight);
+        VABufferID shortCoded = va.buffer(rounded, VAEncCodedBufferType, nullptr, 1u << 20);
+        Picture shortPicture(kCodedWidth, kVisibleHeight, 21);
+        va.upload(shortSurface, shortPicture);
+        check(va.encodeHevc(rounded, shortSurface, shortCoded, roundedStream, true) == VA_STATUS_SUCCESS,
+              "an HEVC picture whose surface is a few rows short of the coded size is accepted");
+        const auto shortRead = va.read(shortSurface, shortCoded);
+        check(va.device.outputWidth == kCodedWidth && va.device.outputHeight == kVisibleHeight &&
+                  parseSlice(shortRead.data, true).checksum == shortPicture.checksum(),
+              "and the stream is the size of the surface");
+        va.table.vaDestroyContext(&va.context, rounded);
+
+        const VAContextID tooShort = va.encodeContext(config, kCodedWidth, kCodedHeight);
+        Stream wrongStream = stream;
+        VASurfaceID tinySurface = va.surface(kCodedWidth, kCodedHeight - 32);
+        VABufferID tinyCoded = va.buffer(tooShort, VAEncCodedBufferType, nullptr, 1u << 20);
+        check(va.encodeHevc(tooShort, tinySurface, tinyCoded, wrongStream, true) == VA_STATUS_ERROR_INVALID_PARAMETER,
+              "a surface more than a block short of the stream is refused");
+        va.table.vaDestroyContext(&va.context, tooShort);
+    }
+
     // Main is 8-bit; a client that asks for more is refused rather than served wrongly.
     const VAContextID second = va.encodeContext(config, kCodedWidth, kCodedHeight);
     VASurfaceID surface = va.surface();

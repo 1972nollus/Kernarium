@@ -37,6 +37,9 @@ run 1920x1080 h264_vaapi -rc_mode CQP -qp 28 -f h264
 run 640x360 h264_vaapi -profile:v main -rc_mode CBR -b:v 1M -g 15 -f h264
 run 320x240 h264_vaapi -profile:v constrained_baseline -f h264
 run 1280x720 hevc_vaapi -f hevc
+run 640x360 hevc_vaapi -f hevc
+run 1920x1080 hevc_vaapi -f hevc
+run 854x480 h264_vaapi -f h264
 run 1280x720 hevc_vaapi -rc_mode CQP -qp 30 -f hevc
 echo "FFMPEG_SELFTEST: $([ "$failed" = 0 ] && echo PASS || echo "FAIL ($failed)")"
 [ "$failed" = 0 ]
