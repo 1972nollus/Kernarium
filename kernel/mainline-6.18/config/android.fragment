@@ -75,6 +75,11 @@ CONFIG_CGROUP_V1_ATTACH_SYS_NICE=y
 CONFIG_SECCOMP=y
 CONFIG_SECCOMP_FILTER=y
 CONFIG_TASK_DELAY_ACCT=y
+# Match the Android 17 GKI policy, which leaves auxiliary POSIX clocks unset.
+# With them, clock IDs 16 to 23 name the auxiliary clocks, so timer_create()
+# on clock 16 fails EOPNOTSUPP where Bionic's time.timer_create_EINVAL and the
+# CTS expect EINVAL.
+# CONFIG_POSIX_AUX_CLOCKS is not set
 # Utilization clamping is tied to a physical CPU-frequency governor. UML has
 # no cpufreq device and schedules fixed virtual CPUs on host carriers, so these
 # controls cannot provide their advertised semantics.
