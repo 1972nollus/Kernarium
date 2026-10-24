@@ -47,12 +47,61 @@ def run_tool(
     )
 
 
+def with_imports(payload: bytes, elf64: bool, imports: tuple[str, ...]) -> bytes:
+    """Append a dynamic symbol table that imports the given functions, and the
+    section headers that name it, to a synthetic ELF."""
+    data = bytearray(payload)
+    strings = bytearray(b"\0")
+    symbols = bytearray(24 if elf64 else 16)
+    for name in imports:
+        offset = len(strings)
+        strings.extend(name.encode() + b"\0")
+        symbols.extend(
+            struct.pack("<IBBHQQ", offset, 0x12, 0, 0, 0, 0)
+            if elf64 else struct.pack("<IIIBBH", offset, 0, 0, 0x12, 0, 0)
+        )
+    data.extend(b"\0" * (-len(data) % 8))
+    string_offset = len(data)
+    data.extend(strings)
+    data.extend(b"\0" * (-len(data) % 8))
+    symbol_offset = len(data)
+    data.extend(symbols)
+    data.extend(b"\0" * (-len(data) % 8))
+    section_offset = len(data)
+    entry_size = 64 if elf64 else 40
+    data.extend(b"\0" * entry_size)  # SHT_NULL
+    for kind, offset, size, link, entry in (
+        (11, symbol_offset, len(symbols), 2, 24 if elf64 else 16),  # .dynsym
+        (3, string_offset, len(strings), 0, 0),                     # .dynstr
+    ):
+        data.extend(
+            struct.pack("<IIQQQQIIQQ", 0, kind, 2, 0, offset, size, link, 1, 8, entry)
+            if elf64 else
+            struct.pack("<IIIIIIIIII", 0, kind, 2, 0, offset, size, link, 1, 4, entry)
+        )
+    if elf64:
+        struct.pack_into("<Q", data, 40, section_offset)
+        struct.pack_into("<HH", data, 58, entry_size, 3)
+    else:
+        struct.pack_into("<I", data, 32, section_offset)
+        struct.pack_into("<HH", data, 46, entry_size, 3)
+    return bytes(data)
+
+
+# What a library built with -D_FILE_OFFSET_BITS=64 imports on a 32-bit target,
+# and what the same source imports on a 64-bit one, where Bionic has one off_t.
+LARGE_FILE_IMPORTS_32 = ("open", "mmap64", "lseek64", "munmap")
+LARGE_FILE_IMPORTS_64 = ("open", "mmap", "lseek", "munmap")
+
+
 def synthetic_aarch64_elf(
     alignment: int = 16384,
     needed: tuple[str, ...] = (),
     edit: tuple[str, int, int] | None = None,
+    imports: tuple[str, ...] | None = None,
 ) -> bytes:
-    """An AArch64 ET_DYN; `edit` is a (struct format, offset, value) overwrite."""
+    """An AArch64 ET_DYN; `edit` is a (struct format, offset, value) overwrite
+    and `imports` adds a dynamic symbol table."""
     program_headers = 2 if needed else 1
     dynamic_entries = 3 + len(needed) if needed else 0
     dynamic_offset = 64 + 56 * program_headers
@@ -111,7 +160,7 @@ def synthetic_aarch64_elf(
         payload[string_offset:] = string_table
     if edit is not None:
         struct.pack_into(edit[0], payload, edit[1], edit[2])
-    return bytes(payload)
+    return with_imports(bytes(payload), True, imports) if imports is not None else bytes(payload)
 
 
 def synthetic_arm_elf(
@@ -119,9 +168,10 @@ def synthetic_arm_elf(
     needed: tuple[str, ...] = (),
     edit: tuple[str, int, int] | None = None,
     flags: int = 0x05000200,
+    imports: tuple[str, ...] | None = None,
 ) -> bytes:
     """An Arm ET_DYN of the softfp EABI; `edit` is a (struct format, offset,
-    value) overwrite."""
+    value) overwrite and `imports` adds a dynamic symbol table."""
     program_headers = 2 if needed else 1
     dynamic_entries = 3 + len(needed) if needed else 0
     dynamic_offset = 52 + 32 * program_headers
@@ -162,7 +212,7 @@ def synthetic_arm_elf(
         payload[string_offset:] = string_table
     if edit is not None:
         struct.pack_into(edit[0], payload, edit[1], edit[2])
-    return bytes(payload)
+    return with_imports(bytes(payload), False, imports) if imports is not None else bytes(payload)
 
 
 def load_tool(path: Path):
@@ -681,6 +731,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             ()
                             if missing_gallium_dependency or index == 0
                             else ("venus_gallium_dri.so",),
+                            imports=LARGE_FILE_IMPORTS_64,
                         )
                     )
                     archive.writestr(entry, payload)
@@ -695,12 +746,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         synthetic_arm_elf(
                             needed=()
                             if missing_arm_gallium_dependency or index == 0
-                            else ("venus_gallium_dri.so",)
+                            else ("venus_gallium_dri.so",),
+                            imports=LARGE_FILE_IMPORTS_32,
                         ),
                     )
                 for hal in ("vulkan.virtio", "gralloc.minigbm", "mapper.minigbm"):
-                    archive.writestr(f"VENDOR/lib64/hw/{hal}.so", synthetic_aarch64_elf())
-                    archive.writestr(f"VENDOR/lib/hw/{hal}.so", synthetic_arm_elf())
+                    archive.writestr(
+                        f"VENDOR/lib64/hw/{hal}.so",
+                        synthetic_aarch64_elf(imports=LARGE_FILE_IMPORTS_64),
+                    )
+                    archive.writestr(
+                        f"VENDOR/lib/hw/{hal}.so", synthetic_arm_elf(imports=LARGE_FILE_IMPORTS_32)
+                    )
                 if retired_egl_library:
                     archive.writestr(
                         "VENDOR/lib64/egl/libGLES_mesa.so", synthetic_aarch64_elf()
@@ -940,6 +997,24 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("32-bit-machine", {"arm_edit": ("<H", 18, 62)}, "not Arm"),
             ("32-bit-big-endian", {"arm_edit": ("<B", 5, 2)}, "little-endian ELF32 or ELF64"),
             ("32-bit-program-header-size", {"arm_edit": ("<H", 42, 16)}, "program.header"),
+            # The Venus ICD built without -D_FILE_OFFSET_BITS=64 imports the
+            # 32-bit-offset mmap and lseek, and fails to map a DRM offset.
+            ("32-bit-vulkan-icd-plain-mmap",
+             {"entries": {"VENDOR/lib/hw/vulkan.virtio.so": synthetic_arm_elf(
+                 imports=("open", "mmap", "lseek64", "munmap"))}},
+             r"32-bit VENDOR/lib/hw/vulkan.virtio.so imports mmap instead of mmap64"),
+            ("32-bit-gallium-plain-lseek",
+             {"entries": {"VENDOR/lib/venus_gallium_dri.so": synthetic_arm_elf(
+                 imports=("open", "mmap64", "lseek"))}},
+             r"venus_gallium_dri.so imports lseek instead of lseek64"),
+            ("32-bit-gralloc-both-plain",
+             {"entries": {"VENDOR/lib/hw/gralloc.minigbm.so": synthetic_arm_elf(
+                 imports=("mmap", "lseek"))}},
+             r"gralloc.minigbm.so imports lseek, mmap instead of lseek64, mmap64"),
+            ("32-bit-stack-without-symbols",
+             {"entries": {"VENDOR/lib/egl/libEGL_kernarium.so": synthetic_arm_elf(
+                 needed=("venus_gallium_dri.so",))}},
+             r"no readable section headers"),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)

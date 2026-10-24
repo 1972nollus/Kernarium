@@ -54,6 +54,13 @@ MESA_HAL_ENTRIES = {
     for abi in MESA_ABI_DIRECTORIES
     for module in ("vulkan.virtio", "gralloc.minigbm", "mapper.minigbm")
 }
+# A 32-bit library of the stack must be built with -D_FILE_OFFSET_BITS=64, or
+# its mmap of a DRM offset above 4 GiB (the Venus renderer's, the buffer
+# allocator's) passes a 32-bit off_t and fails with EINVAL. Bionic's headers
+# then rename these calls to their 64 suffix. The rule covers this stack alone:
+# the platform's own 32-bit libraries import plain mmap and lseek for
+# offsets that never leave 32 bits.
+LARGE_FILE_FUNCTIONS = ("mmap", "lseek")
 # The graphics HAL selections. The product init script copies each
 # androidboot.hardware.<name> into ro.hardware.<name> at early-init, so the
 # boot command line is each property's one writer and must name these values;
@@ -981,6 +988,30 @@ def check_target_elf(info: zipfile.ZipInfo, payload: bytes) -> None:
     android_image.check_load_alignment(info.filename, payload, error)
 
 
+def check_large_file_imports(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], entry: str
+) -> None:
+    """Refuse a 32-bit stack library that imports mmap or lseek without the 64
+    suffix when the same library has a 64-bit build."""
+    parts = PurePosixPath(entry).parts
+    if parts[1] != "lib":
+        return
+    twin = str(PurePosixPath(parts[0], "lib64", *parts[2:]))
+    if twin not in infos:
+        return
+    info = infos[entry]
+    plain = sorted(
+        set(LARGE_FILE_FUNCTIONS)
+        & android_image.elf_imports(info.filename, archive.read(info), error)
+    )
+    if plain:
+        fail(
+            f"32-bit {entry} imports {', '.join(plain)} instead of "
+            f"{', '.join(name + '64' for name in plain)}: it was built without "
+            "-D_FILE_OFFSET_BITS=64"
+        )
+
+
 def check_mesa_gles_stack(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
@@ -998,6 +1029,7 @@ def check_mesa_gles_stack(
                 f" ET_DYN: {entry}"
             )
         check_target_elf(info, payload)
+        check_large_file_imports(archive, infos, entry)
         if entry in MESA_EGL_ENTRIES:
             needed = android_image.elf_needed(info.filename, archive.read(info), error)
             if MESA_GALLIUM_DRIVER not in needed:

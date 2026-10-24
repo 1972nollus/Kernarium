@@ -69,6 +69,8 @@ MODULE_METADATA = frozenset({
 })
 PT_LOAD = 1
 PT_DYNAMIC = 2
+SHT_DYNSYM = 11
+SHN_UNDEF = 0
 DT_NULL = 0
 DT_NEEDED = 1
 DT_STRTAB = 5
@@ -324,15 +326,24 @@ class ElfFormat:
     program_header_format: str
     dynamic_format: str
     min_page_size: int
+    section_offset_at: int
+    section_entry_at: int
+    section_header_format: str
+    symbol_format: str
 
 
+# The section header is (name, type, flags, address, offset, size, link, info,
+# alignment, entry size) in both classes, and a symbol is (name, info, other,
+# section index, value, size) in the class's own order.
 ELF32 = ElfFormat(
     ELFCLASS32, ELF32_HEADER_SIZE, 28, "<I", 42, ELF32_PROGRAM_HEADER_SIZE,
     "<IIIIIIII", "<iI", MIN_ARM_PAGE_SIZE,
+    32, 46, "<IIIIIIIIII", "<IIIBBH",
 )
 ELF64 = ElfFormat(
     ELFCLASS64, ELF64_HEADER_SIZE, 32, "<Q", 54, ELF64_PROGRAM_HEADER_SIZE,
     "<IIQQQQQQ", "<qQ", MAX_PAGE_SIZE_SUPPORTED,
+    40, 58, "<IIQQQQIIQQ", "<IBBHQQ",
 )
 ELF_FORMATS = {ELFCLASS32: ELF32, ELFCLASS64: ELF64}
 
@@ -500,3 +511,51 @@ def elf_needed(name: str, payload: bytes, error: Error) -> set[str]:
         except UnicodeDecodeError as failure:
             raise error(f"ELF DT_NEEDED string is not UTF-8: {name}: {failure}") from failure
     return needed
+
+
+def elf_imports(name: str, payload: bytes, error: Error) -> set[str]:
+    """Return the undefined dynamic symbols, the imports, of a whole ELF32 or
+    ELF64 payload that elf_format has classified. They come from the section
+    headers, so a payload without a dynamic symbol table is refused."""
+    elf = ELF_FORMATS[payload[4]]
+    table = struct.unpack_from(elf.program_offset_format, payload, elf.section_offset_at)[0]
+    entry_size, count = struct.unpack_from("<HH", payload, elf.section_entry_at)
+    if (
+        not table
+        or not count
+        or entry_size < struct.calcsize(elf.section_header_format)
+        or table + entry_size * count > len(payload)
+    ):
+        raise error(f"ELF has no readable section headers, so its imports cannot be read: {name}")
+    sections = [
+        struct.unpack_from(elf.section_header_format, payload, table + index * entry_size)
+        for index in range(count)
+    ]
+    imports: set[str] = set()
+    found = False
+    symbol_size = struct.calcsize(elf.symbol_format)
+    for _, kind, _, _, offset, size, link, _, _, entry in sections:
+        if kind != SHT_DYNSYM:
+            continue
+        found = True
+        if link >= count or entry != symbol_size or size % symbol_size or offset + size > len(payload):
+            raise error(f"ELF dynamic symbol table is malformed: {name}")
+        _, _, _, _, string_offset, string_size, _, _, _, _ = sections[link]
+        if string_offset + string_size > len(payload):
+            raise error(f"ELF dynamic string table is outside the payload: {name}")
+        strings = payload[string_offset : string_offset + string_size]
+        for position in range(offset, offset + size, symbol_size):
+            fields = struct.unpack_from(elf.symbol_format, payload, position)
+            if elf.elf_class == ELFCLASS32:
+                symbol, _, _, _, _, section = fields
+            else:
+                symbol, _, _, section, _, _ = fields
+            if section != SHN_UNDEF or symbol == 0:
+                continue
+            end = strings.find(b"\0", symbol)
+            if symbol >= len(strings) or end < 0:
+                raise error(f"ELF dynamic symbol name is out of bounds: {name}")
+            imports.add(strings[symbol:end].decode("utf-8", errors="replace"))
+    if not found:
+        raise error(f"ELF has no dynamic symbol table: {name}")
+    return imports

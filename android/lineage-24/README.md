@@ -338,7 +338,11 @@ defaults every compiled module uses, for each arch whose platform has
 four-byte pointers. Without it a 32-bit module keeps a 32-bit `off_t`: the
 Venus renderer's `mmap` of a DRM offset above 4 GiB then fails with `EINVAL`.
 The 64-bit port is unchanged. The generator test refuses a committed port with
-an arm module built without the define.
+an arm module built without the define, and the target-files verifier refuses
+a 32-bit library of the graphics stack that has a 64-bit twin and imports `mmap`
+or `lseek` rather than `mmap64` or `lseek64`. The platform's other 32-bit
+libraries import the plain functions for offsets that never leave 32 bits, so
+the rule covers the Mesa and minigbm libraries alone.
 
 Soong has no equivalent of the guest build's out-of-tree
 `-Dvenus-protocol-dir`, so the port carries the driver half of the Venus

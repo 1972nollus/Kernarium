@@ -1075,8 +1075,9 @@ The Android product runs `armeabi-v7a` applications beside `arm64-v8a` ones
 ([`../android/lineage-24/README.md`](../android/lineage-24/README.md#android-product)).
 The build side needs no Android build. `lineage24-builder-lane` drives the
 target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
-placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files)
-and the builder's assertions; `lineage24-first-boot-precompile` covers the
+placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files
+and their 64-suffixed `mmap` and `lseek` imports) and the builder's assertions;
+`lineage24-first-boot-precompile` covers the
 ISA set of a package and the per-ISA artifacts and manifest;
 `lineage24-mesa-venus-port-generator` covers the per-ISA generators of the
 Mesa port and that every arm module is built with Meson's large-file define;
