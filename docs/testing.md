@@ -1076,7 +1076,10 @@ The Android product runs `armeabi-v7a` applications beside `arm64-v8a` ones
 The build side needs no Android build. `lineage24-builder-lane` drives the
 target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
 placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files
-and their 64-suffixed `mmap` and `lseek` imports) and the builder's assertions;
+and their 64-suffixed `mmap` and `lseek` imports; the hardware video encoder
+service, a codec list of its two encoders alone, the encoder properties and no
+enabled decoder, the video nodes' group, the service's seccomp calls and its
+label) and the builder's assertions;
 `lineage24-first-boot-precompile` covers the
 ISA set of a package and the per-ISA artifacts and manifest;
 `lineage24-mesa-venus-port-generator` covers the per-ISA generators of the
@@ -1117,6 +1120,25 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
   and the image and compressed sizes. The stock secondary zygote stays unless
   it costs more than 3 s of iPad cold boot or 100 MiB of guest `MemAvailable`;
   then one started on demand is designed.
+
+## Android hardware video encoding
+
+A release candidate whose product carries the hardware encoders
+([`../android/lineage-24/README.md`](../android/lineage-24/README.md#hardware-video-encoding))
+is qualified opt-in, on a guest started with the host's video encoder enabled
+(`--video-encoder`).
+
+- **Codec list.** `MediaCodecList` shows `c2.v4l2.avc.encoder` and
+  `c2.v4l2.hevc.encoder` beside the `c2.android.*` components and no hardware
+  decoder; the encoder service runs without restarts, with no SELinux denial
+  and no seccomp kill in its log.
+- **CTS.** The encoder tests of `CtsMediaEncoderTestCases`,
+  `CtsMediaV2TestCases`, `CtsVideoCodecTestCases`, `CtsVideoTestCases`,
+  `CtsMediaCodecTestCases` and `CtsMediaRecorderTestCases`, filtered to the two
+  codec names, pass on `arm64-v8a` and `armeabi-v7a`, and the software
+  `c2.android.*` results do not regress.
+- **Host.** The host's video activity log shows hardware encodes for those
+  runs; a pass that never reached the host encoder does not qualify.
 
 ## x86 instruction conformance
 

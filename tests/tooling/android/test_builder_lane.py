@@ -380,6 +380,40 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             str(kernel_release),
         ]
 
+        video_service = tool.VIDEO_ENCODER_SERVICE
+        video_codecs = tool.VIDEO_ENCODER_CODECS
+        video_ueventd = tool.VIDEO_ENCODER_UEVENTD
+        video_seccomp_default = tool.VIDEO_ENCODER_SECCOMP_DEFAULT
+        video_seccomp_extended = tool.VIDEO_ENCODER_SECCOMP_EXTENDED
+        good_video_properties = dict(tool.VIDEO_ENCODER_PROPERTIES)
+        good_video_rc = (
+            f"service vendor.media.c2 /vendor/bin/hw/{video_service}\n"
+            "    class hal\n"
+            "    user mediacodec\n"
+            "    group mediadrm drmrpc camera\n"
+        )
+        good_video_seccomp = "".join(
+            f"{call}: 1\n" for call in ("read", *tool.VIDEO_ENCODER_SECCOMP_CALLS)
+        )
+        good_video_contexts = (
+            "/(vendor|system/vendor)/bin/hw/android\\.hardware\\.media\\.c2-service-v4l2"
+            "  u:object_r:mediacodec_exec:s0\n"
+        )
+
+        def video_codec_list(*, decoders: tuple[str, ...] = (),
+                             encoders: dict[str, str] | None = None) -> bytes:
+            encoders = video_codecs if encoders is None else encoders
+            return (
+                "<MediaCodecs>\n"
+                "  <Decoders>\n"
+                + "".join(f'    <MediaCodec name="{name}" type="video/avc"/>\n'
+                          for name in decoders)
+                + "  </Decoders>\n  <Encoders>\n"
+                + "".join(f'    <MediaCodec name="{name}" type="{kind}"/>\n'
+                          for name, kind in encoders.items())
+                + "  </Encoders>\n</MediaCodecs>\n"
+            ).encode()
+
         def write_fixture(path: Path, *, module: bool = False,
                           module_loader: bool = False, dlkm_image: bool = False,
                           dynamic_image: bool = False, ota_tool: bool = False,
@@ -411,6 +445,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
                           wide_fdroid_permissions: bool = False,
+                          video_properties: dict[str, str] | None = None,
+                          missing_video_ueventd: bool = False,
                           mesa_gles_alignment: int = 16384,
                           elf_edit: tuple[str, int, int] | None = None,
                           abilist32: str = "armeabi-v7a",
@@ -650,7 +686,35 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     ueventd += "/dev/hvc0 0660 root shell\n"
                 if unsupported_hvc:
                     ueventd += "/dev/hvc1 0660 root shell\n"
+                if not missing_video_ueventd:
+                    ueventd += video_ueventd + "\n"
                 archive.writestr("VENDOR/etc/ueventd.rc", ueventd)
+                # The hardware video encoders: the Codec2 service, its plugin
+                # store, the codec list, its seccomp policies and labels.
+                archive.writestr(
+                    f"VENDOR/bin/hw/{video_service}", synthetic_aarch64_elf(alignment)
+                )
+                archive.writestr("VENDOR/lib64/libc2plugin_store.so",
+                                 synthetic_aarch64_elf(alignment))
+                archive.writestr(
+                    f"VENDOR/etc/init/{video_service}.rc", good_video_rc
+                )
+                archive.writestr("VENDOR/etc/media_codecs_c2.xml", video_codec_list())
+                archive.writestr(
+                    f"VENDOR/etc/seccomp_policy/{video_seccomp_default}",
+                    "read: 1\n",
+                )
+                archive.writestr(
+                    f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}",
+                    good_video_seccomp,
+                )
+                archive.writestr(
+                    "VENDOR/etc/selinux/vendor_file_contexts", good_video_contexts
+                )
+                archive.writestr(
+                    f"VENDOR/etc/vintf/manifest/{video_service}.xml",
+                    '<manifest version="1.0" type="device"/>\n',
+                )
                 for apk in preopt_apks:
                     archive.writestr(apk, b"apk")
                     apk_path = Path(apk)
@@ -781,6 +845,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"ro.hardware.{vendor_hal_property}=selected\n"
                         if vendor_hal_property
                         else ""
+                    )
+                    + "".join(
+                        f"{name}={value}\n"
+                        for name, value in (
+                            good_video_properties
+                            if video_properties is None
+                            else video_properties
+                        ).items()
                     ),
                 )
                 archive.writestr("ODM/etc/build.prop", abi_properties("odm", "armeabi-v7a"))
@@ -939,6 +1011,43 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("curated-out-profiles",
              {"extra_entry": "SYSTEM_EXT/app/Profiles/Profiles.apk"}),
             ("fdroid-wide-permissions", {"wide_fdroid_permissions": True}),
+            ("missing-video-encoder-service",
+             {"entries": {f"VENDOR/bin/hw/{video_service}": None}}),
+            ("missing-video-plugin-store",
+             {"entries": {"VENDOR/lib64/libc2plugin_store.so": None}}),
+            ("missing-video-codec-list",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": None}}),
+            ("video-codec-list-lacks-hevc",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoders={"c2.v4l2.avc.encoder": "video/avc"})}}),
+            ("video-hardware-decoder",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoders=("c2.v4l2.avc.decoder",))}}),
+            ("video-codec-list-invalid",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": b"<MediaCodecs>"}}),
+            ("video-decoder-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.decoder.supported.h264": "true"}}),
+            ("missing-video-hevc-property",
+             {"video_properties": {
+                 name: value for name, value in good_video_properties.items()
+                 if not name.endswith("supported.hevc")}}),
+            ("video-concurrency-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.encode_concurrent_instances": "1"}}),
+            ("missing-video-ueventd", {"missing_video_ueventd": True}),
+            ("video-service-without-camera-group",
+             {"entries": {f"VENDOR/etc/init/{video_service}.rc": good_video_rc.replace(
+                 " camera", "").encode()}}),
+            ("video-seccomp-lacks-eventfd",
+             {"entries": {
+                 f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}":
+                 b"read: 1\n# eventfd2: 1\n"}}),
+            ("video-service-label",
+             {"entries": {"VENDOR/etc/selinux/vendor_file_contexts":
+                          good_video_contexts.replace("mediacodec_exec", "vendor_file").encode()}}),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)
@@ -1019,6 +1128,47 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"VENDOR/lib/egl/libEGL_kernarium.so": synthetic_arm_elf(
                  needed=("venus_gallium_dri.so",))}},
              r"no readable section headers"),
+            ("missing-video-encoder-service-cause",
+             {"entries": {f"VENDOR/bin/hw/{video_service}": None}},
+             "required entries are missing"),
+            ("video-codec-list-lacks-hevc-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoders={"c2.v4l2.avc.encoder": "video/avc"})}},
+             "hardware encoders alone"),
+            ("video-hardware-decoder-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoders=("c2.v4l2.avc.decoder",))}},
+             "hardware decoders stay out"),
+            ("video-decoder-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.decoder.supported.h264": "true"}},
+             "enables a hardware decoder"),
+            ("missing-video-hevc-property-cause",
+             {"video_properties": {
+                 name: value for name, value in good_video_properties.items()
+                 if not name.endswith("supported.hevc")}},
+             "lacks ro.vendor.v4l2_codec2.encoder.supported.hevc"),
+            ("video-concurrency-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.encode_concurrent_instances": "1"}},
+             "lacks ro.vendor.v4l2_codec2.encode_concurrent_instances=8"),
+            ("missing-video-ueventd-cause",
+             {"missing_video_ueventd": True}, "video nodes' group"),
+            ("video-service-without-camera-group-cause",
+             {"entries": {f"VENDOR/etc/init/{video_service}.rc": good_video_rc.replace(
+                 " camera", "").encode()}},
+             "does not join the group"),
+            ("video-seccomp-lacks-eventfd-cause",
+             {"entries": {
+                 f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}":
+                 b"read: 1\n# eventfd2: 1\n"}},
+             "does not allow eventfd2"),
+            ("video-service-label-cause",
+             {"entries": {"VENDOR/etc/selinux/vendor_file_contexts":
+                          good_video_contexts.replace("mediacodec_exec", "vendor_file").encode()}},
+             "not labeled mediacodec_exec"),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)

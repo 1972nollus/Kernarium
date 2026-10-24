@@ -380,6 +380,26 @@ PRODUCT_COPY_FILES += \
 PRODUCT_PACKAGES += kernarium_vk_present
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_present
 
+# Hardware video encoding. The host's VideoToolbox encoders reach the guest as a
+# V4L2 stateful encoder, and external/v4l2_codec2 exposes them through Codec2:
+# its service is the vendor Codec2 store beside the software one. The XML lists
+# the encoders alone, so hardware decoders stay out of Android's codec list, and
+# the properties enable exactly those two components. The store admits as many
+# instances as the host serves streams. The extended policy adds the calls the
+# service's seccomp policy lacks for the V4L2 device, and ueventd gives the
+# nodes to the group the service joins.
+PRODUCT_SOONG_NAMESPACES += external/v4l2_codec2
+PRODUCT_PACKAGES += \
+    android.hardware.media.c2-service-v4l2 \
+    libc2plugin_store
+PRODUCT_COPY_FILES += \
+    device/kernarium/darwin/config/media_codecs_c2_v4l2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml \
+    device/kernarium/darwin/config/media_c2_extended_seccomp_policy:$(TARGET_COPY_OUT_VENDOR)/etc/seccomp_policy/android.hardware.media.c2-extended-seccomp_policy
+PRODUCT_VENDOR_PROPERTIES += \
+    ro.vendor.v4l2_codec2.encoder.supported.h264=true \
+    ro.vendor.v4l2_codec2.encoder.supported.hevc=true \
+    ro.vendor.v4l2_codec2.encode_concurrent_instances=8
+
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 
 # ADB is available over the inherited TCP port even though this machine has no

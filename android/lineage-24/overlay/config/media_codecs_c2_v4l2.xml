@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  The hardware video encoders of the host, which the Virtio video encoder
+  presents as a V4L2 stateful encoder and external/v4l2_codec2 exposes through
+  Codec2. The product installs this file as /vendor/etc/media_codecs_c2.xml, the
+  file the Codec2 codec list reads beside media_codecs.xml.
+
+  Only encoders are listed. Hardware decoders stay out of the codec list until
+  they are qualified on their own: listing one changes how Android decodes.
+
+  The sizes, bitrates and levels follow the encoder component, which offers
+  AVC up to level 5.2 and HEVC Main up to the highest level the device lists.
+  The component derives the bitrate modes and the QP bounds from the device's
+  controls, and these entries state what the Virtio video encoder publishes for
+  a VideoToolbox hardware encoder: VBR, CBR and constant quality.
+-->
+<MediaCodecs>
+    <Encoders>
+        <MediaCodec name="c2.v4l2.avc.encoder" type="video/avc">
+            <Limit name="size" min="16x16" max="4096x4096" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-36864" />
+            <Limit name="blocks-per-second" range="1-2073600" />
+            <Limit name="frame-rate" range="1-240" />
+            <Limit name="bitrate" range="1-240000000" />
+            <Limit name="quality" range="1-100" default="50" />
+            <Limit name="concurrent-instances" max="8" />
+            <Feature name="bitrate-modes" value="VBR,CBR,CQ" />
+            <Feature name="qp-bounds" />
+        </MediaCodec>
+        <MediaCodec name="c2.v4l2.hevc.encoder" type="video/hevc">
+            <Limit name="size" min="16x16" max="4096x4096" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-65536" />
+            <Limit name="blocks-per-second" range="1-4177920" />
+            <Limit name="frame-rate" range="1-240" />
+            <Limit name="bitrate" range="1-60000000" />
+            <Limit name="quality" range="1-100" default="50" />
+            <Limit name="concurrent-instances" max="8" />
+            <Feature name="bitrate-modes" value="VBR,CBR,CQ" />
+            <Feature name="qp-bounds" />
+        </MediaCodec>
+    </Encoders>
+</MediaCodecs>

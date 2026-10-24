@@ -407,6 +407,34 @@ registry pin that differs from its owner, and a port codec whose first line
 does not name the recorded pins; such a change needs a regenerated codec, a
 port replay and a new release.
 
+## Hardware video encoding
+
+The host's VideoToolbox encoders reach the guest as a V4L2 stateful encoder
+(Virtio video), and the product exposes them through Codec2. The vendor service
+`android.hardware.media.c2-service-v4l2` of `external/v4l2_codec2` serves
+`c2.v4l2.avc.encoder` and `c2.v4l2.hevc.encoder` beside the software
+`c2.android.*` components, and MediaCodec selects them by name or by the
+platform's hardware preference. The patch series under
+`patches/projects/p0018` adds the HEVC component and derives every encoder
+parameter from the device rather than from constants: bitrate range and modes
+(VBR, CBR, constant quality), QP bounds, B-frame depth, temporal layers,
+profiles and levels, colour aspects and HDR10 static metadata. A capability the
+device does not list is not advertised: Main 10 and HDR10 need a 10-bit raw
+format, which the device publishes only when the host does. Packed RGB input
+goes to the device unconverted when it lists that byte order and is converted
+otherwise.
+
+`overlay/config/media_codecs_c2_v4l2.xml` is installed as
+`vendor/etc/media_codecs_c2.xml` and names these two encoders alone. Hardware
+decoders are out of the product: the codec list has no decoder, the decoder
+properties stay off, and a decoder is qualified on its own before it joins.
+`ro.vendor.v4l2_codec2.encode_concurrent_instances` bounds the encoder
+instances to the streams the host serves. The service joins `camera`, which
+`ueventd.rc` gives the `/dev/video*` nodes; its executable carries the
+`mediacodec_exec` label; and `media_c2_extended_seccomp_policy` adds the calls
+the V4L2 poller needs beside the service's default minijail policy. The
+target-files verifier requires each of these and refuses a decoder.
+
 ## Payload reduction
 
 Payload reduction is done through product configuration and regenerated AOSP

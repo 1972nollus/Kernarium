@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 07:29:16 +0900
+Subject: [PATCH] README: document the HEVC encoder and the parameters the
+ device supplies
+
+The encoder README listed three codecs, two bitrate modes and NV12 as the only
+input. Describe the HEVC encoder, the parameters that exist when the encoder
+device has the controls for them, and the input formats the encoder passes on.
+---
+ README.md | 40 +++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 35 insertions(+), 5 deletions(-)
+
+diff --git a/README.md b/README.md
+index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..a39feff02f42a90b382f748c76e0a7b1b108a832 100644
+--- a/README.md
++++ b/README.md
+@@ -289,10 +289,12 @@ extern "C" ::C2Allocator* CreateAllocator(::C2Allocator::id_t allocatorId) {
+ 
+ ### Supported Codecs
+ 
+-Currently the V4L2 encoder has support for the H.264, VP8 and VP9 codecs. Codec
+-selection can be done by selecting the encoder with the appropriate name.
++Currently the V4L2 encoder has support for the H.264, HEVC, VP8 and VP9 codecs.
++Codec selection can be done by selecting the encoder with the appropriate name.
+ 
+ - H26: *c2.v4l2.avc.encoder*
++- HEVC: *c2.v4l2.hevc.encoder*, enabled by
++  *ro.vendor.v4l2_codec2.encoder.supported.hevc*
+ - VP8: *c2.v4l2.vp8.encoder*
+ - VP9: *c2.v4l2.vp9.encoder*
+ 
+@@ -316,6 +318,31 @@ be allowed to dynamically adjust the bitrate to maintain a constant quality. As
+ the mediacodec framework does not provide facilities to configure the peak
+ bitrate when using VBR, it is currently always set to 2x the target bitrate.
+ 
++The following parameters exist only if the encoder device has the controls for
++them, and are static:
++
++- *C2_PARAMKEY_BITRATE_MODE* offers the modes in the device's
++*V4L2_CID_MPEG_VIDEO_BITRATE_MODE* menu. The constant quality mode
++(*C2Config::BITRATE_IGNORE*) takes its quality, 1 to 100, from
++*C2_PARAMKEY_QUALITY* and can be changed at run-time.
++- *C2_PARAMKEY_BITRATE* is limited to the range of the device's bitrate control.
++- *C2_PARAMKEY_PICTURE_QUANTIZATION* sets the lowest and highest quantization
++parameter, the tightest of the bounds for any picture type, within the range of
++the device's minimum and maximum QP controls.
++- *C2_PARAMKEY_GOP* with a B-frame layer sets the largest run of B-frames, up
++to the device's *V4L2_CID_MPEG_VIDEO_B_FRAMES* maximum, and not for H.264
++Baseline. The encoder then returns its output in the order of the stream, and
++*C2_PARAMKEY_INPUT_DELAY* follows the run.
++- *C2_PARAMKEY_TEMPORAL_LAYERING* sets layers of P frames, up to what the
++device's hierarchical coding controls allow. Layers turn B-frames off and
++constant bitrate into variable bitrate. The bitrate ratio of the base layer
++splits the bitrate between the two layers.
++- *C2_PARAMKEY_COLOR_ASPECTS* sets the colorimetry of the raw frames, and
++*C2_PARAMKEY_VUI_COLOR_ASPECTS* reports what the stream carries.
++- *C2_PARAMKEY_HDR_STATIC_INFO* sets the HDR10 mastering display and content
++light level of an HEVC Main 10 stream, if the device has those controls and
++takes P010 frames. A device without P010 input does not offer Main 10.
++
+ The following parameters are dynamic, and can be freely adjusted at run-time:
+ 
+ - *C2_PARAMKEY_BITRATE*: Use this parameter to specify the desired bitrate.
+@@ -329,10 +356,13 @@ additional key frames in addition to the periodic ones requested through the
+ 
+ ### Supported Input Pixel Formats:
+ 
+-The V4L2 encoder supports various input pixel formats, however frames are
+-currently always passed to the V4L2 encoder in the NV12 format. If a video frame
++The V4L2 encoder supports various input pixel formats. Frames are passed to the
++V4L2 encoder in the NV12 format, or in P010 for HEVC Main 10. If a video frame
+ using a different pixel format is passed to the encoder, format conversion will
+-be performed to convert the frame to the NV12 format.
++be performed to convert the frame to the NV12 format, except for packed RGB
++frames (RGBA_8888 and RGBX_8888 blocks) that the device takes as they are: the
++encoder then asks the device for the format of the first frame before it
++queues it.
+ 
+ ### Additional Features:
+ 

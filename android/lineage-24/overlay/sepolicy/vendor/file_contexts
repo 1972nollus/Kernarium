@@ -15,3 +15,7 @@
 # Mesa loads the allocator's gralloc0 module in the same processes to read
 # buffer metadata.
 /vendor/lib(64)?/hw/gralloc\.minigbm\.so  u:object_r:same_process_hal_file:s0
+
+# The Codec2 store that serves the host's hardware video encoders runs in the
+# mediacodec domain like the stock Codec2 service.
+/(vendor|system/vendor)/bin/hw/android\.hardware\.media\.c2-service-v4l2  u:object_r:mediacodec_exec:s0
