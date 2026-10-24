@@ -297,6 +297,34 @@ and the self-test also run on any Linux build host. Any other VA-API client
 works too, because the driver implements the public interface and nothing
 else.
 
+## In the Debian desktop images
+
+The starter Plasma image, the KDE image and the x86-64 desktop image carry
+Debian's Chromium, the driver and [`chromium.d/kernarium-video`](chromium.d/kernarium-video),
+which `/usr/bin/chromium` sources at start. The file names the driver
+(`LIBVA_DRIVER_NAME=uml`, because libva would otherwise map the virtio-gpu node
+to Mesa's driver, which has nothing to offer), passes
+`--render-node-override=/dev/dri/renderD128` (the guest's render node is not a
+PCI device, so Chromium finds none itself and leaves VA-API off), and enables
+`AcceleratedVideoEncoder`, off by default on Linux, and `ChromeOSHWVBREncoding`,
+which arm64 needs for variable-bitrate profiles. No udev rule, session
+environment or other package is involved.
+
+With it Chromium's hardware encode is H.264 on both architectures, and its VA-API
+decode goes through this driver as well: VP9 is hardware, and H.264 and HEVC
+decode stay in software because the driver does not offer them.
+`--disable-accelerated-video-decode` would also skip the initialisation that
+encode needs. Chromium has no HEVC encode on Linux; HEVC reaches the service
+through FFmpeg and GStreamer.
+
+[`tools/rootfs/producer.sh`](../../rootfs/producer.sh) builds the driver inside
+an image's own root (`producer_install_uml_va_driver`), against the libva and
+libdrm the image ships, runs the unit test and the probe self-test there,
+installs both files with `cmake --install --prefix /usr` and removes the build
+tools; the starter and x86-64 producers call it, and the
+[desktop derivation](../../rootfs/desktop/README.md) installs a driver built the
+same way into the KDE image.
+
 ## In the Steam x86-64 image
 
 [`tools/rootfs/steam-x86_64`](../../rootfs/steam-x86_64/README.md) compiles

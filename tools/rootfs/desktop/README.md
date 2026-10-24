@@ -31,6 +31,14 @@ accepted only with a new release derived from it.
   classification of the Kernarium and VNC input devices, and an OpenRC
   service granting the display and input nodes to the desktop's groups.
 
+The KDE image also carries the [Virtio video VA-API
+driver](../../video/va-v4l2/README.md): the derivation installs the driver it
+is given with `--driver` as `uml_drv_video.so` beside Mesa's drivers, and the
+`/etc/chromium.d` file that makes Chromium use it, then checks that the driver
+resolves every library the image has. Build the driver on arm64 Debian 13,
+whose libva and libdrm the image carries, with `cmake --preset guest` in
+`tools/video/va-v4l2`; the receipt records the driver's digest.
+
 The derivation also removes the machine ID each source was built with, so
 every guest generates its own at first boot and keeps it in its writable
 root. A systemd image carries an empty `/etc/machine-id`; an OpenRC image
@@ -54,7 +62,7 @@ KWin's), runs the setup in a chroot of the extracted tree with `/proc` and
 a receipt naming the source, the setup and the output:
 
 ```sh
-sudo tools/rootfs/desktop/derive.py --image kde \
+sudo tools/rootfs/desktop/derive.py --image kde --driver /path/to/uml_drv_video.so \
   --source /path/to/rootfs.erofs --output /path/to/kde-<date>-r<n>.erofs
 ```
 

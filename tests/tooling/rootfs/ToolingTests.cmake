@@ -44,6 +44,13 @@ uml_add_tooling_test(
     TIMEOUT 60)
 
 uml_add_tooling_test(
+    NAME rootfs-video-driver-images
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_video_driver_images.py
+    LABELS rootfs;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME rootfs-elf-audit
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_elf_audit.py

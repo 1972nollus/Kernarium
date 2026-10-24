@@ -77,3 +77,5 @@ target_compile_features(va_encode_probe PRIVATE cxx_std_20)
 
 include(GNUInstallDirs)
 install(TARGETS uml_drv_video LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/dri)
+# Chromium reads this to use the driver for hardware video encode and decode.
+install(FILES chromium.d/kernarium-video DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/chromium.d)

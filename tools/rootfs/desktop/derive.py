@@ -71,6 +71,56 @@ def tool_version(tool: str) -> str:
     return output.splitlines()[0].strip()
 
 
+def check_driver(driver: Path, machine: str) -> None:
+    """Refuse a driver that is not a shared object for the image's machine."""
+    machines = {"aarch64": 183, "x86_64": 62}
+    header = driver.read_bytes()[:20] if driver.is_file() else b""
+    if (
+        len(header) < 20
+        or header[:4] != b"\x7fELF"
+        or header[4] != 2  # ELFCLASS64
+        or header[5] != 1  # little endian
+        or int.from_bytes(header[16:18], "little") != 3  # ET_DYN
+        or int.from_bytes(header[18:20], "little") != machines[machine]
+    ):
+        raise DerivationError(f"{driver} is not a {machine} shared object")
+
+
+def install_driver(root: Path, entry: dict, driver: Path) -> dict:
+    """Install the VA-API driver and the Chromium file that selects it.
+
+    The driver is built from tools/video/va-v4l2 on an arm64 Debian 13 host,
+    against the libva and libdrm Debian 13 ships, which is what the image
+    carries. Its recorded digest names the exact file the image holds.
+    """
+    spec = entry["driver"]
+    check_driver(driver, spec["machine"])
+    configuration = (DIRECTORY / spec["configuration"]["from"]).resolve()
+    for source, destination, mode in (
+        (driver, spec["destination"], 0o644),
+        (configuration, spec["configuration"]["destination"], 0o644),
+    ):
+        target = root / destination
+        if (root / Path(destination).parts[0]).is_symlink():
+            raise DerivationError(f"the image's /{Path(destination).parts[0]} is a symbolic link")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() or target.is_symlink():
+            raise DerivationError(f"the image already has /{destination}")
+        shutil.copyfile(source, target)
+        os.chmod(target, mode)
+        if os.geteuid() == 0:
+            os.chown(target, 0, 0)
+    return {
+        "destination": spec["destination"],
+        "sha256": sha256(driver),
+        "size": driver.stat().st_size,
+        "configuration": {
+            "destination": spec["configuration"]["destination"],
+            "sha256": sha256(configuration),
+        },
+    }
+
+
 def reset_machine_id(root: Path) -> None:
     """Leave the extracted image at ``root`` without a machine ID.
 
@@ -111,7 +161,10 @@ def reset_machine_id(root: Path) -> None:
         copy.symlink_to("/etc/machine-id")
 
 
-def derive(image: str, source: Path, output: Path, work: Path) -> dict:
+def derive(
+    image: str, source: Path, output: Path, work: Path,
+    driver: Path | None = None,
+) -> dict:
     descriptor = json.loads(DESCRIPTOR.read_text(encoding="utf-8"))
     try:
         entry = descriptor["images"][image]
@@ -129,6 +182,14 @@ def derive(image: str, source: Path, output: Path, work: Path) -> dict:
     if receipt_path.exists():
         raise DerivationError(f"refusing to replace {receipt_path}")
     setup = DIRECTORY / entry["setup"]
+    if "driver" in entry and driver is None:
+        raise DerivationError(
+            f"{image} carries the VA-API driver: pass --driver"
+        )
+    if "driver" not in entry and driver is not None:
+        raise DerivationError(f"{image} carries no VA-API driver")
+    if driver is not None:
+        check_driver(driver, entry["driver"]["machine"])
 
     stage = Path(tempfile.mkdtemp(prefix=f"desktop-{image}-", dir=work))
     root = stage / "root"
@@ -146,11 +207,25 @@ def derive(image: str, source: Path, output: Path, work: Path) -> dict:
                 raise DerivationError(f"the image has no {target.name} directory")
             run(["mount", *arguments, str(target)])
             mounted.append(target)
+        installed = None
+        if driver is not None:
+            installed = install_driver(root, entry, driver)
         with setup.open("rb") as script:
             run(
                 ["chroot", str(root), "/bin/sh", "-s"],
                 stdin=script, env=SETUP_ENVIRONMENT,
             )
+        if installed is not None:
+            # The driver must resolve every library on the image it joins.
+            linked = subprocess.run(
+                ["chroot", str(root), "/usr/bin/ldd", "/" + installed["destination"]],
+                check=True, capture_output=True, text=True,
+                env=SETUP_ENVIRONMENT,
+            ).stdout
+            if "not found" in linked:
+                raise DerivationError(
+                    "the driver needs libraries the image lacks:\n" + linked
+                )
         while mounted:
             run(["umount", str(mounted.pop())])
         reset_machine_id(root)
@@ -190,6 +265,7 @@ def derive(image: str, source: Path, output: Path, work: Path) -> dict:
             "uuid": output_fields["Filesystem UUID"],
             "compression": entry["compression"],
         },
+        **({"driver": installed} if installed is not None else {}),
         "tools": {
             "mkfs.erofs": tool_version("mkfs.erofs"),
             "host": f"{platform.system()} {platform.release()} {platform.machine()}",
@@ -208,6 +284,9 @@ def main() -> int:
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path,
                         help="the new image; never an existing file")
+    parser.add_argument("--driver", type=Path,
+                        help="the VA-API driver (uml_drv_video.so) an image "
+                             "that names one carries")
     parser.add_argument("--work", type=Path,
                         help="where the tree is extracted (default: beside "
                              "the output)")
@@ -222,7 +301,10 @@ def main() -> int:
     output = options.output.resolve()
     work = (options.work or output.parent).resolve()
     try:
-        receipt = derive(options.image, options.source.resolve(), output, work)
+        receipt = derive(
+            options.image, options.source.resolve(), output, work,
+            options.driver.resolve() if options.driver else None,
+        )
     except (DerivationError, subprocess.CalledProcessError, OSError) as error:
         print(f"derive.py: {error}", file=sys.stderr)
         return 1

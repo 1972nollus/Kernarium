@@ -70,6 +70,51 @@ producer_reset_machine_id()
 	sudo -n ln -sfn /etc/machine-id "$1/var/lib/dbus/machine-id"
 }
 
+# producer_install_uml_va_driver ROOT SOURCE: build the VA-API driver tree
+# SOURCE (tools/video/va-v4l2) inside the Debian root ROOT, against the libva
+# and libdrm that root ships, run its unit test and its probe self-test there,
+# and install the driver and the Chromium configuration that selects it. The
+# build tools are installed for the build and removed again, so the image keeps
+# only the libraries the driver runs on. ROOT needs a working apt and a mounted
+# /proc, and the caller defines fail().
+producer_install_uml_va_driver()
+{
+	producer_va_root=$1
+	producer_va_source=$2
+	[ -f "$producer_va_source/CMakeLists.txt" ] || \
+		fail "no VA-API driver source at $producer_va_source"
+	sudo -n rm -rf -- "$producer_va_root/tmp/va-v4l2" \
+		"$producer_va_root/tmp/va-v4l2-build"
+	sudo -n cp -a -- "$producer_va_source" "$producer_va_root/tmp/va-v4l2"
+	sudo -n rm -rf -- "$producer_va_root/tmp/va-v4l2/build"
+	sudo -n chroot "$producer_va_root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+		apt-get install -y --no-install-recommends \
+		build-essential cmake ninja-build pkg-config libva-dev libdrm-dev
+	# What the driver runs on stays when the build tools go.
+	sudo -n chroot "$producer_va_root" apt-mark manual libva2 libva-drm2 libdrm2
+	# The prefix is /usr so that GNUInstallDirs picks the multiarch library
+	# directory and /etc for the Chromium configuration.
+	sudo -n chroot "$producer_va_root" /bin/sh -ec '
+		cd /tmp/va-v4l2
+		cmake --preset guest -B /tmp/va-v4l2-build -DCMAKE_INSTALL_PREFIX=/usr
+		cmake --build /tmp/va-v4l2-build
+		/tmp/va-v4l2-build/uml_va_v4l2_tests
+		tests/probe_selftest.sh /tmp/va-v4l2-build
+		cmake --install /tmp/va-v4l2-build
+		driver=$(find /usr/lib -name uml_drv_video.so)
+		test -n "$driver"
+		if ldd "$driver" | grep -q "not found"; then
+			ldd "$driver" >&2
+			exit 1
+		fi'
+	sudo -n chroot "$producer_va_root" apt-get purge -y --auto-remove \
+		build-essential cmake ninja-build pkg-config libva-dev libdrm-dev
+	sudo -n rm -rf -- "$producer_va_root/tmp/va-v4l2" \
+		"$producer_va_root/tmp/va-v4l2-build"
+	sudo -n test -f "$producer_va_root/etc/chromium.d/kernarium-video" || \
+		fail "the Chromium configuration was not installed"
+}
+
 # producer_stage PARENT NAME: create $staging_dir, a directory this user owns
 # beside the output NAME in PARENT, so that the name a root-run tool writes
 # stays reserved and publication is a same-directory rename. Until

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Debian's /usr/bin/chromium sources every file in this directory. This one
+# points Chromium's VA-API at the Virtio video driver (uml_drv_video.so).
+# ../README.md owns the contract.
+
+# libva maps the virtio_gpu DRM driver to Mesa's driver, which has nothing to
+# offer here; naming ours scopes the choice to Chromium.
+export LIBVA_DRIVER_NAME=uml
+# The guest's render node is not a PCI device, so Chromium finds none unless it
+# is told. Without a render node VA-API stays off.
+CHROMIUM_FLAGS="$CHROMIUM_FLAGS --render-node-override=/dev/dri/renderD128 --enable-features=AcceleratedVideoEncoder,ChromeOSHWVBREncoding"

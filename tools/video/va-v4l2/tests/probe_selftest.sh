@@ -7,7 +7,7 @@
 # usage: probe_selftest.sh BUILD_DIR
 set -u
 build=${1:?usage: probe_selftest.sh BUILD_DIR}
-build=$(cd "$build" && pwd)
+build=$(CDPATH= cd -- "$build" && pwd)
 export LD_PRELOAD="$build/drm_node_shim.so"
 export LIBVA_DRIVER_NAME=fake
 export LIBVA_DRIVERS_PATH=$build

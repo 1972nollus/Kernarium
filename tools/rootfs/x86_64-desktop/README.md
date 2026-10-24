@@ -1,7 +1,7 @@
 # x86-family desktop qualification rootfs
 
 This producer creates the Debian 13 userspace used to qualify the 4 KiB x86
-execution boundary with Plasma Wayland, Wine, and Steam. The primary
+execution boundary with Plasma Wayland, Wine, Steam, and Chromium. The primary
 architecture is amd64. Debian's Steam installer requires an i386 runtime, so
 the image contains amd64 and i386 ELF payloads and rejects every other ELF
 machine type. It never contains arm64 userspace.
@@ -45,6 +45,13 @@ Attach, detach, and later reconnect without restarting the guest using the
 macOS Unix-socket client, for example
 `nc -U /private/tmp/uml-x86-hvc0.sock`. The Virtio console is the quieter
 command channel; `ttyS0` also carries kernel and systemd console output.
+
+Debian's Chromium reaches the Virtio video device through VA-API. The producer
+builds [`tools/video/va-v4l2`](../../video/va-v4l2/README.md) in the image's
+own root against its libva and libdrm, runs the driver's unit test and probe
+self-test there, installs `uml_drv_video.so` beside Mesa's drivers and the
+`/etc/chromium.d/kernarium-video` file that selects it, and removes the build
+tools again.
 
 The Debian package installs Steam's bootstrap and its recommended amd64 and
 i386 desktop-library closure. The first `steam` launch presents a Zenity

@@ -3,6 +3,14 @@
   "images": {
     "kde": {
       "setup": "setup/kde",
+      "driver": {
+        "machine": "aarch64",
+        "destination": "usr/lib/aarch64-linux-gnu/dri/uml_drv_video.so",
+        "configuration": {
+          "from": "../../video/va-v4l2/chromium.d/kernarium-video",
+          "destination": "etc/chromium.d/kernarium-video"
+        }
+      },
       "compression": "zstd,level=9",
       "source": {
         "file": "rootfs.erofs",

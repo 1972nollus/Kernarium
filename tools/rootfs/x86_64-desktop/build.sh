@@ -30,6 +30,13 @@ EOF
 producer_parse_erofs_options "$@"
 producer_require_host x86_64 chroot debootstrap mkfs.erofs python3 sha256sum \
 	sort sudo
+unmount_root_proc()
+{
+	if mountpoint -q "$root/proc"; then
+		sudo umount "$root/proc"
+	fi
+}
+producer_exit_hook=unmount_root_proc
 producer_stage_erofs_output
 
 printf '%s\n' '==> Bootstrapping Debian 13 amd64'
@@ -62,7 +69,7 @@ sudo chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
 	iputils-ping netbase locales \
 	plasma-desktop plasma-workspace kwin-wayland sddm sddm-theme-breeze \
 	konsole xwayland xserver-xorg-core xserver-xorg-video-modesetting xauth \
-	libgl1-mesa-dri mesa-utils xdg-desktop-portal-kde fonts-dejavu-core \
+	libgl1-mesa-dri mesa-utils xdg-desktop-portal-kde fonts-dejavu-core chromium \
 	wine wine64 wine64-preloader wine32:i386 libwine:amd64 libwine:i386 xvfb \
 	curl wget xz-utils file less lsof xdg-user-dirs zenity
 
@@ -74,6 +81,11 @@ printf '%s\n' \
 sudo chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
 	apt-get install -y --install-recommends \
 	steam-installer steam-libs:amd64 steam-libs:i386 steam-libs-i386:i386
+
+printf '%s\n' '==> Building the Virtio video VA-API driver for Chromium'
+sudo mount -t proc proc "$root/proc"
+producer_install_uml_va_driver "$root" "$SCRIPT_DIR/../../video/va-v4l2"
+sudo umount "$root/proc"
 
 printf '%s\n' '==> Configuring the qualification desktop'
 write_root_file "$root/etc/hostname" 0644 <<'EOF'

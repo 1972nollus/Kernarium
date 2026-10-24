@@ -178,13 +178,17 @@ host codec profile set through the shared Linux and Android driver and copies
 decoded planes into guest memory. Its protocol and buffer ownership do not
 depend on Virgl or VA-API.
 
-Which decode API a guest application can reach is a property of that
-application's own build, not of this device. A Linux Chromium or CEF built for
-arm64 discovers the stateful decoder through `/dev/video-dec*`; the same
-upstream project built for x86-64 carries no stateful V4L2 decoder at all and
-offers only VA-API, for which no driver over a V4L2 stateful decoder exists.
-An x86-64 guest therefore reaches this service only from an application that
-speaks V4L2 itself.
+Which codec API a guest application can reach is a property of that
+application's own build, not of this device. Chromium on Linux enumerates
+`/dev/video0` through `/dev/video255` itself where it has a V4L2 decoder at all
+(the `/dev/video-dec*` names are a ChromeOS convention), and its only hardware
+encode on Linux is VA-API. Valve's x86-64 CEF carries no stateful V4L2 decoder,
+only VA-API. The guest therefore ships a VA-API driver over the same V4L2 nodes,
+[`uml_drv_video.so`](../tools/video/va-v4l2/README.md): the Debian Chromium
+images select it through `/etc/chromium.d/kernarium-video`, and it gives
+Chromium and any other VA-API client H.264 encode on both guest architectures.
+An application that speaks V4L2 itself, such as FFmpeg's `*_v4l2m2m` codecs or
+GStreamer's `v4l2` elements, reaches the service without it.
 
 H.264 High10 is advertised only on Apple targets where a profile-specific
 VideoToolbox hardware probe succeeds. Qualified physical iOS hardware produces

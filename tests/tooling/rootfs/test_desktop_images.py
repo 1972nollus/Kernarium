@@ -180,6 +180,94 @@ class DesktopImageTests(unittest.TestCase):
         self.assertLess(setup, reset)
         self.assertLess(reset, image)
 
+    @staticmethod
+    def shared_object(machine: int, kind: int = 3) -> bytes:
+        header = bytearray(64)
+        header[:4] = b"\x7fELF"
+        header[4] = 2
+        header[5] = 1
+        header[16:18] = kind.to_bytes(2, "little")
+        header[18:20] = machine.to_bytes(2, "little")
+        return bytes(header)
+
+    def test_the_video_driver_is_a_shared_object_for_the_image(self) -> None:
+        derive = load_derive()
+        with tempfile.TemporaryDirectory() as name:
+            directory = pathlib.Path(name)
+            good = directory / "good.so"
+            good.write_bytes(self.shared_object(183))
+            derive.check_driver(good, "aarch64")
+            for label, content in (
+                ("another machine", self.shared_object(62)),
+                ("an executable", self.shared_object(183, kind=2)),
+                ("not an ELF file", b"#!/bin/sh\n" + bytes(64)),
+                ("truncated", self.shared_object(183)[:10]),
+            ):
+                with self.subTest(label):
+                    bad = directory / "bad.so"
+                    bad.write_bytes(content)
+                    with self.assertRaisesRegex(
+                        derive.DerivationError, "shared object"
+                    ):
+                        derive.check_driver(bad, "aarch64")
+            with self.assertRaisesRegex(derive.DerivationError, "shared object"):
+                derive.check_driver(directory / "missing.so", "aarch64")
+
+    def test_the_kde_image_carries_the_video_driver_and_its_chromium_file(
+        self,
+    ) -> None:
+        derive = load_derive()
+        descriptor = json.loads(
+            (DESKTOP / "images.json").read_text(encoding="utf-8")
+        )
+        entry = descriptor["images"]["kde"]
+        self.assertEqual(
+            {name for name, image in descriptor["images"].items() if "driver" in image},
+            {"kde"},
+        )
+        configuration = (DESKTOP / entry["driver"]["configuration"]["from"]).resolve()
+        text = configuration.read_text(encoding="utf-8")
+        # What Chromium needs to use the driver: the VA-API driver name, a
+        # render node it cannot find itself, and the encode features.
+        self.assertIn("export LIBVA_DRIVER_NAME=uml\n", text)
+        self.assertIn("--render-node-override=/dev/dri/renderD128", text)
+        self.assertIn("--enable-features=AcceleratedVideoEncoder", text)
+        subprocess.run(["sh", "-n", str(configuration)], check=True)
+        with tempfile.TemporaryDirectory() as name:
+            directory = pathlib.Path(name)
+            root = directory / "root"
+            (root / "usr/lib/aarch64-linux-gnu/dri").mkdir(parents=True)
+            (root / "etc").mkdir()
+            driver = directory / "uml_drv_video.so"
+            driver.write_bytes(self.shared_object(183) + b"driver")
+            installed = derive.install_driver(root, entry, driver)
+            target = root / entry["driver"]["destination"]
+            self.assertEqual(target.read_bytes(), driver.read_bytes())
+            self.assertEqual(target.stat().st_mode & 0o7777, 0o644)
+            chromium = root / entry["driver"]["configuration"]["destination"]
+            self.assertEqual(chromium.read_text(encoding="utf-8"), text)
+            self.assertEqual(
+                installed["sha256"], hashlib.sha256(driver.read_bytes()).hexdigest()
+            )
+            # Neither file replaces one the image already has.
+            with self.assertRaisesRegex(derive.DerivationError, "already has"):
+                derive.install_driver(root, entry, driver)
+
+    def test_a_driver_only_goes_to_an_image_that_names_one(self) -> None:
+        derive = load_derive()
+        source = inspect.getsource(derive.derive)
+        self.assertIn("pass --driver", source)
+        self.assertIn("carries no VA-API driver", source)
+        # The driver is in place before the setup, and the setup's result is
+        # checked for libraries the image lacks before the image is written.
+        install = source.index("install_driver(root, entry, driver)")
+        setup = source.index('["chroot", str(root), "/bin/sh", "-s"]')
+        linked = source.index('"/usr/bin/ldd"')
+        image = source.index('"mkfs.erofs"')
+        self.assertLess(install, setup)
+        self.assertLess(setup, linked)
+        self.assertLess(linked, image)
+
 
 if __name__ == "__main__":
     unittest.main()
