@@ -49,4 +49,27 @@ using GuestMapper = std::function<std::span<std::uint8_t>(std::uint64_t, std::si
     std::span<const GuestSegment> segments, std::span<std::uint8_t> data, bool write,
     std::uint64_t skip = 0);
 
+/* Reads one plane of a guest buffer front to back in pieces, such as the rows
+ * of a picture, without searching the whole segment list for each piece. A
+ * read that starts before the previous one began finds its segment again from
+ * the start. */
+class GuestPlaneReader final {
+public:
+    GuestPlaneReader(const GuestMapper& mapper, const uml::virtio::SharedMemoryRegions* regions,
+                     std::span<const GuestSegment> segments) noexcept
+        : mapper_(mapper), regions_(regions), segments_(segments)
+    {
+    }
+    /* Fills `out` from `offset` bytes into the plane; false when the plane is
+     * shorter than that or a segment cannot be reached. */
+    [[nodiscard]] bool read(std::uint64_t offset, std::span<std::uint8_t> out);
+
+private:
+    const GuestMapper& mapper_;
+    const uml::virtio::SharedMemoryRegions* regions_;
+    std::span<const GuestSegment> segments_;
+    std::size_t index_ {};
+    std::uint64_t indexStart_ {};
+};
+
 } // namespace uml::video

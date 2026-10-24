@@ -56,6 +56,32 @@ GuestPlanes parseScatterLists(std::span<const std::uint8_t> payload, unsigned pl
     return planes;
 }
 
+namespace {
+/* Moves `data` between itself and the part of `segment` that starts `start`
+ * bytes into it. */
+bool transferOne(const GuestMapper& mapper, const uml::virtio::SharedMemoryRegions* regions,
+                 const GuestSegment& segment, std::uint64_t start, std::span<std::uint8_t> data,
+                 bool write)
+{
+    const auto size = data.size();
+    if (segment.shared) {
+        bool copied = false;
+        const auto copy = [&](std::span<std::uint8_t> memory) {
+            if (memory.size() != size) return;
+            if (write) std::memcpy(memory.data(), data.data(), size);
+            else std::memcpy(data.data(), memory.data(), size);
+            copied = true;
+        };
+        return regions && regions->resolve(segment.region, segment.address + start, size, copy) && copied;
+    }
+    auto memory = mapper ? mapper(segment.address + start, size) : std::span<std::uint8_t>{};
+    if (memory.size() != size) return false;
+    if (write) std::memcpy(memory.data(), data.data(), size);
+    else std::memcpy(data.data(), memory.data(), size);
+    return true;
+}
+}
+
 bool transferSegments(const GuestMapper& mapper, const uml::virtio::SharedMemoryRegions* regions,
     std::span<const GuestSegment> segments, std::span<std::uint8_t> data, bool write,
     std::uint64_t skip)
@@ -70,26 +96,31 @@ bool transferSegments(const GuestMapper& mapper, const uml::virtio::SharedMemory
         }
         const auto size = std::min<std::size_t>(data.size() - offset, segment.length - start);
         if (!size) break;
-        if (segment.shared) {
-            bool copied = false;
-            const auto copy = [&](std::span<std::uint8_t> memory) {
-                if (memory.size() != size) return;
-                if (write) std::memcpy(memory.data(), data.data() + offset, size);
-                else std::memcpy(data.data() + offset, memory.data(), size);
-                copied = true;
-            };
-            if (!regions || !regions->resolve(segment.region, segment.address + start, size, copy) ||
-                !copied)
-                return false;
-        } else {
-            auto memory = mapper ? mapper(segment.address + start, size) : std::span<std::uint8_t>{};
-            if (memory.size() != size) return false;
-            if (write) std::memcpy(memory.data(), data.data() + offset, size);
-            else std::memcpy(data.data() + offset, memory.data(), size);
-        }
+        if (!transferOne(mapper, regions, segment, start, data.subspan(offset, size), write))
+            return false;
         offset += size;
     }
     return offset == data.size();
+}
+
+bool GuestPlaneReader::read(std::uint64_t offset, std::span<std::uint8_t> out)
+{
+    if (offset < indexStart_) index_ = 0, indexStart_ = 0;
+    while (index_ < segments_.size() && offset >= indexStart_ + segments_[index_].length) {
+        indexStart_ += segments_[index_].length;
+        ++index_;
+    }
+    std::size_t done = 0;
+    std::uint64_t start = offset - indexStart_;
+    for (std::size_t index = index_; done < out.size() && index < segments_.size(); ++index) {
+        const auto& segment = segments_[index];
+        const auto size = std::min<std::size_t>(out.size() - done, segment.length - start);
+        if (!transferOne(mapper_, regions_, segment, start, out.subspan(done, size), false))
+            return false;
+        done += size;
+        start = 0;
+    }
+    return done == out.size();
 }
 
 } // namespace uml::video

@@ -26,6 +26,13 @@ target_link_libraries(uml_video_decoder PRIVATE UML::PlatformContract
     "-framework Foundation" "-framework CoreMedia" "-framework CoreVideo"
     "-framework VideoToolbox")
 
+# The Apple encoder (VideoToolbox) replaces this source when it lands; until
+# then a host reports no hardware encoder.
+add_library(uml_video_encoder STATIC apple/video_encoder_unavailable.cpp)
+add_library(UML::VideoEncoder ALIAS uml_video_encoder)
+uml_declare_architecture_target(uml_video_encoder platform)
+target_include_directories(uml_video_encoder PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_library(uml_host_battery STATIC apple/host_battery.mm)
 add_library(UML::HostBattery ALIAS uml_host_battery)
 uml_declare_architecture_target(uml_host_battery platform)

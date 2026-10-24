@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 namespace uml::video {
 
@@ -69,6 +70,58 @@ public:
             static_cast<unsigned long long>(distinctBuffers),
             static_cast<unsigned long long>(requeuedBuffers), pending, raw,
             static_cast<unsigned long long>(converted), codec);
+        std::fflush(file_);
+    }
+
+    /* The encoder's lines carry the word "encoder" after the time, so a
+     * reader of a log that holds both devices tells them apart. They answer
+     * the same question for the encode side: that a stream really reached
+     * the hardware encoder, with what settings, and how much it produced. */
+    void encoderAdvertised(const char* codec, const std::string& profiles, const std::string& inputs,
+                           std::uint32_t width, std::uint32_t height, const std::string& rateControls,
+                           std::uint32_t bFrames, std::uint32_t layers, std::uint32_t sessions)
+    {
+        if (file_ == nullptr) return;
+        std::fprintf(file_,
+            "uml-video %.3f encoder advertise codec=%s profiles=%s inputs=%s max=%ux%u rc=%s bframes=%u"
+            " layers=%u sessions=%u\n",
+            elapsed(), codec, profiles.c_str(), inputs.c_str(), width, height, rateControls.c_str(),
+            bFrames, layers, sessions);
+        std::fflush(file_);
+    }
+    void encoderOpened(std::uint32_t stream, const char* codec)
+    {
+        if (file_ == nullptr) return;
+        std::fprintf(file_, "uml-video %.3f encoder stream=%u open codec=%s\n", elapsed(), stream, codec);
+        std::fflush(file_);
+    }
+    /* Written when the stream's first frame configures the platform encoder,
+     * from the settled state: what the guest asked for is what the host was
+     * given. */
+    void encoderStarted(std::uint32_t stream, const char* codec, const char* profile, const char* rateControl,
+                        std::uint64_t bitrate, std::uint32_t width, std::uint32_t height,
+                        std::uint32_t rateNumerator, std::uint32_t rateDenominator, const char* input,
+                        std::uint32_t bFrames, std::uint32_t layers, const char* status)
+    {
+        if (file_ == nullptr) return;
+        std::fprintf(file_,
+            "uml-video %.3f encoder stream=%u start codec=%s profile=%s rc=%s bitrate=%llu size=%ux%u"
+            " fps=%u/%u input=%s bframes=%u layers=%u status=%s\n",
+            elapsed(), stream, codec, profile, rateControl, static_cast<unsigned long long>(bitrate), width,
+            height, rateNumerator, rateDenominator, input, bFrames, layers, status);
+        std::fflush(file_);
+    }
+    void encoderClosed(std::uint32_t stream, const char* reason, const char* codec, std::uint64_t framesIn,
+                       std::uint64_t framesOut, std::uint64_t keyFrames, std::uint64_t bytes,
+                       std::uint64_t errors, std::size_t pendingOutputs)
+    {
+        if (file_ == nullptr) return;
+        std::fprintf(file_,
+            "uml-video %.3f encoder stream=%u close=%s coded=%s frames_in=%llu frames_out=%llu keyframes=%llu"
+            " bytes=%llu errors=%llu pending_outputs_at_close=%zu\n",
+            elapsed(), stream, reason, codec, static_cast<unsigned long long>(framesIn),
+            static_cast<unsigned long long>(framesOut), static_cast<unsigned long long>(keyFrames),
+            static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(errors), pendingOutputs);
         std::fflush(file_);
     }
 
