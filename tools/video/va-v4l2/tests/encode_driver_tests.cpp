@@ -86,6 +86,24 @@ struct Va {
 
     bool ok() const { return initialised == VA_STATUS_SUCCESS; }
 
+    // What a browser does: terminate the display it used before its sandbox
+    // closes, then initialise another inside it.
+    void terminate()
+    {
+        if (initialised == VA_STATUS_SUCCESS) table.vaTerminate(&context);
+        initialised = VA_STATUS_ERROR_OPERATION_FAILED;
+    }
+    VAStatus reinitialise()
+    {
+        context = {};
+        table = {};
+        proc = {};
+        context.vtable = &table;
+        context.vtable_vpp = &proc;
+        initialised = initializeDriver(&context, pool);
+        return initialised;
+    }
+
     std::vector<VAProfile> profiles()
     {
         std::vector<VAProfile> out(context.max_profiles);
@@ -782,6 +800,36 @@ void testHevc()
     check(va.encodeHevc(second, surface, buffer, stream, true, 10) != VA_STATUS_SUCCESS, "ten-bit parameters are refused");
 }
 
+void testInitialisedAgainInsideASandbox()
+{
+    // The pool outlives vaTerminate, so a display initialised after the node
+    // can no longer be opened finds the same stock and the same capabilities.
+    Va va({}, "2,0");
+    if (!va.ok()) { check(false, "the rig initialises"); return; }
+    check(va.device.opens == 2, "the first display opens the pool");
+    va.terminate();
+    va.device.denyOpen = true;
+    check(va.reinitialise() == VA_STATUS_SUCCESS, "a display initialises when nothing can be opened");
+    check(has(va.profiles(), VAProfileH264Main) && has(va.profiles(), VAProfileHEVCMain),
+          "and offers what the first one did");
+    check(va.device.opens == 2, "without opening anything");
+
+    VAConfigID config = VA_INVALID_ID;
+    va.config(VAProfileH264Main, VA_RC_CBR, config);
+    VAStatus status = VA_STATUS_ERROR_OPERATION_FAILED;
+    const VAContextID context = va.encodeContext(config, kCodedWidth, kCodedHeight, &status);
+    check(status == VA_STATUS_SUCCESS, "a context is served from the pool");
+    VASurfaceID surface = va.surface();
+    VABufferID coded = va.buffer(context, VAEncCodedBufferType, nullptr, 1u << 20);
+    Picture picture(kCodedWidth, kCodedHeight, 5);
+    va.upload(surface, picture);
+    Stream stream;
+    check(va.encode(context, surface, coded, stream, true) == VA_STATUS_SUCCESS &&
+              parseSlice(va.read(surface, coded).data).found,
+          "and encodes");
+    va.table.vaDestroyContext(&va.context, context);
+}
+
 void testDescriptors()
 {
     // Two descriptors in the pool, and the node refuses to be opened again, as
@@ -850,6 +898,7 @@ void runDriverEncodeTests()
     testCodedBufferLimits();
     testRefusals();
     testHevc();
+    testInitialisedAgainInsideASandbox();
     testDescriptors();
 }
 

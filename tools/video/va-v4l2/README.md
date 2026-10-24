@@ -292,7 +292,10 @@ LIBVA_DRIVER_NAME=uml LIBVA_DRIVERS_PATH=$PWD/build \
 against `fake_drv_video`, the same driver over the in-memory encoder node, with
 `drm_node_shim.so` preloaded so libva-drm takes a descriptor that is no DRM
 node. That covers the whole path except the Virtio video device, on a host that
-has none. The decode and encode probes are Linux guest programs; the unit test
+has none. `tests/ffmpeg_selftest.sh build` does the same with FFmpeg's
+`h264_vaapi` and `hevc_vaapi` as a second client, when `ffmpeg` is installed;
+the fake's stream is not decodable, so it checks that FFmpeg's submission is
+accepted and every frame returns. The decode and encode probes are Linux guest programs; the unit test
 and the self-test also run on any Linux build host. Any other VA-API client
 works too, because the driver implements the public interface and nothing
 else.
