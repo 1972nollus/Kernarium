@@ -48,8 +48,8 @@ void every_scalar_variant_coalesces() {
             "SP pair has the wrong memory-write mask");
     require(compiled.direct_memory_write_mask == expected_mask,
             "SP pair has the wrong direct-store mask");
-    require(count_word(hot, monitor_clear) == (variant.load ? 0U : 1U),
-            "SP store pair did not use one local-monitor clear");
+    require(count_word(hot, monitor_clear) == 0U,
+            "SP pair cleared the local monitor");
 
     if (!variant.load) {
       const auto tracked = jit_test::compile_tracked_block(

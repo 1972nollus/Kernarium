@@ -349,8 +349,6 @@ void JitCompiler::emit_sme_array_vector(std::uint32_t instruction,
     emitter_.subtract_immediate(10, 10, 16);
     emitter_.compare_zero(loop, 10, true, true);
   }
-  if (!load)
-    clear_local_exclusive_monitor();
 }
 
 void JitCompiler::emit_sme_zt0_address() {
@@ -390,8 +388,6 @@ void JitCompiler::emit_sme_zt0_transfer(std::uint32_t instruction,
       emitter_.emit(pair_post_index(false, load ? 9U : 8U));
     }
   }
-  if (!load)
-    clear_local_exclusive_monitor();
 }
 
 std::optional<JitCompiler::StreamingWord>
@@ -849,8 +845,6 @@ bool JitCompiler::emit_streaming_memory(const detail::SmeEncoding &row,
     place(slice_operand->segments[1].low, slice_operand->segments[1].width, 0);
   }
   emitter_.emit(word);
-  if (store)
-    clear_local_exclusive_monitor();
   return true;
 }
 
@@ -927,8 +921,6 @@ bool JitCompiler::emit_streaming_fp_memory(std::uint32_t instruction,
     word = (size << 30) | 0x3d00'0000U | (opc << 22) | (8U << 5) | rt;
   }
   emitter_.emit(word);
-  if (!memory.load)
-    clear_local_exclusive_monitor();
   if ((memory.mode == Mode::pre_index || memory.mode == Mode::post_index) &&
       memory.immediate != 0) {
     const auto base = write_native_gpr(memory.base, true, true, 9);

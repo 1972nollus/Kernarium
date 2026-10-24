@@ -117,6 +117,9 @@ no floating point or SIMD):
   and across one, each also under a condition that fails and passes;
 - `exclusive`: LDREX/STREX and LDAEX/STLEX sequences, CLREX, misaligned and
   unmapped loads;
+- `exclusive-spill`: the same pairs with a register spill (STR or STRD to the
+  stack) between the load and the store, which an engine whose monitor a
+  store clears fails; the lanes that interrupt the guest leave it out;
 - `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH (also in an IT block whose
   condition passes and fails), PC-writing loads (the multiple ones also under
   a condition that fails and passes) and ALU instructions, interworking both

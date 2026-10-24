@@ -99,18 +99,20 @@ RunResult load_store_exclusive(CpuState &cpu,
 				cpu.exclusive_version == reservation_version(key) &&
 				cpu.exclusive_value == monitored_first &&
 				cpu.exclusive_value2 == monitored_second;
+			const MonitoredValue monitored{cpu.exclusive_key,
+				cpu.exclusive_value, cpu.exclusive_value2};
 			cpu.clear_exclusive_monitor();
 			if (success) {
 				std::uintptr_t stored_key = 0;
-				const auto store_result = atomic_store_pair_value(memory,
-					address, element_size, first, second,
+				const auto store_result = atomic_store_exclusive_pair_value(
+					memory, address, element_size, monitored, first, second,
 					ordered ? std::memory_order_release :
 						std::memory_order_relaxed,
-					&key, stored_key);
+					stored_key);
 				if (store_result == AtomicStoreResult::fault)
 					return memory_fault(address, instruction, true);
 				if (store_result == AtomicStoreResult::stored)
-					reservation_store(stored_key);
+					reservation_store(cpu, stored_key);
 				else
 					success = false;
 			}
@@ -172,18 +174,20 @@ RunResult load_store_exclusive(CpuState &cpu,
 				cpu.exclusive_key == key &&
 				cpu.exclusive_version == reservation_version(key) &&
 				cpu.exclusive_value == current;
+			const MonitoredValue monitored{cpu.exclusive_key,
+				cpu.exclusive_value, 0};
 			cpu.clear_exclusive_monitor();
 			if (success) {
 				std::uintptr_t stored_key = 0;
-				const auto store_result = atomic_store_value(
-					memory, address, size, value,
+				const auto store_result = atomic_store_exclusive_value(
+					memory, address, size, monitored, value,
 					ordered ? std::memory_order_release :
 						std::memory_order_relaxed,
-					&key, stored_key);
+					stored_key);
 				if (store_result == AtomicStoreResult::fault)
 					return memory_fault(address, instruction, true);
 				if (store_result == AtomicStoreResult::stored)
-					reservation_store(stored_key);
+					reservation_store(cpu, stored_key);
 				else {
 					success = false;
 				}
@@ -192,15 +196,15 @@ RunResult load_store_exclusive(CpuState &cpu,
 		} else {
 			std::uintptr_t key = 0;
 			if (atomic_store_value(memory, address, size, value,
-					std::memory_order_release,
-					nullptr, key) != AtomicStoreResult::stored)
+					std::memory_order_release, key) !=
+			    AtomicStoreResult::stored)
 				return memory_fault(address, instruction, true);
 			/* ARM reservations are invalidated by a write even when the
 			 * stored bits equal the old value.  The sequence is keyed by the
 			 * translated host reservation granule, so shared aliases observe
 			 * the invalidation without unrelated atomics causing livelock.
 			 */
-			reservation_store(key);
+			reservation_store(cpu, key);
 		}
 	}
 	cpu.pc += 4;
@@ -237,7 +241,7 @@ RunResult load_store_compare_swap(CpuState &cpu,
 	/* The architecture permits a CAS read to clear reservations even when its
 	 * comparison fails. This implementation consistently chooses that behavior.
 	 */
-	reservation_store(key);
+	reservation_store(cpu, key);
 	cpu.write_register(compare_register, observed, false);
 	cpu.pc += 4;
 	return continue_after(pc, instruction);
@@ -281,7 +285,7 @@ RunResult load_store_compare_swap_pair(CpuState &cpu,
 			replacement_second, acquire, release, observed_first,
 			observed_second, key))
 		return memory_fault(address, instruction, true);
-	reservation_store(key);
+	reservation_store(cpu, key);
 	cpu.write_register(compare_register, observed_first, false);
 	cpu.write_register(compare_register + 1, observed_second, false);
 	cpu.pc += 4;
@@ -317,7 +321,7 @@ RunResult load_store_atomic(CpuState &cpu, GuestMemory &memory,
 	if (!atomic_rmw_value(memory, address, size, operation, operand, acquire,
 			release, observed, key))
 		return memory_fault(address, instruction, true);
-	reservation_store(key);
+	reservation_store(cpu, key);
 	cpu.write_register(destination, observed, false);
 	cpu.pc += 4;
 	return continue_after(pc, instruction);
@@ -368,10 +372,10 @@ RunResult load_store_rcpc(CpuState &cpu, GuestMemory &memory,
 		std::scoped_lock lock{exclusive_memory_mutex};
 		std::uintptr_t key = 0;
 		if (atomic_store_value(memory, address, size, value,
-				std::memory_order_release, nullptr, key) !=
+				std::memory_order_release, key) !=
 		    AtomicStoreResult::stored)
 			return memory_fault(address, instruction, true);
-		reservation_store(key);
+		reservation_store(cpu, key);
 	}
 	cpu.pc += 4;
 	return continue_after(pc, instruction);

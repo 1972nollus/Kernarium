@@ -50,7 +50,8 @@ std::array<ReservationSlot, reservation_slot_count> reservation_slots;
 		(address & ~(reservation_granule - 1)) | 1);
 }
 
-[[nodiscard]] std::uintptr_t host_reservation_key(std::byte *pointer) noexcept
+[[nodiscard]] std::uintptr_t host_reservation_key(
+	const std::byte *pointer) noexcept
 {
 	return reinterpret_cast<std::uintptr_t>(pointer) &
 		~(reservation_granule - 1);
@@ -64,11 +65,21 @@ std::array<ReservationSlot, reservation_slot_count> reservation_slots;
 		fallback_reservation_key(address);
 }
 
-[[nodiscard]] ReservationSlot &reservation_slot(std::uintptr_t key) noexcept
+[[nodiscard]] std::size_t slot_index(std::uintptr_t key) noexcept
 {
 	auto hash = key >> 4;
 	hash ^= hash >> 17;
-	return reservation_slots[hash & (reservation_slot_count - 1)];
+	return hash & (reservation_slot_count - 1);
+}
+
+[[nodiscard]] ReservationSlot &reservation_slot(std::uintptr_t key) noexcept
+{
+	return reservation_slots[slot_index(key)];
+}
+
+[[nodiscard]] std::size_t reservation_slot_index(const std::byte *host) noexcept
+{
+	return slot_index(host_reservation_key(host));
 }
 
 [[nodiscard]] std::uint64_t reservation_version(std::uintptr_t key) noexcept
@@ -76,9 +87,22 @@ std::array<ReservationSlot, reservation_slot_count> reservation_slots;
 	return reservation_slot(key).version.load(std::memory_order_acquire);
 }
 
-void reservation_store(std::uintptr_t key) noexcept
+void reservation_store(CpuState &writer, std::uintptr_t key) noexcept
 {
-	reservation_slot(key).version.fetch_add(1, std::memory_order_release);
+	auto &slot = reservation_slot(key);
+	const auto before = slot.version.fetch_add(1, std::memory_order_release);
+	/*
+	 * The writer's own reservation survives a store to another granule,
+	 * also one that hashes to the reserved granule's slot: when no other
+	 * store has touched the slot since the writer's snapshot (`before` is
+	 * still its version), the writer's snapshot moves up with the slot.
+	 * The store of any other vCPU moved the version first, and fails the
+	 * writer's store-exclusive as a collision may.
+	 */
+	if (writer.exclusive_size != 0 && writer.exclusive_version == before &&
+	    key != writer.exclusive_key &&
+	    &slot == &reservation_slot(writer.exclusive_key))
+		writer.exclusive_version = before + 1;
 }
 
 template<typename Integer>
@@ -243,15 +267,12 @@ template<typename Result>
 
 [[nodiscard]] AtomicStoreResult atomic_store_value(GuestMemory &memory,
 	std::uint64_t address, std::size_t size, std::uint64_t value,
-	std::memory_order order, const std::uintptr_t *expected_key,
-	std::uintptr_t &key)
+	std::memory_order order, std::uintptr_t &key)
 {
 	auto *pointer = memory.atomic_pointer(
 		address, size, MemoryAccess::write);
 	if (pointer != nullptr && naturally_aligned(pointer, size)) {
 		key = host_reservation_key(pointer);
-		if (expected_key != nullptr && key != *expected_key)
-			return AtomicStoreResult::reservation_mismatch;
 		switch (size) {
 		case 1: atomic_store_at<std::uint8_t>(pointer, value, order); break;
 		case 2: atomic_store_at<std::uint16_t>(pointer, value, order); break;
@@ -263,8 +284,6 @@ template<typename Result>
 	}
 	if (pointer != nullptr && lse2_host_pointer(pointer, size)) {
 		key = host_reservation_key(pointer);
-		if (expected_key != nullptr && key != *expected_key)
-			return AtomicStoreResult::reservation_mismatch;
 		arm64::detail::lse2_release_store(pointer, size, value);
 		return AtomicStoreResult::stored;
 	}
@@ -285,6 +304,59 @@ template<typename Result>
 	 * direct read/write aliases are checked above before any store occurs.
 	 */
 	return AtomicStoreResult::stored;
+}
+
+[[nodiscard]] AtomicStoreResult atomic_store_exclusive_value(
+	GuestMemory &memory, std::uint64_t address, std::size_t size,
+	const MonitoredValue &monitored, std::uint64_t value,
+	std::memory_order order, std::uintptr_t &key)
+{
+	auto *pointer = memory.atomic_pointer(
+		address, size, MemoryAccess::write);
+	const bool aligned = pointer != nullptr && naturally_aligned(pointer, size);
+	if (aligned || (pointer != nullptr && lse2_host_pointer(pointer, size))) {
+		key = host_reservation_key(pointer);
+		if (key != monitored.key)
+			return AtomicStoreResult::reservation_mismatch;
+		const auto mask = size == 8 ? ~std::uint64_t{0} :
+			(std::uint64_t{1} << (size * 8)) - 1;
+		const auto compare = monitored.first & mask;
+		const auto failure_order = std::memory_order_relaxed;
+		std::uint64_t observed = 0;
+		if (!aligned) {
+			observed = arm64::detail::lse2_compare_swap(
+				pointer, size, compare, value);
+		} else {
+			switch (size) {
+			case 1: observed = atomic_compare_swap_at<std::uint8_t>(pointer,
+				compare, value, order, failure_order); break;
+			case 2: observed = atomic_compare_swap_at<std::uint16_t>(pointer,
+				compare, value, order, failure_order); break;
+			case 4: observed = atomic_compare_swap_at<std::uint32_t>(pointer,
+				compare, value, order, failure_order); break;
+			case 8: observed = atomic_compare_swap_at<std::uint64_t>(pointer,
+				compare, value, order, failure_order); break;
+			default: return AtomicStoreResult::fault;
+			}
+		}
+		return observed == compare ? AtomicStoreResult::stored :
+			AtomicStoreResult::reservation_mismatch;
+	}
+	if (atomic_translation_failed(memory))
+		return AtomicStoreResult::fault;
+
+	/* No direct pointer: the memory's own write is the only writer, so the
+	 * caller's check of the value under the exclusive gate stands in for the
+	 * compare-and-swap. */
+	key = reservation_key(memory, address, size, MemoryAccess::write);
+	if (key != monitored.key)
+		return AtomicStoreResult::reservation_mismatch;
+	std::array<std::byte, 8> bytes{};
+	arm64::detail::encode_little_endian(value, std::span{bytes}.first(size));
+	if (order != std::memory_order_relaxed)
+		std::atomic_thread_fence(std::memory_order_release);
+	return memory.write(address, std::span{bytes}.first(size)) ?
+		AtomicStoreResult::stored : AtomicStoreResult::fault;
 }
 
 [[nodiscard]] bool atomic_compare_swap_value(GuestMemory &memory,
@@ -575,70 +647,60 @@ template<typename Integer>
 	return true;
 }
 
-[[nodiscard]] AtomicStoreResult atomic_store_pair_value(GuestMemory &memory,
-	std::uint64_t address, std::size_t element_size, std::uint64_t first,
-	std::uint64_t second, std::memory_order order,
-	const std::uintptr_t *expected_key, std::uintptr_t &key)
+[[nodiscard]] AtomicStoreResult atomic_store_exclusive_pair_value(
+	GuestMemory &memory, std::uint64_t address, std::size_t element_size,
+	const MonitoredValue &monitored, std::uint64_t first,
+	std::uint64_t second, std::memory_order order, std::uintptr_t &key)
 {
 	const auto total_size = element_size * 2;
+	auto *pointer = memory.atomic_pointer(
+		address, total_size, MemoryAccess::write);
+	if (pointer != nullptr) {
+		key = host_reservation_key(pointer);
+		if (key != monitored.key)
+			return AtomicStoreResult::reservation_mismatch;
+		if (total_size == 8) {
+			const auto packed = (first & 0xffff'ffffU) | (second << 32);
+			const auto observed = naturally_aligned(pointer, 8) ?
+				atomic_compare_swap_at<std::uint64_t>(pointer,
+					monitored.first, packed, order,
+					std::memory_order_relaxed) :
+				arm64::detail::lse2_compare_swap(pointer, 8,
+					monitored.first, packed);
+			return observed == monitored.first ? AtomicStoreResult::stored :
+				AtomicStoreResult::reservation_mismatch;
+		}
+		/* The single-copy rule keeps a 16-byte pair aligned. */
+		std::uint64_t observed_first = 0;
+		std::uint64_t observed_second = 0;
+		atomic_compare_swap_pair_128_at(pointer, monitored.first,
+			monitored.second, first, second, observed_first,
+			observed_second);
+		return observed_first == monitored.first &&
+			observed_second == monitored.second ?
+			AtomicStoreResult::stored : AtomicStoreResult::reservation_mismatch;
+	}
+	if (atomic_translation_failed(memory))
+		return AtomicStoreResult::fault;
+
+	/* No direct pointer: see atomic_store_exclusive_value. */
+	key = reservation_key(
+		memory, address, total_size, MemoryAccess::write);
+	if (key != monitored.key)
+		return AtomicStoreResult::reservation_mismatch;
 	std::array<std::byte, 16> bytes{};
 	arm64::detail::encode_little_endian(first,
 		std::span{bytes}.first(element_size));
 	arm64::detail::encode_little_endian(second,
 		std::span{bytes}.subspan(element_size, element_size));
-	auto *pointer = memory.atomic_pointer(
-		address, total_size, MemoryAccess::write);
-	if (pointer != nullptr) {
-		key = host_reservation_key(pointer);
-		if (expected_key != nullptr && key != *expected_key)
-			return AtomicStoreResult::reservation_mismatch;
-		if (total_size == 8) {
-			const auto packed = (first & 0xffff'ffffU) | (second << 32);
-			if (!naturally_aligned(pointer, 8))
-				arm64::detail::lse2_release_store(pointer, 8, packed);
-			else
-				atomic_store_at<std::uint64_t>(pointer, packed, order);
-			return AtomicStoreResult::stored;
-		}
-		if (order != std::memory_order_relaxed)
-			std::atomic_thread_fence(order);
-		/* The single-copy rule keeps a 16-byte pair aligned. CASP gives
-		 * the slow path a true 128-bit atomic store. The speculative LDP
-		 * only seeds the comparison; CASP validates it before
-		 * committing. */
-		__asm__ volatile(
-			"mov x9, %0\n"
-			"mov x12, %1\n"
-			"mov x13, %2\n"
-			"ldp x14, x15, [x9]\n"
-			"1:\n"
-			"mov x10, x14\n"
-			"mov x11, x15\n"
-			"casp x14, x15, x12, x13, [x9]\n"
-			"cmp x14, x10\n"
-			"ccmp x15, x11, #0, eq\n"
-			"b.ne 1b"
-			:
-			: "r"(pointer), "r"(first), "r"(second)
-			: "x9", "x10", "x11", "x12", "x13", "x14", "x15",
-			  "cc", "memory");
-		return AtomicStoreResult::stored;
-	}
-	if (atomic_translation_failed(memory))
-		return AtomicStoreResult::fault;
-
-	key = reservation_key(
-		memory, address, total_size, MemoryAccess::write);
-	if (expected_key != nullptr && key != *expected_key)
-		return AtomicStoreResult::reservation_mismatch;
 	if (order != std::memory_order_relaxed)
 		std::atomic_thread_fence(order);
 	return memory.write(address, std::span{bytes}.first(total_size)) ?
 		AtomicStoreResult::stored : AtomicStoreResult::fault;
 }
 
-void invalidate_reservations_for_store_locked(GuestMemory &memory,
-	std::uint64_t address, std::size_t size)
+void invalidate_reservations_for_store_locked(CpuState &writer,
+	GuestMemory &memory, std::uint64_t address, std::size_t size)
 {
 	/* Every successful ordinary store invalidates every reservation granule it
 	 * touches, even when the stored bits compare equal to the old value. Keep
@@ -649,7 +711,8 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 		const auto current = address + offset;
 		auto *pointer = memory.reservation_pointer(
 			current, 1, MemoryAccess::write);
-		reservation_store(pointer != nullptr ? host_reservation_key(pointer) :
+		reservation_store(writer, pointer != nullptr ?
+			host_reservation_key(pointer) :
 			fallback_reservation_key(current));
 		const auto remaining_in_granule = reservation_granule -
 			(static_cast<std::uintptr_t>(current) &
@@ -659,8 +722,8 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 	}
 }
 
-[[nodiscard]] bool ordinary_store(GuestMemory &memory, std::uint64_t address,
-	std::span<const std::byte> bytes)
+[[nodiscard]] bool ordinary_store(CpuState &writer, GuestMemory &memory,
+	std::uint64_t address, std::span<const std::byte> bytes)
 {
 	/* Serialize the write itself with the exclusive operations. Doing
 	 * only the version update under the lock leaves a window in which STXR can
@@ -669,7 +732,8 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 	std::scoped_lock lock{exclusive_memory_mutex};
 	if (!memory.write(address, bytes))
 		return false;
-	invalidate_reservations_for_store_locked(memory, address, bytes.size());
+	invalidate_reservations_for_store_locked(writer, memory, address,
+		bytes.size());
 	return true;
 }
 
@@ -692,12 +756,13 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 	return true;
 }
 
-void invalidate_store_ranges(std::span<const JitStoreRange> ranges) noexcept
+void invalidate_store_ranges(CpuState &writer,
+	std::span<const JitStoreRange> ranges) noexcept
 {
 	for (const auto &range : ranges) {
 		for (std::uint64_t offset = 0; offset < range.size;) {
 			const auto current = range.address + offset;
-			reservation_store(host_reservation_key(
+			reservation_store(writer, host_reservation_key(
 				reinterpret_cast<std::byte *>(current)));
 			const auto remaining_in_granule = reservation_granule -
 				(static_cast<std::uintptr_t>(current) &

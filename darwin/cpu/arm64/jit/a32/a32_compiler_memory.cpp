@@ -221,7 +221,10 @@ void A32Compiler::track_direct_store(unsigned address, std::size_t size) {
   emitter_.store_x(4, 3, offset + offsetof(JitStoreRange, size));
 }
 
-/* An ordinary store may clear the local monitor, and does, unconditionally. */
+/* Ends the software monitor where the guest's pair ends: a CLREX, the
+ * store-exclusive of a fused run and its exits. An ordinary store of the
+ * guest's own leaves it standing (the monitor contract in
+ * docs/architecture.md). */
 void A32Compiler::clear_exclusive_monitor() {
   emitter_.store_b(31, 15, offsetof(CpuState, exclusive_size));
 }
@@ -392,7 +395,6 @@ A32Compiler::Flow A32Compiler::emit_single(const Transfer &transfer) {
       default: emit(indexed(enc::str_w(value, base, 0))); break;
       }
     }
-    clear_exclusive_monitor();
     if (transfer.wback)
       write_back(transfer);
     return Flow::next;
@@ -464,7 +466,6 @@ A32Compiler::Flow A32Compiler::emit_pair(const Transfer &transfer) {
     const unsigned second = use(transfer.t2, fallback_m);
     emit(enc::x::orr(temp0, first, second, enc::lsl, 32));
     emit(enc::str_x(temp0, address_register, 0));
-    clear_exclusive_monitor();
   } else {
     emit(enc::ldr_x(fallback_m, address_register, 0));
     const auto low = def(transfer.t, false, fallback_n);
@@ -531,8 +532,6 @@ A32Compiler::Flow A32Compiler::emit_multiple(const Transfer &transfer) {
     }
     offset += 4U;
   }
-  if (store)
-    clear_exclusive_monitor();
   if (transfer.wback) {
     const auto dest = def(transfer.n, true, fallback_m);
     const unsigned host = dest.native.host;

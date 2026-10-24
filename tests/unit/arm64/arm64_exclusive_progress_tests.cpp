@@ -11,7 +11,8 @@
  * - the shape of ART's MessageStack.pushMessage, whose store sits before the
  *   exclusive load, with one and with two colliding stores;
  * - a store between the load and the store-exclusive, which no preparation by
- *   the load can survive, so the store-exclusive must complete by itself;
+ *   the load can survive, so the gadget engine's store-exclusive must complete
+ *   by itself and the JIT's monitor must stand;
  * - every width, ordering and the pair forms;
  * - the faults a load or a store-exclusive takes, the cases in which the
  *   software completion must refuse, and a copy-on-write break between the
@@ -374,7 +375,6 @@ void check_loop(engine::EngineHarness &harness, const Loop &loop)
 		.native = engine::NativeRequirements::baseline(),
 		.memory = regions,
 		.variable_instruction_count = true,
-		.gadgets_only = loop.inside,
 	});
 }
 
