@@ -5,15 +5,16 @@ Subject: [PATCH] webkit: check provider availability as the system
 
 SystemImpl.getWebViewPackages() drops the configured providers that are not
 installed. It asks the package manager with MATCH_ANY_USER, and the binder
-methods getAllWebViewPackages(), getValidWebViewPackages() and
-getDefaultWebViewPackage() run that check under the identity of the calling
-application, which the package manager rejects without
-INTERACT_ACROSS_USERS ("MATCH_ANY_USER flag requires INTERACT_ACROSS_USERS
-permission"). The configured list is public and AOSP returns it to any
-caller.
+methods getAllWebViewPackages() and getValidWebViewPackages() run that check
+under the identity of the calling application, which the package manager
+rejects without INTERACT_ACROSS_USERS ("MATCH_ANY_USER flag requires
+INTERACT_ACROSS_USERS permission"). The configured list is public and AOSP
+returns it to any caller of getAllWebViewPackages().
 
 Whether a provider is installed does not depend on who asks, so run the
-availability check as the system.
+availability check as the system. getValidWebViewPackages() still reads each
+provider's package info as the caller, and so still needs the permission, as
+on AOSP.
 ---
  .../core/java/com/android/server/webkit/SystemImpl.java    | 7 +++++++
  1 file changed, 7 insertions(+)
