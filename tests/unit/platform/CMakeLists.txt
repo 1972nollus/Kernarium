@@ -46,6 +46,11 @@ uml_add_unit_test(NAME platform-video-encoder-cache
     COMMAND uml_video_encoder_cache_tests
     LABELS video TIMEOUT 900)
 
+# The system limits hardware encoder sessions across every process, so the tests
+# that hold them (one holds all it can get) run one at a time.
+set_tests_properties(platform-video-encoder platform-video-encoder-recovery
+    platform-video-encoder-cache PROPERTIES RESOURCE_LOCK video-encoder-hardware)
+
 # The platform's run routing; the transaction tests use its test variant.
 add_executable(uml_run_routing_tests
     run_routing_tests.cpp

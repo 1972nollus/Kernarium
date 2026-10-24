@@ -1063,13 +1063,23 @@ void concurrentStreams()
     const auto profile = pick(h264Capability, {VideoEncodeProfile::h264Baseline, VideoEncodeProfile::h264Main, VideoEncodeProfile::h264High});
     require(profile.has_value(), "no H.264 profile");
     auto settings = baseSettings(*profile, 128, 96);
+    // The system limits hardware sessions across every process, so another
+    // process holding some makes this one open fewer: try again a few times
+    // before calling that a fault.
     std::vector<std::unique_ptr<VideoEncoder>> sessions;
     VideoEncodeStatus last = VideoEncodeStatus::ok;
-    for (unsigned i = 0; i < 48; ++i) {
-        auto encoder = makeVideoEncoder();
-        last = encoder->configure(settings);
-        if (last != VideoEncodeStatus::ok) break;
-        sessions.push_back(std::move(encoder));
+    for (unsigned attempt = 0; attempt < 6; ++attempt) {
+        sessions.clear();
+        last = VideoEncodeStatus::ok;
+        for (unsigned i = 0; i < 48; ++i) {
+            auto encoder = makeVideoEncoder();
+            last = encoder->configure(settings);
+            if (last != VideoEncodeStatus::ok) break;
+            sessions.push_back(std::move(encoder));
+        }
+        if (sessions.size() >= h264Capability->concurrentSessions || attempt == 5) break;
+        sessions.clear();
+        usleep(1'000'000);
     }
     std::printf("  %zu sessions open at once (discovery counted %u)\n", sessions.size(), h264Capability->concurrentSessions);
     require(sessions.size() >= h264Capability->concurrentSessions, "the sessions discovery counted can be open together");
