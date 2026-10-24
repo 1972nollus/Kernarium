@@ -1,5 +1,5 @@
 record	oracle	cases
-absent-profile	profile	751
+absent-profile	profile	795
 alu-qemu	qemu	7702
 armv8-convert16-qemu	qemu	192
 armv8-fz16-qemu	qemu	160

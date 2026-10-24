@@ -11,7 +11,9 @@
   labelled "profile", and an instruction that is UNDEFINED, UNPREDICTABLE,
   unallocated or of an absent feature raises SIGILL, and SVC raises the
   system-call event. Decisions D4 (floating-point trap enables are
-  read-as-zero) and D6 (SWP, SWPB and SETEND are UNDEFINED) are here.
+  read-as-zero) and D6 (SWP, SWPB and SETEND raise the undefined-instruction
+  event whatever the condition; the guest kernel emulates SWP and SWPB behind
+  abi.swp) are here.
 """
 
 from __future__ import annotations
@@ -206,6 +208,23 @@ def suite_absent(context: Context) -> list[Case]:
             if decodes_undefined(isa, word):
                 cases.append(predicted(suite, f"Undefined/{isa}.{reason}.{index}", "Undefined", isa, word,
                                        EVENT_SIGILL, index % 3))
+    # SWP and SWPB are not in the Armv8 AArch32 profile: the engine reports the event whatever
+    # the condition and the flags, and the guest kernel decides (abi.swp). Every condition field,
+    # and the register shapes: Rt == Rt2 (the form CTS runs), Rn == Rt, the stack pointer as Rn
+    # and the program counter as each operand.
+    for byte in (0, 1):
+        name = "SWPB" if byte else "SWP"
+        for condition in range(16):
+            word = 0x01031092 | byte << 22 | condition << 28
+            if decodes_undefined("A32", word):
+                cases.append(predicted(suite, f"Undefined/{name}.cond{condition:x}", "Undefined", "A32",
+                                       word, EVENT_SIGILL, condition % 3))
+        for shape, (rn, rt, rt2) in enumerate(((1, 0, 0), (0, 0, 1), (13, 0, 1), (2, 15, 1), (2, 1, 15),
+                                               (15, 1, 2))):
+            word = 0xE1000090 | byte << 22 | rn << 16 | rt << 12 | rt2
+            if decodes_undefined("A32", word):
+                cases.append(predicted(suite, f"Undefined/{name}.r{rn}.r{rt}.r{rt2}", "Undefined", "A32",
+                                       word, EVENT_SIGILL, shape % 2))
     # System calls leave the program: the engine reports the event.
     for imm in (0, 0x123456, 0xFFFFFF):
         word = 0xEF000000 | imm

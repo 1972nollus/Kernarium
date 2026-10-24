@@ -45,7 +45,9 @@ leaves out, by `absent` entries whose corpus cases expect an illegal
 instruction:
 
 - SWP and SWPB, which Armv8 AArch32 does not have (they are absent from the
-  release and decode as unallocated), and SETEND and SETPAN;
+  release and decode as unallocated, so an engine raises the event whatever the
+  condition and the guest kernel emulates them behind `abi.swp`), and SETEND
+  and SETPAN;
 - the privileged and debug forms: ERET, RFE, SRS, SMC, HVC, HLT, DCPS, the
   banked-register and user-register forms of MRS, MSR, LDM and STM;
 - LDC and STC, and MCRR, because no coprocessor register is accessible by

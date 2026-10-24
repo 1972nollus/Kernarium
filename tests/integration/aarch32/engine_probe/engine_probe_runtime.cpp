@@ -229,6 +229,7 @@ void check_mem(const void *got, const void *want, u32 length, const char *name)
 void quit(long status)
 {
 	flush();
+	restore_swp();
 	for (;;)
 		sys(nr_exit_group, status);
 }
@@ -341,6 +342,73 @@ bool under_qemu()
 	return environment("A32_PROBE_QEMU") != nullptr;
 }
 
+/* ---- abi.swp ---- */
+
+namespace {
+/* The value abi.swp had before this process wrote it, and the process. */
+long swp_saved = -1;
+long swp_writer;
+
+bool write_swp(int value)
+{
+	const long fd = sys(nr_openat, -100, addr("/proc/sys/abi/swp"), 1);
+	if (fd < 0)
+		return false;
+	const char text[2] = {static_cast<char>('0' + value), '\n'};
+	const long written = sys(nr_write, fd, addr(text), 2);
+	sys(nr_close, fd);
+	return written == 2;
+}
+} // namespace
+
+extern "C" u32 sw_word(u32 *p, u32 value, u32 sentinel);
+
+long swp_setting()
+{
+	const long fd = sys(nr_openat, -100, addr("/proc/sys/abi/swp"), 0);
+	if (fd == -eacces || fd == -eperm) {
+		/* A shell may not even read the file (Android's SELinux policy), so
+		 * ask a child: it exits 0 if its SWP ran and dies of SIGILL if not. */
+		static u32 word = 0;
+		const long child = fork_child();
+		if (child == 0)
+			quit(sw_word(&word, 1, 2) == 0 ? 0 : 1);
+		const long status = wait_child(child);
+		if (exited_with(status, 0))
+			return 1;
+		return killed_by(status, sigill) ? 0 : -einval;
+	}
+	if (fd < 0)
+		return fd;
+	char text[4] = {};
+	const long length = sys(nr_read, fd, addr(text), 3);
+	sys(nr_close, fd);
+	if (length < 1)
+		return -einval;
+	return (text[0] == '0' || text[0] == '1') ? text[0] - '0' : -einval;
+}
+
+bool swp_set(int value)
+{
+	const long before = swp_setting();
+	if (before < 0 || !write_swp(value))
+		return false;
+	if (swp_saved < 0) {
+		swp_saved = before;
+		swp_writer = getpid();
+	}
+	return true;
+}
+
+void restore_swp()
+{
+	if (swp_saved < 0 || getpid() != swp_writer)
+		return;
+	const long wanted = swp_saved;
+	swp_saved = -1;
+	write_swp(static_cast<int>(wanted));
+}
+
 /* ---- helpers ---- */
 
 word mmap_pages(word length, word protection, word flags)
@@ -434,6 +502,7 @@ static void catch_handler(int signo, SigInfo *info, UContext *context)
 	caught.address = info->address;
 	caught.pc = context->mcontext.pc;
 	caught.cpsr = context->mcontext.cpsr;
+	caught.fault_address = context->mcontext.fault_address;
 	if (signo == sigill)
 		++stats.sigill_expected;
 	if (catch_skip == return_to_lr) {
