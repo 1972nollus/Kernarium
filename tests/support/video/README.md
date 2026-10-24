@@ -15,3 +15,13 @@ only on hosts whose hardware capability probe reports them. The guest V4L2
 probe uses the same VP9 fixture; VP9 states its profile in the stream, so the
 driver exposes no profile menu and the advertised format is the whole
 capability.
+
+## Synthetic encoder
+
+`synthetic_encoder.hpp` is a `uml::platform::VideoEncoder` that encodes
+nothing. Each raw frame becomes a small Annex B (or JFIF) unit that names the
+frame, so a test sees from the guest's coded buffer which frame crossed, in
+what order, and whether it was a key frame. Its frame pool pads every plane's
+stride, output can be held back and released, and it records the settings,
+updates, resets and submitted planes. The Virtio video encoder device tests
+link it as `UML::TestSyntheticEncoder`; no production target does.
