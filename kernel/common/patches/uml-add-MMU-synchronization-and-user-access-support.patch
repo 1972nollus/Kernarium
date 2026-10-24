@@ -11,11 +11,11 @@ Keep page-table synchronization, precise nested invalidation ranges, same-proces
  arch/um/kernel/skas/mmu.c        |  33 ++-
  arch/um/kernel/skas/mmu_darwin.c |  98 +++++++
  arch/um/kernel/skas/process.c    |  90 +++++-
- arch/um/kernel/skas/uaccess.c    | 327 +++++++++++++++++----
+ arch/um/kernel/skas/uaccess.c    | 331 +++++++++++++++++----
  arch/um/kernel/tlb.c             | 489 +++++++++++++++++++++++++++++--
  arch/um/kernel/trap.c            |  58 +++-
  mm/mmu_gather.c                  |   7 +-
- 10 files changed, 1011 insertions(+), 112 deletions(-)
+ 10 files changed, 1015 insertions(+), 112 deletions(-)
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
 diff --git a/arch/um/include/asm/tlb.h b/arch/um/include/asm/tlb.h
@@ -389,10 +389,10 @@ index 5881b17eb9874256cef33ca69643aa0f737e4cab..5e153236cbc104c5ac60297c9de16773
 +	return 0;
  }
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b006597d9f6591 100644
+index 198269e384c43b174208d683ec4f18242d726fac..6716f4aff55c2f9b630b7246dbe7124ce0b7bfd0 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -7,72 +7,250 @@
+@@ -7,72 +7,254 @@
  #include <linux/highmem.h>
  #include <linux/mm.h>
  #include <linux/module.h>
@@ -575,15 +575,19 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
 +	 * pin_user_mapping() samples the entry under the appropriate page-table
 +	 * lock and returns a reference without changing the long-standing UML
 +	 * fault contract.  On a miss, handle_page_fault() still performs demand
-+	 * paging, COW, and stack expansion; the second lookup then pins the
-+	 * resulting base page.
++	 * paging, COW, and stack expansion, and the lookup runs again.
++	 *
++	 * The fault and that lookup do not share one hold of mmap_lock.  A
++	 * sibling's fork() queued behind the fault takes the lock first and
++	 * write-protects every private PTE again, and reclaim or migration can
++	 * unmap the page without the lock at all.  Native uaccess re-executes
++	 * its access after every fault until the fault handler gives up, so a
++	 * miss here likewise ends only when handle_page_fault() fails or the
++	 * task is dying; a lost race is never -EFAULT.
 +	 */
-+	page = pin_user_mapping(current->mm, virt, is_write);
-+	if (page == NULL) {
-+		if (handle_page_fault(virt, 0, is_write, 1, &dummy_code))
-+			return NULL;
-+		page = pin_user_mapping(current->mm, virt, is_write);
-+		if (page == NULL)
++	while ((page = pin_user_mapping(current->mm, virt, is_write)) == NULL) {
++		if (handle_page_fault(virt, 0, is_write, 1, &dummy_code) ||
++		    fatal_signal_pending(current))
  			return NULL;
 -		pte = virt_to_pte(current->mm, virt);
  	}
@@ -668,7 +672,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	addr = (unsigned long) page_address(page) +
-@@ -89,6 +267,19 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -89,6 +271,19 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	kunmap_atomic((void *)addr);
  #endif
  
@@ -688,7 +692,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  	return n;
  }
  
-@@ -223,7 +414,7 @@ long strnlen_user(const char __user *str, long len)
+@@ -223,7 +418,7 @@ long strnlen_user(const char __user *str, long len)
  	int count = 0, n;
  
  	if (!access_ok(str, 1))
@@ -697,7 +701,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  	n = buffer_op((unsigned long) str, len, 0, strnlen_chunk, &count);
  	if (n == 0)
  		return count + 1;
-@@ -250,20 +441,20 @@ EXPORT_SYMBOL(strnlen_user);
+@@ -250,20 +445,20 @@ EXPORT_SYMBOL(strnlen_user);
  
  int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
  {
@@ -724,7 +728,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	addr = (unsigned long) page_address(page) +
-@@ -273,37 +464,46 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
+@@ -273,37 +468,46 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
  		((unsigned long) addr & ~PAGE_MASK);
  #endif
  	uaddr = (u32 *) addr;
@@ -793,7 +797,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  
  	if (ret == 0)
  		*oval = oldval;
-@@ -331,18 +531,17 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -331,18 +535,17 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  			      u32 oldval, u32 newval)
  {
  	struct page *page;
@@ -816,7 +820,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	uaddr = page_address(page) + (((unsigned long) uaddr) & ~PAGE_MASK);
-@@ -350,9 +549,8 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -350,9 +553,8 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  	uaddr = kmap_atomic(page) + ((unsigned long) uaddr & ~PAGE_MASK);
  #endif
  
@@ -828,7 +832,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b44b8471a07aee17490060eb29b00659
  
  #ifdef CONFIG_64BIT
  	pagefault_enable();
-@@ -361,8 +559,11 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -361,8 +563,11 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  #endif
  	ret = 0;
  

@@ -323,7 +323,11 @@ Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
 at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
 `schedule()` when the caller stays runnable. The uaccess retry and TLB-walk
 safe points poll through `cond_resched()`, which does so only without
-`CONFIG_PREEMPTION`; both assert that at build time.
+`CONFIG_PREEMPTION`; both assert that at build time. A uaccess that may sleep
+retries its fault until the fault handler refuses it or the task is dying, as
+native uaccess re-executes the access, so a sibling's `fork()` that
+write-protects the page again after the fault never fails the copy with
+`-EFAULT`.
 Every path that changes a CPU's
 logical IRQ state outside `local_irq_*()`, including interrupt work run from an
 idle wait, reports the change to lockdep as interrupt entry would; without

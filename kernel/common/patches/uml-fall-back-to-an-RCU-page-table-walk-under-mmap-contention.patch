@@ -25,7 +25,7 @@ unchanged.
  1 file changed, 29 insertions(+), 14 deletions(-)
 
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 87ac30bc6746fd5ad06660a4f6ea904fb6fbeee6..f53a2fbc4519bcc4921e019e88207f96c17a709a 100644
+index 96b7559b9d6da9c35ba562b4d7ab349d74e35b0d..1120fbcd684ce44fe90eaddbba44c241d861aa30 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -8,6 +8,7 @@

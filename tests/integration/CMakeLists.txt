@@ -528,6 +528,19 @@ uml_add_guest_integration_test(
     TIMEOUT 600
     CPUS 2)
 
+# A kernel copy into a private page that a sibling's fork() keeps
+# write-protecting succeeds: uaccess retries its copy-on-write fault until the
+# fault handler itself refuses, as native uaccess re-executes a faulting access.
+uml_add_guest_integration_test(
+    NAME guest-uaccess-fork-cow
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/uaccess_fork_cow_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror -pthread"
+        --ncpus 4 --probe-timeout 120
+    LABELS guest;kernel;memory
+    TIMEOUT 420
+    CPUS 4)
+
 # A system call or a fault taken with a bad stack pointer, again and again
 # on one vCPU, gets native arm64's result and never kills the task, and the
 # kernel prints no failed Darwin host call.
