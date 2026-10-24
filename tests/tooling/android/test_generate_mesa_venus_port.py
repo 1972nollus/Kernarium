@@ -15,7 +15,14 @@ between platforms, so the generator moves the values of a property Soong does
 not make configurable into an arch block. The test pins the properties Soong's
 own structs declare, checks the generator's tables against them, drives the
 move on synthetic modules, and refuses the committed port if it still selects
-a property outside the pinned list."""
+a property outside the pinned list.
+
+Meson compiles every file with -D_FILE_OFFSET_BITS=64 and the converter does
+not carry that over, so the generator adds it for each arch whose platform has
+four-byte pointers. The test drives that on synthetic platforms and modules,
+and refuses a committed port with an arm module that would be built without
+it, since the 32-bit Venus renderer then mmaps a DRM offset above 4 GiB with a
+truncated off_t."""
 
 from __future__ import annotations
 
@@ -511,6 +518,133 @@ def check_lift_refusals(generator, scratch: Path) -> None:
         fail(f"an arch block the tool did not write is refused: {message}")
 
 
+LARGE_FILE_FLAG = "-D_FILE_OFFSET_BITS=64"
+FLAG_FIELDS = ("cflags", "conlyflags", "cppflags")
+
+
+def platforms_toml(**pointers: dict[str, int] | None) -> str:
+    """A platform description whose platforms give void* the sizes named, or
+    nothing for the converter's eight-byte default."""
+    text = ""
+    for name, sizes in pointers.items():
+        text += f'[[platform]]\nname = "{name}"\n'
+        for language in ("c", "cpp"):
+            text += f"[platform.{language}]\ncompiler_id = \"clang\"\n"
+            if sizes:
+                text += f"[platform.{language}.sizeof.sizes]\n"
+                text += "".join(f'"{spelling}" = {size}\n' for spelling, size in sizes.items())
+    return text
+
+
+def check_large_file_arches(generator, scratch: Path) -> None:
+    both = SimpleNamespace(host_platforms=["p64", "p32"],
+                           platform_arch={"p64": "arm64", "p32": "arm"})
+    four = {"void*": 4, "void *": 4}
+
+    def arches(port, **pointers) -> list[str]:
+        path = scratch / "large-file.toml"
+        path.write_text(platforms_toml(**pointers))
+        return generator.large_file_arches(path, port)
+
+    if arches(both, p64=None, p32=four) != ["arm"]:
+        fail("a platform with four-byte pointers needs the large-file define for its arch")
+    if arches(SimpleNamespace(host_platforms=["p64"], platform_arch={}), p64=None) != []:
+        fail("a 64-bit port needs no large-file define, and its output must not change")
+    for label, port, pointers in (
+        ("the two spellings of void* disagreeing", both,
+         {"p64": None, "p32": {"void*": 4, "void *": 8}}),
+        ("a pointer that is neither four nor eight bytes", both,
+         {"p64": None, "p32": {"void*": 2, "void *": 2}}),
+        ("a 32-bit platform without an arch", SimpleNamespace(
+            host_platforms=["p32"], platform_arch={}), {"p32": four}),
+        ("a host platform the description lacks", both, {"p64": None}),
+    ):
+        try:
+            arches(port, **pointers)
+        except SystemExit:
+            continue
+        fail(f"{label} must be refused")
+
+
+def check_large_file_scope(generator, scratch: Path) -> None:
+    """scope() gives every compiled module the defaults, and the defaults carry
+    the define for the 32-bit arches alone."""
+    sixty_four = """
+cc_defaults {
+    name: "venus_kernarium_compat_args",
+    vendor: true,
+    cflags: [
+        "-Wno-gnu-pointer-arith",
+    ],
+    cppflags: [
+        "-Wno-gnu-pointer-arith",
+    ],
+}
+"""
+    for label, arches in (("64", []), ("32", ["arm"])):
+        root = scratch / f"scope-{label}"
+        write(root, "Android.bp",
+              'cc_library_shared {\n    name: "lib",\n    srcs: [\n        "a.c",\n    ],\n}\n'
+              'cc_library_static {\n    name: "helper",\n    srcs: [\n        "b.c",\n    ],\n}\n')
+        blueprints = generator.load(root)
+        generator.scope(root, blueprints, {"lib"}, arches)
+        text = blueprints[0].text()
+        defaults = text[text.index("\ncc_defaults {"):]
+        if arches:
+            wanted = sixty_four[: sixty_four.rindex("}")] + (
+                "    arch: {\n        arm: {\n            cflags: [\n"
+                f'                "{LARGE_FILE_FLAG}",\n'
+                "            ],\n        },\n    },\n}\n")
+        else:
+            wanted = sixty_four
+        if defaults.strip() != wanted.strip():
+            fail(f"the {label}-bit defaults differ from the expected block:\n{defaults}")
+        for module in ("lib", "venus_helper"):
+            block = next(b for b in blueprints[0].blocks if generator.block_name(b) == module)
+            if generator.list_items(block, "defaults") != ["venus_kernarium_compat_args"]:
+                fail(f"{module} must use the compat defaults")
+
+
+def effective_flags(generator, blocks_by_name: dict, block: list[str], arch: str) -> list[str]:
+    """The compile flags Soong gives the module for one arch: its own and its
+    defaults', the arch block's, and the select branch the arch takes."""
+    flags: list[str] = []
+    selects = generator.selects(block)
+    plain, arches = generator.take_arch(block)
+    for field in FLAG_FIELDS:
+        flags += generator.list_items(plain, field)
+        flags += arches.get(arch, {}).get(field, [])
+        for choice in selects:
+            if choice.field == field:
+                flags += choice.branches.get(arch, choice.branches.get("default", []))
+    for name in generator.list_items(plain, "defaults"):
+        flags += effective_flags(generator, blocks_by_name, blocks_by_name[name], arch)
+    return flags
+
+
+def check_committed_large_file(generator, root: Path) -> None:
+    """Every module the committed port compiles carries Meson's large-file
+    define for arm, and the 64-bit modules are as the port had them."""
+    blocks_by_name = {
+        generator.block_name(b): b for bp in generator.load(root) for b in bp.blocks
+        if generator.block_name(b) is not None
+    }
+    compiled = [
+        name for name, block in sorted(blocks_by_name.items())
+        if generator.block_kind(block) in ("cc_library_shared", "cc_library_static", "cc_binary")
+    ]
+    if len(compiled) < 30:
+        fail(f"the committed port compiles only {len(compiled)} modules; the check would prove little")
+    for name in compiled:
+        arm = effective_flags(generator, blocks_by_name, blocks_by_name[name], "arm")
+        if LARGE_FILE_FLAG not in arm:
+            fail(f"{name} is built for arm without {LARGE_FILE_FLAG}: its mmap and lseek would "
+                 "take a 32-bit off_t and fail on a DRM offset above 4 GiB")
+        arm64 = effective_flags(generator, blocks_by_name, blocks_by_name[name], "arm64")
+        if LARGE_FILE_FLAG in arm64:
+            fail(f"{name} gains {LARGE_FILE_FLAG} for arm64, which changes the 64-bit port")
+
+
 def committed_port_files(source_root: Path, scratch: Path) -> Path:
     """The Android.bp files the committed port series adds, written under scratch."""
     series = source_root / "android/lineage-24/third_party/mesa-venus/series"
@@ -557,6 +691,7 @@ def check_committed_port(generator, source_root: Path, scratch: Path) -> None:
     ]
     if len(defaults) != 1 or "            conlyflags: [\n                \"-DHAVE_UINT128\",\n" not in "\n".join(defaults[0]):
         fail("-DHAVE_UINT128 belongs in an arm64 arch block of the C defaults")
+    check_committed_large_file(generator, root)
 
 
 def check_host_platforms(generator) -> None:
@@ -624,6 +759,8 @@ def main() -> int:
         check_refusals(generator, scratch)
         check_lift(generator, scratch)
         check_lift_refusals(generator, scratch)
+        check_large_file_arches(generator, scratch)
+        check_large_file_scope(generator, scratch)
         check_committed_port(generator, args.source_root, scratch)
     print("Mesa port generator fixture passed")
     return 0

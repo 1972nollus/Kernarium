@@ -332,6 +332,14 @@ libraries through `ro.hardware.egl`. Soong makes every warning an error outside
 per-module `[[kernarium.warning_exception]]` entry, with its reason, in
 `soong-port.toml`.
 
+Meson compiles every C and C++ file with `-D_FILE_OFFSET_BITS=64`, and the
+converter does not carry that compiler default over. The tool adds it, in the
+defaults every compiled module uses, for each arch whose platform has
+four-byte pointers. Without it a 32-bit module keeps a 32-bit `off_t`: the
+Venus renderer's `mmap` of a DRM offset above 4 GiB then fails with `EINVAL`.
+The 64-bit port is unchanged. The generator test refuses a committed port with
+an arm module built without the define.
+
 Soong has no equivalent of the guest build's out-of-tree
 `-Dvenus-protocol-dir`, so the port carries the driver half of the Venus
 protocol codec at the tree path the upstream snapshot reserves for it.

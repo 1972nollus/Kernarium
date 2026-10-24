@@ -44,6 +44,16 @@ refuses a `select` on a property whose configurability it has not been told,
 rather than leave Soong to reject the port: SOONG_CONFIGURABLE and
 SOONG_ARCH_VARIANT list what Soong's own property structs declare.
 
+Meson also compiles every C and C++ file with `-D_FILE_OFFSET_BITS=64`
+(`Compiler.get_largefile_args`, returned by `CLikeCompiler.get_always_args` and
+added by `Backend.generate_basic_compiler_args` in the pinned converter's Meson),
+but the converter carries over only the project's and each target's own
+arguments. Without it a 32-bit build keeps a 32-bit `off_t`, and the Venus
+renderer's `mmap` of a DRM offset above 4 GiB fails with `EINVAL`. The tool adds
+the define, once, to the defaults every compiled module uses, for each Soong
+arch whose platform has four-byte pointers. A 64-bit arch already has a 64-bit
+`off_t`, and Meson's define changes nothing there.
+
 The converter is a builder toolchain input pinned by `third_party/meson2hermetic`:
 an upstream commit and a local series. This tool refuses a converter checkout
 whose tree is not the recorded final tree. The platform description it feeds
@@ -112,11 +122,14 @@ cc_defaults {
 %s    ],
     cppflags: [
 %s    ],
-}
+%s}
 """
 COMPAT_FLAGS = [
     "-Wno-gnu-pointer-arith",
 ]
+# What Meson's compilers return from get_largefile_args() for every C and C++
+# compile, which the converter does not carry over.
+LARGE_FILE_FLAG = "-D_FILE_OFFSET_BITS=64"
 BLOCK_TYPE = re.compile(r"^([a-z_0-9]+)\s*\{\s*$")
 
 
@@ -560,6 +573,9 @@ class Port:
         self.gl_front_ends = self.keep - {hal_module}
         self.warning_exceptions = warning_exceptions(table)
         self.host_platforms, self.platform_arch = host_platforms(table)
+        # Set once the platform description is known: the Soong arches whose
+        # `off_t` is 32 bits without the large-file define.
+        self.large_file_arches: list[str] = []
 
 
 def host_platforms(table: dict[str, object]) -> tuple[list[str], dict[str, str]]:
@@ -579,6 +595,45 @@ def host_platforms(table: dict[str, object]) -> tuple[list[str], dict[str, str]]
             "platform its own Soong arch"
         )
     return platforms, arches
+
+
+def pointer_size(platform: dict[str, object]) -> int:
+    """The size of `void*` the platform description gives the converter, which
+    answers eight bytes for any type it is not told."""
+    sizes = []
+    for language in ("c", "cpp"):
+        table = platform.get(language, {})
+        known = table.get("sizeof", {}).get("sizes", {}) if isinstance(table, dict) else {}
+        sizes.extend(known.get(spelling, 8) for spelling in ("void*", "void *"))
+    if len(set(sizes)) != 1:
+        raise SystemExit(
+            f"generate-mesa-venus-port.py: platform {platform.get('name')} gives void* "
+            f"different sizes: {sorted(set(sizes))}"
+        )
+    return sizes[0]
+
+
+def large_file_arches(platforms: Path, port: Port) -> list[str]:
+    """The Soong arches of the host platforms with four-byte pointers, whose
+    `off_t` stays 32 bits unless the large-file define is on the command line."""
+    described = {
+        platform["name"]: platform for platform in tomllib.loads(platforms.read_text())["platform"]
+    }
+    arches: list[str] = []
+    for name in port.host_platforms:
+        if name not in described:
+            raise SystemExit(f"generate-mesa-venus-port.py: {platforms} does not define {name}")
+        size = pointer_size(described[name])
+        if size == 8:
+            continue
+        arch = port.platform_arch.get(name)
+        if size != 4 or arch is None:
+            raise SystemExit(
+                f"generate-mesa-venus-port.py: platform {name} has {size}-byte pointers and "
+                "needs [kernarium.platform_arch] to name its arch"
+            )
+        arches.append(arch)
+    return arches
 
 
 def repair(root: Path, blueprints: list[Blueprint], port: Port) -> None:
@@ -1210,6 +1265,7 @@ def generate_soong(args: argparse.Namespace, metadata: dict[str, str]) -> None:
     if not args.dependencies.is_file():
         raise SystemExit("generate-mesa-venus-port.py: the dependency map is missing")
     port = Port(args.config, metadata.get("MESA_VENUS_HAL_MODULE", ""))
+    port.large_file_arches = large_file_arches(args.platforms, port)
     verify_converter(args.android_root, args.converter)
     variants = platform_genrules(args, port) if len(port.host_platforms) > 1 else {}
     convert(args)
@@ -1223,7 +1279,7 @@ def generate_soong(args: argparse.Namespace, metadata: dict[str, str]) -> None:
         print(f"split {split} generators that differ between host platforms")
     repair(args.checkout, blueprints, port)
     blueprints = prune(blueprints, port.keep)
-    scope(args.checkout, blueprints, port.keep)
+    scope(args.checkout, blueprints, port.keep, port.large_file_arches)
     kept = audit_selects(blueprints)
     if kept:
         print(f"kept {kept} selects on properties Soong makes configurable")
@@ -1359,10 +1415,22 @@ def prune(blueprints: list[Blueprint], keep: set[str]) -> list[Blueprint]:
     return kept
 
 
-def scope(root: Path, blueprints: list[Blueprint], keep: set[str]) -> None:
+def compat_block(wide_offset_arches: list[str]) -> list[str]:
+    """The defaults every compiled module uses: the AOSP-strictness flags, and
+    Meson's large-file define for each arch that needs it."""
+    flags = "".join(f'        "{flag}",\n' for flag in COMPAT_FLAGS)
+    arch = "\n".join(arch_block({a: {"cflags": [LARGE_FILE_FLAG]} for a in sorted(wide_offset_arches)}))
+    text = COMPAT_BLOCK % (COMPAT, flags, flags, arch + "\n" if wide_offset_arches else "")
+    return text.split("\n")[:-1]
+
+
+def scope(
+    root: Path, blueprints: list[Blueprint], keep: set[str], wide_offset_arches: list[str]
+) -> None:
     """Prefix every generated module name, and every reference to one.
 
-    Each compiled module also gains the port's AOSP-strictness defaults."""
+    Each compiled module also gains the port's AOSP-strictness defaults, and
+    for a 32-bit arch Meson's large-file define."""
     names = {
         name
         for bp in blueprints
@@ -1392,8 +1460,7 @@ def scope(root: Path, blueprints: list[Blueprint], keep: set[str]) -> None:
     if top is None:
         raise SystemExit("generate-mesa-venus-port.py: the port has no top-level Android.bp")
     if not any(block_name(block) == COMPAT for block in top.blocks):
-        flags = "".join(f'        "{flag}",\n' for flag in COMPAT_FLAGS)
-        top.blocks.append((COMPAT_BLOCK % (COMPAT, flags, flags)).split("\n")[:-1])
+        top.blocks.append(compat_block(wide_offset_arches))
     print(f"scoped {len(names)} module names in {changed} Android.bp files")
 
 
