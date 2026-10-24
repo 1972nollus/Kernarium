@@ -205,6 +205,14 @@ by the user.
 The product uses software KeyMint/gatekeeper, SELinux enforcing policy, no
 `system_other` image, and no loadable modules or DLKM partitions.
 
+LineageOS's vendor policy lets `system_server` read the vendor security patch
+level (`ro.vendor.build.security_patch`), which `SecurityStateManager` reports to
+every application, while the platform policy denies applications the same read.
+An application would see the level through the API and an empty property.
+`overlay/sepolicy/vendor/appdomain.te` grants the read to application domains;
+the value is public, and the target-files verifier requires the rule in the
+packaged vendor policy.
+
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
 in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves

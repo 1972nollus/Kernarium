@@ -396,6 +396,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_kernel_config: bool = False,
                           wrong_kernel_release: bool = False,
                           missing_memfd_policy: bool = False,
+                          missing_spl_policy: bool = False,
                           missing_virtio_console: bool = False,
                           unsupported_hvc: bool = False,
                           missing_mesa_gles: bool = False,
@@ -649,7 +650,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "VENDOR/etc/selinux/vendor_sepolicy.cil",
                     "(policycap open_perms)\n"
                     if missing_memfd_policy
-                    else "(policycap memfd_class)\n",
+                    else "(policycap memfd_class)\n"
+                    + (
+                        ""
+                        if missing_spl_policy
+                        else "(allow appdomain_202604 vendor_security_patch_level_prop_202604 "
+                        "(file (read getattr map open)))\n"
+                    ),
                 )
                 ueventd = "/dev/ttyS0 0660 root shell\n"
                 if not missing_virtio_console:
@@ -911,6 +918,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("kernel-config", {"wrong_kernel_config": True}),
             ("kernel-release", {"wrong_kernel_release": True}),
             ("memfd-policy", {"missing_memfd_policy": True}),
+            ("spl-policy", {"missing_spl_policy": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
             ("unsupported-hvc", {"unsupported_hvc": True}),
             ("missing-mesa-gles", {"missing_mesa_gles": True}),

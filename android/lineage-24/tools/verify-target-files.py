@@ -422,6 +422,11 @@ READ_ONLY_FILESYSTEMS = {
     "vendor_fs_type": "ext4",
     "odm_fs_type": "ext4",
 }
+VENDOR_SPL_APP_READ = re.compile(
+    rb"^\(allow appdomain(?:_[0-9]+)? vendor_security_patch_level_prop(?:_[0-9]+)? "
+    rb"\(file \([^)]*\bread\b[^)]*\)\)\)$",
+    re.MULTILINE,
+)
 # The image's inode count, which the first-boot resize keeps per block group
 # (BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT in overlay/BoardConfig.mk).
 USERDATA_EXTFS_INODE_COUNT = "8192"
@@ -772,6 +777,10 @@ def check_kernel_policy(
     )
     if b"(policycap memfd_class)" not in vendor_policy:
         fail("Android 17 vendor policy does not enable policycap memfd_class")
+    # Applications must read the vendor patch level that LineageOS lets
+    # system_server report to them (overlay/sepolicy/vendor/appdomain.te).
+    if not VENDOR_SPL_APP_READ.search(vendor_policy):
+        fail("vendor policy does not let applications read vendor_security_patch_level_prop")
 
 
 def parse_properties(payload: str) -> dict[str, str]:
