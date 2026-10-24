@@ -2504,7 +2504,7 @@ index 0000000000000000000000000000000000000000..3548f941b5af59cc04f7e667c527f6e4
 +
 +#endif
 diff --git a/arch/um/kernel/ptrace.c b/arch/um/kernel/ptrace.c
-index fdbb37b5c3996188d92cf307d31eeaeca1f0acce..51b9576fc57b297eea4c3dc61f945e3d4aaa8149 100644
+index 3507bf10ecd8dbaf7b7cd4f0391537943c219f0f..0a163b169829f9a3a77031ee0c3a2d8065982d13 100644
 --- a/arch/um/kernel/ptrace.c
 +++ b/arch/um/kernel/ptrace.c
 @@ -4,6 +4,7 @@
@@ -2515,7 +2515,7 @@ index fdbb37b5c3996188d92cf307d31eeaeca1f0acce..51b9576fc57b297eea4c3dc61f945e3d
  #include <linux/ptrace.h>
  #include <linux/sched.h>
  #include <linux/uaccess.h>
-@@ -109,6 +110,14 @@ long arch_ptrace(struct task_struct *child, long request,
+@@ -110,6 +111,14 @@ long arch_ptrace(struct task_struct *child, long request,
  	return ret;
  }
  
@@ -2551,7 +2551,7 @@ index 8cb774915731e131352e9f9e3249ac8422faa293..0a1b285326fccffdd15435ead9b6f695
  {
  	current->thread.arch.tpidr_el0 = tls;
 diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
-index 9ff2fa2288c4a59014725de16b21af4e5816ba23..766807e1ee60ea42848e8159bdfc51232548c7f3 100644
+index 1309cdaa33ac42c16fc89916d61d7cb64690347e..dbd286c05aaebd6ca678e31dcb4ceb037d17b740 100644
 --- a/arch/um/kernel/skas/syscall.c
 +++ b/arch/um/kernel/skas/syscall.c
 @@ -6,6 +6,7 @@
@@ -2562,10 +2562,10 @@ index 9ff2fa2288c4a59014725de16b21af4e5816ba23..766807e1ee60ea42848e8159bdfc5123
  #include <kern_util.h>
  #include <sysdep/ptrace.h>
  #include <sysdep/ptrace_user.h>
-@@ -47,6 +48,11 @@ void handle_syscall(struct uml_pt_regs *r)
- 	/* Initialize the syscall number and default return value. */
+@@ -71,6 +72,11 @@ void handle_syscall(struct uml_pt_regs *r)
  	UPT_SYSCALL_NR(r) = UPT_SYSCALL_ARCH_NR(r);
- 	PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
+ 	if (UPT_SYSCALL_PRESET_ENOSYS(r))
+ 		PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
 +	if (test_syscall_work(SYSCALL_USER_DISPATCH) &&
 +	    syscall_user_dispatch(regs)) {
 +		current->syscall_dispatch.on_dispatch = false;
@@ -2574,7 +2574,7 @@ index 9ff2fa2288c4a59014725de16b21af4e5816ba23..766807e1ee60ea42848e8159bdfc5123
  
  	if (syscall_trace_enter(regs))
  		goto out;
-@@ -65,12 +71,10 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -89,12 +95,10 @@ void handle_syscall(struct uml_pt_regs *r)
  			goto out;
  		}
  	}

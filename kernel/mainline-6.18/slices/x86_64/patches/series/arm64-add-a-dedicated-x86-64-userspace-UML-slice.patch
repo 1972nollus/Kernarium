@@ -35,7 +35,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  arch/arm64/um/asm/user.h              |  29 +-
  arch/arm64/um/mmap.c                  | 128 ++++
  arch/arm64/um/ptrace.c                | 265 ++++-----
- arch/arm64/um/shared/sysdep/ptrace.h  | 187 ++++--
+ arch/arm64/um/shared/sysdep/ptrace.h  | 203 ++++---
  arch/arm64/um/signal.c                | 622 ++++++++++++++------
  arch/arm64/um/tls.c                   |  10 +-
  arch/arm64/um/x86_64_syscalls.c       | 806 ++++++++++++++++++++++++++
@@ -50,7 +50,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
  include/linux/fs.h                    |   2 +
- 26 files changed, 2004 insertions(+), 543 deletions(-)
+ 26 files changed, 2004 insertions(+), 559 deletions(-)
  create mode 100644 arch/arm64/um/asm/unistd.h
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
@@ -1027,10 +1027,10 @@ index e4c01527abe73ff1a238096db6bc3f60ba7819eb..9b5193e03c41bc20f551bb236f9d96f7
 +	return &uml_x86_64_view;
  }
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index 8e88cd3dd6089d2b90aa105b5567ef3f8a88caa2..d233d6e25a6672ef1f94c0df52d51b1be3d230de 100644
+index 4188e5b95ef1a04deee6b4ce6f2d740b08332d76..d233d6e25a6672ef1f94c0df52d51b1be3d230de 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
-@@ -22,29 +22,25 @@
+@@ -22,45 +22,25 @@
  #define UPT_IP(regs) REGS_IP((regs)->gp)
  #define UPT_PSTATE(regs) REGS_PSTATE((regs)->gp)
  
@@ -1048,15 +1048,31 @@ index 8e88cd3dd6089d2b90aa105b5567ef3f8a88caa2..d233d6e25a6672ef1f94c0df52d51b1b
 -	(UPT_AARCH32(regs) ? (unsigned int)UPT_X((regs), 7) : \
 -	 UPT_X((regs), 8))
 -
--#define UPT_SYSCALL_ARG1(regs) ((regs)->orig_x0)
+-/*
+- * x0 is both the first argument and the return-value register, and, as on
+- * native arm64, it is the argument until the call returns: a tracer reads it
+- * at the entry stop, and what it writes there is what the call gets.  orig_x0
+- * is the argument as the task passed it, which the Darwin host records at
+- * every entry; the system call reports (syscall_get_arguments, audit) and a
+- * restart use it.
+- */
+-#define UPT_SYSCALL_ARG1(regs) UPT_X((regs), 0)
+-#define UPT_SYSCALL_ENTRY_ARG1(regs) ((regs)->orig_x0)
 -#define UPT_SYSCALL_ARG2(regs) UPT_X((regs), 1)
 -#define UPT_SYSCALL_ARG3(regs) UPT_X((regs), 2)
 -#define UPT_SYSCALL_ARG4(regs) UPT_X((regs), 3)
 -#define UPT_SYSCALL_ARG5(regs) UPT_X((regs), 4)
 -#define UPT_SYSCALL_ARG6(regs) UPT_X((regs), 5)
--/* x0 is both the first argument and the return-value register. */
 -#define UPT_SYSCALL_ROLLBACK(regs) \
 -	(UPT_X((regs), 0) = (regs)->orig_x0)
+-/*
+- * As in el0_svc_common(), the system call number is an int and -1
+- * (NO_SYSCALL) is the one number handle_syscall() presets x0 for.  A tracer
+- * or seccomp that sets it skips the call and leaves x0 as it wrote it; any
+- * other number the kernel has no call for returns -ENOSYS.
+- */
+-#define UPT_SYSCALL_PRESET_ENOSYS(regs) ((int)UPT_SYSCALL_NR(regs) == -1)
+-#define UPT_SYSCALL_REPORT_ENOSYS(regs, nr) ((nr) != -1)
 +enum uml_x86_64_register {
 +	UML_X86_64_RAX,
 +	UML_X86_64_RCX,
@@ -1079,7 +1095,7 @@ index 8e88cd3dd6089d2b90aa105b5567ef3f8a88caa2..d233d6e25a6672ef1f94c0df52d51b1b
  
  struct uml_pt_regs {
  	unsigned long gp[MAX_REG_NR];
-@@ -69,45 +65,136 @@ struct uml_pt_regs {
+@@ -85,45 +65,136 @@ struct uml_pt_regs {
  	unsigned long compat_tls[3][2];
  	/*
  	 * TPIDRURO of an AArch32 task, in bits 31:0, which the host reads and
@@ -2839,17 +2855,17 @@ index 29228c4941558ab2d4a5153991642c4659552891..7309390f6599b61ed734ea54fca2f941
  #include <linux/mm_types.h>
  
 diff --git a/arch/um/include/asm/syscall-generic.h b/arch/um/include/asm/syscall-generic.h
-index 215668ff8df026f330892cbf03bb84a4c1c63add..0c0aae139b9b19d30385a3b2920cfd58c7dbe5d7 100644
+index bdc58cc1bded808980bea44f8f0eec6619cf5d4f..bfbb6178818d74edd57d3a4c11349182a52fb20e 100644
 --- a/arch/um/include/asm/syscall-generic.h
 +++ b/arch/um/include/asm/syscall-generic.h
-@@ -61,7 +61,7 @@ static inline void syscall_get_arguments(struct task_struct *task,
+@@ -71,7 +71,7 @@ static inline void syscall_get_arguments(struct task_struct *task,
  					 struct pt_regs *regs,
  					 unsigned long *args)
  {
 -	const struct uml_pt_regs *r = &regs->regs;
 +	struct uml_pt_regs *r = &regs->regs;
  
- 	*args++ = UPT_SYSCALL_ARG1(r);
+ 	*args++ = UPT_SYSCALL_ENTRY_ARG1(r);
  	*args++ = UPT_SYSCALL_ARG2(r);
 diff --git a/arch/um/kernel/exec.c b/arch/um/kernel/exec.c
 index c00611346a2ca3d58c464b914cad266bcd98de61..fd3fcc27b31970c4973fb05f6ff9e3d84019ac25 100644
@@ -2869,10 +2885,10 @@ index c00611346a2ca3d58c464b914cad266bcd98de61..fd3fcc27b31970c4973fb05f6ff9e3d8
  	       sizeof(current_pt_regs()->regs.compat_tls));
  	current_pt_regs()->regs.tpidrro = 0;
 diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
-index 276273b4470e6f412dece700242b332851648a3f..9ff2fa2288c4a59014725de16b21af4e5816ba23 100644
+index 99cad951786d0aba68089f899382af1aa9434975..1309cdaa33ac42c16fc89916d61d7cb64690347e 100644
 --- a/arch/um/kernel/skas/syscall.c
 +++ b/arch/um/kernel/skas/syscall.c
-@@ -42,6 +42,7 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -65,6 +65,7 @@ void handle_syscall(struct uml_pt_regs *r)
  {
  	struct pt_regs *regs = container_of(r, struct pt_regs, regs);
  	int syscall;
@@ -2880,7 +2896,7 @@ index 276273b4470e6f412dece700242b332851648a3f..9ff2fa2288c4a59014725de16b21af4e
  
  	/* Initialize the syscall number and default return value. */
  	UPT_SYSCALL_NR(r) = UPT_SYSCALL_ARCH_NR(r);
-@@ -55,6 +56,21 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -79,6 +80,21 @@ void handle_syscall(struct uml_pt_regs *r)
  		goto out;
  
  	syscall = UPT_SYSCALL_NR(r);
@@ -2902,7 +2918,7 @@ index 276273b4470e6f412dece700242b332851648a3f..9ff2fa2288c4a59014725de16b21af4e
  
  	/*
  	 * If no time passes, then sched_yield may not actually yield, causing
-@@ -79,6 +95,9 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -103,6 +119,9 @@ void handle_syscall(struct uml_pt_regs *r)
  					UPT_SYSCALL_ARG4(&regs->regs),
  					UPT_SYSCALL_ARG5(&regs->regs),
  					UPT_SYSCALL_ARG6(&regs->regs));

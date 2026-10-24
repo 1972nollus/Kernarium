@@ -1171,7 +1171,7 @@ index 0000000000000000000000000000000000000000..37fb45bfd63c73d635d7c8ad61f50234
 +
 +#endif
 diff --git a/arch/um/kernel/ptrace.c b/arch/um/kernel/ptrace.c
-index 51b9576fc57b297eea4c3dc61f945e3d4aaa8149..b15827a599166dce2049d1a23b3466b56c24e859 100644
+index 0a163b169829f9a3a77031ee0c3a2d8065982d13..baf661e140557fd091db057e0e98ad99e76a8565 100644
 --- a/arch/um/kernel/ptrace.c
 +++ b/arch/um/kernel/ptrace.c
 @@ -4,7 +4,6 @@
@@ -1182,7 +1182,7 @@ index 51b9576fc57b297eea4c3dc61f945e3d4aaa8149..b15827a599166dce2049d1a23b3466b5
  #include <linux/ptrace.h>
  #include <linux/sched.h>
  #include <linux/uaccess.h>
-@@ -42,7 +41,7 @@ void ptrace_disable(struct task_struct *child)
+@@ -43,7 +42,7 @@ void ptrace_disable(struct task_struct *child)
  long arch_ptrace(struct task_struct *child, long request,
  		 unsigned long addr, unsigned long data)
  {
@@ -1191,7 +1191,7 @@ index 51b9576fc57b297eea4c3dc61f945e3d4aaa8149..b15827a599166dce2049d1a23b3466b5
  	unsigned long __user *p = (void __user *)data;
  	void __user *vp = p;
  
-@@ -64,6 +63,8 @@ long arch_ptrace(struct task_struct *child, long request,
+@@ -65,6 +64,8 @@ long arch_ptrace(struct task_struct *child, long request,
  
  #ifdef PTRACE_GETREGS
  	case PTRACE_GETREGS: { /* Get all gp regs from the child. */
@@ -1200,7 +1200,7 @@ index 51b9576fc57b297eea4c3dc61f945e3d4aaa8149..b15827a599166dce2049d1a23b3466b5
  		if (!access_ok(p, MAX_REG_OFFSET)) {
  			ret = -EIO;
  			break;
-@@ -79,6 +80,8 @@ long arch_ptrace(struct task_struct *child, long request,
+@@ -80,6 +81,8 @@ long arch_ptrace(struct task_struct *child, long request,
  #ifdef PTRACE_SETREGS
  	case PTRACE_SETREGS: { /* Set all gp regs in the child. */
  		unsigned long tmp = 0;
@@ -1209,7 +1209,7 @@ index 51b9576fc57b297eea4c3dc61f945e3d4aaa8149..b15827a599166dce2049d1a23b3466b5
  		if (!access_ok(p, MAX_REG_OFFSET)) {
  			ret = -EIO;
  			break;
-@@ -110,14 +113,6 @@ long arch_ptrace(struct task_struct *child, long request,
+@@ -111,14 +114,6 @@ long arch_ptrace(struct task_struct *child, long request,
  	return ret;
  }
  

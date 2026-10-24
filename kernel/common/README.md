@@ -173,6 +173,18 @@ register, even one of the -ERESTART* codes an interrupted call returns,
 reaches a signal handler and survives it unchanged. `guest-signal-restart`
 checks x0 on arm64 and the x86 exception probe checks RAX.
 
+A tracer sees an arm64 task's system calls as it does on native arm64. At the
+entry stop x0 (r0 for an AArch32 task) holds the first argument, and what a
+tracer writes there is the argument the call gets. `PTRACE_GET_SYSCALL_INFO`
+and audit report the argument as the task passed it, and
+`PTRACE_SET_SYSCALL_INFO` replaces both copies. Only the number -1 presets x0
+with -ENOSYS; a tracer or seccomp that sets it skips the call and leaves x0 as
+it wrote it, and any other number with no call returns -ENOSYS. The exit stop
+shows the return value, and a call restarted after a signal shows its first
+argument again. The x86_64 slice keeps x86's convention, -ENOSYS in rax at
+every entry stop. `guest-ptrace-syscall-args-gadgets` and `-jit` check A64 and
+AArch32 tracees.
+
 A task's stack pointer is the task's own. A system call or a fault taken
 with it at zero or outside the task's address space returns, or delivers the
 signal, that native Linux does, however often it comes on one vCPU.

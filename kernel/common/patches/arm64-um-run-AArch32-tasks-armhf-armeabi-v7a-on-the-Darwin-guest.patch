@@ -1521,7 +1521,7 @@ index 0000000000000000000000000000000000000000..ae23fd3375c722ddcdb38ee130fbfbea
 +	return ret;
 +}
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index 3a493972d6b40e4f5500325140850a61069660e4..8e88cd3dd6089d2b90aa105b5567ef3f8a88caa2 100644
+index 83096ca4112793252c70c677913a0d7ae505aad5..4188e5b95ef1a04deee6b4ce6f2d740b08332d76 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
 @@ -22,6 +22,20 @@
@@ -1542,10 +1542,10 @@ index 3a493972d6b40e4f5500325140850a61069660e4..8e88cd3dd6089d2b90aa105b5567ef3f
 +	(UPT_AARCH32(regs) ? (unsigned int)UPT_X((regs), 7) : \
 +	 UPT_X((regs), 8))
 +
- #define UPT_SYSCALL_ARG1(regs) ((regs)->orig_x0)
- #define UPT_SYSCALL_ARG2(regs) UPT_X((regs), 1)
- #define UPT_SYSCALL_ARG3(regs) UPT_X((regs), 2)
-@@ -53,6 +67,11 @@ struct uml_pt_regs {
+ /*
+  * x0 is both the first argument and the return-value register, and, as on
+  * native arm64, it is the argument until the call returns: a tracer reads it
+@@ -69,6 +83,11 @@ struct uml_pt_regs {
  	 * the flexible floating-point register tail.
  	 */
  	unsigned long compat_tls[3][2];
@@ -1557,7 +1557,7 @@ index 3a493972d6b40e4f5500325140850a61069660e4..8e88cd3dd6089d2b90aa105b5567ef3f
  	unsigned long fp[];
  };
  
-@@ -64,11 +83,31 @@ struct uml_pt_regs {
+@@ -80,11 +99,31 @@ struct uml_pt_regs {
  	/* AArch64 returns syscall results in x0, which is also argument 1. \
  	 * Restore it before re-executing SVC; unlike x86, rewinding the PC \
  	 * alone would retry with -ERESTART* as the first argument. \
@@ -2266,7 +2266,7 @@ index 0000000000000000000000000000000000000000..8b19e9cc82fdb36f509ff4b7ddd8cf8f
 +}
 diff --git a/arch/arm64/um/sys_compat.c b/arch/arm64/um/sys_compat.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..543f463cd929c125beb7a8f07cdb3e421f8cbceb
+index 0000000000000000000000000000000000000000..86f69c07139896a632c691e0620e4d4e7d68d32d
 --- /dev/null
 +++ b/arch/arm64/um/sys_compat.c
 @@ -0,0 +1,93 @@
@@ -2321,8 +2321,8 @@ index 0000000000000000000000000000000000000000..543f463cd929c125beb7a8f07cdb3e42
 +
 +/*
 + * Handle all unrecognised system calls.  The number is past the end of the
-+ * table.  handle_syscall() has already set x0 to -ENOSYS, so the call's first
-+ * argument is the original x0, and the other argument registers are intact.
++ * table.  As in native compat_arm_syscall(), the arguments are r0-r2 (x0-x2)
++ * as they stand, which are what the task passed unless a tracer rewrote them.
 + */
 +long compat_arm_syscall(struct uml_pt_regs *regs, int scno)
 +{

@@ -510,6 +510,24 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# A tracer follows the system calls of an A64 task and, on arm64, an AArch32
+# one as on native Linux: the entry stop shows the first argument in its
+# register, a rewrite there is the argument the call uses, the exit stop shows
+# the return value, syscall(-1) returns ENOSYS, and an interrupted call that a
+# handler restarts shows its argument again. Both engines run it, because a
+# register image crosses the host boundary at every system call.
+foreach(_engine IN ITEMS gadgets jit)
+    uml_add_guest_integration_test(
+        NAME guest-ptrace-syscall-args-${_engine}
+        SCRIPT support/run_guest_probe.py
+        ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/ptrace_syscall_args_probe.cpp
+            "--cxxflags=-Wall -Wextra -Werror"
+            --engine ${_engine} --ncpus 2 --probe-timeout 240
+        LABELS guest;kernel;${_engine}
+        TIMEOUT 480
+        CPUS 2)
+endforeach()
+
 # A signal taken between two instructions leaves x0 alone even when it holds
 # an -ERESTART* code: only a system call's own return is restarted.
 uml_add_guest_integration_test(

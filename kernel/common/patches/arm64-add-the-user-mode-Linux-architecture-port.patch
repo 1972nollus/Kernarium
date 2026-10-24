@@ -43,7 +43,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/shared/sysdep/archsetjmp.h     |  29 +++
  arch/arm64/um/shared/sysdep/faultinfo.h      |  41 ++++
  arch/arm64/um/shared/sysdep/kernel-offsets.h |  16 ++
- arch/arm64/um/shared/sysdep/ptrace.h         |  74 ++++++
+ arch/arm64/um/shared/sysdep/ptrace.h         |  90 +++++++
  arch/arm64/um/shared/sysdep/ptrace_user.h    |  14 ++
  arch/arm64/um/signal.c                       | 239 +++++++++++++++++++
  arch/arm64/um/subarch.c                      |  29 +++
@@ -52,7 +52,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/sysrq.c                        |  18 ++
  arch/arm64/um/tls.c                          |  22 ++
  arch/arm64/um/user-offsets.c                 |  63 +++++
- 47 files changed, 1633 insertions(+)
+ 47 files changed, 1649 insertions(+)
  create mode 100644 arch/arm64/Makefile.um
  create mode 100644 arch/arm64/um/Kconfig
  create mode 100644 arch/arm64/um/Makefile
@@ -1466,10 +1466,10 @@ index 0000000000000000000000000000000000000000..2e7f079f0f8eacff6c9c33e01b20ed00
 +}
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..f77c6e818dabddb6598a1cefb47167cbe324fef7
+index 0000000000000000000000000000000000000000..96411d0ddfcca84189277aae487f91fa7c687787
 --- /dev/null
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,90 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef _SYSDEP_UM_ARM64_PTRACE_H
 +#define _SYSDEP_UM_ARM64_PTRACE_H
@@ -1494,15 +1494,31 @@ index 0000000000000000000000000000000000000000..f77c6e818dabddb6598a1cefb47167cb
 +#define UPT_IP(regs) REGS_IP((regs)->gp)
 +#define UPT_PSTATE(regs) REGS_PSTATE((regs)->gp)
 +
-+#define UPT_SYSCALL_ARG1(regs) ((regs)->orig_x0)
++/*
++ * x0 is both the first argument and the return-value register, and, as on
++ * native arm64, it is the argument until the call returns: a tracer reads it
++ * at the entry stop, and what it writes there is what the call gets.  orig_x0
++ * is the argument as the task passed it, which the Darwin host records at
++ * every entry; the system call reports (syscall_get_arguments, audit) and a
++ * restart use it.
++ */
++#define UPT_SYSCALL_ARG1(regs) UPT_X((regs), 0)
++#define UPT_SYSCALL_ENTRY_ARG1(regs) ((regs)->orig_x0)
 +#define UPT_SYSCALL_ARG2(regs) UPT_X((regs), 1)
 +#define UPT_SYSCALL_ARG3(regs) UPT_X((regs), 2)
 +#define UPT_SYSCALL_ARG4(regs) UPT_X((regs), 3)
 +#define UPT_SYSCALL_ARG5(regs) UPT_X((regs), 4)
 +#define UPT_SYSCALL_ARG6(regs) UPT_X((regs), 5)
-+/* x0 is both the first argument and the return-value register. */
 +#define UPT_SYSCALL_ROLLBACK(regs) \
 +	(UPT_X((regs), 0) = (regs)->orig_x0)
++/*
++ * As in el0_svc_common(), the system call number is an int and -1
++ * (NO_SYSCALL) is the one number handle_syscall() presets x0 for.  A tracer
++ * or seccomp that sets it skips the call and leaves x0 as it wrote it; any
++ * other number the kernel has no call for returns -ENOSYS.
++ */
++#define UPT_SYSCALL_PRESET_ENOSYS(regs) ((int)UPT_SYSCALL_NR(regs) == -1)
++#define UPT_SYSCALL_REPORT_ENOSYS(regs, nr) ((nr) != -1)
 +
 +struct uml_pt_regs {
 +	unsigned long gp[MAX_REG_NR];
