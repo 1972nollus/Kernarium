@@ -45,11 +45,11 @@ the data size of a completed coded buffer.
  drivers/media/virtio/virtio_video_ctrls.c   |  384 +++++
  drivers/media/virtio/virtio_video_device.c  |   69 +-
  drivers/media/virtio/virtio_video_driver.c  |   21 +-
- drivers/media/virtio/virtio_video_enc.c     | 1512 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_enc.c     | 1513 +++++++++++++++++++
  drivers/media/virtio/virtio_video_helpers.c |   14 +-
  drivers/media/virtio/virtio_video_vq.c      |  306 +++-
  include/uapi/linux/virtio_video.h           |  157 +-
- 12 files changed, 2614 insertions(+), 33 deletions(-)
+ 12 files changed, 2615 insertions(+), 33 deletions(-)
  create mode 100644 drivers/media/virtio/virtio_video_ctrls.c
  create mode 100644 drivers/media/virtio/virtio_video_enc.c
 
@@ -985,10 +985,10 @@ index 1f73c6beb1fe81627b675f87d655c1629b3564c4..79b064e2db38be50d3b1ecea941a5330
  static struct virtio_driver virtio_video_driver = {
 diff --git a/drivers/media/virtio/virtio_video_enc.c b/drivers/media/virtio/virtio_video_enc.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee4140dd20d41e0f11ff1891ea83c70dbf0611c7
+index 0000000000000000000000000000000000000000..c5210f119d989ec0323b2de73ede8a9e6e8f8647
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_enc.c
-@@ -0,0 +1,1512 @@
+@@ -0,0 +1,1513 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Encoder for virtio video device.
 + *
@@ -1694,7 +1694,8 @@ index 0000000000000000000000000000000000000000..ee4140dd20d41e0f11ff1891ea83c70d
 +	if (virtio_video_state(stream) == STREAM_STATE_ERROR)
 +		return -EIO;
 +
-+	if (sel->type != V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE)
++	/* The core hands selection ioctls the single-plane type. */
++	if (sel->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
 +		return -EINVAL;
 +
 +	switch (sel->target) {
@@ -1823,7 +1824,7 @@ index 0000000000000000000000000000000000000000..ee4140dd20d41e0f11ff1891ea83c70d
 +	if (virtio_video_state(stream) == STREAM_STATE_ERROR)
 +		return -EIO;
 +
-+	if (sel->type != V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE ||
++	if (sel->type != V4L2_BUF_TYPE_VIDEO_OUTPUT ||
 +	    sel->target != V4L2_SEL_TGT_CROP)
 +		return -EINVAL;
 +
