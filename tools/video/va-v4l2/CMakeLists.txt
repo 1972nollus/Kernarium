@@ -16,6 +16,7 @@ add_library(uml_va_v4l2_core OBJECT
     convert.cpp
     storage.cpp
     v4l2_decoder.cpp
+    v4l2_encoder.cpp
     v4l2_io.cpp
     v4l2_pool.cpp
     vp9.cpp)
@@ -34,7 +35,11 @@ target_link_options(uml_drv_video PRIVATE
     "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/driver.map" "-Wl,--no-undefined")
 set_property(TARGET uml_drv_video APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/driver.map")
 
-add_executable(uml_va_v4l2_tests tests/va_v4l2_tests.cpp tests/pool_tests.cpp)
+add_executable(uml_va_v4l2_tests
+    tests/va_v4l2_tests.cpp
+    tests/pool_tests.cpp
+    tests/fake_v4l2.cpp
+    tests/encoder_tests.cpp)
 target_link_libraries(uml_va_v4l2_tests PRIVATE uml_va_v4l2_core)
 
 # The guest-side qualification client. It talks to libva, not to this driver
