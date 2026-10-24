@@ -508,6 +508,24 @@ void exits_become_bridge_events()
 	require(registers.fault.address == 0x1000'0002U &&
 		registers.fault.error_code == 0 && registers.fault.trap_number == 0);
 
+	/* An address wider than 32 bits is the engine's error, not a guest
+	 * fault the compat siginfo would truncate. */
+	for (const std::uint64_t address : {0x1'0000'0000ULL,
+		     0xa64d'000f'5000'1040ULL, ~0ULL}) {
+		auto wide = exit_of(ExitReason::memory_fault);
+		wide.fault.address = address;
+		require(event(wide) == DARWIN_UML_EVENT_FATAL,
+			"a fault above 4 GiB reached the guest");
+		auto target = exit_of(ExitReason::pc_alignment);
+		target.fault.address = address | 2U;
+		require(event(target) == DARWIN_UML_EVENT_FATAL,
+			"a PC alignment fault above 4 GiB reached the guest");
+	}
+	auto top = exit_of(ExitReason::memory_fault);
+	top.fault.address = 0xffff'ffffU;
+	require(event(top) == DARWIN_UML_EVENT_FAULT &&
+		registers.fault.address == 0xffff'ffffU);
+
 	/* No trap enables and no SME in AArch32. */
 	require(event(exit_of(ExitReason::floating_point_trap)) ==
 		DARWIN_UML_EVENT_FATAL);

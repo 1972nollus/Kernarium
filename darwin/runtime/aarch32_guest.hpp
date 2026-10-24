@@ -31,6 +31,8 @@ inline constexpr std::int32_t breakpoint_exception_class = 0x38;
 /* The software-step exception class the kernel turns into TRAP_TRACE; the
  * same value as for AArch64. */
 inline constexpr std::int32_t software_step_class = 0x32;
+/* The highest address an AArch32 task has. */
+inline constexpr std::uint64_t a32_address_limit = 0xffff'ffffU;
 
 /* Whether the kernel may hand `registers` over as an AArch32 entry. Every
  * condition is a kernel invariant: the mode is
@@ -136,7 +138,10 @@ inline void save_a32_cpu(arm64::CpuState &cpu,
  *   software-step class, at the PC of the next instruction.
  * - A data abort, a PC alignment fault and a data alignment fault report
  *   the architectural 32-bit address the engine gives; an instruction fetch
- *   fault names the address that could not be read.
+ *   fault names the address that could not be read. An address wider than
+ *   32 bits is no guest address but the engine's error, which the kernel's
+ *   compat siginfo would truncate into an ordinary SIGSEGV, so it is the
+ *   fatal event.
  * - An UNDEFINED instruction is the illegal-instruction event with the state
  *   of the instruction, which has done nothing.
  * An AArch32 task cannot reach a floating-point trap (the trap enables read
@@ -150,6 +155,8 @@ inline void save_a32_cpu(arm64::CpuState &cpu,
 	case ExitReason::system_call:
 		return DARWIN_UML_EVENT_SYSCALL;
 	case ExitReason::memory_fault:
+		if (result.fault.address > a32_address_limit)
+			break;
 		return ::uml::runtime::report_memory_fault(registers, result.fault);
 	case ExitReason::interrupt:
 		if (stop_requested)
@@ -171,6 +178,8 @@ inline void save_a32_cpu(arm64::CpuState &cpu,
 		registers.fault.trap_number = software_step_class;
 		return DARWIN_UML_EVENT_BREAKPOINT;
 	case ExitReason::pc_alignment:
+		if (result.fault.address > a32_address_limit)
+			break;
 		registers.fault.error_code = 0;
 		registers.fault.address = result.fault.address;
 		registers.fault.trap_number = 0;
