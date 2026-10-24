@@ -27,6 +27,19 @@ multiArch package with libraries for both ABIs runs in both; any other package
 runs in the ISA of the first supported ABI it has libraries for; and a package
 with preinstalled libraries for both ISAs next to its APK counts as both. The
 set is the same whichever ABI is primary, so use32bitAbi does not change it.
+
+Soong dexpreopts an application for the targets of its own compile_multilib,
+the first target by default, so a product records an application invocation for
+the primary ISA only; libraries are preopted for every ISA. dex2oat's command
+for an application differs between ISAs in nothing but --instruction-set,
+--instruction-set-variant, --instruction-set-features and the output paths
+(dexpreopt.go, dexpreoptCommand: the boot image location is the same for every
+ISA, and dex2oat finds <isa>/boot.art beside it). The tool therefore takes the
+recorded application invocation of the primary ISA and replaces those three
+flags with the ones Soong recorded for libraries of the other ISA. Before it
+does, it checks the rule against Soong's own run: for every library recorded
+for both ISAs, the primary ISA's invocation with the other ISA's flags must be
+that other ISA's invocation, token for token.
 """
 
 from __future__ import annotations
@@ -69,6 +82,9 @@ TEMPLATE_DROP_PREFIXES = (
     "--compiler-filter=", "--compilation-reason=", "--copy-dex-files=",
 )
 TEMPLATE_DROP_FLAGS = ("--strip", "--generate-debug-info", "--abort-on-hard-verifier-error")
+# The flags that name the ISA the artifact is compiled for.
+ISA_FLAG_PREFIXES = ("--instruction-set=", "--instruction-set-variant=", "--instruction-set-features=")
+OAT_ISA_DIRECTORY = re.compile(r"/oat/(?:arm64|arm)/")
 SDK_P = 28
 SDK_Q = 29
 APACHE_HTTP_LEGACY = "org.apache.http.legacy"
@@ -232,23 +248,94 @@ class Tools:
     def __init__(self, aosp: Path, out_dir: str, host_bin: Path | None = None) -> None:
         self.aosp = aosp
         self.out = out_dir
+        self._recorded: dict[tuple[str, str], list[tuple[Path, list[str]]]] | None = None
         self.bin = host_bin or aosp / out_dir / "host" / "linux-x86" / "bin"
         for tool in ("debugfs", "aapt2"):
             if not (self.bin / tool).is_file():
                 fail(f"missing host tool: {self.bin / tool}")
 
+    def _index(self) -> dict[tuple[str, str], list[tuple[Path, list[str]]]]:
+        """Every dex2oat invocation Soong recorded, by (ISA directory, file name)."""
+        if self._recorded is None:
+            self._recorded = {}
+            base = self.aosp / self.out / "soong" / ".intermediates"
+            for path in sorted(base.glob("**/dexpreopt/*/oat/*/*.invocation")):
+                text = [t for t in path.read_text(encoding="utf-8").split("\n") if t]
+                self._recorded.setdefault((path.parent.name, path.name), []).append((path, text))
+        return self._recorded
+
+    def recorded(self, isa: str, name: str) -> list[list[str]]:
+        """The tokens of every invocation Soong recorded as <name> for one ISA."""
+        return [text for _, text in self._index().get((isa, name), [])]
+
+    def library_pairs(self, isa: str) -> list[tuple[list[str], list[str]]]:
+        """The library invocations of the primary ISA and `isa` for each module that has both."""
+        primary = {path.parents[1]: text
+                   for path, text in self._index().get((PRIMARY_ISA, "javalib.invocation"), [])}
+        return [(primary[path.parents[1]], text)
+                for path, text in self._index().get((isa, "javalib.invocation"), [])
+                if path.parents[1] in primary]
+
     def template(self, isa: str) -> list[str]:
-        """Soong's own dex2oat flags for an application of one ISA, from a recorded run."""
-        base = self.aosp / self.out / "soong" / ".intermediates"
-        for path in sorted(base.glob(f"**/dexpreopt/*/oat/{isa}/package.invocation")):
-            text = [t for t in path.read_text(encoding="utf-8").split("\n") if t]
-            if (any(t.startswith("--boot-image=") for t in text)
+        """Soong's own dex2oat flags for an application of one ISA.
+
+        A recorded application invocation for the ISA is used as it is.
+        Otherwise it is the primary ISA's, with the ISA flags Soong records for
+        libraries of this ISA, once Soong's libraries have shown that these
+        flags are all that separates the ISAs."""
+        def complete(text: list[str]) -> bool:
+            return (any(t.startswith("--boot-image=") for t in text)
                     and any(t.startswith("-Xbootclasspath:") for t in text)
-                    and any(t.startswith("--dex-location=/") for t in text)):
+                    and any(t.startswith("--dex-location=/") for t in text))
+
+        for text in self.recorded(isa, "package.invocation"):
+            if complete(text):
                 return text
-        fail(f"no recorded {isa} dex2oat invocation under {base}; "
-             f"build a module that Soong dexpreopts for {isa} first")
-        return []
+        if isa == PRIMARY_ISA:
+            fail(f"no recorded {isa} application dex2oat invocation under "
+                 f"{self.aosp / self.out / 'soong' / '.intermediates'}; "
+                 f"build an application that Soong dexpreopts first")
+        primary = next((t for t in self.recorded(PRIMARY_ISA, "package.invocation") if complete(t)), None)
+        if primary is None:
+            fail(f"no recorded {PRIMARY_ISA} application dex2oat invocation to derive the {isa} one from")
+        pairs = self.library_pairs(isa)
+        if not pairs:
+            fail(f"no recorded {isa} application dex2oat invocation, and no library recorded for "
+                 f"both {PRIMARY_ISA} and {isa} to show how they differ; build the libraries first")
+        flags = isa_flags(pairs[0][1])
+        for primary_library, other_library in pairs:
+            if isa_flags(other_library) != flags:
+                fail(f"Soong recorded different {isa} ISA flags for different libraries: "
+                     f"{isa_flags(other_library)} and {flags}")
+            derived = oat_neutral(retarget(primary_library, flags))
+            recorded = oat_neutral(other_library)
+            if derived != recorded:
+                difference = next((a, b) for a, b in zip(derived, recorded) if a != b) \
+                    if len(derived) == len(recorded) else f"{len(derived)} against {len(recorded)} arguments"
+                fail(f"Soong's {isa} library invocation differs from its {PRIMARY_ISA} one in more than "
+                     f"the ISA flags ({difference}); the application template cannot be derived")
+        return retarget(primary, flags)
+
+
+def isa_flags(tokens: list[str]) -> list[str]:
+    """The ISA flags of an invocation, in the order ISA_FLAG_PREFIXES lists them."""
+    found = [next((t for t in tokens if t.startswith(prefix)), None) for prefix in ISA_FLAG_PREFIXES]
+    if None in found:
+        fail("a recorded dex2oat invocation lacks an ISA flag")
+    return found
+
+
+def retarget(tokens: list[str], flags: list[str]) -> list[str]:
+    """The invocation with its ISA flags replaced by `flags`."""
+    isa_flags(tokens)
+    by_prefix = dict(zip(ISA_FLAG_PREFIXES, flags))
+    return [by_prefix[next(p for p in ISA_FLAG_PREFIXES if t.startswith(p))]
+            if t.startswith(ISA_FLAG_PREFIXES) else t for t in tokens]
+
+
+def oat_neutral(tokens: list[str]) -> list[str]:
+    """The invocation with the ISA directory of its output paths blanked."""
+    return [OAT_ISA_DIRECTORY.sub("/oat/ISA/", t) for t in tokens]
 
 
 def run(command: list[str], **kwargs) -> subprocess.CompletedProcess:

@@ -210,9 +210,14 @@ the second instruction set of any package, since Soong dexpreopts an
 application for the first only.
 `tools/precompile-first-boot-apps.py` compiles exactly those after a first
 `target-files-package` pass, with the host `dex2oat`, Soong's own application
-flags recorded for that instruction set, filter `verify` and the class loader
-context ART Service derives on the device (the manifest's libraries plus the
-implicit ones `PackageBackwardCompatibility` adds). A package runs in arm64
+flags, filter `verify` and the class loader context ART Service derives on the
+device (the manifest's libraries plus the implicit ones
+`PackageBackwardCompatibility` adds). Soong records an application invocation
+for the first instruction set only, so the tool takes the arm64 one and swaps
+in the `arm` instruction-set flags Soong recorded for its libraries, which
+share the boot image location and differ from their arm64 invocation in
+nothing else; it checks that against every library recorded for both, and
+refuses to derive the template when any of them disagrees. A package runs in arm64
 unless native code puts it elsewhere: a multiArch package with libraries for
 both ABIs runs in both, so the multi-ABI WebView needs `arm` artifacts too, and
 a package with libraries for one ABI only runs in that ABI's instruction set.

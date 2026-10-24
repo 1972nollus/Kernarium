@@ -174,19 +174,31 @@ def build_fixture(root: Path) -> Path:
     write_executable(bin_dir / "aapt2", FAKE_AAPT2)
     write_executable(bin_dir / "debugfs", "#!/bin/sh\nexit 1\n")
     write_executable(bin_dir / "dex2oatd64", FAKE_DEX2OAT)
-    for isa, variant in (("arm64", "cortex-a53"), ("arm", "cortex-a53")):
-        invocation = aosp / f"out/soong/.intermediates/x/dexpreopt/App/oat/{isa}/package.invocation"
-        invocation.parent.mkdir(parents=True)
-        boot = "/system/framework/boot.art" if isa == "arm64" else "/system/framework/arm/boot.art"
-        tokens = [
-            "out/host/linux-x86/bin/dex2oatd64", f"--boot-image={boot}",
-            "-Xbootclasspath:/system/framework/core-oj.jar", "--dex-location=/system/app/App/App.apk",
-            "--dex-file=out/App.apk", "--oat-file=out/App.odex", "--compiler-filter=speed",
-            "--compilation-reason=prebuilt", "--class-loader-context=PCL[]", "--strip",
-            "--generate-debug-info", f"--instruction-set={isa}",
-            f"--instruction-set-variant={variant}", "--no-inline-from=core-oj.jar",
-        ]
-        invocation.write_text("\n".join(tokens) + "\n", encoding="utf-8")
+    # What a multilib product records: an application invocation for the primary
+    # ISA only (Soong preopts an application for its first target), and a
+    # library invocation for each ISA, which differ in the ISA flags and the
+    # output paths alone. The boot image location is the same for both.
+    for isa, variant, features in (("arm64", "cortex-a53", "default"),
+                                   ("arm", "cortex-a7", "div,atomic_ldrd_strd")):
+        for module, name, dex, location in (
+                ("App", "package.invocation", "App.apk", "/system/app/App/App.apk"),
+                ("Lib", "javalib.invocation", "Lib.jar", "/system/framework/Lib.jar")):
+            if isa == "arm" and module == "App":
+                continue
+            invocation = aosp / f"out/soong/.intermediates/x/dexpreopt/{module}/oat/{isa}/{name}"
+            invocation.parent.mkdir(parents=True)
+            tokens = [
+                "out/host/linux-x86/bin/dex2oatd", "--avoid-storing-invocation",
+                f"--write-invocation-to={invocation}", "--boot-image=/system/framework/boot.art",
+                "-Xbootclasspath:/system/framework/core-oj.jar", f"--dex-location={location}",
+                f"--dex-file=out/{dex}", f"--oat-file=out/{module}/oat/{isa}/x.odex",
+                "--compiler-filter=speed", "--compilation-reason=prebuilt",
+                "--class-loader-context=PCL[]", "--strip", "--generate-debug-info",
+                f"--instruction-set={isa}", f"--instruction-set-variant={variant}",
+                f"--instruction-set-features={features}", f"--oat-symbols=out/{module}/oat/{isa}/x.symbols.odex",
+                "--no-inline-from=core-oj.jar",
+            ]
+            invocation.write_text("\n".join(tokens) + "\n", encoding="utf-8")
     product = aosp / "out/target/product/darwin"
     make_apk(product / "product/app/Foo/Foo.apk", XMLTREE, b"dex-foo")
     make_apk(product / "product/app/Own/Own.apk", XMLTREE, b"dex-own")
@@ -268,15 +280,60 @@ def check_build_and_verify(tool, scratch: Path) -> None:
     os.environ["FIXTURE_LOG"] = str(log)
     common = ["--aosp-source", str(aosp), "--out-dir", "out"]
 
-    # An ISA with no recorded Soong invocation cannot be compiled.
-    arm_invocation = aosp / "out/soong/.intermediates/x/dexpreopt/App/oat/arm/package.invocation"
-    saved = arm_invocation.read_bytes()
-    arm_invocation.unlink()
-    message = run_tool(tool, "build", *common, "--product", "darwin",
-                       "--output", str(scratch / "no-arm"), expect_fail=True)
-    if "no recorded arm dex2oat invocation" not in message:
-        fail(f"a missing arm template must be named: {message}")
-    arm_invocation.write_bytes(saved)
+    # The arm template is derived, and only from what Soong recorded.
+    recorded = aosp / "out/soong/.intermediates/x/dexpreopt"
+    arm_library = recorded / "Lib/oat/arm/javalib.invocation"
+    arm_library_text = arm_library.read_text()
+    attempts = 0
+
+    def refuse() -> str:
+        nonlocal attempts
+        attempts += 1
+        return run_tool(tool, "build", *common, "--product", "darwin",
+                        "--output", str(scratch / f"refused-{attempts}"), expect_fail=True)
+
+    def refused(change, wanted: str, why: str) -> None:
+        change()
+        message = refuse()
+        arm_library.write_text(arm_library_text)
+        if wanted not in message:
+            fail(f"{why}: {message}")
+
+    refused(arm_library.unlink, "no library recorded for both arm64 and arm",
+            "an ISA with no application and no library invocation cannot be compiled")
+    refused(lambda: arm_library.write_text(arm_library_text.replace(
+                "-Xbootclasspath:/system/framework/core-oj.jar", "-Xbootclasspath:/elsewhere.jar")),
+            "differs from its arm64 one in more than the ISA flags",
+            "an arm library that differs beyond the ISA flags must refuse the derivation")
+    other = recorded / "Other/oat/arm/javalib.invocation"
+    other.parent.mkdir(parents=True)
+    other.write_text(arm_library_text.replace("cortex-a7", "cortex-a9").replace("/Lib/", "/Other/"))
+    (recorded / "Other/oat/arm64").mkdir()
+    (recorded / "Other/oat/arm64/javalib.invocation").write_text(
+        (recorded / "Lib/oat/arm64/javalib.invocation").read_text().replace("/Lib/", "/Other/"))
+    refused(lambda: None, "different arm ISA flags for different libraries",
+            "libraries that disagree on the ISA flags must refuse the derivation")
+    shutil.rmtree(recorded / "Other")
+    arm64_application = recorded / "App/oat/arm64/package.invocation"
+    arm64_text = arm64_application.read_text()
+    arm64_application.unlink()
+    message = refuse()
+    arm64_application.write_text(arm64_text)
+    if "no recorded arm64 application dex2oat invocation" not in message:
+        fail(f"without a primary application invocation nothing can be derived: {message}")
+
+    # An application invocation Soong did record for the ISA is used as it is.
+    exact = recorded / "Exact/oat/arm/package.invocation"
+    exact.parent.mkdir(parents=True)
+    exact.write_text(arm_library_text.replace("javalib", "package").replace(
+        "cortex-a7", "recorded-variant").replace("Lib.jar", "Exact.apk").replace(
+        "/system/framework/Lib", "/system/app/Exact/Exact").replace("/Lib/", "/Exact/"))
+    run_tool(tool, "build", *common, "--product", "darwin", "--output", str(scratch / "exact"))
+    arm_runs = [a for (_, isa), a in invocations(log).items() if isa == "arm"]
+    if not arm_runs or any("--instruction-set-variant=recorded-variant" not in a for a in arm_runs):
+        fail(f"a recorded arm application invocation must be the arm template: {arm_runs}")
+    shutil.rmtree(recorded / "Exact")
+    log.unlink()
 
     first = scratch / "first"
     run_tool(tool, "build", *common, "--product", "darwin", "--output", str(first), "--jobs", "2")
@@ -316,10 +373,14 @@ def check_build_and_verify(tool, scratch: Path) -> None:
         for kept in ("--boot-image", "--instruction-set", "--instruction-set-variant"):
             if kept not in flags:
                 fail(f"{kept} is Soong's flag and must be kept")
-        # Each ISA compiles with the flags Soong recorded for that ISA.
-        if f"--instruction-set={isa}" not in invocation or \
-                f"--boot-image={'/system/framework/arm/boot.art' if isa == 'arm' else '/system/framework/boot.art'}" \
-                not in invocation:
+        # Each ISA compiles with the ISA flags Soong recorded for that ISA, and
+        # the boot image location every ISA shares.
+        variant, features = (("cortex-a7", "div,atomic_ldrd_strd") if isa == "arm"
+                             else ("cortex-a53", "default"))
+        isa_flags = [a for a in invocation if a.startswith("--instruction-set")]
+        if isa_flags != [f"--instruction-set={isa}", f"--instruction-set-variant={variant}",
+                         f"--instruction-set-features={features}"] or \
+                "--boot-image=/system/framework/boot.art" not in invocation:
             fail(f"{location} ({isa}) used another ISA's template: {invocation}")
         for token, wanted in (("--compiler-filter", "verify"), ("--compilation-reason", "prebuilt"),
                               ("--dex-location", location)):
