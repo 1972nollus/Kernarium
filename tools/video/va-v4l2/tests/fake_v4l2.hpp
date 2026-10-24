@@ -44,6 +44,10 @@ public:
         bool ignoreForceKey {false};
         // The node publishes no controls at all.
         bool noControls {false};
+        // Which bitrate modes (bit 0 variable, 1 constant, 2 constant quality)
+        // and H.264 profile menu items the node offers.
+        unsigned bitrateModeMask {0x7};
+        std::uint64_t h264ProfileMask {(1u << 0) | (1u << 1) | (1u << 2) | (1u << 4) | (1ull << 17)};
         // The node refuses these requests.
         bool failStreamOn {false};
         bool failSetFormat {false};
@@ -82,6 +86,8 @@ public:
     std::vector<Frame> frames;
     int opens {};
     int closes {};
+    // Refuses to open the node, as a sandbox does.
+    bool denyOpen {};
     int streamOns {};
     int streamOffs {};
     int requestBuffersFree {};
@@ -164,6 +170,7 @@ private:
     std::map<std::uint32_t, bool> dynamic_;
     std::map<int, std::unique_ptr<Session>> sessions_;
     int next_ {1000};
+    int focus_ {};
 };
 
 }

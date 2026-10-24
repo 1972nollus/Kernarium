@@ -66,7 +66,7 @@ void FakeEncoderNode::buildTable()
         dynamic_[id] = dynamic;
     };
     if (options_.noControls) return;
-    add(V4L2_CID_MPEG_VIDEO_BITRATE_MODE, V4L2_CTRL_TYPE_MENU, 0, 2, 0, false, 0x7);
+    add(V4L2_CID_MPEG_VIDEO_BITRATE_MODE, V4L2_CTRL_TYPE_MENU, 0, 2, 0, false, options_.bitrateModeMask);
     add(V4L2_CID_MPEG_VIDEO_BITRATE, V4L2_CTRL_TYPE_INTEGER, 1000, 240000000, 2000000, true);
     add(V4L2_CID_MPEG_VIDEO_BITRATE_PEAK, V4L2_CTRL_TYPE_INTEGER, 0, 240000000, 0, true);
     add(V4L2_CID_MPEG_VIDEO_CONSTANT_QUALITY, V4L2_CTRL_TYPE_INTEGER, 1, 100, 50, true);
@@ -80,8 +80,7 @@ void FakeEncoderNode::buildTable()
     add(V4L2_CID_MPEG_VIDEO_VBV_SIZE, V4L2_CTRL_TYPE_INTEGER, 0, 2147483647, 0, false);
     add(V4L2_CID_MIN_BUFFERS_FOR_OUTPUT, V4L2_CTRL_TYPE_INTEGER, 2, 2, 2, false, 0, V4L2_CTRL_FLAG_READ_ONLY);
     // Baseline, constrained baseline, main, high and constrained high.
-    add(V4L2_CID_MPEG_VIDEO_H264_PROFILE, V4L2_CTRL_TYPE_MENU, 0, 17, 2,
-        false, (1u << 0) | (1u << 1) | (1u << 2) | (1u << 4) | (1ull << 17));
+    add(V4L2_CID_MPEG_VIDEO_H264_PROFILE, V4L2_CTRL_TYPE_MENU, 0, 17, 2, false, options_.h264ProfileMask);
     add(V4L2_CID_MPEG_VIDEO_H264_LEVEL, V4L2_CTRL_TYPE_MENU, 0, 16, 11, false, (1ull << 17) - 1);
     add(V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE, V4L2_CTRL_TYPE_MENU, 0, 1, 1, false, 0x3);
     add(V4L2_CID_MPEG_VIDEO_H264_8X8_TRANSFORM, V4L2_CTRL_TYPE_BOOLEAN, 0, 1, 1, false);
@@ -122,10 +121,12 @@ FakeEncoderNode::Session* FakeEncoderNode::find(int fd)
 
 std::int64_t FakeEncoderNode::control(std::uint32_t id) const
 {
-    // The newest session is the one a test is looking at.
-    if (!sessions_.empty()) {
-        const auto found = sessions_.rbegin()->second->values.find(id);
-        if (found != sessions_.rbegin()->second->values.end()) return found->second;
+    // The session a test is looking at is the one that was configured last,
+    // whichever descriptor of a pool it was given.
+    const auto active = sessions_.find(focus_);
+    if (active != sessions_.end()) {
+        const auto found = active->second->values.find(id);
+        if (found != active->second->values.end()) return found->second;
     }
     const auto found = table_.find(id);
     return found == table_.end() ? 0 : found->second.defaultValue;
@@ -141,6 +142,7 @@ unsigned FakeEncoderNode::codedWaiting() const
 int FakeEncoderNode::open(const char* path)
 {
     if (std::strcmp(path, kPath) != 0) { errno = ENOENT; return -1; }
+    if (denyOpen) { errno = EACCES; return -1; }
     auto session = std::make_unique<Session>();
     session->fd = next_++;
     for (const auto& entry : table_) session->values[entry.first] = entry.second.defaultValue;
@@ -382,16 +384,33 @@ void FakeEncoderNode::encodeOne(Session& session, unsigned index)
     coded.timestamp = raw.timestamp;
     coded.key = key;
     coded.error = options_.errorFrame >= 0 && std::int64_t(session.ordinal) == options_.errorFrame;
+    // An HEVC NAL unit header is two bytes: the type in bits 1..6 of the first,
+    // and a one in the second (temporal id plus one).
+    const bool hevc = session.capture.fmt.pix_mp.pixelformat == V4L2_PIX_FMT_HEVC;
     if (key && session.values[V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR]) {
-        append(coded.data, {0, 0, 0, 1, 0x67, std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_PROFILE]),
-                            std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_LEVEL])});
-        appendBig(coded.data, width, 2);
-        appendBig(coded.data, height, 2);
-        coded.data.push_back(std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_BITRATE_MODE]));
-        append(coded.data, {0, 0, 0, 1, 0x68, std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE]),
-                            std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_8X8_TRANSFORM])});
+        if (hevc) {
+            append(coded.data, {0, 0, 0, 1, 0x40, 0x01});
+            append(coded.data, {0, 0, 0, 1, 0x42, 0x01, std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_HEVC_PROFILE]),
+                                std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_HEVC_LEVEL]),
+                                std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_HEVC_TIER])});
+            appendBig(coded.data, width, 2);
+            appendBig(coded.data, height, 2);
+            coded.data.push_back(std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_BITRATE_MODE]));
+            append(coded.data, {0, 0, 0, 1, 0x44, 0x01});
+        } else {
+            append(coded.data, {0, 0, 0, 1, 0x67, std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_PROFILE]),
+                                std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_LEVEL])});
+            appendBig(coded.data, width, 2);
+            appendBig(coded.data, height, 2);
+            coded.data.push_back(std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_BITRATE_MODE]));
+            append(coded.data, {0, 0, 0, 1, 0x68, std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE]),
+                                std::uint8_t(session.values[V4L2_CID_MPEG_VIDEO_H264_8X8_TRANSFORM])});
+        }
     }
-    append(coded.data, {0, 0, 0, 1, std::uint8_t(key ? 0x65 : 0x41)});
+    if (hevc)
+        append(coded.data, {0, 0, 0, 1, std::uint8_t(key ? 0x26 : 0x02), 0x01});
+    else
+        append(coded.data, {0, 0, 0, 1, std::uint8_t(key ? 0x65 : 0x41)});
     appendBig(coded.data, sum, 8);
     appendBig(coded.data, raw.timestamp, 8);
     appendBig(coded.data, session.ordinal, 4);
@@ -528,6 +547,7 @@ int FakeEncoderNode::ioctl(int fd, unsigned long request, void* argument)
         return 0;
     }
     case VIDIOC_S_EXT_CTRLS:
+        focus_ = fd;
         return setExtControls(*session, *static_cast<v4l2_ext_controls*>(argument));
     case VIDIOC_G_FMT: {
         auto& format = *static_cast<v4l2_format*>(argument);
@@ -541,6 +561,7 @@ int FakeEncoderNode::ioctl(int fd, unsigned long request, void* argument)
         auto& format = *static_cast<v4l2_format*>(argument);
         if (format.type != kOutput && format.type != kCapture) { errno = EINVAL; return -1; }
         if (session->rawOn || session->codedOn) { errno = EBUSY; return -1; }
+        focus_ = fd;
         const int result = setFormat(*session, format, true);
         if (result == 0 && format.type == kCapture) codedFormat = format.fmt.pix_mp.pixelformat;
         return result;

@@ -13,41 +13,11 @@
 
 #include "../v4l2_encoder.hpp"
 #include "fake_v4l2.hpp"
+#include "picture.hpp"
 #include "test_support.hpp"
 
 namespace uml::va::test {
 namespace {
-
-// A picture whose every sample can be told from its neighbours, in buffers
-// whose rows are longer than the picture is wide.
-struct Picture {
-    unsigned width {};
-    unsigned height {};
-    std::size_t lumaPitch {};
-    std::size_t chromaPitch {};
-    std::vector<std::uint8_t> luma;
-    std::vector<std::uint8_t> chroma;
-
-    Picture(unsigned w, unsigned h, unsigned seed) : width(w), height(h), lumaPitch(w + 32), chromaPitch(w + 40)
-    {
-        luma.assign(lumaPitch * h, 0xee);
-        chroma.assign(chromaPitch * ((h + 1) / 2), 0xdd);
-        for (unsigned row = 0; row < h; ++row)
-            for (unsigned column = 0; column < w; ++column)
-                luma[row * lumaPitch + column] = std::uint8_t(column * 7 + row * 13 + seed);
-        for (unsigned row = 0; row < (h + 1) / 2; ++row)
-            for (unsigned column = 0; column < w; ++column)
-                chroma[row * chromaPitch + column] = std::uint8_t(column * 3 + row * 5 + seed * 11);
-    }
-    RawFrame frame() const
-    {
-        return {luma.data(), lumaPitch, chroma.data(), chromaPitch, width, height};
-    }
-    std::uint64_t checksum() const
-    {
-        return FakeEncoderNode::checksum(luma.data(), lumaPitch, chroma.data(), chromaPitch, width, height);
-    }
-};
 
 struct Rig {
     FakeEncoderNode device;
@@ -62,7 +32,7 @@ struct Rig {
         capabilities = std::make_shared<EncoderCapabilities>();
         capabilities->device = FakeEncoderNode::kPath;
         probed = probeEncoder(device, lease.fd(), *capabilities, error);
-        lease.giveBack(true);
+        lease.giveBack(true, false);
     }
     std::unique_ptr<V4l2Encoder> open(const V4l2Encoder::Settings& settings)
     {
@@ -148,6 +118,7 @@ void testSessionSetup()
         {V4L2_CID_MPEG_VIDEO_H264_PROFILE, V4L2_MPEG_VIDEO_H264_PROFILE_MAIN},
         {V4L2_CID_MPEG_VIDEO_H264_LEVEL, V4L2_MPEG_VIDEO_H264_LEVEL_3_1},
         {V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR, 1},
+        {V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE, 0},
     };
     auto encoder = rig.open(settings);
     check(encoder != nullptr, "a session opens");
@@ -159,6 +130,7 @@ void testSessionSetup()
     check(rig.device.frameRateNumerator == 30000 && rig.device.frameRateDenominator == 1001,
           "the fractional frame rate reaches the device");
     check(rig.device.streamOns == 2, "both queues are started");
+    check(rig.device.control(V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE) == 0, "a boolean control reaches the device");
     check(rig.device.control(V4L2_CID_MPEG_VIDEO_BITRATE) == 4000000 &&
               rig.device.control(V4L2_CID_MPEG_VIDEO_GOP_SIZE) == 60 &&
               rig.device.control(V4L2_CID_MPEG_VIDEO_BITRATE_MODE) == V4L2_MPEG_VIDEO_BITRATE_MODE_CBR,
@@ -168,7 +140,7 @@ void testSessionSetup()
     check(before && rig.device.controlLog.size() == settings.controls.size(),
           "every setup control is applied before streaming, in order");
     check(rig.device.controlLog.front().id == V4L2_CID_MPEG_VIDEO_BITRATE_MODE &&
-              rig.device.controlLog.back().id == V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR,
+              rig.device.controlLog.back().id == V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE,
           "controls are applied in the order given");
     check(encoder->notes().empty(), "a clean setup leaves no notes");
 
@@ -180,6 +152,10 @@ void testSessionSetup()
     auto again = rig.open(baseSettings(320, 240));
     check(again != nullptr && rig.device.opens == 1, "the next session reuses the descriptor");
     check(rig.device.outputWidth == 320, "and starts from the initialisation sequence");
+    check(rig.device.control(V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE) == 1 &&
+              rig.device.control(V4L2_CID_MPEG_VIDEO_BITRATE) == 2000000 &&
+              rig.device.control(V4L2_CID_MPEG_VIDEO_GOP_SIZE) == 0,
+          "a reused descriptor does not keep the controls of the session before");
 }
 
 void testEncodeAndCollect()

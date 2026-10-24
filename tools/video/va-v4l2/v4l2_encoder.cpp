@@ -303,6 +303,10 @@ bool V4l2Encoder::negotiate(const Settings& settings, std::string& error)
     if (io_->ioctl(fd_, VIDIOC_S_PARM, &parameters) < 0)
         notes_.push_back(reason("set the frame rate"));
 
+    // Controls outlive a session on the descriptor, so one that an earlier
+    // session set and this one does not mention would otherwise still hold the
+    // earlier session's value.
+    if (lease_.reused()) resetControls();
     for (const auto& control : settings.controls) applyControl(control, false);
 
     if (!allocate(kOutput, std::max(settings.rawBuffers, 2u), raw_, error)) return false;
@@ -373,6 +377,19 @@ bool V4l2Encoder::setControl(std::uint32_t id, std::int64_t value, int& number)
         return false;
     }
     return true;
+}
+
+void V4l2Encoder::resetControls()
+{
+    for (const auto& entry : capabilities_->controls) {
+        const ControlInfo& info = entry.second;
+        if (info.flags & (V4L2_CTRL_FLAG_READ_ONLY | V4L2_CTRL_FLAG_DISABLED)) continue;
+        if (info.type != V4L2_CTRL_TYPE_INTEGER && info.type != V4L2_CTRL_TYPE_BOOLEAN &&
+            info.type != V4L2_CTRL_TYPE_MENU && info.type != V4L2_CTRL_TYPE_INTEGER_MENU)
+            continue;
+        int number = 0;
+        setControl(info.id, info.defaultValue, number);
+    }
 }
 
 bool V4l2Encoder::applyControl(const ControlValue& control, bool streaming)

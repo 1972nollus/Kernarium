@@ -18,17 +18,18 @@ Lease& Lease::operator=(Lease&& other) noexcept
     device_ = std::move(other.device_);
     fd_ = other.fd_;
     pooled_ = other.pooled_;
+    reused_ = other.reused_;
     other.pool_ = nullptr;
     other.fd_ = -1;
     return *this;
 }
 
-void Lease::giveBack(bool healthy) noexcept
+void Lease::giveBack(bool healthy, bool used) noexcept
 {
     if (fd_ < 0) return;
     const int fd = fd_;
     fd_ = -1;
-    pool_->giveBack(role_, device_, fd, healthy);
+    pool_->giveBack(role_, device_, fd, healthy, used || reused_);
 }
 
 DescriptorPool::~DescriptorPool()
@@ -102,6 +103,7 @@ Lease DescriptorPool::acquire(Role role, const std::string& device, std::string&
     if (found != own.idle.end()) {
         lease.fd_ = found->fd;
         lease.pooled_ = true;
+        lease.reused_ = found->used;
         own.idle.erase(found);
     } else {
         const int fd = io_.open(device.c_str());
@@ -119,7 +121,7 @@ Lease DescriptorPool::acquire(Role role, const std::string& device, std::string&
     return lease;
 }
 
-void DescriptorPool::giveBack(Role role, const std::string& device, int fd, bool healthy) noexcept
+void DescriptorPool::giveBack(Role role, const std::string& device, int fd, bool healthy, bool used) noexcept
 {
     std::lock_guard guard(lock_);
     Stock& own = stock(role);
@@ -131,7 +133,7 @@ void DescriptorPool::giveBack(Role role, const std::string& device, int fd, bool
         if (own.held) --own.held;
         return;
     }
-    own.idle.push_back({device, fd});
+    own.idle.push_back({device, fd, used});
 }
 
 PoolSizes poolSizes(const char* request) noexcept

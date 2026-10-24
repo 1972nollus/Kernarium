@@ -151,6 +151,26 @@ void testGrowth()
     check(off.closes == 1 && disabled.held(Role::encoder) == 0, "and keeps nothing afterwards");
 }
 
+void testReuseFlag()
+{
+    CountingIo io;
+    DescriptorPool pool(io);
+    pool.setTarget(Role::encoder, 1);
+    pool.fill(Role::encoder, "/dev/video1");
+    std::string error;
+    Lease probe = pool.acquire(Role::encoder, "/dev/video1", error);
+    check(probe && !probe.reused(), "a descriptor nobody has used is not reused");
+    probe.giveBack(true, false);
+    Lease session = pool.acquire(Role::encoder, "/dev/video1", error);
+    check(session && !session.reused(), "a descriptor that was only read from is not reused");
+    session.giveBack(true);
+    Lease next = pool.acquire(Role::encoder, "/dev/video1", error);
+    check(next && next.reused(), "a descriptor a session used is reused");
+    next.giveBack(true, false);
+    Lease again = pool.acquire(Role::encoder, "/dev/video1", error);
+    check(again && again.reused(), "reading from a used descriptor does not make it new");
+}
+
 void testDestruction()
 {
     CountingIo io;
@@ -170,6 +190,7 @@ void runPoolTests()
     testFillAndReuse();
     testSandbox();
     testGrowth();
+    testReuseFlag();
     testDestruction();
 }
 

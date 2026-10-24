@@ -30,12 +30,16 @@ public:
     // Whether the descriptor was opened ahead of time rather than for this
     // lease. A pooled descriptor is the one a sandboxed process can still get.
     bool pooled() const noexcept { return pooled_; }
+    // Whether an earlier session has already used the descriptor. Whatever
+    // that session left set on it - a control, above all - is still set.
+    bool reused() const noexcept { return reused_; }
     V4l2Io& io() const noexcept { return *io_; }
 
     // A healthy descriptor has had both of its queues stopped and released, so
     // the next session can start from the initialisation sequence; the pool
-    // keeps it. Anything else is closed.
-    void giveBack(bool healthy) noexcept;
+    // keeps it. Anything else is closed. `used` says whether anything beyond
+    // reading the node's capabilities was done with it.
+    void giveBack(bool healthy, bool used = true) noexcept;
 
 private:
     friend class DescriptorPool;
@@ -45,6 +49,7 @@ private:
     std::string device_;
     int fd_ {-1};
     bool pooled_ {};
+    bool reused_ {};
 };
 
 // A process-wide stock of open V4L2 descriptors.
@@ -95,6 +100,7 @@ private:
     struct Entry {
         std::string device;
         int fd {-1};
+        bool used {};
     };
     struct Stock {
         unsigned target {};
@@ -105,7 +111,7 @@ private:
 
     Stock& stock(Role role) noexcept { return stocks_[role == Role::encoder ? 0 : 1]; }
     const Stock& stock(Role role) const noexcept { return stocks_[role == Role::encoder ? 0 : 1]; }
-    void giveBack(Role role, const std::string& device, int fd, bool healthy) noexcept;
+    void giveBack(Role role, const std::string& device, int fd, bool healthy, bool used) noexcept;
 
     V4l2Io& io_;
     mutable std::mutex lock_;

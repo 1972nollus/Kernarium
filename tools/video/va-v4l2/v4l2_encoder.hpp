@@ -165,6 +165,7 @@ private:
     bool negotiate(const Settings& settings, std::string& error);
     bool allocate(unsigned type, unsigned count, std::vector<Buffer>& buffers, std::string& error);
     void unmap(std::vector<Buffer>& buffers);
+    void resetControls();
     bool applyControl(const ControlValue& control, bool streaming);
     bool setControl(std::uint32_t id, std::int64_t value, int& error);
     bool reclaimRaw(std::string& error);
