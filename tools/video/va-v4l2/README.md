@@ -327,8 +327,9 @@ for variable-bitrate profiles). The driver does its part, but Chromium's
 encoder works on frames in GPU memory that it allocates through gbm, and the
 guest's Mesa gbm has two limits that the driver cannot lift:
 
-- It cannot allocate NV12, so the GPU process aborts when the first encode
-  starts.
+- It cannot allocate NV12, so the encode fails when its first frame arrives:
+  Chromium 154's GPU process aborts, and Chromium 156 reports "Unable to
+  create a mappable shared image" and a WebCodecs encoding error.
 - Pixels the guest GPU wrote (canvas, video and page content composited on
   the GPU) are not readable by the guest CPU, which is the only reader the
   driver has. Such frames encode as black. Frames built in ordinary memory
