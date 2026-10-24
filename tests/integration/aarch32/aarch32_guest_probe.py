@@ -18,7 +18,11 @@ VFP and TLS registers, follows its system calls (PTRACE_GET_SYSCALL_INFO
 names AUDIT_ARCH_ARM) and single steps, and sees the VFP context of its
 signal frames; the faults end the program in SIGSEGV, SIGILL and SIGTRAP; a
 core dump is a 32-bit ARM core file; and many runs at once all complete.  The
-4 KiB-layout program loads and runs.
+4 KiB-layout program loads and runs.  With --aarch64-helper, the guest
+assembles aarch64_dirty.s, a 64-bit program that leaves x15-x30 set, and the
+program's every exclusive and ordered form runs on each CPU right after it:
+first through its execve, then between sched_yield calls of a copy that
+spins on the same CPU.  --only exclusives runs that check alone.
 Prints one line per check and exits with the number of failures.
 """
 
@@ -590,6 +594,48 @@ def check_core_dump(elf):
     os.unlink(os.path.join(directory, names[0]))
 
 
+def build_aarch64_helper(source):
+    """aarch64_dirty.s, assembled and linked by the guest's own tools."""
+    program = "/tmp/a64-dirty"
+    for command in (["as", "-o", program + ".o", source],
+                    ["ld", "-static", "-o", program, program + ".o"]):
+        result = subprocess.run(command, stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=120)
+        check(f"{command[0]} builds the 64-bit helper", result.returncode == 0,
+              result.stderr.strip()[-500:])
+        if result.returncode != 0:
+            return None
+    return program
+
+
+def check_exclusives_after_aarch64(elf, helper):
+    """The exclusive and ordered forms on a CPU that runs 64-bit code.
+
+    The runtime enters a 32-bit task with R0-R14 only, so x15-x30 are what
+    the 64-bit task before it left.  On each CPU, the helper executes the
+    program with them set, and a second copy of it sets them before each of
+    its sched_yield calls on the same CPU, which the program's own calls
+    let it run between."""
+    for cpu in sorted(os.sched_getaffinity(0)):
+        def pin(cpu=cpu):
+            os.sched_setaffinity(0, {cpu})
+        spinner = subprocess.Popen([helper, "spin"], stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, preexec_fn=pin)
+        try:
+            result = subprocess.run([helper, "exec", elf, "exclusives"],
+                                    stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True,
+                                    timeout=300, preexec_fn=pin)
+        finally:
+            spinner.kill()
+            spinner.wait()
+        check(f"exclusives beside a 64-bit task on CPU {cpu}",
+              result.returncode == 0,
+              f"status {result.returncode}: {result.stdout.strip()[-300:]}")
+
+
 def check_parallel(elf):
     """Many AArch32 programs at once, each one on its own."""
     codes = [subprocess.run([elf, "leaf"],
@@ -624,10 +670,24 @@ def main():
     parser.add_argument("--deadline", type=int, default=280,
                         metavar="SECONDS",
                         help="kill the probe after this long")
+    parser.add_argument("--aarch64-helper", metavar="SOURCE",
+                        help="aarch64_dirty.s, for the exclusives check")
+    parser.add_argument("--only", choices=("exclusives",),
+                        help="run this check alone")
     arguments = parser.parse_args()
     if os.uname().machine != "aarch64":
         print("SKIP aarch32: not an arm64 guest")
         return 0
+    if arguments.only and not arguments.aarch64_helper:
+        parser.error("--only exclusives needs --aarch64-helper")
+
+    if arguments.only == "exclusives":
+        signal.alarm(arguments.deadline)
+        helper = build_aarch64_helper(arguments.aarch64_helper)
+        if helper:
+            check_exclusives_after_aarch64(arguments.elf, helper)
+        print(f"aarch32-probe: {failures} failure(s)", flush=True)
+        return min(failures, 100)
 
     check_native_view()
     signal.alarm(arguments.deadline)
@@ -643,6 +703,10 @@ def main():
         check_vfp_frame(arguments.elf)
         check_core_dump(arguments.elf)
         check_parallel(arguments.elf)
+        if arguments.aarch64_helper:
+            helper = build_aarch64_helper(arguments.aarch64_helper)
+            if helper:
+                check_exclusives_after_aarch64(arguments.elf, helper)
     print(f"aarch32-probe: {failures} failure(s)", flush=True)
     return min(failures, 100)
 

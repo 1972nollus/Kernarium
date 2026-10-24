@@ -38,6 +38,10 @@
  *   trace    sets r4 and r5 to known values, stops itself with SIGSTOP for
  *            a tracer to read and rewrite them, and exits with the r5 it
  *            then finds.
+ *   exclusives  every exclusive and ordered transfer, each after a
+ *            sched_yield, for a run beside a 64-bit task that leaves its
+ *            registers set on the same CPU (aarch64_dirty.s); exits with
+ *            the number of words that came out wrong.
  */
 
 	.syntax	unified
@@ -175,6 +179,7 @@ _start:
 	mode	s_extra, mode_extra
 	mode	s_tracer, mode_tracer
 	mode	s_vfp, mode_vfp
+	mode	s_exclusives, mode_exclusives
 
 run_all:
 	lea	r0, s_start
@@ -2074,6 +2079,222 @@ mode_vfp:
 	sc	SYS_exit_group
 
 
+/* ---- exclusives after 64-bit code (mode "exclusives") ---- */
+
+/* A 64-bit task (aarch64_dirty.s) set x15-x30 when it executed this
+ * program, and another one on the same CPU sets them again before each of
+ * its sched_yield calls, so every return from one of ours enters with them
+ * set. Each of XROUNDS rounds takes a fresh page of an anonymous mapping:
+ * the Thumb half reads it with a plain LDR first, so the first exclusive
+ * load meets the read-only zero page and the store the write fault, as a
+ * fresh .bss page does; then every exclusive and ordered form adds one to a
+ * word of its own, each after a sched_yield. Exits with the number of
+ * words that did not come out 1; a fault ends it in SIGSEGV. */
+	.equ	XROUNDS,	64
+
+mode_exclusives:
+	mov	r0, #0
+	movi	r1, XROUNDS * 4096
+	mov	r2, #3			/* PROT_READ | PROT_WRITE */
+	mov	r3, #0x22		/* MAP_PRIVATE | MAP_ANONYMOUS */
+	mvn	r4, #0
+	mov	r5, #0
+	sc	SYS_mmap2
+	cmn	r0, #4096
+	movhi	r0, #99
+	bhi	9f
+	mov	r6, r0			/* the mapping */
+	mov	r10, #0			/* the round */
+	mov	r8, #0			/* failures */
+1:	add	r4, r6, r10, lsl #12
+	lea	r0, x_thumb
+	orr	r0, r0, #1
+	blx	r0
+	add	r8, r8, r0
+	add	r4, r6, r10, lsl #12
+	add	r4, r4, #0x800
+	bl	x_arm
+	add	r8, r8, r0
+	add	r10, r10, #1
+	cmp	r10, #XROUNDS
+	blt	1b
+	lea	r0, s_x_line
+	bl	puts
+	mov	r0, r8
+	bl	putdec
+	lea	r0, s_summary_b
+	bl	puts
+	mov	r0, #(XROUNDS * 20)
+	bl	putdec
+	lea	r0, s_summary_c
+	bl	puts
+	mov	r0, r8
+	cmp	r0, #100
+	movgt	r0, #100
+9:	sc	SYS_exit_group
+
+	.arch	armv8-a
+
+/* One round's Thumb half, on the page at r4: returns its failures in r0.
+ * r6 counts them, r5 the attempts of one sequence, r7 is the system call. */
+.macro t_yield
+	movs	r7, #SYS_sched_yield
+	svc	#0
+.endm
+
+/* The word at r3 is 1, or count a failure. */
+.macro t_expect_one
+	ldr	r1, [r3]
+	cmp	r1, #1
+	it	ne
+	addne	r6, r6, #1
+.endm
+
+/* LDREX and STREX with an offset: the base stays in r4. */
+.macro t_offset off
+	t_yield
+	ldr	r1, [r4, #\off]
+	movs	r5, #0
+1:	ldrex	r1, [r4, #\off]
+	adds	r1, r1, #1
+	strex	r2, r1, [r4, #\off]
+	adds	r5, r5, #1
+	cmp	r2, #0
+	beq	2f
+	cmp	r5, #255
+	blo	1b
+2:	add	r3, r4, #\off
+	t_expect_one
+.endm
+
+/* A load and store exclusive pair of one register at r4 + off. */
+.macro t_single load, store, off
+	t_yield
+	add	r3, r4, #\off
+	movs	r5, #0
+1:	\load	r1, [r3]
+	adds	r1, r1, #1
+	\store	r2, r1, [r3]
+	adds	r5, r5, #1
+	cmp	r2, #0
+	beq	2f
+	cmp	r5, #255
+	blo	1b
+2:	t_expect_one
+.endm
+
+.macro t_double load, store, off
+	t_yield
+	add	r3, r4, #\off
+	movs	r5, #0
+1:	\load	r0, r1, [r3]
+	adds	r0, r0, #1
+	\store	r2, r0, r1, [r3]
+	adds	r5, r5, #1
+	cmp	r2, #0
+	beq	2f
+	cmp	r5, #255
+	blo	1b
+2:	t_expect_one
+.endm
+
+	.thumb
+	.thumb_func
+x_thumb:
+	push	{r4, r5, r6, r7, lr}
+	movs	r6, #0
+	t_offset 0x40
+	t_offset 0x3fc
+	t_offset 0
+	t_single ldaex, stlex, 0x100
+	t_single ldrexb, strexb, 0x104
+	t_single ldrexh, strexh, 0x108
+	t_single ldaexb, stlexb, 0x10c
+	t_single ldaexh, stlexh, 0x110
+	t_double ldrexd, strexd, 0x118
+	t_double ldaexd, stlexd, 0x120
+	t_yield
+	add	r3, r4, #0x128
+	movs	r1, #1
+	stl	r1, [r3]
+	lda	r1, [r3]
+	add	r3, r4, #0x12c
+	stl	r1, [r3]
+	t_expect_one
+	mov	r0, r6
+	pop	{r4, r5, r6, r7, pc}
+
+	.arm
+	.p2align 2
+
+/* One round's ARM half, on r4 = the page + 0x800: the same, with no offset
+ * form, which A32 does not have. */
+.macro a_yield
+	mov	r7, #SYS_sched_yield
+	svc	#0
+.endm
+
+.macro a_expect_one
+	ldr	r1, [r3]
+	cmp	r1, #1
+	addne	r6, r6, #1
+.endm
+
+.macro a_single load, store, off
+	a_yield
+	add	r3, r4, #\off
+	mov	r5, #0
+1:	\load	r1, [r3]
+	add	r1, r1, #1
+	\store	r2, r1, [r3]
+	add	r5, r5, #1
+	cmp	r2, #0
+	beq	2f
+	cmp	r5, #255
+	blo	1b
+2:	a_expect_one
+.endm
+
+.macro a_double load, store, off
+	a_yield
+	add	r3, r4, #\off
+	mov	r5, #0
+1:	\load	r0, r1, [r3]
+	add	r0, r0, #1
+	\store	r2, r0, r1, [r3]
+	add	r5, r5, #1
+	cmp	r2, #0
+	beq	2f
+	cmp	r5, #255
+	blo	1b
+2:	a_expect_one
+.endm
+
+x_arm:
+	push	{r4, r5, r6, r7, lr}
+	mov	r6, #0
+	a_single ldrex, strex, 0
+	a_single ldaex, stlex, 0x8
+	a_single ldrexb, strexb, 0x10
+	a_single ldrexh, strexh, 0x14
+	a_single ldaexb, stlexb, 0x18
+	a_single ldaexh, stlexh, 0x1c
+	a_double ldrexd, strexd, 0x20
+	a_double ldaexd, stlexd, 0x28
+	a_yield
+	add	r3, r4, #0x30
+	mov	r1, #1
+	stl	r1, [r3]
+	lda	r1, [r3]
+	add	r3, r4, #0x34
+	stl	r1, [r3]
+	a_expect_one
+	mov	r0, r6
+	pop	{r4, r5, r6, r7, pc}
+
+	.arch	armv7-a
+
+
 /* ---- strings ---- */
 
 	.balign	4
@@ -2218,6 +2439,8 @@ mode_vfp:
 	str_	n_sc_open_dir, "syscalls: open O_DIRECTORY"
 	str_	n_sc_getdents64, "syscalls: getdents64"
 	str_	s_vfp, "vfp"
+	str_	s_exclusives, "exclusives"
+	str_	s_x_line, "a32-probe: exclusives: "
 	str_	n_tr_exec_stop, "tracer: exec stop with SIGTRAP"
 	str_	n_tr_getregs, "tracer: PTRACE_GETREGS"
 	str_	n_tr_pc, "tracer: pc is the entry"

@@ -269,8 +269,8 @@ probe's shell tools. Run it on the Linux guest and the maintained Android
 kernel.
 
 `guest-aarch32-kernel` checks the kernel's AArch32 task support in
-[`../kernel/common/README.md`](../kernel/common/README.md), and needs `python3`
-in the rootfs. The build generates a freestanding
+[`../kernel/common/README.md`](../kernel/common/README.md), and needs `python3`,
+`as` and `ld` in the rootfs. The build generates a freestanding
 armhf program from `tests/integration/aarch32/aarch32_probe.S` with the
 configured compiler's ARM backend, wraps it into an ELF32 executable with
 `make_elf32.py` (the toolchain has no ARM linker), aligned to 64 KiB and aligned
@@ -283,7 +283,11 @@ fault signals and stack growth, the time64 and socket calls with
 `SCM_RIGHTS`, `vfork`, timers, `seccomp` and a 32-bit tracer), a 64-bit
 tracer's session (registers, system call and single-step stops, signal-frame
 VFP state), a core dump and many runs at once, and requires the 4 KiB-only
-program to run on the guest. The tooling test
+program to run on the guest. Last, the guest assembles `aarch64_dirty.s`, a
+64-bit program that leaves x15-x30 set, and the program runs every exclusive
+and ordered transfer on each CPU right after it, through its execve and
+between its `sched_yield` calls. `guest-aarch32-exclusives-gadgets` and
+`-jit` run that check alone on four vCPUs of each engine. The tooling test
 `aarch32-elf32-wrapper` checks the two layouts the wrapper writes, and
 `aarch32-elf32-linker` the multi-object linker of the engine probe below.
 
