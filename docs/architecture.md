@@ -835,7 +835,8 @@ The [Virtio video devices](../darwin/device/video/README.md) bridge the shared
 mainline/Android V4L2 drivers to the platform VideoToolbox decoder (device 31)
 and encoder (device 30). Each uses its own vhost-user connection and service
 thread and requires no GPU context, and the devices depend only on the platform
-interfaces `video_decoder.hpp` and `video_encoder.hpp`. The
+interfaces `darwin/platform/video_decoder.hpp` and
+`darwin/platform/video_encoder.hpp`. The
 [private wire header](../kernel/common/video/README.md) is separate from both
 the public API and the host/kernel bridge ABI.
 
