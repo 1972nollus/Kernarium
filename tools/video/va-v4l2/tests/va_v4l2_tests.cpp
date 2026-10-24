@@ -23,17 +23,11 @@
 #include "../storage.hpp"
 #include "../v4l2_decoder.hpp"
 #include "../vp9.hpp"
+#include "test_support.hpp"
 
 namespace {
 
-int failures = 0;
-
-void check(bool condition, const char* what)
-{
-    if (condition) return;
-    std::fprintf(stderr, "FAIL %s\n", what);
-    ++failures;
-}
+using uml::va::test::check;
 
 // Writes VP9 uncompressed headers bit by bit, which is the only way to build
 // the fixtures this parser has to read.
@@ -513,7 +507,8 @@ int main()
     testArgbToNv12();
     testRegionBounds();
     testImportedLayout();
-    if (failures) {
+    uml::va::test::runPoolTests();
+    if (const int failures = uml::va::test::failureCount()) {
         std::fprintf(stderr, "UML_VA_V4L2_TESTS: FAIL (%d)\n", failures);
         return 1;
     }

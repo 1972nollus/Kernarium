@@ -145,12 +145,45 @@ planes is refused and an NV12 decode keeps the decoder's own buffers. When the
 capture queue learns to take one object carrying both planes, the probe finds
 it with no other change.
 
+## Device access in a sandboxed process
+
+A browser's GPU process initialises VA-API before it engages its sandbox, and
+a sandbox that is engaged cannot open a device node, so a session created
+afterwards would find nothing to talk to. The driver therefore opens a pool of
+V4L2 descriptors at the first initialisation in a process, and a session takes
+one from the pool and gives it back when it ends, with both of its queues
+stopped and released so that the next session starts from the initialisation
+sequence. The pool belongs to the process rather than to a `vaInitialize`:
+libva keeps the driver loaded, and a terminate followed by another initialise
+finds the same stock. Surfaces use the DRM descriptor the client passed to
+`vaGetDisplayDRM`, so allocating them opens nothing either.
+
+| `UML_VA_V4L2_POOL` | descriptors opened ahead |
+| --- | --- |
+| unset | four for the encoder and four for the decoder |
+| `encoders,decoders` | that many of each, at most sixteen; `0,0` opens nothing ahead |
+
+A process that is not sandboxed may take more than the pool holds: a session
+opens another descriptor when the stock is empty and closes it again when it
+ends. In a sandbox with the stock empty, `vaCreateContext` answers
+`VA_STATUS_ERROR_MAX_NUM_EXCEEDED` and the client falls back to software.
+
+The pool is required whenever Chromium's GPU sandbox engages. In today's guests
+it does not engage: Chromium's `SandboxLinux::InitializeSandbox()` declines to
+apply seccomp-bpf to a process that already has more than one thread, that
+refusal is not fatal for the GPU process, and the Mesa driver stack has started
+threads by the time the GPU process reaches it. `--gpu-sandbox-failures-fatal`
+turns the refusal into a crash, which is the evidence. Renderers and the other
+sandboxed process types are sandboxed normally, so the guest kernel is not the
+reason.
+
 ## Environment
 
 | variable | meaning |
 | --- | --- |
 | `LIBVA_DRIVER_NAME=uml`, `LIBVA_DRIVERS_PATH` | how libva finds this driver |
 | `UML_VA_V4L2_DEVICE` | the decoder node, instead of `/dev/video-dec0` or a scan of `/dev/video*` |
+| `UML_VA_V4L2_POOL` | how many descriptors to open ahead for each role, as above |
 | `UML_VA_V4L2_SURFACES` | the backing store, as above |
 | `UML_VA_V4L2_HIDDEN` | `show` (default) or `skip`, as above |
 | `UML_VA_V4L2_RGB` | `auto` (default) or `off`, as above |

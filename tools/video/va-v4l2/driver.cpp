@@ -118,21 +118,36 @@ void Driver::note(const char* message) const
 
 void Driver::probeCodecs()
 {
-    device_ = findDecoderDevice(V4L2_PIX_FMT_VP9);
+    // The descriptors a session will need are opened here, at initialisation,
+    // because a browser engages its sandbox after initialising VA-API and no
+    // device node can be opened after that.
+    auto& pool = DescriptorPool::process();
+    const PoolSizes sizes = poolSizes(std::getenv("UML_VA_V4L2_POOL"));
+    pool.setTarget(Role::decoder, sizes.decoders);
+    pool.setTarget(Role::encoder, sizes.encoders);
+    device_ = pool.knownDevice(Role::decoder);
+    if (device_.empty()) device_ = findDecoderDevice(V4L2_PIX_FMT_VP9);
     if (device_.empty()) { note("no Virtio video decoder node"); return; }
+    pool.fill(Role::decoder, device_);
+    std::string error;
+    Lease lease = pool.acquire(Role::decoder, device_, error);
+    if (!lease) { note(error.c_str()); return; }
     // Only the codecs whose VA-API submissions this driver can turn back into
     // the byte stream a stateful decoder needs are advertised. H.264 and HEVC
     // need their parameter sets rebuilt from the picture parameters first.
     CodecSupport vp9 {VAProfileVP9Profile0, V4L2_PIX_FMT_VP9, 16, 16, 4096, 2304};
-    queryCodecLimits(device_, V4L2_PIX_FMT_VP9, vp9.minWidth, vp9.minHeight, vp9.maxWidth, vp9.maxHeight);
+    queryCodecLimits(lease.fd(), V4L2_PIX_FMT_VP9, vp9.minWidth, vp9.minHeight, vp9.maxWidth, vp9.maxHeight);
     codecs_.push_back(vp9);
+    probeCapture(lease.fd());
+    // Nothing above changed the descriptor's state, so it goes back as it was.
+    lease.giveBack(true);
 }
 
-void Driver::probeCapture()
+void Driver::probeCapture(int descriptor)
 {
     if (captureProbed_) return;
     captureProbed_ = true;
-    rgbOffered_ = decoderOffersCapture(device_, V4L2_PIX_FMT_ABGR32);
+    rgbOffered_ = decoderOffersCapture(descriptor, V4L2_PIX_FMT_ABGR32);
     // Everything a decode session needs to know is settled here, at
     // initialisation, so that the first session of a boot - which is the one
     // that plays a startup movie - gets the same answer as every later one.
@@ -146,14 +161,12 @@ void Driver::probeCapture()
 
 bool Driver::importsCapture()
 {
-    probeCapture();
     return lendCapture_;
 }
 
 std::uint32_t Driver::preferredCapture()
 {
     if (rgbPolicy_ == RgbCapture::off) return 0;
-    probeCapture();
     if (!useRgbCapture(rgbPolicy_, rgbOffered_)) return 0;
     // The device writes B, G, R, A in memory, which is what VA-API calls
     // VA_FOURCC_ARGB and what a browser's BGRX pixmap expects.
@@ -970,7 +983,10 @@ VAStatus createContext(VADriverContextP ctx, VAConfigID configId, int width, int
         if (!codec) return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
         if (!width || !height) return VA_STATUS_ERROR_INVALID_PARAMETER;
         std::string error;
-        context->decoder = V4l2Decoder::open(driver.device(), codec->v4l2Format, unsigned(width),
+        // A pooled descriptor is the one a sandboxed process can still get.
+        Lease lease = DescriptorPool::process().acquire(Role::decoder, driver.device(), error);
+        if (!lease) { driver.note(error.c_str()); return VA_STATUS_ERROR_MAX_NUM_EXCEEDED; }
+        context->decoder = V4l2Decoder::open(std::move(lease), codec->v4l2Format, unsigned(width),
                                              unsigned(height), driver.preferredCapture(), error);
         if (!context->decoder) { driver.note(error.c_str()); return VA_STATUS_ERROR_ALLOCATION_FAILED; }
         // Lend the decoder this driver's own buffers, so that the device

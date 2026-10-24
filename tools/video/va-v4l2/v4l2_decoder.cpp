@@ -86,21 +86,16 @@ bool useRgbCapture(RgbCapture policy, bool deviceOffers) noexcept
     return deviceOffers && policy != RgbCapture::off;
 }
 
-bool decoderOffersCapture(const std::string& device, std::uint32_t fourcc)
+bool decoderOffersCapture(int descriptor, std::uint32_t fourcc)
 {
-    if (device.empty() || !fourcc) return false;
-    const int fd = ::open(device.c_str(), O_RDWR | O_CLOEXEC);
-    if (fd < 0) return false;
-    bool offered = false;
-    for (unsigned index = 0; !offered; ++index) {
+    if (descriptor < 0 || !fourcc) return false;
+    for (unsigned index = 0;; ++index) {
         v4l2_fmtdesc description {};
         description.type = kCapture;
         description.index = index;
-        if (call(fd, VIDIOC_ENUM_FMT, &description) < 0) break;
-        offered = description.pixelformat == fourcc;
+        if (call(descriptor, VIDIOC_ENUM_FMT, &description) < 0) return false;
+        if (description.pixelformat == fourcc) return true;
     }
-    ::close(fd);
-    return offered;
 }
 
 std::string findDecoderDevice(std::uint32_t codedFormat)
@@ -152,18 +147,14 @@ bool capturedPlaneFits(std::uint32_t format, unsigned plane, unsigned width, uns
     return rows == 1 || pitch <= (room - rowBytes) / (rows - 1);
 }
 
-bool queryCodecLimits(const std::string& device, std::uint32_t codedFormat, unsigned& minWidth,
+bool queryCodecLimits(int descriptor, std::uint32_t codedFormat, unsigned& minWidth,
                       unsigned& minHeight, unsigned& maxWidth, unsigned& maxHeight)
 {
-    if (device.empty()) return false;
-    const int fd = ::open(device.c_str(), O_RDWR | O_CLOEXEC);
-    if (fd < 0) return false;
+    if (descriptor < 0) return false;
     v4l2_frmsizeenum sizes {};
     sizes.index = 0;
     sizes.pixel_format = codedFormat;
-    const bool good = call(fd, VIDIOC_ENUM_FRAMESIZES, &sizes) == 0;
-    ::close(fd);
-    if (!good) return false;
+    if (call(descriptor, VIDIOC_ENUM_FRAMESIZES, &sizes) != 0) return false;
     if (sizes.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
         minWidth = maxWidth = sizes.discrete.width;
         minHeight = maxHeight = sizes.discrete.height;
@@ -176,17 +167,20 @@ bool queryCodecLimits(const std::string& device, std::uint32_t codedFormat, unsi
     return minWidth && minHeight && maxWidth && maxHeight;
 }
 
-std::unique_ptr<V4l2Decoder> V4l2Decoder::open(const std::string& device, std::uint32_t codedFormat,
+std::unique_ptr<V4l2Decoder> V4l2Decoder::open(Lease lease, std::uint32_t codedFormat,
                                                unsigned width, unsigned height,
                                                std::uint32_t preferredCapture, std::string& error)
 {
-    if (device.empty()) { error = "no Virtio video decoder node"; return nullptr; }
+    if (!lease) { error = "no Virtio video decoder node"; return nullptr; }
     std::unique_ptr<V4l2Decoder> decoder(new V4l2Decoder);
     decoder->preferredCapture_ = preferredCapture;
-    decoder->fd_ = ::open(device.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
-    if (decoder->fd_ < 0) { error = reason("open decoder"); return nullptr; }
+    decoder->fd_ = lease.fd();
+    decoder->lease_ = std::move(lease);
     if (!acceptsFormat(decoder->fd_, codedFormat)) { error = "decoder does not offer the codec"; return nullptr; }
+    // A descriptor that served an earlier session may still hold its events.
     v4l2_event_subscription subscription {};
+    subscription.type = V4L2_EVENT_ALL;
+    call(decoder->fd_, VIDIOC_UNSUBSCRIBE_EVENT, &subscription);
     subscription.type = V4L2_EVENT_SOURCE_CHANGE;
     if (call(decoder->fd_, VIDIOC_SUBSCRIBE_EVENT, &subscription) < 0) { error = reason("subscribe source change"); return nullptr; }
     subscription.type = V4L2_EVENT_EOS;
@@ -214,13 +208,31 @@ std::unique_ptr<V4l2Decoder> V4l2Decoder::open(const std::string& device, std::u
 
 V4l2Decoder::~V4l2Decoder()
 {
-    if (fd_ >= 0) {
-        if (captureStreaming_) { auto type = unsigned(kCapture); call(fd_, VIDIOC_STREAMOFF, &type); }
-        if (outputStreaming_) { auto type = unsigned(kOutput); call(fd_, VIDIOC_STREAMOFF, &type); }
-        unmap(capture_);
-        unmap(output_);
-        ::close(fd_);
+    if (fd_ < 0) return;
+    bool clean = true;
+    if (captureStreaming_) {
+        auto type = unsigned(kCapture);
+        if (call(fd_, VIDIOC_STREAMOFF, &type) < 0) clean = false;
     }
+    if (outputStreaming_) {
+        auto type = unsigned(kOutput);
+        if (call(fd_, VIDIOC_STREAMOFF, &type) < 0) clean = false;
+    }
+    unmap(capture_);
+    unmap(output_);
+    // Free both queues so that the next session on this descriptor starts from
+    // the initialisation sequence. A queue that was never set up has nothing to
+    // free, and that is not a failure.
+    const auto freeQueue = [this, &clean](unsigned type, unsigned memory) {
+        v4l2_requestbuffers request {};
+        request.type = type;
+        request.memory = memory;
+        request.count = 0;
+        if (call(fd_, VIDIOC_REQBUFS, &request) < 0 && errno != EINVAL) clean = false;
+    };
+    freeQueue(kCapture, captureImports_ ? V4L2_MEMORY_DMABUF : V4L2_MEMORY_MMAP);
+    freeQueue(kOutput, V4L2_MEMORY_MMAP);
+    lease_.giveBack(clean);
 }
 
 bool V4l2Decoder::setupOutput(std::uint32_t codedFormat, unsigned width, unsigned height, std::string& error)

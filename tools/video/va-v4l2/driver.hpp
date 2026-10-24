@@ -190,15 +190,16 @@ public:
 
 private:
     void probeCodecs();
-    // Learns once what the decoder's capture queue can do.
-    void probeCapture();
+    // Learns once what the decoder's capture queue can do, on a descriptor the
+    // pool lent for the purpose.
+    void probeCapture(int descriptor);
 
     std::mutex lock_;
     std::vector<CodecSupport> codecs_;
     std::string device_;
     RgbCapture rgbPolicy_ {RgbCapture::automatic};
     CaptureMemory capturePolicy_ {CaptureMemory::automatic};
-    // Probed once at initialisation, because each probe opens the device node.
+    // Probed once at initialisation, before a sandbox can close the device nodes.
     bool captureProbed_ {};
     bool rgbOffered_ {};
     bool lendCapture_ {};
