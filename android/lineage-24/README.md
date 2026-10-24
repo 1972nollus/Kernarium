@@ -213,6 +213,14 @@ An application would see the level through the API and an empty property.
 the value is public, and the target-files verifier requires the rule in the
 packaged vendor policy.
 
+MediaProvider's FUSE daemon kept its state on the stack of the session thread,
+while the Java side keeps calling into the daemon until that thread deletes it.
+A public volume that unmounts right after it mounts reached the volume's
+leveldb setup once the state was gone, and MediaProvider aborted on a destroyed
+mutex. A `packages/providers/MediaProvider` topic (route `p0019`) keeps the
+state until the daemon is deleted and makes that setup return when the session
+has ended.
+
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
 in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves
