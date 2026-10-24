@@ -571,6 +571,19 @@ uml_add_guest_integration_test(
     TIMEOUT 420
     CPUS 4)
 
+# The settings the Android CTS and the desktop disagree on: a Linux guest has
+# SysV IPC, the NFS client and SCTP and no RDS, and every guest has IPv4
+# multicast and no listener on RDS-over-TCP's port.
+uml_add_guest_integration_test(
+    NAME guest-kernel-config
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/kernel_config_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror"
+        --ncpus 2 --probe-timeout 120
+    LABELS guest;kernel;smoke
+    TIMEOUT 420
+    CPUS 2)
+
 # A system call or a fault taken with a bad stack pointer, again and again
 # on one vCPU, gets native arm64's result and never kills the task, and the
 # kernel prints no failed Darwin host call.

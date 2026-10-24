@@ -125,7 +125,8 @@ discovery need, and SafeSetID, which restricts only the IDs a policy written
 to securityfs names. No product has RDS: its TCP transport opens a kernel
 listener on port 16385 in every network namespace for any local user to
 reach, and nothing in a guest uses it, so the LTP case that needs it,
-`recvmsg03`, is in `disabled-tests.tsv`.
+`recvmsg03`, is in `disabled-tests.tsv`. `guest-kernel-config` checks these
+settings in a Linux guest, and the same probe checks an Android guest.
 
 DWARF stays uncompressed in both products, in the shared policy, for the Darwin
 host's pahole, whose elfutils is built without zstd.
