@@ -24,10 +24,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 53 insertions(+)
 
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 4fabe9205a7a023142b01450a4730433bef273ca..bd3151ae9f3a225be0aa066d42679f26a5e26193 100644
+index fc1fb14d46aa3725535ad435ecff807f916840a6..c00ec8d8430369d3f84754b58f36f4595030c8ca 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
-@@ -257,6 +257,47 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+@@ -262,6 +262,47 @@ int handle_uaccess_fault(unsigned long address, int is_write, int *code_out)
  					code_out);
  }
  
@@ -75,7 +75,7 @@ index 4fabe9205a7a023142b01450a4730433bef273ca..bd3151ae9f3a225be0aa066d42679f26
  static void show_segv_info(struct uml_pt_regs *regs)
  {
  	struct task_struct *tsk = current;
-@@ -444,6 +485,18 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -449,6 +490,18 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  	}
  	show_segv_info(regs);
  

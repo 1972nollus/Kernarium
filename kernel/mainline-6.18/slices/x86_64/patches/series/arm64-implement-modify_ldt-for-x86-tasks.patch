@@ -341,7 +341,7 @@ index fdc3e28675372640fbebb31155b25a035b021209..a7d76b1c5499420064308406731c8e40
  	struct mutex turnstile;
  
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index 83f7e9f5c45274d2fd1282a1e5b998a3582cc1a4..bdc2f2a8e3b06dd0b99526f398b991e01af9722b 100644
+index beda0d55cd51730e8a2fe1e77fce50df249716d5..78a97235f9b3710ee7c53a5f38f0484dc1b94ce9 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -69,6 +69,7 @@ extern void do_uml_exitcalls(void);

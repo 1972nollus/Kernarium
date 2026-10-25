@@ -344,9 +344,12 @@ safe points poll through `cond_resched()`, which does so only without
 retries its fault until the fault handler refuses it or the task is dying, as
 native uaccess re-executes the access, so a sibling's `fork()` that
 write-protects the page again after the fault never fails the copy with
-`-EFAULT`. A uaccess write holds its page with a pin taken under the
-page-table lock, so a `fork()` meanwhile gives the child a copy and a store
-through the kernel's alias never reaches it.
+`-EFAULT`. That fault is the kernel's own access, so it carries no
+`FAULT_FLAG_USER`: a userfaultfd made with `UFFD_USER_MODE_ONLY` refuses it
+and the copy fails with `-EFAULT`, as it does natively, while a user-mode
+access to the same range is still delivered. A uaccess write holds its page
+with a pin taken under the page-table lock, so a `fork()` meanwhile gives the
+child a copy and a store through the kernel's alias never reaches it.
 Every path that changes a CPU's
 logical IRQ state outside `local_irq_*()`, including interrupt work run from an
 idle wait, reports the change to lockdep as interrupt entry would; without

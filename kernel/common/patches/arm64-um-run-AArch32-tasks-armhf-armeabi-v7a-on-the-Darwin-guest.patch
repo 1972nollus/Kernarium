@@ -2548,7 +2548,7 @@ index ae6b892773f3d92d13b839acb0a08ff33469371a..651022c60550de3ea6409725368e82c3
 +}
 +#endif
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 1b50acbd2077fa4389b1dadfebe3e4d8fd0d0763..46992c2d4f40144dcf9cb0a0c8d1bebf6a0c44a3 100644
+index 7915c1b421f91df67001dbcf97de9b87d2e06e47..a6d32d27031a4ecdc38d8f81873b7e106b4902cd 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -15,6 +15,9 @@

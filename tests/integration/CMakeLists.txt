@@ -617,6 +617,20 @@ uml_add_guest_integration_test(
     TIMEOUT 420
     CPUS 4)
 
+# The kernel's own access to a user range reaches userfaultfd as native Linux
+# delivers it: a UFFD_USER_MODE_ONLY descriptor never sees it and the system
+# call fails with EFAULT, while a user-mode access and a plain descriptor's
+# kernel access are delivered. Android's ART collector depends on both.
+uml_add_guest_integration_test(
+    NAME guest-uaccess-userfaultfd
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/uaccess_userfaultfd_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror -pthread"
+        --ncpus 2 --probe-timeout 120
+    LABELS guest;kernel;memory
+    TIMEOUT 420
+    CPUS 2)
+
 # The settings the Android CTS and the desktop disagree on: a Linux guest has
 # SysV IPC, the NFS client and SCTP and no RDS, and every guest has IPv4
 # multicast and no listener on RDS-over-TCP's port.

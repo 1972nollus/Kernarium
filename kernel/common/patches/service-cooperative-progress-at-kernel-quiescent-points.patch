@@ -24,7 +24,7 @@ needs no poll: it leaves the CPU to the idle loop or to another task.
  6 files changed, 112 insertions(+), 6 deletions(-)
 
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b5e2662e1 100644
+index 198ba0cad52645505807ac20faeb9641c6467495..480eda72a4869435404ccfeea1b97fdce330b298 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -37,6 +37,9 @@ extern unsigned int do_IRQ(int irq, struct uml_pt_regs *regs);
@@ -38,7 +38,7 @@ index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index f98d4f2ab51092ee2527b3fc8d61acdc8b77e076..34aeec80642a53b0d33567f432266eadae0b7ae9 100644
+index eebdfd692dbf7a4bf209190f8da07de8fa1dee44..0a79d20d3c871993203998e82fef9496c7a0547e 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -184,6 +184,31 @@ static void mark_user_page_dirty(unsigned long addr, struct page *page,
@@ -74,7 +74,7 @@ index f98d4f2ab51092ee2527b3fc8d61acdc8b77e076..34aeec80642a53b0d33567f432266ead
  {
  	struct page *page;
 @@ -210,6 +235,10 @@ static struct page *maybe_map(unsigned long virt, int is_write)
- 		if (handle_page_fault(virt, 0, is_write, 1, &dummy_code) ||
+ 		if (handle_uaccess_fault(virt, is_write, &dummy_code) ||
  		    fatal_signal_pending(current))
  			return NULL;
 +#ifdef UML_HOST_DARWIN

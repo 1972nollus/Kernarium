@@ -5,19 +5,20 @@ Subject: [PATCH] uml: add MMU synchronization and user-access support
 
 Keep page-table synchronization, precise nested invalidation ranges, same-process address-space lifetime, and user-access behavior in one final-state MMU topic.
 ---
- arch/um/include/asm/tlb.h        |   9 +
- arch/um/kernel/mem.c             |   7 +
- arch/um/kernel/skas/Makefile     |   5 +
- arch/um/kernel/skas/mmu.c        |  33 ++-
- arch/um/kernel/skas/mmu_darwin.c |  98 +++++++
- arch/um/kernel/skas/process.c    |  90 +++++-
- arch/um/kernel/skas/uaccess.c    | 359 +++++++++++++++++++----
- arch/um/kernel/tlb.c             | 489 +++++++++++++++++++++++++++++--
- arch/um/kernel/trap.c            |  58 +++-
- include/linux/mm.h               |   2 +
- mm/gup.c                         |  47 +++
- mm/mmu_gather.c                  |   7 +-
- 12 files changed, 1092 insertions(+), 112 deletions(-)
+ arch/um/include/asm/tlb.h          |   9 +
+ arch/um/include/shared/kern_util.h |   4 +-
+ arch/um/kernel/mem.c               |   7 +
+ arch/um/kernel/skas/Makefile       |   5 +
+ arch/um/kernel/skas/mmu.c          |  33 +-
+ arch/um/kernel/skas/mmu_darwin.c   |  98 ++++++
+ arch/um/kernel/skas/process.c      |  90 +++++-
+ arch/um/kernel/skas/uaccess.c      | 359 +++++++++++++++++----
+ arch/um/kernel/tlb.c               | 489 +++++++++++++++++++++++++++--
+ arch/um/kernel/trap.c              |  65 +++-
+ include/linux/mm.h                 |   2 +
+ mm/gup.c                           |  47 +++
+ mm/mmu_gather.c                    |   7 +-
+ 13 files changed, 1100 insertions(+), 115 deletions(-)
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
 diff --git a/arch/um/include/asm/tlb.h b/arch/um/include/asm/tlb.h
@@ -38,6 +39,21 @@ index 0422467bda5ba309aa58820feb50a9198860ac1b..ed4e779424897a3d2d195eb5b48feb79
 +#endif
 +
  #endif
+diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
+index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..198ba0cad52645505807ac20faeb9641c6467495 100644
+--- a/arch/um/include/shared/kern_util.h
++++ b/arch/um/include/shared/kern_util.h
+@@ -30,8 +30,8 @@ extern void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
+ extern unsigned long segv(struct faultinfo fi, unsigned long ip,
+ 			  int is_user, struct uml_pt_regs *regs,
+ 			  void *mc);
+-extern int handle_page_fault(unsigned long address, unsigned long ip,
+-			     int is_write, int is_user, int *code_out);
++extern int handle_uaccess_fault(unsigned long address, int is_write,
++				int *code_out);
+ 
+ extern unsigned int do_IRQ(int irq, struct uml_pt_regs *regs);
+ extern void initial_thread_cb(void (*proc)(void *), void *arg);
 diff --git a/arch/um/kernel/mem.c b/arch/um/kernel/mem.c
 index 32e3b1972dc12f57620cf6b2d97d5057619845df..a8cd49bd5cc95f9ab038ab184b25766f1320a08c 100644
 --- a/arch/um/kernel/mem.c
@@ -391,7 +407,7 @@ index 5881b17eb9874256cef33ca69643aa0f737e4cab..5e153236cbc104c5ac60297c9de16773
 +	return 0;
  }
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 198269e384c43b174208d683ec4f18242d726fac..f98d4f2ab51092ee2527b3fc8d61acdc8b77e076 100644
+index 198269e384c43b174208d683ec4f18242d726fac..eebdfd692dbf7a4bf209190f8da07de8fa1dee44 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -7,72 +7,282 @@
@@ -602,19 +618,19 @@ index 198269e384c43b174208d683ec4f18242d726fac..f98d4f2ab51092ee2527b3fc8d61acdc
 +	 * then used the physical page after it could already have been recycled.
 +	 * pin_user_mapping() samples the entry under the appropriate page-table
 +	 * lock and returns a reference without changing the long-standing UML
-+	 * fault contract.  On a miss, handle_page_fault() still performs demand
-+	 * paging, COW, and stack expansion, and the lookup runs again.
++	 * fault contract.  On a miss, handle_uaccess_fault() still performs
++	 * demand paging, COW, and stack expansion, and the lookup runs again.
 +	 *
 +	 * The fault and that lookup do not share one hold of mmap_lock.  A
 +	 * sibling's fork() queued behind the fault takes the lock first and
 +	 * write-protects every private PTE again, and reclaim or migration can
 +	 * unmap the page without the lock at all.  Native uaccess re-executes
 +	 * its access after every fault until the fault handler gives up, so a
-+	 * miss here likewise ends only when handle_page_fault() fails or the
++	 * miss here likewise ends only when handle_uaccess_fault() fails or the
 +	 * task is dying; a lost race is never -EFAULT.
 +	 */
 +	while ((page = pin_user_mapping(current->mm, virt, is_write)) == NULL) {
-+		if (handle_page_fault(virt, 0, is_write, 1, &dummy_code) ||
++		if (handle_uaccess_fault(virt, is_write, &dummy_code) ||
 +		    fatal_signal_pending(current))
  			return NULL;
 -		pte = virt_to_pte(current->mm, virt);
@@ -1499,7 +1515,7 @@ index cf7e0d4407f2cd73777870ee6b087962bab79489..2585bfa7e23fde21bc6c998438912438
 +	}
  }
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..433b6fda3da3428817c1ca7e81304b6b6bc02c7a 100644
+index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..41d0c399dbb0fca2d0a42c0eb3ab1bcc0b216f89 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
 @@ -17,6 +17,11 @@
@@ -1514,19 +1530,35 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..433b6fda3da3428817c1ca7e81304b6b
  /*
   * NOTE: UML does not have exception tables. As such, this is almost a copy
   * of the code in mm/memory.c, only adjusting the logic to simply check whether
-@@ -137,8 +142,9 @@ um_lock_mm_and_find_vma(struct mm_struct *mm,
+@@ -136,9 +141,16 @@ um_lock_mm_and_find_vma(struct mm_struct *mm,
+ /*
   * Note this is constrained to return 0, -EFAULT, -EACCES, -ENOMEM by
   * segv().
++ *
++ * A uaccess fault is the kernel's own access to a user address, which UML
++ * resolves by calling this function instead of taking an exception.  It may
++ * wait for mmap_lock like a user fault, but it is not taken in user mode:
++ * FAULT_FLAG_USER stays clear, so userfaultfd refuses it for a descriptor
++ * made with UFFD_USER_MODE_ONLY, as it does for native uaccess.
   */
 -int handle_page_fault(unsigned long address, unsigned long ip,
 -		      int is_write, int is_user, int *code_out)
 +static int handle_page_fault_access(unsigned long address, unsigned long ip,
 +				    int is_write, int is_exec, int is_user,
-+				    int *code_out)
++				    int uaccess, int *code_out)
  {
  	struct mm_struct *mm = current->mm;
  	struct vm_area_struct *vma;
-@@ -168,6 +174,13 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+@@ -156,7 +168,7 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+ 	if (faulthandler_disabled())
+ 		goto out_nosemaphore;
+ 
+-	if (is_user)
++	if (is_user && !uaccess)
+ 		flags |= FAULT_FLAG_USER;
+ retry:
+ 	vma = um_lock_mm_and_find_vma(mm, address, is_user);
+@@ -168,6 +180,13 @@ int handle_page_fault(unsigned long address, unsigned long ip,
  		if (!(vma->vm_flags & VM_WRITE))
  			goto out;
  		flags |= FAULT_FLAG_WRITE;
@@ -1540,21 +1572,20 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..433b6fda3da3428817c1ca7e81304b6b
  	} else {
  		/* Don't require VM_READ|VM_EXEC for write faults! */
  		if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
-@@ -236,6 +249,13 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+@@ -236,6 +255,12 @@ int handle_page_fault(unsigned long address, unsigned long ip,
  	return 0;
  }
  
-+int handle_page_fault(unsigned long address, unsigned long ip,
-+		      int is_write, int is_user, int *code_out)
++int handle_uaccess_fault(unsigned long address, int is_write, int *code_out)
 +{
-+	return handle_page_fault_access(address, ip, is_write, 0, is_user,
++	return handle_page_fault_access(address, 0, is_write, 0, 1, 1,
 +					code_out);
 +}
 +
  static void show_segv_info(struct uml_pt_regs *regs)
  {
  	struct task_struct *tsk = current;
-@@ -316,17 +336,35 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -316,17 +341,35 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  	if (!is_user && regs)
  		current->thread.segv_regs = container_of(regs, struct pt_regs, regs);
  
@@ -1593,7 +1624,7 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..433b6fda3da3428817c1ca7e81304b6b
  		goto out;
  	}
  	else if (current->pagefault_disabled) {
-@@ -353,8 +391,13 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -353,8 +396,13 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  	}
  
  	if (SEGV_IS_FIXABLE(&fi))
@@ -1605,11 +1636,11 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..433b6fda3da3428817c1ca7e81304b6b
 +#else
 +					       0,
 +#endif
-+					       is_user, &si_code);
++					       is_user, 0, &si_code);
  	else {
  		err = -EFAULT;
  		/*
-@@ -375,7 +418,6 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -375,7 +423,6 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  		panic("Kernel mode fault at addr 0x%lx, ip 0x%lx",
  		      address, ip);
  	}
