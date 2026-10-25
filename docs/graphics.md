@@ -197,6 +197,14 @@ buffers, so a scanout bit on NV12 costs the guest every video encoder, video
 decoder and camera use of that format. P010 stays unavailable either way:
 minigbm has no emulation for it and the host does not sample it.
 
+Without a host allocator the renderer cannot create any multi-planar resource,
+so a YUV buffer exists on the host only as the bytes of an R8 image, whatever
+the buffer is used for. minigbm decides that by what the host can create rather
+than by the capabilities a buffer's use flags name, which are none for a buffer
+only the CPU, a codec or a camera touches: the renderer refuses a native NV12
+create as an invalid parameter and every later command on that resource as an
+invalid resource id.
+
 Applications that use stateful V4L2 decoding can instead use the independent
 [Virtio video service](../darwin/device/video/README.md). It exposes the same
 host codec profile set through the shared Linux and Android driver and copies
