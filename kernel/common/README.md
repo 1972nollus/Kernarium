@@ -324,7 +324,19 @@ V0-V15, FPSCR split between `fpsr` and `fpcr`, TPIDRURW in `tls` and the new
 `tpidrro` for TPIDRURO. The comments on `struct darwin_uml_guest_registers`
 in [`abi/darwin_uml_abi.h`](abi/darwin_uml_abi.h) define the registers and what
 each event means, and `abi.cp15_barrier` (0 to 2, default 1) is passed as
-`DARWIN_UML_DISPATCH_A32_CP15BEN`. SWP, SWPB and SETEND are UNDEFINED.
+`DARWIN_UML_DISPATCH_A32_CP15BEN`. The engines raise the
+undefined-instruction event for SWP and SWPB whatever their condition, and
+`abi.swp` (0 or 1, default 0, as on arm64 Linux; Android's init sets 1)
+decides what the kernel does with it: 0 delivers SIGILL, and 1 emulates the
+instruction as arm64 Linux's `armv8_deprecated.c` does. The exchange is one
+atomic operation on the page the task sees, so it is atomic against exclusive
+pairs, atomic instructions and futex operations on other vCPUs. An access
+that fails, an unaligned SWP included, raises SIGSEGV with the pc at the
+instruction, a failing condition retires the instruction untouched, and a
+stepped one ends with `TRAP_TRACE`. A pc operand, which the architecture
+leaves UNPREDICTABLE, is UNDEFINED, where arm64 Linux would use an unrelated
+register. SETEND is UNDEFINED, as on a CPU without mixed-endian EL0, and has
+no switch.
 AArch32 is on only when `darwin_uml_guest_compat_hwcap()` is non-zero. That
 word always names the architecture's baseline, so it is the single source of
 truth and no separate query exists. While it is zero, as in a run without an

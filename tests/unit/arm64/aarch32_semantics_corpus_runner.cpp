@@ -11,6 +11,11 @@
  * The model's guest pages are separate host allocations, so a library that
  * assumed two guest pages are adjacent in the host would fail here.
  *
+ * The library covers the whole profile, so a case with a form it does not
+ * cover is a failure of the lane too (--skipped lists such forms), and the
+ * BFloat16, 8-bit matrix multiply and FHM forms run on any host, because the
+ * library does not need those features.
+ *
  *   uml_arm64_aarch32_semantics_corpus_tests PACK [--record NAME]
  *       [--case NAME] [--form PREFIX] [--all-failures] [--trace] [--skipped]
  */
@@ -289,7 +294,7 @@ std::string check(Machine &machine, const Case &test, const Profile &profile)
 bool within_coverage(const Case &test)
 {
 	bool covered = true;
-	for_each_instruction(test, Profile::at(Level::complete), [&](const ProgramStep &step) {
+	for_each_instruction(test, Profile{}, [&](const ProgramStep &step) {
 		covered = !step.instruction.legal() || a32_semantics_covers(step.instruction.form);
 		return covered;
 	});
@@ -332,7 +337,7 @@ int main(int argc, char **argv)
 	g_trace = trace;
 	const Pack pack = read_pack(read_file(path));
 	/* The whole profile: the library implements all of it. */
-	const Profile profile = Profile::at(Level::complete);
+	const Profile profile;
 
 	Machine machine;
 	Totals totals;

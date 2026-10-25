@@ -83,7 +83,7 @@ index f355df97e151ed1cc8dd53909aad7f4c0fee4696..b5928e08d6271161496d9163b97032d1
  {
  	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 4ae759c65d830f96026b8be0af635f99b508d0c5..6d7076773db49994d94eac24a2b53edb7e92cac0 100644
+index 720f4479b1557a2a340dd30bf53588281fd2e1f0..8a2d4845962c4807951f919730dd46eddf8f7968 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -107,6 +107,35 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
@@ -130,7 +130,7 @@ index 4ae759c65d830f96026b8be0af635f99b508d0c5..6d7076773db49994d94eac24a2b53edb
  
  /*
   * The dispatch flags of the guest registers hold facts about the task for
-@@ -690,19 +720,37 @@ void userspace(struct uml_pt_regs *registers)
+@@ -712,19 +742,37 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_BREAKPOINT:
  		{
  			siginfo_t signal_info = { 0 };

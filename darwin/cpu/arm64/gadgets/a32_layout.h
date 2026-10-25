@@ -11,13 +11,12 @@
  * [the instruction's key][operand]; a gadget with a slow path that the
  * library takes over carries the operand as its last stream word. The
  * operand holds what the library's decode needs again at run time: the
- * instruction's word in bits 0-31, the ITSTATE it executes in at bit 32, the
- * decode level at bit 40, whether the target PC of a load that writes PC is
- * to be left as a value in CpuState::registers[15] at bit 42, whether the
- * word is T32 at bit 43, and the form decoded at build time at bit 48, which
- * the run-time decode must find again. */
+ * instruction's word in bits 0-31, the ITSTATE it executes in at bit 32,
+ * whether the target PC of a load that writes PC is to be left as a value in
+ * CpuState::registers[15] at bit 42, whether the word is T32 at bit 43, and
+ * the form decoded at build time at bit 48, which the run-time decode must
+ * find again. */
 #define UML_GADGET_A32_LIBRARY_IT_SHIFT 32
-#define UML_GADGET_A32_LIBRARY_LEVEL_SHIFT 40
 #define UML_GADGET_A32_LIBRARY_PC_VALUE_SHIFT 42
 #define UML_GADGET_A32_LIBRARY_THUMB_SHIFT 43
 #define UML_GADGET_A32_LIBRARY_FORM_SHIFT 48
@@ -30,6 +29,18 @@
  * position in place of the key, because no block transfer the gadgets run
  * reads the PC. */
 #define UML_GADGET_A32_POSITION_SHIFT 24
+
+/* The two CpuState::registers slots past R0-R14 that the part borrows: for
+ * the value of PC read as an operand, a destination PC, and the address of a
+ * T32 LDREX or STREX with an offset. No AArch32 register is in them, so the
+ * runtime does not load them, and they hold whatever the virtual CPU ran
+ * last, an AArch64 task's x15 and x16 among it. The exclusive and ordered
+ * transfers are the A64 part's gadgets, which read an address slot whole, so
+ * every slot a stream reads holds a zero-extended value: R0-R14 are loaded
+ * so and every write keeps them so, and each entry clears these two
+ * (GadgetExecutor::enter_aarch32). */
+#define UML_GADGET_A32_SCRATCH0_SLOT 15
+#define UML_GADGET_A32_SCRATCH1_SLOT 16
 
 /* What uml_arm64_gadget_a32_execute (a32/library_helpers.cpp) returns to the
  * gadget: the instruction retired; it faulted, with the fault in the TLB;

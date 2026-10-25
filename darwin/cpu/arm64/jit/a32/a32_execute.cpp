@@ -27,8 +27,6 @@
 #include "cpu/arm64/jit/jit_semantic_reservation.hpp"
 #include "cpu/arm64/memory.hpp"
 
-#include <array>
-#include <atomic>
 #include <bit>
 #include <mutex>
 #include <span>
@@ -44,11 +42,11 @@ namespace sem = jit::semantic;
 using aarch32::Instruction;
 
 /* The exclusive monitor's view of guest memory, for sem::atomic_load_value
- * and sem::atomic_store_value: the translated page of one access the library
- * has already checked for natural alignment (1, 2, 4 or 8 bytes), which the
- * monitor performs as one host access. has_fault() is true, so a failed
- * translation is the access's fault, which the library reports, and neither
- * helper falls back to read or write. */
+ * and sem::atomic_store_exclusive_value: the translated page of one access
+ * the library has already checked for natural alignment (1, 2, 4 or 8
+ * bytes), which the monitor performs as one host access. has_fault() is
+ * true, so a failed translation is the access's fault, which the library
+ * reports, and neither helper falls back to read or write. */
 class TlbMemory final : public GuestMemory {
 public:
   explicit TlbMemory(Tlb &tlb) noexcept : tlb_{tlb} {}
@@ -85,7 +83,8 @@ private:
  * exclusive monitor is the JIT's software reservation. */
 class LibraryMemory final : public aarch32::A32Memory {
 public:
-  explicit LibraryMemory(Tlb &tlb) noexcept : tlb_{tlb}, memory_{tlb} {}
+  LibraryMemory(CpuState &cpu, Tlb &tlb) noexcept
+      : cpu_{cpu}, tlb_{tlb}, memory_{tlb} {}
 
   std::byte *translate(std::uint64_t address,
                        ::uml::memory::MemoryAccess access) noexcept override {
@@ -100,7 +99,7 @@ public:
   void stored(std::byte *host, std::size_t size) noexcept override {
     const JitStoreRange range{reinterpret_cast<std::uint64_t>(host),
                                    size};
-    sem::invalidate_store_ranges(std::span{&range, 1});
+    sem::invalidate_store_ranges(cpu_, std::span{&range, 1});
   }
 
   /* LDREX: the value and the reservation (the granule's key and version)
@@ -131,7 +130,10 @@ public:
 
   /* STREX passes when the monitor still names this location, no store has
    * invalidated its granule and the location holds the value the load read;
-   * the monitor is cleared either way. */
+   * the monitor is cleared either way. The store itself is a compare-and-swap
+   * from that value, so a write that does not take the exclusive lock (the
+   * kernel's futex and SWP emulation) between the check and the store fails
+   * the STREX instead of being overwritten. */
   bool store_exclusive(CpuState &cpu, std::uint32_t address, std::byte *,
                        unsigned size, std::uint64_t value,
                        bool release) noexcept override {
@@ -145,21 +147,24 @@ public:
                    cpu.exclusive_size == size && cpu.exclusive_key == key &&
                    cpu.exclusive_version == sem::reservation_version(key) &&
                    cpu.exclusive_value == current;
+    const sem::MonitoredValue monitored{cpu.exclusive_key, cpu.exclusive_value,
+                                        0};
     cpu.clear_exclusive_monitor();
     if (!success)
       return false;
     std::uintptr_t stored_key = 0;
-    const auto result = sem::atomic_store_value(
-        memory_, address, size, value,
-        release ? std::memory_order_release : std::memory_order_relaxed, &key,
+    const auto result = sem::atomic_store_exclusive_value(
+        memory_, address, size, monitored, value,
+        release ? std::memory_order_release : std::memory_order_relaxed,
         stored_key);
     if (result != sem::AtomicStoreResult::stored)
       return false;
-    sem::reservation_store(stored_key);
+    sem::reservation_store(cpu, stored_key);
     return true;
   }
 
 private:
+  CpuState &cpu_;
   Tlb &tlb_;
   TlbMemory memory_;
 };
@@ -187,7 +192,7 @@ private:
                                                std::uint32_t itstate) noexcept {
   cpu.pc = key;
   cpu.a32_itstate = static_cast<std::uint8_t>(itstate);
-  LibraryMemory memory{tlb};
+  LibraryMemory memory{cpu, tlb};
   aarch32::StepResult result;
   const auto traits = inst.info().traits;
   if ((traits & aarch32::trait::stores) != 0U &&
@@ -217,34 +222,7 @@ private:
   return pack_jit_result(Event::fatal, 0);
 }
 
-std::atomic<bool> counting_exits{false};
-std::atomic<std::uint64_t> exit_total{0};
-std::array<std::atomic<std::uint64_t>, aarch32::kFormCount> form_exits{};
-
 } // namespace
-
-namespace jit::a32 {
-
-void count_helper_exits(bool enable) noexcept {
-  counting_exits.store(enable, std::memory_order_relaxed);
-}
-
-std::uint64_t helper_exits(aarch32::Form form) noexcept {
-  return form_exits[static_cast<std::size_t>(form)].load(
-      std::memory_order_relaxed);
-}
-
-std::uint64_t helper_exit_total() noexcept {
-  return exit_total.load(std::memory_order_relaxed);
-}
-
-void reset_helper_exits() noexcept {
-  exit_total.store(0, std::memory_order_relaxed);
-  for (auto &count : form_exits)
-    count.store(0, std::memory_order_relaxed);
-}
-
-} // namespace jit::a32
 
 extern "C" std::uint64_t uml_arm64_jit_a32_execute(
     CpuState *cpu, Tlb *tlb, std::uint32_t word, std::uint64_t key,
@@ -265,11 +243,6 @@ extern "C" std::uint64_t uml_arm64_jit_a32_execute(
    * of the run restores the host's. */
   if (needs_host_fp_environment(inst))
     arm64::restore_native_fp_environment(*cpu);
-  if (counting_exits.load(std::memory_order_relaxed)) {
-    form_exits[static_cast<std::size_t>(inst.form)].fetch_add(
-        1, std::memory_order_relaxed);
-    exit_total.fetch_add(1, std::memory_order_relaxed);
-  }
   const auto traits = inst.info().traits;
   if ((traits & aarch32::trait::exclusive) == 0U)
     return execute_in_library(*cpu, *tlb, inst, key, itstate);

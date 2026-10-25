@@ -25,7 +25,7 @@ namespace uml::cpu::arm64::gadgets::a32 {
  *
  * The PC of a program as the engine reports it on an exit is the key of the
  * instruction that did not retire, or of the next instruction for one that
- * did (SVC, BKPT excepted: aarch32/README.md). */
+ * did (SVC, BKPT excepted: aarch32/semantics.hpp). */
 
 struct BuildInput final {
 	/* The key the block starts at. */
@@ -67,9 +67,9 @@ inline constexpr std::size_t block_limit = 64;
 	const BuildOptions &options, const aarch32::Profile &profile,
 	std::size_t block_instructions);
 
-/* The profile the gadget engine decodes AArch32 against: its level and the
- * optional extensions the host has (a32_features), which are the ones the
- * guest is shown. A form of any other extension is UNDEFINED. */
+/* The profile the gadget engine decodes AArch32 against: the optional
+ * extensions the host has (a32_features), which are the ones the guest is
+ * shown. A form of any other extension is UNDEFINED. */
 [[nodiscard]] aarch32::Profile decode_profile(const BuildOptions &options) noexcept;
 
 /* Where each instruction of a T32 block starts, given the block's halfwords:

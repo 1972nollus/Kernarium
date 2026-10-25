@@ -25,10 +25,10 @@ namespace uml::cpu::arm64::gadgets::a32::detail {
 
 using namespace aarch32;
 
-/* CpuState::registers[15] and [16], where PC read as an operand and a
- * destination PC live. */
-constexpr std::uintptr_t scratch0 = 15 * 8;
-constexpr std::uintptr_t scratch1 = 16 * 8;
+/* The part's scratch slots (a32_layout.h), where PC read as an operand, a
+ * destination PC and a T32 exclusive transfer's address live. */
+constexpr std::uintptr_t scratch0 = UML_GADGET_A32_SCRATCH0_SLOT * 8;
+constexpr std::uintptr_t scratch1 = UML_GADGET_A32_SCRATCH1_SLOT * 8;
 /* The registers of a block transfer that its first operand word holds
  * (engine/generate_a32.py). */
 constexpr unsigned block_word_registers = 6;

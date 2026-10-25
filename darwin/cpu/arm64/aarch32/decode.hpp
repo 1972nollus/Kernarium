@@ -36,9 +36,8 @@ enum class Reason : std::uint8_t {
 	unallocated,
 	/* The encoding is allocated but UNPREDICTABLE. */
 	unpredictable,
-	/* An instruction the profile leaves out: privileged at EL0, obsolete, a
-	 * coprocessor access that is not one of the profile's, or above the
-	 * profile's level. */
+	/* An instruction the profile leaves out: privileged at EL0, obsolete, or
+	 * a coprocessor access that is not one of the profile's. */
 	profile,
 	/* An instruction of a feature the profile lacks. */
 	feature,
@@ -86,8 +85,8 @@ struct Instruction final {
 	 * value. */
 	Operands operands;
 
-	/* The form's table entry: the XML encoding name and mnemonic, the level
-	 * and feature it needs, whether it is conditional, and static traits
+	/* The form's table entry: the XML encoding name and mnemonic, its level
+	 * and the feature it needs, whether it is conditional, and static traits
 	 * scanned from the XML's Execute pseudocode (loads, stores, exclusives,
 	 * the kinds of PC write, barriers, hints, exceptions, and fp_state, a
 	 * read or write of the S, D, Q or V registers or FPSCR). fp_state is

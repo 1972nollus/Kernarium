@@ -103,12 +103,14 @@ void JitCompiler::emit_misalignment_check(unsigned address, std::size_t alignmen
     emitter_.compare_zero(misaligned, 0, true, true);
   }
 
+/*
+ * Ends the software monitor where the guest's pair ends: after a fused
+ * store-exclusive and on a fused run's mismatch exit. An ordinary store of the
+ * guest's own leaves it standing (see the monitor contract in
+ * docs/architecture.md); reservation versions fail a store-exclusive that a
+ * store to the reserved granule has beaten.
+ */
 void JitCompiler::clear_local_exclusive_monitor() {
-    /*
-     * An ordinary store is permitted to clear the local monitor
-     * unconditionally.  Keep this as one straight-line instruction after the
-     * store: no opcode or monitor-state checks belong in the JIT hot path.
-     */
     emitter_.store_b(31, 15, offsetof(CpuState, exclusive_size));
   }
 
@@ -494,7 +496,6 @@ void JitCompiler::emit_native_scalar_atomic(std::uint32_t instruction,
               native_destination.host;
     emitter_.emit(native);
     commit_native_gpr(native_destination, destination, false);
-    clear_local_exclusive_monitor();
   }
 
 void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
@@ -523,7 +524,6 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
               native_replacement.host;
     emitter_.emit(native);
     commit_native_gpr(native_result, compare, false);
-    clear_local_exclusive_monitor();
   }
 
 [[nodiscard]] bool JitCompiler::emit_pair_memory(std::uint32_t instruction,
@@ -638,8 +638,6 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
         if (second != first)
           commit_native_gpr(native_second_gpr, second, false);
       }
-    } else {
-      clear_local_exclusive_monitor();
     }
 
     const bool writeback =
@@ -780,8 +778,6 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
                       ((first + index) & 31U) *
                           sizeof(arm64::VectorRegister));
       }
-    } else {
-      clear_local_exclusive_monitor();
     }
     if (post_index) {
       load_gpr(8, base, true);
@@ -883,8 +879,6 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
         commit_native_vector(native_vector, transfer);
       else
         commit_native_gpr(native_gpr, transfer, false);
-    } else {
-      clear_local_exclusive_monitor();
     }
 
     const bool writeback =
@@ -958,8 +952,6 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
       commit_native_vector(native_vector, spill.transfer);
     else
       commit_native_gpr(native_gpr, 31U, false);
-  } else {
-    clear_local_exclusive_monitor();
   }
 }
 
@@ -1190,10 +1182,8 @@ collect_unsigned_run(std::span<const std::uint32_t> instructions,
       run_straddles_.push_back(straddle);
     }
 
-    if (!load) {
+    if (!load)
       mark_direct_memory_writes(length);
-      clear_local_exclusive_monitor();
-    }
     return length;
   }
 
@@ -1465,10 +1455,8 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
     emit_native_gpr_run(std::span{operations}.first(length), load, straddle,
                         proved);
 
-    if (!load) {
+    if (!load)
       mark_direct_memory_writes(length);
-      clear_local_exclusive_monitor();
-    }
     return length;
   }
 
@@ -1521,10 +1509,8 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
     emit_native_gpr_run(std::span{operations}.first(length), load, straddle,
                         proved);
 
-    if (!load) {
+    if (!load)
       mark_direct_memory_writes(length);
-      clear_local_exclusive_monitor();
-    }
     return length;
   }
 
@@ -1601,8 +1587,6 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
         commit_native_vector(native_vector, transfer);
       else
         commit_native_gpr(native_gpr, transfer, false);
-    } else {
-      clear_local_exclusive_monitor();
     }
     return true;
   }

@@ -137,9 +137,7 @@ namespace {
       }
     }
     if (count == 0) {
-      const auto fault = memory.last_fault();
-      tlb_.fault_address = fault.address;
-      tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+      record_fetch_fault(memory);
       return Event::memory_fault;
     }
     /*
@@ -192,7 +190,8 @@ namespace {
               stored.target_link, candidate.relocations,
               stored.direct_link_refusals,
               std::span{instructions}.first(candidate.guest_instructions),
-              std::move(saved_guest_words),
+              std::move(saved_guest_words), candidate.guest_instructions,
+              candidate.guest_instructions,
               candidate.memory_write_mask, candidate.direct_memory_write_mask,
               candidate.accesses_fp_state, candidate.link_target_safe,
               candidate.native_fp,
@@ -288,8 +287,8 @@ namespace {
     debug_check_host_streaming_state(host_capabilities_);
     if (tracked_stores)
       jit::semantic::invalidate_store_ranges(
-          std::span<const JitStoreRange>{tracked_store_ranges_}.first(
-              block->instruction_count));
+          cpu, std::span<const JitStoreRange>{tracked_store_ranges_}.first(
+                   block->instruction_count));
     const auto [event, current_executed] = unpack_jit_result(result);
     deferred_exclusive = chain.deferred_exclusive_instruction;
     executed = maximum_chain_instructions -
@@ -311,7 +310,7 @@ namespace {
   Event event{};
   bool tracked_unavailable = false;
   {
-    JitBlockPublication publication{store_participant_, cpu};
+    JitBlockPublication publication{store_participant_};
     if (!publication.needs_tracking()) {
       event = execute_native(block->function, false);
     } else {
@@ -362,8 +361,15 @@ JitExecutor::Implementation::tracked_store_function(CompiledBlock &block, Static
   const auto compiled = compiler.compile(
       translation_key_pc(block.key),
       std::span{instructions}.first(block.instruction_count));
+  return store_tracked_variant(block, compiled, compiled.guest_instructions);
+}
+
+[[nodiscard]] JitFunction JitExecutor::Implementation::store_tracked_variant(
+    CompiledBlock &block, const JitCompiler::Result &compiled,
+    std::size_t guest_units) {
   if (compiled.words.empty() ||
       compiled.guest_instructions != block.instruction_count ||
+      guest_units != block.saved_units ||
       !valid_link_state_metadata(compiled.accesses_fp_state,
                                  compiled.native_fp) ||
       compiled.direct_memory_write_mask != block.direct_memory_write_mask)
@@ -453,9 +459,7 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
   if (memory.fetch(pc, std::as_writable_bytes(
                            std::span{&instruction, std::size_t{1}})))
     return true;
-  const auto fault = memory.last_fault();
-  tlb_.fault_address = fault.address;
-  tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+  record_fetch_fault(memory);
   return false;
 }
 
@@ -466,8 +470,14 @@ JitExecutor::Implementation::translate_single_instruction(
     std::uint8_t mode) {
   JitCompiler compiler{nullptr, nullptr, track_direct_stores};
   compiler.set_sme_mode(mode);
-  const auto compiled =
-      compiler.compile(pc, std::span{&instruction, std::size_t{1}});
+  return store_single_translation(
+      compiler.compile(pc, std::span{&instruction, std::size_t{1}}));
+}
+
+[[nodiscard]] std::optional<
+    JitExecutor::Implementation::SingleInstructionTranslation>
+JitExecutor::Implementation::store_single_translation(
+    const JitCompiler::Result &compiled) {
   if (compiled.words.empty() || compiled.guest_instructions != 1U ||
       !valid_link_state_metadata(compiled.accesses_fp_state,
                                  compiled.native_fp))
@@ -516,6 +526,7 @@ JitExecutor::Implementation::translate_single_instruction(
     arm64::restore_native_fp_environment(target);
   if (tracked_stores)
     jit::semantic::invalidate_store_ranges(
+        target,
         std::span<const JitStoreRange>{tracked_store_ranges_}.first(1U));
   const auto unpacked = unpack_jit_result(result);
   executed = unpacked.retired;
@@ -534,25 +545,16 @@ JitExecutor::Implementation::translate_single_instruction(
   if (!translation)
     return Event::fatal;
   std::uint32_t deferred_exclusive = 0;
-  Event event{};
-  if (translation->direct_memory_write_mask == 0) {
-    event = invoke_single_instruction(*translation, cpu, false, false,
-                                      executed, deferred_exclusive);
-  } else {
-    JitBlockPublication publication{store_participant_, cpu};
-    if (!publication.needs_tracking()) {
-      event = invoke_single_instruction(*translation, cpu, false, false,
-                                        executed, deferred_exclusive);
-    } else {
-      const auto tracked =
-          translate_single_instruction(cpu.pc, instruction, true, cpu.svcr);
-      if (!tracked || tracked->direct_memory_write_mask !=
-                          translation->direct_memory_write_mask)
-        return Event::fatal;
-      event = invoke_single_instruction(*tracked, cpu, true, false,
-                                        executed, deferred_exclusive);
-    }
-  }
+  const auto published = invoke_single_instruction_published(
+      cpu, *translation,
+      [&] {
+        return translate_single_instruction(cpu.pc, instruction, true,
+                                            cpu.svcr);
+      },
+      executed, deferred_exclusive);
+  if (!published)
+    return Event::fatal;
+  auto event = *published;
   if (deferred_exclusive != 0U) {
     const auto retired_prefix = executed;
     std::size_t exclusive_executed = 0;

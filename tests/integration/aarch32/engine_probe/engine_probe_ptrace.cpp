@@ -4,8 +4,9 @@
  * resumes it, sees SIGTRAP with TRAP_BRKPT for the debugger encodings (udf
  * #16 in A32, udf #1 in T32), steps it one instruction at a time through
  * branches, an SVC and an A32/T32 switch, and steps through an IT block with
- * ITSTATE advancing after each instruction. The thread area request returns
- * TPIDRURO. */
+ * ITSTATE advancing after each instruction. A step over a SWP the kernel
+ * emulates (abi.swp 1), or skips for its condition, stops with TRAP_TRACE at
+ * the next instruction. The thread area request returns TPIDRURO. */
 #include "engine_probe.hpp"
 
 extern "C" {
@@ -19,6 +20,8 @@ long pt_step_it();
 extern const char pt_step_it_stop[], pt_step_it_first[];
 long pt_step_arm();
 extern const char pt_step_arm_stop[], pt_step_arm_s1[], pt_step_arm_s5[], pt_step_arm_t1[];
+long pt_step_swp();
+extern const char pt_step_swp_stop[], pt_step_swp_s1[], pt_step_swp_s4[];
 }
 
 namespace probe {
@@ -298,6 +301,62 @@ void group_ptrace()
 			if (!exited_with(status, 0x37))
 				finish(child);
 		}
+	}
+
+	/* Single steps over a SWP the kernel emulates, and one it skips. */
+	{
+		const long setting = swp_setting();
+		const bool swp_ready = setting == 1 || (setting == 0 && swp_set(1));
+		if (!swp_ready) {
+			line("NOTE ptrace: abi.swp is 0 and not writable by this process; the SWP steps are skipped");
+			return;
+		}
+		const long child = start_traced(pt_step_swp, 0);
+		check(child > 0, "a traced child for the SWP steps starts");
+		if (child <= 0)
+			return;
+		Stop stop = wait_for_stop(child);
+		u32 regs[18] = {};
+		get_registers(child, regs);
+		const word s1 = addr(pt_step_swp_s1);
+		const word s4 = addr(pt_step_swp_s4);
+		regs[15] = s1;
+		set_registers(child, regs);
+
+		sys(nr_ptrace, ptrace_singlestep, child, 0, 0);
+		stop = wait_for_stop(child);
+		check(stop.stopped && stop.signal == sigtrap, "a step over an emulated swp stops the child with SIGTRAP");
+		SigInfo info{};
+		sys(nr_ptrace, ptrace_getsiginfo, child, 0, addr(&info));
+		check_eq(static_cast<u32>(info.code), 2, "and si_code is TRAP_TRACE");
+		check_eq(info.address, s1 + 4, "and si_addr is the next instruction");
+		get_registers(child, regs);
+		check_eq(regs[15], s1 + 4, "the pc is past the swp");
+		check_eq(regs[0], 0x55, "the swap is done: Rt holds the old word");
+
+		for (int step = 0; step < 2; ++step) {
+			sys(nr_ptrace, ptrace_singlestep, child, 0, 0);
+			stop = wait_for_stop(child);
+			if (!stop.stopped || stop.signal != sigtrap)
+				check(false, "the steps between the swaps stop with SIGTRAP");
+		}
+		get_registers(child, regs);
+		check_eq(regs[15], s4, "the pc is at the conditional swp");
+		check_eq(regs[16] & 0x40000000U, 0, "its condition is false: Z is clear");
+		sys(nr_ptrace, ptrace_singlestep, child, 0, 0);
+		stop = wait_for_stop(child);
+		check(stop.stopped && stop.signal == sigtrap, "a step over a swp whose condition is false stops with SIGTRAP");
+		sys(nr_ptrace, ptrace_getsiginfo, child, 0, addr(&info));
+		check_eq(static_cast<u32>(info.code), 2, "and si_code is TRAP_TRACE");
+		check_eq(info.address, s4 + 4, "and si_addr is the next instruction");
+		get_registers(child, regs);
+		check_eq(regs[15], s4 + 4, "the pc is past the skipped swp");
+		check_eq(regs[5], 0x77, "and Rt is untouched");
+		sys(nr_ptrace, ptrace_cont, child, 0, 0);
+		const long status = wait_child(child);
+		check(exited_with(status, 0xaa), "the routine found the emulated swp's store in memory");
+		if (!exited_with(status, 0xaa))
+			finish(child);
 	}
 }
 

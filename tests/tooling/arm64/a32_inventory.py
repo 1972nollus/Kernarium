@@ -16,7 +16,7 @@ Columns:
 - encoding: the XML encoding name, which is also the decoder's Form.
 - isa: A32, T16 or T32.
 - mnemonic: the encoding's mnemonic.
-- level: the smallest A32Support level that runs it (base, simd, complete).
+- level: the part of the profile it belongs to (base, simd, complete).
 - feature: the optional extension a host must have, or baseline.
 - profile: executed, restricted (the fields select what EL0 may touch),
   nop (executes as a NOP) or undefined (no word of it executes).

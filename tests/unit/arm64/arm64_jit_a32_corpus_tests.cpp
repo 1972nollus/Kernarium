@@ -18,6 +18,19 @@
  * N times, until kReservationsWanted cases have lost a reservation, and fails
  * if none did. --attempts N replaces the limit (1 makes the storm fail).
  *
+ * The corpus also holds every lowered form out of the slow helper from a
+ * clean state: each event-free case runs twice (the first run warms the
+ * translation and the TLB), and past the first run one case in which the
+ * form always executes must take no helper exit (the others cross a page or
+ * write back over the loaded register). The forms the semantic library runs
+ * (the parallel arithmetic and the Armv8 extensions the compiler does not
+ * lower) must take it in all of them, and every vector form of the simd level
+ * must have a lowering. A case whose form is of an extension the host lacks
+ * (BFloat16 and the 8-bit matrix forms on an M1) is skipped, because the JIT
+ * decodes it as UNDEFINED there. The VJCVT cases include a flush-to-zero
+ * subnormal input, which exercises the correction for a host whose FJCVTZS
+ * reports it as exact.
+ *
  *   uml_arm64_jit_a32_corpus_tests PACK [--record NAME] [--case NAME]
  *       [--form PREFIX] [--list-failures] [--passes N] [--interrupt]
  *       [--attempts N]
@@ -28,8 +41,8 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/aarch32/decode.hpp"
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
 #include "cpu/arm64/jit/a32/a32_compiler.hpp"
-#include "cpu/arm64/jit/a32/a32_helpers.hpp"
 #include "cpu/arm64/jit/a32/a32_operations.hpp"
 #include "cpu/arm64/jit/a32/a32_vector_operations.hpp"
 
@@ -357,23 +370,20 @@ Attempt check(Machine &machine, const Case &test) {
   return {};
 }
 
-/* Whether the JIT's level implements every instruction of the program, and
- * its own profile accepts each: an encoding the oracle executes but the JIT's
- * profile leaves out (the extensions this host lacks, such as BF16 and I8MM on
- * the M1 Ultra: the guest is shown none of them and the JIT treats them as
+/* Whether the JIT's own profile accepts every instruction of the program that
+ * the oracle executes: an encoding the oracle executes but the JIT's profile
+ * leaves out (the extensions this host lacks, such as BF16 and I8MM on the M1
+ * Ultra: the guest is shown none of them and the JIT treats them as
  * UNDEFINED) is not the JIT's to run. */
-bool within_level(const Case &test, const dec::Profile &profile) {
-  bool within = true;
+bool jit_accepts(const Case &test, const dec::Profile &profile) {
+  bool accepted = true;
   for_each_instruction(test, profile, [&](const ProgramStep &step) {
-    const auto &instruction = step.instruction;
-    within = !instruction.legal() ||
-             (static_cast<int>(instruction.info().level) <=
-                  static_cast<int>(::uml::cpu::arm64::jit::a32::a32_level()) &&
-              step.decode_at(::uml::cpu::arm64::jit::a32::decode_profile())
-                  .legal());
-    return within;
+    accepted = !step.instruction.legal() ||
+               step.decode_at(::uml::cpu::arm64::jit::a32::decode_profile())
+                   .legal();
+    return accepted;
   });
-  return within;
+  return accepted;
 }
 
 /* The compiler classifies every vector form the simd level has, so that none
@@ -428,12 +438,12 @@ std::map<std::string, ExitTally> measure_helper_exits(
   for (std::size_t index = 0; index < dec::kFormCount; ++index)
     forms.emplace(dec::kForms[index].name, static_cast<dec::Form>(index));
   std::map<std::string, ExitTally> tallies;
-  ::uml::cpu::arm64::jit::a32::count_helper_exits(true);
+  ::uml::cpu::arm64::aarch32::count_a32_library_exits(true);
   for (const auto &record : pack.records) {
     if ((record.profiles & kProfileBit) == 0)
       continue;
     for (const auto &test : record.cases) {
-      if (test.event != 0 || !within_level(test, profile))
+      if (test.event != 0 || !jit_accepts(test, profile))
         continue;
       const auto form = forms.find(test.form);
       require(form != forms.end());
@@ -442,11 +452,11 @@ std::map<std::string, ExitTally> measure_helper_exits(
       for (unsigned pass = 0; pass < 2; ++pass) {
         machine.load(test);
         auto cpu = cpu_from(test.initial, thumb, kCodeBase + test.origin);
-        before = ::uml::cpu::arm64::jit::a32::helper_exits(form->second);
+        before = ::uml::cpu::arm64::aarch32::a32_library_exits(form->second);
         (void)machine.run(cpu);
       }
       const auto taken =
-          ::uml::cpu::arm64::jit::a32::helper_exits(form->second) - before;
+          ::uml::cpu::arm64::aarch32::a32_library_exits(form->second) - before;
       auto &tally = tallies[test.form];
       ++tally.cases;
       tally.clean += taken == 0 ? 1U : 0U;
@@ -460,7 +470,7 @@ std::map<std::string, ExitTally> measure_helper_exits(
                      static_cast<std::size_t>(taken));
     }
   }
-  ::uml::cpu::arm64::jit::a32::count_helper_exits(false);
+  ::uml::cpu::arm64::aarch32::count_a32_library_exits(false);
   return tallies;
 }
 
@@ -589,7 +599,7 @@ int main(int argc, char **argv) {
   require(jit_available() == 1);
   require_vector_forms_classified();
   const auto pack = read_pack(read_file(path));
-  const auto profile = dec::Profile::at(dec::Level::complete);
+  const dec::Profile profile;
 
   Machine machine{0x1a32'0300};
   if (exit_report) {
@@ -614,7 +624,7 @@ int main(int argc, char **argv) {
           continue;
         if (!only_form.empty() && !test.form.starts_with(only_form))
           continue;
-        if (!within_level(test, profile)) {
+        if (!jit_accepts(test, profile)) {
           ++totals.skipped;
           continue;
         }

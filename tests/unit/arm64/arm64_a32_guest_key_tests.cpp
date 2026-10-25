@@ -5,7 +5,10 @@
  * cell or with a fault position, that interworking selects the state, and
  * that nothing a cache hashes by loses the instruction address. Validation:
  * that a word and a halfword span match, mismatch and fault in the right
- * order across page boundaries of the guest page. */
+ * order across page boundaries of the guest page. Fetch: that a window is
+ * read one page-bounded run at a time and ends at the first run that cannot
+ * be read. */
+#include "cpu/arm64/aarch32/guest_fetch.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/sme_profile.hpp"
@@ -386,6 +389,66 @@ void thumb_spans_split_between_halfwords()
 	}
 }
 
+/* A window is fetched one page-bounded run at a time, in units of a byte, a
+ * halfword or a word, and ends at the first run that cannot be read. */
+void fetch_reads_a_page_bounded_window()
+{
+	for (const std::size_t unit : {std::size_t{1}, std::size_t{2},
+		     std::size_t{4}}) {
+		const std::size_t units = 24;
+		const std::uint64_t boundary = 0x6'0000 + page_size;
+		const std::uint64_t start = boundary - 5 * unit;
+		const auto expected = pattern(units * unit, 0x21);
+		std::vector<std::byte> image(2 * page_size, std::byte{0xee});
+		std::memcpy(image.data() + (start - 0x6'0000), expected.data(),
+			expected.size());
+		const auto read = [&](FakeMemory &memory, std::uint64_t address,
+				      std::span<std::byte> out) {
+			return aarch32::fetch_guest_units(address, unit, out,
+				page_size,
+				[&memory](std::uint64_t at,
+					  std::span<std::byte> bytes) {
+					return memory.fetch(at, bytes);
+				});
+		};
+
+		/* Across the boundary: two runs, every byte placed. */
+		FakeMemory memory{0x6'0000, image};
+		std::vector<std::byte> out(units * unit, std::byte{0});
+		require(read(memory, start, out) == units,
+			"a window across a page was cut short");
+		require(memory.fetches == 2, "one run per page was not read");
+		require(out == expected, "the window holds the wrong bytes");
+
+		/* Inside one page: a single run. */
+		memory.fetches = 0;
+		require(read(memory, start - 8 * unit,
+			std::span{out}.first(4 * unit)) == 4);
+		require(memory.fetches == 1);
+
+		/* Nothing asked for, nothing read. A byte tail short of a unit
+		 * is not a unit. */
+		memory.fetches = 0;
+		require(read(memory, start, std::span{out}.first(0)) == 0);
+		require(read(memory, start,
+			std::span{out}.first(unit - 1)) == 0);
+		require(memory.fetches == 0);
+
+		/* An unreadable second page keeps the first run's units. */
+		FakeMemory second{0x6'0000, image};
+		second.poison(boundary + unit);
+		require(read(second, start, out) == 5,
+			"the units before an unreadable run were lost");
+		/* An unreadable first page is an empty window. */
+		FakeMemory first{0x6'0000, image};
+		first.poison(start);
+		require(read(first, start, out) == 0);
+		/* A window with no mapping at all. */
+		FakeMemory none{0x9'0000, pattern(64, 1)};
+		require(read(none, start, out) == 0);
+	}
+}
+
 /* A PC the keys cannot name (an odd Thumb address at the last byte of a
  * page) still terminates, with a deterministic answer. */
 void malformed_pc_terminates()
@@ -406,6 +469,20 @@ void malformed_pc_terminates()
 	require(result == GuestValidation::match ||
 		result == GuestValidation::mismatch ||
 		result == GuestValidation::fault);
+
+	/* The same address as the start of a window: a run of one halfword
+	 * across the page end, then the aligned remainder. */
+	std::array<std::byte, 8> window{};
+	std::vector<std::uint64_t> addresses;
+	const auto count = aarch32::fetch_guest_units(0x1'0fffU, 2, window,
+		page_size,
+		[&](std::uint64_t address, std::span<std::byte> out) {
+			addresses.push_back(address);
+			return memory.fetch(address, out);
+		});
+	require(count == 4 && addresses.size() >= 2 &&
+		addresses.front() == 0x1'0fffU,
+		"a malformed window did not read its first unit in a run of one");
 }
 
 } // namespace
@@ -418,6 +495,7 @@ int main()
 	adjacent_instructions_differ_above_bit_one();
 	unit_sizes_and_fetch_addresses();
 	validation_reads_page_bounded_runs();
+	fetch_reads_a_page_bounded_window();
 	thumb_spans_split_between_halfwords();
 	malformed_pc_terminates();
 	return 0;

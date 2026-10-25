@@ -209,9 +209,8 @@ Android build none of them.
 instruction execution is qualified against the pinned FEX handwritten x86-64
 corpus; distribution and complete Linux syscall compatibility require separate
 guest qualification. The slice accepts no AArch32 executable (its
-`UML_ARM64_AARCH32` is off); the arm64 kernels accept `EM_AARCH64` and, once
-the run's engine implements AArch32, 32-bit ARM EABI executables, and run
-stock armhf userspace ([shared README](../common/README.md)).
+`UML_ARM64_AARCH32` is off); the arm64 kernels accept `EM_AARCH64` and
+32-bit ARM EABI executables, and run stock armhf userspace ([shared README](../common/README.md)).
 Android does not consume the x86_64 overlay. The slice's overlay turns off
 `UML_ARM64_SME`, so it builds none of the shared SME task state,
 which x86 tasks do not have; the shared mm-shared mark stays, for the x86-64
@@ -324,7 +323,13 @@ Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
 at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
 `schedule()` when the caller stays runnable. The uaccess retry and TLB-walk
 safe points poll through `cond_resched()`, which does so only without
-`CONFIG_PREEMPTION`; both assert that at build time.
+`CONFIG_PREEMPTION`; both assert that at build time. A uaccess that may sleep
+retries its fault until the fault handler refuses it or the task is dying, as
+native uaccess re-executes the access, so a sibling's `fork()` that
+write-protects the page again after the fault never fails the copy with
+`-EFAULT`. A uaccess write holds its page with a pin taken under the
+page-table lock, so a `fork()` meanwhile gives the child a copy and a store
+through the kernel's alias never reaches it.
 Every path that changes a CPU's
 logical IRQ state outside `local_irq_*()`, including interrupt work run from an
 idle wait, reports the change to lockdep as interrupt entry would; without

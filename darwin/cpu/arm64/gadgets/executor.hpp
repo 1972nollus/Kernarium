@@ -2,6 +2,7 @@
 #pragma once
 
 #include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/gadgets/a32_layout.h"
 #include "cpu/arm64/gadgets/execution_histogram.hpp"
 #include "cpu/arm64/gadgets/guest_sampler.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -80,11 +81,19 @@ public:
 	/* run_block for an AArch32 task (a32/a32_builder.hpp): cpu.pc is an
 	 * A32 or T32 key (aarch32/guest_key.hpp) and every exit leaves it one.
 	 * Retirement, fault positions and ITSTATE follow the contract in
-	 * aarch32/README.md; a breakpoint exit leaves BKPT's immediate in
+	 * aarch32/semantics.hpp; a breakpoint exit leaves BKPT's immediate in
 	 * breakpoint_immediate(). */
 	[[nodiscard]] ::uml::cpu::EngineEvent run_a32_block(
 		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
 		unsigned long generation, std::size_t &executed);
+	/* The start of an AArch32 entry, before its first run_a32_block: the
+	 * scratch slots the streams borrow hold what the virtual CPU ran
+	 * before, so they start at zero (a32_layout.h). */
+	static void enter_aarch32(CpuState &cpu) noexcept
+	{
+		cpu.registers[UML_GADGET_A32_SCRATCH0_SLOT] = 0;
+		cpu.registers[UML_GADGET_A32_SCRATCH1_SLOT] = 0;
+	}
 	[[nodiscard]] std::uint32_t breakpoint_immediate() const noexcept
 	{
 		return breakpoint_immediate_;

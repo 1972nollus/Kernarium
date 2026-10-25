@@ -10,10 +10,9 @@ namespace uml::cpu::arm64::aarch32 {
  * halfword in its upper half (hw1 << 16); a T32 word is hw1 << 16 | hw2. */
 enum class Isa : std::uint8_t { a32, t16, t32 };
 
-/* How far a profile implements AArch32, mirroring A32Support: none (every
- * word is illegal), the integer core, that plus VFPv4-D32 and Advanced SIMD,
- * or everything including the Armv8 additions. */
-enum class Level : std::uint8_t { none, base, simd, complete };
+/* The part of the profile a form belongs to: the integer core, VFPv4-D32 and
+ * Advanced SIMD, or the Armv8 additions. A profile has all three. */
+enum class Level : std::uint8_t { base, simd, complete };
 
 /* The optional extensions a profile has, each where the host has the A64
  * feature the engines lower it onto. The order is the generator's
@@ -67,16 +66,10 @@ private:
 	std::uint32_t bits_ = 0;
 };
 
-/* The profile a decode is made against: the level the engine implements and
- * the optional features its host has. */
+/* The profile a decode is made against: the optional features the host has.
+ * The default has all of them. */
 struct Profile final {
-	Level level = Level::complete;
 	FeatureSet features = FeatureSet::all();
-
-	[[nodiscard]] static constexpr Profile at(Level level) noexcept
-	{
-		return Profile{level, level == Level::complete ? FeatureSet::all() : FeatureSet{}};
-	}
 };
 
 /* ITSTATE: the condition and mask of the IT block in progress. The value is

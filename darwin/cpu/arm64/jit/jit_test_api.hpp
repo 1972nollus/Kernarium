@@ -148,6 +148,10 @@ gpr_population_count_for_testing(bool wide, std::uint64_t value);
 [[nodiscard]] std::vector<std::uint32_t>
 lower_memory_barrier_for_testing(std::uint32_t instruction, bool native_sb);
 
+/* The index of the reservation version slot that host location `host`
+ * hashes to; locations with equal indices share one version. */
+[[nodiscard]] std::size_t reservation_slot_for_testing(const void *host) noexcept;
+
 [[nodiscard]] std::size_t successful_link_host_word_savings() noexcept;
 [[nodiscard]] std::size_t link_chain_instruction_limit() noexcept;
 [[nodiscard]] std::size_t link_capability_selector_count() noexcept;

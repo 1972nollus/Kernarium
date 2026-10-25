@@ -24,7 +24,6 @@ import a32_table_model as tm
 import a32_table_render as render
 
 
-LEVELS = {"none": 0, "base": 1, "simd": 2, "complete": 3}
 FNV_OFFSET = 0xCBF29CE484222325
 FNV_PRIME = 0x100000001B3
 
@@ -44,16 +43,19 @@ class Reference:
         self.model = model
         cache = render.tables(model)
         self.trees, self.rows = cache["trees"], cache["rows"]
-        self.parsed: dict[int, list] = {}
+        self.parsed: dict[tuple[str, str], list] = {}
         self.catalog = catalog
         self.storage = {id(m): storage_type(m.cpp) for m in model.member_list}
         self.last: evaluator.Evaluator | None = None
 
     def program_ast(self, form: tm.FormModel):
-        key = form.program
+        """The form's own Decode pseudocode, parsed: forms that share an
+        operand program may differ in text, and each is evaluated from its
+        own."""
+        encoding = form.encoding
+        key = (encoding.file, encoding.psname)
         if key not in self.parsed:
-            encoding = form.encoding
-            text = self.catalog.decode_text(encoding.file, encoding.psname)
+            text = self.catalog.decode_text(*key)
             self.parsed[key] = asl.parse(text, strict=True)
         return self.parsed[key]
 
@@ -83,7 +85,7 @@ class Reference:
         words.append(int(ev.carry_flags))
         return fnv(words)
 
-    def decode(self, isa: str, word: int, it_state: int, level: str,
+    def decode(self, isa: str, word: int, it_state: int,
                features: set[str]) -> Expected:
         thumb = isa != "A32"
         row = render.walk_tree(self.trees, self.rows, isa, word)
@@ -98,7 +100,7 @@ class Reference:
         if row.kind == "unpredictable":
             result.reason = "unpredictable"
             return result
-        if form.availability == "undefined_at_el0" or LEVELS[form.level] > LEVELS[level]:
+        if form.availability == "undefined_at_el0":
             result.reason = "profile"
             return result
         if form.feature is not None and form.feature not in features:
@@ -156,12 +158,12 @@ class Reference:
         self.conditioned(result, form, word, it_state, thumb)
         return result
 
-    def operands(self, isa: str, word: int, it_state: int, level: str,
+    def operands(self, isa: str, word: int, it_state: int,
                  features: set[str]) -> tuple[Expected, dict[str, object]]:
         """The decode result and the Decode pseudocode's variables as Python
         values (integers, booleans and enumerator names)."""
         self.last = None
-        result = self.decode(isa, word, it_state, level, features)
+        result = self.decode(isa, word, it_state, features)
         values: dict[str, object] = {}
         if self.last is not None and result.status != "undefined":
             for name, raw in self.last.locals.items():

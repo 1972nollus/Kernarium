@@ -170,24 +170,14 @@ thread_local ThreadStateRegistrations thread_state_registrations;
 
 /* Every guest entry resolves its execution object twice, once from
  * darwin_uml_static_guest_interrupt_sequence() and once from run_common_guest(),
- * and the answer is per-thread and does not change between retirements. Each
- * resolution took a shared_lock on execution_lifecycle_mutex_, a lock_guard on
- * states_mutex_ and a shared_ptr copy, then a third mutex plus a
- * thread::id hash lookup and a second shared_ptr copy inside
- * ThreadStateStore::acquire(), then a vector scan in bind() whose predicate
- * dereferences a weak_ptr control block per entry. On a syscall-heavy workload
- * that is six mutex acquisitions and two hash lookups per syscall, on
- * process-global cachelines shared by every vCPU thread.
- *
- * The resolved object is therefore cached per thread, and the entry is weak
- * rather than owning. That is what makes it self-invalidating, and it is the
- * whole correctness argument: retire_thread_execution_states() clears the store,
+ * and the answer is per-thread and does not change between retirements. The
+ * resolved object is therefore cached per thread, and the entry is weak rather
+ * than owning. That is what makes it self-invalidating, and it is the whole
+ * correctness argument: retire_thread_execution_states() clears the store,
  * which drops the only strong reference - retirement runs under
  * execution_lifecycle_mutex_ held exclusively, so no ThreadExecutionStateAccess
  * can be outstanding to hold another - the object is destroyed, and lock() then
- * fails and sends this thread down the slow path. An explicit validity epoch was
- * written first and then removed: it could not be made to fail any test, because
- * the only state it guarded against is one no caller can produce.
+ * fails and sends this thread down the slow path.
  *
  * Weak also preserves destruction order. ThreadExecutionState carries the engine
  * slots and the guest memory view, and retirement destroys it before the memory
@@ -495,44 +485,6 @@ current_guest_host_capabilities() noexcept
 {
 	const auto *context = current_context();
 	return guest_host_capabilities(context != nullptr ?
-		context->execution_engine() : ExecutionEngine::automatic);
-}
-
-::uml::cpu::arm64::A32Support guest_a32_support(
-	::uml::cpu::EngineKind kind) noexcept
-{
-	using ::uml::cpu::EngineKind;
-	const auto present = [](EngineKind of) noexcept {
-		return ::uml::cpu::arm64::a32_presented_support(
-			::uml::cpu::engine_a32_support(of),
-			::uml::platform::apple::guest_aarch32_policy() ==
-				::uml::platform::apple::GuestAarch32Policy::on);
-	};
-	static const auto gadgets = present(EngineKind::gadgets);
-	static const auto jit = present(EngineKind::jit);
-	return kind == EngineKind::jit ? jit : gadgets;
-}
-
-::uml::cpu::arm64::A32Support guest_a32_support(
-	ExecutionEngine engine) noexcept
-{
-	using ::uml::cpu::EngineKind;
-	switch (engine) {
-	case ExecutionEngine::gadgets:
-		return guest_a32_support(EngineKind::gadgets);
-	case ExecutionEngine::jit:
-		return guest_a32_support(EngineKind::jit);
-	case ExecutionEngine::automatic:
-		break;
-	}
-	return std::min(guest_a32_support(EngineKind::gadgets),
-		guest_a32_support(EngineKind::jit));
-}
-
-::uml::cpu::arm64::A32Support current_guest_a32_support() noexcept
-{
-	const auto *context = current_context();
-	return guest_a32_support(context != nullptr ?
 		context->execution_engine() : ExecutionEngine::automatic);
 }
 

@@ -376,47 +376,11 @@ region, can therefore still change its odds when an unrelated image changes
 size, so an iPad layout comparison logs each launch's load address and counts
 modes per arm.
 
-An arm64 gadget stream carries no PC word for a memory transfer. The operand
-of every load, store, pair, atomic, exclusive, ordered and SIMD structure form
-ends in the instruction's position in its block, in its top byte, so a block
-holds at most 256 instructions. A fault reports the position shifted left by
-two with bit 0 set, which no instruction address and no translation key has,
-and the boundary turns it into the PC from the block holding the faulting
-stream, as `resolve_fault_position` does for A64; a T32 block, whose
-instructions have two lengths, finds the instruction in the block's halfwords.
-Only MOPS and a literal load whose target does not fit 48 bits keep a PC word.
-`arm64-gadget-memory-fault-position` faults one instruction of each family at
-several positions, directly and through a link.
-
-A constant stored to a register is one stream word when it fits 48 bits or is
-ones above bit 47: the destination's CpuState offset in bits 63:48 over the
-value's low 48 bits, which MOVZ and MOVN take below a shift of 48, ADR and
-ADRP (with the ADD that folds into them) and the emulated identification
-registers when their value fits. Any other value keeps
-`move_wide_constant` and its two words. `arm64-gadget-packed-immediate` runs
-each form against the architectural definition.
-
-A TBZ or TBNZ carries no mask word: its operand word holds the bit number in
-bits 5:0, where the register shift that tests it reads it, and the register's
-CpuState offset in bits 31:16, and an inlined branch's retire suffix sits in
-bits 47:32. The `test_branch` entries of the former form stay in the bank
-unselected, because removing them would move every later entry.
-`arm64-gadget-test-bit-branch` runs every bit, both polarities, XZR and each
-shape the builder emits.
-
-A logical immediate on W registers shares the word that names its registers,
-in bits 63:32 above the destination and source fields. A 64-bit immediate has a
-word of its own, and a form whose destination is its source, which bakes the
-register into the entry, has that word alone. `arm64-gadget-packed-immediate`
-runs every W encoding and a sample of the X ones in each shape.
-
-An SBFM or UBFM is a gadget pointer and one operand word: the two shifts that
-compute it, whose amounts the builder derives from the encoding, and the
-CpuState offsets of its source and destination. Only BFM keeps its two mask
-words. The SBFM and UBFM entries of the former form stay in the bank
-unselected, because removing them would move every later entry. A RET through
-X30 is the gadget pointer and its indirect site; any other register keeps the
-operand that names it.
+Each arm64 engine's internals are in the README beside it: the
+[gadget engine](../darwin/cpu/arm64/gadgets/README.md) records its
+stream encodings, streaming mode, return ring and TLB use, and the
+[JIT](../darwin/cpu/arm64/jit/README.md) its streaming mode; both
+record their AArch32 lowering.
 
 The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
 too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and
@@ -484,11 +448,23 @@ A fault between the pair leaves the loop for the kernel, whose next entry
 clears the record (an exception return ends the monitor; `arm64-static-runtime`
 checks it), and the loop retries from its head. The JIT's fused regions check
 both mappings before the monitor, and its semantic path keeps a software
-reservation; its ordinary stores clear the monitor, as the architecture
-permits. `arm64-exclusive-progress` and `arm64-tlb` check the gadget contract
-on both engines, `arm64-exclusive-events` checks in A64, A32 and T32 that a
-branch, a link, an indirect lookup, a translation, a TLB refill or a library
-call between a pair does not fail its store, and
+reservation: a table of versions of 16-byte host granules, in which a store to
+a granule fails the store-exclusive that reserved it. Its store-exclusive is
+one host compare-and-swap from the value the load read, so a write that does
+not take the exclusive lock between its check and its store (the kernel's
+futex and SWP emulation, DMA) fails it instead of being overwritten; that
+check is also value-based. The monitor ends at a store-exclusive, a CLREX, an
+exception and a store to the reserved granule. A store of the guest's own to
+another granule leaves it standing, as on hardware and as a register spill
+between a pair needs, also when the two granules share a version slot. While
+any vCPU holds a reservation, every vCPU's native stores (its own included)
+run their tracked variants, which record the granules they wrote.
+`arm64-exclusive-progress` and `arm64-tlb` check the contract on both
+engines, `arm64-exclusive-events` checks in A64, A32 and T32 that a
+branch, a link, an indirect lookup, a translation, a TLB refill, a library
+call or a store of the guest's own to another line between a pair does not
+fail its store, `arm64-jit-exclusive_completion` checks that a write outside
+the exclusive lock fails a semantic store-exclusive, and
 `guest-exclusive-progress-gadgets` and `guest-exclusive-progress-jit` check the
 contract in a guest.
 
@@ -551,110 +527,6 @@ mode or with ZA on; only a host with FEAT_SME in hardware reads SVCR. Only
 the M4's SVL of 64 bytes has been checked on hardware, and the iOS SME path
 is unvalidated on hardware.
 
-The gadget engine implements all of the profile but the SME2 forms
-(`sme_support` is `complete`). Its control core is SMSTART and SMSTOP, MRS
-and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and ADDSPL, LDR and STR of ZA
-and ZT0, and ZERO of ZA and ZT0, with every size read from the vCPU's SVL at
-run time. Its SME part follows the veneer island, so appending to it moves
-no base entry and re-encodes no veneer call. A translation belongs to one SVCR mode, PSTATE.SM and
-PSTATE.ZA: each mode has its own program cache and links, an SVCR write
-ends its block, and a mode change empties the return ring. A program
-translated with SM = 0 and ZA = 1 reaches ZA and ZT0 through a helper on the
-register file. One translated with SM = 1 runs with the host in streaming
-mode and, when ZA = 1, with guest ZA, and ZT0 under SME2, resident in the
-host's; a helper call leaves streaming mode around itself, spilling and
-refilling them, so no C++ runs in streaming mode. XNU resets FPSR on every
-kernel entry while a thread is in streaming mode, so a streaming program
-keeps the guest's FPSR in `CpuState` and never runs with the native FP
-environment active: only the guest's FPCR, with its trap enables clear, is
-the host's while it runs, and MSR FPCR runs as a twin that sets both
-copies. Such a program may select
-only the entries that `engine/sme.inc` lists: the control core, the base
-gadgets that execute no AdvSIMD instruction and call no helper, and the
-streaming twins of the base GPR gadgets that do. A twin is its base gadget
-assembled a second time from the same source, as `uml_arm64_gadget_sm_`
-plus the base name, with each helper call made through a trampoline that
-leaves streaming mode around it and each AdvSIMD word of a slow path
-replaced by an FMOV; CSSC CNT's twin counts in GPRs. A table maps each base
-entry to its twin, and the builder selects the twin. Twins cover the integer
-loads, stores and pairs, atomics and exclusives, DC ZVA, IC IVAU, the MOPS
-forms and CSSC CNT, so their hot paths run in streaming mode unchanged and
-only a TLB miss, a page crossing or an alignment fault leaves it. A
-streaming program also runs every register-only SVE, SVE2 and SME form of
-the SME1 profile, and every FP&SIMD data-processing class legal in streaming
-mode, from gadgets that `engine/generate_streaming.py` writes at build time
-from the encoding table, one per value of a form's bits that are not
-register numbers. Each loads the registers its instruction names from the
-register file at offsets the builder computes from the SVL, or from
-`CpuState` for general registers, into fixed host registers, runs the
-instruction on them and stores its destination back. A form whose
-immediates would take hundreds of gadgets runs an equivalent register form
-on an immediate, or a count from the SVL, that the builder computes. A
-gadget that may change NZCV runs with the guest's flags in the host's, and a
-floating-point one ORs the exceptions it raised into the guest's FPSR, and
-runs again if FPSR.QC shows that a kernel entry reset the host's. RDVL,
-ADDVL and ADDPL run as RDSVL, ADDSVL and ADDSPL. Every SVE and SME1 load and
-store, and every SIMD&FP load and store legal in streaming mode, runs from
-a generated vector memory gadget, one per instruction the host executes for
-it (shape, direction, sizes, extension, ZA tile and slice direction), with
-the address mode, registers and shape resolved by the builder into the
-stream `darwin/cpu/arm64/gadgets/sme_layout.h` describes. Its fast path
-forms the address, and when every byte the access spans lies in one guest
-page the TLB holds, runs the native instruction on registers loaded from the
-register file. Anything else takes a helper that does the whole access on
-the register file: it touches only active elements, translates every page
-they lie in before it moves a byte, and reports a fault as M4 hardware does,
-a predicated access at its first faulting active byte rounded down to
-4 KiB and an unpredicated one at that byte. SVE prefetches are NOPs. The
-builder ends a block at the illegal-instruction exit on any other word:
-AdvSIMD, a word outside the profile, or an SME2 form, which the guest is
-not told of.
-`arm64-gadget-streaming-safety` walks every listed entry, and every 16-byte
-boundary of the generated gadgets, in the images each tree links and fails
-on an AdvSIMD word executed in streaming mode, a helper called there, or an
-indirect call.
-
-The JIT is `complete` too. Its control core runs SMSTART and SMSTOP, MRS
-and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and ADDSPL, and LDR, STR and
-ZERO of ZA and ZT0. It keys every translation, link
-and indirect site by the guest's SVCR mode as well as its PC, so a block runs
-only in the mode it was translated for; mode 0 translations are unchanged. A
-guest write of SVCR ends its block. An SM=1 translation keeps the guest's Z,
-P, ZA and ZT0 in the identically numbered host registers: its external
-prologue enters streaming mode and fills them from the register file, and
-every epilogue and host helper call first leaves streaming mode and spills
-them. Helpers are terminal, so no SM=1 code runs after one, and a TLB miss
-takes a streaming bridge that leaves and re-enters around the walker. The
-transitions preserve NZCV, and SM=1 code emits no AdvSIMD instruction of its
-own. An SM=1 translation also runs every register-only SVE, SVE2 and SME form
-of the SME1 profile, and every FP&SIMD data-processing class legal in
-streaming mode, as the guest's own word, with each general register it names,
-and a ZA slice index, renamed to a host register that holds the guest's.
-MOVPRFX runs as a move of its own. A form that may change NZCV runs with the
-guest's flags in the host's. XNU resets FPSR on every kernel entry while a
-thread is in streaming mode, so the guest's FPSR stays in `CpuState`: the
-streaming entry installs the guest's FPCR with trap enables clear, which
-kernel entries keep, MSR FPCR writes both copies, and the exit restores the
-host's. A floating-point form runs on a cleared FPSR, ORs what it raised into
-the guest's, and restores its destination and runs again if FPSR.QC shows
-that a kernel entry reset the host's. Every SVE and SME1 load and store
-runs as the guest's own word, its base renamed to the host address and its
-offset zeroed, when every byte it can span, whichever elements are active,
-lies in one guest page the TLB holds. A crossing, a TLB miss, a failed
-translation, a misaligned SP base or a tagged base takes a terminal helper
-that does the whole access on the register file: it touches only active
-elements, translates every page they lie in before it moves a byte, and
-reports a fault as the gadget engine does. The SIMD&FP loads and stores
-legal in streaming mode run the same way, with any writeback after the
-access. SVE prefetches are NOPs. SME2, the reserved bitmask immediates of
-ORR, EOR, AND and DUPM, every other SVE and SME word, and in streaming mode
-AdvSIMD and the FEAT_LSFE and FEAT_LSUI loads and stores are its
-illegal-instruction exit; every other instruction it runs at SVCR 0 runs in
-streaming mode too. SM=0 translations run with the host's SME off and
-hold no SVE or SME instruction: they reach ZA and ZT0 in the register file
-with GPR copies. SM=1 code reads SVL with RDSVL and SM=0 code from
-`CpuState`, so no translation depends on it.
-
 The arm64 virtual CPU has no SVE outside streaming mode, whatever the host
 reports, and advertises none: ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1 read
 zero, the SVE HWCAP bits are clear, and `platform::without_sve` clears the
@@ -709,23 +581,17 @@ the bridge imports no SVE vector length and its register tail holds FP and SME
 state only (bridge ABI 23), so a task has no SVE state to carry across an
 entry.
 
-The arm64 engines are growing a 32-bit Arm guest: AArch32 EL0, A32 and T32
-with interworking and IT, for the armhf userspace of Debian and Android's
+Both arm64 engines run a 32-bit Arm guest: AArch32 EL0, A32 and T32 with
+interworking and IT, for the armhf userspace of Debian and Android's
 armeabi-v7a, which needs hardware VFPv4-D32 and Advanced SIMD, so there is no
-soft-float-only profile. The profile, derived from the host as the SME profile is, is in
+soft-float-only profile. The profile, derived from the host as the SME profile
+is, is in
 [`cpu/arm64/aarch32/a32_profile.hpp`](../darwin/cpu/arm64/aarch32/a32_profile.hpp).
-Each engine's `a32_support` names how far it implements it, `none`, `base`
-(the integer core), `simd` or `complete`, and `base` and `simd` are
-milestones, not products. `CpuEngine::run_aarch32` is the entry for a task in
-AArch32 state, the A64 `run` is unchanged, and an engine below `base` takes the
-new entry as the illegal-instruction exit without touching the state. The
-gadget engine and the JIT are both at `complete` on macOS. The development
-policy `DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
-`a32_presented_support` gives the level a run presents, nothing with the
-policy off and the engine's level with it on, and the AArch32 identification
-registers and the compat AT_HWCAP and AT_HWCAP2 words derive from that level
-and the host in `cpu/arm64/id_registers.hpp` as arm64 Linux derives them, and
-are zero below `base`. The default turns on once both engines are complete.
+Every arm64 product presents all of it with no switch and no host token, and
+the AArch32 identification registers and the compat AT_HWCAP and AT_HWCAP2
+words derive from the host in `cpu/arm64/id_registers.hpp` as arm64 Linux
+derives them. `CpuEngine::run_aarch32` is the entry for a task in AArch32
+state, and the A64 `run` is unchanged.
 
 An AArch32 task keeps R0-R14 zero-extended in the integer registers, NZCV in
 the A64 flags and D0-D31 in the low sixteen vectors; what has no A64 field is
@@ -749,139 +615,16 @@ and A32 and a halfword for T32, so one page-bounded validation serves the
 gadget cache's validating lookups, the JIT's stale lookups and the shared
 tier, whose entries must carry the ISA of the key they are stored under.
 
-The gadget engine's AArch32 part translates A32 and T32 with the shared
-decoder into the data-only streams A64 uses, so one executor, one program
-cache and one execution boundary run both
-([`gadgets/a32`](../darwin/cpu/arm64/gadgets/a32/a32_builder.hpp);
-`run_translated_aarch32_blocks` in `cpu/arm64/engine_execution.hpp` is the
-loop an engine's `run_aarch32` takes). Its gadgets come from the decoder's
-table by `engine/generate_a32.py` and `engine/a32.inc`, in a bank, a cold
-section and a veneer island of their own after the SME part, so no A64 entry
-moves and the part holds no SVE or SME word. A conditional instruction is a
-skip over a run of instructions sharing its condition, a conditional
-terminal gives the skipped instruction back, and a block never ends inside an
-IT block: one the block limit cuts off ends in an unlinked exit with ITSTATE
-stored. A block holds at most 64 instructions (`a32::block_limit`); a T32
-block stops five short of that unless an IT block is open, so that an IT
-block it starts completes inside it. Conditional data processing that sets
-no flags and does not write the PC (MOV, MVN, ADD, SUB, RSB, AND, ORR, EOR
-and BIC of an immediate or a register, MOVW, and VMOV between S or D
-registers) is a select instead: its gadget computes the result and keeps the
-old value where the condition fails, so nothing branches on the guest's
-flags. A plain CMP of a register or of an immediate below 2^24, outside an
-IT block and followed at once by a conditional branch, is the A64 fused
-compare-and-branch gadget of the branch's condition, which reads the
-CpuState slots a register lives in, so the pair costs one dispatch. An
-unconditional VCMP or VCMPE followed at once by an unconditional VMRS
-APSR_nzcv is likewise one gadget that sets FPSCR's flags and copies them to
-NZCV. ADD and SUB of an immediate to the same register have an entry per
-register R0 to R14 with the displacement baked in. A word the decoder rejects, a coprocessor word the profile lacks and
-a form above the engine's level end the block in the illegal-instruction exit
-at the word whatever its condition, except a coprocessor word that is not
-UNPREDICTABLE in the complete profile, which a failing condition skips like
-any other instruction. SVC, BKPT and a retiring exit count their instruction;
-a fault or undefined exit does not. SVC leaves PC after itself and ITSTATE
-advanced; a fault, UDF or BKPT leaves PC at the instruction with its own
-ITSTATE, which a T32 block recovers by decoding its saved halfwords again. An
-entry with ITSTATE set, and a single step, run one uncached instruction at a
-time until ITSTATE is zero. The parallel add and subtract family and SEL are
-gadgets: Advanced SIMD does the lanes on the low half of a vector register, GE
-is the byte-lane mask CpuState keeps, and the saturating forms compute their
-saturation with lane arithmetic, because the saturating instructions would set
-FPSR.QC, which the guest reads in FPSCR. LDM, STM, PUSH and POP that cross a
-page, an STM that stores the PC, and the rare integer forms (USAD8, the dual
-multiplies, the 16-bit saturates and extends, QADD and its relatives), run
-through the shared AArch32 semantic library
-(`cpu/arm64/aarch32/semantics.hpp`): the `a32_library` gadget and the
-crossing paths spill NZCV, decode the word again and call `execute_a32`,
-which translates every page before a load changes a
-register, stores the words ahead of a faulting STM and leaves the base
-register as it was. LDREX and STREX, and LDAEX and STLEX, are the A64
-exclusive gadgets and share their forward-progress mechanism; LDA and STL are
-the A64 ordered ones. Like them, the single and doubleword transfers, VLDR,
-VSTR, TBB, TBH and the block transfers carry no key: their operand holds the
-instruction's position in bits 31:24
-(`darwin/cpu/arm64/gadgets/a32_layout.h`), which a fault reports as the A64
-transfers do, and a block transfer's crossing path passes it to the library
-in place of the key. The library-exit counters name any lowered form that
-reaches the library, and the unit tests require none does.
+Each engine lowers AArch32 in its own tree, and its README records how:
+the [gadget engine](../darwin/cpu/arm64/gadgets/README.md) and
+the [JIT](../darwin/cpu/arm64/jit/README.md).
 
-VFP and Advanced SIMD are lowered onto the A64 instructions with the same
-lanes. D0-D31 and S0-S31 are byte offsets into `CpuState::vectors`, and a
-gadget stores only the bytes the A32 destination has. VFP runs under the
-guest's FPCR in the native FP environment. Advanced SIMD floating point runs
-under the standard FPSCR value (flush to zero, default NaN, round to nearest):
-each such gadget starts with `a32_fp_standard` and each VFP gadget with
-`a32_fp_guest` (`engine/a32.inc`), which write the host FPCR only when
-`CpuState::a32_fp_standard` says the native environment holds the other one,
-so a loop of one kind switches once and the execution boundary restores the
-host's FPCR whichever it holds. A switch costs more than the instructions
-around it, so the forms that interleave the two kinds in image and signal
-code run in the active environment when their result is the same in both and
-switch only for operands where it is not: the VFP conversions between floats
-and integers (all but a denormal float to integer, and an integer to float
-under a rounding mode other than round to nearest), VMAX and VMIN (a NaN or a
-denormal), and the single-precision VADD, VSUB and VMUL of both kinds (a
-nonzero operand whose exponent field is outside 64 to 191, which keeps a sum,
-a difference and a product normal, and a guest rounding mode other than round
-to nearest). The test is integer arithmetic on the operands' bits, made
-before the instruction so that it raises no flags of its own. The A32 shifts by an immediate use the A64
-shift-by-register instructions with a replicated signed amount, so a gadget
-serves every amount; the forms that exist in A64 only with an immediate
-(SQSHLU, the converts with a fraction width, VEXT) have a gadget per
-immediate. VLDn and VSTn are native (`engine/a32_structure.py`): a copy for
-VLD1 and VST1 of several registers, LD2 to LD4 and ST2 to ST4 for the
-interleaved ones, element copies for one lane and LD1R to LD4R for all lanes,
-with the register or immediate writeback; a VLD1 or VST1 copy that crosses a
-page stays in the gadget and moves its bytes with the A64 slow transfer helper,
-and one without an alignment hint has a gadget for each writeback that tests
-nothing the instruction does not need. A copy with an alignment hint and a
-VLD1 to all lanes of one or two registers have gadgets of their own too, which
-test the alignment and leave a misaligned access to the library. An
-unconditional ADD or SUB of an immediate that sets no flags, names no PC and
-computes the base of a copy without hint or writeback runs inside the copy's
-gadget when only unconditional Advanced SIMD data processing that reads no
-core register comes between: the gadget writes the register before the
-transfer, so a fault finds it as the ADD left it, and nothing between can
-exit or fault.
-VRECPS and VRSQRTS (AArch32's unfused steps, not the fused A64 ones), an
-interleaved or one-lane structure access or VLDM and VSTM that crosses a page,
-and a misaligned access with an alignment hint run
-through the semantic library, whose exit commits the live FPSR to
-CpuState before the call and reinstalls it after, as the A64 engine's
-software floating-point helpers do. A saturating instruction leaves QC in the
-cumulative FPSR flags the native environment keeps; `engine/a32_neon.py` and
-`engine/a32_simd.py` document the groups and the operand words.
-
-The complete level adds the Armv8 floating-point additions and the optional
-extensions. The engine decodes in the profile its host gives it
-(`a32::decode_profile`): the extensions the host has the A64 feature for
-(`a32_features`), which are the ones the guest is shown, so a form of any other
-extension is UNDEFINED, as the HWCAPs say. The generator
-(`engine/a32_armv8.py`) lowers each shown extension onto the A64 instruction
-with the same lanes: CRC32, AES, SHA-1 and SHA-256, VMULL.P64, SB, VSEL,
-VMAXNM, VMINNM, VRINT and VCVT with a rounding mode, the double/half
-conversions, the half-precision VFP forms (arithmetic, compares, conversions,
-VMOVX and VINS), half-precision Advanced SIMD, the dot products, VQRDMLAH and
-VQRDMLSH, VCADD, VCMLA and VFMAL and VFMSL. A decoded form with no gadget is
-the semantic library's, run through the `a32_library` gadget: the BF16 and
-Int8 matrix forms and VJCVT, on a host that has them. The FP16 VFP forms share
-the single-precision plans (aux bit 2) and store a half whole through its S
-register, which a half result zero-extends into.
-The level the engine translates at is `a32_support`; a test or a bring-up
-names another one in `BuildOptions::a32_level`, and the runtime never does.
-`arm64-gadget-a32-control` checks the contract above, `arm64-gadget-a32-forms`
-that the engine defines exactly what the decoder defines at its level,
-`arm64-gadget-a32-corpus` that it matches the AArch32 corpus records of that
-level, and `arm64-gadget-region-layout` the part's placement.
-
-The runtime enters an AArch32 task through `run_aarch32` only while the run
-presents AArch32, which `guest_a32_support()` decides in one place: the
-selected engine's level under the development policy. The compat
+The runtime enters an AArch32 task through `run_aarch32`. The compat
 `AT_HWCAP` and `AT_HWCAP2` words the guest selector returns derive from the
-same level, so a run advertises exactly what its engine runs, a non-zero word
-is the kernel's whole evidence that a run executes AArch32, and an AArch32
-entry the run does not present is a fatal event. The conversions live in
+host the selected engine presents, so a run advertises exactly what its engine
+runs, and a non-zero word is the kernel's whole evidence that a run executes
+AArch32. An AArch32 entry in a state the kernel may not hand over is a fatal
+event. The conversions live in
 [`runtime/aarch32_guest.hpp`](../darwin/runtime/aarch32_guest.hpp) and the
 formats of the status word and FPSCR in
 [`cpu/arm64/aarch32/state_format.hpp`](../darwin/cpu/arm64/aarch32/state_format.hpp).
@@ -898,170 +641,9 @@ is fatal unless the status is User mode with E clear, IT comes with T, and
 the task is neither streaming nor holds live SVE registers. An engine's exit
 becomes the bridge event for a 32-bit task: BKPT carries its immediate and
 the BKPT32 exception class, a completed single step the software-step class,
-and a PC alignment fault the 32-bit target address.
-
-The JIT lowers AArch32 in `cpu/arm64/jit/a32`, beside the A64 compiler and
-without changing it. An A32 or T32 block is decoded by the shared decoder and
-compiled by its own compiler, which reuses the A64 compiler's register
-residency, flag machine, cold paths, direct and indirect links, tracked stores
-and publication: R0-R14 are resident host registers (each core register has
-one: x3-x7, x12, x13, x17 and the callee-saved x22-x28, which an AArch32
-translation's frame saves and the A64 translations never touch). A linked
-translation keeps them there from block to block: the registers are loaded
-before the block's internal entry, which only the executor reaches, a link
-leaves them in their hosts, and every return to the executor, a refused link
-included, writes all fifteen back; its link sequences therefore use x10 and
-x11, and no lowering may use a host register of a core register as scratch.
-An unlinked translation (the tracked-store variant, a single instruction) loads
-at first use and writes back at every exit. NZCV is the host's with the lazy-flag states of the A64 compiler, a
-condition is a branch over the body (a conditional data-processing instruction
-that sets no flags and writes no PC, and MOVW, instead runs on both arms and
-a CSEL on the host flags keeps its result only where the condition holds, so
-no data-dependent branch is left to mispredict), and a link's target is the
-key. Every exit
-whose successor is static (a branch, the fall-through of a block the 60
-instructions of a window cut short, the arm of a conditional instruction or
-CBZ that is not taken) is a link while the ITSTATE that follows is zero, so a
-straight run chains like a loop. A chain states what is set up for the whole
-run, not what its first block needs: the floating-point state is loaded, and
-the native environment is on whenever any earlier block switched it on, so a
-chain that began at an integer block links into a floating-point one and back
-instead of returning to the executor at each edge. An indirect branch of
-AArch32 code looks in its site's two cells and then in the executor's
-direct-mapped table of the targets its misses have trained (4096 entries,
-tagged with the link epoch so that the translation of the same address in
-another address space or after a code change never matches), and returns to the
-executor only when both miss: a function with many callers, such as libm's
-`lroundf`, has a return to each of them. A conditional branch (B with a
-condition, CBZ, CBNZ) does not end a block: the block goes on with its
-registers and flags in the host, while the taken path leaves by a cold side
-exit that publishes what is dirty at the branch and links to the target. A
-branch back is a loop's end or a `continue`, and the side exit costs the link
-of the taken path either way. An unconditional branch ends the block, and so
-does a conditional one back to the translation's own first instruction: that
-block is a loop in the host. A probe compilation records the vector registers it holds at
-the back edge and the core registers the body names, the
-translation loads them before the loop head and counts
-every one as dirty so that each exit writes them back, and the back edge is the
-chain budget's test for one more iteration and a branch. The iteration that
-cannot be afforded leaves like any linked exit. Memory
-takes the inline TLB sequence after a 32-bit address and the alignment
-rule of the form (the entry index comes from the address's own bits and the
-tag compare shifts the address, two instructions fewer than the A64
-compiler's). An access already checked to be aligned to its size (a
-single-precision VLDR or VSTR, a Neon transfer whose alignment hint covers its
-bytes, an ordered or exclusive access) is not tested for crossing a page. Any
-other access of more than one byte compares the entry's tag with the page of
-its last byte, so a crossing access misses (the index never gives neighbouring
-pages of a 32-bit address space one entry) and its cold path tells it from a
-miss. A single load or store of a byte, halfword or word does not add the entry's
-delta to the address in a register of its own: the access takes the delta in
-its addressing mode (`[x9, w8, uxtw]`), and the miss path leaves the host
-pointer in x9 and zero in x8; a pair, a multiple transfer, an acquire or
-release and a store that records its host range keep the host pointer in x8.
-The Armv8 load-acquire and store-release (LDA, STL and their
-byte and halfword forms) are an alignment-checked LDAR and STLR. A
-load-exclusive, up to four register instructions and the store-exclusive
-(acquire and release forms included) on the same address at the start of a
-block become one host load-exclusive and store-exclusive, so the guest's
-monitor is the host's; a failed store leaves the status to the guest's retry
-loop. A conditional forward branch or CBZ/CBNZ between the two (the
-compare-and-swap that leaves on a mismatch, the try-lock) stays in the run as
-a side exit whose taken arm clears the monitor and links to the target. The
-parallel add and subtract forms run in the vector unit on the
-packed lanes (UMAX and UMIN stand in for the unsigned saturating forms and a
-widening add for GE, so the host's QC flag is never set). What the lowering
-declines (an access across a page or one that must fault, an exclusive that
-does not fuse, the signed saturating parallel forms, SSAT16, USAT16 and USAD8)
-leaves the block through `uml_arm64_jit_a32_execute`, a terminal helper that
-runs the one instruction in the AArch32 semantic library over the TLB, with
-the library's fault ordering. The helper restores the host's FPCR and FPSR
-unless the instruction is a memory transfer or integer arithmetic, which
-leave the guest's native environment installed for the next block. The
-exclusives run there too, over the JIT's versioned software reservation: the
-helper overrides the library's monitor hooks, because the guest monitor is
-shared with the tracked stores and the fused host exclusives and the library's
-default compare-and-swap monitor is not. An entry in the middle of an IT block
-and a single step run one instruction in the single-instruction arena, with
-the IT state the exit recorded. Translations validate their saved guest bytes
-in the ISA's unit, so a halfword of a 32-bit T32 instruction rewritten under a
-translation is seen. Executable memory comes only from the arena the A64 JIT
-already uses; the A32 files allocate and publish none.
-
-The JIT's AArch32 vector support (VFP and Advanced SIMD on D0-D31) keeps Q0-Q15
-in the A64 compiler's vector residency: CpuState vectors 0-15 are the resident
-host registers V16-V31, a D register is the low or high half of its Q and an S
-register a 32-bit lane, so a narrower operand is staged in a scratch register
-and a result is inserted into its half or lane. An insert rewrites the whole Q,
-so in a run of unconditional single-precision VFP instructions an S register
-that was read from its lane or written also keeps a copy, a shadow, in one of
-V0-V4 and V7, which the run's later reads take instead of the lane: operations
-on different lanes of one Q do not wait for each other's inserts. The Q
-register still takes every write, so an exit, a link and a cold path need no
-shadow; a conditional, double-precision or Advanced SIMD instruction, or any
-other that may write an S register or use those host registers, forgets them,
-and the TLB miss bridge preserves V0-V7. A VFP instruction runs under the
-guest's FPCR and FPSR, which the executor installs for a block that holds one
-(the native floating-point environment of the A64 compiler); an Advanced SIMD
-floating-point instruction runs under the Standard FPSCR value (FZ and DN set,
-round to nearest, AHP and FZ16 the guest's). The host FPCR keeps the mode it
-has across exits and links, as the gadget engine's does:
-`CpuState::a32_fp_standard` records it, the executor clears it where it
-activates the environment, and a translation tests the byte at the first
-instruction that needs a mode and writes the FPCR only when the mode differs.
-The two modes part only on a nonzero denormal operand, a NaN operand, a
-result that is tiny before rounding and a rounding mode other than to nearest,
-so a Neon VMAX, VMIN, VADD, VSUB, VMUL, VMLA or VMLS of single precision in a
-run of at most eight Neon floating-point operations that a VFP instruction
-(or the end of the block) follows runs under the guest's FPCR behind integer
-tests of its operands, and under the Standard value from a cold path when a
-test fails; a longer run switches once, and so does a loop that holds such
-operations and no VFP instruction or FPSCR write (the probe compilation counts
-them): it sets the Standard value before its head and runs every lap unguarded.
-A run under the guest's FPCR leaves its cumulative
-exception flags behind, so what only it would raise is found before it: a
-product whose operand exponents sum to less than 129 (it may underflow,
-inexactly) is tested before the multiplication, and a sum needs no such test
-because a tiny sum of normal numbers is exact. A saturating
-instruction sets QC in the host FPSR, which is the guest's. A VCMP
-leaves its flags in FPSCR's copy in `CpuState` and in the host NZCV, so an
-unconditional VMRS APSR_nzcv, FPSCR right after it keeps them there and
-the branch on them waits for no reload. VRECPS and VRSQRTS
-round the product before the step, as the AArch32 pseudocode does and the A64
-instructions do not, and answer 2.0 or 1.5 for an infinity times a zero
-without raising Invalid Operation. VLDR, VSTR and the register-list transfers
-move whole Q registers where the list is aligned to one; the structure loads
-and stores use the host LDn and STn on scratch registers. They share the
-scalar transfers' TLB sequence and alignment rule. A faulting alignment, a PC
-base or a list past the register file runs the instruction in the semantic
-library instead, as does a store that crosses a page. A load of at most 32
-bytes that crosses a page stays in the translation: its cold path probes the
-TLB for both pages and, when the two mappings are adjacent in the host, reads
-through the first as within one page, and otherwise copies the last 32 bytes
-of the first page and the first 32 of the second side by side into
-`CpuState::a32_cross` and reads from there at the guest's offset. A page
-missing from the TLB takes the library, which fills it.
-
-At the complete level the JIT presents the Armv8 extensions as well, each where
-the host has its A64 feature: it decodes against `a32_decode_profile`, the
-extensions the guest is shown, so a form of an extension the host lacks is
-UNDEFINED and never reaches the semantic library. It lowers the ones that are
-the host's own instruction on the same operands: CRC32, the AES and SHA-1 and
-SHA-256 instructions, VSEL (FCSEL on the guest flags), VMAXNM and VMINNM, VRINT
-and VCVT with a named rounding (scalar under the guest's FPCR, Advanced SIMD
-under the Standard FPSCR value), the signed and unsigned dot products, VQRDMLAH
-and VQRDMLSH, VCADD and VCMLA (half precision as well, with FP16) and SB (a DSB
-and an ISB). VJCVT is FJCVTZS with its Z flag taken into FPSCR; on a host whose
-FJCVTZS reports a flushed subnormal as exact, the A64 JIT's correction (a
-subnormal input is never exact) applies here too. A D-register form that A64
-has no 64-bit arrangement for (single-precision VCMLA by element) runs on the
-128-bit arrangement with the doubleword in both halves, which raises the same
-flags. The rest of the level runs in the semantic library: the other
-half-precision forms, the fused widening half-precision multiply-accumulates,
-the BFloat16 and 8-bit matrix forms and the mixed-sign dot products, and a
-half-precision variant of an Advanced SIMD floating-point form that the
-compiler does not lower, which shares the form of the single-precision one and
-differs in the operands' esize.
+and a PC alignment fault the 32-bit target address. A fault address wider
+than 32 bits is an engine error and the fatal event, never a guest SIGSEGV
+whose compat siginfo would hide the upper half.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
@@ -1139,62 +721,10 @@ tagged by address space, retirement drops one address space's owned state, and
 same-generation stale programs are reused only after exact page-bounded word
 validation. Both gadget engines share an address space's bodies and link state
 among every executor running it, while each executor keeps its own slots and
-retirement order; `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private, as
-[`../darwin/README.md`](../darwin/README.md) records. An address space a
-single executor keeps to itself sweeps its link records and indirect sites once
-they number half again what its last sweep kept and enough of its translations
-have left the cache to have left some unnamed: one that no resident
-translation's stream names and that is no resident block's own record is
-released for reuse, and the site cells and target-table entries naming it are
-emptied, so link state follows what the cache holds rather than all the code
-the address space ever ran. A shared address space is not swept, but is
-renewed once its arena holds at least two mebibytes no body uses and more than
-its bodies do: it is closed, and each executor attached lets go of it at the
-start of its next entry into translated code, so the next one to run the
-address space makes a new one and the old one dies with its last executor.
-An executor also lets go of an address space whose generation the MMU has
-destroyed, at the same point and as the count of destroyed generations moves,
-leaving its number in the window's order until the least-recently-used rule
-reaches it; the x86 gadget executors do the same at the start of each run.
-Both gadget engines charge what each address space keeps (bodies or
-translations, link and indirect records, target tables; not slots) to one
-process-wide byte budget (`cpu/gadget_cache_budget.hpp`), a translation shared
-by several executors once. A store that takes the open address spaces past
-the budget asks the largest to shed; every executor holding one lets go of it
-at the same point as of a renewed space, so the open spaces stay within the
-budget and the whole within twice it. The emulator sets the budget before the
-first executor from guest memory and the host's process memory limit, or from
-`--gadget-cache-budget=`.
-Cached
-returns consult a private per-carrier return-record ring after their site
-cells miss: linked calls push the return PC with its block link, a matching
-record follows that link and fills an empty cell of the site, and the executor
-empties the ring on every address-space switch and after a link sweep, so a
-stale record can only fall back to the ordinary miss exit. A cached indirect
-branch whose cells (and, for a return, ring) miss then looks the target up in
-its address space's direct-mapped target table, which every miss exit trains
-with the target's block link; a hit follows that link and likewise fills only
-an empty cell, so vCPUs sharing a polymorphic site do not keep rewriting it,
-while the miss exit retrains its cells round-robin. The table belongs to the
-address space's link state and is retired with it, so it never names another
-address space's code, and a link reset by a code change leaves through its
-ordinary unlinked exit.
-The software TLB keys its entries by guest page number and indexes 16,384
-32-byte entries directly by the page number's low bits, so a cache line holds
-two neighbouring pages. A same-page transfer compares the page of its final
-byte against the entry its first byte indexes: the direct index never places
-neighbouring pages in one entry, so a crossing transfer can only miss and is
-recognized on the cold path. `arm64-tlb-probe-set` checks that every inline
-probe of both engines hits the entry the C++ fill path placed and misses a
-page its entry does not hold.
-The gadget engine's fill path looks the page up in the generation its entered
-execution context holds (`darwin_uml_static_vm_execution_context_translate()`),
-without resolving the thread's address space and active generation each time.
-It reads the generation's fill index (`darwin/memory/mmu/fill_index.hpp`), a
-radix table of host addresses and guest permissions that mirrors the mapping
-map and is read without a lock: whatever removes or changes a mapping quiesces
-execution first, so an entered context never sees a stale word. A page the index
-does not hold is looked up in the map under its reader lock.
+retirement order; `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private. How
+the cache sweeps, renews and lets go of an address space's state, and the
+process byte budget that bounds all of it, are in
+[`../darwin/README.md`](../darwin/README.md).
 
 Guest debuggers depend on two kernel/host contracts. To single-step a task,
 Linux sets the architectural step bit in the entry registers (arm64 PSTATE.SS,

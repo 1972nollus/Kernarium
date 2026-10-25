@@ -25,7 +25,7 @@ unchanged.
  1 file changed, 29 insertions(+), 14 deletions(-)
 
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 87ac30bc6746fd5ad06660a4f6ea904fb6fbeee6..f53a2fbc4519bcc4921e019e88207f96c17a709a 100644
+index 34aeec80642a53b0d33567f432266eadae0b7ae9..67402d8d37a28a6632ccea29b0c13a4321c01629 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -8,6 +8,7 @@
@@ -93,7 +93,7 @@ index 87ac30bc6746fd5ad06660a4f6ea904fb6fbeee6..f53a2fbc4519bcc4921e019e88207f96
  }
  
  /* The PTE mapping addr, mapped and locked through *ptlp, or NULL. */
-@@ -81,8 +98,7 @@ static struct page *pin_user_mapping(struct mm_struct *mm, unsigned long addr,
+@@ -94,8 +111,7 @@ static struct page *pin_user_mapping(struct mm_struct *mm, unsigned long addr,
  	if (mm == NULL)
  		return NULL;
  
@@ -103,7 +103,7 @@ index 87ac30bc6746fd5ad06660a4f6ea904fb6fbeee6..f53a2fbc4519bcc4921e019e88207f96
  	ptep = user_walk_lock_pte(&walk, addr, &ptl);
  	if (ptep != NULL) {
  		pte_t value = ptep_get(ptep);
-@@ -141,8 +157,7 @@ static void mark_user_page_dirty(unsigned long addr, struct page *page,
+@@ -167,8 +183,7 @@ static void mark_user_page_dirty(unsigned long addr, struct page *page,
  		return;
  	}
  

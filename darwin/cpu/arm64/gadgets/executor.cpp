@@ -2,14 +2,15 @@
 #include "executor.hpp"
 
 #include "cpu/arm64/aarch32/breakpoint_immediate.hpp"
+#include "cpu/arm64/aarch32/guest_fetch.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/gadgets/a32/a32_builder.hpp"
-#include "cpu/arm64/gadgets/a32_support.hpp"
 #include "cpu/gadget_body_arena.hpp"
 #include "cpu/gadget_cache_budget.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
+#include "cpu/gadget_generation_window.hpp"
 #include "cpu/gadget_record_table.hpp"
 #include "cpu/gadget_shared_space.hpp"
 #if UML_GADGET_CACHE_CENSUS
@@ -74,9 +75,8 @@ constexpr std::size_t maximum_t32_validation_units =
  * two flags in the bits a PC of that width never uses, so no two canonical
  * keys share a compact form. A key outside both has none: it tags to a value
  * no slot holds, which is a miss. */
-constexpr unsigned tag_owner_shift = 48;
 constexpr std::uint64_t tag_key_mask =
-	(std::uint64_t{1} << tag_owner_shift) - 1U;
+	(std::uint64_t{1} << gadget_cache::tag_owner_shift) - 1U;
 constexpr unsigned a64_key_bits = 47;
 constexpr std::uint64_t aarch32_flag = std::uint64_t{1} << a64_key_bits;
 constexpr std::uint64_t thumb_flag = std::uint64_t{1} << (a64_key_bits - 1U);
@@ -130,24 +130,11 @@ static_assert(compact_tag_key(arm64::aarch32::a32_key(0x1002U)) ==
 [[nodiscard]] std::size_t fetch_units(StaticGuestMemory &memory,
 	std::uint64_t address, std::size_t unit, std::span<std::byte> bytes)
 {
-	const std::size_t capacity = bytes.size() / unit;
-	std::size_t count = 0;
-	while (count < capacity) {
-		const auto at = address + count * unit;
-		const auto page_remaining =
-			guest_page_size - (at & (guest_page_size - 1));
-		auto run = std::min<std::size_t>(capacity - count,
-			static_cast<std::size_t>(page_remaining / unit));
-		/* A valid A64 or A32 PC is word aligned. Preserve deterministic
-		 * fault handling for a malformed PC instead of constructing an
-		 * empty span. */
-		if (run == 0)
-			run = 1;
-		if (!memory.fetch(at, bytes.subspan(count * unit, run * unit)))
-			break;
-		count += run;
-	}
-	return count;
+	return arm64::aarch32::fetch_guest_units(address, unit, bytes,
+		guest_page_size,
+		[&memory](std::uint64_t at, std::span<std::byte> out) {
+			return memory.fetch(at, out);
+		});
 }
 
 [[nodiscard]] std::size_t fetch_instruction_window(
@@ -1436,7 +1423,7 @@ public:
 				slot.vacate();
 			}
 		}
-		for (auto &[generation, state] : generations_) {
+		for (auto &[generation, state] : window_.generations) {
 			renew_if_due(*state.space);
 			SpaceRegistry::instance().detach(state.space,
 				announcement_);
@@ -1472,7 +1459,7 @@ public:
 			if (slab)
 				slabs += sizeof(Slab);
 		std::size_t lists = 0;
-		for (const auto &[generation, state] : generations_)
+		for (const auto &[generation, state] : window_.generations)
 			lists += state.slots.capacity() * sizeof(std::uint32_t);
 		if (link_memo_)
 			lists += sizeof(LinkMemo);
@@ -1511,10 +1498,11 @@ public:
 		history_.write(out);
 		std::fputc('\n', out);
 		const auto now = census::elapsed_seconds();
-		for (const auto &[generation, state] : generations_) {
-			const auto found = std::find(resident_.rbegin(),
-				resident_.rend(), generation);
-			const bool running = generation == current_generation_;
+		for (const auto &[generation, state] : window_.generations) {
+			const auto found = std::find(window_.order.rbegin(),
+				window_.order.rend(), generation);
+			const bool running =
+				generation == window_.current_generation;
 			const auto space = state.space->footprint();
 			/* Whether the MMU still has the address space: 1 live, 0
 			 * destroyed, negative when it cannot say from this thread. */
@@ -1527,7 +1515,7 @@ public:
 				"idle_seconds=%.3f link_records=%zu links=%zu "
 				"indirect=0 targets=0 space=%p alive=%d\n",
 				generation, running ? 1 : 0,
-				found - resident_.rbegin(),
+				found - window_.order.rbegin(),
 				static_cast<unsigned long long>(running ? 0 :
 					switches_ - state.census_switch),
 				running ? 0.0 : now - state.census_seconds,
@@ -1557,10 +1545,11 @@ public:
 		 * from every cache that holds it, which a reader removes by
 		 * the space's identity. */
 		if (sample != 0)
-			for (const auto &[generation, state] : generations_)
+			for (const auto &[generation, state] :
+			     window_.generations)
 				state.space->for_each_link(
 					[&, generation](const LinkRecord &record) {
-						if (census_sampled(
+						if (census::sampled(
 							    record.link.guest_pc,
 							    sample))
 							std::fprintf(out,
@@ -1602,7 +1591,7 @@ public:
 						body.source_unit(),
 					static_cast<const void *>(&body));
 				if (sample != 0 &&
-				    census_sampled(slot.key(), sample))
+				    census::sampled(slot.key(), sample))
 					census_words(out, slot, text, records);
 			}
 		}
@@ -1613,7 +1602,7 @@ public:
 	 * shared pool this is an outcome of the workload, not a build option. */
 	[[nodiscard]] std::size_t resident_generations() const noexcept
 	{
-		return generations_.size();
+		return window_.generations.size();
 	}
 
 	[[nodiscard]] std::size_t occupancy() const noexcept
@@ -1636,14 +1625,16 @@ public:
 	{
 #if UML_GADGET_CACHE_CENSUS
 		/* The address space being left was in use until now. */
-		if (generation != current_generation_ && current_ != nullptr) {
+		if (generation != window_.current_generation &&
+		    window_.current != nullptr) {
 			++switches_;
-			current_->census_switch = switches_;
-			current_->census_seconds = census::elapsed_seconds();
+			window_.current->census_switch = switches_;
+			window_.current->census_seconds =
+				census::elapsed_seconds();
 		}
 #endif
-		current_generation_ = generation;
-		current_ = nullptr;
+		window_.current_generation = generation;
+		window_.current = nullptr;
 		auto &state = current();
 		touch(generation);
 		if (state.changes == changes)
@@ -1660,10 +1651,11 @@ public:
 	{
 #if UML_GADGET_CACHE_CENSUS
 		if ((history_.lookups() & 4095U) == 0)
-			snapshot_if_due();
+			census::snapshot_if_due(schedule_, *this);
 #endif
-		assert(current_ == nullptr || current_->changes == changes);
-		const auto location = locate(current_generation_, pc);
+		assert(window_.current == nullptr ||
+		       window_.current->changes == changes);
+		const auto location = locate(window_.current_generation, pc);
 		const auto tag = tag_of(pc);
 		auto &slab = slabs_[location.slab];
 		if (slab) {
@@ -1671,7 +1663,7 @@ public:
 				auto &slot = slab->slots[location.offset + way];
 				if (slot.tag != tag)
 					continue;
-				if (slot.epoch() == current_epoch_) {
+				if (slot.epoch() == window_.current_epoch) {
 #if UML_GADGET_CACHE_CENSUS
 					history_.hit();
 #endif
@@ -1724,12 +1716,12 @@ public:
 	[[nodiscard]] std::optional<BuildResult> find_stream(
 		const void *stream) const
 	{
-		if (stream == nullptr || current_ == nullptr)
+		if (stream == nullptr || window_.current == nullptr)
 			return std::nullopt;
 #if UML_GADGET_CACHE_CENSUS
 		++stream_lookups_;
 #endif
-		const auto *body = current_->space->owner(stream);
+		const auto *body = window_.current->space->owner(stream);
 		if (body == nullptr)
 			return std::nullopt;
 		auto result = body->result();
@@ -1749,9 +1741,9 @@ public:
 	[[nodiscard]] std::optional<StreamSource> find_stream_source(
 		const void *stream) const
 	{
-		if (stream == nullptr || current_ == nullptr)
+		if (stream == nullptr || window_.current == nullptr)
 			return std::nullopt;
-		const auto *body = current_->space->owner(stream);
+		const auto *body = window_.current->space->owner(stream);
 		if (body == nullptr)
 			return std::nullopt;
 		auto result = body->result();
@@ -1766,7 +1758,7 @@ public:
 	[[nodiscard]] bool sample_block(const void *stream,
 		diagnostics::SampledBlock &block) const noexcept
 	{
-		for (const auto &[generation, state] : generations_) {
+		for (const auto &[generation, state] : window_.generations) {
 			const Body *body = nullptr;
 			try {
 				if (!state.space->try_owner(stream, body) ||
@@ -1821,8 +1813,8 @@ public:
 	 * code; a record reset by a code change just exits through link_exit. */
 	[[nodiscard]] const void *target_tier() const noexcept
 	{
-		return current_ != nullptr ? current_->space->target_tier() :
-			nullptr;
+		return window_.current != nullptr ?
+			window_.current->space->target_tier() : nullptr;
 	}
 
 	[[nodiscard]] arm64::gadgets::IndirectLink *indirect_link(
@@ -1843,11 +1835,11 @@ public:
 		if (!link_memo_)
 			link_memo_ = std::make_unique<LinkMemo>();
 		auto &entry = (*link_memo_)[((pc >> 2U) ^ (pc >> 14U) ^
-			current_generation_) & (link_memo_entries - 1U)];
+			window_.current_generation) & (link_memo_entries - 1U)];
 		if (entry.link == nullptr || entry.pc != pc ||
-		    entry.generation != current_generation_)
-			entry = {pc, current_generation_,
-				current_->space->link(pc)};
+		    entry.generation != window_.current_generation)
+			entry = {pc, window_.current_generation,
+				window_.current->space->link(pc)};
 		return entry.link;
 	}
 
@@ -1910,7 +1902,8 @@ public:
 		 * resident, and this store makes a second copy beside it. */
 		bool restored = false;
 		{
-			const auto location = locate(current_generation_, pc);
+			const auto location =
+				locate(window_.current_generation, pc);
 			if (const auto &slab = slabs_[location.slab])
 				for (std::size_t way = 0; way < ways; ++way)
 					if (slab->slots[location.offset + way]
@@ -1920,7 +1913,7 @@ public:
 #endif
 		auto &slot = install(pc, body, changes);
 #if UML_GADGET_CACHE_CENSUS
-		history_.arrive(census_id_, current_generation_, pc,
+		history_.arrive(census_id_, window_.current_generation, pc,
 			body_digest(*slot.body), restored);
 #endif
 		state.space->reclaim(announcement_);
@@ -1975,7 +1968,7 @@ public:
 		};
 		std::array<Leaving, uml_gadget_resident_generations + 1U> leaving{};
 		std::size_t count = 0;
-		for (const auto &[generation, state] : generations_) {
+		for (const auto &[generation, state] : window_.generations) {
 			if (count == leaving.size())
 				break;
 			if (state.space->closed() || state.space->shedding())
@@ -1987,7 +1980,7 @@ public:
 		bool left_current = false;
 		for (std::size_t index = 0; index < count; ++index) {
 			const auto [generation, tombstone] = leaving[index];
-			left_current |= generation == current_generation_;
+			left_current |= generation == window_.current_generation;
 #if UML_GADGET_CACHE_CENSUS
 			if (tombstone)
 				++dead_left_;
@@ -1995,8 +1988,9 @@ public:
 			/* A space the budget asked to shed is closed, for every
 			 * other executor holding it to let go of too. */
 			if (!tombstone)
-				if (const auto held = generations_.find(generation);
-				    held != generations_.end() &&
+				if (const auto held =
+					    window_.generations.find(generation);
+				    held != window_.generations.end() &&
 				    held->second.space->shedding())
 					SpaceRegistry::instance().close(
 						held->second.space);
@@ -2011,16 +2005,6 @@ private:
 	static constexpr std::size_t set_count = slot_count / ways;
 	static constexpr std::size_t slab_slots = ::uml::cpu::gadget_cache::slab_slots;
 	static constexpr std::size_t slab_count = slot_count / slab_slots;
-	/* The ids tags can carry, and the owner bits that match none of them
-	 * while no address space is running. */
-	static constexpr std::size_t max_owner_id = 0xfffeU;
-	static constexpr std::uint64_t no_owner = std::uint64_t{0xffffU}
-		<< tag_owner_shift;
-	static constexpr std::uint16_t max_epoch = 0xffffU;
-	static_assert(uml_gadget_resident_generations + 2U < max_owner_id,
-		"every resident address space has an id, and so does the one "
-		"being retired");
-
 	/* One way of a set: what a lookup compares and the translation it
 	 * names.
 	 *
@@ -2097,7 +2081,8 @@ private:
 		}
 		[[nodiscard]] std::uint16_t owner() const noexcept
 		{
-			return static_cast<std::uint16_t>(tag >> tag_owner_shift);
+			return static_cast<std::uint16_t>(
+				tag >> gadget_cache::tag_owner_shift);
 		}
 		[[nodiscard]] std::uint64_t key() const noexcept
 		{
@@ -2124,6 +2109,14 @@ private:
 		std::size_t offset;
 	};
 
+	static constexpr std::size_t link_memo_entries = 4096;
+	struct LinkMemoEntry final {
+		std::uint64_t pc;
+		unsigned long generation;
+		const arm64::gadgets::BlockLink *link;
+	};
+	using LinkMemo = std::array<LinkMemoEntry, link_memo_entries>;
+
 	/* What this cache keeps about one address space it holds: the space,
 	 * shared with other executors or not, the code-change mark it last
 	 * answered, and the slots it stored into.
@@ -2133,44 +2126,8 @@ private:
 	 * That matters because retirement is not rare on a desktop guest: it
 	 * happens on every first sight of a ninth address space. See G167.
 	 */
-	static constexpr std::size_t link_memo_entries = 4096;
-	struct LinkMemoEntry final {
-		std::uint64_t pc;
-		unsigned long generation;
-		const arm64::gadgets::BlockLink *link;
-	};
-	using LinkMemo = std::array<LinkMemoEntry, link_memo_entries>;
-
-	struct Generation final {
-		Generation() = default;
-		Generation(const Generation &) = delete;
-		Generation &operator=(const Generation &) = delete;
-		Generation(Generation &&) = delete;
-		Generation &operator=(Generation &&) = delete;
-
-		Space *space{};
-		std::uint64_t changes{};
-		/* The guest's number for the address space, and the cache's own
-		 * for it: the id a slot's tag carries, from one up, recycled
-		 * once the address space is retired and its slots released. */
-		unsigned long value{};
-		std::uint16_t id{};
-		/* How many times the address space's code is known to have
-		 * changed, as far as a slot's validation can tell: a slot whose
-		 * epoch equals this one has matched guest memory since the
-		 * last change. It runs from one to its maximum and starts over
-		 * after a sweep of the slots that carry it, so a slot's epoch
-		 * is never mistaken for the current one. */
-		std::uint16_t epoch{1};
-		/* Slots this address space has stored into, as flat slot
-		 * indices. It may name a slot another address space has since
-		 * taken, and may name one twice, so retirement checks every
-		 * entry; it can only *miss* a slot by having overflowed, which
-		 * `slots_complete` records and retirement answers with the whole
-		 * sweep.
-		 */
-		std::vector<std::uint32_t> slots;
-		bool slots_complete{true};
+	struct Generation final
+		: gadget_cache::GenerationState<Space, unsigned long> {
 #if UML_GADGET_CACHE_CENSUS
 		/* When the cache last left this address space, in switches and
 		 * in seconds. */
@@ -2178,6 +2135,9 @@ private:
 		double census_seconds{};
 #endif
 	};
+
+	using Window = gadget_cache::GenerationWindow<unsigned long, Generation,
+		uml_gadget_resident_generations>;
 
 	[[nodiscard]] static Location locate(
 		unsigned long generation, std::uint64_t pc) noexcept
@@ -2199,15 +2159,7 @@ private:
 		};
 	}
 
-	/* Least-recently-current first. */
-	void touch(unsigned long generation)
-	{
-		const auto found = std::find(
-			resident_.begin(), resident_.end(), generation);
-		if (found != resident_.end())
-			resident_.erase(found);
-		resident_.push_back(generation);
-	}
+	void touch(unsigned long generation) { window_.touch(generation); }
 
 	/* Let go of one address space: its resident translations, and the
 	 * cache's hold on the space, which goes with the last executor that
@@ -2223,9 +2175,9 @@ private:
 	 * place. */
 	void retire(unsigned long generation, bool tombstone = false)
 	{
-		const auto owner = generations_.find(generation);
-		if (owner == generations_.end()) {
-			forget_place(generation);
+		const auto owner = window_.generations.find(generation);
+		if (owner == window_.generations.end()) {
+			window_.forget_place(generation);
 			return;
 		}
 		const auto id = owner->second.id;
@@ -2248,28 +2200,15 @@ private:
 		/* Everything that can fail comes before anything changes,
 		 * so that a failure leaves the address space held and
 		 * retirable again. */
-		free_ids_.reserve(free_ids_.size() + 1);
+		window_.reserve_id();
 		/* Letting go of its slots may have left a shared space
 		 * mostly freed arena. This cache still holds the space,
 		 * which is what makes it safe to close. */
 		renew_if_due(*space);
-		if (current_ == &owner->second)
-			unbind();
-		owners_[id] = nullptr;
-		free_ids_.push_back(id);
-		generations_.erase(owner);
+		window_.leave(owner, id);
 		SpaceRegistry::instance().detach(space, announcement_);
 		if (!tombstone)
-			forget_place(generation);
-	}
-
-	/* Drop a generation's place in the window's order. */
-	void forget_place(unsigned long generation)
-	{
-		const auto found = std::find(
-			resident_.begin(), resident_.end(), generation);
-		if (found != resident_.end())
-			resident_.erase(found);
+			window_.forget_place(generation);
 	}
 
 	/* Close a shared address space that holds enough freed arena
@@ -2332,24 +2271,12 @@ private:
 			~(granule - 1);
 	}
 
-	/* What each record a stream can point at names, by the record's
-	 * address, for each address space: a link record by the guest PC it
-	 * links to, an indirect site by the branch that owns it. */
-	using CensusRecords = std::unordered_map<unsigned long,
-		std::unordered_map<std::uintptr_t, std::pair<char, std::uint64_t>>>;
+	/* What each record a stream can point at names, for each address
+	 * space. */
+	using CensusRecords =
+		std::unordered_map<unsigned long, census::RecordNames>;
 
-	[[nodiscard]] static bool census_sampled(
-		std::uint64_t pc, std::uint64_t one_in) noexcept
-	{
-		auto value = pc * 0x9e3779b97f4a7c15ULL;
-		value ^= value >> 29;
-		return value % one_in == 0;
-	}
-
-	/* One sampled body's stream, entry word included, word by word:
-	 * `g` a gadget by its offset in the executable's text, `l` a link
-	 * record by the guest PC it links to, `i` an indirect site by the
-	 * branch that owns it, and `o` any other word as it is. */
+	/* One sampled body's stream, entry word included. */
 	void census_words(std::FILE *out, const Slot &slot,
 		census::TextRange text, CensusRecords &records) const
 	{
@@ -2373,34 +2300,9 @@ private:
 			}
 		}
 		const auto &body = *slot.body;
-		std::fprintf(out, "W 0x%llx",
-			static_cast<unsigned long long>(slot.key()));
-		const auto *end = body.words() + body.word_count;
-		for (const auto *word = body.link_entry(); word != end; ++word) {
-			const auto value = *word;
-			if (text.contains(value)) {
-				std::fprintf(out, " g%llx",
-					static_cast<unsigned long long>(
-						value - text.begin));
-			} else if (const auto found = named->second.find(value);
-				   found != named->second.end()) {
-				std::fprintf(out, " %c%llx", found->second.first,
-					static_cast<unsigned long long>(
-						found->second.second));
-			} else {
-				std::fprintf(out, " o%llx",
-					static_cast<unsigned long long>(value));
-			}
-		}
-		std::fputc('\n', out);
-	}
-
-	void snapshot_if_due()
-	{
-		if (const auto number = schedule_.due(); number != 0)
-			census::append([this, number](std::FILE *out) {
-				census(out, number);
-			});
+		census::write_words(out, slot.key(),
+			{body.link_entry(), body.words() + body.word_count},
+			text, named->second);
 	}
 #endif
 
@@ -2421,64 +2323,33 @@ private:
 	 * assumed. */
 	[[nodiscard]] Generation &current()
 	{
-		if (current_ != nullptr)
-			return *current_;
-		auto [entry, inserted] =
-			generations_.try_emplace(current_generation_);
-		current_ = &entry->second;
+		if (window_.current != nullptr)
+			return *window_.current;
+		auto [entry, inserted] = window_.generations.try_emplace(
+			window_.current_generation);
+		window_.current = &entry->second;
 		if (inserted) {
 			auto &state = entry->second;
-			enroll(state, current_generation_);
+			window_.enroll(state, window_.current_generation);
 			state.space = SpaceRegistry::instance().attach(
 				SpaceKey{
-					.generation = current_generation_,
+					.generation = window_.current_generation,
 					.mode = mode_,
 					.owner = share_ ? nullptr : this,
 					.options = options_,
 				},
 				state.changes, announcement_);
-			touch(current_generation_);
-			while (resident_.size() > uml_gadget_resident_generations) {
+			touch(window_.current_generation);
+			window_.trim([this](unsigned long generation) {
 #if UML_GADGET_CACHE_CENSUS
-				if (!generations_.contains(resident_.front()))
+				if (!window_.generations.contains(generation))
 					++lru_tomb_;
 #endif
-				retire(resident_.front());
-			}
+				retire(generation);
+			});
 		}
-		bind(*current_);
-		return *current_;
-	}
-
-	/* Give an address space the id its slots' tags will carry. */
-	void enroll(Generation &state, unsigned long generation)
-	{
-		state.value = generation;
-		if (!free_ids_.empty()) {
-			state.id = free_ids_.back();
-			free_ids_.pop_back();
-		} else {
-			assert(owners_.size() <= max_owner_id);
-			state.id = static_cast<std::uint16_t>(owners_.size());
-			owners_.push_back(nullptr);
-		}
-		owners_[state.id] = &state;
-	}
-
-	/* Make an enrolled address space the one lookups are made in. */
-	void bind(const Generation &state) noexcept
-	{
-		current_owner_ = std::uint64_t{state.id} << tag_owner_shift;
-		current_epoch_ = state.epoch;
-	}
-
-	/* No address space is running: the owner bits name none, so no
-	 * lookup matches. */
-	void unbind() noexcept
-	{
-		current_ = nullptr;
-		current_owner_ = no_owner;
-		current_epoch_ = 0;
+		window_.bind(*window_.current);
+		return *window_.current;
 	}
 
 	/* The tag a lookup in the running address space compares. */
@@ -2486,34 +2357,33 @@ private:
 	{
 		const auto compact = compact_tag_key(key);
 		return compact == unmatchable_tag ? unmatchable_tag :
-			compact | current_owner_;
+			compact | window_.current_owner;
 	}
 
 	[[nodiscard]] Generation *owner_of(const Slot &slot) const noexcept
 	{
-		return owners_[slot.owner()];
+		return window_.owners[slot.owner()];
 	}
 
 	[[nodiscard]] unsigned long generation_of(
 		const Slot &slot) const noexcept
 	{
-		return owners_[slot.owner()]->value;
+		return window_.owners[slot.owner()]->value;
 	}
 
 	/* A code change was seen in the running address space: every slot's
-	 * validation is out of date. The epoch advances, and when it would
-	 * pass what a slot can hold the slots that carry one are cleared, so
-	 * that no old validation is ever equal to a new epoch. */
+	 * validation is out of date. When the epoch would pass what a slot can
+	 * hold, the slots that carry one are cleared first. */
 	void advance_epoch(Generation &state) noexcept
 	{
-		if (state.epoch == max_epoch) {
-			const auto id = state.id;
+		const auto forget_epochs = [this](Generation &wrapped) noexcept {
+			const auto id = wrapped.id;
 			const auto forget = [id](Slot &slot) noexcept {
 				if (slot.body != nullptr && slot.owner() == id)
 					slot.set_epoch(0);
 			};
-			if (state.slots_complete) {
-				for (const auto index : state.slots)
+			if (wrapped.slots_complete) {
+				for (const auto index : wrapped.slots)
 					forget(slot_at(index));
 			} else {
 				for (auto &slab : slabs_)
@@ -2521,11 +2391,8 @@ private:
 						for (auto &slot : slab->slots)
 							forget(slot);
 			}
-			state.epoch = 0;
-		}
-		++state.epoch;
-		if (&state == current_)
-			current_epoch_ = state.epoch;
+		};
+		window_.advance_epoch(state, forget_epochs);
 	}
 
 	/* Put a held body in the set for `pc`, letting go of whatever the way
@@ -2534,7 +2401,7 @@ private:
 		[[maybe_unused]] std::uint64_t changes)
 	{
 		assert(current().changes == changes);
-		const auto location = locate(current_generation_, pc);
+		const auto location = locate(window_.current_generation, pc);
 		auto &slab = slabs_[location.slab];
 		if (!slab)
 			slab = std::make_unique<Slab>();
@@ -2587,7 +2454,7 @@ private:
 		slot.tag = tag_of(pc);
 		slot.body = body;
 		slot.memo = 0;
-		slot.set_epoch(current_epoch_);
+		slot.set_epoch(window_.current_epoch);
 		activate(pc, slot);
 		return slot;
 	}
@@ -2706,7 +2573,7 @@ private:
 		case Validation::valid:
 			break;
 		}
-		slot.set_epoch(current_epoch_);
+		slot.set_epoch(window_.current_epoch);
 		++diagnostics.validation_hits;
 		return true;
 	}
@@ -2803,7 +2670,8 @@ private:
 		 * about to go. */
 		if (link_memo_)
 			for (auto &entry : *link_memo_)
-				if (entry.generation == current_generation_ &&
+				if (entry.generation ==
+					    window_.current_generation &&
 				    entry.link != nullptr &&
 				    !links.marked(Space::record_of(entry.link)))
 					entry = {};
@@ -2852,14 +2720,11 @@ private:
 	std::array<std::byte, 32U << 10> scratch_;
 	std::pmr::monotonic_buffer_resource build_scratch_;
 	/* At most uml_gadget_resident_generations + 1 entries, so finding one is
-	 * cheap; the state each holds is what makes retiring it proportional. */
-	std::unordered_map<unsigned long, Generation> generations_;
-	/* generations_ is node-based, so this stays valid across insertion; only
-	 * retiring this very address space could invalidate it, and retirement
-	 * only ever takes the least recently current one. */
-	Generation *current_{};
-	std::vector<unsigned long> resident_;
-	unsigned long current_generation_{};
+	 * cheap; the state each holds is what makes retiring it proportional.
+	 * The running one stays valid across insertion; only retiring this very
+	 * address space could invalidate it, and retirement only ever takes the
+	 * least recently current one. */
+	Window window_;
 #if UML_GADGET_CACHE_CENSUS
 	mutable std::uint64_t stream_lookups_{};
 	census::History history_;
@@ -2877,15 +2742,6 @@ private:
 	std::uint64_t dead_left_{};
 	std::uint64_t lru_tomb_{};
 #endif
-	/* What the running address space adds to a key to make a tag, and
-	 * the epoch its slots must carry to be current. Both are read by
-	 * every lookup, so they sit here rather than behind current_. */
-	std::uint64_t current_owner_{no_owner};
-	std::uint16_t current_epoch_{};
-	/* Address spaces by id, with id zero never used, and the ids of the
-	 * ones retired. */
-	std::vector<Generation *> owners_{nullptr};
-	std::vector<std::uint16_t> free_ids_;
 	std::array<std::unique_ptr<Slab>, slab_count> slabs_;
 	std::array<std::uint8_t, set_count> next_replacement_{};
 };

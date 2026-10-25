@@ -382,6 +382,15 @@ The compositor's framebuffers are such GPU-only blobs; the host presents each
 through the Metal texture that stores its GL texture, as
 [`../../docs/graphics.md`](../../docs/graphics.md) describes.
 
+Such a blob has no pages the guest can map, because the kernel refuses to map a
+blob that is not mappable, so the guest's Virgl driver reaches it only through
+copy transfers. It imports a host blob with staging on whenever the renderer
+copies in both directions, and a second import of a handle it still holds
+reports the blob's type as the first did. Hardware bitmap uploads and the
+read-back of a window or an EGL image rely on both, and on the renderer reading
+a blob texture back through its staging buffer's guest storage
+([`../../docs/graphics.md`](../../docs/graphics.md#current-path)).
+
 Presentation is `VK_ANDROID_native_buffer`: the platform loader allocates the
 swapchain images from gralloc and the driver imports them. Those blobs belong to
 the renderer's GL context, and an Apple host has no dma-buf to hand across, so

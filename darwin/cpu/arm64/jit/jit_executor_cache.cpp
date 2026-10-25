@@ -32,7 +32,7 @@ JitExecutor::Implementation::validate_stale_block(
   /*
    * This runs on every stale hit in production builds, so it fetches
    * page-bounded runs and compares each run once, with the page-splitting
-   * loop fetch_instruction_window() uses in the gadget executor.
+   * loop fetch_guest_units() (aarch32/guest_fetch.hpp) uses for a window.
    *
    * Validation reports mismatch at the first differing word, and fault only
    * for an unreadable word it reaches before any mismatch. A failed bulk fetch
@@ -169,6 +169,7 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
                             std::span<const std::uint32_t> guest_words,
                             std::shared_ptr<const std::uint32_t[]>
                                 saved_guest_words,
+                            std::size_t instruction_count, std::size_t units,
                             std::uint64_t memory_write_mask,
                             std::uint64_t direct_memory_write_mask,
                             bool accesses_fp_state, bool link_target_safe,
@@ -202,8 +203,8 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
     cache_validation_diagnostics_.direct_link_table_high_water =
         links_.size();
 #endif
-  block.instruction_count = guest_words.size();
-  block.saved_units = static_cast<std::uint8_t>(guest_words.size());
+  block.instruction_count = instruction_count;
+  block.saved_units = static_cast<std::uint8_t>(units);
   block.saved_guest_words = std::move(saved_guest_words);
   block.memory_write_mask = memory_write_mask;
   block.direct_memory_write_mask = direct_memory_write_mask;
@@ -330,9 +331,8 @@ JitExecutor::Implementation::install_shared_translation(
       generation, changes, translation_key(pc, mode),
       sign_jit_function<JitFunction>(stored.code), internal_entry,
       stored.target_link, translation->relocations,
-      stored.direct_link_refusals,
-      guest_words.first(translation->guest_instructions),
-      translation->guest_words,
+      stored.direct_link_refusals, guest_words, translation->guest_words,
+      translation->guest_instructions, translation->guest_word_count,
       translation->memory_write_mask, translation->direct_memory_write_mask,
       translation->accesses_fp_state, translation->link_target_safe,
       translation->native_fp,
@@ -347,11 +347,19 @@ JitExecutor::Implementation::publish_shared_translation(
     std::uint64_t pc, std::uint8_t mode,
     std::span<const std::uint32_t> guest_words,
     const JitCompiler::Result &compiled) {
+  return publish_shared_translation(
+      pc, mode, guest_words.first(compiled.guest_instructions),
+      compiled.guest_instructions, compiled);
+}
+
+std::shared_ptr<const SharedTranslation>
+JitExecutor::Implementation::publish_shared_translation(
+    std::uint64_t pc, std::uint8_t mode,
+    std::span<const std::uint32_t> validation_words,
+    std::size_t guest_word_count, const JitCompiler::Result &compiled) {
   auto &cache = SharedTranslationCache::instance();
   if (!compiled.relocatable)
     return nullptr;
-  const auto validation_words =
-      guest_words.first(compiled.guest_instructions);
   const auto profile = shared_codegen_profile(mode);
   const auto preflight = cache.preflight_publication(
       profile, pc, validation_words,
@@ -394,7 +402,7 @@ JitExecutor::Implementation::publish_shared_translation(
     translation->indirect_link_refusals = compiled.indirect_link_refusals;
     translation->isa = static_cast<std::uint8_t>(aarch32::key_isa(pc));
     translation->guest_words = std::move(saved_guest_words);
-    translation->guest_word_count = validation_words.size();
+    translation->guest_word_count = guest_word_count;
     translation->guest_instructions = compiled.guest_instructions;
     translation->hot_words = compiled.hot_words;
     translation->internal_entry_word = compiled.internal_entry_word;

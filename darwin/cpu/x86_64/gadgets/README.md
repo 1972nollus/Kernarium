@@ -973,14 +973,8 @@ asked to shed, and the registry no longer hands it out.
 ## Measuring what the cache costs
 
 A `UML_GADGET_CACHE_CENSUS=ON` build makes every executor append what its
-cache holds, at teardown and optionally at intervals: the committed
-slabs, each resident translation's own allocations as the arenas sized
-them -- its body and native stream, its saved source, and the decoded
-instructions only a replayed block holds -- the link and indirect records,
-and the target link table each address space owns, with the history of its
-lookups, evictions and retranslations. A space the executors share is written
-whole on an `S` record, named by its identity, by every executor that holds
-it, and each translation names its body, so that a reader counts a space and a
-body once. The record format is the arm64 engine's, so one analyzer reads a
-capture from either. See
-[`tests/perf/README.md`](../../../../tests/perf/README.md).
+cache holds and how it came to hold it, in the arm64 engine's records, so one
+analyzer reads a capture from either
+([`tests/perf/README.md`](../../../../tests/perf/README.md#cache-census)). An
+x86 translation's allocations are its body and native stream, its saved
+source, and the decoded instructions only a replayed block holds.

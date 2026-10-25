@@ -170,6 +170,9 @@ struct CpuState final {
 	 * tls, and its PC in key form (aarch32/guest_key.hpp) for the whole entry;
 	 * these are the parts that have no A64 field. The runtime writes every one
 	 * of them on each AArch32 entry and an A64 entry never reads them.
+	 * registers[15..30] and sp hold what the virtual CPU ran before, an
+	 * AArch64 task's x15-x30 and SP among it, and an engine that borrows one
+	 * sets it before it reads it.
 	 *
 	 * a32 marks an AArch32 entry for assertions and the sampler. a32_q is the
 	 * sticky Q flag. a32_ge_mask is GE[3:0] with each flag widened to the byte

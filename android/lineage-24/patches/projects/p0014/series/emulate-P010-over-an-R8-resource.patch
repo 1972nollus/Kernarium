@@ -22,7 +22,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 18 insertions(+), 9 deletions(-)
 
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index c99db486d39185640c82187fac7ed76c3a2c2865..7618d41c7c448133a3da7053afc46829188ca56a 100644
+index 5300be66af74fd834fd411f3302036ee4306b783..5bb26708e7d58abac59492c1911c1a398db827b0 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
 @@ -195,13 +195,16 @@ static void virgl_get_emulated_metadata(const struct bo *bo, struct bo_metadata
@@ -88,8 +88,8 @@ index c99db486d39185640c82187fac7ed76c3a2c2865..7618d41c7c448133a3da7053afc46829
 +	       drm_format == DRM_FORMAT_YVU420_ANDROID;
  }
  
- // Adds the given buffer combination to the list of supported buffer combinations if the
-@@ -737,7 +745,8 @@ static int virgl_init(struct driver *drv)
+ // Whether this buffer exists only as the bytes of an R8 image. The native test above only checks
+@@ -760,7 +768,8 @@ static int virgl_init(struct driver *drv)
  	 * when not natively supported and instead handled by HWComposer. */
  	virgl_add_combination(drv, DRM_FORMAT_P010, &LINEAR_METADATA,
  			      BO_USE_SCANOUT | BO_USE_TEXTURE | BO_USE_SW_MASK |

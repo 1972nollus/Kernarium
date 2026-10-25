@@ -9,12 +9,9 @@
  * event; the instruction under test is the form the case names; the event
  * is one the instruction's kind can raise; the retired count, the fault
  * position and address, the state changes and the memory runs are consistent
- * with that; and a case is stored once. Every case of the 4 KiB profile runs; a
- * case whose forms need a level the run does not implement is skipped, so a
- * lane at the base or SIMD level reads the same pack.
+ * with that; and a case is stored once. Every case of the 4 KiB profile runs.
  *
- *   uml_arm64_aarch32_corpus_tests PACK [--level base|simd|complete]
- *                                       [--record NAME]
+ *   uml_arm64_aarch32_corpus_tests PACK [--record NAME]
  */
 #include "aarch32_corpus_pack.hpp"
 #include "cpu/arm64/aarch32/decode.hpp"
@@ -92,7 +89,7 @@ bool is_linux_breakpoint(const Instruction &instruction)
  * A32 words, or Thumb instructions in the IT state the earlier ones leave. */
 void check_program_walk()
 {
-	const Profile profile = Profile::at(Level::complete);
+	const Profile profile;
 	struct Seen final {
 		unsigned half, cond;
 		bool in_it, last_in_it;
@@ -129,11 +126,11 @@ void check_program_walk()
 }
 
 struct Totals final {
-	std::size_t records = 0, cases = 0, skipped = 0, events = 0;
+	std::size_t records = 0, cases = 0, events = 0;
 	std::map<std::string, std::size_t> per_oracle;
 };
 
-void check_case(const Record &record, const Case &test, const Profile &profile, Level level, Totals &totals)
+void check_case(const Record &record, const Case &test, const Profile &profile, Totals &totals)
 {
 	const auto context = record.name + ": " + test.name;
 	const auto fail = [&](const char *what) {
@@ -152,10 +149,6 @@ void check_case(const Record &record, const Case &test, const Profile &profile, 
 		if (test.origin + 2U * test.halves.size() != kCodeSize || test.event != kSigSegv ||
 			test.fault_address != kCodeBase + kCodeSize || test.retired != program.size())
 			fail("a cut-off fetch faults at the end of the code region");
-		if (static_cast<int>(kForms[static_cast<std::size_t>(named->second)].level) > static_cast<int>(level)) {
-			++totals.skipped;
-			return;
-		}
 		++totals.events;
 		++totals.cases;
 		++totals.per_oracle[record.oracle];
@@ -166,12 +159,6 @@ void check_case(const Record &record, const Case &test, const Profile &profile, 
 	const Instruction &target = program[test.target].instruction;
 	if (target.form != named->second)
 		fail("the instruction under test decodes to a different form");
-	for (const auto &decoded : program)
-		if (static_cast<int>(decoded.instruction.info().level) > static_cast<int>(level) &&
-			decoded.instruction.legal()) {
-			++totals.skipped;
-			return;
-		}
 
 	const bool thumb = test.flags & kFlagThumb;
 	const bool straight = test.flags & kFlagStraight;
@@ -241,26 +228,21 @@ void check_case(const Record &record, const Case &test, const Profile &profile, 
 int main(int argc, char **argv)
 {
 	const char *path = nullptr;
-	Level level = Level::complete;
 	std::string only;
 	for (int index = 1; index < argc; ++index) {
 		const std::string_view argument = argv[index];
-		if (argument == "--level" && index + 1 < argc) {
-			const std::string_view name = argv[++index];
-			level = name == "base" ? Level::base : name == "simd" ? Level::simd : Level::complete;
-			require(name == "base" || name == "simd" || name == "complete", "unknown level");
-		} else if (argument == "--record" && index + 1 < argc) {
+		if (argument == "--record" && index + 1 < argc) {
 			only = argv[++index];
 		} else {
-			require(path == nullptr && !argument.starts_with("--"), "usage: PACK [--level L] [--record NAME]");
+			require(path == nullptr && !argument.starts_with("--"), "usage: PACK [--record NAME]");
 			path = argv[index];
 		}
 	}
-	require(path != nullptr, "usage: PACK [--level L] [--record NAME]");
+	require(path != nullptr, "usage: PACK [--record NAME]");
 
 	check_program_walk();
 	const Pack pack = read_pack(read_file(path));
-	const Profile profile = Profile::at(Level::complete);
+	const Profile profile;
 	Totals totals;
 	std::set<std::string> names;
 	for (const Record &record : pack.records) {
@@ -272,12 +254,12 @@ int main(int argc, char **argv)
 		for (const Case &test : record.cases) {
 			require(seen.emplace(test.name, test.form, test.recipe, test.halves).second,
 				"a case is stored twice");
-			check_case(record, test, profile, level, totals);
+			check_case(record, test, profile, totals);
 		}
 	}
 	require(totals.records != 0, "no record applies to the 4 KiB profile");
-	std::printf("AArch32 corpus: %zu cases in %zu records (%zu raise an event, %zu skipped below the level)\n",
-		totals.cases, totals.records, totals.events, totals.skipped);
+	std::printf("AArch32 corpus: %zu cases in %zu records (%zu raise an event)\n",
+		totals.cases, totals.records, totals.events);
 	for (const auto &[oracle, count] : totals.per_oracle)
 		std::printf("  %s: %zu\n", oracle.c_str(), count);
 	return 0;

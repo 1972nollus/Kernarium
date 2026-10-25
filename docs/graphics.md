@@ -138,6 +138,23 @@ alone: the context error it reports is cleared with it, so a context that only
 transfers, as Android's gralloc mapper does to lock a buffer for reading, keeps
 working after one refusal.
 
+A texture a guest context created and wrapped in a blob, as Android's gralloc
+does for every GPU-only buffer, has no guest pages. The guest reaches its pixels
+through a staging buffer: a copy transfer moves them between the texture and
+the staging buffer's guest storage. The renderer requires that storage of the
+staging buffer, whichever way the pixels move, and asks nothing of the texture.
+
+A texture the renderer creates for a guest reads as zeros until the guest
+writes it, as the zeroed pages the guest allocated for it would. The host
+driver hands out the memory of a released resource again with its pixels still
+in it, so without a clear a new texture shows what an earlier one held, which
+may have belonged to another guest process. The renderer clears every level of
+a new texture at creation. A texture imported from an image keeps the content it
+was imported with, and a texture in a compressed format keeps what the driver
+allocated, because a clear cannot write one. The clear is queued on the GPU and
+adds no CPU time to the creating thread; it costs GPU time per level, plus the
+bandwidth to fill the texture, before the first frame that uses it.
+
 Pointer semantics are selected by the product launcher. Android native and VNC
 input is exposed as one direct touch contact with absolute coordinates; hover,
 auxiliary buttons, and wheel events are suppressed, and coordinates are sent
@@ -171,6 +188,22 @@ storage of a default framebuffer the guest cannot name. vrend therefore offers
 a depth format only where the host's own storage has the width and datatype
 that format names, and a guest config with 32 depth bits is backed by a real
 32-bit float depth buffer.
+
+The scanout mask is held to the same standard. Only the 8-bit RGB layouts the
+display presents carry a scanout bit, and no YUV format does. The guest's
+minigbm keeps the scanout use on exactly the combinations the mask names, and
+it refuses an NV12 combination that has both scanout and its emulation over R8
+buffers, so a scanout bit on NV12 costs the guest every video encoder, video
+decoder and camera use of that format. P010 stays unavailable either way:
+minigbm has no emulation for it and the host does not sample it.
+
+Without a host allocator the renderer cannot create any multi-planar resource,
+so a YUV buffer exists on the host only as the bytes of an R8 image, whatever
+the buffer is used for. minigbm decides that by what the host can create rather
+than by the capabilities a buffer's use flags name, which are none for a buffer
+only the CPU, a codec or a camera touches: the renderer refuses a native NV12
+create as an invalid parameter and every later command on that resource as an
+invalid resource id.
 
 Applications that use stateful V4L2 decoding can instead use the independent
 [Virtio video service](../darwin/device/video/README.md). It exposes the same
@@ -918,64 +951,41 @@ Two consequences follow.
 
 The per-device geometry heap starts at 16 MiB rather than a fixed 128 MiB,
 because a Venus host pays it once per guest `VkDevice` that draws through it;
-a device that never does allocates none. The heaviest command buffer in the CTS
-tessellation, geometry, draw and rasterization groups asks it for 1.53 MiB, but
-that under-measures real demand, which is linear in patches and primitives: 130
-quad patches at tessellation level 64 need 17.2 MB. The heap therefore grows,
-at least doubling and in one step to what a draw is known to need, up to
-128 MiB or its starting size, whichever is larger.
-`MESA_KK_HEAP_SIZE_MIB` sets the start from 1 to 4095 MiB without a rebuild,
-and any other value keeps 16 MiB.
+a device that never does allocates none. It grows, at least doubling, to a cap
+of 128 MiB or its starting size, whichever is larger, and
+`MESA_KK_HEAP_SIZE_MIB` sets the start from 1 to 4095 MiB without a rebuild.
+What a guest sees:
 
-A direct draw whose reservations the driver can bound grows the heap before it
-is recorded and renders on its first submission. The restart unroll's bound is
-exact. Tessellation is bounded at the largest level the TCS writes when every
-level the domain reads is a compile-time constant, and at the level-64 maximum
-otherwise. The first heap is created at the size such a draw needs, and a
-multi-draw grows the heap once for all its entries. A reservation only the GPU
-can size, from an indirect draw or a stage after tessellation or geometry, is
-refused when it does not fit. The device library is compiled without `printf`,
-and its `abort()` would end only the allocating kernel invocation, so every
-kernel that reserves heap space checks the reservation instead and, when it is
-refused, empties its draw; the command buffer completes. The heap header counts
-refusals, and the driver reads them at the next draw and when the recording is
-reset. It grows the heap for later command buffers in one step to hold what
-every refused render segment needed, what it reserved plus every size it was
-refused, and logs the first loss once per device. The kernel that resets the
-heap for each segment folds the segment before it into the header. Reservations
-advance the heap by compare-exchange and never past its end, so a refused one
-leaves the heap as it was. A tessellated draw reserves its indices and all its
-patches' domain points at once, so its patches do not contend for the heap. A
-recording keeps every heap it used until it is reset or freed. If Metal refuses
-the first heap, a draw that needs it is not recorded and its command buffer
-ends with `VK_ERROR_OUT_OF_DEVICE_MEMORY`; if it refuses a larger one, the
-device keeps the heap it has. The level-64 bound is conservative, so when the
-TCS computes its levels the heap grows with the patches a render pass draws
-directly, whatever their levels: past about a thousand quad patches it reaches
-the cap. Constant levels bound it by the level written instead, and 65,536
-triangle patches at level 1 fit the starting 16 MiB.
+- A direct draw whose reservations the driver can bound grows the heap before
+  it is recorded and renders on its first submission. The restart unroll's
+  bound is exact; tessellation is bounded at the largest level the TCS writes
+  when every level the domain reads is a compile-time constant, and at the
+  level-64 maximum otherwise.
+- A reservation only the GPU can size, from an indirect draw or a stage after
+  tessellation or geometry, is refused when it does not fit. That draw loses its
+  output and the command buffer completes; the first loss on a device is logged
+  once, and later command buffers get a heap large enough for what the refused
+  render segments needed, as far as the pool below allows.
+- If Metal refuses the first heap, a draw that needs it is not recorded and its
+  command buffer ends with `VK_ERROR_OUT_OF_DEVICE_MEMORY`; if it refuses a
+  larger one, the device keeps the heap it has.
+
+The level-64 bound is conservative, so when the TCS computes its levels the
+heap grows with the patches a render pass draws directly, whatever their
+levels: past about a thousand quad patches it reaches the cap. Constant levels
+bound it by the level written instead, and 65,536 triangle patches at level 1
+fit the starting 16 MiB.
 
 A Venus device charges its heap to the renderer's device-memory pool (see [the
 Venus share](#host-visible-memory-is-bounded-by-the-blob-aperture)), so the
 heap and the guest's allocations share one bound. A heap the device creates or
-grows takes at most half of the pool's headroom, rounded down to 64 KiB, so it
-never takes more than it leaves the guest. Only a device's first heap may take
-1 MiB even when that is more than half of what is left, and the pool still
-refuses it when not even that fits. A bound the driver computes still grows the heap no
-further than the cap above, because it overstates a draw's need up to 4096
-times for levels a TCS computes. Growth to what refused reservations measured
-goes as far as the pool allows, up to 4095 MiB, the most the header can
-address, or Metal's largest buffer if that is smaller. A heap the pool cannot
-hold is not created. The device keeps the heap it has, and draws that do not
-fit it lose their output through the refusal path above. A device with no heap
-yet fails the command buffer of a draw that needs one, as when Metal refuses
-the first heap, and tries again at its next such draw. Heaps a recording still
-holds are Metal allocations and count against the headroom. When a reset, freed or re-recorded recording leaves
-the device's heap held by nothing else, a heap grown past its start is freed
-once the headroom has fallen below half its size, and the next draw that needs
-a heap creates one from what the pool then leaves. A device created without a
-pool, as host GL through Zink creates, keeps the fixed cap and counts in the
-pool only as Metal memory.
+grows takes at most half of the pool's headroom, except that a device's first
+heap may take 1 MiB, and a heap the pool cannot hold is not created. A heap
+grown past its start is freed once nothing holds it and the headroom has fallen
+below half its size. A device created without a pool, as host GL through Zink
+creates, keeps the fixed cap. The rules are the comment above
+`KK_HEAP_START_MIB` in `src/kosmickrisp/vulkan/kk_cmd_draw.c` and
+`kk_device_memory_pool.h`, in this project's Mesa series.
 
 An uninterrupted released mustpass fraction runs about 200,000 cases in one
 `deqp-vk` process, and a 1536 MiB guest cannot hold every group in that
