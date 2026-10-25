@@ -864,8 +864,22 @@ def check_video_encoders(
     }
     if encoders != VIDEO_ENCODER_CODECS:
         fail(f"the Codec2 list must name the hardware encoders alone: {encoders}")
-    if len(list(codecs.iter("MediaCodec"))) != len(encoders):
+    # A decoder may appear only as an update to a software decoder's limits.
+    decoders = list(codecs.iterfind("./Decoders/MediaCodec"))
+    if any(
+        not (codec.get("name") or "").startswith("c2.android.") or codec.get("update") != "true"
+        for codec in decoders
+    ) or len(list(codecs.iter("MediaCodec"))) != len(encoders) + len(decoders):
         fail("the Codec2 list names a codec outside its encoders: hardware decoders stay out")
+    # CTS requires a hardware codec to publish what it sustains: the performance points that
+    # the claims test reads and the measured frame rates that the encoder performance test
+    # checks against what it measures.
+    for codec in codecs.iterfind("./Encoders/MediaCodec"):
+        limits = [limit.get("name", "") for limit in codec.iterfind("./Limit")]
+        for prefix in ("performance-point-", "measured-frame-rate-"):
+            if not any(name.startswith(prefix) for name in limits):
+                fail(f"{codec.get('name')} publishes no {prefix}* limit: "
+                     "a hardware codec states its performance")
 
     vendor = parse_properties(
         read_small(archive, infos["VENDOR/build.prop"]).decode("utf-8", errors="strict")

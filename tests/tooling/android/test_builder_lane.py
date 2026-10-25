@@ -401,15 +401,30 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         )
 
         def video_codec_list(*, decoders: tuple[str, ...] = (),
-                             encoders: dict[str, str] | None = None) -> bytes:
+                             encoders: dict[str, str] | None = None,
+                             performance_points: bool = True,
+                             measured_frame_rates: bool = True,
+                             software_updates: tuple[str, ...] = (
+                                 "c2.android.hevc.decoder",)) -> bytes:
             encoders = video_codecs if encoders is None else encoders
+            limits = (
+                ('      <Limit name="performance-point-1920x1080" range="30-45"/>\n'
+                 if performance_points else "")
+                + ('      <Limit name="measured-frame-rate-1920x1080" range="31-45"/>\n'
+                   if measured_frame_rates else "")
+            )
             return (
                 "<MediaCodecs>\n"
                 "  <Decoders>\n"
+                + "".join(f'    <MediaCodec name="{name}" type="video/hevc" update="true">\n'
+                          '      <Limit name="blocks-per-second" range="1-16711680"/>\n'
+                          "    </MediaCodec>\n"
+                          for name in software_updates)
                 + "".join(f'    <MediaCodec name="{name}" type="video/avc"/>\n'
                           for name in decoders)
                 + "  </Decoders>\n  <Encoders>\n"
-                + "".join(f'    <MediaCodec name="{name}" type="{kind}"/>\n'
+                + "".join(f'    <MediaCodec name="{name}" type="{kind}">\n{limits}'
+                          "    </MediaCodec>\n"
                           for name, kind in encoders.items())
                 + "  </Encoders>\n</MediaCodecs>\n"
             ).encode()
@@ -1023,8 +1038,17 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("video-hardware-decoder",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  decoders=("c2.v4l2.avc.decoder",))}}),
+            ("video-software-decoder-listed-not-updated",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoders=("c2.android.avc.decoder",))}}),
             ("video-codec-list-invalid",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": b"<MediaCodecs>"}}),
+            ("video-encoder-without-performance-point",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_points=False)}}),
+            ("video-encoder-without-measured-frame-rate",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 measured_frame_rates=False)}}),
             ("video-decoder-property",
              {"video_properties": {
                  **good_video_properties,
@@ -1135,6 +1159,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  encoders={"c2.v4l2.avc.encoder": "video/avc"})}},
              "hardware encoders alone"),
+            ("video-software-decoder-listed-not-updated-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoders=("c2.android.avc.decoder",))}},
+             "hardware decoders stay out"),
+            ("video-encoder-without-performance-point-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_points=False)}},
+             "publishes no performance-point-"),
+            ("video-encoder-without-measured-frame-rate-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 measured_frame_rates=False)}},
+             "publishes no measured-frame-rate-"),
             ("video-hardware-decoder-cause",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  decoders=("c2.v4l2.avc.decoder",))}},

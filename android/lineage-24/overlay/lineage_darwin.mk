@@ -394,7 +394,7 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_presen
 PRODUCT_SOONG_NAMESPACES += external/v4l2_codec2
 PRODUCT_PACKAGES += android.hardware.media.c2-service-v4l2
 PRODUCT_COPY_FILES += \
-    device/kernarium/darwin/config/media_codecs_c2_v4l2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml \
+    device/kernarium/darwin/config/media_codecs_c2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml \
     device/kernarium/darwin/config/media_c2_extended_seccomp_policy:$(TARGET_COPY_OUT_VENDOR)/etc/seccomp_policy/android.hardware.media.c2-extended-seccomp_policy
 PRODUCT_VENDOR_PROPERTIES += \
     ro.vendor.v4l2_codec2.encoder.supported.h264=true \

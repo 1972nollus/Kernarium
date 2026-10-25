@@ -442,10 +442,15 @@ formats as bytes of an R8 resource, each plane a sub-image that a mapping
 transfers on its own. P010 has the NV12 layout with two-byte samples, which is
 what lets Main 10 and HDR10 input reach the device.
 
-`overlay/config/media_codecs_c2_v4l2.xml` is installed as
-`vendor/etc/media_codecs_c2.xml` and names these two encoders alone. Hardware
-decoders are out of the product: the codec list has no decoder, the decoder
-properties stay off, and a decoder is qualified on its own before it joins.
+`overlay/config/media_codecs_c2.xml` is installed as
+`vendor/etc/media_codecs_c2.xml` and adds these two encoders alone, each with
+the performance points and measured frame rates CTS requires of a hardware
+codec. The numbers are what the encoders sustain through the guest-to-host
+frame copy, which grows with the picture, so 4K HEVC is published below 30
+frames per second. Hardware decoders are out of the product: the codec list adds
+no decoder, the decoder properties stay off, and a decoder is qualified on its
+own before it joins. The file is the product's one vendor codec list, so it also
+carries any update (`update="true"`) to the limits of a software decoder.
 `ro.vendor.v4l2_codec2.encode_concurrent_instances` bounds the encoder
 instances to the streams the host serves. The service joins `camera`, which
 `ueventd.rc` gives the `/dev/video*` nodes; its executable carries the
