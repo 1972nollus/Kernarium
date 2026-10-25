@@ -21,6 +21,7 @@
 #include <cstring>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -538,6 +539,143 @@ bool menuHas(int fd, unsigned id, int index)
     return tryCall(fd, VIDIOC_QUERYMENU, &menu) == 0;
 }
 
+/*
+ * The colour description an H.264 stream states in its sequence parameter set:
+ * the ITU-T H.273 code points of its VUI, which is where a client's colour
+ * choices reach the stream. 2 is "unspecified", which is also what a stream
+ * without a description means.
+ */
+struct Vui {
+    unsigned primaries {2}, transfer {2}, matrix {2};
+    unsigned fullRange {0};
+};
+struct BitReader {
+    std::vector<std::uint8_t> bytes;
+    std::size_t position {0};
+    unsigned bit()
+    {
+        require(position < bytes.size() * 8, "the sequence parameter set ends early");
+        const unsigned value = (bytes[position >> 3] >> (7 - (position & 7))) & 1u;
+        ++position;
+        return value;
+    }
+    unsigned bits(unsigned count)
+    {
+        unsigned value = 0;
+        while (count--) value = (value << 1) | bit();
+        return value;
+    }
+    unsigned ue()
+    {
+        unsigned zeros = 0;
+        while (bit() == 0) require(++zeros < 32, "an Exp-Golomb code is too long");
+        return zeros ? ((1u << zeros) - 1u) + bits(zeros) : 0;
+    }
+    void se() { ue(); }
+};
+bool h264Vui(const std::vector<std::uint8_t>& stream, Vui& vui)
+{
+    for (std::size_t i = 0; i + 4 < stream.size(); ++i) {
+        if (!(stream[i] == 0 && stream[i + 1] == 0 && stream[i + 2] == 1 && (stream[i + 3] & 0x1f) == 7)) continue;
+        BitReader reader;
+        unsigned zeros = 0;
+        for (std::size_t j = i + 4; j < stream.size(); ++j) {
+            if (zeros >= 2 && stream[j] == 1) break;    // the next start code
+            if (zeros >= 2 && stream[j] == 3) { zeros = 0; continue; }   // emulation prevention
+            zeros = stream[j] == 0 ? zeros + 1 : 0;
+            reader.bytes.push_back(stream[j]);
+        }
+        const unsigned profile = reader.bits(8);
+        reader.bits(8);
+        reader.bits(8);
+        reader.ue();
+        unsigned chroma = 1;
+        if (profile == 100 || profile == 110 || profile == 122 || profile == 244 || profile == 44 || profile == 83 ||
+            profile == 86 || profile == 118 || profile == 128 || profile == 138 || profile == 139 || profile == 134 ||
+            profile == 135) {
+            chroma = reader.ue();
+            if (chroma == 3) reader.bit();
+            reader.ue();
+            reader.ue();
+            reader.bit();
+            if (reader.bit()) {
+                for (unsigned list = 0; list < (chroma == 3 ? 12u : 8u); ++list) {
+                    if (!reader.bit()) continue;
+                    unsigned last = 8, next = 8;
+                    for (unsigned k = 0; k < (list < 6 ? 16u : 64u); ++k) {
+                        if (next) {
+                            const unsigned code = reader.ue();
+                            const int delta = (code & 1u) ? int((code + 1) / 2) : -int(code / 2);
+                            next = unsigned((int(last) + delta + 256) % 256);
+                        }
+                        last = next ? next : last;
+                    }
+                }
+            }
+        }
+        reader.ue();
+        const unsigned pocType = reader.ue();
+        if (pocType == 0) reader.ue();
+        else if (pocType == 1) {
+            reader.bit();
+            reader.se();
+            reader.se();
+            const unsigned cycle = reader.ue();
+            for (unsigned k = 0; k < cycle; ++k) reader.se();
+        }
+        reader.ue();
+        reader.bit();
+        reader.ue();
+        reader.ue();
+        if (!reader.bit()) reader.bit();
+        reader.bit();
+        if (reader.bit()) for (unsigned k = 0; k < 4; ++k) reader.ue();
+        if (!reader.bit()) return true;   // no VUI
+        if (reader.bit() && reader.bits(8) == 255) reader.bits(32);
+        if (reader.bit()) reader.bit();
+        if (reader.bit()) {
+            reader.bits(3);
+            vui.fullRange = reader.bit();
+            if (reader.bit()) {
+                vui.primaries = reader.bits(8);
+                vui.transfer = reader.bits(8);
+                vui.matrix = reader.bits(8);
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+struct Colours {
+    unsigned space {}, transfer {}, encoding {}, quantization {};
+};
+void putColours(v4l2_pix_format_mplane& pix, const Colours& c)
+{
+    pix.colorspace = c.space;
+    pix.xfer_func = static_cast<std::uint8_t>(c.transfer);
+    pix.ycbcr_enc = static_cast<std::uint8_t>(c.encoding);
+    pix.quantization = static_cast<std::uint8_t>(c.quantization);
+}
+bool coloursAre(const v4l2_pix_format_mplane& pix, const Colours& c)
+{
+    return pix.colorspace == c.space && pix.xfer_func == c.transfer && pix.ycbcr_enc == c.encoding &&
+           pix.quantization == c.quantization;
+}
+std::string coloursText(const v4l2_pix_format_mplane& pix)
+{
+    return std::to_string(pix.colorspace) + "/" + std::to_string(pix.xfer_func) + "/" + std::to_string(pix.ycbcr_enc) + "/" +
+           std::to_string(pix.quantization);
+}
+
+/* A colour scenario: what a client states, and what an H.264 stream must say for it. */
+struct ColourPlan {
+    const char* name;
+    Colours set;
+    unsigned primaries, transfer, matrix;   // H.273 code points; 0xff is not checked
+    unsigned fullRange;
+};
+
 struct Plan {
     unsigned coded {};
     unsigned raw {};
@@ -554,6 +692,7 @@ struct Plan {
     bool abortFirst {false};   // frames in flight are abandoned by STREAMOFF before the stream under test
     int prepend {-1};          // PREPEND_SPSPPS_TO_IDR set before the stream starts; -1 leaves the default
     unsigned layers {};        // H.264 temporal layers asked for with hierarchical coding; 0 leaves it off
+    std::optional<ColourPlan> colour;   // the colorimetry the client states on the raw queue
 };
 
 class Encoder {
@@ -601,7 +740,7 @@ public:
             if (fmt.pixelformat == raw) return true;
         }
     }
-    void setRaw(unsigned raw, unsigned width, unsigned height)
+    void setRaw(unsigned raw, unsigned width, unsigned height, const Colours* colours = nullptr)
     {
         const auto* layout = layoutOf(raw);
         require(layout, "a raw format without a layout");
@@ -609,10 +748,15 @@ public:
         candidate.type = output;
         candidate.fmt.pix_mp.width = width; candidate.fmt.pix_mp.height = height;
         candidate.fmt.pix_mp.pixelformat = raw;
+        if (colours) putColours(candidate.fmt.pix_mp, *colours);
         call(fd, VIDIOC_TRY_FMT, &candidate, "TRY_FMT raw");
+        if (colours)
+            require(coloursAre(candidate.fmt.pix_mp, *colours), "TRY_FMT changed the colorimetry: " + coloursText(candidate.fmt.pix_mp));
         v4l2_format format = candidate;
         call(fd, VIDIOC_S_FMT, &format, "S_FMT raw");
         const auto& negotiated = format.fmt.pix_mp;
+        if (colours)
+            require(coloursAre(negotiated, *colours), "S_FMT changed the colorimetry: " + coloursText(negotiated));
         require(negotiated.pixelformat == raw, "the raw format was substituted: " + fourccName(negotiated.pixelformat));
         require(negotiated.width == width && negotiated.height == height, "the raw size was changed");
         require(negotiated.num_planes == layout->planes, "the raw plane count differs from its format");
@@ -628,10 +772,43 @@ public:
         current.type = output;
         call(fd, VIDIOC_G_FMT, &current, "G_FMT raw");
         require(current.fmt.pix_mp.pixelformat == raw && current.fmt.pix_mp.width == width, "G_FMT differs from S_FMT");
+        if (colours)
+            require(coloursAre(current.fmt.pix_mp, *colours), "G_FMT changed the colorimetry: " + coloursText(current.fmt.pix_mp));
         outFormat = negotiated;
         outLayout = layout;
         visible = {0, 0, width, height};
         refreshCoded();
+    }
+    // The colorimetry a client stated stays what the encoder reports and what it keeps, through
+    // the calls that touch the raw queue's stream information.
+    void requireColours(const Colours& colours, const char* when)
+    {
+        v4l2_format current {};
+        current.type = output;
+        call(fd, VIDIOC_G_FMT, &current, "G_FMT raw colours");
+        require(coloursAre(current.fmt.pix_mp, colours),
+                std::string("the colorimetry is ") + coloursText(current.fmt.pix_mp) + " " + when);
+    }
+    void colourRules(const Colours& colours)
+    {
+        v4l2_format current {};
+        current.type = output;
+        call(fd, VIDIOC_G_FMT, &current, "G_FMT raw");
+        // Stating the same format and colors again is no change, even with buffers allocated.
+        v4l2_format again = current;
+        call(fd, VIDIOC_S_FMT, &again, "S_FMT raw again");
+        require(coloursAre(again.fmt.pix_mp, colours), "stating the colorimetry again changed it: " + coloursText(again.fmt.pix_mp));
+        // A change of it is refused while buffers exist, and leaves the stated one.
+        v4l2_format other = current;
+        other.fmt.pix_mp.quantization = colours.quantization == V4L2_QUANTIZATION_FULL_RANGE ? V4L2_QUANTIZATION_LIM_RANGE
+                                                                                            : V4L2_QUANTIZATION_FULL_RANGE;
+        require(tryCall(fd, VIDIOC_S_FMT, &other) == -EBUSY, "a colorimetry change under buffers was not refused");
+        requireColours(colours, "after a refused change");
+        // Setting the frame interval sends the stream information again, with the colors in it.
+        setInterval(1, 30);
+        requireColours(colours, "after S_PARM");
+        refreshCoded();
+        require(capFormat.colorspace <= V4L2_COLORSPACE_DCI_P3, "the coded queue reports an invalid colorspace");
     }
     void refreshCoded()
     {
@@ -1011,8 +1188,10 @@ void runPlan(const Run& run, const Plan& plan)
     encoder.subscribe();
     encoder.setCoded(plan.coded);
     require(encoder.rawListed(plan.raw), "the raw format is not listed for the coded format");
-    encoder.setRaw(plan.raw, plan.width, plan.height);
+    const Colours* colours = plan.colour ? &plan.colour->set : nullptr;
+    encoder.setRaw(plan.raw, plan.width, plan.height, colours);
     encoder.setInterval(1, 30);
+    if (colours) encoder.requireColours(*colours, "after S_PARM");
     unsigned width = plan.width, height = plan.height;
     if (plan.crop) {
         encoder.setCrop(8, 8, plan.width - 24, plan.height - 16);
@@ -1040,6 +1219,7 @@ void runPlan(const Run& run, const Plan& plan)
                 "setting the number of layers failed");
     }
     encoder.allocateBuffers(plan.memory);
+    if (colours) encoder.colourRules(*colours);
     encoder.start();
     // A control the encoder cannot change while it encodes is refused with EBUSY; a dynamic one is not.
     if (hasControl(encoder.fd, V4L2_CID_MPEG_VIDEO_BITRATE_MODE)) {
@@ -1070,9 +1250,35 @@ void runPlan(const Run& run, const Plan& plan)
             require(setControl(encoder.fd, V4L2_CID_MPEG_VIDEO_BITRATE, 3000000) == 0, "changing the bitrate while encoding failed");
         encoder.submit(n, makePicture(plan.width, plan.height, n));
         pictures.push_back(n);
+        if (colours && n == plan.frames / 2) {
+            // The frame interval changes while the stream runs, which sends the stream
+            // information again; the colors in it are the ones the client stated.
+            encoder.setInterval(1, 25);
+            encoder.requireColours(*colours, "after S_PARM while encoding");
+        }
     }
     encoder.drain();
     auto coded = encoder.take();
+    if (plan.colour && plan.coded == V4L2_PIX_FMT_H264) {
+        Vui vui;
+        bool found = false;
+        for (const auto& item : coded) {
+            if (item.bytes.empty()) continue;
+            found = h264Vui(item.bytes, vui);
+            if (found) break;
+        }
+        require(found, std::string(plan.colour->name) + ": the stream has no sequence parameter set");
+        const auto& want = *plan.colour;
+        std::printf("INFO colour %s: VUI primaries=%u transfer=%u matrix=%u full-range=%u\n", want.name, vui.primaries, vui.transfer,
+                    vui.matrix, vui.fullRange);
+        std::fflush(stdout);
+        require((want.primaries == 0xff || vui.primaries == want.primaries) &&
+                (want.transfer == 0xff || vui.transfer == want.transfer) &&
+                (want.matrix == 0xff || vui.matrix == want.matrix) && vui.fullRange == want.fullRange,
+                std::string(plan.colour->name) + ": the stream states other colors than the client stated (primaries " +
+                std::to_string(vui.primaries) + " transfer " + std::to_string(vui.transfer) + " matrix " +
+                std::to_string(vui.matrix) + " full range " + std::to_string(vui.fullRange) + ")");
+    }
     auto mean = verify(run, plan, encoder, coded, pictures, width, height, true, "stream");
     unsigned total = 0;
     for (const auto& item : coded) total += unsigned(item.bytes.size());
@@ -1102,7 +1308,7 @@ void runPlan(const Run& run, const Plan& plan)
     if (plan.resize) {
         encoder.stop();
         const unsigned newWidth = 256, newHeight = 192;
-        encoder.setRaw(plan.raw, newWidth, newHeight);
+        encoder.setRaw(plan.raw, newWidth, newHeight, colours);
         require(encoder.capFormat.width == newWidth && encoder.capFormat.height == newHeight, "the coded size did not follow the new raw size");
         encoder.allocateBuffers(plan.memory);
         encoder.start();
@@ -1339,6 +1545,18 @@ void auditControls(const std::string& path, const std::vector<unsigned>& codecs)
         if (it->second.type != control.type)
             problems.push_back(std::string(control.name) + " has type " + std::to_string(it->second.type) + ", not " +
                                std::to_string(control.type));
+        // The driver registers the range and the default the host describes. The host codes
+        // B-frames in a run of one pattern, so the control spans zero to the run in steps of
+        // one; and a level a client does not set is the lowest one the picture, rate and
+        // bit rate fit, so the level menus default to their lowest item.
+        if (control.id == V4L2_CID_MPEG_VIDEO_B_FRAMES &&
+            (it->second.minimum != 0 || it->second.step != 1 || it->second.maximum < 1))
+            problems.push_back("B_FRAMES spans " + std::to_string(it->second.minimum) + " to " + std::to_string(it->second.maximum) +
+                               " in steps of " + std::to_string(it->second.step) + ", not from zero in steps of one");
+        if ((control.id == V4L2_CID_MPEG_VIDEO_H264_LEVEL || control.id == V4L2_CID_MPEG_VIDEO_HEVC_LEVEL) &&
+            it->second.default_value != it->second.minimum)
+            problems.push_back(std::string(control.name) + " defaults to item " + std::to_string(it->second.default_value) +
+                               ", not the lowest, " + std::to_string(it->second.minimum));
         found.erase(it);
     }
     for (const auto& rest : found) problems.push_back("control " + std::to_string(rest.first) + " (" + rest.second.name + ") is not in the host table");
@@ -1472,6 +1690,29 @@ int main(int argc, char** argv)
                 Plan cropped = plan;
                 cropped.crop = true; cropped.forceAt = -1; cropped.resume = false; cropped.resize = false;
                 attempt(run, cropped, "crop");
+                // The colorimetry a client states on the raw queue is kept, reaches the stream,
+                // and survives the calls that resend the stream information. RAW states no
+                // primaries, which is how a client gives a transfer function and a range alone.
+                static const ColourPlan scenarios[] = {
+                    {"BT.709 limited", {V4L2_COLORSPACE_REC709, V4L2_XFER_FUNC_709, V4L2_YCBCR_ENC_709, V4L2_QUANTIZATION_LIM_RANGE},
+                        1, 1, 1, 0},
+                    {"sRGB full", {V4L2_COLORSPACE_SRGB, V4L2_XFER_FUNC_SRGB, V4L2_YCBCR_ENC_601, V4L2_QUANTIZATION_FULL_RANGE},
+                        1, 13, 6, 1},
+                    {"RAW sRGB transfer, full", {V4L2_COLORSPACE_RAW, V4L2_XFER_FUNC_SRGB, V4L2_YCBCR_ENC_DEFAULT,
+                                                 V4L2_QUANTIZATION_FULL_RANGE}, 2, 13, 0xff, 1},
+                    {"RAW linear, limited", {V4L2_COLORSPACE_RAW, V4L2_XFER_FUNC_NONE, V4L2_YCBCR_ENC_DEFAULT,
+                                             V4L2_QUANTIZATION_LIM_RANGE}, 2, 8, 0xff, 0},
+                    // Values the host has no mapping for are still the client's: the encoder reports
+                    // them as stated, and the host's reduction of them stays out of the client's view.
+                    {"Adobe RGB, SMPTE 240M, XV709", {V4L2_COLORSPACE_OPRGB, V4L2_XFER_FUNC_SMPTE240M, V4L2_YCBCR_ENC_XV709,
+                                                      V4L2_QUANTIZATION_FULL_RANGE}, 0xff, 0xff, 0xff, 1},
+                };
+                for (const auto& scenario : scenarios) {
+                    Plan coloured = plan;
+                    coloured.colour = scenario; coloured.frames = 6; coloured.forceAt = -1; coloured.resume = false;
+                    coloured.resize = false;
+                    attempt(run, coloured, "colour");
+                }
                 if (profileId && menuHas(probe.fd, V4L2_CID_MPEG_VIDEO_HEADER_MODE, V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE)) {
                     Plan header = plan;
                     header.separateHeader = true; header.forceAt = -1; header.resume = false; header.resize = false;
