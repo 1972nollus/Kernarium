@@ -115,7 +115,11 @@ which the guest driver reports as the V4L2 LAST buffer, and only then posts
 `GET_PARAMS` on the capture queue. No picture of the new size is written into
 buffers the client still holds: delivery resumes after it sets the new size on
 the capture queue, clears it or detaches its resources, which is what a V4L2
-client does when it handles the source change. The first size of a stream is
+client does when it handles the source change. The coded buffer whose packet
+carries the new size is held as well, queued and not returned, until the client
+does that, or clears the coded queue, or drains. A client that stops the decoder
+as soon as every coded buffer is back (as v4l2_codec2 does) therefore cannot end
+the drain before the marker and the event. The first size of a stream is
 announced as the event alone, from the packet's headers, before any picture
 exists, with no end marker and no hold.
 
