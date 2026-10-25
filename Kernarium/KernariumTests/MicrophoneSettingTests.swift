@@ -157,19 +157,37 @@ struct MicrophoneSettingTests {
         #expect(permission.requests == 0)
     }
 
+    /// The whole sentence of each state, so that a concatenation that
+    /// drops its tail is caught.
     @Test
-    func theExplanationNamesWhatTheGuestHears() {
+    func theExplanationSaysEverythingForEachState() {
         #expect(
-            MicrophoneSetting.explanation(isOn: false, access: .granted)
-                .hasPrefix("Off")
+            MicrophoneSetting.explanation(isOn: false, access: .granted) ==
+                "Off. Programs in the guest record silence, and Kernarium " +
+                "does not use the microphone. This applies at once."
         )
         #expect(
-            MicrophoneSetting.explanation(isOn: true, access: .granted)
-                .hasPrefix("On")
+            MicrophoneSetting.explanation(isOn: true, access: .granted) ==
+                "On. Programs in the guest can record from this device's " +
+                "microphone, and iOS shows its recording indicator while " +
+                "they do. This applies at once."
         )
         #expect(
-            MicrophoneSetting.explanation(isOn: true, access: .notAsked)
-                .contains("silence")
+            MicrophoneSetting.explanation(isOn: true, access: .notAsked) ==
+                "Waiting for your answer to iOS's request for microphone " +
+                "access. Until then the guest records silence."
         )
+        #expect(
+            MicrophoneSetting.explanation(isOn: true, access: .denied) ==
+                "iOS has not allowed Kernarium to use the microphone, so the " +
+                "guest records silence. Allow it for Kernarium in Settings."
+        )
+        // A setting that is off says so whatever the system's answer is.
+        for access in [MicrophoneAccess.notAsked, .denied, .granted] {
+            #expect(
+                MicrophoneSetting.explanation(isOn: false, access: access)
+                    .hasSuffix("This applies at once.")
+            )
+        }
     }
 }
