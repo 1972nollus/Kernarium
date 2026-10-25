@@ -402,8 +402,12 @@ for variable-bitrate profiles). Three parts fit together to make it work:
   so a descriptor, per plane, and the single descriptor names the first plane
   only. So the driver's vendor string begins with `Mesa Gallium driver`, the
   string of the class of driver that takes the per-plane import, and continues
-  with the driver's own name. That string also marks the driver as thread-safe,
-  so Chromium stops serialising its calls; the driver locks its own state.
+  with the driver's own name. Chromium treats that class as thread-safe and
+  stops serialising its calls with a lock of its own, so the driver serialises
+  itself: every entry point that reads or changes driver state takes the
+  driver's lock, and the others are the lifecycle calls, answers from
+  constants, or forwards to an entry point that locks. Keep it so when adding
+  an entry point.
 - **The pixels.** Content the guest GPU wrote (canvas, video and page content
   composited on the GPU) is current for the CPU only on a guest kernel that
   exports virtio-gpu dma-bufs read-write and transfers the resource around a
