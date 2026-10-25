@@ -235,6 +235,19 @@ only when negotiated, bounded, invisible to guest userspace, and presented
 through an ABI the unmodified guest Mesa and libdrm already understand. A
 private userspace ioctl or library must never become a production dependency.
 
+One guest file is the single exception: the gbm backend module
+`virtio_gpu_gbm.so`, which the Debian desktop images ship beside the video
+driver ([va-v4l2](../tools/video/va-v4l2/README.md#the-gbm-module-planar-buffers-for-debians-libgbm)).
+Debian's libgbm cannot allocate NV12, P010 or any other planar format, so a
+video pipeline has nowhere to put its frames (Chromium's frame for a hardware
+encoder is `gbm_bo_create(NV12)`), and neither the kernel nor the host can
+change that. The module is not a replacement or a preload: Debian's unmodified
+libgbm loads it through its documented backend interface, by the DRM driver
+name, and it makes the device Mesa's own backend makes, adding only planar
+buffers, one resource per plane. Mesa, its EGL platform and every call on a
+colour buffer stay as shipped, and deleting the file, or `GBM_BACKEND=dri` for
+one process, restores Mesa alone.
+
 Two framebuffers for which `KHR-GL46.direct_state_access.framebuffers_check_status`
 prefers an incomplete status are reported complete, as the specification
 requires. One mixes a renderbuffer created with one sample and one created
