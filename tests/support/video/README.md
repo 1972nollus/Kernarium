@@ -50,6 +50,29 @@ They are produced with ffmpeg and x265, for example
 `-c copy -bsf:v hevc_metadata=crop_left=6:crop_right=2:crop_top=4:crop_bottom=2`
 on a 128 × 96 stream coded from `hevc-main.raw`.
 
+## H.264 streams for order and cropping
+
+Four more streams do the same for H.264. All are Annex B with the parameter
+sets repeated at every IDR picture, and none carries an encoder identification
+string (SEI units are removed).
+
+- `h264-bframes.bin` is 20 pictures of 64 × 64 with the flat gray ramp of
+  `hevc-bframes.bin` (luma `16 + 10 * N`), High profile, coded with B-pictures
+  and reference B-pictures in two closed groups of 12 and 8 (two IDR pictures,
+  `max_num_reorder_frames` 2, `max_dec_frame_buffering` 4, picture order count
+  type 0, explicit reference marking). It is
+  `ffmpeg -f lavfi -i "color=c=black:size=64x64:rate=30,format=yuv420p,geq=lum='16+10*N':cb=128:cr=128" -frames:v 20 -c:v libx264 -profile:v high -x264-params "bframes=3:b-pyramid=normal:keyint=12:min-keyint=12:scenecut=0:b-adapt=0:ref=3:repeat-headers=1:aud=0" -bsf:v filter_units=remove_types=6 -f h264 h264-bframes.bin`.
+- `h264-no-restriction.bin` is the same stream with `bitstream_restriction_flag`
+  cleared in the SPS (x264 always writes the limits, so the bits after the flag
+  are dropped by hand), so that the decoder falls back to what the level allows.
+- `h264-poc2.bin` is Main profile with picture order count type 2 and no
+  B-pictures, coded with the same source and `bframes=0:ref=2`.
+- `h264-window.bin` is the pattern of `hevc-main.raw` coded as 128 × 96 Main
+  profile with a frame cropping rectangle of 6 samples on the left, 2 on the
+  right, 4 on top and 2 on the bottom (`h264_metadata=crop_left=6:crop_right=2:crop_top=4:crop_bottom=2`),
+  so the stream shows 120 × 90. `h264-window.raw` is the picture a software
+  decoder shows.
+
 ## Synthetic encoder
 
 `synthetic_encoder.hpp` is a `uml::platform::VideoEncoder` that encodes

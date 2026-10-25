@@ -18,6 +18,13 @@ uml_add_unit_test(NAME platform-hevc-stream
     COMMAND uml_hevc_stream_tests ${PROJECT_SOURCE_DIR}/tests/support/video
     LABELS video)
 
+# The decoder's H.264 header readers and output ordering, which need no hardware.
+add_executable(uml_h264_stream_tests h264_stream_tests.cpp)
+target_link_libraries(uml_h264_stream_tests PRIVATE UML::VideoDecoder)
+uml_add_unit_test(NAME platform-h264-stream
+    COMMAND uml_h264_stream_tests ${PROJECT_SOURCE_DIR}/tests/support/video
+    LABELS video)
+
 # The video encoder backend's Annex B and parameter-set readers, which need no
 # hardware.
 add_executable(uml_video_encoder_bitstream_tests video_encoder_bitstream_tests.cpp)
