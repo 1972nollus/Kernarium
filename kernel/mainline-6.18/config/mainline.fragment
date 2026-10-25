@@ -28,3 +28,9 @@ CONFIG_IP_SCTP=y
 # Linux 6.17's auxiliary POSIX clocks, which LTP's timer_create02 covers. The
 # Android product leaves them off, as GKI does (see android.fragment).
 CONFIG_POSIX_AUX_CLOCKS=y
+
+# Sxmo, which postmarketOS Linux guests run, suspends the guest on its own
+# whenever /sys/power/wake_lock exists, and a desktop guest has no wakelock
+# service to hold it awake. The Android product builds the file in (see
+# android.fragment).
+# CONFIG_PM_WAKELOCKS is not set

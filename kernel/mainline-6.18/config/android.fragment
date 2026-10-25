@@ -176,6 +176,16 @@ CONFIG_DRM_VIRTIO_GPU_STANDARD_FORMATS=y
 # touchscreen. The desktop product keeps the tablet's buttons and wheel.
 CONFIG_UML_VNC_INPUT_TOUCHSCREEN=y
 
+# --- Suspend ----------------------------------------------------------------
+# Android suspends itself whenever its wakelock count reaches zero. Its
+# SystemSuspend service keeps those wakelocks in userspace, and when one is
+# taken while the system is entering a suspend it writes "userspace-abort" to
+# /sys/power/wake_lock to end that suspend; the zygote's init script writes
+# zygote_kwl there when the zygote restarts. Without this option the file does
+# not exist, so a wakelock taken while a suspend is under way cannot stop it.
+# GKI builds it.
+CONFIG_PM_WAKELOCKS=y
+
 # --- Host battery -----------------------------------------------------------
 # The Apple launcher provides a local experimental Virtio device carrying the
 # host battery percentage and charging state. The built-in power-supply driver
