@@ -66,6 +66,65 @@ completes with an error rather than reaching memory the guest no longer has.
 The guest chooses the plane layout it negotiated: planes packed into one
 dma-buf follow one another at their negotiated sizes.
 
+### Decoder behavior
+
+**Display order.** VideoToolbox returns each picture as it decodes it, and a
+V4L2 client cannot reorder them: it has a buffer sequence, not a presentation
+time. The HEVC decoder therefore derives the output order from the stream
+(`apple/hevc_stream.cpp`). It decodes one picture at a time, computes each
+picture order count (clause 8.3.1), and holds a picture until more pictures wait
+than `sps_max_num_reorder_pics` allows or it has waited longer than
+`sps_max_latency_increase_plus1` allows (the bumping process of C.5.2). A coded
+video sequence boundary, an end of sequence or bitstream unit, and a drain
+release every waiting picture in order. A RASL picture whose CRA or BLA the
+decode begins at, or follows an end of sequence, is skipped: its references are
+missing and VideoToolbox answers it with a bad-data error. A picture with
+`pic_output_flag` 0 is decoded and not shown. Timestamps stay with their
+pictures. H.264, VP9 and JPEG pictures are returned as decoded; an H.264 stream
+with B-pictures therefore reaches the guest in decode order, which is a
+continuing limitation (its picture order counts, types 0 to 2 and MMCO 5, are
+not implemented).
+
+**Seek.** `QUEUE_CLEAR` on the coded queue drops every picture in flight, every
+reference and the picture order state, and keeps the stream's parameter sets
+and the capture format the client settled on, because a client that seeks
+resends neither. The next picture must start at a random access point. A size
+the client already has is not announced again.
+
+**Raw formats.** A 10-bit stream is offered NV12 and YUV420 as well as P010 and
+packed BGRA; the decoder rounds each sample to 8 bits as it copies the picture
+out. VideoToolbox's own 8-bit output for a 10-bit stream is not used: it moves
+the chroma by about a fifth. P010 is refused for a stream with 8-bit samples.
+A stream that states full range in its VUI (or a VP9 header) is decoded to the
+full-range pixel format, so no sample is squeezed into 16 to 235, and the frame
+says so for the conversion to packed BGRA.
+
+**Cropping.** The size a client is told is the stream's conformance window,
+not its coded size. VideoToolbox honors only the right and bottom offsets of
+the window and returns the coded picture's top-left corner otherwise, so the
+decoder describes the stream with its window removed from the SPS and crops the
+copy at the window's own origin. The result is byte for byte what a software
+decoder shows (`platform-video-decoder` checks it).
+
+**Resolution change.** When the first picture of a new size is decoded, the
+device first delivers every picture of the old size, including the ones held
+back for display order, into the capture buffers set up for it. It then
+completes one more capture buffer, empty and with `VIRTIO_VIDEO_DEQUEUE_FLAG_EOS`,
+which the guest driver reports as the V4L2 LAST buffer, and only then posts
+`VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED`, with the new size answering
+`GET_PARAMS` on the capture queue. No picture of the new size is written into
+buffers the client still holds: delivery resumes after it sets the new size on
+the capture queue, clears it or detaches its resources, which is what a V4L2
+client does when it handles the source change. The first size of a stream is
+announced as the event alone, from the packet's headers, before any picture
+exists, with no end marker and no hold.
+
+**Limits.** The device reports HEVC levels 1 to 6.2 with no tier, because the
+wire has none, so a High tier stream is accepted wherever the hardware decodes
+it. `platform-video-decoder` decodes a High tier 4096 x 2160 (level 5.2) and
+8192 x 4320 (level 6.2) picture whenever the capability list covers that size,
+so a host whose hardware does less fails the test, not a guest.
+
 Input uses complete Annex B H.264/HEVC access units, complete JPEG frames, or
 complete VP9 frames.
 Streams retain timestamps, signal format changes, drain delayed output, and
