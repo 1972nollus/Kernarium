@@ -423,6 +423,8 @@ def run(arguments: argparse.Namespace) -> int:
     staging = work.with_name(work.name + ".new")
     subprocess.run(["cp", "-c", str(arguments.source_disk), str(staging)],
                    check=True, stdin=subprocess.DEVNULL)
+    # The source may be read-only to stay unchanged; the guest writes its clone.
+    staging.chmod(staging.stat().st_mode | 0o200)
     staging.replace(work)
     shutil.copyfile(release_id, work.with_name(work.name + ".release-id"))
 
