@@ -654,7 +654,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     + (
                         ""
                         if missing_spl_policy
-                        else "(allow appdomain_202604 vendor_security_patch_level_prop_202604 "
+                        else "(allow appdomain vendor_security_patch_level_prop_202604 "
                         "(file (read getattr map open)))\n"
                     ),
                 )
