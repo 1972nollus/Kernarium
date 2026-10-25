@@ -196,6 +196,29 @@ signal, that native Linux does, however often it comes on one vCPU.
 `guest-stack-pointer` checks this on arm64 and the x86 exception probe on
 both x86 ABIs.
 
+The arm64 kernels give a task the AArch64 tagged-address ABI
+(`Documentation/arch/arm64/tagged-address-abi.rst`) as native arm64 Linux
+without MTE does. `prctl(PR_SET_TAGGED_ADDR_CTRL, PR_TAGGED_ADDR_ENABLE)` lets
+a task pass pointers with any top byte to the system calls that read and write
+its memory, futex, `process_vm_readv` and `process_vm_writev`, and
+`PR_GET_TAGGED_ADDR_CTRL`, `abi.tagged_addr_disabled` and
+`NT_ARM_TAGGED_ADDR_CTRL` report and control it. The memory-management calls
+untag whether or not it is on. Threads and forks inherit it and an exec ends
+it; an AArch32 task has none and gets `EINVAL`. The kernel offers it only
+while `darwin_uml_guest_top_byte_ignore()` is 1, that is only under
+`--guest-top-byte-ignore`, because a tagged pointer faults otherwise; without
+the flag enabling it fails with `EINVAL` through both interfaces. A fault's
+address is the one the engine translated, already without its tag, so
+`segv()` never untags it and a tagged access with the ignore off faults at the
+tagged address instead of retrying forever. The one difference from native
+Linux is `SA_EXPOSE_TAGBITS`: `si_addr` never carries the tag, because the
+engines do not report the address the instruction presented. A non-fixed
+`mmap()` hint the guest cannot use, outside the guest address range or inside
+the native window, is ignored as on native Linux, and only a fixed placement
+that touches the window is refused. The x86_64 slice has none of this.
+`guest-tagged-addr-gadgets`, `-jit` and `-no-tbi` compare every result of a
+probe with the rows native arm64 Linux printed for it.
+
 When the host implements SME for a run,
 `darwin_uml_guest_sme_vector_length()` returns its streaming vector length
 (SVL) and an arm64 task gets what `arch/arm64/kernel/fpsimd.c` gives it on a

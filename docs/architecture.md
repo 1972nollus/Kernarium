@@ -645,6 +645,16 @@ and a PC alignment fault the 32-bit target address. A fault address wider
 than 32 bits is an engine error and the fatal event, never a guest SIGSEGV
 whose compat siginfo would hide the upper half.
 
+Under top-byte ignore (`--guest-top-byte-ignore`, which the Android product
+always passes) both arm64 engines strip the top byte of a data address before
+they translate it, so a data abort carries the address they translated and
+never the tag the instruction presented. The kernel therefore does not untag
+the fault address in `segv()`: it cannot know whether the host ignores a tag,
+and a tagged access without it must fault at the address it used. The kernel
+offers the tagged-address ABI only while the host reports the ignore, and its
+contract, including the one fault-address difference from native Linux, is in
+the [shared kernel README](../kernel/common/README.md).
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
