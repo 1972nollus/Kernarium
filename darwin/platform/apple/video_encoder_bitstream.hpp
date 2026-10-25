@@ -6,6 +6,7 @@
 // VideoToolbox, and so that discovery and the encoder read a coded stream the
 // same way.
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -106,6 +107,11 @@ public:
         if (overrun_) return 0;
         return ((1u << zeros) - 1) + (zeros ? bits(zeros) : 0);
     }
+    std::int32_t signedExpGolomb()
+    {
+        const std::uint32_t code = unsignedExpGolomb();
+        return (code & 1) ? std::int32_t((code + 1) / 2) : -std::int32_t(code / 2);
+    }
 private:
     Bytes bytes_;
     std::size_t position_ {};
@@ -123,6 +129,146 @@ struct H264SpsInfo {
 {
     if (nal.size() < 4 || h264NalType(nal) != h264NalSps) return std::nullopt;
     return H264SpsInfo {nal[1], nal[2], nal[3]};
+}
+
+// Everything the level limits of H.264 Annex A read from an SPS.
+struct H264SpsLimits {
+    unsigned profileIdc {};
+    unsigned constraintFlags {};
+    unsigned levelIdc {};
+    unsigned pocType {};
+    unsigned maxNumRefFrames {};
+    unsigned widthMacroblocks {};
+    unsigned heightMacroblocks {};   // of a frame
+    bool frameMbsOnly {};
+    bool vuiPresent {};
+    bool timingInfo {};
+    std::uint32_t numUnitsInTick {};
+    std::uint32_t timeScale {};
+    // HRD parameters of either kind. The largest bit rate and CPB size stated.
+    bool hrd {};
+    std::uint64_t hrdBitRate {};
+    std::uint64_t hrdCpbSize {};
+    bool bitstreamRestriction {};
+    unsigned log2MaxMvLengthVertical {};
+    unsigned maxNumReorderFrames {};
+    unsigned maxDecFrameBuffering {};
+};
+
+namespace detail {
+inline void skipH264ScalingList(BitReader& reader, unsigned size)
+{
+    int last = 8, next = 8;
+    for (unsigned j = 0; j < size && reader.ok(); ++j) {
+        if (next != 0) next = (last + reader.signedExpGolomb() + 256) % 256;
+        last = next == 0 ? last : next;
+    }
+}
+
+// hrd_parameters(); false for a count the syntax does not allow.
+inline bool readH264Hrd(BitReader& reader, H264SpsLimits& limits)
+{
+    const unsigned schedules = reader.unsignedExpGolomb() + 1;
+    const unsigned bitRateScale = reader.bits(4), cpbSizeScale = reader.bits(4);
+    if (schedules > 32) return false;
+    limits.hrd = true;
+    for (unsigned i = 0; i < schedules && reader.ok(); ++i) {
+        const std::uint64_t rate = (std::uint64_t(reader.unsignedExpGolomb()) + 1) << (6 + bitRateScale);
+        const std::uint64_t size = (std::uint64_t(reader.unsignedExpGolomb()) + 1) << (4 + cpbSizeScale);
+        reader.bits(1);   // cbr_flag
+        limits.hrdBitRate = std::max(limits.hrdBitRate, rate);
+        limits.hrdCpbSize = std::max(limits.hrdCpbSize, size);
+    }
+    reader.bits(20);   // the four delay lengths
+    return true;
+}
+} // namespace detail
+
+// The SPS NAL unit (with its header byte) read to the end of its VUI. nullopt
+// for a unit it cannot walk.
+[[nodiscard]] inline std::optional<H264SpsLimits> parseH264SpsLimits(Bytes nal)
+{
+    if (nal.size() < 4 || h264NalType(nal) != h264NalSps) return std::nullopt;
+    const auto payload = rbsp(nal, 1);
+    BitReader reader(payload);
+    H264SpsLimits limits;
+    limits.profileIdc = reader.bits(8);
+    limits.constraintFlags = reader.bits(8);
+    limits.levelIdc = reader.bits(8);
+    reader.unsignedExpGolomb();   // seq_parameter_set_id
+    switch (limits.profileIdc) {
+    case 100: case 110: case 122: case 244: case 44: case 83: case 86: case 118: case 128: case 138: case 139: case 134: case 135: {
+        const unsigned chroma = reader.unsignedExpGolomb();
+        if (chroma == 3) reader.bits(1);
+        reader.unsignedExpGolomb();   // bit_depth_luma_minus8
+        reader.unsignedExpGolomb();   // bit_depth_chroma_minus8
+        reader.bits(1);               // qpprime_y_zero_transform_bypass_flag
+        if (reader.bits(1)) {         // seq_scaling_matrix_present_flag
+            for (unsigned i = 0; i < (chroma != 3 ? 8u : 12u) && reader.ok(); ++i)
+                if (reader.bits(1)) detail::skipH264ScalingList(reader, i < 6 ? 16 : 64);
+        }
+        break;
+    }
+    default: break;
+    }
+    reader.unsignedExpGolomb();   // log2_max_frame_num_minus4
+    limits.pocType = reader.unsignedExpGolomb();
+    if (limits.pocType == 0) {
+        reader.unsignedExpGolomb();
+    } else if (limits.pocType == 1) {
+        reader.bits(1);
+        reader.signedExpGolomb();
+        reader.signedExpGolomb();
+        const unsigned cycle = reader.unsignedExpGolomb();
+        if (cycle > 255) return std::nullopt;
+        for (unsigned i = 0; i < cycle && reader.ok(); ++i) reader.signedExpGolomb();
+    }
+    limits.maxNumRefFrames = reader.unsignedExpGolomb();
+    reader.bits(1);   // gaps_in_frame_num_value_allowed_flag
+    limits.widthMacroblocks = reader.unsignedExpGolomb() + 1;
+    const unsigned mapUnits = reader.unsignedExpGolomb() + 1;
+    limits.frameMbsOnly = reader.bits(1) != 0;
+    if (!limits.frameMbsOnly) reader.bits(1);   // mb_adaptive_frame_field_flag
+    limits.heightMacroblocks = mapUnits * (limits.frameMbsOnly ? 1 : 2);
+    reader.bits(1);   // direct_8x8_inference_flag
+    if (reader.bits(1)) for (int i = 0; i < 4; ++i) reader.unsignedExpGolomb();   // frame cropping
+    limits.vuiPresent = reader.bits(1) != 0;
+    if (!reader.ok()) return std::nullopt;
+    if (!limits.vuiPresent) return limits;
+    if (reader.bits(1) && reader.bits(8) == 255) reader.bits(32);   // aspect ratio
+    if (reader.bits(1)) reader.bits(1);                              // overscan
+    if (reader.bits(1)) {                                            // video_signal_type_present_flag
+        reader.bits(4);                                              // video_format, video_full_range_flag
+        if (reader.bits(1)) reader.bits(24);                         // colour description
+    }
+    if (reader.bits(1)) {                                            // chroma_loc_info_present_flag
+        reader.unsignedExpGolomb();
+        reader.unsignedExpGolomb();
+    }
+    if (reader.bits(1)) {                                            // timing_info_present_flag
+        limits.timingInfo = true;
+        limits.numUnitsInTick = reader.bits(32);
+        limits.timeScale = reader.bits(32);
+        reader.bits(1);                                              // fixed_frame_rate_flag
+    }
+    const bool nalHrd = reader.bits(1) != 0;
+    if (nalHrd && !detail::readH264Hrd(reader, limits)) return std::nullopt;
+    const bool vclHrd = reader.bits(1) != 0;
+    if (vclHrd && !detail::readH264Hrd(reader, limits)) return std::nullopt;
+    if (nalHrd || vclHrd) reader.bits(1);                            // low_delay_hrd_flag
+    reader.bits(1);                                                  // pic_struct_present_flag
+    limits.bitstreamRestriction = reader.bits(1) != 0;
+    if (limits.bitstreamRestriction) {
+        reader.bits(1);                                              // motion_vectors_over_pic_boundaries_flag
+        reader.unsignedExpGolomb();                                  // max_bytes_per_pic_denom
+        reader.unsignedExpGolomb();                                  // max_bits_per_mb_denom
+        reader.unsignedExpGolomb();                                  // log2_max_mv_length_horizontal
+        limits.log2MaxMvLengthVertical = reader.unsignedExpGolomb();
+        limits.maxNumReorderFrames = reader.unsignedExpGolomb();
+        limits.maxDecFrameBuffering = reader.unsignedExpGolomb();
+    }
+    if (!reader.ok()) return std::nullopt;
+    return limits;
 }
 
 struct HevcSpsInfo {
@@ -154,11 +300,25 @@ struct HevcSpsFormat {
     unsigned transfer {};
     unsigned matrix {};
     bool fullRange {};
+    // What the level limits of H.265 Annex A read.
+    bool highTier {};
+    unsigned levelIdc {};
+    unsigned maxSubLayersMinus1 {};
+    bool subLayerLevels {};          // sub-layers state profile or level of their own
+    unsigned width {};               // coded picture size in luma samples
+    unsigned height {};
+    unsigned maxDecPicBuffering {};  // of the highest sub-layer
+    unsigned maxNumReorder {};
+    bool timingInfo {};
+    std::uint32_t numUnitsInTick {};
+    std::uint32_t timeScale {};
+    bool hrd {};                     // the VUI carries hrd_parameters, which are not walked
 };
 
-// The bit depths and the VUI colour description of an HEVC SPS NAL unit (with
-// its two-byte header). nullopt for a stream it cannot walk to the VUI: one
-// with scaling list data, which the hardware encoder does not write.
+// The bit depths, the picture size, the DPB size and the VUI colour
+// description of an HEVC SPS NAL unit (with its two-byte header). nullopt for
+// a stream it cannot walk to the VUI: one with scaling list data, which the
+// hardware encoder does not write.
 [[nodiscard]] inline std::optional<HevcSpsFormat> parseHevcSpsFormat(Bytes nal)
 {
     if (nal.size() < 4 || hevcNalType(nal) != hevcNalSps) return std::nullopt;
@@ -169,12 +329,17 @@ struct HevcSpsFormat {
     reader.bits(1);   // sps_temporal_id_nesting_flag
     // profile_tier_level: the general part is 88 bits and the level 8; every
     // sub-layer then adds a profile of 88 bits and a level of 8 when present.
-    for (unsigned i = 0; i < 3; ++i) reader.bits(32);
+    HevcSpsFormat format;
+    format.maxSubLayersMinus1 = subLayers;
+    format.highTier = (reader.bits(32) >> 29 & 1) != 0;
+    reader.bits(32);
+    format.levelIdc = reader.bits(32) & 0xff;
     if (subLayers > 7) return std::nullopt;
     bool subProfile[8] = {}, subLevel[8] = {};
     for (unsigned i = 0; i < subLayers; ++i) {
         subProfile[i] = reader.bits(1) != 0;
         subLevel[i] = reader.bits(1) != 0;
+        format.subLayerLevels = format.subLayerLevels || subProfile[i] || subLevel[i];
     }
     if (subLayers > 0)
         for (unsigned i = subLayers; i < 8; ++i) reader.bits(2);
@@ -182,19 +347,21 @@ struct HevcSpsFormat {
         if (subProfile[i]) for (unsigned part = 0; part < 11; ++part) reader.bits(8);
         if (subLevel[i]) reader.bits(8);
     }
-    HevcSpsFormat format;
     reader.unsignedExpGolomb();   // sps_seq_parameter_set_id
     format.chromaFormat = reader.unsignedExpGolomb();
     if (format.chromaFormat == 3) reader.bits(1);
-    reader.unsignedExpGolomb();   // pic_width_in_luma_samples
-    reader.unsignedExpGolomb();   // pic_height_in_luma_samples
+    format.width = reader.unsignedExpGolomb();
+    format.height = reader.unsignedExpGolomb();
     if (reader.bits(1)) for (int i = 0; i < 4; ++i) reader.unsignedExpGolomb();   // conformance window
     format.bitDepthLuma = reader.unsignedExpGolomb() + 8;
     format.bitDepthChroma = reader.unsignedExpGolomb() + 8;
     const unsigned pocBits = reader.unsignedExpGolomb() + 4;
     const bool orderingPerLayer = reader.bits(1) != 0;
-    for (unsigned i = orderingPerLayer ? 0 : subLayers; i <= subLayers; ++i)
-        for (int part = 0; part < 3; ++part) reader.unsignedExpGolomb();
+    for (unsigned i = orderingPerLayer ? 0 : subLayers; i <= subLayers; ++i) {
+        format.maxDecPicBuffering = reader.unsignedExpGolomb() + 1;
+        format.maxNumReorder = reader.unsignedExpGolomb();
+        reader.unsignedExpGolomb();   // sps_max_latency_increase_plus1
+    }
     for (int i = 0; i < 4; ++i) reader.unsignedExpGolomb();   // coding and transform block sizes
     reader.unsignedExpGolomb();                               // max_transform_hierarchy_depth_inter
     reader.unsignedExpGolomb();                               // max_transform_hierarchy_depth_intra
@@ -281,8 +448,51 @@ struct HevcSpsFormat {
             format.matrix = reader.bits(8);
         }
     }
+    if (reader.bits(1)) {                                            // chroma_loc_info_present_flag
+        reader.unsignedExpGolomb();
+        reader.unsignedExpGolomb();
+    }
+    reader.bits(3);                                                  // neutral chroma, field_seq, frame_field_info
+    if (reader.bits(1)) for (int i = 0; i < 4; ++i) reader.unsignedExpGolomb();   // default display window
+    if (reader.bits(1)) {                                            // vui_timing_info_present_flag
+        format.timingInfo = true;
+        format.numUnitsInTick = reader.bits(32);
+        format.timeScale = reader.bits(32);
+        if (reader.bits(1)) reader.unsignedExpGolomb();              // poc_proportional_to_timing_flag
+        format.hrd = reader.bits(1) != 0;                            // vui_hrd_parameters_present_flag
+    }
     if (!reader.ok()) return std::nullopt;
     return format;
+}
+
+struct HevcPpsInfo {
+    bool tilesEnabled {};
+};
+
+// The PPS NAL unit (with its two-byte header) read to tiles_enabled_flag.
+[[nodiscard]] inline std::optional<HevcPpsInfo> parseHevcPps(Bytes nal)
+{
+    if (nal.size() < 4 || hevcNalType(nal) != hevcNalPps) return std::nullopt;
+    const auto payload = rbsp(nal, 2);
+    BitReader reader(payload);
+    reader.unsignedExpGolomb();   // pps_pic_parameter_set_id
+    reader.unsignedExpGolomb();   // pps_seq_parameter_set_id
+    reader.bits(1);               // dependent_slice_segments_enabled_flag
+    reader.bits(1);               // output_flag_present_flag
+    reader.bits(3);               // num_extra_slice_header_bits
+    reader.bits(2);               // sign_data_hiding_enabled_flag, cabac_init_present_flag
+    reader.unsignedExpGolomb();   // num_ref_idx_l0_default_active_minus1
+    reader.unsignedExpGolomb();   // num_ref_idx_l1_default_active_minus1
+    reader.signedExpGolomb();     // init_qp_minus26
+    reader.bits(2);               // constrained_intra_pred_flag, transform_skip_enabled_flag
+    if (reader.bits(1)) reader.unsignedExpGolomb();   // cu_qp_delta_enabled_flag, diff_cu_qp_delta_depth
+    reader.signedExpGolomb();     // pps_cb_qp_offset
+    reader.signedExpGolomb();     // pps_cr_qp_offset
+    reader.bits(4);               // slice chroma offsets, weighted prediction (two), transquant bypass
+    HevcPpsInfo info;
+    info.tilesEnabled = reader.bits(1) != 0;
+    if (!reader.ok()) return std::nullopt;
+    return info;
 }
 
 // entropy_coding_mode_flag of an H.264 PPS NAL unit: true for CABAC.
@@ -353,15 +563,22 @@ struct SeiMessage {
     return oneB ? 9u : unsigned(nal[3]);
 }
 
-// States a higher level in an H.264 SPS. A level is a ceiling on the stream, so
-// a stream that fits a level also fits every level above it. False, and the
-// unit untouched, when it already states `level` or more.
-inline bool raiseH264Level(std::vector<std::uint8_t>& nal, unsigned level)
+// States `level` in an H.264 SPS, higher or lower than it stated. Level 1b is
+// written as level_idc 9 and, for Baseline, Main and Extended, as level 1.1
+// with constraint_set3_flag; leaving it clears the flag. False, and the unit
+// untouched, when it already states `level` or is not an SPS.
+inline bool setH264Level(std::vector<std::uint8_t>& nal, unsigned level)
 {
     const auto current = h264Level(nal);
-    if (!current || *current >= level || level > 255) return false;
+    if (!current || *current == level || level > 255) return false;
+    const bool flagged = nal[1] == 66 || nal[1] == 77 || nal[1] == 88;
     if (*current == 9 && nal[3] == 11) nal[2] = std::uint8_t(nal[2] & ~0x10u);   // no longer level 1b
-    nal[3] = std::uint8_t(level);
+    if (level == 9 && flagged) {
+        nal[3] = 11;
+        nal[2] = std::uint8_t(nal[2] | 0x10u);
+    } else {
+        nal[3] = std::uint8_t(level);
+    }
     return true;
 }
 
@@ -388,13 +605,13 @@ inline bool raiseH264Level(std::vector<std::uint8_t>& nal, unsigned level)
     return unsigned(payload[*offset]);
 }
 
-// States a higher level in an HEVC VPS or SPS, as raiseH264Level does for H.264.
-inline bool raiseHevcLevel(std::vector<std::uint8_t>& nal, unsigned level)
+// States `level` in an HEVC VPS or SPS, as setH264Level does for H.264.
+inline bool setHevcLevel(std::vector<std::uint8_t>& nal, unsigned level)
 {
     const auto offset = hevcLevelOffset(nal);
     if (!offset || nal.size() < 4 || level > 255) return false;
     auto payload = rbsp(nal, 2);
-    if (payload.size() <= *offset || payload[*offset] >= level) return false;
+    if (payload.size() <= *offset || payload[*offset] == level) return false;
     payload[*offset] = std::uint8_t(level);
     const auto escaped = escapeEmulation(payload);
     nal.resize(2);
