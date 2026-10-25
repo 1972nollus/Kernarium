@@ -156,6 +156,50 @@ private:
     VideoFormat format_;
     std::vector<DecodedVideoFrame> frames_;
 };
+/* A decoder whose pictures change size where the script says, and which, like
+ * the hardware, knows the size of the latest picture it has read as soon as it
+ * has read it: before anyone has taken the pictures before it. Every picture is
+ * square. */
+std::uint8_t scriptedLuma(unsigned picture, std::uint32_t row, std::uint32_t column) noexcept
+{
+    return std::uint8_t(0x20 + (row * 5u + column * 3u + picture * 7u) % 0xc0u);
+}
+struct ScriptedState {
+    unsigned discards {};
+    unsigned submitted {};
+};
+class ScriptedDecoder final : public VideoDecoder {
+public:
+    ScriptedDecoder(std::vector<std::uint32_t> sizes, std::shared_ptr<ScriptedState> state)
+        : sizes_(std::move(sizes)), state_(std::move(state)) {}
+    void inspect(std::span<const std::uint8_t>) override { format_ = {sizes_.front(), sizes_.front(), 8}; }
+    void submit(std::span<const std::uint8_t>, std::uint64_t timestamp) override
+    {
+        const auto size = sizes_[std::min<std::size_t>(state_->submitted, sizes_.size() - 1)];
+        const auto picture = ++state_->submitted;
+        format_ = {size, size, 8};
+        DecodedVideoFrame frame;
+        frame.format = format_;
+        frame.timestamp = timestamp;
+        frame.color = {VideoColorMatrix::bt601, false};
+        frame.luma.resize(std::size_t(size) * size);
+        for (std::uint32_t row = 0; row < size; ++row)
+            for (std::uint32_t column = 0; column < size; ++column)
+                frame.luma[std::size_t(row) * size + column] = scriptedLuma(picture, row, column);
+        frame.chroma.assign(std::size_t(size) * size / 2, 0x80);
+        frames_.push_back(std::move(frame));
+    }
+    void drain() override {}
+    void discard() override { ++state_->discards; frames_.clear(); }
+    std::vector<DecodedVideoFrame> takeFrames() override { return std::exchange(frames_, {}); }
+    VideoFormat format() const noexcept override { return format_; }
+    void requestOutputLayout(VideoPixelLayout) override {}
+private:
+    std::vector<std::uint32_t> sizes_;
+    std::shared_ptr<ScriptedState> state_;
+    VideoFormat format_;
+    std::vector<DecodedVideoFrame> frames_;
+};
 using Planes = std::vector<std::vector<virtio_video_resource_sg_entry>>;
 
 /* A device for one case, with `memory` as the guest RAM behind its mapper.
@@ -1038,6 +1082,152 @@ void inputBackpressure()
     video.device.reset();
 }
 
+/* Where a picture's size changes, every picture of the old size is delivered
+ * first, in the buffers set up for it; one more buffer then completes empty and
+ * last; the client is told the new size; and nothing of the new size is written
+ * into the buffers it still holds until it has set its queue up again. */
+void resolutionChange()
+{
+    auto state = std::make_shared<ScriptedState>();
+    // Pictures one and two are 64 x 64, three and four 32 x 32.
+    VideoFixture video(9, 16 * page, [state](auto) {
+        return std::make_unique<ScriptedDecoder>(std::vector<std::uint32_t> {64, 64, 32, 32}, state);
+    });
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    video.createStream();
+    for (unsigned id = 0; id < 2; ++id)
+        require(video.device.processQueue(1, 910 + id, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+                "event not deferred");
+    video.setOutputFormat(VIRTIO_VIDEO_FORMAT_NV12);
+    for (unsigned id = 1; id <= 4; ++id) video.attachEncodedInput(id);
+    const std::uint64_t big = 3 * page, small = 6 * page;
+    require(load<virtio_video_cmd_hdr>(video.attach(output, 2, {{{big, 4096, {}}}, {{big + page, 2048, {}}}}).response).type
+            == VIRTIO_VIDEO_RESP_OK_NODATA, "capture attach failed");
+    const auto size = [&video](std::uint32_t queue) {
+        std::vector<std::uint8_t> request;
+        append(request, virtio_video_get_params{{VIRTIO_VIDEO_CMD_GET_PARAMS, video.stream}, queue, {}});
+        return load<virtio_video_get_params_resp>(video.device.processQueue(0, video.next++, request, 16384).response)
+            .params.frame_width;
+    };
+    const auto flagsOf = [](const VhostUserQueueCompletion& completion) {
+        return load<virtio_video_resource_queue_resp>(completion.response).flags;
+    };
+    VhostUserQueueCompletion completion;
+    const auto captureRequestFor = [&video](std::uint32_t resource) {
+        const auto capture = video.queueCommand(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, resource);
+        const auto request = video.next;
+        require(video.command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
+        return request;
+    };
+
+    // Two pictures of the first size, each into a buffer of the client's.
+    for (unsigned picture = 1; picture <= 2; ++picture) {
+        const auto request = captureRequestFor(2);
+        require(load<virtio_video_resource_queue_resp>(
+                    video.command(video.queueCommand(input, picture, 5, 100 + picture)).response).flags == 0,
+                "decode input failed");
+        if (picture == 1) {
+            require(video.device.takeQueueCompletion(completion) && completion.requestId == 910 &&
+                    load<virtio_video_event>(completion.response).event_type == VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED,
+                    "the first size was not announced");
+        }
+        require(video.device.takeQueueCompletion(completion) && completion.requestId == request,
+                "missing capture completion");
+        const auto result = load<virtio_video_resource_queue_resp>(completion.response);
+        require(result.flags == 0 && result.timestamp == 100 + picture && result.data_sizes[0] == 4096 &&
+                result.data_sizes[1] == 2048, "incorrect first-size picture");
+        require(video.memory[big + 64 * 7 + 9] == scriptedLuma(picture, 7, 9), "first-size picture changed");
+        require(!video.device.takeQueueCompletion(completion), "an extra completion");
+    }
+    require(size(output) == 64, "the capture size is the first one");
+
+    /* The third picture is smaller. Nothing is announced and no buffer is
+     * used for it while the client has none queued: it is the client's to
+     * receive the old pictures first. */
+    require(load<virtio_video_resource_queue_resp>(
+                video.command(video.queueCommand(input, 3, 5, 103)).response).flags == 0, "decode input failed");
+    require(!video.device.takeQueueCompletion(completion), "a size change was announced ahead of the pictures before it");
+    require(size(output) == 64, "the size changed before the old pictures were delivered");
+
+    // The next buffer the client queues ends the old size.
+    const auto last = captureRequestFor(2);
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == last, "missing last buffer");
+    const auto marker = load<virtio_video_resource_queue_resp>(completion.response);
+    require(marker.flags == VIRTIO_VIDEO_DEQUEUE_FLAG_EOS && marker.data_sizes[0] == 0, "the last buffer is not empty and last");
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == 911 &&
+            load<virtio_video_event>(completion.response).event_type == VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED,
+            "the new size was not announced after the last buffer");
+    require(!video.device.takeQueueCompletion(completion), "an extra completion after the change");
+    require(size(output) == 32, "the new size is not reported");
+
+    // A buffer the client still holds, and a picture that would fit it, wait.
+    require(load<virtio_video_resource_queue_resp>(
+                video.command(video.queueCommand(input, 4, 5, 104)).response).flags == 0, "decode input failed");
+    const auto held = captureRequestFor(2);
+    require(!video.device.takeQueueCompletion(completion), "a picture of the new size was written into an old buffer");
+    // The client sets its capture queue up again.
+    video.ok(virtio_video_queue_clear{{VIRTIO_VIDEO_CMD_QUEUE_CLEAR, 9}, output, {}});
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == held && flagsOf(completion) ==
+            VIRTIO_VIDEO_DEQUEUE_FLAG_ERR, "the old buffer was not returned");
+    require(load<virtio_video_cmd_hdr>(video.attach(output, 3, {{{small, 1024, {}}}, {{small + page, 512, {}}}}).response).type
+            == VIRTIO_VIDEO_RESP_OK_NODATA, "new capture attach failed");
+    for (unsigned picture = 3; picture <= 4; ++picture) {
+        const auto request = captureRequestFor(3);
+        require(video.device.takeQueueCompletion(completion) && completion.requestId == request, "missing capture completion");
+        const auto result = load<virtio_video_resource_queue_resp>(completion.response);
+        require(result.flags == 0 && result.timestamp == 100 + picture && result.data_sizes[0] == 1024 &&
+                result.data_sizes[1] == 512, "incorrect second-size picture");
+        require(video.memory[small + 32 * 5 + 3] == scriptedLuma(picture, 5, 3), "second-size picture changed");
+    }
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 9}});
+    video.device.reset();
+}
+
+/* A seek throws away what was decoded and nothing else: the decoder keeps the
+ * stream's parameter sets, and the client is not told a size it already has. */
+void seekKeepsTheFormat()
+{
+    auto state = std::make_shared<ScriptedState>();
+    VideoFixture video(10, 8 * page, [state](auto) {
+        return std::make_unique<ScriptedDecoder>(std::vector<std::uint32_t> {64}, state);
+    });
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    video.createStream();
+    for (unsigned id = 0; id < 2; ++id)
+        require(video.device.processQueue(1, 920 + id, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+                "event not deferred");
+    video.setOutputFormat(VIRTIO_VIDEO_FORMAT_NV12);
+    for (unsigned id = 1; id <= 2; ++id) video.attachEncodedInput(id);
+    require(load<virtio_video_cmd_hdr>(video.attach(output, 2, {{{3 * page, 4096, {}}}, {{4 * page, 2048, {}}}}).response).type
+            == VIRTIO_VIDEO_RESP_OK_NODATA, "capture attach failed");
+    VhostUserQueueCompletion completion;
+    const auto decodeOne = [&](std::uint32_t resource, std::uint64_t timestamp) {
+        const auto capture = video.queueCommand(output, 2);
+        const auto request = video.next;
+        require(video.command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
+        require(load<virtio_video_resource_queue_resp>(
+                    video.command(video.queueCommand(input, resource, 5, timestamp)).response).flags == 0,
+                "decode input failed");
+        return request;
+    };
+    decodeOne(1, 201);
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == 920, "missing source event");
+    require(video.device.takeQueueCompletion(completion), "missing capture completion");
+    video.ok(virtio_video_queue_clear{{VIRTIO_VIDEO_CMD_QUEUE_CLEAR, 10}, input, {}});
+    require(state->discards == 1, "a seek did not discard the decoder's state");
+    require(!video.device.takeQueueCompletion(completion), "a seek completed something");
+    const auto request = decodeOne(2, 202);
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == request,
+            "the first picture after a seek was not delivered, or the format was announced again");
+    const auto result = load<virtio_video_resource_queue_resp>(completion.response);
+    require(result.flags == 0 && result.timestamp == 202, "incorrect picture after a seek");
+    require(!video.device.takeQueueCompletion(completion), "an extra completion after a seek");
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 10}});
+    video.device.reset();
+}
+
 /* A format descriptor's `mask` names positions in the other queue's list, in
  * the order the same response carries them, and a guest that walks that list
  * offers its client exactly the formats the bits select. This checks both
@@ -1154,6 +1344,8 @@ int main()
         unsettledHoldIsBounded();
         planarAfterSourceChange();
         packedDefaultThroughStreamon();
+        resolutionChange();
+        seekKeepsTheFormat();
         for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420, VIRTIO_VIDEO_FORMAT_P010})
             exercise(format);
         activityLog();

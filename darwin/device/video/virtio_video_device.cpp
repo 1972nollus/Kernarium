@@ -209,7 +209,16 @@ public:
          * first picture it then decodes already carries the chosen layout,
          * which is what keeps the host from converting every frame. */
         bool captureDeferred {true};
+        /* The picture size the client was told, which pictures are compared
+         * with: a picture of another size is a resolution change, whatever
+         * capture parameters the client has set since. */
         bool sourceKnown {};
+        std::uint32_t announcedWidth {};
+        std::uint32_t announcedHeight {};
+        /* A resolution change has been announced and the client has not yet
+         * set its capture queue up again: no picture of the new size is
+         * delivered into the buffers it still holds. */
+        bool renegotiating {};
         bool draining {};
         bool eosSent {};
         std::uint64_t packets {};
@@ -330,23 +339,32 @@ public:
     // bounded only by what the guest can have attached.
     static constexpr std::size_t heldPacketLimit = 128;
 
+    /* Tells the client the picture size, which it needs before it can set its
+     * capture queue up. The raw format is the client's choice when it has made
+     * one, and otherwise follows the stream: P010 can only carry 10-bit
+     * samples, and a stream that has none cannot be offered it. */
+    void announce(std::uint32_t id, Stream& stream, std::uint32_t width, std::uint32_t height, unsigned depth)
+    {
+        auto raw = stream.output.format;
+        if (raw == VIRTIO_VIDEO_FORMAT_BGRA8888) { /* keep the negotiated packed format */ }
+        else if (raw == VIRTIO_VIDEO_FORMAT_P010) { if (depth != 10) raw = VIRTIO_VIDEO_FORMAT_NV12; }
+        else if (depth == 10) raw = VIRTIO_VIDEO_FORMAT_P010;
+        stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw, width, height);
+        stream.announcedWidth = width;
+        stream.announcedHeight = height;
+        stream.sourceKnown = true;
+        event(id, VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED);
+    }
+
+    /* The first announcement of a stream comes from the decoder's reading of the
+     * stream's headers, before any picture exists. After that a size change is
+     * announced where the pictures of the new size begin, so that every picture
+     * of the old size is delivered first. */
     void refreshFormat(std::uint32_t id, Stream& stream)
     {
+        if (stream.sourceKnown) return;
         const auto format = stream.decoder->format();
-        /* Packed capture has left the YCbCr domain, so the stream's bit depth
-         * neither selects the raw format nor invalidates the negotiated one. */
-        const bool packed = stream.output.format == VIRTIO_VIDEO_FORMAT_BGRA8888;
-        if (format.width && (!stream.sourceKnown || stream.output.frame_width != format.width ||
-            stream.output.frame_height != format.height ||
-            (!packed && (stream.output.format == VIRTIO_VIDEO_FORMAT_P010) != (format.bitDepth == 10)))) {
-            auto raw = stream.output.format;
-            if (packed) { /* keep the negotiated packed format */ }
-            else if (format.bitDepth == 10) raw = VIRTIO_VIDEO_FORMAT_P010;
-            else if (raw == VIRTIO_VIDEO_FORMAT_P010) raw = VIRTIO_VIDEO_FORMAT_NV12;
-            stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw, format.width, format.height);
-            stream.sourceKnown = true;
-            event(id, VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED);
-        }
+        if (format.width) announce(id, stream, format.width, format.height, format.bitDepth);
     }
 
     void collect(std::uint32_t id, Stream& stream)
@@ -395,11 +413,40 @@ public:
         stream.heldBytes = 0;
     }
 
+    /* Whether delivering this picture needs the client to set its capture queue
+     * up again: it is not the size it was told, or it is 8-bit samples for a
+     * client that negotiated P010. */
+    static bool changesFormat(const Stream& stream, const uml::platform::DecodedVideoFrame& frame)
+    {
+        if (frame.format.width != stream.announcedWidth || frame.format.height != stream.announcedHeight)
+            return true;
+        return stream.output.format == VIRTIO_VIDEO_FORMAT_P010 &&
+               frame.layout == uml::platform::VideoPixelLayout::planarYuv && frame.format.bitDepth != 10;
+    }
+
     void pump(std::uint32_t id, Stream& stream)
     {
-        while (!stream.outputs.empty()) {
+        for (;;) {
+            // Nothing of the new size reaches buffers set up for the old one.
+            if (stream.renegotiating) return;
+            if (!stream.frames.empty() && stream.sourceKnown && changesFormat(stream, stream.frames.front())) {
+                /* Every picture of the old size has been delivered, in order.
+                 * One more buffer completes empty and last, which is where a
+                 * V4L2 client sees the old stream end, and then the client is
+                 * told the new size. */
+                if (stream.outputs.empty()) return;
+                const auto last = stream.outputs.front();
+                stream.outputs.pop_front();
+                stream.resources.at(resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, last.resource)).queued = false;
+                completions.push_back({last.request, queued(id, 0, VIRTIO_VIDEO_DEQUEUE_FLAG_EOS)});
+                const auto& next = stream.frames.front();
+                announce(id, stream, next.format.width, next.format.height, next.format.bitDepth);
+                stream.renegotiating = true;
+                return;
+            }
+            if (stream.outputs.empty()) return;
             if (stream.frames.empty() &&
-                (!stream.draining || stream.eosSent || !stream.held.empty())) break;
+                (!stream.draining || stream.eosSent || !stream.held.empty())) return;
             const auto output = stream.outputs.front();
             stream.outputs.pop_front();
             auto& resource = stream.resources.at(resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, output.resource));
@@ -542,11 +589,13 @@ public:
                         return wireCodec(c.codec) == stream.coded && c.bitDepth == (tenBit ? 10u : 8u);
                     }) || (stream.sourceKnown && (stream.decoder->format().bitDepth == 10) != tenBit)))
                     throw std::invalid_argument("raw video bit depth is incompatible with the stream");
-                stream.decoder->requestOutputLayout(packed ? uml::platform::VideoPixelLayout::packedBgra
-                                                           : uml::platform::VideoPixelLayout::planarYuv);
+                stream.decoder->requestOutputLayout(captureLayout(p.format));
                 stream.captureSettled = true;
                 stream.captureDeferred = false;
                 stream.output = params(p.queue_type, p.format, p.frame_width, p.frame_height);
+                /* A client that sets the new size is done renegotiating. */
+                if (p.frame_width == stream.announcedWidth && p.frame_height == stream.announcedHeight)
+                    stream.renegotiating = false;
                 drive(id, stream);
             }
             return done(reply(id));
@@ -655,21 +704,18 @@ public:
         case VIRTIO_VIDEO_CMD_QUEUE_DETACH_RESOURCES: {
             const auto q = load<virtio_video_queue_clear>(request);
             if (!validQueue(q.queue_type)) throw std::invalid_argument("invalid clear queue");
-            if (q.queue_type == VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT) cancelOutputs(id, stream);
-            else {
-                const auto cap = std::find_if(capabilities.begin(), capabilities.end(),
-                    [&stream](const auto& c) { return wireCodec(c.codec) == stream.coded; });
+            if (q.queue_type == VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT) {
+                cancelOutputs(id, stream);
+                stream.renegotiating = false;
+            } else {
+                /* A seek. The decoder forgets what it decoded and keeps the
+                 * stream's parameter sets, which the client does not send
+                 * again, and the format it settled on: the picture size is
+                 * announced again only if it is not the one the client has. */
                 cancelHeld(id, stream);
-                stream.decoder = factory(cap->codec);
-                /* A new decoder knows nothing of the format already
-                 * negotiated, and would hand back planar pictures for a
-                 * packed capture queue until the device converted each one.
-                 * Before the format is settled it stays planar, which is the
-                 * layout a client that has not chosen yet can still use. */
-                if (stream.captureSettled)
-                    stream.decoder->requestOutputLayout(captureLayout(stream.output.format));
+                stream.decoder->discard();
                 stream.frames.clear();
-                stream.sourceKnown = stream.draining = stream.eosSent = false;
+                stream.draining = stream.eosSent = false;
             }
             if (header.type == VIRTIO_VIDEO_CMD_QUEUE_DETACH_RESOURCES)
                 std::erase_if(stream.resources, [&q](const auto& r) { return (r.first >> 32) == q.queue_type; });
