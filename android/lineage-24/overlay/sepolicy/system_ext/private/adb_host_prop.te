@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# adbd reports whether an adb host is connected, and product init holds a
+# wakelock while one is (sys.kernarium.adb.host_connected). adbd is a core
+# domain, which the Treble split forbids to set a vendor-owned property, so the
+# property belongs to the system partitions. Init reads every property and needs
+# no rule; nothing else uses it.
+system_internal_prop(kernarium_adb_host_prop)
+
+set_prop(adbd, kernarium_adb_host_prop)

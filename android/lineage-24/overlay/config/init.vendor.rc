@@ -37,7 +37,7 @@ on boot
 
 # A phone stays awake while a USB host is connected; the host of this machine
 # reaches adbd over a network that cannot wake a suspended guest, so adbd
-# reports its host in vendor.kernarium.adb.host_connected and the blocker, a
+# reports its host in sys.kernarium.adb.host_connected and the blocker, a
 # userspace wakelock, keeps Android from autosuspending while one is there. Only
 # Android's own autosuspend is held back: a suspend the host requests does not
 # pass through the wakelock counter.
@@ -46,10 +46,10 @@ service suspend_blocker /vendor/bin/suspend_blocker
     group system
     disabled
 
-on property:vendor.kernarium.adb.host_connected=1
+on property:sys.kernarium.adb.host_connected=1
     start suspend_blocker
 
-on property:vendor.kernarium.adb.host_connected=0
+on property:sys.kernarium.adb.host_connected=0
     stop suspend_blocker
 
 # The boot command line expedites RCU grace periods, which shortens boot.

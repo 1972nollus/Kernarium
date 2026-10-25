@@ -11,6 +11,7 @@ import importlib.util
 import io
 import json
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -405,6 +406,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_blocker_binary: bool = False,
                           missing_adb_prop_context: bool = False,
                           missing_adb_prop_policy: bool = False,
+                          core_sets_vendor_prop: bool = False,
+                          system_ext_core_sets_vendor_prop: bool = False,
+                          adb_prop_not_system: bool = False,
                           missing_virtio_console: bool = False,
                           unsupported_hvc: bool = False,
                           missing_mesa_gles: bool = False,
@@ -607,12 +611,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                            else "    disabled\n")
                     )
                 blocker_rules += (
-                    "on property:vendor.kernarium.adb.host_connected=1\n"
+                    "on property:sys.kernarium.adb.host_connected=1\n"
                     "    start suspend_blocker\n"
                 )
                 if blocker_variant != "no-stop":
                     blocker_rules += (
-                        "on property:vendor.kernarium.adb.host_connected=0\n"
+                        "on property:sys.kernarium.adb.host_connected=0\n"
                         "    stop suspend_blocker\n"
                     )
                 if blocker_variant == "started-at-boot":
@@ -711,11 +715,39 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 )
                 if not missing_blocker_binary:
                     archive.writestr("VENDOR/bin/suspend_blocker", b"blocker")
+                # Platform, vendor and system_ext policy as the builder emits them: the
+                # platform's core domains, a vendor-owned property that only
+                # vendor_init sets, and the system-owned property adbd reports its host in.
                 archive.writestr(
-                    "VENDOR/etc/selinux/vendor_property_contexts",
-                    "" if missing_adb_prop_context else
-                    "vendor.kernarium.adb.host_connected    "
-                    "u:object_r:vendor_kernarium_adb_prop:s0 exact bool\n",
+                    "SYSTEM/etc/selinux/plat_sepolicy.cil",
+                    "(typeattributeset coredomain (adbd init system_server))\n",
+                )
+                archive.writestr(
+                    "SYSTEM_EXT/etc/selinux/system_ext_property_contexts",
+                    "ro.vendor.aware_available  u:object_r:vendor_aware_available_prop:s0\n"
+                    + (
+                        ""
+                        if missing_adb_prop_context
+                        else "sys.kernarium.adb.host_connected    "
+                        "u:object_r:kernarium_adb_host_prop:s0 exact bool\n"
+                    ),
+                )
+                archive.writestr(
+                    "SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil",
+                    "(typeattributeset vendor_property_type (vendor_aware_available_prop ))\n"
+                    "(typeattributeset system_property_type (apexd_prop "
+                    + ("" if adb_prop_not_system else "kernarium_adb_host_prop ")
+                    + "))\n"
+                    + (
+                        ""
+                        if missing_adb_prop_policy
+                        else "(allow adbd kernarium_adb_host_prop (property_service (set)))\n"
+                    )
+                    + (
+                        "(allow system_server vendor_aware_available_prop (property_service (set)))\n"
+                        if system_ext_core_sets_vendor_prop
+                        else ""
+                    ),
                 )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_sepolicy.cil",
@@ -728,11 +760,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         else "(allow appdomain vendor_security_patch_level_prop_202604 "
                         "(file (read getattr map open)))\n"
                     )
+                    + "(typeattributeset vendor_property_type (vendor_mesa_prop "
+                    "virtual_face_hal_prop_202604))\n"
+                    "(allow vendor_init_202604 vendor_mesa_prop (property_service (set)))\n"
+                    "(allow init virtual_face_hal_prop_202604 (property_service (set)))\n"
                     + (
-                        ""
-                        if missing_adb_prop_policy
-                        else "(allow adbd_202604 vendor_kernarium_adb_prop "
-                        "(property_service (set)))\n"
+                        "(allow adbd_202604 virtual_face_hal_prop_202604 (property_service (set)))\n"
+                        if core_sets_vendor_prop
+                        else ""
                     ),
                 )
                 ueventd = "/dev/ttyS0 0660 root shell\n"
@@ -1009,6 +1044,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("blocker-binary", {"missing_blocker_binary": True}),
             ("adb-prop-context", {"missing_adb_prop_context": True}),
             ("adb-prop-policy", {"missing_adb_prop_policy": True}),
+            ("core-sets-vendor-prop", {"core_sets_vendor_prop": True}),
+            ("system-ext-core-sets-vendor-prop", {"system_ext_core_sets_vendor_prop": True}),
+            ("adb-prop-not-system", {"adb_prop_not_system": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
             ("unsupported-hvc", {"unsupported_hvc": True}),
             ("missing-mesa-gles", {"missing_mesa_gles": True}),
@@ -1079,9 +1117,15 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("blocker-binary-cause", {"missing_blocker_binary": True},
              "VENDOR/bin/suspend_blocker"),
             ("adb-prop-context-cause", {"missing_adb_prop_context": True},
-             "do not label vendor.kernarium.adb.host_connected"),
+             "do not label sys.kernarium.adb.host_connected"),
             ("adb-prop-policy-cause", {"missing_adb_prop_policy": True},
-             "does not let adbd set vendor.kernarium.adb.host_connected"),
+             "does not let adbd set sys.kernarium.adb.host_connected"),
+            ("core-sets-vendor-prop-cause", {"core_sets_vendor_prop": True},
+             "lets the core domain adbd set the vendor property type virtual_face_hal_prop"),
+            ("system-ext-core-sets-vendor-prop-cause", {"system_ext_core_sets_vendor_prop": True},
+             "system_ext policy lets the core domain system_server set the vendor property type"),
+            ("adb-prop-not-system-cause", {"adb_prop_not_system": True},
+             "does not define the system-owned kernarium_adb_host_prop"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("missing-microphone-feature-cause", {"missing_microphone_feature": True},
@@ -1154,6 +1198,43 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             result = run_tool(verifier, "--target-files", fixture, *kernel_options)
             if result.returncode != 1 or not re.search(reason, result.stdout):
                 fail(f"target-files verifier did not reject the {label} fixture for {reason!r}: {result.stdout}")
+
+
+def verify_overlay_sepolicy(android_root: Path) -> None:
+    """The overlay's sepolicy sources keep core domains off vendor-owned properties."""
+    tool = android_root / "tools/check-overlay-sepolicy.py"
+    overlay = android_root / "overlay"
+    subprocess.run([str(tool), "--overlay", str(overlay)], check=True)
+    with tempfile.TemporaryDirectory(prefix="overlay-sepolicy-") as scratch:
+        copy = Path(scratch) / "overlay"
+        shutil.copytree(overlay / "sepolicy", copy / "sepolicy")
+        bad = copy / "sepolicy/vendor/adb_host_prop.te"
+        bad.write_text(
+            "vendor_public_prop(vendor_kernarium_adb_prop)\n"
+            "set_prop(adbd, vendor_kernarium_adb_prop)\n"
+        )
+        result = subprocess.run(
+            [str(tool), "--overlay", str(copy)], capture_output=True, text=True
+        )
+        if result.returncode == 0 or "adbd may be a core domain" not in result.stderr:
+            fail(f"the overlay sepolicy check accepted a core domain on a vendor property: {result.stderr!r}")
+        # A domain the overlay declares itself, and vendor_init, may set a vendor property.
+        bad.write_text(
+            "type kernarium_helper, domain;\n"
+            "vendor_public_prop(vendor_kernarium_helper_prop)\n"
+            "set_prop(kernarium_helper, vendor_kernarium_helper_prop)\n"
+            "set_prop(vendor_init, vendor_kernarium_helper_prop)\n"
+        )
+        subprocess.run([str(tool), "--overlay", str(copy)], check=True)
+        bad.write_text(
+            "vendor_public_prop(vendor_kernarium_adb_prop)\n"
+            "allow system_server vendor_kernarium_adb_prop:property_service { set };\n"
+        )
+        result = subprocess.run(
+            [str(tool), "--overlay", str(copy)], capture_output=True, text=True
+        )
+        if result.returncode == 0 or "system_server may be a core domain" not in result.stderr:
+            fail("the overlay sepolicy check accepted an allow rule of a core domain")
 
 
 def verify_hal_selections(android_root: Path) -> None:
@@ -1733,6 +1814,7 @@ def main() -> None:
     verify_kernel_elf_fixtures(android_root / "build/verify-kernel-elf.py")
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_hal_selections(android_root)
+    verify_overlay_sepolicy(android_root)
     verify_pin_manifest(android_root / "tools/render-pin-manifest.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")

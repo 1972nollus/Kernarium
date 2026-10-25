@@ -11,10 +11,11 @@ user, light idle) cut the connection for 60 to 600 seconds at a time.
 The device-side update_transports() was empty. It now counts the
 transports in kCsHost, the state a device gives the end of a transport
 that announced itself as an adb host, and sets
-vendor.kernarium.adb.host_connected to 1 when the count leaves zero and
+sys.kernarium.adb.host_connected to 1 when the count leaves zero and
 to 0 when it returns to zero. adbd clears the property at start, so an
 adbd that died with a host connected cannot leave it set. Product init
-holds a userspace wakelock while the property is 1.
+holds a userspace wakelock while the property is 1. The property is
+system-owned, as adbd is a core domain and may not set a vendor one.
 ---
  daemon/main.cpp |  3 +++
  transport.cpp   | 37 ++++++++++++++++++++++++++++++++++++-
@@ -36,7 +37,7 @@ index 3d1d8e7f62bb34cafdc90c6bea303d8332cda16c..757020ac84323c6bf192100e01249d45
      // we aren't able to bind mount after dropping root.
      const char* adb_external_storage = getenv("ADB_EXTERNAL_STORAGE");
 diff --git a/transport.cpp b/transport.cpp
-index 66273fc09c5ccb50e55e276f8a76b893cb9372f2..ed892ed5b3ba2609e0d4fc9a4346f50adca47a0a 100644
+index 66273fc09c5ccb50e55e276f8a76b893cb9372f2..df41faced40a01f816f27bad9eb8ad59e7326309 100644
 --- a/transport.cpp
 +++ b/transport.cpp
 @@ -42,6 +42,9 @@
@@ -56,7 +57,7 @@ index 66273fc09c5ccb50e55e276f8a76b893cb9372f2..ed892ed5b3ba2609e0d4fc9a4346f50a
 +// A phone stays awake while a USB host is connected. This device has no cable: its host reaches
 +// adbd over the network, which cannot wake a suspended guest, so the guest must not suspend itself
 +// while a host is there. Product init holds a userspace wakelock for as long as this property is 1.
-+static constexpr char kHostConnectedProperty[] = "vendor.kernarium.adb.host_connected";
++static constexpr char kHostConnectedProperty[] = "sys.kernarium.adb.host_connected";
 +
 +static void set_host_connected(bool connected) {
 +    if (!android::base::SetProperty(kHostConnectedProperty, connected ? "1" : "0")) {

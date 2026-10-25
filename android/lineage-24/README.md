@@ -459,15 +459,18 @@ unplugged and nothing holds a wakelock, and a phone stays awake while a USB host
 is connected. This machine's adb host arrives over the network, which cannot
 wake a suspended guest, so the host's connection would vanish for the minute or
 more until the next alarm. adbd's p0011 topic therefore sets
-`vendor.kernarium.adb.host_connected` to 1 while it has an adb host and to 0
+`sys.kernarium.adb.host_connected` to 1 while it has an adb host and to 0
 when the last one leaves (and when it starts), and product init starts the
 Cuttlefish `suspend_blocker`, a userspace wakelock, on 1 and stops it on 0. The
 wakelock holds back only Android's own autosuspend: a suspend that the host
 requests through the management console never goes through SystemSuspend, so it
-still suspends the guest. adbd may set the property because the sepolicy
-overlay's `vendor_kernarium_adb_prop` is vendor-public; the target-files
-verifier requires the service, both triggers, the property context and the
-rule.
+still suspends the guest. adbd is a core domain, which the platform keeps from
+setting a vendor-owned property, so the property is system-owned: its type,
+label and the `set_prop` live in the overlay's system_ext sepolicy
+(`overlay/sepolicy/system_ext/private`). `tools/check-overlay-sepolicy.py` keeps a
+core domain off the overlay's vendor properties before any build, and the
+target-files verifier repeats the platform neverallow on the built policy and
+requires the service, both triggers, the property context and the rule.
 
 DeviceLock and Virtualization are retained with their boot and system-server
 classpath fragments even though their hardware-backed functions are not

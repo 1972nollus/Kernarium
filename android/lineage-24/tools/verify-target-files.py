@@ -160,7 +160,10 @@ REQUIRED_ENTRIES = {
     "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
     "SYSTEM_EXT/priv-app/LineageSettingsProvider/LineageSettingsProvider.apk",
     "SYSTEM_EXT/priv-app/Seedvault/Seedvault.apk",
+    "SYSTEM_EXT/etc/selinux/system_ext_property_contexts",
+    "SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil",
     "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
+    "SYSTEM/etc/selinux/plat_sepolicy.cil",
     "VENDOR/bin/hw/android.hardware.health-service.example",
     "VENDOR/bin/suspend_blocker",
     "VENDOR/etc/audio_effects_config.xml",
@@ -173,7 +176,6 @@ REQUIRED_ENTRIES = {
     "VENDOR/etc/permissions/handheld_core_hardware.xml",
     "VENDOR/etc/primary_audio_policy_configuration.xml",
     "VENDOR/etc/r_submix_audio_policy_configuration.xml",
-    "VENDOR/etc/selinux/vendor_property_contexts",
     "VENDOR/etc/selinux/vendor_sepolicy.cil",
     "VENDOR/etc/ueventd.rc",
     "VENDOR/etc/vintf/compatibility_matrix.xml",
@@ -437,13 +439,14 @@ VENDOR_SPL_APP_READ = re.compile(
 # (BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT in overlay/BoardConfig.mk).
 USERDATA_EXTFS_INODE_COUNT = "8192"
 # adbd reports its host in this property and init holds a userspace wakelock while
-# it is 1 (adbd's p0011 topic, overlay/config/init.vendor.rc, overlay/sepolicy/vendor).
-ADB_HOST_PROPERTY = "vendor.kernarium.adb.host_connected"
-ADB_HOST_PROPERTY_TYPE = "vendor_kernarium_adb_prop"
-ADB_HOST_PROPERTY_SET = re.compile(
-    rb"^\(allow adbd(?:_[0-9]+)? " + ADB_HOST_PROPERTY_TYPE.encode() + rb"(?:_[0-9]+)? "
-    rb"\(property_service \(set\)\)\)$",
-    re.MULTILINE,
+# it is 1 (adbd's p0011 topic, overlay/config/init.vendor.rc,
+# overlay/sepolicy/system_ext/private). The property is system-owned: adbd is a core
+# domain, which the platform neverallow keeps from setting a vendor-owned property.
+ADB_HOST_PROPERTY = "sys.kernarium.adb.host_connected"
+ADB_HOST_PROPERTY_TYPE = "kernarium_adb_host_prop"
+CIL_PLATFORM_VERSION_SUFFIX = re.compile(r"_[0-9]{6}$")
+CIL_PROPERTY_SET_RULE = re.compile(
+    rb"^\(allow (\S+) (\S+) \(property_service \(([^)]*)\)\)\)$", re.MULTILINE
 )
 SUSPEND_BLOCKER_SERVICE = ("suspend_blocker", "/vendor/bin/suspend_blocker")
 UML_INIT_REQUIRED = (
@@ -689,16 +692,6 @@ def check_boot_policy(
         fail("UML init policy does not restore normal RCU grace periods after boot")
     check_suspend_blocker(init_payload, actions)
 
-    property_contexts = read_small(
-        archive, infos["VENDOR/etc/selinux/vendor_property_contexts"]
-    ).decode("utf-8", errors="strict")
-    if not any(
-        line.split()[:2] == [ADB_HOST_PROPERTY, f"u:object_r:{ADB_HOST_PROPERTY_TYPE}:s0"]
-        for line in property_contexts.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ):
-        fail(f"vendor property contexts do not label {ADB_HOST_PROPERTY}")
-
     ueventd_payload = read_small(
         archive, infos["VENDOR/etc/ueventd.rc"]
     ).decode("utf-8", errors="strict")
@@ -849,9 +842,75 @@ def check_kernel_policy(
     # system_server report to them (overlay/sepolicy/vendor/appdomain.te).
     if not VENDOR_SPL_APP_READ.search(vendor_policy):
         fail("vendor policy does not let applications read vendor_security_patch_level_prop")
-    # adbd reports its host to the wakelock rule in init (overlay/sepolicy/vendor/adb_host_prop.te).
-    if not ADB_HOST_PROPERTY_SET.search(vendor_policy):
-        fail(f"vendor policy does not let adbd set {ADB_HOST_PROPERTY}")
+    check_property_writers(
+        read_small(archive, infos["SYSTEM/etc/selinux/plat_sepolicy.cil"]),
+        vendor_policy,
+        read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil"]),
+        read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_property_contexts"]).decode(
+            "utf-8", errors="strict"
+        ),
+    )
+
+
+def cil_attribute_members(policy: bytes, attribute: str) -> set[str]:
+    """Types of a CIL attribute, platform version suffixes removed."""
+    pattern = re.compile(
+        rb"^\(typeattributeset " + re.escape(attribute.encode()) + rb" \(([^)]*)\)\)$",
+        re.MULTILINE,
+    )
+    return {
+        CIL_PLATFORM_VERSION_SUFFIX.sub("", name.decode())
+        for match in pattern.finditer(policy)
+        for name in match.group(1).split()
+    }
+
+
+def check_property_writers(
+    platform_policy: bytes,
+    vendor_policy: bytes,
+    system_ext_policy: bytes,
+    system_ext_contexts: str,
+) -> None:
+    """A core domain may set no vendor-owned property, and adbd reports its host.
+
+    The first rule repeats the platform neverallow of private/property.te so a
+    product rule that breaks it fails here and not only in the policy build.
+    """
+    core_domains = cil_attribute_members(platform_policy, "coredomain") - {"init"}
+    vendor_properties = cil_attribute_members(
+        vendor_policy, "vendor_property_type"
+    ) | cil_attribute_members(system_ext_policy, "vendor_property_type")
+    for label, policy in (("vendor", vendor_policy), ("system_ext", system_ext_policy)):
+        for match in CIL_PROPERTY_SET_RULE.finditer(policy):
+            source = CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode())
+            target = CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode())
+            if b"set" not in match.group(3).split():
+                continue
+            if source in core_domains and target in vendor_properties:
+                fail(
+                    f"{label} policy lets the core domain {source} set the vendor "
+                    f"property type {target}; a core domain may set only a "
+                    "system-owned property"
+                )
+    system_properties = cil_attribute_members(system_ext_policy, "system_property_type")
+    if ADB_HOST_PROPERTY_TYPE not in system_properties:
+        fail(f"system_ext policy does not define the system-owned {ADB_HOST_PROPERTY_TYPE}")
+    allowed = False
+    for match in CIL_PROPERTY_SET_RULE.finditer(system_ext_policy):
+        if (
+            match.group(1) == b"adbd"
+            and match.group(2).decode() == ADB_HOST_PROPERTY_TYPE
+            and b"set" in match.group(3).split()
+        ):
+            allowed = True
+    if not allowed:
+        fail(f"system_ext policy does not let adbd set {ADB_HOST_PROPERTY}")
+    if not any(
+        line.split()[:2] == [ADB_HOST_PROPERTY, f"u:object_r:{ADB_HOST_PROPERTY_TYPE}:s0"]
+        for line in system_ext_contexts.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ):
+        fail(f"system_ext property contexts do not label {ADB_HOST_PROPERTY}")
 
 
 def parse_properties(payload: str) -> dict[str, str]:

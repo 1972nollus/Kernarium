@@ -10,6 +10,7 @@ PATCH_SERIES="$ROOT_DIR/scripts/patch_series.py"
 PROJECTS="$ANDROID_ROOT/patches/projects.tsv"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 DEVICE_SYNC="$ANDROID_ROOT/tools/sync-device-tree.py"
+SEPOLICY_CHECK="$ANDROID_ROOT/tools/check-overlay-sepolicy.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
 AOSP_SOURCE=
 
@@ -52,9 +53,11 @@ absolute_path "AOSP source" "$AOSP_SOURCE"
 [ -d "$AOSP_SOURCE/.repo/manifests" ] || fail "AOSP Repo metadata is missing"
 [ -x "$VERIFIER" ] || fail "AOSP patch verifier is missing"
 [ -x "$DEVICE_SYNC" ] || fail "device-tree sync tool is missing"
+[ -x "$SEPOLICY_CHECK" ] || fail "overlay sepolicy check is missing"
 [ -x "$MESA_VENUS_VERIFIER" ] || fail "Mesa Venus source verifier is missing"
 [ -f "$PROJECTS" ] || fail "AOSP route table is missing"
 
+"$SEPOLICY_CHECK" --overlay "$ANDROID_ROOT/overlay"
 "$MESA_VENUS_VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \

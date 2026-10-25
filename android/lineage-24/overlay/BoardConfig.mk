@@ -63,6 +63,9 @@ BOARD_VENDOR_SEPOLICY_DIRS := $(filter-out \
     $(BOARD_VENDOR_SEPOLICY_DIRS))
 
 BOARD_VENDOR_SEPOLICY_DIRS += device/kernarium/darwin/sepolicy/vendor
+# Properties the platform's core domains set belong to the system partitions: the
+# Treble split forbids a core domain to set a vendor-owned one.
+SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += device/kernarium/darwin/sepolicy/system_ext/private
 
 # The Android UML ELF is built and published independently. Android packaging
 # must neither substitute a Cuttlefish kernel nor stage loadable modules.

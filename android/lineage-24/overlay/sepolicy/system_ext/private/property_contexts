@@ -1,0 +1,2 @@
+# adbd's report that an adb host is connected; product init turns it into a wakelock.
+sys.kernarium.adb.host_connected    u:object_r:kernarium_adb_host_prop:s0 exact bool
