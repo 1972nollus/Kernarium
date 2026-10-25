@@ -15,11 +15,11 @@ the bytes blue, green, red, alpha, while the blocks the framework maps hold
 red, green, blue, alpha, which is ABGR (V4L2 RGBA32). Name them by their
 byte order, so the V4L2 format that matches is the one the encoder asks for.
 ---
- components/EncodeComponent.cpp                | 28 +++++++++--
+ components/EncodeComponent.cpp                | 28 ++++++++--
  .../v4l2_codec2/components/VideoEncoder.h     |  6 +++
- v4l2/V4L2Encoder.cpp                          | 50 ++++++++++++++++++-
+ v4l2/V4L2Encoder.cpp                          | 54 +++++++++++++++++--
  v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |  3 ++
- 4 files changed, 82 insertions(+), 5 deletions(-)
+ 4 files changed, 84 insertions(+), 7 deletions(-)
 
 diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
 index 27927180a5912d126ba006ee1ef12cda800d66d4..2aa2d0024f18cc4aa0151b79039a50d878061615 100644
@@ -103,15 +103,16 @@ index d05f1caa5e6624e5ac1a237f6a6ab2486f500df1..28a3de53f2d306600d2cbecf820a8003
      virtual const ui::Size& visibleSize() const = 0;
      virtual const ui::Size& codedSize() const = 0;
 diff --git a/v4l2/V4L2Encoder.cpp b/v4l2/V4L2Encoder.cpp
-index dbf3a1ff62fddc3434a1ef4cf316673174d87fa8..4b6ee205f0eb229242dffffdd70e5ba764ca4d7e 100644
+index a3c4b336558451e14dad3c1e4977b7043bef29c4..773cb294a921b32da7bb96e79e56a1f9cfc1a607 100644
 --- a/v4l2/V4L2Encoder.cpp
 +++ b/v4l2/V4L2Encoder.cpp
-@@ -48,6 +48,21 @@ size_t GetMaxOutputBufferSize(const ui::Size& size) {
+@@ -48,6 +48,23 @@ size_t GetMaxOutputBufferSize(const ui::Size& size) {
      return kMaxBitstreamBufferSizeInBytes;
  }
  
-+// Whether |format| is a packed RGB format, which V4L2 names with the fourcc of a single plane.
-+bool isPackedRgb(VideoPixelFormat format) {
++// Whether V4L2 names |format| with the fourcc of a single buffer: packed RGB, whose pixels share one
++// plane, and P010, whose Y and CbCr planes share one buffer.
++bool isSingleBufferFormat(VideoPixelFormat format) {
 +    switch (format) {
 +    case VideoPixelFormat::ARGB:
 +    case VideoPixelFormat::ABGR:
@@ -119,6 +120,7 @@ index dbf3a1ff62fddc3434a1ef4cf316673174d87fa8..4b6ee205f0eb229242dffffdd70e5ba7
 +    case VideoPixelFormat::XBGR:
 +    case VideoPixelFormat::BGRA:
 +    case VideoPixelFormat::RGBA:
++    case VideoPixelFormat::P010:
 +        return true;
 +    default:
 +        return false;
@@ -128,7 +130,7 @@ index dbf3a1ff62fddc3434a1ef4cf316673174d87fa8..4b6ee205f0eb229242dffffdd70e5ba7
  // Define V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR control code if not present in header files.
  #ifndef V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR
  #define V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR (V4L2_CID_MPEG_BASE + 644)
-@@ -226,6 +241,36 @@ void V4L2Encoder::requestKeyframe() {
+@@ -226,6 +243,36 @@ void V4L2Encoder::requestKeyframe() {
      mKeyFrameCounter = 0;
  }
  
@@ -145,7 +147,7 @@ index dbf3a1ff62fddc3434a1ef4cf316673174d87fa8..4b6ee205f0eb229242dffffdd70e5ba7
 +
 +    // Leave the format as it is unless the device lists the one asked for, as the caller then
 +    // converts the frames.
-+    auto fourcc = Fourcc::fromVideoPixelFormat(format, isPackedRgb(format));
++    auto fourcc = Fourcc::fromVideoPixelFormat(format, isSingleBufferFormat(format));
 +    if (!fourcc || !mInputQueue->tryFormat(fourcc->toV4L2PixFmt(), mVisibleSize, 0)) {
 +        return false;
 +    }
@@ -165,7 +167,7 @@ index dbf3a1ff62fddc3434a1ef4cf316673174d87fa8..4b6ee205f0eb229242dffffdd70e5ba7
  VideoPixelFormat V4L2Encoder::inputFormat() const {
      return mInputLayout ? mInputLayout.value().mFormat : VideoPixelFormat::UNKNOWN;
  }
-@@ -239,6 +284,7 @@ bool V4L2Encoder::initialize(C2Config::profile_t outputProfile, std::optional<ui
+@@ -239,6 +286,7 @@ bool V4L2Encoder::initialize(C2Config::profile_t outputProfile, std::optional<ui
      ALOG_ASSERT(keyFramePeriod > 0);
  
      mVisibleSize = visibleSize;
@@ -173,7 +175,7 @@ index dbf3a1ff62fddc3434a1ef4cf316673174d87fa8..4b6ee205f0eb229242dffffdd70e5ba7
      mKeyFramePeriod = keyFramePeriod;
      mKeyFrameCounter = 0;
  
-@@ -491,13 +537,13 @@ bool V4L2Encoder::configureInputFormat(VideoPixelFormat inputFormat, uint32_t st
+@@ -491,15 +539,13 @@ bool V4L2Encoder::configureInputFormat(VideoPixelFormat inputFormat, uint32_t st
                                         const V4L2Colorimetry& colorimetry) {
      ALOGV("%s()", __func__);
      ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
@@ -184,8 +186,10 @@ index dbf3a1ff62fddc3434a1ef4cf316673174d87fa8..4b6ee205f0eb229242dffffdd70e5ba7
  
      // First try to use the requested pixel format directly.
      std::optional<struct v4l2_format> format;
--    auto fourcc = Fourcc::fromVideoPixelFormat(inputFormat, false);
-+    auto fourcc = Fourcc::fromVideoPixelFormat(inputFormat, isPackedRgb(inputFormat));
+-    // P010 is one buffer holding both colour planes, which V4L2 names with the fourcc of a
+-    // single-planar format.
+-    auto fourcc = Fourcc::fromVideoPixelFormat(inputFormat, inputFormat == VideoPixelFormat::P010);
++    auto fourcc = Fourcc::fromVideoPixelFormat(inputFormat, isSingleBufferFormat(inputFormat));
      if (fourcc) {
          format = mInputQueue->setFormat(fourcc->toV4L2PixFmt(), mVisibleSize, 0, stride,
                                          colorimetry);

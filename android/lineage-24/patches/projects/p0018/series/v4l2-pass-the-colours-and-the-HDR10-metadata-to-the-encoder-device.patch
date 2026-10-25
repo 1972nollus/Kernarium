@@ -16,25 +16,53 @@ profile to make sense. The device query leaves Main 10 out of the profiles
 when the device lists no P010 input; it lists the raw formats for the HEVC
 coded format, since a device lists them per coded format. The interface
 offers the P010 pixel format with that profile, which the framework lists as
-a colour format, and the encoder takes P010 frames for the profile, with the
-frame layout and the stride of the P010 blocks. A
-device that lists the HDR10 mastering display and content light level
-controls on top of that offers the HDR static info parameter, which is
-the sign for the framework to list the HDR10 profile, and the encoder sets
-the two compound controls from it in the units of the SEI messages.
+a colour format, and the encoder takes P010 frames for the profile. P010 is
+one buffer that holds both colour planes, so V4L2 names it with the fourcc
+of a single buffer, the CbCr plane starts after the Y plane at the same
+stride, and its element is a pair of 16-bit samples. A device that lists the
+HDR10 mastering display and content light level controls on top of that
+offers the HDR static info parameter, which is the sign for the framework to
+list the HDR10 profile, and the encoder sets the two compound controls from
+it in the units of the SEI messages.
 ---
+ common/VideoPixelFormat.cpp                   |   7 +-
  common/include/v4l2_codec2/common/Common.h    |   2 +
  components/EncodeComponent.cpp                |  18 ++-
  components/EncodeInterface.cpp                | 148 +++++++++++++++++-
  .../v4l2_codec2/components/EncodeInterface.h  |  18 +++
  .../v4l2_codec2/components/VideoEncoder.h     |   9 ++
- v4l2/V4L2Device.cpp                           | 134 +++++++++++++++-
+ v4l2/V4L2Device.cpp                           | 137 +++++++++++++++-
  v4l2/V4L2EncodeComponent.cpp                  |  15 +-
- v4l2/V4L2Encoder.cpp                          |  71 ++++++++-
+ v4l2/V4L2Encoder.cpp                          |  75 ++++++++-
  v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |  26 ++-
  v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |   8 +-
- 10 files changed, 433 insertions(+), 16 deletions(-)
+ 11 files changed, 444 insertions(+), 19 deletions(-)
 
+diff --git a/common/VideoPixelFormat.cpp b/common/VideoPixelFormat.cpp
+index 48eb2a30ef888312abfa5b11f0e5b1dd1ea74f16..a097151a547f6f1a9d05b1bfd62398981c490500 100644
+--- a/common/VideoPixelFormat.cpp
++++ b/common/VideoPixelFormat.cpp
+@@ -300,7 +300,6 @@ int bytesPerElement(VideoPixelFormat format, size_t plane) {
+     case VideoPixelFormat::YUV422P12:
+     case VideoPixelFormat::YUV444P12:
+     case VideoPixelFormat::P016LE:
+-    case VideoPixelFormat::P010:
+         return 2;
+     case VideoPixelFormat::NV12:
+     case VideoPixelFormat::NV21: {
+@@ -308,6 +307,12 @@ int bytesPerElement(VideoPixelFormat format, size_t plane) {
+         ALOG_ASSERT(plane < base::size(bytes_per_element));
+         return bytes_per_element[plane];
+     }
++    case VideoPixelFormat::P010: {
++        // 16-bit samples, and the interleaved CbCr plane holds one pair per element.
++        static const int bytes_per_element[] = {2, 4};
++        ALOG_ASSERT(plane < base::size(bytes_per_element));
++        return bytes_per_element[plane];
++    }
+     case VideoPixelFormat::YV12:
+     case VideoPixelFormat::I420:
+     case VideoPixelFormat::I422:
 diff --git a/common/include/v4l2_codec2/common/Common.h b/common/include/v4l2_codec2/common/Common.h
 index aa72bef7c5cda98dbd0ba9f5434fa63830bb4ba5..1eaa41af8eb85bcc277060c2a961bbf577559a56 100644
 --- a/common/include/v4l2_codec2/common/Common.h
@@ -327,7 +355,7 @@ index bf207e895c9311bdf8413683acb61f90394af60d..d05f1caa5e6624e5ac1a237f6a6ab248
  
      // The InputFrame class can be used to store raw video frames.
 diff --git a/v4l2/V4L2Device.cpp b/v4l2/V4L2Device.cpp
-index a9ff06399514aa2c92d0f47662b5fe94d59bce38..0ed408438a1f3566b273661a164c1aae1d243ce0 100644
+index a9ff06399514aa2c92d0f47662b5fe94d59bce38..8d9dfec58f08098a93ebd5d8508de17f69ff37c2 100644
 --- a/v4l2/V4L2Device.cpp
 +++ b/v4l2/V4L2Device.cpp
 @@ -95,6 +95,11 @@ V4L2ExtCtrl::V4L2ExtCtrl(uint32_t id, int32_t val) : V4L2ExtCtrl(id) {
@@ -454,7 +482,17 @@ index a9ff06399514aa2c92d0f47662b5fe94d59bce38..0ed408438a1f3566b273661a164c1aae
  // static
  v4l2_mpeg_video_bitrate_mode V4L2Device::c2BitrateModeToV4L2BitrateMode(
          C2Config::bitrate_mode_t bitrateMode) {
-@@ -2490,6 +2589,39 @@ void V4L2Device::queryEncoderControls(VideoCodec codec, uint32_t pixFmt,
+@@ -2140,7 +2239,8 @@ std::optional<VideoFrameLayout> V4L2Device::v4L2FormatToVideoFrameLayout(
+         const size_t yStrideAbs = static_cast<size_t>(yStride);
+         switch (pixFmt) {
+         case V4L2_PIX_FMT_NV12:
+-            // The stride of UV is the same as Y in NV12. The height is half of Y plane.
++        case V4L2_PIX_FMT_P010:
++            // The stride of UV is the same as Y in NV12 and P010. The height is half of Y plane.
+             planes.push_back(VideoFramePlane{yStride, yStrideAbs * pixMp.height,
+                                              yStrideAbs * pixMp.height / 2});
+             ALOG_ASSERT(2u == planes.size());
+@@ -2490,6 +2590,39 @@ void V4L2Device::queryEncoderControls(VideoCodec codec, uint32_t pixFmt,
      if (isCtrlExposed(isHEVC ? V4L2_CID_MPEG_VIDEO_HEVC_LEVEL : V4L2_CID_MPEG_VIDEO_H264_LEVEL)) {
          caps->supportedLevels = queryC2Levels(pixFmt);
      }
@@ -538,7 +576,7 @@ index f484743e02071f8c78c114a7d5912cca7a618a63..1c395a638f4e43b245246c4a3278e387
      mQuality = params.quality;
  
 diff --git a/v4l2/V4L2Encoder.cpp b/v4l2/V4L2Encoder.cpp
-index 241e7c0cf83b88f249fc35296cdd254ca0eff7bc..dbf3a1ff62fddc3434a1ef4cf316673174d87fa8 100644
+index 241e7c0cf83b88f249fc35296cdd254ca0eff7bc..a3c4b336558451e14dad3c1e4977b7043bef29c4 100644
 --- a/v4l2/V4L2Encoder.cpp
 +++ b/v4l2/V4L2Encoder.cpp
 @@ -8,7 +8,9 @@
@@ -572,9 +610,14 @@ index 241e7c0cf83b88f249fc35296cdd254ca0eff7bc..dbf3a1ff62fddc3434a1ef4cf3166731
      ALOGV("%s()", __func__);
      ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
      ALOG_ASSERT(mState == State::UNINITIALIZED);
-@@ -494,7 +499,8 @@ bool V4L2Encoder::configureInputFormat(VideoPixelFormat inputFormat, uint32_t st
+@@ -492,9 +497,12 @@ bool V4L2Encoder::configureInputFormat(VideoPixelFormat inputFormat, uint32_t st
+ 
+     // First try to use the requested pixel format directly.
      std::optional<struct v4l2_format> format;
-     auto fourcc = Fourcc::fromVideoPixelFormat(inputFormat, false);
+-    auto fourcc = Fourcc::fromVideoPixelFormat(inputFormat, false);
++    // P010 is one buffer holding both colour planes, which V4L2 names with the fourcc of a
++    // single-planar format.
++    auto fourcc = Fourcc::fromVideoPixelFormat(inputFormat, inputFormat == VideoPixelFormat::P010);
      if (fourcc) {
 -        format = mInputQueue->setFormat(fourcc->toV4L2PixFmt(), mVisibleSize, 0, stride);
 +        format = mInputQueue->setFormat(fourcc->toV4L2PixFmt(), mVisibleSize, 0, stride,
@@ -582,7 +625,7 @@ index 241e7c0cf83b88f249fc35296cdd254ca0eff7bc..dbf3a1ff62fddc3434a1ef4cf3166731
      }
  
      // If the device doesn't support the requested input format we'll try the device's preferred
-@@ -504,7 +510,8 @@ bool V4L2Encoder::configureInputFormat(VideoPixelFormat inputFormat, uint32_t st
+@@ -504,7 +512,8 @@ bool V4L2Encoder::configureInputFormat(VideoPixelFormat inputFormat, uint32_t st
          std::vector<uint32_t> preferredFormats =
                  mDevice->preferredInputFormat(V4L2Device::Type::kEncoder);
          for (uint32_t i = 0; !format && i < preferredFormats.size(); ++i) {
@@ -592,7 +635,7 @@ index 241e7c0cf83b88f249fc35296cdd254ca0eff7bc..dbf3a1ff62fddc3434a1ef4cf3166731
          }
      }
  
-@@ -640,6 +647,9 @@ bool V4L2Encoder::configureDevice(C2Config::profile_t outputProfile,
+@@ -640,6 +649,9 @@ bool V4L2Encoder::configureDevice(C2Config::profile_t outputProfile,
          return configureH264(outputProfile, outputLevel, bitrate, params);
      }
      if (isHEVCProfile(outputProfile)) {
@@ -602,7 +645,7 @@ index 241e7c0cf83b88f249fc35296cdd254ca0eff7bc..dbf3a1ff62fddc3434a1ef4cf3166731
          return configureHEVC(outputProfile, outputLevel, bitrate, params);
      }
  
-@@ -760,6 +770,59 @@ bool V4L2Encoder::configureHEVC(C2Config::profile_t outputProfile,
+@@ -760,6 +772,59 @@ bool V4L2Encoder::configureHEVC(C2Config::profile_t outputProfile,
      return true;
  }
  
