@@ -1250,6 +1250,7 @@ gadget atomic_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
+	tbi_strip x7
 	.if \alignment
 	single_copy_alignment atomic_\name, \alignment, 1
 	.endif
@@ -1312,6 +1313,7 @@ gadget compare_swap_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
+	tbi_strip x7
 	.if \alignment
 	single_copy_alignment compare_swap_\name, \alignment, 1
 	.endif
@@ -1366,6 +1368,7 @@ gadget compare_swap_pair_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
+	tbi_strip x7
 	single_copy_alignment compare_swap_pair_\name, \alignment, 1
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, fault=uml_arm64_gadget_memory_fault_indexed
 	and x20, x19, #0xffff
@@ -1438,6 +1441,7 @@ gadget exclusive_load_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
 	ldr x7, [_cpu, x20]
+	tbi_strip x7
 	.if \alignment
 	single_copy_alignment exclusive_load_\name, \alignment, 0
 	.endif
@@ -1479,6 +1483,7 @@ gadget exclusive_store_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
+	tbi_strip x7
 	.if \source_zero
 	mov x15, xzr
 	.else
@@ -1535,6 +1540,7 @@ gadget exclusive_pair_load_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
+	tbi_strip x7
 	single_copy_alignment exclusive_pair_load_\name, \alignment, 0
 	exclusive_translate EXCL(pair_load_miss_)\name
 EXCL(pair_load_resume_)\name:
@@ -1578,6 +1584,7 @@ gadget exclusive_pair_store_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #36, #12
 	ldr x7, [_cpu, x20]
+	tbi_strip x7
 	.if \first_zero
 	mov x15, xzr
 	.else
@@ -1676,6 +1683,7 @@ gadget ordered_load_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
 	ldr x7, [_cpu, x20]
+	tbi_strip x7
 	.if \alignment
 	single_copy_alignment ordered_load_\name, \alignment, 0
 	.endif
@@ -1711,6 +1719,7 @@ gadget ordered_store_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
 	ldr x7, [_cpu, x20]
+	tbi_strip x7
 	.if \alignment
 	single_copy_alignment ordered_store_\name, \alignment, 1
 	.endif
@@ -1757,6 +1766,7 @@ gadget rcpc_load_\name
 	ldr x7, [x8, x20, lsl #3]
 	sbfx x9, x19, #10, #9
 	add x7, x7, x9
+	tbi_strip x7
 	.if \alignment
 	single_copy_alignment rcpc_load_\name, \alignment, 0
 	.endif
@@ -1807,6 +1817,7 @@ gadget rcpc_store_\name
 	ldr x7, [x8, x20, lsl #3]
 	sbfx x9, x19, #10, #9
 	add x7, x7, x9
+	tbi_strip x7
 	.if \alignment
 	single_copy_alignment rcpc_store_\name, \alignment, 1
 	.endif

@@ -128,6 +128,17 @@ NAME(uml_arm64_gadget_\name):
 92:
 .endm
 
+/* Strip a top-byte-ignore tag from guest address \reg where TBI is on, as the
+ * scalar transfers do, so the atomic, ordered, RCpc and exclusive forms key
+ * the TLB, check alignment and report a fault by the same untagged address.
+ * Scratch: w9. */
+.macro tbi_strip reg
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	cbz w9, Ltbi_strip_done\@
+	ubfx \reg, \reg, #0, #56
+Ltbi_strip_done\@:
+.endm
+
 /* A translated transfer is at most 64 bytes, so adding its final byte can
  * cross at most one guest-page boundary.  The xor therefore needs only the
  * page-index low bit, avoiding a separate mask/compare instruction. */
