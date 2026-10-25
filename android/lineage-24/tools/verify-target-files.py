@@ -476,6 +476,7 @@ PROPERTY_CONTEXT_FILES = (
     "VENDOR/etc/selinux/vendor_property_contexts",
     "ODM/etc/selinux/odm_property_contexts",
 )
+CIL_DONTAUDIT_RULE = re.compile(rb"^\(dontaudit (\S+) (\S+) \((\w+) \(([^)]*)\)\)\)$", re.MULTILINE)
 CIL_ALLOW_RULE = re.compile(rb"^\(allow (\S+) (\S+) \((\w+) \(([^)]*)\)\)\)$", re.MULTILINE)
 CIL_PERMISSIVE_TYPE = re.compile(rb"^\(typepermissive (\S+)\)$", re.MULTILINE)
 # The only domain that may be permissive: the userdebug root shell.
@@ -898,6 +899,7 @@ def check_kernel_policy(
         ),
     )
     check_policy_relaxations((platform_policy, vendor_policy, system_ext_policy))
+    check_mediaserver_property_audit((platform_policy, vendor_policy, system_ext_policy))
     contexts = [
         line
         for name in PROPERTY_CONTEXT_FILES
@@ -1067,6 +1069,34 @@ def check_policy_relaxations(policies: tuple[bytes, ...]) -> None:
             domain = CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode())
             if domain not in PERMISSIVE_DOMAINS:
                 fail(f"policy makes the domain {domain} permissive; only the userdebug su may be")
+
+
+def check_mediaserver_property_audit(policies: tuple[bytes, ...]) -> None:
+    """mediaserver's read of a vendor property is silenced as it is for the other graphics clients.
+
+    The vendor's gralloc mapper, which mediaserver loads to allocate decoder
+    buffers, reads vendor.minigbm.debug when it initialises. That name is a
+    vendor_default_prop, which a core domain may not read, and the lookup
+    carries on without a value. Without this rule every first use logs an
+    audit denial that nothing needs to act on.
+    """
+    for policy in policies:
+        for match in CIL_DONTAUDIT_RULE.finditer(policy):
+            source, target, object_class, permissions = (
+                CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(index).decode())
+                for index in (1, 2, 3, 4)
+            )
+            if (
+                source == "mediaserver"
+                and target == "vendor_default_prop"
+                and object_class == "file"
+                and "read" in permissions.split()
+            ):
+                return
+    fail(
+        "policy does not silence the denial of mediaserver reading vendor_default_prop "
+        "(overlay/sepolicy/system_ext/private/mediaserver.te)"
+    )
 
 
 def property_label(name: str, contexts: list[str]) -> str | None:

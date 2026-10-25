@@ -414,6 +414,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           adb_prop_not_system: bool = False,
                           adb_prop_unreadable_by_vendor_init: bool = False,
                           lineage_policy: str | None = None,
+                          missing_mediaserver_audit: bool = False,
                           missing_virtio_console: bool = False,
                           unsupported_hvc: bool = False,
                           missing_mesa_gles: bool = False,
@@ -782,6 +783,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "(typeattributeset contextmount_type (fixture_rootfs))\n"
                     "(allow init fixture_rootfs (filesystem (relabelto)))\n"
                     + (
+                        ""
+                        if missing_mediaserver_audit
+                        else "(dontaudit mediaserver vendor_default_prop (file (read)))\n"
+                    )
+                    + (
                         "(allow fsck_untrusted self (capability (sys_admin)))\n"
                         if lineage_policy == "fsck-sys-admin"
                         else ""
@@ -1139,6 +1145,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("lineage-fsck-sys-admin", {"lineage_policy": "fsck-sys-admin"}),
             ("lineage-vold-relabelto", {"lineage_policy": "vold-relabelto"}),
             ("lineage-permissive-backuptool", {"lineage_policy": "permissive-backuptool"}),
+            ("missing-mediaserver-audit", {"missing_mediaserver_audit": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
             ("unsupported-hvc", {"unsupported_hvc": True}),
             ("missing-mesa-gles", {"missing_mesa_gles": True}),
@@ -1244,6 +1251,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "lets vold relabel a filesystem to sdcard_posix"),
             ("lineage-permissive-backuptool-cause", {"lineage_policy": "permissive-backuptool"},
              "makes the domain backuptool permissive"),
+            ("missing-mediaserver-audit-cause", {"missing_mediaserver_audit": True},
+             "does not silence the denial of mediaserver reading vendor_default_prop"),
             ("adb-prop-unreadable-by-vendor-init-cause",
              {"adb_prop_unreadable_by_vendor_init": True},
              "names sys.kernarium.adb.host_connected, labelled kernarium_adb_host_prop, "

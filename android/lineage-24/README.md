@@ -270,6 +270,13 @@ back, a later such grant fails the policy build, and the target-files verifier
 repeats the checks on the built policy (only the userdebug `su` may be
 permissive).
 
+`mediaserver` loads the vendor's gralloc mapper to allocate decoder buffers, and
+minigbm reads the option `vendor.minigbm.debug` when it initialises. That name
+is a `vendor_default_prop`, which a core domain may not read; the lookup finds no
+value and the mapper carries on. Android silences the same denial for
+applications, SurfaceFlinger and the boot animation, and the system_ext policy
+silences it for `mediaserver`, which the verifier requires.
+
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
 in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves
