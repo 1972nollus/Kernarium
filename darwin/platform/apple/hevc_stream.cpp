@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "hevc_stream.hpp"
+#include "rbsp_writer.hpp"
 
 #include <algorithm>
 
@@ -7,6 +8,7 @@ namespace uml::platform::hevc {
 namespace {
 
 using bitstream::BitReader;
+using BitWriter = bitstream::RbspWriter;
 
 // Skips n bits of a reader whose reads are at most 32 bits wide.
 void skip(BitReader& reader, unsigned count)
@@ -14,27 +16,6 @@ void skip(BitReader& reader, unsigned count)
     for (; count >= 32; count -= 32) reader.bits(32);
     if (count) reader.bits(count);
 }
-
-// Appends bits, most significant first, and pads the last byte with zeros.
-class BitWriter {
-public:
-    void bit(bool value)
-    {
-        if (used_ % 8 == 0) bytes_.push_back(0);
-        if (value) bytes_.back() = std::uint8_t(bytes_.back() | (0x80u >> (used_ % 8)));
-        ++used_;
-    }
-    // Copies bits [from, to) of a payload.
-    void copy(const std::vector<std::uint8_t>& payload, std::size_t from, std::size_t to)
-    {
-        for (std::size_t at = from; at < to; ++at) bit((payload[at / 8] >> (7 - at % 8)) & 1);
-    }
-    [[nodiscard]] const std::vector<std::uint8_t>& bytes() const noexcept { return bytes_; }
-
-private:
-    std::vector<std::uint8_t> bytes_;
-    std::size_t used_ {};
-};
 
 // Offsets and picture sizes beyond this are not a picture any decoder takes.
 constexpr unsigned largestDimension = 1u << 16;
