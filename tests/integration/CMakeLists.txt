@@ -160,6 +160,34 @@ if(UML_FUTEX_PROBE_BINARY)
         CPUS 4)
 endif()
 
+set(UML_GBM_DMABUF_PROBE_BINARY "" CACHE FILEPATH
+    "Guest executable built from tests/integration/gpu/gbm_dmabuf_probe.cpp")
+if(UML_GBM_DMABUF_PROBE_BINARY)
+    if(NOT EXISTS "${UML_GBM_DMABUF_PROBE_BINARY}")
+        message(FATAL_ERROR "The dma-buf visibility test requires its compiled guest probe")
+    endif()
+    # A four-vCPU guest with the GPU; the probe opens the render node itself.
+    uml_add_guest_integration_test(
+        NAME guest-gbm-dmabuf
+        SCRIPT gpu/run_gpu_guest.py
+        ARGS --timeout 300
+            --memory 4G
+            --guest-file
+            /usr/local/libexec/gbm-dmabuf-probe=${UML_GBM_DMABUF_PROBE_BINARY}
+            --command "timeout 60 sh -c 'until test -e /dev/dri/renderD128
+do
+    sleep 1
+done'"
+            --command "timeout 120 /usr/local/libexec/gbm-dmabuf-probe /dev/dri/renderD128"
+            --
+            ncpus=4 --execution-engine=jit --gpu --gpu-display=vnc
+            --gpu-vnc-bind=127.0.0.1 --gpu-vnc-port=0
+        LABELS guest;gpu
+        TIMEOUT 420
+        CPUS 4
+        GPUS 1)
+endif()
+
 if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
    NOT TARGET "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
     message(FATAL_ERROR "Integration tests require a selected kernel artifact")

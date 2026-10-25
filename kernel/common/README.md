@@ -376,3 +376,23 @@ observed by that operation, and wake-operation arithmetic retries competing
 updates instead of overwriting them. The optional `guest-futex-atomic` test
 checks concurrent kernel/userspace updates and robust priority-inheritance
 mutexes.
+
+A virtio-gpu PRIME export is always read-write. The first export of a buffer
+fixes the mode of every later one, and guest Mesa exports without `DRM_RDWR`,
+so a buffer it exported first could otherwise never be mapped writable.
+
+A classic 3D resource, a single-sampled 2D or rectangle Virgl texture, is
+coherent with the GPU through its dma-buf around `DMA_BUF_IOCTL_SYNC`. Its
+guest pages change only on an explicit `TRANSFER_FROM_HOST_3D` or
+`TRANSFER_TO_HOST_3D`, which Mesa issues for its own maps and not for a
+dma-buf. A sync start waits for the buffer's write fences, then reads level 0
+from the host and waits for the transfer, and a sync end that wrote sends
+level 0 to the host. Blob resources, 2D resources and every other shape keep
+their behaviour, so Android, whose gralloc locks with its own transfers and
+whose GPU-only buffers are blobs, is unaffected. Each sync is a synchronous
+round trip that copies the whole level, because the ioctl carries no range,
+and a write end adds a second one. A start also replaces guest-page writes no
+transfer has taken to the host, so CPU access must be bracketed and a producer
+must flush its commands before it hands a buffer over. The optional
+`guest-gbm-dmabuf` test checks the export mode and both directions of
+visibility.

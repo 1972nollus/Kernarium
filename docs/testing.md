@@ -282,6 +282,19 @@ The optional `guest-futex-atomic` test checks the futex contract in
 probe's shell tools. Run it on the Linux guest and the maintained Android
 kernel.
 
+The optional `guest-gbm-dmabuf` test checks the virtio-gpu dma-buf contract in
+[`../kernel/common/README.md`](../kernel/common/README.md). Build
+`tests/integration/gpu/gbm_dmabuf_probe.cpp` as a dynamically linked C++20
+executable for the guest architecture (`c++ -std=c++20 -O2 -ldl`) and configure
+`UML_GBM_DMABUF_PROBE_BINARY`. The guest boots with the GPU, and the probe opens
+the render node through the image's own libgbm and libEGL. It requires an
+export that asked for no write access to be read-write, a GPU write to be
+visible through the dma-buf mapping after `DMA_BUF_IOCTL_SYNC` (twice), and a
+CPU write through it, bracketed the same way, to be what the GPU reads (twice).
+The x86_64 slice registers no CTest suites, so it runs `run_gpu_guest.py`
+directly with an x86-64 probe and an x86-64 image that carries Mesa, naming the
+test's `--command` lines and kernel arguments.
+
 `guest-aarch32-kernel` checks the kernel's AArch32 task support in
 [`../kernel/common/README.md`](../kernel/common/README.md), and needs `python3`,
 `as` and `ld` in the rootfs. The build generates a freestanding

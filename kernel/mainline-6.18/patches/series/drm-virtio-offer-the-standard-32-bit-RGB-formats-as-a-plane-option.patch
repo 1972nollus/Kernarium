@@ -62,10 +62,10 @@ index e265a06f2c06ab2b9c79384346cfcf8278bffe3b..335319d83e87e812d41e878bb9c3dab6
  
  	/* lookup object associated with res handle */
 diff --git a/drivers/gpu/drm/virtio/virtgpu_drv.h b/drivers/gpu/drm/virtio/virtgpu_drv.h
-index 1a6b956f090d90e18f974696c8374221f9c20f3f..058c1e2c7e8d6cbd18b5821a4f9d0a2482f2a8d1 100644
+index 1913cd2ebeeaa48b294626882917989671106905..5d14b125b8e021103f2b13d11eb6c737bf92799a 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_drv.h
 +++ b/drivers/gpu/drm/virtio/virtgpu_drv.h
-@@ -472,6 +472,7 @@ void virtio_gpu_modeset_fini(struct virtio_gpu_device *vgdev);
+@@ -479,6 +479,7 @@ void virtio_gpu_modeset_fini(struct virtio_gpu_device *vgdev);
  
  /* virtgpu_plane.c */
  uint32_t virtio_gpu_translate_format(uint32_t drm_fourcc);
