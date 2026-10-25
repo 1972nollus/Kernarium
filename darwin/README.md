@@ -371,7 +371,11 @@ free buffer (`slirp-network-tcp-window`). SLiRP closes the host end of a
 connection whose guest end stops answering within about ten minutes, whether
 it was retransmitting to the guest or probing a window the guest closed
 (`slirp-network-tcp-liveness`). An idle connection has no keep-alive, the
-RFC 1122 default, and stays open until one side closes it.
+RFC 1122 default, and stays open until one side closes it. A guest connect
+the host stack refuses at once is answered with ICMP net-unreachable, except
+a connect to port 0: Darwin refuses it before sending anything, where Linux
+sends the SYN, so SLiRP leaves it unanswered and the guest connect times out
+(`slirp-network-connect-failure`).
 
 The guest network driver has no transmit flow control, so a frame the provider
 refuses is lost and TCP must retransmit it. A guest transmit into a full
