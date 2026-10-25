@@ -408,6 +408,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_adb_prop_policy: bool = False,
                           core_sets_vendor_prop: bool = False,
                           missing_audio_binder_policy: bool = False,
+                          oversize_platform_policy: bool = False,
                           system_ext_core_sets_vendor_prop: bool = False,
                           adb_prop_not_system: bool = False,
                           missing_virtio_console: bool = False,
@@ -719,9 +720,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 # Platform, vendor and system_ext policy as the builder emits them: the
                 # platform's core domains, a vendor-owned property that only
                 # vendor_init sets, and the system-owned property adbd reports its host in.
+                # The real platform policy is 3.4 MB; the filler keeps the fixture realistic in size.
                 archive.writestr(
                     "SYSTEM/etc/selinux/plat_sepolicy.cil",
-                    "(typeattributeset coredomain (adbd init system_server))\n",
+                    "(typeattributeset coredomain (adbd init system_server))\n"
+                    + "; padding to the size of a real platform policy\n" * (
+                        (17 << 20 if oversize_platform_policy else 3_441_569) // 48
+                    ),
                 )
                 archive.writestr(
                     "SYSTEM_EXT/etc/selinux/system_ext_property_contexts",
@@ -1052,6 +1057,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("adb-prop-policy", {"missing_adb_prop_policy": True}),
             ("core-sets-vendor-prop", {"core_sets_vendor_prop": True}),
             ("audio-binder-policy", {"missing_audio_binder_policy": True}),
+            ("oversize-platform-policy", {"oversize_platform_policy": True}),
             ("system-ext-core-sets-vendor-prop", {"system_ext_core_sets_vendor_prop": True}),
             ("adb-prop-not-system", {"adb_prop_not_system": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
@@ -1127,6 +1133,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "do not label sys.kernarium.adb.host_connected"),
             ("adb-prop-policy-cause", {"missing_adb_prop_policy": True},
              "does not let adbd set sys.kernarium.adb.host_connected"),
+            ("oversize-platform-policy-cause", {"oversize_platform_policy": True},
+             "SYSTEM/etc/selinux/plat_sepolicy.cil"),
             ("audio-binder-policy-cause", {"missing_audio_binder_policy": True},
              "audio HAL processes call each other's binder"),
             ("core-sets-vendor-prop-cause", {"core_sets_vendor_prop": True},

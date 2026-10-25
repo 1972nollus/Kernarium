@@ -554,8 +554,16 @@ def reject_nonstatic_payload(path: PurePosixPath) -> None:
         fail(f"absent hardware feature declaration is forbidden: {path}")
 
 
-def read_small(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
-    if info.is_dir() or info.file_size > 1 << 20:
+# The platform's compiled policy (plat_sepolicy.cil) is 3.4 MB; the bound leaves
+# room for it to grow about fivefold. The vendor and system_ext policies are
+# a few hundred kilobytes and keep the default bound.
+PLATFORM_POLICY_LIMIT = 16 << 20
+
+
+def read_small(
+    archive: zipfile.ZipFile, info: zipfile.ZipInfo, limit: int = 1 << 20
+) -> bytes:
+    if info.is_dir() or info.file_size > limit:
         fail(f"policy file is missing or unexpectedly large: {info.filename}")
     return archive.read(info)
 
@@ -852,7 +860,9 @@ def check_kernel_policy(
     if not AUDIO_HAL_SELF_BINDER.search(vendor_policy):
         fail("vendor policy does not let the audio HAL processes call each other's binder")
     check_property_writers(
-        read_small(archive, infos["SYSTEM/etc/selinux/plat_sepolicy.cil"]),
+        read_small(
+            archive, infos["SYSTEM/etc/selinux/plat_sepolicy.cil"], PLATFORM_POLICY_LIMIT
+        ),
         vendor_policy,
         read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil"]),
         read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_property_contexts"]).decode(
