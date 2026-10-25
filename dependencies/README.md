@@ -67,11 +67,12 @@ tree in `source-trees.tsv`. Its topics let a host forward's listening socket
 queue up to the host's `SOMAXCONN` connections instead of one, keep the
 advertised receive window within the buffer when the peer has passed the last
 advertised edge (an LP64 widening bug), drop a connection whose peer stops
-answering window probes, and leave a guest connect to port 0, which a BSD host
-stack refuses before it sends anything, unanswered instead of answering it with
-ICMP net-unreachable. Upstream master at 62b29862 has none of them; drop a
-topic when a libslirp update absorbs it. The user-network contract they
-provide is in [`../darwin/README.md`](../darwin/README.md).
+answering window probes, and answer a guest connect to port 0, which a BSD host
+stack refuses before it sends anything, as a network would instead of with ICMP
+net-unreachable: unanswered, or with a reset when the destination is the host.
+Upstream master at 62b29862 has none of them; drop a topic when a libslirp
+update absorbs it. The user-network contract they provide is in
+[`../darwin/README.md`](../darwin/README.md).
 
 The `macos` product carries FEXCore for the macOS-only x86-64 JIT engine. The
 `fex` row applies one patch-managed series,
