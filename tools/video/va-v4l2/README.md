@@ -303,6 +303,57 @@ and the self-test also run on any Linux build host. Any other VA-API client
 works too, because the driver implements the public interface and nothing
 else.
 
+## The gbm module: planar buffers for Debian's libgbm
+
+Chromium allocates the frames it hands to a hardware encoder through gbm, and
+Debian's libgbm cannot allocate any planar format: it looks every FourCC up in
+a table of colour formats, so NV12, P010 and the three-plane layouts fail with
+`EINVAL` before they reach a driver. `virtio_gpu_gbm.so`
+([`gbm/`](gbm/)) is the backend module that fixes this for the virtio-gpu
+device. libgbm loads a backend module named after the DRM driver of the node it
+is given, so installing the file as `/usr/lib/<triplet>/gbm/virtio_gpu_gbm.so`
+is the whole configuration; `GBM_BACKEND=dri` turns it off for a process.
+
+- **It adds planar buffers and nothing else.** The module loads Mesa's own DRI
+  backend (`dri_gbm.so`, beside it) and returns the device that backend makes,
+  so the device is still the `drm` device Mesa's EGL platform expects. It
+  replaces only the entries of that device's function table that a planar
+  buffer needs; every other call, and every buffer of a colour format, is
+  Mesa's own. A compositor's scanout and rendering buffers, gbm surfaces and
+  EGL windows are unchanged. When it cannot load Mesa's backend, or Mesa's
+  backend already allocates NV12, it makes no device or leaves the device as
+  Mesa made it, and libgbm falls back to Mesa.
+- **A planar buffer is one buffer object per plane**, each in the format the
+  plane really has (`R8` and `GR88` for NV12, `R16` and `GR1616` for P010, three
+  `R8` for YU12 and YV12), so each plane is its own resource of the guest GPU
+  with its own dma-buf, at offset 0, linear. That is how Mesa describes a
+  planar image to the GPU, and what Chromium imports plane by plane. The
+  buffer reports its plane count, strides, one handle and descriptor per
+  plane (`gbm_bo_get_fd_for_plane`) and its first plane's as the image's.
+  `gbm_bo_map` and `gbm_bo_write` of a whole planar image fail with `ENOSYS`,
+  because the call cannot name a plane: a client maps each plane's dma-buf.
+  A planar buffer must reach EGL through its plane descriptors, not as an
+  `EGL_NATIVE_PIXMAP_KHR` gbm buffer.
+- **Only 64-bit.** The module is built for the guest's native architecture and
+  not for the 32-bit libgbm of the x86-64 image, whose clients (Steam and Wine)
+  allocate no planar buffers.
+- **It depends on libgbm's backend interface, version 1**, which is frozen: a
+  later version only appends. [`gbm/abi.hpp`](gbm/abi.hpp) declares that layout
+  because Debian's libgbm-dev does not install the header, and a device made at
+  another version is left as Mesa made it.
+
+What a client may do with the plane descriptors depends on the guest kernel: a
+descriptor Mesa exports is read-only unless the kernel exports virtio-gpu
+buffers read-write, and what the GPU wrote reaches the guest's pages only where
+the kernel transfers it around a dma-buf CPU access
+(`DMA_BUF_IOCTL_SYNC`). The driver and Chromium bracket their accesses that way.
+
+`tests/gbm_planar_tests.cpp` runs the adapter and the module against a fake
+Mesa backend, inside `uml_va_v4l2_tests`. `gbm_planar_probe` is the guest-side
+check against the real libgbm and libEGL: planar allocation and export, a gbm
+surface under an EGL window surface as a compositor uses it, and the GPU
+rendering into a plane and the CPU reading and writing it back.
+
 ## In the Debian desktop images
 
 The starter Plasma image, the KDE image and the x86-64 desktop image carry

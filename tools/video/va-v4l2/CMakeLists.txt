@@ -39,14 +39,46 @@ target_link_options(uml_drv_video PRIVATE
     "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/driver.map" "-Wl,--no-undefined")
 set_property(TARGET uml_drv_video APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/driver.map")
 
+# The gbm backend module for the virtio-gpu DRM driver: libgbm loads
+# virtio_gpu_gbm.so by that driver name and the module adds the planar buffers
+# (NV12, P010 and the three-plane layouts) that Debian's libgbm cannot allocate,
+# on the device Mesa's own DRI backend makes. gbm/README in ../README.md owns
+# the contract. It is loaded into every process that uses gbm, so it needs no
+# C++ runtime and exports one symbol.
+add_library(uml_gbm_planar OBJECT gbm/planar.cpp)
+target_compile_features(uml_gbm_planar PUBLIC cxx_std_20)
+target_compile_options(uml_gbm_planar PUBLIC -Wall -Wextra -Werror -fno-exceptions -fno-rtti)
+target_include_directories(uml_gbm_planar PUBLIC ${LIBDRM_INCLUDE_DIRS})
+set_property(TARGET uml_gbm_planar PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+add_library(virtio_gpu_gbm MODULE gbm/module.cpp)
+target_link_libraries(virtio_gpu_gbm PRIVATE uml_gbm_planar ${CMAKE_DL_LIBS})
+set_target_properties(virtio_gpu_gbm PROPERTIES PREFIX "" OUTPUT_NAME "virtio_gpu_gbm")
+target_compile_options(virtio_gpu_gbm PRIVATE -fvisibility=hidden -fno-exceptions -fno-rtti)
+target_link_options(virtio_gpu_gbm PRIVATE
+    "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/gbm/module.map" "-Wl,--no-undefined"
+    -nostdlib++ -static-libgcc)
+set_property(TARGET virtio_gpu_gbm APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gbm/module.map")
+
 add_executable(uml_va_v4l2_tests
     tests/va_v4l2_tests.cpp
     tests/pool_tests.cpp
     tests/fake_v4l2.cpp
     tests/encoder_tests.cpp
     tests/encode_driver_tests.cpp
-    tests/annexb_tests.cpp)
-target_link_libraries(uml_va_v4l2_tests PRIVATE uml_va_v4l2_core)
+    tests/annexb_tests.cpp
+    tests/gbm_planar_tests.cpp
+    tests/fake_gbm.cpp)
+target_link_libraries(uml_va_v4l2_tests PRIVATE uml_va_v4l2_core uml_gbm_planar)
+# The module test loads the built module and a fake Mesa backend beside the
+# test binary.
+add_library(fake_dri_gbm MODULE tests/fake_gbm.cpp)
+target_compile_definitions(fake_dri_gbm PRIVATE UML_FAKE_GBM_MODULE)
+target_compile_features(fake_dri_gbm PRIVATE cxx_std_20)
+target_compile_options(fake_dri_gbm PRIVATE -Wall -Wextra -Werror)
+target_include_directories(fake_dri_gbm PRIVATE ${LIBDRM_INCLUDE_DIRS})
+set_target_properties(fake_dri_gbm PROPERTIES PREFIX "" OUTPUT_NAME "fake_dri_gbm")
+add_dependencies(uml_va_v4l2_tests virtio_gpu_gbm fake_dri_gbm)
 
 # The same driver over the in-memory encoder node, for running the probes through
 # libva's loader on a host with no Virtio video device.
@@ -75,7 +107,14 @@ target_link_libraries(va_encode_probe PRIVATE PkgConfig::LIBVA PkgConfig::LIBVA_
 target_compile_options(va_encode_probe PRIVATE -Wall -Wextra -Werror)
 target_compile_features(va_encode_probe PRIVATE cxx_std_20)
 
+# The guest-side client of the real libgbm and libEGL for the gbm module.
+add_executable(gbm_planar_probe tests/gbm_planar_probe.cpp)
+target_link_libraries(gbm_planar_probe PRIVATE ${CMAKE_DL_LIBS})
+target_compile_options(gbm_planar_probe PRIVATE -Wall -Wextra -Werror)
+target_compile_features(gbm_planar_probe PRIVATE cxx_std_20)
+
 include(GNUInstallDirs)
 install(TARGETS uml_drv_video LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/dri)
+install(TARGETS virtio_gpu_gbm LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/gbm)
 # Chromium reads this to use the driver for hardware video encode and decode.
 install(FILES chromium.d/kernarium-video DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/chromium.d)

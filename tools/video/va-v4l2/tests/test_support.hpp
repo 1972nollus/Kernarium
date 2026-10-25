@@ -22,5 +22,6 @@ void runPoolTests();
 void runEncoderTests();
 void runDriverEncodeTests();
 void runAnnexbTests();
+void runGbmPlanarTests();
 
 }
