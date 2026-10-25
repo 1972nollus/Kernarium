@@ -2,6 +2,7 @@
 #include "video_encoder.hpp"
 #include "video_encoder_bitstream.hpp"
 #include "video_encoder_internal.hpp"
+#include "video_encoder_levels.hpp"
 #include "descriptor.hpp"
 #if UML_VIDEO_ENCODER_TESTING
 #include "video_encoder_testing.hpp"
@@ -194,99 +195,10 @@ NSString* matrixCoefficients(VideoMatrixCoefficients value)
     return nil;
 }
 
-// ---- H.264 levels.
+// ---- Levels. The tables, the level a stream needs and the rewriting of the
+// level in its parameter sets are in video_encoder_levels.hpp.
 
-struct H264LevelLimits {
-    unsigned idc;
-    std::uint64_t macroblocksPerSecond;
-    std::uint32_t frameMacroblocks;
-    std::uint32_t kilobitsPerSecond;   // for the Baseline, Main and Extended profiles
-};
-
-// ITU-T H.264 Table A-1.
-constexpr H264LevelLimits kH264Levels[] = {
-    {10, 1485, 99, 64},          {11, 3000, 396, 192},        {12, 6000, 396, 384},
-    {13, 11880, 396, 768},       {20, 11880, 396, 2000},      {21, 19800, 792, 4000},
-    {22, 20250, 1620, 4000},     {30, 40500, 1620, 10000},    {31, 108000, 3600, 14000},
-    {32, 216000, 5120, 20000},   {40, 245760, 8192, 20000},   {41, 245760, 8192, 50000},
-    {42, 522240, 8704, 50000},   {50, 589824, 22080, 135000}, {51, 983040, 36864, 240000},
-    {52, 2073600, 36864, 240000}, {60, 4177920, 139264, 240000}, {61, 8355840, 139264, 240000},
-    {62, 16711680, 139264, 240000},
-};
-
-// The lowest level whose limits hold the picture, the frame rate and the
-// bit rate. VideoToolbox answers every frame of a stream coded below its
-// level with an error, so a requested level is only honored at or above this.
-unsigned h264RequiredLevel(VideoEncodeProfile profile, const VideoEncodeSettings& settings)
-{
-    const std::uint64_t macroblocks = std::uint64_t((settings.width + 15) / 16) * ((settings.height + 15) / 16);
-    const double rate = settings.frameRateDenominator
-        ? double(settings.frameRateNumerator) / double(settings.frameRateDenominator) : 30.0;
-    const double bitrateFactor =
-        profile == VideoEncodeProfile::h264High || profile == VideoEncodeProfile::h264ConstrainedHigh ? 1.25
-        : profile == VideoEncodeProfile::h264High422 ? 3.0
-        : profile == VideoEncodeProfile::h264High444Predictive ? 4.0 : 1.0;
-    const std::uint64_t widthMacroblocks = (settings.width + 15) / 16, heightMacroblocks = (settings.height + 15) / 16;
-    for (const auto& level : kH264Levels) {
-        if (macroblocks > level.frameMacroblocks) continue;
-        // Neither side of the picture may exceed what a picture of the largest size could be as a strip.
-        if (widthMacroblocks * widthMacroblocks > 8ull * level.frameMacroblocks ||
-            heightMacroblocks * heightMacroblocks > 8ull * level.frameMacroblocks) continue;
-        if (double(macroblocks) * rate > double(level.macroblocksPerSecond)) continue;
-        const double peak = double(std::max(settings.bitrate, settings.peakBitrate));
-        if (peak > double(level.kilobitsPerSecond) * 1000.0 * bitrateFactor) continue;
-        return level.idc;
-    }
-    return 62;
-}
-
-struct HevcLevelLimits {
-    unsigned idc;   // general_level_idc: 30 times the level
-    std::uint64_t lumaSamplesPerSecond;
-    std::uint32_t lumaPictureSize;
-    std::uint32_t kilobitsPerSecond;   // Main tier
-};
-
-// ITU-T H.265 Tables A.8 and A.9.
-constexpr HevcLevelLimits kHevcLevels[] = {
-    {30, 552960, 36864, 128},           {60, 3686400, 122880, 1500},        {63, 7372800, 245760, 3000},
-    {90, 16588800, 552960, 6000},       {93, 33177600, 983040, 10000},      {120, 66846720, 2228224, 12000},
-    {123, 133693440, 2228224, 20000},   {150, 267386880, 8912896, 25000},   {153, 534773760, 8912896, 40000},
-    {156, 1069547520, 8912896, 60000},  {180, 1069547520, 35651584, 60000}, {183, 2139095040, 35651584, 120000},
-    {186, 4278190080, 35651584, 240000},
-};
-
-// The lowest HEVC level, in the Main tier, whose limits hold the picture, the
-// frame rate and the bit rate.
-unsigned hevcRequiredLevel(const VideoEncodeSettings& settings)
-{
-    const std::uint64_t samples = std::uint64_t(settings.width) * settings.height;
-    const double rate = settings.frameRateDenominator
-        ? double(settings.frameRateNumerator) / double(settings.frameRateDenominator) : 30.0;
-    const double peak = double(std::max(settings.bitrate, settings.peakBitrate));
-    for (const auto& level : kHevcLevels) {
-        if (samples > level.lumaPictureSize) continue;
-        if (std::uint64_t(settings.width) * settings.width > 8ull * level.lumaPictureSize ||
-            std::uint64_t(settings.height) * settings.height > 8ull * level.lumaPictureSize) continue;
-        if (double(samples) * rate > double(level.lumaSamplesPerSecond)) continue;
-        if (peak > double(level.kilobitsPerSecond) * 1000.0) continue;
-        return level.idc;
-    }
-    return 186;
-}
-
-// The level the stream states at least: the one asked for, and the lowest one
-// its picture size, frame rate and bit rate fit. VideoToolbox does not weigh the
-// bit rate when it chooses (a CIF stream at 832 kbit/s comes out as level 1.3,
-// whose limit is 768) and names few levels, so the stream is made to state this.
-unsigned statedLevelFloor(const VideoEncodeSettings& settings)
-{
-    switch (settings.codec) {
-    case VideoCodec::h264: return std::max(settings.level, h264RequiredLevel(settings.profile, settings));
-    case VideoCodec::hevc: return std::max(settings.level, hevcRequiredLevel(settings));
-    default: return 0;
-    }
-}
+using levels::h264RequiredLevel;
 
 // The ProfileLevel value of a profile at an explicit level, or nil where
 // VideoToolbox names none and the encoder has to choose.
@@ -392,9 +304,10 @@ struct AssemblyConfig {
     bool separateParameterSets {};
     bool parameterSetsWithEveryKeyFrame {true};
     unsigned temporalLayers {1};
-    // The level the parameter sets state at least; a lower one VideoToolbox
-    // wrote is raised to it. Zero leaves them as written.
-    unsigned minimumLevel {};
+    // What decides the level the parameter sets state, in place of the one
+    // VideoToolbox wrote (levels::restateLevel). A zero floor leaves them as
+    // written.
+    levels::Policy levelPolicy;
     // The HDR10 static metadata SEI unit, with its start code, that precedes
     // the pictures of every key frame. VideoToolbox keeps the values in the
     // format description it hands the muxer, so the Annex B stream needs them
@@ -427,6 +340,10 @@ struct Shared {
     unsigned acquired {};    // frames handed out and neither submitted nor released
     bool lost {};            // VideoToolbox reported the session gone
     unsigned lossesWithoutOutput {};
+    // The level the parameter sets of the latest key frame state, as level_idc
+    // or general_level_idc; zero before the first. A change of rate that this
+    // level cannot hold starts a new session, whose key frame states a higher one.
+    std::atomic<unsigned> statedLevel {};
     // The live session, so that a drain which outlasts a recovery can flush
     // the session that replaced the one it started on.
     CFRef<VTCompressionSessionRef> session;
@@ -523,17 +440,6 @@ private:
         shared_->condition.notify_all();
     }
 
-    // States the level the settings call for in a parameter set that states a lower one.
-    void raiseLevel(std::vector<std::uint8_t>& unit) const
-    {
-        if (!config_.minimumLevel) return;
-        if (config_.codec == VideoCodec::h264) {
-            if (bitstream::h264NalType(unit) == bitstream::h264NalSps) (void)bitstream::raiseH264Level(unit, config_.minimumLevel);
-        } else if (config_.codec == VideoCodec::hevc) {
-            (void)bitstream::raiseHevcLevel(unit, config_.minimumLevel);
-        }
-    }
-
     Assembled assemble(CMSampleBufferRef sample, std::uint64_t timestamp)
     {
         Assembled result;
@@ -593,12 +499,17 @@ private:
             const std::uint8_t* bytes = nullptr;
             std::size_t size = 0;
             if (setAt(0, &bytes, &size) != noErr) return result;
+            std::vector<std::vector<std::uint8_t>> parameterSets;
             for (std::size_t at = 0; at < count; ++at) {
                 if (setAt(at, &bytes, &size) != noErr) return result;
-                std::vector<std::uint8_t> unit(bytes, bytes + size);
-                raiseLevel(unit);
-                bitstream::appendAnnexB(sets, unit.data(), unit.size());
+                parameterSets.emplace_back(bytes, bytes + size);
             }
+            // VideoToolbox's level is replaced by the one the settings call for.
+            if (config_.levelPolicy.floor) {
+                const unsigned level = levels::restateLevel(config_.codec, parameterSets, config_.levelPolicy);
+                if (level) shared_->statedLevel.store(level);
+            }
+            for (const auto& unit : parameterSets) bitstream::appendAnnexB(sets, unit.data(), unit.size());
         }
         if (lengthSize < 1 || lengthSize > 4) return result;
 
@@ -1140,7 +1051,7 @@ private:
     // A level VideoToolbox names is requested from it when the stream fits it.
     // Otherwise the encoder chooses the lowest level that holds the stream
     // itself. Either way the stream states at least the level asked for and
-    // the one its size and rates need (statedLevelFloor).
+    // the one its size and rates need (levels::statedLevelFloor).
     NSString* profileLevel(const VideoEncodeSettings& settings) const
     {
         if (settings.codec == VideoCodec::h264 && settings.level && !levelFallback_) {
@@ -1189,7 +1100,9 @@ private:
         assembly.separateParameterSets = settings.separateParameterSets;
         assembly.parameterSetsWithEveryKeyFrame = settings.parameterSetsWithEveryKeyFrame;
         assembly.temporalLayers = settings.temporalLayers;
-        assembly.minimumLevel = statedLevelFloor(settings);
+        assembly.levelPolicy = levels::makePolicy(settings, plan_.reorders, !plan_.lowLatency);
+        statedFloor_ = assembly.levelPolicy.floor;
+        shared_->statedLevel.store(0);
         if (settings.hdr) assembly.hdrSei = hdrSeiUnit(*settings.hdr);
         std::uint64_t epoch = 0;
         {
@@ -1480,6 +1393,14 @@ private:
         case VideoRateControl::constantQp:
             break;   // the QP of a frame is a setting, not something to change under the stream
         }
+        // A rate or frame rate that the level the stream states cannot hold:
+        // the stream would violate it from the next frame on. A new session
+        // starts at a key frame whose parameter sets state a level that holds.
+        if (const unsigned needed = levels::statedLevelFloor(next)) {
+            const unsigned latest = shared_->statedLevel.load();
+            const unsigned stated = latest ? latest : statedFloor_;
+            if (levels::levelRank(next.codec, needed) > levels::levelRank(next.codec, stated)) rebuild_ = true;
+        }
         // Likewise a QP bound: it only takes effect from a new session.
         if (next.rateControl != VideoRateControl::constantQp && next.maximumQp != was.maximumQp) rebuild_ = true;
         if (next.frameRateNumerator != was.frameRateNumerator || next.frameRateDenominator != was.frameRateDenominator)
@@ -1731,6 +1652,7 @@ private:
     bool checked_ {};
     bool levelFallback_ {};
     bool rebuild_ {};   // a setting the running session ignores changed; the next frame starts a new session
+    unsigned statedFloor_ {};   // the level the session's parameter sets state at least
     CFRef<VTCompressionSessionRef> session_;
     CFRef<CVPixelBufferPoolRef> pool_;
     CFRef<CVPixelBufferPoolRef> stagingPool_;   // plan_.convertsRgb: the caller's frames
