@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 12U
+#define KERNARIUM_RUNTIME_API_VERSION 13U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -133,6 +133,30 @@ typedef int (*kernarium_runtime_set_background_throttle_function)(int enabled);
  * background. Quiescing trims once by itself. It may wait for the guest's
  * console, so call it away from the main thread. */
 typedef int (*kernarium_runtime_set_page_cache_trimming_function)(int enabled);
+/* What set_microphone leaves, as its return value. */
+enum {
+    /* The Microphone setting is off. The guest records silence. */
+    KERNARIUM_RUNTIME_MICROPHONE_OFF = 0,
+    /* On, but the system has not been asked for access: the guest records
+     * silence until the application has asked, and the application, not the
+     * runtime, is the one that asks. */
+    KERNARIUM_RUNTIME_MICROPHONE_UNASKED = 1,
+    /* On, but the system refuses access. The guest records silence. */
+    KERNARIUM_RUNTIME_MICROPHONE_DENIED = 2,
+    /* On and permitted: a guest that records hears the microphone. */
+    KERNARIUM_RUNTIME_MICROPHONE_ON = 3,
+};
+/* Turns the guest's microphone on (nonzero) or off (zero) and returns the
+ * resulting KERNARIUM_RUNTIME_MICROPHONE_ value. It is off until the
+ * application turns it on, and while it is off, or the system has not granted
+ * access, a guest that records gets silence and nothing opens the microphone.
+ * The runtime never asks the system for access and never shows a permission
+ * prompt: the application asks, as the direct result of the user turning the
+ * setting on, and then calls this. Calling it again with a nonzero value after
+ * the answer, or when the application becomes active, lets a guest that is
+ * recording pick the microphone up. It may be called whether or not a guest
+ * runs; a guest that starts later follows it. */
+typedef int (*kernarium_runtime_set_microphone_function)(int enabled);
 
 /* The application resolves only this versioned getter after loading exactly
  * one runtime framework. The table is immutable and remains valid until
@@ -158,6 +182,7 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_set_background_throttle_function set_background_throttle;
     kernarium_runtime_set_page_cache_trimming_function
         set_page_cache_trimming;
+    kernarium_runtime_set_microphone_function set_microphone;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)
@@ -167,7 +192,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v12(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v13(void);
 
 #ifdef __cplusplus
 }

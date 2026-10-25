@@ -158,11 +158,24 @@ final class GuestPictureInPicture: NSObject, PictureInPictureWindow {
     private func configureAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(
-                .playback,
-                mode: .moviePlayback,
-                options: [.mixWithOthers]
-            )
+            if session.category == .playAndRecord {
+                // The guest's microphone is being captured, which needs the
+                // record category, and the movie mode is valid only with
+                // playback. The window plays in either.
+                try session.setCategory(
+                    .playAndRecord,
+                    mode: .default,
+                    options: [
+                        .mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP,
+                    ]
+                )
+            } else {
+                try session.setCategory(
+                    .playback,
+                    mode: .moviePlayback,
+                    options: [.mixWithOthers]
+                )
+            }
             try session.setActive(true)
         } catch {
             print("Kernarium: picture in picture audio session failed: \(error)")

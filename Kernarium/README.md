@@ -131,7 +131,8 @@ Kernarium attaches:
 
 - an absolute touchscreen and evdev keyboard;
 - a signed-16-bit 48 kHz playback stream (stereo) and capture stream
-  (mono or stereo) through Virtio-Sound, with the capture stream silent;
+  (mono or stereo) through Virtio-Sound, whose capture records silence unless
+  the user turns on Microphone;
 - an Android-only Virtio battery reflecting the Apple host's percentage and
   charging state, with a 100-percent charging fallback when the host has no
   readable battery;
@@ -162,6 +163,29 @@ manifest does not support multiple scenes, and iPadOS offers no second window.
 Tiling and Slide Over, from the Window menu of a window zoomed to the screen,
 only arrange that window, and the guest display follows its size as it does a
 resize.
+
+### Microphone
+
+Emulator Settings has a Microphone switch, off by default. While it is off, or
+iOS has not granted access, a guest that records gets silence in real time
+and nothing opens the microphone. Turning it on is the one place iOS is asked
+for access: the application asks (`MicrophoneSetting`), as the direct result of
+the switch, and then tells the runtime (`set_microphone`), which never asks and
+never shows a prompt. The switch applies at once, unlike the rest of the form,
+which is why Cancel does not undo it. A launch that finds it on carries it into
+the guest without asking, so a user who dismissed the question is not asked
+again at launch; iOS's Settings is where to change the answer, and the
+application picks the change up when it becomes active.
+
+The microphone is opened only while a program in the guest records, so iOS's
+recording indicator is lit only then, and it is closed when the program stops.
+The audio session is play-and-record, still mixing with other audio, only for
+that time; the Picture in Picture window keeps that category when it finds it
+rather than replacing it with the playback category, which its movie mode needs.
+A guest kept running in the background may keep recording while the program
+does, under the `audio` background mode; iOS's indicator shows it.
+[`../darwin/device/audio/README.md`](../darwin/device/audio/README.md#microphone)
+owns the device side.
 
 ## Lifecycle
 

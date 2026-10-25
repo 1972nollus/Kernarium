@@ -1,8 +1,10 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 struct EmulatorSettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var microphone = MicrophoneSetting.shared
 
     @State private var vCPUCount: Int
     @State private var guestMemoryMiB: Int
@@ -136,6 +138,40 @@ struct EmulatorSettingsView: View {
                         in: EmulatorConfiguration.overlaySizeRangeGiB
                     )
                     .accessibilityIdentifier("overlaySizeStepper")
+                }
+
+                // Unlike the rest of the form this applies at once, whatever
+                // Save or Cancel does: turning it on is when iOS asks for
+                // access (see MicrophoneSetting).
+                Section("Microphone") {
+                    Toggle(
+                        "Microphone",
+                        isOn: Binding(
+                            get: { microphone.isOn },
+                            set: { microphone.setOn($0) }
+                        )
+                    )
+                    .accessibilityIdentifier("microphoneToggle")
+
+                    Text(
+                        MicrophoneSetting.explanation(
+                            isOn: microphone.isOn,
+                            access: microphone.access
+                        )
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                    if microphone.isOn, microphone.access == .denied {
+                        Button("Open Settings") {
+                            if let url = URL(
+                                string: UIApplication.openSettingsURLString
+                            ) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                        .accessibilityIdentifier("microphoneOpenSettingsButton")
+                    }
                 }
 
                 Section("Storage") {
