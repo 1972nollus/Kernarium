@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * A JIT translation is compiled for top-byte ignore (TBI) and its key says so.
- * With it, every access that does not name SP as its base reaches the byte
- * its low 56 bits name, a fault reports that untagged address, and the base
- * register keeps its tag. Without it, the tag is part of the address. An SP
- * base is never untagged.
+ * With it, every access reaches the byte its low 56 bits name, whatever
+ * register is its base, a fault reports that untagged address, and the base
+ * register keeps its tag. Without it, the tag is part of the address.
  *
  * Each family of memory form runs one program on one executor: untagged
  * without TBI, which is the reference; tagged with TBI, which must leave the
@@ -291,15 +290,26 @@ void every_family_ignores_the_tag() {
   }
 }
 
-/* A pointer that names SP is never untagged, whatever TBI says. */
-void sp_is_never_untagged() {
-  const std::array<Family, 4> sp_families{{
+/* An SP base is no exception: under TBI a tagged SP reaches the byte its low
+ * 56 bits name and keeps its tag, and a fault reports the untagged address.
+ * Without TBI the tag is part of the address. */
+void sp_is_untagged_like_any_base() {
+  const std::array<Family, 7> sp_families{{
       {"str sp", {0xf900'07e1U}, 8, 8},               // str x1,[sp,#8]
       {"ldr sp", {0xf940'07e1U}, 8, 8},               // ldr x1,[sp,#8]
       {"stp sp", {0xa901'0be1U}, 16, 16},             // stp x1,x2,[sp,#16]
       {"ld1 sp", {0x4c40'73e0U}, 0, 16},              // ld1 {v0.16b},[sp]
+      {"ldar sp", {0xc8df'ffe1U}, 0, 8},              // ldar x1,[sp]
+      {"ldadd sp", {0xf821'03e2U}, 0, 8, 1, 1, true}, // ldadd x1,x2,[sp]
+      {"fused exclusive sp",
+       {0xc85f'7fe3U, 0x9100'0463U, 0xc804'7fe3U, 0x35ff'ffa4U}, 0, 8, 1, 1,
+       false, true},
+              // ldxr x3,[sp]; add x3,x3,#1; stxr w4,x3,[sp]; cbnz w4,start
   }};
   for (const auto &family : sp_families) {
+    if (family.lse && !::uml::platform::apple::probed_host_capabilities().has(
+                          ::uml::cpu::ArmFeature::lse))
+      continue;
     Machine machine{next_generation++, family};
     const auto reference = machine.run(true, 0, data + 0x100);
     if (reference.event != Event::system_call)
@@ -307,11 +317,33 @@ void sp_is_never_untagged() {
     for (const auto tag : tags) {
       const auto tagged = (data + 0x100) | tag;
       const auto outcome = machine.run(true, 0, tagged);
-      if (outcome.event != Event::memory_fault ||
-          outcome.fault_address != reported(family, tagged))
-        fail(family, "a tagged SP was untagged", tag);
-      if (outcome.memory != Machine::pristine())
-        fail(family, "a tagged SP moved memory", tag);
+      bool same = outcome.event == reference.event &&
+                  (family.retries || outcome.retired == reference.retired) &&
+                  outcome.memory == reference.memory &&
+                  outcome.cpu.pc == reference.cpu.pc &&
+                  outcome.cpu.sp == tagged;
+      for (unsigned number = 0; number < 31; ++number)
+        same = same &&
+               outcome.cpu.registers[number] == reference.cpu.registers[number];
+      for (unsigned number = 0; number < 32; ++number)
+        same = same && outcome.cpu.vectors[number].bytes ==
+                           reference.cpu.vectors[number].bytes;
+      if (!same)
+        fail(family, "a tagged SP with TBI did not match the reference", tag);
+
+      /* Without TBI the tagged SP is an address nothing maps. */
+      const auto without = machine.run(false, 0, tagged);
+      if (without.event != Event::memory_fault ||
+          without.fault_address != reported(family, tagged))
+        fail(family, "a tagged SP without TBI did not fault at itself", tag);
+      if (without.memory != Machine::pristine())
+        fail(family, "a tagged SP without TBI moved memory", tag);
+
+      /* An unmapped page faults at the untagged address. */
+      const auto fault = machine.run(true, 0, unmapped | tag);
+      if (fault.event != Event::memory_fault ||
+          fault.fault_address != reported(family, unmapped))
+        fail(family, "an unmapped tagged SP reported a tagged address", tag);
     }
   }
 }
@@ -363,7 +395,7 @@ int main() {
   require(jit_available() == 1);
   key_carries_the_mode();
   every_family_ignores_the_tag();
-  sp_is_never_untagged();
+  sp_is_untagged_like_any_base();
   keyed_pcs_are_not_addresses();
   return 0;
 }

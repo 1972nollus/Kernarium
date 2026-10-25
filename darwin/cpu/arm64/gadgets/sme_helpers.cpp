@@ -299,7 +299,7 @@ extern "C" [[gnu::noinline]] std::uint32_t uml_arm64_gadget_sme_memory(
 		data = file + uml::cpu::arm64::sme_zt0_offset(svl);
 		size = uml::cpu::arm64::sme_zt0_bytes;
 	}
-	address = cpu->untag_data_address(address, base_sp);
+	address = cpu->untag_data_address(address);
 	if (!transfer(*tlb, address, data, size, access))
 		return 0;
 	if (access == Access::write)
@@ -356,7 +356,7 @@ extern "C" [[gnu::noinline]] std::uint32_t uml_arm64_gadget_sme_vector_memory(
 		address += index << ((address_word >>
 			UML_GADGET_SME_VM_SHIFT_SHIFT) & 7U);
 	}
-	address = cpu->untag_data_address(address, base_sp);
+	address = cpu->untag_data_address(address);
 
 	VectorAccess access{};
 	access.file = cpu->sme_registers;

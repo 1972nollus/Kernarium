@@ -38,8 +38,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 	const unsigned second_transfer = (instruction >> 10) & 0x1fU;
 	const unsigned base_register = (instruction >> 5) & 0x1fU;
 	const auto tagged_address = cpu.read_register(base_register, true);
-	const auto address = cpu.untag_data_address(
-		tagged_address, base_register == 31U);
+	const auto address = cpu.untag_data_address(tagged_address);
 	const bool ordered = (instruction & 0x0000'8000U) != 0;
 	if (pair) {
 		/* Pair-exclusive encodings fix bit 31, use Rt2 as a real transfer
@@ -222,8 +221,7 @@ RunResult load_store_compare_swap(CpuState &cpu,
 	const unsigned replacement_register = instruction & 31U;
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const auto tagged_address = cpu.read_register(base_register, true);
-	const auto address = cpu.untag_data_address(
-		tagged_address, base_register == 31U);
+	const auto address = cpu.untag_data_address(tagged_address);
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    single_copy_alignment_faults(address, size))
 		return alignment_fault(address, instruction, true);
@@ -263,8 +261,7 @@ RunResult load_store_compare_swap_pair(CpuState &cpu,
 	const auto total_size = element_size * 2;
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const auto tagged_address = cpu.read_register(base_register, true);
-	const auto address = cpu.untag_data_address(
-		tagged_address, base_register == 31U);
+	const auto address = cpu.untag_data_address(tagged_address);
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    single_copy_alignment_faults(address, total_size))
 		return alignment_fault(address, instruction, true);
@@ -306,8 +303,7 @@ RunResult load_store_atomic(CpuState &cpu, GuestMemory &memory,
 	const unsigned destination = instruction & 31U;
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const auto tagged_address = cpu.read_register(base_register, true);
-	const auto address = cpu.untag_data_address(
-		tagged_address, base_register == 31U);
+	const auto address = cpu.untag_data_address(tagged_address);
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    single_copy_alignment_faults(address, size))
 		return alignment_fault(address, instruction, true);
@@ -350,8 +346,7 @@ RunResult load_store_rcpc(CpuState &cpu, GuestMemory &memory,
 	const unsigned transfer = instruction & 31U;
 	const auto base = cpu.read_register(base_register, true);
 	const auto tagged_address = base + static_cast<std::uint64_t>(offset);
-	const auto address = cpu.untag_data_address(
-		tagged_address, base_register == 31U);
+	const auto address = cpu.untag_data_address(tagged_address);
 	if (single_copy_alignment_faults(address, size))
 		return alignment_fault(address, instruction, !load);
 

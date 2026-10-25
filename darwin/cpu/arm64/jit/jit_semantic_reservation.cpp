@@ -738,11 +738,11 @@ void invalidate_reservations_for_store_locked(CpuState &writer,
 }
 
 [[nodiscard]] bool simd_structure_address(CpuState &cpu,
-	GuestMemory &memory, std::uint64_t tagged_address, bool base_sp,
+	GuestMemory &memory, std::uint64_t tagged_address,
 	std::size_t transfer_size, std::size_t element_size,
 	MemoryAccess access, std::uint64_t &address, std::uint64_t &fault_address)
 {
-	address = cpu.untag_data_address(tagged_address, base_sp);
+	address = cpu.untag_data_address(tagged_address);
 	for (std::size_t completed = 0; completed < transfer_size;
 	     completed += element_size) {
 		const auto current = address + completed;

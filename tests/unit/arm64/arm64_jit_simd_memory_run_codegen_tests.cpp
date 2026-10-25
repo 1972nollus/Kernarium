@@ -116,8 +116,7 @@ void every_valid_variant_coalesces_for_both_base_kinds() {
           code_base + 0x100'000U + base * 0x1000U + index * 0x80U, guest);
       const auto tagged_hot = hot_code(tagged, guest.size());
       require(count_word(tagged_hot, tagged_state_load) == 0U &&
-                  count_word(tagged_hot, tag_strip) ==
-                      (base == 31U ? 0U : 1U),
+                  count_word(tagged_hot, tag_strip) == 1U,
               "SIMD run has the wrong top-byte strip count");
       require(count_word(tagged_hot, translation_probe) == 1 &&
                   count_memory_form(tagged_hot, guest[0]) == 1 &&
@@ -196,8 +195,7 @@ void run_lengths_are_bounded_to_eight() {
               "split SIMD run without top-byte ignore does tag work");
       const auto tagged = compile_tagged(
           code_base + 0x98'000U + base * 0x1000U + length * 0x40U, guest);
-      require(count_word(hot_code(tagged, guest.size()), tag_strip) ==
-                  (base == 31U ? 0U : groups),
+      require(count_word(hot_code(tagged, guest.size()), tag_strip) == groups,
               "split SIMD run has the wrong top-byte strip count");
     }
   }

@@ -596,7 +596,7 @@ void JitCompiler::emit_cache_zero(std::uint32_t instruction, std::uint64_t pc) {
     mark_direct_memory_write();
     const unsigned source = instruction & 31U;
     load_gpr(8, source, false);
-    emit_untag_data_address(8, source == 31U);
+    emit_untag_data_address(8);
     mask_register(8, ~std::uint64_t{63}, true);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
@@ -645,7 +645,7 @@ void JitCompiler::emit_code_synchronize(std::uint32_t instruction, std::uint64_t
       emitter_.move_x(0, 31);
     else {
       emitter_.load_x(0, 15, register_offset(source, false));
-      emit_untag_data_address(0, false);
+      emit_untag_data_address(0);
     }
     emitter_.call(
         reinterpret_cast<const void *>(&uml_arm64_guest_code_synchronize));

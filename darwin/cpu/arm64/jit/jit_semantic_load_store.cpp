@@ -55,8 +55,7 @@ RunResult load_store_unsigned(CpuState &cpu, GuestMemory &memory,
 		static_cast<std::uint64_t>((instruction >> 10) & 0xfffU) * size;
 	std::uint64_t address{};
 	std::uint64_t fault_address{};
-	if (!simd_structure_address(cpu, memory, tagged_address,
-		    base_register == 31U, size, size,
+	if (!simd_structure_address(cpu, memory, tagged_address, size, size,
 		    load ? MemoryAccess::read : MemoryAccess::write,
 		    address, fault_address))
 		return memory_fault(fault_address, instruction, !load);
@@ -200,8 +199,7 @@ RunResult load_store_other(CpuState &cpu, GuestMemory &memory,
 	}
 	const auto tagged_address = address;
 	std::uint64_t fault_address{};
-	if (!simd_structure_address(cpu, memory, tagged_address,
-		    base_register == 31U, size, size,
+	if (!simd_structure_address(cpu, memory, tagged_address, size, size,
 		    load ? MemoryAccess::read : MemoryAccess::write,
 		    address, fault_address))
 		return memory_fault(fault_address, instruction, !load);

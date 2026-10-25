@@ -62,8 +62,8 @@ void JitCompiler::emit_tlb_set(unsigned address) {
     emitter_.add_shifted(0, 14, 0, 5);
   }
 
-void JitCompiler::emit_untag_data_address(unsigned address, bool base_sp) {
-    if (base_sp || !top_byte_ignore())
+void JitCompiler::emit_untag_data_address(unsigned address) {
+    if (!top_byte_ignore())
       return;
     emitter_.ubfm(address, address, 0, 55);
   }
@@ -244,7 +244,7 @@ void JitCompiler::clear_local_exclusive_monitor() {
     load_gpr(8, base, true);
     if (base == 31U)
       emit_misalignment_check(8, 16, slow);
-    emit_untag_data_address(8, base == 31U);
+    emit_untag_data_address(8);
     emit_misalignment_check(8, bytes, slow);
 
     /*
@@ -263,7 +263,7 @@ void JitCompiler::clear_local_exclusive_monitor() {
      */
     track_direct_store(21, bytes, count_ + store_index);
     load_gpr(8, base, true);
-    emit_untag_data_address(8, base == 31U);
+    emit_untag_data_address(8);
     emit_translate(8, Access::read, slow, fault, bytes);
     emitter_.compare_register(8, 21);
     emitter_.branch_condition(slow, 1); // NE
@@ -437,12 +437,8 @@ void JitCompiler::emit_native_atomic_address(std::uint32_t instruction,
         cold_exit(instruction, pc, ColdPath::Action::exclusive_slow);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    if (base == 31U) {
-      emit_misalignment_check(8, 16, slow);
-    } else {
-      emit_untag_data_address(8, false);
-      emit_misalignment_check(8, bytes, slow);
-    }
+    emit_untag_data_address(8);
+    emit_misalignment_check(8, base == 31U ? 16 : bytes, slow);
     emit_translate(8, Access::write, slow, fault, 1);
     track_direct_store(8, bytes);
   }
@@ -464,12 +460,8 @@ void JitCompiler::emit_native_ordered_load(std::uint32_t instruction,
     const auto slow = cold_exit(instruction, pc, slow_action);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    if (base == 31U) {
-      emit_misalignment_check(8, 16, slow);
-    } else {
-      emit_untag_data_address(8, false);
-      emit_misalignment_check(8, bytes, slow);
-    }
+    emit_untag_data_address(8);
+    emit_misalignment_check(8, base == 31U ? 16 : bytes, slow);
     emit_translate(8, Access::read, slow, fault, 1);
     const auto native_destination =
         write_native_gpr(destination, false, false, 9);
@@ -573,7 +565,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     }
     if (mode != 1U)
       emit_displacement(8, 8);
-    emit_untag_data_address(8, base == 31U);
+    emit_untag_data_address(8);
 
     /* The helper remains responsible for cross-page atomicity. The common
      * same-page case needs one TLB lookup and one native pair instruction. */
@@ -723,7 +715,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     if (base == 31U) {
       emit_misalignment_check(8, 16, slow);
     }
-    emit_untag_data_address(8, base == 31U);
+    emit_untag_data_address(8);
     emit_translate(8, load ? Access::read : Access::write, slow, fault,
                    transfer_size);
     if (!load)
@@ -836,7 +828,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
         cold_exit(instruction, pc, ColdPath::Action::memory_slow);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    emit_untag_data_address(8, base == 31U);
+    emit_untag_data_address(8);
     emit_translate(8, load ? Access::read : Access::write, fallback, fault,
                    bytes);
     if (!load)
@@ -907,7 +899,7 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
     emitter_.add_shifted(8, 8, 9, 0);
   }
   const auto fault = cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-  emit_untag_data_address(8, base == 31U);
+  emit_untag_data_address(8);
   emit_translate(8, load ? Access::read : Access::write, slow, fault, bytes);
   if (!load)
     track_direct_store(8, bytes);
@@ -1126,9 +1118,9 @@ collect_unsigned_run(std::span<const std::uint32_t> instructions,
         emitter_.test_zero(straddle.label, 0, page_shift - 4U, true);
         proved = true;
       }
+      emit_untag_data_address(8);
     } else {
-      proved = emit_run_span_proof(first_offset, maximum_end, straddle.label,
-                                   base != 31U);
+      proved = emit_run_span_proof(first_offset, maximum_end, straddle.label);
     }
 
     emit_translate(8, load ? Access::read : Access::write, slow, slow, 1);
@@ -1243,7 +1235,7 @@ void JitCompiler::move_run_base(std::uint64_t offset, bool forward,
   }
 
 bool JitCompiler::emit_run_span_proof(std::uint64_t first, std::uint64_t end,
-                                      Arm64Emitter::Label outside, bool untag) {
+                                      Arm64Emitter::Label outside) {
     /*
      * The run translates its first accessed byte, so only the bytes it
      * accesses must share a page: a base near a page end whose fields all
@@ -1252,7 +1244,7 @@ bool JitCompiler::emit_run_span_proof(std::uint64_t first, std::uint64_t end,
      * their own unsigned offsets.
      */
     move_run_base(first, true);
-    emit_untag_data_address(8, !untag);
+    emit_untag_data_address(8);
     const auto last_delta = end - first - 1U;
     if (last_delta == 0U)
       return false;
@@ -1419,6 +1411,7 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
         emitter_.test_zero(straddle.label, 0, page_shift - 4U, true);
         proved = true;
       }
+      emit_untag_data_address(8);
     } else {
       proved = emit_run_span_proof(first_offset, maximum_end, straddle.label);
     }
@@ -1472,8 +1465,8 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
         .access = load ? Access::read : Access::write,
         .first = first_offset,
     };
-    const bool proved = emit_run_span_proof(first_offset, maximum_end,
-                                            straddle.label, true);
+    const bool proved =
+        emit_run_span_proof(first_offset, maximum_end, straddle.label);
 
     emit_translate(8, load ? Access::read : Access::write, slow, slow, 1);
     move_run_base(first_offset, false);
@@ -1531,7 +1524,7 @@ void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
         cold_exit(instruction, pc, ColdPath::Action::memory_slow);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
-    emit_untag_data_address(8, base == 31U);
+    emit_untag_data_address(8);
     emit_translate(8, load ? Access::read : Access::write, fallback, fault,
                    bytes);
     if (!load)

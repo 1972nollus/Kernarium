@@ -83,8 +83,7 @@ Sm0Result execute_sm0_spill(CpuState &cpu, std::uint32_t word,
 		sp_base ? cpu.sp : cpu.registers[spill->base];
 	const std::uint64_t address = cpu.untag_data_address(
 		base + static_cast<std::uint64_t>(
-			static_cast<std::int64_t>(spill->offset)),
-		sp_base);
+			static_cast<std::int64_t>(spill->offset)));
 	const unsigned size = spill->bytes();
 	std::array<std::byte, sm0_vector_bytes> image{};
 	std::uint64_t unreachable = 0;

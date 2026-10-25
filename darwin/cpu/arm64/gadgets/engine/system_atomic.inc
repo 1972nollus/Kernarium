@@ -723,7 +723,6 @@ Lsimd_structure_slow\@:
 	mov x3, sp
 	mov x4, #(\count * (8 << \q))
 	mov w5, #0
-	mov w6, #\base_sp
 	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #64]
 	cbz w0, Lsimd_structure_fault\@
@@ -740,7 +739,6 @@ Lsimd_structure_slow\@:
 	mov x3, sp
 	mov x4, #(\count * (8 << \q))
 	mov w5, #1
-	mov w6, #\base_sp
 	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #64]
 	cbz w0, Lsimd_structure_fault\@
@@ -921,7 +919,6 @@ Lsimd_replicate_slow\@:
 	mov x3, sp
 	mov x4, #(\count * \width)
 	mov w5, #0
-	mov w6, #\base_sp
 	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #32]
 	cbz w0, Lsimd_replicate_fault\@
@@ -1088,7 +1085,6 @@ Lsimd_lane_slow\@:
 	mov x3, sp
 	mov x4, #(\count * \width)
 	mov w5, #0
-	mov w6, #\base_sp
 	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #32]
 	cbz w0, Lsimd_lane_fault\@
@@ -1103,7 +1099,6 @@ Lsimd_lane_slow\@:
 	mov x3, sp
 	mov x4, #(\count * \width)
 	mov w5, #1
-	mov w6, #\base_sp
 	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #32]
 	cbz w0, Lsimd_lane_fault\@

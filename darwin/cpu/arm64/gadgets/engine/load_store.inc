@@ -1149,7 +1149,8 @@ scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, L
 	.endif
 	.if !\sp_base
 	/* TBI keeps the ordinary pair fast path after stripping the logical
-	 * tag from the effective address. SP is never top-byte ignored. */
+	 * tag from the effective address. An SP base keeps its tag here and the
+	 * TLB entry is keyed by it (Tlb::translate_tagged). */
 	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, Linteger_pair_untagged\@
 	ubfx x19, x19, #0, #56

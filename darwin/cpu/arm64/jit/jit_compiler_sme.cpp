@@ -306,7 +306,7 @@ void JitCompiler::emit_sme_array_vector(std::uint32_t instruction,
       emitter_.emit(multiply_add(8, 1, 2, 8));
     }
   }
-  emit_untag_data_address(8, base == 31U);
+  emit_untag_data_address(8);
   /* The vector's SVL bytes must lie in one page: SVL is below a page, so
    * the page bit of (address & page_mask) + SVL - 1 is the test. A
    * crossing vector takes the helper, which translates both pages first. */
@@ -367,7 +367,7 @@ void JitCompiler::emit_sme_zt0_transfer(std::uint32_t instruction,
   load_gpr(8, base, true);
   if (base == 31U)
     emit_misalignment_check(8, 16, slow);
-  emit_untag_data_address(8, base == 31U);
+  emit_untag_data_address(8);
   emit_translate(8, load ? Access::read : Access::write, slow, fault,
                  sme_zt0_bytes);
   if (!load)
@@ -796,7 +796,7 @@ bool JitCompiler::emit_streaming_memory(const detail::SmeEncoding &row,
   case detail::SmeAddressOffset::register_byte:
     break;
   }
-  emit_untag_data_address(8, base == 31U);
+  emit_untag_data_address(8);
   if (constant_span) {
     emit_translate(8, access, slow, slow, constant_bytes);
   } else {
@@ -886,7 +886,7 @@ bool JitCompiler::emit_streaming_fp_memory(std::uint32_t instruction,
           emitter_.add_immediate(8, 8, part, high);
       }
     }
-    emit_untag_data_address(8, memory.base == 31U);
+    emit_untag_data_address(8);
   }
   emit_translate(8, access, slow, slow, bytes);
   if (!memory.load)

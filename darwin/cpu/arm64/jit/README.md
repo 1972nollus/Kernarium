@@ -16,12 +16,12 @@ the lowering contracts that are not obvious from the code; the
 When the guest ignores the top byte of data addresses (`CpuState::tbi_enabled`,
 the host's `--guest-top-byte-ignore`), a translation is compiled for it and its
 key says so (bit 61 of an A64 key, `translation_mode_tbi`), so a block runs only
-under the setting it was translated for. Every access that does not name SP as
-its base then strips bits 63:56 of its final address, after any displacement,
-with one `ubfx` before the address is translated, and a translation compiled
+under the setting it was translated for. Every access, whatever register is its
+base, then strips bits 63:56 of its final address, after any displacement, with
+one `ubfx` before the address is translated, and a translation compiled
 without it holds no check at all. The TLB, a page fault and the fault address a
 signal reports therefore see the untagged address, as the semantic path
-reports it; an SP base is never untagged. Exclusives, atomics and ordered
+reports it. Exclusives, atomics and ordered
 accesses strip before they translate and record the host address, so the
 monitor guards the location and not the pointer. A run of accesses off one base
 strips once. The cold paths do not test the flag again.
