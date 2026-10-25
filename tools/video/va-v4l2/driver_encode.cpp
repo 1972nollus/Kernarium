@@ -205,21 +205,24 @@ VAStatus rawFrameOf(Driver& driver, Context& owner, Surface& target, RawFrame& f
     // the encoder takes.
     driver.materialise(target);
     // The encoder only reads the surface, so a descriptor a client exported
-    // read-only is enough.
+    // read-only is enough. Each plane is read where its own object maps, which
+    // is one object for a surface the driver allocated and one per plane for a
+    // planar buffer a graphics stack exported.
     errno = 0;
-    const std::uint8_t* base = target.buffer->mapForRead();
-    if (!base) {
+    const std::uint8_t* luma = target.buffer->planeForRead(0);
+    const std::uint8_t* chroma = target.fourcc == VA_FOURCC_NV12 && target.buffer->planes() >= 2
+        ? target.buffer->planeForRead(1) : nullptr;
+    if (!luma || (target.fourcc == VA_FOURCC_NV12 && !chroma)) {
         const int reason = errno;
         driver.note(("cannot map the memory of an encode input surface: " +
                      std::string(reason ? std::strerror(reason) : "no reason given")).c_str());
-        return VA_STATUS_ERROR_OPERATION_FAILED;
+        return target.fourcc == VA_FOURCC_NV12 && target.buffer->planes() < 2
+            ? VA_STATUS_ERROR_INVALID_SURFACE : VA_STATUS_ERROR_OPERATION_FAILED;
     }
     const unsigned width = std::min(target.width, target.buffer->width());
     const unsigned height = std::min(target.height, target.buffer->height());
     if (target.fourcc == VA_FOURCC_NV12) {
-        if (target.buffer->planes() < 2) return VA_STATUS_ERROR_INVALID_SURFACE;
-        frame = {base + target.buffer->offset(0), target.buffer->pitch(0), base + target.buffer->offset(1),
-                 target.buffer->pitch(1), width, height};
+        frame = {luma, target.buffer->pitch(0), chroma, target.buffer->pitch(1), width, height};
         return VA_STATUS_SUCCESS;
     }
     if (target.fourcc == VA_FOURCC_ARGB) {
@@ -227,13 +230,12 @@ VAStatus rawFrameOf(Driver& driver, Context& owner, Surface& target, RawFrame& f
         const std::size_t pitch = (std::size_t(width) + 1) & ~std::size_t(1);
         const std::size_t rows = (std::size_t(height) + 1) & ~std::size_t(1);
         owner.encodeScratch.assign(pitch * rows + pitch * (rows / 2), 0);
-        std::uint8_t* luma = owner.encodeScratch.data();
-        std::uint8_t* chroma = luma + pitch * rows;
+        std::uint8_t* out = owner.encodeScratch.data();
+        std::uint8_t* outChroma = out + pitch * rows;
         const Region region {0, 0, width, height};
-        const PlaneView planes[2] {{luma, pitch}, {chroma, pitch}};
-        convertArgbToNv12(ConstPlaneView {base + target.buffer->offset(0), target.buffer->pitch(0)}, region, planes,
-                          region, height >= 720);
-        frame = {luma, pitch, chroma, pitch, width, height};
+        const PlaneView planes[2] {{out, pitch}, {outChroma, pitch}};
+        convertArgbToNv12(ConstPlaneView {luma, target.buffer->pitch(0)}, region, planes, region, height >= 720);
+        frame = {out, pitch, outChroma, pitch, width, height};
         return VA_STATUS_SUCCESS;
     }
     return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
@@ -254,6 +256,11 @@ VAStatus Driver::submitEncode(Context& owner, VASurfaceID id, Surface& target)
         note("an encode picture named no coded buffer");
         return VA_STATUS_ERROR_INVALID_BUFFER;
     }
+    if (!target.buffer) return VA_STATUS_ERROR_INVALID_SURFACE;
+    // A frame a graphics stack drew reaches the guest's memory only when the
+    // kernel is told the CPU is about to read it, and it must stay current
+    // until the encoder has copied it.
+    const PixelBuffer::CpuAccess access(*target.buffer, false);
     RawFrame frame;
     VAStatus status = rawFrameOf(*this, owner, target, frame);
     if (status != VA_STATUS_SUCCESS) return status;

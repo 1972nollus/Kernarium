@@ -223,6 +223,7 @@ std::uint32_t Driver::preferredCapture()
 void Driver::materialise(Surface& target)
 {
     if (target.nativeValid || !target.shadow || !target.buffer) return;
+    const PixelBuffer::CpuAccess writing(*target.buffer, true);
     const std::uint8_t* from = target.shadow->map();
     std::uint8_t* to = target.buffer->map();
     if (!from || !to) return;
@@ -418,6 +419,7 @@ bool Driver::fillFromLent(Surface& target, PixelBuffer& lent, bool packed)
     if (!from) return false;
     if (packed) return storePacked(target, planeView(lent, from), lent.width(), lent.height());
     if (!target.buffer || lent.planes() < 2) return false;
+    const PixelBuffer::CpuAccess writing(*target.buffer, true);
     std::uint8_t* to = target.buffer->map();
     if (!to) return false;
     copyNv12(planeViews(lent, from).data(), planeViews(*target.buffer, to).data(),
@@ -501,6 +503,7 @@ void Driver::harvest(Context& context, std::chrono::milliseconds wait)
                 target->state = stored ? Surface::State::ready : Surface::State::failed;
             } else if (target && target->buffer && target->fourcc == VA_FOURCC_NV12 && picture.planes >= 2 &&
                 !picture.error) {
+                const PixelBuffer::CpuAccess writing(*target->buffer, true);
                 if (std::uint8_t* destination = target->buffer->map()) {
                     const ConstPlaneView source[2] {
                         {picture.plane[0], picture.pitch[0]},
@@ -589,6 +592,8 @@ VAStatus Driver::submitFrame(Context& owner, VASurfaceID id, Surface& target)
             return VA_STATUS_SUCCESS;
         }
         materialise(*source);
+        const PixelBuffer::CpuAccess reading(*source->buffer, false);
+        const PixelBuffer::CpuAccess writing(*target.buffer, true);
         const std::uint8_t* from = source->buffer->map();
         std::uint8_t* to = target.buffer->map();
         if (!from || !to) return VA_STATUS_ERROR_OPERATION_FAILED;
@@ -652,6 +657,8 @@ VAStatus Driver::process(Context& owner, Surface& target)
     if (!source || !source->buffer || !target.buffer) return VA_STATUS_ERROR_INVALID_SURFACE;
     const auto status = waitFor(*source, kDecodeWait);
     if (status != VA_STATUS_SUCCESS) return status;
+    const PixelBuffer::CpuAccess reading(*source->buffer, false);
+    const PixelBuffer::CpuAccess writing(*target.buffer, true);
     const std::uint8_t* from = source->buffer->map();
     std::uint8_t* to = target.buffer->map();
     if (!from || !to) return VA_STATUS_ERROR_OPERATION_FAILED;
@@ -956,25 +963,36 @@ VAStatus createSurfaces2(VADriverContextP ctx, unsigned format, unsigned width, 
         surface->height = height;
         surface->fourcc = fourcc;
         if (descriptor) {
-            int fd = -1;
+            int fds[4] {-1, -1, -1, -1};
+            std::size_t sizes[4] {};
+            unsigned objectCount = 1;
+            unsigned planeObject[4] {};
             unsigned planes = 0;
             std::uint32_t pitch[4] {};
             std::uint32_t offset[4] {};
             std::uint64_t modifier = 0;
-            std::size_t size = 0;
             if (memoryType == VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2) {
                 const auto* prime = static_cast<const VADRMPRIMESurfaceDescriptor*>(descriptor);
                 constexpr std::uint32_t kObjects = sizeof(prime->objects) / sizeof(prime->objects[0]);
                 constexpr std::uint32_t kLayers = sizeof(prime->layers) / sizeof(prime->layers[0]);
                 if (!prime->num_objects || !prime->num_layers || prime->num_objects > kObjects ||
-                    prime->num_layers > kLayers)
+                    prime->num_layers > kLayers || prime->num_objects > 4)
                     return VA_STATUS_ERROR_INVALID_PARAMETER;
                 fourcc = prime->fourcc;
-                fd = prime->objects[0].fd;
+                objectCount = prime->num_objects;
                 modifier = prime->objects[0].drm_format_modifier;
-                size = prime->objects[0].size;
+                for (unsigned object = 0; object < objectCount; ++object) {
+                    fds[object] = prime->objects[object].fd;
+                    sizes[object] = prime->objects[object].size;
+                }
+                // A planar image may live in one object, every plane at its own
+                // offset, or in an object per plane, as a graphics stack that
+                // allocates a resource per plane exports it.
                 for (unsigned layer = 0; layer < prime->num_layers && planes < 4; ++layer)
                     for (unsigned plane = 0; plane < prime->layers[layer].num_planes && planes < 4; ++plane) {
+                        const unsigned object = prime->layers[layer].object_index[plane];
+                        if (object >= objectCount) return VA_STATUS_ERROR_INVALID_PARAMETER;
+                        planeObject[planes] = object;
                         pitch[planes] = prime->layers[layer].pitch[plane];
                         offset[planes] = prime->layers[layer].offset[plane];
                         ++planes;
@@ -983,8 +1001,8 @@ VAStatus createSurfaces2(VADriverContextP ctx, unsigned format, unsigned width, 
                 const auto* external = static_cast<const VASurfaceAttribExternalBuffers*>(descriptor);
                 if (!external->num_buffers || !external->num_planes) return VA_STATUS_ERROR_INVALID_PARAMETER;
                 fourcc = external->pixel_format;
-                fd = int(external->buffers[0]);
-                size = external->data_size;
+                fds[0] = int(external->buffers[0]);
+                sizes[0] = external->data_size;
                 planes = std::min<unsigned>(external->num_planes, 4);
                 for (unsigned plane = 0; plane < planes; ++plane) {
                     pitch[plane] = external->pitches[plane];
@@ -999,15 +1017,30 @@ VAStatus createSurfaces2(VADriverContextP ctx, unsigned format, unsigned width, 
             surface->fourcc = fourcc;
             // The same memory imported as another image gets its own checked
             // layout rather than the earlier import's.
-            auto shared = driver.knownBuffer(descriptorIdentity(fd));
-            if (shared && shared->holds(fourcc, width, height)) {
+            auto shared = driver.knownBuffer(descriptorIdentity(fds[0]));
+            bool sameObjects = shared && shared->objects() == objectCount;
+            for (unsigned object = 0; sameObjects && object < objectCount; ++object)
+                sameObjects = shared->objectIdentity(object) == descriptorIdentity(fds[object]);
+            if (shared && sameObjects && shared->holds(fourcc, width, height)) {
                 surface->buffer = std::move(shared);
             } else {
-                const int duplicate = fd >= 0 ? fcntl(fd, F_DUPFD_CLOEXEC, 0) : -1;
+                PixelBuffer::Object objects[4] {{-1, 0}, {-1, 0}, {-1, 0}, {-1, 0}};
+                bool duplicated = true;
+                for (unsigned object = 0; object < objectCount; ++object) {
+                    objects[object] = {fds[object] >= 0 ? fcntl(fds[object], F_DUPFD_CLOEXEC, 0) : -1,
+                                       sizes[object]};
+                    duplicated = duplicated && objects[object].fd >= 0;
+                }
                 std::string error;
-                auto adopted = PixelBuffer::adopt(duplicate, fourcc, width, height, planes, pitch, offset,
-                                                  modifier, size, error);
-                if (!adopted) { if (duplicate >= 0) ::close(duplicate); return VA_STATUS_ERROR_INVALID_PARAMETER; }
+                auto adopted = duplicated ? PixelBuffer::adoptObjects(objects, objectCount, fourcc, width, height,
+                                                                      planes, pitch, offset, planeObject, modifier,
+                                                                      error)
+                                          : nullptr;
+                if (!adopted) {
+                    for (unsigned object = 0; object < objectCount; ++object)
+                        if (objects[object].fd >= 0) ::close(objects[object].fd);
+                    return VA_STATUS_ERROR_INVALID_PARAMETER;
+                }
                 surface->buffer = std::shared_ptr<PixelBuffer>(adopted.release());
                 driver.known.emplace(surface->buffer->identity(), surface->buffer);
             }
@@ -1486,7 +1519,9 @@ VAStatus readSurface(Driver& driver, Surface& surface, const Region& region, Ima
     std::uint8_t* destination = nullptr;
     if (Buffer* buffer = driver.buffer(target.image.buf); buffer && buffer->bytes() >= target.image.data_size)
         destination = buffer->data();
-    const std::uint8_t* source = surface.buffer ? surface.buffer->map() : nullptr;
+    if (!surface.buffer) return VA_STATUS_ERROR_OPERATION_FAILED;
+    const PixelBuffer::CpuAccess reading(*surface.buffer, false);
+    const std::uint8_t* source = surface.buffer->map();
     if (!destination || !source) return VA_STATUS_ERROR_OPERATION_FAILED;
     const auto width = std::min<unsigned>(region.width, target.image.width);
     const auto height = std::min<unsigned>(region.height, target.image.height);
@@ -1558,6 +1593,7 @@ VAStatus putImage(VADriverContextP ctx, VASurfaceID id, VAImageID imageId, int s
     if (sourceWidth != destinationWidth || sourceHeight != destinationHeight) return VA_STATUS_ERROR_UNIMPLEMENTED;
     if (image.format.fourcc != surface->fourcc) return VA_STATUS_ERROR_UNIMPLEMENTED;
     Buffer* buffer = driver.buffer(image.buf);
+    const PixelBuffer::CpuAccess writing(*surface->buffer, true);
     std::uint8_t* destination = surface->buffer->map();
     if (!buffer || !destination || buffer->bytes() < image.data_size) return VA_STATUS_ERROR_OPERATION_FAILED;
     const std::uint8_t* source = buffer->data();

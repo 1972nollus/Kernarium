@@ -5,8 +5,10 @@
 // frame reaches the coded buffer, and what happens when a client does something
 // the encoder cannot.
 #include <fcntl.h>
+#include <linux/dma-buf.h>
 #include <linux/videodev2.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <va/va_backend.h>
 #include <va/va_backend_vpp.h>
@@ -14,6 +16,7 @@
 #include <va/va_enc_h264.h>
 
 #include <algorithm>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -22,9 +25,44 @@
 #include <vector>
 
 #include "../driver.hpp"
+#include "../storage.hpp"
 #include "fake_v4l2.hpp"
 #include "picture.hpp"
 #include "test_support.hpp"
+
+// The guest kernel's dma-buf synchronisation, observed. A memfd the tests make
+// stands in for a dma-buf: its sync requests are recorded and answered as the
+// kernel would, and every other request goes to the kernel untouched.
+namespace {
+struct SyncRecord {
+    std::uint64_t flags;
+};
+std::vector<SyncRecord>& syncLog()
+{
+    static std::vector<SyncRecord> log;
+    return log;
+}
+bool isFixture(int fd)
+{
+    char link[64], target[128] {};
+    std::snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+    const ssize_t length = readlink(link, target, sizeof target - 1);
+    return length > 0 && std::strncmp(target, "/memfd:va-v4l2-encode-input", 27) == 0;
+}
+}
+
+extern "C" int ioctl(int fd, unsigned long request, ...)
+{
+    std::va_list arguments;
+    va_start(arguments, request);
+    void* argument = va_arg(arguments, void*);
+    va_end(arguments);
+    if (request == DMA_BUF_IOCTL_SYNC && argument && isFixture(fd)) {
+        syncLog().push_back({static_cast<const dma_buf_sync*>(argument)->flags});
+        return 0;
+    }
+    return int(syscall(SYS_ioctl, fd, request, argument));
+}
 
 namespace uml::va::test {
 namespace {
@@ -930,13 +968,143 @@ void testImportedInput()
 
     const VABufferID coded = va.buffer(context, VAEncCodedBufferType, nullptr, 1u << 20);
     Stream stream;
+    syncLog().clear();
     check(va.encode(context, imported, coded, stream, true) == VA_STATUS_SUCCESS,
           "a picture in an imported read-only surface is accepted");
+    check(syncLog().size() == 2, "an imported surface is bracketed once around the read");
     const auto read = va.read(imported, coded);
     const SliceInfo slice = parseSlice(read.data);
     check(read.status == VA_STATUS_SUCCESS && slice.found && slice.checksum == picture.checksum(kCodedWidth, kVisibleHeight),
           "and the encoder was given its pixels");
     va.table.vaDestroyContext(&va.context, context);
+}
+
+// A planar buffer a graphics stack allocates gives each plane a resource of its
+// own, so the descriptor names two objects; the encoder reads each plane where
+// it is, and tells the kernel the CPU is reading both.
+void testImportedPerPlane()
+{
+    Va va;
+    if (!va.ok()) { check(false, "the rig initialises"); return; }
+    VAConfigID config = VA_INVALID_ID;
+    va.config(VAProfileH264Main, VA_RC_CBR, config);
+    const VAContextID context = va.encodeContext(config, kCodedWidth, kCodedHeight);
+
+    const Picture picture(kCodedWidth, kCodedHeight, 9);
+    const std::size_t lumaBytes = std::size_t(kCodedWidth) * kCodedHeight;
+    const std::size_t chromaBytes = lumaBytes / 2;
+    int objects[2] {-1, -1};
+    const std::size_t sizes[2] {lumaBytes, chromaBytes};
+    for (unsigned plane = 0; plane < 2; ++plane) {
+        const int writer = memfd_create("va-v4l2-encode-input", MFD_CLOEXEC);
+        check(writer >= 0 && ftruncate(writer, off_t(sizes[plane])) == 0, "a per-plane fixture exists");
+        if (writer < 0) return;
+        void* mapped = mmap(nullptr, sizes[plane], PROT_READ | PROT_WRITE, MAP_SHARED, writer, 0);
+        if (mapped == MAP_FAILED) { ::close(writer); check(false, "the fixture maps"); return; }
+        auto* bytes = static_cast<std::uint8_t*>(mapped);
+        const unsigned rows = plane ? kCodedHeight / 2 : kCodedHeight;
+        const std::uint8_t* from = plane ? picture.chroma.data() : picture.luma.data();
+        const std::size_t pitch = plane ? picture.chromaPitch : picture.lumaPitch;
+        for (unsigned row = 0; row < rows; ++row)
+            std::memcpy(bytes + std::size_t(row) * kCodedWidth, from + row * pitch, kCodedWidth);
+        munmap(mapped, sizes[plane]);
+        char path[64];
+        std::snprintf(path, sizeof path, "/proc/self/fd/%d", writer);
+        objects[plane] = open(path, O_RDONLY | O_CLOEXEC);
+        ::close(writer);
+        check(objects[plane] >= 0, "the fixture reopens read-only");
+        if (objects[plane] < 0) return;
+    }
+
+    VADRMPRIMESurfaceDescriptor descriptor {};
+    descriptor.width = kCodedWidth;
+    descriptor.height = kCodedHeight;
+    descriptor.fourcc = VA_FOURCC_NV12;
+    descriptor.num_objects = 2;
+    for (unsigned plane = 0; plane < 2; ++plane) {
+        descriptor.objects[plane].fd = objects[plane];
+        descriptor.objects[plane].size = std::uint32_t(sizes[plane]);
+    }
+    descriptor.num_layers = 2;
+    descriptor.layers[0].drm_format = 0x20203852; // R8
+    descriptor.layers[0].num_planes = 1;
+    descriptor.layers[0].object_index[0] = 0;
+    descriptor.layers[0].pitch[0] = kCodedWidth;
+    descriptor.layers[1].drm_format = 0x38385247; // GR88
+    descriptor.layers[1].num_planes = 1;
+    descriptor.layers[1].object_index[0] = 1;
+    descriptor.layers[1].pitch[0] = kCodedWidth;
+    VASurfaceAttrib attributes[2] {};
+    attributes[0].type = VASurfaceAttribMemoryType;
+    attributes[0].flags = VA_SURFACE_ATTRIB_SETTABLE;
+    attributes[0].value.type = VAGenericValueTypeInteger;
+    attributes[0].value.value.i = VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2;
+    attributes[1].type = VASurfaceAttribExternalBufferDescriptor;
+    attributes[1].flags = VA_SURFACE_ATTRIB_SETTABLE;
+    attributes[1].value.type = VAGenericValueTypePointer;
+    attributes[1].value.value.p = &descriptor;
+    VASurfaceID imported = VA_INVALID_SURFACE;
+    const VAStatus made = va.table.vaCreateSurfaces2(&va.context, VA_RT_FORMAT_YUV420, kCodedWidth, kCodedHeight,
+                                                     &imported, 1, attributes, 2);
+    check(made == VA_STATUS_SUCCESS, "a descriptor with an object per plane is imported as a surface");
+    if (made != VA_STATUS_SUCCESS) { ::close(objects[0]); ::close(objects[1]); return; }
+
+    // A layer that names an object the descriptor does not have is refused.
+    descriptor.layers[1].object_index[0] = 2;
+    VASurfaceID refused = VA_INVALID_SURFACE;
+    check(va.table.vaCreateSurfaces2(&va.context, VA_RT_FORMAT_YUV420, kCodedWidth, kCodedHeight, &refused, 1,
+                                     attributes, 2) == VA_STATUS_ERROR_INVALID_PARAMETER,
+          "a plane in an object the descriptor lacks is refused");
+    ::close(objects[0]);
+    ::close(objects[1]);
+
+    const VABufferID coded = va.buffer(context, VAEncCodedBufferType, nullptr, 1u << 20);
+    Stream stream;
+    syncLog().clear();
+    check(va.encode(context, imported, coded, stream, true) == VA_STATUS_SUCCESS,
+          "a picture whose planes are in two objects is accepted");
+    const auto read = va.read(imported, coded);
+    const SliceInfo slice = parseSlice(read.data);
+    check(read.status == VA_STATUS_SUCCESS && slice.found && slice.checksum == picture.checksum(kCodedWidth, kVisibleHeight),
+          "and the encoder was given the pixels of both planes");
+    const auto& log = syncLog();
+    check(log.size() == 4, "each object is told the CPU starts and ends reading it");
+    if (log.size() == 4) {
+        const bool order = !(log[0].flags & DMA_BUF_SYNC_END) && !(log[1].flags & DMA_BUF_SYNC_END) &&
+                           (log[2].flags & DMA_BUF_SYNC_END) && (log[3].flags & DMA_BUF_SYNC_END);
+        check(order, "every object is started before any is ended");
+        bool readOnly = true;
+        for (const auto& entry : log) readOnly = readOnly && (entry.flags & DMA_BUF_SYNC_RW) == DMA_BUF_SYNC_READ;
+        check(readOnly, "the encoder's access is a read");
+    }
+    va.table.vaDestroyContext(&va.context, context);
+}
+
+// The bracket a client's buffer gets around the driver's own writes.
+void testCpuAccess()
+{
+    const int file = memfd_create("va-v4l2-encode-input", MFD_CLOEXEC);
+    check(file >= 0 && ftruncate(file, 64 * 64 * 2) == 0, "a bracket fixture exists");
+    if (file < 0) return;
+    const std::uint32_t pitch[2] {64, 64};
+    const std::uint32_t offset[2] {0, 64 * 64};
+    std::string error;
+    auto buffer = PixelBuffer::adopt(file, VA_FOURCC_NV12, 64, 64, 2, pitch, offset, 0, 64 * 64 * 3 / 2, error);
+    check(buffer != nullptr, "a client buffer is adopted");
+    if (!buffer) { ::close(file); return; }
+    syncLog().clear();
+    { const PixelBuffer::CpuAccess writing(*buffer, true); check(syncLog().size() == 1, "a write starts"); }
+    const auto& log = syncLog();
+    check(log.size() == 2 && (log[0].flags & DMA_BUF_SYNC_RW) == DMA_BUF_SYNC_RW &&
+              !(log[0].flags & DMA_BUF_SYNC_END) && (log[1].flags & DMA_BUF_SYNC_END) &&
+              (log[1].flags & DMA_BUF_SYNC_RW) == DMA_BUF_SYNC_RW,
+          "a write is bracketed as a read and a write");
+    // A buffer the driver allocated itself is no client's, and needs no bracket.
+    std::string own;
+    auto allocated = PixelBuffer::allocate(VA_FOURCC_NV12, 64, 64, own);
+    syncLog().clear();
+    if (allocated) { const PixelBuffer::CpuAccess reading(*allocated, false); }
+    check(syncLog().empty(), "the driver's own buffer is not bracketed");
 }
 
 void testDescriptors()
@@ -1009,6 +1177,8 @@ void runDriverEncodeTests()
     testHevc();
     testInitialisedAgainInsideASandbox();
     testImportedInput();
+    testImportedPerPlane();
+    testCpuAccess();
     testDescriptors();
 }
 

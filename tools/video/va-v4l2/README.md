@@ -86,6 +86,22 @@ a planar buffer an object of its own. So an NV12 surface is carried by a
 single packed 32-bit buffer whose rows hold the luma and then the chroma, and
 the descriptor names both planes inside it at their offsets.
 
+That limit is on what the driver exports. A descriptor a client imports may
+name several objects, with each plane in the object its layer's `object_index`
+says: a planar buffer from [the gbm module](#the-gbm-module-planar-buffers-for-debians-libgbm)
+has an object per plane. Such a surface has no single mapping, so it serves as
+an encode input (the encoder reads each plane where it is) and is refused as a
+target the driver writes pictures into.
+
+Everything the driver does to the memory of a surface a client imported is
+bracketed with `DMA_BUF_IOCTL_SYNC`, on every object of the surface: a read
+starts and ends with `READ`, a write with `READ | WRITE`. That is what makes a
+frame the GPU drew current for the CPU, and a frame the CPU wrote current for
+the GPU, on a guest kernel that transfers the buffer around a CPU access; a
+descriptor that is no dma-buf (a memory file) answers the request with an error
+that is ignored. A mapping handed to the client by `vaDeriveImage` stays the
+client's to bracket.
+
 ## Decoding straight to packed RGB
 
 A browser converts every decoded frame to RGB before it can draw it, and under
@@ -184,7 +200,8 @@ goes in. A stream cannot change its size; the client creates a new context.
 Pictures go to the node as NV12 in whichever of `NV12M` and `NV12` it takes,
 from NV12 surfaces directly or from ARGB ones after one conversion. The
 encoder only reads a surface, so a descriptor a client imported read-only (the
-state of one a graphics stack exports) is mapped read-only and serves. Every key
+state of one a graphics stack exports) is mapped read-only and serves, and each
+frame is read inside one `DMA_BUF_IOCTL_SYNC` bracket. Every key
 frame carries its parameter sets in the same buffer. `vaEndPicture` returns
 once the frame is queued; `vaSyncSurface` on the input and `vaMapBuffer` on the
 coded buffer wait up to four seconds for the frame, which comes back with the

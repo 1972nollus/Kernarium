@@ -2,6 +2,8 @@
 #include "storage.hpp"
 
 #include <drm_fourcc.h>
+#include <linux/dma-buf.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <dlfcn.h>
@@ -347,18 +349,34 @@ std::unique_ptr<PixelBuffer> PixelBuffer::adopt(int fd, std::uint32_t fourcc, un
                                                 const std::uint32_t* offset, std::uint64_t modifier,
                                                 std::size_t size, std::string& error)
 {
+    const Object object {fd, size};
+    const unsigned owner[4] {};
+    return adoptObjects(&object, 1, fourcc, width, height, planes, pitch, offset, owner, modifier, error);
+}
+
+std::unique_ptr<PixelBuffer> PixelBuffer::adoptObjects(const Object* objects, unsigned objectCount,
+                                                       std::uint32_t fourcc, unsigned width, unsigned height,
+                                                       unsigned planes, const std::uint32_t* pitch,
+                                                       const std::uint32_t* offset, const unsigned* object,
+                                                       std::uint64_t modifier, std::string& error)
+{
     // The driver copies whole rows of this driver's own layout into and out
     // of an imported surface, so each plane it uses needs rows at least that
-    // long, and the object has to hold every plane the descriptor places.
+    // long, and the object a plane lives in has to hold it.
     unsigned needed = 0;
     std::size_t rowBytes[4] {};
     std::size_t ownOffset[4] {};
     std::size_t ownSize = 0;
-    if (fd < 0 || planes > 4 || !planeLayout(fourcc, width, height, needed, rowBytes, ownOffset, ownSize) ||
-        planes < needed) {
+    if (!objects || !objectCount || objectCount > 4 || planes > 4 ||
+        !planeLayout(fourcc, width, height, needed, rowBytes, ownOffset, ownSize) || planes < needed) {
         error = "imported surface has no usable planes";
         return nullptr;
     }
+    for (unsigned index = 0; index < objectCount; ++index)
+        if (objects[index].fd < 0) {
+            error = "imported surface has an object without a descriptor";
+            return nullptr;
+        }
     std::unique_ptr<PixelBuffer> buffer(new PixelBuffer);
     buffer->kind_ = StorageKind::imported;
     buffer->fourcc_ = fourcc;
@@ -366,21 +384,37 @@ std::unique_ptr<PixelBuffer> PixelBuffer::adopt(int fd, std::uint32_t fourcc, un
     buffer->height_ = height;
     buffer->planes_ = planes;
     buffer->modifier_ = modifier;
-    std::size_t end = 0;
+    std::size_t end[4] {};
     for (unsigned plane = 0; plane < planes; ++plane) {
         if (plane < needed && pitch[plane] < rowBytes[plane]) {
             error = "imported surface rows are shorter than its width";
             return nullptr;
         }
+        if (object[plane] >= objectCount) {
+            error = "imported surface names an object it does not have";
+            return nullptr;
+        }
         buffer->pitch_[plane] = pitch[plane];
         buffer->offset_[plane] = offset[plane];
+        buffer->planeObject_[plane] = object[plane];
         const unsigned rows = plane && fourcc == VA_FOURCC_NV12 ? (height + 1u) / 2u : height;
-        end = std::max(end, std::size_t(offset[plane]) + std::size_t(pitch[plane]) * rows);
+        end[object[plane]] = std::max(end[object[plane]], std::size_t(offset[plane]) + std::size_t(pitch[plane]) * rows);
     }
-    if (size && size < end) { error = "imported surface is smaller than its planes"; return nullptr; }
-    buffer->size_ = size ? size : end;
-    buffer->fd_ = fd;
-    buffer->identity_ = descriptorIdentity(fd);
+    for (unsigned index = 0; index < objectCount; ++index)
+        if (objects[index].size && objects[index].size < end[index]) {
+            error = "imported surface is smaller than its planes";
+            return nullptr;
+        }
+    buffer->objects_ = objectCount;
+    buffer->size_ = objects[0].size ? objects[0].size : end[0];
+    buffer->fd_ = objects[0].fd;
+    buffer->identity_ = descriptorIdentity(objects[0].fd);
+    buffer->objectIdentity_[0] = buffer->identity_;
+    for (unsigned index = 1; index < objectCount; ++index) {
+        buffer->extraFd_[index - 1] = objects[index].fd;
+        buffer->extraSize_[index - 1] = objects[index].size ? objects[index].size : end[index];
+        buffer->objectIdentity_[index] = descriptorIdentity(objects[index].fd);
+    }
     return buffer;
 }
 
@@ -391,6 +425,48 @@ PixelBuffer::~PixelBuffer()
     if (readMap_) munmap(const_cast<std::uint8_t*>(readMap_), size_);
     if (bo_) gbm().boDestroy(bo_);
     if (fd_ >= 0) ::close(fd_);
+    for (unsigned index = 0; index < 3; ++index) {
+        if (extraMap_[index]) munmap(const_cast<std::uint8_t*>(extraMap_[index]), extraSize_[index]);
+        if (extraFd_[index] >= 0) ::close(extraFd_[index]);
+    }
+}
+
+const std::uint8_t* PixelBuffer::planeForRead(unsigned plane)
+{
+    if (plane >= planes_) return nullptr;
+    const unsigned object = planeObject_[plane];
+    const std::uint8_t* base = nullptr;
+    if (object == 0) {
+        base = mapForRead();
+    } else {
+        const unsigned slot = object - 1;
+        if (!extraMap_[slot] && extraFd_[slot] >= 0 && extraSize_[slot]) {
+            void* address = mmap(nullptr, extraSize_[slot], PROT_READ, MAP_SHARED, extraFd_[slot], 0);
+            if (address != MAP_FAILED) extraMap_[slot] = static_cast<const std::uint8_t*>(address);
+        }
+        base = extraMap_[slot];
+    }
+    return base ? base + offset_[plane] : nullptr;
+}
+
+PixelBuffer::CpuAccess::CpuAccess(const PixelBuffer& buffer, bool write) noexcept : write_(write)
+{
+    if (buffer.kind_ != StorageKind::imported) return;
+    const std::uint64_t flags = DMA_BUF_SYNC_START | (write ? DMA_BUF_SYNC_RW : DMA_BUF_SYNC_READ);
+    for (unsigned index = 0; index < buffer.objects_; ++index) {
+        const int fd = index == 0 ? buffer.fd_ : buffer.extraFd_[index - 1];
+        dma_buf_sync request {flags};
+        if (fd >= 0 && ioctl(fd, DMA_BUF_IOCTL_SYNC, &request) == 0) fd_[count_++] = fd;
+    }
+}
+
+PixelBuffer::CpuAccess::~CpuAccess()
+{
+    const std::uint64_t flags = DMA_BUF_SYNC_END | (write_ ? DMA_BUF_SYNC_RW : DMA_BUF_SYNC_READ);
+    for (unsigned index = 0; index < count_; ++index) {
+        dma_buf_sync request {flags};
+        ioctl(fd_[index], DMA_BUF_IOCTL_SYNC, &request);
+    }
 }
 
 int PixelBuffer::exportDescriptor() const
@@ -413,6 +489,7 @@ const std::uint8_t* PixelBuffer::mapForRead()
 std::uint8_t* PixelBuffer::map()
 {
     if (map_) return map_;
+    if (objects_ > 1) return nullptr;
     if (bo_ && boWidth_ && boHeight_) {
         auto& loader = gbm();
         if (loader.boMap && loader.boUnmap) {

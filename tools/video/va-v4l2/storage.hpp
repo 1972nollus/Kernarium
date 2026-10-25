@@ -29,6 +29,24 @@ public:
                                               unsigned planes, const std::uint32_t* pitch,
                                               const std::uint32_t* offset, std::uint64_t modifier,
                                               std::size_t size, std::string& error);
+
+    // A descriptor a client hands over and the extent it says the object has
+    // (zero when it names none).
+    struct Object {
+        int fd;
+        std::size_t size;
+    };
+    // The same for an image whose planes live in several objects, as a
+    // graphics stack's planar buffer does when it gives every plane a
+    // resource of its own. `object[plane]` names the object each plane is in.
+    // The descriptors are taken over only when the call succeeds. A buffer of
+    // several objects is for a reader of planes (planeForRead); it has no
+    // single mapping.
+    static std::unique_ptr<PixelBuffer> adoptObjects(const Object* objects, unsigned objectCount,
+                                                     std::uint32_t fourcc, unsigned width, unsigned height,
+                                                     unsigned planes, const std::uint32_t* pitch,
+                                                     const std::uint32_t* offset, const unsigned* object,
+                                                     std::uint64_t modifier, std::string& error);
     ~PixelBuffer();
 
     PixelBuffer(const PixelBuffer&) = delete;
@@ -48,7 +66,34 @@ public:
     // all an encoder needs of its input. Null when neither can be made.
     const std::uint8_t* mapForRead();
 
+    // Where one plane's first byte is, read-only, whichever object the plane
+    // lives in. Null when that object cannot be mapped.
+    const std::uint8_t* planeForRead(unsigned plane);
+
+    // CPU access to a buffer a client imported, bracketed the way the kernel
+    // wants dma-buf accesses bracketed (DMA_BUF_IOCTL_SYNC): from construction
+    // to destruction the buffer's contents are current for the CPU, and when
+    // the access wrote, the GPU sees what was written. A buffer the driver
+    // allocated for itself is not imported and the bracket does nothing; so
+    // does one whose descriptors are no dma-bufs. A failed sync is not an
+    // error, because a descriptor that is no dma-buf has nothing to sync.
+    class CpuAccess {
+    public:
+        CpuAccess(const PixelBuffer& buffer, bool write) noexcept;
+        ~CpuAccess();
+        CpuAccess(const CpuAccess&) = delete;
+        CpuAccess& operator=(const CpuAccess&) = delete;
+
+    private:
+        int fd_[4] {-1, -1, -1, -1};
+        unsigned count_ {};
+        bool write_ {};
+    };
+
     StorageKind kind() const noexcept { return kind_; }
+    unsigned objects() const noexcept { return objects_; }
+    // The identity of the n-th object, as descriptorIdentity() says it.
+    std::uint64_t objectIdentity(unsigned index) const noexcept { return objectIdentity_[index]; }
     std::uint32_t fourcc() const noexcept { return fourcc_; }
     unsigned width() const noexcept { return width_; }
     unsigned height() const noexcept { return height_; }
@@ -85,6 +130,14 @@ private:
     std::uint8_t* map_ {};
     // Set instead of map_ when only a read-only mapping could be made.
     const std::uint8_t* readMap_ {};
+    // The objects after the first of an image that lives in several; the
+    // first is fd_, size_ and readMap_.
+    unsigned objects_ {1};
+    unsigned planeObject_[4] {};
+    int extraFd_[3] {-1, -1, -1};
+    std::size_t extraSize_[3] {};
+    const std::uint8_t* extraMap_[3] {};
+    std::uint64_t objectIdentity_[4] {};
     void* bo_ {};
     // A GBM buffer is mapped through GBM itself: the descriptor it exports
     // need not be writable, and mapping that descriptor then fails.
