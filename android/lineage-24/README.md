@@ -221,6 +221,13 @@ An application would see the level through the API and an empty property.
 the value is public, and the target-files verifier requires the rule in the
 packaged vendor policy.
 
+The example audio service is two processes, the core HAL and the effects HAL, in
+one SELinux domain, and the core HAL transacts with the effects HAL's binder.
+The platform policy gives a HAL domain no binder call to itself, so every stream
+open was denied (the audit rate limit hid how many).
+`overlay/sepolicy/vendor/hal_audio_default.te` allows the call, and the
+target-files verifier requires the rule.
+
 MediaProvider's FUSE daemon kept its state on the stack of the session thread,
 while the Java side keeps calling into the daemon until that thread deletes it.
 A public volume that unmounts right after it mounts reached the volume's

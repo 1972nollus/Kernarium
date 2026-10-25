@@ -438,6 +438,13 @@ VENDOR_SPL_APP_READ = re.compile(
 # The image's inode count, which the first-boot resize keeps per block group
 # (BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT in overlay/BoardConfig.mk).
 USERDATA_EXTFS_INODE_COUNT = "8192"
+# The two example audio HAL processes share one domain and call each other's binder
+# (overlay/sepolicy/vendor/hal_audio_default.te).
+AUDIO_HAL_SELF_BINDER = re.compile(
+    rb"^\(allow hal_audio_default(?:_[0-9]+)? hal_audio_default(?:_[0-9]+)? "
+    rb"\(binder \([^)]*\bcall\b[^)]*\)\)\)$",
+    re.MULTILINE,
+)
 # adbd reports its host in this property and init holds a userspace wakelock while
 # it is 1 (adbd's p0011 topic, overlay/config/init.vendor.rc,
 # overlay/sepolicy/system_ext/private). The property is system-owned: adbd is a core
@@ -842,6 +849,8 @@ def check_kernel_policy(
     # system_server report to them (overlay/sepolicy/vendor/appdomain.te).
     if not VENDOR_SPL_APP_READ.search(vendor_policy):
         fail("vendor policy does not let applications read vendor_security_patch_level_prop")
+    if not AUDIO_HAL_SELF_BINDER.search(vendor_policy):
+        fail("vendor policy does not let the audio HAL processes call each other's binder")
     check_property_writers(
         read_small(archive, infos["SYSTEM/etc/selinux/plat_sepolicy.cil"]),
         vendor_policy,

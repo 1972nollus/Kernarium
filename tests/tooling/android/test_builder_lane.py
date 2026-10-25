@@ -407,6 +407,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_adb_prop_context: bool = False,
                           missing_adb_prop_policy: bool = False,
                           core_sets_vendor_prop: bool = False,
+                          missing_audio_binder_policy: bool = False,
                           system_ext_core_sets_vendor_prop: bool = False,
                           adb_prop_not_system: bool = False,
                           missing_virtio_console: bool = False,
@@ -765,6 +766,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "(allow vendor_init_202604 vendor_mesa_prop (property_service (set)))\n"
                     "(allow init virtual_face_hal_prop_202604 (property_service (set)))\n"
                     + (
+                        ""
+                        if missing_audio_binder_policy
+                        else "(allow hal_audio_default hal_audio_default (binder (call transfer)))\n"
+                    )
+                    + (
                         "(allow adbd_202604 virtual_face_hal_prop_202604 (property_service (set)))\n"
                         if core_sets_vendor_prop
                         else ""
@@ -1045,6 +1051,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("adb-prop-context", {"missing_adb_prop_context": True}),
             ("adb-prop-policy", {"missing_adb_prop_policy": True}),
             ("core-sets-vendor-prop", {"core_sets_vendor_prop": True}),
+            ("audio-binder-policy", {"missing_audio_binder_policy": True}),
             ("system-ext-core-sets-vendor-prop", {"system_ext_core_sets_vendor_prop": True}),
             ("adb-prop-not-system", {"adb_prop_not_system": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
@@ -1120,6 +1127,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "do not label sys.kernarium.adb.host_connected"),
             ("adb-prop-policy-cause", {"missing_adb_prop_policy": True},
              "does not let adbd set sys.kernarium.adb.host_connected"),
+            ("audio-binder-policy-cause", {"missing_audio_binder_policy": True},
+             "audio HAL processes call each other's binder"),
             ("core-sets-vendor-prop-cause", {"core_sets_vendor_prop": True},
              "lets the core domain adbd set the vendor property type virtual_face_hal_prop"),
             ("system-ext-core-sets-vendor-prop-cause", {"system_ext_core_sets_vendor_prop": True},
