@@ -138,6 +138,12 @@ alone: the context error it reports is cleared with it, so a context that only
 transfers, as Android's gralloc mapper does to lock a buffer for reading, keeps
 working after one refusal.
 
+A texture a guest context created and wrapped in a blob, as Android's gralloc
+does for every GPU-only buffer, has no guest pages. The guest reaches its pixels
+through a staging buffer: a copy transfer moves them between the texture and
+the staging buffer's guest storage. The renderer requires that storage of the
+staging buffer, whichever way the pixels move, and asks nothing of the texture.
+
 Pointer semantics are selected by the product launcher. Android native and VNC
 input is exposed as one direct touch contact with absolute coordinates; hover,
 auxiliary buttons, and wheel events are suppressed, and coordinates are sent

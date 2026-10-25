@@ -186,6 +186,16 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # A blob texture has no guest pages, so a guest reads and writes it through
+    # a staging buffer: the copy transfer must check the staging buffer for
+    # guest storage in both directions, not the texture.
+    uml_add_gpu_unit_test(gpu-blob-copy-transfer
+        uml_gpu_blob_copy_transfer_tests
+        host_gl_blob_copy_transfer_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries}
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY)
+
     # A layout the guest names has to fit the host storage behind it.
     uml_add_gpu_unit_test(gpu-import-bounds
         uml_gpu_import_bounds_tests host_gl_import_bounds_tests.mm
@@ -250,7 +260,7 @@ if(TARGET uml_gpu_service)
 
     # A host without a usable GL stack or renderer skips these with status 77.
     set_tests_properties(
-        gpu-transfer-context-error gpu-import-bounds
+        gpu-transfer-context-error gpu-blob-copy-transfer gpu-import-bounds
         gpu-resource-metal-texture gpu-cross-context-readback
         gpu-depth-format-advertisement gpu-line-loop-statistics
         gpu-statistics-availability
