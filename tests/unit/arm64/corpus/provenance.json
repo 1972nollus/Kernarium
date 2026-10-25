@@ -86,17 +86,17 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 148750,
+  "cases": 150138,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 85,
     "illegal-instruction": 31116,
     "instruction-budget": 129,
-    "memory-fault": 6233,
-    "system-call": 111112
+    "memory-fault": 6758,
+    "system-call": 111975
   },
   "cases_by_profile": {
-    "4k": 148750
+    "4k": 150138
   },
   "coverage": {
     "entries": 2291,
@@ -183,12 +183,12 @@
     "script": "tools/arm64-tests/lse2-alignment-corpus.py",
     "sha256": "6e18fe890e0c5a36b06fe731f7db78d53e6ae114cdb011bee87ce9e0228bc631"
   },
-  "memory_blobs": 1104,
-  "pack_bytes": 11419585,
-  "pack_sha256": "1676d7c99ba3d0735a062ad89c4c59ca9de69fa9a6239e2367028b91b49f4b78",
+  "memory_blobs": 1105,
+  "pack_bytes": 11436331,
+  "pack_sha256": "a9d0fca27de4448871a8e5a399eb76e20328b7eefdf2606675d3c69fedde2f6d",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
-  "programs": 122549,
-  "records": 928,
+  "programs": 123377,
+  "records": 929,
   "retired_16k": {
     "carried_cases": 603,
     "dropped_cases": 27562,
@@ -235,8 +235,15 @@
     }
   },
   "state_minimization": {
-    "full": 34191,
+    "full": 35579,
     "narrow": 114559
+  },
+  "tbi_memory": {
+    "cases": 1388,
+    "fault_cases": 502,
+    "script": "tools/arm64-tests/tbi-memory-corpus.py",
+    "sha256": "a375c920dd7980431dac64e18ea8f0d0d16eb5ccc0c46059421f1272f80cafab",
+    "tbi_off_cases": 23
   },
   "validator_cases": {
     "host-counter-frequency/v1": 9,

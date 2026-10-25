@@ -743,6 +743,15 @@ SME profile assumed on any host. The unit tests `arm64-sm0-vector-length`,
 `arm64-gadget-sme`, `arm64-jit-sme-control` and `arm64-jit-sme-codegen` check
 the family against a model of the pseudocode and run it in each engine.
 
+The `arm64-tbi-memory` record holds the atomic, compare-and-swap, ordered,
+RCpc and exclusive forms reaching memory through a pointer tagged in its top
+byte, with the virtual CPU's top-byte ignore on, and the controls with it off.
+Its expectations come from the architecture's pseudocode, it needs no host
+feature, and `arm64-instruction-corpus-tbi-memory` re-derives it. The
+`arm64-tlb` unit test pins that an entry filled through any tag goes with its
+page, and the `guest_tagged_*_loop.S` probes time the form and the aliasing a
+tag could cause.
+
 The `arm64-floating-trap-native` records, and the outcomes of the
 register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
 were observed on the M1, which traps floating-point exceptions natively; any

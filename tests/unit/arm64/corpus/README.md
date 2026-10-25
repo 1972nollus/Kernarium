@@ -295,7 +295,9 @@ records, and appends them, so the steps run in one order, followed by one
 `--repack`: [LSE2 alignment](#lse2-alignment-cases),
 [absent features](#absent-feature-cases), [native SME](#native-sme-cases),
 [native floating-point trap](#native-floating-point-trap-cases),
-[SM = 0 family](#sm--0-family-cases), [16 KiB retirement](#16-kib-retirement),
+[SM = 0 family](#sm--0-family-cases),
+[top-byte-ignore memory](#top-byte-ignore-memory-cases),
+[16 KiB retirement](#16-kib-retirement),
 and [invalid-encoding bits](#invalid-encoding-bits). A
 hardware step's `--carry PACK` copies the pack's records for a request that
 is unchanged, so a regeneration that changes no request needs no host. The
@@ -523,7 +525,7 @@ python3 -B tools/arm64-tests/floating-trap-native-corpus.py native.jsonl \
   trap.jsonl --response trap.response --response trap.response2
 ```
 
-The SM = 0 family step below follows on `trap.jsonl` before the repack.
+The SM = 0 family step below follows on `trap.jsonl`.
 
 The cases that need FEAT_AFP or FEAT_BF16, which the M1 lacks, form a second
 request, which `--afp-request` writes and an FEAT_AFP and FEAT_BF16 host, the
@@ -595,20 +597,80 @@ python3 -B tools/arm64-tests/sm0-vl-corpus.py trap.jsonl sm0-vl.jsonl
 `arm64-instruction-corpus-sm0-vl` tooling test re-derives the record and checks
 the model against hand-written values.
 
+## Top-byte-ignore memory cases
+
+With top-byte ignore (TBI) a data address's top byte is not part of the
+address: a pointer tagged in bits 63:56 reaches the byte its low 56 bits name,
+a fault reports that untagged address, and the exclusive monitor, which guards
+a location and not a pointer, does not see the tag. Android runs every process
+this way, and the virtual CPU does wherever the host passes
+`--guest-top-byte-ignore` (`CpuState::tbi_enabled`); without it a tagged
+pointer is an address outside the guest's range and faults at that address.
+[`tools/arm64-tests/tbi-memory-corpus.py`](../../../../tools/arm64-tests/tbi-memory-corpus.py)
+writes the one `arm64-tbi-memory` record, whose expectations come from the
+architecture's pseudocode, written independently of the engines. Every case
+reaches memory through a tagged base register, with tag bytes from a fixed
+rotation, and each family is a section of the script with functions of its
+own:
+
+- atomic read-modify-write: LDADD, LDCLR, LDEOR, LDSET, LDSMAX, LDSMIN, LDUMAX,
+  LDUMIN and SWP in every width and ordering, with the source and the result
+  each a register or the zero register, and the misaligned access across a
+  16-byte block, which faults on every host with or without FEAT_LSE2;
+- CAS and CASP, matching and not, in every width, ordering and register mode,
+  and across a block;
+- LDAR and STLR, LDAPR, LDAPUR with every extension and offsets of both signs,
+  and STLUR, completing and across a block;
+- LDXR, LDAXR, STXR, STLXR and the pair forms, paired so that every load form
+  and store form is some program's, the monitor across pointers that differ
+  only in the tag or in having none, a store-exclusive with no load before it,
+  and the forms across a block;
+- translation faults of a tagged access to an unmapped page and to a read-only
+  page, which report the untagged address, and the controls with TBI off, where
+  the same pointer faults at the pointer, aligned or across a block.
+
+An atomic, ordered, RCpc or exclusive access that crosses a 16-byte block
+faults before it translates, so these cases pin the fault address the gadget
+engine reports for a misaligned tagged access: the untagged address, as a
+translation fault reports. A store-exclusive to an unmapped or read-only page
+is not here, because the architecture leaves it IMPLEMENTATION DEFINED whether
+the abort or the failed monitor check comes first. A completed access cannot
+show which TLB key an engine filled; the `arm64-tlb` test and the
+`guest_tagged_*_loop.S` probes
+([performance tools](../../perf/README.md#focused-assembly-probes)) own that.
+
+The step needs no hardware and appends after the SM = 0 family step. It
+reruns after any change to the script, on the previous step's dump or the
+pack's own `--dump`:
+
+```sh
+python3 -B tools/arm64-tests/tbi-memory-corpus.py sm0-vl.jsonl tbi-memory.jsonl
+```
+
+Its records hold 4 KiB only, so the retirement step keeps them all. Run on the
+pack's own dump, which is already retired, go straight to the
+[invalid-encoding step](#invalid-encoding-bits): retiring again would replace
+the recorded retirement counts with zeros.
+
+`provenance.json` records the script's hash and the case counts under
+`tbi_memory`; `build-unit-corpus.py --check` verifies the hash, and the
+`arm64-instruction-corpus-tbi-memory` tooling test re-derives the record and
+checks the model against hand-written values.
+
 ## 16 KiB retirement
 
 The guest has 4 KiB pages only, but the producer export ran both page
 profiles. [`tools/arm64-tests/retire-16k-corpus.py`](../../../../tools/arm64-tests/retire-16k-corpus.py)
-rewrites the SM = 0 step's dump: a record for both profiles becomes a record
-for 4 KiB, and a record for 16 KiB alone is deleted. A deleted case whose
-entry word no 4 KiB case executes is relocated into the 4 KiB code page and
-carried, so the pack's encodings do not shrink, only its page-geometry cases;
-the script's docstring owns the placement rules, and the runner executes a
-carried case like any other. The step needs no hardware and appends before the
-invalid-encoding step:
+rewrites the top-byte-ignore memory step's dump: a record for both profiles
+becomes a record for 4 KiB, and a record for 16 KiB alone is deleted. A
+deleted case whose entry word no 4 KiB case executes is relocated into the
+4 KiB code page and carried, so the pack's encodings do not shrink, only its
+page-geometry cases; the script's docstring owns the placement rules, and the
+runner executes a carried case like any other. The step needs no hardware and
+appends before the invalid-encoding step:
 
 ```sh
-python3 -B tools/arm64-tests/retire-16k-corpus.py sm0-vl.jsonl retired.jsonl
+python3 -B tools/arm64-tests/retire-16k-corpus.py tbi-memory.jsonl retired.jsonl
 ```
 
 `provenance.json` records the script hash and the counts under `retired_16k`.
