@@ -53,9 +53,16 @@ null beyond that, and a frame dropped unsubmitted returns its slot.
   its presentation time is below one already returned. Output is in decode
   order. The longest B-frame run cannot be limited; discovery reports the most
   it saw, and a stream is promised no more.
-- **Levels.** An explicit H.264 level is honored when the stream fits it and
-  VideoToolbox names it; otherwise the encoder chooses (a level below what the
-  stream needs makes every frame fail). An HEVC level is only a ceiling.
+- **Levels.** A stream states the level it was asked for, or the lowest level
+  its picture size, frame rate and bit rate fit if that is higher (H.264
+  Table A-1; HEVC Tables A.8 and A.9, Main tier). VideoToolbox names few levels
+  and weighs no bit rate (a CIF stream at 832 kbit/s comes out as level 1.3,
+  whose limit is 768), so the encoder rewrites the level in the parameter sets
+  (the SPS, and the VPS of HEVC) when VideoToolbox wrote a lower one. A level
+  only ever rises, which keeps the stream conformant. A level VideoToolbox does
+  name, and the stream fits, is requested from it as well; one it refuses for
+  the picture's shape (Baseline 1.3 for a picture 704 samples high) is left to
+  its own choice.
 - **Sizes** are even for video; JPEG keeps odd sizes exactly.
 
 ### Input layouts and colour
@@ -63,8 +70,8 @@ null beyond that, and a frame dropped unsubmitted returns its slot.
 A layout is listed for a profile only when an encode from it came out right.
 HEVC Main 10 takes P010, the 10-bit input that keeps its precision, as well as
 the 8-bit layouts, which the encoder widens. `bgra` and `rgba` are offered
-together, as one layout in two byte orders: `bgra` is CoreVideo 32BGRA, and `rgba` the memory order R, G, B, A
-of Android's AB24 (DRM ABGR8888) surfaces.
+together, as one layout in two byte orders: `bgra` is CoreVideo 32BGRA, and
+`rgba` the memory order R, G, B, A of Android's AB24 (DRM ABGR8888) surfaces.
 
 CoreVideo has no 32RGBA pixel format: a buffer cannot be created in it, from a
 pool or around an IOSurface, so VideoToolbox cannot take it natively. An `rgba`

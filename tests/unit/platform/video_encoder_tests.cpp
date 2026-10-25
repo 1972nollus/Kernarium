@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -1078,6 +1079,22 @@ void levels()
             require(sps.has_value(), "an SPS");
             return sps->levelIdc;
         };
+        // A named level, a level VideoToolbox has no name for and one it refuses for the picture's shape.
+        const auto stateOf = [&](std::uint32_t level, std::uint32_t width, std::uint32_t height, std::uint32_t kilobits,
+                                 std::uint32_t framesPerSecond) {
+            auto settings = baseSettings(h264Profile, width, height);
+            settings.rateControl = VideoRateControl::constantBitrate;
+            settings.bitrate = std::uint64_t(kilobits) * 1000;
+            settings.frameRateNumerator = framesPerSecond;
+            settings.level = level;
+            const auto encoded = encode(settings, 6, busySource(width, height), "stated level");
+            expectOrdered(encoded.output, 6);
+            const auto sps = firstH264Sps(*encoded.output.pictures().front());
+            require(sps.has_value(), "an SPS");
+            if (hardwareDecodes(h264Profile))
+                require(meanLumaPsnr(encoded.sources, decode(VideoCodec::h264, encoded.output)) >= 12.0, "and the stream decodes");
+            return sps->levelIdc;
+        };
         const auto automatic = levelOf(0, 1280, 720);
         std::printf("  %s: automatic level at 720p30 is %u\n", profileName(h264Profile), automatic);
         require(automatic >= 31 && automatic <= entry->maximumLevel, "an automatic level holds 720p30");
@@ -1086,6 +1103,16 @@ void levels()
             require(levelOf(10, 1280, 720) >= 31, "a level the stream does not fit is raised to one it fits");
             if (entry->maximumLevel >= 52 && h264Profile != VideoEncodeProfile::h264Baseline)
                 require(levelOf(52, 1280, 720) == 52, "the highest level is selectable");
+            // VideoToolbox names no level between 1.3 and 3.0 and weighs no bit rate.
+            require(stateOf(20, 352, 288, 832, 30) == 20, "a level VideoToolbox does not name is stated");
+            require(stateOf(21, 176, 144, 200, 15) == 21, "even one far above what the stream needs");
+            require(stateOf(0, 352, 288, 832, 30) >= (h264Profile == VideoEncodeProfile::h264High ? 13u : 20u),
+                    "an automatic level holds the bit rate");
+            // Baseline 1.3 is refused for a picture 704 samples high.
+            const auto tall = stateOf(13, 144, 704, 512, 30);
+            std::printf("  %s: a 144x704 stream asked to state level 1.3 states %u\n", profileName(h264Profile), tall);
+            require(tall >= 13, "a tall picture is encoded and states at least the level asked for");
+            require(stateOf(0, 704, 144, 512, 30) >= 13, "and so is a wide one");
         }
     }
     if (hevcCapability) {
@@ -1103,6 +1130,26 @@ void levels()
                 if (const auto sps = bits::parseHevcSps(unit)) level = sps->levelIdc;
             std::printf("  %s: level_idc %u for a request of 120\n", profileName(entry.profile), level);
             require(level >= 90 && level <= entry.maximumLevel, "an HEVC stream states a level within the verified maximum");
+            if (entry.levelSelectable) {
+                require(level == 120, "the level asked for is the level stated");
+                std::uint32_t vpsLevel = 0;
+                for (const auto unit : bits::splitAnnexB(encoded.output.pictures().front()->bytes))
+                    if (const auto vps = bits::hevcLevel(unit); vps && bits::hevcNalType(unit) == bits::hevcNalVps) vpsLevel = *vps;
+                require(vpsLevel == level, "in the VPS as well");
+                // And never less than the stream needs, which VideoToolbox's choice may not be.
+                auto busy = settings;
+                busy.level = 0;
+                busy.bitrate = 20'000'000;
+                busy.rateControl = VideoRateControl::constantBitrate;
+                const auto automatic = encode(busy, 4, [&](unsigned index) {
+                    const Picture eight = busyPicture(1280, 720, index);
+                    return entry.inputs.front() == RawVideoLayout::p010 ? widen(eight) : eight;
+                }, "hevc automatic level");
+                std::uint32_t chosen = 0;
+                for (const auto unit : bits::splitAnnexB(automatic.output.pictures().front()->bytes))
+                    if (const auto sps = bits::parseHevcSps(unit)) chosen = sps->levelIdc;
+                require(chosen >= 123, "20 Mbit/s at 720p30 needs level 4.1 in the Main tier");
+            }
         }
     }
 

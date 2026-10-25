@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -310,6 +311,75 @@ Unit syntheticSps(bool scalingList, bool vui)
     return w.sps();
 }
 
+// Raising a level changes the level and nothing else.
+void levels()
+{
+    // H.264 on the checked-in streams.
+    for (const char* name : {"h264-baseline", "h264-main", "h264-high"}) {
+        const auto stream = read(std::string(name) + ".bin");
+        for (const auto unit : splitAnnexB(stream)) {
+            if (h264NalType(unit) != h264NalSps) continue;
+            Unit sps(unit.begin(), unit.end());
+            const auto level = h264Level(sps);
+            require(level.has_value() && *level == sps[3], "the level is level_idc");
+            Unit unchanged = sps;
+            require(!raiseH264Level(unchanged, *level) && unchanged == sps, "a level already stated is left alone");
+            require(!raiseH264Level(unchanged, *level - 1) && unchanged == sps, "a lower level is not stated");
+            require(raiseH264Level(sps, 52) && h264Level(sps) == std::optional<unsigned>(52), "a higher level is stated");
+            Unit rest = sps, was(unit.begin(), unit.end());
+            rest[3] = was[3];
+            require(rest == was, "and nothing else changed");
+        }
+    }
+    // Level 1b is written as level 1.1 with constraint_set3_flag by Baseline, Main and Extended, and as 9 by the rest.
+    Unit oneB {0x67, 66, 0x10, 11, 0xaa};
+    require(h264Level(oneB) == std::optional<unsigned>(9), "Baseline level 1.1 with constraint_set3_flag is level 1b");
+    Unit high {0x67, 100, 0x10, 11, 0xaa};
+    require(h264Level(high) == std::optional<unsigned>(11), "the flag means something else in High");
+    require(raiseH264Level(oneB, 13) && oneB == (Unit {0x67, 66, 0x00, 13, 0xaa}), "raising level 1b clears the flag");
+    Unit highNine {0x67, 100, 0x00, 9, 0xaa};
+    require(h264Level(highNine) == std::optional<unsigned>(9) && raiseH264Level(highNine, 10) && highNine[3] == 10, "High level 1b");
+    require(!h264Level(Unit {0x68, 1, 2, 3}) && !raiseH264Level(oneB = Unit {0x68, 1, 2, 3}, 30), "only an SPS has a level");
+
+    // HEVC: the VPS and SPS of the checked-in streams state the same level, and a raised one reads back.
+    for (const char* name : {"hevc-main", "hevc-main10"}) {
+        const auto stream = read(std::string(name) + ".bin");
+        std::optional<unsigned> vpsLevel, spsLevel;
+        for (const auto unit : splitAnnexB(stream)) {
+            const unsigned type = hevcNalType(unit);
+            if (type != hevcNalVps && type != hevcNalSps) continue;
+            Unit nal(unit.begin(), unit.end());
+            const auto level = hevcLevel(nal);
+            require(level.has_value(), "the level can be read");
+            (type == hevcNalVps ? vpsLevel : spsLevel) = level;
+            if (type == hevcNalSps) require(parseHevcSps(nal)->levelIdc == *level, "the same level as the SPS reader finds");
+            Unit unchanged = nal;
+            require(!raiseHevcLevel(unchanged, *level) && unchanged == nal, "a level already stated is left alone");
+            Unit raised = nal;
+            require(raiseHevcLevel(raised, 156) && hevcLevel(raised) == std::optional<unsigned>(156), "a higher level is stated");
+            auto before = rbsp(nal, 2), after = rbsp(raised, 2);
+            require(before.size() == after.size(), "the payload keeps its size");
+            for (std::size_t i = 0; i < before.size(); ++i)
+                require(before[i] == after[i] || i == *hevcLevelOffset(nal), "and only the level differs");
+            // The unit still holds together as a unit of a stream.
+            std::vector<std::uint8_t> annexB;
+            appendAnnexB(annexB, raised.data(), raised.size());
+            appendAnnexB(annexB, raised.data(), raised.size());
+            const auto units = splitAnnexB(annexB);
+            require(units.size() == 2 && Unit(units[0].begin(), units[0].end()) == raised, "with no start code inside it");
+        }
+        require(vpsLevel && spsLevel && *vpsLevel == *spsLevel, "the VPS and the SPS state one level");
+    }
+    // The profile_tier_level of a real SPS is full of zeros, so the level sits among emulation prevention bytes.
+    Unit synthetic = syntheticSps(false, true);
+    const auto before = parseHevcSpsFormat(synthetic);
+    require(raiseHevcLevel(synthetic, 93) && hevcLevel(synthetic) == std::optional<unsigned>(93), "a synthetic SPS takes a level");
+    const auto after = parseHevcSpsFormat(synthetic);
+    require(before && after && after->primaries == before->primaries && after->transfer == before->transfer &&
+            after->bitDepthLuma == before->bitDepthLuma, "and still reads to its VUI");
+    require(!hevcLevel(Unit {0x44, 0x01, 1, 2, 3, 4}) && !raiseHevcLevel(synthetic = Unit {0x44, 0x01, 1, 2, 3, 4}, 93), "only a VPS or SPS has a level");
+}
+
 void hevcSpsFormat()
 {
     const auto unit = syntheticSps(false, true);
@@ -343,6 +413,7 @@ int main(int argc, char** argv)
         bitReading();
         seiMessages();
         hevcSpsFormat();
+        levels();
         fixtures();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

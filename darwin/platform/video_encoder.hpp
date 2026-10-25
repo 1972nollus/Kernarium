@@ -78,8 +78,9 @@ struct VideoEncodeProfileCapability {
     // Highest level this host can be asked for, as level_idc (H.264, e.g. 52)
     // or general_level_idc (HEVC, e.g. 186). Zero for JPEG.
     std::uint32_t maximumLevel {};
-    // False when the encoder chooses the level itself and a requested level
-    // is only a ceiling (HEVC on VideoToolbox).
+    // True when a stream states the level it was asked for, or the lowest one
+    // its picture size, frame rate and bit rate need if that is higher. False
+    // when the encoder chooses and a requested level is only a ceiling.
     bool levelSelectable {};
 };
 
@@ -114,7 +115,7 @@ struct VideoEncodeCapability {
 struct VideoEncodeSettings {
     VideoCodec codec {VideoCodec::h264};
     VideoEncodeProfile profile {VideoEncodeProfile::h264High};
-    std::uint32_t level {};  // as maximumLevel; zero lets the encoder choose
+    std::uint32_t level {};  // as maximumLevel; the stream states at least this; zero: as low as it fits
     std::uint32_t width {};
     std::uint32_t height {};
     RawVideoLayout input {RawVideoLayout::nv12};
