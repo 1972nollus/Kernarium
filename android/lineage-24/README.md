@@ -340,6 +340,18 @@ the product's vendor init script copies `androidboot.hardware.egl`,
 vendor property has already set. The target-files verifier therefore refuses a
 vendor `ro.hardware.egl`, `ro.hardware.vulkan` or `ro.hardware.gralloc`.
 
+The command line also sets `androidboot.hw_timeout_multiplier=5`, which the
+vendor init script copies to `ro.hw_timeout_multiplier`. The framework scales
+its ANR and watchdog timeouts by it (`Build.HW_TIMEOUT_MULTIPLIER`), so the
+slower engines, the gadget interpreters on the Mac and on the iPad, do not raise
+ANRs that a phone-speed device would not. Cuttlefish uses 3 on its native
+architecture and 50 when it emulates another one. Two CTS cases assume 3 or
+less: `JobSchedulingTest#testAnr_onStartJob` and `#testAnr_onStopJob` wait 30 s
+for the ANR that the job scheduler raises 8 s times the multiplier after an
+unanswered `onStartJob` or `onStopJob`, which is 40 s here (24 s at 3, where
+both pass). They are a timing deviation of the product, not a defect, and the
+multiplier stays.
+
 That script replaces the inherited Cuttlefish graphics init script. It expands
 only `androidboot` properties the tracked command line sets, because a copy
 from a missing one fails at every boot; the goldfish composer mode and the
