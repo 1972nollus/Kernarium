@@ -11,6 +11,13 @@ uml_add_unit_test(NAME platform-video-decoder
     COMMAND uml_video_decoder_tests ${PROJECT_SOURCE_DIR}/tests/support/video
     LABELS video TIMEOUT 120)
 
+# The decoder's HEVC header readers and output ordering, which need no hardware.
+add_executable(uml_hevc_stream_tests hevc_stream_tests.cpp)
+target_link_libraries(uml_hevc_stream_tests PRIVATE UML::VideoDecoder)
+uml_add_unit_test(NAME platform-hevc-stream
+    COMMAND uml_hevc_stream_tests ${PROJECT_SOURCE_DIR}/tests/support/video
+    LABELS video)
+
 # The video encoder backend's Annex B and parameter-set readers, which need no
 # hardware.
 add_executable(uml_video_encoder_bitstream_tests video_encoder_bitstream_tests.cpp)

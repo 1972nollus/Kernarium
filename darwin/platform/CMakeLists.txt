@@ -18,7 +18,7 @@ uml_declare_architecture_target(uml_descriptor platform)
 target_include_directories(uml_descriptor INTERFACE
     ${PROJECT_SOURCE_DIR}/darwin)
 
-add_library(uml_video_decoder STATIC apple/video_decoder.mm)
+add_library(uml_video_decoder STATIC apple/video_decoder.mm apple/hevc_stream.cpp)
 add_library(UML::VideoDecoder ALIAS uml_video_decoder)
 uml_declare_architecture_target(uml_video_decoder platform)
 target_include_directories(uml_video_decoder PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

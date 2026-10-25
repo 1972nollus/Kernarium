@@ -81,6 +81,8 @@ class BitReader {
 public:
     explicit BitReader(Bytes bytes) : bytes_(bytes) {}
     [[nodiscard]] bool ok() const noexcept { return !overrun_; }
+    // Bits consumed so far.
+    [[nodiscard]] std::size_t position() const noexcept { return position_; }
     std::uint32_t bits(unsigned count)
     {
         std::uint32_t value = 0;
