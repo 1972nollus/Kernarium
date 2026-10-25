@@ -34,3 +34,11 @@ CONFIG_POSIX_AUX_CLOCKS=y
 # service to hold it awake. The Android product builds the file in (see
 # android.fragment).
 # CONFIG_PM_WAKELOCKS is not set
+
+# A Linux guest's usermode helpers are its distribution's: systemd-coredump
+# receives core dumps through a piped core_pattern, and the keyring, NFS
+# idmapper and bridge STP upcalls run /sbin/request-key and /sbin/bridge-stp.
+# A static helper path would stop all of them from running. The Android
+# product, which has none of these, gives every helper an empty path (see
+# android.fragment).
+# CONFIG_STATIC_USERMODEHELPER is not set

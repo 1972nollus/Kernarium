@@ -125,6 +125,11 @@ The Linux overlay holds only what differs from the Android product:
   stay off. Sxmo, which postmarketOS guests run, suspends the guest on its own
   whenever that file exists, and a desktop guest has no wakelock service to
   hold it awake. The Android product turns it on (see below).
+- No static usermode helper: `CONFIG_STATIC_USERMODEHELPER` stays off.
+  systemd-coredump is a piped `core_pattern`, and the NFS idmapper's
+  `/sbin/request-key` and `/sbin/bridge-stp` are upcalls, so a static path
+  would turn each into a silent no-op. The Android product turns it on (see
+  below).
 
 Every product has IPv4 multicast, which Kconfig leaves off and mDNS and SSDP
 discovery need, and SafeSetID, which restricts only the IDs a policy written
@@ -675,6 +680,14 @@ The overlay holds only what differs from the Linux product:
   the overlay leaves both out, and SCTP too, which Android has no use for. The
   forbidden list also names RDS, so that no overlay brings back its
   listener.
+- `CONFIG_STATIC_USERMODEHELPER` with an empty
+  `CONFIG_STATIC_USERMODEHELPER_PATH`, which the CTS requires. Every
+  `call_usermodehelper()` then returns without starting a program, so a
+  piped `core_pattern`, a key upcall or an orderly poweroff cannot make the
+  kernel run a program as root. Android's tombstones come from debuggerd's
+  signal handler and its boot needs no helper; a piped `core_pattern` logs
+  "Core dump to |... disabled". The Linux product keeps the helpers its
+  distribution uses (see above).
 - Auxiliary POSIX clocks are off, as in GKI. With them, clock IDs 16 to 23
   name the auxiliary clocks, which have no timers, so `timer_create()` on
   clock 16 fails with `EOPNOTSUPP` where Bionic's `time.timer_create_EINVAL`
