@@ -19,7 +19,8 @@ benchmark, its own loading time and score), plus the emulator CPU time spent.
 Taps are in guest display pixels, so a scenario belongs to one display size.
 
 The tool does not serialize guests: run one guest per measurement.
-Each record carries the guest's vCPU count (--cpus, default 4). Environment
+Each record carries the guest's vCPU count (--cpus, default 4) and execution
+engine (--engine, default gadgets). Environment
 for one arm of an A/B goes in with --env, and --guest-samples profiles the
 whole boot with DARWIN_UML_GUEST_SAMPLES.
 """
@@ -214,7 +215,8 @@ class Guest:
                    "--adb-port", str(arguments.adb_port),
                    "--adb-timeout", "900",
                    "--cpus", str(arguments.cpus),
-                   "--memory", arguments.memory]
+                   "--memory", arguments.memory,
+                   "--engine", arguments.engine]
         self.process = subprocess.Popen(
             command, cwd=REPOSITORY, env=environment, stdin=subprocess.DEVNULL,
             stdout=self.console, stderr=subprocess.STDOUT)
@@ -425,19 +427,29 @@ def run(arguments: argparse.Namespace) -> int:
     shutil.copyfile(release_id, work.with_name(work.name + ".release-id"))
 
     guest = Guest(arguments, environment)
-    booted = guest.wait_booted(time.monotonic() + 1200)
+    boot_started = time.monotonic()
+    booted = guest.wait_booted(boot_started + 1200)
+    boot_seconds = round(time.monotonic() - boot_started, 1)
     emulator_pid = guest.emulator_pid()
     status = None
     try:
         if not booted or emulator_pid is None:
             print(f"guest did not boot (pid {emulator_pid})", file=sys.stderr)
             return 1
+        # The emulator's CPU seconds at boot completion measure the boot's
+        # translation and execution work whatever the host load.
+        boot_cpu = cpu_seconds(subprocess.run(
+            ["ps", "-o", "time=", "-p", str(emulator_pid)],
+            capture_output=True, text=True).stdout)
         time.sleep(arguments.settle)
         installed = guest.shell("pm list packages")
         for round_index in range(arguments.launches):
             for app in selected:
                 record = {"label": arguments.label, "app": app.name,
-                          "round": round_index, "cpus": arguments.cpus}
+                          "round": round_index, "cpus": arguments.cpus,
+                          "engine": arguments.engine,
+                          "boot_seconds": boot_seconds,
+                          "boot_emulator_cpu": boot_cpu}
                 if f"package:{app.package}\n" not in installed + "\n":
                     record.update(seconds=None, missing=True)
                 else:
@@ -472,6 +484,8 @@ def main() -> int:
     parser.add_argument("--env", action="append", default=[])
     parser.add_argument("--guest-samples")
     parser.add_argument("--cpus", type=int, default=4)
+    parser.add_argument("--engine", choices=("gadgets", "jit"),
+                        default="gadgets")
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--settle", type=int, default=45)
     parser.add_argument("--display", choices=("native", "vnc"),
