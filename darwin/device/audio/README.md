@@ -90,9 +90,10 @@ reads or opens the microphone, and no permission prompt can appear.
   audio session.
 
 macOS enables it with `--audio-input=host` (`silent` is the default; either
-value implies `--audio`): the launcher turns the switch on at start, which is
-when macOS asks, and prints the answer. A launcher run from a terminal is
-asked on behalf of the app that started it. Kernarium's Microphone setting is
+value implies `--audio`; `tools/boot_android.py --audio-input host` passes it):
+the launcher turns the switch on at start, which is when macOS asks, and prints
+the answer. A launcher run from a terminal is asked on behalf of the app that
+started it. Kernarium's Microphone setting is
 described in [`../../../Kernarium/README.md`](../../../Kernarium/README.md).
 
 ## Null output

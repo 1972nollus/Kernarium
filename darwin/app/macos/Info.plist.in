@@ -8,5 +8,7 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>@UML_MACOS_APP_NAME@</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Programs in the guest system can record from this Mac's microphone when you start it with --audio-input=host.</string>
 </dict>
 </plist>

@@ -66,6 +66,10 @@ REFUSALS: list[tuple[list[str], str]] = [
     (["--audio-output="], CONFIGURE + "--audio-output must be host or null"),
     (["--audio-output=null", explicit(AUDIO)],
      COLLISION.format("--audio", "Virtio Sound")),
+    (["--audio-input=bogus"], CONFIGURE + "--audio-input must be silent or host"),
+    (["--audio-input="], CONFIGURE + "--audio-input must be silent or host"),
+    (["--audio-input=silent", explicit(AUDIO)],
+     COLLISION.format("--audio", "Virtio Sound")),
     (["--gpu-vnc-bind="], CONFIGURE + "invalid host option: --gpu-vnc-bind="),
     (["--gpu-vnc-password="],
      CONFIGURE + "VNC password must contain between 1 and 8 bytes"),
@@ -109,6 +113,7 @@ ACCEPTED: list[list[str]] = [
      explicit(GPU)],
     ["--audio-output=null"],
     ["--audio", "--audio-output=host"],
+    ["--audio-input=silent"],
 ]
 
 

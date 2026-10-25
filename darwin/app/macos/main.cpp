@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "audio/in_process_service.hpp"
+#include "audio/microphone_switch.hpp"
 #include "audio/protocol.hpp"
 #include "balloon/in_process_service.hpp"
 #include "balloon/protocol.hpp"
@@ -15,6 +16,7 @@
 #include "gpu/protocol.hpp"
 #include "launcher.hpp"
 #include "guest_memory_argument.hpp"
+#include "platform/microphone_authorization.hpp"
 #include "sockets/socket_paths.hpp"
 #include "uml/emulator.h"
 #if UML_APP_HAS_SLIRP
@@ -258,6 +260,7 @@ struct PreparedArguments {
 	HostGpuOptions gpu;
 	bool audio {};
 	uml::audio::OutputMode audio_output {uml::audio::OutputMode::host};
+	bool audio_input_host {};
 	bool battery {};
 	bool video {};
 	std::string console_socket;
@@ -336,6 +339,15 @@ PreparedArguments prepare_host_arguments(
 			else
 				throw std::invalid_argument(
 					"--audio-output must be host or null");
+			prepared.audio = true;
+		} else if (valued("--audio-input=")) {
+			if (value == "silent")
+				prepared.audio_input_host = false;
+			else if (value == "host")
+				prepared.audio_input_host = true;
+			else
+				throw std::invalid_argument(
+					"--audio-input must be silent or host");
 			prepared.audio = true;
 		} else if (argument == "--battery") {
 			prepared.battery = true;
@@ -669,16 +681,32 @@ int uml::app::runEmbeddedKernel(
 		    "--video", "Virtio video"))
 		return 1;
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> audio_service;
+	/* The guest records silence unless the user asks for the host's
+	 * microphone. Creating the switch touches nothing; only turning it on
+	 * below can make the system ask for permission. */
+	std::shared_ptr<uml::audio::MicrophoneSwitch> microphone;
+	if (prepared.audio_input_host)
+		microphone = std::make_shared<uml::audio::MicrophoneSwitch>(
+			uml::platform::makeAppleMicrophoneAuthorization());
 	if (prepared.audio && !information_only &&
 	    !start_virtio_device(
 		    prepared.kernel, audio_service,
 		    uml::audio::protocol::deviceId,
 		    [&] {
 			    return uml::audio::makeInProcessService(
-				    {.output = prepared.audio_output});
+				    {.output = prepared.audio_output,
+				     .microphone = microphone});
 		    },
 		    "--audio", "Virtio Sound"))
 		return 1;
+	if (microphone && audio_service) {
+		using State = uml::audio::MicrophoneSwitch::State;
+		const auto report = [](State state) {
+			std::fprintf(stderr, "Microphone: %s\n",
+				     uml::audio::describe(state));
+		};
+		report(microphone->enable(report));
+	}
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> console_service;
 	const bool named_serial = !prepared.serial_socket.empty();
 	if ((named_serial || !prepared.console_socket.empty()) &&
