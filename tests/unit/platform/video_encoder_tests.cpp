@@ -418,7 +418,7 @@ void bFrames()
         const auto profile = pick(capability, {VideoEncodeProfile::h264High, VideoEncodeProfile::h264Main, VideoEncodeProfile::hevcMain});
         if (!profile) continue;
         auto settings = baseSettings(*profile, 320, 240);
-        settings.bFrames = std::min(2u, capability->maximumBFrames);
+        settings.bFrames = capability->maximumBFrames;   // the run the encoder codes
         settings.keyFrameInterval = 0;
         const unsigned count = 40;
         const auto encoded = encode(settings, count, busySource(320, 240), "B-frames");
@@ -442,10 +442,24 @@ void bFrames()
         std::printf("  %s: %u bidirectional of %u, %u out of order, longest run %u\n",
                     capability->codec == VideoCodec::hevc ? "hevc" : "h264", bidirectional, count, reordered, longest);
         require(bidirectional > 0 && reordered > 0, "B-frames reorder the output");
+        require(longest <= capability->maximumBFrames, "no run is longer than the verified one");
         if (hardwareDecodes(*profile)) {
             const auto decoded = decode(capability->codec, encoded.output);
             require(decoded.size() == count, "the decoder returns every picture");
             require(meanLumaPsnr(encoded.sources, decoded) >= 24.0, "a stream with B-frames decodes to the source");
+        }
+        // The encoder cannot be asked for a shorter run: a caller who accepts
+        // fewer B-frames than it codes gets none, so its output is never more
+        // out of order than it was told.
+        for (unsigned shorter = 1; shorter < capability->maximumBFrames; ++shorter) {
+            auto limited = settings;
+            limited.bFrames = shorter;
+            const auto plain = encode(limited, 24, busySource(320, 240), "shorter B run");
+            const auto plainFrames = plain.output.pictures();
+            require(plainFrames.size() == 24, "every frame is returned");
+            for (std::size_t i = 0; i < plainFrames.size(); ++i)
+                require(plainFrames[i]->timestamp == i && plainFrames[i]->type != VideoFrameType::bidirectional,
+                        "a run shorter than the encoder's is not coded");
         }
         // The caller's memory budget for reordering grows with it.
         auto encoder = open(settings, "B-frame acquire");

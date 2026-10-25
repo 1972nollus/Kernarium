@@ -99,7 +99,10 @@ struct VideoEncodeCapability {
     std::uint64_t maximumBitrate {};  // bits per second
     std::uint32_t minimumQp {};
     std::uint32_t maximumQp {};
-    std::uint32_t maximumBFrames {};  // zero: output order is input order
+    // The B-frame run the encoder codes when it may reorder; zero: output order
+    // is input order. The run is fixed (VideoToolbox cannot shorten it), so a
+    // request below it codes no B-frames and a request at or above it codes it.
+    std::uint32_t maximumBFrames {};
     std::uint32_t maximumTemporalLayers {1};
     bool entropyModeSelectable {};    // H.264 CAVLC or CABAC
     bool hdrStaticMetadata {};
@@ -131,7 +134,7 @@ struct VideoEncodeSettings {
     std::optional<std::uint32_t> minimumQp;
     std::optional<std::uint32_t> maximumQp;
     std::uint32_t keyFrameInterval {};  // frames; zero: first frame and requests only
-    std::uint32_t bFrames {};           // zero: no reordering
+    std::uint32_t bFrames {};           // the longest B-frame run accepted; zero: no reordering
     std::uint32_t temporalLayers {1};
     std::uint32_t baseLayerBitratePercent {};  // temporalLayers > 1; zero: encoder default
     bool cabac {true};                         // H.264 Main and above

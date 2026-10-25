@@ -51,8 +51,11 @@ null beyond that, and a frame dropped unsubmitted returns its slot.
   JFIF segment the hardware leaves out.
 - **Frame type** is read from the sample: key, predicted, or bidirectional when
   its presentation time is below one already returned. Output is in decode
-  order. The longest B-frame run cannot be limited; discovery reports the most
-  it saw, and a stream is promised no more.
+  order. B-frames are coded in one pattern that no property shortens
+  (`MaxFrameDelayCount` and `ReferenceBufferCount` are refused by the hardware
+  encoders): discovery reports its run (`maximumBFrames`, 3), and `bFrames` at
+  or above it codes the pattern. A request below it codes no B-frames, so the
+  output is never more out of order than the caller allowed.
 - **Levels.** A stream states the level it was asked for, or the lowest level
   its picture size, frame rate and bit rate fit if that is higher (H.264
   Table A-1; HEVC Tables A.8 and A.9, Main tier). VideoToolbox names few levels

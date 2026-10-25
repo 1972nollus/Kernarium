@@ -566,10 +566,11 @@ std::optional<CodecDiscovery> discoverCodec(VideoCodec codec)
         if (!capability.maximumBitrate) return std::nullopt;
 
         // B-frames: whatever the encoder does when it is allowed to reorder.
-        // No public control limits the run, so the longest one seen is the
-        // most a stream can be promised.
+        // The hardware encoders refuse every property that would limit the run
+        // (MaxFrameDelayCount, ReferenceBufferCount), so the longest one seen
+        // is the run, which a stream codes whole or not at all.
         Probe reorder {referenceSettings(kProbeWidth, kProbeHeight), 36, true};
-        reorder.settings.bFrames = 1;
+        reorder.settings.bFrames = 4;
         const auto reordered = runProbe(reorder);
         if (reordered.encoded) capability.maximumBFrames = std::min(analyze(codec, reordered.frames).longestBidirectionalRun, 4u);
 

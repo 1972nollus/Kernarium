@@ -719,6 +719,7 @@ struct SessionPlan {
     CMVideoCodecType codec {};
     OSType pixelFormat {};
     bool swapsRedBlue {};        // the caller's frame is RGBA in a BGRA buffer
+    bool reorders {};            // the encoder may code B-frames, and so reorder its output
     bool lowLatency {};          // the low-latency encoder, selected by what the stream asks for
     bool ownKeyFrames {};        // the key frames are ours: the frame type chooses the QP
     NSString* profileLevel {};
@@ -1029,6 +1030,7 @@ private:
         plan.lowLatency = wantsLayers || (wantsFrameQp && !settings.bFrames);
         plan.ownKeyFrames = plan.lowLatency && settings.rateControl == VideoRateControl::constantQp;
 
+        unsigned fixedBFrameRun = 0;
         if (check) {
             const auto found = discovery();
             const CodecDiscovery* codec = found ? found->find(settings.codec) : nullptr;
@@ -1049,6 +1051,7 @@ private:
             if (!jpeg && (settings.bitrate > capability.maximumBitrate || settings.peakBitrate > capability.maximumBitrate))
                 return fail(VideoEncodeStatus::invalid, "bitrate is above the verified maximum");
             if (settings.bFrames > capability.maximumBFrames) return fail(VideoEncodeStatus::invalid, "B-frames above the verified maximum");
+            fixedBFrameRun = capability.maximumBFrames;
             if (settings.temporalLayers > capability.maximumTemporalLayers) return fail(VideoEncodeStatus::unsupported, "temporal layers above the verified maximum");
             if (plan.lowLatency && std::find(codec->lowLatencyProfiles.begin(), codec->lowLatencyProfiles.end(), settings.profile) == codec->lowLatencyProfiles.end()) {
                 if (wantsLayers) return fail(VideoEncodeStatus::unsupported, "low-latency encoder does not write the profile");
@@ -1066,7 +1069,14 @@ private:
         plan.pixelFormat = settings.color.fullRange ? layoutInfo(settings.input).fullRange : layoutInfo(settings.input).limitedRange;
         plan.swapsRedBlue = layoutInfo(settings.input).swapsRedBlue;
         if (!plan.pixelFormat) return fail(VideoEncodeStatus::invalid, "unknown input layout");
-        plan.maximumInFlight = settings.bFrames ? kMaximumInFlightReordered : kMaximumInFlight;
+        // The hardware encoders code B-frames in one pattern, a run of
+        // fixedBFrameRun per reference, and refuse every property that would
+        // shorten it (MaxFrameDelayCount, ReferenceBufferCount). A caller who
+        // accepts fewer gets none, so the output never runs further out of
+        // order than it was told. An unchecked configuration is a probe, which
+        // asks for reordering to see what the encoder does with it.
+        plan.reorders = settings.bFrames && (!check || settings.bFrames >= fixedBFrameRun);
+        plan.maximumInFlight = plan.reorders ? kMaximumInFlightReordered : kMaximumInFlight;
         plan.profileLevel = jpeg ? nil : profileLevel(settings);
         if (!jpeg && !plan.profileLevel) return fail(VideoEncodeStatus::unsupported, "profile has no VideoToolbox value");
         plan.settings = std::move(settings);
@@ -1229,7 +1239,7 @@ private:
             return VideoEncodeStatus::ok;
         }
         if (!apply(session, UML_KEY(ProfileLevel), plan_.profileLevel, true)) return refuse("ProfileLevel");
-        if (!apply(session, UML_KEY(AllowFrameReordering), s.bFrames ? @YES : @NO, true)) return refuse("AllowFrameReordering");
+        if (!apply(session, UML_KEY(AllowFrameReordering), plan_.reorders ? @YES : @NO, true)) return refuse("AllowFrameReordering");
         const double rate = double(s.frameRateNumerator) / double(s.frameRateDenominator);
         (void)apply(session, UML_KEY(ExpectedFrameRate), @(rate), false);
         const std::int32_t interval = plan_.ownKeyFrames || s.keyFrameInterval == 0
