@@ -228,11 +228,11 @@ class DesktopImageTests(unittest.TestCase):
         configuration = (DESKTOP / entry["driver"]["configuration"]["from"]).resolve()
         text = configuration.read_text(encoding="utf-8")
         # What Chromium needs to use the driver: the VA-API driver name and a
-        # render node it cannot find itself. Its encode features are opt-in.
+        # render node it cannot find itself, and the encode features are on.
         self.assertIn("export LIBVA_DRIVER_NAME=uml\n", text)
         self.assertIn("--render-node-override=/dev/dri/renderD128", text)
-        self.assertIn("KERNARIUM_CHROMIUM_VIDEO_ENCODE", text)
-        self.assertIn("--enable-features=AcceleratedVideoEncoder", text)
+        self.assertIn("--enable-features=AcceleratedVideoEncoder,ChromeOSHWVBREncoding", text)
+        self.assertNotIn("KERNARIUM_CHROMIUM_VIDEO_ENCODE", text)
         self.assertNotIn('CHROMIUM_FLAGS="$CHROMIUM_FLAGS --render-node-override=/dev/dri/renderD128 --enable-features', text)
         subprocess.run(["sh", "-n", str(configuration)], check=True)
         with tempfile.TemporaryDirectory() as name:

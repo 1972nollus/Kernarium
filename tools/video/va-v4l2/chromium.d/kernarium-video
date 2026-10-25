@@ -10,10 +10,7 @@ export LIBVA_DRIVER_NAME=uml
 # is told. Without a render node VA-API stays off.
 CHROMIUM_FLAGS="$CHROMIUM_FLAGS --render-node-override=/dev/dri/renderD128"
 
-# Chromium's own VA-API encode is opt-in. It encodes frames that live in GPU
-# memory, which the guest's Mesa gbm cannot allocate as NV12 and whose
-# GPU-written pixels the guest CPU cannot read; ../README.md owns the
-# limitation. Set KERNARIUM_CHROMIUM_VIDEO_ENCODE=1 to turn the feature on.
-if [ "${KERNARIUM_CHROMIUM_VIDEO_ENCODE:-}" = 1 ]; then
-	CHROMIUM_FLAGS="$CHROMIUM_FLAGS --enable-features=AcceleratedVideoEncoder,ChromeOSHWVBREncoding"
-fi
+# Chromium's own hardware encode (WebCodecs, WebRTC), H.264. The gbm module
+# allocates the NV12 frames it encodes and the driver imports them plane by
+# plane; ../README.md owns the contract.
+CHROMIUM_FLAGS="$CHROMIUM_FLAGS --enable-features=AcceleratedVideoEncoder,ChromeOSHWVBREncoding"

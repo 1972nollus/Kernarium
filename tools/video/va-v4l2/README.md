@@ -387,26 +387,30 @@ H.264 and HEVC decode stay in software because the driver does not offer them.
 `--disable-accelerated-video-decode` would also skip the initialisation that
 encode needs.
 
-Chromium's own hardware encode (WebCodecs `VideoEncoder`, WebRTC) is H.264
-only, since it has no HEVC encode on Linux, and it stays off unless the
-environment sets `KERNARIUM_CHROMIUM_VIDEO_ENCODE=1`, which adds
+Chromium's own hardware encode (WebCodecs `VideoEncoder`, WebRTC) is on. It is
+H.264 only, since Chromium has no HEVC encode on Linux, and the file adds
 `AcceleratedVideoEncoder` and `ChromeOSHWVBREncoding` (arm64 needs the latter
-for variable-bitrate profiles). The driver does its part, but Chromium's
-encoder works on frames in GPU memory that it allocates through gbm, and the
-guest's Mesa gbm has two limits that the driver cannot lift:
+for variable-bitrate profiles). Three parts fit together to make it work:
 
-- It cannot allocate NV12, so the encode fails when its first frame arrives:
-  Chromium 154's GPU process aborts, and Chromium 156 reports "Unable to
-  create a mappable shared image" and a WebCodecs encoding error.
-- Pixels the guest GPU wrote (canvas, video and page content composited on
-  the GPU) are not readable by the guest CPU, which is the only reader the
-  driver has. Such frames encode as black. Frames built in ordinary memory
-  (a `VideoFrame` made from a buffer) work once gbm allocates NV12.
-
-The driver maps a surface imported read-only, which is how Mesa exports its
-buffers. A gbm that allocates NV12 and a CPU-visible path from the GPU belong
-to the guest graphics stack; until then FFmpeg and GStreamer reach the encoder
-through VA-API and V4L2 for H.264 and HEVC.
+- **The frames.** Chromium encodes frames that live in GPU memory, which it
+  allocates through gbm as NV12 buffers. [The gbm module](#the-gbm-module-planar-buffers-for-debians-libgbm)
+  allocates them.
+- **The import.** Chromium hands a planar buffer to a driver as one descriptor
+  per plane (`VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2`) only when it recognises
+  the driver by its vendor string, and as a single descriptor with every plane
+  at an offset in it for any other. A buffer of the module has a resource, and
+  so a descriptor, per plane, and the single descriptor names the first plane
+  only. So the driver's vendor string begins with `Mesa Gallium driver`, the
+  string of the class of driver that takes the per-plane import, and continues
+  with the driver's own name. That string also marks the driver as thread-safe,
+  so Chromium stops serialising its calls; the driver locks its own state.
+- **The pixels.** Content the guest GPU wrote (canvas, video and page content
+  composited on the GPU) is current for the CPU only on a guest kernel that
+  exports virtio-gpu dma-bufs read-write and transfers the resource around a
+  dma-buf CPU access (`drm/virtio: export a dma-buf read-write` and
+  `drm/virtio: transfer a 3D resource around CPU access through its dma-buf`).
+  Without them a GPU-painted frame encodes black, while frames built in
+  ordinary memory (a `VideoFrame` made from a buffer) are unaffected.
 
 [`tools/rootfs/producer.sh`](../../rootfs/producer.sh) builds the driver inside
 an image's own root (`producer_install_uml_va_driver`), against the libva and
