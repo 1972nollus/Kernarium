@@ -86,18 +86,22 @@ def check_driver(driver: Path, machine: str) -> None:
         raise DerivationError(f"{driver} is not a {machine} shared object")
 
 
-def install_driver(root: Path, entry: dict, driver: Path) -> dict:
-    """Install the VA-API driver and the Chromium file that selects it.
+def install_driver(root: Path, entry: dict, driver: Path, gbm_module: Path) -> dict:
+    """Install the VA-API driver, the gbm module and the Chromium file.
 
-    The driver is built from tools/video/va-v4l2 on an arm64 Debian 13 host,
-    against the libva and libdrm Debian 13 ships, which is what the image
-    carries. Its recorded digest names the exact file the image holds.
+    The driver and the gbm backend module that lets libgbm allocate the planar
+    buffers Chromium's encoder needs are built together from tools/video/va-v4l2
+    on an arm64 Debian 13 host, against the libva and libdrm Debian 13 ships,
+    which is what the image carries. Their recorded digests name the exact
+    files the image holds, and the Chromium file selects the driver.
     """
     spec = entry["driver"]
     check_driver(driver, spec["machine"])
+    check_driver(gbm_module, spec["machine"])
     configuration = (DIRECTORY / spec["configuration"]["from"]).resolve()
     for source, destination, mode in (
         (driver, spec["destination"], 0o644),
+        (gbm_module, spec["gbm"]["destination"], 0o644),
         (configuration, spec["configuration"]["destination"], 0o644),
     ):
         target = root / destination
@@ -114,6 +118,11 @@ def install_driver(root: Path, entry: dict, driver: Path) -> dict:
         "destination": spec["destination"],
         "sha256": sha256(driver),
         "size": driver.stat().st_size,
+        "gbm": {
+            "destination": spec["gbm"]["destination"],
+            "sha256": sha256(gbm_module),
+            "size": gbm_module.stat().st_size,
+        },
         "configuration": {
             "destination": spec["configuration"]["destination"],
             "sha256": sha256(configuration),
@@ -163,7 +172,7 @@ def reset_machine_id(root: Path) -> None:
 
 def derive(
     image: str, source: Path, output: Path, work: Path,
-    driver: Path | None = None,
+    driver: Path | None = None, gbm_module: Path | None = None,
 ) -> dict:
     descriptor = json.loads(DESCRIPTOR.read_text(encoding="utf-8"))
     try:
@@ -182,14 +191,16 @@ def derive(
     if receipt_path.exists():
         raise DerivationError(f"refusing to replace {receipt_path}")
     setup = DIRECTORY / entry["setup"]
-    if "driver" in entry and driver is None:
+    if "driver" in entry and (driver is None or gbm_module is None):
         raise DerivationError(
-            f"{image} carries the VA-API driver: pass --driver"
+            f"{image} carries the VA-API driver and its gbm module: pass --driver "
+            "and --gbm-module"
         )
-    if "driver" not in entry and driver is not None:
+    if "driver" not in entry and (driver is not None or gbm_module is not None):
         raise DerivationError(f"{image} carries no VA-API driver")
-    if driver is not None:
+    if driver is not None and gbm_module is not None:
         check_driver(driver, entry["driver"]["machine"])
+        check_driver(gbm_module, entry["driver"]["machine"])
 
     stage = Path(tempfile.mkdtemp(prefix=f"desktop-{image}-", dir=work))
     root = stage / "root"
@@ -208,24 +219,26 @@ def derive(
             run(["mount", *arguments, str(target)])
             mounted.append(target)
         installed = None
-        if driver is not None:
-            installed = install_driver(root, entry, driver)
+        if driver is not None and gbm_module is not None:
+            installed = install_driver(root, entry, driver, gbm_module)
         with setup.open("rb") as script:
             run(
                 ["chroot", str(root), "/bin/sh", "-s"],
                 stdin=script, env=SETUP_ENVIRONMENT,
             )
         if installed is not None:
-            # The driver must resolve every library on the image it joins.
-            linked = subprocess.run(
-                ["chroot", str(root), "/usr/bin/ldd", "/" + installed["destination"]],
-                check=True, capture_output=True, text=True,
-                env=SETUP_ENVIRONMENT,
-            ).stdout
-            if "not found" in linked:
-                raise DerivationError(
-                    "the driver needs libraries the image lacks:\n" + linked
-                )
+            # The driver and the module must resolve every library on the image
+            # they join.
+            for installed_file in (installed, installed["gbm"]):
+                linked = subprocess.run(
+                    ["chroot", str(root), "/usr/bin/ldd", "/" + installed_file["destination"]],
+                    check=True, capture_output=True, text=True,
+                    env=SETUP_ENVIRONMENT,
+                ).stdout
+                if "not found" in linked:
+                    raise DerivationError(
+                        f"/{installed_file['destination']} needs libraries the image lacks:\n" + linked
+                    )
         while mounted:
             run(["umount", str(mounted.pop())])
         reset_machine_id(root)
@@ -287,6 +300,9 @@ def main() -> int:
     parser.add_argument("--driver", type=Path,
                         help="the VA-API driver (uml_drv_video.so) an image "
                              "that names one carries")
+    parser.add_argument("--gbm-module", type=Path,
+                        help="the gbm backend module (virtio_gpu_gbm.so) built "
+                             "with the driver")
     parser.add_argument("--work", type=Path,
                         help="where the tree is extracted (default: beside "
                              "the output)")
@@ -304,6 +320,7 @@ def main() -> int:
         receipt = derive(
             options.image, options.source.resolve(), output, work,
             options.driver.resolve() if options.driver else None,
+            options.gbm_module.resolve() if options.gbm_module else None,
         )
     except (DerivationError, subprocess.CalledProcessError, OSError) as error:
         print(f"derive.py: {error}", file=sys.stderr)

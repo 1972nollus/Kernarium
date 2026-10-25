@@ -33,11 +33,13 @@ accepted only with a new release derived from it.
 
 The KDE image also carries the [Virtio video VA-API
 driver](../../video/va-v4l2/README.md): the derivation installs the driver it
-is given with `--driver` as `uml_drv_video.so` beside Mesa's drivers, and the
-`/etc/chromium.d` file that makes Chromium use it, then checks that the driver
-resolves every library the image has. Build the driver on arm64 Debian 13,
-whose libva and libdrm the image carries, with `cmake --preset guest` in
-`tools/video/va-v4l2`; the receipt records the driver's digest.
+is given with `--driver` as `uml_drv_video.so` beside Mesa's drivers, the gbm
+module it is given with `--gbm-module` as `virtio_gpu_gbm.so` beside Mesa's gbm
+backend (Chromium's encode needs the planar buffers it allocates), and the
+`/etc/chromium.d` file that makes Chromium use the driver, then checks that
+both resolve every library the image has. Build them on arm64 Debian 13, whose
+libva and libdrm the image carries, with `cmake --preset guest` in
+`tools/video/va-v4l2`; the receipt records their digests.
 
 The derivation also removes the machine ID each source was built with, so
 every guest generates its own at first boot and keeps it in its writable
@@ -63,6 +65,7 @@ a receipt naming the source, the setup and the output:
 
 ```sh
 sudo tools/rootfs/desktop/derive.py --image kde --driver /path/to/uml_drv_video.so \
+  --gbm-module /path/to/virtio_gpu_gbm.so \
   --source /path/to/rootfs.erofs --output /path/to/kde-<date>-r<n>.erofs
 ```
 

@@ -240,12 +240,27 @@ class DesktopImageTests(unittest.TestCase):
             root = directory / "root"
             (root / "usr/lib/aarch64-linux-gnu/dri").mkdir(parents=True)
             (root / "etc").mkdir()
+            (root / "usr/lib/aarch64-linux-gnu/gbm").mkdir(parents=True)
             driver = directory / "uml_drv_video.so"
             driver.write_bytes(self.shared_object(183) + b"driver")
-            installed = derive.install_driver(root, entry, driver)
+            module = directory / "virtio_gpu_gbm.so"
+            module.write_bytes(self.shared_object(183) + b"module")
+            installed = derive.install_driver(root, entry, driver, module)
             target = root / entry["driver"]["destination"]
             self.assertEqual(target.read_bytes(), driver.read_bytes())
             self.assertEqual(target.stat().st_mode & 0o7777, 0o644)
+            # The gbm module joins Mesa's backends, where libgbm looks for one
+            # named after the DRM driver.
+            self.assertEqual(
+                entry["driver"]["gbm"]["destination"],
+                "usr/lib/aarch64-linux-gnu/gbm/virtio_gpu_gbm.so",
+            )
+            installed_module = root / entry["driver"]["gbm"]["destination"]
+            self.assertEqual(installed_module.read_bytes(), module.read_bytes())
+            self.assertEqual(installed_module.stat().st_mode & 0o7777, 0o644)
+            self.assertEqual(
+                installed["gbm"]["sha256"], hashlib.sha256(module.read_bytes()).hexdigest()
+            )
             chromium = root / entry["driver"]["configuration"]["destination"]
             self.assertEqual(chromium.read_text(encoding="utf-8"), text)
             self.assertEqual(
@@ -253,16 +268,17 @@ class DesktopImageTests(unittest.TestCase):
             )
             # Neither file replaces one the image already has.
             with self.assertRaisesRegex(derive.DerivationError, "already has"):
-                derive.install_driver(root, entry, driver)
+                derive.install_driver(root, entry, driver, module)
 
     def test_a_driver_only_goes_to_an_image_that_names_one(self) -> None:
         derive = load_derive()
         source = inspect.getsource(derive.derive)
         self.assertIn("pass --driver", source)
+        self.assertIn("--gbm-module", source)
         self.assertIn("carries no VA-API driver", source)
         # The driver is in place before the setup, and the setup's result is
         # checked for libraries the image lacks before the image is written.
-        install = source.index("install_driver(root, entry, driver)")
+        install = source.index("install_driver(root, entry, driver, gbm_module)")
         setup = source.index('["chroot", str(root), "/bin/sh", "-s"]')
         linked = source.index('"/usr/bin/ldd"')
         image = source.index('"mkfs.erofs"')
