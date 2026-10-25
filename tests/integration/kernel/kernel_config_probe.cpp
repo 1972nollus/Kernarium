@@ -4,10 +4,13 @@
 // [linux|android], linux by default.
 //   both:    IPv4 multicast (/proc/net/igmp, a group join, a looped datagram),
 //            no RDS socket family, no listener on TCP port 16385
-//   linux:   SysV IPC works, the NFS client and SCTP are present
-//   android: no SysV IPC (ENOSYS, no /proc/sysvipc), no NFS client, no SCTP
+//   linux:   SysV IPC works, the NFS client and SCTP are present, and
+//            /sys/power has no wake_lock
+//   android: no SysV IPC (ENOSYS, no /proc/sysvipc), no NFS client, no SCTP,
+//            and /sys/power/wake_lock takes and releases a wakelock
 // Prints one line per check. The exit status is the failure count.
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -302,6 +305,42 @@ void check_sctp(bool wanted)
 		report("no-sctp", fd < 0 && !registered, detail);
 }
 
+bool write_text(const char *path, const char *text)
+{
+	int fd = open(path, O_WRONLY);
+	if (fd < 0)
+		return false;
+	ssize_t length = static_cast<ssize_t>(std::strlen(text));
+	bool ok = write(fd, text, static_cast<size_t>(length)) == length;
+	close(fd);
+	return ok;
+}
+
+// Android's SystemSuspend ends a suspend that is under way by writing
+// "userspace-abort" to /sys/power/wake_lock, and Sxmo suspends a guest on its
+// own whenever the file exists. /sys/power/state must exist for the absence
+// to mean anything.
+void check_wake_lock(bool wanted)
+{
+	bool power = access("/sys/power/state", F_OK) == 0;
+	bool present = access("/sys/power/wake_lock", F_OK) == 0;
+	if (!wanted) {
+		report("no-wake-lock", power && !present,
+		       std::string("/sys/power/state ") + (power ? "present" : "absent") +
+			       ", /sys/power/wake_lock " + (present ? "present" : "absent"));
+		return;
+	}
+	const char *name = "kconfig-probe";
+	bool taken = present && write_text("/sys/power/wake_lock", name);
+	bool listed = taken && slurp("/sys/power/wake_lock").find(name) != std::string::npos;
+	bool released = taken && write_text("/sys/power/wake_unlock", name) &&
+			slurp("/sys/power/wake_lock").find(name) == std::string::npos;
+	report("wake-lock", power && listed && released,
+	       std::string("wake_lock ") + (present ? "present" : "absent") + ", taken " +
+		       (taken ? "yes" : "no") + ", listed " + (listed ? "yes" : "no") +
+		       ", released " + (released ? "yes" : "no"));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -318,6 +357,7 @@ int main(int argc, char **argv)
 	check_sysv(!android);
 	check_nfs(!android);
 	check_sctp(!android);
+	check_wake_lock(android);
 	std::printf("%s: %d failure(s)\n", product, failures);
 	return failures;
 }

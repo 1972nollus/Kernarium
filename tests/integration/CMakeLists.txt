@@ -478,8 +478,9 @@ uml_add_guest_integration_test(
 # until a wake request, and a wake sent while it is still being entered
 # ends it, even while it still syncs file systems. A suspend the host asked
 # for that one of the guest's own wake sources ended is entered again. A
-# suspend the guest entered by itself ends for a wake or for a power key
-# typed on the VNC display, which reaches the guest once.
+# suspend the guest entered by itself ends for a wake, for a power key typed
+# on the VNC display, which reaches the guest once, or for a network frame,
+# which never ends or fails one the host asked for.
 uml_add_guest_integration_test(
     NAME guest-suspend-holds
     SCRIPT kernel/run_guest_suspend_holds.py
@@ -662,8 +663,8 @@ uml_add_guest_integration_test(
     CPUS 2)
 
 # The settings the Android CTS and the desktop disagree on: a Linux guest has
-# SysV IPC, the NFS client and SCTP and no RDS, and every guest has IPv4
-# multicast and no listener on RDS-over-TCP's port.
+# SysV IPC, the NFS client and SCTP, no RDS and no wakelock interface, and
+# every guest has IPv4 multicast and no listener on RDS-over-TCP's port.
 uml_add_guest_integration_test(
     NAME guest-kernel-config
     SCRIPT support/run_guest_probe.py

@@ -43,6 +43,12 @@ that sync instead: the request must fail without a second attempt, and the
 host's next suspend must hold.
 The power arm forwards a power key through the VNC display to a guest that
 suspended itself: the key must wake it promptly and reach it exactly once.
+The network-wake arm sends a byte through the network forward to a guest that
+suspended itself: the suspend must hold while nothing arrives, the byte must
+end it promptly and be echoed, and the interface's wakeup source must have
+reported it. The host's suspend asked for right after a burst must then hold
+under the same traffic, entered once, as the network arm requires of any suspend
+the host asked for.
 The contract is the suspend paragraph of the mainline kernel README.
 """
 
@@ -172,6 +178,13 @@ with open("{KEY_LOG}", "w", buffering=1) as log:
             if kind == 1 and code == 116:
                 log.write(f"{{value}}\\n")
 """
+# A frame ends a suspend the guest started itself within this long.
+NETWORK_WAKE_SECONDS = 5.0
+# How many frames the network interface's wakeup source has reported.
+NETWORK_WAKEUPS = (
+    "for d in /sys/class/wakeup/wakeup*; do "
+    "[ \"$(cat $d/name)\" = darwin-net-rx ] && cat $d/event_count; done; true"
+)
 ECHO = "/opt/uml-test/suspend_echo.py"
 ECHO_SERVER = f"""\
 import socket
@@ -491,6 +504,103 @@ def run_network(arguments, private: pathlib.Path) -> None:
         require_clean(guest, "network", request)
         if not guest.shutdown(60):
             raise RuntimeError("network: the guest did not power off")
+
+
+def network_wakeups(guest: Guest, required: bool = True) -> int:
+    """How many frames the interface's wakeup source has reported; 0 for a
+    kernel without the source when ``required`` is false."""
+    output = guest.check_command(NETWORK_WAKEUPS, 30).strip().splitlines()
+    if not output or not output[-1].strip().isdigit():
+        if required:
+            raise RuntimeError(
+                f"network-wake: no darwin-net-rx wakeup source in {output!r}"
+            )
+        return 0
+    return int(output[-1])
+
+
+def run_network_wake(arguments, private: pathlib.Path) -> None:
+    """A frame ends a suspend the guest started itself, and never fails or
+    ends one the host asked for."""
+    port = unused_loopback_port()
+    with Guest(
+        arguments.emulator,
+        arguments.rootfs,
+        "1G",
+        "tmpfs",
+        (f"ncpus={VCPUS}", f"--net-forward=tcp:127.0.0.1:{port}-{GUEST_PORT}"),
+        overlay_shell=True,
+        engine=arguments.engine,
+        payloads={ECHO: GuestFile(ECHO_SERVER.encode(), 0o755)},
+    ) as guest:
+        guest.boot_to_shell(180)
+        console = ManagementConsole(guest, private)
+        request = len(guest.output())
+        guest.check_command(
+            f"(python3 {ECHO} >/run/suspend-echo.log 2>&1 </dev/null &)", 30
+        )
+        connection = connect_echo(guest, port)
+        wakeups = network_wakeups(guest, required=False)
+
+        # The guest's own suspend holds while nothing arrives, and a byte
+        # ends it: the guest resumes and echoes it.
+        exits = guest.output().count(SUSPEND_EXIT)
+        entries = guest.output().count(SUSPEND_ENTRY)
+        guest._write(SELF_SUSPEND)
+        wait_for_line(guest, SUSPEND_ENTRY, entries, "network-wake")
+        hold_quietly(guest, exits, 2.0, "network-wake")
+        sent = time.monotonic()
+        connection.sendall(b"x")
+        woke = wait_for_exit_line(
+            guest, exits,
+            "network-wake: the guest stayed in its own suspend after a frame "
+            "arrived",
+        )
+        read_echo(guest, connection, 1)
+        echoed = time.monotonic() - sent
+        if echoed > NETWORK_WAKE_SECONDS:
+            raise RuntimeError(
+                f"network-wake: the byte was echoed {echoed:.2f} s after it "
+                f"was sent, not within {NETWORK_WAKE_SECONDS:g} s"
+            )
+        reported = network_wakeups(guest) - wakeups
+        if reported < 1:
+            raise RuntimeError(
+                "network-wake: the interface's wakeup source reported nothing "
+                "for the frame that ended the suspend"
+            )
+
+        # The host's suspend, asked for right after a burst, holds under
+        # traffic and is entered once: the burst's wakeup, still held, does
+        # not fail it.
+        connection.sendall(b"x" * 8)
+        read_echo(guest, connection, 8)
+        entries = guest.output().count(SUSPEND_ENTRY)
+        sent = 0
+
+        def send() -> None:
+            nonlocal sent
+            connection.sendall(b"x")
+            sent += 1
+
+        hold(guest, console, "network-wake", send)
+        attempts = guest.output().count(SUSPEND_ENTRY) - entries
+        if attempts != 1:
+            raise RuntimeError(
+                f"network-wake: the host's suspend took {attempts} attempts "
+                "after a burst, not one\n" + guest.output()[request:][-4000:]
+            )
+        read_echo(guest, connection, sent)
+        print(
+            f"network-wake: a byte ended the guest's own suspend after "
+            f"{woke:.2f} s and was echoed in {echoed:.2f} s "
+            f"({reported} wakeup reported); the host's suspend after a burst "
+            f"held under {sent} bytes in one attempt"
+        )
+        connection.close()
+        require_clean(guest, "network-wake", request)
+        if not guest.shutdown(60):
+            raise RuntimeError("network-wake: the guest did not power off")
 
 
 def run_console(arguments, private: pathlib.Path) -> None:
@@ -1025,6 +1135,7 @@ ARMS = {
     "sync-alarm": run_sync_alarm,
     "sync-host-wake": run_sync_host_wake,
     "power": run_power,
+    "network-wake": run_network_wake,
 }
 
 
