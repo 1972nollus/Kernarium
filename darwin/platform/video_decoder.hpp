@@ -46,9 +46,12 @@ struct VideoColorimetry {
     friend bool operator==(const VideoColorimetry&, const VideoColorimetry&) = default;
 };
 
-// Timestamps retain the caller's units and are returned in presentation order,
-// including delayed drain output. `layout` selects which buffers carry the
-// samples and is the layout the frame actually has, not the one last requested.
+// Timestamps retain the caller's units. Frames are returned in the order the
+// stream shows them, including delayed drain output: HEVC pictures by their
+// picture order count (VideoToolbox returns them as decoded). H.264 pictures
+// are returned as decoded, so a stream with B-pictures leaves out of display
+// order. `layout` selects which buffers carry the samples and is the layout the
+// frame actually has, not the one last requested.
 struct DecodedVideoFrame {
     VideoFormat format;
     VideoPixelLayout layout {VideoPixelLayout::planarYuv};
@@ -76,7 +79,14 @@ public:
     // alone, and a packet whose headers are incomplete leaves the format as
     // it was.
     virtual void inspect(std::span<const std::uint8_t> bytes) = 0;
+    // Finishes decoding and makes every picture still waiting for its turn
+    // available, in output order.
     virtual void drain() = 0;
+    // A seek: drops every picture in flight, every reference and the state of
+    // the stream's picture order, and keeps the parameter sets and the format
+    // they described, because a client that seeks does not send them again.
+    // The next picture must begin at a random access point.
+    virtual void discard() = 0;
     virtual std::vector<DecodedVideoFrame> takeFrames() = 0;
     [[nodiscard]] virtual VideoFormat format() const noexcept = 0;
     // Requests the layout of frames decoded from this point on. A decoder that

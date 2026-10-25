@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_decoder.hpp"
+#include "hevc_stream.hpp"
 
 #import <Foundation/Foundation.h>
 #import <VideoToolbox/VideoToolbox.h>
@@ -9,6 +10,7 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -235,6 +237,104 @@ VideoFormat jpegFormat(std::span<const std::uint8_t> data)
     throw std::runtime_error("JPEG baseline frame header is missing");
 }
 
+/* The rectangle of a decoded picture the stream shows, when that is less than
+ * the whole of it. */
+struct Crop {
+    std::uint32_t x {};
+    std::uint32_t y {};
+    std::uint32_t width {};
+    std::uint32_t height {};
+    bool set {};
+};
+
+/* One picture on its way through the hardware: what the caller said about it,
+ * and the frames the hardware's callback made of it. The callback runs before
+ * the wait that follows each picture returns, so the picture lives on the
+ * stack of the call that submitted it. */
+struct Picture {
+    std::uint64_t timestamp {};
+    Crop crop;
+    std::vector<DecodedVideoFrame> frames;
+};
+
+/* The decoded surface as the planes or pixels a caller takes, cut to the
+ * picture the stream shows. */
+DecodedVideoFrame copyPicture(CVImageBufferRef image, const Picture& picture, std::uint64_t timestamp)
+{
+    const auto pixelFormat = CVPixelBufferGetPixelFormatType(image);
+    const bool packed = pixelFormat == kCVPixelFormatType_32BGRA;
+    const bool tenBit = pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+    const bool fullRange = pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+    if (!packed && !tenBit && pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
+        pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+        throw std::runtime_error("unexpected hardware video pixel format");
+    if (CVPixelBufferGetPlaneCount(image) != (packed ? 0u : 2u))
+        throw std::runtime_error("invalid hardware video planes");
+    const std::uint32_t surfaceWidth = std::uint32_t(CVPixelBufferGetWidth(image));
+    const std::uint32_t surfaceHeight = std::uint32_t(CVPixelBufferGetHeight(image));
+    const Crop crop = picture.crop.set ? picture.crop : Crop {0, 0, surfaceWidth, surfaceHeight, true};
+    if (!crop.width || !crop.height || crop.x > surfaceWidth || crop.width > surfaceWidth - crop.x ||
+        crop.y > surfaceHeight || crop.height > surfaceHeight - crop.y)
+        throw std::runtime_error("hardware video surface is smaller than the picture it carries");
+    DecodedVideoFrame frame;
+    frame.layout = packed ? VideoPixelLayout::packedBgra : VideoPixelLayout::planarYuv;
+    frame.format = {crop.width, crop.height, tenBit ? 10u : 8u};
+    /* Read back the description the hardware itself applied, so a
+     * caller that converts this frame reaches the same picture the
+     * hardware would have packed. A stream that states nothing is
+     * resolved by VideoToolbox, not guessed again here. */
+    frame.color.fullRange = fullRange;
+    CFObject<CFTypeRef> matrixValue {CVBufferCopyAttachment(image, kCVImageBufferYCbCrMatrixKey, nullptr)};
+    if (const auto matrix = matrixValue.get()) {
+        if (CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_601_4) ||
+            CFEqual(matrix, kCVImageBufferYCbCrMatrix_SMPTE_240M_1995))
+            frame.color.matrix = VideoColorMatrix::bt601;
+        else if (CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_2020))
+            frame.color.matrix = VideoColorMatrix::bt2020;
+        else frame.color.matrix = VideoColorMatrix::bt709;
+    } else {
+        // The same rule VideoToolbox applies to an unstated matrix.
+        frame.color.matrix = surfaceHeight > 576 ? VideoColorMatrix::bt709 : VideoColorMatrix::bt601;
+    }
+    frame.timestamp = timestamp;
+    checked(CVPixelBufferLockBaseAddress(image, kCVPixelBufferLock_ReadOnly), "map decoded video");
+    struct Unlock {
+        CVImageBufferRef image;
+        ~Unlock() { CVPixelBufferUnlockBaseAddress(image, kCVPixelBufferLock_ReadOnly); }
+    } unlock {image};
+    if (packed) {
+        const std::size_t rowBytes = std::size_t(crop.width) * 4;
+        const std::size_t offset = std::size_t(crop.x) * 4;
+        const auto stride = CVPixelBufferGetBytesPerRow(image);
+        const auto* source = static_cast<const std::uint8_t*>(CVPixelBufferGetBaseAddress(image));
+        if (!source || stride < offset + rowBytes) throw std::runtime_error("truncated hardware video surface");
+        frame.pixels.resize(rowBytes * crop.height);
+        for (std::size_t row = 0; row < crop.height; ++row)
+            std::memcpy(frame.pixels.data() + row * rowBytes, source + (crop.y + row) * stride + offset, rowBytes);
+        return frame;
+    }
+    const std::size_t sample = tenBit ? 2 : 1;
+    for (unsigned plane = 0; plane < 2; ++plane) {
+        /* The chroma plane holds one interleaved pair for every two luma
+         * samples each way, and a window offset counts whole pairs. */
+        const std::size_t width = plane ? ((crop.width + 1) / 2) * 2 : crop.width;
+        const std::size_t height = plane ? (crop.height + 1) / 2 : crop.height;
+        const std::size_t firstColumn = plane ? (crop.x / 2) * 2 : crop.x;
+        const std::size_t firstRow = plane ? crop.y / 2 : crop.y;
+        const std::size_t rowBytes = width * sample;
+        const std::size_t offset = firstColumn * sample;
+        const auto stride = CVPixelBufferGetBytesPerRowOfPlane(image, plane);
+        const auto* source = static_cast<const std::uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(image, plane));
+        if (!source || stride < offset + rowBytes || CVPixelBufferGetHeightOfPlane(image, plane) < firstRow + height)
+            throw std::runtime_error("truncated hardware video surface");
+        auto& destination = plane ? frame.chroma : frame.luma;
+        destination.resize(rowBytes * height);
+        for (std::size_t row = 0; row < height; ++row)
+            std::memcpy(destination.data() + row * rowBytes, source + (firstRow + row) * stride + offset, rowBytes);
+    }
+    return frame;
+}
+
 class AppleVideoDecoder final : public VideoDecoder {
 public:
     explicit AppleVideoDecoder(VideoCodec codec) : codec_(codec) {}
@@ -248,10 +348,16 @@ public:
 
     void submit(std::span<const std::uint8_t> bytes, std::uint64_t timestamp) override
     {
+        if (codec_ == VideoCodec::hevc) {
+            readHevc(bytes, timestamp, true);
+            return;
+        }
         const auto packet = prepare(bytes);
         if (packet.empty()) return;
         if (!session_.get()) throw std::runtime_error("video picture precedes its parameter sets");
-        decode(packet, timestamp);
+        Picture picture {timestamp, {}, {}};
+        decode(packet, picture);
+        for (auto& frame : picture.frames) emit(std::move(frame));
     }
 
     /* Everything `submit` does before the picture reaches the hardware:
@@ -261,15 +367,41 @@ public:
      * that needs the picture size before it can choose a layout runs this
      * alone, then submits the same packet, which repeats the parse without
      * repeating its effect. */
-    void inspect(std::span<const std::uint8_t> bytes) override { prepare(bytes); }
+    void inspect(std::span<const std::uint8_t> bytes) override
+    {
+        if (codec_ == VideoCodec::hevc) readHevc(bytes, 0, false);
+        else prepare(bytes);
+    }
 
     void drain() override
     {
-        if (!session_.get()) return;
-        checked(VTDecompressionSessionFinishDelayedFrames(session_.get()), "drain video decoder");
-        checked(VTDecompressionSessionWaitForAsynchronousFrames(session_.get()), "wait for video drain");
-        checkCallback();
+        if (session_.get()) {
+            checked(VTDecompressionSessionFinishDelayedFrames(session_.get()), "drain video decoder");
+            checked(VTDecompressionSessionWaitForAsynchronousFrames(session_.get()), "wait for video drain");
+            checkCallback();
+        }
+        releaseWaiting();
     }
+
+    /* A seek: nothing decoded so far is shown and no reference survives, but
+     * the parameter sets and the format they described do, because a client
+     * that seeks does not send them again. The session is built anew from them
+     * with the first picture that follows. */
+    void discard() override
+    {
+        if (session_.get()) VTDecompressionSessionWaitForAsynchronousFrames(session_.get());
+        {
+            std::lock_guard lock(mutex_);
+            frames_.clear();
+            callbackError_.clear();
+        }
+        waiting_.clear();
+        order_.clear();
+        hevcOrder_.reset();
+        if (session_.get()) VTDecompressionSessionInvalidate(session_.get());
+        session_.reset();
+    }
+
     std::vector<DecodedVideoFrame> takeFrames() override
     {
         std::lock_guard lock(mutex_);
@@ -296,10 +428,21 @@ public:
     }
 
 private:
-    std::vector<std::uint8_t> prepare(std::span<const std::uint8_t> bytes)
+    // What the session itself produces.
+    [[nodiscard]] VideoPixelLayout wantedLayout() const noexcept
+    {
+        return layout_ == VideoPixelLayout::packedBgra ? VideoPixelLayout::packedBgra : VideoPixelLayout::planarYuv;
+    }
+
+    static void checkPacketSize(std::span<const std::uint8_t> bytes)
     {
         if (bytes.empty() || bytes.size() > 8 * 1024 * 1024)
             throw std::runtime_error("video packet size is outside the decoder limit");
+    }
+
+    std::vector<std::uint8_t> prepare(std::span<const std::uint8_t> bytes)
+    {
+        checkPacketSize(bytes);
         std::vector<std::uint8_t> packet;
         bool changed = false;
         // A point where restarting the session loses nothing, because the
@@ -329,20 +472,14 @@ private:
         } else {
             bool picture = false;
             for (const auto unit : annexB(bytes)) {
-                const unsigned type = codec_ == VideoCodec::h264 ? unit[0] & 31 : (unit[0] >> 1) & 63;
+                const unsigned type = unit[0] & 31;
                 int parameter = -1;
-                if (codec_ == VideoCodec::h264) {
-                    if (type == 7) parameter = 0;
-                    if (type == 8) parameter = 1;
-                    picture |= type >= 1 && type <= 5;
-                    randomAccess |= type == 5;          // IDR
-                } else {
-                    if (type >= 32 && type <= 34) parameter = int(type - 32);
-                    picture |= type <= 31;
-                    randomAccess |= type >= 16 && type <= 23;   // IRAP
-                }
+                if (type == 7) parameter = 0;
+                if (type == 8) parameter = 1;
+                picture |= type >= 1 && type <= 5;
+                randomAccess |= type == 5;          // IDR
                 if (parameter >= 0) {
-                    auto& saved = parameters_[std::size_t(parameter)];
+                    auto& saved = h264Parameters_[std::size_t(parameter)];
                     if (!std::equal(saved.begin(), saved.end(), unit.begin(), unit.end())) {
                         saved.assign(unit.begin(), unit.end());
                         changed = true;
@@ -356,12 +493,146 @@ private:
             }
             if (!picture) packet.clear();
         }
-        if (changed || !description_.get() || (randomAccess && layout_ != sessionLayout_))
+        if (changed || !description_.get() || !session_.get() ||
+            (randomAccess && wantedLayout() != sessionLayout_))
             configure();
         return packet;
     }
 
-    void decode(const std::vector<std::uint8_t>& packet, std::uint64_t timestamp)
+    /* An HEVC packet: its parameter sets are kept, and each picture it carries
+     * is decoded on its own, so that the order pictures are shown in can be
+     * worked out per picture. With `decodePictures` unset only the headers are
+     * read. */
+    struct HevcPicture {
+        hevc::SliceStart start;
+        std::vector<std::uint8_t> packet;
+        bool open {};
+    };
+
+    void readHevc(std::span<const std::uint8_t> bytes, std::uint64_t timestamp, bool decodePictures)
+    {
+        checkPacketSize(bytes);
+        HevcPicture current;
+        bool sized = false;
+        const auto finish = [&] {
+            if (!current.open) return;
+            current.open = false;
+            if (decodePictures) {
+                decodeHevc(current, timestamp);
+            } else if (!sized) {
+                adoptHevc(current.start.spsId);
+                sized = true;
+            }
+        };
+        for (const auto unit : annexB(bytes)) {
+            // A decoder of the base layer ignores the other layers.
+            if (unit.size() < 2 || hevc::layerId(unit) != 0) continue;
+            const unsigned type = hevc::nalType(unit);
+            if (type >= hevc::nalVps && type <= hevc::nalPps) {
+                // Pictures before a parameter set are decoded with the sets they were coded for.
+                finish();
+                switch (hevcSets_.store(unit)) {
+                case hevc::ParameterSets::Result::rejected: throw std::runtime_error("invalid HEVC parameter set");
+                case hevc::ParameterSets::Result::changed: hevcChanged_ = true; break;
+                case hevc::ParameterSets::Result::unchanged: break;
+                }
+                // A stream that states its parameter sets and no picture is
+                // still described by the last SPS it stated.
+                if (type == hevc::nalSps) adoptHevc(hevc::parseSps(unit)->id);
+                continue;
+            }
+            if (type == hevc::nalEndOfSequence || type == hevc::nalEndOfBitstream) {
+                finish();
+                if (decodePictures) {
+                    hevcOrder_.endSequence();
+                    releaseWaiting();
+                }
+                continue;
+            }
+            if (!hevc::isPicture(type)) continue;
+            const auto start = hevc::parseSliceStart(unit, hevcSets_);
+            if (!start) throw std::runtime_error("video picture precedes its parameter sets");
+            if (start->firstInPicture) {
+                finish();
+                current = {*start, {}, true};
+            } else if (!current.open) {
+                throw std::runtime_error("HEVC slice segment without its first segment");
+            }
+            const auto size = std::uint32_t(unit.size());
+            current.packet.insert(current.packet.end(), {std::uint8_t(size >> 24), std::uint8_t(size >> 16),
+                                                         std::uint8_t(size >> 8), std::uint8_t(size)});
+            current.packet.insert(current.packet.end(), unit.begin(), unit.end());
+        }
+        finish();
+    }
+
+    // The size and depth of the pictures an SPS describes are the stream's.
+    void adoptHevc(unsigned spsId)
+    {
+        const auto* sps = hevcSets_.sps(spsId);
+        if (!sps) return;
+        if ((sps->profile != 1 && sps->profile != 2) || sps->chromaFormat != 1 ||
+            (sps->bitDepth != 8 && sps->bitDepth != 10))
+            throw std::runtime_error("unsupported HEVC profile");
+        format_ = {sps->visibleWidth(), sps->visibleHeight(), sps->bitDepth};
+        hevcActive_ = *sps;
+    }
+
+    void decodeHevc(const HevcPicture& picture, std::uint64_t timestamp)
+    {
+        adoptHevc(picture.start.spsId);
+        const auto sps = *hevcSets_.sps(picture.start.spsId);
+        const auto verdict = hevcOrder_.next(picture.start, sps);
+        // Nothing decoded before a new sequence is shown after a picture of it.
+        if (verdict.startsSequence) releaseWaiting();
+        if (!verdict.decode) return;
+        const bool randomAccess = hevc::isIrap(picture.start.type);
+        if (hevcChanged_ || !description_.get() || !session_.get() ||
+            (randomAccess && wantedLayout() != sessionLayout_))
+            configure();
+        if (!session_.get()) throw std::runtime_error("video picture precedes its parameter sets");
+        Picture decoded {timestamp, {}, {}};
+        // VideoToolbox honors only part of the conformance window, so the
+        // session decodes the whole coded picture and the copy is cut here.
+        if (sps.hasWindow)
+            decoded.crop = {sps.window.left, sps.window.top, sps.visibleWidth(), sps.visibleHeight(), true};
+        decode(picture.packet, decoded);
+        if (!verdict.output) return;   // decoded because later pictures refer to it
+        std::vector<hevc::ReorderBuffer::Id> released;
+        for (auto& frame : decoded.frames) {
+            const auto id = ++sequence_;
+            waiting_.emplace(id, std::move(frame));
+            order_.add(id, verdict.poc, sps.maxNumReorder, sps.maxLatencyIncreasePlus1, released);
+        }
+        release(released);
+    }
+
+    void release(const std::vector<hevc::ReorderBuffer::Id>& ids)
+    {
+        for (const auto id : ids) {
+            const auto found = waiting_.find(id);
+            if (found == waiting_.end()) continue;
+            emit(std::move(found->second));
+            waiting_.erase(found);
+        }
+    }
+
+    // Every picture that waits for a lower count to be shown leaves now.
+    void releaseWaiting()
+    {
+        std::vector<hevc::ReorderBuffer::Id> released;
+        order_.flush(released);
+        release(released);
+    }
+
+    void emit(DecodedVideoFrame frame)
+    {
+        std::lock_guard lock(mutex_);
+        if (frames_.size() >= 32) throw std::runtime_error("decoded video queue is full");
+        frames_.push_back(std::move(frame));
+    }
+
+    void decode(const std::vector<std::uint8_t>& packet, Picture& picture)
     {
         CFObject<CMBlockBufferRef> block;
         checked(CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, nullptr, packet.size(),
@@ -369,26 +640,33 @@ private:
         checked(CMBlockBufferReplaceDataBytes(packet.data(), block.get(), 0, packet.size()), "copy video packet");
         CFObject<CMSampleBufferRef> sample;
         const std::size_t size = packet.size();
-        if (timestamp > std::uint64_t(std::numeric_limits<std::int64_t>::max()))
-            throw std::runtime_error("video timestamp exceeds CMTime range");
-        const CMSampleTimingInfo timing {kCMTimeInvalid, CMTimeMake(std::int64_t(timestamp), 1000000000), kCMTimeInvalid};
+        const CMSampleTimingInfo timing {kCMTimeInvalid, CMTimeMake(std::int64_t(++sequence_), 1000), kCMTimeInvalid};
         checked(CMSampleBufferCreateReady(kCFAllocatorDefault, block.get(), description_.get(),
             1, 1, &timing, 1, &size, sample.address()), "create video sample");
-        checked(VTDecompressionSessionDecodeFrame(session_.get(), sample.get(),
-            kVTDecodeFrame_EnableTemporalProcessing, nullptr, nullptr), "decode video packet");
+        /* The picture is the callback's to fill until the session has
+         * returned everything it was given, even when decoding fails. */
+        struct Settle {
+            VTDecompressionSessionRef session;
+            ~Settle() { VTDecompressionSessionWaitForAsynchronousFrames(session); }
+        } settle {session_.get()};
+        /* No temporal processing: the hardware returns each picture as it
+         * decodes it, and the order pictures are shown in is worked out here,
+         * from the stream, not from timestamps a client may not set. */
+        checked(VTDecompressionSessionDecodeFrame(session_.get(), sample.get(), 0, &picture, nullptr),
+                "decode video packet");
         checked(VTDecompressionSessionWaitForAsynchronousFrames(session_.get()), "wait for decoded video");
         checkCallback();
     }
 
     void configure()
     {
-        if (codec_ != VideoCodec::jpeg && codec_ != VideoCodec::vp9) {
-            const unsigned count = codec_ == VideoCodec::h264 ? 2 : 3;
-            for (unsigned i = 0; i < count; ++i) if (parameters_[i].empty()) return;
-        }
+        if (codec_ == VideoCodec::h264)
+            for (const auto& parameters : h264Parameters_) if (parameters.empty()) return;
+        if (codec_ == VideoCodec::hevc && !hevcSets_.complete()) return;
         drain();
         if (session_.get()) VTDecompressionSessionInvalidate(session_.get());
         session_.reset();
+        hevcChanged_ = false;
         if (codec_ == VideoCodec::jpeg) {
             checked(CMVideoFormatDescriptionCreate(kCFAllocatorDefault, kCMVideoCodecType_JPEG,
                 int(format_.width), int(format_.height), nullptr, description_.address()), "describe JPEG");
@@ -401,38 +679,41 @@ private:
             checked(CMVideoFormatDescriptionCreate(kCFAllocatorDefault, kCMVideoCodecType_VP9,
                 int(format_.width), int(format_.height), (__bridge CFDictionaryRef)extensions,
                 description_.address()), "describe VP9");
-        } else {
-            std::array<const std::uint8_t*, 3> data {};
-            std::array<std::size_t, 3> sizes {};
-            for (unsigned i = 0; i < 3; ++i) { data[i] = parameters_[i].data(); sizes[i] = parameters_[i].size(); }
-            if (codec_ == VideoCodec::h264) {
-                if (parameters_[0].size() < 4) throw std::runtime_error("truncated H.264 SPS");
-                const unsigned profile = parameters_[0][1];
-                if (profile != 66 && profile != 77 && profile != 100 && profile != 110)
-                    throw std::runtime_error("unsupported H.264 profile");
-                if (profile == 110 && !high10Available())
-                    throw std::runtime_error("H.264 High10 hardware is unavailable on this host");
-                format_.bitDepth = profile == 110 ? 10 : 8;
-                checked(CMVideoFormatDescriptionCreateFromH264ParameterSets(kCFAllocatorDefault,
-                    2, data.data(), sizes.data(), 4, description_.address()), "describe H.264");
-            } else {
-                if (parameters_[1].size() < 4) throw std::runtime_error("truncated HEVC SPS");
-                const unsigned profile = parameters_[1][3] & 31;
-                if (profile != 1 && profile != 2) throw std::runtime_error("unsupported HEVC profile");
-                format_.bitDepth = profile == 2 ? 10 : 8;
-                checked(CMVideoFormatDescriptionCreateFromHEVCParameterSets(kCFAllocatorDefault,
-                    3, data.data(), sizes.data(), 4, nullptr, description_.address()), "describe HEVC");
-            }
+        } else if (codec_ == VideoCodec::h264) {
+            std::array<const std::uint8_t*, 2> data {};
+            std::array<std::size_t, 2> sizes {};
+            for (unsigned i = 0; i < 2; ++i) { data[i] = h264Parameters_[i].data(); sizes[i] = h264Parameters_[i].size(); }
+            if (h264Parameters_[0].size() < 4) throw std::runtime_error("truncated H.264 SPS");
+            const unsigned profile = h264Parameters_[0][1];
+            if (profile != 66 && profile != 77 && profile != 100 && profile != 110)
+                throw std::runtime_error("unsupported H.264 profile");
+            if (profile == 110 && !high10Available())
+                throw std::runtime_error("H.264 High10 hardware is unavailable on this host");
+            format_.bitDepth = profile == 110 ? 10 : 8;
+            checked(CMVideoFormatDescriptionCreateFromH264ParameterSets(kCFAllocatorDefault,
+                2, data.data(), sizes.data(), 4, description_.address()), "describe H.264");
             const auto dimensions = CMVideoFormatDescriptionGetDimensions(description_.get());
             format_.width = std::uint32_t(dimensions.width);
             format_.height = std::uint32_t(dimensions.height);
+        } else {
+            const auto units = hevcSets_.descriptionUnits();
+            std::vector<const std::uint8_t*> data;
+            std::vector<std::size_t> sizes;
+            for (const auto& unit : units) { data.push_back(unit.data()); sizes.push_back(unit.size()); }
+            checked(CMVideoFormatDescriptionCreateFromHEVCParameterSets(kCFAllocatorDefault,
+                units.size(), data.data(), sizes.data(), 4, nullptr, description_.address()), "describe HEVC");
         }
+        /* What the hardware decodes is the coded picture: the window an HEVC
+         * stream states is cut from it afterwards. */
+        const bool hevcStream = codec_ == VideoCodec::hevc;
+        const auto codedWidth = hevcStream ? hevcActive_.width : format_.width;
+        const auto codedHeight = hevcStream ? hevcActive_.height : format_.height;
         const auto maxWidth = codec_ == VideoCodec::hevc ? 8192u : 4096u;
         const auto maxHeight = codec_ == VideoCodec::hevc ? 4320u : 2304u;
-        if (!format_.width || !format_.height || format_.width > maxWidth || format_.height > maxHeight)
+        if (!codedWidth || !codedHeight || codedWidth > maxWidth || codedHeight > maxHeight)
             throw std::runtime_error("video dimensions exceed decoder capabilities");
-        const OSType planarFormat = format_.bitDepth == 10 ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-                                                        : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+        const OSType planarFormat = format_.bitDepth <= 8 ? kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+                                                          : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
         NSDictionary* specification = @{(__bridge NSString*)kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: @YES};
         VTDecompressionOutputCallbackRecord callback {output, this};
         const auto create = [&](OSType pixelFormat) {
@@ -446,8 +727,8 @@ private:
          * is why a client that draws through an RGB surface asks for it.
          * A decoder that will not emit it still decodes, in its own
          * layout, and the frame reports which layout it carries. */
-        sessionLayout_ = layout_;
-        if (layout_ == VideoPixelLayout::packedBgra && create(kCVPixelFormatType_32BGRA) != noErr)
+        sessionLayout_ = wantedLayout();
+        if (sessionLayout_ == VideoPixelLayout::packedBgra && create(kCVPixelFormatType_32BGRA) != noErr)
             session_.reset();
         if (!session_.get()) {
             sessionLayout_ = VideoPixelLayout::planarYuv;
@@ -467,79 +748,16 @@ private:
         }
     }
 
-    static void output(void* context, void*, OSStatus status, VTDecodeInfoFlags,
-                       CVImageBufferRef image, CMTime timestamp, CMTime) noexcept
+    static void output(void* context, void* source, OSStatus status, VTDecodeInfoFlags,
+                       CVImageBufferRef image, CMTime, CMTime) noexcept
     {
         auto& self = *static_cast<AppleVideoDecoder*>(context);
+        auto& picture = *static_cast<Picture*>(source);
         std::lock_guard lock(self.mutex_);
         try {
             checked(status, "hardware video output");
             if (!image) return;
-            if (self.frames_.size() >= 32) throw std::runtime_error("decoded video queue is full");
-            const auto pixelFormat = CVPixelBufferGetPixelFormatType(image);
-            const bool packed = pixelFormat == kCVPixelFormatType_32BGRA;
-            const bool tenBit = pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
-            if (!packed && !tenBit && pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
-                pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
-                throw std::runtime_error("unexpected hardware video pixel format");
-            if (CVPixelBufferGetPlaneCount(image) != (packed ? 0u : 2u))
-                throw std::runtime_error("invalid hardware video planes");
-            DecodedVideoFrame frame;
-            frame.layout = packed ? VideoPixelLayout::packedBgra : VideoPixelLayout::planarYuv;
-            frame.format = {std::uint32_t(CVPixelBufferGetWidth(image)),
-                            std::uint32_t(CVPixelBufferGetHeight(image)), tenBit ? 10u : 8u};
-            /* Read back the description the hardware itself applied, so a
-             * caller that converts this frame reaches the same picture the
-             * hardware would have packed. A stream that states nothing is
-             * resolved by VideoToolbox, not guessed again here. */
-            frame.color.fullRange = pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
-            CFObject<CFTypeRef> matrixValue {
-                CVBufferCopyAttachment(image, kCVImageBufferYCbCrMatrixKey, nullptr)};
-            if (const auto matrix = matrixValue.get()) {
-                if (CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_601_4) ||
-                    CFEqual(matrix, kCVImageBufferYCbCrMatrix_SMPTE_240M_1995))
-                    frame.color.matrix = VideoColorMatrix::bt601;
-                else if (CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_2020))
-                    frame.color.matrix = VideoColorMatrix::bt2020;
-                else frame.color.matrix = VideoColorMatrix::bt709;
-            } else {
-                // The same rule VideoToolbox applies to an unstated matrix.
-                frame.color.matrix = frame.format.height > 576 ? VideoColorMatrix::bt709
-                                                               : VideoColorMatrix::bt601;
-            }
-            if (!CMTIME_IS_NUMERIC(timestamp) || timestamp.value < 0)
-                throw std::runtime_error("invalid decoded video timestamp");
-            frame.timestamp = std::uint64_t(CMTimeConvertScale(timestamp, 1000000000, kCMTimeRoundingMethod_Default).value);
-            checked(CVPixelBufferLockBaseAddress(image, kCVPixelBufferLock_ReadOnly), "map decoded video");
-            struct Unlock {
-                CVPixelBufferRef image;
-                ~Unlock() { CVPixelBufferUnlockBaseAddress(image, kCVPixelBufferLock_ReadOnly); }
-            } unlock {image};
-            if (packed) {
-                const std::size_t rowBytes = std::size_t(frame.format.width) * 4;
-                const auto stride = CVPixelBufferGetBytesPerRow(image);
-                const auto* source = static_cast<const std::uint8_t*>(CVPixelBufferGetBaseAddress(image));
-                if (!source || stride < rowBytes) throw std::runtime_error("truncated hardware video surface");
-                frame.pixels.resize(rowBytes * frame.format.height);
-                for (std::size_t row = 0; row < frame.format.height; ++row)
-                    std::memcpy(frame.pixels.data() + row * rowBytes, source + row * stride, rowBytes);
-                self.frames_.push_back(std::move(frame));
-                return;
-            }
-            for (unsigned plane = 0; plane < 2; ++plane) {
-                const std::size_t width = plane ? ((frame.format.width + 1) / 2) * 2 : frame.format.width;
-                const std::size_t height = plane ? (frame.format.height + 1) / 2 : frame.format.height;
-                const std::size_t rowBytes = width * (tenBit ? 2 : 1);
-                const auto stride = CVPixelBufferGetBytesPerRowOfPlane(image, plane);
-                const auto* source = static_cast<const std::uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(image, plane));
-                if (!source || stride < rowBytes || CVPixelBufferGetHeightOfPlane(image, plane) < height)
-                    throw std::runtime_error("truncated hardware video surface");
-                auto& destination = plane ? frame.chroma : frame.luma;
-                destination.resize(rowBytes * height);
-                for (std::size_t row = 0; row < height; ++row)
-                    std::memcpy(destination.data() + row * rowBytes, source + row * stride, rowBytes);
-            }
-            self.frames_.push_back(std::move(frame));
+            picture.frames.push_back(copyPicture(image, picture, picture.timestamp));
         } catch (const std::exception& error) {
             self.callbackError_ = error.what();
         } catch (...) {
@@ -558,7 +776,17 @@ private:
     VideoPixelLayout sessionLayout_ {VideoPixelLayout::planarYuv};
     unsigned vp9ColorSpace_ {};
     bool vp9FullRange_ {};
-    std::array<std::vector<std::uint8_t>, 3> parameters_;
+    std::array<std::vector<std::uint8_t>, 2> h264Parameters_;
+    // HEVC: the stream's parameter sets, the one in use, and the order its
+    // pictures are shown in. Decoded pictures wait here, by number, for the
+    // pictures that precede them.
+    hevc::ParameterSets hevcSets_;
+    hevc::Sps hevcActive_;
+    bool hevcChanged_ {};
+    hevc::PictureOrder hevcOrder_;
+    hevc::ReorderBuffer order_;
+    std::map<hevc::ReorderBuffer::Id, DecodedVideoFrame> waiting_;
+    std::uint64_t sequence_ {};
     CFObject<CMVideoFormatDescriptionRef> description_;
     CFObject<VTDecompressionSessionRef> session_;
     std::mutex mutex_;

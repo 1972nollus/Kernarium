@@ -139,6 +139,7 @@ public:
         frames_.push_back(std::move(frame));
     }
     void drain() override {}
+    void discard() override { frames_.clear(); }
     std::vector<DecodedVideoFrame> takeFrames() override { return std::exchange(frames_, {}); }
     VideoFormat format() const noexcept override { return format_; }
     void requestOutputLayout(VideoPixelLayout layout) override { layout_ = layout; }
