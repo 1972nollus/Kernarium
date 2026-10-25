@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_decoder.hpp"
+#include "apple/h264_stream.hpp"
 #include "apple/hevc_stream.hpp"
 #include "require.hpp"
 
@@ -9,6 +10,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -56,6 +58,54 @@ Bytes withoutParameterSets(const Bytes& accessUnit)
     for (const auto unit : bitstream::splitAnnexB(accessUnit)) {
         const auto type = bitstream::hevcNalType(unit);
         if (type < 32 || type > 34) bitstream::appendAnnexB(result, unit.data(), unit.size());
+    }
+    return result;
+}
+
+// The same for H.264: the pictures of an Annex B stream with the parameter sets that precede each.
+std::vector<Bytes> h264AccessUnits(const Bytes& stream)
+{
+    namespace bitstream = uml::platform::bitstream;
+    namespace h264 = uml::platform::h264;
+    std::vector<Bytes> result;
+    Bytes current;
+    h264::ParameterSets sets;
+    std::optional<h264::SliceHeader> last;
+    bool hasPicture = false;
+    for (const auto unit : bitstream::splitAnnexB(stream)) {
+        const auto type = h264::nalType(unit);
+        bool starts = false;
+        if (type == h264::nalSps || type == h264::nalPps) {
+            sets.store(unit);
+            starts = true;
+        } else if (h264::isPicture(type)) {
+            const auto header = h264::parseSliceHeader(unit, sets);
+            if (!header) throw std::runtime_error("H.264 fixture has a slice without its parameter sets");
+            starts = last && h264::startsPicture(*last, *header);
+            last = header;
+        } else {
+            starts = true;
+        }
+        if (hasPicture && starts) {
+            result.push_back(std::move(current));
+            current.clear();
+            hasPicture = false;
+        }
+        bitstream::appendAnnexB(current, unit.data(), unit.size());
+        hasPicture = hasPicture || h264::isPicture(type);
+    }
+    if (hasPicture) result.push_back(std::move(current));
+    return result;
+}
+
+Bytes withoutH264ParameterSets(const Bytes& accessUnit)
+{
+    namespace bitstream = uml::platform::bitstream;
+    namespace h264 = uml::platform::h264;
+    Bytes result;
+    for (const auto unit : bitstream::splitAnnexB(accessUnit)) {
+        const auto type = h264::nalType(unit);
+        if (type != h264::nalSps && type != h264::nalPps) bitstream::appendAnnexB(result, unit.data(), unit.size());
     }
     return result;
 }
@@ -276,6 +326,110 @@ void hevcWindow()
     }
 }
 
+/* The same fixtures for H.264, in the order the encoder coded them: picture N
+ * of the stream is source frame display[N]. */
+const unsigned h264ClosedDisplay[] = {0, 4, 2, 1, 3, 8, 6, 5, 7, 11, 9, 10, 12, 16, 14, 13, 15, 19, 17, 18};
+
+void h264DisplayOrder()
+{
+    using namespace uml::platform;
+    // B-pictures with the limits the stream states, and with the level's.
+    for (const char* name : {"h264-bframes.bin", "h264-no-restriction.bin"}) {
+        const auto units = h264AccessUnits(read(name));
+        require(units.size() == 20, "the H.264 order fixtures have twenty pictures");
+        auto decoder = makeVideoDecoder(VideoCodec::h264);
+        std::vector<DecodedVideoFrame> frames;
+        for (std::size_t i = 0; i < units.size(); ++i) {
+            decoder->submit(units[i], (i + 1) * 1000ull);
+            append(frames, decoder->takeFrames());
+        }
+        // Pictures wait for the ones that precede them in display order.
+        const bool stated = std::string(name) == "h264-bframes.bin";
+        if (stated) require(frames.size() == units.size() - 2, "the last pictures wait until the stream is drained");
+        else require(frames.size() < units.size(), "the level's limits hold the last pictures back");
+        decoder->drain();
+        append(frames, decoder->takeFrames());
+        checkDisplayOrder(frames, h264ClosedDisplay, 20, {}, name);
+    }
+    // Order count type 2 is decoding order, and nothing is held back.
+    {
+        const auto units = h264AccessUnits(read("h264-poc2.bin"));
+        auto decoder = makeVideoDecoder(VideoCodec::h264);
+        for (std::size_t i = 0; i < units.size(); ++i) {
+            decoder->submit(units[i], (i + 1) * 1000ull);
+            const auto frames = decoder->takeFrames();
+            require(frames.size() == 1 && frames[0].timestamp == (i + 1) * 1000ull,
+                    "a stream that cannot reorder shows each picture as it is decoded");
+            require(std::abs(meanLuma(frames[0]) - (16.0 + 10.0 * i)) <= 3.0, "the picture is the one that was sent");
+        }
+    }
+    // A packet that carries several pictures is decoded picture by picture.
+    {
+        const auto units = h264AccessUnits(read("h264-bframes.bin"));
+        Bytes joined;
+        for (std::size_t i = 0; i < 5; ++i) joined.insert(joined.end(), units[i].begin(), units[i].end());
+        auto decoder = makeVideoDecoder(VideoCodec::h264);
+        decoder->submit(joined, 777000);
+        decoder->drain();
+        const auto frames = decoder->takeFrames();
+        require(frames.size() == 5, "all five pictures of a joined packet were decoded");
+        for (std::size_t k = 0; k < frames.size(); ++k)
+            require(std::abs(meanLuma(frames[k]) - (16.0 + 10.0 * k)) <= 3.0, "joined pictures leave in display order");
+    }
+    // A seek keeps the parameter sets: the first picture after it carries none.
+    {
+        const auto units = h264AccessUnits(read("h264-bframes.bin"));
+        auto decoder = makeVideoDecoder(VideoCodec::h264);
+        for (std::size_t i = 0; i < 7; ++i) decoder->submit(units[i], (i + 1) * 1000ull);
+        const auto before = decoder->format();
+        decoder->discard();
+        require(decoder->takeFrames().empty(), "a seek shows nothing decoded before it");
+        require(decoder->format() == before, "a seek keeps the format");
+        std::vector<DecodedVideoFrame> frames;
+        for (std::size_t i = 12; i < units.size(); ++i) {
+            decoder->submit(i == 12 ? withoutH264ParameterSets(units[i]) : units[i], (i + 1) * 1000ull);
+            append(frames, decoder->takeFrames());
+        }
+        decoder->drain();
+        append(frames, decoder->takeFrames());
+        require(frames.size() == 8, "the eight pictures after the seek");
+        for (std::size_t k = 1; k < frames.size(); ++k) {
+            require(frames[k].timestamp > 12000, "a picture decoded before the seek was shown after it");
+            require(meanLuma(frames[k]) > meanLuma(frames[k - 1]), "pictures after a seek leave in order");
+        }
+        // And a second seek does the same thing again.
+        decoder->discard();
+        for (std::size_t i = 12; i < units.size(); ++i) decoder->submit(withoutH264ParameterSets(units[i]), (i + 1) * 1000ull);
+        decoder->drain();
+        require(decoder->takeFrames().size() == 8, "a second seek");
+    }
+}
+
+void h264Window()
+{
+    using namespace uml::platform;
+    // Frame cropping with offsets on the left and the top.
+    auto decoder = makeVideoDecoder(VideoCodec::h264);
+    const auto stream = read("h264-window.bin");
+    decoder->inspect(stream);
+    require(decoder->format() == VideoFormat {120, 90, 8}, "the stream reports the picture it shows");
+    require(decoder->takeFrames().empty(), "inspecting decodes nothing");
+    decoder->submit(stream, 5);
+    decoder->drain();
+    const auto frames = decoder->takeFrames();
+    require(frames.size() == 1 && frames[0].format == VideoFormat {120, 90, 8}, "the picture is the window");
+    require(frames[0].luma.size() == 120u * 90u && frames[0].chroma.size() == 120u * 45u, "cropped plane sizes");
+    const auto error = sampleError(read("h264-window.raw"), frames[0].luma, frames[0].chroma);
+    std::printf("h264-window: max error %.0f levels\n", error);
+    require(error <= 2.0, "the window is cut at its own origin");
+    auto packed = makeVideoDecoder(VideoCodec::h264);
+    packed->requestOutputLayout(VideoPixelLayout::packedBgra);
+    packed->submit(stream, 5);
+    packed->drain();
+    const auto pictures = packed->takeFrames();
+    require(pictures.size() == 1 && pictures[0].pixels.size() == 120u * 90u * 4u, "a cropped packed picture");
+}
+
 /* What the host says it decodes is checked by decoding it: a picture of the
  * largest size the capability list states, in the highest tier and level. */
 void hevcLimits(const std::vector<uml::platform::VideoDecodeCapability>& capabilities)
@@ -487,6 +641,14 @@ int main(int argc, char** argv)
             hevcWindow();
             hevcRawFormats();
             hevcLimits(capabilities);
+        }
+        const auto has = [&](VideoProfile profile) {
+            return std::any_of(capabilities.begin(), capabilities.end(),
+                               [profile](const auto& c) { return c.profile == profile; });
+        };
+        if (has(VideoProfile::h264Main) && has(VideoProfile::h264High)) {
+            h264DisplayOrder();
+            h264Window();
         }
         auto decoder = makeVideoDecoder(capabilities.front().codec);
         bool rejected = false;

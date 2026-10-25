@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_decoder.hpp"
+#include "h264_stream.hpp"
 #include "hevc_stream.hpp"
 
 #import <Foundation/Foundation.h>
@@ -372,6 +373,10 @@ public:
             readHevc(bytes, timestamp, true);
             return;
         }
+        if (codec_ == VideoCodec::h264) {
+            readH264(bytes, timestamp, true);
+            return;
+        }
         const auto packet = prepare(bytes);
         if (packet.empty()) return;
         if (!session_.get()) throw std::runtime_error("video picture precedes its parameter sets");
@@ -390,16 +395,13 @@ public:
     void inspect(std::span<const std::uint8_t> bytes) override
     {
         if (codec_ == VideoCodec::hevc) readHevc(bytes, 0, false);
+        else if (codec_ == VideoCodec::h264) readH264(bytes, 0, false);
         else prepare(bytes);
     }
 
     void drain() override
     {
-        if (session_.get()) {
-            checked(VTDecompressionSessionFinishDelayedFrames(session_.get()), "drain video decoder");
-            checked(VTDecompressionSessionWaitForAsynchronousFrames(session_.get()), "wait for video drain");
-            checkCallback();
-        }
+        finishSession();
         releaseWaiting();
     }
 
@@ -418,6 +420,7 @@ public:
         waiting_.clear();
         order_.clear();
         hevcOrder_.reset();
+        h264Order_.reset();
         if (session_.get()) VTDecompressionSessionInvalidate(session_.get());
         session_.reset();
     }
@@ -490,29 +493,6 @@ private:
                 throw std::runtime_error("VP9 stream does not start with a key frame");
             }
             packet.assign(bytes.begin(), bytes.end());
-        } else {
-            bool picture = false;
-            for (const auto unit : annexB(bytes)) {
-                const unsigned type = unit[0] & 31;
-                int parameter = -1;
-                if (type == 7) parameter = 0;
-                if (type == 8) parameter = 1;
-                picture |= type >= 1 && type <= 5;
-                randomAccess |= type == 5;          // IDR
-                if (parameter >= 0) {
-                    auto& saved = h264Parameters_[std::size_t(parameter)];
-                    if (!std::equal(saved.begin(), saved.end(), unit.begin(), unit.end())) {
-                        saved.assign(unit.begin(), unit.end());
-                        changed = true;
-                    }
-                    continue;
-                }
-                const auto size = std::uint32_t(unit.size());
-                packet.insert(packet.end(), {std::uint8_t(size >> 24), std::uint8_t(size >> 16),
-                                              std::uint8_t(size >> 8), std::uint8_t(size)});
-                packet.insert(packet.end(), unit.begin(), unit.end());
-            }
-            if (!picture) packet.clear();
         }
         if (changed || !description_.get() || !session_.get() ||
             (randomAccess && wantedLayout() != sessionLayout_))
@@ -619,7 +599,7 @@ private:
             decoded.crop = {sps.window.left, sps.window.top, sps.visibleWidth(), sps.visibleHeight(), true};
         decode(picture.packet, decoded);
         if (!verdict.output) return;   // decoded because later pictures refer to it
-        std::vector<hevc::ReorderBuffer::Id> released;
+        std::vector<std::uint64_t> released;
         for (auto& frame : decoded.frames) {
             const auto id = ++sequence_;
             waiting_.emplace(id, std::move(frame));
@@ -628,7 +608,107 @@ private:
         release(released);
     }
 
-    void release(const std::vector<hevc::ReorderBuffer::Id>& ids)
+    /* An H.264 packet: its parameter sets are kept, and each picture it carries
+     * is decoded on its own, so that the order pictures are shown in can be
+     * worked out per picture. With `decodePictures` unset only the headers are
+     * read. */
+    struct H264Picture {
+        h264::SliceHeader first;
+        std::vector<std::uint8_t> packet;
+        bool open {};
+    };
+
+    void readH264(std::span<const std::uint8_t> bytes, std::uint64_t timestamp, bool decodePictures)
+    {
+        checkPacketSize(bytes);
+        H264Picture current;
+        bool sized = false;
+        const auto finish = [&] {
+            if (!current.open) return;
+            current.open = false;
+            if (decodePictures) {
+                decodeH264(current, timestamp);
+            } else if (!sized) {
+                adoptH264(current.first.spsId);
+                sized = true;
+            }
+        };
+        for (const auto unit : annexB(bytes)) {
+            if (unit.size() < 2) continue;
+            const unsigned type = h264::nalType(unit);
+            if (type == h264::nalSps || type == h264::nalPps) {
+                // Pictures before a parameter set are decoded with the sets they were coded for.
+                finish();
+                switch (h264Sets_.store(unit)) {
+                case h264::ParameterSets::Result::rejected: throw std::runtime_error("invalid H.264 parameter set");
+                case h264::ParameterSets::Result::changed: h264Changed_ = true; break;
+                case h264::ParameterSets::Result::unchanged: break;
+                }
+                // A stream that states its parameter sets and no picture is
+                // still described by the last SPS it stated.
+                if (type == h264::nalSps) adoptH264(h264::parseSps(unit)->id);
+                continue;
+            }
+            if (!h264::isPicture(type)) {
+                // These begin an access unit: the picture before them is complete.
+                if (type == h264::nalSei || type == h264::nalAud || type == h264::nalEndOfSequence ||
+                    type == h264::nalEndOfStream)
+                    finish();
+                continue;
+            }
+            const auto slice = h264::parseSliceHeader(unit, h264Sets_);
+            if (!slice) throw std::runtime_error("video picture precedes its parameter sets");
+            // A redundant slice repeats a primary one the decoder already has.
+            if (slice->redundantPicCnt) continue;
+            if (current.open && h264::startsPicture(current.first, *slice)) finish();
+            if (!current.open) current = {*slice, {}, true};
+            const auto size = std::uint32_t(unit.size());
+            current.packet.insert(current.packet.end(), {std::uint8_t(size >> 24), std::uint8_t(size >> 16),
+                                                         std::uint8_t(size >> 8), std::uint8_t(size)});
+            current.packet.insert(current.packet.end(), unit.begin(), unit.end());
+        }
+        finish();
+    }
+
+    // The size and depth of the pictures an SPS describes are the stream's.
+    void adoptH264(unsigned spsId)
+    {
+        const auto* sps = h264Sets_.sps(spsId);
+        if (!sps) return;
+        if ((sps->profile != 66 && sps->profile != 77 && sps->profile != 100 && sps->profile != 110) ||
+            sps->chromaFormat != 1 || (sps->bitDepth != 8 && sps->bitDepth != 10))
+            throw std::runtime_error("unsupported H.264 profile");
+        format_ = {sps->visibleWidth(), sps->visibleHeight(), sps->bitDepth};
+        h264Active_ = *sps;
+    }
+
+    void decodeH264(const H264Picture& picture, std::uint64_t timestamp)
+    {
+        adoptH264(picture.first.spsId);
+        const auto sps = *h264Sets_.sps(picture.first.spsId);
+        const bool randomAccess = picture.first.idr();
+        if (h264Changed_ || !description_.get() || !session_.get() ||
+            (randomAccess && wantedLayout() != sessionLayout_))
+            configure();
+        if (!session_.get()) throw std::runtime_error("video picture precedes its parameter sets");
+        Picture decoded {timestamp, {}, layout_ == VideoPixelLayout::planar8Bit, {}};
+        // The session decodes the whole coded picture and the copy is cut here.
+        if (sps.hasWindow)
+            decoded.crop = {sps.window.left, sps.window.top, sps.visibleWidth(), sps.visibleHeight(), true};
+        decode(picture.packet, decoded);
+        std::vector<std::uint64_t> released;
+        // A picture the hardware returned no frame for is still a picture of
+        // the stream: the buffer's account of what refers to what needs it.
+        if (decoded.frames.empty()) h264Order_.add(0, picture.first, sps, released);
+        for (auto& frame : decoded.frames) {
+            const auto id = ++sequence_;
+            waiting_.emplace(id, std::move(frame));
+            h264Order_.add(id, picture.first, sps, released);
+        }
+        release(released);
+    }
+
+    void release(const std::vector<std::uint64_t>& ids)
     {
         for (const auto id : ids) {
             const auto found = waiting_.find(id);
@@ -641,9 +721,21 @@ private:
     // Every picture that waits for a lower count to be shown leaves now.
     void releaseWaiting()
     {
-        std::vector<hevc::ReorderBuffer::Id> released;
-        order_.flush(released);
+        std::vector<std::uint64_t> released;
+        if (codec_ == VideoCodec::hevc) order_.flush(released);
+        if (codec_ == VideoCodec::h264) h264Order_.flush(released);
         release(released);
+    }
+
+    /* The hardware returns every picture it has been given. Nothing is held
+     * back inside it, and what the stream's order holds back is not its to
+     * return, so this changes nothing that is waiting. */
+    void finishSession()
+    {
+        if (!session_.get()) return;
+        checked(VTDecompressionSessionFinishDelayedFrames(session_.get()), "drain video decoder");
+        checked(VTDecompressionSessionWaitForAsynchronousFrames(session_.get()), "wait for video drain");
+        checkCallback();
     }
 
     void emit(DecodedVideoFrame frame)
@@ -681,13 +773,15 @@ private:
 
     void configure()
     {
-        if (codec_ == VideoCodec::h264)
-            for (const auto& parameters : h264Parameters_) if (parameters.empty()) return;
+        if (codec_ == VideoCodec::h264 && !h264Sets_.complete()) return;
         if (codec_ == VideoCodec::hevc && !hevcSets_.complete()) return;
-        drain();
+        /* Building a session anew does not end the stream: what waits for the
+         * pictures before it keeps waiting. */
+        finishSession();
         if (session_.get()) VTDecompressionSessionInvalidate(session_.get());
         session_.reset();
         hevcChanged_ = false;
+        h264Changed_ = false;
         if (codec_ == VideoCodec::jpeg) {
             checked(CMVideoFormatDescriptionCreate(kCFAllocatorDefault, kCMVideoCodecType_JPEG,
                 int(format_.width), int(format_.height), nullptr, description_.address()), "describe JPEG");
@@ -701,21 +795,14 @@ private:
                 int(format_.width), int(format_.height), (__bridge CFDictionaryRef)extensions,
                 description_.address()), "describe VP9");
         } else if (codec_ == VideoCodec::h264) {
-            std::array<const std::uint8_t*, 2> data {};
-            std::array<std::size_t, 2> sizes {};
-            for (unsigned i = 0; i < 2; ++i) { data[i] = h264Parameters_[i].data(); sizes[i] = h264Parameters_[i].size(); }
-            if (h264Parameters_[0].size() < 4) throw std::runtime_error("truncated H.264 SPS");
-            const unsigned profile = h264Parameters_[0][1];
-            if (profile != 66 && profile != 77 && profile != 100 && profile != 110)
-                throw std::runtime_error("unsupported H.264 profile");
-            if (profile == 110 && !high10Available())
+            if (h264Active_.profile == 110 && !high10Available())
                 throw std::runtime_error("H.264 High10 hardware is unavailable on this host");
-            format_.bitDepth = profile == 110 ? 10 : 8;
+            const auto units = h264Sets_.descriptionUnits();
+            std::vector<const std::uint8_t*> data;
+            std::vector<std::size_t> sizes;
+            for (const auto& unit : units) { data.push_back(unit.data()); sizes.push_back(unit.size()); }
             checked(CMVideoFormatDescriptionCreateFromH264ParameterSets(kCFAllocatorDefault,
-                2, data.data(), sizes.data(), 4, description_.address()), "describe H.264");
-            const auto dimensions = CMVideoFormatDescriptionGetDimensions(description_.get());
-            format_.width = std::uint32_t(dimensions.width);
-            format_.height = std::uint32_t(dimensions.height);
+                units.size(), data.data(), sizes.data(), 4, description_.address()), "describe H.264");
         } else {
             const auto units = hevcSets_.descriptionUnits();
             std::vector<const std::uint8_t*> data;
@@ -725,10 +812,11 @@ private:
                 units.size(), data.data(), sizes.data(), 4, nullptr, description_.address()), "describe HEVC");
         }
         /* What the hardware decodes is the coded picture: the window an HEVC
-         * stream states is cut from it afterwards. */
-        const bool hevcStream = codec_ == VideoCodec::hevc;
-        const auto codedWidth = hevcStream ? hevcActive_.width : format_.width;
-        const auto codedHeight = hevcStream ? hevcActive_.height : format_.height;
+         * or H.264 stream states is cut from it afterwards. */
+        const auto codedWidth = codec_ == VideoCodec::hevc ? hevcActive_.width
+            : codec_ == VideoCodec::h264 ? h264Active_.width() : format_.width;
+        const auto codedHeight = codec_ == VideoCodec::hevc ? hevcActive_.height
+            : codec_ == VideoCodec::h264 ? h264Active_.height() : format_.height;
         const auto maxWidth = codec_ == VideoCodec::hevc ? 8192u : 4096u;
         const auto maxHeight = codec_ == VideoCodec::hevc ? 4320u : 2304u;
         if (!codedWidth || !codedHeight || codedWidth > maxWidth || codedHeight > maxHeight)
@@ -808,10 +896,15 @@ private:
     VideoPixelLayout sessionLayout_ {VideoPixelLayout::planarYuv};
     unsigned vp9ColorSpace_ {};
     bool vp9FullRange_ {};
-    std::array<std::vector<std::uint8_t>, 2> h264Parameters_;
+    // H.264: the stream's parameter sets, the SPS in use, and the order its
+    // frames are shown in.
+    h264::ParameterSets h264Sets_;
+    h264::Sps h264Active_;
+    bool h264Changed_ {};
+    h264::OutputOrder h264Order_;
     // HEVC: the stream's parameter sets, the one in use, and the order its
-    // pictures are shown in. Decoded pictures wait here, by number, for the
-    // pictures that precede them.
+    // pictures are shown in. Decoded pictures of either codec wait here, by
+    // number, for the pictures that precede them.
     hevc::ParameterSets hevcSets_;
     hevc::Sps hevcActive_;
     bool hevcChanged_ {};

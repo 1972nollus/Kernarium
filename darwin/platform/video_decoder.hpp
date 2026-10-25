@@ -50,11 +50,11 @@ struct VideoColorimetry {
 };
 
 // Timestamps retain the caller's units. Frames are returned in the order the
-// stream shows them, including delayed drain output: HEVC pictures by their
-// picture order count (VideoToolbox returns them as decoded). H.264 pictures
-// are returned as decoded, so a stream with B-pictures leaves out of display
-// order. `layout` selects which buffers carry the samples and is the layout the
-// frame actually has, not the one last requested; the depth is the frame's own.
+// stream shows them, including delayed drain output: H.264 and HEVC pictures
+// by their picture order count (VideoToolbox returns them as decoded). H.264
+// field pictures are the exception and leave as decoded. `layout` selects which
+// buffers carry the samples and is the layout the frame actually has, not the
+// one last requested; the depth is the frame's own.
 struct DecodedVideoFrame {
     VideoFormat format;
     VideoPixelLayout layout {VideoPixelLayout::planarYuv};
