@@ -2460,7 +2460,7 @@ index bc38f7f3f1bea6c5fe40864343a26cb15f32b7cc..19d22c559f2a1456cf9efdc4fc897a85
  #define _TIF_WORK_MASK		(_TIF_NEED_RESCHED | _TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL | \
  				 _TIF_NOTIFY_RESUME)
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index 738bb8a006bef0a46796d020c7b8a62635461dca..beda0d55cd51730e8a2fe1e77fce50df249716d5 100644
+index da49b319b8d0c3ff03a9a29504bd3d6c3720a8a3..4f94a043ff6518da1eb331931e677e96f2ebe5bb 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -68,6 +68,7 @@ extern void do_uml_exitcalls(void);

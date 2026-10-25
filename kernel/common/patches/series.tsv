@@ -87,3 +87,5 @@ patch	drm-virtio-transfer-a-3D-resource-around-CPU-access-through-its-dma-.patch
 patch	arm64-um-provide-the-AArch64-tagged-address-ABI.patch
 patch	arm64-um-offer-the-tagged-address-ABI-only-where-the-host-ignores-ta.patch
 patch	arm64-um-ignore-an-mmap-hint-the-guest-cannot-use.patch
+patch	um-wake-the-system-through-every-descriptor-of-a-shared-interrupt.patch
+patch	um-let-the-Darwin-network-wake-a-suspend-the-guest-starts.patch
