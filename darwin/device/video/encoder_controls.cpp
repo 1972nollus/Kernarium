@@ -225,9 +225,17 @@ VideoEncodeProfile profileFor(VideoCodec codec, std::int64_t index)
     return codec == VideoCodec::h264 ? match(h264Profiles) : match(hevcProfiles);
 }
 
+/* The colour aspects a stream states. A V4L2 client states the standard in the
+ * colorspace and may leave the other fields at their defaults, which the
+ * colorspace then implies (V4L2_MAP_*_DEFAULT). The V4L2 core resets the other
+ * fields to DEFAULT whenever the colorspace is DEFAULT, so a client with a
+ * transfer function or a range but no standard sends RAW instead: RAW states
+ * no primaries, and then every default means what it says, not what a standard
+ * implies. */
 uml::platform::VideoEncodeColor colorFor(const StreamInfo& info)
 {
     using uml::platform::VideoEncodeColor;
+    const bool raw = info.colorspace == UML_V4L2_COLORSPACE_RAW;
     VideoEncodeColor color;
     switch (info.colorspace) {
     case UML_V4L2_COLORSPACE_SMPTE170M: color.primaries = VideoColorPrimaries::bt601Ntsc; break;
@@ -235,12 +243,10 @@ uml::platform::VideoEncodeColor colorFor(const StreamInfo& info)
     case UML_V4L2_COLORSPACE_REC709: case UML_V4L2_COLORSPACE_SRGB: color.primaries = VideoColorPrimaries::bt709; break;
     case UML_V4L2_COLORSPACE_BT2020: color.primaries = VideoColorPrimaries::bt2020; break;
     case UML_V4L2_COLORSPACE_DCI_P3: color.primaries = VideoColorPrimaries::p3D65; break;
-    default: break;
+    default: break;  // DEFAULT and RAW: unspecified
     }
-    /* V4L2 lets a stream leave the transfer function and matrix at their
-     * defaults, which its colorspace implies (V4L2_MAP_*_DEFAULT). */
     auto transfer = info.transfer;
-    if (transfer == UML_V4L2_XFER_FUNC_DEFAULT) {
+    if (transfer == UML_V4L2_XFER_FUNC_DEFAULT && !raw) {
         switch (info.colorspace) {
         case UML_V4L2_COLORSPACE_SRGB: transfer = UML_V4L2_XFER_FUNC_SRGB; break;
         case UML_V4L2_COLORSPACE_REC709: case UML_V4L2_COLORSPACE_SMPTE170M:
@@ -257,7 +263,7 @@ uml::platform::VideoEncodeColor colorFor(const StreamInfo& info)
     default: break;
     }
     auto matrix = info.matrix;
-    if (matrix == UML_V4L2_YCBCR_ENC_DEFAULT) {
+    if (matrix == UML_V4L2_YCBCR_ENC_DEFAULT && !raw) {
         switch (info.colorspace) {
         case UML_V4L2_COLORSPACE_REC709: case UML_V4L2_COLORSPACE_DCI_P3: matrix = UML_V4L2_YCBCR_ENC_709; break;
         case UML_V4L2_COLORSPACE_BT2020: matrix = UML_V4L2_YCBCR_ENC_BT2020; break;
@@ -286,7 +292,7 @@ StreamInfo sanitized(const StreamInfo& info) noexcept
     StreamInfo result = info;
     result.colorspace = keep(info.colorspace,
         {UML_V4L2_COLORSPACE_SMPTE170M, UML_V4L2_COLORSPACE_REC709, UML_V4L2_COLORSPACE_470_SYSTEM_BG,
-         UML_V4L2_COLORSPACE_SRGB, UML_V4L2_COLORSPACE_BT2020, UML_V4L2_COLORSPACE_DCI_P3});
+         UML_V4L2_COLORSPACE_SRGB, UML_V4L2_COLORSPACE_BT2020, UML_V4L2_COLORSPACE_RAW, UML_V4L2_COLORSPACE_DCI_P3});
     result.transfer = keep(info.transfer,
         {UML_V4L2_XFER_FUNC_709, UML_V4L2_XFER_FUNC_SRGB, UML_V4L2_XFER_FUNC_SMPTE2084, UML_V4L2_XFER_FUNC_NONE});
     result.matrix = keep(info.matrix, {UML_V4L2_YCBCR_ENC_601, UML_V4L2_YCBCR_ENC_709, UML_V4L2_YCBCR_ENC_BT2020});
@@ -322,13 +328,10 @@ EncoderControls::EncoderControls(std::span<const VideoEncodeCapability> capabili
             modes &= codecModes;
         }
         std::int64_t maximumBitrate = std::numeric_limits<std::int64_t>::max();
-        std::uint32_t maximumBFrames = std::numeric_limits<std::uint32_t>::max();
-        for (const auto* capability : video) {
+        for (const auto* capability : video)
             if (capability->maximumBitrate)
                 maximumBitrate = std::min<std::int64_t>(maximumBitrate, std::int64_t(std::min<std::uint64_t>(
                     capability->maximumBitrate, std::uint64_t(maximumInt))));
-            maximumBFrames = std::min(maximumBFrames, capability->maximumBFrames);
-        }
         if (maximumBitrate == std::numeric_limits<std::int64_t>::max()) maximumBitrate = maximumInt;
         maximumBitrate = std::max<std::int64_t>(maximumBitrate, 1000);
 
@@ -351,8 +354,14 @@ EncoderControls::EncoderControls(std::span<const VideoEncodeCapability> capabili
         add.boolean(UML_V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE, true, videoFormats);
         add.integer(UML_V4L2_CID_MPEG_VIDEO_VBV_SIZE, 0, maximumInt, 0, videoFormats);
         add.integer(UML_V4L2_CID_MPEG_VIDEO_GOP_SIZE, 0, maximumInt, 0, videoFormats);
-        if (maximumBFrames > 0)
-            add.integer(UML_V4L2_CID_MPEG_VIDEO_B_FRAMES, 0, maximumBFrames, 0, videoFormats);
+        /* The platform codes B-frames in one pattern of a fixed run, or none:
+         * a request below the run is no B-frames (encodeSettings). The control
+         * runs to the longest run and belongs to the codecs that have one. */
+        std::uint32_t longestRun = 0;
+        for (const auto* capability : video) longestRun = std::max(longestRun, capability->maximumBFrames);
+        if (longestRun > 0)
+            add.integer(UML_V4L2_CID_MPEG_VIDEO_B_FRAMES, 0, longestRun, 0,
+                        (h264 && h264->maximumBFrames ? h264Format : 0) | (hevc && hevc->maximumBFrames ? hevcFormat : 0));
         add.button(UML_V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME, videoFormats, VIRTIO_VIDEO_V4L2_CTRL_F_DYNAMIC);
         add.menu(UML_V4L2_CID_MPEG_VIDEO_HEADER_MODE,
                  (1u << UML_V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE) |
@@ -393,9 +402,13 @@ EncoderControls::EncoderControls(std::span<const VideoEncodeCapability> capabili
         const auto [minimumQp, maximumQp] = qpRange(*h264);
         add.menu(UML_V4L2_CID_MPEG_VIDEO_H264_PROFILE, publishedProfiles(*h264, h264Profiles),
                  defaultProfileIndex(*h264, h264Profiles, h264Preference), h264Format);
+        /* A stream states the level it asked for, or the lowest its picture,
+         * frame rate and bit rate fit if that is higher, so the lowest level
+         * is the default and means "as low as it fits". */
         const auto top = highestLevel(*h264) ? highestLevelIndex(h264Levels, highestLevel(*h264))
                                               : std::uint32_t(UML_V4L2_MPEG_VIDEO_H264_LEVEL_5_2);
-        add.menu(UML_V4L2_CID_MPEG_VIDEO_H264_LEVEL, (std::uint64_t(1) << (top + 1)) - 1, top, h264Format);
+        add.menu(UML_V4L2_CID_MPEG_VIDEO_H264_LEVEL, (std::uint64_t(1) << (top + 1)) - 1,
+                 UML_V4L2_MPEG_VIDEO_H264_LEVEL_1_0, h264Format);
         add.integer(UML_V4L2_CID_MPEG_VIDEO_H264_MIN_QP, minimumQp, maximumQp, minimumQp, h264Format);
         add.integer(UML_V4L2_CID_MPEG_VIDEO_H264_MAX_QP, minimumQp, maximumQp, maximumQp, h264Format,
                     VIRTIO_VIDEO_V4L2_CTRL_F_DYNAMIC);
@@ -420,7 +433,8 @@ EncoderControls::EncoderControls(std::span<const VideoEncodeCapability> capabili
                  defaultProfileIndex(*hevc, hevcProfiles, hevcPreference), hevcFormat);
         const auto top = highestLevel(*hevc) ? highestLevelIndex(hevcLevels, highestLevel(*hevc))
                                               : std::uint32_t(UML_V4L2_MPEG_VIDEO_HEVC_LEVEL_6_2);
-        add.menu(UML_V4L2_CID_MPEG_VIDEO_HEVC_LEVEL, (std::uint64_t(1) << (top + 1)) - 1, top, hevcFormat);
+        add.menu(UML_V4L2_CID_MPEG_VIDEO_HEVC_LEVEL, (std::uint64_t(1) << (top + 1)) - 1,
+                 UML_V4L2_MPEG_VIDEO_HEVC_LEVEL_1, hevcFormat);
         add.menu(UML_V4L2_CID_MPEG_VIDEO_HEVC_TIER, std::uint64_t(1) << UML_V4L2_MPEG_VIDEO_HEVC_TIER_MAIN,
                  UML_V4L2_MPEG_VIDEO_HEVC_TIER_MAIN, hevcFormat, 0, UML_V4L2_MPEG_VIDEO_HEVC_TIER_HIGH);
         add.integer(UML_V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP, minimumQp, maximumQp, minimumQp, hevcFormat);
@@ -554,7 +568,11 @@ VideoEncodeSettings encodeSettings(const EncodeStream& stream, const ControlValu
     if (values.scalars.contains(maximumId) && scalar(values, maximumId) < 51)
         settings.maximumQp = std::uint32_t(scalar(values, maximumId));
     settings.keyFrameInterval = std::uint32_t(scalar(values, UML_V4L2_CID_MPEG_VIDEO_GOP_SIZE));
-    settings.bFrames = std::uint32_t(scalar(values, UML_V4L2_CID_MPEG_VIDEO_B_FRAMES));
+    /* B-frames are coded in the host's one pattern or not at all: a request
+     * for fewer than its run is no B-frames, one for more is the run. */
+    const auto askedBFrames = scalar(values, UML_V4L2_CID_MPEG_VIDEO_B_FRAMES);
+    settings.bFrames = stream.maximumBFrames != 0 && askedBFrames >= std::int64_t(stream.maximumBFrames)
+        ? stream.maximumBFrames : 0;
     if (h264) {
         if (scalar(values, UML_V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING) != 0)
             settings.temporalLayers = std::uint32_t(std::max<std::int64_t>(

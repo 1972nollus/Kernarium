@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <set>
 #include <string>
+#include <tuple>
 
 using namespace uml::platform;
 using namespace uml::video;
@@ -220,7 +221,10 @@ void controlTable()
     require(!published(controls, UML_V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE), "frame RC switch offered without CQP in both codecs");
     require(published(controls, UML_V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE) && published(controls, UML_V4L2_CID_MPEG_VIDEO_VBV_SIZE) &&
             published(controls, UML_V4L2_CID_MPEG_VIDEO_GOP_SIZE), "ordinary video controls");
-    require(control(controls, UML_V4L2_CID_MPEG_VIDEO_B_FRAMES).maximum == 2, "B-frame ceiling");
+    // B-frames: the longest run of the codecs that have one, for those codecs; a request below a run codes none.
+    const auto& bFrames = control(controls, UML_V4L2_CID_MPEG_VIDEO_B_FRAMES);
+    require(bFrames.minimum == 0 && bFrames.maximum == 3 && bFrames.step == 1 && bFrames.default_value == 0 &&
+            bFrames.coded_formats == video, "B-frame range is up to the longest run");
     const auto& key = control(controls, UML_V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME);
     require(key.type == UML_V4L2_CTRL_TYPE_BUTTON && (key.flags & VIRTIO_VIDEO_V4L2_CTRL_F_DYNAMIC), "force key frame");
     const auto& header = control(controls, UML_V4L2_CID_MPEG_VIDEO_HEADER_MODE);
@@ -239,8 +243,10 @@ void controlTable()
             profile.default_value == UML_V4L2_MPEG_VIDEO_H264_PROFILE_HIGH && profile.coded_formats == h264Only,
             "H.264 profile menu");
     const auto& level = control(controls, UML_V4L2_CID_MPEG_VIDEO_H264_LEVEL);
-    require(level.maximum == UML_V4L2_MPEG_VIDEO_H264_LEVEL_5_2 && level.default_value == level.maximum &&
-            level.menu_skip_mask == 0, "H.264 level menu stops at the host's level 5.2");
+    require(level.maximum == UML_V4L2_MPEG_VIDEO_H264_LEVEL_5_2 && level.menu_skip_mask == 0,
+            "H.264 level menu stops at the host's level 5.2");
+    // A stream states at least the level it asks for, so the default is the lowest level: as low as it fits.
+    require(level.default_value == UML_V4L2_MPEG_VIDEO_H264_LEVEL_1_0, "H.264 level defaults to the lowest");
     require(control(controls, UML_V4L2_CID_MPEG_VIDEO_H264_MIN_QP).default_value == 0 &&
             control(controls, UML_V4L2_CID_MPEG_VIDEO_H264_MAX_QP).default_value == 51 &&
             (control(controls, UML_V4L2_CID_MPEG_VIDEO_H264_MAX_QP).flags & VIRTIO_VIDEO_V4L2_CTRL_F_DYNAMIC) &&
@@ -262,8 +268,9 @@ void controlTable()
             hevcProfile.menu_skip_mask == menuBit(UML_V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_STILL_PICTURE) &&
             hevcProfile.default_value == UML_V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN && hevcProfile.coded_formats == hevcOnly,
             "HEVC profile menu");
-    require(control(controls, UML_V4L2_CID_MPEG_VIDEO_HEVC_LEVEL).maximum == UML_V4L2_MPEG_VIDEO_HEVC_LEVEL_6_2,
-            "HEVC level menu");
+    require(control(controls, UML_V4L2_CID_MPEG_VIDEO_HEVC_LEVEL).maximum == UML_V4L2_MPEG_VIDEO_HEVC_LEVEL_6_2 &&
+            control(controls, UML_V4L2_CID_MPEG_VIDEO_HEVC_LEVEL).default_value == UML_V4L2_MPEG_VIDEO_HEVC_LEVEL_1,
+            "HEVC level menu runs to the host's level and defaults to the lowest");
     const auto& tier = control(controls, UML_V4L2_CID_MPEG_VIDEO_HEVC_TIER);
     require(tier.maximum == UML_V4L2_MPEG_VIDEO_HEVC_TIER_HIGH && tier.menu_skip_mask == menuBit(UML_V4L2_MPEG_VIDEO_HEVC_TIER_HIGH) &&
             tier.default_value == UML_V4L2_MPEG_VIDEO_HEVC_TIER_MAIN, "HEVC tier is a menu with one usable item");
@@ -310,6 +317,25 @@ void controlTable()
             !published(cq, UML_V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_LAYER) &&
             published(cq, UML_V4L2_CID_MPEG_VIDEO_CONSTANT_QUALITY), "controls the host cannot honour were offered");
 
+    // A B-frame run belongs to the codecs that have one. A host whose H.264 alone reorders offers the control for
+    // H.264 alone, to the length of its run; one where neither does offers none.
+    auto h264Reorders = capabilities;
+    h264Reorders[1].maximumBFrames = 0;
+    const EncoderControls h264RunHost(h264Reorders);
+    const auto& h264Run = control(h264RunHost, UML_V4L2_CID_MPEG_VIDEO_B_FRAMES);
+    require(h264Run.maximum == 3 && h264Run.coded_formats == codedBit(VIRTIO_VIDEO_FORMAT_H264),
+            "the B-frame control reached a codec that codes none");
+    auto hevcReorders = capabilities;
+    hevcReorders[0].maximumBFrames = 0;
+    const EncoderControls hevcRunHost(hevcReorders);
+    const auto& hevcRun = control(hevcRunHost, UML_V4L2_CID_MPEG_VIDEO_B_FRAMES);
+    require(hevcRun.maximum == 2 && hevcRun.coded_formats == codedBit(VIRTIO_VIDEO_FORMAT_HEVC),
+            "a host whose HEVC alone reorders offers its run");
+    auto neither = capabilities;
+    neither[0].maximumBFrames = 0;
+    neither[1].maximumBFrames = 0;
+    require(!published(EncoderControls(neither), UML_V4L2_CID_MPEG_VIDEO_B_FRAMES), "B-frames offered where no codec reorders");
+
     // Baseline-only H.264 has no 8x8 transform.
     auto baseline = capabilities[0];
     baseline.profiles.resize(1);
@@ -319,7 +345,9 @@ void controlTable()
     auto unleveled = capabilities[0];
     for (auto& entry : unleveled.profiles) entry.maximumLevel = 0;
     require(control(EncoderControls(std::vector<VideoEncodeCapability> {unleveled}), UML_V4L2_CID_MPEG_VIDEO_H264_LEVEL).default_value ==
-            UML_V4L2_MPEG_VIDEO_H264_LEVEL_5_2, "default level top");
+            UML_V4L2_MPEG_VIDEO_H264_LEVEL_1_0, "default level");
+    require(control(EncoderControls(std::vector<VideoEncodeCapability> {unleveled}), UML_V4L2_CID_MPEG_VIDEO_H264_LEVEL).maximum ==
+            UML_V4L2_MPEG_VIDEO_H264_LEVEL_5_2, "top level");
     // A selectable HDR host without Main10 has no HDR controls.
     auto sdr = capabilities[1];
     sdr.profiles.resize(1);
@@ -340,8 +368,8 @@ void valueChecks()
             check(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 999) == ControlCheck::invalid &&
             check(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 80'000'001) == ControlCheck::invalid &&
             check(UML_V4L2_CID_MPEG_VIDEO_BITRATE, -1) == ControlCheck::invalid, "integer range");
-    require(check(UML_V4L2_CID_MPEG_VIDEO_B_FRAMES, 2) == ControlCheck::ok && check(UML_V4L2_CID_MPEG_VIDEO_B_FRAMES, 3) == ControlCheck::invalid,
-            "B-frame ceiling");
+    require(check(UML_V4L2_CID_MPEG_VIDEO_B_FRAMES, 2) == ControlCheck::ok && check(UML_V4L2_CID_MPEG_VIDEO_B_FRAMES, 3) == ControlCheck::ok &&
+            check(UML_V4L2_CID_MPEG_VIDEO_B_FRAMES, 4) == ControlCheck::invalid, "B-frame ceiling");
     // Boolean.
     require(check(UML_V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE, 0) == ControlCheck::ok && check(UML_V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE, 1) == ControlCheck::ok &&
             check(UML_V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE, 2) == ControlCheck::invalid, "boolean values");
@@ -395,6 +423,16 @@ void streamInfo()
     info.matrix = UML_V4L2_YCBCR_ENC_709;
     info.quantization = UML_V4L2_QUANTIZATION_LIM_RANGE;
     require(sanitized(info) == info, "supported colorimetry changed");
+    // RAW is the client's way to state no standard (the V4L2 core resets the other fields when the colorspace is
+    // DEFAULT), so it passes with every other field.
+    for (const auto transfer : {UML_V4L2_XFER_FUNC_DEFAULT, UML_V4L2_XFER_FUNC_NONE, UML_V4L2_XFER_FUNC_SMPTE2084}) {
+        StreamInfo raw;
+        raw.colorspace = UML_V4L2_COLORSPACE_RAW;
+        raw.transfer = transfer;
+        raw.matrix = UML_V4L2_YCBCR_ENC_BT2020;
+        raw.quantization = UML_V4L2_QUANTIZATION_FULL_RANGE;
+        require(sanitized(raw) == raw, "a RAW colorspace was dropped or changed its neighbours");
+    }
     info.colorspace = 99;
     info.transfer = 99;
     info.matrix = 99;
@@ -413,6 +451,8 @@ EncodeStream stream(VideoCodec codec, RawVideoLayout layout = RawVideoLayout::nv
     result.input = layout;
     result.width = 1280;
     result.height = 720;
+    // The host's B-frame runs: three in H.264, two in HEVC, none in JPEG.
+    result.maximumBFrames = codec == VideoCodec::h264 ? 3 : codec == VideoCodec::hevc ? 2 : 0;
     return result;
 }
 
@@ -423,7 +463,7 @@ void settingsFromControls()
 
     // Every default maps to the settings of a plain live stream.
     const auto plain = encodeSettings(stream(VideoCodec::h264), defaults);
-    require(plain.codec == VideoCodec::h264 && plain.profile == VideoEncodeProfile::h264High && plain.level == 52 &&
+    require(plain.codec == VideoCodec::h264 && plain.profile == VideoEncodeProfile::h264High && plain.level == 10 &&
             plain.width == 1280 && plain.height == 720 && plain.input == RawVideoLayout::nv12, "default stream shape");
     require(plain.rateControl == VideoRateControl::variableBitrate && plain.bitrate == 2'000'000 && plain.peakBitrate == 0 &&
             plain.quality == 50 && plain.frameRateNumerator == 30 && plain.frameRateDenominator == 1,
@@ -441,7 +481,7 @@ void settingsFromControls()
     values.scalars[UML_V4L2_CID_MPEG_VIDEO_BITRATE] = 5'000'000;
     values.scalars[UML_V4L2_CID_MPEG_VIDEO_BITRATE_PEAK] = 6'000'000;
     values.scalars[UML_V4L2_CID_MPEG_VIDEO_GOP_SIZE] = 60;
-    values.scalars[UML_V4L2_CID_MPEG_VIDEO_B_FRAMES] = 2;
+    values.scalars[UML_V4L2_CID_MPEG_VIDEO_B_FRAMES] = 3;
     values.scalars[UML_V4L2_CID_MPEG_VIDEO_H264_MIN_QP] = 10;
     values.scalars[UML_V4L2_CID_MPEG_VIDEO_H264_MAX_QP] = 40;
     values.scalars[UML_V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE] = UML_V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CAVLC;
@@ -460,7 +500,24 @@ void settingsFromControls()
     require(set.rateControl == VideoRateControl::constantBitrate && set.bitrate == 5'000'000 && set.peakBitrate == 6'000'000,
             "rate control");
     require(set.frameRateNumerator == 60000 && set.frameRateDenominator == 1001, "a frame interval is a frame rate inverted");
-    require(set.keyFrameInterval == 60 && set.bFrames == 2 && !set.realTime, "B-frames end the real-time behaviour");
+    require(set.keyFrameInterval == 60 && set.bFrames == 3 && !set.realTime, "B-frames end the real-time behaviour");
+    // The platform codes B-frames as a whole run or not at all, so the device asks for either: a request below the
+    // run is none (and the stream stays a live one), one at the run is the run, and a longer one the codec's own run.
+    for (const auto [codec, asked, coded] : {std::tuple {VideoCodec::h264, 0, 0}, std::tuple {VideoCodec::h264, 1, 0},
+                                             std::tuple {VideoCodec::h264, 2, 0}, std::tuple {VideoCodec::h264, 3, 3},
+                                             std::tuple {VideoCodec::hevc, 1, 0}, std::tuple {VideoCodec::hevc, 2, 2},
+                                             std::tuple {VideoCodec::hevc, 3, 2}}) {
+        auto frames = defaults;
+        frames.scalars[UML_V4L2_CID_MPEG_VIDEO_B_FRAMES] = asked;
+        const auto effective = encodeSettings(stream(codec), frames);
+        require(effective.bFrames == std::uint32_t(coded) && effective.realTime == (coded == 0),
+                "a B-frame request is not the run or none");
+    }
+    auto none = stream(VideoCodec::h264);
+    none.maximumBFrames = 0;
+    auto reorder = defaults;
+    reorder.scalars[UML_V4L2_CID_MPEG_VIDEO_B_FRAMES] = 3;
+    require(encodeSettings(none, reorder).bFrames == 0, "B-frames asked of a host that codes none");
     require(set.minimumQp == 10u && set.maximumQp == 40u && !set.cabac, "quantizer bounds and entropy mode");
     require(set.bufferBits == 100u * 8192, "the CPB size is in kilobytes");
     require(set.separateParameterSets && set.parameterSetsWithEveryKeyFrame, "separate headers");
@@ -537,6 +594,55 @@ void settingsFromControls()
     colored.info = StreamInfo {};
     color = encodeSettings(colored, defaults).color;
     require(color == VideoEncodeColor {}, "unspecified colorimetry must stay unspecified");
+
+    // RAW states no standard, and then nothing is derived from one: DEFAULT is unspecified (or limited range), so a
+    // client with a transfer function or a range alone states exactly that.
+    const auto rawColor = [&](std::uint32_t transfer, std::uint32_t matrix, std::uint32_t quantization) {
+        EncodeStream raw = stream(VideoCodec::hevc);
+        raw.info.colorspace = UML_V4L2_COLORSPACE_RAW;
+        raw.info.transfer = transfer;
+        raw.info.matrix = matrix;
+        raw.info.quantization = quantization;
+        return encodeSettings(raw, defaults).color;
+    };
+    require(rawColor(UML_V4L2_XFER_FUNC_DEFAULT, UML_V4L2_YCBCR_ENC_DEFAULT, UML_V4L2_QUANTIZATION_DEFAULT) == VideoEncodeColor {},
+            "RAW with every field at its default states a colour");
+    color = rawColor(UML_V4L2_XFER_FUNC_DEFAULT, UML_V4L2_YCBCR_ENC_709, UML_V4L2_QUANTIZATION_DEFAULT);
+    require(color.primaries == VideoColorPrimaries::unspecified && color.transfer == VideoTransferFunction::unspecified &&
+            color.matrix == VideoMatrixCoefficients::bt709 && !color.fullRange, "RAW: a default transfer function is unspecified");
+    color = rawColor(UML_V4L2_XFER_FUNC_NONE, UML_V4L2_YCBCR_ENC_DEFAULT, UML_V4L2_QUANTIZATION_DEFAULT);
+    require(color.primaries == VideoColorPrimaries::unspecified && color.transfer == VideoTransferFunction::linear &&
+            color.matrix == VideoMatrixCoefficients::unspecified && !color.fullRange, "RAW: no transfer function is linear");
+    color = rawColor(UML_V4L2_XFER_FUNC_SMPTE2084, UML_V4L2_YCBCR_ENC_DEFAULT, UML_V4L2_QUANTIZATION_DEFAULT);
+    require(color.primaries == VideoColorPrimaries::unspecified && color.transfer == VideoTransferFunction::pq &&
+            color.matrix == VideoMatrixCoefficients::unspecified && !color.fullRange, "RAW: PQ without a standard or a matrix");
+    color = rawColor(UML_V4L2_XFER_FUNC_709, UML_V4L2_YCBCR_ENC_DEFAULT, UML_V4L2_QUANTIZATION_DEFAULT);
+    require(color.transfer == VideoTransferFunction::bt709 && color.primaries == VideoColorPrimaries::unspecified &&
+            color.matrix == VideoMatrixCoefficients::unspecified, "RAW: an explicit transfer function is kept");
+    color = rawColor(UML_V4L2_XFER_FUNC_SRGB, UML_V4L2_YCBCR_ENC_DEFAULT, UML_V4L2_QUANTIZATION_DEFAULT);
+    require(color.transfer == VideoTransferFunction::srgb && color.primaries == VideoColorPrimaries::unspecified &&
+            color.matrix == VideoMatrixCoefficients::unspecified && !color.fullRange,
+            "RAW: sRGB is a transfer function here, not a standard that implies its matrix and range");
+    color = rawColor(UML_V4L2_XFER_FUNC_DEFAULT, UML_V4L2_YCBCR_ENC_BT2020, UML_V4L2_QUANTIZATION_DEFAULT);
+    require(color.matrix == VideoMatrixCoefficients::bt2020 && color.primaries == VideoColorPrimaries::unspecified &&
+            color.transfer == VideoTransferFunction::unspecified, "RAW: an explicit matrix is kept");
+    color = rawColor(UML_V4L2_XFER_FUNC_DEFAULT, UML_V4L2_YCBCR_ENC_601, UML_V4L2_QUANTIZATION_DEFAULT);
+    require(color.matrix == VideoMatrixCoefficients::bt601, "RAW: an explicit 601 matrix is kept");
+    color = rawColor(UML_V4L2_XFER_FUNC_DEFAULT, UML_V4L2_YCBCR_ENC_DEFAULT, UML_V4L2_QUANTIZATION_FULL_RANGE);
+    require(color.fullRange && color.primaries == VideoColorPrimaries::unspecified && color.transfer == VideoTransferFunction::unspecified &&
+            color.matrix == VideoMatrixCoefficients::unspecified, "RAW: full range alone");
+    color = rawColor(UML_V4L2_XFER_FUNC_DEFAULT, UML_V4L2_YCBCR_ENC_DEFAULT, UML_V4L2_QUANTIZATION_LIM_RANGE);
+    require(!color.fullRange, "RAW: limited range is limited");
+    // Every aspect at once, as an HDR10 client states it with no standard of its own.
+    color = rawColor(UML_V4L2_XFER_FUNC_SMPTE2084, UML_V4L2_YCBCR_ENC_BT2020, UML_V4L2_QUANTIZATION_LIM_RANGE);
+    require(color == (VideoEncodeColor {VideoColorPrimaries::unspecified, VideoTransferFunction::pq,
+                                        VideoMatrixCoefficients::bt2020, false}), "RAW with PQ and BT.2020");
+    // The standards still derive their own defaults (the cases above, and sRGB's full range).
+    colored.info = StreamInfo {};
+    colored.info.colorspace = UML_V4L2_COLORSPACE_BT2020;
+    require(encodeSettings(colored, defaults).color == (VideoEncodeColor {VideoColorPrimaries::bt2020, VideoTransferFunction::bt709,
+                                                                          VideoMatrixCoefficients::bt2020, false}),
+            "BT.2020 without a transfer function or a matrix lost its defaults");
 }
 
 void updates()
@@ -637,6 +743,28 @@ void realHost()
     require(published(controls, UML_V4L2_CID_COLORIMETRY_HDR10_CLL_INFO) == hdr &&
             published(controls, UML_V4L2_CID_COLORIMETRY_HDR10_MASTERING_DISPLAY) == hdr,
             "the HDR10 controls do not follow the hardware's HDR metadata");
+    // B-frames follow the platform's run: the control runs to the longest run, for the codecs that have one.
+    std::uint32_t longestRun = 0, runFormats = 0;
+    for (const auto& capability : capabilities) {
+        if (capability.codec == VideoCodec::jpeg) continue;
+        longestRun = std::max(longestRun, capability.maximumBFrames);
+        if (capability.maximumBFrames) runFormats |= capability.codec == VideoCodec::h264 ? 1u : 2u;
+    }
+    require(published(controls, UML_V4L2_CID_MPEG_VIDEO_B_FRAMES) == (longestRun > 0),
+            "the B-frame control does not follow the platform's run");
+    if (longestRun > 0) {
+        const auto& bFrames = control(controls, UML_V4L2_CID_MPEG_VIDEO_B_FRAMES);
+        require(bFrames.maximum == longestRun && bFrames.coded_formats ==
+                    (((runFormats & 1) ? codedBit(VIRTIO_VIDEO_FORMAT_H264) : 0) | ((runFormats & 2) ? codedBit(VIRTIO_VIDEO_FORMAT_HEVC) : 0)),
+                "the B-frame control is not the platform's run for the codecs that have one");
+    }
+    // The default level is the lowest, because a stream states at least the level it asks for.
+    if (published(controls, UML_V4L2_CID_MPEG_VIDEO_H264_LEVEL))
+        require(control(controls, UML_V4L2_CID_MPEG_VIDEO_H264_LEVEL).default_value == UML_V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
+                "the default H.264 level is not the lowest");
+    if (published(controls, UML_V4L2_CID_MPEG_VIDEO_HEVC_LEVEL))
+        require(control(controls, UML_V4L2_CID_MPEG_VIDEO_HEVC_LEVEL).default_value == UML_V4L2_MPEG_VIDEO_HEVC_LEVEL_1,
+                "the default HEVC level is not the lowest");
     std::printf("  this host lists %zu raw formats; HEVC Main 10 %s, P010 %s, HDR10 metadata %s\n", listed.size(), main10Profile ? "yes" : "no",
                 hasLayout(VideoCodec::hevc, RawVideoLayout::p010) ? "yes" : "no", hdr ? "yes" : "no");
     if (main10) {

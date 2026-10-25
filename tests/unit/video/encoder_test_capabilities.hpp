@@ -8,8 +8,9 @@
 namespace uml::testing {
 
 /* An encoder host that offers H.264 (three profiles, every rate-control mode,
- * B-frames, two temporal layers), HEVC (Main and Main10, HDR metadata, no
- * quantizer-only mode, a lower bitrate ceiling) and JPEG. The two video codecs
+ * a B-frame run of three, two temporal layers), HEVC (Main and Main10, HDR
+ * metadata, no quantizer-only mode, a lower bitrate ceiling, a B-frame run of
+ * two) and JPEG. The two video codecs
  * differ in several limits on purpose: a control they share has to stop at the
  * more restrictive one. */
 inline std::vector<uml::platform::VideoEncodeCapability> encoderHostCapabilities()
@@ -34,7 +35,7 @@ inline std::vector<uml::platform::VideoEncodeCapability> encoderHostCapabilities
     h264.maximumBitrate = 100'000'000;
     h264.minimumQp = 0;
     h264.maximumQp = 51;
-    h264.maximumBFrames = 2;
+    h264.maximumBFrames = 3;
     h264.maximumTemporalLayers = 2;
     h264.entropyModeSelectable = true;
     h264.concurrentSessions = 4;
@@ -42,8 +43,8 @@ inline std::vector<uml::platform::VideoEncodeCapability> encoderHostCapabilities
     VideoEncodeCapability hevc;
     hevc.codec = VideoCodec::hevc;
     hevc.profiles = {
-        {VideoEncodeProfile::hevcMain, eightBit, 186, false},
-        {VideoEncodeProfile::hevcMain10, {RawVideoLayout::p010}, 186, false},
+        {VideoEncodeProfile::hevcMain, eightBit, 186, true},
+        {VideoEncodeProfile::hevcMain10, {RawVideoLayout::p010}, 186, true},
     };
     hevc.minimumWidth = 64;
     hevc.minimumHeight = 64;

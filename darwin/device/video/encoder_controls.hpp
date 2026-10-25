@@ -82,6 +82,10 @@ struct EncodeStream {
     std::uint32_t width {};
     std::uint32_t height {};
     StreamInfo info;
+    /* The B-frame run the host codes for this codec (its capability's
+     * maximumBFrames), zero when it codes none. The platform codes the whole
+     * run or none, so a request below it reaches the encoder as none. */
+    std::uint32_t maximumBFrames {};
 };
 
 [[nodiscard]] uml::platform::VideoEncodeSettings encodeSettings(

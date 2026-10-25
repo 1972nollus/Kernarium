@@ -509,6 +509,7 @@ public:
         request.width = stream.crop.width;
         request.height = stream.crop.height;
         request.info = stream.info;
+        if (const auto* capability = capabilityOf(stream.codec)) request.maximumBFrames = capability->maximumBFrames;
         const auto settings = encodeSettings(request, stream.controls);
         const auto status = stream.encoder->configure(settings);
         log.encoderStarted(id, codecName(settings.codec), profileName(settings.profile),

@@ -215,7 +215,7 @@ Structure and headers:
 | Control | Type | Range, menu and default | Dyn | Published when | VT |
 | --- | --- | --- | --- | --- | --- |
 | `MPEG_VIDEO_GOP_SIZE` | int | 0 to 2^31-1; default 0 (no periodic key frame) | no: VT ignores a change while streaming | always | `MaxKeyFrameInterval`; 0 means never |
-| `MPEG_VIDEO_B_FRAMES` | int | 0 to the verified maximum; default 0 | no | the standard encoder | 0: `AllowFrameReordering` = NO, always set because VT defaults to YES. Above 0: YES, and VT picks the pattern |
+| `MPEG_VIDEO_B_FRAMES` | int | 0 to the longest run any codec has (3 on Apple hardware); default 0 | no | the codecs with a run | VT codes B-frames in one pattern whose run cannot be shortened, so the host codes the whole run or none: a value below a codec's run is no B-frames (`AllowFrameReordering` = NO, always set because VT defaults to YES), a value at or above it is the run (a codec with a shorter run codes its own). A value in between reads back as set and does nothing, which keeps the stream no more out of order than the guest allowed |
 | `MPEG_VIDEO_FORCE_KEY_FRAME` | button | | yes | always | `ForceKeyFrame` on the next submitted frame |
 | `MPEG_VIDEO_HEADER_MODE` | menu | SEPARATE, JOINED_WITH_1ST_FRAME; default JOINED | no | always | host Annex B assembly; SEPARATE produces a `CODEC_CONFIG` buffer first |
 | `MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR` | bool | default 1 | yes | always | the host inserts VPS, SPS and PPS before each IDR |
@@ -233,9 +233,9 @@ only when an encode with it wrote a matching SPS:
 | Control | Published menu items | VT |
 | --- | --- | --- |
 | `MPEG_VIDEO_H264_PROFILE` | BASELINE, CONSTRAINED_BASELINE, MAIN, HIGH, CONSTRAINED_HIGH; HIGH_422 and HIGH_444_PREDICTIVE once NV16 and NV24 input exist | `ProfileLevel` H264_`<profile>`_`<level>` |
-| `MPEG_VIDEO_H264_LEVEL` | 1.0 to 5.2 | 1.3, 3.0 to 3.2, 4.0 to 4.2 and 5.0 to 5.2 map to the matching constant. 1.0 to 1.2, 1b and 2.x map to AutoLevel, which picks the lowest level that fits. 6.x is not published |
+| `MPEG_VIDEO_H264_LEVEL` | 1.0 to 5.2; default 1.0 | The stream states the level asked for, or the lowest its size, frame rate and bit rate fit if that is higher, so the default 1.0 means "as low as it fits". VT names few levels and weighs no bit rate: a named level the stream fits is requested from it, and the platform raises a lower level in the SPS. 6.x is not published |
 | `MPEG_VIDEO_HEVC_PROFILE` | MAIN, MAIN_10, and MAIN_STILL_PICTURE when verified | `HEVC_Main_AutoLevel`, `HEVC_Main10_AutoLevel`, `HEVC_MainStill` |
-| `MPEG_VIDEO_HEVC_LEVEL` | 1 to the verified maximum (6.2 when 8192x4320 encodes) | VT has AutoLevel only, so a requested level is a ceiling and the stream may carry a lower one; the level actually written is what the stream reports |
+| `MPEG_VIDEO_HEVC_LEVEL` | 1 to the verified maximum (6.2 when 8192x4320 encodes); default 1 | As H.264: VT has AutoLevel only, and the platform rewrites the level in the VPS and SPS to the one asked for or the lowest the stream fits if higher |
 | `MPEG_VIDEO_HEVC_TIER` | MAIN | |
 
 HDR and colorimetry:
@@ -244,10 +244,18 @@ HDR and colorimetry:
 | --- | --- | --- | --- |
 | `COLORIMETRY_HDR10_CLL_INFO` | compound, 4 bytes | HEVC Main10 verified | `ContentLightLevelInfo`, with the big-endian SEI payload built by the host |
 | `COLORIMETRY_HDR10_MASTERING_DISPLAY` | compound, 24 bytes | HEVC Main10 verified | `MasteringDisplayColorVolume` |
-| `SET_STREAM_INFO` colorspace | `v4l2_colorspace` | always | REC709: `ColorPrimaries_ITU_R_709_2`. SMPTE170M: `SMPTE_C`. 470_SYSTEM_BG: `EBU_3213`. BT2020: `ITU_R_2020`. DCI_P3: `P3_D65`. SRGB: 709 primaries |
+| `SET_STREAM_INFO` colorspace | `v4l2_colorspace` | always | REC709: `ColorPrimaries_ITU_R_709_2`. SMPTE170M: `SMPTE_C`. 470_SYSTEM_BG: `EBU_3213`. BT2020: `ITU_R_2020`. DCI_P3: `P3_D65`. SRGB: 709 primaries. RAW: no primaries. DEFAULT leaves the standard unspecified |
 | `SET_STREAM_INFO` xfer_func | `v4l2_xfer_func` | always | 709: `ITU_R_709_2`. SRGB: `sRGB`. SMPTE2084: `SMPTE_ST_2084_PQ`. NONE: `Linear` |
 | `SET_STREAM_INFO` ycbcr_enc | `v4l2_ycbcr_encoding` | always | 601: `ITU_R_601_4`. 709: `ITU_R_709_2`. BT2020: `ITU_R_2020` |
-| `SET_STREAM_INFO` quantization | `v4l2_quantization` | always | FULL_RANGE selects the 420f and xf20 input formats; LIM_RANGE selects 420v and x420 |
+| `SET_STREAM_INFO` quantization | `v4l2_quantization` | always | FULL_RANGE selects full-range YCbCr input (RGB input is converted by the platform, since VT converts RGB to video range only); LIM_RANGE selects video range |
+
+A standard in the colorspace implies the defaults of the fields beside it (a
+DEFAULT transfer function, matrix or range follows it, V4L2's `V4L2_MAP_*_DEFAULT`).
+The V4L2 core resets those fields to DEFAULT whenever the colorspace is
+DEFAULT, so a client that has a transfer function or a range but no standard
+sends `V4L2_COLORSPACE_RAW`, which states no primaries and derives nothing: a
+DEFAULT transfer function is then unspecified (NONE is linear), a DEFAULT
+matrix is unspecified, and a DEFAULT range is limited.
 
 The same values are attached to every pixel buffer and written into the coded
 stream's VUI. `GET_STREAM_INFO` on the coded queue returns what was written,

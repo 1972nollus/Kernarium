@@ -32,6 +32,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace uml::platform;
@@ -713,6 +714,16 @@ void streamInformation()
     current = info(input);
     require(current.frame_interval_numerator == 1 && current.frame_interval_denominator == 25 && current.colorspace == 0 &&
             current.xfer_func == 0 && current.ycbcr_enc == 0 && current.quantization == 0, "unsupported colorimetry");
+    // RAW states no standard: the colorspace is kept, and the fields beside it keep their own values.
+    set.info = {input, 1, 25, UML_V4L2_COLORSPACE_RAW, UML_V4L2_XFER_FUNC_NONE, UML_V4L2_YCBCR_ENC_DEFAULT,
+                UML_V4L2_QUANTIZATION_FULL_RANGE, {}};
+    f.ok(set);
+    for (const auto queue : {input, output}) {
+        current = info(queue);
+        require(current.colorspace == UML_V4L2_COLORSPACE_RAW && current.xfer_func == UML_V4L2_XFER_FUNC_NONE &&
+                current.ycbcr_enc == UML_V4L2_YCBCR_ENC_DEFAULT && current.quantization == UML_V4L2_QUANTIZATION_FULL_RANGE,
+                "a RAW colorspace was not kept");
+    }
     set.info.queue_type = 0;
     f.refused(set, VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "stream information for no queue was accepted");
     set.hdr.stream_id = 9;
@@ -844,7 +855,7 @@ void encodeRoundTrip()
     require(done.size() == 1, "the raw frame did not complete at the host copy");
     require(f.encoders.size() == 1 && f.encoder().configures == 1, "the first frame configures the encoder once");
     const auto& settings = f.encoder().settings;
-    require(settings.codec == VideoCodec::h264 && settings.profile == VideoEncodeProfile::h264High && settings.level == 52 &&
+    require(settings.codec == VideoCodec::h264 && settings.profile == VideoEncodeProfile::h264High && settings.level == 10 &&
             settings.width == frameSize && settings.height == frameSize && settings.input == RawVideoLayout::nv12 &&
             settings.rateControl == VideoRateControl::variableBitrate && settings.bitrate == 2'000'000 &&
             settings.frameRateNumerator == 30 && settings.frameRateDenominator == 1, "the encoder was not configured from the stream");
@@ -1446,6 +1457,81 @@ void dynamicControls()
             "the new session did not take the stream's current settings");
 }
 
+/* B-frames are coded as the host's whole run or not at all, so a request below the run is none and the stream
+ * stays a live one. The run is a codec's own: H.264 three, HEVC two. */
+void bFrames()
+{
+    const auto settingsFor = [](std::uint32_t coded, std::int64_t asked) {
+        Fixture f;
+        prepare(f, 1, coded);
+        if (asked >= 0)
+            require(Fixture::type(setControls(f, 1, ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_B_FRAMES, asked))) ==
+                    VIRTIO_VIDEO_RESP_OK_V4L2_CONTROLS, "B-frames refused inside the published range");
+        f.queueCoded(1, 0);
+        f.queueRaw(1, 1, 1);
+        const auto& settings = f.encoder().settings;
+        return std::pair {settings.bFrames, settings.realTime};
+    };
+    using Result = std::pair<std::uint32_t, bool>;
+    require(settingsFor(VIRTIO_VIDEO_FORMAT_H264, -1) == Result {0, true}, "the default is no B-frames");
+    require(settingsFor(VIRTIO_VIDEO_FORMAT_H264, 0) == Result {0, true}, "no B-frames");
+    require(settingsFor(VIRTIO_VIDEO_FORMAT_H264, 1) == Result {0, true}, "one B-frame is below the run of three");
+    require(settingsFor(VIRTIO_VIDEO_FORMAT_H264, 2) == Result {0, true}, "two B-frames are below the run of three");
+    require(settingsFor(VIRTIO_VIDEO_FORMAT_H264, 3) == Result {3, false}, "the whole run was not coded");
+    require(settingsFor(VIRTIO_VIDEO_FORMAT_HEVC, 1) == Result {0, true}, "one B-frame is below HEVC's run of two");
+    require(settingsFor(VIRTIO_VIDEO_FORMAT_HEVC, 2) == Result {2, false}, "HEVC's whole run was not coded");
+    require(settingsFor(VIRTIO_VIDEO_FORMAT_HEVC, 3) == Result {2, false}, "a longer run than HEVC has was not clamped to it");
+
+    // Beyond the longest run is outside the control's range.
+    Fixture f;
+    prepare(f);
+    require(Fixture::type(setControls(f, 1, ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_B_FRAMES, 4))) ==
+            VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "B-frames beyond the longest run were accepted");
+    // A host whose HEVC does not reorder refuses the control on an HEVC stream and keeps it for H.264.
+    auto capabilities = encoderHostCapabilities();
+    capabilities[1].maximumBFrames = 0;
+    Fixture g({}, capabilities);
+    prepare(g, 1, VIRTIO_VIDEO_FORMAT_HEVC);
+    g.queueCoded(1, 0);
+    g.queueRaw(1, 1, 1);
+    require(g.encoder().settings.bFrames == 0 && g.encoder().settings.realTime, "an HEVC encoder that codes no B-frames was asked for them");
+}
+
+/* A client that states a transfer function or a range but no standard sends RAW (the V4L2 core would reset those
+ * fields beside a DEFAULT colorspace), and the stream states exactly that and no more. */
+void rawColorspace()
+{
+    Fixture f;
+    prepare(f);
+    virtio_video_set_stream_info set {};
+    set.hdr = {VIRTIO_VIDEO_CMD_SET_STREAM_INFO, 1};
+    set.info = {input, 1, 30, UML_V4L2_COLORSPACE_RAW, UML_V4L2_XFER_FUNC_SMPTE2084, UML_V4L2_YCBCR_ENC_DEFAULT,
+                UML_V4L2_QUANTIZATION_FULL_RANGE, {}};
+    f.ok(set);
+    f.queueCoded(1, 0);
+    f.queueRaw(1, 1, 1);
+    const auto& color = f.encoder().settings.color;
+    require(color == (VideoEncodeColor {VideoColorPrimaries::unspecified, VideoTransferFunction::pq,
+                                        VideoMatrixCoefficients::unspecified, true}),
+            "a RAW colorspace did not state only the transfer function and the range");
+    // Streaming, the colorimetry is fixed: RAW is not a way around that.
+    set.info.xfer_func = UML_V4L2_XFER_FUNC_NONE;
+    f.refused(set, VIRTIO_VIDEO_RESP_ERR_BUSY, "the transfer function changed while streaming");
+
+    // The device does not discard what sits beside a DEFAULT colorspace (the V4L2 core resets it before it gets here),
+    // and a DEFAULT colorspace derives nothing from a standard.
+    Fixture g;
+    prepare(g);
+    set.info = {input, 1, 30, UML_V4L2_COLORSPACE_DEFAULT, UML_V4L2_XFER_FUNC_NONE, UML_V4L2_YCBCR_ENC_DEFAULT,
+                UML_V4L2_QUANTIZATION_DEFAULT, {}};
+    g.ok(set);
+    g.queueCoded(1, 0);
+    g.queueRaw(1, 1, 1);
+    require(g.encoder().settings.color.primaries == VideoColorPrimaries::unspecified &&
+            g.encoder().settings.color.transfer == VideoTransferFunction::linear,
+            "a default colorspace with a transfer function stated something else");
+}
+
 void jpeg()
 {
     Fixture f;
@@ -1580,7 +1666,7 @@ void activityLog()
         require(std::filesystem::exists(path), "the activity log was not written");
         const auto text = readLog(path);
         require(text.find("encoder advertise codec=h264 profiles=h264-constrained-baseline,h264-main,h264-high inputs=nv12,i420,bgra,rgba "
-                          "max=4096x2304 rc=vbr,cbr,cq,cqp bframes=2 layers=2 sessions=4") != std::string::npos, "advertised H.264");
+                          "max=4096x2304 rc=vbr,cbr,cq,cqp bframes=3 layers=2 sessions=4") != std::string::npos, "advertised H.264");
         require(text.find("encoder advertise codec=hevc profiles=hevc-main,hevc-main10 inputs=nv12,i420,bgra,rgba,p010 max=8192x4320 "
                           "rc=vbr,cbr,cq bframes=2 layers=1 sessions=4") != std::string::npos, "advertised HEVC");
         require(text.find("encoder advertise codec=jpeg profiles=jpeg-baseline inputs=nv12,bgra,rgba max=16384x16384 rc=cq") != std::string::npos,
@@ -1736,6 +1822,23 @@ unsigned hevcProfileIdc(const std::vector<std::uint8_t>& frame)
 {
     for (const auto& unit : annexBUnits(frame))
         if (hevcType(unit) == hevcSps) return unescaped(unit).at(3) & 0x1f;
+    require(false, "the key frame has no SPS");
+    return 0;
+}
+
+/* The level an SPS states: level_idc of H.264, and general_level_idc of HEVC, which follows the profile, its
+ * compatibility flags and its six bytes of constraint flags. */
+unsigned h264LevelIdc(const std::vector<std::uint8_t>& frame)
+{
+    for (const auto& unit : annexBUnits(frame))
+        if (h264Type(unit) == h264Sps) return unescaped(unit).at(3);
+    require(false, "the key frame has no SPS");
+    return 0;
+}
+unsigned hevcLevelIdc(const std::vector<std::uint8_t>& frame)
+{
+    for (const auto& unit : annexBUnits(frame))
+        if (hevcType(unit) == hevcSps) return unescaped(unit).at(14);
     require(false, "the key frame has no SPS");
     return 0;
 }
@@ -1948,6 +2051,71 @@ void platformEncoder()
         require(hevcSeiPayloads(stream.frames[0].bytes).count(137) == 0, "HDR metadata nobody asked for");
     }
 
+    // Levels: a stream states the level it asked for, or the lowest it fits, so the default is not the host's top
+    // and a level asked for is the level stated.
+    const auto capabilityOf = [&](VideoCodec codec) -> const VideoEncodeCapability* {
+        for (const auto& capability : capabilities)
+            if (capability.codec == codec) return &capability;
+        return nullptr;
+    };
+    if (lists(VideoCodec::h264, VideoEncodeProfile::h264High, RawVideoLayout::nv12) && capabilityOf(VideoCodec::h264)->profiles.front().maximumLevel >= 51) {
+        const auto defaults = encodeOnPlatform(*make(), VIRTIO_VIDEO_FORMAT_H264, RawVideoLayout::nv12, width, height, 3);
+        const auto stated = h264LevelIdc(defaults.frames[0].bytes);
+        require(stated >= 10 && stated < 40, "an H.264 stream that named no level did not state the lowest one it fits");
+        const auto asked = encodeOnPlatform(*make(), VIRTIO_VIDEO_FORMAT_H264, RawVideoLayout::nv12, width, height, 3, [](Fixture& g) {
+            require(Fixture::type(setControls(g, 1, ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_H264_LEVEL, UML_V4L2_MPEG_VIDEO_H264_LEVEL_5_1))) ==
+                    VIRTIO_VIDEO_RESP_OK_V4L2_CONTROLS, "level 5.1 refused");
+        });
+        require(h264LevelIdc(asked.frames[0].bytes) == 51, "an H.264 stream did not state the level it asked for");
+    }
+    if (lists(VideoCodec::hevc, VideoEncodeProfile::hevcMain, RawVideoLayout::nv12) && capabilityOf(VideoCodec::hevc)->profiles.front().levelSelectable &&
+        capabilityOf(VideoCodec::hevc)->profiles.front().maximumLevel >= 153) {
+        const auto defaults = encodeOnPlatform(*make(), VIRTIO_VIDEO_FORMAT_HEVC, RawVideoLayout::nv12, width, height, 3);
+        const auto stated = hevcLevelIdc(defaults.frames[0].bytes);
+        require(stated >= 30 && stated < 120, "an HEVC stream that named no level did not state the lowest one it fits");
+        const auto asked = encodeOnPlatform(*make(), VIRTIO_VIDEO_FORMAT_HEVC, RawVideoLayout::nv12, width, height, 3, [](Fixture& g) {
+            require(Fixture::type(setControls(g, 1, ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_HEVC_LEVEL, UML_V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1))) ==
+                    VIRTIO_VIDEO_RESP_OK_V4L2_CONTROLS, "HEVC level 5.1 refused");
+        });
+        require(hevcLevelIdc(asked.frames[0].bytes) == 153, "an HEVC stream did not state the level it asked for");
+    }
+
+    // B-frames: the platform codes its whole run or none. A request below the run keeps the stream in order, and one
+    // at the run reorders it; the frames still come back in decode order with their own timestamps.
+    for (const auto [codec, coded, profile, name] : {std::tuple {VideoCodec::h264, VIRTIO_VIDEO_FORMAT_H264, VideoEncodeProfile::h264High, "H.264"},
+                                                     std::tuple {VideoCodec::hevc, VIRTIO_VIDEO_FORMAT_HEVC, VideoEncodeProfile::hevcMain, "HEVC"}}) {
+        const auto* capability = capabilityOf(codec);
+        if (!capability || capability->maximumBFrames < 2 || !lists(codec, profile, RawVideoLayout::nv12)) {
+            std::printf("  no %s B-frames on this host; skipped\n", name);
+            continue;
+        }
+        const unsigned frames = 14, run = capability->maximumBFrames;
+        const auto coded_with = [&](unsigned asked) {
+            return encodeOnPlatform(*make(), coded, RawVideoLayout::nv12, width, height, frames, [asked](Fixture& g) {
+                require(Fixture::type(setControls(g, 1, ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_B_FRAMES, asked))) ==
+                        VIRTIO_VIDEO_RESP_OK_V4L2_CONTROLS, "the host's own B-frame run was refused");
+            });
+        };
+        const auto order = [](const PlatformStream& stream) {
+            bool ascending = true, bidirectional = false;
+            for (std::size_t index = 0; index < stream.frames.size(); ++index) {
+                bidirectional = bidirectional || (stream.frames[index].flags & VIRTIO_VIDEO_DEQUEUE_FLAG_BFRAME);
+                if (index > 0 && stream.frames[index].timestamp < stream.frames[index - 1].timestamp) ascending = false;
+            }
+            return std::pair {ascending, bidirectional};
+        };
+        const auto below = coded_with(run - 1);
+        require(below.frames.size() == frames && below.endMarker, name);
+        require(order(below) == std::pair {true, false}, "a request below the host's B-frame run coded B-frames");
+        const auto whole = coded_with(run);
+        require(whole.frames.size() == frames && whole.endMarker, name);
+        require(order(whole) == std::pair {false, true}, "a request for the host's whole B-frame run did not reorder");
+        std::set<std::uint64_t> timestamps;
+        for (const auto& frame : whole.frames) timestamps.insert(frame.timestamp);
+        require(timestamps.size() == frames && *timestamps.begin() == realTimestamp(1) && *timestamps.rbegin() == realTimestamp(frames),
+                "a reordered stream lost or invented a timestamp");
+    }
+
     // Android's surfaces: packed pixels, converted by the platform.
     for (const auto layout : {RawVideoLayout::bgra, RawVideoLayout::rgba}) {
         const char* name = layout == RawVideoLayout::bgra ? "BGRA" : "RGBA";
@@ -2026,6 +2194,8 @@ int main()
         failures();
         parameterSets();
         dynamicControls();
+        bFrames();
+        rawColorspace();
         jpeg();
         severalStreams();
         resetAndDestroy();
