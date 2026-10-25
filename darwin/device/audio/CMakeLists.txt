@@ -5,6 +5,7 @@ add_library(uml_audio_device STATIC
     in_process_service.cpp
     null_playback_sink.cpp
     period_clock.cpp
+    silent_capture_source.cpp
     virtio_sound_device.cpp)
 add_library(UML::AudioDevice ALIAS uml_audio_device)
 uml_declare_architecture_target(uml_audio_device device)

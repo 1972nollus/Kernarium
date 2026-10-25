@@ -40,16 +40,57 @@ using uml::virtio::toBytes;
     return header.streamId == protocol::streamId;
 }
 
+/* The parameters a stream of `minimumChannels` to `maximumChannels` accepts:
+ * 48 kHz signed 16-bit frames, whole periods in a buffer of at most 256. */
+[[nodiscard]] bool supportedParameters(
+    const protocol::PcmSetParameters& parameters,
+    std::uint8_t minimumChannels,
+    std::uint8_t maximumChannels) noexcept
+{
+    return parameters.bufferBytes != 0 && parameters.periodBytes != 0 &&
+        parameters.bufferBytes <= protocol::maximumBufferBytes &&
+        parameters.bufferBytes % parameters.periodBytes == 0 &&
+        parameters.bufferBytes / parameters.periodBytes <=
+            protocol::maximumPeriods &&
+        parameters.channels >= minimumChannels &&
+        parameters.channels <= maximumChannels &&
+        parameters.periodBytes %
+                (parameters.channels * protocol::bytesPerSample) == 0 &&
+        parameters.features == 0 &&
+        parameters.format == protocol::PcmFormat::signed16 &&
+        parameters.rate == protocol::PcmRate::rate48000 &&
+        parameters.padding == 0;
+}
+
+/* A request for `count` consecutive entries of `entrySize` bytes each,
+ * all of which exist. */
+[[nodiscard]] bool validQuery(
+    const protocol::QueryInfo& query,
+    std::size_t entrySize) noexcept
+{
+    return query.count != 0 && query.startId < protocol::streamCount &&
+        query.count <= protocol::streamCount - query.startId &&
+        query.size == entrySize;
+}
+
+// The shortest wait the clock is asked for. A guest that chooses periods
+// shorter than this is served in batches rather than woken for each one.
+constexpr auto minimumWake = std::chrono::microseconds(250);
+
 } // namespace
 
 VirtioSoundDevice::VirtioSoundDevice(
     std::unique_ptr<PlaybackSink> sink,
+    std::unique_ptr<CaptureSource> capture,
     std::shared_ptr<PeriodClock> clock)
     : sink_(std::move(sink))
+    , capture_(std::move(capture))
     , clock_(std::move(clock))
 {
     if (!sink_)
         throw std::invalid_argument("Virtio Sound requires a playback sink");
+    if (!capture_)
+        throw std::invalid_argument("Virtio Sound requires a capture source");
     if (!clock_)
         throw std::invalid_argument("Virtio Sound requires a period clock");
 }
@@ -75,8 +116,8 @@ std::vector<std::uint8_t> VirtioSoundDevice::configuration() const
 {
     const protocol::Configuration configuration {
         .jacks = 0,
-        .streams = 1,
-        .channelMaps = 1,
+        .streams = protocol::streamCount,
+        .channelMaps = protocol::streamCount,
         .controls = 0,
     };
     return toBytes(configuration);
@@ -103,77 +144,80 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
         if (request.size() != sizeof(protocol::QueryInfo))
             return status(protocol::Status::badMessage, responseCapacity);
         const auto query = fromBytes<protocol::QueryInfo>(request);
-        if (query.startId != protocol::streamId || query.count != 1 ||
-            query.size != sizeof(protocol::PcmInfo)) {
+        if (!validQuery(query, sizeof(protocol::PcmInfo)))
             return status(protocol::Status::badMessage, responseCapacity);
+        auto response = toBytes(protocol::Header {
+            .code = static_cast<std::uint32_t>(protocol::Status::ok),
+        });
+        for (std::uint32_t id = query.startId;
+             id < query.startId + query.count; ++id) {
+            const bool input = id == protocol::inputStreamId;
+            const auto info = toBytes(protocol::PcmInfo {
+                .header = {.functionGroupNodeId = 0},
+                .features = 0,
+                .formats = 1ULL << static_cast<std::uint8_t>(
+                    protocol::PcmFormat::signed16),
+                .rates = 1ULL << static_cast<std::uint8_t>(
+                    protocol::PcmRate::rate48000),
+                .direction = input ? protocol::Direction::input
+                                   : protocol::Direction::output,
+                .minimumChannels =
+                    input ? std::uint8_t {1} : protocol::channelCount,
+                .maximumChannels = protocol::channelCount,
+                .padding = {},
+            });
+            response.insert(response.end(), info.begin(), info.end());
         }
-        const protocol::PcmInfo info {
-            .header = {.functionGroupNodeId = 0},
-            .features = 0,
-            .formats = 1ULL << static_cast<std::uint8_t>(
-                protocol::PcmFormat::signed16),
-            .rates = 1ULL << static_cast<std::uint8_t>(
-                protocol::PcmRate::rate48000),
-            .direction = protocol::Direction::output,
-            .minimumChannels = protocol::channelCount,
-            .maximumChannels = protocol::channelCount,
-            .padding = {},
-        };
-        if (responseCapacity < sizeof(protocol::Header) + sizeof(info))
+        if (responseCapacity < response.size())
             return status(protocol::Status::badMessage, responseCapacity);
-        return complete(toBytes(
-            protocol::Header {
-                .code = static_cast<std::uint32_t>(protocol::Status::ok),
-            },
-            info));
+        return complete(std::move(response));
     }
     case protocol::Request::channelMapInfo: {
         if (request.size() != sizeof(protocol::QueryInfo))
             return status(protocol::Status::badMessage, responseCapacity);
         const auto query = fromBytes<protocol::QueryInfo>(request);
-        if (query.startId != protocol::channelMapId || query.count != 1 ||
-            query.size != sizeof(protocol::ChannelMapInfo)) {
+        if (!validQuery(query, sizeof(protocol::ChannelMapInfo)))
             return status(protocol::Status::badMessage, responseCapacity);
+        auto response = toBytes(protocol::Header {
+            .code = static_cast<std::uint32_t>(protocol::Status::ok),
+        });
+        for (std::uint32_t id = query.startId;
+             id < query.startId + query.count; ++id) {
+            protocol::ChannelMapInfo info {
+                .header = {.functionGroupNodeId = 0},
+                .direction = id == protocol::inputChannelMapId
+                    ? protocol::Direction::input
+                    : protocol::Direction::output,
+                .channels = protocol::channelCount,
+                .positions = {},
+            };
+            info.positions[0] = static_cast<std::uint8_t>(
+                protocol::ChannelPosition::frontLeft);
+            info.positions[1] = static_cast<std::uint8_t>(
+                protocol::ChannelPosition::frontRight);
+            const auto bytes = toBytes(info);
+            response.insert(response.end(), bytes.begin(), bytes.end());
         }
-        protocol::ChannelMapInfo info {
-            .header = {.functionGroupNodeId = 0},
-            .direction = protocol::Direction::output,
-            .channels = protocol::channelCount,
-            .positions = {},
-        };
-        info.positions[0] = static_cast<std::uint8_t>(
-            protocol::ChannelPosition::frontLeft);
-        info.positions[1] = static_cast<std::uint8_t>(
-            protocol::ChannelPosition::frontRight);
-        if (responseCapacity < sizeof(protocol::Header) + sizeof(info))
+        if (responseCapacity < response.size())
             return status(protocol::Status::badMessage, responseCapacity);
-        return complete(toBytes(
-            protocol::Header {
-                .code = static_cast<std::uint32_t>(protocol::Status::ok),
-            },
-            info));
+        return complete(std::move(response));
     }
     case protocol::Request::pcmSetParameters: {
         if (request.size() != sizeof(protocol::PcmSetParameters))
             return status(protocol::Status::badMessage, responseCapacity);
         const auto parameters = fromBytes<protocol::PcmSetParameters>(request);
+        if (parameters.header.streamId == protocol::inputStreamId) {
+            return processCaptureControl(
+                header.code, request, responseCapacity);
+        }
         if (!validStreamHeader(parameters.header))
             return status(protocol::Status::badMessage, responseCapacity);
         if (deferredTransfers_ != 0)
             return status(protocol::Status::ioError, responseCapacity);
         if (state_ == StreamState::running ||
             state_ == StreamState::stopped ||
-            parameters.bufferBytes == 0 || parameters.periodBytes == 0 ||
-            parameters.bufferBytes > protocol::maximumBufferBytes ||
-            parameters.bufferBytes % parameters.periodBytes != 0 ||
-            parameters.bufferBytes / parameters.periodBytes >
-                protocol::maximumPeriods ||
-            parameters.periodBytes % protocol::frameBytes != 0 ||
-            parameters.features != 0 ||
-            parameters.channels != protocol::channelCount ||
-            parameters.format != protocol::PcmFormat::signed16 ||
-            parameters.rate != protocol::PcmRate::rate48000 ||
-            parameters.padding != 0) {
+            !supportedParameters(
+                parameters, protocol::channelCount, protocol::channelCount)) {
             return status(protocol::Status::notSupported, responseCapacity);
         }
         PlaybackParameters selected {
@@ -196,6 +240,10 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
         if (request.size() != sizeof(protocol::PcmHeader))
             return status(protocol::Status::badMessage, responseCapacity);
         const auto pcm = fromBytes<protocol::PcmHeader>(request);
+        if (pcm.streamId == protocol::inputStreamId) {
+            return processCaptureControl(
+                header.code, request, responseCapacity);
+        }
         if (!validStreamHeader(pcm))
             return status(protocol::Status::badMessage, responseCapacity);
         const auto command = static_cast<protocol::Request>(header.code);
@@ -297,7 +345,7 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processQueue(
     case protocol::transmitQueue:
         return processTransmit(requestId, request, responseCapacity);
     case protocol::receiveQueue:
-        return complete({});
+        return processReceive(request, responseCapacity);
     default:
         throw std::runtime_error("invalid Virtio Sound queue index");
     }
@@ -306,6 +354,11 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processQueue(
 void VirtioSoundDevice::reset() noexcept
 {
     sink_->reset();
+    capture_->reset();
+    captureState_ = StreamState::unconfigured;
+    captureParameters_ = {};
+    captureBufferBytes_ = 0;
+    captureCredit_ = 0;
     clock_->cancel();
     armed_.reset();
     state_ = StreamState::unconfigured;
@@ -329,7 +382,9 @@ void VirtioSoundDevice::drainEventSource()
     if (armed_ && *armed_ <= now)
         armed_.reset();
     sink_->handleEvents();
+    capture_->handleEvents();
     releasePacedTransfers(now);
+    advanceCapture(now);
     rearmClock();
 }
 
@@ -423,18 +478,167 @@ void VirtioSoundDevice::releasePacedTransfers(ClockTime now)
     }
 }
 
+std::chrono::nanoseconds VirtioSoundDevice::capturePeriod() const noexcept
+{
+    const std::int64_t frames = captureParameters_.periodBytes /
+        (captureParameters_.channels * captureParameters_.bytesPerSample);
+    return std::chrono::nanoseconds(
+        frames * 1'000'000'000LL / captureParameters_.sampleRate);
+}
+
+/* Credits the periods of real time that have passed since the last tick. */
+void VirtioSoundDevice::advanceCapture(ClockTime now)
+{
+    if (captureState_ != StreamState::running || now < captureNextTick_)
+        return;
+    const auto period = capturePeriod();
+    const auto elapsed = (now - captureNextTick_) / period + 1;
+    captureNextTick_ += elapsed * period;
+    const auto credit = static_cast<std::uint64_t>(captureCredit_) +
+        static_cast<std::uint64_t>(elapsed) * captureParameters_.periodBytes;
+    captureCredit_ = static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(credit, captureBufferBytes_));
+}
+
 void VirtioSoundDevice::rearmClock()
 {
     std::optional<ClockTime> next;
     if (!paced_.empty() && paced_.front().timed)
         next = paced_.front().due;
+    if (captureState_ == StreamState::running &&
+        (!next || captureNextTick_ < *next)) {
+        next = captureNextTick_;
+    }
     if (next == armed_)
         return;
     armed_ = next;
     if (next)
-        clock_->wakeAt(*next);
+        clock_->wakeAt(std::max(*next, clock_->now() + minimumWake));
     else
         clock_->cancel();
+}
+
+uml::virtio::VhostUserQueueResult VirtioSoundDevice::processCaptureControl(
+    std::uint32_t code,
+    std::span<const std::uint8_t> request,
+    std::size_t responseCapacity)
+{
+    switch (static_cast<protocol::Request>(code)) {
+    case protocol::Request::pcmSetParameters: {
+        const auto parameters = fromBytes<protocol::PcmSetParameters>(request);
+        if (captureState_ == StreamState::running ||
+            captureState_ == StreamState::stopped ||
+            !supportedParameters(parameters, 1, protocol::channelCount)) {
+            return status(protocol::Status::notSupported, responseCapacity);
+        }
+        captureParameters_ = {
+            .periodBytes = parameters.periodBytes,
+            .sampleRate = protocol::sampleRate,
+            .channels = parameters.channels,
+            .bytesPerSample = protocol::bytesPerSample,
+        };
+        captureBufferBytes_ = parameters.bufferBytes;
+        capture_->configure(captureParameters_);
+        captureState_ = StreamState::configured;
+        return status(protocol::Status::ok, responseCapacity);
+    }
+    case protocol::Request::pcmPrepare:
+        if (captureState_ != StreamState::configured &&
+            captureState_ != StreamState::prepared &&
+            captureState_ != StreamState::released) {
+            return status(protocol::Status::ioError, responseCapacity);
+        }
+        capture_->prepare();
+        captureCredit_ = 0;
+        captureState_ = StreamState::prepared;
+        return status(protocol::Status::ok, responseCapacity);
+    case protocol::Request::pcmStart:
+        if (captureState_ != StreamState::prepared &&
+            captureState_ != StreamState::stopped) {
+            return status(protocol::Status::ioError, responseCapacity);
+        }
+        capture_->start();
+        captureState_ = StreamState::running;
+        captureCredit_ = 0;
+        captureNextTick_ = clock_->now() + capturePeriod();
+        break;
+    case protocol::Request::pcmStop:
+        if (captureState_ != StreamState::running)
+            return status(protocol::Status::ioError, responseCapacity);
+        capture_->stop();
+        captureState_ = StreamState::stopped;
+        captureCredit_ = 0;
+        // The buffers still queued come back empty on the next pass.
+        clock_->notify();
+        break;
+    case protocol::Request::pcmRelease:
+        if (captureState_ != StreamState::prepared &&
+            captureState_ != StreamState::stopped) {
+            return status(protocol::Status::ioError, responseCapacity);
+        }
+        capture_->release();
+        captureState_ = StreamState::released;
+        captureCredit_ = 0;
+        clock_->notify();
+        break;
+    default:
+        return status(protocol::Status::notSupported, responseCapacity);
+    }
+    rearmClock();
+    return status(protocol::Status::ok, responseCapacity);
+}
+
+/* A receive buffer is the data the guest asks for followed by a status. */
+uml::virtio::VhostUserQueueResult VirtioSoundDevice::processReceive(
+    std::span<const std::uint8_t> request,
+    std::size_t responseCapacity)
+{
+    if (responseCapacity < sizeof(protocol::PcmStatus))
+        return complete({});
+    const auto reply = [&](protocol::Status value,
+                           std::vector<std::uint8_t> pcm = {}) {
+        const auto tail = toBytes(protocol::PcmStatus {
+            .status = value,
+            .latencyBytes = 0,
+        });
+        pcm.insert(pcm.end(), tail.begin(), tail.end());
+        return complete(std::move(pcm));
+    };
+    if (request.size() < sizeof(protocol::PcmTransfer))
+        return reply(protocol::Status::badMessage);
+    const auto transfer = fromBytes<protocol::PcmTransfer>(request);
+    if (transfer.streamId != protocol::inputStreamId)
+        return reply(protocol::Status::badMessage);
+    switch (captureState_) {
+    case StreamState::prepared:
+        // The driver queues its buffers before it starts the stream.
+        return {};
+    case StreamState::running:
+        break;
+    case StreamState::stopped:
+    case StreamState::released:
+        // A stream that is not recording returns its buffers without data.
+        return reply(protocol::Status::ok);
+    default:
+        return reply(protocol::Status::badMessage);
+    }
+    const std::size_t pcmBytes = responseCapacity - sizeof(protocol::PcmStatus);
+    if (pcmBytes != captureParameters_.periodBytes)
+        return reply(protocol::Status::badMessage);
+    advanceCapture(clock_->now());
+    if (captureCredit_ < pcmBytes) {
+        // The next period of real time has not passed yet; the clock wakes
+        // the transport when it has.
+        rearmClock();
+        return {};
+    }
+    captureCredit_ -= captureParameters_.periodBytes;
+    std::vector<std::uint8_t> pcm(pcmBytes);
+    const auto filled = std::min(
+        capture_->read(pcm), pcm.size());
+    // What the source did not supply is silence.
+    std::fill(pcm.begin() + static_cast<std::ptrdiff_t>(filled), pcm.end(), 0);
+    return reply(protocol::Status::ok, std::move(pcm));
 }
 
 } // namespace uml::audio

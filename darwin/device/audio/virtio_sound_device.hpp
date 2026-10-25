@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "capture_source.hpp"
 #include "period_clock.hpp"
 #include "playback_sink.hpp"
 #include "vhost_user_device.hpp"
@@ -20,6 +21,7 @@ public:
     /* `clock` is the one the sink signals its completions on. */
     VirtioSoundDevice(
         std::unique_ptr<PlaybackSink> sink,
+        std::unique_ptr<CaptureSource> capture,
         std::shared_ptr<PeriodClock> clock);
     ~VirtioSoundDevice() override;
 
@@ -59,6 +61,13 @@ private:
         std::uint64_t requestId,
         std::span<const std::uint8_t> request,
         std::size_t responseCapacity);
+    [[nodiscard]] uml::virtio::VhostUserQueueResult processCaptureControl(
+        std::uint32_t code,
+        std::span<const std::uint8_t> request,
+        std::size_t responseCapacity);
+    [[nodiscard]] uml::virtio::VhostUserQueueResult processReceive(
+        std::span<const std::uint8_t> request,
+        std::size_t responseCapacity);
 
     // A period the sink could not play, completed on the period clock.
     struct PacedTransfer final {
@@ -78,9 +87,12 @@ private:
     void pace(std::uint64_t requestId);
     void timePacedTransfers();
     void releasePacedTransfers(ClockTime now);
+    [[nodiscard]] std::chrono::nanoseconds capturePeriod() const noexcept;
+    void advanceCapture(ClockTime now);
     void rearmClock();
 
     std::unique_ptr<PlaybackSink> sink_;
+    std::unique_ptr<CaptureSource> capture_;
     std::shared_ptr<PeriodClock> clock_;
     StreamState state_ {StreamState::unconfigured};
     PlaybackParameters parameters_ {};
@@ -97,6 +109,17 @@ private:
     std::deque<ReadyCompletion> ready_;
     // When the paced data queued so far would finish playing.
     ClockTime playHead_ {};
+
+    // The capture stream. While it runs, the device credits one period of
+    // real time per period, and each receive buffer completes once a period
+    // is credited, filled from the capture source and zero-padded. The
+    // credit is capped at the stream's buffer, as a recorder's would be: a
+    // guest that falls behind loses the oldest audio.
+    StreamState captureState_ {StreamState::unconfigured};
+    CaptureParameters captureParameters_ {};
+    std::uint32_t captureBufferBytes_ {};
+    std::uint32_t captureCredit_ {};
+    ClockTime captureNextTick_ {};
     // The deadline the clock is armed for, cleared when it signals.
     std::optional<ClockTime> armed_;
 };

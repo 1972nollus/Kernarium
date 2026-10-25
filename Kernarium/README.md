@@ -130,7 +130,8 @@ harness session runs before powering the guest off. The lanes are in
 Kernarium attaches:
 
 - an absolute touchscreen and evdev keyboard;
-- one signed-16-bit stereo 48 kHz playback stream through Virtio-Sound;
+- a signed-16-bit 48 kHz playback stream (stereo) and capture stream
+  (mono or stereo) through Virtio-Sound, with the capture stream silent;
 - an Android-only Virtio battery reflecting the Apple host's percentage and
   charging state, with a 100-percent charging fallback when the host has no
   readable battery;

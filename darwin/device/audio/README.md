@@ -1,9 +1,11 @@
 # Virtio Sound
 
 `UML::AudioDevice` serves Virtio device 25 over the common vhost-user
-transport. It exposes one signed-16-bit, 48 kHz, stereo playback stream.
-Mixer controls and jacks are not exposed. The device owns protocol validation
-and stream state; the host output belongs to a `PlaybackSink`.
+transport. It exposes two 48 kHz signed-16-bit streams in one function group,
+which the guest driver presents as the two directions of PCM device 0: stereo
+playback, and capture of one or two channels. Mixer controls and jacks are not
+exposed. The device owns protocol validation and stream state; the host output
+belongs to a `PlaybackSink` and the captured audio to a `CaptureSource`.
 
 macOS and Android enable the service with `--audio`; Kernarium supplies it to
 every guest it runs.
@@ -41,6 +43,24 @@ real time after the one before, on its `PeriodClock`:
 The guest therefore sees a steady device whatever the Mac's output does, and
 never an I/O error from an output problem.
 
+## Capture
+
+While the guest records, the device completes one receive buffer per period of
+real time on its `PeriodClock`, from `PCM_START` on, whatever the capture
+source holds. The guest's capture clock therefore never depends on a source:
+it is neither stalled by a slow one nor raced by a fast one. The device credits
+the periods that have passed, up to the stream's buffer, so a guest that falls
+behind loses the oldest audio and the next period stays on the original grid.
+Buffers the driver queues before `PCM_START` wait for it, and a stopped or
+released stream returns its queued buffers without data.
+
+The audio comes from a `CaptureSource`, which fills the front of each period
+and leaves the rest zero. A source cannot fail a stream: one that cannot
+deliver audio returns nothing and the guest records silence. The default
+source is silent, so an unmodified product delivers zeros in real time, which
+is what the Android audio policy's built-in microphone needs to open input
+streams, and no microphone is touched and no permission is requested.
+
 ## Null output
 
 `--audio-output=null` selects a sink that plays nothing: every period is
@@ -51,7 +71,7 @@ and Kernarium keeps the host output.
 
 ## Tests
 
-`virtio-sound-protocol` covers the protocol, the lifecycle, the pacing under an
-injected clock and the production clock. `UML_TEST_APPLE_AUDIO=ON` adds
+`virtio-sound-protocol` covers the protocol, both streams' lifecycles, the
+pacing and capture delivery under an injected clock, and the production clock. `UML_TEST_APPLE_AUDIO=ON` adds
 `apple-audio-playback`, which plays a brief tone through the real output (see
 [`../../../docs/testing.md`](../../../docs/testing.md)).

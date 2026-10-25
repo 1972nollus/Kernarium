@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "capture_source.hpp"
 #include "period_clock.hpp"
 #include "protocol.hpp"
 #include "require.hpp"
+#include "test_clock.hpp"
 #include "virtio_sound_device.hpp"
 #include "wire_bytes.hpp"
 
 #include <poll.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -28,34 +31,9 @@ using uml::testing::bytes;
 using uml::testing::load;
 using uml::testing::require;
 
+using uml::audio_testing::TestClock;
+
 using namespace std::chrono_literals;
-
-/* A period clock whose time the test advances by hand. */
-class TestClock final : public uml::audio::PeriodClock {
-public:
-    uml::audio::ClockTime now() const noexcept override { return time; }
-    void notify() const noexcept override { ++notifyCount; }
-    void wakeAt(uml::audio::ClockTime deadline) noexcept override
-    {
-        armed = deadline;
-    }
-    void cancel() noexcept override { armed.reset(); }
-    int descriptor() const noexcept override { return -1; }
-    void drain() noexcept override { ++drainCount; }
-
-    /* What the operating system does as time passes: a deadline that has
-     * come fires once and is gone. */
-    void fire()
-    {
-        if (armed && *armed <= time)
-            armed.reset();
-    }
-
-    uml::audio::ClockTime time {std::chrono::steady_clock::time_point {} + 1h};
-    std::optional<uml::audio::ClockTime> armed;
-    mutable unsigned notifyCount {};
-    unsigned drainCount {};
-};
 
 class TestSink final : public uml::audio::PlaybackSink {
 public:
@@ -122,17 +100,54 @@ public:
         uml::audio::PlaybackEnqueueResult::accepted};
 };
 
+/* A capture source that holds whatever the test gives it. */
+class TestCapture final : public uml::audio::CaptureSource {
+public:
+    void configure(const uml::audio::CaptureParameters& chosen) noexcept override
+    {
+        ++configureCount;
+        configured = chosen;
+    }
+    void prepare() noexcept override { ++prepareCount; }
+    void start() noexcept override { ++startCount; }
+    void stop() noexcept override { ++stopCount; }
+    void release() noexcept override { ++releaseCount; }
+    void reset() noexcept override { ++resetCount; }
+
+    std::size_t read(std::span<std::uint8_t> pcm) noexcept override
+    {
+        ++readCount;
+        const auto count = std::min(pcm.size(), supply.size());
+        std::memcpy(pcm.data(), supply.data(), count);
+        supply.erase(supply.begin(), supply.begin() + static_cast<long>(count));
+        return count;
+    }
+
+    uml::audio::CaptureParameters configured {};
+    std::vector<std::uint8_t> supply;
+    unsigned configureCount {};
+    unsigned prepareCount {};
+    unsigned startCount {};
+    unsigned stopCount {};
+    unsigned releaseCount {};
+    unsigned resetCount {};
+    unsigned readCount {};
+};
+
 struct Fixture final {
     Fixture()
         : clock(std::make_shared<TestClock>())
     {
         auto owned = std::make_unique<TestSink>();
         sink = owned.get();
+        auto source = std::make_unique<TestCapture>();
+        capture = source.get();
         device = std::make_unique<uml::audio::VirtioSoundDevice>(
-            std::move(owned), clock);
+            std::move(owned), std::move(source), clock);
     }
 
     TestSink* sink {};
+    TestCapture* capture {};
     std::shared_ptr<TestClock> clock;
     std::unique_ptr<uml::audio::VirtioSoundDevice> device;
 };
@@ -191,8 +206,8 @@ void exposesOneStereoPlaybackStream()
     const auto configuration = fixture.device->configuration();
     const auto config = load<protocol::Configuration>(configuration);
     require(config.jacks == 0);
-    require(config.streams == 1);
-    require(config.channelMaps == 1);
+    require(config.streams == 2);
+    require(config.channelMaps == 2);
     require(config.controls == 0);
 
     const protocol::QueryInfo query {
@@ -258,10 +273,19 @@ void rejectsMalformedAndOutOfOrderControlRequests()
             .code = static_cast<std::uint32_t>(protocol::Request::pcmInfo),
         },
         .startId = 0,
-        .count = 2,
+        .count = 3,
         .size = sizeof(protocol::PcmInfo),
     };
     require(responseStatus(control(*fixture.device, bytes(invalidQuery))) ==
+            protocol::Status::badMessage);
+    auto pastTheEnd = invalidQuery;
+    pastTheEnd.startId = 2;
+    pastTheEnd.count = 1;
+    require(responseStatus(control(*fixture.device, bytes(pastTheEnd))) ==
+            protocol::Status::badMessage);
+    auto empty = invalidQuery;
+    empty.count = 0;
+    require(responseStatus(control(*fixture.device, bytes(empty))) ==
             protocol::Status::badMessage);
 
     const auto event = fixture.device->processQueue(
@@ -271,6 +295,14 @@ void rejectsMalformedAndOutOfOrderControlRequests()
         protocol::receiveQueue, 3, {}, 0);
     require(receive.action == uml::virtio::VhostUserQueueAction::complete);
     require(receive.response.empty());
+    // A receive buffer for a stream that is not capturing is refused.
+    const auto strayReceive = fixture.device->processQueue(
+        protocol::receiveQueue, 4,
+        bytes(protocol::PcmTransfer {.streamId = protocol::streamId}),
+        sizeof(protocol::PcmStatus));
+    require(strayReceive.action ==
+            uml::virtio::VhostUserQueueAction::complete);
+    require(responseStatus(strayReceive) == protocol::Status::badMessage);
 }
 
 void playbackDefersUntilTheAppleSinkConsumesAPeriod()
@@ -712,7 +744,8 @@ void nullOutputPlaysNothingInRealTime()
 {
     auto clock = std::make_shared<TestClock>();
     uml::audio::VirtioSoundDevice device(
-        uml::audio::makeNullPlaybackSink(), clock);
+        uml::audio::makeNullPlaybackSink(),
+        uml::audio::makeSilentCaptureSource(), clock);
     const auto selected = pacedParameters();
     require(responseStatus(control(device, bytes(selected))) ==
             protocol::Status::ok);
@@ -744,6 +777,465 @@ void nullOutputPlaysNothingInRealTime()
     device.drainEventSource();
     require(device.takeQueueCompletion(completion) &&
             completion.requestId == 2);
+}
+
+
+protocol::PcmSetParameters captureParameters(
+    std::uint8_t channels = protocol::channelCount)
+{
+    auto selected = pacedParameters();
+    selected.header.streamId = protocol::inputStreamId;
+    selected.channels = channels;
+    // 5 ms at either channel count.
+    selected.periodBytes = 480U * channels;
+    selected.bufferBytes = selected.periodBytes * 4;
+    return selected;
+}
+
+protocol::PcmHeader captureCommand(protocol::Request request)
+{
+    return {
+        .header = {.code = static_cast<std::uint32_t>(request)},
+        .streamId = protocol::inputStreamId,
+    };
+}
+
+protocol::Status captureControl(Fixture& fixture, protocol::Request request)
+{
+    return responseStatus(control(
+        *fixture.device, bytes(captureCommand(request))));
+}
+
+void prepareCapture(Fixture& fixture, const protocol::PcmSetParameters& chosen)
+{
+    require(responseStatus(control(*fixture.device, bytes(chosen))) ==
+            protocol::Status::ok);
+    require(captureControl(fixture, protocol::Request::pcmPrepare) ==
+            protocol::Status::ok);
+}
+
+/* One receive buffer: the period of data and the status behind it. */
+uml::virtio::VhostUserQueueResult receive(
+    Fixture& fixture,
+    std::uint64_t id,
+    std::uint32_t periodBytes)
+{
+    return fixture.device->processQueue(
+        protocol::receiveQueue, id,
+        bytes(protocol::PcmTransfer {.streamId = protocol::inputStreamId}),
+        periodBytes + sizeof(protocol::PcmStatus));
+}
+
+bool isRetry(const uml::virtio::VhostUserQueueResult& result)
+{
+    return result.action == uml::virtio::VhostUserQueueAction::retry;
+}
+
+/* The transport finds the descriptor readable, drains the device, and runs
+ * every queue again. */
+void wake(Fixture& fixture)
+{
+    fixture.clock->fire();
+    fixture.device->drainEventSource();
+}
+
+/* Returns the data of a completed receive buffer, checking its status. */
+std::vector<std::uint8_t> filled(
+    const uml::virtio::VhostUserQueueResult& result,
+    std::uint32_t periodBytes)
+{
+    require(result.action == uml::virtio::VhostUserQueueAction::complete);
+    require(result.response.size() == periodBytes + sizeof(protocol::PcmStatus));
+    const auto status = load<protocol::PcmStatus>(result.response, periodBytes);
+    require(status.status == protocol::Status::ok && status.latencyBytes == 0);
+    return {result.response.begin(), result.response.begin() + periodBytes};
+}
+
+void capturePcmInfoNamesAnInputStream()
+{
+    Fixture fixture;
+    protocol::QueryInfo query {
+        .header = {
+            .code = static_cast<std::uint32_t>(protocol::Request::pcmInfo),
+        },
+        .startId = 0,
+        .count = 2,
+        .size = sizeof(protocol::PcmInfo),
+    };
+    auto result = control(*fixture.device, bytes(query));
+    require(responseStatus(result) == protocol::Status::ok);
+    require(result.response.size() ==
+            sizeof(protocol::Header) + 2 * sizeof(protocol::PcmInfo));
+    const auto output = load<protocol::PcmInfo>(
+        result.response, sizeof(protocol::Header));
+    const auto input = load<protocol::PcmInfo>(
+        result.response, sizeof(protocol::Header) + sizeof(protocol::PcmInfo));
+    require(output.direction == protocol::Direction::output);
+    require(input.direction == protocol::Direction::input);
+    // One function group, so the guest pairs them as PCM device 0.
+    require(output.header.functionGroupNodeId == 0 &&
+            input.header.functionGroupNodeId == 0);
+    require(input.minimumChannels == 1 && input.maximumChannels == 2);
+    require(input.formats == output.formats && input.rates == output.rates);
+
+    query.startId = 1;
+    query.count = 1;
+    result = control(*fixture.device, bytes(query));
+    require(result.response.size() ==
+            sizeof(protocol::Header) + sizeof(protocol::PcmInfo));
+    require(load<protocol::PcmInfo>(
+                result.response, sizeof(protocol::Header)).direction ==
+            protocol::Direction::input);
+
+    const protocol::QueryInfo maps {
+        .header = {
+            .code = static_cast<std::uint32_t>(
+                protocol::Request::channelMapInfo),
+        },
+        .startId = 0,
+        .count = 2,
+        .size = sizeof(protocol::ChannelMapInfo),
+    };
+    result = control(*fixture.device, bytes(maps));
+    require(responseStatus(result) == protocol::Status::ok);
+    require(result.response.size() ==
+            sizeof(protocol::Header) + 2 * sizeof(protocol::ChannelMapInfo));
+    require(load<protocol::ChannelMapInfo>(
+                result.response, sizeof(protocol::Header)).direction ==
+            protocol::Direction::output);
+    const auto inputMap = load<protocol::ChannelMapInfo>(
+        result.response,
+        sizeof(protocol::Header) + sizeof(protocol::ChannelMapInfo));
+    require(inputMap.direction == protocol::Direction::input);
+    require(inputMap.channels == 2 &&
+            inputMap.header.functionGroupNodeId == 0);
+
+    // A response buffer too small for both entries is refused.
+    require(responseStatus(fixture.device->processQueue(
+                protocol::controlQueue, 1, bytes(maps),
+                sizeof(protocol::Header) + sizeof(protocol::ChannelMapInfo))) ==
+            protocol::Status::badMessage);
+}
+
+void captureNegotiatesItsParametersApartFromPlayback()
+{
+    Fixture fixture;
+    auto chosen = captureParameters();
+    require(responseStatus(control(*fixture.device, bytes(chosen))) ==
+            protocol::Status::ok);
+    require(fixture.capture->configureCount == 1);
+    require(fixture.capture->configured.periodBytes == chosen.periodBytes);
+    require(fixture.capture->configured.channels == 2);
+    require(fixture.capture->configured.sampleRate == protocol::sampleRate);
+    require(fixture.capture->configured.bytesPerSample == 2);
+    // Playback is not involved.
+    require(fixture.sink->configureCount == 0);
+
+    chosen = captureParameters(1);
+    require(responseStatus(control(*fixture.device, bytes(chosen))) ==
+            protocol::Status::ok);
+    require(fixture.capture->configured.channels == 1);
+    require(fixture.capture->configured.periodBytes == 480);
+
+    // Mono playback is not offered, mono capture is; neither takes other
+    // rates, formats, channel counts or a ragged period.
+    auto playback = parameters();
+    playback.channels = 1;
+    require(responseStatus(control(*fixture.device, bytes(playback))) ==
+            protocol::Status::notSupported);
+    for (const auto& change : std::vector<
+             std::pair<const char*, void (*)(protocol::PcmSetParameters&)>> {
+             {"three channels",
+              [](protocol::PcmSetParameters& p) { p.channels = 3; }},
+             {"zero channels",
+              [](protocol::PcmSetParameters& p) { p.channels = 0; }},
+             {"rate",
+              [](protocol::PcmSetParameters& p) {
+                  p.rate = static_cast<protocol::PcmRate>(6);
+              }},
+             {"format",
+              [](protocol::PcmSetParameters& p) {
+                  p.format = static_cast<protocol::PcmFormat>(4);
+              }},
+             {"ragged period",
+              [](protocol::PcmSetParameters& p) { p.periodBytes -= 2; }},
+             {"feature flags",
+              [](protocol::PcmSetParameters& p) { p.features = 1; }},
+             {"too many periods",
+              [](protocol::PcmSetParameters& p) {
+                  p.bufferBytes = p.periodBytes * 300;
+              }},
+         }) {
+        auto bad = captureParameters();
+        change.second(bad);
+        require(responseStatus(control(*fixture.device, bytes(bad))) ==
+                    protocol::Status::notSupported,
+                change.first);
+    }
+    require(fixture.capture->configureCount == 2);
+}
+
+/* The capture stream delivers a period for each period of real time, from
+ * the moment it starts, whatever the guest or the source does. */
+void captureDeliversPeriodsInRealTime()
+{
+    Fixture fixture;
+    const auto chosen = captureParameters();
+    prepareCapture(fixture, chosen);
+    const auto period = chosen.periodBytes;
+
+    // The driver queues buffers before it starts the stream.
+    require(isRetry(receive(fixture, 1, period)));
+    require(!fixture.clock->armed);
+    require(captureControl(fixture, protocol::Request::pcmStart) ==
+            protocol::Status::ok);
+    const auto start = fixture.clock->time;
+    require(fixture.capture->startCount == 1);
+    require(fixture.clock->armed && *fixture.clock->armed == start + 5ms);
+
+    fixture.clock->time = start + 4ms;
+    wake(fixture);
+    require(isRetry(receive(fixture, 1, period)));
+    fixture.clock->time = start + 5ms;
+    wake(fixture);
+    const auto first = receive(fixture, 1, period);
+    const auto data = filled(first, period);
+    require(std::all_of(data.begin(), data.end(),
+                        [](std::uint8_t byte) { return byte == 0; }));
+    require(isRetry(receive(fixture, 2, period)));
+    require(*fixture.clock->armed == start + 10ms);
+
+    // A guest that keeps up receives one period per five milliseconds: two
+    // seconds of real time are 400 periods, not one more or less.
+    unsigned delivered = 1;
+    for (int tick = 2; tick <= 400; ++tick) {
+        fixture.clock->time = start + tick * 5ms;
+        wake(fixture);
+        require(*fixture.clock->armed == start + (tick + 1) * 5ms);
+        const auto result = receive(fixture, 100 + tick, period);
+        require(!isRetry(result));
+        (void)filled(result, period);
+        ++delivered;
+        require(isRetry(receive(fixture, 7, period)));
+    }
+    require(delivered == 400);
+    require(fixture.capture->readCount == 400);
+}
+
+/* A guest that stalls loses the oldest audio, not the clock: the credit is
+ * the stream's buffer, and the next period still falls on the old grid. */
+void captureOverrunDropsTheOldestAudio()
+{
+    Fixture fixture;
+    const auto chosen = captureParameters();
+    prepareCapture(fixture, chosen);
+    const auto period = chosen.periodBytes;
+    require(captureControl(fixture, protocol::Request::pcmStart) ==
+            protocol::Status::ok);
+    const auto start = fixture.clock->time;
+
+    fixture.clock->time = start + 10s + 1ms;
+    wake(fixture);
+    for (std::uint64_t id = 1; id <= 4; ++id)
+        (void)filled(receive(fixture, id, period), period);
+    require(isRetry(receive(fixture, 5, period)));
+    // 10.001 s is 2000 periods and a fifth; the next tick is the 2001st.
+    require(*fixture.clock->armed == start + 10s + 5ms);
+}
+
+/* What the source supplies leads the period and the rest is zero. */
+void captureSourceDataIsPaddedWithSilence()
+{
+    Fixture fixture;
+    const auto chosen = captureParameters();
+    prepareCapture(fixture, chosen);
+    const auto period = chosen.periodBytes;
+    require(captureControl(fixture, protocol::Request::pcmStart) ==
+            protocol::Status::ok);
+    fixture.capture->supply.assign(period + 100, 0xab);
+
+    fixture.clock->time += 5ms;
+    wake(fixture);
+    auto data = filled(receive(fixture, 1, period), period);
+    require(std::all_of(data.begin(), data.end(),
+                        [](std::uint8_t byte) { return byte == 0xab; }));
+    fixture.clock->time += 5ms;
+    wake(fixture);
+    data = filled(receive(fixture, 2, period), period);
+    require(std::all_of(data.begin(), data.begin() + 100,
+                        [](std::uint8_t byte) { return byte == 0xab; }));
+    require(std::all_of(data.begin() + 100, data.end(),
+                        [](std::uint8_t byte) { return byte == 0; }));
+    fixture.clock->time += 5ms;
+    wake(fixture);
+    data = filled(receive(fixture, 3, period), period);
+    require(std::all_of(data.begin(), data.end(),
+                        [](std::uint8_t byte) { return byte == 0; }));
+}
+
+/* A stopped or released stream returns the buffers the driver still holds,
+ * empty, and wakes the transport to collect them. */
+void captureStopAndReleaseReturnTheQueuedBuffers()
+{
+    Fixture fixture;
+    const auto chosen = captureParameters();
+    prepareCapture(fixture, chosen);
+    const auto period = chosen.periodBytes;
+    require(captureControl(fixture, protocol::Request::pcmStart) ==
+            protocol::Status::ok);
+    require(isRetry(receive(fixture, 1, period)));
+
+    const auto before = fixture.clock->notifyCount;
+    require(captureControl(fixture, protocol::Request::pcmStop) ==
+            protocol::Status::ok);
+    require(fixture.clock->notifyCount == before + 1);
+    require(fixture.capture->stopCount == 1);
+    require(!fixture.clock->armed);
+    auto returned = receive(fixture, 1, period);
+    require(returned.action == uml::virtio::VhostUserQueueAction::complete);
+    require(returned.response.size() == sizeof(protocol::PcmStatus));
+    require(responseStatus(returned) == protocol::Status::ok);
+    fixture.clock->time += 1s;
+    wake(fixture);
+
+    // Starting again begins a fresh stream; the stalled second is not
+    // credited.
+    require(captureControl(fixture, protocol::Request::pcmStart) ==
+            protocol::Status::ok);
+    require(isRetry(receive(fixture, 2, period)));
+    fixture.clock->time += 5ms;
+    wake(fixture);
+    (void)filled(receive(fixture, 2, period), period);
+    require(isRetry(receive(fixture, 3, period)));
+
+    require(captureControl(fixture, protocol::Request::pcmStop) ==
+            protocol::Status::ok);
+    require(captureControl(fixture, protocol::Request::pcmRelease) ==
+            protocol::Status::ok);
+    require(fixture.capture->releaseCount == 1);
+    require(fixture.clock->notifyCount == before + 3);
+    returned = receive(fixture, 3, period);
+    require(returned.response.size() == sizeof(protocol::PcmStatus));
+    require(responseStatus(returned) == protocol::Status::ok);
+
+    // Released, the stream can be configured and prepared once more.
+    prepareCapture(fixture, captureParameters(1));
+    require(fixture.capture->prepareCount == 2);
+    require(isRetry(receive(fixture, 4, 480)));
+}
+
+void captureLifecycleFollowsThePlaybackRules()
+{
+    Fixture fixture;
+    const auto chosen = captureParameters();
+    for (const auto request : {protocol::Request::pcmPrepare,
+                               protocol::Request::pcmStart,
+                               protocol::Request::pcmStop,
+                               protocol::Request::pcmRelease}) {
+        require(captureControl(fixture, request) == protocol::Status::ioError);
+    }
+    // A buffer for a stream nobody configured is refused.
+    require(responseStatus(receive(fixture, 1, chosen.periodBytes)) ==
+            protocol::Status::badMessage);
+
+    prepareCapture(fixture, chosen);
+    require(captureControl(fixture, protocol::Request::pcmPrepare) ==
+            protocol::Status::ok);
+    require(captureControl(fixture, protocol::Request::pcmStop) ==
+            protocol::Status::ioError);
+    require(captureControl(fixture, protocol::Request::pcmStart) ==
+            protocol::Status::ok);
+    // A running stream takes no new parameters and starts only once.
+    require(responseStatus(control(*fixture.device, bytes(chosen))) ==
+            protocol::Status::notSupported);
+    require(captureControl(fixture, protocol::Request::pcmStart) ==
+            protocol::Status::ioError);
+    require(captureControl(fixture, protocol::Request::pcmRelease) ==
+            protocol::Status::ioError);
+    // A buffer of the wrong size is refused rather than half filled.
+    fixture.clock->time += 5ms;
+    wake(fixture);
+    require(responseStatus(receive(fixture, 2, chosen.periodBytes / 2)) ==
+            protocol::Status::badMessage);
+    (void)filled(receive(fixture, 3, chosen.periodBytes), chosen.periodBytes);
+
+    // Playback is untouched by all of it.
+    require(fixture.sink->prepareCount == 0 && fixture.sink->startCount == 0);
+}
+
+/* The two streams share the clock: it wakes for whichever is due first. */
+void captureAndPlaybackShareTheClock()
+{
+    Fixture fixture;
+    const auto playback = pacedParameters();
+    prepareStream(fixture, playback);
+    fixture.sink->enqueueResult = uml::audio::PlaybackEnqueueResult::discarded;
+    command(fixture, protocol::Request::pcmStart);
+    const auto start = fixture.clock->time;
+    require(fixture.device->processQueue(
+                protocol::transmitQueue, 1, transferOf(playback.periodBytes),
+                sizeof(protocol::PcmStatus)).action ==
+            uml::virtio::VhostUserQueueAction::defer);
+    require(*fixture.clock->armed == start + 5ms);
+
+    // Capture starts a millisecond later, so its first period falls at
+    // start + 6 ms, after the playback period that is already queued.
+    fixture.clock->time = start + 1ms;
+    const auto chosen = captureParameters();
+    prepareCapture(fixture, chosen);
+    require(captureControl(fixture, protocol::Request::pcmStart) ==
+            protocol::Status::ok);
+    require(*fixture.clock->armed == start + 5ms);
+
+    fixture.clock->time = start + 5ms;
+    const auto completed = serve(fixture);
+    require(completed.size() == 1 && completed[0].first == 1);
+    require(*fixture.clock->armed == start + 6ms);
+
+    fixture.clock->time = start + 6ms;
+    wake(fixture);
+    (void)filled(receive(fixture, 9, chosen.periodBytes), chosen.periodBytes);
+    require(*fixture.clock->armed == start + 11ms);
+
+    // With capture stopped the clock has nothing left to do.
+    require(captureControl(fixture, protocol::Request::pcmStop) ==
+            protocol::Status::ok);
+    require(!fixture.clock->armed);
+}
+
+void deviceResetStopsCapture()
+{
+    Fixture fixture;
+    const auto chosen = captureParameters();
+    prepareCapture(fixture, chosen);
+    require(captureControl(fixture, protocol::Request::pcmStart) ==
+            protocol::Status::ok);
+    require(fixture.clock->armed.has_value());
+    fixture.device->reset();
+    require(fixture.capture->resetCount == 1);
+    require(!fixture.clock->armed);
+    fixture.clock->time += 1s;
+    wake(fixture);
+    require(responseStatus(receive(fixture, 1, chosen.periodBytes)) ==
+            protocol::Status::badMessage);
+    // The guest can negotiate again from the start.
+    prepareCapture(fixture, chosen);
+}
+
+/* The silent source: the default of the product. */
+void silentSourceReadsNothing()
+{
+    const auto source = uml::audio::makeSilentCaptureSource();
+    source->configure({.periodBytes = 960, .sampleRate = 48000,
+                       .channels = 2, .bytesPerSample = 2});
+    source->prepare();
+    source->start();
+    std::array<std::uint8_t, 960> pcm {};
+    pcm.fill(0x55);
+    require(source->read(pcm) == 0);
+    source->stop();
+    source->release();
+    source->reset();
 }
 
 bool readable(int descriptor, std::chrono::milliseconds timeout)
@@ -807,6 +1299,16 @@ int main()
     stoppedAndReleasedStreamsReturnPacedPeriods();
     resetClearsThePacedSchedule();
     nullOutputPlaysNothingInRealTime();
+    capturePcmInfoNamesAnInputStream();
+    captureNegotiatesItsParametersApartFromPlayback();
+    captureDeliversPeriodsInRealTime();
+    captureOverrunDropsTheOldestAudio();
+    captureSourceDataIsPaddedWithSilence();
+    captureStopAndReleaseReturnTheQueuedBuffers();
+    captureLifecycleFollowsThePlaybackRules();
+    captureAndPlaybackShareTheClock();
+    deviceResetStopsCapture();
+    silentSourceReadsNothing();
     productionClockWakesOnNotifyAndOnDeadline();
     return EXIT_SUCCESS;
 }

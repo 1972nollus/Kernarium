@@ -2,6 +2,7 @@
 
 #include "in_process_service.hpp"
 
+#include "capture_source.hpp"
 #include "period_clock.hpp"
 #include "playback_sink.hpp"
 #include "vhost_user_server.hpp"
@@ -18,8 +19,9 @@ std::unique_ptr<uml::gpu::InProcessVhostUserService> makeInProcessService(
             auto sink = options.output == OutputMode::null
                 ? makeNullPlaybackSink()
                 : makeApplePlaybackSink(clock);
+            auto capture = makeSilentCaptureSource();
             return std::make_unique<VirtioSoundDevice>(
-                std::move(sink), std::move(clock));
+                std::move(sink), std::move(capture), std::move(clock));
         });
 }
 
