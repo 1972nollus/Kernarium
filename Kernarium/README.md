@@ -307,8 +307,8 @@ Each script documents its options in `--help` or its header:
   on an Apple silicon Mac in Designed for iPad mode;
 - `package-ios-frameworks.sh` packages the selected runtime and graphics slices
   and the static GPT fdisk and zstd XCFrameworks for Xcode, with
-  `--automation` the automation Linux runtime, and the host battery archive
-  only `KernariumTests` links;
+  `--automation` the automation Linux runtime, and the host battery and video
+  encoder archives only `KernariumTests` links;
 - `make-guest-bundle.py` assembles an Android `.kern` bundle from an installed
   release;
 - `ipad-automation.py` drives UI automation on a connected iPad through the

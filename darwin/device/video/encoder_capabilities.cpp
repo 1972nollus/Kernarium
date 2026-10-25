@@ -15,7 +15,7 @@ using uml::platform::VideoEncodeCapability;
 /* The order raw formats are listed in. A client that takes the first one it
  * understands gets the layout every encoder input path handles best. */
 constexpr std::array rawOrder {RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::p010,
-                               RawVideoLayout::bgra, RawVideoLayout::nv16, RawVideoLayout::nv24};
+                               RawVideoLayout::bgra, RawVideoLayout::rgba, RawVideoLayout::nv16, RawVideoLayout::nv24};
 
 bool accepts(const VideoEncodeCapability& capability, RawVideoLayout layout)
 {
@@ -32,7 +32,7 @@ std::uint32_t planesLayout(RawVideoLayout layout)
     case RawVideoLayout::nv12: case RawVideoLayout::i420: case RawVideoLayout::nv16:
     case RawVideoLayout::nv24:
         return VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER | VIRTIO_VIDEO_PLANES_LAYOUT_PER_PLANE;
-    case RawVideoLayout::p010: case RawVideoLayout::bgra:
+    case RawVideoLayout::p010: case RawVideoLayout::bgra: case RawVideoLayout::rgba:
         return VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER;
     }
     return VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER;
@@ -81,6 +81,7 @@ std::uint32_t wireRawFormat(RawVideoLayout layout) noexcept
     case RawVideoLayout::nv16: return VIRTIO_VIDEO_FORMAT_NV16;
     case RawVideoLayout::nv24: return VIRTIO_VIDEO_FORMAT_NV24;
     case RawVideoLayout::bgra: return VIRTIO_VIDEO_FORMAT_BGRA8888;
+    case RawVideoLayout::rgba: return VIRTIO_VIDEO_FORMAT_RGBA8888;
     }
     return 0;
 }

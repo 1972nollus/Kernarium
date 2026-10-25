@@ -36,6 +36,7 @@ enum class RawVideoLayout {
     nv16,  // 8-bit 4:2:2, Y plane then interleaved CbCr
     nv24,  // 8-bit 4:4:4, Y plane then interleaved CbCr
     bgra,  // 8-bit packed B, G, R, A; the encoder converts to YCbCr
+    rgba,  // 8-bit packed R, G, B, A in memory order (DRM ABGR8888); likewise converted
 };
 
 enum class VideoRateControl {

@@ -256,7 +256,7 @@ private:
             case Layout::p010: add(2 * width, height); add(4 * half(width), half(height)); break;
             case Layout::nv16: add(width, height); add(2 * half(width), height); break;
             case Layout::nv24: add(width, height); add(2 * width, height); break;
-            case Layout::bgra: add(4 * width, height); break;
+            case Layout::bgra: case Layout::rgba: add(4 * width, height); break;
             }
         }
         std::size_t planeCount() const noexcept override { return planes.size(); }

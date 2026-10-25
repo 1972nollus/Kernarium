@@ -107,6 +107,7 @@ const char* layoutName(RawVideoLayout layout) noexcept
     case RawVideoLayout::nv16: return "nv16";
     case RawVideoLayout::nv24: return "nv24";
     case RawVideoLayout::bgra: return "bgra";
+    case RawVideoLayout::rgba: return "rgba";
     }
     return "unknown";
 }
@@ -186,13 +187,16 @@ std::optional<RawLayout> rawLayout(RawVideoLayout layout, std::uint32_t width, s
         naturalPlanes = 2;
         break;
     case RawVideoLayout::bgra:
+    case RawVideoLayout::rgba:
         components = {{0, 0, 4 * width, height, 0, 0, 4}};
         naturalPlanes = 1;
         break;
     }
     if (components.empty()) return std::nullopt;
+    /* A buffer per component is offered only for the formats whose planes
+     * are separate buffers in the capability response (planesLayout). */
     const bool perComponent = requestedPlanes == 0 ? naturalPlanes == components.size()
-                                                   : requestedPlanes == components.size() && components.size() > 1;
+        : requestedPlanes == components.size() && components.size() > 1 && naturalPlanes == components.size();
     if (requestedPlanes > 1 && !perComponent) return std::nullopt;
     if (requestedPlanes == 1 || (requestedPlanes == 0 && !perComponent)) {
         std::uint64_t offset = 0;

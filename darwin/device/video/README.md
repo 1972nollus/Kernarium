@@ -251,11 +251,15 @@ which is what Android's color-aspects checks read back. `MIN_BUFFERS_FOR_OUTPUT`
 is read-only and 2, because the host copies each raw frame on arrival.
 
 Raw input formats (V4L2 OUTPUT) are NV12, YUV420 (`YU12`), P010 (HEVC Main10
-only), packed BGRA for Android surface input (VideoToolbox converts), and the
-encoder-only NV16 and NV24 for H.264 High 4:2:2 and High 4:4:4 Predictive. The
-coded formats are `H264`, `HEVC` and `JPEG`, each listed only when discovery
-found a hardware encoder for it. Odd visible sizes are rounded down to even by
-VideoToolbox, so the device reports an alignment of 2.
+only), packed BGRA and RGBA for Android surface input (the platform converts;
+RGBA is the memory order R, G, B, A of Android's AB24 surfaces, wire format
+`RGBA8888`), and the encoder-only NV16 and NV24 for H.264 High 4:2:2 and High
+4:4:4 Predictive. A format is listed only when some profile of some codec
+encoded from it on this host. Packed and 10-bit formats are one buffer; the
+planar 8-bit formats are one buffer or one per plane. The coded formats are
+`H264`, `HEVC` and `JPEG`, each listed only when discovery found a hardware
+encoder for it. Odd visible sizes are rounded down to even by VideoToolbox, so
+the device reports an alignment of 2.
 
 Not published, because the host can neither honor nor emulate the control: the
 multi-slice controls (`MaxH264SliceBytes` fails on the hardware encoder and the
