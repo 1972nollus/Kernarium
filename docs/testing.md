@@ -255,9 +255,10 @@ the guest architecture and configure an integration preset with
 `UML_V4L2_PROBE_BINARY` pointing to it. The rootfs needs a shell, `ip`,
 `sha256sum` and `timeout`. The test boots a disposable overlay with the probe
 and its fixtures installed as payload files, checks their SHA-256 list, checks
-every advertised profile's pixels, raw layouts including packed BGRA capture,
-imported dma-buf capture, timestamps, source-change and EOS events, and rejects
-kernel faults or failed shutdown. Android uses its own 4 KiB guest and
+every advertised profile's pixels, raw layouts including packed BGRA capture
+and 8-bit capture of a 10-bit stream, imported dma-buf capture, timestamps,
+source-change and EOS events, the display order of HEVC B-pictures and a seek
+over open-group streams, and rejects kernel faults or failed shutdown. Android uses its own 4 KiB guest and
 deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
