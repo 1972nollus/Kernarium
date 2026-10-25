@@ -144,6 +144,17 @@ through a staging buffer: a copy transfer moves them between the texture and
 the staging buffer's guest storage. The renderer requires that storage of the
 staging buffer, whichever way the pixels move, and asks nothing of the texture.
 
+A texture the renderer creates for a guest reads as zeros until the guest
+writes it, as the zeroed pages the guest allocated for it would. The host
+driver hands out the memory of a released resource again with its pixels still
+in it, so without a clear a new texture shows what an earlier one held, which
+may have belonged to another guest process. The renderer clears every level of
+a new texture at creation. A texture imported from an image keeps the content it
+was imported with, and a texture in a compressed format keeps what the driver
+allocated, because a clear cannot write one. The clear is queued on the GPU and
+adds no CPU time to the creating thread; it costs GPU time per level, plus the
+bandwidth to fill the texture, before the first frame that uses it.
+
 Pointer semantics are selected by the product launcher. Android native and VNC
 input is exposed as one direct touch contact with absolute coordinates; hover,
 auxiliary buttons, and wheel events are suppressed, and coordinates are sent
