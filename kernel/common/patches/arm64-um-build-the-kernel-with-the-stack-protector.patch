@@ -13,13 +13,21 @@ Host objects keep -fno-stack-protector: they are the host's code, on the
 host's stacks and signal stacks, and their canary reads would add no
 protection to anything the kernel owns.
 
+Unlike arm64, UML's start_kernel() is not the end of the boot thread: a
+halt or reboot longjmps back to start_idle_thread() and returns through
+start_uml() and linux_main() to main(). Both saved the canary before
+start_kernel() drew a new one, so they are built without the protector;
+otherwise every poweroff ends in a stack-protector panic.
+
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
  arch/arm64/um/Kconfig              |  1 +
  arch/arm64/um/asm/stackprotector.h | 31 ++++++++++++++++++++++++++++++
  arch/arm64/um/subarch.c            |  8 ++++++++
  arch/um/Makefile                   |  5 +++++
- 4 files changed, 45 insertions(+)
+ arch/um/kernel/skas/process.c      |  2 +-
+ arch/um/kernel/um_arch.c           |  7 ++++++-
+ 6 files changed, 52 insertions(+), 2 deletions(-)
  create mode 100644 arch/arm64/um/asm/stackprotector.h
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
@@ -109,3 +117,34 @@ index 2aecce6eb3a8893eb84cabf125e48e4ce5c586a5..396a5202e9d59a736ff34a0c3e52c0d2
  # Host objects are compiled against the host C library, whose types reuse the
  # kernel's names with host definitions (size_t, pid_t, sigset_t, struct
  # sigaction, ...). pahole would encode that DWARF into the kernel's BTF, so
+diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
+index 8cb774915731e131352e9f9e3249ac8422faa293..e7a6d0e0fb9c2a6d3632579052ac6e69a98b9475 100644
+--- a/arch/um/kernel/skas/process.c
++++ b/arch/um/kernel/skas/process.c
+@@ -31,7 +31,7 @@ static int __init start_kernel_proc(void *unused)
+ 
+ char cpu_irqstacks[NR_CPUS][THREAD_SIZE] __aligned(THREAD_SIZE);
+ 
+-int __init start_uml(void)
++int __init __no_stack_protector start_uml(void)
+ {
+ 	stack_protections((unsigned long) &cpu_irqstacks[0]);
+ #ifndef UML_HOST_DARWIN
+diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
+index e426227f327d49d16d618709f21d6943dc58f54e..a350b79721d49850c56f2e1f4868323504cf54c7 100644
+--- a/arch/um/kernel/um_arch.c
++++ b/arch/um/kernel/um_arch.c
+@@ -510,7 +510,12 @@ static unsigned long __init get_top_address(char **envp)
+ #endif
+ }
+ 
+-int __init linux_main(int argc, char **argv, char **envp)
++/*
++ * A halt returns through linux_main() and start_uml() to the host's main(),
++ * after start_kernel() has drawn the canary these two frames saved before it,
++ * so neither may check it.
++ */
++int __init __no_stack_protector linux_main(int argc, char **argv, char **envp)
+ {
+ 	unsigned long avail, diff;
+ 	unsigned long virtmem_size, max_physmem;

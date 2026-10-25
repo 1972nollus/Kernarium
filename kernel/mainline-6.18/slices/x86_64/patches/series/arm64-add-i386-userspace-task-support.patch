@@ -2531,7 +2531,7 @@ index 79a25e436086aed18bd760f68efb87a77e18586e..980cb4daeef7de8a48034a42cd2a5759
  {
  	/* Send us the fake SIGTRAP */
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
-index 8cb774915731e131352e9f9e3249ac8422faa293..0a1b285326fccffdd15435ead9b6f69591faf844 100644
+index e7a6d0e0fb9c2a6d3632579052ac6e69a98b9475..64abc74d0ca80a9311d0cea12c4dde52077d44f2 100644
 --- a/arch/um/kernel/skas/process.c
 +++ b/arch/um/kernel/skas/process.c
 @@ -67,6 +67,15 @@ unsigned long current_tls(void)
