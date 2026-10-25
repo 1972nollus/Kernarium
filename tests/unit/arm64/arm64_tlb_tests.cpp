@@ -250,6 +250,218 @@ void exclusive_load_of_a_read_only_page()
 		tlb->fault_access == Access::write);
 }
 
+/* A tagged lookup keys its entry by the page as presented, so the read and
+ * write halves of one page can hold it under different tags at once, and an
+ * invalidation finds both only by comparing the page number of the key. Every
+ * way the mapping of the untagged page changes must remove them, and no tagged
+ * lookup may then reach the old translation. */
+constexpr std::uint64_t tag_a = 0xb4ULL << 56;
+constexpr std::uint64_t tag_b = 0x2cULL << 56;
+
+/* Holds `address` under tag A in the read half and tag B in the write half,
+ * and returns the host pages those aliases translate to. */
+struct Alias final {
+	std::byte *read;
+	std::byte *write;
+};
+
+[[nodiscard]] Alias hold_aliased(Tlb &tlb, std::uint64_t address)
+{
+	Alias alias{tlb.translate_tagged(address | tag_a, Access::read),
+		tlb.translate_tagged(address | tag_b, Access::write)};
+	require(alias.read != nullptr && alias.write != nullptr);
+	return alias;
+}
+
+/* Whether a half holds the page under exactly this key. */
+[[nodiscard]] bool holds(const Tlb &tlb, std::uint64_t address,
+	Access access)
+{
+	const auto key = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
+	return std::ranges::any_of(tlb.entries, [&](const auto &entry) {
+		return (access == Access::write ? entry.write_page :
+			entry.read_page) == key;
+	});
+}
+
+[[nodiscard]] bool faults_untagged(Tlb &tlb, std::uint64_t address,
+	Access access)
+{
+	const auto tag = access == Access::write ? tag_b : tag_a;
+	return tlb.translate_tagged(address | tag, access) == nullptr &&
+		tlb.fault_address == address && tlb.fault_access == access;
+}
+
+void tagged_aliases_follow_a_narrow_unmap()
+{
+	constexpr unsigned long generation = 226;
+	constexpr std::uint64_t base = 0x2600'0000;
+	Mapping mapping{generation, base, 4};
+	auto tlb = std::make_unique<Tlb>();
+	tlb->tagged_addresses = true;
+	tlb->prepare(generation, changes(generation));
+	for (std::size_t index = 0; index < 4; ++index)
+		(void)hold_aliased(*tlb, base + index * page);
+	require(holds(*tlb, (base + page) | tag_a, Access::read) &&
+		holds(*tlb, (base + page) | tag_b, Access::write));
+
+	require(darwin_uml_static_vm_unmap_generation(generation,
+		reinterpret_cast<void *>(base + page), 2 * page) == 0);
+	tlb->prepare(generation, changes(generation));
+	for (const auto index : {std::size_t{1}, std::size_t{2}}) {
+		const auto address = base + index * page;
+		require(!cached(*tlb, address));
+		require(faults_untagged(*tlb, address, Access::read));
+		require(faults_untagged(*tlb, address, Access::write));
+		/* A fault leaves no entry behind. */
+		require(!cached(*tlb, address));
+	}
+	for (const auto index : {std::size_t{0}, std::size_t{3}}) {
+		const auto address = base + index * page;
+		require(holds(*tlb, address | tag_a, Access::read));
+		require(holds(*tlb, address | tag_b, Access::write));
+	}
+}
+
+void tagged_aliases_follow_a_wide_unmap()
+{
+	constexpr unsigned long generation = 227;
+	constexpr std::uint64_t base = 0x1a00'0000;
+	constexpr std::size_t removed = uml::memory::tlb_entry_count + 2;
+	constexpr std::size_t pages = removed + 2;
+	Mapping mapping{generation, base, pages};
+	auto tlb = std::make_unique<Tlb>();
+	tlb->tagged_addresses = true;
+	tlb->prepare(generation, changes(generation));
+	const std::uint64_t kept_low = base;
+	const std::uint64_t first = base + page;
+	const std::uint64_t last = base + removed * page;
+	const std::uint64_t kept_high = base + (removed + 1) * page;
+	for (const auto address : {kept_low, first, last, kept_high})
+		(void)hold_aliased(*tlb, address);
+
+	require(darwin_uml_static_vm_unmap_generation(generation,
+		reinterpret_cast<void *>(first), removed * page) == 0);
+	tlb->prepare(generation, changes(generation));
+	for (const auto address : {first, last}) {
+		require(!cached(*tlb, address));
+		require(faults_untagged(*tlb, address, Access::read));
+		require(faults_untagged(*tlb, address, Access::write));
+	}
+	for (const auto address : {kept_low, kept_high}) {
+		require(holds(*tlb, address | tag_a, Access::read));
+		require(holds(*tlb, address | tag_b, Access::write));
+	}
+}
+
+/* The same address mapped again onto other backing is a new translation: a
+ * tagged lookup of it must reach the new bytes, never the old ones. */
+void tagged_aliases_do_not_outlive_a_remap()
+{
+	constexpr unsigned long generation = 228;
+	constexpr std::uint64_t base = 0x2700'0000;
+	Mapping mapping{generation, base, 2};
+	auto tlb = std::make_unique<Tlb>();
+	tlb->tagged_addresses = true;
+	tlb->prepare(generation, changes(generation));
+	const auto before = hold_aliased(*tlb, base);
+
+	require(darwin_uml_static_vm_unmap_generation(generation,
+		reinterpret_cast<void *>(base), page) == 0);
+	uml::testing::ScratchBacking replacement{"uml-tlb-remap.XXXXXX", page};
+	replacement.put_byte(0x10, std::byte{0x5a});
+	require(darwin_uml_static_vm_map_generation(generation,
+		reinterpret_cast<void *>(base), replacement.descriptor(), 0,
+		page, PROT_READ | PROT_WRITE, 0, 1) == 0);
+	tlb->prepare(generation, changes(generation));
+	require(!cached(*tlb, base));
+
+	const auto after = hold_aliased(*tlb, base);
+	require(after.read != before.read && after.write != before.write);
+	require(after.read[0x10] == std::byte{0x5a});
+	require(after.write[0x10] == std::byte{0x5a});
+	/* The write alias reaches the page the read alias does. */
+	after.write[0x11] = std::byte{0x77};
+	require(after.read[0x11] == std::byte{0x77});
+}
+
+/* A protection change drops the aliases of the page: a write through the
+ * write alias must fault after the page becomes read-only. */
+void tagged_aliases_follow_a_protection_change()
+{
+	constexpr unsigned long generation = 229;
+	constexpr std::uint64_t base = 0x2800'0000;
+	Mapping mapping{generation, base, 2};
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	auto tlb = std::make_unique<Tlb>();
+	tlb->tagged_addresses = true;
+	tlb->prepare(generation, changes(generation));
+	(void)hold_aliased(*tlb, base);
+	(void)hold_aliased(*tlb, base + page);
+
+	require(darwin_uml_static_vm_protect(reinterpret_cast<void *>(base),
+		page, PROT_READ) == 0);
+	tlb->prepare(generation, changes(generation));
+	require(!cached(*tlb, base));
+	require(faults_untagged(*tlb, base, Access::write));
+	require(tlb->translate_tagged(base | tag_a, Access::read) != nullptr);
+	/* The neighbour keeps both aliases and its permission. */
+	require(holds(*tlb, (base + page) | tag_a, Access::read));
+	require(holds(*tlb, (base + page) | tag_b, Access::write));
+	require(tlb->translate_tagged((base + page) | tag_b,
+		Access::write) != nullptr);
+}
+
+/* An address-space switch and the overflow of the mapping history flush every
+ * filled set, whatever tag keyed it. */
+void tagged_aliases_follow_a_generation_switch()
+{
+	constexpr unsigned long first = 230;
+	constexpr unsigned long second = 231;
+	constexpr std::uint64_t base = 0x2900'0000;
+	constexpr std::size_t pages = 3 * uml::memory::tlb_dirty_capacity;
+	Mapping mapping{first, base, pages};
+	auto tlb = std::make_unique<Tlb>();
+	tlb->tagged_addresses = true;
+	for (const std::size_t filled : {std::size_t{5},
+		     uml::memory::tlb_dirty_capacity, pages}) {
+		tlb->prepare(first, changes(first));
+		for (std::size_t index = 0; index < filled; ++index)
+			(void)hold_aliased(*tlb, base + index * page);
+		require(holds(*tlb, (base + (filled - 1) * page) | tag_a,
+			Access::read));
+		tlb->prepare(second, 0);
+		require(empty(*tlb));
+	}
+	/* Back in the first space, nothing of the earlier visit remains. */
+	tlb->prepare(first, changes(first));
+	(void)hold_aliased(*tlb, base);
+	tlb->prepare(second, 0);
+	tlb->prepare(first, changes(first));
+	require(empty(*tlb));
+}
+
+void tagged_aliases_follow_a_history_overflow()
+{
+	constexpr unsigned long generation = 232;
+	constexpr std::uint64_t base = 0x2a00'0000;
+	/* More single-page changes than one reconcile can list. */
+	constexpr std::size_t churn = 300;
+	Mapping mapping{generation, base, 8 + churn};
+	auto tlb = std::make_unique<Tlb>();
+	tlb->tagged_addresses = true;
+	tlb->prepare(generation, changes(generation));
+	for (std::size_t index = 0; index < 8; ++index)
+		(void)hold_aliased(*tlb, base + index * page);
+	for (std::size_t index = 0; index < churn; ++index)
+		require(darwin_uml_static_vm_unmap_generation(generation,
+			reinterpret_cast<void *>(base + (8 + index) * page),
+			page) == 0);
+	tlb->prepare(generation, changes(generation));
+	require(empty(*tlb));
+	require(tlb->translate_tagged(base | tag_a, Access::read) != nullptr);
+}
+
 } // namespace
 
 int main()
@@ -260,4 +472,10 @@ int main()
 	narrow_unmap_invalidates_its_pages();
 	exclusive_load_fills_the_write_entry();
 	exclusive_load_of_a_read_only_page();
+	tagged_aliases_follow_a_narrow_unmap();
+	tagged_aliases_follow_a_wide_unmap();
+	tagged_aliases_do_not_outlive_a_remap();
+	tagged_aliases_follow_a_protection_change();
+	tagged_aliases_follow_a_generation_switch();
+	tagged_aliases_follow_a_history_overflow();
 }
