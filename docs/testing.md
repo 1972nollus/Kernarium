@@ -1077,8 +1077,9 @@ The build side needs no Android build. `lineage24-builder-lane` drives the
 target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
 placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files
 and their 64-suffixed `mmap` and `lseek` imports, the userdata inode count,
-the application read of the vendor security patch level, and the built-in
-microphone with its feature declaration) and the builder's assertions;
+the application read of the vendor security patch level, the built-in
+microphone with its feature declaration, and the userdata `quota` flag) and the
+builder's assertions;
 `lineage24-first-boot-precompile` covers the
 ISA set of a package and the per-ISA artifacts and manifest;
 `lineage24-mesa-venus-port-generator` covers the per-ISA generators of the

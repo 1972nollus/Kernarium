@@ -387,6 +387,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_fstab: bool = False, stock_fstab: bool = False,
                           wrong_filesystem: bool = False,
                           wrong_userdata_inodes: bool = False,
+                          missing_userdata_quota: bool = False,
                           wrong_apex_filesystem: bool = False,
                           seriallogging: bool = False,
                           boot_control: bool = False,
@@ -563,6 +564,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"SYSTEM/apex/{apex}.apex", synthetic_apex("ext4")
                     )
                 fstab = erofs_system_fstab(uml_fstab) if wrong_fstab else uml_fstab
+                if missing_userdata_quota:
+                    fstab = fstab.replace(",quota", "")
                 archive.writestr("VENDOR/etc/fstab.uml", fstab)
                 archive.writestr(
                     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
@@ -946,6 +949,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("wrong-fstab", {"wrong_fstab": True}),
             ("wrong-filesystem", {"wrong_filesystem": True}),
             ("wrong-userdata-inodes", {"wrong_userdata_inodes": True}),
+            ("missing-userdata-quota", {"missing_userdata_quota": True}),
             ("wrong-apex-filesystem", {"wrong_apex_filesystem": True}),
             ("stock-fstab", {"stock_fstab": True}),
             ("seriallogging", {"seriallogging": True}),
@@ -1019,6 +1023,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("armeabi", {"abilist32": "armeabi-v7a,armeabi"}, "armeabi is forbidden|legacy armeabi"),
             ("no-32-bit-abi-cause", {"abilist32": ""}, "unexpected ABI"),
             ("single-zygote-cause", {"zygote": "zygote64"}, "zygote"),
+            ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
+             "userdata entry lacks the fs_mgr quota flag"),
             ("missing-microphone-feature-cause", {"missing_microphone_feature": True},
              "feature is not declared: android.hardware.microphone"),
             ("camera-feature-cause", {"unsupported_feature": True},

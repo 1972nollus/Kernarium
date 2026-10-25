@@ -7,6 +7,8 @@
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid,discard wait,check,formattable,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid,discard wait,check,first_stage_mount
 # Static non-A/B storage uses neither userdata checkpointing nor BootControl.
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,wait,check,formattable
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,reservedsize=128M,wait,check
+# `quota` has fs_mgr turn on ext4 user, group and project quota (tune2fs -Oquota) before
+# the check; installd answers StorageStatsManager from it.
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,wait,check,quota,formattable
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,reservedsize=128M,wait,check,quota
 /dev/block/by-name/misc /misc emmc defaults defaults

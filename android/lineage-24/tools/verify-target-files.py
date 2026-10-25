@@ -597,6 +597,7 @@ def check_boot_policy(
 
     fstab = android_image.tracked_fstab(error)
     for entry in UML_FSTAB_ENTRIES:
+        check_userdata_quota(read_small(archive, infos[entry]), entry)
         if read_small(archive, infos[entry]) != fstab:
             fail(f"UML fstab differs from the fixed UBD contract: {entry}")
 
@@ -845,6 +846,25 @@ def check_multilib_properties(
     )
     if system.get("ro.product.cpu.abi") != EXPECTED_ABIS["abi"]:
         fail(f"SYSTEM/build.prop lacks ro.product.cpu.abi=arm64-v8a: {system.get('ro.product.cpu.abi')!r}")
+
+
+def check_userdata_quota(fstab: bytes, label: str) -> None:
+    """Every userdata line carries the fs_mgr `quota` flag.
+
+    installd answers StorageStatsManager only from a /data device whose user quota
+    is on, and fs_mgr's tune2fs step enables it only for an entry with the flag.
+    """
+    lines = [
+        fields
+        for fields in (line.split() for line in fstab.decode("utf-8", errors="strict").splitlines())
+        if fields and not fields[0].startswith("#") and fields[0] == "/dev/block/by-name/userdata"
+    ]
+    if not lines:
+        fail(f"UML fstab has no userdata entry: {label}")
+    for fields in lines:
+        flags = fields[4].split(",") if len(fields) > 4 else []
+        if "quota" not in flags:
+            fail(f"UML fstab userdata entry lacks the fs_mgr quota flag: {label}")
 
 
 def check_audio_policy(

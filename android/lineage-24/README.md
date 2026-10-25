@@ -508,8 +508,11 @@ system disk; it reaches sgdisk only for the loop-backed virtual disk of
 The immutable Android payload filesystems and APEX payloads are ext4. Userdata
 is an ordinary unencrypted ext4 filesystem in the directly writable image; this
 emulator does not expose a hardware-backed KeyMint service and the guest bundle
-is already protected by the host application sandbox. The product does not
-enable filesystem quota provisioning. First-stage init mounts fixed GPT
+is already protected by the host application sandbox. Both userdata fstab
+entries carry the fs_mgr `quota` flag, so the first mount runs
+`tune2fs -Oquota -Qusrquota,grpquota,prjquota` (the seed filesystem's 256-byte
+inodes allow project quota) and `installd` can answer StorageStatsManager from
+the per-UID quota; the target-files verifier requires the flag. First-stage init mounts fixed GPT
 partitions by name and does not use logical, slot-select, or module mount flags.
 Writable metadata and userdata use continuous ext4 discard so deleted guest
 extents are promptly returned to the sparse host file through UBD's batched
