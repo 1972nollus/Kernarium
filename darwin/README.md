@@ -374,8 +374,9 @@ it was retransmitting to the guest or probing a window the guest closed
 RFC 1122 default, and stays open until one side closes it. A guest connect
 the host stack refuses at once is answered with ICMP net-unreachable, except
 a connect to port 0: Darwin refuses it before sending anything, where Linux
-sends the SYN, so SLiRP leaves it unanswered and the guest connect times out
-(`slirp-network-connect-failure`).
+sends the SYN, so SLiRP leaves it unanswered and the guest connect times out,
+or resets it when the destination is the host's gateway address, as the host's
+own stack would (`slirp-network-connect-failure`).
 
 The guest network driver has no transmit flow control, so a frame the provider
 refuses is lost and TCP must retransmit it. A guest transmit into a full

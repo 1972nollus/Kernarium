@@ -7,8 +7,10 @@
  * anything, where a stack that sent the SYN hears nothing from an unreachable
  * host and leaves the guest connect pending until its own timeout. The SYN
  * must go unanswered, however often the guest retransmits it, and must not
- * leave a host socket behind. Every other synchronous failure keeps its ICMP
- * error, and a refused port is still refused with a reset.
+ * leave a host socket behind. The gateway is the host itself, though, which
+ * would refuse port 0 with a reset, as Linux does for loopback. Every other
+ * synchronous failure keeps its ICMP error, and a refused port is still
+ * refused with a reset.
  */
 #include "slirp_tcp_harness.hpp"
 
@@ -161,6 +163,18 @@ int main(void)
 		failures++;
 	}
 
+	/* The gateway reaches the host's loopback, which refuses port 0. */
+	const Reply gateway = connect_attempt(network, gateway_ip, 0, guest_port);
+	if (!gateway.tcp || (gateway.tcp->flags & tcp_rst) == 0 ||
+	    gateway.tcp->source_port != 0 || gateway.icmp) {
+		fprintf(stderr,
+			"gateway port 0: expected a reset, got tcp=%d flags "
+			"0x%02x, icmp=%d, %zu frame(s)\n",
+			gateway.tcp ? 1 : 0, gateway.tcp ? gateway.tcp->flags : 0,
+			gateway.icmp ? 1 : 0, gateway.frames);
+		failures++;
+	}
+
 	/* A destination Darwin refuses synchronously for another reason keeps
 	 * the ICMP error; Linux refuses a multicast TCP connect the same way,
 	 * with ENETUNREACH. */
@@ -203,7 +217,7 @@ int main(void)
 	if (failures != 0)
 		return 1;
 	printf("PASS: a connect to port 0 stays unanswered and leaks no "
-	       "socket, other synchronous failures keep ICMP "
-	       "net-unreachable, and a closed port is reset\n");
+	       "socket, the gateway resets it, other synchronous failures "
+	       "keep ICMP net-unreachable, and a closed port is reset\n");
 	return 0;
 }
