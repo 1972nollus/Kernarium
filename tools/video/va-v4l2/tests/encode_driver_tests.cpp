@@ -1107,6 +1107,19 @@ void testCpuAccess()
     check(syncLog().empty(), "the driver's own buffer is not bracketed");
 }
 
+// Chromium takes the descriptor-per-plane import only from drivers whose vendor
+// string it recognises; it reads the string through vaQueryVendorString.
+void testVendorString()
+{
+    Va va;
+    if (!va.ok()) { check(false, "the rig initialises"); return; }
+    const char* vendor = va.context.str_vendor;
+    check(vendor != nullptr && std::strncmp(vendor, "Mesa Gallium driver", 19) == 0,
+          "the vendor string starts with the prefix Chromium reads as a descriptor-per-plane driver");
+    check(vendor != nullptr && std::strstr(vendor, "Kernarium Virtio video") != nullptr,
+          "and names this driver");
+}
+
 void testDescriptors()
 {
     // Two descriptors in the pool, and the node refuses to be opened again, as
@@ -1179,6 +1192,7 @@ void runDriverEncodeTests()
     testImportedInput();
     testImportedPerPlane();
     testCpuAccess();
+    testVendorString();
     testDescriptors();
 }
 

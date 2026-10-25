@@ -24,7 +24,13 @@
 namespace uml::va {
 namespace {
 
-constexpr const char* kVendor = "Kernarium Virtio video V4L2 backend 1.0";
+// Chromium picks how it hands a planar buffer to a driver by the vendor string:
+// one descriptor per plane (DRM_PRIME_2) for the drivers it lists, and for any
+// other a single descriptor with every plane at an offset in it. The planes of
+// a buffer allocated here are separate resources of the guest GPU, each with
+// its own descriptor (gbm/planar.hpp), so this driver names the class of driver
+// that takes the descriptor-per-plane import and follows with its own name.
+constexpr const char* kVendor = "Mesa Gallium driver (Kernarium Virtio video V4L2 backend 1.0)";
 constexpr std::chrono::milliseconds kDecodeWait {4000};
 
 // The hardware writes limited-range YCbCr; the usual switch between the two
