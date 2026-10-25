@@ -743,6 +743,15 @@ SME profile assumed on any host. The unit tests `arm64-sm0-vector-length`,
 `arm64-gadget-sme`, `arm64-jit-sme-control` and `arm64-jit-sme-codegen` check
 the family against a model of the pseudocode and run it in each engine.
 
+Top-byte ignore (TBI), which Android guests always run with, ignores the top
+byte of every data address, SP-based or not. The `arm64-tbi-equivalence`
+records rerun existing memory cases (general, SIMD&FP, pair, structure, SVE and
+SME forms) with a tagged base register and expect the source's result, add the
+tag-in-index, carry and SP-base forms, and pin that a tagged pointer faults at
+itself with TBI off; `arm64-instruction-corpus-tbi-equivalence` re-derives
+them, and `arm64-jit-top-byte-ignore` runs the JIT's strip across the forms.
+The SME cases need an SME host.
+
 The `arm64-floating-trap-native` records, and the outcomes of the
 register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
 were observed on the M1, which traps floating-point exceptions natively; any

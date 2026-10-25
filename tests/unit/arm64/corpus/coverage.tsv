@@ -143,7 +143,7 @@ BASE-0141	Base	CSINC	106	35	110
 BASE-0142	Base	CSINV	101	35	107
 BASE-0143	Base	CSNEG	95	35	103
 BASE-0144	Base	CTZ	104	298	359
-BASE-0145	Base	DC	45	481	511
+BASE-0145	Base	DC	56	481	511
 BASE-0146	Base	DCPS1	0	76	76
 BASE-0147	Base	DCPS2	0	76	76
 BASE-0148	Base	DCPS3	0	77	77
@@ -177,7 +177,7 @@ BASE-0175	Base	HINT	146	0	51
 BASE-0176	Base	HINTE	461	0	366
 BASE-0177	Base	HLT	0	76	76
 BASE-0178	Base	HVC	0	75	75
-BASE-0179	Base	IC	45	481	511
+BASE-0179	Base	IC	56	481	511
 BASE-0180	Base	IRG	0	233	231
 BASE-0181	Base	ISB	17	0	9
 BASE-0182	Base	LD64B	0	310	310
@@ -216,24 +216,24 @@ BASE-0214	Base	LDIAPP	0	99	99
 BASE-0215	Base	LDLAR	0	34	34
 BASE-0216	Base	LDLARB	0	17	17
 BASE-0217	Base	LDLARH	0	17	17
-BASE-0218	Base	LDNP	41	38	74
-BASE-0219	Base	LDP	122	54	164
-BASE-0220	Base	LDPSW	60	27	81
-BASE-0221	Base	LDR (immediate)	1358	314	834
+BASE-0218	Base	LDNP	51	38	74
+BASE-0219	Base	LDP	152	54	164
+BASE-0220	Base	LDPSW	75	27	81
+BASE-0221	Base	LDR (immediate)	1457	314	835
 BASE-0222	Base	LDR (literal)	202	156	358
-BASE-0223	Base	LDR (register)	162	201	332
+BASE-0223	Base	LDR (register)	287	201	332
 BASE-0224	Base	LDRAA, LDRAB	0	137	137
-BASE-0225	Base	LDRB (immediate)	252	314	565
-BASE-0226	Base	LDRB (register)	99	211	302
-BASE-0227	Base	LDRH (immediate)	251	314	562
-BASE-0228	Base	LDRH (register)	80	184	251
-BASE-0229	Base	LDRSB (immediate)	496	314	809
-BASE-0230	Base	LDRSB (register)	199	201	381
-BASE-0231	Base	LDRSH (immediate)	509	314	815
-BASE-0232	Base	LDRSH (register)	161	201	332
-BASE-0233	Base	LDRSW (immediate)	254	314	563
+BASE-0225	Base	LDRB (immediate)	293	314	565
+BASE-0226	Base	LDRB (register)	172	211	303
+BASE-0227	Base	LDRH (immediate)	291	314	562
+BASE-0228	Base	LDRH (register)	144	184	251
+BASE-0229	Base	LDRSB (immediate)	580	314	809
+BASE-0230	Base	LDRSB (register)	342	201	381
+BASE-0231	Base	LDRSH (immediate)	596	314	815
+BASE-0232	Base	LDRSH (register)	289	201	332
+BASE-0233	Base	LDRSW (immediate)	300	314	563
 BASE-0234	Base	LDRSW (literal)	99	156	255
-BASE-0235	Base	LDRSW (register)	79	184	249
+BASE-0235	Base	LDRSW (register)	142	184	249
 BASE-0236	Base	LDSET, LDSETA, LDSETAL, LDSETL	64	280	330
 BASE-0237	Base	LDSETB, LDSETAB, LDSETALB, LDSETLB	31	280	305
 BASE-0238	Base	LDSETH, LDSETAH, LDSETALH, LDSETLH	31	280	305
@@ -248,12 +248,12 @@ BASE-0246	Base	LDTADD, LDTADDA, LDTADDAL, LDTADDL	0	15	15
 BASE-0247	Base	LDTCLR, LDTCLRA, LDTCLRAL, LDTCLRL	0	16	16
 BASE-0248	Base	LDTNP	0	45	45
 BASE-0249	Base	LDTP	0	75	75
-BASE-0250	Base	LDTR	52	72	122
-BASE-0251	Base	LDTRB	25	72	97
-BASE-0252	Base	LDTRH	26	72	97
-BASE-0253	Base	LDTRSB	49	72	120
-BASE-0254	Base	LDTRSH	52	72	122
-BASE-0255	Base	LDTRSW	27	72	98
+BASE-0250	Base	LDTR	80	72	122
+BASE-0251	Base	LDTRB	36	72	97
+BASE-0252	Base	LDTRH	38	72	97
+BASE-0253	Base	LDTRSB	73	72	120
+BASE-0254	Base	LDTRSH	78	72	122
+BASE-0255	Base	LDTRSW	39	72	98
 BASE-0256	Base	LDTSET, LDTSETA, LDTSETAL, LDTSETL	0	15	15
 BASE-0257	Base	LDTXR	0	10	10
 BASE-0258	Base	LDUMAX, LDUMAXA, LDUMAXAL, LDUMAXL	64	280	330
@@ -262,12 +262,12 @@ BASE-0260	Base	LDUMAXH, LDUMAXAH, LDUMAXALH, LDUMAXLH	31	280	305
 BASE-0261	Base	LDUMIN, LDUMINA, LDUMINAL, LDUMINL	65	280	330
 BASE-0262	Base	LDUMINB, LDUMINAB, LDUMINALB, LDUMINLB	31	280	305
 BASE-0263	Base	LDUMINH, LDUMINAH, LDUMINALH, LDUMINLH	31	280	305
-BASE-0264	Base	LDUR	54	65	115
-BASE-0265	Base	LDURB	26	65	91
-BASE-0266	Base	LDURH	25	65	88
-BASE-0267	Base	LDURSB	52	65	117
-BASE-0268	Base	LDURSH	56	65	117
-BASE-0269	Base	LDURSW	28	65	91
+BASE-0264	Base	LDUR	80	65	115
+BASE-0265	Base	LDURB	37	65	91
+BASE-0266	Base	LDURH	40	65	88
+BASE-0267	Base	LDURSB	80	65	117
+BASE-0268	Base	LDURSH	83	65	117
+BASE-0269	Base	LDURSW	41	65	91
 BASE-0270	Base	LDXP	24	10	32
 BASE-0271	Base	LDXR	200	8	30
 BASE-0272	Base	LDXRB	7	0	7
@@ -419,14 +419,14 @@ BASE-0417	Base	STLXP	11	0	10
 BASE-0418	Base	STLXR	20	0	20
 BASE-0419	Base	STLXRB	9	0	9
 BASE-0420	Base	STLXRH	9	0	9
-BASE-0421	Base	STNP	42	20	57
-BASE-0422	Base	STP	126	0	112
-BASE-0423	Base	STR (immediate)	410	314	684
-BASE-0424	Base	STR (register)	164	201	321
-BASE-0425	Base	STRB (immediate)	157	314	470
-BASE-0426	Base	STRB (register)	99	184	265
-BASE-0427	Base	STRH (immediate)	160	314	471
-BASE-0428	Base	STRH (register)	79	184	239
+BASE-0421	Base	STNP	55	20	58
+BASE-0422	Base	STP	157	0	112
+BASE-0423	Base	STR (immediate)	501	314	684
+BASE-0424	Base	STR (register)	293	201	321
+BASE-0425	Base	STRB (immediate)	193	314	471
+BASE-0426	Base	STRB (register)	194	184	272
+BASE-0427	Base	STRH (immediate)	198	314	471
+BASE-0428	Base	STRH (register)	142	184	239
 BASE-0429	Base	STSET, STSETL	1	0	1
 BASE-0430	Base	STSETB, STSETLB	1	0	1
 BASE-0431	Base	STSETH, STSETLH	1	0	1
@@ -441,9 +441,9 @@ BASE-0439	Base	STTADD, STTADDL	0	1	1
 BASE-0440	Base	STTCLR, STTCLRL	0	1	1
 BASE-0441	Base	STTNP	0	21	21
 BASE-0442	Base	STTP	0	2	2
-BASE-0443	Base	STTR	59	72	129
-BASE-0444	Base	STTRB	24	72	96
-BASE-0445	Base	STTRH	26	72	97
+BASE-0443	Base	STTR	81	72	129
+BASE-0444	Base	STTRB	33	72	96
+BASE-0445	Base	STTRH	38	72	97
 BASE-0446	Base	STTSET, STTSETL	0	1	1
 BASE-0447	Base	STTXR	0	6	6
 BASE-0448	Base	STUMAX, STUMAXL	1	0	1
@@ -452,9 +452,9 @@ BASE-0450	Base	STUMAXH, STUMAXLH	1	0	1
 BASE-0451	Base	STUMIN, STUMINL	1	0	1
 BASE-0452	Base	STUMINB, STUMINLB	1	0	1
 BASE-0453	Base	STUMINH, STUMINLH	1	0	1
-BASE-0454	Base	STUR	61	65	122
-BASE-0455	Base	STURB	25	65	90
-BASE-0456	Base	STURH	27	65	90
+BASE-0454	Base	STUR	89	65	122
+BASE-0455	Base	STURB	38	65	90
+BASE-0456	Base	STURH	42	65	90
 BASE-0457	Base	STXP	9	0	9
 BASE-0458	Base	STXR	19	4	23
 BASE-0459	Base	STXRB	9	0	9
@@ -481,7 +481,7 @@ BASE-0479	Base	SWPT, SWPTA, SWPTAL, SWPTL	0	14	14
 BASE-0480	Base	SXTB	9	0	1
 BASE-0481	Base	SXTH	9	0	1
 BASE-0482	Base	SXTW	9	0	1
-BASE-0483	Base	SYS	45	855	865
+BASE-0483	Base	SYS	56	855	865
 BASE-0484	Base	SYSL	0	126	122
 BASE-0485	Base	SYSP	0	250	230
 BASE-0486	Base	TBNZ	179	0	163
@@ -722,18 +722,18 @@ FPSIMD-0204	FP&SIMD	FSUB (scalar)	122	73	136
 FPSIMD-0205	FP&SIMD	FSUB (vector)	139	36	100
 FPSIMD-0206	FP&SIMD	INS (element)	107	23	130
 FPSIMD-0207	FP&SIMD	INS (general)	40	15	55
-FPSIMD-0208	FP&SIMD	LD1 (multiple structures)	928	151	730
-FPSIMD-0209	FP&SIMD	LD1 (single structure)	797	336	809
-FPSIMD-0210	FP&SIMD	LD1R	291	315	464
-FPSIMD-0211	FP&SIMD	LD2 (multiple structures)	197	140	261
-FPSIMD-0212	FP&SIMD	LD2 (single structure)	644	336	712
-FPSIMD-0213	FP&SIMD	LD2R	228	315	436
-FPSIMD-0214	FP&SIMD	LD3 (multiple structures)	189	140	256
-FPSIMD-0215	FP&SIMD	LD3 (single structure)	649	336	708
-FPSIMD-0216	FP&SIMD	LD3R	228	315	435
-FPSIMD-0217	FP&SIMD	LD4 (multiple structures)	208	140	261
-FPSIMD-0218	FP&SIMD	LD4 (single structure)	673	336	704
-FPSIMD-0219	FP&SIMD	LD4R	249	315	430
+FPSIMD-0208	FP&SIMD	LD1 (multiple structures)	1141	151	730
+FPSIMD-0209	FP&SIMD	LD1 (single structure)	983	336	809
+FPSIMD-0210	FP&SIMD	LD1R	362	315	464
+FPSIMD-0211	FP&SIMD	LD2 (multiple structures)	249	140	261
+FPSIMD-0212	FP&SIMD	LD2 (single structure)	824	336	712
+FPSIMD-0213	FP&SIMD	LD2R	294	315	436
+FPSIMD-0214	FP&SIMD	LD3 (multiple structures)	240	140	256
+FPSIMD-0215	FP&SIMD	LD3 (single structure)	831	336	708
+FPSIMD-0216	FP&SIMD	LD3R	294	315	435
+FPSIMD-0217	FP&SIMD	LD4 (multiple structures)	260	140	261
+FPSIMD-0218	FP&SIMD	LD4 (single structure)	853	336	704
+FPSIMD-0219	FP&SIMD	LD4R	317	315	430
 FPSIMD-0220	FP&SIMD	LDAP1 (SIMD&FP)	0	151	151
 FPSIMD-0221	FP&SIMD	LDAPUR (SIMD&FP)	0	62	62
 FPSIMD-0222	FP&SIMD	LDBFADD, LDBFADDA, LDBFADDAL, LDBFADDL	0	281	281
@@ -746,14 +746,14 @@ FPSIMD-0228	FP&SIMD	LDFMAX, LDFMAXA, LDFMAXAL, LDFMAXL	0	281	281
 FPSIMD-0229	FP&SIMD	LDFMAXNM, LDFMAXNMA, LDFMAXNMAL, LDFMAXNML	0	281	281
 FPSIMD-0230	FP&SIMD	LDFMIN, LDFMINA, LDFMINAL, LDFMINL	0	281	281
 FPSIMD-0231	FP&SIMD	LDFMINNM, LDFMINNMA, LDFMINNMAL, LDFMINNML	0	281	281
-FPSIMD-0232	FP&SIMD	LDNP (SIMD&FP)	63	47	104
-FPSIMD-0233	FP&SIMD	LDP (SIMD&FP)	185	81	248
-FPSIMD-0234	FP&SIMD	LDR (immediate, SIMD&FP)	551	314	797
+FPSIMD-0232	FP&SIMD	LDNP (SIMD&FP)	81	47	104
+FPSIMD-0233	FP&SIMD	LDP (SIMD&FP)	245	81	249
+FPSIMD-0234	FP&SIMD	LDR (immediate, SIMD&FP)	684	314	797
 FPSIMD-0235	FP&SIMD	LDR (literal, SIMD&FP)	313	156	469
-FPSIMD-0236	FP&SIMD	LDR (register, SIMD&FP)	167	207	329
+FPSIMD-0236	FP&SIMD	LDR (register, SIMD&FP)	234	207	329
 FPSIMD-0237	FP&SIMD	LDTNP (SIMD&FP)	0	47	47
 FPSIMD-0238	FP&SIMD	LDTP (SIMD&FP)	0	78	78
-FPSIMD-0239	FP&SIMD	LDUR (SIMD&FP)	129	65	175
+FPSIMD-0239	FP&SIMD	LDUR (SIMD&FP)	159	65	175
 FPSIMD-0240	FP&SIMD	LUTI2	0	50	50
 FPSIMD-0241	FP&SIMD	LUTI4	0	50	50
 FPSIMD-0242	FP&SIMD	MLA (by element)	58	26	79
@@ -883,14 +883,14 @@ FPSIMD-0365	FP&SIMD	SSHR	69	498	561
 FPSIMD-0366	FP&SIMD	SSRA	72	497	560
 FPSIMD-0367	FP&SIMD	SSUBL, SSUBL2	58	4	53
 FPSIMD-0368	FP&SIMD	SSUBW, SSUBW2	58	4	53
-FPSIMD-0369	FP&SIMD	ST1 (multiple structures)	923	151	727
-FPSIMD-0370	FP&SIMD	ST1 (single structure)	805	336	820
-FPSIMD-0371	FP&SIMD	ST2 (multiple structures)	196	141	261
-FPSIMD-0372	FP&SIMD	ST2 (single structure)	650	336	704
-FPSIMD-0373	FP&SIMD	ST3 (multiple structures)	189	140	254
-FPSIMD-0374	FP&SIMD	ST3 (single structure)	652	336	707
-FPSIMD-0375	FP&SIMD	ST4 (multiple structures)	209	140	263
-FPSIMD-0376	FP&SIMD	ST4 (single structure)	677	336	707
+FPSIMD-0369	FP&SIMD	ST1 (multiple structures)	1131	151	727
+FPSIMD-0370	FP&SIMD	ST1 (single structure)	998	336	821
+FPSIMD-0371	FP&SIMD	ST2 (multiple structures)	246	141	261
+FPSIMD-0372	FP&SIMD	ST2 (single structure)	829	336	704
+FPSIMD-0373	FP&SIMD	ST3 (multiple structures)	240	140	254
+FPSIMD-0374	FP&SIMD	ST3 (single structure)	831	336	707
+FPSIMD-0375	FP&SIMD	ST4 (multiple structures)	260	140	263
+FPSIMD-0376	FP&SIMD	ST4 (single structure)	862	336	707
 FPSIMD-0377	FP&SIMD	STBFADD, STBFADDL	0	281	281
 FPSIMD-0378	FP&SIMD	STBFMAX, STBFMAXL	0	281	281
 FPSIMD-0379	FP&SIMD	STBFMAXNM, STBFMAXNML	0	281	281
@@ -903,13 +903,13 @@ FPSIMD-0385	FP&SIMD	STFMIN, STFMINL	0	281	281
 FPSIMD-0386	FP&SIMD	STFMINNM, STFMINNML	0	281	281
 FPSIMD-0387	FP&SIMD	STL1 (SIMD&FP)	0	151	151
 FPSIMD-0388	FP&SIMD	STLUR (SIMD&FP)	0	62	62
-FPSIMD-0389	FP&SIMD	STNP (SIMD&FP)	66	20	80
-FPSIMD-0390	FP&SIMD	STP (SIMD&FP)	197	0	176
-FPSIMD-0391	FP&SIMD	STR (immediate, SIMD&FP)	527	314	776
-FPSIMD-0392	FP&SIMD	STR (register, SIMD&FP)	165	207	330
+FPSIMD-0389	FP&SIMD	STNP (SIMD&FP)	84	20	80
+FPSIMD-0390	FP&SIMD	STP (SIMD&FP)	251	0	176
+FPSIMD-0391	FP&SIMD	STR (immediate, SIMD&FP)	666	314	777
+FPSIMD-0392	FP&SIMD	STR (register, SIMD&FP)	228	207	330
 FPSIMD-0393	FP&SIMD	STTNP (SIMD&FP)	0	21	21
 FPSIMD-0394	FP&SIMD	STTP (SIMD&FP)	0	1	1
-FPSIMD-0395	FP&SIMD	STUR (SIMD&FP)	129	65	175
+FPSIMD-0395	FP&SIMD	STUR (SIMD&FP)	161	65	176
 FPSIMD-0396	FP&SIMD	SUB (vector)	39	182	204
 FPSIMD-0397	FP&SIMD	SUBHN, SUBHN2	68	4	59
 FPSIMD-0398	FP&SIMD	SUDOT (by element)	33	21	50
@@ -1281,28 +1281,28 @@ SVE-0296	SVE	LASTA (SIMD&FP scalar)	11	2	8
 SVE-0297	SVE	LASTB (scalar)	10	2	5
 SVE-0298	SVE	LASTB (SIMD&FP scalar)	11	2	8
 SVE-0299	SVE	LASTP	0	3	1
-SVE-0300	SVE	LD1B (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0301	SVE	LD1B (scalar plus immediate, single register)	56	8	12
-SVE-0302	SVE	LD1B (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0303	SVE	LD1B (scalar plus scalar, single register)	296	120	44
+SVE-0300	SVE	LD1B (scalar plus immediate, consecutive registers)	33	4	7
+SVE-0301	SVE	LD1B (scalar plus immediate, single register)	66	8	13
+SVE-0302	SVE	LD1B (scalar plus scalar, consecutive registers)	39	4	12
+SVE-0303	SVE	LD1B (scalar plus scalar, single register)	306	120	45
 SVE-0304	SVE	LD1B (scalar plus vector)	0	9	3
 SVE-0305	SVE	LD1B (vector plus immediate)	0	6	2
-SVE-0306	SVE	LD1D (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0307	SVE	LD1D (scalar plus immediate, single register)	14	5	4
-SVE-0308	SVE	LD1D (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0309	SVE	LD1D (scalar plus scalar, single register)	74	105	28
+SVE-0306	SVE	LD1D (scalar plus immediate, consecutive registers)	32	4	7
+SVE-0307	SVE	LD1D (scalar plus immediate, single register)	21	5	5
+SVE-0308	SVE	LD1D (scalar plus scalar, consecutive registers)	38	4	12
+SVE-0309	SVE	LD1D (scalar plus scalar, single register)	84	105	29
 SVE-0310	SVE	LD1D (scalar plus vector)	0	12	4
 SVE-0311	SVE	LD1D (vector plus immediate)	0	3	1
-SVE-0312	SVE	LD1H (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0313	SVE	LD1H (scalar plus immediate, single register)	42	6	9
-SVE-0314	SVE	LD1H (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0315	SVE	LD1H (scalar plus scalar, single register)	222	110	37
+SVE-0312	SVE	LD1H (scalar plus immediate, consecutive registers)	32	4	7
+SVE-0313	SVE	LD1H (scalar plus immediate, single register)	52	6	10
+SVE-0314	SVE	LD1H (scalar plus scalar, consecutive registers)	38	4	12
+SVE-0315	SVE	LD1H (scalar plus scalar, single register)	232	110	38
 SVE-0316	SVE	LD1H (scalar plus vector)	0	18	6
 SVE-0317	SVE	LD1H (vector plus immediate)	0	6	2
 SVE-0318	SVE	LD1Q	0	3	1
-SVE-0319	SVE	LD1RB	52	8	12
-SVE-0320	SVE	LD1RD	13	2	3
-SVE-0321	SVE	LD1RH	39	6	9
+SVE-0319	SVE	LD1RB	62	8	13
+SVE-0320	SVE	LD1RD	20	2	4
+SVE-0321	SVE	LD1RH	49	6	10
 SVE-0322	SVE	LD1ROB (scalar plus immediate)	0	3	1
 SVE-0323	SVE	LD1ROB (scalar plus scalar)	0	35	9
 SVE-0324	SVE	LD1ROD (scalar plus immediate)	0	3	1
@@ -1311,66 +1311,66 @@ SVE-0326	SVE	LD1ROH (scalar plus immediate)	0	3	1
 SVE-0327	SVE	LD1ROH (scalar plus scalar)	0	35	9
 SVE-0328	SVE	LD1ROW (scalar plus immediate)	0	3	1
 SVE-0329	SVE	LD1ROW (scalar plus scalar)	0	35	9
-SVE-0330	SVE	LD1RQB (scalar plus immediate)	13	2	3
-SVE-0331	SVE	LD1RQB (scalar plus scalar)	69	30	11
-SVE-0332	SVE	LD1RQD (scalar plus immediate)	13	2	3
-SVE-0333	SVE	LD1RQD (scalar plus scalar)	69	30	11
-SVE-0334	SVE	LD1RQH (scalar plus immediate)	13	2	3
-SVE-0335	SVE	LD1RQH (scalar plus scalar)	69	30	11
-SVE-0336	SVE	LD1RQW (scalar plus immediate)	13	2	3
-SVE-0337	SVE	LD1RQW (scalar plus scalar)	69	30	11
-SVE-0338	SVE	LD1RSB	39	6	9
-SVE-0339	SVE	LD1RSH	26	4	6
-SVE-0340	SVE	LD1RSW	13	2	3
-SVE-0341	SVE	LD1RW	26	4	6
-SVE-0342	SVE	LD1SB (scalar plus immediate)	42	6	9
-SVE-0343	SVE	LD1SB (scalar plus scalar)	222	110	37
+SVE-0330	SVE	LD1RQB (scalar plus immediate)	20	2	4
+SVE-0331	SVE	LD1RQB (scalar plus scalar)	79	30	12
+SVE-0332	SVE	LD1RQD (scalar plus immediate)	20	2	4
+SVE-0333	SVE	LD1RQD (scalar plus scalar)	79	30	12
+SVE-0334	SVE	LD1RQH (scalar plus immediate)	20	2	4
+SVE-0335	SVE	LD1RQH (scalar plus scalar)	79	30	12
+SVE-0336	SVE	LD1RQW (scalar plus immediate)	20	2	4
+SVE-0337	SVE	LD1RQW (scalar plus scalar)	79	30	12
+SVE-0338	SVE	LD1RSB	49	6	10
+SVE-0339	SVE	LD1RSH	35	4	7
+SVE-0340	SVE	LD1RSW	20	2	4
+SVE-0341	SVE	LD1RW	35	4	7
+SVE-0342	SVE	LD1SB (scalar plus immediate)	52	6	10
+SVE-0343	SVE	LD1SB (scalar plus scalar)	232	110	38
 SVE-0344	SVE	LD1SB (scalar plus vector)	0	9	3
 SVE-0345	SVE	LD1SB (vector plus immediate)	0	6	2
-SVE-0346	SVE	LD1SH (scalar plus immediate)	28	4	6
-SVE-0347	SVE	LD1SH (scalar plus scalar)	148	100	30
+SVE-0346	SVE	LD1SH (scalar plus immediate)	37	4	7
+SVE-0347	SVE	LD1SH (scalar plus scalar)	158	100	31
 SVE-0348	SVE	LD1SH (scalar plus vector)	0	18	6
 SVE-0349	SVE	LD1SH (vector plus immediate)	0	6	2
-SVE-0350	SVE	LD1SW (scalar plus immediate)	14	2	3
-SVE-0351	SVE	LD1SW (scalar plus scalar)	74	90	23
+SVE-0350	SVE	LD1SW (scalar plus immediate)	21	2	4
+SVE-0351	SVE	LD1SW (scalar plus scalar)	84	90	24
 SVE-0352	SVE	LD1SW (scalar plus vector)	0	12	4
 SVE-0353	SVE	LD1SW (vector plus immediate)	0	3	1
-SVE-0354	SVE	LD1W (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0355	SVE	LD1W (scalar plus immediate, single register)	28	8	8
-SVE-0356	SVE	LD1W (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0357	SVE	LD1W (scalar plus scalar, single register)	148	116	36
+SVE-0354	SVE	LD1W (scalar plus immediate, consecutive registers)	32	4	7
+SVE-0355	SVE	LD1W (scalar plus immediate, single register)	37	8	9
+SVE-0356	SVE	LD1W (scalar plus scalar, consecutive registers)	38	4	12
+SVE-0357	SVE	LD1W (scalar plus scalar, single register)	158	116	37
 SVE-0358	SVE	LD1W (scalar plus vector)	0	18	6
 SVE-0359	SVE	LD1W (vector plus immediate)	0	6	2
-SVE-0360	SVE	LD2B (scalar plus immediate)	14	2	3
-SVE-0361	SVE	LD2B (scalar plus scalar)	74	70	19
-SVE-0362	SVE	LD2D (scalar plus immediate)	14	2	3
-SVE-0363	SVE	LD2D (scalar plus scalar)	74	70	19
-SVE-0364	SVE	LD2H (scalar plus immediate)	14	2	3
-SVE-0365	SVE	LD2H (scalar plus scalar)	74	70	19
+SVE-0360	SVE	LD2B (scalar plus immediate)	21	2	4
+SVE-0361	SVE	LD2B (scalar plus scalar)	84	70	20
+SVE-0362	SVE	LD2D (scalar plus immediate)	21	2	4
+SVE-0363	SVE	LD2D (scalar plus scalar)	84	70	20
+SVE-0364	SVE	LD2H (scalar plus immediate)	21	2	4
+SVE-0365	SVE	LD2H (scalar plus scalar)	84	70	20
 SVE-0366	SVE	LD2Q (scalar plus immediate)	0	3	1
 SVE-0367	SVE	LD2Q (scalar plus scalar)	0	15	5
-SVE-0368	SVE	LD2W (scalar plus immediate)	14	2	3
-SVE-0369	SVE	LD2W (scalar plus scalar)	74	70	19
-SVE-0370	SVE	LD3B (scalar plus immediate)	14	2	3
-SVE-0371	SVE	LD3B (scalar plus scalar)	74	70	19
-SVE-0372	SVE	LD3D (scalar plus immediate)	14	2	3
-SVE-0373	SVE	LD3D (scalar plus scalar)	74	70	19
-SVE-0374	SVE	LD3H (scalar plus immediate)	14	2	3
-SVE-0375	SVE	LD3H (scalar plus scalar)	74	70	19
+SVE-0368	SVE	LD2W (scalar plus immediate)	21	2	4
+SVE-0369	SVE	LD2W (scalar plus scalar)	84	70	20
+SVE-0370	SVE	LD3B (scalar plus immediate)	21	2	4
+SVE-0371	SVE	LD3B (scalar plus scalar)	84	70	20
+SVE-0372	SVE	LD3D (scalar plus immediate)	21	2	4
+SVE-0373	SVE	LD3D (scalar plus scalar)	84	70	20
+SVE-0374	SVE	LD3H (scalar plus immediate)	21	2	4
+SVE-0375	SVE	LD3H (scalar plus scalar)	84	70	20
 SVE-0376	SVE	LD3Q (scalar plus immediate)	0	3	1
 SVE-0377	SVE	LD3Q (scalar plus scalar)	0	15	5
-SVE-0378	SVE	LD3W (scalar plus immediate)	14	2	3
-SVE-0379	SVE	LD3W (scalar plus scalar)	74	70	19
-SVE-0380	SVE	LD4B (scalar plus immediate)	14	2	3
-SVE-0381	SVE	LD4B (scalar plus scalar)	74	70	19
-SVE-0382	SVE	LD4D (scalar plus immediate)	14	2	3
-SVE-0383	SVE	LD4D (scalar plus scalar)	74	70	19
-SVE-0384	SVE	LD4H (scalar plus immediate)	14	2	3
-SVE-0385	SVE	LD4H (scalar plus scalar)	74	70	19
+SVE-0378	SVE	LD3W (scalar plus immediate)	21	2	4
+SVE-0379	SVE	LD3W (scalar plus scalar)	84	70	20
+SVE-0380	SVE	LD4B (scalar plus immediate)	21	2	4
+SVE-0381	SVE	LD4B (scalar plus scalar)	84	70	20
+SVE-0382	SVE	LD4D (scalar plus immediate)	21	2	4
+SVE-0383	SVE	LD4D (scalar plus scalar)	84	70	20
+SVE-0384	SVE	LD4H (scalar plus immediate)	21	2	4
+SVE-0385	SVE	LD4H (scalar plus scalar)	84	70	20
 SVE-0386	SVE	LD4Q (scalar plus immediate)	0	3	1
 SVE-0387	SVE	LD4Q (scalar plus scalar)	0	15	5
-SVE-0388	SVE	LD4W (scalar plus immediate)	14	2	3
-SVE-0389	SVE	LD4W (scalar plus scalar)	74	70	19
+SVE-0388	SVE	LD4W (scalar plus immediate)	21	2	4
+SVE-0389	SVE	LD4W (scalar plus scalar)	84	70	20
 SVE-0390	SVE	LDFF1B (scalar plus scalar)	0	12	4
 SVE-0391	SVE	LDFF1B (scalar plus vector)	0	9	3
 SVE-0392	SVE	LDFF1B (vector plus immediate)	0	6	2
@@ -1399,31 +1399,31 @@ SVE-0414	SVE	LDNF1SB	0	9	3
 SVE-0415	SVE	LDNF1SH	0	6	2
 SVE-0416	SVE	LDNF1SW	0	3	1
 SVE-0417	SVE	LDNF1W	0	6	2
-SVE-0418	SVE	LDNT1B (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0419	SVE	LDNT1B (scalar plus immediate, single register)	14	2	3
-SVE-0420	SVE	LDNT1B (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0421	SVE	LDNT1B (scalar plus scalar, single register)	74	30	11
+SVE-0418	SVE	LDNT1B (scalar plus immediate, consecutive registers)	33	4	7
+SVE-0419	SVE	LDNT1B (scalar plus immediate, single register)	21	2	4
+SVE-0420	SVE	LDNT1B (scalar plus scalar, consecutive registers)	39	4	12
+SVE-0421	SVE	LDNT1B (scalar plus scalar, single register)	84	30	12
 SVE-0422	SVE	LDNT1B (vector plus scalar)	0	6	2
-SVE-0423	SVE	LDNT1D (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0424	SVE	LDNT1D (scalar plus immediate, single register)	14	2	3
-SVE-0425	SVE	LDNT1D (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0426	SVE	LDNT1D (scalar plus scalar, single register)	74	30	11
+SVE-0423	SVE	LDNT1D (scalar plus immediate, consecutive registers)	32	4	7
+SVE-0424	SVE	LDNT1D (scalar plus immediate, single register)	21	2	4
+SVE-0425	SVE	LDNT1D (scalar plus scalar, consecutive registers)	38	4	12
+SVE-0426	SVE	LDNT1D (scalar plus scalar, single register)	84	30	12
 SVE-0427	SVE	LDNT1D (vector plus scalar)	0	3	1
-SVE-0428	SVE	LDNT1H (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0429	SVE	LDNT1H (scalar plus immediate, single register)	14	2	3
-SVE-0430	SVE	LDNT1H (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0431	SVE	LDNT1H (scalar plus scalar, single register)	74	30	11
+SVE-0428	SVE	LDNT1H (scalar plus immediate, consecutive registers)	32	4	7
+SVE-0429	SVE	LDNT1H (scalar plus immediate, single register)	21	2	4
+SVE-0430	SVE	LDNT1H (scalar plus scalar, consecutive registers)	38	4	12
+SVE-0431	SVE	LDNT1H (scalar plus scalar, single register)	84	30	12
 SVE-0432	SVE	LDNT1H (vector plus scalar)	0	6	2
 SVE-0433	SVE	LDNT1SB	0	6	2
 SVE-0434	SVE	LDNT1SH	0	6	2
 SVE-0435	SVE	LDNT1SW	0	3	1
-SVE-0436	SVE	LDNT1W (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0437	SVE	LDNT1W (scalar plus immediate, single register)	14	2	3
-SVE-0438	SVE	LDNT1W (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0439	SVE	LDNT1W (scalar plus scalar, single register)	74	30	11
+SVE-0436	SVE	LDNT1W (scalar plus immediate, consecutive registers)	32	4	7
+SVE-0437	SVE	LDNT1W (scalar plus immediate, single register)	21	2	4
+SVE-0438	SVE	LDNT1W (scalar plus scalar, consecutive registers)	38	4	12
+SVE-0439	SVE	LDNT1W (scalar plus scalar, single register)	84	30	12
 SVE-0440	SVE	LDNT1W (vector plus scalar)	0	6	2
-SVE-0441	SVE	LDR (predicate)	107	1	71
-SVE-0442	SVE	LDR (vector)	138	1	106
+SVE-0441	SVE	LDR (predicate)	120	1	72
+SVE-0442	SVE	LDR (vector)	151	1	107
 SVE-0443	SVE	LSL (immediate, predicated)	32	8	20
 SVE-0444	SVE	LSL (immediate, unpredicated)	32	8	32
 SVE-0445	SVE	LSL (vectors)	11	2	8
@@ -1694,83 +1694,83 @@ SVE-0709	SVE	SSUBLT	15	4	15
 SVE-0710	SVE	SSUBLTB	15	4	15
 SVE-0711	SVE	SSUBWB	15	4	15
 SVE-0712	SVE	SSUBWT	15	4	15
-SVE-0713	SVE	ST1B (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0714	SVE	ST1B (scalar plus immediate, single register)	18	2	6
-SVE-0715	SVE	ST1B (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0716	SVE	ST1B (scalar plus scalar, single register)	82	87	15
+SVE-0713	SVE	ST1B (scalar plus immediate, consecutive registers)	36	4	7
+SVE-0714	SVE	ST1B (scalar plus immediate, single register)	26	2	7
+SVE-0715	SVE	ST1B (scalar plus scalar, consecutive registers)	42	4	12
+SVE-0716	SVE	ST1B (scalar plus scalar, single register)	92	87	16
 SVE-0717	SVE	ST1B (scalar plus vector)	0	9	3
 SVE-0718	SVE	ST1B (vector plus immediate)	0	6	2
-SVE-0719	SVE	ST1D (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0720	SVE	ST1D (scalar plus immediate, single register)	15	5	4
-SVE-0721	SVE	ST1D (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0722	SVE	ST1D (scalar plus scalar, single register)	79	102	17
+SVE-0719	SVE	ST1D (scalar plus immediate, consecutive registers)	34	4	7
+SVE-0720	SVE	ST1D (scalar plus immediate, single register)	23	5	5
+SVE-0721	SVE	ST1D (scalar plus scalar, consecutive registers)	40	4	12
+SVE-0722	SVE	ST1D (scalar plus scalar, single register)	89	102	18
 SVE-0723	SVE	ST1D (scalar plus vector)	0	12	4
 SVE-0724	SVE	ST1D (vector plus immediate)	0	3	1
-SVE-0725	SVE	ST1H (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0726	SVE	ST1H (scalar plus immediate, single register)	31	4	7
-SVE-0727	SVE	ST1H (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0728	SVE	ST1H (scalar plus scalar, single register)	991	201	72
+SVE-0725	SVE	ST1H (scalar plus immediate, consecutive registers)	34	4	7
+SVE-0726	SVE	ST1H (scalar plus immediate, single register)	40	4	8
+SVE-0727	SVE	ST1H (scalar plus scalar, consecutive registers)	40	4	12
+SVE-0728	SVE	ST1H (scalar plus scalar, single register)	1001	201	73
 SVE-0729	SVE	ST1H (scalar plus vector)	0	18	6
 SVE-0730	SVE	ST1H (vector plus immediate)	0	6	2
 SVE-0731	SVE	ST1Q	0	3	1
-SVE-0732	SVE	ST1W (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0733	SVE	ST1W (scalar plus immediate, single register)	16	6	6
-SVE-0734	SVE	ST1W (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0735	SVE	ST1W (scalar plus scalar, single register)	80	103	19
+SVE-0732	SVE	ST1W (scalar plus immediate, consecutive registers)	34	4	7
+SVE-0733	SVE	ST1W (scalar plus immediate, single register)	24	6	7
+SVE-0734	SVE	ST1W (scalar plus scalar, consecutive registers)	40	4	12
+SVE-0735	SVE	ST1W (scalar plus scalar, single register)	90	103	20
 SVE-0736	SVE	ST1W (scalar plus vector)	0	18	6
 SVE-0737	SVE	ST1W (vector plus immediate)	0	6	2
-SVE-0738	SVE	ST2B (scalar plus immediate)	15	2	3
-SVE-0739	SVE	ST2B (scalar plus scalar)	79	70	19
-SVE-0740	SVE	ST2D (scalar plus immediate)	15	2	3
-SVE-0741	SVE	ST2D (scalar plus scalar)	79	70	19
-SVE-0742	SVE	ST2H (scalar plus immediate)	15	2	3
-SVE-0743	SVE	ST2H (scalar plus scalar)	79	70	19
+SVE-0738	SVE	ST2B (scalar plus immediate)	23	2	4
+SVE-0739	SVE	ST2B (scalar plus scalar)	89	70	20
+SVE-0740	SVE	ST2D (scalar plus immediate)	23	2	4
+SVE-0741	SVE	ST2D (scalar plus scalar)	89	70	20
+SVE-0742	SVE	ST2H (scalar plus immediate)	23	2	4
+SVE-0743	SVE	ST2H (scalar plus scalar)	89	70	20
 SVE-0744	SVE	ST2Q (scalar plus immediate)	0	3	1
 SVE-0745	SVE	ST2Q (scalar plus scalar)	0	15	5
-SVE-0746	SVE	ST2W (scalar plus immediate)	15	2	3
-SVE-0747	SVE	ST2W (scalar plus scalar)	79	70	19
-SVE-0748	SVE	ST3B (scalar plus immediate)	15	2	3
-SVE-0749	SVE	ST3B (scalar plus scalar)	79	70	19
-SVE-0750	SVE	ST3D (scalar plus immediate)	15	2	3
-SVE-0751	SVE	ST3D (scalar plus scalar)	79	70	19
-SVE-0752	SVE	ST3H (scalar plus immediate)	15	2	3
-SVE-0753	SVE	ST3H (scalar plus scalar)	79	70	19
+SVE-0746	SVE	ST2W (scalar plus immediate)	23	2	4
+SVE-0747	SVE	ST2W (scalar plus scalar)	89	70	20
+SVE-0748	SVE	ST3B (scalar plus immediate)	23	2	4
+SVE-0749	SVE	ST3B (scalar plus scalar)	89	70	20
+SVE-0750	SVE	ST3D (scalar plus immediate)	23	2	4
+SVE-0751	SVE	ST3D (scalar plus scalar)	89	70	20
+SVE-0752	SVE	ST3H (scalar plus immediate)	23	2	4
+SVE-0753	SVE	ST3H (scalar plus scalar)	89	70	20
 SVE-0754	SVE	ST3Q (scalar plus immediate)	0	3	1
 SVE-0755	SVE	ST3Q (scalar plus scalar)	0	15	5
-SVE-0756	SVE	ST3W (scalar plus immediate)	15	2	3
-SVE-0757	SVE	ST3W (scalar plus scalar)	79	70	19
-SVE-0758	SVE	ST4B (scalar plus immediate)	15	2	3
-SVE-0759	SVE	ST4B (scalar plus scalar)	79	70	19
-SVE-0760	SVE	ST4D (scalar plus immediate)	15	2	3
-SVE-0761	SVE	ST4D (scalar plus scalar)	79	70	19
-SVE-0762	SVE	ST4H (scalar plus immediate)	15	2	3
-SVE-0763	SVE	ST4H (scalar plus scalar)	79	70	19
+SVE-0756	SVE	ST3W (scalar plus immediate)	23	2	4
+SVE-0757	SVE	ST3W (scalar plus scalar)	89	70	20
+SVE-0758	SVE	ST4B (scalar plus immediate)	23	2	4
+SVE-0759	SVE	ST4B (scalar plus scalar)	89	70	20
+SVE-0760	SVE	ST4D (scalar plus immediate)	23	2	4
+SVE-0761	SVE	ST4D (scalar plus scalar)	89	70	20
+SVE-0762	SVE	ST4H (scalar plus immediate)	23	2	4
+SVE-0763	SVE	ST4H (scalar plus scalar)	89	70	20
 SVE-0764	SVE	ST4Q (scalar plus immediate)	0	3	1
 SVE-0765	SVE	ST4Q (scalar plus scalar)	0	15	5
-SVE-0766	SVE	ST4W (scalar plus immediate)	15	2	3
-SVE-0767	SVE	ST4W (scalar plus scalar)	79	70	19
-SVE-0768	SVE	STNT1B (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0769	SVE	STNT1B (scalar plus immediate, single register)	15	2	3
-SVE-0770	SVE	STNT1B (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0771	SVE	STNT1B (scalar plus scalar, single register)	79	30	11
+SVE-0766	SVE	ST4W (scalar plus immediate)	23	2	4
+SVE-0767	SVE	ST4W (scalar plus scalar)	89	70	20
+SVE-0768	SVE	STNT1B (scalar plus immediate, consecutive registers)	36	4	7
+SVE-0769	SVE	STNT1B (scalar plus immediate, single register)	23	2	4
+SVE-0770	SVE	STNT1B (scalar plus scalar, consecutive registers)	42	4	12
+SVE-0771	SVE	STNT1B (scalar plus scalar, single register)	89	30	12
 SVE-0772	SVE	STNT1B (vector plus scalar)	0	6	2
-SVE-0773	SVE	STNT1D (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0774	SVE	STNT1D (scalar plus immediate, single register)	15	2	3
-SVE-0775	SVE	STNT1D (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0776	SVE	STNT1D (scalar plus scalar, single register)	79	31	11
+SVE-0773	SVE	STNT1D (scalar plus immediate, consecutive registers)	34	4	7
+SVE-0774	SVE	STNT1D (scalar plus immediate, single register)	23	2	4
+SVE-0775	SVE	STNT1D (scalar plus scalar, consecutive registers)	40	4	12
+SVE-0776	SVE	STNT1D (scalar plus scalar, single register)	89	31	12
 SVE-0777	SVE	STNT1D (vector plus scalar)	0	3	1
-SVE-0778	SVE	STNT1H (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0779	SVE	STNT1H (scalar plus immediate, single register)	15	2	3
-SVE-0780	SVE	STNT1H (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0781	SVE	STNT1H (scalar plus scalar, single register)	79	30	11
+SVE-0778	SVE	STNT1H (scalar plus immediate, consecutive registers)	34	4	7
+SVE-0779	SVE	STNT1H (scalar plus immediate, single register)	23	2	4
+SVE-0780	SVE	STNT1H (scalar plus scalar, consecutive registers)	40	4	12
+SVE-0781	SVE	STNT1H (scalar plus scalar, single register)	89	30	12
 SVE-0782	SVE	STNT1H (vector plus scalar)	0	6	2
-SVE-0783	SVE	STNT1W (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0784	SVE	STNT1W (scalar plus immediate, single register)	15	2	3
-SVE-0785	SVE	STNT1W (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0786	SVE	STNT1W (scalar plus scalar, single register)	79	30	11
+SVE-0783	SVE	STNT1W (scalar plus immediate, consecutive registers)	34	4	7
+SVE-0784	SVE	STNT1W (scalar plus immediate, single register)	23	2	4
+SVE-0785	SVE	STNT1W (scalar plus scalar, consecutive registers)	40	4	12
+SVE-0786	SVE	STNT1W (scalar plus scalar, single register)	89	30	12
 SVE-0787	SVE	STNT1W (vector plus scalar)	0	6	2
-SVE-0788	SVE	STR (predicate)	108	1	71
-SVE-0789	SVE	STR (vector)	139	1	106
+SVE-0788	SVE	STR (predicate)	121	1	72
+SVE-0789	SVE	STR (vector)	152	1	107
 SVE-0790	SVE	SUB (immediate)	13	6	13
 SVE-0791	SVE	SUB (vectors, predicated)	11	2	8
 SVE-0792	SVE	SUB (vectors, unpredicated)	10	2	10
@@ -2072,29 +2072,29 @@ SME-0132	SME	FVDOT (FP16 to FP32)	11	3	8
 SME-0133	SME	FVDOT (FP8 to FP16)	0	3	1
 SME-0134	SME	FVDOTB	0	3	1
 SME-0135	SME	FVDOTT	0	3	1
-SME-0136	SME	LD1B (scalar plus immediate, strided registers)	26	4	6
-SME-0137	SME	LD1B (scalar plus scalar, strided registers)	30	4	10
-SME-0138	SME	LD1B (scalar plus scalar, tile slice)	20	3	7
-SME-0139	SME	LD1D (scalar plus immediate, strided registers)	26	4	6
-SME-0140	SME	LD1D (scalar plus scalar, strided registers)	30	4	10
-SME-0141	SME	LD1D (scalar plus scalar, tile slice)	20	3	7
-SME-0142	SME	LD1H (scalar plus immediate, strided registers)	26	4	6
-SME-0143	SME	LD1H (scalar plus scalar, strided registers)	30	4	10
-SME-0144	SME	LD1H (scalar plus scalar, tile slice)	20	3	7
-SME-0145	SME	LD1Q	19	3	6
-SME-0146	SME	LD1W (scalar plus immediate, strided registers)	26	4	6
-SME-0147	SME	LD1W (scalar plus scalar, strided registers)	30	4	10
-SME-0148	SME	LD1W (scalar plus scalar, tile slice)	22	3	9
-SME-0149	SME	LDNT1B (scalar plus immediate, strided registers)	26	4	6
-SME-0150	SME	LDNT1B (scalar plus scalar, strided registers)	30	4	10
-SME-0151	SME	LDNT1D (scalar plus immediate, strided registers)	26	4	6
-SME-0152	SME	LDNT1D (scalar plus scalar, strided registers)	30	4	10
-SME-0153	SME	LDNT1H (scalar plus immediate, strided registers)	26	4	6
-SME-0154	SME	LDNT1H (scalar plus scalar, strided registers)	30	4	10
-SME-0155	SME	LDNT1W (scalar plus immediate, strided registers)	26	4	6
-SME-0156	SME	LDNT1W (scalar plus scalar, strided registers)	30	4	10
-SME-0157	SME	LDR (array vector)	12	2	3
-SME-0158	SME	LDR (table)	9	2	2
+SME-0136	SME	LD1B (scalar plus immediate, strided registers)	33	4	7
+SME-0137	SME	LD1B (scalar plus scalar, strided registers)	39	4	12
+SME-0138	SME	LD1B (scalar plus scalar, tile slice)	29	3	9
+SME-0139	SME	LD1D (scalar plus immediate, strided registers)	32	4	7
+SME-0140	SME	LD1D (scalar plus scalar, strided registers)	38	4	12
+SME-0141	SME	LD1D (scalar plus scalar, tile slice)	29	3	9
+SME-0142	SME	LD1H (scalar plus immediate, strided registers)	32	4	7
+SME-0143	SME	LD1H (scalar plus scalar, strided registers)	38	4	12
+SME-0144	SME	LD1H (scalar plus scalar, tile slice)	29	3	9
+SME-0145	SME	LD1Q	29	3	8
+SME-0146	SME	LD1W (scalar plus immediate, strided registers)	32	4	7
+SME-0147	SME	LD1W (scalar plus scalar, strided registers)	38	4	12
+SME-0148	SME	LD1W (scalar plus scalar, tile slice)	31	3	11
+SME-0149	SME	LDNT1B (scalar plus immediate, strided registers)	33	4	7
+SME-0150	SME	LDNT1B (scalar plus scalar, strided registers)	39	4	12
+SME-0151	SME	LDNT1D (scalar plus immediate, strided registers)	32	4	7
+SME-0152	SME	LDNT1D (scalar plus scalar, strided registers)	38	4	12
+SME-0153	SME	LDNT1H (scalar plus immediate, strided registers)	32	4	7
+SME-0154	SME	LDNT1H (scalar plus scalar, strided registers)	38	4	12
+SME-0155	SME	LDNT1W (scalar plus immediate, strided registers)	32	4	7
+SME-0156	SME	LDNT1W (scalar plus scalar, strided registers)	38	4	12
+SME-0157	SME	LDR (array vector)	19	2	4
+SME-0158	SME	LDR (table)	16	2	2
 SME-0159	SME	LUTI2 (four registers)	17	9	18
 SME-0160	SME	LUTI2 (single)	12	6	12
 SME-0161	SME	LUTI2 (two registers)	13	9	14
@@ -2183,31 +2183,31 @@ SME-0243	SME	SQRSHRU (two registers)	6	2	6
 SME-0244	SME	SQRSHRUN	13	4	13
 SME-0245	SME	SRSHL (multiple and single vector)	14	4	14
 SME-0246	SME	SRSHL (multiple vectors)	16	4	16
-SME-0247	SME	ST1B (scalar plus immediate, strided registers)	28	4	6
-SME-0248	SME	ST1B (scalar plus scalar, strided registers)	32	4	10
-SME-0249	SME	ST1B (scalar plus scalar, tile slice)	21	3	7
-SME-0250	SME	ST1D (scalar plus immediate, strided registers)	28	4	6
-SME-0251	SME	ST1D (scalar plus scalar, strided registers)	32	4	10
-SME-0252	SME	ST1D (scalar plus scalar, tile slice)	21	3	7
-SME-0253	SME	ST1H (scalar plus immediate, strided registers)	28	4	6
-SME-0254	SME	ST1H (scalar plus scalar, strided registers)	32	4	10
-SME-0255	SME	ST1H (scalar plus scalar, tile slice)	21	3	7
-SME-0256	SME	ST1Q	20	3	6
-SME-0257	SME	ST1W (scalar plus immediate, strided registers)	28	4	6
-SME-0258	SME	ST1W (scalar plus scalar, strided registers)	32	4	10
-SME-0259	SME	ST1W (scalar plus scalar, tile slice)	23	3	9
+SME-0247	SME	ST1B (scalar plus immediate, strided registers)	36	4	7
+SME-0248	SME	ST1B (scalar plus scalar, strided registers)	42	4	12
+SME-0249	SME	ST1B (scalar plus scalar, tile slice)	31	3	9
+SME-0250	SME	ST1D (scalar plus immediate, strided registers)	34	4	7
+SME-0251	SME	ST1D (scalar plus scalar, strided registers)	40	4	12
+SME-0252	SME	ST1D (scalar plus scalar, tile slice)	31	3	9
+SME-0253	SME	ST1H (scalar plus immediate, strided registers)	34	4	7
+SME-0254	SME	ST1H (scalar plus scalar, strided registers)	40	4	12
+SME-0255	SME	ST1H (scalar plus scalar, tile slice)	31	3	9
+SME-0256	SME	ST1Q	30	3	8
+SME-0257	SME	ST1W (scalar plus immediate, strided registers)	34	4	7
+SME-0258	SME	ST1W (scalar plus scalar, strided registers)	40	4	12
+SME-0259	SME	ST1W (scalar plus scalar, tile slice)	33	3	11
 SME-0260	SME	STMOPA (2-way)	0	3	1
 SME-0261	SME	STMOPA (4-way)	0	3	1
-SME-0262	SME	STNT1B (scalar plus immediate, strided registers)	28	4	6
-SME-0263	SME	STNT1B (scalar plus scalar, strided registers)	32	4	10
-SME-0264	SME	STNT1D (scalar plus immediate, strided registers)	28	4	6
-SME-0265	SME	STNT1D (scalar plus scalar, strided registers)	32	4	10
-SME-0266	SME	STNT1H (scalar plus immediate, strided registers)	28	4	6
-SME-0267	SME	STNT1H (scalar plus scalar, strided registers)	32	4	10
-SME-0268	SME	STNT1W (scalar plus immediate, strided registers)	28	4	6
-SME-0269	SME	STNT1W (scalar plus scalar, strided registers)	32	4	10
-SME-0270	SME	STR (array vector)	13	2	3
-SME-0271	SME	STR (table)	10	2	2
+SME-0262	SME	STNT1B (scalar plus immediate, strided registers)	36	4	7
+SME-0263	SME	STNT1B (scalar plus scalar, strided registers)	42	4	12
+SME-0264	SME	STNT1D (scalar plus immediate, strided registers)	34	4	7
+SME-0265	SME	STNT1D (scalar plus scalar, strided registers)	40	4	12
+SME-0266	SME	STNT1H (scalar plus immediate, strided registers)	34	4	7
+SME-0267	SME	STNT1H (scalar plus scalar, strided registers)	40	4	12
+SME-0268	SME	STNT1W (scalar plus immediate, strided registers)	34	4	7
+SME-0269	SME	STNT1W (scalar plus scalar, strided registers)	40	4	12
+SME-0270	SME	STR (array vector)	21	2	4
+SME-0271	SME	STR (table)	18	2	2
 SME-0272	SME	SUB (to array, array and multiple vectors)	20	12	12
 SME-0273	SME	SUB (to array, multiple and single vector)	28	12	20
 SME-0274	SME	SUB (to array, multiple vectors)	32	12	24

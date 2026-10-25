@@ -24,8 +24,10 @@ which the repository does not keep, so they are not checked beyond bounding
 the replacements: the retirement of the 16 KiB profile removed some. The
 native SME records that sme-native-corpus.py appends after the rewrite
 exercise FEAT_SME by design, and so do the SM = 0 vector-length records of
-sm0-vl-corpus.py; arm64-instruction-corpus-sme-native and
-arm64-instruction-corpus-sm0-vl check them.
+sm0-vl-corpus.py and the top-byte-ignore equivalence records of
+tbi-memory-corpus.py, which rerun the native SME cases with a tagged base;
+arm64-instruction-corpus-sme-native, arm64-instruction-corpus-sm0-vl and
+arm64-instruction-corpus-tbi-equivalence check them.
 """
 
 from __future__ import annotations
@@ -44,9 +46,10 @@ import sys
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 REWRITE = REPOSITORY / "tools" / "arm64-tests" / "absent-feature-corpus.py"
 TBI_NAME = re.compile(r"^(.*) with TBI tag 0x([0-9a-f]{2})$")
-# The producers of tools/arm64-tests/sme-native-corpus.py and
-# sm0-vl-corpus.py.
-NATIVE_PRODUCERS = ("arm64-sme-native", "arm64-sm0-vl")
+# The producers of tools/arm64-tests/sme-native-corpus.py,
+# sm0-vl-corpus.py and the equivalence section of tbi-memory-corpus.py.
+NATIVE_PRODUCERS = ("arm64-sme-native", "arm64-sm0-vl",
+                    "arm64-tbi-equivalence")
 
 
 def load_rewrite():
