@@ -66,8 +66,10 @@ series, [`patches/libslirp`](patches/libslirp/series.tsv), so both record its
 tree in `source-trees.tsv`. Its topics let a host forward's listening socket
 queue up to the host's `SOMAXCONN` connections instead of one, keep the
 advertised receive window within the buffer when the peer has passed the last
-advertised edge (an LP64 widening bug), and drop a connection whose peer stops
-answering window probes. Upstream master at 62b29862 has none of them; drop a
+advertised edge (an LP64 widening bug), drop a connection whose peer stops
+answering window probes, and leave a guest connect to port 0, which a BSD host
+stack refuses before it sends anything, unanswered instead of answering it with
+ICMP net-unreachable. Upstream master at 62b29862 has none of them; drop a
 topic when a libslirp update absorbs it. The user-network contract they
 provide is in [`../darwin/README.md`](../darwin/README.md).
 
