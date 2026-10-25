@@ -3,25 +3,34 @@
 // Android CTS and the desktop disagree on. usage: kernel_config_probe
 // [linux|android], linux by default.
 //   both:    IPv4 multicast (/proc/net/igmp, a group join, a looped datagram),
-//            no RDS socket family, no listener on TCP port 16385
-//   linux:   SysV IPC works, the NFS client and SCTP are present, and
-//            /sys/power has no wake_lock
+//            no RDS socket family, no listener on TCP port 16385, and the
+//            stack protector and hardened usercopy in /proc/config.gz
+//   linux:   SysV IPC works, the NFS client and SCTP are present, a piped
+//            core_pattern runs its helper, and /sys/power has no wake_lock
 //   android: no SysV IPC (ENOSYS, no /proc/sysvipc), no NFS client, no SCTP,
-//            and /sys/power/wake_lock takes and releases a wakelock
+//            /sys/power/wake_lock takes and releases a wakelock, and the
+//            static usermode helper runs no piped core_pattern helper
 // Prints one line per check. The exit status is the failure count.
+//
+// The probe is also the usermode helper it tests: "kernel_config_probe --umh
+// MARKER" drains its standard input and creates MARKER.
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
+#include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/sem.h>
 #include <sys/shm.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -341,10 +350,142 @@ void check_wake_lock(bool wanted)
 		       ", released " + (released ? "yes" : "no"));
 }
 
+// The resolved kernel configuration, as /proc/config.gz holds it. zcat is run
+// without a shell, which an Android guest does not have at /bin/sh.
+std::string kernel_config()
+{
+	int fds[2];
+	if (pipe(fds) != 0)
+		return {};
+	pid_t child = fork();
+	if (child < 0) {
+		close(fds[0]);
+		close(fds[1]);
+		return {};
+	}
+	if (child == 0) {
+		dup2(fds[1], 1);
+		close(fds[0]);
+		close(fds[1]);
+		int null = open("/dev/null", O_WRONLY);
+		if (null >= 0)
+			dup2(null, 2);
+		execlp("zcat", "zcat", "/proc/config.gz", static_cast<char *>(nullptr));
+		_exit(127);
+	}
+	close(fds[1]);
+	std::string text;
+	char chunk[4096];
+	ssize_t got;
+	while ((got = read(fds[0], chunk, sizeof chunk)) > 0)
+		text.append(chunk, static_cast<size_t>(got));
+	close(fds[0]);
+	int status = 0;
+	waitpid(child, &status, 0);
+	return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? text : std::string();
+}
+
+bool config_has(const std::string &config, const std::string &line)
+{
+	return config.find("\n" + line + "\n") != std::string::npos ||
+	       config.compare(0, line.size() + 1, line + "\n") == 0;
+}
+
+// The kernel hardening the Android CTS requires: the strong stack protector,
+// hardened usercopy, and the static usermode helper with an empty path. The
+// Linux product keeps its distribution's usermode helpers (systemd-coredump,
+// request-key, bridge-stp), so its helper path stays free.
+void check_hardening_config(bool android)
+{
+	std::string config = kernel_config();
+	if (config.empty()) {
+		report("hardening-config", false, "/proc/config.gz is unreadable");
+		return;
+	}
+	bool protector = config_has(config, "CONFIG_STACKPROTECTOR_STRONG=y");
+	bool usercopy = config_has(config, "CONFIG_HARDENED_USERCOPY=y");
+	bool helper = config_has(config, "CONFIG_STATIC_USERMODEHELPER=y");
+	bool empty_path = config_has(config, "CONFIG_STATIC_USERMODEHELPER_PATH=\"\"");
+	std::string detail = std::string("strong stack protector ") + (protector ? "on" : "off") +
+			     ", hardened usercopy " + (usercopy ? "on" : "off") +
+			     ", static usermode helper " + (helper ? "on" : "off") +
+			     (helper ? (empty_path ? " with an empty path" : " with a path") : "");
+	report("hardening-config",
+	       protector && usercopy && (android ? helper && empty_path : !helper), detail);
+}
+
+// A piped core_pattern runs the probe itself as the helper (--umh), so the
+// result needs no shell or other file. A static usermode helper with an empty
+// path starts no helper at all, whatever core_pattern names, and the kernel
+// says the dump is disabled.
+void check_usermode_helper(bool android)
+{
+	char self[4096];
+	ssize_t length = readlink("/proc/self/exe", self, sizeof self - 1);
+	if (length <= 0) {
+		report("usermode-helper", false, "cannot find the probe binary");
+		return;
+	}
+	self[length] = '\0';
+	std::string marker = std::string(android ? "/data/local/tmp" : "/tmp") +
+			     "/kconfig-umh-marker";
+	unlink(marker.c_str());
+	std::string saved = slurp("/proc/sys/kernel/core_pattern");
+	while (!saved.empty() && saved.back() == '\n')
+		saved.pop_back();
+	std::string pattern = std::string("|") + self + " --umh " + marker;
+	if (!write_text("/proc/sys/kernel/core_pattern", pattern.c_str())) {
+		int e = errno;
+		// An unprivileged shell cannot set it; a root one must.
+		report("usermode-helper", geteuid() != 0,
+		       std::string("core_pattern is not writable: ") + errno_text(e) +
+			       (geteuid() != 0 ? " (not root, skipped)" : ""));
+		return;
+	}
+	pid_t child = fork();
+	if (child == 0) {
+		rlimit unlimited{RLIM_INFINITY, RLIM_INFINITY};
+		setrlimit(RLIMIT_CORE, &unlimited);
+		prctl(PR_SET_DUMPABLE, 1);
+		signal(SIGSEGV, SIG_DFL);
+		kill(getpid(), SIGSEGV);
+		_exit(0);
+	}
+	int status = 0;
+	if (child > 0)
+		waitpid(child, &status, 0);
+	bool dumped = child > 0 && WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV;
+	// The kernel reaps the task once the dump ends, but the helper is a
+	// separate process that may still be creating the marker.
+	bool ran = false;
+	for (int i = 0; i < 50 && !ran; ++i) {
+		ran = access(marker.c_str(), F_OK) == 0;
+		if (!ran)
+			usleep(100000);
+	}
+	unlink(marker.c_str());
+	write_text("/proc/sys/kernel/core_pattern", saved.c_str());
+	std::string detail = std::string("the child ") + (dumped ? "crashed" : "did not crash") +
+			     ", the helper " + (ran ? "ran" : "did not run");
+	if (android)
+		report("static-usermode-helper", dumped && !ran, detail);
+	else
+		report("usermode-helper", dumped && ran, detail);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
 {
+	if (argc == 3 && std::strcmp(argv[1], "--umh") == 0) {
+		char chunk[4096];
+		while (read(0, chunk, sizeof chunk) > 0) {
+		}
+		int fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0600);
+		if (fd >= 0)
+			close(fd);
+		return 0;
+	}
 	const char *product = argc == 2 ? argv[1] : "linux";
 	if (argc > 2 || (std::strcmp(product, "android") != 0 && std::strcmp(product, "linux") != 0)) {
 		std::fprintf(stderr, "usage: kernel_config_probe [linux|android]\n");
@@ -358,6 +499,8 @@ int main(int argc, char **argv)
 	check_nfs(!android);
 	check_sctp(!android);
 	check_wake_lock(android);
+	check_hardening_config(android);
+	check_usermode_helper(android);
 	std::printf("%s: %d failure(s)\n", product, failures);
 	return failures;
 }

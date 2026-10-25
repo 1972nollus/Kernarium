@@ -51,11 +51,11 @@ the data size of a completed coded buffer.
  drivers/media/virtio/virtio_video_ctrls.c   |  414 +++++
  drivers/media/virtio/virtio_video_device.c  |   69 +-
  drivers/media/virtio/virtio_video_driver.c  |   21 +-
- drivers/media/virtio/virtio_video_enc.c     | 1517 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_enc.c     | 1532 +++++++++++++++++++
  drivers/media/virtio/virtio_video_helpers.c |   15 +-
  drivers/media/virtio/virtio_video_vq.c      |  306 +++-
  include/uapi/linux/virtio_video.h           |  157 +-
- 12 files changed, 2650 insertions(+), 33 deletions(-)
+ 12 files changed, 2665 insertions(+), 33 deletions(-)
  create mode 100644 drivers/media/virtio/virtio_video_ctrls.c
  create mode 100644 drivers/media/virtio/virtio_video_enc.c
 
@@ -1027,10 +1027,10 @@ index 1f73c6beb1fe81627b675f87d655c1629b3564c4..79b064e2db38be50d3b1ecea941a5330
  static struct virtio_driver virtio_video_driver = {
 diff --git a/drivers/media/virtio/virtio_video_enc.c b/drivers/media/virtio/virtio_video_enc.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef21baf5160f7be1038abb54ab2ee6960257ea93
+index 0000000000000000000000000000000000000000..b4c37099e039aebf2dc234937883280b2157d4d0
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_enc.c
-@@ -0,0 +1,1517 @@
+@@ -0,0 +1,1532 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Encoder for virtio video device.
 + *
@@ -1288,20 +1288,28 @@ index 0000000000000000000000000000000000000000..ef21baf5160f7be1038abb54ab2ee696
 +}
 +
 +/*
-+ * Read the device's stream information back: the colorimetry of the raw
-+ * queue as the device accepted it, and what the coded queue carries.
++ * Read the device's stream information back: the coded queue's frame interval
++ * and colorimetry, which are what the stream carries, and, for a new stream,
++ * the colorimetry the raw queue starts with. After that the raw colorimetry
++ * is the client's to state, so the driver keeps the values it was given and
++ * never replaces them with the device's answer, which reduces what it does not
++ * understand to a default: a client that states the same colors again would
++ * otherwise find them changed.
 + */
-+static int enc_read_stream_info(struct virtio_video_stream *stream)
++static int enc_read_stream_info(struct virtio_video_stream *stream,
++				bool raw_colors)
 +{
 +	struct virtio_video_device *vvd = to_virtio_vd(stream->video_dev);
 +	struct video_stream_info raw = {}, coded = {};
 +	int ret;
 +
-+	ret = virtio_video_cmd_get_stream_info(vvd, stream,
-+					       VIRTIO_VIDEO_QUEUE_TYPE_INPUT,
-+					       &raw);
-+	if (ret)
-+		return ret;
++	if (raw_colors) {
++		ret = virtio_video_cmd_get_stream_info(vvd, stream,
++						       VIRTIO_VIDEO_QUEUE_TYPE_INPUT,
++						       &raw);
++		if (ret)
++			return ret;
++	}
 +
 +	ret = virtio_video_cmd_get_stream_info(vvd, stream,
 +					       VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT,
@@ -1309,10 +1317,12 @@ index 0000000000000000000000000000000000000000..ef21baf5160f7be1038abb54ab2ee696
 +	if (ret)
 +		return ret;
 +
-+	stream->raw_info.colorspace = raw.colorspace;
-+	stream->raw_info.xfer_func = raw.xfer_func;
-+	stream->raw_info.ycbcr_enc = raw.ycbcr_enc;
-+	stream->raw_info.quantization = raw.quantization;
++	if (raw_colors) {
++		stream->raw_info.colorspace = raw.colorspace;
++		stream->raw_info.xfer_func = raw.xfer_func;
++		stream->raw_info.ycbcr_enc = raw.ycbcr_enc;
++		stream->raw_info.quantization = raw.quantization;
++	}
 +	stream->coded_info = coded;
 +
 +	return 0;
@@ -1579,9 +1589,14 @@ index 0000000000000000000000000000000000000000..ef21baf5160f7be1038abb54ab2ee696
 +						       &colors);
 +		if (ret)
 +			return ret;
-+		ret = enc_read_stream_info(stream);
++		/* The coded queue reports the colors the stream carries. */
++		ret = enc_read_stream_info(stream, false);
 +		if (ret)
 +			return ret;
++		stream->raw_info.colorspace = colors.colorspace;
++		stream->raw_info.xfer_func = colors.xfer_func;
++		stream->raw_info.ycbcr_enc = colors.ycbcr_enc;
++		stream->raw_info.quantization = colors.quantization;
 +	}
 +
 +	enc_g_fmt_raw(stream, pix_mp);
@@ -1631,7 +1646,7 @@ index 0000000000000000000000000000000000000000..ef21baf5160f7be1038abb54ab2ee696
 +		ret = enc_get_params(stream);
 +		if (ret)
 +			return ret;
-+		ret = enc_read_stream_info(stream);
++		ret = enc_read_stream_info(stream, false);
 +		if (ret)
 +			return ret;
 +		virtio_video_ctrls_set_coded_format(stream,
@@ -1993,7 +2008,7 @@ index 0000000000000000000000000000000000000000..ef21baf5160f7be1038abb54ab2ee696
 +
 +	ret = virtio_video_cmd_set_stream_info(vvd, stream, queue, &info);
 +	if (!ret)
-+		ret = enc_read_stream_info(stream);
++		ret = enc_read_stream_info(stream, false);
 +	if (!ret && raw) {
 +		/* The device keeps one interval, the coded stream's. */
 +		stream->raw_info.interval_numerator =
@@ -2326,7 +2341,7 @@ index 0000000000000000000000000000000000000000..ef21baf5160f7be1038abb54ab2ee696
 +	mutex_init(&stream->hold_lock);
 +	INIT_LIST_HEAD(&stream->held);
 +
-+	ret = enc_read_stream_info(stream);
++	ret = enc_read_stream_info(stream, true);
 +	if (ret) {
 +		v4l2_err(&vvd->v4l2_dev, "failed to get stream info\n");
 +		return ret;

@@ -125,6 +125,11 @@ The Linux overlay holds only what differs from the Android product:
   stay off. Sxmo, which postmarketOS guests run, suspends the guest on its own
   whenever that file exists, and a desktop guest has no wakelock service to
   hold it awake. The Android product turns it on (see below).
+- No static usermode helper: `CONFIG_STATIC_USERMODEHELPER` stays off.
+  systemd-coredump is a piped `core_pattern`, and the NFS idmapper's
+  `/sbin/request-key` and `/sbin/bridge-stp` are upcalls, so a static path
+  would turn each into a silent no-op. The Android product turns it on (see
+  below).
 
 Every product has IPv4 multicast, which Kconfig leaves off and mDNS and SSDP
 discovery need, and SafeSetID, which restricts only the IDs a policy written
@@ -133,6 +138,47 @@ listener on port 16385 in every network namespace for any local user to
 reach, and nothing in a guest uses it, so the LTP case that needs it,
 `recvmsg03`, is in `disabled-tests.tsv`. `guest-kernel-config` checks these
 settings in a Linux guest, and the same probe checks an Android guest.
+
+### Kernel self-protection
+
+Every product builds the kernel with `CONFIG_STACKPROTECTOR_STRONG` and
+`CONFIG_HARDENED_USERCOPY`, as Debian and the Android GKI do. The stack
+protector uses one global canary, `__stack_chk_guard`, which
+`boot_init_stack_canary()` draws before the first protected frame; the
+host-facing objects (`USER_CFLAGS`) are built without it. Hardened usercopy
+checks every variable-size `copy_to_user()` and `copy_from_user()` against its
+slab object, page allocation, kernel text and stack, and a failure is a
+panic. UML arm64 has no `HAVE_ARCH_WITHIN_STACK_FRAMES`, so a stack copy is
+checked against the whole stack, not the frame. LKDTM confirms the canary
+check and the slab, page, kernel-text and stack-bounds cases. An overrun of
+one stack frame into the next goes unseen here, and so does a vmalloc overrun
+into its guard page, which upstream does not catch either.
+
+The Android CTS `KernelConfigTest` also asks for three symbols that arch/um
+does not have. Each protection is either provided by the design under another
+mechanism or has nothing to protect, so the product keeps the three tests as
+documented deviations:
+
+- `CONFIG_ARM64_SW_TTBR0_PAN` (PAN): the kernel is native host code, and guest
+  user memory is a software MMU that it reaches only through the uaccess page
+  walk. A kernel access to a guest user address outside uaccess faults, and
+  `segv()` panics with "Kernel tried to access user memory" (LKDTM
+  `ACCESS_USERSPACE` and `EXEC_USERSPACE`), which is what PAN enforces. There
+  is no `PSTATE.PAN` or TTBR0 switch to emulate.
+- `CONFIG_UNMAP_KERNEL_AT_EL0` (KPTI): guest user code runs in the engine, and
+  the software MMU maps no kernel memory into any guest address; the native
+  window is a hole in the guest range. EL0 therefore cannot name a kernel
+  address, and there is no shared page table to split. The test's other way
+  out, `meltdown` and `spectre_v2` entries in
+  `/sys/devices/system/cpu/vulnerabilities` that do not say "Vulnerable", is
+  not offered: the guest and its kernel share the host core's predictors, and
+  the host cannot promise Spectre v2 immunity.
+- `CONFIG_RANDOMIZE_BASE` (KASLR): the macOS native window starts at the
+  fixed `DARWIN_UML_MACOS_NATIVE_ADDRESS`, so the kernel sits at the same
+  address on every boot (iOS lets the host choose it). The kernel takes the
+  window from the host at runtime, so randomising the macOS base is a change
+  to the host's `prepare_native_kernel_layout()`, not a kernel option; it is
+  not done.
 
 DWARF stays uncompressed in both products, in the shared policy, for the Darwin
 host's pahole, whose elfutils is built without zstd.
@@ -634,6 +680,14 @@ The overlay holds only what differs from the Linux product:
   the overlay leaves both out, and SCTP too, which Android has no use for. The
   forbidden list also names RDS, so that no overlay brings back its
   listener.
+- `CONFIG_STATIC_USERMODEHELPER` with an empty
+  `CONFIG_STATIC_USERMODEHELPER_PATH`, which the CTS requires. Every
+  `call_usermodehelper()` then returns without starting a program, so a
+  piped `core_pattern`, a key upcall or an orderly poweroff cannot make the
+  kernel run a program as root. Android's tombstones come from debuggerd's
+  signal handler and its boot needs no helper; a piped `core_pattern` logs
+  "Core dump to |... disabled". The Linux product keeps the helpers its
+  distribution uses (see above).
 - Auxiliary POSIX clocks are off, as in GKI. With them, clock IDs 16 to 23
   name the auxiliary clocks, which have no timers, so `timer_create()` on
   clock 16 fails with `EOPNOTSUPP` where Bionic's `time.timer_create_EINVAL`

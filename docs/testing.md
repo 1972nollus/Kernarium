@@ -285,7 +285,11 @@ against the host table, so a control the driver dropped or a format listed
 under another fourcc fails; encodes packed BGRA and RGBA pictures, whose red
 and blue blocks show the channel order; and checks the parameter sets that
 `PREPEND_SPSPPS_TO_IDR` adds and the layers that hierarchical coding makes.
-Each stream is decoded back through the guest decoder and compared with the
+Colorimetry stated on the raw queue, including `V4L2_COLORSPACE_RAW` with a
+transfer function and range, must read back as stated, survive a repeated
+`S_FMT` and `S_PARM`, and appear in the H.264 stream's VUI; the B-frame control
+must run from zero in steps of one and the level menus default to their lowest
+item, as the host describes them. Each stream is decoded back through the guest decoder and compared with the
 pictures by luma PSNR. The x86_64 slice runs `run_v4l2_encode.py`
 directly, like the decoder.
 

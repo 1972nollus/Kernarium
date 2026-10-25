@@ -176,6 +176,14 @@ CONFIG_DRM_VIRTIO_GPU_STANDARD_FORMATS=y
 # touchscreen. The desktop product keeps the tablet's buttons and wheel.
 CONFIG_UML_VNC_INPUT_TOUCHSCREEN=y
 
+# --- Kernel self-protection -------------------------------------------------
+# Android runs no usermode helper from the kernel. With an empty path every
+# call_usermodehelper() returns without starting anything, so a piped
+# core_pattern, a key upcall or an orderly poweroff cannot make the kernel run
+# a program as root. The CTS requires it.
+CONFIG_STATIC_USERMODEHELPER=y
+CONFIG_STATIC_USERMODEHELPER_PATH=""
+
 # --- Suspend ----------------------------------------------------------------
 # Android suspends itself whenever its wakelock count reaches zero. Its
 # SystemSuspend service keeps those wakelocks in userspace, and when one is

@@ -675,7 +675,10 @@ uml_add_guest_integration_test(
 
 # The settings the Android CTS and the desktop disagree on: a Linux guest has
 # SysV IPC, the NFS client and SCTP, no RDS and no wakelock interface, and
-# every guest has IPv4 multicast and no listener on RDS-over-TCP's port.
+# runs the helper a piped core_pattern names; every guest has IPv4 multicast,
+# no listener on RDS-over-TCP's port, and the strong stack protector and
+# hardened usercopy. An Android guest, which runs the probe by hand, has a
+# static usermode helper that starts nothing.
 uml_add_guest_integration_test(
     NAME guest-kernel-config
     SCRIPT support/run_guest_probe.py
