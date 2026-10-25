@@ -144,6 +144,147 @@ struct HevcSpsInfo {
     return HevcSpsInfo {unsigned(profile & 0x1f), (profile & 0x20) != 0, payload[12]};
 }
 
+struct HevcSpsFormat {
+    unsigned chromaFormat {};   // chroma_format_idc: 1 is 4:2:0
+    unsigned bitDepthLuma {};
+    unsigned bitDepthChroma {};
+    bool vuiPresent {};
+    bool colorDescription {};   // colour_primaries, transfer_characteristics and matrix_coeffs are stated
+    unsigned primaries {};
+    unsigned transfer {};
+    unsigned matrix {};
+    bool fullRange {};
+};
+
+// The bit depths and the VUI colour description of an HEVC SPS NAL unit (with
+// its two-byte header). nullopt for a stream it cannot walk to the VUI: one
+// with scaling list data, which the hardware encoder does not write.
+[[nodiscard]] inline std::optional<HevcSpsFormat> parseHevcSpsFormat(Bytes nal)
+{
+    if (nal.size() < 4 || hevcNalType(nal) != hevcNalSps) return std::nullopt;
+    const auto payload = rbsp(nal, 2);
+    BitReader reader(payload);
+    reader.bits(4);   // sps_video_parameter_set_id
+    const unsigned subLayers = reader.bits(3);
+    reader.bits(1);   // sps_temporal_id_nesting_flag
+    // profile_tier_level: the general part is 88 bits and the level 8; every
+    // sub-layer then adds a profile of 88 bits and a level of 8 when present.
+    for (unsigned i = 0; i < 3; ++i) reader.bits(32);
+    if (subLayers > 7) return std::nullopt;
+    bool subProfile[8] = {}, subLevel[8] = {};
+    for (unsigned i = 0; i < subLayers; ++i) {
+        subProfile[i] = reader.bits(1) != 0;
+        subLevel[i] = reader.bits(1) != 0;
+    }
+    if (subLayers > 0)
+        for (unsigned i = subLayers; i < 8; ++i) reader.bits(2);
+    for (unsigned i = 0; i < subLayers; ++i) {
+        if (subProfile[i]) for (unsigned part = 0; part < 11; ++part) reader.bits(8);
+        if (subLevel[i]) reader.bits(8);
+    }
+    HevcSpsFormat format;
+    reader.unsignedExpGolomb();   // sps_seq_parameter_set_id
+    format.chromaFormat = reader.unsignedExpGolomb();
+    if (format.chromaFormat == 3) reader.bits(1);
+    reader.unsignedExpGolomb();   // pic_width_in_luma_samples
+    reader.unsignedExpGolomb();   // pic_height_in_luma_samples
+    if (reader.bits(1)) for (int i = 0; i < 4; ++i) reader.unsignedExpGolomb();   // conformance window
+    format.bitDepthLuma = reader.unsignedExpGolomb() + 8;
+    format.bitDepthChroma = reader.unsignedExpGolomb() + 8;
+    const unsigned pocBits = reader.unsignedExpGolomb() + 4;
+    const bool orderingPerLayer = reader.bits(1) != 0;
+    for (unsigned i = orderingPerLayer ? 0 : subLayers; i <= subLayers; ++i)
+        for (int part = 0; part < 3; ++part) reader.unsignedExpGolomb();
+    for (int i = 0; i < 4; ++i) reader.unsignedExpGolomb();   // coding and transform block sizes
+    reader.unsignedExpGolomb();                               // max_transform_hierarchy_depth_inter
+    reader.unsignedExpGolomb();                               // max_transform_hierarchy_depth_intra
+    if (reader.bits(1) && reader.bits(1)) return std::nullopt;   // scaling_list_data
+    reader.bits(2);                                           // amp, sample adaptive offset
+    if (reader.bits(1)) {                                     // pcm
+        reader.bits(8);
+        reader.unsignedExpGolomb();
+        reader.unsignedExpGolomb();
+        reader.bits(1);
+    }
+    const unsigned sets = reader.unsignedExpGolomb();
+    if (sets > 64) return std::nullopt;
+    struct Set { std::vector<int> negative, positive; };   // DeltaPocS0, DeltaPocS1
+    std::vector<Set> rps(sets);
+    for (unsigned index = 0; index < sets && reader.ok(); ++index) {
+        Set& set = rps[index];
+        if (index != 0 && reader.bits(1)) {   // inter_ref_pic_set_prediction_flag, with delta_idx_minus1 = 0
+            const Set& ref = rps[index - 1];
+            const int sign = reader.bits(1) ? -1 : 1;
+            const int deltaRps = sign * int(reader.unsignedExpGolomb() + 1);
+            const std::size_t count = ref.negative.size() + ref.positive.size() + 1;
+            std::vector<bool> use(count, true);
+            for (std::size_t j = 0; j < count; ++j)
+                if (!reader.bits(1)) use[j] = reader.bits(1) != 0;
+            const std::size_t negatives = ref.negative.size();
+            for (std::size_t j = ref.positive.size(); j-- > 0;) {
+                const int delta = ref.positive[j] + deltaRps;
+                if (delta < 0 && use[negatives + j]) set.negative.push_back(delta);
+            }
+            if (deltaRps < 0 && use[count - 1]) set.negative.push_back(deltaRps);
+            for (std::size_t j = 0; j < negatives; ++j) {
+                const int delta = ref.negative[j] + deltaRps;
+                if (delta < 0 && use[j]) set.negative.push_back(delta);
+            }
+            for (std::size_t j = negatives; j-- > 0;) {
+                const int delta = ref.negative[j] + deltaRps;
+                if (delta > 0 && use[j]) set.positive.push_back(delta);
+            }
+            if (deltaRps > 0 && use[count - 1]) set.positive.push_back(deltaRps);
+            for (std::size_t j = 0; j < ref.positive.size(); ++j) {
+                const int delta = ref.positive[j] + deltaRps;
+                if (delta > 0 && use[negatives + j]) set.positive.push_back(delta);
+            }
+        } else {
+            const unsigned negatives = reader.unsignedExpGolomb();
+            const unsigned positives = reader.unsignedExpGolomb();
+            if (negatives > 16 || positives > 16) return std::nullopt;
+            int poc = 0;
+            for (unsigned j = 0; j < negatives; ++j) {
+                poc -= int(reader.unsignedExpGolomb()) + 1;
+                reader.bits(1);
+                set.negative.push_back(poc);
+            }
+            poc = 0;
+            for (unsigned j = 0; j < positives; ++j) {
+                poc += int(reader.unsignedExpGolomb()) + 1;
+                reader.bits(1);
+                set.positive.push_back(poc);
+            }
+        }
+    }
+    if (reader.bits(1)) {   // long_term_ref_pics_present_flag
+        const unsigned longTerm = reader.unsignedExpGolomb();
+        if (longTerm > 32) return std::nullopt;
+        for (unsigned i = 0; i < longTerm; ++i) {
+            reader.bits(pocBits);
+            reader.bits(1);
+        }
+    }
+    reader.bits(2);   // sps_temporal_mvp_enabled_flag, strong_intra_smoothing_enabled_flag
+    format.vuiPresent = reader.bits(1) != 0;
+    if (!reader.ok()) return std::nullopt;
+    if (!format.vuiPresent) return format;
+    if (reader.bits(1) && reader.bits(8) == 255) reader.bits(32);   // aspect ratio
+    if (reader.bits(1)) reader.bits(1);                              // overscan
+    if (reader.bits(1)) {                                            // video_signal_type_present_flag
+        reader.bits(3);                                              // video_format
+        format.fullRange = reader.bits(1) != 0;
+        if (reader.bits(1)) {
+            format.colorDescription = true;
+            format.primaries = reader.bits(8);
+            format.transfer = reader.bits(8);
+            format.matrix = reader.bits(8);
+        }
+    }
+    if (!reader.ok()) return std::nullopt;
+    return format;
+}
+
 // entropy_coding_mode_flag of an H.264 PPS NAL unit: true for CABAC.
 [[nodiscard]] inline std::optional<bool> h264Cabac(Bytes nal)
 {

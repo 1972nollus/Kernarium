@@ -766,6 +766,94 @@ void hdr()
     }
 }
 
+// ---- HEVC Main 10 colour aspects: what an HDR10 or HLG stream states.
+
+void hdrColor()
+{
+    step("HEVC Main 10 colour aspects");
+    if (!hevcCapability || !supportsLayout(*hevcCapability, VideoEncodeProfile::hevcMain10, RawVideoLayout::p010)) {
+        std::puts("  no HEVC Main 10 from 10-bit input on this host; skipped");
+        return;
+    }
+    struct Case {
+        const char* name;
+        VideoEncodeColor color;
+        unsigned primaries, transfer, matrix;   // the ITU-T H.273 code points the VUI states
+        VideoColorMatrix decoded;
+    };
+    const Case cases[] = {
+        {"BT.2020 PQ", {VideoColorPrimaries::bt2020, VideoTransferFunction::pq, VideoMatrixCoefficients::bt2020, false}, 9, 16, 9, VideoColorMatrix::bt2020},
+        {"BT.2020 HLG", {VideoColorPrimaries::bt2020, VideoTransferFunction::hlg, VideoMatrixCoefficients::bt2020, false}, 9, 18, 9, VideoColorMatrix::bt2020},
+        {"BT.2020 PQ, full range", {VideoColorPrimaries::bt2020, VideoTransferFunction::pq, VideoMatrixCoefficients::bt2020, true}, 9, 16, 9, VideoColorMatrix::bt2020},
+        {"BT.709", {VideoColorPrimaries::bt709, VideoTransferFunction::bt709, VideoMatrixCoefficients::bt709, false}, 1, 1, 1, VideoColorMatrix::bt709},
+    };
+    for (const auto& c : cases) {
+        auto settings = baseSettings(VideoEncodeProfile::hevcMain10, 128, 96, RawVideoLayout::p010);
+        settings.color = c.color;
+        const auto encoded = encode(settings, 4, fixtureSource(RawVideoLayout::p010), "hdr colour");
+        expectOrdered(encoded.output, 4);
+        const auto sps = firstUnit(VideoCodec::hevc, *encoded.output.pictures().front(), bits::hevcNalSps);
+        require(sps.has_value(), "an SPS");
+        const auto format = bits::parseHevcSpsFormat(*sps);
+        require(format.has_value(), "the SPS can be read to its VUI");
+        std::printf("  %s: %u-bit 4:2:0 %d, VUI primaries %u transfer %u matrix %u full range %d\n", c.name, format->bitDepthLuma,
+                    int(format->chromaFormat == 1), format->primaries, format->transfer, format->matrix, int(format->fullRange));
+        require(format->chromaFormat == 1 && format->bitDepthLuma == 10 && format->bitDepthChroma == 10, "ten-bit 4:2:0");
+        require(format->vuiPresent && format->colorDescription, "the SPS states a colour description");
+        require(format->primaries == c.primaries && format->transfer == c.transfer && format->matrix == c.matrix, "the VUI states what was asked for");
+        require(format->fullRange == c.color.fullRange, "the range is stated");
+        if (hardwareDecodes(VideoEncodeProfile::hevcMain10)) {
+            const auto decoded = decode(VideoCodec::hevc, encoded.output);
+            require(decoded.size() == 4, "four pictures");
+            for (const auto& [timestamp, frame] : decoded) {
+                require(frame.format.bitDepth == 10, "the decoder sees ten bits");
+                require(frame.color.matrix == c.decoded, "the decoder reads the matrix back");
+            }
+            // The decoder may hand back a full-range stream in video range, so only limited range is compared sample for sample.
+            if (!c.color.fullRange) require(meanLumaPsnr(encoded.sources, decoded) >= 32.0, "and the picture is right");
+        }
+    }
+    {
+        // A stream that asks for no colour description states none.
+        auto settings = baseSettings(VideoEncodeProfile::hevcMain10, 128, 96, RawVideoLayout::p010);
+        settings.color = {};
+        const auto encoded = encode(settings, 2, fixtureSource(RawVideoLayout::p010), "no colour");
+        const auto sps = firstUnit(VideoCodec::hevc, *encoded.output.pictures().front(), bits::hevcNalSps);
+        require(sps.has_value(), "an SPS");
+        const auto format = bits::parseHevcSpsFormat(*sps);
+        require(format.has_value() && !format->colorDescription, "no colour was asked for and none is stated");
+    }
+    {
+        // HLG with static metadata: the transfer function and the SEI messages are independent.
+        VideoHdrStaticMetadata metadata;
+        metadata.displayPrimaries = {13250, 34500, 7500, 3000, 34000, 16000};
+        metadata.whitePointX = 15635;
+        metadata.whitePointY = 16450;
+        metadata.maximumLuminance = 10'000'000;
+        metadata.minimumLuminance = 50;
+        metadata.maximumContentLightLevel = 1000;
+        metadata.maximumFrameAverageLightLevel = 400;
+        auto settings = baseSettings(VideoEncodeProfile::hevcMain10, 128, 96, RawVideoLayout::p010);
+        settings.color = {VideoColorPrimaries::bt2020, VideoTransferFunction::hlg, VideoMatrixCoefficients::bt2020, false};
+        settings.hdr = metadata;
+        const auto encoded = encode(settings, 3, fixtureSource(RawVideoLayout::p010), "hlg metadata");
+        expectOrdered(encoded.output, 3);
+        const auto& key = *encoded.output.pictures().front();
+        bool mastering = false, light = false;
+        for (const auto unit : bits::splitAnnexB(key.bytes))
+            if (bits::hevcNalType(unit) == bits::hevcNalPrefixSei)
+                for (const auto& message : bits::hevcSeiMessages(unit)) {
+                    mastering = mastering || message.type == 137;
+                    light = light || message.type == 144;
+                }
+        require(mastering && light, "an HLG key frame carries the static metadata");
+        const auto sps = firstUnit(VideoCodec::hevc, key, bits::hevcNalSps);
+        require(sps.has_value(), "an SPS");
+        const auto format = bits::parseHevcSpsFormat(*sps);
+        require(format.has_value() && format->transfer == 18, "and the VUI still states HLG");
+    }
+}
+
 // ---- RGBA input: the memory order of Android's AB24 surfaces.
 
 void rgbaInput()
@@ -1361,6 +1449,7 @@ int main(int argc, char** argv)
         flow();
         parameterSets();
         hdr();
+        hdrColor();
         rgbaInput();
         lowLatency();
         color();

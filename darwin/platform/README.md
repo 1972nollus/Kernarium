@@ -58,7 +58,7 @@ null beyond that, and a frame dropped unsubmitted returns its slot.
   stream needs makes every frame fail). An HEVC level is only a ceiling.
 - **Sizes** are even for video; JPEG keeps odd sizes exactly.
 
-### Input layouts
+### Input layouts and colour
 
 A layout is listed for a profile only when an encode from it came out right.
 HEVC Main 10 takes P010, the 10-bit input that keeps its precision, as well as
@@ -75,6 +75,16 @@ frame up to 4K, against tens of milliseconds to encode one; a caller that holds
 RGBA surfaces saves the guest CPU the same conversion, which on an interpreted
 guest is far dearer. A stream from `rgba` matches one from `bgra` of the same
 pictures in size and quality.
+
+The colour description (`VideoEncodeColor`: primaries, transfer function,
+matrix and range) is attached to the pixel buffers and the session, and shows in
+the stream: the SPS VUI of H.264 and HEVC states the ITU-T H.273 code points
+(BT.2020 PQ is 9/16/9, BT.2020 HLG 9/18/9, with the range flag). HDR10 static
+metadata (`VideoHdrStaticMetadata`) belongs to HEVC Main 10 and is written as
+described under Output. HLG is a transfer function the platform encodes and
+tests, and V4L2 has no name for it (its transfer functions end at SMPTE 2084),
+so a guest through the Virtio device cannot ask for it; it stays unexposed
+there.
 
 ### Rate control
 
@@ -121,9 +131,10 @@ the lost one.
 `platform-video-encoder-bitstream` checks the readers against the decoder
 fixtures and needs no hardware. `platform-video-encoder` exercises every
 advertised profile and layout, each rate-control mode and update, key frames,
-B-frames, layers, parameter sets, HDR, colour, RGBA channel order, levels,
-sizes, flow and limits, and decodes the streams with the platform decoder to
-compare pictures.
+B-frames, layers, parameter sets, HDR, colour (H.264, and HEVC Main 10 from
+P010 with PQ and HLG, read back from the VUI), RGBA channel order, levels, sizes,
+flow and limits, and decodes the streams with the platform decoder to compare
+pictures.
 `platform-video-encoder-recovery` links a variant of the backend that fails
 sessions on demand; `platform-video-encoder-cache` runs child processes against
 valid, missing and unusable cache files. `Kernarium/KernariumTests/HostVideoEncoderTests.mm`

@@ -192,6 +192,14 @@ void fixtures()
             }
         }
         require(vps && sps && pps, "VPS, SPS and PPS");
+        for (const auto unit : units) {
+            if (hevcNalType(unit) != hevcNalSps) continue;
+            const auto format = parseHevcSpsFormat(unit);
+            require(format.has_value(), "the fixture's SPS can be read to its VUI");
+            std::printf("%s: %u-bit, chroma format %u, VUI %d\n", c.name, format->bitDepthLuma, format->chromaFormat, int(format->vuiPresent));
+            require(format->chromaFormat == 1, "4:2:0");
+            require(format->bitDepthLuma == (c.profile == 2 ? 10u : 8u) && format->bitDepthChroma == format->bitDepthLuma, "bit depth");
+        }
     }
 
     // Units of the wrong kind or too short to read are refused, not guessed at.
@@ -200,6 +208,125 @@ void fixtures()
     require(!parseHevcSps(Unit {0x40, 0x01, 1, 2, 3}), "VPS is not an SPS");
     require(!parseHevcSps(Unit {0x42, 0x01, 1, 2, 3}), "truncated HEVC SPS");
     require(!h264Cabac(Unit {0x67, 1, 2}), "SPS is not a PPS");
+}
+
+// Builds RBSP bit by bit, so that an SPS can use syntax the hardware encoder does
+// not write.
+class BitWriter {
+public:
+    void bits(std::uint64_t value, unsigned count)
+    {
+        while (count-- > 0) put((value >> count) & 1u);
+    }
+    void ue(std::uint32_t value)
+    {
+        const std::uint64_t coded = std::uint64_t(value) + 1;
+        unsigned length = 0;
+        while ((coded >> (length + 1)) != 0) ++length;
+        bits(0, length);
+        bits(coded, length + 1);
+    }
+    // The unit: a two-byte NAL header, then the payload with its stop bit,
+    // padded and with emulation prevention bytes.
+    Unit sps()
+    {
+        put(1);
+        while (count_ % 8 != 0) put(0);
+        Unit unit {0x42, 0x01};
+        const auto escaped = escapeEmulation(bytes_);
+        unit.insert(unit.end(), escaped.begin(), escaped.end());
+        return unit;
+    }
+private:
+    void put(unsigned bit)
+    {
+        if (count_ % 8 == 0) bytes_.push_back(0);
+        bytes_.back() = std::uint8_t(bytes_.back() | (bit << (7 - count_ % 8)));
+        ++count_;
+    }
+    std::vector<std::uint8_t> bytes_;
+    std::size_t count_ {};
+};
+
+// An SPS with three sub-layers (two of which state a profile or a level), a
+// conformance window, ordering info per sub-layer, PCM, short-term sets
+// predicted from one another, long-term pictures, and a VUI with an extended
+// sample aspect ratio, overscan and a colour description.
+Unit syntheticSps(bool scalingList, bool vui)
+{
+    BitWriter w;
+    w.bits(0, 4);   // sps_video_parameter_set_id
+    w.bits(2, 3);   // sps_max_sub_layers_minus1
+    w.bits(1, 1);
+    w.bits(0x02000000, 32); w.bits(0x60000000, 32); w.bits(0x00000000, 32);   // general profile, compatibility, constraints, level
+    w.bits(1, 1); w.bits(1, 1);   // sub-layer 0: profile and level
+    w.bits(0, 1); w.bits(1, 1);   // sub-layer 1: level only
+    w.bits(0, 12);                // reserved_zero_2bits for the sub-layers that do not exist
+    for (unsigned i = 0; i < 11; ++i) w.bits(0x5a, 8);   // sub-layer 0 profile (88 bits)
+    w.bits(90, 8);                // sub-layer 0 level
+    w.bits(60, 8);                // sub-layer 1 level
+    w.ue(0);                      // sps_seq_parameter_set_id
+    w.ue(1);                      // chroma_format_idc
+    w.ue(1920);
+    w.ue(1080);
+    w.bits(1, 1);                 // conformance window
+    for (unsigned i = 0; i < 4; ++i) w.ue(i);
+    w.ue(2); w.ue(2);             // ten bits
+    w.ue(4);                      // log2_max_pic_order_cnt_lsb_minus4: eight bits
+    w.bits(1, 1);                 // sub_layer_ordering_info_present_flag
+    for (unsigned i = 0; i < 3; ++i) { w.ue(4); w.ue(2); w.ue(0); }
+    w.ue(0); w.ue(3); w.ue(0); w.ue(3);   // block sizes
+    w.ue(2); w.ue(2);             // transform hierarchy depths
+    w.bits(scalingList ? 1 : 0, 1);   // scaling_list_enabled_flag
+    if (scalingList) w.bits(1, 1);    // sps_scaling_list_data_present_flag
+    w.bits(1, 1); w.bits(1, 1);   // amp, sample adaptive offset
+    w.bits(1, 1);                 // pcm
+    w.bits(0x77, 8); w.ue(0); w.ue(2); w.bits(1, 1);
+    w.ue(4);                      // num_short_term_ref_pic_sets
+    // 0: negative -1 and -3, positive +2.
+    w.ue(2); w.ue(1);
+    w.ue(0); w.bits(1, 1); w.ue(1); w.bits(1, 1);
+    w.ue(1); w.bits(1, 1);
+    // 1: predicted from 0 with delta_rps +1: four flags (three pictures and the delta itself).
+    w.bits(1, 1); w.bits(0, 1); w.ue(0);
+    w.bits(0xf, 4);               // used_by_curr_pic_flag, four times
+    // 2: predicted from 1 (-2, +1, +3) with delta_rps -1; one flag says "not used, use the delta".
+    w.bits(1, 1); w.bits(1, 1); w.ue(0);
+    w.bits(1, 1); w.bits(0, 1); w.bits(1, 1); w.bits(1, 1); w.bits(1, 1);
+    // 3: predicted from 2 (-1, -3, +2): four flags again.
+    w.bits(1, 1); w.bits(0, 1); w.ue(1);
+    w.bits(1, 1); w.bits(1, 1); w.bits(1, 1); w.bits(1, 1);
+    w.bits(1, 1);                 // long_term_ref_pics_present_flag
+    w.ue(2);
+    w.bits(0xa5, 8); w.bits(1, 1); w.bits(0x5a, 8); w.bits(0, 1);
+    w.bits(1, 1); w.bits(1, 1);   // temporal MVP, strong intra smoothing
+    w.bits(vui ? 1 : 0, 1);
+    if (vui) {
+        w.bits(1, 1); w.bits(255, 8); w.bits(16, 16); w.bits(11, 16);   // sample aspect ratio 16:11
+        w.bits(1, 1); w.bits(1, 1);                                      // overscan
+        w.bits(1, 1); w.bits(5, 3); w.bits(1, 1);                        // video signal type: unspecified format, full range
+        w.bits(1, 1); w.bits(9, 8); w.bits(16, 8); w.bits(9, 8);         // BT.2020, PQ, BT.2020
+    }
+    return w.sps();
+}
+
+void hevcSpsFormat()
+{
+    const auto unit = syntheticSps(false, true);
+    const auto format = parseHevcSpsFormat(unit);
+    require(format.has_value(), "the synthetic SPS is read to its VUI");
+    require(format->chromaFormat == 1 && format->bitDepthLuma == 10 && format->bitDepthChroma == 10, "format and depth");
+    require(format->vuiPresent && format->colorDescription, "a colour description");
+    require(format->primaries == 9 && format->transfer == 16 && format->matrix == 9 && format->fullRange,
+            "the VUI is found behind sub-layers, a window, PCM, predicted sets and long-term pictures");
+
+    const auto noVui = parseHevcSpsFormat(syntheticSps(false, false));
+    require(noVui.has_value() && !noVui->vuiPresent && !noVui->colorDescription, "an SPS with no VUI states no colour");
+    require(!parseHevcSpsFormat(syntheticSps(true, true)).has_value(), "scaling list data is refused rather than skipped");
+    Unit truncated = unit;
+    truncated.resize(truncated.size() - 6);
+    require(!parseHevcSpsFormat(truncated).has_value(), "a truncated SPS is refused");
+    require(!parseHevcSpsFormat(Unit {0x40, 0x01, 1, 2, 3, 4}).has_value(), "a VPS is not an SPS");
 }
 } // namespace
 
@@ -215,6 +342,7 @@ int main(int argc, char** argv)
         emulationPrevention();
         bitReading();
         seiMessages();
+        hevcSpsFormat();
         fixtures();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
