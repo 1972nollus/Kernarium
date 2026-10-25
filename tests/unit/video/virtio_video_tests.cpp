@@ -1082,11 +1082,17 @@ void inputBackpressure()
     video.device.reset();
 }
 
+/* How the client deals with a size change it has been told of. */
+enum class Renegotiation { clearCapture, setNewSize, drain, clearCoded };
+
 /* Where a picture's size changes, every picture of the old size is delivered
  * first, in the buffers set up for it; one more buffer then completes empty and
  * last; the client is told the new size; and nothing of the new size is written
- * into the buffers it still holds until it has set its queue up again. */
-void resolutionChange()
+ * into the buffers it still holds until it has set its queue up again. The
+ * coded buffer that carried the change is not given back until then either, or
+ * a client that drains as soon as its coded buffers are back would drain across
+ * the change: whichever way the client deals with it releases that buffer. */
+void resolutionChange(Renegotiation how)
 {
     auto state = std::make_shared<ScriptedState>();
     // Pictures one and two are 64 x 64, three and four 32 x 32.
@@ -1142,13 +1148,16 @@ void resolutionChange()
     }
     require(size(output) == 64, "the capture size is the first one");
 
-    /* The third picture is smaller. Nothing is announced and no buffer is
+    /* The third packet is smaller. Nothing is announced and no buffer is
      * used for it while the client has none queued: it is the client's to
-     * receive the old pictures first. */
-    require(load<virtio_video_resource_queue_resp>(
-                video.command(video.queueCommand(input, 3, 5, 103)).response).flags == 0, "decode input failed");
+     * receive the old pictures first. The packet's own buffer waits too. */
+    const auto changing = video.next;
+    require(video.command(video.queueCommand(input, 3, 5, 103)).action == VhostUserQueueAction::defer,
+            "the coded buffer that changes the size was given back at once");
     require(!video.device.takeQueueCompletion(completion), "a size change was announced ahead of the pictures before it");
     require(size(output) == 64, "the size changed before the old pictures were delivered");
+    require(load<virtio_video_cmd_hdr>(video.command(video.queueCommand(input, 3, 5, 999)).response).type ==
+            VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "a coded buffer that is held was queued again");
 
     // The next buffer the client queues ends the old size.
     const auto last = captureRequestFor(2);
@@ -1161,24 +1170,58 @@ void resolutionChange()
     require(!video.device.takeQueueCompletion(completion), "an extra completion after the change");
     require(size(output) == 32, "the new size is not reported");
 
-    // A buffer the client still holds, and a picture that would fit it, wait.
+    /* A packet of the new size is no change and is given back at once; the
+     * buffer of the change stays with the device until the client has dealt
+     * with it. */
     require(load<virtio_video_resource_queue_resp>(
                 video.command(video.queueCommand(input, 4, 5, 104)).response).flags == 0, "decode input failed");
-    const auto held = captureRequestFor(2);
-    require(!video.device.takeQueueCompletion(completion), "a picture of the new size was written into an old buffer");
-    // The client sets its capture queue up again.
-    video.ok(virtio_video_queue_clear{{VIRTIO_VIDEO_CMD_QUEUE_CLEAR, 9}, output, {}});
-    require(video.device.takeQueueCompletion(completion) && completion.requestId == held && flagsOf(completion) ==
-            VIRTIO_VIDEO_DEQUEUE_FLAG_ERR, "the old buffer was not returned");
-    require(load<virtio_video_cmd_hdr>(video.attach(output, 3, {{{small, 1024, {}}}, {{small + page, 512, {}}}}).response).type
-            == VIRTIO_VIDEO_RESP_OK_NODATA, "new capture attach failed");
-    for (unsigned picture = 3; picture <= 4; ++picture) {
-        const auto request = captureRequestFor(3);
-        require(video.device.takeQueueCompletion(completion) && completion.requestId == request, "missing capture completion");
+    const auto changeCompletion = [&](const char* what) {
+        require(video.device.takeQueueCompletion(completion) && completion.requestId == changing, what);
         const auto result = load<virtio_video_resource_queue_resp>(completion.response);
-        require(result.flags == 0 && result.timestamp == 100 + picture && result.data_sizes[0] == 1024 &&
-                result.data_sizes[1] == 512, "incorrect second-size picture");
-        require(video.memory[small + 32 * 5 + 3] == scriptedLuma(picture, 5, 3), "second-size picture changed");
+        require(result.flags == 0 && result.timestamp == 103 && result.data_sizes[0] == 5, what);
+    };
+
+    switch (how) {
+    case Renegotiation::clearCapture: {
+        // A buffer the client still holds, and a picture that would fit it, wait.
+        const auto held = captureRequestFor(2);
+        require(!video.device.takeQueueCompletion(completion), "a picture of the new size was written into an old buffer");
+        video.ok(virtio_video_queue_clear{{VIRTIO_VIDEO_CMD_QUEUE_CLEAR, 9}, output, {}});
+        require(video.device.takeQueueCompletion(completion) && completion.requestId == held && flagsOf(completion) ==
+                VIRTIO_VIDEO_DEQUEUE_FLAG_ERR, "the old buffer was not returned");
+        changeCompletion("clearing the capture queue did not give back the coded buffer of the change");
+        break;
+    }
+    case Renegotiation::setNewSize:
+        require(!video.device.takeQueueCompletion(completion), "the coded buffer of the change was given back early");
+        video.setOutputFormat(VIRTIO_VIDEO_FORMAT_NV12, 32, 32);
+        changeCompletion("setting the new size did not give back the coded buffer of the change");
+        break;
+    case Renegotiation::drain:
+        require(!video.device.takeQueueCompletion(completion), "the coded buffer of the change was given back early");
+        video.ok(virtio_video_stream_drain{{VIRTIO_VIDEO_CMD_STREAM_DRAIN, 9}});
+        changeCompletion("a drain did not give back the coded buffer of the change");
+        break;
+    case Renegotiation::clearCoded:
+        require(!video.device.takeQueueCompletion(completion), "the coded buffer of the change was given back early");
+        video.ok(virtio_video_queue_clear{{VIRTIO_VIDEO_CMD_QUEUE_CLEAR, 9}, input, {}});
+        changeCompletion("clearing the coded queue did not give back the coded buffer of the change");
+        break;
+    }
+    require(!video.device.takeQueueCompletion(completion), "an extra completion after the renegotiation");
+    if (how == Renegotiation::clearCapture || how == Renegotiation::setNewSize) {
+        if (how == Renegotiation::setNewSize)
+            video.ok(virtio_video_queue_clear{{VIRTIO_VIDEO_CMD_QUEUE_CLEAR, 9}, output, {}});
+        require(load<virtio_video_cmd_hdr>(video.attach(output, 3, {{{small, 1024, {}}}, {{small + page, 512, {}}}}).response).type
+                == VIRTIO_VIDEO_RESP_OK_NODATA, "new capture attach failed");
+        for (unsigned picture = 3; picture <= 4; ++picture) {
+            const auto request = captureRequestFor(3);
+            require(video.device.takeQueueCompletion(completion) && completion.requestId == request, "missing capture completion");
+            const auto result = load<virtio_video_resource_queue_resp>(completion.response);
+            require(result.flags == 0 && result.timestamp == 100 + picture && result.data_sizes[0] == 1024 &&
+                    result.data_sizes[1] == 512, "incorrect second-size picture");
+            require(video.memory[small + 32 * 5 + 3] == scriptedLuma(picture, 5, 3), "second-size picture changed");
+        }
     }
     video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 9}});
     video.device.reset();
@@ -1422,7 +1465,9 @@ int main()
         unsettledHoldIsBounded();
         planarAfterSourceChange();
         packedDefaultThroughStreamon();
-        resolutionChange();
+        for (const auto how : {Renegotiation::clearCapture, Renegotiation::setNewSize,
+                               Renegotiation::drain, Renegotiation::clearCoded})
+            resolutionChange(how);
         seekKeepsTheFormat();
         for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_P010})
             tenBitStreamToNv12(format);

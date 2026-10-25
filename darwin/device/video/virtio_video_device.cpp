@@ -212,6 +212,18 @@ public:
         std::uint32_t size;
         std::vector<std::uint8_t> packet;
     };
+    /* A coded buffer whose packet changed the picture size. The decoder has
+     * consumed it, but it is not given back until the client has set its
+     * capture queue up for the new size, which is when a hardware decoder
+     * returns it too. A client that queues its last coded buffer and then
+     * drains therefore cannot drain across a size change it has not handled:
+     * its drain waits for every coded buffer, and the end marker of the old
+     * size is not mistaken for the end of the drain. */
+    struct SizeChange {
+        std::uint64_t request;
+        std::uint32_t resource;
+        std::vector<std::uint8_t> response;
+    };
     struct Stream {
         std::uint32_t coded {};
         std::uint32_t profile {};
@@ -241,6 +253,11 @@ public:
          * set its capture queue up again: no picture of the new size is
          * delivered into the buffers it still holds. */
         bool renegotiating {};
+        /* The size the latest packet given to the decoder declared, which the
+         * next packet is compared with to find the one that changes it. */
+        std::uint32_t submittedWidth {};
+        std::uint32_t submittedHeight {};
+        std::deque<SizeChange> sizeChanges;
         bool draining {};
         bool eosSent {};
         std::uint64_t packets {};
@@ -389,6 +406,45 @@ public:
         if (format.width) announce(id, stream, format.width, format.height, format.bitDepth);
     }
 
+    /* Whether the packet just given to the decoder declares another picture
+     * size than the one before it. The first packet of a stream declares the
+     * size, it does not change it. */
+    static bool carriesSizeChange(Stream& stream)
+    {
+        const auto format = stream.decoder->format();
+        if (!format.width) return false;
+        const bool changed = stream.submittedWidth &&
+            (format.width != stream.submittedWidth || format.height != stream.submittedHeight);
+        stream.submittedWidth = format.width;
+        stream.submittedHeight = format.height;
+        return changed;
+    }
+
+    /* Keeps the completion of a coded buffer until the client has dealt with
+     * the size change it carries. The buffer stays queued meanwhile, so a
+     * client cannot queue it again. */
+    void holdSizeChange(Stream& stream, std::uint64_t request, std::uint32_t resource,
+                        std::vector<std::uint8_t> response)
+    {
+        const auto found = stream.resources.find(resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_INPUT, resource));
+        if (found != stream.resources.end()) found->second.queued = true;
+        stream.sizeChanges.push_back({request, resource, std::move(response)});
+    }
+
+    /* Gives back the coded buffers that carried a size change: the client has
+     * set its capture queue up for the new size, stopped the queue, drained,
+     * or cleared the coded queue, and none of those leaves it waiting for the
+     * buffer. */
+    void releaseSizeChanges(Stream& stream)
+    {
+        for (auto& change : stream.sizeChanges) {
+            const auto found = stream.resources.find(resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_INPUT, change.resource));
+            if (found != stream.resources.end()) found->second.queued = false;
+            completions.push_back({change.request, std::move(change.response)});
+        }
+        stream.sizeChanges.clear();
+    }
+
     void collect(std::uint32_t id, Stream& stream)
     {
         refreshFormat(id, stream);
@@ -415,7 +471,8 @@ public:
             stream.packetBytes += held.size;
             auto result = load<virtio_video_resource_queue_resp>(queued(id, held.timestamp, 0));
             result.data_sizes[0] = held.size;
-            completions.push_back({held.request, toBytes(result)});
+            if (carriesSizeChange(stream)) holdSizeChange(stream, held.request, held.resource, toBytes(result));
+            else completions.push_back({held.request, toBytes(result)});
             refreshFormat(id, stream);
             for (auto& frame : stream.decoder->takeFrames()) stream.frames.push_back(std::move(frame));
         }
@@ -433,6 +490,7 @@ public:
         }
         stream.held.clear();
         stream.heldBytes = 0;
+        releaseSizeChanges(stream);
     }
 
     /* Whether delivering this picture needs the client to set its capture queue
@@ -621,8 +679,10 @@ public:
                 stream.captureDeferred = false;
                 stream.output = params(p.queue_type, p.format, p.frame_width, p.frame_height);
                 /* A client that sets the new size is done renegotiating. */
-                if (p.frame_width == stream.announcedWidth && p.frame_height == stream.announcedHeight)
+                if (p.frame_width == stream.announcedWidth && p.frame_height == stream.announcedHeight) {
                     stream.renegotiating = false;
+                    releaseSizeChanges(stream);
+                }
                 drive(id, stream);
             }
             return done(reply(id));
@@ -691,9 +751,14 @@ public:
                 stream.decoder->submit(packet, q.timestamp);
                 ++stream.packets;
                 stream.packetBytes += q.data_sizes[0];
+                const bool changesSize = carriesSizeChange(stream);
                 collect(id, stream);
                 auto result = load<virtio_video_resource_queue_resp>(queued(id, q.timestamp, 0));
                 result.data_sizes[0] = q.data_sizes[0];
+                if (changesSize) {
+                    holdSizeChange(stream, requestId, q.resource_id, toBytes(result));
+                    return {VhostUserQueueAction::defer, {}};
+                }
                 return done(toBytes(result));
             }
             if (stream.outputs.size() >= 32) throw std::invalid_argument("video capture queue is full");
@@ -722,6 +787,7 @@ public:
              * capture format: decode what is held before draining, or the end
              * of stream would be reported ahead of the pictures. */
             stream.captureDeferred = false;
+            releaseSizeChanges(stream);
             drive(id, stream);
             stream.decoder->drain();
             stream.draining = true;
@@ -734,6 +800,7 @@ public:
             if (q.queue_type == VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT) {
                 cancelOutputs(id, stream);
                 stream.renegotiating = false;
+                releaseSizeChanges(stream);
             } else {
                 /* A seek. The decoder forgets what it decoded and keeps the
                  * stream's parameter sets, which the client does not send
