@@ -83,6 +83,24 @@ std::vector<std::uint8_t> packBgra(const uml::platform::DecodedVideoFrame& frame
     return pixels;
 }
 
+/* A planar frame of 10-bit samples, which sit in the high bits of a
+ * little-endian pair, as the 8-bit NV12 a client that negotiated it expects.
+ * The decoder narrows the pictures it decodes once it has been asked to, so
+ * only a picture decoded before the client chose reaches this. The rounding is
+ * the decoder's. */
+void narrowTo8(uml::platform::DecodedVideoFrame& frame)
+{
+    for (auto* plane : {&frame.luma, &frame.chroma}) {
+        std::vector<std::uint8_t> narrow(plane->size() / 2);
+        for (std::size_t i = 0; i < narrow.size(); ++i) {
+            const unsigned value = unsigned((*plane)[2 * i]) | (unsigned((*plane)[2 * i + 1]) << 8);
+            narrow[i] = std::uint8_t(std::min(255u, (value + 0x80u) >> 8));
+        }
+        *plane = std::move(narrow);
+    }
+    frame.format.bitDepth = 8;
+}
+
 std::vector<std::uint8_t> reply(std::uint32_t stream, std::uint32_t type = VIRTIO_VIDEO_RESP_OK_NODATA)
 {
     return toBytes(virtio_video_cmd_hdr{type, stream});
@@ -96,10 +114,14 @@ std::uint32_t defaultCapture(unsigned bitDepth) noexcept
 {
     return bitDepth == 10 ? VIRTIO_VIDEO_FORMAT_P010 : VIRTIO_VIDEO_FORMAT_BGRA8888;
 }
+/* What the decoder is asked to produce for a capture format: packed pixels, the
+ * stream's own depth for P010, and 8-bit planes for NV12 and YUV420, which a
+ * 10-bit stream reaches by being narrowed. */
 uml::platform::VideoPixelLayout captureLayout(std::uint32_t format) noexcept
 {
-    return format == VIRTIO_VIDEO_FORMAT_BGRA8888 ? uml::platform::VideoPixelLayout::packedBgra
-                                                  : uml::platform::VideoPixelLayout::planarYuv;
+    if (format == VIRTIO_VIDEO_FORMAT_BGRA8888) return uml::platform::VideoPixelLayout::packedBgra;
+    return format == VIRTIO_VIDEO_FORMAT_P010 ? uml::platform::VideoPixelLayout::planarYuv
+                                              : uml::platform::VideoPixelLayout::planar8Bit;
 }
 bool validQueue(std::uint32_t queue)
 {
@@ -348,7 +370,7 @@ public:
         auto raw = stream.output.format;
         if (raw == VIRTIO_VIDEO_FORMAT_BGRA8888) { /* keep the negotiated packed format */ }
         else if (raw == VIRTIO_VIDEO_FORMAT_P010) { if (depth != 10) raw = VIRTIO_VIDEO_FORMAT_NV12; }
-        else if (depth == 10) raw = VIRTIO_VIDEO_FORMAT_P010;
+        else if (depth == 10 && !stream.captureSettled) raw = VIRTIO_VIDEO_FORMAT_P010;
         stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw, width, height);
         stream.announcedWidth = width;
         stream.announcedHeight = height;
@@ -459,6 +481,9 @@ public:
             auto frame = std::move(stream.frames.front());
             stream.frames.pop_front();
             ++stream.delivered;
+            if (stream.output.format != VIRTIO_VIDEO_FORMAT_BGRA8888 && stream.output.format != VIRTIO_VIDEO_FORMAT_P010 &&
+                frame.layout == uml::platform::VideoPixelLayout::planarYuv && frame.format.bitDepth == 10)
+                narrowTo8(frame);
             std::vector<std::vector<std::uint8_t>> planes;
             if (stream.output.format == VIRTIO_VIDEO_FORMAT_BGRA8888) {
                 const bool packed = frame.layout == uml::platform::VideoPixelLayout::packedBgra;
@@ -582,12 +607,14 @@ public:
                 const bool packed = p.format == VIRTIO_VIDEO_FORMAT_BGRA8888;
                 if (!packed && p.format != VIRTIO_VIDEO_FORMAT_NV12 && p.format != VIRTIO_VIDEO_FORMAT_YUV420 &&
                     p.format != VIRTIO_VIDEO_FORMAT_P010) throw std::invalid_argument("unsupported raw video format");
-                const bool tenBit = p.format == VIRTIO_VIDEO_FORMAT_P010;
-                /* A packed format carries 8-bit samples whatever the stream's
-                 * depth is, so only a planar choice has to match it. */
-                if (!packed && (std::none_of(capabilities.begin(), capabilities.end(), [&stream, tenBit](const auto& c) {
-                        return wireCodec(c.codec) == stream.coded && c.bitDepth == (tenBit ? 10u : 8u);
-                    }) || (stream.sourceKnown && (stream.decoder->format().bitDepth == 10) != tenBit)))
+                /* Only P010 has to match the stream's depth: it carries 10-bit
+                 * samples and nothing else. A packed format and the 8-bit
+                 * planar ones are reached from either depth, a 10-bit stream
+                 * being narrowed on its way. */
+                if (p.format == VIRTIO_VIDEO_FORMAT_P010 &&
+                    (std::none_of(capabilities.begin(), capabilities.end(), [&stream](const auto& c) {
+                         return wireCodec(c.codec) == stream.coded && c.bitDepth == 10u;
+                     }) || (stream.sourceKnown && stream.decoder->format().bitDepth != 10)))
                     throw std::invalid_argument("raw video bit depth is incompatible with the stream");
                 stream.decoder->requestOutputLayout(captureLayout(p.format));
                 stream.captureSettled = true;

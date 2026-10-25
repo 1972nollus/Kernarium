@@ -1228,6 +1228,63 @@ void seekKeepsTheFormat()
     video.device.reset();
 }
 
+/* A 10-bit stream is offered 8-bit planar capture, which Android asks for by
+ * default, and still P010. A client that wants P010 from an 8-bit stream is
+ * refused: the samples would be a lie. */
+void tenBitStreamToNv12(unsigned format)
+{
+    VideoFixture video(11, 8 * page, [](auto) { return std::make_unique<Decoder>(true); },
+        {{VideoCodec::h264, VideoProfile::h264High10, 4096, 2304, 51, 10}});
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    video.createStream();
+    require(video.device.processQueue(1, 930, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+            "event not deferred");
+    video.setOutputFormat(format);
+    video.attachEncodedInput();
+    const bool nv12 = format == VIRTIO_VIDEO_FORMAT_NV12;
+    Planes planes = nv12 ? Planes {{{3 * page, 4096, {}}}, {{4 * page, 2048, {}}}}
+                         : Planes {{{3 * page, 12288, {}}}};
+    require(load<virtio_video_cmd_hdr>(video.attach(output, 2, planes).response).type ==
+            VIRTIO_VIDEO_RESP_OK_NODATA, "capture attach failed");
+    const auto capture = video.queueCommand(output, 2);
+    const auto request = video.next;
+    require(video.command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
+    require(load<virtio_video_resource_queue_resp>(
+                video.command(video.queueCommand(input, 1, 5, 31)).response).flags == 0, "decode input failed");
+    VhostUserQueueCompletion completion;
+    require(video.device.takeQueueCompletion(completion), "missing source event");
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == request, "missing capture completion");
+    const auto result = load<virtio_video_resource_queue_resp>(completion.response);
+    require(result.flags == 0, "the picture was failed");
+    if (nv12) {
+        require(result.data_sizes[0] == 4096 && result.data_sizes[1] == 2048, "8-bit planes of a 10-bit stream");
+        // The decoder's samples carry the pattern in both bytes; narrowing rounds.
+        for (std::uint32_t row = 0; row < 64; row += 9)
+            for (std::uint32_t column = 0; column < 64; column += 7) {
+                const unsigned wide = patternLuma(row, column) * 257u;
+                require(video.memory[3 * page + row * 64 + column] == std::min(255u, (wide + 0x80u) >> 8),
+                        "a 10-bit sample was not narrowed to 8 bits");
+            }
+        require(video.memory[4 * page] == 0x91 && video.memory[4 * page + 1] == 0x91, "chroma was not narrowed");
+    } else {
+        require(result.data_sizes[0] == 12288, "10-bit samples of a 10-bit stream");
+    }
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 11}});
+    video.device.reset();
+
+    // And the other way round.
+    VideoFixture eight(12, 4 * page, [](auto) { return std::make_unique<Decoder>(false); });
+    eight.createStream();
+    virtio_video_set_params set {};
+    set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 12};
+    set.params.queue_type = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    set.params.format = VIRTIO_VIDEO_FORMAT_P010;
+    set.params.frame_width = set.params.frame_height = 64;
+    require(load<virtio_video_cmd_hdr>(eight.command(set).response).type == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER,
+            "P010 was offered for an 8-bit stream");
+}
+
 /* A format descriptor's `mask` names positions in the other queue's list, in
  * the order the same response carries them, and a guest that walks that list
  * offers its client exactly the formats the bits select. This checks both
@@ -1324,6 +1381,27 @@ void capabilityMasks()
         require(selected(coded, mask) == expected, "a capture format names the wrong codecs");
     }
     device.reset();
+
+    /* A codec with only a 10-bit capability is reached by the 8-bit planar
+     * formats too: its pictures are narrowed. */
+    VirtioVideoDevice tenBitOnly({{VideoCodec::h264, VideoProfile::h264High10, 4096, 2304, 51, 10}},
+                                 [](auto) { return std::make_unique<Decoder>(true); });
+    std::vector<std::uint8_t> request;
+    append(request, virtio_video_query_capability{{VIRTIO_VIDEO_CMD_QUERY_CAPABILITY, 0},
+                                                  VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, {}});
+    const auto reply = tenBitOnly.processQueue(0, 1, request, 65536).response;
+    unsigned seen = 0;
+    auto offset = sizeof(virtio_video_query_capability_resp);
+    for (unsigned i = 0; i < load<virtio_video_query_capability_resp>(reply).num_descs; ++i) {
+        const auto desc = load<virtio_video_format_desc>(std::span(reply).subspan(offset));
+        require(desc.mask == 1, "a raw format of a 10-bit only codec does not name it");
+        ++seen;
+        offset += sizeof(virtio_video_format_desc);
+        const auto range = load<virtio_video_format_frame>(std::span(reply).subspan(offset));
+        require(range.width.max == 4096, "a raw format of a 10-bit only codec has no size");
+        offset += sizeof(virtio_video_format_frame) + range.num_rates * sizeof(virtio_video_format_range);
+    }
+    require(seen == 4, "all four raw formats are offered for a 10-bit codec");
 }
 
 }
@@ -1346,6 +1424,8 @@ int main()
         packedDefaultThroughStreamon();
         resolutionChange();
         seekKeepsTheFormat();
+        for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_P010})
+            tenBitStreamToNv12(format);
         for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420, VIRTIO_VIDEO_FORMAT_P010})
             exercise(format);
         activityLog();

@@ -106,22 +106,21 @@ std::vector<std::uint8_t> capabilityResponse(
         for (const auto& cap : capabilities) {
             const bool input = queue == VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
             if (input && wireCodec(cap.codec) != format) continue;
-            if (!input && format != VIRTIO_VIDEO_FORMAT_BGRA8888 &&
-                cap.bitDepth != (format == VIRTIO_VIDEO_FORMAT_P010 ? 10u : 8u)) continue;
+            // P010 carries 10-bit samples and nothing else; every other raw
+            // format is reached from either depth, a 10-bit stream being narrowed.
+            if (!input && format == VIRTIO_VIDEO_FORMAT_P010 && cap.bitDepth != 10) continue;
             width = std::max(width, cap.maximumWidth);
             height = std::max(height, cap.maximumHeight);
             if (input) {
                 /* A descriptor's mask names positions in the *other* queue's
                  * list, in the order this very response carries it. A coded
-                 * format reaches the packed format whatever its coded bit
-                 * depth, an 8-bit one reaches the 8-bit planar formats, and a
-                 * 10-bit one reaches P010 - which is what the device itself
-                 * enforces when a stream negotiates its capture format. */
+                 * format reaches the packed format and the 8-bit planar
+                 * formats whatever its coded bit depth, and a 10-bit one also
+                 * reaches P010 - which is what the device itself enforces
+                 * when a stream negotiates its capture format. */
                 for (std::size_t index = 0; index < raw.size(); ++index) {
-                    const bool packed = raw[index] == VIRTIO_VIDEO_FORMAT_BGRA8888;
                     const bool tenBitRaw = raw[index] == VIRTIO_VIDEO_FORMAT_P010;
-                    if (packed || tenBitRaw == (cap.bitDepth == 10))
-                        mask |= std::uint64_t(1) << index;
+                    if (!tenBitRaw || cap.bitDepth == 10) mask |= std::uint64_t(1) << index;
                 }
             } else {
                 const auto found = std::find(coded.begin(), coded.end(), wireCodec(cap.codec));
