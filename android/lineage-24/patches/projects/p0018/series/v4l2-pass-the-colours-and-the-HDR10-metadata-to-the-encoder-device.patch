@@ -13,8 +13,11 @@ where the device reads it.
 
 Main 10 encodes 10-bit frames, which the device must take as P010 for the
 profile to make sense. The device query leaves Main 10 out of the profiles
-when the device lists no P010 input, and the encoder takes P010 frames for
-that profile, with the frame layout and the stride of the P010 blocks. A
+when the device lists no P010 input; it lists the raw formats for the HEVC
+coded format, since a device lists them per coded format. The interface
+offers the P010 pixel format with that profile, which the framework lists as
+a colour format, and the encoder takes P010 frames for the profile, with the
+frame layout and the stride of the P010 blocks. A
 device that lists the HDR10 mastering display and content light level
 controls on top of that offers the HDR static info parameter, which is
 the sign for the framework to list the HDR10 profile, and the encoder sets
@@ -22,15 +25,15 @@ the two compound controls from it in the units of the SEI messages.
 ---
  common/include/v4l2_codec2/common/Common.h    |   2 +
  components/EncodeComponent.cpp                |  18 ++-
- components/EncodeInterface.cpp                | 132 +++++++++++++++++-
- .../v4l2_codec2/components/EncodeInterface.h  |  17 +++
+ components/EncodeInterface.cpp                | 148 +++++++++++++++++-
+ .../v4l2_codec2/components/EncodeInterface.h  |  18 +++
  .../v4l2_codec2/components/VideoEncoder.h     |   9 ++
- v4l2/V4L2Device.cpp                           | 123 +++++++++++++++-
+ v4l2/V4L2Device.cpp                           | 134 +++++++++++++++-
  v4l2/V4L2EncodeComponent.cpp                  |  15 +-
- v4l2/V4L2Encoder.cpp                          |  71 +++++++++-
- v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |  26 +++-
+ v4l2/V4L2Encoder.cpp                          |  71 ++++++++-
+ v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |  26 ++-
  v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |   8 +-
- 10 files changed, 405 insertions(+), 16 deletions(-)
+ 10 files changed, 433 insertions(+), 16 deletions(-)
 
 diff --git a/common/include/v4l2_codec2/common/Common.h b/common/include/v4l2_codec2/common/Common.h
 index aa72bef7c5cda98dbd0ba9f5434fa63830bb4ba5..1eaa41af8eb85bcc277060c2a961bbf577559a56 100644
@@ -46,7 +49,7 @@ index aa72bef7c5cda98dbd0ba9f5434fa63830bb4ba5..1eaa41af8eb85bcc277060c2a961bbf5
  
  // Check whether |rect1| completely contains |rect2|.
 diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
-index 89de2742a706c06a5a254218581f04ec4fd9208d..f40684454436f7fd5e2bac7d0538a153e249f26b 100644
+index ca922e6a48d06a42da8b11cb46f85450219ce8f0..27927180a5912d126ba006ee1ef12cda800d66d4 100644
 --- a/components/EncodeComponent.cpp
 +++ b/components/EncodeComponent.cpp
 @@ -109,7 +109,15 @@ std::optional<std::vector<VideoFramePlane>> getVideoFrameLayout(const C2ConstGra
@@ -82,7 +85,7 @@ index 89de2742a706c06a5a254218581f04ec4fd9208d..f40684454436f7fd5e2bac7d0538a153
      std::shared_ptr<C2GraphicBlock> block;
      status = pool->fetchGraphicBlock(size.width, size.height, static_cast<uint32_t>(halFormat),
 diff --git a/components/EncodeInterface.cpp b/components/EncodeInterface.cpp
-index 22f2cfe91341cd1465d637314f03b1dcce569372..8acc6978610f5dd559872a374b7aca00a3982fd8 100644
+index 22f2cfe91341cd1465d637314f03b1dcce569372..d6c1ef61585ce7901e7abb7b3e82d31837656e6d 100644
 --- a/components/EncodeInterface.cpp
 +++ b/components/EncodeInterface.cpp
 @@ -389,13 +389,59 @@ C2R EncodeInterface::InputDelaySetter(bool /*mayBlock*/, C2P<C2PortActualDelayTu
@@ -146,10 +149,26 @@ index 22f2cfe91341cd1465d637314f03b1dcce569372..8acc6978610f5dd559872a374b7aca00
      Initialize(name, caps);
  }
  
-@@ -600,6 +646,68 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+@@ -600,6 +646,84 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
                           .withSetter(Setter<decltype(*mKeyFramePeriodUs)>::StrictValueWithNoDeps)
                           .build());
  
++    // The raw formats of the frames: flexible YUV, and P010 when the device encodes Main 10, which
++    // is what makes the framework list the 10-bit colour formats.
++    std::vector<uint32_t> pixelFormats = {HAL_PIXEL_FORMAT_YCBCR_420_888};
++    if (std::any_of(caps.supportedProfiles.begin(), caps.supportedProfiles.end(),
++                    [](const SupportedProfile& profile) {
++                        return profile.profile == C2Config::PROFILE_HEVC_MAIN_10;
++                    })) {
++        pixelFormats.push_back(HAL_PIXEL_FORMAT_YCBCR_P010);
++    }
++    addParameter(DefineParam(mPixelFormat, C2_PARAMKEY_PIXEL_FORMAT)
++                         .withDefault(new C2StreamPixelFormatInfo::input(
++                                 0u, HAL_PIXEL_FORMAT_YCBCR_420_888))
++                         .withFields({C2F(mPixelFormat, value).oneOf(pixelFormats)})
++                         .withSetter(Setter<decltype(*mPixelFormat)>::NonStrictValueWithNoDeps)
++                         .build());
++
 +    // The colours of the frames, which the stream describes the way the client does.
 +    addParameter(DefineParam(mColorAspects, C2_PARAMKEY_COLOR_ASPECTS)
 +                         .withDefault(new C2StreamColorAspectsInfo::input(
@@ -215,7 +234,7 @@ index 22f2cfe91341cd1465d637314f03b1dcce569372..8acc6978610f5dd559872a374b7aca00
      // The bounds of the quantization parameter, if the device has them.
      if (caps.qpRange) {
          mQpRange = caps.qpRange;
-@@ -728,6 +836,28 @@ float EncodeInterface::getBaseLayerBitrateRatio() const {
+@@ -728,6 +852,28 @@ float EncodeInterface::getBaseLayerBitrateRatio() const {
      return std::clamp(mLayering->m.bitrateRatios[0], 0.05f, 0.95f);
  }
  
@@ -245,7 +264,7 @@ index 22f2cfe91341cd1465d637314f03b1dcce569372..8acc6978610f5dd559872a374b7aca00
      if (mKeyFramePeriodUs->value < 0 || mKeyFramePeriodUs->value == INT64_MAX) {
          return 0;
 diff --git a/components/include/v4l2_codec2/components/EncodeInterface.h b/components/include/v4l2_codec2/components/EncodeInterface.h
-index 5ef591af7bccace9c1d654da5c0e92e29c4b0247..a5f1456b516230ba03aa457d40f7b72f4f9bbe7f 100644
+index 5ef591af7bccace9c1d654da5c0e92e29c4b0247..a401f89bd19cd5e4bfcfd5eaffadb20a4fc57e91 100644
 --- a/components/include/v4l2_codec2/components/EncodeInterface.h
 +++ b/components/include/v4l2_codec2/components/EncodeInterface.h
 @@ -68,6 +68,10 @@ public:
@@ -273,11 +292,12 @@ index 5ef591af7bccace9c1d654da5c0e92e29c4b0247..a5f1456b516230ba03aa457d40f7b72f
      static C2R InputDelaySetter(bool mayBlock, C2P<C2PortActualDelayTuning::input>& me,
                                  const C2P<C2StreamGopTuning::output>& gop);
  
-@@ -166,6 +177,12 @@ protected:
+@@ -166,6 +177,13 @@ protected:
      // The temporal layering of the stream.
      std::shared_ptr<C2StreamTemporalLayeringTuning::output> mLayering;
  
 +    // The colour aspects of the frames to encode, and the ones the stream carries.
++    std::shared_ptr<C2StreamPixelFormatInfo::input> mPixelFormat;
 +    std::shared_ptr<C2StreamColorAspectsInfo::input> mColorAspects;
 +    std::shared_ptr<C2StreamColorAspectsInfo::output> mCodedColorAspects;
 +    // The HDR10 static metadata of the frames, if the device takes it.
@@ -307,7 +327,7 @@ index bf207e895c9311bdf8413683acb61f90394af60d..d05f1caa5e6624e5ac1a237f6a6ab248
  
      // The InputFrame class can be used to store raw video frames.
 diff --git a/v4l2/V4L2Device.cpp b/v4l2/V4L2Device.cpp
-index a9ff06399514aa2c92d0f47662b5fe94d59bce38..ac4b8876c4c7c6ca09e6d770f8ec6310dc8cda81 100644
+index a9ff06399514aa2c92d0f47662b5fe94d59bce38..0ed408438a1f3566b273661a164c1aae1d243ce0 100644
 --- a/v4l2/V4L2Device.cpp
 +++ b/v4l2/V4L2Device.cpp
 @@ -95,6 +95,11 @@ V4L2ExtCtrl::V4L2ExtCtrl(uint32_t id, int32_t val) : V4L2ExtCtrl(id) {
@@ -434,7 +454,7 @@ index a9ff06399514aa2c92d0f47662b5fe94d59bce38..ac4b8876c4c7c6ca09e6d770f8ec6310
  // static
  v4l2_mpeg_video_bitrate_mode V4L2Device::c2BitrateModeToV4L2BitrateMode(
          C2Config::bitrate_mode_t bitrateMode) {
-@@ -2490,6 +2589,28 @@ void V4L2Device::queryEncoderControls(VideoCodec codec, uint32_t pixFmt,
+@@ -2490,6 +2589,39 @@ void V4L2Device::queryEncoderControls(VideoCodec codec, uint32_t pixFmt,
      if (isCtrlExposed(isHEVC ? V4L2_CID_MPEG_VIDEO_HEVC_LEVEL : V4L2_CID_MPEG_VIDEO_H264_LEVEL)) {
          caps->supportedLevels = queryC2Levels(pixFmt);
      }
@@ -442,6 +462,17 @@ index a9ff06399514aa2c92d0f47662b5fe94d59bce38..ac4b8876c4c7c6ca09e6d770f8ec6310
 +    // Main 10 takes 10-bit frames, so a device that lists the profile but takes no 10-bit frame
 +    // cannot encode it. The HDR10 metadata only has a meaning for that profile.
 +    if (isHEVC) {
++        // A device lists the raw formats of the coded format its stream is set to, so set the
++        // coded format of this codec before the list is asked for.
++        v4l2_format codedFormat;
++        memset(&codedFormat, 0, sizeof(codedFormat));
++        codedFormat.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
++        codedFormat.fmt.pix_mp.pixelformat = pixFmt;
++        codedFormat.fmt.pix_mp.width = 1920;
++        codedFormat.fmt.pix_mp.height = 1080;
++        codedFormat.fmt.pix_mp.num_planes = 1;
++        ioctl(VIDIOC_S_FMT, &codedFormat);
++
 +        const std::vector<uint32_t> rawFormats =
 +                enumerateSupportedPixelformats(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
 +        const bool takesP010 = std::find(rawFormats.begin(), rawFormats.end(),
@@ -464,10 +495,10 @@ index a9ff06399514aa2c92d0f47662b5fe94d59bce38..ac4b8876c4c7c6ca09e6d770f8ec6310
  
  std::vector<C2Config::level_t> V4L2Device::enumerateSupportedDecodeLevels(
 diff --git a/v4l2/V4L2EncodeComponent.cpp b/v4l2/V4L2EncodeComponent.cpp
-index f60fd64f1fa3870333cb27d04b1d4fedcad9637a..4d2e889893ab513e453d1f3dd44e241202fabd5c 100644
+index f484743e02071f8c78c114a7d5912cca7a618a63..1c395a638f4e43b245246c4a3278e387661467b9 100644
 --- a/v4l2/V4L2EncodeComponent.cpp
 +++ b/v4l2/V4L2EncodeComponent.cpp
-@@ -79,10 +79,16 @@ bool V4L2EncodeComponent::initializeEncoder() {
+@@ -80,10 +80,16 @@ bool V4L2EncodeComponent::initializeEncoder() {
          level = c2LevelToV4L2HEVCLevel(mInterface->getOutputLevel());
      }
  
@@ -485,7 +516,7 @@ index f60fd64f1fa3870333cb27d04b1d4fedcad9637a..4d2e889893ab513e453d1f3dd44e2412
      if (!stride) {
          ALOGE("Failed to get video frame stride");
          reportError(C2_CORRUPTED);
-@@ -100,7 +106,6 @@ bool V4L2EncodeComponent::initializeEncoder() {
+@@ -101,7 +107,6 @@ bool V4L2EncodeComponent::initializeEncoder() {
  
      mBitrate = mInterface->getBitrate();
  
@@ -493,7 +524,7 @@ index f60fd64f1fa3870333cb27d04b1d4fedcad9637a..4d2e889893ab513e453d1f3dd44e2412
      params.quality = mInterface->getQuality();
      params.qpBounds = mInterface->getQpBounds();
      params.maxBFrames = mInterface->getMaxBFrames();
-@@ -117,6 +122,12 @@ bool V4L2EncodeComponent::initializeEncoder() {
+@@ -118,6 +123,12 @@ bool V4L2EncodeComponent::initializeEncoder() {
          params.maxBFrames = 0;
          if (mBitrateMode == C2Config::BITRATE_CONST) mBitrateMode = C2Config::BITRATE_VARIABLE;
      }

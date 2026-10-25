@@ -422,7 +422,16 @@ profiles and levels, colour aspects and HDR10 static metadata. A capability the
 device does not list is not advertised: Main 10 and HDR10 need a 10-bit raw
 format, which the device publishes only when the host does. Packed RGB input
 goes to the device unconverted when it lists that byte order and is converted
-otherwise.
+otherwise. The device picks the level of a stream under the ceiling the client
+asks for, so the component reports the level it reads from the first coded
+headers.
+
+An encoder's input is a CPU-readable gralloc buffer (`COLOR_FormatYUV420Flexible`
+as NV12, `COLOR_FormatYUVP010` as P010, or packed RGB): the host cannot sample a
+YUV format natively, so minigbm allocates NV12, NV21, P010 and the planar 4:2:0
+formats as bytes of an R8 resource, each plane a sub-image that a mapping
+transfers on its own. P010 has the NV12 layout with two-byte samples, which is
+what lets Main 10 and HDR10 input reach the device.
 
 `overlay/config/media_codecs_c2_v4l2.xml` is installed as
 `vendor/etc/media_codecs_c2.xml` and names these two encoders alone. Hardware

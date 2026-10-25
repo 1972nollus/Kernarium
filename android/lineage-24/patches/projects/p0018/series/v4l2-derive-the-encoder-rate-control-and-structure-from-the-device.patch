@@ -24,23 +24,29 @@ With B-frames the stream leaves the encoder in decode order, so the
 component reports a finished work item without waiting for the ones before
 it, except for the one that ends the stream. The input delay follows the
 run of B-frames.
+
+The device chooses the level of the stream under the ceiling the client
+asks for, so the component reads the level from the first coded headers (the
+AVC SPS or the HEVC general_level_idc) and reports it as the stream's profile
+and level when it differs from the requested one.
 ---
- common/EncodeHelpers.cpp                      |   2 +
+ common/EncodeHelpers.cpp                      |  84 +++++
  common/include/v4l2_codec2/common/Common.h    |  17 +
- components/EncodeComponent.cpp                |  43 ++-
+ .../v4l2_codec2/common/EncodeHelpers.h        |   5 +
+ components/EncodeComponent.cpp                |  54 +++-
  components/EncodeInterface.cpp                | 294 ++++++++++++++++--
- .../v4l2_codec2/components/EncodeComponent.h  |  10 +
+ .../v4l2_codec2/components/EncodeComponent.h  |  13 +
  .../v4l2_codec2/components/EncodeInterface.h  |  44 +++
  .../v4l2_codec2/components/VideoEncoder.h     |  21 ++
  v4l2/V4L2Device.cpp                           |  96 +++++-
- v4l2/V4L2EncodeComponent.cpp                  |  22 +-
+ v4l2/V4L2EncodeComponent.cpp                  |  23 +-
  v4l2/V4L2Encoder.cpp                          | 126 ++++++--
  v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |   4 +
  v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |  38 ++-
- 12 files changed, 649 insertions(+), 68 deletions(-)
+ 13 files changed, 751 insertions(+), 68 deletions(-)
 
 diff --git a/common/EncodeHelpers.cpp b/common/EncodeHelpers.cpp
-index 68c940063e7369b1dda0069d4d930c2acbec1976..6ab578bfa2f04aaeeccd6649a470ccca23f752b9 100644
+index 68c940063e7369b1dda0069d4d930c2acbec1976..9056e074eb82936df05cdd6bffc77ee7be482449 100644
 --- a/common/EncodeHelpers.cpp
 +++ b/common/EncodeHelpers.cpp
 @@ -79,6 +79,8 @@ uint8_t c2LevelToV4L2Level(C2Config::level_t level) {
@@ -52,6 +58,95 @@ index 68c940063e7369b1dda0069d4d930c2acbec1976..6ab578bfa2f04aaeeccd6649a470ccca
      default:
          ALOGE("Unrecognizable C2 level (value = 0x%x)...", level);
          return 0;
+@@ -235,6 +237,88 @@ bool extractCSDInfo(std::unique_ptr<C2StreamInitDataInfo::output>* const csd, co
+            copyNALUPrependingStartCode(pps.data(), pps.size(), &csdBuffer, &configDataLength);
+ }
+ 
++C2Config::level_t extractStreamLevel(bool isHEVC, const uint8_t* data, size_t length) {
++    if (!isHEVC) {
++        // The SPS is the NAL header, profile_idc, the constraint flags and level_idc.
++        std::vector<uint8_t> sps;
++        std::vector<uint8_t> pps;
++        if (!extractSPSPPS(data, length, &sps, &pps) || sps.size() < 4) return C2Config::LEVEL_UNUSED;
++        const uint8_t profileIdc = sps[1];
++        const uint8_t constraintFlags = sps[2];
++        const uint8_t levelIdc = sps[3];
++        // Level 1b is level 1.1 with constraint_set3 in the profiles that have no level 1b code.
++        const bool oneB = levelIdc == 9 || (levelIdc == 11 && (constraintFlags & 0x10) &&
++                                            (profileIdc == 66 || profileIdc == 77 ||
++                                             profileIdc == 88));
++        if (oneB) return C2Config::LEVEL_AVC_1B;
++        switch (levelIdc) {
++        case 10: return C2Config::LEVEL_AVC_1;
++        case 11: return C2Config::LEVEL_AVC_1_1;
++        case 12: return C2Config::LEVEL_AVC_1_2;
++        case 13: return C2Config::LEVEL_AVC_1_3;
++        case 20: return C2Config::LEVEL_AVC_2;
++        case 21: return C2Config::LEVEL_AVC_2_1;
++        case 22: return C2Config::LEVEL_AVC_2_2;
++        case 30: return C2Config::LEVEL_AVC_3;
++        case 31: return C2Config::LEVEL_AVC_3_1;
++        case 32: return C2Config::LEVEL_AVC_3_2;
++        case 40: return C2Config::LEVEL_AVC_4;
++        case 41: return C2Config::LEVEL_AVC_4_1;
++        case 42: return C2Config::LEVEL_AVC_4_2;
++        case 50: return C2Config::LEVEL_AVC_5;
++        case 51: return C2Config::LEVEL_AVC_5_1;
++        case 52: return C2Config::LEVEL_AVC_5_2;
++        case 60: return C2Config::LEVEL_AVC_6;
++        case 61: return C2Config::LEVEL_AVC_6_1;
++        case 62: return C2Config::LEVEL_AVC_6_2;
++        default: return C2Config::LEVEL_UNUSED;
++        }
++    }
++
++    std::vector<uint8_t> vps;
++    std::vector<uint8_t> sps;
++    std::vector<uint8_t> pps;
++    if (!extractVPSSPSPPS(data, length, &vps, &sps, &pps)) return C2Config::LEVEL_UNUSED;
++
++    // The SPS is the two byte NAL header, then the VPS id with the sub-layer count, then the
++    // profile, tier and level of the general profile. Drop the emulation prevention bytes of the
++    // first bytes, which can hold zeros, to read them as they are in the payload.
++    std::vector<uint8_t> payload;
++    for (size_t i = 2; i < sps.size() && payload.size() < 13; ++i) {
++        const size_t n = payload.size();
++        if (n >= 2 && payload[n - 1] == 0 && payload[n - 2] == 0 && sps[i] == 3) continue;
++        payload.push_back(sps[i]);
++    }
++    if (payload.size() < 13) return C2Config::LEVEL_UNUSED;
++    const bool highTier = payload[1] & 0x20;
++    const uint8_t levelIdc = payload[12];
++    // Levels below 4 have no high tier.
++    struct HevcLevel {
++        uint8_t idc;
++        C2Config::level_t main;
++        C2Config::level_t high;
++    };
++    static const HevcLevel kLevels[] = {
++            {30, C2Config::LEVEL_HEVC_MAIN_1, C2Config::LEVEL_HEVC_MAIN_1},
++            {60, C2Config::LEVEL_HEVC_MAIN_2, C2Config::LEVEL_HEVC_MAIN_2},
++            {63, C2Config::LEVEL_HEVC_MAIN_2_1, C2Config::LEVEL_HEVC_MAIN_2_1},
++            {90, C2Config::LEVEL_HEVC_MAIN_3, C2Config::LEVEL_HEVC_MAIN_3},
++            {93, C2Config::LEVEL_HEVC_MAIN_3_1, C2Config::LEVEL_HEVC_MAIN_3_1},
++            {120, C2Config::LEVEL_HEVC_MAIN_4, C2Config::LEVEL_HEVC_HIGH_4},
++            {123, C2Config::LEVEL_HEVC_MAIN_4_1, C2Config::LEVEL_HEVC_HIGH_4_1},
++            {150, C2Config::LEVEL_HEVC_MAIN_5, C2Config::LEVEL_HEVC_HIGH_5},
++            {153, C2Config::LEVEL_HEVC_MAIN_5_1, C2Config::LEVEL_HEVC_HIGH_5_1},
++            {156, C2Config::LEVEL_HEVC_MAIN_5_2, C2Config::LEVEL_HEVC_HIGH_5_2},
++            {180, C2Config::LEVEL_HEVC_MAIN_6, C2Config::LEVEL_HEVC_HIGH_6},
++            {183, C2Config::LEVEL_HEVC_MAIN_6_1, C2Config::LEVEL_HEVC_HIGH_6_1},
++            {186, C2Config::LEVEL_HEVC_MAIN_6_2, C2Config::LEVEL_HEVC_HIGH_6_2},
++    };
++    for (const HevcLevel& level : kLevels) {
++        if (level.idc == levelIdc) return highTier ? level.high : level.main;
++    }
++    return C2Config::LEVEL_UNUSED;
++}
++
+ size_t prependSPSPPSToIDR(const uint8_t* src, size_t srcSize, uint8_t* dst, size_t dstSize,
+                           std::vector<uint8_t>* sps, std::vector<uint8_t>* pps) {
+     bool foundStreamParams = false;
 diff --git a/common/include/v4l2_codec2/common/Common.h b/common/include/v4l2_codec2/common/Common.h
 index ac55bd2189d1a7f98d59b827192311b0a6f3d800..aa72bef7c5cda98dbd0ba9f5434fa63830bb4ba5 100644
 --- a/common/include/v4l2_codec2/common/Common.h
@@ -87,8 +182,24 @@ index ac55bd2189d1a7f98d59b827192311b0a6f3d800..aa72bef7c5cda98dbd0ba9f5434fa638
  };
  
  // Check whether |rect1| completely contains |rect2|.
+diff --git a/common/include/v4l2_codec2/common/EncodeHelpers.h b/common/include/v4l2_codec2/common/EncodeHelpers.h
+index f9001e5eea31d6ae91023150379ad9b579715190..8b0e4a1384b4d9a932790fd6ae405694932c8232 100644
+--- a/common/include/v4l2_codec2/common/EncodeHelpers.h
++++ b/common/include/v4l2_codec2/common/EncodeHelpers.h
+@@ -69,6 +69,11 @@ bool extractVPSSPSPPS(const uint8_t* data, size_t length, std::vector<uint8_t>*
+ bool extractHEVCCSDInfo(std::unique_ptr<C2StreamInitDataInfo::output>* const csd,
+                         const uint8_t* data, size_t length);
+ 
++// The level an encoder wrote into the first SPS of the Annex B stream |data|, in C2 terms, or
++// LEVEL_UNUSED when the stream has no SPS or the level is not one C2 knows. A device may choose a
++// level of its own, so the level of the stream is what the component has to report.
++C2Config::level_t extractStreamLevel(bool isHEVC, const uint8_t* data, size_t length);
++
+ // Prepend the specified |sps| and |pps| NAL units (without start codes) to the H.264 |data| stream.
+ // The result is copied into |dst|. The provided |sps| and |pps| data will be updated if an SPS or
+ // PPS NAL unit is encountered. Returns the size of the new data, will be 0 if an error occurred.
 diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
-index 1a7c17746160c72abd0946c47560b7ced0766e56..89de2742a706c06a5a254218581f04ec4fd9208d 100644
+index 1a7c17746160c72abd0946c47560b7ced0766e56..ca922e6a48d06a42da8b11cb46f85450219ce8f0 100644
 --- a/components/EncodeComponent.cpp
 +++ b/components/EncodeComponent.cpp
 @@ -662,6 +662,20 @@ bool EncodeComponent::updateEncodingParameters() {
@@ -124,7 +235,25 @@ index 1a7c17746160c72abd0946c47560b7ced0766e56..89de2742a706c06a5a254218581f04ec
  }
  
  void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, bool keyFrame,
-@@ -931,10 +942,7 @@ void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, boo
+@@ -902,6 +913,17 @@ void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, boo
+         C2Work* work = mWorkQueue.front().get();
+         work->worklets.front()->output.configUpdate.push_back(std::move(csd));
+         mExtractCSD = false;
++
++        // The device may write a level other than the one it was given, as a device that only
++        // knows to pick the level of a stream does, so tell the framework the level of the stream.
++        const C2Config::level_t streamLevel =
++                extractStreamLevel(isHEVCProfile(mOutputProfile), view.data(), view.capacity());
++        if (streamLevel != C2Config::LEVEL_UNUSED && streamLevel != mOutputLevel) {
++            ALOGV("The stream has level %#x, not %#x", streamLevel, mOutputLevel);
++            work->worklets.front()->output.configUpdate.push_back(
++                    C2Param::Copy(C2StreamProfileLevelInfo::output(0u, mOutputProfile, streamLevel)));
++            mOutputLevel = streamLevel;
++        }
+     }
+ 
+     // Get the work item associated with the timestamp.
+@@ -931,10 +953,7 @@ void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, boo
      // We can report the work item as completed if its associated input buffer has also been
      // released. As output buffers are not necessarily returned in order we might be able to return
      // multiple ready work items now.
@@ -136,7 +265,7 @@ index 1a7c17746160c72abd0946c47560b7ced0766e56..89de2742a706c06a5a254218581f04ec
  }
  
  C2Work* EncodeComponent::getWorkByIndex(uint64_t index) {
-@@ -999,6 +1007,25 @@ bool EncodeComponent::isWorkDone(const C2Work& work) const {
+@@ -999,6 +1018,25 @@ bool EncodeComponent::isWorkDone(const C2Work& work) const {
      return true;
  }
  
@@ -520,7 +649,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..22f2cfe91341cd1465d637314f03b1dc
      if (mKeyFramePeriodUs->value < 0 || mKeyFramePeriodUs->value == INT64_MAX) {
          return 0;
 diff --git a/components/include/v4l2_codec2/components/EncodeComponent.h b/components/include/v4l2_codec2/components/EncodeComponent.h
-index d2e42f755c6ac72738d6a433d4b7d5bc4e2ac33c..3226c21aca103a3858eb9dff369ed4cd3ad72211 100644
+index d2e42f755c6ac72738d6a433d4b7d5bc4e2ac33c..67811a6317547951d84154e1ef80d5a1b955869a 100644
 --- a/components/include/v4l2_codec2/components/EncodeComponent.h
 +++ b/components/include/v4l2_codec2/components/EncodeComponent.h
 @@ -120,6 +120,10 @@ protected:
@@ -543,7 +672,7 @@ index d2e42f755c6ac72738d6a433d4b7d5bc4e2ac33c..3226c21aca103a3858eb9dff369ed4cd
      // The framerate currently configured on the v4l2 device.
      uint32_t mFramerate = 0;
      // Maximum valid framerate for current output level and input frame size.
-@@ -170,6 +176,10 @@ protected:
+@@ -170,10 +176,17 @@ protected:
      // The timestamp of the last frame encoded, used to dynamically adjust the framerate.
      std::optional<int64_t> mLastFrameTime;
  
@@ -554,6 +683,13 @@ index d2e42f755c6ac72738d6a433d4b7d5bc4e2ac33c..3226c21aca103a3858eb9dff369ed4cd
      // Whether we need to extract and submit CSD (codec-specific data, e.g. H.264 SPS).
      bool mExtractCSD = false;
      // The profile of the stream the encoder was started with, set when the encoder is initialized.
+     C2Config::profile_t mOutputProfile = C2Config::PROFILE_UNUSED;
++    // The level of the stream, which the encoder started with the requested one and sets to the
++    // level it wrote once the first output shows it.
++    C2Config::level_t mOutputLevel = C2Config::LEVEL_UNUSED;
+ 
+     // The queue of encode work items currently being processed.
+     std::deque<std::unique_ptr<C2Work>> mWorkQueue;
 diff --git a/components/include/v4l2_codec2/components/EncodeInterface.h b/components/include/v4l2_codec2/components/EncodeInterface.h
 index 26e8dc9dc670668c36734dd387847a628160b8b3..5ef591af7bccace9c1d654da5c0e92e29c4b0247 100644
 --- a/components/include/v4l2_codec2/components/EncodeInterface.h
@@ -795,10 +931,18 @@ index defb0f0c957d49d2eabb635d8956515dd59888cc..a9ff06399514aa2c92d0f47662b5fe94
          VideoCodec videoCodecType) {
      std::vector<C2Config::level_t> supportedLevels;
 diff --git a/v4l2/V4L2EncodeComponent.cpp b/v4l2/V4L2EncodeComponent.cpp
-index 7d1940e1a5c1c53d724a0a16acf55f8f280affab..f60fd64f1fa3870333cb27d04b1d4fedcad9637a 100644
+index 7d1940e1a5c1c53d724a0a16acf55f8f280affab..f484743e02071f8c78c114a7d5912cca7a618a63 100644
 --- a/v4l2/V4L2EncodeComponent.cpp
 +++ b/v4l2/V4L2EncodeComponent.cpp
-@@ -100,10 +100,30 @@ bool V4L2EncodeComponent::initializeEncoder() {
+@@ -69,6 +69,7 @@ bool V4L2EncodeComponent::initializeEncoder() {
+ 
+     // CSD only needs to be extracted when using an H.264 or HEVC profile.
+     mOutputProfile = outputProfile;
++    mOutputLevel = mInterface->getOutputLevel();
+     mExtractCSD = isH264Profile(outputProfile) || isHEVCProfile(outputProfile);
+ 
+     // The level, as the V4L2 enum value of the codec's level control.
+@@ -100,10 +101,30 @@ bool V4L2EncodeComponent::initializeEncoder() {
  
      mBitrate = mInterface->getBitrate();
  

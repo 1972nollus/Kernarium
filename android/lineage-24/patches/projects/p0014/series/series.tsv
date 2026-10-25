@@ -3,3 +3,4 @@
 # export again; never edit this directory by hand.
 patch	report-the-real-buffer-layout-on-an-upstream-virtio-gpu.patch
 patch	share-GPU-buffers-as-blob-resources.patch
+patch	emulate-P010-over-an-R8-resource.patch

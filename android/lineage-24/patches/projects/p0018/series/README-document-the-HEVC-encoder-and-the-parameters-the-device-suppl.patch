@@ -8,11 +8,11 @@ The encoder README listed three codecs, two bitrate modes and NV12 as the only
 input. Describe the HEVC encoder, the parameters that exist when the encoder
 device has the controls for them, and the input formats the encoder passes on.
 ---
- README.md | 40 +++++++++++++++++++++++++++++++++++-----
- 1 file changed, 35 insertions(+), 5 deletions(-)
+ README.md | 45 ++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 40 insertions(+), 5 deletions(-)
 
 diff --git a/README.md b/README.md
-index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..a39feff02f42a90b382f748c76e0a7b1b108a832 100644
+index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..920554d04ba7cbdba2cb72b1cae7527ef3cce4b6 100644
 --- a/README.md
 +++ b/README.md
 @@ -289,10 +289,12 @@ extern "C" ::C2Allocator* CreateAllocator(::C2Allocator::id_t allocatorId) {
@@ -30,7 +30,7 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..a39feff02f42a90b382f748c76e0a7b1
  - VP8: *c2.v4l2.vp8.encoder*
  - VP9: *c2.v4l2.vp9.encoder*
  
-@@ -316,6 +318,31 @@ be allowed to dynamically adjust the bitrate to maintain a constant quality. As
+@@ -316,6 +318,36 @@ be allowed to dynamically adjust the bitrate to maintain a constant quality. As
  the mediacodec framework does not provide facilities to configure the peak
  bitrate when using VBR, it is currently always set to 2x the target bitrate.
  
@@ -58,11 +58,16 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..a39feff02f42a90b382f748c76e0a7b1
 +- *C2_PARAMKEY_HDR_STATIC_INFO* sets the HDR10 mastering display and content
 +light level of an HEVC Main 10 stream, if the device has those controls and
 +takes P010 frames. A device without P010 input does not offer Main 10.
++- *C2_PARAMKEY_PIXEL_FORMAT* lists P010 beside the flexible YUV 4:2:0 format
++when the encoder offers Main 10, so the framework lists *COLOR_FormatYUVP010*.
++- *C2_PARAMKEY_PROFILE_LEVEL* of the output reports the level the device chose
++for the stream, read from the first coded headers, when it differs from the
++ceiling the client asked for.
 +
  The following parameters are dynamic, and can be freely adjusted at run-time:
  
  - *C2_PARAMKEY_BITRATE*: Use this parameter to specify the desired bitrate.
-@@ -329,10 +356,13 @@ additional key frames in addition to the periodic ones requested through the
+@@ -329,10 +361,13 @@ additional key frames in addition to the periodic ones requested through the
  
  ### Supported Input Pixel Formats:
  

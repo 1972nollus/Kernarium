@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 20:16:18 +0900
+Subject: [PATCH] emulate P010 over an R8 resource
+
+A host that cannot sample P010 natively leaves the guest with no P010
+buffer: the combination is skipped at init, so an allocation for it fails
+with "Unsupported combination". An HEVC Main 10 encoder, a client of
+COLOR_FormatYUVP010 and a P010 camera or decoder output all need a buffer
+the CPU can access.
+
+NV12, NV21 and the planar 4:2:0 formats are already emulated as bytes in an
+R8 resource, each plane a sub-image the transfers can address. P010 has the
+NV12 layout with two-byte samples, so its byte image is twice as wide, and
+so are its transfer boxes. Add it to the emulated formats. As for the
+others, the emulation covers buffers the CPU accesses and is not offered for
+rendering or scanout.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ virtgpu_virgl.c | 27 ++++++++++++++++++---------
+ 1 file changed, 18 insertions(+), 9 deletions(-)
+
+diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
+index c99db486d39185640c82187fac7ed76c3a2c2865..7618d41c7c448133a3da7053afc46829188ca56a 100644
+--- a/virtgpu_virgl.c
++++ b/virtgpu_virgl.c
+@@ -195,13 +195,16 @@ static void virgl_get_emulated_metadata(const struct bo *bo, struct bo_metadata
+ 	switch (bo->meta.format) {
+ 	case DRM_FORMAT_NV12:
+ 	case DRM_FORMAT_NV21:
+-		// Bi-planar
++	case DRM_FORMAT_P010:
++		// Bi-planar. A P010 sample takes two bytes, so a row of the byte image is twice as
++		// wide and the interleaved CbCr rows are as wide as the Y rows, as in NV12.
+ 		metadata->num_planes = 2;
+ 
+ 		y_plane_height = original_height;
+ 		c_plane_height = DIV_ROUND_UP(original_height, 2);
+ 
+-		metadata->width = original_width;
++		metadata->width =
++		    bo->meta.format == DRM_FORMAT_P010 ? original_width * 2 : original_width;
+ 		metadata->height = y_plane_height + c_plane_height;
+ 
+ 		// Y-plane (full resolution)
+@@ -278,25 +281,29 @@ static void virgl_get_emulated_transfers_params(const struct bo *bo,
+ 	switch (bo->meta.format) {
+ 	case DRM_FORMAT_NV12:
+ 	case DRM_FORMAT_NV21:
+-		// Bi-planar
++	case DRM_FORMAT_P010: {
++		// Bi-planar. The byte image of a P010 buffer has two bytes per sample.
++		const uint32_t bytes_per_sample = bo->meta.format == DRM_FORMAT_P010 ? 2 : 1;
++
+ 		xfer_params->xfers_needed = 2;
+ 
+ 		y_plane_height = bo->meta.height;
+ 		c_plane_height = DIV_ROUND_UP(bo->meta.height, 2);
+ 
+ 		// Y-plane (full resolution)
+-		xfer_params->xfer_boxes[0].x = transfer_box->x;
++		xfer_params->xfer_boxes[0].x = transfer_box->x * bytes_per_sample;
+ 		xfer_params->xfer_boxes[0].y = transfer_box->y;
+-		xfer_params->xfer_boxes[0].width = transfer_box->width;
++		xfer_params->xfer_boxes[0].width = transfer_box->width * bytes_per_sample;
+ 		xfer_params->xfer_boxes[0].height = transfer_box->height;
+ 
+ 		// CbCr-plane (half resolution, interleaved, placed below Y-plane)
+-		xfer_params->xfer_boxes[1].x = transfer_box->x;
++		xfer_params->xfer_boxes[1].x = transfer_box->x * bytes_per_sample;
+ 		xfer_params->xfer_boxes[1].y = transfer_box->y + y_plane_height;
+-		xfer_params->xfer_boxes[1].width = transfer_box->width;
++		xfer_params->xfer_boxes[1].width = transfer_box->width * bytes_per_sample;
+ 		xfer_params->xfer_boxes[1].height = DIV_ROUND_UP(transfer_box->height, 2);
+ 
+ 		break;
++	}
+ 	case DRM_FORMAT_YVU420:
+ 	case DRM_FORMAT_YVU420_ANDROID:
+ 		// Tri-planar
+@@ -380,7 +387,8 @@ static bool virgl_supports_combination_through_emulation(struct driver *drv, uin
+ 		return false;
+ 
+ 	return drm_format == DRM_FORMAT_NV12 || drm_format == DRM_FORMAT_NV21 ||
+-	       drm_format == DRM_FORMAT_YVU420 || drm_format == DRM_FORMAT_YVU420_ANDROID;
++	       drm_format == DRM_FORMAT_P010 || drm_format == DRM_FORMAT_YVU420 ||
++	       drm_format == DRM_FORMAT_YVU420_ANDROID;
+ }
+ 
+ // Adds the given buffer combination to the list of supported buffer combinations if the
+@@ -737,7 +745,8 @@ static int virgl_init(struct driver *drv)
+ 	 * when not natively supported and instead handled by HWComposer. */
+ 	virgl_add_combination(drv, DRM_FORMAT_P010, &LINEAR_METADATA,
+ 			      BO_USE_SCANOUT | BO_USE_TEXTURE | BO_USE_SW_MASK |
+-				  BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE);
++				  BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE |
++				  BO_USE_HW_VIDEO_DECODER | BO_USE_HW_VIDEO_ENCODER);
+ 	/* Android VTS sensors hal tests require BO_USE_SENSOR_DIRECT_DATA. */
+ 	drv_modify_combination(drv, DRM_FORMAT_R8, &LINEAR_METADATA,
+ 			       BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE | BO_USE_HW_VIDEO_DECODER |
