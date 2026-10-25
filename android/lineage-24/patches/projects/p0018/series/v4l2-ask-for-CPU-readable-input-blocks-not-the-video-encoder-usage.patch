@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 18:37:21 +0900
+Subject: [PATCH] v4l2: ask for CPU-readable input blocks, not the
+ video-encoder usage
+
+The component maps every input block it reads, to find the plane layout and
+to convert a layout the device does not take. The framework refuses to map a
+block that was not allocated for CPU access, and a producer allocates with the
+usage the component declares, which was VIDEO_ENCODER alone: a Surface input
+from GLES then delivered blocks the component could not lock, and encoding
+failed on the first frame.
+
+The same usage also made the allocation of a flexible YUV block fail on a
+gralloc that has no such combination, which is the case when the GPU cannot
+sample NV12, so a ByteBuffer input could not start at all. Declare CPU read
+instead, as the software encoders do. The coded-output blocks keep the
+VIDEO_ENCODER usage they were already fetched with.
+---
+ components/EncodeInterface.cpp                         | 10 ++++++----
+ .../include/v4l2_codec2/components/EncodeInterface.h   |  2 +-
+ 2 files changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/components/EncodeInterface.cpp b/components/EncodeInterface.cpp
+index 8acc6978610f5dd559872a374b7aca00a3982fd8..02f803a22fe9ccc686f745c5cc36a4e901a84d1a 100644
+--- a/components/EncodeInterface.cpp
++++ b/components/EncodeInterface.cpp
+@@ -12,7 +12,6 @@
+ 
+ #include <C2PlatformSupport.h>
+ #include <SimpleC2Interface.h>
+-#include <android/hardware/graphics/common/1.0/types.h>
+ #include <media/stagefright/MediaDefs.h>
+ #include <utils/Log.h>
+ 
+@@ -21,8 +20,6 @@
+ #include <v4l2_codec2/common/HEVC.h>
+ #include <v4l2_codec2/common/VideoTypes.h>
+ 
+-using android::hardware::graphics::common::V1_0::BufferUsage;
+-
+ namespace android {
+ 
+ namespace {
+@@ -604,9 +601,14 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+                     .withConstValue(new C2StreamBufferTypeSetting::input(0u, C2BufferData::GRAPHIC))
+                     .build());
+ 
++    // The component maps every input block it reads: to find the plane layout, and to convert a
++    // layout the device does not take. Producers allocate with the usage declared here, and the
++    // framework refuses to map a block that was not allocated for CPU access, so the usage is CPU
++    // read. VIDEO_ENCODER is left out because gralloc may have no flexible YUV combination for
++    // it, as on a host whose GPU cannot sample NV12, and then no input block can be allocated.
+     addParameter(DefineParam(mInputMemoryUsage, C2_PARAMKEY_INPUT_STREAM_USAGE)
+                          .withConstValue(new C2StreamUsageTuning::input(
+-                                 0u, static_cast<uint64_t>(BufferUsage::VIDEO_ENCODER)))
++                                 0u, static_cast<uint64_t>(C2MemoryUsage::CPU_READ)))
+                          .build());
+ 
+     addParameter(
+diff --git a/components/include/v4l2_codec2/components/EncodeInterface.h b/components/include/v4l2_codec2/components/EncodeInterface.h
+index a5f1456b516230ba03aa457d40f7b72f4f9bbe7f..038848d41d1c1219105b9371732bbeac554689ce 100644
+--- a/components/include/v4l2_codec2/components/EncodeInterface.h
++++ b/components/include/v4l2_codec2/components/EncodeInterface.h
+@@ -124,7 +124,7 @@ protected:
+     std::shared_ptr<C2ComponentKindSetting> mKind;
+     // The input format kind; should be C2FormatVideo.
+     std::shared_ptr<C2StreamBufferTypeSetting::input> mInputFormat;
+-    // The memory usage flag of input buffer; should be BufferUsage::VIDEO_ENCODER.
++    // The memory usage flag of input buffer; should be C2MemoryUsage::CPU_READ.
+     std::shared_ptr<C2StreamUsageTuning::input> mInputMemoryUsage;
+     // The output format kind; should be C2FormatCompressed.
+     std::shared_ptr<C2StreamBufferTypeSetting::output> mOutputFormat;

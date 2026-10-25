@@ -6,4 +6,5 @@ patch	v4l2-add-the-c2.v4l2.hevc.encoder-component.patch
 patch	v4l2-derive-the-encoder-rate-control-and-structure-from-the-device.patch
 patch	v4l2-pass-the-colours-and-the-HDR10-metadata-to-the-encoder-device.patch
 patch	v4l2-queue-packed-RGB-frames-to-the-device-as-they-are.patch
+patch	v4l2-ask-for-CPU-readable-input-blocks-not-the-video-encoder-usage.patch
 patch	README-document-the-HEVC-encoder-and-the-parameters-the-device-suppl.patch
