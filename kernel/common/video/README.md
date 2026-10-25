@@ -38,8 +38,12 @@ of an input buffer once the host has copied it, and drain.
 Controls cross the wire as V4L2 control IDs, V4L2 menu indices and V4L2 enum
 values, which are stable UAPI. The host lists every control it supports with
 its type, range, step, default, menu skip mask and flags, and the driver
-registers exactly that list, skips an ID it does not know, and forwards values
-unchanged, so a capability the host learns needs no driver change. The
+registers exactly that list, skips an ID it does not know or a menu or compound
+type the kernel defines differently, and forwards values unchanged, so a
+capability the host learns needs no driver change. A boolean or button is
+registered as the host describes it, because the V4L2 framework's table types
+some booleans the UAPI names, `PREPEND_SPSPPS_TO_IDR` and
+`H264_HIERARCHICAL_CODING` among them, as integers. The
 fractional frame interval and the colorimetry of the raw frames travel in a
 separate stream-information command. The
 [device README](../../../darwin/device/video/README.md#encoder-controls) owns
@@ -51,7 +55,9 @@ session from settled controls; until then the frames wait in the driver. It
 reports the host's own plane layout and ignores a client's strides. A
 format's coded and raw masks are read in both directions, and a raw format
 is listed under its contiguous V4L2 name, and also under the per-plane name
-when the host reports `PER_PLANE`. STREAMOFF on either queue sends
+when the host reports `PER_PLANE`. A packed format is named for its memory
+order: BGRA8888 is `AR24` and RGBA8888 is `AB24`, though the decoder's table
+keeps its older `RGB4` for RGBA8888. STREAMOFF on either queue sends
 `QUEUE_CLEAR`, and STREAMOFF of the raw queue during a drain sends
 `STREAM_DRAIN` again, so the next coded buffer is the empty end of stream.
 A `CODEC_CONFIG` buffer reaches the client with no frame-type flag, because

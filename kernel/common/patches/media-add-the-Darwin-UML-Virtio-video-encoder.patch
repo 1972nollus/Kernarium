@@ -13,10 +13,14 @@ skip masks and flags, as V4L2 control IDs and menu indices. The driver
 registers that list for each open file and forwards a value unchanged, so
 a control the host learns needs no change here. A descriptor whose ID,
 type or menu this kernel does not define the same way is skipped rather
-than failing the open. A control the device does not mark dynamic is
-grabbed while the coded queue streams, as the stateful encoder interface
-requires, and a control is inactive for the coded formats its descriptor
-does not name.
+than failing the open. The framework's table has no entry for some
+booleans the UAPI names, PREPEND_SPSPPS_TO_IDR and
+H264_HIERARCHICAL_CODING among them, and types them as integers, so a
+boolean or button the device describes is registered as the device
+describes it and every control the device publishes reaches the client.
+A control the device does not mark dynamic is grabbed while the coded
+queue streams, as the stateful encoder interface requires, and a control
+is inactive for the coded formats its descriptor does not name.
 
 The device creates its session at the first raw frame, from the formats
 and controls it holds then. A raw frame therefore reaches the device only
@@ -30,8 +34,10 @@ again. A buffer holding only parameter sets carries no frame-type flag.
 The raw queue's formats follow the device: the ones it accepts with the
 current coded format, a plane layout named by the device's plane count,
 the tight line lengths the device reads and the size the visible
-rectangle gives the coded stream. The frame interval and the colorimetry
-cross the wire in the stream-information commands.
+rectangle gives the coded stream. A packed raw format is listed under the
+name of its memory order, so RGBA8888 is RGBA32 ('AB24') where the
+decoder's table keeps its older RGB32. The frame interval and the
+colorimetry cross the wire in the stream-information commands.
 
 The shared command paths gain what the encoder needs: a response length
 for the commands whose answer varies, a slab cache name per device, and
@@ -42,14 +48,14 @@ the data size of a completed coded buffer.
  drivers/media/virtio/README                 |   41 +-
  drivers/media/virtio/virtio_video.h         |  118 +-
  drivers/media/virtio/virtio_video_caps.c    |   18 +-
- drivers/media/virtio/virtio_video_ctrls.c   |  384 +++++
+ drivers/media/virtio/virtio_video_ctrls.c   |  414 +++++
  drivers/media/virtio/virtio_video_device.c  |   69 +-
  drivers/media/virtio/virtio_video_driver.c  |   21 +-
- drivers/media/virtio/virtio_video_enc.c     | 1513 +++++++++++++++++++
- drivers/media/virtio/virtio_video_helpers.c |   14 +-
+ drivers/media/virtio/virtio_video_enc.c     | 1517 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_helpers.c |   15 +-
  drivers/media/virtio/virtio_video_vq.c      |  306 +++-
  include/uapi/linux/virtio_video.h           |  157 +-
- 12 files changed, 2615 insertions(+), 33 deletions(-)
+ 12 files changed, 2650 insertions(+), 33 deletions(-)
  create mode 100644 drivers/media/virtio/virtio_video_ctrls.c
  create mode 100644 drivers/media/virtio/virtio_video_enc.c
 
@@ -370,10 +376,10 @@ index 25294725f72ecf946a8647f95b10daa8dd44ecb3..34b9e404418c8778a385ca97f8d43c26
  	offset = sizeof(struct virtio_video_format_desc);
 diff --git a/drivers/media/virtio/virtio_video_ctrls.c b/drivers/media/virtio/virtio_video_ctrls.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f7b14fe61936ff8e3c6c5c8425eb8d176f96921c
+index 0000000000000000000000000000000000000000..d3f6fbd6c3accb83412ab9d13bbefd9477d5cc0b
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_ctrls.c
-@@ -0,0 +1,384 @@
+@@ -0,0 +1,414 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * V4L2 controls of the Virtio video encoder.
@@ -385,6 +391,9 @@ index 0000000000000000000000000000000000000000..f7b14fe61936ff8e3c6c5c8425eb8d17
 + * change here. A control this kernel does not define, or whose type or menu
 + * the device describes differently from what this kernel defines for it, is
 + * left out, so a newer device never makes an older driver refuse to open.
++ * The framework's table types a few booleans and buttons as integers because
++ * it has no entry for them; the device's boolean or button is registered as the
++ * device describes it.
 + *
 + * Controls that cannot change while the stream encodes are grabbed from the
 + * moment the coded queue streams until it stops, so they fail with EBUSY as the
@@ -417,7 +426,15 @@ index 0000000000000000000000000000000000000000..f7b14fe61936ff8e3c6c5c8425eb8d17
 +		return false;
 +
 +	v4l2_ctrl_fill(c->id, &name, &type, &min, &max, &step, &def, &flags);
-+	if (type != c->type)
++	/*
++	 * The table reports an integer for an ID it has no entry for, such as
++	 * PREPEND_SPSPPS_TO_IDR and H264_HIERARCHICAL_CODING, which are
++	 * booleans. Those are registered as the device describes them.
++	 */
++	if (type != c->type &&
++	    !(type == V4L2_CTRL_TYPE_INTEGER &&
++	      (c->type == V4L2_CTRL_TYPE_BOOLEAN ||
++	       c->type == V4L2_CTRL_TYPE_BUTTON)))
 +		return false;
 +
 +	switch (c->type) {
@@ -618,6 +635,28 @@ index 0000000000000000000000000000000000000000..f7b14fe61936ff8e3c6c5c8425eb8d17
 +	.g_volatile_ctrl = virtio_video_ctrl_g_volatile_ctrl,
 +};
 +
++/*
++ * A boolean or a button as the device describes it. v4l2_ctrl_new_std() takes
++ * the type from the framework's table, which gives some booleans no entry.
++ */
++static struct v4l2_ctrl *
++virtio_video_ctrl_register_flag(struct v4l2_ctrl_handler *hdl,
++				const struct video_v4l2_control *c)
++{
++	bool boolean = c->type == V4L2_CTRL_TYPE_BOOLEAN;
++	struct v4l2_ctrl_config cfg = {
++		.ops = &virtio_video_ctrl_ops,
++		.id = c->id,
++		.name = v4l2_ctrl_get_name(c->id),
++		.type = c->type,
++		.max = boolean,
++		.step = boolean,
++		.def = boolean ? c->default_value : 0,
++	};
++
++	return v4l2_ctrl_new_custom(hdl, &cfg, NULL);
++}
++
 +static struct v4l2_ctrl *
 +virtio_video_ctrl_register(struct virtio_video_stream *stream,
 +			   const struct video_v4l2_control *c)
@@ -634,11 +673,8 @@ index 0000000000000000000000000000000000000000..f7b14fe61936ff8e3c6c5c8425eb8d17
 +		return v4l2_ctrl_new_std(hdl, &virtio_video_ctrl_ops, c->id,
 +					 min, max, step, def);
 +	case V4L2_CTRL_TYPE_BOOLEAN:
-+		return v4l2_ctrl_new_std(hdl, &virtio_video_ctrl_ops, c->id,
-+					 0, 1, 1, c->default_value);
 +	case V4L2_CTRL_TYPE_BUTTON:
-+		return v4l2_ctrl_new_std(hdl, &virtio_video_ctrl_ops, c->id,
-+					 0, 0, 0, 0);
++		return virtio_video_ctrl_register_flag(hdl, c);
 +	case V4L2_CTRL_TYPE_MENU:
 +		return v4l2_ctrl_new_std_menu(hdl, &virtio_video_ctrl_ops,
 +					      c->id, c->maximum,
@@ -985,10 +1021,10 @@ index 1f73c6beb1fe81627b675f87d655c1629b3564c4..79b064e2db38be50d3b1ecea941a5330
  static struct virtio_driver virtio_video_driver = {
 diff --git a/drivers/media/virtio/virtio_video_enc.c b/drivers/media/virtio/virtio_video_enc.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..c5210f119d989ec0323b2de73ede8a9e6e8f8647
+index 0000000000000000000000000000000000000000..ef21baf5160f7be1038abb54ab2ee6960257ea93
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_enc.c
-@@ -0,0 +1,1513 @@
+@@ -0,0 +1,1517 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Encoder for virtio video device.
 + *
@@ -1068,6 +1104,10 @@ index 0000000000000000000000000000000000000000..c5210f119d989ec0323b2de73ede8a9e
 +		break;
 +	case VIRTIO_VIDEO_FORMAT_NV24:
 +		*single = V4L2_PIX_FMT_NV24;
++		break;
++	case VIRTIO_VIDEO_FORMAT_RGBA8888:
++		/* R, G, B, A in memory. The decoder's older name for it is RGB32. */
++		*single = V4L2_PIX_FMT_RGBA32;
 +		break;
 +	default:
 +		*single = virtio_video_format_to_v4l2(wire_format);
@@ -2503,10 +2543,10 @@ index 0000000000000000000000000000000000000000..c5210f119d989ec0323b2de73ede8a9e
 +	return 0;
 +}
 diff --git a/drivers/media/virtio/virtio_video_helpers.c b/drivers/media/virtio/virtio_video_helpers.c
-index e6bb2fbfaff1f1bf68ca57547fe2b2f041a92472..fc38030a595e58143d7bfac83b419848813eca3c 100644
+index e6bb2fbfaff1f1bf68ca57547fe2b2f041a92472..f64160bd15786183fd49c68d602de7c405f7de30 100644
 --- a/drivers/media/virtio/virtio_video_helpers.c
 +++ b/drivers/media/virtio/virtio_video_helpers.c
-@@ -124,6 +124,17 @@ static struct virtio_video_convert_table format_table[] = {
+@@ -124,6 +124,18 @@ static struct virtio_video_convert_table format_table[] = {
  	{ VIRTIO_VIDEO_FORMAT_HEVC, V4L2_PIX_FMT_HEVC },
  	{ VIRTIO_VIDEO_FORMAT_VP8, V4L2_PIX_FMT_VP8 },
  	{ VIRTIO_VIDEO_FORMAT_VP9, V4L2_PIX_FMT_VP9 },
@@ -2520,11 +2560,12 @@ index e6bb2fbfaff1f1bf68ca57547fe2b2f041a92472..fc38030a595e58143d7bfac83b419848
 +	{ VIRTIO_VIDEO_FORMAT_NV16, V4L2_PIX_FMT_NV16M },
 +	{ VIRTIO_VIDEO_FORMAT_NV16, V4L2_PIX_FMT_NV16 },
 +	{ VIRTIO_VIDEO_FORMAT_NV24, V4L2_PIX_FMT_NV24 },
++	{ VIRTIO_VIDEO_FORMAT_RGBA8888, V4L2_PIX_FMT_RGBA32 },
 +	{ VIRTIO_VIDEO_FORMAT_MJPEG, V4L2_PIX_FMT_JPEG },
  	{ 0 },
  };
  
-@@ -157,7 +168,8 @@ struct video_format *virtio_video_find_video_format(struct list_head *fmts_list,
+@@ -157,7 +169,8 @@ struct video_format *virtio_video_find_video_format(struct list_head *fmts_list,
  	struct video_format *fmt = NULL;
  
  	list_for_each_entry(fmt, fmts_list, formats_list_entry) {

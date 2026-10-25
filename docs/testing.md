@@ -271,8 +271,13 @@ encodes generated pictures from mapped and imported dma-buf input, and checks
 the key-frame flags, header buffers, timestamps, forced key frames, controls
 refused while streaming, crop, drain with the last flag and end-of-stream
 event, resumption, a restart after STREAMOFF without a drain, and a resolution
-change. Each stream is decoded back through the guest decoder and compared
-with the pictures by luma PSNR. The x86_64 slice runs `run_v4l2_encode.py`
+change. It also holds every control and raw format the guest registers
+against the host table, so a control the driver dropped or a format listed
+under another fourcc fails; encodes packed BGRA and RGBA pictures, whose red
+and blue blocks show the channel order; and checks the parameter sets that
+`PREPEND_SPSPPS_TO_IDR` adds and the layers that hierarchical coding makes.
+Each stream is decoded back through the guest decoder and compared with the
+pictures by luma PSNR. The x86_64 slice runs `run_v4l2_encode.py`
 directly, like the decoder.
 
 The optional `guest-futex-atomic` test checks the futex contract in

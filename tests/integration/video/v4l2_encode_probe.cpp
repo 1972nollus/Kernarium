@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -174,19 +175,28 @@ Picture makePicture(unsigned width, unsigned height, unsigned n)
     return picture;
 }
 
+/* In a packed picture a red and a blue block show which order the encoder reads the channels in. */
+struct Block { unsigned x, y, size; };
+constexpr Block redBlock {16, 16, 16}, blueBlock {48, 16, 16};
+constexpr unsigned colourBlocksMinWidth = 96, colourBlocksMinHeight = 48;
+
 struct Layout {
     const char* name;
     unsigned fourcc;
     unsigned planes;       // memory planes
     bool tenBit;
     bool interleaved;      // NV12-like: one chroma plane with U and V interleaved
+    bool packed;           // four bytes a pixel in one plane, as an Android surface hands them over
+    bool redFirst;         // packed: R, G, B, A in memory rather than B, G, R, A
 };
 const Layout layouts[] = {
-    {"NV12", V4L2_PIX_FMT_NV12, 1, false, true},
-    {"NM12", V4L2_PIX_FMT_NV12M, 2, false, true},
-    {"YU12", V4L2_PIX_FMT_YUV420, 1, false, false},
-    {"YM12", V4L2_PIX_FMT_YUV420M, 3, false, false},
-    {"P010", V4L2_PIX_FMT_P010, 1, true, true},
+    {"NV12", V4L2_PIX_FMT_NV12, 1, false, true, false, false},
+    {"NM12", V4L2_PIX_FMT_NV12M, 2, false, true, false, false},
+    {"YU12", V4L2_PIX_FMT_YUV420, 1, false, false, false, false},
+    {"YM12", V4L2_PIX_FMT_YUV420M, 3, false, false, false, false},
+    {"P010", V4L2_PIX_FMT_P010, 1, true, true, false, false},
+    {"AR24", V4L2_PIX_FMT_ABGR32, 1, false, false, true, false},
+    {"AB24", V4L2_PIX_FMT_RGBA32, 1, false, false, true, true},
 };
 const Layout* layoutOf(unsigned fourcc)
 {
@@ -217,6 +227,29 @@ void pack(const Picture& picture, const Layout& layout, const v4l2_pix_format_mp
         require(end <= maps[plane].length, "buffer plane is shorter than the picture");
     };
     auto* base0 = static_cast<std::uint8_t*>(maps[0].data);
+    if (layout.packed) {
+        // A grey picture, so the luma the encoder derives does not depend on the matrix it assumes:
+        // the limited-range luma of the picture is the grey level that maps back to it.
+        for (unsigned row = 0; row < picture.height; ++row)
+            for (unsigned column = 0; column < picture.width; ++column) {
+                need(0, std::size_t(row) * stride(0) + (column + 1) * 4);
+                const int level = (int(picture.y[std::size_t(row) * picture.width + column]) - 16) * 255 / 219;
+                const auto grey = std::uint8_t(std::clamp(level, 0, 255));
+                auto* pixel = base0 + std::size_t(row) * stride(0) + column * 4;
+                pixel[0] = grey; pixel[1] = grey; pixel[2] = grey; pixel[3] = 0xff;
+                if (picture.width < colourBlocksMinWidth || picture.height < colourBlocksMinHeight) continue;
+                const auto inside = [&](const Block& block) {
+                    return column >= block.x && column < block.x + block.size && row >= block.y && row < block.y + block.size;
+                };
+                if (inside(redBlock) || inside(blueBlock)) {
+                    const bool red = inside(redBlock);
+                    pixel[0] = (red == layout.redFirst) ? 0xff : 0;   // first byte: R for RGBA, B for BGRA
+                    pixel[1] = 0;
+                    pixel[2] = (red == layout.redFirst) ? 0 : 0xff;
+                }
+            }
+        return;
+    }
     if (layout.planes == 1) {
         // Luma, then the chroma, all in one buffer, each plane after the one before.
         const std::size_t lumaSize = std::size_t(stride(0)) * picture.height;
@@ -301,6 +334,10 @@ std::vector<unsigned> nalTypes(const std::vector<std::uint8_t>& bytes, bool hevc
 bool contains(const std::vector<unsigned>& types, unsigned type)
 {
     return std::find(types.begin(), types.end(), type) != types.end();
+}
+bool hasParameterSet(const std::vector<unsigned>& types, bool hevc)
+{
+    return std::any_of(types.begin(), types.end(), [hevc](unsigned t) { return hevc ? t >= 32 && t <= 34 : t == 7 || t == 8; });
 }
 bool hasIdr(const std::vector<unsigned>& types, bool hevc)
 {
@@ -487,6 +524,13 @@ int setControl(int fd, unsigned id, int value)
     control.id = id; control.value = value;
     return tryCall(fd, VIDIOC_S_CTRL, &control);
 }
+int getControl(int fd, unsigned id)
+{
+    v4l2_control control {};
+    control.id = id;
+    call(fd, VIDIOC_G_CTRL, &control, "G_CTRL");
+    return control.value;
+}
 bool menuHas(int fd, unsigned id, int index)
 {
     v4l2_querymenu menu {};
@@ -508,6 +552,8 @@ struct Plan {
     bool resume {false};
     bool resize {false};
     bool abortFirst {false};   // frames in flight are abandoned by STREAMOFF before the stream under test
+    int prepend {-1};          // PREPEND_SPSPPS_TO_IDR set before the stream starts; -1 leaves the default
+    unsigned layers {};        // H.264 temporal layers asked for with hierarchical coding; 0 leaves it off
 };
 
 class Encoder {
@@ -571,8 +617,8 @@ public:
         require(negotiated.width == width && negotiated.height == height, "the raw size was changed");
         require(negotiated.num_planes == layout->planes, "the raw plane count differs from its format");
         for (unsigned i = 0; i < negotiated.num_planes; ++i) {
-            require(negotiated.plane_fmt[i].bytesperline >= (i == 0 || layout->interleaved ? width : width / 2) * (layout->tenBit ? 2u : 1u),
-                    "a raw line is shorter than its row");
+            const unsigned row = layout->packed ? width * 4 : (i == 0 || layout->interleaved ? width : width / 2) * (layout->tenBit ? 2u : 1u);
+            require(negotiated.plane_fmt[i].bytesperline >= row, "a raw line is shorter than its row");
             require(negotiated.plane_fmt[i].sizeimage >= negotiated.plane_fmt[i].bytesperline, "a raw plane is shorter than a row");
             require(candidate.fmt.pix_mp.plane_fmt[i].bytesperline == negotiated.plane_fmt[i].bytesperline &&
                     candidate.fmt.pix_mp.plane_fmt[i].sizeimage == negotiated.plane_fmt[i].sizeimage,
@@ -872,6 +918,16 @@ double verify(const Run& run, const Plan& plan, Encoder& encoder, const std::vec
             if (!plan.separateHeader)
                 require(contains(types, hevc ? 33 : 7) && contains(types, hevc ? 34 : 8), "the first picture lacks parameter sets");
         }
+        // With PREPEND_SPSPPS_TO_IDR on, which is the default, every key frame carries its parameter sets;
+        // with it cleared they come once, at the start of the stream.
+        if (key && !plan.separateHeader && std::strcmp(label, "stream") == 0) {
+            const bool sets = contains(types, hevc ? 33 : 7) && contains(types, hevc ? 34 : 8);
+            if (plan.prepend != 0 || i == 0)
+                require(sets, "a key frame lacks its parameter sets");
+            else
+                require(!hasParameterSet(types, hevc),
+                        "a key frame repeats parameter sets after PREPEND_SPSPPS_TO_IDR was cleared");
+        }
         if (plan.forceAt >= 0 && unit.timestamp == timestampOfPicture(unsigned(plan.forceAt)))
             require(key, "a forced key frame is not a key frame");
     }
@@ -899,9 +955,48 @@ double verify(const Run& run, const Plan& plan, Encoder& encoder, const std::vec
         const unsigned x = unsigned(encoder.visible.left), y = unsigned(encoder.visible.top);
         const auto reference = makePicture(encoder.outFormat.width, encoder.outFormat.height, pictureOf.at(units[i]->timestamp));
         require(picture.width >= width, "decoded pitch is shorter than the picture");
-        const double psnr = lumaPsnr(reference, x, y, width, height, picture.luma.data(), std::size_t(picture.width) * picture.bytes, picture.bytes);
+        const auto* rawLayout = layoutOf(plan.raw);
+        const auto measure = [&](const Picture& expected) {
+            return lumaPsnr(expected, x, y, width, height, picture.luma.data(), std::size_t(picture.width) * picture.bytes, picture.bytes);
+        };
+        double psnr;
+        if (rawLayout->packed) {
+            // A grey RGB picture has the same luma under any matrix, but the host may take its range as limited or
+            // as full, so the decoded luma is held against both. The colour blocks are not grey and are checked
+            // below, so they are left out of the comparison.
+            Picture limited = reference, full = reference;
+            for (auto& sample : full.y) sample = std::uint8_t(std::clamp((int(sample) - 16) * 255 / 219, 0, 255));
+            for (const auto* block : {&redBlock, &blueBlock})
+                for (unsigned row = block->y; row < block->y + block->size && row < reference.height; ++row)
+                    for (unsigned column = block->x; column < block->x + block->size && column < reference.width; ++column) {
+                        if (column < x || row < y || column - x >= width || row - y >= height) continue;
+                        const auto value = picture.luma[(std::size_t(row - y) * picture.width + (column - x)) * picture.bytes];
+                        limited.y[std::size_t(row) * reference.width + column] = value;
+                        full.y[std::size_t(row) * reference.width + column] = value;
+                    }
+            psnr = std::max(measure(limited), measure(full));
+        } else {
+            psnr = measure(reference);
+        }
         sum += psnr;
         worst = std::min(worst, psnr);
+        const auto* packed = layoutOf(plan.raw);
+        if (i == 0 && packed->packed && encoder.outFormat.width >= colourBlocksMinWidth && encoder.outFormat.height >= colourBlocksMinHeight) {
+            // The luma of saturated red is above that of saturated blue under either BT.601 or BT.709, in limited
+            // range (about 63 or 82 against 32 or 41) or in full range (54 or 76 against 18 or 29), so a swap of
+            // the channels shows.
+            const auto luma = [&](const Block& block) -> int {
+                const int column = int(block.x + block.size / 2) - int(x), row = int(block.y + block.size / 2) - int(y);
+                if (column < 0 || row < 0 || unsigned(column) >= width || unsigned(row) >= height) return -1;
+                const auto at = (std::size_t(row) * picture.width + std::size_t(column)) * picture.bytes;
+                return picture.bytes == 2 ? (picture.luma[at] | picture.luma[at + 1] << 8) >> 8 : picture.luma[at];
+            };
+            const int red = luma(redBlock), blue = luma(blueBlock);
+            if (red >= 0 && blue >= 0)
+                require(red > 45 && red >= blue + 15,
+                        std::string(label) + ": the colour blocks read as red " + std::to_string(red) + " and blue " +
+                        std::to_string(blue) + " in luma, so the channel order is wrong");
+        }
     }
     const double mean = sum / double(units.size());
     require(mean >= 30.0 && worst >= 24.0,
@@ -930,6 +1025,20 @@ void runPlan(const Run& run, const Plan& plan)
     if (plan.separateHeader)
         require(setControl(encoder.fd, V4L2_CID_MPEG_VIDEO_HEADER_MODE, V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE) == 0,
                 "setting the header mode failed");
+    if (plan.prepend >= 0) {
+        require(setControl(encoder.fd, V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR, plan.prepend) == 0,
+                "setting PREPEND_SPSPPS_TO_IDR failed");
+        require(getControl(encoder.fd, V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR) == plan.prepend,
+                "PREPEND_SPSPPS_TO_IDR did not read back");
+    }
+    if (plan.layers) {
+        require(setControl(encoder.fd, V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING, 1) == 0,
+                "enabling hierarchical coding failed");
+        require(getControl(encoder.fd, V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING) == 1,
+                "hierarchical coding did not read back");
+        require(setControl(encoder.fd, V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_LAYER, int(plan.layers)) == 0,
+                "setting the number of layers failed");
+    }
     encoder.allocateBuffers(plan.memory);
     encoder.start();
     // A control the encoder cannot change while it encodes is refused with EBUSY; a dynamic one is not.
@@ -940,6 +1049,13 @@ void runPlan(const Run& run, const Plan& plan)
         require(setControl(encoder.fd, V4L2_CID_MPEG_VIDEO_BITRATE_MODE, current.value) == -EBUSY,
                 "a control that cannot change while encoding was not refused");
     }
+    // PREPEND_SPSPPS_TO_IDR may change while it encodes; turning hierarchical coding on or off may not.
+    if (hasControl(encoder.fd, V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR))
+        require(setControl(encoder.fd, V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR, plan.prepend == 0 ? 0 : 1) == 0,
+                "a dynamic control was refused while encoding");
+    if (plan.coded == V4L2_PIX_FMT_H264 && hasControl(encoder.fd, V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING))
+        require(setControl(encoder.fd, V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING, plan.layers ? 1 : 0) == -EBUSY,
+                "hierarchical coding changed while encoding");
     if (plan.abortFirst) {
         // Whatever the first frames produce is dropped with the queues, and the
         // stream that follows starts again with a key frame.
@@ -1063,6 +1179,187 @@ std::vector<unsigned> discover(const std::string& path)
 }
 /* A plan that fails does not stop the others, so one run shows every defect. */
 std::vector<std::string> failures;
+
+/*
+ * The controls the host table publishes (darwin/device/video/README.md), by what
+ * makes the host publish each. The guest driver registers exactly what the
+ * host publishes, so a control missing here is one the driver dropped, and
+ * a control of another type is one it registered as something else. A control
+ * the host publishes only when it has verified the capability is optional, but
+ * has the type listed when it is there.
+ */
+enum class When { video, h264, hevc, jpeg, any };
+struct Published {
+    unsigned id;
+    unsigned type;
+    const char* name;
+    When when;
+    bool always;   // published whenever its codec is
+};
+const Published publishedControls[] = {
+    {V4L2_CID_MIN_BUFFERS_FOR_OUTPUT, V4L2_CTRL_TYPE_INTEGER, "MIN_BUFFERS_FOR_OUTPUT", When::any, true},
+    {V4L2_CID_MPEG_VIDEO_BITRATE_MODE, V4L2_CTRL_TYPE_MENU, "BITRATE_MODE", When::video, true},
+    {V4L2_CID_MPEG_VIDEO_BITRATE, V4L2_CTRL_TYPE_INTEGER, "BITRATE", When::video, true},
+    {V4L2_CID_MPEG_VIDEO_BITRATE_PEAK, V4L2_CTRL_TYPE_INTEGER, "BITRATE_PEAK", When::video, false},
+    {V4L2_CID_MPEG_VIDEO_CONSTANT_QUALITY, V4L2_CTRL_TYPE_INTEGER, "CONSTANT_QUALITY", When::video, false},
+    {V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE, V4L2_CTRL_TYPE_BOOLEAN, "FRAME_RC_ENABLE", When::video, false},
+    {V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE, V4L2_CTRL_TYPE_BOOLEAN, "MB_RC_ENABLE", When::video, true},
+    {V4L2_CID_MPEG_VIDEO_VBV_SIZE, V4L2_CTRL_TYPE_INTEGER, "VBV_SIZE", When::video, true},
+    {V4L2_CID_MPEG_VIDEO_GOP_SIZE, V4L2_CTRL_TYPE_INTEGER, "GOP_SIZE", When::video, true},
+    {V4L2_CID_MPEG_VIDEO_B_FRAMES, V4L2_CTRL_TYPE_INTEGER, "B_FRAMES", When::video, false},
+    {V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME, V4L2_CTRL_TYPE_BUTTON, "FORCE_KEY_FRAME", When::video, true},
+    {V4L2_CID_MPEG_VIDEO_HEADER_MODE, V4L2_CTRL_TYPE_MENU, "HEADER_MODE", When::video, true},
+    {V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR, V4L2_CTRL_TYPE_BOOLEAN, "PREPEND_SPSPPS_TO_IDR", When::video, true},
+    {V4L2_CID_MPEG_VIDEO_H264_PROFILE, V4L2_CTRL_TYPE_MENU, "H264_PROFILE", When::h264, true},
+    {V4L2_CID_MPEG_VIDEO_H264_LEVEL, V4L2_CTRL_TYPE_MENU, "H264_LEVEL", When::h264, true},
+    {V4L2_CID_MPEG_VIDEO_H264_MIN_QP, V4L2_CTRL_TYPE_INTEGER, "H264_MIN_QP", When::h264, true},
+    {V4L2_CID_MPEG_VIDEO_H264_MAX_QP, V4L2_CTRL_TYPE_INTEGER, "H264_MAX_QP", When::h264, true},
+    {V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP, V4L2_CTRL_TYPE_INTEGER, "H264_I_FRAME_QP", When::h264, false},
+    {V4L2_CID_MPEG_VIDEO_H264_P_FRAME_QP, V4L2_CTRL_TYPE_INTEGER, "H264_P_FRAME_QP", When::h264, false},
+    {V4L2_CID_MPEG_VIDEO_H264_B_FRAME_QP, V4L2_CTRL_TYPE_INTEGER, "H264_B_FRAME_QP", When::h264, false},
+    {V4L2_CID_MPEG_VIDEO_H264_8X8_TRANSFORM, V4L2_CTRL_TYPE_BOOLEAN, "H264_8X8_TRANSFORM", When::h264, false},
+    {V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE, V4L2_CTRL_TYPE_MENU, "H264_ENTROPY_MODE", When::h264, false},
+    {V4L2_CID_MPEG_VIDEO_H264_CPB_SIZE, V4L2_CTRL_TYPE_INTEGER, "H264_CPB_SIZE", When::h264, true},
+    {V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING, V4L2_CTRL_TYPE_BOOLEAN, "H264_HIERARCHICAL_CODING", When::h264, false},
+    {V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_TYPE, V4L2_CTRL_TYPE_MENU, "H264_HIERARCHICAL_CODING_TYPE", When::h264, false},
+    {V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_LAYER, V4L2_CTRL_TYPE_INTEGER, "H264_HIERARCHICAL_CODING_LAYER", When::h264, false},
+    {V4L2_CID_MPEG_VIDEO_H264_HIER_CODING_L0_BR, V4L2_CTRL_TYPE_INTEGER, "H264_HIER_CODING_L0_BR", When::h264, false},
+    {V4L2_CID_MPEG_VIDEO_H264_HIER_CODING_L1_BR, V4L2_CTRL_TYPE_INTEGER, "H264_HIER_CODING_L1_BR", When::h264, false},
+    {V4L2_CID_MPEG_VIDEO_HEVC_PROFILE, V4L2_CTRL_TYPE_MENU, "HEVC_PROFILE", When::hevc, true},
+    {V4L2_CID_MPEG_VIDEO_HEVC_LEVEL, V4L2_CTRL_TYPE_MENU, "HEVC_LEVEL", When::hevc, true},
+    {V4L2_CID_MPEG_VIDEO_HEVC_TIER, V4L2_CTRL_TYPE_MENU, "HEVC_TIER", When::hevc, true},
+    {V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP, V4L2_CTRL_TYPE_INTEGER, "HEVC_MIN_QP", When::hevc, true},
+    {V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP, V4L2_CTRL_TYPE_INTEGER, "HEVC_MAX_QP", When::hevc, true},
+    {V4L2_CID_MPEG_VIDEO_HEVC_I_FRAME_QP, V4L2_CTRL_TYPE_INTEGER, "HEVC_I_FRAME_QP", When::hevc, false},
+    {V4L2_CID_MPEG_VIDEO_HEVC_P_FRAME_QP, V4L2_CTRL_TYPE_INTEGER, "HEVC_P_FRAME_QP", When::hevc, false},
+    {V4L2_CID_MPEG_VIDEO_HEVC_B_FRAME_QP, V4L2_CTRL_TYPE_INTEGER, "HEVC_B_FRAME_QP", When::hevc, false},
+    {V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_TYPE, V4L2_CTRL_TYPE_MENU, "HEVC_HIER_CODING_TYPE", When::hevc, false},
+    {V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_LAYER, V4L2_CTRL_TYPE_INTEGER, "HEVC_HIER_CODING_LAYER", When::hevc, false},
+    {V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L0_BR, V4L2_CTRL_TYPE_INTEGER, "HEVC_HIER_CODING_L0_BR", When::hevc, false},
+    {V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L1_BR, V4L2_CTRL_TYPE_INTEGER, "HEVC_HIER_CODING_L1_BR", When::hevc, false},
+    {V4L2_CID_COLORIMETRY_HDR10_CLL_INFO, V4L2_CTRL_TYPE_HDR10_CLL_INFO, "HDR10_CLL_INFO", When::hevc, false},
+    {V4L2_CID_COLORIMETRY_HDR10_MASTERING_DISPLAY, V4L2_CTRL_TYPE_HDR10_MASTERING_DISPLAY, "HDR10_MASTERING_DISPLAY", When::hevc, false},
+    {V4L2_CID_JPEG_COMPRESSION_QUALITY, V4L2_CTRL_TYPE_INTEGER, "JPEG_COMPRESSION_QUALITY", When::jpeg, true},
+};
+
+/*
+ * The raw formats a coded format lists on the OUTPUT queue, under the V4L2 names of their memory
+ * layouts: a host that offers a format must not reach the client under another fourcc, and
+ * the profile menu says which of the wider formats are there to be asked for.
+ */
+void auditRawFormats(const std::string& path, const std::vector<unsigned>& codecs)
+{
+    Device owner(path);
+    const int fd = owner.fd;
+    const unsigned known[] = {V4L2_PIX_FMT_NV12, V4L2_PIX_FMT_NV12M, V4L2_PIX_FMT_YUV420, V4L2_PIX_FMT_YUV420M,
+                              V4L2_PIX_FMT_ABGR32, V4L2_PIX_FMT_RGBA32, V4L2_PIX_FMT_NV16, V4L2_PIX_FMT_NV16M,
+                              V4L2_PIX_FMT_NV24, V4L2_PIX_FMT_P010};
+    std::vector<std::string> problems;
+    for (const auto coded : codecs) {
+        v4l2_format format {};
+        format.type = capture;
+        format.fmt.pix_mp.pixelformat = coded;
+        format.fmt.pix_mp.plane_fmt[0].sizeimage = 1u << 16;
+        call(fd, VIDIOC_S_FMT, &format, "S_FMT coded");
+        std::vector<unsigned> raws;
+        for (unsigned index = 0;; ++index) {
+            v4l2_fmtdesc fmt {};
+            fmt.type = output; fmt.index = index;
+            const int result = tryCall(fd, VIDIOC_ENUM_FMT, &fmt);
+            if (result < 0) { require(result == -EINVAL, "ENUM_FMT raw failed"); break; }
+            raws.push_back(fmt.pixelformat);
+        }
+        const auto has = [&raws](unsigned raw) { return std::find(raws.begin(), raws.end(), raw) != raws.end(); };
+        const std::string name = fourccName(coded);
+        for (const auto raw : raws)
+            if (std::find(std::begin(known), std::end(known), raw) == std::end(known))
+                problems.push_back(name + " lists the raw format " + fourccName(raw) + ", which is no name of a format the host offers");
+        if (coded == V4L2_PIX_FMT_H264 || coded == V4L2_PIX_FMT_HEVC) {
+            if (!has(V4L2_PIX_FMT_NV12) && !has(V4L2_PIX_FMT_NV12M)) problems.push_back(name + " lists no NV12");
+            if (!has(V4L2_PIX_FMT_YUV420) && !has(V4L2_PIX_FMT_YUV420M)) problems.push_back(name + " lists no YU12");
+            if (!has(V4L2_PIX_FMT_ABGR32)) problems.push_back(name + " lists no AR24 (BGRA)");
+        }
+        if (coded == V4L2_PIX_FMT_HEVC) {
+            const bool main10 = menuHas(fd, V4L2_CID_MPEG_VIDEO_HEVC_PROFILE, V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10);
+            if (main10 != has(V4L2_PIX_FMT_P010))
+                problems.push_back(std::string("HEVC Main 10 is ") + (main10 ? "offered" : "not offered") + " but P010 is " +
+                                   (has(V4L2_PIX_FMT_P010) ? "" : "not ") + "a raw format");
+        } else if (has(V4L2_PIX_FMT_P010)) {
+            problems.push_back(name + " lists P010, which only HEVC Main 10 takes");
+        }
+        if (coded == V4L2_PIX_FMT_H264) {
+            const bool wide = menuHas(fd, V4L2_CID_MPEG_VIDEO_H264_PROFILE, V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_422);
+            const bool widest = menuHas(fd, V4L2_CID_MPEG_VIDEO_H264_PROFILE, V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_444_PREDICTIVE);
+            if (wide != (has(V4L2_PIX_FMT_NV16) || has(V4L2_PIX_FMT_NV16M)))
+                problems.push_back("H.264 High 4:2:2 and NV16 are not offered together");
+            if (widest != has(V4L2_PIX_FMT_NV24))
+                problems.push_back("H.264 High 4:4:4 Predictive and NV24 are not offered together");
+        }
+        std::string listed;
+        for (const auto raw : raws) listed += (listed.empty() ? "" : " ") + fourccName(raw);
+        std::printf("encoder %s raw formats: %s\n", name.c_str(), listed.c_str());
+    }
+    std::string text;
+    for (const auto& problem : problems) text += (text.empty() ? "" : "; ") + problem;
+    require(problems.empty(), "raw format audit: " + text);
+    std::puts("PASS raw formats listed under the names of their layouts");
+    std::fflush(stdout);
+}
+
+/* Every control the encoder registers for a client against the host table. */
+void auditControls(const std::string& path, const std::vector<unsigned>& codecs)
+{
+    Device owner(path);
+    const int fd = owner.fd;
+    std::map<unsigned, v4l2_query_ext_ctrl> found;
+    unsigned next = V4L2_CTRL_FLAG_NEXT_CTRL | V4L2_CTRL_FLAG_NEXT_COMPOUND;
+    for (;;) {
+        v4l2_query_ext_ctrl control {};
+        control.id = next;
+        const int result = tryCall(fd, VIDIOC_QUERY_EXT_CTRL, &control);
+        if (result < 0) { require(result == -EINVAL, "QUERY_EXT_CTRL failed"); break; }
+        next = control.id | V4L2_CTRL_FLAG_NEXT_CTRL | V4L2_CTRL_FLAG_NEXT_COMPOUND;
+        if (control.type != V4L2_CTRL_TYPE_CTRL_CLASS) found[control.id] = control;
+    }
+    const auto listed = [&codecs](unsigned coded) { return std::find(codecs.begin(), codecs.end(), coded) != codecs.end(); };
+    const bool h264 = listed(V4L2_PIX_FMT_H264), hevc = listed(V4L2_PIX_FMT_HEVC), jpeg = listed(V4L2_PIX_FMT_JPEG);
+    std::vector<std::string> problems;
+    unsigned checked = 0;
+    for (const auto& control : publishedControls) {
+        const bool expected = control.when == When::any || (control.when == When::video && (h264 || hevc)) ||
+                              (control.when == When::h264 && h264) || (control.when == When::hevc && hevc) ||
+                              (control.when == When::jpeg && jpeg);
+        const auto it = found.find(control.id);
+        if (it == found.end()) {
+            if (expected && control.always) problems.push_back(std::string(control.name) + " is not registered");
+            continue;
+        }
+        ++checked;
+        if (!expected) problems.push_back(std::string(control.name) + " is registered for a coded format that is not listed");
+        if (it->second.type != control.type)
+            problems.push_back(std::string(control.name) + " has type " + std::to_string(it->second.type) + ", not " +
+                               std::to_string(control.type));
+        found.erase(it);
+    }
+    for (const auto& rest : found) problems.push_back("control " + std::to_string(rest.first) + " (" + rest.second.name + ") is not in the host table");
+    // The controls of a group come together.
+    const auto present = [fd](unsigned id) {
+        v4l2_queryctrl control {};
+        control.id = id;
+        return tryCall(fd, VIDIOC_QUERYCTRL, &control) == 0;
+    };
+    if (h264 && present(V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_TYPE) && !present(V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING))
+        problems.push_back("H.264 hierarchical coding has its layers but not its switch");
+    if ((h264 || hevc) && present(V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE)) {
+        if (h264 && !present(V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP)) problems.push_back("FRAME_RC_ENABLE is registered without the H.264 frame QPs");
+        if (hevc && !present(V4L2_CID_MPEG_VIDEO_HEVC_I_FRAME_QP)) problems.push_back("FRAME_RC_ENABLE is registered without the HEVC frame QPs");
+    }
+    std::string text;
+    for (const auto& problem : problems) text += (text.empty() ? "" : "; ") + problem;
+    require(problems.empty(), "control audit: " + text);
+    std::printf("PASS controls %u host-table controls registered with their types\n", checked);
+    std::fflush(stdout);
+}
 bool attempt(const Run& run, const Plan& plan, const char* what)
 {
     try {
@@ -1090,6 +1387,15 @@ int main(int argc, char** argv)
         else if (findNode("stateful-decoder", run.decoder) != 0) run.decoder.clear();
         std::printf("encoder %s decoder %s\n", run.encoder.c_str(), run.decoder.empty() ? "(none)" : run.decoder.c_str());
         const auto codecs = discover(run.encoder);
+        for (const auto audit : {auditRawFormats, auditControls}) {
+            try {
+                audit(run.encoder, codecs);
+            } catch (const std::exception& error) {
+                failures.push_back(std::string("FAIL ") + error.what());
+                std::printf("%s\n", failures.back().c_str());
+                std::fflush(stdout);
+            }
+        }
         unsigned encoded = 0;
         bool resumed = false, resized = false;
         for (const auto coded : codecs) {
@@ -1124,7 +1430,11 @@ int main(int argc, char** argv)
                 Plan plan;
                 plan.coded = coded; plan.profileId = profileId; plan.profileValue = profile;
                 plan.raw = tenBit ? V4L2_PIX_FMT_P010 : eight;
-                if (tenBit && !probe.rawListed(V4L2_PIX_FMT_P010)) continue;
+                if (tenBit && !probe.rawListed(V4L2_PIX_FMT_P010)) {
+                    failures.push_back("FAIL HEVC Main 10 is offered but P010 is not a raw format of the encoder");
+                    std::puts(failures.back().c_str());
+                    continue;
+                }
                 plan.forceAt = 6;
                 plan.resume = !resumed;
                 plan.resize = !resized && (avc || hevc);
@@ -1138,11 +1448,23 @@ int main(int argc, char** argv)
                 imported.memory = V4L2_MEMORY_DMABUF; imported.forceAt = -1; imported.resume = false; imported.resize = false;
                 attempt(run, imported, "dmabuf");
                 for (const unsigned other : {unsigned(V4L2_PIX_FMT_NV12), unsigned(V4L2_PIX_FMT_NV12M), unsigned(V4L2_PIX_FMT_YUV420),
-                                             unsigned(V4L2_PIX_FMT_YUV420M)}) {
+                                             unsigned(V4L2_PIX_FMT_YUV420M), unsigned(V4L2_PIX_FMT_ABGR32),
+                                             unsigned(V4L2_PIX_FMT_RGBA32)}) {
                     if (tenBit || other == plan.raw || !probe.rawListed(other)) continue;
                     Plan layout = plan;
                     layout.raw = other; layout.forceAt = -1; layout.resume = false; layout.resize = false;
                     attempt(run, layout, "layout");
+                }
+                if (profileId && hasControl(probe.fd, V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR)) {
+                    // Parameter sets come once at the start, not before the forced key frame.
+                    Plan bare = plan;
+                    bare.prepend = 0; bare.resume = false; bare.resize = false;
+                    attempt(run, bare, "noprepend");
+                }
+                if (avc && hasControl(probe.fd, V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING)) {
+                    Plan layered = plan;
+                    layered.layers = 2; layered.forceAt = -1; layered.resume = false; layered.resize = false;
+                    attempt(run, layered, "layers");
                 }
                 Plan aborted = plan;
                 aborted.abortFirst = true; aborted.forceAt = -1; aborted.resume = false; aborted.resize = false;
