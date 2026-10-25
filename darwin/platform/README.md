@@ -86,10 +86,23 @@ RGBA surfaces saves the guest CPU the same conversion, which on an interpreted
 guest is far dearer. A stream from `rgba` matches one from `bgra` of the same
 pictures in size and quality.
 
+VideoToolbox converts RGB to video-range YCbCr only, whatever range the stream
+asks for, and then states video range. A stream that asks for full range from
+`bgra` or `rgba` is converted here instead (vImage's ARGB8888 to 4:2:0 YCbCr
+over 0..255 with the stream's matrix, BT.709 from 720 lines up and BT.601 below
+when none is stated; the permutation of `rgba` is part of the call). The encoder
+then takes full-range NV12 and states full range. The conversion runs on the
+submitting thread and costs about 0.8 ms at 720p, 1.2 ms at 1080p and 3.3 ms at
+4K per frame, against 7, 14 and 27 ms to encode one.
+
 The colour description (`VideoEncodeColor`: primaries, transfer function,
 matrix and range) is attached to the pixel buffers and the session, and shows in
 the stream: the SPS VUI of H.264 and HEVC states the ITU-T H.273 code points
-(BT.2020 PQ is 9/16/9, BT.2020 HLG 9/18/9, with the range flag). HDR10 static
+(BT.2020 PQ is 9/16/9, BT.2020 HLG 9/18/9, with the range flag). Each aspect is
+independent: a stream that asks for a transfer function or full range alone
+states it, with 2 (unspecified) for the others, and one that asks for nothing
+states no description. The tests check every combination of range, standard
+and transfer for NV12, I420, BGRA and RGBA in both codecs. HDR10 static
 metadata (`VideoHdrStaticMetadata`) belongs to HEVC Main 10 and is written as
 described under Output. HLG is a transfer function the platform encodes and
 tests, and V4L2 has no name for it (its transfer functions end at SMPTE 2084),
@@ -141,10 +154,10 @@ the lost one.
 `platform-video-encoder-bitstream` checks the readers against the decoder
 fixtures and needs no hardware. `platform-video-encoder` exercises every
 advertised profile and layout, each rate-control mode and update, key frames,
-B-frames, layers, parameter sets, HDR, colour (H.264, and HEVC Main 10 from
-P010 with PQ and HLG, read back from the VUI), RGBA channel order, levels, sizes,
-flow and limits, and decodes the streams with the platform decoder to compare
-pictures.
+B-frames, layers, parameter sets, HDR, colour (every combination of aspects in
+both codecs, and HEVC Main 10 from P010 with PQ and HLG, read back from the
+VUI), RGBA channel order in both ranges, levels, sizes, flow and limits, and
+decodes the streams with the platform decoder to compare pictures.
 `platform-video-encoder-recovery` links a variant of the backend that fails
 sessions on demand; `platform-video-encoder-cache` runs child processes against
 valid, missing and unusable cache files. `Kernarium/KernariumTests/HostVideoEncoderTests.mm`

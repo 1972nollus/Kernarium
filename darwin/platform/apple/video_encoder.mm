@@ -108,20 +108,24 @@ struct LayoutInfo {
     // order it can back with an IOSurface, so the buffer is BGRA and the
     // encoder swaps red and blue in place when the frame is submitted.
     bool swapsRedBlue;
+    // One plane of 8-bit RGB. VideoToolbox converts it to YCbCr itself, and
+    // always to video range; a stream that asks for full range is converted
+    // here instead.
+    bool packedRgb;
 };
 
 LayoutInfo layoutInfo(RawVideoLayout layout) noexcept
 {
     switch (layout) {
-    case RawVideoLayout::nv12: return {kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, 2, false};
-    case RawVideoLayout::i420: return {kCVPixelFormatType_420YpCbCr8Planar, kCVPixelFormatType_420YpCbCr8PlanarFullRange, 3, false};
-    case RawVideoLayout::p010: return {kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr10BiPlanarFullRange, 2, false};
-    case RawVideoLayout::nv16: return {kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8BiPlanarFullRange, 2, false};
-    case RawVideoLayout::nv24: return {kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_444YpCbCr8BiPlanarFullRange, 2, false};
-    case RawVideoLayout::bgra: return {kCVPixelFormatType_32BGRA, kCVPixelFormatType_32BGRA, 1, false};
-    case RawVideoLayout::rgba: return {kCVPixelFormatType_32BGRA, kCVPixelFormatType_32BGRA, 1, true};
+    case RawVideoLayout::nv12: return {kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, 2, false, false};
+    case RawVideoLayout::i420: return {kCVPixelFormatType_420YpCbCr8Planar, kCVPixelFormatType_420YpCbCr8PlanarFullRange, 3, false, false};
+    case RawVideoLayout::p010: return {kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr10BiPlanarFullRange, 2, false, false};
+    case RawVideoLayout::nv16: return {kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8BiPlanarFullRange, 2, false, false};
+    case RawVideoLayout::nv24: return {kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_444YpCbCr8BiPlanarFullRange, 2, false, false};
+    case RawVideoLayout::bgra: return {kCVPixelFormatType_32BGRA, kCVPixelFormatType_32BGRA, 1, false, true};
+    case RawVideoLayout::rgba: return {kCVPixelFormatType_32BGRA, kCVPixelFormatType_32BGRA, 1, true, true};
     }
-    return {0, 0, 0, false};
+    return {0, 0, 0, false, false};
 }
 
 CMVideoCodecType codecType(VideoCodec codec) noexcept
@@ -339,6 +343,38 @@ NSString* autoLevelValue(VideoEncodeProfile profile)
     case VideoEncodeProfile::jpegBaseline: break;
     }
     return nil;
+}
+
+// ---- RGB to full-range YCbCr.
+
+struct KrKb {
+    float kr, kb;
+};
+
+// The luma weights of a matrix. An unstated matrix is what a decoder assumes
+// for the picture size: BT.709 from 720 lines up, BT.601 below.
+KrKb lumaWeights(VideoMatrixCoefficients matrix, std::uint32_t height) noexcept
+{
+    switch (matrix) {
+    case VideoMatrixCoefficients::bt601: return {0.299f, 0.114f};
+    case VideoMatrixCoefficients::bt709: return {0.2126f, 0.0722f};
+    case VideoMatrixCoefficients::bt2020: return {0.2627f, 0.0593f};
+    case VideoMatrixCoefficients::unspecified: break;
+    }
+    return height >= 720 ? KrKb {0.2126f, 0.0722f} : KrKb {0.299f, 0.114f};
+}
+
+// vImage's conversion from 8-bit RGB to 4:2:0 YCbCr over the full 0..255
+// range, for the matrix of the settings.
+bool makeFullRangeConversion(const VideoEncodeSettings& settings, vImage_ARGBToYpCbCr& conversion) noexcept
+{
+    const auto [kr, kb] = lumaWeights(settings.color.matrix, settings.height);
+    const float kg = 1.0f - kr - kb;
+    const vImage_ARGBToYpCbCrMatrix matrix {kr, kg, kb, -0.5f * kr / (1.0f - kb), -0.5f * kg / (1.0f - kb), 0.5f,
+                                            -0.5f * kg / (1.0f - kr), -0.5f * kb / (1.0f - kr)};
+    const vImage_YpCbCrPixelRange range {0, 128, 255, 255, 255, 0, 255, 0};
+    return vImageConvert_ARGBToYpCbCr_GenerateConversion(&matrix, &range, &conversion, kvImageARGB8888, kvImage420Yp8_CbCr8,
+                                                         kvImageNoFlags) == kvImageNoError;
 }
 
 // ---- A frame in flight.
@@ -720,6 +756,7 @@ struct SessionPlan {
     OSType pixelFormat {};
     bool swapsRedBlue {};        // the caller's frame is RGBA in a BGRA buffer
     bool reorders {};            // the encoder may code B-frames, and so reorder its output
+    bool convertsRgb {};         // the caller's RGB frames become full-range NV12 before the encoder sees them
     bool lowLatency {};          // the low-latency encoder, selected by what the stream asks for
     bool ownKeyFrames {};        // the key frames are ours: the frame type chooses the QP
     NSString* profileLevel {};
@@ -793,9 +830,12 @@ public:
                 if (shared_->acquired + shared_->pending.size() >= plan_.maximumInFlight) return nullptr;
                 generation = shared_->generation;
             }
-            CFRef<CVPixelBufferRef> pixels = allocatePixelBuffer();
+            // A frame that is converted before the encoder sees it is written in RGB.
+            CFRef<CVPixelBufferRef> pixels = plan_.convertsRgb
+                ? allocatePixelBuffer(stagingPool_.get(), kCVPixelFormatType_32BGRA)
+                : allocatePixelBuffer(pool_.get(), plan_.pixelFormat);
             if (!pixels) return nullptr;
-            attachColor(pixels.get());
+            if (!plan_.convertsRgb) attachColor(pixels.get());
             {
                 std::lock_guard lock(shared_->mutex);
                 if (generation != shared_->generation) return nullptr;
@@ -824,6 +864,14 @@ public:
                 std::lock_guard lock(shared_->mutex);
                 shared_->pushErrorLocked(timestamp);
                 return;
+            }
+            if (plan_.convertsRgb) {
+                pixels = convertRgb(pixels);
+                if (!pixels) {
+                    std::lock_guard lock(shared_->mutex);
+                    shared_->pushErrorLocked(timestamp);
+                    return;
+                }
             }
             const std::uint64_t index = nextIndex_++;
             Pending entry;
@@ -1066,8 +1114,14 @@ private:
             return fail(VideoEncodeStatus::unsupported, "HDR static metadata needs HEVC Main 10");
 
         plan.codec = type;
-        plan.pixelFormat = settings.color.fullRange ? layoutInfo(settings.input).fullRange : layoutInfo(settings.input).limitedRange;
-        plan.swapsRedBlue = layoutInfo(settings.input).swapsRedBlue;
+        const LayoutInfo layout = layoutInfo(settings.input);
+        plan.pixelFormat = settings.color.fullRange ? layout.fullRange : layout.limitedRange;
+        plan.swapsRedBlue = layout.swapsRedBlue;
+        if (layout.packedRgb && settings.color.fullRange && !jpeg) {
+            plan.convertsRgb = true;
+            plan.swapsRedBlue = false;   // the conversion reads either order
+            plan.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+        }
         if (!plan.pixelFormat) return fail(VideoEncodeStatus::invalid, "unknown input layout");
         // The hardware encoders code B-frames in one pattern, a run of
         // fixedBFrameRun per reference, and refuse every property that would
@@ -1181,6 +1235,15 @@ private:
         }
         pool_ = CFRef<CVPixelBufferPoolRef>::retain(VTCompressionSessionGetPixelBufferPool(session.get()));
         if (!pool_) createOwnPool();
+        if (plan_.convertsRgb) {
+            if (!makeFullRangeConversion(settings, fullRangeConversion_)) {
+                diagnostic_ = "vImage cannot make the full-range conversion";
+                VTCompressionSessionInvalidate(session.get());
+                return VideoEncodeStatus::failed;
+            }
+            stagingPool_.reset();
+            createStagingPool();
+        }
         session_ = std::move(session);
         context_ = std::move(context);
         {
@@ -1195,19 +1258,26 @@ private:
     // VideoToolbox offers no pool for a source format it must convert first
     // and could not reconcile with its own; a pool of the same attributes is
     // what the caller needs, and the encoder takes whatever IOSurface it gets.
-    void createOwnPool()
+    CFRef<CVPixelBufferPoolRef> makePool(OSType format) const
     {
         const auto& settings = plan_.settings;
         NSDictionary* attributes = @{
-            (__bridge NSString*)kCVPixelBufferPixelFormatTypeKey: @(plan_.pixelFormat),
+            (__bridge NSString*)kCVPixelBufferPixelFormatTypeKey: @(format),
             (__bridge NSString*)kCVPixelBufferWidthKey: @(settings.width),
             (__bridge NSString*)kCVPixelBufferHeightKey: @(settings.height),
             (__bridge NSString*)kCVPixelBufferIOSurfacePropertiesKey: @{},
         };
         CVPixelBufferPoolRef created = nullptr;
-        if (CVPixelBufferPoolCreate(kCFAllocatorDefault, nullptr, (__bridge CFDictionaryRef)attributes, &created) == kCVReturnSuccess)
-            pool_ = CFRef<CVPixelBufferPoolRef>::adopt(created);
+        if (CVPixelBufferPoolCreate(kCFAllocatorDefault, nullptr, (__bridge CFDictionaryRef)attributes, &created) != kCVReturnSuccess)
+            return {};
+        return CFRef<CVPixelBufferPoolRef>::adopt(created);
     }
+
+    void createOwnPool() { pool_ = makePool(plan_.pixelFormat); }
+
+    // The pool of the frames a caller writes in RGB, which are converted into
+    // the session's own.
+    void createStagingPool() { stagingPool_ = makePool(kCVPixelFormatType_32BGRA); }
 
     static OSStatus setProperty(VTCompressionSessionRef session, CFStringRef key, CFTypeRef value)
     {
@@ -1419,22 +1489,51 @@ private:
 
     // ---- Frames.
 
-    CFRef<CVPixelBufferRef> allocatePixelBuffer()
+    CFRef<CVPixelBufferRef> allocatePixelBuffer(CVPixelBufferPoolRef pool, OSType format)
     {
         CVPixelBufferRef created = nullptr;
-        if (pool_) {
+        if (pool) {
             NSDictionary* auxiliary = @{(__bridge NSString*)kCVPixelBufferPoolAllocationThresholdKey: @(plan_.maximumInFlight + kPoolSlack)};
-            if (CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(kCFAllocatorDefault, pool_.get(), (__bridge CFDictionaryRef)auxiliary, &created) == kCVReturnSuccess)
+            if (CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(kCFAllocatorDefault, pool, (__bridge CFDictionaryRef)auxiliary, &created) == kCVReturnSuccess)
                 return CFRef<CVPixelBufferRef>::adopt(created);
             return {};
         }
         // A stream whose session could not be made still takes its frames, so
         // that each one is answered with an error rather than left waiting.
         NSDictionary* attributes = @{(__bridge NSString*)kCVPixelBufferIOSurfacePropertiesKey: @{}};
-        if (CVPixelBufferCreate(kCFAllocatorDefault, plan_.settings.width, plan_.settings.height, plan_.pixelFormat,
+        if (CVPixelBufferCreate(kCFAllocatorDefault, plan_.settings.width, plan_.settings.height, format,
                                 (__bridge CFDictionaryRef)attributes, &created) != kCVReturnSuccess)
             return {};
         return CFRef<CVPixelBufferRef>::adopt(created);
+    }
+
+    // The caller's RGB frame as a full-range NV12 buffer from the session's
+    // pool, which is what the encoder is given when the stream asks for full
+    // range: VideoToolbox converts RGB to video range only. The conversion
+    // reads either byte order, and runs on the submitting thread (untiled, so
+    // that it wakes no dispatch pool the emulator's scheduler does not count).
+    CFRef<CVPixelBufferRef> convertRgb(const CFRef<CVPixelBufferRef>& rgb)
+    {
+        CFRef<CVPixelBufferRef> yuv = allocatePixelBuffer(pool_.get(), plan_.pixelFormat);
+        if (!yuv) return {};
+        CVPixelBufferLockBaseAddress(rgb.get(), kCVPixelBufferLock_ReadOnly);
+        CVPixelBufferLockBaseAddress(yuv.get(), 0);
+        const vImage_Buffer source {CVPixelBufferGetBaseAddress(rgb.get()), CVPixelBufferGetHeight(rgb.get()),
+                                    CVPixelBufferGetWidth(rgb.get()), CVPixelBufferGetBytesPerRow(rgb.get())};
+        const vImage_Buffer luma {CVPixelBufferGetBaseAddressOfPlane(yuv.get(), 0), CVPixelBufferGetHeightOfPlane(yuv.get(), 0),
+                                  CVPixelBufferGetWidthOfPlane(yuv.get(), 0), CVPixelBufferGetBytesPerRowOfPlane(yuv.get(), 0)};
+        const vImage_Buffer chroma {CVPixelBufferGetBaseAddressOfPlane(yuv.get(), 1), CVPixelBufferGetHeightOfPlane(yuv.get(), 1),
+                                    CVPixelBufferGetWidthOfPlane(yuv.get(), 1), CVPixelBufferGetBytesPerRowOfPlane(yuv.get(), 1)};
+        // Where A, R, G and B sit in a source pixel.
+        static constexpr std::uint8_t bgra[4] = {3, 2, 1, 0};
+        static constexpr std::uint8_t rgba[4] = {3, 0, 1, 2};
+        const auto result = vImageConvert_ARGB8888To420Yp8_CbCr8(&source, &luma, &chroma, &fullRangeConversion_,
+            plan_.settings.input == RawVideoLayout::rgba ? rgba : bgra, kvImageDoNotTile);
+        CVPixelBufferUnlockBaseAddress(yuv.get(), 0);
+        CVPixelBufferUnlockBaseAddress(rgb.get(), kCVPixelBufferLock_ReadOnly);
+        if (result != kvImageNoError) return {};
+        attachColor(yuv.get());
+        return yuv;
     }
 
     void attachColor(CVPixelBufferRef pixels) const
@@ -1620,6 +1719,7 @@ private:
             session_.reset();
         }
         pool_.reset();
+        stagingPool_.reset();
         context_.reset();
         encoderIdentifier_.clear();
     }
@@ -1633,6 +1733,8 @@ private:
     bool rebuild_ {};   // a setting the running session ignores changed; the next frame starts a new session
     CFRef<VTCompressionSessionRef> session_;
     CFRef<CVPixelBufferPoolRef> pool_;
+    CFRef<CVPixelBufferPoolRef> stagingPool_;   // plan_.convertsRgb: the caller's frames
+    vImage_ARGBToYpCbCr fullRangeConversion_ {};
     std::unique_ptr<SessionContext> context_;
     std::uint64_t nextIndex_ {};
     std::int64_t nextPresentation_ {};
