@@ -58,6 +58,24 @@ null beyond that, and a frame dropped unsubmitted returns its slot.
   stream needs makes every frame fail). An HEVC level is only a ceiling.
 - **Sizes** are even for video; JPEG keeps odd sizes exactly.
 
+### Input layouts
+
+A layout is listed for a profile only when an encode from it came out right.
+HEVC Main 10 takes P010, the 10-bit input that keeps its precision, as well as
+the 8-bit layouts, which the encoder widens. `bgra` and `rgba` are offered
+together, as one layout in two byte orders: `bgra` is CoreVideo 32BGRA, and `rgba` the memory order R, G, B, A
+of Android's AB24 (DRM ABGR8888) surfaces.
+
+CoreVideo has no 32RGBA pixel format: a buffer cannot be created in it, from a
+pool or around an IOSurface, so VideoToolbox cannot take it natively. An `rgba`
+frame is written into the BGRA pool and its red and blue bytes are exchanged in
+place when it is submitted (`vImagePermuteChannels`, untiled, on the submitting
+thread). The exchange is memory-bound and costs well under a millisecond per
+frame up to 4K, against tens of milliseconds to encode one; a caller that holds
+RGBA surfaces saves the guest CPU the same conversion, which on an interpreted
+guest is far dearer. A stream from `rgba` matches one from `bgra` of the same
+pictures in size and quality.
+
 ### Rate control
 
 The standard encoder (`ave`) is real-time by default here: it holds its target
@@ -103,8 +121,9 @@ the lost one.
 `platform-video-encoder-bitstream` checks the readers against the decoder
 fixtures and needs no hardware. `platform-video-encoder` exercises every
 advertised profile and layout, each rate-control mode and update, key frames,
-B-frames, layers, parameter sets, HDR, colour, levels, sizes, flow and limits,
-and decodes the streams with the platform decoder to compare pictures.
+B-frames, layers, parameter sets, HDR, colour, RGBA channel order, levels,
+sizes, flow and limits, and decodes the streams with the platform decoder to
+compare pictures.
 `platform-video-encoder-recovery` links a variant of the backend that fails
 sessions on demand; `platform-video-encoder-cache` runs child processes against
 valid, missing and unusable cache files. `Kernarium/KernariumTests/HostVideoEncoderTests.mm`

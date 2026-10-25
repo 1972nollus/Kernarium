@@ -14,6 +14,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 /* The platform video encoder on this host's hardware.
@@ -118,6 +119,12 @@ void capabilityInvariants()
             require(!profile.inputs.empty(), "a profile with no input layout is not listed");
             require(jpeg == (profile.maximumLevel == 0), "only JPEG has no level");
             require(!jpeg || !profile.levelSelectable, "JPEG has no level to select");
+            const auto lists = [&](RawVideoLayout layout) {
+                return std::find(profile.inputs.begin(), profile.inputs.end(), layout) != profile.inputs.end();
+            };
+            // Both packed orders reach the encoder through one pool, so one is not offered without the other.
+            require(lists(RawVideoLayout::bgra) == lists(RawVideoLayout::rgba), "BGRA and RGBA input are offered together");
+            require(profile.profile != VideoEncodeProfile::hevcMain10 || lists(RawVideoLayout::p010), "HEVC Main 10 takes 10-bit input");
         }
         if (jpeg) {
             require(capability.rateControls.size() == 1 && capability.rateControls[0] == VideoRateControl::constantQuality,
@@ -170,7 +177,7 @@ void profileLayoutRoundtrip()
                 const auto psnr = roundtripPsnr(profile.profile, encoded);
                 std::printf("  %-30s %6zu bytes, PSNR %s%.1f dB\n", label.c_str(), encoded.output.bytes(0, count),
                             psnr ? "" : "(no decoder) ", psnr.value_or(0));
-                if (psnr) require(*psnr >= (layout == RawVideoLayout::bgra ? 26.0 : 32.0), "the decoded picture differs from the source");
+                if (psnr) require(*psnr >= (layout == RawVideoLayout::bgra || layout == RawVideoLayout::rgba ? 26.0 : 32.0), "the decoded picture differs from the source");
                 ++cases;
             }
         }
@@ -759,6 +766,75 @@ void hdr()
     }
 }
 
+// ---- RGBA input: the memory order of Android's AB24 surfaces.
+
+void rgbaInput()
+{
+    step("RGBA input");
+    const auto profile = pick(h264Capability, {VideoEncodeProfile::h264High, VideoEncodeProfile::h264Main, VideoEncodeProfile::h264Baseline});
+    require(profile.has_value(), "no H.264 profile");
+    require(supportsLayout(*h264Capability, *profile, RawVideoLayout::rgba), "H.264 takes RGBA input");
+    if (!hardwareDecodes(*profile)) {
+        std::puts("  no hardware decoder to read the pictures back; skipped");
+        return;
+    }
+    // A solid picture of one colour, as BT.709 limited-range 4:2:0 samples.
+    const auto solid = [](std::uint8_t y, std::uint8_t cb, std::uint8_t cr) {
+        Picture picture;
+        picture.width = 128;
+        picture.height = 96;
+        picture.luma.assign(std::size_t(picture.width) * picture.height, y);
+        picture.chroma.resize(std::size_t(picture.width) * picture.height / 2);
+        for (std::size_t i = 0; i < picture.chroma.size(); i += 2) {
+            picture.chroma[i] = cb;
+            picture.chroma[i + 1] = cr;
+        }
+        return picture;
+    };
+    struct Color {
+        const char* name;
+        std::uint8_t y, cb, cr;
+    };
+    // Red (255, 0, 0), green (0, 255, 0) and blue (0, 0, 255): swapping red and blue exchanges the first and last.
+    const Color colors[] = {{"red", 63, 102, 240}, {"green", 173, 42, 26}, {"blue", 32, 240, 118}};
+    for (const auto layout : {RawVideoLayout::bgra, RawVideoLayout::rgba}) {
+        for (const auto& color : colors) {
+            auto settings = baseSettings(*profile, 128, 96, layout);
+            settings.bitrate = 4'000'000;
+            const auto picture = solid(color.y, color.cb, color.cr);
+            const auto encoded = encode(settings, 3, [&](unsigned) { return picture; }, "channel order");
+            expectOrdered(encoded.output, 3);
+            const auto decoded = decode(VideoCodec::h264, encoded.output);
+            require(decoded.size() == 3, "three pictures");
+            bool first = true;
+            for (const auto& [timestamp, frame] : decoded) {
+                require(frame.layout == VideoPixelLayout::planarYuv && frame.format.bitDepth == 8, "8-bit planar samples");
+                // The centre chroma pair: the encoder subsamples by averaging, so a solid picture stays solid.
+                const std::size_t pair = (std::size_t(frame.format.height) / 4) * frame.format.width + (frame.format.width / 4) * 2;
+                const int cb = frame.chroma[pair], cr = frame.chroma[pair + 1];
+                if (std::exchange(first, false))
+                    std::printf("  %s %s: decoded Cb %d Cr %d (expected %u %u)\n", layoutName(layout), color.name, cb, cr, color.cb, color.cr);
+                require(std::abs(cb - int(color.cb)) <= 12 && std::abs(cr - int(color.cr)) <= 12, "the decoded colour is the colour that was written");
+            }
+        }
+    }
+    // The two orders carry the same picture when the same samples are written.
+    double psnr[2] = {};
+    std::size_t bytes[2] = {};
+    unsigned slot = 0;
+    for (const auto layout : {RawVideoLayout::bgra, RawVideoLayout::rgba}) {
+        auto settings = baseSettings(*profile, 128, 96, layout);
+        settings.bitrate = 1'000'000;
+        const auto encoded = encode(settings, 8, fixtureSource(RawVideoLayout::nv12), "rgba equivalence");
+        expectOrdered(encoded.output, 8);
+        psnr[slot] = meanLumaPsnr(encoded.sources, decode(VideoCodec::h264, encoded.output));
+        bytes[slot++] = encoded.output.bytes(0, 8);
+    }
+    std::printf("  BGRA %.1f dB in %zu bytes, RGBA %.1f dB in %zu bytes\n", psnr[0], bytes[0], psnr[1], bytes[1]);
+    require(std::abs(psnr[0] - psnr[1]) < 0.5, "RGBA and BGRA input decode to the same quality");
+    require(bytes[1] * 10 < bytes[0] * 11 && bytes[0] * 10 < bytes[1] * 11, "and cost the same bits");
+}
+
 // ---- Temporal layers and a QP per frame type: the low-latency encoder.
 
 void lowLatency()
@@ -1133,7 +1209,7 @@ void refusals()
     expect("temporal layers with B-frames", S::invalid, [](auto& s) { s.temporalLayers = 2; s.bFrames = 1; });
     expect("B-frames above the maximum", S::invalid, [&](auto& s) { s.bFrames = h264Capability->maximumBFrames + 1; });
     for (const auto layout : {RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::p010, RawVideoLayout::nv16, RawVideoLayout::nv24,
-                              RawVideoLayout::bgra}) {
+                              RawVideoLayout::bgra, RawVideoLayout::rgba}) {
         if (supportsLayout(*h264Capability, *profile, layout)) continue;
         expect("an input layout that was not verified", S::unsupported, [&](auto& s) { s.input = layout; });
         break;
@@ -1285,6 +1361,7 @@ int main(int argc, char** argv)
         flow();
         parameterSets();
         hdr();
+        rgbaInput();
         lowLatency();
         color();
         levels();

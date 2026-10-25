@@ -36,8 +36,8 @@ add_library(UML::VideoEncoder ALIAS uml_video_encoder)
 uml_declare_architecture_target(uml_video_encoder platform)
 target_include_directories(uml_video_encoder PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(uml_video_encoder PRIVATE UML::PlatformContract
-    "-framework Foundation" "-framework CoreMedia" "-framework CoreVideo"
-    "-framework VideoToolbox")
+    "-framework Accelerate" "-framework Foundation" "-framework CoreMedia"
+    "-framework CoreVideo" "-framework VideoToolbox")
 if(UML_BUILD_UNIT_TESTS)
     # The same sources with the session-loss injection the recovery test
     # drives; products compile them without it.
@@ -50,8 +50,8 @@ if(UML_BUILD_UNIT_TESTS)
         UML_VIDEO_ENCODER_TESTING=1)
     target_link_libraries(uml_video_encoder_test_variant PRIVATE
         UML::PlatformContract
-        "-framework Foundation" "-framework CoreMedia" "-framework CoreVideo"
-        "-framework VideoToolbox")
+        "-framework Accelerate" "-framework Foundation" "-framework CoreMedia"
+        "-framework CoreVideo" "-framework VideoToolbox")
 endif()
 
 add_library(uml_host_battery STATIC apple/host_battery.mm)

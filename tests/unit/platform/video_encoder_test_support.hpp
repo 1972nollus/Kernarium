@@ -170,8 +170,10 @@ inline void writePicture(WritableVideoFrame& frame, const Picture& picture, RawV
         copyPlane(frame, 1, chroma.data(), w * 2, w * 2, h);
         break;
     }
-    case RawVideoLayout::bgra: {
+    case RawVideoLayout::bgra:
+    case RawVideoLayout::rgba: {
         require(frame.planeCount() == 1, "packed frame expected");
+        const bool rgbFirst = layout == RawVideoLayout::rgba;
         std::vector<std::uint8_t> pixels(w * h * 4);
         for (std::size_t y = 0; y < h; ++y)
             for (std::size_t x = 0; x < w; ++x) {
@@ -180,10 +182,12 @@ inline void writePicture(WritableVideoFrame& frame, const Picture& picture, RawV
                 const double cb = (double(picture.chroma[(y / 2) * w + (x / 2) * 2]) - 128.0) * 255.0 / 224.0;
                 const double cr = (double(picture.chroma[(y / 2) * w + (x / 2) * 2 + 1]) - 128.0) * 255.0 / 224.0;
                 const auto clamp = [](double v) { return std::uint8_t(std::clamp(v + 0.5, 0.0, 255.0)); };
-                pixels[(y * w + x) * 4 + 0] = clamp(yy + 1.8556 * cb);
-                pixels[(y * w + x) * 4 + 1] = clamp(yy - 0.1873 * cb - 0.4681 * cr);
-                pixels[(y * w + x) * 4 + 2] = clamp(yy + 1.5748 * cr);
-                pixels[(y * w + x) * 4 + 3] = 255;
+                const std::uint8_t blue = clamp(yy + 1.8556 * cb), green = clamp(yy - 0.1873 * cb - 0.4681 * cr), red = clamp(yy + 1.5748 * cr);
+                std::uint8_t* pixel = &pixels[(y * w + x) * 4];
+                pixel[0] = rgbFirst ? red : blue;
+                pixel[1] = green;
+                pixel[2] = rgbFirst ? blue : red;
+                pixel[3] = 255;
             }
         copyPlane(frame, 0, pixels.data(), w * 4, w * 4, h);
         break;
@@ -537,6 +541,7 @@ inline const char* layoutName(RawVideoLayout layout)
     case RawVideoLayout::nv16: return "nv16";
     case RawVideoLayout::nv24: return "nv24";
     case RawVideoLayout::bgra: return "bgra";
+    case RawVideoLayout::rgba: return "rgba";
     }
     return "?";
 }

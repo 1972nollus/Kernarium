@@ -7,6 +7,7 @@
 #include "video_encoder_testing.hpp"
 #endif
 
+#import <Accelerate/Accelerate.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
@@ -103,19 +104,24 @@ struct LayoutInfo {
     OSType limitedRange;
     OSType fullRange;
     unsigned planes;
+    // The caller's bytes are R, G, B, A and CoreVideo has no buffer of that
+    // order it can back with an IOSurface, so the buffer is BGRA and the
+    // encoder swaps red and blue in place when the frame is submitted.
+    bool swapsRedBlue;
 };
 
 LayoutInfo layoutInfo(RawVideoLayout layout) noexcept
 {
     switch (layout) {
-    case RawVideoLayout::nv12: return {kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, 2};
-    case RawVideoLayout::i420: return {kCVPixelFormatType_420YpCbCr8Planar, kCVPixelFormatType_420YpCbCr8PlanarFullRange, 3};
-    case RawVideoLayout::p010: return {kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr10BiPlanarFullRange, 2};
-    case RawVideoLayout::nv16: return {kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8BiPlanarFullRange, 2};
-    case RawVideoLayout::nv24: return {kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_444YpCbCr8BiPlanarFullRange, 2};
-    case RawVideoLayout::bgra: return {kCVPixelFormatType_32BGRA, kCVPixelFormatType_32BGRA, 1};
+    case RawVideoLayout::nv12: return {kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, 2, false};
+    case RawVideoLayout::i420: return {kCVPixelFormatType_420YpCbCr8Planar, kCVPixelFormatType_420YpCbCr8PlanarFullRange, 3, false};
+    case RawVideoLayout::p010: return {kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr10BiPlanarFullRange, 2, false};
+    case RawVideoLayout::nv16: return {kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8BiPlanarFullRange, 2, false};
+    case RawVideoLayout::nv24: return {kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_444YpCbCr8BiPlanarFullRange, 2, false};
+    case RawVideoLayout::bgra: return {kCVPixelFormatType_32BGRA, kCVPixelFormatType_32BGRA, 1, false};
+    case RawVideoLayout::rgba: return {kCVPixelFormatType_32BGRA, kCVPixelFormatType_32BGRA, 1, true};
     }
-    return {0, 0, 0};
+    return {0, 0, 0, false};
 }
 
 CMVideoCodecType codecType(VideoCodec codec) noexcept
@@ -544,8 +550,8 @@ private:
 // slot it holds when it is dropped without being submitted.
 class PoolFrame final : public WritableVideoFrame {
 public:
-    PoolFrame(std::shared_ptr<Shared> shared, std::uint64_t generation, CFRef<CVPixelBufferRef> pixels)
-        : shared_(std::move(shared)), generation_(generation), pixels_(std::move(pixels))
+    PoolFrame(std::shared_ptr<Shared> shared, std::uint64_t generation, CFRef<CVPixelBufferRef> pixels, bool swapsRedBlue)
+        : shared_(std::move(shared)), generation_(generation), pixels_(std::move(pixels)), swapsRedBlue_(swapsRedBlue)
     {
         CVPixelBufferLockBaseAddress(pixels_.get(), 0);
         locked_ = true;
@@ -589,6 +595,7 @@ public:
     // frame was acquired, which makes the frame part of a discarded stream.
     [[nodiscard]] bool take(CFRef<CVPixelBufferRef>& pixels)
     {
+        if (swapsRedBlue_) swapRedBlue();
         unlock();
         submitted_ = true;
         {
@@ -606,6 +613,17 @@ private:
         std::uint32_t stride {};
         std::uint32_t rows {};
     };
+    // R, G, B, A to B, G, R, A, in place. CoreVideo has no 32RGBA pixel buffer,
+    // so RGBA input is carried in the BGRA pool. Untiled: the work is bound by
+    // memory, and it runs on the caller's thread instead of waking a dispatch
+    // pool that the emulator's scheduler does not account for.
+    void swapRedBlue()
+    {
+        const auto& data = planeData_[0];
+        vImage_Buffer buffer {data.base, data.rows, CVPixelBufferGetWidth(pixels_.get()), data.stride};
+        static constexpr std::uint8_t map[4] = {2, 1, 0, 3};
+        (void)vImagePermuteChannels_ARGB8888(&buffer, &buffer, map, kvImageDoNotTile);
+    }
     void unlock()
     {
         if (locked_) CVPixelBufferUnlockBaseAddress(pixels_.get(), 0);
@@ -624,6 +642,7 @@ private:
     std::size_t planes_ {};
     bool locked_ {};
     bool submitted_ {};
+    bool swapsRedBlue_ {};
 };
 
 // Everything the session needs that follows from the settings alone.
@@ -631,6 +650,7 @@ struct SessionPlan {
     VideoEncodeSettings settings;
     CMVideoCodecType codec {};
     OSType pixelFormat {};
+    bool swapsRedBlue {};        // the caller's frame is RGBA in a BGRA buffer
     bool lowLatency {};          // the low-latency encoder, selected by what the stream asks for
     bool ownKeyFrames {};        // the key frames are ours: the frame type chooses the QP
     NSString* profileLevel {};
@@ -712,7 +732,7 @@ public:
                 if (generation != shared_->generation) return nullptr;
                 ++shared_->acquired;
             }
-            return std::make_unique<PoolFrame>(shared_, generation, std::move(pixels));
+            return std::make_unique<PoolFrame>(shared_, generation, std::move(pixels), plan_.swapsRedBlue);
         }
     }
 
@@ -976,6 +996,7 @@ private:
 
         plan.codec = type;
         plan.pixelFormat = settings.color.fullRange ? layoutInfo(settings.input).fullRange : layoutInfo(settings.input).limitedRange;
+        plan.swapsRedBlue = layoutInfo(settings.input).swapsRedBlue;
         if (!plan.pixelFormat) return fail(VideoEncodeStatus::invalid, "unknown input layout");
         plan.maximumInFlight = settings.bFrames ? kMaximumInFlightReordered : kMaximumInFlight;
         plan.profileLevel = jpeg ? nil : profileLevel(settings);

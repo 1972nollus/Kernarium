@@ -43,7 +43,7 @@ namespace {
 
 using bitstream::Bytes;
 
-constexpr unsigned kDiscoveryRevision = 2;
+constexpr unsigned kDiscoveryRevision = 3;
 constexpr std::chrono::seconds kDiscoveryWait {300};   // a discovery takes seconds; the bound only ends a stuck one
 constexpr std::uint32_t kProbeWidth = 128;
 constexpr std::uint32_t kProbeHeight = 96;
@@ -328,7 +328,7 @@ struct Candidate {
 
 std::vector<Candidate> candidates(VideoCodec codec)
 {
-    const std::vector<RawVideoLayout> common {RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::bgra};
+    const std::vector<RawVideoLayout> common {RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::bgra, RawVideoLayout::rgba};
     switch (codec) {
     case VideoCodec::h264:
         return {{VideoEncodeProfile::h264Baseline, common}, {VideoEncodeProfile::h264ConstrainedBaseline, common},
@@ -338,7 +338,7 @@ std::vector<Candidate> candidates(VideoCodec codec)
                 {VideoEncodeProfile::h264High444Predictive, {RawVideoLayout::nv24}}};
     case VideoCodec::hevc:
         return {{VideoEncodeProfile::hevcMain, common},
-                {VideoEncodeProfile::hevcMain10, {RawVideoLayout::p010, RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::bgra}},
+                {VideoEncodeProfile::hevcMain10, {RawVideoLayout::p010, RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::bgra, RawVideoLayout::rgba}},
                 {VideoEncodeProfile::hevcMainStill, common}};
     case VideoCodec::jpeg: return {{VideoEncodeProfile::jpegBaseline, common}};
     case VideoCodec::vp9: break;
@@ -765,7 +765,7 @@ std::optional<Discovery> decodeDiscovery(NSDictionary* root)
             if (![item isKindOfClass:[NSDictionary class]]) return std::nullopt;
             VideoEncodeProfileCapability profile;
             profile.profile = reader.enumeration<VideoEncodeProfile>(item[@"profile"], int(VideoEncodeProfile::jpegBaseline));
-            profile.inputs = reader.enumerations<RawVideoLayout>(item, @"inputs", int(RawVideoLayout::bgra));
+            profile.inputs = reader.enumerations<RawVideoLayout>(item, @"inputs", int(RawVideoLayout::rgba));
             profile.maximumLevel = std::uint32_t(reader.unsignedValue(item, @"maximumLevel", 1000));
             profile.levelSelectable = [reader.number(item, @"levelSelectable") boolValue];
             c.profiles.push_back(std::move(profile));
