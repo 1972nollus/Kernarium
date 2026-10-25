@@ -78,8 +78,9 @@ struct VideoEncodeProfileCapability {
     // Highest level this host can be asked for, as level_idc (H.264, e.g. 52)
     // or general_level_idc (HEVC, e.g. 186). Zero for JPEG.
     std::uint32_t maximumLevel {};
-    // False when the encoder chooses the level itself and a requested level
-    // is only a ceiling (HEVC on VideoToolbox).
+    // True when a stream states the level it was asked for, or the lowest one
+    // its picture size, frame rate and bit rate need if that is higher. False
+    // when the encoder chooses and a requested level is only a ceiling.
     bool levelSelectable {};
 };
 
@@ -98,7 +99,10 @@ struct VideoEncodeCapability {
     std::uint64_t maximumBitrate {};  // bits per second
     std::uint32_t minimumQp {};
     std::uint32_t maximumQp {};
-    std::uint32_t maximumBFrames {};  // zero: output order is input order
+    // The B-frame run the encoder codes when it may reorder; zero: output order
+    // is input order. The run is fixed (VideoToolbox cannot shorten it), so a
+    // request below it codes no B-frames and a request at or above it codes it.
+    std::uint32_t maximumBFrames {};
     std::uint32_t maximumTemporalLayers {1};
     bool entropyModeSelectable {};    // H.264 CAVLC or CABAC
     bool hdrStaticMetadata {};
@@ -114,7 +118,7 @@ struct VideoEncodeCapability {
 struct VideoEncodeSettings {
     VideoCodec codec {VideoCodec::h264};
     VideoEncodeProfile profile {VideoEncodeProfile::h264High};
-    std::uint32_t level {};  // as maximumLevel; zero lets the encoder choose
+    std::uint32_t level {};  // as maximumLevel; the stream states at least this; zero: as low as it fits
     std::uint32_t width {};
     std::uint32_t height {};
     RawVideoLayout input {RawVideoLayout::nv12};
@@ -130,7 +134,7 @@ struct VideoEncodeSettings {
     std::optional<std::uint32_t> minimumQp;
     std::optional<std::uint32_t> maximumQp;
     std::uint32_t keyFrameInterval {};  // frames; zero: first frame and requests only
-    std::uint32_t bFrames {};           // zero: no reordering
+    std::uint32_t bFrames {};           // the longest B-frame run accepted; zero: no reordering
     std::uint32_t temporalLayers {1};
     std::uint32_t baseLayerBitratePercent {};  // temporalLayers > 1; zero: encoder default
     bool cabac {true};                         // H.264 Main and above

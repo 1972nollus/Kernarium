@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -417,7 +418,7 @@ void bFrames()
         const auto profile = pick(capability, {VideoEncodeProfile::h264High, VideoEncodeProfile::h264Main, VideoEncodeProfile::hevcMain});
         if (!profile) continue;
         auto settings = baseSettings(*profile, 320, 240);
-        settings.bFrames = std::min(2u, capability->maximumBFrames);
+        settings.bFrames = capability->maximumBFrames;   // the run the encoder codes
         settings.keyFrameInterval = 0;
         const unsigned count = 40;
         const auto encoded = encode(settings, count, busySource(320, 240), "B-frames");
@@ -441,10 +442,24 @@ void bFrames()
         std::printf("  %s: %u bidirectional of %u, %u out of order, longest run %u\n",
                     capability->codec == VideoCodec::hevc ? "hevc" : "h264", bidirectional, count, reordered, longest);
         require(bidirectional > 0 && reordered > 0, "B-frames reorder the output");
+        require(longest <= capability->maximumBFrames, "no run is longer than the verified one");
         if (hardwareDecodes(*profile)) {
             const auto decoded = decode(capability->codec, encoded.output);
             require(decoded.size() == count, "the decoder returns every picture");
             require(meanLumaPsnr(encoded.sources, decoded) >= 24.0, "a stream with B-frames decodes to the source");
+        }
+        // The encoder cannot be asked for a shorter run: a caller who accepts
+        // fewer B-frames than it codes gets none, so its output is never more
+        // out of order than it was told.
+        for (unsigned shorter = 1; shorter < capability->maximumBFrames; ++shorter) {
+            auto limited = settings;
+            limited.bFrames = shorter;
+            const auto plain = encode(limited, 24, busySource(320, 240), "shorter B run");
+            const auto plainFrames = plain.output.pictures();
+            require(plainFrames.size() == 24, "every frame is returned");
+            for (std::size_t i = 0; i < plainFrames.size(); ++i)
+                require(plainFrames[i]->timestamp == i && plainFrames[i]->type != VideoFrameType::bidirectional,
+                        "a run shorter than the encoder's is not coded");
         }
         // The caller's memory budget for reordering grows with it.
         auto encoder = open(settings, "B-frame acquire");
@@ -885,24 +900,32 @@ void rgbaInput()
     };
     // Red (255, 0, 0), green (0, 255, 0) and blue (0, 0, 255): swapping red and blue exchanges the first and last.
     const Color colors[] = {{"red", 63, 102, 240}, {"green", 173, 42, 26}, {"blue", 32, 240, 118}};
-    for (const auto layout : {RawVideoLayout::bgra, RawVideoLayout::rgba}) {
-        for (const auto& color : colors) {
-            auto settings = baseSettings(*profile, 128, 96, layout);
-            settings.bitrate = 4'000'000;
-            const auto picture = solid(color.y, color.cb, color.cr);
-            const auto encoded = encode(settings, 3, [&](unsigned) { return picture; }, "channel order");
-            expectOrdered(encoded.output, 3);
-            const auto decoded = decode(VideoCodec::h264, encoded.output);
-            require(decoded.size() == 3, "three pictures");
-            bool first = true;
-            for (const auto& [timestamp, frame] : decoded) {
-                require(frame.layout == VideoPixelLayout::planarYuv && frame.format.bitDepth == 8, "8-bit planar samples");
-                // The centre chroma pair: the encoder subsamples by averaging, so a solid picture stays solid.
-                const std::size_t pair = (std::size_t(frame.format.height) / 4) * frame.format.width + (frame.format.width / 4) * 2;
-                const int cb = frame.chroma[pair], cr = frame.chroma[pair + 1];
-                if (std::exchange(first, false))
-                    std::printf("  %s %s: decoded Cb %d Cr %d (expected %u %u)\n", layoutName(layout), color.name, cb, cr, color.cb, color.cr);
-                require(std::abs(cb - int(color.cb)) <= 12 && std::abs(cr - int(color.cr)) <= 12, "the decoded colour is the colour that was written");
+    // The decoder hands pictures back in video range whatever the stream's range, so a full-range
+    // stream must decode to the same colours as a limited one: the range it states is the range it has.
+    for (const bool fullRange : {false, true}) {
+        for (const auto layout : {RawVideoLayout::bgra, RawVideoLayout::rgba}) {
+            for (const auto& color : colors) {
+                auto settings = baseSettings(*profile, 128, 96, layout);
+                settings.color.fullRange = fullRange;
+                settings.bitrate = 4'000'000;
+                const auto picture = solid(color.y, color.cb, color.cr);
+                const auto encoded = encode(settings, 3, [&](unsigned) { return picture; }, "channel order");
+                expectOrdered(encoded.output, 3);
+                const auto decoded = decode(VideoCodec::h264, encoded.output);
+                require(decoded.size() == 3, "three pictures");
+                bool first = true;
+                for (const auto& [timestamp, frame] : decoded) {
+                    require(frame.layout == VideoPixelLayout::planarYuv && frame.format.bitDepth == 8, "8-bit planar samples");
+                    // The centre chroma pair: the encoder subsamples by averaging, so a solid picture stays solid.
+                    const std::size_t pair = (std::size_t(frame.format.height) / 4) * frame.format.width + (frame.format.width / 4) * 2;
+                    const int cb = frame.chroma[pair], cr = frame.chroma[pair + 1];
+                    const int luma = frame.luma[(std::size_t(frame.format.height) / 2) * frame.format.width + frame.format.width / 2];
+                    if (std::exchange(first, false))
+                        std::printf("  %s %s %s: decoded Y %d Cb %d Cr %d (expected %u %u %u)\n", layoutName(layout),
+                                    fullRange ? "full" : "limited", color.name, luma, cb, cr, color.y, color.cb, color.cr);
+                    require(std::abs(luma - int(color.y)) <= 12 && std::abs(cb - int(color.cb)) <= 12 && std::abs(cr - int(color.cr)) <= 12,
+                            "the decoded colour is the colour that was written");
+                }
             }
         }
     }
@@ -1060,6 +1083,123 @@ void color()
     }
 }
 
+// ---- Every combination of colour aspects a guest API can state.
+
+// What a stream's VUI states, whichever codec wrote it.
+struct StatedColor {
+    bool present {};
+    unsigned primaries {2}, transfer {2}, matrix {2};
+    bool fullRange {};
+};
+
+std::optional<StatedColor> statedColor(VideoCodec codec, const EncodedVideoFrame& frame)
+{
+    StatedColor stated;
+    if (codec == VideoCodec::h264) {
+        const auto sps = firstUnit(codec, frame, bits::h264NalSps);
+        require(sps.has_value(), "an SPS");
+        const auto vui = h264Vui(*sps);
+        if (!vui) return stated;
+        stated.present = vui->colorDescription;
+        if (vui->colorDescription) {
+            stated.primaries = vui->primaries;
+            stated.transfer = vui->transfer;
+            stated.matrix = vui->matrix;
+        }
+        stated.fullRange = vui->fullRange;
+        return stated;
+    }
+    const auto sps = firstUnit(codec, frame, bits::hevcNalSps);
+    require(sps.has_value(), "an SPS");
+    const auto format = bits::parseHevcSpsFormat(*sps);
+    if (!format) return std::nullopt;
+    stated.present = format->colorDescription;
+    if (format->colorDescription) {
+        stated.primaries = format->primaries;
+        stated.transfer = format->transfer;
+        stated.matrix = format->matrix;
+    }
+    stated.fullRange = format->fullRange;
+    return stated;
+}
+
+void colorAspects()
+{
+    step("every combination of colour aspects");
+    struct Standard {
+        const char* name;
+        VideoColorPrimaries primaries;
+        VideoMatrixCoefficients matrix;
+        unsigned primariesCode, matrixCode;
+    };
+    // The standards a guest names set the primaries and the matrix together; an unnamed one sets neither.
+    const Standard standards[] = {
+        {"unspecified", VideoColorPrimaries::unspecified, VideoMatrixCoefficients::unspecified, 2, 2},
+        {"BT.709", VideoColorPrimaries::bt709, VideoMatrixCoefficients::bt709, 1, 1},
+        {"BT.601 NTSC", VideoColorPrimaries::bt601Ntsc, VideoMatrixCoefficients::bt601, 6, 6},
+        {"BT.601 PAL", VideoColorPrimaries::bt601Pal, VideoMatrixCoefficients::bt601, 5, 6},
+    };
+    struct Transfer {
+        const char* name;
+        VideoTransferFunction transfer;
+        unsigned code;
+    };
+    const Transfer transfers[] = {
+        {"unspecified", VideoTransferFunction::unspecified, 2},
+        {"linear", VideoTransferFunction::linear, 8},
+        {"BT.709", VideoTransferFunction::bt709, 1},
+    };
+    struct Case {
+        VideoCodec codec;
+        VideoEncodeProfile profile;
+        RawVideoLayout layout;
+    };
+    std::vector<Case> cases;
+    for (const auto layout : {RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::bgra, RawVideoLayout::rgba}) {
+        for (const auto* capability : {h264Capability, hevcCapability}) {
+            if (!capability) continue;
+            const auto profile = pick(capability, {VideoEncodeProfile::h264High, VideoEncodeProfile::h264Main, VideoEncodeProfile::hevcMain});
+            if (profile && supportsLayout(*capability, *profile, layout)) cases.push_back({capability->codec, *profile, layout});
+        }
+    }
+    unsigned checked = 0;
+    for (const auto& c : cases) {
+        for (const bool fullRange : {false, true}) {
+            for (const auto& standard : standards) {
+                for (const auto& transfer : transfers) {
+                    auto settings = baseSettings(c.profile, 128, 96, c.layout);
+                    settings.color = {standard.primaries, transfer.transfer, standard.matrix, fullRange};
+                    // Pictures matter in the sections above; here a stream is read for what it states.
+                    const auto encoded = encode(settings, 1, fixtureSource(RawVideoLayout::nv12), "colour aspects");
+                    expectOrdered(encoded.output, 1);
+                    const auto stated = statedColor(c.codec, *encoded.output.pictures().front());
+                    require(stated.has_value(), "the SPS can be read to its VUI");
+                    const bool anything = standard.primaries != VideoColorPrimaries::unspecified ||
+                                          transfer.transfer != VideoTransferFunction::unspecified;
+                    const std::string what = std::string(layoutName(c.layout)) + (c.codec == VideoCodec::hevc ? " hevc " : " h264 ") +
+                                             (fullRange ? "full " : "limited ") + standard.name + " / " + transfer.name;
+                    if (anything || fullRange) {
+                        if (!stated->present) std::fprintf(stderr, "%s: no colour description\n", what.c_str());
+                        require(stated->present, "a stream with any colour aspect states a colour description");
+                        if (stated->primaries != standard.primariesCode || stated->transfer != transfer.code ||
+                            stated->matrix != standard.matrixCode)
+                            std::fprintf(stderr, "%s: states %u/%u/%u, wanted %u/%u/%u\n", what.c_str(), stated->primaries, stated->transfer,
+                                         stated->matrix, standard.primariesCode, transfer.code, standard.matrixCode);
+                        require(stated->primaries == standard.primariesCode && stated->transfer == transfer.code &&
+                                stated->matrix == standard.matrixCode, "each aspect is the one asked for and none other");
+                    } else {
+                        require(!stated->present, "a stream that asks for nothing states nothing");
+                    }
+                    if (stated->fullRange != fullRange) std::fprintf(stderr, "%s: range flag %d\n", what.c_str(), int(stated->fullRange));
+                    require(stated->fullRange == fullRange, "the range is the one asked for");
+                    ++checked;
+                }
+            }
+        }
+    }
+    std::printf("  %u combinations of range, standard and transfer across %zu codec and layout pairs\n", checked, cases.size());
+}
+
 // ---- Levels, entropy mode and timestamps.
 
 void levels()
@@ -1078,6 +1218,22 @@ void levels()
             require(sps.has_value(), "an SPS");
             return sps->levelIdc;
         };
+        // A named level, a level VideoToolbox has no name for and one it refuses for the picture's shape.
+        const auto stateOf = [&](std::uint32_t level, std::uint32_t width, std::uint32_t height, std::uint32_t kilobits,
+                                 std::uint32_t framesPerSecond) {
+            auto settings = baseSettings(h264Profile, width, height);
+            settings.rateControl = VideoRateControl::constantBitrate;
+            settings.bitrate = std::uint64_t(kilobits) * 1000;
+            settings.frameRateNumerator = framesPerSecond;
+            settings.level = level;
+            const auto encoded = encode(settings, 6, busySource(width, height), "stated level");
+            expectOrdered(encoded.output, 6);
+            const auto sps = firstH264Sps(*encoded.output.pictures().front());
+            require(sps.has_value(), "an SPS");
+            if (hardwareDecodes(h264Profile))
+                require(meanLumaPsnr(encoded.sources, decode(VideoCodec::h264, encoded.output)) >= 12.0, "and the stream decodes");
+            return sps->levelIdc;
+        };
         const auto automatic = levelOf(0, 1280, 720);
         std::printf("  %s: automatic level at 720p30 is %u\n", profileName(h264Profile), automatic);
         require(automatic >= 31 && automatic <= entry->maximumLevel, "an automatic level holds 720p30");
@@ -1086,6 +1242,16 @@ void levels()
             require(levelOf(10, 1280, 720) >= 31, "a level the stream does not fit is raised to one it fits");
             if (entry->maximumLevel >= 52 && h264Profile != VideoEncodeProfile::h264Baseline)
                 require(levelOf(52, 1280, 720) == 52, "the highest level is selectable");
+            // VideoToolbox names no level between 1.3 and 3.0 and weighs no bit rate.
+            require(stateOf(20, 352, 288, 832, 30) == 20, "a level VideoToolbox does not name is stated");
+            require(stateOf(21, 176, 144, 200, 15) == 21, "even one far above what the stream needs");
+            require(stateOf(0, 352, 288, 832, 30) >= (h264Profile == VideoEncodeProfile::h264High ? 13u : 20u),
+                    "an automatic level holds the bit rate");
+            // Baseline 1.3 is refused for a picture 704 samples high.
+            const auto tall = stateOf(13, 144, 704, 512, 30);
+            std::printf("  %s: a 144x704 stream asked to state level 1.3 states %u\n", profileName(h264Profile), tall);
+            require(tall >= 13, "a tall picture is encoded and states at least the level asked for");
+            require(stateOf(0, 704, 144, 512, 30) >= 13, "and so is a wide one");
         }
     }
     if (hevcCapability) {
@@ -1103,6 +1269,26 @@ void levels()
                 if (const auto sps = bits::parseHevcSps(unit)) level = sps->levelIdc;
             std::printf("  %s: level_idc %u for a request of 120\n", profileName(entry.profile), level);
             require(level >= 90 && level <= entry.maximumLevel, "an HEVC stream states a level within the verified maximum");
+            if (entry.levelSelectable) {
+                require(level == 120, "the level asked for is the level stated");
+                std::uint32_t vpsLevel = 0;
+                for (const auto unit : bits::splitAnnexB(encoded.output.pictures().front()->bytes))
+                    if (const auto vps = bits::hevcLevel(unit); vps && bits::hevcNalType(unit) == bits::hevcNalVps) vpsLevel = *vps;
+                require(vpsLevel == level, "in the VPS as well");
+                // And never less than the stream needs, which VideoToolbox's choice may not be.
+                auto busy = settings;
+                busy.level = 0;
+                busy.bitrate = 20'000'000;
+                busy.rateControl = VideoRateControl::constantBitrate;
+                const auto automatic = encode(busy, 4, [&](unsigned index) {
+                    const Picture eight = busyPicture(1280, 720, index);
+                    return entry.inputs.front() == RawVideoLayout::p010 ? widen(eight) : eight;
+                }, "hevc automatic level");
+                std::uint32_t chosen = 0;
+                for (const auto unit : bits::splitAnnexB(automatic.output.pictures().front()->bytes))
+                    if (const auto sps = bits::parseHevcSps(unit)) chosen = sps->levelIdc;
+                require(chosen >= 123, "20 Mbit/s at 720p30 needs level 4.1 in the Main tier");
+            }
         }
     }
 
@@ -1453,6 +1639,7 @@ int main(int argc, char** argv)
         rgbaInput();
         lowLatency();
         color();
+        colorAspects();
         levels();
         timestamps();
         sizes();

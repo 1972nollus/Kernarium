@@ -43,7 +43,7 @@ namespace {
 
 using bitstream::Bytes;
 
-constexpr unsigned kDiscoveryRevision = 3;
+constexpr unsigned kDiscoveryRevision = 4;
 constexpr std::chrono::seconds kDiscoveryWait {300};   // a discovery takes seconds; the bound only ends a stuck one
 constexpr std::uint32_t kProbeWidth = 128;
 constexpr std::uint32_t kProbeHeight = 96;
@@ -479,15 +479,18 @@ std::optional<CodecDiscovery> discoverCodec(VideoCodec codec)
         return baseSettings(codec, reference.profile, input, width, height);
     };
 
-    // Levels. H.264 names its levels, and a level is selectable where the
-    // encoder wrote the one it was asked for; it is a ceiling elsewhere.
+    // Levels. A level is selectable where the stream states the one it was
+    // asked for, which the encoder guarantees by raising the level in the
+    // parameter sets VideoToolbox wrote (H.264, 5.2; HEVC, 4.0, which no
+    // picture of a probe's size needs).
     for (auto& profile : capability.profiles) {
-        if (codec != VideoCodec::h264) continue;
+        if (codec == VideoCodec::jpeg) continue;
+        const unsigned asked = codec == VideoCodec::h264 ? 52 : 120;
         Probe probe {baseSettings(codec, profile.profile, profile.inputs.front())};
-        probe.settings.level = 52;
+        probe.settings.level = asked;
         const auto stream = runProbe(probe);
-        profile.maximumLevel = 52;
-        profile.levelSelectable = stream.encoded && analyze(codec, stream.frames).levelIdc == 52;
+        if (codec == VideoCodec::h264) profile.maximumLevel = asked;
+        profile.levelSelectable = stream.encoded && analyze(codec, stream.frames).levelIdc == asked;
     }
 
     // Sizes: the smallest square that encodes, then a ladder up to the first
@@ -563,10 +566,11 @@ std::optional<CodecDiscovery> discoverCodec(VideoCodec codec)
         if (!capability.maximumBitrate) return std::nullopt;
 
         // B-frames: whatever the encoder does when it is allowed to reorder.
-        // No public control limits the run, so the longest one seen is the
-        // most a stream can be promised.
+        // The hardware encoders refuse every property that would limit the run
+        // (MaxFrameDelayCount, ReferenceBufferCount), so the longest one seen
+        // is the run, which a stream codes whole or not at all.
         Probe reorder {referenceSettings(kProbeWidth, kProbeHeight), 36, true};
-        reorder.settings.bFrames = 1;
+        reorder.settings.bFrames = 4;
         const auto reordered = runProbe(reorder);
         if (reordered.encoded) capability.maximumBFrames = std::min(analyze(codec, reordered.frames).longestBidirectionalRun, 4u);
 

@@ -343,6 +343,65 @@ struct SeiMessage {
     return out;
 }
 
+// The level an H.264 SPS NAL unit (with its header byte) states, as level_idc.
+// Level 1b is 9: a Baseline, Main or Extended stream writes it as level 1.1
+// with constraint_set3_flag set, and the other profiles as level_idc 9.
+[[nodiscard]] inline std::optional<unsigned> h264Level(Bytes nal)
+{
+    if (nal.size() < 4 || h264NalType(nal) != h264NalSps) return std::nullopt;
+    const bool oneB = nal[3] == 11 && (nal[2] & 0x10) && (nal[1] == 66 || nal[1] == 77 || nal[1] == 88);
+    return oneB ? 9u : unsigned(nal[3]);
+}
+
+// States a higher level in an H.264 SPS. A level is a ceiling on the stream, so
+// a stream that fits a level also fits every level above it. False, and the
+// unit untouched, when it already states `level` or more.
+inline bool raiseH264Level(std::vector<std::uint8_t>& nal, unsigned level)
+{
+    const auto current = h264Level(nal);
+    if (!current || *current >= level || level > 255) return false;
+    if (*current == 9 && nal[3] == 11) nal[2] = std::uint8_t(nal[2] & ~0x10u);   // no longer level 1b
+    nal[3] = std::uint8_t(level);
+    return true;
+}
+
+// general_level_idc sits at a fixed place in the profile_tier_level of an HEVC
+// VPS (after four bytes of header fields) and SPS (after one), counted in
+// payload bytes without emulation prevention.
+[[nodiscard]] inline std::optional<std::size_t> hevcLevelOffset(Bytes nal)
+{
+    switch (hevcNalType(nal)) {
+    case hevcNalVps: return 4 + 11;
+    case hevcNalSps: return 1 + 11;
+    default: return std::nullopt;
+    }
+}
+
+// The general_level_idc an HEVC VPS or SPS NAL unit (with its two-byte header)
+// states.
+[[nodiscard]] inline std::optional<unsigned> hevcLevel(Bytes nal)
+{
+    const auto offset = hevcLevelOffset(nal);
+    if (!offset || nal.size() < 4) return std::nullopt;
+    const auto payload = rbsp(nal, 2);
+    if (payload.size() <= *offset) return std::nullopt;
+    return unsigned(payload[*offset]);
+}
+
+// States a higher level in an HEVC VPS or SPS, as raiseH264Level does for H.264.
+inline bool raiseHevcLevel(std::vector<std::uint8_t>& nal, unsigned level)
+{
+    const auto offset = hevcLevelOffset(nal);
+    if (!offset || nal.size() < 4 || level > 255) return false;
+    auto payload = rbsp(nal, 2);
+    if (payload.size() <= *offset || payload[*offset] >= level) return false;
+    payload[*offset] = std::uint8_t(level);
+    const auto escaped = escapeEmulation(payload);
+    nal.resize(2);
+    nal.insert(nal.end(), escaped.begin(), escaped.end());
+    return true;
+}
+
 // Appends `nal` to `out` behind a four-byte start code.
 inline void appendAnnexB(std::vector<std::uint8_t>& out, const std::uint8_t* nal, std::size_t size)
 {

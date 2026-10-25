@@ -108,20 +108,24 @@ struct LayoutInfo {
     // order it can back with an IOSurface, so the buffer is BGRA and the
     // encoder swaps red and blue in place when the frame is submitted.
     bool swapsRedBlue;
+    // One plane of 8-bit RGB. VideoToolbox converts it to YCbCr itself, and
+    // always to video range; a stream that asks for full range is converted
+    // here instead.
+    bool packedRgb;
 };
 
 LayoutInfo layoutInfo(RawVideoLayout layout) noexcept
 {
     switch (layout) {
-    case RawVideoLayout::nv12: return {kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, 2, false};
-    case RawVideoLayout::i420: return {kCVPixelFormatType_420YpCbCr8Planar, kCVPixelFormatType_420YpCbCr8PlanarFullRange, 3, false};
-    case RawVideoLayout::p010: return {kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr10BiPlanarFullRange, 2, false};
-    case RawVideoLayout::nv16: return {kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8BiPlanarFullRange, 2, false};
-    case RawVideoLayout::nv24: return {kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_444YpCbCr8BiPlanarFullRange, 2, false};
-    case RawVideoLayout::bgra: return {kCVPixelFormatType_32BGRA, kCVPixelFormatType_32BGRA, 1, false};
-    case RawVideoLayout::rgba: return {kCVPixelFormatType_32BGRA, kCVPixelFormatType_32BGRA, 1, true};
+    case RawVideoLayout::nv12: return {kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, 2, false, false};
+    case RawVideoLayout::i420: return {kCVPixelFormatType_420YpCbCr8Planar, kCVPixelFormatType_420YpCbCr8PlanarFullRange, 3, false, false};
+    case RawVideoLayout::p010: return {kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr10BiPlanarFullRange, 2, false, false};
+    case RawVideoLayout::nv16: return {kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8BiPlanarFullRange, 2, false, false};
+    case RawVideoLayout::nv24: return {kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_444YpCbCr8BiPlanarFullRange, 2, false, false};
+    case RawVideoLayout::bgra: return {kCVPixelFormatType_32BGRA, kCVPixelFormatType_32BGRA, 1, false, true};
+    case RawVideoLayout::rgba: return {kCVPixelFormatType_32BGRA, kCVPixelFormatType_32BGRA, 1, true, true};
     }
-    return {0, 0, 0, false};
+    return {0, 0, 0, false, false};
 }
 
 CMVideoCodecType codecType(VideoCodec codec) noexcept
@@ -222,14 +226,66 @@ unsigned h264RequiredLevel(VideoEncodeProfile profile, const VideoEncodeSettings
         profile == VideoEncodeProfile::h264High || profile == VideoEncodeProfile::h264ConstrainedHigh ? 1.25
         : profile == VideoEncodeProfile::h264High422 ? 3.0
         : profile == VideoEncodeProfile::h264High444Predictive ? 4.0 : 1.0;
+    const std::uint64_t widthMacroblocks = (settings.width + 15) / 16, heightMacroblocks = (settings.height + 15) / 16;
     for (const auto& level : kH264Levels) {
         if (macroblocks > level.frameMacroblocks) continue;
+        // Neither side of the picture may exceed what a picture of the largest size could be as a strip.
+        if (widthMacroblocks * widthMacroblocks > 8ull * level.frameMacroblocks ||
+            heightMacroblocks * heightMacroblocks > 8ull * level.frameMacroblocks) continue;
         if (double(macroblocks) * rate > double(level.macroblocksPerSecond)) continue;
         const double peak = double(std::max(settings.bitrate, settings.peakBitrate));
         if (peak > double(level.kilobitsPerSecond) * 1000.0 * bitrateFactor) continue;
         return level.idc;
     }
     return 62;
+}
+
+struct HevcLevelLimits {
+    unsigned idc;   // general_level_idc: 30 times the level
+    std::uint64_t lumaSamplesPerSecond;
+    std::uint32_t lumaPictureSize;
+    std::uint32_t kilobitsPerSecond;   // Main tier
+};
+
+// ITU-T H.265 Tables A.8 and A.9.
+constexpr HevcLevelLimits kHevcLevels[] = {
+    {30, 552960, 36864, 128},           {60, 3686400, 122880, 1500},        {63, 7372800, 245760, 3000},
+    {90, 16588800, 552960, 6000},       {93, 33177600, 983040, 10000},      {120, 66846720, 2228224, 12000},
+    {123, 133693440, 2228224, 20000},   {150, 267386880, 8912896, 25000},   {153, 534773760, 8912896, 40000},
+    {156, 1069547520, 8912896, 60000},  {180, 1069547520, 35651584, 60000}, {183, 2139095040, 35651584, 120000},
+    {186, 4278190080, 35651584, 240000},
+};
+
+// The lowest HEVC level, in the Main tier, whose limits hold the picture, the
+// frame rate and the bit rate.
+unsigned hevcRequiredLevel(const VideoEncodeSettings& settings)
+{
+    const std::uint64_t samples = std::uint64_t(settings.width) * settings.height;
+    const double rate = settings.frameRateDenominator
+        ? double(settings.frameRateNumerator) / double(settings.frameRateDenominator) : 30.0;
+    const double peak = double(std::max(settings.bitrate, settings.peakBitrate));
+    for (const auto& level : kHevcLevels) {
+        if (samples > level.lumaPictureSize) continue;
+        if (std::uint64_t(settings.width) * settings.width > 8ull * level.lumaPictureSize ||
+            std::uint64_t(settings.height) * settings.height > 8ull * level.lumaPictureSize) continue;
+        if (double(samples) * rate > double(level.lumaSamplesPerSecond)) continue;
+        if (peak > double(level.kilobitsPerSecond) * 1000.0) continue;
+        return level.idc;
+    }
+    return 186;
+}
+
+// The level the stream states at least: the one asked for, and the lowest one
+// its picture size, frame rate and bit rate fit. VideoToolbox does not weigh the
+// bit rate when it chooses (a CIF stream at 832 kbit/s comes out as level 1.3,
+// whose limit is 768) and names few levels, so the stream is made to state this.
+unsigned statedLevelFloor(const VideoEncodeSettings& settings)
+{
+    switch (settings.codec) {
+    case VideoCodec::h264: return std::max(settings.level, h264RequiredLevel(settings.profile, settings));
+    case VideoCodec::hevc: return std::max(settings.level, hevcRequiredLevel(settings));
+    default: return 0;
+    }
 }
 
 // The ProfileLevel value of a profile at an explicit level, or nil where
@@ -289,6 +345,38 @@ NSString* autoLevelValue(VideoEncodeProfile profile)
     return nil;
 }
 
+// ---- RGB to full-range YCbCr.
+
+struct KrKb {
+    float kr, kb;
+};
+
+// The luma weights of a matrix. An unstated matrix is what a decoder assumes
+// for the picture size: BT.709 from 720 lines up, BT.601 below.
+KrKb lumaWeights(VideoMatrixCoefficients matrix, std::uint32_t height) noexcept
+{
+    switch (matrix) {
+    case VideoMatrixCoefficients::bt601: return {0.299f, 0.114f};
+    case VideoMatrixCoefficients::bt709: return {0.2126f, 0.0722f};
+    case VideoMatrixCoefficients::bt2020: return {0.2627f, 0.0593f};
+    case VideoMatrixCoefficients::unspecified: break;
+    }
+    return height >= 720 ? KrKb {0.2126f, 0.0722f} : KrKb {0.299f, 0.114f};
+}
+
+// vImage's conversion from 8-bit RGB to 4:2:0 YCbCr over the full 0..255
+// range, for the matrix of the settings.
+bool makeFullRangeConversion(const VideoEncodeSettings& settings, vImage_ARGBToYpCbCr& conversion) noexcept
+{
+    const auto [kr, kb] = lumaWeights(settings.color.matrix, settings.height);
+    const float kg = 1.0f - kr - kb;
+    const vImage_ARGBToYpCbCrMatrix matrix {kr, kg, kb, -0.5f * kr / (1.0f - kb), -0.5f * kg / (1.0f - kb), 0.5f,
+                                            -0.5f * kg / (1.0f - kr), -0.5f * kb / (1.0f - kr)};
+    const vImage_YpCbCrPixelRange range {0, 128, 255, 255, 255, 0, 255, 0};
+    return vImageConvert_ARGBToYpCbCr_GenerateConversion(&matrix, &range, &conversion, kvImageARGB8888, kvImage420Yp8_CbCr8,
+                                                         kvImageNoFlags) == kvImageNoError;
+}
+
 // ---- A frame in flight.
 
 struct Pending {
@@ -304,6 +392,9 @@ struct AssemblyConfig {
     bool separateParameterSets {};
     bool parameterSetsWithEveryKeyFrame {true};
     unsigned temporalLayers {1};
+    // The level the parameter sets state at least; a lower one VideoToolbox
+    // wrote is raised to it. Zero leaves them as written.
+    unsigned minimumLevel {};
     // The HDR10 static metadata SEI unit, with its start code, that precedes
     // the pictures of every key frame. VideoToolbox keeps the values in the
     // format description it hands the muxer, so the Annex B stream needs them
@@ -432,6 +523,17 @@ private:
         shared_->condition.notify_all();
     }
 
+    // States the level the settings call for in a parameter set that states a lower one.
+    void raiseLevel(std::vector<std::uint8_t>& unit) const
+    {
+        if (!config_.minimumLevel) return;
+        if (config_.codec == VideoCodec::h264) {
+            if (bitstream::h264NalType(unit) == bitstream::h264NalSps) (void)bitstream::raiseH264Level(unit, config_.minimumLevel);
+        } else if (config_.codec == VideoCodec::hevc) {
+            (void)bitstream::raiseHevcLevel(unit, config_.minimumLevel);
+        }
+    }
+
     Assembled assemble(CMSampleBufferRef sample, std::uint64_t timestamp)
     {
         Assembled result;
@@ -493,7 +595,9 @@ private:
             if (setAt(0, &bytes, &size) != noErr) return result;
             for (std::size_t at = 0; at < count; ++at) {
                 if (setAt(at, &bytes, &size) != noErr) return result;
-                bitstream::appendAnnexB(sets, bytes, size);
+                std::vector<std::uint8_t> unit(bytes, bytes + size);
+                raiseLevel(unit);
+                bitstream::appendAnnexB(sets, unit.data(), unit.size());
             }
         }
         if (lengthSize < 1 || lengthSize > 4) return result;
@@ -651,6 +755,8 @@ struct SessionPlan {
     CMVideoCodecType codec {};
     OSType pixelFormat {};
     bool swapsRedBlue {};        // the caller's frame is RGBA in a BGRA buffer
+    bool reorders {};            // the encoder may code B-frames, and so reorder its output
+    bool convertsRgb {};         // the caller's RGB frames become full-range NV12 before the encoder sees them
     bool lowLatency {};          // the low-latency encoder, selected by what the stream asks for
     bool ownKeyFrames {};        // the key frames are ours: the frame type chooses the QP
     NSString* profileLevel {};
@@ -724,9 +830,12 @@ public:
                 if (shared_->acquired + shared_->pending.size() >= plan_.maximumInFlight) return nullptr;
                 generation = shared_->generation;
             }
-            CFRef<CVPixelBufferRef> pixels = allocatePixelBuffer();
+            // A frame that is converted before the encoder sees it is written in RGB.
+            CFRef<CVPixelBufferRef> pixels = plan_.convertsRgb
+                ? allocatePixelBuffer(stagingPool_.get(), kCVPixelFormatType_32BGRA)
+                : allocatePixelBuffer(pool_.get(), plan_.pixelFormat);
             if (!pixels) return nullptr;
-            attachColor(pixels.get());
+            if (!plan_.convertsRgb) attachColor(pixels.get());
             {
                 std::lock_guard lock(shared_->mutex);
                 if (generation != shared_->generation) return nullptr;
@@ -755,6 +864,14 @@ public:
                 std::lock_guard lock(shared_->mutex);
                 shared_->pushErrorLocked(timestamp);
                 return;
+            }
+            if (plan_.convertsRgb) {
+                pixels = convertRgb(pixels);
+                if (!pixels) {
+                    std::lock_guard lock(shared_->mutex);
+                    shared_->pushErrorLocked(timestamp);
+                    return;
+                }
             }
             const std::uint64_t index = nextIndex_++;
             Pending entry;
@@ -961,6 +1078,7 @@ private:
         plan.lowLatency = wantsLayers || (wantsFrameQp && !settings.bFrames);
         plan.ownKeyFrames = plan.lowLatency && settings.rateControl == VideoRateControl::constantQp;
 
+        unsigned fixedBFrameRun = 0;
         if (check) {
             const auto found = discovery();
             const CodecDiscovery* codec = found ? found->find(settings.codec) : nullptr;
@@ -981,6 +1099,7 @@ private:
             if (!jpeg && (settings.bitrate > capability.maximumBitrate || settings.peakBitrate > capability.maximumBitrate))
                 return fail(VideoEncodeStatus::invalid, "bitrate is above the verified maximum");
             if (settings.bFrames > capability.maximumBFrames) return fail(VideoEncodeStatus::invalid, "B-frames above the verified maximum");
+            fixedBFrameRun = capability.maximumBFrames;
             if (settings.temporalLayers > capability.maximumTemporalLayers) return fail(VideoEncodeStatus::unsupported, "temporal layers above the verified maximum");
             if (plan.lowLatency && std::find(codec->lowLatencyProfiles.begin(), codec->lowLatencyProfiles.end(), settings.profile) == codec->lowLatencyProfiles.end()) {
                 if (wantsLayers) return fail(VideoEncodeStatus::unsupported, "low-latency encoder does not write the profile");
@@ -995,19 +1114,33 @@ private:
             return fail(VideoEncodeStatus::unsupported, "HDR static metadata needs HEVC Main 10");
 
         plan.codec = type;
-        plan.pixelFormat = settings.color.fullRange ? layoutInfo(settings.input).fullRange : layoutInfo(settings.input).limitedRange;
-        plan.swapsRedBlue = layoutInfo(settings.input).swapsRedBlue;
+        const LayoutInfo layout = layoutInfo(settings.input);
+        plan.pixelFormat = settings.color.fullRange ? layout.fullRange : layout.limitedRange;
+        plan.swapsRedBlue = layout.swapsRedBlue;
+        if (layout.packedRgb && settings.color.fullRange && !jpeg) {
+            plan.convertsRgb = true;
+            plan.swapsRedBlue = false;   // the conversion reads either order
+            plan.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+        }
         if (!plan.pixelFormat) return fail(VideoEncodeStatus::invalid, "unknown input layout");
-        plan.maximumInFlight = settings.bFrames ? kMaximumInFlightReordered : kMaximumInFlight;
+        // The hardware encoders code B-frames in one pattern, a run of
+        // fixedBFrameRun per reference, and refuse every property that would
+        // shorten it (MaxFrameDelayCount, ReferenceBufferCount). A caller who
+        // accepts fewer gets none, so the output never runs further out of
+        // order than it was told. An unchecked configuration is a probe, which
+        // asks for reordering to see what the encoder does with it.
+        plan.reorders = settings.bFrames && (!check || settings.bFrames >= fixedBFrameRun);
+        plan.maximumInFlight = plan.reorders ? kMaximumInFlightReordered : kMaximumInFlight;
         plan.profileLevel = jpeg ? nil : profileLevel(settings);
         if (!jpeg && !plan.profileLevel) return fail(VideoEncodeStatus::unsupported, "profile has no VideoToolbox value");
         plan.settings = std::move(settings);
         return VideoEncodeStatus::ok;
     }
 
-    // A requested level is honored when VideoToolbox names it and the stream
-    // fits it. Otherwise the encoder chooses the lowest level that holds the
-    // stream, which is at or below any level a stream this size can ask for.
+    // A level VideoToolbox names is requested from it when the stream fits it.
+    // Otherwise the encoder chooses the lowest level that holds the stream
+    // itself. Either way the stream states at least the level asked for and
+    // the one its size and rates need (statedLevelFloor).
     NSString* profileLevel(const VideoEncodeSettings& settings) const
     {
         if (settings.codec == VideoCodec::h264 && settings.level && !levelFallback_) {
@@ -1020,6 +1153,25 @@ private:
     // ---- The session.
 
     VideoEncodeStatus createSession()
+    {
+        auto status = createSessionOnce();
+        // VideoToolbox accepts a named level only for some picture shapes (it
+        // refuses Baseline 1.3 for a picture 704 samples high). The stream
+        // states the level asked for either way, so the encoder may choose.
+        if (status != VideoEncodeStatus::ok && status != VideoEncodeStatus::exhausted && !levelFallback_ && namesLevel()) {
+            levelFallback_ = true;
+            plan_.profileLevel = profileLevel(plan_.settings);
+            status = createSessionOnce();
+        }
+        return status;
+    }
+
+    [[nodiscard]] bool namesLevel() const
+    {
+        return plan_.profileLevel && ![plan_.profileLevel isEqualToString:autoLevelValue(plan_.settings.profile)];
+    }
+
+    VideoEncodeStatus createSessionOnce()
     {
         const auto& settings = plan_.settings;
         NSMutableDictionary* specification = [NSMutableDictionary dictionary];
@@ -1037,6 +1189,7 @@ private:
         assembly.separateParameterSets = settings.separateParameterSets;
         assembly.parameterSetsWithEveryKeyFrame = settings.parameterSetsWithEveryKeyFrame;
         assembly.temporalLayers = settings.temporalLayers;
+        assembly.minimumLevel = statedLevelFloor(settings);
         if (settings.hdr) assembly.hdrSei = hdrSeiUnit(*settings.hdr);
         std::uint64_t epoch = 0;
         {
@@ -1082,6 +1235,15 @@ private:
         }
         pool_ = CFRef<CVPixelBufferPoolRef>::retain(VTCompressionSessionGetPixelBufferPool(session.get()));
         if (!pool_) createOwnPool();
+        if (plan_.convertsRgb) {
+            if (!makeFullRangeConversion(settings, fullRangeConversion_)) {
+                diagnostic_ = "vImage cannot make the full-range conversion";
+                VTCompressionSessionInvalidate(session.get());
+                return VideoEncodeStatus::failed;
+            }
+            stagingPool_.reset();
+            createStagingPool();
+        }
         session_ = std::move(session);
         context_ = std::move(context);
         {
@@ -1096,19 +1258,26 @@ private:
     // VideoToolbox offers no pool for a source format it must convert first
     // and could not reconcile with its own; a pool of the same attributes is
     // what the caller needs, and the encoder takes whatever IOSurface it gets.
-    void createOwnPool()
+    CFRef<CVPixelBufferPoolRef> makePool(OSType format) const
     {
         const auto& settings = plan_.settings;
         NSDictionary* attributes = @{
-            (__bridge NSString*)kCVPixelBufferPixelFormatTypeKey: @(plan_.pixelFormat),
+            (__bridge NSString*)kCVPixelBufferPixelFormatTypeKey: @(format),
             (__bridge NSString*)kCVPixelBufferWidthKey: @(settings.width),
             (__bridge NSString*)kCVPixelBufferHeightKey: @(settings.height),
             (__bridge NSString*)kCVPixelBufferIOSurfacePropertiesKey: @{},
         };
         CVPixelBufferPoolRef created = nullptr;
-        if (CVPixelBufferPoolCreate(kCFAllocatorDefault, nullptr, (__bridge CFDictionaryRef)attributes, &created) == kCVReturnSuccess)
-            pool_ = CFRef<CVPixelBufferPoolRef>::adopt(created);
+        if (CVPixelBufferPoolCreate(kCFAllocatorDefault, nullptr, (__bridge CFDictionaryRef)attributes, &created) != kCVReturnSuccess)
+            return {};
+        return CFRef<CVPixelBufferPoolRef>::adopt(created);
     }
+
+    void createOwnPool() { pool_ = makePool(plan_.pixelFormat); }
+
+    // The pool of the frames a caller writes in RGB, which are converted into
+    // the session's own.
+    void createStagingPool() { stagingPool_ = makePool(kCVPixelFormatType_32BGRA); }
 
     static OSStatus setProperty(VTCompressionSessionRef session, CFStringRef key, CFTypeRef value)
     {
@@ -1140,7 +1309,7 @@ private:
             return VideoEncodeStatus::ok;
         }
         if (!apply(session, UML_KEY(ProfileLevel), plan_.profileLevel, true)) return refuse("ProfileLevel");
-        if (!apply(session, UML_KEY(AllowFrameReordering), s.bFrames ? @YES : @NO, true)) return refuse("AllowFrameReordering");
+        if (!apply(session, UML_KEY(AllowFrameReordering), plan_.reorders ? @YES : @NO, true)) return refuse("AllowFrameReordering");
         const double rate = double(s.frameRateNumerator) / double(s.frameRateDenominator);
         (void)apply(session, UML_KEY(ExpectedFrameRate), @(rate), false);
         const std::int32_t interval = plan_.ownKeyFrames || s.keyFrameInterval == 0
@@ -1320,22 +1489,51 @@ private:
 
     // ---- Frames.
 
-    CFRef<CVPixelBufferRef> allocatePixelBuffer()
+    CFRef<CVPixelBufferRef> allocatePixelBuffer(CVPixelBufferPoolRef pool, OSType format)
     {
         CVPixelBufferRef created = nullptr;
-        if (pool_) {
+        if (pool) {
             NSDictionary* auxiliary = @{(__bridge NSString*)kCVPixelBufferPoolAllocationThresholdKey: @(plan_.maximumInFlight + kPoolSlack)};
-            if (CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(kCFAllocatorDefault, pool_.get(), (__bridge CFDictionaryRef)auxiliary, &created) == kCVReturnSuccess)
+            if (CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(kCFAllocatorDefault, pool, (__bridge CFDictionaryRef)auxiliary, &created) == kCVReturnSuccess)
                 return CFRef<CVPixelBufferRef>::adopt(created);
             return {};
         }
         // A stream whose session could not be made still takes its frames, so
         // that each one is answered with an error rather than left waiting.
         NSDictionary* attributes = @{(__bridge NSString*)kCVPixelBufferIOSurfacePropertiesKey: @{}};
-        if (CVPixelBufferCreate(kCFAllocatorDefault, plan_.settings.width, plan_.settings.height, plan_.pixelFormat,
+        if (CVPixelBufferCreate(kCFAllocatorDefault, plan_.settings.width, plan_.settings.height, format,
                                 (__bridge CFDictionaryRef)attributes, &created) != kCVReturnSuccess)
             return {};
         return CFRef<CVPixelBufferRef>::adopt(created);
+    }
+
+    // The caller's RGB frame as a full-range NV12 buffer from the session's
+    // pool, which is what the encoder is given when the stream asks for full
+    // range: VideoToolbox converts RGB to video range only. The conversion
+    // reads either byte order, and runs on the submitting thread (untiled, so
+    // that it wakes no dispatch pool the emulator's scheduler does not count).
+    CFRef<CVPixelBufferRef> convertRgb(const CFRef<CVPixelBufferRef>& rgb)
+    {
+        CFRef<CVPixelBufferRef> yuv = allocatePixelBuffer(pool_.get(), plan_.pixelFormat);
+        if (!yuv) return {};
+        CVPixelBufferLockBaseAddress(rgb.get(), kCVPixelBufferLock_ReadOnly);
+        CVPixelBufferLockBaseAddress(yuv.get(), 0);
+        const vImage_Buffer source {CVPixelBufferGetBaseAddress(rgb.get()), CVPixelBufferGetHeight(rgb.get()),
+                                    CVPixelBufferGetWidth(rgb.get()), CVPixelBufferGetBytesPerRow(rgb.get())};
+        const vImage_Buffer luma {CVPixelBufferGetBaseAddressOfPlane(yuv.get(), 0), CVPixelBufferGetHeightOfPlane(yuv.get(), 0),
+                                  CVPixelBufferGetWidthOfPlane(yuv.get(), 0), CVPixelBufferGetBytesPerRowOfPlane(yuv.get(), 0)};
+        const vImage_Buffer chroma {CVPixelBufferGetBaseAddressOfPlane(yuv.get(), 1), CVPixelBufferGetHeightOfPlane(yuv.get(), 1),
+                                    CVPixelBufferGetWidthOfPlane(yuv.get(), 1), CVPixelBufferGetBytesPerRowOfPlane(yuv.get(), 1)};
+        // Where A, R, G and B sit in a source pixel.
+        static constexpr std::uint8_t bgra[4] = {3, 2, 1, 0};
+        static constexpr std::uint8_t rgba[4] = {3, 0, 1, 2};
+        const auto result = vImageConvert_ARGB8888To420Yp8_CbCr8(&source, &luma, &chroma, &fullRangeConversion_,
+            plan_.settings.input == RawVideoLayout::rgba ? rgba : bgra, kvImageDoNotTile);
+        CVPixelBufferUnlockBaseAddress(yuv.get(), 0);
+        CVPixelBufferUnlockBaseAddress(rgb.get(), kCVPixelBufferLock_ReadOnly);
+        if (result != kvImageNoError) return {};
+        attachColor(yuv.get());
+        return yuv;
     }
 
     void attachColor(CVPixelBufferRef pixels) const
@@ -1521,6 +1719,7 @@ private:
             session_.reset();
         }
         pool_.reset();
+        stagingPool_.reset();
         context_.reset();
         encoderIdentifier_.clear();
     }
@@ -1534,6 +1733,8 @@ private:
     bool rebuild_ {};   // a setting the running session ignores changed; the next frame starts a new session
     CFRef<VTCompressionSessionRef> session_;
     CFRef<CVPixelBufferPoolRef> pool_;
+    CFRef<CVPixelBufferPoolRef> stagingPool_;   // plan_.convertsRgb: the caller's frames
+    vImage_ARGBToYpCbCr fullRangeConversion_ {};
     std::unique_ptr<SessionContext> context_;
     std::uint64_t nextIndex_ {};
     std::int64_t nextPresentation_ {};
