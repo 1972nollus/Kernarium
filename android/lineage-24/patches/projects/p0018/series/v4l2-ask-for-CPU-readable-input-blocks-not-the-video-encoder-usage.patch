@@ -54,7 +54,7 @@ index 8a9787b4923d92b7767b56fbd06f060ba4807159..0a23bc929143e86dc0c924473e383c15
              ALOGE("Failed to fetch graphic block (error: %d)", status);
              return C2_NO_MEMORY;
 diff --git a/components/EncodeInterface.cpp b/components/EncodeInterface.cpp
-index e39b7d0ac5ef778c9c9c04268aa848a6d1827839..e9fac695da6c494170aba269cbf8e00cf60ee861 100644
+index f9aa39d12b60606992a510e4ee05ebc04ed1de9b..cd2a773bbd1cfdc9bc0bb0ef2a117fd574615ca7 100644
 --- a/components/EncodeInterface.cpp
 +++ b/components/EncodeInterface.cpp
 @@ -12,7 +12,6 @@
@@ -74,7 +74,7 @@ index e39b7d0ac5ef778c9c9c04268aa848a6d1827839..e9fac695da6c494170aba269cbf8e00c
  namespace android {
  
  namespace {
-@@ -627,9 +624,14 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+@@ -619,9 +616,14 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
                      .withConstValue(new C2StreamBufferTypeSetting::input(0u, C2BufferData::GRAPHIC))
                      .build());
  
@@ -91,10 +91,10 @@ index e39b7d0ac5ef778c9c9c04268aa848a6d1827839..e9fac695da6c494170aba269cbf8e00c
  
      addParameter(
 diff --git a/components/include/v4l2_codec2/components/EncodeInterface.h b/components/include/v4l2_codec2/components/EncodeInterface.h
-index 580def577446ee5c17436ad8525aa6c49b2e88cd..9320cf750120596a3fc4a7cbeb5e40c21fdb179b 100644
+index d26f533b70a03ef4c8561294e00b0e89c04f253e..2b404e5b7800a1ede9288af6e8b81fe957730277 100644
 --- a/components/include/v4l2_codec2/components/EncodeInterface.h
 +++ b/components/include/v4l2_codec2/components/EncodeInterface.h
-@@ -127,7 +127,7 @@ protected:
+@@ -125,7 +125,7 @@ protected:
      std::shared_ptr<C2ComponentKindSetting> mKind;
      // The input format kind; should be C2FormatVideo.
      std::shared_ptr<C2StreamBufferTypeSetting::input> mInputFormat;

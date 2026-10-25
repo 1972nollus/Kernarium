@@ -31,12 +31,12 @@ it in the units of the SEI messages.
  components/EncodeInterface.cpp                | 148 +++++++++++++++++-
  .../v4l2_codec2/components/EncodeInterface.h  |  19 +++
  .../v4l2_codec2/components/VideoEncoder.h     |   9 ++
- v4l2/V4L2Device.cpp                           | 137 +++++++++++++++-
+ v4l2/V4L2Device.cpp                           | 148 +++++++++++++++++-
  v4l2/V4L2EncodeComponent.cpp                  |  15 +-
  v4l2/V4L2Encoder.cpp                          |  75 ++++++++-
  v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |  26 ++-
  v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |   8 +-
- 11 files changed, 445 insertions(+), 19 deletions(-)
+ 11 files changed, 456 insertions(+), 19 deletions(-)
 
 diff --git a/common/VideoPixelFormat.cpp b/common/VideoPixelFormat.cpp
 index 48eb2a30ef888312abfa5b11f0e5b1dd1ea74f16..a097151a547f6f1a9d05b1bfd62398981c490500 100644
@@ -113,10 +113,10 @@ index ca922e6a48d06a42da8b11cb46f85450219ce8f0..27927180a5912d126ba006ee1ef12cda
      std::shared_ptr<C2GraphicBlock> block;
      status = pool->fetchGraphicBlock(size.width, size.height, static_cast<uint32_t>(halFormat),
 diff --git a/components/EncodeInterface.cpp b/components/EncodeInterface.cpp
-index c34fa02c991c0b00227fcd52dc7b55b9159e3534..e39b7d0ac5ef778c9c9c04268aa848a6d1827839 100644
+index 6b12dcef9ab496a17985e900b946cac7458c43a0..f9aa39d12b60606992a510e4ee05ebc04ed1de9b 100644
 --- a/components/EncodeInterface.cpp
 +++ b/components/EncodeInterface.cpp
-@@ -412,13 +412,59 @@ C2R EncodeInterface::InputDelaySetter(bool /*mayBlock*/, C2P<C2PortActualDelayTu
+@@ -404,13 +404,59 @@ C2R EncodeInterface::InputDelaySetter(bool /*mayBlock*/, C2P<C2PortActualDelayTu
      return C2R::Ok();
  }
  
@@ -177,7 +177,7 @@ index c34fa02c991c0b00227fcd52dc7b55b9159e3534..e39b7d0ac5ef778c9c9c04268aa848a6
      Initialize(name, caps);
  }
  
-@@ -623,6 +669,84 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+@@ -615,6 +661,84 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
                           .withSetter(Setter<decltype(*mKeyFramePeriodUs)>::StrictValueWithNoDeps)
                           .build());
  
@@ -262,7 +262,7 @@ index c34fa02c991c0b00227fcd52dc7b55b9159e3534..e39b7d0ac5ef778c9c9c04268aa848a6
      // The bounds of the quantization parameter, if the device has them.
      if (caps.qpRange) {
          mQpRange = caps.qpRange;
-@@ -758,6 +882,28 @@ float EncodeInterface::getBaseLayerBitrateRatio() const {
+@@ -750,6 +874,28 @@ float EncodeInterface::getBaseLayerBitrateRatio() const {
      return std::clamp(mLayering->m.bitrateRatios[0], 0.05f, 0.95f);
  }
  
@@ -292,7 +292,7 @@ index c34fa02c991c0b00227fcd52dc7b55b9159e3534..e39b7d0ac5ef778c9c9c04268aa848a6
      if (mKeyFramePeriodUs->value < 0 || mKeyFramePeriodUs->value == INT64_MAX) {
          return 0;
 diff --git a/components/include/v4l2_codec2/components/EncodeInterface.h b/components/include/v4l2_codec2/components/EncodeInterface.h
-index 507937bf3ffab652c29010b5ab105db39793e224..580def577446ee5c17436ad8525aa6c49b2e88cd 100644
+index 3211883d75b8ccb1461119b4be5a130f229d4c62..d26f533b70a03ef4c8561294e00b0e89c04f253e 100644
 --- a/components/include/v4l2_codec2/components/EncodeInterface.h
 +++ b/components/include/v4l2_codec2/components/EncodeInterface.h
 @@ -68,6 +68,10 @@ public:
@@ -323,7 +323,7 @@ index 507937bf3ffab652c29010b5ab105db39793e224..580def577446ee5c17436ad8525aa6c4
      static C2R InputDelaySetter(bool mayBlock, C2P<C2PortActualDelayTuning::input>& me,
                                  const C2P<C2StreamGopTuning::output>& gop);
  
-@@ -169,6 +181,13 @@ protected:
+@@ -167,6 +179,13 @@ protected:
      // The temporal layering of the stream.
      std::shared_ptr<C2StreamTemporalLayeringTuning::output> mLayering;
  
@@ -358,7 +358,7 @@ index bf207e895c9311bdf8413683acb61f90394af60d..d05f1caa5e6624e5ac1a237f6a6ab248
  
      // The InputFrame class can be used to store raw video frames.
 diff --git a/v4l2/V4L2Device.cpp b/v4l2/V4L2Device.cpp
-index 82f3c62fe86c467339b736bfbfc5edeab9840b0a..e14d6cb091b1af833eca451df9ff037636bc3bc4 100644
+index 82f3c62fe86c467339b736bfbfc5edeab9840b0a..345c1c2cca2d818ba0f15131b15e95f041fe6f57 100644
 --- a/v4l2/V4L2Device.cpp
 +++ b/v4l2/V4L2Device.cpp
 @@ -95,6 +95,11 @@ V4L2ExtCtrl::V4L2ExtCtrl(uint32_t id, int32_t val) : V4L2ExtCtrl(id) {
@@ -391,7 +391,7 @@ index 82f3c62fe86c467339b736bfbfc5edeab9840b0a..e14d6cb091b1af833eca451df9ff0376
      if (mDevice->ioctl(VIDIOC_S_FMT, &format) != 0 || format.fmt.pix_mp.pixelformat != fourcc) {
          ALOGEQ("Failed to set format (format_fourcc=0x%" PRIx32 ")", fourcc);
          return std::nullopt;
-@@ -1878,6 +1890,93 @@ int32_t V4L2Device::h264LevelIdcToV4L2H264Level(uint8_t levelIdc) {
+@@ -1878,6 +1890,104 @@ int32_t V4L2Device::h264LevelIdcToV4L2H264Level(uint8_t levelIdc) {
      }
  }
  
@@ -479,13 +479,24 @@ index 82f3c62fe86c467339b736bfbfc5edeab9840b0a..e14d6cb091b1af833eca451df9ff0376
 +        break;
 +    }
 +
++    // The V4L2 core resets the transfer function, the matrix and the quantization to the default
++    // whenever the colorspace is the default, so a stream that states some of them but not its
++    // primaries would lose them. RAW states no primaries and keeps the rest as given: every
++    // default then means unspecified, not what a standard implies.
++    if (colorimetry.colorspace == V4L2_COLORSPACE_DEFAULT &&
++        (colorimetry.xferFunc != V4L2_XFER_FUNC_DEFAULT ||
++         colorimetry.ycbcrEnc != V4L2_YCBCR_ENC_DEFAULT ||
++         colorimetry.quantization != V4L2_QUANTIZATION_DEFAULT)) {
++        colorimetry.colorspace = V4L2_COLORSPACE_RAW;
++    }
++
 +    return colorimetry;
 +}
 +
  // static
  v4l2_mpeg_video_bitrate_mode V4L2Device::c2BitrateModeToV4L2BitrateMode(
          C2Config::bitrate_mode_t bitrateMode) {
-@@ -2142,7 +2241,8 @@ std::optional<VideoFrameLayout> V4L2Device::v4L2FormatToVideoFrameLayout(
+@@ -2142,7 +2252,8 @@ std::optional<VideoFrameLayout> V4L2Device::v4L2FormatToVideoFrameLayout(
          const size_t yStrideAbs = static_cast<size_t>(yStride);
          switch (pixFmt) {
          case V4L2_PIX_FMT_NV12:
@@ -495,7 +506,7 @@ index 82f3c62fe86c467339b736bfbfc5edeab9840b0a..e14d6cb091b1af833eca451df9ff0376
              planes.push_back(VideoFramePlane{yStride, yStrideAbs * pixMp.height,
                                               yStrideAbs * pixMp.height / 2});
              ALOG_ASSERT(2u == planes.size());
-@@ -2492,6 +2592,39 @@ void V4L2Device::queryEncoderControls(VideoCodec codec, uint32_t pixFmt,
+@@ -2492,6 +2603,39 @@ void V4L2Device::queryEncoderControls(VideoCodec codec, uint32_t pixFmt,
      if (isCtrlExposed(isHEVC ? V4L2_CID_MPEG_VIDEO_HEVC_LEVEL : V4L2_CID_MPEG_VIDEO_H264_LEVEL)) {
          caps->supportedLevels = queryC2Levels(pixFmt);
      }

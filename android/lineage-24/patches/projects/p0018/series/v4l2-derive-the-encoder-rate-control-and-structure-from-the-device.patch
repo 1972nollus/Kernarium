@@ -38,7 +38,7 @@ and level when it differs from the requested one.
  common/include/v4l2_codec2/common/Common.h    |  17 +
  .../v4l2_codec2/common/EncodeHelpers.h        |   5 +
  components/EncodeComponent.cpp                |  54 ++-
- components/EncodeInterface.cpp                | 324 ++++++++++++++++--
+ components/EncodeInterface.cpp                | 325 ++++++++++++++++--
  .../v4l2_codec2/components/EncodeComponent.h  |  13 +
  .../v4l2_codec2/components/EncodeInterface.h  |  47 +++
  .../v4l2_codec2/components/VideoEncoder.h     |  21 ++
@@ -47,7 +47,7 @@ and level when it differs from the requested one.
  v4l2/V4L2Encoder.cpp                          | 126 ++++++-
  v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |   4 +
  v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |  38 +-
- 13 files changed, 786 insertions(+), 68 deletions(-)
+ 13 files changed, 787 insertions(+), 68 deletions(-)
 
 diff --git a/common/EncodeHelpers.cpp b/common/EncodeHelpers.cpp
 index 68c940063e7369b1dda0069d4d930c2acbec1976..9056e074eb82936df05cdd6bffc77ee7be482449 100644
@@ -296,10 +296,10 @@ index 1a7c17746160c72abd0946c47560b7ced0766e56..ca922e6a48d06a42da8b11cb46f85450
      ATRACE_CALL();
      ALOG_ASSERT(work);
 diff --git a/components/EncodeInterface.cpp b/components/EncodeInterface.cpp
-index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c34fa02c991c0b00227fcd52dc7b55b9159e3534 100644
+index 6a356e8135e31a53df70932f0319e5ea1fdd0025..6b12dcef9ab496a17985e900b946cac7458c43a0 100644
 --- a/components/EncodeInterface.cpp
 +++ b/components/EncodeInterface.cpp
-@@ -43,6 +43,29 @@ constexpr uint32_t kDefaultBitrate = 64000;
+@@ -43,6 +43,31 @@ constexpr uint32_t kDefaultBitrate = 64000;
  // TODO: increase this in the future for supporting higher level/resolution encoding.
  constexpr uint32_t kMaxBitrate = 50000000;
  
@@ -313,8 +313,10 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c34fa02c991c0b00227fcd52dc7b55b9
 +// The most B-frames between two reference frames that a client can ask for before the setter
 +// reduces the request to what the device supports.
 +constexpr uint32_t kMaxRequestedBFrames = 16;
-+// The frames, beyond the run of B-frames, that the host's encoder holds a reference frame back.
-+constexpr uint32_t kReorderHoldBack = 2;
++// The frames, beyond the run of B-frames, after which a client may wait for the next output: a
++// reference frame is coded only once the frames before it have arrived, so the output that follows
++// the first one comes with the frame after the run.
++constexpr uint32_t kReorderHoldBack = 1;
 +
 +// The H.264 levels offered when the device does not list the ones it supports.
 +constexpr C2Config::level_t kDefaultH264Levels[] = {
@@ -329,7 +331,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c34fa02c991c0b00227fcd52dc7b55b9
  // The HEVC levels offered when the device does not list the ones it supports. They stop at the
  // level every tier-aware encoder of this size class meets.
  constexpr C2Config::level_t kDefaultHEVCLevels[] = {
-@@ -51,6 +74,35 @@ constexpr C2Config::level_t kDefaultHEVCLevels[] = {
+@@ -51,6 +76,35 @@ constexpr C2Config::level_t kDefaultHEVCLevels[] = {
          C2Config::LEVEL_HEVC_MAIN_4_1, C2Config::LEVEL_HEVC_MAIN_5,   C2Config::LEVEL_HEVC_MAIN_5_1,
  };
  
@@ -365,7 +367,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c34fa02c991c0b00227fcd52dc7b55b9
  // Returns the HEVC levels the interface offers: the Main tier levels |deviceLevels| lists, or the
  // default levels when the device lists none.
  std::vector<unsigned int> offeredHEVCLevels(const std::vector<C2Config::level_t>& deviceLevels) {
-@@ -277,6 +329,89 @@ C2R EncodeInterface::IntraRefreshPeriodSetter(bool mayBlock,
+@@ -268,6 +322,88 @@ C2R EncodeInterface::IntraRefreshPeriodSetter(bool mayBlock,
      return C2R::Ok();
  }
  
@@ -416,11 +418,10 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c34fa02c991c0b00227fcd52dc7b55b9
 +// static
 +C2R EncodeInterface::PipelineDelaySetter(bool /*mayBlock*/, C2P<C2PipelineDelayTuning>& me,
 +                                         const C2P<C2StreamGopTuning::output>& gop) {
-+    // The latency a client reads as MediaFormat.KEY_LATENCY: the input frames after which the
-+    // encoder has an output for it. The device picks the pattern of its B-frames, and the host
-+    // codes them in a hierarchy that holds a reference frame back for up to two frames more than
-+    // the run of B-frames, so a client that waits for an output after a latency of the run alone
-+    // waits for one that is not yet coded and the stream stalls.
++    // The latency a client reads as MediaFormat.KEY_LATENCY: the input frames after which it may
++    // wait for the encoder to have an output. An encoder that codes a run of B-frames holds those
++    // frames until the next reference frame arrives, so a client that waits for an output after a
++    // latency of the run alone waits for one that is not yet coded and the stream stalls.
 +    uint32_t bFrames = 0;
 +    for (size_t i = 0; i < gop.v.flexCount(); ++i) {
 +        const C2GopLayerStruct& layer = gop.v.m.values[i];
@@ -455,7 +456,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c34fa02c991c0b00227fcd52dc7b55b9
  EncodeInterface::EncodeInterface(const C2String& name, std::shared_ptr<C2ReflectorHelper> helper,
                                   const SupportedCapabilities& caps)
        : C2InterfaceHelper(std::move(helper)) {
-@@ -333,56 +468,71 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+@@ -324,56 +460,71 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
                           .withSetter(Setter<decltype(*mFrameRate)>::StrictValueWithNoDeps)
                           .build());
  
@@ -560,7 +561,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c34fa02c991c0b00227fcd52dc7b55b9
          addParameter(DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
                               .withDefault(new C2StreamProfileLevelInfo::output(
                                       0u, minProfile, static_cast<C2Config::level_t>(defaultLevel)))
-@@ -473,6 +623,64 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+@@ -464,6 +615,64 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
                           .withSetter(Setter<decltype(*mKeyFramePeriodUs)>::StrictValueWithNoDeps)
                           .build());
  
@@ -625,7 +626,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c34fa02c991c0b00227fcd52dc7b55b9
      C2Allocator::id_t inputAllocators[] = {kDefaultInputAllocator};
  
      C2Allocator::id_t outputAllocators[] = {kDefaultOutputAllocator};
-@@ -500,6 +708,56 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+@@ -491,6 +700,56 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
      mInitStatus = C2_OK;
  }
  
@@ -725,7 +726,7 @@ index d2e42f755c6ac72738d6a433d4b7d5bc4e2ac33c..67811a6317547951d84154e1ef80d5a1
      // The queue of encode work items currently being processed.
      std::deque<std::unique_ptr<C2Work>> mWorkQueue;
 diff --git a/components/include/v4l2_codec2/components/EncodeInterface.h b/components/include/v4l2_codec2/components/EncodeInterface.h
-index 26e8dc9dc670668c36734dd387847a628160b8b3..507937bf3ffab652c29010b5ab105db39793e224 100644
+index bf4917bb4f65a9fff584e42c4bc81f2540d09c6d..3211883d75b8ccb1461119b4be5a130f229d4c62 100644
 --- a/components/include/v4l2_codec2/components/EncodeInterface.h
 +++ b/components/include/v4l2_codec2/components/EncodeInterface.h
 @@ -5,7 +5,9 @@
@@ -777,7 +778,7 @@ index 26e8dc9dc670668c36734dd387847a628160b8b3..507937bf3ffab652c29010b5ab105db3
      // Recorded lowest configured level
      // Is static for the need to use H264ProfileLevelSetter as a setter
      static C2Config::level_t lowestConfigLevel;
-@@ -127,6 +154,26 @@ protected:
+@@ -125,6 +152,26 @@ protected:
      // The intra-frame refresh period. This is unused for the component now.
      // TODO: adapt intra refresh period to encoder.
      std::shared_ptr<C2StreamIntraRefreshTuning::output> mIntraRefreshPeriod;

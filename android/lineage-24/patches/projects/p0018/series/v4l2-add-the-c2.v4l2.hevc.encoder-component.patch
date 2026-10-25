@@ -16,24 +16,24 @@ stays AVC only. The codec-specific data is the VPS, SPS and PPS of the
 first coded frame, and the frame rate ceiling follows the HEVC level.
 ---
  common/Android.bp                             |   1 +
- common/EncodeHelpers.cpp                      |  84 +++++++++++++
+ common/EncodeHelpers.cpp                      |  84 ++++++++++++++
  common/HEVC.cpp                               |  35 ++++++
  .../v4l2_codec2/common/EncodeHelpers.h        |  15 +++
  common/include/v4l2_codec2/common/HEVC.h      |  50 ++++++++
  .../v4l2_codec2/common/HEVCNalParser.h        |   2 +
  components/EncodeComponent.cpp                |  10 +-
- components/EncodeInterface.cpp                | 117 ++++++++++++++++++
+ components/EncodeInterface.cpp                | 108 ++++++++++++++++++
  .../v4l2_codec2/components/EncodeComponent.h  |   2 +
- .../v4l2_codec2/components/EncodeInterface.h  |   6 +
+ .../v4l2_codec2/components/EncodeInterface.h  |   4 +
  v4l2/V4L2ComponentCommon.cpp                  |  12 +-
  v4l2/V4L2ComponentStore.cpp                   |   3 +
  v4l2/V4L2Device.cpp                           |  15 +++
  v4l2/V4L2EncodeComponent.cpp                  |  16 ++-
- v4l2/V4L2Encoder.cpp                          |  65 +++++++++-
+ v4l2/V4L2Encoder.cpp                          |  65 ++++++++++-
  .../v4l2_codec2/v4l2/V4L2ComponentCommon.h    |   1 +
  v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |   2 +
  v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |   5 +-
- 18 files changed, 425 insertions(+), 16 deletions(-)
+ 18 files changed, 414 insertions(+), 16 deletions(-)
  create mode 100644 common/HEVC.cpp
  create mode 100644 common/include/v4l2_codec2/common/HEVC.h
 
@@ -338,7 +338,7 @@ index 65de28375b7b7e9fe49cf14f1fabc55aae1c497a..1a7c17746160c72abd0946c47560b7ce
              reportError(C2_CORRUPTED);
              return;
 diff --git a/components/EncodeInterface.cpp b/components/EncodeInterface.cpp
-index 12152e6f747198b2058268efd1ccd92826de67a8..1f03c8e2f94ce03d26955ee63e3db88a40290216 100644
+index 12152e6f747198b2058268efd1ccd92826de67a8..6a356e8135e31a53df70932f0319e5ea1fdd0025 100644
 --- a/components/EncodeInterface.cpp
 +++ b/components/EncodeInterface.cpp
 @@ -18,6 +18,7 @@
@@ -349,7 +349,7 @@ index 12152e6f747198b2058268efd1ccd92826de67a8..1f03c8e2f94ce03d26955ee63e3db88a
  #include <v4l2_codec2/common/VideoTypes.h>
  
  using android::hardware::graphics::common::V1_0::BufferUsage;
-@@ -41,10 +42,38 @@ constexpr uint32_t kDefaultBitrate = 64000;
+@@ -41,6 +42,32 @@ constexpr uint32_t kDefaultBitrate = 64000;
  // The maximal output bitrate in bits per second. It's the max bitrate of AVC Level4.1.
  // TODO: increase this in the future for supporting higher level/resolution encoding.
  constexpr uint32_t kMaxBitrate = 50000000;
@@ -382,13 +382,7 @@ index 12152e6f747198b2058268efd1ccd92826de67a8..1f03c8e2f94ce03d26955ee63e3db88a
  }  // namespace
  
  //static
- C2Config::level_t EncodeInterface::lowestConfigLevel = C2Config::LEVEL_UNUSED;
-+//static
-+C2Config::level_t EncodeInterface::lowestConfigLevelHEVC = C2Config::LEVEL_UNUSED;
- 
- // static
- C2R EncodeInterface::H264ProfileLevelSetter(bool /*mayBlock*/,
-@@ -134,6 +163,74 @@ C2R EncodeInterface::H264ProfileLevelSetter(bool /*mayBlock*/,
+@@ -134,6 +161,67 @@ C2R EncodeInterface::H264ProfileLevelSetter(bool /*mayBlock*/,
      return C2R::Ok();
  }
  
@@ -415,11 +409,6 @@ index 12152e6f747198b2058268efd1ccd92826de67a8..1f03c8e2f94ce03d26955ee63e3db88a
 +    uint64_t targetLumaPs = static_cast<uint64_t>(videoSize.v.width) * videoSize.v.height;
 +    double targetLumaSr = static_cast<double>(targetLumaPs) * frameRate.v.value;
 +
-+    // Try the recorded lowest configured level, see the H.264 setter for the reason.
-+    if (lowestConfigLevelHEVC != C2Config::LEVEL_UNUSED && lowestConfigLevelHEVC < info.v.level) {
-+        info.set().level = lowestConfigLevelHEVC;
-+    }
-+
 +    // Check if the supplied level meets the requirements. If not, update the level with the lowest
 +    // level meeting the requirements.
 +    bool found = false;
@@ -434,8 +423,6 @@ index 12152e6f747198b2058268efd1ccd92826de67a8..1f03c8e2f94ce03d26955ee63e3db88a
 +            // This is the lowest level that meets the requirements, and if we haven't seen the
 +            // supplied level yet, that means we don't need the update.
 +            if (needsUpdate) {
-+                lowestConfigLevelHEVC = info.v.level;
-+
 +                ALOGD("Given level %u does not cover current configuration: "
 +                      "adjusting to %u",
 +                      info.v.level, limit.level);
@@ -463,7 +450,7 @@ index 12152e6f747198b2058268efd1ccd92826de67a8..1f03c8e2f94ce03d26955ee63e3db88a
  C2R EncodeInterface::VP9ProfileLevelSetter(bool /*mayBlock*/,
                                             C2P<C2StreamProfileLevelInfo::output>& info,
                                             const C2P<C2StreamPictureSizeInfo::input>& /*videoSize*/,
-@@ -274,6 +371,26 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+@@ -274,6 +362,26 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
                                                   C2Config::LEVEL_AVC_5, C2Config::LEVEL_AVC_5_1})})
                          .withSetter(H264ProfileLevelSetter, mInputVisibleSize, mFrameRate, mBitrate)
                          .build());
@@ -504,7 +491,7 @@ index 2d40dfff423a8457431cd84c119e824fbff3a94e..d2e42f755c6ac72738d6a433d4b7d5bc
      // The queue of encode work items currently being processed.
      std::deque<std::unique_ptr<C2Work>> mWorkQueue;
 diff --git a/components/include/v4l2_codec2/components/EncodeInterface.h b/components/include/v4l2_codec2/components/EncodeInterface.h
-index e59f58cfd5e85e98020246de03369f2a166cd8a3..26e8dc9dc670668c36734dd387847a628160b8b3 100644
+index e59f58cfd5e85e98020246de03369f2a166cd8a3..bf4917bb4f65a9fff584e42c4bc81f2540d09c6d 100644
 --- a/components/include/v4l2_codec2/components/EncodeInterface.h
 +++ b/components/include/v4l2_codec2/components/EncodeInterface.h
 @@ -62,6 +62,10 @@ protected:
@@ -518,15 +505,6 @@ index e59f58cfd5e85e98020246de03369f2a166cd8a3..26e8dc9dc670668c36734dd387847a62
      static C2R VP9ProfileLevelSetter(bool mayBlock, C2P<C2StreamProfileLevelInfo::output>& info,
                                       const C2P<C2StreamPictureSizeInfo::input>& videosize,
                                       const C2P<C2StreamFrameRateInfo::output>& frameRate,
-@@ -75,6 +79,8 @@ protected:
-     // Recorded lowest configured level
-     // Is static for the need to use H264ProfileLevelSetter as a setter
-     static C2Config::level_t lowestConfigLevel;
-+    // The same record for HEVC, whose levels are a different range.
-+    static C2Config::level_t lowestConfigLevelHEVC;
- 
-     // Constant parameters
- 
 diff --git a/v4l2/V4L2ComponentCommon.cpp b/v4l2/V4L2ComponentCommon.cpp
 index 2123bd00fbc0a2ef3993827500278c30a5715369..13605502c50c5c74805d532baad170bd69c1bca1 100644
 --- a/v4l2/V4L2ComponentCommon.cpp

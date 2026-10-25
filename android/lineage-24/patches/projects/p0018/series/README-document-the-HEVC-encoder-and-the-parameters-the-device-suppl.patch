@@ -8,11 +8,11 @@ The encoder README listed three codecs, two bitrate modes and NV12 as the only
 input. Describe the HEVC encoder, the parameters that exist when the encoder
 device has the controls for them, and the input formats the encoder passes on.
 ---
- README.md | 48 +++++++++++++++++++++++++++++++++++++++++++-----
- 1 file changed, 43 insertions(+), 5 deletions(-)
+ README.md | 56 +++++++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 48 insertions(+), 8 deletions(-)
 
 diff --git a/README.md b/README.md
-index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..80d15271d44ac1f040f93eb3e5e6cd7a0fa03ec9 100644
+index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..66f8b00fc1a1be135dcf66b1980299c610b16339 100644
 --- a/README.md
 +++ b/README.md
 @@ -289,10 +289,12 @@ extern "C" ::C2Allocator* CreateAllocator(::C2Allocator::id_t allocatorId) {
@@ -30,10 +30,26 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..80d15271d44ac1f040f93eb3e5e6cd7a
  - VP8: *c2.v4l2.vp8.encoder*
  - VP9: *c2.v4l2.vp9.encoder*
  
-@@ -316,6 +318,39 @@ be allowed to dynamically adjust the bitrate to maintain a constant quality. As
+@@ -303,8 +305,9 @@ The following parameters are static and can not be changed at run-time:
+ - *C2_PARAMKEY_PICTURE_SIZE*: This parameter can be used to configure the
+ resolution of the encoded video stream.
+ - *C2_PARAMKEY_PROFILE_LEVEL*: This parameter can be used to adjust the desired
+-profile level. When using the H.264 codec the profile level might be adjusted to
+-conform to the minimum requirements for the specified bitrate and framerate.
++profile level. The device is configured with that level, or with the lowest
++level the encoder offers that holds the picture size, the framerate and the
++bitrate, if that is higher.
+ - *C2_PARAMKEY_SYNC_FRAME_INTERVAL*: This parameter can be used to configure the
+ desired time between subsequent key frames in microseconds.
+ - *C2_PARAMKEY_BITRATE_MODE*: This parameter can be used to switch between
+@@ -314,7 +317,41 @@ bitrate. This mode is preferable for video conferencing where maintaining a
+ stable bitrate is more important than quality. When using VBR the encoder will
+ be allowed to dynamically adjust the bitrate to maintain a constant quality. As
  the mediacodec framework does not provide facilities to configure the peak
- bitrate when using VBR, it is currently always set to 2x the target bitrate.
- 
+-bitrate when using VBR, it is currently always set to 2x the target bitrate.
++bitrate when using VBR, it is currently always set to 2x the target bitrate, or
++to the most the level allows if that is less.
++
 +The following parameters exist only if the encoder device has the controls for
 +them, and are static:
 +
@@ -49,9 +65,9 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..80d15271d44ac1f040f93eb3e5e6cd7a
 +to the device's *V4L2_CID_MPEG_VIDEO_B_FRAMES* maximum, and not for H.264
 +Baseline. The encoder then returns its output in the order of the stream, and
 +*C2_PARAMKEY_INPUT_DELAY* follows the run. *C2_PARAMKEY_PIPELINE_DELAY*, which
-+the framework reports as the latency of the encoder, is two frames longer: the
-+host codes B-frames in a hierarchy that holds a reference frame back beyond the
-+run, and a client that waits for an output sooner stalls the stream.
++the framework reports as the latency of the encoder, is one frame longer: the
++frames of a run wait for the reference frame after them, and a client that
++waits for an output sooner stalls the stream.
 +- *C2_PARAMKEY_TEMPORAL_LAYERING* sets layers of P frames, up to what the
 +device's hierarchical coding controls allow. Layers turn B-frames off and
 +constant bitrate into variable bitrate. The bitrate ratio of the base layer
@@ -66,11 +82,10 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..80d15271d44ac1f040f93eb3e5e6cd7a
 +- *C2_PARAMKEY_PROFILE_LEVEL* of the output reports the level the device chose
 +for the stream, read from the first coded headers, when it differs from the
 +ceiling the client asked for.
-+
+ 
  The following parameters are dynamic, and can be freely adjusted at run-time:
  
- - *C2_PARAMKEY_BITRATE*: Use this parameter to specify the desired bitrate.
-@@ -329,10 +364,13 @@ additional key frames in addition to the periodic ones requested through the
+@@ -329,10 +366,13 @@ additional key frames in addition to the periodic ones requested through the
  
  ### Supported Input Pixel Formats:
  
