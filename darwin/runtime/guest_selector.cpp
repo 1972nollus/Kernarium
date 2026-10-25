@@ -31,6 +31,16 @@ extern "C" unsigned long darwin_uml_guest_compat_hwcap2(void)
 		::uml::runtime::current_guest_host_capabilities())[1];
 }
 
+/* Whether the run ignores the top byte of a data address, as the Android
+ * product and any --guest-top-byte-ignore run do. The kernel reads it at boot
+ * to decide whether to offer the tagged-address ABI. Outside a run no engine
+ * executes a guest, so nothing ignores a tag. */
+extern "C" unsigned long darwin_uml_guest_top_byte_ignore(void)
+{
+	const auto *context = ::uml::runtime::current_context();
+	return context != nullptr && context->top_byte_ignore() ? 1UL : 0UL;
+}
+
 extern "C" const char *darwin_uml_guest_cpu_model_name(void)
 {
 	/*
