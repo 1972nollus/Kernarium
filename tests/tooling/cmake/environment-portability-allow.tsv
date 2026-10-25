@@ -10,8 +10,8 @@
 #     framework template track by decision)
 # An entry that matches nothing fails the test, so the list cannot rot.
 # Private tokens belong to the local denylist (R5), never to this file.
-R1	tests/integration/gpu/vulkan_cts_receipt.json	/home/vm/uml-source31-	recorded provenance of an accepted artifact
-R1	tests/integration/gpu/vk_gl_cts_derivative_rootfs.json	/home/vm/uml-source31-	recorded provenance of an accepted artifact
+R1	tests/integration/gpu/vulkan_cts_receipt.json	/home/vm/uml-source32-	recorded provenance of an accepted artifact
+R1	tests/integration/gpu/vk_gl_cts_derivative_rootfs.json	/home/vm/uml-source32-	recorded provenance of an accepted artifact
 R1	tests/tooling/gpu/test_run_vk_gl_cts.py	/home/vm/input	fixture for a parser or validator
 R1	tests/tooling/android/test_builder_lane.py	\"/home/build/\"	fixture for a parser or validator
 R2	tests/tooling/cmake/test_patch_series.py	dev@Mac\.local	fixture for a parser or validator
