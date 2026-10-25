@@ -52,8 +52,13 @@ which controls the host publishes.
 The encoder driver gives the host these guarantees. It sends a raw frame only
 once the coded queue streams and no drain is pending, so the host builds its
 session from settled controls; until then the frames wait in the driver. It
-reports the host's own plane layout and ignores a client's strides. A
-format's coded and raw masks are read in both directions, and a raw format
+reports the host's own plane layout and ignores a client's strides. The
+four colorimetry fields of the raw queue (`colorspace`, `xfer_func`,
+`ycbcr_enc` and `quantization`) go to the host as the client states them,
+`V4L2_COLORSPACE_RAW` with an explicit transfer function and range among
+them, and `G_FMT` reports them as stated: the host's answer is read back for
+the coded queue only, which carries what the stream states. A format's coded
+and raw masks are read in both directions, and a raw format
 is listed under its contiguous V4L2 name, and also under the per-plane name
 when the host reports `PER_PLANE`. A packed format is named for its memory
 order: BGRA8888 is `AR24` and RGBA8888 is `AB24`, though the decoder's table
