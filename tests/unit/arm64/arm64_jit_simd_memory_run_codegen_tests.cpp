@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_jit_memory_run_codegen_test_support.hpp"
 #include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/jit/jit_runtime_contract.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "require.hpp"
 
@@ -36,11 +37,23 @@ using arm64_jit_memory_run_codegen_test::translation_probe;
 using uml::testing::require;
 
 constexpr std::uint64_t code_base = 0x50c0'0000ULL;
+/* ldrb w0, [x15, #tbi_enabled]: no translation tests the flag, which its
+ * key carries instead. */
 constexpr std::uint32_t tagged_state_load =
     0x3940'0000U |
     (static_cast<std::uint32_t>(offsetof(arm64::CpuState, tbi_enabled))
      << 10U) |
     (15U << 5U);
+/* ubfx x8, x8, #0, #56: the top-byte strip of a translation compiled for
+ * top-byte ignore, once per run off a non-SP base. */
+constexpr std::uint32_t tag_strip = 0xd340'dd08U;
+
+[[nodiscard]] jit_test::CompiledCode
+compile_tagged(std::uint64_t pc, std::span<const std::uint32_t> guest) {
+  return jit_test::compile_block_in_mode(pc, guest,
+                                         arm64::translation_mode_tbi)
+      .code;
+}
 
 struct Variant final {
   unsigned size;
@@ -96,8 +109,20 @@ void every_valid_variant_coalesces_for_both_base_kinds() {
                   count_branch_shape(hot, cbnz_x0) ==
                       (base == 31U ? 1U : 0U),
               "SIMD run has the wrong SP alignment-check count");
-      require(count_word(hot, tagged_state_load) == (base == 31U ? 0U : 1U),
-              "SIMD run has the wrong tagged-state-check count");
+      require(count_word(hot, tagged_state_load) == 0U &&
+                  count_word(hot, tag_strip) == 0U,
+              "SIMD run without top-byte ignore does tag work");
+      const auto tagged = compile_tagged(
+          code_base + 0x100'000U + base * 0x1000U + index * 0x80U, guest);
+      const auto tagged_hot = hot_code(tagged, guest.size());
+      require(count_word(tagged_hot, tagged_state_load) == 0U &&
+                  count_word(tagged_hot, tag_strip) ==
+                      (base == 31U ? 0U : 1U),
+              "SIMD run has the wrong top-byte strip count");
+      require(count_word(tagged_hot, translation_probe) == 1 &&
+                  count_memory_form(tagged_hot, guest[0]) == 1 &&
+                  count_memory_form(tagged_hot, guest[1]) == 1,
+              "SIMD run lost its shape under top-byte ignore");
       const auto expected_mask =
           variant.load ? std::uint64_t{0} : std::uint64_t{3};
       require(compiled.memory_write_mask == expected_mask &&
@@ -166,9 +191,14 @@ void run_lengths_are_bounded_to_eight() {
                   count_branch_shape(hot, cbnz_x0) ==
                       (base == 31U ? groups : 0U),
               "split SIMD run has the wrong alignment-check count");
-      require(count_word(hot, tagged_state_load) ==
+      require(count_word(hot, tagged_state_load) == 0U &&
+                  count_word(hot, tag_strip) == 0U,
+              "split SIMD run without top-byte ignore does tag work");
+      const auto tagged = compile_tagged(
+          code_base + 0x98'000U + base * 0x1000U + length * 0x40U, guest);
+      require(count_word(hot_code(tagged, guest.size()), tag_strip) ==
                   (base == 31U ? 0U : groups),
-              "split SIMD run has the wrong state-check count");
+              "split SIMD run has the wrong top-byte strip count");
     }
   }
 }

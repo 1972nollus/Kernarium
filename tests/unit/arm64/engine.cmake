@@ -295,6 +295,10 @@
     uml_add_arm64_unit_test(jit_fp_link_runtime WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
+    # Top-byte ignore selects a translation and strips inline (cpu/arm64/jit).
+    uml_add_arm64_unit_test(jit_top_byte_ignore WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+
     # The JIT's AArch32 support (cpu/arm64/jit/a32).
     uml_add_arm64_unit_test(jit_a32_runtime WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})

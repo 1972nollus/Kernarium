@@ -791,8 +791,8 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
   set_exit_gpr_mask(resident_across_links_ ? dirty_gpr_mask() : 0);
   set_exit_vector_mask(0);
   /* The successor runs in this translation's mode: nothing in a block
-   * changes SVCR and then reaches a linked exit. */
-  const auto key = translation_key(target, sme_mode_);
+   * changes SVCR or top-byte-ignore and then reaches a linked exit. */
+  const auto key = translation_key(target, translation_mode());
   const auto *link =
       link_resolver_ == nullptr
           ? nullptr
@@ -879,7 +879,7 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
 
   /* The site and every target it trains belong to this translation's mode;
    * its entries compare plain guest PCs with x8. */
-  const auto source_key = translation_key(source_pc, sme_mode_);
+  const auto source_key = translation_key(source_pc, translation_mode());
   const auto *site =
       indirect_link_resolver_ == nullptr
           ? nullptr

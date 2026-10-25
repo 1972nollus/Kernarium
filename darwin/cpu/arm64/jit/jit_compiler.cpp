@@ -48,8 +48,8 @@ void JitCompiler::set_table_list_planning_enabled(bool enabled) noexcept {
     table_list_planning_enabled_ = enabled;
   }
 
-void JitCompiler::set_sme_mode(std::uint8_t mode) noexcept {
-    JitCompilerFamilies::set_sme_mode(mode);
+void JitCompiler::set_translation_mode(std::uint8_t mode) noexcept {
+    JitCompilerFamilies::set_translation_mode(mode);
     emitter_.set_sme_host_mode(jit::jit_sme_host_mode(
         sme_mode(), sme_profile(host_capabilities()) == SmeProfile::sme2));
   }
@@ -329,8 +329,8 @@ void JitCompiler::select_consecutive_vector_lists(
          (instruction & 0x3fa0'0000U) == 0x08a0'0000U);
     if (native_scalar_lse)
       return false;
-    /* LDAR runs natively, and its misaligned or tagged fallback only
-     * reads: it establishes no reservation and waits for no publication. */
+    /* LDAR runs natively, and its misaligned fallback only reads: it
+     * establishes no reservation and waits for no publication. */
     if ((instruction & 0x3fff'fc00U) == 0x08df'fc00U)
       return false;
     const bool scalar_atomic =
@@ -596,13 +596,7 @@ void JitCompiler::emit_cache_zero(std::uint32_t instruction, std::uint64_t pc) {
     mark_direct_memory_write();
     const unsigned source = instruction & 31U;
     load_gpr(8, source, false);
-    if (source != 31U) {
-      const auto no_tagged_state = emitter_.make_label();
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(no_tagged_state, 0, false, false);
-      emitter_.ubfm(8, 8, 0, 55);
-      emitter_.bind(no_tagged_state);
-    }
+    emit_untag_data_address(8, source == 31U);
     mask_register(8, ~std::uint64_t{63}, true);
     const auto fault =
         cold_exit(instruction, pc, ColdPath::Action::memory_fault);
@@ -651,11 +645,7 @@ void JitCompiler::emit_code_synchronize(std::uint32_t instruction, std::uint64_t
       emitter_.move_x(0, 31);
     else {
       emitter_.load_x(0, 15, register_offset(source, false));
-      const auto no_tagged_state = emitter_.make_label();
-      emitter_.load_b(8, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(no_tagged_state, 8, false, false);
-      emitter_.ubfm(0, 0, 0, 55);
-      emitter_.bind(no_tagged_state);
+      emit_untag_data_address(0, false);
     }
     emitter_.call(
         reinterpret_cast<const void *>(&uml_arm64_guest_code_synchronize));

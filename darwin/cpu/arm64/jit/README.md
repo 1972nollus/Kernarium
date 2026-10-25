@@ -11,6 +11,21 @@ slow path's role are cross-engine contracts in
 the lowering contracts that are not obvious from the code; the
 [gadget engine](../gadgets/README.md) states the rules both engines share.
 
+## Top-byte ignore
+
+When the guest ignores the top byte of data addresses (`CpuState::tbi_enabled`,
+the host's `--guest-top-byte-ignore`), a translation is compiled for it and its
+key says so (bit 61 of an A64 key, `translation_mode_tbi`), so a block runs only
+under the setting it was translated for. Every access that does not name SP as
+its base then strips bits 63:56 of its final address, after any displacement,
+with one `ubfx` before the address is translated, and a translation compiled
+without it holds no check at all. The TLB, a page fault and the fault address a
+signal reports therefore see the untagged address, as the semantic path
+reports it; an SP base is never untagged. Exclusives, atomics and ordered
+accesses strip before they translate and record the host address, so the
+monitor guards the location and not the pointer. A run of accesses off one base
+strips once. The cold paths do not test the flag again.
+
 ## Streaming mode
 
 The JIT follows the streaming-mode rules that the
@@ -41,8 +56,8 @@ floating-point form runs on a cleared FPSR; when it must run again, it restores
 its destination first. Every SVE and SME1 load and store runs as the guest's
 own word, its base renamed to the host address and its offset zeroed, when
 every byte it can span, whichever elements are active, lies in one guest page
-the TLB holds. A crossing, a TLB miss, a failed translation, a misaligned SP
-base or a tagged base takes a terminal helper that does the whole access. The
+the TLB holds. A crossing, a TLB miss, a failed translation or a misaligned SP
+base takes a terminal helper that does the whole access. The
 SIMD&FP loads and stores legal in streaming mode run the same way, with any
 writeback after the access. SME2, every other SVE and SME word, and in
 streaming mode AdvSIMD and the FEAT_LSFE and FEAT_LSUI loads and stores are its

@@ -214,13 +214,23 @@ void compare_lookahead_preserves_fetch_faults(bool matches) {
   executor.end_execution();
 }
 
+/*
+ * Four vCPUs raise one counter with a compare-and-swap loop. The loop at the
+ * page's start is the fused sequence the JIT lowers to the host's own
+ * monitor. With `mixed_semantic`, vCPU 0 runs a copy that begins one NOP
+ * earlier and retries to it: a load-exclusive that does not begin a block is
+ * left to the checked semantic helpers and their software reservation, so
+ * the two kinds of vCPU meet on one location.
+ */
 void concurrent_compare_retry_case(bool mixed_semantic) {
   constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
   const unsigned long generation = mixed_semantic ? 10'105U : 10'104U;
   constexpr std::uint64_t base = 0x124'0000U;
   constexpr auto data = base + page;
+  constexpr std::uint64_t semantic_entry = base + 0x100U;
   constexpr std::size_t workers = 4;
   constexpr unsigned iterations = 1000;
+  constexpr std::uint32_t nop = 0xd503'201fU;
   JitBacking backing{2};
   backing.put32(0, load_exclusive);
   backing.put32(4, 0xeb04'007fU); // cmp x3, x4
@@ -228,6 +238,13 @@ void concurrent_compare_retry_case(bool mixed_semantic) {
   backing.put32(12, 0xc805'7c22U); // stxr w5, x2, [x1]
   backing.put32(16, 0x35ff'ff85U); // cbnz w5, start
   backing.put32(20, system_call);
+  backing.put32(0x100, nop);
+  backing.put32(0x104, load_exclusive);
+  backing.put32(0x108, 0xeb04'007fU); // cmp x3, x4
+  backing.put32(0x10c, 0x5400'0061U); // b.ne end
+  backing.put32(0x110, 0xc805'7c22U); // stxr w5, x2, [x1]
+  backing.put32(0x114, 0x35ff'ff65U); // cbnz w5, the NOP
+  backing.put32(0x118, system_call);
   backing.put64(page, 0);
   JitMapping mapping{generation, base, backing, 2};
   auto executors =
@@ -242,14 +259,18 @@ void concurrent_compare_retry_case(bool mixed_semantic) {
     threads.emplace_back([&, index] {
       auto &cpu = (*cpus)[index];
       auto &executor = (*executors)[index];
+      const bool semantic = mixed_semantic && index == 0;
+      // Instructions one pass of the loop retires; the run ends in a
+      // system call after the last pass, or after a mismatch that skips the
+      // store and the retry.
+      const std::size_t pass = semantic ? 6U : 5U;
       cpu.registers[1] = data;
-      cpu.tbi_enabled = mixed_semantic && index == 0;
       require(executor.begin_execution(generation, base));
       start.arrive_and_wait();
       std::uint64_t expected = 0;
       unsigned successes = 0;
       while (successes < iterations) {
-        cpu.pc = base;
+        cpu.pc = semantic ? semantic_entry : base;
         cpu.registers[2] = expected + 1;
         cpu.registers[4] = expected;
         cpu.registers[5] = 7;
@@ -266,7 +287,7 @@ void concurrent_compare_retry_case(bool mixed_semantic) {
         if (cpu.registers[5] == 0) {
           require(cpu.registers[3] == expected);
           require((cpu.nzcv & 0x4000'0000U) != 0);
-          require(retired >= 6 && (retired - 6) % 5 == 0);
+          require(retired >= pass + 1 && (retired - pass - 1) % pass == 0);
           ++successes;
           expected = cpu.registers[2];
         } else {
@@ -276,7 +297,7 @@ void concurrent_compare_retry_case(bool mixed_semantic) {
           require(cpu.registers[5] == 1 || cpu.registers[5] == 7);
           require(cpu.registers[3] > expected);
           require((cpu.nzcv & 0x4000'0000U) == 0);
-          require(retired >= 4 && (retired - 4) % 5 == 0);
+          require(retired >= pass - 1 && (retired - (pass - 1)) % pass == 0);
           expected = cpu.registers[3];
         }
       }
@@ -289,6 +310,20 @@ void concurrent_compare_retry_case(bool mixed_semantic) {
 }
 
 enum class AliasStore : unsigned { plain, release };
+
+/* Runs the store at `cpu`'s PC through the semantic memory helper, as the
+ * translated store's slow edge does, and checks it retired alone. */
+void semantic_store_through_helper(uml::cpu::arm64::CpuState &cpu,
+                                   unsigned long generation,
+                                   std::uint32_t instruction) {
+  uml::memory::Tlb tlb;
+  tlb.prepare(generation, darwin_uml_static_vm_changes(generation));
+  const auto result =
+      uml::cpu::arm64::uml_arm64_jit_execute_memory(&cpu, &tlb, instruction);
+  require((result >> 32U) == 1U);
+  require(static_cast<std::uint32_t>(result) ==
+          static_cast<std::uint32_t>(::uml::cpu::EngineEvent::continued));
+}
 
 void same_backing_alias_case(bool overlaps, bool semantic_store = false,
                              AliasStore store = AliasStore::plain) {
@@ -327,21 +362,9 @@ void same_backing_alias_case(bool overlaps, bool semantic_store = false,
   first_cpu.pc = base;
   first_cpu.registers[1] = data;
   first_cpu.registers[4] = replacement;
-  /*
-   * Exercise the checked semantic reservation path deliberately. Untagged
-   * production blocks lower base exclusive instructions directly to the host
-   * and may legitimately lose their monitor across this artificial sequence
-   * of separate run_block calls.
-   */
-  first_cpu.tbi_enabled = true;
   second_cpu.pc = base + 8U;
   second_cpu.registers[2] = observed;
   second_cpu.registers[6] = alias + store_offset;
-  /*
-   * Top-byte-ignore keeps tag checks off but sends the alias store through
-   * the JIT's semantic slow path instead of its tracked native store.
-   */
-  second_cpu.tbi_enabled = semantic_store;
 
   require(first.begin_execution(generation, first_cpu.pc));
   std::size_t executed = 0;
@@ -355,6 +378,13 @@ void same_backing_alias_case(bool overlaps, bool semantic_store = false,
     require(second.begin_execution(generation, second_cpu.pc));
     auto event = ::uml::cpu::EngineEvent::continued;
     std::size_t retired = 0;
+    if (semantic_store) {
+      // The helper the store's slow edge runs, which a tracked native store
+      // does not reach; the system call then runs as its own block.
+      semantic_store_through_helper(second_cpu, generation, alias_store);
+      require(second_cpu.pc == base + 12U);
+      retired = 1;
+    }
     unsigned blocks = 0;
     for (; blocks < 4U && event == ::uml::cpu::EngineEvent::continued;
          ++blocks) {
@@ -365,7 +395,7 @@ void same_backing_alias_case(bool overlaps, bool semantic_store = false,
     require(event == ::uml::cpu::EngineEvent::system_call);
     require(retired == 2);
     // The native store and system call share one translated block.
-    require(semantic_store || blocks == 1);
+    require(blocks == 1);
     second.end_execution();
   } else {
     // Exercise the helper explicitly so native lowering cannot hide a stale
@@ -421,7 +451,6 @@ void native_store_invalidates_semantic_reservation_case() {
   semantic_cpu.pc = base;
   semantic_cpu.registers[1] = data;
   semantic_cpu.registers[4] = 99U;
-  semantic_cpu.tbi_enabled = true;
   native_cpu.pc = base + 8U;
   native_cpu.registers[1] = data;
 
@@ -496,7 +525,6 @@ void slow_store_invalidates_semantic_reservation_case(bool structure) {
   semantic_cpu.pc = base;
   semantic_cpu.registers[1] = data;
   semantic_cpu.registers[4] = replacement;
-  semantic_cpu.tbi_enabled = true;
   store_cpu.pc = base + 8U;
   store_cpu.registers[2] = observed;
   store_cpu.registers[6] = data - 8U;
@@ -557,6 +585,13 @@ void concurrent_native_cold_paths_leave_publication_before_helper() {
   for (std::size_t index = 0; index < workers; ++index)
     backing.put64(page + index * sizeof(std::uint64_t), index);
   JitMapping mapping{generation, base, backing, 2};
+  // A page the guest can read and not write, which the native sequence's
+  // write translation refuses.
+  constexpr std::uint64_t read_only_page = base + 2U * page;
+  JitBacking read_only{1};
+  require(darwin_uml_static_vm_map(
+              reinterpret_cast<void *>(read_only_page), read_only.descriptor(),
+              0, page, PROT_READ, 0, 0) == 0);
 
   auto executors =
       std::make_unique<std::array<uml::cpu::arm64::JitExecutor, workers>>();
@@ -565,9 +600,10 @@ void concurrent_native_cold_paths_leave_publication_before_helper() {
   auto cpus = std::make_unique<
       std::array<uml::cpu::arm64::CpuState, workers>>();
   /*
-   * Compile and warm each native sequence before the synchronized run. The
-   * tagged-state switch then forces every cached sequence down the helper
-   * cold edge without allowing translation latency to serialize the test.
+   * Compile and warm each native sequence before the synchronized run. A
+   * pointer into the read-only page then forces every cached sequence down
+   * the helper cold edge, where its load-exclusive needs only read access,
+   * without allowing translation latency to serialize the test.
    */
   for (std::size_t index = 0; index < workers; ++index) {
     auto &cpu = (*cpus)[index];
@@ -581,7 +617,7 @@ void concurrent_native_cold_paths_leave_publication_before_helper() {
     require(executed >= 4U);
     (*executors)[index].end_execution();
     cpu.pc = base;
-    cpu.tbi_enabled = true;
+    cpu.registers[1] = read_only_page + index * sizeof(std::uint64_t);
   }
 
   std::barrier start{workers};
@@ -894,22 +930,23 @@ void own_store_keeps_reservation_case(OwnStore path, bool same_granule,
   cpu.registers[2] = 5U;
   cpu.registers[4] = replacement;
   cpu.registers[6] = other;
-  // The load takes the helper with top-byte ignore on, which keeps a
-  // software reservation; the store then runs natively without it.
-  cpu.tbi_enabled = true;
+  // The load-exclusive takes the helper, which keeps a software
+  // reservation; the store then runs natively or through the helper.
   require(executor.begin_execution(generation, cpu.pc));
   std::size_t executed = 0;
   require(executor.run_block(cpu, memory, generation, executed) ==
           ::uml::cpu::EngineEvent::continued);
   require(cpu.exclusive_size == 8U);
-  cpu.tbi_enabled = path == OwnStore::semantic;
   cpu.pc = base + 8U;
-  auto event = ::uml::cpu::EngineEvent::continued;
-  for (unsigned blocks = 0;
-       blocks < 4U && event == ::uml::cpu::EngineEvent::continued; ++blocks)
-    event = executor.run_block(cpu, memory, generation, executed);
-  require(event == ::uml::cpu::EngineEvent::system_call);
-  cpu.tbi_enabled = true;
+  if (path == OwnStore::semantic) {
+    semantic_store_through_helper(cpu, generation, alias_store);
+  } else {
+    auto event = ::uml::cpu::EngineEvent::continued;
+    for (unsigned blocks = 0;
+         blocks < 4U && event == ::uml::cpu::EngineEvent::continued; ++blocks)
+      event = executor.run_block(cpu, memory, generation, executed);
+    require(event == ::uml::cpu::EngineEvent::system_call);
+  }
   cpu.pc = base + 16U;
   require(executor.run_block(cpu, memory, generation, executed) ==
           ::uml::cpu::EngineEvent::continued);

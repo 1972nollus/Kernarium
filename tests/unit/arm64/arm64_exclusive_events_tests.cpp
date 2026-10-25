@@ -14,7 +14,11 @@
  * - an instruction the gadget engine's library runs (A32 and T32);
  * - another thread's stores to another line of the page, all the while;
  * - the guest's own store to another line, its pair store (a spill's STP or
- *   STRD) to another page, and in A64 a structure store (ST2) to that page.
+ *   STRD) to another page, and in A64 a structure store (ST2) to that page,
+ *   one that crosses into the next page, and one through a tagged pointer;
+ * - in A64 the whole pair through a base that carries a tag in its top byte,
+ *   which the engine ignores (top-byte ignore), so the monitor guards the
+ *   location and not the pointer.
  *
  * Every case runs in A64, A32 and T32, for a single register (a doubleword in
  * A64, a word in AArch32) and a pair of words, on both engines. A store may
@@ -99,6 +103,9 @@ enum class Between {
 	own_store,
 	own_pair_store,
 	own_structure_store,
+	own_structure_store_crossing,
+	own_tagged_structure_store,
+	tagged_base,
 };
 
 [[nodiscard]] const char *name(Isa isa) noexcept
@@ -146,6 +153,12 @@ enum class Between {
 		return "a pair store of its own to another page";
 	case Between::own_structure_store:
 		return "a structure store of its own to another page";
+	case Between::own_structure_store_crossing:
+		return "a structure store of its own across a page";
+	case Between::own_tagged_structure_store:
+		return "a structure store of its own through a tagged pointer";
+	case Between::tagged_base:
+		return "nothing between, through a tagged base";
 	}
 	return "?";
 }
@@ -464,6 +477,8 @@ struct Program final {
 		c.own_pair_store();
 		break;
 	case Between::own_structure_store:
+	case Between::own_structure_store_crossing:
+	case Between::own_tagged_structure_store:
 		c.own_structure_store();
 		break;
 	default:
@@ -604,9 +619,19 @@ template<typename T>
 	const Program &built)
 {
 	auto cpu = machine.cpu_at(built.start);
-	/* With top-byte ignore on, which Android's tasks have, the JIT leaves a
-	 * structure store to its semantic helper. */
-	cpu.tbi_enabled = c.between == Between::own_structure_store;
+	/* With top-byte ignore on, which Android's tasks have, the engines
+	 * ignore the tag a pointer carries in its top byte. */
+	constexpr std::uint64_t tag = std::uint64_t{0x5a} << 56;
+	cpu.tbi_enabled = c.between == Between::tagged_base ||
+		c.between == Between::own_tagged_structure_store;
+	if (c.between == Between::tagged_base)
+		cpu.registers[0] |= tag;
+	if (c.between == Between::own_tagged_structure_store)
+		cpu.registers[6] |= tag;
+	/* A structure store of 32 bytes that ends one page on: the JIT leaves
+	 * a store that crosses a page to its semantic helper. */
+	if (c.between == Between::own_structure_store_crossing)
+		cpu.registers[6] = data_base + 3 * page - 16;
 	const auto reason = machine.run(cpu);
 	if (reason != uml::cpu::ExitReason::system_call)
 		failed(c, "the program did not finish; exit reason",
@@ -745,13 +770,18 @@ int main(int argc, char **argv)
 					     Between::other_thread,
 					     Between::own_store,
 					     Between::own_pair_store,
-					     Between::own_structure_store}) {
+					     Between::own_structure_store,
+					     Between::own_structure_store_crossing,
+					     Between::own_tagged_structure_store,
+					     Between::tagged_base}) {
 					/* The library case has no A64 form, nor the
-					 * structure store an AArch32 one. */
+					 * structure store or a tagged base an AArch32
+					 * one. */
+					const bool a64_only =
+						between >= Between::own_structure_store;
 					if ((between == Between::library &&
 					     isa == Isa::a64) ||
-					    (between == Between::own_structure_store &&
-					     isa != Isa::a64))
+					    (a64_only && isa != Isa::a64))
 						continue;
 					const Case c{engine, isa, width, between};
 					const auto taken =

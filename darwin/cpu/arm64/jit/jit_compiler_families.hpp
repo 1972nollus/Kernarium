@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/jit/jit_runtime_contract.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/engine.hpp"
 
@@ -62,12 +63,22 @@ protected:
   void attach_indirect_link_resolver(
       void *context, IndirectLinkResolver resolver) noexcept;
 
-  /* The guest SVCR mode (svcr_sm, svcr_za) the translation is compiled
-   * for. Its links and indirect sites use translation_key() with it. */
-  void set_sme_mode(std::uint8_t mode) noexcept {
+  /* The mode the translation is compiled for: the guest SVCR mode (svcr_sm,
+   * svcr_za) and translation_mode_tbi, which strips the top byte of every
+   * non-SP data address inline. Its links and indirect sites use
+   * translation_key() with it. */
+  void set_translation_mode(std::uint8_t mode) noexcept {
     sme_mode_ = static_cast<std::uint8_t>(mode & svcr_mask);
+    top_byte_ignore_ = (mode & translation_mode_tbi) != 0U;
   }
   [[nodiscard]] std::uint8_t sme_mode() const noexcept { return sme_mode_; }
+  [[nodiscard]] std::uint8_t translation_mode() const noexcept {
+    return static_cast<std::uint8_t>(
+        sme_mode_ | (top_byte_ignore_ ? translation_mode_tbi : 0U));
+  }
+  [[nodiscard]] bool top_byte_ignore() const noexcept {
+    return top_byte_ignore_;
+  }
   [[nodiscard]] bool streaming_translation() const noexcept {
     return (sme_mode_ & svcr_sm) != 0U;
   }
@@ -394,6 +405,7 @@ private:
   IndirectLinkResolver indirect_link_resolver_{};
   std::size_t indirect_link_refusals_{};
   std::uint8_t sme_mode_{};
+  bool top_byte_ignore_{};
 };
 
 } // namespace uml::cpu::arm64::jit

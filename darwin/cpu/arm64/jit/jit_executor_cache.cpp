@@ -259,7 +259,7 @@ void JitExecutor::Implementation::clear_cache() noexcept {
 [[nodiscard]] SharedTranslationCache::CodegenProfile
 JitExecutor::Implementation::shared_codegen_profile(
     std::uint8_t mode) const noexcept {
-  return {.capabilities = host_capabilities_, .sme_mode = mode};
+  return {.capabilities = host_capabilities_, .translation_mode = mode};
 }
 
 [[nodiscard]] std::optional<SharedTranslationMaterializationFailure>
