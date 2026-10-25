@@ -260,8 +260,11 @@ buffers handed back and guest memory a client brings, with each buffer's planes
 in separate dma-bufs or in one and their lengths stated as QUERYBUF gave them,
 as the whole dma-buf, or not at all. `guest-v4l2-decode-gpu` runs the same probe
 with the GPU, where capture buffers are host-visible blobs and an imported
-dma-buf takes another path in the driver. Android uses its own 4 KiB guest and
-deployment workflow.
+dma-buf takes another path in the driver. A stream that changes its picture size
+twice is decoded the way Android's V4L2 codec handles it, including a drain asked
+for while the last change is still on its way: every picture of a size returns,
+then the LAST buffer, before the source change is visible. Android uses its own
+4 KiB guest and deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py`, with `--gpu`
 for the GPU case, directly with an x86-64 probe and an x86-64 rootfs, the way

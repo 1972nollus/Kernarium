@@ -23,6 +23,22 @@ host-visible buffer that has no guest-physical address. Stream IDs, buffer exten
 host. The wire format is shared by all maintained
 kernel slices.
 
+## Decoder resolution change
+
+The device ends a picture size with one more capture buffer, empty and flagged
+`VIRTIO_VIDEO_DEQUEUE_FLAG_EOS`, after every picture of that size, and only then
+posts `VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED`. The driver reports the
+buffer as a `V4L2_BUF_FLAG_LAST` buffer with no payload and reads the new
+parameters before it queues `V4L2_EVENT_SOURCE_CHANGE`. The command queue
+completes in order, so a client that sees the event finds every picture of the
+old size and the LAST buffer already dequeueable, and `VIDIOC_DQBUF` then fails
+with `EPIPE` until it restarts the capture queue. A drain the client has asked
+for ends the old size by itself, at the drain's own last buffer after the
+capture queue is set up again, so the change gets no marker of its own: a client
+takes the first LAST buffer it sees as the end of its drain. The
+[device README](../../../darwin/device/video/README.md) owns the device's side.
+The `guest-v4l2-decode` probe holds both orders.
+
 ## Encoder (device ID 30)
 
 The encoder is its own device instance, and its commands are additions the
