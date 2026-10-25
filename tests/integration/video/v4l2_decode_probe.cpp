@@ -9,10 +9,12 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -36,12 +38,27 @@ struct Device {
     ~Device() { close(fd); }
 };
 struct Mapping {
+    /* `data` is the plane's first byte and `length` its size. A plane that
+     * starts inside a dma-buf, after the planes before it, need not start on a
+     * page, so the mapping begins on the page below it. */
     void* data;
     std::size_t length;
-    Mapping(int fd, std::size_t size, off_t offset) : data(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, offset)), length(size)
-    { require(data != MAP_FAILED, "map video buffer failed"); }
-    Mapping(Mapping&& other) noexcept : data(other.data), length(other.length) { other.data = MAP_FAILED; }
-    ~Mapping() { if (data != MAP_FAILED) munmap(data, length); }
+    Mapping(int fd, std::size_t size, off_t offset)
+    {
+        const off_t page = sysconf(_SC_PAGESIZE);
+        const off_t aligned = offset - offset % page;
+        skew = std::size_t(offset - aligned);
+        base = mmap(nullptr, size + skew, PROT_READ | PROT_WRITE, MAP_SHARED, fd, aligned);
+        require(base != MAP_FAILED, "map video buffer failed");
+        data = static_cast<std::uint8_t*>(base) + skew;
+        length = size;
+    }
+    Mapping(Mapping&& other) noexcept : data(other.data), length(other.length), base(other.base), skew(other.skew)
+    { other.base = MAP_FAILED; }
+    ~Mapping() { if (base != MAP_FAILED) munmap(base, length + skew); }
+private:
+    void* base;
+    std::size_t skew;
 };
 std::vector<std::uint8_t> read(const std::string& path)
 {
@@ -55,9 +72,12 @@ using Buffers = std::vector<std::vector<Mapping>>;
 struct Prime {
     int fd {-1};
     std::size_t length {};
+    /* Where the plane starts in the dma-buf, which is not zero for the second
+     * plane of a buffer whose planes share one. */
+    std::size_t offset {};
     Prime() = default;
-    Prime(int descriptor, std::size_t size) : fd(descriptor), length(size) {}
-    Prime(Prime&& other) noexcept : fd(other.fd), length(other.length) { other.fd = -1; }
+    Prime(int descriptor, std::size_t size, std::size_t start = 0) : fd(descriptor), length(size), offset(start) {}
+    Prime(Prime&& other) noexcept : fd(other.fd), length(other.length), offset(other.offset) { other.fd = -1; }
     Prime& operator=(Prime&&) = delete;
     Prime(const Prime&) = delete;
     ~Prime() { if (fd >= 0) close(fd); }
@@ -128,7 +148,12 @@ void queue(int fd, v4l2_buf_type type, unsigned index, const std::vector<Mapping
     planes[0].bytesused = bytes;
     call(fd, VIDIOC_QBUF, &buffer, "QBUF");
 }
-void queueImported(int fd, v4l2_buf_type type, unsigned index, const std::vector<Prime>& primes)
+/* How an imported capture buffer states its planes' lengths. A client may
+ * pass what QUERYBUF gave it, the dma-buf's whole size, or nothing at all, in
+ * which case the queue takes the dma-buf's size. */
+enum class Declared { negotiated, whole, none };
+void queueImported(int fd, v4l2_buf_type type, unsigned index, const std::vector<Prime>& primes,
+                   const std::vector<unsigned>& sizes = {}, Declared declared = Declared::whole)
 {
     v4l2_plane planes[VIDEO_MAX_PLANES] {};
     v4l2_buffer buffer {};
@@ -137,16 +162,90 @@ void queueImported(int fd, v4l2_buf_type type, unsigned index, const std::vector
     buffer.timestamp.tv_sec = 7; buffer.timestamp.tv_usec = 654321;
     for (unsigned i = 0; i < primes.size(); ++i) {
         planes[i].m.fd = primes[i].fd;
-        planes[i].length = primes[i].length;
+        planes[i].length = declared == Declared::none ? 0
+            : declared == Declared::negotiated ? sizes.at(i) : primes[i].length;
     }
     call(fd, VIDIOC_QBUF, &buffer, "QBUF dmabuf");
+}
+/* Where an imported capture buffer's memory comes from. By default it is the
+ * capture queue's own buffers, exported and handed back, which on a host with
+ * a GPU are host-visible blobs. `guestPages` instead takes guest memory a
+ * client could equally have got from a dma-buf heap or another driver: the
+ * coded queue's buffers, which are guest pages on every host. `shared` puts a
+ * buffer's planes in one dma-buf, one after another, the way a client that
+ * allocates one buffer per picture does. */
+struct Import {
+    bool guestPages {};
+    bool shared {};
+    Declared declared {Declared::whole};
+};
+/* Exports `count` buffers of guest pages, one dma-buf per plane or one for all
+ * of a buffer's planes. The descriptors outlive the device that allocated
+ * them: vb2 keeps a buffer an exported dma-buf still holds. */
+Primes exportGuestPages(const char* device, unsigned coded, const std::vector<unsigned>& sizes,
+                        bool shared, unsigned count)
+{
+    Device owner(device);
+    const int fd = owner.fd;
+    v4l2_format input {};
+    input.type = output;
+    input.fmt.pix_mp.width = 128; input.fmt.pix_mp.height = 96;
+    input.fmt.pix_mp.pixelformat = coded;
+    input.fmt.pix_mp.num_planes = 1;
+    input.fmt.pix_mp.plane_fmt[0].sizeimage = 4096;
+    call(fd, VIDIOC_S_FMT, &input, "S_FMT coded for export");
+    std::vector<unsigned> chunks;
+    if (shared) chunks.push_back(std::accumulate(sizes.begin(), sizes.end(), 0u));
+    else chunks = sizes;
+    /* One group of buffers per distinct size. A coded buffer is as large as
+     * the request says, so each dma-buf is exactly what its planes need. */
+    Primes result(count);
+    for (const unsigned size : chunks) {
+        v4l2_create_buffers create {};
+        create.count = count; create.memory = V4L2_MEMORY_MMAP;
+        create.format = input;
+        create.format.fmt.pix_mp.plane_fmt[0].sizeimage = size;
+        call(fd, VIDIOC_CREATE_BUFS, &create, "CREATE_BUFS guest pages");
+        require(create.count == count, "unexpected guest page buffer count");
+        for (unsigned i = 0; i < count; ++i) {
+            v4l2_exportbuffer request {};
+            request.type = output; request.index = create.index + i; request.plane = 0;
+            request.flags = O_RDWR | O_CLOEXEC;
+            call(fd, VIDIOC_EXPBUF, &request, "EXPBUF guest pages");
+            require(request.fd >= 0, "EXPBUF returned no descriptor");
+            const off_t extent = lseek(request.fd, 0, SEEK_END);
+            require(extent >= off_t(size), "exported guest page buffer is too small");
+            result[i].emplace_back(request.fd, std::size_t(extent));
+        }
+    }
+    if (shared) {
+        /* The planes follow one another in the one dma-buf. */
+        std::size_t offset = 0;
+        for (auto& planes : result) {
+            const int whole = planes[0].fd;
+            const std::size_t extent = planes[0].length;
+            offset = 0;
+            planes[0].offset = 0;
+            for (unsigned i = 1; i < sizes.size(); ++i) {
+                offset += sizes[i - 1];
+                planes.emplace_back(dup(whole), extent, offset);
+                require(planes.back().fd >= 0, "dup of a dma-buf failed");
+            }
+        }
+    }
+    release(fd, output);
+    return result;
 }
 /* `memory` selects how the capture queue holds its frames: its own mapped
  * buffers, or dma-buf descriptors it imports. The imported case is the one a
  * GPU client uses, so it is qualified against the same fixtures. */
 void decode(const char* device, const std::string& directory, const char* name, unsigned coded, unsigned raw,
-            unsigned memory = V4L2_MEMORY_MMAP)
+            unsigned memory = V4L2_MEMORY_MMAP, Import origin = {})
 {
+    const std::string memoryName = memory != V4L2_MEMORY_DMABUF ? "mmap"
+        : !origin.guestPages ? "dmabuf"
+        : std::string(origin.shared ? "dmabuf-guest-shared-" : "dmabuf-guest-") +
+            (origin.declared == Declared::negotiated ? "negotiated" : origin.declared == Declared::whole ? "whole" : "none");
     const auto packet = read(directory + "/" + name + ".bin");
     const auto reference = read(directory + "/" + name + ".raw");
     Device owner(device);
@@ -236,21 +335,37 @@ void decode(const char* device, const std::string& directory, const char* name, 
     require(negotiated.plane_fmt[0].sizeimage >=
                 negotiated.plane_fmt[0].bytesperline * negotiated.height,
             "capture plane is shorter than the rows it reports");
-    auto outputs = allocate(fd, capture, 4);
+    Buffers outputs;
     Primes primes;
-    if (memory == V4L2_MEMORY_DMABUF) {
-        primes = exportAndRelease(fd, capture, outputs);
-        outputs.clear();
-        release(fd, capture);
-        require(import(fd, capture, primes.size()) == primes.size(), "imported buffer count differs");
+    std::vector<unsigned> sizes;
+    for (unsigned i = 0; i < format.fmt.pix_mp.num_planes; ++i)
+        sizes.push_back(format.fmt.pix_mp.plane_fmt[i].sizeimage);
+    if (origin.guestPages) {
+        require(memory == V4L2_MEMORY_DMABUF, "guest page buffers are imported");
+        /* The queue says how many buffers it keeps; the descriptors are then
+         * exported for exactly those. */
+        primes = exportGuestPages(device, coded, sizes, origin.shared, import(fd, capture, 4));
         for (auto& planes : primes) {
             outputs.emplace_back();
-            for (auto& plane : planes)
-                outputs.back().emplace_back(plane.fd, plane.length, 0);
+            for (unsigned i = 0; i < planes.size(); ++i)
+                outputs.back().emplace_back(planes[i].fd, sizes.at(i), planes[i].offset);
+        }
+    } else {
+        outputs = allocate(fd, capture, 4);
+        if (memory == V4L2_MEMORY_DMABUF) {
+            primes = exportAndRelease(fd, capture, outputs);
+            outputs.clear();
+            release(fd, capture);
+            require(import(fd, capture, primes.size()) == primes.size(), "imported buffer count differs");
+            for (auto& planes : primes) {
+                outputs.emplace_back();
+                for (auto& plane : planes)
+                    outputs.back().emplace_back(plane.fd, plane.length, 0);
+            }
         }
     }
     for (unsigned i = 0; i < outputs.size(); ++i) {
-        if (memory == V4L2_MEMORY_DMABUF) queueImported(fd, capture, i, primes[i]);
+        if (memory == V4L2_MEMORY_DMABUF) queueImported(fd, capture, i, primes[i], sizes, origin.declared);
         else queue(fd, capture, i, outputs[i]);
     }
     type = capture;
@@ -322,7 +437,7 @@ void decode(const char* device, const std::string& directory, const char* name, 
             require(checked >= 128 * 96 / 8, "too little of the packed frame could be verified");
             require(maximum <= 8, "V4L2 packed pixels differ from the reference");
             std::printf("PASS %s raw=%08x memory=%s max-error=%u pixels=%u\n", name, raw,
-                memory == V4L2_MEMORY_DMABUF ? "dmabuf" : "mmap", maximum, checked);
+                memoryName.c_str(), maximum, checked);
             std::fflush(stdout);
             continue;
         }
@@ -343,13 +458,25 @@ void decode(const char* device, const std::string& directory, const char* name, 
         }
         require(maximum <= (coded == V4L2_PIX_FMT_MJPEG ? 4u : 2u), "V4L2 pixels differ from reference");
         std::printf("PASS %s raw=%08x memory=%s max-error=%u\n", name, raw,
-            memory == V4L2_MEMORY_DMABUF ? "dmabuf" : "mmap", maximum);
+            memoryName.c_str(), maximum);
         std::fflush(stdout);
     }
     require(frame && eos, "capture frame/EOS timeout");
     type = output; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF output");
     type = capture; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF capture");
 }
+}
+/* The imported buffers a client that is not the driver's own exporter queues:
+ * guest memory, with its planes in separate dma-bufs or in one, and their
+ * lengths stated as QUERYBUF gave them, as the whole dma-buf, or not at all.
+ * A plane after the first in a shared dma-buf starts past its own length, so
+ * only the dma-buf's size can bound it. */
+void importGuestPages(const char* device, const std::string& directory, const char* name,
+                      unsigned coded, unsigned raw)
+{
+    for (const bool shared : {false, true})
+        for (const auto declared : {Declared::negotiated, Declared::whole, Declared::none})
+            decode(device, directory, name, coded, raw, V4L2_MEMORY_DMABUF, Import{true, shared, declared});
 }
 /* A client that renders what it decodes keeps its pictures in a pool and hands
  * the same descriptors back to the capture queue as they are released, so each
@@ -622,11 +749,21 @@ int main(int argc, char** argv)
                            V4L2_MEMORY_DMABUF);
                     decode(device, argv[1], profile->name, fmt.pixelformat, V4L2_PIX_FMT_ABGR32,
                            V4L2_MEMORY_DMABUF);
+                    importGuestPages(device, argv[1], profile->name, fmt.pixelformat, profile->raw);
+                    decode(device, argv[1], profile->name, fmt.pixelformat, V4L2_PIX_FMT_ABGR32,
+                           V4L2_MEMORY_DMABUF, Import{true, false, Declared::negotiated});
                     imported = true;
                 }
+                if (profile->raw == V4L2_PIX_FMT_P010)
+                    decode(device, argv[1], profile->name, fmt.pixelformat, profile->raw,
+                           V4L2_MEMORY_DMABUF, Import{true, false, Declared::negotiated});
                 ++tested;
-                if (avc && profile->value == V4L2_MPEG_VIDEO_H264_PROFILE_HIGH)
+                if (avc && profile->value == V4L2_MPEG_VIDEO_H264_PROFILE_HIGH) {
                     decode(device, argv[1], profile->name, fmt.pixelformat, V4L2_PIX_FMT_YUV420M);
+                    /* Three planes in one dma-buf, the last two starting off a page boundary. */
+                    decode(device, argv[1], profile->name, fmt.pixelformat, V4L2_PIX_FMT_YUV420M,
+                           V4L2_MEMORY_DMABUF, Import{true, true, Declared::negotiated});
+                }
             }
         }
         require(tested > 0, "decoder advertised no supported profiles");

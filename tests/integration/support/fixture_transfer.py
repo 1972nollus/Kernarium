@@ -41,17 +41,20 @@ KERNEL_FAILURE_MARKERS = (
 
 
 def parse_arguments(
-    description: str | None, engines: Sequence[str] = ()
+    description: str | None, engines: Sequence[str] = (), gpu: bool = False
 ) -> argparse.Namespace:
     """Parse a probe runner's command line and check that the probe is one.
 
-    A runner of several engines names them and receives --engine."""
+    A runner of several engines names them and receives --engine; one that can
+    boot its guest with the GPU receives --gpu."""
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
     parser.add_argument("--probe", required=True, type=pathlib.Path)
     if engines:
         parser.add_argument("--engine", required=True, choices=tuple(engines))
+    if gpu:
+        parser.add_argument("--gpu", action="store_true")
     parser.add_argument("--log", type=pathlib.Path)
     arguments = parser.parse_args()
     binary = arguments.probe.read_bytes()

@@ -14,6 +14,13 @@ inside it, which the negotiated VIRTIO_VIDEO_F_RESOURCE_SHM_REGION feature
 permits. V4L2 carries no per-plane offset on a capture buffer, so planes
 that share one dma-buf follow one another at their negotiated sizes.
 
+A plane is bounded by its dma-buf, not by its own length, which a client
+may state as that plane's size alone while the planes share one buffer. An
+imported buffer keeps the scatter-list implementation's cookie and user
+count even when the queue's own buffers are host-visible blobs: its scatter
+list and attachment belong to that implementation alone, and reading the
+blob allocator's state for them made every import fail.
+
 UML removes a device from an exitcall while other CPUs still run tasks, and
 a management-console halt, an unbind or a lost vhost-user backend does so
 without device_shutdown(). Removal therefore resets the device and deletes
@@ -36,17 +43,17 @@ stream.
  drivers/media/Makefile                      |    2 +
  drivers/media/virtio/Kconfig                |    9 +
  drivers/media/virtio/Makefile               |    6 +
- drivers/media/virtio/README                 |   11 +
+ drivers/media/virtio/README                 |   17 +
  drivers/media/virtio/virtio_video.h         |  442 +++++++
- drivers/media/virtio/virtio_video_blob.c    |  157 +++
+ drivers/media/virtio/virtio_video_blob.c    |  183 +++
  drivers/media/virtio/virtio_video_caps.c    |  515 ++++++++
  drivers/media/virtio/virtio_video_dec.c     |  479 +++++++
- drivers/media/virtio/virtio_video_device.c  | 1301 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_device.c  | 1307 +++++++++++++++++++
  drivers/media/virtio/virtio_video_driver.c  |  261 ++++
  drivers/media/virtio/virtio_video_helpers.c |  198 +++
  drivers/media/virtio/virtio_video_vq.c      | 1077 +++++++++++++++
  include/uapi/linux/virtio_video.h           |  539 ++++++++
- 14 files changed, 4999 insertions(+)
+ 14 files changed, 5037 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -112,10 +119,10 @@ index 0000000000000000000000000000000000000000..674cca853cf2462ddca7972e5b3bed3e
 +	virtio_video_blob.o
 diff --git a/drivers/media/virtio/README b/drivers/media/virtio/README
 new file mode 100644
-index 0000000000000000000000000000000000000000..90e8a3531bb86bec3aca28050a7e4950c84c0a7f
+index 0000000000000000000000000000000000000000..abee8bfb14e3050308ea74e38289a63657ae974f
 --- /dev/null
 +++ b/drivers/media/virtio/README
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,17 @@
 +Darwin UML stateful decoder
 +
 +Adapted from OpenSynergy's Virtio video driver in Android common-modules
@@ -127,6 +134,12 @@ index 0000000000000000000000000000000000000000..90e8a3531bb86bec3aca28050a7e4950
 +baseline JPEG with hardware-dependent profiles, including 10-bit output.
 +The canonical wire declarations are kernel/common/video/virtio_video.h
 +in the owning Darwin host repository.
++
++A V4L2_MEMORY_DMABUF capture buffer may be any dma-buf: one the decoder's own
++queue exported, guest memory from a heap or another driver, or one holding all
++of a buffer's planes, which follow one another at their negotiated sizes. The
++lengths a client states for the planes may be those sizes, the dma-buf's size
++or zero, because only the dma-buf bounds where the planes lie.
 diff --git a/drivers/media/virtio/virtio_video.h b/drivers/media/virtio/virtio_video.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..826fcf95c06abf96f7e516e0a822b1d874d62a23
@@ -577,10 +590,10 @@ index 0000000000000000000000000000000000000000..826fcf95c06abf96f7e516e0a822b1d8
 +#endif /* _VIRTIO_VIDEO_H */
 diff --git a/drivers/media/virtio/virtio_video_blob.c b/drivers/media/virtio/virtio_video_blob.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..98fbb3c33f74fcc79542c517d3b8442d50a1b6e8
+index 0000000000000000000000000000000000000000..4773ee398a56b958f3eabcb5538a8101b19ef315
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_blob.c
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,183 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Capture buffers a renderer can import.
@@ -607,6 +620,13 @@ index 0000000000000000000000000000000000000000..98fbb3c33f74fcc79542c517d3b8442d
 +#include "virtio_video.h"
 +
 +struct virtio_video_blob_buffer {
++	/*
++	 * Names the allocator and comes first: the operations below are also
++	 * called with the state of an imported buffer, which is the
++	 * scatter-list implementation's and starts with a device pointer, and
++	 * only this word tells the two apart where no buffer is passed.
++	 */
++	const struct vb2_mem_ops *ops;
 +	struct virtio_gpu_host_blob *blob;
 +	unsigned long size;
 +};
@@ -628,6 +648,7 @@ index 0000000000000000000000000000000000000000..98fbb3c33f74fcc79542c517d3b8442d
 +		return err;
 +	}
 +
++	buffer->ops = &virtio_video_blob_memops;
 +	buffer->size = size;
 +
 +	return buffer;
@@ -677,11 +698,29 @@ index 0000000000000000000000000000000000000000..98fbb3c33f74fcc79542c517d3b8442d
 +{
 +	struct virtio_video_blob_buffer *buffer = buf_priv;
 +
-+	return buffer ? virtio_gpu_host_blob_users(buffer->blob) : 0;
++	if (!buffer)
++		return 0;
++
++	/* An imported buffer is counted by the implementation that attached it. */
++	if (buffer->ops != &virtio_video_blob_memops)
++		return vb2_dma_sg_memops.num_users(buf_priv);
++
++	return virtio_gpu_host_blob_users(buffer->blob);
 +}
 +
++/*
++ * The cookie of a buffer this driver allocated is the blob itself, which
++ * virtio_video_blob_region() reads. An imported buffer's is its scatter list,
++ * which vb2_dma_sg_plane_desc() reads, so each memory type answers with its own
++ * implementation's; returning the blob's for an imported buffer made the
++ * driver read the attachment as a scatter list, find no entries in it and
++ * refuse every import.
++ */
 +static void *virtio_video_blob_cookie(struct vb2_buffer *vb, void *buf_priv)
 +{
++	if (vb->memory == VB2_MEMORY_DMABUF)
++		return vb2_dma_sg_memops.cookie(vb, buf_priv);
++
 +	return buf_priv;
 +}
 +
@@ -1746,10 +1785,10 @@ index 0000000000000000000000000000000000000000..d3ec77840dc7e7e2d2265dac1e15ea0e
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..cae18f2589e15db9e15c55e1656a4a8c3c9739f1
+index 0000000000000000000000000000000000000000..468d5746371eb3634f2bb1b187987cdfa1f1a5ab
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -0,0 +1,1301 @@
+@@ -0,0 +1,1307 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -1979,7 +2018,7 @@ index 0000000000000000000000000000000000000000..cae18f2589e15db9e15c55e1656a4a8c
 +{
 +	struct sg_table *sgt;
 +	struct scatterlist *sg;
-+	u64 skip, want = vb->planes[plane].min_length;
++	u64 skip, limit, want = vb->planes[plane].min_length;
 +	unsigned int i, used = 0;
 +	int ret;
 +
@@ -1996,9 +2035,15 @@ index 0000000000000000000000000000000000000000..cae18f2589e15db9e15c55e1656a4a8c
 +	if (!sgt || !sgt->nents || !want)
 +		return -EINVAL;
 +
++	/*
++	 * Planes that share a dma-buf follow one another in it, so a plane's
++	 * extent is bounded by the dma-buf and not by the plane's own length,
++	 * which a client may state as that plane's size alone.
++	 */
 +	skip = virtio_video_plane_dmabuf_offset(vb, plane);
-+	if (skip > vb->planes[plane].length ||
-+	    want > vb->planes[plane].length - skip)
++	limit = vb->planes[plane].dbuf ? vb->planes[plane].dbuf->size :
++					 vb->planes[plane].length;
++	if (skip > limit || want > limit - skip)
 +		return -EINVAL;
 +
 +	for_each_sgtable_dma_sg(sgt, sg, i) {

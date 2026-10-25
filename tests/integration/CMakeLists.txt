@@ -124,6 +124,17 @@ if(UML_V4L2_PROBE_BINARY)
         LABELS guest;video
         TIMEOUT 600
         CPUS 2)
+    # The same probe with the GPU: capture buffers are then host-visible blobs,
+    # and a dma-buf a client imports takes the driver's other path.
+    uml_add_guest_integration_test(
+        NAME guest-v4l2-decode-gpu
+        SCRIPT video/run_v4l2_decode.py
+        ARGS --probe "${UML_V4L2_PROBE_BINARY}" --gpu
+            --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-gpu-guest.log"
+        LABELS guest;video;gpu
+        TIMEOUT 600
+        CPUS 2
+        GPUS 1)
 endif()
 
 set(UML_V4L2_ENCODE_PROBE_BINARY "" CACHE FILEPATH
