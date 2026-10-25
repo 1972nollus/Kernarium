@@ -236,6 +236,18 @@ to accept. `overlay/config/media_codecs_c2.xml` updates the two entries (the
 vendor file is parsed after the APEX's), and the target-files verifier requires
 the installed file to allow 3840x2160 at 30 frames per second.
 
+Two CTS results that the image does not cause. LineageOS turns
+`Settings.Global.restricted_networking_mode` on (lineage-sdk's settings
+provider) and gives only applications that request INTERNET the network. A test
+application that requests none, such as the one of the content resolver sync
+tests, gets `POLICY_REJECT_ALL`, and the JobScheduler's connectivity constraint
+of its sync job never holds: the product keeps this LineageOS privacy default,
+and a CTS run sets the setting to 0 when the guest starts. A CTS test that
+reboots the device (`PreferredActivityTests#testAddDuplicatedPreferredActivity`
+expects the package manager to deduplicate preferred activities at the reboot)
+cannot pass where reboots are disabled, as they must be when the emulator exits
+on reboot.
+
 MediaProvider's FUSE daemon kept its state on the stack of the session thread,
 while the Java side keeps calling into the daemon until that thread deletes it.
 A public volume that unmounts right after it mounts reached the volume's
