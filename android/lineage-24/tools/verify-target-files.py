@@ -476,6 +476,10 @@ PROPERTY_CONTEXT_FILES = (
     "VENDOR/etc/selinux/vendor_property_contexts",
     "ODM/etc/selinux/odm_property_contexts",
 )
+CIL_ALLOW_RULE = re.compile(rb"^\(allow (\S+) (\S+) \((\w+) \(([^)]*)\)\)\)$", re.MULTILINE)
+CIL_PERMISSIVE_TYPE = re.compile(rb"^\(typepermissive (\S+)\)$", re.MULTILINE)
+# The only domain that may be permissive: the userdebug root shell.
+PERMISSIVE_DOMAINS = frozenset({"su"})
 SUSPEND_BLOCKER_SERVICE = ("suspend_blocker", "/vendor/bin/suspend_blocker")
 UML_INIT_REQUIRED = (
     "mount_all --early",
@@ -893,6 +897,7 @@ def check_kernel_policy(
             "utf-8", errors="strict"
         ),
     )
+    check_policy_relaxations((platform_policy, vendor_policy, system_ext_policy))
     contexts = [
         line
         for name in PROPERTY_CONTEXT_FILES
@@ -1015,6 +1020,53 @@ def check_property_writers(
         if line.strip() and not line.lstrip().startswith("#")
     ):
         fail(f"system_ext property contexts do not label {ADB_HOST_PROPERTY}")
+
+
+def check_policy_relaxations(policies: tuple[bytes, ...]) -> None:
+    """The policy holds none of the LineageOS grants that Android's neverallow tests refuse.
+
+    LineageOS serves an ext4 SD card and addon.d updates with rules that the
+    platform build tolerates only because its fork relaxed the matching
+    neverallows; the CTS carries AOSP's. This product has neither feature, and
+    its tree restores the neverallows (the system/sepolicy route), so the rules
+    are gone. This repeats the checks on the built policy.
+    """
+    mls_trusted = set()
+    for policy in policies:
+        mls_trusted |= cil_attribute_members(policy, "mlstrustedsubject")
+    if "mediaprovider_app" in mls_trusted:
+        fail(
+            "policy makes mediaprovider_app an mlstrustedsubject; Android's neverallow "
+            "tests refuse it to fork and to modify privapp_data_file"
+        )
+    groups: dict[str, set[str]] = {}
+    for policy in policies:
+        for match in CIL_ALLOW_RULE.finditer(policy):
+            source, target, object_class, permissions = (
+                CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(index).decode())
+                for index in (1, 2, 3, 4)
+            )
+            perms = set(permissions.split())
+            if source == "mediaprovider_app" and target == "privapp_data_file":
+                fail("policy lets mediaprovider_app use privapp_data_file beyond the app rules")
+            if (
+                source == "fsck_untrusted"
+                and object_class in ("capability", "cap_userns")
+                and "sys_admin" in perms
+            ):
+                fail("policy gives fsck_untrusted sys_admin; Android's neverallow tests refuse it")
+            if object_class == "filesystem" and "relabelto" in perms:
+                if target not in groups:
+                    groups[target] = cil_types_and_attributes(policies, target)
+                if "fs_type" in groups[target] and "contextmount_type" not in groups[target]:
+                    fail(
+                        f"policy lets {source} relabel a filesystem to {target}; only a "
+                        "contextmount_type may be a relabelto target"
+                    )
+        for match in CIL_PERMISSIVE_TYPE.finditer(policy):
+            domain = CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode())
+            if domain not in PERMISSIVE_DOMAINS:
+                fail(f"policy makes the domain {domain} permissive; only the userdebug su may be")
 
 
 def property_label(name: str, contexts: list[str]) -> str | None:

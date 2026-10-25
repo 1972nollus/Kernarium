@@ -1079,7 +1079,8 @@ placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files
 and their 64-suffixed `mmap` and `lseek` imports, the userdata inode count,
 the application read of the vendor security patch level, the built-in
 microphone with its feature declaration, the userdata `quota` flag, and the
-suspend blocker with the adb host-connected property it follows) and the
+suspend blocker with the adb host-connected property it follows, and the
+policy without the LineageOS grants that Android's neverallow tests refuse) and the
 builder's assertions;
 `lineage24-first-boot-precompile` covers the
 ISA set of a package and the per-ISA artifacts and manifest;

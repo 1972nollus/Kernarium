@@ -256,6 +256,20 @@ mutex. A `packages/providers/MediaProvider` topic (route `p0019`) keeps the
 state until the daemon is deleted and makes that setup return when the session
 has ended.
 
+LineageOS's SELinux policy serves an ext4 external SD card and addon.d updates
+with grants that Android's neverallow tests refuse: `mediaprovider_app` is an
+`mlstrustedsubject` (so it may fork and write `privapp_data_file`), `vold` may
+relabel a filesystem to `sdcard_posix`, `fsck_untrusted` holds `sys_admin`, and
+`backuptool` is permissive. The platform build lets them through because
+LineageOS relaxed the matching neverallows in its fork. This product has no
+removable card and no addon.d, so two topics undo them: `system/sepolicy`
+(route `p0020`) reverts the `mediaprovider_app` change and restores AOSP's two
+neverallows, and `device/lineage/sepolicy` (route `p0021`) drops the `vold` and
+`fsck_untrusted` grants and the permissive `backuptool`. With the neverallows
+back, a later such grant fails the policy build, and the target-files verifier
+repeats the checks on the built policy (only the userdebug `su` may be
+permissive).
+
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
 in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves

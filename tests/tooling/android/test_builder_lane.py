@@ -413,6 +413,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           system_ext_core_sets_vendor_prop: bool = False,
                           adb_prop_not_system: bool = False,
                           adb_prop_unreadable_by_vendor_init: bool = False,
+                          lineage_policy: str | None = None,
                           missing_virtio_console: bool = False,
                           unsupported_hvc: bool = False,
                           missing_mesa_gles: bool = False,
@@ -747,6 +748,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "(typeattributeset domain (adbd init system_server vendor_init))\n"
                     "(allow domain boot_status_prop (file (read getattr map open)))\n"
                     "(allow domain bootloader_prop (file (read getattr map open)))\n"
+                    "(typeattributeset mlstrustedsubject (artd installd"
+                    + (" mediaprovider_app" if lineage_policy == "mediaprovider-trusted" else "")
+                    + "))\n(typepermissive su)\n"
                     + "; padding to the size of a real platform policy\n" * (
                         (17 << 20 if oversize_platform_policy else 3_441_569) // 48
                     ),
@@ -773,7 +777,31 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil",
                     "(typeattributeset vendor_property_type (vendor_aware_available_prop ))\n"
-                    "(typeattributeset system_property_type (apexd_prop "
+                    # A relabelto on a contextmount type is allowed; only the Lineage rules are not.
+                    "(typeattributeset fs_type (fixture_rootfs sdcard_posix))\n"
+                    "(typeattributeset contextmount_type (fixture_rootfs))\n"
+                    "(allow init fixture_rootfs (filesystem (relabelto)))\n"
+                    + (
+                        "(allow fsck_untrusted self (capability (sys_admin)))\n"
+                        if lineage_policy == "fsck-sys-admin"
+                        else ""
+                    )
+                    + (
+                        "(allow vold sdcard_posix (filesystem (relabelfrom relabelto)))\n"
+                        if lineage_policy == "vold-relabelto"
+                        else ""
+                    )
+                    + (
+                        "(typepermissive backuptool)\n"
+                        if lineage_policy == "permissive-backuptool"
+                        else ""
+                    )
+                    + (
+                        "(allow mediaprovider_app privapp_data_file (file (create unlink)))\n"
+                        if lineage_policy == "mediaprovider-privapp"
+                        else ""
+                    )
+                    + "(typeattributeset system_property_type (apexd_prop "
                     + ("" if adb_prop_not_system else "kernarium_adb_host_prop ")
                     + "))\n"
                     + (
@@ -1106,6 +1134,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("system-ext-core-sets-vendor-prop", {"system_ext_core_sets_vendor_prop": True}),
             ("adb-prop-not-system", {"adb_prop_not_system": True}),
             ("adb-prop-unreadable-by-vendor-init", {"adb_prop_unreadable_by_vendor_init": True}),
+            ("lineage-mediaprovider-trusted", {"lineage_policy": "mediaprovider-trusted"}),
+            ("lineage-mediaprovider-privapp", {"lineage_policy": "mediaprovider-privapp"}),
+            ("lineage-fsck-sys-admin", {"lineage_policy": "fsck-sys-admin"}),
+            ("lineage-vold-relabelto", {"lineage_policy": "vold-relabelto"}),
+            ("lineage-permissive-backuptool", {"lineage_policy": "permissive-backuptool"}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
             ("unsupported-hvc", {"unsupported_hvc": True}),
             ("missing-mesa-gles", {"missing_mesa_gles": True}),
@@ -1201,6 +1234,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "system_ext policy lets the core domain system_server set the vendor property type"),
             ("adb-prop-not-system-cause", {"adb_prop_not_system": True},
              "does not define the system-owned kernarium_adb_host_prop"),
+            ("lineage-mediaprovider-trusted-cause", {"lineage_policy": "mediaprovider-trusted"},
+             "makes mediaprovider_app an mlstrustedsubject"),
+            ("lineage-mediaprovider-privapp-cause", {"lineage_policy": "mediaprovider-privapp"},
+             "lets mediaprovider_app use privapp_data_file"),
+            ("lineage-fsck-sys-admin-cause", {"lineage_policy": "fsck-sys-admin"},
+             "gives fsck_untrusted sys_admin"),
+            ("lineage-vold-relabelto-cause", {"lineage_policy": "vold-relabelto"},
+             "lets vold relabel a filesystem to sdcard_posix"),
+            ("lineage-permissive-backuptool-cause", {"lineage_policy": "permissive-backuptool"},
+             "makes the domain backuptool permissive"),
             ("adb-prop-unreadable-by-vendor-init-cause",
              {"adb_prop_unreadable_by_vendor_init": True},
              "names sys.kernarium.adb.host_connected, labelled kernarium_adb_host_prop, "
