@@ -672,6 +672,22 @@ build on the M1.
 | Keep the FP environment live across helper exits | Rejected before building. After the three changes the remaining switches are real page crossings, at most 14 million a run in Object Remover and well under a million elsewhere: under 1 percent of any workload, against a change to the environment code the gadget engine shares. |
 | Share the semantic load/store handlers' transfer block in one helper | Rejected twice. `load_store_unsigned` and `load_store_other` end in the same 30 lines, and one helper saves about 11 lines net. Outlined or always inlined, it changed both handlers' lowering (an extra callee-saved pair, a different register assignment), and the tagged-vector probe, whose SIMD&FP transfers all take this slow path, measured 1.1 percent slower, then 1.7 percent slower against a layout-only pad. A pad reproduces a layout shift, not a change inside the handler, so the two copies stay. |
 
+## JIT top-byte ignore
+
+Android tags heap pointers, so an Android guest always runs with top-byte
+ignore, and the JIT tested the setting at run time in every memory word and
+left for its semantic helper whenever it was on. That exit cost about 69 ns
+per access on an M1 Ultra: a sort on an arm64 Linux guest with the setting on
+took 52 s against 2.6 s with it off, and the Android guest booted in 287 s on
+the JIT against 40 s on the gadget engine. Times are medians of ABBA pairs on
+one vCPU.
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Put the setting in the translation key and strip at compile time | Accepted. The setting is constant over a guest entry, so it joins a block's key (bit 61 of an A64 key) and the compiler emits one `ubfx` of the final address when it is on and nothing when it is off. With the setting on, the sort runs 2.61 s against 2.53 s with it off (52 s before), and the gpr and scalar-mix probes 0.04 and 0.06 s (6.1 and 1.7 s before); the memory-dense probes pay the one instruction, up to 7 percent. A guest with the setting off gets faster too, by 4 percent on the sort and up to 13 on memory-dense probes, because the run-time test that was always there is gone, so a tagged guest now runs within 4 percent of the old untagged one on every probe and faster on most. Android boots in 61 to 71 s against 40 s on gadgets and launches Settings in 3.0 to 3.6 s against 1.6 to 2.0 s. A tagged SP is stripped like any other base, which the gadget engine already completed through its TLB, so both engines agree. A block that links to another carries the key in a register, so a link checkpoint that stores it as the next PC must mask the mode bit; the first Android boot jumped to a PC with bit 61 set. |
+| Test the setting inline and strip with one branch or a branchless mask | Rejected. Both removed the exit but cost what the old test cost a guest with the setting off, 5 to 12 percent on memory-dense probes, because the test is on every access's path. Only a decision made at compile time takes it off that path. |
+| What remains of the Android gap | Not chased. Two host samples of the JIT guest's first Settings launches put 28 to 31 percent of its active vCPU time in translated code, 19 percent in publishing blocks (`sys_icache_invalidate` alone is 12 to 13), 12 to 13 percent in finding an identical block in the shared translation cache, 12 percent in the link and dispatch tables, and 4 percent in compiling. What is left is the cost of translating cold code once, not memory exits: the JIT guest spends about twice the gadget guest's CPU in boot and in a cold launch. |
+
 ## AArch32 JIT: floating-point environment
 
 The JIT lowers AArch32 in `cpu/arm64/jit/a32`. Geekbench 5 armv7 on it scored
