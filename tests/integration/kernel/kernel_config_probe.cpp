@@ -3,7 +3,8 @@
 // Android CTS and the desktop disagree on. usage: kernel_config_probe
 // [linux|android], linux by default.
 //   both:    IPv4 multicast (/proc/net/igmp, a group join, a looped datagram),
-//            no RDS socket family, no listener on TCP port 16385
+//            no RDS socket family, no listener on TCP port 16385, and the
+//            stack protector and hardened usercopy in /proc/config.gz
 //   linux:   SysV IPC works, the NFS client and SCTP are present, and
 //            /sys/power has no wake_lock
 //   android: no SysV IPC (ENOSYS, no /proc/sysvipc), no NFS client, no SCTP,
@@ -22,6 +23,7 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -341,6 +343,63 @@ void check_wake_lock(bool wanted)
 		       ", released " + (released ? "yes" : "no"));
 }
 
+// The resolved kernel configuration, as /proc/config.gz holds it. zcat is run
+// without a shell, which an Android guest does not have at /bin/sh.
+std::string kernel_config()
+{
+	int fds[2];
+	if (pipe(fds) != 0)
+		return {};
+	pid_t child = fork();
+	if (child < 0) {
+		close(fds[0]);
+		close(fds[1]);
+		return {};
+	}
+	if (child == 0) {
+		dup2(fds[1], 1);
+		close(fds[0]);
+		close(fds[1]);
+		int null = open("/dev/null", O_WRONLY);
+		if (null >= 0)
+			dup2(null, 2);
+		execlp("zcat", "zcat", "/proc/config.gz", static_cast<char *>(nullptr));
+		_exit(127);
+	}
+	close(fds[1]);
+	std::string text;
+	char chunk[4096];
+	ssize_t got;
+	while ((got = read(fds[0], chunk, sizeof chunk)) > 0)
+		text.append(chunk, static_cast<size_t>(got));
+	close(fds[0]);
+	int status = 0;
+	waitpid(child, &status, 0);
+	return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? text : std::string();
+}
+
+bool config_has(const std::string &config, const std::string &line)
+{
+	return config.find("\n" + line + "\n") != std::string::npos ||
+	       config.compare(0, line.size() + 1, line + "\n") == 0;
+}
+
+// The kernel hardening the Android CTS requires: the strong stack protector
+// and hardened usercopy.
+void check_hardening_config()
+{
+	std::string config = kernel_config();
+	if (config.empty()) {
+		report("hardening-config", false, "/proc/config.gz is unreadable");
+		return;
+	}
+	bool protector = config_has(config, "CONFIG_STACKPROTECTOR_STRONG=y");
+	bool usercopy = config_has(config, "CONFIG_HARDENED_USERCOPY=y");
+	report("hardening-config", protector && usercopy,
+	       std::string("strong stack protector ") + (protector ? "on" : "off") +
+		       ", hardened usercopy " + (usercopy ? "on" : "off"));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -358,6 +417,7 @@ int main(int argc, char **argv)
 	check_nfs(!android);
 	check_sctp(!android);
 	check_wake_lock(android);
+	check_hardening_config();
 	std::printf("%s: %d failure(s)\n", product, failures);
 	return failures;
 }

@@ -406,6 +406,15 @@ CONFIG_SECURITY_LANDLOCK=y
 # without the module that write fails.
 CONFIG_SECURITY_SAFESETID=y
 
+# --- Kernel self-protection -------------------------------------------------
+# Debian and Android's GKI build the same two. A kernel stack overflow ends in
+# a panic that names the function, and a copy between kernel and user memory
+# is refused when it would cross the bounds of its slab object, page
+# allocation, stack or kernel text. Android's CTS requires both.
+CONFIG_STACKPROTECTOR=y
+CONFIG_STACKPROTECTOR_STRONG=y
+CONFIG_HARDENED_USERCOPY=y
+
 # --- Display and input ------------------------------------------------------
 # uinput and evdev are software-only interfaces: they let guest userspace
 # construct and consume virtual input devices without exposing host hardware.
