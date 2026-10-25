@@ -84,3 +84,6 @@ patch	um-name-the-host-threads-the-kernel-creates.patch
 patch	arm64-um-show-system-call-stops-as-native-arm64-does.patch
 patch	drm-virtio-export-a-dma-buf-read-write.patch
 patch	drm-virtio-transfer-a-3D-resource-around-CPU-access-through-its-dma-.patch
+patch	arm64-um-provide-the-AArch64-tagged-address-ABI.patch
+patch	arm64-um-offer-the-tagged-address-ABI-only-where-the-host-ignores-ta.patch
+patch	arm64-um-ignore-an-mmap-hint-the-guest-cannot-use.patch

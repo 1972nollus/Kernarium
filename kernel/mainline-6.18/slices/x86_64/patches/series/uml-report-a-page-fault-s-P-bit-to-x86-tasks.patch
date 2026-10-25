@@ -24,7 +24,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 53 insertions(+)
 
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index fc1fb14d46aa3725535ad435ecff807f916840a6..c00ec8d8430369d3f84754b58f36f4595030c8ca 100644
+index f563d4291ace739fff4979d7c77e5259e4502d2a..244aa9d873b68735e11ad1c3b2765a71d7b1922c 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
 @@ -262,6 +262,47 @@ int handle_uaccess_fault(unsigned long address, int is_write, int *code_out)
@@ -75,7 +75,7 @@ index fc1fb14d46aa3725535ad435ecff807f916840a6..c00ec8d8430369d3f84754b58f36f459
  static void show_segv_info(struct uml_pt_regs *regs)
  {
  	struct task_struct *tsk = current;
-@@ -449,6 +490,18 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -458,6 +499,18 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  	}
  	show_segv_info(regs);
  

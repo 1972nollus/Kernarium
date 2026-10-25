@@ -39,15 +39,15 @@ selector in the error code, as on x86 Linux.
  create mode 100644 arch/arm64/um/ldt.c
 
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index 4da74bbf11696fd01ab5ba37bdc67cfe9bca6ae7..00fb0c66737c0ba7999655275ca6ea7bd4a05801 100644
+index cc95273be0999519bc1fd89160ddbf39772dbc74..0f28e2f9b1be156b6d873587861c1bf1627c9986 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
-@@ -7,7 +7,7 @@ obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
+@@ -8,7 +8,7 @@ obj-$(CONFIG_UML_ARM64_TAGGED_ADDR_ABI) += tagged_addr.o
  obj-$(CONFIG_UML_ARM64_AARCH32) += aarch32.o aarch32_pages.o \
  	armv8_deprecated.o ptrace32.o signal32.o sys32.o sys_compat.o
  obj-$(CONFIG_COMPAT) += x86_32_syscalls.o
--obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += mmap.o x86_syscall_tables.o
-+obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += ldt.o mmap.o x86_syscall_tables.o
+-obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += x86_syscall_tables.o
++obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += ldt.o x86_syscall_tables.o
  
  x86-syscalltbl := $(srctree)/scripts/syscalltbl.sh
  x86-syscall-32 := $(srctree)/arch/x86/entry/syscalls/syscall_32.tbl
