@@ -393,6 +393,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           context_hub: bool = False,
                           unsupported_hal: bool = False,
                           unsupported_feature: bool = False,
+                          missing_microphone_feature: bool = False,
+                          missing_mic_policy: bool = False,
+                          extra_input_device: bool = False,
                           wrong_kernel_config: bool = False,
                           wrong_kernel_release: bool = False,
                           missing_memfd_policy: bool = False,
@@ -619,16 +622,49 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "VENDOR/etc/primary_audio_policy_configuration.xml",
                     '<module name="primary" halVersion="3.0">'
-                    '<attachedDevices><item>Speaker</item></attachedDevices>'
+                    '<attachedDevices><item>Speaker</item>'
+                    + ("" if missing_mic_policy else "<item>Built-In Mic</item>")
+                    + '</attachedDevices>'
                     '<defaultOutputDevice>Speaker</defaultOutputDevice>'
                     '<mixPorts><mixPort name="primary output" role="source" '
                     'flags="AUDIO_OUTPUT_FLAG_PRIMARY"><profile name="" '
                     'format="AUDIO_FORMAT_PCM_16_BIT" samplingRates="48000" '
-                    'channelMasks="AUDIO_CHANNEL_OUT_STEREO"/></mixPort></mixPorts>'
+                    'channelMasks="AUDIO_CHANNEL_OUT_STEREO"/></mixPort>'
+                    + (
+                        ""
+                        if missing_mic_policy
+                        else '<mixPort name="primary input" role="sink"><profile '
+                        'name="" format="AUDIO_FORMAT_PCM_16_BIT" '
+                        'samplingRates="48000" channelMasks="AUDIO_CHANNEL_IN_STEREO '
+                        'AUDIO_CHANNEL_IN_MONO"/></mixPort>'
+                    )
+                    + '</mixPorts>'
                     '<devicePorts><devicePort tagName="Speaker" '
-                    'type="AUDIO_DEVICE_OUT_SPEAKER" role="sink"/></devicePorts>'
+                    'type="AUDIO_DEVICE_OUT_SPEAKER" role="sink"/>'
+                    + (
+                        ""
+                        if missing_mic_policy
+                        else '<devicePort tagName="Built-In Mic" '
+                        'type="AUDIO_DEVICE_IN_BUILTIN_MIC" address="bottom" '
+                        'role="source"/>'
+                    )
+                    + (
+                        '<devicePort tagName="Back Mic" '
+                        'type="AUDIO_DEVICE_IN_BACK_MIC" address="back" '
+                        'role="source"/>'
+                        if extra_input_device
+                        else ""
+                    )
+                    + '</devicePorts>'
                     '<routes><route type="mix" sink="Speaker" '
-                    'sources="primary output"/></routes></module>',
+                    'sources="primary output"/>'
+                    + (
+                        ""
+                        if missing_mic_policy
+                        else '<route type="mix" sink="primary input" '
+                        'sources="Built-In Mic"/>'
+                    )
+                    + '</routes></module>',
                 )
                 archive.writestr(
                     "VENDOR/etc/audio_policy_volumes.xml",
@@ -700,14 +736,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                     + '</privapp-permissions></permissions>',
                 )
-                advertised_feature = (
-                    "android.hardware.microphone"
-                    if unsupported_feature
-                    else "android.hardware.touchscreen"
-                )
+                advertised_features = ["android.hardware.touchscreen"]
+                if not missing_microphone_feature:
+                    advertised_features.append("android.hardware.microphone")
+                if unsupported_feature:
+                    advertised_features.append("android.hardware.camera")
                 archive.writestr(
                     "VENDOR/etc/permissions/handheld_core_hardware.xml",
-                    f'<permissions><feature name="{advertised_feature}"/></permissions>',
+                    "<permissions>"
+                    + "".join(f'<feature name="{name}"/>' for name in advertised_features)
+                    + "</permissions>",
                 )
                 archive.writestr(
                     "VENDOR/etc/permissions/bluetooth_excluded_hardware.xml",
@@ -915,6 +953,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("context-hub", {"context_hub": True}),
             ("unsupported-hal", {"unsupported_hal": True}),
             ("unsupported-feature", {"unsupported_feature": True}),
+            ("missing-microphone-feature", {"missing_microphone_feature": True}),
+            ("missing-mic-policy", {"missing_mic_policy": True}),
+            ("extra-input-device", {"extra_input_device": True}),
             ("kernel-config", {"wrong_kernel_config": True}),
             ("kernel-release", {"wrong_kernel_release": True}),
             ("memfd-policy", {"missing_memfd_policy": True}),
@@ -978,6 +1019,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("armeabi", {"abilist32": "armeabi-v7a,armeabi"}, "armeabi is forbidden|legacy armeabi"),
             ("no-32-bit-abi-cause", {"abilist32": ""}, "unexpected ABI"),
             ("single-zygote-cause", {"zygote": "zygote64"}, "zygote"),
+            ("missing-microphone-feature-cause", {"missing_microphone_feature": True},
+             "feature is not declared: android.hardware.microphone"),
+            ("camera-feature-cause", {"unsupported_feature": True},
+             "absent hardware feature is advertised.*android.hardware.camera"),
+            ("missing-mic-policy-cause", {"missing_mic_policy": True},
+             "ordinary mixer input"),
+            ("extra-input-device-cause", {"extra_input_device": True},
+             "only its speaker and built-in microphone"),
             ("no-64-bit-compiler-cause", {"dex2oat64": False}, "dalvik.vm.dex2oat64.enabled"),
             ("missing-32-bit-runtime-cause",
              {"entries": {"SYSTEM/bin/app_process32": None}}, "required entries are missing"),

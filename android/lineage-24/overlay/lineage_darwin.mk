@@ -58,9 +58,10 @@ TARGET_DEDICATED_RECOVERY := true
 TARGET_NO_RECOVERY := false
 
 # LineageOS switches, read while its configuration is inherited below. The
-# machine has no camera, no audio capture device, no charger or fastboot
-# transport, and no hardware to apply effects to, so the matching defaults of
-# the LineageOS product chain stay out. Debug builds carry `su` for the
+# machine has no camera, no charger or fastboot transport, and no hardware to
+# apply effects to, so the matching defaults of the LineageOS product chain stay
+# out. Its microphone is the Virtio sound capture stream (config/
+# primary_audio_policy_configuration.xml, config/kernarium_core_hardware.xml). Debug builds carry `su` for the
 # development tooling; a user build never does.
 PRODUCT_NO_CAMERA := true
 TARGET_EXCLUDES_AUDIOFX := true

@@ -156,9 +156,17 @@ GNSS, NFC, UWB, Thread, camera, biometric, sensor, vibrator, secure-element,
 USB, and Trusty hardware is not advertised. Ethernet uses the real
 Virtio-net/SLiRP path.
 
-The vendor audio policy exposes only the implemented 48 kHz stereo primary
-playback path, supplies the AOSP software effects configuration, and disables
-AAudio MMAP and exclusive modes. Settings omits its Bluetooth media-output
+The vendor audio policy exposes the 48 kHz stereo primary playback path and one
+built-in microphone, the Virtio sound capture stream (16-bit PCM at 48 kHz, mono
+or stereo), supplies the AOSP software effects configuration, and disables
+AAudio MMAP and exclusive modes. The product declares
+`android.hardware.microphone` permanently, because one build fingerprint cannot
+report a feature on only some boots (CDD 7.8.1 C-0-7). What the stream carries
+is the host's setting: silence by default, so recording APIs always open and
+return zeros, or the host's microphone when the user turns it on. The image
+needs a host with the capture stream; on an older host an application can open
+the input and the ALSA open then fails. The target-files verifier requires the
+declaration and exactly this input. Settings omits its Bluetooth media-output
 switcher so the remaining volume and vibration controls do not instantiate a
 radio-backed media manager. A dedicated Virtio
 battery device reports the Apple host's percentage and charging state through

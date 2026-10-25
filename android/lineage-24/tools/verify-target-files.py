@@ -391,6 +391,12 @@ FORBIDDEN_FEATURE_DECLARATIONS = {
     "android.hardware.wifi.xml",
     "android.software.verified_boot.xml",
 }
+# The Virtio sound capture stream is the product's microphone. A build
+# fingerprint cannot report it only on some boots, so the declaration is
+# permanent (CDD 7.8.1 C-0-7) and the audio policy carries its input.
+REQUIRED_FEATURE_NAMES = {
+    "android.hardware.microphone",
+}
 FORBIDDEN_FEATURE_NAMES = {
     "android.hardware.bluetooth",
     "android.hardware.bluetooth_le",
@@ -402,7 +408,6 @@ FORBIDDEN_FEATURE_NAMES = {
     "android.hardware.context_hub",
     "android.hardware.fingerprint",
     "android.hardware.location.gps",
-    "android.hardware.microphone",
     "android.hardware.telephony",
     "android.hardware.usb.accessory",
     "android.hardware.usb.host",
@@ -690,6 +695,7 @@ def check_fdroid(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) ->
 def check_hardware_features(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
+    declared: set[str] = set()
     for name, info in infos.items():
         path = PurePosixPath(name)
         if (
@@ -708,6 +714,10 @@ def check_hardware_features(
             feature = element.attrib.get("name")
             if feature in FORBIDDEN_FEATURE_NAMES:
                 fail(f"absent hardware feature is advertised in {name}: {feature}")
+            if feature:
+                declared.add(feature)
+    for feature in sorted(REQUIRED_FEATURE_NAMES - declared):
+        fail(f"hardware feature is not declared: {feature}")
 
 
 def app_preopt_paths(apk: str, isa: str = "arm64") -> tuple[str, str]:
@@ -874,34 +884,60 @@ def check_audio_policy(
     profiles = elements("profile")
     device_ports = elements("devicePort")
     routes = elements("route")
-    if len(mix_ports) != 1 or mix_ports[0].attrib != {
-        "name": "primary output",
-        "role": "source",
-        "flags": "AUDIO_OUTPUT_FLAG_PRIMARY",
+    if [port.attrib for port in mix_ports] != [
+        {
+            "name": "primary output",
+            "role": "source",
+            "flags": "AUDIO_OUTPUT_FLAG_PRIMARY",
+        },
+        {"name": "primary input", "role": "sink"},
+    ]:
+        fail("UML primary audio policy must expose one ordinary mixer output "
+             "and one ordinary mixer input")
+    if [profile.attrib for profile in profiles] != [
+        {
+            "name": "",
+            "format": "AUDIO_FORMAT_PCM_16_BIT",
+            "samplingRates": "48000",
+            "channelMasks": "AUDIO_CHANNEL_OUT_STEREO",
+        },
+        {
+            "name": "",
+            "format": "AUDIO_FORMAT_PCM_16_BIT",
+            "samplingRates": "48000",
+            "channelMasks": "AUDIO_CHANNEL_IN_STEREO AUDIO_CHANNEL_IN_MONO",
+        },
+    ]:
+        fail("UML primary audio profiles must match the 48 kHz Virtio playback "
+             "and capture streams")
+    if [port.attrib for port in device_ports] != [
+        {
+            "tagName": "Speaker",
+            "type": "AUDIO_DEVICE_OUT_SPEAKER",
+            "role": "sink",
+        },
+        {
+            "tagName": "Built-In Mic",
+            "type": "AUDIO_DEVICE_IN_BUILTIN_MIC",
+            "address": "bottom",
+            "role": "source",
+        },
+    ]:
+        fail("UML primary audio policy must expose only its speaker and built-in microphone")
+    if [route.attrib for route in routes] != [
+        {"type": "mix", "sink": "Speaker", "sources": "primary output"},
+        {"type": "mix", "sink": "primary input", "sources": "Built-In Mic"},
+    ]:
+        fail("UML primary audio routes do not connect the mixer to the speaker "
+             "and the built-in microphone to the input mixer")
+    if [item.text for item in elements("item")] != ["Speaker", "Built-In Mic"]:
+        fail("UML primary audio policy must attach only its speaker and built-in microphone")
+    if set(re.findall(rb"AUDIO_DEVICE_IN_[A-Z0-9_]+", primary_payload)) != {
+        b"AUDIO_DEVICE_IN_BUILTIN_MIC"
     }:
-        fail("UML primary audio policy must expose one ordinary mixer output")
-    if len(profiles) != 1 or profiles[0].attrib != {
-        "name": "",
-        "format": "AUDIO_FORMAT_PCM_16_BIT",
-        "samplingRates": "48000",
-        "channelMasks": "AUDIO_CHANNEL_OUT_STEREO",
-    }:
-        fail("UML primary audio profile must match the 48 kHz stereo Virtio device")
-    if len(device_ports) != 1 or device_ports[0].attrib != {
-        "tagName": "Speaker",
-        "type": "AUDIO_DEVICE_OUT_SPEAKER",
-        "role": "sink",
-    }:
-        fail("UML primary audio policy must expose only its speaker")
-    if len(routes) != 1 or routes[0].attrib != {
-        "type": "mix",
-        "sink": "Speaker",
-        "sources": "primary output",
-    }:
-        fail("UML primary audio route does not connect its mixer to the speaker")
+        fail("UML primary audio policy must name no input device but its built-in microphone")
 
     for forbidden in (
-        b"AUDIO_DEVICE_IN_",
         b"AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD",
         b"AUDIO_OUTPUT_FLAG_DIRECT",
         b"AUDIO_OUTPUT_FLAG_MMAP_NOIRQ",
