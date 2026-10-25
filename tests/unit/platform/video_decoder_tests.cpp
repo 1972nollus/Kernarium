@@ -181,6 +181,8 @@ void hevcDisplayOrder()
     }
 }
 
+// The 10-bit stream of an 8-bit request, and a full-range stream, a window, and sizes
+// that the capability list states.
 double sampleError(const Bytes& reference, const std::vector<std::uint8_t>& luma, const std::vector<std::uint8_t>& chroma)
 {
     double worst = 0;
@@ -188,6 +190,63 @@ double sampleError(const Bytes& reference, const std::vector<std::uint8_t>& luma
     for (std::size_t i = 0; i < chroma.size(); ++i)
         worst = std::max(worst, std::abs(double(chroma[i]) - reference[luma.size() + i]));
     return worst;
+}
+
+void hevcRawFormats()
+{
+    using namespace uml::platform;
+    // A Main 10 stream decoded to 8-bit NV12 when the client asks for it.
+    {
+        auto decoder = makeVideoDecoder(VideoCodec::hevc);
+        decoder->requestOutputLayout(VideoPixelLayout::planar8Bit);
+        decoder->submit(read("hevc-main10.bin"), 5);
+        decoder->drain();
+        const auto frames = decoder->takeFrames();
+        require(frames.size() == 1, "one 8-bit picture of a Main 10 stream");
+        const auto& frame = frames[0];
+        require(frame.layout == VideoPixelLayout::planarYuv && frame.format == VideoFormat {128, 96, 8},
+                "a Main 10 stream decoded to 8 bits is NV12");
+        require(frame.luma.size() == 128u * 96u && frame.chroma.size() == 128u * 48u, "NV12 plane sizes");
+        require(decoder->format().bitDepth == 10, "the stream is still a 10-bit one");
+        const auto reference = read("hevc-main10.raw");
+        double worst = 0;
+        const std::size_t lumaSamples = 128 * 96;
+        for (std::size_t i = 0; i < frame.luma.size() + frame.chroma.size(); ++i) {
+            const auto& plane = i < lumaSamples ? frame.luma : frame.chroma;
+            const auto got = double(plane[i < lumaSamples ? i : i - lumaSamples]);
+            const auto wanted = double((reference[2 * i] | (reference[2 * i + 1] << 8)) >> 6) / 4.0;
+            worst = std::max(worst, std::abs(got - wanted));
+        }
+        std::printf("hevc-main10 as NV12: max error %.2f levels\n", worst);
+        require(worst <= 2.0, "the 8-bit picture is the 10-bit one narrowed");
+        // Without the request the stream keeps its depth.
+        auto native = makeVideoDecoder(VideoCodec::hevc);
+        native->submit(read("hevc-main10.bin"), 5);
+        native->drain();
+        require(native->takeFrames().at(0).format.bitDepth == 10, "10-bit by default");
+        // An 8-bit stream is the same either way.
+        auto eight = makeVideoDecoder(VideoCodec::hevc);
+        eight->requestOutputLayout(VideoPixelLayout::planar8Bit);
+        eight->submit(read("hevc-main.bin"), 5);
+        eight->drain();
+        require(eight->takeFrames().at(0).format.bitDepth == 8, "8-bit stays 8-bit");
+    }
+    // A stream that states full range is decoded to full range.
+    {
+        auto decoder = makeVideoDecoder(VideoCodec::hevc);
+        decoder->submit(read("hevc-full-range.bin"), 5);
+        decoder->drain();
+        const auto frames = decoder->takeFrames();
+        require(frames.size() == 1 && frames[0].color.fullRange, "the frame says it is full range");
+        const auto error = sampleError(read("hevc-full-range.raw"), frames[0].luma, frames[0].chroma);
+        std::printf("hevc-full-range: max error %.0f levels\n", error);
+        require(error <= 2.0, "full-range samples are not converted to video range");
+        // A stream that says nothing stays video range.
+        auto limited = makeVideoDecoder(VideoCodec::hevc);
+        limited->submit(read("hevc-main.bin"), 5);
+        limited->drain();
+        require(!limited->takeFrames().at(0).color.fullRange, "video range by default");
+    }
 }
 
 void hevcWindow()
@@ -405,6 +464,7 @@ int main(int argc, char** argv)
                         [](const auto& c) { return c.codec == VideoCodec::hevc; })) {
             hevcDisplayOrder();
             hevcWindow();
+            hevcRawFormats();
         }
         auto decoder = makeVideoDecoder(capabilities.front().codec);
         bool rejected = false;

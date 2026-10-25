@@ -31,9 +31,12 @@ struct VideoFormat {
 };
 
 // How a decoded frame carries its samples. A planar frame is the decoder's
-// native 4:2:0 output; a packed frame has already left the YCbCr domain and is
-// what a client that only draws through a 32-bit RGB surface needs.
-enum class VideoPixelLayout { planarYuv, packedBgra };
+// native 4:2:0 output, 8-bit NV12 or 10-bit P010 by the stream's depth;
+// planar8Bit asks for NV12 whatever the depth is, which for a 10-bit stream
+// means the host narrows it, and is planarYuv for an 8-bit one. A packed
+// frame has already left the YCbCr domain and is what a client that only draws
+// through a 32-bit RGB surface needs.
+enum class VideoPixelLayout { planarYuv, packedBgra, planar8Bit };
 
 // How a planar frame's samples relate to RGB. It is read back from the decoded
 // surface rather than guessed, so it is the description the hardware itself
@@ -51,7 +54,7 @@ struct VideoColorimetry {
 // picture order count (VideoToolbox returns them as decoded). H.264 pictures
 // are returned as decoded, so a stream with B-pictures leaves out of display
 // order. `layout` selects which buffers carry the samples and is the layout the
-// frame actually has, not the one last requested.
+// frame actually has, not the one last requested; the depth is the frame's own.
 struct DecodedVideoFrame {
     VideoFormat format;
     VideoPixelLayout layout {VideoPixelLayout::planarYuv};

@@ -254,6 +254,8 @@ struct Crop {
 struct Picture {
     std::uint64_t timestamp {};
     Crop crop;
+    // The caller wants 8-bit planes whatever the depth of the stream.
+    bool narrow {};
     std::vector<DecodedVideoFrame> frames;
 };
 
@@ -263,8 +265,10 @@ DecodedVideoFrame copyPicture(CVImageBufferRef image, const Picture& picture, st
 {
     const auto pixelFormat = CVPixelBufferGetPixelFormatType(image);
     const bool packed = pixelFormat == kCVPixelFormatType_32BGRA;
-    const bool tenBit = pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
-    const bool fullRange = pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+    const bool tenBit = pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange ||
+                        pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
+    const bool fullRange = pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                           pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
     if (!packed && !tenBit && pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
         pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
         throw std::runtime_error("unexpected hardware video pixel format");
@@ -278,7 +282,8 @@ DecodedVideoFrame copyPicture(CVImageBufferRef image, const Picture& picture, st
         throw std::runtime_error("hardware video surface is smaller than the picture it carries");
     DecodedVideoFrame frame;
     frame.layout = packed ? VideoPixelLayout::packedBgra : VideoPixelLayout::planarYuv;
-    frame.format = {crop.width, crop.height, tenBit ? 10u : 8u};
+    const bool narrowed = tenBit && picture.narrow;
+    frame.format = {crop.width, crop.height, tenBit && !narrowed ? 10u : 8u};
     /* Read back the description the hardware itself applied, so a
      * caller that converts this frame reaches the same picture the
      * hardware would have packed. A stream that states nothing is
@@ -314,6 +319,7 @@ DecodedVideoFrame copyPicture(CVImageBufferRef image, const Picture& picture, st
         return frame;
     }
     const std::size_t sample = tenBit ? 2 : 1;
+    const std::size_t outputSample = narrowed ? 1 : sample;
     for (unsigned plane = 0; plane < 2; ++plane) {
         /* The chroma plane holds one interleaved pair for every two luma
          * samples each way, and a window offset counts whole pairs. */
@@ -328,9 +334,23 @@ DecodedVideoFrame copyPicture(CVImageBufferRef image, const Picture& picture, st
         if (!source || stride < offset + rowBytes || CVPixelBufferGetHeightOfPlane(image, plane) < firstRow + height)
             throw std::runtime_error("truncated hardware video surface");
         auto& destination = plane ? frame.chroma : frame.luma;
-        destination.resize(rowBytes * height);
-        for (std::size_t row = 0; row < height; ++row)
-            std::memcpy(destination.data() + row * rowBytes, source + (firstRow + row) * stride + offset, rowBytes);
+        destination.resize(width * outputSample * height);
+        for (std::size_t row = 0; row < height; ++row) {
+            const auto* in = source + (firstRow + row) * stride + offset;
+            auto* out = destination.data() + row * width * outputSample;
+            if (!narrowed) {
+                std::memcpy(out, in, rowBytes);
+                continue;
+            }
+            /* A 10-bit sample sits in the high bits of a little-endian pair.
+             * Rounding it to 8 bits here, rather than asking the hardware for
+             * 8-bit output, keeps the chroma exact: the hardware's own
+             * conversion moves the colors. */
+            for (std::size_t column = 0; column < width; ++column) {
+                const unsigned value = unsigned(in[2 * column]) | (unsigned(in[2 * column + 1]) << 8);
+                out[column] = std::uint8_t(std::min(255u, (value + 0x80u) >> 8));
+            }
+        }
     }
     return frame;
 }
@@ -355,7 +375,7 @@ public:
         const auto packet = prepare(bytes);
         if (packet.empty()) return;
         if (!session_.get()) throw std::runtime_error("video picture precedes its parameter sets");
-        Picture picture {timestamp, {}, {}};
+        Picture picture {timestamp, {}, layout_ == VideoPixelLayout::planar8Bit, {}};
         decode(packet, picture);
         for (auto& frame : picture.frames) emit(std::move(frame));
     }
@@ -428,7 +448,8 @@ public:
     }
 
 private:
-    // What the session itself produces.
+    // What the session itself produces. Narrowing a 10-bit picture to 8 bits
+    // is done as it is copied, so asking for it needs no new session.
     [[nodiscard]] VideoPixelLayout wantedLayout() const noexcept
     {
         return layout_ == VideoPixelLayout::packedBgra ? VideoPixelLayout::packedBgra : VideoPixelLayout::planarYuv;
@@ -591,7 +612,7 @@ private:
             (randomAccess && wantedLayout() != sessionLayout_))
             configure();
         if (!session_.get()) throw std::runtime_error("video picture precedes its parameter sets");
-        Picture decoded {timestamp, {}, {}};
+        Picture decoded {timestamp, {}, layout_ == VideoPixelLayout::planar8Bit, {}};
         // VideoToolbox honors only part of the conformance window, so the
         // session decodes the whole coded picture and the copy is cut here.
         if (sps.hasWindow)
@@ -712,8 +733,19 @@ private:
         const auto maxHeight = codec_ == VideoCodec::hevc ? 4320u : 2304u;
         if (!codedWidth || !codedHeight || codedWidth > maxWidth || codedHeight > maxHeight)
             throw std::runtime_error("video dimensions exceed decoder capabilities");
-        const OSType planarFormat = format_.bitDepth <= 8 ? kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-                                                          : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+        /* A stream that states full range is decoded to full range: asking
+         * for video range would have the hardware squeeze every sample. */
+        bool fullRange = false;
+        if (codec_ == VideoCodec::vp9) {
+            fullRange = vp9FullRange_;
+        } else if (codec_ != VideoCodec::jpeg) {
+            const auto value = CMFormatDescriptionGetExtension(description_.get(),
+                                                               kCMFormatDescriptionExtension_FullRangeVideo);
+            fullRange = value && CFGetTypeID(value) == CFBooleanGetTypeID() && CFBooleanGetValue(CFBooleanRef(value));
+        }
+        const OSType planarFormat = format_.bitDepth <= 8
+            ? (fullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+            : (fullRange ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange);
         NSDictionary* specification = @{(__bridge NSString*)kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: @YES};
         VTDecompressionOutputCallbackRecord callback {output, this};
         const auto create = [&](OSType pixelFormat) {
