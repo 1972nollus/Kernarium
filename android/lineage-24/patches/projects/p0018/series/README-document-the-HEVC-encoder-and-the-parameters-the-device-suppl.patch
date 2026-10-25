@@ -8,11 +8,11 @@ The encoder README listed three codecs, two bitrate modes and NV12 as the only
 input. Describe the HEVC encoder, the parameters that exist when the encoder
 device has the controls for them, and the input formats the encoder passes on.
 ---
- README.md | 45 ++++++++++++++++++++++++++++++++++++++++-----
- 1 file changed, 40 insertions(+), 5 deletions(-)
+ README.md | 48 +++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 43 insertions(+), 5 deletions(-)
 
 diff --git a/README.md b/README.md
-index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..920554d04ba7cbdba2cb72b1cae7527ef3cce4b6 100644
+index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..80d15271d44ac1f040f93eb3e5e6cd7a0fa03ec9 100644
 --- a/README.md
 +++ b/README.md
 @@ -289,10 +289,12 @@ extern "C" ::C2Allocator* CreateAllocator(::C2Allocator::id_t allocatorId) {
@@ -30,7 +30,7 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..920554d04ba7cbdba2cb72b1cae7527e
  - VP8: *c2.v4l2.vp8.encoder*
  - VP9: *c2.v4l2.vp9.encoder*
  
-@@ -316,6 +318,36 @@ be allowed to dynamically adjust the bitrate to maintain a constant quality. As
+@@ -316,6 +318,39 @@ be allowed to dynamically adjust the bitrate to maintain a constant quality. As
  the mediacodec framework does not provide facilities to configure the peak
  bitrate when using VBR, it is currently always set to 2x the target bitrate.
  
@@ -48,7 +48,10 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..920554d04ba7cbdba2cb72b1cae7527e
 +- *C2_PARAMKEY_GOP* with a B-frame layer sets the largest run of B-frames, up
 +to the device's *V4L2_CID_MPEG_VIDEO_B_FRAMES* maximum, and not for H.264
 +Baseline. The encoder then returns its output in the order of the stream, and
-+*C2_PARAMKEY_INPUT_DELAY* follows the run.
++*C2_PARAMKEY_INPUT_DELAY* follows the run. *C2_PARAMKEY_PIPELINE_DELAY*, which
++the framework reports as the latency of the encoder, is two frames longer: the
++host codes B-frames in a hierarchy that holds a reference frame back beyond the
++run, and a client that waits for an output sooner stalls the stream.
 +- *C2_PARAMKEY_TEMPORAL_LAYERING* sets layers of P frames, up to what the
 +device's hierarchical coding controls allow. Layers turn B-frames off and
 +constant bitrate into variable bitrate. The bitrate ratio of the base layer
@@ -67,7 +70,7 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..920554d04ba7cbdba2cb72b1cae7527e
  The following parameters are dynamic, and can be freely adjusted at run-time:
  
  - *C2_PARAMKEY_BITRATE*: Use this parameter to specify the desired bitrate.
-@@ -329,10 +361,13 @@ additional key frames in addition to the periodic ones requested through the
+@@ -329,10 +364,13 @@ additional key frames in addition to the periodic ones requested through the
  
  ### Supported Input Pixel Formats:
  
