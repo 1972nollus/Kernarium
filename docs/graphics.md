@@ -189,6 +189,14 @@ a depth format only where the host's own storage has the width and datatype
 that format names, and a guest config with 32 depth bits is backed by a real
 32-bit float depth buffer.
 
+The scanout mask is held to the same standard. Only the 8-bit RGB layouts the
+display presents carry a scanout bit, and no YUV format does. The guest's
+minigbm keeps the scanout use on exactly the combinations the mask names, and
+it refuses an NV12 combination that has both scanout and its emulation over R8
+buffers, so a scanout bit on NV12 costs the guest every video encoder, video
+decoder and camera use of that format. P010 stays unavailable either way:
+minigbm has no emulation for it and the host does not sample it.
+
 Applications that use stateful V4L2 decoding can instead use the independent
 [Virtio video service](../darwin/device/video/README.md). It exposes the same
 host codec profile set through the shared Linux and Android driver and copies

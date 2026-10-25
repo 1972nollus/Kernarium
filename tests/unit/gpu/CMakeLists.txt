@@ -206,6 +206,16 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # The scanout mask of the capset names what the display presents: minigbm
+    # drops the video uses of a buffer entry that claims a scanout it cannot
+    # have.
+    uml_add_gpu_unit_test(gpu-scanout-caps
+        uml_gpu_scanout_caps_tests
+        host_gl_scanout_caps_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries}
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY)
+
     # A layout the guest names has to fit the host storage behind it.
     uml_add_gpu_unit_test(gpu-import-bounds
         uml_gpu_import_bounds_tests host_gl_import_bounds_tests.mm
@@ -271,7 +281,7 @@ if(TARGET uml_gpu_service)
     # A host without a usable GL stack or renderer skips these with status 77.
     set_tests_properties(
         gpu-transfer-context-error gpu-blob-copy-transfer
-        gpu-texture-zero-fill gpu-import-bounds
+        gpu-texture-zero-fill gpu-scanout-caps gpu-import-bounds
         gpu-resource-metal-texture gpu-cross-context-readback
         gpu-depth-format-advertisement gpu-line-loop-statistics
         gpu-statistics-availability
