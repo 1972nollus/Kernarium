@@ -382,16 +382,17 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_presen
 
 # Hardware video encoding. The host's VideoToolbox encoders reach the guest as a
 # V4L2 stateful encoder, and external/v4l2_codec2 exposes them through Codec2:
-# its service is the vendor Codec2 store beside the software one. The XML lists
-# the encoders alone, so hardware decoders stay out of Android's codec list, and
-# the properties enable exactly those two components. The store admits as many
+# its service is the vendor Codec2 store beside the software one. The service
+# brings the vendor variants of the libraries it links, the plugin store among
+# them; naming one of those here would install its core variant under /system,
+# which the generic system artifact path requirement refuses. The XML lists the
+# encoders alone, so hardware decoders stay out of Android's codec list, and the
+# properties enable exactly those two components. The store admits as many
 # instances as the host serves streams. The extended policy adds the calls the
 # service's seccomp policy lacks for the V4L2 device, and ueventd gives the
 # nodes to the group the service joins.
 PRODUCT_SOONG_NAMESPACES += external/v4l2_codec2
-PRODUCT_PACKAGES += \
-    android.hardware.media.c2-service-v4l2 \
-    libc2plugin_store
+PRODUCT_PACKAGES += android.hardware.media.c2-service-v4l2
 PRODUCT_COPY_FILES += \
     device/kernarium/darwin/config/media_codecs_c2_v4l2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml \
     device/kernarium/darwin/config/media_c2_extended_seccomp_policy:$(TARGET_COPY_OUT_VENDOR)/etc/seccomp_policy/android.hardware.media.c2-extended-seccomp_policy
