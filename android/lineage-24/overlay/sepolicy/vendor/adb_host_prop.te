@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# adbd reports whether an adb host is connected, and product init holds a
+# wakelock while one is (vendor.kernarium.adb.host_connected). Init reads every
+# property, so adbd only needs to set it; the type is vendor-public because a
+# platform domain may set only such a vendor property.
+vendor_public_prop(vendor_kernarium_adb_prop)
+
+set_prop(adbd, vendor_kernarium_adb_prop)

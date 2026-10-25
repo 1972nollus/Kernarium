@@ -450,9 +450,24 @@ KeyMint/gatekeeper, and Credential Manager remain.
 The fixed image also omits CompOS and other AVF guest payloads, legacy VNDK
 31--34 APEXes, OTA and DSU executables, the dynamic-system installer,
 Cuttlefish host-monitoring services, process-memory guardian, and unused
-vsock, suspend, and tombstone forwarding helpers. These are excluded from the
+vsock and tombstone forwarding helpers. These are excluded from the
 resolved product package set before image construction. The build and
 target-files verifiers reject any excluded module that reappears.
+
+Android suspends itself like a phone when the screen is off, the battery is
+unplugged and nothing holds a wakelock, and a phone stays awake while a USB host
+is connected. This machine's adb host arrives over the network, which cannot
+wake a suspended guest, so the host's connection would vanish for the minute or
+more until the next alarm. adbd's p0011 topic therefore sets
+`vendor.kernarium.adb.host_connected` to 1 while it has an adb host and to 0
+when the last one leaves (and when it starts), and product init starts the
+Cuttlefish `suspend_blocker`, a userspace wakelock, on 1 and stops it on 0. The
+wakelock holds back only Android's own autosuspend: a suspend that the host
+requests through the management console never goes through SystemSuspend, so it
+still suspends the guest. adbd may set the property because the sepolicy
+overlay's `vendor_kernarium_adb_prop` is vendor-public; the target-files
+verifier requires the service, both triggers, the property context and the
+rule.
 
 DeviceLock and Virtualization are retained with their boot and system-server
 classpath fragments even though their hardware-backed functions are not

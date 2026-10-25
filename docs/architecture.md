@@ -1491,8 +1491,9 @@ boundary, as after a suspend request whose reply timed out, still ends it;
 the [mainline README](../kernel/mainline-6.18/README.md) gives the kernel's
 side. `uml_emulator_wake()` sends that edge whatever the host last asked for,
 except to a guest it has quiesced, as a phone's power key does: it ends a
-suspend the guest entered by itself, such as Android's once its display is off,
-and a running guest only answers it. Kernarium sends it after forwarding its
+suspend the guest entered by itself, such as Android's once its display is off
+and no adb host is connected (the [Android README](../android/lineage-24/README.md)
+explains the wakelock), and a running guest only answers it. Kernarium sends it after forwarding its
 Power key, whose virtio input cannot wake a suspended guest itself; the macOS
 VNC display maps XF86PowerOff to the guest's power key, and VNC input is itself
 a wake source. The guest replies to a suspend only after syncing its file

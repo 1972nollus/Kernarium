@@ -4,3 +4,6 @@
 # inside SurfaceFlinger, and neither can read vendor_default_prop, so the
 # product-owned driver options get a type those readers are allowed to see.
 vendor.mesa.    u:object_r:vendor_mesa_prop:s0
+
+# adbd's report that an adb host is connected; product init turns it into a wakelock.
+vendor.kernarium.adb.host_connected    u:object_r:vendor_kernarium_adb_prop:s0 exact bool

@@ -401,6 +401,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_kernel_release: bool = False,
                           missing_memfd_policy: bool = False,
                           missing_spl_policy: bool = False,
+                          blocker_variant: str | None = None,
+                          missing_blocker_binary: bool = False,
+                          missing_adb_prop_context: bool = False,
+                          missing_adb_prop_policy: bool = False,
                           missing_virtio_console: bool = False,
                           unsupported_hvc: bool = False,
                           missing_mesa_gles: bool = False,
@@ -593,6 +597,26 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     rcu_restore = ""
                 elif init_variant != "rcu-restore-at-boot":
                     rcu_restore = "on property:sys.boot_completed=1\n" + rcu_restore
+                # The wakelock that keeps the guest awake while an adb host is connected.
+                blocker_rules = ""
+                if blocker_variant != "missing-service":
+                    blocker_rules += (
+                        "service suspend_blocker /vendor/bin/suspend_blocker\n"
+                        "    user root\n    group system\n"
+                        + ("    class early_hal\n" if blocker_variant == "class-started"
+                           else "    disabled\n")
+                    )
+                blocker_rules += (
+                    "on property:vendor.kernarium.adb.host_connected=1\n"
+                    "    start suspend_blocker\n"
+                )
+                if blocker_variant != "no-stop":
+                    blocker_rules += (
+                        "on property:vendor.kernarium.adb.host_connected=0\n"
+                        "    stop suspend_blocker\n"
+                    )
+                if blocker_variant == "started-at-boot":
+                    blocker_rules += "on boot\n    start suspend_blocker\n"
                 archive.writestr(
                     "VENDOR/etc/init/init.kernarium.rc",
                     "on early-init\n" + graphics + density +
@@ -604,7 +628,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "on boot\n"
                     "    setprop ro.hardware.audio.primary goldfish\n"
                     "    setprop service.adb.tcp.port 5555\n"
-                    "    start adbd\n" + rcu_restore,
+                    "    start adbd\n" + rcu_restore + blocker_rules,
                 )
                 if extra_entry is not None:
                     archive.writestr(extra_entry, "on early-init\n")
@@ -685,6 +709,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "VENDOR/bin/hw/android.hardware.health-service.example",
                     b"health",
                 )
+                if not missing_blocker_binary:
+                    archive.writestr("VENDOR/bin/suspend_blocker", b"blocker")
+                archive.writestr(
+                    "VENDOR/etc/selinux/vendor_property_contexts",
+                    "" if missing_adb_prop_context else
+                    "vendor.kernarium.adb.host_connected    "
+                    "u:object_r:vendor_kernarium_adb_prop:s0 exact bool\n",
+                )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_sepolicy.cil",
                     "(policycap open_perms)\n"
@@ -695,6 +727,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if missing_spl_policy
                         else "(allow appdomain vendor_security_patch_level_prop_202604 "
                         "(file (read getattr map open)))\n"
+                    )
+                    + (
+                        ""
+                        if missing_adb_prop_policy
+                        else "(allow adbd_202604 vendor_kernarium_adb_prop "
+                        "(property_service (set)))\n"
                     ),
                 )
                 ueventd = "/dev/ttyS0 0660 root shell\n"
@@ -964,6 +1002,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("kernel-release", {"wrong_kernel_release": True}),
             ("memfd-policy", {"missing_memfd_policy": True}),
             ("spl-policy", {"missing_spl_policy": True}),
+            ("blocker-missing-service", {"blocker_variant": "missing-service"}),
+            ("blocker-class-started", {"blocker_variant": "class-started"}),
+            ("blocker-started-at-boot", {"blocker_variant": "started-at-boot"}),
+            ("blocker-no-stop", {"blocker_variant": "no-stop"}),
+            ("blocker-binary", {"missing_blocker_binary": True}),
+            ("adb-prop-context", {"missing_adb_prop_context": True}),
+            ("adb-prop-policy", {"missing_adb_prop_policy": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
             ("unsupported-hvc", {"unsupported_hvc": True}),
             ("missing-mesa-gles", {"missing_mesa_gles": True}),
@@ -1023,6 +1068,20 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("armeabi", {"abilist32": "armeabi-v7a,armeabi"}, "armeabi is forbidden|legacy armeabi"),
             ("no-32-bit-abi-cause", {"abilist32": ""}, "unexpected ABI"),
             ("single-zygote-cause", {"zygote": "zygote64"}, "zygote"),
+            ("blocker-missing-service-cause", {"blocker_variant": "missing-service"},
+             "does not declare the suspend_blocker service"),
+            ("blocker-class-started-cause", {"blocker_variant": "class-started"},
+             "starts suspend_blocker with its class"),
+            ("blocker-started-at-boot-cause", {"blocker_variant": "started-at-boot"},
+             "starts suspend_blocker under 'boot'"),
+            ("blocker-no-stop-cause", {"blocker_variant": "no-stop"},
+             "does not stop suspend_blocker when the last adb host leaves"),
+            ("blocker-binary-cause", {"missing_blocker_binary": True},
+             "VENDOR/bin/suspend_blocker"),
+            ("adb-prop-context-cause", {"missing_adb_prop_context": True},
+             "do not label vendor.kernarium.adb.host_connected"),
+            ("adb-prop-policy-cause", {"missing_adb_prop_policy": True},
+             "does not let adbd set vendor.kernarium.adb.host_connected"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("missing-microphone-feature-cause", {"missing_microphone_feature": True},

@@ -1078,7 +1078,8 @@ target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
 placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files
 and their 64-suffixed `mmap` and `lseek` imports, the userdata inode count,
 the application read of the vendor security patch level, the built-in
-microphone with its feature declaration, and the userdata `quota` flag) and the
+microphone with its feature declaration, the userdata `quota` flag, and the
+suspend blocker with the adb host-connected property it follows) and the
 builder's assertions;
 `lineage24-first-boot-precompile` covers the
 ISA set of a package and the per-ISA artifacts and manifest;

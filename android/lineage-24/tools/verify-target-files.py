@@ -162,6 +162,7 @@ REQUIRED_ENTRIES = {
     "SYSTEM_EXT/priv-app/Seedvault/Seedvault.apk",
     "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
     "VENDOR/bin/hw/android.hardware.health-service.example",
+    "VENDOR/bin/suspend_blocker",
     "VENDOR/etc/audio_effects_config.xml",
     "VENDOR/etc/audio_policy_configuration.xml",
     "VENDOR/etc/audio_policy_volumes.xml",
@@ -172,6 +173,7 @@ REQUIRED_ENTRIES = {
     "VENDOR/etc/permissions/handheld_core_hardware.xml",
     "VENDOR/etc/primary_audio_policy_configuration.xml",
     "VENDOR/etc/r_submix_audio_policy_configuration.xml",
+    "VENDOR/etc/selinux/vendor_property_contexts",
     "VENDOR/etc/selinux/vendor_sepolicy.cil",
     "VENDOR/etc/ueventd.rc",
     "VENDOR/etc/vintf/compatibility_matrix.xml",
@@ -340,7 +342,6 @@ FORBIDDEN_EXECUTABLE_FILENAMES = {
     "snapshotctl",
     "snapuserd",
     "socket_vsock_proxy",
-    "suspend_blocker",
     "tombstone_transmit",
     "update_engine",
     "update_engine_client",
@@ -435,6 +436,16 @@ VENDOR_SPL_APP_READ = re.compile(
 # The image's inode count, which the first-boot resize keeps per block group
 # (BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT in overlay/BoardConfig.mk).
 USERDATA_EXTFS_INODE_COUNT = "8192"
+# adbd reports its host in this property and init holds a userspace wakelock while
+# it is 1 (adbd's p0011 topic, overlay/config/init.vendor.rc, overlay/sepolicy/vendor).
+ADB_HOST_PROPERTY = "vendor.kernarium.adb.host_connected"
+ADB_HOST_PROPERTY_TYPE = "vendor_kernarium_adb_prop"
+ADB_HOST_PROPERTY_SET = re.compile(
+    rb"^\(allow adbd(?:_[0-9]+)? " + ADB_HOST_PROPERTY_TYPE.encode() + rb"(?:_[0-9]+)? "
+    rb"\(property_service \(set\)\)\)$",
+    re.MULTILINE,
+)
+SUSPEND_BLOCKER_SERVICE = ("suspend_blocker", "/vendor/bin/suspend_blocker")
 UML_INIT_REQUIRED = (
     "mount_all --early",
     "exec -- /system/bin/resize2fs /dev/block/by-name/userdata",
@@ -463,7 +474,6 @@ UML_INIT_FORBIDDEN = (
     "setup_wifi",
     "socket_vsock_proxy",
     "/dev/hvc",
-    "suspend_blocker",
     "/dev/block/by-name/custom",
 )
 
@@ -557,6 +567,42 @@ def check_apex_payload_filesystem(
     fail(f"APEX payload must use ext4: {info.filename}")
 
 
+def init_services(payload: str) -> dict[str, tuple[str, list[str]]]:
+    """Map each service of an init script to its executable and its option lines."""
+    services: dict[str, tuple[str, list[str]]] = {}
+    options: list[str] | None = None
+    for raw in payload.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if fields[0] == "service" and len(fields) >= 3:
+            options = []
+            services[fields[1]] = (fields[2], options)
+        elif fields[0] in ("on", "import"):
+            options = None
+        elif options is not None and raw[:1].isspace():
+            options.append(" ".join(fields))
+    return services
+
+
+def check_suspend_blocker(init_payload: str, actions: dict[str, list[str]]) -> None:
+    """The wakelock that keeps the guest awake runs exactly while an adb host is connected."""
+    name, executable = SUSPEND_BLOCKER_SERVICE
+    service = init_services(init_payload).get(name)
+    if service is None or service[0] != executable:
+        fail(f"UML init policy does not declare the {name} service at {executable}")
+    if "disabled" not in service[1]:
+        fail(f"UML init policy starts {name} with its class instead of on an adb host")
+    for trigger, commands in actions.items():
+        if f"start {name}" in commands and trigger != f"property:{ADB_HOST_PROPERTY}=1":
+            fail(f"UML init policy starts {name} under '{trigger}'")
+    if f"start {name}" not in actions.get(f"property:{ADB_HOST_PROPERTY}=1", []):
+        fail(f"UML init policy does not start {name} while an adb host is connected")
+    if f"stop {name}" not in actions.get(f"property:{ADB_HOST_PROPERTY}=0", []):
+        fail(f"UML init policy does not stop {name} when the last adb host leaves")
+
+
 def init_actions(payload: str) -> dict[str, list[str]]:
     """Map each action trigger of an init script to its commands."""
     actions: dict[str, list[str]] = {}
@@ -641,6 +687,17 @@ def check_boot_policy(
         fail("UML init policy does not copy a host-supplied display density")
     if UML_INIT_RCU_RESTORE not in actions.get(UML_INIT_RCU_TRIGGER, []):
         fail("UML init policy does not restore normal RCU grace periods after boot")
+    check_suspend_blocker(init_payload, actions)
+
+    property_contexts = read_small(
+        archive, infos["VENDOR/etc/selinux/vendor_property_contexts"]
+    ).decode("utf-8", errors="strict")
+    if not any(
+        line.split()[:2] == [ADB_HOST_PROPERTY, f"u:object_r:{ADB_HOST_PROPERTY_TYPE}:s0"]
+        for line in property_contexts.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ):
+        fail(f"vendor property contexts do not label {ADB_HOST_PROPERTY}")
 
     ueventd_payload = read_small(
         archive, infos["VENDOR/etc/ueventd.rc"]
@@ -792,6 +849,9 @@ def check_kernel_policy(
     # system_server report to them (overlay/sepolicy/vendor/appdomain.te).
     if not VENDOR_SPL_APP_READ.search(vendor_policy):
         fail("vendor policy does not let applications read vendor_security_patch_level_prop")
+    # adbd reports its host to the wakelock rule in init (overlay/sepolicy/vendor/adb_host_prop.te).
+    if not ADB_HOST_PROPERTY_SET.search(vendor_policy):
+        fail(f"vendor policy does not let adbd set {ADB_HOST_PROPERTY}")
 
 
 def parse_properties(payload: str) -> dict[str, str]:

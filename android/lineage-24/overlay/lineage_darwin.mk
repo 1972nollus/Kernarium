@@ -264,7 +264,6 @@ KERNARIUM_REMOVED_PACKAGES := \
     snapuserd \
     snapuserd_ramdisk \
     socket_vsock_proxy \
-    suspend_blocker \
     tombstone_transmit \
     update_engine \
     update_engine_client \

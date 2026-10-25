@@ -400,6 +400,8 @@ else
 fi
 [[ "$PRODUCT_PACKAGES" == *" adb_root "* ]] ||
 	fail "the LineageOS adb root service is absent"
+[[ "$PRODUCT_PACKAGES" == *" suspend_blocker "* ]] ||
+	fail "the suspend blocker that holds the guest awake for an adb host is absent"
 PRODUCT_PACKAGES_EXCLUDE=" $(get_build_var PRODUCT_PACKAGES_EXCLUDE) "
 for package in \
 	BasicDreams \
@@ -452,7 +454,6 @@ for package in \
 	snapuserd \
 	snapuserd_ramdisk \
 	socket_vsock_proxy \
-	suspend_blocker \
 	tombstone_transmit \
 	update_engine \
 	update_engine_client \
