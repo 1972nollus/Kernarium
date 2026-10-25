@@ -327,6 +327,11 @@ PRODUCT_COPY_FILES_EXCLUDE += \
 PRODUCT_COPY_FILES += \
     device/kernarium/darwin/config/kernarium_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml
 
+# The software video decoders advertise less than they decode; the vendor file
+# updates their limits to 3840x2160 (config/media_codecs_c2.xml).
+PRODUCT_COPY_FILES += \
+    device/kernarium/darwin/config/media_codecs_c2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml
+
 # The Vulkan HAL is Mesa's Venus driver built from this project's pinned guest
 # Mesa source. Its generated Soong module names are scoped with a venus_
 # prefix so they cannot collide with the AOSP external/mesa3d modules. The

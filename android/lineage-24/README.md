@@ -228,6 +228,14 @@ open was denied (the audit rate limit hid how many).
 `overlay/sepolicy/vendor/hal_audio_default.te` allows the call, and the
 target-files verifier requires the rule.
 
+The guest has no hardware video decoder, and the software decoders of the
+swcodec APEX advertise less than they decode: VP9 up to 2048x2048 and HEVC at
+2,000,000 8x8 blocks per second (1080p at 60 frames per second). Both decode
+3840x2160, which the Mainline media CTS expects some component of every device
+to accept. `overlay/config/media_codecs_c2.xml` updates the two entries (the
+vendor file is parsed after the APEX's), and the target-files verifier requires
+the installed file to allow 3840x2160 at 30 frames per second.
+
 MediaProvider's FUSE daemon kept its state on the stack of the session thread,
 while the Java side keeps calling into the daemon until that thread deletes it.
 A public volume that unmounts right after it mounts reached the volume's

@@ -172,6 +172,7 @@ REQUIRED_ENTRIES = {
     "VENDOR/etc/default_volume_tables.xml",
     "VENDOR/etc/fstab.uml",
     "VENDOR/etc/init/init.kernarium.rc",
+    "VENDOR/etc/media_codecs_c2.xml",
     "VENDOR/etc/permissions/bluetooth_excluded_hardware.xml",
     "VENDOR/etc/permissions/handheld_core_hardware.xml",
     "VENDOR/etc/primary_audio_policy_configuration.xml",
@@ -438,6 +439,11 @@ VENDOR_SPL_APP_READ = re.compile(
 # The image's inode count, which the first-boot resize keeps per block group
 # (BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT in overlay/BoardConfig.mk).
 USERDATA_EXTFS_INODE_COUNT = "8192"
+# 3840x2160 at 30 frames per second, in the blocks that the codec limits count: HEVC counts
+# 8x8 blocks (480 x 270 = 129,600, 3,888,000 per second), VP9 16x16 blocks (240 x 135 = 32,400).
+MEDIA_C2_HEVC_BLOCKS_PER_SECOND = 129_600 * 30
+MEDIA_C2_VP9_BLOCK_COUNT = 32_400
+MEDIA_C2_SIZE = (3840, 2160)
 # The two example audio HAL processes share one domain and call each other's binder
 # (overlay/sepolicy/vendor/hal_audio_default.te).
 AUDIO_HAL_SELF_BINDER = re.compile(
@@ -706,6 +712,7 @@ def check_boot_policy(
     if UML_INIT_RCU_RESTORE not in actions.get(UML_INIT_RCU_TRIGGER, []):
         fail("UML init policy does not restore normal RCU grace periods after boot")
     check_suspend_blocker(init_payload, actions)
+    check_media_codecs_c2(read_small(archive, infos["VENDOR/etc/media_codecs_c2.xml"]))
 
     ueventd_payload = read_small(
         archive, infos["VENDOR/etc/ueventd.rc"]
@@ -869,6 +876,50 @@ def check_kernel_policy(
             "utf-8", errors="strict"
         ),
     )
+
+
+def media_codec_limit(codec: ET.Element, name: str) -> ET.Element:
+    limits = [limit for limit in codec.findall("Limit") if limit.get("name") == name]
+    if len(limits) != 1:
+        fail(f"media_codecs_c2.xml: {codec.get('name')} needs exactly one {name} limit")
+    return limits[0]
+
+
+def check_media_codecs_c2(payload: bytes) -> None:
+    """The software HEVC and VP9 decoders must be allowed 3840x2160."""
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as error:
+        fail(f"media_codecs_c2.xml is not well-formed: {error}")
+    decoders = {
+        codec.get("name"): codec for codec in root.findall("./Decoders/MediaCodec")
+    }
+    for name in ("c2.android.hevc.decoder", "c2.android.vp9.decoder"):
+        codec = decoders.get(name)
+        if codec is None or codec.get("update") != "true":
+            fail(f"media_codecs_c2.xml does not update {name}")
+
+    def upper(limit: ET.Element) -> int:
+        return int(limit.get("range", "0-0").split("-")[1])
+
+    hevc_rate = upper(
+        media_codec_limit(decoders["c2.android.hevc.decoder"], "blocks-per-second")
+    )
+    if hevc_rate < MEDIA_C2_HEVC_BLOCKS_PER_SECOND:
+        fail(
+            f"media_codecs_c2.xml allows the HEVC decoder only {hevc_rate} blocks per second; "
+            f"3840x2160 at 30 frames per second needs {MEDIA_C2_HEVC_BLOCKS_PER_SECOND}"
+        )
+    vp9 = decoders["c2.android.vp9.decoder"]
+    width, height = (int(side) for side in media_codec_limit(vp9, "size").get("max", "0x0").split("x"))
+    if width < MEDIA_C2_SIZE[0] or height < MEDIA_C2_SIZE[1]:
+        fail(f"media_codecs_c2.xml limits the VP9 decoder to {width}x{height}, below 3840x2160")
+    vp9_blocks = upper(media_codec_limit(vp9, "block-count"))
+    if vp9_blocks < MEDIA_C2_VP9_BLOCK_COUNT:
+        fail(
+            f"media_codecs_c2.xml allows the VP9 decoder {vp9_blocks} blocks, below "
+            f"{MEDIA_C2_VP9_BLOCK_COUNT} for 3840x2160"
+        )
 
 
 def cil_attribute_members(policy: bytes, attribute: str) -> set[str]:

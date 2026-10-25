@@ -409,6 +409,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           core_sets_vendor_prop: bool = False,
                           missing_audio_binder_policy: bool = False,
                           oversize_platform_policy: bool = False,
+                          media_codecs_variant: str | None = None,
                           system_ext_core_sets_vendor_prop: bool = False,
                           adb_prop_not_system: bool = False,
                           missing_virtio_console: bool = False,
@@ -717,6 +718,24 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 )
                 if not missing_blocker_binary:
                     archive.writestr("VENDOR/bin/suspend_blocker", b"blocker")
+                # The software decoders' 3840x2160 update (config/media_codecs_c2.xml).
+                hevc_rate = "1-3000000" if media_codecs_variant == "low-hevc-rate" else "1-16711680"
+                vp9_size = "2048x2048" if media_codecs_variant == "small-vp9-size" else "4096x4096"
+                vp9_blocks = "1-16384" if media_codecs_variant == "small-vp9-blocks" else "1-65536"
+                if media_codecs_variant != "missing":
+                    archive.writestr(
+                        "VENDOR/etc/media_codecs_c2.xml",
+                        "<broken" if media_codecs_variant == "malformed" else
+                        '<MediaCodecs><Decoders>'
+                        + ("" if media_codecs_variant == "no-hevc" else
+                           '<MediaCodec name="c2.android.hevc.decoder" type="video/hevc" update="true">'
+                           f'<Limit name="blocks-per-second" range="{hevc_rate}" /></MediaCodec>')
+                        + '<MediaCodec name="c2.android.vp9.decoder" type="video/x-vnd.on2.vp9" update="true">'
+                        f'<Limit name="size" min="2x2" max="{vp9_size}" />'
+                        f'<Limit name="block-count" range="{vp9_blocks}" />'
+                        '<Limit name="blocks-per-second" range="1-2000000" /></MediaCodec>'
+                        '</Decoders></MediaCodecs>',
+                    )
                 # Platform, vendor and system_ext policy as the builder emits them: the
                 # platform's core domains, a vendor-owned property that only
                 # vendor_init sets, and the system-owned property adbd reports its host in.
@@ -1058,6 +1077,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("core-sets-vendor-prop", {"core_sets_vendor_prop": True}),
             ("audio-binder-policy", {"missing_audio_binder_policy": True}),
             ("oversize-platform-policy", {"oversize_platform_policy": True}),
+            ("media-codecs-missing", {"media_codecs_variant": "missing"}),
+            ("media-codecs-malformed", {"media_codecs_variant": "malformed"}),
+            ("media-codecs-no-hevc", {"media_codecs_variant": "no-hevc"}),
+            ("media-codecs-low-hevc-rate", {"media_codecs_variant": "low-hevc-rate"}),
+            ("media-codecs-small-vp9-size", {"media_codecs_variant": "small-vp9-size"}),
+            ("media-codecs-small-vp9-blocks", {"media_codecs_variant": "small-vp9-blocks"}),
             ("system-ext-core-sets-vendor-prop", {"system_ext_core_sets_vendor_prop": True}),
             ("adb-prop-not-system", {"adb_prop_not_system": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
@@ -1133,6 +1158,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "do not label sys.kernarium.adb.host_connected"),
             ("adb-prop-policy-cause", {"missing_adb_prop_policy": True},
              "does not let adbd set sys.kernarium.adb.host_connected"),
+            ("media-codecs-missing-cause", {"media_codecs_variant": "missing"},
+             "VENDOR/etc/media_codecs_c2.xml"),
+            ("media-codecs-malformed-cause", {"media_codecs_variant": "malformed"},
+             "media_codecs_c2.xml is not well-formed"),
+            ("media-codecs-no-hevc-cause", {"media_codecs_variant": "no-hevc"},
+             "does not update c2.android.hevc.decoder"),
+            ("media-codecs-low-hevc-rate-cause", {"media_codecs_variant": "low-hevc-rate"},
+             "allows the HEVC decoder only 3000000 blocks per second"),
+            ("media-codecs-small-vp9-size-cause", {"media_codecs_variant": "small-vp9-size"},
+             "limits the VP9 decoder to 2048x2048"),
+            ("media-codecs-small-vp9-blocks-cause", {"media_codecs_variant": "small-vp9-blocks"},
+             "allows the VP9 decoder 16384 blocks"),
             ("oversize-platform-policy-cause", {"oversize_platform_policy": True},
              "SYSTEM/etc/selinux/plat_sepolicy.cil"),
             ("audio-binder-policy-cause", {"missing_audio_binder_policy": True},
@@ -1252,6 +1289,14 @@ def verify_overlay_sepolicy(android_root: Path) -> None:
         )
         if result.returncode == 0 or "system_server may be a core domain" not in result.stderr:
             fail("the overlay sepolicy check accepted an allow rule of a core domain")
+
+
+def verify_media_codecs_overlay(android_root: Path) -> None:
+    """The tracked software decoder update satisfies the verifier that checks the image."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    verifier.check_media_codecs_c2(
+        (android_root / "overlay/config/media_codecs_c2.xml").read_bytes()
+    )
 
 
 def verify_hal_selections(android_root: Path) -> None:
@@ -1832,6 +1877,7 @@ def main() -> None:
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_hal_selections(android_root)
     verify_overlay_sepolicy(android_root)
+    verify_media_codecs_overlay(android_root)
     verify_pin_manifest(android_root / "tools/render-pin-manifest.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")
