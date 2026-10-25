@@ -964,9 +964,10 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
   emitter.branch(undo_and_return_to_cpp);
 
   emitter.bind(fallback);
-  /* x16 is the matched record's key, which equals the target PC in x8
-   * only in mode 0. */
-  emitter.store_x(sme_mode_ == 0U ? 16U : 8U, 15, offsetof(CpuState, pc));
+  /* x8 still holds the target PC; the matched record's key in x16 equals it
+   * only in mode 0, and a top-byte-ignore translation's key has a state bit
+   * beside the PC. */
+  emitter.store_x(8, 15, offsetof(CpuState, pc));
   emitter.bind(undo_and_return_to_cpp);
   emitter.add_immediate(20, 20, static_cast<unsigned>(count));
   emitter.return_constant(Event::continued, count);
