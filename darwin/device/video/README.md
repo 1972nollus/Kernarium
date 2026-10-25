@@ -70,20 +70,28 @@ dma-buf follow one another at their negotiated sizes.
 
 **Display order.** VideoToolbox returns each picture as it decodes it, and a
 V4L2 client cannot reorder them: it has a buffer sequence, not a presentation
-time. The HEVC decoder therefore derives the output order from the stream
-(`apple/hevc_stream.cpp`). It decodes one picture at a time, computes each
-picture order count (clause 8.3.1), and holds a picture until more pictures wait
-than `sps_max_num_reorder_pics` allows or it has waited longer than
-`sps_max_latency_increase_plus1` allows (the bumping process of C.5.2). A coded
-video sequence boundary, an end of sequence or bitstream unit, and a drain
-release every waiting picture in order. A RASL picture whose CRA or BLA the
-decode begins at, or follows an end of sequence, is skipped: its references are
-missing and VideoToolbox answers it with a bad-data error. A picture with
-`pic_output_flag` 0 is decoded and not shown. Timestamps stay with their
-pictures. H.264, VP9 and JPEG pictures are returned as decoded; an H.264 stream
-with B-pictures therefore reaches the guest in decode order, which is a
-continuing limitation (its picture order counts, types 0 to 2 and MMCO 5, are
-not implemented).
+time. The H.264 and HEVC decoders therefore derive the output order from the
+stream (`apple/h264_stream.cpp`, `apple/hevc_stream.cpp`). Each decodes one
+picture at a time, computes its picture order count, and holds a picture in the
+decoded picture buffer's bumping process: HEVC (C.5.2) until more pictures wait
+than `sps_max_num_reorder_pics` allows or one has waited longer than
+`sps_max_latency_increase_plus1` allows; H.264 (C.4.5.3) until more frames wait
+than `max_num_reorder_frames` allows or the buffer of `max_dec_frame_buffering`
+frames has no room. A stream that states neither gets the level's frame count,
+and zero for Baseline, picture order count type 2 and the intra profiles with
+`constraint_set3`. H.264 order counts of types 0 to 2, `memory_management`
+operations 1 to 6, the sliding window and `frame_num` gaps are modelled, and an
+IDR picture or operation 5 sends everything before it out first (the device
+ignores `no_output_of_prior_pics_flag`, because a frame the decoder has is a
+frame the client is owed). A coded video sequence boundary, an end of sequence
+or bitstream unit, and a drain release every waiting picture in order. A RASL
+picture whose CRA or BLA the decode begins at, or follows an end of sequence, is
+skipped: its references are missing and VideoToolbox answers it with a bad-data
+error. A picture with `pic_output_flag` 0 is decoded and not shown. Timestamps
+stay with their pictures. H.264 field pictures (`field_pic_flag` 1) are not
+modelled: each leaves at once after everything waiting, in decode order, which
+is a continuing limitation for interlaced field-coded streams. VP9 and JPEG
+pictures are returned as decoded, which is their display order.
 
 **Seek.** `QUEUE_CLEAR` on the coded queue drops every picture in flight, every
 reference and the picture order state, and keeps the stream's parameter sets
@@ -99,12 +107,13 @@ A stream that states full range in its VUI (or a VP9 header) is decoded to the
 full-range pixel format, so no sample is squeezed into 16 to 235, and the frame
 says so for the conversion to packed BGRA.
 
-**Cropping.** The size a client is told is the stream's conformance window,
-not its coded size. VideoToolbox honors only the right and bottom offsets of
-the window and returns the coded picture's top-left corner otherwise, so the
-decoder describes the stream with its window removed from the SPS and crops the
-copy at the window's own origin. The result is byte for byte what a software
-decoder shows (`platform-video-decoder` checks it).
+**Cropping.** The size a client is told is the stream's conformance window
+(HEVC) or frame cropping rectangle (H.264), not its coded size. VideoToolbox
+honors only the right and bottom offsets and returns the coded picture's
+top-left corner otherwise, so the decoder describes the stream with the window
+removed from the SPS and crops the copy at the window's own origin. The result
+is byte for byte what a software decoder shows (`platform-video-decoder` checks
+both codecs).
 
 **Resolution change.** When the first picture of a new size is decoded, the
 device first delivers every picture of the old size, including the ones held
