@@ -26,18 +26,18 @@ it, except for the one that ends the stream. The input delay follows the
 run of B-frames.
 ---
  common/EncodeHelpers.cpp                      |   2 +
- common/include/v4l2_codec2/common/Common.h    |  17 ++
+ common/include/v4l2_codec2/common/Common.h    |  17 +
  components/EncodeComponent.cpp                |  43 ++-
- components/EncodeInterface.cpp                | 277 +++++++++++++++---
+ components/EncodeInterface.cpp                | 294 ++++++++++++++++--
  .../v4l2_codec2/components/EncodeComponent.h  |  10 +
- .../v4l2_codec2/components/EncodeInterface.h  |  42 +++
+ .../v4l2_codec2/components/EncodeInterface.h  |  44 +++
  .../v4l2_codec2/components/VideoEncoder.h     |  21 ++
  v4l2/V4L2Device.cpp                           |  96 +++++-
  v4l2/V4L2EncodeComponent.cpp                  |  22 +-
  v4l2/V4L2Encoder.cpp                          | 126 ++++++--
  v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |   4 +
  v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |  38 ++-
- 12 files changed, 630 insertions(+), 68 deletions(-)
+ 12 files changed, 649 insertions(+), 68 deletions(-)
 
 diff --git a/common/EncodeHelpers.cpp b/common/EncodeHelpers.cpp
 index 68c940063e7369b1dda0069d4d930c2acbec1976..6ab578bfa2f04aaeeccd6649a470ccca23f752b9 100644
@@ -163,10 +163,10 @@ index 1a7c17746160c72abd0946c47560b7ced0766e56..89de2742a706c06a5a254218581f04ec
      ATRACE_CALL();
      ALOG_ASSERT(work);
 diff --git a/components/EncodeInterface.cpp b/components/EncodeInterface.cpp
-index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c5df1d1784509f966779bede4df1b322c5d8eeca 100644
+index 1f03c8e2f94ce03d26955ee63e3db88a40290216..22f2cfe91341cd1465d637314f03b1dcce569372 100644
 --- a/components/EncodeInterface.cpp
 +++ b/components/EncodeInterface.cpp
-@@ -43,6 +43,24 @@ constexpr uint32_t kDefaultBitrate = 64000;
+@@ -43,6 +43,27 @@ constexpr uint32_t kDefaultBitrate = 64000;
  // TODO: increase this in the future for supporting higher level/resolution encoding.
  constexpr uint32_t kMaxBitrate = 50000000;
  
@@ -177,6 +177,9 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c5df1d1784509f966779bede4df1b322
 +// The most temporal layers that a client can ask for before the setter reduces the request to what
 +// the device supports.
 +constexpr uint32_t kMaxRequestedLayerCount = 8;
++// The most B-frames between two reference frames that a client can ask for before the setter
++// reduces the request to what the device supports.
++constexpr uint32_t kMaxRequestedBFrames = 16;
 +
 +// The H.264 levels offered when the device does not list the ones it supports.
 +constexpr C2Config::level_t kDefaultH264Levels[] = {
@@ -191,7 +194,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c5df1d1784509f966779bede4df1b322
  // The HEVC levels offered when the device does not list the ones it supports. They stop at the
  // level every tier-aware encoder of this size class meets.
  constexpr C2Config::level_t kDefaultHEVCLevels[] = {
-@@ -51,6 +69,35 @@ constexpr C2Config::level_t kDefaultHEVCLevels[] = {
+@@ -51,6 +72,35 @@ constexpr C2Config::level_t kDefaultHEVCLevels[] = {
          C2Config::LEVEL_HEVC_MAIN_4_1, C2Config::LEVEL_HEVC_MAIN_5,   C2Config::LEVEL_HEVC_MAIN_5_1,
  };
  
@@ -227,7 +230,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c5df1d1784509f966779bede4df1b322
  // Returns the HEVC levels the interface offers: the Main tier levels |deviceLevels| lists, or the
  // default levels when the device lists none.
  std::vector<unsigned int> offeredHEVCLevels(const std::vector<C2Config::level_t>& deviceLevels) {
-@@ -277,6 +324,54 @@ C2R EncodeInterface::IntraRefreshPeriodSetter(bool mayBlock,
+@@ -277,6 +327,68 @@ C2R EncodeInterface::IntraRefreshPeriodSetter(bool mayBlock,
      return C2R::Ok();
  }
  
@@ -266,14 +269,28 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c5df1d1784509f966779bede4df1b322
 +}
 +
 +// static
++C2R EncodeInterface::GopSetter(bool /*mayBlock*/, C2P<C2StreamGopTuning::output>& /*me*/) {
++    // The structure is taken as the client gives it. The count of a layer has no range, as the
++    // period of the P frames shares the field with the run of B-frames, so the run is limited to
++    // what the device supports where the component reads it, and by the input delay below.
++    // (Setter<>::NonStrictValuesWithNoDeps would validate each layer through a field helper of the
++    // layer struct, which the interface helper library does not instantiate.)
++    return C2R::Ok();
++}
++
++// static
 +C2R EncodeInterface::InputDelaySetter(bool /*mayBlock*/, C2P<C2PortActualDelayTuning::input>& me,
 +                                      const C2P<C2StreamGopTuning::output>& gop) {
 +    // The encoder holds as many frames as there are B-frames between two reference frames before
-+    // it can output the first of them.
++    // it can output the first of them, and no more than the device supports.
 +    uint32_t bFrames = 0;
 +    for (size_t i = 0; i < gop.v.flexCount(); ++i) {
 +        const C2GopLayerStruct& layer = gop.v.m.values[i];
 +        if (layer.type_ & C2Config::B_FRAME) bFrames = std::max(bFrames, layer.count);
++    }
++    bFrames = std::min(bFrames, kMaxRequestedBFrames);
++    while (bFrames > 0 && !me.F(me.v.value).supportsAtAll(bFrames)) {
++        --bFrames;
 +    }
 +    me.set().value = bFrames;
 +    return C2R::Ok();
@@ -282,7 +299,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c5df1d1784509f966779bede4df1b322
  EncodeInterface::EncodeInterface(const C2String& name, std::shared_ptr<C2ReflectorHelper> helper,
                                   const SupportedCapabilities& caps)
        : C2InterfaceHelper(std::move(helper)) {
-@@ -333,56 +428,71 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+@@ -333,56 +445,71 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
                           .withSetter(Setter<decltype(*mFrameRate)>::StrictValueWithNoDeps)
                           .build());
  
@@ -387,7 +404,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c5df1d1784509f966779bede4df1b322
          addParameter(DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
                               .withDefault(new C2StreamProfileLevelInfo::output(
                                       0u, minProfile, static_cast<C2Config::level_t>(defaultLevel)))
-@@ -473,6 +583,57 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+@@ -473,6 +600,57 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
                           .withSetter(Setter<decltype(*mKeyFramePeriodUs)>::StrictValueWithNoDeps)
                           .build());
  
@@ -417,7 +434,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c5df1d1784509f966779bede4df1b322
 +                                                                                 0u /* stream */))
 +                             .withFields({C2F(mGop, m.values[0].type_).any(),
 +                                          C2F(mGop, m.values[0].count).any()})
-+                             .withSetter(Setter<decltype(*mGop)>::NonStrictValuesWithNoDeps)
++                             .withSetter(GopSetter)
 +                             .build());
 +
 +        addParameter(DefineParam(mActualInputDelay, C2_PARAMKEY_INPUT_DELAY)
@@ -445,7 +462,7 @@ index 1f03c8e2f94ce03d26955ee63e3db88a40290216..c5df1d1784509f966779bede4df1b322
      C2Allocator::id_t inputAllocators[] = {kDefaultInputAllocator};
  
      C2Allocator::id_t outputAllocators[] = {kDefaultOutputAllocator};
-@@ -500,6 +661,56 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+@@ -500,6 +678,56 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
      mInitStatus = C2_OK;
  }
  
@@ -538,7 +555,7 @@ index d2e42f755c6ac72738d6a433d4b7d5bc4e2ac33c..3226c21aca103a3858eb9dff369ed4cd
      bool mExtractCSD = false;
      // The profile of the stream the encoder was started with, set when the encoder is initialized.
 diff --git a/components/include/v4l2_codec2/components/EncodeInterface.h b/components/include/v4l2_codec2/components/EncodeInterface.h
-index 26e8dc9dc670668c36734dd387847a628160b8b3..832010a96505056384345312d37e83de1d000a3f 100644
+index 26e8dc9dc670668c36734dd387847a628160b8b3..5ef591af7bccace9c1d654da5c0e92e29c4b0247 100644
 --- a/components/include/v4l2_codec2/components/EncodeInterface.h
 +++ b/components/include/v4l2_codec2/components/EncodeInterface.h
 @@ -5,7 +5,9 @@
@@ -571,7 +588,7 @@ index 26e8dc9dc670668c36734dd387847a628160b8b3..832010a96505056384345312d37e83de
  protected:
      void Initialize(const C2String& name, const SupportedCapabilities& caps);
  
-@@ -76,6 +91,14 @@ protected:
+@@ -76,6 +91,16 @@ protected:
      static C2R IntraRefreshPeriodSetter(bool mayBlock,
                                          C2P<C2StreamIntraRefreshTuning::output>& period);
  
@@ -580,13 +597,15 @@ index 26e8dc9dc670668c36734dd387847a628160b8b3..832010a96505056384345312d37e83de
 +
 +    static C2R LayeringSetter(bool mayBlock, C2P<C2StreamTemporalLayeringTuning::output>& me);
 +
++    static C2R GopSetter(bool mayBlock, C2P<C2StreamGopTuning::output>& me);
++
 +    static C2R InputDelaySetter(bool mayBlock, C2P<C2PortActualDelayTuning::input>& me,
 +                                const C2P<C2StreamGopTuning::output>& gop);
 +
      // Recorded lowest configured level
      // Is static for the need to use H264ProfileLevelSetter as a setter
      static C2Config::level_t lowestConfigLevel;
-@@ -127,6 +150,25 @@ protected:
+@@ -127,6 +152,25 @@ protected:
      // The intra-frame refresh period. This is unused for the component now.
      // TODO: adapt intra refresh period to encoder.
      std::shared_ptr<C2StreamIntraRefreshTuning::output> mIntraRefreshPeriod;

@@ -82,10 +82,10 @@ index 89de2742a706c06a5a254218581f04ec4fd9208d..f40684454436f7fd5e2bac7d0538a153
      std::shared_ptr<C2GraphicBlock> block;
      status = pool->fetchGraphicBlock(size.width, size.height, static_cast<uint32_t>(halFormat),
 diff --git a/components/EncodeInterface.cpp b/components/EncodeInterface.cpp
-index c5df1d1784509f966779bede4df1b322c5d8eeca..0f59b52d9a7af4fe10a41be719039f1434a0540e 100644
+index 22f2cfe91341cd1465d637314f03b1dcce569372..8acc6978610f5dd559872a374b7aca00a3982fd8 100644
 --- a/components/EncodeInterface.cpp
 +++ b/components/EncodeInterface.cpp
-@@ -372,13 +372,59 @@ C2R EncodeInterface::InputDelaySetter(bool /*mayBlock*/, C2P<C2PortActualDelayTu
+@@ -389,13 +389,59 @@ C2R EncodeInterface::InputDelaySetter(bool /*mayBlock*/, C2P<C2PortActualDelayTu
      return C2R::Ok();
  }
  
@@ -146,7 +146,7 @@ index c5df1d1784509f966779bede4df1b322c5d8eeca..0f59b52d9a7af4fe10a41be719039f14
      Initialize(name, caps);
  }
  
-@@ -583,6 +629,68 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+@@ -600,6 +646,68 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
                           .withSetter(Setter<decltype(*mKeyFramePeriodUs)>::StrictValueWithNoDeps)
                           .build());
  
@@ -215,7 +215,7 @@ index c5df1d1784509f966779bede4df1b322c5d8eeca..0f59b52d9a7af4fe10a41be719039f14
      // The bounds of the quantization parameter, if the device has them.
      if (caps.qpRange) {
          mQpRange = caps.qpRange;
-@@ -711,6 +819,28 @@ float EncodeInterface::getBaseLayerBitrateRatio() const {
+@@ -728,6 +836,28 @@ float EncodeInterface::getBaseLayerBitrateRatio() const {
      return std::clamp(mLayering->m.bitrateRatios[0], 0.05f, 0.95f);
  }
  
@@ -245,7 +245,7 @@ index c5df1d1784509f966779bede4df1b322c5d8eeca..0f59b52d9a7af4fe10a41be719039f14
      if (mKeyFramePeriodUs->value < 0 || mKeyFramePeriodUs->value == INT64_MAX) {
          return 0;
 diff --git a/components/include/v4l2_codec2/components/EncodeInterface.h b/components/include/v4l2_codec2/components/EncodeInterface.h
-index 832010a96505056384345312d37e83de1d000a3f..b07a02da463ad21283e7bd3c10cbdf5da013ea70 100644
+index 5ef591af7bccace9c1d654da5c0e92e29c4b0247..a5f1456b516230ba03aa457d40f7b72f4f9bbe7f 100644
 --- a/components/include/v4l2_codec2/components/EncodeInterface.h
 +++ b/components/include/v4l2_codec2/components/EncodeInterface.h
 @@ -68,6 +68,10 @@ public:
@@ -259,9 +259,9 @@ index 832010a96505056384345312d37e83de1d000a3f..b07a02da463ad21283e7bd3c10cbdf5d
  
  protected:
      void Initialize(const C2String& name, const SupportedCapabilities& caps);
-@@ -96,6 +100,13 @@ protected:
+@@ -98,6 +102,13 @@ protected:
  
-     static C2R LayeringSetter(bool mayBlock, C2P<C2StreamTemporalLayeringTuning::output>& me);
+     static C2R GopSetter(bool mayBlock, C2P<C2StreamGopTuning::output>& me);
  
 +    static C2R ColorAspectsSetter(bool mayBlock, C2P<C2StreamColorAspectsInfo::input>& me);
 +
@@ -273,7 +273,7 @@ index 832010a96505056384345312d37e83de1d000a3f..b07a02da463ad21283e7bd3c10cbdf5d
      static C2R InputDelaySetter(bool mayBlock, C2P<C2PortActualDelayTuning::input>& me,
                                  const C2P<C2StreamGopTuning::output>& gop);
  
-@@ -164,6 +175,12 @@ protected:
+@@ -166,6 +177,12 @@ protected:
      // The temporal layering of the stream.
      std::shared_ptr<C2StreamTemporalLayeringTuning::output> mLayering;
  
