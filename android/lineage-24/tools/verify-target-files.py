@@ -163,6 +163,7 @@ REQUIRED_ENTRIES = {
     "SYSTEM_EXT/etc/selinux/system_ext_property_contexts",
     "SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil",
     "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
+    "SYSTEM/etc/selinux/plat_property_contexts",
     "SYSTEM/etc/selinux/plat_sepolicy.cil",
     "VENDOR/bin/hw/android.hardware.health-service.example",
     "VENDOR/bin/suspend_blocker",
@@ -177,6 +178,7 @@ REQUIRED_ENTRIES = {
     "VENDOR/etc/permissions/handheld_core_hardware.xml",
     "VENDOR/etc/primary_audio_policy_configuration.xml",
     "VENDOR/etc/r_submix_audio_policy_configuration.xml",
+    "VENDOR/etc/selinux/vendor_property_contexts",
     "VENDOR/etc/selinux/vendor_sepolicy.cil",
     "VENDOR/etc/ueventd.rc",
     "VENDOR/etc/vintf/compatibility_matrix.xml",
@@ -460,6 +462,19 @@ ADB_HOST_PROPERTY_TYPE = "kernarium_adb_host_prop"
 CIL_PLATFORM_VERSION_SUFFIX = re.compile(r"_[0-9]{6}$")
 CIL_PROPERTY_SET_RULE = re.compile(
     rb"^\(allow (\S+) (\S+) \(property_service \(([^)]*)\)\)\)$", re.MULTILINE
+)
+CIL_FILE_ALLOW_RULE = re.compile(
+    rb"^\(allow (\S+) (\S+) \(file \(([^)]*)\)\)\)$", re.MULTILINE
+)
+CIL_TYPE_ATTRIBUTE_SET = re.compile(rb"^\(typeattributeset (\S+) \(([^()]*)\)\)$", re.MULTILINE)
+INIT_PROPERTY_TRIGGER = re.compile(r"property:([^=\s&]+)=")
+# The property_contexts of every partition, in the order libselinux merges them.
+PROPERTY_CONTEXT_FILES = (
+    "SYSTEM/etc/selinux/plat_property_contexts",
+    "SYSTEM_EXT/etc/selinux/system_ext_property_contexts",
+    "PRODUCT/etc/selinux/product_property_contexts",
+    "VENDOR/etc/selinux/vendor_property_contexts",
+    "ODM/etc/selinux/odm_property_contexts",
 )
 SUSPEND_BLOCKER_SERVICE = ("suspend_blocker", "/vendor/bin/suspend_blocker")
 UML_INIT_REQUIRED = (
@@ -866,15 +881,34 @@ def check_kernel_policy(
         fail("vendor policy does not let applications read vendor_security_patch_level_prop")
     if not AUDIO_HAL_SELF_BINDER.search(vendor_policy):
         fail("vendor policy does not let the audio HAL processes call each other's binder")
+    platform_policy = read_small(
+        archive, infos["SYSTEM/etc/selinux/plat_sepolicy.cil"], PLATFORM_POLICY_LIMIT
+    )
+    system_ext_policy = read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil"])
     check_property_writers(
-        read_small(
-            archive, infos["SYSTEM/etc/selinux/plat_sepolicy.cil"], PLATFORM_POLICY_LIMIT
-        ),
+        platform_policy,
         vendor_policy,
-        read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil"]),
+        system_ext_policy,
         read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_property_contexts"]).decode(
             "utf-8", errors="strict"
         ),
+    )
+    contexts = [
+        line
+        for name in PROPERTY_CONTEXT_FILES
+        if name in infos
+        for line in read_small(archive, infos[name], PLATFORM_POLICY_LIMIT)
+        .decode("utf-8", errors="strict")
+        .splitlines()
+    ]
+    check_vendor_init_triggers(
+        init_actions(
+            read_small(archive, infos["VENDOR/etc/init/init.kernarium.rc"]).decode(
+                "utf-8", errors="strict"
+            )
+        ),
+        contexts,
+        (platform_policy, vendor_policy, system_ext_policy),
     )
 
 
@@ -981,6 +1015,66 @@ def check_property_writers(
         if line.strip() and not line.lstrip().startswith("#")
     ):
         fail(f"system_ext property contexts do not label {ADB_HOST_PROPERTY}")
+
+
+def property_label(name: str, contexts: list[str]) -> str | None:
+    """The SELinux type that property_contexts give a property: an exact entry, else the longest prefix."""
+    best: tuple[int, str] | None = None
+    for line in contexts:
+        fields = line.split()
+        if not fields or fields[0].startswith("#") or len(fields) < 2:
+            continue
+        label = fields[1].split(":")[2] if fields[1].count(":") >= 3 else None
+        if label is None:
+            continue
+        if "exact" in fields[2:]:
+            if fields[0] == name:
+                return label
+        elif name.startswith(fields[0]) and (best is None or len(fields[0]) > best[0]):
+            best = (len(fields[0]), label)
+    return best[1] if best else None
+
+
+def cil_types_and_attributes(policies: tuple[bytes, ...], type_name: str) -> set[str]:
+    """A type and every attribute that includes it."""
+    names = {type_name}
+    for policy in policies:
+        for match in CIL_TYPE_ATTRIBUTE_SET.finditer(policy):
+            members = {
+                CIL_PLATFORM_VERSION_SUFFIX.sub("", member.decode())
+                for member in match.group(2).split()
+            }
+            if type_name in members:
+                names.add(CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()))
+    return names
+
+
+def check_vendor_init_triggers(
+    actions: dict[str, list[str]], contexts: list[str], policies: tuple[bytes, ...]
+) -> None:
+    """Every property that a product init trigger names is readable by vendor_init.
+
+    Init parses a vendor script in the vendor_init subcontext and drops a trigger
+    whose property that domain may not read ("unexported property trigger"), so a
+    service that only such a trigger starts never runs. The platform's
+    neverallow keeps vendor_init off system_internal_prop types.
+    """
+    readers_of = cil_types_and_attributes(policies, "vendor_init")
+    for trigger in actions:
+        for name in INIT_PROPERTY_TRIGGER.findall(trigger):
+            label = property_label(name, contexts) or "default_prop"
+            readable = cil_types_and_attributes(policies, label)
+            if not any(
+                CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) in readers_of
+                and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) in readable
+                and b"read" in match.group(3).split()
+                for policy in policies
+                for match in CIL_FILE_ALLOW_RULE.finditer(policy)
+            ):
+                fail(
+                    f"the trigger 'on {trigger}' names {name}, labelled {label}, which "
+                    "vendor_init may not read; init drops the trigger"
+                )
 
 
 def parse_properties(payload: str) -> dict[str, str]:

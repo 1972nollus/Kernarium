@@ -494,10 +494,16 @@ requests through the management console never goes through SystemSuspend, so it
 still suspends the guest. adbd is a core domain, which the platform keeps from
 setting a vendor-owned property, so the property is system-owned: its type,
 label and the `set_prop` live in the overlay's system_ext sepolicy
-(`overlay/sepolicy/system_ext/private`). `tools/check-overlay-sepolicy.py` keeps a
-core domain off the overlay's vendor properties before any build, and the
-target-files verifier repeats the platform neverallow on the built policy and
-requires the service, both triggers, the property context and the rule.
+(`overlay/sepolicy/system_ext/private`). Init parses the product's script as
+`vendor_init` and drops a trigger on a property that domain may not read
+("unexported property trigger"), and a `system_internal_prop` is closed to it, so
+the type is a `system_public_prop` with `get_prop(vendor_init, ...)`.
+`tools/check-overlay-sepolicy.py` keeps a core domain off the overlay's vendor
+properties and a trigger off an unreadable property before any build, and the
+target-files verifier repeats the platform neverallow on the built policy,
+requires the service, both triggers, the property context and the rule, and
+resolves every property that a trigger of the product script names to its
+label and requires `vendor_init` to read it.
 
 DeviceLock and Virtualization are retained with their boot and system-server
 classpath fragments even though their hardware-backed functions are not

@@ -412,6 +412,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           media_codecs_variant: str | None = None,
                           system_ext_core_sets_vendor_prop: bool = False,
                           adb_prop_not_system: bool = False,
+                          adb_prop_unreadable_by_vendor_init: bool = False,
                           missing_virtio_console: bool = False,
                           unsupported_hvc: bool = False,
                           missing_mesa_gles: bool = False,
@@ -743,9 +744,21 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM/etc/selinux/plat_sepolicy.cil",
                     "(typeattributeset coredomain (adbd init system_server))\n"
+                    "(typeattributeset domain (adbd init system_server vendor_init))\n"
+                    "(allow domain boot_status_prop (file (read getattr map open)))\n"
+                    "(allow domain bootloader_prop (file (read getattr map open)))\n"
                     + "; padding to the size of a real platform policy\n" * (
                         (17 << 20 if oversize_platform_policy else 3_441_569) // 48
                     ),
+                )
+                archive.writestr(
+                    "SYSTEM/etc/selinux/plat_property_contexts",
+                    "sys.boot_completed    u:object_r:boot_status_prop:s0 exact bool\n"
+                    "ro.boot.              u:object_r:bootloader_prop:s0\n",
+                )
+                archive.writestr(
+                    "VENDOR/etc/selinux/vendor_property_contexts",
+                    "ro.boot.lcd_density   u:object_r:vendor_graphics_config_prop:s0 exact int\n",
                 )
                 archive.writestr(
                     "SYSTEM_EXT/etc/selinux/system_ext_property_contexts",
@@ -769,6 +782,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         else "(allow adbd kernarium_adb_host_prop (property_service (set)))\n"
                     )
                     + (
+                        ""
+                        if adb_prop_unreadable_by_vendor_init
+                        else "(allow vendor_init kernarium_adb_host_prop (file (getattr open read map)))\n"
+                    )
+                    + (
                         "(allow system_server vendor_aware_available_prop (property_service (set)))\n"
                         if system_ext_core_sets_vendor_prop
                         else ""
@@ -788,6 +806,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     + "(typeattributeset vendor_property_type (vendor_mesa_prop "
                     "virtual_face_hal_prop_202604))\n"
                     "(allow vendor_init_202604 vendor_mesa_prop (property_service (set)))\n"
+                    "(allow vendor_init_202604 vendor_graphics_config_prop "
+                    "(file (read getattr map open)))\n"
                     "(allow init virtual_face_hal_prop_202604 (property_service (set)))\n"
                     + (
                         ""
@@ -1085,6 +1105,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("media-codecs-small-vp9-blocks", {"media_codecs_variant": "small-vp9-blocks"}),
             ("system-ext-core-sets-vendor-prop", {"system_ext_core_sets_vendor_prop": True}),
             ("adb-prop-not-system", {"adb_prop_not_system": True}),
+            ("adb-prop-unreadable-by-vendor-init", {"adb_prop_unreadable_by_vendor_init": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
             ("unsupported-hvc", {"unsupported_hvc": True}),
             ("missing-mesa-gles", {"missing_mesa_gles": True}),
@@ -1180,6 +1201,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "system_ext policy lets the core domain system_server set the vendor property type"),
             ("adb-prop-not-system-cause", {"adb_prop_not_system": True},
              "does not define the system-owned kernarium_adb_host_prop"),
+            ("adb-prop-unreadable-by-vendor-init-cause",
+             {"adb_prop_unreadable_by_vendor_init": True},
+             "names sys.kernarium.adb.host_connected, labelled kernarium_adb_host_prop, "
+             "which vendor_init may not read"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("missing-microphone-feature-cause", {"missing_microphone_feature": True},
@@ -1262,6 +1287,8 @@ def verify_overlay_sepolicy(android_root: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="overlay-sepolicy-") as scratch:
         copy = Path(scratch) / "overlay"
         shutil.copytree(overlay / "sepolicy", copy / "sepolicy")
+        (copy / "config").mkdir()
+        shutil.copy(overlay / "config/init.vendor.rc", copy / "config/init.vendor.rc")
         bad = copy / "sepolicy/vendor/adb_host_prop.te"
         bad.write_text(
             "vendor_public_prop(vendor_kernarium_adb_prop)\n"
@@ -1289,6 +1316,21 @@ def verify_overlay_sepolicy(android_root: Path) -> None:
         )
         if result.returncode == 0 or "system_server may be a core domain" not in result.stderr:
             fail("the overlay sepolicy check accepted an allow rule of a core domain")
+        # A property that a product init trigger names must be readable by vendor_init.
+        system_ext = copy / "sepolicy/system_ext/private"
+        good = (system_ext / "adb_host_prop.te").read_text()
+        for broken, needle in (
+            (good.replace("system_public_prop(", "system_internal_prop("), "system_internal_prop"),
+            (good.replace("get_prop(vendor_init, kernarium_adb_host_prop)", ""), "lacks get_prop(vendor_init"),
+        ):
+            bad.unlink(missing_ok=True)
+            (system_ext / "adb_host_prop.te").write_text(broken)
+            result = subprocess.run(
+                [str(tool), "--overlay", str(copy)], capture_output=True, text=True
+            )
+            if result.returncode == 0 or needle not in result.stderr:
+                fail(f"the overlay sepolicy check accepted a trigger on an unreadable property ({needle}): "
+                     f"{result.stderr!r}")
 
 
 def verify_media_codecs_overlay(android_root: Path) -> None:
