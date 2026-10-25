@@ -77,6 +77,12 @@ void MicrophoneSwitch::disable()
 
 MicrophoneSwitch::State MicrophoneSwitch::state() const
 {
+    {
+        // Off asks the system nothing.
+        const std::lock_guard lock(lock_);
+        if (!wanted_)
+            return State::off;
+    }
     const auto permission = authorization_->permission();
     const std::lock_guard lock(lock_);
     if (!wanted_)
