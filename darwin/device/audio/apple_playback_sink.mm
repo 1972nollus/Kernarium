@@ -2,7 +2,6 @@
 
 #include "playback_sink.hpp"
 
-#include "platform/descriptor.hpp"
 #include "protocol.hpp"
 
 #import <AVFAudio/AVFAudio.h>
@@ -21,10 +20,8 @@
 namespace uml::audio {
 namespace {
 
-using uml::platform::WakeSocket;
-
 struct NotificationFlags final {
-    explicit NotificationFlags(std::shared_ptr<WakeSocket> source)
+    explicit NotificationFlags(std::shared_ptr<const Waker> source)
         : wake(std::move(source))
     {
     }
@@ -32,10 +29,10 @@ struct NotificationFlags final {
     void signal(std::atomic_bool& flag) noexcept
     {
         flag.store(true, std::memory_order_release);
-        (void)wake->notify();
+        wake->notify();
     }
 
-    std::shared_ptr<WakeSocket> wake;
+    std::shared_ptr<const Waker> wake;
     std::atomic_bool configurationChanged {};
 #if TARGET_OS_IPHONE
     std::atomic_bool interruptionBegan {};
@@ -96,7 +93,7 @@ struct PlaybackState final {
         std::uint64_t requestId {};
     };
 
-    explicit PlaybackState(std::shared_ptr<WakeSocket> source)
+    explicit PlaybackState(std::shared_ptr<const Waker> source)
         : wake(std::move(source))
         , slots(std::make_unique<Slot[]>(protocol::maximumPeriods))
     {
@@ -104,7 +101,7 @@ struct PlaybackState final {
 
     void finish(
         std::uint64_t requestId,
-        bool success,
+        PlaybackOutcome outcome,
         std::uint32_t periodBytes) noexcept
     {
         std::uint32_t remaining {};
@@ -113,9 +110,9 @@ struct PlaybackState final {
         completions.push({
             .requestId = requestId,
             .latencyBytes = remaining * periodBytes,
-            .success = success,
+            .outcome = outcome,
         });
-        (void)wake->notify();
+        wake->notify();
     }
 
     void discard() noexcept
@@ -139,7 +136,7 @@ private:
     }
 
 public:
-    std::shared_ptr<WakeSocket> wake;
+    std::shared_ptr<const Waker> wake;
     std::unique_ptr<Slot[]> slots;
     CompletionQueue completions;
     std::atomic<std::uint32_t> pending {};
@@ -151,8 +148,8 @@ public:
 
 class ApplePlaybackSink final : public PlaybackSink {
 public:
-    ApplePlaybackSink()
-        : wake_(std::make_shared<WakeSocket>("audio readiness"))
+    explicit ApplePlaybackSink(std::shared_ptr<const Waker> waker)
+        : wake_(std::move(waker))
         , notifications_(std::make_shared<NotificationFlags>(wake_))
         , state_(std::make_shared<PlaybackState>(wake_))
         , engine_([[AVAudioEngine alloc] init])
@@ -304,29 +301,34 @@ public:
         }
     }
 
+    /* An output that will not start does not fail the guest's stream. The
+     * stream runs, the sink discards what it is given (enqueue() reports
+     * it), the device paces the guest on its own clock, and the next route
+     * change or end of an interruption tries the output again. A false
+     * return means only that the sink was not prepared. */
     [[nodiscard]] bool start() override
     {
         if (!configured_ || !prepared_)
             return false;
+        running_ = true;
         if (!activateSession()) {
-            faulted_ = true;
-            return false;
+            failToStart();
+            return true;
         }
         @try {
             NSError* error = nil;
             if ((!engine_.isRunning && ![engine_ startAndReturnError:&error]) ||
                 ![player_ playAndReturnError:&error]) {
                 deactivateSession();
-                faulted_ = true;
-                return false;
+                failToStart();
+                return true;
             }
-            running_ = true;
             faulted_ = false;
             return true;
         } @catch (NSException*) {
             deactivateSession();
-            faulted_ = true;
-            return false;
+            failToStart();
+            return true;
         }
     }
 
@@ -346,7 +348,7 @@ public:
             [engine_ pause];
         } @catch (NSException*) {
         }
-        abortPending(true);
+        abortPending();
         deactivateSession();
         prepared_ = false;
         running_ = false;
@@ -383,7 +385,7 @@ public:
             state->slotCount == 0)
             return PlaybackEnqueueResult::failed;
         if (faulted_)
-            return PlaybackEnqueueResult::failed;
+            return PlaybackEnqueueResult::discarded;
         PlaybackState::Slot* selected = nullptr;
         std::size_t selectedIndex = 0;
         for (std::size_t offset = 0; offset < state->slotCount; ++offset) {
@@ -406,7 +408,7 @@ public:
                 audioBuffer->mBuffers[0].mData == nullptr ||
                 static_cast<std::size_t>(
                     audioBuffer->mBuffers[0].mDataByteSize) < pcm.size())
-                return PlaybackEnqueueResult::failed;
+                return PlaybackEnqueueResult::discarded;
             std::memcpy(audioBuffer->mBuffers[0].mData, pcm.data(), pcm.size());
 
             ticket = state->nextTicket++;
@@ -422,7 +424,8 @@ public:
                   auto expected = ticket;
                   if (slot.ticket.compare_exchange_strong(
                           expected, 0, std::memory_order_acq_rel)) {
-                      state->finish(requestId, true, periodBytes);
+                      state->finish(
+                          requestId, PlaybackOutcome::played, periodBytes);
                   }
                 }];
             return PlaybackEnqueueResult::accepted;
@@ -434,18 +437,12 @@ public:
                     state->discard();
             }
             faulted_ = true;
-            return PlaybackEnqueueResult::failed;
+            return PlaybackEnqueueResult::discarded;
         }
     }
 
-    [[nodiscard]] int eventDescriptor() const noexcept override
+    void handleEvents() override
     {
-        return wake_->descriptor();
-    }
-
-    void drainEventSource() override
-    {
-        (void)wake_->drain();
         @try {
 #if TARGET_OS_IPHONE
             if (notifications_->interruptionBegan.exchange(
@@ -466,7 +463,7 @@ public:
             if (configurationChanged && configured_) {
                 [player_ stop];
                 [engine_ stop];
-                abortPending(true);
+                abortPending();
                 [engine_ prepare];
                 faulted_ = false;
             }
@@ -484,13 +481,13 @@ public:
                     [player_ playAndReturnError:&error]) {
                     faulted_ = false;
                 } else {
-                    abortPending(false);
+                    abortPending();
                     running_ = false;
                     faulted_ = true;
                 }
             }
         } @catch (NSException*) {
-            abortPending(false);
+            abortPending();
             running_ = false;
             faulted_ = true;
         }
@@ -503,15 +500,24 @@ public:
     }
 
 private:
-    void abortPending(bool success) noexcept
+    void failToStart() noexcept
+    {
+        // Periods queued before the start will never play.
+        abortPending();
+        faulted_ = true;
+    }
+
+    /* Hands back every queued period unplayed. The device completes them
+     * on its period clock rather than at once. */
+    void abortPending() noexcept
     {
         auto state = state_;
         for (std::size_t index = 0; index < state->slotCount; ++index) {
             const auto ticket =
                 state->slots[index].ticket.exchange(0, std::memory_order_acq_rel);
             if (ticket != 0)
-                state->finish(state->slots[index].requestId, success,
-                              state->periodBytes);
+                state->finish(state->slots[index].requestId,
+                              PlaybackOutcome::discarded, state->periodBytes);
         }
     }
 
@@ -549,7 +555,7 @@ private:
 #endif
     }
 
-    std::shared_ptr<WakeSocket> wake_;
+    std::shared_ptr<const Waker> wake_;
     std::shared_ptr<NotificationFlags> notifications_;
     std::shared_ptr<PlaybackState> state_;
     AVAudioEngine* __strong engine_;
@@ -569,10 +575,11 @@ private:
 
 } // namespace
 
-std::unique_ptr<PlaybackSink> makeApplePlaybackSink()
+std::unique_ptr<PlaybackSink> makeApplePlaybackSink(
+    std::shared_ptr<const Waker> waker)
 {
     @try {
-        return std::make_unique<ApplePlaybackSink>();
+        return std::make_unique<ApplePlaybackSink>(std::move(waker));
     } @catch (NSException* exception) {
         const char* reason = exception.reason.UTF8String;
         throw std::runtime_error(

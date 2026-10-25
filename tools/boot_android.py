@@ -168,6 +168,16 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         choices=("gadgets", "jit"),
         default="gadgets",
     )
+    parser.add_argument(
+        "--audio-output",
+        choices=("host", "null"),
+        default="host",
+        help=(
+            "play guest audio through the Mac's default output, or discard "
+            "it at the rate it would play, for runs that must be silent "
+            "(default: host)"
+        ),
+    )
     boot_mode = parser.add_mutually_exclusive_group()
     boot_mode.add_argument(
         "--boot-mode", choices=("auto", "normal", "recovery"), default="normal"
@@ -489,6 +499,8 @@ def emulator_command(
           if options.display == "vnc" else []),
         f"--gpu-width={options.width}",
         f"--gpu-height={options.height}",
+        *([f"--audio-output={options.audio_output}"]
+          if options.audio_output != "host" else []),
         f"ncpus={options.cpus}",
         f"mem={options.memory}",
         f"--execution-engine={options.engine}",

@@ -352,9 +352,12 @@ acknowledgements; a completed teardown or a failed map releases it for reuse.
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
 
-The audio device owns a bounded period/completion ring. The callback path does
-not allocate or lock. iOS owns AVAudioSession interruption and route recovery.
-Capture and mixer controls are not exposed.
+The audio device is described in
+[`device/audio/README.md`](device/audio/README.md): a bounded period/completion
+ring whose callback path does not allocate or lock, playback completions paced
+on the device's own clock when the host output cannot play, and a null output.
+iOS owns AVAudioSession interruption and route recovery. Capture and mixer
+controls are not exposed.
 
 SLiRP host forwards are owned by the provider so they survive provider reopen.
 An unavailable individual host port is reported without removing the guest's

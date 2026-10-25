@@ -4,6 +4,7 @@
 
 #include "protocol.hpp"
 
+#include <algorithm>
 #include <array>
 #include <stdexcept>
 
@@ -41,11 +42,16 @@ using uml::virtio::toBytes;
 
 } // namespace
 
-VirtioSoundDevice::VirtioSoundDevice(std::unique_ptr<PlaybackSink> sink)
+VirtioSoundDevice::VirtioSoundDevice(
+    std::unique_ptr<PlaybackSink> sink,
+    std::shared_ptr<PeriodClock> clock)
     : sink_(std::move(sink))
+    , clock_(std::move(clock))
 {
     if (!sink_)
         throw std::invalid_argument("Virtio Sound requires a playback sink");
+    if (!clock_)
+        throw std::invalid_argument("Virtio Sound requires a period clock");
 }
 
 VirtioSoundDevice::~VirtioSoundDevice() = default;
@@ -208,11 +214,14 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
                 return status(protocol::Status::ioError, responseCapacity);
             }
             state_ = StreamState::running;
+            timePacedTransfers();
         } else if (command == protocol::Request::pcmStop) {
             if (state_ != StreamState::running)
                 return status(protocol::Status::ioError, responseCapacity);
             sink_->stop();
             state_ = StreamState::stopped;
+            for (auto& transfer : paced_)
+                transfer.timed = false;
         } else {
             if (state_ != StreamState::prepared &&
                 state_ != StreamState::stopped) {
@@ -220,7 +229,12 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
             }
             sink_->release();
             state_ = StreamState::released;
+            // A release returns every queued period at once.
+            for (const auto& transfer : paced_)
+                ready_.push_back({transfer.requestId, 0});
+            paced_.clear();
         }
+        rearmClock();
         return status(protocol::Status::ok, responseCapacity);
     }
     default:
@@ -261,6 +275,8 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processTransmit(
         }));
     }
     ++deferredTransfers_;
+    if (enqueueResult == PlaybackEnqueueResult::discarded)
+        pace(requestId);
     return {
         .action = uml::virtio::VhostUserQueueAction::defer,
         .response = {},
@@ -290,38 +306,135 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processQueue(
 void VirtioSoundDevice::reset() noexcept
 {
     sink_->reset();
+    clock_->cancel();
+    armed_.reset();
     state_ = StreamState::unconfigured;
     parameters_ = {};
     deferredTransfers_ = 0;
+    paced_.clear();
+    ready_.clear();
 }
 
 int VirtioSoundDevice::eventDescriptor() const noexcept
 {
-    return sink_->eventDescriptor();
+    return clock_->descriptor();
 }
 
 void VirtioSoundDevice::drainEventSource()
 {
-    sink_->drainEventSource();
+    clock_->drain();
+    const auto now = clock_->now();
+    // A deadline that has passed has fired; one still ahead is still armed,
+    // and this wake was the sink's.
+    if (armed_ && *armed_ <= now)
+        armed_.reset();
+    sink_->handleEvents();
+    releasePacedTransfers(now);
+    rearmClock();
 }
 
 bool VirtioSoundDevice::takeQueueCompletion(
     uml::virtio::VhostUserQueueCompletion& completion)
 {
-    PlaybackCompletion playback;
-    if (!sink_->takeCompletion(playback))
-        return false;
-    if (deferredTransfers_ != 0)
-        --deferredTransfers_;
-    completion = {
-        .requestId = playback.requestId,
-        .response = toBytes(protocol::PcmStatus {
-            .status = playback.success ? protocol::Status::ok
-                                       : protocol::Status::ioError,
-            .latencyBytes = playback.latencyBytes,
-        }),
-    };
-    return true;
+    releasePacedTransfers(clock_->now());
+    for (;;) {
+        std::uint32_t latencyBytes {};
+        auto outcome = PlaybackOutcome::played;
+        std::uint64_t requestId {};
+        if (!ready_.empty()) {
+            requestId = ready_.front().requestId;
+            latencyBytes = ready_.front().latencyBytes;
+            ready_.pop_front();
+        } else {
+            PlaybackCompletion playback;
+            if (!sink_->takeCompletion(playback)) {
+                rearmClock();
+                return false;
+            }
+            if (playback.outcome == PlaybackOutcome::discarded &&
+                state_ == StreamState::running) {
+                // The output dropped the period; the guest still waits for
+                // a period of real time to pass.
+                pace(playback.requestId);
+                continue;
+            }
+            requestId = playback.requestId;
+            latencyBytes = playback.latencyBytes;
+            outcome = playback.outcome;
+        }
+        if (deferredTransfers_ != 0)
+            --deferredTransfers_;
+        completion = {
+            .requestId = requestId,
+            .response = toBytes(protocol::PcmStatus {
+                .status = outcome == PlaybackOutcome::failed
+                    ? protocol::Status::ioError
+                    : protocol::Status::ok,
+                .latencyBytes = latencyBytes,
+            }),
+        };
+        return true;
+    }
+}
+
+std::chrono::nanoseconds VirtioSoundDevice::playbackPeriod() const noexcept
+{
+    const std::int64_t frames =
+        parameters_.periodBytes / protocol::frameBytes;
+    return std::chrono::nanoseconds(
+        frames * 1'000'000'000LL / protocol::sampleRate);
+}
+
+void VirtioSoundDevice::pace(std::uint64_t requestId)
+{
+    PacedTransfer transfer {.requestId = requestId};
+    if (state_ == StreamState::running) {
+        playHead_ = std::max(playHead_, clock_->now()) + playbackPeriod();
+        transfer.due = playHead_;
+        transfer.timed = true;
+    }
+    paced_.push_back(transfer);
+    rearmClock();
+}
+
+/* A stream that starts plays what it has queued from now on, one period
+ * after another. */
+void VirtioSoundDevice::timePacedTransfers()
+{
+    playHead_ = clock_->now();
+    for (auto& transfer : paced_) {
+        playHead_ += playbackPeriod();
+        transfer.due = playHead_;
+        transfer.timed = true;
+    }
+}
+
+void VirtioSoundDevice::releasePacedTransfers(ClockTime now)
+{
+    while (!paced_.empty() && paced_.front().timed &&
+           paced_.front().due <= now) {
+        const auto requestId = paced_.front().requestId;
+        paced_.pop_front();
+        ready_.push_back({
+            requestId,
+            static_cast<std::uint32_t>(paced_.size()) *
+                parameters_.periodBytes,
+        });
+    }
+}
+
+void VirtioSoundDevice::rearmClock()
+{
+    std::optional<ClockTime> next;
+    if (!paced_.empty() && paced_.front().timed)
+        next = paced_.front().due;
+    if (next == armed_)
+        return;
+    armed_ = next;
+    if (next)
+        clock_->wakeAt(*next);
+    else
+        clock_->cancel();
 }
 
 } // namespace uml::audio

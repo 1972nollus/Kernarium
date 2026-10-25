@@ -2,18 +2,24 @@
 
 #include "in_process_service.hpp"
 
+#include "period_clock.hpp"
 #include "playback_sink.hpp"
 #include "vhost_user_server.hpp"
 #include "virtio_sound_device.hpp"
 
 namespace uml::audio {
 
-std::unique_ptr<uml::gpu::InProcessVhostUserService> makeInProcessService()
+std::unique_ptr<uml::gpu::InProcessVhostUserService> makeInProcessService(
+    const ServiceOptions& options)
 {
     return std::make_unique<uml::gpu::InProcessVhostUserService>(
-        "Virtio Sound", "uml-audio", [] {
+        "Virtio Sound", "uml-audio", [options] {
+            auto clock = makePeriodClock();
+            auto sink = options.output == OutputMode::null
+                ? makeNullPlaybackSink()
+                : makeApplePlaybackSink(clock);
             return std::make_unique<VirtioSoundDevice>(
-                makeApplePlaybackSink());
+                std::move(sink), std::move(clock));
         });
 }
 

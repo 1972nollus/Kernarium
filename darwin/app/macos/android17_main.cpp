@@ -98,7 +98,8 @@ AndroidOptions parse_options(int argc, char *const argv[])
 		}
 		has_gpu |= argument == "--gpu";
 		has_gpu_display |= argument.starts_with("--gpu-display=");
-		has_audio |= argument == "--audio";
+		has_audio |= argument == "--audio" ||
+			     argument.starts_with("--audio-output=");
 		has_battery |= argument == "--battery";
 		options.forwarded.emplace_back(argument);
 	}

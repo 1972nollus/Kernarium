@@ -545,7 +545,9 @@ with a newly expanded copy of that release. The default session uses
 the existing `macos-android17` executable with native Metal display, 10 vCPUs,
 8 GiB of RAM, the gadgets engine, and a 720-by-1280 portrait display. Pass
 `--build` to refresh that executable incrementally or `--recovery` to boot
-recovery; run `tools/boot_android.py --help` for other overrides.
+recovery; run `tools/boot_android.py --help` for other overrides. Pass
+`--audio-output null` to discard guest audio at the rate it would play, for a
+run that must make no sound.
 
 Kernarium represents one Android guest as a `.kern` directory containing:
 

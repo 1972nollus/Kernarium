@@ -257,6 +257,7 @@ struct HostGpuOptions {
 struct PreparedArguments {
 	HostGpuOptions gpu;
 	bool audio {};
+	uml::audio::OutputMode audio_output {uml::audio::OutputMode::host};
 	bool battery {};
 	bool video {};
 	std::string console_socket;
@@ -326,6 +327,15 @@ PreparedArguments prepare_host_arguments(
 		if (argument == "--gpu") {
 			prepared.gpu.enabled = true;
 		} else if (argument == "--audio") {
+			prepared.audio = true;
+		} else if (valued("--audio-output=")) {
+			if (value == "host")
+				prepared.audio_output = uml::audio::OutputMode::host;
+			else if (value == "null")
+				prepared.audio_output = uml::audio::OutputMode::null;
+			else
+				throw std::invalid_argument(
+					"--audio-output must be host or null");
 			prepared.audio = true;
 		} else if (argument == "--battery") {
 			prepared.battery = true;
@@ -663,7 +673,10 @@ int uml::app::runEmbeddedKernel(
 	    !start_virtio_device(
 		    prepared.kernel, audio_service,
 		    uml::audio::protocol::deviceId,
-		    [] { return uml::audio::makeInProcessService(); },
+		    [&] {
+			    return uml::audio::makeInProcessService(
+				    {.output = prepared.audio_output});
+		    },
 		    "--audio", "Virtio Sound"))
 		return 1;
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> console_service;

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "period_clock.hpp"
 #include "playback_sink.hpp"
 
 #include <poll.h>
@@ -19,7 +20,7 @@ void require(bool condition, const char* message)
         throw std::runtime_error(message);
 }
 
-void playback(uml::audio::PlaybackSink& sink)
+void playback(uml::audio::PlaybackSink& sink, uml::audio::PeriodClock& clock)
 {
     constexpr std::uint32_t frames = 1024;
     constexpr std::uint32_t periodBytes = frames * 2 * sizeof(std::int16_t);
@@ -47,7 +48,8 @@ void playback(uml::audio::PlaybackSink& sink)
                 }
             }
             const auto result = sink.enqueue(queued + 1, pcm);
-            require(result != uml::audio::PlaybackEnqueueResult::failed,
+            require(result != uml::audio::PlaybackEnqueueResult::failed &&
+                    result != uml::audio::PlaybackEnqueueResult::discarded,
                     "Apple audio rejected a PCM period");
             if (result == uml::audio::PlaybackEnqueueResult::retry)
                 break;
@@ -57,12 +59,14 @@ void playback(uml::audio::PlaybackSink& sink)
             require(sink.start(), "Apple audio output engine failed to start");
             started = true;
         }
-        pollfd descriptor {sink.eventDescriptor(), POLLIN, 0};
+        pollfd descriptor {clock.descriptor(), POLLIN, 0};
         require(poll(&descriptor, 1, 50) >= 0, "Apple audio completion poll failed");
-        sink.drainEventSource();
+        clock.drain();
+        sink.handleEvents();
         uml::audio::PlaybackCompletion completion;
         while (sink.takeCompletion(completion)) {
-            require(completion.success && completion.requestId > 0 &&
+            require(completion.outcome == uml::audio::PlaybackOutcome::played &&
+                    completion.requestId > 0 &&
                     completion.requestId <= queued, "invalid Apple audio completion");
             require(completed.insert(completion.requestId).second,
                     "duplicate Apple audio completion");
@@ -78,9 +82,10 @@ void playback(uml::audio::PlaybackSink& sink)
 int main()
 {
     try {
-        auto sink = uml::audio::makeApplePlaybackSink();
-        playback(*sink);
-        playback(*sink);
+        const auto clock = uml::audio::makePeriodClock();
+        auto sink = uml::audio::makeApplePlaybackSink(clock);
+        playback(*sink, *clock);
+        playback(*sink, *clock);
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
