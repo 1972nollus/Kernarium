@@ -2,6 +2,7 @@
 
 #include "playback_sink.hpp"
 
+#include "audio_session.hpp"
 #include "protocol.hpp"
 
 #import <AVFAudio/AVFAudio.h>
@@ -521,38 +522,16 @@ private:
         }
     }
 
+    /* The audio session is shared with the microphone, which asks for a
+     * different category while the guest records (see audio_session.hpp). */
     [[nodiscard]] bool activateSession() noexcept
     {
-#if TARGET_OS_IPHONE
-        @try {
-            AVAudioSession* session = [AVAudioSession sharedInstance];
-            NSError* error = nil;
-            if (![session setCategory:AVAudioSessionCategoryPlayback
-                               mode:AVAudioSessionModeDefault
-                            options:0
-                              error:&error])
-                return false;
-            if (![session setActive:YES error:&error])
-                return false;
-        } @catch (NSException*) {
-            return false;
-        }
-#endif
-        return true;
+        return session::acquire(session::Client::playback);
     }
 
     void deactivateSession() noexcept
     {
-#if TARGET_OS_IPHONE
-        @try {
-            NSError* error = nil;
-            [[AVAudioSession sharedInstance]
-                setActive:NO
-              withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
-                    error:&error];
-        } @catch (NSException*) {
-        }
-#endif
+        session::release(session::Client::playback);
     }
 
     std::shared_ptr<const Waker> wake_;

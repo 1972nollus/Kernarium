@@ -296,7 +296,10 @@ load/store-exclusive pairs, and every token must remain. `guest-aarch32-exclusiv
 
 `UML_TEST_APPLE_AUDIO=ON` enables `apple-audio-playback`, which sends a brief,
 low-volume stereo tone through the real macOS output and verifies completion
-and restart. It requires access to macOS audio services.
+and restart. It requires access to macOS audio services. The microphone has
+no opt-in test: `virtio-sound-microphone` runs over fakes, and the real input
+is checked by hand (see the Microphone section of the audio README) because
+granting microphone access is the user's act.
 
 The full sanitizer suites remain separate because of their runtime cost:
 

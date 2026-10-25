@@ -2,6 +2,7 @@
 #pragma once
 
 #include "in_process_vhost_user_service.hpp"
+#include "microphone_switch.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -18,6 +19,9 @@ enum class OutputMode : std::uint8_t {
 
 struct ServiceOptions final {
     OutputMode output {OutputMode::host};
+    /* The user's Microphone setting. Without one the guest records silence
+     * and the product never touches the microphone. */
+    std::shared_ptr<MicrophoneSwitch> microphone;
 };
 
 [[nodiscard]] std::unique_ptr<uml::gpu::InProcessVhostUserService>

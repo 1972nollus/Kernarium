@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 add_library(uml_audio_device STATIC
+    apple_microphone_input.mm
     apple_playback_sink.mm
+    audio_session.mm
     in_process_service.cpp
+    microphone_capture_source.cpp
+    microphone_switch.cpp
     null_playback_sink.cpp
     period_clock.cpp
     silent_capture_source.cpp
@@ -16,6 +20,7 @@ target_include_directories(uml_audio_device
 target_link_libraries(uml_audio_device
     PUBLIC
         UML::Descriptor
+        UML::MicrophoneAuthorization
     PRIVATE
         UML::VhostUserTransport
     "-framework AVFAudio"

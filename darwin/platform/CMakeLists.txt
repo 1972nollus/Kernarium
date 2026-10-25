@@ -40,6 +40,18 @@ else()
     target_link_libraries(uml_host_battery PRIVATE "-framework UIKit")
 endif()
 
+# The system's microphone permission. Reading it never prompts.
+add_library(uml_microphone_authorization STATIC
+    apple/microphone_authorization.mm)
+add_library(UML::MicrophoneAuthorization ALIAS uml_microphone_authorization)
+uml_declare_architecture_target(uml_microphone_authorization platform)
+target_include_directories(uml_microphone_authorization PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(uml_microphone_authorization PRIVATE
+    UML::PlatformContract
+    "-framework AVFAudio"
+    "-framework Foundation")
+
 add_library(uml_host_gpu_memory STATIC apple/host_gpu_memory.mm)
 add_library(UML::HostGpuMemory ALIAS uml_host_gpu_memory)
 uml_declare_architecture_target(uml_host_gpu_memory platform)
