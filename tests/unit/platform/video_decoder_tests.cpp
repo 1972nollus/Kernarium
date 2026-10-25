@@ -276,6 +276,27 @@ void hevcWindow()
     }
 }
 
+/* What the host says it decodes is checked by decoding it: a picture of the
+ * largest size the capability list states, in the highest tier and level. */
+void hevcLimits(const std::vector<uml::platform::VideoDecodeCapability>& capabilities)
+{
+    using namespace uml::platform;
+    const auto main = std::find_if(capabilities.begin(), capabilities.end(),
+                                   [](const auto& c) { return c.profile == VideoProfile::hevcMain; });
+    if (main == capabilities.end()) return;
+    struct Size { const char* name; std::uint32_t width, height; };
+    for (const auto& size : {Size {"hevc-high-tier-4k", 4096, 2160}, Size {"hevc-high-tier-8k", 8192, 4320}}) {
+        if (main->maximumWidth < size.width || main->maximumHeight < size.height) continue;
+        auto decoder = makeVideoDecoder(VideoCodec::hevc);
+        decoder->submit(read(std::string(size.name) + ".bin"), 5);
+        decoder->drain();
+        const auto frames = decoder->takeFrames();
+        require(frames.size() == 1 && frames[0].format == VideoFormat {size.width, size.height, 8},
+                "a size the host advertises did not decode");
+        require(std::abs(meanLuma(frames[0]) - 128.0) <= 3.0, "an advertised size decoded to the wrong picture");
+        std::printf("%s: %ux%u decoded in hardware\n", size.name, size.width, size.height);
+    }
+}
 }
 
 int main(int argc, char** argv)
@@ -465,6 +486,7 @@ int main(int argc, char** argv)
             hevcDisplayOrder();
             hevcWindow();
             hevcRawFormats();
+            hevcLimits(capabilities);
         }
         auto decoder = makeVideoDecoder(capabilities.front().codec);
         bool rejected = false;

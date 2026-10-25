@@ -18,7 +18,7 @@ capability.
 
 ## HEVC streams for order and cropping
 
-Four more HEVC streams exercise what a single access unit cannot. All of them
+Six more HEVC streams exercise what a single access unit cannot. All of them
 are Annex B, with the parameter sets repeated at every random access point, and
 none carries an encoder identification string.
 
@@ -39,6 +39,10 @@ none carries an encoder identification string.
 - `hevc-full-range.bin` is the pattern of `hevc-main.raw` with the full-range
   flag set in the VUI, and `hevc-full-range.raw` what a software decoder
   returns, with no range conversion.
+- `hevc-high-tier-4k.bin` and `hevc-high-tier-8k.bin` are one flat gray
+  picture of 4096 × 2160 at level 5.2 and 8192 × 4320 at level 6.2, both High
+  tier. The platform test decodes each the host's capability list says it can,
+  so that nothing is advertised that the hardware does not decode.
 
 They are produced with ffmpeg and x265, for example
 `ffmpeg -f lavfi -i "color=c=black:size=64x64:rate=30,format=yuv420p,geq=lum='16+10*N':cb=128:cr=128" -frames:v 20 -c:v libx265 -x265-params "bframes=3:b-pyramid=1:keyint=12:min-keyint=12:open-gop=0:no-scenecut=1:b-adapt=0:no-info=1:repeat-headers=1" -f hevc hevc-bframes.bin`
