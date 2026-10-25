@@ -118,7 +118,9 @@ struct VideoEncodeCapability {
 struct VideoEncodeSettings {
     VideoCodec codec {VideoCodec::h264};
     VideoEncodeProfile profile {VideoEncodeProfile::h264High};
-    std::uint32_t level {};  // as maximumLevel; the stream states at least this; zero: as low as it fits
+    // As maximumLevel. The stream states at least this, and the lowest level
+    // at or above it that the stream provably fits; zero: as low as it fits.
+    std::uint32_t level {};
     std::uint32_t width {};
     std::uint32_t height {};
     RawVideoLayout input {RawVideoLayout::nv12};

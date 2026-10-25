@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_encoder_test_support.hpp"
+#include "apple/video_encoder_levels.hpp"
 #include "scratch_directory.hpp"
 
 #include <poll.h>
@@ -29,6 +30,7 @@
 
 namespace {
 using namespace uml::testing::video_encoder;
+namespace lv = uml::platform::levels;
 
 const VideoEncodeCapability* h264Capability;
 const VideoEncodeCapability* hevcCapability;
@@ -1202,7 +1204,7 @@ void colorAspects()
 
 // ---- Levels, entropy mode and timestamps.
 
-void levels()
+void levelsAndEntropyMode()
 {
     step("levels and entropy mode");
     for (const auto h264Profile : {VideoEncodeProfile::h264Baseline, VideoEncodeProfile::h264Main, VideoEncodeProfile::h264High}) {
@@ -1252,6 +1254,83 @@ void levels()
             std::printf("  %s: a 144x704 stream asked to state level 1.3 states %u\n", profileName(h264Profile), tall);
             require(tall >= 13, "a tall picture is encoded and states at least the level asked for");
             require(stateOf(0, 704, 144, 512, 30) >= 13, "and so is a wide one");
+
+            // The level a stream states holds what the stream is: whatever was asked for, the macroblocks the
+            // hardware really codes (it codes no picture narrower than 192 samples), the frame rate and the
+            // references. Nothing may state a level the coded stream breaks.
+            const auto statedFor = [&](std::uint32_t width, std::uint32_t height, std::uint32_t framesPerSecond, VideoRateControl control,
+                                       std::uint64_t kilobits, std::uint64_t peakKilobits, std::uint32_t asked) {
+                auto settings = baseSettings(h264Profile, width, height);
+                settings.frameRateNumerator = framesPerSecond;
+                settings.rateControl = control;
+                settings.bitrate = kilobits * 1000;
+                settings.peakBitrate = peakKilobits * 1000;
+                settings.level = asked;
+                const auto encoded = encode(settings, 12, busySource(width, height), "stated level holds the stream");
+                expectOrdered(encoded.output, 12);
+                const auto unit = firstUnit(VideoCodec::h264, *encoded.output.pictures().front(), bits::h264NalSps);
+                require(unit.has_value(), "an SPS");
+                const auto limits = bits::parseH264SpsLimits(*unit);
+                require(limits.has_value(), "the SPS can be read");
+                const unsigned level = bits::h264Level(*unit).value_or(0);
+                const auto row = std::find_if(std::begin(lv::kH264Levels), std::end(lv::kH264Levels),
+                                              [&](const lv::H264LevelLimits& candidate) { return candidate.idc == level; });
+                require(row != std::end(lv::kH264Levels), "a level of Table A-1");
+                const std::uint64_t macroblocks = std::uint64_t(limits->widthMacroblocks) * limits->heightMacroblocks;
+                require(lv::h264Rank(level) >= lv::h264Rank(asked), "the level asked for is the least that is stated");
+                require(macroblocks <= row->frameMacroblocks, "the coded picture is within MaxFS");
+                require(double(macroblocks) * framesPerSecond <= double(row->macroblocksPerSecond), "the coded rate is within MaxMBPS");
+                require(limits->maxNumRefFrames <= std::min<std::uint64_t>(row->dpbMacroblocks / macroblocks, 16), "the references fit the DPB");
+                require(!row->frameMbsOnly || limits->frameMbsOnly, "no interlace where the level forbids it");
+                if (control != VideoRateControl::constantQuality && peakKilobits)
+                    require(lv::h264Rank(level) >= lv::h264Rank(lv::h264RequiredLevel(h264Profile, settings)),
+                            "and the rate asked for");
+                if (hardwareDecodes(h264Profile))
+                    require(meanLumaPsnr(encoded.sources, decode(VideoCodec::h264, encoded.output)) >= 12.0, "the stream decodes");
+                return level;
+            };
+            for (const std::uint32_t asked : {0u, 10u, 12u, 20u, 30u}) {
+                for (const auto control : {VideoRateControl::variableBitrate, VideoRateControl::constantBitrate}) {
+                    for (const auto size : {std::pair {160u, 128u}, std::pair {176u, 144u}, std::pair {320u, 240u}}) {
+                        const auto level = statedFor(size.first, size.second, 15, control, 64, control == VideoRateControl::variableBitrate ? 64 : 0, asked);
+                        if (asked == 10 && size.first == 160) require(level == 10, "a small stream held to 64 kbit/s states the level 1.0 asked for");
+                    }
+                }
+            }
+            require(statedFor(160, 128, 15, VideoRateControl::variableBitrate, 64, 0, 10) == 10, "and so does one with no peak when VideoToolbox states it");
+            require(statedFor(160, 128, 15, VideoRateControl::variableBitrate, 64, 64, 9) == 9, "level 1b asked for is stated");
+            // The hardware codes QCIF as 192x144, 108 macroblocks, which is 1620 per second at 15 frames per second:
+            // level 1.0 holds 99 and 1485, so 1.1 is the lowest level that is true of the stream.
+            require(statedFor(176, 144, 15, VideoRateControl::variableBitrate, 64, 64, 10) >= 11, "QCIF is not stated as level 1.0");
+
+            // The stream's rate goes beyond what the level holds: the next key frame states a level that does.
+            {
+                auto settings = baseSettings(h264Profile, 160, 128);
+                settings.frameRateNumerator = 15;
+                settings.rateControl = VideoRateControl::variableBitrate;
+                settings.bitrate = settings.peakBitrate = 64'000;
+                settings.level = 10;
+                settings.keyFrameInterval = 10;
+                Feed feed;
+                feed.before = [&](VideoEncoder& encoder, unsigned index) {
+                    if (index != 20) return;
+                    VideoEncodeUpdate update;
+                    update.bitrate = update.peakBitrate = 400'000;
+                    require(encoder.update(update) == VideoEncodeStatus::ok, "raising the rate");
+                };
+                const auto encoded = encode(settings, 40, busySource(160, 128), "rate beyond the level", feed);
+                expectOrdered(encoded.output, 40);
+                std::vector<unsigned> keyLevels;
+                for (const auto* picture : encoded.output.pictures())
+                    if (picture->type == VideoFrameType::key)
+                        if (const auto unit = firstUnit(VideoCodec::h264, *picture, bits::h264NalSps)) keyLevels.push_back(bits::h264Level(*unit).value_or(0));
+                require(keyLevels.size() >= 3 && keyLevels.front() == 10, "the stream starts at level 1.0");
+                auto faster = settings;
+                faster.bitrate = faster.peakBitrate = 400'000;
+                const unsigned needed = lv::h264RequiredLevel(h264Profile, faster);
+                require(needed > 10 && lv::h264Rank(keyLevels.back()) >= lv::h264Rank(needed),
+                        "and states the level 400 kbit/s needs once it runs at that rate");
+            }
         }
     }
     if (hevcCapability) {
@@ -1270,6 +1349,29 @@ void levels()
             std::printf("  %s: level_idc %u for a request of 120\n", profileName(entry.profile), level);
             require(level >= 90 && level <= entry.maximumLevel, "an HEVC stream states a level within the verified maximum");
             if (entry.levelSelectable) {
+                // VideoToolbox states level 2.1 for CIF; 2.0 holds 832 kbit/s at 30 frames per second.
+                auto cif = baseSettings(entry.profile, 352, 288, entry.inputs.front());
+                cif.rateControl = VideoRateControl::constantBitrate;
+                cif.bitrate = 832'000;
+                cif.level = 60;
+                const auto cifEncoded = encode(cif, 6, [&](unsigned index) {
+                    const Picture eight = busyPicture(352, 288, index);
+                    return entry.inputs.front() == RawVideoLayout::p010 ? widen(eight) : eight;
+                }, "hevc cif");
+                expectOrdered(cifEncoded.output, 6);
+                std::uint32_t cifSps = 0, cifVps = 0;
+                for (const auto unit : bits::splitAnnexB(cifEncoded.output.pictures().front()->bytes)) {
+                    if (const auto sps = bits::parseHevcSps(unit)) cifSps = sps->levelIdc;
+                    if (bits::hevcNalType(unit) == bits::hevcNalVps) cifVps = bits::hevcLevel(unit).value_or(0);
+                }
+                require(cifSps == 60 && cifVps == 60, "a bounded CIF stream states level 2 in the SPS and the VPS");
+                // Level 2 allows sixteen slice segments a picture; the encoder writes the picture whole.
+                for (const auto* picture : cifEncoded.output.pictures()) {
+                    unsigned slices = 0;
+                    for (const auto unit : bits::splitAnnexB(picture->bytes))
+                        if (bits::hevcNalType(unit) < 32) ++slices;
+                    require(slices >= 1 && slices <= 16, "within the slice segments the level allows");
+                }
                 require(level == 120, "the level asked for is the level stated");
                 std::uint32_t vpsLevel = 0;
                 for (const auto unit : bits::splitAnnexB(encoded.output.pictures().front()->bytes))
@@ -1640,7 +1742,7 @@ int main(int argc, char** argv)
         lowLatency();
         color();
         colorAspects();
-        levels();
+        levelsAndEntropyMode();
         timestamps();
         sizes();
         concurrentStreams();

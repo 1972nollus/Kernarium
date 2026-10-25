@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "apple/video_encoder_bitstream.hpp"
+#include "apple/video_encoder_levels.hpp"
 #include "require.hpp"
 
 #include <cstdint>
@@ -17,6 +18,7 @@
 
 namespace {
 using namespace uml::platform::bitstream;
+using namespace uml::platform;
 using uml::testing::require;
 
 std::string fixtureDirectory;
@@ -227,17 +229,18 @@ public:
         bits(0, length);
         bits(coded, length + 1);
     }
-    // The unit: a two-byte NAL header, then the payload with its stop bit,
-    // padded and with emulation prevention bytes.
-    Unit sps()
+    void se(std::int32_t value) { ue(value > 0 ? std::uint32_t(2 * value - 1) : std::uint32_t(-2 * value)); }
+    // The unit: a NAL header, then the payload with its stop bit, padded and
+    // with emulation prevention bytes.
+    Unit unit(Unit header)
     {
         put(1);
         while (count_ % 8 != 0) put(0);
-        Unit unit {0x42, 0x01};
         const auto escaped = escapeEmulation(bytes_);
-        unit.insert(unit.end(), escaped.begin(), escaped.end());
-        return unit;
+        header.insert(header.end(), escaped.begin(), escaped.end());
+        return header;
     }
+    Unit sps() { return unit({0x42, 0x01}); }
 private:
     void put(unsigned bit)
     {
@@ -253,13 +256,13 @@ private:
 // conformance window, ordering info per sub-layer, PCM, short-term sets
 // predicted from one another, long-term pictures, and a VUI with an extended
 // sample aspect ratio, overscan and a colour description.
-Unit syntheticSps(bool scalingList, bool vui)
+Unit syntheticSps(bool scalingList, bool vui, bool vuiHrd = false)
 {
     BitWriter w;
     w.bits(0, 4);   // sps_video_parameter_set_id
     w.bits(2, 3);   // sps_max_sub_layers_minus1
     w.bits(1, 1);
-    w.bits(0x02000000, 32); w.bits(0x60000000, 32); w.bits(0x00000000, 32);   // general profile, compatibility, constraints, level
+    w.bits(0x22000000, 32); w.bits(0x60000000, 32); w.bits(63, 32);   // general profile (high tier), compatibility, constraints, level 2.1
     w.bits(1, 1); w.bits(1, 1);   // sub-layer 0: profile and level
     w.bits(0, 1); w.bits(1, 1);   // sub-layer 1: level only
     w.bits(0, 12);                // reserved_zero_2bits for the sub-layers that do not exist
@@ -307,12 +310,182 @@ Unit syntheticSps(bool scalingList, bool vui)
         w.bits(1, 1); w.bits(1, 1);                                      // overscan
         w.bits(1, 1); w.bits(5, 3); w.bits(1, 1);                        // video signal type: unspecified format, full range
         w.bits(1, 1); w.bits(9, 8); w.bits(16, 8); w.bits(9, 8);         // BT.2020, PQ, BT.2020
+        w.bits(1, 1); w.ue(2); w.ue(2);                                  // chroma sample location
+        w.bits(0, 3);                                                    // neutral chroma, field_seq, frame_field_info
+        w.bits(1, 1); for (unsigned i = 0; i < 4; ++i) w.ue(i + 1);      // default display window
+        w.bits(1, 1); w.bits(1001, 32); w.bits(30000, 32);               // timing: 30000/1001
+        w.bits(1, 1); w.ue(3);                                           // poc_proportional_to_timing_flag
+        w.bits(vuiHrd ? 1 : 0, 1);                                       // vui_hrd_parameters_present_flag
     }
     return w.sps();
 }
 
-// Raising a level changes the level and nothing else.
-void levels()
+// ---- Levels.
+
+// An H.264 SPS with the fields the level limits read.
+struct H264SpsSpec {
+    unsigned profile {66};
+    unsigned constraints {0};
+    unsigned level {10};
+    unsigned widthMacroblocks {11};
+    unsigned heightMacroblocks {9};
+    unsigned refs {1};
+    unsigned pocType {0};
+    bool frameMbsOnly {true};
+    bool scalingMatrix {false};
+    bool vui {false};
+    bool timing {false};
+    unsigned timeScale {30};     // with 1 unit in tick: twice the frame rate when fixed
+    bool hrd {false};
+    unsigned hrdBitRate {64000}; // a multiple of 64
+    unsigned hrdCpb {64000};     // a multiple of 16
+    bool restriction {false};
+    unsigned log2MvVertical {8};
+    unsigned reorder {0};
+    unsigned dpb {1};
+};
+
+Unit h264Sps(const H264SpsSpec& spec)
+{
+    BitWriter w;
+    w.bits(spec.profile, 8);
+    w.bits(spec.constraints, 8);
+    w.bits(spec.level, 8);
+    w.ue(0);   // seq_parameter_set_id
+    switch (spec.profile) {
+    case 100: case 110: case 122: case 244: case 44:
+        w.ue(1); w.ue(0); w.ue(0); w.bits(0, 1);   // 4:2:0, eight bits, no bypass
+        w.bits(spec.scalingMatrix ? 1 : 0, 1);
+        if (spec.scalingMatrix) {
+            // Eight lists: the first has two deltas ending in a zero scale, the second says "use the default",
+            // the third has a delta and runs to its end, and five are absent.
+            w.bits(1, 1); w.se(-3); w.se(-5);   // 16 values: 8 -> 5, then 5 -> 0 stops the list
+            w.bits(1, 1); w.se(-8);             // next scale 0 straight away
+            w.bits(1, 1); for (unsigned i = 0; i < 16; ++i) w.se(i == 0 ? 2 : 0);
+            for (unsigned i = 3; i < 8; ++i) w.bits(0, 1);
+        }
+        break;
+    default: break;
+    }
+    w.ue(0);   // log2_max_frame_num_minus4
+    w.ue(spec.pocType);
+    if (spec.pocType == 0) {
+        w.ue(2);
+    } else if (spec.pocType == 1) {
+        w.bits(0, 1); w.se(-1); w.se(2); w.ue(2); w.se(1); w.se(-1);
+    }
+    w.ue(spec.refs);
+    w.bits(0, 1);   // gaps_in_frame_num_value_allowed_flag
+    w.ue(spec.widthMacroblocks - 1);
+    w.ue((spec.frameMbsOnly ? spec.heightMacroblocks : spec.heightMacroblocks / 2) - 1);
+    w.bits(spec.frameMbsOnly ? 1 : 0, 1);
+    if (!spec.frameMbsOnly) w.bits(0, 1);
+    w.bits(1, 1);   // direct_8x8_inference_flag
+    w.bits(0, 1);   // frame_cropping_flag
+    w.bits(spec.vui ? 1 : 0, 1);
+    if (spec.vui) {
+        w.bits(1, 1); w.bits(255, 8); w.bits(4, 16); w.bits(3, 16);   // aspect ratio 4:3
+        w.bits(1, 1); w.bits(0, 1);                                   // overscan
+        w.bits(1, 1); w.bits(5, 3); w.bits(0, 1); w.bits(1, 1); w.bits(1, 8); w.bits(1, 8); w.bits(1, 8);   // BT.709
+        w.bits(1, 1); w.ue(1); w.ue(2);                               // chroma sample location
+        w.bits(spec.timing ? 1 : 0, 1);
+        if (spec.timing) { w.bits(1, 32); w.bits(spec.timeScale, 32); w.bits(1, 1); }
+        w.bits(spec.hrd ? 1 : 0, 1);
+        if (spec.hrd) {
+            w.ue(0); w.bits(0, 4); w.bits(0, 4);   // one schedule, no scaling
+            w.ue(spec.hrdBitRate / 64 - 1); w.ue(spec.hrdCpb / 16 - 1); w.bits(1, 1);
+            w.bits(23, 5); w.bits(23, 5); w.bits(23, 5); w.bits(24, 5);
+        }
+        w.bits(0, 1);                                                 // vcl_hrd_parameters_present_flag
+        if (spec.hrd) w.bits(0, 1);                                   // low_delay_hrd_flag
+        w.bits(0, 1);                                                 // pic_struct_present_flag
+        w.bits(spec.restriction ? 1 : 0, 1);
+        if (spec.restriction) {
+            w.bits(1, 1); w.ue(2); w.ue(1); w.ue(16); w.ue(spec.log2MvVertical); w.ue(spec.reorder); w.ue(spec.dpb);
+        }
+    }
+    return w.unit({0x67});
+}
+
+// A Main-profile HEVC SPS of one temporal layer with the fields the level
+// limits read, a PPS, and a VPS-shaped unit carrying a level.
+struct HevcSpsSpec {
+    unsigned level {63};
+    bool highTier {false};
+    unsigned width {176};
+    unsigned height {144};
+    unsigned dpb {5};
+    unsigned reorder {0};
+    bool hrd {false};
+    bool timing {false};
+    unsigned timeScale {15};   // with 1 unit in tick: the frame rate
+};
+
+Unit hevcSps(const HevcSpsSpec& spec)
+{
+    BitWriter w;
+    w.bits(0, 4);   // sps_video_parameter_set_id
+    w.bits(0, 3);   // sps_max_sub_layers_minus1
+    w.bits(1, 1);
+    w.bits(0x01000000u | (spec.highTier ? 0x20000000u : 0), 32);   // profile space, tier and Main
+    w.bits(0x60000000, 32);                                        // compatibility, then constraint flags
+    w.bits(spec.level, 32);                                        // the rest of the flags and the level
+    w.ue(0); w.ue(1);                                              // sps_seq_parameter_set_id, 4:2:0
+    w.ue(spec.width); w.ue(spec.height);
+    w.bits(0, 1);                                                  // conformance window
+    w.ue(0); w.ue(0);                                              // eight bits
+    w.ue(4);                                                       // log2_max_pic_order_cnt_lsb_minus4
+    w.bits(1, 1);                                                  // sub_layer_ordering_info_present_flag
+    w.ue(spec.dpb - 1); w.ue(spec.reorder); w.ue(0);
+    w.ue(0); w.ue(3); w.ue(0); w.ue(3);                            // block sizes
+    w.ue(2); w.ue(2);                                              // transform hierarchy depths
+    w.bits(0, 1);                                                  // scaling_list_enabled_flag
+    w.bits(1, 1); w.bits(1, 1);                                    // amp, sample adaptive offset
+    w.bits(0, 1);                                                  // pcm
+    w.ue(0);                                                       // num_short_term_ref_pic_sets
+    w.bits(0, 1);                                                  // long_term_ref_pics_present_flag
+    w.bits(1, 1); w.bits(1, 1);                                    // temporal MVP, strong intra smoothing
+    w.bits(1, 1);                                                  // vui_parameters_present_flag
+    w.bits(0, 1); w.bits(0, 1);                                    // aspect ratio, overscan
+    w.bits(0, 1); w.bits(0, 1);                                    // video signal type, chroma location
+    w.bits(0, 3);
+    w.bits(0, 1);                                                  // default display window
+    w.bits(spec.timing || spec.hrd ? 1 : 0, 1);
+    if (spec.timing || spec.hrd) {
+        w.bits(1, 32); w.bits(spec.timeScale, 32); w.bits(0, 1);
+        w.bits(spec.hrd ? 1 : 0, 1);
+    }
+    return w.sps();
+}
+
+Unit hevcPps(bool tiles)
+{
+    BitWriter w;
+    w.ue(0); w.ue(0);
+    w.bits(0, 1); w.bits(0, 1); w.bits(0, 3); w.bits(0, 2);
+    w.ue(0); w.ue(0); w.se(0);
+    w.bits(0, 2);
+    w.bits(0, 1);   // cu_qp_delta_enabled_flag
+    w.se(0); w.se(0);
+    w.bits(0, 4);
+    w.bits(tiles ? 1 : 0, 1);
+    return w.unit({0x44, 0x01});
+}
+
+// A VPS with the level at its place in profile_tier_level, behind four bytes
+// of fields, and a few fields after it.
+Unit hevcVps(unsigned level)
+{
+    BitWriter w;
+    w.bits(0, 4); w.bits(1, 1); w.bits(1, 1); w.bits(0, 6); w.bits(0, 3); w.bits(1, 1); w.bits(0xffff, 16);
+    w.bits(0x01000000, 32); w.bits(0x60000000, 32); w.bits(level, 32);
+    w.bits(1, 1); w.ue(4); w.ue(2); w.ue(0);
+    w.bits(0, 6); w.ue(0); w.bits(0, 2);
+    return w.unit({0x40, 0x01});
+}
+
+// Setting a level changes the level and nothing else.
+void levelSetting()
 {
     // H.264 on the checked-in streams.
     for (const char* name : {"h264-baseline", "h264-main", "h264-high"}) {
@@ -323,9 +496,9 @@ void levels()
             const auto level = h264Level(sps);
             require(level.has_value() && *level == sps[3], "the level is level_idc");
             Unit unchanged = sps;
-            require(!raiseH264Level(unchanged, *level) && unchanged == sps, "a level already stated is left alone");
-            require(!raiseH264Level(unchanged, *level - 1) && unchanged == sps, "a lower level is not stated");
-            require(raiseH264Level(sps, 52) && h264Level(sps) == std::optional<unsigned>(52), "a higher level is stated");
+            require(!setH264Level(unchanged, *level) && unchanged == sps, "a level already stated is left alone");
+            require(setH264Level(sps, 52) && h264Level(sps) == std::optional<unsigned>(52), "a higher level is stated");
+            require(setH264Level(sps, 10) && h264Level(sps) == std::optional<unsigned>(10), "and a lower one");
             Unit rest = sps, was(unit.begin(), unit.end());
             rest[3] = was[3];
             require(rest == was, "and nothing else changed");
@@ -336,12 +509,16 @@ void levels()
     require(h264Level(oneB) == std::optional<unsigned>(9), "Baseline level 1.1 with constraint_set3_flag is level 1b");
     Unit high {0x67, 100, 0x10, 11, 0xaa};
     require(h264Level(high) == std::optional<unsigned>(11), "the flag means something else in High");
-    require(raiseH264Level(oneB, 13) && oneB == (Unit {0x67, 66, 0x00, 13, 0xaa}), "raising level 1b clears the flag");
+    require(setH264Level(oneB, 13) && oneB == (Unit {0x67, 66, 0x00, 13, 0xaa}), "leaving level 1b clears the flag");
+    require(setH264Level(oneB, 9) && oneB == (Unit {0x67, 66, 0x10, 11, 0xaa}), "Baseline states 1b as 1.1 with the flag");
+    require(setH264Level(oneB, 10) && oneB == (Unit {0x67, 66, 0x00, 10, 0xaa}), "level 1b falls to 1.0 and the flag clears");
     Unit highNine {0x67, 100, 0x00, 9, 0xaa};
-    require(h264Level(highNine) == std::optional<unsigned>(9) && raiseH264Level(highNine, 10) && highNine[3] == 10, "High level 1b");
-    require(!h264Level(Unit {0x68, 1, 2, 3}) && !raiseH264Level(oneB = Unit {0x68, 1, 2, 3}, 30), "only an SPS has a level");
+    require(h264Level(highNine) == std::optional<unsigned>(9) && setH264Level(highNine, 10) && highNine[3] == 10, "High level 1b");
+    require(setH264Level(highNine, 9) && highNine == (Unit {0x67, 100, 0x00, 9, 0xaa}), "High states 1b as level_idc 9");
+    Unit notSps {0x68, 1, 2, 3};
+    require(!h264Level(notSps) && !setH264Level(notSps, 30), "only an SPS has a level");
 
-    // HEVC: the VPS and SPS of the checked-in streams state the same level, and a raised one reads back.
+    // HEVC: the VPS and SPS of the checked-in streams state the same level, and a set one reads back.
     for (const char* name : {"hevc-main", "hevc-main10"}) {
         const auto stream = read(std::string(name) + ".bin");
         std::optional<unsigned> vpsLevel, spsLevel;
@@ -354,9 +531,11 @@ void levels()
             (type == hevcNalVps ? vpsLevel : spsLevel) = level;
             if (type == hevcNalSps) require(parseHevcSps(nal)->levelIdc == *level, "the same level as the SPS reader finds");
             Unit unchanged = nal;
-            require(!raiseHevcLevel(unchanged, *level) && unchanged == nal, "a level already stated is left alone");
+            require(!setHevcLevel(unchanged, *level) && unchanged == nal, "a level already stated is left alone");
             Unit raised = nal;
-            require(raiseHevcLevel(raised, 156) && hevcLevel(raised) == std::optional<unsigned>(156), "a higher level is stated");
+            require(setHevcLevel(raised, 156) && hevcLevel(raised) == std::optional<unsigned>(156), "a higher level is stated");
+            require(setHevcLevel(raised, *level) && raised == nal, "and falling back restores the unit exactly");
+            require(setHevcLevel(raised, 156), "once more");
             auto before = rbsp(nal, 2), after = rbsp(raised, 2);
             require(before.size() == after.size(), "the payload keeps its size");
             for (std::size_t i = 0; i < before.size(); ++i)
@@ -373,11 +552,317 @@ void levels()
     // The profile_tier_level of a real SPS is full of zeros, so the level sits among emulation prevention bytes.
     Unit synthetic = syntheticSps(false, true);
     const auto before = parseHevcSpsFormat(synthetic);
-    require(raiseHevcLevel(synthetic, 93) && hevcLevel(synthetic) == std::optional<unsigned>(93), "a synthetic SPS takes a level");
+    require(setHevcLevel(synthetic, 93) && hevcLevel(synthetic) == std::optional<unsigned>(93), "a synthetic SPS takes a level");
     const auto after = parseHevcSpsFormat(synthetic);
     require(before && after && after->primaries == before->primaries && after->transfer == before->transfer &&
-            after->bitDepthLuma == before->bitDepthLuma, "and still reads to its VUI");
-    require(!hevcLevel(Unit {0x44, 0x01, 1, 2, 3, 4}) && !raiseHevcLevel(synthetic = Unit {0x44, 0x01, 1, 2, 3, 4}, 93), "only a VPS or SPS has a level");
+            after->bitDepthLuma == before->bitDepthLuma && after->levelIdc == 93, "and still reads to its VUI");
+    Unit slice {0x44, 0x01, 1, 2, 3, 4};
+    require(!hevcLevel(slice) && !setHevcLevel(slice, 93), "only a VPS or SPS has a level");
+}
+
+void h264SpsLimits()
+{
+    for (const char* name : {"h264-baseline", "h264-main", "h264-high", "h264-high10"}) {
+        const auto stream = read(std::string(name) + ".bin");
+        bool found = false;
+        for (const auto unit : splitAnnexB(stream)) {
+            if (h264NalType(unit) != h264NalSps) continue;
+            const auto limits = parseH264SpsLimits(unit);
+            require(limits.has_value(), "the SPS of a checked-in stream is read to its VUI");
+            require(limits->widthMacroblocks == 8 && limits->heightMacroblocks == 6 && limits->frameMbsOnly, "the picture is 128x96");
+            require(limits->vuiPresent && limits->timingInfo && limits->bitstreamRestriction && !limits->hrd, "with timing and restrictions");
+            require(limits->maxNumRefFrames <= limits->maxDecFrameBuffering, "the DPB holds the references");
+            require(limits->levelIdc == h264Level(unit), "and the level the helper reads");
+            found = true;
+        }
+        require(found, "an SPS");
+    }
+    H264SpsSpec spec;
+    for (const unsigned profile : {66u, 77u, 100u, 110u}) {
+        spec.profile = profile;
+        spec.vui = true; spec.timing = true; spec.timeScale = 60; spec.hrd = true; spec.hrdBitRate = 128000; spec.hrdCpb = 350000;
+        spec.restriction = true; spec.reorder = 1; spec.dpb = 3; spec.refs = 2; spec.pocType = profile == 77 ? 1 : 0;
+        spec.scalingMatrix = profile >= 100;
+        const auto limits = parseH264SpsLimits(h264Sps(spec));
+        require(limits.has_value(), "a synthetic SPS is read");
+        require(limits->profileIdc == profile && limits->levelIdc == 10 && limits->widthMacroblocks == 11 && limits->heightMacroblocks == 9,
+                "profile, level and picture");
+        require(limits->maxNumRefFrames == 2 && limits->pocType == spec.pocType, "references and order count type");
+        require(limits->timingInfo && limits->timeScale == 60 && limits->numUnitsInTick == 1, "timing");
+        require(limits->hrd && limits->hrdBitRate == 128000 && limits->hrdCpbSize == 350000, "the HRD is read to its rate and size");
+        require(limits->bitstreamRestriction && limits->log2MaxMvLengthVertical == 8 && limits->maxNumReorderFrames == 1 &&
+                limits->maxDecFrameBuffering == 3, "and the restrictions behind it");
+    }
+    spec = {};
+    spec.frameMbsOnly = false; spec.heightMacroblocks = 8;
+    const auto interlaced = parseH264SpsLimits(h264Sps(spec));
+    require(interlaced && !interlaced->frameMbsOnly && interlaced->heightMacroblocks == 8, "field coding doubles the map units");
+    const auto bare = parseH264SpsLimits(h264Sps({}));
+    require(bare && !bare->vuiPresent && !bare->bitstreamRestriction && !bare->hrd, "no VUI states nothing");
+    auto truncated = h264Sps([] { H264SpsSpec s; s.vui = true; s.restriction = true; return s; }());
+    truncated.resize(truncated.size() - 3);
+    require(!parseH264SpsLimits(truncated), "a truncated SPS is refused");
+    require(!parseH264SpsLimits(Unit {0x68, 1, 2, 3, 4}), "a PPS is not an SPS");
+}
+
+// The settings of the Android case that failed: a QCIF recording at 15 frames
+// per second and 64 kbit/s, variable bit rate with the peak the level allows,
+// level 1.0 asked for.
+VideoEncodeSettings qcifRecording(VideoEncodeProfile profile = VideoEncodeProfile::h264Baseline)
+{
+    VideoEncodeSettings settings;
+    settings.codec = profile >= VideoEncodeProfile::hevcMain ? VideoCodec::hevc : VideoCodec::h264;
+    settings.profile = profile;
+    settings.level = settings.codec == VideoCodec::hevc ? 30 : 10;
+    settings.width = 176;
+    settings.height = 144;
+    settings.frameRateNumerator = 15;
+    settings.rateControl = VideoRateControl::variableBitrate;
+    settings.bitrate = 64000;
+    settings.peakBitrate = 64000;
+    return settings;
+}
+
+std::optional<unsigned> choice(const Unit& sps, const levels::Policy& policy) { return levels::chooseH264Level(sps, policy); }
+
+void h264LevelChoice()
+{
+    const auto policy = levels::makePolicy(qcifRecording(), false, true);
+    require(policy.floor == 10 && policy.boundedBitrate == 64000 && !policy.reorders, "level 1.0 is asked for and the rate is bounded");
+
+    // VideoToolbox states 1.1 for the picture and rate that fit 1.0 exactly (99 macroblocks at 15 frames per second).
+    H264SpsSpec spec;
+    spec.level = 11;
+    require(choice(h264Sps(spec), policy) == std::optional<unsigned>(10), "VideoToolbox's 1.1 falls to the 1.0 that was asked for");
+    // The same level is left alone, and a level below the floor rises to it.
+    spec.level = 10;
+    require(!choice(h264Sps(spec), policy), "the level asked for is left as it is");
+    spec.level = 10;
+    auto needsMore = qcifRecording();
+    needsMore.bitrate = needsMore.peakBitrate = 100000;
+    const auto raised = levels::makePolicy(needsMore, false, true);
+    require(raised.floor == 11, "a stream of 100 kbit/s needs level 1.1");
+    require(choice(h264Sps(spec), raised) == std::optional<unsigned>(11), "and a lower level rises to it");
+
+    // Nothing bounds the rate: the level stays what VideoToolbox chose.
+    spec.level = 11;
+    auto noPeak = qcifRecording();
+    noPeak.peakBitrate = 0;
+    require(!choice(h264Sps(spec), levels::makePolicy(noPeak, false, true)), "a variable rate without a peak keeps VideoToolbox's level");
+    require(!choice(h264Sps(spec), levels::makePolicy(qcifRecording(), false, false)), "and so does one whose peak is not enforced");
+    auto quality = qcifRecording();
+    quality.rateControl = VideoRateControl::constantQuality;
+    require(!choice(h264Sps(spec), levels::makePolicy(quality, false, true)), "and constant quality");
+    auto constant = qcifRecording();
+    constant.rateControl = VideoRateControl::constantBitrate;
+    constant.peakBitrate = 0;
+    require(choice(h264Sps(spec), levels::makePolicy(constant, false, true)) == std::optional<unsigned>(10), "a constant rate is bounded by itself");
+
+    // The picture, the frame rate and the rate each keep a stream out of a level.
+    auto fast = qcifRecording();
+    fast.frameRateNumerator = 30;
+    const auto fastPolicy = levels::makePolicy(fast, false, true);
+    require(fastPolicy.floor == 11, "30 frames per second of QCIF need level 1.1");
+    require(choice(h264Sps(spec), fastPolicy) == std::nullopt, "and VideoToolbox's 1.1 stays");
+    H264SpsSpec timed;
+    timed.level = 12; timed.vui = true; timed.timing = true; timed.timeScale = 60;   // the stream says 30 frames per second
+    require(choice(h264Sps(timed), policy) == std::optional<unsigned>(11), "a frame rate the SPS states beyond the settings counts");
+    H264SpsSpec big;
+    big.level = 21; big.widthMacroblocks = 22; big.heightMacroblocks = 18;
+    auto cif = qcifRecording();
+    cif.width = 352; cif.height = 288; cif.level = 20; cif.bitrate = cif.peakBitrate = 832000; cif.frameRateNumerator = 30;
+    require(levels::makePolicy(cif, false, true).floor == 20, "CIF at 832 kbit/s asked for 2.0 states 2.0");
+    require(choice(h264Sps(big), levels::makePolicy(cif, false, true)) == std::optional<unsigned>(20), "2.1 falls to 2.0");
+    cif.level = 13;
+    require(levels::makePolicy(cif, false, true).floor == 20, "level 1.3 asked for CIF at 832 kbit/s is raised to 2.0 by the rate");
+
+    // The DPB: the references, and the frames waiting for output when B-frames reorder.
+    H264SpsSpec refs;
+    refs.level = 12; refs.refs = 4;
+    require(choice(h264Sps(refs), policy) == std::optional<unsigned>(10), "four references fit the four frames of 1.0");
+    refs.refs = 5;
+    require(choice(h264Sps(refs), policy) == std::optional<unsigned>(11), "five do not, and 1.1 holds nine");
+    const auto reordering = levels::makePolicy(qcifRecording(), true, true);
+    refs.refs = 1;
+    require(choice(h264Sps(refs), reordering) == std::optional<unsigned>(10), "one reference and three waiting frames fit 1.0");
+    refs.refs = 2;
+    require(choice(h264Sps(refs), reordering) == std::optional<unsigned>(11), "two references and three waiting frames need 1.1");
+    refs.level = 11; refs.refs = 4;
+    require(!choice(h264Sps(refs), reordering), "and VideoToolbox's 1.1 holds four and three (nine frames)");
+    H264SpsSpec restricted;
+    restricted.level = 12; restricted.vui = true; restricted.restriction = true; restricted.refs = 2; restricted.dpb = 4; restricted.reorder = 2;
+    require(choice(h264Sps(restricted), reordering) == std::optional<unsigned>(10), "a stated DPB of four fits 1.0 whatever reorders");
+    restricted.dpb = 5;
+    require(choice(h264Sps(restricted), reordering) == std::optional<unsigned>(11), "five does not");
+    restricted.dpb = 4; restricted.log2MvVertical = 9;
+    require(choice(h264Sps(restricted), reordering) == std::optional<unsigned>(11), "a vertical motion vector range beyond 64 samples does not");
+
+    // The HRD parameters the SPS states are held to the level as well.
+    H264SpsSpec hrd;
+    hrd.level = 12; hrd.vui = true; hrd.hrd = true; hrd.hrdBitRate = 64000; hrd.hrdCpb = 160000;
+    require(choice(h264Sps(hrd), policy) == std::optional<unsigned>(10), "an HRD within 64 kbit/s and 175 kbit fits 1.0");
+    hrd.hrdBitRate = 128000;
+    require(choice(h264Sps(hrd), policy) == std::optional<unsigned>(11), "a higher rate does not");
+    hrd.hrdBitRate = 64000; hrd.hrdCpb = 200000;
+    require(choice(h264Sps(hrd), policy) == std::optional<unsigned>(11), "nor a larger buffer");
+    auto buffered = qcifRecording();
+    buffered.bufferBits = 200000;
+    spec.level = 11;
+    require(!choice(h264Sps(spec), levels::makePolicy(buffered, false, true)) ||
+            *choice(h264Sps(spec), levels::makePolicy(buffered, false, true)) != 10, "a buffer the caller sized beyond 1.0's does not");
+
+    // Interlaced coding is allowed from level 2.1.
+    H264SpsSpec fields;
+    fields.level = 21; fields.frameMbsOnly = false; fields.heightMacroblocks = 8;
+    auto smallFields = qcifRecording();
+    smallFields.height = 128;
+    smallFields.level = 10;
+    require(!choice(h264Sps(fields), levels::makePolicy(smallFields, false, true)), "an interlaced SPS stays at 2.1");
+
+    // The bit rate factor follows the profile of the stream.
+    auto highRate = qcifRecording(VideoEncodeProfile::h264High);
+    highRate.bitrate = highRate.peakBitrate = 80000;
+    H264SpsSpec highSps;
+    highSps.profile = 100; highSps.level = 11;
+    require(levels::makePolicy(highRate, false, true).floor == 10, "High allows 80 kbit/s at level 1.0");
+    require(choice(h264Sps(highSps), levels::makePolicy(highRate, false, true)) == std::optional<unsigned>(10), "and 1.1 falls to it");
+    H264SpsSpec mainSps;
+    mainSps.profile = 77; mainSps.level = 11;
+    require(choice(h264Sps(mainSps), levels::makePolicy(highRate, false, true)) != std::optional<unsigned>(10),
+            "a Main stream does not get the High allowance");
+    H264SpsSpec unknown;
+    unknown.profile = 83; unknown.level = 11;
+    require(!choice(h264Sps(unknown), policy), "a profile whose factor is not known is left alone");
+
+    // Level 1b sits between 1.0 and 1.1.
+    auto oneB = qcifRecording();
+    oneB.level = 9;
+    const auto oneBPolicy = levels::makePolicy(oneB, false, true);
+    require(oneBPolicy.floor == 9, "level 1b asked for is the floor, above the 1.0 the stream needs");
+    spec.level = 11; spec.profile = 66;
+    auto baseline = h264Sps(spec);
+    require(choice(baseline, oneBPolicy) == std::optional<unsigned>(9), "1.1 falls to 1b");
+    std::vector<Unit> units {baseline};
+    require(levels::restateLevel(VideoCodec::h264, units, oneBPolicy) == 9 && units[0][2] == 0x10 && units[0][3] == 11,
+            "Baseline states 1b as 1.1 with constraint_set3_flag");
+    // A stream that states 1b where only 1.0 was asked for falls to the 1.0 that fits.
+    std::vector<Unit> flagged {units[0]};
+    require(levels::restateLevel(VideoCodec::h264, flagged, policy) == 10, "1b falls to 1.0");
+    require(flagged[0][2] == 0x00 && flagged[0][3] == 10, "and clears the flag");
+}
+
+void hevcLevelChoice()
+{
+    const auto policy = levels::makePolicy(qcifRecording(VideoEncodeProfile::hevcMain), false, true);
+    require(policy.floor == 30 && policy.boundedBitrate == 64000, "level 1 is asked for");
+    HevcSpsSpec spec;
+    const auto pps = hevcPps(false);
+    const auto vps = hevcVps(63);
+    const auto choose = [&](const HevcSpsSpec& s, const levels::Policy& p, const Unit& picturePps = hevcPps(false)) {
+        return levels::chooseHevcLevel(hevcSps(s), picturePps, p);
+    };
+    require(choose(spec, policy) == std::optional<unsigned>(30), "VideoToolbox's 2.1 falls to the level 1 that was asked for");
+    spec.level = 30;
+    require(!choose(spec, policy), "the level asked for is left alone");
+    auto bigger = qcifRecording(VideoEncodeProfile::hevcMain);
+    bigger.bitrate = bigger.peakBitrate = 400000;
+    spec.level = 90;
+    require(levels::makePolicy(bigger, false, true).floor == 60, "400 kbit/s needs level 2");
+    require(choose(spec, levels::makePolicy(bigger, false, true)) == std::optional<unsigned>(60), "and 3 falls to it, not to 1");
+    spec.level = 20;
+    require(choose(spec, levels::makePolicy(bigger, false, true)) == std::optional<unsigned>(60), "a level below the floor rises");
+
+    spec.level = 63;
+    auto noPeak = qcifRecording(VideoEncodeProfile::hevcMain);
+    noPeak.peakBitrate = 0;
+    require(!choose(spec, levels::makePolicy(noPeak, false, true)), "an unbounded rate keeps VideoToolbox's level");
+    spec.dpb = 9;
+    require(choose(spec, policy) == std::optional<unsigned>(60), "nine pictures do not fit 176x144 at level 1, whose DPB holds eight");
+    spec.dpb = 5;
+    spec.width = 320; spec.height = 240;
+    auto qvga = qcifRecording(VideoEncodeProfile::hevcMain);
+    qvga.width = 320; qvga.height = 240;
+    require(levels::makePolicy(qvga, false, true).floor == 30 || levels::makePolicy(qvga, false, true).floor == 60,
+            "QVGA is above level 1's picture size");
+    qvga.level = 30;
+    const auto qvgaPolicy = levels::makePolicy(qvga, false, true);
+    require(qvgaPolicy.floor == 60, "so level 2 is the floor");
+    spec.level = 93;
+    require(choose(spec, qvgaPolicy) == std::optional<unsigned>(60), "and 3.1 falls to 2");
+    spec.width = 176; spec.height = 144;
+
+    // What the walk cannot vouch for keeps VideoToolbox's level.
+    spec.level = 63;
+    HevcSpsSpec highTier = spec;
+    highTier.highTier = true;
+    require(!choose(highTier, policy), "the High tier");
+    HevcSpsSpec withHrd = spec;
+    withHrd.hrd = true;
+    require(!choose(withHrd, policy), "HRD parameters");
+    require(!choose(spec, policy, hevcPps(true)), "tiles");
+    require(levels::chooseHevcLevel(hevcSps(spec), Unit {}, policy) == std::nullopt, "a missing PPS");
+    HevcSpsSpec timed = spec;
+    timed.timing = true;
+    require(choose(timed, policy) == std::optional<unsigned>(30), "timing information within the limit is fine");
+    timed.timeScale = 30;
+    require(choose(timed, policy) == std::optional<unsigned>(60), "a frame rate the SPS states beyond level 1's sample rate counts");
+
+    // The VPS and the SPS state one level, as the stream stated it before.
+    std::vector<Unit> units {vps, hevcSps(spec), pps};
+    require(levels::restateLevel(VideoCodec::hevc, units, policy) == 30, "the stream now states level 1");
+    require(hevcLevel(units[0]) == std::optional<unsigned>(30) && hevcLevel(units[1]) == std::optional<unsigned>(30), "in the VPS and the SPS");
+    require(units[2] == pps, "and the PPS is untouched");
+    std::vector<Unit> unbounded {vps, hevcSps(spec), pps};
+    require(levels::restateLevel(VideoCodec::hevc, unbounded, levels::makePolicy(noPeak, false, true)) == 63 &&
+            hevcLevel(unbounded[0]) == std::optional<unsigned>(63), "units left alone keep their level");
+}
+
+// The units of the checked-in streams, with the level VideoToolbox might have
+// chosen, and the policy that brings the level back to the stream's own.
+void levelRoundTrip()
+{
+    struct Case { const char* name; VideoCodec codec; VideoEncodeProfile profile; };
+    for (const Case c : {Case {"h264-baseline", VideoCodec::h264, VideoEncodeProfile::h264Baseline},
+                         Case {"h264-main", VideoCodec::h264, VideoEncodeProfile::h264Main},
+                         Case {"h264-high", VideoCodec::h264, VideoEncodeProfile::h264High},
+                         Case {"hevc-main", VideoCodec::hevc, VideoEncodeProfile::hevcMain},
+                         Case {"hevc-main10", VideoCodec::hevc, VideoEncodeProfile::hevcMain10}}) {
+        const auto stream = read(std::string(c.name) + ".bin");
+        std::vector<Unit> original;
+        for (const auto unit : splitAnnexB(stream)) {
+            const bool hevc = c.codec == VideoCodec::hevc;
+            const unsigned type = hevc ? hevcNalType(unit) : h264NalType(unit);
+            if (hevc ? (type == hevcNalVps || type == hevcNalSps || type == hevcNalPps) : (type == h264NalSps || type == h264NalPps))
+                original.emplace_back(unit.begin(), unit.end());
+        }
+        require(original.size() >= 2, "parameter sets");
+        VideoEncodeSettings settings;
+        settings.codec = c.codec;
+        settings.profile = c.profile;
+        settings.width = 128;
+        settings.height = 96;
+        settings.frameRateNumerator = 25;
+        settings.rateControl = VideoRateControl::variableBitrate;
+        settings.bitrate = 40000;
+        settings.peakBitrate = 40000;
+        settings.level = c.codec == VideoCodec::hevc ? 30 : 10;
+        const auto policy = levels::makePolicy(settings, c.profile != VideoEncodeProfile::h264Baseline, true);
+        auto units = original;
+        const unsigned before = levels::restateLevel(c.codec, units, policy);
+        require(before == settings.level, "a stream already at the level asked for keeps it");
+        require(units == original, "and is byte for byte what it was");
+        // VideoToolbox's choice, three levels up.
+        auto high = original;
+        for (auto& unit : high) {
+            if (c.codec == VideoCodec::hevc) (void)setHevcLevel(unit, 93);
+            else if (h264NalType(unit) == h264NalSps) (void)setH264Level(unit, 31);
+        }
+        require(high != original, "the level was raised");
+        const unsigned after = levels::restateLevel(c.codec, high, policy);
+        std::printf("  %s: from a level three up, %u\n", c.name, after);
+        require(after == settings.level, "and comes back to the level asked for");
+        require(high == original, "byte for byte");
+    }
 }
 
 void hevcSpsFormat()
@@ -389,6 +874,15 @@ void hevcSpsFormat()
     require(format->vuiPresent && format->colorDescription, "a colour description");
     require(format->primaries == 9 && format->transfer == 16 && format->matrix == 9 && format->fullRange,
             "the VUI is found behind sub-layers, a window, PCM, predicted sets and long-term pictures");
+
+    require(format->highTier && format->levelIdc == 63 && format->maxSubLayersMinus1 == 2 && format->subLayerLevels,
+            "the tier, the level and the sub-layers");
+    require(format->width == 1920 && format->height == 1080 && format->maxDecPicBuffering == 5 && format->maxNumReorder == 2,
+            "the picture size and the DPB of the highest sub-layer");
+    require(format->timingInfo && format->numUnitsInTick == 1001 && format->timeScale == 30000 && !format->hrd,
+            "the timing information and no HRD");
+    const auto withHrd = parseHevcSpsFormat(syntheticSps(false, true, true));
+    require(withHrd && withHrd->hrd, "HRD parameters are noticed");
 
     const auto noVui = parseHevcSpsFormat(syntheticSps(false, false));
     require(noVui.has_value() && !noVui->vuiPresent && !noVui->colorDescription, "an SPS with no VUI states no colour");
@@ -413,7 +907,11 @@ int main(int argc, char** argv)
         bitReading();
         seiMessages();
         hevcSpsFormat();
-        levels();
+        levelSetting();
+        h264SpsLimits();
+        h264LevelChoice();
+        hevcLevelChoice();
+        levelRoundTrip();
         fixtures();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
