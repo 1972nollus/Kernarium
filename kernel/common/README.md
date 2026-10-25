@@ -182,7 +182,9 @@ with -ENOSYS; a tracer or seccomp that sets it skips the call and leaves x0 as
 it wrote it, and any other number with no call returns -ENOSYS. The exit stop
 shows the return value, and a call restarted after a signal shows its first
 argument again. A tracer reads and sets the number of the call through
-`NT_ARM_SYSTEM_CALL`: another number runs that call, and -1 skips it. A stop
+`NT_ARM_SYSTEM_CALL`: another number runs that call, and -1 skips it. A call
+whose number a tracer changed and that then restarts after a signal restarts
+as the call the task made, because x8 stays as the task wrote it. A stop
 holds 0 (entry) or 1 (exit) in x7, r12 for an AArch32 task, and the task's
 value returns when the stop ends. The x86_64 slice keeps x86's convention,
 -ENOSYS in rax at every entry stop, and has neither of these.

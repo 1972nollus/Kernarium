@@ -21,6 +21,10 @@
 //   syscall(9999)       ENOSYS; arm64 shows the argument at its entry stop
 //   getpid()            arm64: the tracer skips it and sets EPERM
 //   getppid()           arm64: the tracer changes it to getpid
+//   getppid(pipe, ...)  arm64: the tracer changes it to a blocking read, a
+//                       signal interrupts it, and the call starts again as
+//                       getppid, the call the task made, whether a handler
+//                       runs or the tracer suppresses the signal
 //   write(78, ...)      the tracer replaces the arguments with
 //                       PTRACE_SET_SYSCALL_INFO
 //   read(pipe, ...)     a signal interrupts it, the handler returns and the
@@ -377,6 +381,8 @@ struct Shared {
 	long unimplemented_result;
 	long skipped_result;
 	long swapped_result;
+	long restart_swapped_result[2];
+	char swap_byte;
 	long replaced_result;
 	long read_result;
 	long x7_clobbered;
@@ -386,6 +392,7 @@ struct Shared {
 Shared *shared_state;
 int data_pipe[2];
 int restart_pipe[2];
+int swap_pipe[2];
 
 void on_signal(int)
 {
@@ -401,6 +408,7 @@ void on_signal(int)
 	sigaction(SIGUSR1, &action, nullptr);
 	close(data_pipe[0]);
 	close(restart_pipe[1]);
+	close(swap_pipe[1]);
 	ptrace(PTRACE_TRACEME, 0, nullptr, nullptr);
 	raise(SIGSTOP);
 
@@ -412,6 +420,9 @@ void on_signal(int)
 		raw_syscall(unimplemented_number, 7);
 	shared_state->skipped_result = raw_syscall(SYS_getpid, 7);
 	shared_state->swapped_result = raw_syscall(SYS_getppid);
+	for (long &result : shared_state->restart_swapped_result)
+		result = raw_syscall(SYS_getppid, swap_pipe[0],
+				     (long)&shared_state->swap_byte, 1);
 	shared_state->replaced_result =
 		raw_syscall(SYS_write, replaced_fd, (long)message, message_length);
 	shared_state->read_result =
@@ -443,6 +454,78 @@ void kill_child(pid_t pid)
 	waitpid(pid, &status, __WALL);
 }
 
+#if defined(__aarch64__)
+// A call a tracer changed to a blocking read(pipe) is interrupted by SIGUSR1
+// and starts again.  Natively the register that holds the number still has
+// what the task wrote, so the restart shows the call the task made at its
+// entry stop and runs it, not the call the tracer put in its place.  deliver
+// has the child's handler run; otherwise the tracer suppresses the signal.
+bool check_swapped_restart(const char *prefix, pid_t pid, Abi abi, int original,
+			   int read_number, uint64_t pipe_fd, bool deliver)
+{
+	char name[128];
+	Stop stop;
+	int wait_status = 0;
+	int signal = deliver ? SIGUSR1 : 0;
+	bool restarted = false;
+	const uint64_t restart_code = abi == Abi::aarch32 ?
+		(uint64_t)(uint32_t)-512 : minus_erestartsys;
+
+	auto label = [&](const char *text) {
+		snprintf(name, sizeof(name), "%s %s", prefix, text);
+		return name;
+	};
+
+	if (!resume(pid, abi, stop) ||
+	    !expect(label("swapped call entry"), stop, true, original))
+		return false;
+	check(label("a tracer changes the call to a blocking read"),
+	      set_system_call(pid, read_number), "%s", strerror(errno));
+	if (abi == Abi::aarch32)
+		check(label("a tracer gives the read its descriptor"),
+		      set_first_argument(pid, abi, pipe_fd), "%s", strerror(errno));
+	// The signal is pending when the read starts, so it returns
+	// -ERESTARTSYS at once.
+	kill(pid, SIGUSR1);
+	if (!resume(pid, abi, stop) ||
+	    !expect(label("interrupted swapped call exit"), stop, false, original))
+		return false;
+	check(label("the interrupted call's exit stop shows -ERESTARTSYS"),
+	      stop.ret == restart_code, "%s", describe(stop).c_str());
+	ptrace(PTRACE_SYSCALL, pid, nullptr, nullptr);
+	waitpid(pid, &wait_status, __WALL);
+	if (!WIFSTOPPED(wait_status) || WSTOPSIG(wait_status) != SIGUSR1) {
+		check(label("the signal stops the child"), false, "status %#x",
+		      wait_status);
+		return false;
+	}
+	for (int step = 0; step < 8 && !restarted; step++) {
+		if (!resume(pid, abi, stop, signal))
+			break;
+		signal = 0;
+		restarted = stop.entry &&
+			    (stop.nr == (uint64_t)original || stop.nr == (uint64_t)read_number);
+	}
+	check(label("the interrupted call starts again"), restarted, "%s",
+	      describe(stop).c_str());
+	if (!restarted)
+		return false;
+	check(label("the restarted entry stop shows the call the task made"),
+	      stop.nr == (uint64_t)original, "%s", describe(stop).c_str());
+	if (abi == Abi::native)
+		check(label("the restarted entry stop shows the descriptor"),
+		      stop.args[0] == pipe_fd, "%s", describe(stop).c_str());
+	if (!resume(pid, abi, stop) ||
+	    !expect(label("restarted call exit"), stop, false, original))
+		return false;
+	check(label("the restarted call ran as the call the task made"),
+	      (abi == Abi::aarch32 ? (uint32_t)stop.ret : stop.ret) ==
+	      (abi == Abi::aarch32 ? (uint32_t)getpid() : (uint64_t)getpid()),
+	      "%s", describe(stop).c_str());
+	return true;
+}
+#endif
+
 void check_native()
 {
 	const char *abi = "A64";
@@ -462,7 +545,8 @@ void check_native()
 
 	shared_state = (Shared *)mmap(nullptr, 4096, PROT_READ | PROT_WRITE,
 				      MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-	if (shared_state == MAP_FAILED || pipe(data_pipe) || pipe(restart_pipe)) {
+	if (shared_state == MAP_FAILED || pipe(data_pipe) || pipe(restart_pipe) ||
+	    pipe(swap_pipe)) {
 		check(label("set up"), false, "%s", strerror(errno));
 		return;
 	}
@@ -603,6 +687,22 @@ void check_native()
 	check(label("the other call ran: the exit stop shows the child's pid"),
 	      stop.ret == (uint64_t)pid, "%s pid %d", describe(stop).c_str(),
 	      (int)pid);
+	// getppid(pipe, ...) changed to a blocking read and interrupted: once
+	// with the child's handler running, once with the signal suppressed.
+	if (!check_swapped_restart("A64 handler", pid, Abi::native, SYS_getppid,
+				   SYS_read, swap_pipe[0], true) ||
+	    !check_swapped_restart("A64 suppressed", pid, Abi::native,
+				   SYS_getppid, SYS_read, swap_pipe[0], false))
+		return kill_child(pid);
+#else
+	// The same calls with nothing changed: getppid twice.
+	for (int call = 0; call < 2; call++) {
+		if (!resume(pid, Abi::native, stop) ||
+		    !expect(label("getppid entry"), stop, true, SYS_getppid) ||
+		    !resume(pid, Abi::native, stop) ||
+		    !expect(label("getppid exit"), stop, false, SYS_getppid))
+			return kill_child(pid);
+	}
 #endif
 
 	// PTRACE_SET_SYSCALL_INFO replaces write(78, ...) by a write to the pipe.
@@ -717,6 +817,10 @@ void check_native()
 	check(label("the other call returned the child's pid to the child"),
 	      shared_state->swapped_result == (long)pid, "%ld, pid %d",
 	      shared_state->swapped_result, (int)pid);
+	for (long result : shared_state->restart_swapped_result)
+		check(label("the restarted call returned the parent's pid to the child"),
+		      result == (long)getpid(), "%ld, parent %d", result,
+		      (int)getpid());
 	check(label("the child's x7 survives every stop"),
 	      shared_state->x7_clobbered == 0, "%ld changes",
 	      shared_state->x7_clobbered);
@@ -748,16 +852,17 @@ void check_native()
 //	exit_group(r8)
 constexpr uint32_t a32_code[] = {
 	0xe3a08000, 0xe3055678, 0xe3415234, 0xe3a0c077, 0xe3a0004d,
-	0xe28f10bc, 0xe3a0201c, 0xe3a07004, 0xef000000, 0xe350001c,
+	0xe28f10c8, 0xe3a0201c, 0xe3a07004, 0xef000000, 0xe350001c,
 	0x03888001, 0xe35c0077, 0x03888040, 0xe3010092, 0xe3a07006,
 	0xef000000, 0xe3700009, 0x03888002, 0xe3a00007, 0xe3e07000,
 	0xef000000, 0xe3700026, 0x03888004, 0xe3a00007, 0xe302770f,
 	0xef000000, 0xe3700026, 0x03888008, 0xe3a00007, 0xe3a07014,
 	0xef000000, 0xe3700001, 0x03888080, 0xe3a07040, 0xef000000,
-	0xe3000000, 0xe3400001, 0xe2801c01, 0xe3a02000, 0xe3007002,
-	0xe340700f, 0xef000000, 0xe3500000, 0x03888010, 0xe1a00005,
-	0xe3007005, 0xe340700f, 0xef000000, 0xee1d1f70, 0xe1510005,
-	0x03888020, 0xe1a00008, 0xe3a070f8, 0xef000000,
+	0xe3a02001, 0xe3a07040, 0xef000000, 0xe3000000, 0xe3400001,
+	0xe2801c01, 0xe3a02000, 0xe3007002, 0xe340700f, 0xef000000,
+	0xe3500000, 0x03888010, 0xe1a00005, 0xe3007005, 0xe340700f,
+	0xef000000, 0xee1d1f70, 0xe1510005, 0x03888020, 0xe1a00008,
+	0xe3a070f8, 0xef000000,
 };
 constexpr char a32_message[] = "a32: fd 77 became the pipe!\n";
 constexpr uint32_t a32_checks = 255;
@@ -941,6 +1046,10 @@ void check_aarch32()
 	check(label("the other call ran: the exit stop shows the child's pid"),
 	      stop.ret == (uint32_t)pid, "%s pid %d", describe(stop).c_str(),
 	      (int)pid);
+	// getppid(...) changed to a blocking read, interrupted, signal suppressed.
+	if (!check_swapped_restart("A32 suppressed", pid, Abi::aarch32, 64, 3,
+				   swap_pipe[0], false))
+		return kill_child(pid);
 
 	// ARM's private calls take r0-r2 as they stand at the stop.
 	if (!resume(pid, Abi::aarch32, stop) ||
