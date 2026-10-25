@@ -24,22 +24,22 @@ A received frame also reports a wakeup that keeps the guest awake for
 wakeup_count handshake of an automatic suspend fail, so that the stack
 and the task the frames are for can answer before the next suspend
 begins.  The host's suspend ignores it.  darwin_net_kern.guest_wake=0
-leaves the interface a non-wake source.
+turns the wake and the hold off.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- arch/um/drivers/darwin_net_kern.c  | 31 ++++++++++++++++++++++++++++
- arch/um/drivers/mconsole_kern.c    | 14 +++++++++++++
- arch/um/include/shared/irq_kern.h  |  7 +++++++
+ arch/um/drivers/darwin_net_kern.c  | 34 ++++++++++++++++++++++++++++++
+ arch/um/drivers/mconsole_kern.c    | 14 ++++++++++++
+ arch/um/include/shared/irq_kern.h  |  7 ++++++
  arch/um/include/shared/kern_util.h |  1 +
- arch/um/kernel/irq.c               | 33 +++++++++++++++++++++++++++---
- 5 files changed, 83 insertions(+), 3 deletions(-)
+ arch/um/kernel/irq.c               | 33 ++++++++++++++++++++++++++---
+ 5 files changed, 86 insertions(+), 3 deletions(-)
 
 diff --git a/arch/um/drivers/darwin_net_kern.c b/arch/um/drivers/darwin_net_kern.c
-index 62b5c169bddbb46e83c9e16f5f648a6a3446fca8..6bcb180bf97aecc467fd1b808e2815c780263064 100644
+index 62b5c169bddbb46e83c9e16f5f648a6a3446fca8..5ed5683ae98f5d92c36c8da34478e6eae8e11fc9 100644
 --- a/arch/um/drivers/darwin_net_kern.c
 +++ b/arch/um/drivers/darwin_net_kern.c
-@@ -3,14 +3,32 @@
+@@ -3,14 +3,33 @@
  #include <linux/etherdevice.h>
  #include <linux/init.h>
  #include <linux/interrupt.h>
@@ -59,7 +59,8 @@ index 62b5c169bddbb46e83c9e16f5f648a6a3446fca8..6bcb180bf97aecc467fd1b808e2815c7
 + * wireless interface does, and keep the guest awake for this long after each
 + * burst, so that the stack and the task the frames are for can answer before
 + * an automatic suspend begins again.  A suspend the host asked for is not
-+ * woken by the network.  darwin_net_kern.guest_wake=0 turns the wake off.
++ * woken by the network.  darwin_net_kern.guest_wake=0 turns the wake and the
++ * hold off.
 + */
 +#define DARWIN_NET_RX_WAKE_MS 500
 +
@@ -72,7 +73,7 @@ index 62b5c169bddbb46e83c9e16f5f648a6a3446fca8..6bcb180bf97aecc467fd1b808e2815c7
  struct darwin_net_private {
  	struct net_device *device;
  	struct napi_struct napi;
-@@ -77,6 +95,14 @@ static irqreturn_t darwin_net_interrupt(int irq, void *data)
+@@ -77,6 +96,14 @@ static irqreturn_t darwin_net_interrupt(int irq, void *data)
  	(void)irq;
  	if (!private->backend_ready || !netif_running(device))
  		return IRQ_NONE;
@@ -87,7 +88,7 @@ index 62b5c169bddbb46e83c9e16f5f648a6a3446fca8..6bcb180bf97aecc467fd1b808e2815c7
  	napi_schedule(&private->napi);
  	return IRQ_HANDLED;
  }
-@@ -126,6 +152,8 @@ static int darwin_net_open_device(struct net_device *device)
+@@ -126,6 +153,8 @@ static int darwin_net_open_device(struct net_device *device)
  	}
  	private->receive_irq = irq;
  	device->irq = irq;
@@ -96,11 +97,13 @@ index 62b5c169bddbb46e83c9e16f5f648a6a3446fca8..6bcb180bf97aecc467fd1b808e2815c7
  	netif_carrier_on(device);
  	netif_start_queue(device);
  	return 0;
-@@ -181,8 +209,11 @@ static int __init darwin_net_init(void)
+@@ -181,8 +210,13 @@ static int __init darwin_net_init(void)
  		eth_hw_addr_random(device);
  	if (!private->backend_ready)
  		netif_carrier_off(device);
-+	darwin_net_wakeup = wakeup_source_register(NULL, "darwin-net-rx");
++	if (darwin_net_guest_wake)
++		darwin_net_wakeup = wakeup_source_register(NULL,
++							   "darwin-net-rx");
  	result = register_netdev(device);
  	if (result != 0) {
 +		wakeup_source_unregister(darwin_net_wakeup);
