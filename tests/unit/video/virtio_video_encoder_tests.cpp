@@ -19,6 +19,8 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +29,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -73,11 +76,15 @@ std::uint8_t chromaPattern(unsigned seed, std::size_t row, std::size_t byte)
  * `setup` runs on every encoder the device creates, before the device sees it,
  * and `encoders` lists them in creation order for the case to steer. */
 struct Fixture final {
+    /* With `platform`, the device encodes on the real platform encoder and
+     * `setup` and `encoders` are unused. */
     explicit Fixture(std::function<void(SyntheticEncoder&)> configure = {},
                      std::vector<VideoEncodeCapability> capabilities = encoderHostCapabilities(),
-                     std::size_t memorySize = 128 * page)
+                     std::size_t memorySize = 128 * page,
+                     std::function<std::unique_ptr<VideoEncoder>()> platform = {})
         : setup(std::move(configure)),
-          device(std::move(capabilities), [this]() -> std::unique_ptr<VideoEncoder> {
+          device(std::move(capabilities), [this, platform = std::move(platform)]() -> std::unique_ptr<VideoEncoder> {
+              if (platform) return platform();
               auto encoder = std::make_unique<SyntheticEncoder>();
               if (setup) setup(*encoder);
               encoders.push_back(encoder.get());
@@ -604,10 +611,16 @@ void parameters()
     require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_NV12, 100, 80, 0)) == VIRTIO_VIDEO_RESP_OK_NODATA, "even size");
     raw = f.params(1, input);
     require(raw.plane_formats[1].plane_size == 100u * 40 && raw.plane_formats[1].stride == 100, "NV12 chroma plane");
-    // BGRA is one plane of four bytes a pixel.
-    require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_BGRA8888, 64, 64)) == VIRTIO_VIDEO_RESP_OK_NODATA, "BGRA");
-    raw = f.params(1, input);
-    require(raw.num_planes == 1 && raw.plane_formats[0].plane_size == 64u * 64 * 4 && raw.plane_formats[0].stride == 256, "BGRA plane");
+    // BGRA and RGBA are one plane of four bytes a pixel, whichever way the plane count is asked for.
+    for (const auto format : {VIRTIO_VIDEO_FORMAT_BGRA8888, VIRTIO_VIDEO_FORMAT_RGBA8888})
+        for (const unsigned planes : {0u, 1u}) {
+            require(Fixture::type(f.setInput(1, format, 64, 64, planes)) == VIRTIO_VIDEO_RESP_OK_NODATA, "packed format");
+            raw = f.params(1, input);
+            require(raw.format == format && raw.num_planes == 1 && raw.plane_formats[0].plane_size == 64u * 64 * 4 &&
+                    raw.plane_formats[0].stride == 256, "packed plane");
+        }
+    require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_RGBA8888, 64, 64, 2)) == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER,
+            "a packed format in two planes was accepted");
 
     // What the host cannot encode, or size, is refused.
     require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_P010, 64, 64)) == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER,
@@ -642,7 +655,7 @@ void parameters()
     require(Fixture::type(f.setOutput(1, VIRTIO_VIDEO_FORMAT_VP9)) == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "VP9");
     require(Fixture::type(f.setOutput(1, VIRTIO_VIDEO_FORMAT_NV12)) == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "NV12 as coded");
     require(Fixture::type(f.setOutput(1, VIRTIO_VIDEO_FORMAT_MJPEG)) == VIRTIO_VIDEO_RESP_OK_NODATA, "JPEG");
-    // JPEG takes NV12 and BGRA but not I420: a stream on I420 moves to a layout JPEG takes.
+    // JPEG takes NV12, BGRA and RGBA but not I420.
     require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_YUV420, 64, 64)) == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER,
             "JPEG accepted I420");
 
@@ -945,19 +958,44 @@ void otherLayouts()
                         "an I420 plane changed");
         }
     }
-    {
+    // The two packed formats reach the encoder as their own layout, byte for byte.
+    for (const auto format : {VIRTIO_VIDEO_FORMAT_BGRA8888, VIRTIO_VIDEO_FORMAT_RGBA8888}) {
         Fixture f;
         f.create(1);
-        require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_BGRA8888, 64, 64)) == VIRTIO_VIDEO_RESP_OK_NODATA, "BGRA");
+        require(Fixture::type(f.setInput(1, format, 64, 64)) == VIRTIO_VIDEO_RESP_OK_NODATA, "packed format");
         const std::size_t base = 40 * page;
         for (std::size_t i = 0; i < 64 * 64 * 4; ++i) f.memory[base + i] = std::uint8_t(i * 7 + i / 256);
         require(Fixture::type(f.attach(1, input, 1, {{{base, 64 * 64 * 4, 0}}})) == VIRTIO_VIDEO_RESP_OK_NODATA, "attach");
         f.attachCodedOk(1, 0);
         f.queue(1, input, 1, 5);
         const auto& frame = f.encoder().submitted.at(0);
-        require(f.encoder().settings.input == RawVideoLayout::bgra && frame.planes.size() == 1, "BGRA is one plane");
+        require(f.encoder().settings.input == (format == VIRTIO_VIDEO_FORMAT_BGRA8888 ? RawVideoLayout::bgra : RawVideoLayout::rgba) &&
+                frame.planes.size() == 1, "a packed format is one plane");
         for (std::size_t row = 0; row < 64; ++row)
-            require(std::memcmp(&frame.planes[0][row * frame.strides[0]], &f.memory[base + row * 256], 256) == 0, "BGRA rows");
+            require(std::memcmp(&frame.planes[0][row * frame.strides[0]], &f.memory[base + row * 256], 256) == 0, "packed rows");
+    }
+    // Ten-bit input is one buffer holding both planes, and cannot be split in two.
+    {
+        Fixture f;
+        f.create(1, VIRTIO_VIDEO_FORMAT_HEVC);
+        require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_P010, 64, 64, 2)) == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER,
+                "P010 in two buffers was accepted");
+        require(Fixture::type(f.setInput(1, VIRTIO_VIDEO_FORMAT_P010, 64, 64)) == VIRTIO_VIDEO_RESP_OK_NODATA, "P010");
+        const auto p010 = f.params(1, input);
+        require(p010.num_planes == 1 && p010.plane_formats[0].plane_size == 64u * 64 * 2 + 32u * 128 && p010.plane_formats[0].stride == 128,
+                "P010 is one buffer of the luma and the interleaved chroma");
+        const std::size_t base = 40 * page;
+        const std::size_t chromaStart = 64 * 64 * 2;
+        for (std::size_t i = 0; i < p010.plane_formats[0].plane_size; ++i) f.memory[base + i] = std::uint8_t(i * 5 + i / 128);
+        require(Fixture::type(f.attach(1, input, 1, {{{base, p010.plane_formats[0].plane_size, 0}}})) == VIRTIO_VIDEO_RESP_OK_NODATA, "attach");
+        f.attachCodedOk(1, 0);
+        f.queue(1, input, 1, 5);
+        const auto& frame = f.encoder().submitted.at(0);
+        require(f.encoder().settings.input == RawVideoLayout::p010 && frame.planes.size() == 2, "P010 reaches the encoder as two planes");
+        for (std::size_t row = 0; row < 64; ++row)
+            require(std::memcmp(&frame.planes[0][row * frame.strides[0]], &f.memory[base + row * 128], 128) == 0, "P010 luma");
+        for (std::size_t row = 0; row < 32; ++row)
+            require(std::memcmp(&frame.planes[1][row * frame.strides[1]], &f.memory[base + chromaStart + row * 128], 128) == 0, "P010 chroma");
     }
 }
 
@@ -1541,11 +1579,11 @@ void activityLog()
         f.create(9);
         require(std::filesystem::exists(path), "the activity log was not written");
         const auto text = readLog(path);
-        require(text.find("encoder advertise codec=h264 profiles=h264-constrained-baseline,h264-main,h264-high inputs=nv12,i420,bgra "
+        require(text.find("encoder advertise codec=h264 profiles=h264-constrained-baseline,h264-main,h264-high inputs=nv12,i420,bgra,rgba "
                           "max=4096x2304 rc=vbr,cbr,cq,cqp bframes=2 layers=2 sessions=4") != std::string::npos, "advertised H.264");
-        require(text.find("encoder advertise codec=hevc profiles=hevc-main,hevc-main10 inputs=nv12,i420,bgra,p010 max=8192x4320 "
+        require(text.find("encoder advertise codec=hevc profiles=hevc-main,hevc-main10 inputs=nv12,i420,bgra,rgba,p010 max=8192x4320 "
                           "rc=vbr,cbr,cq bframes=2 layers=1 sessions=4") != std::string::npos, "advertised HEVC");
-        require(text.find("encoder advertise codec=jpeg profiles=jpeg-baseline inputs=nv12,bgra max=16384x16384 rc=cq") != std::string::npos,
+        require(text.find("encoder advertise codec=jpeg profiles=jpeg-baseline inputs=nv12,bgra,rgba max=16384x16384 rc=cq") != std::string::npos,
                 "advertised JPEG");
         require(text.find("encoder stream=7 open codec=h264") != std::string::npos, "stream open");
         require(text.find("encoder stream=7 start codec=h264 profile=h264-high rc=vbr bitrate=2000000 size=64x64 fps=30000/1001 "
@@ -1625,6 +1663,349 @@ void sharedMemoryBuffers()
     ::close(descriptor);
 }
 
+/* ---- The device on the host's own hardware encoder.
+ *
+ * Everything above steers a synthetic encoder. These cases run a stream the
+ * way a guest driver would on the real platform encoder, with the capability
+ * list the platform discovered, and read the coded bytes back. What this host
+ * can encode is what discovery says, so a case whose feature the host lacks
+ * is skipped, and the capability list is checked to agree. */
+
+std::vector<std::vector<std::uint8_t>> annexBUnits(const std::vector<std::uint8_t>& bytes)
+{
+    std::vector<std::vector<std::uint8_t>> units;
+    std::size_t start = bytes.size();
+    for (std::size_t index = 0; index + 2 < bytes.size(); ++index) {
+        if (bytes[index] != 0 || bytes[index + 1] != 0 || bytes[index + 2] != 1) continue;
+        if (start < bytes.size()) {
+            auto end = index;
+            while (end > start && bytes[end - 1] == 0) --end;
+            units.emplace_back(bytes.begin() + std::ptrdiff_t(start), bytes.begin() + std::ptrdiff_t(end));
+        }
+        start = index + 3;
+        index += 2;
+    }
+    if (start < bytes.size()) units.emplace_back(bytes.begin() + std::ptrdiff_t(start), bytes.end());
+    return units;
+}
+
+/* The unit with its emulation prevention bytes removed. */
+std::vector<std::uint8_t> unescaped(const std::vector<std::uint8_t>& unit)
+{
+    std::vector<std::uint8_t> out;
+    unsigned zeros = 0;
+    for (const auto byte : unit) {
+        if (zeros >= 2 && byte == 3) {
+            zeros = 0;
+            continue;
+        }
+        zeros = byte == 0 ? zeros + 1 : 0;
+        out.push_back(byte);
+    }
+    return out;
+}
+
+constexpr unsigned hevcSps = 33, hevcPrefixSei = 39, h264Sps = 7, h264Idr = 5;
+unsigned hevcType(const std::vector<std::uint8_t>& unit) { return (unit.at(0) >> 1) & 0x3f; }
+unsigned h264Type(const std::vector<std::uint8_t>& unit) { return unit.at(0) & 0x1f; }
+
+/* The SEI messages of every prefix SEI unit, by payload type. */
+std::map<unsigned, std::vector<std::uint8_t>> hevcSeiPayloads(const std::vector<std::uint8_t>& frame)
+{
+    std::map<unsigned, std::vector<std::uint8_t>> messages;
+    for (const auto& unit : annexBUnits(frame)) {
+        if (hevcType(unit) != hevcPrefixSei) continue;
+        const auto rbsp = unescaped(unit);
+        std::size_t at = 2;
+        while (at + 2 < rbsp.size()) {
+            unsigned type = 0, size = 0;
+            while (at < rbsp.size() && rbsp[at] == 0xff) type += 255, ++at;
+            type += rbsp.at(at++);
+            while (at < rbsp.size() && rbsp[at] == 0xff) size += 255, ++at;
+            size += rbsp.at(at++);
+            require(at + size <= rbsp.size(), "an SEI message overruns its unit");
+            messages[type].assign(rbsp.begin() + std::ptrdiff_t(at), rbsp.begin() + std::ptrdiff_t(at + size));
+            at += size;
+        }
+    }
+    return messages;
+}
+
+/* general_profile_idc of an HEVC stream's SPS: the low five bits of the byte after the unit header and the VPS id byte. */
+unsigned hevcProfileIdc(const std::vector<std::uint8_t>& frame)
+{
+    for (const auto& unit : annexBUnits(frame))
+        if (hevcType(unit) == hevcSps) return unescaped(unit).at(3) & 0x1f;
+    require(false, "the key frame has no SPS");
+    return 0;
+}
+
+/* A picture that is not flat, in the layout's own bytes. */
+void fillRaw(std::uint8_t* out, RawVideoLayout layout, unsigned width, unsigned height, unsigned index)
+{
+    const auto luma = [&](unsigned x, unsigned y) {
+        return std::uint8_t(40 + ((x + 2 * index) % 64) + (((x / 16 + y / 16) & 1) * 90) + ((x * 7 + y * 13 + index) % 17));
+    };
+    const auto chroma = [&](unsigned x, unsigned y, unsigned plane) {
+        return std::uint8_t(plane == 0 ? 100 + (x + index) % 40 : 120 + y % 40);
+    };
+    switch (layout) {
+    case RawVideoLayout::nv12:
+        for (unsigned y = 0; y < height; ++y)
+            for (unsigned x = 0; x < width; ++x) out[y * width + x] = luma(x, y);
+        out += std::size_t(width) * height;
+        for (unsigned y = 0; y < height / 2; ++y)
+            for (unsigned x = 0; x < width / 2; ++x) {
+                out[y * width + 2 * x] = chroma(x, y, 0);
+                out[y * width + 2 * x + 1] = chroma(x, y, 1);
+            }
+        break;
+    case RawVideoLayout::p010: {
+        const auto put = [](std::uint8_t* at, std::uint8_t value) {
+            const auto sample = std::uint16_t(std::uint16_t(value) << 8);  // ten bits in the high bits of sixteen
+            at[0] = std::uint8_t(sample & 0xff);
+            at[1] = std::uint8_t(sample >> 8);
+        };
+        for (unsigned y = 0; y < height; ++y)
+            for (unsigned x = 0; x < width; ++x) put(out + 2 * (std::size_t(y) * width + x), luma(x, y));
+        out += 2 * std::size_t(width) * height;
+        for (unsigned y = 0; y < height / 2; ++y)
+            for (unsigned x = 0; x < width / 2; ++x) {
+                put(out + 2 * (std::size_t(y) * width + 2 * x), chroma(x, y, 0));
+                put(out + 2 * (std::size_t(y) * width + 2 * x + 1), chroma(x, y, 1));
+            }
+        break;
+    }
+    case RawVideoLayout::bgra:
+    case RawVideoLayout::rgba:
+        for (unsigned y = 0; y < height; ++y)
+            for (unsigned x = 0; x < width; ++x) {
+                const auto at = out + 4 * (std::size_t(y) * width + x);
+                at[0] = luma(x, y); at[1] = chroma(x, y, 0); at[2] = chroma(x, y, 1); at[3] = 0xff;
+            }
+        break;
+    default:
+        require(false, "a layout this case does not draw");
+    }
+}
+
+struct CodedFrame {
+    std::uint32_t flags {};
+    std::uint64_t timestamp {};
+    std::vector<std::uint8_t> bytes;
+};
+struct PlatformStream {
+    std::vector<CodedFrame> frames;  // in completion order, the end marker excluded
+    bool endMarker {};
+};
+
+constexpr unsigned realRawSlot = 64, realCodedSlot = 16;  // pages
+std::size_t realRawBase(unsigned n) { return (16 + realRawSlot * (n - 1)) * page; }
+std::size_t realCodedBase(unsigned k) { return (16 + realRawSlot * 16 + realCodedSlot * k) * page; }
+constexpr std::size_t realMemory = 16 + realRawSlot * 16 + realCodedSlot * 20;  // pages
+std::uint64_t realTimestamp(unsigned n) { return 1000 + 33 * std::uint64_t(n); }
+
+/* Configures stream 1 as `codedFormat` from `layout` through `configure`,
+ * queues `count` pictures and enough coded buffers for them and the end
+ * marker, drains, and collects what the device completes, bounded in time. */
+PlatformStream encodeOnPlatform(Fixture& f, std::uint32_t codedFormat, RawVideoLayout layout, unsigned width, unsigned height,
+                                unsigned count, const std::function<void(Fixture&)>& configure = {})
+{
+    f.create(1, codedFormat);
+    if (configure) configure(f);
+    require(Fixture::type(f.setInput(1, wireRawFormat(layout), width, height, 1)) == VIRTIO_VIDEO_RESP_OK_NODATA, "the host's own format was refused");
+    const auto raw = f.params(1, input);
+    require(raw.num_planes == 1, "the raw buffer is not one buffer");
+    const std::uint32_t rawSize = raw.plane_formats[0].plane_size;
+    require(rawSize <= realRawSlot * page, "the picture does not fit its slot");
+    for (unsigned n = 1; n <= count; ++n) {
+        fillRaw(&f.memory[realRawBase(n)], layout, width, height, n);
+        require(Fixture::type(f.attach(1, input, n, {{{realRawBase(n), rawSize, 0}}})) == VIRTIO_VIDEO_RESP_OK_NODATA, "raw attach");
+    }
+    std::map<std::uint64_t, unsigned> codedRequests;
+    for (unsigned k = 0; k < count + 1; ++k) {
+        require(Fixture::type(f.attach(1, output, codedFirst + k, {{{realCodedBase(k), realCodedSlot * page, 0}}})) == VIRTIO_VIDEO_RESP_OK_NODATA,
+                "coded attach");
+        codedRequests[f.next] = k;
+        require(f.send(f.queueCommand(1, output, codedFirst + k)).action == VhostUserQueueAction::defer, "a coded buffer was not deferred");
+    }
+    std::set<std::uint64_t> pending;
+    for (unsigned n = 1; n <= count; ++n) {
+        auto command = f.queueCommand(1, input, n, realTimestamp(n));
+        command.data_sizes[0] = rawSize;
+        command.data_sizes[1] = 0;
+        pending.insert(f.next);
+        require(f.send(command).action == VhostUserQueueAction::defer, "a raw buffer was not deferred");
+    }
+    const auto drainRequest = f.next;
+    pending.insert(drainRequest);
+    require(f.send(virtio_video_stream_drain {{VIRTIO_VIDEO_CMD_STREAM_DRAIN, 1}}).action == VhostUserQueueAction::defer, "drain was not deferred");
+
+    PlatformStream result;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (true) {
+        for (const auto& completion : f.completions()) {
+            if (const auto coded = codedRequests.find(completion.request); coded != codedRequests.end()) {
+                require(completion.responseType() == VIRTIO_VIDEO_RESP_OK_RESOURCE_QUEUE, "a coded buffer failed");
+                const auto buffer = completion.buffer();
+                require(!(buffer.flags & VIRTIO_VIDEO_DEQUEUE_FLAG_ERR), "the platform failed a frame");
+                require(buffer.data_sizes[0] <= realCodedSlot * page, "a coded frame overran its buffer");
+                if (buffer.flags & VIRTIO_VIDEO_DEQUEUE_FLAG_EOS) {
+                    require(buffer.data_sizes[0] == 0 && !result.endMarker, "the end marker");
+                    result.endMarker = true;
+                } else {
+                    const auto from = f.memory.begin() + std::ptrdiff_t(realCodedBase(coded->second));
+                    result.frames.push_back({buffer.flags, buffer.timestamp, {from, from + buffer.data_sizes[0]}});
+                }
+                codedRequests.erase(coded);
+            } else {
+                require(pending.erase(completion.request) == 1, "a completion nobody asked for");
+                require(completion.responseType() == (completion.request == drainRequest ? VIRTIO_VIDEO_RESP_OK_NODATA
+                                                                                          : VIRTIO_VIDEO_RESP_OK_RESOURCE_QUEUE),
+                        "a raw buffer or the drain failed");
+                require(completion.request == drainRequest || !(completion.buffer().flags & VIRTIO_VIDEO_DEQUEUE_FLAG_ERR),
+                        "the platform encoder refused the stream the host's own capability lists");
+            }
+        }
+        if (pending.empty() && codedRequests.empty()) break;
+        require(std::chrono::steady_clock::now() < deadline, "the platform encoder did not finish the stream in a minute");
+        if (f.readable(200)) f.device.drainEventSource();
+    }
+    return result;
+}
+
+/* What every stream the platform encodes has to look like to the guest. */
+void requireStream(const PlatformStream& stream, unsigned count, const char* what)
+{
+    require(stream.frames.size() == count && stream.endMarker, what);
+    for (unsigned index = 0; index < count; ++index) {
+        const auto& frame = stream.frames[index];
+        require(!frame.bytes.empty(), what);
+        require(frame.timestamp == realTimestamp(index + 1), what);
+        require(index == 0 ? frame.flags == VIRTIO_VIDEO_DEQUEUE_FLAG_KEY_FRAME : frame.flags == VIRTIO_VIDEO_DEQUEUE_FLAG_PFRAME, what);
+    }
+}
+
+void platformEncoder()
+{
+    const auto capabilities = videoEncodeCapabilities();
+    if (capabilities.empty()) {
+        std::puts("  no hardware video encoder on this host; skipped");
+        return;
+    }
+    const auto lists = [&](VideoCodec codec, VideoEncodeProfile profile, RawVideoLayout layout) {
+        for (const auto& capability : capabilities)
+            if (capability.codec == codec)
+                for (const auto& entry : capability.profiles)
+                    if (entry.profile == profile && std::find(entry.inputs.begin(), entry.inputs.end(), layout) != entry.inputs.end())
+                        return true;
+        return false;
+    };
+    const auto make = [&] {
+        return std::make_unique<Fixture>(std::function<void(SyntheticEncoder&)> {}, capabilities, realMemory * page,
+                                         [] { return makeVideoEncoder(); });
+    };
+    constexpr unsigned count = 6, width = 128, height = 96;
+
+    // The device lists each raw format on the wire when a profile of the host encoded from it.
+    {
+        const auto f = make();
+        const auto response = f->send(virtio_video_query_capability {{VIRTIO_VIDEO_CMD_QUERY_CAPABILITY, 0}, input, {}});
+        const auto header = load<virtio_video_query_capability_resp>(response.response);
+        require(header.hdr.type == VIRTIO_VIDEO_RESP_OK_QUERY_CAPABILITY, "capability query");
+        std::set<std::uint32_t> formats;
+        std::size_t offset = sizeof(header);
+        for (std::uint32_t index = 0; index < header.num_descs; ++index) {
+            const auto desc = load<virtio_video_format_desc>(response.response, offset);
+            formats.insert(desc.format);
+            offset += sizeof(desc) + sizeof(virtio_video_format_frame) + sizeof(virtio_video_format_range);
+        }
+        for (const auto layout : {RawVideoLayout::nv12, RawVideoLayout::p010, RawVideoLayout::bgra, RawVideoLayout::rgba}) {
+            bool any = false;
+            for (const auto& capability : capabilities)
+                for (const auto& entry : capability.profiles)
+                    any = any || std::find(entry.inputs.begin(), entry.inputs.end(), layout) != entry.inputs.end();
+            require(formats.count(wireRawFormat(layout)) == (any ? 1u : 0u), "the wire does not list the host's raw formats");
+        }
+    }
+
+    // NV12 into H.264 and into plain HEVC: the profile the guest gets is the one it did not change.
+    if (lists(VideoCodec::h264, VideoEncodeProfile::h264High, RawVideoLayout::nv12)) {
+        const auto f = make();
+        const auto stream = encodeOnPlatform(*f, VIRTIO_VIDEO_FORMAT_H264, RawVideoLayout::nv12, width, height, count);
+        requireStream(stream, count, "H.264 from NV12");
+        bool sps = false, idr = false;
+        for (const auto& unit : annexBUnits(stream.frames[0].bytes)) sps = sps || h264Type(unit) == h264Sps, idr = idr || h264Type(unit) == h264Idr;
+        require(sps && idr, "the first H.264 frame is not a key frame with its parameter sets");
+    } else {
+        std::puts("  no H.264 from NV12 on this host; skipped");
+    }
+    if (lists(VideoCodec::hevc, VideoEncodeProfile::hevcMain, RawVideoLayout::nv12)) {
+        const auto f = make();
+        const auto stream = encodeOnPlatform(*f, VIRTIO_VIDEO_FORMAT_HEVC, RawVideoLayout::nv12, width, height, count);
+        requireStream(stream, count, "HEVC from NV12");
+        require(hevcProfileIdc(stream.frames[0].bytes) == 1, "an HEVC stream the guest did not configure is not Main");
+        require(hevcSeiPayloads(stream.frames[0].bytes).count(137) == 0, "HDR metadata nobody asked for");
+    }
+
+    // Android's surfaces: packed pixels, converted by the platform.
+    for (const auto layout : {RawVideoLayout::bgra, RawVideoLayout::rgba}) {
+        const char* name = layout == RawVideoLayout::bgra ? "BGRA" : "RGBA";
+        const bool h264 = lists(VideoCodec::h264, VideoEncodeProfile::h264High, layout);
+        if (!h264 && !lists(VideoCodec::hevc, VideoEncodeProfile::hevcMain, layout)) {
+            std::printf("  no %s input on this host; skipped\n", name);
+            continue;
+        }
+        const auto f = make();
+        const auto stream = encodeOnPlatform(*f, h264 ? VIRTIO_VIDEO_FORMAT_H264 : VIRTIO_VIDEO_FORMAT_HEVC, layout, width, height, count);
+        requireStream(stream, count, name);
+    }
+
+    // HEVC Main 10 from P010 with HDR10: the profile, the 10-bit layout and both SEI messages reach the coded stream.
+    if (lists(VideoCodec::hevc, VideoEncodeProfile::hevcMain10, RawVideoLayout::p010)) {
+        // Primaries are green, blue, red; the control carries all x and then all y, and the SEI interleaves them.
+        const std::array<std::uint16_t, 8> mastering {8500, 39850, 6550, 2300, 35400, 14600, 15635, 16450};
+        const std::uint32_t maximumLuminance = 10'000'000, minimumLuminance = 50;
+        std::vector<std::uint8_t> display, light, expectedMastering, expectedLight;
+        const auto le16 = [](std::vector<std::uint8_t>& out, unsigned value) { out.push_back(std::uint8_t(value)); out.push_back(std::uint8_t(value >> 8)); };
+        const auto be16 = [](std::vector<std::uint8_t>& out, unsigned value) { out.push_back(std::uint8_t(value >> 8)); out.push_back(std::uint8_t(value)); };
+        const auto le32 = [&](std::vector<std::uint8_t>& out, std::uint32_t value) { le16(out, value & 0xffff); le16(out, value >> 16); };
+        const auto be32 = [&](std::vector<std::uint8_t>& out, std::uint32_t value) { be16(out, value >> 16); be16(out, value & 0xffff); };
+        for (const auto x : {0, 2, 4}) le16(display, mastering[x]);
+        for (const auto y : {1, 3, 5}) le16(display, mastering[y]);
+        le16(display, mastering[6]); le16(display, mastering[7]);
+        le32(display, maximumLuminance); le32(display, minimumLuminance);
+        le16(light, 1000); le16(light, 400);
+        for (const auto value : mastering) be16(expectedMastering, value);
+        be32(expectedMastering, maximumLuminance); be32(expectedMastering, minimumLuminance);
+        be16(expectedLight, 1000); be16(expectedLight, 400);
+
+        const auto f = make();
+        const auto stream = encodeOnPlatform(*f, VIRTIO_VIDEO_FORMAT_HEVC, RawVideoLayout::p010, width, height, count, [&](Fixture& g) {
+            require(Fixture::type(setControls(g, 1, ControlSet()
+                        .scalar(UML_V4L2_CID_MPEG_VIDEO_HEVC_PROFILE, UML_V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10)
+                        .compound(UML_V4L2_CID_COLORIMETRY_HDR10_MASTERING_DISPLAY, display)
+                        .compound(UML_V4L2_CID_COLORIMETRY_HDR10_CLL_INFO, light))) == VIRTIO_VIDEO_RESP_OK_V4L2_CONTROLS,
+                    "Main 10 and the HDR10 controls were refused on a host that lists them");
+            virtio_video_set_stream_info info {};
+            info.hdr = {VIRTIO_VIDEO_CMD_SET_STREAM_INFO, 1};
+            info.info = {input, 1, 30, UML_V4L2_COLORSPACE_BT2020, UML_V4L2_XFER_FUNC_SMPTE2084, UML_V4L2_YCBCR_ENC_BT2020, 0, {}};
+            g.ok(info);
+        });
+        requireStream(stream, count, "HEVC Main 10 from P010");
+        require(hevcProfileIdc(stream.frames[0].bytes) == 2, "the stream is not HEVC Main 10");
+        const auto key = hevcSeiPayloads(stream.frames[0].bytes);
+        require(key.count(137) == 1 && key.at(137) == expectedMastering, "the mastering display SEI is not the guest's control, byte for byte");
+        require(key.count(144) == 1 && key.at(144) == expectedLight, "the content light level SEI is not the guest's control, byte for byte");
+        for (unsigned index = 1; index < count; ++index) {
+            const auto other = hevcSeiPayloads(stream.frames[index].bytes);
+            require(other.count(137) == 0 && other.count(144) == 0, "a frame that is not a key frame states HDR metadata");
+        }
+    } else {
+        std::puts("  no HEVC Main 10 from P010 on this host; skipped");
+    }
+}
+
 } // namespace
 
 int main()
@@ -1650,6 +2031,7 @@ int main()
         resetAndDestroy();
         activityLog();
         sharedMemoryBuffers();
+        platformEncoder();
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

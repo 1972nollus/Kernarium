@@ -74,7 +74,7 @@ bool published(const EncoderControls& controls, std::uint32_t id) { return contr
 void wireNames()
 {
     for (const auto layout : {RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::p010,
-                              RawVideoLayout::nv16, RawVideoLayout::nv24, RawVideoLayout::bgra}) {
+                              RawVideoLayout::nv16, RawVideoLayout::nv24, RawVideoLayout::bgra, RawVideoLayout::rgba}) {
         const auto format = wireRawFormat(layout);
         require(format >= VIRTIO_VIDEO_FORMAT_RAW_MIN && format <= VIRTIO_VIDEO_FORMAT_RAW_MAX, "raw wire format range");
         require(platformRawLayout(format) == layout, "a raw format does not round-trip");
@@ -95,21 +95,22 @@ void wireNames()
 void capabilityResponses()
 {
     const auto capabilities = encoderHostCapabilities();
-    // The order is fixed: NV12, I420, P010, BGRA, and the codecs as the host lists them.
+    // The order is fixed: NV12, I420, P010, BGRA, RGBA, and the codecs as the host lists them.
     const auto raw = advertisedRawLayouts(capabilities);
     require((raw == std::vector<RawVideoLayout> {RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::p010,
-                                                  RawVideoLayout::bgra}),
+                                                  RawVideoLayout::bgra, RawVideoLayout::rgba}),
             "the raw formats are not the ones an encoder accepted, in the fixed order");
     require((advertisedCodedFormats(capabilities) ==
              std::vector<std::uint32_t> {VIRTIO_VIDEO_FORMAT_H264, VIRTIO_VIDEO_FORMAT_HEVC, VIRTIO_VIDEO_FORMAT_MJPEG}),
             "the coded formats are not the host's codecs in order");
 
     const auto inputs = parse(encoderCapabilityResponse(capabilities, input));
-    require(inputs.size() == 4, "the input queue lists one entry per raw format");
+    require(inputs.size() == 5, "the input queue lists one entry per raw format");
     std::vector<std::uint32_t> inputFormats;
     for (const auto& entry : inputs) inputFormats.push_back(entry.desc.format);
     require((inputFormats == std::vector<std::uint32_t> {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420,
-                                                          VIRTIO_VIDEO_FORMAT_P010, VIRTIO_VIDEO_FORMAT_BGRA8888}),
+                                                          VIRTIO_VIDEO_FORMAT_P010, VIRTIO_VIDEO_FORMAT_BGRA8888,
+                                                          VIRTIO_VIDEO_FORMAT_RGBA8888}),
             "raw format order changed");
     // A mask names, by index into the other queue's list, the formats it works with.
     const std::uint64_t h264 = 1, hevc = 2, jpeg = 4;
@@ -117,13 +118,15 @@ void capabilityResponses()
     require(inputs[1].desc.mask == (h264 | hevc), "I420 feeds H.264 and HEVC but not JPEG");
     require(inputs[2].desc.mask == hevc, "P010 feeds only HEVC Main10");
     require(inputs[3].desc.mask == (h264 | hevc | jpeg), "BGRA feeds every codec");
+    require(inputs[4].desc.mask == (h264 | hevc | jpeg), "RGBA feeds every codec");
     // The planar 8-bit formats may be one buffer or one per plane; the others are one buffer.
     const auto both = VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER | VIRTIO_VIDEO_PLANES_LAYOUT_PER_PLANE;
     require(inputs[0].desc.planes_layout == both && inputs[1].desc.planes_layout == both,
             "planar formats must offer both buffer layouts");
     require(inputs[2].desc.planes_layout == VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER &&
-            inputs[3].desc.planes_layout == VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER,
-            "P010 and BGRA are single-buffer formats");
+            inputs[3].desc.planes_layout == VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER &&
+            inputs[4].desc.planes_layout == VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER,
+            "P010, BGRA and RGBA are single-buffer formats");
     // The size range is the union over the codecs that take the format.
     require(inputs[0].frame.width.min == 16 && inputs[0].frame.width.max == 16384 &&
             inputs[0].frame.height.max == 16384, "NV12 size range is the widest of its codecs");
@@ -138,10 +141,10 @@ void capabilityResponses()
     require(outputs.size() == 3, "the output queue lists one entry per codec");
     require(outputs[0].desc.format == VIRTIO_VIDEO_FORMAT_H264 && outputs[1].desc.format == VIRTIO_VIDEO_FORMAT_HEVC &&
             outputs[2].desc.format == VIRTIO_VIDEO_FORMAT_MJPEG, "coded format order");
-    // Output masks index the raw list: NV12 = 1, I420 = 2, P010 = 4, BGRA = 8.
-    require(outputs[0].desc.mask == (1 | 2 | 8), "H.264 takes NV12, I420 and BGRA");
-    require(outputs[1].desc.mask == (1 | 2 | 4 | 8), "HEVC takes everything");
-    require(outputs[2].desc.mask == (1 | 8), "JPEG takes NV12 and BGRA");
+    // Output masks index the raw list: NV12 = 1, I420 = 2, P010 = 4, BGRA = 8, RGBA = 16.
+    require(outputs[0].desc.mask == (1 | 2 | 8 | 16), "H.264 takes NV12, I420, BGRA and RGBA");
+    require(outputs[1].desc.mask == (1 | 2 | 4 | 8 | 16), "HEVC takes everything");
+    require(outputs[2].desc.mask == (1 | 8 | 16), "JPEG takes NV12, BGRA and RGBA");
     require(outputs[0].desc.planes_layout == VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER, "coded buffers are single-plane");
     require(outputs[0].frame.width.max == 4096 && outputs[0].frame.height.max == 2304, "H.264 size range");
     require(outputs[2].frame.width.min == 16, "JPEG size range");
@@ -153,8 +156,16 @@ void capabilityResponses()
     // A host with only JPEG advertises only what it has, and the masks follow the lists.
     std::vector<VideoEncodeCapability> jpegOnly {capabilities[2]};
     const auto jpegInputs = parse(encoderCapabilityResponse(jpegOnly, input));
-    require(jpegInputs.size() == 2 && jpegInputs[0].desc.mask == 1 && jpegInputs[1].desc.format == VIRTIO_VIDEO_FORMAT_BGRA8888,
-            "a JPEG-only host lists NV12 and BGRA");
+    require(jpegInputs.size() == 3 && jpegInputs[0].desc.mask == 1 && jpegInputs[1].desc.format == VIRTIO_VIDEO_FORMAT_BGRA8888 &&
+            jpegInputs[2].desc.format == VIRTIO_VIDEO_FORMAT_RGBA8888, "a JPEG-only host lists NV12, BGRA and RGBA");
+    // A layout is listed because a profile encoded from it: a host that did not encode RGBA does not list it.
+    auto noRgba = capabilities;
+    for (auto& capability : noRgba)
+        for (auto& profile : capability.profiles)
+            profile.inputs.erase(std::remove(profile.inputs.begin(), profile.inputs.end(), RawVideoLayout::rgba), profile.inputs.end());
+    const auto withoutRgba = parse(encoderCapabilityResponse(noRgba, input));
+    require(withoutRgba.size() == 4 && withoutRgba.back().desc.format == VIRTIO_VIDEO_FORMAT_BGRA8888,
+            "RGBA was listed on a host that did not encode it");
     // VP9 is the decoder's; an encoder capability for it is not advertised.
     VideoEncodeCapability vp9 = capabilities[0];
     vp9.codec = VideoCodec::vp9;
@@ -554,6 +565,106 @@ void updates()
     require(!encodeUpdate(stream(VideoCodec::h264), {}, values).bitrate, "an empty update changed something");
 }
 
+/* The platform's own discovery on this host, through the device's mapping.
+ * Every other case here feeds the mapping a capability list written by hand;
+ * this one proves the lists the device publishes are what the hardware did.
+ * Which layouts and profiles exist depends on the host, so a host without a
+ * feature has the feature absent from the wire, not the case failing. */
+void realHost()
+{
+    const auto capabilities = videoEncodeCapabilities();
+    if (capabilities.empty()) {
+        std::puts("  no hardware video encoder on this host; skipped");
+        return;
+    }
+    const auto hasLayout = [&](VideoCodec codec, RawVideoLayout layout) {
+        for (const auto& capability : capabilities)
+            if (capability.codec == codec)
+                for (const auto& profile : capability.profiles)
+                    if (std::find(profile.inputs.begin(), profile.inputs.end(), layout) != profile.inputs.end()) return true;
+        return false;
+    };
+    const auto codecs = {VideoCodec::h264, VideoCodec::hevc, VideoCodec::jpeg};
+    const auto raws = {RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::p010, RawVideoLayout::bgra,
+                       RawVideoLayout::rgba, RawVideoLayout::nv16, RawVideoLayout::nv24};
+
+    // The input queue lists a raw format exactly when some profile of some codec encoded from it, and its mask
+    // names exactly the codecs that did.
+    const auto coded = advertisedCodedFormats(capabilities);
+    const auto inputs = parse(encoderCapabilityResponse(capabilities, input));
+    std::vector<std::uint32_t> expectedFormats;
+    for (const auto layout : raws) {
+        bool any = false;
+        for (const auto codec : codecs) any = any || hasLayout(codec, layout);
+        if (any) expectedFormats.push_back(wireRawFormat(layout));
+    }
+    std::vector<std::uint32_t> listed;
+    for (const auto& entry : inputs) listed.push_back(entry.desc.format);
+    require(listed == expectedFormats, "the input queue is not the layouts the hardware encoded from");
+    for (const auto& entry : inputs) {
+        const auto layout = platformRawLayout(entry.desc.format);
+        require(layout.has_value(), "a listed raw format is not an encoder input");
+        std::uint64_t mask = 0;
+        for (std::size_t index = 0; index < coded.size(); ++index)
+            if (hasLayout(*encodedCodec(coded[index]), *layout)) mask |= std::uint64_t(1) << index;
+        require(entry.desc.mask == mask, "a raw format's mask is not the codecs that encoded from it");
+        const bool single = *layout == RawVideoLayout::p010 || *layout == RawVideoLayout::bgra || *layout == RawVideoLayout::rgba;
+        require(single ? entry.desc.planes_layout == VIRTIO_VIDEO_PLANES_LAYOUT_SINGLE_BUFFER : entry.desc.planes_layout != 0,
+                "a packed or ten-bit format is not a single buffer");
+    }
+
+    // HEVC Main 10, and with it P010 input and the HDR10 controls, is on the wire exactly when the hardware has it.
+    const EncoderControls controls(capabilities);
+    bool hevc = false, main10Profile = false, hdr = false;
+    for (const auto& capability : capabilities) {
+        if (capability.codec != VideoCodec::hevc) continue;
+        hevc = true;
+        for (const auto& profile : capability.profiles) main10Profile = main10Profile || profile.profile == VideoEncodeProfile::hevcMain10;
+        hdr = main10Profile && capability.hdrStaticMetadata;
+    }
+    const bool main10 = main10Profile && hasLayout(VideoCodec::hevc, RawVideoLayout::p010);
+    require(!hasLayout(VideoCodec::h264, RawVideoLayout::p010) && !hasLayout(VideoCodec::jpeg, RawVideoLayout::p010),
+            "10-bit input is encoded by something other than HEVC");
+    require(std::count(listed.begin(), listed.end(), VIRTIO_VIDEO_FORMAT_P010) == (hasLayout(VideoCodec::hevc, RawVideoLayout::p010) ? 1 : 0),
+            "P010 is listed on a host that did not encode from it, or missing on one that did");
+    require(published(controls, UML_V4L2_CID_MPEG_VIDEO_HEVC_PROFILE) == hevc, "the HEVC profile control does not follow the HEVC capability");
+    if (hevc) {
+        const auto& profile = control(controls, UML_V4L2_CID_MPEG_VIDEO_HEVC_PROFILE);
+        const bool offered = profile.maximum >= UML_V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10 &&
+            ((profile.menu_skip_mask >> UML_V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10) & 1) == 0;
+        require(offered == main10Profile, "Main 10 is offered without hardware for it, or hidden with it");
+    }
+    require(published(controls, UML_V4L2_CID_COLORIMETRY_HDR10_CLL_INFO) == hdr &&
+            published(controls, UML_V4L2_CID_COLORIMETRY_HDR10_MASTERING_DISPLAY) == hdr,
+            "the HDR10 controls do not follow the hardware's HDR metadata");
+    std::printf("  this host lists %zu raw formats; HEVC Main 10 %s, P010 %s, HDR10 metadata %s\n", listed.size(), main10Profile ? "yes" : "no",
+                hasLayout(VideoCodec::hevc, RawVideoLayout::p010) ? "yes" : "no", hdr ? "yes" : "no");
+    if (main10) {
+        // And a stream that asks for it gets it: Main 10, the 10-bit layout, and the metadata in the encoder's settings.
+        auto values = controls.defaults();
+        values.scalars[UML_V4L2_CID_MPEG_VIDEO_HEVC_PROFILE] = UML_V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10;
+        std::vector<std::uint8_t> light(4), display(24);
+        light[0] = 0xe8; light[1] = 0x03; light[2] = 0x90; light[3] = 0x01;
+        for (std::size_t i = 0; i < 6; ++i) display[2 * i] = std::uint8_t(i + 1);
+        display[12] = 0x10; display[14] = 0x20; display[16] = 0x40; display[17] = 0x42; display[18] = 0x0f; display[20] = 0x05;
+        if (hdr) {
+            require(controls.check(UML_V4L2_CID_COLORIMETRY_HDR10_CLL_INFO, 0, light.size()) == ControlCheck::ok &&
+                    controls.check(UML_V4L2_CID_COLORIMETRY_HDR10_MASTERING_DISPLAY, 0, display.size()) == ControlCheck::ok,
+                    "the host's HDR10 payload sizes are refused");
+            values.payloads[UML_V4L2_CID_COLORIMETRY_HDR10_CLL_INFO] = light;
+            values.payloads[UML_V4L2_CID_COLORIMETRY_HDR10_MASTERING_DISPLAY] = display;
+        }
+        const auto settings = encodeSettings(stream(VideoCodec::hevc, RawVideoLayout::p010), values);
+        require(settings.profile == VideoEncodeProfile::hevcMain10 && settings.input == RawVideoLayout::p010 &&
+                settings.hdr.has_value() == hdr, "a Main 10 stream is not the platform's Main 10 session");
+        if (hdr)
+            require(settings.hdr->maximumContentLightLevel == 1000 && settings.hdr->maximumFrameAverageLightLevel == 400 &&
+                    settings.hdr->maximumLuminance == 1'000'000, "the HDR metadata is not the guest's");
+    } else {
+        std::puts("  no HEVC Main 10 from 10-bit input on this host; it is absent from the wire");
+    }
+}
+
 } // namespace
 
 int main()
@@ -567,6 +678,7 @@ int main()
         streamInfo();
         settingsFromControls();
         updates();
+        realHost();
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

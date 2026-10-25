@@ -17,7 +17,8 @@ inline std::vector<uml::platform::VideoEncodeCapability> encoderHostCapabilities
     using namespace uml::platform;
     VideoEncodeCapability h264;
     h264.codec = VideoCodec::h264;
-    const std::vector<RawVideoLayout> eightBit {RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::bgra};
+    const std::vector<RawVideoLayout> eightBit {RawVideoLayout::nv12, RawVideoLayout::i420, RawVideoLayout::bgra,
+                                                RawVideoLayout::rgba};
     h264.profiles = {
         {VideoEncodeProfile::h264ConstrainedBaseline, eightBit, 52, true},
         {VideoEncodeProfile::h264Main, eightBit, 52, true},
@@ -61,7 +62,7 @@ inline std::vector<uml::platform::VideoEncodeCapability> encoderHostCapabilities
 
     VideoEncodeCapability jpeg;
     jpeg.codec = VideoCodec::jpeg;
-    jpeg.profiles = {{VideoEncodeProfile::jpegBaseline, {RawVideoLayout::nv12, RawVideoLayout::bgra}, 0, false}};
+    jpeg.profiles = {{VideoEncodeProfile::jpegBaseline, {RawVideoLayout::nv12, RawVideoLayout::bgra, RawVideoLayout::rgba}, 0, false}};
     jpeg.minimumWidth = 16;
     jpeg.minimumHeight = 16;
     jpeg.maximumWidth = 16384;

@@ -85,10 +85,14 @@ stderr shares the guest console. Unset, the device opens and writes nothing.
 memory boundaries, stream lifecycle, EOS, and event backpressure with a synthetic
 decoder. `platform-video-decoder` decodes the checked-in generated fixtures on
 Apple hardware. `virtio-video-encoder-protocol` drives the encoder device over
-both queues in front of the synthetic encoder in `tests/support/video`, and
-`video-encoder-capabilities` checks the capability responses, control tables and
-control-to-settings mapping without a device. All four are included in the
-`check-gpu` workflow. The optional `guest-v4l2-decode` CTest runs the actual V4L2 driver
+both queues in front of the synthetic encoder in `tests/support/video`, and then
+on the host's own hardware encoder: NV12, packed BGRA and RGBA, and HEVC Main 10
+from P010 with HDR10 metadata, read back as coded bytes. `video-encoder-capabilities`
+checks the capability responses, control tables and control-to-settings mapping
+without a device, and that the wire lists exactly what this host's discovery
+found. A host without a feature skips that case and must not list it. The two
+encoder tests share the `video-encoder-hardware` resource lock with the platform
+encoder tests. All four are included in the `check-gpu` workflow. The optional `guest-v4l2-decode` CTest runs the actual V4L2 driver
 against every advertised codec profile and verifies pixels and clean shutdown.
 See [testing](../../../docs/testing.md) for the guest probe input.
 
