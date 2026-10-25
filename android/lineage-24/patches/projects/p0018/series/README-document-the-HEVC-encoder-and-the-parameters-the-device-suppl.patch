@@ -8,14 +8,29 @@ The encoder README listed three codecs, two bitrate modes and NV12 as the only
 input. Describe the HEVC encoder, the parameters that exist when the encoder
 device has the controls for them, and the input formats the encoder passes on.
 ---
- README.md | 56 +++++++++++++++++++++++++++++++++++++++++++++++--------
- 1 file changed, 48 insertions(+), 8 deletions(-)
+ README.md | 91 +++++++++++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 82 insertions(+), 9 deletions(-)
 
 diff --git a/README.md b/README.md
-index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..66f8b00fc1a1be135dcf66b1980299c610b16339 100644
+index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..1012aae38c1f05c7b4b0109b8707c5831aab8b46 100644
 --- a/README.md
 +++ b/README.md
-@@ -289,10 +289,12 @@ extern "C" ::C2Allocator* CreateAllocator(::C2Allocator::id_t allocatorId) {
+@@ -49,9 +49,13 @@ PRODUCT_COPY_FILES += \
+ # Set the customized property of v4l2_codec2, including:
+ # - The maximum concurrent instances for decoder/encoder.
+ #   It should be the same as "concurrent-instances" at media_codec_c2.xml.
++# - The pixel rate the device sustains for all instances together, in luma
++#   samples per second. It should be the largest performance point that
++#   media_codec_c2.xml publishes. Omit it to report instances only.
+ PRODUCT_PROPERTY_OVERRIDES += \
+     ro.vendor.v4l2_codec2.decode_concurrent_instances=8 \
+-    ro.vendor.v4l2_codec2.encode_concurrent_instances=8
++    ro.vendor.v4l2_codec2.encode_concurrent_instances=8 \
++    ro.vendor.v4l2_codec2.video_pixel_rate=108000000
+ 
+ # Codec2.0 poolMask:
+ #   ION(16)
+@@ -289,10 +293,12 @@ extern "C" ::C2Allocator* CreateAllocator(::C2Allocator::id_t allocatorId) {
  
  ### Supported Codecs
  
@@ -30,7 +45,7 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..66f8b00fc1a1be135dcf66b1980299c6
  - VP8: *c2.v4l2.vp8.encoder*
  - VP9: *c2.v4l2.vp9.encoder*
  
-@@ -303,8 +305,9 @@ The following parameters are static and can not be changed at run-time:
+@@ -303,8 +309,9 @@ The following parameters are static and can not be changed at run-time:
  - *C2_PARAMKEY_PICTURE_SIZE*: This parameter can be used to configure the
  resolution of the encoded video stream.
  - *C2_PARAMKEY_PROFILE_LEVEL*: This parameter can be used to adjust the desired
@@ -42,7 +57,7 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..66f8b00fc1a1be135dcf66b1980299c6
  - *C2_PARAMKEY_SYNC_FRAME_INTERVAL*: This parameter can be used to configure the
  desired time between subsequent key frames in microseconds.
  - *C2_PARAMKEY_BITRATE_MODE*: This parameter can be used to switch between
-@@ -314,7 +317,41 @@ bitrate. This mode is preferable for video conferencing where maintaining a
+@@ -314,7 +321,41 @@ bitrate. This mode is preferable for video conferencing where maintaining a
  stable bitrate is more important than quality. When using VBR the encoder will
  be allowed to dynamically adjust the bitrate to maintain a constant quality. As
  the mediacodec framework does not provide facilities to configure the peak
@@ -85,7 +100,35 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..66f8b00fc1a1be135dcf66b1980299c6
  
  The following parameters are dynamic, and can be freely adjusted at run-time:
  
-@@ -329,10 +366,13 @@ additional key frames in addition to the periodic ones requested through the
+@@ -326,16 +367,48 @@ framerate.
+ - *C2_PARAMKEY_REQUEST_SYNC_FRAME*: This parameter can be used to request
+ additional key frames in addition to the periodic ones requested through the
+ *C2_PARAMKEY_SYNC_FRAME_INTERVAL* parameter.
++- *C2_PARAMKEY_OPERATING_RATE* and *C2_PARAMKEY_PRIORITY*: The rate at which the
++client gives frames, and whether it needs them coded at that rate (priority 0)
++or as the device finds the time (a priority below 0). They change the system
++resources the instance needs, see below.
++
++### System Resources:
++
++The component store reports the capacity of the device, and each encoder the
++resources it needs, so that Android can tell what is left
++(*MediaCodec.getGloballyAvailableResources()*). Both have two vendor ids:
++
++- Codec sessions (*C2PlatformConfig::VENDOR_START*): the capacity is the sum of
++the concurrent instance bounds of the codecs the store offers, and every
++instance needs one.
++- Pixel rate (*VENDOR_START* + 1): the capacity is
++*ro.vendor.v4l2_codec2.video_pixel_rate*. An instance needs the width times the
++height times the frame rate (the operating rate, if it is set) of its stream
++when it runs in real time, and nothing when it does not.
++
++An encoder reports a change of its need with its next output. A start that
++would take the pixel rate of all instances past the capacity fails with
++*C2_NO_MEMORY*, which Android raises as *ERROR_INSUFFICIENT_RESOURCE*; the first
++instance is always admitted, as the device serves one of whatever size it
++supports. A decoder takes part by reporting *videoResourcesNeeded()* and
++claiming its pixel rate from *VideoPixelRateBudget* (*VideoResources.h*).
  
  ### Supported Input Pixel Formats:
  
@@ -102,3 +145,10 @@ index 7b4455d2ecb4a864a87fd1f380ee0d24bbc0bef9..66f8b00fc1a1be135dcf66b1980299c6
  
  ### Additional Features:
  
++A device that holds the bitrate by leaving frames out returns the output buffer
++of such a frame with the error flag and no data. The work item of the frame
++finishes without an output, and the items behind it are not held up.
++
+ To improve the resilience of H.264 video streams when data is missing, SPS and
+ PPS NAL units are prepended to IDR frames by enabling the
+ *V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR* control. If the V4L2 driver does not

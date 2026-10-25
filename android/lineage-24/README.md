@@ -452,7 +452,11 @@ no decoder, the decoder properties stay off, and a decoder is qualified on its
 own before it joins. The file is the product's one vendor codec list, so it also
 carries any update (`update="true"`) to the limits of a software decoder.
 `ro.vendor.v4l2_codec2.encode_concurrent_instances` bounds the encoder
-instances to the streams the host serves. The service joins `camera`, which
+instances to the streams the host serves, and
+`ro.vendor.v4l2_codec2.video_pixel_rate` is the pixel rate the host sustains.
+The service reports both as the capacity Android counts instances against
+(`MediaCodec.getGloballyAvailableResources()`), so no performance point may
+exceed it; the target-files verifier requires that. The service joins `camera`, which
 `ueventd.rc` gives the `/dev/video*` nodes; its executable carries the
 `mediacodec_exec` label; and `media_c2_extended_seccomp_policy` adds the calls
 the V4L2 poller needs beside the service's default minijail policy. The

@@ -388,7 +388,10 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_presen
 # which the generic system artifact path requirement refuses. The XML lists the
 # encoders alone, so hardware decoders stay out of Android's codec list, and the
 # properties enable exactly those two components. The store admits as many
-# instances as the host serves streams. The extended policy adds the calls the
+# instances as the host serves streams, and reports the pixel rate the host
+# sustains as the capacity of its real-time streams, which is the largest
+# performance point the XML publishes (3840x2160 at 13 frames per second is
+# 107827200 luma samples per second). The extended policy adds the calls the
 # service's seccomp policy lacks for the V4L2 device, and ueventd gives the
 # nodes to the group the service joins.
 PRODUCT_SOONG_NAMESPACES += external/v4l2_codec2
@@ -399,7 +402,8 @@ PRODUCT_COPY_FILES += \
 PRODUCT_VENDOR_PROPERTIES += \
     ro.vendor.v4l2_codec2.encoder.supported.h264=true \
     ro.vendor.v4l2_codec2.encoder.supported.hevc=true \
-    ro.vendor.v4l2_codec2.encode_concurrent_instances=8
+    ro.vendor.v4l2_codec2.encode_concurrent_instances=8 \
+    ro.vendor.v4l2_codec2.video_pixel_rate=108000000
 
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 

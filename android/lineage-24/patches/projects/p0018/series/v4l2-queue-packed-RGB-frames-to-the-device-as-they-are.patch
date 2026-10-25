@@ -22,7 +22,7 @@ byte order, so the V4L2 format that matches is the one the encoder asks for.
  4 files changed, 84 insertions(+), 7 deletions(-)
 
 diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
-index 27927180a5912d126ba006ee1ef12cda800d66d4..2aa2d0024f18cc4aa0151b79039a50d878061615 100644
+index 27762166ed9afa414bcf283d37c5965b99b40293..9a73e886042636a949d9f71e25a17896f760dc6e 100644
 --- a/components/EncodeComponent.cpp
 +++ b/components/EncodeComponent.cpp
 @@ -38,6 +38,13 @@ using android::hardware::graphics::common::V1_0::BufferUsage;

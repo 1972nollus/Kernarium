@@ -8,4 +8,6 @@ patch	v4l2-pass-the-colours-and-the-HDR10-metadata-to-the-encoder-device.patch
 patch	v4l2-queue-packed-RGB-frames-to-the-device-as-they-are.patch
 patch	v4l2-ask-for-CPU-readable-input-blocks-not-the-video-encoder-usage.patch
 patch	v4l2-keep-an-encoder-s-level-to-what-its-client-asked-for.patch
+patch	v4l2-report-the-codec-resources-to-the-framework.patch
+patch	v4l2-finish-a-frame-the-device-dropped-instead-of-waiting-for-it.patch
 patch	README-document-the-HEVC-encoder-and-the-parameters-the-device-suppl.patch

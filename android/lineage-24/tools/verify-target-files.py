@@ -41,8 +41,9 @@ MESA_ABI_DIRECTORIES = {"lib64": android_image.EM_AARCH64, "lib": android_image.
 # The hardware video encoders: the vendor Codec2 service of external/v4l2_codec2
 # and the two components it serves. The codec list names only encoders, because
 # a hardware decoder changes how Android decodes and is qualified on its own;
-# the properties enable those components and no decoder, and admit one
-# instance per stream the host serves.
+# the properties enable those components and no decoder, admit one instance
+# per stream the host serves, and state the pixel rate the host sustains, which the
+# service reports as its capacity and which no published performance point may exceed.
 VIDEO_ENCODER_SERVICE = "android.hardware.media.c2-service-v4l2"
 VIDEO_ENCODER_CODECS = {
     "c2.v4l2.avc.encoder": "video/avc",
@@ -52,6 +53,7 @@ VIDEO_ENCODER_PROPERTIES = {
     "ro.vendor.v4l2_codec2.encoder.supported.h264": "true",
     "ro.vendor.v4l2_codec2.encoder.supported.hevc": "true",
     "ro.vendor.v4l2_codec2.encode_concurrent_instances": "8",
+    "ro.vendor.v4l2_codec2.video_pixel_rate": "108000000",
 }
 VIDEO_DECODER_PROPERTY_PREFIX = "ro.vendor.v4l2_codec2.decoder.supported."
 VIDEO_ENCODER_UEVENTD = "/dev/video* 0660 system camera"
@@ -887,6 +889,22 @@ def check_video_encoders(
     for key, expected in VIDEO_ENCODER_PROPERTIES.items():
         if vendor.get(key) != expected:
             fail(f"VENDOR/build.prop lacks {key}={expected}: {vendor.get(key)!r}")
+    # A codec cannot publish more than the device sustains: the service reports the pixel rate
+    # as the capacity that real-time streams are counted against.
+    capacity = int(vendor["ro.vendor.v4l2_codec2.video_pixel_rate"])
+    for codec in codecs.iterfind("./Encoders/MediaCodec"):
+        for limit in codec.iterfind("./Limit"):
+            name = limit.get("name", "")
+            if not name.startswith("performance-point-"):
+                continue
+            try:
+                width, height = (int(side) for side in name.rpartition("-")[2].split("x"))
+                frame_rate = int((limit.get("range") or "").partition("-")[2])
+            except ValueError:
+                fail(f"{codec.get('name')} publishes a malformed {name}: {limit.get('range')!r}")
+            if width * height * frame_rate > capacity:
+                fail(f"{codec.get('name')} publishes {name} above the pixel rate capacity "
+                     f"{capacity}: {width * height * frame_rate}")
     for key, value in vendor.items():
         if key.startswith(VIDEO_DECODER_PROPERTY_PREFIX) and value != "false":
             fail(f"VENDOR/build.prop enables a hardware decoder: {key}={value}")

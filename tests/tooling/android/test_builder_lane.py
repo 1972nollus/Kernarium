@@ -404,11 +404,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                              encoders: dict[str, str] | None = None,
                              performance_points: bool = True,
                              measured_frame_rates: bool = True,
+                             performance_point: str = "1920x1080 30-45",
                              software_updates: tuple[str, ...] = (
                                  "c2.android.hevc.decoder",)) -> bytes:
             encoders = video_codecs if encoders is None else encoders
             limits = (
-                ('      <Limit name="performance-point-1920x1080" range="30-45"/>\n'
+                (f'      <Limit name="performance-point-{performance_point.split()[0]}"'
+                 f' range="{performance_point.split()[1]}"/>\n'
                  if performance_points else "")
                 + ('      <Limit name="measured-frame-rate-1920x1080" range="31-45"/>\n'
                    if measured_frame_rates else "")
@@ -1049,6 +1051,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("video-encoder-without-measured-frame-rate",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  measured_frame_rates=False)}}),
+            ("video-performance-point-above-capacity",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 30-60")}}),
+            ("video-performance-point-malformed",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 fast")}}),
+            ("video-pixel-rate-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_pixel_rate": "1000"}}),
             ("video-decoder-property",
              {"video_properties": {
                  **good_video_properties,
@@ -1171,6 +1183,19 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  measured_frame_rates=False)}},
              "publishes no measured-frame-rate-"),
+            ("video-performance-point-above-capacity-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 30-60")}},
+             "above the pixel rate capacity 108000000"),
+            ("video-performance-point-malformed-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 fast")}},
+             "publishes a malformed performance-point-3840x2160"),
+            ("video-pixel-rate-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_pixel_rate": "1000"}},
+             "lacks ro.vendor.v4l2_codec2.video_pixel_rate=108000000"),
             ("video-hardware-decoder-cause",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  decoders=("c2.v4l2.avc.decoder",))}},

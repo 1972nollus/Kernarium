@@ -77,7 +77,7 @@ index aa72bef7c5cda98dbd0ba9f5434fa63830bb4ba5..1eaa41af8eb85bcc277060c2a961bbf5
  
  // Check whether |rect1| completely contains |rect2|.
 diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
-index ca922e6a48d06a42da8b11cb46f85450219ce8f0..27927180a5912d126ba006ee1ef12cda800d66d4 100644
+index 3712112bf0b635252735ccb39381fb11959410f7..27762166ed9afa414bcf283d37c5965b99b40293 100644
 --- a/components/EncodeComponent.cpp
 +++ b/components/EncodeComponent.cpp
 @@ -109,7 +109,15 @@ std::optional<std::vector<VideoFramePlane>> getVideoFrameLayout(const C2ConstGra

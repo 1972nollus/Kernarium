@@ -203,7 +203,7 @@ index f9001e5eea31d6ae91023150379ad9b579715190..8b0e4a1384b4d9a932790fd6ae405694
  // The result is copied into |dst|. The provided |sps| and |pps| data will be updated if an SPS or
  // PPS NAL unit is encountered. Returns the size of the new data, will be 0 if an error occurred.
 diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
-index 1a7c17746160c72abd0946c47560b7ced0766e56..ca922e6a48d06a42da8b11cb46f85450219ce8f0 100644
+index 1a7c17746160c72abd0946c47560b7ced0766e56..3712112bf0b635252735ccb39381fb11959410f7 100644
 --- a/components/EncodeComponent.cpp
 +++ b/components/EncodeComponent.cpp
 @@ -662,6 +662,20 @@ bool EncodeComponent::updateEncodingParameters() {
@@ -250,8 +250,8 @@ index 1a7c17746160c72abd0946c47560b7ced0766e56..ca922e6a48d06a42da8b11cb46f85450
 +                extractStreamLevel(isHEVCProfile(mOutputProfile), view.data(), view.capacity());
 +        if (streamLevel != C2Config::LEVEL_UNUSED && streamLevel != mOutputLevel) {
 +            ALOGV("The stream has level %#x, not %#x", streamLevel, mOutputLevel);
-+            work->worklets.front()->output.configUpdate.push_back(
-+                    C2Param::Copy(C2StreamProfileLevelInfo::output(0u, mOutputProfile, streamLevel)));
++            work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(
++                    C2StreamProfileLevelInfo::output(0u, mOutputProfile, streamLevel)));
 +            mOutputLevel = streamLevel;
 +        }
      }
