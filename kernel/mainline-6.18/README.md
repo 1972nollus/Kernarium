@@ -121,6 +121,10 @@ The Linux overlay holds only what differs from the Android product:
   use and Android forbids or has no use for (see the Android overlay below).
   SCTP creates no listener and the SLiRP network never forwards it, so it
   joins endpoints inside the guest.
+- No wakelock interface: `CONFIG_PM_WAKELOCKS` and its `/sys/power/wake_lock`
+  stay off. Sxmo, which postmarketOS guests run, suspends the guest on its own
+  whenever that file exists, and a desktop guest has no wakelock service to
+  hold it awake. The Android product turns it on (see below).
 
 Every product has IPv4 multicast, which Kconfig leaves off and mDNS and SSDP
 discovery need, and SafeSetID, which restricts only the IDs a policy written
@@ -517,12 +521,24 @@ hotplug and restores them before guest tasks resume. The console socket is
 `uml_dir=<dir>`, a directory owned by that machine alone; a path that does not
 fit Darwin's 104-byte `sun_path` is refused, never truncated.
 
-Only a wake source ends the suspend: the management console, the UML RTC
-alarm, VNC input, and a vhost-user device whose wakeup is enabled in sysfs. A
+Only a wake source ends the suspend. Some wake any suspend: the management
+console, the UML RTC alarm, VNC input, and a vhost-user device whose wakeup is
+enabled in sysfs (its backend channel and every queue's call descriptor
+alike). The Darwin network interface wakes only a suspend the guest started
+itself, such as Android's once its last wakelock goes away, as a phone's
+wireless interface does: a received frame ends it and keeps the guest awake
+for 500 ms through the `darwin-net-rx` wakeup source, so that the stack and
+the task the frame is for answer before the next automatic suspend, and an
+`adb` command to a guest whose display is off is answered at once instead of
+at the next RTC alarm. A suspend the host asked for through the management
+console ends only with the host's wake, and no frame fails it; the kernel
+knows it from the host's request until the guest has replied that it is
+suspended. `darwin_net_kern.guest_wake=0` turns the wake and the hold off. A
 Linux host clears O_ASYNC on every other descriptor for the suspend; Darwin,
 whose IRQ notification thread stands in for SIGIO, takes those descriptors off
-that thread instead, so network and console input, vhost-user requests and
-block completions wait for the resume and are handled then. The suspended CPU
+that thread instead, so console input, vhost-user requests and block
+completions wait for the resume and are handled then, and so does network
+input in a suspend the host asked for. The suspended CPU
 sleeps until a wake source has input or a wakeup is pending, so neither a host
 signal nor a notification collected before the suspend ends it. A wake request
 that arrives while a suspend is still being entered, whether the host or the
@@ -539,11 +555,13 @@ ends the request instead, and a request that gives up replies `Suspend
 failed`.
 Virtio input is not a wake source, because a suspend disables its rings, so a
 host that forwards a power key also sends the wake. `guest-suspend-holds`
-keeps network, console and vhost-user traffic flowing through a suspend, sends
-early wakes, one of them while a frozen file system holds the suspend's sync,
-fires an RTC alarm during a held sync of the host's suspend, which must still
-hold, and wakes a suspend the guest entered by itself with a wake and with a
-power key typed on the VNC display.
+keeps network, console and vhost-user traffic flowing through a suspend the
+host asked for, sends early wakes, one of them while a frozen file system
+holds the suspend's sync, fires an RTC alarm during a held sync of the host's
+suspend, which must still hold, and wakes a suspend the guest entered by
+itself with a wake, with a power key typed on the VNC display and with a
+network connection, after which the host's own suspend must hold under
+traffic on its first attempt.
 
 Loadable modules remain disabled. The required guest filesystems, networking,
 Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM
@@ -605,8 +623,12 @@ The overlay holds only what differs from the Linux product:
 - Android's own facilities: Binder and binderfs, the DMA-BUF heaps and udmabuf,
   bootconfig, the inline-encryption fallback with fscrypt and HCTR2, PF_KEY for
   the network statistics path, socket destruction for netd, further xtables
-  matches and targets, the gpu_mem tracepoints, the Kernarium battery, and hvc
-  for the single-port Virtio console.
+  matches and targets, the gpu_mem tracepoints, the Kernarium battery, hvc
+  for the single-port Virtio console, and `CONFIG_PM_WAKELOCKS`. Android's
+  SystemSuspend service ends a suspend that is under way by writing
+  `userspace-abort` to `/sys/power/wake_lock`, so without the file a wakelock
+  taken while the system is entering a suspend cannot stop it. The Linux
+  product leaves the file out for the guest-OS reason given above.
 - Android's CTS requires that SysV IPC (`CONFIG_SYSVIPC`, whose system calls
   must answer `ENOSYS`) and the NFS client (`CONFIG_NFS_FS`) are absent, so
   the overlay leaves both out, and SCTP too, which Android has no use for. The
