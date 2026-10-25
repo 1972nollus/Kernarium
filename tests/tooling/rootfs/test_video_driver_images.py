@@ -39,6 +39,9 @@ class VideoDriverImageTests(unittest.TestCase):
         # the Chromium file under /etc.
         self.assertIn("-DCMAKE_INSTALL_PREFIX=/usr", helper)
         self.assertIn("not found", helper)
+        # The gbm backend module ships with the driver and is checked the same
+        # way, since every libgbm client of the image loads it.
+        self.assertIn("virtio_gpu_gbm.so", helper)
         # The libraries the driver runs on outlive the build tools.
         self.assertRegex(helper, r"apt-mark manual[^\n]*libva2[^\n]*libdrm2")
         subprocess.run(["sh", "-n", str(ROOTFS / "producer.sh")], check=True)
@@ -53,6 +56,14 @@ class VideoDriverImageTests(unittest.TestCase):
         self.assertIn(
             "DESTINATION ${CMAKE_INSTALL_LIBDIR}/dri)", cmake
         )
+
+    def test_the_gbm_module_installs_where_libgbm_looks_for_backends(self) -> None:
+        cmake = text(VIDEO / "CMakeLists.txt")
+        # libgbm loads <driver name>_gbm.so from its backend directory, and the
+        # module names the DRM driver it serves.
+        self.assertIn("install(TARGETS virtio_gpu_gbm", cmake)
+        self.assertIn("DESTINATION ${CMAKE_INSTALL_LIBDIR}/gbm", cmake)
+        self.assertIn("virtio_gpu_gbm", cmake)
 
     def test_the_starter_plasma_image_builds_the_driver_after_chromium(
         self,

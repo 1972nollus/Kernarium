@@ -73,9 +73,10 @@ producer_reset_machine_id()
 # producer_install_uml_va_driver ROOT SOURCE: build the VA-API driver tree
 # SOURCE (tools/video/va-v4l2) inside the Debian root ROOT, against the libva
 # and libdrm that root ships, run its unit test and its probe self-test there,
-# and install the driver and the Chromium configuration that selects it. The
-# build tools are installed for the build and removed again, so the image keeps
-# only the libraries the driver runs on. ROOT needs a working apt and a mounted
+# and install the driver, the gbm backend module that lets libgbm allocate the
+# planar buffers a video client needs, and the Chromium configuration that
+# selects the driver. The build tools are installed for the build and removed
+# again, so the image keeps only the libraries the driver runs on. ROOT needs a working apt and a mounted
 # /proc, and the caller defines fail().
 producer_install_uml_va_driver()
 {
@@ -101,12 +102,14 @@ producer_install_uml_va_driver()
 		/tmp/va-v4l2-build/uml_va_v4l2_tests
 		tests/probe_selftest.sh /tmp/va-v4l2-build
 		cmake --install /tmp/va-v4l2-build
-		driver=$(find /usr/lib -name uml_drv_video.so)
-		test -n "$driver"
-		if ldd "$driver" | grep -q "not found"; then
-			ldd "$driver" >&2
-			exit 1
-		fi'
+		for module in uml_drv_video.so virtio_gpu_gbm.so; do
+			path=$(find /usr/lib -name "$module")
+			test -n "$path"
+			if ldd "$path" | grep -q "not found"; then
+				ldd "$path" >&2
+				exit 1
+			fi
+		done'
 	sudo -n chroot "$producer_va_root" apt-get purge -y --auto-remove \
 		build-essential cmake ninja-build pkg-config libva-dev libdrm-dev
 	sudo -n rm -rf -- "$producer_va_root/tmp/va-v4l2" \
