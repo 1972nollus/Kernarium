@@ -257,9 +257,10 @@ the guest architecture and configure an integration preset with
 and its fixtures installed as payload files, checks their SHA-256 list, checks
 every advertised profile's pixels, raw layouts including packed BGRA capture
 and 8-bit capture of a 10-bit stream, imported dma-buf capture, timestamps,
-source-change and EOS events, the display order of HEVC B-pictures and a seek
-over open-group streams, and rejects kernel faults or failed shutdown. Android uses its own 4 KiB guest and
-deployment workflow.
+source-change and EOS events, the display order of H.264 and HEVC B-pictures
+and a seek in both (over open-group streams for HEVC), and rejects kernel
+faults or failed shutdown. Android uses its own 4 KiB guest and deployment
+workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
 an x86-64 probe and an x86-64 rootfs, the way its boot check below is run.

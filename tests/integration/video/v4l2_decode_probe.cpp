@@ -505,10 +505,10 @@ void ringCycle(const char* device, const std::string& directory, const char* nam
     std::fflush(stdout);
 }
 
-/* The access units of an Annex B HEVC stream: a new one starts at a parameter
- * set, an access unit delimiter or a prefix SEI after a picture's slices, or at
- * a slice that begins a picture. */
-std::vector<std::vector<std::uint8_t>> accessUnits(const std::vector<std::uint8_t>& stream)
+/* The access units of an Annex B HEVC or H.264 stream: a new one starts at a
+ * parameter set, an access unit delimiter or a prefix SEI after a picture's
+ * slices, or at a slice that begins a picture. */
+std::vector<std::vector<std::uint8_t>> accessUnits(const std::vector<std::uint8_t>& stream, bool avc = false)
 {
     std::vector<std::size_t> starts;
     for (std::size_t i = 0; i + 3 < stream.size(); ++i)
@@ -520,21 +520,24 @@ std::vector<std::vector<std::uint8_t>> accessUnits(const std::vector<std::uint8_
     for (const auto start : starts) {
         const auto nal = start + (stream[start] == 0 && stream[start + 1] == 0 && stream[start + 2] == 0 ? 4 : 3);
         if (nal + 2 >= stream.size()) break;
-        const unsigned type = (stream[nal] >> 1) & 0x3f;
-        const bool first = type < 32 && (stream[nal + 2] & 0x80);
-        if (picture && (first || (type >= 32 && type <= 35) || type == 39)) {
+        const unsigned type = avc ? stream[nal] & 0x1f : (stream[nal] >> 1) & 0x3f;
+        const bool slice = avc ? type == 1 || type == 5 : type < 32;
+        // first_mb_in_slice (H.264) or first_slice_segment_in_pic_flag (HEVC)
+        const bool first = slice && (stream[nal + (avc ? 1 : 2)] & 0x80);
+        const bool boundary = avc ? type >= 6 && type <= 9 : (type >= 32 && type <= 35) || type == 39;
+        if (picture && (first || boundary)) {
             units.emplace_back(stream.begin() + begin, stream.begin() + start);
             begin = start;
             picture = false;
         }
-        if (type < 32) picture = true;
+        if (slice) picture = true;
     }
     units.emplace_back(stream.begin() + begin, stream.end());
     return units;
 }
 /* The access unit without its parameter sets, as a player seeking to a random
  * access point sends it: it has them already. */
-std::vector<std::uint8_t> withoutParameterSets(const std::vector<std::uint8_t>& unit)
+std::vector<std::uint8_t> withoutParameterSets(const std::vector<std::uint8_t>& unit, bool avc = false)
 {
     std::vector<std::uint8_t> result;
     std::size_t begin = 0;
@@ -547,19 +550,19 @@ std::vector<std::uint8_t> withoutParameterSets(const std::vector<std::uint8_t>& 
         const auto start = i > 0 && unit[i - 1] == 0 && i - 1 >= begin ? i - 1 : i;
         flush(start, keep);
         begin = start;
-        const unsigned type = (unit[i + 3] >> 1) & 0x3f;
-        keep = type < 32 || type > 34;
+        const unsigned type = avc ? unit[i + 3] & 0x1f : (unit[i + 3] >> 1) & 0x3f;
+        keep = avc ? type != 7 && type != 8 : type < 32 || type > 34;
     }
     flush(unit.size(), keep);
     return result;
 }
-/* A stateful HEVC decode of a stream of several access units, one per coded
+/* A stateful decode of a stream of several access units, one per coded
  * buffer, collecting each picture's timestamp and brightness in the order the
  * decoder returns them. */
-class HevcRun {
+class OrderRun {
 public:
     struct Picture { unsigned stamp; int luma; };
-    HevcRun(const char* device, std::size_t largest) : owner_(device), fd_(owner_.fd)
+    OrderRun(const char* device, std::size_t largest, unsigned codec) : owner_(device), fd_(owner_.fd)
     {
         v4l2_event_subscription subscription {};
         subscription.type = V4L2_EVENT_SOURCE_CHANGE;
@@ -567,7 +570,7 @@ public:
         v4l2_format input {};
         input.type = output;
         input.fmt.pix_mp.width = 64; input.fmt.pix_mp.height = 64;
-        input.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_HEVC;
+        input.fmt.pix_mp.pixelformat = codec;
         input.fmt.pix_mp.num_planes = 1;
         input.fmt.pix_mp.plane_fmt[0].sizeimage = largest;
         call(fd_, VIDIOC_S_FMT, &input, "S_FMT coded");
@@ -685,6 +688,64 @@ private:
     std::vector<Picture> shown_;
     bool captureOn_ {}, last_ {};
 };
+/* The same for H.264, whose pictures also come back as decoded: B-pictures and
+ * reference B-pictures in groups the stream's own limits describe, the same
+ * stream with the limits left to the level, a stream that cannot reorder, and a
+ * seek to an IDR picture whose parameter sets the decoder already has. */
+void h264DisplayOrder(const char* device, const std::string& directory)
+{
+    static const unsigned closedDisplay[] = {0, 4, 2, 1, 3, 8, 6, 5, 7, 11, 9, 10, 12, 16, 14, 13, 15, 19, 17, 18};
+    for (const char* name : {"h264-bframes.bin", "h264-no-restriction.bin"}) {
+        const auto units = accessUnits(read(directory + "/" + name), true);
+        require(units.size() == 20, "the H.264 B-picture fixture is not twenty access units");
+        std::size_t largest = 0;
+        for (const auto& unit : units) largest = std::max(largest, unit.size());
+        OrderRun run(device, largest, V4L2_PIX_FMT_H264);
+        for (unsigned i = 0; i < units.size(); ++i) run.feed(units[i], i + 1);
+        const auto& shown = run.finish();
+        require(shown.size() == 20, "the decoder did not return every H.264 picture");
+        for (unsigned i = 0; i < shown.size(); ++i) {
+            require(shown[i].stamp >= 1 && shown[i].stamp <= 20 && closedDisplay[shown[i].stamp - 1] == i,
+                    "H.264 pictures are not returned in display order");
+            require(std::abs(shown[i].luma - int(16 + 10 * i)) <= 3, "an H.264 picture is not the one its timestamp names");
+        }
+        std::printf("PASS h264 display order: %s, 20 pictures\n", name);
+        std::fflush(stdout);
+    }
+    {
+        const auto units = accessUnits(read(directory + "/h264-poc2.bin"), true);
+        std::size_t largest = 0;
+        for (const auto& unit : units) largest = std::max(largest, unit.size());
+        OrderRun run(device, largest, V4L2_PIX_FMT_H264);
+        for (unsigned i = 0; i < units.size(); ++i) run.feed(units[i], i + 1);
+        const auto& shown = run.finish();
+        require(shown.size() == units.size(), "the decoder did not return every picture of a stream without reordering");
+        for (unsigned i = 0; i < shown.size(); ++i)
+            require(shown[i].stamp == i + 1 && std::abs(shown[i].luma - int(16 + 10 * i)) <= 3,
+                    "a stream without reordering is shown as decoded");
+        std::puts("PASS h264 order count type 2: pictures as decoded");
+        std::fflush(stdout);
+    }
+    {
+        const auto units = accessUnits(read(directory + "/h264-bframes.bin"), true);
+        std::size_t largest = 0;
+        for (const auto& unit : units) largest = std::max(largest, unit.size());
+        OrderRun run(device, largest, V4L2_PIX_FMT_H264);
+        for (unsigned i = 0; i < 7; ++i) run.feed(units[i], i + 1);
+        run.seek();
+        for (unsigned i = 12; i < units.size(); ++i) run.feed(i == 12 ? withoutParameterSets(units[i], true) : units[i], i + 1);
+        const auto& shown = run.finish();
+        std::vector<OrderRun::Picture> after;
+        for (const auto& picture : shown) if (picture.stamp >= 13) after.push_back(picture);
+        require(after.size() == 8, "the pictures after an H.264 seek are not those of the IDR picture");
+        for (unsigned i = 0; i < after.size(); ++i)
+            require(std::abs(after[i].luma - int(16 + 10 * (12 + i))) <= 3,
+                    "H.264 pictures after a seek are not in display order");
+        std::puts("PASS h264 seek: 8 pictures after a seek");
+        std::fflush(stdout);
+    }
+}
+
 /* Pictures with B-pictures leave in the order they are shown, whatever order
  * they were decoded in. The pictures of these streams are flat gray that rises
  * by 10 levels from one display position to the next, so the brightness of a
@@ -699,7 +760,7 @@ void hevcDisplayOrder(const char* device, const std::string& directory)
     std::size_t largest = 0;
     for (const auto& unit : closed) largest = std::max(largest, unit.size());
     {
-        HevcRun run(device, largest);
+        OrderRun run(device, largest, V4L2_PIX_FMT_HEVC);
         for (unsigned i = 0; i < closed.size(); ++i) run.feed(closed[i], i + 1);
         const auto& shown = run.finish();
         require(shown.size() == 20, "the decoder did not return every picture");
@@ -719,12 +780,12 @@ void hevcDisplayOrder(const char* device, const std::string& directory)
         /* The first nine access units, a seek, then the second CRA picture and
          * what follows, without the parameter sets the decoder has already. The
          * three pictures that lead the CRA are not shown. */
-        HevcRun run(device, largest);
+        OrderRun run(device, largest, V4L2_PIX_FMT_HEVC);
         for (unsigned i = 0; i < 9; ++i) run.feed(open[i], i + 1);
         run.seek();
         for (unsigned i = 13; i < open.size(); ++i) run.feed(withoutParameterSets(open[i]), i + 1);
         const auto& shown = run.finish();
-        std::vector<HevcRun::Picture> after;
+        std::vector<OrderRun::Picture> after;
         for (const auto& picture : shown) if (picture.stamp >= 14) after.push_back(picture);
         require(after.size() == 8, "the pictures after a seek are not those of the random access point");
         for (unsigned i = 0; i < after.size(); ++i)
@@ -866,7 +927,8 @@ int main(int argc, char** argv)
                 if (profile->raw == V4L2_PIX_FMT_P010)
                     decode(device, argv[1], profile->name, fmt.pixelformat, V4L2_PIX_FMT_NV12M);
             }
-            if (!avc) hevcDisplayOrder(device, argv[1]);
+            if (avc) h264DisplayOrder(device, argv[1]);
+            else hevcDisplayOrder(device, argv[1]);
         }
         require(tested > 0, "decoder advertised no supported profiles");
         std::puts("UML_V4L2_DECODE: PASS");
