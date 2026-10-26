@@ -429,15 +429,8 @@ for variable-bitrate profiles). Three parts fit together to make it work:
   Without them a GPU-painted frame encodes black, while frames built in
   ordinary memory (a `VideoFrame` made from a buffer) are unaffected.
 
-Two limits of the guest GPU show in what Chromium plays:
+One limit of the guest GPU shows in what Chromium plays:
 
-- **Software-decoded video.** With the module installed Chromium would keep the
-  frames of its software decoders in gbm NV12 buffers, and the GPU does not
-  sample an NV12 image imported from a buffer the CPU wrote (`gbm_planar_probe
-  --carrier-sample` reads transparent black from it, where a colour buffer
-  reads right), so every such video would play black. The file adds
-  `--disable-gpu-memory-buffer-video-frames`, which keeps those frames in shared
-  memory; encode produces the same streams with and without it.
 - **Hardware-decoded video.** The pictures the driver decodes are right, and
   `va_decode_probe --export-early` reads them back from the exported
   descriptor. What Chromium then composites from that descriptor is not: a
