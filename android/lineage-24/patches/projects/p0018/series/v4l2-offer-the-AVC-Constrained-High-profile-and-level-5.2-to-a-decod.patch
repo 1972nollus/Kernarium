@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 11:30:15 +0900
+Subject: [PATCH] v4l2: offer the AVC Constrained High profile and level 5.2 to
+ a decoder
+
+The device lists the H.264 profiles and levels its wire format names: no
+Constrained High profile, and no level above 5.1. A decoder that takes High
+at level 5.1 takes Constrained High, a subset of High, and level 5.2, which
+differs from 5.1 by the rate of the macroblocks and not by the size of the
+picture, so the decoder offers both. A stream of either was left without a
+decoder, which CTS reports for every encoder level that has no other.
+---
+ components/DecodeInterface.cpp | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
+index 12435abca802d1615d735e3cd24e07b05f3d3b9c..f4329ab52d147cca20a273b7d37c06e065870432 100644
+--- a/components/DecodeInterface.cpp
++++ b/components/DecodeInterface.cpp
+@@ -65,6 +65,25 @@ void addHevcHighTierLevels(std::vector<unsigned int>* levels) {
+     }
+ }
+ 
++// Adds what a decoder of H.264 takes beyond what the device lists. The device lists the profiles
++// and levels its wire format names, which has no Constrained High profile and stops at level 5.1.
++// Constrained High is a subset of High, and level 5.2 differs from 5.1 by the rate of the
++// macroblocks and not by the size of the picture, so a decoder that takes High at level 5.1 takes
++// both.
++void addAvcImpliedProfilesAndLevels(std::vector<uint32_t>* profiles,
++                                    std::vector<unsigned int>* levels) {
++    auto has = [](const auto& list, auto value) {
++        return std::find(list.begin(), list.end(), static_cast<unsigned int>(value)) != list.end();
++    };
++    if (has(*profiles, C2Config::PROFILE_AVC_HIGH) &&
++        !has(*profiles, C2Config::PROFILE_AVC_CONSTRAINED_HIGH)) {
++        profiles->push_back(C2Config::PROFILE_AVC_CONSTRAINED_HIGH);
++    }
++    if (has(*levels, C2Config::LEVEL_AVC_5_1) && !has(*levels, C2Config::LEVEL_AVC_5_2)) {
++        levels->push_back(C2Config::LEVEL_AVC_5_2);
++    }
++}
++
+ size_t calculateInputBufferSize(size_t area) {
+     if (area > k4KArea) {
+         ALOGW("Input buffer size for video size (%zu) larger than 4K (%zu) might be too small.",
+@@ -278,6 +297,7 @@ DecodeInterface::DecodeInterface(const std::string& name,
+     }
+ 
+     if (mVideoCodec == VideoCodec::HEVC) addHevcHighTierLevels(&levels);
++    if (mVideoCodec == VideoCodec::H264) addAvcImpliedProfilesAndLevels(&profiles, &levels);
+ 
+     uint32_t defaultLevel = caps.defaultLevel;
+     if (defaultLevel == C2Config::LEVEL_UNUSED)

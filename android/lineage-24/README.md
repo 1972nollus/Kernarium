@@ -416,14 +416,14 @@ registry pin that differs from its owner, and a port codec whose first line
 does not name the recorded pins; such a change needs a regenerated codec, a
 port replay and a new release.
 
-## Hardware video encoding
+## Hardware video encoding and decoding
 
-The host's VideoToolbox encoders reach the guest as a V4L2 stateful encoder
-(Virtio video), and the product exposes them through Codec2. The vendor service
-`android.hardware.media.c2-service-v4l2` of `external/v4l2_codec2` serves
-`c2.v4l2.avc.encoder` and `c2.v4l2.hevc.encoder` beside the software
-`c2.android.*` components, and MediaCodec selects them by name or by the
-platform's hardware preference. The patch series under
+The host's VideoToolbox encoders and decoders reach the guest as V4L2 stateful
+devices (Virtio video), and the product exposes them through Codec2. The vendor
+service `android.hardware.media.c2-service-v4l2` of `external/v4l2_codec2`
+serves `c2.v4l2.avc.encoder`, `c2.v4l2.hevc.encoder`, `c2.v4l2.avc.decoder` and
+`c2.v4l2.hevc.decoder` beside the software `c2.android.*` components, and
+MediaCodec selects them by name or by the platform's hardware preference. The patch series under
 `patches/projects/p0018` adds the HEVC component and derives every encoder
 parameter from the device rather than from constants: bitrate range and modes
 (VBR, CBR, constant quality), QP bounds, B-frame depth, temporal layers,
@@ -435,6 +435,23 @@ otherwise. The device picks the level of a stream under the ceiling the client
 asks for, so the component reports the level it reads from the first coded
 headers.
 
+The decoders take HEVC Main and Main 10 (with the High tier of every level the
+device lists, which it lists by its Main tier) and H.264 (with Constrained High
+and level 5.2, which the device's wire format cannot name). They decode to the
+raw format the client asks for: 8-bit YUV from a 10-bit stream unless the
+client asks for P010, which the host converts. A client that decodes to byte
+buffers is given pooled output blocks, and every output block is allocated with
+CPU write usage so that the decoder can hand a picture to the host copy for a
+consumer that reads it through the GPU; the device writes the guest pages of a
+decoded picture, so minigbm never transfers a decoder's output from the host.
+HDR content is shown as SDR: the host has no P010 sampler, so a P010 surface
+cannot be shown correctly. A decoder reports its sessions and, once the
+product states a decode pixel rate, its pixel rate through the same resource
+interface as the encoders. The decoders keep the component's default rank, so
+MediaCodec chooses them before `c2.android.avc.decoder` and
+`c2.android.hevc.decoder` for a stream both take; a Main 10 stream has no other
+decoder.
+
 An encoder's input is a CPU-readable gralloc buffer (`COLOR_FormatYUV420Flexible`
 as NV12, `COLOR_FormatYUVP010` as P010, or packed RGB): the host cannot sample a
 YUV format natively, so minigbm allocates NV12, NV21, P010 and the planar 4:2:0
@@ -443,24 +460,27 @@ transfers on its own. P010 has the NV12 layout with two-byte samples, which is
 what lets Main 10 and HDR10 input reach the device.
 
 `overlay/config/media_codecs_c2.xml` is installed as
-`vendor/etc/media_codecs_c2.xml` and adds these two encoders alone, each with
-the performance points and measured frame rates CTS requires of a hardware
-codec. The numbers are what the encoders sustain through the guest-to-host
+`vendor/etc/media_codecs_c2.xml` and adds the two encoders, each with the
+performance points and measured frame rates CTS requires of a hardware codec,
+and the two decoders, each with identical width and height ranges and the
+adaptive playback and dynamic colour aspects features it implements. The numbers are what the encoders sustain through the guest-to-host
 frame copy, which grows with the picture, so 4K HEVC is published below 30
-frames per second. Hardware decoders are out of the product: the codec list adds
-no decoder, the decoder properties stay off, and a decoder is qualified on its
-own before it joins. The file is the product's one vendor codec list, so it also
+frames per second. The file is the product's one vendor codec list, so it also
 carries any update (`update="true"`) to the limits of a software decoder.
-`ro.vendor.v4l2_codec2.encode_concurrent_instances` bounds the encoder
-instances to the streams the host serves, and
-`ro.vendor.v4l2_codec2.video_pixel_rate` is the pixel rate the host sustains.
-The service reports both as the capacity Android counts instances against
-(`MediaCodec.getGloballyAvailableResources()`), so no performance point may
-exceed it; the target-files verifier requires that. The service joins `camera`, which
+`ro.vendor.v4l2_codec2.encode_concurrent_instances` and
+`ro.vendor.v4l2_codec2.decode_concurrent_instances` bound the instances of each
+direction to the streams the host serves, and
+`ro.vendor.v4l2_codec2.video_pixel_rate` is the pixel rate the host sustains
+for encoding. The service reports them as the capacity Android counts instances
+against (`MediaCodec.getGloballyAvailableResources()`), so no performance point
+may exceed the pixel rate; the target-files verifier requires that. The service joins `camera`, which
 `ueventd.rc` gives the `/dev/video*` nodes; its executable carries the
 `mediacodec_exec` label; and `media_c2_extended_seccomp_policy` adds the calls
-the V4L2 poller needs beside the service's default minijail policy. The
-target-files verifier requires each of these and refuses a decoder.
+the V4L2 poller and the crash handler of debuggerd need beside the service's
+default minijail policy, and `sepolicy/vendor/mediacodec.te` lets the service
+map the message queue that a client's buffer pool shares in a memfd. The
+target-files verifier requires each of these and refuses a hardware decoder
+beyond the two (`VIDEO_DECODER_CODECS`).
 
 ## Payload reduction
 

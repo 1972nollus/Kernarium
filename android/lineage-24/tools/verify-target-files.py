@@ -38,12 +38,12 @@ MESA_GALLIUM_DRIVER = "venus_gallium_dri.so"
 # and an armeabi-v7a one in lib. The ABI directory decides the ELF class
 # check_mesa_gles_stack requires.
 MESA_ABI_DIRECTORIES = {"lib64": android_image.EM_AARCH64, "lib": android_image.EM_ARM}
-# The hardware video encoders: the vendor Codec2 service of external/v4l2_codec2
-# and the two components it serves. The codec list names only encoders, because
-# a hardware decoder changes how Android decodes and is qualified on its own;
-# the properties enable those components and no decoder, admit one instance
-# per stream the host serves, and state the pixel rate the host sustains, which the
-# service reports as its capacity and which no published performance point may exceed.
+# The hardware video codecs: the vendor Codec2 service of external/v4l2_codec2
+# and the components it serves, two encoders and two decoders. The codec list
+# names exactly those, beside the updates to the software decoders' limits. The
+# properties enable those components, admit one instance per stream the host
+# serves, and state the pixel rate the host sustains, which the service reports
+# as its capacity and which no published performance point may exceed.
 VIDEO_ENCODER_SERVICE = "android.hardware.media.c2-service-v4l2"
 VIDEO_ENCODER_CODECS = {
     "c2.v4l2.avc.encoder": "video/avc",
@@ -55,11 +55,22 @@ VIDEO_ENCODER_PROPERTIES = {
     "ro.vendor.v4l2_codec2.encode_concurrent_instances": "8",
     "ro.vendor.v4l2_codec2.video_pixel_rate": "108000000",
 }
+VIDEO_DECODER_CODECS = {
+    "c2.v4l2.avc.decoder": "video/avc",
+    "c2.v4l2.hevc.decoder": "video/hevc",
+}
 VIDEO_DECODER_PROPERTY_PREFIX = "ro.vendor.v4l2_codec2.decoder.supported."
+VIDEO_DECODER_PROPERTIES = {
+    "ro.vendor.v4l2_codec2.decoder.supported.h264": "true",
+    "ro.vendor.v4l2_codec2.decoder.supported.hevc": "true",
+    "ro.vendor.v4l2_codec2.decode_concurrent_instances": "8",
+}
 VIDEO_ENCODER_UEVENTD = "/dev/video* 0660 system camera"
 # The service reads this policy beside its default one. The poller of the V4L2
 # device wakes its thread through an eventfd, which the default lacks.
 VIDEO_ENCODER_SECCOMP_CALLS = ("eventfd2",)
+# The crash handler of debuggerd runs in the service when it faults.
+VIDEO_CRASH_HANDLER_SECCOMP_CALLS = ("getppid", "recvfrom", "setsockopt", "uname")
 VIDEO_ENCODER_SECCOMP_DEFAULT = "android.hardware.media.c2-default-seccomp_policy"
 VIDEO_ENCODER_SECCOMP_EXTENDED = "android.hardware.media.c2-extended-seccomp_policy"
 MESA_EGL_ENTRIES = {
@@ -855,7 +866,7 @@ def check_multilib_properties(
 def check_video_encoders(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
-    """The codec list names the hardware encoders alone, and only they are enabled."""
+    """The codec list names the hardware encoders and decoders, and only they are enabled."""
     try:
         codecs = ET.fromstring(read_small(archive, infos["VENDOR/etc/media_codecs_c2.xml"]))
     except ET.ParseError as error:
@@ -865,14 +876,37 @@ def check_video_encoders(
         for codec in codecs.iterfind("./Encoders/MediaCodec")
     }
     if encoders != VIDEO_ENCODER_CODECS:
-        fail(f"the Codec2 list must name the hardware encoders alone: {encoders}")
-    # A decoder may appear only as an update to a software decoder's limits.
+        fail(f"the Codec2 list must name exactly the hardware encoders: {encoders}")
+    # A decoder is one of the hardware decoders, or an update to a software decoder's limits.
+    hardware_decoders = {
+        codec.get("name"): codec.get("type")
+        for codec in codecs.iterfind("./Decoders/MediaCodec")
+        if (codec.get("name") or "").startswith("c2.v4l2.")
+    }
+    if hardware_decoders != VIDEO_DECODER_CODECS:
+        fail(f"the Codec2 list must name the hardware decoders: {hardware_decoders}")
     decoders = list(codecs.iterfind("./Decoders/MediaCodec"))
     if any(
-        not (codec.get("name") or "").startswith("c2.android.") or codec.get("update") != "true"
+        (codec.get("name") or "") not in VIDEO_DECODER_CODECS
+        and (
+            not (codec.get("name") or "").startswith("c2.android.") or codec.get("update") != "true"
+        )
         for codec in decoders
     ) or len(list(codecs.iter("MediaCodec"))) != len(encoders) + len(decoders):
-        fail("the Codec2 list names a codec outside its encoders: hardware decoders stay out")
+        fail("the Codec2 list names a codec outside the hardware codecs and the software updates")
+    for codec in decoders:
+        if codec.get("name") not in VIDEO_DECODER_CODECS:
+            continue
+        # CTS wants a decoder's width and height ranges to match, and the adaptive playback and
+        # dynamic colour aspects features it implements to be published.
+        limits = {limit.get("name"): limit for limit in codec.iterfind("./Limit")}
+        size = limits.get("size")
+        if size is None or "x" not in (size.get("min") or "") or "x" not in (size.get("max") or ""):
+            fail(f"{codec.get('name')} publishes no size limit")
+        features = {feature.get("name") for feature in codec.iterfind("./Feature")}
+        for feature in ("adaptive-playback", "dynamic-color-aspects"):
+            if feature not in features:
+                fail(f"{codec.get('name')} does not publish {feature}")
     # CTS requires a hardware codec to publish what it sustains: the performance points that
     # the claims test reads and the measured frame rates that the encoder performance test
     # checks against what it measures.
@@ -905,9 +939,16 @@ def check_video_encoders(
             if width * height * frame_rate > capacity:
                 fail(f"{codec.get('name')} publishes {name} above the pixel rate capacity "
                      f"{capacity}: {width * height * frame_rate}")
+    for key, expected in VIDEO_DECODER_PROPERTIES.items():
+        if vendor.get(key) != expected:
+            fail(f"VENDOR/build.prop lacks {key}={expected}: {vendor.get(key)!r}")
     for key, value in vendor.items():
-        if key.startswith(VIDEO_DECODER_PROPERTY_PREFIX) and value != "false":
-            fail(f"VENDOR/build.prop enables a hardware decoder: {key}={value}")
+        if (
+            key.startswith(VIDEO_DECODER_PROPERTY_PREFIX)
+            and key not in VIDEO_DECODER_PROPERTIES
+            and value != "false"
+        ):
+            fail(f"VENDOR/build.prop enables a hardware decoder outside the approved set: {key}")
 
     ueventd = {
         line.strip()
@@ -936,9 +977,9 @@ def check_video_encoders(
         for line in policy.splitlines()
         if not line.lstrip().startswith("#")
     }
-    for call in VIDEO_ENCODER_SECCOMP_CALLS:
+    for call in VIDEO_ENCODER_SECCOMP_CALLS + VIDEO_CRASH_HANDLER_SECCOMP_CALLS:
         if call not in allowed:
-            fail(f"the video encoder seccomp policy does not allow {call}")
+            fail(f"the video codec seccomp policy does not allow {call}")
 
     contexts = read_small(archive, infos["VENDOR/etc/selinux/vendor_file_contexts"]).decode(
         "utf-8", errors="strict"

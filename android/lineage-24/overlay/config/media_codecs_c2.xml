@@ -1,21 +1,28 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!--
-  The hardware video encoders of the host, which the Virtio video encoder
-  presents as a V4L2 stateful encoder and external/v4l2_codec2 exposes through
-  Codec2. The product installs this file as /vendor/etc/media_codecs_c2.xml, the
-  file the Codec2 codec list reads beside media_codecs.xml.
+  The hardware video codecs of the host, which the Virtio video device presents
+  as V4L2 stateful encoders and decoders and external/v4l2_codec2 exposes
+  through Codec2. The product installs this file as /vendor/etc/media_codecs_c2.xml,
+  the file the Codec2 codec list reads beside media_codecs.xml. It is the
+  product's one vendor codec list, so it also carries the updates (update="true")
+  to the limits of the software decoders.
 
-  Only encoders are listed as new components. Hardware decoders stay out of the
-  codec list until they are qualified on their own: listing one changes how
-  Android decodes. The file is the product's one vendor codec list, so it may
-  also carry updates (update="true") to the limits of the software decoders.
+  The decoders are HEVC (Main and Main 10) and H.264, the formats the host
+  decodes in hardware. The component takes the profiles and levels from the
+  device and lists the High tier of every HEVC level the device lists; this file
+  states what MediaCodecInfo cannot learn from the component. CTS wants the width
+  and height ranges of a decoder to be the same, and the component limits a
+  stream to 4096x4096 samples. It asks every hardware decoder for adaptive
+  playback and for dynamic colour aspects, which the component implements: it
+  follows a change of resolution and reads the colour of each coded video
+  sequence.
 
-  The sizes, bitrates and levels follow the encoder component, which offers
-  AVC up to level 5.2 and HEVC Main up to the highest level the device lists.
-  The component derives the bitrate modes and the QP bounds from the device's
-  controls, and these entries state what the Virtio video encoder publishes for
-  a VideoToolbox hardware encoder: VBR, CBR and constant quality.
+  The sizes, bitrates and levels of the encoders follow the encoder component,
+  which offers AVC up to level 5.2 and HEVC Main up to the highest level the
+  device lists. The component derives the bitrate modes and the QP bounds from
+  the device's controls, and these entries state what the Virtio video encoder
+  publishes for a VideoToolbox hardware encoder: VBR, CBR and constant quality.
 
   The performance points and measured frame rates are what the encoders sustain
   through the frame copy between the guest and the host, which grows with the
@@ -24,6 +31,32 @@
   the fastest. 4K HEVC is therefore published below 30 frames per second.
 -->
 <MediaCodecs>
+    <Decoders>
+        <MediaCodec name="c2.v4l2.hevc.decoder" type="video/hevc">
+            <Limit name="size" min="64x64" max="4096x4096" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-65536" />
+            <Limit name="blocks-per-second" range="1-4147200" />
+            <Limit name="frame-rate" range="1-240" />
+            <Limit name="bitrate" range="1-240000000" />
+            <Limit name="concurrent-instances" max="8" />
+            <Feature name="adaptive-playback" />
+            <Feature name="dynamic-color-aspects" />
+        </MediaCodec>
+        <MediaCodec name="c2.v4l2.avc.decoder" type="video/avc">
+            <Limit name="size" min="64x64" max="4096x4096" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-65536" />
+            <Limit name="blocks-per-second" range="1-2211840" />
+            <Limit name="frame-rate" range="1-240" />
+            <Limit name="bitrate" range="1-240000000" />
+            <Limit name="concurrent-instances" max="8" />
+            <Feature name="adaptive-playback" />
+            <Feature name="dynamic-color-aspects" />
+        </MediaCodec>
+    </Decoders>
     <Encoders>
         <MediaCodec name="c2.v4l2.avc.encoder" type="video/avc">
             <Limit name="size" min="16x16" max="4096x4096" />

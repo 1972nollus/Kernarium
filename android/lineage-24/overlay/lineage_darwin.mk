@@ -380,20 +380,22 @@ PRODUCT_COPY_FILES += \
 PRODUCT_PACKAGES += kernarium_vk_present
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_present
 
-# Hardware video encoding. The host's VideoToolbox encoders reach the guest as a
-# V4L2 stateful encoder, and external/v4l2_codec2 exposes them through Codec2:
-# its service is the vendor Codec2 store beside the software one. The service
-# brings the vendor variants of the libraries it links, the plugin store among
-# them; naming one of those here would install its core variant under /system,
-# which the generic system artifact path requirement refuses. The XML lists the
-# encoders alone, so hardware decoders stay out of Android's codec list, and the
-# properties enable exactly those two components. The store admits as many
-# instances as the host serves streams, and reports the pixel rate the host
-# sustains as the capacity of its real-time streams, which is the largest
-# performance point the XML publishes (3840x2160 at 13 frames per second is
-# 107827200 luma samples per second). The extended policy adds the calls the
-# service's seccomp policy lacks for the V4L2 device, and ueventd gives the
-# nodes to the group the service joins.
+# Hardware video encoding and decoding. The host's VideoToolbox encoders and
+# decoders reach the guest as V4L2 stateful devices, and external/v4l2_codec2
+# exposes them through Codec2: its service is the vendor Codec2 store beside the
+# software one. The service brings the vendor variants of the libraries it
+# links, the plugin store among them; naming one of those here would install its
+# core variant under /system, which the generic system artifact path
+# requirement refuses. The XML lists the encoders and the HEVC and H.264
+# decoders, and the properties enable exactly those components. The store
+# admits as many instances as the host serves streams, and reports the pixel
+# rate the host sustains as the capacity of its real-time encoder streams, which
+# is the largest performance point the XML publishes (3840x2160 at 13 frames
+# per second is 107827200 luma samples per second); a decoder reports its
+# sessions alone until a decode pixel rate is measured
+# (ro.vendor.v4l2_codec2.video_decode_pixel_rate). The extended policy adds the
+# calls the service's seccomp policy lacks for the V4L2 device and for the
+# crash handler, and ueventd gives the nodes to the group the service joins.
 PRODUCT_SOONG_NAMESPACES += external/v4l2_codec2
 PRODUCT_PACKAGES += android.hardware.media.c2-service-v4l2
 PRODUCT_COPY_FILES += \
@@ -403,7 +405,10 @@ PRODUCT_VENDOR_PROPERTIES += \
     ro.vendor.v4l2_codec2.encoder.supported.h264=true \
     ro.vendor.v4l2_codec2.encoder.supported.hevc=true \
     ro.vendor.v4l2_codec2.encode_concurrent_instances=8 \
-    ro.vendor.v4l2_codec2.video_pixel_rate=108000000
+    ro.vendor.v4l2_codec2.video_pixel_rate=108000000 \
+    ro.vendor.v4l2_codec2.decoder.supported.h264=true \
+    ro.vendor.v4l2_codec2.decoder.supported.hevc=true \
+    ro.vendor.v4l2_codec2.decode_concurrent_instances=8
 
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 

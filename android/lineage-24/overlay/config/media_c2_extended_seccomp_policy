@@ -18,3 +18,11 @@ pselect6: 1
 statfs: 1
 getcwd: 1
 sysinfo: 1
+
+# The crash handler of debuggerd runs in the service when it faults, and the
+# default policy lacks the calls it makes, so a fault of the service ends in
+# SIGSYS with no tombstone to show it.
+getppid: 1
+recvfrom: 1
+setsockopt: 1
+uname: 1

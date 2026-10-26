@@ -11,3 +11,12 @@ patch	v4l2-keep-an-encoder-s-level-to-what-its-client-asked-for.patch
 patch	v4l2-report-the-codec-resources-to-the-framework.patch
 patch	v4l2-finish-a-frame-the-device-dropped-instead-of-waiting-for-it.patch
 patch	README-document-the-HEVC-encoder-and-the-parameters-the-device-suppl.patch
+patch	v4l2-pool-the-output-of-a-client-that-decodes-to-byte-buffers.patch
+patch	v4l2-decode-to-the-raw-format-the-client-asks-for.patch
+patch	v4l2-hand-a-decoded-picture-to-the-host-for-a-consumer-that-uses-the.patch
+patch	v4l2-report-the-range-a-stream-states-without-a-colour-description.patch
+patch	v4l2-offer-the-HEVC-High-tier-levels-a-decoder-takes.patch
+patch	v4l2-report-the-codec-resources-a-decoder-holds.patch
+patch	v4l2-keep-decoding-when-the-client-switches-the-output-surface.patch
+patch	v4l2-offer-the-AVC-Constrained-High-profile-and-level-5.2-to-a-decod.patch
+patch	README-document-the-decoder.patch
