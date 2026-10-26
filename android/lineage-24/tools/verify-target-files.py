@@ -329,7 +329,6 @@ FORBIDDEN_APEX_FILENAMES = {
     "com.android.hardware.security.authgraph.apex",
     "com.android.hardware.security.secretkeeper.apex",
     "com.android.hardware.tetheroffload.apex",
-    "com.android.hardware.thermal.apex",
     "com.android.hardware.usb.apex",
     "com.android.vndk.v31.apex",
     "com.android.vndk.v32.apex",
@@ -823,6 +822,50 @@ def check_discrete_ops(
             f"no discrete app-op list in {DEVICE_CONFIG_OVERLAY} keeps AOSP's default ops; "
             f"the closest lacks {', '.join(map(str, missing))}"
         )
+
+
+# The AOSP example thermal service, packaged as the vendor APEX that Cuttlefish installs. The
+# system_server thermal manager and CTS NativeThermalTest need a thermal HAL. Its payload holds the
+# service binary (a regular-file directory entry: name length, file type 1, name), the VINTF
+# fragment that declares IThermal/default, and the init script that starts the service.
+THERMAL_HAL_APEX = "VENDOR/apex/com.android.hardware.thermal.apex"
+THERMAL_HAL_BINARY = b"android.hardware.thermal-service.example"
+THERMAL_HAL_BINARY_ENTRY = bytes([len(THERMAL_HAL_BINARY), 1]) + THERMAL_HAL_BINARY
+THERMAL_HAL_FRAGMENT = (
+    b"<name>android.hardware.thermal</name>",
+    b"<fqname>IThermal/default</fqname>",
+)
+THERMAL_HAL_SERVICE = (
+    b"service vendor.thermal-example /apex/com.android.hardware.thermal/bin/hw/"
+    + THERMAL_HAL_BINARY
+)
+APEX_PAYLOAD_READ_LIMIT = 64 << 20
+
+
+def check_thermal_hal(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The vendor APEX must hold the thermal service, its VINTF fragment and its init script."""
+    info = infos.get(THERMAL_HAL_APEX)
+    if info is None:
+        fail(f"{THERMAL_HAL_APEX} is missing: the product needs a thermal HAL")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, 16 << 20))) as apex:
+            payload_info = apex.getinfo("apex_payload.img")
+            if payload_info.file_size > APEX_PAYLOAD_READ_LIMIT:
+                fail(f"{THERMAL_HAL_APEX} has an unexpectedly large payload")
+            payload = apex.read(payload_info)
+    except (KeyError, OSError, zipfile.BadZipFile) as error:
+        fail(f"cannot inspect {THERMAL_HAL_APEX}: {error}")
+    if THERMAL_HAL_BINARY_ENTRY not in payload:
+        fail(
+            f"{THERMAL_HAL_APEX} does not hold the service binary "
+            f"bin/hw/{THERMAL_HAL_BINARY.decode()}"
+        )
+    if not all(marker in payload for marker in THERMAL_HAL_FRAGMENT):
+        fail(f"{THERMAL_HAL_APEX} does not declare IThermal/default in a VINTF fragment")
+    if THERMAL_HAL_SERVICE not in payload:
+        fail(f"{THERMAL_HAL_APEX} does not start the vendor.thermal-example service")
 
 
 def check_hardware_features(
@@ -1611,6 +1654,7 @@ def main() -> None:
         check_hardware_features(archive, infos)
         check_fdroid(archive, infos)
         check_discrete_ops(archive, infos)
+        check_thermal_hal(archive, infos)
         check_audio_policy(archive, infos)
         check_multilib_properties(archive, infos)
         check_mesa_gles_stack(archive, infos)

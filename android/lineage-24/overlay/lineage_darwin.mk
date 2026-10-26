@@ -236,7 +236,6 @@ KERNARIUM_REMOVED_PACKAGES := \
     com.android.hardware.security.authgraph \
     com.android.hardware.security.secretkeeper \
     com.android.hardware.tetheroffload \
-    com.android.hardware.thermal \
     com.android.hardware.usb \
     com.android.hardware.vibrator \
     com.android.hardware.wifi \

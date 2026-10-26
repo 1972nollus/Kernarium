@@ -555,11 +555,21 @@ port replay and a new release.
 Payload reduction is done through product configuration and regenerated AOSP
 patches, never by deleting files from a completed image. The product omits the
 AuthSecret, reboot-escrow, AuthGraph, Secretkeeper, remote Identity Credential,
-confirmation-UI, consumer-IR, USB, thermal, tether-offload, input-processor,
+confirmation-UI, consumer-IR, USB, tether-offload, input-processor,
 conditional-access, netlink-interceptor, and inactive Ranchu-composer HAL
 APEXes. None has corresponding Darwin UML hardware. The active DRM composer,
 power and memtrack integration, ClearKey DRM, dumpstate diagnostics, software
 KeyMint/gatekeeper, and Credential Manager remain.
+
+The thermal HAL APEX was first removed with these, and is installed again. It
+is AOSP's example AIDL thermal service (`com.android.hardware.thermal`), which
+reports fixed example temperatures and is what Cuttlefish ships, not a driver
+for hardware the machine lacks. `system_server`'s thermal manager and the NDK thermal API need
+a thermal HAL, and CTS `NativeThermalTest` fails with "HAL Ready: false"
+without one. The module carries its own SELinux file contexts, and the platform
+policy already has the `hal_thermal_default` domain and the service context.
+The target-files verifier requires the vendor APEX to hold the service, the
+VINTF fragment that declares `IThermal/default` and the init script.
 
 The fixed image also omits CompOS and other AVF guest payloads, legacy VNDK
 31--34 APEXes, OTA and DSU executables, the dynamic-system installer,

@@ -245,8 +245,9 @@ def erofs_system_fstab(fstab: str) -> str:
     return changed
 
 
-def synthetic_apex(filesystem: str = "ext4") -> bytes:
+def synthetic_apex(filesystem: str = "ext4", content: bytes = b"") -> bytes:
     payload = bytearray(1024 + 0x38 + 2)
+    payload += content
     if filesystem == "ext4":
         payload[1024 + 0x38 : 1024 + 0x38 + 2] = b"\x53\xef"
     elif filesystem == "erofs":
@@ -432,6 +433,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_product_model: bool = False,
                           missing_lockscreen_default: bool = False,
                           discrete_ops_variant: str | None = None,
+                          thermal_hal_variant: str | None = None,
                           wide_fdroid_permissions: bool = False,
                           mesa_gles_alignment: int = 16384,
                           elf_edit: tuple[str, int, int] | None = None,
@@ -1049,6 +1051,30 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                 if unsupported_hal:
                     archive.writestr("VENDOR/apex/com.google.cf.light.apex", b"apex")
+                # The AOSP example thermal service as the vendor APEX Cuttlefish installs: the service
+                # binary as a regular-file directory entry (name length, file type 1, name), the
+                # VINTF fragment that declares it and the init script that starts it. The init
+                # script names the binary too, so the entry is told apart from that.
+                thermal_binary = b"android.hardware.thermal-service.example"
+                thermal_content = b"\x00" * 8
+                if thermal_hal_variant != "no-binary":
+                    thermal_content += bytes([len(thermal_binary), 1]) + thermal_binary
+                if thermal_hal_variant != "no-fragment":
+                    thermal_content += (
+                        b'<manifest version="1.0" type="device"><hal format="aidl">'
+                        b"<name>android.hardware.thermal</name><version>3</version>"
+                        b"<fqname>IThermal/default</fqname></hal></manifest>"
+                    )
+                if thermal_hal_variant != "no-service":
+                    thermal_content += (
+                        b"service vendor.thermal-example "
+                        b"/apex/com.android.hardware.thermal/bin/hw/" + thermal_binary + b"\n"
+                    )
+                if thermal_hal_variant != "missing-apex":
+                    archive.writestr(
+                        "VENDOR/apex/com.android.hardware.thermal.apex",
+                        synthetic_apex("ext4", thermal_content),
+                    )
                 if system_other:
                     archive.writestr(
                         "SYSTEM_OTHER/app/Fixture/Fixture.apk", b"apk"
@@ -1195,6 +1221,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("product-model", {"wrong_product_model": True}),
             ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
             ("missing-discrete-ops-overlay", {"discrete_ops_variant": "missing-overlay"}),
+            ("missing-thermal-apex", {"thermal_hal_variant": "missing-apex"}),
+            ("thermal-apex-without-binary", {"thermal_hal_variant": "no-binary"}),
+            ("thermal-apex-without-fragment", {"thermal_hal_variant": "no-fragment"}),
+            ("thermal-apex-without-service", {"thermal_hal_variant": "no-service"}),
             ("lineage-discrete-ops-list-only", {"discrete_ops_variant": "lineage-list-only"}),
             ("short-discrete-ops-list", {"discrete_ops_variant": "short-device-list"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
@@ -1293,6 +1323,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "which vendor_init may not read"),
             ("missing-lockscreen-default-cause", {"missing_lockscreen_default": True},
              "unexpected product property ro.lockscreen.disable.default"),
+            ("missing-thermal-apex-cause", {"thermal_hal_variant": "missing-apex"},
+             "com.android.hardware.thermal.apex is missing: the product needs a thermal HAL"),
+            ("thermal-apex-without-binary-cause", {"thermal_hal_variant": "no-binary"},
+             "does not hold the service binary bin/hw/android.hardware.thermal-service.example"),
+            ("thermal-apex-without-fragment-cause", {"thermal_hal_variant": "no-fragment"},
+             "does not declare IThermal/default in a VINTF fragment"),
+            ("thermal-apex-without-service-cause", {"thermal_hal_variant": "no-service"},
+             "does not start the vendor.thermal-example service"),
             ("missing-discrete-ops-overlay-cause", {"discrete_ops_variant": "missing-overlay"},
              "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk is missing"),
             ("lineage-discrete-ops-list-only-cause", {"discrete_ops_variant": "lineage-list-only"},
