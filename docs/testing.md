@@ -328,6 +328,17 @@ The x86_64 slice registers no CTest suites, so it runs `run_gpu_guest.py`
 directly with an x86-64 probe and an x86-64 image that carries Mesa, naming the
 test's `--command` lines and kernel arguments.
 
+The optional `guest-drm-vblank` test checks that Virtio-GPU paces its display
+as the vblank contract in
+[`../kernel/common/README.md`](../kernel/common/README.md) describes. Build
+`tests/integration/gpu/drm_flip_probe.cpp` as a static C++20 executable for the
+guest architecture and configure `UML_DRM_FLIP_PROBE_BINARY`. The guest boots
+with the GPU; the probe sets the first output's preferred mode, waits for 30
+vblanks and flips two buffers for two seconds, and requires both rates to be
+within 10% of the mode's refresh rate. The x86_64 slice runs
+`run_gpu_guest.py` directly with an x86-64 probe, naming the test's `--command`
+lines and kernel arguments.
+
 `guest-aarch32-kernel` checks the kernel's AArch32 task support in
 [`../kernel/common/README.md`](../kernel/common/README.md), and needs `python3`,
 `as` and `ld` in the rootfs. The build generates a freestanding

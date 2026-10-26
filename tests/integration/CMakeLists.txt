@@ -199,6 +199,34 @@ done'"
         GPUS 1)
 endif()
 
+set(UML_DRM_FLIP_PROBE_BINARY "" CACHE FILEPATH
+    "Guest executable built from tests/integration/gpu/drm_flip_probe.cpp")
+if(UML_DRM_FLIP_PROBE_BINARY)
+    if(NOT EXISTS "${UML_DRM_FLIP_PROBE_BINARY}")
+        message(FATAL_ERROR "The vblank pacing test requires its compiled guest probe")
+    endif()
+    # A four-vCPU guest with the GPU; the probe takes the card's first output.
+    uml_add_guest_integration_test(
+        NAME guest-drm-vblank
+        SCRIPT gpu/run_gpu_guest.py
+        ARGS --timeout 300
+            --memory 4G
+            --guest-file
+            /usr/local/libexec/drm-flip-probe=${UML_DRM_FLIP_PROBE_BINARY}
+            --command "timeout 60 sh -c 'until test -e /dev/dri/card0
+do
+    sleep 1
+done'"
+            --command "timeout 60 /usr/local/libexec/drm-flip-probe"
+            --
+            ncpus=4 --execution-engine=jit --gpu --gpu-display=vnc
+            --gpu-vnc-bind=127.0.0.1 --gpu-vnc-port=0
+        LABELS guest;gpu
+        TIMEOUT 420
+        CPUS 4
+        GPUS 1)
+endif()
+
 if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
    NOT TARGET "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
     message(FATAL_ERROR "Integration tests require a selected kernel artifact")

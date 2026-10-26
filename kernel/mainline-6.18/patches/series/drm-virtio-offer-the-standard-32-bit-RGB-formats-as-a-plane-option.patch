@@ -48,10 +48,10 @@ index fc884fb57b7eaf4217cbdf9277f79b89f5ab9021..f8413ee71ed7a9e2e62275ef7809a08b
 +
 +	   If unsure, say N.
 diff --git a/drivers/gpu/drm/virtio/virtgpu_display.c b/drivers/gpu/drm/virtio/virtgpu_display.c
-index e265a06f2c06ab2b9c79384346cfcf8278bffe3b..335319d83e87e812d41e878bb9c3dab680ce8357 100644
+index fe7fc933e421dea70d4d4cc8861722bab4fa3e42..2ebfeff12406dc1b297eb325b894e05fc91b0996 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_display.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_display.c
-@@ -300,8 +300,7 @@ virtio_gpu_user_framebuffer_create(struct drm_device *dev,
+@@ -315,8 +315,7 @@ virtio_gpu_user_framebuffer_create(struct drm_device *dev,
  	struct virtio_gpu_framebuffer *virtio_gpu_fb;
  	int ret;
  

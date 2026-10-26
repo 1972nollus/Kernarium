@@ -91,3 +91,4 @@ patch	um-wake-the-system-through-every-descriptor-of-a-shared-interrupt.patch
 patch	um-let-the-Darwin-network-wake-a-suspend-the-guest-starts.patch
 patch	arm64-um-build-the-kernel-with-the-stack-protector.patch
 patch	media-v4l2-add-the-HLG-transfer-function.patch
+patch	drm-virtio-pace-the-CRTC-with-a-vblank-timer.patch

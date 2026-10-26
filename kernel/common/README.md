@@ -419,3 +419,13 @@ transfer has taken to the host, so CPU access must be bracketed and a producer
 must flush its commands before it hands a buffer over. The optional
 `guest-gbm-dmabuf` test checks the export mode and both directions of
 visibility.
+
+virtio-gpu has no vertical blank, so the driver paces each CRTC with the DRM
+vblank timer at its mode's refresh rate. A page flip's event and out-fence
+signal at the next tick, not when the flip is queued, and an atomic commit
+waits one tick, so a client that flips faster is held to the display's rate.
+Android's drm_hwcomposer schedules a frame against the present fence and so
+presents it no earlier than it asked for. The timer runs only while a client
+holds a vblank reference, so an idle display costs nothing. The optional
+`guest-drm-vblank` test checks the vblank wait and the flip rate against the
+mode's refresh rate.
