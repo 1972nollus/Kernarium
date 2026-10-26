@@ -27,10 +27,10 @@ holds stands for the oldest of them.
  5 files changed, 66 insertions(+), 3 deletions(-)
 
 diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
-index c11d99e865496798b5840aa85b153303d9866bd5..2a339577d8286caaf39c334aa577bc2f81f165db 100644
+index acfdc6e5036804656fec84bf15b9a5c9cf46c1c5..5144a7a0320adea0517bb0c84aef26f39304ff23 100644
 --- a/components/EncodeComponent.cpp
 +++ b/components/EncodeComponent.cpp
-@@ -881,6 +881,7 @@ void EncodeComponent::flush() {
+@@ -890,6 +890,7 @@ void EncodeComponent::flush() {
          abortedWorkItems.push_back(std::move(work));
          mWorkQueue.pop_front();
      }
@@ -38,7 +38,7 @@ index c11d99e865496798b5840aa85b153303d9866bd5..2a339577d8286caaf39c334aa577bc2f
      if (!abortedWorkItems.empty()) {
          mListener->onWorkDone_nb(weak_from_this(), std::move(abortedWorkItems));
      }
-@@ -949,6 +950,11 @@ void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, boo
+@@ -958,6 +959,11 @@ void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, boo
      ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
      ALOG_ASSERT(buffer->dmabuf);
  
@@ -50,7 +50,7 @@ index c11d99e865496798b5840aa85b153303d9866bd5..2a339577d8286caaf39c334aa577bc2f
      C2ConstLinearBlock constBlock =
              buffer->dmabuf->share(buffer->dmabuf->offset(), dataSize, C2Fence());
  
-@@ -1028,6 +1034,36 @@ void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, boo
+@@ -1037,6 +1043,36 @@ void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, boo
      reportFinishedWork();
  }
  
@@ -87,7 +87,7 @@ index c11d99e865496798b5840aa85b153303d9866bd5..2a339577d8286caaf39c334aa577bc2f
  C2Work* EncodeComponent::getWorkByIndex(uint64_t index) {
      ALOGV("%s(): getting work item (index: %" PRIu64 ")", __func__, index);
      ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
-@@ -1080,8 +1116,10 @@ bool EncodeComponent::isWorkDone(const C2Work& work) const {
+@@ -1089,8 +1125,10 @@ bool EncodeComponent::isWorkDone(const C2Work& work) const {
          return false;
      }
  
@@ -100,7 +100,7 @@ index c11d99e865496798b5840aa85b153303d9866bd5..2a339577d8286caaf39c334aa577bc2f
          ALOGV("Output buffer associated with work item %" PRIu64 " not returned yet",
                work.input.ordinal.frameIndex.peeku());
          return false;
-@@ -1116,6 +1154,7 @@ void EncodeComponent::reportWork(std::unique_ptr<C2Work> work) {
+@@ -1125,6 +1163,7 @@ void EncodeComponent::reportWork(std::unique_ptr<C2Work> work) {
            work->input.ordinal.frameIndex.peekull(), work->input.ordinal.timestamp.peekull());
      ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
  

@@ -15,14 +15,14 @@ the bytes blue, green, red, alpha, while the blocks the framework maps hold
 red, green, blue, alpha, which is ABGR (V4L2 RGBA32). Name them by their
 byte order, so the V4L2 format that matches is the one the encoder asks for.
 ---
- components/EncodeComponent.cpp                | 28 ++++++++--
+ components/EncodeComponent.cpp                | 43 ++++++++++++---
  .../v4l2_codec2/components/VideoEncoder.h     |  6 +++
  v4l2/V4L2Encoder.cpp                          | 54 +++++++++++++++++--
  v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |  3 ++
- 4 files changed, 84 insertions(+), 7 deletions(-)
+ 4 files changed, 96 insertions(+), 10 deletions(-)
 
 diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
-index 27762166ed9afa414bcf283d37c5965b99b40293..9a73e886042636a949d9f71e25a17896f760dc6e 100644
+index 27762166ed9afa414bcf283d37c5965b99b40293..f2f5b6b6935df694579b630cb0f7820e959d5a99 100644
 --- a/components/EncodeComponent.cpp
 +++ b/components/EncodeComponent.cpp
 @@ -38,6 +38,13 @@ using android::hardware::graphics::common::V1_0::BufferUsage;
@@ -85,6 +85,41 @@ index 27762166ed9afa414bcf283d37c5965b99b40293..9a73e886042636a949d9f71e25a17896
          if (mEncoder->inputFormat() != format) {
              ALOG_ASSERT(!mInputFormatConverter);
              ALOGV("Creating input format convertor (%s)",
+@@ -526,14 +548,23 @@ void EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+             // buffer. Whenever there is no format conversion, this causes
+             // sync issue on ARCVM since host side buffers never get updated.
+             // Fix this by explicitly calling lock/unlock before sending buffer
+-            // to encoder.
++            // to encoder. A producer that renders with the GPU, such as GLES on a Surface, writes
++            // a frame in the host's copy and nowhere else; reading the buffer pulls the frame into
++            // the guest memory the device takes it from.
+             const C2Handle* handle = inputBlock.handle();
+             uint32_t width, height, format, stride, generation, igbpSlot;
+             uint64_t usage, igbpId;
+             _UnwrapNativeCodec2GrallocMetadata(handle, &width, &height, &format, &usage, &stride,
+                                                &generation, &igbpId, &igbpSlot);
+             do {
+-                if (!(usage & GRALLOC_USAGE_SW_WRITE_MASK)) break;
++                uint64_t lockUsage;
++                if (usage & GRALLOC_USAGE_SW_WRITE_MASK) {
++                    lockUsage = GRALLOC_USAGE_SW_WRITE_OFTEN;
++                } else if ((usage & GRALLOC_USAGE_HW_RENDER) && (usage & GRALLOC_USAGE_SW_READ_MASK)) {
++                    lockUsage = GRALLOC_USAGE_SW_READ_OFTEN;
++                } else {
++                    break;
++                }
+                 native_handle_t* gralloc_handle = UnwrapNativeCodec2GrallocHandle(handle);
+                 if (nullptr == gralloc_handle) break;
+                 sp<GraphicBuffer> buffer =
+@@ -541,7 +572,7 @@ void EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+                                           height, format, 1, usage, stride);
+                 native_handle_delete(gralloc_handle);
+                 void* pixels;
+-                if (buffer->lock(GRALLOC_USAGE_SW_WRITE_OFTEN, &pixels)) break;
++                if (buffer->lock(lockUsage, &pixels)) break;
+                 buffer->unlock();
+             } while (0);
+         }
 diff --git a/components/include/v4l2_codec2/components/VideoEncoder.h b/components/include/v4l2_codec2/components/VideoEncoder.h
 index d05f1caa5e6624e5ac1a237f6a6ab2486f500df1..28a3de53f2d306600d2cbecf820a8003bdaabd5a 100644
 --- a/components/include/v4l2_codec2/components/VideoEncoder.h

@@ -35,10 +35,10 @@ and never below the target.
  4 files changed, 119 insertions(+), 69 deletions(-)
 
 diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
-index 9a73e886042636a949d9f71e25a17896f760dc6e..e8ab99a327ef81bd8a3e79f767409c3ba767f5cb 100644
+index f2f5b6b6935df694579b630cb0f7820e959d5a99..930c6eef1a08106c59c15308e5f3c21fa1cb72d9 100644
 --- a/components/EncodeComponent.cpp
 +++ b/components/EncodeComponent.cpp
-@@ -689,10 +689,10 @@ bool EncodeComponent::updateEncodingParameters() {
+@@ -698,10 +698,10 @@ bool EncodeComponent::updateEncodingParameters() {
          mBitrate = bitrate;
  
          if (mBitrateMode == C2Config::BITRATE_VARIABLE) {
@@ -51,7 +51,7 @@ index 9a73e886042636a949d9f71e25a17896f760dc6e..e8ab99a327ef81bd8a3e79f767409c3b
          }
      }
  
-@@ -746,11 +746,11 @@ bool EncodeComponent::updateEncodingParameters() {
+@@ -755,11 +755,11 @@ bool EncodeComponent::updateEncodingParameters() {
  
      C2Config::profile_t outputProfile = mInterface->getOutputProfile();
      if (isH264Profile(outputProfile)) {

@@ -218,7 +218,7 @@ index 4a09336518dce4c2d5c2f6030f752f4e78cf5fbb..4e399032858a8410aa03ab337b4efec8
  }
  }  // namespace android
 diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
-index e8ab99a327ef81bd8a3e79f767409c3ba767f5cb..c11d99e865496798b5840aa85b153303d9866bd5 100644
+index 930c6eef1a08106c59c15308e5f3c21fa1cb72d9..acfdc6e5036804656fec84bf15b9a5c9cf46c1c5 100644
 --- a/components/EncodeComponent.cpp
 +++ b/components/EncodeComponent.cpp
 @@ -32,6 +32,7 @@
@@ -302,7 +302,7 @@ index e8ab99a327ef81bd8a3e79f767409c3ba767f5cb..c11d99e865496798b5840aa85b153303
      done->Signal();
  }
  
-@@ -984,6 +1010,18 @@ void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, boo
+@@ -993,6 +1019,18 @@ void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, boo
      }
      work->worklets.front()->output.buffers.emplace_back(std::move(linearBuffer));
  
