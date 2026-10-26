@@ -385,6 +385,13 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_presen
 PRODUCT_PACKAGES += kernarium_vk_ahb_import
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_ahb_import
 
+# A YUV hardware-buffer round-trip check: it writes NV12, P010 and YV12 buffers
+# of even and odd sizes whole and then by a partial lock, and reads them back
+# through the host copy, so a layout the guest and the renderer read
+# differently fails the run.
+PRODUCT_PACKAGES += kernarium_ahb_yuv_roundtrip
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_yuv_roundtrip
+
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 
 # ADB is available over the inherited TCP port even though this machine has no
