@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -348,6 +349,24 @@ std::vector<std::string> readKernelCommandLine(
 		throw std::invalid_argument(
 			"the release kernel command line is empty");
 	return arguments;
+}
+
+std::string lcdDensityArgument(std::uint32_t dotsPerInch)
+{
+	return std::string{lcdDensityPrefix} +
+	       std::to_string(dotsPerInch == 0 ? defaultLcdDensity : dotsPerInch);
+}
+
+std::uint32_t parseDotsPerInch(std::string_view text)
+{
+	std::uint32_t parsed = 0;
+	const auto [end, error] =
+		std::from_chars(text.data(), text.data() + text.size(), parsed);
+	if (error != std::errc{} || end != text.data() + text.size() ||
+	    parsed == 0)
+		throw std::invalid_argument("invalid dots per inch: " +
+					    std::string{text});
+	return parsed;
 }
 
 BootSelection selectBoot(const std::filesystem::path &diskPath,

@@ -4,6 +4,7 @@
 #include "block/android_boot.hpp"
 
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -23,6 +24,7 @@ constexpr std::string_view android_default_guest_cpus{"ncpus=10"};
 constexpr std::string_view release_option{"--android-release="};
 constexpr std::string_view disk_option{"--android-disk="};
 constexpr std::string_view boot_mode_option{"--android-boot-mode="};
+constexpr std::string_view dpi_option{"--gpu-dpi="};
 constexpr std::string_view adb_authorization_prefix{
 	"androidboot.kernarium.adb_auth="};
 
@@ -31,6 +33,8 @@ struct AndroidOptions {
 	std::filesystem::path disk;
 	uml::android::BootMode boot_mode = uml::android::BootMode::automatic;
 	bool boot_mode_set = false;
+	/* The EDID density the GPU device advertises; 0 advertises none. */
+	std::uint32_t dots_per_inch = 0;
 	std::vector<std::string> forwarded;
 };
 
@@ -67,6 +71,12 @@ AndroidOptions parse_options(int argc, char *const argv[])
 		if (argument.starts_with(adb_authorization_prefix))
 			throw std::invalid_argument(
 				"macOS fixes Android ADB authorization at boot");
+		if (argument.starts_with(uml::android::lcdDensityPrefix))
+			throw std::invalid_argument(
+				"the Android density follows --gpu-dpi");
+		if (argument.starts_with(dpi_option))
+			options.dots_per_inch = uml::android::parseDotsPerInch(
+				argument.substr(dpi_option.size()));
 		if (argument.starts_with(release_option)) {
 			if (!options.release.empty())
 				throw std::invalid_argument(
@@ -155,6 +165,7 @@ void print_usage()
 			"  --android-release=/absolute/release\n"
 			"  --android-disk=/absolute/writable-disk.img\n"
 			"  --android-boot-mode=auto|normal|recovery\n"
+			"  --gpu-dpi=N (also the guest density; 213 without it)\n"
 			"  --virtio-console-socket=/absolute/console.sock\n"
 			"The same values may be supplied through UML_ANDROID17_RELEASE, "
 			"UML_ANDROID17_DISK, "
@@ -188,11 +199,17 @@ int main(int argc, char *argv[], char *envp[])
 			options.forwarded.emplace_back("root=/dev/ram0");
 			options.forwarded.emplace_back("rootfstype=ramfs");
 			constexpr std::array launcher_prefixes{
-				adb_authorization_prefix};
+				adb_authorization_prefix,
+				uml::android::lcdDensityPrefix};
 			for (auto &argument : uml::android::readKernelCommandLine(
 				     release / "boot/kernel-command-line.txt",
 				     launcher_prefixes))
 				options.forwarded.push_back(std::move(argument));
+			/* Android init imports this as ro.boot.lcd_density, which
+			 * the vendor init script publishes as ro.sf.lcd_density: a
+			 * guest without it has an empty property. */
+			options.forwarded.emplace_back(
+				uml::android::lcdDensityArgument(options.dots_per_inch));
 			options.forwarded.emplace_back(
 				std::string{adb_authorization_prefix} + "0");
 			std::fprintf(

@@ -379,9 +379,12 @@ only `androidboot` properties the tracked command line sets, because a copy
 from a missing one fails at every boot; the goldfish composer mode and the
 ANGLE feature overrides have no source on this product and are not copied. The
 one host-supplied value, `androidboot.lcd_density`, is copied to
-`ro.sf.lcd_density` in an action gated on its presence. Kernarium passes it at
-each launch. The standalone macOS launcher passes none, so SurfaceFlinger uses
-its 213 dpi fallback and logs that the property is undefined.
+`ro.sf.lcd_density` in an action gated on its presence. Every launcher passes
+it, and a release's command line may not set it. Kernarium passes the density of
+the EDID it advertises. The standalone macOS launcher passes its `--gpu-dpi`
+value, which also sets the EDID, or 213, the density SurfaceFlinger itself
+falls back to when a display has no physical size, so the property is never
+empty (CTS `DisplaySizeTest` parses it as an integer).
 
 The display follows the host view. When the host advertises a new size
 ([`../../docs/graphics.md`](../../docs/graphics.md#dynamic-native-geometry)),

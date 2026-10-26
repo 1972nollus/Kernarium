@@ -47,6 +47,25 @@ std::vector<std::string> readKernelCommandLine(
 	const std::filesystem::path &path,
 	std::span<const std::string_view> launcherPrefixes);
 
+/* The kernel argument that gives the guest its display density. Android init
+ * imports it as ro.boot.lcd_density and the product's vendor init copies it to
+ * ro.sf.lcd_density, so every launcher sets it and a release's command line
+ * may not. */
+inline constexpr std::string_view lcdDensityPrefix{"androidboot.lcd_density="};
+
+/* The density SurfaceFlinger uses, in dots per inch, when a display has no
+ * physical size to derive one from. */
+inline constexpr std::uint32_t defaultLcdDensity = 213;
+
+/* `androidboot.lcd_density=` followed by the density of the EDID the launcher
+ * advertises (its --gpu-dpi), or defaultLcdDensity when it advertises none
+ * (`dotsPerInch` is 0). */
+std::string lcdDensityArgument(std::uint32_t dotsPerInch);
+
+/* The dots per inch in the text of a --gpu-dpi value: a positive decimal
+ * number with no other character. Throws std::invalid_argument otherwise. */
+std::uint32_t parseDotsPerInch(std::string_view text);
+
 } // namespace uml::android
 
 #endif

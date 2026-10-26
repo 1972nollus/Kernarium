@@ -238,6 +238,36 @@ void testKernelCommandLine(const std::filesystem::path &directory)
 	});
 }
 
+/* The standalone launcher gives every guest a density: the EDID's, or the one
+ * SurfaceFlinger falls back to. A release cannot set it. */
+void testLcdDensity(const std::filesystem::path &directory)
+{
+	require(uml::android::lcdDensityArgument(0) ==
+		"androidboot.lcd_density=213");
+	require(uml::android::lcdDensityArgument(320) ==
+		"androidboot.lcd_density=320");
+	require(uml::android::lcdDensityArgument(
+			uml::android::defaultLcdDensity) ==
+		"androidboot.lcd_density=213");
+
+	require(uml::android::parseDotsPerInch("160") == 160U);
+	for (const std::string_view bad : {"", "0", "-1", "12x", " 5", "5 ",
+					   "4294967296", "dpi"})
+		requireThrows([&] { (void)uml::android::parseDotsPerInch(bad); });
+
+	constexpr std::array<std::string_view, 2> launcherPrefixes{
+		"androidboot.kernarium.adb_auth=",
+		uml::android::lcdDensityPrefix};
+	const auto path = directory / "density-command-line.txt";
+	writeText(path, "quiet androidboot.lcd_density=240\n");
+	requireThrows([&] {
+		(void)uml::android::readKernelCommandLine(path, launcherPrefixes);
+	});
+	writeText(path, "quiet androidboot.hardware=kernarium\n");
+	require(uml::android::readKernelCommandLine(path, launcherPrefixes) ==
+		std::vector<std::string>{"quiet", "androidboot.hardware=kernarium"});
+}
+
 /* The writable disk is named in a UBD specification and opened read-write. */
 void testWritableDisk(const std::filesystem::path &directory)
 {
@@ -275,6 +305,7 @@ int main()
 		"uml-android-boot-tests.XXXXXX"};
 	const auto &directory = scratch.path();
 	testKernelCommandLine(directory);
+	testLcdDensity(directory);
 	testWritableDisk(directory);
 
 	const auto stale = makeDisk(directory, seedDiskSize);
