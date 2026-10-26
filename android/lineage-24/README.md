@@ -431,7 +431,8 @@ profiles and levels, colour aspects and HDR10 static metadata. A capability the
 device does not list is not advertised: Main 10 and HDR10 need a 10-bit raw
 format, which the device publishes only when the host does. Packed RGB input
 goes to the device unconverted when it lists that byte order and is converted
-otherwise. The device picks the level of a stream under the ceiling the client
+otherwise; a Main 10 session also takes 8-bit YUV and RGBA_1010102 input, which
+the component converts to P010 by the stream's colour aspects. The device picks the level of a stream under the ceiling the client
 asks for, so the component reports the level it reads from the first coded
 headers.
 

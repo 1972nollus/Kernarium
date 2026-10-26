@@ -9,14 +9,14 @@ buffers and hands a picture to the host for a GPU consumer. None of that
 was written down, and a product that enables the decoder sets a property
 the README did not name.
 ---
- README.md | 69 ++++++++++++++++++++++++++++++++++++++++++++++++-------
- 1 file changed, 61 insertions(+), 8 deletions(-)
+ README.md | 87 +++++++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 75 insertions(+), 12 deletions(-)
 
 diff --git a/README.md b/README.md
-index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..3e2c5a35e3dbcded737beb14cb14b4fb63a5ad0e 100644
+index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..98e7bf28ce1b9777fcf8be38896316384f6a9142 100644
 --- a/README.md
 +++ b/README.md
-@@ -381,17 +381,23 @@ resources it needs, so that Android can tell what is left
+@@ -381,27 +381,43 @@ resources it needs, so that Android can tell what is left
  - Codec sessions (*C2PlatformConfig::VENDOR_START*): the capacity is the sum of
  the concurrent instance bounds of the codecs the store offers, and every
  instance needs one.
@@ -48,7 +48,31 @@ index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..3e2c5a35e3dbcded737beb14cb14b4fb
  
  ### Supported Input Pixel Formats:
  
-@@ -415,4 +421,51 @@ PPS NAL units are prepended to IDR frames by enabling the
+ The V4L2 encoder supports various input pixel formats. Frames are passed to the
+ V4L2 encoder in the NV12 format, or in P010 for HEVC Main 10. If a video frame
+ using a different pixel format is passed to the encoder, format conversion will
+-be performed to convert the frame to the NV12 format, except for packed RGB
+-frames (RGBA_8888 and RGBX_8888 blocks) that the device takes as they are: the
+-encoder then asks the device for the format of the first frame before it
+-queues it.
++be performed to convert the frame to the NV12 format (P010 for Main 10), except
++for packed RGB frames (RGBA_8888 and RGBX_8888 blocks) that the device takes as
++they are: the encoder then asks the device for the format of the first frame
++before it queues it.
++
++The conversion to P010 takes 8-bit YUV 4:2:0 (planar or semiplanar) and packed
++8-bit RGB, and RGBA_1010102, which the framework maps as a 10-bit YUVA block
++whose words hold red, green and blue. 8-bit YUV samples are shifted left by
++eight, which moves limited-range black and white from 16 and 235 to 64 and 940.
++RGB becomes YCbCr by the matrix and range of *C2_PARAMKEY_COLOR_ASPECTS*, the way
++the software AV1 and APV encoders convert RGBA_1010102: BT.709 for
++*MATRIX_BT709* and BT.2020 for any other, full range for *RANGE_FULL* and
++limited range for any other. Each chroma sample is the mean of its 2x2 block. 10-bit
++RGB for an 8-bit encoder is not converted.
+ 
+ ### Additional Features:
+ 
+@@ -415,4 +431,51 @@ PPS NAL units are prepended to IDR frames by enabling the
  support this control the encoder will manually cache and prepend SPS and PPS NAL
  units.
  

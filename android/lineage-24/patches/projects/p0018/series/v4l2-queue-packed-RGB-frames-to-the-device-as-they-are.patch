@@ -14,6 +14,13 @@ The block layout had called every RGB block ARGB, which in libyuv's naming is
 the bytes blue, green, red, alpha, while the blocks the framework maps hold
 red, green, blue, alpha, which is ABGR (V4L2 RGBA32). Name them by their
 byte order, so the V4L2 format that matches is the one the encoder asks for.
+
+A frame that a GPU producer rendered exists only in the host's copy of the
+buffer, and the device reads the guest memory. The first frame of a GLES
+Surface reached the device and every later one was black. Before the device
+takes a frame the component now locks the buffer for reading when the producer
+rendered it with the GPU and no CPU write lock applies, which pulls the frame
+into the guest memory, as the write lock does for a CPU producer.
 ---
  components/EncodeComponent.cpp                | 43 ++++++++++++---
  .../v4l2_codec2/components/VideoEncoder.h     |  6 +++
