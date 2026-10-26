@@ -261,6 +261,13 @@ The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
 an x86-64 probe and an x86-64 rootfs, the way its boot check below is run.
 
+The optional `guest-v4l2-mmap-capture` test covers what that one cannot: with a
+GPU the decoder's capture buffers are host-visible Virtio-GPU blobs, and an
+allocation of them has to finish on an idle guest. Build
+`tests/integration/video/v4l2_mmap_capture_probe.cpp` the same way and configure
+`UML_V4L2_MMAP_CAPTURE_PROBE_BINARY`. The probe allocates and maps the buffers
+and fails when that takes ten seconds or when the buffers are not blobs.
+
 The optional `guest-futex-atomic` test checks the futex contract in
 [`../kernel/common/README.md`](../kernel/common/README.md). Configure
 `UML_FUTEX_PROBE_BINARY` with a static C++20 build of

@@ -126,6 +126,25 @@ if(UML_V4L2_PROBE_BINARY)
         CPUS 2)
 endif()
 
+set(UML_V4L2_MMAP_CAPTURE_PROBE_BINARY "" CACHE FILEPATH
+    "Static guest executable built from tests/integration/video/v4l2_mmap_capture_probe.cpp")
+if(UML_V4L2_MMAP_CAPTURE_PROBE_BINARY)
+    if(NOT EXISTS "${UML_V4L2_MMAP_CAPTURE_PROBE_BINARY}")
+        message(FATAL_ERROR "V4L2 MMAP capture qualification requires its guest probe")
+    endif()
+    # The decoder's capture buffers are host-visible GPU blobs only in a guest
+    # that has a GPU, which is why this is not part of guest-v4l2-decode.
+    uml_add_guest_integration_test(
+        NAME guest-v4l2-mmap-capture
+        SCRIPT video/run_v4l2_mmap_capture.py
+        ARGS --probe "${UML_V4L2_MMAP_CAPTURE_PROBE_BINARY}"
+            --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-mmap-capture-guest.log"
+        LABELS guest;video;gpu;smoke
+        TIMEOUT 300
+        CPUS 2
+        GPUS 1)
+endif()
+
 set(UML_FUTEX_PROBE_BINARY "" CACHE FILEPATH
     "Static guest executable built from tests/integration/futex/futex_atomic_probe.cpp")
 if(UML_FUTEX_PROBE_BINARY)
