@@ -402,6 +402,8 @@ fi
 	fail "the LineageOS adb root service is absent"
 [[ "$PRODUCT_PACKAGES" == *" suspend_blocker "* ]] ||
 	fail "the suspend blocker that holds the guest awake for an adb host is absent"
+[[ "$PRODUCT_PACKAGES" == *" com.android.hardware.thermal "* ]] ||
+	fail "the example thermal HAL that the thermal manager needs is absent"
 PRODUCT_PACKAGES_EXCLUDE=" $(get_build_var PRODUCT_PACKAGES_EXCLUDE) "
 for package in \
 	BasicDreams \
@@ -431,7 +433,6 @@ for package in \
 	com.android.hardware.security.authgraph \
 	com.android.hardware.security.secretkeeper \
 	com.android.hardware.tetheroffload \
-	com.android.hardware.thermal \
 	com.android.hardware.usb \
 	com.android.vndk.v31 \
 	com.android.vndk.v32 \

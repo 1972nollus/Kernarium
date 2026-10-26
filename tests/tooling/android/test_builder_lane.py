@@ -1493,6 +1493,32 @@ def verify_media_codecs_overlay(android_root: Path) -> None:
     )
 
 
+def verify_package_assertions(android_root: Path) -> None:
+    """The producer's package assertions agree with the product's removed-package list."""
+    product = (android_root / "overlay/lineage_darwin.mk").read_text()
+    removed_block = re.search(
+        r"^KERNARIUM_REMOVED_PACKAGES := \\\n((?:    \S+ \\\n)+    \S+)$", product, re.MULTILINE
+    )
+    if removed_block is None:
+        fail("lineage_darwin.mk has no KERNARIUM_REMOVED_PACKAGES list")
+    removed = set(removed_block.group(1).replace("\\", " ").split())
+    script = (android_root / "build/build-aosp.sh").read_text()
+    excluded_block = re.search(
+        r'^PRODUCT_PACKAGES_EXCLUDE=.*\nfor package in \\\n((?:\t\S+ \\\n)+\t\S+); do$', script, re.MULTILINE
+    )
+    if excluded_block is None:
+        fail("build-aosp.sh has no list of packages asserted to be excluded")
+    asserted_excluded = set(excluded_block.group(1).replace("\\", " ").split())
+    for package in sorted(asserted_excluded - removed):
+        fail(f"build-aosp.sh asserts {package} is excluded, but the product does not remove it")
+    present = set(re.findall(r'\[\[ "\$PRODUCT_PACKAGES" == \*" (\S+) "\* \]\]', script))
+    for package in sorted(present & removed):
+        fail(f"build-aosp.sh asserts {package} is present, but the product removes it")
+    for package in ("com.android.hardware.thermal",):
+        if package not in present:
+            fail(f"build-aosp.sh does not assert that {package} is present")
+
+
 def verify_hal_selections(android_root: Path) -> None:
     # The boot command line is the one writer of each graphics HAL selection,
     # so it must name the modules the target-files verifier expects.
@@ -2082,6 +2108,7 @@ def main() -> None:
     verify_hal_selections(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
+    verify_package_assertions(android_root)
     verify_pin_manifest(android_root / "tools/render-pin-manifest.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")
