@@ -14,3 +14,10 @@ CHROMIUM_FLAGS="$CHROMIUM_FLAGS --render-node-override=/dev/dri/renderD128"
 # allocates the NV12 frames it encodes and the driver imports them plane by
 # plane; ../README.md owns the contract.
 CHROMIUM_FLAGS="$CHROMIUM_FLAGS --enable-features=AcceleratedVideoEncoder,ChromeOSHWVBREncoding"
+
+# With the gbm module installed Chromium keeps the frames of its software video
+# decoders in gbm NV12 buffers, and the guest GPU does not sample those, so
+# every software-decoded video would play as black. Frames in shared memory
+# are not affected, and neither is encode.
+# ../README.md owns the contract.
+CHROMIUM_FLAGS="$CHROMIUM_FLAGS --disable-gpu-memory-buffer-video-frames"
