@@ -20,10 +20,11 @@ using uml::virtio::VhostUserQueueResult;
 
 DelayedAnswerDevice::DelayedAnswerDevice(
     std::unique_ptr<uml::virtio::VhostUserDevice> device, Policy policy,
-    Log log)
+    Log log, Answerer answerer)
     : device_(std::move(device))
     , policy_(std::move(policy))
     , log_(std::move(log))
+    , answerer_(std::move(answerer))
 {
     if (!device_ || !policy_)
         throw std::invalid_argument("a delayed-answer device needs a device and a policy");
@@ -84,6 +85,12 @@ VhostUserQueueResult DelayedAnswerDevice::processQueue(std::uint32_t index,
                                                        std::span<const std::uint8_t> request,
                                                        std::size_t responseCapacity)
 {
+    if (answerer_) {
+        if (auto answer = answerer_(index, request)) {
+            note("answered a request in the device's place");
+            return {VhostUserQueueAction::complete, std::move(*answer)};
+        }
+    }
     const auto delay = policy_(index, request);
     auto result = device_->processQueue(index, requestId, request, responseCapacity);
     if (!delay || result.action != VhostUserQueueAction::complete)

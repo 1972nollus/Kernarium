@@ -23,6 +23,17 @@ host-visible buffer that has no guest-physical address. Stream IDs, buffer exten
 host. The wire format is shared by all maintained
 kernel slices.
 
+## Failed capture buffers
+
+A capture buffer the device completes with `VIRTIO_VIDEO_DEQUEUE_FLAG_ERR` or
+`VIRTIO_VIDEO_DEQUEUE_FLAG_EOS`, on the decoder and the encoder alike, reaches
+the client with no payload and the timestamp of the answer, as one holding a
+picture does. The device names the picture or frame it failed to deliver, so
+the client can tell which one was lost, and answers 0 for a buffer that stands
+for none, such as the end-of-stream marker or one returned by a flush. The
+`guest-video-error-answer` test has a device fail a capture buffer and checks
+that the client reads the timestamp it named.
+
 ## Decoder resolution change
 
 The device ends a picture size with one more capture buffer, empty and flagged

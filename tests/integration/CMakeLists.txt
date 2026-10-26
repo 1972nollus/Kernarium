@@ -779,6 +779,40 @@ uml_add_integration_test(
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
 
+# A capture buffer a Virtio video device answers as failed reaches the client
+# flagged as an error, empty, and with the timestamp of the answer. A host
+# drops a picture only when its codec does, so the device is the production one
+# behind a test-only shim that answers the guest's capture buffer as failed.
+uml_add_freestanding_cxx_payload(UML_GUEST_VIDEO_ERROR_ANSWER_INIT
+    guest-video-error-answer-init
+    video/video_error_answer_init.cpp
+    COMMENT "Building the freestanding arm64 init of the failed video buffer test"
+    ARCH_OPTIONS -march=armv8-a)
+add_executable(uml_video_error_answer_tests video/video_error_answer_tests.cpp)
+target_link_libraries(uml_video_error_answer_tests PRIVATE
+    UML::BootInitramfs
+    UML::DelayedAnswerDevice
+    UML::Emulator
+    UML::VideoDevice)
+target_link_options(uml_video_error_answer_tests PRIVATE
+    "LINKER:-export_dynamic"
+    "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
+add_dependencies(uml_video_error_answer_tests
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
+add_dependencies(integration-test-binaries uml_video_error_answer_tests)
+get_target_property(_uml_video_error_answer_kernel
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_IMAGE)
+uml_add_integration_test(
+    NAME guest-video-error-answer
+    COMMAND uml_video_error_answer_tests
+        ${_uml_video_error_answer_kernel}
+        ${UML_GUEST_VIDEO_ERROR_ANSWER_INIT}
+        ${CMAKE_CURRENT_BINARY_DIR}/video-error-answer
+    LABELS guest;kernel;video
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
 # Configuration reads and in-band kicks that several vCPUs start at once on
 # one vhost-user socket each keep their own reply: a console that keeps
 # resizing, and answers late, stays bound while every vCPU writes to it.

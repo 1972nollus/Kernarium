@@ -270,6 +270,12 @@ slice exercises its own V4L2 path by running `run_v4l2_decode.py`, with `--gpu`
 for the GPU case, directly with an x86-64 probe and an x86-64 rootfs, the way
 its boot check below is run.
 
+`guest-video-error-answer` needs no probe or rootfs. Its arm64 guest has a
+decoder whose device, the production one behind a test-only shim, answers the
+capture buffers the guest queues as failed, and the test checks that the client
+dequeues one flagged as an error, empty, and with the timestamp the device
+named, a contract the encoder's driver shares.
+
 The optional `guest-v4l2-encode` test qualifies the Virtio video encoder the
 same way. Build `tests/integration/video/v4l2_encode_probe.cpp` as a static
 C++20 executable for the guest architecture and configure
