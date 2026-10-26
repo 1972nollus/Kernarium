@@ -205,6 +205,19 @@ only the CPU, a codec or a camera touches: the renderer refuses a native NV12
 create as an invalid parameter and every later command on that resource as an
 invalid resource id.
 
+The emulated layouts are the layouts Android defines, so that the media
+framework, the Image API and an importer that reads the buffer's own plane
+offsets and strides agree on where a plane is. An NV12 image is the luma rows
+followed by the interleaved chroma rows. A YV12 image is Android's: the V plane
+after the Y plane, the U plane after the V plane, and a chroma stride of half
+the luma stride, which minigbm makes a multiple of 32 so that the half is a
+multiple of 16. A chroma row is therefore half as wide as the R8 image and two
+of them fill one image row, so a 1920x1080 frame is a 1920x1620 image. Locking
+part of a buffer flushes and invalidates exactly the bytes of that rectangle,
+as one box for the luma plane and as up to two boxes for each planar chroma
+plane, and gives every box the offset of its first byte, because the renderer
+reads a box from the guest copy at the offset of the transfer.
+
 Applications that use stateful V4L2 decoding can instead use the independent
 [Virtio video service](../darwin/device/video/README.md). It exposes the same
 host codec profile set through the shared Linux and Android driver and copies
