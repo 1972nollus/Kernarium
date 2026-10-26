@@ -1344,6 +1344,9 @@ def check_audio_policy(
         "ro.config.assistant_vol_default": "15",
         "ro.product.product.model": "Darwin UML",
         "persist.sys.usb.config": "adb",
+        # The guest boots without a lock screen, and `locksettings set-disabled` can turn
+        # it on: LockSettingsService stores this default when it creates its database.
+        "ro.lockscreen.disable.default": "true",
     }
     for property_name, expected in expected_properties.items():
         values = [

@@ -270,6 +270,21 @@ back, a later such grant fails the policy build, and the target-files verifier
 repeats the checks on the built policy (only the userdebug `su` may be
 permissive).
 
+The guest boots straight to the home screen, and its swipe lock screen can be
+turned on. `LockPatternUtils.isLockScreenDisabled` ORs
+`config_disableLockscreenByDefault` with the stored `lockscreen.disabled`
+value, so the overlay sets the flag false: a true flag keeps the lock screen off
+whatever `locksettings set-disabled false` or the Settings app sets, and the CTS
+keyguard tests need one that can be shown. The default is the product property
+`ro.lockscreen.disable.default=true`: `LockSettingsService` stores
+`lockscreen.disabled=1` for user 0 when it creates its database, which a fresh
+`/data` does on the first boot, and the target-files verifier requires the
+property. A `/data` that already holds a lock settings database has no such
+value and shows the swipe lock screen; the standalone launcher gives every
+release a new `/data`. Other users and work profiles start with the lock screen
+on. The settings provider's `def_lockscreen_disabled` plays no part: nothing
+reads `Settings.System.lockscreen.disabled`.
+
 `mediaserver` loads the vendor's gralloc mapper to allocate decoder buffers, and
 minigbm reads the option `vendor.minigbm.debug` when it initialises. That name
 is a `vendor_default_prop`, which a core domain may not read; the lookup finds no

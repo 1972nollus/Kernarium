@@ -425,4 +425,13 @@ PRODUCT_PRODUCT_PROPERTIES += \
 PRODUCT_SYSTEM_EXT_PROPERTIES += \
     ro.audio.ihaladaptervendorextension_enabled=true
 
+# The guest boots straight to the home screen, and its swipe lock screen stays
+# available. LockSettingsService writes lockscreen.disabled=1 for user 0 when it
+# creates its database, which a fresh /data does on the first boot; the setting
+# can then be changed with `locksettings set-disabled` or the Settings app.
+# config_disableLockscreenByDefault is false for that reason (the overlay's
+# core/res config.xml). The standalone launcher gives every release a new /data.
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.lockscreen.disable.default=true
+
 PRODUCT_IGNORE_ALL_ANDROIDMK := true

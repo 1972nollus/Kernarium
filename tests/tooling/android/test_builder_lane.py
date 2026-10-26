@@ -430,6 +430,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           half_preopt_pair: bool = False,
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
+                          missing_lockscreen_default: bool = False,
                           wide_fdroid_permissions: bool = False,
                           mesa_gles_alignment: int = 16384,
                           elf_edit: tuple[str, int, int] | None = None,
@@ -525,7 +526,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.config.system_vol_default=7\n"
                     "ro.config.assistant_vol_default=15\n"
                     "persist.sys.usb.config=adb\n"
-                    f"ro.product.product.model="
+                    + ("" if missing_lockscreen_default else "ro.lockscreen.disable.default=true\n")
+                    + f"ro.product.product.model="
                     f"{'Android 17 on Darwin UML' if wrong_product_model else 'Darwin UML'}\n",
                 )
                 archive.writestr(
@@ -1163,6 +1165,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("half-preopt-pair", {"half_preopt_pair": True}),
             ("audio-defaults", {"wrong_audio_defaults": True}),
             ("product-model", {"wrong_product_model": True}),
+            ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
@@ -1257,6 +1260,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"adb_prop_unreadable_by_vendor_init": True},
              "names sys.kernarium.adb.host_connected, labelled kernarium_adb_host_prop, "
              "which vendor_init may not read"),
+            ("missing-lockscreen-default-cause", {"missing_lockscreen_default": True},
+             "unexpected product property ro.lockscreen.disable.default"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("missing-microphone-feature-cause", {"missing_microphone_feature": True},
