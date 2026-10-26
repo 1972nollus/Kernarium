@@ -263,8 +263,11 @@ Android port series beside the metadata. The port series carries the generated
 Soong port and the few source changes only Android needs, such as advertising
 `EGL_EXT_pixel_format_float` only with a float config: HWUI takes the extension
 as the promise of a half-float window config, and the Android visuals are all
-fixed-point. It also leaves out `VK_KHR_device_address_commands`, which the CTS
-refuses on a device whose declared dEQP level does not list it. A guest replay assigns new
+fixed-point: RGBA8888, RGBX8888, BGRA8888 and RGB565, and gralloc offers no
+10-bit or half-float colour-output buffer either, so a 10-bit render target is
+unavailable and the CTS cases that use one skip on their own support query. The
+port also leaves out `VK_KHR_device_address_commands`, which the CTS refuses on
+a device whose declared dEQP level does not list it. A guest replay assigns new
 commit identities each time it is recreated, so the guest half is pinned by
 tree. Moving to a newer guest epoch is a metadata bump, a replay, and a
 regeneration; the verifier refuses a guest series that changed underneath the
@@ -344,6 +347,15 @@ that path.
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:
 this driver has not been qualified against Android's Vulkan dEQP must-pass list.
+A declared level makes the CTS run every list dated up to it, so a declaration
+waits for those lists to pass whole. One gap is known in this
+stack: `vkMapMemory` of host-visible memory exported as a hardware buffer fails
+with `VK_ERROR_MEMORY_MAP_FAILED`, because gralloc backs such a buffer with a
+classic 3D resource, which Venus refuses to map by design (its contents reach
+the guest only through transfers), and a renderer-created blob in its place has
+no guest mapping on this host. The two
+`api.external.memory.android_hardware_buffer.*.host_visible.import_twice` cases
+of the 2019 list are the ones that map it.
 
 The Android hardware buffer handle type a swapchain needs is guest Mesa work,
 so it arrives with the guest Vulkan epoch pinned in
