@@ -9,11 +9,11 @@ buffers and hands a picture to the host for a GPU consumer. None of that
 was written down, and a product that enables the decoder sets a property
 the README did not name.
 ---
- README.md | 65 ++++++++++++++++++++++++++++++++++++++++++++++++-------
- 1 file changed, 57 insertions(+), 8 deletions(-)
+ README.md | 69 ++++++++++++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 61 insertions(+), 8 deletions(-)
 
 diff --git a/README.md b/README.md
-index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..dd86a6566396faca08d2fdb6ee9b986e5f6efd3b 100644
+index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..3e2c5a35e3dbcded737beb14cb14b4fb63a5ad0e 100644
 --- a/README.md
 +++ b/README.md
 @@ -381,17 +381,23 @@ resources it needs, so that Android can tell what is left
@@ -48,7 +48,7 @@ index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..dd86a6566396faca08d2fdb6ee9b986e
  
  ### Supported Input Pixel Formats:
  
-@@ -415,4 +421,47 @@ PPS NAL units are prepended to IDR frames by enabling the
+@@ -415,4 +421,51 @@ PPS NAL units are prepended to IDR frames by enabling the
  support this control the encoder will manually cache and prepend SPS and PPS NAL
  units.
  
@@ -69,10 +69,14 @@ index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..dd86a6566396faca08d2fdb6ee9b986e
 +### Output Pixel Formats and Buffers
 +
 +The component takes *C2_PARAMKEY_PIXEL_FORMAT* on its output: flexible YUV
-+4:2:0 always, and P010 when the device lists a 10-bit profile (HEVC Main 10,
-+VP9 profile 2). A client that asks for flexible 4:2:0 gets 8-bit samples from a
-+10-bit stream when the device converts them, and a client that asks for P010
-+gets P010.
++4:2:0 always, P010 when the device lists a 10-bit profile (HEVC Main 10, VP9
++profile 2), and *IMPLEMENTATION_DEFINED*, which the framework sets when the
++client renders to a Surface. A client that asks for flexible 4:2:0 gets 8-bit
++samples from a 10-bit stream when the device converts them, and a client that
++asks for P010 gets P010. A client that renders to a Surface gets P010 from a
++10-bit stream when the usage of the Surface's consumer
++(*C2_PARAMKEY_OUTPUT_STREAM_USAGE*) names a video encoder, which then has all 10
++bits, and 8-bit samples otherwise, for a display that cannot show P010.
 +
 +A client that decodes to byte buffers configures the basic graphic block pool,
 +whose blocks carry no pool data for the frame pool to identify them by; the
