@@ -260,8 +260,10 @@ and 8-bit capture of a 10-bit stream, imported dma-buf capture, timestamps,
 source-change and EOS events, the display order of H.264 and HEVC B-pictures
 and a seek in both (over open-group streams for HEVC), reads the H.264 and HEVC
 profile and level menus (Constrained High beside High, levels from 1.0 up to
-5.2 and from 1 up to 6.2, the current level the highest), and rejects kernel
-faults or failed shutdown. Imported capture covers the queue's own
+5.2 and from 1 up to 6.2, the current level the highest), decodes flat portrait
+and square H.264 and HEVC pictures (2304 x 4096, 4096 x 4096, 4320 x 8192) to
+frames of their own size inside a frame range that is a rectangle, and rejects
+kernel faults or failed shutdown. Imported capture covers the queue's own
 buffers handed back and guest memory a client brings, with each buffer's planes
 in separate dma-bufs or in one and their lengths stated as QUERYBUF gave them,
 as the whole dma-buf, or not at all. `guest-v4l2-decode-gpu` runs the same probe

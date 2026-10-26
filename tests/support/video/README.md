@@ -59,6 +59,14 @@ none carries an encoder identification string.
   largest frame level 5.2 allows, with level_idc 52:
   `ffmpeg -f lavfi -i "color=c=gray:size=4096x2304:rate=30,format=yuv420p" -frames:v 1 -c:v libx264 -profile:v high -level:v 5.2 -x264-params repeat-headers=1 -bsf:v filter_units=remove_types=6 -f h264 h264-high-level-5-2.bin`.
   The platform test decodes it whenever the capability list states level 5.2.
+- `h264-portrait-2304x4096.bin` (level 5.2), `h264-square-4096x4096.bin`
+  (level 6.0) and `hevc-portrait-4320x8192.bin` are one flat gray High (Main
+  for HEVC) picture each, produced as `h264-high-level-5-2.bin` is, at the
+  size in the name. The platform test decodes them and the guest probe plays
+  them through the V4L2 decoder, which holds that a portrait picture is not
+  refused for its height. `h264-too-wide-4112x2304.bin` is the same picture
+  at the first width the hardware refuses; the test requires the host to
+  refuse it.
 - `hevc-high-tier-4k.bin` and `hevc-high-tier-8k.bin` are one flat gray
   picture of 4096 × 2160 at level 5.2 and 8192 × 4320 at level 6.2, both High
   tier. The platform test decodes each the host's capability list says it can,

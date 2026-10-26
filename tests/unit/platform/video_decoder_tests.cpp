@@ -439,7 +439,8 @@ void hevcLimits(const std::vector<uml::platform::VideoDecodeCapability>& capabil
                                    [](const auto& c) { return c.profile == VideoProfile::hevcMain; });
     if (main == capabilities.end()) return;
     struct Size { const char* name; std::uint32_t width, height; };
-    for (const auto& size : {Size {"hevc-high-tier-4k", 4096, 2160}, Size {"hevc-high-tier-8k", 8192, 4320}}) {
+    for (const auto& size : {Size {"hevc-high-tier-4k", 4096, 2160}, Size {"hevc-high-tier-8k", 8192, 4320},
+                             Size {"hevc-portrait-4320x8192", 4320, 8192}}) {
         if (main->maximumWidth < size.width || main->maximumHeight < size.height) continue;
         auto decoder = makeVideoDecoder(VideoCodec::hevc);
         decoder->submit(read(std::string(size.name) + ".bin"), 5);
@@ -450,6 +451,37 @@ void hevcLimits(const std::vector<uml::platform::VideoDecodeCapability>& capabil
         require(std::abs(meanLuma(frames[0]) - 128.0) <= 3.0, "an advertised size decoded to the wrong picture");
         std::printf("%s: %ux%u decoded in hardware\n", size.name, size.width, size.height);
     }
+}
+
+/* The hardware limits a dimension and not the area, so the host accepts every
+ * picture within the advertised rectangle: a portrait one as a landscape one,
+ * and a square one the level's frame area would not allow. One a dimension
+ * beyond it is refused. */
+void h264Shapes(const std::vector<uml::platform::VideoDecodeCapability>& capabilities)
+{
+    using namespace uml::platform;
+    const auto cap = std::find_if(capabilities.begin(), capabilities.end(),
+                                  [](const auto& c) { return c.profile == VideoProfile::h264High; });
+    if (cap == capabilities.end()) return;
+    struct Shape { const char* name; std::uint32_t width, height; };
+    for (const auto& shape : {Shape {"h264-portrait-2304x4096", 2304, 4096}, Shape {"h264-square-4096x4096", 4096, 4096}}) {
+        require(cap->maximumWidth >= shape.width && cap->maximumHeight >= shape.height,
+                "the advertised H.264 size range leaves out a picture the hardware decodes");
+        auto decoder = makeVideoDecoder(VideoCodec::h264);
+        decoder->submit(read(std::string(shape.name) + ".bin"), 5);
+        decoder->drain();
+        const auto frames = decoder->takeFrames();
+        require(frames.size() == 1 && frames[0].format == VideoFormat {shape.width, shape.height, 8},
+                "an H.264 picture within the advertised range did not decode");
+        require(std::abs(meanLuma(frames[0]) - 128.0) <= 3.0, "an H.264 picture within the range decoded wrongly");
+        std::printf("%s: %ux%u decoded in hardware\n", shape.name, shape.width, shape.height);
+    }
+    /* 4112 is the first width the hardware refuses. */
+    require(cap->maximumWidth < 4112 && cap->maximumHeight < 4112, "the advertised H.264 size range reaches 4112");
+    auto decoder = makeVideoDecoder(VideoCodec::h264);
+    bool refused = false;
+    try { decoder->submit(read("h264-too-wide-4112x2304.bin"), 5); } catch (const std::runtime_error&) { refused = true; }
+    require(refused, "an H.264 picture beyond the advertised range was accepted");
 }
 
 /* The H.264 level the host states is the one its hardware was seen to decode:
@@ -678,6 +710,7 @@ int main(int argc, char** argv)
             h264Window();
         }
         h264Limits(capabilities);
+        h264Shapes(capabilities);
         auto decoder = makeVideoDecoder(capabilities.front().codec);
         bool rejected = false;
         try { decoder->submit({}, 0); } catch (const std::runtime_error&) { rejected = true; }

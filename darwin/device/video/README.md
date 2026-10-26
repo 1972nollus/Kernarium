@@ -150,6 +150,23 @@ capability states a level above 5.2, so a higher claim needs a fixture first.
 H.264 High10 keeps level 5.1: macOS does not offer it, and no host that does is
 verified at 5.2.
 
+**Picture size.** The guest's frame range is a rectangle from 64 to the
+capability's maximum on each axis, and the host accepts every picture inside it,
+so a portrait picture decodes as a landscape one does (Android's encoder tests
+play 2304 x 4096 streams back through the decoder). The hardware limits a
+dimension, not the frame area. Measured on an M1 Ultra, H.264 opens 4096 on
+either axis (4096 x 4096 and 2304 x 4096 decode, 4112 in either direction is
+refused) and HEVC opens at least 8192 x 8192 and 16384 x 8192, where the
+measurement stopped, so H.264 states 4096 x 4096 and HEVC 8192 x 8192. These are
+wider than the frame area of the level the device states (level 5.2 allows
+36864 macroblocks and the hardware opens 65536), so a frame area limit would
+refuse pictures the hardware decodes and the guest is told it may send.
+`platform-video-decoder` decodes the portrait and square pictures and requires
+the next width to be refused. JPEG and VP9 stay at 4096 x 2304, unmeasured for
+other shapes. The iOS decoders' limits are unmeasured (the iPad is parked): iOS
+states the same sizes on the strength of the macOS measurement, and a device
+whose hardware opens less has to be found by running that test there.
+
 Input uses complete Annex B H.264/HEVC access units, complete JPEG frames, or
 complete VP9 frames.
 Streams retain timestamps, signal format changes, drain delayed output, and

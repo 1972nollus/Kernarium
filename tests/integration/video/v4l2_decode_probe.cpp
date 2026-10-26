@@ -471,6 +471,93 @@ void decode(const char* device, const std::string& directory, const char* name, 
     type = capture; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF capture");
 }
 }
+/* A picture that is not landscape, or not small, decoded to a frame of its own
+ * size. The hardware limits a dimension and not the area, so the guest's range
+ * is a rectangle and every picture within it decodes; a host that capped the
+ * height at the landscape 2304 refused these. The stream is a flat gray picture,
+ * so the frame is checked by its size, its stride and its mean luma. */
+void decodeShape(const char* device, const std::string& directory, const char* name, unsigned coded,
+                 unsigned width, unsigned height)
+{
+    const auto packet = read(directory + "/" + name + ".bin");
+    Device owner(device);
+    const int fd = owner.fd;
+    v4l2_event_subscription subscription {};
+    subscription.type = V4L2_EVENT_SOURCE_CHANGE;
+    call(fd, VIDIOC_SUBSCRIBE_EVENT, &subscription, "SUBSCRIBE_EVENT");
+    v4l2_format input {};
+    input.type = output;
+    input.fmt.pix_mp.width = 128; input.fmt.pix_mp.height = 96;
+    input.fmt.pix_mp.pixelformat = coded;
+    input.fmt.pix_mp.num_planes = 1;
+    input.fmt.pix_mp.plane_fmt[0].sizeimage = packet.size();
+    call(fd, VIDIOC_S_FMT, &input, "S_FMT coded");
+    auto inputs = allocate(fd, output, 2);
+    require(inputs[0][0].length >= packet.size(), "coded buffer too short");
+    std::memcpy(inputs[0][0].data, packet.data(), packet.size());
+    auto type = output;
+    call(fd, VIDIOC_STREAMON, &type, "STREAMON output");
+    queue(fd, output, 0, inputs[0], packet.size());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    bool source = false;
+    while (!source && std::chrono::steady_clock::now() < deadline) {
+        pollfd p {fd, POLLPRI, 0};
+        if (poll(&p, 1, 100) < 0 && errno != EINTR) throw std::runtime_error("poll source change failed");
+        v4l2_event event {};
+        if (ioctl(fd, VIDIOC_DQEVENT, &event) == 0)
+            source = event.type == V4L2_EVENT_SOURCE_CHANGE && (event.u.src_change.changes & V4L2_EVENT_SRC_CH_RESOLUTION);
+        else require(errno == EAGAIN, "DQEVENT failed");
+    }
+    require(source, "decoder source-change timeout");
+    v4l2_format format {};
+    format.type = capture;
+    call(fd, VIDIOC_G_FMT, &format, "G_FMT capture");
+    require(format.fmt.pix_mp.width == width && format.fmt.pix_mp.height == height,
+            "the decoded picture is not the size of the stream");
+    format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12M;
+    call(fd, VIDIOC_S_FMT, &format, "S_FMT capture");
+    const auto stride = format.fmt.pix_mp.plane_fmt[0].bytesperline;
+    require(format.fmt.pix_mp.width == width && format.fmt.pix_mp.height == height && stride >= width &&
+            format.fmt.pix_mp.plane_fmt[0].sizeimage >= std::size_t(stride) * height,
+            "the capture format does not hold the picture");
+    auto outputs = allocate(fd, capture, 4);
+    for (unsigned i = 0; i < outputs.size(); ++i) queue(fd, capture, i, outputs[i]);
+    type = capture;
+    call(fd, VIDIOC_STREAMON, &type, "STREAMON capture");
+    v4l2_decoder_cmd drain {};
+    drain.cmd = V4L2_DEC_CMD_STOP;
+    call(fd, VIDIOC_DECODER_CMD, &drain, "DECODER_CMD drain");
+    bool frame = false, eos = false;
+    while (!eos && std::chrono::steady_clock::now() < deadline) {
+        pollfd p {fd, POLLIN, 0};
+        if (poll(&p, 1, 100) < 0 && errno != EINTR) throw std::runtime_error("poll capture failed");
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = capture; buffer.memory = V4L2_MEMORY_MMAP;
+        buffer.length = VIDEO_MAX_PLANES; buffer.m.planes = planes;
+        if (ioctl(fd, VIDIOC_DQBUF, &buffer) < 0) {
+            require(errno == EAGAIN, "DQBUF capture failed"); continue;
+        }
+        require(!(buffer.flags & V4L2_BUF_FLAG_ERROR), "capture buffer has decoder error");
+        if (buffer.flags & V4L2_BUF_FLAG_LAST) { eos = true; if (!planes[0].bytesused) continue; }
+        require(!frame, "decoder returned duplicate frame");
+        frame = true;
+        require(buffer.index < outputs.size() && planes[0].bytesused >= std::size_t(stride) * height,
+                "the decoded plane is shorter than the picture");
+        const auto* luma = static_cast<const std::uint8_t*>(outputs[buffer.index][0].data) + planes[0].data_offset;
+        std::uint64_t sum = 0;
+        for (unsigned row = 0; row < height; ++row)
+            for (unsigned column = 0; column < width; ++column) sum += luma[std::size_t(row) * stride + column];
+        const double mean = double(sum) / (double(width) * height);
+        require(mean > 122.0 && mean < 130.0, "the decoded picture is not the flat gray the stream codes");
+        std::printf("PASS shape %s %ux%u mean-luma=%.1f\n", name, width, height, mean);
+        std::fflush(stdout);
+    }
+    require(frame && eos, "capture frame/EOS timeout");
+    type = output; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF output");
+    type = capture; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF capture");
+}
+
 /* The imported buffers a client that is not the driver's own exporter queues:
  * guest memory, with its planes in separate dma-bufs or in one, and their
  * lengths stated as QUERYBUF gave them, as the whole dma-buf, or not at all.
@@ -1320,6 +1407,13 @@ int main(int argc, char** argv)
                     "a stepwise frame size has a zero step");
             require(sizes.stepwise.max_width >= 1920 && sizes.stepwise.max_height >= 1200,
                     "the advertised maximum coded size is too small");
+            /* The range is a rectangle, so it names a portrait picture as it names a landscape one. */
+            if (coded.pixelformat == V4L2_PIX_FMT_H264)
+                require(sizes.stepwise.max_width >= 4096 && sizes.stepwise.max_height >= 4096,
+                        "the advertised H.264 range stops short of 4096 x 4096");
+            if (coded.pixelformat == V4L2_PIX_FMT_HEVC)
+                require(sizes.stepwise.max_width >= 8192 && sizes.stepwise.max_height >= 8192,
+                        "the advertised HEVC range stops short of 8192 x 8192");
             /* A capture list in wire order names the planar format the device
              * actually decodes to; a reversed one names only the tail. */
             bool planar = false;
@@ -1399,6 +1493,12 @@ int main(int argc, char** argv)
             call(capabilities.fd, VIDIOC_QUERYCTRL, &control, "QUERYCTRL profiles");
             require(control.minimum >= 0 && control.maximum <= 32, "invalid profile menu bounds");
             profileAndLevelMenus(capabilities.fd, avc);
+            if (avc) {
+                decodeShape(device, argv[1], "h264-portrait-2304x4096", fmt.pixelformat, 2304, 4096);
+                decodeShape(device, argv[1], "h264-square-4096x4096", fmt.pixelformat, 4096, 4096);
+            } else {
+                decodeShape(device, argv[1], "hevc-portrait-4320x8192", fmt.pixelformat, 4320, 8192);
+            }
             bool imported = false;
             for (int value = control.minimum; value <= control.maximum; ++value) {
                 v4l2_querymenu menu {}; menu.id = id; menu.index = value;
