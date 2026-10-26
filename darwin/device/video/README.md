@@ -130,7 +130,12 @@ client does when it handles the source change. The coded buffer whose packet
 carries the new size is held as well, queued and not returned, until the client
 does that, or clears the coded queue, or drains. A client that stops the decoder
 as soon as every coded buffer is back (as v4l2_codec2 does) therefore cannot end
-the drain before the marker and the event. The first size of a stream is
+the drain before the marker and the event. A client that has asked for its
+drain takes the first LAST buffer for the end of it, as v4l2_codec2 does, so a
+change inside a drain gets no marker of its own: once every picture of the old
+size is delivered the device posts the event alone, delivers the pictures of
+the new size into the buffers the client sets up for them, and ends the drain
+with its marker after the last one. The first size of a stream is
 announced as the event alone, from the packet's headers, before any picture
 exists, with no end marker and no hold, unless the client has set its capture
 queue up for another size already (provisional capture, below).

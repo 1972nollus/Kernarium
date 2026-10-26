@@ -544,12 +544,18 @@ public:
                 /* Every picture of the old size has been delivered, in order.
                  * One more buffer completes empty and last, which is where a
                  * V4L2 client sees the old stream end, and then the client is
-                 * told the new size. */
-                if (stream.outputs.empty()) return;
-                const auto last = stream.outputs.front();
-                stream.outputs.pop_front();
-                stream.resources.at(resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, last.resource)).queued = false;
-                completions.push_back({last.request, queued(id, 0, VIRTIO_VIDEO_DEQUEUE_FLAG_EOS)});
+                 * told the new size. A client that is draining has asked for
+                 * the end of everything it queued and takes the first last
+                 * buffer for it, so a change inside its drain is announced
+                 * with no marker of its own: the drain's marker follows the
+                 * last picture of the new size. */
+                if (!stream.draining) {
+                    if (stream.outputs.empty()) return;
+                    const auto last = stream.outputs.front();
+                    stream.outputs.pop_front();
+                    stream.resources.at(resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, last.resource)).queued = false;
+                    completions.push_back({last.request, queued(id, 0, VIRTIO_VIDEO_DEQUEUE_FLAG_EOS)});
+                }
                 const auto& next = stream.frames.front();
                 announce(id, stream, next.format.width, next.format.height, next.format.bitDepth);
                 stream.renegotiating = true;

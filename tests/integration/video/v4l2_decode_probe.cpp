@@ -750,10 +750,16 @@ std::vector<std::vector<std::uint8_t>> delimitedUnits(const std::vector<std::uin
  * drain as soon as every coded buffer is back and takes the first LAST buffer
  * it sees as the end of that drain. The device must therefore not let a change
  * be pending then, which it does by keeping the coded buffer that carries the
- * change until the client has handled it, as a hardware decoder does. */
+ * change until the client has handled it, as a hardware decoder does. The
+ * straight client queues every access unit and drains at once, so the changes
+ * are inside its drain, and it takes the first LAST buffer for the end of it:
+ * the device must not end an old size with one there, but announce the change
+ * and carry on into the buffers the client then sets up. */
+enum class Drain { afterPictures, eager, straight };
 void resolutionChange(const char* device, const std::string& directory, unsigned coded,
-                      unsigned memory = V4L2_MEMORY_MMAP, Import origin = {}, bool eager = false)
+                      unsigned memory = V4L2_MEMORY_MMAP, Import origin = {}, Drain drain = Drain::afterPictures)
 {
+    const bool eager = drain == Drain::eager;
     struct Sequence { unsigned width, height, pictures; };
     const Sequence sequences[] = {{128, 96, 8}, {96, 64, 8}, {160, 112, 8}};
     constexpr unsigned count = 3;
@@ -777,7 +783,9 @@ void resolutionChange(const char* device, const std::string& directory, unsigned
     input.fmt.pix_mp.num_planes = 1;
     input.fmt.pix_mp.plane_fmt[0].sizeimage = unsigned(largest);
     call(fd, VIDIOC_S_FMT, &input, "S_FMT coded");
-    auto inputs = allocate(fd, output, 4);
+    /* The straight client holds a buffer for every access unit, as one that
+     * reads its whole stream ahead does. */
+    auto inputs = allocate(fd, output, drain == Drain::straight ? total : 4);
     for (const auto& buffer : inputs) require(buffer[0].length >= largest, "coded buffer too short");
     std::vector<bool> free(inputs.size(), true);
     auto type = output;
@@ -948,11 +956,11 @@ void resolutionChange(const char* device, const std::string& directory, unsigned
          * that carries the change until the client has handled it, so for such
          * a client the drain never starts first. The patient client below
          * waits for the pictures instead. */
-        if (!draining && capturing && fed == units.size() && (eager || received == total) &&
-            std::all_of(free.begin(), free.end(), [](bool v) { return v; })) {
-            v4l2_decoder_cmd drain {};
-            drain.cmd = V4L2_DEC_CMD_STOP;
-            call(fd, VIDIOC_DECODER_CMD, &drain, "DECODER_CMD drain");
+        if (!draining && capturing && fed == units.size() && (drain != Drain::afterPictures || received == total) &&
+            (drain == Drain::straight || std::all_of(free.begin(), free.end(), [](bool v) { return v; }))) {
+            v4l2_decoder_cmd stop {};
+            stop.cmd = V4L2_DEC_CMD_STOP;
+            call(fd, VIDIOC_DECODER_CMD, &stop, "DECODER_CMD drain");
             draining = true;
             drainedAfter = received;
             drainedChanges = changes;
@@ -1011,7 +1019,7 @@ void resolutionChange(const char* device, const std::string& directory, unsigned
     type = capture; call(fd, VIDIOC_STREAMOFF, &type, "STREAMOFF capture");
     std::printf("PASS resolution-change sequences=%u pictures=%u memory=%s drain=%s drained-after=%u pictures, %u changes\n",
         count, received, memory != V4L2_MEMORY_DMABUF ? "mmap" : !origin.guestPages ? "dmabuf" : "dmabuf-guest",
-        eager ? "eager" : "after-pictures", drainedAfter, drainedChanges);
+        eager ? "eager" : drain == Drain::straight ? "straight" : "after-pictures", drainedAfter, drainedChanges);
     std::fflush(stdout);
 }
 
@@ -1651,7 +1659,10 @@ int main(int argc, char** argv)
             resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_DMABUF);
             resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_DMABUF,
                              Import{true, false, Declared::negotiated});
-            resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_MMAP, {}, true);
+            resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_MMAP, {}, Drain::eager);
+            resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_MMAP, {}, Drain::straight);
+            resolutionChange(device, argv[1], fmt.pixelformat, V4L2_MEMORY_DMABUF,
+                             Import{true, false, Declared::negotiated}, Drain::straight);
             break;
         }
         unsigned tested = 0;
