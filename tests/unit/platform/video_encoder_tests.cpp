@@ -1303,33 +1303,98 @@ void levelsAndEntropyMode()
             // level 1.0 holds 99 and 1485, so 1.1 is the lowest level that is true of the stream.
             require(statedFor(176, 144, 15, VideoRateControl::variableBitrate, 64, 64, 10) >= 11, "QCIF is not stated as level 1.0");
 
-            // The stream's rate goes beyond what the level holds: the next key frame states a level that does.
-            {
+            // The level is that of the settings the stream starts with. A rate that grows past what it holds is not
+            // restated: that would be a second set of parameter sets inside the stream and a key frame nobody
+            // asked for, and V4L2 and MediaCodec both give the header once, ahead of the first picture. The
+            // caller who will raise the rate says so in the level or the rate it starts with.
+            for (const bool separate : {true, false}) {
                 auto settings = baseSettings(h264Profile, 160, 128);
                 settings.frameRateNumerator = 15;
                 settings.rateControl = VideoRateControl::variableBitrate;
                 settings.bitrate = settings.peakBitrate = 64'000;
                 settings.level = 10;
                 settings.keyFrameInterval = 10;
+                settings.separateParameterSets = separate;
                 Feed feed;
                 feed.before = [&](VideoEncoder& encoder, unsigned index) {
-                    if (index != 20) return;
+                    if (index != 15) return;
                     VideoEncodeUpdate update;
                     update.bitrate = update.peakBitrate = 400'000;
                     require(encoder.update(update) == VideoEncodeStatus::ok, "raising the rate");
+                    VideoEncodeUpdate quicker;
+                    quicker.frameRateNumerator = 30;
+                    require(encoder.update(quicker) == VideoEncodeStatus::ok, "and the frame rate");
                 };
                 const auto encoded = encode(settings, 40, busySource(160, 128), "rate beyond the level", feed);
                 expectOrdered(encoded.output, 40);
-                std::vector<unsigned> keyLevels;
-                for (const auto* picture : encoded.output.pictures())
-                    if (picture->type == VideoFrameType::key)
-                        if (const auto unit = firstUnit(VideoCodec::h264, *picture, bits::h264NalSps)) keyLevels.push_back(bits::h264Level(*unit).value_or(0));
-                require(keyLevels.size() >= 3 && keyLevels.front() == 10, "the stream starts at level 1.0");
                 auto faster = settings;
                 faster.bitrate = faster.peakBitrate = 400'000;
-                const unsigned needed = lv::h264RequiredLevel(h264Profile, faster);
-                require(needed > 10 && lv::h264Rank(keyLevels.back()) >= lv::h264Rank(needed),
-                        "and states the level 400 kbit/s needs once it runs at that rate");
+                faster.frameRateNumerator = 30;
+                require(lv::h264Rank(lv::h264RequiredLevel(h264Profile, faster)) > lv::h264Rank(10), "the new rate needs a higher level");
+                unsigned headers = 0;
+                bool headersFirst = true;
+                bool pictureSeen = false;
+                for (const auto& item : encoded.output.items) {
+                    if (item.kind == EncodedVideoFrameKind::parameterSets) {
+                        ++headers;
+                        headersFirst = headersFirst && !pictureSeen;
+                    } else if (item.kind == EncodedVideoFrameKind::frame) {
+                        pictureSeen = true;
+                    }
+                }
+                std::printf("  rate raised under a running stream, %s parameter sets: %u header frames\n", separate ? "separate" : "joined", headers);
+                require(headers == (separate ? 1u : 0u) && headersFirst, "the parameter sets are given once, ahead of the first picture");
+                std::vector<std::uint64_t> keys;
+                std::vector<unsigned> keyLevels;
+                for (const auto* picture : encoded.output.pictures()) {
+                    if (picture->type != VideoFrameType::key) continue;
+                    keys.push_back(picture->timestamp);
+                    if (const auto unit = firstUnit(VideoCodec::h264, *picture, bits::h264NalSps)) keyLevels.push_back(bits::h264Level(*unit).value_or(0));
+                }
+                require((keys == std::vector<std::uint64_t> {0, 10, 20, 30}), "and the new rate asks for no key frame");
+                require(keyLevels.size() == 4 && std::all_of(keyLevels.begin(), keyLevels.end(), [&](unsigned level) { return level == keyLevels.front(); }),
+                        "every key frame states the level the stream started with");
+            }
+
+            // A session made again, here for a QP bound, states the level of the settings as they now are. Its
+            // parameter sets differ from the stream's, so a separate buffer for them comes right before its key frame.
+            for (const bool separate : {true, false}) {
+                auto settings = baseSettings(h264Profile, 160, 128);
+                settings.frameRateNumerator = 15;
+                settings.rateControl = VideoRateControl::variableBitrate;
+                settings.bitrate = settings.peakBitrate = 64'000;
+                settings.level = 10;
+                settings.keyFrameInterval = 100;
+                settings.separateParameterSets = separate;
+                Feed feed;
+                feed.before = [&](VideoEncoder& encoder, unsigned index) {
+                    if (index != 15) return;
+                    VideoEncodeUpdate update;
+                    update.bitrate = update.peakBitrate = 400'000;
+                    update.maximumQp = 40;
+                    require(encoder.update(update) == VideoEncodeStatus::ok, "raising the rate and bounding the QP");
+                };
+                const auto encoded = encode(settings, 30, busySource(160, 128), "session made again", feed);
+                expectOrdered(encoded.output, 30);
+                const auto& items = encoded.output.items;
+                unsigned headers = 0;
+                std::vector<unsigned> keyLevels;
+                std::vector<std::uint64_t> keys;
+                for (std::size_t i = 0; i < items.size(); ++i) {
+                    const auto& item = items[i];
+                    if (item.kind == EncodedVideoFrameKind::parameterSets) {
+                        ++headers;
+                        require(i + 1 < items.size() && items[i + 1].kind == EncodedVideoFrameKind::frame && items[i + 1].type == VideoFrameType::key,
+                                "parameter sets come right before a key frame");
+                    } else if (item.kind == EncodedVideoFrameKind::frame && item.type == VideoFrameType::key) {
+                        keys.push_back(item.timestamp);
+                        if (const auto unit = firstUnit(VideoCodec::h264, item, bits::h264NalSps)) keyLevels.push_back(bits::h264Level(*unit).value_or(0));
+                    }
+                }
+                require((keys == std::vector<std::uint64_t> {0, 15}), "the new session starts at a key frame");
+                require(keyLevels.size() == 2 && keyLevels.front() == 10 && lv::h264Rank(keyLevels.back()) > lv::h264Rank(10),
+                        "which states the level the new rate needs");
+                require(headers == (separate ? 2u : 0u), "and the parameter sets of each session are given once");
             }
         }
     }

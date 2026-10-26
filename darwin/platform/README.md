@@ -86,11 +86,16 @@ null beyond that, and a frame dropped unsubmitted returns its slot.
   has: QCIF is 12x9 macroblocks, 108 against level 1.0's 99, and 1620 a second
   at 15 frames against 1485. The level of QCIF is 1.1 or higher, whatever was
   asked for.
-  A rate or frame rate update that the stated level cannot hold starts a new
-  session at a key frame, whose parameter sets state a level that does. A
-  level VideoToolbox does name, and the stream fits, is requested from it as
-  well; one it refuses for the picture's shape (Baseline 1.3 for a picture
-  704 samples high) is left to its own choice.
+  The level is that of the settings a session is made from: a rate or frame
+  rate update under a running session does not restate it, because that would
+  put a second set of parameter sets inside the stream and force a key frame
+  the caller did not ask for. A caller that will raise the rate asks for the
+  level it needs, or starts at that rate. A session made again for another
+  reason (a changed quality or QP bound, a lost session) states the level of the
+  settings as they now are, and its parameter sets, which then differ, come
+  ahead of its key frame. A level VideoToolbox does name, and the stream fits,
+  is requested from it as well; one it refuses for the picture's shape
+  (Baseline 1.3 for a picture 704 samples high) is left to its own choice.
 - **Sizes** are even for video; JPEG keeps odd sizes exactly.
 
 ### Input layouts and colour
