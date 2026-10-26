@@ -15,19 +15,29 @@ measure.
 
 Pace the CRTC the way vkms does: initialise vblank handling for every
 scanout and let the DRM helpers run a timer at the mode's refresh rate.
-A flip event is armed for the next tick, an atomic commit waits one tick
-as it does on a device with a real vertical blank, and the timer runs
-only while something holds a vblank reference, so an idle display costs
-nothing. A client that flips faster than the refresh rate is now held to
-it.
+A flip event is armed for the next tick, and the timer runs only while
+something holds a vblank reference, so an idle display costs nothing. A
+client that flips faster than the refresh rate is now held to it, since
+the next commit waits for the previous flip event.
+
+The commit tail waits for the commit's own flip event rather than
+counting a vblank, as the default tail does. The default wait warns when
+it sees no vblank within 100 ms, which a loaded host can cause by
+delaying the timer, and the flip event completes on the same tick
+without the warning. No scanout needs either wait, because the host
+copies the frame when the driver flushes the resource and nothing scans
+out the old framebuffer afterwards. A commit must still complete on its
+flip, though: without any wait a blocking commit, a SETCRTC for
+instance, returns before its flip event, and the nonblocking page flip
+that a client queues next is refused with -EBUSY for up to a tick.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- drivers/gpu/drm/virtio/virtgpu_display.c | 22 ++++++++++++++++++++++
- 1 file changed, 22 insertions(+)
+ drivers/gpu/drm/virtio/virtgpu_display.c | 54 ++++++++++++++++++++++++
+ 1 file changed, 54 insertions(+)
 
 diff --git a/drivers/gpu/drm/virtio/virtgpu_display.c b/drivers/gpu/drm/virtio/virtgpu_display.c
-index e265a06f2c06ab2b9c79384346cfcf8278bffe3b..fe7fc933e421dea70d4d4cc8861722bab4fa3e42 100644
+index e265a06f2c06ab2b9c79384346cfcf8278bffe3b..7c31ff32787d99f2b4df14bdbe3e9a199ba6f6f3 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_display.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_display.c
 @@ -32,6 +32,8 @@
@@ -80,7 +90,45 @@ index e265a06f2c06ab2b9c79384346cfcf8278bffe3b..fe7fc933e421dea70d4d4cc8861722ba
  }
  
  static const struct drm_crtc_helper_funcs virtio_gpu_crtc_helper_funcs = {
-@@ -342,6 +357,13 @@ int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev)
+@@ -331,6 +346,37 @@ static const struct drm_mode_config_funcs virtio_gpu_mode_funcs = {
+ 	.atomic_commit = drm_atomic_helper_commit,
+ };
+ 
++/*
++ * The default commit tail counts a vblank after it programs the planes and
++ * warns when it sees none within 100 ms. Here the vblank is a timer, which a
++ * loaded host can delay past that without anything being wrong. Wait for the
++ * commit's own flip event instead, which the same timer sends: a commit then
++ * still completes on the next tick, as it does on a device with a real
++ * vertical blank, so a client that queues a flip right after a blocking
++ * commit (a SETCRTC, say) is not refused with -EBUSY for the flip that is
++ * still pending.
++ *
++ * No scanout needs the wait: the host copies the frame when the driver
++ * flushes the resource, so nothing scans out the old framebuffer once the
++ * planes are programmed.
++ */
++static void virtio_gpu_commit_tail(struct drm_atomic_state *state)
++{
++	struct drm_device *dev = state->dev;
++
++	drm_atomic_helper_commit_modeset_disables(dev, state);
++	drm_atomic_helper_commit_planes(dev, state, 0);
++	drm_atomic_helper_commit_modeset_enables(dev, state);
++	drm_atomic_helper_fake_vblank(state);
++	drm_atomic_helper_commit_hw_done(state);
++	drm_atomic_helper_wait_for_flip_done(dev, state);
++	drm_atomic_helper_cleanup_planes(dev, state);
++}
++
++static const struct drm_mode_config_helper_funcs virtio_gpu_mode_helpers = {
++	.atomic_commit_tail = virtio_gpu_commit_tail,
++};
++
+ int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev)
+ {
+ 	int i, ret;
+@@ -342,8 +388,16 @@ int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev)
  	if (ret)
  		return ret;
  
@@ -93,4 +141,7 @@ index e265a06f2c06ab2b9c79384346cfcf8278bffe3b..fe7fc933e421dea70d4d4cc8861722ba
 +
  	vgdev->ddev->mode_config.quirk_addfb_prefer_host_byte_order = true;
  	vgdev->ddev->mode_config.funcs = &virtio_gpu_mode_funcs;
++	vgdev->ddev->mode_config.helper_private = &virtio_gpu_mode_helpers;
  
+ 	/* modes will be validated against the framebuffer size */
+ 	vgdev->ddev->mode_config.min_width = XRES_MIN;

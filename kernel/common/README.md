@@ -422,10 +422,15 @@ visibility.
 
 virtio-gpu has no vertical blank, so the driver paces each CRTC with the DRM
 vblank timer at its mode's refresh rate. A page flip's event and out-fence
-signal at the next tick, not when the flip is queued, and an atomic commit
-waits one tick, so a client that flips faster is held to the display's rate.
+signal at the next tick, not when the flip is queued, and the next commit waits
+for them, so a client that flips faster is held to the display's rate.
 Android's drm_hwcomposer schedules a frame against the present fence and so
 presents it no earlier than it asked for. The timer runs only while a client
-holds a vblank reference, so an idle display costs nothing. The optional
-`guest-drm-vblank` test checks the vblank wait and the flip rate against the
-mode's refresh rate.
+holds a vblank reference, so an idle display costs nothing. The commit tail
+waits for the commit's own flip event instead of counting a vblank as the
+default tail does: a loaded host can delay the timer past the 100 ms after
+which the count warns, and a commit must still complete on its flip, or the
+nonblocking flip a client queues right after a blocking one is refused with
+`-EBUSY`. No scanout needs the wait, because the host copies the frame when the
+driver flushes the resource. The optional `guest-drm-vblank` test checks the
+vblank wait and the flip rate against the mode's refresh rate.
