@@ -315,6 +315,19 @@ LineageOS's list united with the ops of `DiscreteOpsRegistry`'s defaults. The
 target-files verifier requires the generated overlay to cover the defaults; a
 list that drops one of them also fails the `lineage24-builder-lane` fixtures.
 
+When applications update together while their tasks are in a desk (LineageOS
+enables desktop windowing on tablets), WM Shell's `PackageUpdateController`
+starts a `PackageUpdateActivity` placeholder in the task of each, once per
+package and in an order that two package update threads decide. The placeholder
+was `singleTop`, and the activity starter delivers a `singleTop` start to the top
+activity of the focused root task when it is the same component. A desk is one
+root task, so with the topmost task handled first the start for the next task
+was delivered to the first task's placeholder as a new intent: the next
+application kept running through its update and was killed by the package stop
+timeout without saving its state (`CtsStopAndKillHostTest`). A `frameworks/base`
+topic (route `p0007`) makes the placeholder a standard activity, so every
+updating task gets its own.
+
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
 in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves
