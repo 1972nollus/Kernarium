@@ -1248,6 +1248,9 @@ def check_vendor_init_triggers(
 # and the Vulkan loader from exposing VK_GOOGLE_display_timing.
 PRESENT_FENCE_PROPERTY = "ro.vendor.hwc.drm.present_fence_not_reliable"
 FALSE_PROPERTY_VALUES = {"0", "n", "no", "off", "false"}
+# Incremental installs (adb install --incremental, the Incremental FS service) need this
+# vendor property and the kernel's incfs.
+INCREMENTAL_PROPERTY = "ro.incremental.enable"
 
 
 def parse_properties(payload: str) -> dict[str, str]:
@@ -1302,6 +1305,8 @@ def check_multilib_properties(
     for key, expected in VENDOR_MULTILIB_PROPERTIES.items():
         if vendor.get(key) != expected:
             fail(f"VENDOR/build.prop lacks {key}={expected}: {vendor.get(key)!r}")
+    if vendor.get(INCREMENTAL_PROPERTY) != "1":
+        fail(f"VENDOR/build.prop lacks {INCREMENTAL_PROPERTY}=1: {vendor.get(INCREMENTAL_PROPERTY)!r}")
     system = parse_properties(
         read_small(archive, infos["SYSTEM/build.prop"]).decode("utf-8", errors="strict")
     )

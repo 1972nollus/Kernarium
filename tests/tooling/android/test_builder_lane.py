@@ -1027,7 +1027,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     + {
                         "present-fence-unreliable":
                             "ro.vendor.hwc.drm.present_fence_not_reliable=true\n",
-                    }.get(vendor_property_variant, "")
+                        "no-incremental": "",
+                        "incremental-off": "ro.incremental.enable=0\n",
+                    }.get(vendor_property_variant, "ro.incremental.enable=1\n")
                     + (
                         f"ro.hardware.{vendor_hal_property}=selected\n"
                         if vendor_hal_property
@@ -1230,6 +1232,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
             ("missing-discrete-ops-overlay", {"discrete_ops_variant": "missing-overlay"}),
             ("unreliable-present-fence", {"vendor_property_variant": "present-fence-unreliable"}),
+            ("missing-incremental-property", {"vendor_property_variant": "no-incremental"}),
+            ("disabled-incremental-property", {"vendor_property_variant": "incremental-off"}),
             ("missing-thermal-apex", {"thermal_hal_variant": "missing-apex"}),
             ("thermal-apex-without-binary", {"thermal_hal_variant": "no-binary"}),
             ("thermal-apex-without-fragment", {"thermal_hal_variant": "no-fragment"}),
@@ -1334,6 +1338,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "unexpected product property ro.lockscreen.disable.default"),
             ("unreliable-present-fence-cause", {"vendor_property_variant": "present-fence-unreliable"},
              "marks the present fences unreliable: ro.vendor.hwc.drm.present_fence_not_reliable=true"),
+            ("missing-incremental-property-cause", {"vendor_property_variant": "no-incremental"},
+             "VENDOR/build.prop lacks ro.incremental.enable=1: None"),
+            ("disabled-incremental-property-cause", {"vendor_property_variant": "incremental-off"},
+             "VENDOR/build.prop lacks ro.incremental.enable=1: '0'"),
             ("missing-thermal-apex-cause", {"thermal_hal_variant": "missing-apex"},
              "com.android.hardware.thermal.apex is missing: the product needs a thermal HAL"),
             ("thermal-apex-without-binary-cause", {"thermal_hal_variant": "no-binary"},

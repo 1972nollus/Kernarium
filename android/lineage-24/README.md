@@ -340,6 +340,12 @@ remove an inherited value, and a second assignment is a duplicate the build
 refuses), and the target-files verifier rejects any partition that sets it true.
 The guest needs a kernel with the vblank pacing.
 
+Incremental installs (`adb install --incremental`, the Incremental FS service)
+need the vendor property `ro.incremental.enable=1`, which the inherited
+Cuttlefish configuration sets, and a kernel with Incremental FS. The
+target-files verifier pins the property so a change in the inherited product
+cannot drop it unnoticed.
+
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
 in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves
