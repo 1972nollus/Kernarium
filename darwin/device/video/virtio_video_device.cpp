@@ -148,6 +148,7 @@ const char* profileName(uml::platform::VideoProfile profile) noexcept
     case uml::platform::VideoProfile::h264ConstrainedBaseline: return "h264-constrained-baseline";
     case uml::platform::VideoProfile::h264Main: return "h264-main";
     case uml::platform::VideoProfile::h264High: return "h264-high";
+    case uml::platform::VideoProfile::h264ConstrainedHigh: return "h264-constrained-high";
     case uml::platform::VideoProfile::h264High10: return "h264-high10";
     case uml::platform::VideoProfile::hevcMain: return "hevc-main";
     case uml::platform::VideoProfile::hevcMain10: return "hevc-main10";
@@ -589,14 +590,8 @@ public:
             const auto format = load<virtio_video_query_control_profile>(request.subspan(sizeof(q))).format;
             std::vector<std::uint32_t> values;
             if (q.control == VIRTIO_VIDEO_CONTROL_PROFILE) values = profileValues(capabilities, format);
-            else if (q.control == VIRTIO_VIDEO_CONTROL_LEVEL) {
-                if (format == VIRTIO_VIDEO_FORMAT_H264)
-                    for (unsigned level = VIRTIO_VIDEO_LEVEL_H264_MIN; level <= VIRTIO_VIDEO_LEVEL_H264_MAX; ++level)
-                        values.push_back(level);
-                if (format == VIRTIO_VIDEO_FORMAT_HEVC)
-                    for (unsigned level = VIRTIO_VIDEO_LEVEL_HEVC_MIN; level <= VIRTIO_VIDEO_LEVEL_HEVC_MAX; ++level)
-                        values.push_back(level);
-            } else return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
+            else if (q.control == VIRTIO_VIDEO_CONTROL_LEVEL) values = levelValues(capabilities, format);
+            else return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
             auto result = reply(id, VIRTIO_VIDEO_RESP_OK_QUERY_CONTROL);
             const auto count = toBytes(virtio_video_query_control_resp_profile{std::uint32_t(values.size()), {}});
             result.insert(result.end(), count.begin(), count.end());
@@ -820,11 +815,12 @@ public:
             auto result = reply(id, VIRTIO_VIDEO_RESP_OK_GET_CONTROL);
             std::uint32_t value;
             if (q.control == VIRTIO_VIDEO_CONTROL_PROFILE) value = stream.profile;
-            else if (q.control == VIRTIO_VIDEO_CONTROL_LEVEL && stream.coded == VIRTIO_VIDEO_FORMAT_H264)
-                value = VIRTIO_VIDEO_LEVEL_H264_5_1;
-            else if (q.control == VIRTIO_VIDEO_CONTROL_LEVEL && stream.coded == VIRTIO_VIDEO_FORMAT_HEVC)
-                value = VIRTIO_VIDEO_LEVEL_HEVC_6_2;
-            else return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
+            else if (q.control == VIRTIO_VIDEO_CONTROL_LEVEL) {
+                // The stream's level is not tracked: it is the highest the format decodes.
+                const auto levels = levelValues(capabilities, stream.coded);
+                if (levels.empty()) return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
+                value = levels.back();
+            } else return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
             const auto data = toBytes(virtio_video_control_val_profile{value, {}});
             result.insert(result.end(), data.begin(), data.end());
             return done(std::move(result));

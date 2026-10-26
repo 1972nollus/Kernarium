@@ -47,6 +47,7 @@ std::uint32_t wireProfile(uml::platform::VideoProfile profile)
     case h264ConstrainedBaseline: return VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE;
     case h264Main: return VIRTIO_VIDEO_PROFILE_H264_MAIN;
     case h264High: return VIRTIO_VIDEO_PROFILE_H264_HIGH;
+    case h264ConstrainedHigh: return VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_HIGH;
     case h264High10: return VIRTIO_VIDEO_PROFILE_H264_HIGH10PROFILE;
     case hevcMain: return VIRTIO_VIDEO_PROFILE_HEVC_MAIN;
     case hevcMain10: return VIRTIO_VIDEO_PROFILE_HEVC_MAIN10;
@@ -64,6 +65,49 @@ std::vector<std::uint32_t> profileValues(
         if (wireCodec(cap.codec) == format && wireProfile(cap.profile))
             values.push_back(wireProfile(cap.profile));
     }
+    return values;
+}
+
+namespace {
+struct LevelRow {
+    std::uint32_t idc;    // level_idc, or general_level_idc for HEVC
+    std::uint32_t wire;
+};
+constexpr LevelRow h264Levels[] = {
+    {10, VIRTIO_VIDEO_LEVEL_H264_1_0}, {11, VIRTIO_VIDEO_LEVEL_H264_1_1},
+    {12, VIRTIO_VIDEO_LEVEL_H264_1_2}, {13, VIRTIO_VIDEO_LEVEL_H264_1_3},
+    {20, VIRTIO_VIDEO_LEVEL_H264_2_0}, {21, VIRTIO_VIDEO_LEVEL_H264_2_1},
+    {22, VIRTIO_VIDEO_LEVEL_H264_2_2}, {30, VIRTIO_VIDEO_LEVEL_H264_3_0},
+    {31, VIRTIO_VIDEO_LEVEL_H264_3_1}, {32, VIRTIO_VIDEO_LEVEL_H264_3_2},
+    {40, VIRTIO_VIDEO_LEVEL_H264_4_0}, {41, VIRTIO_VIDEO_LEVEL_H264_4_1},
+    {42, VIRTIO_VIDEO_LEVEL_H264_4_2}, {50, VIRTIO_VIDEO_LEVEL_H264_5_0},
+    {51, VIRTIO_VIDEO_LEVEL_H264_5_1}, {52, VIRTIO_VIDEO_LEVEL_H264_5_2},
+    {60, VIRTIO_VIDEO_LEVEL_H264_6_0}, {61, VIRTIO_VIDEO_LEVEL_H264_6_1},
+    {62, VIRTIO_VIDEO_LEVEL_H264_6_2},
+};
+constexpr LevelRow hevcLevels[] = {
+    {30, VIRTIO_VIDEO_LEVEL_HEVC_1},    {60, VIRTIO_VIDEO_LEVEL_HEVC_2},
+    {63, VIRTIO_VIDEO_LEVEL_HEVC_2_1},  {90, VIRTIO_VIDEO_LEVEL_HEVC_3},
+    {93, VIRTIO_VIDEO_LEVEL_HEVC_3_1},  {120, VIRTIO_VIDEO_LEVEL_HEVC_4},
+    {123, VIRTIO_VIDEO_LEVEL_HEVC_4_1}, {150, VIRTIO_VIDEO_LEVEL_HEVC_5},
+    {153, VIRTIO_VIDEO_LEVEL_HEVC_5_1}, {156, VIRTIO_VIDEO_LEVEL_HEVC_5_2},
+    {180, VIRTIO_VIDEO_LEVEL_HEVC_6},   {183, VIRTIO_VIDEO_LEVEL_HEVC_6_1},
+    {186, VIRTIO_VIDEO_LEVEL_HEVC_6_2},
+};
+} // namespace
+
+std::vector<std::uint32_t> levelValues(
+    std::span<const uml::platform::VideoDecodeCapability> capabilities, std::uint32_t format)
+{
+    std::span<const LevelRow> rows;
+    if (format == VIRTIO_VIDEO_FORMAT_H264) rows = h264Levels;
+    else if (format == VIRTIO_VIDEO_FORMAT_HEVC) rows = hevcLevels;
+    std::uint32_t highest = 0;
+    for (const auto& cap : capabilities)
+        if (wireCodec(cap.codec) == format) highest = std::max(highest, cap.maximumLevel);
+    std::vector<std::uint32_t> values;
+    for (const auto& row : rows)
+        if (row.idc <= highest) values.push_back(row.wire);
     return values;
 }
 

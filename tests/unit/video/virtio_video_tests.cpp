@@ -346,12 +346,63 @@ void exercise(unsigned format)
 
 }
 
+std::vector<std::uint32_t> levelsOf(VirtioVideoDevice& device, std::uint32_t format)
+{
+    std::vector<std::uint8_t> request;
+    append(request, virtio_video_query_control{{VIRTIO_VIDEO_CMD_QUERY_CONTROL, 0}, VIRTIO_VIDEO_CONTROL_LEVEL, {}});
+    append(request, virtio_video_query_control_level{format, {}});
+    const auto result = device.processQueue(0, 3, request, 256);
+    const auto header = load<virtio_video_cmd_hdr>(result.response);
+    if (header.type != VIRTIO_VIDEO_RESP_OK_QUERY_CONTROL) return {};
+    const auto bytes = std::span(result.response).subspan(sizeof(header));
+    const auto count = load<virtio_video_query_control_resp_level>(bytes).num;
+    std::vector<std::uint32_t> levels;
+    for (std::uint32_t i = 0; i < count; ++i)
+        levels.push_back(load<std::uint32_t>(bytes.subspan(sizeof(virtio_video_query_control_resp_level) + 4 * i)));
+    return levels;
+}
+
+/* A profile the host lists reaches the guest as its own wire profile, as
+ * Constrained Baseline does, so the guest's profile menu names it. */
+void h264ProfileControls()
+{
+    const std::vector<VideoProfile> profiles {VideoProfile::h264Baseline, VideoProfile::h264ConstrainedBaseline,
+        VideoProfile::h264Main, VideoProfile::h264High, VideoProfile::h264ConstrainedHigh};
+    std::vector<VideoDecodeCapability> capabilities;
+    for (const auto profile : profiles) capabilities.push_back({VideoCodec::h264, profile, 4096, 2304, 52, 8});
+    VirtioVideoDevice device(capabilities, [](auto) { return std::make_unique<Decoder>(false); });
+    std::vector<std::uint8_t> request;
+    append(request, virtio_video_query_control{{VIRTIO_VIDEO_CMD_QUERY_CONTROL, 0}, VIRTIO_VIDEO_CONTROL_PROFILE, {}});
+    append(request, virtio_video_query_control_profile{VIRTIO_VIDEO_FORMAT_H264, {}});
+    const auto result = device.processQueue(0, 3, request, 256);
+    const auto header = load<virtio_video_cmd_hdr>(result.response);
+    require(header.type == VIRTIO_VIDEO_RESP_OK_QUERY_CONTROL, "the profile query failed");
+    const auto bytes = std::span(result.response).subspan(sizeof(header));
+    const std::vector<std::uint32_t> wanted {VIRTIO_VIDEO_PROFILE_H264_BASELINE,
+        VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE, VIRTIO_VIDEO_PROFILE_H264_MAIN,
+        VIRTIO_VIDEO_PROFILE_H264_HIGH, VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_HIGH};
+    require(load<virtio_video_query_control_resp_profile>(bytes).num == wanted.size(), "wrong number of profiles");
+    for (std::size_t i = 0; i < wanted.size(); ++i)
+        require(load<std::uint32_t>(bytes.subspan(sizeof(virtio_video_query_control_resp_profile) + 4 * i)) == wanted[i],
+                "an H.264 profile is missing from the wire list");
+}
+
+/* The levels a stream may carry are the ones the capability states. The
+ * device neither claims a level the hardware refuses nor withholds one it
+ * decodes, and the current level is the highest. */
 void codecLevelControls()
 {
-    for (const auto codec : {VideoCodec::h264, VideoCodec::hevc, VideoCodec::jpeg}) {
+    struct Case { VideoCodec codec; std::uint32_t maximum, highest, count; };
+    for (const auto& c : {Case {VideoCodec::h264, 52, VIRTIO_VIDEO_LEVEL_H264_5_2, 16},
+                          Case {VideoCodec::h264, 51, VIRTIO_VIDEO_LEVEL_H264_5_1, 15},
+                          Case {VideoCodec::h264, 62, VIRTIO_VIDEO_LEVEL_H264_6_2, 19},
+                          Case {VideoCodec::hevc, 186, VIRTIO_VIDEO_LEVEL_HEVC_6_2, 13},
+                          Case {VideoCodec::hevc, 153, VIRTIO_VIDEO_LEVEL_HEVC_5_1, 9},
+                          Case {VideoCodec::jpeg, 0, 0, 0}}) {
+        const auto codec = c.codec;
         VirtioVideoDevice device({{codec, codec == VideoCodec::hevc ? VideoProfile::hevcMain :
             codec == VideoCodec::jpeg ? VideoProfile::jpegBaseline : VideoProfile::h264High,
-            4096, 2304, 51, 8}}, [](auto) { return std::make_unique<Decoder>(false); });
+            4096, 2304, c.maximum, 8}}, [](auto) { return std::make_unique<Decoder>(false); });
         virtio_video_stream_create create {};
         create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 1};
         create.coded_format = wireCodec(codec);
@@ -363,13 +414,19 @@ void codecLevelControls()
         append(request, virtio_video_get_control{{VIRTIO_VIDEO_CMD_GET_CONTROL, 1}, VIRTIO_VIDEO_CONTROL_LEVEL, {}});
         const auto result = device.processQueue(0, 2, request, 128);
         const auto header = load<virtio_video_cmd_hdr>(result.response);
+        const auto levels = levelsOf(device, wireCodec(codec));
         if (codec == VideoCodec::jpeg) {
             require(header.type == VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL, "JPEG exposed a coded level");
+            require(levels.empty(), "JPEG listed coded levels");
         } else {
             require(header.type == VIRTIO_VIDEO_RESP_OK_GET_CONTROL, "level control failed");
             const auto value = load<virtio_video_control_val_level>(std::span(result.response).subspan(sizeof(header)));
-            require(value.level == (codec == VideoCodec::h264 ? VIRTIO_VIDEO_LEVEL_H264_5_1 :
-                VIRTIO_VIDEO_LEVEL_HEVC_6_2), "level belongs to the wrong codec");
+            require(value.level == c.highest, "the level is not the capability's maximum");
+            require(levels.size() == c.count && levels.back() == c.highest &&
+                    std::is_sorted(levels.begin(), levels.end()),
+                    "the level list is not every level up to the capability's maximum");
+            require(levels.front() == (codec == VideoCodec::h264 ? VIRTIO_VIDEO_LEVEL_H264_1_0 :
+                VIRTIO_VIDEO_LEVEL_HEVC_1), "the level list starts at the wrong level");
         }
     }
 }
@@ -1451,6 +1508,7 @@ void capabilityMasks()
 int main()
 {
     try {
+        h264ProfileControls();
         codecLevelControls();
         decoderRejectsEncoderCommands();
         capabilityMasks();

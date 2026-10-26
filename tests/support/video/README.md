@@ -1,7 +1,7 @@
 # Video decoder fixtures
 
 These 128 × 96 synthetic color-pattern frames cover H.264 Baseline,
-Constrained Baseline, Main, High and High10; HEVC Main and Main10; baseline
+Constrained Baseline, Main, High, Constrained High and High10; HEVC Main and Main10; baseline
 4:2:0 JPEG; and VP9 Profile 0. Each `.bin` contains one Annex B access unit, a
 JPEG image, or one VP9 frame with no container. Its `.raw` reference is tightly
 packed NV12 or P010, with no row padding. The patterns contain no third-party
@@ -50,6 +50,15 @@ none carries an encoder identification string.
 - `hevc-full-range.bin` is the pattern of `hevc-main.raw` with the full-range
   flag set in the VUI, and `hevc-full-range.raw` what a software decoder
   returns, with no range conversion.
+- `h264-constrained-high.bin` and `.raw` are `h264-high.bin` and its
+  reference with `constraint_set4_flag` and `constraint_set5_flag` set in the
+  SPS (the byte after `profile_idc` 100 is 0x0c), which is what Constrained
+  High states for a stream with only frame macroblocks and no B-pictures; the
+  picture is the single I picture High has, so the same reference serves.
+- `h264-high-level-5-2.bin` is one flat gray High picture of 4096 × 2304, the
+  largest frame level 5.2 allows, with level_idc 52:
+  `ffmpeg -f lavfi -i "color=c=gray:size=4096x2304:rate=30,format=yuv420p" -frames:v 1 -c:v libx264 -profile:v high -level:v 5.2 -x264-params repeat-headers=1 -bsf:v filter_units=remove_types=6 -f h264 h264-high-level-5-2.bin`.
+  The platform test decodes it whenever the capability list states level 5.2.
 - `hevc-high-tier-4k.bin` and `hevc-high-tier-8k.bin` are one flat gray
   picture of 4096 × 2160 at level 5.2 and 8192 × 4320 at level 6.2, both High
   tier. The platform test decodes each the host's capability list says it can,

@@ -259,6 +259,7 @@ uml::platform::VideoEncodeColor colorFor(const StreamInfo& info)
     case UML_V4L2_XFER_FUNC_709: color.transfer = VideoTransferFunction::bt709; break;
     case UML_V4L2_XFER_FUNC_SRGB: color.transfer = VideoTransferFunction::srgb; break;
     case UML_V4L2_XFER_FUNC_SMPTE2084: color.transfer = VideoTransferFunction::pq; break;
+    case UML_V4L2_XFER_FUNC_HLG: color.transfer = VideoTransferFunction::hlg; break;
     case UML_V4L2_XFER_FUNC_NONE: color.transfer = VideoTransferFunction::linear; break;
     default: break;
     }
@@ -294,7 +295,8 @@ StreamInfo sanitized(const StreamInfo& info) noexcept
         {UML_V4L2_COLORSPACE_SMPTE170M, UML_V4L2_COLORSPACE_REC709, UML_V4L2_COLORSPACE_470_SYSTEM_BG,
          UML_V4L2_COLORSPACE_SRGB, UML_V4L2_COLORSPACE_BT2020, UML_V4L2_COLORSPACE_RAW, UML_V4L2_COLORSPACE_DCI_P3});
     result.transfer = keep(info.transfer,
-        {UML_V4L2_XFER_FUNC_709, UML_V4L2_XFER_FUNC_SRGB, UML_V4L2_XFER_FUNC_SMPTE2084, UML_V4L2_XFER_FUNC_NONE});
+        {UML_V4L2_XFER_FUNC_709, UML_V4L2_XFER_FUNC_SRGB, UML_V4L2_XFER_FUNC_SMPTE2084, UML_V4L2_XFER_FUNC_HLG,
+         UML_V4L2_XFER_FUNC_NONE});
     result.matrix = keep(info.matrix, {UML_V4L2_YCBCR_ENC_601, UML_V4L2_YCBCR_ENC_709, UML_V4L2_YCBCR_ENC_BT2020});
     result.quantization = keep(info.quantization, {UML_V4L2_QUANTIZATION_FULL_RANGE, UML_V4L2_QUANTIZATION_LIM_RANGE});
     return result;

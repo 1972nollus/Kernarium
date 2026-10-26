@@ -573,18 +573,25 @@ struct BitReader {
     }
     void se() { ue(); }
 };
+/* The bytes of the NAL unit that starts at `first`, up to the next start code, without emulation prevention. */
+std::vector<std::uint8_t> unescapedUnit(const std::vector<std::uint8_t>& stream, std::size_t first)
+{
+    std::vector<std::uint8_t> bytes;
+    unsigned zeros = 0;
+    for (std::size_t j = first; j < stream.size(); ++j) {
+        if (zeros >= 2 && stream[j] == 1) break;    // the next start code
+        if (zeros >= 2 && stream[j] == 3) { zeros = 0; continue; }   // emulation prevention
+        zeros = stream[j] == 0 ? zeros + 1 : 0;
+        bytes.push_back(stream[j]);
+    }
+    return bytes;
+}
 bool h264Vui(const std::vector<std::uint8_t>& stream, Vui& vui)
 {
     for (std::size_t i = 0; i + 4 < stream.size(); ++i) {
         if (!(stream[i] == 0 && stream[i + 1] == 0 && stream[i + 2] == 1 && (stream[i + 3] & 0x1f) == 7)) continue;
         BitReader reader;
-        unsigned zeros = 0;
-        for (std::size_t j = i + 4; j < stream.size(); ++j) {
-            if (zeros >= 2 && stream[j] == 1) break;    // the next start code
-            if (zeros >= 2 && stream[j] == 3) { zeros = 0; continue; }   // emulation prevention
-            zeros = stream[j] == 0 ? zeros + 1 : 0;
-            reader.bytes.push_back(stream[j]);
-        }
+        reader.bytes = unescapedUnit(stream, i + 4);
         const unsigned profile = reader.bits(8);
         reader.bits(8);
         reader.bits(8);
@@ -647,6 +654,74 @@ bool h264Vui(const std::vector<std::uint8_t>& stream, Vui& vui)
     return false;
 }
 
+/* The colour description an HEVC stream states in its sequence parameter set (H.265 7.3.2.2). The hardware
+ * encoder writes no scaling list, which this does not walk, so a stream with one reports no VUI. */
+bool hevcVui(const std::vector<std::uint8_t>& stream, Vui& vui)
+{
+    for (std::size_t i = 0; i + 5 < stream.size(); ++i) {
+        if (!(stream[i] == 0 && stream[i + 1] == 0 && stream[i + 2] == 1 && ((stream[i + 3] >> 1) & 0x3f) == 33)) continue;
+        BitReader reader;
+        reader.bytes = unescapedUnit(stream, i + 5);   // behind the two-byte NAL unit header
+        reader.bits(4);                                // sps_video_parameter_set_id
+        const unsigned subLayers = reader.bits(3);
+        reader.bits(1);                                // sps_temporal_id_nesting_flag
+        reader.bits(32); reader.bits(32); reader.bits(32);   // general profile (88 bits) and level
+        bool profilePresent[8] = {}, levelPresent[8] = {};
+        for (unsigned k = 0; k < subLayers; ++k) { profilePresent[k] = reader.bit() != 0; levelPresent[k] = reader.bit() != 0; }
+        if (subLayers > 0) for (unsigned k = subLayers; k < 8; ++k) reader.bits(2);
+        for (unsigned k = 0; k < subLayers; ++k) {
+            if (profilePresent[k]) { for (unsigned part = 0; part < 11; ++part) reader.bits(8); }
+            if (levelPresent[k]) reader.bits(8);
+        }
+        reader.ue();                                   // sps_seq_parameter_set_id
+        if (reader.ue() == 3) reader.bit();            // chroma_format_idc, separate_colour_plane_flag
+        reader.ue(); reader.ue();                      // picture size
+        if (reader.bit()) for (unsigned k = 0; k < 4; ++k) reader.ue();   // conformance window
+        reader.ue(); reader.ue();                      // bit depths
+        const unsigned pocBits = reader.ue() + 4;
+        const bool orderingPerLayer = reader.bit() != 0;
+        for (unsigned k = orderingPerLayer ? 0 : subLayers; k <= subLayers; ++k) { reader.ue(); reader.ue(); reader.ue(); }
+        for (unsigned k = 0; k < 6; ++k) reader.ue();  // block sizes and transform hierarchy depths
+        if (reader.bit() && reader.bit()) return false;   // a scaling list
+        reader.bits(2);                                // amp, sample adaptive offset
+        if (reader.bit()) { reader.bits(8); reader.ue(); reader.ue(); reader.bit(); }   // pcm
+        const unsigned sets = reader.ue();
+        require(sets <= 64, "an HEVC SPS names too many reference picture sets");
+        std::vector<unsigned> pictures(sets);          // NumDeltaPocs of each short-term set
+        for (unsigned set = 0; set < sets; ++set) {
+            if (set != 0 && reader.bit()) {            // predicted from the set before it
+                reader.bit(); reader.ue();             // delta_rps_sign, abs_delta_rps_minus1
+                for (unsigned k = 0; k <= pictures[set - 1]; ++k)
+                    if (reader.bit() || reader.bit()) ++pictures[set];   // used_by_curr_pic_flag, else use_delta_flag
+            } else {
+                const unsigned negative = reader.ue(), positive = reader.ue();
+                require(negative <= 16 && positive <= 16, "an HEVC reference picture set is too large");
+                for (unsigned k = 0; k < negative + positive; ++k) { reader.ue(); reader.bit(); }
+                pictures[set] = negative + positive;
+            }
+        }
+        if (reader.bit()) {                            // long_term_ref_pics_present_flag
+            const unsigned count = reader.ue();
+            for (unsigned k = 0; k < count; ++k) { reader.bits(pocBits); reader.bit(); }
+        }
+        reader.bits(2);                                // temporal MVP, strong intra smoothing
+        if (!reader.bit()) return true;                // no VUI
+        if (reader.bit() && reader.bits(8) == 255) reader.bits(32);   // aspect ratio
+        if (reader.bit()) reader.bit();                // overscan
+        if (reader.bit()) {                            // video_signal_type_present_flag
+            reader.bits(3);
+            vui.fullRange = reader.bit();
+            if (reader.bit()) {
+                vui.primaries = reader.bits(8);
+                vui.transfer = reader.bits(8);
+                vui.matrix = reader.bits(8);
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 struct Colours {
     unsigned space {}, transfer {}, encoding {}, quantization {};
 };
@@ -674,7 +749,11 @@ struct ColourPlan {
     Colours set;
     unsigned primaries, transfer, matrix;   // H.273 code points; 0xff is not checked
     unsigned fullRange;
+    bool hdr {false};   // for HEVC Main 10, whose VUI is checked too
 };
+
+/* V4L2_XFER_FUNC_HLG, the kernel line's local extension of the transfer function enum (upstream has none). */
+constexpr unsigned xferFuncHlg = 8;
 
 struct Plan {
     unsigned coded {};
@@ -1259,12 +1338,12 @@ void runPlan(const Run& run, const Plan& plan)
     }
     encoder.drain();
     auto coded = encoder.take();
-    if (plan.colour && plan.coded == V4L2_PIX_FMT_H264) {
+    if (plan.colour && (plan.coded == V4L2_PIX_FMT_H264 || (plan.coded == V4L2_PIX_FMT_HEVC && plan.colour->hdr))) {
         Vui vui;
         bool found = false;
         for (const auto& item : coded) {
             if (item.bytes.empty()) continue;
-            found = h264Vui(item.bytes, vui);
+            found = plan.coded == V4L2_PIX_FMT_H264 ? h264Vui(item.bytes, vui) : hevcVui(item.bytes, vui);
             if (found) break;
         }
         require(found, std::string(plan.colour->name) + ": the stream has no sequence parameter set");
@@ -1659,6 +1738,24 @@ int main(int argc, char** argv)
                 if (attempt(run, plan, "stream")) ++encoded;
                 if (plan.resume) resumed = true;
                 if (plan.resize) resized = true;
+                // An HDR stream states its transfer function in the VUI of the 10-bit HEVC profile. HLG has no value
+                // upstream, so the kernel line's own must survive S_FMT, which resets one it does not know.
+                if (hevc && tenBit) {
+                    static const ColourPlan hdrScenarios[] = {
+                        {"BT.2020 PQ", {V4L2_COLORSPACE_BT2020, V4L2_XFER_FUNC_SMPTE2084, V4L2_YCBCR_ENC_BT2020,
+                                        V4L2_QUANTIZATION_LIM_RANGE}, 9, 16, 9, 0, true},
+                        {"BT.2020 HLG", {V4L2_COLORSPACE_BT2020, xferFuncHlg, V4L2_YCBCR_ENC_BT2020,
+                                         V4L2_QUANTIZATION_LIM_RANGE}, 9, 18, 9, 0, true},
+                        {"RAW HLG, BT.2020 matrix", {V4L2_COLORSPACE_RAW, xferFuncHlg, V4L2_YCBCR_ENC_BT2020,
+                                                     V4L2_QUANTIZATION_LIM_RANGE}, 0xff, 18, 9, 0, true},
+                    };
+                    for (const auto& scenario : hdrScenarios) {
+                        Plan coloured = plan;
+                        coloured.colour = scenario; coloured.frames = 6; coloured.forceAt = -1; coloured.resume = false;
+                        coloured.resize = false;
+                        attempt(run, coloured, "hdr colour");
+                    }
+                }
                 if (variants) continue;
                 variants = true;
                 // The other ways a client hands over its frames, once per codec.

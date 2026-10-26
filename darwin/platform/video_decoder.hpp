@@ -10,10 +10,13 @@ namespace uml::platform {
 
 enum class VideoCodec { h264, hevc, jpeg, vp9 };
 enum class VideoProfile {
-    h264Baseline, h264ConstrainedBaseline, h264Main, h264High, h264High10,
-    hevcMain, hevcMain10, jpegBaseline, vp9Profile0,
+    h264Baseline, h264ConstrainedBaseline, h264Main, h264High, h264ConstrainedHigh,
+    h264High10, hevcMain, hevcMain10, jpegBaseline, vp9Profile0,
 };
 
+// maximumLevel is the highest level the hardware decodes, as the stream states
+// it: H.264 level_idc (51 is level 5.1) and HEVC general_level_idc (186 is
+// level 6.2); 0 for a codec with no levels.
 struct VideoDecodeCapability {
     VideoCodec codec;
     VideoProfile profile;

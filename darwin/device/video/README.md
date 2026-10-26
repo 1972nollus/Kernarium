@@ -12,7 +12,9 @@ The shared mainline and Android driver creates `/dev/video0`;
 the Steam image provides the `/dev/video-dec0` udev alias used by CEF.
 
 The Apple backend requires VideoToolbox hardware decoding. Its capabilities are
-H.264 Baseline, Constrained Baseline, Main, and High; HEVC Main and Main10; and
+H.264 Baseline, Constrained Baseline, Main, High and Constrained High (High
+with the constraint flags set, a subset it decodes by construction, listed as
+a profile of its own as Constrained Baseline is); HEVC Main and Main10; and
 baseline JPEG, subject to host availability.
 H.264 High10 is conditional on the iOS profile probe and is excluded on macOS.
 VP9 Profile 0 is added where VideoToolbox offers it as a supplemental decoder,
@@ -132,11 +134,21 @@ the drain before the marker and the event. The first size of a stream is
 announced as the event alone, from the packet's headers, before any picture
 exists, with no end marker and no hold.
 
-**Limits.** The device reports HEVC levels 1 to 6.2 with no tier, because the
-wire has none, so a High tier stream is accepted wherever the hardware decodes
-it. `platform-video-decoder` decodes a High tier 4096 x 2160 (level 5.2) and
-8192 x 4320 (level 6.2) picture whenever the capability list covers that size,
-so a host whose hardware does less fails the test, not a guest.
+**Limits.** The device lists the levels of a coded format from the lowest up
+to the highest `maximumLevel` of the format's capabilities, and reports that
+level as the current one; the guest's level menu is exactly that range. HEVC
+comes out as levels 1 to 6.2 with no tier, because the wire has none, so a High
+tier stream is accepted wherever the hardware decodes it. `platform-video-decoder`
+decodes a High tier 4096 x 2160 (level 5.2) and 8192 x 4320 (level 6.2)
+picture whenever the capability list covers that size, so a host whose hardware
+does less fails the test, not a guest. H.264 comes out as levels 1.0 to 5.2:
+the hardware decodes the 4096 x 2304 frame level 5.2 allows (the same
+decoder takes it whatever level the stream states) and refuses to open the
+8192 x 4320 frame a level 6 stream may carry, so the wire names 6.0 to 6.2 and
+no host lists them. The test decodes a level 5.2 picture and fails if a
+capability states a level above 5.2, so a higher claim needs a fixture first.
+H.264 High10 keeps level 5.1: macOS does not offer it, and no host that does is
+verified at 5.2.
 
 Input uses complete Annex B H.264/HEVC access units, complete JPEG frames, or
 complete VP9 frames.
@@ -317,7 +329,7 @@ HDR and colorimetry:
 | `COLORIMETRY_HDR10_CLL_INFO` | compound, 4 bytes | HEVC Main10 verified | `ContentLightLevelInfo`, with the big-endian SEI payload built by the host |
 | `COLORIMETRY_HDR10_MASTERING_DISPLAY` | compound, 24 bytes | HEVC Main10 verified | `MasteringDisplayColorVolume` |
 | `SET_STREAM_INFO` colorspace | `v4l2_colorspace` | always | REC709: `ColorPrimaries_ITU_R_709_2`. SMPTE170M: `SMPTE_C`. 470_SYSTEM_BG: `EBU_3213`. BT2020: `ITU_R_2020`. DCI_P3: `P3_D65`. SRGB: 709 primaries. RAW: no primaries. DEFAULT leaves the standard unspecified |
-| `SET_STREAM_INFO` xfer_func | `v4l2_xfer_func` | always | 709: `ITU_R_709_2`. SRGB: `sRGB`. SMPTE2084: `SMPTE_ST_2084_PQ`. NONE: `Linear` |
+| `SET_STREAM_INFO` xfer_func | `v4l2_xfer_func`, with the kernel line's local `HLG` = 8 | always | 709: `ITU_R_709_2`. SRGB: `sRGB`. SMPTE2084: `SMPTE_ST_2084_PQ`. HLG: `ITU_R_2100_HLG`. NONE: `Linear` |
 | `SET_STREAM_INFO` ycbcr_enc | `v4l2_ycbcr_encoding` | always | 601: `ITU_R_601_4`. 709: `ITU_R_709_2`. BT2020: `ITU_R_2020` |
 | `SET_STREAM_INFO` quantization | `v4l2_quantization` | always | FULL_RANGE selects full-range YCbCr input (RGB input is converted by the platform, since VT converts RGB to video range only); LIM_RANGE selects video range |
 
@@ -361,7 +373,6 @@ nowhere:
 - HEVC with alpha, depth and disparity HEVC, and MV-HEVC.
 - HEVC range extensions (Main 4:2:2 10, Main 4:4:4, Main 4:4:4 10, Monochrome
   and Monochrome 10), because the V4L2 HEVC profile menu ends at Main 10.
-- The HLG transfer function, which V4L2 cannot carry.
 - VideoToolbox settings with no V4L2 control: presets, speed against quality,
   spatial adaptive QP levels, the VBV initial delay and HDR10+ per-frame
   metadata.

@@ -258,7 +258,9 @@ and its fixtures installed as payload files, checks their SHA-256 list, checks
 every advertised profile's pixels, raw layouts including packed BGRA capture
 and 8-bit capture of a 10-bit stream, imported dma-buf capture, timestamps,
 source-change and EOS events, the display order of H.264 and HEVC B-pictures
-and a seek in both (over open-group streams for HEVC), and rejects kernel
+and a seek in both (over open-group streams for HEVC), reads the H.264 and HEVC
+profile and level menus (Constrained High beside High, levels from 1.0 up to
+5.2 and from 1 up to 6.2, the current level the highest), and rejects kernel
 faults or failed shutdown. Imported capture covers the queue's own
 buffers handed back and guest memory a client brings, with each buffer's planes
 in separate dma-bufs or in one and their lengths stated as QUERYBUF gave them,
@@ -297,7 +299,10 @@ and blue blocks show the channel order; and checks the parameter sets that
 `PREPEND_SPSPPS_TO_IDR` adds and the layers that hierarchical coding makes.
 Colorimetry stated on the raw queue, including `V4L2_COLORSPACE_RAW` with a
 transfer function and range, must read back as stated, survive a repeated
-`S_FMT` and `S_PARM`, and appear in the H.264 stream's VUI; the B-frame control
+`S_FMT` and `S_PARM`, and appear in the H.264 stream's VUI; BT.2020 with PQ
+and with HLG (`V4L2_XFER_FUNC_HLG`, the kernel line's local value 8), stated on
+a P010 raw queue, must read back and show as transfer characteristics 16 and 18
+in the HEVC Main 10 stream's VUI; the B-frame control
 must run from zero in steps of one and the level menus default to their lowest
 item, as the host describes them. Each stream is decoded back through the guest decoder and compared with the
 pictures by luma PSNR. The x86_64 slice runs `run_v4l2_encode.py`

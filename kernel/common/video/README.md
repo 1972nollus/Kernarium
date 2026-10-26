@@ -34,6 +34,18 @@ for none, such as the end-of-stream marker or one returned by a flush. The
 `guest-video-error-answer` test has a device fail a capture buffer and checks
 that the client reads the timestamp it named.
 
+## Decoder profiles and levels
+
+The wire names the H.264 levels 1.0 to 6.2, the HEVC levels 1 to 6.2 and, as
+H.264 profiles of their own, Constrained Baseline and Constrained High. The
+host lists the levels up to the highest its decoder decodes and reports that
+level as the current one, and the driver turns the replies into the read-only
+V4L2 profile and level menus. The driver's tables map each wire value to its
+V4L2 menu index and read an unknown value as the first entry of the menu, so a
+value appended to the wire needs its row in `virtio_video_helpers.c`. The
+[device README](../../../darwin/device/video/README.md) owns which levels the
+host decodes and why.
+
 ## Decoder resolution change
 
 The device ends a picture size with one more capture buffer, empty and flagged
@@ -94,6 +106,14 @@ keeps its older `RGB4` for RGBA8888. STREAMOFF on either queue sends
 `STREAM_DRAIN` again, so the next coded buffer is the empty end of stream.
 A `CODEC_CONFIG` buffer reaches the client with no frame-type flag, because
 V4L2 has none for it.
+
+The V4L2 core resets a transfer function it does not know to
+`V4L2_XFER_FUNC_DEFAULT` on every `VIDIOC_S_FMT`, before a driver sees it, and
+upstream has none for hybrid log-gamma. The kernel line therefore carries one
+local UAPI extension, `V4L2_XFER_FUNC_HLG = 8` (the topic "media: v4l2: add the
+HLG transfer function"), so that a client can state HLG and an HDR stream's VUI
+can carry it. If upstream adds an HLG value, adopt upstream's in that topic and
+in `virtio_video_v4l2_ids.h`.
 
 `virtio_video_v4l2_ids.h` lists the V4L2 numbers the host uses, one
 `#define UML_<kernel symbol> <number>` per value. `sync-protocol.py` checks each

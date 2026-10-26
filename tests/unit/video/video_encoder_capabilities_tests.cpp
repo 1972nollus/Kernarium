@@ -637,6 +637,17 @@ void settingsFromControls()
     color = rawColor(UML_V4L2_XFER_FUNC_SMPTE2084, UML_V4L2_YCBCR_ENC_BT2020, UML_V4L2_QUANTIZATION_LIM_RANGE);
     require(color == (VideoEncodeColor {VideoColorPrimaries::unspecified, VideoTransferFunction::pq,
                                         VideoMatrixCoefficients::bt2020, false}), "RAW with PQ and BT.2020");
+    // Hybrid log-gamma is a transfer function of its own, with or without a standard beside it.
+    color = rawColor(UML_V4L2_XFER_FUNC_HLG, UML_V4L2_YCBCR_ENC_BT2020, UML_V4L2_QUANTIZATION_LIM_RANGE);
+    require(color == (VideoEncodeColor {VideoColorPrimaries::unspecified, VideoTransferFunction::hlg,
+                                        VideoMatrixCoefficients::bt2020, false}), "RAW with HLG and BT.2020");
+    colored.info = StreamInfo {};
+    colored.info.colorspace = UML_V4L2_COLORSPACE_BT2020;
+    colored.info.transfer = UML_V4L2_XFER_FUNC_HLG;
+    colored.info.matrix = UML_V4L2_YCBCR_ENC_BT2020;
+    require(encodeSettings(colored, defaults).color == (VideoEncodeColor {VideoColorPrimaries::bt2020, VideoTransferFunction::hlg,
+                                                                          VideoMatrixCoefficients::bt2020, false}),
+            "BT.2020 with HLG states the BT.709 transfer function its standard implies");
     // The standards still derive their own defaults (the cases above, and sRGB's full range).
     colored.info = StreamInfo {};
     colored.info.colorspace = UML_V4L2_COLORSPACE_BT2020;

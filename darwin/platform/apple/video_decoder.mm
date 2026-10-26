@@ -925,9 +925,14 @@ std::vector<VideoDecodeCapability> videoDecodeCapabilities()
 {
     std::vector<VideoDecodeCapability> result;
     if (VTIsHardwareDecodeSupported(kCMVideoCodecType_H264)) {
+        // Level 5.2 is the last whose largest frame (36864 macroblocks, 4096 x
+        // 2304) the hardware opens: it decodes a level 5.2, 6.0 or 6.2 stream of
+        // that size alike, and refuses the 8192 x 4320 frame a level 6 stream may
+        // carry. The platform test decodes the level 5.2 frame.
         for (auto profile : {VideoProfile::h264Baseline, VideoProfile::h264ConstrainedBaseline,
-                             VideoProfile::h264Main, VideoProfile::h264High})
-            result.push_back({VideoCodec::h264, profile, 4096, 2304, 51, 8});
+                             VideoProfile::h264Main, VideoProfile::h264High,
+                             VideoProfile::h264ConstrainedHigh})
+            result.push_back({VideoCodec::h264, profile, 4096, 2304, 52, 8});
         if (high10Available())
             result.push_back({VideoCodec::h264, VideoProfile::h264High10, 4096, 2304, 51, 10});
     }

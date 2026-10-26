@@ -1219,6 +1219,66 @@ void hevcDisplayOrder(const char* device, const std::string& directory)
     }
 }
 
+/* The values a read-only menu lists, in order. */
+std::vector<int> menuItems(int fd, unsigned id)
+{
+    v4l2_queryctrl control {};
+    control.id = id;
+    call(fd, VIDIOC_QUERYCTRL, &control, "QUERYCTRL menu");
+    require(control.type == V4L2_CTRL_TYPE_MENU && control.minimum >= 0 && control.maximum < 32, "invalid menu bounds");
+    require((control.flags & V4L2_CTRL_FLAG_READ_ONLY) != 0, "a decoder menu can be written");
+    std::vector<int> items;
+    for (int value = control.minimum; value <= control.maximum; ++value) {
+        v4l2_querymenu menu {};
+        menu.id = id; menu.index = unsigned(value);
+        if (ioctl(fd, VIDIOC_QUERYMENU, &menu) < 0) {
+            require(errno == EINVAL, "QUERYMENU failed");
+            continue;
+        }
+        items.push_back(value);
+    }
+    require(!items.empty(), "a menu lists nothing");
+    return items;
+}
+
+/* The profile and level menus a client reads to decide what the decoder takes.
+ * Constrained Baseline and Constrained High are subsets of Baseline and High
+ * that the host names as profiles of their own, so a stream that states them is
+ * not refused for lacking an entry. The levels are everything from the lowest to
+ * the highest the host decodes, with no gap but the 1b the wire lacks; the host
+ * decodes H.264 up to level 5.2 (the largest frame its hardware opens, which
+ * the CTS encoder profile and level tests send) and HEVC up to 6.2. */
+void profileAndLevelMenus(int fd, bool avc)
+{
+    const auto has = [](const std::vector<int>& items, int value) {
+        return std::find(items.begin(), items.end(), value) != items.end();
+    };
+    const auto profiles = menuItems(fd, avc ? V4L2_CID_MPEG_VIDEO_H264_PROFILE : V4L2_CID_MPEG_VIDEO_HEVC_PROFILE);
+    const auto levels = menuItems(fd, avc ? V4L2_CID_MPEG_VIDEO_H264_LEVEL : V4L2_CID_MPEG_VIDEO_HEVC_LEVEL);
+    if (avc) {
+        require(has(profiles, V4L2_MPEG_VIDEO_H264_PROFILE_HIGH), "the H.264 profile menu lacks High");
+        require(has(profiles, V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_HIGH),
+                "the H.264 profile menu lacks Constrained High, a subset of the High it lists");
+        require(has(profiles, V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE) ==
+                has(profiles, V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE),
+                "the H.264 profile menu lists Baseline without Constrained Baseline or the reverse");
+        require(levels.front() == V4L2_MPEG_VIDEO_H264_LEVEL_1_0, "the H.264 level menu does not start at level 1.0");
+        require(levels.back() >= V4L2_MPEG_VIDEO_H264_LEVEL_5_2,
+                "the H.264 level menu stops below level 5.2, which the hardware decodes");
+        for (int level = levels.front(); level <= levels.back(); ++level)
+            require(level == V4L2_MPEG_VIDEO_H264_LEVEL_1B || has(levels, level), "the H.264 level menu has a gap");
+        std::printf("H.264 profiles %zu, levels up to menu index %d\n", profiles.size(), levels.back());
+    } else {
+        require(has(profiles, V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN), "the HEVC profile menu lacks Main");
+        require(levels.front() == V4L2_MPEG_VIDEO_HEVC_LEVEL_1, "the HEVC level menu does not start at level 1");
+        require(levels.back() == V4L2_MPEG_VIDEO_HEVC_LEVEL_6_2, "the HEVC level menu does not reach level 6.2");
+        for (int level = levels.front(); level <= levels.back(); ++level)
+            require(has(levels, level), "the HEVC level menu has a gap");
+        std::printf("HEVC profiles %zu, levels up to menu index %d\n", profiles.size(), levels.back());
+    }
+    std::fflush(stdout);
+}
+
 int main(int argc, char** argv)
 {
     try {
@@ -1231,6 +1291,7 @@ int main(int argc, char** argv)
             {V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE, "h264-constrained-baseline", V4L2_PIX_FMT_NV12M},
             {V4L2_MPEG_VIDEO_H264_PROFILE_MAIN, "h264-main", V4L2_PIX_FMT_NV12M},
             {V4L2_MPEG_VIDEO_H264_PROFILE_HIGH, "h264-high", V4L2_PIX_FMT_NV12M},
+            {V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_HIGH, "h264-constrained-high", V4L2_PIX_FMT_NV12M},
             {V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10, "h264-high10", V4L2_PIX_FMT_P010},
         };
         const Profile hevc[] = {
@@ -1337,6 +1398,7 @@ int main(int argc, char** argv)
             v4l2_queryctrl control {}; control.id = id;
             call(capabilities.fd, VIDIOC_QUERYCTRL, &control, "QUERYCTRL profiles");
             require(control.minimum >= 0 && control.maximum <= 32, "invalid profile menu bounds");
+            profileAndLevelMenus(capabilities.fd, avc);
             bool imported = false;
             for (int value = control.minimum; value <= control.maximum; ++value) {
                 v4l2_querymenu menu {}; menu.id = id; menu.index = value;

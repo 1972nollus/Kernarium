@@ -26,6 +26,12 @@ timestamp the device answered with, as one holding a picture does, so a
 client can tell which frame failed and not read the stale one the buffer
 carried from its last use.
 
+The wire names the H.264 levels 5.2 to 6.2 and the Constrained High
+profile, as it names Constrained Baseline, and the driver maps each to
+its V4L2 menu index. A level or profile the table lacks reads as the
+first entry of its menu, so a device that lists Constrained High or level
+5.2 would be taken for Baseline or level 1.0.
+
 UML removes a device from an exitcall while other CPUs still run tasks, and
 a management-console halt, an unbind or a lost vhost-user backend does so
 without device_shutdown(). Removal therefore resets the device and deletes
@@ -55,10 +61,10 @@ stream.
  drivers/media/virtio/virtio_video_dec.c     |  479 +++++++
  drivers/media/virtio/virtio_video_device.c  | 1313 +++++++++++++++++++
  drivers/media/virtio/virtio_video_driver.c  |  261 ++++
- drivers/media/virtio/virtio_video_helpers.c |  198 +++
+ drivers/media/virtio/virtio_video_helpers.c |  203 +++
  drivers/media/virtio/virtio_video_vq.c      | 1077 +++++++++++++++
- include/uapi/linux/virtio_video.h           |  539 ++++++++
- 14 files changed, 5043 insertions(+)
+ include/uapi/linux/virtio_video.h           |  544 ++++++++
+ 14 files changed, 5053 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -3376,10 +3382,10 @@ index 0000000000000000000000000000000000000000..1f73c6beb1fe81627b675f87d655c162
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/virtio/virtio_video_helpers.c b/drivers/media/virtio/virtio_video_helpers.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..e6bb2fbfaff1f1bf68ca57547fe2b2f041a92472
+index 0000000000000000000000000000000000000000..ae0d96ccbd1a6500ab4d2ea60406304df95274b1
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_helpers.c
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,203 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -3436,6 +3442,10 @@ index 0000000000000000000000000000000000000000..e6bb2fbfaff1f1bf68ca57547fe2b2f0
 +	{ VIRTIO_VIDEO_LEVEL_H264_4_2, V4L2_MPEG_VIDEO_H264_LEVEL_4_2 },
 +	{ VIRTIO_VIDEO_LEVEL_H264_5_0, V4L2_MPEG_VIDEO_H264_LEVEL_5_0 },
 +	{ VIRTIO_VIDEO_LEVEL_H264_5_1, V4L2_MPEG_VIDEO_H264_LEVEL_5_1 },
++	{ VIRTIO_VIDEO_LEVEL_H264_5_2, V4L2_MPEG_VIDEO_H264_LEVEL_5_2 },
++	{ VIRTIO_VIDEO_LEVEL_H264_6_0, V4L2_MPEG_VIDEO_H264_LEVEL_6_0 },
++	{ VIRTIO_VIDEO_LEVEL_H264_6_1, V4L2_MPEG_VIDEO_H264_LEVEL_6_1 },
++	{ VIRTIO_VIDEO_LEVEL_H264_6_2, V4L2_MPEG_VIDEO_H264_LEVEL_6_2 },
 +	{ 0 },
 +};
 +
@@ -3453,6 +3463,7 @@ index 0000000000000000000000000000000000000000..e6bb2fbfaff1f1bf68ca57547fe2b2f0
 +
 +static struct virtio_video_convert_table profile_table[] = {
 +	{ VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE, V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE },
++	{ VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_HIGH, V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_HIGH },
 +	{ VIRTIO_VIDEO_PROFILE_HEVC_MAIN, V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN },
 +	{ VIRTIO_VIDEO_PROFILE_HEVC_MAIN10, V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10 },
 +	{ VIRTIO_VIDEO_PROFILE_H264_BASELINE,
@@ -4663,10 +4674,10 @@ index 0000000000000000000000000000000000000000..dd904e0f413caf4668c19bd8e0f78cda
 +
 diff --git a/include/uapi/linux/virtio_video.h b/include/uapi/linux/virtio_video.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..6a66a95f3e9486ee90d587beace61dd55dbf239c
+index 0000000000000000000000000000000000000000..7898dd1a46feecae93407070a9315278ce70c9c7
 --- /dev/null
 +++ b/include/uapi/linux/virtio_video.h
-@@ -0,0 +1,539 @@
+@@ -0,0 +1,544 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/*
 + * Virtio Video Device
@@ -4786,7 +4797,8 @@ index 0000000000000000000000000000000000000000..6a66a95f3e9486ee90d587beace61dd5
 +	VIRTIO_VIDEO_PROFILE_H264_STEREOHIGH,
 +	VIRTIO_VIDEO_PROFILE_H264_MULTIVIEWHIGH,
 +	VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE,
-+	VIRTIO_VIDEO_PROFILE_H264_MAX = VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE,
++	VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_HIGH,
++	VIRTIO_VIDEO_PROFILE_H264_MAX = VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_HIGH,
 +
 +	/* HEVC */
 +	VIRTIO_VIDEO_PROFILE_HEVC_MIN = 0x200,
@@ -4831,7 +4843,11 @@ index 0000000000000000000000000000000000000000..6a66a95f3e9486ee90d587beace61dd5
 +	VIRTIO_VIDEO_LEVEL_H264_4_2,
 +	VIRTIO_VIDEO_LEVEL_H264_5_0,
 +	VIRTIO_VIDEO_LEVEL_H264_5_1,
-+	VIRTIO_VIDEO_LEVEL_H264_MAX = VIRTIO_VIDEO_LEVEL_H264_5_1,
++	VIRTIO_VIDEO_LEVEL_H264_5_2,
++	VIRTIO_VIDEO_LEVEL_H264_6_0,
++	VIRTIO_VIDEO_LEVEL_H264_6_1,
++	VIRTIO_VIDEO_LEVEL_H264_6_2,
++	VIRTIO_VIDEO_LEVEL_H264_MAX = VIRTIO_VIDEO_LEVEL_H264_6_2,
 +    VIRTIO_VIDEO_LEVEL_HEVC_MIN = 0x200,
 +    VIRTIO_VIDEO_LEVEL_HEVC_1 = VIRTIO_VIDEO_LEVEL_HEVC_MIN,
 +    VIRTIO_VIDEO_LEVEL_HEVC_2,

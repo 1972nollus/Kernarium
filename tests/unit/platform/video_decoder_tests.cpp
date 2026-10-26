@@ -451,6 +451,32 @@ void hevcLimits(const std::vector<uml::platform::VideoDecodeCapability>& capabil
         std::printf("%s: %ux%u decoded in hardware\n", size.name, size.width, size.height);
     }
 }
+
+/* The H.264 level the host states is the one its hardware was seen to decode:
+ * the largest frame level 5.2 allows, 4096 x 2304 (36864 macroblocks), at
+ * that level. Level 6 allows frames up to 8192 x 4352, which the hardware
+ * refuses to open, so no capability may state it until a fixture decodes one. */
+void h264Limits(const std::vector<uml::platform::VideoDecodeCapability>& capabilities)
+{
+    using namespace uml::platform;
+    for (const auto& cap : capabilities) {
+        if (cap.codec != VideoCodec::h264) continue;
+        require(cap.maximumLevel <= 52, "an H.264 level above 5.2 is advertised without a fixture that decodes it");
+        /* The wire states one level per format, and High is the profile whose
+         * stream shows it: the profiles share the hardware and the frame size. */
+        if (cap.profile != VideoProfile::h264High) continue;
+        require(cap.maximumLevel == 52 && cap.maximumWidth >= 4096 && cap.maximumHeight >= 2304,
+                "High does not state the level its fixture decodes");
+        auto decoder = makeVideoDecoder(VideoCodec::h264);
+        decoder->submit(read("h264-high-level-5-2.bin"), 5);
+        decoder->drain();
+        const auto frames = decoder->takeFrames();
+        require(frames.size() == 1 && frames[0].format == VideoFormat {4096, 2304, 8},
+                "an H.264 level the host advertises did not decode");
+        require(std::abs(meanLuma(frames[0]) - 128.0) <= 3.0, "an advertised level decoded to the wrong picture");
+        std::puts("h264-high-level-5-2: 4096x2304 level 5.2 decoded in hardware");
+    }
+}
 }
 
 int main(int argc, char** argv)
@@ -469,7 +495,8 @@ int main(int argc, char** argv)
         require(!capabilities.empty(), "no hardware video decoder available");
         VideoColorimetry colorimetry[16] {};
         const char* names[] = {"h264-baseline", "h264-constrained-baseline", "h264-main",
-            "h264-high", "h264-high10", "hevc-main", "hevc-main10", "jpeg", "vp9-profile0"};
+            "h264-high", "h264-constrained-high", "h264-high10", "hevc-main", "hevc-main10", "jpeg",
+            "vp9-profile0"};
         for (const auto& cap : capabilities) {
             const char* name = names[unsigned(cap.profile)];
             std::printf("Decoding %s\n", name);
@@ -650,6 +677,7 @@ int main(int argc, char** argv)
             h264DisplayOrder();
             h264Window();
         }
+        h264Limits(capabilities);
         auto decoder = makeVideoDecoder(capabilities.front().codec);
         bool rejected = false;
         try { decoder->submit({}, 0); } catch (const std::runtime_error&) { rejected = true; }

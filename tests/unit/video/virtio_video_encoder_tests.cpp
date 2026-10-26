@@ -724,6 +724,16 @@ void streamInformation()
                 current.ycbcr_enc == UML_V4L2_YCBCR_ENC_DEFAULT && current.quantization == UML_V4L2_QUANTIZATION_FULL_RANGE,
                 "a RAW colorspace was not kept");
     }
+    // Hybrid log-gamma is the kernel line's own V4L2 value, and the wire carries it like any other transfer function.
+    set.info = {input, 1, 25, UML_V4L2_COLORSPACE_BT2020, UML_V4L2_XFER_FUNC_HLG, UML_V4L2_YCBCR_ENC_BT2020,
+                UML_V4L2_QUANTIZATION_LIM_RANGE, {}};
+    f.ok(set);
+    for (const auto queue : {input, output}) {
+        current = info(queue);
+        require(current.colorspace == UML_V4L2_COLORSPACE_BT2020 && current.xfer_func == UML_V4L2_XFER_FUNC_HLG &&
+                current.ycbcr_enc == UML_V4L2_YCBCR_ENC_BT2020 && current.quantization == UML_V4L2_QUANTIZATION_LIM_RANGE,
+                "hybrid log-gamma was not kept");
+    }
     set.info.queue_type = 0;
     f.refused(set, VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "stream information for no queue was accepted");
     set.hdr.stream_id = 9;
