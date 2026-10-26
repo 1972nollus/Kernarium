@@ -785,6 +785,46 @@ def check_fdroid(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) ->
              "INSTALL_PACKAGES and DELETE_PACKAGES")
 
 
+# The runtime resource overlay Soong generates from the product's SimpleDeviceConfig
+# overlays, and the DeviceConfig key whose value lists the app ops recorded into the discrete
+# history. The default ops are DiscreteOpsRegistry's LEGACY_OPS and IMPORTANT_OPS_FOR_SECURITY:
+# LineageOS's list predates most of them, and an op that is not listed never reaches the history.
+DEVICE_CONFIG_OVERLAY = (
+    "PRODUCT/overlay/SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk"
+)
+DISCRETE_OPS_KEY = b"privacy/discrete_history_ops_cslist="
+DISCRETE_OPS_DEFAULT = frozenset({
+    0, 1, 2, 25, 26, 27, 41, 42, 63, 73, 88, 89, 100, 101,
+    120, 136, 141, 147, 149, 150, 152, 170, 171, 172, 173,
+})
+
+
+def check_discrete_ops(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    """The discrete app-op history list must keep AOSP's default ops."""
+    info = infos.get(DEVICE_CONFIG_OVERLAY)
+    if info is None:
+        fail(f"{DEVICE_CONFIG_OVERLAY} is missing")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info))) as overlay:
+            table = overlay.read("resources.arsc")
+    except (KeyError, OSError, zipfile.BadZipFile) as error:
+        fail(f"{DEVICE_CONFIG_OVERLAY} has no readable resource table: {error}")
+    lists = [
+        {int(op) for op in match.group(1).split(b",") if op}
+        for match in re.finditer(re.escape(DISCRETE_OPS_KEY) + rb"([0-9,]+)", table)
+    ]
+    if not lists:
+        fail(f"{DEVICE_CONFIG_OVERLAY} does not set {DISCRETE_OPS_KEY.decode()}")
+    missing = min((sorted(DISCRETE_OPS_DEFAULT - ops) for ops in lists), key=len)
+    if missing:
+        fail(
+            f"no discrete app-op list in {DEVICE_CONFIG_OVERLAY} keeps AOSP's default ops; "
+            f"the closest lacks {', '.join(map(str, missing))}"
+        )
+
+
 def check_hardware_features(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
@@ -1570,6 +1610,7 @@ def main() -> None:
         check_app_dexpreopt(seen)
         check_hardware_features(archive, infos)
         check_fdroid(archive, infos)
+        check_discrete_ops(archive, infos)
         check_audio_policy(archive, infos)
         check_multilib_properties(archive, infos)
         check_mesa_gles_stack(archive, infos)

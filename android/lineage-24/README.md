@@ -303,6 +303,18 @@ default for the keyboards of a built-in bus and AOSP's for `BUS_VIRTUAL`, which
 virtio-input, `uinput` and virtual devices report; `keyboard.orientationAware`
 in an input device configuration still decides either way.
 
+The app-ops service records only the ops of a configured list into its
+discrete history (`privacy/discrete_history_ops_cslist`). LineageOS replaces
+AOSP's default with an Android 12 list through SimpleDeviceConfig, so every op
+added since never reaches the history: the health and sensor reads, the trigger
+audio and emergency location ops, the test op of the historical registry CTS
+tests, and the ops AOSP records for security. SimpleDeviceConfig applies its
+`configs_base` array (LineageOS's) and then `configs_device`, so
+`overlay/overlay/packages/apps/SimpleDeviceConfig` sets the second to
+LineageOS's list united with the ops of `DiscreteOpsRegistry`'s defaults. The
+target-files verifier requires the generated overlay to cover the defaults; a
+list that drops one of them also fails the `lineage24-builder-lane` fixtures.
+
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
 in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves

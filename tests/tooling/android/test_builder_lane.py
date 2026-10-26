@@ -431,6 +431,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
                           missing_lockscreen_default: bool = False,
+                          discrete_ops_variant: str | None = None,
                           wide_fdroid_permissions: bool = False,
                           mesa_gles_alignment: int = 16384,
                           elf_edit: tuple[str, int, int] | None = None,
@@ -879,6 +880,33 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                             archive.writestr(f"{artifact}.vdex", b"vdex")
                 for apk in plain_apks:
                     archive.writestr(apk, b"apk")
+                # The runtime resource overlay Soong generates from the product's
+                # SimpleDeviceConfig overlays. Its string pool holds each DeviceConfig list:
+                # LineageOS's, then the product's, which adds the ops of AOSP's default.
+                lineage_ops = (
+                    "0,109,1,108,26,101,27,102,106,100,8,9,6,7,4,5,62,59,60,90,77,111,114,112,51,65,"
+                    "13,6,7,52,53,54,69,74,79,113,20,16,14,19,18,57"
+                )
+                device_ops = (
+                    "0,1,2,4,5,6,7,8,9,13,14,16,18,19,20,25,26,27,41,42,51,52,53,54,57,59,60,62,63,"
+                    "65,69,73,74,77,79,88,89,90,100,101,102,106,108,109,111,112,113,114,120,136,141,"
+                    "147,149,150,152,170,171,172,173"
+                )
+                if discrete_ops_variant == "short-device-list":
+                    device_ops = device_ops.replace(",141,", ",")
+                if discrete_ops_variant != "missing-overlay":
+                    key = b"privacy/discrete_history_ops_cslist="
+                    table = b"\x00" + key + lineage_ops.encode() + b"\x00"
+                    if discrete_ops_variant != "lineage-list-only":
+                        table += key + device_ops.encode() + b"\x00"
+                    overlay_apk = io.BytesIO()
+                    with zipfile.ZipFile(overlay_apk, "w") as overlay:
+                        overlay.writestr("resources.arsc", table)
+                    archive.writestr(
+                        "PRODUCT/overlay/"
+                        "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk",
+                        overlay_apk.getvalue(),
+                    )
                 for apk in arm_preopt_apks:
                     apk_path = Path(apk)
                     for isa in ("arm64", "arm"):
@@ -1166,6 +1194,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("audio-defaults", {"wrong_audio_defaults": True}),
             ("product-model", {"wrong_product_model": True}),
             ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
+            ("missing-discrete-ops-overlay", {"discrete_ops_variant": "missing-overlay"}),
+            ("lineage-discrete-ops-list-only", {"discrete_ops_variant": "lineage-list-only"}),
+            ("short-discrete-ops-list", {"discrete_ops_variant": "short-device-list"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
             ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
@@ -1262,6 +1293,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "which vendor_init may not read"),
             ("missing-lockscreen-default-cause", {"missing_lockscreen_default": True},
              "unexpected product property ro.lockscreen.disable.default"),
+            ("missing-discrete-ops-overlay-cause", {"discrete_ops_variant": "missing-overlay"},
+             "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk is missing"),
+            ("lineage-discrete-ops-list-only-cause", {"discrete_ops_variant": "lineage-list-only"},
+             "keeps AOSP's default ops; the closest lacks 2, 25, 41, 42, 63, 73, 88, 89, 120, "
+             "136, 141, 147, 149, 150, 152, 170, 171, 172, 173"),
+            ("short-discrete-ops-list-cause", {"discrete_ops_variant": "short-device-list"},
+             "the closest lacks 141$"),
             ("missing-userdata-quota-cause", {"missing_userdata_quota": True},
              "userdata entry lacks the fs_mgr quota flag"),
             ("missing-microphone-feature-cause", {"missing_microphone_feature": True},
