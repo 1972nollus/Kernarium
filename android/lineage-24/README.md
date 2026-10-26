@@ -292,6 +292,17 @@ value and the mapper carries on. Android silences the same denial for
 applications, SurfaceFlinger and the boot animation, and the system_ext policy
 silences it for `mediaserver`, which the verifier requires.
 
+The guest's virtual keyboards (the VNC keyboard, and the devices that `uinput`
+and the virtual device manager create) belong to no display. LineageOS's swap
+volume buttons port makes every keyboard that `EventHub` does not count as
+external orientation aware, and it counts only USB and Bluetooth devices as
+external. An orientation aware keyboard is also tied to the internal display,
+while the virtual input device tests wait for a device that has no display, so
+they timed out. A `frameworks/native` topic (route `p0022`) keeps LineageOS's
+default for the keyboards of a built-in bus and AOSP's for `BUS_VIRTUAL`, which
+virtio-input, `uinput` and virtual devices report; `keyboard.orientationAware`
+in an input device configuration still decides either way.
+
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
 in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves
