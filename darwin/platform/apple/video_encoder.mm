@@ -340,10 +340,6 @@ struct Shared {
     unsigned acquired {};    // frames handed out and neither submitted nor released
     bool lost {};            // VideoToolbox reported the session gone
     unsigned lossesWithoutOutput {};
-    // The level the parameter sets of the latest key frame state, as level_idc
-    // or general_level_idc; zero before the first. A change of rate that this
-    // level cannot hold starts a new session, whose key frame states a higher one.
-    std::atomic<unsigned> statedLevel {};
     // The live session, so that a drain which outlasts a recovery can flush
     // the session that replaced the one it started on.
     CFRef<VTCompressionSessionRef> session;
@@ -505,10 +501,7 @@ private:
                 parameterSets.emplace_back(bytes, bytes + size);
             }
             // VideoToolbox's level is replaced by the one the settings call for.
-            if (config_.levelPolicy.floor) {
-                const unsigned level = levels::restateLevel(config_.codec, parameterSets, config_.levelPolicy);
-                if (level) shared_->statedLevel.store(level);
-            }
+            if (config_.levelPolicy.floor) (void)levels::restateLevel(config_.codec, parameterSets, config_.levelPolicy);
             for (const auto& unit : parameterSets) bitstream::appendAnnexB(sets, unit.data(), unit.size());
         }
         if (lengthSize < 1 || lengthSize > 4) return result;
@@ -1101,8 +1094,6 @@ private:
         assembly.parameterSetsWithEveryKeyFrame = settings.parameterSetsWithEveryKeyFrame;
         assembly.temporalLayers = settings.temporalLayers;
         assembly.levelPolicy = levels::makePolicy(settings, plan_.reorders, !plan_.lowLatency);
-        statedFloor_ = assembly.levelPolicy.floor;
-        shared_->statedLevel.store(0);
         if (settings.hdr) assembly.hdrSei = hdrSeiUnit(*settings.hdr);
         std::uint64_t epoch = 0;
         {
@@ -1393,14 +1384,10 @@ private:
         case VideoRateControl::constantQp:
             break;   // the QP of a frame is a setting, not something to change under the stream
         }
-        // A rate or frame rate that the level the stream states cannot hold:
-        // the stream would violate it from the next frame on. A new session
-        // starts at a key frame whose parameter sets state a level that holds.
-        if (const unsigned needed = levels::statedLevelFloor(next)) {
-            const unsigned latest = shared_->statedLevel.load();
-            const unsigned stated = latest ? latest : statedFloor_;
-            if (levels::levelRank(next.codec, needed) > levels::levelRank(next.codec, stated)) rebuild_ = true;
-        }
+        // The level is a property of the stream's start (levels::makePolicy):
+        // a rate or frame rate that changes under the running session does not
+        // restate it. A session made for any other reason takes the level of
+        // the settings it is made from.
         // Likewise a QP bound: it only takes effect from a new session.
         if (next.rateControl != VideoRateControl::constantQp && next.maximumQp != was.maximumQp) rebuild_ = true;
         if (next.frameRateNumerator != was.frameRateNumerator || next.frameRateDenominator != was.frameRateDenominator)
@@ -1652,7 +1639,6 @@ private:
     bool checked_ {};
     bool levelFallback_ {};
     bool rebuild_ {};   // a setting the running session ignores changed; the next frame starts a new session
-    unsigned statedFloor_ {};   // the level the session's parameter sets state at least
     CFRef<VTCompressionSessionRef> session_;
     CFRef<CVPixelBufferPoolRef> pool_;
     CFRef<CVPixelBufferPoolRef> stagingPool_;   // plan_.convertsRgb: the caller's frames

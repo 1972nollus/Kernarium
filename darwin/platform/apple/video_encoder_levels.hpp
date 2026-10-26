@@ -188,12 +188,6 @@ struct Policy {
     bool reorders {};              // B-frames may be coded
 };
 
-// Orders the levels of one codec.
-[[nodiscard]] constexpr unsigned levelRank(VideoCodec codec, unsigned idc) noexcept
-{
-    return codec == VideoCodec::h264 ? h264Rank(idc) : idc;
-}
-
 // The level the stream states at least: the one asked for, and the lowest one
 // its picture size, frame rate and bit rate fit.
 [[nodiscard]] inline unsigned statedLevelFloor(const VideoEncodeSettings& settings)
