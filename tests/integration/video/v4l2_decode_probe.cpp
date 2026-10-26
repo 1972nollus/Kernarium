@@ -441,7 +441,11 @@ void decode(const char* device, const std::string& directory, const char* name, 
             std::fflush(stdout);
             continue;
         }
-        require(actual.size() == reference.size(), "decoded plane sizes differ");
+        /* A 10-bit stream captured as 8-bit planes is the 10-bit picture
+         * rounded to 8 bits, so its reference is half the size. */
+        const unsigned step = raw == V4L2_PIX_FMT_P010 ? 2 : 1;
+        const unsigned referenceStep = reference.size() == 128u * 96u * 3u ? 2 : 1;
+        require(actual.size() == reference.size() / referenceStep * step, "decoded plane sizes differ");
         if (raw == V4L2_PIX_FMT_YUV420M) {
             const auto planar = actual;
             for (unsigned i = 0; i < 128 * 96 / 4; ++i) {
@@ -450,10 +454,11 @@ void decode(const char* device, const std::string& directory, const char* name, 
             }
         }
         unsigned maximum = 0;
-        const unsigned step = raw == V4L2_PIX_FMT_P010 ? 2 : 1;
         for (std::size_t i = 0; i < actual.size(); i += step) {
+            const std::size_t at = i / step * referenceStep;
             const int got = step == 1 ? actual[i] : (actual[i] | (actual[i + 1] << 8)) >> 6;
-            const int wanted = step == 1 ? reference[i] : (reference[i] | (reference[i + 1] << 8)) >> 6;
+            int wanted = referenceStep == 1 ? reference[at] : (reference[at] | (reference[at + 1] << 8)) >> 6;
+            if (referenceStep > step) wanted = (wanted + 2) >> 2;
             maximum = std::max(maximum, unsigned(std::abs(got - wanted)));
         }
         require(maximum <= (coded == V4L2_PIX_FMT_MJPEG ? 4u : 2u), "V4L2 pixels differ from reference");
@@ -923,6 +928,297 @@ void resolutionChange(const char* device, const std::string& directory, unsigned
     std::fflush(stdout);
 }
 
+/* The access units of an Annex B HEVC or H.264 stream: a new one starts at a
+ * parameter set, an access unit delimiter or a prefix SEI after a picture's
+ * slices, or at a slice that begins a picture. */
+std::vector<std::vector<std::uint8_t>> accessUnits(const std::vector<std::uint8_t>& stream, bool avc = false)
+{
+    std::vector<std::size_t> starts;
+    for (std::size_t i = 0; i + 3 < stream.size(); ++i)
+        if (stream[i] == 0 && stream[i + 1] == 0 && stream[i + 2] == 1)
+            starts.push_back(i > 0 && stream[i - 1] == 0 ? i - 1 : i);
+    std::vector<std::vector<std::uint8_t>> units;
+    bool picture = false;
+    std::size_t begin = 0;
+    for (const auto start : starts) {
+        const auto nal = start + (stream[start] == 0 && stream[start + 1] == 0 && stream[start + 2] == 0 ? 4 : 3);
+        if (nal + 2 >= stream.size()) break;
+        const unsigned type = avc ? stream[nal] & 0x1f : (stream[nal] >> 1) & 0x3f;
+        const bool slice = avc ? type == 1 || type == 5 : type < 32;
+        // first_mb_in_slice (H.264) or first_slice_segment_in_pic_flag (HEVC)
+        const bool first = slice && (stream[nal + (avc ? 1 : 2)] & 0x80);
+        const bool boundary = avc ? type >= 6 && type <= 9 : (type >= 32 && type <= 35) || type == 39;
+        if (picture && (first || boundary)) {
+            units.emplace_back(stream.begin() + begin, stream.begin() + start);
+            begin = start;
+            picture = false;
+        }
+        if (slice) picture = true;
+    }
+    units.emplace_back(stream.begin() + begin, stream.end());
+    return units;
+}
+/* The access unit without its parameter sets, as a player seeking to a random
+ * access point sends it: it has them already. */
+std::vector<std::uint8_t> withoutParameterSets(const std::vector<std::uint8_t>& unit, bool avc = false)
+{
+    std::vector<std::uint8_t> result;
+    std::size_t begin = 0;
+    const auto flush = [&](std::size_t end, bool keep) {
+        if (keep) result.insert(result.end(), unit.begin() + begin, unit.begin() + end);
+    };
+    bool keep = true;
+    for (std::size_t i = 0; i + 3 < unit.size(); ++i) {
+        if (!(unit[i] == 0 && unit[i + 1] == 0 && unit[i + 2] == 1)) continue;
+        const auto start = i > 0 && unit[i - 1] == 0 && i - 1 >= begin ? i - 1 : i;
+        flush(start, keep);
+        begin = start;
+        const unsigned type = avc ? unit[i + 3] & 0x1f : (unit[i + 3] >> 1) & 0x3f;
+        keep = avc ? type != 7 && type != 8 : type < 32 || type > 34;
+    }
+    flush(unit.size(), keep);
+    return result;
+}
+/* A stateful decode of a stream of several access units, one per coded
+ * buffer, collecting each picture's timestamp and brightness in the order the
+ * decoder returns them. */
+class OrderRun {
+public:
+    struct Picture { unsigned stamp; int luma; };
+    OrderRun(const char* device, std::size_t largest, unsigned codec) : owner_(device), fd_(owner_.fd)
+    {
+        v4l2_event_subscription subscription {};
+        subscription.type = V4L2_EVENT_SOURCE_CHANGE;
+        call(fd_, VIDIOC_SUBSCRIBE_EVENT, &subscription, "SUBSCRIBE_EVENT");
+        v4l2_format input {};
+        input.type = output;
+        input.fmt.pix_mp.width = 64; input.fmt.pix_mp.height = 64;
+        input.fmt.pix_mp.pixelformat = codec;
+        input.fmt.pix_mp.num_planes = 1;
+        input.fmt.pix_mp.plane_fmt[0].sizeimage = largest;
+        call(fd_, VIDIOC_S_FMT, &input, "S_FMT coded");
+        inputs_ = allocate(fd_, output, 4);
+        for (unsigned i = 0; i < inputs_.size(); ++i) {
+            require(inputs_[i][0].length >= largest, "coded buffer too short");
+            free_.push_back(i);
+        }
+        auto type = output;
+        call(fd_, VIDIOC_STREAMON, &type, "STREAMON output");
+    }
+    void feed(const std::vector<std::uint8_t>& unit, unsigned stamp)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (free_.empty() && std::chrono::steady_clock::now() < deadline) pump();
+        require(!free_.empty(), "no coded buffer came back");
+        const auto index = free_.back();
+        free_.pop_back();
+        std::memcpy(inputs_[index][0].data, unit.data(), unit.size());
+        v4l2_plane planes[VIDEO_MAX_PLANES] {};
+        v4l2_buffer buffer {};
+        buffer.type = output; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = index;
+        buffer.length = 1; buffer.m.planes = planes;
+        buffer.timestamp.tv_sec = 7; buffer.timestamp.tv_usec = stamp;
+        planes[0].length = inputs_[index][0].length;
+        planes[0].bytesused = unit.size();
+        call(fd_, VIDIOC_QBUF, &buffer, "QBUF coded");
+        if (!captureOn_) startCapture();
+    }
+    // A seek: the coded queue stops and starts again, and the capture queue runs on.
+    void seek()
+    {
+        auto type = output;
+        call(fd_, VIDIOC_STREAMOFF, &type, "STREAMOFF output");
+        call(fd_, VIDIOC_STREAMON, &type, "STREAMON output");
+        free_.clear();
+        for (unsigned i = 0; i < inputs_.size(); ++i) free_.push_back(i);
+    }
+    // Drains the decoder and returns every picture it showed.
+    const std::vector<Picture>& finish()
+    {
+        v4l2_decoder_cmd drain {};
+        drain.cmd = V4L2_DEC_CMD_STOP;
+        call(fd_, VIDIOC_DECODER_CMD, &drain, "DECODER_CMD drain");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (!last_ && std::chrono::steady_clock::now() < deadline) pump();
+        require(last_, "the decoder did not end the stream");
+        return shown_;
+    }
+
+private:
+    void startCapture()
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        bool source = false;
+        while (!source && std::chrono::steady_clock::now() < deadline) {
+            pollfd p {fd_, POLLPRI, 0};
+            if (poll(&p, 1, 100) < 0 && errno != EINTR) throw std::runtime_error("poll source change failed");
+            v4l2_event event {};
+            if (ioctl(fd_, VIDIOC_DQEVENT, &event) == 0) source = event.type == V4L2_EVENT_SOURCE_CHANGE;
+            else require(errno == EAGAIN, "DQEVENT failed");
+        }
+        require(source, "decoder source-change timeout");
+        v4l2_format format {};
+        format.type = capture;
+        call(fd_, VIDIOC_G_FMT, &format, "G_FMT capture");
+        require(format.fmt.pix_mp.width == 64 && format.fmt.pix_mp.height == 64, "decoded dimensions differ");
+        format.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12M;
+        call(fd_, VIDIOC_S_FMT, &format, "S_FMT capture");
+        outputs_ = allocate(fd_, capture, 8);
+        for (unsigned i = 0; i < outputs_.size(); ++i) queue(fd_, capture, i, outputs_[i]);
+        auto type = capture;
+        call(fd_, VIDIOC_STREAMON, &type, "STREAMON capture");
+        captureOn_ = true;
+    }
+    void pump()
+    {
+        pollfd p {fd_, POLLIN | POLLOUT, 0};
+        if (poll(&p, 1, 100) < 0 && errno != EINTR) throw std::runtime_error("poll failed");
+        for (;;) {
+            v4l2_plane planes[VIDEO_MAX_PLANES] {};
+            v4l2_buffer buffer {};
+            buffer.type = output; buffer.memory = V4L2_MEMORY_MMAP;
+            buffer.length = VIDEO_MAX_PLANES; buffer.m.planes = planes;
+            if (ioctl(fd_, VIDIOC_DQBUF, &buffer) < 0) { require(errno == EAGAIN, "DQBUF coded failed"); break; }
+            free_.push_back(buffer.index);
+        }
+        if (!captureOn_) return;
+        for (;;) {
+            v4l2_plane planes[VIDEO_MAX_PLANES] {};
+            v4l2_buffer buffer {};
+            buffer.type = capture; buffer.memory = V4L2_MEMORY_MMAP;
+            buffer.length = VIDEO_MAX_PLANES; buffer.m.planes = planes;
+            if (ioctl(fd_, VIDIOC_DQBUF, &buffer) < 0) {
+                // The queue refuses once its last buffer has been taken.
+                require(errno == EAGAIN || (last_ && errno == EPIPE), "DQBUF capture failed");
+                break;
+            }
+            require(!(buffer.flags & V4L2_BUF_FLAG_ERROR), "capture buffer has decoder error");
+            require(buffer.index < outputs_.size(), "capture index outside allocation");
+            if (buffer.flags & V4L2_BUF_FLAG_LAST) {
+                last_ = true;
+                if (!planes[0].bytesused) continue;
+            }
+            if (planes[0].bytesused)
+                shown_.push_back({unsigned(buffer.timestamp.tv_usec),
+                                  static_cast<const std::uint8_t*>(outputs_[buffer.index][0].data)[planes[0].data_offset]});
+            if (!last_) queue(fd_, capture, buffer.index, outputs_[buffer.index]);
+        }
+    }
+    Device owner_;
+    int fd_;
+    Buffers inputs_, outputs_;
+    std::vector<unsigned> free_;
+    std::vector<Picture> shown_;
+    bool captureOn_ {}, last_ {};
+};
+/* The same for H.264, whose pictures also come back as decoded: B-pictures and
+ * reference B-pictures in groups the stream's own limits describe, the same
+ * stream with the limits left to the level, a stream that cannot reorder, and a
+ * seek to an IDR picture whose parameter sets the decoder already has. */
+void h264DisplayOrder(const char* device, const std::string& directory)
+{
+    static const unsigned closedDisplay[] = {0, 4, 2, 1, 3, 8, 6, 5, 7, 11, 9, 10, 12, 16, 14, 13, 15, 19, 17, 18};
+    for (const char* name : {"h264-bframes.bin", "h264-no-restriction.bin"}) {
+        const auto units = accessUnits(read(directory + "/" + name), true);
+        require(units.size() == 20, "the H.264 B-picture fixture is not twenty access units");
+        std::size_t largest = 0;
+        for (const auto& unit : units) largest = std::max(largest, unit.size());
+        OrderRun run(device, largest, V4L2_PIX_FMT_H264);
+        for (unsigned i = 0; i < units.size(); ++i) run.feed(units[i], i + 1);
+        const auto& shown = run.finish();
+        require(shown.size() == 20, "the decoder did not return every H.264 picture");
+        for (unsigned i = 0; i < shown.size(); ++i) {
+            require(shown[i].stamp >= 1 && shown[i].stamp <= 20 && closedDisplay[shown[i].stamp - 1] == i,
+                    "H.264 pictures are not returned in display order");
+            require(std::abs(shown[i].luma - int(16 + 10 * i)) <= 3, "an H.264 picture is not the one its timestamp names");
+        }
+        std::printf("PASS h264 display order: %s, 20 pictures\n", name);
+        std::fflush(stdout);
+    }
+    {
+        const auto units = accessUnits(read(directory + "/h264-poc2.bin"), true);
+        std::size_t largest = 0;
+        for (const auto& unit : units) largest = std::max(largest, unit.size());
+        OrderRun run(device, largest, V4L2_PIX_FMT_H264);
+        for (unsigned i = 0; i < units.size(); ++i) run.feed(units[i], i + 1);
+        const auto& shown = run.finish();
+        require(shown.size() == units.size(), "the decoder did not return every picture of a stream without reordering");
+        for (unsigned i = 0; i < shown.size(); ++i)
+            require(shown[i].stamp == i + 1 && std::abs(shown[i].luma - int(16 + 10 * i)) <= 3,
+                    "a stream without reordering is shown as decoded");
+        std::puts("PASS h264 order count type 2: pictures as decoded");
+        std::fflush(stdout);
+    }
+    {
+        const auto units = accessUnits(read(directory + "/h264-bframes.bin"), true);
+        std::size_t largest = 0;
+        for (const auto& unit : units) largest = std::max(largest, unit.size());
+        OrderRun run(device, largest, V4L2_PIX_FMT_H264);
+        for (unsigned i = 0; i < 7; ++i) run.feed(units[i], i + 1);
+        run.seek();
+        for (unsigned i = 12; i < units.size(); ++i) run.feed(i == 12 ? withoutParameterSets(units[i], true) : units[i], i + 1);
+        const auto& shown = run.finish();
+        std::vector<OrderRun::Picture> after;
+        for (const auto& picture : shown) if (picture.stamp >= 13) after.push_back(picture);
+        require(after.size() == 8, "the pictures after an H.264 seek are not those of the IDR picture");
+        for (unsigned i = 0; i < after.size(); ++i)
+            require(std::abs(after[i].luma - int(16 + 10 * (12 + i))) <= 3,
+                    "H.264 pictures after a seek are not in display order");
+        std::puts("PASS h264 seek: 8 pictures after a seek");
+        std::fflush(stdout);
+    }
+}
+
+/* Pictures with B-pictures leave in the order they are shown, whatever order
+ * they were decoded in. The pictures of these streams are flat gray that rises
+ * by 10 levels from one display position to the next, so the brightness of a
+ * returned picture names its display position and its timestamp the order it
+ * was decoded in. After a seek to a random access point whose leading pictures
+ * need pictures the decoder never had, those are not shown. */
+void hevcDisplayOrder(const char* device, const std::string& directory)
+{
+    static const unsigned closedDisplay[] = {0, 4, 2, 1, 3, 8, 6, 5, 7, 11, 10, 9, 12, 16, 14, 13, 15, 19, 18, 17};
+    const auto closed = accessUnits(read(directory + "/hevc-bframes.bin"));
+    require(closed.size() == 20, "the B-picture fixture is not twenty access units");
+    std::size_t largest = 0;
+    for (const auto& unit : closed) largest = std::max(largest, unit.size());
+    {
+        OrderRun run(device, largest, V4L2_PIX_FMT_HEVC);
+        for (unsigned i = 0; i < closed.size(); ++i) run.feed(closed[i], i + 1);
+        const auto& shown = run.finish();
+        require(shown.size() == 20, "the decoder did not return every picture");
+        for (unsigned i = 0; i < shown.size(); ++i) {
+            require(shown[i].stamp >= 1 && shown[i].stamp <= 20 && closedDisplay[shown[i].stamp - 1] == i,
+                    "pictures are not returned in display order");
+            require(std::abs(shown[i].luma - int(16 + 10 * i)) <= 3, "a picture is not the one its timestamp names");
+        }
+        std::puts("PASS hevc display order: 20 pictures with B-pictures");
+        std::fflush(stdout);
+    }
+    const auto open = accessUnits(read(directory + "/hevc-open-gop.bin"));
+    require(open.size() == 24, "the open-group fixture is not twenty-four access units");
+    largest = 0;
+    for (const auto& unit : open) largest = std::max(largest, unit.size());
+    {
+        /* The first nine access units, a seek, then the second CRA picture and
+         * what follows, without the parameter sets the decoder has already. The
+         * three pictures that lead the CRA are not shown. */
+        OrderRun run(device, largest, V4L2_PIX_FMT_HEVC);
+        for (unsigned i = 0; i < 9; ++i) run.feed(open[i], i + 1);
+        run.seek();
+        for (unsigned i = 13; i < open.size(); ++i) run.feed(withoutParameterSets(open[i]), i + 1);
+        const auto& shown = run.finish();
+        std::vector<OrderRun::Picture> after;
+        for (const auto& picture : shown) if (picture.stamp >= 14) after.push_back(picture);
+        require(after.size() == 8, "the pictures after a seek are not those of the random access point");
+        for (unsigned i = 0; i < after.size(); ++i)
+            require(std::abs(after[i].luma - int(16 + 10 * (16 + i))) <= 3,
+                    "pictures after a seek are not in display order");
+        std::puts("PASS hevc seek: 8 pictures after a seek, leading pictures skipped");
+        std::fflush(stdout);
+    }
+}
+
 int main(int argc, char** argv)
 {
     try {
@@ -1076,7 +1372,12 @@ int main(int argc, char** argv)
                     decode(device, argv[1], profile->name, fmt.pixelformat, V4L2_PIX_FMT_YUV420M,
                            V4L2_MEMORY_DMABUF, Import{true, true, Declared::negotiated});
                 }
+                // A 10-bit stream is also captured as the 8-bit planes Android asks for.
+                if (profile->raw == V4L2_PIX_FMT_P010)
+                    decode(device, argv[1], profile->name, fmt.pixelformat, V4L2_PIX_FMT_NV12M);
             }
+            if (avc) h264DisplayOrder(device, argv[1]);
+            else hevcDisplayOrder(device, argv[1]);
         }
         require(tested > 0, "decoder advertised no supported profiles");
         std::puts("UML_V4L2_DECODE: PASS");

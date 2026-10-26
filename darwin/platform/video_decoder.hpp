@@ -31,9 +31,12 @@ struct VideoFormat {
 };
 
 // How a decoded frame carries its samples. A planar frame is the decoder's
-// native 4:2:0 output; a packed frame has already left the YCbCr domain and is
-// what a client that only draws through a 32-bit RGB surface needs.
-enum class VideoPixelLayout { planarYuv, packedBgra };
+// native 4:2:0 output, 8-bit NV12 or 10-bit P010 by the stream's depth;
+// planar8Bit asks for NV12 whatever the depth is, which for a 10-bit stream
+// means the host narrows it, and is planarYuv for an 8-bit one. A packed
+// frame has already left the YCbCr domain and is what a client that only draws
+// through a 32-bit RGB surface needs.
+enum class VideoPixelLayout { planarYuv, packedBgra, planar8Bit };
 
 // How a planar frame's samples relate to RGB. It is read back from the decoded
 // surface rather than guessed, so it is the description the hardware itself
@@ -46,9 +49,12 @@ struct VideoColorimetry {
     friend bool operator==(const VideoColorimetry&, const VideoColorimetry&) = default;
 };
 
-// Timestamps retain the caller's units and are returned in presentation order,
-// including delayed drain output. `layout` selects which buffers carry the
-// samples and is the layout the frame actually has, not the one last requested.
+// Timestamps retain the caller's units. Frames are returned in the order the
+// stream shows them, including delayed drain output: H.264 and HEVC pictures
+// by their picture order count (VideoToolbox returns them as decoded). H.264
+// field pictures are the exception and leave as decoded. `layout` selects which
+// buffers carry the samples and is the layout the frame actually has, not the
+// one last requested; the depth is the frame's own.
 struct DecodedVideoFrame {
     VideoFormat format;
     VideoPixelLayout layout {VideoPixelLayout::planarYuv};
@@ -76,7 +82,14 @@ public:
     // alone, and a packet whose headers are incomplete leaves the format as
     // it was.
     virtual void inspect(std::span<const std::uint8_t> bytes) = 0;
+    // Finishes decoding and makes every picture still waiting for its turn
+    // available, in output order.
     virtual void drain() = 0;
+    // A seek: drops every picture in flight, every reference and the state of
+    // the stream's picture order, and keeps the parameter sets and the format
+    // they described, because a client that seeks does not send them again.
+    // The next picture must begin at a random access point.
+    virtual void discard() = 0;
     virtual std::vector<DecodedVideoFrame> takeFrames() = 0;
     [[nodiscard]] virtual VideoFormat format() const noexcept = 0;
     // Requests the layout of frames decoded from this point on. A decoder that

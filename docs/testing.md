@@ -130,8 +130,10 @@ cmake --workflow --preset check-loader-asan-ubsan
 The `unit-gpu` test preset's name filter is the one selection of GPU workflow
 tests, and the other `unit-gpu*` test presets inherit it. It selects every
 registered test named `gpu-*` (the two `gpu-guest-*` tooling tests among them),
-and the Virtio balloon, battery, console, input, sound and video protocol
-tests and `platform-video-decoder` that the GPU configuration also builds. A
+and the Virtio balloon, battery, console, input, sound, video and video encoder
+protocol tests, `video-encoder-capabilities`, `platform-video-decoder`, and the
+hardware `platform-video-encoder`, `-recovery` and `-cache` tests that the GPU
+configuration also builds. A
 new GPU test joins the workflow by its name: `uml_add_gpu_unit_test` refuses a
 name that does not start with `gpu-`. Configure derives the
 `gpu-unit-test-binaries` target from that filter, so a selected test's binary
@@ -253,9 +255,11 @@ the guest architecture and configure an integration preset with
 `UML_V4L2_PROBE_BINARY` pointing to it. The rootfs needs a shell, `ip`,
 `sha256sum` and `timeout`. The test boots a disposable overlay with the probe
 and its fixtures installed as payload files, checks their SHA-256 list, checks
-every advertised profile's pixels, raw layouts including packed BGRA capture,
-imported dma-buf capture, timestamps, source-change and EOS events, and rejects
-kernel faults or failed shutdown. Imported capture covers the queue's own
+every advertised profile's pixels, raw layouts including packed BGRA capture
+and 8-bit capture of a 10-bit stream, imported dma-buf capture, timestamps,
+source-change and EOS events, the display order of H.264 and HEVC B-pictures
+and a seek in both (over open-group streams for HEVC), and rejects kernel
+faults or failed shutdown. Imported capture covers the queue's own
 buffers handed back and guest memory a client brings, with each buffer's planes
 in separate dma-bufs or in one and their lengths stated as QUERYBUF gave them,
 as the whole dma-buf, or not at all. `guest-v4l2-decode-gpu` runs the same probe
@@ -547,9 +551,10 @@ and no Simulator variant; see
 [`graphics.md`](graphics.md#current-path).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
-Xcode. It also packages the Apple battery provider's archive, as the Android
-runtime links it, as `HostBattery.xcframework`; only `KernariumTests` links
-it, so the test process reaches the provider without loading a second runtime.
+Xcode. It also packages the Apple battery provider's archive and the hardware
+video encoder's, as the Android runtime links them, as `HostBattery.xcframework`
+and `HostVideoEncoder.xcframework`; only `KernariumTests` links them, so the
+test process reaches each without loading a second runtime.
 `dependencies/build-ios-storage.sh --verify-only` and
 `dependencies/build-ios-zstd.sh --verify-only` check both arm64 Apple slices,
 their provenance and deployment targets, required APIs, and the absence of

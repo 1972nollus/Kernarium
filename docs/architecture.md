@@ -853,9 +853,12 @@ host GPU within seconds and a request that reached Metal after that would make
 the renderer's Vulkan device lost for good, and opens it as the application
 returns.
 
-The [Virtio video device](../darwin/device/video/README.md) bridges the shared
-mainline/Android V4L2 driver to the platform VideoToolbox decoder. It uses its
-own vhost-user connection and requires no GPU context. The
+The [Virtio video devices](../darwin/device/video/README.md) bridge the shared
+mainline/Android V4L2 drivers to the platform VideoToolbox decoder (device 31)
+and encoder (device 30). Each uses its own vhost-user connection and service
+thread and requires no GPU context, and the devices depend only on the platform
+interfaces `darwin/platform/video_decoder.hpp` and
+`darwin/platform/video_encoder.hpp`. The
 [private wire header](../kernel/common/video/README.md) is separate from both
 the public API and the host/kernel bridge ABI.
 
