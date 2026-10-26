@@ -434,6 +434,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_lockscreen_default: bool = False,
                           discrete_ops_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
+                          vendor_property_variant: str | None = None,
                           wide_fdroid_permissions: bool = False,
                           mesa_gles_alignment: int = 16384,
                           elf_edit: tuple[str, int, int] | None = None,
@@ -1020,6 +1021,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     + "ro.bionic.2nd_arch=arm\n"
                     "ro.bionic.2nd_cpu_variant=cortex-a53\n"
                     "dalvik.vm.isa.arm.variant=cortex-a53\n"
+                    # post_process_props.py comments out a denylisted vendor property; the
+                    # product denylists the unreliable present fence of the inherited config.
+                    "#ro.vendor.hwc.drm.present_fence_not_reliable=true\n"
+                    + {
+                        "present-fence-unreliable":
+                            "ro.vendor.hwc.drm.present_fence_not_reliable=true\n",
+                    }.get(vendor_property_variant, "")
                     + (
                         f"ro.hardware.{vendor_hal_property}=selected\n"
                         if vendor_hal_property
@@ -1221,6 +1229,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("product-model", {"wrong_product_model": True}),
             ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
             ("missing-discrete-ops-overlay", {"discrete_ops_variant": "missing-overlay"}),
+            ("unreliable-present-fence", {"vendor_property_variant": "present-fence-unreliable"}),
             ("missing-thermal-apex", {"thermal_hal_variant": "missing-apex"}),
             ("thermal-apex-without-binary", {"thermal_hal_variant": "no-binary"}),
             ("thermal-apex-without-fragment", {"thermal_hal_variant": "no-fragment"}),
@@ -1323,6 +1332,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "which vendor_init may not read"),
             ("missing-lockscreen-default-cause", {"missing_lockscreen_default": True},
              "unexpected product property ro.lockscreen.disable.default"),
+            ("unreliable-present-fence-cause", {"vendor_property_variant": "present-fence-unreliable"},
+             "marks the present fences unreliable: ro.vendor.hwc.drm.present_fence_not_reliable=true"),
             ("missing-thermal-apex-cause", {"thermal_hal_variant": "missing-apex"},
              "com.android.hardware.thermal.apex is missing: the product needs a thermal HAL"),
             ("thermal-apex-without-binary-cause", {"thermal_hal_variant": "no-binary"},

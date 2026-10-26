@@ -328,6 +328,18 @@ timeout without saving its state (`CtsStopAndKillHostTest`). A `frameworks/base`
 topic (route `p0007`) makes the placeholder a standard activity, so every
 updating task gets its own.
 
+The virtio-gpu display is paced by a vblank timer in the kernel, so the present
+fences of drm_hwcomposer signal when a frame is shown. The inherited Cuttlefish
+graphics configuration sets `ro.vendor.hwc.drm.present_fence_not_reliable=true`,
+written for a host that sends frames as fast as it can. With it set,
+SurfaceFlinger does not take present timestamps from the fences and the Vulkan
+loader does not expose `VK_GOOGLE_display_timing`, which the CTS frame timeline
+tests use. The product drops the property through the vendor build.prop denylist
+(`PRODUCT_VENDOR_PROPERTY_BLACKLIST`: a filter over the product variable cannot
+remove an inherited value, and a second assignment is a duplicate the build
+refuses), and the target-files verifier rejects any partition that sets it true.
+The guest needs a kernel with the vblank pacing.
+
 A first boot compiles nothing. ART Service would otherwise compile every
 package without a usable artifact, for each instruction set the package runs
 in, on a fresh `/data` (reason `first-boot`, filter `verify`), and Soong leaves

@@ -1242,6 +1242,14 @@ def check_vendor_init_triggers(
                 )
 
 
+# The virtio-gpu device paces the display with a vblank timer, so the present fences of
+# drm_hwcomposer are reliable. The inherited Cuttlefish property marks them unreliable, which
+# keeps SurfaceFlinger from taking present timestamps from them (service.sf.present_timestamp)
+# and the Vulkan loader from exposing VK_GOOGLE_display_timing.
+PRESENT_FENCE_PROPERTY = "ro.vendor.hwc.drm.present_fence_not_reliable"
+FALSE_PROPERTY_VALUES = {"0", "n", "no", "off", "false"}
+
+
 def parse_properties(payload: str) -> dict[str, str]:
     properties: dict[str, str] = {}
     for line in payload.splitlines():
@@ -1269,6 +1277,11 @@ def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None
                 fail(f"unexpected ABI in {info.filename}: {key}={value!r}, not {expected!r}")
         if key == "ro.zygote" and value != VENDOR_MULTILIB_PROPERTIES["ro.zygote"]:
             fail(f"unexpected zygote in {info.filename}: {value}")
+        if key == PRESENT_FENCE_PROPERTY and value.lower() not in FALSE_PROPERTY_VALUES:
+            fail(
+                f"{info.filename} marks the present fences unreliable: {key}={value}; "
+                "the virtio-gpu display is paced by a vblank timer"
+            )
 
 
 def check_multilib_properties(
