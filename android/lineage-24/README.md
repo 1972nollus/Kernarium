@@ -263,7 +263,8 @@ Android port series beside the metadata. The port series carries the generated
 Soong port and the few source changes only Android needs, such as advertising
 `EGL_EXT_pixel_format_float` only with a float config: HWUI takes the extension
 as the promise of a half-float window config, and the Android visuals are all
-fixed-point. A guest replay assigns new
+fixed-point. It also leaves out `VK_KHR_device_address_commands`, which the CTS
+refuses on a device whose declared dEQP level does not list it. A guest replay assigns new
 commit identities each time it is recreated, so the guest half is pinned by
 tree. Moving to a newer guest epoch is a metadata bump, a replay, and a
 regeneration; the verifier refuses a guest series that changed underneath the
