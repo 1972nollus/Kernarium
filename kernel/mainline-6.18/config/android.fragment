@@ -262,6 +262,8 @@ CONFIG_PROFILING=y
 # cache; GKI follows it.
 # CONFIG_FHANDLE is not set
 # CONFIG_FW_CACHE is not set
+# Panic on a corrupted list instead of continuing with it (LIST_HARDENED).
+CONFIG_BUG_ON_DATA_CORRUPTION=y
 
 # --- Suspend ----------------------------------------------------------------
 # Android suspends itself whenever its wakelock count reaches zero. Its

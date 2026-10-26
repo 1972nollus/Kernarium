@@ -841,6 +841,16 @@ Two items of the list cost nothing to meet. `CONFIG_NO_HZ` is the legacy symbol
 for dynticks idle, which the shared policy already runs as `NO_HZ_IDLE`, and
 `CONFIG_PROFILING` is the hook that profilers attach to.
 
+The list asks for `CONFIG_BUG_ON_DATA_CORRUPTION`, which selects
+`CONFIG_LIST_HARDENED`: a list operation whose neighbours do not point back
+panics instead of carrying on with a corrupted list. It costs 2.3% over
+single-vCPU system-call microbenchmarks (getppid 1.6%, a pipe round trip 2.5%,
+a 4 KiB tmpfs read or write up to 3.9%) and nothing measurable on a broad guest
+workload (compiling, a tree walk, tar: 0.991 of the time on four vCPUs, 0.987
+on one). Only Android's list asks for it, so the Linux product does not set it;
+moving the symbol to the shared policy would put the same cost on every
+product.
+
 GKI also turns on hardening and memory options that no list requires
 (`INIT_ON_ALLOC_DEFAULT_ON`, `FORTIFY_SOURCE`, `SLAB_FREELIST_HARDENED`,
 `LRU_GEN` and others); the product does not carry them.
