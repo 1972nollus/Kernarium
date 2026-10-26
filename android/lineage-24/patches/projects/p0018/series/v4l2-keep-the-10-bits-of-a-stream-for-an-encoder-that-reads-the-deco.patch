@@ -58,10 +58,10 @@ index 22ea0bc13ada4764010742b6373a9947e0a82de5..3972e216f6d00bc7c81f23b2fe44a347
      YV12 = static_cast<int32_t>(HPixelFormat::YV12),
      YCBCR_P010 = static_cast<int32_t>(HPixelFormat::YCBCR_P010),
 diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
-index f4329ab52d147cca20a273b7d37c06e065870432..41558e6fb225b0d3152538edbeac4e4291714f53 100644
+index 12435abca802d1615d735e3cd24e07b05f3d3b9c..e7f9ff6baea4274d8c16d8d6604db16aeeebcf4c 100644
 --- a/components/DecodeInterface.cpp
 +++ b/components/DecodeInterface.cpp
-@@ -379,18 +379,28 @@ DecodeInterface::DecodeInterface(const std::string& name,
+@@ -359,18 +359,28 @@ DecodeInterface::DecodeInterface(const std::string& name,
  
      // The raw formats the decoder can produce. Codec2InfoBuilder lists the colour formats of a
      // decoder from this parameter, so P010 is what makes a 10-bit decoder offer COLOR_FormatYUVP010.
@@ -90,7 +90,7 @@ index f4329ab52d147cca20a273b7d37c06e065870432..41558e6fb225b0d3152538edbeac4e42
      addParameter(
              DefineParam(mOutputDelay, C2_PARAMKEY_OUTPUT_DELAY)
                      .withConstValue(new C2PortDelayTuning::output(getOutputDelay(*mVideoCodec)))
-@@ -587,6 +597,18 @@ c2_status_t DecodeInterface::updatePictureSize(uint32_t width, uint32_t height)
+@@ -567,6 +577,18 @@ c2_status_t DecodeInterface::updatePictureSize(uint32_t width, uint32_t height)
      return config({&size}, C2_MAY_BLOCK, &failures);
  }
  

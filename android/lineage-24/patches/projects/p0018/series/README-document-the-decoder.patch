@@ -9,11 +9,11 @@ buffers and hands a picture to the host for a GPU consumer. None of that
 was written down, and a product that enables the decoder sets a property
 the README did not name.
 ---
- README.md | 87 +++++++++++++++++++++++++++++++++++++++++++++++--------
- 1 file changed, 75 insertions(+), 12 deletions(-)
+ README.md | 84 +++++++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 72 insertions(+), 12 deletions(-)
 
 diff --git a/README.md b/README.md
-index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..98e7bf28ce1b9777fcf8be38896316384f6a9142 100644
+index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..ba3d1e5fcca261be35b07876642b0d754737a0d5 100644
 --- a/README.md
 +++ b/README.md
 @@ -381,27 +381,43 @@ resources it needs, so that Android can tell what is left
@@ -72,7 +72,7 @@ index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..98e7bf28ce1b9777fcf8be3889631638
  
  ### Additional Features:
  
-@@ -415,4 +431,51 @@ PPS NAL units are prepended to IDR frames by enabling the
+@@ -415,4 +431,48 @@ PPS NAL units are prepended to IDR frames by enabling the
  support this control the encoder will manually cache and prepend SPS and PPS NAL
  units.
  
@@ -85,10 +85,7 @@ index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..98e7bf28ce1b9777fcf8be3889631638
 +*ro.vendor.v4l2_codec2.decoder.supported.h264* and *.hevc* (VP8 and VP9 follow
 +the same pattern). The profiles and levels come from the device. The device
 +lists the HEVC levels by their Main tier, so the decoder also offers the High
-+tier of every level from 4 up, which a stream of that tier needs. Its H.264
-+profiles and levels stop at High and level 5.1, so the decoder also offers
-+Constrained High, a subset of High, and level 5.2, which differs from 5.1 by the
-+macroblock rate and not by the picture size.
++tier of every level from 4 up, which a stream of that tier needs.
 +
 +### Output Pixel Formats and Buffers
 +

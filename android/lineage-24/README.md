@@ -437,8 +437,7 @@ asks for, so the component reports the level it reads from the first coded
 headers.
 
 The decoders take HEVC Main and Main 10 (with the High tier of every level the
-device lists, which it lists by its Main tier) and H.264 (with Constrained High
-and level 5.2, which the device's wire format cannot name). They decode to the
+device lists, which it lists by its Main tier) and H.264. They decode to the
 raw format the client asks for: 8-bit YUV from a 10-bit stream unless the
 client asks for P010, which the host converts, or renders to the input surface
 of a video encoder, which reads all 10 bits. A client that decodes to byte
