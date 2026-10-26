@@ -194,8 +194,10 @@ display presents carry a scanout bit, and no YUV format does. The guest's
 minigbm keeps the scanout use on exactly the combinations the mask names, and
 it refuses an NV12 combination that has both scanout and its emulation over R8
 buffers, so a scanout bit on NV12 costs the guest every video encoder, video
-decoder and camera use of that format. P010 stays unavailable either way:
-minigbm has no emulation for it and the host does not sample it.
+decoder and camera use of that format. P010 carries no scanout bit either,
+because the host does not sample it: minigbm emulates it over an R8 resource for
+CPU access, as the input of a video encoder and the output of a video decoder,
+and keeps scanout off it.
 
 Without a host allocator the renderer cannot create any multi-planar resource,
 so a YUV buffer exists on the host only as the bytes of an R8 image, whatever
