@@ -447,6 +447,10 @@ bool Driver::storePacked(Surface& target, const ConstPlaneView& source, unsigned
     const Region region {0, 0, std::min(target.width, width), std::min(target.height, height)};
     copyPacked32(source, region, planeView(*target.shadow, to), region);
     target.nativeValid = false;
+    // A client that exported the surface or derived an image from it looks at
+    // the surface's own memory and never asks this driver for it again, so the
+    // picture has to be there now rather than when it is next requested.
+    if (target.exported) materialise(target);
     return true;
 }
 

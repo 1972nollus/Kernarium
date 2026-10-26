@@ -95,7 +95,11 @@ target the driver writes pictures into.
 
 Everything the driver does to the memory of a surface a client imported is
 bracketed with `DMA_BUF_IOCTL_SYNC`, on every object of the surface: a read
-starts and ends with `READ`, a write with `READ | WRITE`. That is what makes a
+starts and ends with `READ`, a write with `READ | WRITE`. A write to a GBM
+surface the driver allocated itself is bracketed the same way, because a
+client that imported the exported descriptor samples that memory on the GPU
+and the driver never unmaps its own mapping, which is the only other thing
+that would take the picture there. That is what makes a
 frame the GPU drew current for the CPU, and a frame the CPU wrote current for
 the GPU, on a guest kernel that transfers the buffer around a CPU access; a
 descriptor that is no dma-buf (a memory file) answers the request with an error
@@ -122,10 +126,12 @@ frame; the measurement is recorded in
 The decision is made once, at initialisation, from what the device offers
 rather than from what a client has done so far, so the first decode session of
 a boot gets the same answer as every later one. The packed picture lives in
-an RGB shadow of the NV12 surface, converted back only when a client asks for
-NV12 through `vaDeriveImage`, `vaGetImage` or `vaExportSurfaceHandle`. That
-round trip is not bit exact, so `UML_VA_V4L2_RGB=off` stays for a client that
-wants the device's own planes.
+an RGB shadow of the NV12 surface, converted back when a client asks for NV12
+through `vaDeriveImage`, `vaGetImage` or `vaExportSurfaceHandle`, and after
+every later decode into a surface whose memory such a client holds, because
+that client reads the memory without asking again. That round trip is not bit
+exact, so `UML_VA_V4L2_RGB=off` stays for a client that wants the device's own
+planes.
 
 The format is negotiated before the first packet, not after the source-change
 event: the device keeps the choice across that event, and changing it once the
@@ -291,7 +297,10 @@ LIBVA_DRIVER_NAME=uml LIBVA_DRIVERS_PATH=$PWD/build \
 `--vpp` additionally converts every decoded frame to ARGB through a
 `VAProfileNone` video-processing context, and `--export` exports a decoded
 surface as `DRM_PRIME_2`, re-imports the descriptor and compares the pixels.
-Those are the two paths a browser uses beyond decoding.
+`--export-early` exports every surface before anything is decoded into it and
+reads each frame from that exported memory before asking the driver for the
+frame any other way, which is what a browser that hands its surfaces to a
+compositor does. Those are the paths a browser uses beyond decoding.
 
 `build/va_encode_probe` is the encode counterpart. It submits pictures the way
 Chromium's `VaapiVideoEncodeAccelerator` does - surfaces and coded buffers at
@@ -369,7 +378,11 @@ the kernel transfers it around a dma-buf CPU access
 Mesa backend, inside `uml_va_v4l2_tests`. `gbm_planar_probe` is the guest-side
 check against the real libgbm and libEGL: planar allocation and export, a gbm
 surface under an EGL window surface as a compositor uses it, and the GPU
-rendering into a plane and the CPU reading and writing it back.
+rendering into a plane and the CPU reading and writing it back. `--carrier`
+repeats that for the layout the driver exports a decoded surface in (one object
+with the chroma plane at an offset), and `--carrier-sample` samples NV12
+pictures as a compositor's external texture, against a colour buffer as the
+control.
 
 ## In the Debian desktop images
 

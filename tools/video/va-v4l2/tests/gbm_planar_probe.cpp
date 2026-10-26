@@ -7,7 +7,7 @@
 // library is opened at run time, so it builds with the libraries the driver
 // already needs and runs against whatever the guest has.
 //
-// usage: gbm_planar_probe [--node PATH] [--egl] [--planes] [--require-visibility]
+// usage: gbm_planar_probe [--node PATH] [--egl] [--planes] [--carrier] [--carrier-sample] [--require-visibility]
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -490,22 +490,35 @@ void probePlaneRender(Gbm& gbm, Egl& egl, void* device)
             }
             Map writer = mapPlane(fd, length, true);
             if (writer.address != MAP_FAILED) {
-                sync(fd, kSyncStart | kSyncWrite);
-                auto* bytes = static_cast<std::uint8_t*>(writer.address);
-                for (unsigned y = 0; y < height; ++y)
-                    for (unsigned x = 0; x < width; ++x)
-                        for (unsigned byte = 0; byte < trial.bytesPerPixel; ++byte)
-                            bytes[y * stride + x * trial.bytesPerPixel + byte] = trial.written[byte];
-                sync(fd, kSyncEnd | kSyncWrite);
+                // The first write is what the GPU is expected to see, and every
+                // later one has to be seen too: a decoder rewrites the same
+                // buffer for every picture it delivers.
+                for (unsigned round = 0; round < 3; ++round) {
+                    std::uint8_t value[2] {trial.written[0], trial.written[1]};
+                    value[0] = std::uint8_t(value[0] + 37 * round);
+                    value[1] = std::uint8_t(value[1] + 61 * round);
+                    sync(fd, kSyncStart | kSyncWrite);
+                    auto* bytes = static_cast<std::uint8_t*>(writer.address);
+                    for (unsigned y = 0; y < height; ++y)
+                        for (unsigned x = 0; x < width; ++x)
+                            for (unsigned byte = 0; byte < trial.bytesPerPixel; ++byte)
+                                bytes[y * stride + x * trial.bytesPerPixel + byte] = value[byte];
+                    sync(fd, kSyncEnd | kSyncWrite);
+                    std::vector<std::uint8_t> pixels(std::size_t(width) * height * 4);
+                    egl.readPixels(0, 0, int(width), int(height), kGlRgba, kGlUnsignedByte, pixels.data());
+                    const std::uint8_t red = pixels[0], green = pixels[1];
+                    const bool seen = std::abs(int(red) - value[0]) <= 1 &&
+                                      (trial.bytesPerPixel < 2 || std::abs(int(green) - value[1]) <= 1);
+                    if (round == 0)
+                        std::snprintf(label, sizeof label, "planes: the GPU reads what the CPU wrote to plane %u",
+                                      plane);
+                    else
+                        std::snprintf(label, sizeof label,
+                                      "planes: the GPU reads a later write %u to plane %u", round, plane);
+                    if (seen || requireVisibility) report(seen, label);
+                    else info("%s: not visible without the dma-buf coherence kernel (got %u,%u)", label, red, green);
+                }
                 munmap(writer.address, length);
-                std::vector<std::uint8_t> pixels(std::size_t(width) * height * 4);
-                egl.readPixels(0, 0, int(width), int(height), kGlRgba, kGlUnsignedByte, pixels.data());
-                const std::uint8_t red = pixels[0], green = pixels[1];
-                const bool seen = std::abs(int(red) - trial.written[0]) <= 1 &&
-                                  (trial.bytesPerPixel < 2 || std::abs(int(green) - trial.written[1]) <= 1);
-                std::snprintf(label, sizeof label, "planes: the GPU reads what the CPU wrote to plane %u", plane);
-                if (seen || requireVisibility) report(seen, label);
-                else info("%s: not visible without the dma-buf coherence kernel (got %u,%u)", label, red, green);
             } else {
                 info("plane %u: the dma-buf maps read-only (%s)", plane, std::strerror(writer.error));
                 if (requireVisibility) report(false, "planes: the dma-buf is writable");
@@ -523,6 +536,333 @@ void probePlaneRender(Gbm& gbm, Egl& egl, void* device)
     egl.terminate(display);
 }
 
+// A surface of the VA-API driver: NV12 carried by one packed 32-bit buffer,
+// luma rows first and the chroma rows after them. A browser that imports the
+// exported descriptor reads each plane at its offset as R8 and GR88, so what the
+// CPU writes there has to reach a GPU that imports the planes that way.
+void probeCarrierRender(Gbm& gbm, Egl& egl, void* device)
+{
+    EGLDisplay display = egl.getPlatformDisplay(kEglPlatformGbm, device, nullptr);
+    EGLint major = 0, minor = 0;
+    if (!display || !egl.initialize(display, &major, &minor)) {
+        report(false, "egl: the display initialises for a carrier");
+        return;
+    }
+    egl.bindApi(kEglOpenGlEsApi);
+    const EGLint wanted[] = {kEglRenderableType, kEglEs2Bit, kEglNone};
+    EGLConfig config = nullptr;
+    EGLint count = 0;
+    egl.chooseConfig(display, wanted, &config, 1, &count);
+    const EGLint attributes[] = {kEglContextClientVersion, 2, kEglNone};
+    EGLContext gl = config ? egl.createContext(display, config, nullptr, attributes) : nullptr;
+    if (!gl || !egl.makeCurrent(display, nullptr, nullptr, gl) || !egl.loadGl()) {
+        report(false, "egl: a surfaceless context is current for a carrier");
+        return;
+    }
+    constexpr unsigned kWidth = 640, kHeight = 360;
+    constexpr unsigned kRows = kHeight + kHeight / 2;
+    void* bo = gbm.boCreate(device, kWidth / 4, kRows, kXrgb, kUseRendering | kUseLinear);
+    report(bo != nullptr, "carrier: a packed buffer for an NV12 picture is allocated");
+    if (!bo) return;
+    const int fd = gbm.planeFd(bo, 0);
+    const unsigned stride = gbm.planeStride(bo, 0);
+    const std::size_t length = std::size_t(stride) * kRows;
+    for (unsigned plane = 0; plane < 2; ++plane) {
+        const std::uint32_t format = plane ? kGr88 : kR8;
+        const unsigned bytesPerPixel = plane ? 2 : 1;
+        const unsigned width = plane ? kWidth / 2 : kWidth, height = plane ? kHeight / 2 : kHeight;
+        const std::size_t offset = plane ? std::size_t(stride) * kHeight : 0;
+        char label[160];
+        const EGLint image[] = {kEglWidth, EGLint(width), kEglHeight, EGLint(height), kEglDrmFourcc,
+                                EGLint(format), kEglPlane0Fd, fd, kEglPlane0Offset, EGLint(offset),
+                                kEglPlane0Pitch, EGLint(stride), kEglNone};
+        EGLImage handle = fd >= 0 ? egl.createImage(display, nullptr, kEglLinuxDmaBuf, nullptr, image) : nullptr;
+        std::snprintf(label, sizeof label, "carrier: plane %u imports into EGL at its offset", plane);
+        report(handle != nullptr, label);
+        if (!handle) continue;
+        GLuint texture = 0, framebuffer = 0;
+        egl.genTextures(1, &texture);
+        egl.bindTexture(kGlTexture2d, texture);
+        egl.imageTargetTexture(kGlTexture2d, handle);
+        egl.genFramebuffers(1, &framebuffer);
+        egl.bindFramebuffer(kGlFramebuffer, framebuffer);
+        egl.framebufferTexture2d(kGlFramebuffer, kGlColorAttachment0, kGlTexture2d, texture, 0);
+        const bool complete = egl.checkFramebuffer(kGlFramebuffer) == kGlFramebufferComplete;
+        std::snprintf(label, sizeof label, "carrier: plane %u is a complete render target", plane);
+        report(complete, label);
+        Map writer = mapPlane(fd, length, true);
+        if (complete && writer.address != MAP_FAILED) {
+            for (unsigned round = 0; round < 3; ++round) {
+                const std::uint8_t value[2] {std::uint8_t(40 + 37 * round + 5 * plane),
+                                             std::uint8_t(200 - 61 * round)};
+                sync(fd, kSyncStart | kSyncWrite);
+                auto* bytes = static_cast<std::uint8_t*>(writer.address) + offset;
+                for (unsigned y = 0; y < height; ++y)
+                    for (unsigned x = 0; x < width; ++x)
+                        for (unsigned byte = 0; byte < bytesPerPixel; ++byte)
+                            bytes[std::size_t(y) * stride + x * bytesPerPixel + byte] = value[byte];
+                sync(fd, kSyncEnd | kSyncWrite);
+                std::vector<std::uint8_t> pixels(std::size_t(width) * height * 4);
+                egl.readPixels(0, 0, int(width), int(height), kGlRgba, kGlUnsignedByte, pixels.data());
+                bool seen = true;
+                unsigned wrong = 0;
+                for (unsigned y = 0; y < height; y += 11)
+                    for (unsigned x = 0; x < width; x += 13) {
+                        const std::uint8_t* got = &pixels[(std::size_t(y) * width + x) * 4];
+                        if (std::abs(int(got[0]) - value[0]) > 1 ||
+                            (bytesPerPixel > 1 && std::abs(int(got[1]) - value[1]) > 1)) { seen = false; ++wrong; }
+                    }
+                std::snprintf(label, sizeof label, "carrier: the GPU reads write %u to plane %u (%u samples differ)",
+                              round, plane, wrong);
+                report(seen, label);
+            }
+            munmap(writer.address, length);
+        }
+        egl.bindFramebuffer(kGlFramebuffer, 0);
+        egl.deleteFramebuffers(1, &framebuffer);
+        egl.deleteTextures(1, &texture);
+        egl.destroyImage(display, handle);
+    }
+    if (fd >= 0) close(fd);
+    gbm.boDestroy(bo);
+    egl.makeCurrent(display, nullptr, nullptr, nullptr);
+    egl.destroyContext(display, gl);
+    egl.terminate(display);
+}
+
+// Samples the carrier the way a browser's compositor does: one EGL image of
+// the whole NV12 picture (both planes in the one dma-buf, chroma at its offset),
+// bound as an external texture and drawn into an RGBA target. The picture is
+// one solid colour, so the answer is its colour as the GPU sees it.
+void probeCarrierSample(Gbm& gbm, Egl& egl, void* device)
+{
+    EGLDisplay display = egl.getPlatformDisplay(kEglPlatformGbm, device, nullptr);
+    EGLint major = 0, minor = 0;
+    if (!display || !egl.initialize(display, &major, &minor)) {
+        report(false, "egl: the display initialises for a sampled carrier");
+        return;
+    }
+    egl.bindApi(kEglOpenGlEsApi);
+    const EGLint wanted[] = {kEglRenderableType, kEglEs2Bit, kEglNone};
+    EGLConfig config = nullptr;
+    EGLint count = 0;
+    egl.chooseConfig(display, wanted, &config, 1, &count);
+    const EGLint attributes[] = {kEglContextClientVersion, 2, kEglNone};
+    EGLContext gl = config ? egl.createContext(display, config, nullptr, attributes) : nullptr;
+    if (!gl || !egl.makeCurrent(display, nullptr, nullptr, gl) || !egl.loadGl()) {
+        report(false, "egl: a surfaceless context is current for a sampled carrier");
+        return;
+    }
+    auto proc = [&egl](const char* name) { return egl.getProcAddress(name); };
+    using Shader = GLuint (*)(GLenum);
+    auto createShader = reinterpret_cast<Shader>(proc("glCreateShader"));
+    auto shaderSource = reinterpret_cast<void (*)(GLuint, int, const char* const*, const int*)>(proc("glShaderSource"));
+    auto compileShader = reinterpret_cast<void (*)(GLuint)>(proc("glCompileShader"));
+    auto createProgram = reinterpret_cast<GLuint (*)()>(proc("glCreateProgram"));
+    auto attachShader = reinterpret_cast<void (*)(GLuint, GLuint)>(proc("glAttachShader"));
+    auto linkProgram = reinterpret_cast<void (*)(GLuint)>(proc("glLinkProgram"));
+    auto useProgram = reinterpret_cast<void (*)(GLuint)>(proc("glUseProgram"));
+    auto getUniform = reinterpret_cast<int (*)(GLuint, const char*)>(proc("glGetUniformLocation"));
+    auto uniform1i = reinterpret_cast<void (*)(int, int)>(proc("glUniform1i"));
+    auto bindAttrib = reinterpret_cast<void (*)(GLuint, GLuint, const char*)>(proc("glBindAttribLocation"));
+    auto enableAttrib = reinterpret_cast<void (*)(GLuint)>(proc("glEnableVertexAttribArray"));
+    auto attribPointer = reinterpret_cast<void (*)(GLuint, int, GLenum, unsigned char, int, const void*)>(
+        proc("glVertexAttribPointer"));
+    auto drawArrays = reinterpret_cast<void (*)(GLenum, int, int)>(proc("glDrawArrays"));
+    auto viewport = reinterpret_cast<void (*)(int, int, int, int)>(proc("glViewport"));
+    auto texImage = reinterpret_cast<void (*)(GLenum, int, int, int, int, int, GLenum, GLenum, const void*)>(
+        proc("glTexImage2D"));
+    auto texParameter = reinterpret_cast<void (*)(GLenum, GLenum, int)>(proc("glTexParameteri"));
+    auto getShaderLog = reinterpret_cast<void (*)(GLuint, int, int*, char*)>(proc("glGetShaderInfoLog"));
+    auto getProgramLog = reinterpret_cast<void (*)(GLuint, int, int*, char*)>(proc("glGetProgramInfoLog"));
+    auto getProgramiv = reinterpret_cast<void (*)(GLuint, GLenum, int*)>(proc("glGetProgramiv"));
+    auto getError = reinterpret_cast<GLenum (*)()>(proc("glGetError"));
+    if (!createShader || !shaderSource || !compileShader || !createProgram || !attachShader || !linkProgram ||
+        !useProgram || !getUniform || !uniform1i || !bindAttrib || !enableAttrib || !attribPointer || !drawArrays ||
+        !viewport || !texImage || !texParameter) {
+        report(false, "carrier sample: the GLES entry points load");
+        return;
+    }
+    constexpr unsigned kWidth = 640, kHeight = 360, kRows = kHeight + kHeight / 2;
+
+    // One solid studio-swing BT.601 red (Y 81, Cb 90, Cr 240) written by the CPU into
+    // either a packed carrier or a planar buffer, then imported as one NV12 image.
+    struct Source {
+        const char* name;
+        int fd[2];
+        unsigned offset[2];
+        unsigned pitch[2];
+        void* bo;
+        std::uint32_t fourcc;
+        unsigned planes;
+    };
+    auto fill = [](int fd, unsigned offset, unsigned stride, unsigned width, unsigned height, std::uint8_t a,
+                   std::uint8_t b, unsigned bytes, std::size_t length) {
+        Map writer = mapPlane(fd, length, true);
+        if (writer.address == MAP_FAILED) return false;
+        sync(fd, kSyncStart | kSyncWrite);
+        auto* base = static_cast<std::uint8_t*>(writer.address) + offset;
+        for (unsigned y = 0; y < height; ++y)
+            for (unsigned x = 0; x < width; ++x)
+                for (unsigned byte = 0; byte < bytes; ++byte)
+                    base[std::size_t(y) * stride + x * bytes + byte] = byte ? b : a;
+        sync(fd, kSyncEnd | kSyncWrite);
+        munmap(writer.address, length);
+        return true;
+    };
+    Source sources[3] {};
+    for (Source& source : sources) { source.fourcc = kNv12; source.planes = 2; }
+    sources[0].name = "packed carrier";
+    sources[0].bo = gbm.boCreate(device, kWidth / 4, kRows, kXrgb, kUseRendering | kUseLinear);
+    if (sources[0].bo) {
+        const int fd = gbm.planeFd(sources[0].bo, 0);
+        const unsigned stride = gbm.planeStride(sources[0].bo, 0);
+        sources[0].fd[0] = sources[0].fd[1] = fd;
+        sources[0].pitch[0] = sources[0].pitch[1] = stride;
+        sources[0].offset[0] = 0;
+        sources[0].offset[1] = stride * kHeight;
+        const std::size_t length = std::size_t(stride) * kRows;
+        fill(fd, 0, stride, kWidth, kHeight, 81, 81, 1, length);
+        fill(fd, stride * kHeight, stride, kWidth / 2, kHeight / 2, 90, 240, 2, length);
+    }
+    sources[1].name = "planar buffer";
+    sources[1].bo = gbm.boCreate(device, kWidth, kHeight, kNv12, kUseRendering | kUseLinear);
+    if (sources[1].bo) {
+        for (int plane = 0; plane < 2; ++plane) {
+            sources[1].fd[plane] = gbm.planeFd(sources[1].bo, plane);
+            sources[1].pitch[plane] = gbm.planeStride(sources[1].bo, plane);
+            sources[1].offset[plane] = 0;
+        }
+        fill(sources[1].fd[0], 0, sources[1].pitch[0], kWidth, kHeight, 81, 81, 1,
+             std::size_t(sources[1].pitch[0]) * kHeight);
+        fill(sources[1].fd[1], 0, sources[1].pitch[1], kWidth / 2, kHeight / 2, 90, 240, 2,
+             std::size_t(sources[1].pitch[1]) * kHeight / 2);
+    }
+    sources[2].name = "colour buffer";
+    sources[2].fourcc = kXrgb;
+    sources[2].planes = 1;
+    sources[2].bo = gbm.boCreate(device, kWidth, kHeight, kXrgb, kUseRendering | kUseLinear);
+    if (sources[2].bo) {
+        const int fd = gbm.planeFd(sources[2].bo, 0);
+        const unsigned stride = gbm.planeStride(sources[2].bo, 0);
+        sources[2].fd[0] = sources[2].fd[1] = fd;
+        sources[2].pitch[0] = sources[2].pitch[1] = stride;
+        // B, G, R, X: opaque red
+        Map writer = mapPlane(fd, std::size_t(stride) * kHeight, true);
+        if (writer.address != MAP_FAILED) {
+            sync(fd, kSyncStart | kSyncWrite);
+            auto* base = static_cast<std::uint8_t*>(writer.address);
+            for (unsigned y = 0; y < kHeight; ++y)
+                for (unsigned x = 0; x < kWidth; ++x) {
+                    std::uint8_t* pixel = base + std::size_t(y) * stride + x * 4;
+                    pixel[0] = 0; pixel[1] = 0; pixel[2] = 255; pixel[3] = 255;
+                }
+            sync(fd, kSyncEnd | kSyncWrite);
+            munmap(writer.address, std::size_t(stride) * kHeight);
+        }
+    }
+    for (const Source& source : sources) {
+        char label[220];
+        std::snprintf(label, sizeof label, "carrier sample: a %s for an NV12 picture is allocated", source.name);
+        report(source.bo != nullptr, label);
+        if (!source.bo) continue;
+        const EGLint image[] = {kEglWidth, EGLint(kWidth), kEglHeight, EGLint(kHeight), kEglDrmFourcc,
+                                EGLint(source.fourcc), kEglPlane0Fd, source.fd[0], kEglPlane0Offset,
+                                EGLint(source.offset[0]), kEglPlane0Pitch, EGLint(source.pitch[0]),
+                                source.planes > 1 ? 0x3275 : kEglNone, source.fd[1], 0x3276,
+                                EGLint(source.offset[1]), 0x3277, EGLint(source.pitch[1]), kEglNone};
+        EGLImage handle = egl.createImage(display, nullptr, kEglLinuxDmaBuf, nullptr, image);
+        std::snprintf(label, sizeof label, "carrier sample: the %s imports into EGL as one image", source.name);
+        report(handle != nullptr, label);
+        if (!handle) continue;
+        GLuint texture = 0, target = 0, framebuffer = 0;
+        egl.genTextures(1, &texture);
+        egl.bindTexture(0x8D65 /* GL_TEXTURE_EXTERNAL_OES */, texture);
+        egl.imageTargetTexture(0x8D65, handle);
+        texParameter(0x8D65, 0x2801, 0x2600);
+        texParameter(0x8D65, 0x2800, 0x2600);
+        egl.genTextures(1, &target);
+        egl.bindTexture(kGlTexture2d, target);
+        texImage(kGlTexture2d, 0, int(kGlRgba), 64, 64, 0, kGlRgba, kGlUnsignedByte, nullptr);
+        egl.genFramebuffers(1, &framebuffer);
+        egl.bindFramebuffer(kGlFramebuffer, framebuffer);
+        egl.framebufferTexture2d(kGlFramebuffer, kGlColorAttachment0, kGlTexture2d, target, 0);
+        const char* vertex = "attribute vec2 p; varying vec2 uv; void main() { uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }";
+        const char* fragment = "#extension GL_OES_EGL_image_external : require\nprecision mediump float; varying vec2 uv; "
+                               "uniform samplerExternalOES t; void main() { gl_FragColor = texture2D(t, uv); }";
+        const GLuint vs = createShader(0x8B31), fs = createShader(0x8B30);
+        shaderSource(vs, 1, &vertex, nullptr); compileShader(vs);
+        shaderSource(fs, 1, &fragment, nullptr); compileShader(fs);
+        if (getShaderLog) {
+            char log[256] {};
+            getShaderLog(fs, sizeof log, nullptr, log);
+            if (log[0]) info("carrier sample: fragment shader log: %s", log);
+        }
+        const GLuint program = createProgram();
+        attachShader(program, vs); attachShader(program, fs);
+        bindAttrib(program, 0, "p");
+        linkProgram(program);
+        if (getProgramiv && getProgramLog) {
+            int linked = 0;
+            getProgramiv(program, 0x8B82 /* GL_LINK_STATUS */, &linked);
+            char log[256] {};
+            getProgramLog(program, sizeof log, nullptr, log);
+            info("carrier sample: %s program linked %d %s", source.name, linked, log);
+        }
+        useProgram(program);
+        uniform1i(getUniform(program, "t"), 0);
+        static const float quad[] = {-1, -1, 1, -1, -1, 1, 1, 1};
+        enableAttrib(0);
+        attribPointer(0, 2, 0x1406, 0, 0, quad);
+        viewport(0, 0, 64, 64);
+        {
+            // The draw itself, before any sampling: a constant colour.
+            const char* flat = "precision mediump float; varying vec2 uv; void main() { gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0); }";
+            const GLuint fl = createShader(0x8B30);
+            shaderSource(fl, 1, &flat, nullptr); compileShader(fl);
+            const GLuint flatProgram = createProgram();
+            attachShader(flatProgram, vs); attachShader(flatProgram, fl);
+            bindAttrib(flatProgram, 0, "p");
+            linkProgram(flatProgram);
+            useProgram(flatProgram);
+            egl.clearColor(0.f, 1.f, 0.f, 1.f);
+            egl.clear(kGlColorBufferBit);
+            drawArrays(0x0005, 0, 4);
+            std::uint8_t flatPixel[4] {};
+            egl.readPixels(32, 32, 1, 1, kGlRgba, kGlUnsignedByte, flatPixel);
+            info("carrier sample: %s constant draw reads %u,%u,%u,%u", source.name, flatPixel[0], flatPixel[1],
+                 flatPixel[2], flatPixel[3]);
+            useProgram(program);
+        }
+        egl.clearColor(0.f, 1.f, 0.f, 1.f);
+        egl.clear(kGlColorBufferBit);
+        drawArrays(0x0005, 0, 4);
+        if (getError) info("carrier sample: %s glGetError after draw 0x%x", source.name, getError());
+        std::uint8_t pixel[4] {};
+        egl.readPixels(32, 32, 1, 1, kGlRgba, kGlUnsignedByte, pixel);
+        info("carrier sample: %s sample reads %u,%u,%u,%u", source.name, pixel[0], pixel[1], pixel[2], pixel[3]);
+        const bool red = pixel[0] > 200 && pixel[1] < 70 && pixel[2] < 70;
+        const bool blue = pixel[2] > 200 && pixel[1] < 70 && pixel[0] < 70;
+        std::snprintf(label, sizeof label, "carrier sample: the GPU samples the %s as red (got %u,%u,%u%s)",
+                      source.name, pixel[0], pixel[1], pixel[2], blue ? ", which is blue: chroma swapped" : "");
+        report(red, label);
+        egl.bindFramebuffer(kGlFramebuffer, 0);
+        egl.deleteFramebuffers(1, &framebuffer);
+        egl.deleteTextures(1, &texture);
+        egl.deleteTextures(1, &target);
+        egl.destroyImage(display, handle);
+    }
+    for (const Source& source : sources) {
+        if (!source.bo) continue;
+        if (source.fd[0] >= 0) close(source.fd[0]);
+        if (source.fd[1] >= 0 && source.fd[1] != source.fd[0]) close(source.fd[1]);
+        gbm.boDestroy(source.bo);
+    }
+    egl.makeCurrent(display, nullptr, nullptr, nullptr);
+    egl.destroyContext(display, gl);
+    egl.terminate(display);
+}
+
 }
 
 int main(int argc, char** argv)
@@ -530,15 +870,17 @@ int main(int argc, char** argv)
     // A crash in a graphics library must not take the report with it.
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     const char* node = "/dev/dri/renderD128";
-    bool useEgl = false, usePlanes = false;
+    bool useEgl = false, usePlanes = false, useCarrier = false, useCarrierSample = false;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--node" && index + 1 < argc) node = argv[++index];
         else if (argument == "--egl") useEgl = true;
         else if (argument == "--planes") usePlanes = true;
+        else if (argument == "--carrier") useCarrier = true;
+        else if (argument == "--carrier-sample") useCarrierSample = true;
         else if (argument == "--require-visibility") requireVisibility = true;
         else {
-            std::fprintf(stderr, "usage: gbm_planar_probe [--node PATH] [--egl] [--planes] [--require-visibility]\n");
+            std::fprintf(stderr, "usage: gbm_planar_probe [--node PATH] [--egl] [--planes] [--carrier] [--carrier-sample] [--require-visibility]\n");
             return 2;
         }
     }
@@ -578,7 +920,7 @@ int main(int argc, char** argv)
         }
         gbm.boDestroy(colour);
     }
-    if (useEgl || usePlanes) {
+    if (useEgl || usePlanes || useCarrier || useCarrierSample) {
         Egl egl;
         if (!egl.load()) {
             std::printf("FAIL libEGL or libGLESv2 cannot be loaded\n");
@@ -586,6 +928,8 @@ int main(int argc, char** argv)
         } else {
             if (useEgl) probeCompositor(gbm, egl, device);
             if (usePlanes) probePlaneRender(gbm, egl, device);
+            if (useCarrier) probeCarrierRender(gbm, egl, device);
+            if (useCarrierSample) probeCarrierSample(gbm, egl, device);
         }
     }
     gbm.destroyDevice(device);

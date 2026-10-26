@@ -451,7 +451,11 @@ const std::uint8_t* PixelBuffer::planeForRead(unsigned plane)
 
 PixelBuffer::CpuAccess::CpuAccess(const PixelBuffer& buffer, bool write) noexcept : write_(write)
 {
-    if (buffer.kind_ != StorageKind::imported) return;
+    // A buffer the driver allocated itself is bracketed for writing only: the
+    // CPU mapping it keeps is never unmapped, so nothing else takes what is
+    // written to the GPU, while a read has nothing to bring up to date that
+    // the driver's own writes have not already made current.
+    if (buffer.kind_ != StorageKind::imported && !(buffer.kind_ == StorageKind::gbm && write)) return;
     const std::uint64_t flags = DMA_BUF_SYNC_START | (write ? DMA_BUF_SYNC_RW : DMA_BUF_SYNC_READ);
     for (unsigned index = 0; index < buffer.objects_; ++index) {
         const int fd = index == 0 ? buffer.fd_ : buffer.extraFd_[index - 1];

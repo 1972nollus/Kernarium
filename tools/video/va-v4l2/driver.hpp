@@ -83,7 +83,8 @@ struct Surface {
     std::uint32_t fourcc {};
     std::shared_ptr<PixelBuffer> buffer;
     // When the decoder delivers packed RGB, the picture lands here and the
-    // NV12 buffer above is filled only if a client really asks for NV12.
+    // NV12 buffer above is filled only if a client really asks for NV12, or
+    // holds that buffer already (`exported`).
     std::shared_ptr<PixelBuffer> shadow;
     bool nativeValid {true};
     // Set once a client has been given this surface's own memory - a dma-buf
@@ -196,7 +197,8 @@ public:
     // memory, because a client already holds it.
     bool fillFromLent(Surface& target, PixelBuffer& lent, bool packed);
     // Copies packed pixels into a surface's RGB shadow, allocating it first,
-    // and leaves the NV12 buffer stale until somebody asks for it.
+    // and leaves the NV12 buffer stale until somebody asks for it - unless a
+    // client already holds that buffer, which then gets the picture at once.
     bool storePacked(Surface& target, const ConstPlaneView& source, unsigned width, unsigned height);
     VAStatus process(Context& context, Surface& target);
 

@@ -73,10 +73,12 @@ public:
     // CPU access to a buffer a client imported, bracketed the way the kernel
     // wants dma-buf accesses bracketed (DMA_BUF_IOCTL_SYNC): from construction
     // to destruction the buffer's contents are current for the CPU, and when
-    // the access wrote, the GPU sees what was written. A buffer the driver
-    // allocated for itself is not imported and the bracket does nothing; so
-    // does one whose descriptors are no dma-bufs. A failed sync is not an
-    // error, because a descriptor that is no dma-buf has nothing to sync.
+    // the access wrote, the GPU sees what was written. A GBM buffer the driver
+    // allocated for itself is bracketed when the access writes, because a
+    // client that imported the surface's descriptor samples it on the GPU; a
+    // read of one does nothing. So does any buffer whose descriptors are no
+    // dma-bufs. A failed sync is not an error, because a descriptor that is no
+    // dma-buf has nothing to sync.
     class CpuAccess {
     public:
         CpuAccess(const PixelBuffer& buffer, bool write) noexcept;
