@@ -1418,6 +1418,16 @@ def verify_hal_selections(android_root: Path) -> None:
     if f"MESA_VENUS_HAL_MODULE='{module}'" not in metadata.splitlines():
         fail(f"the Vulkan HAL selection does not name the Venus module {module}")
 
+    # ro.serialno comes from androidboot.serialno, and Build.getSerial() must match
+    # ^[a-zA-Z0-9]+$ (CTS AccessSerialNumberTest#testGetSerialReturnsExpectedFormat).
+    serials = [
+        token.partition("=")[2]
+        for token in command_line
+        if token.partition("=")[0] == "androidboot.serialno"
+    ]
+    if len(serials) != 1 or not re.fullmatch(r"[a-zA-Z0-9]+", serials[0]):
+        fail(f"boot command line serial number {serials} is not one alphanumeric value")
+
     # A setprop that expands a missing ro.boot property fails at every boot.
     # The product init script may therefore expand only properties the command
     # line sets, or a host-supplied one inside an action gated on its presence.
