@@ -560,8 +560,11 @@ modifier, because Metal describes no tiling an agent outside the driver could
 agree on. A modifier image is therefore exactly a linear image with a name for
 its layout and inherits nearly every linear limit: one 2D level and layer, a
 dedicated allocation, no depth or stencil attachment, and an explicit plane
-layout accepted only where it matches the layout Metal's own alignment rule
-produces. What it carries that plain linear tiling does not is a colour and an
+layout accepted only where Metal can read it: a plane may start at any offset
+that is a multiple of Metal's alignment and may have any row pitch that holds a
+row, keeps to the same alignment and is no wider than the widest texture, which
+is how a half-width chroma plane laid out at the pitch of its luma plane is
+imported. What it carries that plain linear tiling does not is a colour and an
 input attachment, because a swapchain image is one: Mesa's common WSI has no
 fallback when no modifier can hold a colour attachment (it filters the modifier
 list with `vkGetPhysicalDeviceImageFormatProperties2` and, when nothing
