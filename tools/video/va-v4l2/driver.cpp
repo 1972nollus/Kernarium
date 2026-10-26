@@ -107,6 +107,7 @@ Driver::Driver(VADriverContextP context, DescriptorPool& pool) : pool_(pool)
     note((std::string("surfaces ") + storageName(selectedStorage()) + " (" + storageReason() + ")").c_str());
     rgbPolicy_ = rgbCaptureRequest(std::getenv("UML_VA_V4L2_RGB"));
     capturePolicy_ = captureMemoryRequest(std::getenv("UML_VA_V4L2_CAPTURE"));
+    if (const char* request = std::getenv("UML_VA_V4L2_EXPORT")) exportArgb_ = std::strcmp(request, "argb") == 0;
     probeCodecs();
     probeEncoding();
 }
@@ -431,6 +432,7 @@ bool Driver::fillFromLent(Surface& target, PixelBuffer& lent, bool packed)
     copyNv12(planeViews(lent, from).data(), planeViews(*target.buffer, to).data(),
              std::min(target.width, lent.width()), std::min(target.height, lent.height()));
     target.nativeValid = true;
+    refreshExport(target);
     return true;
 }
 
@@ -445,13 +447,30 @@ bool Driver::storePacked(Surface& target, const ConstPlaneView& source, unsigned
         return false;
     }
     const Region region {0, 0, std::min(target.width, width), std::min(target.height, height)};
-    copyPacked32(source, region, planeView(*target.shadow, to), region);
+    {
+        // The shadow is what the client samples when the surface exports it.
+        const PixelBuffer::CpuAccess writing(*target.shadow, true);
+        copyPacked32(source, region, planeView(*target.shadow, to), region);
+    }
     target.nativeValid = false;
     // A client that exported the surface or derived an image from it looks at
     // the surface's own memory and never asks this driver for it again, so the
-    // picture has to be there now rather than when it is next requested.
-    if (target.exported) materialise(target);
+    // picture has to be there now rather than when it is next requested. A
+    // surface that exports its shadow already has it there.
+    if (target.exported && !target.exportsArgb) materialise(target);
     return true;
+}
+
+void Driver::refreshExport(Surface& surface)
+{
+    if (!surface.exportsArgb || !surface.shadow || !surface.buffer || !surface.nativeValid) return;
+    const std::uint8_t* from = surface.buffer->map();
+    std::uint8_t* to = surface.shadow->map();
+    if (!from || !to) return;
+    const Region region {0, 0, surface.width, surface.height};
+    const PixelBuffer::CpuAccess writing(*surface.shadow, true);
+    convertNv12ToArgb(planeViews(*surface.buffer, from).data(), region, planeView(*surface.shadow, to), region,
+                      isBt709(surface.height));
 }
 
 void Driver::harvest(Context& context, std::chrono::milliseconds wait)
@@ -522,6 +541,7 @@ void Driver::harvest(Context& context, std::chrono::milliseconds wait)
                              std::min(target->width, picture.width),
                              std::min(target->height, picture.height));
                     target->nativeValid = true;
+                    refreshExport(*target);
                     target->state = Surface::State::ready;
                 } else {
                     target->state = Surface::State::failed;
@@ -612,6 +632,7 @@ VAStatus Driver::submitFrame(Context& owner, VASurfaceID id, Surface& target)
         // The NV12 buffer is now the truth for this surface, whatever an
         // earlier packed decode left in its shadow.
         target.nativeValid = true;
+        refreshExport(target);
         target.state = Surface::State::ready;
         return VA_STATUS_SUCCESS;
     }
@@ -1607,8 +1628,9 @@ VAStatus putImage(VADriverContextP ctx, VASurfaceID id, VAImageID imageId, int s
     std::uint8_t* destination = surface->buffer->map();
     if (!buffer || !destination || buffer->bytes() < image.data_size) return VA_STATUS_ERROR_OPERATION_FAILED;
     const std::uint8_t* source = buffer->data();
-    // Whatever the decoder left in a shadow is now stale.
-    surface->shadow.reset();
+    // Whatever the decoder left in a shadow is now stale. A shadow a client
+    // holds is the surface's memory and stays; it is refreshed below.
+    if (!surface->exportsArgb) surface->shadow.reset();
     surface->nativeValid = true;
     if (surface->fourcc == VA_FOURCC_NV12) {
         const ConstPlaneView in[2] {
@@ -1620,7 +1642,43 @@ VAStatus putImage(VADriverContextP ctx, VASurfaceID id, VAImageID imageId, int s
         const ConstPlaneView in {source + image.offsets[0], image.pitches[0]};
         copyPacked32(in, *from, planeView(*surface->buffer, destination), *to);
     }
+    driver.refreshExport(*surface);
     surface->state = Surface::State::ready;
+    return VA_STATUS_SUCCESS;
+}
+
+// A surface's descriptor as packed ARGB: its RGB shadow, one object, one plane.
+// The picture is made current for the client now and after every later decode.
+VAStatus exportShadow(Driver& driver, Surface& surface, void* out)
+{
+    if (!surface.shadow) {
+        std::string error;
+        surface.shadow = PixelBuffer::allocate(VA_FOURCC_ARGB, surface.width, surface.height, error);
+        if (!surface.shadow) {
+            if (!error.empty()) driver.note(error.c_str());
+            return VA_STATUS_ERROR_ALLOCATION_FAILED;
+        }
+    }
+    surface.exportsArgb = true;
+    if (surface.state == Surface::State::ready) driver.refreshExport(surface);
+    const int fd = surface.shadow->exportDescriptor();
+    if (fd < 0) return VA_STATUS_ERROR_OPERATION_FAILED;
+    surface.exported = true;
+    auto* descriptor = static_cast<VADRMPRIMESurfaceDescriptor*>(out);
+    std::memset(descriptor, 0, sizeof(*descriptor));
+    descriptor->fourcc = VA_FOURCC_ARGB;
+    descriptor->width = surface.width;
+    descriptor->height = surface.height;
+    descriptor->num_objects = 1;
+    descriptor->objects[0].fd = fd;
+    descriptor->objects[0].size = unsigned(surface.shadow->size());
+    descriptor->objects[0].drm_format_modifier = surface.shadow->modifier();
+    descriptor->num_layers = 1;
+    descriptor->layers[0].drm_format = DRM_FORMAT_ARGB8888;
+    descriptor->layers[0].num_planes = 1;
+    descriptor->layers[0].object_index[0] = 0;
+    descriptor->layers[0].offset[0] = unsigned(surface.shadow->offset(0));
+    descriptor->layers[0].pitch[0] = unsigned(surface.shadow->pitch(0));
     return VA_STATUS_SUCCESS;
 }
 
@@ -1632,6 +1690,7 @@ VAStatus exportSurfaceHandle(VADriverContextP ctx, VASurfaceID id, uint32_t memo
     Surface* surface = driver.surface(id);
     if (!surface || !surface->buffer) return VA_STATUS_ERROR_INVALID_SURFACE;
     if (memoryType != VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2) return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
+    if (driver.exportsPackedArgb() && surface->fourcc == VA_FOURCC_NV12) return exportShadow(driver, *surface, out);
     // A descriptor names the surface's own format, so it has to hold the
     // surface's own pixels even when the decoder delivered packed RGB.
     driver.materialise(*surface);

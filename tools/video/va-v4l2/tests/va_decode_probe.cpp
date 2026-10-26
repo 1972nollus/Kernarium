@@ -91,6 +91,33 @@ struct Output {
     std::uint64_t samples[3] {};
 };
 
+// A packed ARGB picture (bytes B, G, R, A) read from `base`: the checksum of its
+// rows, the least alpha it holds, and its luma as the driver's own studio-swing
+// matrices make it, for comparing with an NV12 picture of the same frame.
+struct Packed {
+    std::uint32_t running {};
+    unsigned minAlpha {255};
+    std::vector<std::uint8_t> luma;
+};
+
+void readPacked(Packed& packed, const std::uint8_t* base, std::size_t offset, std::size_t pitch, unsigned width,
+                unsigned height)
+{
+    const bool bt709 = height >= 720;
+    const int yr = bt709 ? 11966 : 16829, yg = bt709 ? 40254 : 33039, yb = bt709 ? 4064 : 6416;
+    packed.luma.assign(std::size_t(width) * height, 0);
+    for (unsigned line = 0; line < height; ++line) {
+        const std::uint8_t* row = base + offset + std::size_t(line) * pitch;
+        packed.running = crc32(row, std::size_t(width) * 4, packed.running);
+        for (unsigned column = 0; column < width; ++column) {
+            const int blue = row[4 * column], green = row[4 * column + 1], red = row[4 * column + 2];
+            packed.minAlpha = std::min<unsigned>(packed.minAlpha, row[4 * column + 3]);
+            const int luma = ((yr * red + yg * green + yb * blue + 32768) >> 16) + 16;
+            packed.luma[std::size_t(line) * width + column] = std::uint8_t(std::min(255, std::max(0, luma)));
+        }
+    }
+}
+
 bool writeI420(Output& output, const std::uint8_t* base, const VAImage& image, unsigned width, unsigned height)
 {
     std::vector<std::uint8_t> row(width);
@@ -242,6 +269,7 @@ int main(int argc, char** argv)
     }
     unsigned earlyMismatches = 0;
     unsigned lostWrites = 0;
+    unsigned lowestAlpha = 255;
 
     // The same video processing Chromium's image processor asks for: a
     // VAProfileNone/VAEntrypointVideoProc context with a 0x0 extent, one
@@ -329,6 +357,8 @@ int main(int argc, char** argv)
             // driver produce both formats for every frame, which is a client
             // this measures nothing about.
             Output exported;
+            Packed exportedPacked;
+            bool packedExport = false;
             if (exportEarly) {
                 const auto& descriptor = early[slot];
                 const auto size = descriptor.objects[0].size;
@@ -344,10 +374,32 @@ int main(int argc, char** argv)
                 // driver never took to the GPU is replaced by the GPU's older copy at that
                 // point, so a difference means the picture would not have reached the GPU.
                 Output plain;
-                writeI420(plain, static_cast<const std::uint8_t*>(mapping), layout, header.width, header.height);
+                packedExport = descriptor.fourcc == VA_FOURCC_ARGB;
+                Packed plainPacked;
+                if (packedExport) {
+                    if (descriptor.num_objects != 1 || descriptor.num_layers != 1 ||
+                        descriptor.layers[0].num_planes != 1) {
+                        std::fprintf(stderr, "an ARGB descriptor is one object, one layer, one plane\n");
+                        return 1;
+                    }
+                    readPacked(plainPacked, static_cast<const std::uint8_t*>(mapping), descriptor.layers[0].offset[0],
+                               descriptor.layers[0].pitch[0], header.width, header.height);
+                } else {
+                    writeI420(plain, static_cast<const std::uint8_t*>(mapping), layout, header.width, header.height);
+                }
                 dma_buf_sync sync {DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ};
                 (void)ioctl(descriptor.objects[0].fd, DMA_BUF_IOCTL_SYNC, &sync);
-                writeI420(exported, static_cast<const std::uint8_t*>(mapping), layout, header.width, header.height);
+                if (packedExport) {
+                    readPacked(exportedPacked, static_cast<const std::uint8_t*>(mapping),
+                               descriptor.layers[0].offset[0], descriptor.layers[0].pitch[0], header.width,
+                               header.height);
+                    exported.running = exportedPacked.running;
+                    plain.running = plainPacked.running;
+                    lowestAlpha = std::min(lowestAlpha, exportedPacked.minAlpha);
+                } else {
+                    writeI420(exported, static_cast<const std::uint8_t*>(mapping), layout, header.width,
+                              header.height);
+                }
                 if (plain.running != exported.running) {
                     if (!lostWrites)
                         std::fprintf(stderr, "frame %u: the driver's write (crc32 %08x) was replaced by the GPU's copy"
@@ -369,7 +421,28 @@ int main(int argc, char** argv)
                     std::fprintf(stderr, "cannot write the decoded frame\n");
                     return 1;
                 }
-                if (exportEarly) {
+                if (exportEarly && packedExport) {
+                    // The exported RGB and the NV12 the driver gives on request are one
+                    // picture: their luma agrees to the rounding of the conversion.
+                    const auto* planeY = static_cast<const std::uint8_t*>(address) + image.offsets[0];
+                    std::uint64_t total = 0;
+                    unsigned worst = 0;
+                    for (unsigned line = 0; line < header.height; ++line)
+                        for (unsigned column = 0; column < header.width; ++column) {
+                            const int a = planeY[std::size_t(line) * image.pitches[0] + column];
+                            const int b = exportedPacked.luma[std::size_t(line) * header.width + column];
+                            const unsigned difference = unsigned(a > b ? a - b : b - a);
+                            total += difference;
+                            worst = std::max(worst, difference);
+                        }
+                    const double mean = double(total) / (double(header.width) * header.height);
+                    if (mean > 1.0 || worst > 4) {
+                        if (!earlyMismatches)
+                            std::fprintf(stderr, "frame %u: the exported RGB differs from the NV12 the driver gives on"
+                                         " request (mean luma difference %.2f, worst %u)\n", shown, mean, worst);
+                        ++earlyMismatches;
+                    }
+                } else if (exportEarly) {
                     Output asked;
                     writeI420(asked, static_cast<const std::uint8_t*>(address), image, header.width, header.height);
                     if (asked.running != exported.running) {
@@ -491,8 +564,12 @@ int main(int argc, char** argv)
     if (exportEarly) {
         std::fprintf(stderr, "exported early: %u of %u frames differ from the picture asked for, %u lost their"
                      " pixels to the GPU's older copy\n", earlyMismatches, shown, lostWrites);
+        const bool packedDescriptors = !early.empty() && early[0].fourcc == VA_FOURCC_ARGB;
+        if (packedDescriptors)
+            std::fprintf(stderr, "the descriptors are packed ARGB, one plane each; the least alpha seen is %u\n",
+                         lowestAlpha);
         for (const auto& descriptor : early) ::close(descriptor.objects[0].fd);
-        if (earlyMismatches || lostWrites) {
+        if (earlyMismatches || lostWrites || (packedDescriptors && lowestAlpha != 255)) {
             std::fprintf(stderr, "UML_VA_DECODE: FAIL\n");
             return 1;
         }

@@ -233,6 +233,7 @@ class DesktopImageTests(unittest.TestCase):
         self.assertIn("--render-node-override=/dev/dri/renderD128", text)
         self.assertIn("--enable-features=AcceleratedVideoEncoder,ChromeOSHWVBREncoding", text)
         self.assertNotIn("--disable-gpu-memory-buffer-video-frames", text)
+        self.assertIn("export UML_VA_V4L2_EXPORT=argb\n", text)
         self.assertNotIn("KERNARIUM_CHROMIUM_VIDEO_ENCODE", text)
         self.assertNotIn('CHROMIUM_FLAGS="$CHROMIUM_FLAGS --render-node-override=/dev/dri/renderD128 --enable-features', text)
         subprocess.run(["sh", "-n", str(configuration)], check=True)

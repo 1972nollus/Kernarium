@@ -133,6 +133,19 @@ that client reads the memory without asking again. That round trip is not bit
 exact, so `UML_VA_V4L2_RGB=off` stays for a client that wants the device's own
 planes.
 
+### Exporting the packed picture
+
+An NV12 descriptor is one object with the chroma plane at an offset, and a
+guest graphics stack whose Mesa carries no plane offset reads that plane from
+the start of the object, so a client that hands the descriptor to the GPU draws
+the wrong picture. With `UML_VA_V4L2_EXPORT=argb`, `vaExportSurfaceHandle` of an
+NV12 surface hands over the surface's RGB shadow instead: one object, one
+layer, one plane of `ARGB` that a GPU samples like any colour buffer. The
+shadow is then the surface's memory. Every picture the device decodes lands in
+it, bracketed for the GPU, and NV12 is made only for a client that derives or
+reads an image. Without the variable the descriptor is NV12, which is what
+FFmpeg's DRM mapping and the Steam client expect.
+
 The format is negotiated before the first packet, not after the source-change
 event: the device keeps the choice across that event, and changing it once the
 host has a decode session asks it to switch layout underneath one.
@@ -265,6 +278,7 @@ reason.
 | `UML_VA_V4L2_HIDDEN` | `show` (default) or `skip`, as above |
 | `UML_VA_V4L2_RGB` | `auto` (default) or `off`, as above |
 | `UML_VA_V4L2_CAPTURE` | `auto` (default) or `device`: who owns the decoded pictures' memory, as above |
+| `UML_VA_V4L2_EXPORT` | `nv12` (default) or `argb`: the format of an exported decode surface, as above |
 | `UML_VA_DRM_DEVICE` | the render node for GBM surfaces, instead of `/dev/dri/renderD128` |
 | `UML_VA_V4L2_LOG` | a file to append diagnostics to; unset, the driver writes nothing |
 | `UML_VA_V4L2_TRACE` | `1` also logs every entry point a client calls, before it runs and with its answer after, so a client that dies inside the driver leaves the call behind, and a mean of each encode input's samples, to tell pictures from empty memory |
@@ -429,16 +443,13 @@ for variable-bitrate profiles). Three parts fit together to make it work:
   Without them a GPU-painted frame encodes black, while frames built in
   ordinary memory (a `VideoFrame` made from a buffer) are unaffected.
 
-One limit of the guest GPU shows in what Chromium plays:
-
-- **Hardware-decoded video.** The pictures the driver decodes are right, and
-  `va_decode_probe --export-early` reads them back from the exported
-  descriptor. What Chromium then composites from that descriptor is not: a
-  descriptor is one object with the chroma plane at an offset, and the GPU
-  reads that plane from the wrong place (`gbm_planar_probe --carrier` reports
-  it for the same layout), so frames come out black or with their chroma
-  wrong. It needs a guest Mesa that honours the offset of an image imported
-  from an object it already holds.
+Chromium's hardware decode needs one more setting. Its VA-API decoder exports
+each surface it decodes into and hands the descriptor to the compositor, so the
+file sets `UML_VA_V4L2_EXPORT=argb`, and [the descriptor is packed
+ARGB](#exporting-the-packed-picture): Chromium plays hardware-decoded video as
+ARGB frames. An NV12 descriptor would show black or wrong chroma, because the
+GPU reads the chroma plane of such a one-object layout from the wrong place
+(`gbm_planar_probe --carrier` reports it).
 
 [`tools/rootfs/producer.sh`](../../rootfs/producer.sh) builds the driver inside
 an image's own root (`producer_install_uml_va_driver`), against the libva and

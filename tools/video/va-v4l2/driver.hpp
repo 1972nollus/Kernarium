@@ -92,6 +92,11 @@ struct Surface {
     // identity, so a later picture has to be copied into it rather than the
     // surface being pointed at a different buffer.
     bool exported {};
+    // Set when the descriptor this surface handed out is its RGB shadow, as
+    // packed ARGB, instead of the NV12 buffer. The shadow is then the memory
+    // the client looks at: every picture lands in it, and NV12 is made only
+    // for a client that asks for it.
+    bool exportsArgb {};
     enum class State { idle, pending, ready, failed };
     State state {State::idle};
     std::uint64_t sequence {};
@@ -200,6 +205,12 @@ public:
     // and leaves the NV12 buffer stale until somebody asks for it - unless a
     // client already holds that buffer, which then gets the picture at once.
     bool storePacked(Surface& target, const ConstPlaneView& source, unsigned width, unsigned height);
+    // Brings the RGB shadow of a surface that exports it up to date from the
+    // surface's NV12 buffer, after something wrote that buffer.
+    void refreshExport(Surface& surface);
+    // Whether a surface's exported descriptor is packed ARGB rather than NV12
+    // (UML_VA_V4L2_EXPORT=argb).
+    bool exportsPackedArgb() const noexcept { return exportArgb_; }
     VAStatus process(Context& context, Surface& target);
 
     // Encode plumbing. Profiles come from the encoder node, so a profile it
@@ -257,6 +268,7 @@ private:
     std::string encoderDevice_;
     RgbCapture rgbPolicy_ {RgbCapture::automatic};
     CaptureMemory capturePolicy_ {CaptureMemory::automatic};
+    bool exportArgb_ {};
     // Probed once at initialisation, before a sandbox can close the device nodes.
     bool captureProbed_ {};
     bool rgbOffered_ {};
