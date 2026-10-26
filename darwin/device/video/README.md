@@ -132,7 +132,32 @@ does that, or clears the coded queue, or drains. A client that stops the decoder
 as soon as every coded buffer is back (as v4l2_codec2 does) therefore cannot end
 the drain before the marker and the event. The first size of a stream is
 announced as the event alone, from the packet's headers, before any picture
-exists, with no end marker and no hold.
+exists, with no end marker and no hold, unless the client has set its capture
+queue up for another size already (provisional capture, below).
+
+**Provisional capture.** A client may set its capture queue up before it knows
+the size and choose again after the source change: v4l2_codec2 names NV12 at
+64 x 64, queues buffers for it and starts the queue, then queues the stream's
+parameter sets and first picture, and only on the source change stops the queue
+and sets up the real format and buffers. The device takes a capture format
+settled before the size is announced as a guess:
+
+- The decoder is not asked for 8-bit planes until the size is known, so a
+  picture decoded before the client's real choice keeps the stream's depth,
+  reaches a P010 client whole, and is narrowed on delivery for one that keeps
+  NV12. A choice made after the announcement reaches the decoder as usual.
+- When the announced size is not the one the queue was set up for, the first
+  size is a size change as above: no picture is written into the buffers the
+  client holds, and the coded buffer whose packet declared the size is held
+  until the client sets the queue up for the new size, stops it, drains or
+  clears the coded queue. Without the hold, a client that drains once every
+  coded buffer is back ends the drain, without the picture, before it has
+  handled the source change.
+
+A client whose first setup already has the announced size, or that sets its
+capture queue up only after the announcement, sees none of this.
+`guest-v4l2-decode` plays the order, with and without queued provisional
+buffers, for every advertised profile.
 
 **Limits.** The device lists the levels of a coded format from the lowest up
 to the highest `maximumLevel` of the format's capabilities, and reports that

@@ -123,6 +123,20 @@ uml::platform::VideoPixelLayout captureLayout(std::uint32_t format) noexcept
     return format == VIRTIO_VIDEO_FORMAT_P010 ? uml::platform::VideoPixelLayout::planarYuv
                                               : uml::platform::VideoPixelLayout::planar8Bit;
 }
+/* What the decoder is asked to produce for a capture format named while the
+ * picture size is `known` or not. A format named before the size is announced
+ * is provisional: a stateful client sets its queue up with one and chooses
+ * again after the source change, and a picture may be decoded in between. The
+ * stream's own depth is the one layout that picture can still be delivered
+ * from whatever the client chooses, so until the size is known 8-bit planes
+ * are reached by narrowing on delivery, which a choice made afterwards moves
+ * into the decoder. */
+uml::platform::VideoPixelLayout decodeLayout(std::uint32_t format, bool known) noexcept
+{
+    const auto layout = captureLayout(format);
+    return layout == uml::platform::VideoPixelLayout::planar8Bit && !known
+               ? uml::platform::VideoPixelLayout::planarYuv : layout;
+}
 bool validQueue(std::uint32_t queue)
 {
     return queue == VIRTIO_VIDEO_QUEUE_TYPE_INPUT || queue == VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
@@ -404,18 +418,34 @@ public:
     {
         if (stream.sourceKnown) return;
         const auto format = stream.decoder->format();
-        if (format.width) announce(id, stream, format.width, format.height, format.bitDepth);
+        if (!format.width) return;
+        /* A capture queue set up before the size was known is for the size the
+         * client guessed. When that is not the announced one, no picture goes
+         * into it: the client sets its queue up again, as for a size change. */
+        if (setUpForAnotherSize(stream, format)) stream.renegotiating = true;
+        announce(id, stream, format.width, format.height, format.bitDepth);
     }
 
-    /* Whether the packet just given to the decoder declares another picture
-     * size than the one before it. The first packet of a stream declares the
-     * size, it does not change it. */
+    /* Whether the client settled its capture queue before the size was known,
+     * for a size other than the stream's. v4l2_codec2 does: it starts with a
+     * 64x64 queue and chooses the real one after the source change. */
+    static bool setUpForAnotherSize(const Stream& stream, const uml::platform::VideoFormat& format)
+    {
+        return stream.captureSettled &&
+               (stream.output.frame_width != format.width || stream.output.frame_height != format.height);
+    }
+
+    /* Whether the packet just given to the decoder declares a picture size the
+     * client has not set its capture queue up for: another size than the one
+     * before it, or for the first packet, a size other than the one the client
+     * guessed. */
     static bool carriesSizeChange(Stream& stream)
     {
         const auto format = stream.decoder->format();
         if (!format.width) return false;
-        const bool changed = stream.submittedWidth &&
-            (format.width != stream.submittedWidth || format.height != stream.submittedHeight);
+        const bool changed = stream.submittedWidth
+            ? format.width != stream.submittedWidth || format.height != stream.submittedHeight
+            : !stream.sourceKnown && setUpForAnotherSize(stream, format);
         stream.submittedWidth = format.width;
         stream.submittedHeight = format.height;
         return changed;
@@ -669,7 +699,7 @@ public:
                          return wireCodec(c.codec) == stream.coded && c.bitDepth == 10u;
                      }) || (stream.sourceKnown && stream.decoder->format().bitDepth != 10)))
                     throw std::invalid_argument("raw video bit depth is incompatible with the stream");
-                stream.decoder->requestOutputLayout(captureLayout(p.format));
+                stream.decoder->requestOutputLayout(decodeLayout(p.format, stream.sourceKnown));
                 stream.captureSettled = true;
                 stream.captureDeferred = false;
                 stream.output = params(p.queue_type, p.format, p.frame_width, p.frame_height);
@@ -764,7 +794,7 @@ public:
             if (!stream.captureSettled) {
                 stream.captureSettled = true;
                 stream.captureDeferred = false;
-                stream.decoder->requestOutputLayout(captureLayout(stream.output.format));
+                stream.decoder->requestOutputLayout(decodeLayout(stream.output.format, stream.sourceKnown));
             }
             ++stream.captureQueued;
             stream.captureBuffers.insert(q.resource_id);

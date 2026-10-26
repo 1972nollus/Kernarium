@@ -1504,6 +1504,154 @@ void capabilityMasks()
     require(seen == 4, "all four raw formats are offered for a 10-bit codec");
 }
 
+/* Fixes a picture's sample depth when it decodes it, as AppleVideoDecoder
+ * does: asked for 8-bit planes, it narrows 10-bit samples as it copies them.
+ * The first packet carries only parameter sets, so it declares the size and
+ * decodes nothing. */
+class NarrowingDecoder final : public VideoDecoder {
+public:
+    void inspect(std::span<const std::uint8_t>) override { format_ = {128, 128, 10}; }
+    void submit(std::span<const std::uint8_t>, std::uint64_t timestamp) override
+    {
+        format_ = {128, 128, 10};
+        if (!packets_++) return;
+        const bool narrow = layout_ == VideoPixelLayout::planar8Bit;
+        DecodedVideoFrame frame;
+        frame.format = {128, 128, narrow ? 8u : 10u};
+        frame.timestamp = timestamp;
+        frame.color = {VideoColorMatrix::bt601, false};
+        frame.luma.assign(128 * 128 * (narrow ? 1 : 2), 0x40);
+        frame.chroma.assign(128 * 64 * (narrow ? 1 : 2), 0x80);
+        frames_.push_back(std::move(frame));
+    }
+    void drain() override {}
+    void discard() override { frames_.clear(); }
+    std::vector<DecodedVideoFrame> takeFrames() override { return std::exchange(frames_, {}); }
+    VideoFormat format() const noexcept override { return format_; }
+    void requestOutputLayout(VideoPixelLayout layout) override { layout_ = layout; }
+private:
+    unsigned packets_ {};
+    VideoPixelLayout layout_ {VideoPixelLayout::planarYuv};
+    VideoFormat format_;
+    std::vector<DecodedVideoFrame> frames_;
+};
+
+/* v4l2_codec2 names an 8-bit capture format before the picture size is known
+ * and makes its real choice, P010 for a 10-bit stream, after the source
+ * change; the guest may queue the next packet on either side of that choice.
+ * A picture decoded in between keeps its depth and reaches the P010 client.
+ * Narrowed, it would end the stream in an empty LAST buffer, which a draining
+ * client takes for the end of its drain. */
+void provisionalCaptureFormat(bool pictureFirst)
+{
+    VideoFixture video(21, 32 * page, [](auto) { return std::make_unique<NarrowingDecoder>(); },
+        {{VideoCodec::h264, VideoProfile::h264High10, 4096, 2304, 51, 10}});
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    video.createStream();
+    for (unsigned id = 0; id < 2; ++id)
+        require(video.device.processQueue(1, 940 + id, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+                "event not deferred");
+    video.setOutputFormat(VIRTIO_VIDEO_FORMAT_NV12, 64, 64);
+    video.attachEncodedInput(1);
+    video.attachEncodedInput(2);
+    /* The packet that declares the size comes back only once the client has
+     * set its capture queue up for that size: v4l2_codec2 drains only when
+     * every packet is back, and a drain it starts before the source change
+     * ends at once without the picture. */
+    const auto declaring = video.next;
+    require(video.command(video.queueCommand(input, 1, 5, 0)).action == VhostUserQueueAction::defer,
+            "the packet that declared the size came back before the capture queue was set up for it");
+    VhostUserQueueCompletion completion;
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == 940 &&
+            load<virtio_video_event>(completion.response).event_type == VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED,
+            "size not announced");
+    const auto picture = [&] {
+        require(load<virtio_video_resource_queue_resp>(video.command(video.queueCommand(input, 2, 5, 77)).response).flags == 0,
+                "picture packet failed");
+    };
+    if (pictureFirst) picture();
+    video.ok(virtio_video_queue_clear{{VIRTIO_VIDEO_CMD_QUEUE_CLEAR, 21}, output, {}});
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == declaring &&
+            load<virtio_video_resource_queue_resp>(completion.response).flags == 0,
+            "stopping the capture queue did not give back the packet that declared the size");
+    video.setOutputFormat(VIRTIO_VIDEO_FORMAT_P010, 128, 128);
+    require(load<virtio_video_cmd_hdr>(video.attach(output, 3, {{{4 * page, 2 * 128 * 128 + 4 * 64 * 64, {}}}}).response).type
+            == VIRTIO_VIDEO_RESP_OK_NODATA, "capture attach failed");
+    if (!pictureFirst) picture();
+    const auto captureRequest = video.next;
+    require(video.command(video.queueCommand(output, 3)).action == VhostUserQueueAction::defer, "capture was not deferred");
+    video.ok(virtio_video_stream_drain{{VIRTIO_VIDEO_CMD_STREAM_DRAIN, 21}});
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == captureRequest,
+            "missing capture completion");
+    const auto result = load<virtio_video_resource_queue_resp>(completion.response);
+    require(result.flags == 0 && result.timestamp == 77, "the picture did not reach the P010 client");
+    require(!video.device.takeQueueCompletion(completion), "the size was announced again");
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 21}});
+    video.device.reset();
+}
+
+/* v4l2_codec2 also queues buffers for its provisional format and starts the
+ * capture queue before the size is known. A picture decoded after the size is
+ * announced, while those buffers are still queued, waits for the buffers the
+ * client sets up for the real size, even when the client drains before it
+ * handles the source change. */
+void provisionalCaptureBuffers(bool drainFirst)
+{
+    VideoFixture video(21, 32 * page, [](auto) { return std::make_unique<NarrowingDecoder>(); },
+        {{VideoCodec::h264, VideoProfile::h264High10, 4096, 2304, 51, 10}});
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    video.createStream();
+    require(video.device.processQueue(1, 940, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+            "event not deferred");
+    video.setOutputFormat(VIRTIO_VIDEO_FORMAT_NV12, 64, 64);
+    video.attachEncodedInput(1);
+    video.attachEncodedInput(2);
+    for (unsigned i = 0; i < 2; ++i) {
+        const std::uint64_t base = (20 + 2 * i) * page;
+        require(load<virtio_video_cmd_hdr>(video.attach(output, 5 + i, {{{base, 64 * 64, {}}}, {{base + 64 * 64, 64 * 32, {}}}}).response).type
+                == VIRTIO_VIDEO_RESP_OK_NODATA, "provisional capture attach failed");
+        require(video.command(video.queueCommand(output, 5 + i)).action == VhostUserQueueAction::defer,
+                "provisional capture was not deferred");
+    }
+    const auto declaring = video.next;
+    require(video.command(video.queueCommand(input, 1, 5, 0)).action == VhostUserQueueAction::defer,
+            "the packet that declared the size came back before the capture queue was set up for it");
+    require(load<virtio_video_resource_queue_resp>(video.command(video.queueCommand(input, 2, 5, 77)).response).flags == 0,
+            "picture packet failed");
+    if (drainFirst) video.ok(virtio_video_stream_drain{{VIRTIO_VIDEO_CMD_STREAM_DRAIN, 21}});
+    VhostUserQueueCompletion completion;
+    bool announced = false, declared = false;
+    const auto noPictureYet = [&] {
+        while (video.device.takeQueueCompletion(completion)) {
+            if (completion.requestId == 940) { announced = true; continue; }
+            if (completion.requestId == declaring) { declared = true; continue; }
+            require(load<virtio_video_resource_queue_resp>(completion.response).timestamp != 77,
+                    "the picture went into a buffer set up for the provisional size");
+        }
+    };
+    noPictureYet();
+    require(announced, "size not announced");
+    /* A drain gives the packet back, since a client that drains is not waiting
+     * for it. */
+    require(declared == drainFirst, "the packet that declared the size came back before the client stopped its capture queue");
+    video.ok(virtio_video_queue_clear{{VIRTIO_VIDEO_CMD_QUEUE_CLEAR, 21}, output, {}});
+    noPictureYet();
+    require(declared, "stopping the capture queue did not give back the packet that declared the size");
+    video.setOutputFormat(VIRTIO_VIDEO_FORMAT_P010, 128, 128);
+    require(load<virtio_video_cmd_hdr>(video.attach(output, 3, {{{4 * page, 2 * 128 * 128 + 4 * 64 * 64, {}}}}).response).type
+            == VIRTIO_VIDEO_RESP_OK_NODATA, "capture attach failed");
+    const auto captureRequest = video.next;
+    require(video.command(video.queueCommand(output, 3)).action == VhostUserQueueAction::defer, "capture was not deferred");
+    if (!drainFirst) video.ok(virtio_video_stream_drain{{VIRTIO_VIDEO_CMD_STREAM_DRAIN, 21}});
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == captureRequest,
+            "missing capture completion");
+    const auto result = load<virtio_video_resource_queue_resp>(completion.response);
+    require(result.flags == 0 && result.timestamp == 77, "the picture did not reach the buffers set up for its size");
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 21}});
+    video.device.reset();
+}
 }
 int main()
 {
@@ -1529,6 +1677,10 @@ int main()
         seekKeepsTheFormat();
         for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_P010})
             tenBitStreamToNv12(format);
+        provisionalCaptureFormat(false);
+        provisionalCaptureFormat(true);
+        provisionalCaptureBuffers(false);
+        provisionalCaptureBuffers(true);
         for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420, VIRTIO_VIDEO_FORMAT_P010})
             exercise(format);
         activityLog();

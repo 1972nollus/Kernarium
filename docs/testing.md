@@ -271,8 +271,13 @@ with the GPU, where capture buffers are host-visible blobs and an imported
 dma-buf takes another path in the driver. A stream that changes its picture size
 twice is decoded the way Android's V4L2 codec handles it, including a drain asked
 for while the last change is still on its way: every picture of a size returns,
-then the LAST buffer, before the source change is visible. Android uses its own
-4 KiB guest and deployment workflow.
+then the LAST buffer, before the source change is visible. Every profile is also
+started in v4l2_codec2's order, with a provisional 64 x 64 capture format (and
+queued buffers for it) before the size is known, the parameter sets and the
+picture as two coded buffers, and the capture format chosen only after the
+source change: the buffer that declared the size is held until then, nothing
+lands in the provisional buffers, and the picture arrives whole before the LAST
+buffer. Android uses its own 4 KiB guest and deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py`, with `--gpu`
 for the GPU case, directly with an x86-64 probe and an x86-64 rootfs, the way
