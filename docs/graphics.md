@@ -205,6 +205,14 @@ only the CPU, a codec or a camera touches: the renderer refuses a native NV12
 create as an invalid parameter and every later command on that resource as an
 invalid resource id.
 
+For the same reason a view of a later plane selects nothing on the host. A
+guest that imports the second plane of an image as its own resource sends the
+plane number where a sampler view carries its layers, and the renderer reads it
+as the whole texture, so a planar picture whose planes are separate buffers
+samples correctly. A picture packed into one buffer, with its second plane at an
+offset, does not: Virgl carries no offset for an imported plane, and a texture of
+32-bit texels cannot be viewed as 8-bit pairs.
+
 A single-plane buffer's rows are padded to the first whole number of pixels
 that makes them a multiple of 16 bytes (a 642-pixel RGBA row is 2576 bytes and
 the buffer's stride 644 pixels), because the host imports a buffer into Vulkan
