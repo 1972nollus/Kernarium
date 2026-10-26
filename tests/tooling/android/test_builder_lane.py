@@ -434,6 +434,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_lockscreen_default: bool = False,
                           discrete_ops_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
+                          cas_hal_variant: str | None = None,
                           vendor_property_variant: str | None = None,
                           wide_fdroid_permissions: bool = False,
                           mesa_gles_alignment: int = 16384,
@@ -1085,6 +1086,37 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "VENDOR/apex/com.android.hardware.thermal.apex",
                         synthetic_apex("ext4", thermal_content),
                     )
+                # The default CAS HAL, packaged the same way, and the ClearKey CAS plugin it loads
+                # from /vendor/lib*/mediacas for both ISAs.
+                cas_binary = b"android.hardware.cas-service.example"
+                cas_content = b"\x00" * 8
+                if cas_hal_variant != "no-binary":
+                    cas_content += bytes([len(cas_binary), 1]) + cas_binary
+                if cas_hal_variant != "no-fragment":
+                    cas_content += (
+                        b'<manifest version="1.0" type="device"><hal format="aidl">'
+                        b"<name>android.hardware.cas</name>"
+                        b"<fqname>IMediaCasService/default</fqname></hal></manifest>"
+                    )
+                if cas_hal_variant != "no-service":
+                    cas_content += (
+                        b"service vendor.cas-default "
+                        b"/apex/com.android.hardware.cas/bin/hw/" + cas_binary + b"\n"
+                    )
+                if cas_hal_variant != "missing-apex":
+                    archive.writestr(
+                        "VENDOR/apex/com.android.hardware.cas.apex",
+                        synthetic_apex("ext4", cas_content),
+                    )
+                if cas_hal_variant != "no-plugin64":
+                    archive.writestr(
+                        "VENDOR/lib64/mediacas/libclearkeycasplugin.so",
+                        synthetic_aarch64_elf(alignment),
+                    )
+                if cas_hal_variant != "no-plugin32":
+                    archive.writestr(
+                        "VENDOR/lib/mediacas/libclearkeycasplugin.so", synthetic_arm_elf()
+                    )
                 if system_other:
                     archive.writestr(
                         "SYSTEM_OTHER/app/Fixture/Fixture.apk", b"apk"
@@ -1238,6 +1270,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("thermal-apex-without-binary", {"thermal_hal_variant": "no-binary"}),
             ("thermal-apex-without-fragment", {"thermal_hal_variant": "no-fragment"}),
             ("thermal-apex-without-service", {"thermal_hal_variant": "no-service"}),
+            ("missing-cas-apex", {"cas_hal_variant": "missing-apex"}),
+            ("cas-apex-without-binary", {"cas_hal_variant": "no-binary"}),
+            ("cas-apex-without-fragment", {"cas_hal_variant": "no-fragment"}),
+            ("cas-apex-without-service", {"cas_hal_variant": "no-service"}),
+            ("missing-cas-plugin-64", {"cas_hal_variant": "no-plugin64"}),
+            ("missing-cas-plugin-32", {"cas_hal_variant": "no-plugin32"}),
             ("lineage-discrete-ops-list-only", {"discrete_ops_variant": "lineage-list-only"}),
             ("short-discrete-ops-list", {"discrete_ops_variant": "short-device-list"}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
@@ -1350,6 +1388,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not declare IThermal/default in a VINTF fragment"),
             ("thermal-apex-without-service-cause", {"thermal_hal_variant": "no-service"},
              "does not start the vendor.thermal-example service"),
+            ("missing-cas-apex-cause", {"cas_hal_variant": "missing-apex"},
+             "com.android.hardware.cas.apex is missing: the product needs the default CAS HAL"),
+            ("cas-apex-without-binary-cause", {"cas_hal_variant": "no-binary"},
+             "does not hold the service binary bin/hw/android.hardware.cas-service.example"),
+            ("cas-apex-without-fragment-cause", {"cas_hal_variant": "no-fragment"},
+             "does not declare IMediaCasService/default in a VINTF fragment"),
+            ("cas-apex-without-service-cause", {"cas_hal_variant": "no-service"},
+             "does not start the vendor.cas-default service"),
+            ("missing-cas-plugin-64-cause", {"cas_hal_variant": "no-plugin64"},
+             "the ClearKey CAS plugin is missing: VENDOR/lib64/mediacas/libclearkeycasplugin.so"),
+            ("missing-cas-plugin-32-cause", {"cas_hal_variant": "no-plugin32"},
+             "the ClearKey CAS plugin is missing: VENDOR/lib/mediacas/libclearkeycasplugin.so"),
             ("missing-discrete-ops-overlay-cause", {"discrete_ops_variant": "missing-overlay"},
              "SimpleDeviceConfig__lineage_darwin__auto_generated_rro_product.apk is missing"),
             ("lineage-discrete-ops-list-only-cause", {"discrete_ops_variant": "lineage-list-only"},
@@ -1514,7 +1564,11 @@ def verify_package_assertions(android_root: Path) -> None:
     present = set(re.findall(r'\[\[ "\$PRODUCT_PACKAGES" == \*" (\S+) "\* \]\]', script))
     for package in sorted(present & removed):
         fail(f"build-aosp.sh asserts {package} is present, but the product removes it")
-    for package in ("com.android.hardware.thermal",):
+    for package in (
+        "com.android.hardware.thermal",
+        "com.android.hardware.cas",
+        "libclearkeycasplugin",
+    ):
         if package not in present:
             fail(f"build-aosp.sh does not assert that {package} is present")
 

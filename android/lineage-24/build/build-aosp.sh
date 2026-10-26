@@ -404,6 +404,10 @@ fi
 	fail "the suspend blocker that holds the guest awake for an adb host is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.thermal "* ]] ||
 	fail "the example thermal HAL that the thermal manager needs is absent"
+[[ "$PRODUCT_PACKAGES" == *" com.android.hardware.cas "* ]] ||
+	fail "the default CAS HAL that MediaCas needs is absent"
+[[ "$PRODUCT_PACKAGES" == *" libclearkeycasplugin "* ]] ||
+	fail "the ClearKey CAS plugin that the CAS HAL loads is absent"
 PRODUCT_PACKAGES_EXCLUDE=" $(get_build_var PRODUCT_PACKAGES_EXCLUDE) "
 for package in \
 	BasicDreams \
@@ -422,7 +426,6 @@ for package in \
 	TelephonyProvider \
 	com.android.compos \
 	com.android.hardware.authsecret \
-	com.android.hardware.cas \
 	com.android.hardware.graphics.composer.ranchu \
 	android.hardware.health-service.cuttlefish_recovery \
 	com.android.hardware.wifi \

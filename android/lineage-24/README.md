@@ -574,9 +574,9 @@ Payload reduction is done through product configuration and regenerated AOSP
 patches, never by deleting files from a completed image. The product omits the
 AuthSecret, reboot-escrow, AuthGraph, Secretkeeper, remote Identity Credential,
 confirmation-UI, consumer-IR, USB, tether-offload, input-processor,
-conditional-access, netlink-interceptor, and inactive Ranchu-composer HAL
-APEXes. None has corresponding Darwin UML hardware. The active DRM composer,
-power and memtrack integration, ClearKey DRM, dumpstate diagnostics, software
+netlink-interceptor, and inactive Ranchu-composer HAL APEXes. None has
+corresponding Darwin UML hardware. The active DRM composer, power and memtrack
+integration, ClearKey DRM and CAS, dumpstate diagnostics, software
 KeyMint/gatekeeper, and Credential Manager remain.
 
 The thermal HAL APEX was first removed with these, and is installed again. It
@@ -588,6 +588,18 @@ without one. The module carries its own SELinux file contexts, and the platform
 policy already has the `hal_thermal_default` domain and the service context.
 The target-files verifier requires the vendor APEX to hold the service, the
 VINTF fragment that declares `IThermal/default` and the init script.
+
+The conditional-access (CAS) HAL APEX was removed with that group too and is
+installed again. It is AOSP's default CAS service
+(`com.android.hardware.cas`), which loads the ClearKey CAS plugin
+(`libclearkeycasplugin`, installed for both ISAs under `/vendor/lib*/mediacas`)
+and needs no device. Without it `MediaCas` has no `IMediaCasService`: CTS
+`MediaCasTest` throws `UnsupportedCasException` for the ClearKey CAS system
+id 63192. The vendor policy already has the `hal_cas_default` domain and the
+platform has the service context. The target-files verifier requires the vendor
+APEX to hold the service, the VINTF fragment that declares
+`IMediaCasService/default` and the init script, and the plugin in both
+`mediacas` directories.
 
 The fixed image also omits CompOS and other AVF guest payloads, legacy VNDK
 31--34 APEXes, OTA and DSU executables, the dynamic-system installer,

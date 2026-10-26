@@ -225,7 +225,6 @@ KERNARIUM_REMOVED_PACKAGES := \
     com.android.hardware.authsecret \
     com.android.hardware.biometrics.face.virtual \
     com.android.hardware.biometrics.fingerprint.virtual \
-    com.android.hardware.cas \
     com.android.hardware.graphics.composer.ranchu \
     com.android.hardware.contexthub \
     com.android.hardware.gnss \

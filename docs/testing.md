@@ -1082,8 +1082,9 @@ microphone with its feature declaration, the userdata `quota` flag, and the
 suspend blocker with the adb host-connected property it follows, the
 policy without the LineageOS grants that Android's neverallow tests refuse, and the
 discrete app-op list that keeps AOSP's default ops, the example thermal HAL
-with its manifest fragment and service, the vendor `build.prop` without the
-unreliable-present-fence property and with `ro.incremental.enable=1`) and the
+with its manifest fragment and service, the default CAS HAL with its ClearKey
+plugin, the vendor `build.prop` without the unreliable-present-fence property
+and with `ro.incremental.enable=1`) and the
 builder's assertions;
 `lineage24-first-boot-precompile` covers the
 ISA set of a package and the per-ISA artifacts and manifest;

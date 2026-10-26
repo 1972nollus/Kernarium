@@ -321,7 +321,6 @@ FORBIDDEN_STATIC_ENTRIES = {
 }
 FORBIDDEN_APEX_FILENAMES = {
     "com.android.hardware.authsecret.apex",
-    "com.android.hardware.cas.apex",
     "com.android.hardware.graphics.composer.ranchu.apex",
     "com.android.hardware.input.processor.apex",
     "com.android.hardware.net.nlinterceptor.apex",
@@ -824,48 +823,81 @@ def check_discrete_ops(
         )
 
 
-# The AOSP example thermal service, packaged as the vendor APEX that Cuttlefish installs. The
-# system_server thermal manager and CTS NativeThermalTest need a thermal HAL. Its payload holds the
-# service binary (a regular-file directory entry: name length, file type 1, name), the VINTF
-# fragment that declares IThermal/default, and the init script that starts the service.
-THERMAL_HAL_APEX = "VENDOR/apex/com.android.hardware.thermal.apex"
-THERMAL_HAL_BINARY = b"android.hardware.thermal-service.example"
-THERMAL_HAL_BINARY_ENTRY = bytes([len(THERMAL_HAL_BINARY), 1]) + THERMAL_HAL_BINARY
-THERMAL_HAL_FRAGMENT = (
-    b"<name>android.hardware.thermal</name>",
-    b"<fqname>IThermal/default</fqname>",
-)
-THERMAL_HAL_SERVICE = (
-    b"service vendor.thermal-example /apex/com.android.hardware.thermal/bin/hw/"
-    + THERMAL_HAL_BINARY
-)
+# The AOSP example HALs the product keeps, each packaged as the vendor APEX that Cuttlefish
+# installs. The APEX payload holds the service binary (a regular-file directory entry: name
+# length, file type 1, name), the VINTF fragment that declares the AIDL interface, and the init
+# script that starts the service. The init script names the binary too, so the entry is told
+# apart from that.
 APEX_PAYLOAD_READ_LIMIT = 64 << 20
+# system_server's thermal manager and CTS NativeThermalTest need a thermal HAL.
+THERMAL_HAL = {
+    "apex": "VENDOR/apex/com.android.hardware.thermal.apex",
+    "binary": b"android.hardware.thermal-service.example",
+    "fragment": (
+        b"<name>android.hardware.thermal</name>",
+        b"<fqname>IThermal/default</fqname>",
+    ),
+    "interface": "IThermal/default",
+    "service": "vendor.thermal-example",
+    "need": "a thermal HAL",
+}
+# MediaCas and CTS MediaCasTest need the default CAS HAL, which loads the ClearKey CAS plugin
+# (CAS system id 63192) from /vendor/lib*/mediacas.
+CAS_HAL = {
+    "apex": "VENDOR/apex/com.android.hardware.cas.apex",
+    "binary": b"android.hardware.cas-service.example",
+    "fragment": (
+        b"<name>android.hardware.cas</name>",
+        b"<fqname>IMediaCasService/default</fqname>",
+    ),
+    "interface": "IMediaCasService/default",
+    "service": "vendor.cas-default",
+    "need": "the default CAS HAL",
+}
+CAS_PLUGINS = (
+    "VENDOR/lib64/mediacas/libclearkeycasplugin.so",
+    "VENDOR/lib/mediacas/libclearkeycasplugin.so",
+)
+
+
+def check_example_hal(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo], hal: dict
+) -> None:
+    """The vendor APEX must hold the example service, its VINTF fragment and its init script."""
+    apex_name = hal["apex"]
+    binary = hal["binary"]
+    info = infos.get(apex_name)
+    if info is None:
+        fail(f"{apex_name} is missing: the product needs {hal['need']}")
+    try:
+        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, 16 << 20))) as apex:
+            payload_info = apex.getinfo("apex_payload.img")
+            if payload_info.file_size > APEX_PAYLOAD_READ_LIMIT:
+                fail(f"{apex_name} has an unexpectedly large payload")
+            payload = apex.read(payload_info)
+    except (KeyError, OSError, zipfile.BadZipFile) as error:
+        fail(f"cannot inspect {apex_name}: {error}")
+    if bytes([len(binary), 1]) + binary not in payload:
+        fail(f"{apex_name} does not hold the service binary bin/hw/{binary.decode()}")
+    if not all(marker in payload for marker in hal["fragment"]):
+        fail(f"{apex_name} does not declare {hal['interface']} in a VINTF fragment")
+    apex_dir = PurePosixPath(apex_name).stem
+    service = f"service {hal['service']} /apex/{apex_dir}/bin/hw/".encode() + binary
+    if service not in payload:
+        fail(f"{apex_name} does not start the {hal['service']} service")
 
 
 def check_thermal_hal(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
-    """The vendor APEX must hold the thermal service, its VINTF fragment and its init script."""
-    info = infos.get(THERMAL_HAL_APEX)
-    if info is None:
-        fail(f"{THERMAL_HAL_APEX} is missing: the product needs a thermal HAL")
-    try:
-        with zipfile.ZipFile(io.BytesIO(read_small(archive, info, 16 << 20))) as apex:
-            payload_info = apex.getinfo("apex_payload.img")
-            if payload_info.file_size > APEX_PAYLOAD_READ_LIMIT:
-                fail(f"{THERMAL_HAL_APEX} has an unexpectedly large payload")
-            payload = apex.read(payload_info)
-    except (KeyError, OSError, zipfile.BadZipFile) as error:
-        fail(f"cannot inspect {THERMAL_HAL_APEX}: {error}")
-    if THERMAL_HAL_BINARY_ENTRY not in payload:
-        fail(
-            f"{THERMAL_HAL_APEX} does not hold the service binary "
-            f"bin/hw/{THERMAL_HAL_BINARY.decode()}"
-        )
-    if not all(marker in payload for marker in THERMAL_HAL_FRAGMENT):
-        fail(f"{THERMAL_HAL_APEX} does not declare IThermal/default in a VINTF fragment")
-    if THERMAL_HAL_SERVICE not in payload:
-        fail(f"{THERMAL_HAL_APEX} does not start the vendor.thermal-example service")
+    check_example_hal(archive, infos, THERMAL_HAL)
+
+
+def check_cas_hal(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    check_example_hal(archive, infos, CAS_HAL)
+    for plugin in CAS_PLUGINS:
+        if plugin not in infos:
+            fail(f"the ClearKey CAS plugin is missing: {plugin}")
 
 
 def check_hardware_features(
@@ -1673,6 +1705,7 @@ def main() -> None:
         check_fdroid(archive, infos)
         check_discrete_ops(archive, infos)
         check_thermal_hal(archive, infos)
+        check_cas_hal(archive, infos)
         check_audio_policy(archive, infos)
         check_multilib_properties(archive, infos)
         check_mesa_gles_stack(archive, infos)
