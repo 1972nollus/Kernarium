@@ -342,7 +342,10 @@ that; the contract is in
 takes the presented layer on the scanout as a device composition. The product
 ships `kernarium_vk_present`, which owns a layer, wraps it through
 `VK_KHR_android_surface` and presents a swapchain, as the pass-or-fail check of
-that path.
+that path. `kernarium_vk_ahb_import` is the check of the import side: it fills
+hardware buffers of several formats and widths through the CPU, imports each
+into Vulkan and compares what the driver reads back, which fails for a row
+pitch the driver cannot import or the renderer lays out differently.
 
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:

@@ -378,6 +378,13 @@ PRODUCT_COPY_FILES += \
 PRODUCT_PACKAGES += kernarium_vk_present
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_present
 
+# A Vulkan hardware-buffer import check: it fills gralloc buffers of several
+# formats and widths through the CPU, imports each into Vulkan and reads it
+# back, so a row pitch the driver cannot import or the renderer misreads fails
+# the run.
+PRODUCT_PACKAGES += kernarium_vk_ahb_import
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_ahb_import
+
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 
 # ADB is available over the inherited TCP port even though this machine has no
