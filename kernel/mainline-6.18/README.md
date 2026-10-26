@@ -669,8 +669,10 @@ The overlay holds only what differs from the Linux product:
 - Android's own facilities: Binder and binderfs, the DMA-BUF heaps and udmabuf,
   bootconfig, the inline-encryption fallback with fscrypt and HCTR2, PF_KEY for
   the network statistics path, socket destruction for netd, further xtables
-  matches and targets, the gpu_mem tracepoints, the Kernarium battery, hvc
-  for the single-port Virtio console, and `CONFIG_PM_WAKELOCKS`. Android's
+  matches and targets, IPsec transforms, traffic control for BPF, the
+  gpu_mem tracepoints, the Kernarium battery, hvc for the single-port Virtio
+  console, uhid, hidraw and the PlayStation HID driver, and
+  `CONFIG_PM_WAKELOCKS`. Android's
   SystemSuspend service ends a suspend that is under way by writing
   `userspace-abort` to `/sys/power/wake_lock`, so without the file a wakelock
   taken while the system is entering a suspend cannot stop it. The Linux
@@ -798,6 +800,50 @@ The product leaves out these ACK features:
   starts. The product's boot command line and init script keep grace periods
   expedited until boot completes instead (see the
   [LineageOS README](../../android/lineage-24/README.md#android-product)).
+
+### Android base configuration
+
+Android 17's framework compatibility matrices list no kernel options for 6.18
+(`kernel/configs/c/android-6.18` and `d/android-6.18` are empty, and the only
+requirement is the LTS floor), so the newest option list is the 6.12 one,
+`kernel/configs/b/android-6.12/android-base.config` with its conditional XML,
+which GKI's `gki_defconfig` follows. The overlay carries every option of that
+list that arch/um can provide. The product leaves the rest out, each for a
+reason that holds for the guest:
+
+- Modules (`MODULES`, `MODULE_UNLOAD`, `MODVERSIONS`, `STRICT_MODULE_RWX`):
+  the kernel is native host code in one signed executable, and iOS loads no
+  modules.
+- Hardware the guest does not have: USB and the gadget stack (`USB`,
+  `USB_GADGET`, `USB_CONFIGFS*`; adb reaches the guest over the
+  host-forwarded network port), the controller drivers that need USB
+  (`HID_SONY`, `JOYSTICK_XPAD`), `INPUT_JOYSTICK` (which Kconfig denies to UML
+  altogether), cpufreq (`CPU_FREQ`, `CPU_FREQ_STAT`), and Device Tree or ACPI
+  (the conditional XML asks for one of them; devices attach as Virtio
+  devices named on the command line).
+- Facilities arch/um does not provide: `PREEMPT` (`ARCH_NO_PREEMPT`),
+  `BPF_JIT` and `BPF_JIT_ALWAYS_ON` (no eBPF JIT, and the CPU engine alone
+  owns executable memory, so BPF programs run in the interpreter),
+  `CFI_CLANG`, `SHADOW_CALL_STACK` (which also needs x18, a register the
+  Apple arm64 ABI reserves), `KFENCE`, `HAVE_MOVE_PMD` and `HAVE_MOVE_PUD`
+  (the guest's page tables are software), and `STAGING` (the only staging
+  driver Android used is ashmem).
+- ACK-only features, listed above: `ASHMEM`, `DM_DEFAULT_KEY`,
+  `UID_SYS_STATS`, `CPU_FREQ_TIMES`.
+- The hardening documented under Kernel self-protection: PAN, KPTI and KASLR.
+- The AArch32 compatibility options of the arm64 port (`ARMV8_DEPRECATED`,
+  `SWP_EMULATION`, `CP15_BARRIER_EMULATION`, `SETEND_EMULATION`) do not exist
+  on arch/um. SWP and CP15 barriers work (`abi.swp` and `abi.cp15_barrier`);
+  SETEND decodes as unallocated (see the AArch32 documentation).
+- Options that 6.18 no longer has: `SCHED_DEBUG` and `NF_CT_PROTO_DCCP`.
+
+Two items of the list cost nothing to meet. `CONFIG_NO_HZ` is the legacy symbol
+for dynticks idle, which the shared policy already runs as `NO_HZ_IDLE`, and
+`CONFIG_PROFILING` is the hook that profilers attach to.
+
+GKI also turns on hardening and memory options that no list requires
+(`INIT_ON_ALLOC_DEFAULT_ON`, `FORTIFY_SOURCE`, `SLAB_FREELIST_HARDENED`,
+`LRU_GEN` and others); the product does not carry them.
 
 The iOS runtime framework for this product keeps its earlier name,
 `KRuntime_ACK_6_18_4K`, though it now embeds this line's Android artifact.

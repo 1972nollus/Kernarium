@@ -351,12 +351,11 @@ CONFIG_IP_NF_IPTABLES_LEGACY=y
 CONFIG_IP_NF_FILTER=y
 CONFIG_IP_NF_TARGET_REJECT=y
 CONFIG_IP_NF_NAT=y
-# The IPv6 half of the same policy, so a dual-stack guest firewall and a
-# container runtime with IPv6 enabled behave like the IPv4 path.
+# The IPv6 half of the same policy, so a dual-stack guest firewall behaves like
+# the IPv4 path. IPv6 NAT is the Linux product's alone (see mainline.fragment).
 CONFIG_IP6_NF_IPTABLES=y
 CONFIG_IP6_NF_IPTABLES_LEGACY=y
 CONFIG_IP6_NF_FILTER=y
-CONFIG_IP6_NF_NAT=y
 CONFIG_BRIDGE=y
 CONFIG_BRIDGE_NETFILTER=y
 

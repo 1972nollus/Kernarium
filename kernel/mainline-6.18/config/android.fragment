@@ -147,6 +147,63 @@ CONFIG_IP_NF_TARGET_MASQUERADE=y
 CONFIG_IP_NF_TARGET_REDIRECT=y
 CONFIG_IP6_NF_RAW=y
 CONFIG_IP6_NF_TARGET_REJECT=y
+# The rest of Android's base configuration for networking
+# (kernel/configs/b/android-6.12/android-base.config, the newest list, since
+# the android-6.18 one is empty): netd's rules, the platform VPN's IPsec
+# transforms and the traffic control the Tethering module and clatd load their
+# BPF programs into.
+CONFIG_NETFILTER_XT_MATCH_CONNLIMIT=y
+CONFIG_NETFILTER_XT_MATCH_HELPER=y
+CONFIG_NETFILTER_XT_MATCH_MAC=y
+CONFIG_NETFILTER_XT_MATCH_QUOTA=y
+CONFIG_NETFILTER_XT_TARGET_CLASSIFY=y
+CONFIG_NETFILTER_XT_TARGET_CONNSECMARK=y
+CONFIG_NETFILTER_XT_TARGET_TPROXY=y
+CONFIG_NETFILTER_XT_TARGET_TRACE=y
+CONFIG_NF_CONNTRACK_AMANDA=y
+CONFIG_NF_CONNTRACK_FTP=y
+CONFIG_NF_CONNTRACK_H323=y
+CONFIG_NF_CONNTRACK_IRC=y
+CONFIG_NF_CONNTRACK_NETBIOS_NS=y
+CONFIG_NF_CONNTRACK_PPTP=y
+CONFIG_NF_CONNTRACK_SANE=y
+CONFIG_NF_CONNTRACK_SECMARK=y
+CONFIG_NF_CONNTRACK_TFTP=y
+CONFIG_IP_NF_ARPTABLES=y
+CONFIG_IP_NF_ARPFILTER=y
+CONFIG_IP_NF_ARP_MANGLE=y
+CONFIG_IP_NF_MATCH_ECN=y
+CONFIG_IP_NF_MATCH_RPFILTER=y
+CONFIG_IP_NF_MATCH_TTL=y
+CONFIG_IP_NF_TARGET_NETMAP=y
+CONFIG_IP6_NF_MATCH_RPFILTER=y
+CONFIG_INET_ESP=y
+CONFIG_INET6_ESP=y
+CONFIG_INET6_IPCOMP=y
+CONFIG_IPV6_MIP6=y
+CONFIG_IPV6_VTI=y
+CONFIG_NET_IPVTI=y
+CONFIG_NET_IPGRE_DEMUX=y
+CONFIG_XFRM_MIGRATE=y
+CONFIG_IPV6_OPTIMISTIC_DAD=y
+CONFIG_IPV6_ROUTE_INFO=y
+CONFIG_CRYPTO_NULL=y
+CONFIG_CRYPTO_SHA512=y
+CONFIG_CRYPTO_XCBC=y
+CONFIG_NET_SCH_INGRESS=y
+CONFIG_NET_SCH_TBF=y
+CONFIG_NET_CLS_ACT=y
+CONFIG_NET_CLS_BPF=y
+CONFIG_NET_CLS_MATCHALL=y
+CONFIG_NET_CLS_U32=y
+CONFIG_NET_EMATCH=y
+CONFIG_NET_EMATCH_U32=y
+CONFIG_NET_ACT_BPF=y
+CONFIG_NET_ACT_MIRRED=y
+CONFIG_NET_ACT_POLICE=y
+CONFIG_IFB=y
+# The base configuration leaves IPv6 NAT out.
+# CONFIG_IP6_NF_NAT is not set
 
 # --- Android security policy ------------------------------------------------
 # Android owns the SELinux policy and requires audit syscall records. Smack is
@@ -175,6 +232,16 @@ CONFIG_DRM_VIRTIO_GPU_STANDARD_FORMATS=y
 # reports mouse buttons, so the Darwin display is presented as a pure direct
 # touchscreen. The desktop product keeps the tablet's buttons and wheel.
 CONFIG_UML_VNC_INPUT_TOUCHSCREEN=y
+# Android's Bluetooth stack and the CTS input tests create HID devices through
+# /dev/uhid, and hidraw gives apps and the HAL the raw reports. Both are in the
+# Android base configuration.
+CONFIG_HIDRAW=y
+CONFIG_UHID=y
+CONFIG_NEW_LEDS=y
+CONFIG_LEDS_CLASS=y
+CONFIG_LEDS_CLASS_MULTICOLOR=y
+CONFIG_HID_PLAYSTATION=y
+CONFIG_PLAYSTATION_FF=y
 
 # --- Incremental install ----------------------------------------------------
 CONFIG_INCREMENTAL_FS=y
@@ -186,6 +253,15 @@ CONFIG_INCREMENTAL_FS=y
 # a program as root. The CTS requires it.
 CONFIG_STATIC_USERMODEHELPER=y
 CONFIG_STATIC_USERMODEHELPER_PATH=""
+
+# The base configuration names the legacy dynticks symbol and the profiling
+# hooks. The product already runs NO_HZ_IDLE from the shared policy.
+CONFIG_NO_HZ=y
+CONFIG_PROFILING=y
+# The base configuration leaves out the handle system calls and the firmware
+# cache; GKI follows it.
+# CONFIG_FHANDLE is not set
+# CONFIG_FW_CACHE is not set
 
 # --- Suspend ----------------------------------------------------------------
 # Android suspends itself whenever its wakelock count reaches zero. Its

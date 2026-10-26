@@ -25,6 +25,11 @@ CONFIG_NFS_V4_1=y
 CONFIG_NFS_V4_2=y
 CONFIG_IP_SCTP=y
 
+# A container runtime with IPv6 enabled translates addresses on the IPv6 path
+# as it does on the IPv4 one. Android's base configuration leaves IPv6 NAT out
+# (see android.fragment).
+CONFIG_IP6_NF_NAT=y
+
 # Linux 6.17's auxiliary POSIX clocks, which LTP's timer_create02 covers. The
 # Android product leaves them off, as GKI does (see android.fragment).
 CONFIG_POSIX_AUX_CLOCKS=y
