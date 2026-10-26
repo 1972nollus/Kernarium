@@ -677,8 +677,10 @@ uml_add_guest_integration_test(
 # SysV IPC, the NFS client and SCTP, no RDS and no wakelock interface, and
 # runs the helper a piped core_pattern names; every guest has IPv4 multicast,
 # no listener on RDS-over-TCP's port, and the strong stack protector and
-# hardened usercopy. An Android guest, which runs the probe by hand, has a
-# static usermode helper that starts nothing.
+# hardened usercopy. A Linux guest has no Incremental file system. An Android
+# guest, which runs the probe by hand, has a static usermode helper that starts
+# nothing and an Incremental file system that mounts, serves a filled block and
+# times out on a missing one.
 uml_add_guest_integration_test(
     NAME guest-kernel-config
     SCRIPT support/run_guest_probe.py

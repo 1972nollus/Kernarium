@@ -176,6 +176,9 @@ CONFIG_DRM_VIRTIO_GPU_STANDARD_FORMATS=y
 # touchscreen. The desktop product keeps the tablet's buttons and wheel.
 CONFIG_UML_VNC_INPUT_TOUCHSCREEN=y
 
+# --- Incremental install ----------------------------------------------------
+CONFIG_INCREMENTAL_FS=y
+
 # --- Kernel self-protection -------------------------------------------------
 # Android runs no usermode helper from the kernel. With an empty path every
 # call_usermodehelper() returns without starting anything, so a piped

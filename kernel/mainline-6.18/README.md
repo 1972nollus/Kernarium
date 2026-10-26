@@ -21,7 +21,7 @@ The line builds two products from one tree. The Linux product is the desktop
 kernel, with its arm64 kernel and the x86_64 userspace slice. The
 [Android product](#android-product) is the arm64 kernel of the LineageOS 24
 (Android 17) guest. It differs from the Linux product only in its configuration
-overlay: both build the same tree, including nine overlay topics that matter
+overlay: both build the same tree, including ten overlay topics that matter
 only to Android. Every guest page is 4 KiB. The Darwin host's page is 16 KiB,
 which the congruent-slot, aperture and linker rules below account for.
 
@@ -706,7 +706,7 @@ IP autoconfiguration. Recovery independently assigns its fixed local endpoint
 for the host-forwarded ADB contract; external recovery routing is not a
 product requirement.
 
-Nine topics in this line's patch overlay change behaviour only when the Android
+Ten topics in this line's patch overlay change behaviour only when the Android
 overlay switches them on, or only under Android's SELinux policy. Each stays
 out of the shared series because it depends on the guest OS:
 
@@ -762,11 +762,25 @@ out of the shared series because it depends on the guest OS:
   sends the uevents that report an interface going idle or active again.
   Upstream refuses the argument, so the Linux product keeps its `IDLETIMER`
   as is.
+- `CONFIG_INCREMENTAL_FS` is the Incremental file system (`fs/incfs`) of the
+  Android common kernel: a read-only filesystem whose files fill in block by
+  block while an app installs, so that the app can start before its download
+  ends. Android's package manager is its only user. system_server's
+  IncrementalService mounts it under `/data/incremental`, and advertises
+  `android.software.incremental_delivery` only when `/proc/filesystems` lists
+  `incremental-fs` and `/sys/fs/incremental-fs/features` exists. Upstream
+  Linux has no such filesystem, so the Linux product leaves it out. The
+  import is ACK's code at its android17-6.18 revision with two changes: it no
+  longer calls `SetPageError()`, which 6.18 removed, and `notify_unlink()` locks
+  the root directory when the file it names was just completed. `FS_VERITY`
+  stays built in because the filesystem's own verity support needs it, and the
+  filesystem selects `DECOMPRESS_LZ4`, `DECOMPRESS_ZSTD` and `CRYPTO_LIB_SHA256`
+  for its compressed blocks and hash trees.
 
-The cgroup, FUSE, `quota2` and `IDLETIMER` topics are backports from the
-Android common kernel.
+The cgroup, FUSE, `quota2`, `IDLETIMER` and Incremental file system topics come
+from the Android common kernel.
 
-The product carries none of ACK's own features, and does without them:
+The product leaves out these ACK features:
 
 - `/dev/ashmem` and its `ASHMEM_*` ioctls on memfds. The product sets
   `sys.use_memfd`, so libcutils' `ashmem_create_region()` creates a memfd;

@@ -8,26 +8,31 @@
 //   linux:   SysV IPC works, the NFS client and SCTP are present, a piped
 //            core_pattern runs its helper, and /sys/power has no wake_lock
 //   android: no SysV IPC (ENOSYS, no /proc/sysvipc), no NFS client, no SCTP,
-//            /sys/power/wake_lock takes and releases a wakelock, and the
-//            static usermode helper runs no piped core_pattern helper
+//            /sys/power/wake_lock takes and releases a wakelock, the
+//            static usermode helper runs no piped core_pattern helper, and
+//            the Incremental file system mounts, serves a filled block and
+//            fails a read of a missing block (the Linux guest has none)
 // Prints one line per check. The exit status is the failure count.
 //
 // The probe is also the usermode helper it tests: "kernel_config_probe --umh
 // MARKER" drains its standard input and creates MARKER.
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <ftw.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/ipc.h>
+#include <sys/mount.h>
 #include <sys/msg.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/sem.h>
 #include <sys/shm.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -414,6 +419,183 @@ void check_hardening_config(bool android)
 	       protector && usercopy && (android ? helper && empty_path : !helper), detail);
 }
 
+// The Incremental file system of the Android common kernel, whose only user is
+// Android's package manager. The interface below is the subset of
+// <linux/incrementalfs.h> the check needs; the Linux guest's headers lack it.
+struct incfs_uuid {
+	unsigned char bytes[16];
+} __attribute__((aligned(8)));
+
+struct incfs_new_file_args {
+	incfs_uuid file_id;
+	unsigned long long size;
+	unsigned short mode;
+	unsigned short reserved1;
+	unsigned int reserved2;
+	unsigned long long directory_path;
+	unsigned long long file_name;
+	unsigned long long file_attr;
+	unsigned int file_attr_len;
+	unsigned int reserved4;
+	unsigned long long signature_info;
+	unsigned long long signature_size;
+	unsigned long long reserved6;
+};
+
+struct incfs_fill_block {
+	unsigned int block_index;
+	unsigned int data_len;
+	unsigned long long data;
+	unsigned char compression;
+	unsigned char flags;
+	unsigned short reserved1;
+	unsigned int reserved2;
+	unsigned long long reserved3;
+};
+
+struct incfs_fill_blocks {
+	unsigned long long count;
+	unsigned long long fill_blocks;
+};
+
+struct incfs_permit_fill {
+	unsigned int file_descriptor;
+};
+
+constexpr unsigned long incfs_ioc_create_file = _IOWR('g', 30, incfs_new_file_args);
+constexpr unsigned long incfs_ioc_fill_blocks = _IOR('g', 32, incfs_fill_blocks);
+constexpr unsigned long incfs_ioc_permit_fill = _IOW('g', 33, incfs_permit_fill);
+
+int remove_entry(const char *path, const struct stat *, int, struct FTW *)
+{
+	return remove(path);
+}
+
+void check_incfs(bool android)
+{
+	bool listed = slurp("/proc/filesystems").find("\tincremental-fs\n") != std::string::npos;
+	if (!android) {
+		report("no-incfs", !listed,
+		       std::string("incremental-fs ") + (listed ? "present" : "absent"));
+		return;
+	}
+	report("incfs-listed", listed, std::string("incremental-fs ") + (listed ? "present" : "absent"));
+	if (!listed)
+		return;
+
+	// Android's IncFs library reads these before it enables the feature.
+	std::string features;
+	bool supported = true;
+	for (const char *name : {"corefs", "v2", "zstd"}) {
+		std::string value =
+			slurp((std::string("/sys/fs/incremental-fs/features/") + name).c_str());
+		supported = supported && value == "supported\n";
+		features += std::string(features.empty() ? "" : ", ") + name + " " +
+			    (value == "supported\n" ? "supported" : "missing");
+	}
+	report("incfs-features", supported, features);
+
+	std::string root = "/data/local/tmp/kconfig-incfs-" + std::to_string(getpid());
+	std::string backing = root + "/backing";
+	std::string mount_point = root + "/mnt";
+	if (mkdir(root.c_str(), 0700) != 0 || mkdir(backing.c_str(), 0700) != 0 ||
+	    mkdir(mount_point.c_str(), 0700) != 0) {
+		report("incfs-mount", false, "cannot create " + root + ": " + errno_text(errno));
+		nftw(root.c_str(), remove_entry, 8, FTW_DEPTH | FTW_PHYS);
+		return;
+	}
+	int mounted = mount(backing.c_str(), mount_point.c_str(), "incremental-fs",
+			    MS_NOSUID | MS_NODEV | MS_NOATIME,
+			    "read_timeout_ms=1000,readahead=0,rlog_pages=0,rlog_wakeup_cnt=1");
+	report("incfs-mount", mounted == 0,
+	       mounted == 0 ? "mounted " + mount_point : errno_text(errno));
+	if (mounted != 0) {
+		nftw(root.c_str(), remove_entry, 8, FTW_DEPTH | FTW_PHYS);
+		return;
+	}
+
+	// One file of two blocks, filled with a pattern, and one of a block that
+	// is never filled.
+	int control = open((mount_point + "/.pending_reads").c_str(), O_RDONLY | O_CLOEXEC);
+	const char *filled_name = "filled";
+	const char *missing_name = "missing";
+	incfs_new_file_args filled{};
+	filled.file_id.bytes[0] = 1;
+	filled.size = 8192;
+	filled.mode = S_IFREG | 0555;
+	// No directory path puts the file in the root of the mount.
+	filled.file_name = reinterpret_cast<unsigned long long>(filled_name);
+	incfs_new_file_args missing = filled;
+	missing.file_id.bytes[0] = 2;
+	missing.size = 4096;
+	missing.file_name = reinterpret_cast<unsigned long long>(missing_name);
+	int created_filled = control >= 0 ? ioctl(control, incfs_ioc_create_file, &filled) : -1;
+	int created_filled_errno = errno;
+	int created_missing = control >= 0 ? ioctl(control, incfs_ioc_create_file, &missing) : -1;
+	report("incfs-create", created_filled == 0 && created_missing == 0,
+	       control < 0 ? "cannot open .pending_reads: " + errno_text(errno)
+			   : (created_filled == 0 && created_missing == 0
+				      ? std::string("created two files")
+				      : errno_text(created_filled != 0 ? created_filled_errno : errno)));
+
+	std::string filled_path = mount_point + "/filled";
+	int file = open(filled_path.c_str(), O_RDONLY | O_CLOEXEC);
+	char pattern[8192];
+	for (size_t i = 0; i < sizeof pattern; ++i)
+		pattern[i] = static_cast<char>((i * 7 + i / 4096) & 0xff);
+	long long filled_blocks = -1;
+	if (created_filled == 0 && file >= 0) {
+		incfs_permit_fill permit{static_cast<unsigned int>(file)};
+		incfs_fill_block blocks[2] = {};
+		for (unsigned i = 0; i < 2; ++i) {
+			blocks[i].block_index = i;
+			blocks[i].data_len = 4096;
+			blocks[i].data = reinterpret_cast<unsigned long long>(pattern + 4096 * i);
+		}
+		incfs_fill_blocks fill{2, reinterpret_cast<unsigned long long>(blocks)};
+		filled_blocks = ioctl(control, incfs_ioc_permit_fill, &permit) != 0
+					? -1
+					: ioctl(file, incfs_ioc_fill_blocks, &fill);
+	}
+	int fill_errno = errno;
+	report("incfs-fill", filled_blocks == 2,
+	       filled_blocks == 2 ? std::string("filled 2 blocks") : errno_text(fill_errno));
+
+	char readback[8192] = {};
+	ssize_t got = file >= 0 ? pread(file, readback, sizeof readback, 0) : -1;
+	int read_errno = errno;
+	report("incfs-read", got == static_cast<ssize_t>(sizeof readback) &&
+				     std::memcmp(readback, pattern, sizeof pattern) == 0,
+	       got < 0 ? errno_text(read_errno) : "read " + std::to_string(got) + " bytes");
+
+	// A block that was never sent fails the read after read_timeout_ms, and
+	// leaves the page uncached so that the next read asks again.
+	int hole = open((mount_point + "/missing").c_str(), O_RDONLY | O_CLOEXEC);
+	timeval before{};
+	timeval after{};
+	gettimeofday(&before, nullptr);
+	char block[4096];
+	ssize_t hole_got = hole >= 0 ? pread(hole, block, sizeof block, 0) : -1;
+	int hole_errno = errno;
+	gettimeofday(&after, nullptr);
+	long elapsed_ms = static_cast<long>((after.tv_sec - before.tv_sec) * 1000 +
+					    (after.tv_usec - before.tv_usec) / 1000);
+	report("incfs-timeout", hole_got < 0 && elapsed_ms < 10000,
+	       hole_got < 0 ? "read failed with " + errno_text(hole_errno) + " after " +
+				      std::to_string(elapsed_ms) + " ms"
+			    : "read returned " + std::to_string(hole_got) + " bytes");
+
+	if (hole >= 0)
+		close(hole);
+	if (file >= 0)
+		close(file);
+	if (control >= 0)
+		close(control);
+	int unmounted = umount(mount_point.c_str());
+	report("incfs-umount", unmounted == 0, unmounted == 0 ? "unmounted" : errno_text(errno));
+	nftw(root.c_str(), remove_entry, 8, FTW_DEPTH | FTW_PHYS);
+}
+
 // A piped core_pattern runs the probe itself as the helper (--umh), so the
 // result needs no shell or other file. A static usermode helper with an empty
 // path starts no helper at all, whatever core_pattern names, and the kernel
@@ -501,6 +683,7 @@ int main(int argc, char **argv)
 	check_wake_lock(android);
 	check_hardening_config(android);
 	check_usermode_helper(android);
+	check_incfs(android);
 	std::printf("%s: %d failure(s)\n", product, failures);
 	return failures;
 }
