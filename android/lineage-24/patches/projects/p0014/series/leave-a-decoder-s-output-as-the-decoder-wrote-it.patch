@@ -18,10 +18,10 @@ buffer that is also rendered into, or that the camera writes, still does.
  1 file changed, 3 insertions(+), 2 deletions(-)
 
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index 5bb26708e7d58abac59492c1911c1a398db827b0..9a61afb825022c503103c43401afbbab577a9086 100644
+index a1199f094d4d49bb37aa97db3dca8b0c8701327f..6b6d10d2e846d9fa31011aec85915433cdf6f0ef 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
-@@ -1155,11 +1155,12 @@ static int virgl_bo_invalidate(struct bo *bo, struct mapping *mapping)
+@@ -1208,11 +1208,12 @@ static int virgl_bo_invalidate(struct bo *bo, struct mapping *mapping)
  	// Invalidate is only necessary if the host writes to the buffer. The encoder and
  	// decoder flags don't differentiate between input and output buffers, but we can
  	// use the format to determine whether this buffer could be encoder/decoder output.

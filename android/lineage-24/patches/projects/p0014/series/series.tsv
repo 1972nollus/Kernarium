@@ -4,6 +4,8 @@
 patch	report-the-real-buffer-layout-on-an-upstream-virtio-gpu.patch
 patch	share-GPU-buffers-as-blob-resources.patch
 patch	create-a-YUV-buffer-over-R8-whatever-it-is-used-for.patch
+patch	transfer-a-part-of-an-emulated-planar-buffer-from-where-it-lies.patch
+patch	lay-an-emulated-YV12-buffer-out-as-Android-defines-it.patch
 patch	emulate-P010-over-an-R8-resource.patch
 patch	leave-a-decoder-s-output-as-the-decoder-wrote-it.patch
 patch	strip-scanout-from-a-P010-buffer-the-host-cannot-scan-out.patch

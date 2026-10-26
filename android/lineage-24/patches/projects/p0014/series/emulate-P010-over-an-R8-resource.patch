@@ -22,10 +22,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 18 insertions(+), 9 deletions(-)
 
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index 5300be66af74fd834fd411f3302036ee4306b783..5bb26708e7d58abac59492c1911c1a398db827b0 100644
+index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..a1199f094d4d49bb37aa97db3dca8b0c8701327f 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
-@@ -195,13 +195,16 @@ static void virgl_get_emulated_metadata(const struct bo *bo, struct bo_metadata
+@@ -206,13 +206,16 @@ static void virgl_get_emulated_metadata(const struct bo *bo, struct bo_metadata
  	switch (bo->meta.format) {
  	case DRM_FORMAT_NV12:
  	case DRM_FORMAT_NV21:
@@ -44,7 +44,7 @@ index 5300be66af74fd834fd411f3302036ee4306b783..5bb26708e7d58abac59492c1911c1a39
  		metadata->height = y_plane_height + c_plane_height;
  
  		// Y-plane (full resolution)
-@@ -278,25 +281,29 @@ static void virgl_get_emulated_transfers_params(const struct bo *bo,
+@@ -321,16 +324,19 @@ static void virgl_get_emulated_transfers_params(const struct bo *bo,
  	switch (bo->meta.format) {
  	case DRM_FORMAT_NV12:
  	case DRM_FORMAT_NV21:
@@ -66,20 +66,25 @@ index 5300be66af74fd834fd411f3302036ee4306b783..5bb26708e7d58abac59492c1911c1a39
 +		xfer_params->xfer_boxes[0].width = transfer_box->width * bytes_per_sample;
  		xfer_params->xfer_boxes[0].height = transfer_box->height;
  
- 		// CbCr-plane (half resolution, interleaved, placed below Y-plane)
--		xfer_params->xfer_boxes[1].x = transfer_box->x;
-+		xfer_params->xfer_boxes[1].x = transfer_box->x * bytes_per_sample;
- 		xfer_params->xfer_boxes[1].y = transfer_box->y + y_plane_height;
--		xfer_params->xfer_boxes[1].width = transfer_box->width;
-+		xfer_params->xfer_boxes[1].width = transfer_box->width * bytes_per_sample;
- 		xfer_params->xfer_boxes[1].height = DIV_ROUND_UP(transfer_box->height, 2);
+ 		// CbCr-plane (half resolution, interleaved, placed below Y-plane): a row holds a
+@@ -339,13 +345,14 @@ static void virgl_get_emulated_transfers_params(const struct bo *bo,
+ 		uint32_t chroma_end = DIV_ROUND_UP(transfer_box->x + transfer_box->width, 2) * 2;
+ 		if (chroma_end > bo->meta.width)
+ 			chroma_end = bo->meta.width;
+-		xfer_params->xfer_boxes[1].x = chroma_x;
++		xfer_params->xfer_boxes[1].x = chroma_x * bytes_per_sample;
+ 		xfer_params->xfer_boxes[1].y = y_plane_height + transfer_box->y / 2;
+-		xfer_params->xfer_boxes[1].width = chroma_end - chroma_x;
++		xfer_params->xfer_boxes[1].width = (chroma_end - chroma_x) * bytes_per_sample;
+ 		xfer_params->xfer_boxes[1].height =
+ 		    DIV_ROUND_UP(transfer_box->y + transfer_box->height, 2) - transfer_box->y / 2;
  
  		break;
 +	}
  	case DRM_FORMAT_YVU420:
  	case DRM_FORMAT_YVU420_ANDROID:
  		// Tri-planar
-@@ -380,7 +387,8 @@ static bool virgl_supports_combination_through_emulation(struct driver *drv, uin
+@@ -433,7 +440,8 @@ static bool virgl_supports_combination_through_emulation(struct driver *drv, uin
  		return false;
  
  	return drm_format == DRM_FORMAT_NV12 || drm_format == DRM_FORMAT_NV21 ||
@@ -89,7 +94,7 @@ index 5300be66af74fd834fd411f3302036ee4306b783..5bb26708e7d58abac59492c1911c1a39
  }
  
  // Whether this buffer exists only as the bytes of an R8 image. The native test above only checks
-@@ -760,7 +768,8 @@ static int virgl_init(struct driver *drv)
+@@ -813,7 +821,8 @@ static int virgl_init(struct driver *drv)
  	 * when not natively supported and instead handled by HWComposer. */
  	virgl_add_combination(drv, DRM_FORMAT_P010, &LINEAR_METADATA,
  			      BO_USE_SCANOUT | BO_USE_TEXTURE | BO_USE_SW_MASK |
