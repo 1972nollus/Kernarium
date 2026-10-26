@@ -5,7 +5,8 @@ A runner hands over the probe and any fixtures it reads. They reach the guest
 as payload files in one directory, beside a SHA-256 list the guest checks
 before anything runs. A disposable overlay-shell guest runs the probe there,
 and the run fails on a missing PASS marker, an unclean shutdown, or a kernel
-failure in the transcript.
+failure in the transcript. A failure names the probe, its exit status, the step
+that failed and the last thing it said.
 """
 
 from __future__ import annotations
@@ -31,6 +32,9 @@ GUEST_MACHINES = (62, 183)
 PROBE_DIRECTORY = "/usr/local/libexec/uml-probe"
 CHECKSUMS = "SHA256SUMS"
 RESULT_LOG = "/tmp/uml-probe-result.log"
+# Written to RESULT_LOG before each step, so that the last one names the step a
+# failure came from, including one that says nothing itself.
+STEP_MARKER = "UML_PROBE_STEP: "
 KERNEL_FAILURE_MARKERS = (
     "Kernel panic",
     "BUG:",
@@ -88,6 +92,25 @@ def probe_payloads(
     return payloads
 
 
+def failure_message(
+    subject: str, probe: str, status: int, output: str, pass_marker: str
+) -> str:
+    """Say which probe failed, how, in which step and with what last words."""
+    step = "before any step"
+    last = ""
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith(STEP_MARKER):
+            step = line[len(STEP_MARKER) :]
+        elif line:
+            last = line
+    if status == 0:
+        reason = f"probe {probe} did not print {pass_marker!r}"
+    else:
+        reason = f"probe {probe} exited {status} in step {step!r}"
+    return f"guest {subject} failed: {reason}: {last or 'it printed nothing'}"
+
+
 def run_probe(
     arguments: argparse.Namespace,
     *,
@@ -103,8 +126,10 @@ def run_probe(
 ) -> None:
     """Boot a guest with the probe and fixtures installed and run ``./probe``.
 
-    precondition runs before the checksum check; the probe's output is kept
-    in RESULT_LOG and must contain pass_marker."""
+    precondition runs before the checksum check. Every step's output is kept
+    in RESULT_LOG, which must contain pass_marker; a step that fails ends the
+    run with a message that names the probe, its status, the step and the last
+    line it printed."""
     probe = shlex.join(
         ("timeout", str(probe_timeout_seconds), "./probe", *probe_arguments)
     )
@@ -120,24 +145,44 @@ def run_probe(
     ) as guest:
         try:
             guest.boot_and_login(BOOT_TIMEOUT_SECONDS)
-            steps = ["set -e"]
+            steps: list[tuple[str, str]] = []
             if precondition:
-                steps.append(precondition)
+                steps.append(("precondition", precondition))
             steps += [
-                'test "$(getconf PAGESIZE)" = 4096',
-                f"cd {PROBE_DIRECTORY}",
-                f"sha256sum -c {CHECKSUMS} >/dev/null",
-                f"{probe} >{RESULT_LOG} 2>&1",
+                ("guest page size", 'test "$(getconf PAGESIZE)" = 4096'),
+                ("payload directory", f"cd {PROBE_DIRECTORY}"),
+                ("payload checksums", f"sha256sum -c {CHECKSUMS} >/dev/null"),
+                ("probe", probe),
             ]
-            result = guest.run_command("; ".join(steps), command_timeout_seconds)
-            report = guest.run_command(f"cat {RESULT_LOG}", REPORT_TIMEOUT_SECONDS)
+            script = "; ".join(
+                f"echo {shlex.quote(STEP_MARKER + name)}; {command}"
+                for name, command in steps
+            )
+            # The session shell is the guest's PID 1, so a failing step under
+            # its own `set -e` would end the guest before it could say why. A
+            # subshell fails alone, and everything it printed is kept.
+            result = guest.run_command(
+                f"( set -e; {script} ) >{RESULT_LOG} 2>&1",
+                command_timeout_seconds,
+            )
+            report = guest.run_command(
+                f"cat {RESULT_LOG}", REPORT_TIMEOUT_SECONDS
+            )
             print(report.output, flush=True)
             if (
                 result.return_code != 0
                 or report.return_code != 0
                 or pass_marker not in report.output
             ):
-                raise RuntimeError(f"guest {subject} failed")
+                raise RuntimeError(
+                    failure_message(
+                        subject,
+                        arguments.probe.name,
+                        result.return_code,
+                        report.output,
+                        pass_marker,
+                    )
+                )
             if (
                 not guest.shutdown(SHUTDOWN_TIMEOUT_SECONDS)
                 or guest.return_code != 0
