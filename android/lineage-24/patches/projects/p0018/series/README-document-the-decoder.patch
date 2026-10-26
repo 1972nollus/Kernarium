@@ -9,14 +9,24 @@ buffers and hands a picture to the host for a GPU consumer. None of that
 was written down, and a product that enables the decoder sets a property
 the README did not name.
 ---
- README.md | 84 +++++++++++++++++++++++++++++++++++++++++++++++--------
- 1 file changed, 72 insertions(+), 12 deletions(-)
+ README.md | 87 ++++++++++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 74 insertions(+), 13 deletions(-)
 
 diff --git a/README.md b/README.md
-index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..ba3d1e5fcca261be35b07876642b0d754737a0d5 100644
+index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..4ae2a49acfd07b0b0468afc2aedf3924b293f2d4 100644
 --- a/README.md
 +++ b/README.md
-@@ -381,27 +381,43 @@ resources it needs, so that Android can tell what is left
+@@ -347,7 +347,8 @@ device's hierarchical coding controls allow. Layers turn B-frames off and
+ constant bitrate into variable bitrate. The bitrate ratio of the base layer
+ splits the bitrate between the two layers.
+ - *C2_PARAMKEY_COLOR_ASPECTS* sets the colorimetry of the raw frames, and
+-*C2_PARAMKEY_VUI_COLOR_ASPECTS* reports what the stream carries.
++*C2_PARAMKEY_VUI_COLOR_ASPECTS* reports what the stream carries. The device
++takes the transfer function of the frames as *xfer_func*, hybrid log-gamma as 8.
+ - *C2_PARAMKEY_HDR_STATIC_INFO* sets the HDR10 mastering display and content
+ light level of an HEVC Main 10 stream, if the device has those controls and
+ takes P010 frames. A device without P010 input does not offer Main 10.
+@@ -381,27 +382,43 @@ resources it needs, so that Android can tell what is left
  - Codec sessions (*C2PlatformConfig::VENDOR_START*): the capacity is the sum of
  the concurrent instance bounds of the codecs the store offers, and every
  instance needs one.
@@ -72,7 +82,7 @@ index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..ba3d1e5fcca261be35b07876642b0d75
  
  ### Additional Features:
  
-@@ -415,4 +431,48 @@ PPS NAL units are prepended to IDR frames by enabling the
+@@ -415,4 +432,48 @@ PPS NAL units are prepended to IDR frames by enabling the
  support this control the encoder will manually cache and prepend SPS and PPS NAL
  units.
  

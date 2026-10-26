@@ -427,7 +427,7 @@ MediaCodec selects them by name or by the platform's hardware preference. The pa
 `patches/projects/p0018` adds the HEVC component and derives every encoder
 parameter from the device rather than from constants: bitrate range and modes
 (VBR, CBR, constant quality), QP bounds, B-frame depth, temporal layers,
-profiles and levels, colour aspects and HDR10 static metadata. A capability the
+profiles and levels, colour aspects (HLG too) and HDR10 static metadata. A capability the
 device does not list is not advertised: Main 10 and HDR10 need a 10-bit raw
 format, which the device publishes only when the host does. Packed RGB input
 goes to the device unconverted when it lists that byte order and is converted
