@@ -536,6 +536,32 @@ bool anonymous_shared_backing_registered() noexcept
 	return anonymous_backing.registered;
 }
 
+int hand_back_anonymous_guest_ram(void *window, std::size_t length) noexcept
+{
+	std::lock_guard lock{anonymous_backing.mutex};
+	if (anonymous_backing.borrowed_views != 0) {
+		errno = EBUSY;
+		return -1;
+	}
+	/* One call replaces the window whole. A failure leaves everything as it
+	 * was, so the guest can still be handed back later. */
+	if (window != nullptr && reserve_host_range(window, length) != 0)
+		return -1;
+	retire_guest_ram_commitment();
+	/* No view is borrowed, so no page was waiting for the last one. */
+	anonymous_backing.retained.clear();
+	anonymous_backing.retained.shrink_to_fit();
+	anonymous_backing.retained_pages = 0;
+	anonymous_backing.root = nullptr;
+	anonymous_backing.size = 0;
+	anonymous_backing.device = 0;
+	anonymous_backing.inode = 0;
+	anonymous_backing.registered = false;
+	dprintf(STDERR_FILENO,
+		"Darwin anonymous guest RAM: handed back to the process\n");
+	return 0;
+}
+
 bool is_anonymous_shared_backing(int fd) noexcept
 {
 	struct stat status {};

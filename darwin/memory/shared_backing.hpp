@@ -35,7 +35,9 @@ private:
 	bool owns_mapping_{};
 };
 
-/* A process registers one anonymous guest-RAM token and never releases it. */
+/* A process registers one anonymous guest-RAM token at a time. The token is
+ * released only when the guest is handed back (hand_back_anonymous_guest_ram),
+ * so that the same process can boot another guest. */
 [[nodiscard]] bool register_anonymous_shared_backing(int fd) noexcept;
 [[nodiscard]] bool anonymous_shared_backing_registered() noexcept;
 [[nodiscard]] bool is_anonymous_shared_backing(int fd) noexcept;
@@ -61,6 +63,28 @@ struct AnonymousBackingMemory final {
 
 [[nodiscard]] void *map_shared_backing(void *address, std::size_t length,
 	int protection, int flags, int fd, std::uint64_t offset) noexcept;
+
+/* Returns the guest's RAM to the process, so that it can run another guest.
+ *
+ * The guest RAM the host hands out once per process comes back as one
+ * protectionless reservation: the whole window [window, window + length) is
+ * replaced by a single MAP_FIXED PROT_NONE mapping, which drops every page the
+ * guest held and the kernel image with them, keeps the window reserved at
+ * every instant (reserve_host_range) and leaves nothing mapped inside it. The
+ * commitment record is retired, the retained-page record cleared and the token
+ * unregistered, all under the backing's lock, so a consumer sees either the
+ * guest or none.
+ *
+ * Refused with EBUSY, and nothing changed, while a host service borrows guest
+ * RAM (acquire_shared_backing_view): the service reads the pages and the
+ * caller must stop it first. Returns 0 on success and -1 with errno set
+ * otherwise; on failure the guest is still registered. Passing no window
+ * hands back the registration and the commitment alone.
+ *
+ * The caller has no thread that runs the guest, holds no snapshot of its
+ * pages, and has closed the guest's token descriptors. */
+[[nodiscard]] int hand_back_anonymous_guest_ram(
+	void *window, std::size_t length) noexcept;
 
 /* Remove a mapping inside a reserved guest window without giving the address
  * range back to the process.

@@ -118,10 +118,16 @@ private:
 };
 
 /* The process's guest RAM, published once the kernel's physical window exists.
- * Null before that. */
+ * Null before that, and again once the guest has been handed back. */
 [[nodiscard]] GuestRamCommitment *guest_ram_commitment() noexcept;
 void publish_guest_ram_commitment(
 	std::unique_ptr<GuestRamCommitment> commitment) noexcept;
+
+/* Takes the published commitment back, so that the next guest publishes its
+ * own. The window it describes is gone or about to be: the caller (the guest
+ * RAM hand-back, shared_backing.hpp) has no thread left that can commit or
+ * release, and holds no snapshot of the held pages. */
+void retire_guest_ram_commitment() noexcept;
 
 /* Bridge entry points: 0 on success, -1 with errno. Before guest RAM exists
  * there is nothing to change and they fail with ENXIO. */
