@@ -1048,6 +1048,14 @@ requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
 the console, host-file flushing still runs but guest writeback and freeze are
 unavailable.
 
+The kernel says how the guest ends before it runs its exitcalls, with the
+bridge import `darwin_uml_guest_shutdown()`: power-off, halt, or restart with
+the command the guest passed. The runtime logs one line (`guest requested
+restart (command 'recovery')`, `guest powered off` or `guest halted`) and keeps
+the kind and at most 255 bytes of the command in the run's `Context`, which
+`begin_run()` clears and `end_run()` leaves for the handle's owner to read. A
+panic aborts the process and reports nothing.
+
 An application that can be backgrounded holds the guest's GPU requests before it
 quiesces, with the runtime's `set_gpu_hold` (see the request gate under
 [devices](#devices-and-graphics)), and releases them before it resumes. The

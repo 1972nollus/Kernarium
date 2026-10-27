@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <string_view>
 #include <utility>
 
 namespace uml::runtime {
@@ -26,6 +27,26 @@ using GuestEntry = int (*)(void *, void *, unsigned long, unsigned long,
 	unsigned long *);
 
 class Context;
+
+/* How the guest kernel said its run is ending (darwin_uml_guest_shutdown).
+ * The values are the bridge's DARWIN_UML_SHUTDOWN_* kinds, which bridge.cpp
+ * checks; none means the kernel said nothing. */
+enum class GuestShutdownKind : int {
+	none = 0,
+	power_off = 1,
+	halt = 2,
+	restart = 3,
+};
+
+/* The most of a restart command a record keeps. */
+inline constexpr std::size_t guest_shutdown_command_limit = 255;
+
+struct GuestShutdown final {
+	GuestShutdownKind kind{GuestShutdownKind::none};
+	/* The restart command cut to guest_shutdown_command_limit bytes and
+	 * NUL-terminated; empty when the guest gave none. */
+	char command[guest_shutdown_command_limit + 1]{};
+};
 
 /* Pins one host thread's execution object and the Context memory domain that
  * backs its translated caches. Run transitions and Context destruction wait
@@ -96,6 +117,16 @@ public:
 	[[nodiscard]] GuestEntry guest_entry() const noexcept;
 	[[nodiscard]] std::uint64_t memory_domain() const noexcept;
 
+	/* The guest kernel's report of how its run ends, recorded before the
+	 * kernel runs its exitcalls so that it stays on record if one never
+	 * returns. A later report replaces an earlier one, as the later shutdown
+	 * call is the one that ends the run. begin_run() clears the record and
+	 * end_run() keeps it, so the owner reads it once the run has returned
+	 * and until the next run begins. */
+	void record_guest_shutdown(GuestShutdownKind kind,
+		std::string_view command) noexcept;
+	[[nodiscard]] GuestShutdown guest_shutdown() const noexcept;
+
 	[[nodiscard]] ThreadExecutionStateAccess thread_execution_state();
 
 private:
@@ -116,6 +147,8 @@ private:
 	mutable memory::WordSharedMutex execution_lifecycle_mutex_;
 	mutable std::mutex states_mutex_;
 	std::shared_ptr<ThreadStateStore> state_store_;
+	mutable std::mutex shutdown_mutex_;
+	GuestShutdown guest_shutdown_;
 };
 
 /* Composition-facing run route. The provider endpoint is opaque here so the
