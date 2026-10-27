@@ -23,19 +23,25 @@ The need follows the size of the pictures the device decodes, not the
 size the client configured: a stream that changes its size, as adaptive
 playback does, changes what the instance needs, and the framework learns
 of it with the next output.
+
+The picture size parameter is stepped by 2, the alignment the codec XML
+publishes, and the decoded size is rounded up to that, which leaves the size
+of any 4:2:0 stream as it is. A larger step rounds the 360 rows of a 480x360
+stream up to 368, and the framework, which reads the parameter again after a
+flush, reports a second output format change that the stream does not have.
 ---
  common/include/v4l2_codec2/common/Common.h    |  3 +-
  components/ComponentStore.cpp                 | 15 +++-
  components/DecodeComponent.cpp                | 41 ++++++++-
- components/DecodeInterface.cpp                | 84 +++++++++++++++++++
+ components/DecodeInterface.cpp                | 88 ++++++++++++++++++-
  .../v4l2_codec2/components/ComponentStore.h   |  6 +-
  .../v4l2_codec2/components/DecodeComponent.h  |  8 ++
  .../v4l2_codec2/components/DecodeInterface.h  | 30 +++++++
- .../v4l2_codec2/components/VideoResources.h   | 66 ++++++++++++---
+ .../v4l2_codec2/components/VideoResources.h   | 66 +++++++++++---
  v4l2/V4L2ComponentStore.cpp                   | 10 ++-
  v4l2/V4L2Device.cpp                           |  8 +-
  v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |  6 +-
- 11 files changed, 253 insertions(+), 24 deletions(-)
+ 11 files changed, 255 insertions(+), 26 deletions(-)
 
 diff --git a/common/include/v4l2_codec2/common/Common.h b/common/include/v4l2_codec2/common/Common.h
 index bd0051db8fb22a08b1c7c470e9e744438327101e..167828b1384fe1c61f2a9206c8d05f392e7219d0 100644
@@ -188,7 +194,7 @@ index 91b51543ee69641efe888ce42f4e8eedbd072033..a428ce80628236b58204302899967be3
      if (mIntfImpl->getVideoCodec() == VideoCodec::VP8 ||
          mIntfImpl->getVideoCodec() == VideoCodec::VP9) {
 diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
-index 0b07c7dc36f43cab498b6c0cf7679e928d70e99f..12435abca802d1615d735e3cd24e07b05f3d3b9c 100644
+index 0b07c7dc36f43cab498b6c0cf7679e928d70e99f..1735a98911d7451468550f9b2839b15c951f7f26 100644
 --- a/components/DecodeInterface.cpp
 +++ b/components/DecodeInterface.cpp
 @@ -17,6 +17,7 @@
@@ -243,7 +249,15 @@ index 0b07c7dc36f43cab498b6c0cf7679e928d70e99f..12435abca802d1615d735e3cd24e07b0
  
      addParameter(DefineParam(mKind, C2_PARAMKEY_COMPONENT_KIND)
                           .withConstValue(new C2ComponentKindSetting(C2Component::KIND_DECODER))
-@@ -379,6 +410,42 @@ DecodeInterface::DecodeInterface(const std::string& name,
+@@ -373,12 +404,48 @@ DecodeInterface::DecodeInterface(const std::string& name,
+                          .withDefault(new C2StreamPictureSizeInfo::output(
+                                  0u, std::min(320, maxSize.width), std::min(240, maxSize.height)))
+                          .withFields({
+-                                 C2F(mSize, width).inRange(16, maxSize.width, 16),
+-                                 C2F(mSize, height).inRange(16, maxSize.height, 16),
++                                 C2F(mSize, width).inRange(16, maxSize.width, 2),
++                                 C2F(mSize, height).inRange(16, maxSize.height, 2),
+                          })
                           .withSetter(SizeSetter)
                           .build());
  
@@ -300,7 +314,7 @@ index 0b07c7dc36f43cab498b6c0cf7679e928d70e99f..12435abca802d1615d735e3cd24e07b0
 +}
 +
 +c2_status_t DecodeInterface::updatePictureSize(uint32_t width, uint32_t height) {
-+    constexpr uint32_t kStep = 16;
++    constexpr uint32_t kStep = 2;
 +    C2StreamPictureSizeInfo::output size(0u, (width + kStep - 1) / kStep * kStep,
 +                                         (height + kStep - 1) / kStep * kStep);
 +    std::vector<std::unique_ptr<C2SettingResult>> failures;
@@ -361,7 +375,7 @@ index 4d7ee46d6936fff761c86cc0fd44814014788bf9..23dd78cf4526a396ec80cfd662475d63
      std::atomic<ComponentState> mComponentState{ComponentState::STOPPED};
      // Whether we are currently draining the component. This is set when the component is processing
 diff --git a/components/include/v4l2_codec2/components/DecodeInterface.h b/components/include/v4l2_codec2/components/DecodeInterface.h
-index 77702d8502e5885bf55fb17056d48f574a7bb4ae..e887e1131658fb34a496abeeb7459858d9218d8c 100644
+index 77702d8502e5885bf55fb17056d48f574a7bb4ae..f7942a9f0d23b587df103ee81412c64abf307340 100644
 --- a/components/include/v4l2_codec2/components/DecodeInterface.h
 +++ b/components/include/v4l2_codec2/components/DecodeInterface.h
 @@ -37,6 +37,18 @@ public:
@@ -376,7 +390,7 @@ index 77702d8502e5885bf55fb17056d48f574a7bb4ae..e887e1131658fb34a496abeeb7459858
 +    uint64_t getPixelRateNeeded() const;
 +    // Take the size of the pictures the device decodes now, as the stream changes it, so that what
 +    // the instance needs follows the stream and not the size the client configured. The size is
-+    // rounded up to the macroblock the parameter is stepped by.
++    // rounded up to the step of the parameter, which a size of 4:2:0 pictures is a multiple of.
 +    c2_status_t updatePictureSize(uint32_t width, uint32_t height);
 +    // The pixel rate the device decodes, or 0 if the product does not say.
 +    uint64_t getPixelRateCapacity() const { return mPixelRateCapacity; }

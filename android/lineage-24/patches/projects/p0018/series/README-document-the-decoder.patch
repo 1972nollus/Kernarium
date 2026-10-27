@@ -9,11 +9,11 @@ buffers and hands a picture to the host for a GPU consumer. None of that
 was written down, and a product that enables the decoder sets a property
 the README did not name.
 ---
- README.md | 87 ++++++++++++++++++++++++++++++++++++++++++++++---------
- 1 file changed, 74 insertions(+), 13 deletions(-)
+ README.md | 113 +++++++++++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 100 insertions(+), 13 deletions(-)
 
 diff --git a/README.md b/README.md
-index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..4ae2a49acfd07b0b0468afc2aedf3924b293f2d4 100644
+index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..28ecce2211ae74dd626a9ea167b0bd60d7a17a1f 100644
 --- a/README.md
 +++ b/README.md
 @@ -347,7 +347,8 @@ device's hierarchical coding controls allow. Layers turn B-frames off and
@@ -26,7 +26,7 @@ index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..4ae2a49acfd07b0b0468afc2aedf3924
  - *C2_PARAMKEY_HDR_STATIC_INFO* sets the HDR10 mastering display and content
  light level of an HEVC Main 10 stream, if the device has those controls and
  takes P010 frames. A device without P010 input does not offer Main 10.
-@@ -381,27 +382,43 @@ resources it needs, so that Android can tell what is left
+@@ -381,27 +382,50 @@ resources it needs, so that Android can tell what is left
  - Codec sessions (*C2PlatformConfig::VENDOR_START*): the capacity is the sum of
  the concurrent instance bounds of the codecs the store offers, and every
  instance needs one.
@@ -55,6 +55,13 @@ index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..4ae2a49acfd07b0b0468afc2aedf3924
 +device serves one of whatever size it supports. A component takes part by
 +reporting *videoResourcesNeeded()* and claiming its pixel rate from
 +*VideoPixelRateBudget* or *VideoDecodePixelRateBudget* (*VideoResources.h*).
++
++The concurrent instance bound of a product is also what its memory allows. A
++decoder keeps a pool of the pictures it decodes, as many as the device lists
++plus a few spare, in the memory of the device, so a 4K stream takes about a
++gigabyte, and a bound that lets a test or an application create that many
++streams at the largest size ends in the low memory killer. State the number of
++the largest streams the memory holds, not the number of streams the host serves.
  
  ### Supported Input Pixel Formats:
  
@@ -82,7 +89,7 @@ index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..4ae2a49acfd07b0b0468afc2aedf3924
  
  ### Additional Features:
  
-@@ -415,4 +432,48 @@ PPS NAL units are prepended to IDR frames by enabling the
+@@ -415,4 +439,67 @@ PPS NAL units are prepended to IDR frames by enabling the
  support this control the encoder will manually cache and prepend SPS and PPS NAL
  units.
  
@@ -122,6 +129,25 @@ index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..4ae2a49acfd07b0b0468afc2aedf3924
 +are still in use against the number of V4L2 buffers, and the decoder lets a free
 +V4L2 buffer stand for a block it has not met, since the picture buffer is passed
 +again with every queue operation.
++
++### Input Blocks
++
++The device takes a coded buffer in a dma-buf at least as large as the buffer
++size it negotiated, and refuses a smaller one. The input blocks the framework
++allocates for the component are as large as the maximum input size and are
++queued as they are. A client of the block model chooses the size of its own
++blocks, and the component copies a block smaller than the maximum input size
++into a block of a pool it creates on first use, and queues that one. A secure
++block is never copied.
++
++### Picture Size
++
++*C2_PARAMKEY_PICTURE_SIZE* takes any even width and height from 16 up, the
++alignment the codec XML publishes, and follows the size of the pictures the
++device decodes. The framework reads the parameter again after a flush and
++reports an output format change if it differs from what it has, so a step
++larger than the stream's alignment, which rounds the 360 rows of a 480x360
++stream up to 368, makes a change that the stream does not have.
 +
 +### Colour
 +

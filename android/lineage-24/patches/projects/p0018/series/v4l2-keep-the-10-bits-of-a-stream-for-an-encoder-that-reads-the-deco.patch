@@ -58,7 +58,7 @@ index 22ea0bc13ada4764010742b6373a9947e0a82de5..3972e216f6d00bc7c81f23b2fe44a347
      YV12 = static_cast<int32_t>(HPixelFormat::YV12),
      YCBCR_P010 = static_cast<int32_t>(HPixelFormat::YCBCR_P010),
 diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
-index 12435abca802d1615d735e3cd24e07b05f3d3b9c..e7f9ff6baea4274d8c16d8d6604db16aeeebcf4c 100644
+index 1735a98911d7451468550f9b2839b15c951f7f26..d882db3342bada2a134e20fdb1170942471f3e40 100644
 --- a/components/DecodeInterface.cpp
 +++ b/components/DecodeInterface.cpp
 @@ -359,18 +359,28 @@ DecodeInterface::DecodeInterface(const std::string& name,
@@ -110,7 +110,7 @@ index 12435abca802d1615d735e3cd24e07b05f3d3b9c..e7f9ff6baea4274d8c16d8d6604db16a
      return mMaxInputSize->value;
  }
 diff --git a/components/include/v4l2_codec2/components/DecodeInterface.h b/components/include/v4l2_codec2/components/DecodeInterface.h
-index e887e1131658fb34a496abeeb7459858d9218d8c..74060b99391c7e29981ec7442e13fbd85233e03f 100644
+index f7942a9f0d23b587df103ee81412c64abf307340..7e5d900cb0de023d94c2a7af54e1725d07f028bf 100644
 --- a/components/include/v4l2_codec2/components/DecodeInterface.h
 +++ b/components/include/v4l2_codec2/components/DecodeInterface.h
 @@ -29,10 +29,9 @@ public:
