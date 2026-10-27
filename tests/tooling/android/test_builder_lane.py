@@ -1058,6 +1058,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                     + (
                         ""
+                        if wifi_network_variant == "missing-binder-call"
+                        else "(allow system_server kernarium_wifi_network (binder (call)))\n"
+                    )
+                    + (
+                        ""
                         if missing_adb_prop_policy
                         else "(allow adbd kernarium_adb_host_prop (property_service (set)))\n"
                     )
@@ -1612,6 +1617,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("wifi-network-marker-not-system", {"wifi_network_variant": "marker-not-system"}),
             ("wifi-network-missing-marker-rule", {"wifi_network_variant": "missing-marker-rule"}),
             ("wifi-network-missing-binder-transfer", {"wifi_network_variant": "missing-binder-transfer"}),
+            ("wifi-network-missing-binder-call", {"wifi_network_variant": "missing-binder-call"}),
             ("wifi-network-missing-marker-context", {"wifi_network_variant": "missing-marker-context"}),
             ("wifi-network-script", {"missing_wifi_network_script": True}),
             ("wificond-present", {"entries": {"SYSTEM/bin/wificond": synthetic_aarch64_elf()}}),
@@ -1887,6 +1893,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not let the Wi-Fi network domain set persist.sys.kernarium.virtwifi_saved"),
             ("wifi-network-missing-binder-transfer-cause", {"wifi_network_variant": "missing-binder-transfer"},
              "does not let the Wi-Fi network domain transfer binders to system_server"),
+            ("wifi-network-missing-binder-call-cause", {"wifi_network_variant": "missing-binder-call"},
+             "does not let system_server call the Wi-Fi network domain's binder"),
             ("wifi-network-missing-marker-context-cause", {"wifi_network_variant": "missing-marker-context"},
              "do not label persist.sys.kernarium.virtwifi_saved"),
             ("wifi-network-script-cause", {"missing_wifi_network_script": True},

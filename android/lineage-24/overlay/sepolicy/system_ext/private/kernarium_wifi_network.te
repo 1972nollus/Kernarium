@@ -21,9 +21,12 @@ allow kernarium_wifi_network system_file:file execute_no_trans;
 # cmd finds the Wi-Fi service and hands it the descriptors it writes the
 # command's output to and the binder it receives the command's result on: the
 # descriptors are the script's own. Without the binder transfer the Wi-Fi
-# service never gets the command and the network is never saved.
+# service never gets the command, and without the call back to that binder
+# cmd never learns the command is done: it waits for ever, so the script never
+# sets its marker.
 allow kernarium_wifi_network wifi_service:service_manager find;
 allow kernarium_wifi_network system_server:binder transfer;
+allow system_server kernarium_wifi_network:binder call;
 allow system_server kernarium_wifi_network:fd use;
 allow system_server kernarium_wifi_network:fifo_file { getattr read write };
 

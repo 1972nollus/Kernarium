@@ -212,7 +212,7 @@ Once boot completes, `kernarium_wifi_network.sh` (`overlay/tools`, installed on
 `system_ext` and run in a core domain of its own, because it drives the Wi-Fi
 service through `cmd wifi`, which a vendor domain may not, and which hands the
 service a binder to answer on, so the domain may transfer binders to
-`system_server`) saves the open network `VirtWifi`, the one network `virt_wifi`
+`system_server` and `system_server` may call the domain back) saves the open network `VirtWifi`, the one network `virt_wifi`
 shows. It saves it once: the
 marker `persist.sys.kernarium.virtwifi_saved` is set only after the network is
 listed, so a boot that cannot save it tries again, and a network the user

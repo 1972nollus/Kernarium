@@ -1456,6 +1456,18 @@ def check_wifi_network_policy(
             "without the rule the network is never saved"
         )
     if not any(
+        CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) == "system_server"
+        and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) == "kernarium_wifi_network"
+        and match.group(3) == b"binder"
+        and b"call" in match.group(4).split()
+        for match in CIL_ALLOW_RULE.finditer(system_ext_policy)
+    ):
+        fail(
+            "system_ext policy does not let system_server call the Wi-Fi network domain's "
+            "binder: cmd waits for the receiver of its result, so without the rule it never "
+            "returns and the script never sets its marker"
+        )
+    if not any(
         line.split()[:2] == [WIFI_NETWORK_MARKER, f"u:object_r:{WIFI_NETWORK_MARKER_TYPE}:s0"]
         for line in system_ext_property_contexts.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
