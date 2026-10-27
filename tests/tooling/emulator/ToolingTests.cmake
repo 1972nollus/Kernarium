@@ -23,6 +23,9 @@ if(UML_BUILD_KERNEL_RUNNER)
         UML::BridgeAbi
         uml_emulator_test_variant
         UML::GuestPageConfiguration)
+    target_include_directories(uml_embedded_kernel_serialization_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/darwin/runtime)
 
     uml_add_tooling_test(
         NAME embedded-kernel-handle-serialization
