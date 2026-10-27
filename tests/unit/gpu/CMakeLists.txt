@@ -216,6 +216,16 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # A draw that samples the texture it renders into reads what the guest drew
+    # before the texture barrier, a clear included: Skia's blends of a surface it
+    # has just cleared were wrong otherwise.
+    uml_add_gpu_unit_test(gpu-texture-barrier-clear
+        uml_gpu_texture_barrier_tests
+        host_gl_texture_barrier_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries}
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY)
+
     # The scanout mask of the capset names what the display presents: minigbm
     # drops the video uses of a buffer entry that claims a scanout it cannot
     # have.
@@ -295,6 +305,7 @@ if(TARGET uml_gpu_service)
         gpu-resource-metal-texture gpu-cross-context-readback
         gpu-depth-format-advertisement gpu-line-loop-statistics
         gpu-statistics-availability gpu-packed-yuv-planes
+        gpu-texture-barrier-clear
         PROPERTIES SKIP_RETURN_CODE 77)
 
     # The renderer and the same-process render server share one fence table.
