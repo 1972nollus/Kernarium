@@ -39,12 +39,12 @@ struct AddressSpaceLifetime final {
 
 struct GenerationState final {
 	mutable WordSharedMutex mappings_mutex;
-	std::unordered_map<std::uint64_t, Mapping> mappings;
-	/* `mappings` again, as the words the lock-free fill of an entered context
-	 * reads, and the backings their slots name. */
+	/* Every page the generation maps, as one word each, which the lock-free
+	 * fill of an entered context reads, and the backings the words' slots
+	 * name. */
 	FillIndex fill_index;
 	BackingSlots backings;
-	/* The pages mapped, which both of the above hold. */
+	/* The pages mapped. */
 	std::size_t mapped_pages{};
 	std::atomic_uint64_t mapping_changes{1};
 	std::atomic_uint64_t code_changes{1};

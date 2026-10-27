@@ -80,9 +80,11 @@ gadget engine's fill path looks the page up in the generation its entered
 execution context holds (`darwin_uml_static_vm_execution_context_translate()`),
 without resolving the thread's address space and active generation each time.
 It reads the generation's fill index (`darwin/memory/mmu/fill_index.hpp`),
-which is read without a lock because whatever removes or changes a mapping
-quiesces execution first. A page the index does not hold is looked up in the
-map under its reader lock.
+the only record of what the generation maps: one word per page holding the
+host address and the permissions the fill needs. It is read without a lock
+because whatever removes or changes a mapping quiesces execution first. A
+page the index does not hold is unmapped; a fill outside an entered context
+reads the same word under the generation's reader lock.
 
 ## Streaming mode
 

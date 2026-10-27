@@ -130,6 +130,20 @@ target_compile_definitions(uml_backing_slots_tests PRIVATE
     UML_MEMORY_ALLOCATION_TESTING=1)
 uml_add_unit_test(NAME memory-backing-slots COMMAND uml_backing_slots_tests)
 
+# The page index of the static MMU, through its bridge, against a model.
+add_executable(uml_static_mmu_index_tests
+    static_mmu_index_tests.cpp
+    $<TARGET_OBJECTS:uml_static_mmu_test_variant>)
+target_link_libraries(uml_static_mmu_index_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemorySharedBacking)
+target_include_directories(uml_static_mmu_index_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
+target_compile_definitions(uml_static_mmu_index_tests PRIVATE
+    UML_MEMORY_ALLOCATION_TESTING=1)
+uml_add_unit_test(NAME static-mmu-index COMMAND uml_static_mmu_index_tests
+    LABELS tsan)
+
 add_executable(uml_native_mmu_tests
     native_mmu_tests.cpp
     $<TARGET_OBJECTS:uml_native_mmu_test_variant>

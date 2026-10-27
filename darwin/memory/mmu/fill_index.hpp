@@ -15,9 +15,9 @@
 
 namespace uml::memory {
 
-/* A generation's page translations as a radix table of atomic words: a
- * complete record of what the generation maps, and what the software-TLB fill
- * of an entered execution context reads.
+/* A generation's page translations as a radix table of atomic words: the
+ * generation's only record of what it maps, and what the software-TLB fill of
+ * an entered execution context reads.
  *
  * The fill is the hottest reader of a generation's mappings. Through a hash
  * map of its pages it took the reader lock, a cache line every vCPU writes,
