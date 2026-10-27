@@ -1026,7 +1026,8 @@ setup tool with the ARP policy init sets before it, its library, label and domai
 transition, the script that saves the virtual Wi-Fi network once, after boot and
 without touching the user's Wi-Fi switch, with its core domain and marker, the Wi-Fi
 HAL and supplicant with their manifest fragments and services, the Wi-Fi feature
-declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the ClearKey HAL's access to the memfd files of applications, the
+declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the built-in macvlan, cfg80211 and virt_wifi
+options of the packaged kernel configuration, the absent wificond, the ClearKey HAL's access to the memfd files of applications, the
 policy without the LineageOS grants that Android's neverallow tests refuse, and the
 discrete app-op list that keeps AOSP's default ops, the example thermal HAL
 with its manifest fragment and service, the default CAS HAL with its ClearKey

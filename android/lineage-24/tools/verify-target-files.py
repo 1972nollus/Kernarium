@@ -1105,6 +1105,11 @@ def check_app_dexpreopt(seen: set[str]) -> None:
                 fail(f"32-bit application dexpreopt artifact has no ARM64 one: {path}")
 
 
+# The virtual Wi-Fi needs these built in: kernarium_net_setup stacks a macvlan on eth0 and a
+# virt_wifi device on that, and a kernel without them leaves apps no network at all.
+WIFI_KERNEL_OPTIONS = ("CONFIG_MACVLAN=y", "CONFIG_CFG80211=y", "CONFIG_VIRT_WIFI=y")
+
+
 def check_kernel_policy(
     archive: zipfile.ZipFile,
     infos: dict[str, zipfile.ZipInfo],
@@ -1114,6 +1119,15 @@ def check_kernel_policy(
     packaged_config = read_small(archive, infos["META/kernel_configs.txt"])
     if packaged_config != kernel_config.read_bytes():
         fail("packaged kernel configuration differs from the UML build")
+    packaged_options = {
+        line.strip() for line in packaged_config.decode("utf-8", errors="replace").splitlines()
+    }
+    for option in WIFI_KERNEL_OPTIONS:
+        if option not in packaged_options:
+            fail(
+                f"packaged kernel configuration lacks {option}: the virtual Wi-Fi needs it, "
+                "and without it apps have no network"
+            )
 
     packaged_release = read_small(
         archive, infos["META/kernel_version.txt"]

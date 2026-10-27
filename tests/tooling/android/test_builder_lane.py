@@ -368,9 +368,29 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         kernel = root / "kernel/vmlinux"
         kernel.write_bytes(synthetic_aarch64_elf())
         kernel_config = root / "kernel/config"
-        kernel_config.write_text(
-            "CONFIG_PAGE_SIZE_4KB=y\n# CONFIG_MODULES is not set\n"
-        )
+        # The options the virtual Wi-Fi needs, and the ways a configuration can lack one.
+        wifi_kernel_options = {
+            "CONFIG_MACVLAN": "y", "CONFIG_CFG80211": "y", "CONFIG_VIRT_WIFI": "y",
+        }
+
+        def kernel_config_text(variant: str | None) -> str:
+            options = dict(wifi_kernel_options)
+            lines = []
+            if variant is not None:
+                kind, name = variant.rsplit(":", 1)
+                if kind == "missing":
+                    del options[name]
+                elif kind == "module":
+                    options[name] = "m"
+                elif kind == "unset":
+                    del options[name]
+                    lines.append(f"# {name} is not set\n")
+                else:
+                    fail(f"unknown kernel configuration variant {variant}")
+            lines.extend(f"{name}={value}\n" for name, value in options.items())
+            return "CONFIG_PAGE_SIZE_4KB=y\n# CONFIG_MODULES is not set\n" + "".join(lines)
+
+        kernel_config.write_text(kernel_config_text(None))
         kernel_release = root / "kernel/kernel.release"
         kernel_release.write_text("6.18.21-uml-fixture\n")
         kernel_options = [
@@ -401,6 +421,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_mic_policy: bool = False,
                           extra_input_device: bool = False,
                           wrong_kernel_config: bool = False,
+                          kernel_config_variant: str | None = None,
                           wrong_kernel_release: bool = False,
                           missing_memfd_policy: bool = False,
                           missing_spl_policy: bool = False,
@@ -465,6 +486,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           extra_entry: str | None = None,
                           build_variant: str = tracked_variant,
                           alignment: int = 16384) -> None:
+            # The UML build's configuration and the packaged copy agree unless the
+            # fixture is the wrong-configuration one, so that each variant is judged
+            # on the options it lacks and not on a difference.
+            kernel_config.write_text(kernel_config_text(kernel_config_variant))
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
                 archive.writestr("INIT_BOOT/RAMDISK/init", b"init")
@@ -1414,6 +1439,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-mic-policy", {"missing_mic_policy": True}),
             ("extra-input-device", {"extra_input_device": True}),
             ("kernel-config", {"wrong_kernel_config": True}),
+            ("kernel-no-macvlan", {"kernel_config_variant": "missing:CONFIG_MACVLAN"}),
+            ("kernel-no-cfg80211", {"kernel_config_variant": "unset:CONFIG_CFG80211"}),
+            ("kernel-no-virt-wifi", {"kernel_config_variant": "missing:CONFIG_VIRT_WIFI"}),
+            ("kernel-macvlan-module", {"kernel_config_variant": "module:CONFIG_MACVLAN"}),
+            ("kernel-cfg80211-module", {"kernel_config_variant": "module:CONFIG_CFG80211"}),
+            ("kernel-virt-wifi-module", {"kernel_config_variant": "module:CONFIG_VIRT_WIFI"}),
             ("kernel-release", {"wrong_kernel_release": True}),
             ("memfd-policy", {"missing_memfd_policy": True}),
             ("spl-policy", {"missing_spl_policy": True}),
@@ -1636,6 +1667,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "SYSTEM_EXT/bin/kernarium_wifi_network.sh"),
             ("wificond-present-cause", {"entries": {"SYSTEM/bin/wificond": synthetic_aarch64_elf()}},
              "nonstatic image or metadata is forbidden: SYSTEM/bin/wificond"),
+            ("kernel-no-macvlan-cause", {"kernel_config_variant": "missing:CONFIG_MACVLAN"},
+             "packaged kernel configuration lacks CONFIG_MACVLAN=y"),
+            ("kernel-no-cfg80211-cause", {"kernel_config_variant": "unset:CONFIG_CFG80211"},
+             "packaged kernel configuration lacks CONFIG_CFG80211=y"),
+            ("kernel-no-virt-wifi-cause", {"kernel_config_variant": "missing:CONFIG_VIRT_WIFI"},
+             "packaged kernel configuration lacks CONFIG_VIRT_WIFI=y"),
+            ("kernel-macvlan-module-cause", {"kernel_config_variant": "module:CONFIG_MACVLAN"},
+             "packaged kernel configuration lacks CONFIG_MACVLAN=y"),
+            ("kernel-cfg80211-module-cause", {"kernel_config_variant": "module:CONFIG_CFG80211"},
+             "packaged kernel configuration lacks CONFIG_CFG80211=y"),
+            ("kernel-virt-wifi-module-cause", {"kernel_config_variant": "module:CONFIG_VIRT_WIFI"},
+             "packaged kernel configuration lacks CONFIG_VIRT_WIFI=y"),
             ("wifi-dirs-missing-cause", {"wifi_dirs_variant": "missing"},
              "does not run 'mkdir /data/vendor/wifi 0770 wifi wifi' at boot"),
             ("wifi-dirs-wrong-owner-cause", {"wifi_dirs_variant": "wrong-owner"},

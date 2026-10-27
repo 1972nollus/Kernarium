@@ -182,7 +182,9 @@ for another's address, the tool
 The tool fails closed: without the lease or the rule it creates no `wlan0`, so
 adb keeps working and nothing else can take the management address. The kernel
 needs `CONFIG_MACVLAN`, `CONFIG_CFG80211` and `CONFIG_VIRT_WIFI` for the last
-step; a kernel without them leaves `eth0` configured and `wlan0` absent.
+step; a kernel without them leaves `eth0` configured and `wlan0` absent, and
+apps with no network. The target-files verifier therefore requires all three
+built in (`=y`) in the packaged kernel configuration.
 
 The framework sees the Wi-Fi and only the Wi-Fi. The product declares
 `android.hardware.wifi` and not `android.hardware.ethernet`, so the system does
