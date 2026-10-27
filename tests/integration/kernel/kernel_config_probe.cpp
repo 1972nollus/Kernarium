@@ -3,15 +3,20 @@
 // Android CTS and the desktop disagree on. usage: kernel_config_probe
 // [linux|android], linux by default.
 //   both:    IPv4 multicast (/proc/net/igmp, a group join, a looped datagram),
-//            no RDS socket family, no listener on TCP port 16385, and the
-//            stack protector and hardened usercopy in /proc/config.gz
+//            no RDS socket family, no listener on TCP port 16385, the
+//            stack protector and hardened usercopy in /proc/config.gz, and
+//            a macvlan link that rtnetlink creates over a dummy link
 //   linux:   SysV IPC works, the NFS client and SCTP are present, a piped
-//            core_pattern runs its helper, and /sys/power has no wake_lock
+//            core_pattern runs its helper, /sys/power has no wake_lock, and
+//            there is no 802.11 stack (no nl80211 family, no phy)
 //   android: no SysV IPC (ENOSYS, no /proc/sysvipc), no NFS client, no SCTP,
 //            /sys/power/wake_lock takes and releases a wakelock, the
 //            static usermode helper runs no piped core_pattern helper, and
 //            the Incremental file system mounts, serves a filled block and
-//            fails a read of a missing block (the Linux guest has none)
+//            fails a read of a missing block (the Linux guest has none), and
+//            virtual Wi-Fi works: cfg80211's nl80211 family and a phy, and a
+//            virt_wifi link over the macvlan that connects to the access point
+//            VirtWifi through nl80211, raises its carrier and drops it again
 // Prints one line per check. The exit status is the failure count.
 //
 // The probe is also the usermode helper it tests: "kernel_config_probe --umh
@@ -20,6 +25,10 @@
 #include <fcntl.h>
 #include <ftw.h>
 #include <ifaddrs.h>
+#include <linux/genetlink.h>
+#include <linux/if_link.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -655,6 +664,324 @@ void check_usermode_helper(bool android)
 		report("usermode-helper", dumped && ran, detail);
 }
 
+// A request for one of the kernel's netlink interfaces, built the way iproute2
+// builds one: the header, a fixed body, then attributes that may nest.
+class NetlinkRequest {
+public:
+	NetlinkRequest(unsigned short type, unsigned short flags, const void *body,
+		       size_t body_size)
+	{
+		std::memset(buffer_, 0, sizeof buffer_);
+		nlmsghdr *header = reinterpret_cast<nlmsghdr *>(buffer_);
+		header->nlmsg_type = type;
+		header->nlmsg_flags = static_cast<unsigned short>(flags | NLM_F_REQUEST);
+		header->nlmsg_seq = 1;
+		length_ = NLMSG_HDRLEN;
+		std::memcpy(buffer_ + length_, body, body_size);
+		length_ += NLMSG_ALIGN(body_size);
+	}
+
+	void put(unsigned short type, const void *data, size_t size)
+	{
+		nlattr *attribute = reinterpret_cast<nlattr *>(buffer_ + length_);
+		attribute->nla_type = type;
+		attribute->nla_len = static_cast<unsigned short>(NLA_HDRLEN + size);
+		if (size != 0)
+			std::memcpy(buffer_ + length_ + NLA_HDRLEN, data, size);
+		length_ += NLA_ALIGN(NLA_HDRLEN + size);
+	}
+
+	void put_string(unsigned short type, const char *text)
+	{
+		put(type, text, std::strlen(text) + 1);
+	}
+
+	void put_u32(unsigned short type, unsigned int value) { put(type, &value, sizeof value); }
+
+	// The offset to hand to close() after the nested attributes.
+	size_t nest(unsigned short type)
+	{
+		size_t at = length_;
+		put(static_cast<unsigned short>(type | NLA_F_NESTED), nullptr, 0);
+		return at;
+	}
+
+	void close(size_t at)
+	{
+		reinterpret_cast<nlattr *>(buffer_ + at)->nla_len =
+			static_cast<unsigned short>(length_ - at);
+	}
+
+	const char *data()
+	{
+		reinterpret_cast<nlmsghdr *>(buffer_)->nlmsg_len = static_cast<unsigned int>(length_);
+		return buffer_;
+	}
+
+	size_t size() const { return length_; }
+
+private:
+	alignas(8) char buffer_[1024];
+	size_t length_ = 0;
+};
+
+// Sends the request on a netlink socket and returns the errno of the
+// acknowledgement (0 for success) or of the failing call. A reply that is not
+// an acknowledgement is handed back in *reply.
+int netlink_call(int protocol, NetlinkRequest &request, std::string *reply = nullptr)
+{
+	int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, protocol);
+	if (fd < 0)
+		return errno;
+	timeval timeout{5, 0};
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+	sockaddr_nl kernel{};
+	kernel.nl_family = AF_NETLINK;
+	int result = 0;
+	const char *message = request.data();
+	if (sendto(fd, message, request.size(), 0, reinterpret_cast<sockaddr *>(&kernel),
+		   sizeof kernel) < 0) {
+		result = errno;
+	} else {
+		alignas(8) char buffer[8192];
+		ssize_t got = recv(fd, buffer, sizeof buffer, 0);
+		const nlmsghdr *header = reinterpret_cast<const nlmsghdr *>(buffer);
+		if (got < 0)
+			result = errno;
+		else if (static_cast<size_t>(got) < NLMSG_HDRLEN ||
+			 header->nlmsg_len > static_cast<size_t>(got))
+			result = EBADMSG;
+		else if (header->nlmsg_type == NLMSG_ERROR)
+			result = -reinterpret_cast<const nlmsgerr *>(NLMSG_DATA(header))->error;
+		else if (reply != nullptr)
+			reply->assign(buffer, static_cast<size_t>(got));
+	}
+	close(fd);
+	return result;
+}
+
+// The id of a generic netlink family, or minus the errno that refused it:
+// ENOENT for a family the kernel does not have.
+int generic_family(const char *name)
+{
+	genlmsghdr body{};
+	body.cmd = CTRL_CMD_GETFAMILY;
+	body.version = 1;
+	NetlinkRequest request(GENL_ID_CTRL, 0, &body, sizeof body);
+	request.put_string(CTRL_ATTR_FAMILY_NAME, name);
+	std::string reply;
+	int error = netlink_call(NETLINK_GENERIC, request, &reply);
+	if (error != 0)
+		return -error;
+	for (size_t at = NLMSG_HDRLEN + GENL_HDRLEN; at + NLA_HDRLEN <= reply.size();) {
+		nlattr attribute;
+		std::memcpy(&attribute, reply.data() + at, sizeof attribute);
+		if (attribute.nla_len < NLA_HDRLEN || at + attribute.nla_len > reply.size())
+			break;
+		if ((attribute.nla_type & NLA_TYPE_MASK) == CTRL_ATTR_FAMILY_ID &&
+		    attribute.nla_len >= NLA_HDRLEN + sizeof(unsigned short)) {
+			unsigned short id;
+			std::memcpy(&id, reply.data() + at + NLA_HDRLEN, sizeof id);
+			return id;
+		}
+		at += NLA_ALIGN(attribute.nla_len);
+	}
+	return -EBADMSG;
+}
+
+// A link of the given kind, over another one when lower is not zero, with a
+// fixed address when mac is not null. A macvlan is private, as the product's
+// Wi-Fi interface needs it.
+int add_link(const char *name, const char *kind, unsigned lower, const unsigned char *mac)
+{
+	ifinfomsg body{};
+	NetlinkRequest request(RTM_NEWLINK, NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK, &body,
+			       sizeof body);
+	request.put_string(IFLA_IFNAME, name);
+	if (lower != 0)
+		request.put_u32(IFLA_LINK, lower);
+	if (mac != nullptr)
+		request.put(IFLA_ADDRESS, mac, 6);
+	size_t info = request.nest(IFLA_LINKINFO);
+	request.put_string(IFLA_INFO_KIND, kind);
+	if (std::strcmp(kind, "macvlan") == 0) {
+		size_t data = request.nest(IFLA_INFO_DATA);
+		request.put_u32(IFLA_MACVLAN_MODE, MACVLAN_MODE_PRIVATE);
+		request.close(data);
+	}
+	request.close(info);
+	return netlink_call(NETLINK_ROUTE, request);
+}
+
+int set_link_up(const char *name)
+{
+	ifinfomsg body{};
+	body.ifi_index = static_cast<int>(if_nametoindex(name));
+	body.ifi_flags = IFF_UP;
+	body.ifi_change = IFF_UP;
+	NetlinkRequest request(RTM_NEWLINK, NLM_F_ACK, &body, sizeof body);
+	return netlink_call(NETLINK_ROUTE, request);
+}
+
+// Removing a link removes the links stacked on it.
+int delete_link(const char *name)
+{
+	ifinfomsg body{};
+	NetlinkRequest request(RTM_DELLINK, NLM_F_ACK, &body, sizeof body);
+	request.put_string(IFLA_IFNAME, name);
+	return netlink_call(NETLINK_ROUTE, request);
+}
+
+// NL80211_CMD_CONNECT and NL80211_CMD_DISCONNECT with the attributes they
+// need, from <linux/nl80211.h>, which not every build host has.
+constexpr unsigned char nl80211_cmd_connect = 46;
+constexpr unsigned char nl80211_cmd_disconnect = 48;
+constexpr unsigned short nl80211_attr_ifindex = 3;
+constexpr unsigned short nl80211_attr_ssid = 52;
+constexpr unsigned short nl80211_attr_reason_code = 54;
+
+int nl80211_command(int family, unsigned char command, unsigned ifindex, const char *ssid)
+{
+	genlmsghdr body{};
+	body.cmd = command;
+	body.version = 1;
+	NetlinkRequest request(static_cast<unsigned short>(family), NLM_F_ACK, &body, sizeof body);
+	request.put_u32(nl80211_attr_ifindex, ifindex);
+	if (command == nl80211_cmd_connect) {
+		request.put(nl80211_attr_ssid, ssid, std::strlen(ssid));
+	} else {
+		unsigned short leaving = 3; // WLAN_REASON_DEAUTH_LEAVING
+		request.put(nl80211_attr_reason_code, &leaving, sizeof leaving);
+	}
+	return netlink_call(NETLINK_GENERIC, request);
+}
+
+// The carrier of a link, polled until it is the wanted value or the time is
+// up; virt_wifi connects two seconds after it is asked to.
+bool wait_for_carrier(const char *name, char wanted, int seconds)
+{
+	std::string path = std::string("/sys/class/net/") + name + "/carrier";
+	for (int i = 0; i < seconds * 10; ++i) {
+		std::string value = slurp(path.c_str());
+		if (!value.empty() && value[0] == wanted)
+			return true;
+		usleep(100000);
+	}
+	return false;
+}
+
+// Links the checks create, removed before and after: the dummy link carries
+// the others, so deleting it removes all three.
+constexpr const char *probe_lower = "kcfgd0";
+constexpr const char *probe_macvlan = "kcfgm0";
+constexpr const char *probe_wifi = "kcfgw0";
+
+// The stack the Android product builds on its NIC, built on a dummy link so
+// that the guest's own interfaces stay as they are: a macvlan with its own
+// address, and on it a virt_wifi interface when the kernel has one.
+int add_probe_stack(bool wifi, int &failed_step)
+{
+	static const unsigned char address[6] = {0x02, 0x15, 0xb2, 0x00, 0x00, 0x00};
+	failed_step = 1;
+	int error = add_link(probe_lower, "dummy", 0, nullptr);
+	if (error != 0)
+		return error;
+	failed_step = 2;
+	error = add_link(probe_macvlan, "macvlan", if_nametoindex(probe_lower), address);
+	if (error != 0 || !wifi)
+		return error;
+	failed_step = 3;
+	return add_link(probe_wifi, "virt_wifi", if_nametoindex(probe_macvlan), nullptr);
+}
+
+// A macvlan over a dummy link: every product has the driver.
+void check_macvlan()
+{
+	delete_link(probe_lower);
+	int step = 0;
+	int error = add_probe_stack(false, step);
+	bool listed = error == 0 && if_nametoindex(probe_macvlan) != 0;
+	std::string detail = error == 0 ? std::string(probe_macvlan) + " created over " + probe_lower
+					: "step " + std::to_string(step) + ": " + errno_text(error);
+	delete_link(probe_lower);
+	if (error == EPERM && geteuid() != 0)
+		report("macvlan", true, detail + " (not root, skipped)");
+	else
+		report("macvlan", listed, detail);
+}
+
+// The Android product's virtual Wi-Fi: cfg80211 with its nl80211 family and
+// virt_wifi's phy, a virt_wifi interface on the macvlan that connects to the
+// access point VirtWifi and drops its carrier when it disconnects. The Linux
+// product has no 802.11 stack, so nothing answers on nl80211.
+void check_wifi(bool android)
+{
+	std::string config = kernel_config();
+	bool cfg = config_has(config, "CONFIG_CFG80211=y");
+	bool virt = config_has(config, "CONFIG_VIRT_WIFI=y");
+	bool macvlan = config_has(config, "CONFIG_MACVLAN=y");
+	std::string detail = std::string("cfg80211 ") + (cfg ? "on" : "off") + ", virt_wifi " +
+			     (virt ? "on" : "off") + ", macvlan " + (macvlan ? "on" : "off");
+	if (config.empty())
+		report("wifi-config", false, "/proc/config.gz is unreadable");
+	else
+		report("wifi-config", macvlan && cfg == android && virt == android, detail);
+
+	int family = generic_family("nl80211");
+	bool phy = access("/sys/class/ieee80211", F_OK) == 0;
+	if (!android) {
+		report("no-nl80211", family == -ENOENT && !phy,
+		       std::string("nl80211 family ") +
+			       (family > 0 ? "present" : errno_text(-family)) + ", /sys/class/ieee80211 " +
+			       (phy ? "present" : "absent"));
+		return;
+	}
+	report("nl80211", family > 0 && phy,
+	       "nl80211 family " + (family > 0 ? std::to_string(family) : errno_text(-family)) +
+		       ", /sys/class/ieee80211 " + (phy ? "present" : "absent"));
+	if (family <= 0)
+		return;
+
+	delete_link(probe_lower);
+	int step = 0;
+	int error = add_probe_stack(true, step);
+	if (error != 0) {
+		bool skipped = error == EPERM && geteuid() != 0;
+		report("virt-wifi-link", skipped, "step " + std::to_string(step) + ": " +
+							  errno_text(error) +
+							  (skipped ? " (not root, skipped)" : ""));
+		delete_link(probe_lower);
+		return;
+	}
+	unsigned index = if_nametoindex(probe_wifi);
+	std::string phy_path = std::string("/sys/class/net/") + probe_wifi + "/phy80211";
+	report("virt-wifi-link", index != 0 && access(phy_path.c_str(), F_OK) == 0,
+	       std::string(probe_wifi) + " over " + probe_macvlan + " over " + probe_lower);
+
+	// Both links under it must be up for the station to be.
+	int up = set_link_up(probe_lower);
+	if (up == 0)
+		up = set_link_up(probe_macvlan);
+	if (up == 0)
+		up = set_link_up(probe_wifi);
+	int connected = up == 0 ? nl80211_command(family, nl80211_cmd_connect, index, "VirtWifi") : up;
+	bool carrier = connected == 0 && wait_for_carrier(probe_wifi, '1', 10);
+	report("virt-wifi-connect", carrier,
+	       connected != 0 ? errno_text(connected)
+			      : std::string(carrier ? "carrier on" : "no carrier") + " after connecting to VirtWifi");
+	if (connected == 0) {
+		int left = nl80211_command(family, nl80211_cmd_disconnect, index, "");
+		bool dropped = left == 0 && wait_for_carrier(probe_wifi, '0', 10);
+		report("virt-wifi-disconnect", dropped,
+		       left != 0 ? errno_text(left)
+				 : std::string(dropped ? "carrier off" : "carrier still on") +
+					   " after disconnecting");
+	}
+	delete_link(probe_lower);
+	report("virt-wifi-delete", if_nametoindex(probe_wifi) == 0 && if_nametoindex(probe_lower) == 0,
+	       "the three links are gone");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -684,6 +1011,8 @@ int main(int argc, char **argv)
 	check_hardening_config(android);
 	check_usermode_helper(android);
 	check_incfs(android);
+	check_macvlan();
+	check_wifi(android);
 	std::printf("%s: %d failure(s)\n", product, failures);
 	return failures;
 }

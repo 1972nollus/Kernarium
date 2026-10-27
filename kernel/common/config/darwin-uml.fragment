@@ -282,6 +282,10 @@ CONFIG_TUN=y
 # physical host hardware.
 CONFIG_VETH=y
 CONFIG_DUMMY=y
+# A second MAC address on one NIC. The Android guest puts its virtual Wi-Fi
+# interface on a macvlan child of its only NIC, so that the interface adb
+# uses keeps its own address; a container runtime can use it the same way.
+CONFIG_MACVLAN=y
 CONFIG_VSOCKETS=y
 CONFIG_VSOCKETS_LOOPBACK=y
 CONFIG_TLS=y

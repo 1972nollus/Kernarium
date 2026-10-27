@@ -205,6 +205,21 @@ CONFIG_IFB=y
 # The base configuration leaves IPv6 NAT out.
 # CONFIG_IP6_NF_NAT is not set
 
+# --- Virtual Wi-Fi ----------------------------------------------------------
+# Android's Wi-Fi framework (wificond, the supplicant and the Wi-Fi HAL) talks
+# to an nl80211 interface. virt_wifi puts a station interface over an Ethernet
+# device, with one fake open access point named VirtWifi, so that the guest
+# has Wi-Fi without a radio. Only this product has such a framework; the Linux
+# product keeps the code out (kernel/mainline-6.18/README.md gives the cost).
+CONFIG_CFG80211=y
+CONFIG_VIRT_WIFI=y
+# A signed regulatory database needs the host's OpenSSL for Kbuild's
+# certs/extract-cert, and the product ships none, so cfg80211 stays on the
+# world domain. Certification ONUS makes that choice allowed.
+CONFIG_CFG80211_CERTIFICATION_ONUS=y
+# CONFIG_CFG80211_REQUIRE_SIGNED_REGDB is not set
+# CONFIG_CFG80211_CRDA_SUPPORT is not set
+
 # --- Android security policy ------------------------------------------------
 # Android owns the SELinux policy and requires audit syscall records. Smack is
 # mutually exclusive with SELinux and must never survive into this product.
