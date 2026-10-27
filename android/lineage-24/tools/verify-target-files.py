@@ -398,8 +398,12 @@ FORBIDDEN_FEATURE_DECLARATIONS = {
 # The Virtio sound capture stream is the product's microphone. A build
 # fingerprint cannot report it only on some boots, so the declaration is
 # permanent (CDD 7.8.1 C-0-7) and the audio policy carries its input.
+# system_server starts the CompanionDeviceManager service only with
+# android.software.companion_device_setup, which the handheld declaration the
+# product replaces used to carry; the service runs without Bluetooth.
 REQUIRED_FEATURE_NAMES = {
     "android.hardware.microphone",
+    "android.software.companion_device_setup",
 }
 FORBIDDEN_FEATURE_NAMES = {
     "android.hardware.bluetooth",
@@ -925,7 +929,7 @@ def check_hardware_features(
             if feature:
                 declared.add(feature)
     for feature in sorted(REQUIRED_FEATURE_NAMES - declared):
-        fail(f"hardware feature is not declared: {feature}")
+        fail(f"required feature is not declared: {feature}")
 
 
 def app_preopt_paths(apk: str, isa: str = "arm64") -> tuple[str, str]:

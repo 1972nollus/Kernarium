@@ -397,6 +397,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           unsupported_hal: bool = False,
                           unsupported_feature: bool = False,
                           missing_microphone_feature: bool = False,
+                          missing_companion_feature: bool = False,
                           missing_mic_policy: bool = False,
                           extra_input_device: bool = False,
                           wrong_kernel_config: bool = False,
@@ -933,6 +934,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 advertised_features = ["android.hardware.touchscreen"]
                 if not missing_microphone_feature:
                     advertised_features.append("android.hardware.microphone")
+                if not missing_companion_feature:
+                    advertised_features.append("android.software.companion_device_setup")
                 if unsupported_feature:
                     advertised_features.append("android.hardware.camera")
                 archive.writestr(
@@ -1213,6 +1216,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("unsupported-hal", {"unsupported_hal": True}),
             ("unsupported-feature", {"unsupported_feature": True}),
             ("missing-microphone-feature", {"missing_microphone_feature": True}),
+            ("missing-companion-feature", {"missing_companion_feature": True}),
             ("missing-mic-policy", {"missing_mic_policy": True}),
             ("extra-input-device", {"extra_input_device": True}),
             ("kernel-config", {"wrong_kernel_config": True}),
@@ -1411,6 +1415,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "userdata entry lacks the fs_mgr quota flag"),
             ("missing-microphone-feature-cause", {"missing_microphone_feature": True},
              "feature is not declared: android.hardware.microphone"),
+            ("missing-companion-feature-cause", {"missing_companion_feature": True},
+             "feature is not declared: android.software.companion_device_setup"),
             ("camera-feature-cause", {"unsupported_feature": True},
              "absent hardware feature is advertised.*android.hardware.camera"),
             ("missing-mic-policy-cause", {"missing_mic_policy": True},

@@ -172,7 +172,11 @@ is the host's setting: silence by default, so recording APIs always open and
 return zeros, or the host's microphone when the user turns it on. The image
 needs a host with the capture stream; on an older host an application can open
 the input and the ALSA open then fails. The target-files verifier requires the
-declaration and exactly this input. Settings omits its Bluetooth media-output
+declaration and exactly this input. The product also declares
+`android.software.companion_device_setup`, which the handheld declaration it
+replaces carried: system_server starts the CompanionDeviceManager service only
+with that feature, and the service runs without Bluetooth. The verifier
+requires it. Settings omits its Bluetooth media-output
 switcher so the remaining volume and vibration controls do not instantiate a
 radio-backed media manager. A dedicated Virtio
 battery device reports the Apple host's percentage and charging state through

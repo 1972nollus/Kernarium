@@ -1078,7 +1078,7 @@ target-files verifier over fixtures (ABI lists, the 32-bit runtime, ELF32
 placement and alignment, per-ISA ART artifacts, the 32-bit Mesa and HAL files
 and their 64-suffixed `mmap` and `lseek` imports, the userdata inode count,
 the application read of the vendor security patch level, the built-in
-microphone with its feature declaration, the userdata `quota` flag, and the
+microphone and companion device setup feature declarations, the userdata `quota` flag, and the
 suspend blocker with the adb host-connected property it follows, the
 policy without the LineageOS grants that Android's neverallow tests refuse, and the
 discrete app-op list that keeps AOSP's default ops, the example thermal HAL
