@@ -133,10 +133,10 @@ The Linux overlay holds only what differs from the Android product:
 
 Every product has IPv4 multicast, which Kconfig leaves off and mDNS and SSDP
 discovery need, SafeSetID, which restricts only the IDs a policy written to
-securityfs names, and macvlan, a second MAC address on one NIC (about 20 KB of
-code). No product has RDS: its TCP transport opens a kernel listener on port
-16385 in every network namespace for any local user to reach, and nothing in
-a guest uses it, so the LTP case that needs it, `recvmsg03`, is in
+securityfs names, and macvlan, a second MAC address on one NIC (12 KB of code
+and data). No product has RDS: its TCP transport opens a kernel listener on
+port 16385 in every network namespace for any local user to reach, and
+nothing in a guest uses it, so the LTP case that needs it, `recvmsg03`, is in
 `disabled-tests.tsv`. `guest-kernel-config` checks these settings in a Linux
 guest, and the same probe checks an Android guest.
 
@@ -791,7 +791,7 @@ out of the shared series because it depends on the guest OS:
   `CFG80211_CRDA_SUPPORT` off, and cfg80211 stays on the world domain. The
   Linux product leaves both out: only Android's Wi-Fi framework uses an
   802.11 interface, since a desktop guest manages its NIC with networkd and
-  has no Wi-Fi manager, and the code adds about 1.4 MB to `vmlinux` (+3.9% on
+  has no Wi-Fi manager, and the code adds about 1.5 MB to `vmlinux` (+4% on
   Linux arm64) and registers a phy that nothing uses, with a "failed to load
   regulatory.db" message every boot. The recipe needs no `CONFIG_IP_PNP`,
   which stays off.
