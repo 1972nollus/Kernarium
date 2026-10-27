@@ -465,7 +465,6 @@ void test_native_shadow_domains_retire_on_every_handle_exit(
 	backing_a.put_byte(0, std::byte{0x31});
 	ScratchBacking backing_b{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing_b.put_byte(0, std::byte{0xa7});
-	slot.release();
 	native_shadow_a = {
 		.address = slot.page(),
 		.fd = backing_a.descriptor(),

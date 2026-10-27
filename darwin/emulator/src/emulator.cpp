@@ -137,26 +137,51 @@ void invoke_admission_hook(
 				std::memory_order_acquire));
 }
 
-std::atomic<std::uintptr_t> test_native_kernel_window_start;
+/* A Darwin sanitizer holds the product's macOS window itself (AddressSanitizer
+ * keeps its heap at 0x600000000000, ThreadSanitizer reserves everything
+ * outside its application ranges), and the process reserves its window for
+ * good. A sanitized test variant therefore places runs at the start of
+ * ThreadSanitizer's middle application range, which AddressSanitizer leaves to
+ * the application too, unless a test places them elsewhere. */
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define UML_EMULATOR_TEST_SANITIZED 1
+#endif
+#endif
+#ifdef UML_EMULATOR_TEST_SANITIZED
+constexpr std::uintptr_t default_test_native_window_start = 0x550000000000ULL;
+#else
+constexpr std::uintptr_t default_test_native_window_start = 0;
+#endif
+std::atomic<std::uintptr_t> test_native_kernel_window_start{
+	default_test_native_window_start};
 #endif
 
 /* Where a run's native kernel window goes: the product's placement, or in the
- * test variant the same geometry wherever a test placed the window. */
+ * test variant the same geometry wherever a test placed the window. The
+ * process holds its window for as long as it lives, so a run takes the window
+ * it holds or extends it. */
 [[nodiscard]] ::uml::runtime::NativeKernelLayout run_native_kernel_layout(
 	std::size_t guest_memory) noexcept
 {
-	auto layout = ::uml::runtime::prepare_native_kernel_layout(guest_memory);
 #if UML_EMULATOR_TESTING
 	const auto start = test_native_kernel_window_start.load(
 		std::memory_order_acquire);
-	if (start != 0 && layout.valid && !layout.reserved) {
-		const auto length = layout.window_end - layout.window_start;
-		layout.load_bias += start - layout.window_start;
-		layout.window_start = start;
-		layout.window_end = start + length;
+	auto product = ::uml::runtime::native_kernel_placement(guest_memory);
+	if (start != 0 && product.geometry.valid &&
+	    product.placement == ::uml::runtime::WindowPlacement::exact) {
+		auto &geometry = product.geometry;
+		const auto length = geometry.window_end - geometry.window_start;
+		geometry.load_bias += start - geometry.window_start;
+		geometry.window_start = start;
+		geometry.window_end = start + length;
+		const auto layout = ::uml::runtime::reserve_process_native_window(
+			geometry, product.placement);
+		return layout.valid ? layout :
+			::uml::runtime::NativeKernelLayout{.reservation_failed = true};
 	}
 #endif
-	return layout;
+	return ::uml::runtime::prepare_native_kernel_layout(guest_memory);
 }
 
 class ProcessAddressSpaceAdmission final {

@@ -15,6 +15,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
 #include <memory>
 #include <mutex>
 #include <pthread.h>
@@ -35,23 +37,26 @@ using namespace std::chrono_literals;
 #endif
 #endif
 
-#if defined(UML_LOADER_TEST_WITH_SANITIZER)
-/* Darwin sanitizers reserve shadow ranges that include the kernel's ELF link
- * address. Bias this synthetic image from application memory; the ordinary
- * fixture below still covers the exact production link address. */
-constexpr std::uint64_t linked_address = 0x0001'4000'0000ULL;
-#else
-/* Match the real Darwin UML kernel link address. */
+/* The ELF link address of the real Darwin UML kernel. The image runs at the
+ * process's window, wherever that is. */
 constexpr std::uint64_t linked_address = DARWIN_UML_NATIVE_LINK_ADDRESS;
-#endif
 
 /* These fixtures exercise process admission, so keep the managed-JIT run gate
  * from becoming an earlier independent serialization boundary. */
 constexpr char admission_engine_argument[] = "--execution-engine=gadgets";
 
 #if DARWIN_UML_NATIVE_HIGH_PLACEMENT
+/* The process reserves its window once and the images run inside it. The
+ * product's window is where macOS puts it; a Darwin sanitizer holds that
+ * range itself (AddressSanitizer's heap, ThreadSanitizer's shadow), so a
+ * sanitized build takes the start of ThreadSanitizer's middle application
+ * range, which AddressSanitizer leaves to the application too. */
+#if defined(UML_LOADER_TEST_WITH_SANITIZER)
+constexpr std::uint64_t native_window_start = 0x550000000000ULL;
+#else
 constexpr std::uint64_t native_window_start =
 	DARWIN_UML_MACOS_NATIVE_ADDRESS;
+#endif
 #else
 /* Page-aligned, so the auxiliary allowance is this RAM. */
 constexpr std::uint64_t default_guest_memory = 256ULL * 1024ULL * 1024ULL;
@@ -211,7 +216,8 @@ public:
  * and envp. */
 using KernelCallback = int (*)(int, char *const[], char *const[]);
 
-std::vector<std::byte> embedded_image(KernelCallback entry)
+std::vector<std::byte> embedded_image(KernelCallback entry,
+	std::uint64_t link_offset = 0)
 {
 	constexpr std::size_t payload_offset = 256;
 	constexpr std::uint32_t load_callback = 0x5800'0050U;
@@ -227,7 +233,7 @@ std::vector<std::byte> embedded_image(KernelCallback entry)
 	header->type = UML_ET_DYN;
 	header->machine = UML_EM_AARCH64;
 	header->version = 1;
-	header->entry = linked_address;
+	header->entry = linked_address + link_offset;
 	header->phoff = sizeof(*header);
 	header->ehsize = sizeof(*header);
 	header->phentsize = sizeof(uml_elf64_phdr);
@@ -237,8 +243,8 @@ std::vector<std::byte> embedded_image(KernelCallback entry)
 	program->type = UML_PT_LOAD;
 	program->flags = UML_PF_R | UML_PF_X;
 	program->offset = payload_offset;
-	program->vaddr = linked_address;
-	program->paddr = linked_address;
+	program->vaddr = linked_address + link_offset;
+	program->paddr = linked_address + link_offset;
 	program->filesz = 16;
 	program->memsz = 16;
 	program->align = 0x4000;
@@ -358,16 +364,40 @@ void release_blocked_kernel()
 	interleave.changed.notify_all();
 }
 
+/* True when every page of [address, address + length) is mapped and
+ * protectionless: the process's window as reserved, with no mapping of a
+ * guest in it and no free address space either. */
+[[nodiscard]] bool reserved_and_protectionless(std::uintptr_t address,
+	std::size_t length)
+{
+	mach_vm_address_t cursor = address;
+	const mach_vm_address_t end = address + length;
+	while (cursor < end) {
+		mach_vm_address_t region = cursor;
+		mach_vm_size_t size = 0;
+		vm_region_basic_info_data_64_t information{};
+		mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+		mach_port_t object = MACH_PORT_NULL;
+		if (mach_vm_region(mach_task_self(), &region, &size,
+			    VM_REGION_BASIC_INFO_64,
+			    reinterpret_cast<vm_region_info_t>(&information),
+			    &count, &object) != KERN_SUCCESS ||
+		    region > cursor || information.protection != VM_PROT_NONE)
+			return false;
+		cursor = region + size;
+	}
+	return true;
+}
+
+/* The kernel image has gone back to the process's window: the runtime
+ * address is part of the window's protectionless reservation, not a mapping
+ * the kernel left and not free address space either. */
 void require_runtime_window_available()
 {
 	const auto page_size = static_cast<std::size_t>(getpagesize());
-	void *mapping = mmap(reinterpret_cast<void *>(loader_runtime_address),
-		page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-	require(mapping != MAP_FAILED, "could not probe the runtime window");
-	const bool exact = reinterpret_cast<std::uintptr_t>(mapping) ==
-		loader_runtime_address;
-	(void)munmap(mapping, page_size);
-	require(exact, "successful loader call retained the runtime window");
+	require(reserved_and_protectionless(
+		loader_runtime_address, page_size),
+		"successful loader call retained the runtime window");
 }
 
 /* The native display runs the kernel on a worker while the AppKit thread
@@ -417,30 +447,28 @@ void test_kernel_signal_state_is_revoked_before_release()
 	require_runtime_window_available();
 }
 
-void test_occupied_runtime_window_is_not_replaced()
+/* The window belongs to the process's guest, and nothing outside it does. An
+ * image whose segments lie beyond the window is refused before it maps
+ * anything, and the window stays as the process reserved it. */
+void test_image_outside_the_window_is_refused()
 {
 	const auto page_size = static_cast<std::size_t>(getpagesize());
-	void *mapping = mmap(reinterpret_cast<void *>(loader_runtime_address),
-		page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-	require(mapping != MAP_FAILED, "could not reserve loader sentinel");
-	if (reinterpret_cast<std::uintptr_t>(mapping) != loader_runtime_address) {
-		(void)munmap(mapping, page_size);
-		throw std::runtime_error{"runtime window was already occupied"};
-	}
-	std::memset(mapping, 0xa5, page_size);
-	const auto image = embedded_image(second_kernel);
+	constexpr std::uint64_t beyond_the_window = 1ULL << 40;
+	const auto image = embedded_image(second_kernel, beyond_the_window);
 	auto emulator = make_emulator(image);
-	const char *arguments[]{"embedded-loader-sentinel"};
-	const int status = uml_emulator_run(
-		emulator.get(), 1, arguments, nullptr);
-	bool unchanged = true;
-	const auto *bytes = static_cast<const unsigned char *>(mapping);
-	for (std::size_t index = 0; index < page_size; ++index)
-		unchanged = unchanged && bytes[index] == 0xa5;
-	(void)munmap(mapping, page_size);
-	require(status == 126,
-		"loader accepted an occupied fixed runtime window");
-	require(unchanged, "loader modified the occupied runtime window");
+	const char *arguments[]{"embedded-loader-outside-window"};
+	require(uml_emulator_run(emulator.get(), 1, arguments, nullptr) == 126,
+		"loader accepted an image outside the reserved window");
+	void *const outside = reinterpret_cast<void *>(
+		static_cast<std::uintptr_t>(loader_runtime_address +
+			beyond_the_window));
+	void *const probe = mmap(outside, page_size, PROT_NONE,
+		MAP_PRIVATE | MAP_ANON, -1, 0);
+	const bool untouched = probe == outside;
+	if (probe != MAP_FAILED)
+		(void)munmap(probe, page_size);
+	require(untouched, "loader mapped an image outside the reserved window");
+	require_runtime_window_available();
 }
 
 void test_malformed_dynamic_metadata_is_guest_failure()
@@ -696,8 +724,12 @@ void test_embedded_handles_are_process_serialized()
 int main()
 {
 	try {
+#if DARWIN_UML_NATIVE_HIGH_PLACEMENT
+		uml::emulator::testing::place_native_kernel_window(
+			native_window_start);
+#endif
 		test_kernel_signal_state_is_revoked_before_release();
-		test_occupied_runtime_window_is_not_replaced();
+		test_image_outside_the_window_is_refused();
 		test_malformed_dynamic_metadata_is_guest_failure();
 		test_non_executable_final_entry_page_is_guest_failure();
 		test_unaligned_loader_metadata_is_guest_failure();

@@ -38,7 +38,8 @@ target_link_libraries(uml_emulator_options_tests PRIVATE
     UML::MemorySharedBacking)
 target_include_directories(uml_emulator_options_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
-    ${PROJECT_SOURCE_DIR}/darwin/emulator/src)
+    ${PROJECT_SOURCE_DIR}/darwin/emulator/src
+    ${PROJECT_SOURCE_DIR}/tests/unit/memory)
 uml_add_unit_test(NAME emulator-options COMMAND uml_emulator_options_tests)
 
 add_executable(uml_emulator_api_tests emulator_api_tests.cpp)

@@ -17,10 +17,12 @@ namespace uml::testing {
  * options give the guest 256 MiB. */
 inline constexpr std::size_t run_guest_memory = 256U * 1024U * 1024U;
 
-/* A host page reserved at the first free address of the native window that a
- * run takes. A test releases it before the run, so that the run's kernel maps
- * its guest page at page(), and asks retired() afterwards; a slot never
- * released is returned when it is destroyed. */
+/* A host page at the first address of the native window that a run takes,
+ * where a test kernel maps its guest page (page()) and a test asks retired()
+ * afterwards. The process holds its window as one protectionless reservation
+ * for as long as it lives, so the slot is a part of that reservation, not an
+ * allocation of the test: it starts without a mapping, a run's kernel maps
+ * over it, and retirement hands it back to the reservation. */
 class RunWindowSlot final {
 public:
 	RunWindowSlot() : size_{host_page()}
@@ -28,35 +30,13 @@ public:
 		const auto window = ::uml::emulator::testing::native_kernel_window(
 			run_guest_memory);
 		require(window.start != 0, "could not derive the run's native window");
-		for (auto candidate = window.start;
-		     address_ == 0 && candidate <= window.end - size_;
-		     candidate += size_) {
-			mach_vm_address_t reservation = candidate;
-			if (mach_vm_allocate(mach_task_self(), &reservation, size_,
-				    VM_FLAGS_FIXED) == KERN_SUCCESS)
-				address_ = static_cast<std::uintptr_t>(reservation);
-		}
-		require(address_ != 0,
-			"could not reserve a host slot in the run's native window");
-	}
-
-	~RunWindowSlot()
-	{
-		if (!released_)
-			(void)mach_vm_deallocate(mach_task_self(), address_, size_);
+		address_ = window.start;
+		require(retired(),
+			"the run's native window is not a protectionless reservation");
 	}
 
 	RunWindowSlot(const RunWindowSlot &) = delete;
 	RunWindowSlot &operator=(const RunWindowSlot &) = delete;
-
-	void release()
-	{
-		require(!released_ &&
-			mach_vm_deallocate(mach_task_self(), address_, size_) ==
-				KERN_SUCCESS,
-			"could not release the native window slot");
-		released_ = true;
-	}
 
 	/* The guest page one page into the slot. */
 	[[nodiscard]] std::uintptr_t page() const noexcept
@@ -74,7 +54,6 @@ public:
 private:
 	std::uintptr_t address_{};
 	std::size_t size_{};
-	bool released_{};
 };
 
 } // namespace uml::testing

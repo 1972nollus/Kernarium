@@ -115,21 +115,67 @@ using MacosNativeKernelGeometry =
 using DeviceNativeKernelGeometry =
 	NativeKernelLayoutGeometry<DARWIN_UML_NATIVE_ADDRESS_CEILING>;
 
-/* The layout for this process. It is invalid when guest_memory does not fit
- * the product's envelope, and also, with `reservation_failed` set, when a
- * physical iOS device cannot reserve its window: guest RAM is mapped over the
- * window with MAP_FIXED, which must never land on a range the host could
- * have handed to someone else. */
+/* How a window finds its place. */
+enum class WindowPlacement : std::uint8_t {
+	/* The geometry's address or nothing: a macOS process, whose address space
+	 * is the host's to place a kernel built for it in. */
+	exact,
+	/* The geometry's address when the host still offers it, else wherever
+	 * the host has room: a physical iOS device. */
+	anywhere,
+};
+
+/* Where the product puts a guest of this size: the geometry of its window and
+ * how the host finds the window its place. The geometry is invalid when
+ * guest_memory does not fit the product's envelope. Nothing is reserved. */
+struct NativeKernelPlacement final {
+	NativeKernelLayout geometry;
+	WindowPlacement placement{WindowPlacement::anywhere};
+};
+[[nodiscard]] NativeKernelPlacement native_kernel_placement(
+	std::size_t guest_memory) noexcept;
+
+/* Reserve a window of the geometry's length as one protectionless mapping.
+ * The whole window stays reserved: the kernel image, its physical prefix and
+ * guest RAM are all mapped over it in place. Returns an invalid layout when no
+ * suitable window can be reserved. */
+[[nodiscard]] NativeKernelLayout reserve_native_kernel_window(
+	const NativeKernelLayout &geometry,
+	WindowPlacement placement = WindowPlacement::anywhere) noexcept;
+
+/* The process's window for a guest of this geometry.
+ *
+ * The window is one reservation for the life of the process, on every product:
+ * the first call reserves it, the guest maps its kernel image, its RAM and its
+ * auxiliary mappings over it with MAP_FIXED, and a later call, such as that of
+ * a guest which restarted itself, returns the same window. It is never
+ * unmapped while a guest may use it and no range of it is ever freed: Darwin
+ * gives the next unhinted allocation the most recently freed range, so a host
+ * allocation that landed inside would be replaced by the guest's next fixed
+ * mapping, silently on both sides. The guest hands it back whole
+ * (hand_back_anonymous_guest_ram), as one protectionless mapping again.
+ *
+ * A window longer than the one held, which only a process whose guest is not
+ * spent asks for, extends the reservation at its exact address or, where the
+ * host places the window, takes a new one and releases the old, which holds
+ * nothing. Only one run uses the window at a time (the caller holds the
+ * process address-space gate). Invalid when the host will not reserve it. */
+[[nodiscard]] NativeKernelLayout reserve_process_native_window(
+	const NativeKernelLayout &geometry, WindowPlacement placement) noexcept;
+
+/* The layout for this process: the placement's window, reserved. It is invalid
+ * when guest_memory does not fit the product's envelope, and with
+ * `reservation_failed` set when the process cannot reserve its window. */
 [[nodiscard]] NativeKernelLayout prepare_native_kernel_layout(
 	std::size_t guest_memory) noexcept;
 
-/* Reserve a window of the geometry's length as one protectionless mapping,
- * at the geometry's address when the host still offers it and wherever the
- * host has room otherwise. The whole window stays reserved: the kernel image,
- * its physical prefix and guest RAM are all mapped over it in place. Returns
- * an invalid layout when no suitable window can be reserved. */
-[[nodiscard]] NativeKernelLayout reserve_native_kernel_window(
-	const NativeKernelLayout &geometry) noexcept;
+/* Where the process's window is, held whole; empty before the first
+ * reservation. The window may be longer than the layout last prepared. */
+struct ProcessNativeWindow final {
+	std::uintptr_t begin{};
+	std::uintptr_t end{};
+};
+[[nodiscard]] ProcessNativeWindow process_native_window() noexcept;
 
 class NativeKernelLayoutScope final {
 public:
