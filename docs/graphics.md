@@ -22,6 +22,12 @@ dependencies come from the verified `apple-gpu-vulkan-experiment` prefix. No
 Apple GPU product links CGL, OpenGL.framework, EAGL, MoltenVK, a Vulkan
 loader, or a second ambient libepoxy/virglrenderer family.
 
+Destroying a GL context frees the pipelines, shader variants, pipeline cache
+and library references of the Zink programs it built, although the screen's
+shared shaders outlive it, so closing a guest application returns the Metal
+pipelines and generated MSL it caused instead of keeping them for the life of
+the process.
+
 macOS and the iOS device both build that stack from the same sources; the
 prefixes differ only in their platform contract. The iOS
 Simulator has no build of it, because KosmicKrisp requires Metal 4 and the
