@@ -536,6 +536,12 @@ bool anonymous_shared_backing_registered() noexcept
 	return anonymous_backing.registered;
 }
 
+bool guest_ram_borrowed() noexcept
+{
+	std::lock_guard lock{anonymous_backing.mutex};
+	return anonymous_backing.borrowed_views != 0;
+}
+
 int hand_back_anonymous_guest_ram(void *window, std::size_t length) noexcept
 {
 	std::lock_guard lock{anonymous_backing.mutex};

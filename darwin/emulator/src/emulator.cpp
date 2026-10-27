@@ -5,6 +5,7 @@
 #include "context.hpp"
 #include "guest_sync.hpp"
 #include "guest_console.hpp"
+#include "guest_hand_back.hpp"
 #include "guest_hibernation.hpp"
 #include "kernel_signal_scope.hpp"
 #include "native_kernel_layout.hpp"
@@ -31,6 +32,10 @@ extern "C" {
 #include "elf_loader.h"
 }
 #endif
+
+#include <cerrno>
+#include <cstdio>
+#include <unistd.h>
 
 #if UML_EMULATOR_TESTING
 #include <cstring>
@@ -130,6 +135,8 @@ std::atomic<testing::AddressSpaceAdmissionHook> after_handle_admission_hook;
 std::atomic<testing::AddressSpaceAdmissionHook> admission_wait_boundary_hook;
 std::atomic<testing::AddressSpaceAdmissionHook> before_gate_release_hook;
 std::atomic<void *> address_space_admission_hook_context;
+std::atomic<testing::GuestHandBackHook> guest_hand_back_hook;
+std::atomic<void *> guest_hand_back_hook_context;
 
 void invoke_admission_hook(
 	const std::atomic<testing::AddressSpaceAdmissionHook> &hook) noexcept
@@ -262,6 +269,12 @@ void place_native_kernel_window(std::uintptr_t start) noexcept
 	test_native_kernel_window_start.store(start, std::memory_order_release);
 }
 
+void set_guest_hand_back_hook(GuestHandBackHook hook, void *context) noexcept
+{
+	guest_hand_back_hook_context.store(context, std::memory_order_release);
+	guest_hand_back_hook.store(hook, std::memory_order_release);
+}
+
 void report_guest_shutdown(::uml::runtime::GuestShutdownKind kind,
 	const char *command) noexcept
 {
@@ -317,10 +330,12 @@ public:
 		if (!run_scope.entered())
 			return -UML_EMULATOR_RUNTIME_ERROR;
 		clear_run_end();
-		/* A process runs one guest. Refuse a later run before it names the
-		 * console, maps a kernel window or reaches a kernel that would find no
-		 * guest RAM left to claim. */
-		if (::uml::runtime::process_guest_spent())
+		/* A process runs one guest, and that guest may restart itself: this
+		 * handle's guest, after a run that ended with a restart, goes back to
+		 * the process once the run is admitted. Refuse any other later run
+		 * before it names the console, maps a kernel window or reaches a
+		 * kernel that would find no guest RAM left to claim. */
+		if (!restartable_ && ::uml::runtime::process_guest_spent())
 			return -UML_EMULATOR_UNSUPPORTED;
 #if UML_EMULATOR_TESTING
 		invoke_admission_hook(after_handle_admission_hook);
@@ -377,8 +392,12 @@ public:
 			return -UML_EMULATOR_RUNTIME_ERROR;
 		/* Another run may have claimed the guest while this one waited for
 		 * admission. */
-		if (::uml::runtime::process_guest_spent())
+		if (restartable_) {
+			if (const int refused = hand_back_guest(); refused != 0)
+				return refused;
+		} else if (::uml::runtime::process_guest_spent()) {
 			return -UML_EMULATOR_UNSUPPORTED;
+		}
 		/* Readies the guest console's location before the guest binds it,
 		 * and removes it when the run returns, however the guest ended. */
 		const ::uml::device::GuestConsoleRun console_run{
@@ -541,6 +560,77 @@ public:
 #endif
 
 private:
+	/* Hands the process's guest back before the handle boots it again. A
+	 * refusal changes nothing the caller cannot repeat: the guest stays to be
+	 * handed back by a later run, once the caller has stopped what holds it. */
+	[[nodiscard]] int hand_back_guest() noexcept
+	{
+		switch (::uml::runtime::guest_hand_back_block()) {
+		case ::uml::runtime::GuestHandBackBlock::none:
+			break;
+		case ::uml::runtime::GuestHandBackBlock::borrowed_ram:
+			(void)::dprintf(STDERR_FILENO,
+				"Darwin: the guest cannot restart: a host service "
+				"still borrows its RAM; stop the device services "
+				"first\n");
+			return -UML_EMULATOR_RUNTIME_ERROR;
+		case ::uml::runtime::GuestHandBackBlock::kernel_threads:
+			(void)::dprintf(STDERR_FILENO,
+				"Darwin: the guest cannot restart: a kernel thread "
+				"is still running\n");
+			return -UML_EMULATOR_RUNTIME_ERROR;
+		}
+		/* The handle's state describes this kernel and its RAM; the
+		 * hibernation holds the commitment the hand-back retires. */
+		reset_guest_state();
+		::uml::runtime::GuestHandBack hand_back;
+		if (!::uml::runtime::hand_back_guest(hand_back)) {
+			(void)::dprintf(STDERR_FILENO,
+				"Darwin: the guest could not be handed back: "
+				"errno=%d\n", errno);
+			return -UML_EMULATOR_RUNTIME_ERROR;
+		}
+		const auto &released = hand_back.released;
+		(void)::dprintf(STDERR_FILENO,
+			"Darwin: guest handed back: descriptors=%zu keys=%zu "
+			"allocations=%zu (%zu bytes) mappings=%zu (%zu bytes) "
+			"sbrk=%zu guest_files=%zu\n",
+			released.descriptors, released.keys, released.allocations,
+			released.allocation_bytes, released.mappings,
+			released.mapping_bytes, released.sbrk_calls,
+			hand_back.guest_files);
+		restartable_ = false;
+#if UML_EMULATOR_TESTING
+		if (const auto hook = guest_hand_back_hook.load(
+			    std::memory_order_acquire); hook != nullptr)
+			hook(guest_hand_back_hook_context.load(
+				std::memory_order_acquire),
+				{.descriptors = released.descriptors,
+				 .keys = released.keys,
+				 .allocations = released.allocations,
+				 .allocation_bytes = released.allocation_bytes,
+				 .mappings = released.mappings,
+				 .mapping_bytes = released.mapping_bytes,
+				 .sbrk_calls = released.sbrk_calls,
+				 .guest_files = hand_back.guest_files});
+#endif
+		return 0;
+	}
+
+	/* What the handle remembers of its kernel: a suspension, a hibernation
+	 * of its RAM, a page-cache request waiting for the resume. The next
+	 * kernel starts without any of them. The hibernation image of the RAM is
+	 * dropped with the hibernation, and the next boot makes its own. */
+	void reset_guest_state() noexcept
+	{
+		request_hibernation_abort();
+		std::lock_guard lock{guest_lifecycle_mutex_};
+		hibernation_pointer_.store(nullptr, std::memory_order_release);
+		hibernation_.reset();
+		guest_suspension_ = ::uml::device::GuestSuspension::none;
+		pending_page_cache_trim_.reset();
+	}
+
 	/* A run that begins on the handle starts from no end. */
 	void clear_run_end() noexcept
 	{
@@ -577,6 +667,7 @@ private:
 			   ::uml::runtime::GuestShutdownKind::none) {
 			end.kind = UML_EMULATOR_RUN_END_POWER_OFF;
 		}
+		restartable_ = end.kind == UML_EMULATOR_RUN_END_RESTART;
 		std::lock_guard lock{run_end_mutex_};
 		run_end_ = end;
 	}
@@ -676,6 +767,10 @@ private:
 	std::unique_ptr<::uml::runtime::GuestHibernation> hibernation_;
 	std::atomic<::uml::runtime::GuestHibernation *> hibernation_pointer_ {
 		nullptr};
+	/* The handle's last run ended with a restart, so its guest goes back to
+	 * the process when the handle runs again. Only the handle's one run at a
+	 * time reads or writes it. */
+	bool restartable_{};
 	/* How the handle's most recent run ended, for uml_emulator_get_run_end. */
 	mutable std::mutex run_end_mutex_;
 	uml_emulator_run_end run_end_ {

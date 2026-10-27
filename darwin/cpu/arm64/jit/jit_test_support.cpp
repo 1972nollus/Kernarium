@@ -1054,6 +1054,22 @@ bool indirect_link_table_is_bounded(std::size_t capacity) {
          table.size() == capacity;
 }
 
+ExclusiveMonitorState exclusive_monitor_state_for_testing() {
+  ExclusiveMonitorState state;
+  state.active_reservations =
+      active_jit_reservations.load(std::memory_order_seq_cst);
+  {
+    std::scoped_lock lock{jit_reservations_mutex};
+    state.reservations = jit_reservations.size();
+  }
+  {
+    std::scoped_lock lock{jit_store_participants_mutex};
+    state.store_participants = jit_store_participants.size();
+  }
+  state.gate_quiescent = jit_exclusive_gate_is_quiescent_for_testing();
+  return state;
+}
+
 } // namespace jit::testing
 
 } // namespace uml::cpu::arm64

@@ -194,4 +194,16 @@ publication_gate_randomized_stress_for_testing();
 [[nodiscard]] bool
 publication_participant_lifetime_is_idempotent_for_testing();
 
+/* The JIT's process-wide exclusive monitor: the reservations that are held,
+ * the reservations recorded, the registered store participants, and whether
+ * the exclusive gate is idle. All of it is empty when no JIT vCPU exists, as
+ * between two runs of a guest that restarts itself. */
+struct ExclusiveMonitorState final {
+  unsigned active_reservations{};
+  std::size_t reservations{};
+  std::size_t store_participants{};
+  bool gate_quiescent{};
+};
+[[nodiscard]] ExclusiveMonitorState exclusive_monitor_state_for_testing();
+
 } // namespace uml::cpu::arm64::jit::testing

@@ -110,6 +110,7 @@ target_include_directories(uml_runtime_guest_selector PRIVATE
 
 add_library(uml_runtime_entry OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/bridge.cpp
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_hand_back.cpp
     ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_sync.cpp)
 uml_declare_architecture_target(uml_runtime_entry runtime)
 target_link_libraries(uml_runtime_entry PRIVATE

@@ -32,6 +32,27 @@ void set_address_space_admission_hooks(
 	AddressSpaceAdmissionHook at_wait_boundary,
 	AddressSpaceAdmissionHook before_gate_release, void *context) noexcept;
 
+/* What a hand-back gave back: the kernel's descriptors, pthread keys,
+ * allocations and mappings, the sbrk calls the kernel made, and the guest-file
+ * records forgotten. */
+struct GuestHandBackReport final {
+	std::size_t descriptors{};
+	std::size_t keys{};
+	std::size_t allocations{};
+	std::size_t allocation_bytes{};
+	std::size_t mappings{};
+	std::size_t mapping_bytes{};
+	std::size_t sbrk_calls{};
+	std::size_t guest_files{};
+};
+
+/* Called once the process's guest has been handed back, inside the run that
+ * boots it again and before that run reaches its kernel: the moment every
+ * hand-back invariant holds and nothing of the next boot exists. */
+using GuestHandBackHook = void (*)(void *context,
+	const GuestHandBackReport &report) noexcept;
+void set_guest_hand_back_hook(GuestHandBackHook hook, void *context) noexcept;
+
 /* Places the native kernel window of every later run at `start`, at the size
  * the run derives, instead of at the product's address; 0 restores the
  * product's placement. A sanitizer holds the macOS product window for itself,

@@ -45,8 +45,17 @@ uml_add_unit_test(
 add_executable(uml_runtime_sequential_run_tests sequential_run_tests.cpp)
 target_link_libraries(uml_runtime_sequential_run_tests PRIVATE
     UML::BridgeAbi
-    uml_emulator_test_variant)
+    UML::DeviceSocketPaths
+    UML::MemorySharedBacking
+    uml_emulator_test_variant
+    uml_test_mach_vm_region)
+# The JIT's exclusive-monitor probe the restart modes read between runs.
+target_sources(uml_runtime_sequential_run_tests PRIVATE
+    $<TARGET_OBJECTS:uml_arm64_jit_test_support>)
 target_include_directories(uml_runtime_sequential_run_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin
+    ${PROJECT_SOURCE_DIR}/darwin/platform
+    ${PROJECT_SOURCE_DIR}/darwin/runtime
     ${PROJECT_SOURCE_DIR}/tests/unit/emulator)
 uml_add_unit_test(
     NAME runtime-sequential-run-same-handle
@@ -57,6 +66,16 @@ uml_add_unit_test(
 uml_add_unit_test(
     NAME runtime-sequential-run-unclaimed-first-run
     COMMAND uml_runtime_sequential_run_tests unclaimed-first-run)
+# A guest that restarts itself boots again in the same process; every other end
+# leaves the guest spent, and the hand-back refuses what still holds the guest.
+# One process each, because the claim on guest RAM outlives every handle.
+foreach(_uml_restart_mode IN ITEMS restart power-off halt stopped failed
+        another-handle borrowed-view running-thread)
+    uml_add_unit_test(
+        NAME runtime-restart-${_uml_restart_mode}
+        COMMAND uml_runtime_sequential_run_tests ${_uml_restart_mode})
+endforeach()
+unset(_uml_restart_mode)
 
 add_executable(uml_runtime_x86_tier_tests x86_tier_tests.cpp)
 target_include_directories(uml_runtime_x86_tier_tests PRIVATE

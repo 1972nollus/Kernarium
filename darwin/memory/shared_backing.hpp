@@ -64,6 +64,10 @@ struct AnonymousBackingMemory final {
 [[nodiscard]] void *map_shared_backing(void *address, std::size_t length,
 	int protection, int flags, int fd, std::uint64_t offset) noexcept;
 
+/* Whether a host service borrows guest RAM (acquire_shared_backing_view), so
+ * that the guest cannot be handed back. */
+[[nodiscard]] bool guest_ram_borrowed() noexcept;
+
 /* Returns the guest's RAM to the process, so that it can run another guest.
  *
  * The guest RAM the host hands out once per process comes back as one
