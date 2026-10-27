@@ -406,8 +406,6 @@ fi
 	fail "the network setup tool that configures eth0 and the virtual Wi-Fi is absent"
 [[ "$PRODUCT_PACKAGES" == *" kernarium_wifi_network_script "* ]] ||
 	fail "the script that saves the virtual Wi-Fi network is absent"
-[[ "$PRODUCT_PACKAGES" == *" wificond "* ]] ||
-	fail "wificond, which the Wi-Fi service needs for the virtual Wi-Fi, is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.wifi "* ]] ||
 	fail "the Wi-Fi HAL that the virtual Wi-Fi needs is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.google.cf.wpa_supplicant "* ]] ||
@@ -471,7 +469,9 @@ for package in \
 	tombstone_transmit \
 	update_engine \
 	update_engine_client \
-	update_verifier; do
+	update_verifier \
+	wificond \
+	wificond_compat_symlink_module; do
 	[[ "$PRODUCT_PACKAGES_EXCLUDE" == *" $package "* ]] ||
 		fail "unneeded product package is not excluded: $package"
 	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||

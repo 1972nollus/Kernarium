@@ -552,7 +552,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "SYSTEM/bin/android-fixture",
                     synthetic_aarch64_elf(alignment, edit=elf_edit),
                 )
-                for tool in ("e2fsck", "resize2fs", "sgdisk", "wificond"):
+                for tool in ("e2fsck", "resize2fs", "sgdisk"):
                     archive.writestr(
                         f"SYSTEM/bin/{tool}",
                         synthetic_aarch64_elf(alignment),
@@ -1450,7 +1450,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("wifi-network-missing-marker-rule", {"wifi_network_variant": "missing-marker-rule"}),
             ("wifi-network-missing-marker-context", {"wifi_network_variant": "missing-marker-context"}),
             ("wifi-network-script", {"missing_wifi_network_script": True}),
-            ("missing-wificond", {"entries": {"SYSTEM/bin/wificond": None}}),
+            ("wificond-present", {"entries": {"SYSTEM/bin/wificond": synthetic_aarch64_elf()}}),
             ("wifi-dirs-missing", {"wifi_dirs_variant": "missing"}),
             ("wifi-dirs-wrong-owner", {"wifi_dirs_variant": "wrong-owner"}),
             ("missing-wifi-feature", {"missing_wifi_feature": True}),
@@ -1634,8 +1634,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "do not label persist.sys.kernarium.virtwifi_saved"),
             ("wifi-network-script-cause", {"missing_wifi_network_script": True},
              "SYSTEM_EXT/bin/kernarium_wifi_network.sh"),
-            ("missing-wificond-cause", {"entries": {"SYSTEM/bin/wificond": None}},
-             "SYSTEM/bin/wificond"),
+            ("wificond-present-cause", {"entries": {"SYSTEM/bin/wificond": synthetic_aarch64_elf()}},
+             "nonstatic image or metadata is forbidden: SYSTEM/bin/wificond"),
             ("wifi-dirs-missing-cause", {"wifi_dirs_variant": "missing"},
              "does not run 'mkdir /data/vendor/wifi 0770 wifi wifi' at boot"),
             ("wifi-dirs-wrong-owner-cause", {"wifi_dirs_variant": "wrong-owner"},
@@ -1917,7 +1917,6 @@ def verify_package_assertions(android_root: Path) -> None:
         "com.android.hardware.thermal",
         "com.android.hardware.cas",
         "libclearkeycasplugin",
-        "wificond",
         "com.android.hardware.wifi",
         "com.google.cf.wpa_supplicant",
         "KernariumWifiOverlay",

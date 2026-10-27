@@ -189,10 +189,15 @@ The framework sees the Wi-Fi and only the Wi-Fi. The product declares
 not start Ethernet management and `eth0` never becomes a network of its own.
 Apps get one network: Wi-Fi, the open SSID `VirtWifi`, unmetered, with the lease
 10.0.2.16 and the host's DNS. Turning Wi-Fi off, or airplane mode, takes apps
-offline while adb keeps working, since adb rides `eth0`. `wificond`, the Wi-Fi
-HAL (`com.android.hardware.wifi`) and the supplicant
-(`com.google.cf.wpa_supplicant`) are Cuttlefish's packages. `BoardConfig.mk`
-offers the HAL one station interface (`WIFI_HAL_INTERFACE_COMBINATIONS`),
+offline while adb keeps working, since adb rides `eth0`. The Wi-Fi HAL
+(`com.android.hardware.wifi`) and the supplicant
+(`com.google.cf.wpa_supplicant`) are Cuttlefish's packages. `wificond` is not
+shipped: the `cp2a` release configuration sets `RELEASE_DISABLE_WIFICOND`, which
+keeps it out of the product, and the Wi-Fi service then sends nl80211 commands
+itself (it falls back to that whenever `init.svc.wificond` is unset). The
+product excludes `wificond` and its compatibility symlink by name, and the
+target-files verifier rejects `SYSTEM/bin/wificond`. `BoardConfig.mk` offers the
+HAL one station interface (`WIFI_HAL_INTERFACE_COMBINATIONS`),
 because `virt_wifi` has no access-point or peer-to-peer interface type: there is
 no SoftAP, Wi-Fi Direct, Aware or RTT, and Passpoint stays undeclared until the
 Wi-Fi CTS runs show what it needs. `KernariumWifiOverlay` (`overlay/rro`) turns

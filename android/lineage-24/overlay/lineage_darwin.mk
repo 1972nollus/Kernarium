@@ -179,10 +179,12 @@ PRODUCT_COPY_FILES += \
 # sgdisk: vold executes /system/bin/sgdisk to scan and partition any disk it
 # manages, such as the virtual disk of `sm set-virtual-disk`.
 #
-# The Wi-Fi stack (wificond, the Wi-Fi HAL and the supplicant) stays, because
-# the kernel's virt_wifi gives the guest a Wi-Fi station. What Cuttlefish adds
-# around it does not: com.google.cf.wifi holds Cuttlefish's own network setup
-# tools (rename_netiface, setup_wifi and the mac80211 radios), which
+# The Wi-Fi HAL and the supplicant stay, because the kernel's virt_wifi gives
+# the guest a Wi-Fi station. wificond does not come back: the release
+# configuration retires it (RELEASE_DISABLE_WIFICOND), and the Wi-Fi service
+# then drives nl80211 itself. What Cuttlefish adds around the stack does not
+# stay: com.google.cf.wifi holds Cuttlefish's own network setup tools
+# (rename_netiface, setup_wifi and the mac80211 radios), which
 # kernarium_net_setup replaces, and its feature files, which come from the
 # device tree below. CuttlefishWifiOverlay turns on MAC randomization that
 # virt_wifi cannot do (KernariumWifiOverlay replaces it), and the tethering
@@ -273,7 +275,9 @@ KERNARIUM_REMOVED_PACKAGES := \
     tombstone_transmit \
     update_engine \
     update_engine_client \
-    update_verifier
+    update_verifier \
+    wificond \
+    wificond_compat_symlink_module
 PRODUCT_PACKAGES_EXCLUDE += $(KERNARIUM_REMOVED_PACKAGES)
 
 # The inherited Cuttlefish product also asks for modules this tree does not
