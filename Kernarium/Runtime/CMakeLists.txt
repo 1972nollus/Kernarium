@@ -60,6 +60,7 @@ endif()
 
 add_library(KernariumRuntime SHARED
     KernariumConsoleInput.hpp
+    KernariumKeyWake.hpp
     KernariumRuntime.h
     KernariumRuntime.mm)
 uml_declare_architecture_target(KernariumRuntime app)

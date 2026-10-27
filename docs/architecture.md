@@ -1034,8 +1034,10 @@ whatever the host last asked for, except to a guest it has quiesced, as a
 phone's power key does: it ends a suspend the guest entered by itself, such as
 Android's once its display is off, and a running guest only answers it. Network
 traffic to such a guest ends its own suspend as well, so `adb` reaches a guest
-whose display is off. Kernarium sends the edge after forwarding its
-Power key, whose virtio input cannot wake a suspended guest itself; the macOS
+whose display is off. Kernarium sends the edge after forwarding a key-down,
+since virtio input cannot wake a suspended guest itself: at every Power press
+and at most once a second for any other key, so a held key does not repeat it,
+and never for a touch. The macOS
 VNC display maps XF86PowerOff to the guest's power key, and VNC input is itself
 a wake source. The guest replies to a suspend only after syncing its file
 systems, so the host waits up to eight seconds for that reply. A kernel without

@@ -554,7 +554,7 @@ was being entered, is entered again up to three more times; the host's wake
 ends the request instead, and a request that gives up replies `Suspend
 failed`.
 Virtio input is not a wake source, because a suspend disables its rings, so a
-host that forwards a power key also sends the wake. `guest-suspend-holds`
+host that forwards a key also sends the wake. `guest-suspend-holds`
 keeps network, console and vhost-user traffic flowing through a suspend the
 host asked for, sends early wakes, one of them while a frozen file system
 holds the suspend's sync, fires an RTC alarm during a held sync of the host's

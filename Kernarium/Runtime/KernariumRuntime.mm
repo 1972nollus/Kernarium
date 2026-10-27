@@ -2,6 +2,7 @@
 
 #include "KernariumRuntime.h"
 #include "KernariumConsoleInput.hpp"
+#include "KernariumKeyWake.hpp"
 #if KERNARIUM_AUTOMATION_HARNESS
 #include "KernariumHarness.hpp"
 #endif
@@ -131,6 +132,9 @@ std::atomic_bool runtimeActive;
  * kernarium::console::InputRegistry.
  */
 std::mutex emulatorLifecycleMutex;
+/* A held key repeats, so an ordinary key sends the guest one wake edge a second
+ * at most. */
+kernarium::input::KeyWakePolicy keyWakePolicy {std::chrono::seconds(1)};
 std::mutex activeEmulatorMutex;
 uml_emulator* activeEmulator;
 std::mutex activeInputMutex;
@@ -1192,9 +1196,12 @@ void runtimeSendKey(uint16_t code, int pressed)
         activeKeyboard->send(events);
     }
     /* A guest that suspended itself, as Android does once its display is off,
-     * holds the key until something wakes it. Power wakes it, as on a phone.
-     * The wake can wait on the guest's console, so it leaves this thread. */
-    if (code != input::keyPower || pressed == 0)
+     * holds the key until something wakes it. A key-down wakes it, as a phone
+     * wakes to its keyboard, and a touch does not; see KeyWakePolicy. The wake
+     * can wait on the guest's console, so it leaves this thread. */
+    if (!keyWakePolicy.shouldWake(
+            code == input::keyPower, pressed != 0,
+            std::chrono::steady_clock::now()))
         return;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         std::lock_guard lifecycle(emulatorLifecycleMutex);
