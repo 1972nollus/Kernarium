@@ -6,6 +6,7 @@
 #include "guest_sync.hpp"
 #include "guest_console.hpp"
 #include "guest_hibernation.hpp"
+#include "kernel_signal_scope.hpp"
 #include "native_kernel_layout.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
@@ -18,8 +19,10 @@
 #include <mutex>
 #include <new>
 #include <optional>
+#include <algorithm>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -259,6 +262,16 @@ void place_native_kernel_window(std::uintptr_t start) noexcept
 	test_native_kernel_window_start.store(start, std::memory_order_release);
 }
 
+void report_guest_shutdown(::uml::runtime::GuestShutdownKind kind,
+	const char *command) noexcept
+{
+	if (auto *const context = ::uml::runtime::current_context();
+	    context != nullptr)
+		context->record_guest_shutdown(kind,
+			command == nullptr ? std::string_view{} :
+				std::string_view{command});
+}
+
 NativeKernelWindow native_kernel_window(std::size_t guest_memory) noexcept
 {
 	const auto layout = run_native_kernel_layout(guest_memory);
@@ -303,6 +316,7 @@ public:
 		TranslationCacheRunScope translation_cache_run;
 		if (!run_scope.entered())
 			return -UML_EMULATOR_RUNTIME_ERROR;
+		clear_run_end();
 		/* A process runs one guest. Refuse a later run before it names the
 		 * console, maps a kernel window or reaches a kernel that would find no
 		 * guest RAM left to claim. */
@@ -386,12 +400,23 @@ public:
 			::uml::runtime::ActiveRunRouteScope::DeferredPublication{}};
 		route_scope.commit();
 
+		/* An informational run prints and returns: it ran no guest, so it
+		 * has no end to record. */
+		std::optional<RunEndRecorder> run_end_recorder;
 #if UML_EMULATOR_TESTING
-		if (const auto entry = test_kernel_entry(kernel_); entry != nullptr)
+		if (const auto entry = test_kernel_entry(kernel_); entry != nullptr) {
+			if (!prepared.informational)
+				run_end_recorder.emplace(*this);
+			/* The kernel's own process state is the run's to restore, as
+			 * the loader restores it around a real kernel. */
+			const ::uml::runtime::KernelSignalScope kernel_signals{0, 0};
 			return entry(static_cast<int>(arguments.size()),
 				argument_pointers.data(), environment_pointers.data());
+		}
 #endif
 #if UML_EMULATOR_HAS_KERNEL_RUNNER
+		if (!prepared.informational)
+			run_end_recorder.emplace(*this);
 		const auto result = uml_elf_run(kernel_.data(), kernel_.size(),
 			native_layout.load_bias,
 			native_layout.reserved ? native_layout.window_start : 0U,
@@ -496,6 +521,12 @@ public:
 		return runtime_.execution_engine();
 	}
 
+	[[nodiscard]] uml_emulator_run_end run_end() const noexcept
+	{
+		std::lock_guard lock{run_end_mutex_};
+		return run_end_;
+	}
+
 #if UML_EMULATOR_TESTING
 	void use_hibernation(
 		std::unique_ptr<::uml::runtime::HibernationSteps> steps,
@@ -510,6 +541,65 @@ public:
 #endif
 
 private:
+	/* A run that begins on the handle starts from no end. */
+	void clear_run_end() noexcept
+	{
+		std::lock_guard lock{run_end_mutex_};
+		run_end_ = {
+			.struct_size = sizeof(run_end_),
+			.kind = UML_EMULATOR_RUN_END_NONE,
+			.restart_command = {},
+		};
+	}
+
+	/* Says how the run's guest ended, once its kernel has returned. The host's
+	 * own stop request wins over what the guest said on its way out, and a
+	 * kernel that said nothing failed. */
+	void record_run_end() noexcept
+	{
+		uml_emulator_run_end end{
+			.struct_size = sizeof(end),
+			.kind = UML_EMULATOR_RUN_END_FAILED,
+			.restart_command = {},
+		};
+		const auto shutdown = runtime_.guest_shutdown();
+		if (runtime_.stop_requested()) {
+			end.kind = UML_EMULATOR_RUN_END_STOPPED;
+		} else if (shutdown.kind ==
+			   ::uml::runtime::GuestShutdownKind::restart) {
+			end.kind = UML_EMULATOR_RUN_END_RESTART;
+			static_assert(sizeof(end.restart_command) >
+				      ::uml::runtime::guest_shutdown_command_limit);
+			std::copy_n(shutdown.command,
+				    ::uml::runtime::guest_shutdown_command_limit,
+				    end.restart_command);
+		} else if (shutdown.kind !=
+			   ::uml::runtime::GuestShutdownKind::none) {
+			end.kind = UML_EMULATOR_RUN_END_POWER_OFF;
+		}
+		std::lock_guard lock{run_end_mutex_};
+		run_end_ = end;
+	}
+
+	/* Records the end of the run that launched a kernel, on every way out of
+	 * the run, an exception included. */
+	class RunEndRecorder final {
+	public:
+		explicit RunEndRecorder(Emulator &emulator) noexcept
+			: emulator_{emulator}
+		{
+		}
+		~RunEndRecorder()
+		{
+			emulator_.record_run_end();
+		}
+		RunEndRecorder(const RunEndRecorder &) = delete;
+		RunEndRecorder &operator=(const RunEndRecorder &) = delete;
+
+	private:
+		Emulator &emulator_;
+	};
+
 	/* Before the guest boots: what the options say about hibernating, and
 	 * the images a process that ended in a hibernation left behind. */
 	void prepare_guest_hibernation(::uml::runtime::HibernationMode mode)
@@ -586,6 +676,13 @@ private:
 	std::unique_ptr<::uml::runtime::GuestHibernation> hibernation_;
 	std::atomic<::uml::runtime::GuestHibernation *> hibernation_pointer_ {
 		nullptr};
+	/* How the handle's most recent run ended, for uml_emulator_get_run_end. */
+	mutable std::mutex run_end_mutex_;
+	uml_emulator_run_end run_end_ {
+		.struct_size = sizeof(uml_emulator_run_end),
+		.kind = UML_EMULATOR_RUN_END_NONE,
+		.restart_command = {},
+	};
 };
 
 } // namespace uml::emulator
@@ -673,6 +770,16 @@ extern "C" int uml_emulator_run(uml_emulator *emulator, int argc,
 	} catch (...) {
 		return -UML_EMULATOR_RUNTIME_ERROR;
 	}
+}
+
+extern "C" int uml_emulator_get_run_end(const uml_emulator *emulator,
+					uml_emulator_run_end *end)
+{
+	if (emulator == nullptr || end == nullptr ||
+	    end->struct_size < sizeof(*end))
+		return -UML_EMULATOR_INVALID_ARGUMENT;
+	*end = emulator->implementation.run_end();
+	return UML_EMULATOR_OK;
 }
 
 extern "C" void uml_emulator_request_stop(uml_emulator *emulator)

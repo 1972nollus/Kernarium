@@ -26,10 +26,20 @@ int main()
 		emulator, &capabilities);
 	const char *const arguments[]{"uml-package-consumer", "--help"};
 	const int run_status = uml_emulator_run(emulator, 2, arguments, nullptr);
+	/* A run that never entered a kernel did not end a guest. */
+	uml_emulator_run_end run_end{
+		.struct_size = sizeof(uml_emulator_run_end),
+		.kind = UML_EMULATOR_RUN_END_FAILED,
+		.restart_command = "stale",
+	};
+	const int run_end_status = uml_emulator_get_run_end(emulator, &run_end);
 	uml_emulator_request_stop(emulator);
 	uml_emulator_destroy(emulator);
 	return status == UML_EMULATOR_OK &&
 		run_status == -UML_EMULATOR_UNSUPPORTED &&
+		run_end_status == UML_EMULATOR_OK &&
+		run_end.kind == UML_EMULATOR_RUN_END_NONE &&
+		run_end.restart_command[0] == '\0' &&
 		capabilities.abi_version == UML_EMULATOR_ABI_VERSION &&
 		!capabilities.can_run && capabilities.sandbox_safe &&
 		capabilities.platform != nullptr &&

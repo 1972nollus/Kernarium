@@ -240,6 +240,10 @@ bool Context::begin_run() noexcept
 	while (read(stop_notification_read_, pending, sizeof(pending)) > 0)
 		;
 	stop_requested_.store(false, std::memory_order_release);
+	{
+		std::lock_guard shutdown_lock{shutdown_mutex_};
+		guest_shutdown_ = {};
+	}
 	/* A context can be routed before its first run, as white-box tests route
 	 * theirs. Retire every execution object while its old memory domain is
 	 * still valid, then rotate and retire that domain before admitting the
@@ -392,6 +396,23 @@ GuestEntry Context::guest_entry() const noexcept
 std::uint64_t Context::memory_domain() const noexcept
 {
 	return memory_domain_.load(std::memory_order_acquire);
+}
+
+void Context::record_guest_shutdown(GuestShutdownKind kind,
+	std::string_view command) noexcept
+{
+	GuestShutdown record;
+	record.kind = kind;
+	const auto length = std::min(command.size(), guest_shutdown_command_limit);
+	std::copy_n(command.data(), length, record.command);
+	std::lock_guard lock{shutdown_mutex_};
+	guest_shutdown_ = record;
+}
+
+GuestShutdown Context::guest_shutdown() const noexcept
+{
+	std::lock_guard lock{shutdown_mutex_};
+	return guest_shutdown_;
 }
 
 ThreadExecutionStateAccess Context::thread_execution_state()

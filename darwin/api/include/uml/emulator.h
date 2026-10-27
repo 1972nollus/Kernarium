@@ -47,6 +47,32 @@ enum uml_emulator_execution_model {
 	UML_EMULATOR_NATIVE_JIT = 2,
 };
 
+/* How the guest of a run ended, as uml_emulator_get_run_end reports it. */
+enum uml_emulator_run_end_kind {
+	/* No run has begun on the handle, or the last one never ran a guest: it
+	 * was refused, cancelled while queued, or only printed information. */
+	UML_EMULATOR_RUN_END_NONE = 0,
+	/* The guest powered off or halted itself. */
+	UML_EMULATOR_RUN_END_POWER_OFF = 1,
+	/* The guest asked to restart. */
+	UML_EMULATOR_RUN_END_RESTART = 2,
+	/* uml_emulator_request_stop ended the run; it wins over whatever the
+	 * guest said on its way out. */
+	UML_EMULATOR_RUN_END_STOPPED = 3,
+	/* Any other end: the kernel returned, or the image failed to load,
+	 * without saying how the guest ended. */
+	UML_EMULATOR_RUN_END_FAILED = 4,
+};
+
+struct uml_emulator_run_end {
+	/* Set by the caller to sizeof the structure. */
+	uint32_t struct_size;
+	enum uml_emulator_run_end_kind kind;
+	/* The command the guest passed to its restart, cut to 255 bytes;
+	 * empty when it gave none and for every other kind. */
+	char restart_command[256];
+};
+
 struct uml_emulator_config {
 	uint32_t abi_version;
 	uint32_t struct_size;
@@ -91,6 +117,14 @@ int uml_emulator_get_capabilities(const struct uml_emulator *emulator,
  * process's guest unspent. */
 int uml_emulator_run(struct uml_emulator *emulator, int argc,
 		    const char *const argv[], const char *const envp[]);
+/* Reports how the guest of the handle's most recent run ended, once that run
+ * has returned. A run that begins on the handle starts from
+ * UML_EMULATOR_RUN_END_NONE, so a later refused run does not repeat an earlier
+ * run's end. Safe to call from any thread, and idle or during a run, which
+ * then reports the previous run. -UML_EMULATOR_INVALID_ARGUMENT for a null
+ * handle or output, or a struct_size smaller than the structure. */
+int uml_emulator_get_run_end(const struct uml_emulator *emulator,
+			     struct uml_emulator_run_end *end);
 /* This and uml_emulator_sync are the operations intended to overlap
  * uml_emulator_run on the same handle. A stop request made while idle is not
  * inherited by a later run. A request made while a run is queued at process

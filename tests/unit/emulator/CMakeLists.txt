@@ -31,6 +31,17 @@ uml_add_unit_test(
     COMMAND uml_emulator_lifecycle_tests
     LABELS console)
 
+# How a run says its guest ended: the kernel's report, the host's stop, and
+# the runs that ran no guest.
+add_executable(uml_emulator_run_end_tests run_end_tests.cpp)
+target_link_libraries(uml_emulator_run_end_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemorySharedBacking
+    uml_emulator_test_variant)
+target_include_directories(uml_emulator_run_end_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+uml_add_unit_test(NAME emulator-run-end COMMAND uml_emulator_run_end_tests)
+
 add_executable(uml_emulator_options_tests emulator_options_tests.cpp)
 target_link_libraries(uml_emulator_options_tests PRIVATE
     UML::BridgeAbi

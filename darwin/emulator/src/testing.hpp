@@ -11,6 +11,7 @@
 
 namespace uml::runtime {
 class HibernationSteps;
+enum class GuestShutdownKind : int;
 }
 
 namespace uml::emulator::testing {
@@ -47,6 +48,14 @@ struct NativeKernelWindow final {
  * empty when the run would refuse that size. */
 [[nodiscard]] NativeKernelWindow native_kernel_window(
 	std::size_t guest_memory) noexcept;
+
+/* Says, as the guest kernel does through its bridge import before it runs
+ * its exitcalls, how the run that is active on the calling thread's route ends:
+ * the kind and the restart command, which may be null. A kernel entry of a
+ * test image calls it where a real kernel calls the import; without an active
+ * run it does nothing. */
+void report_guest_shutdown(::uml::runtime::GuestShutdownKind kind,
+	const char *command) noexcept;
 
 /* Replaces the steps a hibernation takes, and what a failed restore does, on
  * `emulator`; the quiesce and resume calls then run the same ordering over
