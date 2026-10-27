@@ -51,14 +51,17 @@ endif()
 target_compile_definitions(uml_runtime_context PRIVATE
     UML_DEFAULT_EXECUTION_ENGINE_JIT=$<BOOL:${_uml_default_execution_engine_jit}>)
 
-# Process signal state an embedded kernel image leaves behind; the loader
-# closes this scope before it releases the image.
+# Process signal state an embedded kernel image leaves behind, which the loader
+# closes before it releases the image, and that release, which keeps the image's
+# guest-RAM tail while a host-service view borrows it.
 add_library(uml_runtime_kernel_signals OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/kernel_signal_scope.cpp)
 add_library(UML::RuntimeKernelSignals ALIAS uml_runtime_kernel_signals)
 uml_declare_architecture_target(uml_runtime_kernel_signals runtime)
 target_include_directories(uml_runtime_kernel_signals PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
+target_link_libraries(uml_runtime_kernel_signals PUBLIC
+    UML::MemorySharedBacking)
 
 # The threads an embedded kernel creates and the fence that holds them. The
 # loader resolves the kernel's pthread_create to this registry.

@@ -95,12 +95,16 @@ Domain retirement follows the same rule: it ends one address space, not the
 process, and a later one maps the same window. Guest RAM that a host-service
 view still borrows is the exception: it stays mapped until the last borrowed
 view of the root is released, because in-process backends are stopped only
-after the run returns, and a host stop leaves their queues started. Retirement
-publishes the native shadows of a descriptor's backing and discards those of
-guest RAM: nothing reads RAM once the run is over, and the loader has already
-released the kernel image, whose tail is the first RAM the guest owns, so
-retirement reads none of it whether the window was kept, re-reserved or
-unmapped.
+after the run returns, and a host stop leaves their queues started. The kernel
+image's last pages are the first RAM the guest owns, and every backend's view
+covers them, so the loader releases the image through the same rule
+(`runtime::release_kernel_image`): it stays mapped while a view borrows the
+root, and a range no view borrows goes back to the reservation, or is unmapped
+outside a window, at once. Retirement publishes the native shadows of a
+descriptor's backing and discards those of guest RAM, which nothing reads
+through a shadow once the run is over and which the loader may already have
+released, so retirement reads none of the root whether the window was kept,
+re-reserved or unmapped.
 
 Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create

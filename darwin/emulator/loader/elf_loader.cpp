@@ -67,14 +67,11 @@ public:
 	{
 	}
 
+	/* The image's last pages are guest RAM, which a host-service view may
+	 * still read after the run; the runtime keeps them while one does. */
 	~Reservation()
 	{
-		if (address_ == MAP_FAILED || address_ == nullptr)
-			return;
-		if (in_window_)
-			(void)reserve_in_place(address_, length_);
-		else
-			(void)munmap(address_, length_);
+		::uml::runtime::release_kernel_image(address_, length_, in_window_);
 	}
 
 	Reservation(const Reservation &) = delete;

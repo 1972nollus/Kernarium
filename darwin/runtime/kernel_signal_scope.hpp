@@ -3,6 +3,7 @@
 
 #include <array>
 #include <csignal>
+#include <cstddef>
 #include <cstdint>
 
 namespace uml::runtime {
@@ -46,5 +47,17 @@ private:
 	sigset_t mask_{};
 	bool mask_recorded_{};
 };
+
+/*
+ * Releases the kernel image the loader mapped, once the kernel has returned.
+ * The image's last pages are the first guest RAM, and a host-service view of
+ * guest RAM can still be read after the run: in-process backends stop only
+ * after it returns. While such a view borrows the RAM root, the range stays
+ * mapped and goes back to the window's reservation with the last borrowed
+ * view, as retired guest RAM does. Otherwise a range inside the window goes
+ * back to its reservation at once and any other range is unmapped.
+ */
+void release_kernel_image(void *address, std::size_t length,
+	bool in_window) noexcept;
 
 } // namespace uml::runtime
