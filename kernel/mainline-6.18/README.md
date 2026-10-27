@@ -394,7 +394,13 @@ Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
 at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
 `schedule()` when the caller stays runnable. The uaccess retry and TLB-walk
 safe points poll through `cond_resched()`, which does so only without
-`CONFIG_PREEMPTION`; both assert that at build time. A uaccess that may sleep
+`CONFIG_PREEMPTION`; both assert that at build time. The TLB walk of
+`flush_tlb_mm()` is a safe point only for its direct callers, `dup_mmap()` and
+the soft-dirty clear, which hold no spinlock or RCU read lock. The mmu_gather
+flushes under the PTE lock and never reaches it: the port's own `tlb_flush()`
+walks no VMA, and `exit_mmap()`'s full-mm gather does no host work, because
+`arch_exit_mmap()` has already emptied the host generation and no task is left
+to map into it. A uaccess that may sleep
 retries its fault until the fault handler refuses it or the task is dying, as
 native uaccess re-executes the access, so a sibling's `fork()` that
 write-protects the page again after the fault never fails the copy with

@@ -42,7 +42,7 @@ index 458f68c3840a1ef17578329c8470f2fbae2a9cb1..66a6516d9c9cebfe2c14bb75c6104bd7
  extern int um_tlb_sync_locked(struct mm_struct *mm, unsigned long start,
  			      unsigned long end);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 37b35d3387afddc48ea6cff26976240f172d47ea..17fad5fcd1bfb4915127b2b30b9d965bb5b90d7b 100644
+index 518cd56f2c254bc5e66527256eead5f85fb21282..90cdda698b812d9019eb9c237d3123f9754052d5 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -129,6 +129,62 @@ static int kern_unmap(struct mm_id *mm_idp,

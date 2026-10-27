@@ -936,6 +936,25 @@ uml_add_guest_integration_test(
 # The runner skips on a host with fewer than the ten CPUs it asks for.
 set_tests_properties(guest-mmu-stress PROPERTIES SKIP_RETURN_CODE 77)
 
+# A process with many dirty shared VMAs exits in time linear in them. The mm
+# teardown flushes once per page table that holds a dirty shared page, and a
+# flush that walked every VMA made the exit quadratic: tens of seconds at
+# 20000 VMAs against a few tens of milliseconds.
+uml_add_freestanding_cxx_payload(UML_GUEST_EXIT_SHARED_VMAS
+    guest-exit-shared-vmas
+    smp/guest_exit_shared_vmas.cpp
+    COMMENT "Building the freestanding arm64 shared-VMA exit probe"
+    ARCH_OPTIONS -march=armv8-a)
+
+uml_add_guest_integration_test(
+    NAME guest-exit-shared-vmas
+    SCRIPT smp/run_guest_exit_shared_vmas.py
+    ARGS --probe ${UML_GUEST_EXIT_SHARED_VMAS}
+        --cpus 4
+    LABELS guest;memory;mmu
+    TIMEOUT 600
+    CPUS 4)
+
 if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
     uml_add_guest_integration_test(
         NAME guest-external-network
