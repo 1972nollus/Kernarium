@@ -375,9 +375,12 @@ commands, the back-off, and a pass over file cache read between the pages of a
 tmpfs file.
 `CONFIG_VIRTIO_BALLOON` lets the host carve its GPU memory out of guest RAM.
 UML removes virtio drivers from an exitcall that runs
-after `device_shutdown()` has broken every virtqueue, so the balloon returns
-its pages without waiting for a host answer when its queue is broken; otherwise
-power-off with an inflated balloon never completes.
+after `device_shutdown()` has broken every virtqueue. The balloon therefore
+returns its pages without waiting for a host answer once its queue is broken,
+and its shutdown handler breaks the queues only while it holds the balloon
+lock, so that no balloon page migration is left waiting for an answer the
+broken queue would drop. Otherwise power-off with an inflated balloon never
+completes.
 
 Every slice selects `HAVE_ALIGNED_STRUCT_PAGE` and `HAVE_CMPXCHG_DOUBLE`, as
 native arm64 does; the x86-64 userspace slice keeps the arm64 kernel. SLUB
