@@ -410,6 +410,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_adb_prop_policy: bool = False,
                           core_sets_vendor_prop: bool = False,
                           missing_audio_binder_policy: bool = False,
+                          clearkey_memfd_variant: str | None = None,
                           oversize_platform_policy: bool = False,
                           media_codecs_variant: str | None = None,
                           system_ext_core_sets_vendor_prop: bool = False,
@@ -860,6 +861,22 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "(allow adbd_202604 virtual_face_hal_prop_202604 (property_service (set)))\n"
                         if core_sets_vendor_prop
                         else ""
+                    )
+                    # The ClearKey HAL's rule for the memfd files of application domains: the
+                    # generated attribute names the application domains less the isolated ones.
+                    + (
+                        ""
+                        if clearkey_memfd_variant == "missing"
+                        else "(typeattributeset base_typeattr_9_202604 (and (appdomain) "
+                        "(not (" + ("isolated_app_202604" if clearkey_memfd_variant == "isolated-only"
+                                    else "isolated_app_all_202604") + "))))\n"
+                        "(allow hal_drm_clearkey_aidl "
+                        + ("appdomain_202604" if clearkey_memfd_variant == "all-apps"
+                           else "base_typeattr_9_202604")
+                        + " (memfd_file ("
+                        + ("getattr map read" if clearkey_memfd_variant == "no-write"
+                           else "getattr map read write")
+                        + ")))\n"
                     ),
                 )
                 ueventd = "/dev/ttyS0 0660 root shell\n"
@@ -1232,6 +1249,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("adb-prop-policy", {"missing_adb_prop_policy": True}),
             ("core-sets-vendor-prop", {"core_sets_vendor_prop": True}),
             ("audio-binder-policy", {"missing_audio_binder_policy": True}),
+            ("clearkey-memfd-missing", {"clearkey_memfd_variant": "missing"}),
+            ("clearkey-memfd-no-write", {"clearkey_memfd_variant": "no-write"}),
+            ("clearkey-memfd-isolated-apps", {"clearkey_memfd_variant": "all-apps"}),
+            ("clearkey-memfd-wrong-exclusion", {"clearkey_memfd_variant": "isolated-only"}),
             ("oversize-platform-policy", {"oversize_platform_policy": True}),
             ("media-codecs-missing", {"media_codecs_variant": "missing"}),
             ("media-codecs-malformed", {"media_codecs_variant": "malformed"}),
@@ -1354,6 +1375,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "SYSTEM/etc/selinux/plat_sepolicy.cil"),
             ("audio-binder-policy-cause", {"missing_audio_binder_policy": True},
              "audio HAL processes call each other's binder"),
+            ("clearkey-memfd-missing-cause", {"clearkey_memfd_variant": "missing"},
+             "ClearKey DRM HAL read, write and map the memfd files"),
+            ("clearkey-memfd-no-write-cause", {"clearkey_memfd_variant": "no-write"},
+             "ClearKey DRM HAL read, write and map the memfd files"),
+            ("clearkey-memfd-isolated-apps-cause", {"clearkey_memfd_variant": "all-apps"},
+             "other than isolated apps"),
             ("core-sets-vendor-prop-cause", {"core_sets_vendor_prop": True},
              "lets the core domain adbd set the vendor property type virtual_face_hal_prop"),
             ("system-ext-core-sets-vendor-prop-cause", {"system_ext_core_sets_vendor_prop": True},

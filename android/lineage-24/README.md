@@ -237,6 +237,18 @@ open was denied (the audit rate limit hid how many).
 `overlay/sepolicy/vendor/hal_audio_default.te` allows the call, and the
 target-files verifier requires the rule.
 
+The guest kernel has no ashmem, the product sets `sys.use_memfd`, and the
+vendor policy enables `memfd_class`, so the shared buffers an application
+creates are memfd files labelled with the application's domain. A MediaCodec
+queues its encrypted input in such a buffer and the ClearKey DRM HAL maps it to
+decrypt into it, which the platform policy refuses (it grants a HAL the buffers
+of its declared clients, not those of applications). Every decrypt of a ClearKey
+stream failed. `overlay/sepolicy/vendor/hal_drm_clearkey.te` lets that HAL get
+the attributes of, read, write and map the memfd files of application domains
+other than isolated apps. It names the ClearKey domain alone: `hal_drm_server`
+also covers the Widevine HAL of the system. The target-files verifier requires
+the rule in the packaged vendor policy.
+
 The guest has no hardware video decoder, and the software decoders of the
 swcodec APEX advertise less than they decode: VP9 up to 2048x2048 and HEVC at
 2,000,000 8x8 blocks per second (1080p at 60 frames per second). Both decode

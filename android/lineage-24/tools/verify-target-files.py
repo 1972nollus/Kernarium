@@ -448,6 +448,15 @@ USERDATA_EXTFS_INODE_COUNT = "8192"
 MEDIA_C2_HEVC_BLOCKS_PER_SECOND = 129_600 * 30
 MEDIA_C2_VP9_BLOCK_COUNT = 32_400
 MEDIA_C2_SIZE = (3840, 2160)
+# The ClearKey DRM HAL maps the shared buffers of applications, which are memfd files labelled with
+# the application's domain on a kernel without ashmem (overlay/sepolicy/vendor/hal_drm_clearkey.te).
+# The compiled rule names the application domains less the isolated ones through a generated
+# attribute, a set expression of the form (and (appdomain) (not (isolated_app_all))).
+CLEARKEY_MEMFD_RULE = re.compile(
+    rb"^\(allow hal_drm_clearkey_aidl(?:_[0-9]+)? (\S+) \(memfd_file \(([^)]*)\)\)\)$",
+    re.MULTILINE,
+)
+CLEARKEY_MEMFD_PERMISSIONS = frozenset({"getattr", "map", "read", "write"})
 # The two example audio HAL processes share one domain and call each other's binder
 # (overlay/sepolicy/vendor/hal_audio_default.te).
 AUDIO_HAL_SELF_BINDER = re.compile(
@@ -1005,6 +1014,7 @@ def check_kernel_policy(
         fail("vendor policy does not let applications read vendor_security_patch_level_prop")
     if not AUDIO_HAL_SELF_BINDER.search(vendor_policy):
         fail("vendor policy does not let the audio HAL processes call each other's binder")
+    check_clearkey_memfd_policy(vendor_policy)
     platform_policy = read_small(
         archive, infos["SYSTEM/etc/selinux/plat_sepolicy.cil"], PLATFORM_POLICY_LIMIT
     )
@@ -1141,6 +1151,30 @@ def check_property_writers(
         if line.strip() and not line.lstrip().startswith("#")
     ):
         fail(f"system_ext property contexts do not label {ADB_HOST_PROPERTY}")
+
+
+def check_clearkey_memfd_policy(vendor_policy: bytes) -> None:
+    """The ClearKey HAL may use the memfd files of application domains, not of isolated apps."""
+    for match in CLEARKEY_MEMFD_RULE.finditer(vendor_policy):
+        permissions = set(match.group(2).decode().split())
+        if not CLEARKEY_MEMFD_PERMISSIONS <= permissions:
+            continue
+        target = match.group(1).decode()
+        expression = re.search(
+            rb"^\(typeattributeset " + re.escape(target.encode())
+            + rb" \(and \(appdomain(?:_[0-9]+)? ?\) \(not \(([^)]*)\) ?\)\)\)$",
+            vendor_policy,
+            re.MULTILINE,
+        )
+        if expression is not None and "isolated_app_all" in {
+            CIL_PLATFORM_VERSION_SUFFIX.sub("", name)
+            for name in expression.group(1).decode().split()
+        }:
+            return
+    fail(
+        "vendor policy does not let the ClearKey DRM HAL read, write and map the memfd files "
+        "of application domains other than isolated apps"
+    )
 
 
 def check_policy_relaxations(policies: tuple[bytes, ...]) -> None:

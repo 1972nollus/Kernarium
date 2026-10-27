@@ -1080,6 +1080,7 @@ and their 64-suffixed `mmap` and `lseek` imports, the userdata inode count,
 the application read of the vendor security patch level, the built-in
 microphone and companion device setup feature declarations, the userdata `quota` flag, and the
 suspend blocker with the adb host-connected property it follows, the
+ClearKey HAL's access to the memfd files of applications, the
 policy without the LineageOS grants that Android's neverallow tests refuse, and the
 discrete app-op list that keeps AOSP's default ops, the example thermal HAL
 with its manifest fragment and service, the default CAS HAL with its ClearKey
