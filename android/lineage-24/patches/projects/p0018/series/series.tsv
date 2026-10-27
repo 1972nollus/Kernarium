@@ -21,4 +21,5 @@ patch	v4l2-keep-decoding-when-the-client-switches-the-output-surface.patch
 patch	v4l2-keep-the-10-bits-of-a-stream-for-an-encoder-that-reads-the-deco.patch
 patch	v4l2-convert-to-P010-for-an-HEVC-Main-10-encoder.patch
 patch	v4l2-pass-the-HLG-transfer-function-to-the-encoder-device.patch
+patch	v4l2-take-an-IDR_N_LP-picture-as-an-HEVC-random-access-point.patch
 patch	README-document-the-decoder.patch
