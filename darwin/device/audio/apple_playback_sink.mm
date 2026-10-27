@@ -14,9 +14,11 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -243,6 +245,9 @@ public:
     [[nodiscard]] bool configure(
         const PlaybackParameters& parameters) override
     {
+#if TARGET_OS_IPHONE
+        settleResumption();
+#endif
         // Queued periods belong to the current state, and their completions
         // arrive only there: replacing it would strand them, so they must
         // come back first, as prepare() also requires.
@@ -311,6 +316,9 @@ public:
 
     [[nodiscard]] bool prepare() override
     {
+#if TARGET_OS_IPHONE
+        settleResumption();
+#endif
         if (!configured_ || state_->pending.load(std::memory_order_acquire) != 0)
             return false;
         @try {
@@ -329,6 +337,7 @@ public:
         if (!configured_ || !prepared_)
             return false;
 #if TARGET_OS_IPHONE
+        settleResumption();
         // Another app holds the session: the stream starts muted and the
         // sink takes the session when that app lets go, not before.
         applyInterruptionEvents();
@@ -370,6 +379,9 @@ public:
 
     void stop() noexcept override
     {
+#if TARGET_OS_IPHONE
+        settleResumption();
+#endif
         @try {
             [player_ pause];
         } @catch (NSException*) {
@@ -382,6 +394,9 @@ public:
 
     void release() noexcept override
     {
+#if TARGET_OS_IPHONE
+        settleResumption();
+#endif
         @try {
             [player_ stop];
             [engine_ pause];
@@ -399,6 +414,9 @@ public:
 
     void reset() noexcept override
     {
+#if TARGET_OS_IPHONE
+        settleResumption();
+#endif
         @try {
             [player_ stop];
             [engine_ stop];
@@ -496,9 +514,17 @@ public:
 #if TARGET_OS_IPHONE
             applyInterruptionEvents();
 #endif
+#if TARGET_OS_IPHONE
+            // A resumption in flight owns the engine: a configuration change
+            // it provokes is acted on once it has ended.
+            const bool configurationChanged = resumption_ == nullptr &&
+                notifications_->configurationChanged.exchange(
+                    false, std::memory_order_acq_rel);
+#else
             const bool configurationChanged =
                 notifications_->configurationChanged.exchange(
                     false, std::memory_order_acq_rel);
+#endif
             if (configurationChanged && configured_) {
                 [player_ stop];
                 [engine_ stop];
@@ -690,18 +716,129 @@ private:
             return;
         }
         if (running_)
-            (void)resume();
+            beginResume();
         else
             leaveMute();
     }
 
-    /* Takes the session back and plays again. False when another app still
-     * holds the session, and the sink stays muted; true when the mute is over,
-     * which a failure of the engine itself also ends, as a fault. */
-    [[nodiscard]] bool resume()
+    /* Taking the session back from an app that has just stopped, starting the
+     * engine on the route that follows, and the audio hardware's first cycle
+     * each take as long as the system takes: measured on an iPad mini 6, about
+     * 70, 75 and 210 ms. The device thread completes the guest's periods, and
+     * a guest whose write waits for one longer than its stream's buffer lasts
+     * (as little as 100 ms with the usual four periods) gets an I/O error. So
+     * the session and the engine are taken over on another thread, which
+     * plays one short buffer of silence and waits for the player to consume
+     * it, while the mute clock goes on completing periods here. The device
+     * thread finishes the resumption when the other thread reports; see
+     * completeResume. */
+    struct Resumption final {
+        enum class Outcome { sessionRefused, engineFailed, ready };
+
+        std::mutex mutex;
+        std::condition_variable ended;
+        bool finished {};
+        Outcome outcome {Outcome::sessionRefused};
+    };
+
+    // Starts taking the session back, unless that is already under way.
+    void beginResume()
     {
-        if (!activateSession())
-            return false;
+        if (resumption_ != nullptr)
+            return;
+        const auto resumption = std::make_shared<Resumption>();
+        resumption_ = resumption;
+        nextHintPoll_ = Clock::now() + hintPollInterval;
+        AVAudioEngine* const engine = engine_;
+        AVAudioPlayerNode* const player = player_;
+        // A few milliseconds of silence, played once the engine runs: see
+        // the worker below.
+        AVAudioPCMBuffer* const probe = [[AVAudioPCMBuffer alloc]
+            initWithPCMFormat:format_
+                frameCapacity:256];
+        if (probe != nil) {
+            probe.frameLength = 256;
+            const AudioBufferList* const list = probe.audioBufferList;
+            for (UInt32 index = 0; index < list->mNumberBuffers; ++index)
+                std::memset(list->mBuffers[index].mData, 0,
+                    list->mBuffers[index].mDataByteSize);
+        }
+        const std::weak_ptr<NotificationFlags> weakNotifications =
+            notifications_;
+        dispatch_async(
+            dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+              auto outcome = Resumption::Outcome::sessionRefused;
+              @try {
+                  if (activateSession()) {
+                      NSError* error = nil;
+                      const bool running = engine.isRunning ||
+                          [engine startAndReturnError:&error];
+                      outcome = running ? Resumption::Outcome::ready
+                                        : Resumption::Outcome::engineFailed;
+                      // The player starts here, with nothing scheduled, so
+                      // the periods handed to it later start at once instead
+                      // of after the player's own start-up.
+                      if (running) {
+                          (void)[player playAndReturnError:&error];
+                          // The engine reports that it runs well before the
+                          // audio hardware delivers its first cycle: a fifth
+                          // of a second has been measured on the iPad mini
+                          // 6. The guest is served by the mute clock until
+                          // then, so the first of its periods that the
+                          // player gets does not wait out that start-up. The
+                          // probe is consumed by the first cycle that runs;
+                          // an engine that never renders is left to the
+                          // guest's own timeout after a second.
+                          if (probe != nil) {
+                              dispatch_semaphore_t const rendered =
+                                  dispatch_semaphore_create(0);
+                              [player
+                                  scheduleBuffer:probe
+                                  completionCallbackType:
+                                      AVAudioPlayerNodeCompletionDataConsumed
+                                  completionHandler:^(
+                                      AVAudioPlayerNodeCompletionCallbackType) {
+                                    dispatch_semaphore_signal(rendered);
+                                  }];
+                              (void)dispatch_semaphore_wait(rendered,
+                                  dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC));
+                          }
+                      }
+                  }
+              } @catch (NSException*) {
+                  outcome = Resumption::Outcome::engineFailed;
+              }
+              {
+                  const std::lock_guard lock(resumption->mutex);
+                  resumption->outcome = outcome;
+                  resumption->finished = true;
+              }
+              resumption->ended.notify_all();
+              if (const auto flags = weakNotifications.lock())
+                  (void)flags->wake->notify();
+            });
+    }
+
+    // Waits for a resumption in flight and drops its outcome: the command
+    // that waits changes the stream, and the engine is not to be changed
+    // under the thread that is starting it.
+    void settleResumption() noexcept
+    {
+        if (resumption_ == nullptr)
+            return;
+        {
+            std::unique_lock lock(resumption_->mutex);
+            resumption_->ended.wait(
+                lock, [this] { return resumption_->finished; });
+        }
+        resumption_.reset();
+    }
+
+    /* Plays again with the session taken and the engine running: hands the
+     * periods the mute clock still holds to the player and ends the mute. A
+     * failure of the engine itself ends the mute too, as a fault. */
+    void completeResume()
+    {
         bool playing = false;
         @try {
             NSError* error = nil;
@@ -721,17 +858,17 @@ private:
                 std::fprintf(stderr, "Audio resumed after %lld ms\n",
                     static_cast<long long>(milliseconds.count()));
             }
-            return true;
+            return;
         }
         abortPending(false);
         running_ = false;
         faulted_ = true;
         endMute();
-        return true;
     }
 
-    // Completes the periods that are due and asks whether to take the
-    // session back; runs on the device thread, on every pass and timer tick.
+    // Completes the periods that are due, finishes a resumption that has
+    // ended and asks whether to take the session back; runs on the device
+    // thread, on every pass and timer tick.
     void serviceMute()
     {
         if (!muted_ || !running_)
@@ -742,10 +879,37 @@ private:
                muteClock_.take(now)) {
             completeOldest(*state);
         }
-        if (now >= nextHintPoll_) {
+        if (resumption_ != nullptr) {
+            auto outcome = Resumption::Outcome::sessionRefused;
+            bool finished = false;
+            {
+                const std::lock_guard lock(resumption_->mutex);
+                finished = resumption_->finished;
+                outcome = resumption_->outcome;
+            }
+            if (finished) {
+                resumption_.reset();
+                if (outcome == Resumption::Outcome::ready) {
+                    completeResume();
+                    return;
+                }
+                if (outcome == Resumption::Outcome::engineFailed) {
+                    abortPending(false);
+                    running_ = false;
+                    faulted_ = true;
+                    endMute();
+                    return;
+                }
+                // Another app still holds the session: stay muted and ask
+                // again after the next poll interval.
+                nextHintPoll_ = now + hintPollInterval;
+            } else {
+                nextHintPoll_ = now + hintPollInterval;
+            }
+        } else if (now >= nextHintPoll_) {
             nextHintPoll_ = now + hintPollInterval;
-            if (!otherAudioPlaying() && resume())
-                return;
+            if (!otherAudioPlaying())
+                beginResume();
         }
         armMute();
     }
@@ -826,7 +990,7 @@ private:
         }
     }
 
-    [[nodiscard]] bool activateSession() noexcept
+    [[nodiscard]] static bool activateSession() noexcept
     {
 #if TARGET_OS_IPHONE
         @try {
@@ -876,6 +1040,8 @@ private:
     // The stream runs but plays nothing: the mute clock completes its periods.
     bool muted_ {};
     MuteClock muteClock_;
+    // The session and engine being taken back on another thread, if any.
+    std::shared_ptr<Resumption> resumption_;
     Clock::time_point muteStarted_ {};
     Clock::time_point nextHintPoll_ {};
     Clock::time_point lastResumed_ {};

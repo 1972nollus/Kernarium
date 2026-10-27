@@ -297,7 +297,8 @@ the session's activation and its hint about other apps' audio and on the
 player's scheduling: playback must stop while interrupted without slowing the
 guest's clock, resume when the system lets the session resume or, with no
 notification, when no other app plays, never take the session from an app that
-does, and never wedge. It skips when no iOS Simulator device at the deployment
+does, keep completing periods through a slow session activation, and never
+wedge. It skips when no iOS Simulator device at the deployment
 target exists.
 
 The full sanitizer suites remain separate because of their runtime cost:

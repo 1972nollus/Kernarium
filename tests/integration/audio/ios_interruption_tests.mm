@@ -64,6 +64,8 @@ void check(bool passed, const char* name, const std::string& detail = {})
 std::atomic<bool> otherAudioPlaying {};
 std::atomic<std::uint64_t> activations {};
 std::atomic<int> activationsToFail {};
+// How long the system takes to give the session back, in milliseconds.
+std::atomic<int> activationDelay {};
 std::atomic<std::uint64_t> scheduledPeriods {};
 
 void installHooks()
@@ -84,6 +86,8 @@ void installHooks()
             id session, BOOL active, NSError* __autoreleasing* error) {
           if (active) {
               ++activations;
+              if (const auto delay = activationDelay.load(); delay > 0)
+                  std::this_thread::sleep_for(std::chrono::milliseconds(delay));
               if (activationsToFail.load() > 0) {
                   --activationsToFail;
                   if (error != nullptr) {
@@ -265,6 +269,15 @@ public:
 
     [[nodiscard]] bool healthy() const { return !failed_ && rejected_ == 0; }
 
+    // The longest the guest waited for a period to complete since the last
+    // call, as the device thread saw it.
+    [[nodiscard]] std::chrono::milliseconds longestWait()
+    {
+        const auto longest = longestWait_;
+        longestWait_ = {};
+        return std::chrono::duration_cast<std::chrono::milliseconds>(longest);
+    }
+
 private:
     void fill()
     {
@@ -282,6 +295,10 @@ private:
     {
         uml::audio::PlaybackCompletion completion;
         while (sink_.takeCompletion(completion)) {
+            const auto now = std::chrono::steady_clock::now();
+            if (lastCompletion_ != std::chrono::steady_clock::time_point {})
+                longestWait_ = std::max(longestWait_, now - lastCompletion_);
+            lastCompletion_ = now;
             ++completed_;
             rejected_ += completion.success ? 0 : 1;
         }
@@ -293,6 +310,8 @@ private:
     std::uint64_t completed_ {};
     std::uint64_t rejected_ {};
     bool failed_ {};
+    std::chrono::steady_clock::time_point lastCompletion_ {};
+    std::chrono::steady_clock::duration longestWait_ {};
 };
 
 } // namespace
@@ -515,6 +534,52 @@ void beganWithNoEnd()
     stream.close();
 }
 
+// Taking the session from an app that has stopped can take the system a
+// while, and the engine more on the route that follows. The guest's periods
+// must go on completing at the rate of real audio meanwhile: a guest whose
+// write waits longer than its stream's buffer lasts (100 ms with the usual
+// four periods) gets an I/O error, and the stream restarts with a gap.
+void slowActivationKeepsTheClock()
+{
+    auto sink = uml::audio::makeApplePlaybackSink();
+    Stream stream(*sink);
+    otherAudioPlaying = false;
+    check(stream.open(), "the stream opens for the slow activation");
+    auto seen = stream.window(500ms, 1000ms);
+    check(seen.playing(), "the stream plays before the slow activation",
+        seen.text());
+
+    otherAudioPlaying = true;
+    postInterruptionBegan();
+    seen = stream.window(400ms, 1000ms);
+    check(seen.muted(), "an interruption mutes before the slow activation",
+        seen.text());
+
+    // The interrupter stops, and the system then takes half a second to give
+    // the session back.
+    constexpr int slowMilliseconds = 500;
+    activationDelay = slowMilliseconds;
+    const auto mark = activations.load();
+    (void)stream.longestWait();
+    otherAudioPlaying = false;
+    const auto taken = stream.untilPlayed(recoveryLimit + 1500ms);
+    check(taken < recoveryLimit + 1500ms && activations.load() == mark + 1,
+        "playback returns after a slow activation, by one activation",
+        std::to_string(taken.count()) + " ms");
+    seen = stream.window(300ms, 1500ms);
+    check(seen.playing() && stream.healthy(),
+        "the stream plays on after the slow activation", seen.text());
+    // From the poll that found nobody playing, through the activation and
+    // the hand-over, the guest never waited anywhere near the activation.
+    const auto longest = stream.longestWait();
+    check(longest < 150ms,
+        "the periods kept completing through the slow activation",
+        "longest wait " + std::to_string(longest.count()) + " ms, activation " +
+            std::to_string(slowMilliseconds) + " ms");
+    activationDelay = 0;
+    stream.close();
+}
+
 // A muted stream whose guest wrote nothing for a while owes nothing: the
 // periods it writes next complete at the rate of real audio, not in a burst
 // that makes up the time that passed.
@@ -679,6 +744,7 @@ int main()
         installHooks();
         interruptionMutesAndResumes();
         beganWithNoEnd();
+        slowActivationKeepsTheClock();
         idleMuteBuildsNoCredit();
         noActivationWhileInterrupted();
         interruptionBeforeStart();

@@ -350,7 +350,13 @@ simply stops or is killed, once no other app plays primary audio, asked once a
 second while the stream runs. It never takes the session from an app that still
 plays, except when the guest starts a stream at a moment nothing interrupts
 it: a stream that starts or resumes during an interruption, or a route change
-during one, joins the mute. Route changes otherwise restart the engine.
+during one, joins the mute. Route changes otherwise restart the engine. Taking
+the session back, starting the engine and the audio hardware's first cycle
+(about 70, 75 and 210 ms on an iPad mini 6) run on another thread while the mute
+clock goes on completing the guest's periods, and the held periods are handed
+to the player only once it has consumed a buffer of silence, so that no guest
+write waits longer than its stream's buffer lasts (100 ms with four periods,
+about 330 ms with a 300 ms buffer), which ends in an I/O error.
 Capture and mixer controls are not exposed.
 
 SLiRP host forwards are owned by the provider so they survive provider reopen.
