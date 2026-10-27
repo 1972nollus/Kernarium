@@ -20,8 +20,10 @@
 //            fails a read of a missing block (the Linux guest has none), and
 //            virtual Wi-Fi works: cfg80211's nl80211 family and a phy, and a
 //            virt_wifi link over the macvlan that connects to the access point
-//            VirtWifi through nl80211, raises its carrier and drops it again;
-//            one ESP SPI is allocated for two destination addresses
+//            VirtWifi through nl80211, raises its carrier and drops it again,
+//            remains on a channel the radio did not always list (2412 MHz)
+//            and sends an Action frame there; one ESP SPI is allocated for
+//            two destination addresses
 // Prints one line per check. The exit status is the failure count.
 //
 // The probe is also the usermode helper it tests: "kernel_config_probe --umh
@@ -883,6 +885,99 @@ constexpr const char *probe_lower = "kcfgd0";
 constexpr const char *probe_macvlan = "kcfgm0";
 constexpr const char *probe_wifi = "kcfgw0";
 
+// The generic netlink commands and attributes of off-channel operation, from
+// <linux/nl80211.h>, which not every build host has.
+constexpr unsigned char nl80211_cmd_remain_on_channel = 55;
+constexpr unsigned char nl80211_cmd_cancel_remain_on_channel = 56;
+constexpr unsigned char nl80211_cmd_frame = 59;
+constexpr unsigned short nl80211_attr_wiphy_freq = 38;
+constexpr unsigned short nl80211_attr_frame = 51;
+constexpr unsigned short nl80211_attr_duration = 87;
+constexpr unsigned short nl80211_attr_cookie = 88;
+constexpr unsigned short nl80211_attr_offchannel_tx_ok = 108;
+
+bool reply_cookie(const std::string &reply, unsigned long long &cookie)
+{
+	for (size_t at = NLMSG_HDRLEN + GENL_HDRLEN; at + NLA_HDRLEN <= reply.size();) {
+		nlattr attribute;
+		std::memcpy(&attribute, reply.data() + at, sizeof attribute);
+		if (attribute.nla_len < NLA_HDRLEN || at + attribute.nla_len > reply.size())
+			break;
+		if ((attribute.nla_type & NLA_TYPE_MASK) == nl80211_attr_cookie &&
+		    attribute.nla_len >= NLA_HDRLEN + sizeof cookie) {
+			std::memcpy(&cookie, reply.data() + at + NLA_HDRLEN, sizeof cookie);
+			return true;
+		}
+		at += NLA_ALIGN(attribute.nla_len);
+	}
+	return false;
+}
+
+// Remain on a channel for a time, or send an Action frame there, and return
+// the errno; the cookie that names the request is left in *cookie.
+int nl80211_off_channel(int family, unsigned char command, unsigned ifindex, unsigned freq,
+			unsigned long long *cookie)
+{
+	genlmsghdr body{};
+	body.cmd = command;
+	body.version = 1;
+	NetlinkRequest request(static_cast<unsigned short>(family), NLM_F_ACK, &body, sizeof body);
+	request.put_u32(nl80211_attr_ifindex, ifindex);
+	if (command == nl80211_cmd_cancel_remain_on_channel) {
+		request.put(nl80211_attr_cookie, cookie, sizeof *cookie);
+		return netlink_call(NETLINK_GENERIC, request);
+	}
+	request.put_u32(nl80211_attr_wiphy_freq, freq);
+	request.put_u32(nl80211_attr_duration, 2000);
+	if (command == nl80211_cmd_frame) {
+		// A public Action frame (vendor specific, WFA's OUI and the DPP type) to
+		// nobody, from the interface's own address.
+		unsigned char frame[24 + 8] = {0xd0, 0x00};
+		std::memset(frame + 4, 0xff, 6);
+		unsigned char mac[6] = {};
+		std::string address = slurp((std::string("/sys/class/net/") + probe_wifi + "/address").c_str());
+		unsigned int parts[6] = {};
+		if (std::sscanf(address.c_str(), "%x:%x:%x:%x:%x:%x", &parts[0], &parts[1], &parts[2],
+				&parts[3], &parts[4], &parts[5]) == 6)
+			for (int i = 0; i < 6; ++i)
+				mac[i] = static_cast<unsigned char>(parts[i]);
+		std::memcpy(frame + 10, mac, 6);
+		std::memset(frame + 16, 0xff, 6);
+		const unsigned char action[8] = {0x04, 0x09, 0x50, 0x6f, 0x9a, 0x1a, 0x00, 0x00};
+		std::memcpy(frame + 24, action, sizeof action);
+		request.put(nl80211_attr_frame, frame, sizeof frame);
+		request.put(nl80211_attr_offchannel_tx_ok, nullptr, 0);
+	}
+	std::string reply;
+	int error = netlink_call(NETLINK_GENERIC, request, &reply);
+	if (error == 0 && !reply_cookie(reply, *cookie))
+		return EBADMSG;
+	return error;
+}
+
+// The radio of a phone's Wi-Fi chip, so that a supplicant can listen and send
+// where a peer was told to be, though nobody answers. 2412 MHz was not one of
+// the radio's two channels (2432 and 5240), and the request is refused for a
+// channel it does not list.
+void check_wifi_off_channel(int family, unsigned index)
+{
+	unsigned long long cookie = 0;
+	int roc = nl80211_off_channel(family, nl80211_cmd_remain_on_channel, index, 2412, &cookie);
+	report("virt-wifi-remain-on-channel", roc == 0 && cookie != 0,
+	       roc != 0 ? errno_text(roc) : "remaining on 2412 MHz, cookie " + std::to_string(cookie));
+	if (roc == 0) {
+		int cancelled = nl80211_off_channel(family, nl80211_cmd_cancel_remain_on_channel, index, 0, &cookie);
+		int again = nl80211_off_channel(family, nl80211_cmd_cancel_remain_on_channel, index, 0, &cookie);
+		report("virt-wifi-cancel-roc", cancelled == 0 && again == ENOENT,
+		       "cancelled: " + (cancelled == 0 ? std::string("yes") : errno_text(cancelled)) +
+			       ", cancelled again: " + (again == 0 ? std::string("yes") : errno_text(again)));
+	}
+	unsigned long long frame_cookie = 0;
+	int sent = nl80211_off_channel(family, nl80211_cmd_frame, index, 2412, &frame_cookie);
+	report("virt-wifi-mgmt-tx", sent == 0 && frame_cookie != 0,
+	       sent != 0 ? errno_text(sent) : "Action frame accepted on 2412 MHz, cookie " + std::to_string(frame_cookie));
+}
+
 // The stack the Android product builds on its NIC, built on a dummy link so
 // that the guest's own interfaces stay as they are: a macvlan with its own
 // address, and on it a virt_wifi interface when the kernel has one.
@@ -977,6 +1072,7 @@ void check_wifi(bool android)
 	       connected != 0 ? errno_text(connected)
 			      : std::string(carrier ? "carrier on" : "no carrier") + " after connecting to VirtWifi");
 	if (connected == 0) {
+		check_wifi_off_channel(family, index);
 		int left = nl80211_command(family, nl80211_cmd_disconnect, index, "");
 		bool dropped = left == 0 && wait_for_carrier(probe_wifi, '0', 10);
 		report("virt-wifi-disconnect", dropped,

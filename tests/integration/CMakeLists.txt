@@ -714,7 +714,8 @@ uml_add_guest_integration_test(
 # Android guest, which runs the probe by hand, has a static usermode helper
 # that starts nothing, an Incremental file system that mounts, serves a filled
 # block and times out on a missing one, and virtual Wi-Fi: a virt_wifi link
-# over a macvlan connects to the access point VirtWifi through nl80211.
+# over a macvlan connects to the access point VirtWifi through nl80211, remains
+# on 2412 MHz and sends an Action frame there.
 uml_add_guest_integration_test(
     NAME guest-kernel-config
     SCRIPT support/run_guest_probe.py

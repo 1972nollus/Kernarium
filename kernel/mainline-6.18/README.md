@@ -836,6 +836,18 @@ is inert in a Linux guest:
   holds a default router, so the Android common kernel's rewrite of it is not
   taken. `guest-kernel-config` checks the default and the table that a prefix
   route lands in.
+- virt_wifi's off-channel operation. The virtual radio lists the channels of
+  a phone's chip (2.4 GHz channels 1 to 13, 5 GHz channels 36 to 48 and 149 to
+  165; the access point stays on 5240 MHz), tunes to one with
+  `remain_on_channel` for at most 5 s, and takes Action frames with
+  `mgmt_tx`, which are never acknowledged because no peer exists. With them a
+  supplicant starts Easy Connect (DPP) from a URI that names channels the
+  radio did not list, finds nobody, and the framework's own 40 s timer
+  reports a timeout, as it does on a real chip; before, the supplicant
+  refused to start and the framework reported a generic failure at once.
+  The same path serves ANQP and GAS queries. Only the Android configuration
+  builds virt_wifi. `guest-kernel-config` remains on 2412 MHz and sends an
+  Action frame there.
 
 The product leaves out these ACK features:
 
