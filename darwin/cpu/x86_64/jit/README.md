@@ -235,6 +235,10 @@ milliseconds. The runtime tells the engine which address spaces still exist
 of one that is gone becomes the next address space's, with the same mode, store
 order and floating-point mode, once its code, holds and TLB are dropped. When
 the engine is full, a gone space is released before the least recently used.
+A released space, like an engine that dies with its spaces, returns everything
+FEXCore mapped for its context, the buffers of its block links included;
+`x86-64-jit-space-recycling` holds the process's untagged mappings flat across
+engines made and destroyed.
 
 ## Guest-visible model
 
