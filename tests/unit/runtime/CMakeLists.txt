@@ -66,6 +66,14 @@ uml_add_unit_test(
     COMMAND uml_runtime_x86_tier_tests
     LABELS tsan)
 
+# The registry of an embedded kernel's threads across a storm of restarts.
+add_executable(uml_runtime_kernel_threads_tests kernel_threads_tests.cpp)
+target_link_libraries(uml_runtime_kernel_threads_tests PRIVATE
+    UML::RuntimeThreadFence)
+uml_add_unit_test(
+    NAME runtime-kernel-threads
+    COMMAND uml_runtime_kernel_threads_tests)
+
 # The fence against real threads. Each test stops and starts threads of the
 # process, so the binaries run alone.
 add_executable(uml_runtime_thread_fence_tests thread_fence_tests.cpp)

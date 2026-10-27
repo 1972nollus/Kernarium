@@ -156,6 +156,16 @@ void snapshot_kernel_threads(KernelThreadSnapshot &snapshot) noexcept
 	}
 }
 
+std::size_t reclaim_ended_kernel_threads() noexcept
+{
+	reclaim();
+	std::size_t in_use = 0;
+	for (const Slot &slot : slots)
+		if (slot.word.load(std::memory_order_acquire) != 0)
+			++in_use;
+	return in_use;
+}
+
 void set_kernel_thread_reclaim_inhibited(bool inhibited) noexcept
 {
 	reclaim_inhibited.store(inhibited, std::memory_order_seq_cst);
