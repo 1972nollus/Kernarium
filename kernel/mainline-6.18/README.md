@@ -819,6 +819,23 @@ is inert in a Linux guest:
   check. The topic belongs in the shared series because nothing in it depends
   on the guest OS; only the option does. `guest-kernel-config` checks the
   second allocation in both products.
+- The per-device autoconf route table, the Android common kernel's
+  `accept_ra_rt_table` sysctl (20599bae2f44). With a value other than 0, the
+  routes that router advertisements install (prefix, route information and
+  default router) go into the device's own table instead of `main`: a
+  positive value names the table, a negative one adds its absolute value to
+  the device's ifindex. Android's netd writes -1000 for every network it
+  manages, so that the table its rules select holds the network's routes;
+  without the sysctl a network that has no IpClient to copy the kernel's
+  routes into netd (the CTS's TAP test networks) has no IPv6 route and its
+  `connect()` fails `ENETUNREACH`. The sysctl is 0 by default, which is
+  mainline's behaviour, so the topic needs no option and a Linux guest never
+  writes it; and without `CONFIG_IPV6_MULTIPLE_TABLES`, which only the
+  Android configuration enables, there is one table and the value changes
+  nothing. Mainline's default-router purge already walks every table that
+  holds a default router, so the Android common kernel's rewrite of it is not
+  taken. `guest-kernel-config` checks the default and the table that a prefix
+  route lands in.
 
 The product leaves out these ACK features:
 

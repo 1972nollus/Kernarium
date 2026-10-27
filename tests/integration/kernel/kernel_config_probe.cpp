@@ -5,8 +5,10 @@
 //   both:    IPv4 multicast (/proc/net/igmp, a group join, a looped datagram),
 //            no RDS socket family, no listener on TCP port 16385, the
 //            stack protector and hardened usercopy in /proc/config.gz,
-//            a macvlan link that rtnetlink creates over a dummy link, and an
-//            XFRM SPI allocated twice
+//            a macvlan link that rtnetlink creates over a dummy link, the
+//            accept_ra_rt_table sysctl (0 until written; a prefix route
+//            lands in the device's own table once it is -1000, where the
+//            kernel has IPv6 multiple tables), and an XFRM SPI allocated twice
 //   linux:   SysV IPC works, the NFS client and SCTP are present, a piped
 //            core_pattern runs its helper, /sys/power has no wake_lock,
 //            there is no 802.11 stack (no nl80211 family, no phy), and one
@@ -58,6 +60,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -1033,6 +1036,155 @@ void check_xfrm_spi(bool android)
 	report("xfrm-spi", first == 0 && (second == 0) == android, detail);
 }
 
+// The tables that hold a route to prefix/length through the link, from an
+// RTM_GETROUTE dump of the IPv6 routes of every table: 0, or minus the errno.
+int route6_tables(unsigned ifindex, const in6_addr &prefix, unsigned length, std::vector<int> &tables)
+{
+	tables.clear();
+	int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+	if (fd < 0)
+		return -errno;
+	timeval timeout{5, 0};
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+	rtmsg body{};
+	body.rtm_family = AF_INET6;
+	NetlinkRequest request(RTM_GETROUTE, NLM_F_DUMP, &body, sizeof body);
+	sockaddr_nl kernel{};
+	kernel.nl_family = AF_NETLINK;
+	const char *message = request.data();
+	if (sendto(fd, message, request.size(), 0, reinterpret_cast<sockaddr *>(&kernel),
+		   sizeof kernel) < 0) {
+		int e = errno;
+		close(fd);
+		return -e;
+	}
+	int found = 0;
+	bool done = false;
+	while (!done) {
+		alignas(8) char buffer[16384];
+		ssize_t got = recv(fd, buffer, sizeof buffer, 0);
+		if (got <= 0) {
+			found = got < 0 ? -errno : -EBADMSG;
+			break;
+		}
+		for (const nlmsghdr *header = reinterpret_cast<const nlmsghdr *>(buffer);
+		     NLMSG_OK(header, static_cast<unsigned>(got)); header = NLMSG_NEXT(header, got)) {
+			if (header->nlmsg_type == NLMSG_DONE) {
+				done = true;
+				break;
+			}
+			if (header->nlmsg_type == NLMSG_ERROR) {
+				found = -reinterpret_cast<const nlmsgerr *>(NLMSG_DATA(header))->error;
+				done = true;
+				break;
+			}
+			if (header->nlmsg_type != RTM_NEWROUTE)
+				continue;
+			const rtmsg *route = reinterpret_cast<const rtmsg *>(NLMSG_DATA(header));
+			if (route->rtm_dst_len != length)
+				continue;
+			int table = route->rtm_table;
+			unsigned oif = 0;
+			bool same = false;
+			int remaining = static_cast<int>(RTM_PAYLOAD(header));
+			for (const rtattr *attribute = RTM_RTA(route); RTA_OK(attribute, remaining);
+			     attribute = RTA_NEXT(attribute, remaining)) {
+				if (attribute->rta_type == RTA_DST && RTA_PAYLOAD(attribute) == sizeof prefix)
+					same = std::memcmp(RTA_DATA(attribute), &prefix, sizeof prefix) == 0;
+				else if (attribute->rta_type == RTA_OIF)
+					std::memcpy(&oif, RTA_DATA(attribute), sizeof oif);
+				else if (attribute->rta_type == RTA_TABLE)
+					std::memcpy(&table, RTA_DATA(attribute), sizeof(unsigned));
+			}
+			if (same && oif == ifindex)
+				tables.push_back(table);
+		}
+	}
+	close(fd);
+	return found;
+}
+
+std::string tables_text(const std::vector<int> &tables, int error)
+{
+	if (error != 0)
+		return "(" + errno_text(error < 0 ? -error : error) + ")";
+	std::string text = "[";
+	for (size_t i = 0; i < tables.size(); ++i)
+		text += (i != 0 ? "," : "") + std::to_string(tables[i]);
+	return text + "]";
+}
+
+int address6(unsigned short type, unsigned ifindex, const in6_addr &address, unsigned length)
+{
+	ifaddrmsg body{};
+	body.ifa_family = AF_INET6;
+	body.ifa_prefixlen = static_cast<unsigned char>(length);
+	body.ifa_scope = RT_SCOPE_UNIVERSE;
+	body.ifa_index = ifindex;
+	NetlinkRequest request(type, type == RTM_NEWADDR ? NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK : NLM_F_ACK,
+			       &body, sizeof body);
+	request.put(IFA_LOCAL, &address, sizeof address);
+	return netlink_call(NETLINK_ROUTE, request);
+}
+
+// The Android common kernel's accept_ra_rt_table sysctl, in every product. It
+// is 0, mainline's behaviour, until something writes it (Android's netd writes
+// -1000 for default and so for every new link), and then the prefix route of
+// an address, as the route a router advertisement installs, goes to the table
+// ifindex + 1000 instead of main. A kernel without IPv6 multiple tables (the
+// Linux configuration) has only main, so the route stays there.
+void check_ra_rt_table()
+{
+	std::string value = slurp("/proc/sys/net/ipv6/conf/all/accept_ra_rt_table");
+	report("ra-rt-table-default", value == "0\n",
+	       value.empty() ? "the sysctl is missing" : "all.accept_ra_rt_table is " + value.substr(0, value.size() - 1));
+
+	delete_link(probe_lower);
+	int error = add_link(probe_lower, "dummy", 0, nullptr);
+	if (error == 0)
+		error = set_link_up(probe_lower);
+	if (error != 0) {
+		bool skipped = error == EPERM && geteuid() != 0;
+		report("ra-rt-table-route", skipped, errno_text(error) + (skipped ? " (not root, skipped)" : ""));
+		delete_link(probe_lower);
+		return;
+	}
+	unsigned index = if_nametoindex(probe_lower);
+	in6_addr address{};
+	in6_addr prefix{};
+	inet_pton(AF_INET6, "2001:db8:cafe::1", &address);
+	inet_pton(AF_INET6, "2001:db8:cafe::", &prefix);
+	std::string path = std::string("/proc/sys/net/ipv6/conf/") + probe_lower + "/accept_ra_rt_table";
+	// A new link takes the value of "default", which netd sets to -1000.
+	bool zeroed = write_text(path.c_str(), "0") && slurp(path.c_str()) == "0\n";
+
+	std::vector<int> by_default;
+	std::vector<int> after_delete;
+	std::vector<int> in_device_table;
+	int added = address6(RTM_NEWADDR, index, address, 64);
+	int read_default = added == 0 ? route6_tables(index, prefix, 64, by_default) : -added;
+	int deleted = address6(RTM_DELADDR, index, address, 64);
+	int read_deleted = deleted == 0 ? route6_tables(index, prefix, 64, after_delete) : -deleted;
+
+	bool written = write_text(path.c_str(), "-1000");
+	std::string readback = slurp(path.c_str());
+	added = written ? address6(RTM_NEWADDR, index, address, 64) : EACCES;
+	int read_device = added == 0 ? route6_tables(index, prefix, 64, in_device_table) : -added;
+	bool tables = config_has(kernel_config(), "CONFIG_IPV6_MULTIPLE_TABLES=y");
+	int expected = tables ? static_cast<int>(index) + 1000 : static_cast<int>(RT_TABLE_MAIN);
+	bool ok = zeroed && read_default == 0 && by_default == std::vector<int>{RT_TABLE_MAIN} && read_deleted == 0 &&
+		  after_delete.empty() && readback == "-1000\n" && read_device == 0 &&
+		  in_device_table == std::vector<int>{expected};
+	report("ra-rt-table-route", ok,
+	       std::string(zeroed ? "" : "(the sysctl does not take 0) ") + "prefix route in tables " +
+		       tables_text(by_default, read_default) + " with 0 written, " +
+		       tables_text(after_delete, read_deleted) + " once the address is gone, and " +
+		       tables_text(in_device_table, read_device) + " with " + (readback.empty() ? "?" : readback.substr(0, readback.size() - 1)) +
+		       " written (expected [" + std::to_string(expected) + "], " +
+		       (tables ? "IPv6 multiple tables on" : "IPv6 multiple tables off") + ")");
+	delete_link(probe_lower);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -1065,6 +1217,7 @@ int main(int argc, char **argv)
 	check_macvlan();
 	check_wifi(android);
 	check_xfrm_spi(android);
+	check_ra_rt_table();
 	std::printf("%s: %d failure(s)\n", product, failures);
 	return failures;
 }
