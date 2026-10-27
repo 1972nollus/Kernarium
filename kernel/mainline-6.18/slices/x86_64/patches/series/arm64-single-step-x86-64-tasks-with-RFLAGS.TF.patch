@@ -83,10 +83,10 @@ index f355df97e151ed1cc8dd53909aad7f4c0fee4696..b5928e08d6271161496d9163b97032d1
  {
  	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 720f4479b1557a2a340dd30bf53588281fd2e1f0..8a2d4845962c4807951f919730dd46eddf8f7968 100644
+index f91352f44970b439b330d3b538274b3445a41392..9eb94479273d2bc898a29169a51c6b7ac7e60dd1 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -107,6 +107,35 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
+@@ -115,6 +115,35 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
   * valid_user_regs() does, so saved, traced and signal-frame registers never
   * carry it.  Returns whether the bit was set for this entry.
   */
@@ -122,7 +122,7 @@ index 720f4479b1557a2a340dd30bf53588281fd2e1f0..8a2d4845962c4807951f919730dd46ed
  static int begin_guest_step(struct uml_pt_regs *regs)
  {
  	if (!singlestepping())
-@@ -120,6 +149,7 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
+@@ -128,6 +157,7 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
  	if (stepping)
  		UPT_PSTATE(regs) &= ~DARWIN_GUEST_PSTATE_SS;
  }
@@ -130,7 +130,7 @@ index 720f4479b1557a2a340dd30bf53588281fd2e1f0..8a2d4845962c4807951f919730dd46ed
  
  /*
   * The dispatch flags of the guest registers hold facts about the task for
-@@ -712,19 +742,37 @@ void userspace(struct uml_pt_regs *registers)
+@@ -720,19 +750,37 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_BREAKPOINT:
  		{
  			siginfo_t signal_info = { 0 };

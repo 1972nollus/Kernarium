@@ -99,6 +99,16 @@ hotplug, which reach no IPI boundary. A host stop skips Linux exitcalls, so the
 run end stops the RTC alarm helper itself. `guest-run-end-stop` stops guests
 throughout their boot and requires each run to end with no kernel thread left.
 
+The kernel tells the host how the guest ends, with the bridge import
+`darwin_uml_guest_shutdown(kind, command)`, which `machine_restart()`,
+`machine_power_off()` and `machine_halt()` call before they run the exitcalls.
+The kinds are power-off, halt and restart; a restart passes the command the
+guest gave (`reboot recovery`), which is NULL when it gave none. Recording
+first keeps the intent if an exitcall never returns. A panic does not report:
+it aborts the process, and no restart follows it. The kernel's exit status
+keeps its meaning, so a host that reads only the status sees what it saw
+before.
+
 Every kernel describes the virtual machine in the SMBIOS tables firmware
 writes on other machines, so `/sys/class/dmi/id`, `/sys/firmware/dmi` and the
 programs that read them, such as dmidecode and systemd, find it there. The

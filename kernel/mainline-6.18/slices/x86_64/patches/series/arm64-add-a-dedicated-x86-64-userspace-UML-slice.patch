@@ -3070,10 +3070,10 @@ index 64a1006b06a4fcdee6a3749092d0f81a1b01b989..f563d4291ace739fff4979d7c77e5259
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 3c1e95c811b6f5a0d237723edd5148fd42d1f2e1..27a1851bf97b3fdcbcfdcd8d90df12dea7fa7fe9 100644
+index 07c0695ddf9a836c63f53646bf2a2417fe96a240..f113b96526b990d5bd5f525660b9f02887888847 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -77,12 +77,24 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
+@@ -85,12 +85,24 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
  #define DARWIN_GUEST_SIGBUS 7
  /* Linux asm-generic/siginfo.h values differ from Darwin's floating-point
   * si_code values, so keep the guest ABI numbers explicit at this boundary. */
@@ -3098,7 +3098,7 @@ index 3c1e95c811b6f5a0d237723edd5148fd42d1f2e1..27a1851bf97b3fdcbcfdcd8d90df12de
  /* PSTATE.SS, and the ESR exception class of the software-step exception it
   * raises: the engine retires one instruction and reports that class. */
  #define DARWIN_GUEST_PSTATE_SS (1UL << 21)
-@@ -347,6 +359,39 @@ static int floating_point_signal_code(unsigned int syndrome)
+@@ -355,6 +367,39 @@ static int floating_point_signal_code(unsigned int syndrome)
  	return DARWIN_GUEST_FPE_FLTUNK;
  }
  
@@ -3138,7 +3138,7 @@ index 3c1e95c811b6f5a0d237723edd5148fd42d1f2e1..27a1851bf97b3fdcbcfdcd8d90df12de
  void userspace(struct uml_pt_regs *registers)
  {
  	/* Deliver the host timer only at kernel/guest boundaries.  Allowing a
-@@ -454,7 +499,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -462,7 +507,7 @@ void userspace(struct uml_pt_regs *registers)
  			if (registers->svcr & UML_ARM64_SVCR_SM)
  				uml_arm64_sme_syscall_enter();
  #endif
@@ -3147,7 +3147,7 @@ index 3c1e95c811b6f5a0d237723edd5148fd42d1f2e1..27a1851bf97b3fdcbcfdcd8d90df12de
  			handle_syscall(registers);
  			/* copy_mm() records the parent's COW protection changes in
  			 * UML's normal TLB synchronization state.  The next userspace
-@@ -488,6 +533,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -496,6 +541,10 @@ void userspace(struct uml_pt_regs *registers)
  				if (retry > 0)
  					break;
  			}
@@ -3158,7 +3158,7 @@ index 3c1e95c811b6f5a0d237723edd5148fd42d1f2e1..27a1851bf97b3fdcbcfdcd8d90df12de
  			segv(registers->faultinfo, UPT_IP(registers), 1,
  			     registers, NULL);
  			if (fault >= 4096 && uml_darwin_guest_range(fault, 1)) {
-@@ -524,13 +573,24 @@ void userspace(struct uml_pt_regs *registers)
+@@ -532,13 +581,24 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_FLOATING_POINT_TRAP:
  		{
  			siginfo_t signal_info = { 0 };
@@ -3183,7 +3183,7 @@ index 3c1e95c811b6f5a0d237723edd5148fd42d1f2e1..27a1851bf97b3fdcbcfdcd8d90df12de
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -553,7 +613,14 @@ void userspace(struct uml_pt_regs *registers)
+@@ -561,7 +621,14 @@ void userspace(struct uml_pt_regs *registers)
  			 */
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
@@ -3198,7 +3198,7 @@ index 3c1e95c811b6f5a0d237723edd5148fd42d1f2e1..27a1851bf97b3fdcbcfdcd8d90df12de
  #ifdef CONFIG_UML_ARM64_AARCH32
  			if (UPT_AARCH32(registers)) {
  				/* The three encodings a debugger plants on an
-@@ -647,16 +714,52 @@ void userspace(struct uml_pt_regs *registers)
+@@ -655,16 +722,52 @@ void userspace(struct uml_pt_regs *registers)
  			int stepped = registers->faultinfo.trap_no ==
  				DARWIN_GUEST_SOFTWARE_STEP;
  
