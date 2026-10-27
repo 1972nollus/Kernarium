@@ -715,7 +715,8 @@ uml_add_guest_integration_test(
 # that starts nothing, an Incremental file system that mounts, serves a filled
 # block and times out on a missing one, and virtual Wi-Fi: a virt_wifi link
 # over a macvlan connects to the access point VirtWifi through nl80211, remains
-# on 2412 MHz and sends an Action frame there.
+# on 2412 MHz, sends an Action frame there, and passes a multicast group it
+# joins on to its macvlan.
 uml_add_guest_integration_test(
     NAME guest-kernel-config
     SCRIPT support/run_guest_probe.py

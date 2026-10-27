@@ -22,8 +22,9 @@
 //            virt_wifi link over the macvlan that connects to the access point
 //            VirtWifi through nl80211, raises its carrier and drops it again,
 //            remains on a channel the radio did not always list (2412 MHz)
-//            and sends an Action frame there; one ESP SPI is allocated for
-//            two destination addresses
+//            and sends an Action frame there, and passes a multicast group it
+//            joins on to its macvlan; one ESP SPI is allocated for two
+//            destination addresses
 // Prints one line per check. The exit status is the failure count.
 //
 // The probe is also the usermode helper it tests: "kernel_config_probe --umh
@@ -978,6 +979,59 @@ void check_wifi_off_channel(int family, unsigned index)
 	       sent != 0 ? errno_text(sent) : "Action frame accepted on 2412 MHz, cookie " + std::to_string(frame_cookie));
 }
 
+// Whether /proc/net/dev_mcast lists the link-layer address under the link.
+bool lists_multicast(const char *name, const char *address)
+{
+	std::istringstream lines(slurp("/proc/net/dev_mcast"));
+	std::string line;
+	while (std::getline(lines, line)) {
+		char link[64];
+		char listed[64];
+		if (std::sscanf(line.c_str(), "%*d %63s %*d %*d %63s", link, listed) == 2 &&
+		    std::strcmp(link, name) == 0 && std::strcmp(listed, address) == 0)
+			return true;
+	}
+	return false;
+}
+
+// A macvlan delivers a multicast frame only to the groups its own filter
+// lists, and the product's virt_wifi receives through one, so a group joined on
+// the virt_wifi link has to reach the macvlan's list, and leave it again.
+void check_wifi_multicast(unsigned index)
+{
+	int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+	ip_mreqn membership{};
+	inet_pton(AF_INET, "239.255.77.1", &membership.imr_multiaddr);
+	membership.imr_ifindex = static_cast<int>(index);
+	int joined = fd < 0 ? -1 : setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membership, sizeof membership);
+	if (joined != 0) {
+		report("virt-wifi-multicast", false, "join: " + errno_text(errno));
+		if (fd >= 0)
+			close(fd);
+		return;
+	}
+	// 239.255.77.1 maps to 01:00:5e:7f:4d:01.
+	const char *address = "01005e7f4d01";
+	bool on_wifi = lists_multicast(probe_wifi, address);
+	bool on_macvlan = false;
+	for (int i = 0; i < 30 && !on_macvlan; ++i) {
+		on_macvlan = lists_multicast(probe_macvlan, address);
+		if (!on_macvlan)
+			usleep(100000);
+	}
+	close(fd);
+	bool gone = false;
+	for (int i = 0; i < 30 && !gone; ++i) {
+		gone = !lists_multicast(probe_macvlan, address);
+		if (!gone)
+			usleep(100000);
+	}
+	report("virt-wifi-multicast", on_wifi && on_macvlan && gone,
+	       std::string("group 239.255.77.1 listed on ") + probe_wifi + ": " + (on_wifi ? "yes" : "no") +
+		       ", on " + probe_macvlan + ": " + (on_macvlan ? "yes" : "no") +
+		       ", gone from it after leaving: " + (gone ? "yes" : "no"));
+}
+
 // The stack the Android product builds on its NIC, built on a dummy link so
 // that the guest's own interfaces stay as they are: a macvlan with its own
 // address, and on it a virt_wifi interface when the kernel has one.
@@ -1073,6 +1127,7 @@ void check_wifi(bool android)
 			      : std::string(carrier ? "carrier on" : "no carrier") + " after connecting to VirtWifi");
 	if (connected == 0) {
 		check_wifi_off_channel(family, index);
+		check_wifi_multicast(index);
 		int left = nl80211_command(family, nl80211_cmd_disconnect, index, "");
 		bool dropped = left == 0 && wait_for_carrier(probe_wifi, '0', 10);
 		report("virt-wifi-disconnect", dropped,

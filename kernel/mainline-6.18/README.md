@@ -848,6 +848,13 @@ is inert in a Linux guest:
   The same path serves ANQP and GAS queries. Only the Android configuration
   builds virt_wifi. `guest-kernel-config` remains on 2412 MHz and sends an
   Action frame there.
+- virt_wifi passes its unicast and multicast lists, and `IFF_ALLMULTI` and
+  `IFF_PROMISC`, on to its lower device. A macvlan delivers a multicast frame
+  only to the groups its own filter lists, and the product puts virt_wifi on a
+  macvlan, so without it wlan0's solicited-node groups never reached the
+  filter and a neighbour solicitation for its IPv6 address was dropped.
+  `guest-kernel-config` joins a group on a virt_wifi link and looks for it on
+  the macvlan.
 
 The product leaves out these ACK features:
 
