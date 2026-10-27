@@ -142,13 +142,15 @@ wizard, Canvas, Aperture, Profiles, Recorder, QuickAccessWallet, the charger
 animation,
 fastbootd and AudioFX are excluded, as are DeskClock and EmergencyInfo; the
 build and verifier assert both lists. QuickSearchBox and its home-screen
-search surface are deliberately omitted. Bluetooth and Wi-Fi
-device implementations and feature declarations are also omitted. The Network
-dashboard exposes the stock Ethernet interface editor alongside Data Saver,
-VPN, and Private DNS. On this radio-free product, the editor enables AOSP's
-full Ethernet path and hides its inapplicable Wi-Fi groups. The radio-only
-Connected devices entry is hidden, as is System update because the synced AOSP
-tree has no activity implementing that intent. The modular framework API
+search surface are deliberately omitted. Bluetooth
+device implementations and feature declarations are also omitted. Settings is
+the stock application apart from its Bluetooth parts (a `packages/apps/Settings`
+topic, route `p0009`): the Connected devices entry, which holds only Bluetooth,
+the Bluetooth developer option and the media output switcher are gone. The
+Network page is the stock one with its Wi-Fi page. The Wi-Fi hotspot and
+wireless display pages are hidden, because the virtual Wi-Fi interface is a
+station only, and so is System update, because the synced AOSP tree has no
+activity implementing that intent. The modular framework API
 containers remain part of base AOSP so ordinary applications can still resolve
 the Android SDK classes; excluding them also removes required system-server
 dexpreopt inputs. Telephony,
