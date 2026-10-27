@@ -4,11 +4,15 @@
 // [linux|android], linux by default.
 //   both:    IPv4 multicast (/proc/net/igmp, a group join, a looped datagram),
 //            no RDS socket family, no listener on TCP port 16385, the
-//            stack protector and hardened usercopy in /proc/config.gz, and
-//            a macvlan link that rtnetlink creates over a dummy link
+//            stack protector and hardened usercopy in /proc/config.gz,
+//            a macvlan link that rtnetlink creates over a dummy link, the
+//            accept_ra_rt_table sysctl (0 until written; a prefix route
+//            lands in the device's own table once it is -1000, where the
+//            kernel has IPv6 multiple tables), and an XFRM SPI allocated twice
 //   linux:   SysV IPC works, the NFS client and SCTP are present, a piped
-//            core_pattern runs its helper, /sys/power has no wake_lock, and
-//            there is no 802.11 stack (no nl80211 family, no phy)
+//            core_pattern runs its helper, /sys/power has no wake_lock,
+//            there is no 802.11 stack (no nl80211 family, no phy), and one
+//            ESP SPI is refused for a second destination address
 //   android: no SysV IPC (ENOSYS, no /proc/sysvipc), no NFS client, no SCTP,
 //            /sys/power/wake_lock takes and releases a wakelock, the
 //            static usermode helper runs no piped core_pattern helper, and
@@ -16,7 +20,11 @@
 //            fails a read of a missing block (the Linux guest has none), and
 //            virtual Wi-Fi works: cfg80211's nl80211 family and a phy, and a
 //            virt_wifi link over the macvlan that connects to the access point
-//            VirtWifi through nl80211, raises its carrier and drops it again
+//            VirtWifi through nl80211, raises its carrier and drops it again,
+//            remains on a channel the radio did not always list (2412 MHz)
+//            and sends an Action frame there, and passes a multicast group it
+//            joins on to its macvlan; one ESP SPI is allocated for two
+//            destination addresses
 // Prints one line per check. The exit status is the failure count.
 //
 // The probe is also the usermode helper it tests: "kernel_config_probe --umh
@@ -29,6 +37,7 @@
 #include <linux/if_link.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/xfrm.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -54,6 +63,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -876,6 +886,152 @@ constexpr const char *probe_lower = "kcfgd0";
 constexpr const char *probe_macvlan = "kcfgm0";
 constexpr const char *probe_wifi = "kcfgw0";
 
+// The generic netlink commands and attributes of off-channel operation, from
+// <linux/nl80211.h>, which not every build host has.
+constexpr unsigned char nl80211_cmd_remain_on_channel = 55;
+constexpr unsigned char nl80211_cmd_cancel_remain_on_channel = 56;
+constexpr unsigned char nl80211_cmd_frame = 59;
+constexpr unsigned short nl80211_attr_wiphy_freq = 38;
+constexpr unsigned short nl80211_attr_frame = 51;
+constexpr unsigned short nl80211_attr_duration = 87;
+constexpr unsigned short nl80211_attr_cookie = 88;
+constexpr unsigned short nl80211_attr_offchannel_tx_ok = 108;
+
+bool reply_cookie(const std::string &reply, unsigned long long &cookie)
+{
+	for (size_t at = NLMSG_HDRLEN + GENL_HDRLEN; at + NLA_HDRLEN <= reply.size();) {
+		nlattr attribute;
+		std::memcpy(&attribute, reply.data() + at, sizeof attribute);
+		if (attribute.nla_len < NLA_HDRLEN || at + attribute.nla_len > reply.size())
+			break;
+		if ((attribute.nla_type & NLA_TYPE_MASK) == nl80211_attr_cookie &&
+		    attribute.nla_len >= NLA_HDRLEN + sizeof cookie) {
+			std::memcpy(&cookie, reply.data() + at + NLA_HDRLEN, sizeof cookie);
+			return true;
+		}
+		at += NLA_ALIGN(attribute.nla_len);
+	}
+	return false;
+}
+
+// Remain on a channel for a time, or send an Action frame there, and return
+// the errno; the cookie that names the request is left in *cookie.
+int nl80211_off_channel(int family, unsigned char command, unsigned ifindex, unsigned freq,
+			unsigned long long *cookie)
+{
+	genlmsghdr body{};
+	body.cmd = command;
+	body.version = 1;
+	NetlinkRequest request(static_cast<unsigned short>(family), NLM_F_ACK, &body, sizeof body);
+	request.put_u32(nl80211_attr_ifindex, ifindex);
+	if (command == nl80211_cmd_cancel_remain_on_channel) {
+		request.put(nl80211_attr_cookie, cookie, sizeof *cookie);
+		return netlink_call(NETLINK_GENERIC, request);
+	}
+	request.put_u32(nl80211_attr_wiphy_freq, freq);
+	request.put_u32(nl80211_attr_duration, 2000);
+	if (command == nl80211_cmd_frame) {
+		// A public Action frame (vendor specific, WFA's OUI and the DPP type) to
+		// nobody, from the interface's own address.
+		unsigned char frame[24 + 8] = {0xd0, 0x00};
+		std::memset(frame + 4, 0xff, 6);
+		unsigned char mac[6] = {};
+		std::string address = slurp((std::string("/sys/class/net/") + probe_wifi + "/address").c_str());
+		unsigned int parts[6] = {};
+		if (std::sscanf(address.c_str(), "%x:%x:%x:%x:%x:%x", &parts[0], &parts[1], &parts[2],
+				&parts[3], &parts[4], &parts[5]) == 6)
+			for (int i = 0; i < 6; ++i)
+				mac[i] = static_cast<unsigned char>(parts[i]);
+		std::memcpy(frame + 10, mac, 6);
+		std::memset(frame + 16, 0xff, 6);
+		const unsigned char action[8] = {0x04, 0x09, 0x50, 0x6f, 0x9a, 0x1a, 0x00, 0x00};
+		std::memcpy(frame + 24, action, sizeof action);
+		request.put(nl80211_attr_frame, frame, sizeof frame);
+		request.put(nl80211_attr_offchannel_tx_ok, nullptr, 0);
+	}
+	std::string reply;
+	int error = netlink_call(NETLINK_GENERIC, request, &reply);
+	if (error == 0 && !reply_cookie(reply, *cookie))
+		return EBADMSG;
+	return error;
+}
+
+// The radio of a phone's Wi-Fi chip, so that a supplicant can listen and send
+// where a peer was told to be, though nobody answers. 2412 MHz was not one of
+// the radio's two channels (2432 and 5240), and the request is refused for a
+// channel it does not list.
+void check_wifi_off_channel(int family, unsigned index)
+{
+	unsigned long long cookie = 0;
+	int roc = nl80211_off_channel(family, nl80211_cmd_remain_on_channel, index, 2412, &cookie);
+	report("virt-wifi-remain-on-channel", roc == 0 && cookie != 0,
+	       roc != 0 ? errno_text(roc) : "remaining on 2412 MHz, cookie " + std::to_string(cookie));
+	if (roc == 0) {
+		int cancelled = nl80211_off_channel(family, nl80211_cmd_cancel_remain_on_channel, index, 0, &cookie);
+		int again = nl80211_off_channel(family, nl80211_cmd_cancel_remain_on_channel, index, 0, &cookie);
+		report("virt-wifi-cancel-roc", cancelled == 0 && again == ENOENT,
+		       "cancelled: " + (cancelled == 0 ? std::string("yes") : errno_text(cancelled)) +
+			       ", cancelled again: " + (again == 0 ? std::string("yes") : errno_text(again)));
+	}
+	unsigned long long frame_cookie = 0;
+	int sent = nl80211_off_channel(family, nl80211_cmd_frame, index, 2412, &frame_cookie);
+	report("virt-wifi-mgmt-tx", sent == 0 && frame_cookie != 0,
+	       sent != 0 ? errno_text(sent) : "Action frame accepted on 2412 MHz, cookie " + std::to_string(frame_cookie));
+}
+
+// Whether /proc/net/dev_mcast lists the link-layer address under the link.
+bool lists_multicast(const char *name, const char *address)
+{
+	std::istringstream lines(slurp("/proc/net/dev_mcast"));
+	std::string line;
+	while (std::getline(lines, line)) {
+		char link[64];
+		char listed[64];
+		if (std::sscanf(line.c_str(), "%*d %63s %*d %*d %63s", link, listed) == 2 &&
+		    std::strcmp(link, name) == 0 && std::strcmp(listed, address) == 0)
+			return true;
+	}
+	return false;
+}
+
+// A macvlan delivers a multicast frame only to the groups its own filter
+// lists, and the product's virt_wifi receives through one, so a group joined on
+// the virt_wifi link has to reach the macvlan's list, and leave it again.
+void check_wifi_multicast(unsigned index)
+{
+	int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+	ip_mreqn membership{};
+	inet_pton(AF_INET, "239.255.77.1", &membership.imr_multiaddr);
+	membership.imr_ifindex = static_cast<int>(index);
+	int joined = fd < 0 ? -1 : setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membership, sizeof membership);
+	if (joined != 0) {
+		report("virt-wifi-multicast", false, "join: " + errno_text(errno));
+		if (fd >= 0)
+			close(fd);
+		return;
+	}
+	// 239.255.77.1 maps to 01:00:5e:7f:4d:01.
+	const char *address = "01005e7f4d01";
+	bool on_wifi = lists_multicast(probe_wifi, address);
+	bool on_macvlan = false;
+	for (int i = 0; i < 30 && !on_macvlan; ++i) {
+		on_macvlan = lists_multicast(probe_macvlan, address);
+		if (!on_macvlan)
+			usleep(100000);
+	}
+	close(fd);
+	bool gone = false;
+	for (int i = 0; i < 30 && !gone; ++i) {
+		gone = !lists_multicast(probe_macvlan, address);
+		if (!gone)
+			usleep(100000);
+	}
+	report("virt-wifi-multicast", on_wifi && on_macvlan && gone,
+	       std::string("group 239.255.77.1 listed on ") + probe_wifi + ": " + (on_wifi ? "yes" : "no") +
+		       ", on " + probe_macvlan + ": " + (on_macvlan ? "yes" : "no") +
+		       ", gone from it after leaving: " + (gone ? "yes" : "no"));
+}
+
 // The stack the Android product builds on its NIC, built on a dummy link so
 // that the guest's own interfaces stay as they are: a macvlan with its own
 // address, and on it a virt_wifi interface when the kernel has one.
@@ -970,6 +1126,8 @@ void check_wifi(bool android)
 	       connected != 0 ? errno_text(connected)
 			      : std::string(carrier ? "carrier on" : "no carrier") + " after connecting to VirtWifi");
 	if (connected == 0) {
+		check_wifi_off_channel(family, index);
+		check_wifi_multicast(index);
 		int left = nl80211_command(family, nl80211_cmd_disconnect, index, "");
 		bool dropped = left == 0 && wait_for_carrier(probe_wifi, '0', 10);
 		report("virt-wifi-disconnect", dropped,
@@ -980,6 +1138,202 @@ void check_wifi(bool android)
 	delete_link(probe_lower);
 	report("virt-wifi-delete", if_nametoindex(probe_wifi) == 0 && if_nametoindex(probe_lower) == 0,
 	       "the three links are gone");
+}
+
+// XFRM_MSG_ALLOCSPI for an ESP SPI on an IPv4 destination: 0, or the errno. The
+// allocated state is an acquisition, as the IKE daemon's is.
+int xfrm_alloc_spi(unsigned spi, const char *destination)
+{
+	xfrm_userspi_info body{};
+	body.info.family = AF_INET;
+	body.info.id.proto = IPPROTO_ESP;
+	inet_pton(AF_INET, destination, &body.info.id.daddr.a4);
+	body.min = spi;
+	body.max = spi;
+	NetlinkRequest request(XFRM_MSG_ALLOCSPI, NLM_F_ACK, &body, sizeof body);
+	return netlink_call(NETLINK_XFRM, request);
+}
+
+int xfrm_delete_sa(unsigned spi, const char *destination)
+{
+	xfrm_usersa_id body{};
+	body.family = AF_INET;
+	body.proto = IPPROTO_ESP;
+	inet_pton(AF_INET, destination, &body.daddr.a4);
+	body.spi = htonl(spi);
+	NetlinkRequest request(XFRM_MSG_DELSA, NLM_F_ACK, &body, sizeof body);
+	return netlink_call(NETLINK_XFRM, request);
+}
+
+// Android's IKE daemon, and the CTS's IPsec tunnel tests, reserve one SPI for
+// the local and the remote outer address of a tunnel. Linux 6.17 made an SPI
+// unique per protocol for the whole namespace, which refuses the second
+// reservation; the Android product restores the check per destination
+// (CONFIG_XFRM_SPI_PER_DESTINATION) and the Linux product keeps the stricter one.
+void check_xfrm_spi(bool android)
+{
+	const unsigned spi = 0x51000001;
+	int first = xfrm_alloc_spi(spi, "192.0.2.1");
+	if (first == EPERM && geteuid() != 0) {
+		report("xfrm-spi", true, "not root, skipped");
+		return;
+	}
+	int second = xfrm_alloc_spi(spi, "192.0.2.2");
+	xfrm_delete_sa(spi, "192.0.2.1");
+	xfrm_delete_sa(spi, "192.0.2.2");
+	std::string detail = "SPI for 192.0.2.1: " + (first == 0 ? std::string("allocated") : errno_text(first)) +
+			     ", the same SPI for 192.0.2.2: " +
+			     (second == 0 ? std::string("allocated") : errno_text(second));
+	report("xfrm-spi", first == 0 && (second == 0) == android, detail);
+}
+
+// The tables that hold a route to prefix/length through the link, from an
+// RTM_GETROUTE dump of the IPv6 routes of every table: 0, or minus the errno.
+int route6_tables(unsigned ifindex, const in6_addr &prefix, unsigned length, std::vector<int> &tables)
+{
+	tables.clear();
+	int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+	if (fd < 0)
+		return -errno;
+	timeval timeout{5, 0};
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+	rtmsg body{};
+	body.rtm_family = AF_INET6;
+	NetlinkRequest request(RTM_GETROUTE, NLM_F_DUMP, &body, sizeof body);
+	sockaddr_nl kernel{};
+	kernel.nl_family = AF_NETLINK;
+	const char *message = request.data();
+	if (sendto(fd, message, request.size(), 0, reinterpret_cast<sockaddr *>(&kernel),
+		   sizeof kernel) < 0) {
+		int e = errno;
+		close(fd);
+		return -e;
+	}
+	int found = 0;
+	bool done = false;
+	while (!done) {
+		alignas(8) char buffer[16384];
+		ssize_t got = recv(fd, buffer, sizeof buffer, 0);
+		if (got <= 0) {
+			found = got < 0 ? -errno : -EBADMSG;
+			break;
+		}
+		for (const nlmsghdr *header = reinterpret_cast<const nlmsghdr *>(buffer);
+		     NLMSG_OK(header, static_cast<unsigned>(got)); header = NLMSG_NEXT(header, got)) {
+			if (header->nlmsg_type == NLMSG_DONE) {
+				done = true;
+				break;
+			}
+			if (header->nlmsg_type == NLMSG_ERROR) {
+				found = -reinterpret_cast<const nlmsgerr *>(NLMSG_DATA(header))->error;
+				done = true;
+				break;
+			}
+			if (header->nlmsg_type != RTM_NEWROUTE)
+				continue;
+			const rtmsg *route = reinterpret_cast<const rtmsg *>(NLMSG_DATA(header));
+			if (route->rtm_dst_len != length)
+				continue;
+			int table = route->rtm_table;
+			unsigned oif = 0;
+			bool same = false;
+			int remaining = static_cast<int>(RTM_PAYLOAD(header));
+			for (const rtattr *attribute = RTM_RTA(route); RTA_OK(attribute, remaining);
+			     attribute = RTA_NEXT(attribute, remaining)) {
+				if (attribute->rta_type == RTA_DST && RTA_PAYLOAD(attribute) == sizeof prefix)
+					same = std::memcmp(RTA_DATA(attribute), &prefix, sizeof prefix) == 0;
+				else if (attribute->rta_type == RTA_OIF)
+					std::memcpy(&oif, RTA_DATA(attribute), sizeof oif);
+				else if (attribute->rta_type == RTA_TABLE)
+					std::memcpy(&table, RTA_DATA(attribute), sizeof(unsigned));
+			}
+			if (same && oif == ifindex)
+				tables.push_back(table);
+		}
+	}
+	close(fd);
+	return found;
+}
+
+std::string tables_text(const std::vector<int> &tables, int error)
+{
+	if (error != 0)
+		return "(" + errno_text(error < 0 ? -error : error) + ")";
+	std::string text = "[";
+	for (size_t i = 0; i < tables.size(); ++i)
+		text += (i != 0 ? "," : "") + std::to_string(tables[i]);
+	return text + "]";
+}
+
+int address6(unsigned short type, unsigned ifindex, const in6_addr &address, unsigned length)
+{
+	ifaddrmsg body{};
+	body.ifa_family = AF_INET6;
+	body.ifa_prefixlen = static_cast<unsigned char>(length);
+	body.ifa_scope = RT_SCOPE_UNIVERSE;
+	body.ifa_index = ifindex;
+	NetlinkRequest request(type, type == RTM_NEWADDR ? NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK : NLM_F_ACK,
+			       &body, sizeof body);
+	request.put(IFA_LOCAL, &address, sizeof address);
+	return netlink_call(NETLINK_ROUTE, request);
+}
+
+// The Android common kernel's accept_ra_rt_table sysctl, in every product. It
+// is 0, mainline's behaviour, until something writes it (Android's netd writes
+// -1000 for default and so for every new link), and then the prefix route of
+// an address, as the route a router advertisement installs, goes to the table
+// ifindex + 1000 instead of main. A kernel without IPv6 multiple tables (the
+// Linux configuration) has only main, so the route stays there.
+void check_ra_rt_table()
+{
+	std::string value = slurp("/proc/sys/net/ipv6/conf/all/accept_ra_rt_table");
+	report("ra-rt-table-default", value == "0\n",
+	       value.empty() ? "the sysctl is missing" : "all.accept_ra_rt_table is " + value.substr(0, value.size() - 1));
+
+	delete_link(probe_lower);
+	int error = add_link(probe_lower, "dummy", 0, nullptr);
+	if (error == 0)
+		error = set_link_up(probe_lower);
+	if (error != 0) {
+		bool skipped = error == EPERM && geteuid() != 0;
+		report("ra-rt-table-route", skipped, errno_text(error) + (skipped ? " (not root, skipped)" : ""));
+		delete_link(probe_lower);
+		return;
+	}
+	unsigned index = if_nametoindex(probe_lower);
+	in6_addr address{};
+	in6_addr prefix{};
+	inet_pton(AF_INET6, "2001:db8:cafe::1", &address);
+	inet_pton(AF_INET6, "2001:db8:cafe::", &prefix);
+	std::string path = std::string("/proc/sys/net/ipv6/conf/") + probe_lower + "/accept_ra_rt_table";
+	// A new link takes the value of "default", which netd sets to -1000.
+	bool zeroed = write_text(path.c_str(), "0") && slurp(path.c_str()) == "0\n";
+
+	std::vector<int> by_default;
+	std::vector<int> after_delete;
+	std::vector<int> in_device_table;
+	int added = address6(RTM_NEWADDR, index, address, 64);
+	int read_default = added == 0 ? route6_tables(index, prefix, 64, by_default) : -added;
+	int deleted = address6(RTM_DELADDR, index, address, 64);
+	int read_deleted = deleted == 0 ? route6_tables(index, prefix, 64, after_delete) : -deleted;
+
+	bool written = write_text(path.c_str(), "-1000");
+	std::string readback = slurp(path.c_str());
+	added = written ? address6(RTM_NEWADDR, index, address, 64) : EACCES;
+	int read_device = added == 0 ? route6_tables(index, prefix, 64, in_device_table) : -added;
+	bool tables = config_has(kernel_config(), "CONFIG_IPV6_MULTIPLE_TABLES=y");
+	int expected = tables ? static_cast<int>(index) + 1000 : static_cast<int>(RT_TABLE_MAIN);
+	bool ok = zeroed && read_default == 0 && by_default == std::vector<int>{RT_TABLE_MAIN} && read_deleted == 0 &&
+		  after_delete.empty() && readback == "-1000\n" && read_device == 0 &&
+		  in_device_table == std::vector<int>{expected};
+	report("ra-rt-table-route", ok,
+	       std::string(zeroed ? "" : "(the sysctl does not take 0) ") + "prefix route in tables " +
+		       tables_text(by_default, read_default) + " with 0 written, " +
+		       tables_text(after_delete, read_deleted) + " once the address is gone, and " +
+		       tables_text(in_device_table, read_device) + " with " + (readback.empty() ? "?" : readback.substr(0, readback.size() - 1)) +
+		       " written (expected [" + std::to_string(expected) + "], " +
+		       (tables ? "IPv6 multiple tables on" : "IPv6 multiple tables off") + ")");
+	delete_link(probe_lower);
 }
 
 } // namespace
@@ -1013,6 +1367,8 @@ int main(int argc, char **argv)
 	check_incfs(android);
 	check_macvlan();
 	check_wifi(android);
+	check_xfrm_spi(android);
+	check_ra_rt_table();
 	std::printf("%s: %d failure(s)\n", product, failures);
 	return failures;
 }
