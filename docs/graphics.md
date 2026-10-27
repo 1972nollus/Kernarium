@@ -207,13 +207,28 @@ only the CPU, a codec or a camera touches: the renderer refuses a native NV12
 create as an invalid parameter and every later command on that resource as an
 invalid resource id.
 
-For the same reason a view of a later plane selects nothing on the host. A
-guest that imports the second plane of an image as its own resource sends the
-plane number where a sampler view carries its layers, and the renderer reads it
-as the whole texture, so a planar picture whose planes are separate buffers
-samples correctly. A picture packed into one buffer, with its second plane at an
-offset, does not: Virgl carries no offset for an imported plane, and a texture of
-32-bit texels cannot be viewed as 8-bit pairs.
+The renderer samples such an image as the planes it holds, when the guest says
+what the image is. A resource created with `VIRGL_RESOURCE_FLAG_YUV_BIPLANAR`
+(luma rows, then interleaved chroma rows) or `VIRGL_RESOURCE_FLAG_YUV_TRIPLANAR`
+(luma rows, then the two half-stride chroma planes) and the picture's width in
+pixels in the high half of the flags is checked to be one picture, and keeps a
+texture for each plane: R8 for luma, RG8 for interleaved chroma, and R8 for each
+planar chroma plane. A sampler view of the image sends the plane it selects where
+a view carries its layers, plane 0 as the ordinary layer range and a later plane
+as its number, and reads that plane's texture. The textures are made when the
+first view is, from the image as it then is, and every write the guest transfers
+into the image redraws the plane rows its bytes feed in the blitter's own
+context; an image that only a codec or the CPU touches never gets them. Writes
+the GPU makes into such an image are not followed, because nothing allocates it
+as a render target. The capability `VIRGL_CAP_V2_PACKED_YUV` says the renderer
+knows the flags. minigbm sends them for the 8-bit YUV buffers it emulates (NV12,
+NV21 and YV12), only when the capability is present, so an older renderer is
+never sent a flag it refuses and an older minigbm sends none, which leaves the
+image the single R8 texture it always was. A P010 buffer is not tagged: its
+two-byte samples do not fit the R8 plane textures, and nothing samples it. A guest that imports each plane of a picture as its own
+resource sends the plane number as well, and the renderer reads it as the whole
+texture of that resource unless the resource has the plane's image, so a planar
+picture whose planes are separate buffers samples correctly too.
 
 A single-plane buffer's rows are padded to the first whole number of pixels
 that makes them a multiple of 16 bytes (a 642-pixel RGBA row is 2576 bytes and

@@ -18,11 +18,11 @@ rendering or scanout.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- virtgpu_virgl.c | 37 ++++++++++++++++++++++++-------------
- 1 file changed, 24 insertions(+), 13 deletions(-)
+ virtgpu_virgl.c | 39 ++++++++++++++++++++++++++-------------
+ 1 file changed, 26 insertions(+), 13 deletions(-)
 
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index 5cf0c0606d5a05b01c17d272a12391d45e6809e0..418c18260e4b334808694ab1f97a2265ea015ce8 100644
+index cf4a800f992cf4a3f934c110412bc4498b52900c..5527268151655b528180d35887cc6b88ac79dc03 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
 @@ -210,16 +210,19 @@ static void virgl_get_emulated_metadata(const struct bo *bo, struct bo_metadata
@@ -104,7 +104,16 @@ index 5cf0c0606d5a05b01c17d272a12391d45e6809e0..418c18260e4b334808694ab1f97a2265
  }
  
  // Whether this buffer exists only as the bytes of an R8 image. The native test above only checks
-@@ -856,7 +866,8 @@ static int virgl_init(struct driver *drv)
+@@ -651,6 +661,8 @@ static uint32_t virgl_packed_yuv_flags(struct driver *drv, uint32_t drm_format,
+ 		layout = VIRGL_RESOURCE_FLAG_YUV_TRIPLANAR;
+ 		break;
+ 	default:
++		/* P010 is not tagged: its samples are two bytes, which the host's per-plane R8
++		 * textures cannot hold, and nothing samples it. */
+ 		return 0;
+ 	}
+ 
+@@ -889,7 +901,8 @@ static int virgl_init(struct driver *drv)
  	 * when not natively supported and instead handled by HWComposer. */
  	virgl_add_combination(drv, DRM_FORMAT_P010, &LINEAR_METADATA,
  			      BO_USE_SCANOUT | BO_USE_TEXTURE | BO_USE_SW_MASK |
