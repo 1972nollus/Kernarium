@@ -155,21 +155,12 @@ void guestTransportEndpointBlocks()
     require(::close(transport) == 0);
 }
 
-/* The application holds the GPU's requests before it enters the background,
- * through the service it created. A request the guest queues meanwhile must
- * stay in its ring, the held service must run it once released, and that
- * release must wake a server that has nothing else to do. */
-void holdRequestsHoldsTheServicesRequests()
+/* A request the guest queues while the service holds its requests must stay
+ * in the ring, and the held service must run it once released. The release
+ * must wake a server that has nothing else to do. `socket` is the guest end of
+ * the connection the request travels on. */
+void heldRequestRunsAfterRelease(InProcessGpuService& service, int socket)
 {
-    InProcessGpuOptions options;
-    options.vncPort = 0;
-    options.width = 64;
-    options.height = 64;
-    InProcessGpuService service {std::move(options)};
-    UniqueDescriptor transport {descriptorFromName(service.takeConnectionName())};
-    UniqueDescriptor input {descriptorFromName(service.takeInputConnectionName())};
-    require(service.holdRequests(std::chrono::milliseconds {100}));
-
     const SplitRing ring;
     publishDisplayInfoRequest(ring);
     constexpr std::uint8_t sentinel = 0x5a;
@@ -184,7 +175,6 @@ void holdRequestsHoldsTheServicesRequests()
         return response.type;
     };
 
-    const int socket = transport.get();
     negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
     configureMemory(socket, ring.descriptor());
     const auto channels = startQueue(socket, ring);
@@ -199,6 +189,22 @@ void holdRequestsHoldsTheServicesRequests()
     require(ring.usedIndex() == 1);
     require(responseType() == static_cast<std::uint32_t>(
         protocol::GpuResponse::okDisplayInfo));
+}
+
+/* The application holds the GPU's requests before it enters the background,
+ * through the service it created. */
+void holdRequestsHoldsTheServicesRequests()
+{
+    InProcessGpuOptions options;
+    options.vncPort = 0;
+    options.width = 64;
+    options.height = 64;
+    InProcessGpuService service {std::move(options)};
+    UniqueDescriptor transport {descriptorFromName(service.takeConnectionName())};
+    UniqueDescriptor input {descriptorFromName(service.takeInputConnectionName())};
+    require(service.holdRequests(std::chrono::milliseconds {100}));
+
+    heldRequestRunsAfterRelease(service, transport.get());
 
     /* Holding again, with nothing running, is quiet and holds the next one. */
     require(service.holdRequests(std::chrono::milliseconds {100}));
@@ -206,11 +212,119 @@ void holdRequestsHoldsTheServicesRequests()
     service.stop();
 }
 
+/* A guest that restarts itself is a new guest on the same machine. The next
+ * connection serves it like the first, the old guest's endpoints are the
+ * guest's to close, and a hold the application placed before the restart is
+ * still in place, because the new device starts closed to the guest. */
+void nextConnectionServesTheNextGuest()
+{
+    const auto before = descriptorCount();
+    {
+        InProcessGpuOptions options;
+        options.vncPort = 0;
+        options.width = 64;
+        options.height = 64;
+        InProcessGpuService service {std::move(options)};
+        {
+            UniqueDescriptor transport {
+                descriptorFromName(service.takeConnectionName())};
+            UniqueDescriptor input {
+                descriptorFromName(service.takeInputConnectionName())};
+            require(service.holdRequests(std::chrono::milliseconds {100}));
+            heldRequestRunsAfterRelease(service, transport.get());
+            require(service.holdRequests(std::chrono::milliseconds {100}));
+            /* The old guest goes: its endpoints close here. */
+        }
+        service.startNextConnection();
+        require(service.requestsHeld());
+
+        UniqueDescriptor transport {
+            descriptorFromName(service.takeConnectionName())};
+        UniqueDescriptor input {
+            descriptorFromName(service.takeInputConnectionName())};
+        requireThrows<std::logic_error>(
+            [&] { (void)service.takeConnectionName(); });
+        requireThrows<std::logic_error>(
+            [&] { (void)service.takeInputConnectionName(); });
+        heldRequestRunsAfterRelease(service, transport.get());
+        require(!service.requestsHeld());
+
+        /* And again: the connection after that one is as good. */
+        transport = {};
+        input = {};
+        service.startNextConnection();
+        require(!service.requestsHeld());
+        UniqueDescriptor last {
+            descriptorFromName(service.takeConnectionName())};
+        UniqueDescriptor lastInput {
+            descriptorFromName(service.takeInputConnectionName())};
+        require(service.holdRequests(std::chrono::milliseconds {100}));
+        heldRequestRunsAfterRelease(service, last.get());
+        service.stop();
+    }
+    require(descriptorCount() == before);
+}
+
+/* A connection that cannot be opened leaves the service as it says it does.
+ * One that fails before the old connection is touched leaves that connection
+ * in place; one that fails after leaves none, with its descriptors given
+ * back, and the call can be made again. */
+void failedNextConnectionLeavesTheServiceRecoverable()
+{
+    const auto before = descriptorCount();
+    {
+        InProcessGpuOptions options;
+        options.vncPort = 0;
+        options.width = 64;
+        options.height = 64;
+        InProcessGpuService service {std::move(options)};
+
+        failNextStartup(StartupFailure::afterInputSocketPair);
+        requireThrows<std::runtime_error>(
+            [&] { service.startNextConnection(); });
+        /* The connection that was there is untouched, endpoints included. */
+        UniqueDescriptor transport {
+            descriptorFromName(service.takeConnectionName())};
+        UniqueDescriptor input {
+            descriptorFromName(service.takeInputConnectionName())};
+        require(::fcntl(transport.get(), F_GETFD) >= 0);
+
+        for (const auto failure :
+             {StartupFailure::afterTransportSocketPair,
+              StartupFailure::workerEntry}) {
+            failNextStartup(failure);
+            requireThrows<std::runtime_error>(
+                [&] { service.startNextConnection(); });
+            requireThrows<std::logic_error>(
+                [&] { (void)service.takeConnectionName(); });
+            requireThrows<std::logic_error>(
+                [&] { (void)service.takeInputConnectionName(); });
+        }
+        transport = {};
+        input = {};
+
+        service.startNextConnection();
+        transport = UniqueDescriptor {
+            descriptorFromName(service.takeConnectionName())};
+        input = UniqueDescriptor {
+            descriptorFromName(service.takeInputConnectionName())};
+        require(service.holdRequests(std::chrono::milliseconds {100}));
+        heldRequestRunsAfterRelease(service, transport.get());
+        service.stop();
+        /* A stopped service has no display to carry on. */
+        requireThrows<std::logic_error>(
+            [&] { service.startNextConnection(); });
+    }
+    require(descriptorCount() == before);
+}
+
 } // namespace
 
 void runInProcessServiceTests()
 {
     holdRequestsHoldsTheServicesRequests();
+    nextConnectionServesTheNextGuest();
+    failedNextConnectionLeavesTheServiceRecoverable();
     guestTransportEndpointBlocks();
     forceRepeatedFailure(StartupFailure::afterTransportSocketPair);
     forceRepeatedFailure(StartupFailure::afterInputSocketPair);

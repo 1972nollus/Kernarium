@@ -11,8 +11,33 @@
 
 namespace uml::gpu {
 
-/* The Virtio-GPU backend: a vhost-user server whose device renders through
- * virglrenderer and presents on a display of `displayMode`. */
+/* The display a Virtio-GPU backend presents on, with the dimension limit its
+ * EDID setting implies. */
+[[nodiscard]] std::unique_ptr<Display> makeGpuDisplay(
+    const std::string& vncBindAddress,
+    std::uint16_t vncPort,
+    std::string vncPassword,
+    std::uint32_t width,
+    std::uint32_t height,
+    uml::input::vnc::VncInputSink inputSink = {},
+    DisplayMode displayMode = DisplayMode::vnc,
+    void* nativeView = nullptr,
+    std::uint32_t dotsPerInch = 0,
+    uml::input::vnc::PointerMode pointerMode =
+        uml::input::vnc::PointerMode::mouse,
+    bool autoResizeGuest = true);
+
+/* The Virtio-GPU backend for one guest: a vhost-user server whose device
+ * renders through virglrenderer and presents on `display`. The device only
+ * borrows the display, resets it when it goes, and leaves it to the caller,
+ * so a display that other guests present on after this one survives it. */
+[[nodiscard]] std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
+    std::shared_ptr<Display> display,
+    std::string vncBindAddress,
+    std::uint32_t dotsPerInch = 0,
+    bool selfTestPattern = false);
+
+/* The same with a display of its own, which goes with the server. */
 [[nodiscard]] std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
     std::string vncBindAddress,
     std::uint16_t vncPort,

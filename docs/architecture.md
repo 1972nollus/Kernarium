@@ -1005,6 +1005,22 @@ guest's own fences; the renderer adds none. A resource no other context
 imports keeps ordinary texture storage, and a host with dma-buf shares through
 that instead.
 
+The in-process GPU service keeps the display apart from the guest's GPU
+connection. The display (the VNC listener and its clients, or the native window
+or Kernarium view) and the frame tap last until the service stops. The
+connection (the Virtio-GPU device, the renderer, and every context and resource
+the guest created in them, with their share of the device memory pool) lasts as
+long as one guest. A guest that restarts itself is a new guest on the same
+machine, so `startNextConnection()` ends the connection, which resets the
+display to its idle picture and destroys the renderer, and opens a fresh one
+with new transport and input endpoints. VNC clients stay connected, the
+listener keeps its port, the window stays open, and display input that arrives
+while no connection exists is dropped. The request gate is the service's, not
+the connection's: a hold placed before the restart still holds the new device,
+and the application opens it as it opened the last. A host-visible blob of the
+new guest starts zeroed: nothing the old guest wrote to its own is visible in
+it.
+
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md).
 

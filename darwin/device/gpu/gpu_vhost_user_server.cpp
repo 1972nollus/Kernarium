@@ -35,11 +35,11 @@ Value loadUnaligned(const void* address)
 class GpuVhostUserDevice final : public uml::virtio::VhostUserDevice {
 public:
     GpuVhostUserDevice(
-        std::unique_ptr<Display> display,
+        std::shared_ptr<Display> display,
         std::string vncBindAddress,
         std::uint32_t dotsPerInch)
-        : ownedDisplay_(std::move(display))
-        , display_(*ownedDisplay_)
+        : sharedDisplay_(std::move(display))
+        , display_(*sharedDisplay_)
         , vncBindAddress_(std::move(vncBindAddress))
         , gpu_(
               display_,
@@ -437,7 +437,10 @@ private:
         return pipelineCommand && fence && header.contextId != 0;
     }
 
-    std::unique_ptr<Display> ownedDisplay_;
+    /* The display may outlive this device: a service that serves one guest
+     * after another keeps it, and each device only borrows it. It is declared
+     * before the device so that the device resets it before it can go. */
+    std::shared_ptr<Display> sharedDisplay_;
     Display& display_;
     std::string vncBindAddress_;
     GuestMapper mapper_;
@@ -449,6 +452,23 @@ private:
 };
 
 } // namespace
+
+std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
+    std::shared_ptr<Display> display,
+    std::string vncBindAddress,
+    std::uint32_t dotsPerInch,
+    bool selfTestPattern)
+{
+    if (!display)
+        throw std::invalid_argument("Virtio-GPU server requires a display");
+    auto& presented = *display;
+    auto server = std::make_unique<VhostUserServer>(
+        std::make_unique<GpuVhostUserDevice>(
+            std::move(display), std::move(vncBindAddress), dotsPerInch));
+    if (selfTestPattern)
+        presented.fillSelfTestPattern();
+    return server;
+}
 
 std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
     std::string vncBindAddress,
@@ -464,7 +484,39 @@ std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
     uml::input::vnc::PointerMode pointerMode,
     bool autoResizeGuest)
 {
-    auto display = makeDisplay(
+    std::shared_ptr<Display> display = makeGpuDisplay(
+        vncBindAddress,
+        vncPort,
+        std::move(vncPassword),
+        width,
+        height,
+        std::move(inputSink),
+        displayMode,
+        nativeView,
+        dotsPerInch,
+        pointerMode,
+        autoResizeGuest);
+    return makeGpuVhostUserServer(
+        std::move(display),
+        std::move(vncBindAddress),
+        dotsPerInch,
+        selfTestPattern);
+}
+
+std::unique_ptr<Display> makeGpuDisplay(
+    const std::string& vncBindAddress,
+    std::uint16_t vncPort,
+    std::string vncPassword,
+    std::uint32_t width,
+    std::uint32_t height,
+    uml::input::vnc::VncInputSink inputSink,
+    DisplayMode displayMode,
+    void* nativeView,
+    std::uint32_t dotsPerInch,
+    uml::input::vnc::PointerMode pointerMode,
+    bool autoResizeGuest)
+{
+    return makeDisplay(
         displayMode,
         vncBindAddress,
         vncPort,
@@ -478,13 +530,6 @@ std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
             protocol::maximumDisplayDimension :
             protocol::maximumEdidDimension,
         autoResizeGuest);
-    auto& presented = *display;
-    auto server = std::make_unique<VhostUserServer>(
-        std::make_unique<GpuVhostUserDevice>(
-            std::move(display), std::move(vncBindAddress), dotsPerInch));
-    if (selfTestPattern)
-        presented.fillSelfTestPattern();
-    return server;
 }
 
 } // namespace uml::gpu
