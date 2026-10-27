@@ -108,13 +108,19 @@ int uml_emulator_get_capabilities(const struct uml_emulator *emulator,
  * kernel run is admitted only while no other run is active. Native mappings
  * belong to the run and are flushed and unmapped before that run returns.
  *
- * A process runs one guest. A kernel claims guest RAM early in its boot, and
- * a process hands guest RAM out once. After a run has claimed it, every later
+ * A process runs one guest, and that guest may restart itself. A kernel
+ * claims guest RAM early in its boot. After a run has claimed it, every later
  * run in the process, on this handle or another, returns
  * -UML_EMULATOR_UNSUPPORTED before it names a console, maps a kernel window
- * or enters a kernel. A run that ends before its kernel claims guest RAM,
- * such as one refused for its arguments or cancelled while queued, leaves the
- * process's guest unspent. */
+ * or enters a kernel, except the next run on the handle whose last run ended
+ * with UML_EMULATOR_RUN_END_RESTART (uml_emulator_get_run_end): that run first
+ * hands the guest back to the process and then boots it again. A power-off, a
+ * stop and any other end leave the guest spent. The hand-back fails with
+ * -UML_EMULATOR_RUNTIME_ERROR, changing nothing, while a host service still
+ * borrows guest RAM or a kernel thread still runs; the caller stops its
+ * device services and runs again. A run that ends before its kernel claims
+ * guest RAM, such as one refused for its arguments or cancelled while queued,
+ * leaves the process's guest unspent. */
 int uml_emulator_run(struct uml_emulator *emulator, int argc,
 		    const char *const argv[], const char *const envp[]);
 /* Reports how the guest of the handle's most recent run ended, once that run

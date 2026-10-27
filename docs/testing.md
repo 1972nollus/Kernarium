@@ -313,12 +313,24 @@ ctest --preset unit-tsan
 Every sanitizer preset, these two and the GPU and embedded-loader ones,
 instruments Objective-C++ as well as C++.
 
-Both sanitizers keep the product's macOS native window for themselves, so a
-sanitized test, and every run it makes through the emulator test variant,
-takes a native window that both leave free
-(`tests/unit/memory/native_window_test_support.hpp`). AddressSanitizer also
-ignores `mlock()`, so under it the cases that need wired guest RAM report
-themselves unsupported instead of running.
+Both sanitizers keep the product's macOS native window for themselves, and a
+process reserves its window once, so a sanitized test, and every run it makes
+through the emulator test variant, takes a native window that both leave free
+(`tests/unit/memory/native_window_test_support.hpp`; the test variant places
+its runs there by default). AddressSanitizer also ignores `mlock()`, so under
+it the cases that need wired guest RAM report themselves unsupported instead
+of running.
+
+A guest that restarts itself boots again in the same process, and
+`runtime-restart-*` (one process per mode, `sequential_run_tests.cpp`) covers
+it with a test kernel that leaves behind what a real one does: descriptors,
+pthread keys, allocations and mappings through the imports the loader follows,
+changed signal state, a guest RAM root, kernel threads and a guest file. At the
+moment each of 64 hand-backs completes the test checks that none of it is left
+and that the process is as it was before the first run; the other modes cover
+the ends that stay spent, another handle, a host service that borrows guest RAM
+and a kernel thread that still runs. The default malloc zone keeps what a boot
+freed, so the test gates its in-use bytes, not its size.
 
 The gadget cache census
 ([`tests/perf/README.md`](../tests/perf/README.md#cache-census)) compiles

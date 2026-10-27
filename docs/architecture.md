@@ -38,10 +38,37 @@ state, and copied network callback table. A handle admits at most one run at a
 time. Stop requests affect only that handle's current or queued run and are not
 carried into later runs.
 
-A process runs one guest. After a run's kernel has claimed guest RAM, every
-later run in the process, on any handle, returns `UML_EMULATOR_UNSUPPORTED`
-without entering a kernel; see
-[ADR 0002](decisions/0002-emulator-handle-lifetime.md).
+A process runs one guest, and that guest may restart itself. After a run's
+kernel has claimed guest RAM, every later run in the process, on any handle,
+returns `UML_EMULATOR_UNSUPPORTED` without entering a kernel, except the next
+run on the handle whose last run ended with a restart: that run hands the guest
+back to the process and boots again (`runtime/guest_hand_back`). A run says how
+its guest ended through `uml_emulator_get_run_end`: the guest's own report (the
+kernel's shutdown import fills the run's Context before its exitcalls run), the
+host's stop request ahead of it, and a failure when the kernel said nothing. The
+hand-back refuses with `UML_EMULATOR_RUNTIME_ERROR` while a host service
+borrows guest RAM or a kernel thread runs, and otherwise gives back everything
+the kernel took and did not return:
+
+- its descriptors, pthread keys, allocations and mappings outside the window,
+  which the loader records through the imports it follows
+  (`runtime/kernel_resources`) and the hand-back closes, deletes, frees and
+  unmaps, descriptors through `darwin_uml_close`, after the run's memory domain
+  retired and while no kernel thread runs;
+- the process state the kernel changed, which `KernelSignalScope` restores when
+  the kernel returns: every signal disposition, `ITIMER_REAL`, the entering
+  thread's mask and signal stack, and the status flags and terminal attributes
+  of descriptors 0 to 2;
+- the guest-file records, the slots of ended kernel threads, and the handle's
+  suspension, pending page-cache request and hibernation (whose image refers to
+  the commitment and is dropped with it); and
+- the guest RAM: the whole window becomes one protectionless reservation again,
+  the commitment is retired and the token unregistered, so the next kernel
+  finds no byte and no page of this one.
+
+The freed heap is not returned: the default malloc zone keeps the chunks a boot
+emptied until the system reclaims them, and its in-use bytes stay flat across
+hand-backs. See [ADR 0002](decisions/0002-emulator-handle-lifetime.md).
 
 Runs on different handles serialize through a process address-space gate,
 because an embedded kernel's fixed host mappings cannot be shared. A stop
