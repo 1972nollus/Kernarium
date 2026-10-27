@@ -4,11 +4,13 @@
 // [linux|android], linux by default.
 //   both:    IPv4 multicast (/proc/net/igmp, a group join, a looped datagram),
 //            no RDS socket family, no listener on TCP port 16385, the
-//            stack protector and hardened usercopy in /proc/config.gz, and
-//            a macvlan link that rtnetlink creates over a dummy link
+//            stack protector and hardened usercopy in /proc/config.gz,
+//            a macvlan link that rtnetlink creates over a dummy link, and an
+//            XFRM SPI allocated twice
 //   linux:   SysV IPC works, the NFS client and SCTP are present, a piped
-//            core_pattern runs its helper, /sys/power has no wake_lock, and
-//            there is no 802.11 stack (no nl80211 family, no phy)
+//            core_pattern runs its helper, /sys/power has no wake_lock,
+//            there is no 802.11 stack (no nl80211 family, no phy), and one
+//            ESP SPI is refused for a second destination address
 //   android: no SysV IPC (ENOSYS, no /proc/sysvipc), no NFS client, no SCTP,
 //            /sys/power/wake_lock takes and releases a wakelock, the
 //            static usermode helper runs no piped core_pattern helper, and
@@ -16,7 +18,8 @@
 //            fails a read of a missing block (the Linux guest has none), and
 //            virtual Wi-Fi works: cfg80211's nl80211 family and a phy, and a
 //            virt_wifi link over the macvlan that connects to the access point
-//            VirtWifi through nl80211, raises its carrier and drops it again
+//            VirtWifi through nl80211, raises its carrier and drops it again;
+//            one ESP SPI is allocated for two destination addresses
 // Prints one line per check. The exit status is the failure count.
 //
 // The probe is also the usermode helper it tests: "kernel_config_probe --umh
@@ -29,6 +32,7 @@
 #include <linux/if_link.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/xfrm.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -982,6 +986,53 @@ void check_wifi(bool android)
 	       "the three links are gone");
 }
 
+// XFRM_MSG_ALLOCSPI for an ESP SPI on an IPv4 destination: 0, or the errno. The
+// allocated state is an acquisition, as the IKE daemon's is.
+int xfrm_alloc_spi(unsigned spi, const char *destination)
+{
+	xfrm_userspi_info body{};
+	body.info.family = AF_INET;
+	body.info.id.proto = IPPROTO_ESP;
+	inet_pton(AF_INET, destination, &body.info.id.daddr.a4);
+	body.min = spi;
+	body.max = spi;
+	NetlinkRequest request(XFRM_MSG_ALLOCSPI, NLM_F_ACK, &body, sizeof body);
+	return netlink_call(NETLINK_XFRM, request);
+}
+
+int xfrm_delete_sa(unsigned spi, const char *destination)
+{
+	xfrm_usersa_id body{};
+	body.family = AF_INET;
+	body.proto = IPPROTO_ESP;
+	inet_pton(AF_INET, destination, &body.daddr.a4);
+	body.spi = htonl(spi);
+	NetlinkRequest request(XFRM_MSG_DELSA, NLM_F_ACK, &body, sizeof body);
+	return netlink_call(NETLINK_XFRM, request);
+}
+
+// Android's IKE daemon, and the CTS's IPsec tunnel tests, reserve one SPI for
+// the local and the remote outer address of a tunnel. Linux 6.17 made an SPI
+// unique per protocol for the whole namespace, which refuses the second
+// reservation; the Android product restores the check per destination
+// (CONFIG_XFRM_SPI_PER_DESTINATION) and the Linux product keeps the stricter one.
+void check_xfrm_spi(bool android)
+{
+	const unsigned spi = 0x51000001;
+	int first = xfrm_alloc_spi(spi, "192.0.2.1");
+	if (first == EPERM && geteuid() != 0) {
+		report("xfrm-spi", true, "not root, skipped");
+		return;
+	}
+	int second = xfrm_alloc_spi(spi, "192.0.2.2");
+	xfrm_delete_sa(spi, "192.0.2.1");
+	xfrm_delete_sa(spi, "192.0.2.2");
+	std::string detail = "SPI for 192.0.2.1: " + (first == 0 ? std::string("allocated") : errno_text(first)) +
+			     ", the same SPI for 192.0.2.2: " +
+			     (second == 0 ? std::string("allocated") : errno_text(second));
+	report("xfrm-spi", first == 0 && (second == 0) == android, detail);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -1013,6 +1064,7 @@ int main(int argc, char **argv)
 	check_incfs(android);
 	check_macvlan();
 	check_wifi(android);
+	check_xfrm_spi(android);
 	std::printf("%s: %d failure(s)\n", product, failures);
 	return failures;
 }

@@ -802,6 +802,24 @@ out of the shared series because it depends on the guest OS:
 The cgroup, FUSE, `quota2`, `IDLETIMER` and Incremental file system topics come
 from the Android common kernel.
 
+The shared series carries topics that only the Android product exercises. Each
+is inert in a Linux guest:
+
+- `CONFIG_XFRM_SPI_PER_DESTINATION` (a Kconfig option, off by default and
+  required built-in for Android) makes an IPsec SPI unique per destination
+  address again. Linux 6.17 made it unique per protocol across all
+  destinations (94f39804d891, CVE-2025-39797), so the second allocation of a
+  value for another address fails. Android's IKE daemon and the CTS's
+  `IpSecManagerTunnelTest` reserve one SPI for the local and the remote outer
+  address of a tunnel, so every tunnel test failed in its setup. The Android
+  common kernel reverts that change and the zero-SPI commit after it
+  (cd8ae32e4e46); the option restores the pre-6.17 allocator for the Android
+  product only, and two concurrent allocations of one SPI for one destination
+  can then both succeed, as before 6.17. The Linux product keeps upstream's
+  check. The topic belongs in the shared series because nothing in it depends
+  on the guest OS; only the option does. `guest-kernel-config` checks the
+  second allocation in both products.
+
 The product leaves out these ACK features:
 
 - `/dev/ashmem` and its `ASHMEM_*` ioctls on memfds. The product sets

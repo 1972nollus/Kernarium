@@ -93,3 +93,4 @@ patch	arm64-um-build-the-kernel-with-the-stack-protector.patch
 patch	media-v4l2-add-the-HLG-transfer-function.patch
 patch	drm-virtio-pace-the-CRTC-with-a-vblank-timer.patch
 patch	virtio_balloon-do-not-wait-for-an-answer-from-a-broken-device.patch
+patch	xfrm-allow-one-SPI-on-several-destinations-behind-a-Kconfig-option.patch
