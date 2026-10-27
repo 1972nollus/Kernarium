@@ -20,7 +20,7 @@ calls, which record each applied PTE.
  1 file changed, 78 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 17fad5fcd1bfb4915127b2b30b9d965bb5b90d7b..5b217a950357d31ec0cf42d45ee136251f6d3ee1 100644
+index 90cdda698b812d9019eb9c237d3123f9754052d5..56bc2c1dfb863fdccf832eba4e7a2afea18a7780 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -35,6 +35,15 @@ struct vm_ops {

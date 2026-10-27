@@ -375,9 +375,12 @@ commands, the back-off, and a pass over file cache read between the pages of a
 tmpfs file.
 `CONFIG_VIRTIO_BALLOON` lets the host carve its GPU memory out of guest RAM.
 UML removes virtio drivers from an exitcall that runs
-after `device_shutdown()` has broken every virtqueue, so the balloon returns
-its pages without waiting for a host answer when its queue is broken; otherwise
-power-off with an inflated balloon never completes.
+after `device_shutdown()` has broken every virtqueue. The balloon therefore
+returns its pages without waiting for a host answer once its queue is broken,
+and its shutdown handler breaks the queues only while it holds the balloon
+lock, so that no balloon page migration is left waiting for an answer the
+broken queue would drop. Otherwise power-off with an inflated balloon never
+completes.
 
 Every slice selects `HAVE_ALIGNED_STRUCT_PAGE` and `HAVE_CMPXCHG_DOUBLE`, as
 native arm64 does; the x86-64 userspace slice keeps the arm64 kernel. SLUB
@@ -391,7 +394,13 @@ Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
 at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
 `schedule()` when the caller stays runnable. The uaccess retry and TLB-walk
 safe points poll through `cond_resched()`, which does so only without
-`CONFIG_PREEMPTION`; both assert that at build time. A uaccess that may sleep
+`CONFIG_PREEMPTION`; both assert that at build time. The TLB walk of
+`flush_tlb_mm()` is a safe point only for its direct callers, `dup_mmap()` and
+the soft-dirty clear, which hold no spinlock or RCU read lock. The mmu_gather
+flushes under the PTE lock and never reaches it: the port's own `tlb_flush()`
+walks no VMA, and `exit_mmap()`'s full-mm gather does no host work, because
+`arch_exit_mmap()` has already emptied the host generation and no task is left
+to map into it. A uaccess that may sleep
 retries its fault until the fault handler refuses it or the task is dying, as
 native uaccess re-executes the access, so a sibling's `fork()` that
 write-protects the page again after the fault never fails the copy with
@@ -798,6 +807,60 @@ out of the shared series because it depends on the guest OS:
 
 The cgroup, FUSE, `quota2`, `IDLETIMER` and Incremental file system topics come
 from the Android common kernel.
+
+The shared series carries topics that only the Android product exercises. Each
+is inert in a Linux guest:
+
+- `CONFIG_XFRM_SPI_PER_DESTINATION` (a Kconfig option, off by default and
+  required built-in for Android) makes an IPsec SPI unique per destination
+  address again. Linux 6.17 made it unique per protocol across all
+  destinations (94f39804d891, CVE-2025-39797), so the second allocation of a
+  value for another address fails. Android's IKE daemon and the CTS's
+  `IpSecManagerTunnelTest` reserve one SPI for the local and the remote outer
+  address of a tunnel, so every tunnel test failed in its setup. The Android
+  common kernel reverts that change and the zero-SPI commit after it
+  (cd8ae32e4e46); the option restores the pre-6.17 allocator for the Android
+  product only, and two concurrent allocations of one SPI for one destination
+  can then both succeed, as before 6.17. The Linux product keeps upstream's
+  check. The topic belongs in the shared series because nothing in it depends
+  on the guest OS; only the option does. `guest-kernel-config` checks the
+  second allocation in both products.
+- The per-device autoconf route table, the Android common kernel's
+  `accept_ra_rt_table` sysctl (20599bae2f44). With a value other than 0, the
+  routes that router advertisements install (prefix, route information and
+  default router) go into the device's own table instead of `main`: a
+  positive value names the table, a negative one adds its absolute value to
+  the device's ifindex. Android's netd writes -1000 for every network it
+  manages, so that the table its rules select holds the network's routes;
+  without the sysctl a network that has no IpClient to copy the kernel's
+  routes into netd (the CTS's TAP test networks) has no IPv6 route and its
+  `connect()` fails `ENETUNREACH`. The sysctl is 0 by default, which is
+  mainline's behaviour, so the topic needs no option and a Linux guest never
+  writes it; and without `CONFIG_IPV6_MULTIPLE_TABLES`, which only the
+  Android configuration enables, there is one table and the value changes
+  nothing. Mainline's default-router purge already walks every table that
+  holds a default router, so the Android common kernel's rewrite of it is not
+  taken. `guest-kernel-config` checks the default and the table that a prefix
+  route lands in.
+- virt_wifi's off-channel operation. The virtual radio lists the channels of
+  a phone's chip (2.4 GHz channels 1 to 13, 5 GHz channels 36 to 48 and 149 to
+  165; the access point stays on 5240 MHz), tunes to one with
+  `remain_on_channel` for at most 5 s, and takes Action frames with
+  `mgmt_tx`, which are never acknowledged because no peer exists. With them a
+  supplicant starts Easy Connect (DPP) from a URI that names channels the
+  radio did not list, finds nobody, and the framework's own 40 s timer
+  reports a timeout, as it does on a real chip; before, the supplicant
+  refused to start and the framework reported a generic failure at once.
+  The same path serves ANQP and GAS queries. Only the Android configuration
+  builds virt_wifi. `guest-kernel-config` remains on 2412 MHz and sends an
+  Action frame there.
+- virt_wifi passes its unicast and multicast lists, and `IFF_ALLMULTI` and
+  `IFF_PROMISC`, on to its lower device. A macvlan delivers a multicast frame
+  only to the groups its own filter lists, and the product puts virt_wifi on a
+  macvlan, so without it wlan0's solicited-node groups never reached the
+  filter and a neighbour solicitation for its IPv6 address was dropped.
+  `guest-kernel-config` joins a group on a virt_wifi link and looks for it on
+  the macvlan.
 
 The product leaves out these ACK features:
 

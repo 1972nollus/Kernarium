@@ -101,6 +101,12 @@ CONFIG_IPV6_ROUTER_PREF=y
 CONFIG_NET_KEY=y
 CONFIG_XFRM_INTERFACE=y
 CONFIG_XFRM_STATISTICS=y
+# Android's IKE daemon and the CTS reserve one SPI for the local and the remote
+# outer address of an IPsec tunnel. Linux 6.17 refuses that (it made an SPI
+# unique per protocol, whatever the destination), and the Android common kernel
+# reverts the change, so the allocator here is the older one. The Linux product
+# keeps the stricter check.
+CONFIG_XFRM_SPI_PER_DESTINATION=y
 # netd closes a network's sockets through SOCK_DESTROY when the network goes
 # away, so apps and adb reconnect on the new one. GKI enables it in
 # gki_defconfig.
