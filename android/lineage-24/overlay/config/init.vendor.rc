@@ -32,6 +32,10 @@ on late-fs
 
 on boot
     setprop ro.hardware.audio.primary goldfish
+    # The Wi-Fi HAL and the supplicant keep their sockets and configuration here.
+    mkdir /data/vendor/wifi 0770 wifi wifi
+    mkdir /data/vendor/wifi/wpa 0770 wifi wifi
+    mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi
     setprop service.adb.tcp.port 5555
     start adbd
 

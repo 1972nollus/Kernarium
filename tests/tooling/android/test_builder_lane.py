@@ -412,6 +412,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           net_policy_variant: str | None = None,
                           wifi_network_variant: str | None = None,
                           wifi_hal_variant: str | None = None,
+                          wifi_dirs_variant: str | None = None,
                           supplicant_variant: str | None = None,
                           missing_wifi_feature: bool = False,
                           wifi_feature_file: str | None = None,
@@ -626,6 +627,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     rcu_restore = ""
                 elif init_variant != "rcu-restore-at-boot":
                     rcu_restore = "on property:sys.boot_completed=1\n" + rcu_restore
+                # The directories the Wi-Fi HAL and the supplicant use.
+                wifi_dirs = (
+                    ""
+                    if wifi_dirs_variant == "missing"
+                    else "    mkdir /data/vendor/wifi 0770 wifi wifi\n"
+                    + (
+                        "    mkdir /data/vendor/wifi/wpa 0770 system system\n"
+                        if wifi_dirs_variant == "wrong-owner"
+                        else "    mkdir /data/vendor/wifi/wpa 0770 wifi wifi\n"
+                    )
+                    + "    mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi\n"
+                )
                 # The wakelock that keeps the guest awake while an adb host is connected.
                 blocker_rules = ""
                 if blocker_variant != "missing-service":
@@ -679,7 +692,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "    mount_all --late\n"
                     "on boot\n"
                     "    setprop ro.hardware.audio.primary goldfish\n"
-                    "    setprop service.adb.tcp.port 5555\n"
+                    + wifi_dirs
+                    + "    setprop service.adb.tcp.port 5555\n"
                     "    start adbd\n" + rcu_restore + blocker_rules + net_rules,
                 )
                 if extra_entry is not None:
@@ -1437,6 +1451,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("wifi-network-missing-marker-context", {"wifi_network_variant": "missing-marker-context"}),
             ("wifi-network-script", {"missing_wifi_network_script": True}),
             ("missing-wificond", {"entries": {"SYSTEM/bin/wificond": None}}),
+            ("wifi-dirs-missing", {"wifi_dirs_variant": "missing"}),
+            ("wifi-dirs-wrong-owner", {"wifi_dirs_variant": "wrong-owner"}),
             ("missing-wifi-feature", {"missing_wifi_feature": True}),
             ("missing-wifi-overlay", {"entries": {"VENDOR/overlay/KernariumWifiOverlay.apk": None}}),
             ("ethernet-feature", {"wifi_feature_file": "android.hardware.ethernet"}),
@@ -1620,6 +1636,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "SYSTEM_EXT/bin/kernarium_wifi_network.sh"),
             ("missing-wificond-cause", {"entries": {"SYSTEM/bin/wificond": None}},
              "SYSTEM/bin/wificond"),
+            ("wifi-dirs-missing-cause", {"wifi_dirs_variant": "missing"},
+             "does not run 'mkdir /data/vendor/wifi 0770 wifi wifi' at boot"),
+            ("wifi-dirs-wrong-owner-cause", {"wifi_dirs_variant": "wrong-owner"},
+             "does not run 'mkdir /data/vendor/wifi/wpa 0770 wifi wifi' at boot"),
             ("missing-wifi-feature-cause", {"missing_wifi_feature": True},
              "required feature is not declared: android.hardware.wifi"),
             ("missing-wifi-overlay-cause",

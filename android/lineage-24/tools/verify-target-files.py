@@ -519,6 +519,13 @@ NET_SETUP_SYSCTLS = (
     "write /proc/sys/net/ipv4/conf/all/arp_ignore 1",
     "write /proc/sys/net/ipv4/conf/all/arp_announce 2",
 )
+# The Wi-Fi HAL and the supplicant keep their sockets in these directories, which Cuttlefish's
+# own init script creates and this product's replaces.
+WIFI_DATA_DIRECTORIES = (
+    "mkdir /data/vendor/wifi 0770 wifi wifi",
+    "mkdir /data/vendor/wifi/wpa 0770 wifi wifi",
+    "mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi",
+)
 NET_SETUP_TRANSITION = re.compile(
     rb"^\(typetransition init(?:_[0-9]+)? kernarium_net_setup_exec process kernarium_net_setup\)$",
     re.MULTILINE,
@@ -729,6 +736,10 @@ def check_network_setup(init_payload: str, actions: dict[str, list[str]]) -> Non
     for sysctl in NET_SETUP_SYSCTLS:
         if sysctl not in commands or commands.index(sysctl) > commands.index(start):
             fail(f"UML init policy does not run '{sysctl}' before {name}")
+    boot = actions.get("boot", [])
+    for directory in WIFI_DATA_DIRECTORIES:
+        if directory not in boot:
+            fail(f"UML init policy does not run '{directory}' at boot")
 
 
 def init_actions(payload: str) -> dict[str, list[str]]:
