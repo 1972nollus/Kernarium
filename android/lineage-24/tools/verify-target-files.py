@@ -1962,6 +1962,10 @@ def check_audio_policy(
         # The guest boots without a lock screen, and `locksettings set-disabled` can turn
         # it on: LockSettingsService stores this default when it creates its database.
         "ro.lockscreen.disable.default": "true",
+        # Userdata is a plain ext4 mount of its partition, which the mount holds exclusively:
+        # apexd's pinned APEX images (a dm-linear table over that partition) fail with EBUSY,
+        # so every staged APEX install is rejected unless apexd stages through /data/app-staging.
+        "apexd.config.use_fiemap": "false",
     }
     for property_name, expected in expected_properties.items():
         values = [

@@ -568,6 +568,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
                           missing_lockscreen_default: bool = False,
+                          use_fiemap_variant: str | None = None,
                           discrete_ops_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
@@ -674,6 +675,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.config.assistant_vol_default=15\n"
                     "persist.sys.usb.config=adb\n"
                     + ("" if missing_lockscreen_default else "ro.lockscreen.disable.default=true\n")
+                    + {
+                        None: "apexd.config.use_fiemap=false\n",
+                        "missing": "",
+                        "true": "apexd.config.use_fiemap=true\n",
+                    }[use_fiemap_variant]
                     + f"ro.product.product.model="
                     f"{'Android 17 on Darwin UML' if wrong_product_model else 'Darwin UML'}\n",
                 )
@@ -1680,6 +1686,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("audio-defaults", {"wrong_audio_defaults": True}),
             ("product-model", {"wrong_product_model": True}),
             ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
+            ("missing-use-fiemap", {"use_fiemap_variant": "missing"}),
+            ("use-fiemap-true", {"use_fiemap_variant": "true"}),
             ("missing-discrete-ops-overlay", {"discrete_ops_variant": "missing-overlay"}),
             ("unreliable-present-fence", {"vendor_property_variant": "present-fence-unreliable"}),
             ("missing-incremental-property", {"vendor_property_variant": "no-incremental"}),
@@ -1998,6 +2006,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "which vendor_init may not read"),
             ("missing-lockscreen-default-cause", {"missing_lockscreen_default": True},
              "unexpected product property ro.lockscreen.disable.default"),
+            ("missing-use-fiemap-cause", {"use_fiemap_variant": "missing"},
+             "unexpected product property apexd.config.use_fiemap: \\[\\]"),
+            ("use-fiemap-true-cause", {"use_fiemap_variant": "true"},
+             "unexpected product property apexd.config.use_fiemap: \\['true'\\]"),
             ("unreliable-present-fence-cause", {"vendor_property_variant": "present-fence-unreliable"},
              "marks the present fences unreliable: ro.vendor.hwc.drm.present_fence_not_reliable=true"),
             ("missing-incremental-property-cause", {"vendor_property_variant": "no-incremental"},

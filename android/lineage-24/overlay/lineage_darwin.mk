@@ -520,4 +520,14 @@ PRODUCT_SYSTEM_EXT_PROPERTIES += \
 PRODUCT_PRODUCT_PROPERTIES += \
     ro.lockscreen.disable.default=true
 
+# apexd pins an updated APEX as a device-mapper linear table over the block device that
+# holds /data (Early Activation; it bypasses dm-default-key on devices with metadata
+# encryption). Userdata here is an unencrypted ext4 filesystem mounted straight from its
+# partition, and that mount holds the partition exclusively, so the table load fails with
+# EBUSY and every staged APEX install is rejected. GSI and DSU turn pinning off with this
+# same property: apexd then stages through /data/app-staging and init keeps two mount
+# namespaces (ro.init.mnt_ns.count 2). The target-files verifier requires the property.
+PRODUCT_PRODUCT_PROPERTIES += \
+    apexd.config.use_fiemap=false
+
 PRODUCT_IGNORE_ALL_ANDROIDMK := true

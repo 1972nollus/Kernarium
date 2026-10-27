@@ -893,7 +893,13 @@ system disk; it reaches sgdisk only for the loop-backed virtual disk of
 The immutable Android payload filesystems and APEX payloads are ext4. Userdata
 is an ordinary unencrypted ext4 filesystem in the directly writable image; this
 emulator does not expose a hardware-backed KeyMint service and the guest bundle
-is already protected by the host application sandbox. Both userdata fstab
+is already protected by the host application sandbox. The mount holds the
+partition exclusively, so apexd cannot pin an updated APEX as a device-mapper
+linear table over it (Early Activation, which exists to bypass dm-default-key);
+the product sets `apexd.config.use_fiemap=false`, as GSI and DSU do, so staged
+APEX installs go through `/data/app-staging`, init keeps two mount namespaces
+(`ro.init.mnt_ns.count` 2), and the verifier requires the property. Both
+userdata fstab
 entries carry the fs_mgr `quota` flag, so the first mount runs
 `tune2fs -Oquota -Qusrquota,grpquota,prjquota` (the seed filesystem's 256-byte
 inodes allow project quota) and `installd` can answer StorageStatsManager from
