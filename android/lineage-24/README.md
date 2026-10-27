@@ -159,8 +159,30 @@ containers remain part of base AOSP so ordinary applications can still resolve
 the Android SDK classes; excluding them also removes required system-server
 dexpreopt inputs. Telephony,
 GNSS, NFC, UWB, Thread, camera, biometric, sensor, vibrator, secure-element,
-USB, and Trusty hardware is not advertised. Ethernet uses the real
-Virtio-net/SLiRP path.
+USB, and Trusty hardware is not advertised.
+
+The guest's one network device, `eth0`, is the host's user-mode network (SLiRP:
+10.0.2.0/24, gateway 10.0.2.2, DNS 10.0.2.3), and it is the management NIC: adb
+is reached through the host's forward to 10.0.2.15, so `eth0` keeps that address
+and is never managed by the framework. `kernarium_net_setup`
+(`overlay/tools`, a vendor binary that uses Cuttlefish's `cuttlefish_net`
+netlink library) prepares it at `post-fs-data`, and init waits for it. After
+init has set `arp_ignore` and `arp_announce`, so that no interface answers ARP
+for another's address, the tool
+
+- addresses `eth0` with 10.0.2.15/24 and sends the host's DHCP server one
+  DHCPREQUEST for that address from `eth0`'s MAC, which makes the server
+  reserve it before any other MAC exists;
+- adds the priority-0 rule `from 10.0.2.15 lookup 5555` and the link route of
+  that table, so the replies adbd sends leave `eth0` whichever network the
+  framework makes the default; and
+- stacks the private macvlan `buried_eth0` (MAC `02:15:b2:00:00:00`) on `eth0`
+  and the `virt_wifi` device `wlan0` on that, the way Cuttlefish does.
+
+The tool fails closed: without the lease or the rule it creates no `wlan0`, so
+adb keeps working and nothing else can take the management address. The kernel
+needs `CONFIG_MACVLAN`, `CONFIG_CFG80211` and `CONFIG_VIRT_WIFI` for the last
+step; a kernel without them leaves `eth0` configured and `wlan0` absent.
 
 The vendor audio policy exposes the 48 kHz stereo primary playback path and one
 built-in microphone, the Virtio sound capture stream (16-bit PCM at 48 kHz, mono

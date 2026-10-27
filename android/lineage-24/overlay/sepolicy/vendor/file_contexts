@@ -15,3 +15,6 @@
 # Mesa loads the allocator's gralloc0 module in the same processes to read
 # buffer metadata.
 /vendor/lib(64)?/hw/gralloc\.minigbm\.so  u:object_r:same_process_hal_file:s0
+
+# Addresses eth0 and builds the virtual Wi-Fi interface at post-fs-data.
+/vendor/bin/kernarium_net_setup  u:object_r:kernarium_net_setup_exec:s0

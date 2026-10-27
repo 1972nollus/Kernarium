@@ -383,6 +383,11 @@ PRODUCT_COPY_FILES += \
 PRODUCT_PACKAGES += kernarium_vk_present
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_present
 
+# eth0 is the management NIC adb is reached on; the framework sees the virtual
+# Wi-Fi built on it. This tool configures both before the framework starts
+# (init.vendor.rc runs it at post-fs-data).
+PRODUCT_PACKAGES += kernarium_net_setup
+
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 
 # The virtio-gpu device paces the display with a vblank timer, so a present

@@ -38,3 +38,17 @@ cc_binary {
         "-DVK_USE_PLATFORM_ANDROID_KHR",
     ],
 }
+
+// Splits the guest's network device into the management NIC and the virtual
+// Wi-Fi the framework sees, with Cuttlefish's netlink library.
+cc_binary {
+    name: "kernarium_net_setup",
+    srcs: ["kernarium_net_setup.cpp"],
+    defaults: ["cuttlefish_guest_only"],
+    shared_libs: [
+        "cuttlefish_net",
+        "libbase",
+        "liblog",
+    ],
+    cflags: ["-Wextra"],
+}

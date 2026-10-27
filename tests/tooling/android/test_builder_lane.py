@@ -406,6 +406,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_spl_policy: bool = False,
                           blocker_variant: str | None = None,
                           missing_blocker_binary: bool = False,
+                          net_setup_variant: str | None = None,
+                          missing_net_setup_binary: bool = False,
+                          missing_net_library: bool = False,
+                          net_policy_variant: str | None = None,
                           missing_adb_prop_context: bool = False,
                           missing_adb_prop_policy: bool = False,
                           core_sets_vendor_prop: bool = False,
@@ -636,6 +640,29 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                 if blocker_variant == "started-at-boot":
                     blocker_rules += "on boot\n    start suspend_blocker\n"
+                # The network setup tool: init limits ARP, then waits for the tool.
+                net_rules = ""
+                if net_setup_variant != "missing-service":
+                    net_rules += (
+                        "service kernarium_net_setup /vendor/bin/kernarium_net_setup\n"
+                        "    user root\n"
+                        + ("" if net_setup_variant == "not-oneshot" else "    oneshot\n")
+                        + ("" if net_setup_variant == "not-disabled" else "    disabled\n")
+                    )
+                sysctls = (
+                    "    write /proc/sys/net/ipv4/conf/all/arp_ignore 1\n"
+                    + ("" if net_setup_variant == "no-announce" else
+                       "    write /proc/sys/net/ipv4/conf/all/arp_announce 2\n")
+                )
+                start_tool = "    exec_start kernarium_net_setup\n"
+                if net_setup_variant == "sysctl-after-start":
+                    net_rules += "on post-fs-data\n" + start_tool + sysctls
+                elif net_setup_variant == "no-exec-start":
+                    net_rules += "on post-fs-data\n" + sysctls
+                elif net_setup_variant == "started-at-boot":
+                    net_rules += "on post-fs-data\n" + sysctls + "on boot\n" + start_tool
+                else:
+                    net_rules += "on post-fs-data\n" + sysctls + start_tool
                 archive.writestr(
                     "VENDOR/etc/init/init.kernarium.rc",
                     "on early-init\n" + graphics + density +
@@ -647,7 +674,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "on boot\n"
                     "    setprop ro.hardware.audio.primary goldfish\n"
                     "    setprop service.adb.tcp.port 5555\n"
-                    "    start adbd\n" + rcu_restore + blocker_rules,
+                    "    start adbd\n" + rcu_restore + blocker_rules + net_rules,
                 )
                 if extra_entry is not None:
                     archive.writestr(extra_entry, "on early-init\n")
@@ -730,6 +757,20 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 )
                 if not missing_blocker_binary:
                     archive.writestr("VENDOR/bin/suspend_blocker", b"blocker")
+                if not missing_net_setup_binary:
+                    archive.writestr("VENDOR/bin/kernarium_net_setup", b"net setup")
+                if not missing_net_library:
+                    archive.writestr("VENDOR/lib64/cuttlefish_net.so", b"net library")
+                archive.writestr(
+                    "VENDOR/etc/selinux/vendor_file_contexts",
+                    "/dev/hvc0  u:object_r:serial_device:s0\n"
+                    + (
+                        ""
+                        if net_policy_variant == "missing-label"
+                        else "/vendor/bin/kernarium_net_setup  "
+                        "u:object_r:kernarium_net_setup_exec:s0\n"
+                    ),
+                )
                 # The software decoders' 3840x2160 update (config/media_codecs_c2.xml).
                 hevc_rate = "1-3000000" if media_codecs_variant == "low-hevc-rate" else "1-16711680"
                 vp9_size = "2048x2048" if media_codecs_variant == "small-vp9-size" else "4096x4096"
@@ -861,6 +902,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "(allow adbd_202604 virtual_face_hal_prop_202604 (property_service (set)))\n"
                         if core_sets_vendor_prop
                         else ""
+                    )
+                    # init enters the network setup domain through its executable's label.
+                    + (
+                        ""
+                        if net_policy_variant == "missing-transition"
+                        else "(typetransition init_202604 kernarium_net_setup_exec process "
+                        "kernarium_net_setup)\n"
                     )
                     # The ClearKey HAL's rule for the memfd files of application domains: the
                     # generated attribute names the application domains less the isolated ones.
@@ -1245,6 +1293,17 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("blocker-started-at-boot", {"blocker_variant": "started-at-boot"}),
             ("blocker-no-stop", {"blocker_variant": "no-stop"}),
             ("blocker-binary", {"missing_blocker_binary": True}),
+            ("net-setup-missing-service", {"net_setup_variant": "missing-service"}),
+            ("net-setup-not-oneshot", {"net_setup_variant": "not-oneshot"}),
+            ("net-setup-not-disabled", {"net_setup_variant": "not-disabled"}),
+            ("net-setup-no-exec-start", {"net_setup_variant": "no-exec-start"}),
+            ("net-setup-sysctl-after-start", {"net_setup_variant": "sysctl-after-start"}),
+            ("net-setup-no-announce", {"net_setup_variant": "no-announce"}),
+            ("net-setup-started-at-boot", {"net_setup_variant": "started-at-boot"}),
+            ("net-setup-binary", {"missing_net_setup_binary": True}),
+            ("net-library", {"missing_net_library": True}),
+            ("net-policy-label", {"net_policy_variant": "missing-label"}),
+            ("net-policy-transition", {"net_policy_variant": "missing-transition"}),
             ("adb-prop-context", {"missing_adb_prop_context": True}),
             ("adb-prop-policy", {"missing_adb_prop_policy": True}),
             ("core-sets-vendor-prop", {"core_sets_vendor_prop": True}),
@@ -1355,6 +1414,28 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "does not stop suspend_blocker when the last adb host leaves"),
             ("blocker-binary-cause", {"missing_blocker_binary": True},
              "VENDOR/bin/suspend_blocker"),
+            ("net-setup-missing-service-cause", {"net_setup_variant": "missing-service"},
+             "does not declare the kernarium_net_setup service"),
+            ("net-setup-not-oneshot-cause", {"net_setup_variant": "not-oneshot"},
+             "does not declare kernarium_net_setup as oneshot"),
+            ("net-setup-not-disabled-cause", {"net_setup_variant": "not-disabled"},
+             "does not declare kernarium_net_setup as disabled"),
+            ("net-setup-no-exec-start-cause", {"net_setup_variant": "no-exec-start"},
+             "does not wait for kernarium_net_setup at post-fs-data"),
+            ("net-setup-sysctl-after-start-cause", {"net_setup_variant": "sysctl-after-start"},
+             "arp_ignore 1' before kernarium_net_setup"),
+            ("net-setup-no-announce-cause", {"net_setup_variant": "no-announce"},
+             "arp_announce 2' before kernarium_net_setup"),
+            ("net-setup-started-at-boot-cause", {"net_setup_variant": "started-at-boot"},
+             "starts kernarium_net_setup under 'boot'"),
+            ("net-setup-binary-cause", {"missing_net_setup_binary": True},
+             "VENDOR/bin/kernarium_net_setup"),
+            ("net-library-cause", {"missing_net_library": True},
+             "VENDOR/lib64/cuttlefish_net.so"),
+            ("net-policy-label-cause", {"net_policy_variant": "missing-label"},
+             "do not label /vendor/bin/kernarium_net_setup"),
+            ("net-policy-transition-cause", {"net_policy_variant": "missing-transition"},
+             "does not move init into the network setup domain"),
             ("adb-prop-context-cause", {"missing_adb_prop_context": True},
              "do not label sys.kernarium.adb.host_connected"),
             ("adb-prop-policy-cause", {"missing_adb_prop_policy": True},

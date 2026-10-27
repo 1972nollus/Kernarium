@@ -166,6 +166,7 @@ REQUIRED_ENTRIES = {
     "SYSTEM/etc/selinux/plat_property_contexts",
     "SYSTEM/etc/selinux/plat_sepolicy.cil",
     "VENDOR/bin/hw/android.hardware.health-service.example",
+    "VENDOR/bin/kernarium_net_setup",
     "VENDOR/bin/suspend_blocker",
     "VENDOR/etc/audio_effects_config.xml",
     "VENDOR/etc/audio_policy_configuration.xml",
@@ -178,6 +179,7 @@ REQUIRED_ENTRIES = {
     "VENDOR/etc/permissions/handheld_core_hardware.xml",
     "VENDOR/etc/primary_audio_policy_configuration.xml",
     "VENDOR/etc/r_submix_audio_policy_configuration.xml",
+    "VENDOR/etc/selinux/vendor_file_contexts",
     "VENDOR/etc/selinux/vendor_property_contexts",
     "VENDOR/etc/selinux/vendor_sepolicy.cil",
     "VENDOR/etc/ueventd.rc",
@@ -185,6 +187,8 @@ REQUIRED_ENTRIES = {
     "VENDOR/etc/vintf/manifest.xml",
     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
     "VENDOR/build.prop",
+    # The network setup tool's netlink library (Cuttlefish's).
+    "VENDOR/lib64/cuttlefish_net.so",
     *ABI_LIST_PROPERTY_FILES,
     *MESA_ELF_ENTRIES,
     *MESA_HAL_ENTRIES,
@@ -493,6 +497,24 @@ CIL_PERMISSIVE_TYPE = re.compile(rb"^\(typepermissive (\S+)\)$", re.MULTILINE)
 # The only domain that may be permissive: the userdebug root shell.
 PERMISSIVE_DOMAINS = frozenset({"su"})
 SUSPEND_BLOCKER_SERVICE = ("suspend_blocker", "/vendor/bin/suspend_blocker")
+# eth0 is the management NIC adb is reached on and the framework sees only the
+# virtual Wi-Fi built on it. The tool that sets this up runs at post-fs-data, after
+# init has limited every interface to answering ARP for its own addresses
+# (overlay/config/init.vendor.rc, tools/kernarium_net_setup.cpp).
+NET_SETUP_SERVICE = ("kernarium_net_setup", "/vendor/bin/kernarium_net_setup")
+NET_SETUP_TRIGGER = "post-fs-data"
+NET_SETUP_SYSCTLS = (
+    "write /proc/sys/net/ipv4/conf/all/arp_ignore 1",
+    "write /proc/sys/net/ipv4/conf/all/arp_announce 2",
+)
+NET_SETUP_TRANSITION = re.compile(
+    rb"^\(typetransition init(?:_[0-9]+)? kernarium_net_setup_exec process kernarium_net_setup\)$",
+    re.MULTILINE,
+)
+NET_SETUP_FILE_CONTEXT = re.compile(
+    rb"^/vendor/bin/kernarium_net_setup\s+u:object_r:kernarium_net_setup_exec:s0$",
+    re.MULTILINE,
+)
 UML_INIT_REQUIRED = (
     "mount_all --early",
     "exec -- /system/bin/resize2fs /dev/block/by-name/userdata",
@@ -658,6 +680,27 @@ def check_suspend_blocker(init_payload: str, actions: dict[str, list[str]]) -> N
         fail(f"UML init policy does not stop {name} when the last adb host leaves")
 
 
+def check_network_setup(init_payload: str, actions: dict[str, list[str]]) -> None:
+    """init limits ARP, then waits for the tool that addresses eth0 and builds the Wi-Fi."""
+    name, executable = NET_SETUP_SERVICE
+    service = init_services(init_payload).get(name)
+    if service is None or service[0] != executable:
+        fail(f"UML init policy does not declare the {name} service at {executable}")
+    for option in ("oneshot", "disabled"):
+        if option not in service[1]:
+            fail(f"UML init policy does not declare {name} as {option}")
+    start = f"exec_start {name}"
+    for trigger, commands in actions.items():
+        if trigger != NET_SETUP_TRIGGER and (start in commands or f"start {name}" in commands):
+            fail(f"UML init policy starts {name} under '{trigger}'")
+    commands = actions.get(NET_SETUP_TRIGGER, [])
+    if start not in commands:
+        fail(f"UML init policy does not wait for {name} at {NET_SETUP_TRIGGER}")
+    for sysctl in NET_SETUP_SYSCTLS:
+        if sysctl not in commands or commands.index(sysctl) > commands.index(start):
+            fail(f"UML init policy does not run '{sysctl}' before {name}")
+
+
 def init_actions(payload: str) -> dict[str, list[str]]:
     """Map each action trigger of an init script to its commands."""
     actions: dict[str, list[str]] = {}
@@ -743,6 +786,7 @@ def check_boot_policy(
     if UML_INIT_RCU_RESTORE not in actions.get(UML_INIT_RCU_TRIGGER, []):
         fail("UML init policy does not restore normal RCU grace periods after boot")
     check_suspend_blocker(init_payload, actions)
+    check_network_setup(init_payload, actions)
     check_media_codecs_c2(read_small(archive, infos["VENDOR/etc/media_codecs_c2.xml"]))
 
     ueventd_payload = read_small(
@@ -1015,6 +1059,9 @@ def check_kernel_policy(
     if not AUDIO_HAL_SELF_BINDER.search(vendor_policy):
         fail("vendor policy does not let the audio HAL processes call each other's binder")
     check_clearkey_memfd_policy(vendor_policy)
+    check_network_setup_policy(
+        vendor_policy, read_small(archive, infos["VENDOR/etc/selinux/vendor_file_contexts"])
+    )
     platform_policy = read_small(
         archive, infos["SYSTEM/etc/selinux/plat_sepolicy.cil"], PLATFORM_POLICY_LIMIT
     )
@@ -1175,6 +1222,14 @@ def check_clearkey_memfd_policy(vendor_policy: bytes) -> None:
         "vendor policy does not let the ClearKey DRM HAL read, write and map the memfd files "
         "of application domains other than isolated apps"
     )
+
+
+def check_network_setup_policy(vendor_policy: bytes, vendor_file_contexts: bytes) -> None:
+    """The network setup tool runs in its own domain, not in init's."""
+    if not NET_SETUP_FILE_CONTEXT.search(vendor_file_contexts):
+        fail("vendor file contexts do not label /vendor/bin/kernarium_net_setup")
+    if not NET_SETUP_TRANSITION.search(vendor_policy):
+        fail("vendor policy does not move init into the network setup domain")
 
 
 def check_policy_relaxations(policies: tuple[bytes, ...]) -> None:

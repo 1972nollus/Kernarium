@@ -35,6 +35,23 @@ on boot
     setprop service.adb.tcp.port 5555
     start adbd
 
+# eth0, the host's user-mode network, is the management NIC adb is reached on:
+# it keeps 10.0.2.15 and the framework never manages it. The tool addresses it,
+# has the host's DHCP server reserve the address, keeps adb's replies on eth0,
+# and builds the virtual Wi-Fi interface the framework sees on top of it. init
+# waits for the tool, so adbd and the framework find the interfaces in place.
+# Every interface answers ARP only for its own addresses, so the Wi-Fi lease
+# never takes over the management address.
+service kernarium_net_setup /vendor/bin/kernarium_net_setup
+    user root
+    oneshot
+    disabled
+
+on post-fs-data
+    write /proc/sys/net/ipv4/conf/all/arp_ignore 1
+    write /proc/sys/net/ipv4/conf/all/arp_announce 2
+    exec_start kernarium_net_setup
+
 # A phone stays awake while a USB host is connected; the host of this machine
 # reaches adbd over a network that cannot wake a suspended guest, so adbd
 # reports its host in sys.kernarium.adb.host_connected and the blocker, a
