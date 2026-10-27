@@ -2230,6 +2230,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 fail(f"target-files verifier did not reject the {label} fixture for {reason!r}: {result.stdout}")
 
 
+def verify_net_setup_tool(android_root: Path) -> None:
+    """RTM_NEWLINK with a flag mask replaces the new link's flags with ifi_flags, and with none
+    given that clears IFF_MULTICAST (ether_setup sets it), which the IPv6 neighbour and router
+    discovery of buried_eth0 and wlan0 need. The tool leaves ifi_change at 0; the library's
+    AddIfInfo sets IFF_UP."""
+    source = (android_root / "overlay/tools/kernarium_net_setup.cpp").read_text()
+    if re.search(r"\bifi_change\s*=", source):
+        fail("kernarium_net_setup.cpp assigns ifi_change: a link-creation flag mask clears IFF_MULTICAST")
+
+
 def verify_overlay_sepolicy(android_root: Path) -> None:
     """The overlay's sepolicy sources keep core domains off vendor-owned properties."""
     tool = android_root / "tools/check-overlay-sepolicy.py"
@@ -2914,6 +2924,7 @@ def main() -> None:
     verify_kernel_elf_fixtures(android_root / "build/verify-kernel-elf.py")
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_hal_selections(android_root)
+    verify_net_setup_tool(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)

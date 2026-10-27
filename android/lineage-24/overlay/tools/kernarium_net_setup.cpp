@@ -321,10 +321,12 @@ bool AddLinkRoute(cuttlefish::NetlinkClient& netlink, uint32_t lower_index) {
   return netlink.Send(request);
 }
 
+// The creation requests leave ifi_change at 0. A flag mask would replace the new link's flags with
+// ifi_flags, and with none given that clears IFF_MULTICAST, which ether_setup() sets. BringUp sets
+// IFF_UP.
 bool AddMacvlan(cuttlefish::NetlinkClient& netlink, uint32_t lower_index) {
   cuttlefish::NetlinkRequest request(RTM_NEWLINK, NLM_F_CREATE | NLM_F_EXCL);
   ifinfomsg info = {};
-  info.ifi_change = 0xFFFFFFFF;
   request.Append(info);
   request.AddString(IFLA_IFNAME, kMacvlanName);
   request.AddInt<uint32_t>(IFLA_LINK, lower_index);
@@ -341,7 +343,6 @@ bool AddMacvlan(cuttlefish::NetlinkClient& netlink, uint32_t lower_index) {
 bool AddVirtWifi(cuttlefish::NetlinkClient& netlink, uint32_t lower_index) {
   cuttlefish::NetlinkRequest request(RTM_NEWLINK, NLM_F_CREATE | NLM_F_EXCL);
   ifinfomsg info = {};
-  info.ifi_change = 0xFFFFFFFF;
   request.Append(info);
   request.AddString(IFLA_IFNAME, kWifiName);
   request.AddInt<uint32_t>(IFLA_LINK, lower_index);
