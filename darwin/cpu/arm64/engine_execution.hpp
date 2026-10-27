@@ -49,7 +49,8 @@ struct EntryDefaults {
 
 	/* Runs once, after the execution scope is open and before the first
 	 * block. */
-	static void prepare(CpuState &) noexcept
+	template<typename Executor>
+	static void prepare(Executor &, CpuState &) noexcept
 	{
 	}
 };
@@ -83,6 +84,14 @@ struct GadgetA32Entry : EntryDefaults {
 		std::uint64_t key) noexcept
 	{
 		return aarch32::key_pc(key);
+	}
+
+	/* The executor's own state of an AArch32 entry: the CpuState slots its
+	 * streams borrow beside R0-R14 (GadgetExecutor::enter_aarch32). */
+	template<typename Executor>
+	static void prepare(Executor &executor, CpuState &cpu) noexcept
+	{
+		executor.enter_aarch32(cpu);
 	}
 
 	template<typename Executor>
@@ -125,7 +134,7 @@ template<typename Entry, bool PollCallback, typename Executor>
 	};
 	[[maybe_unused]] const ExecutionScope execution_scope{executor};
 	executor.set_single_step(request.single_step);
-	Entry::prepare(request.cpu);
+	Entry::prepare(executor, request.cpu);
 	const auto interrupt_pending = [&]() noexcept {
 		if (request.interrupt.state_pending())
 			return true;

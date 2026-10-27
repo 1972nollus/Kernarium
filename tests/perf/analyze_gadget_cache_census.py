@@ -2,19 +2,62 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Summarize a gadget cache census written by a UML_GADGET_CACHE_CENSUS build.
 
-Every executor's cache appends one snapshot of itself at teardown, and one
-every DARWIN_UML_GADGET_CACHE_CENSUS_SECONDS seconds when that is set. A
-snapshot is an `E` line with the cache's measured footprint and the history it
-has counted so far, a `G` line per resident address space, a `P` line per
-resident translation, and, for the bodies DARWIN_UML_GADGET_CACHE_CENSUS_WORDS
-samples, a `W` line with the stream word by word. Both gadget engines write
-the same records, so one capture reads the same way for either; a field an
-engine has no counterpart for is simply absent.
+This describes the records; tests/perf/README.md says how to take a capture.
+Every executor's cache appends a snapshot of itself at teardown, and one every
+DARWIN_UML_GADGET_CACHE_CENSUS_SECONDS seconds when that is set, taken by its
+own vCPU at its next lookup. Both gadget engines write the same records, so
+one capture reads the same way for either; a field an engine has no
+counterpart for is simply absent. A snapshot is:
 
-When arm64 executors share an address space's translations, the `E` line
-counts only what the cache owns, every cache holding the space writes the
-space's bodies and records on an `S` line named by the space, and each `P`
-line names its body. Each space and each body is counted once.
+  E  the cache: its geometry; its measured footprint, which is the committed
+     slabs, every resident translation's allocations as the allocator sized
+     them, the link and indirect records and target tables, and the
+     per-address-space indexes the cache owns (on arm64 also the body arena's
+     chunks that hold no live body); the link sweeps, the records and sites
+     they released and the time they took; the process's gadget-cache budget
+     (budget=), what every address space is charged against it (metered=, of
+     which metered_shedding= is in address spaces asked to shed), the most
+     the open ones held when a store passed the budget (metered_peak=), and
+     how many reliefs asked how many address spaces to shed (reliefs=,
+     shed=), with what an x86 cache's own address spaces are charged
+     (charged=); and the history below.
+  G  each resident address space: its place in the window, how long it has
+     been idle, its link state, and alive=: whether the MMU still has the
+     generation (1), has destroyed it (0) or cannot say from the thread
+     taking the snapshot (negative). An x86 cache asks as its runtime does at
+     the start of each run, so it cannot say before its first, and adds the
+     bytes of its own translations of the space (held=).
+  S  an address space the executors share, written by every cache holding
+     it: its arena, link and indirect bytes, alive=, what it is charged and
+     whether it is shedding.
+  P  each resident translation: its key, sizes, digest and body, and its
+     allocation with the header, stream and validation bytes in it.
+  L  for one in every DARWIN_UML_GADGET_CACHE_CENSUS_WORDS link records, the
+     guest PC it links to.
+  W  for one body in as many, its stream word by word: a gadget by its
+     offset in the executable's text (g), a link or indirect record by guest
+     PC (l, i), or another operand (o).
+
+DARWIN_UML_GADGET_CACHE_CENSUS_TOTALS=1 writes only the E and G records and
+leaves stores unmatched against other caches; read such a capture with
+--series.
+
+When executors share an address space's translations, an E line counts only
+what its cache owns (slot slabs and slot lists) and each G line names the
+space its slots point into. The report counts each space and each body once,
+and the history counts the misses that adopted another cache's body.
+
+The history counts how each lookup ended, why each departing translation left
+(way eviction, address-space retirement or a discard) and, for every store,
+whether the cache had held the same code under the same key before and why it
+was gone, and whether another executor of the address space, or another
+address space, translated it first. For a translation evicted and stored again
+unchanged, the evictions in between go into a power-of-two histogram
+(distance=), which says how many of those misses an exclusive victim tier of a
+given size would have served. Recording never fails the cache: a departure or
+store the census had no memory to remember is counted as unrecorded=, and the
+report then calls the repeats lower bounds. A snapshot it had no memory to
+finish is left out whole.
 
 A translation is identified by the guest code it consumed rather than by the
 stream it produced, because two executors translating the same code emit
@@ -25,13 +68,11 @@ how much more would collapse if a fork family's identical pages did too.
 
 The report puts every part of the cache as a share of the measured bytes:
 slot tags, body headers, streams, validation units, allocator rounding, link
-and indirect records, duplicate bodies, and the address spaces that are
-resident but not running. A `G` or `S` line's `alive=` says whether the MMU
-still has the address space's generation (1), has destroyed it (0) or could
-not say (negative); the report counts the bytes of the destroyed ones. The
-lookup history gives the hit rate, why each
-translation that had to be made again was gone, and how many of those an
-exclusive victim tier of a given size would have served.
+and indirect records, duplicate bodies, the address spaces that are resident
+but not running and the bytes of destroyed ones, with the budget line. The
+lookup history gives the hit rate, why each translation that had to be made
+again was gone, and how many of those an exclusive victim tier of a given size
+would have served.
 """
 
 from __future__ import annotations
@@ -705,6 +746,10 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
         print(f"  translated first in another address space          "
               f"{history['other_space']:>11,}  "
               f"{share(history['other_space'], stores)}")
+        if history["unrecorded"]:
+            print(f"  departures and stores the census had no memory to "
+                  f"record {history['unrecorded']:,}: the repeats above "
+                  f"are lower bounds")
         evictions = history["evictions"]
         mean_evicted = history["evicted_bytes"] / evictions if evictions else 0.0
         print(f"  departures: evicted {evictions:,} (mean {mean_evicted:.0f} B)"

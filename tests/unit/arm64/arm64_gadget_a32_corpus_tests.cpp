@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* The gadget engine against the AArch32 instruction corpus
  * (tests/unit/arm64/aarch32_corpus/README.md owns the pack). Every case whose
- * forms the engine's level implements is run through the production AArch32
- * loop in the oracle's memory map, with the oracle's
- * exit stubs, and what the pack records is compared: the signal or system
- * call that ended it and the instruction and address it was raised at, every
- * general register, the APSR flags, Q and GE, TPIDRURW, the data region, and
- * the retired count (the pack counts the program's instructions; the engine
- * also retires the exit stub's load and, for a system call or a breakpoint,
- * that instruction).
+ * forms the engine decodes is run through the production AArch32 loop in the
+ * oracle's memory map, with the oracle's exit stubs, and what the pack
+ * records is compared: the signal or system call that ended it and the
+ * instruction and address it was raised at, every general register, the APSR
+ * flags, Q and GE, D0-D31, FPSCR, TPIDRURW, the data region, and the retired
+ * count (the pack counts the program's instructions; the engine also retires
+ * the exit stub's load and, for a system call or a breakpoint, that
+ * instruction).
  *
- * A case whose forms need a level above the engine's is skipped, as the
- * decoder-only runner skips them; the engine raises the illegal-instruction
- * exit for them, which the forms test checks. The `unaligned` and
+ * A case whose forms need an extension the engine's host lacks is skipped;
+ * the engine raises the illegal-instruction exit for them, which the forms
+ * test checks. The `unaligned` and
  * `fpscr-reserved` suites are recorded from hardware (a Raspberry Pi 4): a
  * multi-word access at a misaligned address is an alignment fault with
  * SCTLR.A = 0, and Stride and Len read as zero.
@@ -31,9 +31,8 @@
  * kInterruptDeadline, and the run fails if none did. --passes N repeats the
  * selected records at least N times.
  *
- *   uml_arm64_gadget_a32_corpus_tests PACK [--level base|simd|complete]
- *       [--record NAME[,NAME...]] [--case TEXT] [--limit N] [--forms FILE]
- *       [--passes N] [--interrupt]
+ *   uml_arm64_gadget_a32_corpus_tests PACK [--record NAME[,NAME...]]
+ *       [--case TEXT] [--limit N] [--forms FILE] [--passes N] [--interrupt]
  */
 #include "aarch32_corpus_cpu_state.hpp"
 #include "aarch32_corpus_pack.hpp"
@@ -41,8 +40,8 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/aarch32/decode.hpp"
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
 #include "cpu/arm64/aarch32/state_format.hpp"
-#include "cpu/arm64/gadgets/a32_support.hpp"
 #include "scratch_backing.hpp"
 
 #include <algorithm>
@@ -81,26 +80,15 @@ constexpr unsigned kExclusiveAttempts = 16;
  * monitor across an interrupt. */
 constexpr std::chrono::seconds kInterruptDeadline{60};
 
-[[nodiscard]] ::uml::cpu::arm64::gadgets::BuildOptions options_at(
-	::uml::cpu::arm64::A32Support level)
-{
-	::uml::cpu::arm64::gadgets::BuildOptions options;
-	options.a32_level = level;
-	return options;
-}
-
 /* The oracle's memory map and exit stubs. */
 class Machine final {
 public:
-	/* `level` is the AArch32 level the engine translates at: the level
-	 * of the cases that run, so a level the engine does not yet implement
-	 * can be brought up case by case. */
-	explicit Machine(::uml::cpu::arm64::A32Support level)
+	Machine()
 		: generation_{3000}
 		, code_{"a32corpus-code.XXXXXX", corpus::kCodeSize}
 		, data_{"a32corpus-data.XXXXXX", corpus::kDataSize}
 		, read_only_{"a32corpus-ro.XXXXXX", corpus::kReadOnlySize}
-		, executor_{options_at(level)}
+		, executor_{::uml::cpu::arm64::gadgets::BuildOptions{}}
 	{
 		require(darwin_uml_static_vm_activate(generation_) == 0);
 		require(darwin_uml_static_vm_map(
@@ -214,28 +202,25 @@ private:
 	::uml::cpu::arm64::gadgets::GadgetExecutor executor_;
 };
 
-/* The decoder's view of the program, to skip a case that needs a level, or an
- * extension, the engine does not give its guest: the engine decodes against
- * its level and the extensions its host has (a32::decode_profile), so a word
- * the whole profile accepts and the engine's profile rejects is above the
- * engine. On a host without BF16, I8MM or JSCVT, say, the corpus's cases of
- * those forms (recorded on an oracle that has them) are skipped. */
-[[nodiscard]] bool needs_higher_level(const corpus::Case &test,
-				      decode::Level level)
+/* The decoder's view of the program, to skip a case that needs an extension
+ * the engine does not give its guest: the engine decodes against the
+ * extensions its host has (a32::decode_profile), so a word the whole profile
+ * accepts and the engine's profile rejects needs one it lacks. On a host
+ * without BF16, I8MM or JSCVT, say, the corpus's cases of those forms
+ * (recorded on an oracle that has them) are skipped. */
+[[nodiscard]] bool needs_absent_extension(const corpus::Case &test)
 {
 	const auto engine = ::uml::cpu::arm64::gadgets::a32::decode_profile(
-		options_at(static_cast<::uml::cpu::arm64::A32Support>(level)));
-	bool higher = false;
+		::uml::cpu::arm64::gadgets::BuildOptions{});
+	bool absent = false;
 	corpus::for_each_instruction(
-		test, decode::Profile::at(decode::Level::complete),
+		test, decode::Profile{},
 		[&](const corpus::ProgramStep &step) {
-			higher = step.instruction.legal() &&
-				 (static_cast<int>(step.instruction.info().level) >
-					  static_cast<int>(level) ||
-				  !step.decode_at(engine).legal());
-			return !higher;
+			absent = step.instruction.legal() &&
+				 !step.decode_at(engine).legal();
+			return !absent;
 		});
-	return higher;
+	return absent;
 }
 
 [[nodiscard]] bool linux_breakpoint(std::uint32_t word, bool thumb)
@@ -251,7 +236,9 @@ struct Outcome final {
 	unsigned event{};
 	bool exit_thumb{};
 	std::uint32_t half{};
-	std::uint32_t address{};
+	/* Whole: an AArch32 fault address is a 32-bit one, and wider is the
+	 * engine's error, not the guest's. */
+	std::uint64_t address{};
 	std::size_t retired{};
 	bool valid{true};
 };
@@ -288,7 +275,7 @@ struct Outcome final {
 		outcome.event = result.fault.alignment ? corpus::kSigBus :
 							 corpus::kSigSegv;
 		outcome.half = half_of(pc);
-		outcome.address = static_cast<std::uint32_t>(result.fault.address);
+		outcome.address = result.fault.address;
 		break;
 	case ExitReason::illegal_instruction:
 		outcome.half = half_of(pc);
@@ -306,7 +293,7 @@ struct Outcome final {
 		 * instruction retired, which the engine does not name. */
 		outcome.event = corpus::kSigBus;
 		outcome.half = ~0U;
-		outcome.address = static_cast<std::uint32_t>(result.fault.address);
+		outcome.address = result.fault.address;
 		break;
 	case ExitReason::instruction_budget:
 		outcome.event = 14;
@@ -360,7 +347,6 @@ struct Totals final {
 };
 
 struct Options final {
-	decode::Level level = decode::Level::base;
 	std::string record, text;
 	std::size_t limit = 40;
 	std::size_t passes = 1;
@@ -429,7 +415,7 @@ private:
 };
 
 /* The program's words and what the decoder says of the instruction under
- * test at the engine's level and at the full profile. */
+ * test. */
 void explain(const corpus::Case &test, std::size_t target)
 {
 	std::fprintf(stderr, "    program %s:", test.flags & corpus::kFlagThumb ? "T32" : "A32");
@@ -463,19 +449,15 @@ void explain(const corpus::Case &test, std::size_t target)
 			word = length == 4 ? std::uint32_t{test.halves[half]} << 16 | test.halves[half + 1]
 					   : std::uint32_t{test.halves[half]} << 16;
 		}
-		for (const auto level : {decode::Level::base, decode::Level::complete}) {
-			const auto profile = decode::Profile::at(level);
-			const auto instruction = thumb ? decode::decode_thumb(word, it, profile)
-						       : decode::decode_a32(word, profile);
-			if (index == target)
-				std::fprintf(stderr, "    %s: %s status %d reason %d cond %u\n",
-					     level == decode::Level::base ? "base" : "complete",
-					     instruction.info().name,
-					     static_cast<int>(instruction.status),
-					     static_cast<int>(instruction.reason), instruction.cond);
-			if (level == decode::Level::complete)
-				it = instruction.next_it;
-		}
+		const decode::Profile profile;
+		const auto instruction = thumb ? decode::decode_thumb(word, it, profile)
+					       : decode::decode_a32(word, profile);
+		if (index == target)
+			std::fprintf(stderr, "    %s status %d reason %d cond %u\n",
+				     instruction.info().name,
+				     static_cast<int>(instruction.status),
+				     static_cast<int>(instruction.reason), instruction.cond);
+		it = instruction.next_it;
 		half += length / 2;
 		++index;
 	}
@@ -503,6 +485,7 @@ struct Attempt final {
 	const bool nop_before_stub = machine.install(test);
 	machine.set_data(initial_data);
 	::uml::cpu::arm64::CpuState cpu{};
+	corpus::leave_aarch64_task_state(cpu);
 	SavedVectors saved{};
 	load_state(cpu, saved, test.initial, thumb, corpus::kCodeBase + origin);
 	const auto result = machine.run(cpu);
@@ -547,8 +530,8 @@ struct Attempt final {
 			if ((test.event == corpus::kSigSegv || test.event == corpus::kSigBus ||
 			     test.event == corpus::kSigIll) &&
 			    test.fault_address != outcome.address)
-				note("fault address %#x vs %#x", test.fault_address,
-				     outcome.address);
+				note("fault address %#x vs %#llx", test.fault_address,
+				     static_cast<unsigned long long>(outcome.address));
 		}
 		/* The pack counts the program's instructions: the engine adds the
 		 * exit stub's load and the exit's system call, and a system call
@@ -567,6 +550,11 @@ struct Attempt final {
 			note("retired %zu vs %zu", test.retired, outcome.retired);
 		for (unsigned index = 0; index < corpus::kRegisters; ++index) {
 			const auto value = static_cast<std::uint32_t>(cpu.registers[index]);
+			/* A register's slot stays zero-extended: the shared A64
+			 * gadgets read it whole. */
+			if ((cpu.registers[index] >> 32) != 0)
+				note("r%u's slot %#llx is not zero-extended", index,
+				     static_cast<unsigned long long>(cpu.registers[index]));
 			if (value != test.final.r[index]) {
 				note("r%u %#x vs %#x", index, test.final.r[index], value);
 				/* A store-exclusive's status: 0 stored, 1 did not. */
@@ -616,7 +604,7 @@ struct Attempt final {
 void check_case(Machine &machine, const corpus::Record &record,
 		const corpus::Case &test, const Options &options, Totals &totals)
 {
-	if (needs_higher_level(test, options.level)) {
+	if (needs_absent_extension(test)) {
 		++totals.skipped;
 		return;
 	}
@@ -658,18 +646,9 @@ int main(int argc, char **argv)
 	const ::uml::testing::RuntimeTestRoute runtime_route;
 	const char *path = nullptr;
 	Options options;
-	options.level = static_cast<decode::Level>(
-		::uml::cpu::arm64::gadgets::a32_support);
 	for (int index = 1; index < argc; ++index) {
 		const std::string_view argument = argv[index];
-		if (argument == "--level" && index + 1 < argc) {
-			const std::string_view name = argv[++index];
-			require(name == "base" || name == "simd" || name == "complete",
-				"unknown level");
-			options.level = name == "base" ? decode::Level::base :
-				name == "simd" ? decode::Level::simd :
-						 decode::Level::complete;
-		} else if (argument == "--record" && index + 1 < argc) {
+		if (argument == "--record" && index + 1 < argc) {
 			options.record = argv[++index];
 		} else if (argument == "--case" && index + 1 < argc) {
 			options.text = argv[++index];
@@ -685,13 +664,13 @@ int main(int argc, char **argv)
 			options.limit = static_cast<std::size_t>(std::atoi(argv[++index]));
 		} else {
 			require(path == nullptr && !argument.starts_with("--"),
-				"usage: PACK [--level L] [--record NAME] [--case TEXT]");
+				"usage: PACK [--record NAME] [--case TEXT]");
 			path = argv[index];
 		}
 	}
-	require(path != nullptr, "usage: PACK [--level L] [--record NAME]");
+	require(path != nullptr, "usage: PACK [--record NAME]");
 	const auto pack = corpus::read_pack(corpus::read_file(path));
-	Machine machine{static_cast<::uml::cpu::arm64::A32Support>(options.level)};
+	Machine machine;
 	Totals totals;
 	decode::reset_a32_library_exits();
 	decode::count_a32_library_exits(true);

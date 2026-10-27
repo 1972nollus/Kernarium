@@ -24,23 +24,22 @@ adapters remain rejected.
 Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- arch/arm64/um/Kconfig                 |  18 +-
+ arch/arm64/um/Kconfig                 |  23 +-
  arch/arm64/um/Makefile                |  19 +-
  arch/arm64/um/asm/elf.h               | 142 ++---
  arch/arm64/um/asm/mman.h              |   5 +
  arch/arm64/um/asm/processor.h         |  13 +-
- arch/arm64/um/asm/ptrace.h            |  23 +-
+ arch/arm64/um/asm/ptrace.h            |  41 +-
  arch/arm64/um/asm/syscall.h           |  40 +-
  arch/arm64/um/asm/unistd.h            |  33 ++
  arch/arm64/um/asm/user.h              |  29 +-
- arch/arm64/um/mmap.c                  | 128 ++++
- arch/arm64/um/ptrace.c                | 265 ++++-----
- arch/arm64/um/shared/sysdep/ptrace.h  | 176 ++++--
+ arch/arm64/um/mmap.c                  | 123 +++-
+ arch/arm64/um/ptrace.c                | 345 ++++-------
+ arch/arm64/um/shared/sysdep/ptrace.h  | 219 ++++---
  arch/arm64/um/signal.c                | 622 ++++++++++++++------
  arch/arm64/um/tls.c                   |  10 +-
  arch/arm64/um/x86_64_syscalls.c       | 806 ++++++++++++++++++++++++++
  arch/arm64/um/x86_syscall_tables.c    |  32 +
- arch/um/include/asm/pgtable.h         |   5 +
  arch/um/include/asm/syscall-generic.h |   2 +-
  arch/um/kernel/exec.c                 |   5 +
  arch/um/kernel/skas/syscall.c         |  19 +
@@ -50,17 +49,16 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
  include/linux/fs.h                    |   2 +
- 26 files changed, 2004 insertions(+), 532 deletions(-)
+ 25 files changed, 1980 insertions(+), 692 deletions(-)
  create mode 100644 arch/arm64/um/asm/unistd.h
- create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
  create mode 100644 arch/arm64/um/x86_syscall_tables.c
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index e195e71dc38a3774ed660e4f7b722f6fe50705da..d2b7d4874a237154ad994c0f6689733579948c5e 100644
+index b0bdc892ebff790cc6bdd8002886b56566f08794..e379296b3128502aafbe5ac48c589da11fe9f37e 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -22,16 +22,28 @@ config UML_ARM64
+@@ -23,16 +23,28 @@ config UML_ARM64
  	select UML_SUBARCH_SUPPORTS_SMP
  
  # Every arm64 task carries SME registers in its Darwin bridge tail, and gets
@@ -92,21 +90,35 @@ index e195e71dc38a3774ed660e4f7b722f6fe50705da..d2b7d4874a237154ad994c0f66897335
  	select ARCH_WANT_COMPAT_IPC_PARSE_VERSION
  	select AUDIT_ARCH_COMPAT_GENERIC
  	select COMPAT_OLD_SIGACTION
+@@ -47,9 +59,10 @@ config COMPAT
+ # PR_SET_TAGGED_ADDR_CTRL, NT_ARM_TAGGED_ADDR_CTRL and the
+ # abi.tagged_addr_disabled sysctl.  A task may pass a tagged pointer only
+ # while the host's engines ignore the top byte of a data address (TBI0), which
+-# the kernel asks the host at boot.
++# the kernel asks the host at boot.  x86-64 tasks have no such byte, so the
++# x86-64 slice has no tagged-address ABI.
+ config UML_ARM64_TAGGED_ADDR_ABI
+-	def_bool y
++	def_bool !UML_X86_64_USERSPACE_ONLY
+ 
+ config KUSER_HELPERS
+ 	bool "Enable kuser helpers page for 32-bit applications"
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index bc1a5cf91ff8dac93986b266eadbe3f193a8c616..6421e5c3f00b847682a16d31c9263deced9440de 100644
+index c9712aae23d0a57eb3cb47e39e2f718b67cbf40e..8fc740b497d85ddc1e749cb824e826df8e7c227c 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
-@@ -1,10 +1,27 @@
+@@ -1,11 +1,28 @@
  # SPDX-License-Identifier: GPL-2.0
  
- obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
+ obj-y := bugs.o delay.o fault.o mem.o mmap.o ptrace.o registers.o setjmp.o \
 -	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o
 +	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o \
 +	x86_64_syscalls.o
  obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
+ obj-$(CONFIG_UML_ARM64_TAGGED_ADDR_ABI) += tagged_addr.o
  obj-$(CONFIG_UML_ARM64_AARCH32) += aarch32.o aarch32_pages.o \
  	armv8_deprecated.o ptrace32.o signal32.o sys32.o sys_compat.o
-+obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += mmap.o x86_syscall_tables.o
++obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += x86_syscall_tables.o
 +
 +x86-syscalltbl := $(srctree)/scripts/syscalltbl.sh
 +x86-syscall-64 := $(srctree)/arch/x86/entry/syscalls/syscall_64.tbl
@@ -123,8 +135,8 @@ index bc1a5cf91ff8dac93986b266eadbe3f193a8c616..6421e5c3f00b847682a16d31c9263dec
 +
 +targets += x86_syscalls_64.h
  
- $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
- targets += user-offsets.s
+ # The emulation tracepoint is arm64 Linux's own.
+ CFLAGS_armv8_deprecated.o := -I$(srctree)/arch/arm64/kernel
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
 index 2dc1b1be43dca961e4ce25ff7b2407caa3ccf894..3bfa08cbdb8451ae06f112a645439aa7fccbdbf6 100644
 --- a/arch/arm64/um/asm/elf.h
@@ -314,7 +326,7 @@ index 2dc1b1be43dca961e4ce25ff7b2407caa3ccf894..3bfa08cbdb8451ae06f112a645439aa7
 -
  #endif
 diff --git a/arch/arm64/um/asm/mman.h b/arch/arm64/um/asm/mman.h
-index 2a075458f6d6e6a70a6c3429ab0aa809048ef4ae..f188b1fb4cd91c918ba1b4301edd8c8037ce4643 100644
+index 1a0753af906d05cc1aac2c220670cccb2623c84c..af84948ee10bbe8423bd3cc0b4f7ca5e0fa38daa 100644
 --- a/arch/arm64/um/asm/mman.h
 +++ b/arch/arm64/um/asm/mman.h
 @@ -2,6 +2,11 @@
@@ -330,10 +342,10 @@ index 2a075458f6d6e6a70a6c3429ab0aa809048ef4ae..f188b1fb4cd91c918ba1b4301edd8c80
  
  #ifdef UML_HOST_DARWIN
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
-index fbd219461e197d4e1b66ca46b3100c8ce25fff13..25feaa3f56803976c127c0e6c44789f275cfbc3e 100644
+index 17a153aa95c1ea04362efa00f564a8f5ff89543f..67a7fc597878391b267036cfcf1de5f97e8d9e4f 100644
 --- a/arch/arm64/um/asm/processor.h
 +++ b/arch/arm64/um/asm/processor.h
-@@ -53,8 +53,9 @@ extern int uml_arm64_sme_get_current_vl(void);
+@@ -62,8 +62,9 @@ extern void uml_arm64_tagged_addr_flush_thread(void);
  
  /* Seccomp exposes KSTK_EIP as si_call_addr, so use the guest user PC. */
  #define KSTK_EIP(task) UPT_IP(&(task)->thread.regs.regs)
@@ -345,7 +357,7 @@ index fbd219461e197d4e1b66ca46b3100c8ce25fff13..25feaa3f56803976c127c0e6c44789f2
  
  #ifdef UML_HOST_DARWIN
  void darwin_cpu_relax(void);
-@@ -89,6 +90,14 @@ static __always_inline void cpu_relax(void)
+@@ -98,6 +99,14 @@ static __always_inline void cpu_relax(void)
  	PAGE_ALIGN(UML_COMPAT_TASK_SIZE / 4)
  #endif
  
@@ -361,7 +373,7 @@ index fbd219461e197d4e1b66ca46b3100c8ce25fff13..25feaa3f56803976c127c0e6c44789f2
  
  #endif
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
-index f1090b3d5472b6e7913ffc556e1fcf25a725affd..b132ad664ae559e1adf5bf0f63d65c7b55eea115 100644
+index 68f9293d262b686cf11b2d4a006c2f894f541773..b132ad664ae559e1adf5bf0f63d65c7b55eea115 100644
 --- a/arch/arm64/um/asm/ptrace.h
 +++ b/arch/arm64/um/asm/ptrace.h
 @@ -9,19 +9,6 @@ enum {
@@ -384,12 +396,18 @@ index f1090b3d5472b6e7913ffc556e1fcf25a725affd..b132ad664ae559e1adf5bf0f63d65c7b
  #include <asm/ptrace-generic.h>
  
  #define user_mode(state) UPT_IS_USER(&(state)->regs)
-@@ -32,15 +19,14 @@ enum {
+@@ -32,21 +19,14 @@ enum {
  #define PT_REGS_BP(state) PT_REGS_FP(state)
  #define PT_REGS_LR(state) UPT_LR(&(state)->regs)
  #define PT_REGS_PSTATE(state) UPT_PSTATE(&(state)->regs)
 -#define PT_REGS_ORIG_SYSCALL(state) \
 -	PT_REGS_X(state, UPT_AARCH32(&(state)->regs) ? 7 : 8)
+-/*
+- * A restarted call runs again as the register says, as on native arm64, so
+- * a tracer that changed the number with NT_ARM_SYSTEM_CALL sees the original
+- * call at the next entry stop.
+- */
+-#define PT_REGS_RESTORE_SYSCALL_NR(state) ((void)0)
 -#define PT_REGS_SYSCALL_RET(state) PT_REGS_X(state, 0)
 +#define PT_REGS_ORIG_SYSCALL(state) ((state)->regs.orig_x0)
 +#define PT_REGS_SYSCALL_RET(state) UPT_SYSCALL_RETURN(&(state)->regs)
@@ -403,12 +421,24 @@ index f1090b3d5472b6e7913ffc556e1fcf25a725affd..b132ad664ae559e1adf5bf0f63d65c7b
  
  static inline long regs_return_value(struct pt_regs *regs)
  {
-@@ -61,7 +47,4 @@ static inline int ptrace_set_thread_area(struct task_struct *child, int index,
+@@ -67,19 +47,4 @@ static inline int ptrace_set_thread_area(struct task_struct *child, int index,
  
  extern void arch_switch_to(struct task_struct *to);
  
 -extern bool uml_arm64_valid_user_pstate(struct task_struct *task,
 -					unsigned long *pstate);
+-
+-struct user_regset;
+-struct membuf;
+-/* NT_ARM_SYSTEM_CALL of the AArch64 and AArch32 views (ptrace.c). */
+-extern int uml_arm64_system_call_get(struct task_struct *target,
+-				     const struct user_regset *regset,
+-				     struct membuf to);
+-extern int uml_arm64_system_call_set(struct task_struct *target,
+-				     const struct user_regset *regset,
+-				     unsigned int pos, unsigned int count,
+-				     const void *kbuf,
+-				     const void __user *ubuf);
 -
  #endif
 diff --git a/arch/arm64/um/asm/syscall.h b/arch/arm64/um/asm/syscall.h
@@ -549,20 +579,23 @@ index 5a52cb113531e762ff1ae11cd4eb829faa959b48..df4bc4b93f2e4bf46d06cc7b4e17350d
  
  #endif
 diff --git a/arch/arm64/um/mmap.c b/arch/arm64/um/mmap.c
-new file mode 100644
-index 0000000000000000000000000000000000000000..1a8b242f6aa99b62d006f59bfc55f0d609280d26
---- /dev/null
+index 3abc8e9a6b88a4929cb85746a9e6060ac7457b82..d840d7887265609d58cfe47450ce8a3fd792054e 100644
+--- a/arch/arm64/um/mmap.c
 +++ b/arch/arm64/um/mmap.c
-@@ -0,0 +1,128 @@
-+// SPDX-License-Identifier: GPL-2.0
-+
+@@ -1,22 +1,78 @@
+ // SPDX-License-Identifier: GPL-2.0
+-/*
+- * The generic mmap allocators, after dropping a hint the guest cannot use
+- * (uml_darwin_mmap_hint() in asm/mman.h).
+- */
+ 
 +#include <linux/errno.h>
 +#include <linux/hugetlb.h>
-+#include <linux/mm.h>
-+#include <linux/mman.h>
+ #include <linux/mm.h>
+ #include <linux/mman.h>
 +#include <linux/random.h>
 +#include <linux/sched.h>
-+#include <linux/sched/mm.h>
+ #include <linux/sched/mm.h>
 +#include <linux/security.h>
 +#include <linux/sizes.h>
 +
@@ -616,31 +649,40 @@ index 0000000000000000000000000000000000000000..1a8b242f6aa99b62d006f59bfc55f0d6
 +
 +	return vm_unmapped_area(&info);
 +}
-+
-+unsigned long
-+arch_get_unmapped_area(struct file *filp, unsigned long addr,
-+		       unsigned long len, unsigned long pgoff,
-+		       unsigned long flags, vm_flags_t vm_flags)
-+{
+ 
+-#ifdef UML_HOST_DARWIN
+ unsigned long
+ arch_get_unmapped_area(struct file *filp, unsigned long addr,
+ 		       unsigned long len, unsigned long pgoff,
+ 		       unsigned long flags, vm_flags_t vm_flags)
+ {
+-	return generic_get_unmapped_area(filp,
+-					 uml_darwin_mmap_hint(addr, len, flags),
+-					 len, pgoff, flags, vm_flags);
++	addr = uml_darwin_mmap_hint(addr, len, flags);
 +	if (flags & MAP_32BIT)
 +		return uml_x86_64_get_unmapped_area_32bit(filp, addr, len, flags,
 +						     vm_flags);
 +
 +	return generic_get_unmapped_area(filp, addr, len, pgoff, flags,
 +					 vm_flags);
-+}
-+
-+unsigned long
-+arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
-+			       unsigned long len, unsigned long pgoff,
-+			       unsigned long flags, vm_flags_t vm_flags)
-+{
+ }
+ 
+ unsigned long
+@@ -24,8 +80,51 @@ arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
+ 			       unsigned long len, unsigned long pgoff,
+ 			       unsigned long flags, vm_flags_t vm_flags)
+ {
+-	return generic_get_unmapped_area_topdown(filp,
+-				uml_darwin_mmap_hint(addr, len, flags),
+-				len, pgoff, flags, vm_flags);
 +	struct mm_struct *mm = current->mm;
 +	struct vm_area_struct *vma, *prev;
 +	struct vm_unmapped_area_info info = {};
 +	const unsigned long mmap_end = arch_get_mmap_end(addr, len, flags);
 +	unsigned long result;
 +
++	addr = uml_darwin_mmap_hint(addr, len, flags);
 +	if (flags & MAP_32BIT)
 +		return uml_x86_64_get_unmapped_area_32bit(filp, addr, len, flags,
 +						     vm_flags);
@@ -681,12 +723,13 @@ index 0000000000000000000000000000000000000000..1a8b242f6aa99b62d006f59bfc55f0d6
 +	info.low_limit = SZ_4G;
 +	info.high_limit = mmap_end;
 +	return vm_unmapped_area(&info);
-+}
+ }
+-#endif
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index e4c01527abe73ff1a238096db6bc3f60ba7819eb..9b5193e03c41bc20f551bb236f9d96f70ed2926c 100644
+index 3c972ab22c74179fdb56ab2d0e80038fc567cc17..9b5193e03c41bc20f551bb236f9d96f70ed2926c 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
-@@ -1,86 +1,111 @@
+@@ -1,92 +1,111 @@
  // SPDX-License-Identifier: GPL-2.0
  
 -#include <linux/bits.h>
@@ -703,9 +746,15 @@ index e4c01527abe73ff1a238096db6bc3f60ba7819eb..9b5193e03c41bc20f551bb236f9d96f7
 -#endif
 -#include "sme.h"
 -
--/* Native arm64's third regset, after the two asm/ptrace.h names. */
+-/* Native arm64's third and, here, fourth regsets, after the two
+- * asm/ptrace.h names. */
 -enum {
 -	REGSET_TLS = REGSET_FP + 1,
+-	REGSET_SYSTEM_CALL,
+-#ifdef CONFIG_UML_ARM64_TAGGED_ADDR_ABI
+-	REGSET_TAGGED_ADDR_CTRL,
+-#endif
+-	REGSET_BASE_COUNT,
 -};
  
  static int register_index(int regno)
@@ -851,7 +900,7 @@ index e4c01527abe73ff1a238096db6bc3f60ba7819eb..9b5193e03c41bc20f551bb236f9d96f7
  	return 0;
  }
  
-@@ -110,8 +135,10 @@ long subarch_ptrace(struct task_struct *child, long request,
+@@ -116,8 +135,10 @@ long subarch_ptrace(struct task_struct *child, long request,
  static int genregs_get(struct task_struct *target,
  		       const struct user_regset *regset, struct membuf to)
  {
@@ -864,7 +913,7 @@ index e4c01527abe73ff1a238096db6bc3f60ba7819eb..9b5193e03c41bc20f551bb236f9d96f7
  	return 0;
  }
  
-@@ -120,27 +147,21 @@ static int genregs_set(struct task_struct *target,
+@@ -126,27 +147,21 @@ static int genregs_set(struct task_struct *target,
  		       unsigned int pos, unsigned int count,
  		       const void *kbuf, const void __user *ubuf)
  {
@@ -901,7 +950,7 @@ index e4c01527abe73ff1a238096db6bc3f60ba7819eb..9b5193e03c41bc20f551bb236f9d96f7
  	return 0;
  }
  
-@@ -150,42 +171,10 @@ static int fpregs_set(struct task_struct *target,
+@@ -156,98 +171,10 @@ static int fpregs_set(struct task_struct *target,
  		      const void *kbuf, const void __user *ubuf)
  {
  	return user_regset_copyin(&pos, &count, &kbuf, &ubuf,
@@ -941,12 +990,68 @@ index e4c01527abe73ff1a238096db6bc3f60ba7819eb..9b5193e03c41bc20f551bb236f9d96f7
 +		target->thread.regs.regs.fp, 0, host_fp_size);
  }
  
+-/* NT_ARM_SYSTEM_CALL, as native: the number of the system call the task is
+- * in, which a tracer changes at an entry stop to run another call, or to -1
+- * to skip it and leave x0 as it stands. */
+-int uml_arm64_system_call_get(struct task_struct *target,
+-			      const struct user_regset *regset,
+-			      struct membuf to)
+-{
+-	return membuf_store(&to, (int)PT_REGS_SYSCALL_NR(task_pt_regs(target)));
+-}
+-
+-int uml_arm64_system_call_set(struct task_struct *target,
+-			      const struct user_regset *regset,
+-			      unsigned int pos, unsigned int count,
+-			      const void *kbuf, const void __user *ubuf)
+-{
+-	int syscallno = PT_REGS_SYSCALL_NR(task_pt_regs(target));
+-	int error;
+-
+-	error = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &syscallno, 0,
+-				   -1);
+-	if (error)
+-		return error;
+-	PT_REGS_SYSCALL_NR(task_pt_regs(target)) = syscallno;
+-	return 0;
+-}
+-
+-#ifdef CONFIG_UML_ARM64_TAGGED_ADDR_ABI
+-/* NT_ARM_TAGGED_ADDR_CTRL, as native arm64 on a CPU without MTE. */
+-static int tagged_addr_ctrl_get(struct task_struct *target,
+-				const struct user_regset *regset,
+-				struct membuf to)
+-{
+-	long ctrl = get_tagged_addr_ctrl(target);
+-
+-	if (WARN_ON_ONCE(IS_ERR_VALUE(ctrl)))
+-		return ctrl;
+-	return membuf_write(&to, &ctrl, sizeof(ctrl));
+-}
+-
+-static int tagged_addr_ctrl_set(struct task_struct *target,
+-				const struct user_regset *regset,
+-				unsigned int pos, unsigned int count,
+-				const void *kbuf, const void __user *ubuf)
+-{
+-	long ctrl = get_tagged_addr_ctrl(target);
+-	int ret;
+-
+-	if (WARN_ON_ONCE(IS_ERR_VALUE(ctrl)))
+-		return ctrl;
+-	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &ctrl, 0, -1);
+-	if (ret)
+-		return ret;
+-	return set_tagged_addr_ctrl(target, ctrl);
+-}
+-#endif
+-
 -static const struct user_regset uml_arm64_regsets[] = {
 +static const struct user_regset uml_x86_64_regsets[] = {
  	[REGSET_GENERAL] = {
  		USER_REGSET_NOTE_TYPE(PRSTATUS),
  		.n = sizeof(struct user_regs_struct) / sizeof(unsigned long),
-@@ -202,73 +191,17 @@ static const struct user_regset uml_arm64_regsets[] = {
+@@ -264,91 +191,17 @@ static const struct user_regset uml_arm64_regsets[] = {
  		.regset_get = fpregs_get,
  		.set = fpregs_set,
  	},
@@ -958,6 +1063,24 @@ index e4c01527abe73ff1a238096db6bc3f60ba7819eb..9b5193e03c41bc20f551bb236f9d96f7
 -		.regset_get = tls_get,
 -		.set = tls_set,
 -	},
+-	[REGSET_SYSTEM_CALL] = {
+-		USER_REGSET_NOTE_TYPE(ARM_SYSTEM_CALL),
+-		.n = 1,
+-		.size = sizeof(int),
+-		.align = sizeof(int),
+-		.regset_get = uml_arm64_system_call_get,
+-		.set = uml_arm64_system_call_set,
+-	},
+-#ifdef CONFIG_UML_ARM64_TAGGED_ADDR_ABI
+-	[REGSET_TAGGED_ADDR_CTRL] = {
+-		USER_REGSET_NOTE_TYPE(ARM_TAGGED_ADDR_CTRL),
+-		.n = 1,
+-		.size = sizeof(long),
+-		.align = sizeof(long),
+-		.regset_get = tagged_addr_ctrl_get,
+-		.set = tagged_addr_ctrl_set,
+-	},
+-#endif
 -#ifdef CONFIG_UML_ARM64_SME
 -	/* Only the SME view below has these, as native arm64 with SME. */
 -	{
@@ -995,7 +1118,7 @@ index e4c01527abe73ff1a238096db6bc3f60ba7819eb..9b5193e03c41bc20f551bb236f9d96f7
 -	.name = "aarch64",
 -	.e_machine = EM_AARCH64,
 -	.regsets = uml_arm64_regsets,
--	.n = REGSET_TLS + 1,
+-	.n = REGSET_BASE_COUNT,
  };
  
 -#ifdef CONFIG_UML_ARM64_SME
@@ -1027,10 +1150,10 @@ index e4c01527abe73ff1a238096db6bc3f60ba7819eb..9b5193e03c41bc20f551bb236f9d96f7
 +	return &uml_x86_64_view;
  }
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1be3d230de 100644
+index 977ed7b1df90a8da0b90cfef6a2aae70bd61019e..d233d6e25a6672ef1f94c0df52d51b1be3d230de 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
-@@ -22,29 +22,25 @@
+@@ -22,45 +22,25 @@
  #define UPT_IP(regs) REGS_IP((regs)->gp)
  #define UPT_PSTATE(regs) REGS_PSTATE((regs)->gp)
  
@@ -1048,15 +1171,31 @@ index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1b
 -	(UPT_AARCH32(regs) ? (unsigned int)UPT_X((regs), 7) : \
 -	 UPT_X((regs), 8))
 -
--#define UPT_SYSCALL_ARG1(regs) ((regs)->orig_x0)
+-/*
+- * x0 is both the first argument and the return-value register, and, as on
+- * native arm64, it is the argument until the call returns: a tracer reads it
+- * at the entry stop, and what it writes there is what the call gets.  orig_x0
+- * is the argument as the task passed it, which the Darwin host records at
+- * every entry; the system call reports (syscall_get_arguments, audit) and a
+- * restart use it.
+- */
+-#define UPT_SYSCALL_ARG1(regs) UPT_X((regs), 0)
+-#define UPT_SYSCALL_ENTRY_ARG1(regs) ((regs)->orig_x0)
 -#define UPT_SYSCALL_ARG2(regs) UPT_X((regs), 1)
 -#define UPT_SYSCALL_ARG3(regs) UPT_X((regs), 2)
 -#define UPT_SYSCALL_ARG4(regs) UPT_X((regs), 3)
 -#define UPT_SYSCALL_ARG5(regs) UPT_X((regs), 4)
 -#define UPT_SYSCALL_ARG6(regs) UPT_X((regs), 5)
--/* x0 is both the first argument and the return-value register. */
 -#define UPT_SYSCALL_ROLLBACK(regs) \
 -	(UPT_X((regs), 0) = (regs)->orig_x0)
+-/*
+- * As in el0_svc_common(), the system call number is an int and -1
+- * (NO_SYSCALL) is the one number handle_syscall() presets x0 for.  A tracer
+- * or seccomp that sets it skips the call and leaves x0 as it wrote it; any
+- * other number the kernel has no call for returns -ENOSYS.
+- */
+-#define UPT_SYSCALL_PRESET_ENOSYS(regs) ((int)UPT_SYSCALL_NR(regs) == -1)
+-#define UPT_SYSCALL_REPORT_ENOSYS(regs, nr) ((nr) != -1)
 +enum uml_x86_64_register {
 +	UML_X86_64_RAX,
 +	UML_X86_64_RCX,
@@ -1079,7 +1218,7 @@ index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1b
  
  struct uml_pt_regs {
  	unsigned long gp[MAX_REG_NR];
-@@ -69,34 +65,136 @@ struct uml_pt_regs {
+@@ -85,70 +65,135 @@ struct uml_pt_regs {
  	unsigned long compat_tls[3][2];
  	/*
  	 * TPIDRURO of an AArch32 task, in bits 31:0, which the host reads and
@@ -1091,16 +1230,38 @@ index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1b
  	unsigned long fp[];
  };
  
+-#define EMPTY_UML_PT_REGS { }
+-#define UPT_SYSCALL_NR(regs) ((regs)->syscall)
+-#define UPT_FAULTINFO(regs) (&(regs)->faultinfo)
+-#define UPT_IS_USER(regs) ((regs)->is_user)
+-#define UPT_RESTART_SYSCALL(regs) do { \
+-	/* AArch64 returns syscall results in x0, which is also argument 1. \
+-	 * Restore it before re-executing SVC; unlike x86, rewinding the PC \
+-	 * alone would retry with -ERESTART* as the first argument. \
+-	 * AArch32 rewinds its 16-bit Thumb SVC by 2 bytes and its ARM SVC \
+-	 * by 4 and, like arm64 Linux, leaves ITSTATE as the call left it. \
+-	 */ \
+-	UPT_X((regs), 0) = (regs)->orig_x0; \
+-	UPT_IP(regs) -= (UPT_AARCH32(regs) && \
+-			 (UPT_PSTATE(regs) & UML_ARM64_PSTATE_T)) ? 2 : 4; \
+-} while (0)
+-
 +#define UPT_X86_64(regs, n) UPT_X((regs), (n))
 +#define UPT_X86_64_RIP(regs) UPT_IP(regs)
 +#define UPT_X86_64_RFLAGS(regs) UPT_X((regs), 16)
-+/*
+ /*
+- * A system call stop holds 0 (entry) or 1 (exit) in x7, in r12 of an AArch32
+- * task, for as long as the tracer looks, as native arm64 does, so that a
+- * tracer can tell the stops apart.  The task's own value comes back when the
+- * stop ends, whatever the tracer wrote.
 + * The RFLAGS bits a task controls, as on Linux x86: a signal frame restores
 + * FIX_EFLAGS (CF, PF, AF, ZF, SF, TF, DF, OF, RF and AC), and a tracer may
 + * also change NT (ptrace's FLAG_MASK). IF, IOPL, VM, VIF, VIP and ID keep
 + * the task's value. start_thread() starts a task with IF and reserved bit 1,
 + * which the Darwin host also sets on every entry to the task.
-+ */
+  */
+-static inline unsigned long upt_syscall_stop_begin(struct uml_pt_regs *regs,
+-						   unsigned long marker)
 +#define UML_X86_RFLAGS_RESTORE_MASK 0x50dd5UL
 +#define UML_X86_RFLAGS_TRACER_MASK (UML_X86_RFLAGS_RESTORE_MASK | (1UL << 14))
 +#define UML_X86_RFLAGS_INITIAL 0x202UL
@@ -1111,10 +1272,13 @@ index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1b
 +#define UML_X86_64_TSC_SIGSEGV (1UL << 34)
 +
 +static inline int upt_x86_64_compat_syscall(const struct uml_pt_regs *regs)
-+{
+ {
+-	unsigned long saved = UPT_X(regs, UPT_AARCH32(regs) ? 12 : 7);
 +	return !!(regs->svcr & UML_X86_64_COMPAT_SYSCALL);
 +}
-+
+ 
+-	UPT_X(regs, UPT_AARCH32(regs) ? 12 : 7) = marker;
+-	return saved;
 +#define UPT_X86_64_COMPAT_SYSCALL(regs) \
 +	upt_x86_64_compat_syscall(regs)
 +
@@ -1124,12 +1288,15 @@ index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1b
 +	if (index < 4)
 +		return regs->fpmr >> (index * 16);
 +	return regs->svcr >> ((index - 4) * 16);
-+}
-+
+ }
+ 
+-static inline void upt_syscall_stop_end(struct uml_pt_regs *regs,
+-					unsigned long saved)
 +static inline void
 +upt_x86_64_set_segment_selector(struct uml_pt_regs *regs, unsigned int index,
 +				unsigned short selector)
-+{
+ {
+-	UPT_X(regs, UPT_AARCH32(regs) ? 12 : 7) = saved;
 +	unsigned int shift;
 +	unsigned long *packed;
 +
@@ -1142,12 +1309,21 @@ index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1b
 +	}
 +	*packed = (*packed & ~(0xffffUL << shift)) |
 +		((unsigned long)selector << shift);
-+}
-+
+ }
+ 
+-#define UPT_SYSCALL_STOP_BEGIN(regs, exit) \
+-	upt_syscall_stop_begin((regs), (exit))
+-#define UPT_SYSCALL_STOP_END(regs, saved) \
+-	upt_syscall_stop_end((regs), (saved))
 +#undef UPT_SP
 +#define UPT_SP(regs) UPT_X86_64((regs), UML_X86_64_RSP)
 +#define UPT_SYSCALL_RETURN(regs) UPT_X86_64((regs), UML_X86_64_RAX)
-+
+ 
+-/* Whether the undefined instruction at an AArch32 task's pc is one of the
+- * encodings which stand for a breakpoint to a debugger (aarch32.c). */
+-extern int uml_arm64_aarch32_break(struct uml_pt_regs *regs);
+-/* Whether abi.cp15_barrier lets an AArch32 task execute CP15 barriers. */
+-extern int uml_arm64_cp15_barrier_enabled(void);
 +static inline unsigned long
 +upt_syscall_arch_nr(const struct uml_pt_regs *regs)
 +{
@@ -1155,7 +1331,17 @@ index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1b
 +		return (unsigned int)UPT_X86_64(regs, UML_X86_64_RAX);
 +	return UPT_X86_64(regs, UML_X86_64_RAX);
 +}
-+
+ 
+-/*
+- * What uml_arm64_aarch32_emulate() made of the undefined instruction at an
+- * AArch32 task's pc (armv8_deprecated.c): it is not one the kernel emulates
+- * here, so the task gets SIGILL; it was emulated and the pc is past it; or
+- * it raised a signal itself and left the pc at the instruction.
+- */
+-#define UML_ARM64_A32_UNDEFINED 0
+-#define UML_ARM64_A32_RETIRED 1
+-#define UML_ARM64_A32_SIGNALLED 2
+-extern int uml_arm64_aarch32_emulate(struct uml_pt_regs *regs);
 +#define UPT_SYSCALL_ARCH_NR(regs) upt_syscall_arch_nr(regs)
 +
 +static inline unsigned long *
@@ -1205,33 +1391,17 @@ index cef8b448bcf82f5e76972650365888c9d10898f3..d233d6e25a6672ef1f94c0df52d51b1b
 +
 +#define UPT_SYSCALL_ROLLBACK(regs) upt_syscall_rollback(regs)
 +
- #define EMPTY_UML_PT_REGS { }
- #define UPT_SYSCALL_NR(regs) ((regs)->syscall)
- #define UPT_FAULTINFO(regs) (&(regs)->faultinfo)
- #define UPT_IS_USER(regs) ((regs)->is_user)
- #define UPT_RESTART_SYSCALL(regs) do { \
--	/* AArch64 returns syscall results in x0, which is also argument 1. \
--	 * Restore it before re-executing SVC; unlike x86, rewinding the PC \
--	 * alone would retry with -ERESTART* as the first argument. \
--	 * AArch32 rewinds its 16-bit Thumb SVC by 2 bytes and its ARM SVC \
--	 * by 4 and, like arm64 Linux, leaves ITSTATE as the call left it. \
--	 */ \
--	UPT_X((regs), 0) = (regs)->orig_x0; \
--	UPT_IP(regs) -= (UPT_AARCH32(regs) && \
--			 (UPT_PSTATE(regs) & UML_ARM64_PSTATE_T)) ? 2 : 4; \
++#define EMPTY_UML_PT_REGS { }
++#define UPT_SYSCALL_NR(regs) ((regs)->syscall)
++#define UPT_FAULTINFO(regs) (&(regs)->faultinfo)
++#define UPT_IS_USER(regs) ((regs)->is_user)
++#define UPT_RESTART_SYSCALL(regs) do { \
 +	UPT_X86_64((regs), UML_X86_64_RAX) = (regs)->orig_x0; \
 +	UPT_IP(regs) -= 2; \
- } while (0)
++} while (0)
  
--/* Whether the undefined instruction at an AArch32 task's pc is one of the
-- * encodings which stand for a breakpoint to a debugger (aarch32.c). */
--extern int uml_arm64_aarch32_break(struct uml_pt_regs *regs);
--/* Whether abi.cp15_barrier lets an AArch32 task execute CP15 barriers. */
--extern int uml_arm64_cp15_barrier_enabled(void);
--
  extern unsigned long host_fp_size;
  extern int arch_init_registers(int pid);
- 
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
 index dd560d7da81a046f943d8a318b50737cf2f053eb..775f7b80119886229c864f2b7dd16f9b57b836ba 100644
 --- a/arch/arm64/um/signal.c
@@ -2811,40 +2981,24 @@ index 0000000000000000000000000000000000000000..eee25b1ba9e6fc18f88a0f1312f76d25
 +};
 +#undef __SYSCALL
 +#undef __SYSCALL_NORETURN
-diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
-index 29228c4941558ab2d4a5153991642c4659552891..7309390f6599b61ed734ea54fca2f9413e6721ac 100644
---- a/arch/um/include/asm/pgtable.h
-+++ b/arch/um/include/asm/pgtable.h
-@@ -8,6 +8,11 @@
- #ifndef __UM_PGTABLE_H
- #define __UM_PGTABLE_H
- 
-+#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
-+#define HAVE_ARCH_UNMAPPED_AREA
-+#define HAVE_ARCH_UNMAPPED_AREA_TOPDOWN
-+#endif
-+
- #include <asm/page.h>
- #include <linux/mm_types.h>
- 
 diff --git a/arch/um/include/asm/syscall-generic.h b/arch/um/include/asm/syscall-generic.h
-index 215668ff8df026f330892cbf03bb84a4c1c63add..0c0aae139b9b19d30385a3b2920cfd58c7dbe5d7 100644
+index bdc58cc1bded808980bea44f8f0eec6619cf5d4f..bfbb6178818d74edd57d3a4c11349182a52fb20e 100644
 --- a/arch/um/include/asm/syscall-generic.h
 +++ b/arch/um/include/asm/syscall-generic.h
-@@ -61,7 +61,7 @@ static inline void syscall_get_arguments(struct task_struct *task,
+@@ -71,7 +71,7 @@ static inline void syscall_get_arguments(struct task_struct *task,
  					 struct pt_regs *regs,
  					 unsigned long *args)
  {
 -	const struct uml_pt_regs *r = &regs->regs;
 +	struct uml_pt_regs *r = &regs->regs;
  
- 	*args++ = UPT_SYSCALL_ARG1(r);
+ 	*args++ = UPT_SYSCALL_ENTRY_ARG1(r);
  	*args++ = UPT_SYSCALL_ARG2(r);
 diff --git a/arch/um/kernel/exec.c b/arch/um/kernel/exec.c
-index c00611346a2ca3d58c464b914cad266bcd98de61..fd3fcc27b31970c4973fb05f6ff9e3d84019ac25 100644
+index 4809ef1346de85e2dd9d082bfcaff912f33b2ea3..f9036e4c308119c8829f14bdc53758fb0af1440a 100644
 --- a/arch/um/kernel/exec.c
 +++ b/arch/um/kernel/exec.c
-@@ -35,7 +35,12 @@ void flush_thread(void)
+@@ -38,7 +38,12 @@ void flush_thread(void)
  	 * user_pt_regs and the FPSIMD image zeroed by get_safe_registers().
  	 */
  	current_pt_regs()->regs.fpmr = 0;
@@ -2858,10 +3012,10 @@ index c00611346a2ca3d58c464b914cad266bcd98de61..fd3fcc27b31970c4973fb05f6ff9e3d8
  	       sizeof(current_pt_regs()->regs.compat_tls));
  	current_pt_regs()->regs.tpidrro = 0;
 diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
-index 276273b4470e6f412dece700242b332851648a3f..9ff2fa2288c4a59014725de16b21af4e5816ba23 100644
+index 99cad951786d0aba68089f899382af1aa9434975..1309cdaa33ac42c16fc89916d61d7cb64690347e 100644
 --- a/arch/um/kernel/skas/syscall.c
 +++ b/arch/um/kernel/skas/syscall.c
-@@ -42,6 +42,7 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -65,6 +65,7 @@ void handle_syscall(struct uml_pt_regs *r)
  {
  	struct pt_regs *regs = container_of(r, struct pt_regs, regs);
  	int syscall;
@@ -2869,7 +3023,7 @@ index 276273b4470e6f412dece700242b332851648a3f..9ff2fa2288c4a59014725de16b21af4e
  
  	/* Initialize the syscall number and default return value. */
  	UPT_SYSCALL_NR(r) = UPT_SYSCALL_ARCH_NR(r);
-@@ -55,6 +56,21 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -79,6 +80,21 @@ void handle_syscall(struct uml_pt_regs *r)
  		goto out;
  
  	syscall = UPT_SYSCALL_NR(r);
@@ -2891,7 +3045,7 @@ index 276273b4470e6f412dece700242b332851648a3f..9ff2fa2288c4a59014725de16b21af4e
  
  	/*
  	 * If no time passes, then sched_yield may not actually yield, causing
-@@ -79,6 +95,9 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -103,6 +119,9 @@ void handle_syscall(struct uml_pt_regs *r)
  					UPT_SYSCALL_ARG4(&regs->regs),
  					UPT_SYSCALL_ARG5(&regs->regs),
  					UPT_SYSCALL_ARG6(&regs->regs));
@@ -2902,10 +3056,10 @@ index 276273b4470e6f412dece700242b332851648a3f..9ff2fa2288c4a59014725de16b21af4e
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
  
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 67bb5bc16c01d7a95ca2b3aa82d21b3b0b4f5e9d..4fabe9205a7a023142b01450a4730433bef273ca 100644
+index 64a1006b06a4fcdee6a3749092d0f81a1b01b989..f563d4291ace739fff4979d7c77e5259e4502d2a 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
-@@ -482,6 +482,9 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
+@@ -496,6 +496,9 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
  		struct faultinfo *fi = UPT_FAULTINFO(regs);
  		current->thread.arch.faultinfo = *fi;
  		force_sig_fault(sig, code, (void __user *)FAULT_ADDRESS(*fi));
@@ -2916,7 +3070,7 @@ index 67bb5bc16c01d7a95ca2b3aa82d21b3b0b4f5e9d..4fabe9205a7a023142b01450a4730433
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 7d81a61fc00d443796cac2e18323851da910ba6c..3d99882fe2bff1d2ffde08dba56ed394e57f745b 100644
+index 3c1e95c811b6f5a0d237723edd5148fd42d1f2e1..27a1851bf97b3fdcbcfdcd8d90df12dea7fa7fe9 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -77,12 +77,24 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
@@ -3042,9 +3196,9 @@ index 7d81a61fc00d443796cac2e18323851da910ba6c..3d99882fe2bff1d2ffde08dba56ed394
  			registers->faultinfo.trap_no = 0;
 +#endif
  #ifdef CONFIG_UML_ARM64_AARCH32
- 			/* The three encodings a debugger plants on an AArch32
- 			 * program are breakpoints, as on arm64 Linux. */
-@@ -625,16 +692,52 @@ void userspace(struct uml_pt_regs *registers)
+ 			if (UPT_AARCH32(registers)) {
+ 				/* The three encodings a debugger plants on an
+@@ -647,16 +714,52 @@ void userspace(struct uml_pt_regs *registers)
  			int stepped = registers->faultinfo.trap_no ==
  				DARWIN_GUEST_SOFTWARE_STEP;
  

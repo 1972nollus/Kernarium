@@ -23,10 +23,10 @@ compat_tls, still at offset 336, and exec still clears them.
  5 files changed, 21 insertions(+), 43 deletions(-)
 
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index f77c6e818dabddb6598a1cefb47167cbe324fef7..3a493972d6b40e4f5500325140850a61069660e4 100644
+index 96411d0ddfcca84189277aae487f91fa7c687787..83096ca4112793252c70c677913a0d7ae505aad5 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
-@@ -47,11 +47,12 @@ struct uml_pt_regs {
+@@ -63,11 +63,12 @@ struct uml_pt_regs {
  	unsigned long fpmr;
  	unsigned long svcr;
  	/*

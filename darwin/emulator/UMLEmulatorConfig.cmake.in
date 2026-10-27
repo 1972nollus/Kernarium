@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 set(UMLEmulator_APPLE_PLATFORM "@UML_APPLE_PLATFORM@")
-set(UMLEmulator_GUEST_PAGE_SIZE "@UML_GUEST_PAGE_SIZE@")
 set(UMLEmulator_GUEST_SLICE "@UML_MAINLINE_KERNEL_SLICE@")
 
 get_filename_component(_uml_emulator_prefix

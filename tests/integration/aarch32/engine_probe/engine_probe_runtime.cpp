@@ -10,19 +10,15 @@
  * semantics are the corpus's job; this is the engine in a task.
  *
  * Each group runs in a forked process and reports PASS and FAIL lines, so a
- * group that dies is a failure and the next one still runs. A group needs a
- * level of the profile (base, simd or complete); the program reads the level
- * from AT_HWCAP and AT_HWCAP2 and skips a group above it, naming why. The
- * program counts the SIGILLs it expects (instructions the profile makes
- * UNDEFINED) and reports any other as a failure; run_guest_a32_engine.py
- * checks the totals. It is C++ compiled for a soft-float ARM target, so the
- * compiler emits no VFP or NEON; the groups that need them use assembly in
- * their own functions.
+ * group that dies is a failure and the next one still runs. The program
+ * counts the SIGILLs it expects (instructions the profile makes UNDEFINED)
+ * and reports any other as a failure; run_guest_a32_engine.py checks the
+ * totals. It is C++ compiled for a soft-float ARM target, so the compiler
+ * emits no VFP or NEON; the groups that need them use assembly in their own
+ * functions.
  *
  * Environment of the init process (kernel command-line words):
  *   A32_PROBE_GROUPS  comma-separated group names to run; default every group
- *   A32_PROBE_LEVEL   the level the engine is expected to present; the
- *                     detected level must equal it
  */
 #include "engine_probe.hpp"
 
@@ -79,7 +75,6 @@ word hwcap;
 word hwcap2;
 word page_size = 4096;
 static char **environment_block;
-int level_detected;
 
 /* ---- output ---- */
 
@@ -234,6 +229,7 @@ void check_mem(const void *got, const void *want, u32 length, const char *name)
 void quit(long status)
 {
 	flush();
+	restore_swp();
 	for (;;)
 		sys(nr_exit_group, status);
 }
@@ -346,6 +342,73 @@ bool under_qemu()
 	return environment("A32_PROBE_QEMU") != nullptr;
 }
 
+/* ---- abi.swp ---- */
+
+namespace {
+/* The value abi.swp had before this process wrote it, and the process. */
+long swp_saved = -1;
+long swp_writer;
+
+bool write_swp(int value)
+{
+	const long fd = sys(nr_openat, -100, addr("/proc/sys/abi/swp"), 1);
+	if (fd < 0)
+		return false;
+	const char text[2] = {static_cast<char>('0' + value), '\n'};
+	const long written = sys(nr_write, fd, addr(text), 2);
+	sys(nr_close, fd);
+	return written == 2;
+}
+} // namespace
+
+extern "C" u32 sw_word(u32 *p, u32 value, u32 sentinel);
+
+long swp_setting()
+{
+	const long fd = sys(nr_openat, -100, addr("/proc/sys/abi/swp"), 0);
+	if (fd == -eacces || fd == -eperm) {
+		/* A shell may not even read the file (Android's SELinux policy), so
+		 * ask a child: it exits 0 if its SWP ran and dies of SIGILL if not. */
+		static u32 word = 0;
+		const long child = fork_child();
+		if (child == 0)
+			quit(sw_word(&word, 1, 2) == 0 ? 0 : 1);
+		const long status = wait_child(child);
+		if (exited_with(status, 0))
+			return 1;
+		return killed_by(status, sigill) ? 0 : -einval;
+	}
+	if (fd < 0)
+		return fd;
+	char text[4] = {};
+	const long length = sys(nr_read, fd, addr(text), 3);
+	sys(nr_close, fd);
+	if (length < 1)
+		return -einval;
+	return (text[0] == '0' || text[0] == '1') ? text[0] - '0' : -einval;
+}
+
+bool swp_set(int value)
+{
+	const long before = swp_setting();
+	if (before < 0 || !write_swp(value))
+		return false;
+	if (swp_saved < 0) {
+		swp_saved = before;
+		swp_writer = getpid();
+	}
+	return true;
+}
+
+void restore_swp()
+{
+	if (swp_saved < 0 || getpid() != swp_writer)
+		return;
+	const long wanted = swp_saved;
+	swp_saved = -1;
+	write_swp(static_cast<int>(wanted));
+}
+
 /* ---- helpers ---- */
 
 word mmap_pages(word length, word protection, word flags)
@@ -439,6 +502,7 @@ static void catch_handler(int signo, SigInfo *info, UContext *context)
 	caught.address = info->address;
 	caught.pc = context->mcontext.pc;
 	caught.cpsr = context->mcontext.cpsr;
+	caught.fault_address = context->mcontext.fault_address;
 	if (signo == sigill)
 		++stats.sigill_expected;
 	if (catch_skip == return_to_lr) {
@@ -600,11 +664,6 @@ bool wanted(const char *list, const char *name)
 	return false;
 }
 
-const char *level_name(int level)
-{
-	return level == level_base ? "base" : level == level_simd ? "simd" : "complete";
-}
-
 void prepare_init()
 {
 	/* Only the guest's /init has to bring up its own console and /proc. */
@@ -666,21 +725,6 @@ extern "C" [[noreturn, gnu::used]] void probe_main(word *stack)
 	prepare_init();
 	group_name = "probe";
 
-	level_detected = level_base;
-	if ((hwcap & hwcap_neon) && (hwcap & hwcap_vfpv4))
-		level_detected = level_simd;
-	if (level_detected == level_simd && (hwcap2 & hwcap2_crc32))
-		level_detected = level_complete;
-
-	line("a32-engine-probe: level ", level_name(level_detected));
-	if (const char *expected = environment("A32_PROBE_LEVEL")) {
-		check(streq(expected, level_name(level_detected)),
-		      "the HWCAP words show the level the engine implements");
-		if (!streq(expected, level_name(level_detected))) {
-			put("detected ");
-			line(level_name(level_detected), " but expected ", expected);
-		}
-	}
 	shared = ptr<Shared>(mmap_pages(sizeof(Shared), prot_read | prot_write,
 					map_shared | map_anonymous));
 	if (addr(shared) > static_cast<word>(-4096)) {
@@ -694,14 +738,6 @@ extern "C" [[noreturn, gnu::used]] void probe_main(word *stack)
 		const Group &group = groups[index];
 		if (!wanted(list, group.name))
 			continue;
-		if (group.level > level_detected) {
-			put("SKIP ");
-			put(group.name);
-			put(": needs the ");
-			put(level_name(group.level));
-			put(" level\n");
-			continue;
-		}
 		run_group(group, index);
 	}
 	put("a32-engine-probe: ");

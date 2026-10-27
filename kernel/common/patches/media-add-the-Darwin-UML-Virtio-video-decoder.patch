@@ -14,6 +14,24 @@ inside it, which the negotiated VIRTIO_VIDEO_F_RESOURCE_SHM_REGION feature
 permits. V4L2 carries no per-plane offset on a capture buffer, so planes
 that share one dma-buf follow one another at their negotiated sizes.
 
+A plane is bounded by its dma-buf, not by its own length, which a client
+may state as that plane's size alone while the planes share one buffer. An
+imported buffer keeps the scatter-list implementation's cookie and user
+count even when the queue's own buffers are host-visible blobs: its scatter
+list and attachment belong to that implementation alone, and reading the
+blob allocator's state for them made every import fail.
+
+A capture buffer that comes back as an error or as the last one takes the
+timestamp the device answered with, as one holding a picture does, so a
+client can tell which frame failed and not read the stale one the buffer
+carried from its last use.
+
+The wire names the H.264 levels 5.2 to 6.2 and the Constrained High
+profile, as it names Constrained Baseline, and the driver maps each to
+its V4L2 menu index. A level or profile the table lacks reads as the
+first entry of its menu, so a device that lists Constrained High or level
+5.2 would be taken for Baseline or level 1.0.
+
 UML removes a device from an exitcall while other CPUs still run tasks, and
 a management-console halt, an unbind or a lost vhost-user backend does so
 without device_shutdown(). Removal therefore resets the device and deletes
@@ -36,17 +54,17 @@ stream.
  drivers/media/Makefile                      |    2 +
  drivers/media/virtio/Kconfig                |    9 +
  drivers/media/virtio/Makefile               |    6 +
- drivers/media/virtio/README                 |   11 +
+ drivers/media/virtio/README                 |   17 +
  drivers/media/virtio/virtio_video.h         |  442 +++++++
- drivers/media/virtio/virtio_video_blob.c    |  157 +++
+ drivers/media/virtio/virtio_video_blob.c    |  183 +++
  drivers/media/virtio/virtio_video_caps.c    |  515 ++++++++
  drivers/media/virtio/virtio_video_dec.c     |  479 +++++++
- drivers/media/virtio/virtio_video_device.c  | 1297 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_device.c  | 1313 +++++++++++++++++++
  drivers/media/virtio/virtio_video_driver.c  |  261 ++++
- drivers/media/virtio/virtio_video_helpers.c |  198 +++
+ drivers/media/virtio/virtio_video_helpers.c |  203 +++
  drivers/media/virtio/virtio_video_vq.c      | 1077 +++++++++++++++
- include/uapi/linux/virtio_video.h           |  539 ++++++++
- 14 files changed, 4995 insertions(+)
+ include/uapi/linux/virtio_video.h           |  544 ++++++++
+ 14 files changed, 5053 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -112,10 +130,10 @@ index 0000000000000000000000000000000000000000..674cca853cf2462ddca7972e5b3bed3e
 +	virtio_video_blob.o
 diff --git a/drivers/media/virtio/README b/drivers/media/virtio/README
 new file mode 100644
-index 0000000000000000000000000000000000000000..90e8a3531bb86bec3aca28050a7e4950c84c0a7f
+index 0000000000000000000000000000000000000000..abee8bfb14e3050308ea74e38289a63657ae974f
 --- /dev/null
 +++ b/drivers/media/virtio/README
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,17 @@
 +Darwin UML stateful decoder
 +
 +Adapted from OpenSynergy's Virtio video driver in Android common-modules
@@ -127,6 +145,12 @@ index 0000000000000000000000000000000000000000..90e8a3531bb86bec3aca28050a7e4950
 +baseline JPEG with hardware-dependent profiles, including 10-bit output.
 +The canonical wire declarations are kernel/common/video/virtio_video.h
 +in the owning Darwin host repository.
++
++A V4L2_MEMORY_DMABUF capture buffer may be any dma-buf: one the decoder's own
++queue exported, guest memory from a heap or another driver, or one holding all
++of a buffer's planes, which follow one another at their negotiated sizes. The
++lengths a client states for the planes may be those sizes, the dma-buf's size
++or zero, because only the dma-buf bounds where the planes lie.
 diff --git a/drivers/media/virtio/virtio_video.h b/drivers/media/virtio/virtio_video.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..826fcf95c06abf96f7e516e0a822b1d874d62a23
@@ -577,10 +601,10 @@ index 0000000000000000000000000000000000000000..826fcf95c06abf96f7e516e0a822b1d8
 +#endif /* _VIRTIO_VIDEO_H */
 diff --git a/drivers/media/virtio/virtio_video_blob.c b/drivers/media/virtio/virtio_video_blob.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..98fbb3c33f74fcc79542c517d3b8442d50a1b6e8
+index 0000000000000000000000000000000000000000..4773ee398a56b958f3eabcb5538a8101b19ef315
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_blob.c
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,183 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Capture buffers a renderer can import.
@@ -607,6 +631,13 @@ index 0000000000000000000000000000000000000000..98fbb3c33f74fcc79542c517d3b8442d
 +#include "virtio_video.h"
 +
 +struct virtio_video_blob_buffer {
++	/*
++	 * Names the allocator and comes first: the operations below are also
++	 * called with the state of an imported buffer, which is the
++	 * scatter-list implementation's and starts with a device pointer, and
++	 * only this word tells the two apart where no buffer is passed.
++	 */
++	const struct vb2_mem_ops *ops;
 +	struct virtio_gpu_host_blob *blob;
 +	unsigned long size;
 +};
@@ -628,6 +659,7 @@ index 0000000000000000000000000000000000000000..98fbb3c33f74fcc79542c517d3b8442d
 +		return err;
 +	}
 +
++	buffer->ops = &virtio_video_blob_memops;
 +	buffer->size = size;
 +
 +	return buffer;
@@ -677,11 +709,29 @@ index 0000000000000000000000000000000000000000..98fbb3c33f74fcc79542c517d3b8442d
 +{
 +	struct virtio_video_blob_buffer *buffer = buf_priv;
 +
-+	return buffer ? virtio_gpu_host_blob_users(buffer->blob) : 0;
++	if (!buffer)
++		return 0;
++
++	/* An imported buffer is counted by the implementation that attached it. */
++	if (buffer->ops != &virtio_video_blob_memops)
++		return vb2_dma_sg_memops.num_users(buf_priv);
++
++	return virtio_gpu_host_blob_users(buffer->blob);
 +}
 +
++/*
++ * The cookie of a buffer this driver allocated is the blob itself, which
++ * virtio_video_blob_region() reads. An imported buffer's is its scatter list,
++ * which vb2_dma_sg_plane_desc() reads, so each memory type answers with its own
++ * implementation's; returning the blob's for an imported buffer made the
++ * driver read the attachment as a scatter list, find no entries in it and
++ * refuse every import.
++ */
 +static void *virtio_video_blob_cookie(struct vb2_buffer *vb, void *buf_priv)
 +{
++	if (vb->memory == VB2_MEMORY_DMABUF)
++		return vb2_dma_sg_memops.cookie(vb, buf_priv);
++
 +	return buf_priv;
 +}
 +
@@ -1746,10 +1796,10 @@ index 0000000000000000000000000000000000000000..d3ec77840dc7e7e2d2265dac1e15ea0e
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06bb7d916a9
+index 0000000000000000000000000000000000000000..6366573fe8202928926b44b3b28f318a5e81652b
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -0,0 +1,1297 @@
+@@ -0,0 +1,1313 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -1979,7 +2029,7 @@ index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06b
 +{
 +	struct sg_table *sgt;
 +	struct scatterlist *sg;
-+	u64 skip, want = vb->planes[plane].min_length;
++	u64 skip, limit, want = vb->planes[plane].min_length;
 +	unsigned int i, used = 0;
 +	int ret;
 +
@@ -1996,9 +2046,15 @@ index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06b
 +	if (!sgt || !sgt->nents || !want)
 +		return -EINVAL;
 +
++	/*
++	 * Planes that share a dma-buf follow one another in it, so a plane's
++	 * extent is bounded by the dma-buf and not by the plane's own length,
++	 * which a client may state as that plane's size alone.
++	 */
 +	skip = virtio_video_plane_dmabuf_offset(vb, plane);
-+	if (skip > vb->planes[plane].length ||
-+	    want > vb->planes[plane].length - skip)
++	limit = vb->planes[plane].dbuf ? vb->planes[plane].dbuf->size :
++					 vb->planes[plane].length;
++	if (skip > limit || want > limit - skip)
 +		return -EINVAL;
 +
 +	for_each_sgtable_dma_sg(sgt, sg, i) {
@@ -2313,15 +2369,17 @@ index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06b
 +	if (fmt == NULL)
 +		return -EINVAL;
 +
-+	for (f_idx = 0; f_idx <= fmt->desc.num_frames; f_idx++) {
-+		frm = &fmt->frames[f_idx];
-+		frame = &frm->frame;
++	frm = NULL;
++	for (f_idx = 0; f_idx < fmt->desc.num_frames; f_idx++) {
++		frame = &fmt->frames[f_idx].frame;
 +		if (in_stepped_interval(frame->width, f->width) &&
-+		    in_stepped_interval(frame->height, f->height))
++		    in_stepped_interval(frame->height, f->height)) {
++			frm = &fmt->frames[f_idx];
 +			break;
++		}
 +	}
 +
-+	if (frame == NULL || f->index >= frame->num_rates)
++	if (!frm || f->index >= frm->frame.num_rates)
 +		return -EINVAL;
 +
 +	frate = &frm->frame_rates[idx];
@@ -2729,6 +2787,14 @@ index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06b
 +		virtio_video_queue_eos_event(stream);
 +	}
 +
++	/*
++	 * A capture buffer names the picture it answers whether or not it holds
++	 * one: a client matches a failed buffer to the frame it belonged to by
++	 * the timestamp, and the buffer's own would be a stale one.
++	 */
++	if (!V4L2_TYPE_IS_OUTPUT(vb2_queue->type))
++		vb->timestamp = timestamp;
++
 +	if ((flags & VIRTIO_VIDEO_DEQUEUE_FLAG_ERR) ||
 +	    (flags & VIRTIO_VIDEO_DEQUEUE_FLAG_EOS)) {
 +		vb->planes[0].bytesused = 0;
@@ -2742,8 +2808,6 @@ index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06b
 +		for (i = 0; i < p_info->num_planes; i++)
 +			vb->planes[i].bytesused =
 +				p_info->plane_format[i].plane_size;
-+
-+		vb->timestamp = timestamp;
 +	}
 +
 +	v4l2_m2m_buf_done(v4l2_vb, done_state);
@@ -2830,6 +2894,7 @@ index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06b
 +	mutex_unlock(video_dev->lock);
 +err_init_ctx:
 +	v4l2_fh_exit(&stream->fh);
++	v4l2_ctrl_handler_free(&stream->ctrl_handler);
 +err_stream_destroy:
 +	/* The device made the stream; it must not outlive the failed open. */
 +	virtio_video_cmd_stream_destroy(vvd, stream_id);
@@ -2851,6 +2916,7 @@ index 0000000000000000000000000000000000000000..565dd2e6983790dc940b8aef6665f06b
 +	v4l2_m2m_ctx_release(stream->fh.m2m_ctx);
 +
 +	v4l2_fh_exit(&stream->fh);
++	v4l2_ctrl_handler_free(&stream->ctrl_handler);
 +
 +	virtio_video_cmd_stream_destroy(vvd, stream->stream_id);
 +	virtio_video_stream_id_put(vvd, stream->stream_id);
@@ -3316,10 +3382,10 @@ index 0000000000000000000000000000000000000000..1f73c6beb1fe81627b675f87d655c162
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/virtio/virtio_video_helpers.c b/drivers/media/virtio/virtio_video_helpers.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..e6bb2fbfaff1f1bf68ca57547fe2b2f041a92472
+index 0000000000000000000000000000000000000000..ae0d96ccbd1a6500ab4d2ea60406304df95274b1
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_helpers.c
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,203 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -3376,6 +3442,10 @@ index 0000000000000000000000000000000000000000..e6bb2fbfaff1f1bf68ca57547fe2b2f0
 +	{ VIRTIO_VIDEO_LEVEL_H264_4_2, V4L2_MPEG_VIDEO_H264_LEVEL_4_2 },
 +	{ VIRTIO_VIDEO_LEVEL_H264_5_0, V4L2_MPEG_VIDEO_H264_LEVEL_5_0 },
 +	{ VIRTIO_VIDEO_LEVEL_H264_5_1, V4L2_MPEG_VIDEO_H264_LEVEL_5_1 },
++	{ VIRTIO_VIDEO_LEVEL_H264_5_2, V4L2_MPEG_VIDEO_H264_LEVEL_5_2 },
++	{ VIRTIO_VIDEO_LEVEL_H264_6_0, V4L2_MPEG_VIDEO_H264_LEVEL_6_0 },
++	{ VIRTIO_VIDEO_LEVEL_H264_6_1, V4L2_MPEG_VIDEO_H264_LEVEL_6_1 },
++	{ VIRTIO_VIDEO_LEVEL_H264_6_2, V4L2_MPEG_VIDEO_H264_LEVEL_6_2 },
 +	{ 0 },
 +};
 +
@@ -3393,6 +3463,7 @@ index 0000000000000000000000000000000000000000..e6bb2fbfaff1f1bf68ca57547fe2b2f0
 +
 +static struct virtio_video_convert_table profile_table[] = {
 +	{ VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE, V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE },
++	{ VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_HIGH, V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_HIGH },
 +	{ VIRTIO_VIDEO_PROFILE_HEVC_MAIN, V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN },
 +	{ VIRTIO_VIDEO_PROFILE_HEVC_MAIN10, V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10 },
 +	{ VIRTIO_VIDEO_PROFILE_H264_BASELINE,
@@ -4603,10 +4674,10 @@ index 0000000000000000000000000000000000000000..dd904e0f413caf4668c19bd8e0f78cda
 +
 diff --git a/include/uapi/linux/virtio_video.h b/include/uapi/linux/virtio_video.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..6a66a95f3e9486ee90d587beace61dd55dbf239c
+index 0000000000000000000000000000000000000000..7898dd1a46feecae93407070a9315278ce70c9c7
 --- /dev/null
 +++ b/include/uapi/linux/virtio_video.h
-@@ -0,0 +1,539 @@
+@@ -0,0 +1,544 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/*
 + * Virtio Video Device
@@ -4726,7 +4797,8 @@ index 0000000000000000000000000000000000000000..6a66a95f3e9486ee90d587beace61dd5
 +	VIRTIO_VIDEO_PROFILE_H264_STEREOHIGH,
 +	VIRTIO_VIDEO_PROFILE_H264_MULTIVIEWHIGH,
 +	VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE,
-+	VIRTIO_VIDEO_PROFILE_H264_MAX = VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE,
++	VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_HIGH,
++	VIRTIO_VIDEO_PROFILE_H264_MAX = VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_HIGH,
 +
 +	/* HEVC */
 +	VIRTIO_VIDEO_PROFILE_HEVC_MIN = 0x200,
@@ -4771,7 +4843,11 @@ index 0000000000000000000000000000000000000000..6a66a95f3e9486ee90d587beace61dd5
 +	VIRTIO_VIDEO_LEVEL_H264_4_2,
 +	VIRTIO_VIDEO_LEVEL_H264_5_0,
 +	VIRTIO_VIDEO_LEVEL_H264_5_1,
-+	VIRTIO_VIDEO_LEVEL_H264_MAX = VIRTIO_VIDEO_LEVEL_H264_5_1,
++	VIRTIO_VIDEO_LEVEL_H264_5_2,
++	VIRTIO_VIDEO_LEVEL_H264_6_0,
++	VIRTIO_VIDEO_LEVEL_H264_6_1,
++	VIRTIO_VIDEO_LEVEL_H264_6_2,
++	VIRTIO_VIDEO_LEVEL_H264_MAX = VIRTIO_VIDEO_LEVEL_H264_6_2,
 +    VIRTIO_VIDEO_LEVEL_HEVC_MIN = 0x200,
 +    VIRTIO_VIDEO_LEVEL_HEVC_1 = VIRTIO_VIDEO_LEVEL_HEVC_MIN,
 +    VIRTIO_VIDEO_LEVEL_HEVC_2,

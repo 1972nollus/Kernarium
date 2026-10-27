@@ -17,7 +17,11 @@ engine lane includes the reader and case layout,
 conversion,
 [`../aarch32_corpus_cpu_state.hpp`](../aarch32_corpus_cpu_state.hpp), runs each
 case and compares what the pack records; the inventory's `engine_status` moves
-from `pending` to `verified` per entry.
+from `pending` to `verified` per entry. A lane starts every case on a virtual
+CPU that has run 64-bit code: the general-register slots that hold no AArch32
+register keep values with both halves set, as an AArch64 task leaves x15-x30
+and SP. A fault address wider than 32 bits, or a register slot left with its
+upper half set, fails the case.
 
 ## A case
 
@@ -113,6 +117,9 @@ no floating point or SIMD):
   and across one, each also under a condition that fails and passes;
 - `exclusive`: LDREX/STREX and LDAEX/STLEX sequences, CLREX, misaligned and
   unmapped loads;
+- `exclusive-spill`: the same pairs with a register spill (STR or STRD to the
+  stack) between the load and the store, which an engine whose monitor a
+  store clears fails; the lanes that interrupt the guest leave it out;
 - `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH (also in an IT block whose
   condition passes and fails), PC-writing loads (the multiple ones also under
   a condition that fails and passes) and ALU instructions, interworking both
@@ -126,7 +133,9 @@ no floating point or SIMD):
 - `system`: barriers, hints, CPS, the APSR instructions, TPIDRURO, TPIDRURW,
   the CP15 barriers, BKPT and the encodings Linux turns into SIGTRAP;
 - `absent`: UNDEFINED, UNPREDICTABLE, unallocated and absent-feature
-  encodings raise SIGILL; SVC raises the system-call event.
+  encodings raise SIGILL, SWP and SWPB under every condition among them
+  (the guest kernel emulates them behind `abi.swp`); SVC raises the
+  system-call event.
 
 On a boundary (any level):
 

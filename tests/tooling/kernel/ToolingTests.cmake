@@ -48,6 +48,15 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME kernel-video-protocol-sync
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_video_protocol_sync.py
+        --tool ${PROJECT_SOURCE_DIR}/kernel/common/video/sync-protocol.py
+        --header ${PROJECT_SOURCE_DIR}/kernel/common/video/virtio_video.h
+    LABELS kernel;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME kernel-darwin-host-compat
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_darwin_host_compat.sh
     LABELS kernel;audit

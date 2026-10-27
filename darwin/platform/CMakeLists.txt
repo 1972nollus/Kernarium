@@ -18,13 +18,41 @@ uml_declare_architecture_target(uml_descriptor platform)
 target_include_directories(uml_descriptor INTERFACE
     ${PROJECT_SOURCE_DIR}/darwin)
 
-add_library(uml_video_decoder STATIC apple/video_decoder.mm)
+add_library(uml_video_decoder STATIC apple/video_decoder.mm apple/hevc_stream.cpp apple/h264_stream.cpp)
 add_library(UML::VideoDecoder ALIAS uml_video_decoder)
 uml_declare_architecture_target(uml_video_decoder platform)
 target_include_directories(uml_video_decoder PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(uml_video_decoder PRIVATE UML::PlatformContract
     "-framework Foundation" "-framework CoreMedia" "-framework CoreVideo"
     "-framework VideoToolbox")
+
+# The hardware video encoder: VideoToolbox discovery, sessions and Annex B
+# output behind darwin/platform/video_encoder.hpp.
+set(UML_VIDEO_ENCODER_SOURCES
+    apple/video_encoder.mm
+    apple/video_encoder_discovery.mm)
+add_library(uml_video_encoder STATIC ${UML_VIDEO_ENCODER_SOURCES})
+add_library(UML::VideoEncoder ALIAS uml_video_encoder)
+uml_declare_architecture_target(uml_video_encoder platform)
+target_include_directories(uml_video_encoder PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(uml_video_encoder PRIVATE UML::PlatformContract
+    "-framework Accelerate" "-framework Foundation" "-framework CoreMedia"
+    "-framework CoreVideo" "-framework VideoToolbox")
+if(UML_BUILD_UNIT_TESTS)
+    # The same sources with the session-loss injection the recovery test
+    # drives; products compile them without it.
+    add_library(uml_video_encoder_test_variant STATIC
+        ${UML_VIDEO_ENCODER_SOURCES})
+    uml_declare_architecture_target(uml_video_encoder_test_variant platform)
+    target_include_directories(uml_video_encoder_test_variant PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(uml_video_encoder_test_variant PUBLIC
+        UML_VIDEO_ENCODER_TESTING=1)
+    target_link_libraries(uml_video_encoder_test_variant PRIVATE
+        UML::PlatformContract
+        "-framework Accelerate" "-framework Foundation" "-framework CoreMedia"
+        "-framework CoreVideo" "-framework VideoToolbox")
+endif()
 
 add_library(uml_host_battery STATIC apple/host_battery.mm)
 add_library(UML::HostBattery ALIAS uml_host_battery)

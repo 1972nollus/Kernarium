@@ -27,7 +27,7 @@ kernel and the separate x86_64-userspace kernel, both with 4 KiB guest pages.
 When omitted, `mem=` defaults to 8 GiB and `ncpus=`
 to 10; explicit kernel arguments override either value independently.
 `cmake --preset macos-x86_64` selects the dedicated x86_64 artifact and host
-gadget backend; ordinary 4 KiB presets continue to select arm64 userspace. The
+gadget backend; the other presets select arm64 userspace. The
 x86_64 product defaults to `cgroup.memory=nokmem`: userspace memory-controller
 accounting remains available, while kernel-object charging is outside this
 compatibility slice. An explicit `cgroup.memory=` argument overrides the
@@ -77,8 +77,11 @@ sections.
 Engine selection, executable-memory ownership, the JIT's semantic slow path,
 the x86_64 slice's userspace profile, and the gadget cache's address-space tags
 are in the
-[architecture](../docs/architecture.md#cpu-execution-and-scheduling). This
-section owns the engines' internal detail.
+[architecture](../docs/architecture.md#cpu-execution-and-scheduling). Each
+engine's lowering is in the README beside it, for the arm64
+[gadgets](cpu/arm64/gadgets/README.md) and [JIT](cpu/arm64/jit/README.md) as
+for the x86_64 engines; this section owns the rest of the engines' internal
+detail.
 
 The x86_64 backend's CPUID advertises ERMS: a repeated string operation moves
 whole page-bounded blocks, so the REP MOVSB that ERMS steers libc onto is this
@@ -138,7 +141,11 @@ product, so that macOS behaves like iOS, and a slot is committed whether or not
 it is occupied; an explicit `-DUML_GADGET_CACHE_SLOTS` selects another power
 of two. Their payloads and mutable branch links remain ISA-specific. Cached
 x86 programs release spare decoder and native-stream capacity before
-publication.
+publication. The resident address spaces themselves, with the ids a slot's tag
+names its owner by, the epochs that validate a slot and the order that retires
+the least recently current, are one template shared by both caches
+(`cpu/gadget_generation_window.hpp`); the engines keep the slot layout, lookup
+and what retiring an address space releases.
 
 Unless `DARWIN_UML_GADGET_SHARED_BODIES=0` keeps them private, arm64 gadget
 executors running one address space with the same build options and SVCR mode
@@ -164,13 +171,19 @@ Apple Silicon product has): it halves the four-vCPU Geekbench multi-core
 cache, and renewal, below, keeps a shared space from accumulating the freed
 arena and link records that process churn leaves in it, which WebGL
 Aquarium's cache did before (G227, G267, G268). A private cache sweeps away
-the link records and indirect sites that nothing it holds names any more; a
-shared space is never swept, and renewal replaces it instead. The parts of
-this that do not depend on an engine's record types are engine-independent
-headers in `cpu/`: the body arena (`gadget_body_arena.hpp`), and what each
-executor announces, the executors attached to a space, the limbo a body waits
-in, the renewal counts and the registry that hands a space out
-(`gadget_shared_space.hpp`). The arm64 engine builds its space from them.
+the link records and indirect sites that nothing it holds names any more, once
+they number half again what its last sweep kept and enough of its translations
+have left the cache to have left some unnamed: a record no resident
+translation's stream names and no resident block owns is released for reuse,
+and the site cells and target-table entries naming it are emptied, so link
+state follows what the cache holds rather than all the code the address space
+ever ran. A shared space is never swept, and renewal replaces it instead. The
+parts of this that do not depend on an engine's record types are
+engine-independent headers in `cpu/`: the body arena
+(`gadget_body_arena.hpp`), and what each executor announces, the executors
+attached to a space, the limbo a body waits in, the renewal counts and the
+registry that hands a space out (`gadget_shared_space.hpp`). The arm64 engine
+builds its space from them.
 
 A shared space bounds its freed arena by renewal. It counts the bytes of its
 arena and of the bodies some slot holds; once it holds at least two mebibytes

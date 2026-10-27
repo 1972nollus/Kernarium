@@ -34,10 +34,6 @@ if(UML_EMULATOR_PACKAGE_PREFIX)
         message(FATAL_ERROR
             "Installed package platform ${UMLEmulator_APPLE_PLATFORM} does not match ${UML_APPLE_PLATFORM}")
     endif()
-    if(NOT "${UMLEmulator_GUEST_PAGE_SIZE}" STREQUAL "4096")
-        message(FATAL_ERROR
-            "Installed package page size ${UMLEmulator_GUEST_PAGE_SIZE} is not 4096")
-    endif()
     if(NOT "${UMLEmulator_GUEST_SLICE}" STREQUAL
        "${UML_EXPECTED_GUEST_SLICE}")
         message(FATAL_ERROR

@@ -247,15 +247,6 @@ expect_cmake_diagnostic "Malformed Apple GPU build receipt row" \
 	verify "$RECEIPT_PREFIX"
 receipt_case 'NR == 3 { print "" } { print }'
 verify "$RECEIPT_PREFIX" >/dev/null || fail "a blank receipt row was rejected"
-# Receipts written before these four fields were dropped still verify.
-receipt_case '{ print } END {
-	print "source_manifest_sha256", "0123456789abcdef"
-	print "platform_contract_sha256", "0123456789abcdef"
-	print "mesa_base_commit", "0123456789abcdef"
-	print "vulkan_headers_base_commit", "0123456789abcdef" }'
-verify "$RECEIPT_PREFIX" >/dev/null ||
-	fail "a receipt with the dropped manifest and base-commit fields was rejected"
-
 receipt_case '$1 == "format" { $2 = "3" } { print }'
 expect_cmake_diagnostic "format is 3, expected 2" verify "$RECEIPT_PREFIX"
 receipt_case '$1 == "product" { $2 = "other" } { print }'

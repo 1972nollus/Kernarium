@@ -11,9 +11,21 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tests/integration/support"))
 import fixture_transfer  # noqa: E402
 
+# With the GPU, the decoder's capture buffers are host-visible blobs rather than
+# guest pages, which changes how the driver imports a dma-buf. The kernel names
+# the GPU's host-visible memory when it has it, so a guest that booted without
+# it fails here rather than passing the blob cases without running them.
+GPU_ARGUMENTS = (
+    "--gpu",
+    "--gpu-display=vnc",
+    "--gpu-vnc-bind=127.0.0.1",
+    "--gpu-vnc-port=0",
+)
+GPU_PRECONDITION = "dmesg | grep -qF +host_visible"
+
 
 def main() -> int:
-    arguments = fixture_transfer.parse_arguments(__doc__)
+    arguments = fixture_transfer.parse_arguments(__doc__, gpu=True)
     fixtures = {
         "video/" + fixture.name: fixture.read_bytes()
         for fixture in sorted((ROOT / "tests/support/video").iterdir())
@@ -23,8 +35,14 @@ def main() -> int:
         arguments,
         subject="V4L2 decoder regression",
         fixtures=fixtures,
-        kernel_arguments=("--video", "ncpus=2", "panic=1"),
-        precondition="test -c /dev/video0",
+        kernel_arguments=(
+            "--video",
+            *(GPU_ARGUMENTS if arguments.gpu else ()),
+            "ncpus=2",
+            "panic=1",
+        ),
+        precondition="test -c /dev/video0"
+        + (f" && {GPU_PRECONDITION}" if arguments.gpu else ""),
         probe_arguments=("video",),
         probe_timeout_seconds=300,
         command_timeout_seconds=360,

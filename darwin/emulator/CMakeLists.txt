@@ -107,7 +107,7 @@ install(TARGETS uml_emulator
 
 # A static C API implemented in C++ and Objective-C++ must carry its runtime
 # link requirements to installed C consumers. Keep this small config
-# relocatable and describe the exact platform/page/profile represented by the
+# relocatable and describe the exact platform/profile represented by the
 # archive beside it.
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/UMLEmulatorConfig.cmake.in

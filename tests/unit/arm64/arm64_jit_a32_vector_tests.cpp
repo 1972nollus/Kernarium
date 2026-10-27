@@ -7,11 +7,19 @@
  * cumulative saturation flag. The vector memory forms: that they stay out of
  * the semantic library on an ordinary access, and take it, with its data and
  * its faults, on a page crossing, a misalignment and an unmapped page. The
- * words were assembled with LLVM MC at authoring time. */
+ * words were assembled with LLVM MC at authoring time.
+ *
+ * VMAX, VMIN, VADD, VSUB, VMUL, VMLA and VMLS run on every special operand,
+ * rounding mode and flush mode in the contexts that guard them and the one
+ * that does not, and QC across runs. The flags of VCMP and VCMPE reach the
+ * APSR through VMRS, adjacent or not, conditional or not. Every vector load
+ * form crosses a page at every offset, with the two pages adjacent in the
+ * host and not, and takes no library call once the TLB holds both; the
+ * library leaves the guest's FP environment installed. */
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
-#include "cpu/arm64/jit/a32/a32_helpers.hpp"
+#include "cpu/arm64/aarch32/semantics_exit_counters.hpp"
 
 #include <array>
 #include <bit>
@@ -26,7 +34,7 @@ using ::uml::cpu::ExitReason;
 
 namespace {
 
-namespace jit_a32 = ::uml::cpu::arm64::jit::a32;
+namespace aarch32 = ::uml::cpu::arm64::aarch32;
 
 constexpr std::uint32_t arm_svc = 0xef00'0000U;
 constexpr std::uint32_t arm_nop = 0xe320'f000U;
@@ -55,11 +63,11 @@ void set_half64(arm64::CpuState &cpu, unsigned q, unsigned half,
 /* Whether the program ran without a trip to the semantic library. */
 struct ExitCount final {
   ExitCount() {
-    jit_a32::reset_helper_exits();
-    jit_a32::count_helper_exits(true);
+    aarch32::reset_a32_library_exits();
+    aarch32::count_a32_library_exits(true);
   }
-  ~ExitCount() { jit_a32::count_helper_exits(false); }
-  [[nodiscard]] static std::size_t total() { return jit_a32::helper_exit_total(); }
+  ~ExitCount() { aarch32::count_a32_library_exits(false); }
+  [[nodiscard]] static std::size_t total() { return aarch32::a32_library_exit_total(); }
 };
 
 // ---------------------------------------------------------------------------

@@ -21,14 +21,17 @@ The line builds two products from one tree. The Linux product is the desktop
 kernel, with its arm64 kernel and the x86_64 userspace slice. The
 [Android product](#android-product) is the arm64 kernel of the LineageOS 24
 (Android 17) guest. It differs from the Linux product only in its configuration
-overlay: both build the same tree, including nine overlay topics that matter
+overlay: both build the same tree, including ten overlay topics that matter
 only to Android. Every guest page is 4 KiB. The Darwin host's page is 16 KiB,
 which the congruent-slot, aperture and linker rules below account for.
 
-The shared stateful Virtio video decoder is built in for every product in this
-line. Its [wire contract](../common/video/README.md) is synchronized from the
-canonical header and its implementation is a topic in the shared series.
-The host exposes hardware decoding through V4L2 independently of the GPU.
+The shared stateful Virtio video decoder and encoder are built in for every
+product in this line. Their [wire contract](../common/video/README.md) is
+synchronized from the canonical header and their implementations are topics in
+the shared series; the encoder is the Virtio device with ID 30, which the
+driver binds only when it negotiates `VIRTIO_VIDEO_F_V4L2_CONTROLS`, and it
+registers the controls its device lists. The host exposes hardware decoding and
+encoding through V4L2 independently of the GPU.
 
 The shared series also carries topics Android relies on: an initrd read from a
 byte range of a host file (`initrd_offset=` and `initrd_size=`), arm64 kernel
@@ -112,6 +115,71 @@ The Linux overlay holds only what differs from the Android product:
   excludes `MSEAL_SYSTEM_MAPPINGS`, which Android enables instead.
 - Smack is the exclusive LSM, with the matching `CONFIG_LSM` order, because
   the recorded LTP results depend on it. Android uses SELinux.
+- Auxiliary POSIX clocks (`CONFIG_POSIX_AUX_CLOCKS`), which Linux 6.17
+  added and LTP's `timer_create02` covers (see the Android overlay below).
+- SysV IPC, the NFS client and SCTP, which desktop software and NFS mounts
+  use and Android forbids or has no use for (see the Android overlay below).
+  SCTP creates no listener and the SLiRP network never forwards it, so it
+  joins endpoints inside the guest.
+- No wakelock interface: `CONFIG_PM_WAKELOCKS` and its `/sys/power/wake_lock`
+  stay off. Sxmo, which postmarketOS guests run, suspends the guest on its own
+  whenever that file exists, and a desktop guest has no wakelock service to
+  hold it awake. The Android product turns it on (see below).
+- No static usermode helper: `CONFIG_STATIC_USERMODEHELPER` stays off.
+  systemd-coredump is a piped `core_pattern`, and the NFS idmapper's
+  `/sbin/request-key` and `/sbin/bridge-stp` are upcalls, so a static path
+  would turn each into a silent no-op. The Android product turns it on (see
+  below).
+
+Every product has IPv4 multicast, which Kconfig leaves off and mDNS and SSDP
+discovery need, SafeSetID, which restricts only the IDs a policy written to
+securityfs names, and macvlan, a second MAC address on one NIC (12 KB of code
+and data). No product has RDS: its TCP transport opens a kernel listener on
+port 16385 in every network namespace for any local user to reach, and
+nothing in a guest uses it, so the LTP case that needs it, `recvmsg03`, is in
+`disabled-tests.tsv`. `guest-kernel-config` checks these settings in a Linux
+guest, and the same probe checks an Android guest.
+
+### Kernel self-protection
+
+Every product builds the kernel with `CONFIG_STACKPROTECTOR_STRONG` and
+`CONFIG_HARDENED_USERCOPY`, as Debian and the Android GKI do. The stack
+protector uses one global canary, `__stack_chk_guard`, which
+`boot_init_stack_canary()` draws before the first protected frame; the
+host-facing objects (`USER_CFLAGS`) are built without it. Hardened usercopy
+checks every variable-size `copy_to_user()` and `copy_from_user()` against its
+slab object, page allocation, kernel text and stack, and a failure is a
+panic. UML arm64 has no `HAVE_ARCH_WITHIN_STACK_FRAMES`, so a stack copy is
+checked against the whole stack, not the frame. LKDTM confirms the canary
+check and the slab, page, kernel-text and stack-bounds cases. An overrun of
+one stack frame into the next goes unseen here, and so does a vmalloc overrun
+into its guard page, which upstream does not catch either.
+
+The Android CTS `KernelConfigTest` also asks for three symbols that arch/um
+does not have. Each protection is either provided by the design under another
+mechanism or has nothing to protect, so the product keeps the three tests as
+documented deviations:
+
+- `CONFIG_ARM64_SW_TTBR0_PAN` (PAN): the kernel is native host code, and guest
+  user memory is a software MMU that it reaches only through the uaccess page
+  walk. A kernel access to a guest user address outside uaccess faults, and
+  `segv()` panics with "Kernel tried to access user memory" (LKDTM
+  `ACCESS_USERSPACE` and `EXEC_USERSPACE`), which is what PAN enforces. There
+  is no `PSTATE.PAN` or TTBR0 switch to emulate.
+- `CONFIG_UNMAP_KERNEL_AT_EL0` (KPTI): guest user code runs in the engine, and
+  the software MMU maps no kernel memory into any guest address; the native
+  window is a hole in the guest range. EL0 therefore cannot name a kernel
+  address, and there is no shared page table to split. The test's other way
+  out, `meltdown` and `spectre_v2` entries in
+  `/sys/devices/system/cpu/vulnerabilities` that do not say "Vulnerable", is
+  not offered: the guest and its kernel share the host core's predictors, and
+  the host cannot promise Spectre v2 immunity.
+- `CONFIG_RANDOMIZE_BASE` (KASLR): the macOS native window starts at the
+  fixed `DARWIN_UML_MACOS_NATIVE_ADDRESS`, so the kernel sits at the same
+  address on every boot (iOS lets the host choose it). The kernel takes the
+  window from the host at runtime, so randomising the macOS base is a change
+  to the host's `prepare_native_kernel_layout()`, not a kernel option; it is
+  not done.
 
 DWARF stays uncompressed in both products, in the shared policy, for the Darwin
 host's pahole, whose elfutils is built without zstd.
@@ -209,9 +277,8 @@ Android build none of them.
 instruction execution is qualified against the pinned FEX handwritten x86-64
 corpus; distribution and complete Linux syscall compatibility require separate
 guest qualification. The slice accepts no AArch32 executable (its
-`UML_ARM64_AARCH32` is off); the arm64 kernels accept `EM_AARCH64` and, once
-the run's engine implements AArch32, 32-bit ARM EABI executables, and run
-stock armhf userspace ([shared README](../common/README.md)).
+`UML_ARM64_AARCH32` is off); the arm64 kernels accept `EM_AARCH64` and
+32-bit ARM EABI executables, and run stock armhf userspace ([shared README](../common/README.md)).
 Android does not consume the x86_64 overlay. The slice's overlay turns off
 `UML_ARM64_SME`, so it builds none of the shared SME task state,
 which x86 tasks do not have; the shared mm-shared mark stays, for the x86-64
@@ -324,7 +391,16 @@ Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
 at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
 `schedule()` when the caller stays runnable. The uaccess retry and TLB-walk
 safe points poll through `cond_resched()`, which does so only without
-`CONFIG_PREEMPTION`; both assert that at build time.
+`CONFIG_PREEMPTION`; both assert that at build time. A uaccess that may sleep
+retries its fault until the fault handler refuses it or the task is dying, as
+native uaccess re-executes the access, so a sibling's `fork()` that
+write-protects the page again after the fault never fails the copy with
+`-EFAULT`. That fault is the kernel's own access, so it carries no
+`FAULT_FLAG_USER`: a userfaultfd made with `UFFD_USER_MODE_ONLY` refuses it
+and the copy fails with `-EFAULT`, as it does natively, while a user-mode
+access to the same range is still delivered. A uaccess write holds its page
+with a pin taken under the page-table lock, so a `fork()` meanwhile gives the
+child a copy and a store through the kernel's alias never reaches it.
 Every path that changes a CPU's
 logical IRQ state outside `local_irq_*()`, including interrupt work run from an
 idle wait, reports the change to lockdep as interrupt entry would; without
@@ -464,13 +540,13 @@ its queue until the run ends, as on a machine that has stopped.
 `guest-ubd-poweroff` powers guests off with direct reads in flight on every
 vCPU. A management-console halt or reboot, an unbind and a lost vhost-user
 backend reach a driver's removal without `device_shutdown()`. The Virtio
-video decoder's removal resets the device and deletes its queues before it
-returns anything the device held, then answers every pending command as
-failed, so a queued buffer returns to vb2 in error, and flushes its event
-work. Its state lasts until the last open file is closed, which no longer
-reaches the device. `guest-video-teardown` removes it by unbind, halt and
-forced power-off while it has open files, queued buffers and commands in
-flight.
+video driver's removal, for a decoder and an encoder alike, resets the device
+and deletes its queues before it returns anything the device held, then
+answers every pending command as failed, so a queued buffer returns to vb2 in
+error, and flushes its event work. Its state lasts until the last open file is
+closed, which no longer reaches the device. `guest-video-teardown` removes
+each device by unbind, halt and forced power-off while it has open files,
+queued buffers and commands in flight.
 A synchronous video command waits five seconds for its answer. On Darwin its
 answer is already in guest memory when the kick returns, because the backend
 runs the queue before it acknowledges the kick and the device answers such a
@@ -492,12 +568,24 @@ hotplug and restores them before guest tasks resume. The console socket is
 `uml_dir=<dir>`, a directory owned by that machine alone; a path that does not
 fit Darwin's 104-byte `sun_path` is refused, never truncated.
 
-Only a wake source ends the suspend: the management console, the UML RTC
-alarm, VNC input, and a vhost-user device whose wakeup is enabled in sysfs. A
+Only a wake source ends the suspend. Some wake any suspend: the management
+console, the UML RTC alarm, VNC input, and a vhost-user device whose wakeup is
+enabled in sysfs (its backend channel and every queue's call descriptor
+alike). The Darwin network interface wakes only a suspend the guest started
+itself, such as Android's once its last wakelock goes away, as a phone's
+wireless interface does: a received frame ends it and keeps the guest awake
+for 500 ms through the `darwin-net-rx` wakeup source, so that the stack and
+the task the frame is for answer before the next automatic suspend, and an
+`adb` command to a guest whose display is off is answered at once instead of
+at the next RTC alarm. A suspend the host asked for through the management
+console ends only with the host's wake, and no frame fails it; the kernel
+knows it from the host's request until the guest has replied that it is
+suspended. `darwin_net_kern.guest_wake=0` turns the wake and the hold off. A
 Linux host clears O_ASYNC on every other descriptor for the suspend; Darwin,
 whose IRQ notification thread stands in for SIGIO, takes those descriptors off
-that thread instead, so network and console input, vhost-user requests and
-block completions wait for the resume and are handled then. The suspended CPU
+that thread instead, so console input, vhost-user requests and block
+completions wait for the resume and are handled then, and so does network
+input in a suspend the host asked for. The suspended CPU
 sleeps until a wake source has input or a wakeup is pending, so neither a host
 signal nor a notification collected before the suspend ends it. A wake request
 that arrives while a suspend is still being entered, whether the host or the
@@ -514,11 +602,13 @@ ends the request instead, and a request that gives up replies `Suspend
 failed`.
 Virtio input is not a wake source, because a suspend disables its rings, so a
 host that forwards a power key also sends the wake. `guest-suspend-holds`
-keeps network, console and vhost-user traffic flowing through a suspend, sends
-early wakes, one of them while a frozen file system holds the suspend's sync,
-fires an RTC alarm during a held sync of the host's suspend, which must still
-hold, and wakes a suspend the guest entered by itself with a wake and with a
-power key typed on the VNC display.
+keeps network, console and vhost-user traffic flowing through a suspend the
+host asked for, sends early wakes, one of them while a frozen file system
+holds the suspend's sync, fires an RTC alarm during a held sync of the host's
+suspend, which must still hold, and wakes a suspend the guest entered by
+itself with a wake, with a power key typed on the VNC display and with a
+network connection, after which the host's own suspend must hold under
+traffic on its first attempt.
 
 Loadable modules remain disabled. The required guest filesystems, networking,
 Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM
@@ -580,8 +670,31 @@ The overlay holds only what differs from the Linux product:
 - Android's own facilities: Binder and binderfs, the DMA-BUF heaps and udmabuf,
   bootconfig, the inline-encryption fallback with fscrypt and HCTR2, PF_KEY for
   the network statistics path, socket destruction for netd, further xtables
-  matches and targets, the gpu_mem tracepoints, the Kernarium battery, and hvc
-  for the single-port Virtio console.
+  matches and targets, IPsec transforms, traffic control for BPF, the
+  gpu_mem tracepoints, the Kernarium battery, hvc for the single-port Virtio
+  console, uhid, hidraw and the PlayStation HID driver, and
+  `CONFIG_PM_WAKELOCKS`. Android's
+  SystemSuspend service ends a suspend that is under way by writing
+  `userspace-abort` to `/sys/power/wake_lock`, so without the file a wakelock
+  taken while the system is entering a suspend cannot stop it. The Linux
+  product leaves the file out for the guest-OS reason given above.
+- Android's CTS requires that SysV IPC (`CONFIG_SYSVIPC`, whose system calls
+  must answer `ENOSYS`) and the NFS client (`CONFIG_NFS_FS`) are absent, so
+  the overlay leaves both out, and SCTP too, which Android has no use for. The
+  forbidden list also names RDS, so that no overlay brings back its
+  listener.
+- `CONFIG_STATIC_USERMODEHELPER` with an empty
+  `CONFIG_STATIC_USERMODEHELPER_PATH`, which the CTS requires. Every
+  `call_usermodehelper()` then returns without starting a program, so a
+  piped `core_pattern`, a key upcall or an orderly poweroff cannot make the
+  kernel run a program as root. Android's tombstones come from debuggerd's
+  signal handler and its boot needs no helper; a piped `core_pattern` logs
+  "Core dump to |... disabled". The Linux product keeps the helpers its
+  distribution uses (see above).
+- Auxiliary POSIX clocks are off, as in GKI. With them, clock IDs 16 to 23
+  name the auxiliary clocks, which have no timers, so `timer_create()` on
+  clock 16 fails with `EOPNOTSUPP` where Bionic's `time.timer_create_EINVAL`
+  and the CTS expect `EINVAL`.
 - Settings the shared policy leaves to their Kconfig defaults, which the
   overlay pins: seccomp, delay accounting, utilization clamping (off), policy
   routing, XFRM interfaces and statistics, conntrack events and netlink, and
@@ -596,7 +709,7 @@ IP autoconfiguration. Recovery independently assigns its fixed local endpoint
 for the host-forwarded ADB contract; external recovery routing is not a
 product requirement.
 
-Nine topics in this line's patch overlay change behaviour only when the Android
+Ten topics in this line's patch overlay change behaviour only when the Android
 overlay switches them on, or only under Android's SELinux policy. Each stays
 out of the shared series because it depends on the guest OS:
 
@@ -652,11 +765,41 @@ out of the shared series because it depends on the guest OS:
   sends the uevents that report an interface going idle or active again.
   Upstream refuses the argument, so the Linux product keeps its `IDLETIMER`
   as is.
+- `CONFIG_INCREMENTAL_FS` is the Incremental file system (`fs/incfs`) of the
+  Android common kernel: a read-only filesystem whose files fill in block by
+  block while an app installs, so that the app can start before its download
+  ends. Android's package manager is its only user. system_server's
+  IncrementalService mounts it under `/data/incremental`, and advertises
+  `android.software.incremental_delivery` only when `/proc/filesystems` lists
+  `incremental-fs` and `/sys/fs/incremental-fs/features` exists. Upstream
+  Linux has no such filesystem, so the Linux product leaves it out. The
+  import is ACK's code at its android17-6.18 revision with two changes: it no
+  longer calls `SetPageError()`, which 6.18 removed, and `notify_unlink()` locks
+  the root directory when the file it names was just completed. `FS_VERITY`
+  stays built in because the filesystem's own verity support needs it, and the
+  filesystem selects `DECOMPRESS_LZ4`, `DECOMPRESS_ZSTD` and `CRYPTO_LIB_SHA256`
+  for its compressed blocks and hash trees.
+- `CONFIG_CFG80211` and `CONFIG_VIRT_WIFI` give the guest Wi-Fi without a
+  radio. Android's Wi-Fi framework (wificond, the supplicant and the Wi-Fi
+  HAL) drives an nl80211 interface, and virt_wifi provides a station interface
+  over an Ethernet device with one fake open access point, `VirtWifi`. The
+  product creates it on a macvlan child of the guest's only NIC, so that the
+  address adb reaches the guest on stays the NIC's own (`CONFIG_MACVLAN` is in
+  the shared policy). A signed regulatory database needs the host's OpenSSL
+  for Kbuild's `certs/extract-cert` and the product ships none, so
+  `CFG80211_CERTIFICATION_ONUS` is on with `CFG80211_REQUIRE_SIGNED_REGDB` and
+  `CFG80211_CRDA_SUPPORT` off, and cfg80211 stays on the world domain. The
+  Linux product leaves both out: only Android's Wi-Fi framework uses an
+  802.11 interface, since a desktop guest manages its NIC with networkd and
+  has no Wi-Fi manager, and the code adds about 1.5 MB to `vmlinux` (+4% on
+  Linux arm64) and registers a phy that nothing uses, with a "failed to load
+  regulatory.db" message every boot. The recipe needs no `CONFIG_IP_PNP`,
+  which stays off.
 
-The cgroup, FUSE, `quota2` and `IDLETIMER` topics are backports from the
-Android common kernel.
+The cgroup, FUSE, `quota2`, `IDLETIMER` and Incremental file system topics come
+from the Android common kernel.
 
-The product carries none of ACK's own features, and does without them:
+The product leaves out these ACK features:
 
 - `/dev/ashmem` and its `ASHMEM_*` ioctls on memfds. The product sets
   `sys.use_memfd`, so libcutils' `ashmem_create_region()` creates a memfd;
@@ -674,6 +817,60 @@ The product carries none of ACK's own features, and does without them:
   starts. The product's boot command line and init script keep grace periods
   expedited until boot completes instead (see the
   [LineageOS README](../../android/lineage-24/README.md#android-product)).
+
+### Android base configuration
+
+Android 17's framework compatibility matrices list no kernel options for 6.18
+(`kernel/configs/c/android-6.18` and `d/android-6.18` are empty, and the only
+requirement is the LTS floor), so the newest option list is the 6.12 one,
+`kernel/configs/b/android-6.12/android-base.config` with its conditional XML,
+which GKI's `gki_defconfig` follows. The overlay carries every option of that
+list that arch/um can provide. The product leaves the rest out, each for a
+reason that holds for the guest:
+
+- Modules (`MODULES`, `MODULE_UNLOAD`, `MODVERSIONS`, `STRICT_MODULE_RWX`):
+  the kernel is native host code in one signed executable, and iOS loads no
+  modules.
+- Hardware the guest does not have: USB and the gadget stack (`USB`,
+  `USB_GADGET`, `USB_CONFIGFS*`; adb reaches the guest over the
+  host-forwarded network port), the controller drivers that need USB
+  (`HID_SONY`, `JOYSTICK_XPAD`), `INPUT_JOYSTICK` (which Kconfig denies to UML
+  altogether), cpufreq (`CPU_FREQ`, `CPU_FREQ_STAT`), and Device Tree or ACPI
+  (the conditional XML asks for one of them; devices attach as Virtio
+  devices named on the command line).
+- Facilities arch/um does not provide: `PREEMPT` (`ARCH_NO_PREEMPT`),
+  `BPF_JIT` and `BPF_JIT_ALWAYS_ON` (no eBPF JIT, and the CPU engine alone
+  owns executable memory, so BPF programs run in the interpreter),
+  `CFI_CLANG`, `SHADOW_CALL_STACK` (which also needs x18, a register the
+  Apple arm64 ABI reserves), `KFENCE`, `HAVE_MOVE_PMD` and `HAVE_MOVE_PUD`
+  (the guest's page tables are software), and `STAGING` (the only staging
+  driver Android used is ashmem).
+- ACK-only features, listed above: `ASHMEM`, `DM_DEFAULT_KEY`,
+  `UID_SYS_STATS`, `CPU_FREQ_TIMES`.
+- The hardening documented under Kernel self-protection: PAN, KPTI and KASLR.
+- The AArch32 compatibility options of the arm64 port (`ARMV8_DEPRECATED`,
+  `SWP_EMULATION`, `CP15_BARRIER_EMULATION`, `SETEND_EMULATION`) do not exist
+  on arch/um. SWP and CP15 barriers work (`abi.swp` and `abi.cp15_barrier`);
+  SETEND decodes as unallocated (see the AArch32 documentation).
+- Options that 6.18 no longer has: `SCHED_DEBUG` and `NF_CT_PROTO_DCCP`.
+
+Two items of the list cost nothing to meet. `CONFIG_NO_HZ` is the legacy symbol
+for dynticks idle, which the shared policy already runs as `NO_HZ_IDLE`, and
+`CONFIG_PROFILING` is the hook that profilers attach to.
+
+The list asks for `CONFIG_BUG_ON_DATA_CORRUPTION`, which selects
+`CONFIG_LIST_HARDENED`: a list operation whose neighbours do not point back
+panics instead of carrying on with a corrupted list. It costs 2.3% over
+single-vCPU system-call microbenchmarks (getppid 1.6%, a pipe round trip 2.5%,
+a 4 KiB tmpfs read or write up to 3.9%) and nothing measurable on a broad guest
+workload (compiling, a tree walk, tar: 0.991 of the time on four vCPUs, 0.987
+on one). Only Android's list asks for it, so the Linux product does not set it;
+moving the symbol to the shared policy would put the same cost on every
+product.
+
+GKI also turns on hardening and memory options that no list requires
+(`INIT_ON_ALLOC_DEFAULT_ON`, `FORTIFY_SOURCE`, `SLAB_FREELIST_HARDENED`,
+`LRU_GEN` and others); the product does not carry them.
 
 The iOS runtime framework for this product keeps its earlier name,
 `KRuntime_ACK_6_18_4K`, though it now embeds this line's Android artifact.

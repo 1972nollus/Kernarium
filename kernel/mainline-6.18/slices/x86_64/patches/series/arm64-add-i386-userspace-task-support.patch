@@ -68,10 +68,10 @@ index ee9fd0150f487c491d1ffa0637a004832481de8b..89a196845065fdd863ca5d0e4f5a7baa
  config GENERIC_ENTRY
  	bool
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index d2b7d4874a237154ad994c0f6689733579948c5e..2cc6a971387eb3223b0434afe436e39f6c6a32a3 100644
+index e379296b3128502aafbe5ac48c589da11fe9f37e..163835b67e17f43ebbc058d7acf26af3570bdb5b 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -30,12 +30,20 @@ config UML_ARM64_SME
+@@ -31,12 +31,20 @@ config UML_ARM64_SME
  config UML_X86_64_USERSPACE_ONLY
  	bool "Run x86-64 userspace exclusively"
  	depends on PAGE_SIZE_4KB
@@ -95,25 +95,25 @@ index d2b7d4874a237154ad994c0f6689733579948c5e..2cc6a971387eb3223b0434afe436e39f
  
  # Every arm64 task may run AArch32 code (armhf and Android's armeabi-v7a) as
  # arm64 Linux's COMPAT does, once the host's engine implements it.  Until
-@@ -52,7 +60,7 @@ config UML_ARM64_AARCH32
+@@ -53,7 +61,7 @@ config UML_ARM64_AARCH32
  	select OLD_SIGSUSPEND3
  
  config COMPAT
 -	def_bool UML_ARM64_AARCH32
 +	def_bool UML_ARM64_AARCH32 || UML_X86_64_USERSPACE_ONLY
  
- config KUSER_HELPERS
- 	bool "Enable kuser helpers page for 32-bit applications"
+ # The AArch64 tagged-address ABI of arm64 Linux's ARM64_TAGGED_ADDR_ABI:
+ # PR_SET_TAGGED_ADDR_CTRL, NT_ARM_TAGGED_ADDR_CTRL and the
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index 6421e5c3f00b847682a16d31c9263deced9440de..43e54d19ab21df8276c0baf338183b1827dd77b3 100644
+index 8fc740b497d85ddc1e749cb824e826df8e7c227c..cc95273be0999519bc1fd89160ddbf39772dbc74 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
-@@ -6,22 +6,29 @@ obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
- obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
+@@ -7,22 +7,29 @@ obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
+ obj-$(CONFIG_UML_ARM64_TAGGED_ADDR_ABI) += tagged_addr.o
  obj-$(CONFIG_UML_ARM64_AARCH32) += aarch32.o aarch32_pages.o \
  	armv8_deprecated.o ptrace32.o signal32.o sys32.o sys_compat.o
 +obj-$(CONFIG_COMPAT) += x86_32_syscalls.o
- obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += mmap.o x86_syscall_tables.o
+ obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += x86_syscall_tables.o
  
  x86-syscalltbl := $(srctree)/scripts/syscalltbl.sh
 +x86-syscall-32 := $(srctree)/arch/x86/entry/syscalls/syscall_32.tbl
@@ -138,8 +138,8 @@ index 6421e5c3f00b847682a16d31c9263deced9440de..43e54d19ab21df8276c0baf338183b18
 -targets += x86_syscalls_64.h
 +targets += x86_syscalls_32.h x86_syscalls_64.h
  
- $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
- targets += user-offsets.s
+ # The emulation tracepoint is arm64 Linux's own.
+ CFLAGS_armv8_deprecated.o := -I$(srctree)/arch/arm64/kernel
 diff --git a/arch/arm64/um/asm/compat-abi.h b/arch/arm64/um/asm/compat-abi.h
 index 2b50984d56d48945c5485c230fdf7348b6963e33..6fd5df2e757ef1b0e51b8bd1e312e73dc5c206d2 100644
 --- a/arch/arm64/um/asm/compat-abi.h
@@ -334,10 +334,10 @@ index 3bfa08cbdb8451ae06f112a645439aa7fccbdbf6..171f0559dc68a7c4cf56c1f95f9025a0
  #define ELF_NGREG 27
  typedef elf_greg_t elf_gregset_t[ELF_NGREG];
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
-index 25feaa3f56803976c127c0e6c44789f275cfbc3e..25bb617d166e1d1b304f8b852b760c5b2a185e2e 100644
+index 67a7fc597878391b267036cfcf1de5f97e8d9e4f..d070ff929a9f79d3d086df7ec6ed26180a193c69 100644
 --- a/arch/arm64/um/asm/processor.h
 +++ b/arch/arm64/um/asm/processor.h
-@@ -91,6 +91,17 @@ static __always_inline void cpu_relax(void)
+@@ -100,6 +100,17 @@ static __always_inline void cpu_relax(void)
  #endif
  
  #ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
@@ -537,7 +537,7 @@ index df4bc4b93f2e4bf46d06cc7b4e17350d27673ae6..c7e2d98d504185a16c1bba37298b4f60
 +
  #endif
 diff --git a/arch/arm64/um/mmap.c b/arch/arm64/um/mmap.c
-index 1a8b242f6aa99b62d006f59bfc55f0d609280d26..3294381b9533c3e8892858694bfa03bd0fd2e26c 100644
+index d840d7887265609d58cfe47450ce8a3fd792054e..038a19097ba9f5a3be393058c13bcf34d2066efd 100644
 --- a/arch/arm64/um/mmap.c
 +++ b/arch/arm64/um/mmap.c
 @@ -1,6 +1,7 @@
@@ -548,10 +548,10 @@ index 1a8b242f6aa99b62d006f59bfc55f0d609280d26..3294381b9533c3e8892858694bfa03bd
  #include <linux/hugetlb.h>
  #include <linux/mm.h>
  #include <linux/mman.h>
-@@ -66,6 +67,10 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
- 		       unsigned long len, unsigned long pgoff,
+@@ -67,6 +68,10 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
  		       unsigned long flags, vm_flags_t vm_flags)
  {
+ 	addr = uml_darwin_mmap_hint(addr, len, flags);
 +	if (is_compat_task())
 +		return generic_get_unmapped_area(filp, addr, len, pgoff, flags,
 +					 vm_flags);
@@ -559,10 +559,10 @@ index 1a8b242f6aa99b62d006f59bfc55f0d609280d26..3294381b9533c3e8892858694bfa03bd
  	if (flags & MAP_32BIT)
  		return uml_x86_64_get_unmapped_area_32bit(filp, addr, len, flags,
  						     vm_flags);
-@@ -85,6 +90,10 @@ arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
- 	const unsigned long mmap_end = arch_get_mmap_end(addr, len, flags);
+@@ -87,6 +92,10 @@ arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
  	unsigned long result;
  
+ 	addr = uml_darwin_mmap_hint(addr, len, flags);
 +	if (is_compat_task())
 +		return generic_get_unmapped_area_topdown(filp, addr, len, pgoff,
 +						 flags, vm_flags);
@@ -2436,7 +2436,7 @@ index b70b8823331e8b3b018af8fd5d24772cd96f79b7..624869cfb2a7f708b51fea141d9aba64
  
  #endif
 diff --git a/arch/um/include/asm/thread_info.h b/arch/um/include/asm/thread_info.h
-index f16b3b64d7b90b824a6d9b688227db446dab7a2a..81e930c8dc2c490746c882108790acf3b0adb0c2 100644
+index bc38f7f3f1bea6c5fe40864343a26cb15f32b7cc..19d22c559f2a1456cf9efdc4fc897a85b061ca1f 100644
 --- a/arch/um/include/asm/thread_info.h
 +++ b/arch/um/include/asm/thread_info.h
 @@ -47,6 +47,9 @@ struct thread_info {
@@ -2446,10 +2446,10 @@ index f16b3b64d7b90b824a6d9b688227db446dab7a2a..81e930c8dc2c490746c882108790acf3
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +#define TIF_SYSCALL_USER_DISPATCH 13	/* syscall user dispatch active */
 +#endif
- 
- 
- #define _TIF_SYSCALL_TRACE	(1 << TIF_SYSCALL_TRACE)
-@@ -61,6 +64,9 @@ struct thread_info {
+ #ifdef CONFIG_UML_ARM64_TAGGED_ADDR_ABI
+ #define TIF_TAGGED_ADDR		14	/* tagged-address ABI enabled */
+ #endif
+@@ -64,6 +67,9 @@ struct thread_info {
  #ifdef CONFIG_COMPAT
  #define _TIF_32BIT		(1 << TIF_32BIT)
  #endif
@@ -2460,7 +2460,7 @@ index f16b3b64d7b90b824a6d9b688227db446dab7a2a..81e930c8dc2c490746c882108790acf3
  #define _TIF_WORK_MASK		(_TIF_NEED_RESCHED | _TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL | \
  				 _TIF_NOTIFY_RESUME)
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index a833287d72c20a02e51ff4e96f593051a8b23324..83f7e9f5c45274d2fd1282a1e5b998a3582cc1a4 100644
+index da49b319b8d0c3ff03a9a29504bd3d6c3720a8a3..4f94a043ff6518da1eb331931e677e96f2ebe5bb 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -68,6 +68,7 @@ extern void do_uml_exitcalls(void);
@@ -2504,7 +2504,7 @@ index 0000000000000000000000000000000000000000..3548f941b5af59cc04f7e667c527f6e4
 +
 +#endif
 diff --git a/arch/um/kernel/ptrace.c b/arch/um/kernel/ptrace.c
-index fdbb37b5c3996188d92cf307d31eeaeca1f0acce..51b9576fc57b297eea4c3dc61f945e3d4aaa8149 100644
+index 79a25e436086aed18bd760f68efb87a77e18586e..980cb4daeef7de8a48034a42cd2a5759f12fcff1 100644
 --- a/arch/um/kernel/ptrace.c
 +++ b/arch/um/kernel/ptrace.c
 @@ -4,6 +4,7 @@
@@ -2515,7 +2515,7 @@ index fdbb37b5c3996188d92cf307d31eeaeca1f0acce..51b9576fc57b297eea4c3dc61f945e3d
  #include <linux/ptrace.h>
  #include <linux/sched.h>
  #include <linux/uaccess.h>
-@@ -109,6 +110,14 @@ long arch_ptrace(struct task_struct *child, long request,
+@@ -110,6 +111,14 @@ long arch_ptrace(struct task_struct *child, long request,
  	return ret;
  }
  
@@ -2531,7 +2531,7 @@ index fdbb37b5c3996188d92cf307d31eeaeca1f0acce..51b9576fc57b297eea4c3dc61f945e3d
  {
  	/* Send us the fake SIGTRAP */
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
-index 8cb774915731e131352e9f9e3249ac8422faa293..0a1b285326fccffdd15435ead9b6f69591faf844 100644
+index e7a6d0e0fb9c2a6d3632579052ac6e69a98b9475..64abc74d0ca80a9311d0cea12c4dde52077d44f2 100644
 --- a/arch/um/kernel/skas/process.c
 +++ b/arch/um/kernel/skas/process.c
 @@ -67,6 +67,15 @@ unsigned long current_tls(void)
@@ -2551,7 +2551,7 @@ index 8cb774915731e131352e9f9e3249ac8422faa293..0a1b285326fccffdd15435ead9b6f695
  {
  	current->thread.arch.tpidr_el0 = tls;
 diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
-index 9ff2fa2288c4a59014725de16b21af4e5816ba23..766807e1ee60ea42848e8159bdfc51232548c7f3 100644
+index 1309cdaa33ac42c16fc89916d61d7cb64690347e..dbd286c05aaebd6ca678e31dcb4ceb037d17b740 100644
 --- a/arch/um/kernel/skas/syscall.c
 +++ b/arch/um/kernel/skas/syscall.c
 @@ -6,6 +6,7 @@
@@ -2562,10 +2562,10 @@ index 9ff2fa2288c4a59014725de16b21af4e5816ba23..766807e1ee60ea42848e8159bdfc5123
  #include <kern_util.h>
  #include <sysdep/ptrace.h>
  #include <sysdep/ptrace_user.h>
-@@ -47,6 +48,11 @@ void handle_syscall(struct uml_pt_regs *r)
- 	/* Initialize the syscall number and default return value. */
+@@ -71,6 +72,11 @@ void handle_syscall(struct uml_pt_regs *r)
  	UPT_SYSCALL_NR(r) = UPT_SYSCALL_ARCH_NR(r);
- 	PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
+ 	if (UPT_SYSCALL_PRESET_ENOSYS(r))
+ 		PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
 +	if (test_syscall_work(SYSCALL_USER_DISPATCH) &&
 +	    syscall_user_dispatch(regs)) {
 +		current->syscall_dispatch.on_dispatch = false;
@@ -2574,7 +2574,7 @@ index 9ff2fa2288c4a59014725de16b21af4e5816ba23..766807e1ee60ea42848e8159bdfc5123
  
  	if (syscall_trace_enter(regs))
  		goto out;
-@@ -65,12 +71,10 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -89,12 +95,10 @@ void handle_syscall(struct uml_pt_regs *r)
  			goto out;
  		}
  	}
@@ -2589,7 +2589,7 @@ index 9ff2fa2288c4a59014725de16b21af4e5816ba23..766807e1ee60ea42848e8159bdfc5123
  	/*
  	 * If no time passes, then sched_yield may not actually yield, causing
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 3d99882fe2bff1d2ffde08dba56ed394e57f745b..4ae759c65d830f96026b8be0af635f99b508d0c5 100644
+index 27a1851bf97b3fdcbcfdcd8d90df12dea7fa7fe9..720f4479b1557a2a340dd30bf53588281fd2e1f0 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -436,6 +436,10 @@ void userspace(struct uml_pt_regs *registers)

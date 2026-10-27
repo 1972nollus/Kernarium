@@ -39,15 +39,15 @@ selector in the error code, as on x86 Linux.
  create mode 100644 arch/arm64/um/ldt.c
 
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index 43e54d19ab21df8276c0baf338183b1827dd77b3..7f19b44c5f079889af28268730e76028e0c68324 100644
+index cc95273be0999519bc1fd89160ddbf39772dbc74..0f28e2f9b1be156b6d873587861c1bf1627c9986 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
-@@ -7,7 +7,7 @@ obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
+@@ -8,7 +8,7 @@ obj-$(CONFIG_UML_ARM64_TAGGED_ADDR_ABI) += tagged_addr.o
  obj-$(CONFIG_UML_ARM64_AARCH32) += aarch32.o aarch32_pages.o \
  	armv8_deprecated.o ptrace32.o signal32.o sys32.o sys_compat.o
  obj-$(CONFIG_COMPAT) += x86_32_syscalls.o
--obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += mmap.o x86_syscall_tables.o
-+obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += ldt.o mmap.o x86_syscall_tables.o
+-obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += x86_syscall_tables.o
++obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += ldt.o x86_syscall_tables.o
  
  x86-syscalltbl := $(srctree)/scripts/syscalltbl.sh
  x86-syscall-32 := $(srctree)/arch/x86/entry/syscalls/syscall_32.tbl
@@ -341,7 +341,7 @@ index fdc3e28675372640fbebb31155b25a035b021209..a7d76b1c5499420064308406731c8e40
  	struct mutex turnstile;
  
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index 83f7e9f5c45274d2fd1282a1e5b998a3582cc1a4..bdc2f2a8e3b06dd0b99526f398b991e01af9722b 100644
+index 4f94a043ff6518da1eb331931e677e96f2ebe5bb..26cd771730004f8ca702a6a4fa48e9830a33bc09 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -69,6 +69,7 @@ extern void do_uml_exitcalls(void);
@@ -388,7 +388,7 @@ index 7a70e528b66dd95c7102ff2f8bc335907c18c985..2a704fcdc2dc64f45e6d1fbe8e47da13
 +#endif
  }
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 6d7076773db49994d94eac24a2b53edb7e92cac0..8af8e4d5d84d11013230a2423ff6198b75c4581a 100644
+index 8a2d4845962c4807951f919730dd46eddf8f7968..4a533dde8515c45f428b8bb7f970883eddbefef4 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -88,6 +88,7 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
@@ -408,7 +408,7 @@ index 6d7076773db49994d94eac24a2b53edb7e92cac0..8af8e4d5d84d11013230a2423ff6198b
  #endif
  		guest_tls = current_tls();
  		/* Snapshot before polling so an IPI racing with the poll remains
-@@ -749,17 +752,23 @@ void userspace(struct uml_pt_regs *registers)
+@@ -771,17 +774,23 @@ void userspace(struct uml_pt_regs *registers)
  			} else if (registers->faultinfo.trap_no == 4 ||
  				   registers->faultinfo.trap_no == 5 ||
  				   registers->faultinfo.trap_no ==

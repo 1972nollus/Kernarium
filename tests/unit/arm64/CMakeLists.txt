@@ -77,20 +77,18 @@ uml_add_arm64_unit_test(no_sve WITHOUT_HARNESS
 # executes: its definition and the words both engines translate from.
 uml_add_arm64_unit_test(sm0_vector_length WITHOUT_HARNESS)
 
-# The AArch32 foundation: the state CpuState appends, the guest-AArch32
-# policy, the engines' levels, the AArch32 identification registers and
-# compat HWCAPs, and the engines' AArch32 entry.
+# The AArch32 foundation: the state CpuState appends, the engines' levels,
+# the AArch32 identification registers and compat HWCAPs, and the engines'
+# AArch32 entry.
 uml_add_arm64_unit_test(a32_foundation WITHOUT_HARNESS
     OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
 # The host runtime side of AArch32: the formats an AArch32 task's status and
 # FPSCR travel in, the load and save around an engine's AArch32 entry, the
 # bridge event of each exit, and the entry points and compat HWCAPs against
-# what the run presents. Run with the guest-AArch32 policy off and on.
+# what the run presents.
 uml_add_arm64_unit_test(a32_host WITHOUT_HARNESS
-    OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS} ARGS policy-off)
-uml_add_unit_test(NAME arm64-a32-host-policy-on
-    COMMAND uml_arm64_a32_host_tests policy-on)
+    OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
 # The tagged translation key both engines' caches share across A64, A32 and
 # T32, and the key-aware validation of a translation's saved guest units.
@@ -106,10 +104,11 @@ uml_add_arm64_unit_test(aarch32_decoder WITHOUT_HARNESS
 
 # The AArch32 semantic library's own contract: fault ordering, the exclusive
 # monitor, the single-instruction entry's IT handling, the events and the
-# library-exit counters. The corpus's model lane (below) covers its answers.
+# library-exit counters, which only the library's counting variant has. The
+# corpus's model lane (below) covers its answers.
 uml_add_arm64_unit_test(aarch32_semantics WITHOUT_HARNESS
     OBJECTS $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
-            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>)
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics_exit_counting>)
 
 # Instruction-family tests: base, memory, then FP and SIMD.
 uml_add_arm64_unit_test(base_arithmetic_allocation)

@@ -679,9 +679,11 @@ target-files verifiers reject any excluded module that reappears.
 
 Android suspends itself like a phone when the screen is off, the battery is
 unplugged and nothing holds a wakelock, and a phone stays awake while a USB host
-is connected. This machine's adb host arrives over the network, which cannot
-wake a suspended guest, so the host's connection would vanish for the minute or
-more until the next alarm. adbd's p0011 topic therefore sets
+is connected. This machine's adb host arrives over the network, which wakes a
+suspend the guest started for only 500 ms per received frame (the
+[mainline README](../../kernel/mainline-6.18/README.md) gives the kernel's
+side), so a connected host would see the guest suspend again between its
+exchanges. adbd's p0011 topic therefore sets
 `sys.kernarium.adb.host_connected` to 1 while it has an adb host and to 0
 when the last one leaves (and when it starts), and product init starts the
 Cuttlefish `suspend_blocker`, a userspace wakelock, on 1 and stops it on 0. The

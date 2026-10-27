@@ -16,15 +16,15 @@ tty_open() and every other carrier asleep.  A task that is about to block
 needs no poll: it leaves the CPU to the idle loop or to another task.
 ---
  arch/um/include/shared/kern_util.h |  3 +++
- arch/um/kernel/skas/uaccess.c      | 34 +++++++++++++++++++++++++++++-
- arch/um/kernel/time.c              | 15 +++++++++++++
- arch/um/kernel/tlb.c               | 10 +++++++++
- arch/um/os-Darwin/smp.c            | 23 +++++++++++++++-----
- kernel/sched/core.c                | 29 +++++++++++++++++++++++++
- 6 files changed, 108 insertions(+), 6 deletions(-)
+ arch/um/kernel/skas/uaccess.c      | 38 +++++++++++++++++++++++++++++-
+ arch/um/kernel/time.c              | 15 ++++++++++++
+ arch/um/kernel/tlb.c               | 10 ++++++++
+ arch/um/os-Darwin/smp.c            | 23 ++++++++++++++----
+ kernel/sched/core.c                | 29 +++++++++++++++++++++++
+ 6 files changed, 112 insertions(+), 6 deletions(-)
 
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
-index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b5e2662e1 100644
+index 198ba0cad52645505807ac20faeb9641c6467495..480eda72a4869435404ccfeea1b97fdce330b298 100644
 --- a/arch/um/include/shared/kern_util.h
 +++ b/arch/um/include/shared/kern_util.h
 @@ -37,6 +37,9 @@ extern unsigned int do_IRQ(int irq, struct uml_pt_regs *regs);
@@ -38,11 +38,11 @@ index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index b44b8471a07aee17490060eb29b006597d9f6591..87ac30bc6746fd5ad06660a4f6ea904fb6fbeee6 100644
+index eebdfd692dbf7a4bf209190f8da07de8fa1dee44..0a79d20d3c871993203998e82fef9496c7a0547e 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -227,6 +227,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)
- #endif
+@@ -184,6 +184,31 @@ static void mark_user_page_dirty(unsigned long addr, struct page *page,
+ 		folio_set_dirty(folio);
  }
  
 +#ifdef UML_HOST_DARWIN
@@ -70,10 +70,21 @@ index b44b8471a07aee17490060eb29b006597d9f6591..87ac30bc6746fd5ad06660a4f6ea904f
 +}
 +#endif
 +
- static int do_op_one_page(unsigned long addr, int len, int is_write,
- 		 int (*op)(unsigned long addr, int len, void *arg), void *arg)
+ static struct page *maybe_map(unsigned long virt, int is_write)
  {
-@@ -248,8 +273,12 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+ 	struct page *page;
+@@ -210,6 +235,10 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+ 		if (handle_uaccess_fault(virt, is_write, &dummy_code) ||
+ 		    fatal_signal_pending(current))
+ 			return NULL;
++#ifdef UML_HOST_DARWIN
++		/* Only a fault that may sleep gets here. */
++		darwin_uaccess_checkpoint(true);
++#endif
+ 	}
+ 	if (IS_ERR(page))
+ 		return NULL;
+@@ -280,8 +309,12 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  		page = NULL;
  	}
  #endif
@@ -87,10 +98,10 @@ index b44b8471a07aee17490060eb29b006597d9f6591..87ac30bc6746fd5ad06660a4f6ea904f
  
  #ifdef CONFIG_64BIT
  	pagefault_disable();
-@@ -280,6 +309,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -312,6 +345,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	if (is_write && n >= 0)
  		mark_user_page_dirty(user_addr, page, may_sleep);
- 	put_page(page);
+ 	unpin_user_mapping(page, is_write);
 +#ifdef UML_HOST_DARWIN
 +	darwin_uaccess_checkpoint(may_sleep);
 +#endif

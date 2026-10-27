@@ -173,11 +173,51 @@ register, even one of the -ERESTART* codes an interrupted call returns,
 reaches a signal handler and survives it unchanged. `guest-signal-restart`
 checks x0 on arm64 and the x86 exception probe checks RAX.
 
+A tracer sees an arm64 task's system calls as it does on native arm64. At the
+entry stop x0 (r0 for an AArch32 task) holds the first argument, and what a
+tracer writes there is the argument the call gets. `PTRACE_GET_SYSCALL_INFO`
+and audit report the argument as the task passed it, and
+`PTRACE_SET_SYSCALL_INFO` replaces both copies. Only the number -1 presets x0
+with -ENOSYS; a tracer or seccomp that sets it skips the call and leaves x0 as
+it wrote it, and any other number with no call returns -ENOSYS. The exit stop
+shows the return value, and a call restarted after a signal shows its first
+argument again. A tracer reads and sets the number of the call through
+`NT_ARM_SYSTEM_CALL`: another number runs that call, and -1 skips it. A call
+whose number a tracer changed and that then restarts after a signal restarts
+as the call the task made, because x8 stays as the task wrote it. A stop
+holds 0 (entry) or 1 (exit) in x7, r12 for an AArch32 task, and the task's
+value returns when the stop ends. The x86_64 slice keeps x86's convention,
+-ENOSYS in rax at every entry stop, and has neither of these.
+`guest-ptrace-syscall-args-gadgets` and `-jit` check A64 and AArch32 tracees.
+
 A task's stack pointer is the task's own. A system call or a fault taken
 with it at zero or outside the task's address space returns, or delivers the
 signal, that native Linux does, however often it comes on one vCPU.
 `guest-stack-pointer` checks this on arm64 and the x86 exception probe on
 both x86 ABIs.
+
+The arm64 kernels give a task the AArch64 tagged-address ABI
+(`Documentation/arch/arm64/tagged-address-abi.rst`) as native arm64 Linux
+without MTE does. `prctl(PR_SET_TAGGED_ADDR_CTRL, PR_TAGGED_ADDR_ENABLE)` lets
+a task pass pointers with any top byte to the system calls that read and write
+its memory, futex, `process_vm_readv` and `process_vm_writev`, and
+`PR_GET_TAGGED_ADDR_CTRL`, `abi.tagged_addr_disabled` and
+`NT_ARM_TAGGED_ADDR_CTRL` report and control it. The memory-management calls
+untag whether or not it is on. Threads and forks inherit it and an exec ends
+it; an AArch32 task has none and gets `EINVAL`. The kernel offers it only
+while `darwin_uml_guest_top_byte_ignore()` is 1, that is only under
+`--guest-top-byte-ignore`, because a tagged pointer faults otherwise; without
+the flag enabling it fails with `EINVAL` through both interfaces. A fault's
+address is the one the engine translated, already without its tag, so
+`segv()` never untags it and a tagged access with the ignore off faults at the
+tagged address instead of retrying forever. The one difference from native
+Linux is `SA_EXPOSE_TAGBITS`: `si_addr` never carries the tag, because the
+engines do not report the address the instruction presented. A non-fixed
+`mmap()` hint the guest cannot use, outside the guest address range or inside
+the native window, is ignored as on native Linux, and only a fixed placement
+that touches the window is refused. The x86_64 slice has none of this.
+`guest-tagged-addr-gadgets`, `-jit` and `-no-tbi` compare every result of a
+probe with the rows native arm64 Linux printed for it.
 
 When the host implements SME for a run,
 `darwin_uml_guest_sme_vector_length()` returns its streaming vector length
@@ -324,7 +364,19 @@ V0-V15, FPSCR split between `fpsr` and `fpcr`, TPIDRURW in `tls` and the new
 `tpidrro` for TPIDRURO. The comments on `struct darwin_uml_guest_registers`
 in [`abi/darwin_uml_abi.h`](abi/darwin_uml_abi.h) define the registers and what
 each event means, and `abi.cp15_barrier` (0 to 2, default 1) is passed as
-`DARWIN_UML_DISPATCH_A32_CP15BEN`. SWP, SWPB and SETEND are UNDEFINED.
+`DARWIN_UML_DISPATCH_A32_CP15BEN`. The engines raise the
+undefined-instruction event for SWP and SWPB whatever their condition, and
+`abi.swp` (0 or 1, default 0, as on arm64 Linux; Android's init sets 1)
+decides what the kernel does with it: 0 delivers SIGILL, and 1 emulates the
+instruction as arm64 Linux's `armv8_deprecated.c` does. The exchange is one
+atomic operation on the page the task sees, so it is atomic against exclusive
+pairs, atomic instructions and futex operations on other vCPUs. An access
+that fails, an unaligned SWP included, raises SIGSEGV with the pc at the
+instruction, a failing condition retires the instruction untouched, and a
+stepped one ends with `TRAP_TRACE`. A pc operand, which the architecture
+leaves UNPREDICTABLE, is UNDEFINED, where arm64 Linux would use an unrelated
+register. SETEND is UNDEFINED, as on a CPU without mixed-endian EL0, and has
+no switch.
 AArch32 is on only when `darwin_uml_guest_compat_hwcap()` is non-zero. That
 word always names the architecture's baseline, so it is the single source of
 truth and no separate query exists. While it is zero, as in a run without an
@@ -348,3 +400,38 @@ observed by that operation, and wake-operation arithmetic retries competing
 updates instead of overwriting them. The optional `guest-futex-atomic` test
 checks concurrent kernel/userspace updates and robust priority-inheritance
 mutexes.
+
+A virtio-gpu PRIME export is always read-write. The first export of a buffer
+fixes the mode of every later one, and guest Mesa exports without `DRM_RDWR`,
+so a buffer it exported first could otherwise never be mapped writable.
+
+A classic 3D resource, a single-sampled 2D or rectangle Virgl texture, is
+coherent with the GPU through its dma-buf around `DMA_BUF_IOCTL_SYNC`. Its
+guest pages change only on an explicit `TRANSFER_FROM_HOST_3D` or
+`TRANSFER_TO_HOST_3D`, which Mesa issues for its own maps and not for a
+dma-buf. A sync start waits for the buffer's write fences, then reads level 0
+from the host and waits for the transfer, and a sync end that wrote sends
+level 0 to the host. Blob resources, 2D resources and every other shape keep
+their behaviour, so Android, whose gralloc locks with its own transfers and
+whose GPU-only buffers are blobs, is unaffected. Each sync is a synchronous
+round trip that copies the whole level, because the ioctl carries no range,
+and a write end adds a second one. A start also replaces guest-page writes no
+transfer has taken to the host, so CPU access must be bracketed and a producer
+must flush its commands before it hands a buffer over. The optional
+`guest-gbm-dmabuf` test checks the export mode and both directions of
+visibility.
+
+virtio-gpu has no vertical blank, so the driver paces each CRTC with the DRM
+vblank timer at its mode's refresh rate. A page flip's event and out-fence
+signal at the next tick, not when the flip is queued, and the next commit waits
+for them, so a client that flips faster is held to the display's rate.
+Android's drm_hwcomposer schedules a frame against the present fence and so
+presents it no earlier than it asked for. The timer runs only while a client
+holds a vblank reference, so an idle display costs nothing. The commit tail
+waits for the commit's own flip event instead of counting a vblank as the
+default tail does: a loaded host can delay the timer past the 100 ms after
+which the count warns, and a commit must still complete on its flip, or the
+nonblocking flip a client queues right after a blocking one is refused with
+`-EBUSY`. No scanout needs the wait, because the host copies the frame when the
+driver flushes the resource. The optional `guest-drm-vblank` test checks the
+vblank wait and the flip rate against the mode's refresh rate.

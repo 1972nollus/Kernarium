@@ -236,7 +236,7 @@ class Tables:
             else:
                 require(first + second <= len(self.leaf_rows), f"leaf {index} reads past kLeafRows")
         require(all(row < len(self.rows) for row in self.leaf_rows), "a leaf names a missing row")
-        # The trees are acyclic: every inner edge goes to a later node.
+        # The trees are acyclic: a child precedes its parent.
         for index, (bit, first, second) in enumerate(self.nodes):
             if bit >= 0:
-                require(first > index and second > index, f"node {index} has a back edge")
+                require(first < index and second < index, f"node {index} has a forward edge")

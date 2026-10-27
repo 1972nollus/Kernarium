@@ -66,7 +66,12 @@ enum {
 	VIRTIO_VIDEO_F_VENDOR = 2,
 	/* Scatter entries may name an offset in a virtio shared-memory
 	   region instead of a guest-physical address. */
-	VIRTIO_VIDEO_F_RESOURCE_SHM_REGION = 3
+	VIRTIO_VIDEO_F_RESOURCE_SHM_REGION = 3,
+	/* The device speaks the V4L2 control and stream-information commands
+	   (VIRTIO_VIDEO_CMD_*_V4L2_CONTROLS, VIRTIO_VIDEO_CMD_*_STREAM_INFO).
+	   An encoder (device ID 30) always offers it, and a driver binds an
+	   encoder only when it is negotiated. A decoder never offers it. */
+	VIRTIO_VIDEO_F_V4L2_CONTROLS = 4
 };
 
 
@@ -87,7 +92,9 @@ enum virtio_video_format {
 	VIRTIO_VIDEO_FORMAT_YVU420, /* 12  YVU 4:2:0     */
 	VIRTIO_VIDEO_FORMAT_YUV422, /* 16 YUV 4:2:2 */
 	VIRTIO_VIDEO_FORMAT_P010,
-	VIRTIO_VIDEO_FORMAT_RAW_MAX = VIRTIO_VIDEO_FORMAT_P010,
+	VIRTIO_VIDEO_FORMAT_NV16, /* 16  Y/CbCr 4:2:2, encoder input */
+	VIRTIO_VIDEO_FORMAT_NV24, /* 24  Y/CbCr 4:4:4, encoder input */
+	VIRTIO_VIDEO_FORMAT_RAW_MAX = VIRTIO_VIDEO_FORMAT_NV24,
 
 	/* Coded formats */
 	VIRTIO_VIDEO_FORMAT_CODED_MIN = 0x1000,
@@ -117,7 +124,8 @@ enum virtio_video_profile {
 	VIRTIO_VIDEO_PROFILE_H264_STEREOHIGH,
 	VIRTIO_VIDEO_PROFILE_H264_MULTIVIEWHIGH,
 	VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE,
-	VIRTIO_VIDEO_PROFILE_H264_MAX = VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_BASELINE,
+	VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_HIGH,
+	VIRTIO_VIDEO_PROFILE_H264_MAX = VIRTIO_VIDEO_PROFILE_H264_CONSTRAINED_HIGH,
 
 	/* HEVC */
 	VIRTIO_VIDEO_PROFILE_HEVC_MIN = 0x200,
@@ -162,7 +170,11 @@ enum virtio_video_level {
 	VIRTIO_VIDEO_LEVEL_H264_4_2,
 	VIRTIO_VIDEO_LEVEL_H264_5_0,
 	VIRTIO_VIDEO_LEVEL_H264_5_1,
-	VIRTIO_VIDEO_LEVEL_H264_MAX = VIRTIO_VIDEO_LEVEL_H264_5_1,
+	VIRTIO_VIDEO_LEVEL_H264_5_2,
+	VIRTIO_VIDEO_LEVEL_H264_6_0,
+	VIRTIO_VIDEO_LEVEL_H264_6_1,
+	VIRTIO_VIDEO_LEVEL_H264_6_2,
+	VIRTIO_VIDEO_LEVEL_H264_MAX = VIRTIO_VIDEO_LEVEL_H264_6_2,
     VIRTIO_VIDEO_LEVEL_HEVC_MIN = 0x200,
     VIRTIO_VIDEO_LEVEL_HEVC_1 = VIRTIO_VIDEO_LEVEL_HEVC_MIN,
     VIRTIO_VIDEO_LEVEL_HEVC_2,
@@ -209,6 +221,12 @@ enum virtio_video_cmd_type {
 	VIRTIO_VIDEO_CMD_QUERY_CONTROL,
 	VIRTIO_VIDEO_CMD_GET_CONTROL,
 	VIRTIO_VIDEO_CMD_SET_CONTROL,
+	/* Encoder only; requires VIRTIO_VIDEO_F_V4L2_CONTROLS */
+	VIRTIO_VIDEO_CMD_QUERY_V4L2_CONTROLS,
+	VIRTIO_VIDEO_CMD_SET_V4L2_CONTROLS,
+	VIRTIO_VIDEO_CMD_GET_V4L2_CONTROLS,
+	VIRTIO_VIDEO_CMD_SET_STREAM_INFO,
+	VIRTIO_VIDEO_CMD_GET_STREAM_INFO,
 
 	/* Response */
 	VIRTIO_VIDEO_RESP_OK_NODATA = 0x0200,
@@ -217,6 +235,9 @@ enum virtio_video_cmd_type {
 	VIRTIO_VIDEO_RESP_OK_GET_PARAMS,
 	VIRTIO_VIDEO_RESP_OK_QUERY_CONTROL,
 	VIRTIO_VIDEO_RESP_OK_GET_CONTROL,
+	VIRTIO_VIDEO_RESP_OK_QUERY_V4L2_CONTROLS,
+	VIRTIO_VIDEO_RESP_OK_V4L2_CONTROLS,
+	VIRTIO_VIDEO_RESP_OK_STREAM_INFO,
 
 	VIRTIO_VIDEO_RESP_ERR_INVALID_OPERATION = 0x0300,
 	VIRTIO_VIDEO_RESP_ERR_OUT_OF_MEMORY,
@@ -224,6 +245,9 @@ enum virtio_video_cmd_type {
 	VIRTIO_VIDEO_RESP_ERR_INVALID_RESOURCE_ID,
 	VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER,
 	VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL,
+	/* A control that may not change while the stream is encoding was set
+	   while it was; the driver normally refuses this itself (-EBUSY). */
+	VIRTIO_VIDEO_RESP_ERR_BUSY,
 };
 
 struct virtio_video_cmd_hdr {
@@ -369,7 +393,25 @@ enum virtio_video_dequeue_flag {
 	VIRTIO_VIDEO_DEQUEUE_FLAG_KEY_FRAME = 1 << 2,
 	VIRTIO_VIDEO_DEQUEUE_FLAG_PFRAME = 1 << 3,
 	VIRTIO_VIDEO_DEQUEUE_FLAG_BFRAME = 1 << 4,
+	/* The buffer holds only parameter sets (VPS/SPS/PPS), produced first
+	   under V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE. */
+	VIRTIO_VIDEO_DEQUEUE_FLAG_CODEC_CONFIG = 1 << 5,
 };
+
+/*
+ * On an encoder (device ID 30):
+ *  - VIRTIO_VIDEO_QUEUE_TYPE_INPUT carries raw frames (V4L2 OUTPUT) and
+ *    VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT carries coded buffers (V4L2 CAPTURE).
+ *  - A coded buffer's response carries the timestamp of the raw frame it
+ *    encodes, data_sizes[0] = bytes written, and KEY_FRAME, PFRAME or
+ *    BFRAME. H.264 and HEVC payloads are Annex B byte streams.
+ *  - Coded buffers complete in decode order. The input buffer of a frame
+ *    completes as soon as the host has copied it, before it is encoded.
+ *  - STREAM_DRAIN completes once every queued frame is encoded; the next
+ *    coded buffer then completes empty with EOS.
+ *  - virtio_video_params.frame_rate is ignored; the frame interval is
+ *    VIRTIO_VIDEO_CMD_SET_STREAM_INFO's.
+ */
 
 struct virtio_video_resource_queue_resp {
 	struct virtio_video_cmd_hdr hdr;
@@ -517,6 +559,122 @@ struct virtio_video_set_control {
 
 struct virtio_video_set_control_resp {
 	struct virtio_video_cmd_hdr hdr;
+};
+
+/*
+ * V4L2 controls (encoder only, VIRTIO_VIDEO_F_V4L2_CONTROLS)
+ *
+ * Controls cross the wire as V4L2 control IDs and V4L2 menu indices, which
+ * are stable UAPI. The host lists every control it supports with its range,
+ * and the driver registers exactly that list and forwards values unchanged,
+ * so a capability the host learns needs no driver change. The driver skips a
+ * descriptor whose ID it does not know.
+ */
+
+/* VIRTIO_VIDEO_CMD_QUERY_V4L2_CONTROLS; hdr.stream_id is 0 (device scope). */
+struct virtio_video_query_v4l2_controls {
+	struct virtio_video_cmd_hdr hdr;
+	__le32 start_index; /* first descriptor to return */
+	__u8 padding[4];
+};
+
+enum virtio_video_v4l2_control_flag {
+	/* May change while the stream is encoding (otherwise the driver
+	   grabs it while streaming). */
+	VIRTIO_VIDEO_V4L2_CTRL_F_DYNAMIC = 1 << 0,
+	VIRTIO_VIDEO_V4L2_CTRL_F_READ_ONLY = 1 << 1,
+	/* Read from the host on every get. */
+	VIRTIO_VIDEO_V4L2_CTRL_F_VOLATILE = 1 << 2,
+};
+
+struct virtio_video_v4l2_control_desc {
+	__le32 id; /* V4L2_CID_* */
+	__le32 type; /* V4L2_CTRL_TYPE_* */
+	__le64 minimum; /* two's-complement s64 */
+	__le64 maximum;
+	__le64 step;
+	__le64 default_value;
+	/* Menu types: bit n set means menu index n is unsupported, as the
+	   skip mask of v4l2_ctrl_new_std_menu(). Zero otherwise. */
+	__le64 menu_skip_mask;
+	__le32 flags; /* Bitmask with VIRTIO_VIDEO_V4L2_CTRL_F_* */
+	__le32 elem_size; /* Compound types: payload bytes. Zero otherwise. */
+	/* Bit (format - VIRTIO_VIDEO_FORMAT_CODED_MIN) set for each coded
+	   format the control applies to; informational. */
+	__le64 coded_formats;
+};
+
+struct virtio_video_query_v4l2_controls_resp {
+	struct virtio_video_cmd_hdr hdr;
+	__le32 num_descs; /* descriptors in this response */
+	__le32 next_index; /* start_index of the next query; 0 when complete */
+	/* Followed by struct virtio_video_v4l2_control_desc descs[num_descs] */
+};
+
+/*
+ * VIRTIO_VIDEO_CMD_SET_V4L2_CONTROLS / VIRTIO_VIDEO_CMD_GET_V4L2_CONTROLS
+ *
+ * A set applies every value or none, as VIDIOC_S_EXT_CTRLS does. A compound
+ * value (elem_size != 0) is carried in the payload area that follows the
+ * value array: size is its length and value its byte offset in that area,
+ * a multiple of 8. A get request names the controls with size and value
+ * zero; the response returns them in the same layout.
+ */
+struct virtio_video_v4l2_control_value {
+	__le32 id; /* V4L2_CID_* */
+	__le32 size; /* 0 for a scalar */
+	__le64 value; /* scalar value, or payload offset */
+};
+
+struct virtio_video_v4l2_controls {
+	struct virtio_video_cmd_hdr hdr;
+	__le32 num_controls;
+	__u8 padding[4];
+	/* Followed by struct virtio_video_v4l2_control_value controls[]
+	   and then the payload area */
+};
+
+struct virtio_video_v4l2_controls_resp {
+	struct virtio_video_cmd_hdr hdr;
+	/* num_controls when every control succeeded, else the index of the
+	   first one that failed */
+	__le32 error_index;
+	__le32 num_controls;
+	/* GET: followed by the values and payload area, as in the request */
+};
+
+/*
+ * VIRTIO_VIDEO_CMD_SET_STREAM_INFO / VIRTIO_VIDEO_CMD_GET_STREAM_INFO
+ *
+ * The fractional frame interval (VIDIOC_S_PARM) and the raw frames'
+ * colorimetry (the colorspace fields of VIDIOC_S_FMT on V4L2 OUTPUT), in
+ * V4L2 enum values. The coded side reports the colorimetry it writes.
+ */
+struct virtio_video_stream_info {
+	__le32 queue_type; /* One of VIRTIO_VIDEO_QUEUE_TYPE_* types */
+	__le32 frame_interval_numerator;
+	__le32 frame_interval_denominator;
+	__le32 colorspace; /* enum v4l2_colorspace */
+	__le32 xfer_func; /* enum v4l2_xfer_func */
+	__le32 ycbcr_enc; /* enum v4l2_ycbcr_encoding */
+	__le32 quantization; /* enum v4l2_quantization */
+	__u8 padding[4];
+};
+
+struct virtio_video_set_stream_info {
+	struct virtio_video_cmd_hdr hdr;
+	struct virtio_video_stream_info info;
+};
+
+struct virtio_video_get_stream_info {
+	struct virtio_video_cmd_hdr hdr;
+	__le32 queue_type; /* One of VIRTIO_VIDEO_QUEUE_TYPE_* types */
+	__u8 padding[4];
+};
+
+struct virtio_video_get_stream_info_resp {
+	struct virtio_video_cmd_hdr hdr;
+	struct virtio_video_stream_info info;
 };
 
 /*

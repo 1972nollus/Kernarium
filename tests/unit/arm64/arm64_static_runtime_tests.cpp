@@ -731,10 +731,10 @@ static void uml_static_illegal_instruction()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
-/* From bridge ABI 22 an AArch32 task is one whose pstate has nRW set, and no
- * engine runs it yet: the compat HWCAP words are zero, so the kernel starts
- * none, and an entry that names one is fatal before any state is loaded. */
-static void uml_static_aarch32_entry_is_fatal()
+/* From bridge ABI 22 an AArch32 task is one whose pstate has nRW set. Both
+ * engines run it, so an entry that names one executes A32 code and leaves at
+ * its system call with the task still in AArch32 state. */
+static void uml_static_aarch32_entry_runs()
 {
 	constexpr unsigned long generation = 133;
 	constexpr std::uint64_t base = 0x2'4000;
@@ -755,11 +755,11 @@ static void uml_static_aarch32_entry_is_fatal()
 	unsigned long tls = 0;
 	const int event = darwin_uml_static_enter_guest(
 		&registers, &fp, sizeof(fp), generation, &tls);
-	require(event == DARWIN_UML_EVENT_FATAL);
-	/* Nothing ran or was loaded back. */
-	require(registers.pc == base);
-	require(registers.x[0] == 0x1'2345'6789ULL);
-	require(registers.pstate == pstate_aarch32_user);
+	require(event == DARWIN_UML_EVENT_SYSCALL);
+	/* The MOV ran, the SVC retired, and the task is still an AArch32 one. */
+	require(registers.pc == base + 8);
+	require(registers.x[0] == 1);
+	require((registers.pstate & pstate_aarch32_user) == pstate_aarch32_user);
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
@@ -1345,7 +1345,7 @@ int main()
 	uml_static_signal_return_bridge();
 	uml_static_permission_fault();
 	uml_static_illegal_instruction();
-	uml_static_aarch32_entry_is_fatal();
+	uml_static_aarch32_entry_runs();
 	uml_static_mapping_change_ranges();
 	uml_static_partial_uaccess_copy_preserves_sibling_writes();
 	uml_static_code_page_stamps_follow_physical_aliases();

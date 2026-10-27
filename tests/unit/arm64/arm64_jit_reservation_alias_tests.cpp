@@ -4,6 +4,7 @@
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_semantic_memory.hpp"
+#include "cpu/arm64/jit/jit_test_api.hpp"
 #include "platform/apple/host_features.hpp"
 
 #include <array>
@@ -825,6 +826,98 @@ void helper_misaligned_compare_swap_keeps_native_updates() {
   });
 }
 
+
+/*
+ * A store of the reserving vCPU's own, between its LDXR and STXR, keeps the
+ * reservation unless it writes the reserved granule. Reservation versions
+ * live in hashed slots, so the store may land on another granule of the
+ * reserved granule's slot; that must keep the reservation too, or a loop
+ * whose spill and lock collide would fail its STXR on every retry.
+ *
+ * The other granule is found with the production slot function, in a mapping
+ * large enough that one exists whatever the host addresses are: any three
+ * aligned runs of 32768 granules hold two, and the reserved one is not both.
+ */
+enum class OwnStore { native, semantic };
+
+void own_store_keeps_reservation_case(OwnStore path, bool same_granule,
+                                      bool colliding) {
+  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+  const unsigned long generation = 10'130U +
+      (path == OwnStore::semantic ? 4U : 0U) + (same_granule ? 2U : 0U) +
+      (colliding ? 1U : 0U);
+  constexpr std::uint64_t base = 0x400'0000U;
+  constexpr std::size_t pages = 400;
+  const auto data = base + page;
+  constexpr std::uint64_t observed = 0x1122'3344'5566'7788ULL;
+  constexpr std::uint64_t replacement = 0x8877'6655'4433'2211ULL;
+
+  JitBacking backing{pages};
+  backing.put32(0, load_exclusive);
+  backing.put32(4, system_call);
+  backing.put32(8, alias_store);
+  backing.put32(12, system_call);
+  backing.put32(16, store_exclusive);
+  backing.put32(20, system_call);
+  backing.put64(page, observed);
+  JitMapping mapping{generation, base, backing, pages};
+
+  uml::memory::Tlb tlb;
+  tlb.prepare(generation, darwin_uml_static_vm_changes(generation));
+  const auto host = [&](std::uint64_t address) {
+    auto *pointer = tlb.translate(address, ::uml::memory::Access::write);
+    require(pointer != nullptr);
+    return static_cast<std::byte *>(pointer);
+  };
+  const auto slot = [&](std::uint64_t address) {
+    return uml::cpu::arm64::jit::testing::reservation_slot_for_testing(
+        host(address));
+  };
+  const auto reserved_slot = slot(data);
+  std::uint64_t other = 0;
+  if (same_granule) {
+    other = data + 8U;
+  } else {
+    for (std::uint64_t offset = 2U * page;
+         other == 0 && offset < pages * page; offset += 16U) {
+      if ((slot(base + offset) == reserved_slot) == colliding)
+        other = base + offset;
+    }
+  }
+  require(other != 0);
+
+  uml::cpu::arm64::JitExecutor executor;
+  uml::memory::StaticGuestMemory memory;
+  uml::cpu::arm64::CpuState cpu{};
+  cpu.pc = base;
+  cpu.registers[1] = data;
+  cpu.registers[2] = 5U;
+  cpu.registers[4] = replacement;
+  cpu.registers[6] = other;
+  // The load takes the helper with top-byte ignore on, which keeps a
+  // software reservation; the store then runs natively without it.
+  cpu.tbi_enabled = true;
+  require(executor.begin_execution(generation, cpu.pc));
+  std::size_t executed = 0;
+  require(executor.run_block(cpu, memory, generation, executed) ==
+          ::uml::cpu::EngineEvent::continued);
+  require(cpu.exclusive_size == 8U);
+  cpu.tbi_enabled = path == OwnStore::semantic;
+  cpu.pc = base + 8U;
+  auto event = ::uml::cpu::EngineEvent::continued;
+  for (unsigned blocks = 0;
+       blocks < 4U && event == ::uml::cpu::EngineEvent::continued; ++blocks)
+    event = executor.run_block(cpu, memory, generation, executed);
+  require(event == ::uml::cpu::EngineEvent::system_call);
+  cpu.tbi_enabled = true;
+  cpu.pc = base + 16U;
+  require(executor.run_block(cpu, memory, generation, executed) ==
+          ::uml::cpu::EngineEvent::continued);
+  require(cpu.registers[5] == (same_granule ? 1U : 0U));
+  require(backing.get64(page) == (same_granule ? observed : replacement));
+  executor.end_execution();
+}
+
 } // namespace
 
 int main() {
@@ -856,5 +949,10 @@ int main() {
   concurrent_native_cold_paths_leave_publication_before_helper();
   helper_pair_compare_swap_keeps_native_updates();
   helper_misaligned_compare_swap_keeps_native_updates();
+  for (const auto path : {OwnStore::native, OwnStore::semantic}) {
+    own_store_keeps_reservation_case(path, false, false);
+    own_store_keeps_reservation_case(path, false, true);
+    own_store_keeps_reservation_case(path, true, false);
+  }
   return 0;
 }

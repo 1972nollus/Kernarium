@@ -232,15 +232,10 @@ def sanitize(name: str) -> str:
 
 @dataclass
 class Translation:
-    """C++ for one Decode section, with what it needs from the context."""
+    """C++ for one Decode section and the fields it reads."""
 
     body: list[str]
     fields_used: set[str] = field(default_factory=set)
-    uses_it: bool = False
-    uses_isa: bool = False
-    features: set[str] = field(default_factory=set)
-    outcomes: set[str] = field(default_factory=set)
-    members: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -622,13 +617,10 @@ class Translator:
                 f"detail::lowest_set_bit({value.cpp}, {width})", INT
             )
         if name == "InITBlock":
-            self.out.uses_it = True
             return Value("ctx.it.active()", BOOL)
         if name == "LastInITBlock":
-            self.out.uses_it = True
             return Value("ctx.it.last()", BOOL)
         if name == "CurrentInstrSet":
-            self.out.uses_isa = True
             return Value(
                 "(ctx.thumb ? InstrSet::T32 : InstrSet::A32)", enum("InstrSet")
             )
@@ -684,7 +676,6 @@ class Translator:
 
     def feature(self, feature: str) -> Value:
         if feature in FEATURES:
-            self.out.features.add(FEATURES[feature])
             return Value(f"ctx.features.has(Feature::{FEATURES[feature]})", BOOL)
         if feature in UNIMPLEMENTED_FEATURES:
             return Value("false", BOOL, False)
@@ -728,7 +719,6 @@ class Translator:
         if name in self.fields:
             self.error(f"variable {name!r} shadows a field")
         member = self.member_for(name, ty)
-        self.out.members.add(member.name)
         self.locals[name] = Value(f"out.{member.name}", ty)
         self.cpp_types[f"out.{member.name}"] = member.cpp
 
@@ -761,7 +751,6 @@ class Translator:
         if "expand_imm_c" in value.cpp:
             # A carry-out of "the flag itself" (rotation zero) is recorded
             # apart from the constant carry-out of a rotated immediate.
-            self.out.members.add("carry_flags")
             self.emit(f"out.carry_flags = {temporary}.carry_in;")
             return [f"{temporary}.imm32", f"{temporary}.carry"]
         self.error("tuple helper has no part names")
@@ -769,7 +758,6 @@ class Translator:
     def store(self, target: Value, value: Value, ty: Ty) -> None:
         cpp = value.cpp
         if cpp == "<PSTATE.C>":
-            self.out.members.add("carry_flags")
             self.emit(f"{target.cpp} = 0;")
             self.emit("out.carry_flags = true;")
             return
@@ -819,7 +807,6 @@ class Translator:
                     self.error("if test is not boolean")
                 if test.const is False:
                     return
-                self.out.outcomes.add(outcome)
                 if test.const is True:
                     self.emit(f"return Outcome::{outcome};")
                 else:
@@ -866,16 +853,12 @@ class Translator:
             self.error("statement is not a call")
         name = node[1]
         if name == "Undefined":
-            self.out.outcomes.add("undefined")
             self.emit("return Outcome::undefined;")
         elif name == "UnpredictableProcedure":
-            self.out.outcomes.add("unpredictable")
             self.emit("return Outcome::unpredictable;")
         elif name == "ExecuteAsNOP":
-            self.out.outcomes.add("nop")
             self.emit("return Outcome::nop;")
         elif name == "See":
-            self.out.outcomes.add("see")
             self.emit("return Outcome::see;")
         else:
             self.error(f"unsupported procedure {name!r}")

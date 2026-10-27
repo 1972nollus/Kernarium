@@ -107,6 +107,7 @@
       "inherits": "macos-unit",
       "cacheVariables": {
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_OBJCXX_FLAGS": "-fsanitize=address,undefined",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
       }
     },
@@ -116,7 +117,16 @@
       "inherits": "macos-unit",
       "cacheVariables": {
         "CMAKE_CXX_FLAGS": "-fsanitize=thread",
+        "CMAKE_OBJCXX_FLAGS": "-fsanitize=thread",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
+      "name": "macos-unit-census",
+      "displayName": "macOS unit tests with the gadget cache census",
+      "inherits": "macos-unit",
+      "cacheVariables": {
+        "UML_GADGET_CACHE_CENSUS": true
       }
     },
     {
@@ -126,6 +136,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_OBJCXX_FLAGS": "-fsanitize=address,undefined",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
         "UML_BUILD_KERNEL_RUNNER": true
       }
@@ -235,6 +246,11 @@
       "targets": ["unit-test-binaries"]
     },
     {
+      "name": "census",
+      "configurePreset": "macos-unit-census",
+      "targets": ["unit-test-binaries"]
+    },
+    {
       "name": "loader-asan-ubsan",
       "configurePreset": "macos-loader-asan-ubsan",
       "targets": ["uml_embedded_kernel_serialization_tests", "architecture-audit"]
@@ -298,7 +314,7 @@
       },
       "filter": {
         "include": {
-          "name": "^(gpu-|platform-video-decoder$|virtio-(balloon|battery|console|input|sound|video)-protocol$)"
+          "name": "^(gpu-|platform-video-(decoder|encoder(-recovery|-cache)?)$|video-encoder-capabilities$|virtio-(balloon|battery|console|input|sound|video|video-encoder)-protocol$)"
         }
       },
       "execution": {
@@ -425,6 +441,24 @@
       }
     },
     {
+      "name": "unit-census",
+      "inherits": "test-defaults",
+      "configurePreset": "macos-unit-census",
+      "environment": {
+        "DARWIN_UML_GADGET_CACHE_CENSUS": "/dev/null",
+        "DARWIN_UML_GADGET_CACHE_CENSUS_SECONDS": "1",
+        "DARWIN_UML_GADGET_CACHE_CENSUS_WORDS": "1"
+      },
+      "filter": {
+        "include": {
+          "label": "^unit$"
+        }
+      },
+      "execution": {
+        "jobs": 10
+      }
+    },
+    {
       "name": "loader-asan-ubsan",
       "inherits": "test-defaults",
       "configurePreset": "macos-loader-asan-ubsan",
@@ -498,6 +532,14 @@
         {"type": "configure", "name": "macos-loader-asan-ubsan"},
         {"type": "build", "name": "loader-asan-ubsan"},
         {"type": "test", "name": "loader-asan-ubsan"}
+      ]
+    },
+    {
+      "name": "check-unit-census",
+      "steps": [
+        {"type": "configure", "name": "macos-unit-census"},
+        {"type": "build", "name": "census"},
+        {"type": "test", "name": "unit-census"}
       ]
     }
   ]

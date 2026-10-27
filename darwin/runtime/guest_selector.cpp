@@ -16,24 +16,29 @@ extern "C" unsigned long darwin_uml_guest_hwcap(void)
 }
 
 /* The AT_HWCAP and AT_HWCAP2 words of a 32-bit task, from the AArch32
- * profile the running engine presents (guest_a32_support), as the AArch64
- * words follow its profile. They are zero until an engine runs AArch32 and
- * the guest-AArch32 policy is on, and the kernel then refuses 32-bit ELF
- * images: a non-zero word is the single source of truth that this run
- * executes AArch32 EL0, and run_common_guest() enters an AArch32 task only
- * where it holds. */
+ * profile of the running engine's host, as the AArch64 words follow its
+ * profile. A non-zero word is the single source of truth that this run
+ * executes AArch32 EL0, and the first word always names the baseline. */
 extern "C" unsigned long darwin_uml_guest_compat_hwcap(void)
 {
 	return ::uml::cpu::arm64::detail::guest_compat_hwcaps(
-		::uml::runtime::current_guest_host_capabilities(),
-		::uml::runtime::current_guest_a32_support())[0];
+		::uml::runtime::current_guest_host_capabilities())[0];
 }
 
 extern "C" unsigned long darwin_uml_guest_compat_hwcap2(void)
 {
 	return ::uml::cpu::arm64::detail::guest_compat_hwcaps(
-		::uml::runtime::current_guest_host_capabilities(),
-		::uml::runtime::current_guest_a32_support())[1];
+		::uml::runtime::current_guest_host_capabilities())[1];
+}
+
+/* Whether the run ignores the top byte of a data address, as the Android
+ * product and any --guest-top-byte-ignore run do. The kernel reads it at boot
+ * to decide whether to offer the tagged-address ABI. Outside a run no engine
+ * executes a guest, so nothing ignores a tag. */
+extern "C" unsigned long darwin_uml_guest_top_byte_ignore(void)
+{
+	const auto *context = ::uml::runtime::current_context();
+	return context != nullptr && context->top_byte_ignore() ? 1UL : 0UL;
 }
 
 extern "C" const char *darwin_uml_guest_cpu_model_name(void)

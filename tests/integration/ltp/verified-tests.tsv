@@ -955,7 +955,6 @@ syscalls	recv01	recv01	pass	240	All socket receive data and error checks pass
 syscalls	recvfrom01	recvfrom01	pass	240	All recvfrom data and error checks pass
 syscalls	recvmsg01	recvmsg01	pass	240	All recvmsg data and error checks pass
 syscalls	recvmsg02	recvmsg02	pass	240	Recvmsg stream EOF behavior passes
-syscalls	recvmsg03	recvmsg03	pass	240	RDS recvmsg destination-address behavior passes with built-in RDS-over-TCP support
 syscalls	recvmmsg01	recvmmsg01	pass	240	All batched socket receive and timeout checks pass
 syscalls	remap_file_pages01	remap_file_pages01	pass	240	Both file-page remapping checks pass
 syscalls	remap_file_pages02	remap_file_pages02	pass	240	All file-page remapping error checks pass
