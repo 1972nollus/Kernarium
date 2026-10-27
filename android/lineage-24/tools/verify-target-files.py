@@ -1444,6 +1444,18 @@ def check_wifi_network_policy(
     ):
         fail(f"system_ext policy does not let the Wi-Fi network domain set {WIFI_NETWORK_MARKER}")
     if not any(
+        CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) == "kernarium_wifi_network"
+        and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) == "system_server"
+        and match.group(3) == b"binder"
+        and b"transfer" in match.group(4).split()
+        for match in CIL_ALLOW_RULE.finditer(system_ext_policy)
+    ):
+        fail(
+            "system_ext policy does not let the Wi-Fi network domain transfer binders to "
+            "system_server: cmd hands the Wi-Fi service the receiver of its result, and "
+            "without the rule the network is never saved"
+        )
+    if not any(
         line.split()[:2] == [WIFI_NETWORK_MARKER, f"u:object_r:{WIFI_NETWORK_MARKER_TYPE}:s0"]
         for line in system_ext_property_contexts.splitlines()
         if line.strip() and not line.lstrip().startswith("#")

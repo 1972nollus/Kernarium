@@ -1024,7 +1024,7 @@ microphone and companion device setup feature declarations, the userdata `quota`
 suspend blocker with the adb host-connected property it follows, the network
 setup tool with the ARP policy init sets before it, its library, label and domain
 transition, the script that saves the virtual Wi-Fi network once, after boot and
-without touching the user's Wi-Fi switch, with its core domain and marker, the Wi-Fi
+without touching the user's Wi-Fi switch, with its core domain, its binder transfer to the Wi-Fi service's process and its marker, the Wi-Fi
 HAL and supplicant with their manifest fragments and services, the Wi-Fi feature
 declaration and the absent Ethernet, Aware, RTT, Direct and Passpoint ones, the built-in macvlan, cfg80211 and virt_wifi
 options of the packaged kernel configuration, the absent wificond, the ClearKey HAL's access to the memfd files of applications, the
