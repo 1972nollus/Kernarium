@@ -351,7 +351,10 @@ if(TARGET uml_gpu_service)
         uml_gpu_display_outlives_connection_tests
         display_outlives_connection_tests.cpp
         LIBRARIES uml_gpu_service
-        INCLUDES ${_uml_gpu_device_directory} ${CMAKE_CURRENT_SOURCE_DIR}
+        INCLUDES
+            ${_uml_gpu_device_directory}
+            ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
+            ${CMAKE_CURRENT_SOURCE_DIR}
         UNIT_DIRECTORY)
     # A host without a usable renderer skips it with status 77.
     set_tests_properties(gpu-display-outlives-connection

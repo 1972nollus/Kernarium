@@ -104,6 +104,8 @@ public:
     std::string takeInputConnectionName()
     {
         std::lock_guard lock(inputMutex_);
+        if (input_.descriptors[0].get() < 0)
+            throw std::logic_error("GPU has no connection");
         if (input_.descriptors[1].get() < 0)
             throw std::logic_error("GPU input endpoint already transferred");
         auto name = input_.connectionName;

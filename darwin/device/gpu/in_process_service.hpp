@@ -69,10 +69,12 @@ public:
      * restarted stay held for the new device, which opens it with
      * releaseRequests() like the old one.
      *
-     * The old guest's endpoints must be closed by now, or its device stays
-     * open in the process. Throws, with the display as it was, when the new
-     * connection cannot be opened; the service may then have no connection,
-     * and a later call tries again. Throws std::logic_error after stop(). */
+     * The old guest's endpoints are the guest's to close: the service shuts
+     * its own ends down whatever the guest has done, and an endpoint left open
+     * only holds a descriptor until it is closed. Throws, with the display as
+     * it was, when the new connection cannot be opened; the service may then
+     * have no connection, and a later call tries again. Throws
+     * std::logic_error after stop(). */
     void startNextConnection();
 
     /* Ends the connection and the display. */

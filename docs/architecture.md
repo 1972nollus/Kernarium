@@ -1018,8 +1018,12 @@ listener keeps its port, the window stays open, and display input that arrives
 while no connection exists is dropped. The request gate is the service's, not
 the connection's: a hold placed before the restart still holds the new device,
 and the application opens it as it opened the last. A host-visible blob of the
-new guest starts zeroed: nothing the old guest wrote to its own is visible in
-it.
+new guest has been observed to start zeroed, but nothing here enforces that: the
+host driver or the OS hands out fresh zero-filled memory. On the Mac, a guest
+that left a token in host-visible memory across a restart (freed, mapped at
+exit, and held by a live process) found none of it, and every byte read zero,
+in 128 to 256 MiB scanned on each of the next two boots. The iPad is not yet
+measured.
 
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md).

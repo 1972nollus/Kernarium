@@ -12,6 +12,7 @@
 #include <memory>
 #include <poll.h>
 #include <stdexcept>
+#include <string_view>
 
 namespace uml::gpu::testing {
 namespace {
@@ -297,8 +298,17 @@ void failedNextConnectionLeavesTheServiceRecoverable()
                 [&] { service.startNextConnection(); });
             requireThrows<std::logic_error>(
                 [&] { (void)service.takeConnectionName(); });
-            requireThrows<std::logic_error>(
-                [&] { (void)service.takeInputConnectionName(); });
+            /* And it says why: there is no connection, not that its endpoint
+             * went already. */
+            try {
+                (void)service.takeInputConnectionName();
+                require(false, "a service without a connection has an input");
+            } catch (const std::logic_error& error) {
+                require(
+                    std::string_view {error.what()}.find("no connection") !=
+                        std::string_view::npos,
+                    "the error does not say there is no connection");
+            }
         }
         transport = {};
         input = {};
