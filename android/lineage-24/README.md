@@ -513,6 +513,26 @@ map the message queue that a client's buffer pool shares in a memfd. The
 target-files verifier requires each of these and refuses a hardware decoder
 beyond the two (`VIDEO_DECODER_CODECS`).
 
+Two CTS results are known deviations, because a published number must hold on
+the hosts the product runs on (a busy Mac, an iPad) and not only on an idle one:
+
+- **4K at 60 frames per second HEVC decoding.**
+  `HevcVp9ClaimsPerformanceTest` at 3840x2160, 60 frames per second asks for a
+  hardware point the host cannot sustain through the guest. The decoders publish
+  4K at 49 to 55 frames per second. CTS's decoder performance test measures 62
+  to 74 on an idle Mac and 50 to 56 on a busy one, and `VideoDecoderPerfTest`
+  measures 53 to 56; publishing 60 made six of the HEVC 4K
+  `CodecDecoderPerformanceTest` cases fail (50 to 56 against the 57 they then
+  expect). The V4L2 path alone does about 250 frames per second at 4K and the
+  host decoder 290, so the rest goes in the Android output path above V4L2 (the
+  Codec2 output into a gralloc buffer and its consumer), which is a performance
+  item of its own.
+- **32-bit encode at the largest sizes.** On `armeabi-v7a`,
+  `VideoEncoderDecoderTest#testPerf` at H.264 and HEVC 1080p and HEVC 4K reaches
+  13.7 frames per second where the published point asks for 14.09: the test's
+  own thread is pegged at 92 to 96% of a vCPU while the codec service is 90%
+  idle, and the 64-bit run of the same case passes at 73 to 83%.
+
 ## Payload reduction
 
 Payload reduction is done through product configuration and regenerated AOSP
