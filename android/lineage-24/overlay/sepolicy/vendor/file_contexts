@@ -18,3 +18,7 @@
 
 # Addresses eth0 and builds the virtual Wi-Fi interface at post-fs-data.
 /vendor/bin/kernarium_net_setup  u:object_r:kernarium_net_setup_exec:s0
+
+# The Codec2 store that serves the host's hardware video encoders runs in the
+# mediacodec domain like the stock Codec2 service.
+/(vendor|system/vendor)/bin/hw/android\.hardware\.media\.c2-service-v4l2  u:object_r:mediacodec_exec:s0

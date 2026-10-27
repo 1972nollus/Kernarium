@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 09:09:20 +0900
+Subject: [PATCH] README: document the decoder
+
+The decoder reports its resources against a pixel rate of its own, takes a
+pixel format parameter, pools the output of a client that decodes to byte
+buffers and hands a picture to the host for a GPU consumer. None of that
+was written down, and a product that enables the decoder sets a property
+the README did not name.
+---
+ README.md | 113 +++++++++++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 100 insertions(+), 13 deletions(-)
+
+diff --git a/README.md b/README.md
+index 1012aae38c1f05c7b4b0109b8707c5831aab8b46..28ecce2211ae74dd626a9ea167b0bd60d7a17a1f 100644
+--- a/README.md
++++ b/README.md
+@@ -347,7 +347,8 @@ device's hierarchical coding controls allow. Layers turn B-frames off and
+ constant bitrate into variable bitrate. The bitrate ratio of the base layer
+ splits the bitrate between the two layers.
+ - *C2_PARAMKEY_COLOR_ASPECTS* sets the colorimetry of the raw frames, and
+-*C2_PARAMKEY_VUI_COLOR_ASPECTS* reports what the stream carries.
++*C2_PARAMKEY_VUI_COLOR_ASPECTS* reports what the stream carries. The device
++takes the transfer function of the frames as *xfer_func*, hybrid log-gamma as 8.
+ - *C2_PARAMKEY_HDR_STATIC_INFO* sets the HDR10 mastering display and content
+ light level of an HEVC Main 10 stream, if the device has those controls and
+ takes P010 frames. A device without P010 input does not offer Main 10.
+@@ -381,27 +382,50 @@ resources it needs, so that Android can tell what is left
+ - Codec sessions (*C2PlatformConfig::VENDOR_START*): the capacity is the sum of
+ the concurrent instance bounds of the codecs the store offers, and every
+ instance needs one.
+-- Pixel rate (*VENDOR_START* + 1): the capacity is
++- Encoder pixel rate (*VENDOR_START* + 1): the capacity is
+ *ro.vendor.v4l2_codec2.video_pixel_rate*. An instance needs the width times the
+ height times the frame rate (the operating rate, if it is set) of its stream
+ when it runs in real time, and nothing when it does not.
+-
+-An encoder reports a change of its need with its next output. A start that
+-would take the pixel rate of all instances past the capacity fails with
+-*C2_NO_MEMORY*, which Android raises as *ERROR_INSUFFICIENT_RESOURCE*; the first
+-instance is always admitted, as the device serves one of whatever size it
+-supports. A decoder takes part by reporting *videoResourcesNeeded()* and
+-claiming its pixel rate from *VideoPixelRateBudget* (*VideoResources.h*).
++- Decoder pixel rate (*VENDOR_START* + 2): the same, counted against
++*ro.vendor.v4l2_codec2.video_decode_pixel_rate* for the decoders, because the
++device sustains a different rate for decoding than for encoding. Omit a pixel
++rate property to report sessions only; the store reports a pixel rate only for
++a direction it offers.
++
++A component reports a change of its need with its next output. A start that
++would take the pixel rate of all instances of its direction past the capacity
++fails with *C2_NO_MEMORY*, which Android raises as
++*ERROR_INSUFFICIENT_RESOURCE*; the first instance is always admitted, as the
++device serves one of whatever size it supports. A component takes part by
++reporting *videoResourcesNeeded()* and claiming its pixel rate from
++*VideoPixelRateBudget* or *VideoDecodePixelRateBudget* (*VideoResources.h*).
++
++The concurrent instance bound of a product is also what its memory allows. A
++decoder keeps a pool of the pictures it decodes, as many as the device lists
++plus a few spare, in the memory of the device, so a 4K stream takes about a
++gigabyte, and a bound that lets a test or an application create that many
++streams at the largest size ends in the low memory killer. State the number of
++the largest streams the memory holds, not the number of streams the host serves.
+ 
+ ### Supported Input Pixel Formats:
+ 
+ The V4L2 encoder supports various input pixel formats. Frames are passed to the
+ V4L2 encoder in the NV12 format, or in P010 for HEVC Main 10. If a video frame
+ using a different pixel format is passed to the encoder, format conversion will
+-be performed to convert the frame to the NV12 format, except for packed RGB
+-frames (RGBA_8888 and RGBX_8888 blocks) that the device takes as they are: the
+-encoder then asks the device for the format of the first frame before it
+-queues it.
++be performed to convert the frame to the NV12 format (P010 for Main 10), except
++for packed RGB frames (RGBA_8888 and RGBX_8888 blocks) that the device takes as
++they are: the encoder then asks the device for the format of the first frame
++before it queues it.
++
++The conversion to P010 takes 8-bit YUV 4:2:0 (planar or semiplanar) and packed
++8-bit RGB, and RGBA_1010102, which the framework maps as a 10-bit YUVA block
++whose words hold red, green and blue. 8-bit YUV samples are shifted left by
++eight, which moves limited-range black and white from 16 and 235 to 64 and 940.
++RGB becomes YCbCr by the matrix and range of *C2_PARAMKEY_COLOR_ASPECTS*, the way
++the software AV1 and APV encoders convert RGBA_1010102: BT.709 for
++*MATRIX_BT709* and BT.2020 for any other, full range for *RANGE_FULL* and
++limited range for any other. Each chroma sample is the mean of its 2x2 block. 10-bit
++RGB for an 8-bit encoder is not converted.
+ 
+ ### Additional Features:
+ 
+@@ -415,4 +439,67 @@ PPS NAL units are prepended to IDR frames by enabling the
+ support this control the encoder will manually cache and prepend SPS and PPS NAL
+ units.
+ 
++## V4L2 Decoder
++
++### Supported Codecs
++
++The decoders are selected by name: *c2.v4l2.avc.decoder* for H.264 and
++*c2.v4l2.hevc.decoder* for HEVC, enabled by
++*ro.vendor.v4l2_codec2.decoder.supported.h264* and *.hevc* (VP8 and VP9 follow
++the same pattern). The profiles and levels come from the device. The device
++lists the HEVC levels by their Main tier, so the decoder also offers the High
++tier of every level from 4 up, which a stream of that tier needs.
++
++### Output Pixel Formats and Buffers
++
++The component takes *C2_PARAMKEY_PIXEL_FORMAT* on its output: flexible YUV
++4:2:0 always, P010 when the device lists a 10-bit profile (HEVC Main 10, VP9
++profile 2), and *IMPLEMENTATION_DEFINED*, which the framework sets when the
++client renders to a Surface. A client that asks for flexible 4:2:0 gets 8-bit
++samples from a 10-bit stream when the device converts them, and a client that
++asks for P010 gets P010. A client that renders to a Surface gets P010 from a
++10-bit stream when the usage of the Surface's consumer
++(*C2_PARAMKEY_OUTPUT_STREAM_USAGE*) names a video encoder, which then has all 10
++bits, and 8-bit samples otherwise, for a display that cannot show P010.
++
++A client that decodes to byte buffers configures the basic graphic block pool,
++whose blocks carry no pool data for the frame pool to identify them by; the
++component then creates a pool of its own from the gralloc allocator. The
++device writes the guest pages of a decoded picture, so a block that a
++consumer reads through the GPU is mapped for writing and unmapped before it is
++handed on, which transfers it to the host copy; every block of a decoder is
++allocated with CPU write usage for that.
++
++A client that detaches the output surface or sets another one hands the frame
++pool buffers the decoder has not met. The pool counts the buffers whose frames
++are still in use against the number of V4L2 buffers, and the decoder lets a free
++V4L2 buffer stand for a block it has not met, since the picture buffer is passed
++again with every queue operation.
++
++### Input Blocks
++
++The device takes a coded buffer in a dma-buf at least as large as the buffer
++size it negotiated, and refuses a smaller one. The input blocks the framework
++allocates for the component are as large as the maximum input size and are
++queued as they are. A client of the block model chooses the size of its own
++blocks, and the component copies a block smaller than the maximum input size
++into a block of a pool it creates on first use, and queues that one. A secure
++block is never copied.
++
++### Picture Size
++
++*C2_PARAMKEY_PICTURE_SIZE* takes any even width and height from 16 up, the
++alignment the codec XML publishes, and follows the size of the pictures the
++device decodes. The framework reads the parameter again after a flush and
++reports an output format change if it differs from what it has, so a step
++larger than the stream's alignment, which rounds the 360 rows of a 480x360
++stream up to 368, makes a change that the stream does not have.
++
++### Colour
++
++The component reads the colour aspects of a stream from its SPS VUI for every
++coded video sequence. A stream that states a range (*video_full_range_flag*)
++without a colour description reports that range, with the colour description
++left unspecified.
++
+ [1]: https://android.googlesource.com/kernel/common/+/ed63bb1d1f8469586006a9ca63c42344401aa2ab

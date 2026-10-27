@@ -1032,8 +1032,10 @@ policy without the LineageOS grants that Android's neverallow tests refuse, and 
 discrete app-op list that keeps AOSP's default ops, the example thermal HAL
 with its manifest fragment and service, the default CAS HAL with its ClearKey
 plugin, the vendor `build.prop` without the unreliable-present-fence property
-and with `ro.incremental.enable=1`) and the
-builder's assertions;
+and with `ro.incremental.enable=1`, the software decoders' 3840x2160 limits, the
+hardware video encoder service, a codec list of its two encoders and two
+decoders, their properties and no other enabled decoder, the video nodes' group,
+the service's seccomp calls and its label) and the builder's assertions;
 `lineage24-first-boot-precompile` covers the
 ISA set of a package and the per-ISA artifacts and manifest;
 `lineage24-mesa-venus-port-generator` covers the per-ISA generators of the
@@ -1074,6 +1076,31 @@ runs Android: the Mac gadgets and JIT engines and the iPad gadgets. A
   and the image and compressed sizes. The stock secondary zygote stays unless
   it costs more than 3 s of iPad cold boot or 100 MiB of guest `MemAvailable`;
   then one started on demand is designed.
+
+## Android hardware video encoding and decoding
+
+A release candidate whose product carries the hardware codecs
+([`../android/lineage-24/README.md`](../android/lineage-24/README.md#hardware-video-encoding-and-decoding))
+is qualified opt-in, on a guest started with the host's Virtio video device
+enabled (`--video`).
+
+- **Codec list.** `MediaCodecList` shows `c2.v4l2.avc.encoder`,
+  `c2.v4l2.hevc.encoder`, `c2.v4l2.avc.decoder` and `c2.v4l2.hevc.decoder`
+  beside the `c2.android.*` components; the service runs without restarts,
+  with no SELinux denial and no seccomp kill in its log.
+- **CTS.** The encoder tests of `CtsMediaEncoderTestCases`,
+  `CtsMediaV2TestCases`, `CtsVideoCodecTestCases`, `CtsVideoTestCases`,
+  `CtsMediaCodecTestCases` and `CtsMediaRecorderTestCases`, filtered to the two
+  encoder names, and the decoder classes of `CtsMediaV2TestCases` and
+  `CtsVideoTestCases` (the performance and availability classes among them) and
+  `AdaptivePlaybackTest`, `DecoderBlockModelTest` and `VideoDecoderPerfTest` of
+  `CtsMediaDecoderTestCases`, filtered to the two decoder names, pass on
+  `arm64-v8a` and `armeabi-v7a`, and the software `c2.android.*` results do
+  not regress. The encoder tests that decode their output pass through the
+  hardware decoders. The decoders' rates swing with the load of the host, so
+  the performance classes run on a quiet one.
+- **Host.** The host's video activity log shows hardware encodes and decodes
+  for those runs; a pass that never reached the host codec does not qualify.
 
 ## x86 instruction conformance
 

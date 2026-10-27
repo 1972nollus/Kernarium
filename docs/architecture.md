@@ -1006,8 +1006,12 @@ consumer reads it back as [`graphics.md`](graphics.md) describes.
 
 Sharing runs the other way too, for a guest whose buffer allocator is not the
 Vulkan driver: when another context asks to import a GL resource, the renderer
-gives that resource a host shared-memory segment the size of its tightly
-packed linear layout and hands out the segment's descriptor. The texture is
+gives that resource a host shared-memory segment the size of its linear layout
+and hands out the segment's descriptor. A row of the segment is padded to the
+first whole number of pixels that makes it a multiple of 16 bytes, the pitch
+Metal reads a texture over a buffer at; the guest allocator pads the buffer it
+asks for by the same rule, and the texture keeps the width the guest samples
+it at. The texture is
 refreshed from the segment before each GL read of it, and the segment is
 rewritten from the texture at the end of a submission that drew into it and
 before its descriptor is handed out. Ordering between the two consumers is the

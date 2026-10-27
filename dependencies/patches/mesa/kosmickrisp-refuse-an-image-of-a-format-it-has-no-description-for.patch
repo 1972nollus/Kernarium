@@ -1,0 +1,119 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 16:34:32 +0900
+Subject: [PATCH] kosmickrisp: refuse an image of a format it has no
+ description for
+
+A Venus guest passes the create info of its application to the host driver as
+it is, and the host driver runs in the process the guest's machine lives in.
+vkCreateImage with VK_FORMAT_UNDEFINED, which is valid only for an image that
+names an external format, reached the layout of the image's first plane, where
+the format's entry in the driver's format table is read to choose the Metal
+pixel format. The table has no entry for it, and the missing entry was
+dereferenced: a guest that sent the format bare ended the host process with a
+segmentation fault.
+
+Answer it with an error before the entry is read. The other formats the table
+does not describe are refused the same way.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/kosmickrisp/vulkan/kk_image_layout.c      |  9 +++
+ src/kosmickrisp/vulkan/meson.build            |  1 +
+ .../tests/test_undefined_image_format.c       | 55 +++++++++++++++++++
+ 3 files changed, 65 insertions(+)
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_undefined_image_format.c
+
+diff --git a/src/kosmickrisp/vulkan/kk_image_layout.c b/src/kosmickrisp/vulkan/kk_image_layout.c
+index 880b23c72df84448bb8b9e8efb3324cbc25ffc5f..8cb371445b100e658440d0f70708ecfbbb8305d6 100644
+--- a/src/kosmickrisp/vulkan/kk_image_layout.c
++++ b/src/kosmickrisp/vulkan/kk_image_layout.c
+@@ -244,6 +244,15 @@ kk_image_layout_init(const struct kk_device *dev, const struct vk_image *image,
+                      const uint8_t height_scale, struct kk_image_layout *layout)
+ {
+    const struct kk_va_format *supported_format = kk_get_va_format(format);
++
++   /* A format this driver has no description of has no Metal pixel format to
++    * lay an image out in. VK_FORMAT_UNDEFINED is one: it is valid only with
++    * an external format, which a Venus guest resolves before the call reaches
++    * this driver, so a guest that sends it bare must be answered with an
++    * error rather than by dereferencing the missing description. */
++   if (supported_format == NULL)
++      return VK_ERROR_INITIALIZATION_FAILED;
++
+    layout->type = vk_image_to_mtl_texture_type(image);
+    layout->width_px = image->extent.width / width_scale;
+    layout->height_px = image->extent.height / height_scale;
+diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
+index 8cefdd104d61117daf0f8ffa11936e6429ca1334..c75707b0aa5a7c3b4770bb233cb690cf5fe1a12a 100644
+--- a/src/kosmickrisp/vulkan/meson.build
++++ b/src/kosmickrisp/vulkan/meson.build
+@@ -387,6 +387,7 @@ if with_tests
+       ['texel_buffer_bounds', []],
+       ['address_binding_planes', []],
+       ['drm_plane_offset', []],
++      ['undefined_image_format', []],
+       ['query_pool_lifetime', ['NSZombieEnabled=YES']],
+     ]
+       test(
+diff --git a/src/kosmickrisp/vulkan/tests/test_undefined_image_format.c b/src/kosmickrisp/vulkan/tests/test_undefined_image_format.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..b44de180c2ca2d89e0b1209331b0d54033306089
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_undefined_image_format.c
+@@ -0,0 +1,55 @@
++/*
++ * Copyright 2026 Google LLC
++ * SPDX-License-Identifier: MIT
++ */
++
++/* An image format is described by this driver's format table. VK_FORMAT_UNDEFINED
++ * has no entry, and it is valid only for an image that names an external
++ * format; a Venus guest passes the create info of its application through to
++ * the host driver as it is, so a guest that sends the format bare reaches
++ * vkCreateImage. That has to be answered with an error: the driver runs in the
++ * host process, which a guest must not be able to end. */
++#define VK_NO_PROTOTYPES
++#include <vulkan/vulkan_core.h>
++
++#include <stdio.h>
++#include <stdlib.h>
++
++#include "kk_test.h"
++
++int
++main(void)
++{
++   struct kk_test_device t;
++   kk_test_create_instance(&t, NULL);
++   kk_test_create_device(&t, NULL, NULL, 0, NULL);
++   KK_LOAD_DEVICE_FUNCTIONS(t);
++
++   const VkImageTiling tilings[] = {
++      VK_IMAGE_TILING_OPTIMAL,
++      VK_IMAGE_TILING_LINEAR,
++   };
++   for (unsigned i = 0; i < 2; i++) {
++      const VkImageCreateInfo info = {
++         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
++         .imageType = VK_IMAGE_TYPE_2D,
++         .format = VK_FORMAT_UNDEFINED,
++         .extent = {64, 64, 1},
++         .mipLevels = 1,
++         .arrayLayers = 1,
++         .samples = VK_SAMPLE_COUNT_1_BIT,
++         .tiling = tilings[i],
++         .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
++         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
++      };
++      VkImage image = VK_NULL_HANDLE;
++      VkResult result = vkCreateImage(device, &info, NULL, &image);
++      fprintf(stderr, "tiling %d: vkCreateImage = %d\n", tilings[i], result);
++      CHECK(result != VK_SUCCESS);
++      CHECK(image == VK_NULL_HANDLE);
++   }
++
++   kk_test_destroy(&t);
++   printf("an image of the undefined format is refused\n");
++   return 0;
++}

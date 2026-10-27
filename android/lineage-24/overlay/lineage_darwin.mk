@@ -341,11 +341,6 @@ PRODUCT_COPY_FILES_EXCLUDE += \
 PRODUCT_COPY_FILES += \
     device/kernarium/darwin/config/kernarium_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml
 
-# The software video decoders advertise less than they decode; the vendor file
-# updates their limits to 3840x2160 (config/media_codecs_c2.xml).
-PRODUCT_COPY_FILES += \
-    device/kernarium/darwin/config/media_codecs_c2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml
-
 # The Vulkan HAL is Mesa's Venus driver built from this project's pinned guest
 # Mesa source. Its generated Soong module names are scoped with a venus_
 # prefix so they cannot collide with the AOSP external/mesa3d modules. The
@@ -413,6 +408,56 @@ PRODUCT_PACKAGES += KernariumWifiOverlay
 # the first time only. It does not turn Wi-Fi on, and a network the user forgets
 # stays forgotten. It runs from system_ext in a core domain of its own.
 PRODUCT_PACKAGES += kernarium_wifi_network_script
+
+# A Vulkan hardware-buffer import check: it fills gralloc buffers of several
+# formats and widths through the CPU, imports each into Vulkan and reads it
+# back, so a row pitch the driver cannot import or the renderer misreads fails
+# the run.
+PRODUCT_PACKAGES += kernarium_vk_ahb_import
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_ahb_import
+
+# A YUV hardware-buffer round-trip check: it writes NV12, P010 and YV12 buffers
+# of even and odd sizes whole and then by a partial lock, and reads them back
+# through the host copy, so a layout the guest and the renderer read
+# differently fails the run.
+PRODUCT_PACKAGES += kernarium_ahb_yuv_roundtrip
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_yuv_roundtrip
+
+# Hardware video encoding and decoding. The host's VideoToolbox encoders and
+# decoders reach the guest as V4L2 stateful devices, and external/v4l2_codec2
+# exposes them through Codec2: its service is the vendor Codec2 store beside the
+# software one. The service brings the vendor variants of the libraries it
+# links, the plugin store among them; naming one of those here would install its
+# core variant under /system, which the generic system artifact path
+# requirement refuses. The XML lists the encoders and the HEVC and H.264
+# decoders, and the properties enable exactly those components; it also updates
+# the limits of the software HEVC and VP9 decoders, which advertise less than
+# they decode, to 3840x2160. The store
+# admits as many instances as the properties allow and reports the pixel rate
+# the host sustains as the capacity of the real-time streams of each direction.
+# That capacity is the largest performance point the XML publishes: 3840x2160 at
+# 13 frames per second is 107827200 luma samples per second for the encoders,
+# and 3840x2160 at 55 frames per second is 456192000 for the decoders (CTS
+# wants the largest point to use at least 60% of the capacity). A decoder keeps
+# its pool of decoded pictures in the guest's 8 GiB, about 0.9 GiB for a 4K
+# stream, so four decoders may run at once where the encoders allow eight. The
+# extended policy adds the calls the service's seccomp policy lacks for the V4L2
+# device and for the crash handler, and ueventd gives the nodes to the group the
+# service joins.
+PRODUCT_SOONG_NAMESPACES += external/v4l2_codec2
+PRODUCT_PACKAGES += android.hardware.media.c2-service-v4l2
+PRODUCT_COPY_FILES += \
+    device/kernarium/darwin/config/media_codecs_c2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml \
+    device/kernarium/darwin/config/media_c2_extended_seccomp_policy:$(TARGET_COPY_OUT_VENDOR)/etc/seccomp_policy/android.hardware.media.c2-extended-seccomp_policy
+PRODUCT_VENDOR_PROPERTIES += \
+    ro.vendor.v4l2_codec2.encoder.supported.h264=true \
+    ro.vendor.v4l2_codec2.encoder.supported.hevc=true \
+    ro.vendor.v4l2_codec2.encode_concurrent_instances=8 \
+    ro.vendor.v4l2_codec2.video_pixel_rate=108000000 \
+    ro.vendor.v4l2_codec2.decoder.supported.h264=true \
+    ro.vendor.v4l2_codec2.decoder.supported.hevc=true \
+    ro.vendor.v4l2_codec2.decode_concurrent_instances=4 \
+    ro.vendor.v4l2_codec2.video_decode_pixel_rate=456192000
 
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 

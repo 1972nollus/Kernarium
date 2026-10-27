@@ -304,11 +304,12 @@ other than isolated apps. It names the ClearKey domain alone: `hal_drm_server`
 also covers the Widevine HAL of the system. The target-files verifier requires
 the rule in the packaged vendor policy.
 
-The guest has no hardware video decoder, and the software decoders of the
-swcodec APEX advertise less than they decode: VP9 up to 2048x2048 and HEVC at
-2,000,000 8x8 blocks per second (1080p at 60 frames per second). Both decode
-3840x2160, which the Mainline media CTS expects some component of every device
-to accept. `overlay/config/media_codecs_c2.xml` updates the two entries (the
+The software decoders of the swcodec APEX advertise less than they decode: VP9
+up to 2048x2048 and HEVC at 2,000,000 8x8 blocks per second (1080p at 60 frames
+per second). Both decode 3840x2160, which the Mainline media CTS expects some
+component of every device to accept. `overlay/config/media_codecs_c2.xml`, the
+file that also lists the hardware codecs
+([below](#hardware-video-encoding-and-decoding)), updates the two entries (the
 vendor file is parsed after the APEX's), and the target-files verifier requires
 the installed file to allow 3840x2160 at 30 frames per second.
 
@@ -537,7 +538,11 @@ Android port series beside the metadata. The port series carries the generated
 Soong port and the few source changes only Android needs, such as advertising
 `EGL_EXT_pixel_format_float` only with a float config: HWUI takes the extension
 as the promise of a half-float window config, and the Android visuals are all
-fixed-point. A guest replay assigns new
+fixed-point: RGBA8888, RGBX8888, BGRA8888 and RGB565, and gralloc offers no
+10-bit or half-float colour-output buffer either, so a 10-bit render target is
+unavailable and the CTS cases that use one skip on their own support query. The
+port also leaves out `VK_KHR_device_address_commands`, which the CTS refuses on
+a device whose declared dEQP level does not list it. A guest replay assigns new
 commit identities each time it is recreated, so the guest half is pinned by
 tree. Moving to a newer guest epoch is a metadata bump, a replay, and a
 regeneration; the verifier refuses a guest series that changed underneath the
@@ -619,6 +624,15 @@ The compositor's framebuffers are such GPU-only blobs; the host presents each
 through the Metal texture that stores its GL texture, as
 [`../../docs/graphics.md`](../../docs/graphics.md) describes.
 
+Such a blob has no pages the guest can map, because the kernel refuses to map a
+blob that is not mappable, so the guest's Virgl driver reaches it only through
+copy transfers. It imports a host blob with staging on whenever the renderer
+copies in both directions, and a second import of a handle it still holds
+reports the blob's type as the first did. Hardware bitmap uploads and the
+read-back of a window or an EGL image rely on both, and on the renderer reading
+a blob texture back through its staging buffer's guest storage
+([`../../docs/graphics.md`](../../docs/graphics.md#current-path)).
+
 Presentation is `VK_ANDROID_native_buffer`: the platform loader allocates the
 swapchain images from gralloc and the driver imports them. Those blobs belong to
 the renderer's GL context, and an Apple host has no dma-buf to hand across, so
@@ -628,11 +642,27 @@ that; the contract is in
 takes the presented layer on the scanout as a device composition. The product
 ships `kernarium_vk_present`, which owns a layer, wraps it through
 `VK_KHR_android_surface` and presents a swapchain, as the pass-or-fail check of
-that path.
+that path. `kernarium_vk_ahb_import` is the check of the import side: it fills
+hardware buffers of several formats and widths through the CPU, imports each
+into Vulkan and compares what the driver reads back, which fails for a row
+pitch the driver cannot import or the renderer lays out differently.
+`kernarium_ahb_yuv_roundtrip` is its counterpart for YUV buffers: NV12, P010 and
+YV12 of even and odd sizes are written whole and then by a partial lock and read
+back through the host copy, which fails for a layout the guest and the renderer
+read differently.
 
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:
 this driver has not been qualified against Android's Vulkan dEQP must-pass list.
+A declared level makes the CTS run every list dated up to it, so a declaration
+waits for those lists to pass whole. One gap is known in this
+stack: `vkMapMemory` of host-visible memory exported as a hardware buffer fails
+with `VK_ERROR_MEMORY_MAP_FAILED`, because gralloc backs such a buffer with a
+classic 3D resource, which Venus refuses to map by design (its contents reach
+the guest only through transfers), and a renderer-created blob in its place has
+no guest mapping on this host. The two
+`api.external.memory.android_hardware_buffer.*.host_visible.import_twice` cases
+of the 2019 list are the ones that map it.
 
 The Android hardware buffer handle type a swapchain needs is guest Mesa work,
 so it arrives with the guest Vulkan epoch pinned in
@@ -643,6 +673,103 @@ renderer. `tools/verify-mesa-venus-source.py` therefore refuses a protocol or
 registry pin that differs from its owner, and a port codec whose first line
 does not name the recorded pins; such a change needs a regenerated codec, a
 port replay and a new release.
+
+## Hardware video encoding and decoding
+
+The host's VideoToolbox encoders and decoders reach the guest as V4L2 stateful
+devices (Virtio video), and the product exposes them through Codec2. The vendor
+service `android.hardware.media.c2-service-v4l2` of `external/v4l2_codec2`
+serves `c2.v4l2.avc.encoder`, `c2.v4l2.hevc.encoder`, `c2.v4l2.avc.decoder` and
+`c2.v4l2.hevc.decoder` beside the software `c2.android.*` components, and
+MediaCodec selects them by name or by the platform's hardware preference. The patch series under
+`patches/projects/p0018` adds the HEVC component and derives every encoder
+parameter from the device rather than from constants: bitrate range and modes
+(VBR, CBR, constant quality), QP bounds, B-frame depth, temporal layers,
+profiles and levels, colour aspects (HLG too) and HDR10 static metadata. A capability the
+device does not list is not advertised: Main 10 and HDR10 need a 10-bit raw
+format, which the device publishes only when the host does. Packed RGB input
+goes to the device unconverted when it lists that byte order and is converted
+otherwise; a Main 10 session also takes 8-bit YUV and RGBA_1010102 input, which
+the component converts to P010 by the stream's colour aspects. The device picks the level of a stream under the ceiling the client
+asks for, so the component reports the level it reads from the first coded
+headers.
+
+The decoders take HEVC Main and Main 10 (with the High tier of every level the
+device lists, which it lists by its Main tier) and H.264. They decode to the
+raw format the client asks for: 8-bit YUV from a 10-bit stream unless the
+client asks for P010, which the host converts, or renders to the input surface
+of a video encoder, which reads all 10 bits. A client that decodes to byte
+buffers is given pooled output blocks, and every output block is allocated with
+CPU write usage so that the decoder can hand a picture to the host copy for a
+consumer that reads it through the GPU; the device writes the guest pages of a
+decoded picture, so minigbm never transfers a decoder's output from the host.
+HDR content is shown as SDR: the host has no P010 sampler, so a P010 surface
+cannot be shown correctly. A decoder reports its sessions and, once the
+product states a decode pixel rate, its pixel rate through the same resource
+interface as the encoders. The decoders keep the component's default rank, so
+MediaCodec chooses them before `c2.android.avc.decoder` and
+`c2.android.hevc.decoder` for a stream both take; a Main 10 stream has no other
+decoder.
+
+An encoder's input is a CPU-readable gralloc buffer (`COLOR_FormatYUV420Flexible`
+as NV12, `COLOR_FormatYUVP010` as P010, or packed RGB): the host cannot sample a
+YUV format natively, so minigbm allocates NV12, NV21, P010 and the planar 4:2:0
+formats as bytes of an R8 resource, each plane a sub-image that a mapping
+transfers on its own. P010 has the NV12 layout with two-byte samples, which is
+what lets Main 10 and HDR10 input reach the device.
+
+`overlay/config/media_codecs_c2.xml` is installed as
+`vendor/etc/media_codecs_c2.xml` and adds the two encoders and the two
+decoders, each with the performance points and measured frame rates CTS
+requires of a hardware codec, identical width and height ranges, and (for a
+decoder) the adaptive playback and dynamic colour aspects features it
+implements. The numbers are what the codecs sustain through the guest-to-host
+frame copy, which grows with the picture, so 4K HEVC encoding is published
+below 30 frames per second; a decoder's lower bound is the rate that keeps up
+with a 30 frames per second clip of every size at or below the point. The file
+is the product's one vendor codec list, so it also carries any update
+(`update="true"`) to the limits of a software decoder.
+`ro.vendor.v4l2_codec2.encode_concurrent_instances` and
+`ro.vendor.v4l2_codec2.decode_concurrent_instances` bound the instances of each
+direction. The encoders allow eight. A decoder keeps its pool of decoded
+pictures in the guest's memory, about 0.9 GiB for a 4K stream, so the guest's
+8 GiB holds four: the decoders state four, which CTS creates at every
+performance point's size without the low memory killer ending the process.
+`ro.vendor.v4l2_codec2.video_pixel_rate` and
+`ro.vendor.v4l2_codec2.video_decode_pixel_rate` are the pixel rates the host
+sustains for encoding and decoding. The service reports them as the capacity
+Android counts real-time instances against
+(`MediaCodec.getGloballyAvailableResources()`), so no performance point may
+exceed its direction's pixel rate and the largest must use at least 60% of it,
+as CTS requires of the resources a point consumes; the target-files verifier
+requires both. The service joins `camera`, which
+`ueventd.rc` gives the `/dev/video*` nodes; its executable carries the
+`mediacodec_exec` label; and `media_c2_extended_seccomp_policy` adds the calls
+the V4L2 poller and the crash handler of debuggerd need beside the service's
+default minijail policy, and `sepolicy/vendor/mediacodec.te` lets the service
+map the message queue that a client's buffer pool shares in a memfd. The
+target-files verifier requires each of these and refuses a hardware decoder
+beyond the two (`VIDEO_DECODER_CODECS`).
+
+Two CTS results are known deviations, because a published number must hold on
+the hosts the product runs on (a busy Mac, an iPad) and not only on an idle one:
+
+- **4K at 60 frames per second HEVC decoding.**
+  `HevcVp9ClaimsPerformanceTest` at 3840x2160, 60 frames per second asks for a
+  hardware point the host cannot sustain through the guest. The decoders publish
+  4K at 49 to 55 frames per second. CTS's decoder performance test measures 62
+  to 74 on an idle Mac and 50 to 56 on a busy one, and `VideoDecoderPerfTest`
+  measures 53 to 56; publishing 60 made six of the HEVC 4K
+  `CodecDecoderPerformanceTest` cases fail (50 to 56 against the 57 they then
+  expect). The V4L2 path alone does about 250 frames per second at 4K and the
+  host decoder 290, so the rest goes in the Android output path above V4L2 (the
+  Codec2 output into a gralloc buffer and its consumer), which is a performance
+  item of its own.
+- **32-bit encode at the largest sizes.** On `armeabi-v7a`,
+  `VideoEncoderDecoderTest#testPerf` at H.264 and HEVC 1080p and HEVC 4K reaches
+  13.7 frames per second where the published point asks for 14.09: the test's
+  own thread is pegged at 92 to 96% of a vCPU while the codec service is 90%
+  idle, and the 64-bit run of the same case passes at 73 to 83%.
 
 ## Payload reduction
 

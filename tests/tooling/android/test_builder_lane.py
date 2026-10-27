@@ -402,6 +402,108 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             str(kernel_release),
         ]
 
+        video_service = tool.VIDEO_ENCODER_SERVICE
+        video_codecs = tool.VIDEO_ENCODER_CODECS
+        video_ueventd = tool.VIDEO_ENCODER_UEVENTD
+        video_seccomp_default = tool.VIDEO_ENCODER_SECCOMP_DEFAULT
+        video_seccomp_extended = tool.VIDEO_ENCODER_SECCOMP_EXTENDED
+        good_video_properties = {
+            **tool.VIDEO_ENCODER_PROPERTIES,
+            **tool.VIDEO_DECODER_PROPERTIES,
+        }
+        good_video_rc = (
+            f"service vendor.media.c2 /vendor/bin/hw/{video_service}\n"
+            "    class hal\n"
+            "    user mediacodec\n"
+            "    group mediadrm drmrpc camera\n"
+        )
+        good_video_seccomp = "".join(
+            f"{call}: 1\n"
+            for call in ("read", *tool.VIDEO_ENCODER_SECCOMP_CALLS,
+                         *tool.VIDEO_CRASH_HANDLER_SECCOMP_CALLS)
+        )
+        # The vendor file contexts as the builder emits them: the serial device, the label
+        # of the network setup tool, and the label of the video codec service.
+        good_net_setup_label = (
+            "/vendor/bin/kernarium_net_setup  u:object_r:kernarium_net_setup_exec:s0\n"
+        )
+        good_video_contexts = (
+            "/dev/hvc0  u:object_r:serial_device:s0\n"
+            + good_net_setup_label
+            + "/(vendor|system/vendor)/bin/hw/android\\.hardware\\.media\\.c2-service-v4l2"
+            "  u:object_r:mediacodec_exec:s0\n"
+        )
+
+        def software_update(name: str, hevc_rate: str, vp9_size: str, vp9_blocks: str) -> str:
+            # The software decoders' 3840x2160 update (config/media_codecs_c2.xml).
+            if name == "c2.android.vp9.decoder":
+                return (
+                    f'    <MediaCodec name="{name}" type="video/x-vnd.on2.vp9" update="true">\n'
+                    f'      <Limit name="size" min="2x2" max="{vp9_size}"/>\n'
+                    f'      <Limit name="block-count" range="{vp9_blocks}"/>\n'
+                    '      <Limit name="blocks-per-second" range="1-2000000"/>\n'
+                    "    </MediaCodec>\n"
+                )
+            return (
+                f'    <MediaCodec name="{name}" type="video/hevc" update="true">\n'
+                f'      <Limit name="blocks-per-second" range="{hevc_rate}"/>\n'
+                "    </MediaCodec>\n"
+            )
+
+        def video_codec_list(*, decoders: tuple[str, ...] = (),
+                             hardware_decoders: dict[str, str] | None = None,
+                             decoder_features: tuple[str, ...] = (
+                                 "adaptive-playback", "dynamic-color-aspects"),
+                             encoders: dict[str, str] | None = None,
+                             performance_points: bool = True,
+                             measured_frame_rates: bool = True,
+                             performance_point: str = "1920x1080 30-45",
+                             decoder_performance_points: bool = True,
+                             decoder_measured_frame_rates: bool = True,
+                             decoder_performance_point: str = "3840x2160 49-55",
+                             software_updates: tuple[str, ...] = (
+                                 "c2.android.hevc.decoder", "c2.android.vp9.decoder"),
+                             hevc_rate: str = "1-16711680",
+                             vp9_size: str = "4096x4096",
+                             vp9_blocks: str = "1-65536") -> bytes:
+            encoders = video_codecs if encoders is None else encoders
+            hardware_decoders = (tool.VIDEO_DECODER_CODECS if hardware_decoders is None
+                                 else hardware_decoders)
+            limits = (
+                (f'      <Limit name="performance-point-{performance_point.split()[0]}"'
+                 f' range="{performance_point.split()[1]}"/>\n'
+                 if performance_points else "")
+                + ('      <Limit name="measured-frame-rate-1920x1080" range="31-45"/>\n'
+                   if measured_frame_rates else "")
+            )
+            decoder_limits = (
+                (f'      <Limit name="performance-point-{decoder_performance_point.split()[0]}"'
+                 f' range="{decoder_performance_point.split()[1]}"/>\n'
+                 if decoder_performance_points else "")
+                + ('      <Limit name="measured-frame-rate-3840x2160" range="49-55"/>\n'
+                   if decoder_measured_frame_rates else "")
+            )
+            return (
+                "<MediaCodecs>\n"
+                "  <Decoders>\n"
+                + "".join(software_update(name, hevc_rate, vp9_size, vp9_blocks)
+                          for name in software_updates)
+                + "".join(f'    <MediaCodec name="{name}" type="{kind}">\n'
+                          '      <Limit name="size" min="64x64" max="4096x4096"/>\n'
+                          + decoder_limits
+                          + "".join(f'      <Feature name="{feature}"/>\n'
+                                    for feature in decoder_features)
+                          + "    </MediaCodec>\n"
+                          for name, kind in hardware_decoders.items())
+                + "".join(f'    <MediaCodec name="{name}" type="video/avc"/>\n'
+                          for name in decoders)
+                + "  </Decoders>\n  <Encoders>\n"
+                + "".join(f'    <MediaCodec name="{name}" type="{kind}">\n{limits}'
+                          "    </MediaCodec>\n"
+                          for name, kind in encoders.items())
+                + "  </Encoders>\n</MediaCodecs>\n"
+            ).encode()
+
         def write_fixture(path: Path, *, module: bool = False,
                           module_loader: bool = False, dlkm_image: bool = False,
                           dynamic_image: bool = False, ota_tool: bool = False,
@@ -471,6 +573,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           cas_hal_variant: str | None = None,
                           vendor_property_variant: str | None = None,
                           wide_fdroid_permissions: bool = False,
+                          video_properties: dict[str, str] | None = None,
+                          missing_video_ueventd: bool = False,
                           mesa_gles_alignment: int = 16384,
                           elf_edit: tuple[str, int, int] | None = None,
                           abilist32: str = "armeabi-v7a",
@@ -856,34 +960,6 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "u:object_r:kernarium_wifi_network_exec:s0\n"
                     ),
                 )
-                archive.writestr(
-                    "VENDOR/etc/selinux/vendor_file_contexts",
-                    "/dev/hvc0  u:object_r:serial_device:s0\n"
-                    + (
-                        ""
-                        if net_policy_variant == "missing-label"
-                        else "/vendor/bin/kernarium_net_setup  "
-                        "u:object_r:kernarium_net_setup_exec:s0\n"
-                    ),
-                )
-                # The software decoders' 3840x2160 update (config/media_codecs_c2.xml).
-                hevc_rate = "1-3000000" if media_codecs_variant == "low-hevc-rate" else "1-16711680"
-                vp9_size = "2048x2048" if media_codecs_variant == "small-vp9-size" else "4096x4096"
-                vp9_blocks = "1-16384" if media_codecs_variant == "small-vp9-blocks" else "1-65536"
-                if media_codecs_variant != "missing":
-                    archive.writestr(
-                        "VENDOR/etc/media_codecs_c2.xml",
-                        "<broken" if media_codecs_variant == "malformed" else
-                        '<MediaCodecs><Decoders>'
-                        + ("" if media_codecs_variant == "no-hevc" else
-                           '<MediaCodec name="c2.android.hevc.decoder" type="video/hevc" update="true">'
-                           f'<Limit name="blocks-per-second" range="{hevc_rate}" /></MediaCodec>')
-                        + '<MediaCodec name="c2.android.vp9.decoder" type="video/x-vnd.on2.vp9" update="true">'
-                        f'<Limit name="size" min="2x2" max="{vp9_size}" />'
-                        f'<Limit name="block-count" range="{vp9_blocks}" />'
-                        '<Limit name="blocks-per-second" range="1-2000000" /></MediaCodec>'
-                        '</Decoders></MediaCodecs>',
-                    )
                 # Platform, vendor and system_ext policy as the builder emits them: the
                 # platform's core domains, a vendor-owned property that only
                 # vendor_init sets, and the system-owned property adbd reports its host in.
@@ -1047,7 +1123,50 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     ueventd += "/dev/hvc0 0660 root shell\n"
                 if unsupported_hvc:
                     ueventd += "/dev/hvc1 0660 root shell\n"
+                if not missing_video_ueventd:
+                    ueventd += video_ueventd + "\n"
                 archive.writestr("VENDOR/etc/ueventd.rc", ueventd)
+                # The hardware video encoders: the Codec2 service, its plugin
+                # store, the codec list, its seccomp policies and labels.
+                archive.writestr(
+                    f"VENDOR/bin/hw/{video_service}", synthetic_aarch64_elf(alignment)
+                )
+                archive.writestr("VENDOR/lib64/libc2plugin_store.so",
+                                 synthetic_aarch64_elf(alignment))
+                archive.writestr(
+                    f"VENDOR/etc/init/{video_service}.rc", good_video_rc
+                )
+                if media_codecs_variant != "missing":
+                    archive.writestr(
+                        "VENDOR/etc/media_codecs_c2.xml",
+                        b"<broken" if media_codecs_variant == "malformed" else video_codec_list(
+                            software_updates=(
+                                ("c2.android.vp9.decoder",) if media_codecs_variant == "no-hevc"
+                                else ("c2.android.hevc.decoder", "c2.android.vp9.decoder")),
+                            hevc_rate=("1-3000000" if media_codecs_variant == "low-hevc-rate"
+                                       else "1-16711680"),
+                            vp9_size=("2048x2048" if media_codecs_variant == "small-vp9-size"
+                                      else "4096x4096"),
+                            vp9_blocks=("1-16384" if media_codecs_variant == "small-vp9-blocks"
+                                        else "1-65536")),
+                    )
+                archive.writestr(
+                    f"VENDOR/etc/seccomp_policy/{video_seccomp_default}",
+                    "read: 1\n",
+                )
+                archive.writestr(
+                    f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}",
+                    good_video_seccomp,
+                )
+                archive.writestr(
+                    "VENDOR/etc/selinux/vendor_file_contexts",
+                    good_video_contexts.replace(good_net_setup_label, "")
+                    if net_policy_variant == "missing-label" else good_video_contexts,
+                )
+                archive.writestr(
+                    f"VENDOR/etc/vintf/manifest/{video_service}.xml",
+                    '<manifest version="1.0" type="device"/>\n',
+                )
                 for apk in preopt_apks:
                     archive.writestr(apk, b"apk")
                     apk_path = Path(apk)
@@ -1229,6 +1348,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         f"ro.hardware.{vendor_hal_property}=selected\n"
                         if vendor_hal_property
                         else ""
+                    )
+                    + "".join(
+                        f"{name}={value}\n"
+                        for name, value in (
+                            good_video_properties
+                            if video_properties is None
+                            else video_properties
+                        ).items()
                     ),
                 )
                 archive.writestr("ODM/etc/build.prop", abi_properties("odm", "armeabi-v7a"))
@@ -1575,6 +1702,97 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("curated-out-profiles",
              {"extra_entry": "SYSTEM_EXT/app/Profiles/Profiles.apk"}),
             ("fdroid-wide-permissions", {"wide_fdroid_permissions": True}),
+            ("missing-video-encoder-service",
+             {"entries": {f"VENDOR/bin/hw/{video_service}": None}}),
+            ("missing-video-plugin-store",
+             {"entries": {"VENDOR/lib64/libc2plugin_store.so": None}}),
+            ("missing-video-codec-list",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": None}}),
+            ("video-codec-list-lacks-hevc",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoders={"c2.v4l2.avc.encoder": "video/avc"})}}),
+            ("video-codec-list-lacks-hevc-decoder",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 hardware_decoders={"c2.v4l2.avc.decoder": "video/avc"})}}),
+            ("video-unapproved-hardware-decoder",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 hardware_decoders={**tool.VIDEO_DECODER_CODECS,
+                                    "c2.v4l2.vp9.decoder": "video/x-vnd.on2.vp9"})}}),
+            ("video-decoder-without-adaptive-playback",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_features=("dynamic-color-aspects",))}}),
+            ("video-software-decoder-listed-not-updated",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoders=("c2.android.avc.decoder",))}}),
+            ("video-codec-list-invalid",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": b"<MediaCodecs>"}}),
+            ("video-encoder-without-performance-point",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_points=False)}}),
+            ("video-encoder-without-measured-frame-rate",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 measured_frame_rates=False)}}),
+            ("video-performance-point-above-capacity",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 30-60")}}),
+            ("video-performance-point-malformed",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 fast")}}),
+            ("video-decoder-without-performance-point",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_points=False)}}),
+            ("video-decoder-without-measured-frame-rate",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_measured_frame_rates=False)}}),
+            ("video-decoder-point-above-capacity",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="3840x2160 60-120")}}),
+            ("video-decoder-points-far-below-capacity",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="1280x720 60-90")}}),
+            ("video-pixel-rate-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_pixel_rate": "1000"}}),
+            ("video-decode-pixel-rate-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_decode_pixel_rate": "1000"}}),
+            ("video-unapproved-decoder-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.decoder.supported.vp9": "true"}}),
+            ("missing-video-decoder-property",
+             {"video_properties": {
+                 name: value for name, value in good_video_properties.items()
+                 if not name.endswith("decoder.supported.h264")}}),
+            ("video-decode-concurrency-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.decode_concurrent_instances": "1"}}),
+            ("missing-video-hevc-property",
+             {"video_properties": {
+                 name: value for name, value in good_video_properties.items()
+                 if not name.endswith("supported.hevc")}}),
+            ("video-concurrency-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.encode_concurrent_instances": "1"}}),
+            ("missing-video-ueventd", {"missing_video_ueventd": True}),
+            ("video-service-without-camera-group",
+             {"entries": {f"VENDOR/etc/init/{video_service}.rc": good_video_rc.replace(
+                 " camera", "").encode()}}),
+            ("video-seccomp-lacks-eventfd",
+             {"entries": {
+                 f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}":
+                 b"read: 1\n# eventfd2: 1\n"}}),
+            ("video-seccomp-lacks-crash-handler-call",
+             {"entries": {
+                 f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}":
+                 good_video_seccomp.replace("uname: 1\n", "").encode()}}),
+            ("video-service-label",
+             {"entries": {"VENDOR/etc/selinux/vendor_file_contexts":
+                          good_video_contexts.replace("mediacodec_exec", "vendor_file").encode()}}),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)
@@ -1721,7 +1939,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("media-codecs-missing-cause", {"media_codecs_variant": "missing"},
              "VENDOR/etc/media_codecs_c2.xml"),
             ("media-codecs-malformed-cause", {"media_codecs_variant": "malformed"},
-             "media_codecs_c2.xml is not well-formed"),
+             "media_codecs_c2.xml is not (valid XML|well-formed)"),
             ("media-codecs-no-hevc-cause", {"media_codecs_variant": "no-hevc"},
              "does not update c2.android.hevc.decoder"),
             ("media-codecs-low-hevc-rate-cause", {"media_codecs_variant": "low-hevc-rate"},
@@ -1865,6 +2083,117 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"VENDOR/lib/egl/libEGL_kernarium.so": synthetic_arm_elf(
                  needed=("venus_gallium_dri.so",))}},
              r"no readable section headers"),
+            ("missing-video-encoder-service-cause",
+             {"entries": {f"VENDOR/bin/hw/{video_service}": None}},
+             "required entries are missing"),
+            ("video-codec-list-lacks-hevc-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 encoders={"c2.v4l2.avc.encoder": "video/avc"})}},
+             "exactly the hardware encoders"),
+            ("video-software-decoder-listed-not-updated-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoders=("c2.android.avc.decoder",))}},
+             "outside the hardware codecs and the software updates"),
+            ("video-encoder-without-performance-point-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_points=False)}},
+             "publishes no performance-point-"),
+            ("video-encoder-without-measured-frame-rate-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 measured_frame_rates=False)}},
+             "publishes no measured-frame-rate-"),
+            ("video-performance-point-above-capacity-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 30-60")}},
+             "above the pixel rate capacity 108000000"),
+            ("video-performance-point-malformed-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 performance_point="3840x2160 fast")}},
+             "publishes a malformed performance-point-3840x2160"),
+            ("video-decoder-without-performance-point-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_points=False)}},
+             r"c2\.v4l2\.\w+\.decoder publishes no performance-point-"),
+            ("video-decoder-without-measured-frame-rate-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_measured_frame_rates=False)}},
+             r"c2\.v4l2\.\w+\.decoder publishes no measured-frame-rate-"),
+            ("video-decoder-point-above-capacity-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="3840x2160 60-120")}},
+             "above the decode pixel rate capacity 456192000"),
+            ("video-decoder-points-far-below-capacity-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="1280x720 60-90")}},
+             "below 60% of the capacity 456192000"),
+            ("video-pixel-rate-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_pixel_rate": "1000"}},
+             "lacks ro.vendor.v4l2_codec2.video_pixel_rate=108000000"),
+            ("video-decode-pixel-rate-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_decode_pixel_rate": "1000"}},
+             "lacks ro.vendor.v4l2_codec2.video_decode_pixel_rate=456192000"),
+            ("video-codec-list-lacks-hevc-decoder-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 hardware_decoders={"c2.v4l2.avc.decoder": "video/avc"})}},
+             "must name the hardware decoders"),
+            ("video-unapproved-hardware-decoder-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 hardware_decoders={**tool.VIDEO_DECODER_CODECS,
+                                    "c2.v4l2.vp9.decoder": "video/x-vnd.on2.vp9"})}},
+             "must name the hardware decoders"),
+            ("video-decoder-without-adaptive-playback-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_features=("dynamic-color-aspects",))}},
+             "does not publish adaptive-playback"),
+            ("video-unapproved-decoder-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.decoder.supported.vp9": "true"}},
+             "outside the approved set"),
+            ("missing-video-decoder-property-cause",
+             {"video_properties": {
+                 name: value for name, value in good_video_properties.items()
+                 if not name.endswith("decoder.supported.h264")}},
+             "lacks ro.vendor.v4l2_codec2.decoder.supported.h264"),
+            ("video-decode-concurrency-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.decode_concurrent_instances": "1"}},
+             "lacks ro.vendor.v4l2_codec2.decode_concurrent_instances=4"),
+            ("missing-video-hevc-property-cause",
+             {"video_properties": {
+                 name: value for name, value in good_video_properties.items()
+                 if not name.endswith("supported.hevc")}},
+             "lacks ro.vendor.v4l2_codec2.encoder.supported.hevc"),
+            ("video-concurrency-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.encode_concurrent_instances": "1"}},
+             "lacks ro.vendor.v4l2_codec2.encode_concurrent_instances=8"),
+            ("missing-video-ueventd-cause",
+             {"missing_video_ueventd": True}, "video nodes' group"),
+            ("video-service-without-camera-group-cause",
+             {"entries": {f"VENDOR/etc/init/{video_service}.rc": good_video_rc.replace(
+                 " camera", "").encode()}},
+             "does not join the group"),
+            ("video-seccomp-lacks-eventfd-cause",
+             {"entries": {
+                 f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}":
+                 b"read: 1\n# eventfd2: 1\n"}},
+             "does not allow eventfd2"),
+            ("video-seccomp-lacks-crash-handler-call-cause",
+             {"entries": {
+                 f"VENDOR/etc/seccomp_policy/{video_seccomp_extended}":
+                 good_video_seccomp.replace("uname: 1\n", "").encode()}},
+             "does not allow uname"),
+            ("video-service-label-cause",
+             {"entries": {"VENDOR/etc/selinux/vendor_file_contexts":
+                          good_video_contexts.replace("mediacodec_exec", "vendor_file").encode()}},
+             "not labeled mediacodec_exec"),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)
