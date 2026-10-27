@@ -2406,6 +2406,22 @@ std::size_t NativeAddressSpace::direct_mapping_count_for_testing() const
 	return retired_.load(std::memory_order_acquire) ? 0 :
 		direct_slots_.size();
 }
+
+bool NativeAddressSpace::mapping_clears_its_page_copy_for_testing() noexcept
+{
+	alignas(Mapping) unsigned char storage[sizeof(Mapping)];
+	auto *const mapping = ::new (storage) Mapping{};
+	mapping->original.fill(std::byte{0xa5});
+	/* Read through the bytes the object occupied once it is destroyed. */
+	const volatile unsigned char *const copy =
+		reinterpret_cast<const unsigned char *>(mapping->original.data());
+	const std::size_t size = mapping->original.size();
+	mapping->~Mapping();
+	for (std::size_t index = 0; index < size; ++index)
+		if (copy[index] != 0)
+			return false;
+	return true;
+}
 #endif
 
 NativeAddressSpace::~NativeAddressSpace()

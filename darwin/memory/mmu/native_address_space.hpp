@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <memory>
 #include <unordered_map>
@@ -66,6 +67,9 @@ public:
 		noexcept;
 	[[nodiscard]] std::size_t direct_mapping_count_for_testing() const
 		noexcept;
+	/* Whether a mapping's page copy is zero once the mapping is destroyed. */
+	[[nodiscard]] static bool mapping_clears_its_page_copy_for_testing()
+		noexcept;
 
 private:
 	struct BackingIdentity final {
@@ -94,8 +98,22 @@ private:
 		std::uint64_t offset;
 		int protection;
 		BackingIdentity identity;
+		/* A copy of the guest page as the shadow slot last agreed with its
+		 * backing. It dies with the mapping and takes nothing of a guest's
+		 * memory with it into freed heap, which a guest that restarts itself
+		 * hands to its successor in the same process. */
 		std::array<std::byte, 4096> original{};
 		bool loaded{};
+
+		~Mapping()
+		{
+			/* Darwin has no explicit_bzero and exposes memset_s only for C11
+			 * Annex K; the empty asm that reads the pointer and clobbers
+			 * memory is what stops the compiler from dropping the clear as
+			 * a dead store to a dying object. */
+			std::memset(original.data(), 0, original.size());
+			__asm__ __volatile__("" : : "r"(original.data()) : "memory");
+		}
 	};
 	struct DirectMapping final {
 		int fd;
