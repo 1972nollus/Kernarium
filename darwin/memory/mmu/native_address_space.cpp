@@ -2418,11 +2418,23 @@ void NativeAddressSpace::retire() noexcept
 	std::lock_guard lock{mutex_};
 	if (retired_.exchange(true, std::memory_order_acq_rel))
 		return;
-	for (const auto slot : materialized_slots_)
-		(void)mprotect(reinterpret_cast<void *>(slot), host_page_size(),
-			PROT_READ | PROT_WRITE);
-	for (const auto slot : materialized_slots_)
-		(void)flush_slot_locked(slot);
+	/* A shadow of a descriptor's backing is published, because the backing
+	 * outlives the space. A shadow of guest RAM is discarded: nothing reads RAM
+	 * once the run is over, and the loader has already released the kernel
+	 * image, whose tail is the first RAM the guest owns, so the root's span
+	 * holds unmapped or reserved pages that a publication would fault on. */
+	for (const auto slot : materialized_slots_) {
+		for (std::uintptr_t position = 0; position < host_page_size();
+		     position += guest_page_size) {
+			const auto found = mappings_.find(slot + position);
+			if (found == mappings_.end() || !found->second.loaded ||
+			    anonymous_shared_backing_memory(
+				    found->second.identity.device,
+				    found->second.identity.inode).anonymous)
+				continue;
+			(void)flush_page_locked(slot + position);
+		}
+	}
 	mappings_.clear();
 	backing_index_.clear();
 	slot_protections_.clear();
