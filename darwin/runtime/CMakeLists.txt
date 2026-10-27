@@ -63,6 +63,19 @@ target_include_directories(uml_runtime_kernel_signals PUBLIC
 target_link_libraries(uml_runtime_kernel_signals PUBLIC
     UML::MemorySharedBacking)
 
+# What an embedded kernel creates through its imports and does not give back:
+# descriptors, pthread keys, allocations and mappings. The loader resolves the
+# kernel's creating imports to this ledger, and a restarted guest's hand-back
+# gives everything in it back.
+add_library(uml_runtime_kernel_resources OBJECT
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/kernel_resources.cpp)
+add_library(UML::RuntimeKernelResources ALIAS uml_runtime_kernel_resources)
+uml_declare_architecture_target(uml_runtime_kernel_resources runtime)
+target_link_libraries(uml_runtime_kernel_resources PRIVATE
+    UML::RuntimeContract)
+target_include_directories(uml_runtime_kernel_resources PUBLIC
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+
 # The threads an embedded kernel creates and the fence that holds them. The
 # loader resolves the kernel's pthread_create to this registry.
 add_library(uml_runtime_thread_fence OBJECT
@@ -117,6 +130,7 @@ target_link_libraries(uml_runtime_objects INTERFACE UML::RuntimeContract)
 target_sources(uml_runtime_objects INTERFACE
 	$<TARGET_OBJECTS:uml_runtime_context>
     $<TARGET_OBJECTS:uml_runtime_kernel_signals>
+    $<TARGET_OBJECTS:uml_runtime_kernel_resources>
     $<TARGET_OBJECTS:uml_runtime_thread_fence>
     $<TARGET_OBJECTS:uml_runtime_hibernation>
     $<TARGET_OBJECTS:uml_runtime_guest_selector>

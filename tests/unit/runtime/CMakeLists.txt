@@ -20,6 +20,17 @@ uml_add_unit_test(
     NAME runtime-kernel-signal-scope
     COMMAND uml_runtime_kernel_signal_scope_tests)
 
+# The ledger of what an embedded kernel creates through its imports.
+add_executable(uml_runtime_kernel_resources_tests kernel_resources_tests.cpp)
+target_link_libraries(uml_runtime_kernel_resources_tests PRIVATE
+    UML::BridgeAbi
+    uml_emulator_test_variant)
+target_include_directories(uml_runtime_kernel_resources_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+uml_add_unit_test(
+    NAME runtime-kernel-resources
+    COMMAND uml_runtime_kernel_resources_tests)
+
 # The loader's release of the kernel image against a host-service view that
 # still borrows its guest-RAM tail.
 add_executable(uml_runtime_kernel_image_release_tests
