@@ -202,9 +202,8 @@ in the guest, an accepted property of a development host. iOS keeps
 authorization and the default-off switch.
 SELinux stays enforcing in both variants; only the host-owned kernel command
 line could change that. Android's wireless-debugging setting
-uses the active Virtio-net Ethernet interface as its trusted-network identity,
-monitors that transport for reconnect and disconnect, and publishes its mDNS
-services without requiring a Wi-Fi manager or multicast lock. Fresh
+is the stock one: it trusts a Wi-Fi network by its SSID and publishes its mDNS
+services on the guest's Wi-Fi interface. Fresh
 notification state shows silent notification icons in the status bar. Active
 DownloadProvider transfers use a silent low-importance channel so their
 progress icon remains visible there; later notification changes remain owned
