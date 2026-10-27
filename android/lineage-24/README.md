@@ -184,6 +184,23 @@ adb keeps working and nothing else can take the management address. The kernel
 needs `CONFIG_MACVLAN`, `CONFIG_CFG80211` and `CONFIG_VIRT_WIFI` for the last
 step; a kernel without them leaves `eth0` configured and `wlan0` absent.
 
+The framework sees the Wi-Fi and only the Wi-Fi. The product declares
+`android.hardware.wifi` and not `android.hardware.ethernet`, so the system does
+not start Ethernet management and `eth0` never becomes a network of its own.
+Apps get one network: Wi-Fi, the open SSID `VirtWifi`, unmetered, with the lease
+10.0.2.16 and the host's DNS. Turning Wi-Fi off, or airplane mode, takes apps
+offline while adb keeps working, since adb rides `eth0`. `wificond`, the Wi-Fi
+HAL (`com.android.hardware.wifi`) and the supplicant
+(`com.google.cf.wpa_supplicant`) are Cuttlefish's packages. `BoardConfig.mk`
+offers the HAL one station interface (`WIFI_HAL_INTERFACE_COMBINATIONS`),
+because `virt_wifi` has no access-point or peer-to-peer interface type: there is
+no SoftAP, Wi-Fi Direct, Aware or RTT, and Passpoint stays undeclared until the
+Wi-Fi CTS runs show what it needs. `KernariumWifiOverlay` (`overlay/rro`) turns
+MAC randomization off, because `virt_wifi` cannot change its MAC address and a
+second MAC would need a second lease. No Connectivity overlay that keeps `eth0`
+out of the Ethernet interface regex is needed: without the feature declaration
+the Ethernet service does not run.
+
 Once boot completes, `kernarium_wifi_network.sh` (`overlay/tools`, installed on
 `system_ext` and run in a core domain of its own, because it drives the Wi-Fi
 service through `cmd wifi`, which a vendor domain may not) saves the open

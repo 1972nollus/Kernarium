@@ -411,6 +411,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_net_library: bool = False,
                           net_policy_variant: str | None = None,
                           wifi_network_variant: str | None = None,
+                          wifi_hal_variant: str | None = None,
+                          supplicant_variant: str | None = None,
+                          missing_wifi_feature: bool = False,
+                          wifi_feature_file: str | None = None,
                           missing_wifi_network_script: bool = False,
                           missing_adb_prop_context: bool = False,
                           missing_adb_prop_policy: bool = False,
@@ -547,7 +551,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "SYSTEM/bin/android-fixture",
                     synthetic_aarch64_elf(alignment, edit=elf_edit),
                 )
-                for tool in ("e2fsck", "resize2fs", "sgdisk"):
+                for tool in ("e2fsck", "resize2fs", "sgdisk", "wificond"):
                     archive.writestr(
                         f"SYSTEM/bin/{tool}",
                         synthetic_aarch64_elf(alignment),
@@ -1075,6 +1079,17 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     advertised_features.append("android.software.companion_device_setup")
                 if unsupported_feature:
                     advertised_features.append("android.hardware.camera")
+                # The virtual Wi-Fi's feature declaration, a file of the platform's own.
+                if not missing_wifi_feature:
+                    archive.writestr(
+                        "VENDOR/etc/permissions/android.hardware.wifi.xml",
+                        '<permissions><feature name="android.hardware.wifi"/></permissions>',
+                    )
+                if wifi_feature_file is not None:
+                    archive.writestr(
+                        f"VENDOR/etc/permissions/{wifi_feature_file}.xml",
+                        f'<permissions><feature name="{wifi_feature_file}"/></permissions>',
+                    )
                 archive.writestr(
                     "VENDOR/etc/permissions/handheld_core_hardware.xml",
                     "<permissions>"
@@ -1226,6 +1241,34 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "VENDOR/apex/com.android.hardware.thermal.apex",
                         synthetic_apex("ext4", thermal_content),
                     )
+                # The Wi-Fi HAL and the supplicant (with hostapd), packaged the same way.
+                def hal_apex(apex, binary, name, fqname, service, variant):
+                    content = b"\x00" * 8
+                    if variant != "no-binary":
+                        content += bytes([len(binary), 1]) + binary
+                    if variant != "no-fragment":
+                        content += (
+                            b'<manifest version="1.0" type="device"><hal format="aidl">'
+                            b"<name>" + name + b"</name><fqname>" + fqname
+                            + b"</fqname></hal></manifest>"
+                        )
+                    if variant != "no-service":
+                        content += (
+                            b"service " + service + b" /apex/" + apex + b"/bin/hw/" + binary
+                            + b" \\\n    -O/data/vendor/wifi/wpa/sockets\n"
+                        )
+                    if variant != "missing-apex":
+                        archive.writestr(
+                            f"VENDOR/apex/{apex.decode()}.apex",
+                            synthetic_apex("ext4", content),
+                        )
+
+                hal_apex(b"com.android.hardware.wifi", b"android.hardware.wifi-service",
+                         b"android.hardware.wifi", b"IWifi/default", b"vendor.wifi_hal_legacy",
+                         wifi_hal_variant)
+                hal_apex(b"com.google.cf.wpa_supplicant", b"wpa_supplicant",
+                         b"android.hardware.wifi.supplicant", b"ISupplicant/default",
+                         b"wpa_supplicant", supplicant_variant)
                 # The default CAS HAL, packaged the same way, and the ClearKey CAS plugin it loads
                 # from /vendor/lib*/mediacas for both ISAs.
                 cas_binary = b"android.hardware.cas-service.example"
@@ -1393,6 +1436,22 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("wifi-network-missing-marker-rule", {"wifi_network_variant": "missing-marker-rule"}),
             ("wifi-network-missing-marker-context", {"wifi_network_variant": "missing-marker-context"}),
             ("wifi-network-script", {"missing_wifi_network_script": True}),
+            ("missing-wificond", {"entries": {"SYSTEM/bin/wificond": None}}),
+            ("missing-wifi-feature", {"missing_wifi_feature": True}),
+            ("missing-wifi-overlay", {"entries": {"VENDOR/overlay/KernariumWifiOverlay.apk": None}}),
+            ("ethernet-feature", {"wifi_feature_file": "android.hardware.ethernet"}),
+            ("wifi-aware-feature", {"wifi_feature_file": "android.hardware.wifi.aware"}),
+            ("wifi-rtt-feature", {"wifi_feature_file": "android.hardware.wifi.rtt"}),
+            ("wifi-direct-feature", {"wifi_feature_file": "android.hardware.wifi.direct"}),
+            ("wifi-passpoint-feature", {"wifi_feature_file": "android.hardware.wifi.passpoint"}),
+            ("missing-wifi-hal-apex", {"wifi_hal_variant": "missing-apex"}),
+            ("wifi-hal-without-binary", {"wifi_hal_variant": "no-binary"}),
+            ("wifi-hal-without-fragment", {"wifi_hal_variant": "no-fragment"}),
+            ("wifi-hal-without-service", {"wifi_hal_variant": "no-service"}),
+            ("missing-supplicant-apex", {"supplicant_variant": "missing-apex"}),
+            ("supplicant-without-binary", {"supplicant_variant": "no-binary"}),
+            ("supplicant-without-fragment", {"supplicant_variant": "no-fragment"}),
+            ("supplicant-without-service", {"supplicant_variant": "no-service"}),
             ("adb-prop-context", {"missing_adb_prop_context": True}),
             ("adb-prop-policy", {"missing_adb_prop_policy": True}),
             ("core-sets-vendor-prop", {"core_sets_vendor_prop": True}),
@@ -1559,6 +1618,39 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "do not label persist.sys.kernarium.virtwifi_saved"),
             ("wifi-network-script-cause", {"missing_wifi_network_script": True},
              "SYSTEM_EXT/bin/kernarium_wifi_network.sh"),
+            ("missing-wificond-cause", {"entries": {"SYSTEM/bin/wificond": None}},
+             "SYSTEM/bin/wificond"),
+            ("missing-wifi-feature-cause", {"missing_wifi_feature": True},
+             "required feature is not declared: android.hardware.wifi"),
+            ("missing-wifi-overlay-cause",
+             {"entries": {"VENDOR/overlay/KernariumWifiOverlay.apk": None}},
+             "VENDOR/overlay/KernariumWifiOverlay.apk"),
+            ("ethernet-feature-cause", {"wifi_feature_file": "android.hardware.ethernet"},
+             "VENDOR/etc/permissions/android.hardware.ethernet.xml"),
+            ("wifi-aware-feature-cause", {"wifi_feature_file": "android.hardware.wifi.aware"},
+             "absent hardware feature declaration is forbidden"),
+            ("wifi-rtt-feature-cause", {"wifi_feature_file": "android.hardware.wifi.rtt"},
+             "absent hardware feature declaration is forbidden"),
+            ("wifi-direct-feature-cause", {"wifi_feature_file": "android.hardware.wifi.direct"},
+             "absent hardware feature declaration is forbidden"),
+            ("wifi-passpoint-feature-cause", {"wifi_feature_file": "android.hardware.wifi.passpoint"},
+             "absent hardware feature declaration is forbidden"),
+            ("missing-wifi-hal-apex-cause", {"wifi_hal_variant": "missing-apex"},
+             "com.android.hardware.wifi.apex is missing: the product needs the Wi-Fi HAL"),
+            ("wifi-hal-without-binary-cause", {"wifi_hal_variant": "no-binary"},
+             "does not hold the service binary bin/hw/android.hardware.wifi-service"),
+            ("wifi-hal-without-fragment-cause", {"wifi_hal_variant": "no-fragment"},
+             "does not declare IWifi/default in a VINTF fragment"),
+            ("wifi-hal-without-service-cause", {"wifi_hal_variant": "no-service"},
+             "does not start the vendor.wifi_hal_legacy service"),
+            ("missing-supplicant-apex-cause", {"supplicant_variant": "missing-apex"},
+             "com.google.cf.wpa_supplicant.apex is missing: the product needs the Wi-Fi supplicant"),
+            ("supplicant-without-binary-cause", {"supplicant_variant": "no-binary"},
+             "does not hold the service binary bin/hw/wpa_supplicant"),
+            ("supplicant-without-fragment-cause", {"supplicant_variant": "no-fragment"},
+             "does not declare ISupplicant/default in a VINTF fragment"),
+            ("supplicant-without-service-cause", {"supplicant_variant": "no-service"},
+             "does not start the wpa_supplicant service"),
             ("adb-prop-context-cause", {"missing_adb_prop_context": True},
              "do not label sys.kernarium.adb.host_connected"),
             ("adb-prop-policy-cause", {"missing_adb_prop_policy": True},
@@ -1805,6 +1897,12 @@ def verify_package_assertions(android_root: Path) -> None:
         "com.android.hardware.thermal",
         "com.android.hardware.cas",
         "libclearkeycasplugin",
+        "wificond",
+        "com.android.hardware.wifi",
+        "com.google.cf.wpa_supplicant",
+        "KernariumWifiOverlay",
+        "kernarium_net_setup",
+        "kernarium_wifi_network_script",
     ):
         if package not in present:
             fail(f"build-aosp.sh does not assert that {package} is present")

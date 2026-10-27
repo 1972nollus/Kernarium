@@ -156,6 +156,7 @@ REQUIRED_ENTRIES = {
     "RECOVERY/RAMDISK/system/bin/recovery",
     "SYSTEM/bin/e2fsck",
     "SYSTEM/bin/resize2fs",
+    "SYSTEM/bin/wificond",
     "SYSTEM_EXT/priv-app/Launcher3QuickStep/Launcher3QuickStep.apk",
     "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
     "SYSTEM_EXT/priv-app/LineageSettingsProvider/LineageSettingsProvider.apk",
@@ -192,6 +193,8 @@ REQUIRED_ENTRIES = {
     "VENDOR/build.prop",
     # The network setup tool's netlink library (Cuttlefish's).
     "VENDOR/lib64/cuttlefish_net.so",
+    # The Wi-Fi module's overlay: virt_wifi cannot randomize its MAC.
+    "VENDOR/overlay/KernariumWifiOverlay.apk",
     *ABI_LIST_PROPERTY_FILES,
     *MESA_ELF_ENTRIES,
     *MESA_HAL_ENTRIES,
@@ -289,13 +292,11 @@ FORBIDDEN_STATIC_ENTRIES = {
     "PRODUCT/overlay/cuttlefish_overlay_uwb.apk",
     "SYSTEM_EXT/etc/permissions/privapp-permissions-com.android.threadnetwork.demoapp.xml",
     "SYSTEM_EXT/priv-app/ThreadNetworkDemoApp/ThreadNetworkDemoApp.apk",
-    "SYSTEM/bin/wificond",
     "VENDOR/apex/com.android.hardware.boot.apex",
     "VENDOR/apex/com.android.hardware.contexthub.apex",
     "VENDOR/apex/com.android.hardware.neuralnetworks.apex",
     "VENDOR/apex/com.android.hardware.threadnetwork.apex",
     "VENDOR/apex/com.android.hardware.uwb.apex",
-    "VENDOR/apex/com.android.hardware.wifi.apex",
     "VENDOR/apex/com.google.cf.bt.apex",
     "VENDOR/apex/com.google.cf.health.apex",
     "VENDOR/apex/com.google.cf.light.apex",
@@ -303,13 +304,12 @@ FORBIDDEN_STATIC_ENTRIES = {
     "VENDOR/apex/com.google.cf.oemlock.apex",
     "VENDOR/apex/com.google.cf.rild.apex",
     "VENDOR/apex/com.google.cf.wifi.apex",
-    "VENDOR/apex/com.google.cf.wpa_supplicant.apex",
     "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
     "VENDOR/etc/bluetooth_with_le_audio_policy_configuration_7_0.xml",
     "VENDOR/etc/init/init_graphics.vendor.rc",
     "VENDOR/etc/init/seriallogging.rc",
+    "VENDOR/etc/permissions/android.hardware.ethernet.xml",
     "VENDOR/etc/permissions/android.hardware.uwb.xml",
-    "VENDOR/etc/permissions/android.hardware.wifi.xml",
     "VENDOR/etc/recovery-resource.dat",
     "VENDOR/etc/sensors/hals.conf",
     "VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml",
@@ -391,15 +391,17 @@ FORBIDDEN_FEATURE_DECLARATIONS = {
     "android.hardware.camera.front.xml",
     "android.hardware.camera.full.xml",
     "android.hardware.camera.raw.xml",
+    "android.hardware.ethernet.xml",
     "android.hardware.fingerprint.xml",
     "android.hardware.location.gps.xml",
     "android.hardware.telephony.xml",
     "android.hardware.usb.accessory.xml",
     "android.hardware.usb.host.xml",
     "android.hardware.uwb.xml",
+    "android.hardware.wifi.aware.xml",
     "android.hardware.wifi.direct.xml",
     "android.hardware.wifi.passpoint.xml",
-    "android.hardware.wifi.xml",
+    "android.hardware.wifi.rtt.xml",
     "android.software.verified_boot.xml",
 }
 # The Virtio sound capture stream is the product's microphone. A build
@@ -408,8 +410,13 @@ FORBIDDEN_FEATURE_DECLARATIONS = {
 # system_server starts the CompanionDeviceManager service only with
 # android.software.companion_device_setup, which the handheld declaration the
 # product replaces used to carry; the service runs without Bluetooth.
+# The kernel's virt_wifi is a station, which is android.hardware.wifi and no more:
+# there is no peer-to-peer, Aware or RTT, and Passpoint waits for the first Wi-Fi
+# CTS run. android.hardware.ethernet is not declared, because eth0 is the management
+# NIC and the framework must not manage it.
 REQUIRED_FEATURE_NAMES = {
     "android.hardware.microphone",
+    "android.hardware.wifi",
     "android.software.companion_device_setup",
 }
 FORBIDDEN_FEATURE_NAMES = {
@@ -421,15 +428,17 @@ FORBIDDEN_FEATURE_NAMES = {
     "android.hardware.camera.flash",
     "android.hardware.camera.front",
     "android.hardware.context_hub",
+    "android.hardware.ethernet",
     "android.hardware.fingerprint",
     "android.hardware.location.gps",
     "android.hardware.telephony",
     "android.hardware.usb.accessory",
     "android.hardware.usb.host",
     "android.hardware.uwb",
+    "android.hardware.wifi.aware",
     "android.hardware.wifi.direct",
     "android.hardware.wifi.passpoint",
-    "android.hardware.wifi",
+    "android.hardware.wifi.rtt",
 }
 UML_FSTAB_ENTRIES = (
     "VENDOR/etc/fstab.uml",
@@ -938,6 +947,31 @@ CAS_HAL = {
     "service": "vendor.cas-default",
     "need": "the default CAS HAL",
 }
+# The virtual Wi-Fi needs the Wi-Fi HAL and the supplicant, which Cuttlefish packages as vendor
+# APEXes (the supplicant one holds hostapd too). The HAL APEX's init script names the binary
+# below /apex/com.android.hardware.wifi.
+WIFI_HAL = {
+    "apex": "VENDOR/apex/com.android.hardware.wifi.apex",
+    "binary": b"android.hardware.wifi-service",
+    "fragment": (
+        b"<name>android.hardware.wifi</name>",
+        b"<fqname>IWifi/default</fqname>",
+    ),
+    "interface": "IWifi/default",
+    "service": "vendor.wifi_hal_legacy",
+    "need": "the Wi-Fi HAL",
+}
+WIFI_SUPPLICANT = {
+    "apex": "VENDOR/apex/com.google.cf.wpa_supplicant.apex",
+    "binary": b"wpa_supplicant",
+    "fragment": (
+        b"<name>android.hardware.wifi.supplicant</name>",
+        b"<fqname>ISupplicant/default</fqname>",
+    ),
+    "interface": "ISupplicant/default",
+    "service": "wpa_supplicant",
+    "need": "the Wi-Fi supplicant",
+}
 CAS_PLUGINS = (
     "VENDOR/lib64/mediacas/libclearkeycasplugin.so",
     "VENDOR/lib/mediacas/libclearkeycasplugin.so",
@@ -975,6 +1009,11 @@ def check_thermal_hal(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
     check_example_hal(archive, infos, THERMAL_HAL)
+
+
+def check_wifi_hals(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    check_example_hal(archive, infos, WIFI_HAL)
+    check_example_hal(archive, infos, WIFI_SUPPLICANT)
 
 
 def check_cas_hal(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
@@ -1908,6 +1947,7 @@ def main() -> None:
         check_discrete_ops(archive, infos)
         check_thermal_hal(archive, infos)
         check_cas_hal(archive, infos)
+        check_wifi_hals(archive, infos)
         check_audio_policy(archive, infos)
         check_multilib_properties(archive, infos)
         check_mesa_gles_stack(archive, infos)

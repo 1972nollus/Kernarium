@@ -406,6 +406,14 @@ fi
 	fail "the network setup tool that configures eth0 and the virtual Wi-Fi is absent"
 [[ "$PRODUCT_PACKAGES" == *" kernarium_wifi_network_script "* ]] ||
 	fail "the script that saves the virtual Wi-Fi network is absent"
+[[ "$PRODUCT_PACKAGES" == *" wificond "* ]] ||
+	fail "wificond, which the Wi-Fi service needs for the virtual Wi-Fi, is absent"
+[[ "$PRODUCT_PACKAGES" == *" com.android.hardware.wifi "* ]] ||
+	fail "the Wi-Fi HAL that the virtual Wi-Fi needs is absent"
+[[ "$PRODUCT_PACKAGES" == *" com.google.cf.wpa_supplicant "* ]] ||
+	fail "the Wi-Fi supplicant that the virtual Wi-Fi needs is absent"
+[[ "$PRODUCT_PACKAGES" == *" KernariumWifiOverlay "* ]] ||
+	fail "the Wi-Fi overlay that turns MAC randomization off is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.thermal "* ]] ||
 	fail "the example thermal HAL that the thermal manager needs is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.cas "* ]] ||
@@ -432,7 +440,6 @@ for package in \
 	com.android.hardware.authsecret \
 	com.android.hardware.graphics.composer.ranchu \
 	android.hardware.health-service.cuttlefish_recovery \
-	com.android.hardware.wifi \
 	com.android.hardware.contexthub \
 	com.android.hardware.input.processor \
 	com.android.hardware.net.nlinterceptor \
@@ -451,7 +458,6 @@ for package in \
 	com.google.cf.identity \
 	com.google.cf.ir \
 	com.google.cf.wifi \
-	com.google.cf.wpa_supplicant \
 	CuttlefishTetheringOverlay \
 	CuttlefishWifiOverlay \
 	gsi_tool \
@@ -465,9 +471,7 @@ for package in \
 	tombstone_transmit \
 	update_engine \
 	update_engine_client \
-	update_verifier \
-	wificond \
-	wificond_compat_symlink_module; do
+	update_verifier; do
 	[[ "$PRODUCT_PACKAGES_EXCLUDE" == *" $package "* ]] ||
 		fail "unneeded product package is not excluded: $package"
 	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||

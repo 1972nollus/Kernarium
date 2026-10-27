@@ -63,6 +63,16 @@ BOARD_VENDOR_SEPOLICY_DIRS := $(filter-out \
     $(BOARD_VENDOR_SEPOLICY_DIRS))
 
 BOARD_VENDOR_SEPOLICY_DIRS += device/kernarium/darwin/sepolicy/vendor
+# The Wi-Fi interface is virt_wifi, a station only: the kernel gives it no
+# access-point or peer-to-peer interface type. The inherited board offers
+# station, access point and peer-to-peer interfaces and a second station, which
+# the HAL would report and the framework would then fail to create. One station
+# keeps SoftAP, Wi-Fi Direct and Aware out of the framework. The flag that
+# selects dual interfaces is ignored when the combinations are given, but it
+# stays cleared so the board says one thing.
+WIFI_HIDL_FEATURE_DUAL_INTERFACE :=
+WIFI_HAL_INTERFACE_COMBINATIONS := {{{STA}, 1}}
+
 # Properties the platform's core domains set belong to the system partitions: the
 # Treble split forbids a core domain to set a vendor-owned one.
 SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += device/kernarium/darwin/sepolicy/system_ext/private

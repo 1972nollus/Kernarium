@@ -16,7 +16,8 @@
 
 # Select the UML-safe branches in the inherited Cuttlefish product before it
 # is evaluated. The Darwin machine has no nested Trusty VM, modem, NFC, sensor,
-# Bluetooth, Wi-Fi, GNSS, biometric, secure-element, or camera transport.
+# Bluetooth, GNSS, biometric, secure-element, or camera transport, and its
+# Wi-Fi is the kernel's virtual one (kernarium_net_setup).
 TRUSTY_SYSTEM_VM := disabled
 UML_ANDROID_SECURITY_HALS := nonsecure
 UML_ANDROID_BUILTIN_KERNEL := true
@@ -177,6 +178,15 @@ PRODUCT_COPY_FILES += \
 # useful to ordinary third-party applications remain installed, and so does
 # sgdisk: vold executes /system/bin/sgdisk to scan and partition any disk it
 # manages, such as the virtual disk of `sm set-virtual-disk`.
+#
+# The Wi-Fi stack (wificond, the Wi-Fi HAL and the supplicant) stays, because
+# the kernel's virt_wifi gives the guest a Wi-Fi station. What Cuttlefish adds
+# around it does not: com.google.cf.wifi holds Cuttlefish's own network setup
+# tools (rename_netiface, setup_wifi and the mac80211 radios), which
+# kernarium_net_setup replaces, and its feature files, which come from the
+# device tree below. CuttlefishWifiOverlay turns on MAC randomization that
+# virt_wifi cannot do (KernariumWifiOverlay replaces it), and the tethering
+# overlay serves a tethering stack that has no upstream here.
 KERNARIUM_REMOVED_PACKAGES := \
     BasicDreams \
     BluetoothMidiService \
@@ -237,7 +247,6 @@ KERNARIUM_REMOVED_PACKAGES := \
     com.android.hardware.tetheroffload \
     com.android.hardware.usb \
     com.android.hardware.vibrator \
-    com.android.hardware.wifi \
     com.android.vndk.v31 \
     com.android.vndk.v32 \
     com.android.vndk.v33 \
@@ -250,7 +259,6 @@ KERNARIUM_REMOVED_PACKAGES := \
     com.google.cf.identity \
     com.google.cf.ir \
     com.google.cf.wifi \
-    com.google.cf.wpa_supplicant \
     cuttlefish_telephony_satellite_configs \
     gsi_tool \
     gsid \
@@ -265,9 +273,7 @@ KERNARIUM_REMOVED_PACKAGES := \
     tombstone_transmit \
     update_engine \
     update_engine_client \
-    update_verifier \
-    wificond \
-    wificond_compat_symlink_module
+    update_verifier
 PRODUCT_PACKAGES_EXCLUDE += $(KERNARIUM_REMOVED_PACKAGES)
 
 # The inherited Cuttlefish product also asks for modules this tree does not
@@ -302,6 +308,12 @@ endif
 
 # Replace the handheld feature declaration and remove optional feature files
 # for absent hardware. This keeps PackageManager truthful for sideloaded apps.
+# The guest declares android.hardware.wifi, which virt_wifi provides, and not
+# android.hardware.ethernet: eth0 is the management NIC, and the framework would
+# otherwise start Ethernet management on it. virt_wifi is a station without
+# peer-to-peer, so android.hardware.wifi.direct stays out, and so do Aware and
+# RTT, which the interface combinations do not offer. Passpoint waits for the
+# first Wi-Fi CTS run.
 PRODUCT_COPY_FILES_EXCLUDE += \
     frameworks/native/data/etc/handheld_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml \
     frameworks/native/data/etc/android.hardware.biometrics.face.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.biometrics.face.xml \
@@ -314,13 +326,13 @@ PRODUCT_COPY_FILES_EXCLUDE += \
     frameworks/native/data/etc/android.hardware.camera.full.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.full.xml \
     frameworks/native/data/etc/android.hardware.camera.raw.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.raw.xml \
     frameworks/native/data/etc/android.hardware.consumerir.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.consumerir.xml \
+    frameworks/native/data/etc/android.hardware.ethernet.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.ethernet.xml \
     frameworks/native/data/etc/android.hardware.location.gps.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.location.gps.xml \
     frameworks/native/data/etc/android.hardware.usb.accessory.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.usb.accessory.xml \
     frameworks/native/data/etc/android.hardware.usb.host.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.usb.host.xml \
     frameworks/native/data/etc/android.hardware.uwb.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.uwb.xml \
     frameworks/native/data/etc/android.hardware.wifi.direct.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.direct.xml \
     frameworks/native/data/etc/android.hardware.wifi.passpoint.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.passpoint.xml \
-    frameworks/native/data/etc/android.hardware.wifi.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.xml \
     frameworks/native/data/etc/android.software.verified_boot.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.verified_boot.xml
 PRODUCT_COPY_FILES += \
     device/kernarium/darwin/config/kernarium_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml
@@ -387,6 +399,11 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_presen
 # Wi-Fi built on it. This tool configures both before the framework starts
 # (init.vendor.rc runs it at post-fs-data).
 PRODUCT_PACKAGES += kernarium_net_setup
+
+# The Wi-Fi module's resources are overlaid by KernariumWifiOverlay
+# (rro/KernariumWifiOverlay): virt_wifi cannot change its MAC address, so the
+# framework must not randomize it.
+PRODUCT_PACKAGES += KernariumWifiOverlay
 
 # Once boot completes, a script saves the virtual Wi-Fi network (VirtWifi, open)
 # the first time only. It does not turn Wi-Fi on, and a network the user forgets
