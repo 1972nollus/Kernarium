@@ -177,7 +177,8 @@ for another's address, the tool
   that table, so the replies adbd sends leave `eth0` whichever network the
   framework makes the default; and
 - stacks the private macvlan `buried_eth0` (MAC `02:15:b2:00:00:00`) on `eth0`
-  and the `virt_wifi` device `wlan0` on that, the way Cuttlefish does.
+  and the `virt_wifi` device `wlan0` on that, the way Cuttlefish does. Both
+  links are created without a link-flag mask, so they keep `IFF_MULTICAST`.
 
 The tool fails closed: without the lease or the rule it creates no `wlan0`, so
 adb keeps working and nothing else can take the management address. The kernel
@@ -326,6 +327,16 @@ reboots the device (`PreferredActivityTests#testAddDuplicatedPreferredActivity`
 expects the package manager to deduplicate preferred activities at the reboot)
 cannot pass where reboots are disabled, as they must be when the emulator exits
 on reboot.
+
+LineageOS's firewall also gives every network, restricted ones included, the
+allow-all UID range from 0 to `Integer.MAX_VALUE`. Netd lets a UID use a
+network that a range includes whatever its permission bits, so any application
+could bind a socket to a restricted network. A `packages/modules/Connectivity`
+topic (route `p0003`) gives a restricted network no range, as on AOSP.
+LineageOS also declares `Settings.Global.UIDS_ALLOWED_ON_RESTRICTED_NETWORKS`
+`@hide` without `@Readable`, which makes the key unreadable to applications
+that AOSP lets read it; a `frameworks/base` topic (route `p0007`) adds the
+annotation.
 
 MediaProvider's FUSE daemon kept its state on the stack of the session thread,
 while the Java side keeps calling into the daemon until that thread deletes it.
