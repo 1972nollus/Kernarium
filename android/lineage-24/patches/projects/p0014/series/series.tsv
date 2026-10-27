@@ -8,3 +8,4 @@ patch	transfer-a-part-of-an-emulated-planar-buffer-from-where-it-lies.patch
 patch	lay-an-emulated-YV12-buffer-out-as-Android-defines-it.patch
 patch	pad-a-native-buffer-s-rows-to-the-pitch-Metal-reads.patch
 patch	pad-an-emulated-NV12-buffer-s-rows-to-the-pitch-Metal-reads.patch
+patch	tell-the-host-how-an-emulated-YUV-buffer-is-laid-out.patch
