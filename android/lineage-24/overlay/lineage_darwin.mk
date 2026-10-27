@@ -388,6 +388,11 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_presen
 # (init.vendor.rc runs it at post-fs-data).
 PRODUCT_PACKAGES += kernarium_net_setup
 
+# Once boot completes, a script saves the virtual Wi-Fi network (VirtWifi, open)
+# the first time only. It does not turn Wi-Fi on, and a network the user forgets
+# stays forgotten. It runs from system_ext in a core domain of its own.
+PRODUCT_PACKAGES += kernarium_wifi_network_script
+
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 
 # The virtio-gpu device paces the display with a vblank timer, so a present

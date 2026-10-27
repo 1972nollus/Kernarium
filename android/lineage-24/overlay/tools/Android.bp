@@ -52,3 +52,14 @@ cc_binary {
     ],
     cflags: ["-Wextra"],
 }
+
+// Saves the virtual Wi-Fi network once. It runs in a core domain on the
+// system_ext partition because it drives a framework service, which a vendor
+// domain may not.
+sh_binary {
+    name: "kernarium_wifi_network_script",
+    src: "kernarium_wifi_network.sh",
+    system_ext_specific: true,
+    filename_from_src: true,
+    init_rc: ["kernarium_wifi_network.rc"],
+}

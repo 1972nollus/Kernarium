@@ -184,6 +184,15 @@ adb keeps working and nothing else can take the management address. The kernel
 needs `CONFIG_MACVLAN`, `CONFIG_CFG80211` and `CONFIG_VIRT_WIFI` for the last
 step; a kernel without them leaves `eth0` configured and `wlan0` absent.
 
+Once boot completes, `kernarium_wifi_network.sh` (`overlay/tools`, installed on
+`system_ext` and run in a core domain of its own, because it drives the Wi-Fi
+service through `cmd wifi`, which a vendor domain may not) saves the open
+network `VirtWifi`, the one network `virt_wifi` shows. It saves it once: the
+marker `persist.sys.kernarium.virtwifi_saved` is set only after the network is
+listed, so a boot that cannot save it tries again, and a network the user
+forgets stays forgotten. It never turns Wi-Fi on or connects, so the user's
+Wi-Fi switch decides whether the saved network is joined.
+
 The vendor audio policy exposes the 48 kHz stereo primary playback path and one
 built-in microphone, the Virtio sound capture stream (16-bit PCM at 48 kHz, mono
 or stereo), supplies the AOSP software effects configuration, and disables

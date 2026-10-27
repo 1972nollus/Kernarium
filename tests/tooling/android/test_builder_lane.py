@@ -410,6 +410,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_net_setup_binary: bool = False,
                           missing_net_library: bool = False,
                           net_policy_variant: str | None = None,
+                          wifi_network_variant: str | None = None,
+                          missing_wifi_network_script: bool = False,
                           missing_adb_prop_context: bool = False,
                           missing_adb_prop_policy: bool = False,
                           core_sets_vendor_prop: bool = False,
@@ -761,6 +763,56 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     archive.writestr("VENDOR/bin/kernarium_net_setup", b"net setup")
                 if not missing_net_library:
                     archive.writestr("VENDOR/lib64/cuttlefish_net.so", b"net library")
+                # The script that saves VirtWifi once, with its init file and labels.
+                if not missing_wifi_network_script:
+                    script = (
+                        "#!/system/bin/sh\n# cmd wifi set-wifi-enabled in a comment is fine\n"
+                        'marker=persist.sys.kernarium.virtwifi_saved\n'
+                        + (
+                            ""
+                            if wifi_network_variant == "no-add"
+                            else "cmd wifi add-network VirtWifi open\n"
+                        )
+                        + ('setprop "$marker" 1\n' if wifi_network_variant != "no-marker" else "")
+                        + {
+                            "enables-wifi": "cmd wifi set-wifi-enabled enabled\n",
+                            "connects": "cmd wifi connect-network VirtWifi open\n",
+                            "settings-put": "settings put global wifi_on 1\n",
+                        }.get(wifi_network_variant or "", "")
+                    )
+                    archive.writestr("SYSTEM_EXT/bin/kernarium_wifi_network.sh", script)
+                if wifi_network_variant != "missing-rc":
+                    wifi_trigger = (
+                        "on boot\n"
+                        if wifi_network_variant == "started-at-boot"
+                        else "on property:sys.boot_completed=1\n"
+                    )
+                    archive.writestr(
+                        "SYSTEM_EXT/etc/init/kernarium_wifi_network.rc",
+                        (
+                            ""
+                            if wifi_network_variant == "missing-service"
+                            else "service kernarium_wifi_network "
+                            "/system_ext/bin/kernarium_wifi_network.sh\n    user root\n"
+                            + ("" if wifi_network_variant == "not-oneshot" else "    oneshot\n")
+                            + ("" if wifi_network_variant == "not-disabled" else "    disabled\n")
+                        )
+                        + (
+                            ""
+                            if wifi_network_variant == "no-start"
+                            else wifi_trigger + "    start kernarium_wifi_network\n"
+                        ),
+                    )
+                archive.writestr(
+                    "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
+                    "/(system_ext|system/system_ext)/bin/other\\.sh  u:object_r:system_file:s0\n"
+                    + (
+                        ""
+                        if wifi_network_variant == "missing-label"
+                        else "/(system_ext|system/system_ext)/bin/kernarium_wifi_network\\.sh  "
+                        "u:object_r:kernarium_wifi_network_exec:s0\n"
+                    ),
+                )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_file_contexts",
                     "/dev/hvc0  u:object_r:serial_device:s0\n"
@@ -823,6 +875,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         if missing_adb_prop_context
                         else "sys.kernarium.adb.host_connected    "
                         "u:object_r:kernarium_adb_host_prop:s0 exact bool\n"
+                    )
+                    + (
+                        ""
+                        if wifi_network_variant == "missing-marker-context"
+                        else "persist.sys.kernarium.virtwifi_saved    "
+                        "u:object_r:kernarium_wifi_network_prop:s0 exact bool\n"
                     ),
                 )
                 archive.writestr(
@@ -859,7 +917,21 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                     + "(typeattributeset system_property_type (apexd_prop "
                     + ("" if adb_prop_not_system else "kernarium_adb_host_prop ")
+                    + ("" if wifi_network_variant == "marker-not-system"
+                       else "kernarium_wifi_network_prop ")
                     + "))\n"
+                    + (
+                        ""
+                        if wifi_network_variant == "missing-transition"
+                        else "(typetransition init kernarium_wifi_network_exec process "
+                        "kernarium_wifi_network)\n"
+                    )
+                    + (
+                        ""
+                        if wifi_network_variant == "missing-marker-rule"
+                        else "(allow kernarium_wifi_network kernarium_wifi_network_prop "
+                        "(property_service (set)))\n"
+                    )
                     + (
                         ""
                         if missing_adb_prop_policy
@@ -1304,6 +1376,23 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("net-library", {"missing_net_library": True}),
             ("net-policy-label", {"net_policy_variant": "missing-label"}),
             ("net-policy-transition", {"net_policy_variant": "missing-transition"}),
+            ("wifi-network-missing-rc", {"wifi_network_variant": "missing-rc"}),
+            ("wifi-network-missing-service", {"wifi_network_variant": "missing-service"}),
+            ("wifi-network-not-oneshot", {"wifi_network_variant": "not-oneshot"}),
+            ("wifi-network-not-disabled", {"wifi_network_variant": "not-disabled"}),
+            ("wifi-network-no-start", {"wifi_network_variant": "no-start"}),
+            ("wifi-network-started-at-boot", {"wifi_network_variant": "started-at-boot"}),
+            ("wifi-network-no-add", {"wifi_network_variant": "no-add"}),
+            ("wifi-network-no-marker", {"wifi_network_variant": "no-marker"}),
+            ("wifi-network-enables-wifi", {"wifi_network_variant": "enables-wifi"}),
+            ("wifi-network-connects", {"wifi_network_variant": "connects"}),
+            ("wifi-network-settings-put", {"wifi_network_variant": "settings-put"}),
+            ("wifi-network-missing-label", {"wifi_network_variant": "missing-label"}),
+            ("wifi-network-missing-transition", {"wifi_network_variant": "missing-transition"}),
+            ("wifi-network-marker-not-system", {"wifi_network_variant": "marker-not-system"}),
+            ("wifi-network-missing-marker-rule", {"wifi_network_variant": "missing-marker-rule"}),
+            ("wifi-network-missing-marker-context", {"wifi_network_variant": "missing-marker-context"}),
+            ("wifi-network-script", {"missing_wifi_network_script": True}),
             ("adb-prop-context", {"missing_adb_prop_context": True}),
             ("adb-prop-policy", {"missing_adb_prop_policy": True}),
             ("core-sets-vendor-prop", {"core_sets_vendor_prop": True}),
@@ -1436,6 +1525,40 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "do not label /vendor/bin/kernarium_net_setup"),
             ("net-policy-transition-cause", {"net_policy_variant": "missing-transition"},
              "does not move init into the network setup domain"),
+            ("wifi-network-missing-rc-cause", {"wifi_network_variant": "missing-rc"},
+             "SYSTEM_EXT/etc/init/kernarium_wifi_network.rc"),
+            ("wifi-network-missing-service-cause", {"wifi_network_variant": "missing-service"},
+             "does not declare the kernarium_wifi_network service"),
+            ("wifi-network-not-oneshot-cause", {"wifi_network_variant": "not-oneshot"},
+             "does not declare kernarium_wifi_network as oneshot"),
+            ("wifi-network-not-disabled-cause", {"wifi_network_variant": "not-disabled"},
+             "does not declare kernarium_wifi_network as disabled"),
+            ("wifi-network-no-start-cause", {"wifi_network_variant": "no-start"},
+             "does not start kernarium_wifi_network when boot completes"),
+            ("wifi-network-started-at-boot-cause", {"wifi_network_variant": "started-at-boot"},
+             "starts kernarium_wifi_network under 'boot'"),
+            ("wifi-network-no-add-cause", {"wifi_network_variant": "no-add"},
+             "does not contain 'cmd wifi add-network VirtWifi open'"),
+            ("wifi-network-no-marker-cause", {"wifi_network_variant": "no-marker"},
+             "does not contain 'setprop'"),
+            ("wifi-network-enables-wifi-cause", {"wifi_network_variant": "enables-wifi"},
+             "contains 'set-wifi-enabled'"),
+            ("wifi-network-connects-cause", {"wifi_network_variant": "connects"},
+             "contains 'connect-network'"),
+            ("wifi-network-settings-put-cause", {"wifi_network_variant": "settings-put"},
+             "contains 'settings put'"),
+            ("wifi-network-missing-label-cause", {"wifi_network_variant": "missing-label"},
+             "do not label /system_ext/bin/kernarium_wifi_network.sh"),
+            ("wifi-network-missing-transition-cause", {"wifi_network_variant": "missing-transition"},
+             "does not move init into the Wi-Fi network domain"),
+            ("wifi-network-marker-not-system-cause", {"wifi_network_variant": "marker-not-system"},
+             "does not define the system-owned kernarium_wifi_network_prop"),
+            ("wifi-network-missing-marker-rule-cause", {"wifi_network_variant": "missing-marker-rule"},
+             "does not let the Wi-Fi network domain set persist.sys.kernarium.virtwifi_saved"),
+            ("wifi-network-missing-marker-context-cause", {"wifi_network_variant": "missing-marker-context"},
+             "do not label persist.sys.kernarium.virtwifi_saved"),
+            ("wifi-network-script-cause", {"missing_wifi_network_script": True},
+             "SYSTEM_EXT/bin/kernarium_wifi_network.sh"),
             ("adb-prop-context-cause", {"missing_adb_prop_context": True},
              "do not label sys.kernarium.adb.host_connected"),
             ("adb-prop-policy-cause", {"missing_adb_prop_policy": True},

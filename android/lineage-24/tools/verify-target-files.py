@@ -160,6 +160,9 @@ REQUIRED_ENTRIES = {
     "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
     "SYSTEM_EXT/priv-app/LineageSettingsProvider/LineageSettingsProvider.apk",
     "SYSTEM_EXT/priv-app/Seedvault/Seedvault.apk",
+    "SYSTEM_EXT/bin/kernarium_wifi_network.sh",
+    "SYSTEM_EXT/etc/init/kernarium_wifi_network.rc",
+    "SYSTEM_EXT/etc/selinux/system_ext_file_contexts",
     "SYSTEM_EXT/etc/selinux/system_ext_property_contexts",
     "SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil",
     "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
@@ -511,8 +514,26 @@ NET_SETUP_TRANSITION = re.compile(
     rb"^\(typetransition init(?:_[0-9]+)? kernarium_net_setup_exec process kernarium_net_setup\)$",
     re.MULTILINE,
 )
-NET_SETUP_FILE_CONTEXT = re.compile(
-    rb"^/vendor/bin/kernarium_net_setup\s+u:object_r:kernarium_net_setup_exec:s0$",
+# After boot completes a script saves the virtual Wi-Fi network (VirtWifi, open) the
+# first time only, in a core domain of its own on system_ext
+# (overlay/tools/kernarium_wifi_network.sh, overlay/sepolicy/system_ext/private).
+# It never turns Wi-Fi on or connects: the user's switch decides whether the saved
+# network is joined, and a network the user forgets stays forgotten.
+WIFI_NETWORK_SERVICE = ("kernarium_wifi_network", "/system_ext/bin/kernarium_wifi_network.sh")
+WIFI_NETWORK_TRIGGER = "property:sys.boot_completed=1"
+WIFI_NETWORK_MARKER = "persist.sys.kernarium.virtwifi_saved"
+WIFI_NETWORK_MARKER_TYPE = "kernarium_wifi_network_prop"
+WIFI_NETWORK_SCRIPT_REQUIRED = ("cmd wifi add-network VirtWifi open", WIFI_NETWORK_MARKER, "setprop")
+WIFI_NETWORK_SCRIPT_FORBIDDEN = (
+    "set-wifi-enabled",
+    "connect-network",
+    "settings put",
+    "wifi_on",
+    "svc wifi",
+)
+WIFI_NETWORK_TRANSITION = re.compile(
+    rb"^\(typetransition init(?:_[0-9]+)? kernarium_wifi_network_exec process "
+    rb"kernarium_wifi_network\)$",
     re.MULTILINE,
 )
 UML_INIT_REQUIRED = (
@@ -787,6 +808,12 @@ def check_boot_policy(
         fail("UML init policy does not restore normal RCU grace periods after boot")
     check_suspend_blocker(init_payload, actions)
     check_network_setup(init_payload, actions)
+    check_wifi_network(
+        read_small(archive, infos["SYSTEM_EXT/etc/init/kernarium_wifi_network.rc"]).decode(
+            "utf-8", errors="strict"
+        ),
+        read_small(archive, infos["SYSTEM_EXT/bin/kernarium_wifi_network.sh"]),
+    )
     check_media_codecs_c2(read_small(archive, infos["VENDOR/etc/media_codecs_c2.xml"]))
 
     ueventd_payload = read_small(
@@ -1066,6 +1093,13 @@ def check_kernel_policy(
         archive, infos["SYSTEM/etc/selinux/plat_sepolicy.cil"], PLATFORM_POLICY_LIMIT
     )
     system_ext_policy = read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_sepolicy.cil"])
+    check_wifi_network_policy(
+        system_ext_policy,
+        read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_file_contexts"]),
+        read_small(archive, infos["SYSTEM_EXT/etc/selinux/system_ext_property_contexts"]).decode(
+            "utf-8", errors="strict"
+        ),
+    )
     check_property_writers(
         platform_policy,
         vendor_policy,
@@ -1224,12 +1258,87 @@ def check_clearkey_memfd_policy(vendor_policy: bytes) -> None:
     )
 
 
+def file_context_label(contexts: bytes, path: str) -> str | None:
+    """The context of the last file_contexts line whose expression matches |path|."""
+    label = None
+    for line in contexts.decode("utf-8", errors="strict").splitlines():
+        fields = line.split()
+        if len(fields) < 2 or fields[0].startswith("#"):
+            continue
+        try:
+            matched = re.fullmatch(fields[0], path)
+        except re.error:
+            continue
+        if matched:
+            label = fields[-1]
+    return label
+
+
 def check_network_setup_policy(vendor_policy: bytes, vendor_file_contexts: bytes) -> None:
     """The network setup tool runs in its own domain, not in init's."""
-    if not NET_SETUP_FILE_CONTEXT.search(vendor_file_contexts):
+    if file_context_label(vendor_file_contexts, NET_SETUP_SERVICE[1]) != (
+        "u:object_r:kernarium_net_setup_exec:s0"
+    ):
         fail("vendor file contexts do not label /vendor/bin/kernarium_net_setup")
     if not NET_SETUP_TRANSITION.search(vendor_policy):
         fail("vendor policy does not move init into the network setup domain")
+
+
+def check_wifi_network(rc_payload: str, script: bytes) -> None:
+    """The script that saves VirtWifi runs once, after boot, and leaves the Wi-Fi switch alone."""
+    name, executable = WIFI_NETWORK_SERVICE
+    service = init_services(rc_payload).get(name)
+    if service is None or service[0] != executable:
+        fail(f"system_ext init policy does not declare the {name} service at {executable}")
+    for option in ("oneshot", "disabled"):
+        if option not in service[1]:
+            fail(f"system_ext init policy does not declare {name} as {option}")
+    actions = init_actions(rc_payload)
+    for trigger, commands in actions.items():
+        if f"start {name}" in commands and trigger != WIFI_NETWORK_TRIGGER:
+            fail(f"system_ext init policy starts {name} under '{trigger}'")
+    if f"start {name}" not in actions.get(WIFI_NETWORK_TRIGGER, []):
+        fail(f"system_ext init policy does not start {name} when boot completes")
+    code = "\n".join(
+        line
+        for line in script.decode("utf-8", errors="strict").splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    for token in WIFI_NETWORK_SCRIPT_REQUIRED:
+        if token not in code:
+            fail(f"{executable} does not contain '{token}'")
+    for token in WIFI_NETWORK_SCRIPT_FORBIDDEN:
+        if token in code:
+            fail(f"{executable} contains '{token}': the user's Wi-Fi switch is not the product's")
+
+
+def check_wifi_network_policy(
+    system_ext_policy: bytes, system_ext_file_contexts: bytes, system_ext_property_contexts: str
+) -> None:
+    """The script runs in its own core domain and may set only its own marker."""
+    if file_context_label(system_ext_file_contexts, WIFI_NETWORK_SERVICE[1]) != (
+        "u:object_r:kernarium_wifi_network_exec:s0"
+    ):
+        fail(f"system_ext file contexts do not label {WIFI_NETWORK_SERVICE[1]}")
+    if not WIFI_NETWORK_TRANSITION.search(system_ext_policy):
+        fail("system_ext policy does not move init into the Wi-Fi network domain")
+    if WIFI_NETWORK_MARKER_TYPE not in cil_attribute_members(
+        system_ext_policy, "system_property_type"
+    ):
+        fail(f"system_ext policy does not define the system-owned {WIFI_NETWORK_MARKER_TYPE}")
+    if not any(
+        match.group(1) == b"kernarium_wifi_network"
+        and match.group(2).decode() == WIFI_NETWORK_MARKER_TYPE
+        and b"set" in match.group(3).split()
+        for match in CIL_PROPERTY_SET_RULE.finditer(system_ext_policy)
+    ):
+        fail(f"system_ext policy does not let the Wi-Fi network domain set {WIFI_NETWORK_MARKER}")
+    if not any(
+        line.split()[:2] == [WIFI_NETWORK_MARKER, f"u:object_r:{WIFI_NETWORK_MARKER_TYPE}:s0"]
+        for line in system_ext_property_contexts.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ):
+        fail(f"system_ext property contexts do not label {WIFI_NETWORK_MARKER}")
 
 
 def check_policy_relaxations(policies: tuple[bytes, ...]) -> None:

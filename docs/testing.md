@@ -1081,7 +1081,8 @@ the application read of the vendor security patch level, the built-in
 microphone and companion device setup feature declarations, the userdata `quota` flag, and the
 suspend blocker with the adb host-connected property it follows, the network
 setup tool with the ARP policy init sets before it, its library, label and domain
-transition, the ClearKey HAL's access to the memfd files of applications, the
+transition, the script that saves the virtual Wi-Fi network once, after boot and
+without touching the user's Wi-Fi switch, with its core domain and marker, the ClearKey HAL's access to the memfd files of applications, the
 policy without the LineageOS grants that Android's neverallow tests refuse, and the
 discrete app-op list that keeps AOSP's default ops, the example thermal HAL
 with its manifest fragment and service, the default CAS HAL with its ClearKey
