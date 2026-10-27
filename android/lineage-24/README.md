@@ -474,20 +474,30 @@ transfers on its own. P010 has the NV12 layout with two-byte samples, which is
 what lets Main 10 and HDR10 input reach the device.
 
 `overlay/config/media_codecs_c2.xml` is installed as
-`vendor/etc/media_codecs_c2.xml` and adds the two encoders, each with the
-performance points and measured frame rates CTS requires of a hardware codec,
-and the two decoders, each with identical width and height ranges and the
-adaptive playback and dynamic colour aspects features it implements. The numbers are what the encoders sustain through the guest-to-host
-frame copy, which grows with the picture, so 4K HEVC is published below 30
-frames per second. The file is the product's one vendor codec list, so it also
-carries any update (`update="true"`) to the limits of a software decoder.
+`vendor/etc/media_codecs_c2.xml` and adds the two encoders and the two
+decoders, each with the performance points and measured frame rates CTS
+requires of a hardware codec, identical width and height ranges, and (for a
+decoder) the adaptive playback and dynamic colour aspects features it
+implements. The numbers are what the codecs sustain through the guest-to-host
+frame copy, which grows with the picture, so 4K HEVC encoding is published
+below 30 frames per second; a decoder's lower bound is the rate that keeps up
+with a 30 frames per second clip of every size at or below the point. The file
+is the product's one vendor codec list, so it also carries any update
+(`update="true"`) to the limits of a software decoder.
 `ro.vendor.v4l2_codec2.encode_concurrent_instances` and
 `ro.vendor.v4l2_codec2.decode_concurrent_instances` bound the instances of each
-direction to the streams the host serves, and
-`ro.vendor.v4l2_codec2.video_pixel_rate` is the pixel rate the host sustains
-for encoding. The service reports them as the capacity Android counts instances
-against (`MediaCodec.getGloballyAvailableResources()`), so no performance point
-may exceed the pixel rate; the target-files verifier requires that. The service joins `camera`, which
+direction. The encoders allow eight. A decoder keeps its pool of decoded
+pictures in the guest's memory, about 0.9 GiB for a 4K stream, so the guest's
+8 GiB holds four: the decoders state four, which CTS creates at every
+performance point's size without the low memory killer ending the process.
+`ro.vendor.v4l2_codec2.video_pixel_rate` and
+`ro.vendor.v4l2_codec2.video_decode_pixel_rate` are the pixel rates the host
+sustains for encoding and decoding. The service reports them as the capacity
+Android counts real-time instances against
+(`MediaCodec.getGloballyAvailableResources()`), so no performance point may
+exceed its direction's pixel rate and the largest must use at least 60% of it,
+as CTS requires of the resources a point consumes; the target-files verifier
+requires both. The service joins `camera`, which
 `ueventd.rc` gives the `/dev/video*` nodes; its executable carries the
 `mediacodec_exec` label; and `media_c2_extended_seccomp_policy` adds the calls
 the V4L2 poller and the crash handler of debuggerd need beside the service's

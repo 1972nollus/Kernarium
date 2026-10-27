@@ -24,11 +24,26 @@
   the device's controls, and these entries state what the Virtio video encoder
   publishes for a VideoToolbox hardware encoder: VBR, CBR and constant quality.
 
-  The performance points and measured frame rates are what the encoders sustain
+  The performance points and measured frame rates are what the codecs sustain
   through the frame copy between the guest and the host, which grows with the
-  picture: each lower bound is about four fifths of the slowest rate the CTS
-  encoder performance test measured for the size, each upper bound a tenth above
-  the fastest. 4K HEVC is therefore published below 30 frames per second.
+  picture. For the encoders, each lower bound is about four fifths of the
+  slowest rate the CTS encoder performance test measured for the size and each
+  upper bound a tenth above the fastest, so 4K HEVC encoding is published below
+  30 frames per second. For the decoders, a performance point's lower bound is
+  four fifths of the slowest rate the CTS decoder performance test achieved at
+  its size, so that CTS tests every clip the point covers at 30 frames per
+  second, and its upper bound is the rate the decoder keeps up with at that
+  size. The measured frame rates of a decoder are the range the CTS decoder
+  test observes: the upper bound is a tenth above the fastest rate of a quiet
+  host and the lower bound about half of the slowest, because the decode rate
+  swings with the load of the host.
+
+  A decoder keeps a pool of decoded pictures in the guest's memory that grows
+  with the picture: one 4K stream costs about 0.9 GiB of the guest's 8 GiB.
+  Four concurrent decoders at the largest size fit; eight do not, and
+  Android's low memory killer ends the process, so the decoders state four
+  concurrent instances (ro.vendor.v4l2_codec2.decode_concurrent_instances) and
+  the encoders, whose buffers stay on the host, eight.
 -->
 <MediaCodecs>
     <Decoders>
@@ -40,7 +55,17 @@
             <Limit name="blocks-per-second" range="1-4147200" />
             <Limit name="frame-rate" range="1-240" />
             <Limit name="bitrate" range="1-240000000" />
-            <Limit name="concurrent-instances" max="8" />
+            <Limit name="concurrent-instances" max="4" />
+            <Limit name="performance-point-3840x2160" range="49-55" />
+            <Limit name="performance-point-1920x1080" range="131-150" />
+            <Limit name="performance-point-1280x720" range="133-155" />
+            <Limit name="performance-point-720x480" range="202-235" />
+            <Limit name="measured-frame-rate-352x288" range="190-445" />
+            <Limit name="measured-frame-rate-640x360" range="210-385" />
+            <Limit name="measured-frame-rate-720x480" range="202-380" />
+            <Limit name="measured-frame-rate-1280x720" range="133-295" />
+            <Limit name="measured-frame-rate-1920x1080" range="131-203" />
+            <Limit name="measured-frame-rate-3840x2160" range="49-62" />
             <Feature name="adaptive-playback" />
             <Feature name="dynamic-color-aspects" />
         </MediaCodec>
@@ -52,7 +77,16 @@
             <Limit name="blocks-per-second" range="1-2211840" />
             <Limit name="frame-rate" range="1-240" />
             <Limit name="bitrate" range="1-240000000" />
-            <Limit name="concurrent-instances" max="8" />
+            <Limit name="concurrent-instances" max="4" />
+            <Limit name="performance-point-3840x2160" range="48-55" />
+            <Limit name="performance-point-1920x1080" range="118-140" />
+            <Limit name="performance-point-1280x720" range="153-170" />
+            <Limit name="performance-point-720x480" range="166-185" />
+            <Limit name="measured-frame-rate-320x240" range="210-430" />
+            <Limit name="measured-frame-rate-720x480" range="166-365" />
+            <Limit name="measured-frame-rate-1280x720" range="153-253" />
+            <Limit name="measured-frame-rate-1920x1080" range="118-163" />
+            <Limit name="measured-frame-rate-3840x2160" range="48-73" />
             <Feature name="adaptive-playback" />
             <Feature name="dynamic-color-aspects" />
         </MediaCodec>

@@ -413,6 +413,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                              performance_points: bool = True,
                              measured_frame_rates: bool = True,
                              performance_point: str = "1920x1080 30-45",
+                             decoder_performance_points: bool = True,
+                             decoder_measured_frame_rates: bool = True,
+                             decoder_performance_point: str = "3840x2160 49-55",
                              software_updates: tuple[str, ...] = (
                                  "c2.android.hevc.decoder",)) -> bytes:
             encoders = video_codecs if encoders is None else encoders
@@ -425,6 +428,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 + ('      <Limit name="measured-frame-rate-1920x1080" range="31-45"/>\n'
                    if measured_frame_rates else "")
             )
+            decoder_limits = (
+                (f'      <Limit name="performance-point-{decoder_performance_point.split()[0]}"'
+                 f' range="{decoder_performance_point.split()[1]}"/>\n'
+                 if decoder_performance_points else "")
+                + ('      <Limit name="measured-frame-rate-3840x2160" range="49-55"/>\n'
+                   if decoder_measured_frame_rates else "")
+            )
             return (
                 "<MediaCodecs>\n"
                 "  <Decoders>\n"
@@ -434,6 +444,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           for name in software_updates)
                 + "".join(f'    <MediaCodec name="{name}" type="{kind}">\n'
                           '      <Limit name="size" min="64x64" max="4096x4096"/>\n'
+                          + decoder_limits
                           + "".join(f'      <Feature name="{feature}"/>\n'
                                     for feature in decoder_features)
                           + "    </MediaCodec>\n"
@@ -1080,10 +1091,26 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("video-performance-point-malformed",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  performance_point="3840x2160 fast")}}),
+            ("video-decoder-without-performance-point",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_points=False)}}),
+            ("video-decoder-without-measured-frame-rate",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_measured_frame_rates=False)}}),
+            ("video-decoder-point-above-capacity",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="3840x2160 60-120")}}),
+            ("video-decoder-points-far-below-capacity",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="1280x720 60-90")}}),
             ("video-pixel-rate-property",
              {"video_properties": {
                  **good_video_properties,
                  "ro.vendor.v4l2_codec2.video_pixel_rate": "1000"}}),
+            ("video-decode-pixel-rate-property",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_decode_pixel_rate": "1000"}}),
             ("video-unapproved-decoder-property",
              {"video_properties": {
                  **good_video_properties,
@@ -1226,11 +1253,32 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  performance_point="3840x2160 fast")}},
              "publishes a malformed performance-point-3840x2160"),
+            ("video-decoder-without-performance-point-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_points=False)}},
+             r"c2\.v4l2\.\w+\.decoder publishes no performance-point-"),
+            ("video-decoder-without-measured-frame-rate-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_measured_frame_rates=False)}},
+             r"c2\.v4l2\.\w+\.decoder publishes no measured-frame-rate-"),
+            ("video-decoder-point-above-capacity-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="3840x2160 60-120")}},
+             "above the decode pixel rate capacity 456192000"),
+            ("video-decoder-points-far-below-capacity-cause",
+             {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
+                 decoder_performance_point="1280x720 60-90")}},
+             "below 60% of the capacity 456192000"),
             ("video-pixel-rate-property-cause",
              {"video_properties": {
                  **good_video_properties,
                  "ro.vendor.v4l2_codec2.video_pixel_rate": "1000"}},
              "lacks ro.vendor.v4l2_codec2.video_pixel_rate=108000000"),
+            ("video-decode-pixel-rate-property-cause",
+             {"video_properties": {
+                 **good_video_properties,
+                 "ro.vendor.v4l2_codec2.video_decode_pixel_rate": "1000"}},
+             "lacks ro.vendor.v4l2_codec2.video_decode_pixel_rate=456192000"),
             ("video-codec-list-lacks-hevc-decoder-cause",
              {"entries": {"VENDOR/etc/media_codecs_c2.xml": video_codec_list(
                  hardware_decoders={"c2.v4l2.avc.decoder": "video/avc"})}},
@@ -1258,7 +1306,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              {"video_properties": {
                  **good_video_properties,
                  "ro.vendor.v4l2_codec2.decode_concurrent_instances": "1"}},
-             "lacks ro.vendor.v4l2_codec2.decode_concurrent_instances=8"),
+             "lacks ro.vendor.v4l2_codec2.decode_concurrent_instances=4"),
             ("missing-video-hevc-property-cause",
              {"video_properties": {
                  name: value for name, value in good_video_properties.items()

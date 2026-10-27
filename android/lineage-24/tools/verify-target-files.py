@@ -63,8 +63,13 @@ VIDEO_DECODER_PROPERTY_PREFIX = "ro.vendor.v4l2_codec2.decoder.supported."
 VIDEO_DECODER_PROPERTIES = {
     "ro.vendor.v4l2_codec2.decoder.supported.h264": "true",
     "ro.vendor.v4l2_codec2.decoder.supported.hevc": "true",
-    "ro.vendor.v4l2_codec2.decode_concurrent_instances": "8",
+    "ro.vendor.v4l2_codec2.decode_concurrent_instances": "4",
+    "ro.vendor.v4l2_codec2.video_decode_pixel_rate": "456192000",
 }
+# CTS demands that the use of the largest published performance point be at least this share of
+# the capacity (VideoEncoderAvailabilityTest and VideoDecoderAvailabilityTest, resource
+# consumption for performance points), so a capacity cannot be far above what the codec publishes.
+VIDEO_MIN_CAPACITY_SHARE = 0.6
 VIDEO_ENCODER_UEVENTD = "/dev/video* 0660 system camera"
 # The service reads this policy beside its default one. The poller of the V4L2
 # device wakes its thread through an eventfd, which the default lacks.
@@ -908,9 +913,12 @@ def check_video_encoders(
             if feature not in features:
                 fail(f"{codec.get('name')} does not publish {feature}")
     # CTS requires a hardware codec to publish what it sustains: the performance points that
-    # the claims test reads and the measured frame rates that the encoder performance test
-    # checks against what it measures.
-    for codec in codecs.iterfind("./Encoders/MediaCodec"):
+    # the claims test reads and the measured frame rates that the performance tests check
+    # against what they measure.
+    hardware_codecs = list(codecs.iterfind("./Encoders/MediaCodec")) + [
+        codec for codec in decoders if codec.get("name") in VIDEO_DECODER_CODECS
+    ]
+    for codec in hardware_codecs:
         limits = [limit.get("name", "") for limit in codec.iterfind("./Limit")]
         for prefix in ("performance-point-", "measured-frame-rate-"):
             if not any(name.startswith(prefix) for name in limits):
@@ -923,25 +931,39 @@ def check_video_encoders(
     for key, expected in VIDEO_ENCODER_PROPERTIES.items():
         if vendor.get(key) != expected:
             fail(f"VENDOR/build.prop lacks {key}={expected}: {vendor.get(key)!r}")
-    # A codec cannot publish more than the device sustains: the service reports the pixel rate
-    # as the capacity that real-time streams are counted against.
-    capacity = int(vendor["ro.vendor.v4l2_codec2.video_pixel_rate"])
-    for codec in codecs.iterfind("./Encoders/MediaCodec"):
-        for limit in codec.iterfind("./Limit"):
-            name = limit.get("name", "")
-            if not name.startswith("performance-point-"):
-                continue
-            try:
-                width, height = (int(side) for side in name.rpartition("-")[2].split("x"))
-                frame_rate = int((limit.get("range") or "").partition("-")[2])
-            except ValueError:
-                fail(f"{codec.get('name')} publishes a malformed {name}: {limit.get('range')!r}")
-            if width * height * frame_rate > capacity:
-                fail(f"{codec.get('name')} publishes {name} above the pixel rate capacity "
-                     f"{capacity}: {width * height * frame_rate}")
     for key, expected in VIDEO_DECODER_PROPERTIES.items():
         if vendor.get(key) != expected:
             fail(f"VENDOR/build.prop lacks {key}={expected}: {vendor.get(key)!r}")
+    # A codec cannot publish more than the device sustains: the service reports the pixel rate
+    # as the capacity that real-time streams of its direction are counted against, and the
+    # largest point must use a good share of it.
+    for direction, group, key in (
+        ("pixel rate", list(codecs.iterfind("./Encoders/MediaCodec")),
+         "ro.vendor.v4l2_codec2.video_pixel_rate"),
+        ("decode pixel rate",
+         [codec for codec in decoders if codec.get("name") in VIDEO_DECODER_CODECS],
+         "ro.vendor.v4l2_codec2.video_decode_pixel_rate"),
+    ):
+        capacity = int(vendor[key])
+        largest = 0
+        for codec in group:
+            for limit in codec.iterfind("./Limit"):
+                name = limit.get("name", "")
+                if not name.startswith("performance-point-"):
+                    continue
+                try:
+                    width, height = (int(side) for side in name.rpartition("-")[2].split("x"))
+                    frame_rate = int((limit.get("range") or "").partition("-")[2])
+                except ValueError:
+                    fail(f"{codec.get('name')} publishes a malformed {name}: "
+                         f"{limit.get('range')!r}")
+                if width * height * frame_rate > capacity:
+                    fail(f"{codec.get('name')} publishes {name} above the {direction} capacity "
+                         f"{capacity}: {width * height * frame_rate}")
+                largest = max(largest, width * height * frame_rate)
+        if largest < capacity * VIDEO_MIN_CAPACITY_SHARE:
+            fail(f"the largest performance point of the {direction} group uses {largest}, "
+                 f"below {VIDEO_MIN_CAPACITY_SHARE:.0%} of the capacity {capacity}")
     for key, value in vendor.items():
         if (
             key.startswith(VIDEO_DECODER_PROPERTY_PREFIX)

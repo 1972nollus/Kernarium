@@ -1005,11 +1005,14 @@ enabled (`--video`).
 - **CTS.** The encoder tests of `CtsMediaEncoderTestCases`,
   `CtsMediaV2TestCases`, `CtsVideoCodecTestCases`, `CtsVideoTestCases`,
   `CtsMediaCodecTestCases` and `CtsMediaRecorderTestCases`, filtered to the two
-  encoder names, and the decoder classes of `CtsMediaV2TestCases` (with
-  `AdaptivePlaybackTest`), filtered to the two decoder names, pass on
+  encoder names, and the decoder classes of `CtsMediaV2TestCases` and
+  `CtsVideoTestCases` (the performance and availability classes among them) and
+  `AdaptivePlaybackTest`, `DecoderBlockModelTest` and `VideoDecoderPerfTest` of
+  `CtsMediaDecoderTestCases`, filtered to the two decoder names, pass on
   `arm64-v8a` and `armeabi-v7a`, and the software `c2.android.*` results do
   not regress. The encoder tests that decode their output pass through the
-  hardware decoders.
+  hardware decoders. The decoders' rates swing with the load of the host, so
+  the performance classes run on a quiet one.
 - **Host.** The host's video activity log shows hardware encodes and decodes
   for those runs; a pass that never reached the host codec does not qualify.
 

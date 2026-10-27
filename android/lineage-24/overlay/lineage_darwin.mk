@@ -388,14 +388,17 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_presen
 # core variant under /system, which the generic system artifact path
 # requirement refuses. The XML lists the encoders and the HEVC and H.264
 # decoders, and the properties enable exactly those components. The store
-# admits as many instances as the host serves streams, and reports the pixel
-# rate the host sustains as the capacity of its real-time encoder streams, which
-# is the largest performance point the XML publishes (3840x2160 at 13 frames
-# per second is 107827200 luma samples per second); a decoder reports its
-# sessions alone until a decode pixel rate is measured
-# (ro.vendor.v4l2_codec2.video_decode_pixel_rate). The extended policy adds the
-# calls the service's seccomp policy lacks for the V4L2 device and for the
-# crash handler, and ueventd gives the nodes to the group the service joins.
+# admits as many instances as the properties allow and reports the pixel rate
+# the host sustains as the capacity of the real-time streams of each direction.
+# That capacity is the largest performance point the XML publishes: 3840x2160 at
+# 13 frames per second is 107827200 luma samples per second for the encoders,
+# and 3840x2160 at 55 frames per second is 456192000 for the decoders (CTS
+# wants the largest point to use at least 60% of the capacity). A decoder keeps
+# its pool of decoded pictures in the guest's 8 GiB, about 0.9 GiB for a 4K
+# stream, so four decoders may run at once where the encoders allow eight. The
+# extended policy adds the calls the service's seccomp policy lacks for the V4L2
+# device and for the crash handler, and ueventd gives the nodes to the group the
+# service joins.
 PRODUCT_SOONG_NAMESPACES += external/v4l2_codec2
 PRODUCT_PACKAGES += android.hardware.media.c2-service-v4l2
 PRODUCT_COPY_FILES += \
@@ -408,7 +411,8 @@ PRODUCT_VENDOR_PROPERTIES += \
     ro.vendor.v4l2_codec2.video_pixel_rate=108000000 \
     ro.vendor.v4l2_codec2.decoder.supported.h264=true \
     ro.vendor.v4l2_codec2.decoder.supported.hevc=true \
-    ro.vendor.v4l2_codec2.decode_concurrent_instances=8
+    ro.vendor.v4l2_codec2.decode_concurrent_instances=4 \
+    ro.vendor.v4l2_codec2.video_decode_pixel_rate=456192000
 
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 
