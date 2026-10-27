@@ -38,3 +38,32 @@ cc_binary {
         "-DVK_USE_PLATFORM_ANDROID_KHR",
     ],
 }
+
+cc_binary {
+    name: "kernarium_vk_ahb_import",
+    srcs: ["kernarium_vk_ahb_import.cpp"],
+    header_libs: ["vulkan_headers"],
+    shared_libs: [
+        "libnativewindow",
+        "libvulkan",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wextra",
+        "-DVK_USE_PLATFORM_ANDROID_KHR",
+    ],
+}
+
+cc_binary {
+    name: "kernarium_ahb_yuv_roundtrip",
+    srcs: ["kernarium_ahb_yuv_roundtrip.cpp"],
+    shared_libs: [
+        "libnativewindow",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wextra",
+    ],
+}

@@ -27,7 +27,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 23 insertions(+), 2 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index af60fb251bbe8cd95fbfa8bdce7aba9f7dd05a15..62a3702487e684fbe58d9604442143f3a2833056 100644
+index d91414f02ed63529d57d57a1ff3d5aba3d3ae0cc..5426fcc219b1c563ef57d35a2301ea4a41499625 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -5528,8 +5528,7 @@ static void vrend_draw_bind_images_shader(struct vrend_sub_context *sub_ctx, int

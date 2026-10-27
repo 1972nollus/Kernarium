@@ -16,10 +16,10 @@ buffer.
  1 file changed, 1 insertion(+)
 
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index 6b6d10d2e846d9fa31011aec85915433cdf6f0ef..e6695a7a276f64e006c8f8706ec0d6fc1d1ebcac 100644
+index 7a4d5cbbd2f7a794e42f707cbd76042988446844..bf19c81f13065b2ec02494d8f1e5cf911f0a63af 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
-@@ -1412,6 +1412,7 @@ static void virgl_3d_resolve_format_and_use_flags(struct driver *drv, uint32_t f
+@@ -1484,6 +1484,7 @@ static void virgl_3d_resolve_format_and_use_flags(struct driver *drv, uint32_t f
  	/* resolve explicit format */
  	switch (*out_format) {
  	case DRM_FORMAT_NV12:

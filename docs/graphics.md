@@ -207,11 +207,33 @@ only the CPU, a codec or a camera touches: the renderer refuses a native NV12
 create as an invalid parameter and every later command on that resource as an
 invalid resource id.
 
+For the same reason a view of a later plane selects nothing on the host. A
+guest that imports the second plane of an image as its own resource sends the
+plane number where a sampler view carries its layers, and the renderer reads it
+as the whole texture, so a planar picture whose planes are separate buffers
+samples correctly. A picture packed into one buffer, with its second plane at an
+offset, does not: Virgl carries no offset for an imported plane, and a texture of
+32-bit texels cannot be viewed as 8-bit pairs.
+
+A single-plane buffer's rows are padded to the first whole number of pixels
+that makes them a multiple of 16 bytes (a 642-pixel RGBA row is 2576 bytes and
+the buffer's stride 644 pixels), because the host imports a buffer into Vulkan
+at the pitch the guest reports and Metal reads a texture over a buffer only at
+such a pitch. The buffer and its host texture keep their width, which Android
+allows to be smaller than the stride and which the guest samples the texture
+by. A swapchain image, a GPU blob, is laid out by the same rule. The renderer
+takes the guest rows of a transfer at the row length of the texture's width,
+because the kernel carries no stride in a transfer, so a buffer with padded rows
+is locked and unlocked one row at a time.
+
 The emulated layouts are the layouts Android defines, so that the media
 framework, the Image API and an importer that reads the buffer's own plane
 offsets and strides agree on where a plane is. An NV12 image is the luma rows
-followed by the interleaved chroma rows. A YV12 image is Android's: the V plane
-after the Y plane, the U plane after the V plane, and a chroma stride of half
+followed by the interleaved chroma rows, and a row is padded to a multiple of 16
+bytes, which also holds the one extra chroma byte of an odd width. A P010 image
+is the same with two-byte samples, its rows padded the same way and the chroma
+box of a partial lock clamped at the padded width. A YV12 image is Android's:
+the V plane after the Y plane, the U plane after the V plane, and a chroma stride of half
 the luma stride, which minigbm makes a multiple of 32 so that the half is a
 multiple of 16. A chroma row is therefore half as wide as the R8 image and two
 of them fill one image row, so a 1920x1080 frame is a 1920x1620 image. Locking

@@ -18,14 +18,14 @@ rendering or scanout.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- virtgpu_virgl.c | 27 ++++++++++++++++++---------
- 1 file changed, 18 insertions(+), 9 deletions(-)
+ virtgpu_virgl.c | 37 ++++++++++++++++++++++++-------------
+ 1 file changed, 24 insertions(+), 13 deletions(-)
 
 diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
-index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..a1199f094d4d49bb37aa97db3dca8b0c8701327f 100644
+index 5cf0c0606d5a05b01c17d272a12391d45e6809e0..418c18260e4b334808694ab1f97a2265ea015ce8 100644
 --- a/virtgpu_virgl.c
 +++ b/virtgpu_virgl.c
-@@ -206,13 +206,16 @@ static void virgl_get_emulated_metadata(const struct bo *bo, struct bo_metadata
+@@ -210,16 +210,19 @@ static void virgl_get_emulated_metadata(const struct bo *bo, struct bo_metadata
  	switch (bo->meta.format) {
  	case DRM_FORMAT_NV12:
  	case DRM_FORMAT_NV21:
@@ -38,13 +38,18 @@ index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..a1199f094d4d49bb37aa97db3dca8b0c
  		y_plane_height = original_height;
  		c_plane_height = DIV_ROUND_UP(original_height, 2);
  
--		metadata->width = original_width;
-+		metadata->width =
-+		    bo->meta.format == DRM_FORMAT_P010 ? original_width * 2 : original_width;
+-		// A chroma row holds a Cb and a Cr byte for each pair of pixels, so of an odd width it
+-		// is one byte longer than the luma row. The rows are therefore padded to the pitch the
++		// A chroma row holds a Cb and a Cr sample for each pair of pixels, so of an odd width it
++		// is one sample longer than the luma row. The rows are therefore padded to the pitch the
+ 		// host imports, which is also the first whole number of bytes that holds them.
+-		metadata->width = ALIGN(original_width, VIRGL_ROW_ALIGNMENT);
++		metadata->width = ALIGN(original_width * (bo->meta.format == DRM_FORMAT_P010 ? 2 : 1),
++					VIRGL_ROW_ALIGNMENT);
  		metadata->height = y_plane_height + c_plane_height;
  
  		// Y-plane (full resolution)
-@@ -321,16 +324,19 @@ static void virgl_get_emulated_transfers_params(const struct bo *bo,
+@@ -328,31 +331,37 @@ static void virgl_get_emulated_transfers_params(const struct bo *bo,
  	switch (bo->meta.format) {
  	case DRM_FORMAT_NV12:
  	case DRM_FORMAT_NV21:
@@ -67,11 +72,16 @@ index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..a1199f094d4d49bb37aa97db3dca8b0c
  		xfer_params->xfer_boxes[0].height = transfer_box->height;
  
  		// CbCr-plane (half resolution, interleaved, placed below Y-plane): a row holds a
-@@ -339,13 +345,14 @@ static void virgl_get_emulated_transfers_params(const struct bo *bo,
+ 		// Cb and a Cr sample for each pair of pixels, and there is one for each pair of rows
+ 		uint32_t chroma_x = transfer_box->x & ~1u;
  		uint32_t chroma_end = DIV_ROUND_UP(transfer_box->x + transfer_box->width, 2) * 2;
- 		if (chroma_end > bo->meta.width)
- 			chroma_end = bo->meta.width;
+-		if (chroma_end > ALIGN(bo->meta.width, VIRGL_ROW_ALIGNMENT))
+-			chroma_end = ALIGN(bo->meta.width, VIRGL_ROW_ALIGNMENT);
 -		xfer_params->xfer_boxes[1].x = chroma_x;
++		uint32_t padded_width =
++		    ALIGN(bo->meta.width * bytes_per_sample, VIRGL_ROW_ALIGNMENT) / bytes_per_sample;
++		if (chroma_end > padded_width)
++			chroma_end = padded_width;
 +		xfer_params->xfer_boxes[1].x = chroma_x * bytes_per_sample;
  		xfer_params->xfer_boxes[1].y = y_plane_height + transfer_box->y / 2;
 -		xfer_params->xfer_boxes[1].width = chroma_end - chroma_x;
@@ -84,7 +94,7 @@ index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..a1199f094d4d49bb37aa97db3dca8b0c
  	case DRM_FORMAT_YVU420:
  	case DRM_FORMAT_YVU420_ANDROID:
  		// Tri-planar
-@@ -433,7 +440,8 @@ static bool virgl_supports_combination_through_emulation(struct driver *drv, uin
+@@ -440,7 +449,8 @@ static bool virgl_supports_combination_through_emulation(struct driver *drv, uin
  		return false;
  
  	return drm_format == DRM_FORMAT_NV12 || drm_format == DRM_FORMAT_NV21 ||
@@ -94,7 +104,7 @@ index 5a1cbf944416f5c5a5c39175a75932571c5c89ea..a1199f094d4d49bb37aa97db3dca8b0c
  }
  
  // Whether this buffer exists only as the bytes of an R8 image. The native test above only checks
-@@ -813,7 +821,8 @@ static int virgl_init(struct driver *drv)
+@@ -856,7 +866,8 @@ static int virgl_init(struct driver *drv)
  	 * when not natively supported and instead handled by HWComposer. */
  	virgl_add_combination(drv, DRM_FORMAT_P010, &LINEAR_METADATA,
  			      BO_USE_SCANOUT | BO_USE_TEXTURE | BO_USE_SW_MASK |

@@ -380,6 +380,20 @@ PRODUCT_COPY_FILES += \
 PRODUCT_PACKAGES += kernarium_vk_present
 PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_present
 
+# A Vulkan hardware-buffer import check: it fills gralloc buffers of several
+# formats and widths through the CPU, imports each into Vulkan and reads it
+# back, so a row pitch the driver cannot import or the renderer misreads fails
+# the run.
+PRODUCT_PACKAGES += kernarium_vk_ahb_import
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_ahb_import
+
+# A YUV hardware-buffer round-trip check: it writes NV12, P010 and YV12 buffers
+# of even and odd sizes whole and then by a partial lock, and reads them back
+# through the host copy, so a layout the guest and the renderer read
+# differently fails the run.
+PRODUCT_PACKAGES += kernarium_ahb_yuv_roundtrip
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_ahb_yuv_roundtrip
+
 # Hardware video encoding and decoding. The host's VideoToolbox encoders and
 # decoders reach the guest as V4L2 stateful devices, and external/v4l2_codec2
 # exposes them through Codec2: its service is the vendor Codec2 store beside the
