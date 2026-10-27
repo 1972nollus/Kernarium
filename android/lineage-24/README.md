@@ -114,7 +114,11 @@ correction: its WebView service drops the configured providers that are not
 installed, asking the package manager for every user, and does so under the
 identity of the calling application, which the package manager refuses without
 `INTERACT_ACROSS_USERS`. The topic runs that availability check as the system,
-so any application reads the provider list, as on AOSP.
+so any application reads the provider list, as on AOSP. A further topic
+of the route lets a media router client set the volume of the built-in speaker
+route: without a Bluetooth adapter the device route controller is the legacy
+one, whose volume request did nothing, and the topic sets the music stream
+volume as the system.
 
 The build variant is the single `LINEAGE24_BUILD_VARIANT` setting in
 `metadata/lineage.env`, `user` or `userdebug`. Lunch, the target-files verifier,

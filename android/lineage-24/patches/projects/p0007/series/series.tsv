@@ -9,3 +9,4 @@ patch	display-ignore-a-snapshot-that-lacks-its-active-mode.patch
 patch	pm-ignore-use32bitAbi-of-system-packages-on-request.patch
 patch	webkit-check-provider-availability-as-the-system.patch
 patch	packageupdate-start-the-placeholder-in-every-updating-task.patch
+patch	media-let-the-legacy-device-route-set-the-music-volume.patch
