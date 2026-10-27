@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <cstddef>
+
 namespace uml::platform {
 
 /*
@@ -31,5 +33,14 @@ struct GuestFileSyncResult final {
  * for. Records that no longer do are retired rather than flushed.
  */
 [[nodiscard]] GuestFileSyncResult sync_guest_files() noexcept;
+
+/*
+ * Forgets every record, and returns how many there were. A guest that restarts
+ * itself hands the process to the next one after the library has closed its
+ * descriptors; a record left behind would name a descriptor number the next
+ * guest, or the host, may be given for something else and retires itself only
+ * at the next flush. Records the next guest makes are its own.
+ */
+std::size_t forget_guest_files() noexcept;
 
 } // namespace uml::platform

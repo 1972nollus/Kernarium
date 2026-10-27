@@ -71,6 +71,18 @@ void record_guest_file(int descriptor, int openFlags) noexcept
 	}
 }
 
+std::size_t forget_guest_files() noexcept
+{
+	std::lock_guard lock(registryMutex);
+	std::size_t forgotten = 0;
+	for (const Record &record : registry)
+		forgotten += record.recorded ? 1U : 0U;
+	/* The storage goes with the records: a descriptor table that once grew
+	 * large must not keep its vector. */
+	std::vector<Record>().swap(registry);
+	return forgotten;
+}
+
 GuestFileSyncResult sync_guest_files() noexcept
 {
 	GuestFileSyncResult result {};
