@@ -186,7 +186,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->set_gpu_hold == nullptr ||
         api->set_frame_sink == nullptr ||
         api->set_background_throttle == nullptr ||
-        api->set_page_cache_trimming == nullptr) {
+        api->set_page_cache_trimming == nullptr ||
+        api->set_microphone == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -222,12 +223,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v12");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v13");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v12: %s\n",
+            "Kernarium: selected runtime lacks API v13: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -350,6 +351,12 @@ extern "C" int kernarium_runtime_loader_set_page_cache_trimming(int enabled)
 {
     const kernarium_runtime_api* runtime = api();
     return runtime == nullptr ? -1 : runtime->set_page_cache_trimming(enabled);
+}
+
+extern "C" int kernarium_runtime_loader_set_microphone(int enabled)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -1 : runtime->set_microphone(enabled);
 }
 
 extern "C" void kernarium_runtime_loader_send_touch(

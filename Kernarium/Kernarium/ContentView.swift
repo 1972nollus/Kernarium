@@ -104,6 +104,13 @@ struct ContentView: View {
         }
         .onReceive(
             NotificationCenter.default.publisher(
+                for: UIApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            MicrophoneSetting.shared.refresh()
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
                 for: UserDefaults.didChangeNotification
             )
         ) { _ in
@@ -1583,6 +1590,9 @@ final class EmulatorLauncher: ObservableObject {
             print("Kernarium: cannot load the runtime")
             return
         }
+        // A Microphone setting the user turned on earlier follows the guest;
+        // a setting that is off leaves the microphone alone.
+        MicrophoneSetting.shared.restoreForGuest()
         let boot: PreparedBoot
         switch selection {
         case let .image(rootfs, _):

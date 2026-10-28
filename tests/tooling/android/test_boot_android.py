@@ -76,6 +76,34 @@ class BootAndroidTests(unittest.TestCase):
         )
         self.assertFalse(any("vnc" in argument for argument in native))
 
+    def test_audio_output_defaults_to_the_host_and_can_be_null(self) -> None:
+        default = boot_android.emulator_command(
+            boot_android.parse_arguments([]), Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertFalse(any("--audio" in argument for argument in default))
+        options = boot_android.parse_arguments(["--audio-output", "null"])
+        command = boot_android.emulator_command(
+            options, Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertIn("--audio-output=null", command)
+        with self.assertRaises(SystemExit):
+            boot_android.parse_arguments(["--audio-output", "speaker"])
+
+    def test_audio_input_is_silent_unless_the_host_microphone_is_asked_for(
+        self
+    ) -> None:
+        default = boot_android.emulator_command(
+            boot_android.parse_arguments([]), Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertFalse(any("--audio-input" in argument for argument in default))
+        options = boot_android.parse_arguments(["--audio-input", "host"])
+        command = boot_android.emulator_command(
+            options, Path("/r"), Path("/i"), Path("/e")
+        )
+        self.assertIn("--audio-input=host", command)
+        with self.assertRaises(SystemExit):
+            boot_android.parse_arguments(["--audio-input", "mic"])
+
     def test_adb_forward_is_loopback_only(self) -> None:
         options = boot_android.parse_arguments(["--adb-port", "15555"])
         command = boot_android.emulator_command(

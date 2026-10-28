@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "audio/in_process_service.hpp"
+#include "audio/microphone_switch.hpp"
 #include "audio/protocol.hpp"
 #include "balloon/in_process_service.hpp"
 #include "balloon/protocol.hpp"
@@ -16,6 +17,7 @@
 #include "gpu/protocol.hpp"
 #include "launcher.hpp"
 #include "guest_memory_argument.hpp"
+#include "platform/microphone_authorization.hpp"
 #include "restart_loop_guard.hpp"
 #include "sockets/socket_paths.hpp"
 #include "uml/emulator.h"
@@ -303,6 +305,8 @@ struct HostGpuOptions {
 struct PreparedArguments {
 	HostGpuOptions gpu;
 	bool audio {};
+	uml::audio::OutputMode audio_output {uml::audio::OutputMode::host};
+	bool audio_input_host {};
 	bool battery {};
 	bool video {};
 	bool video_encoder {};
@@ -338,9 +342,11 @@ struct PreparedArguments {
 	[[nodiscard]] bool same_host_devices(
 		const PreparedArguments &other) const
 	{
-		return std::tie(gpu, audio, battery, video, video_encoder,
-				console_socket, serial_socket, net_forwards) ==
-			std::tie(other.gpu, other.audio, other.battery, other.video,
+		return std::tie(gpu, audio, audio_output, audio_input_host, battery,
+				video, video_encoder, console_socket, serial_socket,
+				net_forwards) ==
+			std::tie(other.gpu, other.audio, other.audio_output,
+				 other.audio_input_host, other.battery, other.video,
 				 other.video_encoder, other.console_socket,
 				 other.serial_socket, other.net_forwards);
 	}
@@ -407,6 +413,24 @@ PreparedArguments prepare_host_arguments(
 		if (argument == "--gpu") {
 			prepared.gpu.enabled = true;
 		} else if (argument == "--audio") {
+			prepared.audio = true;
+		} else if (valued("--audio-output=")) {
+			if (value == "host")
+				prepared.audio_output = uml::audio::OutputMode::host;
+			else if (value == "null")
+				prepared.audio_output = uml::audio::OutputMode::null;
+			else
+				throw std::invalid_argument(
+					"--audio-output must be host or null");
+			prepared.audio = true;
+		} else if (valued("--audio-input=")) {
+			if (value == "silent")
+				prepared.audio_input_host = false;
+			else if (value == "host")
+				prepared.audio_input_host = true;
+			else
+				throw std::invalid_argument(
+					"--audio-input must be silent or host");
 			prepared.audio = true;
 		} else if (argument == "--battery") {
 			prepared.battery = true;
@@ -566,6 +590,9 @@ struct BootServices final {
 	VirtioService video;
 	VirtioService video_encoder;
 	VirtioService audio;
+	/* The guest records silence unless the user asked for the host's
+	 * microphone; the switch ends with the boot's audio service. */
+	std::shared_ptr<uml::audio::MicrophoneSwitch> microphone;
 	VirtioService console;
 
 	void stop() noexcept
@@ -928,13 +955,31 @@ private:
 			    },
 			    "--video-encoder", "Virtio video encoder"))
 			return false;
+		/* Creating the switch touches nothing; only turning it on below
+		 * can make the system ask for permission. */
+		if (prepared_.audio_input_host)
+			services_.microphone =
+				std::make_shared<uml::audio::MicrophoneSwitch>(
+					uml::platform::makeAppleMicrophoneAuthorization());
 		if (prepared_.audio && !information_only_ &&
 		    !start_virtio_device(
 			    kernel, services_.audio,
 			    uml::audio::protocol::deviceId,
-			    [] { return uml::audio::makeInProcessService(); },
+			    [&] {
+				    return uml::audio::makeInProcessService(
+					    {.output = prepared_.audio_output,
+					     .microphone = services_.microphone});
+			    },
 			    "--audio", "Virtio Sound"))
 			return false;
+		if (services_.microphone && services_.audio) {
+			using State = uml::audio::MicrophoneSwitch::State;
+			const auto report = [](State state) {
+				std::fprintf(stderr, "Microphone: %s\n",
+					     uml::audio::describe(state));
+			};
+			report(services_.microphone->enable(report));
+		}
 		const bool named_serial = !prepared_.serial_socket.empty();
 		if ((named_serial || !prepared_.console_socket.empty()) &&
 		    !information_only_ &&

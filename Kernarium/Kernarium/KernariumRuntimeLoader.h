@@ -57,6 +57,11 @@ int kernarium_runtime_loader_set_frame_sink(
  * otherwise, -1 when no runtime is loaded. Call it away from the main thread:
  * it may wait for the guest's console. */
 int kernarium_runtime_loader_set_page_cache_trimming(int enabled);
+/* Turns the guest's microphone on (nonzero) or off (zero), as
+ * kernarium_runtime_set_microphone_function does, and returns the resulting
+ * KERNARIUM_RUNTIME_MICROPHONE_ value, or -1 when no runtime is loaded. It
+ * never asks the system for access; the caller asks first. */
+int kernarium_runtime_loader_set_microphone(int enabled);
 void kernarium_runtime_loader_send_touch(
     uint32_t x,
     uint32_t y,
