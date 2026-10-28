@@ -36,12 +36,51 @@ the guest is over: it powered off, the user stopped it, a boot failed, or it
 kept restarting. The application then says how it ended and asks to be
 relaunched; it never starts a second run in the same process. The guest runs on
 the named `uml-launcher` thread, which leaves the main thread to UIKit and
-MetalKit.
+MetalKit. [Restarts](#restarts) describes what a restart keeps and what the
+application shows.
 
 Kernarium defaults to Linux, the processor count `NSProcessInfo` reports, and
 4 GiB of guest memory where the process is given the host's memory (Designed
 for iPad on a Mac) or 2 GiB on a physical device, whose jetsam limit a 4 GiB
 guest would cross.
+
+## Restarts
+
+The runtime makes the machine once: the emulator handle, the user network with
+its forwards, the GPU service with the view it draws on, the microphone switch
+and the footprint log. Each boot makes its own Virtio services, GPU connection,
+console bridge, input registrations and command line. When the guest asks to
+restart, the runtime stops the boot's services, resets the network link so the
+old guest's connections end, and boots again; an Android guest boots in `auto`
+mode on every restart. The loop and its guarantees (the retry of a run the
+library refuses, the stop request checked before every boot, the loop guard) are
+in [`../docs/architecture.md`](../docs/architecture.md#guest-lifecycle); the
+host test `kernarium-restart-loop` runs the loop against a recording fake.
+
+The application does not announce a restart the guest asked for. While the next
+boot is under way it shows a transient Restarting badge, which goes when the new
+guest's console answers. The runtime reports both edges through
+`set_restart_callback` (runtime API 14), and `BackgroundController` applies the
+page-cache trimming and the vCPU throttle again to a guest it keeps running,
+since both belong to a kernel and the new one boots with neither. A guest that
+restarts five times in a row within 15 s of booting is not booted again: the
+run returns `KERNARIUM_RUNTIME_RESULT_RESTART_LOOP` and the notice says so
+instead of printing a status. The restart notice for iOS ending the process in
+the background is a different event and is unchanged.
+
+The next boot waits while the guest's GPU requests are held or the guest is
+paused. A guest that boots behind a closed gate finds its GPU unanswered: the
+`virtio_gpu` probe times out on each capset and drops them all for that boot, so
+it would run without 3D after the user came back. A `keepRunning` job holds the
+GPU for its whole stay, so a guest that restarts during a job boots when the
+user returns; a Picture in Picture window releases the gate and the guest boots
+at once.
+
+`KERNARIUM_FOOTPRINT_LOG_MS` also writes `Kernarium: memory` lines (`tick`,
+and for a restart `ended` and `booted`): the footprint, the lifetime peak iOS
+acts on, the wired bytes, the address space, and the default malloc zone's
+bytes in use and held: the figures a restart must return to the first boot's
+level.
 
 ## Guest storage
 

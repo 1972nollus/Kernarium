@@ -306,6 +306,26 @@ final class BackgroundController {
         }
     }
 
+    /// The guest restarted itself and its new kernel's console answers. What
+    /// the policy applied to the guest belongs to a kernel, and the new one
+    /// boots with neither the page-cache trimming nor the throttled vCPUs, so
+    /// a guest kept running in the background gets both again. A guest in the
+    /// foreground or paused wants neither; a guest that paused or is waiting
+    /// for the window cannot have restarted into a running boot, since the
+    /// runtime holds the next boot back while the GPU is held.
+    func guestDidRestart() {
+        switch phase {
+        case .keptRunning:
+            effects.setPageCacheTrimming(true)
+            effects.setBackgroundThrottle(true)
+        case .jobRunning:
+            // iOS already runs a continued task at background priority.
+            effects.setPageCacheTrimming(true)
+        case .foreground, .awaitingPictureInPicture, .quiesced:
+            break
+        }
+    }
+
     func willEnterForeground() {
         endWait()
         if phase == .keptRunning {
