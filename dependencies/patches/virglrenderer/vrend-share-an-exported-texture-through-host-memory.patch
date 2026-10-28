@@ -16,7 +16,7 @@ exports a blob as a segment and vrend_resource_import_shm() maps it and
 refreshes a texture from it before each read. Give the export direction the
 same shape. When a resource with no fd of its own is asked to export one --
 which happens only when another context is importing it -- allocate a host
-segment the size of the texture's tightly packed linear layout, snapshot the
+segment the size of the texture's linear layout, snapshot the
 texture into it, and hand out its fd as VIRGL_RESOURCE_FD_SHM. The segment
 becomes the resource's shared storage, recorded in the same shm_import_*
 fields an imported blob uses, so a single refresh path serves both
@@ -26,9 +26,11 @@ segment; only its dma-buf-only check stood in the way, and the size it takes
 from the exported descriptor now falls back to the size the file reports,
 because a shared-memory object need not be seekable and on this host is not.
 
-The stride is width * blocksize, with no padding: that is the layout the
-guest allocator computed for the same width and format when it asked for the
-buffer, and the layout the importing driver is told about.
+A row of the segment is the texture's width rounded up to the first whole
+number of pixels that makes it a multiple of 16 bytes, the pitch Metal reads a
+texture over a buffer at. The guest allocator pads the buffer it asks for by
+the same rule, and it is the layout the importing driver is told about; the
+texture itself stays as wide as the guest samples it.
 
 Synchronisation points, in both directions:
 
@@ -49,11 +51,11 @@ keeps ordinary texture storage and an unchanged code path, and the whole
 export conversion is Metal-host only, so a host with dma-buf keeps its GBM
 export untouched.
 ---
- src/proxy/proxy_context.c  |  23 ++++-
+ src/proxy/proxy_context.c  |  23 +++-
  src/vrend/vrend_decode.c   |   4 +
- src/vrend/vrend_renderer.c | 201 ++++++++++++++++++++++++++++++++-----
+ src/vrend/vrend_renderer.c | 214 ++++++++++++++++++++++++++++++++-----
  src/vrend/vrend_renderer.h |  12 +++
- 4 files changed, 211 insertions(+), 29 deletions(-)
+ 4 files changed, 224 insertions(+), 29 deletions(-)
 
 diff --git a/src/proxy/proxy_context.c b/src/proxy/proxy_context.c
 index 2780a540f7994bce0cf13deb5128761485b1c937..0caf74e955ac1aa19a35c126fc8dc19ab67fbfdf 100644
@@ -116,7 +118,7 @@ index 46d1eb19e3df38d53eb33496f28bd5e3f9a4302e..f70eda6f737e2fab568d98813ebed518
     /* One drain per command buffer still reports a host GL error and still
      * keeps the driver's error queue bounded; only the name of the command
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..af60fb251bbe8cd95fbfa8bdce7aba9f7dd05a15 100644
+index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..d91414f02ed63529d57d57a1ff3d5aba3d3ae0cc 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -3120,6 +3120,8 @@ static void vrend_hw_set_zsurf_texture(struct vrend_context *ctx)
@@ -137,7 +139,7 @@ index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..af60fb251bbe8cd95fbfa8bdce7aba9f
     }
  }
  
-@@ -7606,12 +7610,173 @@ static void vrend_pipe_resource_detach_iov(struct pipe_resource *pres,
+@@ -7606,12 +7610,186 @@ static void vrend_pipe_resource_detach_iov(struct pipe_resource *pres,
     res->num_iovs = 0;
  }
  
@@ -234,6 +236,22 @@ index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..af60fb251bbe8cd95fbfa8bdce7aba9f
 +}
 +
 +#ifdef ENABLE_METAL
++/* The row pitch of a texture's segment. The importing driver is told the pitch
++ * the guest chose when it asked for the buffer, and Metal reads a texture over
++ * a buffer only at a pitch that is a multiple of 16 bytes, so the guest pads a
++ * row to the first whole number of pixels that meets it and the segment is laid
++ * out by the same rule: memory both sides agreed on, with a texture as wide as
++ * the guest samples it. */
++static uint32_t vrend_shm_export_stride(uint32_t width, uint32_t blocksize)
++{
++   uint32_t pixels = 1;
++
++   while ((pixels * blocksize) % 16)
++      pixels++;
++
++   return align(width, pixels) * blocksize;
++}
++
 +/* Give a texture a shared-memory segment so another context can import it.
 + * An Apple host has no dma-buf, and this GL stack can build no texture over
 + * foreign storage, so sharing is a segment both sides map: the importer reads
@@ -260,10 +278,7 @@ index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..af60fb251bbe8cd95fbfa8bdce7aba9f
 +   if (!entry->internalformat || !blocksize)
 +      return false;
 +
-+   /* The guest computed this stride for the same width and format when it
-+    * asked for the buffer, and it is the layout the importing driver is told
-+    * about; a padded one would describe memory neither side agreed on. */
-+   const uint32_t stride = gr->base.width0 * blocksize;
++   const uint32_t stride = vrend_shm_export_stride(gr->base.width0, blocksize);
 +   const uint64_t size = (uint64_t)stride * gr->base.height0;
 +   if (!size)
 +      return false;
@@ -313,7 +328,7 @@ index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..af60fb251bbe8cd95fbfa8bdce7aba9f
        *fd = os_dupfd_cloexec(shm_res->host_shm->fd);
        return *fd >= 0 ? VIRGL_RESOURCE_FD_SHM : VIRGL_RESOURCE_FD_INVALID;
     }
-@@ -9303,28 +9468,10 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
+@@ -9303,28 +9481,10 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
                   offset);
     }
  
@@ -346,7 +361,7 @@ index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..af60fb251bbe8cd95fbfa8bdce7aba9f
  
     gr->shm_import_map = map;
     gr->shm_import_size = res->map_size;
-@@ -9377,7 +9524,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+@@ -9377,7 +9537,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
     if (res->shm_import_image)
        virgl_egl_host_pointer_image_destroy(egl, res->shm_import_image);
  #endif

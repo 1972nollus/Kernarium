@@ -263,7 +263,11 @@ Android port series beside the metadata. The port series carries the generated
 Soong port and the few source changes only Android needs, such as advertising
 `EGL_EXT_pixel_format_float` only with a float config: HWUI takes the extension
 as the promise of a half-float window config, and the Android visuals are all
-fixed-point. A guest replay assigns new
+fixed-point: RGBA8888, RGBX8888, BGRA8888 and RGB565, and gralloc offers no
+10-bit or half-float colour-output buffer either, so a 10-bit render target is
+unavailable and the CTS cases that use one skip on their own support query. The
+port also leaves out `VK_KHR_device_address_commands`, which the CTS refuses on
+a device whose declared dEQP level does not list it. A guest replay assigns new
 commit identities each time it is recreated, so the guest half is pinned by
 tree. Moving to a newer guest epoch is a metadata bump, a replay, and a
 regeneration; the verifier refuses a guest series that changed underneath the
@@ -320,6 +324,15 @@ The compositor's framebuffers are such GPU-only blobs; the host presents each
 through the Metal texture that stores its GL texture, as
 [`../../docs/graphics.md`](../../docs/graphics.md) describes.
 
+Such a blob has no pages the guest can map, because the kernel refuses to map a
+blob that is not mappable, so the guest's Virgl driver reaches it only through
+copy transfers. It imports a host blob with staging on whenever the renderer
+copies in both directions, and a second import of a handle it still holds
+reports the blob's type as the first did. Hardware bitmap uploads and the
+read-back of a window or an EGL image rely on both, and on the renderer reading
+a blob texture back through its staging buffer's guest storage
+([`../../docs/graphics.md`](../../docs/graphics.md#current-path)).
+
 Presentation is `VK_ANDROID_native_buffer`: the platform loader allocates the
 swapchain images from gralloc and the driver imports them. Those blobs belong to
 the renderer's GL context, and an Apple host has no dma-buf to hand across, so
@@ -329,11 +342,27 @@ that; the contract is in
 takes the presented layer on the scanout as a device composition. The product
 ships `kernarium_vk_present`, which owns a layer, wraps it through
 `VK_KHR_android_surface` and presents a swapchain, as the pass-or-fail check of
-that path.
+that path. `kernarium_vk_ahb_import` is the check of the import side: it fills
+hardware buffers of several formats and widths through the CPU, imports each
+into Vulkan and compares what the driver reads back, which fails for a row
+pitch the driver cannot import or the renderer lays out differently.
+`kernarium_ahb_yuv_roundtrip` is its counterpart for YUV buffers: NV12, P010 and
+YV12 of even and odd sizes are written whole and then by a partial lock and read
+back through the host copy, which fails for a layout the guest and the renderer
+read differently.
 
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:
 this driver has not been qualified against Android's Vulkan dEQP must-pass list.
+A declared level makes the CTS run every list dated up to it, so a declaration
+waits for those lists to pass whole. One gap is known in this
+stack: `vkMapMemory` of host-visible memory exported as a hardware buffer fails
+with `VK_ERROR_MEMORY_MAP_FAILED`, because gralloc backs such a buffer with a
+classic 3D resource, which Venus refuses to map by design (its contents reach
+the guest only through transfers), and a renderer-created blob in its place has
+no guest mapping on this host. The two
+`api.external.memory.android_hardware_buffer.*.host_visible.import_twice` cases
+of the 2019 list are the ones that map it.
 
 The Android hardware buffer handle type a swapchain needs is guest Mesa work,
 so it arrives with the guest Vulkan epoch pinned in

@@ -1044,14 +1044,38 @@ consumer reads it back as [`graphics.md`](graphics.md) describes.
 
 Sharing runs the other way too, for a guest whose buffer allocator is not the
 Vulkan driver: when another context asks to import a GL resource, the renderer
-gives that resource a host shared-memory segment the size of its tightly
-packed linear layout and hands out the segment's descriptor. The texture is
+gives that resource a host shared-memory segment the size of its linear layout
+and hands out the segment's descriptor. A row of the segment is padded to the
+first whole number of pixels that makes it a multiple of 16 bytes, the pitch
+Metal reads a texture over a buffer at; the guest allocator pads the buffer it
+asks for by the same rule, and the texture keeps the width the guest samples
+it at. The texture is
 refreshed from the segment before each GL read of it, and the segment is
 rewritten from the texture at the end of a submission that drew into it and
 before its descriptor is handed out. Ordering between the two consumers is the
 guest's own fences; the renderer adds none. A resource no other context
 imports keeps ordinary texture storage, and a host with dma-buf shares through
 that instead.
+
+The in-process GPU service keeps the display apart from the guest's GPU
+connection. The display (the VNC listener and its clients, or the native window
+or Kernarium view) and the frame tap last until the service stops. The
+connection (the Virtio-GPU device, the renderer, and every context and resource
+the guest created in them, with their share of the device memory pool) lasts as
+long as one guest. A guest that restarts itself is a new guest on the same
+machine, so `startNextConnection()` ends the connection, which resets the
+display to its idle picture and destroys the renderer, and opens a fresh one
+with new transport and input endpoints. VNC clients stay connected, the
+listener keeps its port, the window stays open, and display input that arrives
+while no connection exists is dropped. The request gate is the service's, not
+the connection's: a hold placed before the restart still holds the new device,
+and the application opens it as it opened the last. A host-visible blob of the
+new guest has been observed to start zeroed, but nothing here enforces that: the
+host driver or the OS hands out fresh zero-filled memory. On the Mac, a guest
+that left a token in host-visible memory across a restart (freed, mapped at
+exit, and held by a live process) found none of it, and every byte read zero,
+in 128 to 256 MiB scanned on each of the next two boots. The iPad is not yet
+measured.
 
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md).
