@@ -81,8 +81,12 @@ final class MicrophoneSetting: ObservableObject {
         defaults.set(on, forKey: Self.defaultsKey)
         access = permission.access
         if on, access == .notAsked {
+            // The system answers on its own queue. The hop back to the main
+            // actor holds its own weak reference to the setting, taken when
+            // the hop is made, instead of reading the callback's variable
+            // from concurrently-executing code.
             permission.request { [weak self] answer in
-                Task { @MainActor in self?.answered(answer) }
+                Task { @MainActor [weak self] in self?.answered(answer) }
             }
         }
         tellRuntime(on)
