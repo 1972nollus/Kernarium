@@ -84,6 +84,12 @@ struct VideoEncodeProfileCapability {
     bool levelSelectable {};
 };
 
+// The smallest picture side, in samples, that a capability ever lists. VideoToolbox
+// accepts smaller pictures, but a guest's quality check rejects what it makes of
+// them: Android's CTS finds a PSNR under 20 dB at 16, 32 and 48 samples and none
+// at 64. Discovery therefore probes from this side up and never reports less.
+inline constexpr std::uint32_t kVideoEncodeMinimumSide = 64;
+
 // One codec as this host's hardware encodes it. Every field is the result of
 // discovery on this device: a profile, layout, size or mode is listed only
 // after an encode with it succeeded.

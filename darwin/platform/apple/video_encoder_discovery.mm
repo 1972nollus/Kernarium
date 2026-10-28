@@ -43,7 +43,8 @@ namespace {
 
 using bitstream::Bytes;
 
-constexpr unsigned kDiscoveryRevision = 4;
+// 5: the smallest picture side is kVideoEncodeMinimumSide; earlier results list smaller ones.
+constexpr unsigned kDiscoveryRevision = 5;
 constexpr std::chrono::seconds kDiscoveryWait {300};   // a discovery takes seconds; the bound only ends a stuck one
 constexpr std::uint32_t kProbeWidth = 128;
 constexpr std::uint32_t kProbeHeight = 96;
@@ -494,10 +495,15 @@ std::optional<CodecDiscovery> discoverCodec(VideoCodec codec)
     }
 
     // Sizes: the smallest square that encodes, then a ladder up to the first
-    // size that does not, then the extreme aspect ratios of the result.
+    // size that does not, then the extreme aspect ratios of the result. A
+    // video stream is never listed below kVideoEncodeMinimumSide, so its probe
+    // starts there: smaller pictures encode, but a guest's quality check
+    // rejects them. A JPEG still has no such check.
     capability.minimumWidth = kProbeWidth;
     capability.minimumHeight = kProbeHeight;
-    for (const std::uint32_t side : {16u, 32u, 48u, 64u, 96u}) {
+    const std::vector<std::uint32_t> smallest = jpeg ? std::vector<std::uint32_t> {16, 32, 48, 64, 96}
+                                                     : std::vector<std::uint32_t> {kVideoEncodeMinimumSide, 96};
+    for (const std::uint32_t side : smallest) {
         const Probe probe {referenceSettings(side, side), 2};
         if (proves(probe, runProbe(probe))) {
             capability.minimumWidth = capability.minimumHeight = side;
@@ -792,6 +798,9 @@ std::optional<Discovery> decodeDiscovery(NSDictionary* root)
         c.measuredFramesPerSecond1080p = std::uint32_t(reader.unsignedValue(entry, @"fps1080", 100000));
         decoded.lowLatencyProfiles = reader.enumerations<VideoEncodeProfile>(entry, @"lowLatencyProfiles", int(VideoEncodeProfile::jpegBaseline));
         if (!reader.good() || c.profiles.empty() || c.minimumWidth > c.maximumWidth || c.minimumHeight > c.maximumHeight) return std::nullopt;
+        // A video size below the floor is a result that predates it, or a file that is not one.
+        if (c.codec != VideoCodec::jpeg && (c.minimumWidth < kVideoEncodeMinimumSide || c.minimumHeight < kVideoEncodeMinimumSide))
+            return std::nullopt;
         discovery.codecs.push_back(std::move(decoded));
     }
     if (!reader.good()) return std::nullopt;

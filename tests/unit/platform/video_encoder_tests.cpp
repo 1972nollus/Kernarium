@@ -109,6 +109,9 @@ void capabilityInvariants()
                     capability.measuredFramesPerSecond720p, capability.measuredFramesPerSecond1080p);
         require(!capability.profiles.empty(), "a codec with no profile is not listed");
         require(capability.minimumWidth > 0 && capability.minimumHeight > 0, "minimum size");
+        // A video picture below the floor encodes but fails a guest's quality check, so it is never listed.
+        require(jpeg || (capability.minimumWidth >= kVideoEncodeMinimumSide && capability.minimumHeight >= kVideoEncodeMinimumSide),
+                "a video capability lists a picture below the floor");
         require(capability.minimumWidth <= capability.maximumWidth && capability.minimumHeight <= capability.maximumHeight, "size range");
         require(capability.sizeAlignment >= 1, "alignment");
         require(capability.minimumWidth % capability.sizeAlignment == 0 && capability.minimumHeight % capability.sizeAlignment == 0,

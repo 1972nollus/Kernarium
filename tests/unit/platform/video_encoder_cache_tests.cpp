@@ -22,6 +22,7 @@
 #include <iterator>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 extern char** environ;
@@ -191,6 +192,27 @@ std::string withWidth(std::string text, const std::string& width)
     return text;
 }
 
+// The minimum width and height that the first line of `codec` reports.
+std::pair<unsigned, unsigned> minimumOf(const std::string& text, const char* codec)
+{
+    const std::string prefix = std::string(codec) + " size ";
+    const auto at = text.find(prefix);
+    require(at != std::string::npos, "a line for the codec");
+    unsigned width = 0, height = 0;
+    require(std::sscanf(text.c_str() + at + prefix.size(), "%ux%u", &width, &height) == 2, "a size on the line");
+    return {width, height};
+}
+
+// No video codec lists a picture below the floor.
+void requireFloor(const std::string& text, const char* what)
+{
+    for (const char* codec : {"h264", "hevc"}) {
+        if (text.find(std::string(codec) + " size ") == std::string::npos) continue;
+        const auto [width, height] = minimumOf(text, codec);
+        require(width >= kVideoEncodeMinimumSide && height >= kVideoEncodeMinimumSide, what);
+    }
+}
+
 void requireValidCache(const fs::path& path)
 {
     const auto text = slurp(path);
@@ -213,6 +235,7 @@ void run(const fs::path& directory)
     std::printf("discovery: %.1f s\n", fresh.seconds);
     std::fflush(stdout);
     requireValidCache(cache);
+    requireFloor(fresh.output, "discovery lists a video picture below the floor");
     const auto stored = slurp(cache);
 
     // A valid file: the child reports exactly what was stored, fast, and does
@@ -245,6 +268,16 @@ void run(const fs::path& directory)
     invalid.push_back({"another revision", replaceFirst(edited, "\"revision\":", "\"revision\":9")});
     invalid.push_back({"a value out of range", replaceFirst(edited, "\"minimumQp\":", "\"minimumQp\":9")});
     invalid.push_back({"a missing field", replaceFirst(edited, "\"sizeAlignment\":", "\"sizeAlignmentX\":")});
+    {
+        // A result that lists a video picture below the floor, as one written before the floor was.
+        const auto key = std::string("\"minimumWidth\":");
+        const auto at = edited.find(key) + key.size();
+        auto end = at;
+        while (end < edited.size() && std::isdigit(static_cast<unsigned char>(edited[end]))) ++end;
+        auto small = edited;
+        small.replace(at, end - at, "16");
+        invalid.push_back({"a size below the floor", small});
+    }
     for (const auto& c : invalid) {
         write(cache, c.text);
         const auto answered = runChild(cachePath.c_str(), kBound);
@@ -253,6 +286,7 @@ void run(const fs::path& directory)
         require(answered.status == 0, c.what);
         // Discovered, not read: the edited width is gone.
         require(answered.output.find("..1234x") == std::string::npos && answered.output.find("h264 size") == 0, "an unusable cache is ignored");
+        requireFloor(answered.output, "a rediscovery lists a video picture below the floor");
         requireValidCache(cache);
         require(slurp(cache) != c.text, "and replaced");
         // What replaced it is what a later process reuses.
