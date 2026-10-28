@@ -1153,7 +1153,7 @@ partition again and, in `auto` mode, boots the ramdisk. A `bootonce-bootloader`
 command is consumed, as a bootloader that continues would, so that Android's
 init writes `boot-recovery` when it reboots into recovery; `boot-recovery`
 itself stays for recovery to clear. See the
-[Android boot contract](../android/lineage-24/README.md#apple-consumers-and-guest-bundles).
+[Android boot contract](../android/lineage-24/README.md).
 
 An application that can be backgrounded holds the guest's GPU requests before it
 quiesces, with the runtime's `set_gpu_hold` (see the request gate under
