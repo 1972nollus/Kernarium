@@ -97,3 +97,4 @@ patch	xfrm-allow-one-SPI-on-several-destinations-behind-a-Kconfig-option.patch
 patch	ipv6-autoconf-routes-into-per-device-tables.patch
 patch	virt_wifi-let-a-supplicant-listen-and-send-on-any-channel.patch
 patch	virt_wifi-pass-the-multicast-groups-on-to-the-lower-device.patch
+patch	ext4-keep-the-allocator-state-of-a-group-with-inode-preallocations-i.patch
