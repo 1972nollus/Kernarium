@@ -1158,6 +1158,39 @@ init writes `boot-recovery` when it reboots into recovery; `boot-recovery`
 itself stays for recovery to clear. See the
 [Android boot contract](../android/lineage-24/README.md).
 
+The Kernarium runtime (`Kernarium/Runtime`) runs the same loop inside its one
+`run` call, with the same split of machine and boot (its machine also holds the
+microphone switch and the footprint log), the same retries, the same loop guard
+and its own `SIGPIPE` handling before every boot.
+`Kernarium/Runtime/KernariumRestartLoop.hpp` owns the order of the steps
+against a `Machine` interface, so the host test `kernarium-restart-loop` checks
+the order, the retry, the stop request, the hold and the events against a
+recording fake. What differs from the launchers:
+
+- The run returns the last guest's status, a negated `uml_emulator` error when
+  a start-up or a run fails, or `KERNARIUM_RUNTIME_RESULT_RESTART_LOOP` (-100)
+  when the loop guard ends it, which the application shows as its own notice.
+- The stop request is checked before every boot and again after the boot is
+  built, since the handle drops a stop made while it is idle. A stop that
+  arrives as the guest restarts wins and is a clean end.
+- The next boot waits while the guest is paused (a quiesce until its resume) or
+  the GPU service's request gate is held. The gate is the service's, so a hold
+  carries into the new GPU device, and a guest that booted behind a closed
+  gate would time out its `virtio_gpu` capset probe and run without 3D for the
+  whole boot. The first boot is not held: a hold placed before the guest's GPU
+  exists is applied when it does. A guest kept running in a Picture in Picture
+  window has released the gate, so its restarts boot at once.
+- The runtime reports a restart to the application twice
+  (`KERNARIUM_RUNTIME_RESTART_BEGAN` once the guest is gone and its services
+  have stopped, `KERNARIUM_RUNTIME_RESTART_BOOTED` once the new guest's
+  management console answers), so the application can re-apply what belongs to
+  a kernel (the vCPU throttle, the page-cache trimming) to the new one. The
+  console probe sends the application's last trimming request, so it never
+  undoes one, and gives up after 120 s with the event marked unanswered.
+- A hibernation needs nothing here: the hand-back drops the handle's
+  suspension and hibernation image with the rest of the guest's state, and a
+  quiesce asked of an idle handle only flushes.
+
 An application that can be backgrounded holds the guest's GPU requests before it
 quiesces, with the runtime's `set_gpu_hold` (see the request gate under
 [devices](#devices-and-graphics)), and releases them before it resumes. The

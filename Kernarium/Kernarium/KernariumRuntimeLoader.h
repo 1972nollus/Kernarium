@@ -12,6 +12,12 @@
 NS_ASSUME_NONNULL_BEGIN
 
 typedef void (^KernariumConsoleOutputHandler)(NSData* data);
+/* A restart event of the guest, delivered on the main queue: `event` is a
+ * KERNARIUM_RUNTIME_RESTART_ value and `restartCount` the number of times the
+ * guest has restarted. */
+typedef void (^KernariumRestartHandler)(
+    uint32_t event,
+    uint32_t restartCount);
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,6 +75,11 @@ void kernarium_runtime_loader_send_touch(
 void kernarium_runtime_loader_send_key(uint16_t code, int pressed);
 void kernarium_runtime_loader_set_console_output_handler(
     KernariumConsoleOutputHandler _Nullable handler);
+/* Receives the guest's restart events (see
+ * kernarium_runtime_set_restart_callback_function), or none for a nil handler.
+ * It may be set before a runtime is selected. */
+void kernarium_runtime_loader_set_restart_handler(
+    KernariumRestartHandler _Nullable handler);
 int kernarium_runtime_loader_send_console_input(
     const void* buffer,
     size_t length);

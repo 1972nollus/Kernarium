@@ -24,6 +24,13 @@ uint32_t selectedFlavor;
 bool selectionAttempted;
 std::mutex consoleOutputHandlerMutex;
 KernariumConsoleOutputHandler consoleOutputHandler;
+/* The handler is read on the runtime's callback path, under the runtime's own
+ * lock, so it has a mutex of its own that is held only to copy it. Changing
+ * the registration, which takes the runtime's lock, is serialized by the
+ * other one, which the callback path never takes. */
+std::mutex restartHandlerMutex;
+std::mutex restartRegistrationMutex;
+KernariumRestartHandler restartHandler;
 
 void forwardConsoleOutput(
     void*,
@@ -51,6 +58,36 @@ void updateConsoleOutputForwarder(const kernarium_runtime_api* runtime)
     runtime->set_console_output_callback(
         consoleOutputHandler == nil ? nullptr : forwardConsoleOutput,
         nullptr);
+}
+
+/* Runs on a runtime thread, inside the runtime's call, so it only hands the
+ * event to the main queue. */
+void forwardRestart(
+    void*,
+    uint32_t event,
+    uint32_t restartCount)
+{
+    KernariumRestartHandler handler;
+    {
+        std::lock_guard lock(restartHandlerMutex);
+        handler = restartHandler;
+    }
+    if (handler == nil)
+        return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        handler(event, restartCount);
+    });
+}
+
+void updateRestartForwarder(const kernarium_runtime_api* runtime)
+{
+    std::lock_guard registration(restartRegistrationMutex);
+    bool wanted;
+    {
+        std::lock_guard lock(restartHandlerMutex);
+        wanted = restartHandler != nil;
+    }
+    runtime->set_restart_callback(wanted ? forwardRestart : nullptr, nullptr);
 }
 
 [[noreturn]] void guestTimerMaskFailure() noexcept
@@ -187,7 +224,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->set_frame_sink == nullptr ||
         api->set_background_throttle == nullptr ||
         api->set_page_cache_trimming == nullptr ||
-        api->set_microphone == nullptr) {
+        api->set_microphone == nullptr ||
+        api->set_restart_callback == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -223,12 +261,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v13");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v14");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v13: %s\n",
+            "Kernarium: selected runtime lacks API v14: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -242,6 +280,7 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     updateConsoleOutputForwarder(api);
+    updateRestartForwarder(api);
     selectedPageSize = guestPageSize;
     selectedFlavor = guestFlavor;
     selectedApi.store(api, std::memory_order_release);
@@ -386,6 +425,18 @@ extern "C" void kernarium_runtime_loader_set_console_output_handler(
     const kernarium_runtime_api* runtime = api();
     if (runtime != nullptr)
         updateConsoleOutputForwarder(runtime);
+}
+
+extern "C" void kernarium_runtime_loader_set_restart_handler(
+    KernariumRestartHandler handler)
+{
+    {
+        std::lock_guard lock(restartHandlerMutex);
+        restartHandler = [handler copy];
+    }
+    const kernarium_runtime_api* runtime = api();
+    if (runtime != nullptr)
+        updateRestartForwarder(runtime);
 }
 
 extern "C" int kernarium_runtime_loader_send_console_input(

@@ -16,3 +16,14 @@ target_include_directories(uml_kernarium_payload_file_tests PRIVATE
 uml_add_unit_test(NAME kernarium-payload-file
     COMMAND uml_kernarium_payload_file_tests
     LABELS kernarium)
+
+# The run loop of a launch that boots a restarting guest again, with a
+# recording machine in place of the guest.
+add_executable(uml_kernarium_restart_loop_tests restart_loop_tests.cpp)
+target_include_directories(uml_kernarium_restart_loop_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/Kernarium/Runtime
+    ${PROJECT_SOURCE_DIR}/darwin/api/include
+    ${PROJECT_SOURCE_DIR}/darwin/emulator/src)
+uml_add_unit_test(NAME kernarium-restart-loop
+    COMMAND uml_kernarium_restart_loop_tests
+    LABELS kernarium)

@@ -60,6 +60,7 @@ endif()
 
 add_library(KernariumRuntime SHARED
     KernariumConsoleInput.hpp
+    KernariumRestartLoop.hpp
     KernariumRuntime.h
     KernariumRuntime.mm)
 uml_declare_architecture_target(KernariumRuntime app)
@@ -87,6 +88,7 @@ target_include_directories(KernariumRuntime
         ${CMAKE_CURRENT_BINARY_DIR}
         ${PROJECT_SOURCE_DIR}/darwin/api/include
         ${PROJECT_SOURCE_DIR}/darwin/device
+        ${PROJECT_SOURCE_DIR}/darwin/emulator/src
         ${PROJECT_SOURCE_DIR}/darwin/device/audio
         ${PROJECT_SOURCE_DIR}/darwin/device/battery
         ${PROJECT_SOURCE_DIR}/darwin/device/balloon

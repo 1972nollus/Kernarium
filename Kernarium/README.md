@@ -29,11 +29,14 @@ commits, and each carries its kernel ELF in signed Mach-O `__TEXT` (see the
 application embeds every framework, links none at launch, and loads exactly
 one for the process lifetime.
 
-The library runs one guest per process, so a launch runs its guest once. When
-the run returns, whether the guest powered off or the runtime failed, the
-application says how it ended and asks to be relaunched; it never starts a
-second run in the same process. The guest runs on the named `uml-launcher`
-thread, which leaves the main thread to UIKit and MetalKit.
+The library runs one guest per process, so a launch makes one run. A guest that
+restarts itself (a reboot, `adb reboot`, a recovery or bootloader round trip) is
+booted again inside that run, in the same process, and the run returns only when
+the guest is over: it powered off, the user stopped it, a boot failed, or it
+kept restarting. The application then says how it ended and asks to be
+relaunched; it never starts a second run in the same process. The guest runs on
+the named `uml-launcher` thread, which leaves the main thread to UIKit and
+MetalKit.
 
 Kernarium defaults to Linux, the processor count `NSProcessInfo` reports, and
 4 GiB of guest memory where the process is given the host's memory (Designed
