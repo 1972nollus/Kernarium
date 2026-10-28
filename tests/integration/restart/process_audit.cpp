@@ -20,9 +20,10 @@
  *
  * With UML_PROCESS_AUDIT_HAND_BACK set, the process also dumps itself as
  * handback-<n>.txt each time a restarted guest has been handed back to the
- * process: the library announces it on stderr ("Darwin: guest handed back:")
- * after the last step and before the next kernel exists, and the audit sees
- * that line as the launcher writes it.
+ * process: the library announces it with dprintf() on stderr ("Darwin: guest
+ * handed back:") after the last step and before the next kernel exists, and
+ * the audit interposes dprintf() to see that call. (Interposing write() would
+ * not see it: the C library writes through its own internal entry.)
  */
 #include <algorithm>
 #include <array>
@@ -30,6 +31,7 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -453,15 +455,18 @@ __attribute__((constructor)) void start()
 
 extern "C" {
 
-/* The launcher announces the end of a hand-back on stderr; the audit dumps
- * the process at that line, on the thread that writes it. */
-ssize_t uml_process_audit_write(int descriptor, const void *buffer,
-				size_t length)
+/* The library announces the end of a hand-back with dprintf() on stderr; the
+ * audit dumps the process at that call, on the thread that makes it. */
+int uml_process_audit_dprintf(int descriptor, const char *format, ...)
 {
-	const ssize_t written = write(descriptor, buffer, length);
+	va_list arguments;
+	va_start(arguments, format);
+	const int written = vdprintf(descriptor, format, arguments);
+	va_end(arguments);
 	if (descriptor == STDERR_FILENO && hand_back_audit.load() &&
-	    length >= hand_back_line.size() &&
-	    std::memcmp(buffer, hand_back_line.data(), hand_back_line.size()) == 0) {
+	    format != nullptr &&
+	    std::strncmp(format, hand_back_line.data(),
+			 hand_back_line.size()) == 0) {
 		try {
 			write_dump(*directory / ("handback-" +
 				std::to_string(++hand_backs) + ".txt"),
@@ -479,8 +484,8 @@ struct Interposer {
 
 __attribute__((used, section("__DATA,__interpose")))
 const Interposer interposers[] = {
-	{reinterpret_cast<const void *>(uml_process_audit_write),
-	 reinterpret_cast<const void *>(write)},
+	{reinterpret_cast<const void *>(uml_process_audit_dprintf),
+	 reinterpret_cast<const void *>(dprintf)},
 };
 
 }
