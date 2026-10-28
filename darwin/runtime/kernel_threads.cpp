@@ -52,7 +52,7 @@ constexpr unsigned inhibited_poll_microseconds = 200;
  * answers. A request to reclaim waits this long for such threads, and for a
  * creator on its way out of kernel_pthread_create, before it reports a slot
  * in use. */
-constexpr unsigned ending_wait_microseconds = 200U * 1000U;
+constexpr unsigned ending_wait_microseconds = 2U * 1000U * 1000U;
 constexpr unsigned ending_poll_microseconds = 200;
 
 void pause_for(unsigned microseconds) noexcept
