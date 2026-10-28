@@ -40,6 +40,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -239,6 +240,21 @@ void install_host_faults()
 			std::abort();
 }
 
+/* A write to a socket whose peer has gone must fail with EPIPE, not kill the
+ * process. The guest's kernel ignores SIGPIPE while it runs, but the library
+ * hands the host's own disposition back when a run ends, so a launcher that
+ * left it at the default would lose the process to the first host socket
+ * written between two boots (libslirp writes its sockets with plain send()).
+ * Set before the first run, it is the disposition every later run returns to. */
+void ignore_broken_pipes()
+{
+	struct sigaction action {};
+	action.sa_handler = SIG_IGN;
+	sigemptyset(&action.sa_mask);
+	if (sigaction(SIGPIPE, &action, nullptr) < 0)
+		std::abort();
+}
+
 /* Metal reads the whole index of the process's shader cache at its first
  * compile, and conformance campaigns grow that index without bound. Cache the
  * guest's shaders only while the index is small; a removal is the only event
@@ -294,6 +310,27 @@ struct PreparedArguments {
 	std::string serial_socket;
 	std::vector<std::string> net_forwards;
 	std::vector<std::string> kernel;
+
+	/* Whether `other` gives the emulator the same machine: the arguments it
+	 * reads for the vCPU count, the guest memory, the engine and the JIT and
+	 * gadget cache budgets. The budgets are published once per process and a
+	 * restarted run asks for the value the first did. */
+	[[nodiscard]] bool same_machine(const PreparedArguments &other) const
+	{
+		const auto machine = [](const std::vector<std::string> &arguments) {
+			std::vector<std::string> selected;
+			for (const auto &argument : arguments)
+				for (const std::string_view prefix : {
+					     "ncpus=", "mem=", "--execution-engine",
+					     "--jit", "--gadget-", "--guest-"})
+					if (argument.starts_with(prefix)) {
+						selected.push_back(argument);
+						break;
+					}
+			return selected;
+		};
+		return machine(kernel) == machine(other.kernel);
+	}
 
 	/* Whether `other` asks for the same host devices. A guest that restarts
 	 * keeps the devices the first boot created once (the display, the
@@ -698,19 +735,38 @@ public:
 			/* A stop that came between two boots was dropped by the handle. */
 			if (stop_requested_.load(std::memory_order_acquire))
 				return 0;
-			const int status = uml_emulator_run(
-				emulator_.get(), static_cast<int>(arguments.size()),
-				arguments.data(), environment_.data());
+			int status = enter(arguments);
+			/* The library refuses to take a restarted guest back while a
+			 * kernel thread of the old one is still ending, and changes
+			 * nothing when it does. */
+			for (unsigned attempt = 1;
+			     restarts != 0 && status == -UML_EMULATOR_RUNTIME_ERROR &&
+			     attempt <= uml::emulator::restart_run_retries &&
+			     !stop_requested_.load(std::memory_order_acquire);
+			     ++attempt) {
+				std::fprintf(stderr,
+					"The restarted guest is not handed back yet; trying "
+					"again (%u of %u)\n", attempt,
+					uml::emulator::restart_run_retries);
+				std::this_thread::sleep_for(
+					uml::emulator::restart_run_retry_delay);
+				status = enter(arguments);
+			}
 			uml_emulator_run_end end{.struct_size = sizeof(end)};
 			const bool known =
 				uml_emulator_get_run_end(emulator_.get(), &end) ==
 				UML_EMULATOR_OK;
-			if (restarts != 0 && status < 0)
+			if (restarts != 0 && status < 0) {
 				std::fprintf(stderr,
 					"Unable to boot the restarted guest: %d\n", status);
-			if (!known || end.kind != UML_EMULATOR_RUN_END_RESTART ||
-			    stop_requested_.load(std::memory_order_acquire))
+				return 1;
+			}
+			if (!known || end.kind != UML_EMULATOR_RUN_END_RESTART)
 				return status;
+			/* The guest restarted as the user quit: the quit wins, and is
+			 * a clean stop whatever status the restart carried. */
+			if (stop_requested_.load(std::memory_order_acquire))
+				return 0;
 			/* The guest is gone: its services stop before the library hands
 			 * its RAM back to the process, and its connections end with its
 			 * network link. */
@@ -732,7 +788,9 @@ public:
 			end.restart_command[sizeof(end.restart_command) - 1U] = '\0';
 			std::fprintf(stderr,
 				"guest restarting (command '%s', restart %u)\n",
-				end.restart_command, restarts);
+				uml::emulator::printable_restart_command(
+					end.restart_command).c_str(),
+				restarts);
 			if (configuration_.restart_command_line &&
 			    !take_restart_command_line(base_kernel))
 				return 1;
@@ -754,6 +812,13 @@ public:
 	}
 
 private:
+	[[nodiscard]] int enter(const std::vector<const char *> &arguments)
+	{
+		return uml_emulator_run(
+			emulator_.get(), static_cast<int>(arguments.size()),
+			arguments.data(), environment_.data());
+	}
+
 	/* The kernel arguments of the boot after a restart: what the launcher's
 	 * restart command line says, which may differ from the first boot's (an
 	 * Android guest picks its ramdisk again). The host devices it asks for
@@ -764,9 +829,10 @@ private:
 		try {
 			auto next = prepare_host_arguments(
 				configuration_.restart_command_line(), configuration_);
-			if (!prepared_.same_host_devices(next)) {
-				std::fputs("The restart command line asks for other host "
-					   "devices than the first boot's\n", stderr);
+			if (!prepared_.same_host_devices(next) ||
+			    !prepared_.same_machine(next)) {
+				std::fputs("The restart command line asks for another "
+					   "machine than the first boot's\n", stderr);
 				return false;
 			}
 			base_kernel = std::move(next.kernel);
@@ -932,6 +998,7 @@ int uml::app::runEmbeddedKernel(
 	const LaunchConfiguration &configuration)
 {
 	install_host_faults();
+	ignore_broken_pipes();
 	::uml::device::install_socket_path_signal_cleanup();
 	PreparedArguments prepared;
 	try {

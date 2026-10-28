@@ -10,6 +10,8 @@
 
 #include <chrono>
 #include <cstdio>
+#include <string>
+#include <string_view>
 
 namespace {
 
@@ -103,6 +105,43 @@ void test_a_guest_that_never_boots_ends_after_five_boots()
 		"the loop ended after another number of boots than the limit");
 }
 
+void test_the_restart_command_is_printable()
+{
+	using uml::emulator::printable_restart_command;
+	require(printable_restart_command("") == "", "an empty command changed");
+	require(printable_restart_command("recovery") == "recovery",
+		"a plain command changed");
+	require(printable_restart_command("a b-c_d/e.f") == "a b-c_d/e.f",
+		"printable ASCII changed");
+	/* A newline would end the log line, and a quote would end the command's
+	 * own quotes. */
+	require(printable_restart_command("a\nb") == "a\\x0ab",
+		"a newline was kept");
+	require(printable_restart_command("x'); rm") == "x\\'); rm",
+		"a quote was kept as it came");
+	require(printable_restart_command("back\\slash") == "back\\\\slash",
+		"a backslash was kept as it came");
+	require(printable_restart_command(std::string_view("a\0b", 3)) == "a\\x00b",
+		"a NUL ended the command");
+	require(printable_restart_command("\x1b[31m\x7f\xff") ==
+		"\\x1b[31m\\x7f\\xff", "a control or high byte was kept");
+	/* Whatever it was, a command that holds a quote cannot be taken for
+	 * another by a reader that stops at the first unescaped one. */
+	const auto hostile = printable_restart_command("recovery'\nguest restarting");
+	require(hostile.find('\n') == std::string::npos,
+		"the command still holds a line break");
+	require(hostile.find("recovery'") == std::string::npos,
+		"the command still closes its quotes early");
+}
+
+void test_the_retry_policy_is_bounded()
+{
+	require(uml::emulator::restart_run_retries == 3U,
+		"the refused hand-back is not retried three times");
+	require(uml::emulator::restart_run_retry_delay == 500ms,
+		"the retry delay is not half a second");
+}
+
 void test_a_restart_with_no_time_at_all_is_early()
 {
 	RestartLoopGuard guard;
@@ -121,6 +160,8 @@ int main()
 	test_a_long_boot_resets_the_count();
 	test_a_guest_that_never_boots_ends_after_five_boots();
 	test_a_restart_with_no_time_at_all_is_early();
+	test_the_restart_command_is_printable();
+	test_the_retry_policy_is_bounded();
 	std::puts("restart loop guard tests passed");
 	return 0;
 }
