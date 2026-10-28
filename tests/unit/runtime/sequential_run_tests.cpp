@@ -35,6 +35,13 @@
 #include "testing.hpp"
 #include "uml_darwin_host.h"
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#include <sanitizer/allocator_interface.h>
+#define UML_TEST_SANITIZER_ALLOCATOR 1
+#endif
+#endif
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -311,9 +318,9 @@ struct Restarts final {
 	int token{-1};
 	int control{-1};
 	void *outside_mapping{};
-	/* Hand-backs seen, and the default zone's size at each. */
+	/* Hand-backs seen, and the heap's live bytes at each. */
 	int hand_backs{};
-	std::vector<std::size_t> zone_in_use;
+	std::vector<std::size_t> heap_in_use;
 	std::size_t zone_allocated{};
 	pthread_t held_thread{};
 	std::atomic<bool> release_thread{false};
@@ -641,6 +648,22 @@ void require_window_reserved_and_empty()
 		"a page of the window is present after the hand-back");
 }
 
+/* The bytes the process's live allocations hold. A sanitizer replaces the
+ * allocator, and the malloc zone statistics it reports then measure something
+ * else: AddressSanitizer's count every byte ever allocated, freed or not, and
+ * ThreadSanitizer's do not move at all. Its own count of live bytes answers
+ * instead. */
+std::size_t heap_in_use() noexcept
+{
+#if defined(UML_TEST_SANITIZER_ALLOCATOR)
+	return __sanitizer_get_current_allocated_bytes();
+#else
+	malloc_statistics_t statistics{};
+	malloc_zone_statistics(malloc_default_zone(), &statistics);
+	return statistics.size_in_use;
+#endif
+}
+
 /* Called inside the run that boots again, when the hand-back has completed. */
 void check_hand_back(void *, const GuestHandBackReport &report) noexcept
 {
@@ -690,9 +713,9 @@ void check_hand_back(void *, const GuestHandBackReport &report) noexcept
 	require_window_reserved_and_empty();
 	require_same_process(world.before);
 
+	world.heap_in_use.push_back(heap_in_use());
 	malloc_statistics_t zone{};
 	malloc_zone_statistics(malloc_default_zone(), &zone);
-	world.zone_in_use.push_back(zone.size_in_use);
 	world.zone_allocated = zone.size_allocated;
 }
 
@@ -762,18 +785,24 @@ void restart_storm()
 	require_refused(make_emulator(boot).get());
 	require_hand_backs(boots - 1);
 
-	/* The default zone keeps what a boot freed (xzone malloc retains empty
-	 * chunks); its in-use bytes, what the library or the kernel still holds,
-	 * stay flat across hand-backs. */
+	/* The allocator keeps what a boot freed (xzone malloc retains empty
+	 * chunks); the bytes the library or the kernel still holds stay flat
+	 * across hand-backs. */
 	constexpr std::size_t slack = 1U << 20;
-	const std::size_t baseline = world.zone_in_use[2];
-	for (std::size_t index = 3; index < world.zone_in_use.size(); ++index)
-		require(world.zone_in_use[index] <= baseline + slack,
-			"the default zone's in-use bytes grew across hand-backs");
+	const std::size_t baseline = world.heap_in_use[2];
+	for (std::size_t index = 3; index < world.heap_in_use.size(); ++index) {
+		if (world.heap_in_use[index] <= baseline + slack)
+			continue;
+		std::fprintf(stderr,
+			"heap: %zu bytes in use after the 3rd hand-back, %zu after the "
+			"%zu-th\n",
+			baseline, world.heap_in_use[index], index + 1);
+		require(false, "the heap's in-use bytes grew across hand-backs");
+	}
 	std::fprintf(stderr,
-		"default zone: %zu bytes in use after the 3rd hand-back, %zu after "
-		"the %zu-th; %zu bytes allocated\n",
-		baseline, world.zone_in_use.back(), world.zone_in_use.size(),
+		"heap: %zu bytes in use after the 3rd hand-back, %zu after the "
+		"%zu-th; the default zone holds %zu bytes\n",
+		baseline, world.heap_in_use.back(), world.heap_in_use.size(),
 		world.zone_allocated);
 	(void)close(world.control);
 }

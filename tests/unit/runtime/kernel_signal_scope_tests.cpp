@@ -367,14 +367,34 @@ void test_scope_restores_every_changed_disposition()
 	return (stack.ss_flags & SS_DISABLE) != 0;
 }
 
+/* Installs `stack`, disabling the stack if it is disabled. */
+void install_stack(const stack_t &stack)
+{
+	stack_t installed = stack;
+	if (stack_disabled(stack)) {
+		installed.ss_sp = nullptr;
+		installed.ss_size = MINSIGSTKSZ;
+		installed.ss_flags = SS_DISABLE;
+	}
+	require(sigaltstack(&installed, nullptr) == 0,
+		"cannot install the signal stack");
+}
+
 /* The kernel gives the thread that entered it a stack it allocated itself,
  * which the ledger frees afterwards. The thread must have its own again by
  * then, or none if it had none. */
 void test_scope_restores_the_calling_threads_signal_stack()
 {
 	run_on_thread([] {
+		/* A sanitizer runtime gives every thread a stack of its own, which
+		 * it frees when the thread ends: begin with none, and leave the
+		 * thread as it was found. */
+		const stack_t found = current_stack();
+		stack_t none{};
+		none.ss_flags = SS_DISABLE;
+		install_stack(none);
 		require(stack_disabled(current_stack()),
-			"a new thread already has a signal stack");
+			"the signal stack could not be disabled");
 		std::vector<char> kernel_stack(64U * 1024U);
 		{
 			const uml::runtime::KernelSignalScope scope{
@@ -412,10 +432,7 @@ void test_scope_restores_the_calling_threads_signal_stack()
 		const stack_t untouched = current_stack();
 		require(untouched.ss_sp == host.ss_sp &&
 			untouched.ss_size == host.ss_size);
-		stack_t disabled{};
-		disabled.ss_size = MINSIGSTKSZ;
-		disabled.ss_flags = SS_DISABLE;
-		require(sigaltstack(&disabled, nullptr) == 0);
+		install_stack(found);
 	});
 }
 
