@@ -1026,7 +1026,12 @@ void a_restart_waits_for_an_abort_request(Interruption interruption)
 			"the abort request did not begin");
 	}
 	int status = 0;
-	std::thread restarting{[&status, handle] { status = run(handle); }};
+	/* The hand-back's check compares the run thread's own signal mask and
+	 * stack with those before the run, so the thread records them itself. */
+	std::thread restarting{[&status, handle] {
+		world.before = capture_process_state();
+		status = run(handle);
+	}};
 	{
 		std::unique_lock lock{race->mutex};
 		/* A hand-back that does not wait for the request reaches the
