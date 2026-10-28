@@ -24,6 +24,7 @@
 #include "device/sockets/socket_paths.hpp"
 #include "emulator_test_support.hpp"
 #include "guest_files.hpp"
+#include "guest_hibernation.hpp"
 #include "kernel_resources.hpp"
 #include "kernel_threads.hpp"
 #include "mach_vm_region_test_support.hpp"
@@ -45,6 +46,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -55,6 +58,7 @@
 #include <filesystem>
 #include <malloc/malloc.h>
 #include <memory>
+#include <mutex>
 #include <pthread.h>
 #include <stdexcept>
 #include <string>
@@ -64,6 +68,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/un.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -916,6 +921,148 @@ void a_running_thread_stops_the_restart()
 	(void)close(world.control);
 }
 
+/* ---- A stop or a resume racing the hand-back ---- */
+
+/* What the hibernation a boot made sees of an abort request that is still
+ * running when the restart drops it. */
+struct AbortRace final {
+	std::mutex mutex;
+	std::condition_variable changed;
+	int requests{};
+	bool inside{};
+	bool released{};
+	bool destroyed{};
+	bool used_after_destruction{};
+};
+
+class RacingSteps final : public uml::runtime::HibernationSteps {
+public:
+	explicit RacingSteps(std::shared_ptr<AbortRace> race)
+		: race_{std::move(race)}
+	{
+	}
+	~RacingSteps() override
+	{
+		{
+			const std::lock_guard lock{race_->mutex};
+			race_->destroyed = true;
+		}
+		race_->changed.notify_all();
+	}
+
+	bool prepare() noexcept override { return true; }
+	bool hold(uml::runtime::HibernationReport &) noexcept override
+	{
+		return true;
+	}
+	bool write(uml::runtime::HibernationReport &) noexcept override
+	{
+		return true;
+	}
+	bool restore(uml::runtime::HibernationReport &) noexcept override
+	{
+		return true;
+	}
+	void release() noexcept override {}
+
+	/* The first request, a stop's or a resume's, stays inside until the test
+	 * lets it go. A hand-back that destroys this object meanwhile is the
+	 * defect: the request would be running in freed memory. */
+	void set_abort(bool abort) noexcept override
+	{
+		if (!abort)
+			return;
+		const std::shared_ptr<AbortRace> race = race_;
+		std::unique_lock lock{race->mutex};
+		const int number = ++race->requests;
+		race->changed.notify_all();
+		if (number != 1)
+			return;
+		race->inside = true;
+		race->changed.notify_all();
+		race->changed.wait(lock, [&] { return race->released; });
+		race->used_after_destruction = race->destroyed;
+	}
+
+private:
+	std::shared_ptr<AbortRace> race_;
+};
+
+void restore_must_not_run() noexcept
+{
+	std::fputs("a restore ran on a hibernation that never hibernated\n",
+		stderr);
+	std::_Exit(EXIT_FAILURE);
+}
+
+enum class Interruption { stop, resume };
+
+/* The previous boot hibernated once. A stop or a resume on another thread is
+ * inside its abort request, which runs without the lifecycle mutex, when the
+ * restart hands the guest back and drops the hibernation. The drop must wait
+ * for the request. */
+void a_restart_waits_for_an_abort_request(Interruption interruption)
+{
+	using namespace std::chrono_literals;
+	const HandBackHooks hooks;
+	auto emulator = make_emulator(boot);
+	begin_restarts(emulator.get(), 1, Ending::power_off);
+	require(run(emulator.get()) == kernel_booted, "the first boot failed");
+	const auto race = std::make_shared<AbortRace>();
+	uml_emulator *const handle = emulator.get();
+	uml::emulator::testing::use_hibernation(handle,
+		std::make_unique<RacingSteps>(race), &restore_must_not_run);
+
+	std::thread interrupting{[handle, interruption] {
+		if (interruption == Interruption::stop)
+			uml_emulator_request_stop(handle);
+		else
+			uml_emulator_resume(handle);
+	}};
+	{
+		std::unique_lock lock{race->mutex};
+		require(race->changed.wait_for(lock, 10s,
+			[&] { return race->inside; }),
+			"the abort request did not begin");
+	}
+	int status = 0;
+	/* The hand-back's check compares the run thread's own signal mask and
+	 * stack with those before the run, so the thread records them itself. */
+	std::thread restarting{[&status, handle] {
+		world.before = capture_process_state();
+		status = run(handle);
+	}};
+	{
+		std::unique_lock lock{race->mutex};
+		/* A hand-back that does not wait for the request reaches the
+		 * hibernation at once and destroys it; one that waits is still
+		 * blocked when the time is up. */
+		if (race->changed.wait_for(lock, 500ms,
+			    [&] { return race->requests > 1 || race->destroyed; }))
+			(void)race->changed.wait_for(lock, 10s,
+				[&] { return race->destroyed; });
+		race->released = true;
+	}
+	race->changed.notify_all();
+	interrupting.join();
+	restarting.join();
+
+	require(!race->used_after_destruction,
+		"the restart destroyed the hibernation under an abort request");
+	if (interruption == Interruption::resume) {
+		require(status == kernel_booted,
+			"the restart failed beside a resume");
+	}
+	/* A stop that lands in the restarting run may cancel it, before the
+	 * hand-back or after. */
+	if (status == kernel_booted) {
+		require(race->destroyed,
+			"the restart did not drop the hibernation");
+		require_hand_backs(1);
+	}
+	(void)close(world.control);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -948,12 +1095,16 @@ int main(int argc, char **argv)
 			a_borrowed_view_stops_the_restart();
 		else if (mode == "running-thread")
 			a_running_thread_stops_the_restart();
+		else if (mode == "abort-stop")
+			a_restart_waits_for_an_abort_request(Interruption::stop);
+		else if (mode == "abort-resume")
+			a_restart_waits_for_an_abort_request(Interruption::resume);
 		else
 			throw std::runtime_error{
 				"usage: uml_runtime_sequential_run_tests "
 				"same-handle|fresh-handle|unclaimed-first-run|restart|"
 				"power-off|halt|stopped|failed|another-handle|"
-				"borrowed-view|running-thread"};
+				"borrowed-view|running-thread|abort-stop|abort-resume"};
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "%s\n", error.what());
 		return EXIT_FAILURE;

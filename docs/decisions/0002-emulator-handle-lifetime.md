@@ -24,12 +24,15 @@ starts another process.
 
 The hand-back refuses with `UML_EMULATOR_RUNTIME_ERROR`, and changes nothing,
 while a host service still borrows guest RAM or a kernel thread still runs; the
-caller stops its device services and runs again. Otherwise it gives back what
-the kernel took and did not return (descriptors, pthread keys, allocations and
-mappings through the loader's ledger, guest-file records), the handle's own
-suspension and hibernation, and the guest RAM: the native window, which a
-process reserves once and keeps, becomes one protectionless reservation again,
-the RAM commitment is retired and the token unregistered.
+caller stops its device services and runs again, and the refusal is repeatable
+because the handle stays restartable. The check and the hand-back are not one
+step: a service that maps guest RAM in between makes the final step fail after
+the kernel's resources were given back, and a retry then succeeds. Otherwise it
+gives back what the kernel took and did not return (descriptors, pthread keys,
+allocations and mappings through the loader's ledger, guest-file records), the
+handle's own suspension and hibernation, and the guest RAM: the native window,
+which a process reserves once and keeps, becomes one protectionless reservation
+again, the RAM commitment is retired and the token unregistered.
 
 Outcome, 2026-10-03: the caller-supplied native kernel entry, and with it
 concurrent native-callback handles, is removed. No product set it, and a
@@ -42,6 +45,9 @@ kernel can call back, so only white-box tests reached it; they now route a
 context of their own, and a callback outside any run fails closed.
 
 Outcome, 2026-10-28: a guest that restarts itself no longer ends the launch.
-Kernarium and the macOS launcher boot again in the same process, because iOS
-can neither re-exec nor respawn, and a respawn would leave the app without the
-fix. The one-guest-per-process rule remains for every other end of a guest.
+The library boots it again in the same process, because iOS can neither
+re-exec nor respawn, and a respawn would leave the app without the fix. This
+is the contract the launchers follow: after a run that ends with a restart,
+stop every service that maps guest RAM, then run again on the same handle and
+build the services of the new boot. The one-guest-per-process rule remains for
+every other end of a guest.

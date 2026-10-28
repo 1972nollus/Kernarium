@@ -66,6 +66,14 @@ the kernel took and did not return:
   the commitment is retired and the token unregistered, so the next kernel
   finds no byte and no page of this one.
 
+A refusal by the check changes nothing and may be retried: the caller stops
+every service that maps guest RAM, then runs again, and the handle stays
+restartable. The check and the hand-back are not one step, so a view acquired
+after the check makes the final step fail after the ledger has run; a retry
+succeeds. Every run of the process uses the same JIT cache budget and guest CPU
+count, because the budget is published once per process, and a run that asks
+for another is refused.
+
 The freed heap is not returned: the default malloc zone keeps the chunks a boot
 emptied until the system reclaims them, and its in-use bytes stay flat across
 hand-backs. See [ADR 0002](decisions/0002-emulator-handle-lifetime.md).

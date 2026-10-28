@@ -79,10 +79,11 @@ uml_add_unit_test(
     NAME runtime-sequential-run-unclaimed-first-run
     COMMAND uml_runtime_sequential_run_tests unclaimed-first-run)
 # A guest that restarts itself boots again in the same process; every other end
-# leaves the guest spent, and the hand-back refuses what still holds the guest.
+# leaves the guest spent, the hand-back refuses what still holds the guest, and
+# it waits for a stop or a resume still reaching the hibernation it drops.
 # One process each, because the claim on guest RAM outlives every handle.
 foreach(_uml_restart_mode IN ITEMS restart power-off halt stopped failed
-        another-handle borrowed-view running-thread)
+        another-handle borrowed-view running-thread abort-stop abort-resume)
     uml_add_unit_test(
         NAME runtime-restart-${_uml_restart_mode}
         COMMAND uml_runtime_sequential_run_tests ${_uml_restart_mode})

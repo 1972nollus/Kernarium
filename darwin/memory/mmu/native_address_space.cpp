@@ -2412,6 +2412,7 @@ bool NativeAddressSpace::mapping_clears_its_page_copy_for_testing() noexcept
 	alignas(Mapping) unsigned char storage[sizeof(Mapping)];
 	auto *const mapping = ::new (storage) Mapping{};
 	mapping->original.fill(std::byte{0xa5});
+	mapping->loaded = true;
 	/* Read through the bytes the object occupied once it is destroyed. */
 	const volatile unsigned char *const copy =
 		reinterpret_cast<const unsigned char *>(mapping->original.data());

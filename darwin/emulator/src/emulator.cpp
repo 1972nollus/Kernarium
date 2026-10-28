@@ -552,10 +552,10 @@ public:
 		::uml::runtime::GuestHibernation::FailureHandler on_failure)
 	{
 		std::lock_guard lock{guest_lifecycle_mutex_};
+		publish_hibernation(nullptr);
 		hibernation_ = std::make_unique<::uml::runtime::GuestHibernation>(
 			std::move(steps), on_failure);
-		hibernation_pointer_.store(hibernation_.get(),
-			std::memory_order_release);
+		publish_hibernation(hibernation_.get());
 	}
 #endif
 
@@ -625,7 +625,10 @@ private:
 	{
 		request_hibernation_abort();
 		std::lock_guard lock{guest_lifecycle_mutex_};
-		hibernation_pointer_.store(nullptr, std::memory_order_release);
+		/* A stop or a resume on another thread may be inside the abort
+		 * request: withdrawing the pointer waits for it to return, and
+		 * none starts after, so the object is destroyed unobserved. */
+		publish_hibernation(nullptr);
 		hibernation_.reset();
 		guest_suspension_ = ::uml::device::GuestSuspension::none;
 		pending_page_cache_trim_.reset();
@@ -714,17 +717,28 @@ private:
 			} catch (...) {
 				return;
 			}
-			hibernation_pointer_.store(hibernation_.get(),
-				std::memory_order_release);
+			publish_hibernation(hibernation_.get());
 		}
 		(void)hibernation_->hibernate();
 	}
 
+	/* Names the hibernation the abort request may reach, or none. The
+	 * request runs without the lifecycle mutex, which a hibernation in
+	 * progress holds, so the pointer has a mutex of its own: held across the
+	 * request, which only sets a flag, and across the withdrawal that
+	 * precedes the object's destruction. */
+	void publish_hibernation(
+		::uml::runtime::GuestHibernation *hibernation) noexcept
+	{
+		std::lock_guard lock{hibernation_abort_mutex_};
+		hibernation_pointer_ = hibernation;
+	}
+
 	void request_hibernation_abort() noexcept
 	{
-		if (auto *const hibernation =
-			    hibernation_pointer_.load(std::memory_order_acquire))
-			hibernation->request_abort();
+		std::lock_guard lock{hibernation_abort_mutex_};
+		if (hibernation_pointer_ != nullptr)
+			hibernation_pointer_->request_abort();
 	}
 
 	void bring_back_guest_ram() noexcept
@@ -762,11 +776,13 @@ private:
 	::uml::runtime::HibernationMode hibernation_mode_ {
 		::uml::runtime::HibernationMode::automatic};
 	/* Made by the first quiesce that hibernates. Guarded by the lifecycle
-	 * mutex; the pointer is also published for the abort request, which
-	 * resume sends before it waits for the mutex. */
+	 * mutex; the pointer is also published, under its own mutex, for the
+	 * abort request, which a stop or a resume sends before it waits for the
+	 * lifecycle mutex. The mutex is a leaf: nothing is taken under it but the
+	 * request itself. */
 	std::unique_ptr<::uml::runtime::GuestHibernation> hibernation_;
-	std::atomic<::uml::runtime::GuestHibernation *> hibernation_pointer_ {
-		nullptr};
+	std::mutex hibernation_abort_mutex_;
+	::uml::runtime::GuestHibernation *hibernation_pointer_{};
 	/* The handle's last run ended with a restart, so its guest goes back to
 	 * the process when the handle runs again. Only the handle's one run at a
 	 * time reads or writes it. */
