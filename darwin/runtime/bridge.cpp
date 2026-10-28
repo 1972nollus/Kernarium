@@ -118,10 +118,12 @@ int darwin_uml_stop_requested(void)
 }
 
 /*
- * The kernel calls this from machine_restart(), machine_power_off() and
- * machine_halt() before it runs its exitcalls, from a vCPU carrier. The run's
- * context keeps the kind and the command; the log line names them once, as one
- * write so that concurrent output cannot split it.
+ * The kernel calls this when it decides how the guest ends: from a reboot
+ * notifier, before it shuts any driver down, and again from machine_restart(),
+ * machine_power_off() or machine_halt(), before it runs its exitcalls. The
+ * run's context keeps the kind and the command; the log line names them once,
+ * as one write so that concurrent output cannot split it, and a repeat of the
+ * report the context already holds logs nothing.
  */
 void darwin_uml_guest_shutdown(int kind, const char *command)
 {
@@ -150,8 +152,9 @@ void darwin_uml_guest_shutdown(int kind, const char *command)
 		std::string_view{command, strnlen(command,
 			::uml::runtime::guest_shutdown_command_limit)};
 	if (auto *context = ::uml::runtime::current_context();
-	    context != nullptr)
-		context->record_guest_shutdown(recorded, text);
+	    context != nullptr &&
+	    !context->record_guest_shutdown(recorded, text))
+		return;
 	/* The guest chose the command: keep control characters out of the log. */
 	char line[96 + ::uml::runtime::guest_shutdown_command_limit];
 	size_t length = static_cast<size_t>(
