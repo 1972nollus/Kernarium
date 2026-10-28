@@ -42,6 +42,14 @@ target_include_directories(uml_emulator_run_end_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
 uml_add_unit_test(NAME emulator-run-end COMMAND uml_emulator_run_end_tests)
 
+# The guard that ends a loop of restarts the guest never boots past.
+add_executable(uml_restart_loop_guard_tests restart_loop_guard_tests.cpp)
+target_include_directories(uml_restart_loop_guard_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/emulator/src)
+uml_add_unit_test(
+    NAME emulator-restart-loop-guard
+    COMMAND uml_restart_loop_guard_tests)
+
 add_executable(uml_emulator_options_tests emulator_options_tests.cpp)
 target_link_libraries(uml_emulator_options_tests PRIVATE
     UML::BridgeAbi
