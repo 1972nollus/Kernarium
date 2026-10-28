@@ -166,6 +166,8 @@ void test_command_is_cut_at_255_bytes()
 	darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_RESTART, exact.c_str());
 	require(command_of(context.guest_shutdown()) == exact);
 
+	/* The cut command equals the record, which a repeat would not log. */
+	darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_RESTART, "short");
 	const std::string longer = exact + "TAIL" + std::string(300, 'z');
 	const auto text = logged([&] {
 		darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_RESTART,
@@ -181,6 +183,44 @@ void test_command_is_cut_at_255_bytes()
 	const std::string one_over = exact + "X";
 	darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_RESTART, one_over.c_str());
 	require(command_of(context.guest_shutdown()) == exact);
+}
+
+void test_a_repeated_report_is_logged_once()
+{
+	RoutedContext routed;
+	auto &context = routed.context();
+	RunScope run{context};
+	require(run.entered());
+
+	/* The kernel reports from a reboot notifier and again from
+	 * machine_restart(): one line, one record. */
+	const auto first = logged([] {
+		darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_RESTART, "recovery");
+	});
+	require(first == "guest requested restart (command 'recovery')\n", first);
+	const auto again = logged([] {
+		darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_RESTART, "recovery");
+	});
+	require(again.empty(), again);
+	auto record = context.guest_shutdown();
+	require(record.kind == GuestShutdownKind::restart);
+	require(command_of(record) == "recovery");
+
+	/* A report that differs is a new fact: a different command, a different
+	 * kind, and the same report after a new run cleared the record. */
+	const auto other = logged([] {
+		darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_RESTART, "bootloader");
+	});
+	require(other == "guest requested restart (command 'bootloader')\n",
+		other);
+	const auto kind = logged([] {
+		darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_HALT, nullptr);
+	});
+	require(kind == "guest halted\n", kind);
+	const auto repeat = logged([] {
+		darwin_uml_guest_shutdown(DARWIN_UML_SHUTDOWN_HALT, nullptr);
+	});
+	require(repeat.empty(), repeat);
 }
 
 void test_log_line_keeps_control_characters_out()
@@ -311,6 +351,7 @@ int main()
 	test_restart_command_is_recorded_and_named();
 	test_null_command_means_no_command();
 	test_command_is_cut_at_255_bytes();
+	test_a_repeated_report_is_logged_once();
 	test_log_line_keeps_control_characters_out();
 	test_later_report_replaces_the_earlier();
 	test_record_outlives_the_run_and_the_next_run_clears_it();

@@ -118,12 +118,15 @@ public:
 	[[nodiscard]] std::uint64_t memory_domain() const noexcept;
 
 	/* The guest kernel's report of how its run ends, recorded before the
-	 * kernel runs its exitcalls so that it stays on record if one never
-	 * returns. A later report replaces an earlier one, as the later shutdown
-	 * call is the one that ends the run. begin_run() clears the record and
-	 * end_run() keeps it, so the owner reads it once the run has returned
-	 * and until the next run begins. */
-	void record_guest_shutdown(GuestShutdownKind kind,
+	 * kernel shuts its drivers down or runs its exitcalls, so that it stays
+	 * on record if one never returns. The kernel reports twice, from a reboot
+	 * notifier and again from machine_restart(), machine_halt() or
+	 * machine_power_off(); a later report replaces an earlier one, as the
+	 * later shutdown call is the one that ends the run. begin_run() clears
+	 * the record and end_run() keeps it, so the owner reads it once the run
+	 * has returned and until the next run begins. Returns whether the report
+	 * changed the record, which a repeat of the same report does not. */
+	bool record_guest_shutdown(GuestShutdownKind kind,
 		std::string_view command) noexcept;
 	[[nodiscard]] GuestShutdown guest_shutdown() const noexcept;
 

@@ -398,7 +398,7 @@ std::uint64_t Context::memory_domain() const noexcept
 	return memory_domain_.load(std::memory_order_acquire);
 }
 
-void Context::record_guest_shutdown(GuestShutdownKind kind,
+bool Context::record_guest_shutdown(GuestShutdownKind kind,
 	std::string_view command) noexcept
 {
 	GuestShutdown record;
@@ -406,7 +406,11 @@ void Context::record_guest_shutdown(GuestShutdownKind kind,
 	const auto length = std::min(command.size(), guest_shutdown_command_limit);
 	std::copy_n(command.data(), length, record.command);
 	std::lock_guard lock{shutdown_mutex_};
+	const bool changed = guest_shutdown_.kind != record.kind ||
+		std::string_view{guest_shutdown_.command} !=
+			std::string_view{record.command};
 	guest_shutdown_ = record;
+	return changed;
 }
 
 GuestShutdown Context::guest_shutdown() const noexcept

@@ -104,7 +104,11 @@ The kernel tells the host how the guest ends, with the bridge import
 `machine_power_off()` and `machine_halt()` call before they run the exitcalls.
 The kinds are power-off, halt and restart; a restart passes the command the
 guest gave (`reboot recovery`), which is NULL when it gave none. Recording
-first keeps the intent if an exitcall never returns. A panic does not report:
+first keeps the intent if an exitcall never returns. `device_shutdown()` runs
+before `machine_*()`, so a reboot notifier of the highest priority reports the
+same intent as well, before any driver is shut down, and a driver whose
+`.shutdown` never returns still leaves it with the host; the report
+`machine_*()` makes later replaces it. A panic does not report:
 it aborts the process, and no restart follows it. The kernel's exit status
 keeps its meaning, so a host that reads only the status sees what it saw
 before.
