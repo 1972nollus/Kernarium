@@ -5,6 +5,7 @@
 #include "encoder_capabilities.hpp"
 #include "encoder_controls.hpp"
 #include "guest_buffers.hpp"
+#include "raw_pitch.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_protocol.hpp"
 
@@ -155,40 +156,49 @@ struct RawLayout {
 /* The layout of a `width` x `height` frame. `requestedPlanes` is zero for the
  * layout the format has by default (a buffer per component for the planar 8-bit
  * formats, one buffer for the others), one for everything in one buffer, or
- * the component count. Strides are tight and the host decides them: the
- * guest reads them back from the parameters it gets. */
+ * the component count. The host decides the strides, and they are the pitch a
+ * guest allocator gives a buffer (raw_pitch.hpp): the guest reads them back
+ * from the parameters it gets, and a plane's rows lie that far apart. */
 std::optional<RawLayout> rawLayout(RawVideoLayout layout, std::uint32_t width, std::uint32_t height,
                                    unsigned requestedPlanes)
 {
     std::vector<Component> components;
-    const auto chromaWidth = roundUp(width, 1);
     const auto chromaHeight = roundUp(height, 1);
     unsigned naturalPlanes = 1;
     switch (layout) {
-    case RawVideoLayout::nv12:
-        components = {{0, 0, width, height, 0, 0, 1}, {1, 0, 2 * chromaWidth, chromaHeight, 1, 1, 2}};
+    case RawVideoLayout::nv12: {
+        // The interleaved chroma rows are as long as the luma rows and share their pitch.
+        const auto pitch = rawPitch(width);
+        components = {{0, 0, pitch, height, 0, 0, 1}, {1, 0, pitch, chromaHeight, 1, 1, 2}};
         naturalPlanes = 2;
         break;
-    case RawVideoLayout::i420:
-        components = {{0, 0, width, height, 0, 0, 1}, {1, 0, chromaWidth, chromaHeight, 1, 1, 1},
-                      {2, 0, chromaWidth, chromaHeight, 1, 1, 1}};
+    }
+    case RawVideoLayout::i420: {
+        const auto lumaPitch = rawPitch(width, rawTriplanarLumaAlignment);
+        components = {{0, 0, lumaPitch, height, 0, 0, 1}, {1, 0, lumaPitch / 2, chromaHeight, 1, 1, 1},
+                      {2, 0, lumaPitch / 2, chromaHeight, 1, 1, 1}};
         naturalPlanes = 3;
         break;
-    case RawVideoLayout::p010:
-        components = {{0, 0, 2 * width, height, 0, 0, 2}, {1, 0, 4 * chromaWidth, chromaHeight, 1, 1, 4}};
+    }
+    case RawVideoLayout::p010: {
+        const auto pitch = rawPitch(2 * width);
+        components = {{0, 0, pitch, height, 0, 0, 2}, {1, 0, pitch, chromaHeight, 1, 1, 4}};
         naturalPlanes = 1;
         break;
-    case RawVideoLayout::nv16:
-        components = {{0, 0, width, height, 0, 0, 1}, {1, 0, 2 * chromaWidth, height, 1, 0, 2}};
+    }
+    case RawVideoLayout::nv16: {
+        const auto pitch = rawPitch(width);
+        components = {{0, 0, pitch, height, 0, 0, 1}, {1, 0, pitch, height, 1, 0, 2}};
         naturalPlanes = 2;
         break;
+    }
     case RawVideoLayout::nv24:
-        components = {{0, 0, width, height, 0, 0, 1}, {1, 0, 2 * width, height, 0, 0, 2}};
+        components = {{0, 0, rawPitch(width), height, 0, 0, 1}, {1, 0, rawPitch(2 * width), height, 0, 0, 2}};
         naturalPlanes = 2;
         break;
     case RawVideoLayout::bgra:
     case RawVideoLayout::rgba:
-        components = {{0, 0, 4 * width, height, 0, 0, 4}};
+        components = {{0, 0, rawPitch(4 * width), height, 0, 0, 4}};
         naturalPlanes = 1;
         break;
     }

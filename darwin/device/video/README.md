@@ -159,9 +159,10 @@ guarantees:
   value or none. `QUEUE_CLEAR` on either queue ends the session and returns the
   buffers that queue held with an error; the next frame configures a new
   session and starts at a key frame.
-- **Layout.** The device decides each raw plane's size and stride (tight, with
-  odd chroma rounded up) and reports them in `GET_PARAMS`; a buffer smaller than
-  that is refused at attach. A crop is rounded inside the frame to the
+- **Layout.** The device decides each raw plane's size and stride (rows at the
+  pitch `raw_pitch.hpp` states and heights tight, with odd chroma rounded up)
+  and reports them in `GET_PARAMS`; a buffer smaller than that is refused at
+  attach, and the rows are read at that stride. A crop is rounded inside the frame to the
   platform's alignment, and the coded size is the crop's. Planar 8-bit formats
   take a buffer per plane or one buffer, as the guest negotiated.
 - **Buffers.** A raw buffer completes once the host has copied it into a frame
