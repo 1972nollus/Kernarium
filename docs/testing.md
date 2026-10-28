@@ -467,6 +467,23 @@ A behaviour that one program checks inside the guest runs through
 fails on a console line that the registration's `--console-failure` pattern
 matches.
 
+`guest-restart` runs the macOS launcher through a guest that restarts itself.
+Under each of the gadgets and the JIT engine, one `uml-darwin` process boots,
+restarts twice and powers off, with the same pid throughout. The test loads a
+process audit (`tests/integration/restart/process_audit.cpp`) into the launcher
+and, at the settle point of each boot, compares what it lists with boot 1's:
+descriptors by kind, threads by name, Mach ports, the next pthread key, signal
+dispositions and the flags of descriptors 0 to 2. A pattern the first boot
+writes into anonymous memory and tmpfs must be found in guest RAM before the
+restart and nowhere in the process, window included, after it. A second phase
+runs a guest that restarts at once and checks that the launcher ends the loop
+with exit status 3 after five early restarts. `emulator-restart-loop-guard`
+covers the guard's policy and its escaping of the guest's command, and
+`slirp-network-reset-peer` covers a SLiRP connection whose peer resets while
+the guest has data to send, which must not end the process.
+`android-partition-boot-selection` covers the consumption of a
+`bootonce-bootloader` command and the boot a restart selects.
+
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
 `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; do not override individual files.

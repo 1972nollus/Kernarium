@@ -444,8 +444,22 @@ kernel ELF remains outside the disk in the selected runtime artifact. Both image
 from the signed AOSP target files; `recovery` is the stock LineageOS recovery
 that `lineage_darwin` builds, with no separate recovery source or build.
 Neither ramdisk is duplicated as a standalone release file. Boot mode `auto`
-follows the standard command in the directly writable `misc` partition;
-explicit normal/recovery selection is diagnostic.
+follows the standard command in the directly writable `misc` partition and is
+the launcher default; explicit normal/recovery selection is a diagnostic
+override of the first boot only.
+
+A guest reboot restarts the guest in the same host process, so `adb reboot`,
+`adb reboot recovery` and `adb reboot bootloader` all return to a running
+guest, and the launcher keeps waiting on the one process. Every restart reads
+`misc` again and, in `auto` mode, boots the ramdisk it names: Android's
+`boot-recovery` command boots recovery, which clears it when it leaves, and no
+command boots Android. There is no bootloader to stop in, so the launcher
+behaves as a bootloader that continues: a `bootonce-bootloader` command is
+cleared, with a log line, and the guest boots on. It is cleared because a
+command left in `misc` makes Android's init skip writing `boot-recovery`, and
+the guest would then reboot into Android instead of recovery. A guest that
+restarts within 15 s of booting five times in a row ends the launch with exit
+status 3.
 
 The recovery ramdisk is an LZ4 legacy frame of the product's page-agnostic
 AArch64 ELFs, so it runs on the 4 KiB kernel unchanged. Two product changes
@@ -574,7 +588,8 @@ with a newly expanded copy of that release. The default session uses
 the existing `macos-android17` executable with native Metal display, 10 vCPUs,
 8 GiB of RAM, the gadgets engine, and a 720-by-1280 portrait display. Pass
 `--build` to refresh that executable incrementally or `--recovery` to boot
-recovery; run `tools/boot_android.py --help` for other overrides.
+recovery for the first boot; run `tools/boot_android.py --help` for other
+overrides.
 
 Kernarium represents one Android guest as a `.kern` directory containing:
 

@@ -43,10 +43,9 @@ kernel has claimed guest RAM, every later run in the process, on any handle,
 returns `UML_EMULATOR_UNSUPPORTED` without entering a kernel, except the next
 run on the handle whose last run ended with a restart: that run hands the guest
 back to the process and boots again (`runtime/guest_hand_back`). A run says how
-its guest ended through `uml_emulator_get_run_end`: the guest's own report (the
-kernel's shutdown import fills the run's Context before its exitcalls run), the
-host's stop request ahead of it, and a failure when the kernel said nothing. The
-hand-back refuses with `UML_EMULATOR_RUNTIME_ERROR` while a host service
+its guest ended through `uml_emulator_get_run_end`: the guest's own report (see
+[guest lifecycle](#guest-lifecycle)), the host's stop request ahead of it, and a
+failure when the kernel said nothing. The hand-back refuses with `UML_EMULATOR_RUNTIME_ERROR` while a host service
 borrows guest RAM or a kernel thread runs, and otherwise gives back everything
 the kernel took and did not return:
 
@@ -1126,6 +1125,35 @@ restart (command 'recovery')`, `guest powered off` or `guest halted`) and keeps
 the kind and at most 255 bytes of the command in the run's `Context`, which
 `begin_run()` clears and `end_run()` leaves for the handle's owner to read. A
 panic aborts the process and reports nothing.
+
+The macOS launchers (`darwin/app/macos`) restart a guest in the same process.
+The machine is made once: the emulator handle, the SLiRP provider with its
+`--net-forward` list, and the GPU service with its display. Each boot makes its
+own services (battery, balloon, video, video encoder, audio, console) and its
+command line, runs, and stops them again. After a restart the launcher resets
+the SLiRP link (stop, then open at once, which replays the forwards) so that no
+connection of the old guest survives, asks the GPU service for its next
+connection, and runs the handle again; any other end leaves in the order a
+single launch always did, and the exit status is the last guest's (0 for a
+power-off or halt, 1 for a launch error). The launcher logs `guest restarting
+(command '...', restart N)` for each restart, writing the guest's command with
+escapes so a log line stays one line. A restart less than 15 s after its boot
+started is early, and five early restarts in a row end the loop with exit
+status 3: a guest that does not boot is not restarted for ever
+(`emulator/src/restart_loop_guard.hpp` owns the policy). A run the library
+refuses to hand back is retried three times, 500 ms apart, before the launch
+fails; a stop request ends the loop at once. A write to a socket whose peer
+reset it must not end the process, so the launcher ignores `SIGPIPE`, which the
+library restores after each run, and the SLiRP provider marks every socket it
+polls with `SO_NOSIGPIPE`.
+
+Android's boot control block is part of the loop. A launch asks the first boot
+for the mode the user chose (`auto` by default); every restart reads the misc
+partition again and, in `auto` mode, boots the ramdisk. A `bootonce-bootloader`
+command is consumed, as a bootloader that continues would, so that Android's
+init writes `boot-recovery` when it reboots into recovery; `boot-recovery`
+itself stays for recovery to clear. See the
+[Android boot contract](../android/lineage-24/README.md#apple-consumers-and-guest-bundles).
 
 An application that can be backgrounded holds the guest's GPU requests before it
 quiesces, with the runtime's `set_gpu_hold` (see the request gate under
