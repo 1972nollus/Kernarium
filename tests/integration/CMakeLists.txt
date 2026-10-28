@@ -382,6 +382,7 @@ add_subdirectory(aarch32)
 add_subdirectory(balloon)
 add_subdirectory(exclusive)
 add_subdirectory(no_sve)
+add_subdirectory(restart)
 add_subdirectory(sme)
 
 # One-vCPU guest: an input burst past the tty buffer must not end console input.
