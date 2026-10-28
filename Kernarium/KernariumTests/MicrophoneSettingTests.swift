@@ -83,6 +83,20 @@ struct MicrophoneSettingTests {
         #expect(runtime.told == [true, true])
     }
 
+    /// The system's answer comes from its own queue, possibly after the
+    /// setting is gone; it must reach nothing then.
+    @Test
+    func anAnswerThatArrivesAfterTheSettingIsGoneReachesNothing() async throws {
+        let permission = FakePermission(.notAsked)
+        let runtime = Runtime()
+        var microphone: MicrophoneSetting? = setting(permission, runtime)
+        microphone?.setOn(true)
+        microphone = nil
+        permission.answer(.granted)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(runtime.told == [true])
+    }
+
     @Test
     func aDeniedAnswerLeavesTheSettingOnAndSaysSo() async throws {
         let permission = FakePermission(.notAsked)
