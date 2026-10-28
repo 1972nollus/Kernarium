@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <mach/mach.h>
 #include <pthread.h>
+#include <time.h>
 #include <vector>
 
 namespace {
@@ -29,6 +30,13 @@ constexpr unsigned boot_threads = 12;
 
 void *return_at_once(void *) noexcept
 {
+	return nullptr;
+}
+
+void *end_after_a_while(void *) noexcept
+{
+	const timespec delay{0, 40L * 1000L * 1000L};
+	(void)nanosleep(&delay, nullptr);
 	return nullptr;
 }
 
@@ -126,6 +134,18 @@ void a_running_thread_keeps_its_slot()
 		"the slot of an ended thread stayed in use");
 }
 
+/* A thread that is ending when the hand-back asks, as one just joined is
+ * (Darwin wakes the joiner before the thread is gone), is waited for. */
+void a_thread_that_is_ending_is_waited_for()
+{
+	pthread_t ending;
+	require(uml::runtime::kernel_pthread_create(&ending, nullptr,
+		&end_after_a_while, nullptr) == 0);
+	require(uml::runtime::reclaim_ended_kernel_threads() == 0,
+		"a thread that was ending was reported as running");
+	require(pthread_join(ending, nullptr) == 0);
+}
+
 /* While a fence reads the ports nothing is given back, and that shows. */
 void nothing_is_reclaimed_while_a_fence_reads_the_ports()
 {
@@ -144,6 +164,7 @@ int main()
 	a_restart_storm_cannot_overflow_the_registry();
 	a_registry_without_hand_backs_does_not_overflow();
 	a_running_thread_keeps_its_slot();
+	a_thread_that_is_ending_is_waited_for();
 	nothing_is_reclaimed_while_a_fence_reads_the_ports();
 	std::puts("kernel thread registry tests passed");
 	return EXIT_SUCCESS;
