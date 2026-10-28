@@ -9,6 +9,8 @@ python3 -B. A .cpp probe is installed as source, built in the guest with
 c++ -std=c++20 -O2 and --cxxflags, and run. Each probe's header states what
 it checks; its exit status is its failure count. --console-failure also
 fails the run on a console line, the kernel's messages included, that matches.
+--guest-argument adds an emulator argument, such as --guest-top-byte-ignore,
+and --probe-argument an argument of the probe.
 """
 
 from __future__ import annotations
@@ -45,6 +47,27 @@ def main() -> int:
         help='compiler flags of a .cpp probe, as --cxxflags="FLAG FLAG"',
     )
     parser.add_argument(
+        "--guest-argument",
+        action="append",
+        default=[],
+        metavar="ARGUMENT",
+        help="an extra emulator argument, as --guest-argument=ARGUMENT",
+    )
+    parser.add_argument(
+        "--probe-argument",
+        action="append",
+        default=[],
+        metavar="ARGUMENT",
+        help="an argument of the probe, as --probe-argument=ARGUMENT",
+    )
+    parser.add_argument(
+        "--build-timeout",
+        type=int,
+        default=BUILD_TIMEOUT_SECONDS,
+        metavar="SECONDS",
+        help="how long the guest has to build a .cpp probe",
+    )
+    parser.add_argument(
         "--console-failure",
         type=re.compile,
         metavar="REGEX",
@@ -54,6 +77,8 @@ def main() -> int:
     compiled = arguments.probe.suffix == ".cpp"
     if arguments.cxxflags and not compiled:
         parser.error("--cxxflags applies to a .cpp probe")
+    if arguments.build_timeout != BUILD_TIMEOUT_SECONDS and not compiled:
+        parser.error("--build-timeout applies to a .cpp probe")
     pattern = arguments.console_failure
     guest_probe = f"{GUEST_DIRECTORY}/probe{arguments.probe.suffix}"
 
@@ -62,7 +87,7 @@ def main() -> int:
         arguments.rootfs.resolve(),
         "1G",
         "tmpfs",
-        (f"ncpus={arguments.ncpus}",),
+        (f"ncpus={arguments.ncpus}", *arguments.guest_argument),
         init_shell=True,
         engine=arguments.engine,
         payloads={guest_probe: GuestFile(arguments.probe.read_bytes())},
@@ -76,11 +101,13 @@ def main() -> int:
                     + shlex.split(arguments.cxxflags)
                     + ["-o", GUEST_BINARY, guest_probe]
                 ),
-                BUILD_TIMEOUT_SECONDS,
+                arguments.build_timeout,
             )
-            command = GUEST_BINARY
+            command = shlex.join([GUEST_BINARY, *arguments.probe_argument])
         else:
-            command = f"python3 -B {guest_probe}"
+            command = shlex.join(
+                ["python3", "-B", guest_probe, *arguments.probe_argument]
+            )
         result = guest.run_command(command, arguments.probe_timeout)
         print(result.output.strip())
         complaints = [

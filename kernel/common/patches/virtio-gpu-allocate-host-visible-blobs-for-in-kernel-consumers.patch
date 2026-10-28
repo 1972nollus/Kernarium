@@ -29,6 +29,13 @@ one: an importer resolves a descriptor back to this object only when the
 descriptor carries Virtio-GPU's dma-buf ops, and only that exporter names the
 blob's shared-memory region to another virtio device.
 
+The allocation sends the commands it queues (the context's creation the first
+time, the blob's creation and its mapping) with virtio_gpu_notify(). A DRM
+client's ioctl notifies after it queues, this caller has no ioctl, and its
+client waits for the host's answer first, so without the call nothing sent the
+queue until some other user of the device did: a stateful decoder's
+VIDIOC_REQBUFS waited 53 to 60 seconds on a guest with nothing else to draw.
+
 Separate from naming a blob's shared-memory region: that describes a blob a
 DRM client already owns, while this one creates them for a driver that has no
 DRM client at all.
@@ -37,10 +44,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
  drivers/gpu/drm/virtio/Makefile            |   1 +
  drivers/gpu/drm/virtio/virtgpu_drv.h       |   4 +
- drivers/gpu/drm/virtio/virtgpu_host_blob.c | 230 +++++++++++++++++++++
+ drivers/gpu/drm/virtio/virtgpu_host_blob.c | 238 +++++++++++++++++++++
  drivers/gpu/drm/virtio/virtgpu_kms.c       |   8 +
- include/linux/virtio_gpu_host_blob.h       |  81 ++++++++
- 5 files changed, 324 insertions(+)
+ include/linux/virtio_gpu_host_blob.h       |  81 +++++++
+ 5 files changed, 332 insertions(+)
  create mode 100644 drivers/gpu/drm/virtio/virtgpu_host_blob.c
  create mode 100644 include/linux/virtio_gpu_host_blob.h
 
@@ -73,10 +80,10 @@ index 00c609c3b53a80ee4cd0b03661d3d510246dce1d..1a6b956f090d90e18f974696c8374221
  int virtio_gpu_vram_create(struct virtio_gpu_device *vgdev,
 diff --git a/drivers/gpu/drm/virtio/virtgpu_host_blob.c b/drivers/gpu/drm/virtio/virtgpu_host_blob.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f0184ecec87d872572cd2cc2168b84ba36fa5cc6
+index 0000000000000000000000000000000000000000..d05897adcb0444cd58813f61654b71ad22f827db
 --- /dev/null
 +++ b/drivers/gpu/drm/virtio/virtgpu_host_blob.c
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,238 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Host-visible blobs for in-kernel consumers.
@@ -224,6 +231,14 @@ index 0000000000000000000000000000000000000000..f0184ecec87d872572cd2cc2168b84ba
 +	params.size = ALIGN(size, VIRTIO_GPU_HOST_VISIBLE_ALIGNMENT);
 +
 +	ret = virtio_gpu_vram_create(vgdev, &params, &bo);
++	/*
++	 * Queueing a command does not send it: the context, the blob and its
++	 * mapping wait in the control queue until a caller notifies. A DRM
++	 * client's ioctl does, this caller has no ioctl, and the first thing
++	 * its client does is wait for the host's answer, so nothing else would
++	 * send them until some other user of the device happened to.
++	 */
++	virtio_gpu_notify(vgdev);
 +	mutex_unlock(&virtio_gpu_host_blob_lock);
 +	if (ret)
 +		return ERR_PTR(ret);

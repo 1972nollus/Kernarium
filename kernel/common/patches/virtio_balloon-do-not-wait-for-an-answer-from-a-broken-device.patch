@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 12:31:36 +0900
+Subject: [PATCH] virtio_balloon: do not wait for an answer from a broken
+ device
+
+tell_host() ignored the result of virtqueue_add_outbuf() and then waited,
+uninterruptibly, for the host to return the buffer. A broken virtqueue
+never returns one: the add fails with -EIO, and a buffer queued before
+the break stays out, because virtqueue_get_buf() returns nothing once
+the queue is broken and its interrupt no longer runs the callback.
+
+UML reaches that state on every power-off with an inflated balloon: it
+runs virtio_uml_exit() as an exitcall after device_shutdown() has broken
+and reset every virtio device, and virtio_balloon's remove then returns
+its pages through tell_host(). The guest stopped for ever after
+"reboot: Power down". The .shutdown handler 6.18.52 added quiesces the
+balloon's workers before that break but leaves those pages in the
+balloon, so remove still reaches tell_host() on the broken queue.
+
+That handler also leaves balloon page migration running. A compaction
+that migrates a balloon page while the queues break waits in
+tell_host() for ever, holding balloon_lock, and remove then waits for
+that lock: an Android guest that compacts as it powers off sometimes
+never exits.
+
+Return when the buffer cannot be queued, and stop waiting when the
+queue breaks under the request, as a failed kick breaks it. Hold
+balloon_lock while the shutdown handler breaks the queues, so that a
+migration telling the host finishes first and one that starts later
+finds them broken. The pages still leave the balloon; a device that is
+gone cannot be told.
+---
+ drivers/virtio/virtio_balloon.c | 28 +++++++++++++++++++++++-----
+ 1 file changed, 23 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index a3995e77a652ca3a750bd2799243cc052dad7ba2..2f9e5b0dcfa0dd58dd674dde72173f09f938b8c3 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -188,12 +188,20 @@ static void tell_host(struct virtio_balloon *vb, struct virtqueue *vq)
+ 
+ 	sg_init_one(&sg, vb->pfns, sizeof(vb->pfns[0]) * vb->num_pfns);
+ 
+-	/* We should always be able to add one buffer to an empty queue. */
+-	virtqueue_add_outbuf(vq, &sg, 1, vb, GFP_KERNEL);
++	/*
++	 * We should always be able to add one buffer to an empty queue, unless
++	 * the device is broken, and then no answer will ever come.
++	 */
++	if (virtqueue_add_outbuf(vq, &sg, 1, vb, GFP_KERNEL))
++		return;
+ 	virtqueue_kick(vq);
+ 
+-	/* When host has read buffer, this completes via balloon_ack */
+-	wait_event(vb->acked, virtqueue_get_buf(vq, &len));
++	/*
++	 * When host has read buffer, this completes via balloon_ack. A queue
++	 * that breaks meanwhile, as a failed kick breaks it, returns nothing.
++	 */
++	wait_event(vb->acked,
++		   virtqueue_get_buf(vq, &len) || virtqueue_is_broken(vq));
+ 
+ }
+ 
+@@ -1157,8 +1165,18 @@ static void virtballoon_remove(struct virtio_device *vdev)
+ 
+ static void virtballoon_shutdown(struct virtio_device *vdev)
+ {
+-	virtballoon_quiesce(vdev->priv);
++	struct virtio_balloon *vb = vdev->priv;
++
++	virtballoon_quiesce(vb);
++	/*
++	 * Quiescing leaves balloon page migration running. Let a migration
++	 * that is telling the host finish before the queues break, because a
++	 * broken queue never returns its buffer; one that starts later finds
++	 * the queues broken and does not wait.
++	 */
++	mutex_lock(&vb->balloon_lock);
+ 	virtio_device_shutdown(vdev);
++	mutex_unlock(&vb->balloon_lock);
+ }
+ 
+ #ifdef CONFIG_PM_SLEEP

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "virtio_video_device.hpp"
+#include "activity_log.hpp"
+#include "guest_buffers.hpp"
 #include "video_capabilities.hpp"
 #include "vhost_user_protocol.hpp"
 
@@ -19,7 +21,6 @@ using uml::virtio::VhostUserQueueAction;
 using uml::virtio::VhostUserQueueCompletion;
 using uml::virtio::VhostUserQueueResult;
 constexpr std::size_t maximumPacket = 8 * 1024 * 1024;
-constexpr std::size_t maximumResource = 128 * 1024 * 1024;
 
 using uml::virtio::toBytes;
 template<class T> T load(std::span<const std::uint8_t> bytes)
@@ -82,6 +83,24 @@ std::vector<std::uint8_t> packBgra(const uml::platform::DecodedVideoFrame& frame
     return pixels;
 }
 
+/* A planar frame of 10-bit samples, which sit in the high bits of a
+ * little-endian pair, as the 8-bit NV12 a client that negotiated it expects.
+ * The decoder narrows the pictures it decodes once it has been asked to, so
+ * only a picture decoded before the client chose reaches this. The rounding is
+ * the decoder's. */
+void narrowTo8(uml::platform::DecodedVideoFrame& frame)
+{
+    for (auto* plane : {&frame.luma, &frame.chroma}) {
+        std::vector<std::uint8_t> narrow(plane->size() / 2);
+        for (std::size_t i = 0; i < narrow.size(); ++i) {
+            const unsigned value = unsigned((*plane)[2 * i]) | (unsigned((*plane)[2 * i + 1]) << 8);
+            narrow[i] = std::uint8_t(std::min(255u, (value + 0x80u) >> 8));
+        }
+        *plane = std::move(narrow);
+    }
+    frame.format.bitDepth = 8;
+}
+
 std::vector<std::uint8_t> reply(std::uint32_t stream, std::uint32_t type = VIRTIO_VIDEO_RESP_OK_NODATA)
 {
     return toBytes(virtio_video_cmd_hdr{type, stream});
@@ -95,10 +114,14 @@ std::uint32_t defaultCapture(unsigned bitDepth) noexcept
 {
     return bitDepth == 10 ? VIRTIO_VIDEO_FORMAT_P010 : VIRTIO_VIDEO_FORMAT_BGRA8888;
 }
+/* What the decoder is asked to produce for a capture format: packed pixels, the
+ * stream's own depth for P010, and 8-bit planes for NV12 and YUV420, which a
+ * 10-bit stream reaches by being narrowed. */
 uml::platform::VideoPixelLayout captureLayout(std::uint32_t format) noexcept
 {
-    return format == VIRTIO_VIDEO_FORMAT_BGRA8888 ? uml::platform::VideoPixelLayout::packedBgra
-                                                  : uml::platform::VideoPixelLayout::planarYuv;
+    if (format == VIRTIO_VIDEO_FORMAT_BGRA8888) return uml::platform::VideoPixelLayout::packedBgra;
+    return format == VIRTIO_VIDEO_FORMAT_P010 ? uml::platform::VideoPixelLayout::planarYuv
+                                              : uml::platform::VideoPixelLayout::planar8Bit;
 }
 bool validQueue(std::uint32_t queue)
 {
@@ -125,6 +148,7 @@ const char* profileName(uml::platform::VideoProfile profile) noexcept
     case uml::platform::VideoProfile::h264ConstrainedBaseline: return "h264-constrained-baseline";
     case uml::platform::VideoProfile::h264Main: return "h264-main";
     case uml::platform::VideoProfile::h264High: return "h264-high";
+    case uml::platform::VideoProfile::h264ConstrainedHigh: return "h264-constrained-high";
     case uml::platform::VideoProfile::h264High10: return "h264-high10";
     case uml::platform::VideoProfile::hevcMain: return "hevc-main";
     case uml::platform::VideoProfile::hevcMain10: return "hevc-main10";
@@ -134,77 +158,6 @@ const char* profileName(uml::platform::VideoProfile profile) noexcept
     return "unknown";
 }
 
-/* Whether an application really decoded in hardware cannot be answered from
- * inside the guest: a player that silently falls back to software shows the
- * same correct picture, and the guest only sees that it opened a device node.
- * Setting `UML_VIDEO_ACTIVITY_LOG` to a writable path makes the device append
- * what it advertised, every stream a guest opened, and what each stream
- * actually decoded. It is a file rather than stderr because the emulator's
- * stderr shares the guest console and loses lines under load. Nothing is
- * opened, formatted, or written when the variable is unset.
- */
-class ActivityLog final {
-public:
-    ActivityLog()
-    {
-        const char* path = std::getenv("UML_VIDEO_ACTIVITY_LOG");
-        if (path != nullptr && path[0] != '\0') file_ = std::fopen(path, "ae");
-    }
-    ~ActivityLog() { if (file_ != nullptr) std::fclose(file_); }
-    ActivityLog(const ActivityLog&) = delete;
-    ActivityLog& operator=(const ActivityLog&) = delete;
-
-    void advertised(const char* codec, const char* profile, std::uint32_t width,
-                    std::uint32_t height, std::uint32_t bitDepth)
-    {
-        if (file_ == nullptr) return;
-        std::fprintf(file_, "uml-video %.3f advertise codec=%s profile=%s max=%ux%u depth=%u\n",
-            elapsed(), codec, profile, width, height, bitDepth);
-        std::fflush(file_);
-    }
-    void opened(std::uint32_t stream, const char* codec, const char* profile)
-    {
-        if (file_ == nullptr) return;
-        std::fprintf(file_, "uml-video %.3f stream=%u open codec=%s profile=%s\n",
-            elapsed(), stream, codec, profile);
-        std::fflush(file_);
-    }
-    /* The capture fields are appended, so a reader that only knows the older
-     * line keeps working. They answer, without any tool inside the guest,
-     * where a client's capture memory lives and whether it ever gives a
-     * filled buffer back: a client that queues each buffer once and stops has
-     * starved its own pool, while re-queues that stop being filled are the
-     * device's or the driver's fault. */
-    void closed(std::uint32_t stream, const char* reason, std::uint64_t packets,
-                std::uint64_t packetBytes, std::uint64_t frames,
-                std::uint32_t width, std::uint32_t height, const char* capture,
-                std::uint64_t queuedBuffers, std::uint64_t distinctBuffers,
-                std::uint64_t requeuedBuffers, std::size_t pending, const char* raw,
-                std::uint64_t converted, const char* codec)
-    {
-        if (file_ == nullptr) return;
-        std::fprintf(file_,
-            "uml-video %.3f stream=%u close=%s packets=%llu bytes=%llu frames=%llu output=%ux%u"
-            " capture=%s queued=%llu distinct=%llu requeued=%llu pending_at_close=%zu"
-            " raw=%s converted=%llu coded=%s\n",
-            elapsed(), stream, reason, static_cast<unsigned long long>(packets),
-            static_cast<unsigned long long>(packetBytes),
-            static_cast<unsigned long long>(frames), width, height, capture,
-            static_cast<unsigned long long>(queuedBuffers),
-            static_cast<unsigned long long>(distinctBuffers),
-            static_cast<unsigned long long>(requeuedBuffers), pending, raw,
-            static_cast<unsigned long long>(converted), codec);
-        std::fflush(file_);
-    }
-
-private:
-    [[nodiscard]] double elapsed() const noexcept
-    {
-        return std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
-    }
-    std::FILE* file_ {};
-    std::chrono::steady_clock::time_point start_ {std::chrono::steady_clock::now()};
-};
 virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint32_t width, std::uint32_t height)
 {
     virtio_video_params p {};
@@ -244,14 +197,7 @@ virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint3
 
 class VirtioVideoDevice::Implementation {
 public:
-    /* `address` is a guest-physical address, or an offset in shared-memory
-     * region `region` when the guest marked the entry shared. */
-    struct Segment {
-        std::uint64_t address;
-        std::uint32_t length;
-        bool shared {};
-        std::uint8_t region {};
-    };
+    using Segment = GuestSegment;
     struct Resource {
         std::vector<std::vector<Segment>> planes;
         bool queued {};
@@ -266,6 +212,18 @@ public:
         std::uint64_t timestamp;
         std::uint32_t size;
         std::vector<std::uint8_t> packet;
+    };
+    /* A coded buffer whose packet changed the picture size. The decoder has
+     * consumed it, but it is not given back until the client has set its
+     * capture queue up for the new size, which is when a hardware decoder
+     * returns it too. A client that queues its last coded buffer and then
+     * drains therefore cannot drain across a size change it has not handled:
+     * its drain waits for every coded buffer, and the end marker of the old
+     * size is not mistaken for the end of the drain. */
+    struct SizeChange {
+        std::uint64_t request;
+        std::uint32_t resource;
+        std::vector<std::uint8_t> response;
     };
     struct Stream {
         std::uint32_t coded {};
@@ -286,7 +244,21 @@ public:
          * first picture it then decodes already carries the chosen layout,
          * which is what keeps the host from converting every frame. */
         bool captureDeferred {true};
+        /* The picture size the client was told, which pictures are compared
+         * with: a picture of another size is a resolution change, whatever
+         * capture parameters the client has set since. */
         bool sourceKnown {};
+        std::uint32_t announcedWidth {};
+        std::uint32_t announcedHeight {};
+        /* A resolution change has been announced and the client has not yet
+         * set its capture queue up again: no picture of the new size is
+         * delivered into the buffers it still holds. */
+        bool renegotiating {};
+        /* The size the latest packet given to the decoder declared, which the
+         * next packet is compared with to find the one that changes it. */
+        std::uint32_t submittedWidth {};
+        std::uint32_t submittedHeight {};
+        std::deque<SizeChange> sizeChanges;
         bool draining {};
         bool eosSent {};
         std::uint64_t packets {};
@@ -382,36 +354,9 @@ public:
         stream.outputs.clear();
     }
 
-    /* A shared-memory range is resolved again for every transfer: the
-     * backend that owns the region withdraws it from the index before the
-     * guest unmaps it, so a resource whose blob has gone completes with an
-     * error instead of writing into memory the guest no longer has. */
     bool transfer(const std::vector<Segment>& segments, std::span<std::uint8_t> data, bool write)
     {
-        std::size_t offset = 0;
-        for (const auto segment : segments) {
-            const auto size = std::min<std::size_t>(data.size() - offset, segment.length);
-            if (!size) break;
-            if (segment.shared) {
-                bool copied = false;
-                const auto copy = [&](std::span<std::uint8_t> memory) {
-                    if (memory.size() != size) return;
-                    if (write) std::memcpy(memory.data(), data.data() + offset, size);
-                    else std::memcpy(data.data() + offset, memory.data(), size);
-                    copied = true;
-                };
-                if (!regions || !regions->resolve(segment.region, segment.address, size, copy) ||
-                    !copied)
-                    return false;
-            } else {
-                auto memory = mapper ? mapper(segment.address, size) : std::span<std::uint8_t>{};
-                if (memory.size() != size) return false;
-                if (write) std::memcpy(memory.data(), data.data() + offset, size);
-                else std::memcpy(data.data() + offset, memory.data(), size);
-            }
-            offset += size;
-        }
-        return offset == data.size();
+        return transferSegments(mapper, regions.get(), segments, data, write);
     }
 
     /* How many decoded frames the device keeps before it stops taking encoded
@@ -434,23 +379,71 @@ public:
     // bounded only by what the guest can have attached.
     static constexpr std::size_t heldPacketLimit = 128;
 
+    /* Tells the client the picture size, which it needs before it can set its
+     * capture queue up. The raw format is the client's choice when it has made
+     * one, and otherwise follows the stream: P010 can only carry 10-bit
+     * samples, and a stream that has none cannot be offered it. */
+    void announce(std::uint32_t id, Stream& stream, std::uint32_t width, std::uint32_t height, unsigned depth)
+    {
+        auto raw = stream.output.format;
+        if (raw == VIRTIO_VIDEO_FORMAT_BGRA8888) { /* keep the negotiated packed format */ }
+        else if (raw == VIRTIO_VIDEO_FORMAT_P010) { if (depth != 10) raw = VIRTIO_VIDEO_FORMAT_NV12; }
+        else if (depth == 10 && !stream.captureSettled) raw = VIRTIO_VIDEO_FORMAT_P010;
+        stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw, width, height);
+        stream.announcedWidth = width;
+        stream.announcedHeight = height;
+        stream.sourceKnown = true;
+        event(id, VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED);
+    }
+
+    /* The first announcement of a stream comes from the decoder's reading of the
+     * stream's headers, before any picture exists. After that a size change is
+     * announced where the pictures of the new size begin, so that every picture
+     * of the old size is delivered first. */
     void refreshFormat(std::uint32_t id, Stream& stream)
     {
+        if (stream.sourceKnown) return;
         const auto format = stream.decoder->format();
-        /* Packed capture has left the YCbCr domain, so the stream's bit depth
-         * neither selects the raw format nor invalidates the negotiated one. */
-        const bool packed = stream.output.format == VIRTIO_VIDEO_FORMAT_BGRA8888;
-        if (format.width && (!stream.sourceKnown || stream.output.frame_width != format.width ||
-            stream.output.frame_height != format.height ||
-            (!packed && (stream.output.format == VIRTIO_VIDEO_FORMAT_P010) != (format.bitDepth == 10)))) {
-            auto raw = stream.output.format;
-            if (packed) { /* keep the negotiated packed format */ }
-            else if (format.bitDepth == 10) raw = VIRTIO_VIDEO_FORMAT_P010;
-            else if (raw == VIRTIO_VIDEO_FORMAT_P010) raw = VIRTIO_VIDEO_FORMAT_NV12;
-            stream.output = params(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, raw, format.width, format.height);
-            stream.sourceKnown = true;
-            event(id, VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED);
+        if (format.width) announce(id, stream, format.width, format.height, format.bitDepth);
+    }
+
+    /* Whether the packet just given to the decoder declares another picture
+     * size than the one before it. The first packet of a stream declares the
+     * size, it does not change it. */
+    static bool carriesSizeChange(Stream& stream)
+    {
+        const auto format = stream.decoder->format();
+        if (!format.width) return false;
+        const bool changed = stream.submittedWidth &&
+            (format.width != stream.submittedWidth || format.height != stream.submittedHeight);
+        stream.submittedWidth = format.width;
+        stream.submittedHeight = format.height;
+        return changed;
+    }
+
+    /* Keeps the completion of a coded buffer until the client has dealt with
+     * the size change it carries. The buffer stays queued meanwhile, so a
+     * client cannot queue it again. */
+    void holdSizeChange(Stream& stream, std::uint64_t request, std::uint32_t resource,
+                        std::vector<std::uint8_t> response)
+    {
+        const auto found = stream.resources.find(resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_INPUT, resource));
+        if (found != stream.resources.end()) found->second.queued = true;
+        stream.sizeChanges.push_back({request, resource, std::move(response)});
+    }
+
+    /* Gives back the coded buffers that carried a size change: the client has
+     * set its capture queue up for the new size, stopped the queue, drained,
+     * or cleared the coded queue, and none of those leaves it waiting for the
+     * buffer. */
+    void releaseSizeChanges(Stream& stream)
+    {
+        for (auto& change : stream.sizeChanges) {
+            const auto found = stream.resources.find(resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_INPUT, change.resource));
+            if (found != stream.resources.end()) found->second.queued = false;
+            completions.push_back({change.request, std::move(change.response)});
         }
+        stream.sizeChanges.clear();
     }
 
     void collect(std::uint32_t id, Stream& stream)
@@ -479,7 +472,8 @@ public:
             stream.packetBytes += held.size;
             auto result = load<virtio_video_resource_queue_resp>(queued(id, held.timestamp, 0));
             result.data_sizes[0] = held.size;
-            completions.push_back({held.request, toBytes(result)});
+            if (carriesSizeChange(stream)) holdSizeChange(stream, held.request, held.resource, toBytes(result));
+            else completions.push_back({held.request, toBytes(result)});
             refreshFormat(id, stream);
             for (auto& frame : stream.decoder->takeFrames()) stream.frames.push_back(std::move(frame));
         }
@@ -497,13 +491,43 @@ public:
         }
         stream.held.clear();
         stream.heldBytes = 0;
+        releaseSizeChanges(stream);
+    }
+
+    /* Whether delivering this picture needs the client to set its capture queue
+     * up again: it is not the size it was told, or it is 8-bit samples for a
+     * client that negotiated P010. */
+    static bool changesFormat(const Stream& stream, const uml::platform::DecodedVideoFrame& frame)
+    {
+        if (frame.format.width != stream.announcedWidth || frame.format.height != stream.announcedHeight)
+            return true;
+        return stream.output.format == VIRTIO_VIDEO_FORMAT_P010 &&
+               frame.layout == uml::platform::VideoPixelLayout::planarYuv && frame.format.bitDepth != 10;
     }
 
     void pump(std::uint32_t id, Stream& stream)
     {
-        while (!stream.outputs.empty()) {
+        for (;;) {
+            // Nothing of the new size reaches buffers set up for the old one.
+            if (stream.renegotiating) return;
+            if (!stream.frames.empty() && stream.sourceKnown && changesFormat(stream, stream.frames.front())) {
+                /* Every picture of the old size has been delivered, in order.
+                 * One more buffer completes empty and last, which is where a
+                 * V4L2 client sees the old stream end, and then the client is
+                 * told the new size. */
+                if (stream.outputs.empty()) return;
+                const auto last = stream.outputs.front();
+                stream.outputs.pop_front();
+                stream.resources.at(resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, last.resource)).queued = false;
+                completions.push_back({last.request, queued(id, 0, VIRTIO_VIDEO_DEQUEUE_FLAG_EOS)});
+                const auto& next = stream.frames.front();
+                announce(id, stream, next.format.width, next.format.height, next.format.bitDepth);
+                stream.renegotiating = true;
+                return;
+            }
+            if (stream.outputs.empty()) return;
             if (stream.frames.empty() &&
-                (!stream.draining || stream.eosSent || !stream.held.empty())) break;
+                (!stream.draining || stream.eosSent || !stream.held.empty())) return;
             const auto output = stream.outputs.front();
             stream.outputs.pop_front();
             auto& resource = stream.resources.at(resourceKey(VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT, output.resource));
@@ -516,6 +540,9 @@ public:
             auto frame = std::move(stream.frames.front());
             stream.frames.pop_front();
             ++stream.delivered;
+            if (stream.output.format != VIRTIO_VIDEO_FORMAT_BGRA8888 && stream.output.format != VIRTIO_VIDEO_FORMAT_P010 &&
+                frame.layout == uml::platform::VideoPixelLayout::planarYuv && frame.format.bitDepth == 10)
+                narrowTo8(frame);
             std::vector<std::vector<std::uint8_t>> planes;
             if (stream.output.format == VIRTIO_VIDEO_FORMAT_BGRA8888) {
                 const bool packed = frame.layout == uml::platform::VideoPixelLayout::packedBgra;
@@ -563,14 +590,8 @@ public:
             const auto format = load<virtio_video_query_control_profile>(request.subspan(sizeof(q))).format;
             std::vector<std::uint32_t> values;
             if (q.control == VIRTIO_VIDEO_CONTROL_PROFILE) values = profileValues(capabilities, format);
-            else if (q.control == VIRTIO_VIDEO_CONTROL_LEVEL) {
-                if (format == VIRTIO_VIDEO_FORMAT_H264)
-                    for (unsigned level = VIRTIO_VIDEO_LEVEL_H264_MIN; level <= VIRTIO_VIDEO_LEVEL_H264_MAX; ++level)
-                        values.push_back(level);
-                if (format == VIRTIO_VIDEO_FORMAT_HEVC)
-                    for (unsigned level = VIRTIO_VIDEO_LEVEL_HEVC_MIN; level <= VIRTIO_VIDEO_LEVEL_HEVC_MAX; ++level)
-                        values.push_back(level);
-            } else return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
+            else if (q.control == VIRTIO_VIDEO_CONTROL_LEVEL) values = levelValues(capabilities, format);
+            else return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
             auto result = reply(id, VIRTIO_VIDEO_RESP_OK_QUERY_CONTROL);
             const auto count = toBytes(virtio_video_query_control_resp_profile{std::uint32_t(values.size()), {}});
             result.insert(result.end(), count.begin(), count.end());
@@ -639,18 +660,24 @@ public:
                 const bool packed = p.format == VIRTIO_VIDEO_FORMAT_BGRA8888;
                 if (!packed && p.format != VIRTIO_VIDEO_FORMAT_NV12 && p.format != VIRTIO_VIDEO_FORMAT_YUV420 &&
                     p.format != VIRTIO_VIDEO_FORMAT_P010) throw std::invalid_argument("unsupported raw video format");
-                const bool tenBit = p.format == VIRTIO_VIDEO_FORMAT_P010;
-                /* A packed format carries 8-bit samples whatever the stream's
-                 * depth is, so only a planar choice has to match it. */
-                if (!packed && (std::none_of(capabilities.begin(), capabilities.end(), [&stream, tenBit](const auto& c) {
-                        return wireCodec(c.codec) == stream.coded && c.bitDepth == (tenBit ? 10u : 8u);
-                    }) || (stream.sourceKnown && (stream.decoder->format().bitDepth == 10) != tenBit)))
+                /* Only P010 has to match the stream's depth: it carries 10-bit
+                 * samples and nothing else. A packed format and the 8-bit
+                 * planar ones are reached from either depth, a 10-bit stream
+                 * being narrowed on its way. */
+                if (p.format == VIRTIO_VIDEO_FORMAT_P010 &&
+                    (std::none_of(capabilities.begin(), capabilities.end(), [&stream](const auto& c) {
+                         return wireCodec(c.codec) == stream.coded && c.bitDepth == 10u;
+                     }) || (stream.sourceKnown && stream.decoder->format().bitDepth != 10)))
                     throw std::invalid_argument("raw video bit depth is incompatible with the stream");
-                stream.decoder->requestOutputLayout(packed ? uml::platform::VideoPixelLayout::packedBgra
-                                                           : uml::platform::VideoPixelLayout::planarYuv);
+                stream.decoder->requestOutputLayout(captureLayout(p.format));
                 stream.captureSettled = true;
                 stream.captureDeferred = false;
                 stream.output = params(p.queue_type, p.format, p.frame_width, p.frame_height);
+                /* A client that sets the new size is done renegotiating. */
+                if (p.frame_width == stream.announcedWidth && p.frame_height == stream.announcedHeight) {
+                    stream.renegotiating = false;
+                    releaseSizeChanges(stream);
+                }
                 drive(id, stream);
             }
             return done(reply(id));
@@ -669,40 +696,9 @@ public:
             if (previous == stream.resources.end() && stream.resources.size() >= 128)
                 throw std::invalid_argument("invalid video resource");
             const auto& p = q.queue_type == VIRTIO_VIDEO_QUEUE_TYPE_INPUT ? stream.input : stream.output;
-            auto payload = request.subspan(sizeof(q));
             Resource resource;
-            std::size_t total = 0;
-            for (unsigned plane = 0; plane < p.num_planes; ++plane) {
-                if (payload.size() < 8) throw std::invalid_argument("short video scatter list");
-                const auto count = load<std::uint32_t>(payload);
-                payload = payload.subspan(8);
-                if (!count || count > 32768 || count > payload.size() / sizeof(virtio_video_resource_sg_entry))
-                    throw std::invalid_argument("invalid video scatter list length");
-                resource.planes.emplace_back();
-                for (unsigned i = 0; i < count; ++i) {
-                    const auto entry = load<virtio_video_resource_sg_entry>(payload);
-                    payload = payload.subspan(sizeof(entry));
-                    if ((entry.flags & ~VIRTIO_VIDEO_RESOURCE_SG_FLAG_MASK) != 0)
-                        throw std::invalid_argument("unknown video scatter entry flags");
-                    const bool shared = (entry.flags & VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION) != 0;
-                    const auto region = static_cast<std::uint8_t>(
-                        (entry.flags & VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_MASK) >>
-                        VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_SHIFT);
-                    if (!entry.length || entry.length > maximumResource - total ||
-                        (!shared && region != 0))
-                        throw std::invalid_argument("invalid video scatter entry");
-                    if (shared) {
-                        if (!regions || !regions->contains(region, entry.addr, entry.length))
-                            throw std::invalid_argument(
-                                "video resource is not in a published shared-memory region");
-                    } else if (!mapper || mapper(entry.addr, entry.length).size() != entry.length) {
-                        throw std::invalid_argument("video resource lies outside guest memory");
-                    }
-                    total += entry.length;
-                    resource.planes.back().push_back({entry.addr, entry.length, shared, region});
-                }
-            }
-            if (!payload.empty()) throw std::invalid_argument("trailing video resource data");
+            resource.planes = parseScatterLists(request.subspan(sizeof(q)), p.num_planes, mapper,
+                                                regions.get());
             if (previous != stream.resources.end()) previous->second = std::move(resource);
             else stream.resources.emplace(key, std::move(resource));
             return done(reply(id));
@@ -750,9 +746,14 @@ public:
                 stream.decoder->submit(packet, q.timestamp);
                 ++stream.packets;
                 stream.packetBytes += q.data_sizes[0];
+                const bool changesSize = carriesSizeChange(stream);
                 collect(id, stream);
                 auto result = load<virtio_video_resource_queue_resp>(queued(id, q.timestamp, 0));
                 result.data_sizes[0] = q.data_sizes[0];
+                if (changesSize) {
+                    holdSizeChange(stream, requestId, q.resource_id, toBytes(result));
+                    return {VhostUserQueueAction::defer, {}};
+                }
                 return done(toBytes(result));
             }
             if (stream.outputs.size() >= 32) throw std::invalid_argument("video capture queue is full");
@@ -781,6 +782,7 @@ public:
              * capture format: decode what is held before draining, or the end
              * of stream would be reported ahead of the pictures. */
             stream.captureDeferred = false;
+            releaseSizeChanges(stream);
             drive(id, stream);
             stream.decoder->drain();
             stream.draining = true;
@@ -790,21 +792,19 @@ public:
         case VIRTIO_VIDEO_CMD_QUEUE_DETACH_RESOURCES: {
             const auto q = load<virtio_video_queue_clear>(request);
             if (!validQueue(q.queue_type)) throw std::invalid_argument("invalid clear queue");
-            if (q.queue_type == VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT) cancelOutputs(id, stream);
-            else {
-                const auto cap = std::find_if(capabilities.begin(), capabilities.end(),
-                    [&stream](const auto& c) { return wireCodec(c.codec) == stream.coded; });
+            if (q.queue_type == VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT) {
+                cancelOutputs(id, stream);
+                stream.renegotiating = false;
+                releaseSizeChanges(stream);
+            } else {
+                /* A seek. The decoder forgets what it decoded and keeps the
+                 * stream's parameter sets, which the client does not send
+                 * again, and the format it settled on: the picture size is
+                 * announced again only if it is not the one the client has. */
                 cancelHeld(id, stream);
-                stream.decoder = factory(cap->codec);
-                /* A new decoder knows nothing of the format already
-                 * negotiated, and would hand back planar pictures for a
-                 * packed capture queue until the device converted each one.
-                 * Before the format is settled it stays planar, which is the
-                 * layout a client that has not chosen yet can still use. */
-                if (stream.captureSettled)
-                    stream.decoder->requestOutputLayout(captureLayout(stream.output.format));
+                stream.decoder->discard();
                 stream.frames.clear();
-                stream.sourceKnown = stream.draining = stream.eosSent = false;
+                stream.draining = stream.eosSent = false;
             }
             if (header.type == VIRTIO_VIDEO_CMD_QUEUE_DETACH_RESOURCES)
                 std::erase_if(stream.resources, [&q](const auto& r) { return (r.first >> 32) == q.queue_type; });
@@ -815,11 +815,12 @@ public:
             auto result = reply(id, VIRTIO_VIDEO_RESP_OK_GET_CONTROL);
             std::uint32_t value;
             if (q.control == VIRTIO_VIDEO_CONTROL_PROFILE) value = stream.profile;
-            else if (q.control == VIRTIO_VIDEO_CONTROL_LEVEL && stream.coded == VIRTIO_VIDEO_FORMAT_H264)
-                value = VIRTIO_VIDEO_LEVEL_H264_5_1;
-            else if (q.control == VIRTIO_VIDEO_CONTROL_LEVEL && stream.coded == VIRTIO_VIDEO_FORMAT_HEVC)
-                value = VIRTIO_VIDEO_LEVEL_HEVC_6_2;
-            else return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
+            else if (q.control == VIRTIO_VIDEO_CONTROL_LEVEL) {
+                // The stream's level is not tracked: it is the highest the format decodes.
+                const auto levels = levelValues(capabilities, stream.coded);
+                if (levels.empty()) return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
+                value = levels.back();
+            } else return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
             const auto data = toBytes(virtio_video_control_val_profile{value, {}});
             result.insert(result.end(), data.begin(), data.end());
             return done(std::move(result));

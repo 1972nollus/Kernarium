@@ -489,6 +489,8 @@ def emulator_command(
           if options.display == "vnc" else []),
         f"--gpu-width={options.width}",
         f"--gpu-height={options.height}",
+        "--video",
+        "--video-encoder",
         f"ncpus={options.cpus}",
         f"mem={options.memory}",
         f"--execution-engine={options.engine}",

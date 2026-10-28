@@ -130,8 +130,10 @@ cmake --workflow --preset check-loader-asan-ubsan
 The `unit-gpu` test preset's name filter is the one selection of GPU workflow
 tests, and the other `unit-gpu*` test presets inherit it. It selects every
 registered test named `gpu-*` (the two `gpu-guest-*` tooling tests among them),
-and the Virtio balloon, battery, console, input, sound and video protocol
-tests and `platform-video-decoder` that the GPU configuration also builds. A
+and the Virtio balloon, battery, console, input, sound, video and video encoder
+protocol tests, `video-encoder-capabilities`, `platform-video-decoder`, and the
+hardware `platform-video-encoder`, `-recovery` and `-cache` tests that the GPU
+configuration also builds. A
 new GPU test joins the workflow by its name: `uml_add_gpu_unit_test` refuses a
 name that does not start with `gpu-`. Configure derives the
 `gpu-unit-test-binaries` target from that filter, so a selected test's binary
@@ -253,13 +255,58 @@ the guest architecture and configure an integration preset with
 `UML_V4L2_PROBE_BINARY` pointing to it. The rootfs needs a shell, `ip`,
 `sha256sum` and `timeout`. The test boots a disposable overlay with the probe
 and its fixtures installed as payload files, checks their SHA-256 list, checks
-every advertised profile's pixels, raw layouts including packed BGRA capture,
-imported dma-buf capture, timestamps, source-change and EOS events, and rejects
-kernel faults or failed shutdown. Android uses its own 4 KiB guest and
-deployment workflow.
+every advertised profile's pixels, raw layouts including packed BGRA capture
+and 8-bit capture of a 10-bit stream, imported dma-buf capture, timestamps,
+source-change and EOS events, the display order of H.264 and HEVC B-pictures
+and a seek in both (over open-group streams for HEVC), reads the H.264 and HEVC
+profile and level menus (Constrained High beside High, levels from 1.0 up to
+5.2 and from 1 up to 6.2, the current level the highest), and rejects kernel
+faults or failed shutdown. Imported capture covers the queue's own
+buffers handed back and guest memory a client brings, with each buffer's planes
+in separate dma-bufs or in one and their lengths stated as QUERYBUF gave them,
+as the whole dma-buf, or not at all. `guest-v4l2-decode-gpu` runs the same probe
+with the GPU, where capture buffers are host-visible blobs and an imported
+dma-buf takes another path in the driver. A stream that changes its picture size
+twice is decoded the way Android's V4L2 codec handles it, including a drain asked
+for while the last change is still on its way: every picture of a size returns,
+then the LAST buffer, before the source change is visible. Android uses its own
+4 KiB guest and deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
-slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
-an x86-64 probe and an x86-64 rootfs, the way its boot check below is run.
+slice exercises its own V4L2 path by running `run_v4l2_decode.py`, with `--gpu`
+for the GPU case, directly with an x86-64 probe and an x86-64 rootfs, the way
+its boot check below is run.
+
+`guest-video-error-answer` needs no probe or rootfs. Its arm64 guest has a
+decoder whose device, the production one behind a test-only shim, answers the
+capture buffers the guest queues as failed, and the test checks that the client
+dequeues one flagged as an error, empty, and with the timestamp the device
+named, a contract the encoder's driver shares.
+
+The optional `guest-v4l2-encode` test qualifies the Virtio video encoder the
+same way. Build `tests/integration/video/v4l2_encode_probe.cpp` as a static
+C++20 executable for the guest architecture and configure
+`UML_V4L2_ENCODE_PROBE_BINARY`. The guest boots with `--video` and
+`--video-encoder`, and the probe finds the encoder and the decoder by their
+card names. For every advertised coded format, profile and raw layout it
+encodes generated pictures from mapped and imported dma-buf input, and checks
+the key-frame flags, header buffers, timestamps, forced key frames, controls
+refused while streaming, crop, drain with the last flag and end-of-stream
+event, resumption, a restart after STREAMOFF without a drain, and a resolution
+change. It also holds every control and raw format the guest registers
+against the host table, so a control the driver dropped or a format listed
+under another fourcc fails; encodes packed BGRA and RGBA pictures, whose red
+and blue blocks show the channel order; and checks the parameter sets that
+`PREPEND_SPSPPS_TO_IDR` adds and the layers that hierarchical coding makes.
+Colorimetry stated on the raw queue, including `V4L2_COLORSPACE_RAW` with a
+transfer function and range, must read back as stated, survive a repeated
+`S_FMT` and `S_PARM`, and appear in the H.264 stream's VUI; BT.2020 with PQ
+and with HLG (`V4L2_XFER_FUNC_HLG`, the kernel line's local value 8), stated on
+a P010 raw queue, must read back and show as transfer characteristics 16 and 18
+in the HEVC Main 10 stream's VUI; the B-frame control
+must run from zero in steps of one and the level menus default to their lowest
+item, as the host describes them. Each stream is decoded back through the guest decoder and compared with the
+pictures by luma PSNR. The x86_64 slice runs `run_v4l2_encode.py`
+directly, like the decoder.
 
 The optional `guest-futex-atomic` test checks the futex contract in
 [`../kernel/common/README.md`](../kernel/common/README.md). Configure
@@ -267,6 +314,30 @@ The optional `guest-futex-atomic` test checks the futex contract in
 `tests/integration/futex/futex_atomic_probe.cpp`; the rootfs needs the video
 probe's shell tools. Run it on the Linux guest and the maintained Android
 kernel.
+
+The optional `guest-gbm-dmabuf` test checks the virtio-gpu dma-buf contract in
+[`../kernel/common/README.md`](../kernel/common/README.md). Build
+`tests/integration/gpu/gbm_dmabuf_probe.cpp` as a dynamically linked C++20
+executable for the guest architecture (`c++ -std=c++20 -O2 -ldl`) and configure
+`UML_GBM_DMABUF_PROBE_BINARY`. The guest boots with the GPU, and the probe opens
+the render node through the image's own libgbm and libEGL. It requires an
+export that asked for no write access to be read-write, a GPU write to be
+visible through the dma-buf mapping after `DMA_BUF_IOCTL_SYNC` (twice), and a
+CPU write through it, bracketed the same way, to be what the GPU reads (twice).
+The x86_64 slice registers no CTest suites, so it runs `run_gpu_guest.py`
+directly with an x86-64 probe and an x86-64 image that carries Mesa, naming the
+test's `--command` lines and kernel arguments.
+
+The optional `guest-drm-vblank` test checks that Virtio-GPU paces its display
+as the vblank contract in
+[`../kernel/common/README.md`](../kernel/common/README.md) describes. Build
+`tests/integration/gpu/drm_flip_probe.cpp` as a static C++20 executable for the
+guest architecture and configure `UML_DRM_FLIP_PROBE_BINARY`. The guest boots
+with the GPU; the probe sets the first output's preferred mode, waits for 30
+vblanks and flips two buffers for two seconds, and requires both rates to be
+within 10% of the mode's refresh rate. The x86_64 slice runs
+`run_gpu_guest.py` directly with an x86-64 probe, naming the test's `--command`
+lines and kernel arguments.
 
 `guest-aarch32-kernel` checks the kernel's AArch32 task support in
 [`../kernel/common/README.md`](../kernel/common/README.md), and needs `python3`,
@@ -508,9 +579,10 @@ and no Simulator variant; see
 [`graphics.md`](graphics.md#current-path).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
-Xcode. It also packages the Apple battery provider's archive, as the Android
-runtime links it, as `HostBattery.xcframework`; only `KernariumTests` links
-it, so the test process reaches the provider without loading a second runtime.
+Xcode. It also packages the Apple battery provider's archive and the hardware
+video encoder's, as the Android runtime links them, as `HostBattery.xcframework`
+and `HostVideoEncoder.xcframework`; only `KernariumTests` links them, so the
+test process reaches each without loading a second runtime.
 `dependencies/build-ios-storage.sh --verify-only` and
 `dependencies/build-ios-zstd.sh --verify-only` check both arm64 Apple slices,
 their provenance and deployment targets, required APIs, and the absence of

@@ -124,11 +124,12 @@ bool write_attribute(const char *path, const char *value)
 }
 
 
-/* The command cache's allocated objects, or -1. */
+/* The command cache's allocated objects, or -1. The driver names each
+ * device's cache for it, and the decoder is the guest's virtio0. */
 long cache_objects()
 {
 	const long fd = sys(nr_openat, at_fdcwd,
-		ptr("/sys/kernel/slab/virtio-video-vbufs/objects"), 0);
+		ptr("/sys/kernel/slab/virtio-video-virtio0-vbufs/objects"), 0);
 	if (fd < 0)
 		return -1;
 	char text[64] = {};
@@ -147,7 +148,7 @@ long cache_objects()
 void validate(const char *step)
 {
 	const bool validated = write_attribute(
-		"/sys/kernel/slab/virtio-video-vbufs/validate", "1");
+		"/sys/kernel/slab/virtio-video-virtio0-vbufs/validate", "1");
 	out("VIDEO_INIT ");
 	out(step);
 	out(validated ? " validated objects=" : " validate failed objects=");
@@ -194,7 +195,7 @@ extern "C" [[noreturn]] void _start()
 	out(write_attribute("/sys/bus/virtio/drivers/virtio-video/unbind",
 		"virtio0") ? "VIDEO_INIT unbound\n" : "VIDEO_INIT unbind failed\n");
 	out(sys(nr_faccessat, at_fdcwd,
-		ptr("/sys/kernel/slab/virtio-video-vbufs"), 0) == -enoent ?
+		ptr("/sys/kernel/slab/virtio-video-virtio0-vbufs"), 0) == -enoent ?
 		"VIDEO_INIT cache destroyed\n" : "VIDEO_INIT cache kept\n");
 	out(first && second && third ? "VIDEO_INIT done\n" : "VIDEO_INIT unexpected\n");
 	power_off();

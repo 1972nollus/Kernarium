@@ -78,7 +78,7 @@ index 8ebb9e59271b2cca93efb75d62f25cf744a2fd7a..8914ece2ca2d81399169f75c2c1aa0ca
  					  void *address,
  					  unsigned long length);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 4572e7c881f1b7b0434136cf35556bf591f5cb19..3a5f76bb07ac2f841628dbe3d0687ed7ab5be968 100644
+index fe69a5b2fc988009bce2481ebeb524dad94a6680..82ee607e57a315ddf5ad94f75be8acd0c9eaf39d 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -947,6 +947,27 @@ void darwin_tlb_flush_range(struct mm_struct *mm, unsigned long start,

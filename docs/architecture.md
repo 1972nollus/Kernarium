@@ -684,6 +684,16 @@ and a PC alignment fault the 32-bit target address. A fault address wider
 than 32 bits is an engine error and the fatal event, never a guest SIGSEGV
 whose compat siginfo would hide the upper half.
 
+Under top-byte ignore (`--guest-top-byte-ignore`, which the Android product
+always passes) both arm64 engines strip the top byte of a data address before
+they translate it, so a data abort carries the address they translated and
+never the tag the instruction presented. The kernel therefore does not untag
+the fault address in `segv()`: it cannot know whether the host ignores a tag,
+and a tagged access without it must fault at the address it used. The kernel
+offers the tagged-address ABI only while the host reports the ignore, and its
+contract, including the one fault-address difference from native Linux, is in
+the [shared kernel README](../kernel/common/README.md).
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
@@ -882,9 +892,12 @@ host GPU within seconds and a request that reached Metal after that would make
 the renderer's Vulkan device lost for good, and opens it as the application
 returns.
 
-The [Virtio video device](../darwin/device/video/README.md) bridges the shared
-mainline/Android V4L2 driver to the platform VideoToolbox decoder. It uses its
-own vhost-user connection and requires no GPU context. The
+The [Virtio video devices](../darwin/device/video/README.md) bridge the shared
+mainline/Android V4L2 drivers to the platform VideoToolbox decoder (device 31)
+and encoder (device 30). Each uses its own vhost-user connection and service
+thread and requires no GPU context, and the devices depend only on the platform
+interfaces `darwin/platform/video_decoder.hpp` and
+`darwin/platform/video_encoder.hpp`. The
 [private wire header](../kernel/common/video/README.md) is separate from both
 the public API and the host/kernel bridge ABI.
 
@@ -1054,13 +1067,16 @@ until devices, secondary CPUs, interrupts, and timekeeping have reached the
 platform sleep boundary before flushing the host. `uml_emulator_resume()` sends
 the console wake edge. Every console request ends the suspend, so a trimming
 change requested meanwhile waits for the resume, and nothing else on the
-guest's descriptors ends it. An edge sent before the guest reached the
-boundary, as after a suspend request whose reply timed out, still ends it;
-the [mainline README](../kernel/mainline-6.18/README.md) gives the kernel's
-side. `uml_emulator_wake()` sends that edge whatever the host last asked for,
-except to a guest it has quiesced, as a phone's power key does: it ends a
-suspend the guest entered by itself, such as Android's once its display is off,
-and a running guest only answers it. Kernarium sends it after forwarding its
+guest's descriptors ends it, network traffic included. An edge sent before the
+guest reached the boundary, as after a suspend request whose reply timed out,
+still ends it; the [mainline README](../kernel/mainline-6.18/README.md) gives
+the kernel's side, including which wake sources end a suspend the host asked
+for and which end one the guest started. `uml_emulator_wake()` sends that edge
+whatever the host last asked for, except to a guest it has quiesced, as a
+phone's power key does: it ends a suspend the guest entered by itself, such as
+Android's once its display is off, and a running guest only answers it. Network
+traffic to such a guest ends its own suspend as well, so `adb` reaches a guest
+whose display is off. Kernarium sends the edge after forwarding its
 Power key, whose virtio input cannot wake a suspended guest itself; the macOS
 VNC display maps XF86PowerOff to the guest's power key, and VNC input is itself
 a wake source. The guest replies to a suspend only after syncing its file
@@ -1070,6 +1086,14 @@ not suspend, falls back to the stop/go pair. Guests that need writeback
 requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
 the console, host-file flushing still runs but guest writeback and freeze are
 unavailable.
+
+The kernel says how the guest ends before it runs its exitcalls, with the
+bridge import `darwin_uml_guest_shutdown()`: power-off, halt, or restart with
+the command the guest passed. The runtime logs one line (`guest requested
+restart (command 'recovery')`, `guest powered off` or `guest halted`) and keeps
+the kind and at most 255 bytes of the command in the run's `Context`, which
+`begin_run()` clears and `end_run()` leaves for the handle's owner to read. A
+panic aborts the process and reports nothing.
 
 An application that can be backgrounded holds the guest's GPU requests before it
 quiesces, with the runtime's `set_gpu_hold` (see the request gate under

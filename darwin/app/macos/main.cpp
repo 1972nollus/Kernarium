@@ -7,6 +7,7 @@
 #include "battery/protocol.hpp"
 #include "video/in_process_service.hpp"
 #include "video/virtio_video_device.hpp"
+#include "video/virtio_video_encoder_device.hpp"
 #include "console/in_process_service.hpp"
 #include "console/protocol.hpp"
 #include "gpu/in_process_service.hpp"
@@ -259,6 +260,7 @@ struct PreparedArguments {
 	bool audio {};
 	bool battery {};
 	bool video {};
+	bool video_encoder {};
 	std::string console_socket;
 	std::string serial_socket;
 	std::vector<std::string> net_forwards;
@@ -331,6 +333,8 @@ PreparedArguments prepare_host_arguments(
 			prepared.battery = true;
 		} else if (argument == "--video") {
 			prepared.video = true;
+		} else if (argument == "--video-encoder") {
+			prepared.video_encoder = true;
 		} else if (valued("--virtio-console-socket=")) {
 			set_socket_path(prepared.console_socket,
 					"--virtio-console-socket", value);
@@ -658,6 +662,17 @@ int uml::app::runEmbeddedKernel(
 		    },
 		    "--video", "Virtio video"))
 		return 1;
+	std::unique_ptr<uml::gpu::InProcessVhostUserService> video_encoder_service;
+	if (prepared.video_encoder && !information_only &&
+	    !start_virtio_device(
+		    prepared.kernel, video_encoder_service,
+		    uml::video::encoderDeviceId,
+		    [&] {
+			    return uml::video::makeInProcessEncoderService(
+				    gpu_service ? shared_memory_regions : nullptr);
+		    },
+		    "--video-encoder", "Virtio video encoder"))
+		return 1;
 	std::unique_ptr<uml::gpu::InProcessVhostUserService> audio_service;
 	if (prepared.audio && !information_only &&
 	    !start_virtio_device(
@@ -712,6 +727,8 @@ int uml::app::runEmbeddedKernel(
 		battery_service->stop();
 	if (video_service)
 		video_service->stop();
+	if (video_encoder_service)
+		video_encoder_service->stop();
 	if (console_service)
 		console_service->stop();
 	if (balloon_service)
