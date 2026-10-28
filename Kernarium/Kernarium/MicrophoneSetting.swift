@@ -1,4 +1,5 @@
 import AVFAudio
+import Combine
 import Foundation
 
 /// How far the system lets Kernarium use the microphone.
@@ -17,7 +18,7 @@ protocol MicrophonePermission {
     func request(_ answered: @escaping @Sendable (MicrophoneAccess) -> Void)
 }
 
-struct SystemMicrophonePermission: MicrophonePermission {
+nonisolated struct SystemMicrophonePermission: MicrophonePermission {
     var access: MicrophoneAccess {
         switch AVAudioApplication.shared.recordPermission {
         case .granted: .granted
