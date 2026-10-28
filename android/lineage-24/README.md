@@ -882,9 +882,16 @@ host-side operation with the system `truncate` utility and GPT fdisk's
 `sgdisk`, found on `PATH` or named with `--sgdisk`. Runtime launch has no
 disk-capacity parameter and rejects a GPT that does not match the file. The
 resized image is opened directly as writable storage; Android launch never
-constructs or accepts a UBD COW pair. Normal Android asks the ext4
-`resize2fs` tool to fill userdata before mounting `/data`; the tool is
-idempotent when the host has not enlarged the partition. The image carries
+constructs or accepts a UBD COW pair. Normal Android fills
+userdata on every boot, before `/data` is mounted (`late-fs`): `e2fsck -p`
+replays the journal of an unclean stop, `tune2fs -T now` records the check, and
+`resize2fs` grows the filesystem to the partition, doing nothing when the host
+has not enlarged it. `resize2fs` refuses an unmounted filesystem that was
+mounted after its last full check, and the `e2fsck` that `mount_all` runs
+skips a clean one, so a bare `resize2fs` fills userdata on the first boot and
+later boots refuse; the recorded check keeps its other safety checks (error
+flags, journal, orphans) in force. The three tools run in the `fsck` domain,
+which needs no extra policy. The image carries
 8,192 inodes (`BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT`, which a `build/make`
 topic, route `p0002`, forwards to the image builder as it does for the
 read-only partitions), one per 16 KiB, ext4's default ratio. `resize2fs` keeps

@@ -196,6 +196,7 @@ REQUIRED_ENTRIES = {
     "RECOVERY/RAMDISK/system/bin/recovery",
     "SYSTEM/bin/e2fsck",
     "SYSTEM/bin/resize2fs",
+    "SYSTEM/bin/tune2fs",
     "SYSTEM_EXT/priv-app/Launcher3QuickStep/Launcher3QuickStep.apk",
     "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
     "SYSTEM_EXT/priv-app/LineageSettingsProvider/LineageSettingsProvider.apk",
@@ -598,9 +599,18 @@ WIFI_NETWORK_TRANSITION = re.compile(
     rb"kernarium_wifi_network\)$",
     re.MULTILINE,
 )
+# The partition the host grew is filled before /data is mounted, in this order
+# (init.vendor.rc says why): the journal of an unclean stop is replayed, the
+# check time is recorded so that resize2fs does not refuse a filesystem
+# mounted since its last full check, and the filesystem grows.
+USERDATA_GROW_STEPS = (
+    "exec -- /system/bin/e2fsck -p /dev/block/by-name/userdata",
+    "exec -- /system/bin/tune2fs -T now /dev/block/by-name/userdata",
+    "exec -- /system/bin/resize2fs /dev/block/by-name/userdata",
+    "mount_all --late",
+)
 UML_INIT_REQUIRED = (
     "mount_all --early",
-    "exec -- /system/bin/resize2fs /dev/block/by-name/userdata",
     "mount_all --late",
     "ro.hardware.audio.primary",
     "setprop service.adb.tcp.port 5555",
@@ -763,6 +773,27 @@ def check_suspend_blocker(init_payload: str, actions: dict[str, list[str]]) -> N
         fail(f"UML init policy does not stop {name} when the last adb host leaves")
 
 
+def check_userdata_grow(actions: dict[str, list[str]]) -> None:
+    """Growing userdata works on every boot, not only the first, and happens while it is unmounted."""
+    commands = actions.get("late-fs", [])
+    positions = []
+    for step in USERDATA_GROW_STEPS:
+        if step not in commands:
+            fail(f"UML init policy does not run '{step}' at late-fs")
+        positions.append(commands.index(step))
+    if positions != sorted(positions):
+        fail(
+            "UML init policy does not run e2fsck, tune2fs, resize2fs and "
+            "mount_all --late in that order at late-fs"
+        )
+    for trigger, trigger_commands in actions.items():
+        for command in trigger_commands:
+            if "resize2fs" in command and (
+                trigger != "late-fs" or command != USERDATA_GROW_STEPS[2]
+            ):
+                fail(f"UML init policy resizes a filesystem differently under '{trigger}': {command}")
+
+
 def check_network_setup(init_payload: str, actions: dict[str, list[str]]) -> None:
     """init limits ARP, then waits for the tool that addresses eth0 and builds the Wi-Fi."""
     name, executable = NET_SETUP_SERVICE
@@ -872,6 +903,7 @@ def check_boot_policy(
         fail("UML init policy does not copy a host-supplied display density")
     if UML_INIT_RCU_RESTORE not in actions.get(UML_INIT_RCU_TRIGGER, []):
         fail("UML init policy does not restore normal RCU grace periods after boot")
+    check_userdata_grow(actions)
     check_suspend_blocker(init_payload, actions)
     check_network_setup(init_payload, actions)
     check_wifi_network(

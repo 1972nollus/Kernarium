@@ -569,6 +569,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_product_model: bool = False,
                           missing_lockscreen_default: bool = False,
                           use_fiemap_variant: str | None = None,
+                          userdata_grow_variant: str | None = None,
                           discrete_ops_variant: str | None = None,
                           thermal_hal_variant: str | None = None,
                           cas_hal_variant: str | None = None,
@@ -687,7 +688,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "SYSTEM/bin/android-fixture",
                     synthetic_aarch64_elf(alignment, edit=elf_edit),
                 )
-                for tool in ("e2fsck", "resize2fs", "sgdisk"):
+                for tool in ("e2fsck", "resize2fs", "sgdisk", "tune2fs"):
                     archive.writestr(
                         f"SYSTEM/bin/{tool}",
                         synthetic_aarch64_elf(alignment),
@@ -817,14 +818,34 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     net_rules += "on post-fs-data\n" + sysctls + "on boot\n" + start_tool
                 else:
                     net_rules += "on post-fs-data\n" + sysctls + start_tool
+                grow_steps = {
+                    "e2fsck": "    exec -- /system/bin/e2fsck -p /dev/block/by-name/userdata\n",
+                    "tune2fs": "    exec -- /system/bin/tune2fs -T now /dev/block/by-name/userdata\n",
+                    "resize2fs": "    exec -- /system/bin/resize2fs /dev/block/by-name/userdata\n",
+                    "forced": "    exec -- /system/bin/resize2fs -f /dev/block/by-name/userdata\n",
+                }
+                userdata_grow_rules = ""
+                for step in {
+                    None: ("e2fsck", "tune2fs", "resize2fs"),
+                    "resize-only": ("resize2fs",),
+                    "no-tune2fs": ("e2fsck", "resize2fs"),
+                    "forced": ("e2fsck", "forced"),
+                    "wrong-order": ("e2fsck", "resize2fs", "tune2fs"),
+                    "after-mount": (),
+                }[userdata_grow_variant]:
+                    userdata_grow_rules += grow_steps[step]
+                userdata_grow_after = (
+                    grow_steps["e2fsck"] + grow_steps["tune2fs"] + grow_steps["resize2fs"]
+                    if userdata_grow_variant == "after-mount" else ""
+                )
                 archive.writestr(
                     "VENDOR/etc/init/init.kernarium.rc",
                     "on early-init\n" + graphics + density +
                     "on fs\n    mount_all --early\n"
                     "on late-fs\n"
-                    "    exec -- /system/bin/resize2fs "
-                    "/dev/block/by-name/userdata\n"
+                    + userdata_grow_rules +
                     "    mount_all --late\n"
+                    + userdata_grow_after +
                     "on boot\n"
                     "    setprop ro.hardware.audio.primary goldfish\n"
                     + wifi_dirs
@@ -1688,6 +1709,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-lockscreen-default", {"missing_lockscreen_default": True}),
             ("missing-use-fiemap", {"use_fiemap_variant": "missing"}),
             ("use-fiemap-true", {"use_fiemap_variant": "true"}),
+            ("userdata-grow-resize-only", {"userdata_grow_variant": "resize-only"}),
+            ("userdata-grow-without-tune2fs", {"userdata_grow_variant": "no-tune2fs"}),
+            ("userdata-grow-forced", {"userdata_grow_variant": "forced"}),
+            ("userdata-grow-wrong-order", {"userdata_grow_variant": "wrong-order"}),
+            ("userdata-grow-after-mount", {"userdata_grow_variant": "after-mount"}),
             ("missing-discrete-ops-overlay", {"discrete_ops_variant": "missing-overlay"}),
             ("unreliable-present-fence", {"vendor_property_variant": "present-fence-unreliable"}),
             ("missing-incremental-property", {"vendor_property_variant": "no-incremental"}),
@@ -2010,6 +2036,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "unexpected product property apexd.config.use_fiemap: \\[\\]"),
             ("use-fiemap-true-cause", {"use_fiemap_variant": "true"},
              "unexpected product property apexd.config.use_fiemap: \\['true'\\]"),
+            ("userdata-grow-resize-only-cause", {"userdata_grow_variant": "resize-only"},
+             "does not run 'exec -- /system/bin/e2fsck -p /dev/block/by-name/userdata' at late-fs"),
+            ("userdata-grow-without-tune2fs-cause", {"userdata_grow_variant": "no-tune2fs"},
+             "does not run 'exec -- /system/bin/tune2fs -T now /dev/block/by-name/userdata' at late-fs"),
+            ("userdata-grow-forced-cause", {"userdata_grow_variant": "forced"},
+             "does not run 'exec -- /system/bin/tune2fs -T now /dev/block/by-name/userdata' at late-fs"),
+            ("userdata-grow-wrong-order-cause", {"userdata_grow_variant": "wrong-order"},
+             "does not run e2fsck, tune2fs, resize2fs and mount_all --late in that order at late-fs"),
+            ("userdata-grow-after-mount-cause", {"userdata_grow_variant": "after-mount"},
+             "does not run e2fsck, tune2fs, resize2fs and mount_all --late in that order at late-fs"),
             ("unreliable-present-fence-cause", {"vendor_property_variant": "present-fence-unreliable"},
              "marks the present fences unreliable: ro.vendor.hwc.drm.present_fence_not_reliable=true"),
             ("missing-incremental-property-cause", {"vendor_property_variant": "no-incremental"},
@@ -2238,6 +2274,29 @@ def verify_net_setup_tool(android_root: Path) -> None:
     source = (android_root / "overlay/tools/kernarium_net_setup.cpp").read_text()
     if re.search(r"\bifi_change\s*=", source):
         fail("kernarium_net_setup.cpp assigns ifi_change: a link-creation flag mask clears IFF_MULTICAST")
+
+
+def verify_userdata_grow(android_root: Path) -> None:
+    """The product's own init script grows userdata on every boot, before /data is mounted.
+
+    resize2fs refuses an unmounted filesystem mounted after its last full check, and mount_all's
+    e2fsck skips a clean one, so a bare resize2fs works on the first boot and fails on every later
+    one; the script must also record the check, in the order the verifier requires."""
+    verifier = load_tool(android_root / "tools/verify-target-files.py")
+    script = (android_root / "overlay/config/init.vendor.rc").read_text()
+    verifier.check_userdata_grow(verifier.init_actions(script))
+    bare = script.replace(
+        "    exec -- /system/bin/e2fsck -p /dev/block/by-name/userdata\n"
+        "    exec -- /system/bin/tune2fs -T now /dev/block/by-name/userdata\n",
+        "",
+    )
+    if bare == script:
+        fail("init.vendor.rc does not contain the e2fsck and tune2fs steps this guard looks for")
+    try:
+        verifier.check_userdata_grow(verifier.init_actions(bare))
+    except SystemExit:
+        return
+    fail("a bare resize2fs at late-fs passes the userdata grow check")
 
 
 def verify_overlay_sepolicy(android_root: Path) -> None:
@@ -2925,6 +2984,7 @@ def main() -> None:
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_hal_selections(android_root)
     verify_net_setup_tool(android_root)
+    verify_userdata_grow(android_root)
     verify_overlay_sepolicy(android_root)
     verify_media_codecs_overlay(android_root)
     verify_package_assertions(android_root)
