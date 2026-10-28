@@ -38,6 +38,14 @@
   host and the lower bound about half of the slowest, because the decode rate
   swings with the load of the host.
 
+  The encoders start at 64x64 pixels and 20 kbit/s. VideoToolbox emits streams
+  for smaller pictures, but they decode to something far from the source: CTS
+  VideoEncoderMinMaxTest measures a PSNR under its 20 dB threshold at every size
+  with a side of 48 pixels or fewer, and passes at 64. At 64x64 an HEVC stream
+  with inter frames holds the 20 dB only from about 10 kbit/s, so the bitrate
+  range starts at twice that. The component clamps its picture size and bitrate
+  to the same bounds, so the two agree.
+
   A decoder keeps a pool of decoded pictures in the guest's memory that grows
   with the picture: one 4K stream costs about 0.9 GiB of the guest's 8 GiB.
   Four concurrent decoders at the largest size fit; eight do not, and
@@ -93,13 +101,13 @@
     </Decoders>
     <Encoders>
         <MediaCodec name="c2.v4l2.avc.encoder" type="video/avc">
-            <Limit name="size" min="16x16" max="4096x4096" />
+            <Limit name="size" min="64x64" max="4096x4096" />
             <Limit name="alignment" value="2x2" />
             <Limit name="block-size" value="16x16" />
             <Limit name="block-count" range="1-36864" />
             <Limit name="blocks-per-second" range="1-2073600" />
             <Limit name="frame-rate" range="1-240" />
-            <Limit name="bitrate" range="1-240000000" />
+            <Limit name="bitrate" range="20000-240000000" />
             <Limit name="quality" range="1-100" default="50" />
             <Limit name="concurrent-instances" max="8" />
             <Limit name="performance-point-1920x1080" range="30-45" />
@@ -113,13 +121,13 @@
             <Feature name="qp-bounds" />
         </MediaCodec>
         <MediaCodec name="c2.v4l2.hevc.encoder" type="video/hevc">
-            <Limit name="size" min="16x16" max="4096x4096" />
+            <Limit name="size" min="64x64" max="4096x4096" />
             <Limit name="alignment" value="2x2" />
             <Limit name="block-size" value="16x16" />
             <Limit name="block-count" range="1-65536" />
             <Limit name="blocks-per-second" range="1-4177920" />
             <Limit name="frame-rate" range="1-240" />
-            <Limit name="bitrate" range="1-60000000" />
+            <Limit name="bitrate" range="20000-60000000" />
             <Limit name="quality" range="1-100" default="50" />
             <Limit name="concurrent-instances" max="8" />
             <Limit name="performance-point-3840x2160" range="8-13" />
