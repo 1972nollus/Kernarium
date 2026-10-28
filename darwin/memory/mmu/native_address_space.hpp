@@ -107,10 +107,13 @@ private:
 
 		~Mapping()
 		{
-			/* Darwin has no explicit_bzero and exposes memset_s only for C11
-			 * Annex K; the empty asm that reads the pointer and clobbers
-			 * memory is what stops the compiler from dropping the clear as
-			 * a dead store to a dying object. */
+			/* The copy holds guest data only once it is loaded. Darwin has
+			 * no explicit_bzero and exposes memset_s only for C11 Annex K;
+			 * the empty asm that reads the pointer and clobbers memory is
+			 * what stops the compiler from dropping the clear as a dead
+			 * store to a dying object. */
+			if (!loaded)
+				return;
 			std::memset(original.data(), 0, original.size());
 			__asm__ __volatile__("" : : "r"(original.data()) : "memory");
 		}
