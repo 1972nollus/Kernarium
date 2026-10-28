@@ -329,8 +329,11 @@ changed signal state, a guest RAM root, kernel threads and a guest file. At the
 moment each of 64 hand-backs completes the test checks that none of it is left
 and that the process is as it was before the first run; the other modes cover
 the ends that stay spent, another handle, a host service that borrows guest RAM
-and a kernel thread that still runs. The default malloc zone keeps what a boot
-freed, so the test gates its in-use bytes, not its size.
+and a kernel thread that still runs, and a stop or a resume that is inside the
+hibernation's abort request while the restart drops the hibernation
+(`abort-stop`, `abort-resume`). The default malloc zone keeps what a boot freed,
+so the test gates the heap's in-use bytes, not its size; under a sanitizer it
+reads the sanitizer allocator's live bytes.
 
 The gadget cache census
 ([`tests/perf/README.md`](../tests/perf/README.md#cache-census)) compiles

@@ -115,20 +115,43 @@ int uml_emulator_get_capabilities(const struct uml_emulator *emulator,
  * or enters a kernel, except the next run on the handle whose last run ended
  * with UML_EMULATOR_RUN_END_RESTART (uml_emulator_get_run_end): that run first
  * hands the guest back to the process and then boots it again. A power-off, a
- * stop and any other end leave the guest spent. The hand-back fails with
- * -UML_EMULATOR_RUNTIME_ERROR, changing nothing, while a host service still
- * borrows guest RAM or a kernel thread still runs; the caller stops its
- * device services and runs again. A run that ends before its kernel claims
- * guest RAM, such as one refused for its arguments or cancelled while queued,
- * leaves the process's guest unspent. */
+ * stop and any other end leave the guest spent. A run that ends before its
+ * kernel claims guest RAM, such as one refused for its arguments or cancelled
+ * while queued, leaves the process's guest unspent.
+ *
+ * Before it runs again after a restart, the caller must stop every service
+ * that maps guest RAM, such as a device, display, disk or network backend that
+ * holds a view of it, and the kernel's threads must have ended. The services
+ * of the old boot are not carried over: the caller builds them again for the
+ * next one. While a service still borrows guest RAM or a kernel thread still
+ * runs, the hand-back fails with -UML_EMULATOR_RUNTIME_ERROR and changes
+ * nothing. A run refused so may be retried once the cause is gone: the
+ * hand-back repeats safely and the handle stays restartable. Such a refusal
+ * ran no guest, so uml_emulator_get_run_end then reports
+ * UML_EMULATOR_RUN_END_NONE. The check and the hand-back are not one step. A
+ * service that maps guest RAM after the check makes the hand-back itself fail
+ * with -UML_EMULATOR_RUNTIME_ERROR, after the kernel's resources were already
+ * given back; a retry once that service has stopped succeeds.
+ *
+ * Every run of a process must use the same JIT translation-cache budget and
+ * the same number of guest CPUs; a run that asks for another fails with
+ * -UML_EMULATOR_RUNTIME_ERROR.
+ *
+ * The kernel changes process-wide state while it runs, and the run restores
+ * what it found when it ends: the signal dispositions, the calling thread's
+ * signal mask and signal stack, ITIMER_REAL, and the status flags and terminal
+ * modes of descriptors 0 to 2. A host must not rely on a disposition the
+ * kernel set, such as its ignoring SIGPIPE, SIGIO or SIGWINCH, outliving the
+ * run: the host's own disposition is back when the run returns. A host that
+ * needs a signal ignored, SIGPIPE above all, sets that itself at startup. */
 int uml_emulator_run(struct uml_emulator *emulator, int argc,
 		    const char *const argv[], const char *const envp[]);
 /* Reports how the guest of the handle's most recent run ended, once that run
- * has returned. A run that begins on the handle starts from
- * UML_EMULATOR_RUN_END_NONE, so a later refused run does not repeat an earlier
- * run's end. Safe to call from any thread, and idle or during a run, which
- * then reports the previous run. -UML_EMULATOR_INVALID_ARGUMENT for a null
- * handle or output, or a struct_size smaller than the structure. */
+ * has returned. A run that is admitted to the handle starts from
+ * UML_EMULATOR_RUN_END_NONE, so while it runs, and after a run that was
+ * refused, the end is NONE and does not repeat an earlier run's. Safe to call
+ * from any thread, idle or during a run. -UML_EMULATOR_INVALID_ARGUMENT for a
+ * null handle or output, or a struct_size smaller than the structure. */
 int uml_emulator_get_run_end(const struct uml_emulator *emulator,
 			     struct uml_emulator_run_end *end);
 /* This and uml_emulator_sync are the operations intended to overlap
