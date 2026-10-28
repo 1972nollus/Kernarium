@@ -23,14 +23,27 @@ publishing an unnamed format on the queue.
 Decoded surfaces are copied into guest NV12, planar YUV420, P010, or packed
 BGRA buffers. The decoder does not encode.
 
-Packed BGRA is a single plane of 8-bit B, G, R, A samples, `width * 4` bytes per
-row and opaque alpha, reached over the wire as `VIRTIO_VIDEO_FORMAT_BGRA8888`
-and in the guest as `V4L2_PIX_FMT_ABGR32`. It is offered for every stream
-whatever the coded bit depth is, because a client that can only draw through a
-32-bit RGB surface would otherwise convert every frame on a guest processor,
-which costs far more than decoding it. Selecting it makes the host decoder
-produce the packed samples itself, so no processor in the path converts a
-frame.
+Rows lie at the pitch the negotiated plane formats state, not at the picture's
+width. The device states the pitch a guest allocator gives a buffer that the
+host GPU samples, because Metal reads a texture over a buffer only at a row
+pitch that is a multiple of 16 bytes: NV12 and P010 rows (two bytes a sample)
+and packed BGRA rows (whole pixels) fill a multiple of 16 bytes, and planar
+YUV420 luma rows a multiple of 32 bytes with chroma rows half of that. Plane
+heights stay tight, so a plane starts where the rows of the earlier planes end,
+and the padding is zero. A width that is already a multiple of the alignment
+has none, and its frame is copied as it comes. `raw_pitch.hpp` is the single
+statement of the rule, and the guest drivers report the device's stride as the
+V4L2 `bytesperline`, so a client that honors it and the guest's allocator agree
+without either asking the other.
+
+Packed BGRA is a single plane of 8-bit B, G, R, A samples, `width * 4` bytes of
+samples per row and opaque alpha, reached over the wire as
+`VIRTIO_VIDEO_FORMAT_BGRA8888` and in the guest as `V4L2_PIX_FMT_ABGR32`. It is
+offered for every stream whatever the coded bit depth is, because a client that
+can only draw through a 32-bit RGB surface would otherwise convert every frame
+on a guest processor, which costs far more than decoding it. Selecting it makes
+the host decoder produce the packed samples itself, so no processor in the path
+converts a frame.
 
 A client negotiates its capture format only after the source-change event, and
 a decoder cannot change a running session's output layout without discarding
