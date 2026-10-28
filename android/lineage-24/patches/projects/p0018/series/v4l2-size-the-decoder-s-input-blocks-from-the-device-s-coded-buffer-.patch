@@ -1,0 +1,283 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 11:58:09 +0900
+Subject: [PATCH] v4l2: size the decoder's input blocks from the device's coded
+ buffer size
+
+The decoder asked the framework for input blocks of 16 MiB, and 64 MiB
+above 1080p. The framework allocates every input block at that size and a
+stream keeps several of them, so a 4K stream held about 0.9 GB of input
+memory, while the component copies only the bytes a frame uses and the
+device takes coded buffers of 8 MiB.
+
+Read the size of the coded buffers the device negotiates from its input
+queue when the codec is listed (a TRY_FMT with no size requested, which
+the driver raises to the largest packet it takes), and make that the
+default maximum input size, within 1 MiB and 16 MiB. A device that states
+none gets 16 MiB. The decoder asks the device for no less than that size,
+whatever maximum a client states, and logs a device that needs more than
+the blocks it has.
+---
+ README.md                                     | 21 +++++---
+ common/include/v4l2_codec2/common/Common.h    |  4 ++
+ components/DecodeInterface.cpp                | 52 +++++++------------
+ .../v4l2_codec2/components/DecodeInterface.h  |  9 ++--
+ v4l2/V4L2Decoder.cpp                          |  7 +++
+ v4l2/V4L2Device.cpp                           | 24 +++++++++
+ v4l2/include/v4l2_codec2/v4l2/V4L2Device.h    |  4 ++
+ 7 files changed, 79 insertions(+), 42 deletions(-)
+
+diff --git a/README.md b/README.md
+index c2a99109d9d6663be009d810586dfe1d90b6613a..b782863cd0d5300ec361185ad592df240d46cd4e 100644
+--- a/README.md
++++ b/README.md
+@@ -482,12 +482,21 @@ again with every queue operation.
+ ### Input Blocks
+ 
+ The device takes a coded buffer in a dma-buf at least as large as the buffer
+-size it negotiated, and refuses a smaller one. The input blocks the framework
+-allocates for the component are as large as the maximum input size and are
+-queued as they are. A client of the block model chooses the size of its own
+-blocks, and the component copies a block smaller than the maximum input size
+-into a block of a pool it creates on first use, and queues that one. A secure
+-block is never copied.
++size it negotiated, and refuses a smaller one. The component reads that size
++from the device when it lists the codec (the size the input queue reports for
++the codec before any is requested) and makes it the default maximum input
++size, within 1 MiB and 16 MiB; a device that states none gets 16 MiB. The size
++comes from the device because the framework allocates every input block at the
++maximum input size and a stream keeps several of them: blocks of 64 MiB held
++about 0.9 GB for one 4K stream, while the component copies only the bytes a
++frame uses. The decoder logs a device that needs more than the block size.
++
++The input blocks the framework allocates for the component are as large as the
++maximum input size and are queued as they are. A client of the block model, or
++one that states a smaller maximum input size, chooses the size of its own
++blocks, and the component copies a block smaller than the device's size into a
++block of a pool it creates on first use, and queues that one. A secure block
++is never copied.
+ 
+ ### Picture Size
+ 
+diff --git a/common/include/v4l2_codec2/common/Common.h b/common/include/v4l2_codec2/common/Common.h
+index 167828b1384fe1c61f2a9206c8d05f392e7219d0..0f95c832e8c0e1e95e4cc65c86fca4a1894e6049 100644
+--- a/common/include/v4l2_codec2/common/Common.h
++++ b/common/include/v4l2_codec2/common/Common.h
+@@ -54,6 +54,10 @@ struct SupportedCapabilities {
+     std::vector<C2Config::level_t> supportedLevels;
+     C2Config::level_t defaultLevel = C2Config::LEVEL_UNUSED;
+ 
++    // The size in bytes of the coded buffers the decoder device negotiates for the codec: what
++    // the input queue reports before any size is requested. 0 when the device states none.
++    uint32_t codedBufferSize = 0;
++
+     // Rate control and structure capabilities of an encoder, filled from the encoder device's
+     // controls. A control the device does not expose leaves its value at the default below, and
+     // the component then keeps the matching parameter out of its interface.
+diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
+index d882db3342bada2a134e20fdb1170942471f3e40..160920598a1aeef0fbdefe0a2d2fc3bdb4718528 100644
+--- a/components/DecodeInterface.cpp
++++ b/components/DecodeInterface.cpp
+@@ -23,16 +23,13 @@
+ namespace android {
+ namespace {
+ 
+-constexpr size_t k1080pArea = 1920 * 1088;
+-constexpr size_t k4KArea = 3840 * 2160;
+-// Input bitstream buffer size for up to 1080p streams.
+-// Set it to 2MB since it is possible for the encoded bitstream to exceed the size of 1MB
+-// when using higher bitrates, like 1Mb/s on slower devices. Also, this brings up compability
+-// with the Chrome browser as it is using 2MB buffer size for a 1080p stream, ref:
+-// https://source.chromium.org/chromium/chromium/src/+/main:media/gpu/gpu_video_encode_accelerator_helpers.cc;l=25
+-constexpr size_t kInputBufferSizeFor1080p = 16 * 1024 * 1024;  // 16MB
+-// Input bitstream buffer size for up to 4k streams.
+-constexpr size_t kInputBufferSizeFor4K = 4 * kInputBufferSizeFor1080p;
++// The range of the input blocks the component asks for by default. The framework allocates every
++// input block at the maximum input size and a stream keeps several of them, so a size beyond what
++// the device takes is memory that no frame uses: 64 MiB blocks held about 0.9 GB for one 4K stream,
++// while the component copies only the bytes a frame uses. The size comes from the device (see
++// inputBufferSizeFor), within these bounds.
++constexpr size_t kMinInputBufferSize = 1 * 1024 * 1024;
++constexpr size_t kMaxInputBufferSize = 16 * 1024 * 1024;
+ 
+ // The levels of the HEVC Main tier that have a High tier counterpart, and that counterpart.
+ struct HevcTierPair {
+@@ -65,15 +62,13 @@ void addHevcHighTierLevels(std::vector<unsigned int>* levels) {
+     }
+ }
+ 
+-size_t calculateInputBufferSize(size_t area) {
+-    if (area > k4KArea) {
+-        ALOGW("Input buffer size for video size (%zu) larger than 4K (%zu) might be too small.",
+-              area, k4KArea);
+-    }
+-
+-    // Enlarge the input buffer for 4k video
+-    if (area > k1080pArea) return kInputBufferSizeFor4K;
+-    return kInputBufferSizeFor1080p;
++// The size of the input blocks for a device that negotiates coded buffers of |codedBufferSize|
++// bytes: that size, within [kMinInputBufferSize, kMaxInputBufferSize]. A device that states no
++// size (the query failed or the device lists none) gets the largest block, which fits any coded
++// buffer up to that size and does not depend on a size the component could not get.
++size_t inputBufferSizeFor(uint32_t codedBufferSize) {
++    if (codedBufferSize == 0) return kMaxInputBufferSize;
++    return std::clamp<size_t>(codedBufferSize, kMinInputBufferSize, kMaxInputBufferSize);
+ }
+ }  // namespace
+ 
+@@ -157,17 +152,6 @@ C2R DecodeInterface::MergedColorAspectsSetter(bool /* mayBlock */,
+     return C2R::Ok();
+ }
+ 
+-// static
+-C2R DecodeInterface::MaxInputBufferSizeCalculator(
+-        bool /* mayBlock */, C2P<C2StreamMaxBufferSizeInfo::input>& me,
+-        const C2P<C2StreamPictureSizeInfo::output>& size) {
+-    size_t calculatedSize = calculateInputBufferSize(size.v.width * size.v.height);
+-
+-    if (me.v.value < calculatedSize) me.set().value = calculatedSize;
+-
+-    return C2R::Ok();
+-}
+-
+ DecodeInterface::DecodeInterface(const std::string& name,
+                                  const std::shared_ptr<C2ReflectorHelper>& helper,
+                                  const SupportedCapabilities& caps)
+@@ -176,6 +160,7 @@ DecodeInterface::DecodeInterface(const std::string& name,
+ 
+     setDerivedInstance(this);
+     mPixelRateCapacity = caps.pixelRateCapacity;
++    mInputBufferSize = inputBufferSizeFor(caps.codedBufferSize);
+ 
+     // The system resources are a struct that the reflector does not know yet.
+     helper->addStructDescriptors<C2SystemResourceStruct>();
+@@ -458,12 +443,11 @@ DecodeInterface::DecodeInterface(const std::string& name,
+ 
+     addParameter(
+             DefineParam(mMaxInputSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+-                    .withDefault(new C2StreamMaxBufferSizeInfo::input(0u, kInputBufferSizeFor1080p))
++                    .withDefault(new C2StreamMaxBufferSizeInfo::input(0u, mInputBufferSize))
+                     .withFields({
+                             C2F(mMaxInputSize, value).any(),
+                     })
+                     .withSetter(InputSizeSetter)
+-                    .calculatedAs(MaxInputBufferSizeCalculator, mSize)
+                     .build());
+ 
+     bool secureMode = name.find(".secure") != std::string::npos;
+@@ -590,7 +574,9 @@ HalPixelFormat DecodeInterface::getOutputPixelFormat() const {
+ }
+ 
+ size_t DecodeInterface::getInputBufferSize() const {
+-    return mMaxInputSize->value;
++    // A client may state a smaller maximum, which the framework then sizes its blocks to. The
++    // device still takes buffers of the size it negotiated, so the decoder asks for no less.
++    return std::max<size_t>(mMaxInputSize->value, mInputBufferSize);
+ }
+ 
+ c2_status_t DecodeInterface::queryColorAspects(
+diff --git a/components/include/v4l2_codec2/components/DecodeInterface.h b/components/include/v4l2_codec2/components/DecodeInterface.h
+index 7e5d900cb0de023d94c2a7af54e1725d07f028bf..4452395f92f3a547cc6c53e8b80a33b1265a1fd0 100644
+--- a/components/include/v4l2_codec2/components/DecodeInterface.h
++++ b/components/include/v4l2_codec2/components/DecodeInterface.h
+@@ -35,6 +35,9 @@ public:
+ 
+     static uint32_t getOutputDelay(VideoCodec codec);
+ 
++    // The size of the coded buffers the decoder asks the device for, which an input block is at
++    // least as large as when it is queued: the maximum input size, and no less than the size the
++    // device negotiates.
+     size_t getInputBufferSize() const;
+     // Get the system resources that the configured instance needs, as the framework reads them: a
+     // copy of the parameter, and the pixel rate in it, for telling two states apart.
+@@ -56,9 +59,6 @@ private:
+     static C2R ProfileLevelSetter(bool mayBlock, C2P<C2StreamProfileLevelInfo::input>& info);
+     static C2R SizeSetter(bool mayBlock, C2P<C2StreamPictureSizeInfo::output>& videoSize);
+     static C2R InputSizeSetter(bool mayBlock, C2P<C2StreamMaxBufferSizeInfo::input>& inputSize);
+-    static C2R MaxInputBufferSizeCalculator(bool mayBlock,
+-                                            C2P<C2StreamMaxBufferSizeInfo::input>& me,
+-                                            const C2P<C2StreamPictureSizeInfo::output>& size);
+ 
+     static C2R OperatingRateSetter(bool mayBlock, C2P<C2OperatingRateTuning>& me);
+ 
+@@ -120,6 +120,9 @@ private:
+     // The system resources the instance needs for the configuration. Read-only.
+     std::shared_ptr<C2ResourcesNeededTuning> mResourcesNeeded;
+     uint64_t mPixelRateCapacity = 0;
++    // The size of the input blocks by default, and the least the decoder asks the device for: the
++    // size of the coded buffers the device negotiates, within the bounds the component keeps.
++    size_t mInputBufferSize = 0;
+     // Maximum size of one input buffer.
+     std::shared_ptr<C2StreamMaxBufferSizeInfo::input> mMaxInputSize;
+     // The suggested usage of input buffer allocator ID.
+diff --git a/v4l2/V4L2Decoder.cpp b/v4l2/V4L2Decoder.cpp
+index 83fad685e1cd020046159a7ee54f6605c593c0e4..5211d01bb1c78e91fc4f6961d711aeacb2849680 100644
+--- a/v4l2/V4L2Decoder.cpp
++++ b/v4l2/V4L2Decoder.cpp
+@@ -211,6 +211,13 @@ bool V4L2Decoder::setupInputFormat(const uint32_t inputPixelFormat, const size_t
+         return false;
+     }
+     ALOG_ASSERT(format->fmt.pix_mp.pixelformat == inputPixelFormat);
++    // The device takes a dma-buf at least as large as the size it settled on, which is the
++    // largest of the size asked for and the one it needs. The component asks for the size of its
++    // input blocks, so a device that needs more cannot be given a block it accepts.
++    if (format->fmt.pix_mp.plane_fmt[0].sizeimage > inputBufferSize) {
++        ALOGW("The device needs coded buffers of %u bytes, the input blocks are %zu bytes",
++              format->fmt.pix_mp.plane_fmt[0].sizeimage, inputBufferSize);
++    }
+ 
+     if (mInputQueue->allocateBuffers(kNumInputBuffers, V4L2_MEMORY_DMABUF) == 0) {
+         ALOGE("Failed to allocate input buffer.");
+diff --git a/v4l2/V4L2Device.cpp b/v4l2/V4L2Device.cpp
+index 0f9c4a19c2c8661ffa78b71a6810f64461448cd1..fccc79ca30abfe299d631a4d463ac3bacca4c39e 100644
+--- a/v4l2/V4L2Device.cpp
++++ b/v4l2/V4L2Device.cpp
+@@ -2535,9 +2535,33 @@ SupportedCapabilities V4L2Device::queryDecodingCapabilities(VideoCodec codec) {
+     caps.defaultProfile = V4L2Device::getDefaultProfile(codec);
+     caps.pixelRateCapacity = V4L2Device::getDecodePixelRateCapacity();
+ 
++    // The coded buffer size is that of the device that decodes |codec|, which is the one a decoder
++    // of the codec will open.
++    const uint32_t pixelFormat = V4L2Device::videoCodecToPixFmt(codec);
++    scoped_refptr<V4L2Device> device = V4L2Device::create();
++    const std::string path = device->getDevicePathFor(Type::kDecoder, pixelFormat);
++    if (!path.empty() && device->openDevicePath(path, Type::kDecoder)) {
++        caps.codedBufferSize = device->queryCodedBufferSize(pixelFormat);
++        device->closeDevice();
++    }
++    ALOGI("%s(%s): the device negotiates coded buffers of %u bytes", __func__,
++          fourccToString(pixelFormat).c_str(), caps.codedBufferSize);
++
+     return caps;
+ }
+ 
++uint32_t V4L2Device::queryCodedBufferSize(uint32_t pixFmt) {
++    // A format that asks for no size gets the device's own size back: the driver raises the
++    // requested size of the coded plane to the largest packet it takes.
++    v4l2_format format;
++    memset(&format, 0, sizeof(format));
++    format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
++    format.fmt.pix_mp.pixelformat = pixFmt;
++    format.fmt.pix_mp.num_planes = 1;
++    if (ioctl(VIDIOC_TRY_FMT, &format) != 0) return 0;
++    return format.fmt.pix_mp.plane_fmt[0].sizeimage;
++}
++
+ // static
+ SupportedCapabilities V4L2Device::queryEncodingCapabilities(VideoCodec codec) {
+     SupportedCapabilities caps;
+diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2Device.h b/v4l2/include/v4l2_codec2/v4l2/V4L2Device.h
+index 0150c6e30f21815d125e1ac8d54f210936e0b0ce..49d592e91b89f7993c4b2245b028da921c964052 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/V4L2Device.h
++++ b/v4l2/include/v4l2_codec2/v4l2/V4L2Device.h
+@@ -552,6 +552,10 @@ private:
+     SupportedProfiles enumerateSupportedProfiles(V4L2Device::Type type,
+                                                  const std::vector<uint32_t>& pixelFormats);
+ 
++    // Returns the size in bytes of the coded buffers this decoder device negotiates for
++    // |pixFmt|, or 0 if it states none. The device must be open.
++    uint32_t queryCodedBufferSize(uint32_t pixFmt);
++
+     // Fills the rate control and structure capabilities of |caps| from the controls of this
+     // encoder device, which must be open and encode to |codec| in |pixFmt|.
+     void queryEncoderControls(VideoCodec codec, uint32_t pixFmt, SupportedCapabilities* caps);

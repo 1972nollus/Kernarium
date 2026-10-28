@@ -25,3 +25,4 @@ patch	v4l2-take-an-IDR_N_LP-picture-as-an-HEVC-random-access-point.patch
 patch	v4l2-stage-an-input-block-that-is-smaller-than-the-device-s-buffers.patch
 patch	README-document-the-decoder.patch
 patch	v4l2-take-the-device-s-smallest-picture-and-lowest-bitrate.patch
+patch	v4l2-size-the-decoder-s-input-blocks-from-the-device-s-coded-buffer-.patch
