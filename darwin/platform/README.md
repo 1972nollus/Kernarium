@@ -25,6 +25,12 @@ ignores. `prepareVideoEncodeCapabilities()` starts discovery on its own thread;
 the first query waits for it, at most five minutes, and a host that answers
 nothing then reports no encoder.
 
+A video capability never lists a picture side below `kVideoEncodeMinimumSide`
+(64 samples). VideoToolbox encodes smaller pictures, but a guest's quality check
+rejects what it makes of them: Android's CTS finds a PSNR under 20 dB at 16, 32
+and 48 samples and none at 64. The size probe therefore starts at the floor, and
+a cached result below it is ignored. A JPEG still has no such floor.
+
 The result is cached as JSON keyed by `hw.machine`, `hw.model`,
 `kern.osversion` and a revision of the file format. `UML_VIDEO_ENCODE_CACHE`
 names the file; an empty value turns the cache off. The default is the

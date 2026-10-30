@@ -211,7 +211,8 @@ void controlTable()
             mode.menu_skip_mask == 0 && mode.default_value == UML_V4L2_MPEG_VIDEO_BITRATE_MODE_VBR &&
             mode.coded_formats == video, "bitrate mode menu");
     const auto& bitrate = control(controls, UML_V4L2_CID_MPEG_VIDEO_BITRATE);
-    require(bitrate.minimum == 1000 && bitrate.maximum == 80'000'000 && bitrate.default_value == 2'000'000 &&
+    // The floor is 20 kbit/s: the least that holds Android's quality bar at the smallest picture.
+    require(bitrate.minimum == 20'000 && bitrate.maximum == 80'000'000 && bitrate.default_value == 2'000'000 &&
             (bitrate.flags & VIRTIO_VIDEO_V4L2_CTRL_F_DYNAMIC), "bitrate stops at HEVC's lower ceiling and is dynamic");
     require(published(controls, UML_V4L2_CID_MPEG_VIDEO_BITRATE_PEAK), "peak bitrate with VBR");
     const auto& quality = control(controls, UML_V4L2_CID_MPEG_VIDEO_CONSTANT_QUALITY);
@@ -363,8 +364,9 @@ void valueChecks()
     };
     require(check(0x12345678, 0) == ControlCheck::unsupported, "an unknown control was accepted");
     // Integer: range and step.
-    require(check(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 1000) == ControlCheck::ok &&
+    require(check(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 20'000) == ControlCheck::ok &&
             check(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 80'000'000) == ControlCheck::ok &&
+            check(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 19'999) == ControlCheck::invalid &&
             check(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 999) == ControlCheck::invalid &&
             check(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 80'000'001) == ControlCheck::invalid &&
             check(UML_V4L2_CID_MPEG_VIDEO_BITRATE, -1) == ControlCheck::invalid, "integer range");

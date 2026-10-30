@@ -23,6 +23,10 @@ using uml::platform::VideoTransferFunction;
 
 constexpr std::int64_t maximumInt = 0x7fffffff;
 constexpr std::int64_t defaultBitrate = 2'000'000;
+/* The lowest bit rate the bit rate control takes, in bits per second. The host's encoders accept
+ * less, but an HEVC stream with inter frames of a 64x64 picture misses Android's CTS quality bar
+ * (a PSNR of 20 dB) below about 10 kbit/s, so the floor is twice that. */
+constexpr std::int64_t minimumBitrate = 20'000;
 constexpr std::int64_t defaultFrameQp = 26;
 constexpr std::int64_t defaultJpegQuality = 85;
 /* Roles in the bit set of bitrate modes. */
@@ -335,7 +339,7 @@ EncoderControls::EncoderControls(std::span<const VideoEncodeCapability> capabili
                 maximumBitrate = std::min<std::int64_t>(maximumBitrate, std::int64_t(std::min<std::uint64_t>(
                     capability->maximumBitrate, std::uint64_t(maximumInt))));
         if (maximumBitrate == std::numeric_limits<std::int64_t>::max()) maximumBitrate = maximumInt;
-        maximumBitrate = std::max<std::int64_t>(maximumBitrate, 1000);
+        maximumBitrate = std::max<std::int64_t>(maximumBitrate, minimumBitrate);
 
         const std::uint32_t defaultMode = (modes & modeBit(UML_V4L2_MPEG_VIDEO_BITRATE_MODE_VBR))
             ? UML_V4L2_MPEG_VIDEO_BITRATE_MODE_VBR
@@ -343,7 +347,7 @@ EncoderControls::EncoderControls(std::span<const VideoEncodeCapability> capabili
                                                                       : UML_V4L2_MPEG_VIDEO_BITRATE_MODE_CQ;
         add.menu(UML_V4L2_CID_MPEG_VIDEO_BITRATE_MODE, modes, defaultMode, videoFormats);
         if (modes & (modeBit(UML_V4L2_MPEG_VIDEO_BITRATE_MODE_VBR) | modeBit(UML_V4L2_MPEG_VIDEO_BITRATE_MODE_CBR)))
-            add.integer(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 1000, maximumBitrate, defaultBitrate, videoFormats,
+            add.integer(UML_V4L2_CID_MPEG_VIDEO_BITRATE, minimumBitrate, maximumBitrate, defaultBitrate, videoFormats,
                         VIRTIO_VIDEO_V4L2_CTRL_F_DYNAMIC);
         if (modes & modeBit(UML_V4L2_MPEG_VIDEO_BITRATE_MODE_VBR))
             add.integer(UML_V4L2_CID_MPEG_VIDEO_BITRATE_PEAK, 0, maximumBitrate, 0, videoFormats,

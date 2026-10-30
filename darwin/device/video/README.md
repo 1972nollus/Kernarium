@@ -258,6 +258,11 @@ is absent. The guest therefore learns the host's capability from which formats,
 controls and menu items exist, and a control that is not published is
 unsupported, which is the truthful answer.
 
+The bit rate control starts at 20 kbit/s, not at what the encoders accept: an
+HEVC stream with inter frames of a 64x64 picture, the smallest the platform
+lists, misses Android's quality bar (a PSNR of 20 dB) below about 10 kbit/s, and
+the floor is twice that.
+
 ### Encoder behavior
 
 `UML::VideoDevice` implements the device in `virtio_video_encoder_device.cpp`,

@@ -761,7 +761,16 @@ void controlCommands()
     refusedAt(ControlSet().scalar(0x12345678, 1), VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL, 0, "unknown control");
     refusedAt(ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 3'000'000).scalar(0x12345678, 1),
               VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL, 1, "unknown control after a good one");
+    refusedAt(ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 19'999), VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, 0,
+              "below the bit rate floor");
     refusedAt(ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 999), VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, 0, "below range");
+    // The floor itself is taken: 20 kbit/s is the least that holds the quality bar at the smallest picture.
+    require(Fixture::type(setControls(f, 1, ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 20'000))) ==
+                    VIRTIO_VIDEO_RESP_OK_V4L2_CONTROLS &&
+            value(UML_V4L2_CID_MPEG_VIDEO_BITRATE) == 20'000, "the bit rate floor was refused");
+    require(Fixture::type(setControls(f, 1, ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_BITRATE, 2'000'000))) ==
+                    VIRTIO_VIDEO_RESP_OK_V4L2_CONTROLS &&
+            value(UML_V4L2_CID_MPEG_VIDEO_BITRATE) == 2'000'000, "the default was not restored");
     refusedAt(ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_H264_PROFILE, UML_V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE),
               VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, 0, "a menu item the host lacks");
     refusedAt(ControlSet().scalar(UML_V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE, 2), VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, 0, "boolean");
