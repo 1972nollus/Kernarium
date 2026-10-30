@@ -155,13 +155,13 @@ void OffscreenDisplayState::shutdown() noexcept
     if (mirrorStarted)
         setFrameTap(nullptr, nullptr);
     presentation.shutdown();
-    /* A draw that was already queued sees the display stopped; wait for it so
-     * that the layer outlives every use. */
-    if (queue != nullptr) {
+    /* A draw that was already queued is over once this returns; one that is
+     * queued after it sees the display stopped and draws nothing. The queue
+     * and the layer stay until the state is destroyed, because a redraw
+     * request that passed the running check before this ran may still be on
+     * its way to the queue. */
+    if (queue != nullptr)
         dispatch_sync(queue, ^{});
-        queue = nullptr;
-    }
-    layer = nil;
 }
 
 std::shared_ptr<NativeDisplayStateCore> makeOffscreenDisplayState(
