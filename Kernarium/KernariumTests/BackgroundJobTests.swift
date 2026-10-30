@@ -177,7 +177,12 @@ final class FakeJobTask: BackgroundJobTask {
 /// story is recorded.
 @MainActor
 final class RecordingEffects: BackgroundEffects {
-    var calls: [String] = []
+    private let log = CallLog()
+    var calls: [String] {
+        get { log.entries }
+        set { log.entries = newValue }
+    }
+    let gpuHold: GuestGPUHold
     var jobActive = false
     var guestIsAndroid = false
     var pictureInPictureCanStart = false
@@ -185,19 +190,21 @@ final class RecordingEffects: BackgroundEffects {
     var guestDisplayActive: Bool?
     var automationHoldDelay: TimeInterval = 0
 
-    func waitForGuestDisplayOff(until deadline: DispatchTime) -> Bool { true }
-    func holdGuestGPU() { calls.append("hold") }
-    func releaseGuestGPU() { calls.append("release") }
-    func flushGuest(until deadline: DispatchTime?) { calls.append("flush") }
-    func quiesceGuest(reason: String, until deadline: DispatchTime?) {
-        calls.append("quiesce \(reason)")
+    init() {
+        gpuHold = GuestGPUHold(gate: RecordingGate(log))
     }
-    func resumeGuest() { calls.append("resume") }
+
+    func waitForGuestDisplayOff(until deadline: DispatchTime) -> Bool { true }
+    func flushGuest(until deadline: DispatchTime?) { log.add("flush") }
+    func quiesceGuest(reason: String, until deadline: DispatchTime?) {
+        log.add("quiesce \(reason)")
+    }
+    func resumeGuest() { log.add("resume") }
     func setPageCacheTrimming(_ enabled: Bool) {
-        calls.append("trim \(enabled ? "on" : "off")")
+        log.add("trim \(enabled ? "on" : "off")")
     }
     func setBackgroundThrottle(_ enabled: Bool) {}
-    func pressPowerKey() { calls.append("power") }
+    func pressPowerKey() { log.add("power") }
     func stopPictureInPicture() {}
     func keepScheduled(named name: String) -> any BackgroundCancellable {
         Handle()

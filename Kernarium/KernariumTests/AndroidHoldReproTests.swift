@@ -30,36 +30,73 @@ struct AndroidHoldReproTests {
     /// The real effects with a job claimed, and a log of what the policy asked
     /// for and when, in milliseconds from the edge it handled.
     private final class ReproEffects: BackgroundEffects {
+        /// What was asked for and when. The hold can be taken from the
+        /// bound's own thread, so the log takes a lock.
+        private nonisolated final class EdgeLog: @unchecked Sendable {
+            private let lock = NSLock()
+            private var recorded: [[String]] = []
+            private var origin = DispatchTime.now()
+
+            var calls: [[String]] { lock.withLock { recorded } }
+
+            func start() {
+                lock.withLock {
+                    recorded.removeAll()
+                    origin = .now()
+                }
+            }
+
+            func record(_ call: String) {
+                lock.withLock {
+                    let elapsed = DispatchTime.now().uptimeNanoseconds -
+                        origin.uptimeNanoseconds
+                    recorded.append([String(elapsed / 1_000_000), call])
+                }
+            }
+        }
+
+        /// The real gate, with the time the hold is taken or given back.
+        private nonisolated struct RecordingRuntimeGate: GuestGPUGate {
+            let log: EdgeLog
+            private let runtime = RuntimeGPUGate()
+
+            init(_ log: EdgeLog) {
+                self.log = log
+            }
+
+            func hold() {
+                log.record("hold")
+                runtime.hold()
+            }
+
+            func release() {
+                log.record("release")
+                runtime.release()
+            }
+        }
+
         private let real: SystemBackgroundEffects
-        private(set) var calls: [[String]] = []
-        private var origin = DispatchTime.now()
+        private let log = EdgeLog()
+        let gpuHold: GuestGPUHold
+
+        var calls: [[String]] { log.calls }
 
         init() {
             real = SystemBackgroundEffects(
                 persistence: .shared,
                 pictureInPicture: nil
             )
+            gpuHold = GuestGPUHold(gate: RecordingRuntimeGate(log))
         }
 
         func startEdge() {
-            calls.removeAll()
-            origin = .now()
+            log.start()
         }
 
         private func record(_ call: String) {
-            let elapsed = DispatchTime.now().uptimeNanoseconds -
-                origin.uptimeNanoseconds
-            calls.append([String(elapsed / 1_000_000), call])
+            log.record(call)
         }
 
-        func holdGuestGPU() {
-            record("hold")
-            real.holdGuestGPU()
-        }
-        func releaseGuestGPU() {
-            record("release")
-            real.releaseGuestGPU()
-        }
         func flushGuest(until deadline: DispatchTime?) {
             record("flush")
             real.flushGuest(until: deadline)

@@ -136,10 +136,9 @@ protocol BackgroundCancellable: AnyObject {
 /// system, behind one seam so the policy can be tested without any of them.
 @MainActor
 protocol BackgroundEffects: AnyObject {
-    /// Holds every guest GPU request, so none reaches the host GPU while it
-    /// is revoked.
-    func holdGuestGPU()
-    func releaseGuestGPU()
+    /// The hold on the guest's GPU requests, which keeps every one off the
+    /// host GPU while iOS has revoked it. It can be taken from any thread.
+    var gpuHold: GuestGPUHold { get }
     /// Writes the guest's storage back and leaves it running. Waits for the
     /// write-back until `deadline`, or not at all when it is nil.
     func flushGuest(until deadline: DispatchTime?)
@@ -217,13 +216,21 @@ final class BackgroundController {
     /// What the edge handler's own work may take: the watchdog answers to the
     /// handler as a whole.
     static let edgeBudget = DispatchTimeInterval.seconds(4)
-    /// How long an Android guest gets to turn its screen off before its GPU is
-    /// held anyway. A screen that is still drawing when the hold lands leaves
-    /// its threads waiting on a GPU that does not answer, so the screen goes
-    /// off first, while the GPU still works; the wait is bounded because iOS
-    /// revokes the host GPU within seconds of the edge, and holding it in time
-    /// matters more than the screen.
-    static let displayOffGrace = DispatchTimeInterval.milliseconds(1500)
+    /// The latest the GPU of a kept-running job is held after the edge. An
+    /// Android guest gets this long to turn its screen off first: a screen
+    /// that is still drawing when the hold lands leaves its threads waiting on
+    /// a GPU that does not answer, so the screen goes off while the GPU still
+    /// works. The bound is a timer off the main thread, so what the main
+    /// thread is doing cannot move it.
+    ///
+    /// iOS first denies the app the GPU 2.73 s after the edge at the earliest
+    /// (measured over five edges on an iPad: 2.73 to 3.26 s, and 4.1 to 4.7 s
+    /// after the app resigns active), and a hold that lands before that costs
+    /// the guest nothing. 1.5 s leaves 1.2 s. The hold is not taken when the
+    /// app resigns active, 0.8 to 1.7 s before the edge, because the app
+    /// resigns active for a pulled-down shade or a call banner as well, and
+    /// freezing the guest's graphics for a user who stays would be wrong.
+    static let gpuHoldBound = DispatchTimeInterval.milliseconds(1500)
 
     private(set) var phase = Phase.foreground {
         didSet {
@@ -235,13 +242,11 @@ final class BackgroundController {
     private let mode: () -> BackgroundMode
     private var startDeadline: (any BackgroundCancellable)?
     private var keepScheduled: (any BackgroundCancellable)?
-    private var gpuHeld = false
     private var guestQuiesced = false
     /// The Android screen this controller turned off, to turn on again.
     private var screenTurnedOff = false
-    /// A hold an automation launch put off, and what keeps the process
-    /// scheduled until it lands.
-    private var holdDelayTimer: (any BackgroundCancellable)?
+    /// What keeps the process scheduled while a hold an automation launch put
+    /// off has not landed.
     private var holdDelayScheduled: (any BackgroundCancellable)?
 
     init(
@@ -256,6 +261,8 @@ final class BackgroundController {
         guard phase == .foreground else { return }
         let deadline = DispatchTime.now() + Self.edgeBudget
         let chosen = mode()
+        // The edge the hold's timing is measured from.
+        print("Kernarium: background edge, mode \(chosen.rawValue)")
         if chosen == .keepRunning && effects.jobActive {
             enterBackgroundWithJob(until: deadline)
             return
@@ -285,11 +292,21 @@ final class BackgroundController {
     /// answer, so it cannot handle the framework's pause and the screen-off
     /// broadcast, and Android kills it as not responding. A screen that is off
     /// already is left as it is, which the return leaves as well.
+    ///
+    /// The hold has its own bound, armed before anything here can wait: it is
+    /// taken when the screen is off or `gpuHoldBound` after the edge, whichever
+    /// comes first, and neither the wait for the screen nor the guest's
+    /// storage settling afterwards can delay it.
     private func enterBackgroundWithJob(until deadline: DispatchTime) {
+        let delay = effects.automationHoldDelay
+        armGPUHold(delay: delay)
         if effects.guestIsAndroid {
             turnAndroidScreenOff(before: deadline)
         }
-        holdGPUForJob()
+        // A launch that asked for a later hold keeps it later.
+        if delay <= 0 {
+            holdGPU()
+        }
         effects.flushGuest(until: deadline)
         effects.setPageCacheTrimming(true)
         phase = .jobRunning
@@ -305,7 +322,7 @@ final class BackgroundController {
         // A launch that puts the hold off to measure it does not wait for the
         // screen, which would move the hold it asked for.
         guard effects.automationHoldDelay <= 0 else { return }
-        let limit = min(deadline, DispatchTime.now() + Self.displayOffGrace)
+        let limit = min(deadline, DispatchTime.now() + Self.gpuHoldBound)
         let started = DispatchTime.now()
         let off = effects.waitForGuestDisplayOff(until: limit)
         let milliseconds = (
@@ -393,10 +410,7 @@ final class BackgroundController {
         if phase == .jobRunning {
             effects.setPageCacheTrimming(false)
         }
-        if gpuHeld {
-            effects.releaseGuestGPU()
-            gpuHeld = false
-        }
+        effects.gpuHold.release()
         if guestQuiesced {
             effects.resumeGuest()
             guestQuiesced = false
@@ -410,31 +424,30 @@ final class BackgroundController {
     }
 
     private func holdGPU() {
-        effects.holdGuestGPU()
-        gpuHeld = true
+        effects.gpuHold.hold()
+        endHoldDelay()
     }
 
-    /// Holds the GPU for a job at the edge, or, when an automation launch
-    /// asked for the hold after a delay, that long after it. Only a job is
-    /// delayed: the other modes release or keep the GPU on their own terms.
-    private func holdGPUForJob() {
-        let delay = effects.automationHoldDelay
+    /// Arms the bound of a job's hold: `gpuHoldBound` after the edge, or, when
+    /// an automation launch asked for the hold after a delay, that long after
+    /// it. Only a job is delayed: the other modes release or keep the GPU on
+    /// their own terms.
+    private func armGPUHold(delay: TimeInterval) {
         guard delay > 0 else {
-            holdGPU()
+            effects.gpuHold.arm(after: Self.gpuHoldBound.seconds)
             return
         }
         print("Kernarium: automation holds the GPU \(delay) s after the edge")
-        holdDelayScheduled = effects.keepScheduled(named: "gpu-hold-delay")
-        holdDelayTimer = effects.schedule(after: delay) { [weak self] in
-            guard let self else { return }
-            self.endHoldDelay()
-            self.holdGPU()
+        let scheduled = effects.keepScheduled(named: "gpu-hold-delay")
+        holdDelayScheduled = scheduled
+        // Ending the wait twice is harmless, so the hold that landed may end
+        // it here and the return again.
+        effects.gpuHold.arm(after: delay) {
+            Task { @MainActor in scheduled.cancel() }
         }
     }
 
     private func endHoldDelay() {
-        holdDelayTimer?.cancel()
-        holdDelayTimer = nil
         holdDelayScheduled?.cancel()
         holdDelayScheduled = nil
     }
@@ -452,8 +465,7 @@ final class BackgroundController {
     /// The window is up, so the host GPU stays available: the guest may use
     /// it again.
     private func keepGuestRunning() {
-        effects.releaseGuestGPU()
-        gpuHeld = false
+        effects.gpuHold.release()
         effects.setPageCacheTrimming(true)
         effects.setBackgroundThrottle(true)
         phase = .keptRunning
@@ -482,5 +494,19 @@ final class BackgroundController {
         startDeadline = nil
         keepScheduled?.cancel()
         keepScheduled = nil
+    }
+}
+
+private extension DispatchTimeInterval {
+    /// The interval in seconds, for the timers that take them.
+    var seconds: TimeInterval {
+        switch self {
+        case .seconds(let value): TimeInterval(value)
+        case .milliseconds(let value): TimeInterval(value) / 1_000
+        case .microseconds(let value): TimeInterval(value) / 1_000_000
+        case .nanoseconds(let value): TimeInterval(value) / 1_000_000_000
+        case .never: .infinity
+        @unknown default: .infinity
+        }
     }
 }
