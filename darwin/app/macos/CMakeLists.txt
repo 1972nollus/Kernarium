@@ -18,6 +18,22 @@ function(uml_add_macos_embedded_kernel_app
         message(FATAL_ERROR "${ARTIFACT_TARGET} has no kernel ELF image")
     endif()
 
+    # The loader aliases the ELF's executable pages from the section this
+    # links in, as Kernarium's runtime does, so the image has to be safe for
+    # that.
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}" -B
+            "${PROJECT_SOURCE_DIR}/Kernarium/scripts/verify-signed-kernel-carrier.py"
+            --image "${_uml_kernel_image}"
+        RESULT_VARIABLE _uml_carrier_result
+        OUTPUT_VARIABLE _uml_carrier_output
+        ERROR_VARIABLE _uml_carrier_error)
+    if(NOT _uml_carrier_result EQUAL 0)
+        message(FATAL_ERROR
+            "${TARGET_NAME}: the kernel is unsafe for the signed carrier:\n"
+            "${_uml_carrier_output}${_uml_carrier_error}")
+    endif()
+
     add_executable("${TARGET_NAME}"
         launcher.hpp
         main.cpp
@@ -85,7 +101,11 @@ function(uml_add_macos_embedded_kernel_app
         # symbols have no native Mach-O callers, so force-load the deliberately
         # aggregated emulator product at the application boundary.
         "LINKER:-force_load,$<TARGET_FILE:uml_emulator>"
-        "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_kernel_image}"
+        # The kernel ELF is a read-only, host-page aligned __TEXT section:
+        # the emulator runs it in place instead of copying it into the heap,
+        # and the loader aliases its executable pages from it.
+        "LINKER:-sectcreate,__TEXT,__uml_elf,${_uml_kernel_image}"
+        "LINKER:-sectalign,__TEXT,__uml_elf,0x4000"
         "LINKER:-sectcreate,__TEXT,__info_plist,${_uml_info_plist}")
 
     set_target_properties("${TARGET_NAME}" PROPERTIES

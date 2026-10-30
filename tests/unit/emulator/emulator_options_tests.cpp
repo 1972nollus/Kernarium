@@ -288,6 +288,27 @@ void test_gadget_cache_budget_option()
 		"the gadget cache budget ignored trailing text");
 }
 
+void test_memory_limit_option()
+{
+	const char *absent[]{"uml-test"};
+	require(uml::emulator::prepare_emulator_options(
+		1, absent, "/tmp/rootfs.erofs").memory_limit_bytes == 0,
+		"a memory limit was stated without being asked for");
+	const char *chosen[]{"uml-test", "--memory-limit=2867M", "ip=dhcp"};
+	auto options = uml::emulator::prepare_emulator_options(
+		3, chosen, "/tmp/rootfs.erofs");
+	require(options.valid &&
+		options.memory_limit_bytes == 2867U * 1024U * 1024U &&
+		!contains(options, chosen[1]) && contains(options, "ip=dhcp"),
+		"the memory limit was not consumed by the host");
+	for (const char *refused : {"--memory-limit=0", "--memory-limit=",
+		     "--memory-limit=1Gignored", "--memory-limit=lots"}) {
+		const char *arguments[]{"uml-test", refused};
+		require(!uml::emulator::prepare_emulator_options(
+			2, arguments, "/tmp/rootfs.erofs").valid, refused);
+	}
+}
+
 void test_guest_hibernation_option()
 {
 	using uml::runtime::HibernationMode;
@@ -648,6 +669,7 @@ int main()
 		test_x86_64_kernel_memory_accounting_policy();
 		test_guest_memory_budget_matches_kernel_memparse();
 		test_gadget_cache_budget_option();
+		test_memory_limit_option();
 		test_jit_tier_option();
 		test_guest_hibernation_option();
 		test_scalable_native_kernel_layout_geometry();

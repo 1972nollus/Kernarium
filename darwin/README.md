@@ -232,8 +232,9 @@ twice the budget.
 
 The emulator sets the budget before the run's first executor: a quarter of
 guest memory, at least 128 MiB, and at most an eighth of the footprint the
-host lets the process reach where it sets one (iOS; macOS sets none), or the
-size `--gadget-cache-budget=` gives. A process that never sets one, such as a
+host lets the process reach where it sets one (iOS; on macOS the launch states
+it with `--memory-limit=` or `UML_MEMORY_LIMIT_MIB`, and otherwise there is
+none), or the size `--gadget-cache-budget=` gives. A process that never sets one, such as a
 unit test, keeps 1 GiB. No measured workload was asked to shed: on four vCPUs
 and 8 GiB the largest, x86 multi-core Geekbench, peaked at a seventh of its
 2 GiB budget, and at the iPad's geometry WebGL Aquarium, the least headroom,

@@ -230,6 +230,21 @@ def footprint(dump: dict[str, list[str]]) -> str:
     )
 
 
+def require_aliased_text(engine: str, dump: dict[str, list[str]]) -> None:
+    """The kernel's executable pages are the embedded section's own, not a
+    dirty copy of them in anonymous memory."""
+    def figure(keyword: str) -> int:
+        return int(dump[keyword][0]) if dump.get(keyword) else -1
+
+    pages, dirty = figure("kernel_text_pages"), figure("kernel_text_dirty_pages")
+    if pages <= 0 or dirty != 0:
+        raise RuntimeError(
+            f"{engine}: the kernel's text is {pages} executable pages with "
+            f"{dirty} dirty, not clean aliases of the embedded section"
+        )
+    print(f"{engine}: kernel text is {pages} executable pages, none dirty")
+
+
 def write_pattern(guest: Guest) -> bytes:
     """A pattern in tmpfs and in anonymous memory of a process that stays. The
     host never holds it: the guest builds it from letters the host does send."""
@@ -269,6 +284,7 @@ def run_engine(arguments: argparse.Namespace, engine: str) -> None:
         guest.boot_to_shell(300)
         first = settled(channel, "boot1", None)
         print(f"{engine}: boot 1, pid {process_id}: {footprint(first)}")
+        require_aliased_text(engine, first)
         token = write_pattern(guest)
         before = channel.scan("pattern-before", token)
         if before["window_matches"] == 0:
@@ -293,6 +309,7 @@ def run_engine(arguments: argparse.Namespace, engine: str) -> None:
                     f"{engine}: the first boot's pattern survived restart "
                     f"{restart}:\n{after['text']}"
                 )
+            require_aliased_text(engine, current)
             retries = guest.output().count("is not handed back yet")
             returned = heaps_returned(
                 hand_back_dump(audit, restart),

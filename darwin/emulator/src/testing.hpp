@@ -24,6 +24,16 @@ using KernelEntry = int (*)(int argc, char *const argv[], char *const envp[]);
  * kernel, and returns its status. Any other image reaches the loader. */
 [[nodiscard]] std::vector<std::byte> kernel_image(KernelEntry entry);
 
+/* Declares [start, start + size) a kernel image linked into the process, for
+ * the handles created after the call, in addition to the sections the process
+ * has: a handle created from exactly this image keeps the pointer instead of
+ * a copy. The region must stay valid and unchanged until those handles are
+ * destroyed. A null `start` withdraws the declaration. */
+void set_linked_kernel(const void *start, std::size_t size) noexcept;
+
+/* Whether `emulator` runs a linked kernel section itself and holds no copy. */
+[[nodiscard]] bool kernel_image_borrowed(const uml_emulator *emulator) noexcept;
+
 using AddressSpaceAdmissionHook = void (*)(void *) noexcept;
 
 /* Test-only interleaving points for the process-wide address-space gate. */

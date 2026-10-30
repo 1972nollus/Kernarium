@@ -56,8 +56,15 @@ series under `patches/projects/` are the only maintained modifications to
 upstream projects.
 
 `overlay/` owns the complete `device/kernarium/darwin` product tree and is
-synchronized as one verified unit. The Vulkan HAL's Mesa source has its own
-pinned source and generated series under `third_party/mesa-venus/`.
+synchronized as one verified unit. The synchronization stamps a file whose
+bytes or mode differ from what the workspace held with the current time, and
+restores the time of every file that did not change: Make treats an output newer
+than its input as current, and a checkout keeps the time of the commit that
+wrote a file, so an overlay that switches back to older content would otherwise
+leave the installed copy of the newer content in place, while untouched files
+keep the build from redoing work that depends only on them. The Vulkan HAL's
+Mesa source has its own pinned source and generated series under
+`third_party/mesa-venus/`.
 
 `third_party/fdroid/` pins the F-Droid client and its Privileged Extension by
 size and SHA-256. Both are upstream-presigned APKs the build installs
@@ -664,7 +671,10 @@ pitch the driver cannot import or the renderer lays out differently.
 `kernarium_ahb_yuv_roundtrip` is its counterpart for YUV buffers: NV12, P010 and
 YV12 of even and odd sizes are written whole and then by a partial lock and read
 back through the host copy, which fails for a layout the guest and the renderer
-read differently.
+read differently. `kernarium_ahb_rgba_lock` checks the lock of tall RGBA buffers
+whose rows gralloc pads (widths 340 to 350 at 604 rows): a buffer the GPU wrote
+and a buffer the CPU wrote are each compared at the stride, and a padded lock
+that takes more than four times an unpadded one fails the run.
 
 The product declares `android.hardware.vulkan.version` 1.4, `level` 1 and
 `compute` 0, and deliberately declares no `android.software.vulkan.deqp.level`:
@@ -889,9 +899,21 @@ host-side operation with the system `truncate` utility and GPT fdisk's
 `sgdisk`, found on `PATH` or named with `--sgdisk`. Runtime launch has no
 disk-capacity parameter and rejects a GPT that does not match the file. The
 resized image is opened directly as writable storage; Android launch never
-constructs or accepts a UBD COW pair. Normal Android asks the ext4
-`resize2fs` tool to fill userdata before mounting `/data`; the tool is
-idempotent when the host has not enlarged the partition. The image carries
+constructs or accepts a UBD COW pair. Normal Android fills userdata on every
+boot, once `/data` is mounted and before the zygote starts (`post-fs-data`):
+`resize2fs` asks the kernel's online resize to grow the mounted filesystem to
+the partition, and does nothing when the host has not enlarged it. The online
+resize is journaled and needs no `fsck`; an offline `resize2fs` refuses a
+filesystem mounted since its last full check, and the `e2fsck` that `mount_all`
+runs skips a clean one, so it would fill userdata on the first boot only. The
+kernel adds the group descriptor blocks a larger filesystem needs by converting
+it to `meta_bg`, which the 128 MiB image (no reserved descriptor blocks) relies
+on for a first boot at a large capacity. `resize2fs` runs as root with the group
+of `/data`'s owner, so it opens `/data` (mode 0771) without a DAC capability,
+and in the `fsck` domain, which gets `sys_resource`, `open`, `read` and `ioctl`
+on `system_data_root_file:dir` and the one ioctl `EXT4_IOC_RESIZE_FS` (0x6610);
+the target-files verifier requires the command, these rules, and no other
+ioctl for that domain on `/data`. The image carries
 8,192 inodes (`BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT`, which a `build/make`
 topic, route `p0002`, forwards to the image builder as it does for the
 read-only partitions), one per 16 KiB, ext4's default ratio. `resize2fs` keeps

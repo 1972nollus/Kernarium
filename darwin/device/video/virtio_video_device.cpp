@@ -4,6 +4,7 @@
 #include "guest_buffers.hpp"
 #include "video_capabilities.hpp"
 #include "vhost_user_protocol.hpp"
+#include "raw_pitch.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -188,21 +189,32 @@ virtio_video_params params(std::uint32_t queue, std::uint32_t format, std::uint3
         p.num_planes = 1;
         p.plane_formats[0].plane_size = maximumPacket;
     } else {
-        const auto y = width * height;
-        const auto cw = (width + 1) / 2;
         const auto ch = (height + 1) / 2;
+        /* Rows lie at the pitch the guest allocator gives a buffer (raw_pitch.hpp),
+         * and the planes keep their tight heights. */
         if (format == VIRTIO_VIDEO_FORMAT_BGRA8888) {
             // One packed plane of 8-bit B, G, R, A samples, one row per line.
+            const auto pitch = rawPitch(4 * width);
             p.num_planes = 1;
-            p.plane_formats[0] = {4 * y, 4 * width};
+            p.plane_formats[0] = {pitch * height, pitch};
         } else if (format == VIRTIO_VIDEO_FORMAT_P010) {
+            // The interleaved chroma rows follow the luma rows in the one plane.
+            const auto pitch = rawPitch(2 * width);
             p.num_planes = 1;
-            p.plane_formats[0] = {2 * y + 4 * cw * ch, 2 * width};
+            p.plane_formats[0] = {pitch * (height + ch), pitch};
+        } else if (format == VIRTIO_VIDEO_FORMAT_YUV420) {
+            const auto lumaPitch = rawPitch(width, rawTriplanarLumaAlignment);
+            const auto chromaPitch = lumaPitch / 2;
+            p.num_planes = 3;
+            p.plane_formats[0] = {lumaPitch * height, lumaPitch};
+            p.plane_formats[1] = {chromaPitch * ch, chromaPitch};
+            p.plane_formats[2] = {chromaPitch * ch, chromaPitch};
         } else {
-            p.num_planes = format == VIRTIO_VIDEO_FORMAT_YUV420 ? 3 : 2;
-            p.plane_formats[0] = {y, width};
-            p.plane_formats[1] = {cw * ch * (p.num_planes == 2 ? 2u : 1u), cw * (p.num_planes == 2 ? 2u : 1u)};
-            if (p.num_planes == 3) p.plane_formats[2] = {cw * ch, cw};
+            // The interleaved chroma rows are as long as the luma rows.
+            const auto pitch = rawPitch(width);
+            p.num_planes = 2;
+            p.plane_formats[0] = {pitch * height, pitch};
+            p.plane_formats[1] = {pitch * ch, pitch};
         }
     }
     return p;
@@ -580,26 +592,37 @@ public:
                 frame.layout == uml::platform::VideoPixelLayout::planarYuv && frame.format.bitDepth == 10)
                 narrowTo8(frame);
             std::vector<std::vector<std::uint8_t>> planes;
+            /* The decoder's rows are tight; the guest's lie at the pitch the
+             * negotiated plane formats state. */
+            const auto& formats = stream.output.plane_formats;
+            const std::size_t width = frame.format.width;
+            const std::size_t chromaWidth = (width + 1) / 2;
             if (stream.output.format == VIRTIO_VIDEO_FORMAT_BGRA8888) {
                 const bool packed = frame.layout == uml::platform::VideoPixelLayout::packedBgra;
                 if (!packed) ++stream.converted;
-                planes.push_back(packed ? std::move(frame.pixels) : packBgra(frame));
+                planes.push_back(padRows(packed ? std::move(frame.pixels) : packBgra(frame), 4 * width,
+                                         formats[0].stride));
             } else if (frame.layout == uml::platform::VideoPixelLayout::packedBgra) {
                 planes.emplace_back(); // a packed frame cannot answer a planar format
             } else if (stream.output.format == VIRTIO_VIDEO_FORMAT_P010) {
-                frame.luma.insert(frame.luma.end(), frame.chroma.begin(), frame.chroma.end());
-                planes.push_back(std::move(frame.luma));
+                auto luma = padRows(std::move(frame.luma), 2 * width, formats[0].stride);
+                const auto chroma = padRows(std::move(frame.chroma), 4 * chromaWidth, formats[0].stride);
+                if (chroma.empty()) luma.clear();
+                else luma.insert(luma.end(), chroma.begin(), chroma.end());
+                planes.push_back(std::move(luma));
             } else if (stream.output.format == VIRTIO_VIDEO_FORMAT_YUV420) {
-                planes.push_back(std::move(frame.luma));
-                planes.emplace_back(frame.chroma.size() / 2);
-                planes.emplace_back(frame.chroma.size() / 2);
-                for (std::size_t i = 0; i < frame.chroma.size() / 2; ++i) {
-                    planes[1][i] = frame.chroma[2 * i];
-                    planes[2][i] = frame.chroma[2 * i + 1];
+                planes.push_back(padRows(std::move(frame.luma), width, formats[0].stride));
+                std::vector<std::uint8_t> u(frame.chroma.size() / 2);
+                std::vector<std::uint8_t> v(frame.chroma.size() / 2);
+                for (std::size_t i = 0; i < u.size(); ++i) {
+                    u[i] = frame.chroma[2 * i];
+                    v[i] = frame.chroma[2 * i + 1];
                 }
+                planes.push_back(padRows(std::move(u), chromaWidth, formats[1].stride));
+                planes.push_back(padRows(std::move(v), chromaWidth, formats[2].stride));
             } else {
-                planes.push_back(std::move(frame.luma));
-                planes.push_back(std::move(frame.chroma));
+                planes.push_back(padRows(std::move(frame.luma), width, formats[0].stride));
+                planes.push_back(padRows(std::move(frame.chroma), 2 * chromaWidth, formats[1].stride));
             }
             bool good = resource.planes.size() == planes.size() && !planes.empty();
             for (std::size_t i = 0; good && i < planes.size(); ++i)

@@ -72,9 +72,38 @@ private:
  * after it returns. While such a view borrows the RAM root, the range stays
  * mapped and goes back to the window's reservation with the last borrowed
  * view, as retired guest RAM does. Otherwise a range inside the window goes
- * back to its reservation at once and any other range is unmapped.
+ * back to its reservation at once and any other range is unmapped. Signed
+ * kernel text the host keeps (keep_signed_kernel_text) stays mapped either way.
  */
 void release_kernel_image(void *address, std::size_t length,
 	bool in_window) noexcept;
+
+/* The loader's placement of the image inside the window: the range is replaced
+ * by the window's reservation in place, except the signed kernel text a
+ * previous load of the image left there, which no mapping can replace. 0, or
+ * -1 with errno set. */
+[[nodiscard]] int reserve_kernel_image(
+	void *address, std::size_t length) noexcept;
+
+/* Keep the signed kernel text the loader aliased at [address, address +
+ * length) for the life of the process. iOS makes the alias permanent, and
+ * macOS keeps it the same way (memory::keep_host_range): no release replaces
+ * it, and the next load of the same image reuses it. False when it cannot be kept. */
+[[nodiscard]] bool keep_signed_kernel_text(
+	void *address, std::size_t length) noexcept;
+
+/* Whether a previous load left exactly this signed kernel text in place. */
+[[nodiscard]] bool signed_kernel_text_kept(
+	const void *address, std::size_t length) noexcept;
+
+/* Whether [image, image + size) is exactly the kernel ELF the process links
+ * into itself as its __TEXT,__uml_elf section: the section of the image that
+ * holds this library (a framework, or the executable that links the library
+ * statically), or of the main executable. That section is read-only and
+ * file-backed, and it stays mapped for as long as its image does, so a caller
+ * may run it in place instead of keeping a copy of it. Any other range is
+ * the caller's own. */
+[[nodiscard]] bool is_embedded_kernel_image(
+	const void *image, std::size_t size) noexcept;
 
 } // namespace uml::runtime

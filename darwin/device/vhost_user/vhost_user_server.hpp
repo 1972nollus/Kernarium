@@ -44,7 +44,9 @@ public:
 
     /* Lets another thread hold back this server's requests: while the gate
      * is closed none is handed to the device, and each stays in its ring
-     * until the gate opens. Call before runConnected(). */
+     * until the gate opens, unless the gate discards them, in which case the
+     * server completes each with the device's answer for a request that did
+     * not run. Call before runConnected(). */
     void setRequestGate(std::shared_ptr<RequestGate> gate);
 
 private:
@@ -140,6 +142,10 @@ private:
     [[nodiscard]] std::vector<DescriptorSegment> descriptorChain(
         const Queue& queue,
         std::uint16_t head);
+    /* The device-readable bytes of a chain, `requestSize` of them. */
+    [[nodiscard]] std::vector<std::uint8_t> readRequest(
+        std::span<const DescriptorSegment> segments,
+        std::size_t requestSize);
     [[nodiscard]] std::uint64_t allocateRequestId();
 
     std::unique_ptr<uml::virtio::VhostUserDevice> device_;

@@ -321,6 +321,38 @@ void write_memory(std::ostream &out)
 	out << "scratch_dirty " << dirty_bytes_of_tags({scratch_tag}) << '\n';
 }
 
+/* The kernel's executable pages, in the native window, and how many of them
+ * are dirty. The loader aliases them from the embedded kernel section, which
+ * are clean file pages; a copy in anonymous memory is dirty. */
+void write_kernel_text(std::ostream &out)
+{
+	std::size_t pages = 0, dirty = 0;
+	mach_vm_address_t address = window_begin;
+	while (address < window_end) {
+		mach_vm_size_t size = 0;
+		natural_t depth = 64;
+		vm_region_submap_info_data_64_t info{};
+		mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
+		if (mach_vm_region_recurse(mach_task_self(), &address, &size, &depth,
+			    reinterpret_cast<vm_region_recurse_info_t>(&info),
+			    &count) != KERN_SUCCESS)
+			break;
+		if (info.is_submap) {
+			++depth;
+			continue;
+		}
+		if (address >= window_end)
+			break;
+		if ((info.protection & VM_PROT_EXECUTE) != 0) {
+			pages += size / vm_page_size;
+			dirty += info.pages_dirtied;
+		}
+		address += size;
+	}
+	out << "kernel_text_pages " << pages << '\n'
+	    << "kernel_text_dirty_pages " << dirty << '\n';
+}
+
 /* Writes `text` as `path`, atomically, after it is all composed: the file
  * being written is a descriptor of the process too. */
 void publish(const std::filesystem::path &path, const std::string &text)
@@ -339,6 +371,7 @@ void write_dump(const std::filesystem::path &path, const std::string &label)
 	std::ostringstream out;
 	out << "label " << label << "\npid " << getpid() << '\n';
 	write_memory(out);
+	write_kernel_text(out);
 	write_threads(out);
 	write_ports(out);
 	write_descriptors(out);

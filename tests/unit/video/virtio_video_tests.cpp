@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "virtio_video_device.hpp"
+#include "raw_pitch.hpp"
 #include "require.hpp"
 #include "scratch_backing.hpp"
 #include "scratch_directory.hpp"
@@ -65,6 +66,14 @@ std::uint8_t patternLumaByte(std::size_t index, bool ten) noexcept
     return patternLuma(std::uint32_t(sample / 64), std::uint32_t(sample % 64));
 }
 
+/* The interleaved chroma of a decoder that varies it, addressed by chroma row
+ * and by sample within the row, so that a chroma row written at the wrong
+ * pitch cannot match. */
+std::uint8_t patternChroma(std::uint32_t row, std::uint32_t sample) noexcept
+{
+    return std::uint8_t(0x40 + (row * 7u + sample) % 0x80u);
+}
+
 /* The BT.601 limited-range conversion a device performs for a client that
  * asked for packed pixels, written independently of the device's own loop so
  * that a test sees placement and colour separately. */
@@ -87,8 +96,9 @@ void convertBt601Limited(std::uint8_t y, std::uint8_t cb, std::uint8_t cr, std::
 class Decoder final : public VideoDecoder {
 public:
     explicit Decoder(bool ten, bool packs = false, bool defers = false,
-                     std::uint32_t width = 64, std::uint32_t height = 64)
-        : ten_(ten), packs_(packs), defers_(defers), width_(width), height_(height) {}
+                     std::uint32_t width = 64, std::uint32_t height = 64, bool variesChroma = false)
+        : ten_(ten), packs_(packs), defers_(defers), width_(width), height_(height),
+          variesChroma_(variesChroma) {}
     /* Reads what the packet declares and decodes nothing, so a caller can
      * report the picture size before it has to choose an output layout. */
     void inspect(std::span<const std::uint8_t> packet) override
@@ -132,9 +142,17 @@ public:
                     auto* out = frame.luma.data() + (std::size_t(row) * width_ + column) * step;
                     for (std::size_t byte = 0; byte < step; ++byte) out[byte] = patternLuma(row, column);
                 }
-            // Flat chroma keeps the converted colour a function of luma alone.
-            frame.chroma.resize(std::size_t(width_) * ((height_ + 1) / 2) * step);
-            for (std::size_t i = 0; i < frame.chroma.size(); ++i) frame.chroma[i] = i % 2 ? 0x91 : 0x27;
+            // Flat chroma keeps the converted colour a function of luma alone. A row of
+            // interleaved chroma holds a pair for every two columns, an odd width's last
+            // pair included.
+            const std::size_t chromaSamples = 2 * std::size_t((width_ + 1) / 2);
+            frame.chroma.resize(chromaSamples * ((height_ + 1) / 2) * step);
+            for (std::size_t i = 0; i < frame.chroma.size(); ++i) {
+                const auto sample = i / step;
+                frame.chroma[i] = variesChroma_
+                    ? patternChroma(std::uint32_t(sample / chromaSamples), std::uint32_t(sample % chromaSamples))
+                    : (i % 2 ? 0x91 : 0x27);
+            }
         }
         frames_.push_back(std::move(frame));
     }
@@ -151,6 +169,7 @@ private:
     unsigned pictures_ {};
     std::uint32_t width_ {64};
     std::uint32_t height_ {64};
+    bool variesChroma_ {};
     VideoPixelLayout layout_ {VideoPixelLayout::planarYuv};
     VideoPixelLayout adopted_ {VideoPixelLayout::planarYuv};
     VideoFormat format_;
@@ -706,7 +725,9 @@ void sharedMemoryCapture()
 void packedCapture(bool decoderPacks, std::uint32_t width = 64,
                    std::uint32_t height = 64)
 {
-    const std::size_t plane = std::size_t(width) * height * 4;
+    // Rows lie at the pitch a guest allocator gives a buffer: whole pixels that fill 16 bytes.
+    const std::size_t pitch = (std::size_t(width) * 4 + 15) / 16 * 16;
+    const std::size_t plane = pitch * height;
     VideoFixture video(7, 3 * page + plane + page, [&](auto) {
         return std::make_unique<Decoder>(false, decoderPacks, false, width, height);
     });
@@ -744,7 +765,7 @@ void packedCapture(bool decoderPacks, std::uint32_t width = 64,
     const auto negotiated = load<virtio_video_get_params_resp>(video.command(get).response).params;
     require(negotiated.format == VIRTIO_VIDEO_FORMAT_BGRA8888, "packed capture was substituted");
     require(negotiated.num_planes == 1, "packed capture is not a single plane");
-    require(negotiated.plane_formats[0].stride == width * 4, "packed capture stride differs");
+    require(negotiated.plane_formats[0].stride == pitch, "packed capture stride differs");
     require(negotiated.plane_formats[0].plane_size == plane, "packed capture plane size differs");
 
     video.attachEncodedInput();
@@ -767,7 +788,7 @@ void packedCapture(bool decoderPacks, std::uint32_t width = 64,
      * the wrong sample, which only a per-row comparison sees. */
     for (unsigned row = 0; row < height; ++row)
         for (unsigned column = 0; column < width; ++column) {
-            const auto* got = video.memory.data() + base + (std::size_t(row) * width + column) * 4;
+            const auto* got = video.memory.data() + base + std::size_t(row) * pitch + column * 4;
             std::uint8_t expected[4] = {std::uint8_t(row), std::uint8_t(column),
                                         std::uint8_t(row + column), 0xff};
             if (!decoderPacks) convertBt601Limited(patternLuma(row, column), 0x27, 0x91, expected);
@@ -778,8 +799,123 @@ void packedCapture(bool decoderPacks, std::uint32_t width = 64,
                 require(std::abs(int(got[channel]) - int(expected[channel])) <= slack,
                         "packed pixels differ");
         }
+    require(video.memory[base + plane] == 0xcc, "packed frame ran past its plane");
     video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 7}});
     video.device.reset();
+}
+
+/* One plane of a raw capture as the guest lays it out: where it starts, how
+ * far apart its rows are, and what it holds per row. */
+struct CapturePlane {
+    std::uint32_t pitch;
+    std::uint32_t rows;
+    std::uint32_t rowBytes;
+};
+
+/* Planar capture at a width that is not a multiple of the allocator's row
+ * alignment, where every row after the first lands in the wrong place if the
+ * device states or writes tight rows. The expected pitches are spelled out
+ * here, not taken from the device. The first byte past each plane is a guard
+ * the device must leave alone. */
+void unalignedPlanar(unsigned format, std::uint32_t width, std::uint32_t height)
+{
+    const bool ten = format == VIRTIO_VIDEO_FORMAT_P010;
+    const std::uint32_t cw = (width + 1) / 2, ch = (height + 1) / 2;
+    std::vector<CapturePlane> expected;
+    if (format == VIRTIO_VIDEO_FORMAT_P010) {
+        const auto pitch = (2 * width + 15) / 16 * 16;
+        expected = {{pitch, height + ch, 0}};
+    } else if (format == VIRTIO_VIDEO_FORMAT_YUV420) {
+        const auto luma = (width + 31) / 32 * 32;
+        expected = {{luma, height, width}, {luma / 2, ch, cw}, {luma / 2, ch, cw}};
+    } else {
+        const auto pitch = (width + 15) / 16 * 16;
+        expected = {{pitch, height, width}, {pitch, ch, 2 * cw}};
+    }
+    std::size_t total = 3 * page;
+    std::vector<std::uint64_t> bases;
+    for (const auto& plane : expected) {
+        bases.push_back(total);
+        total += (std::size_t(plane.pitch) * plane.rows + page) / page * page + page;
+    }
+    VideoFixture video(7, total, [&](auto) {
+        return std::make_unique<Decoder>(ten, false, false, width, height, true);
+    }, {{VideoCodec::h264, ten ? VideoProfile::h264High10 : VideoProfile::h264High, 4096, 2304, 51,
+         ten ? 10u : 8u}});
+    const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
+    const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    video.createStream();
+    video.setOutputFormat(format, width, height);
+    virtio_video_get_params get {};
+    get.hdr = {VIRTIO_VIDEO_CMD_GET_PARAMS, 7};
+    get.queue_type = output;
+    const auto negotiated = load<virtio_video_get_params_resp>(video.command(get).response).params;
+    require(negotiated.format == format && negotiated.num_planes == expected.size(),
+            "planar capture was substituted");
+    Planes planes;
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        require(negotiated.plane_formats[i].stride == expected[i].pitch, "capture stride differs");
+        require(negotiated.plane_formats[i].plane_size == expected[i].pitch * expected[i].rows,
+                "capture plane size differs");
+        planes.push_back({{bases[i], negotiated.plane_formats[i].plane_size, {}}});
+    }
+
+    video.attachEncodedInput();
+    require(load<virtio_video_cmd_hdr>(video.attach(output, 2, planes).response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
+            "capture attach failed");
+    const auto capture = video.queueCommand(output, 2);
+    const auto captureRequest = video.next;
+    require(video.command(capture).action == VhostUserQueueAction::defer, "capture did not wait for input");
+    const auto packet = video.queueCommand(input, 1, 5, 7654321);
+    require(load<virtio_video_resource_queue_resp>(video.command(packet).response).flags == 0, "decode input failed");
+    VhostUserQueueCompletion completion;
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == captureRequest,
+            "missing capture completion");
+    require(load<virtio_video_resource_queue_resp>(completion.response).flags == 0, "frame was not delivered");
+
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        const auto& plane = expected[i];
+        for (std::uint32_t row = 0; row < plane.rows; ++row) {
+            const auto* got = video.memory.data() + bases[i] + std::size_t(row) * plane.pitch;
+            if (ten) {
+                // One plane: the luma rows, then the interleaved chroma rows, at one pitch.
+                for (std::uint32_t column = 0; column < (row < height ? width : 2 * cw); ++column)
+                    for (std::size_t byte = 0; byte < 2; ++byte)
+                        require(got[column * 2 + byte] ==
+                                    (row < height ? patternLuma(row, column) : patternChroma(row - height, column)),
+                                "P010 picture differs");
+                continue;
+            }
+            for (std::uint32_t column = 0; column < plane.rowBytes; ++column) {
+                std::uint8_t want;
+                if (i == 0) want = patternLuma(row, column);
+                else if (format == VIRTIO_VIDEO_FORMAT_YUV420)
+                    want = patternChroma(row, 2 * column + (i == 2 ? 1 : 0));
+                else want = patternChroma(row, column);
+                require(got[column] == want, "planar picture differs");
+            }
+        }
+        require(video.memory[bases[i] + std::size_t(plane.pitch) * plane.rows] == 0xcc,
+                "a plane was written past its end");
+    }
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 7}});
+    video.device.reset();
+}
+
+/* The rule, as vectors that do not depend on the function that implements it. */
+void rawPitchRule()
+{
+    require(rawPitch(340) == 352 && rawPitch(520) == 528 && rawPitch(352) == 352 && rawPitch(1) == 16,
+            "8-bit semi-planar pitch differs");
+    require(rawPitch(2 * 340) == 688 && rawPitch(2 * 520) == 1040 && rawPitch(2 * 99) == 208,
+            "10-bit pitch differs");
+    require(rawPitch(4 * 341) == 1376 && rawPitch(4 * 64) == 256, "packed pitch differs");
+    require(rawPitch(340, rawTriplanarLumaAlignment) == 352 && rawPitch(99, rawTriplanarLumaAlignment) == 128,
+            "triplanar luma pitch differs");
+    const std::vector<std::uint8_t> tight(6, 7);
+    require(padRows(tight, 3, 3) == tight, "a tight picture was copied");
+    require(padRows(tight, 3, 4) == std::vector<std::uint8_t>({7, 7, 7, 0, 7, 7, 7, 0}), "rows were not padded");
+    require(padRows(tight, 3, 2).empty() && padRows(tight, 4, 4).empty(), "a skewed picture was accepted");
 }
 
 /* A client that changes its capture format after frames have already been
@@ -1771,6 +1907,16 @@ int main()
         // The geometry a browser actually decodes, where a stride error shows.
         for (const bool decoderPacks : {true, false})
             packedCapture(decoderPacks, 1920, 1200);
+        // Widths that are not a multiple of the allocator's row alignment.
+        for (const bool decoderPacks : {true, false}) {
+            packedCapture(decoderPacks, 341, 30);
+            packedCapture(decoderPacks, 99, 77);
+        }
+        rawPitchRule();
+        for (const auto format : {VIRTIO_VIDEO_FORMAT_NV12, VIRTIO_VIDEO_FORMAT_YUV420, VIRTIO_VIDEO_FORMAT_P010})
+            for (const auto& [width, height] : {std::pair{340u, 180u}, std::pair{520u, 38u}, std::pair{99u, 77u},
+                                                std::pair{17u, 5u}, std::pair{1000u, 12u}})
+                unalignedPlanar(format, width, height);
         lateNegotiation();
         inputBackpressure();
         unsettledHoldIsBounded();

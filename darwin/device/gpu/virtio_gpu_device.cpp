@@ -587,6 +587,27 @@ std::vector<std::uint8_t> VirtioGpuDevice::response(
     return bytes;
 }
 
+std::vector<std::uint8_t> VirtioGpuDevice::discardedResponse(
+    std::span<const std::uint8_t> request,
+    bool cursorQueue) const
+{
+    const auto* header = readStructure<protocol::GpuControlHeader>(request);
+    if (cursorQueue || header == nullptr)
+        return {};
+    const protocol::GpuControlHeader answer {
+        .type = static_cast<std::uint32_t>(protocol::GpuResponse::okNoData),
+        .flags = header->flags &
+            (protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex),
+        .fenceId = header->fenceId,
+        .contextId = header->contextId,
+        .ringIndex = header->ringIndex,
+        .padding = {},
+    };
+    std::vector<std::uint8_t> bytes(sizeof(answer));
+    std::memcpy(bytes.data(), &answer, sizeof(answer));
+    return bytes;
+}
+
 std::vector<std::uint8_t> VirtioGpuDevice::displayInfo(
     const protocol::GpuControlHeader& request) const
 {

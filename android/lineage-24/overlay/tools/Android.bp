@@ -92,3 +92,18 @@ cc_binary {
         "-Wextra",
     ],
 }
+
+cc_binary {
+    name: "kernarium_ahb_rgba_lock",
+    srcs: ["kernarium_ahb_rgba_lock.cpp"],
+    shared_libs: [
+        "libEGL",
+        "libGLESv3",
+        "libnativewindow",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wextra",
+    ],
+}

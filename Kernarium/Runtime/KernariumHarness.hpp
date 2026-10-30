@@ -49,7 +49,9 @@ public:
     }
 
     /* The relay's virtio_uml.device argument, or empty without a payload.
-     * Its connection name can be taken once. */
+     * A relay serves one guest: its connection name can be taken once, so a
+     * guest that restarts is given a new relay (the old one ends with the
+     * guest it served). */
     [[nodiscard]] std::string relayDeviceArgument();
 
 private:
@@ -57,7 +59,9 @@ private:
 
     std::vector<std::byte> payload_;
     std::string systemdUnit_;
+    std::mutex* stdoutMutex_ {};
     std::unique_ptr<ArtifactRelay> relay_;
+    bool relayTaken_ {};
 };
 
 } // namespace kernarium::harness

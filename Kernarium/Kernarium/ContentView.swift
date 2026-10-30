@@ -51,6 +51,10 @@ struct ContentView: View {
                 if case let .ended(result) = launcher.phase {
                     GuestEndedNotice(end: GuestRunEnd(result: result))
                         .padding()
+                } else if launcher.restarting {
+                    GuestRestartingBadge()
+                        .padding()
+                        .frame(maxHeight: .infinity, alignment: .top)
                 } else if let restart = backgroundSession.restart {
                     GuestRestartedNotice(restart: restart) {
                         backgroundSession.dismissRestartNotice()
@@ -117,6 +121,7 @@ struct ContentView: View {
         .onChange(of: launcher.phase) { _, phase in
             GuestPictureInPicture.shared.guestRunningChanged(phase == .running)
             refreshKeepRunning()
+            if phase == .running { startJobIfAutomationAsked() }
             // Nothing is left to type into, and the keyboard would cover
             // the notice.
             guard case .ended = phase else { return }
@@ -154,17 +159,35 @@ struct ContentView: View {
             identifier: "backgroundJobButton"
         ) {
             if backgroundJob.state == .idle {
-                guard let guest = launcher.runningGuestName else { return }
-                backgroundJob.start(
-                    limitMinutes: BackgroundSettings().limitMinutes(
-                        forGuest: guest
-                    ),
-                    guestName: (guest as NSString).deletingPathExtension
-                )
+                startKeepRunningJob()
             } else {
                 backgroundJob.cancel()
             }
         }
+    }
+
+    /// Submits the job for the running guest, as the button does.
+    private func startKeepRunningJob() {
+        guard let guest = launcher.runningGuestName else { return }
+        backgroundJob.start(
+            limitMinutes: BackgroundSettings().limitMinutes(forGuest: guest),
+            guestName: (guest as NSString).deletingPathExtension
+        )
+    }
+
+    /// An automation launch can ask for the job as the guest starts, the one
+    /// request iOS accepts while the application is in front, so a driver
+    /// without the UI automation host can reach a guest that runs behind it.
+    /// Only a runtime built for automation answers yes, and only a guest in
+    /// the keep-running mode takes a job.
+    private func startJobIfAutomationAsked() {
+        guard BackgroundJob.startsWithGuest(
+            asked: kernarium_runtime_loader_automation_job_at_start() != 0,
+            mode: keepRunningChosen ? .keepRunning : .off,
+            state: backgroundJob.state
+        ) else { return }
+        print("Kernarium: automation starts the background job")
+        startKeepRunningJob()
     }
 
     private var keepRunningLabel: String {
@@ -325,19 +348,77 @@ enum GuestViewMode {
 struct GuestRunEnd: Equatable {
     let result: Int32
 
+    /// The runtime stopped a guest that restarted itself again and again
+    /// within seconds of booting. A guest that restarts once in a while is
+    /// booted again by the runtime and never reaches this notice.
+    var restartedInALoop: Bool {
+        result == Int32(KERNARIUM_RUNTIME_RESULT_RESTART_LOOP)
+    }
+
     var title: String {
-        result == 0 ? "Guest Shut Down" : "Guest Stopped with an Error"
+        if restartedInALoop { return "Guest Kept Restarting" }
+        return result == 0 ? "Guest Shut Down" : "Guest Stopped with an Error"
     }
 
     var message: String {
         let relaunch = "Relaunch Kernarium to start it again."
+        if restartedInALoop {
+            return "The guest restarted itself again and again within " +
+                "seconds of booting, so Kernarium stopped booting it. " +
+                relaunch
+        }
         return result == 0
             ? relaunch
             : "The runtime returned \(result). \(relaunch)"
     }
 
     var systemName: String {
-        result == 0 ? "power" : "exclamationmark.triangle"
+        if restartedInALoop { return "arrow.trianglehead.2.clockwise.rotate.90" }
+        return result == 0 ? "power" : "exclamationmark.triangle"
+    }
+}
+
+/// A restart the guest asked for, as the runtime reports it. The guest runs
+/// on after it, in the same launch.
+enum GuestRestartEvent: Equatable {
+    /// The guest asked to restart and is gone; the next boot is being
+    /// prepared, and waits while the GPU is held or the guest is paused.
+    case began(restart: Int)
+    /// The restarted guest's console answers.
+    case booted(restart: Int)
+
+    init?(event: UInt32, restartCount: UInt32) {
+        switch Int(event) {
+        case KERNARIUM_RUNTIME_RESTART_BEGAN:
+            self = .began(restart: Int(restartCount))
+        case KERNARIUM_RUNTIME_RESTART_BOOTED:
+            self = .booted(restart: Int(restartCount))
+        default:
+            return nil
+        }
+    }
+}
+
+/// Whether the guest is between two boots. A restart the guest asked for
+/// shows no notice, only a badge while the next boot is under way.
+struct GuestRestartIndicator: Equatable {
+    private(set) var restarting = false
+    private(set) var restarts = 0
+
+    mutating func apply(_ event: GuestRestartEvent) {
+        switch event {
+        case let .began(restart):
+            restarts = max(restarts, restart)
+            restarting = true
+        case let .booted(restart):
+            // An event of an earlier restart ends nothing of a later one.
+            if restart >= restarts { restarting = false }
+        }
+    }
+
+    /// The run ended, so nothing restarts any more.
+    mutating func runEnded() {
+        restarting = false
     }
 }
 
@@ -355,6 +436,25 @@ private struct GuestEndedNotice: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("guestEndedNotice")
+    }
+}
+
+/// Shown over the guest views while a guest that restarted itself boots
+/// again. It takes no input and goes by itself when the new guest's console
+/// answers.
+private struct GuestRestartingBadge: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+            Text("Restarting")
+                .font(.subheadline)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .glassEffect(.regular, in: .capsule)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("guestRestartingBadge")
     }
 }
 
@@ -1500,9 +1600,11 @@ private func runGuest(
     }
 }
 
-/// Where this launch's guest is. A launch runs its guest at most once: the
-/// runtime cannot boot a second guest in the same process, so once the run
-/// returns the application can only ask to be relaunched.
+/// Where this launch's guest is. A launch makes one run, and the runtime boots
+/// a guest that restarts itself again inside it, so the phase stays `running`
+/// across restarts. Once the run returns the guest is over: it powered off, was
+/// stopped, failed, or kept restarting, and the application can only ask to be
+/// relaunched.
 enum GuestRunPhase: Equatable {
     /// No run has started. A failure before the run begins, such as a
     /// missing rootfs, leaves the launch here, and a later layout retries.
@@ -1517,7 +1619,13 @@ final class EmulatorLauncher: ObservableObject {
     static let shared = EmulatorLauncher(configuration: .load())
 
     private let configuration: EmulatorConfiguration
+    /// The job that keeps the guest running in the background, which ends
+    /// with the run.
+    private let job: BackgroundJob
     @Published private(set) var phase = GuestRunPhase.idle
+    /// Whether the guest is between two boots.
+    @Published private(set) var restarting = false
+    private var restartIndicator = GuestRestartIndicator()
     /// The name the running guest's own settings are stored under.
     private(set) var runningGuestName: String?
     private(set) var runningGuestIsAndroid = false
@@ -1525,8 +1633,10 @@ final class EmulatorLauncher: ObservableObject {
 
     var retinaMode: Bool { configuration.retinaMode }
 
-    private init(configuration: EmulatorConfiguration) {
+    /// The unit tests make launchers of their own, with a job of their own.
+    init(configuration: EmulatorConfiguration, job: BackgroundJob? = nil) {
         self.configuration = configuration
+        self.job = job ?? .shared
     }
 
     fileprivate func start(
@@ -1551,6 +1661,19 @@ final class EmulatorLauncher: ObservableObject {
         ) == 0 else {
             print("Kernarium: cannot load the runtime")
             return
+        }
+        // A guest that restarts itself is booted again inside the run; the
+        // runtime says when, so the application can show it and apply what
+        // belongs to a kernel to the new one.
+        // The loader delivers each event on the main queue.
+        kernarium_runtime_loader_set_restart_handler {
+            @Sendable event, restartCount in
+            guard let restart = GuestRestartEvent(
+                event: event, restartCount: restartCount
+            ) else { return }
+            MainActor.assumeIsolated {
+                EmulatorLauncher.shared.guestRestarted(restart)
+            }
         }
         // A Microphone setting the user turned on earlier follows the guest;
         // a setting that is off leaves the microphone alone.
@@ -1657,11 +1780,28 @@ final class EmulatorLauncher: ObservableObject {
         )
     }
 
-    fileprivate func finished(result: Int32) {
+    fileprivate func guestRestarted(_ event: GuestRestartEvent) {
+        guard phase == .running else { return }
+        restartIndicator.apply(event)
+        restarting = restartIndicator.restarting
+        print("Kernarium: \(event)")
+        if case .booted = event {
+            // What the policy applied to the old kernel belongs to a kernel.
+            GuestPersistence.shared.background?.guestDidRestart()
+        }
+    }
+
+    func finished(result: Int32) {
         stopThermalObservation()
+        restartIndicator.runEnded()
+        restarting = false
         phase = .ended(result: result)
         UIApplication.shared.isIdleTimerDisabled = false
         print("Kernarium: runtime returned \(result)")
+        // The job keeps a guest running in the background. A guest whose run
+        // is over has nothing left to keep, whichever way it ended, and a job
+        // that went on would hold the application alive for no reason.
+        job.guestRunEnded(result: result)
     }
 
     func stop() {

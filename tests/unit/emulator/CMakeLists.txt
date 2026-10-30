@@ -42,6 +42,31 @@ target_include_directories(uml_emulator_run_end_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
 uml_add_unit_test(NAME emulator-run-end COMMAND uml_emulator_run_end_tests)
 
+# Creation copies the kernel image, except the __TEXT,__uml_elf section the
+# process links into itself, which is run in place.
+add_executable(uml_emulator_kernel_image_ownership_tests
+    kernel_image_ownership_tests.cpp)
+target_link_libraries(uml_emulator_kernel_image_ownership_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemorySharedBacking
+    uml_emulator_test_variant)
+uml_add_unit_test(
+    NAME emulator-kernel-image-ownership
+    COMMAND uml_emulator_kernel_image_ownership_tests)
+
+# The limit a launch states for the process, and the budgets that derive from
+# it.
+add_executable(uml_emulator_memory_limit_tests memory_limit_tests.cpp)
+target_link_libraries(uml_emulator_memory_limit_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemorySharedBacking
+    uml_emulator_test_variant)
+target_include_directories(uml_emulator_memory_limit_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME emulator-memory-limit
+    COMMAND uml_emulator_memory_limit_tests)
+
 # The guard that ends a loop of restarts the guest never boots past.
 add_executable(uml_restart_loop_guard_tests restart_loop_guard_tests.cpp)
 target_include_directories(uml_restart_loop_guard_tests PRIVATE
