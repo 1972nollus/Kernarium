@@ -33,10 +33,11 @@ again. A buffer holding only parameter sets carries no frame-type flag.
 
 The raw queue's formats follow the device: the ones it accepts with the
 current coded format, a plane layout named by the device's plane count,
-the tight line lengths the device reads and the size the visible
-rectangle gives the coded stream. A packed raw format is listed under the
-name of its memory order, so RGBA8888 is RGBA32 ('AB24') where the
-decoder's table keeps its older RGB32. The frame interval and the
+the line lengths the device reads, at the pitch a guest allocator gives
+a buffer, which TRY_FMT predicts as S_FMT sets it, and the size the
+visible rectangle gives the coded stream. A packed raw format is listed
+under the name of its memory order, so RGBA8888 is RGBA32 ('AB24') where
+the decoder's table keeps its older RGB32. The frame interval and the
 colorimetry cross the wire in the stream-information commands.
 
 The shared command paths gain what the encoder needs: a response length
@@ -45,17 +46,17 @@ the data size of a completed coded buffer.
 ---
  drivers/media/virtio/Kconfig                |    6 +-
  drivers/media/virtio/Makefile               |    1 +
- drivers/media/virtio/README                 |   41 +-
+ drivers/media/virtio/README                 |   42 +-
  drivers/media/virtio/virtio_video.h         |  118 +-
  drivers/media/virtio/virtio_video_caps.c    |   18 +-
  drivers/media/virtio/virtio_video_ctrls.c   |  414 +++++
  drivers/media/virtio/virtio_video_device.c  |   69 +-
  drivers/media/virtio/virtio_video_driver.c  |   21 +-
- drivers/media/virtio/virtio_video_enc.c     | 1532 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_enc.c     | 1536 +++++++++++++++++++
  drivers/media/virtio/virtio_video_helpers.c |   15 +-
  drivers/media/virtio/virtio_video_vq.c      |  306 +++-
  include/uapi/linux/virtio_video.h           |  157 +-
- 12 files changed, 2665 insertions(+), 33 deletions(-)
+ 12 files changed, 2670 insertions(+), 33 deletions(-)
  create mode 100644 drivers/media/virtio/virtio_video_ctrls.c
  create mode 100644 drivers/media/virtio/virtio_video_enc.c
 
@@ -89,10 +90,10 @@ index 674cca853cf2462ddca7972e5b3bed3e551d2336..0774e54bd38c71f00334d53c337b5b3d
  	virtio_video_caps.o virtio_video_helpers.o \
  	virtio_video_blob.o
 diff --git a/drivers/media/virtio/README b/drivers/media/virtio/README
-index abee8bfb14e3050308ea74e38289a63657ae974f..cbb7e8104d2b905ba180f1645706f315a6378b64 100644
+index 00c05eebdc808d37f4f84517e74c9e002acb3d22..d928f9d09e6d96b4a161cd4c26847f3046b05c4e 100644
 --- a/drivers/media/virtio/README
 +++ b/drivers/media/virtio/README
-@@ -1,17 +1,46 @@
+@@ -1,14 +1,14 @@
 -Darwin UML stateful decoder
 +Darwin UML stateful decoder and encoder
  
@@ -111,8 +112,9 @@ index abee8bfb14e3050308ea74e38289a63657ae974f..cbb7e8104d2b905ba180f1645706f315
 +10-bit output. The canonical wire declarations are
 +kernel/common/video/virtio_video.h in the owning Darwin host repository.
  
- A V4L2_MEMORY_DMABUF capture buffer may be any dma-buf: one the decoder's own
- queue exported, guest memory from a heap or another driver, or one holding all
+ A buffer reaches the device in a RESOURCE_ATTACH command with one scatter list
+ per plane, and a list is as long as the buffer has physically separate pieces:
+@@ -26,3 +26,33 @@ queue exported, guest memory from a heap or another driver, or one holding all
  of a buffer's planes, which follow one another at their negotiated sizes. The
  lengths a client states for the planes may be those sizes, the dma-buf's size
  or zero, because only the dma-buf bounds where the planes lie.
@@ -125,8 +127,9 @@ index abee8bfb14e3050308ea74e38289a63657ae974f..cbb7e8104d2b905ba180f1645706f315
 +  coded format is set first; the raw formats then listed are the ones the
 +  device accepts with it. A raw format the device takes both as one buffer
 +  for all planes and as one buffer per plane is listed under both V4L2
-+  names. The device's line lengths are tight, so a client's bytesperline is
-+  not a request the device honors and S_FMT answers with the device's.
++  names. The device decides the line lengths, at the pitch a guest allocator
++  gives a buffer, so a client's bytesperline is not a request the device
++  honors and TRY_FMT and S_FMT answer with the device's.
 +- Visible rectangle. S_SELECTION CROP on OUTPUT is the coded size, which
 +  CAPTURE reports. S_PARM sets the frame interval and S_FMT on OUTPUT the
 +  colorimetry, both through the stream-information commands; CAPTURE reports
@@ -146,7 +149,7 @@ index abee8bfb14e3050308ea74e38289a63657ae974f..cbb7e8104d2b905ba180f1645706f315
 +  holding only parameter sets (header mode SEPARATE) carries no frame-type
 +  flag.
 diff --git a/drivers/media/virtio/virtio_video.h b/drivers/media/virtio/virtio_video.h
-index 826fcf95c06abf96f7e516e0a822b1d874d62a23..baf0265e31d8098a7b01855c07ae784afeba95a9 100644
+index a21bdce03003a64870a068b3540a261a2ebcf7a4..e95160addc0f9579ce96f06e31c403974f4861ff 100644
 --- a/drivers/media/virtio/virtio_video.h
 +++ b/drivers/media/virtio/virtio_video.h
 @@ -48,6 +48,14 @@ struct video_format_frame {
@@ -199,7 +202,7 @@ index 826fcf95c06abf96f7e516e0a822b1d874d62a23..baf0265e31d8098a7b01855c07ae784a
  struct virtio_video_device;
  struct virtio_video_vbuffer;
  
-@@ -160,6 +196,13 @@ enum video_stream_state {
+@@ -184,6 +220,13 @@ enum video_stream_state {
  	STREAM_STATE_ERROR,
  };
  
@@ -213,7 +216,7 @@ index 826fcf95c06abf96f7e516e0a822b1d874d62a23..baf0265e31d8098a7b01855c07ae784a
  struct virtio_video_stream {
  	uint32_t stream_id;
  	atomic_t state;
-@@ -171,6 +214,28 @@ struct virtio_video_stream {
+@@ -195,6 +238,28 @@ struct virtio_video_stream {
  	struct video_format_info out_info;
  	struct video_control_info control;
  	struct video_format_frame *current_frame;
@@ -242,7 +245,7 @@ index 826fcf95c06abf96f7e516e0a822b1d874d62a23..baf0265e31d8098a7b01855c07ae784a
  };
  
  struct virtio_video_device {
-@@ -190,6 +255,9 @@ struct virtio_video_device {
+@@ -214,6 +279,9 @@ struct virtio_video_device {
  	uint32_t max_caps_len;
  	uint32_t max_resp_len;
  
@@ -252,7 +255,7 @@ index 826fcf95c06abf96f7e516e0a822b1d874d62a23..baf0265e31d8098a7b01855c07ae784a
  	bool has_iommu;
  	bool supp_non_contig;
  
-@@ -218,6 +286,11 @@ struct virtio_video_device {
+@@ -242,6 +310,11 @@ struct virtio_video_device {
  	struct list_head output_fmt_list;
  
  	struct list_head controls_fmt_list;
@@ -264,7 +267,7 @@ index 826fcf95c06abf96f7e516e0a822b1d874d62a23..baf0265e31d8098a7b01855c07ae784a
  	struct virtio_video_device_ops *ops;
  };
  
-@@ -225,13 +298,18 @@ struct virtio_video_device_ops {
+@@ -249,13 +322,18 @@ struct virtio_video_device_ops {
  	int (*init_ctrls)(struct virtio_video_stream *stream);
  	int (*init_queues)(void *priv, struct vb2_queue *src_vq,
  			   struct vb2_queue *dst_vq);
@@ -283,7 +286,7 @@ index 826fcf95c06abf96f7e516e0a822b1d874d62a23..baf0265e31d8098a7b01855c07ae784a
  };
  
  static inline gfp_t
-@@ -323,6 +401,7 @@ void virtio_video_device_deinit(struct virtio_video_device *vvd);
+@@ -347,6 +425,7 @@ void virtio_video_device_deinit(struct virtio_video_device *vvd);
  void virtio_video_device_free(struct virtio_video_device *vvd);
  
  int virtio_video_dec_init(struct virtio_video_device *vvd);
@@ -291,7 +294,7 @@ index 826fcf95c06abf96f7e516e0a822b1d874d62a23..baf0265e31d8098a7b01855c07ae784a
  
  void virtio_video_stream_id_get(struct virtio_video_device *vvd,
  				struct virtio_video_stream *stream,
-@@ -375,6 +454,27 @@ int virtio_video_cmd_get_control(struct virtio_video_device *vvd,
+@@ -405,6 +484,27 @@ int virtio_video_cmd_get_control(struct virtio_video_device *vvd,
  				 struct virtio_video_stream *stream,
  				 enum virtio_video_control_type control);
  
@@ -319,7 +322,7 @@ index 826fcf95c06abf96f7e516e0a822b1d874d62a23..baf0265e31d8098a7b01855c07ae784a
  void virtio_video_queue_res_chg_event(struct virtio_video_stream *stream);
  void virtio_video_queue_eos_event(struct virtio_video_stream *stream);
  void virtio_video_handle_error(struct virtio_video_stream *stream);
-@@ -386,7 +486,8 @@ void virtio_video_event_cb(struct virtqueue *vq);
+@@ -416,7 +516,8 @@ void virtio_video_event_cb(struct virtqueue *vq);
  void virtio_video_process_events(struct work_struct *work);
  
  void virtio_video_buf_done(struct virtio_video_buffer *virtio_vb,
@@ -329,7 +332,7 @@ index 826fcf95c06abf96f7e516e0a822b1d874d62a23..baf0265e31d8098a7b01855c07ae784a
  int virtio_video_queue_setup(struct vb2_queue *vq, unsigned int *num_buffers,
  			     unsigned int *num_planes, unsigned int sizes[],
  			     struct device *alloc_devs[]);
-@@ -439,4 +540,19 @@ int virtio_video_stream_get_params(struct virtio_video_device *vvd,
+@@ -471,4 +572,19 @@ int virtio_video_stream_get_params(struct virtio_video_device *vvd,
  int virtio_video_stream_get_controls(struct virtio_video_device *vvd,
  				     struct virtio_video_stream *stream);
  
@@ -801,10 +804,10 @@ index 0000000000000000000000000000000000000000..d3f6fbd6c3accb83412ab9d13bbefd94
 +	}
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
-index 6366573fe8202928926b44b3b28f318a5e81652b..67c11fd0406379af6f00ddfbdf30d31a871d5e9b 100644
+index 26d13af6e45a172137c5f9104c2bd9258f366657..c5890d5ffd08efc55661477756ad3b7a6cb1ae2e 100644
 --- a/drivers/media/virtio/virtio_video_device.c
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -437,7 +437,8 @@ void virtio_video_buf_queue(struct vb2_buffer *vb)
+@@ -449,7 +449,8 @@ void virtio_video_buf_queue(struct vb2_buffer *vb)
  		/* Nothing else would ever return it, so its queue never stops. */
  		if (ret != -ENODEV)
  			v4l2_err(&vvd->v4l2_dev, "failed to queue buffer\n");
@@ -814,7 +817,7 @@ index 6366573fe8202928926b44b3b28f318a5e81652b..67c11fd0406379af6f00ddfbdf30d31a
  		return;
  	}
  
-@@ -933,6 +934,10 @@ int virtio_video_queue_release_buffers(struct virtio_video_stream *stream,
+@@ -949,6 +950,10 @@ int virtio_video_queue_release_buffers(struct virtio_video_stream *stream,
  	struct virtio_video_device *vvd = to_virtio_vd(stream->video_dev);
  	struct vb2_v4l2_buffer *v4l2_vb;
  
@@ -825,7 +828,7 @@ index 6366573fe8202928926b44b3b28f318a5e81652b..67c11fd0406379af6f00ddfbdf30d31a
  	ret = virtio_video_cmd_queue_clear(vvd, stream, queue_type);
  	if (ret) {
  		/* A removed device has already returned every buffer. */
-@@ -955,7 +960,8 @@ int virtio_video_queue_release_buffers(struct virtio_video_stream *stream,
+@@ -971,7 +976,8 @@ int virtio_video_queue_release_buffers(struct virtio_video_stream *stream,
  }
  
  void virtio_video_buf_done(struct virtio_video_buffer *virtio_vb,
@@ -835,7 +838,7 @@ index 6366573fe8202928926b44b3b28f318a5e81652b..67c11fd0406379af6f00ddfbdf30d31a
  {
  	int i;
  	enum vb2_buffer_state done_state = VB2_BUF_STATE_DONE;
-@@ -1002,10 +1008,30 @@ void virtio_video_buf_done(struct virtio_video_buffer *virtio_vb,
+@@ -1018,10 +1024,30 @@ void virtio_video_buf_done(struct virtio_video_buffer *virtio_vb,
  	}
  
  	if (!V4L2_TYPE_IS_OUTPUT(vb2_queue->type)) {
@@ -870,7 +873,7 @@ index 6366573fe8202928926b44b3b28f318a5e81652b..67c11fd0406379af6f00ddfbdf30d31a
  	}
  
  	v4l2_m2m_buf_done(v4l2_vb, done_state);
-@@ -1052,13 +1078,19 @@ static int virtio_video_device_open(struct file *file)
+@@ -1068,13 +1094,19 @@ static int virtio_video_device_open(struct file *file)
  	if (ret)
  		goto err_stream_destroy;
  
@@ -891,7 +894,7 @@ index 6366573fe8202928926b44b3b28f318a5e81652b..67c11fd0406379af6f00ddfbdf30d31a
  	mutex_init(&stream->vq_mutex);
  	v4l2_fh_init(&stream->fh, video_dev);
  	stream->fh.ctrl_handler = &stream->ctrl_handler;
-@@ -1098,6 +1130,7 @@ static int virtio_video_device_open(struct file *file)
+@@ -1114,6 +1146,7 @@ static int virtio_video_device_open(struct file *file)
  	virtio_video_cmd_stream_destroy(vvd, stream_id);
  err_stream_create:
  	virtio_video_stream_id_put(vvd, stream_id);
@@ -899,7 +902,7 @@ index 6366573fe8202928926b44b3b28f318a5e81652b..67c11fd0406379af6f00ddfbdf30d31a
  	kfree(stream);
  	return ret;
  }
-@@ -1119,6 +1152,7 @@ static int virtio_video_device_release(struct file *file)
+@@ -1135,6 +1168,7 @@ static int virtio_video_device_release(struct file *file)
  	virtio_video_cmd_stream_destroy(vvd, stream->stream_id);
  	virtio_video_stream_id_put(vvd, stream->stream_id);
  
@@ -907,7 +910,7 @@ index 6366573fe8202928926b44b3b28f318a5e81652b..67c11fd0406379af6f00ddfbdf30d31a
  	kfree(stream);
  
  	mutex_unlock(video_dev->lock);
-@@ -1242,19 +1276,27 @@ int virtio_video_device_init(struct virtio_video_device *vvd)
+@@ -1258,19 +1292,27 @@ int virtio_video_device_init(struct virtio_video_device *vvd)
  	vd->release = video_device_release_empty;
  
  	/* Use the selection API instead */
@@ -938,7 +941,7 @@ index 6366573fe8202928926b44b3b28f318a5e81652b..67c11fd0406379af6f00ddfbdf30d31a
  
  	ret = virtio_video_parse_virtio_capabilities(vvd, input_resp_buf,
  						     output_resp_buf);
-@@ -1263,7 +1305,10 @@ int virtio_video_device_init(struct virtio_video_device *vvd)
+@@ -1279,7 +1321,10 @@ int virtio_video_device_init(struct virtio_video_device *vvd)
  		goto parse_cap_err;
  	}
  
@@ -950,7 +953,7 @@ index 6366573fe8202928926b44b3b28f318a5e81652b..67c11fd0406379af6f00ddfbdf30d31a
  	if (ret) {
  		v4l2_err(&vvd->v4l2_dev, "failed to query controls\n");
  		goto parse_ctrl_err;
-@@ -1280,6 +1325,7 @@ int virtio_video_device_init(struct virtio_video_device *vvd)
+@@ -1296,6 +1341,7 @@ int virtio_video_device_init(struct virtio_video_device *vvd)
  
  register_err:
  	virtio_video_clean_control(vvd);
@@ -958,7 +961,7 @@ index 6366573fe8202928926b44b3b28f318a5e81652b..67c11fd0406379af6f00ddfbdf30d31a
  parse_ctrl_err:
  	virtio_video_clean_capability(vvd);
  parse_cap_err:
-@@ -1309,5 +1355,6 @@ void virtio_video_device_free(struct virtio_video_device *vvd)
+@@ -1325,5 +1371,6 @@ void virtio_video_device_free(struct virtio_video_device *vvd)
  {
  	v4l2_m2m_release(vvd->m2m_dev);
  	virtio_video_clean_control(vvd);
@@ -1027,10 +1030,10 @@ index 1f73c6beb1fe81627b675f87d655c1629b3564c4..79b064e2db38be50d3b1ecea941a5330
  static struct virtio_driver virtio_video_driver = {
 diff --git a/drivers/media/virtio/virtio_video_enc.c b/drivers/media/virtio/virtio_video_enc.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b4c37099e039aebf2dc234937883280b2157d4d0
+index 0000000000000000000000000000000000000000..8541f0e35ca0d52f2f808a6a198ac45bdcb6dd1f
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_enc.c
-@@ -0,0 +1,1532 @@
+@@ -0,0 +1,1536 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Encoder for virtio video device.
 + *
@@ -1452,9 +1455,10 @@ index 0000000000000000000000000000000000000000..b4c37099e039aebf2dc234937883280b
 +
 +/*
 + * The raw format a OUTPUT format resolves to: one the device takes with the
-+ * current coded format, at a size it supports, in the tight layout the device
-+ * reads. A client's line length is a request the device does not honor, so it
-+ * is answered with the device's.
++ * current coded format, at a size it supports, in the layout the device reads,
++ * whose rows lie at the pitch a guest allocator gives a buffer
++ * (virtio_video_fill_raw_layout()). A client's line length is a request the
++ * device does not honor, so it is answered with the device's.
 + */
 +static int enc_try_raw(struct virtio_video_stream *stream,
 +		       struct v4l2_pix_format_mplane *pix_mp)
@@ -1500,8 +1504,11 @@ index 0000000000000000000000000000000000000000..b4c37099e039aebf2dc234937883280b
 +
 +	enc_get_colorimetry(pix_mp, &colors);
 +
-+	memset(pix_mp->plane_fmt, 0, sizeof(pix_mp->plane_fmt));
-+	ret = v4l2_fill_pixfmt_mp(pix_mp, fourcc, width, height);
++	ret = virtio_video_fill_raw_layout(pix_mp, fourcc, width, height);
++	if (ret == -ENOENT) {
++		memset(pix_mp->plane_fmt, 0, sizeof(pix_mp->plane_fmt));
++		ret = v4l2_fill_pixfmt_mp(pix_mp, fourcc, width, height);
++	}
 +	if (ret)
 +		return ret;
 +
@@ -2564,7 +2571,7 @@ index 0000000000000000000000000000000000000000..b4c37099e039aebf2dc234937883280b
 +	return 0;
 +}
 diff --git a/drivers/media/virtio/virtio_video_helpers.c b/drivers/media/virtio/virtio_video_helpers.c
-index ae0d96ccbd1a6500ab4d2ea60406304df95274b1..d865b7a6ddd39cc2f30837536e42e57b970bdb80 100644
+index f27c516cf031dd09eccd685deb05827c748a2ab3..9baf5735cc4c00ca46cb40ef0925221449c5881c 100644
 --- a/drivers/media/virtio/virtio_video_helpers.c
 +++ b/drivers/media/virtio/virtio_video_helpers.c
 @@ -129,6 +129,18 @@ static struct virtio_video_convert_table format_table[] = {
@@ -2597,10 +2604,10 @@ index ae0d96ccbd1a6500ab4d2ea60406304df95274b1..d865b7a6ddd39cc2f30837536e42e57b
  	}
  
 diff --git a/drivers/media/virtio/virtio_video_vq.c b/drivers/media/virtio/virtio_video_vq.c
-index dd904e0f413caf4668c19bd8e0f78cda44f51744..541033706cded07da95fbc811bf353575ef81188 100644
+index 720142bc6c81ab4df08133132ea7327b8b46b48a..204d2f62dc6a354eb8d65e94d3142cb0bd9a3279 100644
 --- a/drivers/media/virtio/virtio_video_vq.c
 +++ b/drivers/media/virtio/virtio_video_vq.c
-@@ -227,8 +227,17 @@ virtio_video_get_vbuf(struct virtio_video_device *vvd, int size, int resp_size,
+@@ -320,8 +320,17 @@ virtio_video_get_vbuf(struct virtio_video_device *vvd, int size, int resp_size,
  
  int virtio_video_alloc_vbufs(struct virtio_video_device *vvd)
  {
@@ -2619,7 +2626,7 @@ index dd904e0f413caf4668c19bd8e0f78cda44f51744..541033706cded07da95fbc811bf35357
  				  __alignof__(struct virtio_video_vbuffer), 0,
  				  NULL);
  	if (!vvd->vbufs)
-@@ -682,16 +691,22 @@ virtio_video_cmd_resource_queue_cb(struct virtio_video_device *vvd,
+@@ -788,16 +797,22 @@ virtio_video_cmd_resource_queue_cb(struct virtio_video_device *vvd,
  	struct virtio_video_resource_queue_resp *resp =
  		(struct virtio_video_resource_queue_resp *)vbuf->resp_buf;
  
@@ -2644,7 +2651,7 @@ index dd904e0f413caf4668c19bd8e0f78cda44f51744..541033706cded07da95fbc811bf35357
  }
  
  int virtio_video_cmd_resource_queue(struct virtio_video_device *vvd,
-@@ -878,8 +893,16 @@ virtio_video_cmd_get_params_cb(struct virtio_video_device *vvd,
+@@ -984,8 +999,16 @@ virtio_video_cmd_get_params_cb(struct virtio_video_device *vvd,
  	format_info->frame_height = le32_to_cpu(params->frame_height);
  	format_info->min_buffers = le32_to_cpu(params->min_buffers);
  	format_info->max_buffers = le32_to_cpu(params->max_buffers);
@@ -2663,7 +2670,7 @@ index dd904e0f413caf4668c19bd8e0f78cda44f51744..541033706cded07da95fbc811bf35357
  
  	format_info->crop.top = le32_to_cpu(params->crop.top);
  	format_info->crop.left = le32_to_cpu(params->crop.left);
-@@ -956,6 +979,13 @@ virtio_video_cmd_set_params(struct virtio_video_device *vvd,
+@@ -1062,6 +1085,13 @@ virtio_video_cmd_set_params(struct virtio_video_device *vvd,
  	req_p->params.min_buffers = cpu_to_le32(format_info->min_buffers);
  	req_p->params.max_buffers = cpu_to_le32(format_info->max_buffers);
  	req_p->params.num_planes = cpu_to_le32(format_info->num_planes);
@@ -2677,7 +2684,7 @@ index dd904e0f413caf4668c19bd8e0f78cda44f51744..541033706cded07da95fbc811bf35357
  
  	for (i = 0; i < format_info->num_planes; i++) {
  		struct virtio_video_plane_format *plane_formats =
-@@ -1075,3 +1105,269 @@ int virtio_video_cmd_get_control(struct virtio_video_device *vvd,
+@@ -1181,3 +1211,269 @@ int virtio_video_cmd_get_control(struct virtio_video_device *vvd,
  	return ret;
  }
  
