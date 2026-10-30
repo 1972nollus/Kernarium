@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 # Kernarium's runtime is an iOS framework, but its console input, the file
-# handling of the automation boot payload and the key wake policy are plain
-# POSIX and C++ and are exercised here on the host.
+# handling of the automation boot payload, the key wake policy and the
+# automation launch's ADB authorization decision are plain POSIX and C++ and
+# are exercised here on the host.
 add_executable(uml_kernarium_console_input_tests console_input_tests.cpp)
 target_include_directories(uml_kernarium_console_input_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/Kernarium/Runtime)
@@ -23,4 +24,12 @@ target_include_directories(uml_kernarium_key_wake_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/Kernarium/Runtime)
 uml_add_unit_test(NAME kernarium-key-wake
     COMMAND uml_kernarium_key_wake_tests
+    LABELS kernarium)
+
+add_executable(uml_kernarium_adb_authorization_tests
+    adb_authorization_tests.cpp)
+target_include_directories(uml_kernarium_adb_authorization_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/Kernarium/Runtime)
+uml_add_unit_test(NAME kernarium-adb-authorization
+    COMMAND uml_kernarium_adb_authorization_tests
     LABELS kernarium)
