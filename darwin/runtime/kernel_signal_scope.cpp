@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "kernel_signal_scope.hpp"
+#include "memory/shared_backing.hpp"
 
 #include <pthread.h>
+#include <sys/mman.h>
 #include <sys/time.h>
 
 namespace uml::runtime {
@@ -71,6 +73,19 @@ bool KernelSignalScope::inside_image(
 {
 	const auto address = handler_address(action);
 	return address >= image_begin_ && address < image_end_;
+}
+
+void release_kernel_image(void *address, std::size_t length,
+	bool in_window) noexcept
+{
+	if (address == nullptr || address == MAP_FAILED || length == 0)
+		return;
+	if (::uml::memory::retain_borrowed_guest_ram(address, length))
+		return;
+	if (in_window)
+		(void)::uml::memory::reserve_host_range(address, length);
+	else
+		(void)munmap(address, length);
 }
 
 } // namespace uml::runtime

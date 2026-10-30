@@ -20,6 +20,17 @@ uml_add_unit_test(
     NAME runtime-kernel-signal-scope
     COMMAND uml_runtime_kernel_signal_scope_tests)
 
+# The loader's release of the kernel image against a host-service view that
+# still borrows its guest-RAM tail.
+add_executable(uml_runtime_kernel_image_release_tests
+    kernel_image_release_tests.cpp)
+target_link_libraries(uml_runtime_kernel_image_release_tests PRIVATE
+    UML::RuntimeKernelSignals)
+uml_add_unit_test(
+    NAME runtime-kernel-image-release
+    COMMAND uml_runtime_kernel_image_release_tests
+    LABELS tsan)
+
 add_executable(uml_runtime_sequential_run_tests sequential_run_tests.cpp)
 target_link_libraries(uml_runtime_sequential_run_tests PRIVATE
     UML::BridgeAbi

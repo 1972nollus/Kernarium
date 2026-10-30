@@ -126,3 +126,23 @@ uml_add_unit_test(NAME native-4k-shadow-mmu COMMAND uml_native_mmu_tests)
 # several concurrent VM-heavy tests can make that host reservation fail
 # transiently even though an isolated retry succeeds.
 set_tests_properties(native-4k-shadow-mmu PROPERTIES RUN_SERIAL TRUE)
+
+# A run's end retires its native address space after the loader has released
+# part of guest RAM.
+add_executable(uml_native_retire_tests
+    native_retire_tests.cpp
+    $<TARGET_OBJECTS:uml_static_mmu_test_variant>
+    $<TARGET_OBJECTS:uml_native_mmu_test_variant>)
+target_link_libraries(uml_native_retire_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemorySharedBacking)
+target_include_directories(uml_native_retire_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/memory
+    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
+target_compile_definitions(uml_native_retire_tests PRIVATE
+    UML_MEMORY_ALLOCATION_TESTING=1)
+uml_add_unit_test(NAME memory-native-retire COMMAND uml_native_retire_tests
+    LABELS tsan)
+# Like the other native-window tests, it maps at fixed window addresses that a
+# concurrent VM-heavy test can occupy.
+set_tests_properties(memory-native-retire PROPERTIES RUN_SERIAL TRUE)
