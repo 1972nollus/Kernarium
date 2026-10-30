@@ -2604,7 +2604,7 @@ index f27c516cf031dd09eccd685deb05827c748a2ab3..9baf5735cc4c00ca46cb40ef09252214
  	}
  
 diff --git a/drivers/media/virtio/virtio_video_vq.c b/drivers/media/virtio/virtio_video_vq.c
-index 720142bc6c81ab4df08133132ea7327b8b46b48a..204d2f62dc6a354eb8d65e94d3142cb0bd9a3279 100644
+index 5917feb0512bf044b5dccecc520f02b2bc87d3b3..3d6e2daf4de05042c6e7e64535f5cfc075bc523e 100644
 --- a/drivers/media/virtio/virtio_video_vq.c
 +++ b/drivers/media/virtio/virtio_video_vq.c
 @@ -320,8 +320,17 @@ virtio_video_get_vbuf(struct virtio_video_device *vvd, int size, int resp_size,
@@ -2626,7 +2626,7 @@ index 720142bc6c81ab4df08133132ea7327b8b46b48a..204d2f62dc6a354eb8d65e94d3142cb0
  				  __alignof__(struct virtio_video_vbuffer), 0,
  				  NULL);
  	if (!vvd->vbufs)
-@@ -788,16 +797,22 @@ virtio_video_cmd_resource_queue_cb(struct virtio_video_device *vvd,
+@@ -790,16 +799,22 @@ virtio_video_cmd_resource_queue_cb(struct virtio_video_device *vvd,
  	struct virtio_video_resource_queue_resp *resp =
  		(struct virtio_video_resource_queue_resp *)vbuf->resp_buf;
  
@@ -2651,7 +2651,7 @@ index 720142bc6c81ab4df08133132ea7327b8b46b48a..204d2f62dc6a354eb8d65e94d3142cb0
  }
  
  int virtio_video_cmd_resource_queue(struct virtio_video_device *vvd,
-@@ -984,8 +999,16 @@ virtio_video_cmd_get_params_cb(struct virtio_video_device *vvd,
+@@ -986,8 +1001,16 @@ virtio_video_cmd_get_params_cb(struct virtio_video_device *vvd,
  	format_info->frame_height = le32_to_cpu(params->frame_height);
  	format_info->min_buffers = le32_to_cpu(params->min_buffers);
  	format_info->max_buffers = le32_to_cpu(params->max_buffers);
@@ -2670,7 +2670,7 @@ index 720142bc6c81ab4df08133132ea7327b8b46b48a..204d2f62dc6a354eb8d65e94d3142cb0
  
  	format_info->crop.top = le32_to_cpu(params->crop.top);
  	format_info->crop.left = le32_to_cpu(params->crop.left);
-@@ -1062,6 +1085,13 @@ virtio_video_cmd_set_params(struct virtio_video_device *vvd,
+@@ -1064,6 +1087,13 @@ virtio_video_cmd_set_params(struct virtio_video_device *vvd,
  	req_p->params.min_buffers = cpu_to_le32(format_info->min_buffers);
  	req_p->params.max_buffers = cpu_to_le32(format_info->max_buffers);
  	req_p->params.num_planes = cpu_to_le32(format_info->num_planes);
@@ -2684,7 +2684,7 @@ index 720142bc6c81ab4df08133132ea7327b8b46b48a..204d2f62dc6a354eb8d65e94d3142cb0
  
  	for (i = 0; i < format_info->num_planes; i++) {
  		struct virtio_video_plane_format *plane_formats =
-@@ -1181,3 +1211,269 @@ int virtio_video_cmd_get_control(struct virtio_video_device *vvd,
+@@ -1183,3 +1213,269 @@ int virtio_video_cmd_get_control(struct virtio_video_device *vvd,
  	return ret;
  }
  
