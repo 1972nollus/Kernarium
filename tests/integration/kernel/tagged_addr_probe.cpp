@@ -25,9 +25,10 @@
 // The expected row set depends on the run's top-byte-ignore, which the tagged
 // pointers of the probe itself need, so the test says which it started:
 //
-//	probe --tbi=on	the engines ignore the top byte (--guest-top-byte-ignore):
+//	probe --tbi=on	the engines ignore the top byte, as they do by default:
 //			the ABI can be enabled and every row above is checked
-//	probe --tbi=off	they do not: enabling the ABI fails with EINVAL, through
+//	probe --tbi=off	they do not (--guest-no-top-byte-ignore): enabling the
+//			ABI fails with EINVAL, through
 //			prctl and through NT_ARM_TAGGED_ADDR_CTRL, a tagged access
 //			faults, and the rows that never touch a tagged address in
 //			user mode (the ABI off) are those of native Linux

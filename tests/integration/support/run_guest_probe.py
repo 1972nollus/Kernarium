@@ -9,7 +9,7 @@ python3 -B. A .cpp probe is installed as source, built in the guest with
 c++ -std=c++20 -O2 and --cxxflags, and run. Each probe's header states what
 it checks; its exit status is its failure count. --console-failure also
 fails the run on a console line, the kernel's messages included, that matches.
---guest-argument adds an emulator argument, such as --guest-top-byte-ignore,
+--guest-argument adds an emulator argument, such as --guest-no-top-byte-ignore,
 and --probe-argument an argument of the probe.
 """
 

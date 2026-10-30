@@ -600,10 +600,11 @@ endforeach()
 # answers as native arm64 Linux does, row for row: PR_SET/GET_TAGGED_ADDR_CTRL,
 # tagged pointers in the system calls that touch user memory, the abi sysctl,
 # NT_ARM_TAGGED_ADDR_CTRL, and inheritance across fork, exec, threads and an
-# AArch32 task. The engines must ignore the top byte, so the guest runs with
-# --guest-top-byte-ignore on both engines and the probe expects the ABI to be
-# available. Without that flag enabling the ABI is refused, and the probe
-# checks the refusal and the rows that need no tagged address.
+# AArch32 task. The engines ignore the top byte unless the host passes
+# --guest-no-top-byte-ignore, so the guest runs with the default on both
+# engines and the probe expects the ABI to be available. With the off switch
+# enabling the ABI is refused, and the probe checks the refusal and the rows
+# that need no tagged address.
 foreach(_engine IN ITEMS gadgets jit)
     uml_add_guest_integration_test(
         NAME guest-tagged-addr-${_engine}
@@ -611,7 +612,7 @@ foreach(_engine IN ITEMS gadgets jit)
         ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/tagged_addr_probe.cpp
             "--cxxflags=-Wall -Wextra -Werror -pthread"
             --engine ${_engine} --ncpus 2 --probe-timeout 240
-            --guest-argument=--guest-top-byte-ignore --probe-argument=--tbi=on
+            --probe-argument=--tbi=on
         LABELS guest;kernel;${_engine}
         TIMEOUT 600
         CPUS 2)
@@ -621,7 +622,8 @@ uml_add_guest_integration_test(
     SCRIPT support/run_guest_probe.py
     ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/tagged_addr_probe.cpp
         "--cxxflags=-Wall -Wextra -Werror -pthread"
-        --ncpus 2 --probe-timeout 240 --probe-argument=--tbi=off
+        --ncpus 2 --probe-timeout 240
+        --guest-argument=--guest-no-top-byte-ignore --probe-argument=--tbi=off
     LABELS guest;kernel;smoke
     TIMEOUT 600
     CPUS 2)

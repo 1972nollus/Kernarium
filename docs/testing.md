@@ -825,8 +825,9 @@ SME profile assumed on any host. The unit tests `arm64-sm0-vector-length`,
 `arm64-gadget-sme`, `arm64-jit-sme-control` and `arm64-jit-sme-codegen` check
 the family against a model of the pseudocode and run it in each engine.
 
-Top-byte ignore (TBI), which Android guests always run with, ignores the top
-byte of every data address, SP-based or not. The `arm64-tbi-memory` record
+Top-byte ignore (TBI), which every arm64 guest runs with unless the host
+passes `--guest-no-top-byte-ignore`, ignores the top byte of every data
+address, SP-based or not. The `arm64-tbi-memory` record
 holds the atomic, compare-and-swap, ordered, RCpc and exclusive forms reaching
 memory through a pointer tagged in its top byte, with the virtual CPU's
 top-byte ignore on, and the controls with it off. Its expectations come from

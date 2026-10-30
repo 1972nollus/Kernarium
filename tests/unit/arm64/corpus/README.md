@@ -604,8 +604,8 @@ address, whatever register is the base: a pointer tagged in bits 63:56 reaches
 the byte its low 56 bits name, a fault reports that untagged address, the base
 register keeps its tag, also across a writeback, and the exclusive monitor,
 which guards a location and not a pointer, does not see the tag. Android runs
-every process this way, and the virtual CPU does wherever the host passes
-`--guest-top-byte-ignore` (`CpuState::tbi_enabled`); without it a tagged
+every process this way, and the virtual CPU does unless the host passes
+`--guest-no-top-byte-ignore` (`CpuState::tbi_enabled`); with it a tagged
 pointer is an address outside the guest's range and faults at that pointer.
 [`tools/arm64-tests/tbi-memory-corpus.py`](../../../../tools/arm64-tests/tbi-memory-corpus.py)
 holds the cases in sections, one per family of memory forms, and writes two

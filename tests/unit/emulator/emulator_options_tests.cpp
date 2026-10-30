@@ -57,6 +57,19 @@ void test_defaults_and_engine_selection()
 	require(!contains(options, "--guest-top-byte-ignore"),
 		"guest top-byte-ignore host option reached the kernel command line");
 	require(contains(options, "console=ttyS0"), "kernel argument was lost");
+	{
+		/* The off switch is a host option as well: it turns the default
+		 * off and never reaches the guest. */
+		const char *off[]{"uml-test", "--guest-no-top-byte-ignore",
+			"console=ttyS0"};
+		const auto disabled = uml::emulator::prepare_emulator_options(
+			3, off, "/tmp/rootfs.erofs");
+		require(disabled.valid, "the top-byte-ignore off switch was rejected");
+		require(!disabled.top_byte_ignore,
+			"--guest-no-top-byte-ignore did not turn the ignore off");
+		require(!contains(disabled, "--guest-no-top-byte-ignore"),
+			"the off switch reached the kernel command line");
+	}
 	require(contains(options, "ubd0c=/tmp/rootfs.erofs"),
 		"rootfs default was not added");
 	require(contains(options, "root=/dev/ubda"), "root default was not added");
@@ -103,8 +116,8 @@ void test_explicit_defaults_are_preserved()
 	const auto options = uml::emulator::prepare_emulator_options(
 		9, arguments, "/unused/rootfs");
 	require(options.valid, "explicit emulator options were rejected");
-	require(!options.top_byte_ignore,
-		"guest top-byte-ignore mode was enabled by default");
+	require(options.top_byte_ignore,
+		"guest top-byte-ignore mode was not the default");
 	require(options.engine == uml::runtime::ExecutionEngine::gadgets,
 		"separate engine argument was not parsed");
 	/* The seven explicit values, plus the management-console name and

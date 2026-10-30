@@ -243,6 +243,10 @@ EmulatorOptions prepare_emulator_options(
 			prepared.top_byte_ignore = true;
 			continue;
 		}
+		if (argument == "--guest-no-top-byte-ignore") {
+			prepared.top_byte_ignore = false;
+			continue;
+		}
 		if (argument.starts_with("--jit-gadget-fallback")) {
 			prepared.valid = false;
 			return prepared;

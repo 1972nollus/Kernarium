@@ -2,8 +2,8 @@
 /*
  * Shared setup of the guest_tagged_*_loop.S probes: the atomic, ordered and
  * exclusive forms reach memory through a top-byte-tagged pointer, as every
- * Android process with heap pointer tagging makes them. Run the probes with
- * the emulator's --guest-top-byte-ignore, as the Android product runs.
+ * Android process with heap pointer tagging makes them. The emulator ignores
+ * the top byte by default, as the Android product runs it.
  *
  * With no argument the probe tags its pointer (tag 0xb4, bionic's heap tag).
  * With any argument it runs the same instructions through an untagged

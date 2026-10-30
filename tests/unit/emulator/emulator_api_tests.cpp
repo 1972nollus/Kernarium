@@ -425,18 +425,18 @@ void test_run_boundary()
 		"kernel arguments or network callbacks were invalid");
 	require(network_state.writes == 1,
 		"network callback was not invoked exactly once");
-	require(kernel_top_byte_ignore == 0,
-		"a run without --guest-top-byte-ignore reported it");
+	require(kernel_top_byte_ignore == 1,
+		"a run without a top-byte-ignore option did not report it");
 	/* The kernel decides at boot whether to offer the tagged-address ABI
-	 * from the flag, which is the run's own and is consumed before the
+	 * from the setting, which is the run's own and is consumed before the
 	 * kernel sees its arguments. */
 	const char *tbi_arguments[]{
-		"uml-test", "--execution-engine=gadgets", "--guest-top-byte-ignore"};
+		"uml-test", "--execution-engine=gadgets", "--guest-no-top-byte-ignore"};
 	require(uml_emulator_run(
 			emulator.get(), 3, tbi_arguments, environment) == 73,
-		"a top-byte-ignore run did not enter the kernel");
-	require(kernel_top_byte_ignore == 1,
-		"--guest-top-byte-ignore did not reach the kernel's query");
+		"a run with the top-byte-ignore off switch did not enter the kernel");
+	require(kernel_top_byte_ignore == 0,
+		"--guest-no-top-byte-ignore did not reach the kernel's query");
 	/* The gadget run's deliberately different JIT budget/CPU pair must not
 	 * freeze process-global JIT geometry. A later default JIT run publishes
 	 * its own pair and enters normally.
@@ -446,9 +446,9 @@ void test_run_boundary()
 	require(uml_emulator_run(
 			emulator.get(), 2, jit_arguments, environment) == 73,
 		"a gadget-only configuration froze later JIT geometry");
-	require(network_state.writes == 3 && kernel_top_byte_ignore == 0,
+	require(network_state.writes == 3 && kernel_top_byte_ignore == 1,
 		"the sequential JIT run did not enter the kernel, or kept "
-		"the previous run's top-byte-ignore");
+		"the previous run's top-byte-ignore off switch");
 
 	const char *invalid_arguments[]{
 		"uml-test", "--execution-engine=invalid"};

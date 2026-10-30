@@ -205,9 +205,10 @@ its memory, futex, `process_vm_readv` and `process_vm_writev`, and
 `NT_ARM_TAGGED_ADDR_CTRL` report and control it. The memory-management calls
 untag whether or not it is on. Threads and forks inherit it and an exec ends
 it; an AArch32 task has none and gets `EINVAL`. The kernel offers it only
-while `darwin_uml_guest_top_byte_ignore()` is 1, that is only under
-`--guest-top-byte-ignore`, because a tagged pointer faults otherwise; without
-the flag enabling it fails with `EINVAL` through both interfaces. A fault's
+while `darwin_uml_guest_top_byte_ignore()` is 1, which is every run unless the
+host passes `--guest-no-top-byte-ignore`, because a tagged pointer faults
+otherwise; with the off switch enabling it fails with `EINVAL` through both
+interfaces. A fault's
 address is the one the engine translated, already without its tag, so
 `segv()` never untags it and a tagged access with the ignore off faults at the
 tagged address instead of retrying forever. The one difference from native

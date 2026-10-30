@@ -51,9 +51,9 @@ refuses 32-bit ELF files; both engines execute it, so it is non-zero in every
 arm64 product. The x86_64 slice neither imports them nor builds AArch32.
 
 The arm64-only import `darwin_uml_guest_top_byte_ignore()` is 1 when the
-run's engines ignore the top byte of a data address (`--guest-top-byte-ignore`,
-which the Android product always passes) and 0 otherwise, and is fixed for the
-run. The kernel offers the tagged-address ABI only while it is 1. The x86_64
+run's engines ignore the top byte of a data address, which is every run unless
+the host passes `--guest-no-top-byte-ignore`, and 0 otherwise, and is fixed for
+the run. The kernel offers the tagged-address ABI only while it is 1. The x86_64
 slice does not import it.
 
 For an intentional bridge declaration change:

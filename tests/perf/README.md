@@ -398,8 +398,9 @@ The LSE atomic probe needs assembler support for that extension. Other probes de
 the manifest.
 
 The `guest_tagged_*_loop.S` probes reach memory through a pointer tagged in
-its top byte, as a process with heap pointer tagging does; run them with the
-runner's `--guest-top-byte-ignore`. Given a probe argument
+its top byte, as a process with heap pointer tagging does; the emulator ignores
+the top byte by default, and the runner's `--guest-no-top-byte-ignore` turns
+that off. Given a probe argument
 (`--probe-argument x`) they run the same instructions through an untagged
 pointer, which is their matched control. The two alias probes use the tagged
 pointer and a plain one on the same page, so they time an engine whose

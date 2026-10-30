@@ -5,8 +5,8 @@
  * process with heap pointer tagging) makes them: the unsigned-offset,
  * unscaled, register-offset, pair and multiple-structure forms that memcpy
  * and memset use. The final counter is read back through the untagged alias.
- * Run it with the emulator's --guest-top-byte-ignore, as the Android product
- * runs; the prctl is only for kernels that gate the ABI per process.
+ * The emulator ignores the top byte by default, as the Android product runs;
+ * the prctl is only for kernels that gate the ABI per process.
  */
 
 #include "probe_harness.inc"

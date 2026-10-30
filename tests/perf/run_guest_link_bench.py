@@ -60,7 +60,14 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--guest-top-byte-ignore",
         action="store_true",
-        help="run the guest with the top address byte ignored, as Android is",
+        help="run the guest with the top address byte ignored, which is the "
+        "default and how Android runs",
+    )
+    parser.add_argument(
+        "--guest-no-top-byte-ignore",
+        action="store_true",
+        help="run the guest with the top address byte not ignored, the "
+        "control of a tagged-pointer probe",
     )
     boot_mode = parser.add_mutually_exclusive_group()
     boot_mode.add_argument(
@@ -140,6 +147,8 @@ def main() -> int:
             f"ncpus={arguments.cpus}",
             *(("--guest-top-byte-ignore",)
               if arguments.guest_top_byte_ignore else ()),
+            *(("--guest-no-top-byte-ignore",)
+              if arguments.guest_no_top_byte_ignore else ()),
         ),
         init_shell=arguments.shell_init,
         overlay_shell=not arguments.shell_init,
