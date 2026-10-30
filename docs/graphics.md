@@ -196,6 +196,15 @@ a depth format only where the host's own storage has the width and datatype
 that format names, and a guest config with 32 depth bits is backed by a real
 32-bit float depth buffer.
 
+A stencil buffer needs no depth plane beside it. vrend offers
+`VIRGL_FORMAT_S8_UINT`, one byte of stencil per texel, as a depth-stencil target
+that attaches at the stencil attachment point; the format probe and every draw
+use that one, so an image the probe found complete is complete when a guest
+renders to it. A guest that wants stencil and no depth, as Android's hardware
+renderer does for every window, then holds one byte per texel where it held a
+depth-stencil image of four or eight, and every guest's `GL_STENCIL_INDEX8`
+renderbuffer and texture lands on it too.
+
 The scanout mask is held to the same standard. Only the 8-bit RGB layouts the
 display presents carry a scanout bit, and no YUV format does. The guest's
 minigbm keeps the scanout use on exactly the combinations the mask names, and
