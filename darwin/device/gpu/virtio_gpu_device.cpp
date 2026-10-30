@@ -427,6 +427,7 @@ void VirtioGpuDevice::clearScanout() noexcept
     std::vector<std::uint8_t>().swap(readbackStaging_);
     scanoutResource_ = protocol::invalidResourceId;
     scanoutRectangle_ = {};
+    UML_GPU_DISPLAY.setGuestScanoutActive(false);
     UML_GPU_DISPLAY.clear();
 }
 
@@ -570,6 +571,7 @@ void VirtioGpuDevice::reset() noexcept
     sharedMemoryActions_.clear();
     scanoutResource_ = protocol::invalidResourceId;
     scanoutRectangle_ = {};
+    UML_GPU_DISPLAY.setGuestScanoutActive(false);
     UML_GPU_DISPLAY.resetGuestSession();
     UML_GPU_DISPLAY.clear();
 }
@@ -1785,6 +1787,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         releaseBlobScanout();
         scanoutResource_ = scanout->resourceId;
         scanoutRectangle_ = scanout->rectangle;
+        UML_GPU_DISPLAY.setGuestScanoutActive(true);
         displayActivityLog().record(
             "scanout set kind=%s resource=%u source=%ux%u rect=%ux%u+%u+%u",
             virglResource != nullptr ? "virgl" : "2d",
@@ -1918,6 +1921,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         scanoutOffset_ = scanout->offsets[0];
         scanoutTexture_ = texture;
         scanoutVirglBlob_ = readback;
+        UML_GPU_DISPLAY.setGuestScanoutActive(true);
         return success;
     }
 

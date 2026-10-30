@@ -73,6 +73,11 @@ public:
         ++guestSessionResetCount;
     }
 
+    void setGuestScanoutActive(bool active) noexcept override
+    {
+        guestScanoutActive = active;
+    }
+
     void clear() noexcept override
     {
         std::fill(framebuffer.begin(), framebuffer.end(), 0);
@@ -587,6 +592,7 @@ public:
     unsigned guestScanoutChangeCount {};
     bool guestScanoutChangeAccepted {true};
     unsigned guestSessionResetCount {};
+    bool guestScanoutActive {};
     std::uint32_t lastTextureResource {};
     std::uint32_t lastUnmappedResource {};
     std::uint32_t lastBlobScanoutWidth {};
@@ -2110,6 +2116,49 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
     require(dependencies.guestSessionResetCount == 1);
 }
 
+/* The guest's display is on while it has a scanout bound: the application
+ * waits for an Android screen to go off by asking, and the guest's screen turns
+ * off by unbinding the scanout from its disabled CRTC. A bind the device
+ * refused is no scanout, and a reset takes it away with the rest. */
+void theGuestScanoutFlagFollowsTheScanout()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    const auto create = create3d(0x77);
+    requireOk(device, requestBytes(create));
+    require(!dependencies.guestScanoutActive);
+
+    auto scanout = newRequest<protocol::GpuSetScanout>(GpuCommand::setScanout);
+    scanout.rectangle = {.x = 0, .y = 0, .width = 4, .height = 4};
+    scanout.scanoutId = protocol::primaryScanoutId;
+    scanout.resourceId = 999;
+    requireResponse(device, requestBytes(scanout),
+        protocol::GpuResponse::errorInvalidResource);
+    require(!dependencies.guestScanoutActive);
+
+    scanout.resourceId = create.resourceId;
+    requireOk(device, requestBytes(scanout));
+    require(dependencies.guestScanoutActive);
+
+    /* The screen goes off. */
+    scanout.resourceId = protocol::invalidResourceId;
+    requireOk(device, requestBytes(scanout));
+    require(!dependencies.guestScanoutActive);
+
+    /* A refused rebind leaves the display off. */
+    scanout.resourceId = 999;
+    requireResponse(device, requestBytes(scanout),
+        protocol::GpuResponse::errorInvalidResource);
+    require(!dependencies.guestScanoutActive);
+
+    /* It comes on again, and a reset ends it with the connection. */
+    scanout.resourceId = create.resourceId;
+    requireOk(device, requestBytes(scanout));
+    require(dependencies.guestScanoutActive);
+    device.reset();
+    require(!dependencies.guestScanoutActive);
+}
+
 /* A Virgl scanout allocates its readback staging at the first flush that
  * reads back, which is therefore where running out of memory is reported. The
  * staging serves every later readback of that scanout and of page flips at
@@ -2571,6 +2620,8 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     require(dependencies.lastGuestScanoutWidth == scanout.rectangle.width);
     require(dependencies.lastGuestScanoutHeight == scanout.rectangle.height);
     require(dependencies.lastTextureResource == scanout.resourceId);
+    /* A blob scanout turns the guest's display on as well. */
+    require(dependencies.guestScanoutActive);
     require(dependencies.lastBlobScanoutWidth == scanout.width);
     require(dependencies.lastBlobScanoutHeight == scanout.height);
     require(dependencies.lastBlobScanoutFormat == scanout.format);
@@ -3374,6 +3425,7 @@ int main()
     backingRangesAndAttachStateAreValidated();
     failedTransferDoesNotPartiallyCommitPixels();
     setScanoutReplyFailureDoesNotCommitAllocation();
+    theGuestScanoutFlagFollowsTheScanout();
     readbackStagingIsAllocatedByTheFirstReadback();
     unanswerableCapabilityQueriesFailOnlyThemselves();
     venusBlobsAndFencesUseStandardWireState();

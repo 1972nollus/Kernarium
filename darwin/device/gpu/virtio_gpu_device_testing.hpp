@@ -27,6 +27,8 @@ public:
         std::uint32_t height) noexcept = 0;
     virtual void resetGuestSession() noexcept = 0;
     virtual void clear() noexcept = 0;
+    /* A display keeps the flag itself; a fake that records it overrides this. */
+    virtual void setGuestScanoutActive(bool) noexcept {}
     virtual void update(
         std::span<const std::uint8_t> source,
         std::uint32_t sourceWidth,
