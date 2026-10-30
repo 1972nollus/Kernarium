@@ -38,6 +38,12 @@ struct EmulatorOptions final {
 	 * engines keep per address space. Zero derives it from guest memory and
 	 * the host's limit on the process (runtime::set_gadget_cache_budget). */
 	std::size_t gadget_cache_budget{};
+	/* --memory-limit=: the footprint this launch states as the process's
+	 * limit on a host that sets none (platform/host_environment.hpp), so a Mac
+	 * measurement derives its budgets from the figure the iPad has. Zero
+	 * states none and leaves UML_MEMORY_LIMIT_MIB, then the host's own, in
+	 * force. */
+	std::size_t memory_limit_bytes{};
 	/* --jit-tier=: the instructions an x86-64 address space runs on the
 	 * gadget engine before the x86-64 JIT takes it over. Zero is the JIT from
 	 * the first instruction. */

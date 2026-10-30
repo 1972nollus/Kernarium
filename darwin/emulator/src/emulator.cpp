@@ -9,6 +9,7 @@
 #include "guest_hibernation.hpp"
 #include "kernel_signal_scope.hpp"
 #include "native_kernel_layout.hpp"
+#include "virtual_jetsam.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
 
@@ -363,11 +364,16 @@ public:
 			return -UML_EMULATOR_RUNTIME_ERROR;
 		/* Before any gadget executor exists, for the same reason; an
 		 * x86-64 address space starts on the gadget engine in a JIT run
-		 * too. */
-		if (!prepared.informational)
-			(void)::uml::runtime::set_gadget_cache_budget(
+		 * too. The limit the launch states for a host that sets none comes
+		 * first, since the budget derives from it. */
+		std::size_t gadget_cache_budget{};
+		if (!prepared.informational) {
+			::uml::runtime::set_process_memory_limit(
+				prepared.memory_limit_bytes);
+			gadget_cache_budget = ::uml::runtime::set_gadget_cache_budget(
 				prepared.guest_memory_bytes,
 				prepared.gadget_cache_budget);
+		}
 		/* A JIT run activates the managed multi-vCPU executor pool. */
 		if (!translation_cache_run.enter(jit_run))
 			return -UML_EMULATOR_RUNTIME_ERROR;
@@ -412,6 +418,13 @@ public:
 			native_layout};
 		if (!layout_scope.entered())
 			return -UML_EMULATOR_RUNTIME_ERROR;
+		/* Where the host sets no limit and the launch stated one, a Mac run
+		 * says when its footprint goes past it: the line iOS would have
+		 * ended the process at. It ends with the run. */
+		std::unique_ptr<::uml::runtime::VirtualJetsamWatch> virtual_jetsam;
+		if (!prepared.informational)
+			virtual_jetsam = ::uml::runtime::start_virtual_jetsam_watch(
+				gadget_cache_budget);
 		/* One opaque route publishes CPU and network endpoints under one lock.
 		 * Its intrusive storage and commit are allocation-free. */
 		::uml::runtime::ActiveRunRouteScope route_scope{

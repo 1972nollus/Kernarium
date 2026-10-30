@@ -189,6 +189,24 @@ host page leaves the footprint once the guest has ballooned all of its 4 KiB
 frames. Under `VIRTIO_BALLOON_F_MUST_TELL_HOST`, a deflate commits the page
 before the guest may use it.
 
+The process's memory limit, L, is the figure the memory budgets derive from;
+the gadget-cache budget takes at most an eighth of it. iOS enforces one per
+application and reports it (`platform::process_memory_limit_bytes()`: the
+footprint plus the limit remaining, 2,867 MiB on the iPad mini 6). macOS
+enforces none, so a measurement run states it with `--memory-limit=2867M` or
+`UML_MEMORY_LIMIT_MIB=2867`, and every budget that derives from it computes on
+the Mac as it does on the device; the option wins over the variable and the
+host's own limit over both, and a run that states nothing is unchanged. A run
+that states a limit says so on stderr when it starts, with the gadget-cache
+budget derived from it, and a sampler writes one `virtual Jetsam` line, with
+the footprint, the limit and the lifetime peak, each time the footprint rises
+above it or the peak shows that it did between two samples
+(`runtime/virtual_jetsam.hpp`). Nothing is killed: the line marks where iOS
+would have ended the process.
+
+Every iOS memory control carries its macOS path, or records here why none can
+exist, so that a Mac run stays an accurate ground for measuring the device.
+
 A host mapping call that fails says so. The kernel distinguishes an exhausted
 host only by `ENOMEM`, so Mach's resource-shortage and address-space-exhaustion
 codes both arrive as that, and the first such failures are reported on the run's

@@ -35,6 +35,13 @@ inline constexpr unsigned maximum_guest_cpu_count = 64;
 [[nodiscard]] bool acquire_translation_cache_run_session() noexcept;
 void release_translation_cache_run_session() noexcept;
 
+/* States the footprint a launch gives as the process's memory limit, for a
+ * host that sets none (platform/host_environment.hpp); zero withdraws it. The
+ * limit the budgets derive from, and the one a virtual Jetsam watches. Before
+ * set_gadget_cache_budget.
+ */
+void set_process_memory_limit(std::size_t bytes) noexcept;
+
 /* Sets the process's byte budget for what the gadget engines' caches keep per
  * address space (cpu/gadget_cache_budget.hpp) and returns it: `bytes` when
  * nonzero, otherwise a quarter of the guest's memory, at least 128 MiB and at

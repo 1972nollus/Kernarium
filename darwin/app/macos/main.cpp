@@ -326,7 +326,8 @@ struct PreparedArguments {
 			for (const auto &argument : arguments)
 				for (const std::string_view prefix : {
 					     "ncpus=", "mem=", "--execution-engine",
-					     "--jit", "--gadget-", "--guest-"})
+					     "--jit", "--gadget-", "--guest-",
+					     "--memory-limit="})
 					if (argument.starts_with(prefix)) {
 						selected.push_back(argument);
 						break;
