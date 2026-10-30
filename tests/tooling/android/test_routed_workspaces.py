@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from source_fixture import commit, parse_env, run
@@ -396,6 +397,65 @@ def tree_entries(root: Path) -> dict[str, tuple[bytes | None, int]]:
     }
 
 
+def check_sync_times(sync, overlay: Path, destination: Path) -> None:
+    """A synchronized file is new to the build when it changed, and keeps its time when not.
+
+    Make treats an output newer than its input as up to date, and a checkout keeps the time
+    of the commit that wrote a file: content that switches back to an older checkout would
+    otherwise sit behind the installed copy of the newer content.
+    """
+    long_ago = 1_000_000_000_000_000_000  # nanoseconds, September 2001
+    marker = 1_700_000_000_000_000_000  # November 2023, newer than long_ago
+    started = time.time_ns() - 5_000_000_000
+    fstab = destination / "config/fstab"
+    device = destination / "device.mk"
+
+    def stamp(path: Path, nanoseconds: int) -> None:
+        os.utime(path, ns=(nanoseconds, nanoseconds))
+
+    def modified(path: Path) -> int:
+        return path.stat().st_mtime_ns
+
+    # A first copy is all new, whatever the overlay's own times are.
+    for path in (overlay / "device.mk", overlay / "config/fstab"):
+        stamp(path, long_ago)
+    shutil.rmtree(destination)
+    sync("did not copy for the times", "synchronized exact device overlay")
+    for path in (fstab, device):
+        if modified(path) < started:
+            fail(f"sync-device-tree.py gave a new {path.name} the overlay's old time")
+
+    # A file that did not change keeps the time the build saw, even when the checkout touched
+    # the overlay's copy.
+    stamp(fstab, marker)
+    stamp(device, marker)
+    stamp(overlay / "device.mk", started + 1_000_000_000)
+    sync("did not copy an untouched tree", "synchronized exact device overlay")
+    for path in (fstab, device):
+        if modified(path) != marker:
+            fail(f"sync-device-tree.py changed the time of the unchanged {path.name}")
+
+    # Content that switches to an older checkout is newer than the installed copy.
+    (overlay / "config/fstab").write_text("older checkout\n")
+    stamp(overlay / "config/fstab", long_ago)
+    sync("did not copy changed content", "synchronized exact device overlay")
+    if fstab.read_text() != "older checkout\n":
+        fail("sync-device-tree.py did not copy a changed file")
+    if modified(fstab) < started:
+        fail("sync-device-tree.py left a changed file older than the copy it replaced")
+    if modified(device) != marker:
+        fail("sync-device-tree.py touched a file next to a changed one")
+
+    # A mode change alone is a change.
+    stamp(fstab, marker)
+    (overlay / "config/fstab").chmod(0o600)
+    sync("did not copy a mode change", "synchronized exact device overlay")
+    if modified(fstab) < started:
+        fail("sync-device-tree.py kept the time of a file whose mode changed")
+    (overlay / "config/fstab").chmod(0o640)
+    sync("did not restore the mode", "synchronized exact device overlay")
+
+
 def check_device_sync(source_root: Path, root: Path) -> None:
     """The sync tool replaces the workspace's device tree with the overlay's."""
     tool = source_root / "android/lineage-24/tools/sync-device-tree.py"
@@ -426,6 +486,8 @@ def check_device_sync(source_root: Path, root: Path) -> None:
     if tree_entries(destination) != tree_entries(overlay):
         fail("sync-device-tree.py did not copy the overlay exactly")
     sync("rejected the synchronized tree", "verified exact device overlay", "--verify")
+
+    check_sync_times(sync, overlay, destination)
 
     (destination / "stale.mk").write_text("stale\n")
     (destination / "device.mk").write_text("# edited\n")

@@ -168,3 +168,19 @@ uml_add_unit_test(
     COMMAND uml_runtime_guest_hibernation_tests
     TIMEOUT 240)
 set_tests_properties(runtime-guest-hibernation PROPERTIES RUN_SERIAL TRUE)
+
+# The virtual Jetsam: the decision, the line, and the sampler of a run whose
+# launch stated the process's memory limit.
+add_executable(uml_runtime_virtual_jetsam_tests virtual_jetsam_tests.cpp)
+target_link_libraries(uml_runtime_virtual_jetsam_tests PRIVATE
+    UML::RuntimeVirtualJetsam
+    UML::PlatformContract
+    "-framework Foundation")
+target_sources(uml_runtime_virtual_jetsam_tests PRIVATE
+    $<TARGET_OBJECTS:uml_host_environment>)
+target_include_directories(uml_runtime_virtual_jetsam_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/platform)
+uml_add_unit_test(
+    NAME runtime-virtual-jetsam
+    COMMAND uml_runtime_virtual_jetsam_tests
+    LABELS tsan)
