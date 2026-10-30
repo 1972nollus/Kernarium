@@ -421,16 +421,24 @@ and `sw720dp` variants, which every display of 600dp and more draws, are 1920 by
 into a wallpaper window as wide as the display's long side, 1133 pixels. The
 window, and with it the home screen's parallax range, comes from the display and
 the launcher's page offsets, not from the bitmap, so the overlay
-(`overlay/overlay/frameworks/base/core/res/res`) replaces those two variants
-with a 1024 by 1024 copy of the same image, 4 MiB. Against the original, both
-resampled to a window of 687 to 2560 pixels, no pixel differs by more than three
-of 255 levels (PSNR above 56 dB). The platform's own `config_optimizeDefaultWallpaper`
-is no substitute: it crops to the display's long side and scales up, 19.6 MiB at
-2266 by 1374. `tools/default_wallpaper.py` checks the committed files and
-regenerates them from LineageOS's pinned file (`generate --source`); the
+(`overlay/overlay-priority/frameworks/base/core/res/res`) replaces those two
+variants with a 1024 by 1024 copy of the same image, 4 MiB. Against the original,
+both resampled to a window of 687 to 2560 pixels, no pixel differs by more than
+three of 255 levels (PSNR above 56 dB). The platform's own
+`config_optimizeDefaultWallpaper` is no substitute: it crops to the display's long
+side and scales up, 19.6 MiB at 2266 by 1374.
+
+LineageOS's overlay names the same resource, and where two overlay directories do
+that the one listed earlier in `PRODUCT_PACKAGE_OVERLAYS` wins (Soong gives the
+earlier directory the higher priority). `inherit-product` expands the inherited
+list where its call stands, so `overlay/lineage_darwin.mk` lists
+`overlay/overlay-priority` before its calls and `overlay/overlay` after them,
+where it ranks under LineageOS's and Cuttlefish's: a resource that both define is
+theirs. That is why the wallpaper has a directory of its own.
+`tools/default_wallpaper.py` checks the committed files and that order, and
+regenerates the files from LineageOS's pinned file (`generate --source`); the
 target-files verifier requires the built framework overlay's two variants to be
-squares of at most 1024 pixels, which also proves the product's overlay outranks
-LineageOS's.
+squares of at most 1024 pixels, which is where the order shows.
 
 When applications update together while their tasks are in a desk (LineageOS
 enables desktop windowing on tablets), WM Shell's `PackageUpdateController`

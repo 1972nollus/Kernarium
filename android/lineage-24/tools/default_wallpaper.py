@@ -11,10 +11,18 @@ replaces those two variants with a 1024 x 1024 copy of the same image: the
 window, and with it the home screen's parallax range, is sized from the display
 and not from the bitmap, so only the buffer shrinks, to 4 MiB.
 
-`check` verifies the committed files, `generate` rewrites them from LineageOS's
-pinned `drawable-sw600dp-nodpi/default_wallpaper.png` with ImageMagick. The
-verifier of the built target files uses `png_size` on the framework runtime
-overlay.
+LineageOS's overlay names the same resource, and where two overlay directories do
+that, the one listed earlier in PRODUCT_PACKAGE_OVERLAYS wins (Soong gives the
+earlier directory the higher priority). inherit-product expands the inherited list
+where the call stands, so the copies live in their own directory,
+`overlay/overlay-priority`, which `overlay/lineage_darwin.mk` lists before its
+inherit-product calls; the ordinary `overlay/overlay` directory is listed after
+them and ranks under LineageOS's and Cuttlefish's.
+
+`check` verifies the committed files and that order, `generate` rewrites the files
+from LineageOS's pinned `drawable-sw600dp-nodpi/default_wallpaper.png` with
+ImageMagick. The verifier of the built target files uses `png_size` on the
+framework runtime overlay, which is where the order shows.
 """
 
 from __future__ import annotations
@@ -23,6 +31,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import hashlib
+import re
 import shutil
 import struct
 import subprocess
@@ -33,7 +42,12 @@ from pathlib import Path
 # The overlay directories whose default_wallpaper.png this product replaces. The platform
 # prefers the sw720dp variant to the sw600dp one wherever it applies, so both are needed.
 VARIANT_DIRECTORIES = ("drawable-sw600dp-nodpi", "drawable-sw720dp-nodpi")
-OVERLAY_RESOURCES = "overlay/overlay/frameworks/base/core/res/res"
+OVERLAY_RESOURCES = "overlay/overlay-priority/frameworks/base/core/res/res"
+# The product makefile, and the two PRODUCT_PACKAGE_OVERLAYS entries whose order matters.
+PRODUCT_MAKEFILE = "overlay/lineage_darwin.mk"
+PRIORITY_OVERLAY = "device/kernarium/darwin/overlay-priority"
+ORDINARY_OVERLAY = "device/kernarium/darwin/overlay"
+ORDINARY_RESOURCES = "overlay/overlay/frameworks/base/core/res/res"
 FILE_NAME = "default_wallpaper.png"
 # No variant of the built framework overlay may be larger than this, on either side.
 MAX_SIDE = 1024
@@ -59,7 +73,7 @@ def png_size(data: bytes) -> tuple[int, int, int, int]:
 
 
 def check_files(android_root: Path) -> None:
-    """The overlay holds the same bounded 8-bit RGB copy under both variants."""
+    """The priority overlay holds the same bounded 8-bit RGB copy under both variants."""
     resources = android_root / OVERLAY_RESOURCES
     payloads = []
     for directory in VARIANT_DIRECTORIES:
@@ -90,6 +104,43 @@ def check_files(android_root: Path) -> None:
             f"the default wallpaper digest is {digest}, not {OUTPUT_SHA256}: regenerate it with "
             "`tools/default_wallpaper.py generate` and record the new digest"
         )
+
+
+def check_precedence(android_root: Path) -> None:
+    """The priority overlay is listed before the first inherit-product call, the ordinary one after it.
+
+    The built framework overlay is the final proof (the verifier and the canary read it), but this
+    fails in the source tree, before a build, when the directory that has to win ranks under
+    LineageOS's."""
+    text = (android_root / PRODUCT_MAKEFILE).read_text(encoding="utf-8")
+    lines = [re.sub(r"#.*", "", line).strip() for line in text.splitlines()]
+
+    def positions(entry: str) -> list[int]:
+        pattern = re.compile(r"^PRODUCT_PACKAGE_OVERLAYS\s*\+=\s*" + re.escape(entry) + r"\s*$")
+        return [number for number, line in enumerate(lines) if pattern.match(line)]
+
+    inherits = [number for number, line in enumerate(lines) if line.startswith("$(call inherit-product,")]
+    if not inherits:
+        raise WallpaperError(f"{PRODUCT_MAKEFILE} has no inherit-product call to order against")
+    priority = positions(PRIORITY_OVERLAY)
+    if len(priority) != 1:
+        raise WallpaperError(f"{PRODUCT_MAKEFILE} must add {PRIORITY_OVERLAY} to PRODUCT_PACKAGE_OVERLAYS exactly once")
+    if priority[0] > inherits[0]:
+        raise WallpaperError(
+            f"{PRODUCT_MAKEFILE} adds {PRIORITY_OVERLAY} after its first inherit-product call: the "
+            "directory then ranks under LineageOS's overlay and its default wallpaper is not used"
+        )
+    ordinary = positions(ORDINARY_OVERLAY)
+    if len(ordinary) != 1 or ordinary[0] < inherits[-1]:
+        raise WallpaperError(
+            f"{PRODUCT_MAKEFILE} must add {ORDINARY_OVERLAY} once, after its inherit-product calls"
+        )
+    for directory in VARIANT_DIRECTORIES:
+        if (android_root / ORDINARY_RESOURCES / directory / FILE_NAME).exists():
+            raise WallpaperError(
+                f"{directory}/{FILE_NAME} is also in the ordinary overlay, which ranks under "
+                "LineageOS's: keep it only in the priority overlay"
+            )
 
 
 def generate(android_root: Path, source: Path, magick: str) -> str:
@@ -138,6 +189,7 @@ def main() -> None:
             print(f"wrote the default wallpaper, sha256 {generate(arguments.android_root, arguments.source, arguments.magick)}")
         else:
             check_files(arguments.android_root)
+            check_precedence(arguments.android_root)
             print("default wallpaper overlay: ok")
     except (WallpaperError, subprocess.CalledProcessError, OSError) as error:
         print(f"default wallpaper: {error}", file=sys.stderr)

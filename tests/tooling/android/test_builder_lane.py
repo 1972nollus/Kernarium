@@ -2435,7 +2435,8 @@ def verify_default_wallpaper(android_root: Path) -> None:
 
     SystemUI fixes the wallpaper surface to the bitmap, so the 1920 pixel default kept a 14 MiB
     buffer alive behind a window the display's long side wide; the overlay's copy is 1024 pixels
-    and carries the same image (the checked source and output digests pin that)."""
+    and carries the same image (the checked source and output digests pin that). The copies live in
+    the priority overlay directory, which the product makefile lists before LineageOS's."""
     tool = load_tool(android_root / "tools/default_wallpaper.py")
     tool.check_files(android_root)
     resources = Path(tool.OVERLAY_RESOURCES)
@@ -2474,6 +2475,54 @@ def verify_default_wallpaper(android_root: Path) -> None:
         refuses("missing-variant", r"has no drawable-sw720dp-nodpi/default_wallpaper.png", sw720.unlink)
         refuses("changed-bytes", r"digest is .*: regenerate it",
                 lambda: [path.write_bytes(path.read_bytes() + b"\0") for path in (sw600, sw720)])
+    # Where the makefile lists the overlay decides who wins: LineageOS's overlay names the same
+    # resource, Soong ranks the earlier directory higher, and inherit-product expands the inherited
+    # list where its call stands: a directory listed after the calls ranks under LineageOS's.
+    tool.check_precedence(android_root)
+    makefile_text = (android_root / tool.PRODUCT_MAKEFILE).read_text(encoding="utf-8")
+    priority_line = f"PRODUCT_PACKAGE_OVERLAYS += {tool.PRIORITY_OVERLAY}\n"
+    ordinary_line = f"PRODUCT_PACKAGE_OVERLAYS += {tool.ORDINARY_OVERLAY}\n"
+    first_inherit = "$(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)\n"
+    if makefile_text.count(priority_line) != 1 or makefile_text.count(ordinary_line) != 1 \
+            or makefile_text.count(first_inherit) != 1:
+        fail("the product makefile no longer has the lines the precedence cases rewrite")
+    if makefile_text.index(priority_line) > makefile_text.index(first_inherit):
+        fail("the product makefile lists the priority overlay after its inherit-product calls")
+    if makefile_text.index(ordinary_line) < makefile_text.index(first_inherit):
+        fail("the product makefile lists the ordinary overlay before its inherit-product calls")
+    with tempfile.TemporaryDirectory(prefix="default-wallpaper-order-") as temporary:
+        copy = Path(temporary)
+        (copy / "overlay").mkdir()
+
+        def orders(label: str, pattern: str, text: str, ordinary_wallpaper: bool = False) -> None:
+            (copy / tool.PRODUCT_MAKEFILE).write_text(text, encoding="utf-8")
+            stray = copy / tool.ORDINARY_RESOURCES / tool.VARIANT_DIRECTORIES[0] / tool.FILE_NAME
+            if ordinary_wallpaper:
+                stray.parent.mkdir(parents=True, exist_ok=True)
+                stray.write_bytes(b"x")
+            try:
+                tool.check_precedence(copy)
+            except tool.WallpaperError as error:
+                if not re.search(pattern, str(error)):
+                    fail(f"{label}: the refusal does not name its cause: {error}")
+            else:
+                fail(f"{label}: the overlay order check accepts it")
+            if stray.exists():
+                stray.unlink()
+
+        without = makefile_text.replace(priority_line, "")
+        orders("priority-after-inherit", r"after its first inherit-product call",
+               without.replace(first_inherit, first_inherit + priority_line))
+        orders("priority-missing", r"exactly once", without)
+        orders("priority-twice", r"exactly once", makefile_text.replace(priority_line, priority_line * 2))
+        orders("priority-commented-out", r"exactly once",
+               makefile_text.replace(priority_line, "# " + priority_line))
+        orders("ordinary-before-inherit", r"after its inherit-product calls",
+               makefile_text.replace(ordinary_line, "").replace(first_inherit, ordinary_line + first_inherit))
+        orders("wallpaper-also-in-ordinary", r"also in the ordinary overlay", makefile_text,
+               ordinary_wallpaper=True)
+        orders("no-inherit-call", r"no inherit-product call",
+               makefile_text.replace("$(call inherit-product,", "$(call not-inherit,"))
     # A source that is not LineageOS's own file cannot regenerate the committed copy.
     with tempfile.TemporaryDirectory(prefix="default-wallpaper-") as temporary:
         source = Path(temporary) / "source.png"

@@ -1079,7 +1079,9 @@ def check_default_wallpaper(
                 if width != height or width > default_wallpaper.MAX_SIDE:
                     fail(
                         f"{entry} in {FRAMEWORK_OVERLAY} is {width}x{height}: the tablet default "
-                        f"wallpaper must be a square of at most {default_wallpaper.MAX_SIDE} pixels"
+                        f"wallpaper must be a square of at most {default_wallpaper.MAX_SIDE} pixels "
+                        "(LineageOS's overlay wins the resource when the product lists "
+                        f"{default_wallpaper.PRIORITY_OVERLAY} after its inherit-product calls)"
                     )
     except (OSError, zipfile.BadZipFile) as error:
         fail(f"{FRAMEWORK_OVERLAY} is not a readable archive: {error}")

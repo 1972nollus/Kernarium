@@ -75,6 +75,13 @@ ifneq ($(TARGET_BUILD_VARIANT),user)
 WITH_SU := true
 endif
 
+# Where an overlay directory stands in PRODUCT_PACKAGE_OVERLAYS decides who wins a resource that two of
+# them define: Soong gives the earlier directory the higher priority, and inherit-product expands the
+# inherited list where the call stands, so a directory added after the calls below ranks under LineageOS's
+# and Cuttlefish's. The directory with the default wallpaper, which LineageOS also ships, is therefore
+# listed here and no other. The target-files verifier reads the built framework overlay for the result.
+PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay-priority
+
 $(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
 $(call inherit-product, hardware/interfaces/audio/aidl/default/audio_effects.mk)
 $(call inherit-product, vendor/lineage/config/common_full_tablet_wifionly.mk)
