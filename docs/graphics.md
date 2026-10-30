@@ -1070,7 +1070,10 @@ so a client that stopped allocating left the cache's contents held: 25 to
 30 MiB at idle and about 75 MiB right after apps closed. Each Zink screen runs a
 reaper thread (`pb_cache_reaper.c`) that sleeps while the cache is empty,
 otherwise until the oldest entry expires, and then frees what has expired; adding
-a buffer wakes it.
+a buffer wakes it. The cache keeps at most 32 MiB of unused buffers, or an eighth
+of the heap when that is smaller, so its bound is the same on every host rather
+than following the heap size KosmicKrisp reports. `ZINK_BO_CACHE_MAX_MIB`
+changes the cap, and assertions check that the cache stays within it.
 
 A Venus device charges its heap to the renderer's device-memory pool (see [the
 Venus share](#host-visible-memory-is-bounded-by-the-blob-aperture)), so the
