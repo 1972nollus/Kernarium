@@ -1075,6 +1075,13 @@ of the heap when that is smaller, so its bound is the same on every host rather
 than following the heap size KosmicKrisp reports. `ZINK_BO_CACHE_MAX_MIB`
 changes the cap, and assertions check that the cache stays within it.
 
+KosmicKrisp reports physical memory as its one host heap, 64 GiB on a large Mac
+and 4 GiB on an iPad mini 6, and the memory budget it reports follows. Apps and
+drivers that size their caches from either see that difference.
+`MESA_KK_SYSMEM_HEAP_MIB` replaces the figure, up to physical memory, and every
+heap's budget is held to the heap size; a measurement run states 4096 to see what
+the device reports. Unset, the heap is physical memory.
+
 A Venus device charges its heap to the renderer's device-memory pool (see [the
 Venus share](#host-visible-memory-is-bounded-by-the-blob-aperture)), so the
 heap and the guest's allocations share one bound. A heap the device creates or
