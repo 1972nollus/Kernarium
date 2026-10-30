@@ -11,9 +11,14 @@ tasks that wait on the held GPU and for the framework's application-not-
 responding report. A Mac never revokes the GPU, so this shows the guest's side
 of the edge only; the GPU hold itself is the same.
 
-It needs the accepted Android release (make-guest-bundle.py) and adb. The
-guest bundle is assembled once and kept, with its writable disk. The adb
-server it starts is its own and is stopped at the end.
+It needs adb and a guest bundle, which run-ios-mac.sh assembles once from the
+accepted Android release (make-guest-bundle.py) and keeps, with its writable
+disk, in the application's container as --bundle NAME. The host refuses a
+disk whose partition layout is not the one it expects ("fixed GPT partition
+layout differs", android_boot.cpp), so a release built before a layout change
+needs a bundle of the current layout copied there first; an existing bundle
+is reused. The adb server this script starts is its own and is stopped at the
+end.
 
   repro-android-hold-mac.py [--no-build] [--background-seconds N]
                             [--expect {pass,fail}] [--output DIR]
@@ -45,9 +50,12 @@ FORWARD_PORT = 5589
 CHANNEL = "hold-repro"
 # The processes whose survival says the framework itself did not fall over.
 SURVIVORS = "system_server surfaceflinger"
+# A cached process the framework trims has died too, which is not a finding;
+# one the user could see or depend on is. The log also holds the adb service
+# line of this very search, which the pattern would match.
 REPORT_PATTERN = (
     r"WATCHDOG|Watchdog.*(killing|Triggering)|ANR in|am_anr|am_crash|"
-    r"Process .* has died|FATAL EXCEPTION"
+    r"FATAL EXCEPTION|Process .* has died: (top|pers|fg|vis|prcp|psvc|bfgs)"
 )
 
 
@@ -191,13 +199,14 @@ def sample(label: str, baseline_pids: str) -> dict:
         'ps -A -o PID,STAT,WCHAN:32,NAME | grep -E "^ *[0-9]+ +D"', timeout=40
     )
     result["d_state"] = [line.strip() for line in stuck.splitlines() if line.strip()]
-    _, wakefulness = guest("dumpsys power | grep -m1 mWakefulness=", timeout=40)
-    result["wakefulness"] = wakefulness.strip()
+    _, wakefulness = guest("dumpsys power | grep mWakefulness=", timeout=40)
+    result["wakefulness"] = wakefulness.strip().splitlines()[0] if wakefulness.strip() else ""
     _, pids = guest(f"pidof {SURVIVORS}", timeout=40)
     result["pids"] = pids.strip()
     result["survivors_kept"] = pids.strip() == baseline_pids
     _, reports = guest(
-        f'logcat -b all -d -v threadtime | grep -E "{REPORT_PATTERN}"',
+        f'logcat -b all -d -v threadtime | grep -E "{REPORT_PATTERN}" | '
+        'grep -v " adbd "',
         timeout=60,
     )
     result["reports"] = [
@@ -294,10 +303,11 @@ def main() -> int:
         )
         _, baseline_pids = guest(f"pidof {SURVIVORS}")
         baseline_pids = baseline_pids.strip()
-        _, awake = guest("dumpsys power | grep -m1 mWakefulness=")
-        say(f"survivors {baseline_pids!r}, {awake.strip()}")
+        _, awake = guest("dumpsys power | grep mWakefulness=")
+        awake = awake.strip().splitlines()[0] if awake.strip() else ""
+        say(f"survivors {baseline_pids!r}, {awake}")
         verdict["baseline_pids"] = baseline_pids
-        verdict["baseline_wakefulness"] = awake.strip()
+        verdict["baseline_wakefulness"] = awake
         guest(
             'nohup sh -c "while :; do input swipe 560 600 560 200 250; '
             'input swipe 560 200 560 600 250; done" </dev/null >/dev/null 2>&1 &'

@@ -810,8 +810,10 @@ A Mac runs the guest's side of this edge without a device, with no GPU
 revoked: `Kernarium/scripts/repro-android-hold-mac.py` launches the Android
 automation runtime in Designed for iPad mode, applies the real policy through
 `AndroidHoldReproTests`, and checks the guest through adb. The tests skip
-unless that script names their channel. `--expect fail` is for a build with the
-old order, which must show tasks waiting on the GPU control queue.
+unless that script names their channel. It needs an Android bundle whose disk
+has the layout the host expects. `--expect fail` is for a build with the old
+order, which must show tasks waiting on the GPU control queue and the launcher
+not responding to the screen-off broadcast.
 
 To check the restart notice, background the
 application, terminate its process with `devicectl device process terminate`,
