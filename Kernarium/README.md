@@ -166,8 +166,10 @@ resize.
 
 Kernarium asks the guest to write back when the application loses focus,
 quiesces it before the application is backgrounded or terminated, and resumes
-it on foregrounding. Its Power key also wakes a guest that suspended itself,
-such as Android once its display is off. The runtime side of sync, quiesce,
+it on foregrounding. A key press also wakes a guest that suspended itself,
+such as Android once its display is off, as a phone wakes to its keyboard;
+a touch does not. Power wakes it at every press, any other key at most once a
+second. The runtime side of sync, quiesce,
 resume, and wake is in
 [`../docs/architecture.md`](../docs/architecture.md#guest-lifecycle).
 
