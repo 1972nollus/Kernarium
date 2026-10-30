@@ -92,18 +92,14 @@ with open(os.environ["FIXTURE_LOG"], "a") as log:
 '''
 
 
-# An fsck.erofs that extracts a directory of the APEX payload from the tree the
-# fixture keeps beside it, and logs the directory it was asked for.
+# An fsck.erofs that extracts the APEX payload from the tree the fixture keeps beside
+# it (the AOSP 1.8 tool extracts a whole image only), and logs each call.
 FAKE_FSCK_EROFS = r'''#!/usr/bin/env python3
 import os, shutil, sys
 extract = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("--extract="))
-path = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("--path="))
 with open(os.environ["FIXTURE_FSCK_LOG"], "a") as log:
-    log.write(path + "\n")
-source = os.path.join(os.environ["FIXTURE_APEX_TREE"], path.lstrip("/"))
-if not os.path.isdir(source):
-    sys.exit(1)
-shutil.copytree(source, extract)
+    log.write(sys.argv[-1] + "\\n")
+shutil.copytree(os.environ["FIXTURE_APEX_TREE"], extract)
 '''
 
 
@@ -488,7 +484,7 @@ def check_build_and_verify(tool, scratch: Path) -> None:
 
 
 def check_erofs_apex_payloads(tool, scratch: Path) -> None:
-    """The APKs of an EROFS payload come from fsck.erofs, only from the directories it has."""
+    """The APKs of an EROFS payload come from one fsck.erofs extraction, only from the directories it has."""
     import os
 
     bin_dir = scratch / "bin"
@@ -529,14 +525,12 @@ def check_erofs_apex_payloads(tool, scratch: Path) -> None:
             "apex@com.android.fixture@app@Dex@Dex.apk@classes.odex",
             "apex@com.android.fixture@priv-app@Nested@more@Priv.apk@classes.odex"]:
         fail("an APK in an EROFS payload is named as one in an ext4 payload")
-    if log.read_text().split() != ["/app", "/priv-app"]:
-        fail(f"fsck.erofs must be asked for each directory once: {log.read_text()!r}")
+    if len(log.read_text().split()) != 1:
+        fail(f"fsck.erofs must extract the payload once: {log.read_text()!r}")
     only_app = packages_of(synthetic_erofs_image(files=("app/Dex/Dex.apk",)))
     if [package.device_location for package in only_app] != [
             "/apex/com.android.fixture/app/Dex/Dex.apk"]:
         fail("an EROFS payload without /priv-app must yield its /app APKs alone")
-    if log.read_text().split() != ["/app"]:
-        fail(f"fsck.erofs must not be asked for a directory the payload lacks: {log.read_text()!r}")
     no_apps = packages_of(synthetic_erofs_image(files=("etc/init.rc",)))
     if no_apps or log.read_text():
         fail("an EROFS payload without application directories must not run fsck.erofs")
@@ -544,8 +538,8 @@ def check_erofs_apex_payloads(tool, scratch: Path) -> None:
     try:
         packages_of(synthetic_erofs_image(files=("app/Dex/Dex.apk",)))
     except SystemExit as exit_:
-        if "cannot extract /app" not in str(exit_):
-            fail(f"a failed extraction must name the directory: {exit_}")
+        if "cannot extract the payload of com.android.fixture" not in str(exit_):
+            fail(f"a failed extraction must name the APEX: {exit_}")
     else:
         fail("a failed extraction must stop the tool")
 

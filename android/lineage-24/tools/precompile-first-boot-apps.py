@@ -443,25 +443,30 @@ def ext4_payload_apks(tools: Tools, payload: Path, scratch: Path, name: str) -> 
 def erofs_payload_apks(tools: Tools, payload: Path, scratch: Path, name: str) -> list[tuple[str, Path]]:
     """The APKs under /app and /priv-app of an EROFS APEX payload, with their paths in the APEX.
 
-    The payload's directories say which of the two exist; fsck.erofs extracts each of them
-    (its --path names a directory whose contents land in the extraction directory).
+    The payload's directories say whether it has either; only then fsck.erofs extracts the whole
+    payload (the AOSP fsck.erofs cannot extract one directory) and the APKs are taken from it.
     """
-    found: list[tuple[str, Path]] = []
     with payload.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as image:
         present = [
             directory for directory in ("app", "priv-app")
             if android_image.erofs_file_type(image, directory, name, payload_error)
             == android_image.EROFS_FILE_TYPE_DIRECTORY
         ]
+    if not present:
+        return []
+    extracted = scratch / f"{name}.extracted"
+    result = run([str(tools.bin / "fsck.erofs"), f"--extract={extracted}", str(payload)])
+    if result.returncode != 0 or not extracted.is_dir():
+        fail(f"cannot extract the payload of {name}: {result.stderr.strip() or result.stdout.strip()}")
+    found: list[tuple[str, Path]] = []
     for directory in present:
-        extracted = scratch / f"{name}.{directory}"
-        result = run([str(tools.bin / "fsck.erofs"), f"--extract={extracted}",
-                      f"--path=/{directory}", str(payload)])
-        if result.returncode != 0 or not extracted.is_dir():
-            fail(f"cannot extract /{directory} from {name}: {result.stderr.strip()}")
-        for apk in sorted(extracted.rglob("*.apk")):
+        for apk in sorted((extracted / directory).rglob("*.apk")):
             if apk.is_file() and not apk.is_symlink():
-                found.append((f"/{directory}/{apk.relative_to(extracted).as_posix()}", apk))
+                relative = apk.relative_to(extracted / directory).as_posix()
+                target = scratch / (name + f"@{directory}@" + relative.replace("/", "@"))
+                shutil.move(apk, target)
+                found.append((f"/{directory}/{relative}", target))
+    shutil.rmtree(extracted)
     return found
 
 
