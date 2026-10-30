@@ -6,14 +6,29 @@ uml_declare_architecture_target(uml_memory_contract memory)
 target_link_libraries(uml_memory_contract INTERFACE
     UML::GuestPageConfiguration)
 
+# The process's heap region and the heaps taken from it. It is an archive of its
+# own, because the region is one per process and every composition of the MMU
+# objects, and the CPU layer's caches, must load the same one.
+add_library(uml_memory_heap STATIC domain_heap.cpp)
+add_library(UML::MemoryHeap ALIAS uml_memory_heap)
+uml_declare_architecture_target(uml_memory_heap memory)
+target_include_directories(uml_memory_heap PUBLIC
+    ${PROJECT_SOURCE_DIR}/darwin)
+# An iOS app's address space is small and its guest RAM window takes most of
+# it, so the region is 1 GiB there and 8 GiB elsewhere.
+target_compile_definitions(uml_memory_heap PRIVATE
+    UML_HEAP_REGION_BYTES=$<IF:$<STREQUAL:${UML_APPLE_PLATFORM},ios>,1073741824,8589934592>)
+
 add_library(uml_memory_shared_backing STATIC
     shared_backing.cpp
     guest_ram_commitment.cpp
     guest_ram_image.cpp)
 add_library(UML::MemorySharedBacking ALIAS uml_memory_shared_backing)
 uml_declare_architecture_target(uml_memory_shared_backing memory)
+# Every composition of the MMU objects links this archive, so it carries the
+# heap region those objects allocate from.
 target_link_libraries(uml_memory_shared_backing
-    PUBLIC UML::MemoryContract compression
+    PUBLIC UML::MemoryContract UML::MemoryHeap compression
     PRIVATE UML::GuestTimerMask)
 target_include_directories(uml_memory_shared_backing PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin)

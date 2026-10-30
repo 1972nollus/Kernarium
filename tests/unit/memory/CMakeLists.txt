@@ -15,6 +15,14 @@ target_compile_definitions(uml_memory_domain_lifetime_tests PRIVATE
 uml_add_unit_test(NAME memory-domain-lifetime
     COMMAND uml_memory_domain_lifetime_tests LABELS tsan)
 
+# The heaps a unit of the engine maps for itself and gives back whole.
+add_executable(uml_memory_domain_heap_tests domain_heap_tests.cpp)
+target_link_libraries(uml_memory_domain_heap_tests PRIVATE UML::MemoryHeap)
+target_include_directories(uml_memory_domain_heap_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/memory)
+uml_add_unit_test(NAME memory-domain-heap
+    COMMAND uml_memory_domain_heap_tests LABELS tsan)
+
 add_executable(uml_memory_address_window_tests address_window_tests.cpp)
 target_link_libraries(uml_memory_address_window_tests PRIVATE
     uml_address_layout_test_variant)
