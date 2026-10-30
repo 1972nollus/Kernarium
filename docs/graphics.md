@@ -1064,6 +1064,14 @@ levels: past about a thousand quad patches it reaches the cap. Constant levels
 bound it by the level written instead, and 65,536 triangle patches at level 1
 fit the starting 16 MiB.
 
+Zink keeps freed buffers in a cache for 500 ms so that a new allocation reuses
+one, and Mesa freed an expired buffer only when another was added or reclaimed,
+so a client that stopped allocating left the cache's contents held: 25 to
+30 MiB at idle and about 75 MiB right after apps closed. Each Zink screen runs a
+reaper thread (`pb_cache_reaper.c`) that sleeps while the cache is empty,
+otherwise until the oldest entry expires, and then frees what has expired; adding
+a buffer wakes it.
+
 A Venus device charges its heap to the renderer's device-memory pool (see [the
 Venus share](#host-visible-memory-is-bounded-by-the-blob-aperture)), so the
 heap and the guest's allocations share one bound. A heap the device creates or

@@ -245,7 +245,12 @@ KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
 regressions use `--suite vulkan`. Assertions must stay active in those builds.
 Apple's emulated `util_barrier` has `util_tests --gtest_filter='util_barrier.*'`
-in `--suite util`, which runs in any `-Dbuild-tests=true` tree.
+in `--suite util`, which runs in any `-Dbuild-tests=true` tree. Zink's
+buffer-cache reaper is `gallium-pb-cache` in `--suite gallium`, which also needs
+active assertions and takes `-Db_sanitize=thread` for a ThreadSanitizer pass over
+the reaper and the add path; Apple's assembler rejects the CFI directives of
+`src/util/streaming-load-memcpy.c` in that tree, so that one object is built
+without the sanitizer.
 
 KosmicKrisp's runtime behaviour is specified in
 [`../docs/graphics.md`](../docs/graphics.md#kosmickrisp-driver-contracts).
