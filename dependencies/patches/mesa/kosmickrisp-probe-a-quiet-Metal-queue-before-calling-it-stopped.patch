@@ -1,0 +1,746 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 05:46:23 +0900
+Subject: [PATCH] kosmickrisp: probe a quiet Metal queue before calling it
+ stopped
+
+A backgrounded iOS app is denied the GPU, and the Metal command queue of
+a denied app rejects every submission. Each rejected commit is reported
+to its feedback handler within milliseconds, as a timeout for a
+submission the GPU admitted and ran none of, and the driver survives
+that: it completes the signals the failure owed and retires the queue at
+the next submit. A timeline signal enqueued without a command buffer
+behind it has no feedback, and the queue drops it without a word.
+
+On an A15, a Kernarium guest drawing with glmark2 was held off the GPU
+5 s after the app entered the background, which is two seconds past the
+point where iOS denies it. The console shows 38 rejected commits and 24
+retirements, the last one a second before the hold, and then nothing
+from the driver for 30 s. Then it reports that the queue
+accepted a timeline signal for value 2, delivered nothing, reported no
+failure and holds no unanswered work, and loses the device; the guest's
+GL client, waiting in vkQueueWaitIdle, gets VK_ERROR_DEVICE_LOST and
+never draws again. The same run held at 3 s recovers. Nothing could
+tell the two apart: the retirement clears the failure count, the queue
+held nothing it had not answered for, and a failure count of zero with
+nothing unanswered is what a queue that has stopped looks like.
+
+A timeline waiter whose signal has been overdue for
+KK_QUEUE_PROBE_DELAY_NS, one second, on a queue that reports no failure
+and holds nothing it has not answered for, now has the queue committed
+an empty command buffer (kk_queue_probe), at most one a second. The
+probe is an ordinary submission with a serial and a report. A queue that
+rejects it reports a failure, the failure completes the signals the
+queue owes as any other does, and the wait ends about a second after it
+began. A queue that runs it reports nothing and loses nothing, and a
+queue held up behind work only the host can release answers it when the
+host does. The probe never completes a signal itself, so a queue that
+has really stopped still loses the device at the bound it had.
+
+The probe commits from the waiter's thread. The submit thread therefore
+holds a mutex for the whole of kk_queue_submit and the probe takes it
+with a try: a queue that is being submitted to is not quiet, and its
+replacement cannot move under the probe.
+
+The test queue_denied reproduces the denial on a Mac by replacing the
+Metal queue's commit with a rejection reported the way iOS reports it
+and its signalEvent:value: with a drop, for as long as a flag says the
+GPU is denied. In after-failure a rejected commit is recovered and a
+signal-only submit follows on the queue that replaced the failed one; in
+first-op the signal-only submit is the first thing the denied queue
+sees. Both must end their wait in about a second, keep the device, and
+serve work again when the GPU is back. In legit-wait nothing is denied
+and a commit and its signal wait behind a wait only the host can
+release: the queue must not be probed, nothing may be completed early,
+and the device must stay.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/kosmickrisp/vulkan/kk_queue.c             | 106 ++++-
+ src/kosmickrisp/vulkan/kk_queue.h             |  38 +-
+ src/kosmickrisp/vulkan/kk_sync.c              |  26 +-
+ src/kosmickrisp/vulkan/meson.build            |  19 +
+ .../vulkan/tests/test_queue_denied.m          | 370 ++++++++++++++++++
+ 5 files changed, 552 insertions(+), 7 deletions(-)
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_queue_denied.m
+
+diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
+index 5ddfada86b6bdd7f86be41081aaa625b1e9185f3..e7312b15a81ccc5cf0eca46b1e742231fa43d2f0 100644
+--- a/src/kosmickrisp/vulkan/kk_queue.c
++++ b/src/kosmickrisp/vulkan/kk_queue.c
+@@ -348,6 +348,23 @@ kk_queue_submission_new(struct kk_queue_feedback *feedback, uint64_t serial)
+    return submission;
+ }
+ 
++/* The storage of a probe's empty command buffer, which the GPU is done with
++ * when Metal reports the commit. */
++struct kk_queue_probe_storage {
++   mtl_command_allocator *allocator;
++   mtl_command_buffer *command_buffer;
++};
++
++static void
++kk_queue_probe_done(struct mtl_feedback_data *data)
++{
++   struct kk_queue_probe_storage *storage = data->user_data;
++
++   mtl_release(storage->command_buffer);
++   mtl_release(storage->allocator);
++   free(storage);
++}
++
+ static void
+ commit_callback(struct mtl_feedback_data *data)
+ {
+@@ -433,6 +450,78 @@ commit_callback(struct mtl_feedback_data *data)
+    kk_queue_feedback_unref(feedback);
+ }
+ 
++bool
++kk_queue_probe(struct kk_queue *queue)
++{
++   struct kk_queue_feedback *feedback = queue->feedback;
++   if (!feedback)
++      return false;
++
++   /* The submit thread owns the queue while it submits, and a submission has
++    * a commit to report on, so there is nothing to ask. Taken for the whole
++    * probe, this also keeps the queue from being replaced under it. */
++   if (mtx_trylock(&queue->submit_mutex) != thrd_success)
++      return false;
++
++   bool probed = false;
++   struct kk_device *dev = kk_queue_device(queue);
++   const uint64_t now = os_time_get_nano();
++
++   simple_mtx_lock(&feedback->signal_mutex);
++   const bool due = feedback->reported == feedback->last_serial &&
++                    (feedback->probed_at == 0u ||
++                     now - feedback->probed_at >= KK_QUEUE_PROBE_DELAY_NS);
++   if (due)
++      feedback->probed_at = now;
++   simple_mtx_unlock(&feedback->signal_mutex);
++   if (!due)
++      goto out;
++
++   /* Everything the probe needs exists before it is committed, so a failure to
++    * make any of it costs nothing the queue's accounting has seen. */
++   mtl_command_allocator *allocator =
++      mtl_new_command_allocator(dev->mtl_handle);
++   mtl_command_buffer *command_buffer =
++      allocator ? mtl_new_command_buffer(dev->mtl_handle) : NULL;
++   mtl_commit_options *options =
++      command_buffer ? mtl_new_commit_options() : NULL;
++   struct kk_queue_probe_storage *storage =
++      options ? malloc(sizeof(*storage)) : NULL;
++   struct kk_queue_submission *submission =
++      storage ? kk_queue_submission_new(feedback, 0u) : NULL;
++   if (!submission) {
++      if (storage)
++         free(storage);
++      if (options)
++         mtl_release(options);
++      if (command_buffer)
++         mtl_release(command_buffer);
++      if (allocator)
++         mtl_release(allocator);
++      goto out;
++   }
++   storage->allocator = allocator;
++   storage->command_buffer = command_buffer;
++   mtl_begin_command_buffer(command_buffer, allocator);
++   mtl_end_command_buffer(command_buffer);
++
++   /* An ordinary submission with an ordinary report: it takes a serial, and
++    * the queue is not retired and the probe not counted answered until Metal
++    * has reported it. */
++   submission->serial = kk_queue_reserve_serial(feedback);
++   mtl_commit_options_add_feedback_handler(options, kk_queue_probe_done,
++                                           storage);
++   mtl_commit_options_add_feedback_handler(options, queue->feedback_callback,
++                                           submission);
++   mtl_command_queue_commit(queue->mtl_handle, &command_buffer, 1, options);
++   mtl_release(options);
++   probed = true;
++
++out:
++   mtx_unlock(&queue->submit_mutex);
++   return probed;
++}
++
+ /* A submitted recording's native command storage. Metal cannot run a
+  * recording twice, so every submission detaches the storage from its Vulkan
+  * command buffer, and the storage goes back once the GPU is done with it
+@@ -667,9 +756,8 @@ kk_commit_parts_free(struct kk_commit_part *parts, uint32_t count)
+ }
+ 
+ static VkResult
+-kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
++kk_queue_submit_locked(struct kk_queue *queue, struct vk_queue_submit *submit)
+ {
+-   struct kk_queue *queue = container_of(vk_queue, struct kk_queue, vk);
+    struct kk_device *dev = kk_queue_device(queue);
+ 
+    if (vk_queue_is_lost(&queue->vk))
+@@ -825,6 +913,17 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+    return VK_SUCCESS;
+ }
+ 
++static VkResult
++kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
++{
++   struct kk_queue *queue = container_of(vk_queue, struct kk_queue, vk);
++
++   mtx_lock(&queue->submit_mutex);
++   VkResult result = kk_queue_submit_locked(queue, submit);
++   mtx_unlock(&queue->submit_mutex);
++   return result;
++}
++
+ VkResult
+ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
+               const VkDeviceQueueCreateInfo *pCreateInfo,
+@@ -864,6 +963,7 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
+       return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
+    }
+    queue->feedback->refcount = 1;
++   mtx_init(&queue->submit_mutex, mtx_plain);
+    simple_mtx_init(&queue->feedback->mutex, mtx_plain);
+    simple_mtx_init(&queue->feedback->signal_mutex, mtx_plain);
+    util_dynarray_init(&queue->feedback->signals, NULL);
+@@ -879,6 +979,7 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
+          mtl_release(queue->mtl_handle);
+       if (queue->layer_order_event)
+          mtl_release(queue->layer_order_event);
++      mtx_destroy(&queue->submit_mutex);
+       kk_queue_feedback_unref(queue->feedback);
+       vk_queue_finish(&queue->vk);
+       return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+@@ -910,4 +1011,5 @@ kk_queue_finish(struct kk_device *dev, struct kk_queue *queue)
+                                           dev->residency_set.handle);
+    mtl_release(queue->mtl_handle);
+    mtl_release(queue->layer_order_event);
++   mtx_destroy(&queue->submit_mutex);
+ }
+diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
+index f3f129f7ba523dfbbf5df7eda2c3e07010a33733..dd4f1556f802147a40451c711c8df1c1c82f88b7 100644
+--- a/src/kosmickrisp/vulkan/kk_queue.h
++++ b/src/kosmickrisp/vulkan/kk_queue.h
+@@ -56,6 +56,8 @@ struct kk_queue_feedback {
+     * Unlike failures, this is never cleared: a GPU write destroyed by a
+     * failure stays destroyed after the queue that lost it is retired. */
+    bool ever_failed;
++   /* When the queue was last probed (see kk_queue_probe), zero for never. */
++   uint64_t probed_at;
+ };
+ 
+ /* Per-submission feedback payload. Metal reports a failure against one
+@@ -75,6 +77,10 @@ kk_queue_feedback_ref(struct kk_queue_feedback *feedback)
+ 
+ struct kk_queue {
+    struct vk_queue vk;
++   /* Held while the submit thread submits, so that anyone else who commits to
++    * the queue (kk_queue_probe) neither interleaves with a submission nor
++    * races the queue's replacement. */
++   mtx_t submit_mutex;
+    struct mtl_command_queue *mtl_handle;
+    mtl_feedback_handler_callback feedback_callback;
+    struct kk_queue_feedback *feedback;
+@@ -121,8 +127,9 @@ struct kk_queue_progress kk_queue_get_progress(struct kk_queue *queue);
+  *
+  * The two together say what an undelivered signal means. A queue carrying a
+  * reported failure destroyed the signal, and completing it is the repair. A
+- * queue that has reported no failure destroyed nothing: it accepted the signal
+- * and then stopped, and unreported says how much work it is sitting on. */
++ * queue that has reported no failure destroyed nothing, unless it is failing
++ * without saying so (see kk_queue_probe): it accepted the signal and then
++ * stopped, and unreported says how much work it is sitting on. */
+ bool kk_queue_failure_outstanding(struct kk_queue *queue,
+                                   uint64_t *unreported);
+ 
+@@ -136,6 +143,33 @@ bool kk_queue_failure_outstanding(struct kk_queue *queue,
+  * failed. */
+ #define KK_LOST_WORK_TIMEOUT_NS (10ull * 1000000000ull)
+ 
++/* How long a timeline signal the queue took stays undelivered, on a queue that
++ * has reported no failure and holds no work it has not answered for, before
++ * the waiter asks the queue whether it is failing without saying so. The
++ * bound is a tenth of the one for losing the device, and a probe costs one
++ * empty command buffer, so a queue that is only held up by a wait the host
++ * has not released is asked repeatedly and lost nothing. */
++#define KK_QUEUE_PROBE_DELAY_NS (1ull * 1000000000ull)
++
++/* Commits an empty command buffer to the queue, behind everything it holds,
++ * and lets the queue's report on it say whether the queue still runs work.
++ *
++ * Metal reports a failure through the feedback of a commit, and a signal
++ * enqueued on a queue without a command buffer behind it has no feedback. A
++ * queue that rejects every submission, as iOS makes the queue of an app it has
++ * denied the GPU, therefore drops such a signal without a word: the failure
++ * count stays zero and the queue holds nothing it has not answered for, which
++ * is how a queue that stopped looks, and a waiter on the signal would lose the
++ * device for it. The probe gives the queue something to report. A queue that
++ * rejects it reports a failure, and the failure releases the waiters it owes
++ * as any other does. A queue that runs it says nothing, and one held up behind
++ * a wait only the host can release answers once the host does.
++ *
++ * At most one probe per KK_QUEUE_PROBE_DELAY_NS, and none while the queue holds
++ * a submission it has not answered for, which is the probe itself, or while the
++ * submit thread is submitting. Returns whether it committed one. */
++bool kk_queue_probe(struct kk_queue *queue);
++
+ /* How long a queue that has reported no failure may hold work it does not
+  * answer for before a waiter on that work concludes the queue has stopped.
+  * Such a queue destroyed nothing; it stopped running work. Nothing restarts a
+diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
+index 24c13070a3d16bc3f9ef0b10f5eb0120e1729e35..9796a7cd193ad9483e489864b8313145b5b30736 100644
+--- a/src/kosmickrisp/vulkan/kk_sync.c
++++ b/src/kosmickrisp/vulkan/kk_sync.c
+@@ -138,6 +138,7 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+    const uint64_t bound = failure_outstanding ? KK_LOST_WORK_TIMEOUT_NS
+                                               : KK_STOPPED_QUEUE_TIMEOUT_NS;
+    bool expired = false;
++   uint64_t overdue = 0u;
+    simple_mtx_lock(&timeline->overdue_mutex);
+    /* Read the time under the lock: another waiter may start the clock after
+     * an earlier reading, and the elapsed time must never go negative. */
+@@ -145,11 +146,30 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+    if (timeline->overdue_since == 0u || timeline->stalled_value != signaled) {
+       timeline->stalled_value = signaled;
+       timeline->overdue_since = now;
+-   } else if (now - timeline->overdue_since >= bound) {
+-      timeline->overdue_since = 0u;
+-      expired = true;
++   } else {
++      overdue = now - timeline->overdue_since;
++      if (overdue >= bound) {
++         timeline->overdue_since = 0u;
++         expired = true;
++      }
+    }
+    simple_mtx_unlock(&timeline->overdue_mutex);
++
++   /* No failure reported and nothing held that the queue has not answered for
++    * is also how a queue looks that rejects everything it is given and drops
++    * a signal without a commit behind it, which is not a stopped queue and
++    * must not cost the device. Give the queue something to report, and a
++    * failure it reports releases this waiter as any other does. */
++   if (!expired && !failure_outstanding && unreported == 0u &&
++       overdue >= KK_QUEUE_PROBE_DELAY_NS && kk_queue_probe(&dev->queue)) {
++      fprintf(stderr,
++              "KosmicKrisp probing the Metal command queue: it accepted a "
++              "timeline signal for value %" PRIu64
++              ", has not delivered it in %" PRIu64
++              " ms, has reported no failure and holds no work it has not "
++              "answered for\n",
++              wait_value, overdue / 1000000ull);
++   }
+    if (!expired)
+       return;
+ 
+diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
+index e4d7bab32bc63452d3a9de6f0c1616f373fb184d..d59901280f046ced86e3bb285da9090d7965f94a 100644
+--- a/src/kosmickrisp/vulkan/meson.build
++++ b/src/kosmickrisp/vulkan/meson.build
+@@ -479,6 +479,25 @@ if with_tests
+         timeout : 90,
+       )
+     endforeach
++    queue_denied_test = executable(
++      'test_kosmickrisp_queue_denied',
++      files('tests/test_queue_denied.m'),
++      include_directories : kk_test_include_directories,
++      dependencies : kk_whole_library_test_deps + [kk_metal_frameworks,
++                                                    dep_thread],
++      link_whole : libkk,
++      link_args : ['-Wl,-undefined,dynamic_lookup'],
++    )
++    foreach denied_mode : ['after-failure', 'first-op', 'legit-wait']
++      test(
++        'kosmickrisp_queue_denied_' + denied_mode,
++        queue_denied_test,
++        args : [denied_mode],
++        suite : ['kosmickrisp'],
++        env : kk_test_env,
++        timeout : 60,
++      )
++    endforeach
+     timeline_host_wait_test = executable(
+       'test_kosmickrisp_timeline_host_wait',
+       files('tests/test_timeline_host_wait.cpp'),
+diff --git a/src/kosmickrisp/vulkan/tests/test_queue_denied.m b/src/kosmickrisp/vulkan/tests/test_queue_denied.m
+new file mode 100644
+index 0000000000000000000000000000000000000000..13e2215ad03a6fea025f52a2ca169096657a59c6
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_queue_denied.m
+@@ -0,0 +1,370 @@
++/* SPDX-License-Identifier: MIT */
++
++/* iOS denies a backgrounded app the GPU. Every command buffer committed after
++ * that is rejected, and Metal reports each rejection to the commit's feedback
++ * handler within milliseconds, so the driver sees a failure and recovers. A
++ * timeline signal enqueued on the queue without a command buffer behind it is
++ * dropped silently instead: nothing is reported, the failure count the signal
++ * recovery keys on is zero, and the queue holds nothing it has not answered
++ * for, so every waiter looks at a queue that has stopped. After the bound for
++ * that the driver lost the device, for good, and the guest's GL client never
++ * drew again.
++ *
++ * The test reproduces the denial without iOS. It replaces the Metal queue's
++ * commit with a rejection reported the way iOS reports it, an
++ * MTL4CommandQueueErrorDomain timeout for a submission the GPU admitted and
++ * ran none of, and its signalEvent:value: with a drop, for as long as a flag
++ * says the GPU is denied.
++ *
++ *   after-failure  a commit is rejected and recovered, then a signal-only
++ *                  submit follows on the queue that replaced the failed one
++ *   first-op       the first thing the denied GPU sees is a signal-only submit
++ *   legit-wait     no denial: a commit and a signal wait behind a GPU wait only
++ *                  the host can release, which must neither be probed, nor
++ *                  completed early, nor take the device
++ *
++ * The first two must see their wait end well inside the bound for losing the
++ * device, and the queue serve work again once the GPU is back. */
++
++#define VK_NO_PROTOTYPES
++#include "kk_device.h"
++#include "kk_queue.h"
++#include "kk_sync.h"
++#include "vk_semaphore.h"
++#include "vk_sync.h"
++#include "util/os_time.h"
++
++#import <Metal/Metal.h>
++#import <objc/runtime.h>
++
++#include <stdatomic.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++
++#include "kk_test.h"
++
++static atomic_bool denied;
++static atomic_uint rejected_commits;
++static atomic_uint dropped_signals;
++static const char handlers_key = 0;
++
++/* What iOS reports for a submission it refuses: the GPU admitted it, ran none
++ * of it, and called it a timeout. */
++@interface DeniedFeedback : NSObject <MTL4CommitFeedback>
++@end
++
++@implementation DeniedFeedback
++- (NSError *)error
++{
++   return [NSError
++      errorWithDomain:@"MTL4CommandQueueErrorDomain"
++                 code:1
++             userInfo:@{
++                NSLocalizedDescriptionKey :
++                   @"The operation couldn't be completed. (simulated denial)"
++             }];
++}
++- (CFTimeInterval)GPUStartTime
++{
++   return 12345.5;
++}
++- (CFTimeInterval)GPUEndTime
++{
++   return 12345.5;
++}
++@end
++
++typedef void (*signal_event_fn)(id, SEL, id, uint64_t);
++typedef void (*commit_fn)(id, SEL, const id *, NSUInteger, id);
++typedef void (*add_handler_fn)(id, SEL, id);
++static signal_event_fn original_signal_event;
++static commit_fn original_commit;
++static add_handler_fn original_add_handler;
++
++/* The handlers a commit's options carry, kept so that a rejected commit can
++ * call them. */
++static void
++recording_add_handler(id options, SEL selector, id handler)
++{
++   NSMutableArray *list = objc_getAssociatedObject(options, &handlers_key);
++   if (!list) {
++      list = [[NSMutableArray alloc] init];
++      objc_setAssociatedObject(options, &handlers_key, list,
++                               OBJC_ASSOCIATION_RETAIN);
++      [list release];
++   }
++   id copy = [handler copy];
++   [list addObject:copy];
++   [copy release];
++   original_add_handler(options, selector, handler);
++}
++
++static void
++denying_commit(id queue, SEL selector, const id *buffers, NSUInteger count,
++               id options)
++{
++   if (!atomic_load(&denied)) {
++      original_commit(queue, selector, buffers, count, options);
++      return;
++   }
++   atomic_fetch_add(&rejected_commits, 1u);
++   NSArray *handlers = [[objc_getAssociatedObject(options, &handlers_key)
++      copy] autorelease];
++   [handlers retain];
++   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
++      /* Metal reports a rejection from its own thread, a moment after the
++       * commit returned. */
++      usleep(2000);
++      DeniedFeedback *feedback = [[DeniedFeedback alloc] init];
++      for (void (^handler)(id) in handlers)
++         handler(feedback);
++      [feedback release];
++      [handlers release];
++   });
++}
++
++static void
++dropping_signal_event(id queue, SEL selector, id event, uint64_t value)
++{
++   if (atomic_load(&denied)) {
++      atomic_fetch_add(&dropped_signals, 1u);
++      return;
++   }
++   original_signal_event(queue, selector, event, value);
++}
++
++static void
++interpose_metal(void)
++{
++   @autoreleasepool {
++      id<MTLDevice> mtl = MTLCreateSystemDefaultDevice();
++      CHECK(mtl);
++      id<MTL4CommandQueue> probe = [mtl newMTL4CommandQueue];
++      CHECK(probe);
++      Method method = class_getInstanceMethod(object_getClass(probe),
++                                              @selector(signalEvent:value:));
++      CHECK(method);
++      original_signal_event = (signal_event_fn)method_getImplementation(method);
++      method_setImplementation(method, (IMP)dropping_signal_event);
++
++      method = class_getInstanceMethod(object_getClass(probe),
++                                       @selector(commit:count:options:));
++      CHECK(method);
++      original_commit = (commit_fn)method_getImplementation(method);
++      method_setImplementation(method, (IMP)denying_commit);
++
++      MTL4CommitOptions *options = [[MTL4CommitOptions alloc] init];
++      method = class_getInstanceMethod(object_getClass(options),
++                                       @selector(addFeedbackHandler:));
++      CHECK(method);
++      original_add_handler = (add_handler_fn)method_getImplementation(method);
++      method_setImplementation(method, (IMP)recording_add_handler);
++      [options release];
++      [probe release];
++      [mtl release];
++   }
++}
++
++static uint64_t
++now_ns(void)
++{
++   return os_time_get_nano();
++}
++
++int
++main(int argc, char **argv)
++{
++   setvbuf(stdout, NULL, _IONBF, 0);
++   CHECK(argc == 2);
++   const bool after_failure = strcmp(argv[1], "after-failure") == 0;
++   const bool first_op = strcmp(argv[1], "first-op") == 0;
++   const bool legit_wait = strcmp(argv[1], "legit-wait") == 0;
++   CHECK(after_failure || first_op || legit_wait);
++   /* The driver loses the device after 30 s of silence, so a run that gets
++    * there ends here instead, as a failure. */
++   alarm(25);
++   interpose_metal();
++
++   struct kk_test_device t;
++   kk_test_create_instance(&t, "queue-denied");
++   VkPhysicalDeviceVulkan12Features features = {
++      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
++      .timelineSemaphore = VK_TRUE,
++   };
++   kk_test_create_device(&t, &features, NULL, 0, NULL);
++   KK_LOAD_DEVICE_FUNCTIONS(t);
++   LOAD_D(vkCreateSemaphore);
++   LOAD_D(vkDestroySemaphore);
++   LOAD_D(vkSignalSemaphore);
++   LOAD_D(vkGetSemaphoreCounterValue);
++   LOAD_D(vkWaitSemaphores);
++   LOAD_D(vkCmdFillBuffer);
++   struct kk_device *dev = kk_device_from_handle(device);
++   VkQueue queue = t.queue;
++
++   VkBuffer buffer = VK_NULL_HANDLE;
++   VkDeviceMemory memory = VK_NULL_HANDLE;
++   volatile uint32_t *mapped = NULL;
++   kk_test_buffer(&t, 4096, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
++                  KK_TEST_HOST_MEMORY, &buffer, &memory, (void **)&mapped);
++   memset((void *)mapped, 0, 4096);
++
++   VkCommandPool pool = VK_NULL_HANDLE;
++   VkCommandBuffer command = VK_NULL_HANDLE;
++   kk_test_command_buffer(&t, 0, &pool, &command);
++   VkCommandBufferBeginInfo begin = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
++      .flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT,
++   };
++   CHECK(vkBeginCommandBuffer(command, &begin) == VK_SUCCESS);
++   vkCmdFillBuffer(command, buffer, 0, 4096, 0x2468ace1u);
++   CHECK(vkEndCommandBuffer(command) == VK_SUCCESS);
++
++   VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
++   VkSemaphoreTypeCreateInfo timeline_type = {
++      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
++      .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
++   };
++   VkSemaphoreCreateInfo timeline_info = {
++      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
++      .pNext = &timeline_type,
++   };
++
++   if (legit_wait) {
++      /* A submission waits for a value only the host can give, commits behind
++       * the wait and signals another semaphore after the commit. Metal runs
++       * the commit, and with it the signal, once the host gives the value, so
++       * the queue holds work it has not answered for and a waiter on the
++       * second semaphore is overdue for longer than the driver waits before
++       * it asks a queue that holds nothing. It must not ask this one, and
++       * nothing may be completed early or lost. */
++      VkSemaphore gate = VK_NULL_HANDLE, after = VK_NULL_HANDLE;
++      CHECK(vkCreateSemaphore(device, &timeline_info, NULL, &gate) ==
++            VK_SUCCESS);
++      CHECK(vkCreateSemaphore(device, &timeline_info, NULL, &after) ==
++            VK_SUCCESS);
++      struct vk_sync *gate_sync =
++         vk_semaphore_get_active_sync(vk_semaphore_from_handle(gate));
++      kk_timeline_mark_pending(gate_sync, 1);
++      const uint64_t wait_value = 1, signal_value = 1;
++      VkTimelineSemaphoreSubmitInfo values = {
++         .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
++         .waitSemaphoreValueCount = 1,
++         .pWaitSemaphoreValues = &wait_value,
++         .signalSemaphoreValueCount = 1,
++         .pSignalSemaphoreValues = &signal_value,
++      };
++      const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
++      VkSubmitInfo held = {
++         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++         .pNext = &values,
++         .waitSemaphoreCount = 1,
++         .pWaitSemaphores = &gate,
++         .pWaitDstStageMask = &stage,
++         .commandBufferCount = 1,
++         .pCommandBuffers = &command,
++         .signalSemaphoreCount = 1,
++         .pSignalSemaphores = &after,
++      };
++      CHECK(vkQueueSubmit(queue, 1, &held, VK_NULL_HANDLE) == VK_SUCCESS);
++
++      VkSemaphoreWaitInfo wait = {
++         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
++         .semaphoreCount = 1,
++         .pSemaphores = &after,
++         .pValues = &signal_value,
++      };
++      const uint64_t start = now_ns();
++      CHECK(vkWaitSemaphores(device, &wait, 3500000000ull) == VK_TIMEOUT);
++      CHECK(now_ns() - start >= 3400000000ull);
++      uint64_t counter = ~0ull;
++      CHECK(vkGetSemaphoreCounterValue(device, after, &counter) == VK_SUCCESS);
++      CHECK(counter == 0u);
++      CHECK(mapped[0] == 0u);
++      CHECK(!vk_device_is_lost(&dev->vk));
++      /* The queue was never asked. */
++      CHECK(dev->queue.feedback->probed_at == 0u);
++
++      VkSemaphoreSignalInfo release = {
++         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,
++         .semaphore = gate,
++         .value = 1,
++      };
++      CHECK(vkSignalSemaphore(device, &release) == VK_SUCCESS);
++      CHECK(vkWaitSemaphores(device, &wait, 5000000000ull) == VK_SUCCESS);
++      CHECK(mapped[0] == 0x2468ace1u);
++      CHECK(!vk_device_is_lost(&dev->vk));
++
++      /* The queue serves work as before. */
++      memset((void *)mapped, 0, 4096);
++      CHECK(kk_test_submit_and_wait(&t, command, 5000000000ull) == VK_SUCCESS);
++      CHECK(mapped[0] == 0x2468ace1u);
++      CHECK(vkQueueWaitIdle(queue) == VK_SUCCESS);
++      vkDestroySemaphore(device, after, NULL);
++      vkDestroySemaphore(device, gate, NULL);
++      vkDestroyBuffer(device, buffer, NULL);
++      vkFreeMemory(device, memory, NULL);
++      vkDestroyCommandPool(device, pool, NULL);
++      kk_test_destroy(&t);
++      alarm(0);
++      printf("legit-wait: work held behind a host-released wait was neither "
++             "probed, completed early nor lost\n");
++      return 0;
++   }
++
++   /* A healthy queue first, so the run starts from one that works. */
++   CHECK(kk_test_submit_and_wait(&t, command, 5000000000ull) == VK_SUCCESS);
++   CHECK(mapped[0] == 0x2468ace1u);
++   memset((void *)mapped, 0, 4096);
++
++   atomic_store(&denied, true);
++
++   if (after_failure) {
++      /* The first denied commit is rejected and reported, and the waiter it
++       * owes is released by the failure. */
++      CHECK(kk_test_submit_and_wait(&t, command, 5000000000ull) == VK_SUCCESS);
++      CHECK(atomic_load(&rejected_commits) >= 1u);
++      CHECK(mapped[0] == 0u);
++   }
++
++   /* A fence signaled by a submit that commits nothing: the signal is the only
++    * thing the denied queue is given, and it is dropped without a report. */
++   VkFence fence = VK_NULL_HANDLE;
++   CHECK(vkCreateFence(device, &fence_info, NULL, &fence) == VK_SUCCESS);
++   const unsigned dropped_before = atomic_load(&dropped_signals);
++   CHECK(vkQueueSubmit(queue, 0, NULL, fence) == VK_SUCCESS);
++   const uint64_t start = now_ns();
++   VkResult result = vkWaitForFences(device, 1, &fence, VK_TRUE, 15000000000ull);
++   const uint64_t elapsed = now_ns() - start;
++   fprintf(stderr, "signal-only wait on a denied queue: result %d after %.2f s, "
++           "%u signal(s) dropped, %u commit(s) rejected\n", result,
++           elapsed / 1e9, atomic_load(&dropped_signals) - dropped_before,
++           atomic_load(&rejected_commits));
++   CHECK(atomic_load(&dropped_signals) > dropped_before);
++   CHECK(!vk_device_is_lost(&dev->vk));
++   CHECK(result == VK_SUCCESS);
++   CHECK(dev->queue.feedback->probed_at != 0u);
++   /* Well inside the bound for losing the device. */
++   CHECK(elapsed < 10000000000ull);
++   vkDestroyFence(device, fence, NULL);
++
++   /* The GPU is back: the queue runs work again, on a command queue that
++    * replaced the one the denial killed. */
++   atomic_store(&denied, false);
++   CHECK(kk_test_submit_and_wait(&t, command, 10000000000ull) == VK_SUCCESS);
++   CHECK(mapped[0] == 0x2468ace1u);
++   CHECK(!vk_device_is_lost(&dev->vk));
++   CHECK(vkQueueWaitIdle(queue) == VK_SUCCESS);
++
++   vkDestroyBuffer(device, buffer, NULL);
++   vkFreeMemory(device, memory, NULL);
++   vkDestroyCommandPool(device, pool, NULL);
++   kk_test_destroy(&t);
++   alarm(0);
++   printf("%s: a signal dropped on a denied queue ended its wait in %.2f s "
++          "and the device kept serving\n", argv[1], elapsed / 1e9);
++   return 0;
++}
