@@ -39,6 +39,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <map>
 #include <sstream>
 #include <string>
@@ -66,6 +67,10 @@ constexpr char thread_name[] = "uml-process-audit";
 constexpr std::uintptr_t window_begin = DARWIN_UML_MACOS_NATIVE_ADDRESS;
 constexpr std::uintptr_t window_end = window_begin + (1ULL << 40);
 constexpr std::string_view hand_back_line = "Darwin: guest handed back:";
+/* The VM tags of the heaps the memory layer maps for itself and gives back
+ * whole (memory/domain_heap.hpp): domain heaps and thread scratch. */
+constexpr unsigned heap_tag = 241;
+constexpr unsigned scratch_tag = 242;
 
 /* Set by the constructor below. A path object with a constructor of its own
  * would be initialized by the dynamic initializers, which may run after it. */
@@ -269,6 +274,32 @@ void write_process(std::ostream &out)
 	out << "umask " << mask << '\n';
 }
 
+/* The bytes of dirty pages the process holds in regions of one VM tag. */
+std::size_t dirty_bytes_of_tags(std::initializer_list<unsigned> tags)
+{
+	std::size_t bytes = 0;
+	mach_vm_address_t address = 0;
+	for (;;) {
+		mach_vm_size_t size = 0;
+		natural_t depth = 64;
+		vm_region_submap_info_data_64_t info{};
+		mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
+		if (mach_vm_region_recurse(mach_task_self(), &address, &size, &depth,
+			    reinterpret_cast<vm_region_recurse_info_t>(&info),
+			    &count) != KERN_SUCCESS)
+			break;
+		if (info.is_submap) {
+			++depth;
+			continue;
+		}
+		if (std::find(tags.begin(), tags.end(), info.user_tag) != tags.end())
+			bytes += static_cast<std::size_t>(info.pages_dirtied +
+				info.pages_swapped_out) * vm_page_size;
+		address += size;
+	}
+	return bytes;
+}
+
 void write_memory(std::ostream &out)
 {
 	task_vm_info_data_t info{};
@@ -282,6 +313,12 @@ void write_memory(std::ostream &out)
 	malloc_zone_statistics(malloc_default_zone(), &statistics);
 	out << "malloc_in_use " << statistics.size_in_use << '\n';
 	out << "malloc_allocated " << statistics.size_allocated << '\n';
+	/* The heaps the memory layer keeps outside the zone: what a domain's
+	 * engine metadata holds while it lives, and nothing once its run is
+	 * handed back, but the scratch chunk each thread that mapped pages keeps
+	 * until it ends. */
+	out << "heap_dirty " << dirty_bytes_of_tags({heap_tag}) << '\n';
+	out << "scratch_dirty " << dirty_bytes_of_tags({scratch_tag}) << '\n';
 }
 
 /* Writes `text` as `path`, atomically, after it is all composed: the file

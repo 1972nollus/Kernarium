@@ -594,11 +594,13 @@ private:
 		(void)::dprintf(STDERR_FILENO,
 			"Darwin: guest handed back: descriptors=%zu keys=%zu "
 			"allocations=%zu (%zu bytes) mappings=%zu (%zu bytes) "
-			"sbrk=%zu guest_files=%zu\n",
+			"sbrk=%zu guest_files=%zu heaps=%zu (%zu bytes) "
+			"leases=%zu\n",
 			released.descriptors, released.keys, released.allocations,
 			released.allocation_bytes, released.mappings,
 			released.mapping_bytes, released.sbrk_calls,
-			hand_back.guest_files);
+			hand_back.guest_files, hand_back.heaps,
+			hand_back.heap_bytes, hand_back.heap_leases);
 		restartable_ = false;
 #if UML_EMULATOR_TESTING
 		if (const auto hook = guest_hand_back_hook.load(
@@ -612,7 +614,10 @@ private:
 				 .mappings = released.mappings,
 				 .mapping_bytes = released.mapping_bytes,
 				 .sbrk_calls = released.sbrk_calls,
-				 .guest_files = hand_back.guest_files});
+				 .guest_files = hand_back.guest_files,
+				 .heaps = hand_back.heaps,
+				 .heap_bytes = hand_back.heap_bytes,
+				 .heap_leases = hand_back.heap_leases});
 #endif
 		return 0;
 	}

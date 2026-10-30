@@ -28,6 +28,12 @@ namespace uml::runtime {
  *     unregistered, so the next kernel registers its own and finds no byte of
  *     this one (memory/shared_backing.hpp).
  *
+ * The engine's own metadata for the run, the MMU's indexes and the gadget
+ * caches, is in heaps the memory layer gave back when the run's memory domain
+ * retired, which the hand-back follows (memory/domain_heap.hpp). The hand-back
+ * reports what those heaps still hold, which is nothing of the run's but the
+ * scratch chunk each thread that mapped pages keeps for its life.
+ *
  * The handle's own state, which describes this kernel and its RAM, is reset
  * between the check and the hand-back, before the commitment goes. The caller
  * holds the process address-space gate: only one run uses the window at a
@@ -53,6 +59,12 @@ struct GuestHandBack final {
 	KernelResourceCounts released{};
 	/* The guest-file records forgotten. */
 	std::size_t guest_files{};
+	/* The domain heaps alive, the bytes of the heap region committed (the
+	 * threads' kept scratch included) and the leases on the engine's shared
+	 * heap, after the hand-back. */
+	std::size_t heaps{};
+	std::size_t heap_bytes{};
+	std::size_t heap_leases{};
 };
 
 /* Hands the guest back and describes what came back. False, with errno set
