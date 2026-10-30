@@ -1065,9 +1065,23 @@ void a_restart_waits_for_an_abort_request(Interruption interruption)
 
 } // namespace
 
+/* CTest gives every test it runs at once the same open file description for
+ * descriptor 0, and these tests compare its status flags with what the run
+ * left while the kernel scope of a test beside them sets and restores the
+ * same flags. Descriptor 0 gets a description of this process's own. */
+void use_a_private_standard_input()
+{
+	const int input = open("/dev/null", O_RDONLY);
+	require(input >= 0, "cannot open /dev/null");
+	require(dup2(input, 0) == 0, "cannot replace descriptor 0");
+	if (input != 0)
+		close(input);
+}
+
 int main(int argc, char **argv)
 {
 	try {
+		use_a_private_standard_input();
 		const std::string_view mode = argc == 2 ? argv[1] : "";
 		if (mode == "same-handle")
 			second_run_on_the_same_handle();
