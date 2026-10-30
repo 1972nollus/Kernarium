@@ -204,6 +204,9 @@ above it or the peak shows that it did between two samples
 (`runtime/virtual_jetsam.hpp`). Nothing is killed: the line marks where iOS
 would have ended the process.
 
+Every iOS memory control carries its macOS path, or records here why none can
+exist, so that a Mac run stays an accurate ground for measuring the device.
+
 A host mapping call that fails says so. The kernel distinguishes an exhausted
 host only by `ENOMEM`, so Mach's resource-shortage and address-space-exhaustion
 codes both arrive as that, and the first such failures are reported on the run's
