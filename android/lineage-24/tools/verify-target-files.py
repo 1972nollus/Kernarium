@@ -196,7 +196,6 @@ REQUIRED_ENTRIES = {
     "RECOVERY/RAMDISK/system/bin/recovery",
     "SYSTEM/bin/e2fsck",
     "SYSTEM/bin/resize2fs",
-    "SYSTEM/bin/tune2fs",
     "SYSTEM_EXT/priv-app/Launcher3QuickStep/Launcher3QuickStep.apk",
     "SYSTEM_EXT/priv-app/LineageParts/LineageParts.apk",
     "SYSTEM_EXT/priv-app/LineageSettingsProvider/LineageSettingsProvider.apk",
@@ -599,16 +598,24 @@ WIFI_NETWORK_TRANSITION = re.compile(
     rb"kernarium_wifi_network\)$",
     re.MULTILINE,
 )
-# The partition the host grew is filled before /data is mounted, in this order
-# (init.vendor.rc says why): the journal of an unclean stop is replayed, the
-# check time is recorded so that resize2fs does not refuse a filesystem
-# mounted since its last full check, and the filesystem grows.
-USERDATA_GROW_STEPS = (
-    "exec -- /system/bin/e2fsck -p /dev/block/by-name/userdata",
-    "exec -- /system/bin/tune2fs -T now /dev/block/by-name/userdata",
-    "exec -- /system/bin/resize2fs /dev/block/by-name/userdata",
-    "mount_all --late",
+# The partition the host grew is filled on every boot, once /data is mounted
+# (init.vendor.rc says why): the kernel's online resize needs neither a fsck nor
+# a recorded check. resize2fs runs as root with the group of /data's owner, so
+# it opens /data (mode 0771) without a DAC capability, which the platform
+# neverallows its domain.
+# The fsck domain runs resize2fs. The kernel's online resize asks for CAP_SYS_RESOURCE and for
+# EXT4_IOC_RESIZE_FS on the mount point (overlay/sepolicy/vendor/fsck.te).
+USERDATA_GROW_RULES = (
+    ("self", "capability", frozenset({"sys_resource"})),
+    ("system_data_root_file", "dir", frozenset({"open", "read", "ioctl"})),
 )
+USERDATA_GROW_IOCTL = "0x6610"
+CIL_ALLOWX_RULE = re.compile(
+    rb"^\(allowx (\S+) (\S+) \(ioctl (\w+) \(([^()]*)\)\)\)$", re.MULTILINE
+)
+USERDATA_GROW_COMMAND = "exec - root system -- /system/bin/resize2fs /dev/block/by-name/userdata"
+USERDATA_GROW_TRIGGER = "post-fs-data"
+USERDATA_DEVICE = "/dev/block/by-name/userdata"
 UML_INIT_REQUIRED = (
     "mount_all --early",
     "mount_all --late",
@@ -774,24 +781,51 @@ def check_suspend_blocker(init_payload: str, actions: dict[str, list[str]]) -> N
 
 
 def check_userdata_grow(actions: dict[str, list[str]]) -> None:
-    """Growing userdata works on every boot, not only the first, and happens while it is unmounted."""
-    commands = actions.get("late-fs", [])
-    positions = []
-    for step in USERDATA_GROW_STEPS:
-        if step not in commands:
-            fail(f"UML init policy does not run '{step}' at late-fs")
-        positions.append(commands.index(step))
-    if positions != sorted(positions):
-        fail(
-            "UML init policy does not run e2fsck, tune2fs, resize2fs and "
-            "mount_all --late in that order at late-fs"
-        )
-    for trigger, trigger_commands in actions.items():
-        for command in trigger_commands:
-            if "resize2fs" in command and (
-                trigger != "late-fs" or command != USERDATA_GROW_STEPS[2]
+    """Growing userdata works on every boot, not only the first, and happens while it is mounted."""
+    if actions.get(USERDATA_GROW_TRIGGER, []).count(USERDATA_GROW_COMMAND) != 1:
+        fail(f"UML init policy does not run '{USERDATA_GROW_COMMAND}' once at {USERDATA_GROW_TRIGGER}")
+    for trigger, commands in actions.items():
+        for command in commands:
+            if USERDATA_DEVICE in command and (
+                trigger != USERDATA_GROW_TRIGGER or command != USERDATA_GROW_COMMAND
             ):
-                fail(f"UML init policy resizes a filesystem differently under '{trigger}': {command}")
+                fail(f"UML init policy handles userdata differently under '{trigger}': {command}")
+
+
+def check_userdata_grow_policy(vendor_policy: bytes) -> None:
+    """The fsck domain may do what the online resize needs on /data, and no more than that."""
+    def domain(name: str) -> str:
+        return CIL_PLATFORM_VERSION_SUFFIX.sub("", name)
+
+    granted: dict[tuple[str, str], set[str]] = {}
+    for match in CIL_ALLOW_RULE.finditer(vendor_policy):
+        if domain(match.group(1).decode()) == "fsck":
+            key = (domain(match.group(2).decode()), match.group(3).decode())
+            granted.setdefault(key, set()).update(match.group(4).decode().split())
+    for target, object_class, permissions in USERDATA_GROW_RULES:
+        if not permissions <= granted.get((target, object_class), set()):
+            fail(
+                f"vendor policy does not let the fsck domain have {sorted(permissions)} on "
+                f"{target}:{object_class}: the online grow of userdata needs it"
+            )
+    ioctls = {
+        command
+        for match in CIL_ALLOWX_RULE.finditer(vendor_policy)
+        if domain(match.group(1).decode()) == "fsck"
+        and domain(match.group(2).decode()) == "system_data_root_file"
+        and match.group(3) == b"dir"
+        for command in match.group(4).decode().split()
+    }
+    if USERDATA_GROW_IOCTL not in ioctls:
+        fail(
+            "vendor policy does not let the fsck domain issue EXT4_IOC_RESIZE_FS "
+            f"({USERDATA_GROW_IOCTL}) on system_data_root_file:dir"
+        )
+    if ioctls != {USERDATA_GROW_IOCTL}:
+        fail(
+            "vendor policy lets the fsck domain issue more ioctls on /data than "
+            f"EXT4_IOC_RESIZE_FS: {sorted(ioctls)}"
+        )
 
 
 def check_network_setup(init_payload: str, actions: dict[str, list[str]]) -> None:
@@ -1228,6 +1262,7 @@ def check_kernel_policy(
     if not AUDIO_HAL_SELF_BINDER.search(vendor_policy):
         fail("vendor policy does not let the audio HAL processes call each other's binder")
     check_clearkey_memfd_policy(vendor_policy)
+    check_userdata_grow_policy(vendor_policy)
     check_network_setup_policy(
         vendor_policy, read_small(archive, infos["VENDOR/etc/selinux/vendor_file_contexts"])
     )

@@ -289,9 +289,9 @@ PRODUCT_PACKAGES_EXCLUDE += \
     sleep
 
 # The browser (Jelly), the keyboard (LatinIME) and ThemePicker come from the
-# LineageOS product chain. e2fsck, tune2fs and resize2fs grow the compact
-# userdata filesystem after the host expands its partition and before /data is
-# mounted (init.vendor.rc, late-fs). The F-Droid client and its Privileged
+# LineageOS product chain. resize2fs grows the compact userdata filesystem
+# online after the host expands its partition, once /data is mounted
+# (init.vendor.rc, post-fs-data). The F-Droid client and its Privileged
 # Extension are presigned prebuilts that source preparation materializes under
 # vendor/kernarium/fdroid.
 PRODUCT_PACKAGES += \
@@ -300,8 +300,7 @@ PRODUCT_PACKAGES += \
     e2fsck \
     F-Droid \
     F-DroidPrivilegedExtension \
-    resize2fs \
-    tune2fs
+    resize2fs
 
 # First boot compiles nothing. Soong preopts the applications it installs, but
 # never an application inside an APEX, and the presigned F-Droid prebuilts opt

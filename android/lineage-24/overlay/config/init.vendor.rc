@@ -25,21 +25,18 @@ on fs
     mount_all --early
     chmod 622 /dev/kmsg
 
-# The host may have grown the userdata partition since the last boot, and the
-# filesystem is grown to it before it is mounted. Offline, resize2fs can add
-# the group descriptor blocks a larger filesystem needs. It refuses an
-# unmounted filesystem mounted after its last full check, and the e2fsck that
-# mount_all runs skips a clean one, so on its own it works for the first boot
-# only. e2fsck -p replays the journal of an unclean stop, tune2fs records the
-# check, and resize2fs keeps its other checks (error flags, journal, orphans).
-# With nothing to grow resize2fs does nothing; on a partition that holds no
-# filesystem yet the three fail harmlessly.
 on late-fs
-    exec -- /system/bin/e2fsck -p /dev/block/by-name/userdata
-    exec -- /system/bin/tune2fs -T now /dev/block/by-name/userdata
-    exec -- /system/bin/resize2fs /dev/block/by-name/userdata
     mount_all --late
     write /dev/kmsg "GUEST_BUILD_FINGERPRINT: ${ro.build.fingerprint}"
+
+# The host may have grown the userdata partition since the last boot. Once
+# /data is mounted, and before the zygote starts, the kernel's online resize
+# grows the filesystem to the partition: it is journaled, needs no fsck, and
+# adds the group descriptor blocks the compact image has no room for. With
+# nothing to grow resize2fs does nothing. It runs as root with the group of
+# /data's owner, so it opens /data (mode 0771) without a DAC capability.
+on post-fs-data
+    exec - root system -- /system/bin/resize2fs /dev/block/by-name/userdata
 
 on boot
     setprop ro.hardware.audio.primary goldfish
