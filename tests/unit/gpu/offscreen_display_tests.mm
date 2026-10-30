@@ -221,7 +221,7 @@ void checkMirror(id<MTLTexture> texture)
         require(armed->options.maximumWidth == 400 &&
                 armed->options.framesPerSecond == 15,
             "the frame mirror did not take its options");
-        /* Frames reach the mirror's pool and are dropped at its receiver. */
+        /* Frames reach the mirror's pool and its receiver holds the last two. */
         require(offer(*display, texture), "the display refused a scanout");
         std::this_thread::sleep_for(std::chrono::milliseconds(400));
     }

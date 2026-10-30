@@ -115,11 +115,15 @@ offscreen display drives the same presentation into a `CAMetalLayer` that
 belongs to no window (BGRA8, `framebufferOnly`, three drawables) and presents
 each guest frame as it arrives, on a serial queue of its own, because no display
 link paces it; a frame that arrives while one is drawing replaces the one
-waiting, as in a window. `--gpu-offscreen-size=WIDTHxHEIGHT` sets the drawables'
-pixel size (default: the guest mode; a run states the size of the view it
-imitates), and `--gpu-offscreen-mirror=on|off|WIDTH@FPS` keeps the frame mirror
-running into a receiver that drops what it is given (`on` is 800 pixels at 15
-frames a second, off by default). Nothing reaches the guest from the host: there
+waiting, as in a window. It clears and presents each of the three drawables once
+at start, because a view that presents has rendered into all of them within a
+few frames and a layer asked for a drawable only when the guest draws would show
+two at idle. `--gpu-offscreen-size=WIDTHxHEIGHT` sets the drawables' pixel size
+(default: the guest mode; a run states the size of the view it imitates), and
+`--gpu-offscreen-mirror=on|off|WIDTH@FPS` keeps the frame mirror running into a
+receiver that holds the last two frames, as Picture in Picture's display layer
+does, so the mirror's pool is three buffers (`on` is 800 pixels at 15 frames a
+second, off by default). Nothing reaches the guest from the host: there
 is no input, no host resize and no VNC server, and the guest keeps its own mode.
 Like the VNC display, it does not make the process an AppKit application. A
 layer outside any window keeps handing out its drawables without the one-second

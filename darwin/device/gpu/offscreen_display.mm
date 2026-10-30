@@ -5,6 +5,7 @@
 #include "display_geometry.hpp"
 #include "frame_tap.hpp"
 
+#import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 
@@ -16,9 +17,40 @@
 namespace uml::gpu {
 namespace {
 
-/* The mirror's receiver: the frame is borrowed for the call and this keeps
- * none, so the pool recycles its buffers as fast as it makes them. */
-void dropMirroredFrame(void*, void*) {}
+/* The mirror's receiver. Picture in Picture hands each frame to a display
+ * layer that holds the ones it has queued, so with the frame being rendered
+ * the mirror's pool of three buffers is all in use. This keeps the last two
+ * frames it was given and drops the rest, which holds the pool at that size. */
+class MirrorHold final {
+public:
+    static void receive(void* context, void* pixelBuffer)
+    {
+        static_cast<MirrorHold*>(context)->keep(
+            static_cast<CVPixelBufferRef>(pixelBuffer));
+    }
+
+    void keep(CVPixelBufferRef frame)
+    {
+        std::lock_guard lock(mutex_);
+        CVPixelBufferRelease(held_[0]);
+        held_[0] = held_[1];
+        held_[1] = CVPixelBufferRetain(frame);
+    }
+
+    /* Only once the mirror has stopped delivering. */
+    void release()
+    {
+        std::lock_guard lock(mutex_);
+        for (auto& frame : held_) {
+            CVPixelBufferRelease(frame);
+            frame = nullptr;
+        }
+    }
+
+private:
+    std::mutex mutex_;
+    CVPixelBufferRef held_[2] {};
+};
 
 } // namespace
 
@@ -37,6 +69,7 @@ struct OffscreenDisplayState final :
     }
 
     void start(std::uint32_t maximumDimension);
+    void warmDrawables() noexcept;
     void requestRedraw() noexcept;
     [[nodiscard]] bool guestScanoutChanged(
         std::uint32_t width,
@@ -49,6 +82,7 @@ struct OffscreenDisplayState final :
     dispatch_queue_t queue {};
     std::atomic_bool running {true};
     std::atomic_bool redrawScheduled {};
+    MirrorHold mirrorHold;
     bool mirrorStarted {};
 };
 
@@ -70,14 +104,15 @@ void OffscreenDisplayState::start(std::uint32_t maximumDimension)
     queue = dispatch_queue_create(
         "org.linux-um-darwin.offscreen-display", attributes);
 
+    warmDrawables();
     presentation.setRedrawCallback([weak = weak_from_this()] {
         if (auto locked = weak.lock())
             locked->requestRedraw();
     });
     if (options.mirrorWidth != 0 && options.mirrorFramesPerSecond != 0) {
         setFrameTap(
-            dropMirroredFrame,
-            nullptr,
+            &MirrorHold::receive,
+            &mirrorHold,
             {.maximumWidth = options.mirrorWidth,
              .framesPerSecond = options.mirrorFramesPerSecond});
         mirrorStarted = true;
@@ -88,6 +123,56 @@ void OffscreenDisplayState::start(std::uint32_t maximumDimension)
         drawable.width,
         drawable.height,
         mirrorStarted ? "on" : "off");
+}
+
+/* A view that presents has rendered into all three of its drawables within a
+ * few frames and keeps their backing for as long as it lives; a layer that is
+ * only asked for a drawable when the guest draws would show two at idle. Clear
+ * and present each once, so that the display holds what the device's does
+ * whatever the guest's frame rate. */
+void OffscreenDisplayState::warmDrawables() noexcept
+{
+    @autoreleasepool {
+        id<MTLCommandQueue> warm = [layer.device newCommandQueue];
+        if (warm == nil)
+            return;
+        NSMutableArray<id<CAMetalDrawable>>* drawables = [NSMutableArray array];
+        for (int count = 0; count < 3; ++count) {
+            id<CAMetalDrawable> drawable = [layer nextDrawable];
+            if (drawable == nil)
+                break;
+            [drawables addObject:drawable];
+        }
+        dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+        for (id<CAMetalDrawable> drawable in drawables) {
+            MTLRenderPassDescriptor* pass =
+                [MTLRenderPassDescriptor renderPassDescriptor];
+            pass.colorAttachments[0].texture = drawable.texture;
+            pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+            pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+            pass.colorAttachments[0].clearColor =
+                MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
+            id<MTLCommandBuffer> buffer = [warm commandBuffer];
+            id<MTLRenderCommandEncoder> encoder =
+                [buffer renderCommandEncoderWithDescriptor:pass];
+            if (encoder == nil)
+                continue;
+            [encoder endEncoding];
+            [buffer presentDrawable:drawable];
+            [buffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+                dispatch_semaphore_signal(finished);
+            }];
+            [buffer commit];
+        }
+        /* Bounded: a drawable that never completes is not worth a hang. */
+        for (NSUInteger index = 0; index < drawables.count; ++index) {
+            if (dispatch_semaphore_wait(
+                    finished,
+                    dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
+                break;
+            }
+        }
+    }
 }
 
 void OffscreenDisplayState::requestRedraw() noexcept
@@ -152,8 +237,10 @@ void OffscreenDisplayState::shutdown() noexcept
 {
     if (!running.exchange(false, std::memory_order_acq_rel))
         return;
-    if (mirrorStarted)
+    if (mirrorStarted) {
         setFrameTap(nullptr, nullptr);
+        mirrorHold.release();
+    }
     presentation.shutdown();
     /* A draw that was already queued is over once this returns; one that is
      * queued after it sees the display stopped and draws nothing. The queue

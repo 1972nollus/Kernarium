@@ -34,16 +34,19 @@ namespace uml::gpu {
  * It drives the same MetalPresentation as the AppKit and UIKit shells, into
  * three BGRA8 drawables of options.drawableWidth by options.drawableHeight
  * (the display's own size where those are zero), the drawables an iPad's view
- * has. A guest frame is presented as soon as the presentation has one: with no
+ * has. Each is cleared and presented once when the display starts, because a
+ * view that presents has rendered into all three within a few frames, and a
+ * layer asked for a drawable only when the guest draws would show two at idle.
+ * A guest frame is presented as soon as the presentation has one: with no
  * screen there is no display link to ask for it, so a serial queue of the
  * display draws on request and a frame that arrives while one is drawing
  * replaces the one waiting, as in a window. Nothing reaches the guest from the
  * host: no input, no host resize.
  *
  * With options.mirrorWidth and options.mirrorFramesPerSecond set it also keeps
- * the frame mirror (frame_tap.hpp) running into a receiver that drops what it
- * is given, which holds the mirror's pool of IOSurface buffers as Picture in
- * Picture does. */
+ * the frame mirror (frame_tap.hpp) running into a receiver that keeps the last
+ * two frames it is given and drops the rest, which holds the mirror's pool of
+ * three IOSurface buffers as Picture in Picture's display layer does. */
 [[nodiscard]] std::shared_ptr<NativeDisplayStateCore> makeOffscreenDisplayState(
     std::uint32_t width,
     std::uint32_t height,

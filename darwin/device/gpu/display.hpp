@@ -33,7 +33,8 @@ struct OffscreenDisplayOptions {
     std::uint32_t drawableWidth {};
     std::uint32_t drawableHeight {};
     /* The frame mirror (frame_tap.hpp) that Picture in Picture runs, kept
-     * running at this width and rate with a receiver that drops its frames.
+     * running at this width and rate with a receiver that holds the last two
+     * frames, as Picture in Picture's display layer does.
      * Zero in either leaves the mirror off, as it is without Picture in
      * Picture. */
     std::uint32_t mirrorWidth {};
