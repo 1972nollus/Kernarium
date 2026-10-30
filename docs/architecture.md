@@ -196,7 +196,13 @@ footprint plus the limit remaining, 2,867 MiB on the iPad mini 6). macOS
 enforces none, so a measurement run states it with `--memory-limit=2867M` or
 `UML_MEMORY_LIMIT_MIB=2867`, and every budget that derives from it computes on
 the Mac as it does on the device; the option wins over the variable and the
-host's own limit over both, and a run that states nothing is unchanged.
+host's own limit over both, and a run that states nothing is unchanged. A run
+that states a limit says so on stderr when it starts, with the gadget-cache
+budget derived from it, and a sampler writes one `virtual Jetsam` line, with
+the footprint, the limit and the lifetime peak, each time the footprint rises
+above it or the peak shows that it did between two samples
+(`runtime/virtual_jetsam.hpp`). Nothing is killed: the line marks where iOS
+would have ended the process.
 
 A host mapping call that fails says so. The kernel distinguishes an exhausted
 host only by `ENOMEM`, so Mach's resource-shortage and address-space-exhaustion
