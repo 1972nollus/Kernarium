@@ -40,8 +40,10 @@ application shows.
 
 Kernarium defaults to Linux, the processor count `NSProcessInfo` reports, and
 4 GiB of guest memory where the process is given the host's memory (Designed
-for iPad on a Mac) or 2 GiB on a physical device, whose jetsam limit a 4 GiB
-guest would cross.
+for iPad on a Mac) or 1.5 GiB on a physical device, whose jetsam limit a 4 GiB
+guest would cross and a 2 GiB guest crossed on a 4 GiB iPad mini 6. The device
+value stays until the graphics-memory reductions land, and a value the user
+stored is kept.
 
 ## Restarts
 
@@ -73,7 +75,9 @@ paused. A guest that boots behind a closed gate finds its GPU unanswered: the
 it would run without 3D after the user came back. A `keepRunning` job holds the
 GPU for its whole stay, so a guest that restarts during a job boots when the
 user returns; a Picture in Picture window releases the gate and the guest boots
-at once.
+at once. The old guest still stops while the gate is closed: the report of its
+restart makes the gate complete its GPU requests without running them, which its
+shutdown waits for, and the gate holds the next guest as before.
 
 `KERNARIUM_FOOTPRINT_LOG_MS` also writes `Kernarium: memory` lines (`tick`,
 and for a restart `ended` and `booted`): the footprint, the lifetime peak iOS

@@ -65,9 +65,10 @@ public:
      * guest scans out, and so do the clients on it. Display input that
      * arrives while no connection exists is dropped.
      *
-     * The request gate is not touched: requests held back when the guest
-     * restarted stay held for the new device, which opens it with
-     * releaseRequests() like the old one.
+     * The request gate stays closed: a hold in place when the guest restarted
+     * holds the new device, which opens it with releaseRequests() like the
+     * old one. A hold that discarded the old guest's requests because that
+     * guest was ending becomes a plain hold again.
      *
      * The old guest's endpoints are the guest's to close: the service shuts
      * its own ends down whatever the guest has done, and an endpoint left open
@@ -87,7 +88,13 @@ public:
      * Returns whether no request was still running after `budget`; the hold
      * is in place either way. Work the renderer already has, fences included,
      * carries on. The application holds before it enters the background, where
-     * the host GPU is revoked within seconds. */
+     * the host GPU is revoked within seconds.
+     *
+     * The hold promises that requests wait, which a guest that is ending
+     * cannot do: its shutdown drains the rings. When the guest reports its end
+     * (device/guest_end/guest_end.hpp) behind a hold, the service completes
+     * its waiting and arriving requests as success, with their fences, and
+     * runs none, until startNextConnection(). */
     [[nodiscard]] bool holdRequests(
         std::chrono::milliseconds budget) noexcept;
     void releaseRequests() noexcept;

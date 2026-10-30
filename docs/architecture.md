@@ -906,6 +906,28 @@ host GPU within seconds and a request that reached Metal after that would make
 the renderer's Vulkan device lost for good, and opens it as the application
 returns.
 
+A hold promises the guest's requests wait, and a guest that is ending cannot
+wait: its shutdown drains the GPU's rings (`virtio_gpu_shutdown`, and every
+sender blocked for ring space) before the machine can go, and an Android guest
+that keeps rendering fills the control queue within seconds. So a guest that
+ends behind a closed gate turns it to discarding. The kernel reports its end
+through `darwin_uml_guest_shutdown()`; the runtime tells the devices that
+registered a callback in the guest-end registry
+(`darwin/device/guest_end/guest_end.hpp`, a slot table like the socket paths'),
+once per report that is new to the run, and the GPU service's callback tells
+its gate. A discarding gate makes the server consume every request in an
+enabled ring, those already waiting and those that arrive, and complete it
+with the device's answer for a request that did not run
+(`VhostUserDevice::discardedResponse`), without calling the device. The GPU
+answers a control request with a header of type `OK_NODATA` that echoes the
+fence flag, fence id, context id and ring index, so the guest retires every
+fence and finishes stopping, and a cursor command with an empty completion. A
+disabled ring is left alone, as a closed gate leaves it, because its guest no
+longer waits on it. Only a closed gate discards: a guest that ends with the
+gate open ran everything it sent, and a hold placed after the guest's end
+discards from the start. `startNextConnection()` returns a discarding gate to a
+plain hold, so the next guest waits behind it as designed.
+
 The [Virtio video devices](../darwin/device/video/README.md) bridge the shared
 mainline/Android V4L2 drivers to the platform VideoToolbox decoder (device 31)
 and encoder (device 30). Each uses its own vhost-user connection and service
@@ -1083,7 +1105,8 @@ with new transport and input endpoints. VNC clients stay connected, the
 listener keeps its port, the window stays open, and display input that arrives
 while no connection exists is dropped. The request gate is the service's, not
 the connection's: a hold placed before the restart still holds the new device,
-and the application opens it as it opened the last. A host-visible blob of the
+as a plain hold even when the old guest's end made it discard, and the
+application opens it as it opened the last. A host-visible blob of the
 new guest has been observed to start zeroed, but nothing here enforces that: the
 host driver or the OS hands out fresh zero-filled memory. On the Mac, a guest
 that left a token in host-visible memory across a restart (freed, mapped at
@@ -1190,6 +1213,12 @@ recording fake. What differs from the launchers:
   whole boot. The first boot is not held: a hold placed before the guest's GPU
   exists is applied when it does. A guest kept running in a Picture in Picture
   window has released the gate, so its restarts boot at once.
+- A guest that restarts itself behind a closed gate, such as an Android guest
+  in the background under a kept-running job, finishes stopping: its report
+  turns the gate to discarding, which completes the requests its shutdown waits
+  for (see the request gate under [devices](#devices-and-graphics)). Without
+  that the guest stays resident, wired, until its init's reboot monitor crashes
+  the process. The gate is a plain hold again for the next guest.
 - The runtime reports a restart to the application twice
   (`KERNARIUM_RUNTIME_RESTART_BEGAN` once the guest is gone and its services
   have stopped, `KERNARIUM_RUNTIME_RESTART_BOOTED` once the new guest's

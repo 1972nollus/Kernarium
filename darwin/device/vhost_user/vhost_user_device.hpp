@@ -103,6 +103,20 @@ public:
         std::uint64_t requestId,
         std::span<const std::uint8_t> request,
         std::size_t responseCapacity) = 0;
+    /* The answer to a request that is not run because the guest that sent
+     * it is ending and its gate has been told to discard (request_gate.hpp).
+     * The guest's own shutdown waits for these completions, so the answer is
+     * the one a guest cannot tell from success while nothing has happened:
+     * the bytes of a response that reports no error, carrying whatever the
+     * request needs echoed for its sender to retire it, a fence above all.
+     * Empty for a request whose queue returns no response. The device is not
+     * called otherwise; this reads the request and changes nothing. */
+    [[nodiscard]] virtual std::vector<std::uint8_t> discardedResponse(
+        std::uint32_t /* queueIndex */,
+        std::span<const std::uint8_t> /* request */) const
+    {
+        return {};
+    }
     virtual void reset() noexcept = 0;
     virtual void prepareReset() noexcept {}
     /* Whether a request buffer on a disabled ring stays there until the ring

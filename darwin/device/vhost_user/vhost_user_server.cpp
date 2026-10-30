@@ -1200,6 +1200,22 @@ std::size_t VhostUserServer::waitingBuffers(std::uint32_t index)
     return waiting > queue.size ? 0U : waiting;
 }
 
+std::vector<std::uint8_t> VhostUserServer::readRequest(
+    std::span<const DescriptorSegment> segments,
+    std::size_t requestSize)
+{
+    std::vector<std::uint8_t> request(requestSize);
+    std::size_t requestOffset = 0;
+    for (const auto& segment : segments) {
+        if (segment.writable || segment.length == 0)
+            continue;
+        auto* source = translate(segment.address, segment.length, false);
+        std::memcpy(request.data() + requestOffset, source, segment.length);
+        requestOffset += segment.length;
+    }
+    return request;
+}
+
 void VhostUserServer::processQueue(std::uint32_t index)
 {
     if (index >= queues_.size())
@@ -1267,9 +1283,34 @@ void VhostUserServer::processQueue(std::uint32_t index)
         /* A closed gate keeps every request where it is, in a disabled ring
          * as in an enabled one, so a guest that suspends and resumes meanwhile
          * finds each still waiting. The requests behind it wait too, which
-         * keeps them in order. */
-        if (requestSize != 0 && requestGate_ && requestGate_->held())
+         * keeps them in order. A gate that discards, because the guest is
+         * ending, consumes them instead, from an enabled ring: the guest's
+         * shutdown waits for the ring to drain, and a disabled ring is one it
+         * no longer waits on. */
+        const auto gateState = requestSize != 0 && requestGate_
+            ? requestGate_->state()
+            : RequestGate::State::open;
+        if (gateState == RequestGate::State::held ||
+            (gateState == RequestGate::State::discarding && !queue.enabled)) {
             break;
+        }
+        if (gateState == RequestGate::State::discarding) {
+            const auto request = readRequest(segments, requestSize);
+            auto response = device_->discardedResponse(index, request);
+            if (response.size() > responseCapacity)
+                response.clear();
+            const PendingRequest discarded {
+                .requestId = 0,
+                .queueIndex = index,
+                .head = head,
+                .responseCapacity = responseCapacity,
+                .segments = std::move(segments),
+            };
+            completeRequest(discarded, response);
+            ++queue.lastAvailable;
+            completed = true;
+            continue;
+        }
 
         if (!queue.enabled) {
             /* A disabled ring is given no new data: a buffer the device only
@@ -1297,16 +1338,7 @@ void VhostUserServer::processQueue(std::uint32_t index)
             continue;
         }
 
-        std::vector<std::uint8_t> request(requestSize);
-        std::size_t requestOffset = 0;
-        for (const auto& segment : segments) {
-            if (segment.writable || segment.length == 0)
-                continue;
-            auto* source = translate(segment.address, segment.length, false);
-            std::memcpy(
-                request.data() + requestOffset, source, segment.length);
-            requestOffset += segment.length;
-        }
+        const auto request = readRequest(segments, requestSize);
 
         /* The device call and the shared-memory map or unmap it can raise are
          * the work a closed gate waits out. */
@@ -1898,18 +1930,27 @@ void VhostUserServer::serveConnection(
             if ((gateEvents & POLLNVAL) != 0)
                 throw std::runtime_error("invalid request gate descriptor");
             if (gateEvents != 0) {
-                /* The gate opened: the requests it held back run now, every
-                 * queue in turn, as a device event would run them. */
-                requestGate_->acknowledgeRelease();
+                /* The gate opened, and the requests it held back run now, or
+                 * it turned to discarding, and they complete without
+                 * running: either way every queue in turn, as a device event
+                 * would run them. A gate that closed again meanwhile has
+                 * nothing for the server to do. */
+                requestGate_->acknowledgeWake();
+                const auto gateState = requestGate_->state();
                 std::size_t waiting = 0;
                 for (std::uint32_t index = 0; index < queues_.size(); ++index)
                     waiting += waitingBuffers(index);
-                std::fprintf(
-                    stdout,
-                    "%s request gate opened with %zu request(s) waiting\n",
-                    device_->name(),
-                    waiting);
-                (void)std::fflush(stdout);
+                if (gateState != RequestGate::State::held) {
+                    std::fprintf(
+                        stdout,
+                        "%s request gate %s with %zu request(s) waiting\n",
+                        device_->name(),
+                        gateState == RequestGate::State::discarding
+                            ? "discarding"
+                            : "opened",
+                        waiting);
+                    (void)std::fflush(stdout);
+                }
                 for (std::uint32_t index = 0; index < queues_.size(); ++index)
                     processQueue(index);
             }
