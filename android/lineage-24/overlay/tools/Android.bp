@@ -96,15 +96,14 @@ cc_binary {
 cc_binary {
     name: "kernarium_ahb_rgba_lock",
     srcs: ["kernarium_ahb_rgba_lock.cpp"],
-    header_libs: ["vulkan_headers"],
     shared_libs: [
+        "libEGL",
+        "libGLESv3",
         "libnativewindow",
-        "libvulkan",
     ],
     cflags: [
         "-Wall",
         "-Werror",
         "-Wextra",
-        "-DVK_USE_PLATFORM_ANDROID_KHR",
     ],
 }
