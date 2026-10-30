@@ -96,4 +96,14 @@ void release_kernel_image(void *address, std::size_t length,
 [[nodiscard]] bool signed_kernel_text_kept(
 	const void *address, std::size_t length) noexcept;
 
+/* Whether [image, image + size) is exactly the kernel ELF the process links
+ * into itself as its __TEXT,__uml_elf section: the section of the image that
+ * holds this library (a framework, or the executable that links the library
+ * statically), or of the main executable. That section is read-only and
+ * file-backed, and it stays mapped for as long as its image does, so a caller
+ * may run it in place instead of keeping a copy of it. Any other range is
+ * the caller's own. */
+[[nodiscard]] bool is_embedded_kernel_image(
+	const void *image, std::size_t size) noexcept;
+
 } // namespace uml::runtime

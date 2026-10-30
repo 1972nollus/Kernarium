@@ -85,7 +85,9 @@ function(uml_add_macos_embedded_kernel_app
         # symbols have no native Mach-O callers, so force-load the deliberately
         # aggregated emulator product at the application boundary.
         "LINKER:-force_load,$<TARGET_FILE:uml_emulator>"
-        "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_kernel_image}"
+        # The kernel ELF is a read-only __TEXT section, which the emulator
+        # runs in place instead of copying into the heap.
+        "LINKER:-sectcreate,__TEXT,__uml_elf,${_uml_kernel_image}"
         "LINKER:-sectcreate,__TEXT,__info_plist,${_uml_info_plist}")
 
     set_target_properties("${TARGET_NAME}" PROPERTIES

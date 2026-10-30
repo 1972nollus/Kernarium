@@ -53,9 +53,9 @@
 
 extern "C" {
 extern const unsigned char uml_elf_start[]
-	__asm("section$start$__DATA$__uml_elf");
+	__asm("section$start$__TEXT$__uml_elf");
 extern const unsigned char uml_elf_end[]
-	__asm("section$end$__DATA$__uml_elf");
+	__asm("section$end$__TEXT$__uml_elf");
 }
 
 namespace {
