@@ -124,6 +124,7 @@ struct ContentView: View {
         .onChange(of: launcher.phase) { _, phase in
             GuestPictureInPicture.shared.guestRunningChanged(phase == .running)
             refreshKeepRunning()
+            if phase == .running { startJobIfAutomationAsked() }
             // Nothing is left to type into, and the keyboard would cover
             // the notice.
             guard case .ended = phase else { return }
@@ -161,17 +162,35 @@ struct ContentView: View {
             identifier: "backgroundJobButton"
         ) {
             if backgroundJob.state == .idle {
-                guard let guest = launcher.runningGuestName else { return }
-                backgroundJob.start(
-                    limitMinutes: BackgroundSettings().limitMinutes(
-                        forGuest: guest
-                    ),
-                    guestName: (guest as NSString).deletingPathExtension
-                )
+                startKeepRunningJob()
             } else {
                 backgroundJob.cancel()
             }
         }
+    }
+
+    /// Submits the job for the running guest, as the button does.
+    private func startKeepRunningJob() {
+        guard let guest = launcher.runningGuestName else { return }
+        backgroundJob.start(
+            limitMinutes: BackgroundSettings().limitMinutes(forGuest: guest),
+            guestName: (guest as NSString).deletingPathExtension
+        )
+    }
+
+    /// An automation launch can ask for the job as the guest starts, the one
+    /// request iOS accepts while the application is in front, so a driver
+    /// without the UI automation host can reach a guest that runs behind it.
+    /// Only a runtime built for automation answers yes, and only a guest in
+    /// the keep-running mode takes a job.
+    private func startJobIfAutomationAsked() {
+        guard BackgroundJob.startsWithGuest(
+            asked: kernarium_runtime_loader_automation_job_at_start() != 0,
+            mode: keepRunningChosen ? .keepRunning : .off,
+            state: backgroundJob.state
+        ) else { return }
+        print("Kernarium: automation starts the background job")
+        startKeepRunningJob()
     }
 
     private var keepRunningLabel: String {

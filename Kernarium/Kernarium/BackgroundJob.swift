@@ -101,6 +101,16 @@ final class BackgroundJob: ObservableObject {
         }
     }
 
+    /// Whether an automation launch starts the job with its guest: it asked
+    /// to, the guest chose the keep-running mode, and no job exists yet.
+    static func startsWithGuest(
+        asked: Bool,
+        mode: BackgroundMode,
+        state: State
+    ) -> Bool {
+        asked && mode == .keepRunning && state == .idle
+    }
+
     /// The guest's settings may have changed: a job belongs to the keep-running
     /// mode, so leaving the mode ends it.
     func reconcile(mode: BackgroundMode) {

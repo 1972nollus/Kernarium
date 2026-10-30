@@ -167,6 +167,19 @@ harness session runs before powering the guest off. The lanes are in
 [`testing.md`](../docs/testing.md#apple-builds-and-kernarium) and
 [`tests/perf/README.md`](../tests/perf/README.md).
 
+Every automation runtime also reads `KERNARIUM_BACKGROUND_JOB_AT_START=1`
+(`0` or unset asks for nothing; anything else is reported and ignored). A guest
+in the keep-running mode (`KERNARIUM_BACKGROUND_MODE=keepRunning`) then gets
+the background job as soon as it runs, the request the job button makes, and
+the application prints `Kernarium: automation starts the background job`
+followed by the job's own `submitted` or `refused` line. iOS accepts the
+request only from the application in front, so the driver launches it there and
+sends it to the background afterwards; a driver that cannot get the job
+submitted still needs the UI automation host. The application learns of the
+setting from `kernarium_runtime_automation_job_at_start`, an export outside the
+versioned table that only an automation runtime has, and the packaging script
+refuses a release runtime that contains the setting's name.
+
 ## Devices and display
 
 Kernarium attaches:

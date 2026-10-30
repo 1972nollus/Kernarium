@@ -6,6 +6,9 @@
 #if KERNARIUM_AUTOMATION_HARNESS
 #include "KernariumHarness.hpp"
 #endif
+#if KERNARIUM_AUTOMATION_JOB_AT_START
+#include "KernariumAutomationJob.hpp"
+#endif
 
 #include "audio/in_process_service.hpp"
 #include "audio/microphone_switch.hpp"
@@ -1824,6 +1827,33 @@ const kernarium_runtime_api runtimeApi {
 };
 
 } // namespace
+
+#if KERNARIUM_AUTOMATION_JOB_AT_START
+/* An automation runtime tells the application whether the launch asked for the
+ * background job to start with the guest (see KernariumRuntime.h). The
+ * application finds this symbol only in a runtime built for automation. */
+extern "C" KERNARIUM_RUNTIME_EXPORT int
+kernarium_runtime_automation_job_at_start(void)
+{
+    using kernarium::automation::JobAtStart;
+    const char* value =
+        std::getenv(kernarium::automation::jobAtStartVariable);
+    switch (kernarium::automation::parseJobAtStart(value)) {
+    case JobAtStart::on:
+        return 1;
+    case JobAtStart::invalid:
+        std::fprintf(
+            stderr,
+            "Kernarium: %s must be 0 or 1, not '%s'; no job is started\n",
+            kernarium::automation::jobAtStartVariable,
+            value);
+        return 0;
+    case JobAtStart::off:
+        break;
+    }
+    return 0;
+}
+#endif
 
 extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v14(void)
 {

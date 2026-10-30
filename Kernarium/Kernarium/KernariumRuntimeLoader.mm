@@ -22,6 +22,9 @@ std::atomic<const kernarium_runtime_api*> selectedApi;
 uint32_t selectedPageSize;
 uint32_t selectedFlavor;
 bool selectionAttempted;
+/* The selected runtime's automation extension (KernariumRuntime.h), or null:
+ * a release runtime does not export it. */
+int (*automationJobAtStart)(void);
 std::mutex consoleOutputHandlerMutex;
 KernariumConsoleOutputHandler consoleOutputHandler;
 /* The handler is read on the runtime's callback path, under the runtime's own
@@ -281,6 +284,10 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
 
     updateConsoleOutputForwarder(api);
     updateRestartForwarder(api);
+    /* Optional: only a runtime built for automation has it. */
+    automationJobAtStart = reinterpret_cast<int (*)(void)>(
+        dlsym(handle, "kernarium_runtime_automation_job_at_start"));
+    (void)dlerror();
     selectedPageSize = guestPageSize;
     selectedFlavor = guestFlavor;
     selectedApi.store(api, std::memory_order_release);
@@ -437,6 +444,13 @@ extern "C" void kernarium_runtime_loader_set_restart_handler(
     const kernarium_runtime_api* runtime = api();
     if (runtime != nullptr)
         updateRestartForwarder(runtime);
+}
+
+extern "C" int kernarium_runtime_loader_automation_job_at_start(void)
+{
+    return api() != nullptr && automationJobAtStart != nullptr
+        ? automationJobAtStart()
+        : 0;
 }
 
 extern "C" int kernarium_runtime_loader_send_console_input(

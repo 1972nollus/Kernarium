@@ -80,6 +80,10 @@ void kernarium_runtime_loader_set_console_output_handler(
  * It may be set before a runtime is selected. */
 void kernarium_runtime_loader_set_restart_handler(
     KernariumRestartHandler _Nullable handler);
+/* Whether the selected runtime is an automation build and the launch asked it,
+ * through the environment, to start the background job with the guest. Always
+ * zero for a release runtime, which cannot be asked, and when none is loaded. */
+int kernarium_runtime_loader_automation_job_at_start(void);
 int kernarium_runtime_loader_send_console_input(
     const void* buffer,
     size_t length);

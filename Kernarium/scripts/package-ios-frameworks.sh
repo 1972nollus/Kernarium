@@ -11,7 +11,8 @@
 #
 # --automation packages the automation Linux runtimes, which boot host
 # payloads (Kernarium/README.md), in place of the release ones. The Linux
-# runtime is checked: the release runtime must not read a payload, and the
+# runtime is checked: the release runtime must not read a payload or contain
+# the setting that starts the background job with the guest, and the
 # automation runtime must.
 #
 # KernariumTests also links HostBattery.xcframework: the Apple battery
@@ -183,6 +184,19 @@ if LC_ALL=C grep -a -q KERNARIUM_BOOT_PAYLOAD "$binary"; then
 else
 	[ "$AUTOMATION" -eq 0 ] ||
 		fail "$RUNTIME_4K is a release runtime; build the kernarium-ios-device-automation preset"
+fi
+# The setting that starts the background job with the guest is in the
+# automation runtimes alone. The release Android runtime is never one.
+if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_JOB_AT_START "$binary"; then
+	[ "$AUTOMATION" -eq 1 ] ||
+		fail "$RUNTIME_4K carries the background job setting; only an automation runtime may"
+else
+	[ "$AUTOMATION" -eq 0 ] ||
+		fail "$RUNTIME_4K is an automation runtime without the background job setting; rebuild it"
+fi
+binary="$STAGE/$RUNTIME_ANDROID_4K.xcframework/ios-arm64/$RUNTIME_ANDROID_4K.framework/$RUNTIME_ANDROID_4K"
+if LC_ALL=C grep -a -q KERNARIUM_BACKGROUND_JOB_AT_START "$binary"; then
+	fail "$RUNTIME_ANDROID_4K carries the background job setting; only an automation runtime may"
 fi
 
 # The storage and compression cores carry no Metal dependency, so their

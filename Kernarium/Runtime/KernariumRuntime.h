@@ -238,6 +238,15 @@ typedef struct kernarium_runtime_api {
 KERNARIUM_RUNTIME_EXPORT
 const kernarium_runtime_api* kernarium_runtime_get_api_v14(void);
 
+/* An automation-only extension, outside the versioned table: only a runtime
+ * built for automation exports this symbol, and the application looks it up
+ * without requiring it. It returns nonzero when the launch asked, through the
+ * environment, for the background job to start as soon as the guest runs, and
+ * zero otherwise. The setting's name is in the automation runtimes alone, so a
+ * release runtime cannot be asked. */
+KERNARIUM_RUNTIME_EXPORT
+int kernarium_runtime_automation_job_at_start(void);
+
 #ifdef __cplusplus
 }
 #endif

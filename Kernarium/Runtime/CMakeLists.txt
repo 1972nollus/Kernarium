@@ -82,6 +82,14 @@ if(UML_KERNARIUM_AUTOMATION_HARNESS)
 else()
     set(_kernarium_automation_harness 0)
 endif()
+# Every automation runtime, whatever its guest, can be asked to start the
+# background job with the guest (KernariumAutomationJob.hpp).
+if(UML_KERNARIUM_AUTOMATION_HARNESS)
+    target_sources(KernariumRuntime PRIVATE KernariumAutomationJob.hpp)
+    set(_kernarium_automation_job_at_start 1)
+else()
+    set(_kernarium_automation_job_at_start 0)
+endif()
 target_include_directories(KernariumRuntime
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE
@@ -115,7 +123,8 @@ target_link_libraries(KernariumRuntime PRIVATE
 target_compile_definitions(KernariumRuntime PRIVATE
     KERNARIUM_RUNTIME_ANDROID_GUEST=${KERNARIUM_RUNTIME_ANDROID_GUEST}
     KERNARIUM_RUNTIME_GUEST_FLAVOR=${KERNARIUM_RUNTIME_GUEST_FLAVOR}
-    KERNARIUM_AUTOMATION_HARNESS=${_kernarium_automation_harness})
+    KERNARIUM_AUTOMATION_HARNESS=${_kernarium_automation_harness}
+    KERNARIUM_AUTOMATION_JOB_AT_START=${_kernarium_automation_job_at_start})
 target_link_options(KernariumRuntime PRIVATE
     "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
 # The framework code signature covers __TEXT pages. The loader aliases the
