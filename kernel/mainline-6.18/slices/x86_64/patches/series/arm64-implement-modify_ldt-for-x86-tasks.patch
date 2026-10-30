@@ -388,10 +388,10 @@ index 7a70e528b66dd95c7102ff2f8bc335907c18c985..2a704fcdc2dc64f45e6d1fbe8e47da13
 +#endif
  }
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 8a2d4845962c4807951f919730dd46eddf8f7968..4a533dde8515c45f428b8bb7f970883eddbefef4 100644
+index 9eb94479273d2bc898a29169a51c6b7ac7e60dd1..c28617c6798bad815dd135c1001c71af4a6b2518 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -88,6 +88,7 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
+@@ -96,6 +96,7 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
  /* Linux's ILL_ILLOPN, which Darwin's signal.h numbers 4, for x86 #UD. */
  #define DARWIN_GUEST_ILL_ILLOPN 2
  #define DARWIN_GUEST_X86_TRAP_UD 6
@@ -399,7 +399,7 @@ index 8a2d4845962c4807951f919730dd46eddf8f7968..4a533dde8515c45f428b8bb7f970883e
  #define DARWIN_GUEST_X86_TRAP_SS 12
  #define DARWIN_GUEST_X86_TRAP_MF 16
  #define DARWIN_GUEST_X86_TRAP_XM 19
-@@ -469,6 +470,8 @@ void userspace(struct uml_pt_regs *registers)
+@@ -477,6 +478,8 @@ void userspace(struct uml_pt_regs *registers)
  #ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
  		upt_x86_32_set_task_mode(registers,
  					 current_is_x86_32_userspace());
@@ -408,7 +408,7 @@ index 8a2d4845962c4807951f919730dd46eddf8f7968..4a533dde8515c45f428b8bb7f970883e
  #endif
  		guest_tls = current_tls();
  		/* Snapshot before polling so an IPI racing with the poll remains
-@@ -771,17 +774,23 @@ void userspace(struct uml_pt_regs *registers)
+@@ -779,17 +782,23 @@ void userspace(struct uml_pt_regs *registers)
  			} else if (registers->faultinfo.trap_no == 4 ||
  				   registers->faultinfo.trap_no == 5 ||
  				   registers->faultinfo.trap_no ==

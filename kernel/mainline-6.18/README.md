@@ -382,6 +382,19 @@ lock, so that no balloon page migration is left waiting for an answer the
 broken queue would drop. Otherwise power-off with an inflated balloon never
 completes.
 
+Releasing an ext4 inode preallocation never allocates, so evicting a cached
+inode from the inode shrinker, which runs under `PF_MEMALLOC`, does not trip
+the page allocator's check against `__GFP_NOFAIL` requests there. While a
+block group holds an inode preallocation, a shared topic keeps references to
+the group's in-core bitmap and buddy folios and its on-disk block bitmap
+buffer, so the release finds all three cached. The references cost at most
+three 4 KiB pages per such group and keep those pages from being reclaimed or
+migrated. Closed inodes keep preallocations, for example after enabling
+fs-verity, so the release is not confined to open files.
+`guest-ext4-prealloc-reclaim` evicts such inodes under memory pressure, on
+4 KiB and 1 KiB blocks, and requires that reclaim release them with no
+`__GFP_NOFAIL` page allocation.
+
 Every slice selects `HAVE_ALIGNED_STRUCT_PAGE` and `HAVE_CMPXCHG_DOUBLE`, as
 native arm64 does; the x86-64 userspace slice keeps the arm64 kernel. SLUB
 therefore updates a slab's freelist and counters with one CASP, which runs

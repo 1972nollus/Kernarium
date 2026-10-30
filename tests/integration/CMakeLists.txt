@@ -490,6 +490,16 @@ uml_add_guest_integration_test(
     TIMEOUT 600
     CPUS 4)
 
+# Evicting cached ext4 inodes that hold block preallocations, under memory
+# pressure, releases the preallocations without a single __GFP_NOFAIL page
+# allocation at reclaim time, and leaves a checked, unchanged filesystem.
+uml_add_guest_integration_test(
+    NAME guest-ext4-prealloc-reclaim
+    SCRIPT kernel/run_guest_ext4_prealloc_reclaim.py
+    LABELS guest;kernel
+    TIMEOUT 900
+    CPUS 4)
+
 # Page-cache trimming is off until the host asks. The management console turns
 # it on and off and runs one pass that leaves the cache at its floor and,
 # compacting, hands most of what it frees to the host even when the cache lay

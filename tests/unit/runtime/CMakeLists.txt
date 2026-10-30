@@ -12,6 +12,18 @@ uml_add_unit_test(
     COMMAND uml_runtime_context_tests
     LABELS tsan)
 
+# The import through which the guest kernel says how its run ends.
+add_executable(uml_runtime_guest_shutdown_tests guest_shutdown_tests.cpp)
+target_link_libraries(uml_runtime_guest_shutdown_tests PRIVATE
+    UML::BridgeAbi
+    UML::Emulator)
+target_include_directories(uml_runtime_guest_shutdown_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME runtime-guest-shutdown
+    COMMAND uml_runtime_guest_shutdown_tests
+    LABELS tsan)
+
 add_executable(uml_runtime_kernel_signal_scope_tests
     kernel_signal_scope_tests.cpp)
 target_link_libraries(uml_runtime_kernel_signal_scope_tests PRIVATE
