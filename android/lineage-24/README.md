@@ -923,6 +923,13 @@ or partitions. The fstab has no `voldmanaged` entry, so `vold` never manages the
 system disk; it reaches sgdisk only for the loop-backed virtual disk of
 `sm set-virtual-disk`.
 
+AOSP's EROFS tools (`mkfs.erofs`, `fsck.erofs`, `dump.erofs`) are built with
+Zstandard. An `external/erofs-utils` topic (route `p0023`) compiles the encoder
+and the decoder and links libzstd (static on the host, shared on the device and
+in recovery), and a second `external/zstd` topic (route `p0013`) lets that
+project see the library. Without them `mkfs.erofs` rejects `-zzstd` and
+`fsck.erofs` cannot read a Zstandard image.
+
 The immutable Android payload filesystems and APEX payloads are ext4. Userdata
 is an ordinary unencrypted ext4 filesystem in the directly writable image; this
 emulator does not expose a hardware-backed KeyMint service and the guest bundle
