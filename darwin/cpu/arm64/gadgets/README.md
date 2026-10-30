@@ -84,6 +84,21 @@ which is read without a lock because whatever removes or changes a mapping
 quiesces execution first. A page the index does not hold is looked up in the
 map under its reader lock.
 
+With top-byte ignore on, the transfer, pair, structure, atomic,
+compare-and-swap, ordered, RCpc and exclusive gadgets strip the tag with a
+flag-guarded `ubfx` after they form the address and before they check its
+alignment or probe. The TLB therefore holds each page under its untagged key,
+and a misaligned or faulting access reports the untagged address. The miss
+path keys an entry by the address as presented (`Tlb::translate_tagged`), so a
+form that did not strip would evict, on every access, the entry that a plain
+access to the same page had just filled. The macro is `tbi_strip` in
+`engine/core_integer.inc`. An exclusive records the host address after the
+strip, so its monitor never sees a tag, and the exclusive group keeps its
+fixed footprint. `arm64-tlb` pins that an entry held under any tag goes with
+its page, and `arm64-tbi-memory` in the [instruction
+corpus](../../../../tests/unit/arm64/corpus/README.md) pins the architectural
+results.
+
 ## Streaming mode
 
 Both engines run a guest in streaming mode on the host's own, and the rules in

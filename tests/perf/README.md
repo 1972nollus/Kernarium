@@ -393,6 +393,16 @@ registrations and do not enter ordinary suite aggregates.
 The LSE atomic probe needs assembler support for that extension. Other probes declare any restriction in
 the manifest.
 
+The `guest_tagged_*_loop.S` probes reach memory through a pointer tagged in
+its top byte, as a process with heap pointer tagging does; run them with the
+runner's `--guest-top-byte-ignore`. Given a probe argument
+(`--probe-argument x`) they run the same instructions through an untagged
+pointer, which is their matched control. The two alias probes use the tagged
+pointer and a plain one on the same page, so they time an engine whose
+translation cache keys a page by the address as presented; the other two use
+the tagged pointer alone, so they time the form itself. `tbi_atomic_probe.inc`
+holds their shared setup.
+
 ## Loader corpus
 
 A probe isolates one mechanism; an application's load phase is ordinary
