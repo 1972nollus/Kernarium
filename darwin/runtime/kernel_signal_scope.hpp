@@ -72,9 +72,28 @@ private:
  * after it returns. While such a view borrows the RAM root, the range stays
  * mapped and goes back to the window's reservation with the last borrowed
  * view, as retired guest RAM does. Otherwise a range inside the window goes
- * back to its reservation at once and any other range is unmapped.
+ * back to its reservation at once and any other range is unmapped. Signed
+ * kernel text the host keeps (keep_signed_kernel_text) stays mapped either way.
  */
 void release_kernel_image(void *address, std::size_t length,
 	bool in_window) noexcept;
+
+/* The loader's placement of the image inside the window: the range is replaced
+ * by the window's reservation in place, except the signed kernel text a
+ * previous load of the image left there, which no mapping can replace. 0, or
+ * -1 with errno set. */
+[[nodiscard]] int reserve_kernel_image(
+	void *address, std::size_t length) noexcept;
+
+/* Keep the signed kernel text the loader aliased at [address, address +
+ * length) for the life of the process. iOS makes the alias permanent
+ * (memory::keep_host_range), so no release replaces it and the next load of
+ * the same image reuses it. False when it cannot be kept. */
+[[nodiscard]] bool keep_signed_kernel_text(
+	void *address, std::size_t length) noexcept;
+
+/* Whether a previous load left exactly this signed kernel text in place. */
+[[nodiscard]] bool signed_kernel_text_kept(
+	const void *address, std::size_t length) noexcept;
 
 } // namespace uml::runtime

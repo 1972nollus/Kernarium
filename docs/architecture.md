@@ -63,7 +63,9 @@ the kernel took and did not return:
   the commitment and is dropped with it); and
 - the guest RAM: the whole window becomes one protectionless reservation again,
   the commitment is retired and the token unregistered, so the next kernel
-  finds no byte and no page of this one.
+  finds no byte and no page of this one. On iOS the kernel's signed text stays
+  mapped: XNU makes those aliases permanent, so no mapping can replace them,
+  and the next load of the same image reuses them.
 
 A refusal by the check changes nothing and may be retried: the caller stops
 every service that maps guest RAM, then runs again, and the handle stays
@@ -282,7 +284,10 @@ A library built without the embedded ELF runner, such as every XCFramework
 slice, excludes native-VM and embedded-ELF execution; only the macOS unit
 presets keep the native-VM bridge, for their tests. Kernarium uses versioned runtime frameworks whose kernel ELF is carried in signed Mach-O
 `__TEXT`. Its loader aliases immutable executable pages from that mapping,
-copies only data and BSS into anonymous storage, and rejects a carrier
+which iOS makes permanent once its code-signing monitor has associated them
+(a later load of the image reuses them; `memory/shared_backing.hpp`
+`keep_host_range`), copies only data and BSS into anonymous storage around
+them, and rejects a carrier
 mismatch, writable executable segments, or relocations into signed text. The app
 embeds every selectable framework, links none at launch, and loads exactly one
 guest flavour for the process lifetime. macOS retains its

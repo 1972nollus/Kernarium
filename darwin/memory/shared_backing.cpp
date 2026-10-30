@@ -3,6 +3,8 @@
 
 #include "guest_ram_commitment.hpp"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -549,8 +551,9 @@ int hand_back_anonymous_guest_ram(void *window, std::size_t length) noexcept
 		errno = EBUSY;
 		return -1;
 	}
-	/* One call replaces the window whole. A failure leaves everything as it
-	 * was, so the guest can still be handed back later. */
+	/* The window is replaced whole, around the ranges the host keeps. A
+	 * failure leaves the guest registered, so it can still be handed back
+	 * later. */
 	if (window != nullptr && reserve_host_range(window, length) != 0)
 		return -1;
 	retire_guest_ram_commitment();
@@ -655,15 +658,104 @@ bool retain_borrowed_guest_ram(void *address, std::size_t length) noexcept
 	return true;
 }
 
-int reserve_host_range(void *address, std::size_t length) noexcept
+namespace {
+
+struct KeptHostRange final {
+	std::uintptr_t begin{};
+	std::uintptr_t end{};
+};
+
+/* The ranges the host keeps (keep_host_range). Every reservation reads them
+ * and only the loader adds one, so an entry is written once, before the count
+ * that publishes it, and never changes. A kernel image has a few executable
+ * segments, and a process loads one image into one window at a time. */
+struct KeptHostRanges final {
+	std::mutex mutex;
+	std::array<KeptHostRange, 32> ranges{};
+	std::atomic<std::size_t> count{0};
+};
+
+[[clang::no_destroy]] constinit KeptHostRanges kept_host_ranges;
+
+[[nodiscard]] int reserve_exact_host_range(
+	std::uintptr_t begin, std::uintptr_t end) noexcept
 {
-	if (length == 0)
-		return 0;
-	if (mmap(address, length, PROT_NONE,
+	if (mmap(reinterpret_cast<void *>(begin), end - begin, PROT_NONE,
 		    MAP_FIXED | MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0) ==
 	    MAP_FAILED)
 		return -1;
 	return 0;
+}
+
+} // namespace
+
+int reserve_host_range(void *address, std::size_t length) noexcept
+{
+	if (length == 0)
+		return 0;
+	auto begin = reinterpret_cast<std::uintptr_t>(address);
+	if (begin > std::numeric_limits<std::uintptr_t>::max() - length) {
+		errno = EINVAL;
+		return -1;
+	}
+	const std::uintptr_t end = begin + length;
+	const std::size_t kept =
+		kept_host_ranges.count.load(std::memory_order_acquire);
+	/* Each part before the lowest kept range left in [begin, end), then the
+	 * part after the last. XNU refuses a replacement that touches a
+	 * permanent mapping whole, so the parts are reserved separately. */
+	while (begin < end) {
+		const KeptHostRange *next = nullptr;
+		for (std::size_t index = 0; index < kept; ++index) {
+			const auto &range = kept_host_ranges.ranges[index];
+			if (range.begin < end && range.end > begin &&
+			    (next == nullptr || range.begin < next->begin))
+				next = &range;
+		}
+		const std::uintptr_t stop =
+			next == nullptr ? end : std::max(next->begin, begin);
+		if (stop > begin && reserve_exact_host_range(begin, stop) != 0)
+			return -1;
+		if (next == nullptr)
+			break;
+		begin = next->end;
+	}
+	return 0;
+}
+
+bool keep_host_range(void *address, std::size_t length) noexcept
+{
+	const auto begin = reinterpret_cast<std::uintptr_t>(address);
+	if (length == 0 || begin % vm_page_size != 0 ||
+	    length % vm_page_size != 0 ||
+	    begin > std::numeric_limits<std::uintptr_t>::max() - length)
+		return false;
+	std::lock_guard lock{kept_host_ranges.mutex};
+	const std::size_t count =
+		kept_host_ranges.count.load(std::memory_order_relaxed);
+	for (std::size_t index = 0; index < count; ++index) {
+		const auto &range = kept_host_ranges.ranges[index];
+		if (range.begin == begin && range.end == begin + length)
+			return true;
+	}
+	if (count == kept_host_ranges.ranges.size())
+		return false;
+	kept_host_ranges.ranges[count] = {begin, begin + length};
+	kept_host_ranges.count.store(count + 1, std::memory_order_release);
+	return true;
+}
+
+bool host_range_kept(const void *address, std::size_t length) noexcept
+{
+	const auto begin = reinterpret_cast<std::uintptr_t>(address);
+	const std::size_t count =
+		kept_host_ranges.count.load(std::memory_order_acquire);
+	for (std::size_t index = 0; index < count; ++index) {
+		const auto &range = kept_host_ranges.ranges[index];
+		if (range.begin == begin && range.end - range.begin == length)
+			return true;
+	}
+	return false;
 }
 
 void *map_shared_backing(void *address, std::size_t length,
