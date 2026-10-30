@@ -15,9 +15,14 @@ uml_declare_architecture_target(uml_memory_heap memory)
 target_include_directories(uml_memory_heap PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin)
 # An iOS app's address space is small and its guest RAM window takes most of
-# it, so the region is 1 GiB there and 8 GiB elsewhere.
+# it, so the region is 1 GiB there, the Simulator included, and 8 GiB on macOS.
+if(UML_APPLE_PLATFORM MATCHES "^ios")
+    set(_uml_heap_region_bytes 1073741824)
+else()
+    set(_uml_heap_region_bytes 8589934592)
+endif()
 target_compile_definitions(uml_memory_heap PRIVATE
-    UML_HEAP_REGION_BYTES=$<IF:$<STREQUAL:${UML_APPLE_PLATFORM},ios>,1073741824,8589934592>)
+    UML_HEAP_REGION_BYTES=${_uml_heap_region_bytes})
 
 add_library(uml_memory_shared_backing STATIC
     shared_backing.cpp
