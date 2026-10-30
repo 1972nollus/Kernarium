@@ -892,9 +892,21 @@ host-side operation with the system `truncate` utility and GPT fdisk's
 `sgdisk`, found on `PATH` or named with `--sgdisk`. Runtime launch has no
 disk-capacity parameter and rejects a GPT that does not match the file. The
 resized image is opened directly as writable storage; Android launch never
-constructs or accepts a UBD COW pair. Normal Android asks the ext4
-`resize2fs` tool to fill userdata before mounting `/data`; the tool is
-idempotent when the host has not enlarged the partition. The image carries
+constructs or accepts a UBD COW pair. Normal Android fills userdata on every
+boot, once `/data` is mounted and before the zygote starts (`post-fs-data`):
+`resize2fs` asks the kernel's online resize to grow the mounted filesystem to
+the partition, and does nothing when the host has not enlarged it. The online
+resize is journaled and needs no `fsck`; an offline `resize2fs` refuses a
+filesystem mounted since its last full check, and the `e2fsck` that `mount_all`
+runs skips a clean one, so it would fill userdata on the first boot only. The
+kernel adds the group descriptor blocks a larger filesystem needs by converting
+it to `meta_bg`, which the 128 MiB image (no reserved descriptor blocks) relies
+on for a first boot at a large capacity. `resize2fs` runs as root with the group
+of `/data`'s owner, so it opens `/data` (mode 0771) without a DAC capability,
+and in the `fsck` domain, which gets `sys_resource`, `open`, `read` and `ioctl`
+on `system_data_root_file:dir` and the one ioctl `EXT4_IOC_RESIZE_FS` (0x6610);
+the target-files verifier requires the command, these rules, and no other
+ioctl for that domain on `/data`. The image carries
 8,192 inodes (`BOARD_USERDATAIMAGE_EXTFS_INODE_COUNT`, which a `build/make`
 topic, route `p0002`, forwards to the image builder as it does for the
 read-only partitions), one per 16 KiB, ext4's default ratio. `resize2fs` keeps

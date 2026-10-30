@@ -290,9 +290,10 @@ PRODUCT_PACKAGES_EXCLUDE += \
 
 # The browser (Jelly), the keyboard (LatinIME) and ThemePicker come from the
 # LineageOS product chain. resize2fs grows the compact userdata filesystem
-# after the host expands its partition and before the first /data mount. The
-# F-Droid client and its Privileged Extension are presigned prebuilts that
-# source preparation materializes under vendor/kernarium/fdroid.
+# online after the host expands its partition, once /data is mounted
+# (init.vendor.rc, post-fs-data). The F-Droid client and its Privileged
+# Extension are presigned prebuilts that source preparation materializes under
+# vendor/kernarium/fdroid.
 PRODUCT_PACKAGES += \
     android.hardware.health-service.example \
     android.hardware.health-service.example_recovery \
