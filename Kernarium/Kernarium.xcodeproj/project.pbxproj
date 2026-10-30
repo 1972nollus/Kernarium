@@ -629,6 +629,8 @@
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
 					"-framework",
+					Accelerate,
+					"-framework",
 					VideoToolbox,
 					"-framework",
 					CoreMedia,
@@ -662,6 +664,8 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
+					"-framework",
+					Accelerate,
 					"-framework",
 					VideoToolbox,
 					"-framework",
