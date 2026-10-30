@@ -12,7 +12,9 @@
 # --automation packages the automation Linux runtimes, which boot host
 # payloads (Kernarium/README.md), in place of the release ones. The Linux
 # runtime is checked: the release runtime must not read a payload, and the
-# automation runtime must.
+# automation runtime must. --android-automation likewise packages the
+# automation Android runtime, whose launch may turn ADB authorization off, and
+# checks that the release Android runtime carries no such switch.
 #
 # KernariumTests also links HostBattery.xcframework: the Apple battery
 # provider's archive, as the Android runtime links it, with its header. The
@@ -30,11 +32,14 @@ fail()
 }
 
 AUTOMATION=0
-case "$#:${1-}" in
-0:) ;;
-1:--automation) AUTOMATION=1 ;;
-*) fail "usage: package-ios-frameworks.sh [--automation]" ;;
-esac
+ANDROID_AUTOMATION=0
+for option in "$@"; do
+	case "$option" in
+	--automation) AUTOMATION=1 ;;
+	--android-automation) ANDROID_AUTOMATION=1 ;;
+	*) fail "usage: package-ios-frameworks.sh [--automation] [--android-automation]" ;;
+	esac
+done
 
 find_tool()
 {
@@ -64,12 +69,15 @@ RUNTIME_ANDROID_4K="KRuntime_ACK_6_18_4K"
 
 RUNTIME_TREE=kernarium-runtime-ios-device
 [ "$AUTOMATION" -eq 0 ] || RUNTIME_TREE=kernarium-runtime-ios-device-automation
+ANDROID_TREE=kernarium-runtime-ios-device-android-4k
+[ "$ANDROID_AUTOMATION" -eq 0 ] ||
+	ANDROID_TREE=kernarium-runtime-ios-device-android-4k-automation
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/$RUNTIME_TREE/Kernarium/Runtime/$RUNTIME_4K.framework"
-DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-4k/Kernarium/Runtime/$RUNTIME_ANDROID_4K.framework"
+DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/$ANDROID_TREE/Kernarium/Runtime/$RUNTIME_ANDROID_4K.framework"
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64/Frameworks"
 STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
 ZSTD="$ROOT_DIR/.build/dependencies/ios-zstd/LibZstd.xcframework"
-HOST_BATTERY="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-4k/darwin/platform/libuml_host_battery.a"
+HOST_BATTERY="$ROOT_DIR/.build/$ANDROID_TREE/darwin/platform/libuml_host_battery.a"
 HOST_BATTERY_HEADER="$ROOT_DIR/darwin/platform/host_battery.hpp"
 
 # Mesa supplies the host GL provider as MesaEGL and MesaGallium, and the
@@ -165,6 +173,15 @@ else
 		fail "$RUNTIME_4K is a release runtime; build the kernarium-ios-device-automation preset"
 fi
 
+binary="$STAGE/$RUNTIME_ANDROID_4K.xcframework/ios-arm64/$RUNTIME_ANDROID_4K.framework/$RUNTIME_ANDROID_4K"
+if LC_ALL=C grep -a -q KERNARIUM_ANDROID_ADB_AUTH "$binary"; then
+	[ "$ANDROID_AUTOMATION" -eq 1 ] ||
+		fail "$RUNTIME_ANDROID_4K is an automation runtime; package it with --android-automation"
+else
+	[ "$ANDROID_AUTOMATION" -eq 0 ] ||
+		fail "$RUNTIME_ANDROID_4K is a release runtime; build the kernarium-ios-device-android-automation preset"
+fi
+
 # The storage and compression cores carry no Metal dependency, so their
 # XCFrameworks keep both published slices.
 for platform in ios-arm64 ios-arm64-simulator; do
@@ -200,7 +217,7 @@ case $publish in
 	;;
 *) fail "could not publish the XCFrameworks: $OUTPUT" ;;
 esac
-if [ "$AUTOMATION" -eq 1 ]; then
+if [ "$AUTOMATION" -eq 1 ] || [ "$ANDROID_AUTOMATION" -eq 1 ]; then
 	printf '%s\n' "published Kernarium automation XCFrameworks: $OUTPUT"
 else
 	printf '%s\n' "published Kernarium XCFrameworks: $OUTPUT"

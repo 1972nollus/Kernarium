@@ -537,7 +537,12 @@ passes `-enableCodeCoverage YES` to `xcodebuild test`.
 For an opt-in diagnostic, pass one SLiRP forwarding specification as
 `TEST_RUNNER_KERNARIUM_HOST_FORWARD` when launching the app. For example,
 `tcp:127.0.0.1:5567-5555` exposes guest ADB on host loopback port 5567. Normal
-launches leave the variable unset and publish no host port.
+launches leave the variable unset and publish no host port. A device driver
+that cannot answer the first-connection "Allow USB debugging" prompt launches
+the automation Android runtime
+([`Kernarium/README.md`](../Kernarium/README.md#automation-runs)) with
+`KERNARIUM_ANDROID_ADB_AUTH=0` and a loopback forward, and reaches the forward
+over USB with `iproxy`.
 
 Android recovery qualification uses a fresh disposable bundle and sets
 `TEST_RUNNER_KERNARIUM_ANDROID_BOOT_MODE=recovery`. Verify the LineageOS

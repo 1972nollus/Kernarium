@@ -192,6 +192,15 @@
       "cacheVariables": {
         "UML_KERNEL_PRODUCT": "android-17"
       }
+    },
+    {
+      "name": "kernarium-ios-device-android-automation",
+      "displayName": "Kernarium iOS device Android automation runtime (4 KiB)",
+      "inherits": "kernarium-ios-device-android",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-android-4k-automation",
+      "cacheVariables": {
+        "UML_KERNARIUM_AUTOMATION_HARNESS": true
+      }
     }
   ],
   "buildPresets": [
@@ -278,6 +287,11 @@
     {
       "name": "kernarium-ios-device-android",
       "configurePreset": "kernarium-ios-device-android",
+      "targets": ["KernariumRuntime", "architecture-audit"]
+    },
+    {
+      "name": "kernarium-ios-device-android-automation",
+      "configurePreset": "kernarium-ios-device-android-automation",
       "targets": ["KernariumRuntime", "architecture-audit"]
     }
   ],

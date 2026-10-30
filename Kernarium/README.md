@@ -125,6 +125,21 @@ harness session runs before powering the guest off. The lanes are in
 [`testing.md`](../docs/testing.md#apple-builds-and-kernarium) and
 [`tests/perf/README.md`](../tests/perf/README.md).
 
+The Android runtime has an automation variant of its own, the
+`kernarium-ios-device-android-automation` preset packaged with
+`scripts/package-ios-frameworks.sh --android-automation`. The release runtime
+always starts the guest with `androidboot.kernarium.adb_auth=1`, so a fresh
+bundle's first ADB connection waits for the "Allow USB debugging" prompt, and
+a driver without a person at the screen cannot answer it. Only the automation
+runtime reads `KERNARIUM_ANDROID_ADB_AUTH`: `0` starts one launch with
+authorization off, as the macOS launcher does, and `1` or unset keeps the
+prompt. It prints `Kernarium: ADB authorization is off for this launch`, and
+it refuses the setting unless `KERNARIUM_HOST_FORWARD` is unset or listens on
+loopback, because authorization off also makes `adb root` available to
+whatever reaches the forward. A host on USB reaches a loopback forward through
+`iproxy`; a forward on every interface or on a network address is refused.
+The packaging script refuses a release runtime that carries the switch.
+
 ## Devices and display
 
 Kernarium attaches:
@@ -307,7 +322,8 @@ Each script documents its options in `--help` or its header:
   on an Apple silicon Mac in Designed for iPad mode;
 - `package-ios-frameworks.sh` packages the selected runtime and graphics slices
   and the static GPT fdisk and zstd XCFrameworks for Xcode, with
-  `--automation` the automation Linux runtime, and the host battery archive
+  `--automation` the automation Linux runtime, with `--android-automation`
+  the automation Android runtime, and the host battery archive
   only `KernariumTests` links;
 - `make-guest-bundle.py` assembles an Android `.kern` bundle from an installed
   release;

@@ -154,7 +154,9 @@ by the user.
 Fresh settings databases also enable Developer options and ADB. The radio-free
 product starts adbd on TCP port 5555 and retains the stock authorization prompt
 for a newly connected host. The immutable `ro.boot.kernarium.adb_auth` launch
-property can disable that check for host-side diagnostics: iOS fixes it to one,
+property can disable that check for host-side diagnostics: iOS fixes it to one
+(only the automation runtime lets a test launch turn it off, on a loopback
+forward, [`../../Kernarium/README.md`](../../Kernarium/README.md#automation-runs)),
 while the standalone macOS product fixes it to zero. Bundle command lines may
 not override this host security choice. LineageOS makes its debug variant
 non-debuggable and always authorized; the product undoes the first

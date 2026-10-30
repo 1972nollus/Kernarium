@@ -5,6 +5,9 @@
 #if KERNARIUM_AUTOMATION_HARNESS
 #include "KernariumHarness.hpp"
 #endif
+#if KERNARIUM_AUTOMATION_ADB_AUTH
+#include "KernariumAdbAuthorization.hpp"
+#endif
 
 #include "audio/in_process_service.hpp"
 #include "video/in_process_service.hpp"
@@ -674,8 +677,23 @@ void appendKernelCommandLine(
     arguments.emplace_back(
         std::string {densityPrefix} + std::to_string(dotsPerInch));
     /* androidboot properties become immutable ro.boot properties. iOS always
-     * keeps the stock authorization prompt for a previously unseen ADB host. */
+     * keeps the stock authorization prompt for a previously unseen ADB host.
+     * Only the automation runtime lets a launch turn it off, as the macOS
+     * launcher does, so a test driver can reach a fresh guest without a tap;
+     * Kernarium/README.md owns that contract. */
+#if KERNARIUM_AUTOMATION_ADB_AUTH
+    const std::string_view adbAuthorization =
+        kernarium::adb::authorizationValue(
+            std::getenv(kernarium::adb::requestVariable.data()),
+            std::getenv("KERNARIUM_HOST_FORWARD"));
+    if (adbAuthorization == "0")
+        std::fputs(
+            "Kernarium: ADB authorization is off for this launch\n", stderr);
+    arguments.emplace_back(
+        std::string {adbAuthorizationPrefix} + std::string {adbAuthorization});
+#else
     arguments.emplace_back(std::string {adbAuthorizationPrefix} + "1");
+#endif
 }
 
 #endif
