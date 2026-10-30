@@ -574,8 +574,15 @@ as the promise of a half-float window config, and the Android visuals are all
 fixed-point: RGBA8888, RGBX8888, BGRA8888 and RGB565, and gralloc offers no
 10-bit or half-float colour-output buffer either, so a 10-bit render target is
 unavailable and the CTS cases that use one skip on their own support query. The
-port also leaves out `VK_KHR_device_address_commands`, which the CTS refuses on
-a device whose declared dEQP level does not list it. A guest replay assigns new
+port also offers a window config whose only depth-stencil plane is eight bits of
+stencil, when the host renderer advertises that format
+([`../../docs/graphics.md`](../../docs/graphics.md#guest-capability-boundary)):
+HWUI asks for stencil and no depth for every window, `eglChooseConfig` sorts a
+config without a depth plane first for such a request, and the window then holds
+one byte per pixel where the smallest config with a depth plane held four. An
+application that asks for no depth and uses one anyway no longer gets it, as the
+EGL specification allows. The port also leaves out `VK_KHR_device_address_commands`,
+which the CTS refuses on a device whose declared dEQP level does not list it. A guest replay assigns new
 commit identities each time it is recreated, so the guest half is pinned by
 tree. Moving to a newer guest epoch is a metadata bump, a replay, and a
 regeneration; the verifier refuses a guest series that changed underneath the

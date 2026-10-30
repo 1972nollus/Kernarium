@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 02:50:28 +0900
+Subject: [PATCH] dri/android: offer a config whose only buffer is eight bits
+ of stencil
+
+Android's hardware renderer asks for a stencil buffer of eight bits and no
+depth buffer for every window it draws, and the DRI screen offered no config
+that fits: every config with stencil also had a depth plane, so the window's
+depth-stencil buffer held a 32-bit float depth beside the stencil, four to
+eight bytes per pixel where one is wanted.
+
+Add PIPE_FORMAT_S8_UINT to the depth-stencil formats an Android screen offers
+when the driver can render to it. The configs it makes have no depth bits and
+eight stencil bits, which eglChooseConfig sorts before the configs that have a
+depth plane for a request that wants none. A host that does not offer the
+format, as an older virglrenderer does not, leaves the config list as it was.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/gallium/frontends/dri/dri_screen.c | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/frontends/dri/dri_screen.c b/src/gallium/frontends/dri/dri_screen.c
+index 7855f4b2b27d6795de4cbe7795d54ed669dcfba7..c973f511e3714787d84ddd3d820406ef6bab4202 100644
+--- a/src/gallium/frontends/dri/dri_screen.c
++++ b/src/gallium/frontends/dri/dri_screen.c
+@@ -33,6 +33,7 @@
+ #include "dri_context.h"
+ #include "dri_helpers.h"
+ 
++#include "util/detect_os.h"
+ #include "util/u_inlines.h"
+ #include "pipe/p_screen.h"
+ #include "util/format/u_formats.h"
+@@ -342,7 +343,7 @@ dri_fill_in_modes(struct dri_screen *screen)
+       PIPE_FORMAT_R4G4B4A4_UNORM,
+    };
+    struct dri_config **configs = NULL;
+-   enum pipe_format zs_formats[5];
++   enum pipe_format zs_formats[6];
+    unsigned num_zs_formats = 0;
+    unsigned i;
+    struct pipe_screen *p_screen = screen->base.screen;
+@@ -385,6 +386,17 @@ dri_fill_in_modes(struct dri_screen *screen)
+    else if (HAS_ZS(Z32_FLOAT))
+       zs_formats[num_zs_formats++] = PIPE_FORMAT_Z32_FLOAT;
+ 
++#if DETECT_OS_ANDROID
++   /* Android's hardware renderer asks for a stencil buffer of eight bits and
++    * no depth for every window, and a config with only that stores one byte
++    * per pixel where the smallest one with a depth plane stores four. An
++    * eglChooseConfig that wants no depth sorts it before every config that has
++    * one.
++    */
++   if (HAS_ZS(S8_UINT))
++      zs_formats[num_zs_formats++] = PIPE_FORMAT_S8_UINT;
++#endif
++
+ #undef HAS_ZS
+ 
+    mixed_color_depth =
