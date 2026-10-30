@@ -98,6 +98,18 @@ target_include_directories(uml_runtime_hibernation PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
 
+# The line a Mac run writes where iOS would have ended the process, for a
+# limit the launch stated.
+add_library(uml_runtime_virtual_jetsam OBJECT
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/virtual_jetsam.cpp)
+add_library(UML::RuntimeVirtualJetsam ALIAS uml_runtime_virtual_jetsam)
+uml_declare_architecture_target(uml_runtime_virtual_jetsam runtime)
+target_link_libraries(uml_runtime_virtual_jetsam PRIVATE
+    UML::HostEnvironment)
+target_include_directories(uml_runtime_virtual_jetsam PUBLIC
+    ${PROJECT_SOURCE_DIR}/darwin
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+
 add_library(uml_runtime_guest_selector OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_selector.cpp)
 uml_declare_architecture_target(uml_runtime_guest_selector runtime)
@@ -135,6 +147,7 @@ target_sources(uml_runtime_objects INTERFACE
     $<TARGET_OBJECTS:uml_runtime_kernel_resources>
     $<TARGET_OBJECTS:uml_runtime_thread_fence>
     $<TARGET_OBJECTS:uml_runtime_hibernation>
+    $<TARGET_OBJECTS:uml_runtime_virtual_jetsam>
     $<TARGET_OBJECTS:uml_runtime_guest_selector>
     $<TARGET_OBJECTS:uml_runtime_entry>
     $<TARGET_OBJECTS:uml_static_runtime>)

@@ -88,3 +88,17 @@ target_include_directories(uml_run_routing_stress_tests PRIVATE
 uml_add_unit_test(
     NAME runtime-route-unbound-reads
     COMMAND uml_run_routing_stress_tests)
+
+# The process's memory limit: the host's own, else the one a launch states, so a
+# Mac measurement sees the budgets that derive from the limit as the iPad does.
+add_executable(uml_host_environment_tests
+    host_environment_tests.cpp
+    $<TARGET_OBJECTS:uml_host_environment>)
+target_link_libraries(uml_host_environment_tests PRIVATE
+    UML::PlatformContract
+    "-framework Foundation")
+target_include_directories(uml_host_environment_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/platform)
+uml_add_unit_test(
+    NAME platform-host-environment
+    COMMAND uml_host_environment_tests)

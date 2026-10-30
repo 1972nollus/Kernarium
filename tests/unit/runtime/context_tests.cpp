@@ -3,9 +3,11 @@
 #include "cpu/engine.hpp"
 #include "guest_register_tail.hpp"
 #include "memory/domain_contract.hpp"
+#include "platform/host_environment.hpp"
 #include "platform/run_routing.hpp"
 #include "require.hpp"
 #include "runtime/context.hpp"
+#include "runtime/execution_engine.hpp"
 #include "runtime/execution_state.hpp"
 #include "scratch_backing.hpp"
 #include "uml_darwin_cpu.h"
@@ -29,6 +31,7 @@
 #include <ranges>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <sys/mman.h>
 #include <thread>
 #include <unistd.h>
@@ -1015,6 +1018,57 @@ void test_invalid_engine_selection_fails_closed()
 		"invalid execution engine changed the selected production path");
 }
 
+/* A Mac run that states the limit iOS enforces gets the budgets the device
+ * gets: the gadget cache takes at most an eighth of it. */
+void test_stated_memory_limit_sizes_the_gadget_cache_budget()
+{
+	constexpr std::size_t mib = 1024U * 1024U;
+	const char *saved = std::getenv(uml::platform::memory_limit_variable);
+	const std::string kept = saved != nullptr ? saved : "";
+	::unsetenv(uml::platform::memory_limit_variable);
+	uml::runtime::set_process_memory_limit(0);
+	if (uml::platform::process_memory_limit_bytes() == 0) {
+		/* Nothing stated: a quarter of the guest, at least 128 MiB. */
+		require(uml::runtime::set_gadget_cache_budget(1536 * mib, 0) ==
+				384 * mib &&
+			uml::runtime::set_gadget_cache_budget(2048 * mib, 0) ==
+				512 * mib &&
+			uml::runtime::set_gadget_cache_budget(256 * mib, 0) ==
+				128 * mib,
+			"the budget changed with no limit stated");
+		/* The iPad mini 6's 2,867 MiB: an eighth of it, 358 MiB, is under a
+		 * quarter of either guest. */
+		uml::runtime::set_process_memory_limit(2867 * mib);
+		constexpr std::size_t eighth = 2867 * mib / 8;
+		require(eighth / mib == 358,
+			"the limit's eighth is not the iPad's 358 MiB");
+		require(uml::runtime::set_gadget_cache_budget(1536 * mib, 0) ==
+				eighth &&
+			uml::runtime::set_gadget_cache_budget(2048 * mib, 0) ==
+				eighth,
+			"a stated limit did not cap the budget");
+		/* A budget the launch gives is its own. */
+		require(uml::runtime::set_gadget_cache_budget(1536 * mib,
+				96 * mib) == 96 * mib,
+			"a stated limit overrode an explicit budget");
+		/* The environment states it as well, and the option beats it. */
+		uml::runtime::set_process_memory_limit(0);
+		::setenv(uml::platform::memory_limit_variable, "2867", 1);
+		require(uml::runtime::set_gadget_cache_budget(1536 * mib, 0) ==
+			eighth, "the environment did not state the limit");
+		uml::runtime::set_process_memory_limit(1024 * mib);
+		require(uml::runtime::set_gadget_cache_budget(1536 * mib, 0) ==
+			128 * mib, "the option did not beat the environment");
+	}
+	uml::runtime::set_process_memory_limit(0);
+	if (saved != nullptr)
+		::setenv(uml::platform::memory_limit_variable, kept.c_str(), 1);
+	else
+		::unsetenv(uml::platform::memory_limit_variable);
+	/* The process keeps the budget a run never chose. */
+	(void)uml::runtime::set_gadget_cache_budget(0, std::size_t{1} << 30);
+}
+
 } // namespace
 
 int main()
@@ -1037,6 +1091,7 @@ int main()
 		test_same_thread_registration_churn_is_bounded();
 		test_interrupt_registration_is_transactional();
 		test_invalid_engine_selection_fails_closed();
+		test_stated_memory_limit_sizes_the_gadget_cache_budget();
 		return EXIT_SUCCESS;
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "runtime context test failed: %s\n", error.what());
